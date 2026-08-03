@@ -46,7 +46,7 @@
 
 **存档接线**：系统实例由宿主持有，宿主通过 `Interpreter` 的 `SystemHooks`（`snapshot`/`restore`）接入存档——`SaveSnapshot.systems` 携带 `calendar/combat/affection` 快照，随存档 JSON 往返。各系统快照必须 JSON 安全（无 Map/Set/函数）。
 
-**端到端演示**：`examples/starter` 已完整接线全部全家桶——`@calendar`/`@battle`/`@affection`/`@event` 的 `system` 事件由 `src/main.ts` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，并经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。
+**演示接线（非闭环）**：`examples/starter` 演示了全家桶**实例接线与存档往返**——`@calendar`/`@battle`/`@affection`/`@event` 的 `system` 事件由 `src/main.ts` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，并经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。属**演示级**而非完整闭环：`calendar.enter()` 的 `eventId` 仅 `console.info` 不跳转事件场景、`@event` 的 `consumeEvent` 未先经 `availableEvents()` 校验、无回想 UI（详见 README"示例未闭环的宿主应用逻辑"）。
 
 ## 素材注入（渲染层）
 

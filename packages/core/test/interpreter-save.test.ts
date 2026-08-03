@@ -127,6 +127,8 @@ describe('Interpreter 存档', () => {
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));
     interp.start('s1');
     const snap = interp.saveSnapshot()!;
+    // saveSnapshot 直接产物自带 schemaVersion（宿主直写档不经 SaveManager 时校验仍生效）
+    expect(snap.meta.schemaVersion).toBe(1);
 
     const sm = new SaveManager();
     sm.save('s1', snap);

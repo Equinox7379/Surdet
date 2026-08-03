@@ -46,7 +46,15 @@ export class FileSaveStore {
   }
 
   write(slot: string, data: SaveSnapshot): void {
-    const json = JSON.stringify(data);
+    let json: string;
+    try {
+      json = JSON.stringify(data);
+    } catch (err) {
+      // 循环引用/非 JSON 值：转为清晰错误（否则裸 TypeError 经 IPC 上抛，渲染端难以排查）
+      throw new Error(
+        `存档槽位 '${slot}' 数据无法序列化（可能含循环引用或非 JSON 值）：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     if (Buffer.byteLength(json, 'utf8') > MAX_SAVE_BYTES) {
       throw new Error(`存档槽位 '${slot}' 超出大小上限（${MAX_SAVE_BYTES} 字节）`);
     }

@@ -75,4 +75,12 @@ describe('FileSaveStore', () => {
     expect(() => store.write('huge', huge)).toThrow(/超出大小上限/);
     expect(store.read('huge')).toBeNull();
   });
+
+  it('循环引用数据 write 抛清晰错误而非裸 TypeError', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    const circular: Record<string, unknown> = { meta: { id: 'x', createdAt: 1, updatedAt: 1 }, variables: {} };
+    circular['self'] = circular;
+    expect(() => store.write('x', circular as never)).toThrow(/无法序列化/);
+  });
 });

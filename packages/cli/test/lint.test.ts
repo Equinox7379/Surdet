@@ -403,6 +403,15 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'W004')).toBe(true);
   });
 
+  it('choice 后缩进旁白（（...）无说话人前缀）被吞为选项也报 W004', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@choice\n  （她沉默了片刻。）\n  选项A -> @goto a\n@label a\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(true);
+    expect(r.issues.some((i) => i.code === 'W004')).toBe(true);
+  });
+
   it('含冒号的合法选项（动词：内容）不误报 W004', () => {
     const dir = makeProject({
       'content/scenario/a.gal': `@choice\n  说实话：白鹭街，雾灾，还有安安 -> @goto a\n@label a\n凛：对话。\n`,

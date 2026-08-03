@@ -61,7 +61,13 @@ async function main(): Promise<void> {
         return null;
       }
     },
-    write: (slot, data) => localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data)),
+    write: (slot, data) => {
+      try {
+        localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
+      } catch (err) {
+        console.error('[game] 存档写入失败：', err);
+      }
+    },
     delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
     list: () =>
       Object.keys(localStorage)

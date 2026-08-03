@@ -25,6 +25,17 @@ function assertTrustedSender(event: IpcMainEvent): void {
   }
 }
 
+/** 存档数据最小形状校验：防渲染端写入非对象/缺 meta 的垃圾数据。 */
+function assertValidSnapshot(data: unknown): asserts data is SaveSnapshot {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error('存档数据必须是对象');
+  }
+  const meta = (data as SaveSnapshot).meta;
+  if (typeof meta !== 'object' || meta === null) {
+    throw new Error('存档数据缺少 meta 元信息');
+  }
+}
+
 /** 注册渲染层（preload）经 ipcRenderer 转发的存档读写（同步 IPC，低频小数据）。 */
 function registerSaveIpc(): void {
   ipcMain.on('save:list', (e) => {
@@ -37,6 +48,7 @@ function registerSaveIpc(): void {
   });
   ipcMain.on('save:write', (e, slot: string, data: SaveSnapshot) => {
     assertTrustedSender(e);
+    assertValidSnapshot(data);
     getSaveStore().write(slot, data);
   });
   ipcMain.on('save:delete', (e, slot: string) => {

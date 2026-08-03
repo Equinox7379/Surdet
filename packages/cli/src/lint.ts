@@ -361,8 +361,10 @@ function collectSceneSpeakers(scene: CompiledScene): Set<string> {
 }
 
 /**
- * choice 后所有缩进文本行都会被当作选项；若选项的说话人前缀与同场景真实对话一致
- * （如 '凛：'），极可能是"缩进正文被误判为选项"（剧情结构静默损坏）。W004 警告。
+ * choice 后所有缩进文本行都会被当作选项；以下形态极可能是"缩进正文被误判为选项"
+ * （剧情结构静默损坏），W004 警告：
+ *  - 选项的说话人前缀与同场景真实对话一致（如 '凛：'）
+ *  - 选项以旁白括号开头（如 '（她沉默了片刻。）'，无说话人前缀的缩进旁白）
  * 不依赖 game.config.json（始终执行）。
  */
 function checkChoiceSuspects(scene: CompiledScene, speakers: Set<string>, issues: LintIssue[]): void {
@@ -375,6 +377,16 @@ function checkChoiceSuspects(scene: CompiledScene, speakers: Set<string>, issues
           severity: 'warning',
           code: 'W004',
           text: `${opt.pos.file}:${opt.pos.line}:${opt.pos.col}: 选项文本 '${opt.label}' 的说话人前缀 '${prefix}' 与场景内对话一致，疑似缩进正文被误判为选项（choice 后正文请勿缩进）`,
+          file: opt.pos.file,
+          line: opt.pos.line,
+          col: opt.pos.col,
+        });
+      } else if (/^[（(\[]/.test(opt.label)) {
+        // 旁白/注释风格（（...）/[...]）开头：无说话人前缀的缩进旁白同样会被静默吞成选项
+        issues.push({
+          severity: 'warning',
+          code: 'W004',
+          text: `${opt.pos.file}:${opt.pos.line}:${opt.pos.col}: 选项文本 '${opt.label}' 以旁白括号开头，疑似缩进旁白被误判为选项（choice 后正文请勿缩进）`,
           file: opt.pos.file,
           line: opt.pos.line,
           col: opt.pos.col,
