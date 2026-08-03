@@ -421,4 +421,28 @@ describe('lintProject', () => {
     expect(w3.some((i) => i.text.includes('transition'))).toBe(true);
     expect(w3.some((i) => i.text.includes('zoom'))).toBe(true);
   });
+
+  it('system 指令的修饰符是宿主参数通道，不报 W003', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@battle fight_01 @difficulty hard\n@calendar map_01 @season=winter\n@affection lynn @boost\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W003')).toBe(false);
+  });
+
+  it('game.config.json 中 number 变量 min > max 报 VAR_DECL', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({
+        variables: {
+          ok: { type: 'number', initial: 0, min: 0, max: 100 },
+          bad: { type: 'number', initial: 0, min: 100, max: 0 },
+        },
+      }),
+      'content/scenario/a.gal': `凛：好。\n`,
+    });
+    const r = lintProject(dir);
+    const vd = r.issues.filter((i) => i.code === 'VAR_DECL');
+    expect(vd.some((i) => i.text.includes('bad'))).toBe(true);
+    expect(vd.some((i) => i.text.includes('ok'))).toBe(false);
+  });
 });
