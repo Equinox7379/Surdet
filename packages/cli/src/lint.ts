@@ -451,10 +451,61 @@ function checkExpr(
 }
 
 /**
- * 校验 content/config/*.json 内的 DSL 表达式：
- *  calendar.json nodes[].visibleWhen、combat.json damage.base、events.json events[].when、ngp.json clearCondition。
+ * content/config/*.json 内 DSL 表达式的声明式扫描表。
+ * 新增配置文件只需在此加一条（file + 表达式提取器 + 可选内建变量豁免）。
+ * 当前覆盖：calendar.json nodes[].visibleWhen、combat.json damage.base（内建 atk/def/power）、
+ * events.json events[].when、ngp.json clearCondition。
+ */
+interface ConfigExprScan {
+  file: string;
+  /** 该文件表达式可用的内建变量（无需在 game.config.json 声明） */
+  extraAllowed?: readonly string[];
+  /** 从解析后的 JSON 提取待校验的表达式字符串 */
+  extract: (cfg: Record<string, unknown>) => string[];
+}
+
+const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
+  {
+    file: 'calendar.json',
+    extract: (cfg) => {
+      const nodes = cfg['nodes'];
+      if (!Array.isArray(nodes)) return [];
+      return nodes
+        .filter((n): n is Record<string, unknown> => !!n && typeof n === 'object')
+        .map((n) => n['visibleWhen'])
+        .filter((v): v is string => typeof v === 'string');
+    },
+  },
+  {
+    file: 'combat.json',
+    extraAllowed: ['atk', 'def', 'power'],
+    extract: (cfg) => {
+      const damage = cfg['damage'];
+      if (!damage || typeof damage !== 'object') return [];
+      const base = (damage as Record<string, unknown>)['base'];
+      return typeof base === 'string' ? [base] : [];
+    },
+  },
+  {
+    file: 'events.json',
+    extract: (cfg) => {
+      const events = cfg['events'];
+      if (!Array.isArray(events)) return [];
+      return events
+        .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object')
+        .map((e) => e['when'])
+        .filter((v): v is string => typeof v === 'string');
+    },
+  },
+  {
+    file: 'ngp.json',
+    extract: (cfg) => (typeof cfg['clearCondition'] === 'string' ? [cfg['clearCondition'] as string] : []),
+  },
+];
+
+/**
+ * 校验 content/config/*.json 内的 DSL 表达式（见 CONFIG_EXPR_SCANS）。
  * 语法错误报 CONFIG_EXPR；有声明表时做变量引用（V002）与操作数类型（T003）校验。
- * 伤害公式使用内建变量 atk/def/power（不要求声明）。
  */
 function lintConfigExpressions(
   root: string,
@@ -497,40 +548,13 @@ function lintConfigExpressions(
     });
   };
 
-  // calendar.json
-  const calendar = readConfigJson(configDir, 'calendar.json', issues);
-  if (calendar && Array.isArray(calendar['nodes'])) {
-    for (const node of calendar['nodes']) {
-      if (node && typeof node === 'object' && typeof node['visibleWhen'] === 'string') {
-        check(node['visibleWhen'], path.join('content/config', 'calendar.json'));
-      }
+  for (const scan of CONFIG_EXPR_SCANS) {
+    const cfg = readConfigJson(configDir, scan.file, issues);
+    if (!cfg) continue;
+    const rel = path.join('content/config', scan.file);
+    for (const expr of scan.extract(cfg)) {
+      check(expr, rel, scan.extraAllowed);
     }
-  }
-
-  // combat.json（伤害公式内建 atk/def/power）
-  const combat = readConfigJson(configDir, 'combat.json', issues);
-  const combatDamage = combat?.['damage'];
-  if (combatDamage && typeof combatDamage === 'object') {
-    const base = (combatDamage as Record<string, unknown>)['base'];
-    if (typeof base === 'string') {
-      check(base, path.join('content/config', 'combat.json'), ['atk', 'def', 'power']);
-    }
-  }
-
-  // events.json
-  const events = readConfigJson(configDir, 'events.json', issues);
-  if (events && Array.isArray(events['events'])) {
-    for (const ev of events['events']) {
-      if (ev && typeof ev === 'object' && typeof ev['when'] === 'string') {
-        check(ev['when'], path.join('content/config', 'events.json'));
-      }
-    }
-  }
-
-  // ngp.json
-  const ngp = readConfigJson(configDir, 'ngp.json', issues);
-  if (ngp && typeof ngp['clearCondition'] === 'string') {
-    check(ngp['clearCondition'], path.join('content/config', 'ngp.json'));
   }
 }
 
