@@ -122,6 +122,26 @@ describe('Interpreter 存档', () => {
     expect(interp.status).toBe('ended');
   });
 
+  it('存档写入 schemaVersion，读档对过高版本抛错', () => {
+    const { registry, interp } = makeInterp();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+
+    const sm = new SaveManager();
+    sm.save('s1', snap);
+    const loaded = sm.load('s1');
+    expect(loaded.meta.schemaVersion).toBe(1);
+
+    // 旧档无 schemaVersion（视为 0）→ 兼容，不抛错
+    interp.loadSnapshot({ ...snap, meta: { ...snap.meta, schemaVersion: undefined } });
+    expect(interp.status).toBe('awaiting-advance');
+
+    // 版本过高 → 抛错提示升级
+    const future = { ...snap, meta: { ...snap.meta, schemaVersion: 99 } };
+    expect(() => interp.loadSnapshot(future)).toThrow(/schema 版本/);
+  });
+
   it('SystemHooks：saveSnapshot 携带系统快照，loadSnapshot 触发宿主 restore', () => {
     const store = new VariableStore(decls);
     const bus = new EventBus();

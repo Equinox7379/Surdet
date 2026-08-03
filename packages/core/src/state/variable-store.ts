@@ -24,6 +24,9 @@ export class VariableStore {
     if (this.#decls.has(decl.name)) {
       throw new Error(`Variable '${decl.name}' is already declared`);
     }
+    if (decl.type === 'number' && decl.min !== undefined && decl.max !== undefined && decl.min > decl.max) {
+      throw new Error(`Variable '${decl.name}': min (${decl.min}) > max (${decl.max})，clamp 约束非法`);
+    }
     assertType(decl.initial, decl, 'initial');
     this.#decls.set(decl.name, { ...decl });
     this.#values.set(decl.name, cloneValue(decl.initial));

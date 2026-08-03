@@ -33,7 +33,12 @@ export class FileSaveStore {
   read(slot: string): SaveSnapshot | null {
     const file = this.fileFor(slot);
     if (!fs.existsSync(file)) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as SaveSnapshot;
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8')) as SaveSnapshot;
+    } catch {
+      // 损坏/截断的存档视为无档（渲染层经 IPC 收到 null 而非主进程抛错）
+      return null;
+    }
   }
 
   write(slot: string, data: SaveSnapshot): void {

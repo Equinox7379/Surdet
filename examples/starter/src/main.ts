@@ -124,8 +124,12 @@ async function main(): Promise<void> {
     switch (p.type) {
       case 'calendar': {
         const nodeId = p.args[0];
-        const res = nodeId ? calendar.enter(nodeId) : { ok: false as const };
+        const res = nodeId ? calendar.enter(nodeId) : { ok: false as const, reason: '缺节点参数' };
         console.info('[starter] calendar enter:', nodeId, res);
+        // 成功进入且节点带 eventId：消费事件（演示：记录并提示；真实游戏在此跳转对应事件场景）
+        if (res.ok && res.eventId) {
+          console.info('[starter] calendar event triggered:', res.eventId);
+        }
         // 仅成功进入才推进回合（演示逻辑：失败节点/行动力不足不应消耗回合）
         if (res.ok) calendar.advanceTurn();
         break;

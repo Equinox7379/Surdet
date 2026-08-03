@@ -269,6 +269,7 @@ export class CombatSolver {
     const chain = this.#config.elementChain[attacker.kind]?.[target.kind] ?? 1;
     let final = Math.max(1, Math.round(raw * chain));
 
+    // 无 damage 公式（damage 缺省时）不做暴击判定（crit 恒 false）；公式存在时才按 critChance 掷骰
     const crit = formula ? this.#rng() < formula.critChance : false;
     if (crit) final = Math.round(final * (formula?.critMultiplier ?? 1.5));
 

@@ -51,4 +51,11 @@ describe('FileSaveStore', () => {
     expect(sanitizeSlot('a/b\\c')).toBe('a_b_c');
     expect(sanitizeSlot('quick')).toBe('quick');
   });
+
+  it('损坏的存档文件 read 返回 null 而非抛错', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{ not valid json');
+    expect(store.read('bad')).toBeNull();
+  });
 });

@@ -15,6 +15,10 @@ export interface SystemSnapshots {
   newGamePlus?: unknown;
 }
 
+/** 当前存档 schema 版本（读档校验：引擎升级后旧档无迁移路径时据此提示）。
+ *  旧档无 schemaVersion 视为 0，按兼容处理；版本过高抛错提示升级。 */
+export const SAVE_SCHEMA_VERSION = 1;
+
 /** 存档槽位元信息 */
 export interface SaveSlotMeta {
   id: string;
@@ -25,6 +29,8 @@ export interface SaveSlotMeta {
   playTimeSec?: number;
   /** 封面缩略图（dataURL 或路径） */
   thumbnail?: string;
+  /** 存档 schema 版本（SaveManager.save 写入；读档校验用） */
+  schemaVersion?: number;
 }
 
 /** 场景定位：场景 ID + 指令索引（解释器恢复用） */
@@ -98,7 +104,13 @@ export class SaveManager {
     const now = Date.now();
     const stamped: SaveSnapshot = {
       ...snapshot,
-      meta: { ...snapshot.meta, id: slot, updatedAt: now, createdAt: snapshot.meta.createdAt || now },
+      meta: {
+        ...snapshot.meta,
+        id: slot,
+        updatedAt: now,
+        createdAt: snapshot.meta.createdAt || now,
+        schemaVersion: SAVE_SCHEMA_VERSION,
+      },
     };
     this.#storage.write(slot, deepClone(stamped));
   }

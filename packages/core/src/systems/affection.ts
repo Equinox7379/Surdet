@@ -77,7 +77,8 @@ export class AffectionSystem {
     }
   }
 
-  /** 当前好感阶段（最高满足阈值的档），无配置返回 null */
+  /** 当前好感阶段（最高满足阈值的档），无配置返回 null。
+   *  展示 API 容错：好感变量未声明/非 number 时静默返回 null（区别于 availableEvents 的严格抛错策略）。 */
   stageOf(characterId: string): AffectionTier | null {
     const profile = this.#profiles.find((p) => p.characterId === characterId);
     if (!profile || profile.tiers.length === 0) return null;
