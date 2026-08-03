@@ -112,7 +112,8 @@ export class Interpreter {
     return this.#scene ? { sceneId: this.#scene.sceneId, pc: this.#pc } : null;
   }
 
-  /** 启动场景（label 可选，默认场景开头） */
+  /** 启动场景（label 可选，默认场景开头）。
+   *  支持在事件回调内调用（如 sceneEnd 回调里"结局→返回标题"）：延迟到当前迭代结束后重启。 */
   start(sceneId: string, label?: string): void {
     const { scene, pc } = label !== undefined
       ? this.#registry.resolve(`${sceneId}.${label}`)
@@ -122,6 +123,10 @@ export class Interpreter {
     this.#scene = scene;
     this.#pc = pc;
     this.#status = 'running';
+    if (this.#stepping) {
+      this.#resumeRequested = true;
+      return;
+    }
     this.#step();
   }
 
@@ -343,8 +348,15 @@ export class Interpreter {
 
           case 'end': {
             this.#status = 'ended';
-            // 场景/游戏结束事件：宿主可接结局演出、ED、返回标题画面
+            // 场景/游戏结束事件：宿主可接结局演出、ED、返回标题画面。
+            // 回调内可调用 start()（经 #resumeRequested 延迟重启，见 start 的 #stepping 分支）。
+            this.#resumeRequested = false;
             this.#bus.emit('sceneEnd', { sceneId: this.#scene.sceneId });
+            if (this.#resumeRequested) {
+              this.#resumeRequested = false;
+              this.#status = 'running';
+              continue; // start() 已设置新场景，继续执行
+            }
             return;
           }
 
@@ -487,6 +499,18 @@ export function interpolate(text: string, store: VariableStore): string {
     if (match === '}}') return '}';
     return store.has(name!) ? String(store.get(name!)) : `{${name}}`;
   });
+}
+
+/** 提取文本内 {var} 插值变量名（与 interpolate 同一规则：{{ 转义跳过；非法名不匹配）。
+ *  单点维护，供 lint 对文本/说话人插值做变量声明校验。 */
+export function collectInterpolatedVars(text: string): string[] {
+  const out: string[] = [];
+  const re = /\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] !== undefined) out.push(m[1]);
+  }
+  return out;
 }
 
 function requireArg(instr: GenericInstr, arg: string | undefined, usage: string): void {

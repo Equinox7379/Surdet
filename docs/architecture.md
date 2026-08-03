@@ -56,13 +56,15 @@
 
 `SaveSnapshot` = 变量快照 + 场景定位（sceneId+pc）+ 已读标记 + 解锁状态 + 全家桶系统状态（`systems`，宿主经 `SystemHooks` 提供）。`SaveStorage` 接口可注入 localStorage / 文件系统。剧本 `@autosave`/`@savepoint` 由解释器发对应事件（载荷为完整快照，position 已前移到下一条指令，读档不会重跑存档点），宿主订阅后写入自动/手动槽位。
 
-**桌面文件存档**：`@surdet/shell` 经 preload（`window.surdetSave`，sandbox 下用同步 IPC）暴露 `list/read/write/delete`，主进程用 `FileSaveStore`（`packages/shell/src/save-store.ts`）读写 `userData/saves/<slot>.json`；浏览器环境回退 localStorage（见 `examples/starter/src/main.ts`）。
+**桌面文件存档**：`@surdet/shell` 经 preload（`window.surdetSave`，sandbox 下用同步 IPC）暴露 `list/read/write/delete`，主进程用 `FileSaveStore`（`packages/shell/src/save-store.ts`）读写 `userData/saves/<slot>.json`（原子写 + 10MB 大小上限）；浏览器环境回退 localStorage（见 `examples/starter/src/main.ts`）。
 
 > **读档时序约定**：`Interpreter.loadSnapshot` 先恢复变量/已读/解锁与全家桶系统状态（`SystemHooks.restore`），再 `#step()` 从恢复点重新执行指令流（text/choice 会重新发出事件驱动 UI 挂起）。宿主**必须在 UI 线程（非事件回调）调用** `loadSnapshot`——在 `text`/`choice` 等事件回调内调用会撞解释器的 `#stepping` 重入守卫。
 
+> **sceneEnd 回调**：`@end` 触发 `sceneEnd` 事件时解释器正处事件回调上下文；回调内可调用 `start(sceneId)`（如"结局 → 返回标题"），经 `#resumeRequested` 延迟重启，不撞重入守卫。`loadSnapshot` 则不可在事件回调内调用。
+
 ## 场景结束
 
-`Interpreter` 执行到 `@end`（或文件末尾自动追加的 end）时置 `ended` 并发 `sceneEnd` 事件（载荷 `{ sceneId }`），宿主可接结局演出/ED/返回标题画面。
+`Interpreter` 执行到 `@end`（或文件末尾自动追加的 end）时置 `ended` 并发 `sceneEnd` 事件（载荷 `{ sceneId }`），宿主可接结局演出/ED/返回标题画面。`sceneEnd` 回调内支持 `start()` 重启新场景。
 
 ## AI 产出游戏的工作流
 

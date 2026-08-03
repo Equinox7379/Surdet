@@ -7,6 +7,10 @@ import type { SaveSnapshot } from '@surdet/core';
  * 纯 fs 实现，与 Electron 解耦，可脱离 electron 单测（sync IPC 只负责转发）。
  * 槽位名经 sanitizeSlot 白名单清洗，防路径穿越。
  */
+/** 单个存档大小上限（字节）：防渲染进程写入超大 JSON */
+export const MAX_SAVE_BYTES = 10 * 1024 * 1024;
+
+/** 槽位名白名单清洗，防路径穿越 */
 export function sanitizeSlot(slot: string): string {
   return slot.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
@@ -42,7 +46,15 @@ export class FileSaveStore {
   }
 
   write(slot: string, data: SaveSnapshot): void {
-    fs.writeFileSync(this.fileFor(slot), JSON.stringify(data));
+    const json = JSON.stringify(data);
+    if (Buffer.byteLength(json, 'utf8') > MAX_SAVE_BYTES) {
+      throw new Error(`存档槽位 '${slot}' 超出大小上限（${MAX_SAVE_BYTES} 字节）`);
+    }
+    const file = this.fileFor(slot);
+    const tmp = `${file}.tmp`;
+    // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
+    fs.writeFileSync(tmp, json);
+    fs.renameSync(tmp, file);
   }
 
   delete(slot: string): void {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { FileSaveStore, sanitizeSlot } from '../src/save-store.js';
+import { FileSaveStore, sanitizeSlot, MAX_SAVE_BYTES } from '../src/save-store.js';
 
 function makeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-save-'));
@@ -57,5 +57,22 @@ describe('FileSaveStore', () => {
     const store = new FileSaveStore(dir);
     fs.writeFileSync(path.join(dir, 'bad.json'), '{ not valid json');
     expect(store.read('bad')).toBeNull();
+  });
+
+  it('write 原子写：临时文件不残留，内容可完整读回', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('slot1', makeSnap('slot1'));
+    expect(store.read('slot1')).not.toBeNull();
+    // 无 .tmp 残留
+    expect(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('write 超出大小上限抛错（MAX_SAVE_BYTES）', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    const huge = { ...makeSnap('huge'), variables: { big: 'x'.repeat(MAX_SAVE_BYTES + 1) } };
+    expect(() => store.write('huge', huge)).toThrow(/超出大小上限/);
+    expect(store.read('huge')).toBeNull();
   });
 });

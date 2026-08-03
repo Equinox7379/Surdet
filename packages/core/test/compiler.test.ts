@@ -155,6 +155,16 @@ describe('SceneCompiler', () => {
     expect(() => compile('@elif x > 1\nB\n@endif')).toThrow(/S003/);
   });
 
+  it('超深 @if 嵌套抛 S008（而非 RangeError 栈溢出）', () => {
+    const depth = 300;
+    let src = '';
+    for (let i = 0; i < depth; i++) src += '@if x > 0\n';
+    src += '凛：x。\n';
+    for (let i = 0; i < depth; i++) src += '@endif\n';
+    expect(() => compile(src)).toThrow(/S008/);
+    expect(() => compile(src)).toThrow(/嵌套过深/);
+  });
+
   it('choice 选项内块指令抛 S007', () => {
     expect(() => compile('@choice\n  A -> @if x @mod t +1 @endif @goto a')).toThrow(/S007/);
     expect(() => compile('@choice\n  A -> @choice')).toThrow(/S007/);

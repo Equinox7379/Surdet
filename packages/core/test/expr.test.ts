@@ -48,6 +48,12 @@ describe('ExprParser', () => {
     expect(() => parseExpr('"未闭合')).toThrow(ExprParseError);
   });
 
+  it('超深括号嵌套抛 ExprParseError 而非 RangeError（深度守卫）', () => {
+    const src = '('.repeat(5000) + '1' + ')'.repeat(5000);
+    expect(() => parseExpr(src)).toThrow(ExprParseError);
+    expect(() => parseExpr(src)).toThrow(/嵌套过深/);
+  });
+
   it('字符串转义', () => {
     expect(parseExpr('"a\\nb"')).toMatchObject({ kind: 'string', value: 'a\nb' });
   });

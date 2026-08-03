@@ -10,6 +10,9 @@ export class ExprParseError extends Error {
   }
 }
 
+/** 表达式嵌套深度上限（括号/一元/二元链递归），防止恶意/病态输入触发 JS 栈溢出（RangeError）而非可定位的解析错误 */
+export const MAX_EXPR_NESTING = 200;
+
 /**
  * 递归下降表达式解析器。
  * 输入为表达式字符串（@if 的条件 / @set 的右值），产出 ExprAst。
@@ -17,6 +20,7 @@ export class ExprParseError extends Error {
 export class ExprParser {
   #src: string;
   #pos = 0;
+  #nesting = 0;
 
   static parse(source: string): ExprAst {
     return new ExprParser(source).parseRoot();
@@ -109,12 +113,20 @@ export class ExprParser {
     if (ch === undefined) this.#fail('表达式意外结束');
 
     if (ch === '(') {
-      this.#pos++;
-      const inner = this.parseOr();
-      this.#skipWs();
-      if (this.#src[this.#pos] !== ')') this.#fail('缺少右括号 )');
-      this.#pos++;
-      return inner;
+      this.#nesting++;
+      if (this.#nesting > MAX_EXPR_NESTING) {
+        this.#fail(`嵌套过深（超过 ${MAX_EXPR_NESTING} 层括号）`);
+      }
+      try {
+        this.#pos++;
+        const inner = this.parseOr();
+        this.#skipWs();
+        if (this.#src[this.#pos] !== ')') this.#fail('缺少右括号 )');
+        this.#pos++;
+        return inner;
+      } finally {
+        this.#nesting--;
+      }
     }
     if (ch === '"' || ch === "'") return this.parseString(ch);
     if (/[0-9]/.test(ch)) return this.parseNumber();

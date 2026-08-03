@@ -348,6 +348,26 @@ describe('Interpreter', () => {
     expect(ends).toEqual([{ sceneId: 's1' }]);
   });
 
+  it('sceneEnd 回调内可 start() 新场景（结局→返回标题的自然写法不撞重入守卫）', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('凛：终。\n@end', 's1.gal', 's1'));
+    registry.register(compileScene('凛：标题。\n@end', 'title.gal', 'title'));
+    const texts: string[] = [];
+    bus.on<{ speaker: string | null; value: string }>('text', (p) => texts.push(p.value));
+    let restarts = 0;
+    bus.on('sceneEnd', () => {
+      if (restarts++ === 0) interp.start('title');
+    });
+
+    interp.start('s1');
+    interp.advance(); // 终 → end → sceneEnd 回调 start(title) → 标题挂起
+    expect(texts).toEqual(['终。', '标题。']);
+    expect(interp.status).toBe('awaiting-advance');
+    interp.advance(); // 标题 → end（restarts=1 不重启）→ ended
+    expect(interp.status).toBe('ended');
+    expect(restarts).toBe(2);
+  });
+
   it('start 清理残留 pendingChoice（前一次 awaiting-choice 后重启不悬挂）', () => {
     const { registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('@choice\n  A -> @goto a\n@label a\n凛：A。\n@end', 's.gal', 's1'));
