@@ -382,4 +382,43 @@ describe('lintProject', () => {
     expect(v3).toHaveLength(4); // set/mod/flag/inc 各一次，trust 正常
     expect(r.issues.some((i) => i.code === 'V003' && i.text.includes('trust'))).toBe(false);
   });
+
+  it('说话人前缀插值引用未声明变量报 V002', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { heroName: { type: 'string', initial: '陆屿' } } }),
+      'content/scenario/a.gal': `{heroName}：你好。\n{ghost}：再见。\n`,
+    });
+    const r = lintProject(dir);
+    const v2 = r.issues.filter((i) => i.code === 'V002');
+    expect(v2.some((i) => i.text.includes('ghost'))).toBe(true);
+    expect(v2.some((i) => i.text.includes('heroName'))).toBe(false);
+  });
+
+  it('choice 后缩进对话被吞为选项：前缀与场景内说话人一致的选项行报 W004', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@choice\n  凛：这是缩进的普通对话\n  选项A -> @goto a\n@label a\n凛：真实对话。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(true); // 警告不阻断
+    expect(r.issues.some((i) => i.code === 'W004')).toBe(true);
+  });
+
+  it('含冒号的合法选项（动词：内容）不误报 W004', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@choice\n  说实话：白鹭街，雾灾，还有安安 -> @goto a\n@label a\n凛：对话。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W004')).toBe(false);
+  });
+
+  it('未消费的指令修饰符报 W003（@show 未知修饰符 / 核心指令带修饰符）', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@bg castle @transition fade\n@show lynn @ zoom\n@show lynn @ left\n`,
+    });
+    const r = lintProject(dir);
+    const w3 = r.issues.filter((i) => i.code === 'W003');
+    expect(w3).toHaveLength(2); // @bg @transition + @show @zoom；@show @left 合法
+    expect(w3.some((i) => i.text.includes('transition'))).toBe(true);
+    expect(w3.some((i) => i.text.includes('zoom'))).toBe(true);
+  });
 });

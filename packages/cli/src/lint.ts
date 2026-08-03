@@ -7,6 +7,7 @@ import {
   VAR_TYPES,
   parseExpr,
   collectVars,
+  IMPLEMENTED_INSTRUCTIONS,
   type ChoiceInstr,
   type CompiledScene,
   type CondJumpInstr,
@@ -53,6 +54,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const sceneLabels = new Map<string, Set<string>>();
 
   const { variables, types, readonlyVars, hasConfig, customInstructions } = loadVariables(root, issues);
+  const customInstructionsSet = new Set(customInstructions);
 
   // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
   const sceneSourceFiles = new Map<string, string>();
@@ -144,8 +146,12 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
           });
         }
       }
+      if (instr.op === 'instr') {
+        checkConsumedModifiers(instr, customInstructionsSet, issues);
+      }
     }
     validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
+    checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
   }
 
   if (hasConfig && variables.size === 0) {
@@ -326,6 +332,39 @@ function initialMatches(type: string, initial: unknown): boolean {
   }
 }
 
+/** 收集场景内全部说话人（原始文本，供 choice 选项"疑似缩进正文"判定） */
+function collectSceneSpeakers(scene: CompiledScene): Set<string> {
+  const out = new Set<string>();
+  for (const instr of scene.instructions) {
+    if (instr.op === 'text' && instr.speaker) out.add(instr.speaker);
+  }
+  return out;
+}
+
+/**
+ * choice 后所有缩进文本行都会被当作选项；若选项的说话人前缀与同场景真实对话一致
+ * （如 '凛：'），极可能是"缩进正文被误判为选项"（剧情结构静默损坏）。W004 警告。
+ * 不依赖 game.config.json（始终执行）。
+ */
+function checkChoiceSuspects(scene: CompiledScene, speakers: Set<string>, issues: LintIssue[]): void {
+  for (const instr of scene.instructions) {
+    if (instr.op !== 'choice') continue;
+    for (const opt of instr.options) {
+      const prefix = /^([^\s：:]{1,24})[：:]/.exec(opt.label)?.[1];
+      if (prefix !== undefined && speakers.has(prefix)) {
+        issues.push({
+          severity: 'warning',
+          code: 'W004',
+          text: `${opt.pos.file}:${opt.pos.line}:${opt.pos.col}: 选项文本 '${opt.label}' 的说话人前缀 '${prefix}' 与场景内对话一致，疑似缩进正文被误判为选项（choice 后正文请勿缩进）`,
+          file: opt.pos.file,
+          line: opt.pos.line,
+          col: opt.pos.col,
+        });
+      }
+    }
+  }
+}
+
 /** 变量声明交叉校验：赋值目标 + 表达式引用 + 表达式静态类型检查 + readonly 写入 */
 function validateSceneVariables(
   scene: CompiledScene,
@@ -354,6 +393,20 @@ function validateSceneVariables(
               line: p.line,
               col: p.col,
             });
+          }
+        }
+        if (t.speaker !== null) {
+          for (const v of collectInterpolatedVars(t.speaker)) {
+            if (!variables.has(v)) {
+              issues.push({
+                severity: 'error',
+                code: 'V002',
+                text: `${p.file}:${p.line}:${p.col}: 说话人插值 '{${v}}' 引用了未声明变量 '${v}'（需在 game.config.json 的 variables 表中声明）`,
+                file: p.file,
+                line: p.line,
+                col: p.col,
+              });
+            }
           }
         }
         break;
@@ -420,6 +473,50 @@ function collectInterpolatedVars(text: string): string[] {
     if (m[1] !== undefined) out.push(m[1]);
   }
   return out;
+}
+
+/** @show 已被渲染层消费的修饰符白名单（其余修饰符静默丢弃，lint 给 W003 提醒） */
+const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);
+
+/**
+ * 修饰符未消费检查（W003）：与引擎"避免静默无操作"（W002）哲学一致。
+ *  - @show：仅 pos/left/right/center 被渲染层消费；effect/zoom/transition 等会静默丢弃 → 提醒。
+ *  - 其余核心指令：渲染层/解释器不消费任何修饰符，带修饰符即静默丢弃 → 提醒。
+ *  - 自定义指令（customInstructions）：契约由作者负责，跳过。
+ */
+function checkConsumedModifiers(
+  instr: GenericInstr,
+  customInstructions: ReadonlySet<string>,
+  issues: LintIssue[],
+): void {
+  if (instr.modifiers.size === 0) return;
+  const at = `${instr.file}:${instr.line}:${instr.col}`;
+  if (instr.name === 'show') {
+    for (const key of instr.modifiers.keys()) {
+      if (!SHOW_CONSUMED_MODIFIERS.has(key)) {
+        issues.push({
+          severity: 'warning',
+          code: 'W003',
+          text: `${at}: @show 修饰符 '@${key}' 未被渲染层消费（支持 @pos/@left/@right/@center）`,
+          file: instr.file,
+          line: instr.line,
+          col: instr.col,
+        });
+      }
+    }
+    return;
+  }
+  if (!IMPLEMENTED_INSTRUCTIONS.has(instr.name) || customInstructions.has(instr.name)) return;
+  for (const key of instr.modifiers.keys()) {
+    issues.push({
+      severity: 'warning',
+      code: 'W003',
+      text: `${at}: 指令 '@${instr.name}' 的修饰符 '@${key}' 未被引擎消费`,
+      file: instr.file,
+      line: instr.line,
+      col: instr.col,
+    });
+  }
 }
 
 /** 解析表达式并做变量引用（V002）与运算符操作数类型（T003）检查。返回 AST 供类型推断。 */

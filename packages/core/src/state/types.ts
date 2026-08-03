@@ -54,6 +54,3 @@ export interface VarDeclaration {
   /** 用途说明（供文档/工具生成） */
   description?: string;
 }
-
-/** 变量访问的显式类型读取结果 */
-export type TypedGetter<T extends VarValue> = T;

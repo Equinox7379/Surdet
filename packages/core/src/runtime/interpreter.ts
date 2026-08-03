@@ -13,6 +13,7 @@ import { SceneRegistry } from './scene-registry.js';
 import { ReadTracker } from './read-tracker.js';
 import { GalleryState } from '../systems/gallery-state.js';
 import type { SavePosition, SaveSnapshot, SystemSnapshots } from '../save/save-manager.js';
+import { SAVE_SCHEMA_VERSION } from '../save/save-manager.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -158,6 +159,12 @@ export class Interpreter {
   /** 从快照恢复：变量/已读/解锁 + 全家桶系统状态 + 定位到挂起点并重新驱动到挂起状态。
    *  注意：须在 UI 线程（非事件回调）调用，事件回调内调用会撞 #stepping 重入守卫。 */
   loadSnapshot(snap: SaveSnapshot): void {
+    const version = snap.meta?.schemaVersion;
+    if (version !== undefined && version > SAVE_SCHEMA_VERSION) {
+      throw new RuntimeError(
+        `存档 schema 版本 ${version} 高于引擎支持的 ${SAVE_SCHEMA_VERSION}（引擎升级导致的旧档不兼容，请迁移或回退）`,
+      );
+    }
     this.#store.restore(snap.variables);
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
@@ -213,7 +220,10 @@ export class Interpreter {
   /** 主循环入口：标记执行中，跑迭代循环 */
   #step(): void {
     if (this.#stepping) {
-      throw new RuntimeError('解释器重入：不应在事件回调外直接触发 #step');
+      throw new RuntimeError(
+        '解释器重入：当前正处在事件回调执行中，不应直接触发 #step/' +
+          'loadSnapshot 等操作，请改在 UI 线程（非事件回调）调用',
+      );
     }
     this.#stepping = true;
     try {
@@ -263,7 +273,7 @@ export class Interpreter {
             this.readTracker.mark(`${this.#scene!.sceneId}#${instr.index}`);
             this.#resumeRequested = false;
             this.#bus.emit('text', {
-              speaker: instr.speaker,
+              speaker: instr.speaker === null ? null : interpolate(instr.speaker, this.#store),
               value: interpolate(instr.value, this.#store),
             });
             if (this.#resumeRequested) {

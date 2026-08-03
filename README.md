@@ -39,7 +39,7 @@ packages/
 | M6 | CLI 完整化 + 示例游戏（占位素材） | ✅ |
 | M7 | 打包 exe + 文档定稿 | ✅ |
 
-> 说明：M5 全家桶系统是"引擎侧数据驱动求解器 + `system` 事件 + 存档 hooks"，由宿主接线驱动。`examples/starter/src/main.ts` 已完整演示接线：`@calendar`/`@battle`/`@affection`/`@event` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，系统状态经 `SystemHooks` 随存档往返（见 `content/config/*.json` 与 `ch02.gal`）。
+> 说明：M5 全家桶系统是"引擎侧数据驱动求解器 + `system` 事件 + 存档 hooks"，由宿主接线驱动。`examples/starter/src/main.ts` 演示了系统实例接线与存档往返：`@calendar`/`@battle`/`@affection`/`@event` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，系统状态经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。**示例未闭环的宿主应用逻辑**：`calendar.enter()` 的 `eventId` 仅记录不跳转场景、`ngp.unlockGallery` 未在 UI 消费、`@event` 的 `consumeEvent` 不校验 `when`（宿主应先用 `AffectionSystem.availableEvents()` 取可触发事件再消费）——这些属具体游戏逻辑，引擎只提供求解器与数据契约。
 
 ## 已实现
 

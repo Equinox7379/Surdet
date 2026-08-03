@@ -324,6 +324,17 @@ describe('Interpreter', () => {
     expect(interpolate('{2x} {.var} {heroName}', store)).toBe('{2x} {.var} 雷恩');
   });
 
+  it('说话人前缀支持 {var} 插值（{heroName}：渲染为 雷恩：）', () => {
+    const { bus, registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('{heroName}：你好。\n旁白', 's.gal', 's1'));
+    const speakers: (string | null)[] = [];
+    bus.on<{ speaker: string | null; value: string }>('text', (p) => speakers.push(p.speaker));
+    interp.start('s1');
+    expect(speakers[0]).toBe('雷恩');
+    interp.advance();
+    expect(speakers[1]).toBe(null); // 旁白无说话人
+  });
+
   it('end 指令发 sceneEnd 事件（含 sceneId，供宿主接结局）', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));

@@ -32,6 +32,12 @@ describe('VariableStore', () => {
     expect(() => s.declare(base[0]!)).toThrow(/already declared/);
   });
 
+  it('声明时 min > max 抛错', () => {
+    const s = new VariableStore();
+    expect(() => s.declare({ name: 'bad', type: 'number', initial: 0, min: 100, max: 0 })).toThrow(/min .* max/);
+    expect(() => s.declare({ name: 'ok', type: 'number', initial: 0, min: 0, max: 100 })).not.toThrow();
+  });
+
   it('set 类型不符抛错', () => {
     const s = new VariableStore(base);
     expect(() => s.set('heroName', 42)).toThrow(TypeError);

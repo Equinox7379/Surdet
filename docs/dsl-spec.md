@@ -34,6 +34,8 @@
 `{变量名}` 在运行时替换为变量值。例：`我是{heroName}。`
 字面花括号用双写转义：`{{` → `{`、`}}` → `}`（例：`输出 {{变量}} 原文` → `输出 {变量} 原文`）。未声明变量的 `{var}` 保留原文。
 
+**说话人位置同样支持插值**：`{heroName}：你来了。` 会把说话人前缀 `{heroName}` 替换为变量值（如 `陆屿：你来了。`）。lint 会对文本值与说话人位置的插值变量都做声明校验（V002）。
+
 ## 表达式语言
 
 用于 `@if`、`@set` 右值、`choice` 选项条件 `[if:...]`。
@@ -51,7 +53,7 @@
 | 指令 | 示例 | 状态 | 说明 |
 |---|---|---|---|
 | `@bg` | `@bg castle_hall.day` | ✅ | 切换背景 |
-| `@show` | `@show lynn:armor despair @ left @ effect shake` | ✅ | 显示立绘（角色:服装 表情）。位置修饰符：`@pos=值` 优先于裸 `@ left`/`@ right`/`@ center` |
+| `@show` | `@show lynn:armor despair @ left` | ✅ | 显示立绘（角色:服装 表情）。位置修饰符：`@pos=值` 优先于裸 `@ left`/`@ right`/`@ center`；其余修饰符（如 `@ effect`）渲染层未消费，lint 报 W003 |
 | `@hide` | `@hide lynn` | ✅ | 隐藏立绘 |
 | `@voice` | `@voice lynn_001` | ✅ | 播放语音 |
 | `@bgm` / `@se` | `@bgm tense_01` | ✅ | 音乐 / 音效 |
@@ -107,6 +109,10 @@
 - `[if:表达式]` 为可选显示条件
 - `->` 后跟内联指令（`@set/@mod/@goto/@jump` 等）；无跳转则继续 choice 之后
 - 内联不允许块指令（`@if/@choice` 等）
+
+> ⚠️ **缩进正文陷阱**：`@choice` 之后**所有**缩进的文本行都会被当作选项，直到遇到第一个非缩进行。
+> `@choice` 之后的正文（对话/旁白）**绝不能以空白缩进开头**——否则会被静默吞成选项文本、剧情结构损坏且无报错。
+> lint 会对此类含说话人冒号前缀的选项行发 W004 警告（如 `凛：这是缩进的对话`）。
 
 ## 快进/自动播放
 
@@ -210,6 +216,9 @@ node packages/cli/dist/index.js lint <projectDir>
 | 码 | 含义 |
 |---|---|
 | W001 | 未知指令（拼写错误兜底；可经 customInstructions 消音） |
+| W002 | 规划中但未实现的指令（当前无效果，勿依赖） |
+| W003 | 指令修饰符未被引擎消费（`@show` 支持 `@pos/@left/@right/@center`，其余静默丢弃） |
+| W004 | 选项文本含说话人冒号前缀，疑似缩进正文被误判为选项 |
 | SCENE_ID | `@scene` 声明与文件名不一致 / 场景 ID 含点号（破坏 `@jump` 寻址） |
 | LINT_DUP | 场景 ID 重复 |
 | CONFIG | game.config.json / content/config/*.json 缺失或解析失败 |
