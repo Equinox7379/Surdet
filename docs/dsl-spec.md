@@ -217,7 +217,7 @@ node packages/cli/dist/index.js lint <projectDir>
 |---|---|
 | W001 | 未知指令（拼写错误兜底；可经 customInstructions 消音） |
 | W002 | 规划中但未实现的指令（当前无效果，勿依赖） |
-| W003 | 指令修饰符未被引擎消费（`@show` 支持 `@pos/@left/@right/@center`，其余静默丢弃） |
+| W003 | 指令修饰符未被引擎消费（`@show` 支持 `@pos/@left/@right/@center`，其余静默丢弃；`@battle/@calendar/@affection/@event/@shop/@item` 的修饰符是宿主参数通道，交付宿主消费，不报此警告） |
 | W004 | 选项文本含说话人冒号前缀，疑似缩进正文被误判为选项 |
 | SCENE_ID | `@scene` 声明与文件名不一致 / 场景 ID 含点号（破坏 `@jump` 寻址） |
 | LINT_DUP | 场景 ID 重复 |

@@ -54,7 +54,6 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const sceneLabels = new Map<string, Set<string>>();
 
   const { variables, types, readonlyVars, hasConfig, customInstructions } = loadVariables(root, issues);
-  const customInstructionsSet = new Set(customInstructions);
 
   // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
   const sceneSourceFiles = new Map<string, string>();
@@ -147,7 +146,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
         }
       }
       if (instr.op === 'instr') {
-        checkConsumedModifiers(instr, customInstructionsSet, issues);
+        checkConsumedModifiers(instr, issues);
       }
     }
     validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
@@ -303,6 +302,25 @@ function validateVarDecl(cfgPath: string, name: string, decl: unknown, issues: L
       severity: 'error',
       code: 'VAR_DECL',
       text: `${cfgPath}: 变量 '${name}' 的 initial 与 type '${type}' 不匹配（得到 ${JSON.stringify(initial)}）`,
+      file: cfgPath,
+      line: 0,
+      col: 0,
+    });
+    return false;
+  }
+  // min/max 约束自检（与运行时 VariableStore.declare 一致，作者在 lint 阶段即可发现）
+  const min = (decl as Record<string, unknown>)['min'];
+  const max = (decl as Record<string, unknown>)['max'];
+  if (
+    type === 'number'
+    && typeof min === 'number'
+    && typeof max === 'number'
+    && min > max
+  ) {
+    issues.push({
+      severity: 'error',
+      code: 'VAR_DECL',
+      text: `${cfgPath}: 变量 '${name}' 的 min (${min}) > max (${max})，clamp 约束非法`,
       file: cfgPath,
       line: 0,
       col: 0,
@@ -479,14 +497,21 @@ function collectInterpolatedVars(text: string): string[] {
 const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);
 
 /**
+ * system 指令（@battle/@calendar/@affection/@event/@shop/@item）：修饰符原样经解释器
+ * 交付宿主（见 interpreter.ts system 分支），是文档化的宿主参数通道（如 @battle x @difficulty=hard），
+ * 不属"静默丢弃"，不报 W003。
+ */
+const SYSTEM_INSTRUCTIONS = new Set(['battle', 'calendar', 'affection', 'event', 'shop', 'item']);
+
+/**
  * 修饰符未消费检查（W003）：与引擎"避免静默无操作"（W002）哲学一致。
  *  - @show：仅 pos/left/right/center 被渲染层消费；effect/zoom/transition 等会静默丢弃 → 提醒。
  *  - 其余核心指令：渲染层/解释器不消费任何修饰符，带修饰符即静默丢弃 → 提醒。
- *  - 自定义指令（customInstructions）：契约由作者负责，跳过。
+ *  - system 指令：修饰符交付宿主消费 → 跳过。
+ *  - 自定义指令（customInstructions）：契约由作者负责 → 跳过（不在 IMPLEMENTED 集）。
  */
 function checkConsumedModifiers(
   instr: GenericInstr,
-  customInstructions: ReadonlySet<string>,
   issues: LintIssue[],
 ): void {
   if (instr.modifiers.size === 0) return;
@@ -506,7 +531,8 @@ function checkConsumedModifiers(
     }
     return;
   }
-  if (!IMPLEMENTED_INSTRUCTIONS.has(instr.name) || customInstructions.has(instr.name)) return;
+  // system 指令修饰符交付宿主；自定义指令不在 IMPLEMENTED 集 → 两者都跳过
+  if (SYSTEM_INSTRUCTIONS.has(instr.name) || !IMPLEMENTED_INSTRUCTIONS.has(instr.name)) return;
   for (const key of instr.modifiers.keys()) {
     issues.push({
       severity: 'warning',
