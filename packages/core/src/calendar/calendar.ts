@@ -134,15 +134,17 @@ export class CalendarRunner {
   canEnter(nodeId: string): boolean {
     const node = this.#config.nodes.find((n) => n.id === nodeId);
     if (!node) return false;
+    if (this.isOver) return false;
     if (!this.isVisible(node)) return false;
     if (this.#ap < node.apCost) return false;
     return true;
   }
 
-  /** 进入节点：扣行动力、标记访问、返回触发事件 */
+  /** 进入节点：扣行动力、标记访问、返回触发事件（回合超限后拒绝进入） */
   enter(nodeId: string): EnterNodeResult {
     const node = this.#config.nodes.find((n) => n.id === nodeId);
     if (!node) return { ok: false, reason: `节点 '${nodeId}' 不存在` };
+    if (this.isOver) return { ok: false, reason: '回合已超限，无法进入节点' };
     if (!this.isVisible(node)) return { ok: false, reason: `节点 '${nodeId}' 不可见/未解锁` };
     if (this.#ap < node.apCost) return { ok: false, reason: '行动力不足' };
     this.#ap -= node.apCost;

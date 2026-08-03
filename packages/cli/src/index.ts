@@ -77,7 +77,8 @@ async function main(): Promise<number> {
     case 'pack': {
       // 打包指定游戏（缺省 starter）：surdet pack [gameDir]
       const gameDir = args[1] ? path.resolve(args[1]) : '';
-      const shellDir = path.resolve(__dirname, '../shell');
+      // __dirname = packages/cli/dist → 上溯两级到仓库根的 packages/shell
+      const shellDir = path.resolve(__dirname, '../../shell');
       try {
         const { execSync } = await import('node:child_process');
         execSync('npm run pack', {

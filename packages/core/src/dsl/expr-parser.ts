@@ -21,6 +21,8 @@ export class ExprParser {
   #src: string;
   #pos = 0;
   #nesting = 0;
+  /** 一元连缀（!!!x / ---x / +++x）递归深度（括号之外的另一个栈溢出源） */
+  #unaryDepth = 0;
 
   static parse(source: string): ExprAst {
     return new ExprParser(source).parseRoot();
@@ -88,21 +90,20 @@ export class ExprParser {
   private parseUnary(): ExprAst {
     this.#skipWs();
     const ch = this.#src[this.#pos];
-    if (ch === '!') {
-      this.#pos++;
-      this.#skipWs();
-      return { kind: 'unary', op: '!', operand: this.parseUnary() };
-    }
-    if (ch === '-') {
-      this.#pos++;
-      this.#skipWs();
-      return { kind: 'unary', op: '-', operand: this.parseUnary() };
-    }
-    if (ch === '+') {
-      // 一元正号：无语义，直接返回操作数（+5 → 5、+x → x），不产生节点
-      this.#pos++;
-      this.#skipWs();
-      return this.parseUnary();
+    if (ch === '!' || ch === '-' || ch === '+') {
+      this.#unaryDepth++;
+      if (this.#unaryDepth > MAX_EXPR_NESTING) {
+        this.#fail(`嵌套过深（超过 ${MAX_EXPR_NESTING} 层一元运算）`);
+      }
+      try {
+        this.#pos++;
+        this.#skipWs();
+        if (ch === '!') return { kind: 'unary', op: '!', operand: this.parseUnary() };
+        if (ch === '-') return { kind: 'unary', op: '-', operand: this.parseUnary() };
+        return this.parseUnary(); // 一元正号：无语义，直接返回操作数
+      } finally {
+        this.#unaryDepth--;
+      }
     }
     return this.parsePrimary();
   }

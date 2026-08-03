@@ -54,6 +54,15 @@ describe('ExprParser', () => {
     expect(() => parseExpr(src)).toThrow(/嵌套过深/);
   });
 
+  it('超深一元连缀（!!!x）抛 ExprParseError 而非 RangeError', () => {
+    expect(() => parseExpr('!'.repeat(10000) + 'x')).toThrow(ExprParseError);
+    expect(() => parseExpr('-'.repeat(10000) + 'x')).toThrow(ExprParseError);
+    expect(() => parseExpr('+'.repeat(10000) + 'x')).toThrow(ExprParseError);
+    // 常规一元运算仍正常
+    expect(parseExpr('!!true')).toMatchObject({ kind: 'unary', op: '!' });
+    expect(evalExprString('--5', env())).toBe(5);
+  });
+
   it('字符串转义', () => {
     expect(parseExpr('"a\\nb"')).toMatchObject({ kind: 'string', value: 'a\nb' });
   });

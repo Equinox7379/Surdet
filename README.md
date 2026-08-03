@@ -60,7 +60,7 @@ packages/
 ## 已知限制 / 未实现（诚实清单）
 
 - 规划中但**未实现**的指令（lint 给 W002 提示，避免静默无操作）：`@wipe/@shake/@zoom/@particle/@flash/@video/@mov/@tint/@wait`、`@title/@chapter/@tip/@note/@center/@nvl/@ruby`、`@call/@return/@loop/@random/@switch/@check`、`@add_item/@remove_item/@has_item`、`@clear`
-- 鉴赏仅实现 **CG/音乐解锁**（`GalleryState`）；文本回想（`GalleryTextEntry`）为预留配置类型，回想界面未实现
+- 鉴赏仅实现 **CG/音乐解锁**（`GalleryState`）；文本回想（`GalleryTextEntry`）为预留配置类型，回想界面未实现；**示例游戏的 CG 回想 UI 未接线**（`@unlock_cg` 解锁状态已持久化，但 `main.ts` 无回想界面展示）
 - 快进为**跳全部模式**（瞬时显示 + 连续推进至选择肢，不区分已读/未读）；`ReadTracker` 已记录并随存档持久化，但**按已读跳过**的逻辑未接线
 - 表达式语言为确定性纯函数子集（无数组下标/字符串方法/函数调用），有意为之——保证 AI 生成内容可 lint 可预测
 - **存档定位与调用栈**：`SaveSnapshot.position`（schema v1）只存单场景 pc；未来实现 `@call/@return`（子场景调用栈）时需扩展为调用栈快照——当前 v1 无调用栈概念，属已埋好的兼容性扩展点，需提前设计迁移路径（见 `docs/architecture.md` 存档契约）
