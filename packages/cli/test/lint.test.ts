@@ -334,4 +334,52 @@ describe('lintProject', () => {
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.code === 'SCENE_ID')).toBe(true);
   });
+
+  it('content/config 内 DSL 表达式校验：引用未声明变量报 V002，语法错误报 CONFIG_EXPR', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/config/calendar.json': JSON.stringify({
+        nodes: [{ id: 'a', name: 'A', x: 0, y: 0, apCost: 1, visibleWhen: 'ghost > 1' }],
+      }),
+      'content/config/combat.json': JSON.stringify({ damage: { base: 'atk * 2 - def' } }),
+      'content/config/events.json': JSON.stringify({ events: [{ id: 'e', characterId: 'x', when: 'trust >= 5', scene: 'a', once: true }] }),
+      'content/config/ngp.json': JSON.stringify({ clearCondition: '1 +' }),
+    });
+    const r = lintProject(dir);
+    // calendar visibleWhen 引用未声明变量 → V002
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('ghost'))).toBe(true);
+    // combat 伤害公式内建 atk/def/power 不报未声明
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('atk'))).toBe(false);
+    // ngp clearCondition 语法错误 → CONFIG_EXPR
+    expect(r.issues.some((i) => i.code === 'CONFIG_EXPR')).toBe(true);
+    // events when 引用已声明变量 trust → 无 V002
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('trust'))).toBe(false);
+  });
+
+  it('jump 到编译失败场景报 J003 而非误报 J001', () => {
+    const dir = makeProject({
+      'content/scenario/bad.gal': `@if x\nA\n`, // 未闭合 if → S003 编译失败
+      'content/scenario/a.gal': `@jump bad\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'S003')).toBe(true); // 真正的编译错误仍在
+    expect(r.issues.some((i) => i.code === 'J003')).toBe(true); // jump 提示目标编译失败
+    expect(r.issues.some((i) => i.code === 'J001')).toBe(false); // 不再误报"目标不存在"
+  });
+
+  it('写入 readonly 变量报 V003（@set/@mod/@flag）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({
+        variables: {
+          chapter: { type: 'number', initial: 1, readonly: true },
+          trust: { type: 'number', initial: 0 },
+        },
+      }),
+      'content/scenario/a.gal': `@set chapter = 2\n@mod chapter +1\n@flag chapter\n@inc chapter\n@mod trust +1\n`,
+    });
+    const r = lintProject(dir);
+    const v3 = r.issues.filter((i) => i.code === 'V003');
+    expect(v3).toHaveLength(4); // set/mod/flag/inc 各一次，trust 正常
+    expect(r.issues.some((i) => i.code === 'V003' && i.text.includes('trust'))).toBe(false);
+  });
 });

@@ -236,7 +236,7 @@ export class CombatSolver {
     if (!target.alive) throw new Error(`目标 '${targetUid}' 已倒下`);
 
     const skill = skillId ? this.#skill(skillId) : null;
-    if (skill && this.#unit(attackerUid).cooldowns.get(skillId!)! > 0) {
+    if (skill && attacker.cooldowns.get(skillId!)! > 0) {
       throw new Error(`技能 '${skillId}' 冷却中`);
     }
 

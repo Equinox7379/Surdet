@@ -52,10 +52,12 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const scenes = new Map<string, CompiledScene>();
   const sceneLabels = new Map<string, Set<string>>();
 
-  const { variables, types, hasConfig, customInstructions } = loadVariables(root, issues);
+  const { variables, types, readonlyVars, hasConfig, customInstructions } = loadVariables(root, issues);
 
   // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
   const sceneSourceFiles = new Map<string, string>();
+  // 编译失败（语法/结构错误）的场景：登记以便 jump 校验给 J003 而非误报 J001
+  const failedScenes = new Set<string>();
 
   for (const file of files) {
     const sceneId = sceneIdFromFile(file);
@@ -99,6 +101,11 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
         });
       }
     } catch (err) {
+      // 编译失败：登记场景存在（避免后续 @jump 误报 J001"目标场景不存在"，掩盖真正的编译错误）。
+      // 失败场景同样计入 sceneCount / LINT_DUP 冲突判定（文件确实存在）。
+      failedScenes.add(sceneId);
+      sceneSourceFiles.set(sceneId, file);
+      sceneLabels.set(sceneId, new Set());
       // SourceError 统一携带位置与错误码（DslError/LexError/RuntimeError 皆继承自它）
       if (err instanceof SourceError) {
         const p = err.pos;
@@ -122,7 +129,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   for (const [sceneId, scene] of scenes) {
     for (const instr of scene.instructions) {
       if (instr.op === 'jump' && instr.kind === 'jump') {
-        validateJumpTarget(sceneId, instr as JumpInstr, sceneLabels, issues);
+        validateJumpTarget(sceneId, instr as JumpInstr, sceneLabels, failedScenes, issues);
       }
       if (instr.op === 'instr' && instr.name === 'scene') {
         const declared = instr.args[0];
@@ -138,7 +145,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
         }
       }
     }
-    validateSceneVariables(scene, variables, types, issues, hasConfig);
+    validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
   }
 
   if (hasConfig && variables.size === 0) {
@@ -161,19 +168,28 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     });
   }
 
+  // content/config/*.json 内 DSL 表达式校验（visibleWhen/伤害公式/when/clearCondition）
+  lintConfigExpressions(root, variables, types, issues, hasConfig);
+
   const ok = issues.every((i) => i.severity !== 'error');
   return { issues, sceneCount: sceneSourceFiles.size, ok };
 }
 
 /** 加载并校验 game.config.json：variables 声明表 + 声明形状 + customInstructions。
- *  types：变量名 → 声明类型（静态类型检查用）。 */
+ *  types：变量名 → 声明类型（静态类型检查用）；readonlyVars：声明为 readonly 的变量名。 */
 function loadVariables(
   root: string,
   issues: LintIssue[],
-): { variables: Set<string>; types: Map<string, string>; hasConfig: boolean; customInstructions: string[] } {
+): { variables: Set<string>; types: Map<string, string>; readonlyVars: Set<string>; hasConfig: boolean; customInstructions: string[] } {
   const cfgPath = path.join(root, 'game.config.json');
   const customInstructions: string[] = [];
-  const empty = { variables: new Set<string>(), types: new Map<string, string>(), hasConfig: false, customInstructions };
+  const empty = {
+    variables: new Set<string>(),
+    types: new Map<string, string>(),
+    readonlyVars: new Set<string>(),
+    hasConfig: false,
+    customInstructions,
+  };
 
   if (!fs.existsSync(cfgPath)) {
     return empty;
@@ -213,7 +229,7 @@ function loadVariables(
   const variablesRaw = raw['variables'];
   // variables 字段缺失 → 视为空表（lintProject 统一发 EMPTY_VARIABLES 警告）
   if (variablesRaw === undefined) {
-    return { variables: new Set(), types: new Map(), hasConfig: true, customInstructions };
+    return { variables: new Set(), types: new Map(), readonlyVars: new Set(), hasConfig: true, customInstructions };
   }
   if (typeof variablesRaw !== 'object' || variablesRaw === null || Array.isArray(variablesRaw)) {
     issues.push({
@@ -224,18 +240,20 @@ function loadVariables(
       line: 0,
       col: 0,
     });
-    return { variables: new Set(), types: new Map(), hasConfig: true, customInstructions };
+    return { variables: new Set(), types: new Map(), readonlyVars: new Set(), hasConfig: true, customInstructions };
   }
 
   const variables = new Set<string>();
   const types = new Map<string, string>();
+  const readonlyVars = new Set<string>();
   for (const [name, decl] of Object.entries(variablesRaw)) {
     variables.add(name);
     if (validateVarDecl(cfgPath, name, decl, issues) && typeof decl === 'object' && decl !== null) {
       types.set(name, (decl as { type: string }).type);
+      if ((decl as { readonly?: boolean }).readonly === true) readonlyVars.add(name);
     }
   }
-  return { variables, types, hasConfig: true, customInstructions };
+  return { variables, types, readonlyVars, hasConfig: true, customInstructions };
 }
 
 /** 校验单个变量声明条目形状：type 合法 + initial 存在且类型匹配。合法返回 true。 */
@@ -308,11 +326,12 @@ function initialMatches(type: string, initial: unknown): boolean {
   }
 }
 
-/** 变量声明交叉校验：赋值目标 + 表达式引用 + 表达式静态类型检查 */
+/** 变量声明交叉校验：赋值目标 + 表达式引用 + 表达式静态类型检查 + readonly 写入 */
 function validateSceneVariables(
   scene: CompiledScene,
   variables: Set<string>,
   types: Map<string, string>,
+  readonlyVars: Set<string>,
   issues: LintIssue[],
   hasConfig: boolean,
 ): void {
@@ -342,6 +361,7 @@ function validateSceneVariables(
       case 'set': {
         const s = instr as SetInstr;
         checkVarDeclared(s.varName, at(s.file, s.line, s.col), variables, issues, 'V001', '赋值目标');
+        checkNotReadonly(s.varName, at(s.file, s.line, s.col), readonlyVars, issues);
         const ast = checkExpr(s.expr, at(s.file, s.line, s.col), types, issues);
         const declared = types.get(s.varName);
         if (ast && declared) checkSetType(s, declared, ast, types, issues);
@@ -350,6 +370,7 @@ function validateSceneVariables(
       case 'modify': {
         const m = instr as ModifyInstr;
         checkVarDeclared(m.varName, at(m.file, m.line, m.col), variables, issues, 'V001', '修改目标');
+        checkNotReadonly(m.varName, at(m.file, m.line, m.col), readonlyVars, issues);
         break;
       }
       case 'instr': {
@@ -358,6 +379,7 @@ function validateSceneVariables(
           const arg0 = g.args[0];
           if (arg0 !== undefined) {
             checkVarDeclared(arg0, at(g.file, g.line, g.col), variables, issues, 'V001', `@${g.name} 目标`);
+            checkNotReadonly(arg0, at(g.file, g.line, g.col), readonlyVars, issues);
           }
         }
         break;
@@ -426,6 +448,112 @@ function checkExpr(
     });
   });
   return ast;
+}
+
+/**
+ * 校验 content/config/*.json 内的 DSL 表达式：
+ *  calendar.json nodes[].visibleWhen、combat.json damage.base、events.json events[].when、ngp.json clearCondition。
+ * 语法错误报 CONFIG_EXPR；有声明表时做变量引用（V002）与操作数类型（T003）校验。
+ * 伤害公式使用内建变量 atk/def/power（不要求声明）。
+ */
+function lintConfigExpressions(
+  root: string,
+  variables: Set<string>,
+  types: Map<string, string>,
+  issues: LintIssue[],
+  hasConfig: boolean,
+): void {
+  const configDir = path.join(root, 'content/config');
+  if (!fs.existsSync(configDir)) return;
+  const at = (file: string): { file: string; line: number; col: number } => ({ file, line: 0, col: 0 });
+
+  const check = (expr: string, file: string, extraAllowed: readonly string[] = []): void => {
+    let ast: ExprAst;
+    try {
+      ast = parseExpr(expr);
+    } catch {
+      issues.push({
+        severity: 'error',
+        code: 'CONFIG_EXPR',
+        text: `${file}: 配置表达式语法错误：'${expr}'（见 docs/dsl-spec.md 表达式语言）`,
+        file,
+        line: 0,
+        col: 0,
+      });
+      return;
+    }
+    if (!hasConfig || variables.size === 0) return;
+    const allowed = new Set([...types.keys(), ...extraAllowed]);
+    checkExprVars(expr, at(file), allowed, issues);
+    checkExprOperands(ast, types, (code, message) => {
+      issues.push({
+        severity: 'error',
+        code,
+        text: `${file}: ${message}（表达式 '${expr}'）`,
+        file,
+        line: 0,
+        col: 0,
+      });
+    });
+  };
+
+  // calendar.json
+  const calendar = readConfigJson(configDir, 'calendar.json', issues);
+  if (calendar && Array.isArray(calendar['nodes'])) {
+    for (const node of calendar['nodes']) {
+      if (node && typeof node === 'object' && typeof node['visibleWhen'] === 'string') {
+        check(node['visibleWhen'], path.join('content/config', 'calendar.json'));
+      }
+    }
+  }
+
+  // combat.json（伤害公式内建 atk/def/power）
+  const combat = readConfigJson(configDir, 'combat.json', issues);
+  const combatDamage = combat?.['damage'];
+  if (combatDamage && typeof combatDamage === 'object') {
+    const base = (combatDamage as Record<string, unknown>)['base'];
+    if (typeof base === 'string') {
+      check(base, path.join('content/config', 'combat.json'), ['atk', 'def', 'power']);
+    }
+  }
+
+  // events.json
+  const events = readConfigJson(configDir, 'events.json', issues);
+  if (events && Array.isArray(events['events'])) {
+    for (const ev of events['events']) {
+      if (ev && typeof ev === 'object' && typeof ev['when'] === 'string') {
+        check(ev['when'], path.join('content/config', 'events.json'));
+      }
+    }
+  }
+
+  // ngp.json
+  const ngp = readConfigJson(configDir, 'ngp.json', issues);
+  if (ngp && typeof ngp['clearCondition'] === 'string') {
+    check(ngp['clearCondition'], path.join('content/config', 'ngp.json'));
+  }
+}
+
+function readConfigJson(
+  dir: string,
+  name: string,
+  issues: LintIssue[],
+): Record<string, unknown> | null {
+  const full = path.join(dir, name);
+  if (!fs.existsSync(full)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+  } catch (err) {
+    issues.push({
+      severity: 'error',
+      code: 'CONFIG',
+      text: `${full}: JSON 解析失败：${err instanceof Error ? err.message : String(err)}`,
+      file: full,
+      line: 0,
+      col: 0,
+    });
+    return null;
+  }
 }
 
 /** @set 类型匹配：= / := 要求推断类型与声明一致；+= / -= 要求 number */
@@ -606,6 +734,25 @@ function checkVarDeclared(
   }
 }
 
+/** readonly 变量禁止写入（@set/@mod/@inc/@dec/@toggle/@flag/@unflag）——运行时 VariableStore 也会兜底。 */
+function checkNotReadonly(
+  name: string,
+  pos: { file: string; line: number; col: number },
+  readonlyVars: Set<string>,
+  issues: LintIssue[],
+): void {
+  if (readonlyVars.has(name)) {
+    issues.push({
+      severity: 'error',
+      code: 'V003',
+      text: `${pos.file}:${pos.line}:${pos.col}: 变量 '${name}' 声明为 readonly，禁止写入`,
+      file: pos.file,
+      line: pos.line,
+      col: pos.col,
+    });
+  }
+}
+
 function checkExprVars(
   expr: string,
   pos: { file: string; line: number; col: number },
@@ -630,6 +777,7 @@ function validateJumpTarget(
   fromScene: string,
   jump: JumpInstr,
   sceneLabels: Map<string, Set<string>>,
+  failedScenes: Set<string>,
   issues: LintIssue[],
 ): void {
   const target = jump.target;
@@ -641,6 +789,18 @@ function validateJumpTarget(
 
   if (targetScene === fromScene && targetLabel === null) {
     // 跳到本场景开头，允许
+    return;
+  }
+
+  if (failedScenes.has(targetScene)) {
+    issues.push({
+      severity: 'error',
+      code: 'J003',
+      text: `${at}: 目标场景 '${targetScene}' 存在但编译失败，请先修复其语法/结构错误`,
+      file: jump.file,
+      line: jump.line,
+      col: jump.col,
+    });
     return;
   }
 

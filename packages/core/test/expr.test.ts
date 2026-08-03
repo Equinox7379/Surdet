@@ -104,4 +104,25 @@ describe('ExprEval', () => {
     store.set('items', ['a']);
     expect(() => evalExprBoolean('!items', store)).toThrow(/array\[1\]/);
   });
+
+  it('数组/对象变量 ==/!= 深比较（两侧为独立深拷贝，引用比较会恒 false）', () => {
+    const store = new VariableStore([
+      ...decls,
+      { name: 'items', type: 'string[]', initial: [] },
+      { name: 'items2', type: 'string[]', initial: [] },
+      { name: 'stats', type: 'object', initial: { hp: 10 } },
+    ]);
+    store.set('items', ['a', 'b']);
+    store.set('stats', { hp: 10, mp: 5 });
+
+    expect(evalExprBoolean('items == items', store)).toBe(true);
+    expect(evalExprBoolean('items != items', store)).toBe(false);
+    expect(evalExprBoolean('stats == stats', store)).toBe(true);
+
+    // 不同内容深比较
+    store.set('items', ['a']);
+    store.set('items2', ['b']);
+    expect(evalExprBoolean('items == items2', store)).toBe(false);
+    expect(evalExprBoolean('items != items2', store)).toBe(true);
+  });
 });

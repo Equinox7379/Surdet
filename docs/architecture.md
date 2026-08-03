@@ -58,6 +58,8 @@
 
 **桌面文件存档**：`@surdet/shell` 经 preload（`window.surdetSave`，sandbox 下用同步 IPC）暴露 `list/read/write/delete`，主进程用 `FileSaveStore`（`packages/shell/src/save-store.ts`）读写 `userData/saves/<slot>.json`；浏览器环境回退 localStorage（见 `examples/starter/src/main.ts`）。
 
+> **读档时序约定**：`Interpreter.loadSnapshot` 先恢复变量/已读/解锁与全家桶系统状态（`SystemHooks.restore`），再 `#step()` 从恢复点重新执行指令流（text/choice 会重新发出事件驱动 UI 挂起）。宿主**必须在 UI 线程（非事件回调）调用** `loadSnapshot`——在 `text`/`choice` 等事件回调内调用会撞解释器的 `#stepping` 重入守卫。
+
 ## 场景结束
 
 `Interpreter` 执行到 `@end`（或文件末尾自动追加的 end）时置 `ended` 并发 `sceneEnd` 事件（载荷 `{ sceneId }`），宿主可接结局演出/ED/返回标题画面。

@@ -51,6 +51,12 @@ export class AdvRenderer {
         this.#syncText();
       }
     };
+    // 把选择肢点击回调绑定到舞台：PixiStage.showChoices 经 stage.onSelect 转发点击。
+    // 若不在此绑定，宿主只给 AdvRenderer 传 onSelect 会导致真实 UI 点击选择肢无反应
+    // （解释器停在 awaiting-choice，主流程卡死）。
+    if ('onSelect' in stage) {
+      (stage as { onSelect: ((index: number) => void) | null }).onSelect = (index) => this.select(index);
+    }
   }
 
   get status(): RenderStatus {
