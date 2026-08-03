@@ -7,6 +7,7 @@ import {
   VAR_TYPES,
   parseExpr,
   collectVars,
+  collectInterpolatedVars,
   IMPLEMENTED_INSTRUCTIONS,
   type ChoiceInstr,
   type CompiledScene,
@@ -481,17 +482,6 @@ function validateSceneVariables(
 
 /** 直改 store 且第一个参数为变量名的指令（lint 校验声明，运行时 store 也会兜底） */
 const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag']);
-
-/** 提取文本行内 {var} 插值变量（与 interpolate 规则一致：{{ 转义跳过；非法名不匹配）。 */
-function collectInterpolatedVars(text: string): string[] {
-  const out: string[] = [];
-  const re = /\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1] !== undefined) out.push(m[1]);
-  }
-  return out;
-}
 
 /** @show 已被渲染层消费的修饰符白名单（其余修饰符静默丢弃，lint 给 W003 提醒） */
 const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);

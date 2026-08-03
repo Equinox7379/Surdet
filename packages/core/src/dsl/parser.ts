@@ -27,11 +27,17 @@ class TokenCursor {
   }
 }
 
+/** @if 嵌套深度上限（if/elif 链递归），防止病态输入触发 JS 栈溢出（RangeError）而非可定位的 DslError */
+const MAX_IF_NESTING = 200;
+
 /**
  * 语法分析器：Token 流 → SceneAst（嵌套块）。
  * 结构校验：@if/@elif/@else/@endif 配对；@choice 必须有缩进选项行。
  */
 export class Parser {
+  /** @if 嵌套深度（#parseIfChain 递归计数，超限抛 S008 而非 RangeError） */
+  #ifDepth = 0;
+
   parse(tokens: Token[], sceneId: string): SceneAst {
     const cursor = new TokenCursor(tokens);
     const blocks = this.#parseBlockList(cursor, []);
@@ -99,41 +105,49 @@ export class Parser {
    * elif 分支递归复用本方法（nested 为 else 中的嵌套 if）。
    */
   #parseIfChain(cursor: TokenCursor): AstBlock {
-    const head = cursor.next() as InstructionToken; // @if 或 @elif
-    const expr = head.args.join(' ');
-    if (expr.length === 0) {
-      throw new DslError('S001', `@${head.name} 缺少条件表达式`, head);
-    }
+    this.#ifDepth++;
     try {
-      validateExpr(expr);
-    } catch {
-      throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, head);
-    }
+      const head = cursor.next() as InstructionToken; // @if 或 @elif
+      if (this.#ifDepth > MAX_IF_NESTING) {
+        throw new DslError('S008', `@if 嵌套过深（超过 ${MAX_IF_NESTING} 层），请拆分场景或改用跳转`, head);
+      }
+      const expr = head.args.join(' ');
+      if (expr.length === 0) {
+        throw new DslError('S001', `@${head.name} 缺少条件表达式`, head);
+      }
+      try {
+        validateExpr(expr);
+      } catch {
+        throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, head);
+      }
 
-    const then = this.#parseBlockList(cursor, ['else', 'elif', 'endif']);
-    const stopTok = cursor.peek();
+      const then = this.#parseBlockList(cursor, ['else', 'elif', 'endif']);
+      const stopTok = cursor.peek();
 
-    if (stopTok.type === 'instruction' && stopTok.name === 'else') {
-      cursor.next();
-      const elseBlocks = this.#parseBlockList(cursor, ['endif']);
-      this.#expectEndif(cursor, head);
-      return { kind: 'if', expr, then, else: elseBlocks, pos: head };
-    }
+      if (stopTok.type === 'instruction' && stopTok.name === 'else') {
+        cursor.next();
+        const elseBlocks = this.#parseBlockList(cursor, ['endif']);
+        this.#expectEndif(cursor, head);
+        return { kind: 'if', expr, then, else: elseBlocks, pos: head };
+      }
 
-    if (stopTok.type === 'instruction' && stopTok.name === 'elif') {
-      const nested = this.#parseIfChain(cursor);
-      return { kind: 'if', expr, then, else: [nested], pos: head };
-    }
+      if (stopTok.type === 'instruction' && stopTok.name === 'elif') {
+        const nested = this.#parseIfChain(cursor);
+        return { kind: 'if', expr, then, else: [nested], pos: head };
+      }
 
-    if (stopTok.type === 'instruction' && stopTok.name === 'endif') {
-      cursor.next();
-      return { kind: 'if', expr, then, else: [], pos: head };
-    }
+      if (stopTok.type === 'instruction' && stopTok.name === 'endif') {
+        cursor.next();
+        return { kind: 'if', expr, then, else: [], pos: head };
+      }
 
-    if (cursor.eof) {
-      throw new DslError('S003', `@${head.name} 缺少 @endif`, head, 'if 块未闭合');
+      if (cursor.eof) {
+        throw new DslError('S003', `@${head.name} 缺少 @endif`, head, 'if 块未闭合');
+      }
+      throw new DslError('S003', `@${head.name} 后面缺少 @else/@elif/@endif`, head);
+    } finally {
+      this.#ifDepth--;
     }
-    throw new DslError('S003', `@${head.name} 后面缺少 @else/@elif/@endif`, head);
   }
 
   #expectEndif(cursor: TokenCursor, ifTok: Token): void {

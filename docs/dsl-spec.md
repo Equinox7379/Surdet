@@ -89,10 +89,11 @@
 ### 存档点（已实现）
 | 指令 | 示例 | 说明 |
 |---|---|---|
-| `@autosave` | `@autosave` | 触发 `autosave` 事件（载荷为当前完整存档快照），由宿主写入自动存档槽位 |
+| `@autosave` | `@autosave` | 触发 `autosave` 事件（载荷为当前完整存档快照，position 已前移到下一条指令），由宿主写入自动存档槽位 |
 | `@savepoint` | `@savepoint` | 触发 `savepoint` 事件（载荷同上，kind=manual），由宿主写入手动检查点 |
 
 渲染层/宿主需订阅对应事件（`EventBus`）执行实际写入；不订阅则指令无可见效果。
+**宿主应使用事件载荷中的快照**（position 已做 +1 偏移）；若在回调内自行调用 `interpreter.saveSnapshot()`，其 position 指向存档点指令自身，读档会重放一次存档点指令（幂等但多余）。
 
 ## choice 选择肢
 
@@ -175,6 +176,7 @@ node packages/cli/dist/index.js lint <projectDir>
 | S005 | 选项文本/条件为空 |
 | S006 | `@goto/@jump` 缺目标 |
 | S007 | choice 选项内不允许块指令 |
+| S008 | `@if` 嵌套过深（超过 200 层，防止栈溢出） |
 
 ### 编译（C）
 | 码 | 含义 |
