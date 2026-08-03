@@ -17,6 +17,9 @@ export class AudioManager implements AudioHandle {
     this.#bgmKey = src;
     if (src === null) return;
     const h = this.#get(src, { loop: true, volume: 0.55 });
+    // 先停止该 src 的所有现存播放再开始 BGM：同一 src 可能先前作为 SE 播放过，
+    // 直接 h.play() 会与旧实例重叠（howler 同 Howl 多次 play 创建多个 sound）。
+    h.stop();
     h.play();
     this.#bgm = h;
   }

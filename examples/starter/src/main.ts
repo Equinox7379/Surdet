@@ -126,7 +126,8 @@ async function main(): Promise<void> {
         const nodeId = p.args[0];
         const res = nodeId ? calendar.enter(nodeId) : { ok: false as const };
         console.info('[starter] calendar enter:', nodeId, res);
-        calendar.advanceTurn();
+        // 仅成功进入才推进回合（演示逻辑：失败节点/行动力不足不应消耗回合）
+        if (res.ok) calendar.advanceTurn();
         break;
       }
       case 'battle': {

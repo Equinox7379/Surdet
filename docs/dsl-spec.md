@@ -185,12 +185,14 @@ node packages/cli/dist/index.js lint <projectDir>
 |---|---|
 | J001 | `@jump` 目标场景不存在 |
 | J002 | 目标场景缺指定标签 |
+| J003 | `@jump` 目标场景存在但编译失败（先修复其语法/结构错误） |
 
 ### 变量（V）
 | 码 | 含义 |
 |---|---|
 | V001 | 赋值/修改目标变量未声明 |
-| V002 | 表达式引用未声明变量 |
+| V002 | 表达式引用未声明变量（含文本插值 `{var}`） |
+| V003 | 写入 readonly 变量（`@set`/`@mod`/`@inc`/`@dec`/`@toggle`/`@flag`/`@unflag`） |
 | VAR_DECL | game.config.json 变量声明形状非法（type 拼错 / 缺 initial / 类型不匹配） |
 
 ### 静态类型（T，lint 推断）
@@ -202,12 +204,15 @@ node packages/cli/dist/index.js lint <projectDir>
 
 静态类型推断基于 `game.config.json` 的声明表与字面量；无法确定类型时跳过（不误报）。运行时类型校验仍由 `VariableStore`/求值器兜底。
 
+> lint 也会校验 `content/config/*.json` 内的 DSL 表达式：`calendar.json` 的 `visibleWhen`、`events.json` 的 `when`、`ngp.json` 的 `clearCondition`（引用未声明变量报 V002）；`combat.json` 的伤害公式使用内建变量 `atk`/`def`/`power`。语法错误报 `CONFIG_EXPR`。
+
 ### 其他
 | 码 | 含义 |
 |---|---|
 | W001 | 未知指令（拼写错误兜底；可经 customInstructions 消音） |
 | SCENE_ID | `@scene` 声明与文件名不一致 / 场景 ID 含点号（破坏 `@jump` 寻址） |
 | LINT_DUP | 场景 ID 重复 |
-| CONFIG | game.config.json 缺失/解析失败/字段非法 |
+| CONFIG | game.config.json / content/config/*.json 缺失或解析失败 |
+| CONFIG_EXPR | content/config/*.json 内 DSL 表达式语法错误 |
 | NO_CONFIG | 未找到 game.config.json（警告，不阻断） |
 | EMPTY_VARIABLES | variables 表为空，变量校验被跳过（警告） |

@@ -91,9 +91,11 @@ function evalBinary(ast: Extract<ExprAst, { kind: 'binary' }>, env: ExprEnv): Va
 
   switch (ast.op) {
     case '==':
-      return left === right;
+      // 深比较：VariableStore.get 对数组/对象返回防御性拷贝，两侧引用必然不同，
+      // 引用比较会使 `items == items` 恒为 false（隐蔽陷阱）。
+      return deepEqual(left, right);
     case '!=':
-      return left !== right;
+      return !deepEqual(left, right);
   }
 
   if (ast.op === '+') {
@@ -135,6 +137,26 @@ function requireBoolean(v: VarValue, op: string): boolean {
     throw new ExprEvalError(`${op} 需要 boolean 操作数，得到 ${describe(v)}`);
   }
   return v;
+}
+
+/** 深比较（==/!=）：基本类型值比较；数组/对象递归比较（两侧为独立深拷贝的合法写法）。 */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      return a.every((v, i) => deepEqual(v, b[i]));
+    }
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => deepEqual(
+      (a as Record<string, unknown>)[k],
+      (b as Record<string, unknown>)[k],
+    ));
+  }
+  return false;
 }
 
 function describe(v: VarValue): string {

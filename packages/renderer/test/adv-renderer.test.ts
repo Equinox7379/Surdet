@@ -13,6 +13,8 @@ class FakeStage implements AdvStage {
   choices: { index: number; label: string }[][] = [];
   hides = 0;
   fades: number[] = [];
+  /** 模拟 PixiStage.onSelect（AdvRenderer 构造时应自动绑定） */
+  onSelect: ((index: number) => void) | null = null;
 
   setBackground(key: string | null): void {
     this.calls.push(`bg:${String(key)}`);
@@ -108,6 +110,27 @@ describe('AdvRenderer', () => {
     expect(r.select(1)).toBe(true);
     expect(selected).toBe(1);
     expect(stage.hides).toBe(1);
+  });
+
+  it('构造时把 onSelect 绑定到 stage（PixiStage 点击路径可用，修复真实 UI 卡死）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let selected = -1;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onSelect: (i) => { selected = i; } });
+    r.subscribe(bus);
+
+    // AdvRenderer 构造后 stage.onSelect 已被绑定（等效于 PixiStage.showChoices 的点击转发）
+    expect(stage.onSelect).not.toBeNull();
+
+    bus.emit('choice', { options: [{ index: 0, label: 'A' }, { index: 1, label: 'B' }] });
+    expect(r.status).toBe('choice');
+    // 模拟 PixiStage 选项 pointerdown → stage.onSelect(index)
+    stage.onSelect?.(1);
+    expect(selected).toBe(1);
+    expect(r.status).toBe('idle');
+    // 非 choice 状态下点击无副作用（不触发回调）
+    stage.onSelect?.(0);
+    expect(selected).toBe(1);
   });
 
   it('instr 事件：bg/show/hide 驱动舞台，bgm/se/voice 驱动音频，引号契约生效', () => {
