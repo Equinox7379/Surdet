@@ -28,7 +28,10 @@ export interface CombatSkillDef {
   name: string;
   /** 伤害倍率（power 乘到 atk 上） */
   power: number;
-  /** 冷却回合 */
+  /**
+   * 冷却回合。递减时机：行动立即进入冷却，随后双方各行动一次（整回合结束）递减 1。
+   * 故配置 N 的实际效果 = 当回合不可再用，之后 N-1 个整回合后恢复（见 #advance）。
+   */
   cooldown: number;
   /** 命中率 0-1 */
   hit: number;

@@ -27,15 +27,23 @@ interface Subscription {
   once: boolean;
 }
 
+/** 构造选项：回调抛错时的统一处理钩子（宿主可上报 UI/日志，避免错误被静默吞掉） */
+export interface EventBusOptions {
+  onHandlerError?: (err: unknown, event: string) => void;
+}
+
 /**
  * 轻量同步事件总线。支持 once、unsubscribe、按名称订阅。
+ * 回调抛错不中断其余订阅者（logger 记录 + onHandlerError 钩子）。
  */
 export class EventBus {
   #subs = new Map<string, Set<Subscription>>();
   #logger: Logger;
+  #onHandlerError?: (err: unknown, event: string) => void;
 
-  constructor(logger: Logger = DEFAULT_LOGGER) {
+  constructor(logger: Logger = DEFAULT_LOGGER, options: EventBusOptions = {}) {
     this.#logger = logger;
+    this.#onHandlerError = options.onHandlerError;
   }
 
   /** 订阅事件 */
@@ -50,7 +58,7 @@ export class EventBus {
     return this.#add(event, sub);
   }
 
-  /** 发布事件（同步；handler 抛错不中断其余订阅者） */
+  /** 发布事件（同步；handler 抛错不中断其余订阅者，由 logger + onHandlerError 处理） */
   emit(event: string, payload: EventPayload = {}): void {
     const subs = this.#subs.get(event);
     if (!subs) return;
@@ -59,6 +67,7 @@ export class EventBus {
         sub.handler(payload);
       } catch (err) {
         this.#logger.error(`[EventBus] handler for '${event}' threw:`, err);
+        this.#onHandlerError?.(err, event);
       }
       if (sub.once) subs.delete(sub);
     }

@@ -318,4 +318,36 @@ describe('Interpreter', () => {
     const { store } = makeRuntime(baseDecls);
     expect(interpolate('{{heroName}} {heroName} {{x}} {ghost}', store)).toBe('{heroName} 雷恩 {x} {ghost}');
   });
+
+  it('interpolate：非法变量名（{2x}/{.var}）不插值，与表达式解析器规则一致', () => {
+    const { store } = makeRuntime(baseDecls);
+    expect(interpolate('{2x} {.var} {heroName}', store)).toBe('{2x} {.var} 雷恩');
+  });
+
+  it('end 指令发 sceneEnd 事件（含 sceneId，供宿主接结局）', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    const ends: { sceneId: string }[] = [];
+    bus.on('sceneEnd', (p: { sceneId: string }) => ends.push(p));
+
+    interp.start('s1');
+    expect(ends).toEqual([]);
+    interp.advance();
+    expect(interp.status).toBe('ended');
+    expect(ends).toEqual([{ sceneId: 's1' }]);
+  });
+
+  it('start 清理残留 pendingChoice（前一次 awaiting-choice 后重启不悬挂）', () => {
+    const { registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('@choice\n  A -> @goto a\n@label a\n凛：A。\n@end', 's.gal', 's1'));
+    interp.start('s1');
+    expect(interp.status).toBe('awaiting-choice');
+
+    // 不清残留的话旧 choice 会悬挂；清理后可正常重启到新场景并走完
+    registry.register(compileScene('凛：新场景。\n@end', 's2.gal', 's2'));
+    interp.start('s2');
+    expect(interp.status).toBe('awaiting-advance');
+    interp.advance();
+    expect(interp.status).toBe('ended');
+  });
 });

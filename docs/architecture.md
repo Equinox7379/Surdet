@@ -54,7 +54,13 @@
 
 ## 存档契约
 
-`SaveSnapshot` = 变量快照 + 场景定位（sceneId+pc）+ 已读标记 + 解锁状态 + 全家桶系统状态（`systems`，宿主经 `SystemHooks` 提供）。`SaveStorage` 接口可注入 localStorage / 文件系统。剧本 `@autosave`/`@savepoint` 由解释器发对应事件（载荷为完整快照），宿主订阅后写入自动/手动槽位。
+`SaveSnapshot` = 变量快照 + 场景定位（sceneId+pc）+ 已读标记 + 解锁状态 + 全家桶系统状态（`systems`，宿主经 `SystemHooks` 提供）。`SaveStorage` 接口可注入 localStorage / 文件系统。剧本 `@autosave`/`@savepoint` 由解释器发对应事件（载荷为完整快照，position 已前移到下一条指令，读档不会重跑存档点），宿主订阅后写入自动/手动槽位。
+
+**桌面文件存档**：`@surdet/shell` 经 preload（`window.surdetSave`，sandbox 下用同步 IPC）暴露 `list/read/write/delete`，主进程用 `FileSaveStore`（`packages/shell/src/save-store.ts`）读写 `userData/saves/<slot>.json`；浏览器环境回退 localStorage（见 `examples/starter/src/main.ts`）。
+
+## 场景结束
+
+`Interpreter` 执行到 `@end`（或文件末尾自动追加的 end）时置 `ended` 并发 `sceneEnd` 事件（载荷 `{ sceneId }`），宿主可接结局演出/ED/返回标题画面。
 
 ## AI 产出游戏的工作流
 

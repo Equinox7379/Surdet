@@ -15,6 +15,7 @@ import {
   type JumpInstr,
   type ModifyInstr,
   type SetInstr,
+  type TextInstr,
 } from '@surdet/core';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 
@@ -161,7 +162,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   }
 
   const ok = issues.every((i) => i.severity !== 'error');
-  return { issues, sceneCount: files.length, ok };
+  return { issues, sceneCount: sceneSourceFiles.size, ok };
 }
 
 /** 加载并校验 game.config.json：variables 声明表 + 声明形状 + customInstructions。
@@ -321,6 +322,23 @@ function validateSceneVariables(
 
   for (const instr of scene.instructions) {
     switch (instr.op) {
+      case 'text': {
+        const t = instr as TextInstr;
+        const p = at(t.file, t.line, t.col);
+        for (const v of collectInterpolatedVars(t.value)) {
+          if (!variables.has(v)) {
+            issues.push({
+              severity: 'error',
+              code: 'V002',
+              text: `${p.file}:${p.line}:${p.col}: 文本插值 '{${v}}' 引用了未声明变量 '${v}'（需在 game.config.json 的 variables 表中声明）`,
+              file: p.file,
+              line: p.line,
+              col: p.col,
+            });
+          }
+        }
+        break;
+      }
       case 'set': {
         const s = instr as SetInstr;
         checkVarDeclared(s.varName, at(s.file, s.line, s.col), variables, issues, 'V001', '赋值目标');
@@ -370,6 +388,17 @@ function validateSceneVariables(
 
 /** 直改 store 且第一个参数为变量名的指令（lint 校验声明，运行时 store 也会兜底） */
 const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag']);
+
+/** 提取文本行内 {var} 插值变量（与 interpolate 规则一致：{{ 转义跳过；非法名不匹配）。 */
+function collectInterpolatedVars(text: string): string[] {
+  const out: string[] = [];
+  const re = /\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] !== undefined) out.push(m[1]);
+  }
+  return out;
+}
 
 /** 解析表达式并做变量引用（V002）与运算符操作数类型（T003）检查。返回 AST 供类型推断。 */
 function checkExpr(

@@ -166,7 +166,9 @@ function assertType(value: VarValue, decl: VarDeclaration, where: string): void 
       if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) bad('string[]');
       break;
     case 'number[]':
-      if (!Array.isArray(value) || value.some((v) => typeof v !== 'number')) bad('number[]');
+      if (!Array.isArray(value) || value.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
+        bad('number[]');
+      }
       break;
     case 'object':
       if (typeof value !== 'object' || value === null || Array.isArray(value)) bad('object');

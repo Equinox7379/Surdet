@@ -82,6 +82,20 @@ describe('lintProject', () => {
     const r = lintProject(dir);
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.code === 'LINT_DUP')).toBe(true);
+    // 重复 ID 的文件不重复计入 sceneCount（唯一成功场景数）
+    expect(r.sceneCount).toBe(1);
+  });
+
+  it('文本插值引用未声明变量报 V002（转义 {{ }} 不算）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/scenario/a.gal': `凛：{{字面}} {trust} {ghost_var} 结尾。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(false);
+    const v2 = r.issues.filter((i) => i.code === 'V002');
+    expect(v2).toHaveLength(1);
+    expect(v2[0]!.text).toContain('ghost_var');
   });
 
   it('赋值目标变量未声明报 V001', () => {

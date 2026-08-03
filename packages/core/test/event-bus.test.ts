@@ -33,4 +33,15 @@ describe('EventBus', () => {
     expect(logs).toHaveLength(1);
     expect(String(logs[0]![1])).toContain('boom');
   });
+
+  it('onHandlerError 钩子在回调抛错时被调用（宿主可上报，不被静默）', () => {
+    const handled: { err: unknown; event: string }[] = [];
+    const bus = new EventBus(undefined, { onHandlerError: (err, event) => handled.push({ err, event }) });
+    bus.on('tick', () => { throw new Error('boom'); });
+    bus.on('tick', () => { throw new Error('boom2'); });
+    bus.emit('tick');
+    expect(handled).toHaveLength(2);
+    expect(handled[0]!.event).toBe('tick');
+    expect(String(handled[1]!.err)).toContain('boom2');
+  });
 });

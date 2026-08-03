@@ -21,6 +21,18 @@ const sceneFiles = import.meta.glob('../content/scenario/*.gal', {
   import: 'default',
 });
 
+declare global {
+  interface Window {
+    /** Electron shell 经 preload 暴露的文件存档桥（浏览器环境不存在，回退 localStorage） */
+    surdetSave?: {
+      list(): string[];
+      read(slot: string): SaveSnapshot | null;
+      write(slot: string, data: SaveSnapshot): void;
+      delete(slot: string): void;
+    };
+  }
+}
+
 async function main(): Promise<void> {
   const appEl = document.getElementById('app')!;
   const stage = new PixiStage();
@@ -52,22 +64,43 @@ async function main(): Promise<void> {
   stage.app!.canvas.addEventListener('pointerdown', () => renderer.advance());
   stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
 
-  const saveStorage: SaveStorage = {
-    read: (slot) => {
-      try {
-        const raw = localStorage.getItem(`surdet:save:${slot}`);
-        return raw ? (JSON.parse(raw) as SaveSnapshot) : null;
-      } catch {
-        return null;
+  // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统；浏览器回退 localStorage
+  const desktopSave = window.surdetSave;
+  const saveStorage: SaveStorage = desktopSave
+    ? {
+        read: (slot) => {
+          try {
+            return desktopSave.read(slot);
+          } catch {
+            return null;
+          }
+        },
+        write: (slot, data) => desktopSave.write(slot, data),
+        delete: (slot) => desktopSave.delete(slot),
+        list: () => {
+          try {
+            return desktopSave.list();
+          } catch {
+            return [];
+          }
+        },
       }
-    },
-    write: (slot, data) => localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data)),
-    delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
-    list: () =>
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith('surdet:save:'))
-        .map((k) => k.slice('surdet:save:'.length)),
-  };
+    : {
+        read: (slot) => {
+          try {
+            const raw = localStorage.getItem(`surdet:save:${slot}`);
+            return raw ? (JSON.parse(raw) as SaveSnapshot) : null;
+          } catch {
+            return null;
+          }
+        },
+        write: (slot, data) => localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data)),
+        delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
+        list: () =>
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith('surdet:save:'))
+            .map((k) => k.slice('surdet:save:'.length)),
+      };
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
