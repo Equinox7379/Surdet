@@ -88,6 +88,17 @@ describe('CalendarRunner', () => {
     expect(runner.isOver).toBe(true);
   });
 
+  it('回合超限后 canEnter/enter 拒绝进入节点', () => {
+    const { runner } = makeRunner();
+    for (let i = 0; i < 12; i++) runner.advanceTurn();
+    expect(runner.isOver).toBe(true);
+    expect(runner.canEnter('north_gate')).toBe(false);
+    const r = runner.enter('north_gate');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('超限');
+    expect(runner.hasVisited('north_gate')).toBe(false);
+  });
+
   it('snapshot/restore 往返', () => {
     const { runner } = makeRunner();
     runner.enter('north_gate');

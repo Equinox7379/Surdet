@@ -380,6 +380,8 @@ export class CombatSolver {
 }
 
 /** 用伤害公式求基础伤害（变量 atk/def/power；atk 含技能倍率，def 为目标防御）。
+ *  ⚠️ 双重倍率陷阱：`atk` 已返回 `attacker.atk * power`（技能倍率已计入），同时单独暴露
+ *  `power` 供"按功率占比"等幂等场景引用。公式里请勿再写 `power * N`（会得到 atk*power*N 的双重倍率）。
  *  与解释器 @if/@set 一致采用严格求值：公式语法错误/引用缺失变量/结果非数字一律抛错，
  *  暴露配置缺陷，不做静默降级（否则作者写坏一条公式只会悄悄变成 0 伤害）。 */
 function evalDamage(formula: DamageFormula, attacker: CombatUnitInstance, target: CombatUnitInstance, power: number): number {
