@@ -1,0 +1,30 @@
+{
+  "name": "@surdet/renderer",
+  "version": "0.1.0",
+  "description": "Surdet renderer: PixiJS stage for portraits, backgrounds, text, transitions, particles",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0",
+    "howler": "^2.2.4",
+    "pixi.js": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.13"
+  }
+}

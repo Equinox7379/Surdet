@@ -1,0 +1,24 @@
+@scene ch02
+@bg castle_hall
+@bgm tense_01
+
+@label start
+凛：第二章——全家桶系统演示。
+@calendar map_01
+凛：地图日程已接入宿主（CalendarRunner）。
+@set lynn.trust = 40
+@affection lynn
+凛：好感阶段演示——当前好感度 {lynn.trust}。
+@event ev_trust_30
+凛：好感事件已触发（AffectionSystem）。
+@battle fight_01
+凛：回合战斗已接入宿主（CombatSolver）。
+@if battleWon
+@flag cleared
+凛：战斗胜利！已达成 Clear 条件（NewGamePlus）。
+@else
+凛：战斗失败……
+@endif
+@autosave
+@jump ch01_01.start
+@end

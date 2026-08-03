@@ -1,0 +1,14 @@
+appId: com.surdet.game
+productName: Surdet Game
+directories:
+  output: release
+files:
+  - dist/**
+  - game/**
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: SurdetGame-${version}.${ext}
+npmRebuild: false

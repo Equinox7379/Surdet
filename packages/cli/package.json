@@ -1,0 +1,20 @@
+{
+  "name": "@surdet/cli",
+  "version": "0.1.0",
+  "description": "Surdet CLI: create, lint, build and pack galgame projects",
+  "type": "module",
+  "bin": {
+    "surdet": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0"
+  }
+}

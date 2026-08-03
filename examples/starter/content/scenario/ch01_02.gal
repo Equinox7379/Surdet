@@ -1,0 +1,9 @@
+@scene ch01_02
+@bg night_field
+
+@label start
+主角：黎明之前，还有一段路。
+凛：跟着我。
+@autosave
+@jump ch02.start
+@end
