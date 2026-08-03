@@ -408,15 +408,27 @@ export class Interpreter {
         return;
       }
       case 'autosave': {
-        // 存档点：发当前完整快照给宿主，由宿主写入自动存档槽位
+        // 存档点：发当前完整快照给宿主，由宿主写入自动存档槽位。
+        // position 前移一位指向下一条指令：autosave 本身无状态副作用，读档后不应重跑它
+        // （否则会重复触发 autosave 事件，宿主重复写档）。
         const snap = this.saveSnapshot('auto');
-        if (snap) this.#bus.emit('autosave', snap as unknown as EventPayload);
+        if (snap) {
+          if (snap.position) {
+            snap.position = { sceneId: snap.position.sceneId, pc: snap.position.pc + 1 };
+          }
+          this.#bus.emit('autosave', snap as unknown as EventPayload);
+        }
         return;
       }
       case 'savepoint': {
-        // 手动检查点：发当前完整快照给宿主（可写入手动槽位或覆盖检查点）
+        // 手动检查点：发当前完整快照给宿主（可写入手动槽位或覆盖检查点）。position 语义同上。
         const snap = this.saveSnapshot('manual');
-        if (snap) this.#bus.emit('savepoint', snap as unknown as EventPayload);
+        if (snap) {
+          if (snap.position) {
+            snap.position = { sceneId: snap.position.sceneId, pc: snap.position.pc + 1 };
+          }
+          this.#bus.emit('savepoint', snap as unknown as EventPayload);
+        }
         return;
       }
       case 'battle':

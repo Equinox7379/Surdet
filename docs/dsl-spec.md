@@ -39,43 +39,50 @@
 用于 `@if`、`@set` 右值、`choice` 选项条件 `[if:...]`。
 
 - 运算符（优先级从低到高）：`||`、`&&`、`== !=`、`< <= > >=`、`+ -`、`* /`、一元 `! - +`、括号 `( )`
-- 字面量：数字、`"字符串"`/`'字符串'`（支持 `\n` `\t` 转义）、`true`/`false`、变量（可含点号命名空间：`lynn.trust`）
+- 字面量：数字、`"字符串"`/`'字符串'`（支持 `\n` `\t` `\\` 转义）、`true`/`false`、变量（可含点号命名空间：`lynn.trust`）
 - `+` 两侧任一为字符串则拼接；一元 `+` 无语义（`+x ≡ x`）；`&&`/`||` 短路求值，未求值侧不做类型校验
 - 例：`hasSword && lynn.trust >= 10`
 
 ## 指令集
 
+> 实现状态列：✅ = 已实现并有运行时行为；⚠️ = 已声明语法但**尚未实现**（lint 报 W002，当前无任何效果，请勿依赖）。完整清单见 `packages/core/src/dsl/compiler.ts` 的 `IMPLEMENTED_INSTRUCTIONS` / `PLANNED_INSTRUCTIONS`。
+
 ### 演出
-| 指令 | 示例 | 说明 |
-|---|---|---|
-| `@bg` | `@bg castle_hall.day` | 切换背景 |
-| `@show` | `@show lynn:armor despair @ left @ effect shake` | 显示立绘（角色:服装 表情） |
-| `@hide` | `@hide lynn` | 隐藏立绘 |
-| `@voice` | `@voice lynn_001` | 播放语音 |
-| `@bgm` / `@se` | `@bgm tense_01` | 音乐 / 音效 |
-| `@fadein/@fadeout` | `@fadeout 400` | 转场（毫秒） |
-| `@wipe/@shake/@zoom/@flash/@particle/@video/@mov/@tint/@wait` | — | 更多演出指令 |
+| 指令 | 示例 | 状态 | 说明 |
+|---|---|---|---|
+| `@bg` | `@bg castle_hall.day` | ✅ | 切换背景 |
+| `@show` | `@show lynn:armor despair @ left @ effect shake` | ✅ | 显示立绘（角色:服装 表情）。位置修饰符：`@pos=值` 优先于裸 `@ left`/`@ right`/`@ center` |
+| `@hide` | `@hide lynn` | ✅ | 隐藏立绘 |
+| `@voice` | `@voice lynn_001` | ✅ | 播放语音 |
+| `@bgm` / `@se` | `@bgm tense_01` | ✅ | 音乐 / 音效 |
+| `@fadein/@fadeout` | `@fadeout 400` | ✅ | 转场（毫秒） |
+| `@wipe/@shake/@zoom/@flash/@particle/@video/@mov/@tint/@wait` | — | ⚠️ | 更多演出指令（未实现） |
 
 ### 流程
-| 指令 | 示例 | 说明 |
-|---|---|---|
-| `@goto` | `@goto labelName` | 场景内跳转（目标必须是本场景标签） |
-| `@jump` | `@jump ch01_02.start` | 跨场景跳转（`sceneId` 或 `sceneId.label`） |
-| `@call/@return` | — | 调用子场景（M2） |
-| `@if/@elif/@else/@endif` | `@if x > 1` … | 条件块，必须配对 |
-| `@choice` | 见下 | 选择肢 |
+| 指令 | 示例 | 状态 | 说明 |
+|---|---|---|---|
+| `@goto` | `@goto labelName` | ✅ | 场景内跳转（目标必须是本场景标签） |
+| `@jump` | `@jump ch01_02.start` | ✅ | 跨场景跳转（`sceneId` 或 `sceneId.label`） |
+| `@call/@return` | — | ⚠️ | 调用子场景（未实现） |
+| `@if/@elif/@else/@endif` | `@if x > 1` … | ✅ | 条件块，必须配对 |
+| `@choice` | 见下 | ✅ | 选择肢 |
 
 ### 状态
-| 指令 | 示例 | 说明 |
-|---|---|---|
-| `@set` | `@set lynn.trust = 5` | 赋值（`=`/`:=`/`+=`/`-=`） |
-| `@mod` | `@mod lynn.trust +3` | 数值增减 |
-| `@inc/@dec/@toggle/@flag/@check` | — | 便捷操作 |
+| 指令 | 示例 | 状态 | 说明 |
+|---|---|---|---|
+| `@set` | `@set lynn.trust = 5` | ✅ | 赋值（`=`/`:=`/`+=`/`-=`） |
+| `@mod` | `@mod lynn.trust +3` | ✅ | 数值增减 |
+| `@inc/@dec/@toggle/@flag/@unflag` | — | ✅ | 便捷操作 |
+| `@check` | — | ⚠️ | 便捷操作（未实现） |
 
 ### 系统（M4/M5）
-`@battle`、`@calendar`、`@shop`、`@item`、`@affection`、`@event`、`@unlock_cg`、`@unlock_music`、`@scene`、`@end`、`@clear`
-
-> `@scene <id>` 是**声明性指令**：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果。
+| 指令 | 状态 | 说明 |
+|---|---|---|
+| `@battle` / `@calendar` / `@affection` / `@event` / `@shop` / `@item` | ✅ | 发 `system` 事件，由宿主驱动对应 System 类（`@shop`/`@item` 引擎无内置实现，需宿主自理） |
+| `@unlock_cg` / `@unlock_music` | ✅ | 解锁 CG / 音乐（回想鉴赏） |
+| `@scene` | ✅ | 声明性指令：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果 |
+| `@end` | ✅ | 场景结束（可省略，引擎自动追加） |
+| `@clear` | ⚠️ | 周目结束（未实现） |
 
 ### 存档点（已实现）
 | 指令 | 示例 | 说明 |
