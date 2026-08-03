@@ -97,6 +97,31 @@ describe('Interpreter 存档', () => {
     expect(interp.status).toBe('awaiting-advance');
   });
 
+  it('@autosave 快照 position 指向下一条指令（读档不重跑 autosave）', () => {
+    const { bus, registry, interp } = makeInterp();
+    registry.register(compileScene('凛：甲。\n@autosave\n凛：乙。', 's.gal', 's1'));
+    let snapPos: { sceneId: string; pc: number } | null = null;
+    bus.on('autosave', (p) => { snapPos = (p as { position: { sceneId: string; pc: number } }).position; });
+
+    interp.start('s1');
+    interp.advance(); // 甲 → @autosave（index 1）：position 应指向 index 2（凛：乙。），而非 autosave 自身
+    expect(snapPos).toEqual({ sceneId: 's1', pc: 2 });
+
+    // 用该快照恢复：应从 乙 开始，不再重跑 @autosave
+    let autosaveCount = 0;
+    bus.on('autosave', () => { autosaveCount++; });
+    const texts: string[] = [];
+    bus.on<TextEventPayload>('text', (p) => texts.push(p.value));
+    const snap = interp.saveSnapshot()!;
+    snap.position = snapPos;
+    interp.loadSnapshot(snap);
+    expect(autosaveCount).toBe(0); // 恢复点不在 @autosave 指令上
+    expect(texts.at(-1)).toBe('乙。');
+    expect(interp.status).toBe('awaiting-advance');
+    interp.advance();
+    expect(interp.status).toBe('ended');
+  });
+
   it('SystemHooks：saveSnapshot 携带系统快照，loadSnapshot 触发宿主 restore', () => {
     const store = new VariableStore(decls);
     const bus = new EventBus();

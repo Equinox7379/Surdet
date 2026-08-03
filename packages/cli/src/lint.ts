@@ -53,13 +53,17 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
 
   const { variables, types, hasConfig, customInstructions } = loadVariables(root, issues);
 
+  // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
+  const sceneSourceFiles = new Map<string, string>();
+
   for (const file of files) {
     const sceneId = sceneIdFromFile(file);
-    if (scenes.has(sceneId)) {
+    const firstFile = sceneSourceFiles.get(sceneId);
+    if (firstFile !== undefined) {
       issues.push({
         severity: 'error',
         code: 'LINT_DUP',
-        text: `${file}: 场景 ID '${sceneId}' 与已编译场景重复（场景 ID 必须全局唯一）`,
+        text: `${file}: 场景 ID '${sceneId}' 与 ${firstFile} 重复（场景 ID = 文件名去扩展名，子目录下同名文件同样冲突；场景 ID 必须全局唯一）`,
         file,
         line: 0,
         col: 0,
@@ -80,6 +84,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     const source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
     try {
       const scene = compileScene(source, file, sceneId, customInstructions);
+      sceneSourceFiles.set(sceneId, file);
       scenes.set(sceneId, scene);
       sceneLabels.set(sceneId, new Set(scene.labels.keys()));
       for (const d of scene.diagnostics) {

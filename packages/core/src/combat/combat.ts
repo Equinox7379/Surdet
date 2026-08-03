@@ -32,7 +32,10 @@ export interface CombatSkillDef {
   cooldown: number;
   /** 命中率 0-1 */
   hit: number;
-  /** 特殊效果（状态异常/治疗等，由宿主扩展） */
+  /**
+   * 特殊效果标记（扩展点，宿主可自定义消费）。引擎内置：
+   *  - `'long'`：射程视为 99（无视距离攻击），见 act() 的射程判定。
+   */
   effects?: string[];
 }
 
