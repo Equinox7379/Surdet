@@ -151,6 +151,9 @@ export class Interpreter {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         chapter: position.sceneId,
+        // 载荷自带版本：宿主直写档（不经 SaveManager）时 loadSnapshot 的版本校验仍生效
+        schemaVersion: SAVE_SCHEMA_VERSION,
+        // label/thumbnail/playTimeSec 由宿主按槽位元信息补充（引擎无法获知）
       },
       variables: this.#store.snapshot(),
       position,

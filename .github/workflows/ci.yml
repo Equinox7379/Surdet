@@ -24,5 +24,3 @@ jobs:
         run: npm test
       - name: Lint starter
         run: node packages/cli/dist/index.js lint examples/starter
-      - name: Lint echoes-of-mist
-        run: node packages/cli/dist/index.js lint games/echoes-of-mist

@@ -179,7 +179,13 @@ async function main(): Promise<void> {
             return null;
           }
         },
-        write: (slot, data) => desktopSave.write(slot, data),
+        write: (slot, data) => {
+          try {
+            desktopSave.write(slot, data);
+          } catch (err) {
+            console.error('[starter] 存档写入失败：', err);
+          }
+        },
         delete: (slot) => desktopSave.delete(slot),
         list: () => {
           try {
@@ -198,7 +204,13 @@ async function main(): Promise<void> {
             return null;
           }
         },
-        write: (slot, data) => localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data)),
+        write: (slot, data) => {
+          try {
+            localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
+          } catch (err) {
+            console.error('[starter] 存档写入失败：', err);
+          }
+        },
         delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
         list: () =>
           Object.keys(localStorage)
