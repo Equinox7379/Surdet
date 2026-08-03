@@ -1,0 +1,39 @@
+{
+  "title": "Surdet Starter",
+  "version": "0.1.0",
+  "variables": {
+    "lynn.trust": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 100,
+      "description": "凛的好感度"
+    },
+    "hasSword": {
+      "type": "flag",
+      "initial": false,
+      "description": "主角是否持剑"
+    },
+    "heroName": {
+      "type": "string",
+      "initial": "雷恩",
+      "description": "主角名"
+    },
+    "chapter": {
+      "type": "number",
+      "initial": 1,
+      "readonly": true,
+      "description": "当前章节"
+    },
+    "battleWon": {
+      "type": "flag",
+      "initial": false,
+      "description": "上一场战斗是否胜利（宿主写入）"
+    },
+    "cleared": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否达成 Clear（NewGamePlus 周目继承判定）"
+    }
+  }
+}

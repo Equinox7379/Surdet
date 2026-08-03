@@ -1,0 +1,23 @@
+{
+  "title": "New Game",
+  "version": "0.1.0",
+  "variables": {
+    "heroName": {
+      "type": "string",
+      "initial": "雷恩",
+      "description": "主角名"
+    },
+    "lynn.trust": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 100,
+      "description": "凛的好感度"
+    },
+    "hasSword": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否持剑"
+    }
+  }
+}

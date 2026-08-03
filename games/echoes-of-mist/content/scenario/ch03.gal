@@ -1,0 +1,31 @@
+@scene ch03
+@bg fog_city
+@bgm red_alert
+
+@label start
+（大雾纪第四十天。雾下沉了。）
+
+（铅灰色的雾从天空压到屋檐，再从屋檐压到街面。上午十点，第一道“回声实体化”出现——白鹭街旧址的路口，一个灰白色的影子，立在雾里，缓缓转动着脖子，朝行人走去。）
+
+（尖叫声。奔跑声。警察拉起了警戒线，可雾根本拦不住。）
+
+（下午三点，{heroName}同时收到三条消息。）
+
+（第一条，林霜：档案室的门打不开了。雾从里面渗出来。钥匙被吸住了。我需要你。）
+
+（第二条，苏晚晴：雾生之地的坐标在移动！公式还差最后一步，就差你的“雾盲数据”了！现在就来！排水道口！）
+
+（第三条，小满：陆屿哥，老街出事了……雾里的孩子们，他们找不到回家的路了，他们在哭。我在满月堂等你。）
+
+（{heroName}站在图书馆门口的台阶上。雾在他脚边翻涌，像一头睡醒的巨兽。）
+
+（他只能去一个方向。而这场雾，不会等任何人。）
+
+@autosave
+
+@choice
+  奔向档案室，去找林霜 [if:lin.trust >= 8] -> @set heroine = "lin" @jump route_lin_01.start
+  冲向大学排水道，去找苏晚晴 [if:su.trust >= 8] -> @set heroine = "su" @jump route_su_01.start
+  跑向老街满月堂，去找小满 [if:xiaoman.trust >= 8] -> @set heroine = "xiaoman" @jump route_xiaoman_01.start
+  独自冲进雾里 -> @jump bad_end.start
+@end

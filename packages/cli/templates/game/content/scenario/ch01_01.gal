@@ -1,0 +1,26 @@
+@scene ch01_01
+@bg castle
+@bgm tense_01
+
+@label start
+凛：欢迎来到你的新世界。
+主角：这是哪里？
+
+@set lynn.trust = 0
+@if lynn.trust >= 5
+凛：（轻声）你记得我。
+@else
+凛：（移开视线）我们刚认识。
+@endif
+
+@choice
+  自我介绍 -> @mod lynn.trust +3 @goto intro
+  保持沉默 -> @mod lynn.trust +1 @goto silent
+
+@label intro
+凛：很好，我喜欢坦诚的人。
+@end
+
+@label silent
+凛：……你有心事。
+@end

@@ -1,0 +1,25 @@
+{
+  "name": "surdet",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Surdet Engine - a mature, data-driven desktop galgame engine",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/starter",
+    "games/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @surdet/core && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/shell && npm run build -w surdet-starter",
+    "test": "npm run build -w @surdet/core && npm run test --workspaces --if-present",
+    "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/renderer && npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

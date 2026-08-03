@@ -1,0 +1,42 @@
+{
+  "title": "雾中回响",
+  "version": "0.1.0",
+  "variables": {
+    "heroName": {
+      "type": "string",
+      "initial": "陆屿",
+      "description": "主角名（可改）"
+    },
+    "lin.trust": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 100,
+      "description": "林霜好感度"
+    },
+    "su.trust": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 100,
+      "description": "苏晚晴好感度"
+    },
+    "xiaoman.trust": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 100,
+      "description": "小满好感度"
+    },
+    "heard_echo": {
+      "type": "flag",
+      "initial": false,
+      "description": "序章是否追入雾中"
+    },
+    "heroine": {
+      "type": "string",
+      "initial": "",
+      "description": "当前路线标记：lin / su / xiaoman"
+    }
+  }
+}
