@@ -124,6 +124,15 @@ describe('VariableStore', () => {
     expect(() => s.modify('lynn.trust', Infinity)).toThrow();
   });
 
+  it('number[] 运行时拒绝 NaN/Infinity 元素', () => {
+    const s = new VariableStore([{ name: 'nums', type: 'number[]', initial: [] }]);
+    expect(() => s.set('nums', [1, NaN])).toThrow(TypeError);
+    expect(() => s.set('nums', [1, Infinity])).toThrow(TypeError);
+    expect(() => s.set('nums', [1, -Infinity])).toThrow(TypeError);
+    s.set('nums', [1, 2.5]);
+    expect(s.get<number[]>('nums')).toEqual([1, 2.5]);
+  });
+
   it('declarations 返回深拷贝（外部篡改不影响内部 clamp 约束）', () => {
     const s = new VariableStore(base);
     const decl = s.declarations().find((d) => d.name === 'lynn.trust')!;

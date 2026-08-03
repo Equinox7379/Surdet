@@ -116,6 +116,8 @@ export class Interpreter {
     const { scene, pc } = label !== undefined
       ? this.#registry.resolve(`${sceneId}.${label}`)
       : this.#registry.resolve(sceneId);
+    // 清理残留状态（防御：若之前卡在 awaiting-choice，重新 start 不应悬挂旧 choice）
+    this.#pendingChoice = null;
     this.#scene = scene;
     this.#pc = pc;
     this.#status = 'running';
@@ -331,6 +333,8 @@ export class Interpreter {
 
           case 'end': {
             this.#status = 'ended';
+            // 场景/游戏结束事件：宿主可接结局演出、ED、返回标题画面
+            this.#bus.emit('sceneEnd', { sceneId: this.#scene.sceneId });
             return;
           }
 
@@ -464,9 +468,11 @@ export class Interpreter {
 }
 
 /** 文本插值：{var} → 变量值；未声明变量保留原文。
- *  支持转义：{{ → {、}} → }（用于输出字面花括号）。 */
+ *  支持转义：{{ → {、}} → }（用于输出字面花括号）。
+ *  变量名规则与表达式解析器 parseWord 一致：首字符为字母/下划线/CJK，随后可含数字/点/$
+ *  （{2x}、{.var} 这类非法名不插值，保留原文）。 */
 export function interpolate(text: string, store: VariableStore): string {
-  return text.replace(/\{\{|\}\}|\{([A-Za-z0-9_$.\u0080-\uffff]+)\}/g, (match, name: string | undefined) => {
+  return text.replace(/\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g, (match, name: string | undefined) => {
     if (match === '{{') return '{';
     if (match === '}}') return '}';
     return store.has(name!) ? String(store.get(name!)) : `{${name}}`;

@@ -34,7 +34,7 @@ packages/
 | M1 | DSL 词法/语法/编译器 + 错误定位 + lint | ✅ |
 | M2 | ADV 运行时（条件/选择/跳转） | ✅ |
 | M3 | PixiJS 渲染层 + Electron 壳 + 音频 | ✅ |
-| M4 | 存档完整化 + 回想/鉴赏 + 快进跳过 | ✅（CG/音乐解锁完整；文本回想为预留类型） |
+| M4 | 存档完整化 + 回想/鉴赏 + 快进（跳全部模式） | ✅（CG/音乐解锁完整；文本回想为预留类型；按已读跳过的快进未接线） |
 | M5 | 地图日程 + 战斗 + 后宫 + 周目继承 | ✅（引擎侧求解器完整；已接入存档快照，宿主接线驱动） |
 | M6 | CLI 完整化 + 示例游戏（占位素材） | ✅ |
 | M7 | 打包 exe + 文档定稿 | ✅ |
@@ -51,9 +51,9 @@ packages/
 - **ADV 运行时**：`Interpreter` 逐条执行指令流，text/choice 阻塞模型（`advance()`/`choose()` 推进，事件回调内可重入）；if→condJump、跨场景 jump、choice 条件过滤、`{var}` 插值（`{{`/`}}` 转义）；`SceneRegistry` 场景注册与标签寻址
 - **存档点指令**：`@autosave`/`@savepoint` 由解释器发对应事件（载荷为完整快照），宿主订阅写入槽位
 - **渲染层**：`AdvRenderer`（事件驱动，可注入 fake stage 测试）+ `PixiStage`（背景/立绘/对话框/选择肢/黑场转场）+ `Typewriter`（打字机）+ `AudioManager`（howler）+ 程序化占位素材；`PixiStage.registerBackground/registerPortrait` 支持注入真实素材（URL 或 Texture，未注册 key 回退占位）
-- **Electron 壳**：`@surdet/shell` 主进程加载示例游戏构建产物（contextIsolation + sandbox）
+- **Electron 壳**：`@surdet/shell` 主进程加载示例游戏构建产物（contextIsolation + sandbox）+ preload 文件存档桥（`window.surdetSave`，打包 exe 存档落 `userData/saves/*.json`）
 - **存档**：`SaveManager`（多槽位/快速/自动，`SaveStorage` 接口可注入 localStorage/文件）+ 快照含变量/定位/已读/解锁/**全家桶系统状态（`SystemHooks`）**
-- **回想/快进**：`GalleryState`（@unlock_cg/@unlock_music）+ `ReadTracker`（已读标记）+ 渲染层自动播放/快进模式
+- **回想/快进**：`GalleryState`（@unlock_cg/@unlock_music）+ `ReadTracker`（已读标记，随存档持久化）+ 渲染层自动播放/快进模式
 - **全家桶系统**（数据驱动）：`CalendarRunner`（回合/行动力/节点可达性）、`CombatSolver`（伤害公式/相克/冷却/射程，winCondition 三态 + restore，快照 JSON 安全）、`AffectionSystem`（好感阶段/事件树解锁）、`NewGamePlus`（clear 判定/继承计算）；`@battle/@calendar/@affection/@event` 指令发 `system` 事件由宿主驱动
 - **CLI**：`surdet new <name>`（脚手架 + workspace 注册）/ `lint` / `build` / `pack`（M7）
 
@@ -61,6 +61,7 @@ packages/
 
 - 规划中但**未实现**的指令（lint 给 W002 提示，避免静默无操作）：`@wipe/@shake/@zoom/@particle/@flash/@video/@mov/@tint/@wait`、`@title/@chapter/@tip/@note/@center/@nvl/@ruby`、`@call/@return/@loop/@random/@switch/@check`、`@add_item/@remove_item/@has_item`、`@clear`
 - 鉴赏仅实现 **CG/音乐解锁**（`GalleryState`）；文本回想（`GalleryTextEntry`）为预留配置类型，回想界面未实现
+- 快进为**跳全部模式**（瞬时显示 + 连续推进至选择肢，不区分已读/未读）；`ReadTracker` 已记录并随存档持久化，但**按已读跳过**的逻辑未接线
 - 表达式语言为确定性纯函数子集（无数组下标/字符串方法/函数调用），有意为之——保证 AI 生成内容可 lint 可预测
 
 ## 运行
