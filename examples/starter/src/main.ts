@@ -27,6 +27,7 @@ import type {
   SaveSlotMeta,
   SystemSnapshots,
   CombatConfig,
+  CalendarConfig,
   NewGamePlusConfig,
   AffectionProfile,
   RelationshipEvent,
@@ -147,7 +148,7 @@ async function main(): Promise<void> {
 
   // ===== M5 全家桶系统实例（数据驱动，宿主持有并驱动） =====
   // JSON 配置经 resolveJsonModule 推断为宽 string 类型，这里显式断言到引擎类型。
-  const calendar = new CalendarRunner(calendarConfig, store);
+  const calendar = new CalendarRunner(calendarConfig as CalendarConfig, store);
   const combat = new CombatSolver(combatConfig as CombatConfig);
   const affection = new AffectionSystem(
     eventsConfig.profiles as AffectionProfile[],
@@ -267,6 +268,7 @@ async function main(): Promise<void> {
           stage.showMap(
             buildMapView({ turn: calendar.turn, ap: calendar.ap, maxAp: calendar.maxAp, date: calendar.date, nodes }),
             (nodeId) => {
+              const nodeDef = calendar.nodes().find((n) => n.id === nodeId);
               const res = calendar.enter(nodeId);
               if (!res.ok) {
                 console.info('[starter] calendar enter failed:', nodeId, res.reason);
@@ -274,6 +276,11 @@ async function main(): Promise<void> {
                 return;
               }
               console.info('[starter] calendar enter:', nodeId);
+              // 据点节点 → 打开据点指令面板（兰斯式 base commands；无指令配置时按普通节点处理）
+              if (nodeDef?.isBase && calendar.baseCommands().length > 0) {
+                openBasePanel();
+                return;
+              }
               if (res.eventId && registry.has(res.eventId)) {
                 interp.hostJump(res.eventId); // 节点事件场景（约定：场景 ID = eventId）
               } else {
@@ -283,6 +290,54 @@ async function main(): Promise<void> {
             () => {
               calendar.advanceTurn();
               interp.resumeHost(); // 结束回合 → 恢复剧情
+            },
+          );
+        };
+        // 据点指令面板：执行指令 → 扣 AP/记次（引擎）+ 写回 effects（宿主变量）→ 刷新面板
+        let baseMsg = '选择要执行的指令。';
+        const openBasePanel = (): void => {
+          stage.showBaseCommands(
+            {
+              ap: calendar.ap,
+              maxAp: calendar.maxAp,
+              date: calendar.date,
+              message: baseMsg,
+              commands: calendar.baseCommands().map((c) => ({
+                id: c.id,
+                name: c.name,
+                apCost: c.apCost,
+                enabled: calendar.canExecBaseCommand(c.id),
+                remaining: calendar.baseCommandRemaining(c.id),
+              })),
+            },
+            (cmdId) => {
+              const res = calendar.execBaseCommand(cmdId);
+              const name = calendar.baseCommands().find((c) => c.id === cmdId)?.name ?? cmdId;
+              if (!res.ok) {
+                baseMsg = res.reason ?? '无法执行';
+                openBasePanel();
+                return;
+              }
+              // effects 写回宿主变量仓库（引擎不直改业务变量，分工一致）
+              for (const [varName, delta] of Object.entries(res.effects ?? {})) {
+                try {
+                  store.modify(varName, delta);
+                } catch (err) {
+                  console.warn('[starter] base command effect 写回失败:', varName, err);
+                }
+              }
+              baseMsg = `执行了「${name}」。`;
+              if (res.eventId && registry.has(res.eventId)) {
+                stage.hideBase();
+                interp.hostJump(res.eventId); // 指令演出事件
+                return;
+              }
+              checkAchievements(); // 效果变更后补查成就
+              openBasePanel();
+            },
+            () => {
+              stage.hideBase();
+              renderMap(); // 返回地图
             },
           );
         };
@@ -436,6 +491,14 @@ async function main(): Promise<void> {
     const s = interp.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.advance();
   });
+
+  // 滚轮：Backlog 打开时滚动文字记录（galgame 惯例：鼠标滚轮回看历史）
+  stage.app!.canvas.addEventListener('wheel', (e) => {
+    if (renderer.backlogOpen) {
+      e.preventDefault();
+      stage.scrollBacklog(e.deltaY > 0 ? 120 : -120);
+    }
+  }, { passive: false });
 
   // 右键 → 系统菜单（GalGame 惯例）
   stage.app!.canvas.addEventListener('contextmenu', (e) => {

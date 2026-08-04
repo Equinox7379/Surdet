@@ -7,5 +7,10 @@
   "maxAp": 3,
   "maxTurns": 30,
   "dateTemplate": "第{month}月 第{turn}周",
-  "weeksPerMonth": 4
+  "weeksPerMonth": 4,
+  "baseCommands": [
+    { "id": "rest", "name": "休息", "apCost": 1, "effects": { "lynn.hp": 5 } },
+    { "id": "train", "name": "特训", "apCost": 2, "effects": { "lynn.atk": 1 }, "perTurn": 1 },
+    { "id": "patrol", "name": "巡逻", "apCost": 1, "perTurn": 2, "when": "hasSword" }
+  ]
 }
