@@ -239,4 +239,12 @@ describe('@exp 指令（解释器集成）', () => {
     expect(() => assertValidSnapshot({ ...snap, growth: { levels: { lynn: 2 } } })).not.toThrow();
     expect(() => assertValidSnapshot(snap)).not.toThrow();
   });
+
+  it('负经验兜底：经验值不为负、等级不下降', () => {
+    const { growth } = makeGrowth();
+    growth.gainExp('lynn', 12); // L2，xp=2
+    const res = growth.gainExp('lynn', -100);
+    expect(res.levelAfter).toBe(2); // 等级不下降
+    expect(growth.experienceOf('lynn')).toBe(0); // 经验下限 0
+  });
 });
