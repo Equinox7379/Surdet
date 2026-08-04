@@ -312,8 +312,9 @@ function checkSceneReachability(
 /**
  * content/config/*.json 内 DSL 表达式的声明式扫描表。
  * 新增配置文件只需在此加一条（file + 表达式提取器 + 可选内建变量豁免）。
- * 当前覆盖：calendar.json nodes[].visibleWhen、combat.json damage.base（内建 atk/def/power）、
- * events.json events[].when、ngp.json clearCondition。
+ * 当前覆盖：calendar.json nodes[].visibleWhen + baseCommands[].when、
+ * combat.json damage.base（内建 atk/def/power）、events.json events[].when、
+ * ngp.json clearCondition、achievements.json [].when。
  */
 interface ConfigExprScan {
   file: string;
@@ -327,12 +328,27 @@ const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
   {
     file: 'calendar.json',
     extract: (cfg) => {
+      const exprs: string[] = [];
       const nodes = cfg['nodes'];
-      if (!Array.isArray(nodes)) return [];
-      return nodes
-        .filter((n): n is Record<string, unknown> => !!n && typeof n === 'object')
-        .map((n) => n['visibleWhen'])
-        .filter((v): v is string => typeof v === 'string');
+      if (Array.isArray(nodes)) {
+        exprs.push(
+          ...nodes
+            .filter((n): n is Record<string, unknown> => !!n && typeof n === 'object')
+            .map((n) => n['visibleWhen'])
+            .filter((v): v is string => typeof v === 'string'),
+        );
+      }
+      // 据点指令 when（数据驱动据点命令的触发条件）
+      const cmds = cfg['baseCommands'];
+      if (Array.isArray(cmds)) {
+        exprs.push(
+          ...cmds
+            .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+            .map((c) => c['when'])
+            .filter((v): v is string => typeof v === 'string'),
+        );
+      }
+      return exprs;
     },
   },
   {
@@ -359,6 +375,17 @@ const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
   {
     file: 'ngp.json',
     extract: (cfg) => (typeof cfg['clearCondition'] === 'string' ? [cfg['clearCondition'] as string] : []),
+  },
+  {
+    file: 'achievements.json',
+    extract: (cfg) => {
+      // achievements.json 是顶层数组（非对象）：runConfigLint 已把数组原样传入
+      const defs = Array.isArray(cfg) ? cfg : [];
+      return defs
+        .filter((d): d is Record<string, unknown> => typeof d === 'object' && d !== null)
+        .map((d) => d['when'])
+        .filter((w): w is string => typeof w === 'string' && w.length > 0);
+    },
   },
 ];
 
@@ -438,4 +465,4 @@ function readConfigJson(
     return null;
   }
 }
-
+
