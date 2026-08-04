@@ -4,6 +4,7 @@ import type { CombatSnapshot } from '../combat/combat.js';
 import type { AffectionSnapshot } from '../systems/affection.js';
 import type { EventSchedulerSnapshot } from '../systems/event-scheduler.js';
 import type { GrowthSnapshot } from '../systems/growth.js';
+import type { AchievementSnapshot } from '../systems/achievement.js';
 
 /**
  * 全家桶系统快照（可选，由宿主经 Interpreter 的 SystemHooks 提供）。
@@ -15,6 +16,8 @@ export interface SystemSnapshots {
   affection?: AffectionSnapshot;
   /** 事件优先级调度器（已触发的一次性事件 ID；预留） */
   eventScheduler?: EventSchedulerSnapshot;
+  /** 成就解锁状态；宿主经 SystemHooks 提供（成长系统由解释器内聚管理，快照在 SaveSnapshot.growth 顶层） */
+  achievements?: AchievementSnapshot;
   /** 周目继承标记等（预留） */
   newGamePlus?: unknown;
 }

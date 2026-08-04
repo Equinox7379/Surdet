@@ -32,6 +32,8 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'unlock_cg', 'unlock_music', 'unlock_text',
   // 大系统指令（解释器转发 system 事件，由宿主消费）
   'battle', 'calendar', 'shop', 'item', 'affection', 'event',
+  // 成就（解释器转发 system 事件，宿主 AchievementSystem 处理 unlock/check）
+  'achievement',
   // 存档点（解释器发 autosave/savepoint 事件，由宿主写入槽位）
   'autosave', 'savepoint',
   // 流程/结构
