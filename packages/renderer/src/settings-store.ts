@@ -6,6 +6,10 @@ import type { AudioHandle } from './types.js';
  * SettingsStore 负责合并默认值与持久化（宿主注入存储后端：localStorage/文件 IPC）；
  * applySettings 把设置投影到 Typewriter/AudioHandle（宿主接线一行调用）。
  */
+/** 快进策略（skipStrategy 数值枚举）：0 = 仅跳已读（默认，遇未读即停）；1 = 全部跳过（一路到底） */
+export const SKIP_STRATEGY_READ = 0;
+export const SKIP_STRATEGY_ALL = 1;
+
 export interface GameSettings {
   /** 打字速度（每秒字符数） */
   textSpeedCps: number;
@@ -21,6 +25,8 @@ export interface GameSettings {
   seVolume: number;
   /** 语音分轨音量 0..1 */
   voiceVolume: number;
+  /** 快进策略：0=仅跳已读 1=全部跳过（决定宿主快进键的默认行为；持久化） */
+  skipStrategy: number;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -31,6 +37,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   bgmVolume: 0.55,
   seVolume: 0.9,
   voiceVolume: 1,
+  skipStrategy: SKIP_STRATEGY_READ,
 };
 
 /** 设置持久化后端（宿主注入；可同步或异步） */
@@ -78,6 +85,14 @@ export const SETTING_STEPS: {
   { key: 'bgmVolume', label: 'BGM 音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'seVolume', label: '音效音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'voiceVolume', label: '语音音量', step: 0.1, min: 0, max: 1, format: pct },
+  {
+    key: 'skipStrategy',
+    label: '快进策略',
+    step: 1,
+    min: SKIP_STRATEGY_READ,
+    max: SKIP_STRATEGY_ALL,
+    format: (v) => (v >= SKIP_STRATEGY_ALL ? '全部跳过' : '仅跳已读'),
+  },
 ];
 
 /** 设置面板步进：按步进定义把某项 +1/-1 步（范围内 clamp，返回新设置对象，不改原对象） */
@@ -117,6 +132,8 @@ export class SettingsStore {
       bgmVolume: clampNum(raw.bgmVolume, d.bgmVolume, 0, 1),
       seVolume: clampNum(raw.seVolume, d.seVolume, 0, 1),
       voiceVolume: clampNum(raw.voiceVolume, d.voiceVolume, 0, 1),
+      // 快进策略枚举 clamp 到 0/1（非法值回退默认"仅跳已读"）
+      skipStrategy: Math.round(clampNum(raw.skipStrategy, d.skipStrategy, SKIP_STRATEGY_READ, SKIP_STRATEGY_ALL)),
     };
     return this.settings;
   }

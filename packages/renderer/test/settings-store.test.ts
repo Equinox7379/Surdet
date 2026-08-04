@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { Typewriter } from '../src/text-buffer.js';
 import type { AudioHandle } from '../src/types.js';
-import { SettingsStore, MemorySettingsStorage, DEFAULT_SETTINGS } from '../src/settings-store.js';
+import {
+  SettingsStore,
+  MemorySettingsStorage,
+  DEFAULT_SETTINGS,
+  SKIP_STRATEGY_READ,
+  SKIP_STRATEGY_ALL,
+  SETTING_STEPS,
+  stepSetting,
+} from '../src/settings-store.js';
 import type { SettingsStorage, GameSettings } from '../src/settings-store.js';
 
 /** 记录调用的 fake 音频 */
@@ -59,6 +67,41 @@ describe('SettingsStore', () => {
     const storage: SettingsStorage = { load: () => null, save: () => {} };
     const store = new SettingsStore(storage);
     expect(await store.load()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('快进策略：枚举 clamp 到 0/1，步进在"仅跳已读/全部跳过"间切换', async () => {
+    // 默认 = 仅跳已读
+    expect(DEFAULT_SETTINGS.skipStrategy).toBe(SKIP_STRATEGY_READ);
+
+    // 越界/非法值 clamp：5 → 上限（全部跳过），-3 → 下限（仅跳已读）
+    const storage: SettingsStorage = {
+      load: () => ({ skipStrategy: 5 }) as Partial<GameSettings>,
+      save: () => {},
+    };
+    const store = new SettingsStore(storage);
+    expect((await store.load()).skipStrategy).toBe(SKIP_STRATEGY_ALL);
+
+    const storage2: SettingsStorage = {
+      load: () => ({ skipStrategy: -3 }) as Partial<GameSettings>,
+      save: () => {},
+    };
+    const store2 = new SettingsStore(storage2);
+    expect((await store2.load()).skipStrategy).toBe(SKIP_STRATEGY_READ);
+
+    // 步进定义存在且格式化正确（设置面板展示）
+    const step = SETTING_STEPS.find((d) => d.key === 'skipStrategy');
+    expect(step).toBeTruthy();
+    expect(step!.format(0)).toBe('仅跳已读');
+    expect(step!.format(1)).toBe('全部跳过');
+
+    // stepSetting 步进往返（范围内 clamp，不越界）
+    const s0 = { ...DEFAULT_SETTINGS };
+    const s1 = stepSetting(s0, 'skipStrategy', 1);
+    expect(s1.skipStrategy).toBe(SKIP_STRATEGY_ALL);
+    const s2 = stepSetting(s1, 'skipStrategy', 1);
+    expect(s2.skipStrategy).toBe(SKIP_STRATEGY_ALL); // 到顶不再增
+    const s3 = stepSetting(s2, 'skipStrategy', -1);
+    expect(s3.skipStrategy).toBe(SKIP_STRATEGY_READ);
   });
 
   it('apply 把设置投影到打字机与音频', async () => {
