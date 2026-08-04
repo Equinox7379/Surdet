@@ -186,10 +186,17 @@ describe('lintProject', () => {
   });
 
   it('规划中未实现的指令产生 W002 警告', () => {
-    const dir = makeProject({ 'content/scenario/a.gal': `@particle\n` });
+    const dir = makeProject({ 'content/scenario/a.gal': `@clear\n` });
     const r = lintProject(dir);
     expect(r.ok).toBe(true); // 警告不阻断
     expect(r.issues.some((i) => i.code === 'W002' && i.severity === 'warning')).toBe(true);
+  });
+
+  it('演出三件套（particle/mov/tint）已实现，不再产生 W002', () => {
+    const dir = makeProject({ 'content/scenario/a.gal': `@particle snow\n@mov lynn left\n@tint 0xff8866 0.3\n` });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W002')).toBe(false);
+    expect(r.issues.some((i) => i.code === 'W001')).toBe(false);
   });
 
   it('R2 新实现的演出指令（wait/shake/flash/zoom）不再产生 W002', () => {

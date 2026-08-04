@@ -439,6 +439,34 @@ export class AdvRenderer {
         this.#stage.wipe?.(parseDur(args[0]));
         break;
       }
+      case 'mov': {
+        // @mov key pos [dur]：立绘位置平移。pos = left/center/right 或裸数字 X 坐标（逻辑像素）
+        const key = args[0] ?? '';
+        const pos = args[1] ?? '';
+        if (key && pos) this.#stage.movePortrait?.(key, pos, parseDur(args[2]));
+        break;
+      }
+      case 'tint': {
+        // @tint off [dur]：清除调色叠加；@tint 颜色 透明度 [dur]：过渡到目标调色
+        const mode = (args[0] ?? '').toLowerCase();
+        if (mode === 'off') {
+          this.#stage.clearTint?.(parseDur(args[1]));
+          break;
+        }
+        const color = parseColor(mode);
+        if (color !== null) {
+          const alpha = parseAlpha(args[1]);
+          this.#stage.setTint?.(color, alpha, parseDur(args[2]));
+        }
+        break;
+      }
+      case 'particle': {
+        // @particle 预设（snow/rain/sakura/sparkle/fireflies）/ @particle off
+        const kind = (args[0] ?? '').toLowerCase();
+        if (kind === 'off') this.#stage.stopParticles?.();
+        else if (kind) this.#stage.startParticles?.(kind);
+        break;
+      }
       case 'title':
       case 'chapter':
       case 'center': {
@@ -498,4 +526,17 @@ function parseStrength(raw: string | undefined): number {
 function parseScale(raw: string | undefined): number {
   const n = raw ? parseFloat(raw) : NaN;
   return Number.isFinite(n) && n >= 0.25 && n <= 4 ? n : 1;
+}
+
+/** @tint 颜色解析：支持 #rrggbb / rrggbb / 0xrrggbb；非法返回 null（静默忽略，与占位策略一致） */
+export function parseColor(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const m = /^(?:#|0x)?([0-9a-f]{6})$/i.exec(raw.trim());
+  return m ? parseInt(m[1]!, 16) : null;
+}
+
+/** @tint 透明度：0..1，缺省 0.5；越界 clamp */
+function parseAlpha(raw: string | undefined): number {
+  const n = raw ? parseFloat(raw) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
 }

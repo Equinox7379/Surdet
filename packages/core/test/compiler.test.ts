@@ -195,9 +195,14 @@ describe('SceneCompiler', () => {
   });
 
   it('规划中未实现的指令产生 W002 诊断（不再静默无操作）', () => {
-    const scene = compile('@particle\n@tint');
+    const scene = compile('@clear');
     expect(scene.diagnostics.some((d) => d.code === 'W002')).toBe(true);
     expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(false);
+  });
+
+  it('演出三件套（particle/mov/tint）已实现，不再产生告警', () => {
+    const scene = compile('@particle snow\n@mov lynn left\n@tint 0xff8866 0.3');
+    expect(scene.diagnostics).toHaveLength(0);
   });
 
   it('R2 新实现的演出指令（wait/shake/flash/zoom）不再产生告警', () => {

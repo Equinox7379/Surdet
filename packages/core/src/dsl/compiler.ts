@@ -15,6 +15,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出（渲染层消费）
   'bg', 'show', 'hide', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
   'shake', 'flash', 'zoom', 'wipe',
+  'particle', 'mov', 'tint',
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
   // 阻塞等待/视频（解释器挂起 awaiting-timer，宿主计时/播放结束驱动恢复）
   'wait', 'video',
@@ -35,8 +36,6 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
 
 /** 已声明但未实现的指令（lint 给 W002 警告，避免静默无操作） */
 export const PLANNED_INSTRUCTIONS: ReadonlySet<string> = new Set([
-  // 演出
-  'particle', 'mov', 'tint',
   // 系统
   'clear',
 ]);

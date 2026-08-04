@@ -39,6 +39,39 @@ function hsl(hash: number, sat: number, light: number): string {
   return `hsl(${hash % 360}, ${sat * 100}%, ${light * 100}%)`;
 }
 
+/** 颜色通道线性插值（RGB 分量各自 lerp 后合成） */
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (bl & 0xff);
+}
+
+/** @particle 预设参数（程序化粒子：数量/颜色/基准半径/垂直速度 px·帧⁻¹/横向摆动幅度）。
+ *  每个粒子用独立 Graphics（v8 链式 API 直接建形，无纹理/Assets 依赖，与占位策略哲学一致）。 */
+interface ParticlePreset {
+  count: number;
+  color: number;
+  /** 基准半径（像素，实际尺寸乘 0.6..1.4 随机） */
+  size: number;
+  /** 垂直速度（像素/帧 @60fps；update 按 delta 归一） */
+  vy: number;
+  /** 横向摆动幅度（像素/帧） */
+  sway: number;
+  /** 雨滴等竖条形粒子 */
+  elongated?: boolean;
+}
+
+const PARTICLE_PRESETS: Record<string, ParticlePreset> = {
+  snow: { count: 60, color: 0xffffff, size: 4, vy: 0.7, sway: 0.5 },
+  rain: { count: 70, color: 0x9db8d9, size: 3, vy: 6, sway: 0.4, elongated: true },
+  sakura: { count: 40, color: 0xffc4d6, size: 5, vy: 0.9, sway: 1.2 },
+  sparkle: { count: 36, color: 0xfff2b0, size: 2.6, vy: -0.25, sway: 0.3 },
+  fireflies: { count: 24, color: 0xd8f08a, size: 3, vy: -0.15, sway: 0.5 },
+};
+
 /** 程序化占位背景：纵向渐变 */
 function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
   const canvas = document.createElement('canvas');
@@ -210,6 +243,19 @@ export class PixiStage implements AdvStage {
   #wipeBar: Graphics;
   #wipeRemain = 0;
   #wipeDur = 1;
+  /** @tint 调色叠加（颜色/透明度线性过渡到目标） */
+  #tintOverlay: Graphics;
+  #tintFrom = { color: 0x000000, alpha: 0 };
+  #tintTo = { color: 0x000000, alpha: 0 };
+  #tintRemain = 0;
+  #tintDur = 1;
+  /** @particle 粒子效果层（程序化粒子，预设 snow/rain/sakura/sparkle/fireflies） */
+  #particleLayer: Container;
+  #particleKind: string | null = null;
+  #particlePreset: ParticlePreset | null = null;
+  #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
+  /** @mov 立绘位置平移补间（旧位置 → 目标位置线性过渡） */
+  #movTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
   /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -248,6 +294,10 @@ export class PixiStage implements AdvStage {
     this.#bannerLayer.addChild(this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#wipeBar.visible = false;
+    this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
+    this.#tintOverlay.alpha = 0;
+    this.#tintOverlay.visible = false;
+    this.#particleLayer = new Container();
     this.#titleLayer = new Container();
     this.#titleLayer.visible = false;
     this.#menuLayer = new Container();
@@ -330,9 +380,9 @@ export class PixiStage implements AdvStage {
     }
     this.app = app;
 
-    app.stage.addChild(this.#worldLayer, this.#uiLayer);
-    // flash 置最末：闪光覆盖全部 UI（黑场 fade 在其下，转场与闪光可叠加）
-    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#flashOverlay);
+    app.stage.addChild(this.#worldLayer, this.#particleLayer, this.#uiLayer);
+    // flash 置最末：闪光覆盖全部 UI（黑场 fade 在其下，转场与闪光可叠加；tint 叠加在 fade 之上、flash 之下）
+    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#tintOverlay, this.#flashOverlay);
     this.#layout();
     return undefined;
   }
@@ -662,6 +712,97 @@ export class PixiStage implements AdvStage {
     this.#wipeBar.visible = true;
   }
 
+  /* ============================ 演出扩展（@mov/@tint/@particle） ============================ */
+
+  /** @mov：立绘位置平移（key 契约同 removePortrait：完整 `角色:服装` 精确；纯角色 ID 移动该角色全部立绘）。
+   *  pos = left/center/right（三档预设）或裸数字（逻辑像素 X 坐标）；durMs 线性过渡。 */
+  movePortrait(key: string, pos: string, durMs = 400): void {
+    const targetX = this.#resolvePortraitX(pos);
+    if (targetX === null) return;
+    const keys = this.#portraitSprites.has(key)
+      ? [key]
+      : [...this.#portraitSprites.keys()].filter((k) => k.startsWith(`${key}:`));
+    const dur = Math.max(1, durMs);
+    for (const k of keys) {
+      const sprite = this.#portraitSprites.get(k)!;
+      // 重复 @mov 同一立绘：丢弃进行中的旧补间，从当前位置重新起步（不叠加抖动）
+      this.#movTweens = this.#movTweens.filter((tw) => tw.sprite !== sprite);
+      this.#movTweens.push({ sprite, fromX: sprite.x, toX: targetX, remain: dur, dur });
+    }
+  }
+
+  /** 位置解析：三档预设 → 与 setPortrait 一致的 X；纯数字 → 逻辑像素坐标；其余 → null（忽略） */
+  #resolvePortraitX(pos: string): number | null {
+    if (pos === 'left') return this.#w * 0.24;
+    if (pos === 'right') return this.#w * 0.76;
+    if (pos === 'center') return this.#w * 0.5;
+    const n = Number(pos);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** @tint：画面调色叠加（全屏颜色叠加 alpha 线性过渡到目标；颜色通道同步过渡） */
+  setTint(color: number, alpha: number, durMs = 400): void {
+    const cur = this.#tintCurrent();
+    this.#tintFrom = cur;
+    this.#tintTo = { color: color & 0xffffff, alpha: Math.max(0, Math.min(1, alpha)) };
+    this.#tintDur = Math.max(1, durMs);
+    this.#tintRemain = this.#tintDur;
+    this.#tintOverlay.visible = true;
+  }
+
+  /** @tint off：淡出调色叠加到全透明 */
+  clearTint(durMs = 400): void {
+    this.setTint(this.#tintCurrent().color, 0, durMs);
+  }
+
+  /** 当前 tint 实际状态（过渡中取插值，便于从中间状态重新起步） */
+  #tintCurrent(): { color: number; alpha: number } {
+    if (this.#tintRemain <= 0) return { ...this.#tintTo };
+    const t = 1 - this.#tintRemain / this.#tintDur;
+    return {
+      color: lerpColor(this.#tintFrom.color, this.#tintTo.color, t),
+      alpha: this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * t,
+    };
+  }
+
+  /** @particle：启动预设粒子效果（snow/rain/sakura/sparkle/fireflies）。
+   *  程序化实现（每粒子独立 Graphics，无纹理/Assets 依赖）；重复调用同名预设幂等，切换预设重建。 */
+  startParticles(kind: string): void {
+    if (this.#particleKind === kind) return; // 幂等
+    this.stopParticles();
+    const preset = PARTICLE_PRESETS[kind];
+    if (!preset) return; // 未知预设静默忽略（占位策略）
+    this.#particleKind = kind;
+    for (let i = 0; i < preset.count; i++) {
+      const scale = 0.6 + Math.random() * 0.8;
+      const r = preset.size * scale;
+      const g = preset.elongated
+        ? new Graphics().rect(-0.8, -r * 3, 1.6, r * 6).fill({ color: preset.color, alpha: 0.75 })
+        : new Graphics().circle(0, 0, r).fill({ color: preset.color, alpha: 1 });
+      g.alpha = 0.55 + Math.random() * 0.45;
+      g.position.set(Math.random() * this.#w, Math.random() * this.#h);
+      this.#particleLayer.addChild(g);
+      this.#particles.push({
+        sprite: g,
+        vx: (Math.random() - 0.5) * preset.sway,
+        vy: preset.vy * (0.7 + Math.random() * 0.6),
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    this.#particlePreset = preset;
+  }
+
+  /** @particle off：停止并清空粒子 */
+  stopParticles(): void {
+    for (const p of this.#particles) {
+      this.#particleLayer.removeChild(p.sprite);
+      p.sprite.destroy();
+    }
+    this.#particles = [];
+    this.#particleKind = null;
+    this.#particlePreset = null;
+  }
+
   /** 横幅：chapter 变体居中大字，tip 变体右上小字；末段淡出 */
   showBanner(text: string, variant: 'chapter' | 'tip'): void {
     if (text.length === 0) return;
@@ -772,8 +913,46 @@ export class PixiStage implements AdvStage {
     void v.play().catch(finish);
   }
 
-  /** 横幅/wipe 时间轴推进（并入 updateEffects 调用链） */
+  /** 横幅/wipe/tint/mov/粒子 时间轴推进（并入 updateEffects 调用链） */
   #updateTransient(deltaMs: number): void {
+    // @tint 调色过渡（颜色通道与 alpha 同步 lerp；alpha 归零后隐藏叠加层）
+    if (this.#tintRemain > 0) {
+      this.#tintRemain = Math.max(0, this.#tintRemain - deltaMs);
+      const t = 1 - this.#tintRemain / this.#tintDur;
+      const color = lerpColor(this.#tintFrom.color, this.#tintTo.color, t);
+      const alpha = this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * t;
+      this.#tintOverlay.tint = color;
+      this.#tintOverlay.alpha = alpha;
+      if (this.#tintRemain === 0 && alpha <= 0.001) this.#tintOverlay.visible = false;
+    }
+    // @mov 立绘平移补间（水平线性过渡；垂直基线不变）
+    if (this.#movTweens.length > 0) {
+      for (let i = this.#movTweens.length - 1; i >= 0; i--) {
+        const tw = this.#movTweens[i]!;
+        tw.remain = Math.max(0, tw.remain - deltaMs);
+        const t = 1 - tw.remain / tw.dur;
+        tw.sprite.x = tw.fromX + (tw.toX - tw.fromX) * t;
+        if (tw.remain === 0) this.#movTweens.splice(i, 1);
+      }
+    }
+    // @particle 粒子漂移（delta 归一到 60fps 帧单位；出界回绕到对边，循环飘动）
+    if (this.#particles.length > 0) {
+      const frames = deltaMs / 16.667;
+      for (const p of this.#particles) {
+        p.phase += 0.02 * frames;
+        p.sprite.x += (p.vx + Math.sin(p.phase) * this.#particleSwing()) * frames;
+        p.sprite.y += p.vy * frames;
+        if (p.sprite.y > this.#h + 12) {
+          p.sprite.y = -10;
+          p.sprite.x = Math.random() * this.#w;
+        } else if (p.sprite.y < -14) {
+          p.sprite.y = this.#h + 10;
+          p.sprite.x = Math.random() * this.#w;
+        }
+        if (p.sprite.x > this.#w + 12) p.sprite.x = -10;
+        else if (p.sprite.x < -12) p.sprite.x = this.#w + 10;
+      }
+    }
     // 立绘交叉淡化补间
     if (this.#portraitTweens.length > 0) {
       const done: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
@@ -804,6 +983,11 @@ export class PixiStage implements AdvStage {
         this.#wipeBar.position.set(0, 0);
       }
     }
+  }
+
+  /** 粒子横向摆动幅度（像素/帧）：来自当前预设，无预设时 0 */
+  #particleSwing(): number {
+    return this.#particlePreset?.sway ?? 0;
   }
 
   /** 当前缩放下的居中偏移（缩放锚点为画面中心；shake 结束回位也用） */
@@ -1537,6 +1721,7 @@ export class PixiStage implements AdvStage {
    */
   destroy(): void {
     this.#clearChoices();
+    this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     const registered = new Set<Texture>([...this.#registeredBgs.values(), ...this.#registeredPortraits.values()]);
     for (const tex of this.#bgTextureCache.values()) {
       if (!registered.has(tex)) tex.destroy();
