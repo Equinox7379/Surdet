@@ -22,7 +22,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 存档点（解释器发 autosave/savepoint 事件，由宿主写入槽位）
   'autosave', 'savepoint',
   // 流程/结构
-  'goto', 'jump', 'end', 'scene', 'if', 'elif', 'else', 'endif', 'choice', 'label',
+  'goto', 'jump', 'call', 'return', 'end', 'scene', 'if', 'elif', 'else', 'endif', 'choice', 'label',
 ]);
 
 /** 已声明但未实现的指令（lint 给 W002 警告，避免静默无操作） */
@@ -32,7 +32,7 @@ export const PLANNED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 文本/排版
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
   // 流程
-  'call', 'return', 'loop', 'random', 'switch', 'check',
+  'loop', 'random', 'switch', 'check',
   // 状态
   'add_item', 'remove_item', 'has_item',
   // 系统
@@ -44,6 +44,17 @@ export const KNOWN_INSTRUCTIONS: ReadonlySet<string> = new Set([
   ...IMPLEMENTED_INSTRUCTIONS,
   ...PLANNED_INSTRUCTIONS,
 ]);
+
+/** 场景源码内容哈希（FNV-1a 32 位）：存档定位以指令索引为准，剧本编辑会使旧存档
+ *  的 pc 漂移；把源码哈希随存档保存，读档时比对即可发现"存档与剧本版本不一致"。 */
+function hashSource(source: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < source.length; i++) {
+    h ^= source.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
 
 /** 指令发射器：维护指令数组、标签索引、待回填跳转 */
 class Emitter {
@@ -111,6 +122,7 @@ export class SceneCompiler {
       instructions: emitter.instructions,
       labels: new Map(emitter.labels),
       diagnostics: emitter.diagnostics,
+      sceneHash: hashSource(source),
     };
   }
 
@@ -184,6 +196,19 @@ export class SceneCompiler {
     }
     if (name === 'end') {
       // 用户显式 @end 与编译器自动追加的结束指令同构，解释器遇 end 即停，双 end 无害
+      emitter.emit<DslInstr>({ op: 'end', index: -1, file: p.file, line: p.line, col: p.col });
+      return;
+    }
+    if (name === 'call') {
+      const target = args.join(' ');
+      if (target.length === 0) {
+        throw new DslError('S006', '@call 缺少调用目标场景', p, '形如 @call sceneId.label 或 @call sceneId');
+      }
+      emitter.emit<DslInstr>({ op: 'call', target, index: -1, file: p.file, line: p.line, col: p.col });
+      return;
+    }
+    if (name === 'return') {
+      // @return 编译为 end 指令：运行时若调用栈非空则返回调用方，栈空则结束场景
       emitter.emit<DslInstr>({ op: 'end', index: -1, file: p.file, line: p.line, col: p.col });
       return;
     }
@@ -267,6 +292,18 @@ export class SceneCompiler {
       }
     }
 
+    // 全部选项都带条件：运行时可能全部被过滤 → 剧情静默跳过 choice（高风险结构，提醒作者）
+    if (options.length > 0 && options.every((o) => o.when !== null)) {
+      emitter.addDiagnostic({
+        code: 'W005',
+        file: p.file,
+        line: p.line,
+        col: p.col,
+        message: '@choice 全部选项均带条件（[if:expr]），运行时可能被全部过滤而静默跳过选择',
+        hint: '建议至少保留一个无条件选项作为兜底',
+      });
+    }
+
     const choiceAfter = emitter.instructions.length;
     for (const j of pendingAfter.values()) j.gotoIndex = choiceAfter;
 
@@ -294,6 +331,10 @@ export class SceneCompiler {
     }
     if (name === 'goto') {
       const target = args.join(' ');
+      if (target.length === 0) {
+        // 与顶层 @goto 一致：空目标编译期即抛错，不拖到运行期"未解析的 goto 目标"
+        throw new DslError('S006', '@goto 缺少跳转目标标签', p, '形如 @goto labelName');
+      }
       const j = this.#makeGoto(target, p);
       emitter.emit(j);
       emitter.trackGoto(j);
@@ -301,10 +342,25 @@ export class SceneCompiler {
     }
     if (name === 'jump') {
       const target = args.join(' ');
+      if (target.length === 0) {
+        throw new DslError('S006', '@jump 缺少跳转目标场景', p, '形如 @jump sceneId.label 或 @jump sceneId');
+      }
       emitter.emit<DslInstr>({ op: 'jump', kind: 'jump', target, gotoIndex: null, index: -1, file: p.file, line: p.line, col: p.col });
       return;
     }
     if (name === 'end') {
+      emitter.emit<DslInstr>({ op: 'end', index: -1, file: p.file, line: p.line, col: p.col });
+      return;
+    }
+    if (name === 'call') {
+      const target = args.join(' ');
+      if (target.length === 0) {
+        throw new DslError('S006', '@call 缺少调用目标场景', p, '形如 @call sceneId.label 或 @call sceneId');
+      }
+      emitter.emit<DslInstr>({ op: 'call', target, index: -1, file: p.file, line: p.line, col: p.col });
+      return;
+    }
+    if (name === 'return') {
       emitter.emit<DslInstr>({ op: 'end', index: -1, file: p.file, line: p.line, col: p.col });
       return;
     }

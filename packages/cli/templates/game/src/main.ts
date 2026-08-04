@@ -12,11 +12,12 @@ import {
   QUICK_SLOT,
   AUTO_SLOT,
 } from '@surdet/core';
-import type { VarDeclaration, SaveStorage, SaveSnapshot } from '@surdet/core';
+import type { VarDeclaration, SaveStorage, SaveSnapshot, CoreEventMap } from '@surdet/core';
 import { PixiStage, AdvRenderer, AudioManager } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
 
-const sceneFiles = import.meta.glob('../content/scenario/*.gal', {
+// vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
+const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
   query: '?raw',
   import: 'default',
 });
@@ -40,7 +41,7 @@ async function main(): Promise<void> {
     registry.register(compileScene(src, path, id));
   }
 
-  const bus = new EventBus();
+  const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry);
   const audio = new AudioManager();
   const renderer = new AdvRenderer(stage, audio, {
@@ -51,6 +52,10 @@ async function main(): Promise<void> {
 
   stage.app!.canvas.addEventListener('pointerdown', () => renderer.advance());
   stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
+
+  // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率不变）
+  stage.fitWindow();
+  window.addEventListener('resize', () => stage.fitWindow());
 
   const saveStorage: SaveStorage = {
     read: (slot) => {
@@ -83,9 +88,13 @@ async function main(): Promise<void> {
   });
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
-  bus.on<SaveSnapshot>('autosave', (snap) => {
-    saves.save(AUTO_SLOT, snap);
-    console.info('[game] 自动存档');
+  bus.on('autosave', (snap) => {
+    void saves.save(AUTO_SLOT, snap).then(() => console.info('[game] 自动存档'));
+  });
+
+  // 存档场景哈希不匹配：存档后剧本被编辑，定位可能漂移（引擎仍照常加载，此处提醒）
+  bus.on('saveMismatch', (p) => {
+    console.warn(`[game] 存档与剧本版本不一致（场景 ${p.sceneId}），定位可能漂移`);
   });
 
   window.addEventListener('keydown', (e) => {
@@ -93,19 +102,20 @@ async function main(): Promise<void> {
       e.preventDefault();
       const snap = interp.saveSnapshot('quick');
       if (snap) {
-        saves.save(QUICK_SLOT, snap);
-        console.info('[game] 快速存档');
+        void saves.save(QUICK_SLOT, snap).then(() => console.info('[game] 快速存档'));
       }
     } else if (e.key === 'F9') {
       e.preventDefault();
-      if (saves.has(QUICK_SLOT)) {
-        try {
-          interp.loadSnapshot(saves.load(QUICK_SLOT));
-          console.info('[game] 快速读档');
-        } catch (err) {
-          console.error('[game] 读档失败：', err);
+      void (async () => {
+        if (await saves.has(QUICK_SLOT)) {
+          try {
+            interp.loadSnapshot(await saves.load(QUICK_SLOT));
+            console.info('[game] 快速读档');
+          } catch (err) {
+            console.error('[game] 读档失败：', err);
+          }
         }
-      }
+      })();
     } else if (e.key === 'a' || e.key === 'A') {
       console.info('[game] 自动播放', renderer.toggleAuto() ? '开' : '关');
     } else if (e.key === 's' || e.key === 'S') {

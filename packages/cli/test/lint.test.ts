@@ -74,6 +74,34 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'J002')).toBe(true);
   });
 
+  it('@call 到不存在的场景报错（J001，与 @jump 同等校验）', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@call ghost_scene\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => i.code === 'J001' && i.text.includes('@call'))).toBe(true);
+  });
+
+  it('@call 到缺失标签报错（J002）', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@call b.missing\n`,
+      'content/scenario/b.gal': `@label start\n凛：好。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => i.code === 'J002')).toBe(true);
+  });
+
+  it('@call 目标场景/标签均存在时通过', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@call b.extra\n`,
+      'content/scenario/b.gal': `@label extra\n凛：好。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(true);
+  });
+
   it('场景 ID 重复报错', () => {
     const dir = makeProject({
       'content/scenario/dup.gal': `@label a\n`,

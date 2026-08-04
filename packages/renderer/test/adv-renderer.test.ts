@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventBus, compileScene, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
+import type { CoreEventMap } from '@surdet/core';
 import { AdvRenderer, Typewriter, dequote } from '../src/index.js';
 import type { AdvStage, AudioHandle, PortraitView } from '../src/types.js';
 
@@ -50,13 +51,24 @@ class FakeAudio implements AudioHandle {
   bgm: (string | null)[] = [];
   se: string[] = [];
   voice: string[] = [];
+  stoppedAll = 0;
   playBgm(src: string | null): void { this.bgm.push(src); }
   playSe(src: string): void { this.se.push(src); }
   playVoice(src: string): void { this.voice.push(src); }
+  stopAll(): void { this.stoppedAll++; }
+  setMasterVolume(): void {}
+  getMasterVolume(): number { return 1; }
+  setBgmVolume(): void {}
+  getBgmVolume(): number { return 1; }
+  setSeVolume(): void {}
+  getSeVolume(): number { return 1; }
+  setVoiceVolume(): void {}
+  getVoiceVolume(): number { return 1; }
+  isVoicePlaying(): boolean { return false; }
 }
 
 function makeBus() {
-  return new EventBus();
+  return new EventBus<CoreEventMap>();
 }
 
 describe('AdvRenderer', () => {
@@ -256,6 +268,55 @@ describe('AdvRenderer', () => {
     expect(advanced).toBe(1);
     expect(r.status).toBe('idle');
   });
+
+  it('@hide 纯角色 ID（规范写法）原样转发给 stage（前缀匹配移除是 PixiStage 职责）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+
+    bus.emit('instr', { name: 'show', args: ['lynn:armor', 'despair'], modifiers: new Map([['left', '']]), pos: { file: 'x', line: 1, col: 1 } });
+    bus.emit('instr', { name: 'hide', args: ['lynn'], modifiers: new Map(), pos: { file: 'x', line: 2, col: 1 } });
+    expect(stage.calls).toContain('show:lynn:armor');
+    expect(stage.removed).toEqual(['lynn']); // @show lynn:armor 后 @hide lynn 必须能生效（PixiStage 按前缀匹配）
+  });
+
+  it('M5 快进遇未读即停：已读行（wasRead=true）继续跳过，未读行退出快进正常播放', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onAdvance: () => { advanced++; } });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    // 已读行：保持快进 → 瞬时完成 + 自动推进
+    bus.emit('text', { speaker: null, value: '已读行', wasRead: true });
+    r.update(1000);
+    expect(advanced).toBe(1);
+    expect(r.skipMode).toBe(true);
+
+    // 未读行：立即退出快进，进入正常打字（不自动推进）
+    bus.emit('text', { speaker: null, value: '未读行', wasRead: false });
+    expect(r.skipMode).toBe(false);
+    expect(r.status).toBe('typing');
+    r.update(1000); // 打字完成，但停在 awaiting 等待玩家
+    expect(advanced).toBe(1);
+    expect(r.status).toBe('awaiting');
+  });
+
+  it('快进兼容旧载荷（无 wasRead 字段）：保持连续推进', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onAdvance: () => { advanced++; } });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    bus.emit('text', { speaker: null, value: '旧载荷行' }); // 无 wasRead → 不停
+    r.update(1000);
+    expect(advanced).toBe(1);
+    expect(r.skipMode).toBe(true);
+  });
 });
 
 describe('集成：解释器 → 渲染器', () => {
@@ -265,7 +326,7 @@ describe('集成：解释器 → 渲染器', () => {
       { name: 'hasSword', type: 'flag', initial: false },
     ];
     const store = new VariableStore(decls);
-    const bus = new EventBus();
+    const bus = new EventBus<CoreEventMap>();
     const registry = new SceneRegistry();
     const interp = new Interpreter(store, bus, registry);
     const stage = new FakeStage();
@@ -289,8 +350,8 @@ describe('集成：解释器 → 渲染器', () => {
     registry.register(compileScene('@label start\n凛：第二章。', 'c2.gal', 'ch02'));
 
     // 事件回调内同步驱动（迭代续跑）：打字完成后模拟点击推进
-    bus.on<{ options: { index: number; label: string }[] }>('choice', () => renderer.select(1));
-    bus.on<{ speaker: string | null; value: string }>('text', () => {
+    bus.on('choice', () => renderer.select(1));
+    bus.on('text', () => {
       renderer.update(1000); // 打字完成
       if (renderer.status === 'awaiting') renderer.advance();
     });
@@ -308,7 +369,7 @@ describe('集成：解释器 → 渲染器', () => {
       { name: 'trust', type: 'number', initial: 0 },
     ];
     const store = new VariableStore(decls);
-    const bus = new EventBus();
+    const bus = new EventBus<CoreEventMap>();
     const registry = new SceneRegistry();
     const interp = new Interpreter(store, bus, registry);
     const stage = new FakeStage();
@@ -326,7 +387,7 @@ describe('集成：解释器 → 渲染器', () => {
       'e.gal', 'empty',
     ));
 
-    bus.on<{ speaker: string | null; value: string }>('text', () => {
+    bus.on('text', () => {
       renderer.update(1000);
       if (renderer.status === 'awaiting') renderer.advance();
     });
@@ -342,5 +403,55 @@ describe('dequote 契约', () => {
   it('表达式值保留引号，通用指令值去引号', () => {
     // 渲染层只负责通用指令值
     expect(dequote('"a b"')).toBe('a b');
+  });
+
+  it('转义引号：剥外引号并还原转义序列', () => {
+    expect(dequote('"a\\\"b"')).toBe('a"b');
+    expect(dequote("'a\\'b'")).toBe("a'b");
+    expect(dequote('"a\\\\b"')).toBe('a\\b');
+  });
+});
+
+describe('快进批量推进', () => {
+  it('单帧内连续推进多行已读文本（不受帧率限制）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const TOTAL = 50;
+    let idx = 0;
+    let advanced = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), {
+      onAdvance: () => {
+        advanced++;
+        idx++;
+        if (idx < TOTAL) bus.emit('text', { speaker: null, value: `行${idx}`, wasRead: true });
+      },
+    });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    bus.emit('text', { speaker: null, value: '行0', wasRead: true });
+    r.update(16); // 单帧应批量推进全部 50 行
+    expect(advanced).toBe(TOTAL);
+  });
+
+  it('快进批量推进遇未读行立即停止并正常播放', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), {
+      onAdvance: () => {
+        advanced++;
+        // 第二行未读：应停在该行
+        bus.emit('text', { speaker: null, value: '未读行', wasRead: false });
+      },
+    });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    bus.emit('text', { speaker: null, value: '已读行', wasRead: true });
+    r.update(16);
+    expect(advanced).toBe(1); // 只推进了已读行，未读行停住
+    expect(r.skipMode).toBe(false);
+    expect(r.status).toBe('typing');
   });
 });

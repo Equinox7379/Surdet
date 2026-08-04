@@ -184,10 +184,18 @@ export function parseInlineInstructions(
   return result;
 }
 
-/** 从一行文本提取说话人：首个中/英文冒号前的非空短前缀（且非纯数字，避免误判时间）。 */
+/** 从一行文本提取说话人：首个中/英文冒号前的非空短前缀（且非纯数字，避免误判时间；
+ *  且冒号后不紧跟 `/`，避免 `https://…` 这类 URL 的 scheme 被误切为说话人）。 */
 function extractSpeaker(trimmed: string): string | null {
   const idx = firstColonIndex(trimmed);
   if (idx <= 0) return null;
+  // URL scheme（https://…）不当作说话人：仅当冒号后为 "//" 且前缀形如 scheme 时才跳过，
+  // 避免误伤冒号后以斜杠开头的正常台词（如 旁白：/远处钟声/）
+  if (
+    trimmed[idx + 1] === '/'
+    && trimmed[idx + 2] === '/'
+    && /^[A-Za-z][A-Za-z0-9+.-]*$/.test(trimmed.slice(0, idx))
+  ) return null;
   const prefix = trimmed.slice(0, idx);
   if (prefix.length > MAX_SPEAKER_LEN) return null;
   if (/\s/.test(prefix)) return null;
@@ -203,13 +211,20 @@ function firstColonIndex(s: string): number {
   return Math.min(full, half);
 }
 
-/** 引号感知：按分隔符切段，跳过引号内的分隔符（保留引号字符，供后续剥除） */
+/** 引号感知：按分隔符切段，跳过引号内的分隔符（保留引号字符，供后续剥除）。
+ *  引号内支持反斜杠转义（\" / \' / \\）：转义序列原样保留，由消费方（表达式解析器/dequote）还原。 */
 function splitOutsideQuotes(input: string, sep: string): string[] {
   const out: string[] = [];
   let cur = '';
   let quote: '"' | "'" | null = null;
-  for (const c of input) {
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i]!;
     if (quote !== null) {
+      if (c === '\\' && i + 1 < input.length) {
+        cur += c + input[i + 1]!;
+        i++;
+        continue;
+      }
       cur += c;
       if (c === quote) quote = null;
     } else if (c === '"' || c === "'") {
@@ -226,7 +241,8 @@ function splitOutsideQuotes(input: string, sep: string): string[] {
   return out;
 }
 
-/** 引号感知参数切分：引号内空白/@ 不拆 token，但引号字符保留（供表达式字面量与通用值消费方处理） */
+/** 引号感知参数切分：引号内空白/@ 不拆 token，但引号字符保留（供表达式字面量与通用值消费方处理）。
+ *  引号内支持反斜杠转义：\" 不再提前闭合引号，转义序列原样保留在 token 中。 */
 function tokenizeArgs(input: string): string[] {
   const out: string[] = [];
   let cur = '';
@@ -235,6 +251,11 @@ function tokenizeArgs(input: string): string[] {
   for (let i = 0; i < input.length; i++) {
     const c = input[i]!;
     if (quote !== null) {
+      if (c === '\\' && i + 1 < input.length) {
+        cur += c + input[i + 1]!;
+        i++;
+        continue;
+      }
       cur += c;
       if (c === quote) quote = null;
     } else if (c === '"' || c === "'") {

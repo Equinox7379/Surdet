@@ -9,7 +9,9 @@ export interface AdvStage {
   setBackground(key: string | null): void;
   /** 设置/更新立绘 */
   setPortrait(key: string, opts: PortraitView): void;
-  /** 移除立绘 */
+  /** 移除立绘。key 支持两种写法（PixiStage 实现）：
+   *  完整 `角色:服装`（与 @show 的第一个参数一致）精确移除；
+   *  纯 `角色`（文档规范写法 @hide lynn）移除该角色的全部立绘。 */
   removePortrait(key: string): void;
   /** 显示对话框文本（speaker 为 null 表示旁白） */
   showText(speaker: string | null, value: string): void;
@@ -44,6 +46,22 @@ export interface AudioHandle {
   playBgm(src: string | null): void;
   playSe(src: string): void;
   playVoice(src: string): void;
+  /** 停止全部音频（BGM/SE/语音） */
+  stopAll(): void;
+  /** 主音量 0..1（乘到各分轨之上） */
+  setMasterVolume(v: number): void;
+  getMasterVolume(): number;
+  /** BGM 分轨音量 0..1 */
+  setBgmVolume(v: number): void;
+  getBgmVolume(): number;
+  /** SE 分轨音量 0..1 */
+  setSeVolume(v: number): void;
+  getSeVolume(): number;
+  /** 语音分轨音量 0..1 */
+  setVoiceVolume(v: number): void;
+  getVoiceVolume(): number;
+  /** 语音是否播放中（宿主可做"语音播完再自动推进"等策略） */
+  isVoicePlaying(): boolean;
 }
 
 /** 无音频实现（占位素材阶段用） */
@@ -51,4 +69,14 @@ export const NULL_AUDIO: AudioHandle = {
   playBgm() {},
   playSe() {},
   playVoice() {},
+  stopAll() {},
+  setMasterVolume() {},
+  getMasterVolume() { return 1; },
+  setBgmVolume() {},
+  getBgmVolume() { return 1; },
+  setSeVolume() {},
+  getSeVolume() { return 1; },
+  setVoiceVolume() {},
+  getVoiceVolume() { return 1; },
+  isVoicePlaying() { return false; },
 };

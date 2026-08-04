@@ -7,7 +7,7 @@ import { VariableStore } from '../src/state/variable-store.js';
 import { SaveManager } from '../src/save/save-manager.js';
 import type { SystemSnapshots } from '../src/save/save-manager.js';
 import type { VarDeclaration } from '../src/state/types.js';
-import type { TextEventPayload } from '../src/runtime/interpreter.js';
+import type { CoreEventMap } from '../src/runtime/interpreter.js';
 
 const decls: VarDeclaration[] = [
   { name: 'trust', type: 'number', initial: 0 },
@@ -15,7 +15,7 @@ const decls: VarDeclaration[] = [
 
 function makeInterp() {
   const store = new VariableStore(decls);
-  const bus = new EventBus();
+  const bus = new EventBus<CoreEventMap>();
   const registry = new SceneRegistry();
   const interp = new Interpreter(store, bus, registry);
   return { store, bus, registry, interp };
@@ -30,7 +30,8 @@ describe('Interpreter 存档', () => {
     const snap = interp.saveSnapshot();
     expect(snap).not.toBeNull();
     expect(snap!.variables['trust']).toBe(7);
-    expect(snap!.position).toEqual({ sceneId: 's1', pc: 1 }); // pc 指向当前显示行（凛：甲。）
+    expect(snap!.position).toMatchObject({ sceneId: 's1', pc: 1 }); // pc 指向当前显示行（凛：甲。）
+    expect(snap!.position!.sceneHash).toBeTruthy(); // 场景源码哈希随存档保存（读档一致性校验用）
     expect(snap!.readSet).toContain('s1#1'); // 已读 key = 场景ID#指令索引
   });
 
@@ -45,7 +46,7 @@ describe('Interpreter 存档', () => {
 
     // 恢复：变量回到 7，定位回甲（重新发出 text 事件）
     const texts: string[] = [];
-    bus.on<TextEventPayload>('text', (p) => texts.push(p.value));
+    bus.on('text', (p) => texts.push(p.value));
     interp.loadSnapshot(snap);
     expect(interp.status).toBe('awaiting-advance');
     expect(texts).toEqual(['甲。']);
@@ -56,7 +57,7 @@ describe('Interpreter 存档', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('@unlock_cg cg_end\n@unlock_cg cg_end\n@unlock_music m_op', 's.gal', 's1'));
     const events: { type: string; id: string; fresh: boolean }[] = [];
-    bus.on('gallery', (p: { type: string; id: string; fresh: boolean }) => events.push(p));
+    bus.on('gallery', (p) => events.push(p));
 
     interp.start('s1');
     expect(interp.gallery.cgs).toEqual(['cg_end']);
@@ -74,7 +75,7 @@ describe('Interpreter 存档', () => {
     const snap = interp.saveSnapshot()!;
 
     const texts: string[] = [];
-    bus.on<TextEventPayload>('text', (p) => texts.push(p.value));
+    bus.on('text', (p) => texts.push(p.value));
     interp.loadSnapshot(snap);
     expect(texts).toEqual(['甲。']);
     interp.advance();
@@ -88,8 +89,8 @@ describe('Interpreter 存档', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('@set trust = 7\n凛：甲。\n@autosave\n@savepoint\n凛：乙。', 's.gal', 's1'));
     const kinds: string[] = [];
-    bus.on('autosave', (p) => kinds.push((p as { kind: string }).kind));
-    bus.on('savepoint', (p) => kinds.push((p as { kind: string }).kind));
+    bus.on('autosave', (p) => kinds.push(p.kind));
+    bus.on('savepoint', (p) => kinds.push(p.kind));
 
     interp.start('s1');
     interp.advance(); // 甲 → autosave → savepoint → 乙
@@ -100,18 +101,20 @@ describe('Interpreter 存档', () => {
   it('@autosave 快照 position 指向下一条指令（读档不重跑 autosave）', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('凛：甲。\n@autosave\n凛：乙。', 's.gal', 's1'));
-    let snapPos: { sceneId: string; pc: number } | null = null;
-    bus.on('autosave', (p) => { snapPos = (p as { position: { sceneId: string; pc: number } }).position; });
+    let snapPos: { sceneId: string; pc: number; sceneHash?: string } | null = null;
+    bus.on('autosave', (p) => { snapPos = p.position; });
 
     interp.start('s1');
     interp.advance(); // 甲 → @autosave（index 1）：position 应指向 index 2（凛：乙。），而非 autosave 自身
-    expect(snapPos).toEqual({ sceneId: 's1', pc: 2 });
+    expect(snapPos).toMatchObject({ sceneId: 's1', pc: 2 });
+    // 自动存档同样携带场景哈希（position 重建不得丢失，否则 saveMismatch 对自动档失效）
+    expect(snapPos!.sceneHash).toBeTruthy();
 
     // 用该快照恢复：应从 乙 开始，不再重跑 @autosave
     let autosaveCount = 0;
     bus.on('autosave', () => { autosaveCount++; });
     const texts: string[] = [];
-    bus.on<TextEventPayload>('text', (p) => texts.push(p.value));
+    bus.on('text', (p) => texts.push(p.value));
     const snap = interp.saveSnapshot()!;
     snap.position = snapPos;
     interp.loadSnapshot(snap);
@@ -122,18 +125,18 @@ describe('Interpreter 存档', () => {
     expect(interp.status).toBe('ended');
   });
 
-  it('存档写入 schemaVersion，读档对过高版本抛错', () => {
+  it('存档写入 schemaVersion，读档对过高版本抛错', async () => {
     const { registry, interp } = makeInterp();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));
     interp.start('s1');
     const snap = interp.saveSnapshot()!;
     // saveSnapshot 直接产物自带 schemaVersion（宿主直写档不经 SaveManager 时校验仍生效）
-    expect(snap.meta.schemaVersion).toBe(1);
+    expect(snap.meta.schemaVersion).toBe(3);
 
     const sm = new SaveManager();
-    sm.save('s1', snap);
-    const loaded = sm.load('s1');
-    expect(loaded.meta.schemaVersion).toBe(1);
+    await sm.save('s1', snap);
+    const loaded = await sm.load('s1');
+    expect(loaded.meta.schemaVersion).toBe(3);
 
     // 旧档无 schemaVersion（视为 0）→ 兼容，不抛错
     interp.loadSnapshot({ ...snap, meta: { ...snap.meta, schemaVersion: undefined } });
@@ -146,7 +149,7 @@ describe('Interpreter 存档', () => {
 
   it('SystemHooks：saveSnapshot 携带系统快照，loadSnapshot 触发宿主 restore', () => {
     const store = new VariableStore(decls);
-    const bus = new EventBus();
+    const bus = new EventBus<CoreEventMap>();
     const registry = new SceneRegistry();
     let restored: SystemSnapshots | null = null;
     const systems = {
@@ -166,9 +169,9 @@ describe('Interpreter 存档', () => {
     expect(restored).toEqual({ calendar: { turn: 3, ap: 2, visited: ['node_a'] } });
   });
 
-  it('系统快照（含战斗冷却）经 SaveManager JSON 序列化往返不损坏', () => {
+  it('系统快照（含战斗冷却）经 SaveManager JSON 序列化往返不损坏', async () => {
     const store = new VariableStore(decls);
-    const bus = new EventBus();
+    const bus = new EventBus<CoreEventMap>();
     const registry = new SceneRegistry();
     const combat = {
       units: [
@@ -186,11 +189,35 @@ describe('Interpreter 存档', () => {
     interp.start('s1');
     const snap = interp.saveSnapshot()!;
     const sm = new SaveManager();
-    sm.save('s1', snap);
-    const loaded = sm.load('s1');
+    await sm.save('s1', snap);
+    const loaded = await sm.load('s1');
 
     expect(loaded.systems).toEqual({ combat });
     // 战斗冷却经 JSON 深拷贝后仍保留（证明 cooldowns 不再因 Map 序列化丢失）
     expect(loaded.systems!.combat!.units[0]!.cooldowns['power_shot']).toBe(2);
+  });
+
+  it('读档场景哈希不匹配发 saveMismatch（剧本存档后被编辑，仍照常加载）', () => {
+    const { bus, registry, interp } = makeInterp();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    expect(snap.position!.sceneHash).toBeTruthy();
+
+    // 篡改快照哈希模拟"存档后剧本被编辑"（正常保存的快照哈希与注册场景一致，不触发事件）
+    snap.position = { ...snap.position!, sceneHash: 'deadbeef' };
+    const mismatches: { sceneId: string; expected: string; actual: string }[] = [];
+    bus.on('saveMismatch', (p) => mismatches.push(p));
+
+    interp.loadSnapshot(snap);
+    expect(mismatches).toHaveLength(1);
+    expect(mismatches[0]!.sceneId).toBe('s1');
+    expect(mismatches[0]!.expected).toBe('deadbeef');
+    expect(interp.status).toBe('awaiting-advance'); // 不匹配仅告警，照常加载
+
+    // 哈希一致的快照不触发事件
+    const snap2 = interp.saveSnapshot()!;
+    interp.loadSnapshot(snap2);
+    expect(mismatches).toHaveLength(1);
   });
 });

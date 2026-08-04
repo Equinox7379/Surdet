@@ -20,6 +20,17 @@ export class Typewriter {
     this.#cps = options.charsPerSecond ?? 24;
   }
 
+  /** 运行时调整打字速度（每秒字符数；设置界面接入用） */
+  setSpeed(charsPerSecond: number): void {
+    if (Number.isFinite(charsPerSecond) && charsPerSecond > 0) {
+      this.#cps = charsPerSecond;
+    }
+  }
+
+  get speed(): number {
+    return this.#cps;
+  }
+
   /** 设置新文本（重置进度）。空文本视为立即完成并触发 onComplete。 */
   set text(value: string) {
     this.#full = value;

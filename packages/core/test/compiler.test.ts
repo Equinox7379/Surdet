@@ -192,6 +192,27 @@ describe('SceneCompiler', () => {
     expect(scene.diagnostics).toHaveLength(0);
   });
 
+  it('@call 编译为 call 指令，@return 编译为 end（不再产生 W002）', () => {
+    const scene = compile('@call sub\n@return');
+    expect(scene.diagnostics).toHaveLength(0);
+    const call = scene.instructions.find((i) => i.op === 'call');
+    expect(call).toMatchObject({ op: 'call', target: 'sub' });
+    // @return→end + 文末自动追加 end
+    const ends = scene.instructions.filter((i) => i.op === 'end');
+    expect(ends.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('@call 支持 sceneId.label 目标且不带告警', () => {
+    const scene = compile('@call ch01_02.extra');
+    expect(scene.diagnostics).toHaveLength(0);
+    expect(scene.instructions[0]).toMatchObject({ op: 'call', target: 'ch01_02.extra' });
+  });
+
+  it('choice 选项内联 @goto/@jump 空目标编译期抛 S006（与顶层一致）', () => {
+    expect(() => compile('@choice\n  选项A -> @goto\n')).toThrow(/S006/);
+    expect(() => compile('@choice\n  选项A -> @jump\n')).toThrow(/S006/);
+  });
+
   it('引号内 @ 参数在编译链路不损坏（保留为字符串字面量）', () => {
     const scene = compile('@set email = "x@y.com"');
     const set = scene.instructions[0];
