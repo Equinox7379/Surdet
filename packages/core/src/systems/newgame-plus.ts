@@ -46,13 +46,25 @@ export class NewGamePlus {
 
   /** 计算继承结果：base 为新周目初始值表，返回值合并进初始表 */
   computeInherit(base: Record<string, VarValue>): Record<string, VarValue> {
+    const clearedVars: Record<string, VarValue> = {};
+    for (const entry of this.#config.inherit) {
+      const v = this.#env.getVariable(entry.variable);
+      if (v !== undefined) clearedVars[entry.variable] = v;
+    }
+    return this.computeInheritFrom(base, clearedVars);
+  }
+
+  /** 显式通关值版本的继承计算：clearedVars 来自宿主持久化的全局通关记录
+   *  （@clear 时刻的变量快照），供新周目开局时应用——不依赖活体变量表。
+   *  规则：copy = 通关值覆盖初始；add = 初始 + 通关值×权重（非数值按 0）；max = 取大（非数值取初始）。 */
+  computeInheritFrom(base: Record<string, VarValue>, clearedVars: Record<string, VarValue>): Record<string, VarValue> {
     const out: Record<string, VarValue> = { ...base };
     for (const entry of this.#config.inherit) {
-      const cleared = this.#env.getVariable(entry.variable);
+      const cleared = clearedVars[entry.variable];
       const current = base[entry.variable];
       switch (entry.mode) {
         case 'copy':
-          out[entry.variable] = (cleared ?? current) as VarValue;
+          if (cleared !== undefined) out[entry.variable] = cleared;
           break;
         case 'add': {
           const w = entry.weight ?? 1;
@@ -74,5 +86,10 @@ export class NewGamePlus {
 
   get unlockGallery(): boolean {
     return this.#config.unlockGallery;
+  }
+
+  /** 继承项清单（宿主新周目应用继承值时遍历用；副本防篡改） */
+  inheritEntries(): NgpInheritEntry[] {
+    return [...this.#config.inherit];
   }
 }

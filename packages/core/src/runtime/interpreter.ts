@@ -16,6 +16,7 @@ import { GalleryState } from '../systems/gallery-state.js';
 import type { SavePosition, SaveSnapshot, SystemSnapshots } from '../save/save-manager.js';
 import { SAVE_SCHEMA_VERSION, assertValidSnapshot } from '../save/save-manager.js';
 import { migrateSnapshot } from '../save/migrate.js';
+import { ClearTracker } from '../systems/clear-tracker.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -75,6 +76,8 @@ export interface CoreEventMap extends EventMap {
   /** @video 阻塞播放：宿主播放结束（或玩家点击跳过）后调 finishWait() 恢复 */
   video: { src: string };
   gallery: { type: 'cg' | 'music' | 'text'; id: string; fresh: boolean };
+  /** @clear 周目通关：ending = 结局标识（缺省为当前场景 ID）；fresh = 首次达成 */
+  clear: { ending: string; fresh: boolean };
   autosave: SaveSnapshot;
   savepoint: SaveSnapshot;
   sceneEnd: { sceneId: string };
@@ -128,6 +131,8 @@ export class Interpreter {
   readonly gallery: GalleryState;
   /** 已读文本记录（快进跳过用） */
   readonly readTracker: ReadTracker;
+  /** 通关记录（@clear 结局收集；随存档持久化） */
+  readonly clearTracker: ClearTracker;
   /** 全家桶系统存档钩子（宿主注入） */
   #systemHooks: SystemHooks;
 
@@ -138,6 +143,7 @@ export class Interpreter {
     gallery: GalleryState = new GalleryState(),
     readTracker: ReadTracker = new ReadTracker(),
     systemHooks: SystemHooks = {},
+    clearTracker: ClearTracker = new ClearTracker(),
   ) {
     this.#store = store;
     this.#bus = bus;
@@ -145,6 +151,7 @@ export class Interpreter {
     this.gallery = gallery;
     this.readTracker = readTracker;
     this.#systemHooks = systemHooks;
+    this.clearTracker = clearTracker;
   }
 
   get status(): RuntimeStatus {
@@ -216,6 +223,7 @@ export class Interpreter {
       kind,
       readSet: this.readTracker.snapshot(),
       gallery: this.gallery.snapshot(),
+      clears: this.clearTracker.snapshot(),
       ...(systems ? { systems } : {}),
     };
   }
@@ -246,6 +254,7 @@ export class Interpreter {
     this.#store.restore(snap.variables, { allowReadonly: true }); // 可信快照：readonly 系统变量随档恢复
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
+    this.clearTracker.restore(snap.clears); // 旧档无 clears 字段按未通关
     if (snap.systems) this.#systemHooks.restore?.(snap.systems);
     this.#pendingChoice = null;
     // v1 旧档无 callStack 字段 → 按空栈加载（@call 引入前的存档不受影响）
@@ -750,6 +759,14 @@ export class Interpreter {
         requireArg(instr, arg0, '@unlock_text');
         const fresh = this.gallery.unlockText(arg0!);
         this.#bus.emit('gallery', { type: 'text', id: arg0!, fresh });
+        return;
+      }
+      case 'clear': {
+        // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
+        // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
+        const ending = arg0 ?? this.#scene!.sceneId;
+        const fresh = this.clearTracker.markClear(ending);
+        this.#bus.emit('clear', { ending, fresh });
         return;
       }
       case 'autosave': {

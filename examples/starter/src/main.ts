@@ -19,6 +19,7 @@ import {
 } from '@surdet/core';
 import type {
   VarDeclaration,
+  VarValue,
   SaveStorage,
   SaveSnapshot,
   SaveSlotMeta,
@@ -547,6 +548,47 @@ async function main(): Promise<void> {
     document.body.appendChild(div);
   }
 
+  // ===== 周目继承（兰斯式全局通关记录：@clear 事件 → 跨周目持久化；新周目开局应用继承） =====
+  /** 全局通关记录（跨存档/跨周目；Electron 与浏览器的 localStorage 均持久化到各自 userData） */
+  interface GlobalClearRecord {
+    endings: string[];
+    playthroughs: number;
+    /** 最近一次 @clear 时刻的变量全量快照（继承计算源） */
+    variables: Record<string, unknown>;
+    clearedAt: number;
+  }
+  const CLEAR_KEY = 'surdet:clearRecord';
+  function loadClearRecord(): GlobalClearRecord | null {
+    try {
+      const raw = localStorage.getItem(CLEAR_KEY);
+      return raw ? (JSON.parse(raw) as GlobalClearRecord) : null;
+    } catch {
+      return null;
+    }
+  }
+  function saveClearRecord(rec: GlobalClearRecord): void {
+    try {
+      localStorage.setItem(CLEAR_KEY, JSON.stringify(rec));
+    } catch (err) {
+      console.error('[starter] 通关记录写入失败：', err);
+    }
+  }
+  let clearRecord = loadClearRecord();
+
+  // @clear：写入全局通关记录（结局收集 + 变量快照 + 周目计数）
+  bus.on('clear', (p) => {
+    const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
+    if (!rec.endings.includes(p.ending)) {
+      rec.endings.push(p.ending);
+      rec.playthroughs += 1;
+      rec.variables = store.snapshot() as Record<string, unknown>;
+      rec.clearedAt = Date.now();
+      clearRecord = rec;
+      saveClearRecord(rec);
+      console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目）`);
+    }
+  });
+
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   function showTitleScreen(): void {
     stage.showTitle(
@@ -568,12 +610,25 @@ async function main(): Promise<void> {
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   function titleSelect(id: string): void {
     switch (id) {
-      case 'new':
+      case 'new': {
         stage.hideTitle();
         store.reset();
+        // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
+        const rec = loadClearRecord();
+        if (rec) {
+          const inherited = ngp.computeInheritFrom(
+            store.snapshot(),
+            rec.variables as Record<string, VarValue>,
+          );
+          for (const [name, value] of Object.entries(inherited)) {
+            if (store.has(name) && store.get(name) !== value) store.set(name, value);
+          }
+          console.info(`[starter] 新周目开局（第 ${rec.playthroughs + 1} 周目，继承 ${ngp.inheritEntries().length} 项）`);
+        }
         sessionStart = Date.now(); // 新周目重新计游戏时长
         interp.start((gameConfig as { entryScene?: string }).entryScene ?? 'ch01_01'); // 审计修复：入口场景取自配置，不再硬编码
         break;
+      }
       case 'load':
         void openSaveLoad('load');
         break;

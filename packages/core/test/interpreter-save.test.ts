@@ -67,6 +67,38 @@ describe('Interpreter 存档', () => {
     expect(events[1]!.fresh).toBe(false); // 重复解锁
   });
 
+  it('@clear：记录结局 + 广播 clear 事件（缺省结局 = 场景 ID；重复达成 fresh=false）', () => {
+    const { bus, registry, interp } = makeInterp();
+    registry.register(compileScene('@clear\n@clear bad_end\n@clear bad_end', 's.gal', 'end_a'));
+    const events: { ending: string; fresh: boolean }[] = [];
+    bus.on('clear', (p) => events.push(p));
+
+    interp.start('end_a');
+    expect(interp.clearTracker.endings()).toEqual(['end_a', 'bad_end']);
+    expect(interp.clearTracker.isCleared()).toBe(true);
+    expect(events).toEqual([
+      { ending: 'end_a', fresh: true },
+      { ending: 'bad_end', fresh: true },
+      { ending: 'bad_end', fresh: false },
+    ]);
+  });
+
+  it('@clear 结局收集随存档往返（读档恢复）', () => {
+    const { registry, interp } = makeInterp();
+    registry.register(compileScene('@clear good_end\n凛：终。', 's.gal', 'fin'));
+
+    interp.start('fin');
+    interp.advance(); // 挂起在文本
+    const snap = interp.saveSnapshot()!;
+    expect(snap.clears?.endings).toEqual(['good_end']);
+
+    // 新解释器读档：通关记录恢复
+    const { registry: r2, interp: i2 } = makeInterp();
+    r2.register(compileScene('@clear good_end\n凛：终。', 's.gal', 'fin'));
+    i2.loadSnapshot(snap);
+    expect(i2.clearTracker.endings()).toEqual(['good_end']);
+  });
+
   it('loadSnapshot 在场景中段恢复能继续推进', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('@set trust = 7\n凛：甲。\n凛：乙。', 's.gal', 's1'));

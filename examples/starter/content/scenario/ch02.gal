@@ -17,7 +17,8 @@
 凛：回合战斗已接入宿主（CombatSolver）。
 @if battleWon
 @flag cleared
-凛：战斗胜利！已达成 Clear 条件（NewGamePlus）。
+@clear demo_end
+凛：战斗胜利！已达成 Clear 条件（NewGamePlus）。结局已记录到全局通关档案。
 @else
 凛：战斗失败……
 @endif

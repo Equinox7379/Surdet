@@ -59,6 +59,8 @@ export interface SaveSnapshot {
   readSet: string[];
   /** CG/音乐/文本回想解锁状态（texts 为后续版本新增，旧档无此字段） */
   gallery: { cgs: string[]; music: string[]; texts?: string[] };
+  /** 通关记录（@clear 结局收集；后续版本新增，旧档无此字段按未通关） */
+  clears?: { endings: string[] };
   /** 全家桶系统状态快照（日历/战斗/好感/周目，宿主经 SystemHooks 提供，可选） */
   systems?: SystemSnapshots;
 }
@@ -135,6 +137,12 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
     const music = g.music as unknown[];
     if (!cgs.every((x) => typeof x === 'string') || !music.every((x) => typeof x === 'string')) {
       fail('gallery.cgs / gallery.music 必须是字符串数组');
+    }
+  }
+  if (s.clears !== undefined) {
+    const c = s.clears as Record<string, unknown>;
+    if (typeof c !== 'object' || c === null || !Array.isArray(c.endings) || !(c.endings as unknown[]).every((x) => typeof x === 'string')) {
+      fail('clears 必须是 { endings: string[] }');
     }
   }
   // systems 形状兜底（审计修复：深度校验补全）
