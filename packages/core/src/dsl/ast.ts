@@ -117,6 +117,12 @@ export interface CompiledChoiceOption {
   pos: SourcePos;
 }
 
+/** @call sceneId[.label]：将返回点（当前场景 + 下一条指令）压入调用栈，跳转到目标场景 */
+export interface CallInstr extends DslInstrBase {
+  op: 'call';
+  target: string;
+}
+
 /** 场景结束（文末自动追加，解释器据此切换场景/返回） */
 export interface SceneEndInstr extends DslInstrBase {
   op: 'end';
@@ -131,6 +137,7 @@ export type DslInstr =
   | SetInstr
   | ModifyInstr
   | ChoiceInstr
+  | CallInstr
   | SceneEndInstr;
 
 /** 编译诊断（warning 级，error 直接抛 DslError） */
@@ -148,6 +155,9 @@ export interface CompiledScene {
   labels: Map<string, number>;
   /** 诊断信息 */
   diagnostics: DslDiagnostic[];
+  /** 源码内容哈希（存档定位一致性校验用：剧本改动后旧存档 pc 可能指向错误指令，
+   *  读档时哈希不匹配由解释器发 saveMismatch 事件提醒宿主） */
+  sceneHash?: string;
 }
 
 /** 编译异常（错误级，带行列定位） */

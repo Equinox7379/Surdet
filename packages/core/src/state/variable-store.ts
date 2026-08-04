@@ -44,10 +44,19 @@ export class VariableStore {
     return cloneValue(this.#values.get(name)!) as T;
   }
 
+  /** 读取内部引用（不拷贝）。仅供"承诺只读"的内部热路径使用
+   *  （表达式求值器 / 文本插值）：求值器为纯函数、插值只做 String 转换，
+   *  均不修改容器值，省去每字符/每条件求值一次的深拷贝开销。
+   *  对外 API 与任何可能保存返回值的场景必须用 get（防御性拷贝）。 */
+  getRef(name: string): VarValue {
+    this.#assertDeclared(name);
+    return this.#values.get(name)!;
+  }
+
   /** 表达式求值器兼容读取（实现 runtime/expr-eval 的 ExprEnv 结构）。
-   *  未声明变量返回 undefined（由求值器报"变量未定义"）。 */
+   *  未声明变量返回 undefined（由求值器报"变量未定义"）。走 getRef 免拷贝热路径。 */
   getVariable(name: string): VarValue | undefined {
-    return this.has(name) ? this.get(name) : undefined;
+    return this.has(name) ? this.getRef(name) : undefined;
   }
 
   /** 读取 number（运行时校验类型） */

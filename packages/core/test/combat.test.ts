@@ -173,6 +173,76 @@ describe('CombatSolver', () => {
     expect(s2.actingTeam).toBe('enemies');
   });
 
+  it('M8 僵局检测与 pass()：互不在射程时僵局成立，pass 推进回合使 maxTurns 生效', () => {
+    const c: CombatConfig = { ...config, elementChain: {}, winCondition: 'survive_turns', maxTurns: 2 };
+    const s = new CombatSolver(c, fixedRng);
+    s.start({ allies: ['sword'], enemies: ['goblin', 'wolf'] });
+    // 开局布阵双方紧贴（敌方 basePos = 我方人数）：近战可打，无僵局
+    expect(s.canAttackAny('allies_0')).toBe(true);
+    expect(s.actingTeamStalemate).toBe(false);
+
+    // 把敌方拉远 → 双方互不在射程（无移动阶段的求解器）→ 僵局
+    s.units.find((u) => u.uid === 'enemies_0')!.position = 10;
+    s.units.find((u) => u.uid === 'enemies_1')!.position = 11;
+    expect(s.canAttackAny('allies_0')).toBe(false);
+    expect(s.canAttackAny('enemies_0')).toBe(false);
+    expect(s.actingTeamStalemate).toBe(true);
+
+    s.pass(); // allies pass → enemies 行动方（同样僵局）
+    expect(s.actingTeam).toBe('enemies');
+    expect(s.actingTeamStalemate).toBe(true);
+    s.pass(); // enemies pass → 整回合结束，turn 2（尚未超时）
+    expect(s.turn).toBe(2);
+    expect(s.finished).toBe(false);
+
+    s.pass(); // turn 2 双方再 pass → turn 3 > maxTurns 2 → 守方（teams[0]）胜
+    s.pass();
+    expect(s.finished).toBe(true);
+    expect(s.winner).toBe('allies');
+    // 战斗结束后 actingTeamStalemate 恒 false，pass() 抛错
+    expect(s.actingTeamStalemate).toBe(false);
+    expect(() => s.pass()).toThrow(/已结束/);
+  });
+
+  it('M8 canAttackAny：普攻射程内为 true；超程时仅冷却就绪的 long 技能可行动', () => {
+    const c: CombatConfig = {
+      ...config,
+      elementChain: {},
+      skills: [...config.skills, { id: 'snipe', name: '狙击', power: 1, cooldown: 3, hit: 1, effects: ['long'] }],
+      units: [...config.units, { id: 'sniper', name: '狙击手', hp: 10, atk: 4, def: 0, range: 1, move: 0, kind: 'human', skills: ['snipe'] }],
+    };
+    const s = new CombatSolver(c, fixedRng);
+    s.start({ allies: ['sniper'], enemies: ['goblin', 'wolf'] });
+    // 开局贴身：range 1 够到相邻敌人
+    expect(s.canAttackAny('allies_0')).toBe(true);
+
+    // 全部敌人拉出射程（位置 5/6/7 vs sniper 位置 0）
+    const s2 = new CombatSolver(c, fixedRng);
+    s2.start({ allies: ['sniper'], enemies: ['goblin', 'wolf', 'goblin'] });
+    s2.units.find((u) => u.uid === 'enemies_0')!.position = 5;
+    s2.units.find((u) => u.uid === 'enemies_1')!.position = 6;
+    s2.units.find((u) => u.uid === 'enemies_2')!.position = 7;
+    // 普攻超程但 snipe（long）冷却就绪 → 仍可行动，不判僵局
+    expect(s2.canAttackAny('allies_0')).toBe(true);
+    expect(s2.actingTeamStalemate).toBe(false);
+
+    // snipe 使用后进入冷却 3 → 无 long 技能可用 → 僵局
+    s2.act('allies_0', 'enemies_0', 'snipe'); // → enemies 行动
+    s2.pass(); // enemies pass → 整回合末冷却 3→2，回到 allies
+    expect(s2.actingTeam).toBe('allies');
+    expect(s2.canAttackAny('allies_0')).toBe(false);
+    expect(s2.actingTeamStalemate).toBe(true);
+
+    // 再熬两个整回合：冷却 2→1（仍僵局）→ 1→0（long 恢复，僵局解除）
+    s2.pass(); s2.pass();
+    expect(s2.turn).toBe(3);
+    expect(s2.canAttackAny('allies_0')).toBe(false);
+    s2.pass(); s2.pass();
+    expect(s2.turn).toBe(4);
+    expect(s2.canAttackAny('allies_0')).toBe(true);
+    expect(s2.actingTeamStalemate).toBe(false);
+  });
+
   it('M7 伤害公式错误不再静默按 0 处理，而是抛错', () => {
     // 公式引用缺失变量：表达式求值器抛 ExprEvalError
     const c1: CombatConfig = { ...config, elementChain: {}, damage: { base: 'atk * missing_var', critChance: 0, critMultiplier: 1.5 } };

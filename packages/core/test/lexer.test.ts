@@ -22,6 +22,14 @@ describe('Lexer', () => {
     expect(tokens[3]!.value).toBe('12:30 的钟声');
   });
 
+  it('URL scheme 不误判为说话人，冒号后斜杠注释的台词仍提取说话人', () => {
+    const tokens = only(lex('https://example.com/a\n旁白：/远处传来钟声/'), (t) => t.type === 'text') as TextToken[];
+    expect(tokens[0]!.speaker).toBeNull(); // https:// 整体保留
+    expect(tokens[0]!.value).toBe('https://example.com/a');
+    expect(tokens[1]!.speaker).toBe('旁白'); // 冒号后斜杠非 URL：正常提取说话人
+    expect(tokens[1]!.value).toBe('/远处传来钟声/');
+  });
+
   it('解析指令与修饰符', () => {
     const tokens = only(lex('@show lynn:armor despair @ left @ effect shake'), (t) => t.type === 'instruction') as InstructionToken[];
     const t = tokens[0]!;

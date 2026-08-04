@@ -2,6 +2,7 @@
 /**
  * surdet CLI：new / lint / build / pack。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lintProject } from './lint.js';
@@ -9,7 +10,18 @@ import { cmdNew } from './new.js';
 import { cmdBuild } from './build.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.1.0';
+
+/** 版本号从 cli 包 package.json 读取（dist 位于 packages/cli/dist，../package.json 即包清单）；
+ *  读取失败回退 unknown，避免发版时忘记同步硬编码版本。 */
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+const VERSION = readVersion();
 
 const HELP = `Surdet Engine CLI v${VERSION}
 

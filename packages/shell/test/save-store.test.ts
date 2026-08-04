@@ -76,11 +76,46 @@ describe('FileSaveStore', () => {
     expect(store.read('huge')).toBeNull();
   });
 
+  it('read 返回隔离副本：调用方篡改返回值不影响后续读取（与 MemoryStorage 读隔离契约一致）', () => {
+    const store = new FileSaveStore(makeDir());
+    store.write('slot1', makeSnap('slot1'));
+    const got1 = store.read('slot1')!;
+    (got1.variables as Record<string, number>)['trust'] = 999;
+    got1.position!.pc = 99;
+    const got2 = store.read('slot1')!;
+    expect((got2.variables as Record<string, number>)['trust']).toBe(5);
+    expect(got2.position!.pc).toBe(2);
+  });
+
   it('循环引用数据 write 抛清晰错误而非裸 TypeError', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     const circular: Record<string, unknown> = { meta: { id: 'x', createdAt: 1, updatedAt: 1 }, variables: {} };
     circular['self'] = circular;
     expect(() => store.write('x', circular as never)).toThrow(/无法序列化/);
+  });
+
+  it('listMeta 经索引返回槽位元信息（delete 同步移除）', () => {
+    const store = new FileSaveStore(makeDir());
+    store.write('auto', makeSnap('auto'));
+    store.write('quick', { ...makeSnap('quick'), meta: { id: 'quick', createdAt: 2, updatedAt: 9 } });
+    const metas = store.listMeta();
+    expect(metas.map((m) => m.id).sort()).toEqual(['auto', 'quick']);
+    expect(metas.find((m) => m.id === 'quick')!.updatedAt).toBe(9);
+    store.delete('quick');
+    expect(store.listMeta().map((m) => m.id)).toEqual(['auto']);
+  });
+
+  it('listMeta 在无索引的旧存档目录回退逐文件读取', () => {
+    const dir = makeDir();
+    fs.writeFileSync(path.join(dir, 'legacy.json'), JSON.stringify(makeSnap('legacy')));
+    const store = new FileSaveStore(dir);
+    expect(store.listMeta().map((m) => m.id)).toEqual(['legacy']);
+  });
+
+  it('index.json 不被当作存档槽位（list 排除索引与临时文件）', () => {
+    const store = new FileSaveStore(makeDir());
+    store.write('s1', makeSnap('s1'));
+    expect(store.list()).toEqual(['s1']);
   });
 });

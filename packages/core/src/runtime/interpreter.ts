@@ -8,7 +8,7 @@ import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
-import { EventBus, type EventPayload } from './event-bus.js';
+import { EventBus, type EventMap } from './event-bus.js';
 import { SceneRegistry } from './scene-registry.js';
 import { ReadTracker } from './read-tracker.js';
 import { GalleryState } from '../systems/gallery-state.js';
@@ -29,10 +29,16 @@ export interface SystemHooks {
 /** 运行时状态 */
 export type RuntimeStatus = 'idle' | 'running' | 'awaiting-advance' | 'awaiting-choice' | 'ended';
 
+/** @call 最大嵌套深度（同步死循环检测兜底之前，先给出更明确的错误） */
+const MAX_CALL_DEPTH = 64;
+
 /** text 事件载荷 */
 export interface TextEventPayload {
   speaker: string | null;
   value: string;
+  /** 该文本在本次发出前是否已读过（快进"遇未读即停"用；渲染层仅在 false 时停）。
+   *  可选：解释器始终提供；宿主/测试直发事件可省略（渲染层按 undefined 兼容处理） */
+  wasRead?: boolean;
 }
 
 /** choice 事件载荷（options 已按 when 条件过滤，带原始索引供 choose） */
@@ -46,6 +52,28 @@ export interface InstrEventPayload {
   args: string[];
   modifiers: Map<string, string>;
   pos: SourcePos;
+}
+
+/** system 指令事件载荷（@battle/@calendar/@affection/@event/@shop/@item 转发宿主驱动） */
+export interface SystemEventPayload {
+  type: string;
+  args: string[];
+  modifiers: Map<string, string>;
+  pos: SourcePos;
+}
+
+/** 解释器事件映射：EventBus 各事件的载荷类型，订阅/发射端自动推导，宿主接线无需断言 */
+export interface CoreEventMap extends EventMap {
+  text: TextEventPayload;
+  choice: ChoiceEventPayload;
+  instr: InstrEventPayload;
+  system: SystemEventPayload;
+  gallery: { type: 'cg' | 'music'; id: string; fresh: boolean };
+  autosave: SaveSnapshot;
+  savepoint: SaveSnapshot;
+  sceneEnd: { sceneId: string };
+  /** 存档场景哈希与当前场景不一致：存档后剧本被编辑，pc 定位可能漂移（仍继续加载，仅告警） */
+  saveMismatch: { sceneId: string; expected: string; actual: string };
 }
 
 /** 运行时错误（带场景/指令位置） */
@@ -71,12 +99,14 @@ export class RuntimeError extends SourceError {
  */
 export class Interpreter {
   #store: VariableStore;
-  #bus: EventBus;
+  #bus: EventBus<CoreEventMap>;
   #registry: SceneRegistry;
   #status: RuntimeStatus = 'idle';
   #scene: CompiledScene | null = null;
   #pc = 0;
   #pendingChoice: ChoiceInstr | null = null;
+  /** @call 子场景调用栈（返回点序列，栈顶在末尾；随存档持久化） */
+  #callStack: SavePosition[] = [];
   /** 主循环执行中标志：事件回调内重入推进时置 resume 而非递归 */
   #stepping = false;
   #resumeRequested = false;
@@ -89,7 +119,7 @@ export class Interpreter {
 
   constructor(
     store: VariableStore,
-    bus: EventBus,
+    bus: EventBus<CoreEventMap>,
     registry: SceneRegistry,
     gallery: GalleryState = new GalleryState(),
     readTracker: ReadTracker = new ReadTracker(),
@@ -120,6 +150,7 @@ export class Interpreter {
       : this.#registry.resolve(sceneId);
     // 清理残留状态（防御：若之前卡在 awaiting-choice，重新 start 不应悬挂旧 choice）
     this.#pendingChoice = null;
+    this.#callStack = [];
     this.#scene = scene;
     this.#pc = pc;
     this.#status = 'running';
@@ -133,17 +164,23 @@ export class Interpreter {
   /** 当前定位（存档用）。
    *  文本挂起时 pc 已指向下一指令，存档应回退到"当前显示行"；选择肢挂起时 pc 即 choice 指令。 */
   savePosition(): SavePosition | null {
-    if (!this.#scene) return null;
+    return this.#currentSavePosition().position;
+  }
+
+  /** 当前定位 + 场景源码哈希（saveSnapshot 随档保存，loadSnapshot 校验不匹配发 saveMismatch） */
+  #currentSavePosition(): { position: SavePosition | null; hash: string | undefined } {
+    if (!this.#scene) return { position: null, hash: undefined };
     const pc = this.#status === 'awaiting-advance' ? this.#pc - 1 : this.#pc;
-    return { sceneId: this.#scene.sceneId, pc };
+    return { position: { sceneId: this.#scene.sceneId, pc }, hash: this.#scene.sceneHash };
   }
 
   /** 完整存档快照（变量 + 定位 + 已读 + 解锁 + 全家桶系统状态）。未运行/空闲时返回 null。
    *  kind 用于标记手动/快速/自动存档（默认 manual，宿主可覆盖）。 */
   saveSnapshot(kind: SaveSnapshot['kind'] = 'manual'): SaveSnapshot | null {
     if (!this.#scene || this.#status === 'idle') return null;
-    const position = this.savePosition();
+    const { position, hash } = this.#currentSavePosition();
     if (!position) return null;
+    if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
     return {
       meta: {
@@ -157,6 +194,7 @@ export class Interpreter {
       },
       variables: this.#store.snapshot(),
       position,
+      callStack: [...this.#callStack],
       kind,
       readSet: this.readTracker.snapshot(),
       gallery: this.gallery.snapshot(),
@@ -178,6 +216,8 @@ export class Interpreter {
     this.gallery.restore(snap.gallery);
     if (snap.systems) this.#systemHooks.restore?.(snap.systems);
     this.#pendingChoice = null;
+    // v1 旧档无 callStack 字段 → 按空栈加载（@call 引入前的存档不受影响）
+    this.#callStack = snap.callStack ? [...snap.callStack] : [];
     if (!snap.position) {
       this.#scene = null;
       this.#pc = 0;
@@ -185,6 +225,18 @@ export class Interpreter {
       return;
     }
     const scene = this.#registry.get(snap.position.sceneId);
+    // 场景哈希校验：存档后剧本被编辑 → pc 定位可能指向错误指令。
+    // 仍按原定位加载（下方 clamp 到合法范围），但发 saveMismatch 供宿主提示玩家。
+    // 旧档无 sceneHash（schema ≤ v2）或场景无哈希时跳过校验。
+    const expectedHash = snap.position.sceneHash;
+    const actualHash = scene.sceneHash;
+    if (expectedHash !== undefined && actualHash !== undefined && expectedHash !== actualHash) {
+      this.#bus.emit('saveMismatch', {
+        sceneId: scene.sceneId,
+        expected: expectedHash,
+        actual: actualHash,
+      });
+    }
     this.#scene = scene;
     const max = Math.max(0, scene.instructions.length - 1);
     this.#pc = Math.min(Math.max(0, snap.position.pc), max);
@@ -277,12 +329,16 @@ export class Interpreter {
             // 先置挂起状态再发事件：回调内可直接 advance()
             this.#pc++;
             this.#status = 'awaiting-advance';
-            // 用指令索引作为已读 key：避免同场景两条相同文本行被合并为一条已读记录
-            this.readTracker.mark(`${this.#scene!.sceneId}#${instr.index}`);
+            // 用指令索引作为已读 key：避免同场景两条相同文本行被合并为一条已读记录。
+            // wasRead 须在 mark 之前查询：渲染层快进"遇未读即停"据此判断（false = 首次播放）。
+            const readKey = `${this.#scene!.sceneId}#${instr.index}`;
+            const wasRead = this.readTracker.has(readKey);
+            this.readTracker.mark(readKey);
             this.#resumeRequested = false;
             this.#bus.emit('text', {
               speaker: instr.speaker === null ? null : interpolate(instr.speaker, this.#store),
               value: interpolate(instr.value, this.#store),
+              wasRead,
             });
             if (this.#resumeRequested) {
               this.#resumeRequested = false;
@@ -324,6 +380,21 @@ export class Interpreter {
             break;
           }
 
+          case 'call': {
+            // @call：压入返回点（当前场景的下一条指令）并跳转目标场景
+            if (this.#callStack.length >= MAX_CALL_DEPTH) {
+              throw new RuntimeError(
+                `@call 嵌套深度超过 ${MAX_CALL_DEPTH}（检查子场景是否互相 @call 且缺少挂起点）`,
+                instr,
+              );
+            }
+            const { scene, pc } = this.#registry.resolve(instr.target);
+            this.#callStack.push({ sceneId: this.#scene!.sceneId, pc: this.#pc + 1 });
+            this.#scene = scene;
+            this.#pc = pc;
+            break;
+          }
+
           case 'choice': {
             const available = instr.options
               .map((o, i) => ({ o, i }))
@@ -350,6 +421,15 @@ export class Interpreter {
           }
 
           case 'end': {
+            // @return / 场景自然结束：调用栈非空时返回栈顶返回点（子场景调用返回），
+            // 不发 sceneEnd——那只在真正的场景/游戏结束（栈空）时发出。
+            const ret = this.#callStack.pop();
+            if (ret) {
+              const caller = this.#registry.get(ret.sceneId);
+              this.#scene = caller;
+              this.#pc = Math.min(Math.max(0, ret.pc), Math.max(0, caller.instructions.length - 1));
+              break;
+            }
             this.#status = 'ended';
             // 场景/游戏结束事件：宿主可接结局演出、ED、返回标题画面。
             // 回调内可调用 start()（经 #resumeRequested 延迟重启，见 start 的 #stepping 分支）。
@@ -427,25 +507,28 @@ export class Interpreter {
       case 'unlock_cg': {
         requireArg(instr, arg0, '@unlock_cg');
         const fresh = this.gallery.unlockCg(arg0!);
-        this.#bus.emit('gallery', { type: 'cg', id: arg0, fresh });
+        this.#bus.emit('gallery', { type: 'cg', id: arg0!, fresh });
         return;
       }
       case 'unlock_music': {
         requireArg(instr, arg0, '@unlock_music');
         const fresh = this.gallery.unlockMusic(arg0!);
-        this.#bus.emit('gallery', { type: 'music', id: arg0, fresh });
+        this.#bus.emit('gallery', { type: 'music', id: arg0!, fresh });
         return;
       }
       case 'autosave': {
         // 存档点：发当前完整快照给宿主，由宿主写入自动存档槽位。
         // position 前移一位指向下一条指令：autosave 本身无状态副作用，读档后不应重跑它
         // （否则会重复触发 autosave 事件，宿主重复写档）。
+        // 边缘情况：指令恰为场景末条（非文本）时 pc+1 指向自动追加的 end 指令，
+        // 读档会直接触发 sceneEnd——语义上合理（场景确实已走完），不 clamp。
         const snap = this.saveSnapshot('auto');
         if (snap) {
           if (snap.position) {
-            snap.position = { sceneId: snap.position.sceneId, pc: snap.position.pc + 1 };
+            // 展开保留 sceneHash：自动存档同样参与读档哈希一致性校验
+            snap.position = { ...snap.position, pc: snap.position.pc + 1 };
           }
-          this.#bus.emit('autosave', snap as unknown as EventPayload);
+          this.#bus.emit('autosave', snap);
         }
         return;
       }
@@ -454,9 +537,9 @@ export class Interpreter {
         const snap = this.saveSnapshot('manual');
         if (snap) {
           if (snap.position) {
-            snap.position = { sceneId: snap.position.sceneId, pc: snap.position.pc + 1 };
+            snap.position = { ...snap.position, pc: snap.position.pc + 1 };
           }
-          this.#bus.emit('savepoint', snap as unknown as EventPayload);
+          this.#bus.emit('savepoint', snap);
         }
         return;
       }
@@ -494,13 +577,14 @@ export class Interpreter {
 
 /** 文本插值：{var} → 变量值；未声明变量保留原文。
  *  支持转义：{{ → {、}} → }（用于输出字面花括号）。
- *  变量名规则与表达式解析器 parseWord 一致：首字符为字母/下划线/CJK，随后可含数字/点/$
- *  （{2x}、{.var} 这类非法名不插值，保留原文）。 */
+ *  变量名规则与表达式解析器 parseWord 一致：首字符为字母/下划线（\p{L} 含增补平面字符），
+ *  随后可含数字/点/$（{2x}、{.var} 这类非法名不插值，保留原文）。
+ *  走 getRef 免拷贝热路径：每行文本逐字展示都会触发插值，返回值仅做 String 转换，只读安全。 */
 export function interpolate(text: string, store: VariableStore): string {
-  return text.replace(/\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g, (match, name: string | undefined) => {
+  return text.replace(/\{\{|\}\}|\{([\p{L}_][\p{L}0-9_$.]*)\}/gu, (match, name: string | undefined) => {
     if (match === '{{') return '{';
     if (match === '}}') return '}';
-    return store.has(name!) ? String(store.get(name!)) : `{${name}}`;
+    return store.has(name!) ? String(store.getRef(name!)) : `{${name}}`;
   });
 }
 
@@ -508,7 +592,7 @@ export function interpolate(text: string, store: VariableStore): string {
  *  单点维护，供 lint 对文本/说话人插值做变量声明校验。 */
 export function collectInterpolatedVars(text: string): string[] {
   const out: string[] = [];
-  const re = /\{\{|\}\}|\{([A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*)\}/g;
+  const re = /\{\{|\}\}|\{([\p{L}_][\p{L}0-9_$.]*)\}/gu;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m[1] !== undefined) out.push(m[1]);

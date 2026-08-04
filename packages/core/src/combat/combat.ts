@@ -236,7 +236,7 @@ export class CombatSolver {
     if (!target.alive) throw new Error(`目标 '${targetUid}' 已倒下`);
 
     const skill = skillId ? this.#skill(skillId) : null;
-    if (skill && attacker.cooldowns.get(skillId!)! > 0) {
+    if (skillId && skill && (attacker.cooldowns.get(skillId) ?? 0) > 0) {
       throw new Error(`技能 '${skillId}' 冷却中`);
     }
 
@@ -285,6 +285,41 @@ export class CombatSolver {
     };
     this.#advance();
     return this.#lastAction;
+  }
+
+  /** 该单位是否存在可攻击的敌方目标（普攻射程内，或冷却就绪的 'long' 技能）。宿主 AI 僵局检测用。 */
+  canAttackAny(unitUid: string): boolean {
+    const unit = this.#unit(unitUid);
+    if (!unit.alive) return false;
+    for (const t of this.#units) {
+      if (!t.alive || t.team === unit.team) continue;
+      if (Math.abs(unit.position - t.position) <= unit.range) return true;
+      // 超出普攻射程时，仅 'long' 技能（无视距离）且冷却就绪才可行动
+      for (const sid of unit.skills) {
+        const s = this.#config.skills.find((x) => x.id === sid);
+        if (s?.effects?.includes('long') && (unit.cooldowns.get(sid) ?? 0) <= 0) return true;
+      }
+    }
+    return false;
+  }
+
+  /** 当前行动方是否无任何可用攻击（双方无人够得着对方时陷入僵局，宿主应调用 pass()） */
+  get actingTeamStalemate(): boolean {
+    if (this.#finished) return false;
+    return !this.#units.some((u) => u.team === this.actingTeam && u.alive && this.canAttackAny(u.uid));
+  }
+
+  /**
+   * 跳过行动（pass）：行动方无可攻击目标时（如近战单位互不在射程且无移动阶段），
+   * 宿主调用本方法结束该方行动。回合照常推进——保证 maxTurns 超时判定在僵局下依然生效，
+   * 否则双方互相打不到时回合永不递增，战斗将无限死锁。
+   */
+  pass(): void {
+    if (this.#finished) {
+      throw new Error('战斗已结束，无法跳过行动');
+    }
+    this.#lastAction = null;
+    this.#advance();
   }
 
   /** 结束当前行动方回合，进入下一方/下一回合（冷却在整回合末递减） */

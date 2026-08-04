@@ -158,14 +158,20 @@ export class PixiStage implements AdvStage {
     });
   }
 
-  /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用） */
+  /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
+   *  resolution 按设备像素比渲染（高分屏不糊），autoDensity 保持逻辑尺寸 1280×720。 */
   async init(canvas?: HTMLCanvasElement): Promise<void> {
     const app = new Application();
+    const resolution = typeof window !== 'undefined' && window.devicePixelRatio > 0
+      ? window.devicePixelRatio
+      : 1;
     await app.init({
       width: this.#w,
       height: this.#h,
       background: 0x000000,
       antialias: true,
+      resolution,
+      autoDensity: true,
       canvas,
     });
     this.app = app;
@@ -174,6 +180,16 @@ export class PixiStage implements AdvStage {
     this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay);
     this.#layout();
     return undefined;
+  }
+
+  /** 等比缩放画布 CSS 尺寸以适配窗口（保持 16:9，居中由宿主 CSS 负责）。
+   *  内部分辨率保持 1280×720 逻辑尺寸，避免 UI 布局随窗口变化。 */
+  fitWindow(): void {
+    const canvas = this.app?.canvas;
+    if (!canvas || typeof window === 'undefined') return;
+    const scale = Math.min(window.innerWidth / this.#w, window.innerHeight / this.#h);
+    canvas.style.width = `${Math.round(this.#w * scale)}px`;
+    canvas.style.height = `${Math.round(this.#h * scale)}px`;
   }
 
   #layout(): void {
@@ -208,6 +224,7 @@ export class PixiStage implements AdvStage {
   setBackground(key: string | null): void {
     if (this.#bgSprite) {
       this.#bgLayer.removeChild(this.#bgSprite);
+      this.#bgSprite.destroy(); // 纹理由缓存共享，不随 sprite 释放
       this.#bgSprite = null;
     }
     if (key === null || key.length === 0) return;
@@ -251,10 +268,17 @@ export class PixiStage implements AdvStage {
   }
 
   removePortrait(key: string): void {
-    const sprite = this.#portraitSprites.get(key);
-    if (sprite) {
+    // key 契约：完整 `角色:服装`（与 setPortrait 第一参数一致）精确移除；
+    // 纯角色 ID（规范写法 @hide lynn）移除该角色全部立绘——否则 @show lynn:armor
+    // 之后 @hide lynn 查不到 'lynn:armor'，立绘永不消失（静默演出 bug）。
+    const keys = this.#portraitSprites.has(key)
+      ? [key]
+      : [...this.#portraitSprites.keys()].filter((k) => k === key || k.startsWith(`${key}:`));
+    for (const k of keys) {
+      const sprite = this.#portraitSprites.get(k)!;
       this.#portraitLayer.removeChild(sprite);
-      this.#portraitSprites.delete(key);
+      sprite.destroy(); // 纹理由缓存共享，不随 sprite 释放
+      this.#portraitSprites.delete(k);
     }
   }
 
@@ -297,5 +321,33 @@ export class PixiStage implements AdvStage {
       t.destroy();
     }
     this.#choiceViews = [];
+  }
+
+  /**
+   * 释放舞台资源（游戏退出/窗口销毁/热重置时由宿主调用）。
+   * 程序化占位纹理由本舞台生成，destroy 安全；
+   * registerBackground/registerPortrait 注入的纹理不在此销毁
+   * （其生命周期归宿主/Pixi Assets 缓存管理，避免破坏宿主共享引用）——
+   * setBackground/setPortrait 会把命中的注入纹理也放进占位缓存，故销毁前按注册表排除。
+   */
+  destroy(): void {
+    this.#clearChoices();
+    const registered = new Set<Texture>([...this.#registeredBgs.values(), ...this.#registeredPortraits.values()]);
+    for (const tex of this.#bgTextureCache.values()) {
+      if (!registered.has(tex)) tex.destroy();
+    }
+    this.#bgTextureCache.clear();
+    for (const tex of this.#portraitTextureCache.values()) {
+      if (!registered.has(tex)) tex.destroy();
+    }
+    this.#portraitTextureCache.clear();
+    for (const sprite of this.#portraitSprites.values()) sprite.destroy();
+    this.#portraitSprites.clear();
+    this.#bgSprite?.destroy();
+    this.#bgSprite = null;
+    this.#registeredBgs.clear();
+    this.#registeredPortraits.clear();
+    this.app?.destroy(true, { children: true });
+    this.app = null;
   }
 }

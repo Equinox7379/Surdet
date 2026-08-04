@@ -5,6 +5,11 @@
 /** 事件负载基类型 */
 export type EventPayload = Record<string, unknown>;
 
+/** 事件名 → 负载类型 的映射（类型化总线用；默认宽映射保持向后兼容）。
+ *  负载约束为对象类型即可（总线只透传、不检查内容），SaveSnapshot 等具体结构可直接作为负载。 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type EventMap = Record<string, any>;
+
 export type EventHandler<T = EventPayload> = (payload: T) => void;
 
 export type Unsubscribe = () => void;
@@ -35,8 +40,11 @@ export interface EventBusOptions {
 /**
  * 轻量同步事件总线。支持 once、unsubscribe、按名称订阅。
  * 回调抛错不中断其余订阅者（logger 记录 + onHandlerError 钩子）。
+ *
+ * 泛型 E 为事件映射（事件名 → 负载类型）：传入 CoreEventMap 等具体映射时，
+ * on/emit 的事件名与负载类型自动推导，宿主接线无需手写断言。
  */
-export class EventBus {
+export class EventBus<E extends EventMap = EventMap> {
   #subs = new Map<string, Set<Subscription>>();
   #logger: Logger;
   #onHandlerError?: (err: unknown, event: string) => void;
@@ -46,20 +54,20 @@ export class EventBus {
     this.#onHandlerError = options.onHandlerError;
   }
 
-  /** 订阅事件 */
-  on<T>(event: string, handler: EventHandler<T>): Unsubscribe {
+  /** 订阅事件（负载类型由事件映射推导） */
+  on<K extends keyof E & string>(event: K, handler: EventHandler<E[K]>): Unsubscribe {
     const sub: Subscription = { handler: handler as EventHandler<unknown>, once: false };
     return this.#add(event, sub);
   }
 
   /** 订阅一次性事件 */
-  once<T>(event: string, handler: EventHandler<T>): Unsubscribe {
+  once<K extends keyof E & string>(event: K, handler: EventHandler<E[K]>): Unsubscribe {
     const sub: Subscription = { handler: handler as EventHandler<unknown>, once: true };
     return this.#add(event, sub);
   }
 
   /** 发布事件（同步；handler 抛错不中断其余订阅者，由 logger + onHandlerError 处理） */
-  emit(event: string, payload: EventPayload = {}): void {
+  emit<K extends keyof E & string>(event: K, payload: E[K]): void {
     const subs = this.#subs.get(event);
     if (!subs) return;
     for (const sub of [...subs]) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SaveManager, MemoryStorage, QUICK_SLOT } from '../src/save/save-manager.js';
-import type { SaveSnapshot } from '../src/save/save-manager.js';
+import type { SaveSnapshot, SaveStorage } from '../src/save/save-manager.js';
 import { GalleryState } from '../src/systems/gallery-state.js';
 import { ReadTracker } from '../src/runtime/read-tracker.js';
 
@@ -17,46 +17,78 @@ function makeSnap(overrides: Partial<SaveSnapshot> = {}): SaveSnapshot {
 }
 
 describe('SaveManager', () => {
-  it('save/load/list/has/delete', () => {
+  it('save/load/list/has/delete', async () => {
     const sm = new SaveManager();
-    sm.save('slot1', makeSnap());
-    sm.save('slot2', makeSnap());
-    expect(sm.has('slot1')).toBe(true);
-    expect(sm.load('slot1').position).toEqual({ sceneId: 'ch01', pc: 3 });
-    expect(sm.list()).toHaveLength(2);
-    sm.delete('slot1');
-    expect(sm.has('slot1')).toBe(false);
-    expect(() => sm.load('slot1')).toThrow(/不存在/);
+    await sm.save('slot1', makeSnap());
+    await sm.save('slot2', makeSnap());
+    expect(await sm.has('slot1')).toBe(true);
+    expect((await sm.load('slot1')).position).toEqual({ sceneId: 'ch01', pc: 3 });
+    expect(await sm.list()).toHaveLength(2);
+    await sm.delete('slot1');
+    expect(await sm.has('slot1')).toBe(false);
+    await expect(sm.load('slot1')).rejects.toThrow(/不存在/);
   });
 
-  it('保存时写入时间戳与槽位 id', () => {
+  it('保存时写入时间戳与槽位 id', async () => {
     const sm = new SaveManager();
-    sm.save('slotA', makeSnap());
-    const meta = sm.load('slotA').meta;
+    await sm.save('slotA', makeSnap());
+    const meta = (await sm.load('slotA')).meta;
     expect(meta.id).toBe('slotA');
     expect(meta.updatedAt).toBeGreaterThan(0);
   });
 
-  it('写入隔离：外部改动快照不影响已存数据', () => {
+  it('写入隔离：外部改动快照不影响已存数据', async () => {
     const sm = new SaveManager();
     const snap = makeSnap();
-    sm.save('s', snap);
+    await sm.save('s', snap);
     snap.variables['x'] = 999;
-    expect(sm.load('s').variables['x']).toBe(1);
+    expect((await sm.load('s')).variables['x']).toBe(1);
   });
 
-  it('MemoryStorage 深拷贝', () => {
+  it('MemoryStorage 深拷贝', async () => {
     const st = new MemoryStorage();
     const snap = makeSnap();
-    st.write('s', snap);
+    await st.write('s', snap);
     snap.variables['x'] = 999;
-    expect(st.read('s')!.variables['x']).toBe(1);
+    expect((await st.read('s'))!.variables['x']).toBe(1);
   });
 
-  it('自动/快速槽位约定', () => {
+  it('自动/快速槽位约定', async () => {
     const sm = new SaveManager();
-    sm.save(QUICK_SLOT, makeSnap());
-    expect(sm.has(QUICK_SLOT)).toBe(true);
+    await sm.save(QUICK_SLOT, makeSnap());
+    expect(await sm.has(QUICK_SLOT)).toBe(true);
+  });
+
+  it('list 优先走存储元信息索引（不做逐槽全量读取）', async () => {
+    let fullReads = 0;
+    const storage: SaveStorage = {
+      read: () => { fullReads++; return null; },
+      write: () => {},
+      delete: () => {},
+      list: () => [],
+      listMeta: () => [
+        { id: 'a', createdAt: 1, updatedAt: 1 },
+        { id: 'b', createdAt: 2, updatedAt: 5 },
+      ],
+    };
+    const sm = new SaveManager(storage);
+    const metas = await sm.list();
+    expect(metas.map((m) => m.id)).toEqual(['b', 'a']); // 按 updatedAt 倒序
+    expect(fullReads).toBe(0);
+  });
+
+  it('list 无元信息索引时回退逐槽读取（兼容旧后端）', async () => {
+    const inner = new MemoryStorage();
+    const storage: SaveStorage = {
+      read: (slot) => inner.read(slot),
+      write: (slot, data) => inner.write(slot, data),
+      delete: (slot) => inner.delete(slot),
+      list: () => inner.list(),
+    };
+    const sm = new SaveManager(storage);
+    await sm.save('s1', makeSnap());
+    const metas = await sm.list();
+    expect(metas.map((m) => m.id)).toEqual(['s1']);
   });
 });
 
@@ -65,9 +97,9 @@ describe('GalleryState', () => {
     const g = new GalleryState();
     expect(g.unlockCg('cg1')).toBe(true);
     expect(g.unlockCg('cg1')).toBe(false);
-    expect(g.unlockMusic('m1')).toBe(true);
+    expect(g.unlockMusic('m_op')).toBe(true);
     expect(g.hasCg('cg1')).toBe(true);
-    expect(g.hasMusic('m1')).toBe(true);
+    expect(g.hasMusic('m_op')).toBe(true);
 
     const snap = g.snapshot();
     const g2 = new GalleryState();

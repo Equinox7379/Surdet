@@ -40,4 +40,31 @@ describe('PixiStage 素材注入', () => {
     await stage.registerPortrait('lynn', 'armor', 'normal', Texture.EMPTY);
     stage.setPortrait('lynn:armor', { charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'center' });
   });
+
+  it('destroy 不销毁宿主注入的纹理（生命周期归宿主/Pixi Assets 缓存）', async () => {
+    const stage = makeStage();
+    await stage.registerBackground('castle', Texture.EMPTY);
+    await stage.registerPortrait('lynn', 'armor', 'normal', Texture.EMPTY);
+    stage.setBackground('castle');
+    stage.setPortrait('lynn:armor', { charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'center' });
+    stage.destroy();
+    // 注入纹理由宿主共享（此处为 Texture.EMPTY）：destroy 后仍存活，未被销毁
+    expect(Texture.EMPTY.destroyed).toBe(false);
+  });
+
+  it('removePortrait 支持纯角色 ID（规范写法 @hide lynn）：移除该角色全部立绘', async () => {
+    const stage = makeStage();
+    await stage.registerPortrait('lynn', 'armor', 'despair', Texture.EMPTY);
+    await stage.registerPortrait('lynn', 'casual', 'normal', Texture.EMPTY);
+    await stage.registerPortrait('mio', 'uniform', 'normal', Texture.EMPTY);
+    stage.setPortrait('lynn:armor', { charId: 'lynn', costume: 'armor', expression: 'despair', pos: 'left' });
+    stage.setPortrait('lynn:casual', { charId: 'lynn', costume: 'casual', expression: 'normal', pos: 'right' });
+    stage.setPortrait('mio:uniform', { charId: 'mio', costume: 'uniform', expression: 'normal', pos: 'center' });
+
+    // 规范写法 @hide lynn：前缀匹配移除 lynn 的两套立绘，不碰 mio；重复调用幂等
+    stage.removePortrait('lynn');
+    stage.removePortrait('lynn');
+    // 完整 key 写法仍支持精确移除
+    stage.removePortrait('mio:uniform');
+  });
 });

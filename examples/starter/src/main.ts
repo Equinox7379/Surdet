@@ -20,11 +20,13 @@ import type {
   VarDeclaration,
   SaveStorage,
   SaveSnapshot,
+  SaveSlotMeta,
   SystemSnapshots,
   CombatConfig,
   NewGamePlusConfig,
   AffectionProfile,
   RelationshipEvent,
+  CoreEventMap,
 } from '@surdet/core';
 import { PixiStage, AdvRenderer, AudioManager } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
@@ -33,20 +35,21 @@ import combatConfig from '../content/config/combat.json';
 import eventsConfig from '../content/config/events.json';
 import ngpConfig from '../content/config/ngp.json';
 
-// vite glob：把所有 .gal 剧本文本打包进构建
-const sceneFiles = import.meta.glob('../content/scenario/*.gal', {
+// vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
+const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
   query: '?raw',
   import: 'default',
 });
 
 declare global {
   interface Window {
-    /** Electron shell 经 preload 暴露的文件存档桥（浏览器环境不存在，回退 localStorage） */
+    /** Electron shell 经 preload 暴露的文件存档桥（异步 invoke IPC；浏览器环境不存在，回退 localStorage） */
     surdetSave?: {
-      list(): string[];
-      read(slot: string): SaveSnapshot | null;
-      write(slot: string, data: SaveSnapshot): void;
-      delete(slot: string): void;
+      list(): Promise<string[]>;
+      read(slot: string): Promise<SaveSnapshot | null>;
+      write(slot: string, data: SaveSnapshot): Promise<void>;
+      delete(slot: string): Promise<void>;
+      listMeta(): Promise<SaveSlotMeta[]>;
     };
   }
 }
@@ -58,6 +61,10 @@ async function main(): Promise<void> {
   const stage = new PixiStage();
   await stage.init();
   appEl.appendChild(stage.app!.canvas);
+
+  // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率保持 1280×720 逻辑尺寸）
+  stage.fitWindow();
+  window.addEventListener('resize', () => stage.fitWindow());
 
   // 变量表（game.config.json）
   const decls: VarDeclaration[] = Object.entries(gameConfig.variables).map(([name, d]) => ({
@@ -89,6 +96,13 @@ async function main(): Promise<void> {
   function runAutoBattle(): void {
     let guard = 0;
     while (!combat.finished && guard++ < 200) {
+      // 僵局出口（宿主契约，见 CombatSolver.pass）：行动方无可攻击目标
+      // （互不在射程且无冷却就绪的 long 技能）时 pass 推进回合，
+      // 否则 maxTurns 永不触发、战斗无限死锁
+      if (combat.actingTeamStalemate) {
+        combat.pass();
+        continue;
+      }
       const acting = combat.units.find((u) => u.alive && u.team === combat.actingTeam);
       const target = combat.units.find((u) => u.alive && u.team !== combat.actingTeam);
       if (!acting || !target) break;
@@ -99,7 +113,7 @@ async function main(): Promise<void> {
   }
 
   // 总线 + 解释器 + 渲染器（全家桶状态经 SystemHooks 随存档往返）
-  const bus = new EventBus();
+  const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry, undefined, undefined, {
     snapshot: (): SystemSnapshots => ({
       calendar: calendar.snapshot(),
@@ -120,7 +134,7 @@ async function main(): Promise<void> {
   renderer.subscribe(bus);
 
   // M5 system 事件 → 宿主驱动对应系统（@battle/@calendar/@affection/@event/@shop/@item）
-  bus.on<{ type: string; args: string[] }>('system', (p) => {
+  bus.on('system', (p) => {
     switch (p.type) {
       case 'calendar': {
         const nodeId = p.args[0];
@@ -144,8 +158,8 @@ async function main(): Promise<void> {
       }
       case 'affection': {
         const charId = p.args[0];
-        const stage = charId ? affection.stageOf(charId)?.stage ?? null : null;
-        console.info('[starter] affection stage:', stage);
+        const tier = charId ? affection.stageOf(charId)?.stage ?? null : null;
+        console.info('[starter] affection stage:', tier);
         break;
       }
       case 'event': {
@@ -164,36 +178,21 @@ async function main(): Promise<void> {
   stage.app!.canvas.addEventListener('pointerdown', () => renderer.advance());
 
   // Pixi ticker 驱动帧推进
-  stage.app!.ticker.add((ticker) => {
-    renderer.update(ticker.deltaMS);
-  });
+  stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
 
-  // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统；浏览器回退 localStorage
+  // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
   const saveStorage: SaveStorage = desktopSave
     ? {
-        read: (slot) => {
-          try {
-            return desktopSave.read(slot);
-          } catch {
-            return null;
-          }
-        },
-        write: (slot, data) => {
-          try {
-            desktopSave.write(slot, data);
-          } catch (err) {
+        read: (slot) => desktopSave.read(slot).catch(() => null),
+        write: (slot, data) =>
+          desktopSave.write(slot, data).catch((err) => {
             console.error('[starter] 存档写入失败：', err);
-          }
-        },
-        delete: (slot) => desktopSave.delete(slot),
-        list: () => {
-          try {
-            return desktopSave.list();
-          } catch {
-            return [];
-          }
-        },
+          }),
+        delete: (slot) => desktopSave.delete(slot).catch(() => {}),
+        list: () => desktopSave.list().catch(() => []),
+        // 元信息索引：列表界面不读存档体（主进程读 index.json）
+        listMeta: () => desktopSave.listMeta().catch(() => []),
       }
     : {
         read: (slot) => {
@@ -220,9 +219,15 @@ async function main(): Promise<void> {
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
-  bus.on<SaveSnapshot>('autosave', (snap) => {
-    saves.save(AUTO_SLOT, snap);
-    console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
+  bus.on('autosave', (snap) => {
+    void saves.save(AUTO_SLOT, snap).then(() => {
+      console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
+    });
+  });
+
+  // 存档场景哈希不匹配：存档后剧本被编辑，pc 定位可能漂移（引擎仍照常加载，此处提醒玩家）
+  bus.on('saveMismatch', (p) => {
+    console.warn(`[starter] 存档与剧本版本不一致（场景 ${p.sceneId}）：定位可能漂移，建议重新开始该场景`);
   });
 
   // 键位：F5 快速存档 / F9 快速读档 / A 自动播放 / S 快进
@@ -231,19 +236,20 @@ async function main(): Promise<void> {
       e.preventDefault();
       const snap = interp.saveSnapshot();
       if (snap) {
-        saves.save(QUICK_SLOT, { ...snap, kind: 'quick' });
-        console.info('[starter] 快速存档');
+        void saves.save(QUICK_SLOT, { ...snap, kind: 'quick' }).then(() => console.info('[starter] 快速存档'));
       }
     } else if (e.key === 'F9') {
       e.preventDefault();
-      if (saves.has(QUICK_SLOT)) {
-        try {
-          interp.loadSnapshot(saves.load(QUICK_SLOT));
-          console.info('[starter] 快速读档');
-        } catch (err) {
-          console.error('[starter] 读档失败（存档损坏或版本不符）：', err);
+      void (async () => {
+        if (await saves.has(QUICK_SLOT)) {
+          try {
+            interp.loadSnapshot(await saves.load(QUICK_SLOT));
+            console.info('[starter] 快速读档');
+          } catch (err) {
+            console.error('[starter] 读档失败（存档损坏或版本不符）：', err);
+          }
         }
-      }
+      })();
     } else if (e.key === 'a' || e.key === 'A') {
       console.info('[starter] 自动播放', renderer.toggleAuto() ? '开' : '关');
     } else if (e.key === 's' || e.key === 'S') {

@@ -9,6 +9,7 @@ import {
   collectVars,
   collectInterpolatedVars,
   IMPLEMENTED_INSTRUCTIONS,
+  type CallInstr,
   type ChoiceInstr,
   type CompiledScene,
   type CondJumpInstr,
@@ -127,11 +128,16 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     }
   }
 
-  // 跨场景 jump 校验 + @scene 一致性 + 变量引用校验
+  // 跨场景 jump/call 校验 + @scene 一致性 + 变量引用校验
   for (const [sceneId, scene] of scenes) {
     for (const instr of scene.instructions) {
       if (instr.op === 'jump' && instr.kind === 'jump') {
         validateJumpTarget(sceneId, instr as JumpInstr, sceneLabels, failedScenes, issues);
+      }
+      if (instr.op === 'call') {
+        // @call 与 @jump 同等静态校验：目标场景/标签拼错应在 lint 发现，
+        // 不拖到运行时 SceneRegistry.resolve 才抛错（AI 批量生成剧本场景需要快速反馈）
+        validateJumpTarget(sceneId, instr as CallInstr, sceneLabels, failedScenes, issues, '@call');
       }
       if (instr.op === 'instr' && instr.name === 'scene') {
         const declared = instr.args[0];
@@ -922,12 +928,15 @@ function checkExprVars(
   }
 }
 
+/** @jump/@call 共用的跨场景目标校验（场景存在性 + 标签存在性 + 编译失败场景提示）。
+ *  CallInstr 与 JumpInstr 同为 { target, file, line, col } 结构，按结构类型接收。 */
 function validateJumpTarget(
   fromScene: string,
-  jump: JumpInstr,
+  jump: { target: string; file: string; line: number; col: number },
   sceneLabels: Map<string, Set<string>>,
   failedScenes: Set<string>,
   issues: LintIssue[],
+  instrLabel: '@jump' | '@call' = '@jump',
 ): void {
   const target = jump.target;
   const dot = target.indexOf('.');
@@ -958,7 +967,7 @@ function validateJumpTarget(
     issues.push({
       severity: 'error',
       code: 'J001',
-      text: `${at}: 跨场景跳转目标场景 '${targetScene}' 不存在（@jump 目标必须已实现）`,
+      text: `${at}: ${instrLabel} 目标场景 '${targetScene}' 不存在（目标场景必须已实现）`,
       file: jump.file,
       line: jump.line,
       col: jump.col,

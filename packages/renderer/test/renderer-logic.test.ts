@@ -16,6 +16,14 @@ describe('dequote', () => {
     expect(dequote('"a"b')).toBe('"a"b');
     expect(dequote('')).toBe('');
   });
+
+  it('转义感知：内部转义引号可剥外引号并还原；中间裸引号不剥', () => {
+    expect(dequote('"a\\\"b"')).toBe('a"b');
+    expect(dequote("'a\\'b'")).toBe("a'b");
+    expect(dequote('"a\\\\b"')).toBe('a\\b');
+    expect(dequote('"a\"b')).toBe('"a\"b'); // 引号未闭合（转义后无闭合引号）保持原样
+    expect(dequote('"a"b"')).toBe('"a"b"'); // 中间未转义引号：非单一引号值
+  });
 });
 
 describe('Typewriter', () => {
@@ -65,6 +73,20 @@ describe('Typewriter', () => {
     tw.text = '';
     expect(tw.isDone).toBe(true);
     expect(done).toBe(1);
+  });
+
+  it('setSpeed 运行时调整打字速度（非法值忽略）', () => {
+    const tw = new Typewriter({ charsPerSecond: 10 });
+    expect(tw.speed).toBe(10);
+    tw.setSpeed(40);
+    expect(tw.speed).toBe(40);
+    tw.text = 'abcd';
+    tw.update(100); // 40 cps → 4 字符
+    expect(tw.isDone).toBe(true);
+    tw.setSpeed(NaN);
+    expect(tw.speed).toBe(40);
+    tw.setSpeed(0);
+    expect(tw.speed).toBe(40);
   });
 });
 

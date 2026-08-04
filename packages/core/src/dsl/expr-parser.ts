@@ -140,7 +140,8 @@ export class ExprParser {
   }
 
   private parseNumber(): ExprAst {
-    const m = /^[+-]?\d+(\.\d+)?/.exec(this.#src.slice(this.#pos));
+    // 一元 +/- 已在 parseUnary 消费，此处只匹配纯数字（此前 [+-]? 为不可达死代码）
+    const m = /^\d+(\.\d+)?/.exec(this.#src.slice(this.#pos));
     if (!m) this.#fail('非法数字');
     this.#pos += m[0].length;
     return { kind: 'number', value: parseFloat(m[0]) };
@@ -169,7 +170,8 @@ export class ExprParser {
   }
 
   private parseWord(): string {
-    const m = /^[A-Za-z_\u0080-\uffff][A-Za-z0-9_$.\u0080-\uffff]*/.exec(this.#src.slice(this.#pos));
+    // \p{L}（含 u 标志）覆盖增补平面字符（如扩展 B 区生僻汉字），与原 BMP 范围语义一致且更广
+    const m = /^[\p{L}_][\p{L}0-9_$.]*/u.exec(this.#src.slice(this.#pos));
     if (!m) return '';
     this.#pos += m[0].length;
     return m[0];

@@ -1,5 +1,6 @@
 import {
   EventBus,
+  type CoreEventMap,
   type TextEventPayload,
   type ChoiceEventPayload,
   type InstrEventPayload,
@@ -12,6 +13,16 @@ import { NULL_AUDIO } from './types.js';
 
 /** 渲染状态机 */
 export type RenderStatus = 'idle' | 'typing' | 'awaiting' | 'choice';
+
+/** 快进单帧时间预算（毫秒）：预算内批量推进多行，避免长段已读文本受帧率限制 */
+const SKIP_FRAME_BUDGET_MS = 4;
+/** 快进单帧推进上限：病态剧本（无挂起点）时防止单帧冻结 UI */
+const SKIP_MAX_LINES_PER_FRAME = 2000;
+
+/** 高精度时间（快进预算用；测试环境无 performance 时回退 Date.now） */
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
 
 export interface AdvRendererOptions {
   typewriter?: Typewriter;
@@ -61,12 +72,12 @@ export class AdvRenderer {
     return this.#status;
   }
 
-  /** 订阅内核事件总线 */
-  subscribe(bus: EventBus): void {
+  /** 订阅内核事件总线（类型化：负载由 CoreEventMap 推导） */
+  subscribe(bus: EventBus<CoreEventMap>): void {
     this.#unsubs.push(
-      bus.on<TextEventPayload>('text', (p) => this.#onText(p)),
-      bus.on<ChoiceEventPayload>('choice', (p) => this.#onChoice(p)),
-      bus.on<InstrEventPayload>('instr', (p) => this.#onInstr(p)),
+      bus.on('text', (p) => this.#onText(p)),
+      bus.on('choice', (p) => this.#onChoice(p)),
+      bus.on('instr', (p) => this.#onInstr(p)),
     );
   }
 
@@ -77,21 +88,35 @@ export class AdvRenderer {
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
-    // 快进模式：瞬时完成打字
-    if (this.#skipMode && this.#status === 'typing') this.#tw.skip();
-
     this.#tw.update(deltaMs);
     if (this.#status === 'typing') {
       const c = this.#current;
       this.#stage.showText(c?.speaker ?? null, this.#tw.text);
     }
 
-    // 自动播放 / 快进：文本显示完成后立即推进（choice 挂起时不推进）
-    if ((this.#autoPlay || this.#skipMode) && this.#status === 'awaiting') {
+    if (this.#skipMode) {
+      // 快进：时间预算内批量推进（瞬时打字 + 连续 advance），长段已读文本不再受帧率限制。
+      // 遇未读行时 #onText 自动退出快进（skipMode 置 false），循环随之停止。
+      const deadline = nowMs() + SKIP_FRAME_BUDGET_MS;
+      let guard = 0;
+      while (this.#skipMode && guard++ < SKIP_MAX_LINES_PER_FRAME) {
+        if (this.#status === 'typing') {
+          this.#tw.skip(); // onComplete → status 'awaiting'
+        }
+        if (this.#status === 'awaiting') {
+          this.#status = 'idle';
+          this.#stage.showText(null, '');
+          this.#onAdvance?.(); // 解释器同步发出下一事件（text/choice/end）
+          if (nowMs() > deadline) break;
+          continue;
+        }
+        break; // choice/idle（解释器已结束且无后续事件）：停止
+      }
+    } else if (this.#autoPlay && this.#status === 'awaiting') {
+      // 自动播放：文本显示完成后推进一行（choice 挂起时不推进）
       this.#status = 'idle';
       this.#stage.showText(null, '');
       this.#onAdvance?.();
-      return;
     }
 
     const fade = this.#fade;
@@ -100,6 +125,11 @@ export class AdvRenderer {
       this.#stage.setFade(v);
       if (fade.done) this.#fade = null;
     }
+  }
+
+  /** 运行时设置打字速度（每秒字符数，设置界面接入用） */
+  setTextSpeed(charsPerSecond: number): void {
+    this.#tw.setSpeed(charsPerSecond);
   }
 
   /** 切换自动播放 */
@@ -147,6 +177,9 @@ export class AdvRenderer {
   }
 
   #onText(p: TextEventPayload): void {
+    // 遇未读即停：快进中遇到从未播放过的文本（wasRead === false）时自动退出快进，
+    // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
+    if (this.#skipMode && p.wasRead === false) this.#skipMode = false;
     this.#current = { speaker: p.speaker, value: p.value };
     if (p.value.length === 0) {
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，

@@ -5,11 +5,11 @@ import { SceneRegistry } from '../src/runtime/scene-registry.js';
 import { EventBus } from '../src/runtime/event-bus.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import type { VarDeclaration } from '../src/state/types.js';
-import type { ChoiceEventPayload, TextEventPayload, InstrEventPayload } from '../src/runtime/interpreter.js';
+import type { ChoiceEventPayload, TextEventPayload, InstrEventPayload, CoreEventMap } from '../src/runtime/interpreter.js';
 
 function makeRuntime(decls: VarDeclaration[] = []) {
   const store = new VariableStore(decls);
-  const bus = new EventBus();
+  const bus = new EventBus<CoreEventMap>();
   const registry = new SceneRegistry();
   const interp = new Interpreter(store, bus, registry);
   return { store, bus, registry, interp };
@@ -21,25 +21,25 @@ const baseDecls: VarDeclaration[] = [
   { name: 'heroName', type: 'string', initial: '雷恩' },
 ];
 
-function textCollector(bus: EventBus): string[] {
+function textCollector(bus: EventBus<CoreEventMap>): string[] {
   const out: string[] = [];
-  bus.on<TextEventPayload>('text', (p) => {
+  bus.on('text', (p) => {
     out.push(`${p.speaker ?? ''}${p.speaker ? '：' : ''}${p.value}`);
   });
   return out;
 }
 
-function valueCollector(bus: EventBus): string[] {
+function valueCollector(bus: EventBus<CoreEventMap>): string[] {
   const out: string[] = [];
-  bus.on<TextEventPayload>('text', (p) => {
+  bus.on('text', (p) => {
     out.push(p.value);
   });
   return out;
 }
 
-function choiceCollector(bus: EventBus): ChoiceEventPayload[] {
+function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
   const out: ChoiceEventPayload[] = [];
-  bus.on<ChoiceEventPayload>('choice', (p) => {
+  bus.on('choice', (p) => {
     out.push(p);
   });
   return out;
@@ -197,7 +197,7 @@ describe('Interpreter', () => {
     const { store, bus, registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('@bg castle\n@inc trust\n@show lynn:armor @ left', 's.gal', 's1'));
     const instrs: InstrEventPayload[] = [];
-    bus.on<InstrEventPayload>('instr', (p) => {
+    bus.on('instr', (p) => {
       instrs.push(p);
     });
 
@@ -241,8 +241,8 @@ describe('Interpreter', () => {
       's.gal', 's1',
     ));
     const result: string[] = [];
-    bus.on<ChoiceEventPayload>('choice', () => interp.choose(1));
-    bus.on<TextEventPayload>('text', (p) => {
+    bus.on('choice', () => interp.choose(1));
+    bus.on('text', (p) => {
       result.push(p.value);
       if (interp.status === 'awaiting-advance') interp.advance();
     });
@@ -258,7 +258,7 @@ describe('Interpreter', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene(lines, 's.gal', 's1'));
     let count = 0;
-    bus.on<TextEventPayload>('text', () => {
+    bus.on('text', () => {
       count++;
       if (interp.status === 'awaiting-advance') interp.advance();
     });
@@ -300,7 +300,7 @@ describe('Interpreter', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene('@battle fight_01\n@calendar map_01\n@affection lynn', 's.gal', 's1'));
     const systems: { type: string; args: string[] }[] = [];
-    bus.on('system', (p: { type: string; args: string[] }) => systems.push(p));
+    bus.on('system', (p) => systems.push(p));
 
     interp.start('s1');
     expect(systems.map((s) => s.type)).toEqual(['battle', 'calendar', 'affection']);
@@ -328,7 +328,7 @@ describe('Interpreter', () => {
     const { bus, registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('{heroName}：你好。\n旁白', 's.gal', 's1'));
     const speakers: (string | null)[] = [];
-    bus.on<{ speaker: string | null; value: string }>('text', (p) => speakers.push(p.speaker));
+    bus.on('text', (p) => speakers.push(p.speaker));
     interp.start('s1');
     expect(speakers[0]).toBe('雷恩');
     interp.advance();
@@ -339,7 +339,7 @@ describe('Interpreter', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));
     const ends: { sceneId: string }[] = [];
-    bus.on('sceneEnd', (p: { sceneId: string }) => ends.push(p));
+    bus.on('sceneEnd', (p) => ends.push(p));
 
     interp.start('s1');
     expect(ends).toEqual([]);
@@ -353,7 +353,7 @@ describe('Interpreter', () => {
     registry.register(compileScene('凛：终。\n@end', 's1.gal', 's1'));
     registry.register(compileScene('凛：标题。\n@end', 'title.gal', 'title'));
     const texts: string[] = [];
-    bus.on<{ speaker: string | null; value: string }>('text', (p) => texts.push(p.value));
+    bus.on('text', (p) => texts.push(p.value));
     let restarts = 0;
     bus.on('sceneEnd', () => {
       if (restarts++ === 0) interp.start('title');
@@ -380,5 +380,81 @@ describe('Interpreter', () => {
     expect(interp.status).toBe('awaiting-advance');
     interp.advance();
     expect(interp.status).toBe('ended');
+  });
+
+  it('@call 子场景返回调用方继续执行，子场景返回不发 sceneEnd', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('凛：主线。\n@call sub.extra\n凛：回来了。', 'main.gal', 'main'));
+    registry.register(compileScene('@label extra\n凛：支线。\n@return\n凛：不会执行。', 'sub.gal', 'sub'));
+    const texts: string[] = [];
+    const ends: { sceneId: string }[] = [];
+    bus.on('text', (p) => texts.push(p.value));
+    bus.on('sceneEnd', (p) => ends.push(p));
+
+    interp.start('main');
+    interp.advance(); // 主线 → @call sub.extra → 支线
+    expect(texts).toEqual(['主线。', '支线。']);
+    expect(interp.status).toBe('awaiting-advance');
+
+    interp.advance(); // 支线 → @return（end 指令 + 调用栈非空）→ 回到 主线 的下一行
+    expect(texts).toEqual(['主线。', '支线。', '回来了。']);
+    expect(interp.status).toBe('awaiting-advance');
+    // 子场景返回时不发 sceneEnd（仅真正结束时发，共 1 次）
+    expect(ends).toEqual([]);
+
+    interp.advance(); // 回来了 → end（栈空）→ ended
+    expect(interp.status).toBe('ended');
+    expect(ends).toEqual([{ sceneId: 'main' }]);
+  });
+
+  it('@call 嵌套深度超限抛 RuntimeError（MAX_CALL_DEPTH = 64）', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@call a\n凛：不会到这。', 'main.gal', 'main'));
+    // 场景 a/b 互相 @call：无挂起点时同步递归压栈，到 64 层应干净抛错而非栈溢出
+    registry.register(compileScene('@call b', 'a.gal', 'a'));
+    registry.register(compileScene('@call a', 'b.gal', 'b'));
+    bus.on('text', () => {
+      if (interp.status === 'awaiting-advance') interp.advance();
+    });
+    expect(() => interp.start('main')).toThrow(/嵌套深度超过/);
+  });
+
+  it('@call 目标支持纯 sceneId；子场景自然结束（无 @return）也返回调用方', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@call sub\n凛：回到主线。', 'main.gal', 'main'));
+    registry.register(compileScene('凛：支线尾。', 'sub.gal', 'sub')); // 无 @return，文末自动追加 end
+    const texts = valueCollector(bus);
+
+    interp.start('main'); // @call → 子场景首行文本挂起
+    expect(texts).toEqual(['支线尾。']);
+    expect(interp.status).toBe('awaiting-advance');
+
+    interp.advance(); // 子场景自然结束（自动 end + 栈非空）→ 返回调用方下一行
+    expect(texts).toEqual(['支线尾。', '回到主线。']);
+    expect(interp.status).toBe('awaiting-advance');
+
+    interp.advance();
+    expect(interp.status).toBe('ended');
+  });
+
+  it('@call 无目标场景抛 S006 编译错误', () => {
+    expect(() => compileScene('@call\n凛：x。', 's.gal', 's1')).toThrow(/S006/);
+  });
+
+  it('text 事件载荷带 wasRead：首次播放 false，读档重放 true（快进按已读跳过用）', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('凛：甲。\n凛：乙。', 's.gal', 's1'));
+    const reads: boolean[] = [];
+    bus.on('text', (p) => reads.push(p.wasRead === true));
+
+    interp.start('s1'); // 甲：首次播放
+    expect(reads).toEqual([false]);
+    interp.advance(); // 乙：首次播放
+    expect(reads).toEqual([false, false]);
+
+    // 回退到开头重放（模拟读档后快进）：甲/乙均已标记过
+    interp.loadSnapshot(interp.saveSnapshot()!);
+    // loadSnapshot 重新挂起到当前位置（乙）并发出 text；此前快照点在乙（pc=2，awaiting-advance → 回退 1 = 指令1 即乙）
+    expect(reads.at(-1)).toBe(true);
   });
 });

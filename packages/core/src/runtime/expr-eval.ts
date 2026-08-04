@@ -57,16 +57,32 @@ export function evalExpr(ast: ExprAst, env: ExprEnv): VarValue {
   }
 }
 
-/** 便捷函数：解析 + 求值 */
+/** 已解析表达式 AST 缓存：condJump/choice when/visibleWhen/伤害公式等热路径
+ *  对同一表达式串反复求值，避免每次都重新递归下降解析。
+ *  AST 为只读树，共享引用安全；容量上限防止病态输入无限增长（超限整体清空）。 */
+const AST_CACHE_MAX = 1024;
+const astCache = new Map<string, ExprAst>();
+
+function parseCached(source: string): ExprAst {
+  let ast = astCache.get(source);
+  if (ast === undefined) {
+    ast = parseExpr(source);
+    if (astCache.size >= AST_CACHE_MAX) astCache.clear();
+    astCache.set(source, ast);
+  }
+  return ast;
+}
+
+/** 便捷函数：解析 + 求值（解析结果经 AST 缓存复用） */
 export function evalExprString(source: string, env: ExprEnv): VarValue {
-  return evalExpr(parseExpr(source), env);
+  return evalExpr(parseCached(source), env);
 }
 
 /** 便捷函数：解析 + 求值为 boolean（@if / choice when / 好感事件 when 等条件语境使用）。
  *  统一策略：条件表达式求值失败（未定义变量 / 类型错误）一律抛 ExprEvalError，
  *  不静默降级——剧本与配置数据中的条件缺陷应尽早暴露，而非悄悄跳过。 */
 export function evalExprBoolean(source: string, env: ExprEnv): boolean {
-  const v = evalExpr(parseExpr(source), env);
+  const v = evalExpr(parseCached(source), env);
   if (typeof v !== 'boolean') {
     throw new ExprEvalError(`条件表达式 '${source}' 结果不是 boolean，得到 ${describe(v)}`);
   }
