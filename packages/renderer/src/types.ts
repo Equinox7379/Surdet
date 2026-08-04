@@ -30,8 +30,8 @@ export interface AdvStage {
   setAwaiting?(awaiting: boolean): void;
   /** ▼ 呼吸动画时间推进（可选能力） */
   updateContinuePulse?(deltaMs: number): void;
-  /** 展示 Backlog 覆盖层（可选能力，PixiStage 实现） */
-  showBacklog?(entries: readonly { speaker: string | null; text: string }[]): void;
+  /** 展示 Backlog 覆盖层（可选能力，PixiStage 实现）；onReplayVoice 可选：点击带语音的行重播 */
+  showBacklog?(entries: readonly { speaker: string | null; text: string; voice?: string }[], onReplayVoice?: (voice: string) => void): void;
   /** 隐藏 Backlog 覆盖层（可选能力） */
   hideBacklog?(): void;
   /** 画面震动（@shake；durMs 时长，strength 像素振幅，线性衰减） */
@@ -71,6 +71,8 @@ export interface AdvStage {
   setChoiceHighlight?(pos: number): void;
   /** Backlog 覆盖层滚动（delta 像素，正数向下；可选能力） */
   scrollBacklog?(delta: number): void;
+  /** 隐藏/恢复对话界面（H 键惯例：隐藏对话框/说话人栏/等待指示器，保留背景与立绘供赏画；可选能力） */
+  hideInterface?(hidden: boolean): void;
 }
 
 export interface PortraitView {

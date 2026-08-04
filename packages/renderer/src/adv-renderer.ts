@@ -80,6 +80,10 @@ export class AdvRenderer {
   #onWaitEnd?: () => void;
   /** wait/video 会话号：stateReset 后递增，残留的结束回调因此作废（审计修复 C1） */
   #waitSession = 0;
+  /** 最近一次 @voice 的 key：紧跟的文本行把它带进 Backlog（语音回放用） */
+  #pendingVoice: string | null = null;
+  /** 对话界面隐藏中（H 键惯例：隐藏对话框/说话人/等待指示器，背景立绘保留） */
+  #interfaceHidden = false;
 
   constructor(stage: AdvStage, audio: AudioHandle = NULL_AUDIO, options: AdvRendererOptions = {}) {
     this.#stage = stage;
@@ -198,9 +202,23 @@ export class AdvRenderer {
   toggleBacklog(): boolean {
     if (!this.#backlog) return false;
     this.#backlogOpen = !this.#backlogOpen;
-    if (this.#backlogOpen) this.#stage.showBacklog?.(this.#backlog.entries());
-    else this.#stage.hideBacklog?.();
+    if (this.#backlogOpen) {
+      this.#stage.showBacklog?.(this.#backlog.entries(), (voice) => this.#audio.playVoice(voice));
+    } else {
+      this.#stage.hideBacklog?.();
+    }
     return this.#backlogOpen;
+  }
+
+  /** 切换对话界面隐藏（H 键惯例：隐藏对话框/说话人栏/等待指示器，背景与立绘保留供赏画） */
+  toggleHideInterface(): boolean {
+    this.#interfaceHidden = !this.#interfaceHidden;
+    this.#stage.hideInterface?.(this.#interfaceHidden);
+    return this.#interfaceHidden;
+  }
+
+  get interfaceHidden(): boolean {
+    return this.#interfaceHidden;
   }
 
   get backlogOpen(): boolean {
@@ -286,7 +304,9 @@ export class AdvRenderer {
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
     // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
-    this.#backlog?.add(p.speaker, stripRuby(p.value));
+    // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
+    this.#backlog?.add(p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
+    this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
     if (this.#nvl) {
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
@@ -355,6 +375,7 @@ export class AdvRenderer {
   #onStateReset(): void {
     this.#waitDeadline = null;
     this.#waitSession += 1;
+    this.#pendingVoice = null; // 旧场景的语音关联不跨读档延续
     this.#stage.hideVideo?.(); // 停止残留视频本体（回调已由会话令牌作废；审计复核）
   }
 
@@ -412,7 +433,10 @@ export class AdvRenderer {
         break;
       }
       case 'voice': {
-        if (args[0]) this.#audio.playVoice(args[0]);
+        if (args[0]) {
+          this.#audio.playVoice(args[0]);
+          this.#pendingVoice = args[0]; // 下一行文本进 Backlog 时带上（语音回放）
+        }
         break;
       }
       case 'fadeout': {

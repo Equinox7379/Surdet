@@ -63,6 +63,7 @@ class FakeStage implements AdvStage {
   clearTint(durMs: number): void { this.tintClears.push(durMs); }
   startParticles(kind: string): void { this.particlesStarted.push(kind); }
   stopParticles(): void { this.particlesStopped++; }
+  hideInterface?: (hidden: boolean) => void;
 }
 
 class FakeAudio implements AudioHandle {
@@ -640,6 +641,42 @@ describe('R1 行为改进与新特性', () => {
     // 未注入 backlog 时 toggle 返回 false
     const r2 = new AdvRenderer(stage, new FakeAudio());
     expect(r2.toggleBacklog()).toBe(false);
+  });
+
+  it('Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回放用）；读档后关联重置', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const backlog = new Backlog();
+    const r = new AdvRenderer(stage, new FakeAudio(), { backlog });
+    r.subscribe(bus);
+
+    bus.emit('instr', { name: 'voice', args: ['lynn_001'], modifiers: new Map(), pos: { file: 'x', line: 1, col: 1 } });
+    bus.emit('text', { speaker: '凛', value: '带语音的行' });
+    bus.emit('text', { speaker: null, value: '无语音的行' }); // 关联只跟随一行
+
+    const entries = backlog.entries();
+    expect(entries[0]?.voice).toBe('lynn_001');
+    expect(entries[1]?.voice).toBeUndefined();
+
+    // 读档状态重置：旧语音关联不跨读档延续
+    bus.emit('stateReset', { reason: 'load' });
+    bus.emit('text', { speaker: null, value: '读档后的行' });
+    expect(backlog.entries().at(-1)?.voice).toBeUndefined();
+  });
+
+  it('隐藏界面：toggleHideInterface 转发到舞台（H 键赏画惯例）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const hiddenStates: boolean[] = [];
+    stage.hideInterface = (h: boolean): void => { hiddenStates.push(h); };
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+
+    expect(r.interfaceHidden).toBe(false);
+    expect(r.toggleHideInterface()).toBe(true);
+    expect(r.interfaceHidden).toBe(true);
+    expect(r.toggleHideInterface()).toBe(false);
+    expect(hiddenStates).toEqual([true, false]);
   });
 });
 

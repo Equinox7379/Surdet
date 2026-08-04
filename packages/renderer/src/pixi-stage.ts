@@ -256,6 +256,8 @@ export class PixiStage implements AdvStage {
   #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
   /** @mov 立绘位置平移补间（旧位置 → 目标位置线性过渡） */
   #movTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
+  /** 对话界面隐藏中（hideInterface；showText/NVL 不覆盖此状态，恢复后由下一次 showText 重建） */
+  #interfaceHidden = false;
   /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -505,6 +507,13 @@ export class PixiStage implements AdvStage {
     this.#renderDialogText(value);
     // 有文本内容即显示对话框面板；清空时若不在等待推进状态则隐藏
     this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
+    if (this.#interfaceHidden) {
+      // 隐藏界面模式：投影内容照常更新，但可见性保持隐藏（H 键赏画不被新文本打断）
+      this.#dialogPanel.visible = false;
+      this.#speakerText.visible = false;
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+    }
   }
 
   /** 对话文本渲染：含 基础字《注音》 标记时走 ruby 合成层（主字 + 上方小字）。
@@ -550,6 +559,7 @@ export class PixiStage implements AdvStage {
   /** 点击等待指示器可见性（▼；同时决定面板是否保持显示） */
   setAwaiting(awaiting: boolean): void {
     if (this.#nvlActive) return; // NVL 页不使用对话面板/指示器
+    if (this.#interfaceHidden) return; // 隐藏界面模式（H 键赏画）：指示器保持隐藏
     this.#continueIndicator.visible = awaiting;
     if (awaiting) this.#dialogPanel.visible = true;
     else if (
@@ -565,8 +575,9 @@ export class PixiStage implements AdvStage {
     this.#continueIndicator.y = this.#h - 44 + Math.sin(this.#continuePhase) * 4;
   }
 
-  /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭） */
-  showBacklog(entries: readonly BacklogEntry[]): void {
+  /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭）。
+   *  onReplayVoice：点击带语音标记的行重播（@voice 紧跟的文本行） */
+  showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void): void {
     const layer = this.#backlogLayer;
     if (!this.#backlogBuilt) {
       layer.eventMode = 'static';
@@ -589,10 +600,11 @@ export class PixiStage implements AdvStage {
     let y = 0;
     for (const e of entries.slice(-120)) {
       const text = e.text.length > 0 ? e.text : '（无文本）';
+      let first = true;
       for (let i = 0; i < text.length; i += perLine) {
-        const first = i === 0;
+        const lineText = (first && e.speaker ? `${e.speaker}：` : '') + text.slice(i, i + perLine);
         const t = new PText({
-          text: (first && e.speaker ? `${e.speaker}：` : '') + text.slice(i, i + perLine),
+          text: first && e.voice ? `▶ ${lineText}` : lineText,
           style: {
             fontSize: 20,
             fill: first && e.speaker ? 0xffe8c8 : 0xdddddd,
@@ -600,8 +612,18 @@ export class PixiStage implements AdvStage {
           } satisfies TextStyleOptions,
         });
         t.position.set(60, 84 + y);
+        if (first && e.voice && onReplayVoice) {
+          // 点击行首播放图标区重播语音（阻止冒泡到层关闭）
+          t.eventMode = 'static';
+          t.cursor = 'pointer';
+          t.on('pointerdown', (ev) => {
+            ev.stopPropagation();
+            onReplayVoice(e.voice!);
+          });
+        }
         entriesLayer.addChild(t);
         y += 34;
+        first = false;
       }
     }
     this.#backlogContentH = y;
@@ -610,6 +632,16 @@ export class PixiStage implements AdvStage {
     this.#backlogEntriesLayer = entriesLayer;
     layer.addChild(entriesLayer);
     layer.visible = true;
+  }
+
+  /** 隐藏/恢复对话界面（H 键惯例：隐藏对话框/说话人栏/等待指示器；背景立绘/粒子保留供赏画） */
+  hideInterface(hidden: boolean): void {
+    this.#interfaceHidden = hidden;
+    this.#dialogPanel.visible = !hidden;
+    this.#speakerText.visible = !hidden;
+    this.#dialogText.visible = !hidden;
+    this.#dialogRubyLayer.visible = !hidden;
+    this.#continueIndicator.visible = !hidden;
   }
 
   /** Backlog 滚动：delta 正数向下（看更旧内容方向为向上滚 → 负 delta），clamp 到内容范围 */

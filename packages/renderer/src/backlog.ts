@@ -8,6 +8,8 @@
 export interface BacklogEntry {
   speaker: string | null;
   text: string;
+  /** 该行伴随的语音 key（@voice 紧跟的文本行；回看点击可重播） */
+  voice?: string;
 }
 
 /** 默认容量：ADV 常规体量下足够回看，内存占用可忽略 */
@@ -22,8 +24,8 @@ export class Backlog {
   }
 
   /** 追加一条记录（超容量淘汰最旧） */
-  add(speaker: string | null, text: string): void {
-    this.#entries.push({ speaker, text });
+  add(speaker: string | null, text: string, voice?: string): void {
+    this.#entries.push({ speaker, text, ...(voice !== undefined ? { voice } : {}) });
     if (this.#entries.length > this.#capacity) this.#entries.shift();
   }
 
