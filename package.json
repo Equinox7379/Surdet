@@ -10,7 +10,7 @@
     "games/*"
   ],
   "scripts": {
-    "build": "npm run build -w @surdet/core && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/shell && npm run build -w surdet-starter",
+    "build": "npm run build -w @surdet/core && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/shell && npm run build -w surdet-editor && npm run build -w surdet-starter",
     "test": "npm run build -w @surdet/core && npm run test --workspaces --if-present",
     "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/renderer && npm run typecheck --workspaces --if-present"
   },

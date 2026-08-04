@@ -186,10 +186,17 @@ describe('lintProject', () => {
   });
 
   it('规划中未实现的指令产生 W002 警告', () => {
-    const dir = makeProject({ 'content/scenario/a.gal': `@wait 1000\n` });
+    const dir = makeProject({ 'content/scenario/a.gal': `@particle\n` });
     const r = lintProject(dir);
     expect(r.ok).toBe(true); // 警告不阻断
     expect(r.issues.some((i) => i.code === 'W002' && i.severity === 'warning')).toBe(true);
+  });
+
+  it('R2 新实现的演出指令（wait/shake/flash/zoom）不再产生 W002', () => {
+    const dir = makeProject({ 'content/scenario/a.gal': `@wait 1000\n@shake\n@flash\n@zoom 1.2\n` });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W002')).toBe(false);
+    expect(r.issues.some((i) => i.code === 'W001')).toBe(false);
   });
 
   it('变量全声明且合法时无变量错误', () => {

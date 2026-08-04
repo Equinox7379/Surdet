@@ -108,6 +108,18 @@ describe('VariableStore', () => {
     expect(() => s.restore({ heroName: 42 })).toThrow(TypeError);
   });
 
+  it('R3 reset 恢复全部声明初值（新游戏）', () => {
+    const s = new VariableStore(base);
+    s.set('lynn.trust', 42);
+    s.set('hasSword', true);
+    s.set('heroName', '别人');
+    s.reset();
+    expect(s.getNumber('lynn.trust')).toBe(0);
+    expect(s.getBoolean('hasSword')).toBe(false);
+    expect(s.getString('heroName')).toBe('雷恩');
+    expect(s.getNumber('chapter')).toBe(1); // readonly 一并重置
+  });
+
   it('declarations 返回声明表副本', () => {
     const s = new VariableStore(base);
     expect(s.declarations()).toHaveLength(base.length);
@@ -145,6 +157,20 @@ describe('VariableStore', () => {
     decl.max = 1000;
     s.set('lynn.trust', 999);
     expect(s.getNumber('lynn.trust')).toBe(100);
+  });
+
+  it('R1 object 变量拒绝非 JSON 安全嵌套值（存档序列化会静默丢失）', () => {
+    const decl: VarDeclaration = { name: 'cfg', type: 'object', initial: {} };
+    const s = new VariableStore([decl]);
+    expect(() => s.set('cfg', { a: undefined } as unknown as VarValue)).toThrow(/JSON 安全/);
+    expect(() => s.set('cfg', { a: NaN } as unknown as VarValue)).toThrow(/有限 number/);
+    expect(() => s.set('cfg', { a: { b: () => 1 } } as unknown as VarValue)).toThrow(/JSON 安全/);
+    expect(() => s.set('cfg', { a: [1, Infinity] } as unknown as VarValue)).toThrow(/有限 number/);
+    // 合法嵌套（含数组/多层对象）不受影响
+    expect(() => s.set('cfg', { hp: 10, tags: ['a'], sub: { ok: true } } as unknown as VarValue)).not.toThrow();
+    // restore 同样校验（防篡改存档注入非法值）
+    const s2 = new VariableStore([decl]);
+    expect(() => s2.restore({ cfg: { a: undefined } as unknown as VarValue })).toThrow(/JSON 安全/);
   });
 
   it('deep clone：object 变量嵌套结构经 get 不被外部篡改', () => {

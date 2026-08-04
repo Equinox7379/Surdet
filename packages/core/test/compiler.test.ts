@@ -67,6 +67,19 @@ describe('SceneCompiler', () => {
     expect(scene.instructions[2]).toMatchObject({ op: 'set', varName: 'hasSword', setOp: ':=', expr: 'true' });
   });
 
+  it('R2 @wait 编译为 WaitInstr；非法参数抛 C007', () => {
+    const ok = compileScene('@wait 800', 's.gal', 'w');
+    const instr = ok.instructions[0]!;
+    expect(instr.op).toBe('wait');
+    expect((instr as { ms?: number }).ms).toBe(800);
+    // 末尾自动追加 end
+    expect(ok.instructions.at(-1)!.op).toBe('end');
+
+    for (const bad of ['@wait', '@wait abc', '@wait -5', '@wait 1.5', '@wait 99999999']) {
+      expect(() => compileScene(bad, 's.gal', 'w')).toThrow(/C007/);
+    }
+  });
+
   it('set 表达式语法错误定位', () => {
     expect(() => compile('@set x = 1 +')).toThrow(/C005/);
     expect(() => compile('@set x = 1 +')).toThrow(/ch01_01\.gal:1:1/);
@@ -182,9 +195,14 @@ describe('SceneCompiler', () => {
   });
 
   it('规划中未实现的指令产生 W002 诊断（不再静默无操作）', () => {
-    const scene = compile('@wait 1000\n@shake');
+    const scene = compile('@particle\n@tint');
     expect(scene.diagnostics.some((d) => d.code === 'W002')).toBe(true);
     expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(false);
+  });
+
+  it('R2 新实现的演出指令（wait/shake/flash/zoom）不再产生告警', () => {
+    const scene = compile('@wait 1000\n@shake\n@flash\n@zoom 1.2');
+    expect(scene.diagnostics).toHaveLength(0);
   });
 
   it('已实现指令不产生告警', () => {

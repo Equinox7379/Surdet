@@ -3,35 +3,25 @@ import * as path from 'node:path';
 import {
   compileScene,
   SourceError,
-  isVarType,
-  VAR_TYPES,
   parseExpr,
-  collectVars,
-  collectInterpolatedVars,
-  IMPLEMENTED_INSTRUCTIONS,
+  checkExprOperands,
+  checkExprVars,
+  parseVariableConfig,
+  checkChoiceSuspects,
+  collectSceneSpeakers,
+  checkConsumedModifiers,
+  validateJumpTarget,
+  validateSceneVariables,
+  validateSwitchTargets,
   type CallInstr,
-  type ChoiceInstr,
   type CompiledScene,
-  type CondJumpInstr,
   type ExprAst,
-  type GenericInstr,
   type JumpInstr,
-  type ModifyInstr,
-  type SetInstr,
-  type TextInstr,
 } from '@surdet/core';
+import type { LintIssue } from '@surdet/core';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 
-/** lint 输出的一行问题 */
-export interface LintIssue {
-  severity: 'error' | 'warning';
-  /** 完整展示文本（含 file:line:col） */
-  text: string;
-  code: string;
-  file: string;
-  line: number;
-  col: number;
-}
+export type { LintIssue } from '@surdet/core';
 
 export interface LintResult {
   issues: LintIssue[];
@@ -55,7 +45,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const scenes = new Map<string, CompiledScene>();
   const sceneLabels = new Map<string, Set<string>>();
 
-  const { variables, types, readonlyVars, hasConfig, customInstructions } = loadVariables(root, issues);
+  const { variables, types, readonlyVars, hasConfig, customInstructions, entryScene } = loadVariables(root, issues);
 
   // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
   const sceneSourceFiles = new Map<string, string>();
@@ -156,9 +146,15 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
         checkConsumedModifiers(instr, issues);
       }
     }
+    // @switch 目标标签存在性（共享检查，编辑器同用）
+    validateSwitchTargets(scene, issues);
     validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
     checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
   }
+
+  // 未使用标签（W006）+ 场景可达性（W007，需配置 entryScene）
+  checkUnusedLabels(scenes, issues);
+  checkSceneReachability(scenes, entryScene, issues);
 
   if (hasConfig && variables.size === 0) {
     issues.push({
@@ -192,7 +188,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
 function loadVariables(
   root: string,
   issues: LintIssue[],
-): { variables: Set<string>; types: Map<string, string>; readonlyVars: Set<string>; hasConfig: boolean; customInstructions: string[] } {
+): { variables: Set<string>; types: Map<string, string>; readonlyVars: Set<string>; hasConfig: boolean; customInstructions: string[]; entryScene: string | undefined } {
   const cfgPath = path.join(root, 'game.config.json');
   const customInstructions: string[] = [];
   const empty = {
@@ -201,6 +197,7 @@ function loadVariables(
     readonlyVars: new Set<string>(),
     hasConfig: false,
     customInstructions,
+    entryScene: undefined as string | undefined,
   };
 
   if (!fs.existsSync(cfgPath)) {
@@ -222,364 +219,95 @@ function loadVariables(
     return { ...empty, hasConfig: true };
   }
 
-  const custom = raw['customInstructions'];
-  if (custom !== undefined) {
-    if (Array.isArray(custom) && custom.every((s) => typeof s === 'string')) {
-      customInstructions.push(...(custom as string[]));
-    } else {
+  // 变量表/customInstructions/entryScene 解析与声明形状校验：与编辑器共用的 core 实现
+  const parsed = parseVariableConfig(raw, cfgPath, issues);
+  return { ...parsed, hasConfig: true };
+}
+
+/** W006：标签从未被 @goto/@loop/@switch（场景内）或 @jump/@call 'scene.label'（跨场景）引用 */
+function checkUnusedLabels(scenes: Map<string, CompiledScene>, issues: LintIssue[]): void {
+  const localRefs = new Map<string, Set<string>>();
+  const crossRefs = new Set<string>();
+  for (const [sceneId, scene] of scenes) {
+    const refs = new Set<string>();
+    localRefs.set(sceneId, refs);
+    for (const instr of scene.instructions) {
+      if (instr.op === 'jump' && instr.kind === 'goto' && instr.target.length > 0) {
+        refs.add(instr.target);
+      }
+      if (instr.op === 'switch') {
+        for (const c of instr.cases) refs.add(c.label);
+      }
+      if ((instr.op === 'jump' && instr.kind === 'jump') || instr.op === 'call') {
+        const t = (instr as JumpInstr | CallInstr).target;
+        const dot = t.indexOf('.');
+        if (dot >= 0) crossRefs.add(t);
+      }
+    }
+  }
+  for (const [sceneId, scene] of scenes) {
+    const refs = localRefs.get(sceneId)!;
+    for (const [label, idx] of scene.labels) {
+      if (refs.has(label) || crossRefs.has(`${sceneId}.${label}`)) continue;
+      const instr = scene.instructions[idx];
       issues.push({
-        severity: 'error',
-        code: 'CONFIG',
-        text: `${cfgPath}: 'customInstructions' 必须是字符串数组（自定义指令名，用于消 W001 告警）`,
-        file: cfgPath,
-        line: 0,
-        col: 0,
+        severity: 'warning',
+        code: 'W006',
+        text: `${instr ? `${instr.file}:${instr.line}:${instr.col}: ` : ''}标签 '@label ${label}' 从未被任何 @goto/@loop/@switch/@jump/@call 引用`,
+        file: instr?.file ?? '',
+        line: instr?.line ?? 0,
+        col: instr?.col ?? 0,
       });
     }
   }
-
-  const variablesRaw = raw['variables'];
-  // variables 字段缺失 → 视为空表（lintProject 统一发 EMPTY_VARIABLES 警告）
-  if (variablesRaw === undefined) {
-    return { variables: new Set(), types: new Map(), readonlyVars: new Set(), hasConfig: true, customInstructions };
-  }
-  if (typeof variablesRaw !== 'object' || variablesRaw === null || Array.isArray(variablesRaw)) {
-    issues.push({
-      severity: 'error',
-      code: 'CONFIG',
-      text: `${cfgPath}: 'variables' 字段必须是对象（变量名 → 声明），得到 ${Array.isArray(variablesRaw) ? '数组' : typeof variablesRaw}`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return { variables: new Set(), types: new Map(), readonlyVars: new Set(), hasConfig: true, customInstructions };
-  }
-
-  const variables = new Set<string>();
-  const types = new Map<string, string>();
-  const readonlyVars = new Set<string>();
-  for (const [name, decl] of Object.entries(variablesRaw)) {
-    variables.add(name);
-    if (validateVarDecl(cfgPath, name, decl, issues) && typeof decl === 'object' && decl !== null) {
-      types.set(name, (decl as { type: string }).type);
-      if ((decl as { readonly?: boolean }).readonly === true) readonlyVars.add(name);
-    }
-  }
-  return { variables, types, readonlyVars, hasConfig: true, customInstructions };
 }
 
-/** 校验单个变量声明条目形状：type 合法 + initial 存在且类型匹配。合法返回 true。 */
-function validateVarDecl(cfgPath: string, name: string, decl: unknown, issues: LintIssue[]): boolean {
-  if (typeof decl !== 'object' || decl === null || Array.isArray(decl)) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的声明必须是对象 { type, initial, ... }`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  const { type, initial } = decl as Record<string, unknown>;
-  if (typeof type !== 'string' || !isVarType(type)) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的 type 非法（应为 ${VAR_TYPES.join('/')}，得到 '${String(type)}'）`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  if (!('initial' in decl)) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 缺少 initial 初值`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  if (!initialMatches(type, initial)) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的 initial 与 type '${type}' 不匹配（得到 ${JSON.stringify(initial)}）`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  // min/max 约束自检（与运行时 VariableStore.declare 一致，作者在 lint 阶段即可发现）
-  const min = (decl as Record<string, unknown>)['min'];
-  const max = (decl as Record<string, unknown>)['max'];
-  if (
-    type === 'number'
-    && typeof min === 'number'
-    && typeof max === 'number'
-    && min > max
-  ) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的 min (${min}) > max (${max})，clamp 约束非法`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  return true;
-}
-
-function initialMatches(type: string, initial: unknown): boolean {
-  switch (type) {
-    case 'string':
-      return typeof initial === 'string';
-    case 'number':
-      return typeof initial === 'number' && Number.isFinite(initial);
-    case 'boolean':
-    case 'flag':
-      return typeof initial === 'boolean';
-    case 'string[]':
-      return Array.isArray(initial) && initial.every((v) => typeof v === 'string');
-    case 'number[]':
-      return Array.isArray(initial) && initial.every((v) => typeof v === 'number' && Number.isFinite(v));
-    case 'object':
-      return typeof initial === 'object' && initial !== null && !Array.isArray(initial);
-    default:
-      return false;
-  }
-}
-
-/** 收集场景内全部说话人（原始文本，供 choice 选项"疑似缩进正文"判定） */
-function collectSceneSpeakers(scene: CompiledScene): Set<string> {
-  const out = new Set<string>();
-  for (const instr of scene.instructions) {
-    if (instr.op === 'text' && instr.speaker) out.add(instr.speaker);
-  }
-  return out;
-}
-
-/**
- * choice 后所有缩进文本行都会被当作选项；以下形态极可能是"缩进正文被误判为选项"
- * （剧情结构静默损坏），W004 警告：
- *  - 选项的说话人前缀与同场景真实对话一致（如 '凛：'）
- *  - 选项以旁白括号开头（如 '（她沉默了片刻。）'，无说话人前缀的缩进旁白）
- * 不依赖 game.config.json（始终执行）。
- */
-function checkChoiceSuspects(scene: CompiledScene, speakers: Set<string>, issues: LintIssue[]): void {
-  for (const instr of scene.instructions) {
-    if (instr.op !== 'choice') continue;
-    for (const opt of instr.options) {
-      const prefix = /^([^\s：:]{1,24})[：:]/.exec(opt.label)?.[1];
-      if (prefix !== undefined && speakers.has(prefix)) {
-        issues.push({
-          severity: 'warning',
-          code: 'W004',
-          text: `${opt.pos.file}:${opt.pos.line}:${opt.pos.col}: 选项文本 '${opt.label}' 的说话人前缀 '${prefix}' 与场景内对话一致，疑似缩进正文被误判为选项（choice 后正文请勿缩进）`,
-          file: opt.pos.file,
-          line: opt.pos.line,
-          col: opt.pos.col,
-        });
-      } else if (/^[（(\[]/.test(opt.label)) {
-        // 旁白/注释风格（（...）/[...]）开头：无说话人前缀的缩进旁白同样会被静默吞成选项
-        issues.push({
-          severity: 'warning',
-          code: 'W004',
-          text: `${opt.pos.file}:${opt.pos.line}:${opt.pos.col}: 选项文本 '${opt.label}' 以旁白括号开头，疑似缩进旁白被误判为选项（choice 后正文请勿缩进）`,
-          file: opt.pos.file,
-          line: opt.pos.line,
-          col: opt.pos.col,
-        });
-      }
-    }
-  }
-}
-
-/** 变量声明交叉校验：赋值目标 + 表达式引用 + 表达式静态类型检查 + readonly 写入 */
-function validateSceneVariables(
-  scene: CompiledScene,
-  variables: Set<string>,
-  types: Map<string, string>,
-  readonlyVars: Set<string>,
-  issues: LintIssue[],
-  hasConfig: boolean,
-): void {
-  if (!hasConfig || variables.size === 0) return;
-
-  const at = (file: string, line: number, col: number) => ({ file, line, col });
-
-  for (const instr of scene.instructions) {
-    switch (instr.op) {
-      case 'text': {
-        const t = instr as TextInstr;
-        const p = at(t.file, t.line, t.col);
-        for (const v of collectInterpolatedVars(t.value)) {
-          if (!variables.has(v)) {
-            issues.push({
-              severity: 'error',
-              code: 'V002',
-              text: `${p.file}:${p.line}:${p.col}: 文本插值 '{${v}}' 引用了未声明变量 '${v}'（需在 game.config.json 的 variables 表中声明）`,
-              file: p.file,
-              line: p.line,
-              col: p.col,
-            });
-          }
-        }
-        if (t.speaker !== null) {
-          for (const v of collectInterpolatedVars(t.speaker)) {
-            if (!variables.has(v)) {
-              issues.push({
-                severity: 'error',
-                code: 'V002',
-                text: `${p.file}:${p.line}:${p.col}: 说话人插值 '{${v}}' 引用了未声明变量 '${v}'（需在 game.config.json 的 variables 表中声明）`,
-                file: p.file,
-                line: p.line,
-                col: p.col,
-              });
-            }
-          }
-        }
-        break;
-      }
-      case 'set': {
-        const s = instr as SetInstr;
-        checkVarDeclared(s.varName, at(s.file, s.line, s.col), variables, issues, 'V001', '赋值目标');
-        checkNotReadonly(s.varName, at(s.file, s.line, s.col), readonlyVars, issues);
-        const ast = checkExpr(s.expr, at(s.file, s.line, s.col), types, issues);
-        const declared = types.get(s.varName);
-        if (ast && declared) checkSetType(s, declared, ast, types, issues);
-        break;
-      }
-      case 'modify': {
-        const m = instr as ModifyInstr;
-        checkVarDeclared(m.varName, at(m.file, m.line, m.col), variables, issues, 'V001', '修改目标');
-        checkNotReadonly(m.varName, at(m.file, m.line, m.col), readonlyVars, issues);
-        break;
-      }
-      case 'instr': {
-        const g = instr as GenericInstr;
-        if (VARIABLE_INSTRUCTIONS.has(g.name)) {
-          const arg0 = g.args[0];
-          if (arg0 !== undefined) {
-            checkVarDeclared(arg0, at(g.file, g.line, g.col), variables, issues, 'V001', `@${g.name} 目标`);
-            checkNotReadonly(arg0, at(g.file, g.line, g.col), readonlyVars, issues);
-          }
-        }
-        break;
-      }
-      case 'condJump': {
-        const c = instr as CondJumpInstr;
-        const p = at(c.file, c.line, c.col);
-        const ast = checkExpr(c.expr, p, types, issues);
-        if (ast) checkBooleanType(c.expr, ast, p, types, issues);
-        break;
-      }
-      case 'choice': {
-        const ch = instr as ChoiceInstr;
-        for (const opt of ch.options) {
-          if (opt.when !== null) {
-            const p = at(opt.pos.file, opt.pos.line, opt.pos.col);
-            const ast = checkExpr(opt.when, p, types, issues);
-            if (ast) checkBooleanType(opt.when, ast, p, types, issues);
-          }
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  }
-}
-
-/** 直改 store 且第一个参数为变量名的指令（lint 校验声明，运行时 store 也会兜底） */
-const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag']);
-
-/** @show 已被渲染层消费的修饰符白名单（其余修饰符静默丢弃，lint 给 W003 提醒） */
-const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);
-
-/**
- * system 指令（@battle/@calendar/@affection/@event/@shop/@item）：修饰符原样经解释器
- * 交付宿主（见 interpreter.ts system 分支），是文档化的宿主参数通道（如 @battle x @difficulty=hard），
- * 不属"静默丢弃"，不报 W003。
- */
-const SYSTEM_INSTRUCTIONS = new Set(['battle', 'calendar', 'affection', 'event', 'shop', 'item']);
-
-/**
- * 修饰符未消费检查（W003）：与引擎"避免静默无操作"（W002）哲学一致。
- *  - @show：仅 pos/left/right/center 被渲染层消费；effect/zoom/transition 等会静默丢弃 → 提醒。
- *  - 其余核心指令：渲染层/解释器不消费任何修饰符，带修饰符即静默丢弃 → 提醒。
- *  - system 指令：修饰符交付宿主消费 → 跳过。
- *  - 自定义指令（customInstructions）：契约由作者负责 → 跳过（不在 IMPLEMENTED 集）。
- */
-function checkConsumedModifiers(
-  instr: GenericInstr,
+/** W007：场景可达性——从 entryScene 出发经 @jump/@call 到不了的场景（通常是删剧情留下的孤儿文件） */
+function checkSceneReachability(
+  scenes: Map<string, CompiledScene>,
+  entryScene: string | undefined,
   issues: LintIssue[],
 ): void {
-  if (instr.modifiers.size === 0) return;
-  const at = `${instr.file}:${instr.line}:${instr.col}`;
-  if (instr.name === 'show') {
-    for (const key of instr.modifiers.keys()) {
-      if (!SHOW_CONSUMED_MODIFIERS.has(key)) {
-        issues.push({
-          severity: 'warning',
-          code: 'W003',
-          text: `${at}: @show 修饰符 '@${key}' 未被渲染层消费（支持 @pos/@left/@right/@center）`,
-          file: instr.file,
-          line: instr.line,
-          col: instr.col,
-        });
+  if (!entryScene || !scenes.has(entryScene)) return;
+  const edges = new Map<string, Set<string>>();
+  for (const [sceneId, scene] of scenes) {
+    const out = new Set<string>();
+    edges.set(sceneId, out);
+    for (const instr of scene.instructions) {
+      if ((instr.op === 'jump' && instr.kind === 'jump') || instr.op === 'call') {
+        const t = (instr as JumpInstr | CallInstr).target;
+        const dot = t.indexOf('.');
+        out.add(dot >= 0 ? t.slice(0, dot) : t);
       }
     }
-    return;
   }
-  // system 指令修饰符交付宿主；自定义指令不在 IMPLEMENTED 集 → 两者都跳过
-  if (SYSTEM_INSTRUCTIONS.has(instr.name) || !IMPLEMENTED_INSTRUCTIONS.has(instr.name)) return;
-  for (const key of instr.modifiers.keys()) {
+  const seen = new Set<string>([entryScene]);
+  const queue: string[] = [entryScene];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const next of edges.get(cur) ?? []) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  for (const [sceneId, scene] of scenes) {
+    if (seen.has(sceneId)) continue;
+    const first = scene.instructions[0];
     issues.push({
       severity: 'warning',
-      code: 'W003',
-      text: `${at}: 指令 '@${instr.name}' 的修饰符 '@${key}' 未被引擎消费`,
-      file: instr.file,
-      line: instr.line,
-      col: instr.col,
+      code: 'W007',
+      text: `${first ? `${first.file}: ` : ''}场景 '${sceneId}' 从入口场景 '${entryScene}' 不可达（无 @jump/@call 引用）`,
+      file: first?.file ?? '',
+      line: first?.line ?? 0,
+      col: first?.col ?? 0,
     });
   }
 }
 
-/** 解析表达式并做变量引用（V002）与运算符操作数类型（T003）检查。返回 AST 供类型推断。 */
-function checkExpr(
-  expr: string,
-  pos: { file: string; line: number; col: number },
-  types: Map<string, string>,
-  issues: LintIssue[],
-): ExprAst | null {
-  let ast: ExprAst;
-  try {
-    ast = parseExpr(expr);
-  } catch {
-    // 表达式语法错误已由编译期 C005/S002 定位报告，这里跳过避免重复
-    return null;
-  }
-  checkExprVars(expr, pos, new Set(types.keys()), issues);
-  checkExprOperands(ast, types, (code, message) => {
-    issues.push({
-      severity: 'error',
-      code,
-      text: `${pos.file}:${pos.line}:${pos.col}: ${message}（表达式 '${expr}'）`,
-      file: pos.file,
-      line: pos.line,
-      col: pos.col,
-    });
-  });
-  return ast;
-}
+// 场景级纯校验函数已下沉 @surdet/core/scene-lint（CLI 与编辑器共用，消除双源漂移）
+
 
 /**
  * content/config/*.json 内 DSL 表达式的声明式扫描表。
@@ -710,279 +438,4 @@ function readConfigJson(
     return null;
   }
 }
-
-/** @set 类型匹配：= / := 要求推断类型与声明一致；+= / -= 要求 number */
-function checkSetType(
-  s: SetInstr,
-  declaredType: string,
-  ast: ExprAst,
-  types: Map<string, string>,
-  issues: LintIssue[],
-): void {
-  const pos = { file: s.file, line: s.line, col: s.col };
-  const inferred = inferExprType(ast, types);
-  if (inferred === 'unknown') return;
-
-  if (s.setOp === '+=' || s.setOp === '-=') {
-    if (inferred !== 'number') {
-      issues.push({
-        severity: 'error',
-        code: 'T001',
-        text: `${pos.file}:${pos.line}:${pos.col}: @set ${s.setOp} 要求表达式结果为 number，静态推断为 ${inferred}（'${s.expr}'）`,
-        file: pos.file,
-        line: pos.line,
-        col: pos.col,
-      });
-    }
-    return;
-  }
-
-  const expected = DECLARED_TO_EXPR[declaredType];
-  if (expected !== undefined && inferred !== expected) {
-    issues.push({
-      severity: 'error',
-      code: 'T001',
-      text: `${pos.file}:${pos.line}:${pos.col}: @set 目标变量 '${s.varName}' 声明类型为 ${declaredType}（静态推断表达式为 ${inferred}），类型不匹配`,
-      file: pos.file,
-      line: pos.line,
-      col: pos.col,
-    });
-  }
-}
-
-/** 条件语境（@if / choice when / @elif）：推断类型必须是 boolean */
-function checkBooleanType(
-  expr: string,
-  ast: ExprAst,
-  pos: { file: string; line: number; col: number },
-  types: Map<string, string>,
-  issues: LintIssue[],
-): void {
-  const t = inferExprType(ast, types);
-  if (t !== 'unknown' && t !== 'boolean') {
-    issues.push({
-      severity: 'error',
-      code: 'T002',
-      text: `${pos.file}:${pos.line}:${pos.col}: 条件表达式必须为 boolean，静态推断为 ${t}（'${expr}'）`,
-      file: pos.file,
-      line: pos.line,
-      col: pos.col,
-    });
-  }
-}
-
-/* ------------------------- 表达式静态类型推断 ------------------------- */
-
-type ExprType = 'number' | 'string' | 'boolean' | 'unknown';
-
-/** 声明类型 → 可推断的表达式类型（flag 视作 boolean；数组/对象无法经表达式构造，视为 unknown） */
-const DECLARED_TO_EXPR: Record<string, ExprType> = {
-  number: 'number',
-  string: 'string',
-  boolean: 'boolean',
-  flag: 'boolean',
-  'string[]': 'unknown',
-  'number[]': 'unknown',
-  object: 'unknown',
-};
-
-/** 推断表达式静态类型；无法确定返回 'unknown'（不据此报错） */
-function inferExprType(ast: ExprAst, types: Map<string, string>): ExprType {
-  switch (ast.kind) {
-    case 'number':
-      return 'number';
-    case 'string':
-      return 'string';
-    case 'bool':
-      return 'boolean';
-    case 'var': {
-      const t = types.get(ast.name);
-      return t ? (DECLARED_TO_EXPR[t] ?? 'unknown') : 'unknown';
-    }
-    case 'unary':
-      return ast.op === '!' ? 'boolean' : 'number';
-    case 'binary': {
-      const l = inferExprType(ast.left, types);
-      const r = inferExprType(ast.right, types);
-      switch (ast.op) {
-        case '==':
-        case '!=':
-        case '<':
-        case '<=':
-        case '>':
-        case '>=':
-        case '&&':
-        case '||':
-          return 'boolean';
-        case '+':
-          if (l === 'string' || r === 'string') return 'string';
-          if (l === 'number' && r === 'number') return 'number';
-          return 'unknown';
-        default:
-          return l === 'number' && r === 'number' ? 'number' : 'unknown';
-      }
-    }
-  }
-}
-
-/** 递归校验运算符操作数类型（T003）。只对两侧类型均已确定且明显不匹配时报告，避免误报。 */
-function checkExprOperands(
-  ast: ExprAst,
-  types: Map<string, string>,
-  report: (code: string, message: string) => void,
-): void {
-  switch (ast.kind) {
-    case 'unary': {
-      const operandType = inferExprType(ast.operand, types);
-      if (ast.op === '!') {
-        if (operandType !== 'unknown' && operandType !== 'boolean') {
-          report('T003', `'!' 需要 boolean 操作数，静态推断为 ${operandType}`);
-        }
-      } else if (operandType !== 'unknown' && operandType !== 'number') {
-        report('T003', `'-' 需要 number 操作数，静态推断为 ${operandType}`);
-      }
-      checkExprOperands(ast.operand, types, report);
-      return;
-    }
-    case 'binary': {
-      const { op, left, right } = ast;
-      const l = inferExprType(left, types);
-      const r = inferExprType(right, types);
-      if (op === '&&' || op === '||') {
-        if (l !== 'unknown' && l !== 'boolean') report('T003', `'${op}' 需要 boolean 操作数，静态推断为 ${l}`);
-        if (r !== 'unknown' && r !== 'boolean') report('T003', `'${op}' 需要 boolean 操作数，静态推断为 ${r}`);
-      } else if (op === '<' || op === '<=' || op === '>' || op === '>=' || op === '-' || op === '*' || op === '/') {
-        if (l !== 'unknown' && l !== 'number') report('T003', `'${op}' 需要 number 操作数，静态推断为 ${l}`);
-        if (r !== 'unknown' && r !== 'number') report('T003', `'${op}' 需要 number 操作数，静态推断为 ${r}`);
-      } else if (op === '+') {
-        // 运行时 string + boolean 合法（拼接）；仅 number+boolean / boolean+boolean 会炸
-        if ((l === 'boolean' || r === 'boolean') && l !== 'string' && r !== 'string') {
-          report('T003', `'+' 需要 number 或 string 操作数（boolean 仅可与 string 拼接）`);
-        }
-      }
-      checkExprOperands(left, types, report);
-      checkExprOperands(right, types, report);
-      return;
-    }
-    default:
-      return;
-  }
-}
-
-function checkVarDeclared(
-  name: string,
-  pos: { file: string; line: number; col: number },
-  variables: Set<string>,
-  issues: LintIssue[],
-  code: string,
-  role: string,
-): void {
-  if (!variables.has(name)) {
-    issues.push({
-      severity: 'error',
-      code,
-      text: `${pos.file}:${pos.line}:${pos.col}: ${role}变量 '${name}' 未在 game.config.json 的 variables 表中声明`,
-      file: pos.file,
-      line: pos.line,
-      col: pos.col,
-    });
-  }
-}
-
-/** readonly 变量禁止写入（@set/@mod/@inc/@dec/@toggle/@flag/@unflag）——运行时 VariableStore 也会兜底。 */
-function checkNotReadonly(
-  name: string,
-  pos: { file: string; line: number; col: number },
-  readonlyVars: Set<string>,
-  issues: LintIssue[],
-): void {
-  if (readonlyVars.has(name)) {
-    issues.push({
-      severity: 'error',
-      code: 'V003',
-      text: `${pos.file}:${pos.line}:${pos.col}: 变量 '${name}' 声明为 readonly，禁止写入`,
-      file: pos.file,
-      line: pos.line,
-      col: pos.col,
-    });
-  }
-}
-
-function checkExprVars(
-  expr: string,
-  pos: { file: string; line: number; col: number },
-  variables: Set<string>,
-  issues: LintIssue[],
-): void {
-  for (const v of collectVars(parseExpr(expr))) {
-    if (!variables.has(v)) {
-      issues.push({
-        severity: 'error',
-        code: 'V002',
-        text: `${pos.file}:${pos.line}:${pos.col}: 表达式 '${expr}' 引用了未声明变量 '${v}'（需在 game.config.json 的 variables 表中声明）`,
-        file: pos.file,
-        line: pos.line,
-        col: pos.col,
-      });
-    }
-  }
-}
-
-/** @jump/@call 共用的跨场景目标校验（场景存在性 + 标签存在性 + 编译失败场景提示）。
- *  CallInstr 与 JumpInstr 同为 { target, file, line, col } 结构，按结构类型接收。 */
-function validateJumpTarget(
-  fromScene: string,
-  jump: { target: string; file: string; line: number; col: number },
-  sceneLabels: Map<string, Set<string>>,
-  failedScenes: Set<string>,
-  issues: LintIssue[],
-  instrLabel: '@jump' | '@call' = '@jump',
-): void {
-  const target = jump.target;
-  const dot = target.indexOf('.');
-  const targetScene = dot >= 0 ? target.slice(0, dot) : target;
-  const targetLabel = dot >= 0 ? target.slice(dot + 1) : null;
-
-  const at = `${jump.file}:${jump.line}:${jump.col}`;
-
-  if (targetScene === fromScene && targetLabel === null) {
-    // 跳到本场景开头，允许
-    return;
-  }
-
-  if (failedScenes.has(targetScene)) {
-    issues.push({
-      severity: 'error',
-      code: 'J003',
-      text: `${at}: 目标场景 '${targetScene}' 存在但编译失败，请先修复其语法/结构错误`,
-      file: jump.file,
-      line: jump.line,
-      col: jump.col,
-    });
-    return;
-  }
-
-  const labels = sceneLabels.get(targetScene);
-  if (labels === undefined) {
-    issues.push({
-      severity: 'error',
-      code: 'J001',
-      text: `${at}: ${instrLabel} 目标场景 '${targetScene}' 不存在（目标场景必须已实现）`,
-      file: jump.file,
-      line: jump.line,
-      col: jump.col,
-    });
-    return;
-  }
-
-  if (targetLabel !== null && !labels.has(targetLabel)) {
-    issues.push({
-      severity: 'error',
-      code: 'J002',
-      text: `${at}: 场景 '${targetScene}' 中不存在标签 '@label ${targetLabel}'`,
-      file: jump.file,
-      line: jump.line,
-      col: jump.col,
-    });
-  }
-}
+

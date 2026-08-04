@@ -14,9 +14,14 @@ export const MAX_SAVE_BYTES = 10 * 1024 * 1024;
 /** 元信息索引文件名（saves 目录内，不作为存档槽位） */
 const INDEX_FILE = 'index.json';
 
-/** 槽位名白名单清洗，防路径穿越 */
+/** 槽位名白名单清洗，防路径穿越。
+ *  单射编码（审计修复：原实现把 a/b 与 a_b 都洗成 a_b 造成静默覆盖）：
+ *  单遍替换——转义符自身 _ → _u，其余不安全字符 → _xHH。
+ *  输出中每个 _ 都是转义前缀（必跟 u 或 xHH），解码无歧义 → 不同输入必映射不同文件名。 */
 export function sanitizeSlot(slot: string): string {
-  return slot.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return slot.replace(/[^a-zA-Z0-9-]/g, (c) =>
+    c === '_' ? '_u' : `_x${c.charCodeAt(0).toString(16).padStart(2, '0')}`,
+  );
 }
 
 export class FileSaveStore {
@@ -52,19 +57,69 @@ export class FileSaveStore {
       }
       return metas;
     }
-    return Object.values(this.readIndex());
+    const index = this.readIndex();
+    const metas = Object.values(index);
+    // 审计终审修复：索引存在时合并磁盘上未迁移的 legacy 槽位——legacy 文件名不在索引内，
+    // 但 read() 的 legacy 回退能命中；不合并会导致列表漏项。按 meta.id 去重。
+    const known = new Set(metas.map((m) => m.id));
+    for (const name of this.list()) {
+      if (index[name] !== undefined) continue; // 索引已覆盖（新编码 key）
+      const snap = this.read(name);
+      if (snap && !known.has(snap.meta.id)) {
+        known.add(snap.meta.id);
+        metas.push(snap.meta);
+      }
+    }
+    return metas;
   }
 
   read(slot: string): SaveSnapshot | null {
     const file = this.fileFor(slot);
+    const direct = this.#readFile(file);
+    if (direct !== null) return direct;
+    if (!fs.existsSync(file)) {
+      // 兼容回退（审计复核修复）：编码变更前含下划线的槽位（_ 保留）在新编码下（_ → _u）
+      // 文件名不同，存量存档会读不到。新文件不存在时按旧算法文件名补读一次；
+      // 下次 write 落盘新文件名并清理旧文件（#removeLegacyFiles），完成完整迁移。
+      const legacy = this.#legacyFileFor(slot);
+      if (legacy !== null) {
+        const legacyData = this.#readFile(legacy) ?? this.#readFile(`${legacy}.bak`);
+        if (legacyData !== null) return legacyData;
+      }
+      return null;
+    }
+    // 主档存在但损坏（断电/截断）：回退上一次成功写入前的 .bak 备份
+    return this.#readFile(`${file}.bak`);
+  }
+
+  /** 编码变更前的槽位文件名（不安全字符 → _，下划线保留）；与新编码结果相同时返回 null（无需回退） */
+  #legacyFileFor(slot: string): string | null {
+    const legacyName = slot.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (legacyName === sanitizeSlot(slot)) return null;
+    return path.join(this.dir, `${legacyName}.json`);
+  }
+
+  /** 清理旧编码存档文件（含 .bak）：write 迁移收尾与 delete 共用，闭合僵尸存档缺口（审计终审） */
+  #removeLegacyFiles(slot: string): void {
+    const legacy = this.#legacyFileFor(slot);
+    if (legacy === null) return;
+    for (const f of [legacy, `${legacy}.bak`]) {
+      try {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch {
+        // 清理失败不影响主流程（最坏情况：残留旧文件，read 仍优先新文件）
+      }
+    }
+  }
+
+  /** 读取单个存档文件；缺失/损坏返回 null（渲染层收到 null 而非主进程抛错） */
+  #readFile(file: string): SaveSnapshot | null {
     if (!fs.existsSync(file)) return null;
     try {
-      // 读隔离深拷贝（与 MemoryStorage.read 契约一致）：文件场景每次本就重读磁盘，
-      // 深拷贝成本可忽略；防御调用方改返回值污染后续读取。
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as SaveSnapshot;
-      return JSON.parse(JSON.stringify(raw)) as SaveSnapshot;
+      // 读隔离：JSON.parse 每次读盘产出的本就是全新对象图（无共享引用），
+      // 直接返回即满足与 MemoryStorage.read 一致的隔离契约，无需二次克隆
+      return JSON.parse(fs.readFileSync(file, 'utf8')) as SaveSnapshot;
     } catch {
-      // 损坏/截断的存档视为无档（渲染层经 IPC 收到 null 而非主进程抛错）
       return null;
     }
   }
@@ -84,6 +139,8 @@ export class FileSaveStore {
     }
     const file = this.fileFor(slot);
     const tmp = `${file}.tmp`;
+    // 覆盖前备份上一版（.bak）：主档意外损坏时 read 回退恢复，玩家不丢上次进度
+    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
     // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
     fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, file);
@@ -95,11 +152,18 @@ export class FileSaveStore {
     } catch {
       // 索引更新失败：下次 listMeta 无索引时回退逐文件读取，自愈
     }
+    // 审计终审修复：隐式迁移收尾——新文件落盘后清理旧编码文件（含 .bak），
+    // 否则 delete 后 read 会经 legacy 回退把旧档复活成僵尸存档
+    this.#removeLegacyFiles(slot);
   }
 
   delete(slot: string): void {
     const file = this.fileFor(slot);
-    if (fs.existsSync(file)) fs.unlinkSync(file);
+    for (const f of [file, `${file}.bak`]) {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    // 审计终审修复：同步删除旧编码文件（含 .bak），防止删除后经 legacy 回退复活
+    this.#removeLegacyFiles(slot);
     const index = this.readIndex();
     if (index[sanitizeSlot(slot)] !== undefined) {
       delete index[sanitizeSlot(slot)];

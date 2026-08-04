@@ -59,17 +59,24 @@ export function evalExpr(ast: ExprAst, env: ExprEnv): VarValue {
 
 /** 已解析表达式 AST 缓存：condJump/choice when/visibleWhen/伤害公式等热路径
  *  对同一表达式串反复求值，避免每次都重新递归下降解析。
- *  AST 为只读树，共享引用安全；容量上限防止病态输入无限增长（超限整体清空）。 */
+ *  AST 为只读树，共享引用安全；LRU 淘汰——命中即移到插入序末尾，超容量逐出最旧，
+ *  避免"整体清空"导致热表达式被反复重解析（Map 插入序即近似访问序）。 */
 const AST_CACHE_MAX = 1024;
 const astCache = new Map<string, ExprAst>();
 
 function parseCached(source: string): ExprAst {
-  let ast = astCache.get(source);
-  if (ast === undefined) {
-    ast = parseExpr(source);
-    if (astCache.size >= AST_CACHE_MAX) astCache.clear();
-    astCache.set(source, ast);
+  const cached = astCache.get(source);
+  if (cached !== undefined) {
+    astCache.delete(source);
+    astCache.set(source, cached);
+    return cached;
   }
+  const ast = parseExpr(source);
+  if (astCache.size >= AST_CACHE_MAX) {
+    const oldest = astCache.keys().next().value;
+    if (oldest !== undefined) astCache.delete(oldest);
+  }
+  astCache.set(source, ast);
   return ast;
 }
 

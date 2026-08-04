@@ -26,6 +26,40 @@ export interface AdvStage {
    * 纯投影 fake 可不提供。绑定后选择肢点击 → AdvRenderer.select → 宿主 onSelect。
    */
   onSelect?: ((index: number) => void) | null;
+  /** 点击等待指示器可见性（可选能力，PixiStage 实现 ▼ 指示） */
+  setAwaiting?(awaiting: boolean): void;
+  /** ▼ 呼吸动画时间推进（可选能力） */
+  updateContinuePulse?(deltaMs: number): void;
+  /** 展示 Backlog 覆盖层（可选能力，PixiStage 实现） */
+  showBacklog?(entries: readonly { speaker: string | null; text: string }[]): void;
+  /** 隐藏 Backlog 覆盖层（可选能力） */
+  hideBacklog?(): void;
+  /** 画面震动（@shake；durMs 时长，strength 像素振幅，线性衰减） */
+  shake?(durMs: number, strength: number): void;
+  /** 白闪（@flash；线性衰减） */
+  flash?(durMs: number): void;
+  /** 世界层缩放（@zoom；向目标 scale 线性过渡，以画面中心为锚点） */
+  zoom?(scale: number, durMs: number): void;
+  /** 演出效果时间轴推进（每帧调用，驱动 shake/flash/zoom 衰减） */
+  updateEffects?(deltaMs: number): void;
+  /** @wipe 擦除转场（可选能力） */
+  wipe?(durMs: number): void;
+  /** 横幅文本（@title/@chapter/@center 用 chapter 样式，@tip/@note 用 tip 样式） */
+  showBanner?(text: string, variant: 'chapter' | 'tip'): void;
+  /** NVL 模式开关（全屏小说文本页；开启时 AdvRenderer 不走打字机而整行追加） */
+  setNvlMode?(on: boolean): void;
+  /** NVL 页追加一行 */
+  appendNvlText?(speaker: string | null, text: string): void;
+  /** NVL 页清空（@nvl clear） */
+  clearNvlText?(): void;
+  /** @video 阻塞播放：播完/出错/玩家点击跳过时回调 onEnd（宿主随后 finishWait） */
+  showVideo?(src: string, onEnd: () => void): void;
+  /** 强制停止当前 @video 播放（读档 stateReset 时调用，防残留播放；审计复核） */
+  hideVideo?(): void;
+  /** 选择肢键盘导航高亮（pos 为选项序号；可选能力） */
+  setChoiceHighlight?(pos: number): void;
+  /** Backlog 覆盖层滚动（delta 像素，正数向下；可选能力） */
+  scrollBacklog?(delta: number): void;
 }
 
 export interface PortraitView {

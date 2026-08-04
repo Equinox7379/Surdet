@@ -1,7 +1,19 @@
 {
   "title": "Surdet Starter",
   "version": "0.1.0",
+  "entryScene": "ch01_01",
   "variables": {
+    "gold": {
+      "type": "number",
+      "initial": 100,
+      "min": 0,
+      "description": "金币（商店购买用）"
+    },
+    "bag": {
+      "type": "string[]",
+      "initial": [],
+      "description": "道具袋（道具 ID 列表）"
+    },
     "lynn.trust": {
       "type": "number",
       "initial": 0,

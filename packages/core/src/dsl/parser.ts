@@ -228,6 +228,7 @@ export class Parser {
     // 块指令（if/choice 等）不允许内联
     const BLOCK_INLINE = new Set(['if', 'elif', 'else', 'endif', 'choice']);
     let jump: { kind: 'goto' | 'jump'; target: string } | null = null;
+    let extraJumps = 0; // 选项内第二个及以后的 @goto/@jump 会被丢弃 → 编译器报 W008（审计修复：不再静默）
     const rest: typeof inline = [];
     for (const ins of inline) {
       if (BLOCK_INLINE.has(ins.name)) {
@@ -245,12 +246,14 @@ export class Parser {
             throw new DslError('S006', `@${ins.name} 缺少跳转目标`, ins.pos);
           }
           jump = { kind: ins.name, target };
+        } else {
+          extraJumps += 1;
         }
         continue;
       }
       rest.push(ins);
     }
 
-    return { label: labelText, when, inline: rest, jump, pos: pos0 };
+    return { label: labelText, when, inline: rest, jump, extraJumps, pos: pos0 };
   }
 }

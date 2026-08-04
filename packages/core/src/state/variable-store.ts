@@ -81,13 +81,22 @@ export class VariableStore {
     this.#values.set(name, coerce(decl, value));
   }
 
-  /** number 变量增减 delta（float/delta 均可） */
+  /** number 变量增减 delta（float/delta 均可）。
+   *  标量热路径：number 变量直接原地改值 + clamp，免 get/set 的防御性拷贝往返
+   *  （@mod/@inc/@dec 是剧本最高频的状态操作）。非 number 走旧路径报类型错误。 */
   modify(name: string, delta: number): void {
     if (typeof delta !== 'number' || !Number.isFinite(delta)) {
       throw new Error(`modify('${name}'): delta must be a finite number, got ${String(delta)}`);
     }
-    const current = this.getNumber(name);
-    this.set(name, current + delta);
+    const decl = this.#requireWritable(name);
+    if (decl.type !== 'number') {
+      this.set(name, this.getNumber(name) + delta); // 触发与旧实现一致的类型错误
+      return;
+    }
+    let n = (this.#values.get(name) as number) + delta;
+    if (decl.min !== undefined) n = Math.max(decl.min, n);
+    if (decl.max !== undefined) n = Math.min(decl.max, n);
+    this.#values.set(name, n);
   }
 
   /** number 变量 +1 */
@@ -100,13 +109,20 @@ export class VariableStore {
     this.modify(name, -1);
   }
 
-  /** boolean/flag 变量取反 */
+  /** boolean/flag 变量取反（标量热路径：原地取反，免 get/set 拷贝往返） */
   toggle(name: string): void {
     const decl = this.#requireWritable(name);
     if (decl.type !== 'boolean' && decl.type !== 'flag') {
       throw new Error(`toggle('${name}'): variable type is '${decl.type}', expected boolean/flag`);
     }
-    this.set(name, !this.getBoolean(name));
+    this.#values.set(name, !(this.#values.get(name) as boolean));
+  }
+
+  /** 重置全部变量为声明初值（新游戏开始；readonly 一并重置——周目初始状态由声明表定义） */
+  reset(): void {
+    for (const [name, decl] of this.#decls) {
+      this.#values.set(name, cloneValue(decl.initial));
+    }
   }
 
   /** 全部变量表副本（供工具/存档元信息），深拷贝防止外部篡改 */
@@ -127,11 +143,13 @@ export class VariableStore {
   /**
    * 从快照恢复。不存在的变量忽略；存在但类型不匹配抛错。
    * 恢复时重新施加范围 clamp，防止篡改存档破坏数值约束。
+   * readonly 变量默认跳过（系统专属、防篡改）；读档等可信恢复传 allowReadonly: true（审计修复）。
    */
-  restore(data: Record<string, VarValue>): void {
+  restore(data: Record<string, VarValue>, opts?: { allowReadonly?: boolean }): void {
     for (const [key, value] of Object.entries(data)) {
       const decl = this.#decls.get(key);
       if (!decl) continue;
+      if (decl.readonly && opts?.allowReadonly !== true) continue;
       assertType(value, decl, 'snapshot');
       this.#values.set(key, coerce(decl, value));
     }
@@ -182,12 +200,43 @@ function assertType(value: VarValue, decl: VarDeclaration, where: string): void 
         bad('number[]');
       }
       break;
-    case 'object':
+    case 'object': {
+      // object 契约为任意 JSON 安全嵌套结构；递归拒绝非 JSON 安全值（undefined/函数/嵌套容器非法值）。
+      // 否则 undefined 等会在 JSON.stringify 存档时被静默丢弃 → 读档数据缺失。
       if (typeof value !== 'object' || value === null || Array.isArray(value)) bad('object');
+      assertJsonValue(value, decl, where, '$');
       break;
+    }
     default:
       throw new Error(`Variable '${decl.name}': unknown declared type '${decl.type as string}'`);
   }
+}
+
+/** 递归校验 object 变量值为 JSON 安全结构（string/有限 number/boolean/数组/嵌套对象）。
+ *  存档经 JSON 序列化往返，undefined/函数/NaN/Infinity 会被丢弃或变成 null，必须在写入前拦截。 */
+function assertJsonValue(value: unknown, decl: VarDeclaration, where: string, pathStr: string): void {
+  if (typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(
+        `Variable '${decl.name}' (${where}): object 属性 '${pathStr}' 必须为有限 number，得到 ${String(value)}`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => assertJsonValue(v, decl, where, `${pathStr}[${i}]`));
+    return;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const [k, v] of Object.entries(value)) {
+      assertJsonValue(v, decl, where, `${pathStr}.${k}`);
+    }
+    return;
+  }
+  throw new TypeError(
+    `Variable '${decl.name}' (${where}): object 属性 '${pathStr}' 不是 JSON 安全值（undefined/函数等会在存档序列化时静默丢失），得到 ${describeValue(value)}`,
+  );
 }
 
 function coerce(decl: VarDeclaration, value: VarValue): VarValue {

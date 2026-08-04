@@ -63,6 +63,162 @@ describe('Interpreter', () => {
     expect(interp.status).toBe('ended');
   });
 
+  it('R2 @wait：发 wait 事件后挂起 awaiting-timer，finishWait 恢复', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('凛：预备。\n@wait 800\n凛：继续。', 's.gal', 'w1'));
+    const waits: number[] = [];
+    bus.on('wait', (p) => waits.push(p.ms));
+    const texts = valueCollector(bus);
+
+    interp.start('w1');
+    expect(interp.status).toBe('awaiting-advance');
+    interp.advance(); // 走完第一行文本 → @wait 挂起
+    expect(waits).toEqual([800]);
+    expect(interp.status).toBe('awaiting-timer');
+    expect(texts).toEqual(['预备。']); // 后续文本未执行
+
+    interp.finishWait();
+    expect(texts).toEqual(['预备。', '继续。']);
+    expect(interp.status).toBe('awaiting-advance');
+    // 非 wait 状态调 finishWait 抛错
+    expect(() => interp.finishWait()).toThrow(/awaiting-timer/);
+  });
+
+  it('R2 @wait：advance() 跳过剩余等待（玩家点击惯例）', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@wait 9999\n凛：被跳过了。', 's.gal', 'w2'));
+    const texts = valueCollector(bus);
+    interp.start('w2');
+    expect(interp.status).toBe('awaiting-timer');
+    interp.advance(); // 点击跳过
+    expect(texts).toEqual(['被跳过了。']);
+  });
+
+  it('R2 @wait：存档定位回退到 wait 指令，读档重新挂起并再次发 wait 事件', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@wait 500\n凛：等待之后。', 's.gal', 'w3'));
+    interp.start('w3');
+    expect(interp.status).toBe('awaiting-timer');
+    const snap = interp.saveSnapshot()!;
+    expect(snap.position!.pc).toBe(0); // 回退到 wait 指令本身
+
+    const waits: number[] = [];
+    bus.on('wait', (p) => waits.push(p.ms));
+    interp.loadSnapshot(snap);
+    expect(interp.status).toBe('awaiting-timer');
+    expect(waits).toEqual([500]); // 读档重新计时
+  });
+
+  it('R2 pauseHost/resumeHost：system 事件内暂停，指令流冻结至恢复', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@battle fight_01\n凛：战后文本。', 's.gal', 'pb'));
+    const texts = valueCollector(bus);
+    bus.on('system', () => interp.pauseHost()); // 模拟宿主进入交互式战斗
+
+    interp.start('pb');
+    expect(interp.status).toBe('paused'); // @battle 后冻结
+    expect(texts).toEqual([]); // 后续文本未执行
+    interp.advance(); // 暂停中点击无效且不报错
+    expect(interp.status).toBe('paused');
+
+    interp.resumeHost(); // 战斗结束恢复
+    expect(texts).toEqual(['战后文本。']);
+    expect(interp.status).toBe('awaiting-advance');
+    // 重复恢复幂等
+    interp.resumeHost();
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
+  it('R3 @switch：按变量值跳转标签，无匹配落到下一条', () => {
+    const { bus, registry, interp } = makeRuntime([
+      { name: 'chapter', type: 'number', initial: 2 },
+    ]);
+    registry.register(compileScene(
+      '@switch chapter 1:one 2:two\n凛：无匹配。\n@end\n@label one\n凛：第一章。\n@end\n@label two\n凛：第二章。\n@end',
+      's.gal', 'sw',
+    ));
+    const texts = valueCollector(bus);
+    interp.start('sw');
+    expect(texts).toEqual(['第二章。']);
+  });
+
+  it('R3 @switch：条目格式非法编译期抛 C008', () => {
+    expect(() => compileScene('@switch a\n凛：x', 's.gal', 'sw2')).toThrow(/C008/);
+    expect(() => compileScene('@switch a bad', 's.gal', 'sw3')).toThrow(/C008/);
+  });
+
+  it('R3 @check：断言为假抛运行时错误，为真静默通过', () => {
+    const { registry, interp } = makeRuntime([{ name: 'trust', type: 'number', initial: 5 }]);
+    registry.register(compileScene('@check trust >= 0', 's.gal', 'ok'));
+    expect(() => interp.start('ok')).not.toThrow();
+    registry.register(compileScene('@check trust > 100', 's.gal', 'bad'));
+    expect(() => interp.start('bad')).toThrow(/断言失败/);
+  });
+
+  it('R3 @random：写入区间内整数', () => {
+    const { store, registry, interp } = makeRuntime([{ name: 'dice', type: 'number', initial: 0 }]);
+    registry.register(compileScene('@random dice 3 6', 's.gal', 'rnd'));
+    interp.start('rnd');
+    const v = store.getNumber('dice');
+    expect(v).toBeGreaterThanOrEqual(3);
+    expect(v).toBeLessThanOrEqual(6);
+    expect(Number.isInteger(v)).toBe(true);
+  });
+
+  it('R3 @loop：回跳标签成循环，条件出口终止', () => {
+    const { store, registry, interp } = makeRuntime([{ name: 'n', type: 'number', initial: 0 }]);
+    registry.register(compileScene(
+      '@label body\n@mod n +1\n@if n >= 3\n@end\n@endif\n@loop body',
+      's.gal', 'lp',
+    ));
+    interp.start('lp');
+    expect(store.getNumber('n')).toBe(3);
+    expect(interp.status).toBe('ended');
+  });
+
+  it('R3 道具指令：add_item/remove_item/has_item 操作 string[] 变量', () => {
+    const decls: VarDeclaration[] = [
+      { name: 'items', type: 'string[]', initial: [] },
+      { name: 'hasKey', type: 'flag', initial: false },
+    ];
+    const { store, registry, interp } = makeRuntime(decls);
+    registry.register(compileScene(
+      '@add_item items sword\n@add_item items key\n@add_item items sword\n@has_item items key hasKey\n@remove_item items sword',
+      's.gal', 'it',
+    ));
+    interp.start('it');
+    expect(store.get<string[]>('items')).toEqual(['key']); // 去重 + 移除
+    expect(store.getBoolean('hasKey')).toBe(true);
+  });
+
+  it('R3 @video：阻塞挂起 awaiting-timer，finishWait 恢复；advance 可跳过', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@video op_01\n凛：视频之后。', 's.gal', 'vd'));
+    const videos: string[] = [];
+    bus.on('video', (p) => videos.push(p.src));
+    const texts = valueCollector(bus);
+    interp.start('vd');
+    expect(videos).toEqual(['op_01']);
+    expect(interp.status).toBe('awaiting-timer');
+    expect(texts).toEqual([]);
+    interp.advance(); // 玩家点击跳过
+    expect(texts).toEqual(['视频之后。']);
+  });
+
+  it('R3 hostJump：暂停期间宿主跳转目标场景并恢复', () => {
+    const { bus, registry, interp } = makeRuntime();
+    registry.register(compileScene('@calendar map\n凛：不应执行。', 's.gal', 'a'));
+    registry.register(compileScene('@label ev\n凛：事件场景。', 's.gal', 'ev1'));
+    const texts = valueCollector(bus);
+    bus.on('system', () => {
+      interp.pauseHost();
+      interp.hostJump('ev1', 'ev'); // 模拟地图节点事件跳转
+    });
+    interp.start('a');
+    expect(texts).toEqual(['事件场景。']);
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
   it('变量插值 {var} 与 set/mod 生效', () => {
     const { store, bus, registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('@set trust = 5\n@mod trust +3\n凛：{heroName} 好感度 {trust}', 's.gal', 's1'));

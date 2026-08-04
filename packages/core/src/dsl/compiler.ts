@@ -1,4 +1,4 @@
-import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type DslDiagnostic, type DslInstr, type GenericInstr, type JumpInstr, type ModifyInstr, type SceneAst, type SetInstr } from './ast.js';
+import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type DslDiagnostic, type DslInstr, type GenericInstr, type JumpInstr, type ModifyInstr, type SceneAst, type SetInstr, type SwitchInstr, type VideoInstr, type WaitInstr } from './ast.js';
 import { validateExpr } from './expr-parser.js';
 import { Lexer } from './lexer.js';
 import { Parser } from './parser.js';
@@ -14,9 +14,17 @@ import type { SourcePos } from './token.js';
 export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出（渲染层消费）
   'bg', 'show', 'hide', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
+  'shake', 'flash', 'zoom', 'wipe',
+  'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
+  // 阻塞等待/视频（解释器挂起 awaiting-timer，宿主计时/播放结束驱动恢复）
+  'wait', 'video',
+  // 流程控制（解释器执行）
+  'switch', 'loop', 'check', 'random',
+  // 道具（解释器直改 string[] 变量）
+  'add_item', 'remove_item', 'has_item',
   // 状态（解释器直改 store）
   'set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag',
-  'unlock_cg', 'unlock_music',
+  'unlock_cg', 'unlock_music', 'unlock_text',
   // 大系统指令（解释器转发 system 事件，由宿主消费）
   'battle', 'calendar', 'shop', 'item', 'affection', 'event',
   // 存档点（解释器发 autosave/savepoint 事件，由宿主写入槽位）
@@ -28,16 +36,13 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
 /** 已声明但未实现的指令（lint 给 W002 警告，避免静默无操作） */
 export const PLANNED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出
-  'wipe', 'shake', 'zoom', 'particle', 'flash', 'video', 'mov', 'tint', 'wait',
-  // 文本/排版
-  'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
-  // 流程
-  'loop', 'random', 'switch', 'check',
-  // 状态
-  'add_item', 'remove_item', 'has_item',
+  'particle', 'mov', 'tint',
   // 系统
   'clear',
 ]);
+
+/** @wait 毫秒上限（10 分钟；超长等待几乎必为配置错误，且阻塞期间玩家体验冻结） */
+const MAX_WAIT_MS = 600_000;
 
 /** 全部已知指令（implemented + planned），供外部判断指令是否被识别 */
 export const KNOWN_INSTRUCTIONS: ReadonlySet<string> = new Set([
@@ -176,6 +181,34 @@ export class SceneCompiler {
       emitter.emit(this.#buildModifyInstr(block));
       return;
     }
+    if (name === 'wait') {
+      emitter.emit(this.#buildWaitInstr(args, p));
+      return;
+    }
+    if (name === 'video') {
+      const src = args[0];
+      if (src === undefined || src.length === 0) {
+        throw new DslError('C009', '@video 缺少素材键', p, '形如 @video op_01');
+      }
+      emitter.emit<DslInstr>({ op: 'video', src, index: -1, file: p.file, line: p.line, col: p.col });
+      return;
+    }
+    if (name === 'switch') {
+      emitter.emit(this.#buildSwitchInstr(args, p));
+      return;
+    }
+    if (name === 'loop') {
+      // @loop label = 回跳标签（循环体 = label 到 @loop 之间；内部须有挂起点或条件出口，
+      // 无挂起点的死循环由解释器 MAX_SYNC_STEPS 兜底报错）
+      const target = args.join(' ');
+      if (target.length === 0) {
+        throw new DslError('S006', '@loop 缺少跳转目标标签', p, '形如 @loop labelName');
+      }
+      const j = this.#makeGoto(target, p);
+      emitter.emit(j);
+      emitter.trackGoto(j);
+      return;
+    }
     if (name === 'goto') {
       const target = args.join(' ');
       if (target.length === 0) {
@@ -262,6 +295,17 @@ export class SceneCompiler {
     const pendingAfter = new Map<number, JumpInstr>();
 
     for (const opt of options) {
+      // W008：选项内多个 @goto/@jump 只保留第一个（审计修复：显式告警，不再静默丢弃）
+      if ((opt.extraJumps ?? 0) > 0) {
+        emitter.addDiagnostic({
+          code: 'W008',
+          file: opt.pos.file,
+          line: opt.pos.line,
+          col: opt.pos.col,
+          message: `choice 选项 '${opt.label}' 含 ${(opt.extraJumps ?? 0) + 1} 个跳转，仅第一个生效，其余被丢弃`,
+          hint: '一个选项只应有一个 @goto/@jump',
+        });
+      }
       compiledOptions.push({
         label: opt.label,
         when: opt.when,
@@ -321,6 +365,10 @@ export class SceneCompiler {
   ): void {
     const { name, args, modifiers, pos: p } = ins;
 
+    if (name === 'wait') {
+      emitter.emit(this.#buildWaitInstr(args, p));
+      return;
+    }
     if (name === 'set') {
       emitter.emit(this.#buildSetInstr({ kind: 'instr', name, args, modifiers, pos: p }));
       return;
@@ -400,6 +448,38 @@ export class SceneCompiler {
       throw new DslError('C006', `@mod 增量非法：'${args[1]}'`, p);
     }
     return { op: 'modify', varName: args[0]!, delta, index: -1, file: p.file, line: p.line, col: p.col };
+  }
+
+  /** 解析 @wait ms：正整数毫秒，上限 10 分钟（防病态配置长时间冻结剧情推进） */
+  #buildWaitInstr(args: string[], p: SourcePos): WaitInstr {
+    const raw = args[0];
+    const ms = raw === undefined ? NaN : Number(raw);
+    if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_WAIT_MS) {
+      throw new DslError(
+        'C007',
+        `@wait 用法：@wait <毫秒>（正整数，1..${MAX_WAIT_MS}），得到 '${raw ?? ''}'`,
+        p,
+        '形如 @wait 800',
+      );
+    }
+    return { op: 'wait', ms, index: -1, file: p.file, line: p.line, col: p.col };
+  }
+
+  /** 解析 @switch varName v1:label1 v2:label2 ...（值与标签均不可为空） */
+  #buildSwitchInstr(args: string[], p: SourcePos): SwitchInstr {
+    if (args.length < 2) {
+      throw new DslError('C008', '@switch 用法：@switch 变量名 值1:标签1 值2:标签2 ...', p, '形如 @switch chapter 1:c1 2:c2');
+    }
+    const varName = args[0]!;
+    const cases: { value: string; label: string }[] = [];
+    for (const raw of args.slice(1)) {
+      const ci = raw.indexOf(':');
+      if (ci <= 0 || ci === raw.length - 1) {
+        throw new DslError('C008', `@switch 条目 '${raw}' 格式非法（应为 值:标签）`, p);
+      }
+      cases.push({ value: raw.slice(0, ci), label: raw.slice(ci + 1) });
+    }
+    return { op: 'switch', varName, cases, index: -1, file: p.file, line: p.line, col: p.col };
   }
 
   #makeGoto(target: string, p: SourcePos): JumpInstr {
