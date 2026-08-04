@@ -108,6 +108,16 @@ export class CalendarRunner {
       .replaceAll('{month}', String(this.month));
   }
 
+  /** 回合开始事件 ID（场景跳转约定：场景 ID = eventId；宿主在地图打开前经 hostJump 触发） */
+  get turnStartEventId(): string | undefined {
+    return this.#config.onTurnStartEventId;
+  }
+
+  /** 回合结束事件 ID（宿主在玩家结束回合、advanceTurn 之前经 hostJump 触发） */
+  get turnEndEventId(): string | undefined {
+    return this.#config.onTurnEndEventId;
+  }
+
   /** 全部节点 */
   nodes(): MapNodeDef[] {
     return this.#config.nodes;

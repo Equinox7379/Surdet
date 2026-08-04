@@ -2,6 +2,7 @@ import type { VarValue } from '../state/types.js';
 import type { CalendarSnapshot } from '../calendar/calendar.js';
 import type { CombatSnapshot } from '../combat/combat.js';
 import type { AffectionSnapshot } from '../systems/affection.js';
+import type { EventSchedulerSnapshot } from '../systems/event-scheduler.js';
 
 /**
  * 全家桶系统快照（可选，由宿主经 Interpreter 的 SystemHooks 提供）。
@@ -11,6 +12,8 @@ export interface SystemSnapshots {
   calendar?: CalendarSnapshot;
   combat?: CombatSnapshot;
   affection?: AffectionSnapshot;
+  /** 事件优先级调度器（已触发的一次性事件 ID；预留） */
+  eventScheduler?: EventSchedulerSnapshot;
   /** 周目继承标记等（预留） */
   newGamePlus?: unknown;
 }
