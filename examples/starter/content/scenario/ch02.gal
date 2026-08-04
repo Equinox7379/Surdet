@@ -11,6 +11,9 @@
 凛：好感阶段演示——当前好感度 {lynn.trust}。
 @event ev_trust_30
 凛：好感事件已触发（AffectionSystem）。
+凛：战斗前特训——经验值系统演示（GrowthSystem）。
+@exp lynn 28
+凛：获得 28 点经验！升级时属性成长已自动写回变量（atk/hp）。
 凛：出发前，先补给一下吧。
 @shop gold bag
 @battle fight_01

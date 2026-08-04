@@ -19,6 +19,8 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
   // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）
   'clear',
+  // 角色成长（解释器驱动 GrowthSystem，升级属性增量写回变量仓库，发 growth 事件）
+  'exp',
   // 阻塞等待/视频（解释器挂起 awaiting-timer，宿主计时/播放结束驱动恢复）
   'wait', 'video',
   // 流程控制（解释器执行）
