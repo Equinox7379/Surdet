@@ -91,5 +91,6 @@ main { display: flex; flex: 1; min-height: 0; }
 }
 .chip:hover { border-color: var(--accent2); color: var(--accent2); }
 .edge { font-size: 12px; color: var(--dim); padding: 2px 0; }
+#graph-box { overflow-x: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px; margin-bottom: 4px; }
 .banner { padding: 8px 14px; background: #3a2f1e; color: var(--warn); font-size: 13px; }
 .empty { color: var(--dim); font-size: 13px; padding: 12px; }

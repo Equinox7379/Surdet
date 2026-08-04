@@ -301,3 +301,5 @@ git diff --stat     # 查看 24 文件 +494/−35 的改动清单
 终审补漏（第三轮）：FileSaveStore legacy 迁移闭合——write 迁移后清理旧编码文件（含 .bak）、delete 同步删除 legacy 文件、listMeta 索引路径合并未迁移 legacy 槽位，消除僵尸存档复活与列表漏项（补 3 条回归测试）；prepare-pack/preload 两处 XOR 过时注释更正为 AES-256-GCM。
 
 自我迭代 第一梯队（本轮）：① 编辑器撤销/重做栈（打字合并、每场景独立历史）+ 校验 Worker 化（移出主线程、seq 对齐、异常同步回退）；② Playwright+Electron E2E 自动通关回归（画布点击开局→键盘推进→选择肢→F5/F9 存读档回路→系统交互层，30 步到 ch02 全 PASS）；③ 存档 schema 迁移管线（core/save/migrate，旧档逐级升级、断链回退、saveMigrated 事件）。测试基线：**373 全过**（cli 49 + core 217 + editor 14 + renderer 74 + shell 19），typecheck/build 零错误，E2E 退出码 0。
+
+自我迭代 第二梯队（AI 生产线，本轮）：① surdet audit 命令——称谓一致性（CONSIST_TYPO/CONSIST_HONORIFIC）、设定名词表（TERM_VARIANT，content/config/terminology.json）、空心分支（BRANCH_THIN）与无出口场景（NO_EXIT）、节奏报告、无头试跑验收（文本自动推进/选择肢取第一项/@wait 立即结束/系统指令停止/运行时错误即失败）；② docs/ai-writing-prompt.md AI 写作标准模板（DSL 速查+硬性规则+验收闸门）；③ 编辑器场景拓扑图（BFS 分层 SVG、节点点击切场景）。starter 实测：抓到 3 个真实空心分支，试跑 13 步推进到 ch02 系统指令。测试基线：**386 全过**（cli 62 + core 217 + editor 14 + renderer 74 + shell 19），typecheck/build 零错误。

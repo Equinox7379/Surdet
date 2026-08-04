@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { lintProject } from './lint.js';
 import { cmdNew } from './new.js';
 import { cmdBuild } from './build.js';
+import { cmdAudit } from './audit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,8 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet --help            显示帮助
   surdet new <name>        创建新游戏脚手架（games/<name>）
   surdet lint [dir]        校验游戏内容（剧本语法/结构/引用完整性）
+  surdet audit [dir]       AI 生产线验收：内容审计（称谓/名词表/空心分支/节奏）+ 无头试跑
+      --no-run             只做内容审计，跳过无头试跑
   surdet build [dir]       构建游戏（vite）
   surdet pack              打包 Windows exe（M7）
 `;
@@ -56,6 +59,12 @@ async function main(): Promise<number> {
         return 1;
       }
       return await cmdNew(name);
+    }
+
+    case 'audit': {
+      const rest = args.slice(1).filter((a) => !a.startsWith('--'));
+      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      return await cmdAudit(projectDir, { noRun: args.includes('--no-run') });
     }
 
     case 'lint': {

@@ -65,6 +65,7 @@ packages/
 - **文本回想**：`@unlock_text` 解锁 + 鉴赏第三 tab（`gallery.json` 的 `texts` 配 scene/label）+ 点击跳回场景重播
 - **战斗进化**：敌方 AI（`suggestAction`：攻击最低血量目标→接近→跳过）、1D 移动阶段（`moveUnit`/◀▶ 按钮，移动消耗行动）、技能选择条、`moved` 随快照持久化
 - **lint 强化**：J004 `@switch` 标签存在性、W006 未使用标签、W007 场景可达性（`game.config.json` 的 `entryScene` 为起点）
+- **自我迭代第二梯队（AI 生产线）**：① `surdet audit` 内容审计与无头验收——称谓一致性（编辑距离笔误/称谓变体）、设定名词表（`content/config/terminology.json` 规范词/变体扫描）、空心分支（BRANCH_THIN）与无出口场景、每场景节奏报告（行数/字数/阅读时长）、**无头试跑**（解释器从 entryScene 自动推进：文本→推进、选择肢→第一项、@wait→立即结束、遇系统指令停止；运行时错误即验收失败）；② `docs/ai-writing-prompt.md` AI 写作标准模板（DSL 速查 + 硬性规则 + 验收闸门，lint/audit 全绿才算完成）；③ 编辑器场景拓扑图（BFS 分层 SVG，jump/call 边可视化，节点点击切换场景）
 - **自我迭代第一梯队**：① 编辑器撤销/重做栈（Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z，打字合并撤销点、每场景独立历史、上限 200）+ 校验 Worker 化（全项目校验移出主线程，异常自动回退同步实现，seq 对齐丢弃过期结果——大型项目编辑不再卡顿）；② Playwright + Electron E2E 自动通关回归（`npm run e2e -w @surdet/shell`：真实 Electron 壳启动 → 画布点击开局 → 键盘推进剧情/选择肢确认 → F5/F9 存读档回路 → 推进至系统交互层或结局，退出码即回归结论）；③ 存档 schema 迁移管线（`core/save/migrate`：旧档读档时按迁移表逐级升到当前版本，断链回退兼容加载，广播 `saveMigrated` 事件）
 - **独立审计修复批次**：读档状态重置事件 `stateReset`（渲染层作废 @wait/@video 计时、宿主关闭覆盖层，修复 @wait 期间读档必崩）；`loadSnapshot` 清理 `hostPaused`（战斗/地图/商店中读档不再冻结）；`hostJump` 在 text/choice/wait/video 回调内重入全部正确续跑；场景级 lint 检查下沉 `core/scene-lint` 由 CLI 与编辑器共用（消除双源漂移，编辑器接入 customInstructions/变量/类型/修饰符全套检查；范围说明：场景级同源，`content/config/*.json` 表达式校验与 EMPTY_VARIABLES/NO_CONFIG 提示为 CLI 独有）；编辑器新建场景真实落盘 content/scenario、场景 key 改相对路径（子目录同名 LINT_DUP 显式报错）、零失真保持 CRLF 与半角冒号、关页脏保护；`VariableStore.restore` 默认拒写 readonly；存档槽位名单射编码；战斗技能归属/行动阵营/快照内容校验；存档深度校验补全（callStack/gallery/systems）；素材读取移除旧 XOR 回退；SE/语音音量播放中即时生效；存档缩略图纹理 LRU
 - **可视化剧本编辑器**（`packages/editor`，`npm run dev -w surdet-editor` → http://localhost:5174）：File System Access 打开游戏目录（Chrome/Edge）→ 场景列表/新建/脏标记 → **块式可视化编辑**（台词/标签/指令类型化控件 + 原始行双通道，raw 行为事实来源零失真）→ **实时校验**（复用引擎编译器：语法错误、跨场景 jump/call 目标、@switch 标签、未用标签、可达性）→ Ctrl+S 保存回目录；右侧面板含校验结果（点击跳转定位）、变量表（game.config.json）、场景引用图谱；无 FS API 环境提供内存演示项目 + .gal 下载导出兜底
@@ -101,6 +102,7 @@ npm run build                        # 全量构建（含示例 vite 打包）
 npm run dev -w surdet-starter        # 浏览器开发预览（http://localhost:5173）
 npm run dev -w surdet-editor         # 可视化剧本编辑器（http://localhost:5174，Chrome/Edge 打开游戏目录）
 npm run e2e -w @surdet/shell         # E2E 自动通关回归（Playwright 驱动真实 Electron，需先 npm run build）
+npx surdet audit examples/starter    # AI 生产线验收：内容审计 + 无头试跑（--no-run 跳过试跑）
 npm run start -w @surdet/shell       # 桌面窗口（先 build）
 ```
 
