@@ -22,6 +22,8 @@ export class AudioManager implements AudioHandle {
   #bgmVolume = 0.55;
   #seVolume = 0.9;
   #voiceVolume = 1;
+  /** Howl 实例 → 声道（音量调整时即时作用于播放中实例，审计修复） */
+  #channels = new Map<Howl, 'bgm' | 'se' | 'voice'>();
 
   playBgm(src: string | null): void {
     if (src === this.#bgmKey) return;
@@ -44,6 +46,7 @@ export class AudioManager implements AudioHandle {
     }
     if (src === null) return;
     const h = this.#get(src, { loop: true, channel: 'bgm' });
+    this.#channels.set(h, 'bgm');
     // 先停止该 src 的所有现存播放再开始 BGM：同一 src 可能先前作为 SE 播放过，
     // 直接 h.play() 会与旧实例重叠（howler 同 Howl 多次 play 创建多个 sound）。
     h.stop();
@@ -59,11 +62,14 @@ export class AudioManager implements AudioHandle {
   }
 
   playSe(src: string): void {
-    this.#get(src, { channel: 'se' }).play();
+    const h = this.#get(src, { channel: 'se' });
+    this.#channels.set(h, 'se');
+    h.play();
   }
 
   playVoice(src: string): void {
     const h = this.#get(src, { channel: 'voice' });
+    this.#channels.set(h, 'voice');
     h.play();
     this.#voice = h;
   }
@@ -76,6 +82,9 @@ export class AudioManager implements AudioHandle {
   /** 停止全部音频（BGM/SE/语音）并重置 BGM 记录 */
   stopAll(): void {
     Howler.stop(); // howler 全局：停止所有 Howl 的全部播放实例
+    // 推进代际：使尚在等待的旧 BGM 淡出延时停止定时器全部作废。
+    // 否则 stopAll 后立即 playBgm，淡出窗口（350ms）内的旧定时器会误停新启播的 BGM → 静音。
+    this.#bgmEpoch++;
     this.#bgm = null;
     this.#bgmKey = null;
     this.#voice = null;
@@ -100,6 +109,7 @@ export class AudioManager implements AudioHandle {
 
   setSeVolume(v: number): void {
     this.#seVolume = AudioManager.#clamp01(v);
+    this.#applyChannelVolume('se'); // 播放中实例即时生效（审计修复）
   }
 
   getSeVolume(): number {
@@ -108,10 +118,19 @@ export class AudioManager implements AudioHandle {
 
   setVoiceVolume(v: number): void {
     this.#voiceVolume = AudioManager.#clamp01(v);
+    this.#applyChannelVolume('voice'); // 播放中实例即时生效（审计修复）
   }
 
   getVoiceVolume(): number {
     return this.#voiceVolume;
+  }
+
+  /** 把当前声道音量即时施加到该声道所有 Howl 实例（含播放中；审计修复） */
+  #applyChannelVolume(channel: 'se' | 'voice'): void {
+    const v = channel === 'se' ? this.#seVolume : this.#voiceVolume;
+    for (const [h, ch] of this.#channels) {
+      if (ch === channel) h.volume(v);
+    }
   }
 
   static #clamp01(v: number): number {

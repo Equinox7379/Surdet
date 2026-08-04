@@ -8,7 +8,25 @@ import {
   Texture,
   type TextStyleOptions,
 } from 'pixi.js';
+import type { BacklogEntry } from './backlog.js';
+import type { BattleView } from './battle-view.js';
+import { parseRuby, stripRuby } from './ruby.js';
+import type { MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
+import { formatSlotTime } from './ui-views.js';
+import type { GalleryItemView } from './gallery.js';
+import type { SettingsRowView } from './settings-store.js';
 import type { AdvStage, ChoiceOptionView, PortraitView } from './types.js';
+
+/** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
+export interface BattleHandlers {
+  /** 点击存活的非行动方单位 → 以当前行动方首个存活单位攻击该目标；
+   *  skillId 为玩家先前选中的技能（null = 普攻） */
+  onAttack: (targetUid: string, skillId: string | null) => void;
+  /** 跳过行动（僵局出口） */
+  onPass: () => void;
+  /** 移动行动方单位（1D 阵列；移动消耗本次行动） */
+  onMove?: (dir: -1 | 1) => void;
+}
 
 /** 确定性颜色生成（同一资源 key 稳定同色） */
 function hashStr(s: string): number {
@@ -128,7 +146,82 @@ export class PixiStage implements AdvStage {
   #speakerText: PText;
   #dialogText: PText;
   #choiceLayer: Container;
-  #choiceViews: PText[] = [];
+  #choiceViews: Container[] = [];
+  /** 选择肢键盘高亮序号（-1 = 无） */
+  #choiceHighlight = -1;
+  /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
+  #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+  /** Backlog 滚动状态 */
+  #backlogEntriesLayer: Container | null = null;
+  #backlogScroll = 0;
+  #backlogContentH = 0;
+  /** 对话框半透明面板（亮色背景下保证文本可读性） */
+  #dialogPanel: Graphics;
+  /** ▼ 点击等待指示器（awaiting 时可见，呼吸浮动） */
+  #continueIndicator: Graphics;
+  #continuePhase = 0;
+  /** Backlog 覆盖层 */
+  #backlogLayer: Container;
+  #backlogBuilt = false;
+  /** 世界层：包裹背景 + 立绘，@shake/@zoom 的变换载体（UI 层不受影响） */
+  #worldLayer: Container;
+  /** @flash 白色闪光叠加（线性衰减） */
+  #flashOverlay: Graphics;
+  /** 演出效果状态（shake/flash/zoom 均为线性衰减，由 updateEffects 每帧驱动） */
+  #shakeRemain = 0;
+  #shakeDur = 1;
+  #shakeStrength = 0;
+  #flashRemain = 0;
+  #flashDur = 1;
+  #zoomFrom = 1;
+  #zoomTo = 1;
+  #zoomRemain = 0;
+  #zoomDur = 1;
+  /** 鉴赏覆盖层（CG/音乐 两个 tab；CG 全屏回看模式） */
+  #galleryLayer: Container;
+  #galleryTab: 'cg' | 'music' | 'text' = 'cg';
+  #galleryMode: 'grid' | 'viewer' = 'grid';
+  #galleryViews: { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[] } | null = null;
+  #galleryOnPlayMusic: ((id: string, src?: string) => void) | null = null;
+  /** 文本回想重播回调（宿主 hostJump 到回想场景） */
+  #galleryOnReplayText: ((item: GalleryItemView) => void) | null = null;
+  #galleryViewerKey: string | null = null;
+  /** 设置面板覆盖层（◀ ▶ 步进；状态归宿主，本舞台只投影与转发点击） */
+  #settingsLayer: Container;
+  #settingsRows: SettingsRowView[] = [];
+  #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
+  /** 战斗覆盖层（阵营分列 + 血条 + 点击攻击/跳过） */
+  #battleLayer: Container;
+  #battleHandlers: BattleHandlers | null = null;
+  /** 战斗中已选技能（null = 普攻） */
+  #battleSelectedSkill: string | null = null;
+  /** ruby 注音合成层（与 #dialogText 互斥显示） */
+  #dialogRubyLayer: Container;
+  /** NVL 全屏小说文本页 */
+  #nvlLayer: Container;
+  #nvlLines: PText[] = [];
+  #nvlActive = false;
+  /** 横幅（@title/@chapter/@tip/@center）淡出状态 */
+  #bannerLayer: Container;
+  #bannerText: PText;
+  #bannerRemain = 0;
+  #bannerDur = 1;
+  /** @wipe 擦除转场 */
+  #wipeBar: Graphics;
+  #wipeRemain = 0;
+  #wipeDur = 1;
+  /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
+  #titleLayer: Container;
+  #titleHandler: ((id: string) => void) | null = null;
+  #menuLayer: Container;
+  #menuHandlers: { onSelect: (id: string) => void; onClose: () => void } | null = null;
+  #saveLoadLayer: Container;
+  #saveLoadHandlers: { onSelect: (slotId: string) => void; onClose: () => void } | null = null;
+  #mapLayer: Container;
+  #mapHandlers: { onEnter: (nodeId: string) => void; onEndTurn: () => void } | null = null;
+  /** 商店覆盖层 */
+  #shopLayer: Container;
+  #shopHandlers: { onBuy: (itemId: string) => void; onClose: () => void } | null = null;
 
   #w = 1280;
   #h = 720;
@@ -136,11 +229,59 @@ export class PixiStage implements AdvStage {
   constructor() {
     this.#bgLayer = new Container();
     this.#portraitLayer = new Container();
+    this.#worldLayer = new Container();
+    this.#worldLayer.addChild(this.#bgLayer, this.#portraitLayer);
     this.#uiLayer = new Container();
     this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#fadeOverlay.alpha = 0;
+    this.#flashOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
+    this.#flashOverlay.alpha = 0;
     this.#choiceLayer = new Container();
-    this.#uiLayer.addChild(this.#choiceLayer);
+    this.#dialogRubyLayer = new Container();
+    this.#nvlLayer = new Container();
+    this.#nvlLayer.visible = false;
+    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.6 }));
+    this.#bannerLayer = new Container();
+    this.#bannerLayer.visible = false;
+    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions });
+    this.#bannerText.anchor.set(0.5);
+    this.#bannerLayer.addChild(this.#bannerText);
+    this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
+    this.#wipeBar.visible = false;
+    this.#titleLayer = new Container();
+    this.#titleLayer.visible = false;
+    this.#menuLayer = new Container();
+    this.#menuLayer.visible = false;
+    this.#saveLoadLayer = new Container();
+    this.#saveLoadLayer.visible = false;
+    this.#mapLayer = new Container();
+    this.#mapLayer.visible = false;
+    this.#shopLayer = new Container();
+    this.#shopLayer.visible = false;
+    this.#dialogPanel = new Graphics()
+      .roundRect(40, this.#h - 210, this.#w - 80, 180, 14)
+      .fill({ color: 0x000000, alpha: 0.5 });
+    this.#continueIndicator = new Graphics()
+      .moveTo(-9, 0)
+      .lineTo(9, 0)
+      .lineTo(0, 12)
+      .closePath()
+      .fill({ color: 0xffe8c8, alpha: 0.95 });
+    this.#continueIndicator.visible = false;
+    this.#backlogLayer = new Container();
+    this.#backlogLayer.visible = false;
+    this.#galleryLayer = new Container();
+    this.#galleryLayer.visible = false;
+    this.#settingsLayer = new Container();
+    this.#settingsLayer.visible = false;
+    this.#battleLayer = new Container();
+    this.#battleLayer.visible = false;
+    this.#uiLayer.addChild(
+      this.#dialogPanel, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer,
+      this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
+      this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
+      this.#mapLayer, this.#shopLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer,
+    );
 
     this.#speakerText = new PText({
       text: '',
@@ -159,13 +300,15 @@ export class PixiStage implements AdvStage {
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
-   *  resolution 按设备像素比渲染（高分屏不糊），autoDensity 保持逻辑尺寸 1280×720。 */
+   *  resolution 按设备像素比渲染（高分屏不糊），autoDensity 保持逻辑尺寸 1280×720。
+   *  严格 CSP（禁 unsafe-eval）环境自动安装 pixi.js/unsafe-eval 垫片后重试——
+   *  Electron 加固壳/内嵌 webview 等宿主不再因 CSP 直接崩溃。 */
   async init(canvas?: HTMLCanvasElement): Promise<void> {
     const app = new Application();
     const resolution = typeof window !== 'undefined' && window.devicePixelRatio > 0
       ? window.devicePixelRatio
       : 1;
-    await app.init({
+    const opts = {
       width: this.#w,
       height: this.#h,
       background: 0x000000,
@@ -173,11 +316,23 @@ export class PixiStage implements AdvStage {
       resolution,
       autoDensity: true,
       canvas,
-    });
+    };
+    try {
+      await app.init(opts);
+    } catch (err) {
+      if (err instanceof Error && /unsafe-eval/i.test(err.message)) {
+        // 垫片替换 pixi 内部的 Function 构造实现，对常规环境无副作用；安装后重试一次
+        await import('pixi.js/unsafe-eval');
+        await app.init(opts);
+      } else {
+        throw err;
+      }
+    }
     this.app = app;
 
-    app.stage.addChild(this.#bgLayer, this.#portraitLayer, this.#uiLayer);
-    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay);
+    app.stage.addChild(this.#worldLayer, this.#uiLayer);
+    // flash 置最末：闪光覆盖全部 UI（黑场 fade 在其下，转场与闪光可叠加）
+    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#flashOverlay);
     this.#layout();
     return undefined;
   }
@@ -195,6 +350,7 @@ export class PixiStage implements AdvStage {
   #layout(): void {
     this.#speakerText.position.set(70, this.#h - 190);
     this.#dialogText.position.set(70, this.#h - 150);
+    this.#dialogRubyLayer.position.set(70, this.#h - 150);
     // 选择肢列：对话框上方
     for (let i = 0; i < this.#choiceViews.length; i++) {
       this.#choiceViews[i]!.position.set(90, this.#h - 320 + i * 56);
@@ -247,24 +403,36 @@ export class PixiStage implements AdvStage {
       texture = makePortraitTexture(opts.charId, opts.costume, opts.expression);
       this.#portraitTextureCache.set(cacheKey, texture);
     }
-    let sprite = this.#portraitSprites.get(key);
-    if (!sprite) {
-      sprite = new Sprite(texture);
-      this.#portraitSprites.set(key, sprite);
-      this.#portraitLayer.addChild(sprite);
-    } else {
-      sprite.texture = texture;
-    }
-    // 尺寸与位置
     const pw = 340;
     const ph = (texture.height / texture.width) * pw;
-    sprite.width = pw;
-    sprite.height = ph;
-    sprite.anchor.set(0.5, 1);
     const baseY = this.#h * 0.82;
-    if (opts.pos === 'left') sprite.position.set(this.#w * 0.24, baseY);
-    else if (opts.pos === 'right') sprite.position.set(this.#w * 0.76, baseY);
-    else sprite.position.set(this.#w * 0.5, baseY);
+    const px = opts.pos === 'left' ? this.#w * 0.24 : opts.pos === 'right' ? this.#w * 0.76 : this.#w * 0.5;
+    const existing = this.#portraitSprites.get(key);
+    if (!existing) {
+      const sprite = new Sprite(texture);
+      sprite.width = pw;
+      sprite.height = ph;
+      sprite.anchor.set(0.5, 1);
+      sprite.position.set(px, baseY);
+      this.#portraitSprites.set(key, sprite);
+      this.#portraitLayer.addChild(sprite);
+      return;
+    }
+    if (existing.texture === texture) {
+      // 同纹理：仅移动（位置/尺寸无需过渡）
+      existing.position.set(px, baseY);
+      return;
+    }
+    // 纹理变化：交叉淡化（新 sprite 淡入，旧 sprite 淡出后销毁；补间在 updateEffects 推进）
+    const neu = new Sprite(texture);
+    neu.width = pw;
+    neu.height = ph;
+    neu.anchor.set(0.5, 1);
+    neu.position.set(px, baseY);
+    neu.alpha = 0;
+    this.#portraitLayer.addChild(neu);
+    this.#portraitSprites.set(key, neu);
+    this.#portraitTweens.push({ old: existing, neu, remain: 260, dur: 260 });
   }
 
   removePortrait(key: string): void {
@@ -284,27 +452,1064 @@ export class PixiStage implements AdvStage {
 
   showText(speaker: string | null, value: string): void {
     this.#speakerText.text = speaker ?? '';
-    this.#dialogText.text = value;
+    this.#renderDialogText(value);
+    // 有文本内容即显示对话框面板；清空时若不在等待推进状态则隐藏
+    this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
+  }
+
+  /** 对话文本渲染：含 基础字《注音》 标记时走 ruby 合成层（主字 + 上方小字）。
+   *  打字中途标记未闭合时先按纯文本渲染（stripRuby），完成后自然切换为注音形态。 */
+  #renderDialogText(value: string): void {
+    const unclosed = value.split('《').length !== value.split('》').length;
+    const segs = unclosed ? [] : parseRuby(value);
+    const hasRuby = segs.some((s) => s.ruby !== undefined);
+    if (!hasRuby) {
+      this.#clearRubyLayer();
+      this.#dialogText.visible = true;
+      this.#dialogText.text = unclosed ? stripRuby(value) : value;
+      return;
+    }
+    this.#dialogText.visible = false;
+    this.#dialogText.text = '';
+    this.#clearRubyLayer();
+    let x = 0;
+    for (const seg of segs) {
+      const base = new PText({
+        text: seg.base,
+        style: { fontSize: 26, fill: 0xf5f5f5, lineHeight: 38 } satisfies TextStyleOptions,
+      });
+      base.position.set(x, 0);
+      this.#dialogRubyLayer.addChild(base);
+      if (seg.ruby !== undefined) {
+        const r = new PText({
+          text: seg.ruby,
+          style: { fontSize: 13, fill: 0xf5f5f5 } satisfies TextStyleOptions,
+        });
+        r.anchor.set(0.5, 1);
+        r.position.set(x + base.width / 2, -2);
+        this.#dialogRubyLayer.addChild(r);
+      }
+      x += base.width;
+    }
+  }
+
+  #clearRubyLayer(): void {
+    this.#dialogRubyLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
+  }
+
+  /** 点击等待指示器可见性（▼；同时决定面板是否保持显示） */
+  setAwaiting(awaiting: boolean): void {
+    if (this.#nvlActive) return; // NVL 页不使用对话面板/指示器
+    this.#continueIndicator.visible = awaiting;
+    if (awaiting) this.#dialogPanel.visible = true;
+    else if (
+      this.#speakerText.text.length === 0
+      && this.#dialogText.text.length === 0
+    ) this.#dialogPanel.visible = false;
+  }
+
+  /** ▼ 呼吸浮动动画（由 AdvRenderer 每帧转发 ticker delta） */
+  updateContinuePulse(deltaMs: number): void {
+    if (!this.#continueIndicator.visible) return;
+    this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 4) % (Math.PI * 2);
+    this.#continueIndicator.y = this.#h - 44 + Math.sin(this.#continuePhase) * 4;
+  }
+
+  /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭） */
+  showBacklog(entries: readonly BacklogEntry[]): void {
+    const layer = this.#backlogLayer;
+    if (!this.#backlogBuilt) {
+      layer.eventMode = 'static';
+      // 滚轮滚动条目（不冒泡为点击关闭）；空白处点击关闭
+      layer.on('wheel', (e: WheelEvent) => {
+        this.scrollBacklog(e.deltaY > 0 ? 120 : -120);
+      });
+      layer.on('pointerdown', () => { layer.visible = false; });
+      this.#backlogBuilt = true;
+    }
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x000000, alpha: 0.82 }));
+    layer.addChild(new PText({
+      text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
+      style: { fontSize: 22, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 30);
+    // 条目层（整体滚动；CJK 无空格断词 → 按字符数手动软换行）
+    const entriesLayer = new Container();
+    const perLine = 40;
+    let y = 0;
+    for (const e of entries.slice(-120)) {
+      const text = e.text.length > 0 ? e.text : '（无文本）';
+      for (let i = 0; i < text.length; i += perLine) {
+        const first = i === 0;
+        const t = new PText({
+          text: (first && e.speaker ? `${e.speaker}：` : '') + text.slice(i, i + perLine),
+          style: {
+            fontSize: 20,
+            fill: first && e.speaker ? 0xffe8c8 : 0xdddddd,
+            fontWeight: first && e.speaker ? 'bold' : 'normal',
+          } satisfies TextStyleOptions,
+        });
+        t.position.set(60, 84 + y);
+        entriesLayer.addChild(t);
+        y += 34;
+      }
+    }
+    this.#backlogContentH = y;
+    this.#backlogScroll = 0;
+    this.#applyBacklogScroll();
+    this.#backlogEntriesLayer = entriesLayer;
+    layer.addChild(entriesLayer);
+    layer.visible = true;
+  }
+
+  /** Backlog 滚动：delta 正数向下（看更旧内容方向为向上滚 → 负 delta），clamp 到内容范围 */
+  scrollBacklog(delta: number): void {
+    if (!this.#backlogEntriesLayer || !this.#backlogLayer.visible) return;
+    const viewH = this.#h - 120;
+    const maxScroll = Math.max(0, this.#backlogContentH - viewH);
+    this.#backlogScroll = Math.max(-maxScroll, Math.min(0, this.#backlogScroll - delta));
+    this.#applyBacklogScroll();
+  }
+
+  #applyBacklogScroll(): void {
+    if (this.#backlogEntriesLayer) this.#backlogEntriesLayer.position.set(0, this.#backlogScroll);
+  }
+
+  /** 舞台截图缩略图（存档预览用）：整屏截图缩到宽 ≤320 的 JPEG dataURL；失败返回 null */
+  captureThumbnail(): string | null {
+    if (!this.app || typeof document === 'undefined') return null;
+    try {
+      const extract = this.app.renderer.extract as unknown as {
+        canvas: (opts: { target: unknown }) => HTMLCanvasElement;
+      };
+      const src = extract.canvas({ target: this.app.stage });
+      const scale = Math.min(1, 320 / src.width);
+      const small = document.createElement('canvas');
+      small.width = Math.max(1, Math.round(src.width * scale));
+      small.height = Math.max(1, Math.round(src.height * scale));
+      const ctx = small.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(src, 0, 0, small.width, small.height);
+      return small.toDataURL('image/jpeg', 0.72);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 隐藏 Backlog 覆盖层 */
+  hideBacklog(): void {
+    this.#backlogLayer.visible = false;
+  }
+
+  /* ============================ 演出效果（@shake/@flash/@zoom） ============================ */
+
+  /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
+  shake(durMs = 400, strength = 8): void {
+    this.#shakeDur = Math.max(1, durMs);
+    this.#shakeRemain = this.#shakeDur;
+    this.#shakeStrength = Math.max(0, Math.min(strength, 64));
+  }
+
+  /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */
+  flash(durMs = 300): void {
+    this.#flashDur = Math.max(1, durMs);
+    this.#flashRemain = this.#flashDur;
+    this.#flashOverlay.alpha = 1;
+  }
+
+  /** 缩放：world 层向目标 scale 线性过渡（以画面中心为锚点）。scale=1 复位 */
+  zoom(scale = 1, durMs = 400): void {
+    this.#zoomFrom = this.#worldLayer.scale.x;
+    this.#zoomTo = Math.max(0.25, Math.min(4, scale));
+    this.#zoomDur = Math.max(1, durMs);
+    this.#zoomRemain = this.#zoomDur;
+  }
+
+  /** 演出效果时间轴推进（AdvRenderer 每帧转发 ticker delta） */
+  updateEffects(deltaMs: number): void {
+    if (this.#shakeRemain > 0) {
+      this.#shakeRemain = Math.max(0, this.#shakeRemain - deltaMs);
+      const base = this.#zoomBaseOffset();
+      if (this.#shakeRemain === 0) {
+        this.#worldLayer.position.set(base.x, base.y);
+      } else {
+        const s = this.#shakeStrength * (this.#shakeRemain / this.#shakeDur);
+        this.#worldLayer.position.set(
+          base.x + (Math.random() * 2 - 1) * s,
+          base.y + (Math.random() * 2 - 1) * s,
+        );
+      }
+    }
+    if (this.#flashRemain > 0) {
+      this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
+      this.#flashOverlay.alpha = this.#flashRemain / this.#flashDur;
+    }
+    if (this.#zoomRemain > 0) {
+      this.#zoomRemain = Math.max(0, this.#zoomRemain - deltaMs);
+      const t = 1 - this.#zoomRemain / this.#zoomDur;
+      const scale = this.#zoomFrom + (this.#zoomTo - this.#zoomFrom) * t;
+      this.#worldLayer.scale.set(scale);
+      const off = this.#zoomBaseOffset();
+      this.#worldLayer.position.set(off.x, off.y);
+    }
+    this.#updateTransient(deltaMs);
+  }
+
+  /** @wipe：黑色竖条自左向右扫过画面（转场仪式感） */
+  wipe(durMs = 600): void {
+    this.#wipeDur = Math.max(1, durMs);
+    this.#wipeRemain = this.#wipeDur;
+    this.#wipeBar.visible = true;
+  }
+
+  /** 横幅：chapter 变体居中大字，tip 变体右上小字；末段淡出 */
+  showBanner(text: string, variant: 'chapter' | 'tip'): void {
+    if (text.length === 0) return;
+    this.#bannerText.text = text;
+    this.#bannerText.style = variant === 'chapter'
+      ? { fontSize: 40, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions
+      : { fontSize: 20, fill: 0xffe8c8 } satisfies TextStyleOptions;
+    if (variant === 'chapter') {
+      this.#bannerText.position.set(this.#w / 2, this.#h * 0.4);
+    } else {
+      this.#bannerText.anchor.set(1, 0);
+      this.#bannerText.position.set(this.#w - 60, 40);
+    }
+    if (variant === 'chapter') this.#bannerText.anchor.set(0.5);
+    this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
+    this.#bannerRemain = this.#bannerDur;
+    this.#bannerLayer.visible = true;
+    this.#bannerLayer.alpha = 1;
+  }
+
+  /** NVL 模式：开启时隐藏对话框，全屏半透明文本页；关闭时恢复 */
+  setNvlMode(on: boolean): void {
+    this.#nvlActive = on;
+    if (on) {
+      this.clearNvlText();
+      this.#nvlLayer.visible = true;
+      this.#dialogPanel.visible = false;
+      this.#speakerText.visible = false;
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+      this.#continueIndicator.visible = false;
+    } else {
+      this.#nvlLayer.visible = false;
+      this.#speakerText.visible = true;
+      this.#dialogText.visible = true;
+      this.#dialogRubyLayer.visible = true;
+    }
+  }
+
+  /** NVL 页追加一行（超限淘汰最旧并重排行高） */
+  appendNvlText(speaker: string | null, text: string): void {
+    const line = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
+    const t = new PText({
+      text: line,
+      style: { fontSize: 20, fill: 0xf0f0f0, wordWrap: true, wordWrapWidth: this.#w - 160 } satisfies TextStyleOptions,
+    });
+    this.#nvlLayer.addChild(t);
+    this.#nvlLines.push(t);
+    const maxLines = 18;
+    if (this.#nvlLines.length > maxLines) {
+      const old = this.#nvlLines.shift()!;
+      this.#nvlLayer.removeChild(old);
+      old.destroy();
+    }
+    this.#nvlLines.forEach((l, i) => l.position.set(80, 60 + i * 35));
+  }
+
+  /** NVL 页清空（@nvl clear） */
+  clearNvlText(): void {
+    for (const l of this.#nvlLines) {
+      this.#nvlLayer.removeChild(l);
+      l.destroy();
+    }
+    this.#nvlLines = [];
+  }
+
+  /** 强制停止当前 @video（读档作废：渲染层回调已被会话令牌拦截，此处移除画面本体；审计复核） */
+  hideVideo(): void {
+    if (!this.#activeVideo) return;
+    const v = this.#activeVideo;
+    this.#activeVideo = null;
+    v.pause();
+    v.remove();
+  }
+
+  /** @video：DOM <video> 覆盖全屏播放；结束/出错/点击跳过均回调 onEnd（素材缺失自动跳过不阻塞） */
+  showVideo(src: string, onEnd: () => void): void {
+    if (typeof document === 'undefined') {
+      onEnd();
+      return;
+    }
+    const v = document.createElement('video');
+    v.src = src;
+    v.autoplay = true;
+    v.playsInline = true;
+    Object.assign(v.style, {
+      position: 'fixed',
+      inset: '0',
+      width: '100%',
+      height: '100%',
+      objectFit: 'contain',
+      background: '#000',
+      zIndex: '1000',
+    });
+    this.#activeVideo = v;
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      if (this.#activeVideo === v) this.#activeVideo = null;
+      v.remove();
+      onEnd();
+    };
+    v.addEventListener('ended', finish);
+    v.addEventListener('error', finish);
+    v.addEventListener('pointerdown', finish);
+    document.body.appendChild(v);
+    void v.play().catch(finish);
+  }
+
+  /** 横幅/wipe 时间轴推进（并入 updateEffects 调用链） */
+  #updateTransient(deltaMs: number): void {
+    // 立绘交叉淡化补间
+    if (this.#portraitTweens.length > 0) {
+      const done: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+      for (const tw of this.#portraitTweens) {
+        tw.remain = Math.max(0, tw.remain - deltaMs);
+        const t = 1 - tw.remain / tw.dur;
+        tw.neu.alpha = t;
+        tw.old.alpha = 1 - t;
+        if (tw.remain === 0) done.push(tw);
+      }
+      for (const tw of done) {
+        this.#portraitLayer.removeChild(tw.old);
+        tw.old.destroy();
+        this.#portraitTweens.splice(this.#portraitTweens.indexOf(tw), 1);
+      }
+    }
+    if (this.#bannerRemain > 0) {
+      this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
+      this.#bannerLayer.alpha = Math.min(1, this.#bannerRemain / 400);
+      if (this.#bannerRemain === 0) this.#bannerLayer.visible = false;
+    }
+    if (this.#wipeRemain > 0) {
+      this.#wipeRemain = Math.max(0, this.#wipeRemain - deltaMs);
+      const p = 1 - this.#wipeRemain / this.#wipeDur;
+      this.#wipeBar.position.set(-this.#w + p * this.#w * 2, 0);
+      if (this.#wipeRemain === 0) {
+        this.#wipeBar.visible = false;
+        this.#wipeBar.position.set(0, 0);
+      }
+    }
+  }
+
+  /** 当前缩放下的居中偏移（缩放锚点为画面中心；shake 结束回位也用） */
+  #zoomBaseOffset(): { x: number; y: number } {
+    const scale = this.#worldLayer.scale.x;
+    return { x: ((1 - scale) * this.#w) / 2, y: ((1 - scale) * this.#h) / 2 };
+  }
+
+  /* ============================ 鉴赏覆盖层（CG/音乐） ============================ */
+
+  /** 展示鉴赏界面：CG/音乐/文本 三个 tab；CG 全屏回看、音乐播放、文本跳回场景重播 */
+  showGallery(opts: {
+    cgs: GalleryItemView[];
+    music: GalleryItemView[];
+    texts?: GalleryItemView[];
+    onPlayMusic?: (id: string, src?: string) => void;
+    onReplayText?: (item: GalleryItemView) => void;
+  }): void {
+    this.#galleryViews = { cgs: opts.cgs, music: opts.music, texts: opts.texts ?? [] };
+    this.#galleryOnPlayMusic = opts.onPlayMusic ?? null;
+    this.#galleryOnReplayText = opts.onReplayText ?? null;
+    this.#galleryMode = 'grid';
+    this.#galleryViewerKey = null;
+    this.#rebuildGallery();
+    this.#galleryLayer.visible = true;
+  }
+
+  /** 隐藏鉴赏界面 */
+  hideGallery(): void {
+    this.#galleryLayer.visible = false;
+  }
+
+  #rebuildGallery(): void {
+    const layer = this.#galleryLayer;
+    layer.removeAllListeners();
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    if (!this.#galleryViews) return;
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.95 }));
+
+    const mkBtn = (label: string, x: number, active: boolean, onTap: () => void): PText => {
+      const t = new PText({
+        text: label,
+        style: { fontSize: 24, fill: active ? 0xffe8c8 : 0x8a8a96, fontWeight: active ? 'bold' : 'normal' } satisfies TextStyleOptions,
+      });
+      t.position.set(x, 30);
+      t.eventMode = 'static';
+      t.cursor = 'pointer';
+      t.on('pointerdown', onTap);
+      return t;
+    };
+    layer.addChild(mkBtn('CG', 60, this.#galleryTab === 'cg', () => {
+      this.#galleryTab = 'cg';
+      this.#galleryMode = 'grid';
+      this.#rebuildGallery();
+    }));
+    layer.addChild(mkBtn('音乐', 150, this.#galleryTab === 'music', () => {
+      this.#galleryTab = 'music';
+      this.#galleryMode = 'grid';
+      this.#rebuildGallery();
+    }));
+    layer.addChild(mkBtn('文本', 240, this.#galleryTab === 'text', () => {
+      this.#galleryTab = 'text';
+      this.#galleryMode = 'grid';
+      this.#rebuildGallery();
+    }));
+    layer.addChild(mkBtn('✕ 关闭', this.#w - 150, false, () => { this.#galleryLayer.visible = false; }));
+
+    if (this.#galleryMode === 'viewer' && this.#galleryViewerKey !== null) {
+      this.#buildGalleryViewer(layer, this.#galleryViewerKey);
+      return;
+    }
+
+    if (this.#galleryTab === 'cg') {
+      const items = this.#galleryViews.cgs;
+      if (items.length === 0) {
+        layer.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        return;
+      }
+      const cols = 4;
+      const cw = 270;
+      const ch = 152;
+      items.forEach((item, i) => {
+        const x = 60 + (i % cols) * (cw + 20);
+        const y = 96 + Math.floor(i / cols) * (ch + 48);
+        const cell = new Container();
+        cell.position.set(x, y);
+        if (item.unlocked) {
+          const key = item.src ?? item.id;
+          const tex = this.#registeredBgs.get(key)
+            ?? this.#bgTextureCache.get(key)
+            ?? makeBackgroundTexture(key, 320, 180);
+          if (!this.#registeredBgs.has(key) && !this.#bgTextureCache.has(key)) {
+            this.#bgTextureCache.set(key, tex);
+          }
+          const sp = new Sprite(tex);
+          sp.width = cw;
+          sp.height = ch;
+          cell.addChild(sp);
+          cell.eventMode = 'static';
+          cell.cursor = 'pointer';
+          cell.on('pointerdown', () => {
+            this.#galleryMode = 'viewer';
+            this.#galleryViewerKey = key;
+            this.#rebuildGallery();
+          });
+        } else {
+          cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: 0x1c1c26, alpha: 1 }));
+          cell.addChild(new PText({ text: '?', style: { fontSize: 42, fill: 0x55555f } satisfies TextStyleOptions })).position.set(cw / 2 - 12, ch / 2 - 30);
+        }
+        cell.addChild(new PText({
+          text: item.unlocked ? item.name : '???',
+          style: { fontSize: 18, fill: item.unlocked ? 0xdddddd : 0x55555f } satisfies TextStyleOptions,
+        })).position.set(0, ch + 10);
+        layer.addChild(cell);
+      });
+      return;
+    }
+
+    // 音乐 tab：条目行，已解锁可点击播放
+    if (this.#galleryTab === 'music') {
+      const items = this.#galleryViews.music;
+      if (items.length === 0) {
+        layer.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        return;
+      }
+      items.forEach((item, i) => {
+        const y = 96 + i * 58;
+        const row = new Container();
+        row.position.set(60, y);
+        row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
+        row.addChild(new PText({
+          text: `${item.unlocked ? '♪' : '?'}  ${item.unlocked ? item.name : '???'}`,
+          style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+        })).position.set(18, 10);
+        if (item.unlocked) {
+          row.eventMode = 'static';
+          row.cursor = 'pointer';
+          row.on('pointerdown', () => this.#galleryOnPlayMusic?.(item.id, item.src));
+        }
+        layer.addChild(row);
+      });
+      return;
+    }
+
+    // 文本 tab：回想条目，已解锁可点击跳回场景重播
+    const items = this.#galleryViews.texts;
+    if (items.length === 0) {
+      layer.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+      return;
+    }
+    items.forEach((item, i) => {
+      const y = 96 + i * 58;
+      const row = new Container();
+      row.position.set(60, y);
+      row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
+      row.addChild(new PText({
+        text: `${item.unlocked ? '❐' : '?'}  ${item.unlocked ? item.name : '???'}`,
+        style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+      })).position.set(18, 10);
+      if (item.unlocked) {
+        row.eventMode = 'static';
+        row.cursor = 'pointer';
+        row.on('pointerdown', () => this.#galleryOnReplayText?.(item));
+      }
+      layer.addChild(row);
+    });
+  }
+
+  /** CG 全屏回看：优先注册的真实素材，未注册回退程序化占位；点击任意处返回列表 */
+  #buildGalleryViewer(layer: Container, key: string): void {
+    const tex = this.#registeredBgs.get(key)
+      ?? this.#bgTextureCache.get(key)
+      ?? makeBackgroundTexture(key, this.#w, this.#h);
+    if (!this.#registeredBgs.has(key) && !this.#bgTextureCache.has(key)) {
+      this.#bgTextureCache.set(key, tex);
+    }
+    const sp = new Sprite(tex);
+    sp.width = this.#w;
+    sp.height = this.#h;
+    layer.addChild(sp);
+    layer.addChild(new PText({
+      text: '点击任意处返回列表',
+      style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions,
+    })).position.set(this.#w - 250, this.#h - 44);
+    layer.eventMode = 'static';
+    layer.on('pointerdown', () => {
+      this.#galleryMode = 'grid';
+      this.#galleryViewerKey = null;
+      this.#rebuildGallery();
+    });
+  }
+
+  /* ============================ 设置面板 ============================ */
+
+  /** 展示设置面板：◀ ▶ 步进各行；onChange 交宿主改值后应重新调用本方法刷新展示 */
+  showSettings(rows: SettingsRowView[], onChange: (id: string, dir: -1 | 1) => void, onClose: () => void): void {
+    this.#settingsRows = rows;
+    this.#settingsHandlers = { onChange, onClose };
+    this.#rebuildSettings();
+    this.#settingsLayer.visible = true;
+  }
+
+  /** 隐藏设置面板 */
+  hideSettings(): void {
+    this.#settingsLayer.visible = false;
+  }
+
+  #rebuildSettings(): void {
+    const layer = this.#settingsLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    const px = this.#w / 2 - 320;
+    const panelH = 130 + this.#settingsRows.length * 52 + 40;
+    layer.addChild(new Graphics().roundRect(px, 110, 640, panelH, 14).fill({ color: 0x101018, alpha: 0.97 }));
+    layer.addChild(new PText({ text: '设 置', style: { fontSize: 28, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions })).position.set(this.#w / 2 - 42, 132);
+    const close = new PText({ text: '✕', style: { fontSize: 26, fill: 0x8a8a96 } satisfies TextStyleOptions });
+    close.position.set(px + 596, 132);
+    close.eventMode = 'static';
+    close.cursor = 'pointer';
+    close.on('pointerdown', () => {
+      this.#settingsLayer.visible = false;
+      this.#settingsHandlers?.onClose();
+    });
+    layer.addChild(close);
+
+    this.#settingsRows.forEach((row, i) => {
+      const y = 196 + i * 52;
+      layer.addChild(new PText({ text: row.label, style: { fontSize: 22, fill: 0xdddddd } satisfies TextStyleOptions })).position.set(px + 48, y);
+      const left = new PText({ text: '◀', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+      left.position.set(px + 320, y);
+      left.eventMode = 'static';
+      left.cursor = 'pointer';
+      left.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, -1));
+      const value = new PText({ text: row.display, style: { fontSize: 22, fill: 0xffffff } satisfies TextStyleOptions });
+      value.anchor.set(0.5, 0);
+      value.position.set(px + 420, y);
+      const right = new PText({ text: '▶', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+      right.position.set(px + 508, y);
+      right.eventMode = 'static';
+      right.cursor = 'pointer';
+      right.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, 1));
+      layer.addChild(left, value, right);
+    });
+  }
+
+  /* ============================ 战斗覆盖层 ============================ */
+
+  /** 展示交互式战斗界面：阵营分列 + 血条；点击非行动方存活单位攻击，底部可跳过行动。
+   *  宿主每次结算（act/pass）后以新的 BattleView 重新调用本方法刷新。 */
+  showBattle(view: BattleView, handlers: BattleHandlers, message = ''): void {
+    this.#battleHandlers = handlers;
+    const layer = this.#battleLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x05050a, alpha: 0.9 }));
+
+    layer.addChild(new PText({
+      text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
+      style: { fontSize: 26, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 36);
+
+    const teams = [...new Set(view.units.map((u) => u.team))];
+    teams.forEach((team, ti) => {
+      const x = 80 + ti * 620;
+      layer.addChild(new PText({
+        text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
+        style: { fontSize: 20, fill: team === view.actingTeam ? 0xffe8c8 : 0x8a8a96, fontWeight: 'bold' } satisfies TextStyleOptions,
+      })).position.set(x, 92);
+      view.units.filter((u) => u.team === team).forEach((u, i) => {
+        const y = 136 + i * 88;
+        const row = new Container();
+        row.position.set(x, y);
+        row.addChild(new Graphics().roundRect(0, 0, 520, 72, 10).fill({ color: u.alive ? 0x1a1a26 : 0x101016, alpha: 0.96 }));
+        row.addChild(new PText({
+          text: u.alive ? u.name : `${u.name}（倒下）`,
+          style: { fontSize: 20, fill: u.alive ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+        })).position.set(18, 8);
+        // 血条
+        row.addChild(new Graphics().rect(18, 46, 340, 12).fill(0x333340));
+        if (u.hpRatio > 0) {
+          row.addChild(new Graphics().rect(18, 46, 340 * u.hpRatio, 12).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f));
+        }
+        row.addChild(new PText({ text: `${u.hp}/${u.maxHp}`, style: { fontSize: 16, fill: 0xbbbbbb } satisfies TextStyleOptions })).position.set(372, 40);
+        // 非行动方的存活单位可点击攻击（携带已选技能，攻击后清空选择）
+        if (u.alive && u.team !== view.actingTeam) {
+          row.eventMode = 'static';
+          row.cursor = 'pointer';
+          row.on('pointerdown', () => {
+            this.#battleHandlers?.onAttack(u.uid, this.#battleSelectedSkill);
+            this.#battleSelectedSkill = null;
+          });
+        }
+        layer.addChild(row);
+      });
+    });
+
+    // 技能选择条：行动方首个存活单位的 [普攻 + 技能]（冷却中灰显不可选）
+    const actingUnit = view.units.find((u) => u.alive && u.team === view.actingTeam);
+    if (actingUnit) {
+      const skillBtns: { id: string | null; label: string; ready: boolean }[] = [
+        { id: null, label: '普攻', ready: true },
+        ...actingUnit.skills.map((s) => ({
+          id: s.id,
+          label: s.ready ? s.name : `${s.name}（冷却 ${s.cooldown}）`,
+          ready: s.ready,
+        })),
+      ];
+      let sx = 60;
+      for (const btn of skillBtns) {
+        const selected = btn.id !== null && btn.id === this.#battleSelectedSkill;
+        const t = new PText({
+          text: btn.label,
+          style: {
+            fontSize: 18,
+            fill: selected ? 0x0a0a12 : btn.ready ? 0xffe8c8 : 0x55555f,
+          } satisfies TextStyleOptions,
+        });
+        const pad = new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
+          .fill({ color: selected ? 0xffe8c8 : 0x1a1a26, alpha: 0.95 });
+        layer.addChild(pad);
+        t.position.set(sx, this.#h - 144);
+        layer.addChild(t);
+        if (btn.ready) {
+          pad.eventMode = 'static';
+          pad.cursor = 'pointer';
+          pad.on('pointerdown', () => {
+            this.#battleSelectedSkill = btn.id;
+            this.#battleHandlers && this.showBattle(view, this.#battleHandlers, message); // 重绘高亮
+          });
+        }
+        sx += t.width + 34;
+      }
+      if (actingUnit.canMove) {
+        // 移动按钮（1D 阵型，move 值 = 移动距离；移动消耗本次行动）
+        const mkMove = (label: string, dir: -1 | 1, x: number): void => {
+          const b = new PText({
+            text: label,
+            style: { fontSize: 18, fill: 0x9ad0ff } satisfies TextStyleOptions,
+          });
+          b.position.set(x, this.#h - 144);
+          b.eventMode = 'static';
+          b.cursor = 'pointer';
+          b.on('pointerdown', () => this.#battleHandlers?.onMove?.(dir));
+          layer.addChild(b);
+        };
+        mkMove('◀ 移动', -1, sx + 30);
+        mkMove('移动 ▶', 1, sx + 140);
+      }
+    }
+
+    layer.addChild(new PText({
+      text: message.length > 0 ? message : '点击敌方单位发起攻击',
+      style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
+    })).position.set(60, this.#h - 84);
+    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: 0xffe8c8 } satisfies TextStyleOptions });
+    pass.position.set(this.#w - 210, this.#h - 84);
+    pass.eventMode = 'static';
+    pass.cursor = 'pointer';
+    pass.on('pointerdown', () => this.#battleHandlers?.onPass());
+    layer.addChild(pass);
+    layer.visible = true;
+  }
+
+  /** 隐藏战斗界面（战斗结束由宿主调用） */
+  hideBattle(): void {
+    this.#battleLayer.visible = false;
+  }
+
+  /* ============================ 标题画面 / 系统菜单 / 存读档 / 大地图 ============================ */
+
+  /** 展示标题画面：大标题 + 副标题 + 菜单项（enabled=false 灰显不可点） */
+  showTitle(view: TitleView, onSelect: (id: string) => void): void {
+    this.#titleHandler = onSelect;
+    const layer = this.#titleLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.98 }));
+    const title = new PText({ text: view.title, style: { fontSize: 60, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions });
+    title.anchor.set(0.5);
+    title.position.set(this.#w / 2, this.#h * 0.28);
+    layer.addChild(title);
+    if (view.subtitle) {
+      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions });
+      sub.anchor.set(0.5);
+      sub.position.set(this.#w / 2, this.#h * 0.28 + 56);
+      layer.addChild(sub);
+    }
+    const startY = this.#h * 0.48;
+    view.items.forEach((item, i) => {
+      const enabled = item.enabled !== false;
+      const t = new PText({
+        text: item.label,
+        style: { fontSize: 26, fill: enabled ? 0xffffff : 0x4a4a55 } satisfies TextStyleOptions,
+      });
+      t.anchor.set(0.5);
+      t.position.set(this.#w / 2, startY + i * 56);
+      if (enabled) {
+        t.eventMode = 'static';
+        t.cursor = 'pointer';
+        t.on('pointerdown', () => this.#titleHandler?.(item.id));
+      }
+      layer.addChild(t);
+    });
+    layer.visible = true;
+  }
+
+  /** 隐藏标题画面 */
+  hideTitle(): void {
+    this.#titleLayer.visible = false;
+  }
+
+  /** 展示系统菜单：半透明背景点击关闭；条目点击后自动收起并回调 */
+  showSystemMenu(items: SystemMenuItemView[], onSelect: (id: string) => void, onClose: () => void): void {
+    this.#menuHandlers = { onSelect, onClose };
+    const layer = this.#menuLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x000000, alpha: 0.55 });
+    bg.eventMode = 'static';
+    bg.on('pointerdown', () => {
+      layer.visible = false;
+      this.#menuHandlers?.onClose();
+    });
+    layer.addChild(bg);
+    const px = this.#w - 350;
+    layer.addChild(new Graphics().roundRect(px, 90, 270, 50 + items.length * 54, 12).fill({ color: 0x101018, alpha: 0.97 }));
+    items.forEach((item, i) => {
+      const t = new PText({ text: item.label, style: { fontSize: 22, fill: 0xffffff } satisfies TextStyleOptions });
+      t.position.set(px + 44, 116 + i * 54);
+      t.eventMode = 'static';
+      t.cursor = 'pointer';
+      t.on('pointerdown', () => {
+        layer.visible = false;
+        this.#menuHandlers?.onSelect(item.id);
+      });
+      layer.addChild(t);
+    });
+    layer.visible = true;
+  }
+
+  /** 隐藏系统菜单 */
+  hideSystemMenu(): void {
+    this.#menuLayer.visible = false;
+  }
+
+  /** 存档缩略图纹理 LRU：dataURL 每档唯一，不限量会随反复开关存档界面累积（审计修复） */
+  #thumbCache = new Map<string, Texture>();
+  /** 正在播放的 @video 元素（hideVideo 强制停止用；审计复核） */
+  #activeVideo: HTMLVideoElement | null = null;
+  #thumbTexture(url: string): Texture {
+    const hit = this.#thumbCache.get(url);
+    if (hit) {
+      // 命中即移到队尾（Map 按插入序迭代）→ 真 LRU，避免淘汰当前界面正在使用的纹理（审计复核）
+      this.#thumbCache.delete(url);
+      this.#thumbCache.set(url, hit);
+      return hit;
+    }
+    const tex = Texture.from(url);
+    this.#thumbCache.set(url, tex);
+    if (this.#thumbCache.size > 16) {
+      const oldest = this.#thumbCache.keys().next().value;
+      if (oldest !== undefined) {
+        this.#thumbCache.get(oldest)?.destroy(false);
+        this.#thumbCache.delete(oldest);
+      }
+    }
+    return tex;
+  }
+
+  /** 展示存档/读档界面：槽位卡片网格；load 模式空槽灰显不可选 */
+  showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
+    this.#saveLoadHandlers = { onSelect, onClose };
+    const layer = this.#saveLoadLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
+    layer.addChild(new PText({
+      text: view.mode === 'save' ? '存 档' : '读 档',
+      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 36);
+    const close = new PText({ text: '✕ 关闭', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
+    close.position.set(this.#w - 150, 42);
+    close.eventMode = 'static';
+    close.cursor = 'pointer';
+    close.on('pointerdown', () => {
+      layer.visible = false;
+      this.#saveLoadHandlers?.onClose();
+    });
+    layer.addChild(close);
+    const cols = 3;
+    view.slots.forEach((slot, i) => {
+      const x = 60 + (i % cols) * 396;
+      const y = 110 + Math.floor(i / cols) * 118;
+      const selectable = view.mode === 'save' || !slot.empty;
+      const card = new Container();
+      card.position.set(x, y);
+      card.addChild(new Graphics().roundRect(0, 0, 380, 104, 10).fill({ color: selectable ? 0x1a1a26 : 0x121218, alpha: 0.96 }));
+      // 缩略图（舞台截图 dataURL；纹理异步加载完成后自动显示）
+      let textX = 16;
+      if (slot.thumbnail) {
+        const thumb = new Sprite(this.#thumbTexture(slot.thumbnail));
+        thumb.width = 118;
+        thumb.height = 66;
+        thumb.position.set(14, 19);
+        card.addChild(thumb);
+        textX = 148;
+      }
+      card.addChild(new PText({
+        text: slot.empty ? '—— 空槽位 ——' : (slot.label ?? slot.id),
+        style: { fontSize: 20, fill: selectable ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+      })).position.set(textX, 14);
+      if (!slot.empty) {
+        const kindLabel = slot.kind === 'auto' ? '自动 ' : slot.kind === 'quick' ? '快速 ' : '';
+        const playtime = slot.playTimeSec !== undefined && slot.playTimeSec > 0
+          ? ` · ${Math.floor(slot.playTimeSec / 60)}分钟`
+          : '';
+        card.addChild(new PText({
+          text: `${kindLabel}${formatSlotTime(slot.updatedAt)}${playtime}`,
+          style: { fontSize: 16, fill: 0x9a9aa5 } satisfies TextStyleOptions,
+        })).position.set(textX, 60);
+      }
+      if (selectable) {
+        card.eventMode = 'static';
+        card.cursor = 'pointer';
+        card.on('pointerdown', () => {
+          layer.visible = false;
+          this.#saveLoadHandlers?.onSelect(slot.id);
+        });
+      }
+      layer.addChild(card);
+    });
+    layer.visible = true;
+  }
+
+  /** 隐藏存档/读档界面 */
+  hideSaveLoad(): void {
+    this.#saveLoadLayer.visible = false;
+  }
+
+  /** 展示大地图：节点（可进入者高亮可点）+ 日期/回合/行动力 + 结束回合 */
+  showMap(view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void): void {
+    this.#mapHandlers = { onEnter, onEndTurn };
+    const layer = this.#mapLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0f14, alpha: 0.95 }));
+    layer.addChild(new PText({
+      text: `${view.date} —— 回合 ${view.turn}`,
+      style: { fontSize: 24, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 36);
+    layer.addChild(new PText({ text: '行动力', style: { fontSize: 16, fill: 0x9a9aa5 } satisfies TextStyleOptions })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
+    for (let i = 0; i < view.maxAp; i++) {
+      layer.addChild(new Graphics().circle(this.#w - 60 - (view.maxAp - i) * 30 + 10, 50, 10).fill(i < view.ap ? 0x57c26a : 0x333340));
+    }
+    for (const node of view.nodes) {
+      const dot = new Container();
+      dot.position.set(node.x, node.y);
+      const color = node.enterable ? 0xffe8c8 : node.visited ? 0x5a7a8a : 0x333340;
+      dot.addChild(new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }));
+      if (node.visited) {
+        dot.addChild(new PText({ text: '✓', style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions })).position.set(-9, -13);
+      }
+      const nameTag = new PText({
+        text: `${node.name}${node.apCost > 0 ? `（行动力 ${node.apCost}）` : ''}`,
+        style: { fontSize: 16, fill: node.enterable ? 0xffffff : 0x777788 } satisfies TextStyleOptions,
+      });
+      nameTag.anchor.set(0.5, 0);
+      nameTag.position.set(0, 34);
+      dot.addChild(nameTag);
+      if (node.enterable) {
+        dot.eventMode = 'static';
+        dot.cursor = 'pointer';
+        dot.on('pointerdown', () => {
+          layer.visible = false;
+          this.#mapHandlers?.onEnter(node.id);
+        });
+      }
+      layer.addChild(dot);
+    }
+    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+    end.position.set(this.#w - 210, this.#h - 70);
+    end.eventMode = 'static';
+    end.cursor = 'pointer';
+    end.on('pointerdown', () => {
+      layer.visible = false;
+      this.#mapHandlers?.onEndTurn();
+    });
+    layer.addChild(end);
+    layer.visible = true;
+  }
+
+  /** 隐藏大地图 */
+  hideMap(): void {
+    this.#mapLayer.visible = false;
+  }
+
+  /* ============================ 商店 ============================ */
+
+  /** 展示商店覆盖层：金币 + 商品列表（购买按钮，金币不足灰显）。
+   *  宿主在 onBuy 里结算（ShopSystem.buy）后更新视图重新 showShop；离店回调 onClose。 */
+  showShop(
+    view: { gold: number; items: { id: string; name: string; price: number }[]; message?: string },
+    onBuy: (itemId: string) => void,
+    onClose: () => void,
+  ): void {
+    this.#shopHandlers = { onBuy, onClose };
+    const layer = this.#shopLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
+    layer.addChild(new PText({
+      text: '商 店',
+      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 36);
+    layer.addChild(new PText({
+      text: `金币：${view.gold}`,
+      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
+    })).position.set(this.#w - 240, 44);
+    view.items.forEach((item, i) => {
+      const affordable = view.gold >= item.price;
+      const row = new Container();
+      row.position.set(60, 120 + i * 64);
+      row.addChild(new Graphics().roundRect(0, 0, 720, 52, 10).fill({ color: 0x1a1a26, alpha: 0.96 }));
+      row.addChild(new PText({
+        text: item.name,
+        style: { fontSize: 22, fill: 0xffffff } satisfies TextStyleOptions,
+      })).position.set(20, 13);
+      row.addChild(new PText({
+        text: `${item.price} 金币`,
+        style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions,
+      })).position.set(320, 16);
+      const btn = new PText({
+        text: affordable ? '购买' : '金币不足',
+        style: { fontSize: 20, fill: affordable ? 0xffe8c8 : 0x55555f } satisfies TextStyleOptions,
+      });
+      btn.position.set(580, 14);
+      if (affordable) {
+        btn.eventMode = 'static';
+        btn.cursor = 'pointer';
+        btn.on('pointerdown', () => this.#shopHandlers?.onBuy(item.id));
+      }
+      row.addChild(btn);
+      layer.addChild(row);
+    });
+    if (view.message && view.message.length > 0) {
+      layer.addChild(new PText({
+        text: view.message,
+        style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
+      })).position.set(60, this.#h - 130);
+    }
+    const close = new PText({ text: '✕ 离开商店', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
+    close.position.set(this.#w - 220, this.#h - 74);
+    close.eventMode = 'static';
+    close.cursor = 'pointer';
+    close.on('pointerdown', () => {
+      layer.visible = false;
+      this.#shopHandlers?.onClose();
+    });
+    layer.addChild(close);
+    layer.visible = true;
+  }
+
+  /** 隐藏商店 */
+  hideShop(): void {
+    this.#shopLayer.visible = false;
   }
 
   showChoices(options: ChoiceOptionView[]): void {
     this.#clearChoices();
     for (const opt of options) {
+      // Container 包裹（底板 + 文本）：Pixi v8 起 Text 不再允许挂子节点（弃用告警）
+      const holder = new Container();
       const t = new PText({
         text: `▸ ${opt.label}`,
-        style: {
-          fontSize: 26,
-          fill: 0xffffff,
-          dropShadow: { color: 0x000000, alpha: 0.9, blur: 4, distance: 1 },
-        } satisfies TextStyleOptions,
+        style: { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions,
       });
-      t.eventMode = 'static';
-      t.cursor = 'pointer';
-      t.on('pointerdown', () => this.onSelect?.(opt.index));
-      this.#choiceLayer.addChild(t);
-      this.#choiceViews.push(t);
+      const bg = new Graphics()
+        .roundRect(-10, -4, t.width + 20, t.height + 8, 8)
+        .fill({ color: 0x000000, alpha: 0.45 });
+      holder.addChild(bg, t);
+      holder.eventMode = 'static';
+      holder.cursor = 'pointer';
+      holder.on('pointerdown', () => this.onSelect?.(opt.index));
+      // hover 高亮：底板提亮 + 文本变色（离开恢复）
+      holder.on('pointerover', () => {
+        bg.clear();
+        bg.roundRect(-10, -4, t.width + 20, t.height + 8, 8).fill({ color: 0xffe8c8, alpha: 0.28 });
+        t.style = { fontSize: 26, fill: 0xffe8c8 } satisfies TextStyleOptions;
+      });
+      holder.on('pointerout', () => {
+        bg.clear();
+        bg.roundRect(-10, -4, t.width + 20, t.height + 8, 8).fill({ color: 0x000000, alpha: 0.45 });
+        if (this.#choiceHighlight !== this.#choiceViews.indexOf(holder)) {
+          t.style = { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions;
+        }
+      });
+      this.#choiceLayer.addChild(holder);
+      this.#choiceViews.push(holder);
     }
+    this.#choiceHighlight = -1;
     this.#layout();
+  }
+
+  /** 选择肢键盘导航高亮：提亮第 pos 项（其余恢复默认样式） */
+  setChoiceHighlight(pos: number): void {
+    this.#choiceHighlight = pos;
+    this.#choiceViews.forEach((holder, i) => {
+      const text = holder.children.find((c) => c instanceof PText) as PText | undefined;
+      if (!text) return;
+      text.style = i === pos
+        ? { fontSize: 26, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions
+        : { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions;
+    });
   }
 
   hideChoices(): void {
@@ -318,7 +1523,7 @@ export class PixiStage implements AdvStage {
   #clearChoices(): void {
     for (const t of this.#choiceViews) {
       this.#choiceLayer.removeChild(t);
-      t.destroy();
+      t.destroy({ children: true }); // holder 内含底板 Graphics 与文本，一并销毁
     }
     this.#choiceViews = [];
   }

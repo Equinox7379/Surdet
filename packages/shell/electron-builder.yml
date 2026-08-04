@@ -10,5 +10,15 @@ win:
     - target: portable
       arch:
         - x64
+    # NSIS 安装器：可选安装目录 + 开始菜单/桌面快捷方式；图标放 build/icon.ico 即自动启用
+    - target: nsis
+      arch:
+        - x64
   artifactName: SurdetGame-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  shortcutName: Surdet Game
+  artifactName: SurdetGame-Setup-${version}.${ext}
 npmRebuild: false

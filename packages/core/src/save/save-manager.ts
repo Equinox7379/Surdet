@@ -57,8 +57,8 @@ export interface SaveSnapshot {
   kind: 'manual' | 'quick' | 'auto';
   /** 已读标记（快进跳过用） */
   readSet: string[];
-  /** CG/音乐解锁状态 */
-  gallery: { cgs: string[]; music: string[] };
+  /** CG/音乐/文本回想解锁状态（texts 为后续版本新增，旧档无此字段） */
+  gallery: { cgs: string[]; music: string[]; texts?: string[] };
   /** 全家桶系统状态快照（日历/战斗/好感/周目，宿主经 SystemHooks 提供，可选） */
   systems?: SystemSnapshots;
 }
@@ -81,6 +81,66 @@ export interface SaveStorage {
 /** JSON 深拷贝（存档数据均为 JSON 安全值） */
 function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
+}
+
+/** JSON 安全递归检查：string/有限 number/boolean/数组/普通对象 */
+function isJsonSafe(v: unknown): boolean {
+  if (typeof v === 'string' || typeof v === 'boolean') return true;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (Array.isArray(v)) return v.every(isJsonSafe);
+  if (typeof v === 'object' && v !== null) return Object.values(v).every(isJsonSafe);
+  return false;
+}
+
+/** 存档深度校验：结构非法（篡改/损坏/手工编辑出错）提前抛错，
+ *  避免畸形数据在解释器执行中途才爆炸（玩家体验：读档入口即失败并给出原因）。 */
+export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot {
+  const fail = (msg: string): never => {
+    throw new Error(`存档结构非法：${msg}`);
+  };
+  if (typeof snap !== 'object' || snap === null) fail('顶层必须是对象');
+  const s = snap as Record<string, unknown>;
+  if (typeof s.meta !== 'object' || s.meta === null) fail('缺少 meta 元信息');
+  if (typeof s.variables !== 'object' || s.variables === null || Array.isArray(s.variables)) {
+    fail('variables 必须是对象');
+  }
+  if (!isJsonSafe(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
+  if (s.position !== null && s.position !== undefined) {
+    const p = s.position as Record<string, unknown> | null;
+    if (typeof p !== 'object' || p === null || typeof p.sceneId !== 'string' || typeof p.pc !== 'number') {
+      fail('position 必须是 { sceneId: string, pc: number } 或 null');
+    }
+  }
+  if (s.callStack !== undefined) {
+    if (!Array.isArray(s.callStack)) {
+      fail('callStack 必须是数组');
+    } else {
+      for (const frame of s.callStack) {
+        const fr = frame as Record<string, unknown>;
+        if (typeof fr !== 'object' || fr === null || typeof fr.sceneId !== 'string' || typeof fr.pc !== 'number') {
+          fail('callStack 元素必须是 { sceneId: string, pc: number }');
+        }
+      }
+    }
+  }
+  if (!Array.isArray(s.readSet) || !s.readSet.every((x) => typeof x === 'string')) {
+    fail('readSet 必须是字符串数组');
+  }
+  if (s.gallery !== undefined) {
+    const g = s.gallery as Record<string, unknown>;
+    if (typeof g !== 'object' || g === null || !Array.isArray(g.cgs) || !Array.isArray(g.music)) {
+      fail('gallery 必须是 { cgs: string[], music: string[] }');
+    }
+    const cgs = g.cgs as unknown[];
+    const music = g.music as unknown[];
+    if (!cgs.every((x) => typeof x === 'string') || !music.every((x) => typeof x === 'string')) {
+      fail('gallery.cgs / gallery.music 必须是字符串数组');
+    }
+  }
+  // systems 形状兜底（审计修复：深度校验补全）
+  if (s.systems !== undefined && (typeof s.systems !== 'object' || s.systems === null || Array.isArray(s.systems))) {
+    fail('systems 必须是对象');
+  }
 }
 
 /** 内存存储（默认；可测） */

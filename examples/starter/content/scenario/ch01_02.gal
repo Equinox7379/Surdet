@@ -1,9 +1,15 @@
 @scene ch01_02
 @bg night_field
+@unlock_cg cg_field
+@unlock_text t_night
 
 @label start
 主角：黎明之前，还有一段路。
 凛：跟着我。
+主角：远处好像有狼嚎……
+@shake 500
+@flash 250
+@wait 600
 @autosave
 @jump ch02.start
 @end

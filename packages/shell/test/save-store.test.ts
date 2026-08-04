@@ -47,9 +47,12 @@ describe('FileSaveStore', () => {
   });
 
   it('sanitizeSlot 清洗非法字符防路径穿越', () => {
-    expect(sanitizeSlot('../../evil')).toBe('______evil');
-    expect(sanitizeSlot('a/b\\c')).toBe('a_b_c');
+    expect(sanitizeSlot('../../evil')).toBe('_x2e_x2e_x2f_x2e_x2e_x2fevil');
+    expect(sanitizeSlot('a/b\\c')).toBe('a_x2fb_x5cc');
     expect(sanitizeSlot('quick')).toBe('quick');
+    // 单射性（审计修复）：a/b 与 a_b 必须映射到不同槽位，不再静默互相覆盖
+    expect(sanitizeSlot('a/b')).not.toBe(sanitizeSlot('a_b'));
+    expect(sanitizeSlot('a_b')).toBe('a_ub');
   });
 
   it('损坏的存档文件 read 返回 null 而非抛错', () => {
@@ -117,5 +120,88 @@ describe('FileSaveStore', () => {
     const store = new FileSaveStore(makeDir());
     store.write('s1', makeSnap('s1'));
     expect(store.list()).toEqual(['s1']);
+  });
+
+  it('R3 主档损坏时回退 .bak 备份（上次成功写入的版本）', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', makeSnap('s1')); // v1
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 77 } }); // v2，v1 成为 .bak
+    // 主档损坏（模拟断电截断）
+    fs.writeFileSync(path.join(dir, 's1.json'), '{ corrupted');
+    const got = store.read('s1');
+    expect(got).not.toBeNull();
+    expect(got!.variables).toEqual({ trust: 5 }); // 恢复的是 v1
+  });
+
+  it('R3 每次 write 前生成 .bak（list 不把它当槽位）', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', makeSnap('s1'));
+    store.write('s1', makeSnap('s1'));
+    expect(fs.existsSync(path.join(dir, 's1.json.bak'))).toBe(true);
+    expect(store.list()).toEqual(['s1']);
+  });
+});
+
+
+describe('FileSaveStore 槽位编码兼容（审计复核）', () => {
+  it('旧编码存量槽位（含下划线）：新编码文件缺失时按旧文件名回退读，write 后迁移到新文件名', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    const snap = makeSnap('slot_1');
+    // 模拟升级前的存量文件：旧算法 slot_1 → slot_1.json（新算法会算出 slot_u1.json）
+    fs.writeFileSync(path.join(dir, 'slot_1.json'), JSON.stringify(snap), 'utf8');
+    const got = store.read('slot_1');
+    expect(got?.meta.id).toBe('slot_1'); // 回退读命中
+    store.write('slot_1', snap);
+    expect(fs.existsSync(path.join(dir, 'slot_u1.json'))).toBe(true); // 隐式迁移
+    expect(store.read('slot_1')?.meta.id).toBe('slot_1');
+  });
+
+  it('无下划线的槽位：新旧编码一致，不触发回退路径', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    const snap = makeSnap('quick');
+    store.write('quick', snap);
+    expect(store.read('quick')?.meta.id).toBe('quick');
+  });
+});
+
+
+describe('FileSaveStore legacy 迁移闭合：delete/listMeta（审计终审）', () => {
+  it('delete 含下划线槽位：同步删除 legacy 文件，read 返回 null 不复活', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    // 存量 legacy 文件（升级前写入）：slot_a → slot_a.json（新编码为 slot_ua.json）
+    fs.writeFileSync(path.join(dir, 'slot_a.json'), JSON.stringify(makeSnap('slot_a')), 'utf8');
+    expect(store.read('slot_a')?.meta.id).toBe('slot_a'); // 回退读命中
+    store.delete('slot_a');
+    expect(fs.existsSync(path.join(dir, 'slot_a.json'))).toBe(false); // legacy 已删
+    expect(store.read('slot_a')).toBeNull(); // 不复活
+  });
+
+  it('write 隐式迁移后清理 legacy：delete 后无僵尸存档', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    fs.writeFileSync(path.join(dir, 'slot_a.json'), JSON.stringify(makeSnap('slot_a')), 'utf8');
+    store.write('slot_a', makeSnap('slot_a')); // 迁移到新文件名并清理 legacy
+    expect(fs.existsSync(path.join(dir, 'slot_a.json'))).toBe(false);  // legacy 已清理
+    expect(fs.existsSync(path.join(dir, 'slot_ua.json'))).toBe(true);  // 新编码文件在位
+    expect(store.read('slot_a')?.meta.id).toBe('slot_a');
+    store.delete('slot_a');
+    expect(fs.existsSync(path.join(dir, 'slot_ua.json'))).toBe(false);
+    expect(store.read('slot_a')).toBeNull(); // 修复前：legacy 残留 → 删除后复活
+  });
+
+  it('listMeta 索引存在时包含未迁移 legacy 槽位（不漏项）', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('quick', makeSnap('quick')); // 创建 index.json
+    // 未迁移 legacy 槽位（不在索引中）
+    fs.writeFileSync(path.join(dir, 'slot_a.json'), JSON.stringify(makeSnap('slot_a')), 'utf8');
+    const ids = store.listMeta().map((m) => m.id);
+    expect(ids).toContain('quick');
+    expect(ids).toContain('slot_a'); // 修复前漏项
   });
 });

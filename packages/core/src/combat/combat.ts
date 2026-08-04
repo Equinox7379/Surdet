@@ -67,6 +67,9 @@ export interface CombatConfig {
   maxTurns?: number;
   /** 伤害公式（缺省 "atk - def"） */
   damage?: DamageFormula;
+  /** 允许攻击同阵营目标（友伤）。缺省 false：act() 拒绝同阵营目标，
+   *  防止宿主/AI 选目标逻辑失误时静默打到己方单位。 */
+  friendlyFire?: boolean;
 }
 
 /** 战斗实例单位 */
@@ -131,12 +134,20 @@ export interface CombatTurn {
   actingTeam: string;
 }
 
+/** AI/宿主行动建议：攻击 / 移动（1D 阵列接近）/ 跳过 */
+export type CombatSuggestion =
+  | { kind: 'attack'; attackerUid: string; targetUid: string; skillId: string | null }
+  | { kind: 'move'; uid: string; dir: -1 | 1 }
+  | { kind: 'pass' };
+
 export interface CombatSnapshot {
   units: CombatUnitSnapshot[];
   turn: number;
   actingTeam: string;
   winner: string | null;
   finished: boolean;
+  /** 本回合已移动单位（移动消耗行动；旧档无此字段按空） */
+  moved?: string[];
 }
 
 /**
@@ -152,6 +163,8 @@ export class CombatSolver {
   #finished = false;
   #rng: () => number;
   #lastAction: CombatAction | null = null;
+  /** 本回合已消耗移动行动的单位（整回合结束时清空） */
+  #moved = new Set<string>();
 
   constructor(config: CombatConfig, rng: () => number = () => Math.random()) {
     this.#config = config;
@@ -189,6 +202,7 @@ export class CombatSolver {
     this.#teamIndex = 0;
     this.#winner = null;
     this.#finished = false;
+    this.#moved = new Set<string>();
 
     const spawn = (defIds: string[], team: string, basePos: number): void => {
       defIds.forEach((defId, i) => {
@@ -234,8 +248,16 @@ export class CombatSolver {
     const attacker = this.#unit(attackerUid);
     const target = this.#unit(targetUid);
     if (!target.alive) throw new Error(`目标 '${targetUid}' 已倒下`);
+    // 默认禁止攻击同阵营（防宿主/AI 误选目标静默打己方）；需友伤玩法时显式配置 friendlyFire
+    if (target.team === attacker.team && !this.#config.friendlyFire) {
+      throw new Error(`'${attackerUid}' 不能攻击同阵营目标 '${targetUid}'（如需友伤请配置 friendlyFire）`);
+    }
 
     const skill = skillId ? this.#skill(skillId) : null;
+    // 技能归属校验（审计修复）：配置内技能不可被任意单位越权使用
+    if (skillId && skill && !attacker.skills.includes(skillId)) {
+      throw new Error(`单位 '${attackerUid}' 未习得技能 '${skillId}'`);
+    }
     if (skillId && skill && (attacker.cooldowns.get(skillId) ?? 0) > 0) {
       throw new Error(`技能 '${skillId}' 冷却中`);
     }
@@ -246,9 +268,10 @@ export class CombatSolver {
       throw new Error(`目标超出射程（${dist} > ${range}）`);
     }
 
-    // 命中判定（rng() <= hitRate，含边界）
+    // 命中判定统一开区间 rng() < hitRate：hit=0 恒 miss（rng() 可返回恰好 0，
+    // 旧 <= 判定下会偶发命中）、hit=1 恒命中（rng() < 1 恒真），与暴击判定一致
     const hitRate = skill?.hit ?? 1;
-    const hit = this.#rng() <= hitRate;
+    const hit = this.#rng() < hitRate;
     if (!hit) {
       // miss 同样进入冷却（防低命中高伤技能零代价试射）
       if (skill) attacker.cooldowns.set(skill.id, skill.cooldown);
@@ -309,6 +332,64 @@ export class CombatSolver {
     return !this.#units.some((u) => u.team === this.actingTeam && u.alive && this.canAttackAny(u.uid));
   }
 
+  /** 该单位当前能否移动（行动方 + 存活 + 本回合未移动过 + move>0） */
+  canMove(uid: string): boolean {
+    if (this.#finished) return false;
+    const u = this.#units.find((x) => x.uid === uid);
+    return !!u && u.alive && u.team === this.actingTeam && !this.#moved.has(uid) && u.move > 0;
+  }
+
+  /** 移动（1D 阵列定位）：按 move 值位移（不小于 0），消耗本次行动并移交行动权 */
+  moveUnit(uid: string, dir: -1 | 1): void {
+    if (!this.canMove(uid)) {
+      throw new Error(`单位 '${uid}' 当前不能移动（非行动方/已移动过/无移动力）`);
+    }
+    const u = this.#unit(uid);
+    u.position = Math.max(0, u.position + dir * u.move);
+    this.#moved.add(uid);
+    this.#advance();
+  }
+
+  /** AI 行动建议：优先攻击（最低血量目标，就绪技能优先于普攻），
+   *  打不到则向最近敌人移动（需 canMove），否则 pass。敌方自动战斗/新手引导共用。 */
+  suggestAction(team: string): CombatSuggestion {
+    if (this.#finished) return { kind: 'pass' };
+    // 行动方校验（审计修复）：宿主只能为当前行动阵营请求 AI 行动
+    if (team !== this.actingTeam) {
+      throw new Error(`suggestAction 只能查询当前行动阵营 '${this.actingTeam}'（收到 '${team}'）`);
+    }
+    for (const u of this.#units) {
+      if (!u.alive || u.team !== team) continue;
+      const enemies = this.#units.filter((t) => t.alive && t.team !== team);
+      if (enemies.length === 0) return { kind: 'pass' };
+      const inRange = enemies.filter((t) => Math.abs(u.position - t.position) <= u.range);
+      const readySkills = u.skills.filter((sid) => {
+        const s = this.#config.skills.find((x) => x.id === sid);
+        return !!s && (u.cooldowns.get(sid) ?? 0) <= 0;
+      });
+      const longReady = readySkills.filter((sid) => {
+        const s = this.#config.skills.find((x) => x.id === sid);
+        return !!s && !!s.effects?.includes('long');
+      });
+      const pool = inRange.length > 0 ? inRange : longReady.length > 0 ? enemies : [];
+      if (pool.length > 0) {
+        const target = [...pool].sort((a, b) => a.hp - b.hp)[0]!;
+        let skillId: string | null = null;
+        if (inRange.includes(target)) skillId = readySkills[0] ?? null;
+        else skillId = longReady[0] ?? null;
+        return { kind: 'attack', attackerUid: u.uid, targetUid: target.uid, skillId };
+      }
+      // 够不着：向最近敌人接近（移动消耗行动）
+      if (this.canMove(u.uid)) {
+        const nearest = [...enemies].sort(
+          (a, b) => Math.abs(a.position - u.position) - Math.abs(b.position - u.position),
+        )[0]!;
+        return { kind: 'move', uid: u.uid, dir: nearest.position >= u.position ? 1 : -1 };
+      }
+    }
+    return { kind: 'pass' };
+  }
+
   /**
    * 跳过行动（pass）：行动方无可攻击目标时（如近战单位互不在射程且无移动阶段），
    * 宿主调用本方法结束该方行动。回合照常推进——保证 maxTurns 超时判定在僵局下依然生效，
@@ -328,6 +409,7 @@ export class CombatSolver {
     if (this.#teamIndex >= this.#config.teams.length) {
       this.#teamIndex = 0;
       this.#turn++;
+      this.#moved.clear(); // 整回合结束：移动行动重置
       for (const u of this.#units) {
         for (const [skillId, cd] of u.cooldowns) {
           if (cd > 0) u.cooldowns.set(skillId, cd - 1);
@@ -384,20 +466,28 @@ export class CombatSolver {
       actingTeam: this.actingTeam,
       winner: this.#winner,
       finished: this.#finished,
+      moved: [...this.#moved],
     };
   }
 
   /** 从快照恢复（战斗中途存档/读档）。快照为 JSON 安全结构，可经 JSON 序列化往返。 */
   restore(snap: CombatSnapshot): void {
-    this.#units = snap.units.map((u) => ({
-      ...u,
-      cooldowns: new Map(Object.entries(u.cooldowns)),
-    }));
+    // 快照内容校验（审计修复）：拒绝负 HP / 非法阵营等畸形数据
+    const teamSet = new Set(this.#config.teams);
+    if (!Array.isArray(snap.units)) throw new Error('战斗快照 units 必须是数组');
+    this.#units = snap.units.map((u) => {
+      if (!teamSet.has(u.team)) throw new Error(`战斗快照含非法阵营 '${u.team}'`);
+      if (typeof u.hp !== 'number' || !Number.isFinite(u.hp) || u.hp < 0 || u.hp > u.maxHp) {
+        throw new Error(`战斗快照单位 '${u.uid}' HP 非法（须为 0~maxHp 的有限数）`);
+      }
+      return { ...u, cooldowns: new Map(Object.entries(u.cooldowns)) };
+    });
     this.#turn = Math.max(1, snap.turn);
     const idx = this.#config.teams.indexOf(snap.actingTeam);
     this.#teamIndex = idx >= 0 ? idx : 0;
     this.#winner = snap.winner;
     this.#finished = snap.finished;
+    this.#moved = new Set(snap.moved ?? []);
     this.#lastAction = null;
   }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EventBus, compileScene, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
-import { AdvRenderer, Typewriter, dequote } from '../src/index.js';
+import { AdvRenderer, Typewriter, dequote, Backlog } from '../src/index.js';
 import type { AdvStage, AudioHandle, PortraitView } from '../src/types.js';
 
 /** 记录调用的 fake 舞台 */
@@ -45,6 +45,14 @@ class FakeStage implements AdvStage {
     this.calls.push(`fade:${alpha.toFixed(2)}`);
     this.fades.push(alpha);
   }
+  shakes: { dur: number; strength: number }[] = [];
+  flashes: number[] = [];
+  zooms: { scale: number; dur: number }[] = [];
+  effectTicks = 0;
+  shake(durMs: number, strength: number): void { this.shakes.push({ dur: durMs, strength }); }
+  flash(durMs: number): void { this.flashes.push(durMs); }
+  zoom(scale: number, durMs: number): void { this.zooms.push({ scale, dur: durMs }); }
+  updateEffects(): void { this.effectTicks++; }
 }
 
 class FakeAudio implements AudioHandle {
@@ -412,6 +420,166 @@ describe('dequote 契约', () => {
   });
 });
 
+describe('R2 @wait 接线与演出效果', () => {
+  it('@wait：到时回调 onWaitEnd（连 Interpreter.finishWait）', async () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let waitEnded = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd: () => { waitEnded++; } });
+    r.subscribe(bus);
+
+    bus.emit('wait', { ms: 40 });
+    r.update(16); // 未到点
+    expect(waitEnded).toBe(0);
+    await new Promise((res) => setTimeout(res, 60));
+    r.update(16); // 到点
+    expect(waitEnded).toBe(1);
+    r.update(16); // 不重复触发
+    expect(waitEnded).toBe(1);
+  });
+
+  it('@wait：玩家点击 advance 跳过剩余等待', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let waitEnded = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd: () => { waitEnded++; } });
+    r.subscribe(bus);
+
+    bus.emit('wait', { ms: 99999 });
+    expect(r.advance()).toBe(true);
+    expect(waitEnded).toBe(1);
+  });
+
+  it('@wait：快进中立即跳过等待', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let waitEnded = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd: () => { waitEnded++; } });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    bus.emit('wait', { ms: 99999 });
+    r.update(16);
+    expect(waitEnded).toBe(1);
+  });
+
+  it('演出指令 shake/flash/zoom 转发到舞台（参数解析与缺省值）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    const pos = { file: 'x', line: 1, col: 1 };
+
+    bus.emit('instr', { name: 'shake', args: ['300', '12'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'shake', args: [], modifiers: new Map(), pos }); // 缺省 400/8
+    bus.emit('instr', { name: 'flash', args: ['200'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'zoom', args: ['1.5', '600'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'zoom', args: ['bad'], modifiers: new Map(), pos }); // 非法 → 复位 1
+
+    expect(stage.shakes).toEqual([{ dur: 300, strength: 12 }, { dur: 400, strength: 8 }]);
+    expect(stage.flashes).toEqual([200]);
+    expect(stage.zooms).toEqual([{ scale: 1.5, dur: 600 }, { scale: 1, dur: 400 }]);
+    // 每帧驱动效果时间轴
+    r.update(16);
+    expect(stage.effectTicks).toBe(1);
+  });
+});
+
+describe('R1 行为改进与新特性', () => {
+  it('快进遇选择肢自动退出（玩家必须做出选择）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onAdvance: () => { advanced++; } });
+    r.subscribe(bus);
+    r.toggleSkip();
+
+    bus.emit('text', { speaker: null, value: '已读行', wasRead: true });
+    r.update(1000);
+    expect(advanced).toBe(1);
+    expect(r.skipMode).toBe(true);
+
+    // 解释器发出选择肢：快进必须退出，不得越过选择
+    bus.emit('choice', { options: [{ index: 0, label: 'A' }] });
+    expect(r.skipMode).toBe(false);
+    expect(r.status).toBe('choice');
+    r.update(1000); // 不应有任何自动推进
+    expect(advanced).toBe(1);
+  });
+
+  it('自动播放停留：未到停留时长不推进，到时后推进', async () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const tw = new Typewriter({ charsPerSecond: 100 });
+    const r = new AdvRenderer(stage, new FakeAudio(), {
+      typewriter: tw,
+      autoBaseDelayMs: 40,
+      onAdvance: () => { advanced++; },
+    });
+    r.subscribe(bus);
+    r.toggleAuto();
+
+    bus.emit('text', { speaker: null, value: '自动行' });
+    r.update(1000); // 打字完成 → awaiting（停留未到）
+    expect(r.status).toBe('awaiting');
+    expect(advanced).toBe(0);
+    r.update(16); // 仍未到
+    expect(advanced).toBe(0);
+
+    await new Promise((res) => setTimeout(res, 60));
+    r.update(16); // 停留期满 → 推进
+    expect(advanced).toBe(1);
+  });
+
+  it('自动播放等语音播完再推进', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let advanced = 0;
+    const audio = new FakeAudio();
+    let playing = true;
+    audio.isVoicePlaying = () => playing;
+    const tw = new Typewriter({ charsPerSecond: 100 });
+    const r = new AdvRenderer(stage, audio, { typewriter: tw, onAdvance: () => { advanced++; } });
+    r.subscribe(bus);
+    r.toggleAuto();
+
+    bus.emit('text', { speaker: null, value: '语音行' });
+    r.update(1000);
+    expect(advanced).toBe(0); // 语音播放中 → 等待
+    r.update(1000);
+    expect(advanced).toBe(0);
+
+    playing = false; // 语音播完
+    r.update(16);
+    expect(advanced).toBe(1);
+  });
+
+  it('Backlog：text 事件自动记录，容量淘汰最旧', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const backlog = new Backlog(3);
+    const r = new AdvRenderer(stage, new FakeAudio(), { backlog });
+    r.subscribe(bus);
+
+    bus.emit('text', { speaker: '凛', value: '第一行' });
+    bus.emit('text', { speaker: null, value: '第二行' });
+    bus.emit('text', { speaker: '旁白', value: '第三行' });
+    bus.emit('text', { speaker: '凛', value: '第四行' }); // 超容量 → 淘汰最旧
+
+    expect(backlog.size).toBe(3);
+    expect(r.backlogEntries().map((e) => e.text)).toEqual(['第二行', '第三行', '第四行']);
+    expect(backlog.entries()[0]).toEqual({ speaker: null, text: '第二行' });
+    // toggleBacklog：fake stage 未实现覆盖层仍正常切换状态
+    expect(r.toggleBacklog()).toBe(true);
+    expect(r.backlogOpen).toBe(true);
+    expect(r.toggleBacklog()).toBe(false);
+    // 未注入 backlog 时 toggle 返回 false
+    const r2 = new AdvRenderer(stage, new FakeAudio());
+    expect(r2.toggleBacklog()).toBe(false);
+  });
+});
+
 describe('快进批量推进', () => {
   it('单帧内连续推进多行已读文本（不受帧率限制）', () => {
     const bus = makeBus();
@@ -453,5 +621,53 @@ describe('快进批量推进', () => {
     expect(advanced).toBe(1); // 只推进了已读行，未读行停住
     expect(r.skipMode).toBe(false);
     expect(r.status).toBe('typing');
+  });
+});
+
+
+describe('AdvRenderer C1：stateReset 作废等待计时与视频回调（审计复核）', () => {
+  function make(onWaitEnd: () => void) {
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd });
+    const bus = makeBus();
+    r.subscribe(bus);
+    return { stage, r, bus };
+  }
+
+  it('正向：@wait 到时触发一次 onWaitEnd', () => {
+    let ends = 0;
+    const { r, bus } = make(() => { ends++; });
+    bus.emit('wait', { ms: 0 }); // 0ms：deadline = nowMs()，update 立即到点（update 走真实时钟）
+    r.update(100);
+    expect(ends).toBe(1);
+    r.update(100); // 幂等：不重复触发
+    expect(ends).toBe(1);
+  });
+
+  it('stateReset 作废等待计时：之后 update 不再触发 onWaitEnd', () => {
+    let ends = 0;
+    const { r, bus } = make(() => { ends++; });
+    bus.emit('wait', { ms: 60000 });
+    bus.emit('stateReset', { reason: 'load' });
+    r.update(999999);
+    expect(ends).toBe(0); // 修复前：deadline 残留 → 触发 finishWait 状态失配崩溃
+  });
+
+  it('stateReset 作废视频结束回调（会话令牌）', () => {
+    let ends = 0;
+    const { stage, r, bus } = make(() => { ends++; });
+    let onEnd: (() => void) | null = null;
+    (stage as FakeStage & { showVideo?: (src: string, cb: () => void) => void }).showVideo = (_src, cb) => { onEnd = cb; };
+    bus.emit('video', { src: 'v.mp4' });
+    expect(onEnd).not.toBeNull();
+    bus.emit('stateReset', { reason: 'load' });
+    onEnd!(); // 残留的视频结束回调
+    expect(ends).toBe(0); // 已被会话令牌作废
+    // 正向对照：无 stateReset 时回调照常生效
+    let onEnd2: (() => void) | null = null;
+    (stage as FakeStage & { showVideo?: (src: string, cb: () => void) => void }).showVideo = (_src, cb) => { onEnd2 = cb; };
+    bus.emit('video', { src: 'v2.mp4' });
+    onEnd2!();
+    expect(ends).toBe(1);
   });
 });

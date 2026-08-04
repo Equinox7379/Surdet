@@ -11,12 +11,14 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "electron .",
     "pack": "npm run build && node prepare-pack.mjs && electron-builder --win",
+    "e2e": "node e2e/game.e2e.mjs",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@surdet/core": "0.1.0",
     "electron": "43.2.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "playwright": "^1.49.0"
   }
 }

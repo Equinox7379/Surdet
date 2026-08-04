@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "id": "potion", "name": "回复药", "price": 30 },
+    { "id": "iron_sword", "name": "铁剑", "price": 60 },
+    { "id": "charm", "name": "护身符", "price": 45 }
+  ]
+}

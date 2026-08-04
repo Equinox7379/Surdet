@@ -5,7 +5,9 @@ import {
   type ChoiceEventPayload,
   type InstrEventPayload,
 } from '@surdet/core';
+import type { Backlog } from './backlog.js';
 import { dequote } from './dequote.js';
+import { stripRuby } from './ruby.js';
 import { Typewriter } from './text-buffer.js';
 import { FadeTween } from './transitions.js';
 import type { AdvStage, AudioHandle, ChoiceOptionView, PortraitView } from './types.js';
@@ -30,6 +32,14 @@ export interface AdvRendererOptions {
   onAdvance?: () => void;
   /** 玩家选中选项时回调（连接 Interpreter.choose） */
   onSelect?: (index: number) => void;
+  /** @wait 计时结束回调（连接 Interpreter.finishWait）；玩家点击跳过由 advance 处理 */
+  onWaitEnd?: () => void;
+  /** 自动播放：文本显示完成后的基础停留毫秒数（缺省 0 = 完成即推进） */
+  autoBaseDelayMs?: number;
+  /** 自动播放：按文本长度追加的停留（毫秒/字符，与基础停留相加） */
+  autoPerCharMs?: number;
+  /** 文字记录缓冲（注入后自动记录每行文本，供历史回看） */
+  backlog?: Backlog;
 }
 
 /**
@@ -49,6 +59,27 @@ export class AdvRenderer {
   #unsubs: (() => void)[] = [];
   #autoPlay = false;
   #skipMode = false;
+  #autoBaseDelayMs: number;
+  #autoPerCharMs: number;
+  /** 进入 awaiting 的时刻（自动播放停留计时起点） */
+  #awaitSince = 0;
+  /** 文字记录（可选注入） */
+  #backlog: Backlog | null;
+  /** Backlog 覆盖层展示中 */
+  #backlogOpen = false;
+  /** NVL（全屏小说文本）模式 */
+  #nvl = false;
+  /** 当前选择肢（键盘导航用；原始 index 列表） */
+  #choiceIndices: number[] = [];
+  /** 选择肢高亮位置（键盘方向键移动） */
+  #choiceCursor = 0;
+  /** 快进"全部跳过"模式（不区分已读/未读；默认快进仅跳已读） */
+  #skipAll = false;
+  /** @wait 截止时间戳（null = 未在等待） */
+  #waitDeadline: number | null = null;
+  #onWaitEnd?: () => void;
+  /** wait/video 会话号：stateReset 后递增，残留的结束回调因此作废（审计修复 C1） */
+  #waitSession = 0;
 
   constructor(stage: AdvStage, audio: AudioHandle = NULL_AUDIO, options: AdvRendererOptions = {}) {
     this.#stage = stage;
@@ -56,9 +87,14 @@ export class AdvRenderer {
     this.#tw = options.typewriter ?? new Typewriter();
     this.#onAdvance = options.onAdvance;
     this.#onSelect = options.onSelect;
+    this.#onWaitEnd = options.onWaitEnd;
+    this.#autoBaseDelayMs = Math.max(0, options.autoBaseDelayMs ?? 0);
+    this.#autoPerCharMs = Math.max(0, options.autoPerCharMs ?? 0);
+    this.#backlog = options.backlog ?? null;
     this.#tw.onComplete = () => {
       if (this.#status === 'typing') {
         this.#status = 'awaiting';
+        this.#awaitSince = nowMs();
         this.#syncText();
       }
     };
@@ -78,6 +114,9 @@ export class AdvRenderer {
       bus.on('text', (p) => this.#onText(p)),
       bus.on('choice', (p) => this.#onChoice(p)),
       bus.on('instr', (p) => this.#onInstr(p)),
+      bus.on('wait', (p) => this.#onWait(p)),
+      bus.on('video', (p) => this.#onVideo(p)),
+      bus.on('stateReset', () => this.#onStateReset()),
     );
   }
 
@@ -88,6 +127,13 @@ export class AdvRenderer {
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
+    // @wait 计时：到时（或快进中立即）结束等待并恢复解释器
+    if (this.#waitDeadline !== null) {
+      if (this.#skipMode || nowMs() >= this.#waitDeadline) {
+        this.#waitDeadline = null;
+        this.#onWaitEnd?.();
+      }
+    }
     this.#tw.update(deltaMs);
     if (this.#status === 'typing') {
       const c = this.#current;
@@ -113,11 +159,19 @@ export class AdvRenderer {
         break; // choice/idle（解释器已结束且无后续事件）：停止
       }
     } else if (this.#autoPlay && this.#status === 'awaiting') {
-      // 自动播放：文本显示完成后推进一行（choice 挂起时不推进）
-      this.#status = 'idle';
-      this.#stage.showText(null, '');
-      this.#onAdvance?.();
+      // 自动播放：文本显示完成后停留（基础 + 按长度）再推进；语音播放中先等语音
+      // （isVoicePlaying 恒 false 的音频实现不受影响）。choice 挂起时不推进。
+      const waited = nowMs() - this.#awaitSince;
+      const need = this.#autoBaseDelayMs + this.#autoPerCharMs * (this.#current?.value.length ?? 0);
+      if (waited >= need && !this.#audio.isVoicePlaying()) {
+        this.#status = 'idle';
+        this.#stage.showText(null, '');
+        this.#onAdvance?.();
+      }
     }
+    // 点击等待指示器投影（▼ 仅在文本等待推进时可见；fake stage 可未实现）
+    this.#stage.setAwaiting?.(this.#status === 'awaiting');
+    this.#syncContinuePulse(deltaMs);
 
     const fade = this.#fade;
     if (fade) {
@@ -125,11 +179,42 @@ export class AdvRenderer {
       this.#stage.setFade(v);
       if (fade.done) this.#fade = null;
     }
+    // 演出效果时间轴（shake/flash/zoom 由 PixiStage 内部衰减）
+    this.#stage.updateEffects?.(deltaMs);
   }
 
   /** 运行时设置打字速度（每秒字符数，设置界面接入用） */
   setTextSpeed(charsPerSecond: number): void {
     this.#tw.setSpeed(charsPerSecond);
+  }
+
+  /** 运行时调整自动播放停留（设置界面接入用） */
+  setAutoWait(baseDelayMs: number, perCharMs: number): void {
+    this.#autoBaseDelayMs = Math.max(0, baseDelayMs);
+    this.#autoPerCharMs = Math.max(0, perCharMs);
+  }
+
+  /** 切换 Backlog 覆盖层（舞台需实现 showBacklog/hideBacklog；未实现返回 false） */
+  toggleBacklog(): boolean {
+    if (!this.#backlog) return false;
+    this.#backlogOpen = !this.#backlogOpen;
+    if (this.#backlogOpen) this.#stage.showBacklog?.(this.#backlog.entries());
+    else this.#stage.hideBacklog?.();
+    return this.#backlogOpen;
+  }
+
+  get backlogOpen(): boolean {
+    return this.#backlogOpen;
+  }
+
+  /** 舞台未实现 Backlog 覆盖层时的宿主回退取数入口 */
+  backlogEntries() {
+    return this.#backlog?.entries() ?? [];
+  }
+
+  /** ▼ 呼吸动画累加（PixiStage 内部时间轴驱动上下浮动） */
+  #syncContinuePulse(deltaMs: number): void {
+    this.#stage.updateContinuePulse?.(deltaMs);
   }
 
   /** 切换自动播放 */
@@ -138,10 +223,22 @@ export class AdvRenderer {
     return this.#autoPlay;
   }
 
-  /** 切换快进（瞬时文本 + 连续推进） */
+  /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
+    if (!this.#skipMode) this.#skipAll = false;
     return this.#skipMode;
+  }
+
+  /** 切换"全部跳过"快进：不区分已读/未读一路到底（遇选择肢仍会停下） */
+  toggleSkipAll(): boolean {
+    this.#skipAll = !this.#skipAll;
+    this.#skipMode = this.#skipAll;
+    return this.#skipAll;
+  }
+
+  get skipAll(): boolean {
+    return this.#skipAll;
   }
 
   get autoPlay(): boolean {
@@ -152,8 +249,16 @@ export class AdvRenderer {
     return this.#skipMode;
   }
 
-  /** 玩家点击：打字中 → 瞬时完成；等待推进 → 回调 onAdvance */
+  /** 玩家点击/按键推进：等待中 → 跳过等待；打字中 → 瞬时完成；选择肢 → 确认高亮项；等待推进 → onAdvance */
   advance(): boolean {
+    if (this.#waitDeadline !== null) {
+      this.#waitDeadline = null;
+      this.#onWaitEnd?.();
+      return true;
+    }
+    if (this.#status === 'choice') {
+      return this.choiceConfirm();
+    }
     if (this.#status === 'typing') {
       this.#tw.skip();
       return true;
@@ -179,12 +284,22 @@ export class AdvRenderer {
   #onText(p: TextEventPayload): void {
     // 遇未读即停：快进中遇到从未播放过的文本（wasRead === false）时自动退出快进，
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
-    if (this.#skipMode && p.wasRead === false) this.#skipMode = false;
+    // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
+    if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
+    this.#backlog?.add(p.speaker, stripRuby(p.value));
     this.#current = { speaker: p.speaker, value: p.value };
+    if (this.#nvl) {
+      // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
+      this.#stage.appendNvlText?.(p.speaker, stripRuby(p.value));
+      this.#status = 'awaiting';
+      this.#awaitSince = nowMs();
+      return;
+    }
     if (p.value.length === 0) {
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，
       // 否则状态机永远卡在 typing（Typewriter 空文本 done=true 但不触发 onComplete），剧情无法推进。
       this.#status = 'awaiting';
+      this.#awaitSince = nowMs();
       this.#syncText();
       return;
     }
@@ -194,8 +309,70 @@ export class AdvRenderer {
   }
 
   #onChoice(p: ChoiceEventPayload): void {
+    // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
+    this.#skipMode = false;
     this.#status = 'choice';
+    this.#choiceIndices = p.options.map((o) => o.index);
+    this.#choiceCursor = 0;
     this.#stage.showChoices(p.options);
+    this.#stage.setChoiceHighlight?.(0);
+  }
+
+  /** 选择肢键盘导航：上移（循环） */
+  choiceUp(): void {
+    if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return;
+    this.#choiceCursor = (this.#choiceCursor - 1 + this.#choiceIndices.length) % this.#choiceIndices.length;
+    this.#stage.setChoiceHighlight?.(this.#choiceCursor);
+  }
+
+  /** 选择肢键盘导航：下移（循环） */
+  choiceDown(): void {
+    if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return;
+    this.#choiceCursor = (this.#choiceCursor + 1) % this.#choiceIndices.length;
+    this.#stage.setChoiceHighlight?.(this.#choiceCursor);
+  }
+
+  /** 确认当前高亮选项（Enter/Space） */
+  choiceConfirm(): boolean {
+    if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return false;
+    return this.select(this.#choiceIndices[this.#choiceCursor]!);
+  }
+
+  /** 按显示位置直接选择（键盘数字键 1-9 → pos 0-8） */
+  selectChoiceAt(pos: number): boolean {
+    if (this.#status !== 'choice' || pos < 0 || pos >= this.#choiceIndices.length) return false;
+    return this.select(this.#choiceIndices[pos]!);
+  }
+
+  /** @wait：记录截止时间，update 到点后回调 onWaitEnd（宿主连 Interpreter.finishWait）。
+   *  快进中不等待：下一帧 update 立即结束（也可由玩家 advance 点击跳过）。 */
+  #onWait(p: { ms: number }): void {
+    this.#waitDeadline = nowMs() + Math.max(0, p.ms);
+  }
+
+  /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
+   *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
+  #onStateReset(): void {
+    this.#waitDeadline = null;
+    this.#waitSession += 1;
+    this.#stage.hideVideo?.(); // 停止残留视频本体（回调已由会话令牌作废；审计复核）
+  }
+
+  /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */
+  #onVideo(p: { src: string }): void {
+    // 会话令牌：读档后 stateReset 递增会话号，残留的视频结束回调被忽略（审计修复 C1）
+    const session = this.#waitSession;
+    if (this.#skipMode) {
+      this.#onWaitEnd?.();
+      return;
+    }
+    if (this.#stage.showVideo) {
+      this.#stage.showVideo(p.src, () => {
+        if (session === this.#waitSession) this.#onWaitEnd?.();
+      });
+    } else {
+      this.#onWaitEnd?.();
+    }
   }
 
   #onInstr(p: InstrEventPayload): void {
@@ -246,6 +423,46 @@ export class AdvRenderer {
         this.#startFade(1, 0, parseDur(args[0]));
         break;
       }
+      case 'shake': {
+        this.#stage.shake?.(parseDur(args[0]), parseStrength(args[1]));
+        break;
+      }
+      case 'flash': {
+        this.#stage.flash?.(parseDur(args[0]));
+        break;
+      }
+      case 'zoom': {
+        this.#stage.zoom?.(parseScale(args[0]), parseDur(args[1]));
+        break;
+      }
+      case 'wipe': {
+        this.#stage.wipe?.(parseDur(args[0]));
+        break;
+      }
+      case 'title':
+      case 'chapter':
+      case 'center': {
+        // 大横幅（居中大字）：参数连成文本
+        this.#stage.showBanner?.(args.join(' '), 'chapter');
+        break;
+      }
+      case 'tip':
+      case 'note': {
+        // 小提示横幅（角标小字）
+        this.#stage.showBanner?.(args.join(' '), 'tip');
+        break;
+      }
+      case 'nvl': {
+        // @nvl / @nvl on：开启 NVL 页；@nvl off：回 ADV；@nvl clear：清页
+        const mode = (args[0] ?? 'on').toLowerCase();
+        if (mode === 'clear') {
+          this.#stage.clearNvlText?.();
+          break;
+        }
+        this.#nvl = mode !== 'off';
+        this.#stage.setNvlMode?.(this.#nvl);
+        break;
+      }
       default:
         // autosave/savepoint/title 等：渲染层无需关注
         break;
@@ -269,4 +486,16 @@ export class AdvRenderer {
 function parseDur(raw: string | undefined): number {
   const n = raw ? parseInt(raw, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 400;
+}
+
+/** @shake 振幅（像素）：缺省 8 */
+function parseStrength(raw: string | undefined): number {
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 64) : 8;
+}
+
+/** @zoom 目标缩放：合法区间 [0.25, 4]，缺省 1（复位） */
+function parseScale(raw: string | undefined): number {
+  const n = raw ? parseFloat(raw) : NaN;
+  return Number.isFinite(n) && n >= 0.25 && n <= 4 ? n : 1;
 }

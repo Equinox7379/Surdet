@@ -1,6 +1,9 @@
 @scene ch01_01
 @bg castle_hall
 @bgm tense_01
+@unlock_cg cg_hall
+@unlock_music tense_01
+@unlock_text t_first
 
 @label start
 凛：你终于来了，等了你三个晚上。

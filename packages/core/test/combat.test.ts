@@ -243,6 +243,80 @@ describe('CombatSolver', () => {
     expect(s2.actingTeamStalemate).toBe(false);
   });
 
+  it('R1 默认禁止攻击同阵营目标（friendlyFire 未开启）', () => {
+    const s = new CombatSolver({ ...config, elementChain: {} }, fixedRng);
+    s.start({ allies: ['sword', 'archer'], enemies: ['goblin'] });
+    expect(() => s.act('allies_0', 'allies_1')).toThrow(/同阵营/);
+    // 开启 friendlyFire 后允许友伤
+    const sf = new CombatSolver({ ...config, elementChain: {}, friendlyFire: true }, fixedRng);
+    sf.start({ allies: ['sword', 'archer'], enemies: ['goblin'] });
+    expect(() => sf.act('allies_0', 'allies_1')).not.toThrow();
+  });
+
+  it('R1 命中边界：hit=0 恒 miss（即使 rng 返回 0）', () => {
+    const c: CombatConfig = {
+      ...config,
+      elementChain: {},
+      skills: [{ id: 'never', name: '必失手', power: 1, cooldown: 0, hit: 0 }],
+    };
+    const s = new CombatSolver(c, () => 0); // rng 恰好 0：旧 <= 判定会命中
+    s.start({ allies: ['archer'], enemies: ['wolf'] });
+    s.units.find((u) => u.uid === 'allies_0')!.skills = ['never'];
+    const a = s.act('allies_0', 'enemies_0', 'never');
+    expect(a.hit).toBe(false);
+  });
+
+  it('R4 moveUnit：移动消耗行动；同回合不可重复；整回合后重置', () => {
+    const c: CombatConfig = { ...config, elementChain: {}, winCondition: 'survive_turns', maxTurns: 99 };
+    const s = new CombatSolver(c, fixedRng);
+    s.start({ allies: ['sword'], enemies: ['wolf'] });
+    s.units.find((u) => u.uid === 'enemies_0')!.position = 30; // 拉远避免战斗结束
+    expect(s.canMove('allies_0')).toBe(true);
+    s.moveUnit('allies_0', 1); // 消耗行动 → 轮到敌方
+    expect(s.actingTeam).toBe('enemies');
+    expect(() => s.moveUnit('allies_0', 1)).toThrow(/不能移动/); // 非行动方
+    s.moveUnit('enemies_0', 1); // 敌方移动 → 整回合结束
+    expect(s.actingTeam).toBe('allies');
+    expect(s.canMove('allies_0')).toBe(true); // 新回合移动已重置
+  });
+
+  it('R4 suggestAction：射程内攻击、射程外接近、无法行动 pass', () => {
+    const c: CombatConfig = { ...config, elementChain: {} };
+    // 贴身：建议攻击
+    const s1 = new CombatSolver(c, fixedRng);
+    s1.start({ allies: ['sword'], enemies: ['goblin'] });
+    const sug1 = s1.suggestAction('allies');
+    expect(sug1.kind).toBe('attack');
+    // 拉远（剑士射程 1）：建议移动接近
+    const s2 = new CombatSolver(c, fixedRng);
+    s2.start({ allies: ['sword'], enemies: ['goblin'] });
+    s2.units.find((u) => u.uid === 'enemies_0')!.position = 5;
+    const sug2 = s2.suggestAction('allies');
+    expect(sug2).toMatchObject({ kind: 'move', uid: 'allies_0', dir: 1 });
+    // 无移动力单位够不着：pass
+    const c3: CombatConfig = {
+      ...c,
+      units: config.units.map((u) => (u.id === 'sword' ? { ...u, move: 0 } : u)),
+    };
+    const s3 = new CombatSolver(c3, fixedRng);
+    s3.start({ allies: ['sword'], enemies: ['goblin'] });
+    s3.units.find((u) => u.uid === 'enemies_0')!.position = 5;
+    expect(s3.suggestAction('allies').kind).toBe('pass');
+  });
+
+  it('R4 moved 随快照往返（战斗中途读档保持移动消耗状态）', () => {
+    const c: CombatConfig = { ...config, elementChain: {}, winCondition: 'survive_turns', maxTurns: 99 };
+    const s = new CombatSolver(c, fixedRng);
+    s.start({ allies: ['sword'], enemies: ['wolf'] });
+    s.units.find((u) => u.uid === 'enemies_0')!.position = 30;
+    // 快照：moved 为 JSON 安全数组
+    const snap = JSON.parse(JSON.stringify(s.snapshot())) as CombatSnapshot;
+    expect(snap.moved).toEqual([]);
+    const s2 = new CombatSolver(c, fixedRng);
+    s2.restore(snap);
+    expect(s2.canMove('allies_0')).toBe(true);
+  });
+
   it('M7 伤害公式错误不再静默按 0 处理，而是抛错', () => {
     // 公式引用缺失变量：表达式求值器抛 ExprEvalError
     const c1: CombatConfig = { ...config, elementChain: {}, damage: { base: 'atk * missing_var', critChance: 0, critMultiplier: 1.5 } };

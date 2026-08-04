@@ -1,0 +1,20 @@
+{
+  "name": "surdet-editor",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Surdet 可视化剧本编辑器：场景块编辑 + 实时校验 + 项目读写",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  }
+}

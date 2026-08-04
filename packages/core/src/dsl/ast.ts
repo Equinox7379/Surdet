@@ -30,6 +30,8 @@ export interface AstChoiceOption {
   inline: AstInline[];
   /** 显式跳转目标（来自内联 @goto/@jump，编译器提取） */
   jump: { kind: 'goto' | 'jump'; target: string } | null;
+  /** 被丢弃的额外跳转数量（第二个及以后的 @goto/@jump；编译器报 W008） */
+  extraJumps?: number;
   /** 选项行位置 */
   pos: SourcePos;
 }
@@ -100,6 +102,15 @@ export interface ModifyInstr extends DslInstrBase {
   delta: number;
 }
 
+/** @wait ms：阻塞等待。解释器发 wait 事件后挂起（awaiting-timer），
+ *  宿主计时结束调 finishWait() 恢复；玩家 advance() 可跳过剩余等待。
+ *  存档定位回退到 wait 指令本身，读档重新计时。 */
+export interface WaitInstr extends DslInstrBase {
+  op: 'wait';
+  /** 等待时长（毫秒，正整数） */
+  ms: number;
+}
+
 /** 选择肢（option 指令块已在流中，选中的 option 从 blockStart 开始执行） */
 export interface ChoiceInstr extends DslInstrBase {
   op: 'choice';
@@ -128,6 +139,19 @@ export interface SceneEndInstr extends DslInstrBase {
   op: 'end';
 }
 
+/** @switch varName v1:label1 v2:label2 ...：按变量值跳转对应标签，无匹配则落到下一条 */
+export interface SwitchInstr extends DslInstrBase {
+  op: 'switch';
+  varName: string;
+  cases: { value: string; label: string }[];
+}
+
+/** @video key：播放视频并阻塞（宿主播放结束/玩家点击后调 finishWait 恢复，与 @wait 同挂起语义） */
+export interface VideoInstr extends DslInstrBase {
+  op: 'video';
+  src: string;
+}
+
 export type DslInstr =
   | TextInstr
   | GenericInstr
@@ -136,6 +160,9 @@ export type DslInstr =
   | CondJumpInstr
   | SetInstr
   | ModifyInstr
+  | WaitInstr
+  | SwitchInstr
+  | VideoInstr
   | ChoiceInstr
   | CallInstr
   | SceneEndInstr;

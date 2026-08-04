@@ -101,6 +101,19 @@ describe('AudioManager', () => {
     expect(mockPlay.mock.calls.length).toBe(4);
   });
 
+  it('R1 stopAll 后淡出窗口内重新 playBgm 不被旧定时器误停', () => {
+    vi.useFakeTimers();
+    const am = new AudioManager();
+    am.playBgm('a.mp3');
+    am.playBgm('b.mp3'); // a 进入 350ms 淡出停止定时器
+    am.stopAll();
+    am.playBgm('a.mp3'); // 窗口内重新启播 a
+    mockStop.mockClear();
+    vi.runAllTimers();
+    // 旧定时器被 stopAll 的代际推进作废：不应有任何额外 stop 误停新 BGM
+    expect(mockStop).not.toHaveBeenCalled();
+  });
+
   it('分轨音量：setBgmVolume 立即作用于当前 BGM，getter 返回 clamp 后的值', () => {
     const am = new AudioManager();
     am.playBgm('a.mp3');

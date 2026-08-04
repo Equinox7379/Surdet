@@ -61,7 +61,17 @@
 | `@voice` | `@voice lynn_001` | ✅ | 播放语音 |
 | `@bgm` / `@se` | `@bgm tense_01` | ✅ | 音乐 / 音效 |
 | `@fadein/@fadeout` | `@fadeout 400` | ✅ | 转场（毫秒） |
-| `@wipe/@shake/@zoom/@flash/@particle/@video/@mov/@tint/@wait` | — | ⚠️ | 更多演出指令（未实现） |
+| `@wait` | `@wait 800` | ✅ | 阻塞等待（毫秒，正整数，上限 600000）；玩家点击可跳过，读档重新计时 |
+| `@shake` | `@shake 400 8` | ✅ | 画面震动（时长毫秒，振幅像素；均可省略，缺省 400/8） |
+| `@flash` | `@flash 250` | ✅ | 白闪（时长毫秒，缺省 400） |
+| `@zoom` | `@zoom 1.2 600` | ✅ | 世界层缩放（目标倍率 0.25..4，过渡时长毫秒；`@zoom 1` 复位） |
+| `@wipe` | `@wipe 600` | ✅ | 擦除转场：黑色竖条自左向右扫过画面（时长毫秒，缺省 600） |
+| `@video` | `@video op_01` | ✅ | 阻塞视频：覆盖全屏播放，播完/出错/玩家点击跳过自动恢复剧情；素材缺失自动跳过不阻塞 |
+| `@title/@chapter/@center` | `@chapter 第一章 坠落` | ✅ | 居中大字横幅（参数连成文本，约 2.2 秒淡出） |
+| `@tip/@note` | `@tip 提示：右键打开菜单` | ✅ | 右上角小字提示横幅（约 1.8 秒淡出） |
+| `@nvl` | `@nvl` / `@nvl off` / `@nvl clear` | ✅ | NVL 全屏小说模式：开启后文本整行追加到全屏文本页（不走打字机）；`off` 回到 ADV 对话框；`clear` 清空页面 |
+| ruby 注音（文本标记） | `凛：这个世界《せかい》…` | ✅ | 非指令而是**台词内标记**：`基础字《注音》` 渲染为主字 + 上方小字（振假名）；未配对《按字面显示 |
+| `@particle/@mov/@tint` | — | ⚠️ | 更多演出指令（未实现） |
 
 ### 流程
 | 指令 | 示例 | 状态 | 说明 |
@@ -71,6 +81,8 @@
 | `@call/@return` | `@call ch01_02.extra` | ✅ | 调用子场景（`sceneId` 或 `sceneId.label`）：压入返回点，`@return` 或子场景自然结束回到调用处下一行；调用栈随存档持久化，嵌套上限 64 |
 | `@if/@elif/@else/@endif` | `@if x > 1` … | ✅ | 条件块，必须配对 |
 | `@choice` | 见下 | ✅ | 选择肢 |
+| `@switch` | `@switch chapter 1:c1 2:c2` | ✅ | 按变量值跳转 `值:标签`（数值变量与可转数值条目做数值比较，其余按字符串）；无匹配落到下一条；目标标签不存在为运行时错误 |
+| `@loop` | `@loop body` | ✅ | 回跳标签（循环体 = 标签到 `@loop` 之间）；循环内必须有挂起点（文本/选择/等待）或条件出口，无挂起点的死循环由解释器步数上限兜底报错 |
 
 ### 状态
 | 指令 | 示例 | 状态 | 说明 |
@@ -78,13 +90,17 @@
 | `@set` | `@set lynn.trust = 5` | ✅ | 赋值（`=`/`:=`/`+=`/`-=`） |
 | `@mod` | `@mod lynn.trust +3` | ✅ | 数值增减 |
 | `@inc/@dec/@toggle/@flag/@unflag` | — | ✅ | 便捷操作 |
-| `@check` | — | ⚠️ | 便捷操作（未实现） |
+| `@check` | `@check trust >= 0` | ✅ | 剧本断言：条件为假立即抛运行时错误（尽早暴露剧本逻辑缺陷） |
+| `@random` | `@random dice 1 6` | ✅ | 写入 [min, max] 闭区间随机整数到变量 |
+| `@add_item/@remove_item` | `@add_item items key` | ✅ | string[] 变量去重追加 / 移除（道具系统基础） |
+| `@has_item` | `@has_item items key hasKey` | ✅ | 判断数组变量是否含道具，结果写入 boolean 变量 |
 
 ### 系统（M4/M5）
 | 指令 | 状态 | 说明 |
 |---|---|---|
 | `@battle` / `@calendar` / `@affection` / `@event` / `@shop` / `@item` | ✅ | 发 `system` 事件，由宿主驱动对应 System 类（`@shop`/`@item` 引擎无内置实现，需宿主自理） |
-| `@unlock_cg` / `@unlock_music` | ✅ | 解锁 CG / 音乐（回想鉴赏） |
+| `@unlock_cg` / `@unlock_music` / `@unlock_text` | ✅ | 解锁 CG / 音乐 / 文本回想（鉴赏界面三 tab；texts 条目在 gallery.json 配 scene/label，点击跳回重播） |
+| `@shop` | ✅ | 打开商店覆盖层（宿主 ShopSystem 结算）；参数 = 金币变量 道具变量，缺省 `gold bag` |
 | `@scene` | ✅ | 声明性指令：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果 |
 | `@end` | ✅ | 场景结束（可省略，引擎自动追加） |
 | `@clear` | ⚠️ | 周目结束（未实现） |
@@ -228,6 +244,10 @@ node packages/cli/dist/index.js lint <projectDir>
 | W003 | 指令修饰符未被引擎消费（`@show` 支持 `@pos/@left/@right/@center`，其余静默丢弃；`@battle/@calendar/@affection/@event/@shop/@item` 的修饰符是宿主参数通道，交付宿主消费，不报此警告） |
 | W004 | 选项文本含说话人冒号前缀，疑似缩进正文被误判为选项 |
 | W005 | `@choice` 全部选项均带 `[if:expr]` 条件：运行时可能被全部过滤而静默跳过选择（建议保留无条件兜底选项） |
+| W006 | 标签从未被任何 `@goto/@loop/@switch/@jump/@call` 引用（疑似残留） |
+| W007 | 场景从入口场景不可达（需在 game.config.json 配置 `entryScene` 才启用检查） |
+| W008 | choice 选项内含多个 `@goto/@jump`：仅第一个生效，其余被丢弃 |
+| J004 | `@switch` 跳转目标标签不存在（目标必须是本场景标签） |
 | SCENE_ID | `@scene` 声明与文件名不一致 / 场景 ID 含点号（破坏 `@jump` 寻址） |
 | LINT_DUP | 场景 ID 重复 |
 | CONFIG | game.config.json / content/config/*.json 缺失或解析失败 |
