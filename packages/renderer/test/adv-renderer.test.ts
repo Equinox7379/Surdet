@@ -53,6 +53,16 @@ class FakeStage implements AdvStage {
   flash(durMs: number): void { this.flashes.push(durMs); }
   zoom(scale: number, durMs: number): void { this.zooms.push({ scale, dur: durMs }); }
   updateEffects(): void { this.effectTicks++; }
+  movs: { key: string; pos: string; dur: number }[] = [];
+  tints: { color: number; alpha: number; dur: number }[] = [];
+  tintClears: number[] = [];
+  particlesStarted: string[] = [];
+  particlesStopped = 0;
+  movePortrait(key: string, pos: string, durMs: number): void { this.movs.push({ key, pos, dur: durMs }); }
+  setTint(color: number, alpha: number, durMs: number): void { this.tints.push({ color, alpha, dur: durMs }); }
+  clearTint(durMs: number): void { this.tintClears.push(durMs); }
+  startParticles(kind: string): void { this.particlesStarted.push(kind); }
+  stopParticles(): void { this.particlesStopped++; }
 }
 
 class FakeAudio implements AudioHandle {
@@ -482,6 +492,59 @@ describe('R2 @wait 接线与演出效果', () => {
     // 每帧驱动效果时间轴
     r.update(16);
     expect(stage.effectTicks).toBe(1);
+  });
+
+  it('@mov：立绘平移转发（三档预设与缺省时长；缺 key/pos 不转发）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    const pos = { file: 'x', line: 1, col: 1 };
+
+    bus.emit('instr', { name: 'mov', args: ['lynn:armor', 'left', '600'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'mov', args: ['lynn', 'right'], modifiers: new Map(), pos }); // 缺省 dur 400
+    bus.emit('instr', { name: 'mov', args: ['lynn'], modifiers: new Map(), pos }); // 缺 pos → 忽略
+    bus.emit('instr', { name: 'mov', args: [], modifiers: new Map(), pos }); // 缺 key → 忽略
+
+    expect(stage.movs).toEqual([
+      { key: 'lynn:armor', pos: 'left', dur: 600 },
+      { key: 'lynn', pos: 'right', dur: 400 },
+    ]);
+  });
+
+  it('@tint：调色转发（颜色/透明度解析、off 清除、非法颜色忽略）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    const pos = { file: 'x', line: 1, col: 1 };
+
+    bus.emit('instr', { name: 'tint', args: ['0xff8866', '0.3', '500'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'tint', args: ['#2244aa'], modifiers: new Map(), pos }); // 缺省 alpha 0.5 / dur 400
+    bus.emit('instr', { name: 'tint', args: ['off', '300'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'tint', args: ['notacolor'], modifiers: new Map(), pos }); // 非法 → 忽略
+
+    expect(stage.tints).toEqual([
+      { color: 0xff8866, alpha: 0.3, dur: 500 },
+      { color: 0x2244aa, alpha: 0.5, dur: 400 },
+    ]);
+    expect(stage.tintClears).toEqual([300]);
+  });
+
+  it('@particle：粒子启停转发（预设名与 off；空参数忽略）', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    const pos = { file: 'x', line: 1, col: 1 };
+
+    bus.emit('instr', { name: 'particle', args: ['snow'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'particle', args: ['sakura'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'particle', args: ['off'], modifiers: new Map(), pos });
+    bus.emit('instr', { name: 'particle', args: [], modifiers: new Map(), pos }); // 空 → 忽略
+
+    expect(stage.particlesStarted).toEqual(['snow', 'sakura']);
+    expect(stage.particlesStopped).toBe(1);
   });
 });
 

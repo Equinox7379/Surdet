@@ -44,6 +44,17 @@ export interface AdvStage {
   updateEffects?(deltaMs: number): void;
   /** @wipe 擦除转场（可选能力） */
   wipe?(durMs: number): void;
+  /** @mov：立绘位置平移（key 契约同 removePortrait：完整 `角色:服装` 精确，纯角色 ID 移动该角色全部立绘）；
+   *  pos 为 left/center/right 或裸数字 X 坐标，durMs 线性过渡（可选能力） */
+  movePortrait?(key: string, pos: string, durMs: number): void;
+  /** @tint：画面调色叠加（颜色 0xRRGGBB + 透明度，durMs 过渡到目标；可选能力） */
+  setTint?(color: number, alpha: number, durMs: number): void;
+  /** @tint off：清除调色叠加（durMs 淡出；可选能力） */
+  clearTint?(durMs: number): void;
+  /** @particle：启动预设粒子效果（snow/rain/sakura/sparkle/fireflies；可选能力） */
+  startParticles?(kind: string): void;
+  /** @particle off：停止粒子效果（可选能力） */
+  stopParticles?(): void;
   /** 横幅文本（@title/@chapter/@center 用 chapter 样式，@tip/@note 用 tip 样式） */
   showBanner?(text: string, variant: 'chapter' | 'tip'): void;
   /** NVL 模式开关（全屏小说文本页；开启时 AdvRenderer 不走打字机而整行追加） */
