@@ -383,14 +383,21 @@ describe('lintProject', () => {
       'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
       'content/config/calendar.json': JSON.stringify({
         nodes: [{ id: 'a', name: 'A', x: 0, y: 0, apCost: 1, visibleWhen: 'ghost > 1' }],
+        baseCommands: [{ id: 'rest', name: '休息', when: 'trust >= 10' }],
       }),
       'content/config/combat.json': JSON.stringify({ damage: { base: 'atk * 2 - def' } }),
       'content/config/events.json': JSON.stringify({ events: [{ id: 'e', characterId: 'x', when: 'trust >= 5', scene: 'a', once: true }] }),
       'content/config/ngp.json': JSON.stringify({ clearCondition: '1 +' }),
+      'content/config/achievements.json': JSON.stringify([
+        { id: 'ach1', name: '初见', when: 'trust >= 3' },
+        { id: 'ach2', name: '幻影', when: 'ghost > 0' },
+      ]),
     });
     const r = lintProject(dir);
-    // calendar visibleWhen 引用未声明变量 → V002
+    // calendar visibleWhen / achievements when 引用未声明变量 ghost → V002
     expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('ghost'))).toBe(true);
+    // baseCommands when / achievements when 引用已声明变量 trust → 无 V002
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('trust'))).toBe(false);
     // combat 伤害公式内建 atk/def/power 不报未声明
     expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('atk'))).toBe(false);
     // ngp clearCondition 语法错误 → CONFIG_EXPR
