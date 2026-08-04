@@ -17,6 +17,8 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'shake', 'flash', 'zoom', 'wipe',
   'particle', 'mov', 'tint',
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
+  // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）
+  'clear',
   // 阻塞等待/视频（解释器挂起 awaiting-timer，宿主计时/播放结束驱动恢复）
   'wait', 'video',
   // 流程控制（解释器执行）
@@ -36,8 +38,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
 
 /** 已声明但未实现的指令（lint 给 W002 警告，避免静默无操作） */
 export const PLANNED_INSTRUCTIONS: ReadonlySet<string> = new Set([
-  // 系统
-  'clear',
+  // 当前全部已知指令均已实现；保留空集供后续声明未实现指令用
 ]);
 
 /** @wait 毫秒上限（10 分钟；超长等待几乎必为配置错误，且阻塞期间玩家体验冻结） */

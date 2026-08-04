@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileScene, SceneCompiler } from '../src/dsl/compiler.js';
+import { compileScene, SceneCompiler, PLANNED_INSTRUCTIONS } from '../src/dsl/compiler.js';
 import { Parser } from '../src/dsl/parser.js';
 import { Lexer } from '../src/dsl/lexer.js';
 import { DslError } from '../src/dsl/ast.js';
@@ -194,10 +194,11 @@ describe('SceneCompiler', () => {
     expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(true);
   });
 
-  it('规划中未实现的指令产生 W002 诊断（不再静默无操作）', () => {
-    const scene = compile('@clear');
-    expect(scene.diagnostics.some((d) => d.code === 'W002')).toBe(true);
-    expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(false);
+  it('原规划指令（particle/mov/tint/clear）全部已实现，不再产生 W002', () => {
+    const scene = compile('@particle snow\n@mov lynn left\n@tint off\n@clear good_end');
+    expect(scene.diagnostics).toHaveLength(0);
+    // PLANNED 集合已空：全部已知指令均有运行时行为，W002 机制保留供后续声明未实现指令
+    expect(PLANNED_INSTRUCTIONS.size).toBe(0);
   });
 
   it('演出三件套（particle/mov/tint）已实现，不再产生告警', () => {

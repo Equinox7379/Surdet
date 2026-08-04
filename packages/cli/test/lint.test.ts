@@ -185,11 +185,12 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'W001' && i.severity === 'warning')).toBe(true);
   });
 
-  it('规划中未实现的指令产生 W002 警告', () => {
-    const dir = makeProject({ 'content/scenario/a.gal': `@clear\n` });
+  it('原规划指令（particle/mov/tint/clear）全部已实现，不再产生 W002', () => {
+    const dir = makeProject({ 'content/scenario/a.gal': `@particle snow\n@mov lynn left\n@tint off\n@clear good_end\n` });
     const r = lintProject(dir);
-    expect(r.ok).toBe(true); // 警告不阻断
-    expect(r.issues.some((i) => i.code === 'W002' && i.severity === 'warning')).toBe(true);
+    expect(r.ok).toBe(true);
+    expect(r.issues.some((i) => i.code === 'W002')).toBe(false);
+    expect(r.issues.some((i) => i.code === 'W001')).toBe(false);
   });
 
   it('演出三件套（particle/mov/tint）已实现，不再产生 W002', () => {
