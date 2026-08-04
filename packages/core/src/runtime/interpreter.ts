@@ -836,7 +836,8 @@ export class Interpreter {
       case 'affection':
       case 'event':
       case 'shop':
-      case 'item': {
+      case 'item':
+      case 'achievement': {
         // 大系统指令：交给宿主（游戏逻辑层）用对应 System 类驱动
         this.#bus.emit('system', {
           type: name,

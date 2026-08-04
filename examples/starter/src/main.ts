@@ -17,6 +17,7 @@ import {
   NewGamePlus,
   ShopSystem,
   GrowthSystem,
+  AchievementSystem,
 } from '@surdet/core';
 import type {
   VarDeclaration,
@@ -32,6 +33,7 @@ import type {
   CoreEventMap,
   ShopConfig,
   GrowthConfig,
+  AchievementDef,
 } from '@surdet/core';
 import {
   PixiStage,
@@ -55,6 +57,7 @@ import ngpConfig from '../content/config/ngp.json';
 import galleryConfig from '../content/config/gallery.json';
 import shopConfig from '../content/config/shop.json';
 import growthConfig from '../content/config/growth.json';
+import achievementsConfig from '../content/config/achievements.json';
 
 // vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
 const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
@@ -155,6 +158,8 @@ async function main(): Promise<void> {
   const shop = new ShopSystem(shopConfig as ShopConfig, store);
   // 角色成长（经验/升级）：配置驱动曲线，升级属性增量写回变量仓库；状态随存档往返（引擎内聚）
   const growth = new GrowthSystem(growthConfig as GrowthConfig, store);
+  // 成就系统：when 条件批量判定 + 事件触发解锁；状态经 SystemHooks 随存档往返
+  const achievements = new AchievementSystem(achievementsConfig as AchievementDef[], store);
 
   // 战斗采用交互式回合 UI：见下方 system 'battle' 事件处理（点击攻击 / 跳过行动）
 
@@ -165,11 +170,13 @@ async function main(): Promise<void> {
       calendar: calendar.snapshot(),
       combat: combat.snapshot(),
       affection: affection.snapshot(),
+      achievements: achievements.snapshot(),
     }),
     restore: (s: SystemSnapshots) => {
       if (s.calendar) calendar.restore(s.calendar);
       if (s.combat) combat.restore(s.combat);
       if (s.affection) affection.restore(s.affection);
+      if (s.achievements) achievements.restore(s.achievements);
     },
   }, undefined, growth);
   const audioManager = new AudioManager();
@@ -379,6 +386,20 @@ async function main(): Promise<void> {
         const evId = p.args[0];
         if (evId && affection.consumeEvent(evId)) {
           console.info('[starter] event consumed:', evId);
+        }
+        break;
+      }
+      case 'achievement': {
+        // @achievement unlock id：剧情节点显式解锁成就（when 之外的触发途径）
+        const mode = p.args[0];
+        const id = p.args[1];
+        if (mode === 'unlock' && id) {
+          try {
+            const res = achievements.unlock(id);
+            if (res.fresh) stage.showBanner(`成就解锁：${res.def.hidden ? '???' : res.def.name}`, 'tip');
+          } catch (err) {
+            console.warn('[starter] achievement unlock failed:', err instanceof Error ? err.message : err);
+          }
         }
         break;
       }
@@ -607,8 +628,25 @@ async function main(): Promise<void> {
           break;
         }
       }
+      checkAchievements(); // 升级后补查成就（如 level_5）
     }
   });
+
+  // ===== 成就批量判定：状态变更后（text 事件 / 读档）统一扫描 when 条件 =====
+  /** 扫描全部 when 条件成就，新解锁播放横幅提示（求值异常不阻断剧情，仅告警） */
+  function checkAchievements(): void {
+    try {
+      const fresh = achievements.check();
+      for (const r of fresh) {
+        stage.showBanner(`成就解锁：${r.def.name}`, 'tip');
+        console.info(`[starter] achievement unlocked: ${r.id}（${r.def.name}）`);
+      }
+    } catch (err) {
+      console.warn('[starter] achievement check failed:', err instanceof Error ? err.message : err);
+    }
+  }
+  // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
+  bus.on('text', () => checkAchievements());
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   function showTitleScreen(): void {
