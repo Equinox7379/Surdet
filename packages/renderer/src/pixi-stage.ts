@@ -11,7 +11,7 @@ import {
 import type { BacklogEntry } from './backlog.js';
 import type { BattleView } from './battle-view.js';
 import { parseRuby, stripRuby } from './ruby.js';
-import type { MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
+import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
 import type { SettingsRowView } from './settings-store.js';
@@ -270,6 +270,9 @@ export class PixiStage implements AdvStage {
   /** 商店覆盖层 */
   #shopLayer: Container;
   #shopHandlers: { onBuy: (itemId: string) => void; onClose: () => void } | null = null;
+  /** 据点指令面板（兰斯式 base commands） */
+  #baseLayer: Container;
+  #baseHandlers: { onExec: (cmdId: string) => void; onClose: () => void } | null = null;
 
   #w = 1280;
   #h = 720;
@@ -310,6 +313,8 @@ export class PixiStage implements AdvStage {
     this.#mapLayer.visible = false;
     this.#shopLayer = new Container();
     this.#shopLayer.visible = false;
+    this.#baseLayer = new Container();
+    this.#baseLayer.visible = false;
     this.#dialogPanel = new Graphics()
       .roundRect(40, this.#h - 210, this.#w - 80, 180, 14)
       .fill({ color: 0x000000, alpha: 0.5 });
@@ -332,7 +337,7 @@ export class PixiStage implements AdvStage {
       this.#dialogPanel, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer,
       this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
       this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
-      this.#mapLayer, this.#shopLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer,
+      this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer,
     );
 
     this.#speakerText = new PText({
@@ -1678,6 +1683,72 @@ export class PixiStage implements AdvStage {
   /** 隐藏商店 */
   hideShop(): void {
     this.#shopLayer.visible = false;
+  }
+
+  /* ============================ 据点指令（兰斯式 base commands） ============================ */
+
+  /** 展示据点指令面板：指令列表（可执行高亮/不可执行灰显）+ 行动力余量。
+   *  宿主在 onExec 里结算（CalendarRunner.execBaseCommand + 写回 effects）后重绘；onClose 回到地图。 */
+  showBaseCommands(view: BasePanelView, onExec: (cmdId: string) => void, onClose: () => void): void {
+    this.#baseHandlers = { onExec, onClose };
+    const layer = this.#baseLayer;
+    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
+    layer.addChild(new PText({
+      text: '据 点 指 令',
+      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 36);
+    layer.addChild(new PText({
+      text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
+      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
+    })).position.set(this.#w - 340, 44);
+    view.commands.forEach((cmd, i) => {
+      const row = new Container();
+      row.position.set(60, 120 + i * 64);
+      row.addChild(new Graphics().roundRect(0, 0, 860, 52, 10)
+        .fill({ color: cmd.enabled ? 0x1a1a26 : 0x101018, alpha: 0.96 }));
+      row.addChild(new PText({
+        text: cmd.name,
+        style: { fontSize: 22, fill: cmd.enabled ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+      })).position.set(20, 13);
+      row.addChild(new PText({
+        text: `AP ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
+        style: { fontSize: 18, fill: cmd.enabled ? 0xffd77a : 0x55555f } satisfies TextStyleOptions,
+      })).position.set(360, 16);
+      const btn = new PText({
+        text: cmd.enabled ? '执行' : '不可执行',
+        style: { fontSize: 20, fill: cmd.enabled ? 0xffe8c8 : 0x55555f } satisfies TextStyleOptions,
+      });
+      btn.position.set(720, 14);
+      if (cmd.enabled) {
+        btn.eventMode = 'static';
+        btn.cursor = 'pointer';
+        btn.on('pointerdown', () => this.#baseHandlers?.onExec(cmd.id));
+      }
+      row.addChild(btn);
+      layer.addChild(row);
+    });
+    if (view.message && view.message.length > 0) {
+      layer.addChild(new PText({
+        text: view.message,
+        style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
+      })).position.set(60, this.#h - 130);
+    }
+    const close = new PText({ text: '◀ 返回地图', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
+    close.position.set(this.#w - 220, this.#h - 74);
+    close.eventMode = 'static';
+    close.cursor = 'pointer';
+    close.on('pointerdown', () => {
+      layer.visible = false;
+      this.#baseHandlers?.onClose();
+    });
+    layer.addChild(close);
+    layer.visible = true;
+  }
+
+  /** 隐藏据点指令面板 */
+  hideBase(): void {
+    this.#baseLayer.visible = false;
   }
 
   showChoices(options: ChoiceOptionView[]): void {

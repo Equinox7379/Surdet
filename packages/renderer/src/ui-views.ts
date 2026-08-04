@@ -90,3 +90,25 @@ export function buildMapView(input: Omit<MapView, 'nodes'> & { nodes: MapNodeVie
     })),
   };
 }
+
+/* ============================ 据点指令 ============================ */
+
+export interface BaseCommandView {
+  id: string;
+  name: string;
+  /** 行动力消耗 */
+  apCost: number;
+  /** 当前可执行（行动力 + 限次 + when 条件均满足） */
+  enabled: boolean;
+  /** 本回合剩余次数（限次指令展示用；不限次为 null） */
+  remaining?: number | null;
+}
+
+export interface BasePanelView {
+  ap: number;
+  maxAp: number;
+  date: string;
+  commands: BaseCommandView[];
+  /** 结算反馈信息（宿主每次 exec 后刷新） */
+  message?: string;
+}
