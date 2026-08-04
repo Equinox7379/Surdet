@@ -123,7 +123,7 @@ export class GrowthSystem {
     const profile = this.#profile(characterId);
     if (!Number.isFinite(amount)) throw new Error(`GrowthSystem: 经验增量非法（${amount}）`);
     let level = this.levelOf(characterId);
-    let xp = this.experienceOf(characterId) + amount;
+    let xp = Math.max(0, this.experienceOf(characterId) + amount); // 负增量兜底不为负
     const passed: number[] = [];
 
     while (xp > 0) {

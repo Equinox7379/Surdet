@@ -111,4 +111,11 @@ describe('AchievementSystem（成就系统）', () => {
     ach3.restore(json);
     expect(ach3.unlocked()).toEqual(['first_battle', 'secret']);
   });
+
+  it('restore 去重：旧档含重复 ID 不污染进度计数', () => {
+    const { ach } = makeSystem();
+    ach.restore({ unlocked: ['secret', 'secret', 'first_battle'] });
+    expect(ach.unlocked()).toEqual(['secret', 'first_battle']);
+    expect(ach.unlockedCount).toBe(2);
+  });
 });

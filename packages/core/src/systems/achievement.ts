@@ -136,7 +136,7 @@ export class AchievementSystem {
   }
 
   restore(snap: AchievementSnapshot): void {
-    // 读档：只恢复当前配置中仍存在的成就（旧档含已删除成就时静默忽略）
-    this.#unlocked = (snap.unlocked ?? []).filter((id) => this.#byId.has(id));
+    // 读档：只恢复当前配置中仍存在的成就（旧档含已删除成就时静默忽略）；去重防旧档污染进度计数
+    this.#unlocked = [...new Set((snap.unlocked ?? []).filter((id) => this.#byId.has(id)))];
   }
 }
