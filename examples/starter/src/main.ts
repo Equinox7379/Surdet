@@ -16,6 +16,7 @@ import {
   AffectionSystem,
   NewGamePlus,
   ShopSystem,
+  GrowthSystem,
 } from '@surdet/core';
 import type {
   VarDeclaration,
@@ -30,6 +31,7 @@ import type {
   RelationshipEvent,
   CoreEventMap,
   ShopConfig,
+  GrowthConfig,
 } from '@surdet/core';
 import {
   PixiStage,
@@ -52,6 +54,7 @@ import eventsConfig from '../content/config/events.json';
 import ngpConfig from '../content/config/ngp.json';
 import galleryConfig from '../content/config/gallery.json';
 import shopConfig from '../content/config/shop.json';
+import growthConfig from '../content/config/growth.json';
 
 // vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
 const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
@@ -150,10 +153,12 @@ async function main(): Promise<void> {
   );
   const ngp = new NewGamePlus(ngpConfig as NewGamePlusConfig, store);
   const shop = new ShopSystem(shopConfig as ShopConfig, store);
+  // 角色成长（经验/升级）：配置驱动曲线，升级属性增量写回变量仓库；状态随存档往返（引擎内聚）
+  const growth = new GrowthSystem(growthConfig as GrowthConfig, store);
 
   // 战斗采用交互式回合 UI：见下方 system 'battle' 事件处理（点击攻击 / 跳过行动）
 
-  // 总线 + 解释器 + 渲染器（全家桶状态经 SystemHooks 随存档往返）
+  // 总线 + 解释器 + 渲染器（全家桶状态经 SystemHooks 随存档往返；成长系统引擎内聚，构造注入）
   const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry, undefined, undefined, {
     snapshot: (): SystemSnapshots => ({
@@ -166,7 +171,7 @@ async function main(): Promise<void> {
       if (s.combat) combat.restore(s.combat);
       if (s.affection) affection.restore(s.affection);
     },
-  });
+  }, undefined, growth);
   const audioManager = new AudioManager();
   /** 音频素材地址映射（loadAssets 填充：素材键 → Blob/文件 URL） */
   const audioUrls = new Map<string, string>();
@@ -586,6 +591,22 @@ async function main(): Promise<void> {
       clearRecord = rec;
       saveClearRecord(rec);
       console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目）`);
+    }
+  });
+
+  // @exp：角色成长结果 → 升级演出（横幅）+ levelEvents 场景跳转（配置驱动）
+  bus.on('growth', (p) => {
+    if (p.levelsGained > 0) {
+      stage.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
+      console.info(`[starter] growth: ${p.characterId} Lv.${p.levelBefore} → Lv.${p.levelAfter}（+${p.gained} exp）`);
+      // 途经等级触发 levelEvents（升多级时逐级检查；场景存在才跳转，避免配置缺场景卡死剧情）
+      for (const lv of p.passedLevels) {
+        const scene = growth.levelEventFor(p.characterId, lv);
+        if (scene && registry.has(scene)) {
+          interp.hostJump(scene);
+          break;
+        }
+      }
     }
   });
 

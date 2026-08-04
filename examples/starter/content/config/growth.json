@@ -1,0 +1,20 @@
+{
+  "curve": {
+    "base": 10,
+    "linear": 5
+  },
+  "profiles": [
+    {
+      "characterId": "lynn",
+      "initialLevel": 1,
+      "maxLevel": 20,
+      "statGrowth": {
+        "lynn.atk": 2,
+        "lynn.hp": 10
+      },
+      "levelEvents": {
+        "10": "ch01_02"
+      }
+    }
+  ]
+}

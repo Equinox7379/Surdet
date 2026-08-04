@@ -3,6 +3,7 @@ import type { CalendarSnapshot } from '../calendar/calendar.js';
 import type { CombatSnapshot } from '../combat/combat.js';
 import type { AffectionSnapshot } from '../systems/affection.js';
 import type { EventSchedulerSnapshot } from '../systems/event-scheduler.js';
+import type { GrowthSnapshot } from '../systems/growth.js';
 
 /**
  * 全家桶系统快照（可选，由宿主经 Interpreter 的 SystemHooks 提供）。
@@ -64,6 +65,8 @@ export interface SaveSnapshot {
   gallery: { cgs: string[]; music: string[]; texts?: string[] };
   /** 通关记录（@clear 结局收集；后续版本新增，旧档无此字段按未通关） */
   clears?: { endings: string[] };
+  /** 角色成长（经验/等级；后续版本新增，旧档无此字段按初始等级） */
+  growth?: GrowthSnapshot;
   /** 全家桶系统状态快照（日历/战斗/好感/周目，宿主经 SystemHooks 提供，可选） */
   systems?: SystemSnapshots;
 }
@@ -146,6 +149,23 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
     const c = s.clears as Record<string, unknown>;
     if (typeof c !== 'object' || c === null || !Array.isArray(c.endings) || !(c.endings as unknown[]).every((x) => typeof x === 'string')) {
       fail('clears 必须是 { endings: string[] }');
+    }
+  }
+  if (s.growth !== undefined) {
+    const g = s.growth as Record<string, unknown>;
+    if (typeof g !== 'object' || g === null || Array.isArray(g)) {
+      fail('growth 必须是对象');
+    } else {
+      for (const key of ['levels', 'experience'] as const) {
+        const table = g[key];
+        if (table !== undefined) {
+          if (typeof table !== 'object' || table === null || Array.isArray(table)) {
+            fail(`growth.${key} 必须是对象`);
+          } else if (!Object.values(table as Record<string, unknown>).every((x) => typeof x === 'number')) {
+            fail(`growth.${key} 值必须是 number`);
+          }
+        }
+      }
     }
   }
   // systems 形状兜底（审计修复：深度校验补全）

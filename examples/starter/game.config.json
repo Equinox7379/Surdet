@@ -46,6 +46,18 @@
       "type": "flag",
       "initial": false,
       "description": "是否达成 Clear（NewGamePlus 周目继承判定）"
+    },
+    "lynn.atk": {
+      "type": "number",
+      "initial": 5,
+      "min": 0,
+      "description": "凛的攻击力（成长系统升级时增量写回）"
+    },
+    "lynn.hp": {
+      "type": "number",
+      "initial": 20,
+      "min": 1,
+      "description": "凛的生命值（成长系统升级时增量写回）"
     }
   }
 }

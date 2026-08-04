@@ -17,6 +17,7 @@ import type { SavePosition, SaveSnapshot, SystemSnapshots } from '../save/save-m
 import { SAVE_SCHEMA_VERSION, assertValidSnapshot } from '../save/save-manager.js';
 import { migrateSnapshot } from '../save/migrate.js';
 import { ClearTracker } from '../systems/clear-tracker.js';
+import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -78,6 +79,8 @@ export interface CoreEventMap extends EventMap {
   gallery: { type: 'cg' | 'music' | 'text'; id: string; fresh: boolean };
   /** @clear 周目通关：ending = 结局标识（缺省为当前场景 ID）；fresh = 首次达成 */
   clear: { ending: string; fresh: boolean };
+  /** @exp 角色成长：levelsGained > 0 时宿主可播放升级演出/触发 levelEvents */
+  growth: GrowthResult;
   autosave: SaveSnapshot;
   savepoint: SaveSnapshot;
   sceneEnd: { sceneId: string };
@@ -133,6 +136,8 @@ export class Interpreter {
   readonly readTracker: ReadTracker;
   /** 通关记录（@clear 结局收集；随存档持久化） */
   readonly clearTracker: ClearTracker;
+  /** 角色成长系统（@exp 驱动；可选注入，随存档持久化 levels/experience） */
+  #growth: GrowthSystem | null;
   /** 全家桶系统存档钩子（宿主注入） */
   #systemHooks: SystemHooks;
 
@@ -144,6 +149,7 @@ export class Interpreter {
     readTracker: ReadTracker = new ReadTracker(),
     systemHooks: SystemHooks = {},
     clearTracker: ClearTracker = new ClearTracker(),
+    growth: GrowthSystem | null = null,
   ) {
     this.#store = store;
     this.#bus = bus;
@@ -152,6 +158,17 @@ export class Interpreter {
     this.readTracker = readTracker;
     this.#systemHooks = systemHooks;
     this.clearTracker = clearTracker;
+    this.#growth = growth;
+  }
+
+  /** 注入成长系统（宿主在构造后延迟配置时；重复注入替换旧实例） */
+  setGrowth(growth: GrowthSystem | null): void {
+    this.#growth = growth;
+  }
+
+  /** 成长系统只读访问（宿主展示等级/经验条用） */
+  get growth(): GrowthSystem | null {
+    return this.#growth;
   }
 
   get status(): RuntimeStatus {
@@ -224,6 +241,7 @@ export class Interpreter {
       readSet: this.readTracker.snapshot(),
       gallery: this.gallery.snapshot(),
       clears: this.clearTracker.snapshot(),
+      ...(this.#growth ? { growth: this.#growth.snapshot() } : {}),
       ...(systems ? { systems } : {}),
     };
   }
@@ -255,6 +273,7 @@ export class Interpreter {
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
     this.clearTracker.restore(snap.clears); // 旧档无 clears 字段按未通关
+    if (snap.growth && this.#growth) this.#growth.restore(snap.growth); // 旧档无 growth 按初始等级
     if (snap.systems) this.#systemHooks.restore?.(snap.systems);
     this.#pendingChoice = null;
     // v1 旧档无 callStack 字段 → 按空栈加载（@call 引入前的存档不受影响）
@@ -767,6 +786,22 @@ export class Interpreter {
         const ending = arg0 ?? this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
+        return;
+      }
+      case 'exp': {
+        // @exp characterId amount：角色获得经验。GrowthSystem 内聚判升级并把属性增量写回变量仓库。
+        // 未注入成长系统 / 未注册角色 / 增量非法 → 抛运行时错误（尽早暴露配置缺陷）。
+        if (!this.#growth) throw new RuntimeError('@exp 需要宿主注入 GrowthSystem（解释器构造参数或 setGrowth）', instr);
+        const [characterId, amountRaw] = instr.args;
+        if (characterId === undefined || amountRaw === undefined) {
+          throw new RuntimeError('@exp 用法：@exp 角色ID 经验值', instr);
+        }
+        const amount = Number(amountRaw);
+        if (!Number.isFinite(amount)) {
+          throw new RuntimeError(`@exp 经验值非法：'${amountRaw}'`, instr);
+        }
+        const result = this.#growth.gainExp(characterId, amount);
+        this.#bus.emit('growth', result);
         return;
       }
       case 'autosave': {

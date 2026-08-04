@@ -14,9 +14,9 @@ const decls: VarDeclaration[] = [
 
 function makeEvents(): ScheduledEventDef[] {
   return [
-    { id: 'ev_low', characterId: 'sys', when: 'true', scene: 'ev_low_scene', priority: 1 },
+    { id: 'ev_low', characterId: 'sys', when: 'true', scene: 'ev_low_scene', priority: 1, once: false },
     { id: 'ev_high', characterId: 'sys', when: 'turn >= 2', scene: 'ev_high_scene', priority: 10, once: true, effects: { morale: 5 } },
-    { id: 'ev_cond', characterId: 'sys', when: 'liberated', scene: 'ev_cond_scene', priority: 5, effects: { liberated: false } },
+    { id: 'ev_cond', characterId: 'sys', when: 'liberated', scene: 'ev_cond_scene', priority: 5, once: false, effects: { liberated: false } },
   ];
 }
 
@@ -51,7 +51,7 @@ describe('EventScheduler（兰斯式事件优先级调度）', () => {
   it('条件求值严格策略：未声明变量抛错（与 @if 一致，不静默降级）', () => {
     const store = new VariableStore(decls);
     const sched = new EventScheduler(
-      [{ id: 'bad', characterId: 'x', when: 'undefinedVar > 1', scene: 's' }],
+      [{ id: 'bad', characterId: 'x', when: 'undefinedVar > 1', scene: 's', once: false }],
       store,
     );
     expect(() => sched.eligible()).toThrow();
