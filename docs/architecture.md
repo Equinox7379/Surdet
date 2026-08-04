@@ -35,18 +35,23 @@
 - `AdvRenderer` 订阅事件驱动打字机/转场/选择肢，与 Pixi 解耦（可注入 fake stage 测试）。
 - 错误定位贯穿三层：`文件:行:列` + 错误码 + 修复提示。
 
-## 全家桶系统（M5，数据驱动）
+## 全家桶系统（数据驱动）
 
 | 系统 | 配置源 | 引擎侧 | 触发 |
 |---|---|---|---|
-| 地图日程 | calendar.json | `CalendarRunner` | `@calendar` → system 事件 |
+| 地图日程 | calendar.json | `CalendarRunner` | `@calendar` → system 事件；`baseCommands` 据点指令（AP/限次/when/effects） |
 | 回合战斗 | combat.json | `CombatSolver` | `@battle` → system 事件 |
 | 后宫 | events.json | `AffectionSystem` | `@affection/@event` |
+| 商店 | shop.json | `ShopSystem` | `@shop` → system 事件 |
+| 角色成长 | growth.json | `GrowthSystem` | `@exp` → 解释器内聚驱动 + `growth` 事件 |
+| 成就 | achievements.json | `AchievementSystem` | `@achievement unlock` + 宿主 `check()` 批量判定 |
+| 周目通关 | —（剧本内 `@clear`） | `ClearTracker` | `@clear` → `clear` 事件 + 宿主全局通关记录 |
+| 事件调度 | calendar.json（回合头尾） | `EventScheduler` | 三档优先级队列 + once 触发集合 |
 | 周目继承 | ngp 配置 | `NewGamePlus` | clear 判定 + 继承计算 |
 
-**存档接线**：系统实例由宿主持有，宿主通过 `Interpreter` 的 `SystemHooks`（`snapshot`/`restore`）接入存档——`SaveSnapshot.systems` 携带 `calendar/combat/affection` 快照，随存档 JSON 往返。各系统快照必须 JSON 安全（无 Map/Set/函数）。
+**存档接线**：系统实例由宿主持有，宿主通过 `Interpreter` 的 `SystemHooks`（`snapshot`/`restore`）接入存档——`SaveSnapshot.systems` 携带 `calendar/combat/affection/achievements` 快照；`GrowthSystem`（成长）与 `ClearTracker`（周目通关）由解释器**内聚管理**，快照在 `SaveSnapshot.growth`/`SaveSnapshot.clears` 顶层。各系统快照必须 JSON 安全（无 Map/Set/函数）。
 
-**演示接线（非闭环）**：`examples/starter` 演示了全家桶**实例接线与存档往返**——`@calendar`/`@battle`/`@affection`/`@event` 的 `system` 事件由 `src/main.ts` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，并经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。属**演示级**而非完整闭环：`calendar.enter()` 的 `eventId` 仅 `console.info` 不跳转事件场景、`@event` 的 `consumeEvent` 未先经 `availableEvents()` 校验、无回想 UI（详见 README"示例未闭环的宿主应用逻辑"）。
+**演示接线（接近闭环）**：`examples/starter` 演示了全家桶**实例接线与存档往返**——`@calendar`/`@battle`/`@affection`/`@event`/`@shop`/`@achievement` 的 `system` 事件由 `src/main.ts` 驱动对应 System，并经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。已闭环的部分：`calendar.enter()` 的 `eventId` 经 `hostJump` 跳事件场景、`@calendar` 打开地图时订阅回合头尾事件（`turnStartEventId`/`turnEndEventId`）、`baseCommands` 据点指令面板（AP/限次/when/effects 写回变量）、`@exp` 成长 + `levelEvents`、`@clear` 全局通关记录 + NGP 继承、成就 check/unlock 横幅、回想（Gallery）UI。仍可再深化：`@event` 的 `consumeEvent` 未先经 `availableEvents()` 校验、回合头尾事件的演出场景需项目自备。
 
 ## 素材注入（渲染层）
 
