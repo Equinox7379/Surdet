@@ -45,6 +45,7 @@ import {
   SettingsStore,
   SETTING_STEPS,
   stepSetting,
+  SKIP_STRATEGY_ALL,
   buildGalleryViews,
   buildBattleView,
   buildMapView,
@@ -940,7 +941,12 @@ async function main(): Promise<void> {
     } else if (e.key === 'a' || e.key === 'A') {
       console.info('[starter] 自动播放', renderer.toggleAuto() ? '开' : '关');
     } else if (e.key === 's' || e.key === 'S') {
-      console.info('[starter] 快进（已读跳过）', renderer.toggleSkip() ? '开' : '关');
+      // 快进策略跟随设置：仅跳已读（默认，遇未读即停）或全部跳过（一路到底）
+      if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) {
+        console.info('[starter] 快进（全部跳过·设置）', renderer.toggleSkipAll() ? '开' : '关');
+      } else {
+        console.info('[starter] 快进（已读跳过·设置）', renderer.toggleSkip() ? '开' : '关');
+      }
     } else if (e.key === 'x' || e.key === 'X') {
       console.info('[starter] 快进（全部跳过）', renderer.toggleSkipAll() ? '开' : '关');
     } else if (e.key === 'l' || e.key === 'L') {
