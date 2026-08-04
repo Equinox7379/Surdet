@@ -71,7 +71,9 @@
 | `@tip/@note` | `@tip 提示：右键打开菜单` | ✅ | 右上角小字提示横幅（约 1.8 秒淡出） |
 | `@nvl` | `@nvl` / `@nvl off` / `@nvl clear` | ✅ | NVL 全屏小说模式：开启后文本整行追加到全屏文本页（不走打字机）；`off` 回到 ADV 对话框；`clear` 清空页面 |
 | ruby 注音（文本标记） | `凛：这个世界《せかい》…` | ✅ | 非指令而是**台词内标记**：`基础字《注音》` 渲染为主字 + 上方小字（振假名）；未配对《按字面显示 |
-| `@particle/@mov/@tint` | — | ⚠️ | 更多演出指令（未实现） |
+| `@particle` | `@particle sakura` / `@particle sakura 5000` | ✅ | 粒子特效层（预设：sakura/snow/rain/embers/sparkles；可选持续毫秒，缺省持续到 `@particle stop`）；`@particle stop` 清除 |
+| `@mov` | `@mov lynn x 400 800` | ✅ | 立绘属性补间动画（角色 属性 目标值 [时长毫秒]；属性 x/y/alpha；缺省 400ms） |
+| `@tint` | `@tint #ff6600 800` | ✅ | 全屏调色叠加（颜色 hex + 过渡毫秒；`@tint none` 清除） |
 
 ### 流程
 | 指令 | 示例 | 状态 | 说明 |
@@ -103,7 +105,9 @@
 | `@shop` | ✅ | 打开商店覆盖层（宿主 ShopSystem 结算）；参数 = 金币变量 道具变量，缺省 `gold bag` |
 | `@scene` | ✅ | 声明性指令：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果 |
 | `@end` | ✅ | 场景结束（可省略，引擎自动追加） |
-| `@clear` | ⚠️ | 周目结束（未实现） |
+| `@clear` | ✅ | 周目通关记录：`@clear [结局ID]`（缺省结局标识 = 当前场景 ID）。解释器记录 ClearTracker + 广播 `clear` 事件（`{ ending, fresh }`），宿主接全局通关记录与 NGP 继承；结局收集随存档持久化 |
+| `@exp` | ✅ | 角色成长：`@exp 角色ID 经验值`。解释器驱动 GrowthSystem（宿主注入配置）：累积经验→判升级（可连升多级）→升级属性增量写回变量仓库→广播 `growth` 事件（含 passedLevels 供 levelEvents 跳转）；等级/经验随存档持久化 |
+| `@achievement` | ✅ | 成就事件触发：`@achievement unlock 成就ID`。发 `system` 事件由宿主 AchievementSystem 处理（when 条件成就由宿主调 check() 批量判定；幂等，重复解锁 fresh=false） |
 
 ### 存档点（已实现）
 | 指令 | 示例 | 说明 |
