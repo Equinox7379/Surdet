@@ -338,6 +338,7 @@ function applyValidation(issues: Issue[], edges: { from: string; to: string; kin
   renderIssues();
   renderSidebar(); // 刷新脏标记
   updateEdges();   // 刷新场景引用图谱
+  updateGraph();   // 刷新场景拓扑图（自我迭代⑤）
   const errors = issues.filter((i) => i.severity === 'error').length;
   const warnings = issues.length - errors;
   setStatus(errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`, errors === 0);
@@ -726,11 +727,137 @@ function renderRightExtras(): void {
   }
   right.appendChild(chips);
 
+  right.appendChild(h('h3', undefined, '场景拓扑'));
+  const graphBox = h('div');
+  graphBox.id = 'graph-box';
+  right.appendChild(graphBox);
+
   right.appendChild(h('h3', undefined, '场景引用'));
   const edgesBox = h('div');
   edgesBox.id = 'edges-box';
   right.appendChild(edgesBox);
   updateEdges();
+  updateGraph();
+}
+
+/** 场景拓扑图（自我迭代⑤）：BFS 分层布局的 SVG 小图，节点点击切换场景。
+ *  数据源为 lastEdges（Worker/同步校验共用），不依赖编译产物对象。 */
+function updateGraph(): void {
+  const box = document.getElementById('graph-box');
+  if (!box) return;
+  box.innerHTML = '';
+  const ids = [...new Set([...state.scenes.values()].map((s) => s.id))];
+  if (ids.length === 0) return;
+
+  // 邻接表（边目标取场景部分：scene.label → scene）
+  const adj = new Map<string, string[]>();
+  for (const id of ids) adj.set(id, []);
+  for (const e of state.lastEdges) {
+    const to = e.to.split('.')[0]!;
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    if (!adj.has(to)) adj.set(to, []);
+    adj.get(e.from)!.push(to);
+  }
+
+  // BFS 分层（entryScene 为根；不可达场景排到末列）
+  const depth = new Map<string, number>();
+  const entry = state.entryScene && adj.has(state.entryScene) ? state.entryScene : ids[0]!;
+  depth.set(entry, 0);
+  const queue = [entry];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const nx of adj.get(cur) ?? []) {
+      if (!depth.has(nx)) {
+        depth.set(nx, depth.get(cur)! + 1);
+        queue.push(nx);
+      }
+    }
+  }
+  let maxDepth = 0;
+  for (const d of depth.values()) maxDepth = Math.max(maxDepth, d);
+  const unreachable = [...adj.keys()].filter((id) => !depth.has(id));
+  if (unreachable.length > 0) {
+    maxDepth += 1;
+    for (const id of unreachable) depth.set(id, maxDepth); // 不可达：末列集中展示
+  }
+
+  const byDepth = new Map<number, string[]>();
+  for (const [id, d] of depth) {
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d)!.push(id);
+  }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const COLW = 96;
+  const ROWH = 32;
+  const PAD = 10;
+  const NODE_W = 84;
+  const NODE_H = 22;
+  const cols = (maxDepth === 0 ? 0 : maxDepth) + 2;
+  const maxRows = Math.max(1, ...[...byDepth.values()].map((v) => v.length));
+  const width = PAD * 2 + cols * COLW;
+  const height = PAD * 2 + maxRows * ROWH;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+
+  const posOf = new Map<string, { x: number; y: number }>();
+  for (const [d, nodes] of byDepth) {
+    nodes.forEach((id, i) => {
+      posOf.set(id, { x: PAD + d * COLW + NODE_W / 2, y: PAD + i * ROWH + NODE_H / 2 });
+    });
+  }
+
+  // 先画边再画节点（节点盖住线头）
+  for (const e of state.lastEdges) {
+    const from = posOf.get(e.from);
+    const to = posOf.get(e.to.split('.')[0]!);
+    if (!from || !to) continue;
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', String(from.x + NODE_W / 2 - 6));
+    line.setAttribute('y1', String(from.y));
+    line.setAttribute('x2', String(to.x - NODE_W / 2 + 2));
+    line.setAttribute('y2', String(to.y));
+    line.setAttribute('stroke', e.kind === 'call' ? '#7a6aa8' : '#3a4258');
+    line.setAttribute('stroke-width', '1.5');
+    svg.appendChild(line);
+  }
+
+  const currentId = state.current ? state.scenes.get(state.current)?.id : undefined;
+  for (const [id, p] of posOf) {
+    const g = document.createElementNS(NS, 'g');
+    g.style.cursor = 'pointer';
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('x', String(p.x - NODE_W / 2));
+    rect.setAttribute('y', String(p.y - NODE_H / 2));
+    rect.setAttribute('width', String(NODE_W));
+    rect.setAttribute('height', String(NODE_H));
+    rect.setAttribute('rx', '6');
+    rect.setAttribute('fill', id === entry ? '#3a2f1e' : '#1a2032');
+    rect.setAttribute('stroke', id === currentId ? '#ffe8c8' : '#2a3248');
+    const label = document.createElementNS(NS, 'text');
+    label.setAttribute('x', String(p.x));
+    label.setAttribute('y', String(p.y + 4));
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('font-size', '11');
+    label.setAttribute('fill', id === currentId ? '#ffe8c8' : '#dfe4f0');
+    label.textContent = id.length > 11 ? id.slice(0, 10) + '…' : id;
+    g.append(rect, label);
+    const title = document.createElementNS(NS, 'title');
+    title.textContent = id === entry ? `${id}（入口）` : id;
+    g.appendChild(title);
+    g.addEventListener('click', () => {
+      const key = [...state.scenes.keys()].find((k) => state.scenes.get(k)!.id === id);
+      if (key) {
+        state.current = key;
+        renderSidebar();
+        renderEditor();
+        updateGraph();
+      }
+    });
+    svg.appendChild(g);
+  }
+  box.appendChild(svg);
 }
 
 function updateEdges(): void {
