@@ -767,7 +767,7 @@ async function main(): Promise<void> {
   });
 
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
-  //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
+  //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       openSystemMenu();
@@ -824,6 +824,9 @@ async function main(): Promise<void> {
     } else if (e.key === 'l' || e.key === 'L') {
       // Backlog（文字记录）：覆盖层展示近期文本历史（点击任意处关闭）
       console.info('[starter] 文字记录', renderer.toggleBacklog() ? '开' : '关');
+    } else if (e.key === 'h' || e.key === 'H') {
+      // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
+      console.info('[starter] 隐藏界面', renderer.toggleHideInterface() ? '开' : '关');
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
       if (galleryOpen) {
