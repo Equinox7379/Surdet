@@ -304,25 +304,85 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[
   return document.createElementNS(NS, tag);
 }
 
-function edgePath(a: NodeBox, b: NodeBox): string {
+/** 边几何：路径 + 标签位置（验收反馈二轮：同泳道跨单元的跳转边若走直线会与顺序流细线重叠，
+ *  改为向列间空隙鼓出弧线；标签置于弧线顶点，避开节点遮挡） */
+const BULGE = 56;
+function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind']): { d: string; lx: number; ly: number } {
   if (b.x >= a.x + a.w - 1) {
-    // 向右：右侧中点 → 左侧中点（贝塞尔）
+    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
     const dx = Math.max(30, (x2 - x1) / 2);
-    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
   }
   if (Math.abs(b.x - a.x) < 2) {
-    // 同列纵向（泳道内顺序流 / 宿主入口）
-    const down = b.y >= a.y;
-    const x1 = a.x + a.w / 2, y1 = down ? a.y + a.h : a.y;
-    const x2 = b.x + b.w / 2, y2 = down ? b.y : b.y + b.h;
-    return `M ${x1} ${y1} L ${x2} ${y2}`;
+    if (kind === 'flow' || kind === 'host') {
+      // 同列相邻单元的顺序流 / 宿主入口：直线
+      const down = b.y >= a.y;
+      const x1 = a.x + a.w / 2, y1 = down ? a.y + a.h : a.y;
+      const x2 = b.x + b.w / 2, y2 = down ? b.y : b.y + b.h;
+      return { d: `M ${x1} ${y1} L ${x2} ${y2}`, lx: x1, ly: (y1 + y2) / 2 };
+    }
+    // 同泳道跨单元（choice/goto/loop/if）：向右鼓出弧线，与顺序流细线分离
+    const x1 = a.x + a.w, y1 = a.y + a.h / 2;
+    const y2 = b.y + b.h / 2;
+    const cx = x1 + BULGE;
+    return {
+      d: `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${b.x + b.w} ${y2}`,
+      lx: x1 + BULGE * 0.75,
+      ly: (y1 + y2) / 2,
+    };
   }
-  // 回边（loop 等）：绕下方
+  // 回边（跨列且向左）：绕下方
   const x1 = a.x + a.w / 2, y1 = a.y + a.h;
   const x2 = b.x + b.w / 2, y2 = b.y + b.h;
   const dy = Math.max(y1, y2) + 34;
-  return `M ${x1} ${y1} C ${x1} ${dy}, ${x2} ${dy}, ${x2} ${y2}`;
+  return { d: `M ${x1} ${y1} C ${x1} ${dy}, ${x2} ${dy}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: dy - 8 };
+}
+
+/** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
+interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string }
+
+function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[]): void {
+  const a = boxes.get(edge.from);
+  const b = boxes.get(edge.to);
+  if (!a || !b) return; // 悬空目标（未编译场景）不画，lint 会报
+  const geo = edgeGeometry(a, b, edge.kind);
+  const path = el('path');
+  path.setAttribute('d', geo.d);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', EDGE_COLORS[edge.kind]);
+  path.setAttribute('stroke-width', edge.kind === 'flow' ? '1' : '1.5');
+  if (edge.kind === 'call' || edge.kind === 'host') path.setAttribute('stroke-dasharray', '6 4');
+  world.appendChild(path);
+  if (edge.label) {
+    labelsOut.push({ lx: geo.lx, ly: geo.ly, text: edge.label.length > 22 ? edge.label.slice(0, 21) + '…' : edge.label, full: edge.label });
+  }
+}
+
+/** 边标签顶层绘制：深色底板 + 亮色字（在全部节点之后调用，永不被遮） */
+function drawEdgeLabels(world: SVGElement, labels: EdgeLabelDraw[]): void {
+  for (const L of labels) {
+    const labelW = Math.min(160, L.text.length * 7 + 10);
+    const bg = el('rect');
+    bg.setAttribute('x', String(L.lx - labelW / 2));
+    bg.setAttribute('y', String(L.ly - 8));
+    bg.setAttribute('width', String(labelW));
+    bg.setAttribute('height', '14');
+    bg.setAttribute('rx', '4');
+    bg.setAttribute('fill', '#0d1117');
+    bg.setAttribute('opacity', '0.85');
+    const mid = el('text');
+    mid.setAttribute('x', String(L.lx));
+    mid.setAttribute('y', String(L.ly + 3));
+    mid.setAttribute('text-anchor', 'middle');
+    mid.setAttribute('font-size', '10');
+    mid.setAttribute('fill', '#e8d9b0');
+    mid.textContent = L.text;
+    const title = el('title');
+    title.textContent = L.full;
+    mid.appendChild(title);
+    world.append(bg, mid);
+  }
 }
 
 function currentGraph(): FlowGraph {
@@ -443,46 +503,6 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   world.appendChild(g);
 }
 
-function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>): void {
-  const a = boxes.get(edge.from);
-  const b = boxes.get(edge.to);
-  if (!a || !b) return; // 悬空目标（未编译场景）不画，lint 会报
-  const path = el('path');
-  path.setAttribute('d', edgePath(a, b));
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', EDGE_COLORS[edge.kind]);
-  path.setAttribute('stroke-width', edge.kind === 'flow' ? '1' : '1.5');
-  if (edge.kind === 'call' || edge.kind === 'host') path.setAttribute('stroke-dasharray', '6 4');
-  world.appendChild(path);
-  if (edge.label) {
-    // 边标签：放在两端点几何中点（绕行边的贝塞尔 t=0.5 近似在此附近）；
-    // 加深色底板 + 亮色字保证暗底可读（验收反馈：原浅色小字贴边/位置偏，看不见）
-    const midX = (a.x + a.w + b.x) / 2;
-    const midY = (a.y + b.y) / 2 + (a.h + b.h) / 4;
-    const t = edge.label.length > 22 ? edge.label.slice(0, 21) + '…' : edge.label;
-    const labelW = Math.min(180, t.length * 10 + 12);
-    const bg = el('rect');
-    bg.setAttribute('x', String(midX - labelW / 2));
-    bg.setAttribute('y', String(midY - 16));
-    bg.setAttribute('width', String(labelW));
-    bg.setAttribute('height', '14');
-    bg.setAttribute('rx', '4');
-    bg.setAttribute('fill', '#0d1117');
-    bg.setAttribute('opacity', '0.85');
-    const mid = el('text');
-    mid.setAttribute('x', String(midX));
-    mid.setAttribute('y', String(midY - 5));
-    mid.setAttribute('text-anchor', 'middle');
-    mid.setAttribute('font-size', '10');
-    mid.setAttribute('fill', '#e8d9b0');
-    mid.textContent = t;
-    const title = el('title');
-    title.textContent = edge.label;
-    mid.appendChild(title);
-    world.append(bg, mid);
-  }
-}
-
 /** 拖拽/点击区分：超过阈值才算拖拽；拖拽结束后的 click 被抑制 */
 let suppressClick = false;
 const DRAG_THRESHOLD = 6;
@@ -511,16 +531,13 @@ export function renderFlow(container: HTMLElement): void {
   const vx1 = vx0 + cw / view.k, vy1 = vy0 + ch / view.k;
   const visible = (b: NodeBox): boolean => b.x + b.w >= vx0 && b.x <= vx1 && b.y + b.h >= vy0 && b.y <= vy1;
 
-  // 先边后节点（节点盖住线头）
+  // 先边后节点（节点盖住线头）；边标签收集后在最顶层绘制（不被节点遮）
+  const edgeLabels: EdgeLabelDraw[] = [];
   for (const edge of graph.edges) {
     const a = layout.boxes.get(edge.from);
     const b = layout.boxes.get(edge.to);
     if (!a || !b) continue;
-    // 边的粗略可见性：两端点包围盒与视口相交
-    const ex0 = Math.min(a.x, b.x), ex1 = Math.max(a.x + a.w, b.x + b.w);
-    const ey0 = Math.min(a.y, b.y), ey1 = Math.max(a.y + a.h, b.y + b.h) + 40;
-    if (ex1 < vx0 || ex0 > vx1 || ey1 < vy0 || ey0 > vy1) continue;
-    drawEdge(world, edge, layout.boxes);
+    drawEdge(world, edge, layout.boxes, edgeLabels);
   }
 
   /* ---- E1b：节点拖拽建链状态 ---- */
@@ -542,6 +559,8 @@ export function renderFlow(container: HTMLElement): void {
     if (!visible(box)) continue;
     drawNode(world, box, stats, startNodeDrag);
   }
+  // 边标签最后绘制：压在全部节点之上，永不遮挡（验收反馈二轮）
+  drawEdgeLabels(world, edgeLabels);
 
   if (graph.nodes.length === 0) {
     const hint = h('div', 'empty', '暂无编译产物：打开项目后流程图从校验编译产物生成');
