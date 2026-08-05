@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "surdet lint",
+    "simulate": "surdet simulate --assume battleWon=true",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
