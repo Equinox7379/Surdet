@@ -3,11 +3,21 @@
  * （拖拽 DOM 交互与右键菜单由手工验收覆盖；此处保证落盘文本变换的正确性）
  */
 import { describe, expect, it } from 'vitest';
-import { rewriteSceneRefs, countSceneRefs, buildJumpLine, appendLineToScene } from '../src/panels/flow.js';
+import { rewriteSceneRefs, countSceneRefs, buildJumpLine, appendLineToScene, layoutFlowGraph } from '../src/panels/flow.js';
+import { buildFlowGraph } from '../src/graph/build.js';
 import type { FlowNode } from '../src/graph/build.js';
 
 const sceneNode = (sceneId: string): FlowNode => ({ kind: 'scene', id: `s:${sceneId}`, sceneId });
 const labelNode = (sceneId: string, label: string): FlowNode => ({ kind: 'label', id: `l:${sceneId}.${label}`, sceneId, label });
+
+/** 测试用场景集构造（与 graph.test.ts 同构；真实编译产物驱动布局层） */
+import { compileScene } from '@surdet/core';
+import type { CompiledScene } from '@surdet/core';
+function scenesOf(entries: [string, string][]): Map<string, CompiledScene> {
+  const m = new Map<string, CompiledScene>();
+  for (const [id, src] of entries) m.set(id, compileScene(src, `${id}.gal`, id));
+  return m;
+}
 
 describe('rewriteSceneRefs（重命名引用同步改写）', () => {
   it('改写 @jump/@call 的裸场景与 场景.标签 目标', () => {
@@ -60,5 +70,24 @@ describe('appendLineToScene（末尾追加保持换行风格）', () => {
   });
   it('空场景 → 只写新行', () => {
     expect(appendLineToScene('', '\n', '@jump x')).toBe('@jump x');
+  });
+});
+
+describe('layoutFlowGraph（验收轮 Minor3：顶部越界保护）', () => {
+  it('入口场景同时是宿主入口（列首行）：全部节点 y 非负，相对布局不变', () => {
+    // ch1 既是 entryScene 又被配置引用（events.json 形态）：host 节点画在目标上方，修复前 y 为负
+    const graph = buildFlowGraph(scenesOf([
+      ['ch1', '凛：开场。\n'],
+      ['ch2', '@label a\n凛：二。\n'],
+    ]), ['ch1', 'ch2']);
+    const layout = layoutFlowGraph(graph, 'ch1');
+    for (const box of layout.boxes.values()) {
+      expect(box.y).toBeGreaterThanOrEqual(0);
+    }
+    // host 节点仍在目标场景节点上方（相对关系保持）
+    const host = [...layout.boxes.values()].find((b) => b.node.kind === 'host-entry' && b.node.sceneId === 'ch1');
+    const target = layout.boxes.get('s:ch1');
+    expect(host && target).toBeTruthy();
+    expect(host!.y + host!.h).toBeLessThanOrEqual(target!.y);
   });
 });
