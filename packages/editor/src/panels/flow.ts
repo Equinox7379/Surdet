@@ -53,11 +53,9 @@ export function buildJumpLine(from: FlowNode, to: FlowNode): string {
   return to.kind === 'label' ? `@jump ${to.sceneId}.${to.label ?? ''}` : `@jump ${to.sceneId}`;
 }
 
-/** 场景文本末尾追加行（保持换行风格；文末已有换行则直接追加） */
-export function appendLineToScene(text: string, eol: string, raw: string): string {
-  if (text.length === 0) return raw;
-  return text.endsWith(eol) ? text + raw : text + eol + raw;
-}
+/** 场景文本末尾追加行：纯函数已拆至 scene-text.ts（断模块循环依赖，M4 审阅轮 Minor 1）；保留重导出稳定公开 API */
+import { appendLineToScene } from '../scene-text.js';
+export { appendLineToScene };
 
 /* ============================ 布局（纯计算） ============================ */
 
