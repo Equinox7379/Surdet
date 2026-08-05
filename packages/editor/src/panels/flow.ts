@@ -336,8 +336,8 @@ export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sam
   // 跨列回边（向左）：绕下方
   const x1 = a.x + a.w / 2, y1 = a.y + a.h;
   const x2 = b.x + b.w / 2, y2 = b.y + b.h;
-  const dy = Math.max(y1, y2) + 34;
-  return { d: `M ${x1} ${y1} C ${x1} ${dy}, ${x2} ${dy}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: dy - 8 };
+  const dipY = Math.max(y1, y2) + 34;
+  return { d: `M ${x1} ${y1} C ${x1} ${dipY}, ${x2} ${dipY}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: dipY - 8 };
 }
 
 /** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
