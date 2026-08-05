@@ -5,12 +5,14 @@ import {
   Graphics,
   Sprite,
   Text as PText,
+  TextStyle,
   Texture,
   type TextStyleOptions,
 } from 'pixi.js';
 import type { BacklogEntry } from './backlog.js';
 import type { BattleView } from './battle-view.js';
 import { parseRuby, stripRuby } from './ruby.js';
+import { wrapCjk } from './text-wrap.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
@@ -178,6 +180,8 @@ export class PixiStage implements AdvStage {
   #registeredPortraits = new Map<string, Texture>();
   #speakerText: PText;
   #dialogText: PText;
+  /** 对话框每行字数容量（预断行用，构造时按字号估算；M5 支柱4） */
+  #dialogCharsPerLine = 40;
   #choiceLayer: Container;
   #choiceViews: Container[] = [];
   /** 选择肢键盘高亮序号（-1 = 无） */
@@ -349,11 +353,11 @@ export class PixiStage implements AdvStage {
       style: {
         fontSize: 26,
         fill: 0xf5f5f5,
-        wordWrap: true,
-        wordWrapWidth: this.#w - 160,
         lineHeight: 38,
       } satisfies TextStyleOptions,
     });
+    // 对话框预断行（M5 支柱4：断行禁则）：按字数估算每行容量，替代 Pixi wordWrap 的裸断行
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 26));
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
@@ -422,6 +426,31 @@ export class PixiStage implements AdvStage {
     const tex = typeof src === 'string' ? await Assets.load(src) : src;
     this.#registeredBgs.set(key, tex);
     this.#bgTextureCache.delete(key);
+  }
+
+  /**
+   * 自定义字体（M5 支柱4）：加载项目内嵌 woff2（游戏商用字体授权复杂，引擎必须允许自带字体文件），
+   * 加载成功后设为全局默认字体；失败/超时静默回退系统字体（不白屏，只告警）。返回是否生效。
+   * 宿主在渲染文本前调用（如 game.config.json 配置 font 字段指向 content/assets/fonts/*.woff2）。
+   */
+  async registerFont(url: string, family = 'SurdetGameFont', timeoutMs = 3000): Promise<boolean> {
+    if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false; // 非浏览器/测试环境
+    try {
+      const face = new FontFace(family, `url(${url})`);
+      const loaded = await Promise.race([
+        face.load(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
+      ]);
+      (document.fonts as unknown as { add: (f: FontFace) => void }).add(loaded);
+      // Pixi v8：改全局默认样式 → 之后新建的文本生效；对话框/说话人长驻对象直接改样式
+      TextStyle.defaultTextStyle.fontFamily = family;
+      this.#dialogText.style.fontFamily = family;
+      this.#speakerText.style.fontFamily = family;
+      return true;
+    } catch (err) {
+      console.warn('[PixiStage] 自定义字体加载失败，回退系统字体：', err instanceof Error ? err.message : String(err));
+      return false;
+    }
   }
 
   /**
@@ -530,7 +559,9 @@ export class PixiStage implements AdvStage {
     if (!hasRuby) {
       this.#clearRubyLayer();
       this.#dialogText.visible = true;
-      this.#dialogText.text = unclosed ? stripRuby(value) : value;
+      const plain = unclosed ? stripRuby(value) : value;
+      // 断行禁则（M5 支柱4）：禁则字不挂行首/行尾，……——不拆行
+      this.#dialogText.text = wrapCjk(plain, this.#dialogCharsPerLine).join('\n');
       return;
     }
     this.#dialogText.visible = false;
@@ -599,15 +630,15 @@ export class PixiStage implements AdvStage {
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
       style: { fontSize: 22, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 30);
-    // 条目层（整体滚动；CJK 无空格断词 → 按字符数手动软换行）
+    // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
     const entriesLayer = new Container();
     const perLine = 40;
     let y = 0;
     for (const e of entries.slice(-120)) {
       const text = e.text.length > 0 ? e.text : '（无文本）';
       let first = true;
-      for (let i = 0; i < text.length; i += perLine) {
-        const lineText = (first && e.speaker ? `${e.speaker}：` : '') + text.slice(i, i + perLine);
+      for (const line of wrapCjk(text, perLine)) {
+        const lineText = (first && e.speaker ? `${e.speaker}：` : '') + line;
         const t = new PText({
           text: first && e.voice ? `▶ ${lineText}` : lineText,
           style: {

@@ -14,6 +14,7 @@ import {
   validateSceneVariables,
   validateSwitchTargets,
   collectConfigSceneRoots as collectConfigSceneRootsFromConfigs,
+  attachHints,
   type CallInstr,
   type CompiledScene,
   type ExprAst,
@@ -182,6 +183,9 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
 
   // growth.json 非表达式校验（审计轮4）：statGrowth 键必须已声明变量、levelEvents 场景必须存在
   lintGrowthConfig(root, variables, scenes, failedScenes, issues, hasConfig);
+
+  // 按错误码补齐修复建议（M5 支柱1：--json 输出携带，供 AI 自我修正循环消费）
+  attachHints(issues);
 
   const ok = issues.every((i) => i.severity !== 'error');
   return { issues, sceneCount: sceneSourceFiles.size, ok };

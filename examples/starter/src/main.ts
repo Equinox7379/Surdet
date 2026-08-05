@@ -128,6 +128,15 @@ async function main(): Promise<void> {
   // 舞台
   const stage = new PixiStage();
   await stage.init();
+
+  // 自定义字体（可选，M5 支柱4）：game.config.json 配置 font 指向项目内嵌 woff2；
+  // 加载失败/超时自动回退系统字体（不白屏）。不配置则用系统默认字体。
+  const fontUrl = (gameConfig as { font?: string }).font;
+  if (typeof fontUrl === 'string' && fontUrl.length > 0) {
+    void stage.registerFont(fontUrl).then((ok) => {
+      if (ok) console.info('[starter] 自定义字体已加载：', fontUrl);
+    });
+  }
   appEl.appendChild(stage.app!.canvas);
 
   // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率保持 1280×720 逻辑尺寸）

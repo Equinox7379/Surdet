@@ -38,6 +38,7 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet --help            显示帮助
   surdet new <name>        创建新游戏脚手架（games/<name>）
   surdet lint [dir]        校验游戏内容（剧本语法/结构/引用完整性）
+      --json               输出机器可读 JSON（含每条问题的 hint 修复建议，AI 自我修正循环用）
   surdet audit [dir]       AI 生产线验收：内容审计（称谓/名词表/空心分支/节奏）+ 无头试跑
       --no-run             只做内容审计，跳过无头试跑
   surdet simulate [dir]    无头自动模拟：全分支遍历 + 结局可达性 + 死路检测 + 存档往返冒烟
@@ -86,8 +87,16 @@ async function main(): Promise<number> {
     }
 
     case 'lint': {
-      const projectDir = path.resolve(args[1] ?? process.cwd());
+      const jsonOut = args.includes('--json');
+      const rest = args.slice(1).filter((a) => a !== '--json');
+      const projectDir = path.resolve(rest[0] ?? process.cwd());
       const result = lintProject(projectDir);
+
+      if (jsonOut) {
+        // 机器可读输出（M5 支柱1）：结构稳定 { ok, sceneCount, issues[{severity,code,text,hint,file,line,col}] }
+        process.stdout.write(JSON.stringify({ ok: result.ok, sceneCount: result.sceneCount, issues: result.issues }, null, 2) + '\n');
+        return result.issues.some((i) => i.severity === 'error') ? 1 : 0;
+      }
 
       const errors = result.issues.filter((i) => i.severity === 'error');
       const warnings = result.issues.filter((i) => i.severity === 'warning');

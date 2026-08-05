@@ -14,4 +14,5 @@ export * from './audio-manager.js';
 export * from './pixi-stage.js';
 export * from './ruby.js';
 export * from './settings-store.js';
+export * from './text-wrap.js';
 export * from './ui-views.js';

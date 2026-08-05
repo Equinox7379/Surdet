@@ -30,4 +30,5 @@ export * from './systems/event-scheduler.js';
 export * from './systems/growth.js';
 export * from './systems/achievement.js';
 export * from './scene-lint.js';
+export * from './lint-hints.js';
 export * from './systems/shop.js';

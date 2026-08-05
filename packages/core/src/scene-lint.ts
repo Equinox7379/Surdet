@@ -17,7 +17,8 @@ import type {
   TextInstr,
 } from './dsl/ast.js';
 
-/** 统一的 lint 问题形状（CLI 与编辑器共用） */
+/** 统一 lint 问题形状（CLI 与编辑器共用）；hint 为可操作的修复建议（M5 支柱1：AI 自我修正闭环，
+ *  经 attachHints 按错误码补齐，lint --json 输出携带） */
 export interface LintIssue {
   severity: 'error' | 'warning';
   code: string;
@@ -25,6 +26,8 @@ export interface LintIssue {
   file: string;
   line: number;
   col: number;
+  /** 修复建议（写给 AI/作者：精确可操作；由 attachHints 按 code 补齐） */
+  hint?: string;
 }
 
 /** 解析 game.config.json 原始对象 → 变量表/类型表/readonly 集/customInstructions/entryScene。

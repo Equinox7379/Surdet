@@ -545,3 +545,31 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'W007' && i.text.includes('orphan'))).toBe(true);
   });
 });
+
+describe('lint hint（M5 支柱1：AI 自我修正闭环）', () => {
+  it('每条问题都携带按错误码补齐的可操作 hint', () => {
+    // 拆两个场景：b 的 @goto 未定义标签会让 b 编译失败（C002），但不影响 a 的跨场景 J001 校验
+    const dir = makeProject({
+      'content/scenario/a.gal': `@jump ghost_scene\n`,
+      'content/scenario/b.gal': `@goto nowhere\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.length).toBeGreaterThan(0);
+    for (const issue of r.issues) {
+      expect(issue.hint, `错误码 ${issue.code} 缺 hint`).toBeTruthy();
+    }
+    // 抽查：J001/C002 的 hint 给出具体修复动作（场景目录/补标签）
+    expect(r.issues.some((i) => i.code === 'J001' && (i.hint ?? '').includes('content/scenario'))).toBe(true);
+    expect(r.issues.some((i) => i.code === 'C002' && (i.hint ?? '').includes('@label'))).toBe(true);
+  });
+
+  it('JSON 输出形状稳定：可解析且字段齐全（ok/sceneCount/issues[].hint）', () => {
+    const dir = makeProject({ 'content/scenario/a.gal': `@goto ghost\n` });
+    const r = lintProject(dir);
+    const payload = JSON.stringify({ ok: r.ok, sceneCount: r.sceneCount, issues: r.issues });
+    const parsed = JSON.parse(payload) as { ok: boolean; sceneCount: number; issues: { code: string; text: string; hint?: string; file: string; line: number; col: number }[] };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.sceneCount).toBe(1);
+    expect(parsed.issues.every((i) => typeof i.code === 'string' && typeof i.text === 'string' && typeof i.hint === 'string')).toBe(true);
+  });
+});
