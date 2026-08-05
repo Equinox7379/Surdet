@@ -61,7 +61,7 @@ export function appendLineToScene(text: string, eol: string, raw: string): strin
 
 /* ============================ 布局（纯计算） ============================ */
 
-interface NodeBox { node: FlowNode; x: number; y: number; w: number; h: number }
+export interface NodeBox { node: FlowNode; x: number; y: number; w: number; h: number }
 interface FlowLayout { boxes: Map<string, NodeBox>; width: number; height: number }
 
 const NODE_H = 26;
@@ -304,25 +304,20 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[
   return document.createElementNS(NS, tag);
 }
 
-/** 边几何：路径 + 标签位置（验收反馈二轮：同泳道跨单元的跳转边若走直线会与顺序流细线重叠，
- *  改为向列间空隙鼓出弧线；标签置于弧线顶点，避开节点遮挡） */
+/** 边几何：路径 + 标签位置。
+ *  sameLane 由调用方按“同一场景”判定（不能比 x：同泳道节点宽度不同居中后 x 不同，
+ *  验收反馈三轮的错位根因即误判为跨列回边） */
 const BULGE = 56;
-function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind']): { d: string; lx: number; ly: number } {
-  if (b.x >= a.x + a.w - 1) {
-    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-    const dx = Math.max(30, (x2 - x1) / 2);
-    return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
-  }
-  if (Math.abs(b.x - a.x) < 2) {
+export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sameLane: boolean): { d: string; lx: number; ly: number } {
+  if (sameLane) {
     if (kind === 'flow' || kind === 'host') {
-      // 同列相邻单元的顺序流 / 宿主入口：直线
+      // 同泳道相邻单元的顺序流 / 宿主入口：近直线（节点宽度不同居中 x 略差，端点取各自中点）
       const down = b.y >= a.y;
       const x1 = a.x + a.w / 2, y1 = down ? a.y + a.h : a.y;
       const x2 = b.x + b.w / 2, y2 = down ? b.y : b.y + b.h;
-      return { d: `M ${x1} ${y1} L ${x2} ${y2}`, lx: x1, ly: (y1 + y2) / 2 };
+      return { d: `M ${x1} ${y1} L ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
     }
-    // 同泳道跨单元（choice/goto/loop/if）：向右鼓出弧线，与顺序流细线分离
+    // 同泳道跨单元（choice/goto/loop/if）：向右鼓出弧线，与顺序流细线分离；标签在弧线顶点
     const x1 = a.x + a.w, y1 = a.y + a.h / 2;
     const y2 = b.y + b.h / 2;
     const cx = x1 + BULGE;
@@ -332,7 +327,13 @@ function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind']): { d: stri
       ly: (y1 + y2) / 2,
     };
   }
-  // 回边（跨列且向左）：绕下方
+  if (b.x >= a.x + a.w - 1) {
+    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙
+    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+    const dx = Math.max(30, (x2 - x1) / 2);
+    return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
+  }
+  // 跨列回边（向左）：绕下方
   const x1 = a.x + a.w / 2, y1 = a.y + a.h;
   const x2 = b.x + b.w / 2, y2 = b.y + b.h;
   const dy = Math.max(y1, y2) + 34;
@@ -340,13 +341,15 @@ function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind']): { d: stri
 }
 
 /** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
-interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string }
+export interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string }
 
 function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[]): void {
   const a = boxes.get(edge.from);
   const b = boxes.get(edge.to);
   if (!a || !b) return; // 悬空目标（未编译场景）不画，lint 会报
-  const geo = edgeGeometry(a, b, edge.kind);
+  // 同泳道 = 同一场景（节点宽度不同居中后 x 不同，不能用 x 判断）
+  const sameLane = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
+  const geo = edgeGeometry(a, b, edge.kind, sameLane);
   const path = el('path');
   path.setAttribute('d', geo.d);
   path.setAttribute('fill', 'none');
