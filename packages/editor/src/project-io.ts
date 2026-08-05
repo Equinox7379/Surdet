@@ -5,6 +5,8 @@
  */
 import { state, setStatus } from './state.js';
 import { histories } from './history.js';
+import { kindOfDir, parsePortraitFileName } from './assets.js';
+import type { AssetKind } from './assets.js';
 
 let renderAll: () => void = () => {};
 let runValidate: () => void = () => {};
@@ -23,21 +25,26 @@ export async function openProject(): Promise<void> {
   state.dirHandle = dir;
   state.scenes.clear();
   histories.clear(); // 换项目：历史栈失效
-  // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；解析失败按无配置）
-  state.configFiles = { events: null, growth: null, calendar: null };
-  for (const name of ['events', 'growth', 'calendar'] as const) {
+  state.handles = { gameConfig: null, achievements: null };
+  state.dirAssets = [];
+  // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
+  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
+  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null };
+  for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery'] as const) {
     try {
       const contentDir = await dir.getDirectoryHandle('content');
       const configDir = await contentDir.getDirectoryHandle('config');
       const fh = await configDir.getFileHandle(`${name}.json`);
       state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
+      if (name === 'achievements') state.handles.achievements = fh; // 成就编辑器写盘句柄
     } catch {
       state.configFiles[name] = null;
     }
   }
-  // game.config.json（entryScene/变量表）
+  // game.config.json（entryScene/变量表；句柄供变量编辑器写盘）
   try {
     const cfgHandle = await dir.getFileHandle('game.config.json');
+    state.handles.gameConfig = cfgHandle;
     state.gameConfigText = await (await cfgHandle.getFile()).text();
     const cfg = JSON.parse(state.gameConfigText) as { entryScene?: string };
     state.entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
@@ -45,6 +52,16 @@ export async function openProject(): Promise<void> {
     state.gameConfigText = '';
     state.entryScene = '';
   }
+  // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
+  try {
+    const contentDir = await dir.getDirectoryHandle('content');
+    const assetsDir = await contentDir.getDirectoryHandle('assets');
+    await walkAssetDir(assetsDir);
+  } catch { /* 无素材目录 */ }
+  try {
+    const publicDir = await dir.getDirectoryHandle('public');
+    await walkAssetDir(publicDir);
+  } catch { /* 无 public 目录 */ }
   // 递归读取 content/scenario/**/*.gal
   try {
     const contentDir = await dir.getDirectoryHandle('content');
@@ -57,6 +74,38 @@ export async function openProject(): Promise<void> {
   state.current = first ?? null;
   renderAll();
   runValidate(); // 打开后立即校验
+}
+
+/** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/bgm/se/voice/video），子目录继承类型；
+ *  未知类型的目录/文件跳过（不强制素材约定） */
+const IMG_RE = /\.(png|jpe?g|webp|gif|avif)$/i;
+async function walkAssetDir(root: FileSystemDirectoryHandle): Promise<void> {
+  const walk = async (dh: FileSystemDirectoryHandle, kind: AssetKind | null): Promise<void> => {
+    const entries = (dh as unknown as {
+      values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
+    }).values();
+    for await (const ent of entries) {
+      if (ent.kind === 'directory') {
+        await walk(ent, kind ?? kindOfDir(ent.name));
+      } else if (ent.kind === 'file' && kind) {
+        if (kind === 'portrait') {
+          const { key, expr } = parsePortraitFileName(ent.name);
+          state.dirAssets.push({ key, kind, expr, handle: ent, isImage: IMG_RE.test(ent.name) });
+        } else {
+          const key = ent.name.replace(/\.[^.]+$/, '');
+          state.dirAssets.push({ key, kind, handle: ent, isImage: IMG_RE.test(ent.name) });
+        }
+      }
+    }
+  };
+  await walk(root, null);
+}
+
+/** 配置文件写盘（E3 共用：创建可写流 → 写入 → 关闭） */
+export async function writeFileHandle(fh: FileSystemFileHandle, text: string): Promise<void> {
+  const w = await fh.createWritable();
+  await w.write(text);
+  await w.close();
 }
 
 export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
@@ -152,7 +201,9 @@ export function loadDemoProject(): void {
   histories.clear();
   state.gameConfigText = '';
   state.entryScene = 'demo';
-  state.configFiles = { events: null, growth: null, calendar: null };
+  state.handles = { gameConfig: null, achievements: null };
+  state.dirAssets = [];
+  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null };
   state.scenes.set('demo', {
     id: 'demo',
     file: 'demo.gal',

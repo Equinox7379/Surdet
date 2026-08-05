@@ -1,13 +1,29 @@
 /**
- * 场景列表侧栏（E0 拆分：原 main.ts 纯搬移）。
+ * 侧栏（E0 拆分；E2 增加场景/素材标签页）。
  */
 import { state, h, setStatus } from '../state.js';
+import { renderAssetsPanel } from './assets.js';
 
 export function renderSidebar(): void {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
   sidebar.innerHTML = '';
-  sidebar.appendChild(h('h3', undefined, `场景（${state.scenes.size}）`));
+  // 侧栏标签页：场景 | 素材（E2）
+  const tabs = h('div', 'side-tabs');
+  const defs: { id: 'scenes' | 'assets'; label: string }[] = [
+    { id: 'scenes', label: `场景（${state.scenes.size}）` },
+    { id: 'assets', label: '素材' },
+  ];
+  for (const d of defs) {
+    const btn = h('button', d.id === state.sidebarTab ? 'tab active' : 'tab', d.label);
+    btn.onclick = () => { state.sidebarTab = d.id; renderSidebar(); };
+    tabs.appendChild(btn);
+  }
+  sidebar.appendChild(tabs);
+  if (state.sidebarTab === 'assets') {
+    renderAssetsPanel(sidebar);
+    return;
+  }
   const newBtn = h('button', undefined, '＋ 新建场景');
   newBtn.onclick = newScene;
   sidebar.appendChild(newBtn);

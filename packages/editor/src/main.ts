@@ -18,6 +18,7 @@ import { renderEditor } from './panels/editor.js';
 import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { renderRightExtras } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
+import { renderConfig, bindConfigHooks } from './panels/config.js';
 
 /* ============================ 模块装配（钩子注入，保持无环） ============================ */
 
@@ -41,6 +42,10 @@ bindFlowHooks({
     }
   },
   // 流程图结构变更（重命名/删除）后重新调度校验
+  requestValidate: scheduleValidate,
+});
+bindConfigHooks({
+  // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: scheduleValidate,
 });
 
@@ -95,16 +100,17 @@ function renderAll(): void {
   renderMainArea();
 }
 
-/** 主区：标签页（块编辑 / 流程图，E1a）+ 对应内容 */
+/** 主区：标签页（块编辑 / 流程图 / 配置）+ 对应内容 */
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'config'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
+    { id: 'config', label: '配置' },
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
@@ -128,12 +134,18 @@ function renderMainArea(): void {
     renderEditor();
     renderIssues();
     renderRightExtras();
-  } else {
+  } else if (state.mainTab === 'flow') {
     const flowEl = h('section');
     flowEl.id = 'flow-view';
     col.appendChild(flowEl);
     main.appendChild(col);
     renderFlow(flowEl);
+  } else {
+    const cfgEl = h('section');
+    cfgEl.id = 'config-view';
+    col.appendChild(cfgEl);
+    main.appendChild(col);
+    renderConfig(cfgEl);
   }
 }
 
