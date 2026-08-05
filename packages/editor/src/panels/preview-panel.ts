@@ -6,6 +6,19 @@
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
 
+/** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
+let previewReadyListenerBound = false;
+let notifyPreviewReady: (() => void) | null = null;
+
+function bindPreviewReadyListenerOnce(): void {
+  if (previewReadyListenerBound) return;
+  previewReadyListenerBound = true;
+  window.addEventListener('message', (e: MessageEvent) => {
+    const d = e.data as { type?: string } | null;
+    if (d?.type === 'surdet-preview-ready') notifyPreviewReady?.();
+  });
+}
+
 /** 场景内的标签列表（"从标签播放"的跳转目标；纯函数可测） */
 export function listLabels(text: string): string[] {
   const labels: string[] = [];
@@ -68,13 +81,11 @@ export function renderPreviewPanel(container: HTMLElement): void {
     }, '*');
   };
 
-  window.addEventListener('message', (e: MessageEvent) => {
-    const d = e.data as { type?: string } | null;
-    if (d?.type === 'surdet-preview-ready') {
-      ready = true;
-      send(); // 就绪即播放当前场景
-    }
-  });
+  notifyPreviewReady = () => {
+    ready = true;
+    send(); // 就绪即播放当前场景
+  };
+  bindPreviewReadyListenerOnce();
 
   playBtn.onclick = send;
   fastChk.onchange = () => {
