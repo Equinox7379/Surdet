@@ -51,6 +51,7 @@ import {
   buildGalleryViews,
   buildBattleView,
   buildMapView,
+  GamepadPoller,
 } from '@surdet/renderer';
 import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
@@ -949,6 +950,38 @@ async function main(): Promise<void> {
       },
     );
   }
+
+  // 手柄（M7 支柱5）：A 推进/确认 · B/Start 菜单 · 十字键/左摇杆 选择肢导航 · RB 开快进 / LB 关快进
+  const gamepad = new GamepadPoller((actions) => {
+    for (const a of actions) {
+      switch (a) {
+        case 'advance': {
+          const st = interp.status;
+          if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') renderer.advance();
+          break;
+        }
+        case 'cancel':
+        case 'menu':
+          openSystemMenu();
+          break;
+        case 'up':
+          if (renderer.status === 'choice') renderer.choiceUp();
+          break;
+        case 'down':
+          if (renderer.status === 'choice') renderer.choiceDown();
+          break;
+        case 'shoulderRight':
+          if (!renderer.skipMode) renderer.toggleSkip();
+          break;
+        case 'shoulderLeft':
+          if (renderer.skipMode) renderer.toggleSkip();
+          break;
+        default:
+          break;
+      }
+    }
+  });
+  gamepad.start();
 
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;

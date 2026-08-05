@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lintProject } from './lint.js';
 import { cmdNew } from './new.js';
-import { cmdBuild } from './build.js';
+import { cmdBuild, cmdManifest } from './build.js';
 import { cmdAudit } from './audit.js';
 import { cmdSimulate } from './simulate.js';
 
@@ -47,6 +47,8 @@ const HELP = `Surdet Engine CLI v${VERSION}
       --assume k=v         开局变量注入（可重复，如 --assume battleWon=true）
       --json               输出机器可读 JSON 报告
   surdet build [dir]       构建游戏（vite）
+      --web               同时产出 Web 试玩包信息（dist/ 可直接上传静态托管）
+  surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
   surdet pack              打包 Windows exe（M7）
 `;
 
@@ -118,8 +120,15 @@ async function main(): Promise<number> {
     }
 
     case 'build': {
+      const webOut = args.includes('--web');
+      const rest = args.slice(1).filter((a) => a !== '--web');
+      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      return await cmdBuild(projectDir, { web: webOut });
+    }
+
+    case 'manifest': {
       const projectDir = path.resolve(args[1] ?? process.cwd());
-      return await cmdBuild(projectDir);
+      return await cmdManifest(projectDir);
     }
 
     case 'pack': {

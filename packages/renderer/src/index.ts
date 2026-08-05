@@ -6,6 +6,7 @@ export * from './backlog.js';
 export * from './battle-view.js';
 export * from './dequote.js';
 export * from './gallery.js';
+export * from './gamepad.js';
 export * from './text-buffer.js';
 export * from './transitions.js';
 export * from './types.js';
