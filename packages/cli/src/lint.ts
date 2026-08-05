@@ -152,9 +152,9 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
   }
 
-  // 未使用标签（W006）+ 场景可达性（W007，需配置 entryScene）
+  // 未使用标签（W006）+ 场景可达性（W007，需配置 entryScene；配置驱动的 hostJump 目标场景也算可达根）
   checkUnusedLabels(scenes, issues);
-  checkSceneReachability(scenes, entryScene, issues);
+  checkSceneReachability(scenes, entryScene, collectConfigSceneRoots(root), issues);
 
   if (hasConfig && variables.size === 0) {
     issues.push({
@@ -178,6 +178,9 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
 
   // content/config/*.json 内 DSL 表达式校验（visibleWhen/伤害公式/when/clearCondition）
   lintConfigExpressions(root, variables, types, issues, hasConfig);
+
+  // growth.json 非表达式校验（审计轮4）：statGrowth 键必须已声明变量、levelEvents 场景必须存在
+  lintGrowthConfig(root, variables, scenes, failedScenes, issues, hasConfig);
 
   const ok = issues.every((i) => i.severity !== 'error');
   return { issues, sceneCount: sceneSourceFiles.size, ok };
@@ -262,10 +265,12 @@ function checkUnusedLabels(scenes: Map<string, CompiledScene>, issues: LintIssue
   }
 }
 
-/** W007：场景可达性——从 entryScene 出发经 @jump/@call 到不了的场景（通常是删剧情留下的孤儿文件） */
+/** W007：场景可达性——从 entryScene（及配置驱动的 hostJump 目标场景）出发经 @jump/@call 到不了的场景
+ *  （通常是删剧情留下的孤儿文件；events/growth/calendar 配置里的宿主跳转场景不算孤儿） */
 function checkSceneReachability(
   scenes: Map<string, CompiledScene>,
   entryScene: string | undefined,
+  configRoots: readonly string[],
   issues: LintIssue[],
 ): void {
   if (!entryScene || !scenes.has(entryScene)) return;
@@ -281,8 +286,10 @@ function checkSceneReachability(
       }
     }
   }
-  const seen = new Set<string>([entryScene]);
-  const queue: string[] = [entryScene];
+  // 可达根 = 入口场景 + 配置驱动的 hostJump 目标场景（events/growth/calendar）
+  const roots = [entryScene, ...configRoots.filter((s) => scenes.has(s))];
+  const seen = new Set<string>(roots);
+  const queue: string[] = [...roots];
   while (queue.length > 0) {
     const cur = queue.shift()!;
     for (const next of edges.get(cur) ?? []) {
@@ -463,6 +470,117 @@ function readConfigJson(
       col: 0,
     });
     return null;
+  }
+}
+
+/** 收集 content/config/*.json 中配置驱动的 hostJump 目标场景（W007 可达性额外根）：
+ *  events.json events[].scene 与 scheduled[].scene、growth.json profiles[].levelEvents 值、
+ *  calendar.json nodes[].eventId 与 baseCommands[].eventId。这些场景由宿主 hostJump 进入，无 @jump 引用。 */
+function collectConfigSceneRoots(root: string): string[] {
+  const configDir = path.join(root, 'content/config');
+  const roots: string[] = [];
+  const read = (name: string): unknown => {
+    const full = path.join(configDir, name);
+    if (!fs.existsSync(full)) return null;
+    try {
+      return JSON.parse(fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, ''));
+    } catch {
+      return null; // 解析失败由 CONFIG 校验报告，此处不重复报
+    }
+  };
+  const sceneOf = (e: unknown): string | null =>
+    !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).scene === 'string'
+      ? ((e as Record<string, unknown>).scene as string)
+      : null;
+  const events = read('events.json');
+  if (events && typeof events === 'object') {
+    for (const key of ['events', 'scheduled'] as const) {
+      const list = (events as Record<string, unknown>)[key];
+      if (Array.isArray(list)) for (const e of list) { const s = sceneOf(e); if (s) roots.push(s); }
+    }
+  }
+  const growth = read('growth.json');
+  if (growth && typeof growth === 'object') {
+    const profiles = (growth as Record<string, unknown>).profiles;
+    if (Array.isArray(profiles)) {
+      for (const p of profiles) {
+        const lv = p && typeof p === 'object' ? (p as Record<string, unknown>).levelEvents : undefined;
+        if (lv && typeof lv === 'object' && !Array.isArray(lv)) {
+          for (const s of Object.values(lv as Record<string, unknown>)) if (typeof s === 'string') roots.push(s);
+        }
+      }
+    }
+  }
+  const calendar = read('calendar.json');
+  if (calendar && typeof calendar === 'object') {
+    for (const key of ['nodes', 'baseCommands'] as const) {
+      const list = (calendar as Record<string, unknown>)[key];
+      if (Array.isArray(list)) {
+        for (const n of list) {
+          const id = n && typeof n === 'object' ? (n as Record<string, unknown>).eventId : undefined;
+          if (typeof id === 'string') roots.push(id);
+        }
+      }
+    }
+  }
+  return roots;
+}
+
+/** growth.json 校验（非表达式；审计轮4）：statGrowth 键必须已声明变量（V002）；levelEvents 场景必须存在（J001） */
+function lintGrowthConfig(
+  root: string,
+  variables: Set<string>,
+  scenes: Map<string, CompiledScene>,
+  failedScenes: Set<string>,
+  issues: LintIssue[],
+  hasConfig: boolean,
+): void {
+  const full = path.join(root, 'content/config/growth.json');
+  if (!fs.existsSync(full)) return;
+  let cfg: unknown;
+  try {
+    cfg = JSON.parse(fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return; // 解析失败由 CONFIG 校验报告
+  }
+  const rel = path.join('content/config', 'growth.json');
+  const profiles = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? (cfg as Record<string, unknown>).profiles : undefined;
+  if (!Array.isArray(profiles)) return;
+  for (const p of profiles) {
+    if (!p || typeof p !== 'object') continue;
+    const prof = p as Record<string, unknown>;
+    const charId = typeof prof.characterId === 'string' ? prof.characterId : '?';
+    const statGrowth = prof.statGrowth;
+    if (hasConfig && variables.size > 0 && statGrowth && typeof statGrowth === 'object' && !Array.isArray(statGrowth)) {
+      for (const varName of Object.keys(statGrowth as Record<string, unknown>)) {
+        if (!variables.has(varName)) {
+          issues.push({
+            severity: 'error',
+            code: 'V002',
+            text: `${rel}: profiles[${charId}].statGrowth 引用未声明变量 '${varName}'（升级写回会运行时报错，请先在 game.config.json 声明）`,
+            file: rel,
+            line: 0,
+            col: 0,
+          });
+        }
+      }
+    }
+    const levelEvents = prof.levelEvents;
+    if (levelEvents && typeof levelEvents === 'object' && !Array.isArray(levelEvents)) {
+      for (const [level, sceneId] of Object.entries(levelEvents as Record<string, unknown>)) {
+        if (typeof sceneId !== 'string') continue;
+        if (!scenes.has(sceneId) && !failedScenes.has(sceneId)) {
+          issues.push({
+            severity: 'error',
+            code: 'J001',
+            text: `${rel}: profiles[${charId}].levelEvents[${level}] 目标场景 '${sceneId}' 不存在`,
+            file: rel,
+            line: 0,
+            col: 0,
+          });
+        }
+      }
+    }
   }
 }
 

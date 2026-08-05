@@ -134,10 +134,14 @@ export class GrowthSystem {
       xp -= need;
       level += 1;
       passed.push(level);
-      // 属性成长写回：变量必须已声明且为 number（store.set 类型校验兜底）
+      // 属性成长写回：变量必须已声明且为 number（严格策略：未声明/类型不符在升级时即抛错，
+      // 尽早暴露 growth.json 配置缺陷，与类注释"严格策略"一致）
       for (const [varName, delta] of Object.entries(profile.statGrowth ?? {})) {
         const cur = this.#store.get(varName);
-        if (typeof cur === 'number') this.#store.modify(varName, delta);
+        if (typeof cur !== 'number') {
+          throw new Error(`GrowthSystem: statGrowth 变量 '${varName}' 未声明或非 number（growth.json 配置缺陷）`);
+        }
+        this.#store.modify(varName, delta);
       }
     }
 

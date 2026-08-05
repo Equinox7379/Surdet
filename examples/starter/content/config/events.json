@@ -13,5 +13,9 @@
   "events": [
     { "id": "ev_trust_30", "characterId": "lynn", "when": "lynn.trust >= 30", "scene": "ch01_01", "once": true },
     { "id": "ev_trust_70", "characterId": "lynn", "when": "lynn.trust >= 70", "scene": "ch01_01", "once": true }
+  ],
+  "scheduled": [
+    { "id": "ev_turn_start", "characterId": "lynn", "when": "true", "scene": "ch03_turn_event", "once": true, "priority": 10, "effects": { "lynn.trust": 2 } },
+    { "id": "ev_turn_end", "characterId": "lynn", "when": "true", "scene": "ch03_turn_event", "once": false, "priority": 0 }
   ]
 }

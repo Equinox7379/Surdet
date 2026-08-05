@@ -18,6 +18,7 @@ import {
   ShopSystem,
   GrowthSystem,
   AchievementSystem,
+  EventScheduler,
 } from '@surdet/core';
 import type {
   VarDeclaration,
@@ -35,6 +36,7 @@ import type {
   ShopConfig,
   GrowthConfig,
   AchievementDef,
+  ScheduledEventDef,
 } from '@surdet/core';
 import {
   PixiStage,
@@ -162,6 +164,9 @@ async function main(): Promise<void> {
   const growth = new GrowthSystem(growthConfig as GrowthConfig, store);
   // 成就系统：when 条件批量判定 + 事件触发解锁；状态经 SystemHooks 随存档往返
   const achievements = new AchievementSystem(achievementsConfig as AchievementDef[], store);
+  // 事件调度器（兰斯式事件队列）：events.json scheduled[] 声明优先级事件，
+  // 日历回合头/尾统一 dispatch；fired 状态经 SystemHooks 随存档往返
+  const scheduler = new EventScheduler(eventsConfig.scheduled as ScheduledEventDef[], store);
 
   // 战斗采用交互式回合 UI：见下方 system 'battle' 事件处理（点击攻击 / 跳过行动）
 
@@ -173,12 +178,14 @@ async function main(): Promise<void> {
       combat: combat.snapshot(),
       affection: affection.snapshot(),
       achievements: achievements.snapshot(),
+      eventScheduler: scheduler.snapshot(),
     }),
     restore: (s: SystemSnapshots) => {
       if (s.calendar) calendar.restore(s.calendar);
       if (s.combat) combat.restore(s.combat);
       if (s.affection) affection.restore(s.affection);
       if (s.achievements) achievements.restore(s.achievements);
+      if (s.eventScheduler) scheduler.restore(s.eventScheduler);
     },
   }, undefined, growth);
   const audioManager = new AudioManager();
@@ -249,6 +256,9 @@ async function main(): Promise<void> {
     return snap;
   }
 
+  /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
+  let turnResumeSnap: SaveSnapshot | null = null;
+
   // M5 system 事件 → 宿主驱动对应系统（@battle/@calendar/@affection/@event/@shop/@item）
   bus.on('system', (p) => {
     switch (p.type) {
@@ -289,8 +299,24 @@ async function main(): Promise<void> {
               }
             },
             () => {
+              // 回合尾：先结算回合（advanceTurn 重置 AP/限次），再统一调度优先级事件；
+              // 事件带演出场景 → hostJump 进演出，场景结束经 sceneEnd 恢复挂起点续跑剧情
               calendar.advanceTurn();
-              interp.resumeHost(); // 结束回合 → 恢复剧情
+              const endEv = scheduler.dispatch(store);
+              if (endEv) {
+                console.info(`[starter] 回合尾事件触发: ${endEv.id}${endEv.scene ? `（演出 → ${endEv.scene}）` : ''}`);
+                checkAchievements(); // effects 改变量后补查成就
+              }
+              if (endEv?.scene && registry.has(endEv.scene)) {
+                stage.hideMap(); // 演出场景覆盖地图（sceneEnd 恢复剧情后地图不再需要）
+                const snap = interp.saveSnapshot(); // 挂起点已越过 @calendar，恢复即续跑
+                if (snap) {
+                  turnResumeSnap = snap;
+                  interp.hostJump(endEv.scene);
+                  return;
+                }
+              }
+              interp.resumeHost(); // 无演出（或快照不可用）→ 直接恢复剧情
             },
           );
         };
@@ -342,6 +368,13 @@ async function main(): Promise<void> {
             },
           );
         };
+        // 回合头事件：打开地图前统一调度（优先级最高者触发；头事件只做 effects 结算——
+        // 场景演出无法在播完后回到地图（解释器无地图恢复点），演出留给回合尾事件）
+        const headEv = scheduler.dispatch(store);
+        if (headEv) {
+          console.info(`[starter] 回合头事件触发: ${headEv.id}（effects 已结算）`);
+          checkAchievements(); // effects 改变量后补查成就
+        }
         renderMap();
         break;
       }
@@ -574,6 +607,21 @@ async function main(): Promise<void> {
     settingsOpen = false;
   });
 
+  // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
+  // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
+  bus.on('sceneEnd', () => {
+    if (!turnResumeSnap) return;
+    const snap = turnResumeSnap;
+    turnResumeSnap = null;
+    setTimeout(() => {
+      try {
+        interp.loadSnapshot(snap);
+      } catch (err) {
+        console.error('[starter] 回合尾事件恢复失败:', err);
+      }
+    }, 0);
+  });
+
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
     const IMG = /\.(png|jpe?g|webp|gif|avif)$/i;
@@ -642,6 +690,7 @@ async function main(): Promise<void> {
   /** 全局通关记录（跨存档/跨周目；Electron 与浏览器的 localStorage 均持久化到各自 userData） */
   interface GlobalClearRecord {
     endings: string[];
+    /** 累计通关周目数（每次游戏会话计 1；同周目多结局不重复计数） */
     playthroughs: number;
     /** 最近一次 @clear 时刻的变量全量快照（继承计算源） */
     variables: Record<string, unknown>;
@@ -665,18 +714,25 @@ async function main(): Promise<void> {
   }
   let clearRecord = loadClearRecord();
 
+  // 周目计数会话标志：同一会话（新游戏/读档之间）多次 @clear 只计 1 个周目，
+  // 避免同一周目达成多结局（ClearTracker 允许）时 playthroughs 虚增
+  let clearCountedThisSession = false;
+
   // @clear：写入全局通关记录（结局收集 + 变量快照 + 周目计数）
   bus.on('clear', (p) => {
     const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
-    if (!rec.endings.includes(p.ending)) {
-      rec.endings.push(p.ending);
+    const freshEnding = !rec.endings.includes(p.ending);
+    if (freshEnding) rec.endings.push(p.ending);
+    if (!clearCountedThisSession) {
+      clearCountedThisSession = true;
       rec.playthroughs += 1;
-      rec.variables = store.snapshot() as Record<string, unknown>;
-      rec.clearedAt = Date.now();
-      clearRecord = rec;
-      saveClearRecord(rec);
-      console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目）`);
     }
+    // 继承源始终取最近一次 @clear 的变量值（同周目后续结局覆盖前值，语义 = 最新通关状态）
+    rec.variables = store.snapshot() as Record<string, unknown>;
+    rec.clearedAt = Date.now();
+    clearRecord = rec;
+    saveClearRecord(rec);
+    console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目 · 收集 ${rec.endings.length} 结局）`);
   });
 
   // @exp：角色成长结果 → 升级演出（横幅）+ levelEvents 场景跳转（配置驱动）
@@ -692,7 +748,16 @@ async function main(): Promise<void> {
           break;
         }
       }
-      checkAchievements(); // 升级后补查成就（如 level_5）
+      // 事件触发类成就：等级里程碑（level_5 无 when 条件，check() 不会命中，须显式 unlock）
+      if (growth.levelOf(p.characterId) >= 5 && achievements.defOf('level_5')) {
+        try {
+          const res = achievements.unlock('level_5');
+          if (res.fresh) stage.showBanner(`成就解锁：${res.def.name}`, 'tip');
+        } catch (err) {
+          console.warn('[starter] level_5 unlock failed:', err instanceof Error ? err.message : err);
+        }
+      }
+      checkAchievements(); // 升级后补查 when 条件成就
     }
   });
 
@@ -736,6 +801,7 @@ async function main(): Promise<void> {
       case 'new': {
         stage.hideTitle();
         store.reset();
+        clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
         const rec = loadClearRecord();
         if (rec) {
@@ -798,6 +864,7 @@ async function main(): Promise<void> {
           try {
             stage.hideTitle();
             interp.loadSnapshot(await saves.load(slotId));
+            clearCountedThisSession = false; // 读档 = 进入另一周目会话
             console.info('[starter] 已读档', slotId);
           } catch (err) {
             console.error('[starter] 读档失败:', err);
@@ -932,6 +999,7 @@ async function main(): Promise<void> {
         if (await saves.has(QUICK_SLOT)) {
           try {
             interp.loadSnapshot(await saves.load(QUICK_SLOT));
+            clearCountedThisSession = false; // 快速读档 = 进入另一周目会话
             console.info('[starter] 快速读档');
           } catch (err) {
             console.error('[starter] 读档失败（存档损坏或版本不符）：', err);

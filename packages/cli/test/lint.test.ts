@@ -504,4 +504,44 @@ describe('lintProject', () => {
     expect(vd.some((i) => i.text.includes('bad'))).toBe(true);
     expect(vd.some((i) => i.text.includes('ok'))).toBe(false);
   });
+
+  it('growth.json：statGrowth 引用未声明变量报 V002；levelEvents 场景不存在报 J001（审计轮4）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { 'lynn.atk': { type: 'number', initial: 5 } } }),
+      'content/scenario/a.gal': `凛：好。\n`,
+      'content/config/growth.json': JSON.stringify({
+        curve: { base: 10 },
+        profiles: [
+          { characterId: 'lynn', statGrowth: { 'lynn.atk': 2, 'ghost.var': 1 }, levelEvents: { 5: 'ghost_scene' } },
+        ],
+      }),
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('ghost.var'))).toBe(true);
+    expect(r.issues.some((i) => i.code === 'J001' && i.text.includes('ghost_scene'))).toBe(true);
+    expect(r.issues.some((i) => i.code === 'V002' && i.text.includes("'lynn.atk'"))).toBe(false); // 已声明不误报
+  });
+
+  it('W007：配置引用的 hostJump 目标场景（events.json scheduled[]）不算孤儿（审计轮4）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'a', variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/scenario/a.gal': `凛：好。\n`,
+      'content/scenario/turn_ev.gal': `凛：回合事件。\n`,
+      'content/config/events.json': JSON.stringify({
+        scheduled: [{ id: 'e1', characterId: 'x', when: 'trust >= 0', scene: 'turn_ev', once: false }],
+      }),
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W007')).toBe(false);
+  });
+
+  it('W007：无配置引用的孤儿场景仍告警（对照组）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'a', variables: {} }),
+      'content/scenario/a.gal': `凛：好。\n`,
+      'content/scenario/orphan.gal': `凛：孤儿。\n`,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'W007' && i.text.includes('orphan'))).toBe(true);
+  });
 });

@@ -71,9 +71,9 @@
 | `@tip/@note` | `@tip 提示：右键打开菜单` | ✅ | 右上角小字提示横幅（约 1.8 秒淡出） |
 | `@nvl` | `@nvl` / `@nvl off` / `@nvl clear` | ✅ | NVL 全屏小说模式：开启后文本整行追加到全屏文本页（不走打字机）；`off` 回到 ADV 对话框；`clear` 清空页面 |
 | ruby 注音（文本标记） | `凛：这个世界《せかい》…` | ✅ | 非指令而是**台词内标记**：`基础字《注音》` 渲染为主字 + 上方小字（振假名）；未配对《按字面显示 |
-| `@particle` | `@particle sakura` / `@particle sakura 5000` | ✅ | 粒子特效层（预设：sakura/snow/rain/embers/sparkles；可选持续毫秒，缺省持续到 `@particle stop`）；`@particle stop` 清除 |
-| `@mov` | `@mov lynn x 400 800` | ✅ | 立绘属性补间动画（角色 属性 目标值 [时长毫秒]；属性 x/y/alpha；缺省 400ms） |
-| `@tint` | `@tint #ff6600 800` | ✅ | 全屏调色叠加（颜色 hex + 过渡毫秒；`@tint none` 清除） |
+| `@particle` | `@particle sakura` | ✅ | 粒子特效层（预设：snow/rain/sakura/sparkle/fireflies）；`@particle off` 清除 |
+| `@mov` | `@mov lynn left` / `@mov lynn 400 600` | ✅ | 立绘位置平移（角色 位置 [时长毫秒]；位置 = left/center/right 或裸数字 X 坐标；缺省 400ms） |
+| `@tint` | `@tint #ff6600 0.3` / `@tint #ff6600 0.3 800` | ✅ | 全屏调色叠加（颜色 hex + 透明度 [过渡毫秒]；`@tint off` 清除） |
 
 ### 流程
 | 指令 | 示例 | 状态 | 说明 |
@@ -238,7 +238,7 @@ node packages/cli/dist/index.js lint <projectDir>
 
 静态类型推断基于 `game.config.json` 的声明表与字面量；无法确定类型时跳过（不误报）。运行时类型校验仍由 `VariableStore`/求值器兜底。
 
-> lint 也会校验 `content/config/*.json` 内的 DSL 表达式：`calendar.json` 的 `visibleWhen`、`events.json` 的 `when`、`ngp.json` 的 `clearCondition`（引用未声明变量报 V002）；`combat.json` 的伤害公式使用内建变量 `atk`/`def`/`power`。语法错误报 `CONFIG_EXPR`。
+> lint 也会校验 `content/config/*.json` 内的 DSL 表达式：`calendar.json` 的 `nodes[].visibleWhen` 与 `baseCommands[].when`、`events.json` 的 `events[].when`、`achievements.json` 的 `[].when`、`ngp.json` 的 `clearCondition`（引用未声明变量报 V002）；`combat.json` 的伤害公式使用内建变量 `atk`/`def`/`power`。语法错误报 `CONFIG_EXPR`。此外 `growth.json` 的 `statGrowth` 键必须已声明变量（V002）、`levelEvents` 场景必须存在（J001）。
 
 ### 其他
 | 码 | 含义 |
