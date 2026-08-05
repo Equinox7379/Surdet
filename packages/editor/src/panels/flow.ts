@@ -168,6 +168,16 @@ export function layoutFlowGraph(graph: FlowGraph, entryScene: string): FlowLayou
     totalHeight = Math.max(totalHeight, y);
     x += colW + COL_GAP;
   }
+
+  // 顶部越界保护（验收轮 Minor3）：宿主入口节点画在目标场景上方，列首行场景的 host 节点
+  // 可能落在负坐标（默认视口下贴边/出画）；整体下移保证全部节点可见，相对布局不变
+  let minY = Infinity;
+  for (const b of boxes.values()) minY = Math.min(minY, b.y);
+  if (Number.isFinite(minY) && minY < LANE_PAD) {
+    const dy = LANE_PAD - minY;
+    for (const b of boxes.values()) b.y += dy;
+    totalHeight += dy;
+  }
   return { boxes, width: x, height: totalHeight + LANE_PAD };
 }
 
@@ -215,8 +225,8 @@ export async function renameScene(sceneId: string): Promise<void> {
     if (next !== sc.text) { sc.text = next; sc.dirty = true; refCount++; }
   }
   const sc = state.scenes.get(key)!;
-  // @scene 声明行同步
-  sc.text = sc.text.replace(new RegExp(`@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'g'), `@scene ${newId}`);
+  // @scene 声明行同步（锁定行首：不误伤台词/注释中恰好出现的字面 '@scene 旧名'；验收轮 Minor2 修复）
+  sc.text = sc.text.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`);
   sc.dirty = true;
   sc.id = newId;
   sc.file = sc.file.replace(new RegExp(`${escapeRe(sceneId)}\\.gal$`), `${newId}.gal`);
