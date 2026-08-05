@@ -454,7 +454,9 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   rect.setAttribute('width', String(box.w));
   rect.setAttribute('height', String(box.h));
   rect.setAttribute('rx', node.kind === 'host-entry' ? '3' : '6');
-  const isCurrent = state.current !== null && state.scenes.get(state.current)?.id === node.sceneId;
+  // 当前场景高亮：只标场景入口节点（验收反馈：整条泳道全黄太晃眼）；
+  // 点击 label 跳转后块编辑已滚动定位到该行，焦点在那里可见
+  const isCurrent = state.current !== null && node.kind === 'scene' && state.scenes.get(state.current)?.id === node.sceneId;
   const issue = stats.get(node.sceneId);
   rect.setAttribute('fill', node.kind === 'host-entry' ? '#241f12' : node.kind === 'scene' ? '#1c2438' : '#161d2e');
   if (node.kind === 'host-entry') {
