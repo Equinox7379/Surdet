@@ -409,6 +409,8 @@ function createLink(fromNode: FlowNode, toNode: FlowNode): void {
 }
 
 /** 右键上下文菜单（简单 DOM 浮层） */
+let menuOutsideHandler: ((e: PointerEvent) => void) | null = null;
+
 function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: number): void {
   closeSceneMenu();
   const menu = h('div', 'flow-menu');
@@ -422,13 +424,23 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
   menu.style.left = `${cx - rect.left}px`;
   menu.style.top = `${cy - rect.top}px`;
   container.appendChild(menu);
+  // 点菜单外部才关闭（验收反馈：原实现任意 pointerdown 都关，按钮还没收到 click 菜单就被删了）；
+  // 延迟一帧绑定，避开打开菜单那次右键的 pointerdown
   setTimeout(() => {
-    document.addEventListener('pointerdown', closeSceneMenu, { once: true });
+    menuOutsideHandler = (e: PointerEvent) => {
+      const m = document.getElementById('flow-menu');
+      if (m && !m.contains(e.target as Node)) closeSceneMenu();
+    };
+    document.addEventListener('pointerdown', menuOutsideHandler);
   }, 0);
 }
 
 function closeSceneMenu(): void {
   document.getElementById('flow-menu')?.remove();
+  if (menuOutsideHandler) {
+    document.removeEventListener('pointerdown', menuOutsideHandler);
+    menuOutsideHandler = null;
+  }
 }
 
 function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: number; warnings: number }>, startNodeDrag: (nodeId: string, e: PointerEvent) => void): void {
