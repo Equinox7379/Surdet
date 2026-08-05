@@ -28,16 +28,19 @@ export function buildMatcher(query: string, useRegex: boolean): RegExp | null {
   }
 }
 
-/** 跨场景搜索：逐行匹配原始行文本；上限 maxResults 条（防止超大结果拖垮 UI） */
+/** 跨场景搜索：逐行匹配原始行文本；上限 maxResults 条（防止超大结果拖垮 UI）。
+ *  匹配器循环外一次构造（M6 审阅轮 Minor 2）；g 标志的 lastIndex 逐行重置防跨行残留 */
 export function searchScenes(scenes: Iterable<SceneText>, query: string, useRegex: boolean, maxResults = 500): SearchResult[] {
   if (query.length === 0) return [];
+  const re = buildMatcher(query, useRegex);
+  if (!re) return [];
   const results: SearchResult[] = [];
   for (const sc of scenes) {
     const lines = sc.text.split(/\r?\n/);
     lines.forEach((text, i) => {
       if (results.length >= maxResults) return;
-      const re = buildMatcher(query, useRegex);
-      if (re && re.test(text)) {
+      re.lastIndex = 0;
+      if (re.test(text)) {
         results.push({ sceneKey: sc.key, sceneId: sc.id, line: i, text });
       }
     });
