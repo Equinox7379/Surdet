@@ -1,21 +1,62 @@
 /**
- * 流程图视图（E1a，只读导航版）：
+ * 流程图视图（E1a 只读导航 + E1b 交互编辑）：
  *  - 数据源：buildFlowGraph（lastValidation.scenes 编译产物 + collectConfigSceneRoots 宿主入口，
  *    与 CLI 同源；不重新解析源码）
  *  - 布局：场景维 BFS 分层为列，每场景一条泳道（入口节点 + 标签节点纵向排布）；自实现 SVG
- *  - 交互：拖拽平移 / 滚轮缩放（以光标为中心）；单击场景节点 → 切到块编辑视图；
+ *  - 交互（E1a）：拖拽平移 / 滚轮缩放（以光标为中心）；单击场景节点 → 切到块编辑视图；
  *    双击标签节点 → 切到该场景并滚动到 @label 行；当前场景高亮；error 红描边 / warning 黄角标
+ *  - 交互（E1b）：从节点拖到另一节点 → 在源场景末尾插入 @jump/@goto（走 history 可 undo）；
+ *    右键场景节点 → 重命名（引用同步改写）/ 删除（引用检查警告）
  *  - 渲染：视口裁剪（视口外节点不建 DOM；规模目标 100 场景 / 800 标签）
  */
-import { state, h } from '../state.js';
+import { state, h, setStatus } from '../state.js';
 import { collectConfigSceneRoots } from '@surdet/core';
 import { buildFlowGraph, sceneNodeId } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
+import { setSceneText } from '../history.js';
+import { renderSidebar } from './sidebar.js';
 
-/** 导航钩子（main.ts 注入：切回块编辑标签页并可滚动到指定行） */
+/** 导航钩子（main.ts 注入）：切回块编辑标签页并可滚动到指定行；requestValidate 触发重校验 */
 let openSceneHook: (sceneKey: string, line?: number) => void = () => {};
-export function bindFlowHooks(opts: { openScene: (sceneKey: string, line?: number) => void }): void {
+let requestValidateHook: () => void = () => {};
+export function bindFlowHooks(opts: {
+  openScene: (sceneKey: string, line?: number) => void;
+  requestValidate: () => void;
+}): void {
   openSceneHook = opts.openScene;
+  requestValidateHook = opts.requestValidate;
+}
+
+/* ============================ 纯函数助手（可单测） ============================ */
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 跨场景引用行级改写：只改 @jump/@call 的目标 token（行首指令位置），不误伤台词文本 */
+export function rewriteSceneRefs(text: string, oldId: string, newId: string): string {
+  const re = new RegExp(`^([ \\t]*@(?:jump|call)[ \\t]+)${escapeRe(oldId)}(?=[.\\s]|$)`, 'gm');
+  return text.replace(re, `$1${newId}`);
+}
+
+/** 统计场景被 @jump/@call 引用次数（删除前检查用） */
+export function countSceneRefs(text: string, sceneId: string): number {
+  const re = new RegExp(`^[ \\t]*@(?:jump|call)[ \\t]+${escapeRe(sceneId)}(?=[.\\s]|$)`, 'gm');
+  return (text.match(re) ?? []).length;
+}
+
+/** 构造拖拽建链的插入行：同场景 → @goto 标签（场景开头 → @jump 本场景）；跨场景 → @jump 场景[.标签] */
+export function buildJumpLine(from: FlowNode, to: FlowNode): string {
+  if (from.sceneId === to.sceneId) {
+    return to.kind === 'label' ? `@goto ${to.label ?? ''}` : `@jump ${to.sceneId}`;
+  }
+  return to.kind === 'label' ? `@jump ${to.sceneId}.${to.label ?? ''}` : `@jump ${to.sceneId}`;
+}
+
+/** 场景文本末尾追加行（保持换行风格；文末已有换行则直接追加） */
+export function appendLineToScene(text: string, eol: string, raw: string): string {
+  if (text.length === 0) return raw;
+  return text.endsWith(eol) ? text + raw : text + eol + raw;
 }
 
 /* ============================ 布局（纯计算） ============================ */
@@ -116,7 +157,7 @@ export function layoutFlowGraph(graph: FlowGraph, entryScene: string): FlowLayou
       }
       y += LANE_GAP; // 泳道间距
     }
-    // 宿主入口节点：置于目标场景泳道左侧
+    // 宿主入口节点：置于目标场景泳道上方
     for (const n of graph.nodes.filter((nn) => nn.kind === 'host-entry' && depth.get(nn.sceneId) === d)) {
       const target = boxes.get(sceneNodeId(n.sceneId));
       if (target) {
@@ -142,6 +183,100 @@ function sceneIssueStats(): Map<string, { errors: number; warnings: number }> {
     stats.set(base, s);
   }
   return stats;
+}
+
+/* ============================ 场景操作（E1b） ============================ */
+
+/** 场景 Map key（相对路径）← 场景 ID 反查 */
+function sceneKeyById(sceneId: string): string | null {
+  for (const [key, sc] of state.scenes) if (sc.id === sceneId) return key;
+  return null;
+}
+
+/** 重命名场景：内存改名 + 全部场景引用同步改写 + 句柄置空（保存时落新名）；
+ *  平坦路径（content/scenario 直属）尝试删除旧盘上文件；子目录场景提示手动处理。 */
+export async function renameScene(sceneId: string): Promise<void> {
+  const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
+  if (!input) return;
+  const newId = input.trim();
+  if (!/^[^\s.]+$/.test(newId)) { setStatus('场景 ID 非法（不能含空格/点号）', false); return; }
+  if (newId === sceneId) return;
+  if ([...state.scenes.values()].some((s) => s.id === newId)) {
+    setStatus(`场景 '${newId}' 已存在`, false);
+    return;
+  }
+  const key = sceneKeyById(sceneId);
+  if (!key) return;
+
+  // 引用改写（含自身场景内的 @jump/@call 自引用）
+  let refCount = 0;
+  for (const sc of state.scenes.values()) {
+    const next = rewriteSceneRefs(sc.text, sceneId, newId);
+    if (next !== sc.text) { sc.text = next; sc.dirty = true; refCount++; }
+  }
+  const sc = state.scenes.get(key)!;
+  // @scene 声明行同步
+  sc.text = sc.text.replace(new RegExp(`@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'g'), `@scene ${newId}`);
+  sc.dirty = true;
+  sc.id = newId;
+  sc.file = sc.file.replace(new RegExp(`${escapeRe(sceneId)}\\.gal$`), `${newId}.gal`);
+
+  // Map 重键（保持插入顺序）
+  const prefix = key.slice(0, key.length - sceneId.length);
+  const newKey = prefix + newId;
+  const entries = [...state.scenes.entries()].map(([k, v]) => (k === key ? [newKey, v] as const : [k, v] as const));
+  state.scenes = new Map(entries);
+  if (state.current === key) state.current = newKey;
+
+  // 盘上旧文件清理（仅平坦路径；句柄置空后保存会创建新名文件）
+  const flat = !key.includes('/');
+  if (sc.handle && state.dirHandle && flat) {
+    sc.handle = null;
+    try {
+      const contentDir = await state.dirHandle.getDirectoryHandle('content');
+      const scenarioDir = await contentDir.getDirectoryHandle('scenario');
+      await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
+    } catch (err) {
+      setStatus(`重命名已生效，但旧文件 ${sceneId}.gal 删除失败：${err instanceof Error ? err.message : String(err)}`, false);
+    }
+  } else if (sc.handle && !flat) {
+    sc.handle = null;
+    setStatus(`子目录场景重命名：内存已改名，请手动重命名盘上文件 ${sceneId}.gal → ${newId}.gal`, false);
+  }
+
+  setStatus(`场景已重命名 ${sceneId} → ${newId}（同步改写 ${refCount} 处引用；保存后落盘）`, true);
+  renderSidebar();
+  requestValidateHook();
+}
+
+/** 删除场景：引用检查（有入边时确认）→ 移出内存 → 平坦路径删除盘上文件 */
+export async function deleteScene(sceneId: string): Promise<void> {
+  const key = sceneKeyById(sceneId);
+  if (!key) return;
+  let refs = 0;
+  for (const [k, sc] of state.scenes) {
+    if (k === key) continue;
+    refs += countSceneRefs(sc.text, sceneId);
+  }
+  if (refs > 0 && !window.confirm(`场景 '${sceneId}' 被 ${refs} 处 @jump/@call 引用，删除将产生悬空引用（lint 会报 J001）。确定删除？`)) {
+    return;
+  }
+  const sc = state.scenes.get(key)!;
+  state.scenes.delete(key);
+  if (state.current === key) state.current = [...state.scenes.keys()][0] ?? null;
+
+  if (sc.handle && state.dirHandle && !key.includes('/')) {
+    try {
+      const contentDir = await state.dirHandle.getDirectoryHandle('content');
+      const scenarioDir = await contentDir.getDirectoryHandle('scenario');
+      await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
+    } catch (err) {
+      setStatus(`场景已从编辑器移除，但盘上文件删除失败：${err instanceof Error ? err.message : String(err)}`, false);
+    }
+  }
+  setStatus(`已删除场景 '${sceneId}'`, true);
+  renderSidebar();
+  requestValidateHook();
 }
 
 /* ============================ 渲染 ============================ */
@@ -186,16 +321,48 @@ function currentGraph(): FlowGraph {
   return buildFlowGraph(scenes, roots);
 }
 
-/** 场景 Map key（相对路径）← 场景 ID 反查 */
-function sceneKeyById(sceneId: string): string | null {
-  for (const [key, sc] of state.scenes) if (sc.id === sceneId) return key;
-  return null;
+/** 拖拽建链的插入动作（源节点 → 目标节点；写入源场景末尾，走 history 可 undo） */
+function createLink(fromNode: FlowNode, toNode: FlowNode): void {
+  const sceneKey = sceneKeyById(fromNode.sceneId);
+  const sc = sceneKey ? state.scenes.get(sceneKey) : undefined;
+  if (!sceneKey || !sc) {
+    setStatus(`无法定位源场景 '${fromNode.sceneId}'（宿主入口不可编辑）`, false);
+    return;
+  }
+  const line = buildJumpLine(fromNode, toNode);
+  setSceneText(sceneKey, appendLineToScene(sc.text, sc.eol, line));
+  setStatus(`已在 '${fromNode.sceneId}' 末尾插入 ${line}（可撤销；校验稍后刷新）`, true);
+  renderSidebar();
 }
 
-function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: number; warnings: number }>): void {
+/** 右键上下文菜单（简单 DOM 浮层） */
+function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: number): void {
+  closeSceneMenu();
+  const menu = h('div', 'flow-menu');
+  menu.id = 'flow-menu';
+  const rename = h('button', undefined, '重命名场景…');
+  rename.onclick = () => { closeSceneMenu(); void renameScene(sceneId).then(() => refreshFlowIfVisible()); };
+  const del = h('button', undefined, '删除场景…');
+  del.onclick = () => { closeSceneMenu(); void deleteScene(sceneId).then(() => refreshFlowIfVisible()); };
+  menu.append(rename, del);
+  const rect = container.getBoundingClientRect();
+  menu.style.left = `${cx - rect.left}px`;
+  menu.style.top = `${cy - rect.top}px`;
+  container.appendChild(menu);
+  setTimeout(() => {
+    document.addEventListener('pointerdown', closeSceneMenu, { once: true });
+  }, 0);
+}
+
+function closeSceneMenu(): void {
+  document.getElementById('flow-menu')?.remove();
+}
+
+function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: number; warnings: number }>, startNodeDrag: (nodeId: string, e: PointerEvent) => void): void {
   const { node } = box;
   const g = el('g');
   g.style.cursor = 'pointer';
+  g.dataset.nodeId = node.id;
   const rect = el('rect');
   rect.setAttribute('x', String(box.x));
   rect.setAttribute('y', String(box.y));
@@ -224,7 +391,9 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   const label = nodeText(node);
   text.textContent = label.length > 26 ? label.slice(0, 25) + '…' : label;
   const title = el('title');
-  title.textContent = node.kind === 'label' ? `${node.sceneId} · @label ${node.label}（双击跳转）` : node.sceneId;
+  title.textContent = node.kind === 'label'
+    ? `${node.sceneId} · @label ${node.label}（双击跳转；拖到其他节点建跳转）`
+    : `${node.sceneId}（单击编辑；拖到其他节点建跳转；右键重命名/删除）`;
   g.append(rect, text, title);
 
   // warning 角标（error 已用红描边表达）
@@ -237,8 +406,14 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
     g.appendChild(badge);
   }
 
+  // E1b：节点按下可能是拖拽建链（超过阈值）或点击导航（未移动）
+  g.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    startNodeDrag(node.id, e);
+  });
   g.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (suppressClick) return;
     const key = sceneKeyById(node.sceneId);
     if (key) openSceneHook(key);
   });
@@ -247,6 +422,14 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
     const key = sceneKeyById(node.sceneId);
     if (key) openSceneHook(key, node.kind === 'label' ? node.line : undefined);
   });
+  if (node.kind === 'scene') {
+    g.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const container = world.ownerSVGElement?.parentElement;
+      if (container) showSceneMenu(container as HTMLElement, node.sceneId, e.clientX, e.clientY);
+    });
+  }
   world.appendChild(g);
 }
 
@@ -277,9 +460,14 @@ function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>
   }
 }
 
+/** 拖拽/点击区分：超过阈值才算拖拽；拖拽结束后的 click 被抑制 */
+let suppressClick = false;
+const DRAG_THRESHOLD = 6;
+
 /** 渲染流程图到容器（视口裁剪：只为可见范围内的节点/边建 DOM） */
 export function renderFlow(container: HTMLElement): void {
   container.innerHTML = '';
+  closeSceneMenu();
   const graph = currentGraph();
   const layout = layoutFlowGraph(graph, state.entryScene);
   const stats = sceneIssueStats();
@@ -311,9 +499,25 @@ export function renderFlow(container: HTMLElement): void {
     if (ex1 < vx0 || ex0 > vx1 || ey1 < vy0 || ey0 > vy1) continue;
     drawEdge(world, edge, layout.boxes);
   }
+
+  /* ---- E1b：节点拖拽建链状态 ---- */
+  let nodeDrag: { fromId: string; startX: number; startY: number; dragging: boolean } | null = null;
+  const linkLine = el('path');
+  linkLine.setAttribute('fill', 'none');
+  linkLine.setAttribute('stroke', '#ffe8c8');
+  linkLine.setAttribute('stroke-width', '1.5');
+  linkLine.setAttribute('stroke-dasharray', '4 3');
+  linkLine.style.display = 'none';
+  svg.appendChild(linkLine);
+
+  const startNodeDrag = (nodeId: string, e: PointerEvent): void => {
+    nodeDrag = { fromId: nodeId, startX: e.clientX, startY: e.clientY, dragging: false };
+    svg.setPointerCapture(e.pointerId);
+  };
+
   for (const box of layout.boxes.values()) {
     if (!visible(box)) continue;
-    drawNode(world, box, stats);
+    drawNode(world, box, stats, startNodeDrag);
   }
 
   if (graph.nodes.length === 0) {
@@ -339,21 +543,56 @@ export function renderFlow(container: HTMLElement): void {
     renderFlow(container);
   }, { passive: false });
 
-  // 拖拽平移（背景按下；节点点击已 stopPropagation）
+  // 拖拽平移（背景按下；节点按下走建链逻辑，已 stopPropagation）
   let panning: { x: number; y: number; tx: number; ty: number } | null = null;
   svg.addEventListener('pointerdown', (e) => {
     panning = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
     svg.setPointerCapture(e.pointerId);
   });
   svg.addEventListener('pointermove', (e) => {
+    if (nodeDrag) {
+      const dx = e.clientX - nodeDrag.startX;
+      const dy = e.clientY - nodeDrag.startY;
+      if (!nodeDrag.dragging && Math.hypot(dx, dy) > DRAG_THRESHOLD) nodeDrag.dragging = true;
+      if (nodeDrag.dragging) {
+        const from = layout.boxes.get(nodeDrag.fromId);
+        if (from) {
+          const rect = svg.getBoundingClientRect();
+          const x1 = (from.x + from.w / 2) * view.k + view.tx;
+          const y1 = (from.y + from.h / 2) * view.k + view.ty;
+          linkLine.setAttribute('d', `M ${x1} ${y1} L ${e.clientX - rect.left} ${e.clientY - rect.top}`);
+          linkLine.style.display = '';
+        }
+      }
+      return;
+    }
     if (!panning) return;
     view.tx = panning.tx + (e.clientX - panning.x);
     view.ty = panning.ty + (e.clientY - panning.y);
     world.setAttribute('transform', `translate(${view.tx} ${view.ty}) scale(${view.k})`);
   });
-  const endPan = (): void => { panning = null; };
-  svg.addEventListener('pointerup', endPan);
-  svg.addEventListener('pointercancel', endPan);
+  svg.addEventListener('pointerup', (e) => {
+    if (nodeDrag) {
+      const drag = nodeDrag;
+      nodeDrag = null;
+      linkLine.style.display = 'none';
+      if (drag.dragging) {
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        const targetG = hit?.closest?.('[data-node-id]') as SVGGElement | null | undefined;
+        const toId = targetG?.dataset?.nodeId;
+        const from = layout.boxes.get(drag.fromId);
+        const to = toId ? layout.boxes.get(toId) : undefined;
+        if (from && to && toId !== drag.fromId) {
+          createLink(from.node, to.node);
+        }
+      }
+      return;
+    }
+    panning = null;
+  });
+  svg.addEventListener('pointercancel', () => { nodeDrag = null; panning = null; linkLine.style.display = 'none'; });
 
   container.appendChild(svg);
 }

@@ -84,3 +84,14 @@ export function setCurrentText(text: string, opts?: { coalesce?: boolean }): voi
   sc.dirty = true;
   onEdited();
 }
+
+/** 指定场景写入（E1b：流程图拖拽建跳转可作用于非当前场景；不合并，独立撤销点） */
+export function setSceneText(sceneKey: string, text: string): void {
+  const sc = state.scenes.get(sceneKey);
+  if (!sc) return;
+  const hist = getHistoryFor(sceneKey);
+  pushEdit(hist, sc.text, Date.now(), false);
+  sc.text = text;
+  sc.dirty = true;
+  onEdited();
+}
