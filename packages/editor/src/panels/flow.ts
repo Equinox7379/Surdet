@@ -307,8 +307,8 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[
 /** 边几何：路径 + 标签位置。
  *  sameLane 由调用方按“同一场景”判定（不能比 x：同泳道节点宽度不同居中后 x 不同，
  *  验收反馈三轮的错位根因即误判为跨列回边） */
-const BULGE = 56;
-export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sameLane: boolean): { d: string; lx: number; ly: number } {
+const BULGE = 30;
+export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sameLane: boolean, dy = 0): { d: string; lx: number; ly: number } {
   if (sameLane) {
     if (kind === 'flow' || kind === 'host') {
       // 同泳道相邻单元的顺序流 / 宿主入口：近直线（节点宽度不同居中 x 略差，端点取各自中点）
@@ -328,8 +328,8 @@ export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sam
     };
   }
   if (b.x >= a.x + a.w - 1) {
-    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙；dy 为汇聚落点分散偏移
+    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2 + dy;
     const dx = Math.max(30, (x2 - x1) / 2);
     return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
   }
@@ -343,13 +343,13 @@ export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sam
 /** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
 export interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string }
 
-function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[]): void {
+function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[], dy = 0): void {
   const a = boxes.get(edge.from);
   const b = boxes.get(edge.to);
   if (!a || !b) return; // 悬空目标（未编译场景）不画，lint 会报
   // 同泳道 = 同一场景（节点宽度不同居中后 x 不同，不能用 x 判断）
   const sameLane = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
-  const geo = edgeGeometry(a, b, edge.kind, sameLane);
+  const geo = edgeGeometry(a, b, edge.kind, sameLane, dy);
   const path = el('path');
   path.setAttribute('d', geo.d);
   path.setAttribute('fill', 'none');
@@ -539,12 +539,31 @@ export function renderFlow(container: HTMLElement): void {
   const visible = (b: NodeBox): boolean => b.x + b.w >= vx0 && b.x <= vx1 && b.y + b.h >= vy0 && b.y <= vy1;
 
   // 先边后节点（节点盖住线头）；边标签收集后在最顶层绘制（不被节点遮）
+  // 汇聚分散：多条跨列边落在同一目标节点时，落点沿目标左缘错开，避免曲线重叠（验收反馈：连线交叉太乱）
+  const toCount = new Map<string, number>();
+  for (const edge of graph.edges) {
+    const a = layout.boxes.get(edge.from);
+    const b = layout.boxes.get(edge.to);
+    if (!a || !b) continue;
+    const sl = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
+    if (!sl) toCount.set(edge.to, (toCount.get(edge.to) ?? 0) + 1);
+  }
+  const toSeen = new Map<string, number>();
+  const fanDy = (toId: string): number => {
+    const total = toCount.get(toId) ?? 0;
+    if (total <= 1) return 0;
+    const seen = toSeen.get(toId) ?? 0;
+    toSeen.set(toId, seen + 1);
+    const step = Math.min(10, 4 + 16 / total);
+    return (seen - (total - 1) / 2) * step;
+  };
   const edgeLabels: EdgeLabelDraw[] = [];
   for (const edge of graph.edges) {
     const a = layout.boxes.get(edge.from);
     const b = layout.boxes.get(edge.to);
     if (!a || !b) continue;
-    drawEdge(world, edge, layout.boxes, edgeLabels);
+    const sl = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
+    drawEdge(world, edge, layout.boxes, edgeLabels, sl ? 0 : fanDy(edge.to));
   }
 
   /* ---- E1b：节点拖拽建链状态 ---- */
