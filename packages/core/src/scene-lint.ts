@@ -695,3 +695,50 @@ export function validateJumpTarget(
     });
   }
 }
+
+/** 配置驱动的 hostJump 目标场景收集（CLI 与编辑器共用的纯实现；审计轮4 自 CLI 下沉）。
+ *  这些场景由宿主经 hostJump 进入，无 @jump/@call 引用：W007 可达性需将其作为额外根，
+ *  编辑器流程图需将其画成“宿主入口”。输入为已解析的 JSON 原始对象（core 零 fs 约束），
+ *  文件读取由调用方（CLI/编辑器）自理。来源：
+ *   - events.json `events[].scene` 与 `scheduled[].scene`（EventScheduler/AffectionSystem）
+ *   - growth.json `profiles[].levelEvents` 值（GrowthSystem 升级事件）
+ *   - calendar.json `nodes[].eventId` 与 `baseCommands[].eventId`（CalendarRunner） */
+export function collectConfigSceneRoots(configs: { events?: unknown; growth?: unknown; calendar?: unknown }): string[] {
+  const roots: string[] = [];
+  const sceneOf = (e: unknown): string | null =>
+    !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).scene === 'string'
+      ? ((e as Record<string, unknown>).scene as string)
+      : null;
+  const events = configs.events;
+  if (events && typeof events === 'object') {
+    for (const key of ['events', 'scheduled'] as const) {
+      const list = (events as Record<string, unknown>)[key];
+      if (Array.isArray(list)) for (const e of list) { const s = sceneOf(e); if (s) roots.push(s); }
+    }
+  }
+  const growth = configs.growth;
+  if (growth && typeof growth === 'object') {
+    const profiles = (growth as Record<string, unknown>).profiles;
+    if (Array.isArray(profiles)) {
+      for (const p of profiles) {
+        const lv = p && typeof p === 'object' ? (p as Record<string, unknown>).levelEvents : undefined;
+        if (lv && typeof lv === 'object' && !Array.isArray(lv)) {
+          for (const s of Object.values(lv as Record<string, unknown>)) if (typeof s === 'string') roots.push(s);
+        }
+      }
+    }
+  }
+  const calendar = configs.calendar;
+  if (calendar && typeof calendar === 'object') {
+    for (const key of ['nodes', 'baseCommands'] as const) {
+      const list = (calendar as Record<string, unknown>)[key];
+      if (Array.isArray(list)) {
+        for (const n of list) {
+          const id = n && typeof n === 'object' ? (n as Record<string, unknown>).eventId : undefined;
+          if (typeof id === 'string') roots.push(id);
+        }
+      }
+    }
+  }
+  return roots;
+}

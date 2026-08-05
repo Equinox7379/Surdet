@@ -33,7 +33,9 @@ self.onmessage = (e: MessageEvent<ValidateRequest>) => {
         }
       }
     }
-    self.postMessage({ seq, ok: true, issues: result.issues, edges });
+    // 引用图谱在 Worker 内算好，只回传纯数据（structuredClone 友好）；
+    // 编译产物一并回传（E1a：流程图从编译产物提取，不重新解析；Map 可被 structuredClone）
+    self.postMessage({ seq, ok: true, issues: result.issues, edges, scenes: result.scenes });
   } catch (err) {
     self.postMessage({ seq, ok: false, error: err instanceof Error ? err.message : String(err) });
   }
