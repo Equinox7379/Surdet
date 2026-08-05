@@ -8,6 +8,8 @@
   "maxTurns": 30,
   "dateTemplate": "第{month}月 第{turn}周",
   "weeksPerMonth": 4,
+  "onTurnStartEventId": "ev_turn_start",
+  "onTurnEndEventId": "ev_turn_end",
   "baseCommands": [
     { "id": "rest", "name": "休息", "apCost": 1, "effects": { "lynn.hp": 5 } },
     { "id": "train", "name": "特训", "apCost": 2, "effects": { "lynn.atk": 1 }, "perTurn": 1 },

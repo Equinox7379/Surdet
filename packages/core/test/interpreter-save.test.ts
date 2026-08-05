@@ -99,6 +99,20 @@ describe('Interpreter 存档', () => {
     expect(i2.clearTracker.endings()).toEqual(['good_end']);
   });
 
+  it('@clear/@achievement 带引号参数：解释器侧消费的 ID 统一去引号（引号契约）', () => {
+    const { bus, registry, interp } = makeInterp();
+    registry.register(compileScene('@clear "ed_quoted"\n@achievement "unlock" "ach_1"', 's.gal', 's1'));
+    const clears: { ending: string; fresh: boolean }[] = [];
+    const systems: { type: string; args: string[] }[] = [];
+    bus.on('clear', (p) => clears.push(p));
+    bus.on('system', (p) => systems.push({ type: p.type, args: p.args }));
+
+    interp.start('s1');
+    expect(clears).toEqual([{ ending: 'ed_quoted', fresh: true }]); // 不带引号（而非 '"ed_quoted"'）
+    expect(interp.clearTracker.endings()).toEqual(['ed_quoted']);
+    expect(systems).toEqual([{ type: 'achievement', args: ['unlock', 'ach_1'] }]);
+  });
+
   it('loadSnapshot 在场景中段恢复能继续推进', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('@set trust = 7\n凛：甲。\n凛：乙。', 's.gal', 's1'));

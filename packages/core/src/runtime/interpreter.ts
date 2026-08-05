@@ -33,6 +33,16 @@ export interface SystemHooks {
 /** 运行时状态。paused = 宿主暂停（如交互式战斗进行中），resumeHost() 恢复 */
 export type RuntimeStatus = 'idle' | 'running' | 'awaiting-advance' | 'awaiting-choice' | 'awaiting-timer' | 'paused' | 'ended';
 
+/** 指令参数去引号（引号契约：解释器侧消费的 ID 类参数在此去引号，与渲染层 dequote 语义一致）；
+ *  例：@clear "ed1" → 结局标识 ed1（避免引号被写进结局/成就 ID） */
+function dequoteInstrArg(s: string): string {
+  if (s.length < 2) return s;
+  const first = s[0];
+  const last = s[s.length - 1];
+  if ((first !== '"' && first !== "'") || first !== last) return s;
+  return s.slice(1, -1).replace(/\\(.)/g, '$1');
+}
+
 /** @call 最大嵌套深度（同步死循环检测兜底之前，先给出更明确的错误） */
 const MAX_CALL_DEPTH = 64;
 
@@ -783,7 +793,7 @@ export class Interpreter {
       case 'clear': {
         // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
         // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
-        const ending = arg0 ?? this.#scene!.sceneId;
+        const ending = arg0 !== undefined ? dequoteInstrArg(arg0) : this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
         return;
@@ -837,11 +847,22 @@ export class Interpreter {
       case 'event':
       case 'shop':
       case 'item':
-      case 'achievement': {
+      {
         // 大系统指令：交给宿主（游戏逻辑层）用对应 System 类驱动
         this.#bus.emit('system', {
           type: name,
           args: instr.args,
+          modifiers: instr.modifiers,
+          pos: { file: instr.file, line: instr.line, col: instr.col },
+        });
+        return;
+      }
+      case 'achievement': {
+        // 成就指令：args 去引号后转发宿主（@achievement "unlock" "id" 与无引号写法等价；
+        // 与 @clear 一致，解释器侧消费的 ID 类参数统一去引号）
+        this.#bus.emit('system', {
+          type: name,
+          args: instr.args.map((a) => dequoteInstrArg(a)),
           modifiers: instr.modifiers,
           pos: { file: instr.file, line: instr.line, col: instr.col },
         });

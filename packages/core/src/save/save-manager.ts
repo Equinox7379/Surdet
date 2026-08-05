@@ -14,7 +14,7 @@ export interface SystemSnapshots {
   calendar?: CalendarSnapshot;
   combat?: CombatSnapshot;
   affection?: AffectionSnapshot;
-  /** 事件优先级调度器（已触发的一次性事件 ID；预留） */
+  /** 事件优先级调度器（已触发的一次性事件 ID；starter 经 SystemHooks 提供） */
   eventScheduler?: EventSchedulerSnapshot;
   /** 成就解锁状态；宿主经 SystemHooks 提供（成长系统由解释器内聚管理，快照在 SaveSnapshot.growth 顶层） */
   achievements?: AchievementSnapshot;
@@ -171,9 +171,40 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
       }
     }
   }
-  // systems 形状兜底（审计修复：深度校验补全）
-  if (s.systems !== undefined && (typeof s.systems !== 'object' || s.systems === null || Array.isArray(s.systems))) {
-    fail('systems 必须是对象');
+  // systems 形状兜底 + 子快照深度校验（审计轮4：新增系统的子快照纳入读档入口校验，
+  // 避免畸形数据在各系统 restore 中途才爆炸）
+  if (s.systems !== undefined) {
+    if (typeof s.systems !== 'object' || s.systems === null || Array.isArray(s.systems)) {
+      fail('systems 必须是对象');
+    }
+    const sys = s.systems as Record<string, unknown>;
+    // 子快照对象形状校验（undefined 放行 = 旧档无该字段）
+    const checkObj = (v: unknown, label: string): Record<string, unknown> | undefined => {
+      if (v === undefined) return undefined;
+      if (typeof v !== 'object' || v === null || Array.isArray(v)) fail(`${label} 必须是对象`);
+      return v as Record<string, unknown>;
+    };
+    const strArr = (v: unknown, label: string): void => {
+      if (v === undefined) return;
+      if (!Array.isArray(v) || !(v as unknown[]).every((x) => typeof x === 'string')) fail(`${label} 必须是字符串数组`);
+    };
+    const achievements = checkObj(sys.achievements, 'systems.achievements');
+    if (achievements) strArr(achievements.unlocked, 'systems.achievements.unlocked');
+    const scheduler = checkObj(sys.eventScheduler, 'systems.eventScheduler');
+    if (scheduler) strArr(scheduler.fired, 'systems.eventScheduler.fired');
+    const calendar = checkObj(sys.calendar, 'systems.calendar');
+    if (calendar) {
+      if (calendar.turn !== undefined && typeof calendar.turn !== 'number') fail('systems.calendar.turn 必须是 number');
+      if (calendar.ap !== undefined && typeof calendar.ap !== 'number') fail('systems.calendar.ap 必须是 number');
+      strArr(calendar.visited, 'systems.calendar.visited');
+      if (calendar.commandCounts !== undefined) {
+        if (typeof calendar.commandCounts !== 'object' || calendar.commandCounts === null || Array.isArray(calendar.commandCounts)) {
+          fail('systems.calendar.commandCounts 必须是对象');
+        } else if (!Object.values(calendar.commandCounts as Record<string, unknown>).every((x) => typeof x === 'number')) {
+          fail('systems.calendar.commandCounts 值必须是 number');
+        }
+      }
+    }
   }
 }
 

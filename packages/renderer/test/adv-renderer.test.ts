@@ -549,6 +549,44 @@ describe('R2 @wait 接线与演出效果', () => {
   });
 });
 
+describe('dsl-spec 演出三件套示例防漂移（文档语法 = 实现行为；审计轮4）', () => {
+  /** 编译 dsl-spec 示例行并经解释器真实驱动渲染器（端到端：lexer → compiler → interpreter → renderer → stage） */
+  function runScene(src: string): FakeStage {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    const registry = new SceneRegistry();
+    registry.register(compileScene(src, 'spec.gal', 'spec'));
+    const interp = new Interpreter(new VariableStore([]), bus, registry);
+    interp.start('spec');
+    return stage;
+  }
+
+  it('@particle sakura / @particle off（预设启动与清除）', () => {
+    const stage = runScene('@particle sakura\n@particle off');
+    expect(stage.particlesStarted).toEqual(['sakura']);
+    expect(stage.particlesStopped).toBe(1);
+  });
+
+  it('@mov lynn left / @mov lynn 400 600（位置 = 三档预设或裸数字 X；缺省 400ms）', () => {
+    const stage = runScene('@mov lynn left\n@mov lynn 400 600');
+    expect(stage.movs).toEqual([
+      { key: 'lynn', pos: 'left', dur: 400 },
+      { key: 'lynn', pos: '400', dur: 600 },
+    ]);
+  });
+
+  it('@tint #ff6600 0.3 / @tint #ff6600 0.3 800 / @tint off（颜色+透明度[过渡]）', () => {
+    const stage = runScene('@tint #ff6600 0.3\n@tint #ff6600 0.3 800\n@tint off');
+    expect(stage.tints).toEqual([
+      { color: 0xff6600, alpha: 0.3, dur: 400 },
+      { color: 0xff6600, alpha: 0.3, dur: 800 },
+    ]);
+    expect(stage.tintClears).toEqual([400]);
+  });
+});
+
 describe('R1 行为改进与新特性', () => {
   it('快进遇选择肢自动退出（玩家必须做出选择）', () => {
     const bus = makeBus();

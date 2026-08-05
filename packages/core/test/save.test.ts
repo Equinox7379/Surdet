@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SaveManager, MemoryStorage, QUICK_SLOT } from '../src/save/save-manager.js';
+import { SaveManager, MemoryStorage, QUICK_SLOT, assertValidSnapshot } from '../src/save/save-manager.js';
 import type { SaveSnapshot, SaveStorage } from '../src/save/save-manager.js';
 import { GalleryState } from '../src/systems/gallery-state.js';
 import { ReadTracker } from '../src/runtime/read-tracker.js';
@@ -106,6 +106,39 @@ describe('GalleryState', () => {
     g2.restore(snap);
     expect(g2.hasCg('cg1')).toBe(true);
     expect(g2.cgs).toEqual(['cg1']);
+  });
+});
+
+describe('assertValidSnapshot systems 子快照深校验（审计轮4）', () => {
+  it('合法 systems 子快照通过（含 eventScheduler/achievements/commandCounts）', () => {
+    const snap = makeSnap({
+      systems: {
+        calendar: { turn: 2, ap: 1, visited: ['map_01'], commandCounts: { train: 1 } },
+        achievements: { unlocked: ['a', 'b'] },
+        eventScheduler: { fired: ['ev1'] },
+      },
+    });
+    expect(() => assertValidSnapshot(snap)).not.toThrow();
+  });
+
+  it('achievements.unlocked 非字符串数组 → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { achievements: { unlocked: 'a' } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/unlocked/);
+  });
+
+  it('eventScheduler.fired 非数组 → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { eventScheduler: { fired: 123 } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/fired/);
+  });
+
+  it('calendar.commandCounts 值非 number → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { calendar: { turn: 1, ap: 0, visited: [], commandCounts: { rest: 'x' } } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/commandCounts/);
+  });
+
+  it('calendar.turn 非 number → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { calendar: { turn: '2', ap: 0, visited: [] } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/turn/);
   });
 });
 
