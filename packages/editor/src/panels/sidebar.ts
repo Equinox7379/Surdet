@@ -44,6 +44,27 @@ export function bindSidebarHooks(opts: { renderEditor: () => void }): void {
   renderEditorHook = opts.renderEditor;
 }
 
+/** 新建场景模板（M6 E5-4）：带注释的 .gal 片段，{id} 占位替换为场景 ID */
+const SCENE_TEMPLATES: { name: string; body: string }[] = [
+  { name: '空白', body: '@scene {id}\n凛：' },
+  {
+    name: '纯对话',
+    body: '@scene {id}\n@bg 背景key\n@bgm 音乐key\n凛：……\n主角：……\n',
+  },
+  {
+    name: '选择分支',
+    body: '@scene {id}\n凛：……\n@choice\n  选项A -> @goto a\n  选项B -> @goto b\n@label a\n凛：A 线。\n@jump 下一场景\n@label b\n凛：B 线。\n@jump 下一场景\n',
+  },
+  {
+    name: '演出制作',
+    body: '@scene {id}\n@bg 背景key\n@bgm 音乐key\n@shake 400 8\n@flash 250\n@wait 500\n凛：……\n',
+  },
+  {
+    name: '结局',
+    body: '@scene {id}\n凛：……\n@clear\n@end\n',
+  },
+];
+
 export function newScene(): void {
   const name = window.prompt('新场景 ID（文件名，不含 .gal）');
   if (!name || name.trim().length === 0) return;
@@ -52,10 +73,13 @@ export function newScene(): void {
     setStatus(`场景 '${id}' 已存在`, false);
     return;
   }
+  const tplChoice = window.prompt('选择模板：0 空白 / 1 纯对话 / 2 选择分支 / 3 演出制作 / 4 结局（取消 = 空白）');
+  const idx = tplChoice === null ? 0 : Number(tplChoice.trim());
+  const tpl = Number.isInteger(idx) && idx >= 0 && idx < SCENE_TEMPLATES.length ? SCENE_TEMPLATES[idx]! : SCENE_TEMPLATES[0]!;
   state.scenes.set(id, {
     id,
     file: `${id}.gal`,
-    text: `@scene ${id}\n凛：`,
+    text: tpl.body.replace(/\{id\}/g, id),
     eol: '\n',
     dirty: true,
     handle: null,

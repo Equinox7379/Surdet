@@ -19,6 +19,9 @@ import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js'
 import { renderRightExtras } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks } from './panels/config.js';
+import { renderPreviewPanel } from './panels/preview-panel.js';
+import { renderStatsPanel } from './panels/stats-panel.js';
+import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 
 /* ============================ 模块装配（钩子注入，保持无环） ============================ */
 
@@ -30,23 +33,30 @@ bindProjectIoHooks({ renderAll, runValidate, renderSidebar });
 bindSidebarHooks({ renderEditor });
 bindSidebarRenderAll(renderAll);
 bindFlowHooks({
-  // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到 @label 行
-  openScene: (sceneKey, line) => {
-    state.mainTab = 'editor';
-    state.current = sceneKey;
-    renderMainArea();
-    if (line !== undefined) {
-      const target = document.querySelector(`.block[data-line="${Math.max(0, line - 1)}"]`);
-      target?.scrollIntoView({ block: 'center' });
-      target?.classList.add('selected');
-    }
-  },
+  // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到该 @label 行
+  openScene: (sceneKey, line) => jumpToScene(sceneKey, line !== undefined ? Math.max(0, line - 1) : undefined),
   // 流程图结构变更（重命名/删除）后重新调度校验
   requestValidate: scheduleValidate,
 });
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: scheduleValidate,
+});
+
+/** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
+function jumpToScene(sceneKey: string, line?: number): void {
+  state.mainTab = 'editor';
+  state.current = sceneKey;
+  renderMainArea();
+  if (line !== undefined) {
+    const target = document.querySelector(`.block[data-line="${Math.max(0, line)}"]`);
+    target?.scrollIntoView({ block: 'center' });
+    target?.classList.add('selected');
+  }
+}
+bindSearchHooks({
+  onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  onEdited: scheduleValidate,
 });
 
 /* ============================ 布局渲染 ============================ */
@@ -100,17 +110,19 @@ function renderAll(): void {
   renderMainArea();
 }
 
-/** 主区：标签页（块编辑 / 流程图 / 配置）+ 对应内容 */
+/** 主区：标签页（块编辑 / 流程图 / 配置 / 预览 / 统计）+ 对应内容 */
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'config'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'config' | 'preview' | 'stats'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
     { id: 'config', label: '配置' },
+    { id: 'preview', label: '预览' },
+    { id: 'stats', label: '统计' },
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
@@ -123,14 +135,20 @@ function renderMainArea(): void {
     const body = h('div', 'main-body');
     const sidebar = h('aside');
     sidebar.id = 'sidebar';
+    const editorCol = h('div', 'editor-col');
+    const searchPanel = h('div');
+    searchPanel.id = 'search-panel';
+    editorCol.appendChild(searchPanel);
     const editor = h('section');
     editor.id = 'editor';
+    editorCol.appendChild(editor);
     const right = h('aside');
     right.id = 'right';
-    body.append(sidebar, editor, right);
+    body.append(sidebar, editorCol, right);
     col.appendChild(body);
     main.appendChild(col);
     renderSidebar();
+    renderSearchPanel(searchPanel);
     renderEditor();
     renderIssues();
     renderRightExtras();
@@ -140,6 +158,18 @@ function renderMainArea(): void {
     col.appendChild(flowEl);
     main.appendChild(col);
     renderFlow(flowEl);
+  } else if (state.mainTab === 'preview') {
+    const pvEl = h('section');
+    pvEl.id = 'preview-view';
+    col.appendChild(pvEl);
+    main.appendChild(col);
+    renderPreviewPanel(pvEl);
+  } else if (state.mainTab === 'stats') {
+    const stEl = h('section');
+    stEl.id = 'stats-view';
+    col.appendChild(stEl);
+    main.appendChild(col);
+    renderStatsPanel(stEl);
   } else {
     const cfgEl = h('section');
     cfgEl.id = 'config-view';
@@ -166,6 +196,20 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
     e.preventDefault();
     redo();
+  }
+  // Ctrl+F 聚焦搜索（M6 E5）；Ctrl+P 预览标签页
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    if (state.mainTab !== 'editor') {
+      state.mainTab = 'editor';
+      renderMainArea();
+    }
+    focusSearchInput();
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+    e.preventDefault();
+    state.mainTab = 'preview';
+    renderMainArea();
   }
 });
 

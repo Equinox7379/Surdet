@@ -36,8 +36,8 @@ export const state = {
   dirAssets: [] as DirAsset[],
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
-  /** 主区标签页：块编辑 / 流程图（E1a）/ 配置（E3） */
-  mainTab: 'editor' as 'editor' | 'flow' | 'config',
+  /** 主区标签页：块编辑 / 流程图（E1a）/ 配置（E3）/ 预览（M6）/ 统计（M6） */
+  mainTab: 'editor' as 'editor' | 'flow' | 'config' | 'preview' | 'stats',
   fsSupported: typeof window !== 'undefined' && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function',
 };
 
