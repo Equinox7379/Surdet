@@ -455,18 +455,31 @@ function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>
   if (edge.kind === 'call' || edge.kind === 'host') path.setAttribute('stroke-dasharray', '6 4');
   world.appendChild(path);
   if (edge.label) {
+    // 边标签：放在两端点几何中点（绕行边的贝塞尔 t=0.5 近似在此附近）；
+    // 加深色底板 + 亮色字保证暗底可读（验收反馈：原浅色小字贴边/位置偏，看不见）
+    const midX = (a.x + a.w + b.x) / 2;
+    const midY = (a.y + b.y) / 2 + (a.h + b.h) / 4;
+    const t = edge.label.length > 22 ? edge.label.slice(0, 21) + '…' : edge.label;
+    const labelW = Math.min(180, t.length * 10 + 12);
+    const bg = el('rect');
+    bg.setAttribute('x', String(midX - labelW / 2));
+    bg.setAttribute('y', String(midY - 16));
+    bg.setAttribute('width', String(labelW));
+    bg.setAttribute('height', '14');
+    bg.setAttribute('rx', '4');
+    bg.setAttribute('fill', '#0d1117');
+    bg.setAttribute('opacity', '0.85');
     const mid = el('text');
-    mid.setAttribute('x', String((a.x + a.w + b.x) / 2));
-    mid.setAttribute('y', String((a.y + b.y) / 2 + (a.h + b.h) / 4 - 4));
+    mid.setAttribute('x', String(midX));
+    mid.setAttribute('y', String(midY - 5));
     mid.setAttribute('text-anchor', 'middle');
     mid.setAttribute('font-size', '10');
-    mid.setAttribute('fill', '#9fb0c8');
-    const t = edge.label.length > 22 ? edge.label.slice(0, 21) + '…' : edge.label;
+    mid.setAttribute('fill', '#e8d9b0');
     mid.textContent = t;
     const title = el('title');
     title.textContent = edge.label;
     mid.appendChild(title);
-    world.appendChild(mid);
+    world.append(bg, mid);
   }
 }
 
