@@ -491,21 +491,12 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
     g.appendChild(badge);
   }
 
-  // E1b：节点按下可能是拖拽建链（超过阈值）或点击导航（未移动）
+  // E1b：节点按下可能是拖拽建链（超过阈值）或点击导航（未移动）；
+  // 注意：pointerdown 已把指针捕获到 svg，节点的 click 事件不会触发，
+  // 点击导航在 svg pointerup 的“未拖动”分支里自行判定（验收反馈三轮：单击/双击失效根因）
   g.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
     startNodeDrag(node.id, e);
-  });
-  g.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (suppressClick) return;
-    const key = sceneKeyById(node.sceneId);
-    if (key) openSceneHook(key);
-  });
-  g.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    const key = sceneKeyById(node.sceneId);
-    if (key) openSceneHook(key, node.kind === 'label' ? node.line : undefined);
   });
   if (node.kind === 'scene') {
     g.addEventListener('contextmenu', (e) => {
@@ -518,8 +509,7 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   world.appendChild(g);
 }
 
-/** 拖拽/点击区分：超过阈值才算拖拽；拖拽结束后的 click 被抑制 */
-let suppressClick = false;
+/** 拖拽状态由 svg pointerup 统一判定，无需 click 抑制 */
 const DRAG_THRESHOLD = 6;
 
 /** 渲染流程图到容器（视口裁剪：只为可见范围内的节点/边建 DOM） */
@@ -634,8 +624,6 @@ export function renderFlow(container: HTMLElement): void {
       nodeDrag = null;
       linkLine.style.display = 'none';
       if (drag.dragging) {
-        suppressClick = true;
-        setTimeout(() => { suppressClick = false; }, 0);
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const targetG = hit?.closest?.('[data-node-id]') as SVGGElement | null | undefined;
         const toId = targetG?.dataset?.nodeId;
@@ -643,6 +631,14 @@ export function renderFlow(container: HTMLElement): void {
         const to = toId ? layout.boxes.get(toId) : undefined;
         if (from && to && toId !== drag.fromId) {
           createLink(from.node, to.node);
+        }
+      } else {
+        // 未超过拖拽阈值 = 点击导航（指针被捕获到 svg，节点 click 不会触发，须在此自行处理）：
+        // 场景节点 → 切块编辑；label 节点 → 切块编辑并滚动到该 @label 行（连击两次效果相同）
+        const box = layout.boxes.get(drag.fromId);
+        if (box) {
+          const key = sceneKeyById(box.node.sceneId);
+          if (key) openSceneHook(key, box.node.kind === 'label' ? box.node.line : undefined);
         }
       }
       return;
