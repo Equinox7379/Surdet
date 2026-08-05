@@ -13,6 +13,7 @@ import {
   validateJumpTarget,
   validateSceneVariables,
   validateSwitchTargets,
+  collectConfigSceneRoots as collectConfigSceneRootsFromConfigs,
   type CallInstr,
   type CompiledScene,
   type ExprAst,
@@ -473,12 +474,10 @@ function readConfigJson(
   }
 }
 
-/** 收集 content/config/*.json 中配置驱动的 hostJump 目标场景（W007 可达性额外根）：
- *  events.json events[].scene 与 scheduled[].scene、growth.json profiles[].levelEvents 值、
- *  calendar.json nodes[].eventId 与 baseCommands[].eventId。这些场景由宿主 hostJump 进入，无 @jump 引用。 */
+/** 收集 content/config/*.json 中配置驱动的 hostJump 目标场景（W007 可达性额外根）。
+ *  收集逻辑为 core 共享纯实现（编辑器同源复用，审计轮4 下沉）；本函数只负责文件读取。 */
 function collectConfigSceneRoots(root: string): string[] {
   const configDir = path.join(root, 'content/config');
-  const roots: string[] = [];
   const read = (name: string): unknown => {
     const full = path.join(configDir, name);
     if (!fs.existsSync(full)) return null;
@@ -488,42 +487,11 @@ function collectConfigSceneRoots(root: string): string[] {
       return null; // 解析失败由 CONFIG 校验报告，此处不重复报
     }
   };
-  const sceneOf = (e: unknown): string | null =>
-    !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).scene === 'string'
-      ? ((e as Record<string, unknown>).scene as string)
-      : null;
-  const events = read('events.json');
-  if (events && typeof events === 'object') {
-    for (const key of ['events', 'scheduled'] as const) {
-      const list = (events as Record<string, unknown>)[key];
-      if (Array.isArray(list)) for (const e of list) { const s = sceneOf(e); if (s) roots.push(s); }
-    }
-  }
-  const growth = read('growth.json');
-  if (growth && typeof growth === 'object') {
-    const profiles = (growth as Record<string, unknown>).profiles;
-    if (Array.isArray(profiles)) {
-      for (const p of profiles) {
-        const lv = p && typeof p === 'object' ? (p as Record<string, unknown>).levelEvents : undefined;
-        if (lv && typeof lv === 'object' && !Array.isArray(lv)) {
-          for (const s of Object.values(lv as Record<string, unknown>)) if (typeof s === 'string') roots.push(s);
-        }
-      }
-    }
-  }
-  const calendar = read('calendar.json');
-  if (calendar && typeof calendar === 'object') {
-    for (const key of ['nodes', 'baseCommands'] as const) {
-      const list = (calendar as Record<string, unknown>)[key];
-      if (Array.isArray(list)) {
-        for (const n of list) {
-          const id = n && typeof n === 'object' ? (n as Record<string, unknown>).eventId : undefined;
-          if (typeof id === 'string') roots.push(id);
-        }
-      }
-    }
-  }
-  return roots;
+  return collectConfigSceneRootsFromConfigs({
+    events: read('events.json'),
+    growth: read('growth.json'),
+    calendar: read('calendar.json'),
+  });
 }
 
 /** growth.json 校验（非表达式；审计轮4）：statGrowth 键必须已声明变量（V002）；levelEvents 场景必须存在（J001） */

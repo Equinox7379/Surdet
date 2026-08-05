@@ -94,3 +94,11 @@ main { display: flex; flex: 1; min-height: 0; }
 #graph-box { overflow-x: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px; margin-bottom: 4px; }
 .banner { padding: 8px 14px; background: #3a2f1e; color: var(--warn); font-size: 13px; }
 .empty { color: var(--dim); font-size: 13px; padding: 12px; }
+
+/* E1a：主区标签页 + 流程图视图 */
+.main-col { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.tabs { display: flex; gap: 6px; padding: 8px 12px 6px; }
+.tabs button.tab { padding: 4px 14px; font-size: 12px; }
+.tabs button.tab.active { background: #3a2f1e; border-color: var(--accent); color: var(--accent); }
+.main-body { display: flex; flex: 1; min-height: 0; }
+#flow-view { flex: 1; position: relative; overflow: hidden; min-height: 0; border-top: 1px solid var(--line); }
