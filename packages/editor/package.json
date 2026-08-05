@@ -12,9 +12,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@surdet/core": "0.1.0"
+    "@surdet/core": "0.1.0",
+    "@surdet/renderer": "0.1.0"
   },
   "devDependencies": {
     "vite": "^6.3.5"
   }
 }
+
