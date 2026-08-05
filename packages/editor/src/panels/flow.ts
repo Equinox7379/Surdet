@@ -209,10 +209,10 @@ export async function renameScene(sceneId: string): Promise<void> {
   const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
   if (!input) return;
   const newId = input.trim();
-  if (!/^[^\s.]+$/.test(newId)) { setStatus('场景 ID 非法（不能含空格/点号）', false); return; }
+  if (!/^[^\s.]+$/.test(newId)) { setStatus('场景 ID 非法（不能含空格/点号）', false, 4000); return; }
   if (newId === sceneId) return;
   if ([...state.scenes.values()].some((s) => s.id === newId)) {
-    setStatus(`场景 '${newId}' 已存在`, false);
+    setStatus(`场景 '${newId}' 已存在`, false, 4000);
     return;
   }
   const key = sceneKeyById(sceneId);
@@ -247,14 +247,14 @@ export async function renameScene(sceneId: string): Promise<void> {
       const scenarioDir = await contentDir.getDirectoryHandle('scenario');
       await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
     } catch (err) {
-      setStatus(`重命名已生效，但旧文件 ${sceneId}.gal 删除失败：${err instanceof Error ? err.message : String(err)}`, false);
+      setStatus(`重命名已生效，但旧文件 ${sceneId}.gal 删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
     }
   } else if (sc.handle && !flat) {
     sc.handle = null;
-    setStatus(`子目录场景重命名：内存已改名，请手动重命名盘上文件 ${sceneId}.gal → ${newId}.gal`, false);
+    setStatus(`子目录场景重命名：内存已改名，请手动重命名盘上文件 ${sceneId}.gal → ${newId}.gal`, false, 6000);
   }
 
-  setStatus(`场景已重命名 ${sceneId} → ${newId}（同步改写 ${refCount} 处引用；保存后落盘）`, true);
+  setStatus(`场景已重命名 ${sceneId} → ${newId}（同步改写 ${refCount} 处引用；保存后落盘）`, true, 5000);
   renderSidebar();
   requestValidateHook();
 }
@@ -281,10 +281,10 @@ export async function deleteScene(sceneId: string): Promise<void> {
       const scenarioDir = await contentDir.getDirectoryHandle('scenario');
       await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
     } catch (err) {
-      setStatus(`场景已从编辑器移除，但盘上文件删除失败：${err instanceof Error ? err.message : String(err)}`, false);
+      setStatus(`场景已从编辑器移除，但盘上文件删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
     }
   }
-  setStatus(`已删除场景 '${sceneId}'`, true);
+  setStatus(`已删除场景 '${sceneId}'`, true, 4000);
   renderSidebar();
   requestValidateHook();
 }
@@ -399,12 +399,12 @@ function createLink(fromNode: FlowNode, toNode: FlowNode): void {
   const sceneKey = sceneKeyById(fromNode.sceneId);
   const sc = sceneKey ? state.scenes.get(sceneKey) : undefined;
   if (!sceneKey || !sc) {
-    setStatus(`无法定位源场景 '${fromNode.sceneId}'（宿主入口不可编辑）`, false);
+    setStatus(`无法定位源场景 '${fromNode.sceneId}'（宿主入口不可编辑）`, false, 4000);
     return;
   }
   const line = buildJumpLine(fromNode, toNode);
   setSceneText(sceneKey, appendLineToScene(sc.text, sc.eol, line));
-  setStatus(`已在 '${fromNode.sceneId}' 末尾插入 ${line}（可撤销；校验稍后刷新）`, true);
+  setStatus(`已在 '${fromNode.sceneId}' 末尾插入 ${line}（可撤销；校验稍后刷新）`, true, 4000);
   renderSidebar();
 }
 
