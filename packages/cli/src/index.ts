@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * surdet CLI：new / lint / build / pack。
+ * surdet CLI：new / lint / build / pack / audit / simulate。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -9,6 +9,7 @@ import { lintProject } from './lint.js';
 import { cmdNew } from './new.js';
 import { cmdBuild } from './build.js';
 import { cmdAudit } from './audit.js';
+import { cmdSimulate } from './simulate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +25,12 @@ function readVersion(): string {
 }
 const VERSION = readVersion();
 
+/** 参数值识别：--assume k=v 的值位置不可能是项目目录（防止误当作位置参数） */
+function isFlagValue(args: string[], a: string): boolean {
+  const i = args.indexOf(a);
+  return i > 0 && (args[i - 1] === '--assume' || args[i - 1] === '--max-paths' || args[i - 1] === '--max-steps');
+}
+
 const HELP = `Surdet Engine CLI v${VERSION}
 
 用法:
@@ -33,6 +40,11 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet lint [dir]        校验游戏内容（剧本语法/结构/引用完整性）
   surdet audit [dir]       AI 生产线验收：内容审计（称谓/名词表/空心分支/节奏）+ 无头试跑
       --no-run             只做内容审计，跳过无头试跑
+  surdet simulate [dir]    无头自动模拟：全分支遍历 + 结局可达性 + 死路检测 + 存档往返冒烟
+      --max-paths N        路径预算（缺省 500）
+      --max-steps N        单路径步数上限（缺省 20000）
+      --assume k=v         开局变量注入（可重复，如 --assume battleWon=true）
+      --json               输出机器可读 JSON 报告
   surdet build [dir]       构建游戏（vite）
   surdet pack              打包 Windows exe（M7）
 `;
@@ -65,6 +77,12 @@ async function main(): Promise<number> {
       const rest = args.slice(1).filter((a) => !a.startsWith('--'));
       const projectDir = path.resolve(rest[0] ?? process.cwd());
       return await cmdAudit(projectDir, { noRun: args.includes('--no-run') });
+    }
+
+    case 'simulate': {
+      const rest = args.slice(1).filter((a) => !a.startsWith('--') && !isFlagValue(args, a));
+      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      return await cmdSimulate(projectDir, args.slice(1));
     }
 
     case 'lint': {
