@@ -19,6 +19,16 @@ export function bindConfigHooks(opts: { requestValidate: () => void }): void {
   requestValidateHook = opts.requestValidate;
 }
 
+/** 本地重建两个表格（保留内存行模型与未保存输入；仅增删行时用）。
+ *  从盘重读+置空行缓存只属于 renderConfig（标签页进入入口，M4 审阅轮 Major 1 修复） */
+function rerenderConfig(): void {
+  const root = document.getElementById('config-view');
+  if (!root) return;
+  root.innerHTML = '';
+  root.appendChild(renderVariablesSection());
+  root.appendChild(renderAchievementsSection());
+}
+
 /* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
 let varRows: VariableRow[] | null = null;
 let achRows: AchievementRow[] | null = null;
@@ -115,10 +125,6 @@ function renderVariablesSection(): HTMLElement {
   table.appendChild(thead);
 
   const tbody = h('tbody');
-  const rerender = (): void => {
-    const root = document.getElementById('config-view');
-    if (root) renderConfig(root);
-  };
   rows.forEach((row, i) => {
     const tr = h('tr');
     const mkInput = (value: string, placeholder: string, cls: string, oninput: (v: string) => void): HTMLInputElement => {
@@ -164,7 +170,7 @@ function renderVariablesSection(): HTMLElement {
     const tdDel = h('td');
     const del = h('button', undefined, '✕');
     del.title = '删除该变量（被剧本引用时会要求确认）';
-    del.onclick = () => { rows.splice(i, 1); rerender(); };
+    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
@@ -176,7 +182,7 @@ function renderVariablesSection(): HTMLElement {
   const addBtn = h('button', undefined, '＋ 新增变量');
   addBtn.onclick = () => {
     rows.push({ name: '', type: 'number', initial: '0', min: '', max: '', readonly: false, description: '' });
-    rerender();
+    rerenderConfig();
   };
   const saveBtn = h('button', 'primary', '保存变量表');
   saveBtn.onclick = () => { void saveVariables(); };
@@ -242,10 +248,6 @@ function renderAchievementsSection(): HTMLElement {
   table.appendChild(thead);
 
   const tbody = h('tbody');
-  const rerender = (): void => {
-    const root = document.getElementById('config-view');
-    if (root) renderConfig(root);
-  };
   rows.forEach((row, i) => {
     const tr = h('tr');
     const mkInput = (value: string, placeholder: string, cls: string, oninput: (v: string) => void, list?: string): HTMLInputElement => {
@@ -278,7 +280,7 @@ function renderAchievementsSection(): HTMLElement {
     const tdDel = h('td');
     const del = h('button', undefined, '✕');
     del.title = '删除该成就';
-    del.onclick = () => { rows.splice(i, 1); rerender(); };
+    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
@@ -290,7 +292,7 @@ function renderAchievementsSection(): HTMLElement {
   const addBtn = h('button', undefined, '＋ 新增成就');
   addBtn.onclick = () => {
     rows.push({ id: '', name: '', description: '', when: '', hidden: false });
-    rerender();
+    rerenderConfig();
   };
   const saveBtn = h('button', 'primary', '保存成就表');
   saveBtn.onclick = () => { void saveAchievements(); };

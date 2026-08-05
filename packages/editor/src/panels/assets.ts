@@ -8,7 +8,7 @@
 import { state, h, setStatus } from '../state.js';
 import { buildAssetInventory, insertLineForAsset, KIND_LABELS } from '../assets.js';
 import type { AssetEntry, AssetKind } from '../assets.js';
-import { appendLineToScene } from './flow.js';
+import { appendLineToScene } from '../scene-text.js';
 import { setSceneText } from '../history.js';
 
 /** 分组展示顺序 */
@@ -43,7 +43,7 @@ function showPreview(entry: AssetEntry, x: number, y: number): void {
     }).catch(() => {
       box.appendChild(h('div', 'empty', '预览加载失败'));
     });
-    box.appendChild(h('div', 'dim', `${entry.key}（占位素材，真实文件预览）`));
+    box.appendChild(h('div', 'dim', `${entry.key}（盘上真实文件预览）`));
   } else {
     // 无盘上文件：占位色块（编辑器不强制素材存在，与运行时占位一致）
     const ph = h('div', 'asset-preview-ph');
