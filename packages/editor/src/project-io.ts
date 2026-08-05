@@ -109,13 +109,13 @@ export async function saveAll(): Promise<void> {
           sc.dirty = false;
           saved++;
         } catch (err) {
-          setStatus(`场景 '${sc.id}' 创建失败：${err instanceof Error ? err.message : String(err)}`, false);
+          setStatus(`场景 '${sc.id}' 创建失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
         }
         continue;
       }
       // 演示项目（无目录句柄）：下载导出 + 保留脏标记，诚实提示（不冒充已保存）
       exportScene(sc.id, sc.text);
-      setStatus(`演示项目无法写盘：已下载 ${sc.id}.gal，请手动放入 content/scenario/（脏标记保留）`, true);
+      setStatus(`演示项目无法写盘：已下载 ${sc.id}.gal，请手动放入 content/scenario/（脏标记保留）`, true, 6000);
       continue;
     }
     const writable = await handle.createWritable();
@@ -125,7 +125,7 @@ export async function saveAll(): Promise<void> {
     saved++;
     void key;
   }
-  setStatus(saved > 0 ? `已保存 ${saved} 个场景` : '无待保存改动', true);
+  setStatus(saved > 0 ? `已保存 ${saved} 个场景` : '无待保存改动', true, 4000);
   renderSidebar();
 }
 

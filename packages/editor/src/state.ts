@@ -41,9 +41,31 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, t
   return el;
 }
 
-export function setStatus(text: string, ok: boolean): void {
+/** 状态栏：holdMs>0 的提示（操作反馈）驻留展示，期间不被常规校验状态覆盖（验收反馈：提示转瞬即逝）；
+ *  驻留到期后自动恢复为最新校验摘要 */
+let statusHoldUntil = 0;
+let statusHoldTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setStatus(text: string, ok: boolean, holdMs = 0): void {
   const el = document.getElementById('status');
   if (!el) return;
+  const now = Date.now();
+  if (holdMs > 0) {
+    statusHoldUntil = now + holdMs;
+    if (statusHoldTimer) clearTimeout(statusHoldTimer);
+    statusHoldTimer = setTimeout(() => {
+      statusHoldUntil = 0;
+      const sel = document.getElementById('status');
+      if (!sel || !state.lastValidation) return;
+      const issues = state.lastValidation.issues;
+      const errors = issues.filter((i) => i.severity === 'error').length;
+      const warnings = issues.length - errors;
+      sel.textContent = errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`;
+      sel.className = errors === 0 ? 'ok' : 'err';
+    }, holdMs);
+  } else if (ok && now < statusHoldUntil) {
+    return; // 驻留期内常规状态不覆盖操作提示
+  }
   el.textContent = text;
   el.className = ok ? 'ok' : 'err';
 }
