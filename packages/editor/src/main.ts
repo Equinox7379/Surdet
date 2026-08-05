@@ -40,6 +40,8 @@ bindFlowHooks({
       target?.classList.add('selected');
     }
   },
+  // 流程图结构变更（重命名/删除）后重新调度校验
+  requestValidate: scheduleValidate,
 });
 
 /* ============================ 布局渲染 ============================ */

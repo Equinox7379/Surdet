@@ -102,3 +102,7 @@ main { display: flex; flex: 1; min-height: 0; }
 .tabs button.tab.active { background: #3a2f1e; border-color: var(--accent); color: var(--accent); }
 .main-body { display: flex; flex: 1; min-height: 0; }
 #flow-view { flex: 1; position: relative; overflow: hidden; min-height: 0; border-top: 1px solid var(--line); }
+
+/* E1b：流程图右键菜单 */
+.flow-menu { position: absolute; z-index: 10; background: var(--panel2); border: 1px solid var(--accent); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5); }
+.flow-menu button { font-size: 12px; padding: 4px 12px; text-align: left; }
