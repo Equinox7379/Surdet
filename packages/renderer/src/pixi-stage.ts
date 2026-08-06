@@ -74,6 +74,28 @@ const PARTICLE_PRESETS: Record<string, ParticlePreset> = {
   fireflies: { count: 24, color: 0xd8f08a, size: 3, vy: -0.15, sway: 0.5 },
 };
 
+/** 设计语言「夜色蔚蓝」：运行时画面调色板（深色玻璃底 + 冷白文字 + 蔚蓝强调，
+ *  游戏内自成体系，与编辑器浅色主题 #0f8ff3 呼应但不强绑） */
+const NIGHT_AZURE = {
+  /** 对话框玻璃底渐变（深蓝黑，两段半透明 fill 叠加近似纵向渐变） */
+  glassTop: 0x0c1424,
+  glassBottom: 0x0a0f1c,
+  /** 玻璃细描边（冷蓝，低 alpha） */
+  glassEdge: 0x9fd4ff,
+  /** 强调蔚蓝（强调线/选中边/名牌细边） */
+  accent: 0x5ac8ff,
+  /** 正文冷白 */
+  text: 0xf2f6ff,
+  /** 名牌底板深蓝 */
+  plate: 0x123a5c,
+  /** 名牌/高亮文字（略暖于正文的亮冷白） */
+  plateText: 0xeaf6ff,
+  /** 选择肢卡片底 */
+  choiceBg: 0x0d1526,
+  /** 选择肢卡片默认描边 */
+  choiceEdge: 0x3d5a80,
+} as const;
+
 /** 程序化占位背景：纵向渐变 */
 function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
   const canvas = document.createElement('canvas');
@@ -188,10 +210,13 @@ export class PixiStage implements AdvStage {
   #registeredPortraits = new Map<string, Texture>();
   #speakerText: PText;
   #dialogText: PText;
+  /** 说话人名牌底板（玻璃对话框上沿偏左的圆角胶囊，随说话人显隐） */
+  #speakerPlate: Graphics;
   /** 对话框每行字数容量（预断行用，构造时按字号估算；M5 支柱4） */
   #dialogCharsPerLine = 40;
   #choiceLayer: Container;
-  #choiceViews: Container[] = [];
+  /** 选择肢卡片视图（容器 + 卡片底板 + 强调条 + 文本；高亮统一走 #drawChoiceCard 重绘） */
+  #choiceViews: { holder: Container; bg: Graphics; bar: Graphics; label: PText }[] = [];
   /** 选择肢键盘高亮序号（-1 = 无） */
   #choiceHighlight = -1;
   /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
@@ -331,15 +356,16 @@ export class PixiStage implements AdvStage {
     this.#shopLayer.visible = false;
     this.#baseLayer = new Container();
     this.#baseLayer.visible = false;
-    this.#dialogPanel = new Graphics()
-      .roundRect(40, this.#h - 210, this.#w - 80, 180, 14)
-      .fill({ color: 0x000000, alpha: 0.5 });
+    // 对话戏玻璃对话框（夜色蔚蓝）：分层绘制见 #drawDialogPanel（渐变玻璃底 + 细描边 + 顶沿强调线）
+    this.#dialogPanel = new Graphics();
+    this.#drawDialogPanel();
+    this.#speakerPlate = new Graphics();
     this.#continueIndicator = new Graphics()
       .moveTo(-9, 0)
       .lineTo(9, 0)
       .lineTo(0, 12)
       .closePath()
-      .fill({ color: 0xffe8c8, alpha: 0.95 });
+      .fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
     this.#continueIndicator.visible = false;
     this.#backlogLayer = new Container();
     this.#backlogLayer.visible = false;
@@ -350,7 +376,7 @@ export class PixiStage implements AdvStage {
     this.#battleLayer = new Container();
     this.#battleLayer.visible = false;
     this.#uiLayer.addChild(
-      this.#dialogPanel, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer,
+      this.#dialogPanel, this.#speakerPlate, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer,
       this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
       this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
       this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer,
@@ -358,14 +384,16 @@ export class PixiStage implements AdvStage {
 
     this.#speakerText = new PText({
       text: '',
-      style: { fontSize: 26, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
       style: {
         fontSize: 26,
-        fill: 0xf5f5f5,
-        lineHeight: 38,
+        fill: NIGHT_AZURE.text,
+        lineHeight: 46,
+        // 极淡文字阴影：玻璃底上增强正文层次（v8 TextStyle 原生 dropShadow）
+        dropShadow: { alpha: 0.35, blur: 6, distance: 2, color: 0x020409 },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
@@ -435,13 +463,57 @@ export class PixiStage implements AdvStage {
   }
 
   #layout(): void {
-    this.#speakerText.position.set(70, this.#h - 190);
-    this.#dialogText.position.set(70, this.#h - 150);
-    this.#dialogRubyLayer.position.set(70, this.#h - 150);
+    // 名牌骑在对话框上沿：文本居于名牌底板内（底板绘制见 #drawSpeakerPlate）
+    this.#speakerText.position.set(72, this.#h - 229);
+    this.#dialogText.position.set(70, this.#h - 195);
+    this.#dialogRubyLayer.position.set(70, this.#h - 195);
     // 选择肢列：对话框上方
     for (let i = 0; i < this.#choiceViews.length; i++) {
-      this.#choiceViews[i]!.position.set(90, this.#h - 320 + i * 56);
+      this.#choiceViews[i]!.holder.position.set(90, this.#h - 320 + i * 56);
     }
+  }
+
+  /** 对话框玻璃面板绘制（分层：两段半透明 fill 近似纵向渐变玻璃底 + 1px 细描边 + 顶沿蔚蓝强调线） */
+  #drawDialogPanel(): void {
+    const x = 40;
+    const y = this.#h - 210;
+    const w = this.#w - 80;
+    const h = 180;
+    const r = 10;
+    const g = this.#dialogPanel;
+    g.clear();
+    // 玻璃底：上段浅底 + 下段深色叠加，近似深蓝黑纵向渐变（v8 真渐变成本高，叠加口径足够）
+    g.roundRect(x, y, w, h, r).fill({ color: NIGHT_AZURE.glassTop, alpha: 0.68 });
+    // 下半深色层：手工路径（底边圆角与面板同半径，顶边直切）
+    const y1 = y + h * 0.45;
+    g.moveTo(x, y1)
+      .lineTo(x + w, y1)
+      .lineTo(x + w, y + h - r)
+      .arc(x + w - r, y + h - r, r, 0, Math.PI / 2)
+      .lineTo(x + r, y + h)
+      .arc(x + r, y + h - r, r, Math.PI / 2, Math.PI)
+      .closePath()
+      .fill({ color: NIGHT_AZURE.glassBottom, alpha: 0.5 });
+    // 玻璃细描边
+    g.roundRect(x, y, w, h, r).stroke({ width: 1, color: NIGHT_AZURE.glassEdge, alpha: 0.25 });
+    // 顶沿蔚蓝强调线（内缩避免压住圆角与描边）
+    g.roundRect(x + 24, y + 1, w - 48, 2, 1).fill({ color: NIGHT_AZURE.accent, alpha: 0.8 });
+  }
+
+  /** 说话人名牌底板绘制：有说话人时显示圆角胶囊（深蓝底 + 蔚蓝细边），否则隐藏。
+   *  显隐同时受隐藏界面模式（H 键）与 NVL 模式约束。 */
+  #drawSpeakerPlate(): void {
+    const g = this.#speakerPlate;
+    g.clear();
+    const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
+    g.visible = show;
+    if (!show) return;
+    const x = 44;
+    const y = this.#h - 236;
+    const w = this.#speakerText.width + 56;
+    const h = this.#speakerText.height + 14;
+    g.roundRect(x, y, w, h, 8).fill({ color: NIGHT_AZURE.plate, alpha: 0.92 });
+    g.roundRect(x, y, w, h, 8).stroke({ width: 1, color: NIGHT_AZURE.accent, alpha: 0.7 });
   }
 
   /**
@@ -564,12 +636,14 @@ export class PixiStage implements AdvStage {
 
   showText(speaker: string | null, value: string): void {
     this.#speakerText.text = speaker ?? '';
+    this.#drawSpeakerPlate();
     this.#renderDialogText(value);
     // 有文本内容即显示对话框面板；清空时若不在等待推进状态则隐藏
     this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
     if (this.#interfaceHidden) {
       // 隐藏界面模式：投影内容照常更新，但可见性保持隐藏（H 键赏画不被新文本打断）
       this.#dialogPanel.visible = false;
+      this.#speakerPlate.visible = false;
       this.#speakerText.visible = false;
       this.#dialogText.visible = false;
       this.#dialogRubyLayer.visible = false;
@@ -598,14 +672,19 @@ export class PixiStage implements AdvStage {
     for (const seg of segs) {
       const base = new PText({
         text: seg.base,
-        style: { fontSize: 26, fill: 0xf5f5f5, lineHeight: 38 } satisfies TextStyleOptions,
+        style: {
+          fontSize: 26,
+          fill: NIGHT_AZURE.text,
+          lineHeight: 46,
+          dropShadow: { alpha: 0.35, blur: 6, distance: 2, color: 0x020409 },
+        } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
       this.#dialogRubyLayer.addChild(base);
       if (seg.ruby !== undefined) {
         const r = new PText({
           text: seg.ruby,
-          style: { fontSize: 13, fill: 0xf5f5f5 } satisfies TextStyleOptions,
+          style: { fontSize: 13, fill: NIGHT_AZURE.text } satisfies TextStyleOptions,
         });
         r.anchor.set(0.5, 1);
         r.position.set(x + base.width / 2, -2);
@@ -705,6 +784,7 @@ export class PixiStage implements AdvStage {
     this.#dialogText.visible = !hidden;
     this.#dialogRubyLayer.visible = !hidden;
     this.#continueIndicator.visible = !hidden;
+    this.#drawSpeakerPlate();
   }
 
   /** Backlog 滚动：delta 正数向下（看更旧内容方向为向上滚 → 负 delta），clamp 到内容范围 */
@@ -925,6 +1005,7 @@ export class PixiStage implements AdvStage {
       this.clearNvlText();
       this.#nvlLayer.visible = true;
       this.#dialogPanel.visible = false;
+      this.#speakerPlate.visible = false;
       this.#speakerText.visible = false;
       this.#dialogText.visible = false;
       this.#dialogRubyLayer.visible = false;
@@ -934,6 +1015,7 @@ export class PixiStage implements AdvStage {
       this.#speakerText.visible = true;
       this.#dialogText.visible = true;
       this.#dialogRubyLayer.visible = true;
+      this.#drawSpeakerPlate();
     }
   }
 
@@ -1836,50 +1918,58 @@ export class PixiStage implements AdvStage {
 
   showChoices(options: ChoiceOptionView[]): void {
     this.#clearChoices();
-    for (const opt of options) {
-      // Container 包裹（底板 + 文本）：Pixi v8 起 Text 不再允许挂子节点（弃用告警）
+    options.forEach((opt, i) => {
+      // Container 包裹（卡片底板 + 强调条 + 文本）：Pixi v8 起 Text 不再允许挂子节点（弃用告警）
       const holder = new Container();
-      const t = new PText({
-        text: `▸ ${opt.label}`,
-        style: { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions,
+      const label = new PText({
+        text: `${i + 1}. ${opt.label}`,
+        style: { fontSize: 26, fill: NIGHT_AZURE.text } satisfies TextStyleOptions,
       });
-      const bg = new Graphics()
-        .roundRect(-10, -4, t.width + 20, t.height + 8, 8)
-        .fill({ color: 0x000000, alpha: 0.45 });
-      holder.addChild(bg, t);
+      label.position.set(30, 10);
+      const bg = new Graphics();
+      const bar = new Graphics();
+      holder.addChild(bg, bar, label);
+      const view = { holder, bg, bar, label };
+      this.#choiceViews.push(view);
+      this.#drawChoiceCard(view, false);
       holder.eventMode = 'static';
       holder.cursor = 'pointer';
       holder.on('pointerdown', () => this.onSelect?.(opt.index));
-      // hover 高亮：底板提亮 + 文本变色（离开恢复）
-      holder.on('pointerover', () => {
-        bg.clear();
-        bg.roundRect(-10, -4, t.width + 20, t.height + 8, 8).fill({ color: 0xffe8c8, alpha: 0.28 });
-        t.style = { fontSize: 26, fill: 0xffe8c8 } satisfies TextStyleOptions;
-      });
+      // hover 高亮：卡片换选中样式（蔚蓝描边 + 强调条），离开恢复（键盘高亮优先保留）
+      holder.on('pointerover', () => this.#drawChoiceCard(view, true));
       holder.on('pointerout', () => {
-        bg.clear();
-        bg.roundRect(-10, -4, t.width + 20, t.height + 8, 8).fill({ color: 0x000000, alpha: 0.45 });
-        if (this.#choiceHighlight !== this.#choiceViews.indexOf(holder)) {
-          t.style = { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions;
-        }
+        this.#drawChoiceCard(view, this.#choiceHighlight === this.#choiceViews.indexOf(view));
       });
       this.#choiceLayer.addChild(holder);
-      this.#choiceViews.push(holder);
-    }
+    });
     this.#choiceHighlight = -1;
     this.#layout();
   }
 
-  /** 选择肢键盘导航高亮：提亮第 pos 项（其余恢复默认样式） */
+  /** 选择肢卡片绘制（默认/悬停/键盘高亮统一口径：玻璃卡片底 + 细描边，选中蔚蓝描边 + 左侧强调条）。
+   *  先定文字样式再测量宽高，避免加粗后宽度变化导致描边裁剪。 */
+  #drawChoiceCard(view: { holder: Container; bg: Graphics; bar: Graphics; label: PText }, selected: boolean): void {
+    view.label.style = selected
+      ? { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions
+      : { fontSize: 26, fill: NIGHT_AZURE.text } satisfies TextStyleOptions;
+    const w = view.label.width + 60;
+    const h = view.label.height + 20;
+    view.bg.clear();
+    view.bg.roundRect(0, 0, w, h, 10)
+      .fill({ color: NIGHT_AZURE.choiceBg, alpha: 0.66 })
+      .stroke({
+        width: selected ? 1.5 : 1,
+        color: selected ? NIGHT_AZURE.accent : NIGHT_AZURE.choiceEdge,
+        alpha: selected ? 0.95 : 0.8,
+      });
+    view.bar.clear();
+    if (selected) view.bar.roundRect(2, 6, 3.5, h - 12, 2).fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
+  }
+
+  /** 选择肢键盘导航高亮：提亮第 pos 项（其余恢复默认样式；卡片与文本同步重绘） */
   setChoiceHighlight(pos: number): void {
     this.#choiceHighlight = pos;
-    this.#choiceViews.forEach((holder, i) => {
-      const text = holder.children.find((c) => c instanceof PText) as PText | undefined;
-      if (!text) return;
-      text.style = i === pos
-        ? { fontSize: 26, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions
-        : { fontSize: 26, fill: 0xffffff } satisfies TextStyleOptions;
-    });
+    this.#choiceViews.forEach((view, i) => this.#drawChoiceCard(view, i === pos));
   }
 
   hideChoices(): void {
@@ -1891,9 +1981,9 @@ export class PixiStage implements AdvStage {
   }
 
   #clearChoices(): void {
-    for (const t of this.#choiceViews) {
-      this.#choiceLayer.removeChild(t);
-      t.destroy({ children: true }); // holder 内含底板 Graphics 与文本，一并销毁
+    for (const view of this.#choiceViews) {
+      this.#choiceLayer.removeChild(view.holder);
+      view.holder.destroy({ children: true }); // holder 内含底板/强调条 Graphics 与文本，一并销毁
     }
     this.#choiceViews = [];
   }
