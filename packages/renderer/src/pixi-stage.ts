@@ -244,6 +244,9 @@ export class PixiStage implements AdvStage {
   #choiceViews: { holder: Container; bg: Graphics; bar: Graphics; label: PText }[] = [];
   /** 选择肢键盘高亮序号（-1 = 无） */
   #choiceHighlight = -1;
+  /** 选择肢入场淡入状态（精致化批次三：卡片纵列渐显 + 逐卡错峰；由 updateEffects 驱动，不新建 ticker） */
+  #choiceFadeRemain = 0;
+  #choiceFadeDur = 280;
   /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
   #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
   /** Backlog 滚动状态 */
@@ -500,9 +503,13 @@ export class PixiStage implements AdvStage {
     this.#speakerText.position.set(82, this.#h - 220);
     this.#dialogText.position.set(70, this.#h - 140);
     this.#dialogRubyLayer.position.set(70, this.#h - 140);
-    // 选择肢列：对话框上方
+    // 选择肢：画面中央纵列（每卡按自身宽度水平居中，对标柚子社）
+    const step = 60;
+    const startY = this.#h * 0.42 - (this.#choiceViews.length - 1) * step / 2;
     for (let i = 0; i < this.#choiceViews.length; i++) {
-      this.#choiceViews[i]!.holder.position.set(90, this.#h - 320 + i * 56);
+      const v = this.#choiceViews[i]!;
+      const w = v.label.width + 60;
+      v.holder.position.set((this.#w - w) / 2, startY + i * step - (v.label.height + 20) / 2);
     }
   }
 
@@ -889,6 +896,15 @@ export class PixiStage implements AdvStage {
       this.#worldLayer.scale.set(scale);
       const off = this.#zoomBaseOffset();
       this.#worldLayer.position.set(off.x, off.y);
+    }
+    // 选择肢入场淡入（逐卡错峰：第 i 张在第 i*80ms 开始，各自 #choiceFadeDur 内渐显）
+    if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
+      this.#choiceFadeRemain = Math.max(0, this.#choiceFadeRemain - deltaMs);
+      const total = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
+      const elapsed = total - this.#choiceFadeRemain;
+      this.#choiceViews.forEach((v, i) => {
+        v.holder.alpha = Math.max(0, Math.min(1, (elapsed - i * 80) / this.#choiceFadeDur));
+      });
     }
     this.#updateTransient(deltaMs);
   }
@@ -1991,6 +2007,11 @@ export class PixiStage implements AdvStage {
     });
     this.#choiceHighlight = -1;
     this.#layout();
+    // 入场淡入：整体渐显 + 逐卡错峰（updateEffects 驱动；无卡片时不启动）
+    if (this.#choiceViews.length > 0) {
+      this.#choiceFadeRemain = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
+      for (const v of this.#choiceViews) v.holder.alpha = 0;
+    }
   }
 
   /** 选择肢卡片绘制（默认/悬停/键盘高亮统一口径：玻璃卡片底 + 细描边，选中蔚蓝描边 + 左侧强调条）。
