@@ -126,7 +126,7 @@ export function renderCalendarMap(
   marker.setAttribute('orient', 'auto-start-reverse');
   const arrowPath = el('path');
   arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-  arrowPath.setAttribute('fill', '#7d8fbb');
+  arrowPath.setAttribute('fill', '#f0b45c'); // 暖金箭头（UI 翻新第一阶段配色）
   marker.appendChild(arrowPath);
   defs.appendChild(marker);
   svg.appendChild(defs);
@@ -170,7 +170,7 @@ export function renderCalendarMap(
       line.setAttribute('y1', String(pts.y1));
       line.setAttribute('x2', String(pts.x2));
       line.setAttribute('y2', String(pts.y2));
-      line.setAttribute('stroke', '#4a5878');
+      line.setAttribute('stroke', '#8a7a66'); // 暖灰连线（UI 翻新第一阶段配色）
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '6 4');
       line.setAttribute('marker-end', 'url(#map-arrow)');
@@ -237,9 +237,9 @@ export function renderCalendarMap(
     rect.setAttribute('width', String(w));
     rect.setAttribute('height', String(NODE_H));
     rect.setAttribute('rx', '8');
-    rect.setAttribute('fill', isBase ? '#2c2416' : '#1c2438');
+    rect.setAttribute('fill', isBase ? '#2c2416' : '#262019');
     // 重叠节点红框提示（拖拽错开后自动消失）
-    rect.setAttribute('stroke', overlapped.has(id) ? '#c86a6a' : (isBase ? '#c8a86a' : '#3d4a6b'));
+    rect.setAttribute('stroke', overlapped.has(id) ? '#c86a6a' : (isBase ? '#c8a86a' : '#55463a'));
     rect.setAttribute('stroke-width', '2');
     g.appendChild(rect);
 
@@ -254,7 +254,7 @@ export function renderCalendarMap(
     const sub = el('text');
     sub.setAttribute('text-anchor', 'middle');
     sub.setAttribute('y', '14');
-    sub.setAttribute('fill', '#8b93a7');
+    sub.setAttribute('fill', '#a2937f');
     sub.setAttribute('font-size', '10');
     sub.textContent = `${id}${isBase ? '（据点）' : ''} · (${Math.round(x)}, ${Math.round(y)})`;
     g.appendChild(sub);
