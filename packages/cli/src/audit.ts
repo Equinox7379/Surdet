@@ -18,24 +18,19 @@ import {
   EventBus,
   VariableStore,
   SourceError,
+  levenshtein,
+  auditSpeakers,
+  auditTerminology,
+  parseTerminology,
 } from '@surdet/core';
-import type { CompiledScene, CoreEventMap, ChoiceEventPayload, VarDeclaration } from '@surdet/core';
+import type { CompiledScene, CoreEventMap, ChoiceEventPayload, VarDeclaration, AuditFinding, TerminologyTerm } from '@surdet/core';
 import type { VarType, VarValue } from '@surdet/core';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 import { lintProject } from './lint.js';
 
-export interface AuditFinding {
-  severity: 'error' | 'warning' | 'info';
-  code: string;
-  text: string;
-  file: string;
-  line: number;
-}
-
-export interface TerminologyTerm {
-  canonical: string;
-  variants: string[];
-}
+// 术语审计纯逻辑已下沉 core（编辑器术语面板共用同一实现）；此处重导出保持既有导入路径兼容
+export { levenshtein, auditSpeakers, auditTerminology, parseTerminology };
+export type { AuditFinding, TerminologyTerm };
 
 export interface SceneStat {
   id: string;
@@ -49,91 +44,6 @@ export interface AuditResult {
   findings: AuditFinding[];
   stats: SceneStat[];
   totals: { scenes: number; textLines: number; chars: number; choices: number; readingMin: number };
-}
-
-/** 编辑距离（称谓笔误检测用；说话人长度小，O(n*m) 足够） */
-export function levenshtein(a: string, b: string): number {
-  const dp: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = dp[0]!;
-    dp[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const tmp = dp[j]!;
-      dp[j] = Math.min(dp[j]! + 1, dp[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
-      prev = tmp;
-    }
-  }
-  return dp[b.length]!;
-}
-
-/** 称谓一致性：疑似笔误（距离 1）告警；前缀包含（如 凛/凛大人）提示确认 */
-export function auditSpeakers(speakerCounts: Map<string, number>, fileOf: (speaker: string) => { file: string; line: number }): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  const names = [...speakerCounts.keys()];
-  for (let i = 0; i < names.length; i++) {
-    for (let j = i + 1; j < names.length; j++) {
-      const a = names[i]!;
-      const b = names[j]!;
-      const pos = fileOf(a);
-      if (levenshtein(a, b) === 1) {
-        findings.push({
-          severity: 'warning',
-          code: 'CONSIST_TYPO',
-          text: `说话人 '${a}' 与 '${b}' 仅一字符之差（${speakerCounts.get(a)} 处 / ${speakerCounts.get(b)} 处），疑似笔误导致同一角色被拆成两人`,
-          file: pos.file,
-          line: pos.line,
-        });
-      } else if (a.length >= 1 && b.startsWith(a) && b.length - a.length <= 3) {
-        findings.push({
-          severity: 'info',
-          code: 'CONSIST_HONORIFIC',
-          text: `说话人 '${a}' 与 '${b}' 是称谓变体关系，引擎视为两个不同角色（若为同一人不同称呼请确认是演出意图）`,
-          file: pos.file,
-          line: pos.line,
-        });
-      } else if (b.length >= 1 && a.startsWith(b) && a.length - b.length <= 3) {
-        findings.push({
-          severity: 'info',
-          code: 'CONSIST_HONORIFIC',
-          text: `说话人 '${b}' 与 '${a}' 是称谓变体关系，引擎视为两个不同角色（若为同一人不同称呼请确认是演出意图）`,
-          file: pos.file,
-          line: pos.line,
-        });
-      }
-    }
-  }
-  return findings;
-}
-
-/** 设定名词表扫描：文本/说话人/选项文本中出现变体 → 建议规范词 */
-export function auditTerminology(compiled: Map<string, CompiledScene>, terms: TerminologyTerm[]): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  for (const term of terms) {
-    for (const variant of term.variants) {
-      if (variant.length === 0) continue;
-      for (const scene of compiled.values()) {
-        for (const instr of scene.instructions) {
-          const spots: { text: string; file: string; line: number }[] = [];
-          if (instr.op === 'text') spots.push({ text: `${instr.speaker ?? ''} ${instr.value}`, file: instr.file, line: instr.line });
-          if (instr.op === 'choice') {
-            for (const opt of instr.options) spots.push({ text: opt.label, file: opt.pos.file, line: opt.pos.line });
-          }
-          for (const spot of spots) {
-            if (spot.text.includes(variant)) {
-              findings.push({
-                severity: 'warning',
-                code: 'TERM_VARIANT',
-                text: `${spot.file}:${spot.line}: 使用了名词变体 '${variant}'，设定规范词为 '${term.canonical}'`,
-                file: spot.file,
-                line: spot.line,
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-  return findings;
 }
 
 /** 分支与出口分析：空心分支（goto 目标块文本少于 2 行）与无出口场景。
@@ -339,24 +249,17 @@ export function declsFromConfig(raw: Record<string, unknown>): VarDeclaration[] 
 
 /* ============================ CLI 命令 ============================ */
 
-/** 读取 content/config/terminology.json（可选文件；形状非法给提示不阻断） */
+/** 读取 content/config/terminology.json（可选文件；形状非法给提示不阻断；解析逻辑在 core parseTerminology） */
 function loadTerminology(root: string, warn: (msg: string) => void): TerminologyTerm[] {
   const file = path.join(root, 'content/config/terminology.json');
   if (!fs.existsSync(file)) return [];
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as { terms?: unknown };
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
     if (!Array.isArray(raw.terms)) {
       warn(`${file}: 'terms' 必须是数组（{ canonical, variants[] } 列表），已跳过名词表检查`);
       return [];
     }
-    const terms: TerminologyTerm[] = [];
-    for (const t of raw.terms) {
-      if (typeof t !== 'object' || t === null) continue;
-      const tt = t as Record<string, unknown>;
-      if (typeof tt['canonical'] !== 'string' || !Array.isArray(tt['variants'])) continue;
-      terms.push({ canonical: tt['canonical'], variants: tt['variants'].filter((v): v is string => typeof v === 'string') });
-    }
-    return terms;
+    return parseTerminology(raw);
   } catch (err) {
     warn(`${file}: 解析失败（${err instanceof Error ? err.message : String(err)}），已跳过名词表检查`);
     return [];
