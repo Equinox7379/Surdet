@@ -12,7 +12,7 @@
  * 预览侧显示"宿主指令占位"横幅并继续（与设计一致：预览不实例化全家桶宿主）。
  */
 import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
-import type { CoreEventMap } from '@surdet/core';
+import type { CoreEventMap, VarDeclaration } from '@surdet/core';
 import { AdvRenderer, Backlog, PixiStage, Typewriter } from '@surdet/renderer';
 
 interface SceneSrc { id: string; text: string }
@@ -20,6 +20,8 @@ interface SceneSrc { id: string; text: string }
 interface LoadPayload {
   sceneId: string;
   scenes: SceneSrc[];
+  /** game.config.json 变量声明（父窗口提取后下发；缺省按空表） */
+  variables?: Record<string, unknown>[];
   startLabel?: string;
   fast?: boolean;
 }
@@ -49,6 +51,15 @@ function clearError(): void {
   document.getElementById('preview-error')?.remove();
 }
 
+/** 解释器推进守卫：运行时错误（变量未定义等）可见化，不静默卡死 */
+function guardRun(fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    showError(`预览运行时错误：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function boot(): Promise<void> {
   stage = new PixiStage();
   await stage.init();
@@ -58,11 +69,25 @@ async function boot(): Promise<void> {
   renderer = new AdvRenderer(stage, undefined, {
     typewriter: new Typewriter({ charsPerSecond: FAST_CPS }),
     backlog: new Backlog(),
-    onAdvance: () => interp?.advance(),
-    onSelect: (i) => interp?.choose(i),
-    onWaitEnd: () => interp?.finishWait(),
+    onAdvance: () => guardRun(() => interp?.advance()),
+    onSelect: (i) => guardRun(() => interp?.choose(i)),
+    onWaitEnd: () => guardRun(() => interp?.finishWait()),
   });
   renderer.subscribe(bus);
+  // 帧驱动 + 输入接线（宿主模板标准两行；此前遗漏导致打字机永不推进、点击无响应）
+  stage.app!.ticker.add((ticker) => renderer?.update(ticker.deltaMS));
+  stage.app!.canvas.addEventListener('pointerdown', () => {
+    const s = interp?.status;
+    if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer?.advance();
+  });
+  // 键盘推进（Space/Enter，对齐 starter 键位习惯）
+  window.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      const s = interp?.status;
+      if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer?.advance();
+    }
+  });
   // 宿主指令占位：预览无宿主，解释器穿透 system 事件；横幅提示后继续
   bus.on('system', (p) => {
     stage?.showBanner?.(`[宿主指令占位] @${p.type}（预览模式穿透）`, 'tip');
@@ -86,7 +111,8 @@ function load(p: LoadPayload): void {
     if (!registry.has(p.sceneId)) {
       throw new Error(`入口场景 '${p.sceneId}' 不在预览场景集中`);
     }
-    interp = new Interpreter(new VariableStore([]), bus, registry);
+    // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
+    interp = new Interpreter(new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]), bus, registry);
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(p.sceneId, p.startLabel);
   } catch (err) {
@@ -100,5 +126,12 @@ window.addEventListener('message', (e: MessageEvent) => {
   if (d.type === 'surdet-preview-load' && d.payload) load(d.payload);
   if (d.type === 'surdet-preview-fast') renderer?.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
 });
+
+// 调试探针（对齐 starter surdetDebug / 编辑器 surdetEditorDebug 惯例）：验收/自动化直接观察预览运行态
+(window as unknown as Record<string, unknown>).surdetPreviewDebug = {
+  get interp(): Interpreter | null { return interp; },
+  get renderer(): AdvRenderer | null { return renderer; },
+  get stage(): PixiStage | null { return stage; },
+};
 
 void boot();
