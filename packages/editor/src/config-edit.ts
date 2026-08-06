@@ -279,16 +279,29 @@ function origList(raw: unknown, field: string): unknown[] {
   return Array.isArray(obj[field]) ? obj[field] : [];
 }
 
-/** 行数组 → 列表条目：合并原条目（保留未编辑字段）+ 写回已知列（数字自动还原；jsonKeys 列按 JSON 解析） */
+/** 行数组 → 列表条目：按主键（id/characterId）匹配原条目合并（保留未编辑字段），
+ *  避免删行/中间插行时按索引合并导致未知字段错位（M4 批次审阅轮 Major 1 修复）；
+ *  新增行（主键无匹配）或主键被改名时从空条目起步 */
 function applyRowsToList(
-  origArr: unknown[], rows: RowMap[], knownKeys: string[], jsonKeys: string[], errors: string[], listLabel: string,
+  origArr: unknown[], rows: RowMap[], knownKeys: string[], jsonKeys: string[], errors: string[], listLabel: string, primaryKey: string,
 ): Record<string, unknown>[] {
+  const claimed = new Set<unknown>(); // 一个原条目最多被一行认领（重复主键时后续行从空起步）
+  const findOrig = (row: RowMap): Record<string, unknown> | null => {
+    const key = String(row[primaryKey] ?? '').trim();
+    if (key.length === 0) return null;
+    for (const candidate of origArr) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || claimed.has(candidate)) continue;
+      if (String((candidate as Record<string, unknown>)[primaryKey] ?? '').trim() === key) {
+        claimed.add(candidate);
+        return { ...(candidate as Record<string, unknown>) };
+      }
+    }
+    return null;
+  };
   const out: Record<string, unknown>[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
-    const origEntry = origArr[i];
-    const entry: Record<string, unknown> = (origEntry && typeof origEntry === 'object' && !Array.isArray(origEntry))
-      ? { ...(origEntry as Record<string, unknown>) } : {};
+    const entry: Record<string, unknown> = findOrig(row) ?? {};
     for (const key of knownKeys) {
       const cell = row[key];
       if (cell === undefined) continue;
@@ -367,8 +380,8 @@ export function rowsToCalendar(raw: unknown, rows: CalendarRows): { json: Record
     if (!Number.isFinite(n)) errors.push(`日历 ${k} 不是数字：${t}`);
     else json[k] = n;
   }
-  json.nodes = applyRowsToList(origList(raw, 'nodes'), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点');
-  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令');
+  json.nodes = applyRowsToList(origList(raw, 'nodes'), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id');
+  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id');
   checkUniqueId(rows.nodes, 'id', '地图节点', errors);
   checkUniqueId(rows.baseCommands, 'id', '据点指令', errors);
   for (const r of rows.nodes) checkExprCell(r.when, `地图节点 ${String(r.id ?? '')} 的 when`, errors);
@@ -399,9 +412,9 @@ export function rowsToEvents(raw: unknown, rows: EventsRows): { json: Record<str
   const errors: string[] = [];
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const json: Record<string, unknown> = { ...obj };
-  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, EVENT_PROFILE_KEYS, ['tiers'], errors, '好感 profile');
-  json.events = applyRowsToList(origList(raw, 'events'), rows.events, EVENT_KEYS, ['effects'], errors, '事件');
-  json.scheduled = applyRowsToList(origList(raw, 'scheduled'), rows.scheduled, EVENT_KEYS, ['effects'], errors, '日程事件');
+  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, EVENT_PROFILE_KEYS, ['tiers'], errors, '好感 profile', 'characterId');
+  json.events = applyRowsToList(origList(raw, 'events'), rows.events, EVENT_KEYS, ['effects'], errors, '事件', 'id');
+  json.scheduled = applyRowsToList(origList(raw, 'scheduled'), rows.scheduled, EVENT_KEYS, ['effects'], errors, '日程事件', 'id');
   checkUniqueId(rows.events, 'id', '事件', errors);
   checkUniqueId(rows.scheduled, 'id', '日程事件', errors);
   for (const r of [...rows.events, ...rows.scheduled]) checkExprCell(r.when, `事件 ${String(r.id ?? '')} 的 when`, errors);
@@ -440,7 +453,7 @@ export function rowsToGrowth(raw: unknown, rows: GrowthRows): { json: Record<str
     else curve[k] = n;
   }
   json.curve = curve;
-  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, GROWTH_PROFILE_KEYS, ['statGrowth', 'levelEvents'], errors, '成长 profile');
+  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, GROWTH_PROFILE_KEYS, ['statGrowth', 'levelEvents'], errors, '成长 profile', 'characterId');
   for (const p of json.profiles as Record<string, unknown>[]) {
     if (typeof p.initialLevel === 'number' && typeof p.maxLevel === 'number' && p.initialLevel > p.maxLevel) {
       errors.push(`成长 profile ${String(p.characterId ?? '')} initialLevel(${p.initialLevel}) > maxLevel(${p.maxLevel})`);
@@ -478,9 +491,9 @@ export function rowsToGallery(raw: unknown, rows: GalleryRows): { json: Record<s
   const errors: string[] = [];
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const json: Record<string, unknown> = { ...obj };
-  json.cgs = applyRowsToList(origList(raw, 'cgs'), rows.cgs, GALLERY_CG_KEYS, [], errors, 'CG');
-  json.music = applyRowsToList(origList(raw, 'music'), rows.music, GALLERY_CG_KEYS, [], errors, '鉴赏音乐');
-  json.texts = applyRowsToList(origList(raw, 'texts'), rows.texts, GALLERY_TEXT_KEYS, [], errors, '回想');
+  json.cgs = applyRowsToList(origList(raw, 'cgs'), rows.cgs, GALLERY_CG_KEYS, [], errors, 'CG', 'id');
+  json.music = applyRowsToList(origList(raw, 'music'), rows.music, GALLERY_CG_KEYS, [], errors, '鉴赏音乐', 'id');
+  json.texts = applyRowsToList(origList(raw, 'texts'), rows.texts, GALLERY_TEXT_KEYS, [], errors, '回想', 'id');
   checkUniqueId(rows.cgs, 'id', 'CG', errors);
   checkUniqueId(rows.music, 'id', '鉴赏音乐', errors);
   checkUniqueId(rows.texts, 'id', '回想', errors);

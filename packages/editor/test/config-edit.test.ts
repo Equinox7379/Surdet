@@ -188,6 +188,33 @@ describe('calendar ⇄ JSON', () => {
     expect(errors.some((e) => e.includes('JSON'))).toBe(true);
     expect(errors.some((e) => e.includes('maxAp') && e.includes('数字'))).toBe(true);
   });
+
+  it('删行/中间插行时未知字段不错位（按主键合并，审阅轮 Major 1 回归）', () => {
+    // 删行方向：删第一行，存活条目不得继承已删条目的 custom
+    const delRows = parseCalendarRows(calendarRaw);
+    delRows.nodes.splice(0, 1);
+    const delJson = rowsToCalendar(calendarRaw, delRows);
+    expect(delJson.errors).toEqual([]);
+    const delNodes = delJson.json.nodes as Record<string, unknown>[];
+    expect(delNodes).toHaveLength(1);
+    expect(delNodes[0]!.id).toBe('map_02');
+    expect(delNodes[0]!.custom).toBeUndefined(); // keep-me 属于 map_01，不得泄漏
+    // 中间插入方向：新行不得拿走他行 custom，原行各自保留
+    const insRaw = {
+      nodes: [
+        { id: 'a', name: 'A', custom: 'A私有' },
+        { id: 'b', name: 'B', custom: 'B私有' },
+      ],
+    };
+    const insRows = parseCalendarRows(insRaw);
+    insRows.nodes.splice(1, 0, { id: 'new', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' });
+    const insJson = rowsToCalendar(insRaw, insRows);
+    const insNodes = insJson.json.nodes as Record<string, unknown>[];
+    expect(insNodes.map((n) => n.id)).toEqual(['a', 'new', 'b']);
+    expect(insNodes[0]!.custom).toBe('A私有');
+    expect(insNodes[1]!.custom).toBeUndefined();
+    expect(insNodes[2]!.custom).toBe('B私有');
+  });
 });
 
 const eventsRaw = {
