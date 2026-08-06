@@ -294,8 +294,8 @@ const NS = 'http://www.w3.org/2000/svg';
 const view = { k: 1, tx: 30, ty: 30 };
 
 const EDGE_COLORS: Record<FlowEdge['kind'], string> = {
-  flow: '#39415a', goto: '#6a7ba8', jump: '#5a8fd0', call: '#7a6aa8',
-  switch: '#c8a05a', loop: '#d08a4a', choice: '#4aa890', if: '#a06a8a', host: '#d0b060',
+  flow: '#8fa3ba', goto: '#6a7ba8', jump: '#5a8fd0', call: '#7a6aa8',
+  switch: '#0f8ff3', loop: '#00a6c8', choice: '#4aa890', if: '#a06a8a', host: '#e8483c',
 };
 
 function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] {
@@ -370,14 +370,14 @@ function drawEdgeLabels(world: SVGElement, labels: EdgeLabelDraw[]): void {
     bg.setAttribute('width', String(labelW));
     bg.setAttribute('height', '14');
     bg.setAttribute('rx', '4');
-    bg.setAttribute('fill', '#0d1117');
-    bg.setAttribute('opacity', '0.85');
+    bg.setAttribute('fill', '#ffffff');
+    bg.setAttribute('opacity', '0.9');
     const mid = el('text');
     mid.setAttribute('x', String(L.lx));
     mid.setAttribute('y', String(L.ly + 3));
     mid.setAttribute('text-anchor', 'middle');
     mid.setAttribute('font-size', '10');
-    mid.setAttribute('fill', '#e8d9b0');
+    mid.setAttribute('fill', '#44566c');
     mid.textContent = L.text;
     const title = el('title');
     title.textContent = L.full;
@@ -456,15 +456,15 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   // 点击 label 跳转后块编辑已滚动定位到该行，焦点在那里可见
   const isCurrent = state.current !== null && node.kind === 'scene' && state.scenes.get(state.current)?.id === node.sceneId;
   const issue = stats.get(node.sceneId);
-  rect.setAttribute('fill', node.kind === 'host-entry' ? '#241f12' : node.kind === 'scene' ? '#1c2438' : '#161d2e');
+  rect.setAttribute('fill', node.kind === 'host-entry' ? '#f0f6ff' : node.kind === 'scene' ? '#ffffff' : '#f5f8fc');
   if (node.kind === 'host-entry') {
-    rect.setAttribute('stroke', '#d0b060');
+    rect.setAttribute('stroke', '#0f8ff3');
     rect.setAttribute('stroke-dasharray', '5 3');
   } else if (issue && issue.errors > 0) {
-    rect.setAttribute('stroke', '#e06060');
+    rect.setAttribute('stroke', '#e5484d');
     rect.setAttribute('stroke-width', '2');
   } else {
-    rect.setAttribute('stroke', isCurrent ? '#ffe8c8' : '#2a3248');
+    rect.setAttribute('stroke', isCurrent ? '#e8483c' : '#c3cfdd'); // 当前场景：跑者红描边（ME 式聚焦）
     if (isCurrent) rect.setAttribute('stroke-width', '2');
   }
   const text = el('text');
@@ -472,7 +472,7 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   text.setAttribute('y', String(box.y + box.h / 2 + 4));
   text.setAttribute('text-anchor', 'middle');
   text.setAttribute('font-size', '11');
-  text.setAttribute('fill', isCurrent ? '#ffe8c8' : node.kind === 'host-entry' ? '#d0b060' : '#dfe4f0');
+  text.setAttribute('fill', isCurrent ? '#d5382c' : node.kind === 'host-entry' ? '#0a6fd0' : '#1f2d3d');
   const label = nodeText(node);
   text.textContent = label.length > 26 ? label.slice(0, 25) + '…' : label;
   const title = el('title');
@@ -487,7 +487,7 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
     badge.setAttribute('cx', String(box.x + box.w - 4));
     badge.setAttribute('cy', String(box.y + 4));
     badge.setAttribute('r', '4');
-    badge.setAttribute('fill', '#e0c050');
+    badge.setAttribute('fill', '#f0a53c');
     g.appendChild(badge);
   }
 
@@ -526,7 +526,7 @@ export function renderFlow(container: HTMLElement): void {
   svg.setAttribute('width', String(cw));
   svg.setAttribute('height', String(ch));
   svg.style.display = 'block';
-  svg.style.background = '#0d1117';
+  svg.style.background = '#eef3fa';
   const world = el('g');
   world.setAttribute('transform', `translate(${view.tx} ${view.ty}) scale(${view.k})`);
   svg.appendChild(world);
@@ -568,7 +568,7 @@ export function renderFlow(container: HTMLElement): void {
   let nodeDrag: { fromId: string; startX: number; startY: number; dragging: boolean } | null = null;
   const linkLine = el('path');
   linkLine.setAttribute('fill', 'none');
-  linkLine.setAttribute('stroke', '#ffe8c8');
+  linkLine.setAttribute('stroke', '#e8483c');
   linkLine.setAttribute('stroke-width', '1.5');
   linkLine.setAttribute('stroke-dasharray', '4 3');
   linkLine.style.display = 'none';
