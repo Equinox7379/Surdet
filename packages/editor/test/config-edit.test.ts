@@ -12,6 +12,7 @@ import {
   parseEventsRows, rowsToEvents,
   parseGrowthRows, rowsToGrowth,
   parseGalleryRows, rowsToGallery,
+  parseTerminologyRows, rowsToTerminology,
 } from '../src/config-edit.js';
 
 describe('变量表 ⇄ JSON', () => {
@@ -302,5 +303,40 @@ describe('gallery ⇄ JSON', () => {
     const { json, errors } = rowsToGallery(null, rows);
     expect(errors).toEqual([]);
     expect(json.cgs).toEqual([]);
+  });
+});
+
+describe('terminology ⇄ JSON', () => {
+  const termRaw = {
+    terms: [
+      { canonical: '星辉剑', variants: ['星辉之剑', '星剑'] },
+      { canonical: '凛', variants: ['凛小姐'] },
+    ],
+  };
+
+  it('往返一致（variants JSON 列还原）', () => {
+    const rows = parseTerminologyRows(termRaw);
+    expect(rows.terms).toHaveLength(2);
+    expect(rows.terms[0]!.variants).toBe('["星辉之剑","星剑"]');
+    const { json, errors } = rowsToTerminology(termRaw, rows);
+    expect(errors).toEqual([]);
+    expect(json.terms).toEqual(termRaw.terms);
+  });
+
+  it('拦截：规范词重复 / 坏 variants JSON', () => {
+    const rows = parseTerminologyRows(termRaw);
+    rows.terms.push({ canonical: '星辉剑', variants: '[]' });
+    rows.terms[1]!.variants = '{bad';
+    const { errors } = rowsToTerminology(termRaw, rows);
+    expect(errors.some((e) => e.includes("'星辉剑' 重复"))).toBe(true);
+    expect(errors.some((e) => e.includes('JSON'))).toBe(true);
+  });
+
+  it('空配置容错：null 输入可保存为空 terms 文件', () => {
+    const rows = parseTerminologyRows(null);
+    expect(rows.terms).toEqual([]);
+    const { json, errors } = rowsToTerminology(null, rows);
+    expect(errors).toEqual([]);
+    expect(json.terms).toEqual([]);
   });
 });
