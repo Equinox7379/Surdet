@@ -1596,59 +1596,65 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 标题画面 / 系统菜单 / 存读档 / 大地图 ============================ */
 
-  /** 展示标题画面：大字距标题（冷白）+ 蔚蓝强调线 + 菜单纵列（悬停高亮条/位移）；enabled=false 灰显不可点 */
+  /** 展示标题画面（精致化批次四，商业 gal 标题页口径）：大字距 logo 感标题 + 细强调线 +
+   *  弱化菜单（悬停下方细线滑入）+ 轻径向暗角；enabled=false 灰显不可点 */
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
     this.#titleHandler = onSelect;
     const layer = this.#titleLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x060a14, alpha: 0.97 }));
+    // 轻径向暗角：多层同心椭圆叠 alpha 近似（氛围聚焦，不引 canvas 纹理）
+    const vg = new Graphics();
+    for (let i = 1; i <= 5; i++) {
+      vg.ellipse(this.#w / 2, this.#h / 2, this.#w * (0.42 + i * 0.16), this.#h * (0.4 + i * 0.17))
+        .stroke({ width: 60, color: 0x020409, alpha: 0.05 * i });
+    }
+    layer.addChild(vg);
     const title = new PText({
       text: view.title,
-      style: { fontSize: 60, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 8 } satisfies TextStyleOptions,
+      style: { fontSize: 64, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 14 } satisfies TextStyleOptions,
     });
     title.anchor.set(0.5);
     title.position.set(this.#w / 2, this.#h * 0.28);
     layer.addChild(title);
-    // 标题下蔚蓝强调线
+    // 标题下细强调线：更长更细更淡（精致化）
     layer.addChild(new Graphics()
-      .roundRect(this.#w / 2 - 150, this.#h * 0.28 + 44, 300, 2, 1)
-      .fill({ color: NIGHT_AZURE.accent, alpha: 0.85 }));
+      .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 52, 420, 1, 0.5)
+      .fill({ color: NIGHT_AZURE.accent, alpha: 0.55 }));
     if (view.subtitle) {
-      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a9ab5 } satisfies TextStyleOptions });
+      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a9ab5, letterSpacing: 4 } satisfies TextStyleOptions });
       sub.anchor.set(0.5);
-      sub.position.set(this.#w / 2, this.#h * 0.28 + 72);
+      sub.position.set(this.#w / 2, this.#h * 0.28 + 84);
       layer.addChild(sub);
     }
-    const startY = this.#h * 0.5;
+    const startY = this.#h * 0.52;
     view.items.forEach((item, i) => {
       const enabled = item.enabled !== false;
       const baseX = this.#w / 2;
-      const baseY = startY + i * 56;
+      const baseY = startY + i * 52;
       const t = new PText({
         text: item.label,
-        style: { fontSize: 26, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 4 } satisfies TextStyleOptions,
+        style: { fontSize: 22, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 6 } satisfies TextStyleOptions,
       });
       t.anchor.set(0.5);
       t.position.set(baseX, baseY);
       if (enabled) {
-        // 悬停：左侧高亮条滑入 + 文字提亮微右移（文字 anchor 居中，竖条按 baseY 垂直居中，勿用 + 偏移）
-        const bar = new Graphics()
-          .roundRect(baseX - 170, baseY - 13, 4, 26, 2)
-          .fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
-        bar.visible = false;
-        layer.addChild(bar);
+        // 悬停：文字下方细线滑入（含蓄，替代旧竖条+右移）
+        const line = new Graphics()
+          .roundRect(baseX - 70, baseY + 20, 140, 1, 0.5)
+          .fill({ color: NIGHT_AZURE.accent, alpha: 0.9 });
+        line.visible = false;
+        layer.addChild(line);
         t.eventMode = 'static';
         t.cursor = 'pointer';
         t.on('pointerdown', () => this.#titleHandler?.(item.id));
         t.on('pointerover', () => {
-          bar.visible = true;
-          t.x = baseX + 10;
-          t.style = { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold', letterSpacing: 4 } satisfies TextStyleOptions;
+          line.visible = true;
+          t.style = { fontSize: 22, fill: NIGHT_AZURE.plateText, letterSpacing: 6 } satisfies TextStyleOptions;
         });
         t.on('pointerout', () => {
-          bar.visible = false;
-          t.x = baseX;
-          t.style = { fontSize: 26, fill: NIGHT_AZURE.text, letterSpacing: 4 } satisfies TextStyleOptions;
+          line.visible = false;
+          t.style = { fontSize: 22, fill: NIGHT_AZURE.text, letterSpacing: 6 } satisfies TextStyleOptions;
         });
       }
       layer.addChild(t);
