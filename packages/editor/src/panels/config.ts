@@ -19,6 +19,7 @@ import type {
   VariableRow, AchievementRow, RowMap,
   CalendarRows, EventsRows, GrowthRows, GalleryRows,
 } from '../config-edit.js';
+import { renderCalendarMap } from './calendar-map.js';
 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
 let requestValidateHook: () => void = () => {};
@@ -410,6 +411,12 @@ function renderCalendarSection(): HTMLElement {
     ['onTurnStartEventId', '回合开始事件 ID'],
     ['onTurnEndEventId', '回合结束事件 ID'],
   ], cal.scalars));
+
+  // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格）
+  sec.appendChild(h('h4', undefined, '地图可视化（拖拽节点调整坐标）'));
+  const mapWrap = h('div', 'calendar-map-wrap');
+  sec.appendChild(mapWrap);
+  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig);
 
   sec.appendChild(h('h4', undefined, '地图节点（nodes）'));
   sec.appendChild(renderObjectTable([
