@@ -42,8 +42,10 @@ export function auditSpeakers(speakerCounts: Map<string, number>, fileOf: (speak
     for (let j = i + 1; j < names.length; j++) {
       const a = names[i]!;
       const b = names[j]!;
-      const pos = fileOf(a);
       if (levenshtein(a, b) === 1) {
+        // 定位到出现次数更少的一方（疑似笔误的变体），而非先出现者（验收反馈：点击跳到常规名首句而非错字句）
+        const suspect = (speakerCounts.get(b) ?? 0) < (speakerCounts.get(a) ?? 0) ? b : a;
+        const pos = fileOf(suspect);
         findings.push({
           severity: 'warning',
           code: 'CONSIST_TYPO',
@@ -52,6 +54,7 @@ export function auditSpeakers(speakerCounts: Map<string, number>, fileOf: (speak
           line: pos.line,
         });
       } else if (a.length >= 1 && b.startsWith(a) && b.length - a.length <= 3) {
+        const pos = fileOf(a);
         findings.push({
           severity: 'info',
           code: 'CONSIST_HONORIFIC',
@@ -60,6 +63,7 @@ export function auditSpeakers(speakerCounts: Map<string, number>, fileOf: (speak
           line: pos.line,
         });
       } else if (b.length >= 1 && a.startsWith(b) && a.length - b.length <= 3) {
+        const pos = fileOf(b);
         findings.push({
           severity: 'info',
           code: 'CONSIST_HONORIFIC',
