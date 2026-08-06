@@ -18,7 +18,7 @@ import { renderEditor } from './panels/editor.js';
 import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { renderRightExtras } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
-import { renderConfig, bindConfigHooks } from './panels/config.js';
+import { renderConfig, bindConfigHooks, configUndo, configRedo, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
@@ -62,6 +62,8 @@ bindSearchHooks({
 bindAuditHooks({
   // 审计条目点击 → 跳转定位（与搜索/流程图导航同一入口）
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  // 称谓问题一键加变体 → 路由到配置页的 terminology 写盘入口（保持面板无环依赖）
+  onAddVariant: (canonical, variant) => { void addTerminologyVariant(canonical, variant); },
 });
 
 /* ============================ 布局渲染 ============================ */
@@ -89,9 +91,9 @@ function renderAll(): void {
     header.appendChild(expBtn);
   }
   const undoBtn = h('button', undefined, '↩ 撤销 (Ctrl+Z)');
-  undoBtn.onclick = undo;
+  undoBtn.onclick = doUndo;
   const redoBtn = h('button', undefined, '↪ 重做 (Ctrl+Y)');
-  redoBtn.onclick = redo;
+  redoBtn.onclick = doRedo;
   header.appendChild(undoBtn);
   header.appendChild(redoBtn);
   const saveBtn = h('button', 'primary', '保存全部 (Ctrl+S)');
@@ -191,6 +193,18 @@ function renderMainArea(): void {
   }
 }
 
+/* ============================ 撤销/重做路由（剧本栈 vs 配置栈） ============================ */
+
+/** 配置标签页走配置快照栈，其余标签页走剧本文本栈 */
+function doUndo(): void {
+  if (state.mainTab === 'config') configUndo();
+  else undo();
+}
+function doRedo(): void {
+  if (state.mainTab === 'config') configRedo();
+  else redo();
+}
+
 /* ============================ 快捷键 ============================ */
 
 window.addEventListener('keydown', (e) => {
@@ -199,15 +213,15 @@ window.addEventListener('keydown', (e) => {
     void saveAll();
     return;
   }
-  // 撤销/重做（自我迭代①a）：Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
+  // 撤销/重做（自我迭代①a）：Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z；配置页走配置栈
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
-    if (e.shiftKey) redo(); else undo();
+    if (e.shiftKey) doRedo(); else doUndo();
     return;
   }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
     e.preventDefault();
-    redo();
+    doRedo();
   }
   // Ctrl+F 聚焦搜索（M6 E5）；Ctrl+P 预览标签页
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {

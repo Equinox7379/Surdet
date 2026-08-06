@@ -527,3 +527,27 @@ export function rowsToTerminology(raw: unknown, rows: TerminologyTableRows): { j
   }
   return { json, errors };
 }
+
+/** 名词表导入（JSON 文件 → 行模型）：形状容错与 parseTerminology 对齐，但导入要求更严——
+ *  顶层必须是 { terms: [...] }，每条目必须有 canonical（variants 缺省按空数组）；
+ *  非法形状返回错误描述（导入入口提示用）。重复 canonical 不在此拦截，留到保存校验统一报 */
+export function normalizeTerminologyImport(raw: unknown): { terms: RowMap[] } | { error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: '顶层必须是 { terms: [...] } 形状的 JSON 对象' };
+  }
+  const list = (raw as Record<string, unknown>).terms;
+  if (!Array.isArray(list)) return { error: '缺少 terms 数组' };
+  const terms: RowMap[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return { error: `terms[${i}] 不是对象` };
+    const d = t as Record<string, unknown>;
+    if (typeof d.canonical !== 'string' || d.canonical.trim().length === 0) {
+      return { error: `terms[${i}] 缺少规范词 canonical` };
+    }
+    const variants = Array.isArray(d.variants) ? d.variants : [];
+    const vs = variants.filter((v): v is string => typeof v === 'string');
+    terms.push({ canonical: d.canonical, variants: JSON.stringify(vs) });
+  }
+  return { terms };
+}

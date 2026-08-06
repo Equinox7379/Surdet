@@ -95,3 +95,44 @@ export function setSceneText(sceneKey: string, text: string): void {
   sc.dirty = true;
   onEdited();
 }
+
+/* ============================ 通用快照撤销栈（配置页编辑用；纯逻辑可测） ============================ */
+
+export interface SnapshotHistory<T> { past: T[]; future: T[]; lastPushAt: number }
+/** 配置快照栈上限（配置编辑频次低于剧本打字，栈浅一些） */
+export const SNAPSHOT_HISTORY_LIMIT = 50;
+
+export function createSnapshotHistory<T>(): SnapshotHistory<T> {
+  return { past: [], future: [], lastPushAt: 0 };
+}
+
+/** 入栈：coalesce 窗口内不新增撤销点（与文本打字合并同语义，复用 COALESCE_MS）；
+ *  新编辑清空 redo；超上限丢弃最旧 */
+export function snapshotPush<T>(hist: SnapshotHistory<T>, snap: T, now: number, coalesce: boolean, limit = SNAPSHOT_HISTORY_LIMIT): void {
+  if (coalesce && hist.past.length > 0 && now - hist.lastPushAt < COALESCE_MS) {
+    hist.lastPushAt = now; // 连续输入合并：不新增撤销点
+    return;
+  }
+  hist.past.push(snap);
+  if (hist.past.length > limit) hist.past.shift();
+  hist.future = [];
+  hist.lastPushAt = now;
+}
+
+/** 撤销：返回应恢复的快照（空栈 null）；current 为当前态快照，入 redo 栈 */
+export function snapshotUndo<T>(hist: SnapshotHistory<T>, current: T): T | null {
+  if (hist.past.length === 0) return null;
+  const prev = hist.past.pop()!;
+  hist.future.push(current);
+  hist.lastPushAt = 0; // 撤销后的新编辑不与之合并
+  return prev;
+}
+
+/** 重做：返回应恢复的快照（空栈 null）；current 入 past 栈 */
+export function snapshotRedo<T>(hist: SnapshotHistory<T>, current: T): T | null {
+  if (hist.future.length === 0) return null;
+  const next = hist.future.pop()!;
+  hist.past.push(current);
+  hist.lastPushAt = 0;
+  return next;
+}
