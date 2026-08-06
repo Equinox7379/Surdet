@@ -50,8 +50,11 @@ export function renderAuditPanel(container: HTMLElement): void {
 
   const head = h('div', 'dim');
   head.style.padding = '0 0 10px';
+  const hasTermFile = state.configFiles.terminology != null;
   head.textContent = terms.length === 0
-    ? `称谓 ${counts.size} 种 · 未配置 terminology.json（content/config/terminology.json，形状 { terms: [{canonical, variants[]}] }），名词表检查未启用`
+    ? (hasTermFile
+        ? `称谓 ${counts.size} 种 · terminology.json 存在但名词表为空，名词表检查未启用`
+        : `称谓 ${counts.size} 种 · 未配置 terminology.json（content/config/terminology.json，形状 { terms: [{canonical, variants[]}] }），名词表检查未启用`)
     : `称谓 ${counts.size} 种 · 名词表 ${terms.length} 条 · 发现 ${findings.length} 项`;
   container.appendChild(head);
 
