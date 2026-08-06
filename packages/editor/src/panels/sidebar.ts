@@ -27,11 +27,13 @@ export function renderSidebar(): void {
   const newBtn = h('button', undefined, '＋ 新建场景');
   newBtn.onclick = newScene;
   sidebar.appendChild(newBtn);
-  const list = h('div');
+  const list = h('div', 'scene-list');
   for (const [id, sc] of state.scenes) {
+    // UI 第二阶段：场景卡片化（卡底 + 未保存点 + 字数徽章）
     const item = h('div', 'scene-item' + (id === state.current ? ' active' : ''));
-    item.appendChild(h('span', undefined, id));
+    item.appendChild(h('span', 'scene-name', id));
     if (sc.dirty) item.appendChild(h('span', 'dirty', '●'));
+    item.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
     item.onclick = () => { state.current = id; renderSidebar(); renderEditorHook(); };
     list.appendChild(item);
   }
