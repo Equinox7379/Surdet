@@ -96,22 +96,47 @@ const NIGHT_AZURE = {
   choiceEdge: 0x3d5a80,
 } as const;
 
-/** 程序化占位背景：纵向渐变 */
+/** 种子伪随机序列（mulberry32）：占位背景噪点同 key 稳定可复现（不用 Math.random，保住同 key 同图契约） */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 程序化占位背景：冷色多段渐变 + 径向暗角 + 微噪点（夜色蔚蓝气质；
+ *  色相由 key 哈希定色（冷色带），噪点由种子 PRNG 绘制 —— 同 key 稳定同图契约不变） */
 function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
   const hash = hashStr(key);
+  // 冷色带（青→紫 190°..310°）：哈希定色相，同 key 稳定
+  const hue = 190 + (hash % 120);
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, hsl(hash, 0.45, 0.55));
-  g.addColorStop(0.6, hsl((hash + 40) % 360, 0.5, 0.32));
-  g.addColorStop(1, hsl((hash + 80) % 360, 0.55, 0.14));
+  g.addColorStop(0, `hsl(${hue}, 45%, 30%)`);
+  g.addColorStop(0.55, `hsl(${(hue + 25) % 360}, 48%, 17%)`);
+  g.addColorStop(1, `hsl(${(hue + 50) % 360}, 52%, 8%)`);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
-  // 地平线
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fillRect(0, h * 0.78, w, h * 0.22);
+  // 径向暗角：四周压暗聚焦中心（氛围感）
+  const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.75);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(2,4,10,0.5)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, w, h);
+  // 微噪点：种子 PRNG 保证同 key 可复现
+  const rnd = seededRandom(hash);
+  for (let i = 0; i < 1400; i++) {
+    const x = rnd() * w;
+    const y = rnd() * h;
+    ctx.fillStyle = rnd() > 0.5 ? 'rgba(200,225,255,0.05)' : 'rgba(0,0,0,0.08)';
+    ctx.fillRect(x, y, 1.6, 1.6);
+  }
   return Texture.from(canvas);
 }
 
@@ -275,9 +300,13 @@ export class PixiStage implements AdvStage {
   #nvlActive = false;
   /** NVL 页每行字数容量（预断行用，构造时按字号估算；NVL 断行禁则） */
   #nvlCharsPerLine = 50;
-  /** 横幅（@title/@chapter/@tip/@center）淡出状态 */
+  /** 横幅（@title/@chapter/@tip/@center）淡入淡出状态 */
   #bannerLayer: Container;
   #bannerText: PText;
+  /** chapter 横幅电影化上下黑边（letterbox，仅 chapter 变体可见） */
+  #bannerBars: Graphics;
+  /** tip 横幅右上小胶囊底板（仅 tip 变体绘制） */
+  #bannerTipBg: Graphics;
   #bannerRemain = 0;
   #bannerDur = 1;
   /** @wipe 擦除转场 */
@@ -335,9 +364,13 @@ export class PixiStage implements AdvStage {
     this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.6 }));
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
+    this.#bannerBars = new Graphics();
+    this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
+    this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
+    this.#bannerTipBg = new Graphics();
     this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions });
     this.#bannerText.anchor.set(0.5);
-    this.#bannerLayer.addChild(this.#bannerText);
+    this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#wipeBar.visible = false;
     this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
@@ -978,24 +1011,32 @@ export class PixiStage implements AdvStage {
     this.#particlePreset = null;
   }
 
-  /** 横幅：chapter 变体居中大字，tip 变体右上小字；末段淡出 */
+  /** 横幅：chapter 变体电影化（上下黑边 letterbox + 大字距渐显），tip 变体右上小胶囊；首尾淡入淡出 */
   showBanner(text: string, variant: 'chapter' | 'tip'): void {
     if (text.length === 0) return;
     this.#bannerText.text = text;
     this.#bannerText.style = variant === 'chapter'
-      ? { fontSize: 40, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions
-      : { fontSize: 20, fill: 0xffe8c8 } satisfies TextStyleOptions;
+      ? { fontSize: 40, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 10 } satisfies TextStyleOptions
+      : { fontSize: 20, fill: NIGHT_AZURE.plateText } satisfies TextStyleOptions;
+    this.#bannerBars.visible = variant === 'chapter';
+    this.#bannerTipBg.clear();
     if (variant === 'chapter') {
+      this.#bannerText.anchor.set(0.5);
       this.#bannerText.position.set(this.#w / 2, this.#h * 0.4);
     } else {
       this.#bannerText.anchor.set(1, 0);
       this.#bannerText.position.set(this.#w - 60, 40);
+      // 右上小胶囊底板（玻璃家族口径：深蓝底 + 冷灰蓝细描边）
+      const tw = this.#bannerText.width;
+      const th = this.#bannerText.height;
+      this.#bannerTipBg.roundRect(this.#w - 60 - tw - 20, 32, tw + 40, th + 16, (th + 16) / 2)
+        .fill({ color: NIGHT_AZURE.choiceBg, alpha: 0.8 })
+        .stroke({ width: 1, color: NIGHT_AZURE.choiceEdge, alpha: 0.9 });
     }
-    if (variant === 'chapter') this.#bannerText.anchor.set(0.5);
     this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
     this.#bannerRemain = this.#bannerDur;
     this.#bannerLayer.visible = true;
-    this.#bannerLayer.alpha = 1;
+    this.#bannerLayer.alpha = 0; // 渐显由 #updateTransient 驱动（首 300ms 淡入 / 末 400ms 淡出）
   }
 
   /** NVL 模式：开启时隐藏对话框，全屏半透明文本页；关闭时恢复 */
@@ -1173,7 +1214,8 @@ export class PixiStage implements AdvStage {
     }
     if (this.#bannerRemain > 0) {
       this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
-      this.#bannerLayer.alpha = Math.min(1, this.#bannerRemain / 400);
+      const elapsed = this.#bannerDur - this.#bannerRemain;
+      this.#bannerLayer.alpha = Math.min(1, elapsed / 300, this.#bannerRemain / 400);
       if (this.#bannerRemain === 0) this.#bannerLayer.visible = false;
     }
     if (this.#wipeRemain > 0) {
@@ -1558,35 +1600,60 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 标题画面 / 系统菜单 / 存读档 / 大地图 ============================ */
 
-  /** 展示标题画面：大标题 + 副标题 + 菜单项（enabled=false 灰显不可点） */
+  /** 展示标题画面：大字距标题（冷白）+ 蔚蓝强调线 + 菜单纵列（悬停高亮条/位移）；enabled=false 灰显不可点 */
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
     this.#titleHandler = onSelect;
     const layer = this.#titleLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.98 }));
-    const title = new PText({ text: view.title, style: { fontSize: 60, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions });
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x060a14, alpha: 0.97 }));
+    const title = new PText({
+      text: view.title,
+      style: { fontSize: 60, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 8 } satisfies TextStyleOptions,
+    });
     title.anchor.set(0.5);
     title.position.set(this.#w / 2, this.#h * 0.28);
     layer.addChild(title);
+    // 标题下蔚蓝强调线
+    layer.addChild(new Graphics()
+      .roundRect(this.#w / 2 - 150, this.#h * 0.28 + 44, 300, 2, 1)
+      .fill({ color: NIGHT_AZURE.accent, alpha: 0.85 }));
     if (view.subtitle) {
-      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions });
+      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a9ab5 } satisfies TextStyleOptions });
       sub.anchor.set(0.5);
-      sub.position.set(this.#w / 2, this.#h * 0.28 + 56);
+      sub.position.set(this.#w / 2, this.#h * 0.28 + 72);
       layer.addChild(sub);
     }
-    const startY = this.#h * 0.48;
+    const startY = this.#h * 0.5;
     view.items.forEach((item, i) => {
       const enabled = item.enabled !== false;
+      const baseX = this.#w / 2;
+      const baseY = startY + i * 56;
       const t = new PText({
         text: item.label,
-        style: { fontSize: 26, fill: enabled ? 0xffffff : 0x4a4a55 } satisfies TextStyleOptions,
+        style: { fontSize: 26, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 4 } satisfies TextStyleOptions,
       });
       t.anchor.set(0.5);
-      t.position.set(this.#w / 2, startY + i * 56);
+      t.position.set(baseX, baseY);
       if (enabled) {
+        // 悬停：左侧高亮条滑入 + 文字提亮微右移
+        const bar = new Graphics()
+          .roundRect(baseX - 170, baseY + 6, 4, 26, 2)
+          .fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
+        bar.visible = false;
+        layer.addChild(bar);
         t.eventMode = 'static';
         t.cursor = 'pointer';
         t.on('pointerdown', () => this.#titleHandler?.(item.id));
+        t.on('pointerover', () => {
+          bar.visible = true;
+          t.x = baseX + 10;
+          t.style = { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold', letterSpacing: 4 } satisfies TextStyleOptions;
+        });
+        t.on('pointerout', () => {
+          bar.visible = false;
+          t.x = baseX;
+          t.style = { fontSize: 26, fill: NIGHT_AZURE.text, letterSpacing: 4 } satisfies TextStyleOptions;
+        });
       }
       layer.addChild(t);
     });
