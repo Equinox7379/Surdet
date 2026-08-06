@@ -29,7 +29,7 @@ export const state = {
   lastEdges: [] as { from: string; to: string; kind: 'jump' | 'call' }[],
   /** content/config/*.json 原始对象（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
    *  E2/E3：achievements/gallery 供素材清单与配置编辑器） */
-  configFiles: { events: null as unknown, growth: null as unknown, calendar: null as unknown, achievements: null as unknown, gallery: null as unknown },
+  configFiles: { events: null as unknown, growth: null as unknown, calendar: null as unknown, achievements: null as unknown, gallery: null as unknown, terminology: null as unknown },
   /** 配置文件句柄（E3：写盘需要；无 FS API 环境为 null，保存入口置灰） */
   handles: {
     gameConfig: null as FileSystemFileHandle | null,
@@ -43,8 +43,8 @@ export const state = {
   dirAssets: [] as DirAsset[],
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
-  /** 主区标签页：块编辑 / 流程图（E1a）/ 配置（E3）/ 预览（M6）/ 统计（M6） */
-  mainTab: 'editor' as 'editor' | 'flow' | 'config' | 'preview' | 'stats',
+  /** 主区标签页：块编辑 / 流程图（E1a）/ 配置（E3）/ 预览（M6）/ 统计（M6）/ 审计（术语面板） */
+  mainTab: 'editor' as 'editor' | 'flow' | 'config' | 'preview' | 'stats' | 'audit',
   fsSupported: typeof window !== 'undefined' && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function',
 };
 

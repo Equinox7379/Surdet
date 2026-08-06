@@ -29,8 +29,8 @@ export async function openProject(): Promise<void> {
   state.dirAssets = [];
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
-  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null };
-  for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery'] as const) {
+  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+  for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
     try {
       const contentDir = await dir.getDirectoryHandle('content');
       const configDir = await contentDir.getDirectoryHandle('config');
@@ -206,7 +206,7 @@ export function loadDemoProject(): void {
   state.entryScene = 'demo';
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null };
   state.dirAssets = [];
-  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null };
+  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
   state.scenes.set('demo', {
     id: 'demo',
     file: 'demo.gal',

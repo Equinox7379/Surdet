@@ -22,6 +22,7 @@ import { renderConfig, bindConfigHooks } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
+import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 
 /* ============================ 模块装配（钩子注入，保持无环） ============================ */
 
@@ -57,6 +58,10 @@ function jumpToScene(sceneKey: string, line?: number): void {
 bindSearchHooks({
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
   onEdited: scheduleValidate,
+});
+bindAuditHooks({
+  // 审计条目点击 → 跳转定位（与搜索/流程图导航同一入口）
+  onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
 });
 
 /* ============================ 布局渲染 ============================ */
@@ -110,19 +115,20 @@ function renderAll(): void {
   renderMainArea();
 }
 
-/** 主区：标签页（块编辑 / 流程图 / 配置 / 预览 / 统计）+ 对应内容 */
+/** 主区：标签页（块编辑 / 流程图 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'config' | 'preview' | 'stats'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'config' | 'preview' | 'stats' | 'audit'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
     { id: 'config', label: '配置' },
     { id: 'preview', label: '预览' },
     { id: 'stats', label: '统计' },
+    { id: 'audit', label: '审计' },
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
@@ -170,6 +176,12 @@ function renderMainArea(): void {
     col.appendChild(stEl);
     main.appendChild(col);
     renderStatsPanel(stEl);
+  } else if (state.mainTab === 'audit') {
+    const auEl = h('section');
+    auEl.id = 'audit-view';
+    col.appendChild(auEl);
+    main.appendChild(col);
+    renderAuditPanel(auEl);
   } else {
     const cfgEl = h('section');
     cfgEl.id = 'config-view';
