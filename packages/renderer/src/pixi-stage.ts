@@ -37,10 +37,6 @@ function hashStr(s: string): number {
   return Math.abs(h);
 }
 
-function hsl(hash: number, sat: number, light: number): string {
-  return `hsl(${hash % 360}, ${sat * 100}%, ${light * 100}%)`;
-}
-
 /** 颜色通道线性插值（RGB 分量各自 lerp 后合成） */
 function lerpColor(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
@@ -140,8 +136,10 @@ function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
   return Texture.from(canvas);
 }
 
-/** 程序化占位立绘：人形（头 + 身体），表情影响五官 */
-function makePortraitTexture(charId: string, costume: string, expression: string, w = 400, h = 640): Texture {
+/** 程序化占位立绘：胸像构图 + 赛璐璐风（平涂底色/阴影色/描边），表情影响五官。
+ *  源纹理 800×1280（旧 400×640 的 2x），显示尺寸内不再放大插值（精致化批：修糊 + 去 RPG Maker 廉价感）；
+ *  显示宽度由 setPortrait 控制，宽高比 5:8 与旧版一致，几何不变。 */
+function makePortraitTexture(charId: string, costume: string, expression: string, w = 800, h = 1280): Texture {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -149,58 +147,174 @@ function makePortraitTexture(charId: string, costume: string, expression: string
   const hash = hashStr(charId + costume);
   const exprHash = hashStr(expression);
 
-  // 服装
-  ctx.fillStyle = hsl(hash, 0.55, 0.5);
-  ctx.fillRect(w * 0.18, h * 0.34, w * 0.64, h * 0.66);
-  // 衣领
-  ctx.fillStyle = hsl((hash + 30) % 360, 0.6, 0.35);
+  // 调色：平涂底色 + 阴影色 + 描边色（同色系加深，赛璐璐口径）
+  const hairHue = hash % 360;
+  const clothHue = (hash + 150) % 360;
+  const hair = `hsl(${hairHue}, 52%, 62%)`;
+  const hairDark = `hsl(${hairHue}, 50%, 46%)`;
+  const outline = `hsl(${hairHue}, 38%, 24%)`;
+  const skin = `hsl(28, 58%, 88%)`;
+  const skinDark = `hsl(26, 45%, 76%)`;
+  const cloth = `hsl(${clothHue}, 42%, 50%)`;
+  const clothDark = `hsl(${clothHue}, 42%, 38%)`;
+  const iris = `hsl(${(hash + 220) % 360}, 55%, 48%)`;
+  const lw = w * 0.008; // 描边线宽随纹理尺寸，任意分辨率下锐利
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const cx = w / 2;
+  const headY = h * 0.30;
+  const headRx = w * 0.17;
+  const headRy = w * 0.20;
+
+  // 后发（头后大轮廓，先画）
+  ctx.fillStyle = hairDark;
   ctx.beginPath();
-  ctx.moveTo(w * 0.4, h * 0.34);
-  ctx.lineTo(w * 0.5, h * 0.46);
-  ctx.lineTo(w * 0.6, h * 0.34);
+  ctx.ellipse(cx, headY - headRy * 0.06, headRx * 1.22, headRy * 1.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 两侧发束（垂到肩部）
+  ctx.fillStyle = hair;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cx + s * headRx * 1.1, headY - headRy * 0.4);
+    ctx.quadraticCurveTo(cx + s * headRx * 1.5, headY + headRy * 0.9, cx + s * headRx * 1.05, h * 0.62);
+    ctx.quadraticCurveTo(cx + s * headRx * 0.7, headY + headRy * 0.9, cx + s * headRx * 0.82, headY - headRy * 0.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = outline;
+    ctx.stroke();
+  }
+
+  // 颈（肤色 + 上端阴影）
+  ctx.fillStyle = skin;
+  ctx.fillRect(cx - w * 0.05, headY + headRy * 0.7, w * 0.1, h * 0.14);
+  ctx.fillStyle = skinDark;
+  ctx.fillRect(cx - w * 0.05, headY + headRy * 0.7, w * 0.1, h * 0.045);
+
+  // 肩/上身（底部裁切，胸像构图）
+  ctx.fillStyle = cloth;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.10, h);
+  ctx.bezierCurveTo(w * 0.12, h * 0.72, w * 0.28, h * 0.64, cx - w * 0.08, h * 0.60);
+  ctx.lineTo(cx + w * 0.08, h * 0.60);
+  ctx.bezierCurveTo(w * 0.72, h * 0.64, w * 0.88, h * 0.72, w * 0.90, h);
   ctx.closePath();
   ctx.fill();
-  // 头
-  const headR = w * 0.15;
-  const headX = w * 0.5;
-  const headY = h * 0.22;
-  ctx.fillStyle = hsl((hash + 20) % 360, 0.4, 0.78);
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+  // 衣领（V 领 + 内衬阴影）
+  ctx.fillStyle = clothDark;
   ctx.beginPath();
-  ctx.arc(headX, headY, headR, 0, Math.PI * 2);
+  ctx.moveTo(cx - w * 0.075, h * 0.605);
+  ctx.lineTo(cx, h * 0.72);
+  ctx.lineTo(cx + w * 0.075, h * 0.605);
+  ctx.closePath();
   ctx.fill();
-  // 五官（表情差异：眼形 + 嘴形）
-  ctx.fillStyle = '#222';
-  const eyeY = headY + headR * 0.15;
-  if (exprHash % 3 === 0) {
-    // 微笑眼（弯）
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(headX - headR * 0.35, eyeY, headR * 0.12, Math.PI * 1.1, Math.PI * 1.9);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(headX + headR * 0.35, eyeY, headR * 0.12, Math.PI * 1.1, Math.PI * 1.9);
-    ctx.stroke();
-  } else {
-    ctx.beginPath();
-    ctx.arc(headX - headR * 0.35, eyeY, headR * 0.07, 0, Math.PI * 2);
-    ctx.arc(headX + headR * 0.35, eyeY, headR * 0.07, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // 嘴（笑脸/惊讶/普通）
-  ctx.strokeStyle = '#222';
-  ctx.lineWidth = 2;
+  // 下巴投在衣服上的阴影
+  ctx.fillStyle = 'rgba(10,14,26,0.18)';
   ctx.beginPath();
-  const mouthY = headY + headR * 0.5;
-  if (exprHash % 3 === 1) {
-    ctx.arc(headX, mouthY, headR * 0.2, Math.PI * 0.1, Math.PI * 0.9);
-  } else if (exprHash % 3 === 2) {
-    ctx.arc(headX, mouthY, headR * 0.12, 0, Math.PI * 2);
+  ctx.ellipse(cx, h * 0.63, w * 0.09, h * 0.022, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 头（脸部）
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cx, headY, headRx, headRy, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+
+  // 刘海（额前锔齿状，表情无关）
+  ctx.fillStyle = hair;
+  ctx.beginPath();
+  ctx.moveTo(cx - headRx * 1.05, headY - headRy * 0.15);
+  ctx.quadraticCurveTo(cx - headRx * 1.1, headY - headRy * 1.15, cx, headY - headRy * 1.12);
+  ctx.quadraticCurveTo(cx + headRx * 1.1, headY - headRy * 1.15, cx + headRx * 1.05, headY - headRy * 0.15);
+  // 锔齿下缘（四段尖）
+  const fringeY = headY - headRy * 0.28;
+  for (let i = 0; i < 4; i++) {
+    const x0 = cx + headRx * 1.05 - (i + 0.5) * (headRx * 2.1 / 4);
+    const x1 = cx + headRx * 1.05 - (i + 1) * (headRx * 2.1 / 4);
+    ctx.quadraticCurveTo(x0, fringeY + headRy * 0.22, x1, fringeY);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+
+  // ===== 五官（表情差异：眼形/眉形/嘴形） =====
+  const eyeY = headY + headRy * 0.12;
+  const eyeX = headRx * 0.48;
+  const eyeW = w * 0.048;
+  const eyeH = w * 0.062;
+  const expr = exprHash % 3;
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = outline;
+  for (const s of [-1, 1]) {
+    const ex = cx + s * eyeX;
+    if (expr === 1) {
+      // 笑眼：弯弧
+      ctx.beginPath();
+      ctx.arc(ex, eyeY + eyeH * 0.3, eyeW * 0.9, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.lineWidth = lw * 1.4;
+      ctx.stroke();
+      ctx.lineWidth = lw;
+    } else {
+      // 睜眼（普通/惊讶：惊讶更大）
+      const k = expr === 2 ? 1.25 : 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(ex, eyeY, eyeW * k, eyeH * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 虹膜 + 瞳孔 + 高光
+      ctx.fillStyle = iris;
+      ctx.beginPath();
+      ctx.ellipse(ex, eyeY + eyeH * 0.12 * k, eyeW * 0.62 * k, eyeH * 0.66 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = outline;
+      ctx.beginPath();
+      ctx.ellipse(ex, eyeY + eyeH * 0.16 * k, eyeW * 0.3 * k, eyeH * 0.34 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(ex - eyeW * 0.22, eyeY - eyeH * 0.18, eyeW * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 眉毛（笑眼平缓，惊讶上扬）
+    const browY = eyeY - eyeH * (expr === 2 ? 1.9 : 1.55);
+    ctx.beginPath();
+    ctx.moveTo(ex - eyeW, browY + (expr === 2 ? -eyeH * 0.15 : 0));
+    ctx.quadraticCurveTo(ex, browY - eyeH * 0.22, ex + eyeW, browY);
+    ctx.lineWidth = lw * 1.2;
+    ctx.stroke();
+    ctx.lineWidth = lw;
+  }
+  // 嘴
+  const mouthY = headY + headRy * 0.58;
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = lw * 1.3;
+  ctx.beginPath();
+  if (expr === 1) {
+    ctx.arc(cx, mouthY - headRy * 0.06, headRy * 0.16, Math.PI * 0.15, Math.PI * 0.85);
+  } else if (expr === 2) {
+    ctx.ellipse(cx, mouthY, headRy * 0.07, headRy * 0.11, 0, 0, Math.PI * 2);
   } else {
-    ctx.moveTo(headX - headR * 0.2, mouthY);
-    ctx.lineTo(headX + headR * 0.2, mouthY);
+    ctx.moveTo(cx - headRy * 0.12, mouthY);
+    ctx.quadraticCurveTo(cx, mouthY + headRy * 0.05, cx + headRy * 0.12, mouthY);
   }
   ctx.stroke();
+  // 腮红（笑眼时明显）
+  ctx.fillStyle = expr === 1 ? 'rgba(244,140,150,0.30)' : 'rgba(244,140,150,0.14)';
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(cx + s * headRx * 0.62, headY + headRy * 0.38, headRy * 0.16, headRy * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   return Texture.from(canvas);
 }
 
@@ -489,11 +603,21 @@ export class PixiStage implements AdvStage {
   }
 
   /** 等比缩放画布 CSS 尺寸以适配窗口（保持 16:9，居中由宿主 CSS 负责）。
-   *  内部分辨率保持 1280×720 逻辑尺寸，避免 UI 布局随窗口变化。 */
+   *  内部分辨率保持 1280×720 逻辑尺寸；渲染分辨率同步为 实际缩放×设备像素比，
+   *  使画布后备像素与屏幕物理像素 1:1 —— 避免固定 DPR 后备被 CSS 非整数缩放插值发糊（精致化批：修糊） */
   fitWindow(): void {
-    const canvas = this.app?.canvas;
-    if (!canvas || typeof window === 'undefined') return;
-    const scale = Math.min(window.innerWidth / this.#w, window.innerHeight / this.#h);
+    const app = this.app;
+    if (!app || typeof window === 'undefined') return;
+    const scale = Math.max(0.2, Math.min(window.innerWidth / this.#w, window.innerHeight / this.#h));
+    const canvas = app.canvas;
+    const dpr = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+    const res = Math.max(0.5, dpr * scale);
+    const renderer = app.renderer as unknown as { resolution: number; resize: (w: number, h: number) => void };
+    if (Math.abs(renderer.resolution - res) > 0.01) {
+      renderer.resolution = res;
+      // resize 会按 autoDensity 把 CSS 重置回逻辑尺寸，必须先于 CSS 赋值
+      renderer.resize(this.#w, this.#h);
+    }
     canvas.style.width = `${Math.round(this.#w * scale)}px`;
     canvas.style.height = `${Math.round(this.#h * scale)}px`;
   }
@@ -654,7 +778,8 @@ export class PixiStage implements AdvStage {
   }
 
   showText(speaker: string | null, value: string): void {
-    this.#speakerText.text = speaker ?? '';
+    // 柚子社式括号名牌：说话人名字以「」包裹（空说话人不显示）
+    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${speaker}」` : '';
     this.#drawSpeakerPlate();
     this.#renderDialogText(value);
     // 有文本内容即显示对话框面板；清空时若不在等待推进状态则隐藏
