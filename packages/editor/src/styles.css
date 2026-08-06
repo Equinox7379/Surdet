@@ -171,3 +171,8 @@ main { display: flex; flex: 1; min-height: 0; }
 /* 术语审计标签页 */
 #audit-view { flex: 1; overflow-y: auto; padding: 14px; min-width: 0; }
 .issue.info { border-left: 3px solid var(--line); opacity: 0.85; }
+
+/* 日历地图可视化摆放 */
+.calendar-map-wrap { border: 1px solid var(--line); border-radius: 8px; background: #10131c; margin-bottom: 10px; overflow: hidden; }
+svg.calendar-map { display: block; width: 100%; aspect-ratio: 800 / 520; user-select: none; touch-action: none; }
+svg.calendar-map g { transition: none; }
