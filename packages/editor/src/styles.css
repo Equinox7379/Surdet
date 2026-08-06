@@ -22,11 +22,11 @@
   --accent-strong: #0a6fd0;
   --accent-soft: rgba(15, 143, 243, 0.10);
   --accent-glow: rgba(15, 143, 243, 0.22);
-  /* —— 跑者红（ME 标志色：标题点缀/关键数值/流转徽章） —— */
-  --gold: #e8483c;
-  --gold-strong: #d5382c;
+  /* —— 深蓝点缀（原跑者红位：标题点缀/关键数值/流转徽章；用户反馈改蓝） —— */
+  --gold: #0a6fd0;
+  --gold-strong: #085aa8;
   --gold-ink: #ffffff;
-  --gold-soft: rgba(232, 72, 60, 0.10);
+  --gold-soft: rgba(10, 111, 208, 0.10);
   /* —— 语义色 —— */
   --err: #e5484d;
   --err-soft: rgba(229, 72, 77, 0.10);
@@ -127,7 +127,7 @@ header h1 {
 }
 header h1::after {
   content: ""; display: block; height: 3px; width: 100%; margin-top: 2px; border-radius: 2px;
-  background: linear-gradient(90deg, var(--gold), transparent 75%); /* 跑者红拖尾（ME 标志色点缀） */
+  background: linear-gradient(90deg, var(--gold), transparent 75%); /* 深蓝拖尾点缀 */
 }
 header .proj { color: var(--dim); font-size: 13px; padding: 3px 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; }
 header .spacer { flex: 1; }
@@ -180,7 +180,7 @@ main { display: flex; flex: 1; min-height: 0; }
 }
 .badge.text { background: var(--panel2); color: var(--text); border-color: var(--line); }
 .badge.label { background: var(--warn-soft); color: var(--warn); border-color: rgba(240, 165, 60, 0.45); }
-.badge.flow { background: var(--gold-soft); color: var(--gold-strong); border-color: rgba(232, 72, 60, 0.4); }
+.badge.flow { background: var(--gold-soft); color: var(--gold-strong); border-color: rgba(10, 111, 208, 0.4); }
 .badge.dim { background: var(--panel2); color: var(--dim); border-color: var(--line); }
 .block .bar .ops { margin-left: auto; display: flex; gap: 5px; }
 .block .bar button { padding: 3px 10px; font-size: 12px; }
@@ -323,7 +323,7 @@ main { display: flex; flex: 1; min-height: 0; }
   transition: border-color var(--ease), transform var(--ease);
 }
 .stats-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-.stats-value { font-size: 24px; color: var(--gold); font-weight: 800; letter-spacing: 1px; } /* 跑者红数字（ME 式强调） */
+.stats-value { font-size: 24px; color: var(--gold); font-weight: 800; letter-spacing: 1px; } /* 深蓝数字强调 */
 .stats-label { font-size: 12px; color: var(--dim); margin-top: 3px; letter-spacing: 1px; }
 
 /* ============================ 配置页标量网格与子标题 ============================ */

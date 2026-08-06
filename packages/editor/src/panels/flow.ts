@@ -295,7 +295,7 @@ const view = { k: 1, tx: 30, ty: 30 };
 
 const EDGE_COLORS: Record<FlowEdge['kind'], string> = {
   flow: '#8fa3ba', goto: '#6a7ba8', jump: '#5a8fd0', call: '#7a6aa8',
-  switch: '#0f8ff3', loop: '#00a6c8', choice: '#4aa890', if: '#a06a8a', host: '#e8483c',
+  switch: '#0f8ff3', loop: '#00a6c8', choice: '#4aa890', if: '#a06a8a', host: '#0a6fd0',
 };
 
 function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] {
@@ -464,7 +464,7 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
     rect.setAttribute('stroke', '#e5484d');
     rect.setAttribute('stroke-width', '2');
   } else {
-    rect.setAttribute('stroke', isCurrent ? '#e8483c' : '#c3cfdd'); // 当前场景：跑者红描边（ME 式聚焦）
+    rect.setAttribute('stroke', isCurrent ? '#0a6fd0' : '#c3cfdd'); // 当前场景：深蓝描边聚焦（用户反馈：红改蓝）
     if (isCurrent) rect.setAttribute('stroke-width', '2');
   }
   const text = el('text');
@@ -472,7 +472,7 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   text.setAttribute('y', String(box.y + box.h / 2 + 4));
   text.setAttribute('text-anchor', 'middle');
   text.setAttribute('font-size', '11');
-  text.setAttribute('fill', isCurrent ? '#d5382c' : node.kind === 'host-entry' ? '#0a6fd0' : '#1f2d3d');
+  text.setAttribute('fill', isCurrent ? '#0a6fd0' : node.kind === 'host-entry' ? '#0a6fd0' : '#1f2d3d');
   const label = nodeText(node);
   text.textContent = label.length > 26 ? label.slice(0, 25) + '…' : label;
   const title = el('title');
@@ -568,7 +568,7 @@ export function renderFlow(container: HTMLElement): void {
   let nodeDrag: { fromId: string; startX: number; startY: number; dragging: boolean } | null = null;
   const linkLine = el('path');
   linkLine.setAttribute('fill', 'none');
-  linkLine.setAttribute('stroke', '#e8483c');
+  linkLine.setAttribute('stroke', '#0f8ff3');
   linkLine.setAttribute('stroke-width', '1.5');
   linkLine.setAttribute('stroke-dasharray', '4 3');
   linkLine.style.display = 'none';
