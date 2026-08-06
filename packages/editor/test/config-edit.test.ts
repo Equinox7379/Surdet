@@ -8,6 +8,10 @@ import type { CompiledScene } from '@surdet/core';
 import {
   parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
+  parseCalendarRows, rowsToCalendar,
+  parseEventsRows, rowsToEvents,
+  parseGrowthRows, rowsToGrowth,
+  parseGalleryRows, rowsToGallery,
 } from '../src/config-edit.js';
 
 describe('变量表 ⇄ JSON', () => {
@@ -135,5 +139,141 @@ describe('collectReferencedVars（删除保护）', () => {
     const scenes = scenesOf([['ch1', '凛：好。\n']]);
     const refs = collectReferencedVars(scenes);
     expect(refs.size).toBe(0);
+  });
+});
+
+/* ============================ E3 剩余：日历/事件/成长/鉴赏 ============================ */
+
+const calendarRaw = {
+  nodes: [
+    { id: 'map_01', name: '据点', x: 120, y: 480, isBase: true, apCost: 0, custom: 'keep-me' },
+    { id: 'map_02', name: '迷雾森林', x: 360, y: 240, apCost: 2, requires: ['map_01'], eventId: 'forest_event' },
+  ],
+  maxAp: 3,
+  maxTurns: 30,
+  dateTemplate: '第{month}月 第{turn}周',
+  onTurnStartEventId: 'ev_turn_start',
+  baseCommands: [
+    { id: 'rest', name: '休息', apCost: 1, effects: { 'lynn.hp': 5 } },
+    { id: 'patrol', name: '巡逻', apCost: 1, perTurn: 2, when: 'hasSword' },
+  ],
+};
+
+describe('calendar ⇄ JSON', () => {
+  it('往返一致：标量/节点/据点指令（数字还原、JSON 列还原、未知字段保留）', () => {
+    const rows = parseCalendarRows(calendarRaw);
+    expect(rows.scalars.maxAp).toBe('3');
+    expect(rows.nodes).toHaveLength(2);
+    expect(rows.nodes[0]!.requires).toBe('');
+    expect(rows.nodes[1]!.requires).toBe('["map_01"]');
+    const { json, errors } = rowsToCalendar(calendarRaw, rows);
+    expect(errors).toEqual([]);
+    const nodes = json.nodes as Record<string, unknown>[];
+    expect(nodes[0]).toMatchObject({ id: 'map_01', x: 120, isBase: true, apCost: 0, custom: 'keep-me' });
+    expect(nodes[1]!.requires).toEqual(['map_01']);
+    expect((json.baseCommands as Record<string, unknown>[])[0]!.effects).toEqual({ 'lynn.hp': 5 });
+    expect(json.maxTurns).toBe(30);
+    expect(json.onTurnStartEventId).toBe('ev_turn_start');
+  });
+
+  it('非法输入拦截：重复节点 ID / 坏 when / 坏 JSON / 非数字标量', () => {
+    const rows = parseCalendarRows(calendarRaw);
+    rows.nodes.push({ id: 'map_01', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' });
+    rows.baseCommands[0]!.when = 'trust >=';
+    rows.baseCommands[1]!.effects = '{bad';
+    rows.scalars.maxAp = 'abc';
+    const { errors } = rowsToCalendar(calendarRaw, rows);
+    expect(errors.some((e) => e.includes("'map_01' 重复"))).toBe(true);
+    expect(errors.some((e) => e.includes('when') && e.includes('表达式'))).toBe(true);
+    expect(errors.some((e) => e.includes('JSON'))).toBe(true);
+    expect(errors.some((e) => e.includes('maxAp') && e.includes('数字'))).toBe(true);
+  });
+});
+
+const eventsRaw = {
+  profiles: [{ characterId: 'lynn', variable: 'lynn.trust', tiers: [{ min: 0, stage: '陌生' }] }],
+  events: [{ id: 'ev_a', characterId: 'lynn', when: 'lynn.trust >= 30', scene: 'ch01_01', once: true }],
+  scheduled: [{ id: 'ev_turn_start', when: 'true', scene: 'ch03_turn_event', once: true, priority: 10, effects: { 'lynn.trust': 2 } }],
+};
+
+describe('events ⇄ JSON', () => {
+  it('往返一致（profiles/events/scheduled 三表）', () => {
+    const rows = parseEventsRows(eventsRaw);
+    expect(rows.profiles[0]!.tiers).toBe('[{"min":0,"stage":"陌生"}]');
+    const { json, errors } = rowsToEvents(eventsRaw, rows);
+    expect(errors).toEqual([]);
+    expect((json.events as Record<string, unknown>[])[0]!.once).toBe(true);
+    expect((json.scheduled as Record<string, unknown>[])[0]!.effects).toEqual({ 'lynn.trust': 2 });
+    expect((json.profiles as Record<string, unknown>[])[0]!.tiers).toEqual([{ min: 0, stage: '陌生' }]);
+  });
+
+  it('拦截：重复事件 ID 与坏 when', () => {
+    const rows = parseEventsRows(eventsRaw);
+    rows.events.push({ id: 'ev_a', characterId: '', when: '', scene: '', once: false, priority: '', effects: '' });
+    rows.scheduled[0]!.when = '>>> bad';
+    const { errors } = rowsToEvents(eventsRaw, rows);
+    expect(errors.some((e) => e.includes("'ev_a' 重复"))).toBe(true);
+    expect(errors.some((e) => e.includes('when') && e.includes('表达式'))).toBe(true);
+  });
+});
+
+const growthRaw = {
+  curve: { base: 10, linear: 5 },
+  profiles: [{ characterId: 'lynn', initialLevel: 1, maxLevel: 20, statGrowth: { 'lynn.atk': 2 }, levelEvents: { 10: 'ch01_02' } }],
+};
+
+describe('growth ⇄ JSON', () => {
+  it('往返一致：曲线标量 + profile（JSON 列还原）', () => {
+    const rows = parseGrowthRows(growthRaw);
+    expect(rows.scalars['curve.base']).toBe('10');
+    const { json, errors } = rowsToGrowth(growthRaw, rows);
+    expect(errors).toEqual([]);
+    expect(json.curve).toEqual({ base: 10, linear: 5 });
+    const p = (json.profiles as Record<string, unknown>[])[0]!;
+    expect(p.statGrowth).toEqual({ 'lynn.atk': 2 });
+    expect(p.levelEvents).toEqual({ 10: 'ch01_02' });
+  });
+
+  it('拦截：initialLevel > maxLevel / 曲线非数字 / levelEvents 值非字符串', () => {
+    const rows = parseGrowthRows(growthRaw);
+    rows.profiles[0]!.initialLevel = '30';
+    rows.scalars['curve.base'] = 'xyz';
+    const bad = rowsToGrowth(growthRaw, rows);
+    expect(bad.errors.some((e) => e.includes('initialLevel'))).toBe(true);
+    expect(bad.errors.some((e) => e.includes('base') && e.includes('数字'))).toBe(true);
+    const rows2 = parseGrowthRows(growthRaw);
+    rows2.profiles[0]!.levelEvents = '{"10": 123}';
+    expect(rowsToGrowth(growthRaw, rows2).errors.some((e) => e.includes('levelEvents'))).toBe(true);
+  });
+});
+
+const galleryRaw = {
+  cgs: [{ id: 'cg_hall', name: '大厅重逢', src: 'castle_hall' }],
+  music: [{ id: 'tense_01', name: '紧张时刻', src: 'tense_01' }],
+  texts: [{ id: 't_first', name: '大厅初遇', scene: 'ch01_01', label: 'start' }],
+};
+
+describe('gallery ⇄ JSON', () => {
+  it('往返一致（cgs/music/texts 三表）', () => {
+    const rows = parseGalleryRows(galleryRaw);
+    expect(rows.cgs).toHaveLength(1);
+    expect(rows.texts[0]!.scene).toBe('ch01_01');
+    const { json, errors } = rowsToGallery(galleryRaw, rows);
+    expect(errors).toEqual([]);
+    expect((json.cgs as Record<string, unknown>[])[0]!.src).toBe('castle_hall');
+  });
+
+  it('拦截重复 CG ID', () => {
+    const rows = parseGalleryRows(galleryRaw);
+    rows.cgs.push({ id: 'cg_hall', name: '', src: '' });
+    expect(rowsToGallery(galleryRaw, rows).errors.some((e) => e.includes("'cg_hall' 重复"))).toBe(true);
+  });
+
+  it('空配置容错（null 输入 → 空行表，保存不报错）', () => {
+    const rows = parseGalleryRows(null);
+    expect(rows.cgs).toEqual([]);
+    const { json, errors } = rowsToGallery(null, rows);
+    expect(errors).toEqual([]);
+    expect(json.cgs).toEqual([]);
   });
 });

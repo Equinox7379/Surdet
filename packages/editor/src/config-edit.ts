@@ -247,3 +247,242 @@ export function collectReferencedVars(scenes: Map<string, CompiledScene>): Map<s
   }
   return refs;
 }
+
+/* ============================ E3 剩余：日历/事件/成长/鉴赏 共用助手 ============================ */
+
+/** 行模型：文本列 string、勾选列 boolean（统一形状便于通用表格 UI） */
+export type RowMap = Record<string, string | boolean>;
+
+/** 值 → 行单元格：boolean 保留、对象 JSON 字符串化、其余 String、空值 '' */
+function toCell(v: unknown): string | boolean {
+  if (typeof v === 'boolean') return v;
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+/** 列表字段 → 行数组（只取枚举的键；未枚举字段在保存时经原条目合并保留） */
+function listToRows(raw: unknown, field: string, keys: string[]): RowMap[] {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const list = Array.isArray(obj[field]) ? obj[field] : [];
+  return list
+    .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object')
+    .map((e) => {
+      const row: RowMap = {};
+      for (const k of keys) row[k] = toCell(e[k]);
+      return row;
+    });
+}
+
+function origList(raw: unknown, field: string): unknown[] {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return Array.isArray(obj[field]) ? obj[field] : [];
+}
+
+/** 行数组 → 列表条目：合并原条目（保留未编辑字段）+ 写回已知列（数字自动还原；jsonKeys 列按 JSON 解析） */
+function applyRowsToList(
+  origArr: unknown[], rows: RowMap[], knownKeys: string[], jsonKeys: string[], errors: string[], listLabel: string,
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const origEntry = origArr[i];
+    const entry: Record<string, unknown> = (origEntry && typeof origEntry === 'object' && !Array.isArray(origEntry))
+      ? { ...(origEntry as Record<string, unknown>) } : {};
+    for (const key of knownKeys) {
+      const cell = row[key];
+      if (cell === undefined) continue;
+      if (typeof cell === 'boolean') { entry[key] = cell; continue; }
+      const t = String(cell).trim();
+      if (t === '') { delete entry[key]; continue; }
+      if (jsonKeys.includes(key)) {
+        try {
+          entry[key] = JSON.parse(t);
+        } catch {
+          errors.push(`${listLabel} 第 ${i + 1} 行 ${key} 不是合法 JSON：${t}`);
+        }
+        continue;
+      }
+      if (/^-?\d+(\.\d+)?$/.test(t)) entry[key] = Number(t);
+      else entry[key] = t;
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+function checkUniqueId(rows: RowMap[], key: string, label: string, errors: string[]): void {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const id = String(r[key] ?? '').trim();
+    if (id.length === 0) continue;
+    if (seen.has(id)) errors.push(`${label} '${id}' 重复定义`);
+    seen.add(id);
+  }
+}
+
+function checkExprCell(cell: string | boolean | undefined, label: string, errors: string[]): void {
+  if (typeof cell !== 'string') return;
+  const t = cell.trim();
+  if (t === '') return;
+  try {
+    parseExpr(t);
+  } catch (err) {
+    errors.push(`${label} 表达式语法错误：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/* ============================ calendar.json ============================ */
+
+export const CALENDAR_NODE_KEYS = ['id', 'name', 'x', 'y', 'isBase', 'apCost', 'requires', 'when', 'eventId'];
+export const CALENDAR_CMD_KEYS = ['id', 'name', 'apCost', 'when', 'effects', 'perTurn'];
+export const CALENDAR_SCALAR_KEYS = ['maxAp', 'maxTurns', 'dateTemplate', 'weeksPerMonth', 'onTurnStartEventId', 'onTurnEndEventId'];
+
+export interface CalendarRows {
+  scalars: Record<string, string>;
+  nodes: RowMap[];
+  baseCommands: RowMap[];
+}
+
+export function parseCalendarRows(raw: unknown): CalendarRows {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const scalars: Record<string, string> = {};
+  for (const k of CALENDAR_SCALAR_KEYS) scalars[k] = String(toCell(obj[k]));
+  return {
+    scalars,
+    nodes: listToRows(raw, 'nodes', CALENDAR_NODE_KEYS),
+    baseCommands: listToRows(raw, 'baseCommands', CALENDAR_CMD_KEYS),
+  };
+}
+
+export function rowsToCalendar(raw: unknown, rows: CalendarRows): { json: Record<string, unknown>; errors: string[] } {
+  const errors: string[] = [];
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const json: Record<string, unknown> = { ...obj };
+  for (const k of CALENDAR_SCALAR_KEYS) {
+    const t = (rows.scalars[k] ?? '').trim();
+    if (t === '') { delete json[k]; continue; }
+    if (k === 'dateTemplate' || k === 'onTurnStartEventId' || k === 'onTurnEndEventId') { json[k] = t; continue; }
+    const n = Number(t);
+    if (!Number.isFinite(n)) errors.push(`日历 ${k} 不是数字：${t}`);
+    else json[k] = n;
+  }
+  json.nodes = applyRowsToList(origList(raw, 'nodes'), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点');
+  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令');
+  checkUniqueId(rows.nodes, 'id', '地图节点', errors);
+  checkUniqueId(rows.baseCommands, 'id', '据点指令', errors);
+  for (const r of rows.nodes) checkExprCell(r.when, `地图节点 ${String(r.id ?? '')} 的 when`, errors);
+  for (const r of rows.baseCommands) checkExprCell(r.when, `据点指令 ${String(r.id ?? '')} 的 when`, errors);
+  return { json, errors };
+}
+
+/* ============================ events.json ============================ */
+
+export const EVENT_PROFILE_KEYS = ['characterId', 'variable', 'tiers'];
+export const EVENT_KEYS = ['id', 'characterId', 'when', 'scene', 'once', 'priority', 'effects'];
+
+export interface EventsRows {
+  profiles: RowMap[];
+  events: RowMap[];
+  scheduled: RowMap[];
+}
+
+export function parseEventsRows(raw: unknown): EventsRows {
+  return {
+    profiles: listToRows(raw, 'profiles', EVENT_PROFILE_KEYS),
+    events: listToRows(raw, 'events', EVENT_KEYS),
+    scheduled: listToRows(raw, 'scheduled', EVENT_KEYS),
+  };
+}
+
+export function rowsToEvents(raw: unknown, rows: EventsRows): { json: Record<string, unknown>; errors: string[] } {
+  const errors: string[] = [];
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const json: Record<string, unknown> = { ...obj };
+  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, EVENT_PROFILE_KEYS, ['tiers'], errors, '好感 profile');
+  json.events = applyRowsToList(origList(raw, 'events'), rows.events, EVENT_KEYS, ['effects'], errors, '事件');
+  json.scheduled = applyRowsToList(origList(raw, 'scheduled'), rows.scheduled, EVENT_KEYS, ['effects'], errors, '日程事件');
+  checkUniqueId(rows.events, 'id', '事件', errors);
+  checkUniqueId(rows.scheduled, 'id', '日程事件', errors);
+  for (const r of [...rows.events, ...rows.scheduled]) checkExprCell(r.when, `事件 ${String(r.id ?? '')} 的 when`, errors);
+  return { json, errors };
+}
+
+/* ============================ growth.json ============================ */
+
+export const GROWTH_PROFILE_KEYS = ['characterId', 'initialLevel', 'maxLevel', 'statGrowth', 'levelEvents'];
+
+export interface GrowthRows {
+  scalars: Record<string, string>;
+  profiles: RowMap[];
+}
+
+export function parseGrowthRows(raw: unknown): GrowthRows {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const curve = (obj.curve && typeof obj.curve === 'object' ? obj.curve : {}) as Record<string, unknown>;
+  return {
+    scalars: { 'curve.base': String(curve.base ?? ''), 'curve.linear': String(curve.linear ?? '') },
+    profiles: listToRows(raw, 'profiles', GROWTH_PROFILE_KEYS),
+  };
+}
+
+export function rowsToGrowth(raw: unknown, rows: GrowthRows): { json: Record<string, unknown>; errors: string[] } {
+  const errors: string[] = [];
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const json: Record<string, unknown> = { ...obj };
+  const origCurve = (obj.curve && typeof obj.curve === 'object' ? obj.curve : {}) as Record<string, unknown>;
+  const curve: Record<string, unknown> = { ...origCurve };
+  for (const k of ['base', 'linear'] as const) {
+    const t = (rows.scalars[`curve.${k}`] ?? '').trim();
+    if (t === '') { delete curve[k]; continue; }
+    const n = Number(t);
+    if (!Number.isFinite(n)) errors.push(`成长曲线 ${k} 不是数字：${t}`);
+    else curve[k] = n;
+  }
+  json.curve = curve;
+  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, GROWTH_PROFILE_KEYS, ['statGrowth', 'levelEvents'], errors, '成长 profile');
+  for (const p of json.profiles as Record<string, unknown>[]) {
+    if (typeof p.initialLevel === 'number' && typeof p.maxLevel === 'number' && p.initialLevel > p.maxLevel) {
+      errors.push(`成长 profile ${String(p.characterId ?? '')} initialLevel(${p.initialLevel}) > maxLevel(${p.maxLevel})`);
+    }
+    const le = p.levelEvents;
+    if (le && typeof le === 'object' && !Array.isArray(le)) {
+      for (const [lv, sc] of Object.entries(le as Record<string, unknown>)) {
+        if (typeof sc !== 'string') errors.push(`成长 profile ${String(p.characterId ?? '')} levelEvents[${lv}] 场景必须是字符串`);
+      }
+    }
+  }
+  return { json, errors };
+}
+
+/* ============================ gallery.json ============================ */
+
+export const GALLERY_CG_KEYS = ['id', 'name', 'src'];
+export const GALLERY_TEXT_KEYS = ['id', 'name', 'scene', 'label'];
+
+export interface GalleryRows {
+  cgs: RowMap[];
+  music: RowMap[];
+  texts: RowMap[];
+}
+
+export function parseGalleryRows(raw: unknown): GalleryRows {
+  return {
+    cgs: listToRows(raw, 'cgs', GALLERY_CG_KEYS),
+    music: listToRows(raw, 'music', GALLERY_CG_KEYS),
+    texts: listToRows(raw, 'texts', GALLERY_TEXT_KEYS),
+  };
+}
+
+export function rowsToGallery(raw: unknown, rows: GalleryRows): { json: Record<string, unknown>; errors: string[] } {
+  const errors: string[] = [];
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const json: Record<string, unknown> = { ...obj };
+  json.cgs = applyRowsToList(origList(raw, 'cgs'), rows.cgs, GALLERY_CG_KEYS, [], errors, 'CG');
+  json.music = applyRowsToList(origList(raw, 'music'), rows.music, GALLERY_CG_KEYS, [], errors, '鉴赏音乐');
+  json.texts = applyRowsToList(origList(raw, 'texts'), rows.texts, GALLERY_TEXT_KEYS, [], errors, '回想');
+  checkUniqueId(rows.cgs, 'id', 'CG', errors);
+  checkUniqueId(rows.music, 'id', '鉴赏音乐', errors);
+  checkUniqueId(rows.texts, 'id', '回想', errors);
+  return { json, errors };
+}
