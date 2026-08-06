@@ -417,7 +417,7 @@ export class PixiStage implements AdvStage {
 
     this.#speakerText = new PText({
       text: '',
-      style: { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
@@ -425,8 +425,8 @@ export class PixiStage implements AdvStage {
         fontSize: 26,
         fill: NIGHT_AZURE.text,
         lineHeight: 46,
-        // 极淡文字阴影：玻璃底上增强正文层次（v8 TextStyle 原生 dropShadow）
-        dropShadow: { alpha: 0.35, blur: 6, distance: 2, color: 0x020409 },
+        // 无框 ADV 可读性兜底：单层较强文字阴影（本 pixi 版本 dropShadow 类型仅支持单实例，双层口径收敛为此）
+        dropShadow: { alpha: 0.45, blur: 6, distance: 2, color: 0x04070d },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
@@ -496,57 +496,35 @@ export class PixiStage implements AdvStage {
   }
 
   #layout(): void {
-    // 名牌骑在对话框上沿：文本居于名牌底板内（底板绘制见 #drawSpeakerPlate）
-    this.#speakerText.position.set(72, this.#h - 229);
-    this.#dialogText.position.set(70, this.#h - 195);
-    this.#dialogRubyLayer.position.set(70, this.#h - 195);
+    // 无框 ADV：名牌小薄片贴正文区左上，正文下移贴近底边（行距不变，断行链路零改动）
+    this.#speakerText.position.set(82, this.#h - 220);
+    this.#dialogText.position.set(70, this.#h - 140);
+    this.#dialogRubyLayer.position.set(70, this.#h - 140);
     // 选择肢列：对话框上方
     for (let i = 0; i < this.#choiceViews.length; i++) {
       this.#choiceViews[i]!.holder.position.set(90, this.#h - 320 + i * 56);
     }
   }
 
-  /** 对话框玻璃面板绘制（分层：两段半透明 fill 近似纵向渐变玻璃底 + 1px 细描边 + 顶沿蔚蓝强调线） */
+  /** 对话框面板绘制：无框 ADV 形态（精致化批次二，对标柚子社）——玻璃底/描边/强调线全撤，
+   *  正文可读性由双层文字阴影兜底（见构造器 #dialogText 样式）；面板几何与可见性逻辑链路保留不动 */
   #drawDialogPanel(): void {
-    const x = 40;
-    const y = this.#h - 210;
-    const w = this.#w - 80;
-    const h = 180;
-    const r = 10;
-    const g = this.#dialogPanel;
-    g.clear();
-    // 玻璃底：上段浅底 + 下段深色叠加，近似深蓝黑纵向渐变（v8 真渐变成本高，叠加口径足够）
-    g.roundRect(x, y, w, h, r).fill({ color: NIGHT_AZURE.glassTop, alpha: 0.68 });
-    // 下半深色层：手工路径（底边圆角与面板同半径，顶边直切）
-    const y1 = y + h * 0.45;
-    g.moveTo(x, y1)
-      .lineTo(x + w, y1)
-      .lineTo(x + w, y + h - r)
-      .arc(x + w - r, y + h - r, r, 0, Math.PI / 2)
-      .lineTo(x + r, y + h)
-      .arc(x + r, y + h - r, r, Math.PI / 2, Math.PI)
-      .closePath()
-      .fill({ color: NIGHT_AZURE.glassBottom, alpha: 0.5 });
-    // 玻璃细描边
-    g.roundRect(x, y, w, h, r).stroke({ width: 1, color: NIGHT_AZURE.glassEdge, alpha: 0.25 });
-    // 顶沿蔚蓝强调线（内缩避免压住圆角与描边）
-    g.roundRect(x + 24, y + 1, w - 48, 2, 1).fill({ color: NIGHT_AZURE.accent, alpha: 0.8 });
+    this.#dialogPanel.clear();
   }
 
-  /** 说话人名牌底板绘制：有说话人时显示圆角胶囊（深蓝底 + 蔚蓝细边），否则隐藏。
-   *  显隐同时受隐藏界面模式（H 键）与 NVL 模式约束。 */
+  /** 说话人名牌底板绘制：无框 ADV 的小薄片（半透明深底 + 细圆角，不再描边），
+   *  有说话人时显示，否则隐藏；显隐同时受隐藏界面模式（H 键）与 NVL 模式约束。 */
   #drawSpeakerPlate(): void {
     const g = this.#speakerPlate;
     g.clear();
     const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
     g.visible = show;
     if (!show) return;
-    const x = 44;
-    const y = this.#h - 236;
-    const w = this.#speakerText.width + 56;
-    const h = this.#speakerText.height + 14;
-    g.roundRect(x, y, w, h, 8).fill({ color: NIGHT_AZURE.plate, alpha: 0.92 });
-    g.roundRect(x, y, w, h, 8).stroke({ width: 1, color: NIGHT_AZURE.accent, alpha: 0.7 });
+    const x = 64;
+    const y = this.#h - 226;
+    const w = this.#speakerText.width + 36;
+    const h = this.#speakerText.height + 12;
+    g.roundRect(x, y, w, h, 6).fill({ color: 0x0a1322, alpha: 0.55 });
   }
 
   /**
@@ -710,7 +688,7 @@ export class PixiStage implements AdvStage {
           fontSize: 26,
           fill: NIGHT_AZURE.text,
           lineHeight: 46,
-          dropShadow: { alpha: 0.35, blur: 6, distance: 2, color: 0x020409 },
+          dropShadow: { alpha: 0.45, blur: 6, distance: 2, color: 0x04070d },
         } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
