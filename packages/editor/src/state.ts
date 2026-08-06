@@ -38,6 +38,7 @@ export const state = {
     events: null as FileSystemFileHandle | null,
     growth: null as FileSystemFileHandle | null,
     gallery: null as FileSystemFileHandle | null,
+    terminology: null as FileSystemFileHandle | null,
   },
   /** content/assets（及 public/）扫描出的素材文件条目（E2） */
   dirAssets: [] as DirAsset[],

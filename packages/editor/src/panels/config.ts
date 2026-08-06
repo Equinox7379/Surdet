@@ -14,10 +14,11 @@ import {
   parseEventsRows, rowsToEvents,
   parseGrowthRows, rowsToGrowth,
   parseGalleryRows, rowsToGallery,
+  parseTerminologyRows, rowsToTerminology,
 } from '../config-edit.js';
 import type {
   VariableRow, AchievementRow, RowMap,
-  CalendarRows, EventsRows, GrowthRows, GalleryRows,
+  CalendarRows, EventsRows, GrowthRows, GalleryRows, TerminologyTableRows,
 } from '../config-edit.js';
 import { renderCalendarMap } from './calendar-map.js';
 
@@ -39,6 +40,7 @@ function rerenderConfig(): void {
   root.appendChild(renderGrowthSection());
   root.appendChild(renderEventsSection());
   root.appendChild(renderGallerySection());
+  root.appendChild(renderTerminologySection());
 }
 
 /* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
@@ -48,6 +50,7 @@ let calRows: CalendarRows | null = null;
 let evRows: EventsRows | null = null;
 let grRows: GrowthRows | null = null;
 let gaRows: GalleryRows | null = null;
+let termRows: TerminologyTableRows | null = null;
 
 /** 打开配置页时从盘上重读源文件（外部改动即时可见；失败沿用内存态） */
 async function refreshConfigSources(): Promise<void> {
@@ -56,7 +59,7 @@ async function refreshConfigSources(): Promise<void> {
       state.gameConfigText = await (await state.handles.gameConfig.getFile()).text();
     }
   } catch { /* 读取失败沿用内存态 */ }
-  for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery'] as const) {
+  for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery', 'terminology'] as const) {
     try {
       const fh = state.handles[name];
       if (fh) state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
@@ -78,6 +81,7 @@ function ensureCalRows(): CalendarRows { if (!calRows) calRows = parseCalendarRo
 function ensureEvRows(): EventsRows { if (!evRows) evRows = parseEventsRows(state.configFiles.events); return evRows; }
 function ensureGrRows(): GrowthRows { if (!grRows) grRows = parseGrowthRows(state.configFiles.growth); return grRows; }
 function ensureGaRows(): GalleryRows { if (!gaRows) gaRows = parseGalleryRows(state.configFiles.gallery); return gaRows; }
+function ensureTermRows(): TerminologyTableRows { if (!termRows) termRows = parseTerminologyRows(state.configFiles.terminology); return termRows; }
 
 /* ============================ 通用表格/标量 UI ============================ */
 
@@ -151,7 +155,7 @@ function renderScalarGrid(fields: [string, string][], scalars: Record<string, st
 
 /** content/config/*.json 写盘共用（句柄缺失时尝试创建；演示项目诚实拒绝） */
 async function saveConfigFile(
-  name: 'achievements' | 'calendar' | 'events' | 'growth' | 'gallery',
+  name: 'achievements' | 'calendar' | 'events' | 'growth' | 'gallery' | 'terminology',
   json: Record<string, unknown>,
   errors: string[],
   label: string,
@@ -540,6 +544,27 @@ function renderGallerySection(): HTMLElement {
   return sec;
 }
 
+/* ============================ 名词表编辑器（术语审计闭环） ============================ */
+
+function renderTerminologySection(): HTMLElement {
+  const { sec, ops } = sectionShell('名词表（terminology.json · 供审计标签页 TERM_VARIANT 检查）');
+  const tt = ensureTermRows();
+  sec.appendChild(h('div', 'dim', '剧本/选项中出现 variants 里的词时，审计标签页会提示改用规范词 canonical；保存后即时生效。'));
+  sec.appendChild(renderObjectTable([
+    { key: 'canonical', label: '规范词' },
+    { key: 'variants', label: '变体列表 (JSON 数组，如 ["那把剑","石剑"])', type: 'json' },
+  ], tt.terms, { canonical: '', variants: '[]' }));
+
+  const saveBtn = h('button', 'primary', '保存名词表');
+  saveBtn.onclick = () => {
+    const { json, errors } = rowsToTerminology(state.configFiles.terminology, ensureTermRows());
+    void saveConfigFile('terminology', json, errors, '名词表');
+  };
+  ops.appendChild(saveBtn);
+  sec.appendChild(ops);
+  return sec;
+}
+
 /* ============================ 入口 ============================ */
 
 /** 渲染配置标签页（每次进入从盘上重读源文件） */
@@ -555,6 +580,7 @@ export function renderConfig(container: HTMLElement): void {
     evRows = null;
     grRows = null;
     gaRows = null;
+    termRows = null;
     container.innerHTML = '';
     container.appendChild(renderVariablesSection());
     container.appendChild(renderAchievementsSection());
@@ -562,5 +588,6 @@ export function renderConfig(container: HTMLElement): void {
     container.appendChild(renderGrowthSection());
     container.appendChild(renderEventsSection());
     container.appendChild(renderGallerySection());
+    container.appendChild(renderTerminologySection());
   });
 }

@@ -499,3 +499,31 @@ export function rowsToGallery(raw: unknown, rows: GalleryRows): { json: Record<s
   checkUniqueId(rows.texts, 'id', '回想', errors);
   return { json, errors };
 }
+
+/* ============================ terminology.json ============================ */
+
+export const TERMINOLOGY_KEYS = ['canonical', 'variants'];
+
+export interface TerminologyTableRows {
+  terms: RowMap[];
+}
+
+export function parseTerminologyRows(raw: unknown): TerminologyTableRows {
+  return { terms: listToRows(raw, 'terms', TERMINOLOGY_KEYS) };
+}
+
+/** 行 → { terms: [...] }；校验：规范词唯一、variants 为合法 JSON 数组（与 core parseTerminology 同形状） */
+export function rowsToTerminology(raw: unknown, rows: TerminologyTableRows): { json: Record<string, unknown>; errors: string[] } {
+  const errors: string[] = [];
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const json: Record<string, unknown> = { ...obj };
+  json.terms = applyRowsToList(origList(raw, 'terms'), rows.terms, TERMINOLOGY_KEYS, ['variants'], errors, '名词', 'canonical');
+  const seen = new Set<string>();
+  for (const r of rows.terms) {
+    const c = String(r.canonical ?? '').trim();
+    if (c.length === 0) continue;
+    if (seen.has(c)) errors.push(`规范词 '${c}' 重复定义`);
+    seen.add(c);
+  }
+  return { json, errors };
+}
