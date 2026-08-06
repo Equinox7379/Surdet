@@ -18,7 +18,7 @@ import { renderEditor } from './panels/editor.js';
 import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { renderRightExtras } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
-import { renderConfig, bindConfigHooks, configUndo, configRedo, addTerminologyVariant } from './panels/config.js';
+import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
@@ -249,5 +249,13 @@ window.addEventListener('beforeunload', (e) => {
     }
   }
 });
+
+// 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪
+(window as unknown as Record<string, unknown>).surdetEditorDebug = {
+  state,
+  configUndo,
+  configRedo,
+  configHistoryDepth,
+};
 
 renderAll();
