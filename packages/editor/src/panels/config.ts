@@ -427,7 +427,7 @@ function renderAchievementsSection(): HTMLElement {
       inp.value = value;
       inp.placeholder = placeholder;
       if (list) inp.setAttribute('list', list);
-      inp.oninput = () => oninput(inp.value);
+      inp.oninput = () => { pushConfigHistory(true); oninput(inp.value); };
       return inp;
     };
     const tdId = h('td');
