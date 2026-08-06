@@ -42,6 +42,25 @@ export function collectPreviewScenes(scenes: Map<string, { id: string; text: str
   return out;
 }
 
+/** 从 game.config.json 提取变量声明（预览运行时的 VariableStore 源；容错解析：非法/缺失返回空数组；纯函数可测）。
+ *  没有它，真实剧本的 @set/@mod/@if/[if:] 在预览里会因变量未定义报运行时错误。 */
+export function parsePreviewVariables(configText: string): Record<string, unknown>[] {
+  let obj: Record<string, unknown>;
+  try {
+    obj = configText.trim() ? JSON.parse(configText) as Record<string, unknown> : {};
+  } catch {
+    return [];
+  }
+  const vars = obj.variables;
+  if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const [name, decl] of Object.entries(vars as Record<string, unknown>)) {
+    if (!decl || typeof decl !== 'object' || Array.isArray(decl)) continue;
+    out.push({ name, ...(decl as Record<string, unknown>) });
+  }
+  return out;
+}
+
 export function renderPreviewPanel(container: HTMLElement): void {
   container.innerHTML = '';
   const sc = state.current ? state.scenes.get(state.current) : undefined;
@@ -90,6 +109,8 @@ export function renderPreviewPanel(container: HTMLElement): void {
         sceneId: cur.id,
         // 全量场景下发：预览内跨场景 @jump 可正常跳转（多场景预览）
         scenes: collectPreviewScenes(state.scenes),
+        // 变量声明一并下发：真实剧本的 @set/@mod/@if 需要变量表（否则运行时错误卡死）
+        variables: parsePreviewVariables(state.gameConfigText),
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },
