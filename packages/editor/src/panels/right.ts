@@ -136,13 +136,13 @@ export function updateGraph(): void {
     rect.setAttribute('height', String(NODE_H));
     rect.setAttribute('rx', '6');
     rect.setAttribute('fill', id === entry ? '#f0f6ff' : '#ffffff');
-    rect.setAttribute('stroke', id === currentId ? '#e8483c' : '#c3cfdd'); // 当前场景：跑者红描边（ME 式聚焦）
+    rect.setAttribute('stroke', id === currentId ? '#0a6fd0' : '#c3cfdd'); // 当前场景：深蓝描边聚焦（用户反馈：红改蓝）
     const label = document.createElementNS(NS, 'text');
     label.setAttribute('x', String(p.x));
     label.setAttribute('y', String(p.y + 4));
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('font-size', '11');
-    label.setAttribute('fill', id === currentId ? '#d5382c' : '#1f2d3d');
+    label.setAttribute('fill', id === currentId ? '#0a6fd0' : '#1f2d3d');
     label.textContent = id.length > 11 ? id.slice(0, 10) + '…' : id;
     g.append(rect, label);
     const title = document.createElementNS(NS, 'title');
