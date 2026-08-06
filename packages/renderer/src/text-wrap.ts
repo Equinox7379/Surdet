@@ -55,3 +55,36 @@ export function wrapCjk(text: string, perLine: number): string[] {
   }
   return lines;
 }
+
+/**
+ * 像素级断行（wrapCjk 的测量版）：禁则规则完全一致，但每行容量用真实测量宽度
+ * （宿主传入 measure，如 canvas measureText）而非字数估算——中英混排/窄 ASCII 段落不再误差。
+ * 行首禁则触发的行允许超宽（悬挂），与字数版同口径；单字超宽强制独占一行（防死循环）。
+ */
+export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: string) => number): string[] {
+  if (text.length === 0) return [];
+  const limit = Math.max(1, maxWidth);
+  const lines: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    // 贪心找最长不超宽前缀（段落短，线性扫描成本可忽略）
+    let end = i;
+    while (end < text.length && measure(text.slice(i, end + 1)) <= limit) end += 1;
+    if (end <= i) end = i + 1; // 单字已超宽：强制至少一字，防死循环
+    if (end < text.length) {
+      if (end > i + 1 && NO_LINE_END.has(text[end - 1]!)) {
+        end -= 1; // 行尾禁则：前移
+      } else {
+        // 行首禁则：后移收进当前行（允许悬挂超宽）
+        while (end < text.length && (NO_LINE_START.has(text[end]!)
+          || (UNBREAKABLE_RUN.has(text[end]!) && text[end] === text[end - 1]))) {
+          end += 1;
+        }
+      }
+    }
+    if (end <= i) end = i + 1;
+    lines.push(text.slice(i, end));
+    i = end;
+  }
+  return lines;
+}

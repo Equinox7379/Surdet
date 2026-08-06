@@ -2,7 +2,7 @@
  * M5 支柱4：CJK 断行禁则测试（失败用例先行：裸断行会让标点挂行首/拆省略号，wrapCjk 必须避免）。
  */
 import { describe, expect, it } from 'vitest';
-import { wrapCjk } from '../src/text-wrap.js';
+import { wrapCjk, wrapCjkMeasure } from '../src/text-wrap.js';
 
 const NO_START = ['，', '。', '！', '？', '：', '；', '、', '）', '」', '】', '》', '”', '…', '—'];
 const NO_END = ['（', '「', '【', '《', '“'];
@@ -75,5 +75,46 @@ describe('wrapCjk（断行禁则）', () => {
       expect(line.length).toBeLessThanOrEqual(14); // 容量 + 悬挂余量
       expect(line.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('wrapCjkMeasure（像素级断行）', () => {
+  /** 等宽测量：每字 10px → 与字数版 wrapCjk(perLine=maxWidth/10) 完全同构 */
+  const mono = (s: string): number => s.length * 10;
+
+  it('等宽测量与字数版结果一致（含禁则）', () => {
+    const samples = [
+      '甲'.repeat(30),
+      '他说：“你好，世界！”然后离开了……',
+      '（括号）开头，句号。问号？叹号！',
+    ];
+    for (const text of samples) {
+      expect(wrapCjkMeasure(text, 120, mono)).toEqual(wrapCjk(text, 12));
+    }
+  });
+
+  it('无损往返（变宽测量）', () => {
+    const measure = (s: string): number => [...s].reduce((w, c) => w + (c.charCodeAt(0) < 128 ? 2 : 10), 0);
+    const text = 'English 与中文混排，ii 窄字很多。之后继续……';
+    expect(wrapCjkMeasure(text, 100, measure).join('')).toBe(text);
+  });
+
+  it('窄 ASCII 段落按真实宽度容字（字数估算会提前断行）', () => {
+    // 30 个窄字共 60px ≤ 100px → 单行；字数版 perLine=10 会折 3 行
+    const measure = (s: string): number => s.length * 2;
+    expect(wrapCjkMeasure('i'.repeat(30), 100, measure)).toEqual(['i'.repeat(30)]);
+  });
+
+  it('行首禁则悬挂在测量版同样生效', () => {
+    // 12 个 CJK 字恰满 120px，第 13 字是句号 → 收进行尾悬挂（超宽）
+    const text = '甲'.repeat(12) + '。' + '乙'.repeat(5);
+    const lines = wrapCjkMeasure(text, 120, mono);
+    expect(lines[0]).toBe('甲'.repeat(12) + '。');
+    expect(lines[1]).toBe('乙'.repeat(5));
+  });
+
+  it('单字超宽强制独占一行（防死循环）', () => {
+    const lines = wrapCjkMeasure('甲乙丙', 5, mono); // 每字 10px > 5px
+    expect(lines).toEqual(['甲', '乙', '丙']);
   });
 });

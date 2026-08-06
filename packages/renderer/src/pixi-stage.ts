@@ -12,7 +12,7 @@ import {
 import type { BacklogEntry } from './backlog.js';
 import type { BattleView } from './battle-view.js';
 import { parseRuby, stripRuby } from './ruby.js';
-import { wrapCjk } from './text-wrap.js';
+import { wrapCjk, wrapCjkMeasure } from './text-wrap.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
@@ -161,6 +161,14 @@ function makePortraitTexture(charId: string, costume: string, expression: string
  * Pixi 舞台：内核状态的可视化投影。
  * 背景/立绘资源缺失时回退程序化占位（同 key 稳定同图），真实项目可注入真实纹理。
  */
+/** 对话框断行测量上下文（模块级惰性创建共用；非浏览器环境 null → 降级字数估算） */
+let dialogMeasureCtx: CanvasRenderingContext2D | null = null;
+function getDialogMeasureCtx(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null;
+  if (!dialogMeasureCtx) dialogMeasureCtx = document.createElement('canvas').getContext('2d');
+  return dialogMeasureCtx;
+}
+
 export class PixiStage implements AdvStage {
   app: Application | null = null;
   /** 外部注入：选择肢点击回调 */
@@ -360,10 +368,22 @@ export class PixiStage implements AdvStage {
         lineHeight: 38,
       } satisfies TextStyleOptions,
     });
-    // 对话框预断行（M5 支柱4：断行禁则）：按字数估算每行容量，替代 Pixi wordWrap 的裸断行
+    // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
     this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 26));
     // NVL 页预断行（断行禁则）：fontSize 20，估算口径与对话框一致
     this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
+  }
+
+  /** 对话框断行：优先像素级测量（canvas measureText，中英混排精确），
+   *  无测量环境（node/无 canvas）降级字数估算；禁则规则由 wrap 系函数保证 */
+  #wrapDialogText(plain: string): string[] {
+    const ctx = getDialogMeasureCtx();
+    if (!ctx) return wrapCjk(plain, this.#dialogCharsPerLine);
+    const style = this.#dialogText.style;
+    const fam = style.fontFamily;
+    const famStr = Array.isArray(fam) ? fam.join(', ') : String(fam);
+    ctx.font = `${style.fontSize}px ${famStr}`;
+    return wrapCjkMeasure(plain, this.#w - 160, (s) => ctx.measureText(s).width);
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
@@ -566,8 +586,9 @@ export class PixiStage implements AdvStage {
       this.#clearRubyLayer();
       this.#dialogText.visible = true;
       const plain = unclosed ? stripRuby(value) : value;
-      // 断行禁则（M5 支柱4）：禁则字不挂行首/行尾，……——不拆行
-      this.#dialogText.text = wrapCjk(plain, this.#dialogCharsPerLine).join('\n');
+      // 断行禁则（M5 支柱4）：禁则字不挂行首/行尾，……——不拆行；
+      // 像素级测量断行（canvas measureText，中英混排精确）；无 DOM 环境降级字数估算
+      this.#dialogText.text = this.#wrapDialogText(plain).join('\n');
       return;
     }
     this.#dialogText.visible = false;

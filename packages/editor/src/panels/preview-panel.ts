@@ -111,6 +111,13 @@ export function renderPreviewPanel(container: HTMLElement): void {
         scenes: collectPreviewScenes(state.scenes),
         // 变量声明一并下发：真实剧本的 @set/@mod/@if 需要变量表（否则运行时错误卡死）
         variables: parsePreviewVariables(state.gameConfigText),
+        // 编辑器管理的四套配置下发：预览轻宿主（日历/成长/成就/好感）；battle/shop 无配置仍占位
+        configs: {
+          calendar: state.configFiles.calendar ?? undefined,
+          events: state.configFiles.events ?? undefined,
+          growth: state.configFiles.growth ?? undefined,
+          achievements: state.configFiles.achievements ?? undefined,
+        },
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },

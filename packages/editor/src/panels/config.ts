@@ -88,7 +88,8 @@ function ensureTermRows(): TerminologyTableRows { if (!termRows) termRows = pars
 
 /* ============================ 配置编辑撤销/重做（快照栈，与剧本 undo 分栈） ============================ */
 
-/** 配置行模型全量快照（null = 尚未载入的区块，恢复时保持未载入语义） */
+/** 配置行模型全量快照（null = 尚未载入的区块，恢复时保持未载入语义；
+ *  gameConfigText 一并入快照：撤销变量保存后内存态同步回退，覆盖顶层键口径） */
 interface ConfigSnapshot {
   varRows: VariableRow[] | null;
   achRows: AchievementRow[] | null;
@@ -97,6 +98,7 @@ interface ConfigSnapshot {
   grRows: GrowthRows | null;
   gaRows: GalleryRows | null;
   termRows: TerminologyTableRows | null;
+  gameConfigText: string;
 }
 
 const configHist = createSnapshotHistory<ConfigSnapshot>();
@@ -106,7 +108,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return clone({ varRows, achRows, calRows, evRows, grRows, gaRows, termRows });
+  return { ...clone({ varRows, achRows, calRows, evRows, grRows, gaRows, termRows }), gameConfigText: state.gameConfigText };
 }
 
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
@@ -122,6 +124,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   grRows = clone(snap.grRows);
   gaRows = clone(snap.gaRows);
   termRows = clone(snap.termRows);
+  state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
   rerenderConfig();
 }
 

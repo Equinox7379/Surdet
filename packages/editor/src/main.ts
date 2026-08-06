@@ -23,6 +23,9 @@ import { renderPreviewPanel } from './panels/preview-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
+import {
+  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
+} from './autosave.js';
 
 /* ============================ 模块装配（钩子注入，保持无环） ============================ */
 
@@ -30,7 +33,7 @@ bindHistoryHooks({
   onEdited: scheduleValidate,
   onHistoryNav: () => { renderEditor(); renderSidebar(); },
 });
-bindProjectIoHooks({ renderAll, runValidate, renderSidebar });
+bindProjectIoHooks({ renderAll, runValidate, renderSidebar, onProjectLoaded: tryAutosaveRecover, onSaved: clearAutosave });
 bindSidebarHooks({ renderEditor });
 bindSidebarRenderAll(renderAll);
 bindFlowHooks({
@@ -257,5 +260,36 @@ window.addEventListener('beforeunload', (e) => {
   configRedo,
   configHistoryDepth,
 };
+
+/* ============================ 崩溃保险（A1：定时快照 + 同项目恢复提示） ============================ */
+
+/** 项目载入后检查同项目未保存快照：存在且与当前内存不同时询问恢复 */
+function tryAutosaveRecover(): void {
+  const payload = readAutosave();
+  const recoverable = pickRecoverable(payload, state.dirName, state.scenes);
+  if (recoverable.length === 0) return;
+  const when = new Date(payload!.savedAt).toLocaleString();
+  const names = recoverable.map((e) => e.key).join('、');
+  if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}），共 ${recoverable.length} 个场景与磁盘内容不同：\n${names}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
+    return;
+  }
+  for (const e of recoverable) {
+    const sc = state.scenes.get(e.key);
+    if (sc) {
+      sc.text = e.text;
+      sc.dirty = true;
+    }
+  }
+  renderAll();
+  runValidate();
+  renderSidebar();
+}
+
+/** 定时快照：有 dirty 场景就写备份，全部干净则清除旧备份（存储不可用时静默降级） */
+setInterval(() => {
+  const payload = buildAutosave(state.dirName, state.scenes, Date.now());
+  if (payload) writeAutosave(payload);
+  else clearAutosave();
+}, AUTOSAVE_INTERVAL_MS);
 
 renderAll();

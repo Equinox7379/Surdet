@@ -11,11 +11,23 @@ import type { AssetKind } from './assets.js';
 let renderAll: () => void = () => {};
 let runValidate: () => void = () => {};
 let renderSidebar: () => void = () => {};
+/** 项目载入完成（崩溃保险恢复检查挂点；A1） */
+let onProjectLoaded: () => void = () => {};
+/** 保存全部完成（清除崩溃备份挂点；A1） */
+let onSaved: () => void = () => {};
 
-export function bindProjectIoHooks(opts: { renderAll: () => void; runValidate: () => void; renderSidebar: () => void }): void {
+export function bindProjectIoHooks(opts: {
+  renderAll: () => void;
+  runValidate: () => void;
+  renderSidebar: () => void;
+  onProjectLoaded?: () => void;
+  onSaved?: () => void;
+}): void {
   renderAll = opts.renderAll;
   runValidate = opts.runValidate;
   renderSidebar = opts.renderSidebar;
+  onProjectLoaded = opts.onProjectLoaded ?? (() => {});
+  onSaved = opts.onSaved ?? (() => {});
 }
 
 export async function openProject(): Promise<void> {
@@ -77,6 +89,7 @@ export async function openProject(): Promise<void> {
   state.current = first ?? null;
   renderAll();
   runValidate(); // 打开后立即校验
+  onProjectLoaded(); // 崩溃保险：检查同项目未保存快照（A1）
 }
 
 /** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/bgm/se/voice/video），子目录继承类型；
@@ -179,6 +192,7 @@ export async function saveAll(): Promise<void> {
   }
   setStatus(saved > 0 ? `已保存 ${saved} 个场景` : '无待保存改动', true, 4000);
   renderSidebar();
+  onSaved(); // 崩溃保险：磁盘已最新，清除备份（演示项目脏标记保留时下一轮定时快照会自动重建）
 }
 
 export function exportScene(id: string, text: string): void {
@@ -218,4 +232,5 @@ export function loadDemoProject(): void {
   state.current = 'demo';
   renderAll();
   runValidate();
+  onProjectLoaded(); // 崩溃保险：演示项目同样支持恢复（dirName 区分）
 }
