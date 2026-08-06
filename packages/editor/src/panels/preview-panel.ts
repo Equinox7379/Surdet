@@ -61,6 +61,42 @@ export function parsePreviewVariables(configText: string): Record<string, unknow
   return out;
 }
 
+/** 预览字体缓存（避免每次点播放重读数 MB 字体；key = 项目目录 + 字体路径） */
+let previewFontCacheKey = '';
+let previewFontCache: { buffer: ArrayBuffer; mime: string } | null = null;
+
+/** 从项目目录读取 game.config.json font 指向的字体文件（File System Access 逐级句柄）；
+ *  缺失/失败/无 FS API 环境返回 null（预览回退系统字体）。下发用 ArrayBuffer（iframe postMessage 结构化克隆）。 */
+async function readProjectFont(): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
+  let cfg: Record<string, unknown>;
+  try {
+    cfg = state.gameConfigText.trim() ? JSON.parse(state.gameConfigText) as Record<string, unknown> : {};
+  } catch {
+    return null;
+  }
+  const fontPath = cfg.font;
+  if (typeof fontPath !== 'string' || fontPath.length === 0 || !state.dirHandle) return null;
+  const key = `${state.dirName}|${fontPath}`;
+  if (key === previewFontCacheKey) return previewFontCache;
+  const MIME: Record<string, string> = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
+  try {
+    const segs = fontPath.split('/').filter((s) => s.length > 0);
+    const fname = segs.pop()!;
+    let dir: FileSystemDirectoryHandle = state.dirHandle;
+    for (const s of segs) dir = await dir.getDirectoryHandle(s);
+    const fh = await dir.getFileHandle(fname);
+    const buffer = await (await fh.getFile()).arrayBuffer();
+    const ext = (fname.split('.').pop() ?? '').toLowerCase();
+    previewFontCacheKey = key;
+    previewFontCache = { buffer, mime: MIME[ext] ?? 'font/ttf' };
+    return previewFontCache;
+  } catch {
+    previewFontCacheKey = key;
+    previewFontCache = null;
+    return null;
+  }
+}
+
 export function renderPreviewPanel(container: HTMLElement): void {
   container.innerHTML = '';
   const sc = state.current ? state.scenes.get(state.current) : undefined;
@@ -96,13 +132,15 @@ export function renderPreviewPanel(container: HTMLElement): void {
   container.appendChild(frame);
 
   let ready = false;
-  const send = (): void => {
+  const send = async (): Promise<void> => {
     if (!ready) return;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {
       setStatus('预览：请先选择一个场景', false, 4000);
       return;
     }
+    // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
+    const font = await readProjectFont();
     frame.contentWindow?.postMessage({
       type: 'surdet-preview-load',
       payload: {
@@ -118,6 +156,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
           growth: state.configFiles.growth ?? undefined,
           achievements: state.configFiles.achievements ?? undefined,
         },
+        font: font ?? undefined,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },
@@ -126,11 +165,11 @@ export function renderPreviewPanel(container: HTMLElement): void {
 
   notifyPreviewReady = () => {
     ready = true;
-    send(); // 就绪即播放当前场景
+    void send(); // 就绪即播放当前场景
   };
   bindPreviewReadyListenerOnce();
 
-  playBtn.onclick = send;
+  playBtn.onclick = () => { void send(); };
   fastChk.onchange = () => {
     frame.contentWindow?.postMessage({ type: 'surdet-preview-fast', fast: fastChk.checked }, '*');
   };

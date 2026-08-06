@@ -130,13 +130,18 @@ async function main(): Promise<void> {
   const stage = new PixiStage();
   await stage.init();
 
-  // 自定义字体（可选，M5 支柱4）：game.config.json 配置 font 指向项目内嵌 woff2；
-  // 加载失败/超时自动回退系统字体（不白屏）。不配置则用系统默认字体。
-  const fontUrl = (gameConfig as { font?: string }).font;
-  if (typeof fontUrl === 'string' && fontUrl.length > 0) {
-    void stage.registerFont(fontUrl).then((ok) => {
-      if (ok) console.info('[starter] 自定义字体已加载：', fontUrl);
-    });
+  // 自定义字体（可选，M5 支柱4 / 精致化批）：game.config.json 的 font 指向项目内嵌字体（woff2/woff/ttf/otf）；
+  // await 加载完成后再进后续画面（标题首帧即用正确字体渲染，避免系统字闪变）；
+  // 加载失败/超时/文件缺失自动回退系统字体（不白屏）。不配置则用系统默认字体。
+  const fontPath = (gameConfig as { font?: string }).font;
+  if (typeof fontPath === 'string' && fontPath.length > 0) {
+    const fontUrl = await resolveFontUrl(fontPath);
+    if (fontUrl) {
+      const ok = await stage.registerFont(fontUrl);
+      if (ok) console.info('[starter] 自定义字体已加载：', fontPath);
+    } else {
+      console.warn('[starter] 未找到字体文件，回退系统字体：', fontPath);
+    }
   }
   appEl.appendChild(stage.app!.canvas);
 
@@ -631,6 +636,29 @@ async function main(): Promise<void> {
       }
     }, 0);
   });
+
+  // ===== 字体资源解析（与 loadAssets 同口径双路）：打包环境经主进程读取 → Blob URL；dev 环境 vite glob URL =====
+  async function resolveFontUrl(fontPath: string): Promise<string | null> {
+    // fontPath 形如 content/assets/fonts/x.ttf → 素材根相对 fonts/x.ttf（与 loadAssets 的 rel 口径一致）
+    const rel = fontPath.replace(/^content\/assets\//, '');
+    const desktopAsset = window.surdetAsset;
+    if (desktopAsset) {
+      try {
+        const files = await desktopAsset.list();
+        if (!files.includes(rel)) return null;
+        const bytes = await desktopAsset.read(rel);
+        return URL.createObjectURL(new Blob([bytes as unknown as BlobPart]));
+      } catch {
+        return null;
+      }
+    }
+    const fonts = import.meta.glob('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true });
+    const wanted = fontPath.split('/').pop() ?? '';
+    for (const [p, url] of Object.entries(fonts)) {
+      if (p.endsWith(`/${wanted}`)) return url as string;
+    }
+    return null;
+  }
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
