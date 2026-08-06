@@ -252,7 +252,7 @@ export class PixiStage implements AdvStage {
   #backlogContentH = 0;
   /** 对话框半透明面板（亮色背景下保证文本可读性） */
   #dialogPanel: Graphics;
-  /** ▼ 点击等待指示器（awaiting 时可见，呼吸浮动） */
+  /** 等待推进指示器（呼吸小光点；awaiting 时可见） */
   #continueIndicator: Graphics;
   #continuePhase = 0;
   /** Backlog 覆盖层 */
@@ -361,7 +361,7 @@ export class PixiStage implements AdvStage {
     this.#dialogRubyLayer = new Container();
     this.#nvlLayer = new Container();
     this.#nvlLayer.visible = false;
-    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.6 }));
+    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.glassTop, alpha: 0.78 }));
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
     this.#bannerBars = new Graphics();
@@ -393,13 +393,13 @@ export class PixiStage implements AdvStage {
     this.#dialogPanel = new Graphics();
     this.#drawDialogPanel();
     this.#speakerPlate = new Graphics();
+    // 等待推进指示器：呼吸小光点（外圈柔光 + 内圈亮点，动画见 updateContinuePulse）
     this.#continueIndicator = new Graphics()
-      .moveTo(-9, 0)
-      .lineTo(9, 0)
-      .lineTo(0, 12)
-      .closePath()
-      .fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
+      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
+      .circle(0, 0, 4.5).fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
     this.#continueIndicator.visible = false;
+    // 水平定位对齐对话框右下（历史代码只驱动 y，x 从未赋值导致贴左缘，顺手修复）
+    this.#continueIndicator.x = this.#w - 68;
     this.#backlogLayer = new Container();
     this.#backlogLayer.visible = false;
     this.#galleryLayer = new Container();
@@ -731,7 +731,7 @@ export class PixiStage implements AdvStage {
     this.#dialogRubyLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
   }
 
-  /** 点击等待指示器可见性（▼；同时决定面板是否保持显示） */
+  /** 等待推进指示器可见性（呼吸小光点；同时决定面板是否保持显示） */
   setAwaiting(awaiting: boolean): void {
     if (this.#nvlActive) return; // NVL 页不使用对话面板/指示器
     if (this.#interfaceHidden) return; // 隐藏界面模式（H 键赏画）：指示器保持隐藏
@@ -743,11 +743,12 @@ export class PixiStage implements AdvStage {
     ) this.#dialogPanel.visible = false;
   }
 
-  /** ▼ 呼吸浮动动画（由 AdvRenderer 每帧转发 ticker delta） */
+  /** 呼吸小光点动画（由 AdvRenderer 每帧转发 ticker delta；alpha 呼吸 + 轻微浮动） */
   updateContinuePulse(deltaMs: number): void {
     if (!this.#continueIndicator.visible) return;
-    this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 4) % (Math.PI * 2);
-    this.#continueIndicator.y = this.#h - 44 + Math.sin(this.#continuePhase) * 4;
+    this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
+    this.#continueIndicator.y = this.#h - 46 + Math.sin(this.#continuePhase) * 3;
+    this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
   }
 
   /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭）。
@@ -764,10 +765,10 @@ export class PixiStage implements AdvStage {
       this.#backlogBuilt = true;
     }
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x000000, alpha: 0.82 }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x070d1a, alpha: 0.92 }));
     layer.addChild(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
-      style: { fontSize: 22, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 30);
     // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
     const entriesLayer = new Container();
@@ -782,7 +783,7 @@ export class PixiStage implements AdvStage {
           text: first && e.voice ? `▶ ${lineText}` : lineText,
           style: {
             fontSize: 20,
-            fill: first && e.speaker ? 0xffe8c8 : 0xdddddd,
+            fill: first && e.speaker ? NIGHT_AZURE.accent : 0xd6e2f5,
             fontWeight: first && e.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
         });
@@ -1072,7 +1073,7 @@ export class PixiStage implements AdvStage {
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const t = new PText({
       text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: 0xf0f0f0 } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: NIGHT_AZURE.text } satisfies TextStyleOptions,
     });
     this.#nvlLayer.addChild(t);
     this.#nvlLines.push(t);
@@ -1274,7 +1275,7 @@ export class PixiStage implements AdvStage {
     const mkBtn = (label: string, x: number, active: boolean, onTap: () => void): PText => {
       const t = new PText({
         text: label,
-        style: { fontSize: 24, fill: active ? 0xffe8c8 : 0x8a8a96, fontWeight: active ? 'bold' : 'normal' } satisfies TextStyleOptions,
+        style: { fontSize: 24, fill: active ? NIGHT_AZURE.accent : 0x8a93a8, fontWeight: active ? 'bold' : 'normal' } satisfies TextStyleOptions,
       });
       t.position.set(x, 30);
       t.eventMode = 'static';
@@ -1445,7 +1446,7 @@ export class PixiStage implements AdvStage {
     const px = this.#w / 2 - 320;
     const panelH = 130 + this.#settingsRows.length * 52 + 40;
     layer.addChild(new Graphics().roundRect(px, 110, 640, panelH, 14).fill({ color: 0x101018, alpha: 0.97 }));
-    layer.addChild(new PText({ text: '设 置', style: { fontSize: 28, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions })).position.set(this.#w / 2 - 42, 132);
+    layer.addChild(new PText({ text: '设 置', style: { fontSize: 28, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions })).position.set(this.#w / 2 - 42, 132);
     const close = new PText({ text: '✕', style: { fontSize: 26, fill: 0x8a8a96 } satisfies TextStyleOptions });
     close.position.set(px + 596, 132);
     close.eventMode = 'static';
@@ -1459,7 +1460,7 @@ export class PixiStage implements AdvStage {
     this.#settingsRows.forEach((row, i) => {
       const y = 196 + i * 52;
       layer.addChild(new PText({ text: row.label, style: { fontSize: 22, fill: 0xdddddd } satisfies TextStyleOptions })).position.set(px + 48, y);
-      const left = new PText({ text: '◀', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+      const left = new PText({ text: '◀', style: { fontSize: 22, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
       left.position.set(px + 320, y);
       left.eventMode = 'static';
       left.cursor = 'pointer';
@@ -1467,7 +1468,7 @@ export class PixiStage implements AdvStage {
       const value = new PText({ text: row.display, style: { fontSize: 22, fill: 0xffffff } satisfies TextStyleOptions });
       value.anchor.set(0.5, 0);
       value.position.set(px + 420, y);
-      const right = new PText({ text: '▶', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+      const right = new PText({ text: '▶', style: { fontSize: 22, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
       right.position.set(px + 508, y);
       right.eventMode = 'static';
       right.cursor = 'pointer';
@@ -1488,7 +1489,7 @@ export class PixiStage implements AdvStage {
 
     layer.addChild(new PText({
       text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
-      style: { fontSize: 26, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
 
     const teams = [...new Set(view.units.map((u) => u.team))];
@@ -1496,7 +1497,7 @@ export class PixiStage implements AdvStage {
       const x = 80 + ti * 620;
       layer.addChild(new PText({
         text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
-        style: { fontSize: 20, fill: team === view.actingTeam ? 0xffe8c8 : 0x8a8a96, fontWeight: 'bold' } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: team === view.actingTeam ? NIGHT_AZURE.accent : 0x8a93a8, fontWeight: 'bold' } satisfies TextStyleOptions,
       })).position.set(x, 92);
       view.units.filter((u) => u.team === team).forEach((u, i) => {
         const y = 136 + i * 88;
@@ -1544,11 +1545,11 @@ export class PixiStage implements AdvStage {
           text: btn.label,
           style: {
             fontSize: 18,
-            fill: selected ? 0x0a0a12 : btn.ready ? 0xffe8c8 : 0x55555f,
+            fill: selected ? 0x0a1020 : btn.ready ? NIGHT_AZURE.plateText : 0x5a6478,
           } satisfies TextStyleOptions,
         });
         const pad = new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
-          .fill({ color: selected ? 0xffe8c8 : 0x1a1a26, alpha: 0.95 });
+          .fill({ color: selected ? NIGHT_AZURE.accent : 0x141c2e, alpha: 0.95 });
         layer.addChild(pad);
         t.position.set(sx, this.#h - 144);
         layer.addChild(t);
@@ -1584,7 +1585,7 @@ export class PixiStage implements AdvStage {
       text: message.length > 0 ? message : '点击敌方单位发起攻击',
       style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
     })).position.set(60, this.#h - 84);
-    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: 0xffe8c8 } satisfies TextStyleOptions });
+    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
     pass.position.set(this.#w - 210, this.#h - 84);
     pass.eventMode = 'static';
     pass.cursor = 'pointer';
@@ -1730,7 +1731,7 @@ export class PixiStage implements AdvStage {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
       text: view.mode === 'save' ? '存 档' : '读 档',
-      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     const close = new PText({ text: '✕ 关闭', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
     close.position.set(this.#w - 150, 42);
@@ -1799,7 +1800,7 @@ export class PixiStage implements AdvStage {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0f14, alpha: 0.95 }));
     layer.addChild(new PText({
       text: `${view.date} —— 回合 ${view.turn}`,
-      style: { fontSize: 24, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 24, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({ text: '行动力', style: { fontSize: 16, fill: 0x9a9aa5 } satisfies TextStyleOptions })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
     for (let i = 0; i < view.maxAp; i++) {
@@ -1808,7 +1809,7 @@ export class PixiStage implements AdvStage {
     for (const node of view.nodes) {
       const dot = new Container();
       dot.position.set(node.x, node.y);
-      const color = node.enterable ? 0xffe8c8 : node.visited ? 0x5a7a8a : 0x333340;
+      const color = node.enterable ? NIGHT_AZURE.accent : node.visited ? 0x5a7a8a : 0x333340;
       dot.addChild(new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }));
       if (node.visited) {
         dot.addChild(new PText({ text: '✓', style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions })).position.set(-9, -13);
@@ -1830,7 +1831,7 @@ export class PixiStage implements AdvStage {
       }
       layer.addChild(dot);
     }
-    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: 0xffe8c8 } satisfies TextStyleOptions });
+    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
     end.position.set(this.#w - 210, this.#h - 70);
     end.eventMode = 'static';
     end.cursor = 'pointer';
@@ -1862,7 +1863,7 @@ export class PixiStage implements AdvStage {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
       text: '商 店',
-      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({
       text: `金币：${view.gold}`,
@@ -1883,7 +1884,7 @@ export class PixiStage implements AdvStage {
       })).position.set(320, 16);
       const btn = new PText({
         text: affordable ? '购买' : '金币不足',
-        style: { fontSize: 20, fill: affordable ? 0xffe8c8 : 0x55555f } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: affordable ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
       });
       btn.position.set(580, 14);
       if (affordable) {
@@ -1928,7 +1929,7 @@ export class PixiStage implements AdvStage {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
       text: '据 点 指 令',
-      style: { fontSize: 32, fill: 0xffe8c8, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({
       text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
@@ -1949,7 +1950,7 @@ export class PixiStage implements AdvStage {
       })).position.set(360, 16);
       const btn = new PText({
         text: cmd.enabled ? '执行' : '不可执行',
-        style: { fontSize: 20, fill: cmd.enabled ? 0xffe8c8 : 0x55555f } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: cmd.enabled ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
       });
       btn.position.set(720, 14);
       if (cmd.enabled) {
