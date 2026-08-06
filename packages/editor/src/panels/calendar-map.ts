@@ -126,7 +126,7 @@ export function renderCalendarMap(
   marker.setAttribute('orient', 'auto-start-reverse');
   const arrowPath = el('path');
   arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-  arrowPath.setAttribute('fill', '#f0b45c'); // 暖金箭头（UI 翻新第一阶段配色）
+  arrowPath.setAttribute('fill', '#0f8ff3'); // 蔚蓝箭头（ME 白蓝主题）
   marker.appendChild(arrowPath);
   defs.appendChild(marker);
   svg.appendChild(defs);
@@ -170,7 +170,7 @@ export function renderCalendarMap(
       line.setAttribute('y1', String(pts.y1));
       line.setAttribute('x2', String(pts.x2));
       line.setAttribute('y2', String(pts.y2));
-      line.setAttribute('stroke', '#8a7a66'); // 暖灰连线（UI 翻新第一阶段配色）
+      line.setAttribute('stroke', '#8fa5bd'); // 冷灰蓝连线（ME 白蓝主题）
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '6 4');
       line.setAttribute('marker-end', 'url(#map-arrow)');
@@ -237,16 +237,16 @@ export function renderCalendarMap(
     rect.setAttribute('width', String(w));
     rect.setAttribute('height', String(NODE_H));
     rect.setAttribute('rx', '8');
-    rect.setAttribute('fill', isBase ? '#2c2416' : '#262019');
+    rect.setAttribute('fill', isBase ? '#dbeafe' : '#ffffff');
     // 重叠节点红框提示（拖拽错开后自动消失）
-    rect.setAttribute('stroke', overlapped.has(id) ? '#c86a6a' : (isBase ? '#c8a86a' : '#55463a'));
+    rect.setAttribute('stroke', overlapped.has(id) ? '#e5484d' : (isBase ? '#0f8ff3' : '#9fb3c8'));
     rect.setAttribute('stroke-width', '2');
     g.appendChild(rect);
 
     const label = el('text');
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('y', '-2');
-    label.setAttribute('fill', '#e8d9b0');
+    label.setAttribute('fill', '#1f2d3d');
     label.setAttribute('font-size', '14');
     label.textContent = name;
     g.appendChild(label);
@@ -254,7 +254,7 @@ export function renderCalendarMap(
     const sub = el('text');
     sub.setAttribute('text-anchor', 'middle');
     sub.setAttribute('y', '14');
-    sub.setAttribute('fill', '#a2937f');
+    sub.setAttribute('fill', '#6e7f92');
     sub.setAttribute('font-size', '10');
     sub.textContent = `${id}${isBase ? '（据点）' : ''} · (${Math.round(x)}, ${Math.round(y)})`;
     g.appendChild(sub);
@@ -264,15 +264,15 @@ export function renderCalendarMap(
     port.setAttribute('cx', String(w / 2));
     port.setAttribute('cy', '0');
     port.setAttribute('r', '6');
-    port.setAttribute('fill', '#c8a86a');
-    port.setAttribute('stroke', '#0a0a12');
+    port.setAttribute('fill', '#0f8ff3');
+    port.setAttribute('stroke', '#ffffff');
     port.style.cursor = 'crosshair';
     port.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation(); // 不走节点拖拽分支
       port.setPointerCapture(e.pointerId);
       const temp = el('line');
-      temp.setAttribute('stroke', '#c8a86a');
+      temp.setAttribute('stroke', '#00b4d8');
       temp.setAttribute('stroke-width', '2');
       temp.setAttribute('stroke-dasharray', '4 4');
       temp.setAttribute('pointer-events', 'none');

@@ -120,7 +120,7 @@ export function updateGraph(): void {
     line.setAttribute('y1', String(from.y));
     line.setAttribute('x2', String(to.x - NODE_W / 2 + 2));
     line.setAttribute('y2', String(to.y));
-    line.setAttribute('stroke', e.kind === 'call' ? '#7a6aa8' : '#3a4258');
+    line.setAttribute('stroke', e.kind === 'call' ? '#7a6aa8' : '#a9b8ca');
     line.setAttribute('stroke-width', '1.5');
     svg.appendChild(line);
   }
@@ -135,14 +135,14 @@ export function updateGraph(): void {
     rect.setAttribute('width', String(NODE_W));
     rect.setAttribute('height', String(NODE_H));
     rect.setAttribute('rx', '6');
-    rect.setAttribute('fill', id === entry ? '#3a2f1e' : '#1a2032');
-    rect.setAttribute('stroke', id === currentId ? '#ffe8c8' : '#2a3248');
+    rect.setAttribute('fill', id === entry ? '#f0f6ff' : '#ffffff');
+    rect.setAttribute('stroke', id === currentId ? '#e8483c' : '#c3cfdd'); // 当前场景：跑者红描边（ME 式聚焦）
     const label = document.createElementNS(NS, 'text');
     label.setAttribute('x', String(p.x));
     label.setAttribute('y', String(p.y + 4));
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('font-size', '11');
-    label.setAttribute('fill', id === currentId ? '#ffe8c8' : '#dfe4f0');
+    label.setAttribute('fill', id === currentId ? '#d5382c' : '#1f2d3d');
     label.textContent = id.length > 11 ? id.slice(0, 10) + '…' : id;
     g.append(rect, label);
     const title = document.createElementNS(NS, 'title');
