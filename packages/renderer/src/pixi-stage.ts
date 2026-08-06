@@ -237,7 +237,11 @@ export class PixiStage implements AdvStage {
   /** NVL 全屏小说文本页 */
   #nvlLayer: Container;
   #nvlLines: PText[] = [];
+  /** 每条 NVL 条目折出的行数（与 #nvlLines 平行；累计排布与淘汰用） */
+  #nvlLineCounts: number[] = [];
   #nvlActive = false;
+  /** NVL 页每行字数容量（预断行用，构造时按字号估算；NVL 断行禁则） */
+  #nvlCharsPerLine = 50;
   /** 横幅（@title/@chapter/@tip/@center）淡出状态 */
   #bannerLayer: Container;
   #bannerText: PText;
@@ -358,6 +362,8 @@ export class PixiStage implements AdvStage {
     });
     // 对话框预断行（M5 支柱4：断行禁则）：按字数估算每行容量，替代 Pixi wordWrap 的裸断行
     this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 26));
+    // NVL 页预断行（断行禁则）：fontSize 20，估算口径与对话框一致
+    this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
@@ -910,22 +916,46 @@ export class PixiStage implements AdvStage {
     }
   }
 
-  /** NVL 页追加一行（超限淘汰最旧并重排行高） */
+  /** NVL 页条目列表（只读引用；测试断言与宿主持久化巡检用） */
+  get nvlLines(): readonly PText[] {
+    return this.#nvlLines;
+  }
+
+  /** NVL 页追加一条（wrapCjk 预断行；按折行数累计排布；超出屏幕底边淘汰最旧） */
   appendNvlText(speaker: string | null, text: string): void {
-    const line = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
+    const raw = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
+    // 断行禁则（对齐 M5 支柱4 对话框/Backlog）：禁则字不挂行首/行尾，……——不拆行
+    const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const t = new PText({
-      text: line,
-      style: { fontSize: 20, fill: 0xf0f0f0, wordWrap: true, wordWrapWidth: this.#w - 160 } satisfies TextStyleOptions,
+      text: wrapped.join('\n'),
+      style: { fontSize: 20, fill: 0xf0f0f0 } satisfies TextStyleOptions,
     });
     this.#nvlLayer.addChild(t);
     this.#nvlLines.push(t);
-    const maxLines = 18;
-    if (this.#nvlLines.length > maxLines) {
+    this.#nvlLineCounts.push(Math.max(1, wrapped.length));
+    // 超底边淘汰最旧（按折行后的实际行高计算，保底至少留当前条）
+    const budget = this.#h - 120; // 上下各留 60 边距
+    while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
       const old = this.#nvlLines.shift()!;
+      this.#nvlLineCounts.shift();
       this.#nvlLayer.removeChild(old);
       old.destroy();
     }
-    this.#nvlLines.forEach((l, i) => l.position.set(80, 60 + i * 35));
+    // 累计排布：条目按实际折行数占高（替代旧定步长 i*35，多行条目不再重叠）
+    const lineHeight = 28; // ≥ Pixi fontSize 20 的实际行高，留行间距
+    const entryGap = 6;    // 条目之间的额外间隙
+    let y = 60;
+    this.#nvlLines.forEach((l, i) => {
+      l.position.set(80, y);
+      y += this.#nvlLineCounts[i]! * lineHeight + entryGap;
+    });
+  }
+
+  /** NVL 页当前占用总行高（淘汰判断用；行高口径与排布一致） */
+  #nvlTotalHeight(): number {
+    let h = 0;
+    for (const n of this.#nvlLineCounts) h += n * 28 + 6;
+    return h;
   }
 
   /** NVL 页清空（@nvl clear） */
@@ -935,6 +965,7 @@ export class PixiStage implements AdvStage {
       l.destroy();
     }
     this.#nvlLines = [];
+    this.#nvlLineCounts = [];
   }
 
   /** 强制停止当前 @video（读档作废：渲染层回调已被会话令牌拦截，此处移除画面本体；审计复核） */
