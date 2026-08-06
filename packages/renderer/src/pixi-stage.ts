@@ -235,7 +235,7 @@ export class PixiStage implements AdvStage {
   #registeredPortraits = new Map<string, Texture>();
   #speakerText: PText;
   #dialogText: PText;
-  /** 说话人名牌底板（玻璃对话框上沿偏左的圆角胶囊，随说话人显隐） */
+  /** 说话人名牌底板（无框 ADV：贴正文区左上 (64, h-226) 的半透明小薄片，随说话人显隐） */
   #speakerPlate: Graphics;
   /** 对话框每行字数容量（预断行用，构造时按字号估算；M5 支柱4） */
   #dialogCharsPerLine = 40;
@@ -392,7 +392,7 @@ export class PixiStage implements AdvStage {
     this.#shopLayer.visible = false;
     this.#baseLayer = new Container();
     this.#baseLayer.visible = false;
-    // 对话戏玻璃对话框（夜色蔚蓝）：分层绘制见 #drawDialogPanel（渐变玻璃底 + 细描边 + 顶沿强调线）
+    // 对话戏面板（无框 ADV 口径）：#drawDialogPanel 仅 clear() 不绘制，对象与可见性链路保留
     this.#dialogPanel = new Graphics();
     this.#drawDialogPanel();
     this.#speakerPlate = new Graphics();
@@ -514,7 +514,7 @@ export class PixiStage implements AdvStage {
   }
 
   /** 对话框面板绘制：无框 ADV 形态（精致化批次二，对标柚子社）——玻璃底/描边/强调线全撤，
-   *  正文可读性由双层文字阴影兜底（见构造器 #dialogText 样式）；面板几何与可见性逻辑链路保留不动 */
+   *  正文可读性由单层加强文字阴影兜底（见构造器 #dialogText 样式；本 pixi 版本 dropShadow 类型仅支持单实例）；面板几何与可见性逻辑链路保留不动 */
   #drawDialogPanel(): void {
     this.#dialogPanel.clear();
   }
