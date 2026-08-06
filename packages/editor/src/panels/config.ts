@@ -487,11 +487,14 @@ function renderCalendarSection(): HTMLElement {
     ['onTurnEndEventId', '回合结束事件 ID'],
   ], cal.scalars));
 
-  // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格；拖拽前拍撤销快照）
+  // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格；拖拽前与连线编辑变更前拍撤销快照）
   sec.appendChild(h('h4', undefined, '地图可视化（拖拽节点调整坐标 · 右侧圆点拖出前置连线 · 点连线删除）'));
   const mapWrap = h('div', 'calendar-map-wrap');
   sec.appendChild(mapWrap);
-  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig, { onDragStart: () => pushConfigHistory(false) });
+  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig, {
+    onDragStart: () => pushConfigHistory(false),
+    onBeforeEdit: () => pushConfigHistory(false), // 连线增删也可 Ctrl+Z 撤销（审阅轮 Minor 1 修复）
+  });
 
   sec.appendChild(h('h4', undefined, '地图节点（nodes）'));
   sec.appendChild(renderObjectTable([

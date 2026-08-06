@@ -99,13 +99,14 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[
 
 /**
  * 渲染地图画布。拖拽结束/连线变更后调用 onMoved()，由调用方重渲染区块
- * （行模型已在操作中原地更新）。opts.onDragStart 在节点拖拽开始时触发（配置撤销栈拍快照用）。
+ * （行模型已在操作中原地更新）。opts.onDragStart 在节点拖拽开始时触发、
+ * opts.onBeforeEdit 在连线编辑（圆点拖加前置/点线删前置）变更前触发（配置撤销栈拍快照用）。
  */
 export function renderCalendarMap(
   container: HTMLElement,
   rows: RowMap[],
   onMoved: () => void,
-  opts?: { onDragStart?: () => void },
+  opts?: { onDragStart?: () => void; onBeforeEdit?: () => void },
 ): void {
   container.innerHTML = '';
   const svg = el('svg');
@@ -187,7 +188,11 @@ export function renderCalendarMap(
       hit.style.cursor = 'pointer';
       hit.addEventListener('pointerup', () => {
         const targetRow = rowOf.get(id);
-        if (targetRow && removeRequiresFromRow(targetRow, req)) onMoved();
+        if (!targetRow) return;
+        if (!readRequires(targetRow).includes(req)) return; // 无变更不拍快照
+        opts?.onBeforeEdit?.(); // 变更前拍快照：Ctrl+Z 可恢复被删的前置（审阅轮 Minor 1 修复）
+        removeRequiresFromRow(targetRow, req);
+        onMoved();
       });
       svg.appendChild(hit);
       edgeLines.push({ line, fromId: req, toId: id });
@@ -292,7 +297,11 @@ export function renderCalendarMap(
           if (geom.id === id) continue;
           if (Math.abs(p.x - geom.x) <= geom.w / 2 && Math.abs(p.y - geom.y) <= NODE_H / 2) {
             const targetRow = rowOf.get(geom.id);
-            if (targetRow && addRequiresToRow(targetRow, id)) onMoved();
+            if (targetRow && !readRequires(targetRow).includes(id) && id.trim().length > 0) {
+              opts?.onBeforeEdit?.(); // 变更前拍快照：Ctrl+Z 可撤销新增的前置（审阅轮 Minor 1 修复）
+              addRequiresToRow(targetRow, id);
+              onMoved();
+            }
             return;
           }
         }
