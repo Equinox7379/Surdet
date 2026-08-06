@@ -25,7 +25,7 @@ export async function openProject(): Promise<void> {
   state.dirHandle = dir;
   state.scenes.clear();
   histories.clear(); // 换项目：历史栈失效
-  state.handles = { gameConfig: null, achievements: null };
+  state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null };
   state.dirAssets = [];
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
@@ -36,7 +36,10 @@ export async function openProject(): Promise<void> {
       const configDir = await contentDir.getDirectoryHandle('config');
       const fh = await configDir.getFileHandle(`${name}.json`);
       state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
-      if (name === 'achievements') state.handles.achievements = fh; // 成就编辑器写盘句柄
+      // 配置编辑器写盘句柄（E3 全部配置文件）
+      if (name === 'achievements' || name === 'calendar' || name === 'events' || name === 'growth' || name === 'gallery') {
+        state.handles[name] = fh;
+      }
     } catch {
       state.configFiles[name] = null;
     }
@@ -201,7 +204,7 @@ export function loadDemoProject(): void {
   histories.clear();
   state.gameConfigText = '';
   state.entryScene = 'demo';
-  state.handles = { gameConfig: null, achievements: null };
+  state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null };
   state.dirAssets = [];
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null };
   state.scenes.set('demo', {

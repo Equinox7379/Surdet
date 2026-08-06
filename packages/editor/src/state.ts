@@ -31,7 +31,14 @@ export const state = {
    *  E2/E3：achievements/gallery 供素材清单与配置编辑器） */
   configFiles: { events: null as unknown, growth: null as unknown, calendar: null as unknown, achievements: null as unknown, gallery: null as unknown },
   /** 配置文件句柄（E3：写盘需要；无 FS API 环境为 null，保存入口置灰） */
-  handles: { gameConfig: null as FileSystemFileHandle | null, achievements: null as FileSystemFileHandle | null },
+  handles: {
+    gameConfig: null as FileSystemFileHandle | null,
+    achievements: null as FileSystemFileHandle | null,
+    calendar: null as FileSystemFileHandle | null,
+    events: null as FileSystemFileHandle | null,
+    growth: null as FileSystemFileHandle | null,
+    gallery: null as FileSystemFileHandle | null,
+  },
   /** content/assets（及 public/）扫描出的素材文件条目（E2） */
   dirAssets: [] as DirAsset[],
   /** 侧栏标签页：场景 | 素材（E2） */

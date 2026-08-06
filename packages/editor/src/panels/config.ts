@@ -1,17 +1,24 @@
 /**
- * 配置标签页（E3 第一批）：变量表编辑器（game.config.json variables）+ 成就编辑器（achievements.json）。
+ * 配置标签页（E3 完整）：变量表 + 成就 + 日历 + 成长 + 事件 + 鉴赏 六大编辑器。
  *  - 打开时从盘上重新读取源文件（外部修改即时可见）
  *  - 表格 ⇄ JSON 双向转换与校验全部经 config-edit.ts 纯逻辑（落盘前必过校验）
- *  - 写盘 2 空格缩进、键序稳定；无目录连接时保存入口给出诚实提示
- *  - 变量删除保护：被剧本引用的变量删除前列出引用场景并要求确认
+ *  - 写盘 2 空格缩进、键序稳定、未知字段经原条目合并保留；无目录连接时诚实提示
+ *  - 复杂字段（effects/tiers/statGrowth/levelEvents/requires）以 JSON 文本列编辑
  */
 import { state, h, setStatus } from '../state.js';
 import { writeFileHandle } from '../project-io.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
+  parseCalendarRows, rowsToCalendar,
+  parseEventsRows, rowsToEvents,
+  parseGrowthRows, rowsToGrowth,
+  parseGalleryRows, rowsToGallery,
 } from '../config-edit.js';
-import type { VariableRow, AchievementRow } from '../config-edit.js';
+import type {
+  VariableRow, AchievementRow, RowMap,
+  CalendarRows, EventsRows, GrowthRows, GalleryRows,
+} from '../config-edit.js';
 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
 let requestValidateHook: () => void = () => {};
@@ -19,7 +26,7 @@ export function bindConfigHooks(opts: { requestValidate: () => void }): void {
   requestValidateHook = opts.requestValidate;
 }
 
-/** 本地重建两个表格（保留内存行模型与未保存输入；仅增删行时用）。
+/** 本地重建全部区块（保留内存行模型与未保存输入；仅增删行时用）。
  *  从盘重读+置空行缓存只属于 renderConfig（标签页进入入口，M4 审阅轮 Major 1 修复） */
 function rerenderConfig(): void {
   const root = document.getElementById('config-view');
@@ -27,11 +34,19 @@ function rerenderConfig(): void {
   root.innerHTML = '';
   root.appendChild(renderVariablesSection());
   root.appendChild(renderAchievementsSection());
+  root.appendChild(renderCalendarSection());
+  root.appendChild(renderGrowthSection());
+  root.appendChild(renderEventsSection());
+  root.appendChild(renderGallerySection());
 }
 
 /* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
 let varRows: VariableRow[] | null = null;
 let achRows: AchievementRow[] | null = null;
+let calRows: CalendarRows | null = null;
+let evRows: EventsRows | null = null;
+let grRows: GrowthRows | null = null;
+let gaRows: GalleryRows | null = null;
 
 /** 打开配置页时从盘上重读源文件（外部改动即时可见；失败沿用内存态） */
 async function refreshConfigSources(): Promise<void> {
@@ -40,11 +55,12 @@ async function refreshConfigSources(): Promise<void> {
       state.gameConfigText = await (await state.handles.gameConfig.getFile()).text();
     }
   } catch { /* 读取失败沿用内存态 */ }
-  try {
-    if (state.handles.achievements) {
-      state.configFiles.achievements = JSON.parse(await (await state.handles.achievements.getFile()).text()) as unknown;
-    }
-  } catch { /* 同上 */ }
+  for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery'] as const) {
+    try {
+      const fh = state.handles[name];
+      if (fh) state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
+    } catch { /* 同上 */ }
+  }
 }
 
 function parseConfigObj(): Record<string, unknown> {
@@ -55,14 +71,123 @@ function parseConfigObj(): Record<string, unknown> {
   }
 }
 
-function ensureVarRows(): VariableRow[] {
-  if (!varRows) varRows = parseVariablesToRows(parseConfigObj());
-  return varRows;
+function ensureVarRows(): VariableRow[] { if (!varRows) varRows = parseVariablesToRows(parseConfigObj()); return varRows; }
+function ensureAchRows(): AchievementRow[] { if (!achRows) achRows = parseAchievementsToRows(state.configFiles.achievements); return achRows; }
+function ensureCalRows(): CalendarRows { if (!calRows) calRows = parseCalendarRows(state.configFiles.calendar); return calRows; }
+function ensureEvRows(): EventsRows { if (!evRows) evRows = parseEventsRows(state.configFiles.events); return evRows; }
+function ensureGrRows(): GrowthRows { if (!grRows) grRows = parseGrowthRows(state.configFiles.growth); return grRows; }
+function ensureGaRows(): GalleryRows { if (!gaRows) gaRows = parseGalleryRows(state.configFiles.gallery); return gaRows; }
+
+/* ============================ 通用表格/标量 UI ============================ */
+
+interface ColDef {
+  key: string;
+  label: string;
+  /** checkbox=勾选列；json=等宽字体+JSON 校验语义；缺省普通文本 */
+  type?: 'checkbox' | 'json';
 }
 
-function ensureAchRows(): AchievementRow[] {
-  if (!achRows) achRows = parseAchievementsToRows(state.configFiles.achievements);
-  return achRows;
+/** 可编辑对象表格（增删行经 rerenderConfig 本地重建） */
+function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HTMLElement {
+  const wrap = h('div');
+  const table = h('table', 'cfg-table');
+  const thead = h('thead');
+  const hr = h('tr');
+  for (const c of cols) hr.appendChild(h('th', undefined, c.label));
+  hr.appendChild(h('th', undefined, ''));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = h('tbody');
+  rows.forEach((row, i) => {
+    const tr = h('tr');
+    for (const c of cols) {
+      const td = h('td');
+      if (c.type === 'checkbox') {
+        const chk = h('input');
+        chk.type = 'checkbox';
+        chk.checked = row[c.key] === true;
+        chk.onchange = () => { rows[i]![c.key] = chk.checked; };
+        td.appendChild(chk);
+      } else {
+        const inp = h('input', c.type === 'json' ? 'mono' : '');
+        inp.value = String(row[c.key] ?? '');
+        inp.placeholder = c.label;
+        inp.oninput = () => { rows[i]![c.key] = inp.value; };
+        td.appendChild(inp);
+      }
+      tr.appendChild(td);
+    }
+    const tdDel = h('td');
+    const del = h('button', undefined, '✕');
+    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
+    tdDel.appendChild(del);
+    tr.appendChild(tdDel);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  const addBtn = h('button', undefined, '＋ 新增行');
+  addBtn.onclick = () => { rows.push({ ...emptyRow }); rerenderConfig(); };
+  wrap.appendChild(addBtn);
+  return wrap;
+}
+
+/** 标量字段网格（键值对输入） */
+function renderScalarGrid(fields: [string, string][], scalars: Record<string, string>): HTMLElement {
+  const grid = h('div', 'cfg-scalars');
+  for (const [key, label] of fields) {
+    const cell = h('label', 'cfg-scalar');
+    const span = h('span', 'dim', label);
+    const inp = h('input', 'mono');
+    inp.value = scalars[key] ?? '';
+    inp.placeholder = label;
+    inp.oninput = () => { scalars[key] = inp.value; };
+    cell.append(span, inp);
+    grid.appendChild(cell);
+  }
+  return grid;
+}
+
+/** content/config/*.json 写盘共用（句柄缺失时尝试创建；演示项目诚实拒绝） */
+async function saveConfigFile(
+  name: 'achievements' | 'calendar' | 'events' | 'growth' | 'gallery',
+  json: Record<string, unknown>,
+  errors: string[],
+  label: string,
+): Promise<void> {
+  if (errors.length > 0) {
+    setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
+    return;
+  }
+  let handle = state.handles[name];
+  if (!handle && state.dirHandle) {
+    try {
+      const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
+      const configDir = await contentDir.getDirectoryHandle('config', { create: true });
+      handle = await configDir.getFileHandle(`${name}.json`, { create: true });
+      state.handles[name] = handle;
+    } catch { /* 创建失败走下方提示 */ }
+  }
+  if (!handle) {
+    setStatus(`${label}无法保存：未连接游戏目录（演示项目不落盘）`, false, 6000);
+    return;
+  }
+  try {
+    await writeFileHandle(handle, JSON.stringify(json, null, 2) + '\n');
+  } catch (err) {
+    setStatus(`${label}写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+    return;
+  }
+  state.configFiles[name] = json;
+  requestValidateHook();
+  setStatus(`${label}已保存`, true, 4000);
+}
+
+function sectionShell(title: string): { sec: HTMLElement; ops: HTMLElement } {
+  const sec = h('div', 'cfg-section');
+  sec.appendChild(h('h3', undefined, title));
+  const ops = h('div', 'cfg-ops');
+  return { sec, ops };
 }
 
 /* ============================ 变量表编辑器 ============================ */
@@ -111,19 +236,20 @@ async function saveVariables(): Promise<void> {
 }
 
 function renderVariablesSection(): HTMLElement {
-  const sec = h('div', 'cfg-section');
-  sec.appendChild(h('h3', undefined, '变量表（game.config.json）'));
+  const { sec, ops } = sectionShell('变量表（game.config.json）');
   const rows = ensureVarRows();
-
+  const cols: ColDef[] = [
+    { key: 'name', label: '名称' }, { key: 'type', label: '类型' }, { key: 'initial', label: '初始值' },
+    { key: 'min', label: 'min' }, { key: 'max', label: 'max' }, { key: 'readonly', label: '只读', type: 'checkbox' },
+    { key: 'description', label: '描述' },
+  ];
   const table = h('table', 'cfg-table');
   const thead = h('thead');
   const hr = h('tr');
-  for (const col of ['名称', '类型', '初始值', 'min', 'max', '只读', '描述', '']) {
-    hr.appendChild(h('th', undefined, col));
-  }
+  for (const c of cols) hr.appendChild(h('th', undefined, c.label));
+  hr.appendChild(h('th', undefined, ''));
   thead.appendChild(hr);
   table.appendChild(thead);
-
   const tbody = h('tbody');
   rows.forEach((row, i) => {
     const tr = h('tr');
@@ -177,8 +303,6 @@ function renderVariablesSection(): HTMLElement {
   });
   table.appendChild(tbody);
   sec.appendChild(table);
-
-  const ops = h('div', 'cfg-ops');
   const addBtn = h('button', undefined, '＋ 新增变量');
   addBtn.onclick = () => {
     rows.push({ name: '', type: 'number', initial: '0', min: '', max: '', readonly: false, description: '' });
@@ -196,41 +320,14 @@ function renderVariablesSection(): HTMLElement {
 async function saveAchievements(): Promise<void> {
   const rows = ensureAchRows();
   const { json, errors } = rowsToAchievements(rows);
-  if (errors.length > 0) {
-    setStatus(`成就表未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
-    return;
-  }
-  let handle = state.handles.achievements;
-  if (!handle && state.dirHandle) {
-    try {
-      const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
-      const configDir = await contentDir.getDirectoryHandle('config', { create: true });
-      handle = await configDir.getFileHandle('achievements.json', { create: true });
-      state.handles.achievements = handle;
-    } catch { /* 创建失败走下方提示 */ }
-  }
-  if (!handle) {
-    setStatus('成就表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
-    return;
-  }
-  const text = JSON.stringify(json, null, 2) + '\n';
-  try {
-    await writeFileHandle(handle, text);
-  } catch (err) {
-    setStatus(`成就表写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
-    return;
-  }
-  state.configFiles.achievements = json;
-  requestValidateHook();
-  setStatus(`成就表已保存（${json.length} 条成就）`, true, 4000);
+  await saveConfigFile('achievements', json as unknown as Record<string, unknown>, errors, '成就表');
 }
 
 function renderAchievementsSection(): HTMLElement {
-  const sec = h('div', 'cfg-section');
-  sec.appendChild(h('h3', undefined, '成就表（achievements.json）'));
+  const { sec, ops } = sectionShell('成就表（achievements.json）');
   const rows = ensureAchRows();
 
-  // when 表达式的变量名下拉提示（变量表 + 常见宿主变量由用户自填）
+  // when 表达式的变量名下拉提示（来自变量表）
   const dl = h('datalist');
   dl.id = 'cfg-var-names';
   for (const row of ensureVarRows()) {
@@ -288,7 +385,6 @@ function renderAchievementsSection(): HTMLElement {
   table.appendChild(tbody);
   sec.appendChild(table);
 
-  const ops = h('div', 'cfg-ops');
   const addBtn = h('button', undefined, '＋ 新增成就');
   addBtn.onclick = () => {
     rows.push({ id: '', name: '', description: '', when: '', hidden: false });
@@ -297,6 +393,142 @@ function renderAchievementsSection(): HTMLElement {
   const saveBtn = h('button', 'primary', '保存成就表');
   saveBtn.onclick = () => { void saveAchievements(); };
   ops.append(addBtn, saveBtn);
+  sec.appendChild(ops);
+  return sec;
+}
+
+/* ============================ 日历编辑器 ============================ */
+
+function renderCalendarSection(): HTMLElement {
+  const { sec, ops } = sectionShell('日历/地图日程（calendar.json）');
+  const cal = ensureCalRows();
+  sec.appendChild(renderScalarGrid([
+    ['maxAp', '每回合 AP 上限 (maxAp)'],
+    ['maxTurns', '总回合数 (maxTurns)'],
+    ['weeksPerMonth', '每月周数 (weeksPerMonth)'],
+    ['dateTemplate', '日期模板 (dateTemplate)'],
+    ['onTurnStartEventId', '回合开始事件 ID'],
+    ['onTurnEndEventId', '回合结束事件 ID'],
+  ], cal.scalars));
+
+  sec.appendChild(h('h4', undefined, '地图节点（nodes）'));
+  sec.appendChild(renderObjectTable([
+    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' },
+    { key: 'x', label: 'x' }, { key: 'y', label: 'y' },
+    { key: 'isBase', label: '据点', type: 'checkbox' },
+    { key: 'apCost', label: 'AP 消耗' },
+    { key: 'requires', label: '前置节点 (JSON 数组)', type: 'json' },
+    { key: 'when', label: '开放条件 (when)' },
+    { key: 'eventId', label: '关联事件' },
+  ], cal.nodes, { id: '', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' }));
+
+  sec.appendChild(h('h4', undefined, '据点指令（baseCommands）'));
+  sec.appendChild(renderObjectTable([
+    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' }, { key: 'apCost', label: 'AP 消耗' },
+    { key: 'when', label: '可用条件 (when)' },
+    { key: 'effects', label: '效果 (JSON 对象)', type: 'json' },
+    { key: 'perTurn', label: '每回合次数上限' },
+  ], cal.baseCommands, { id: '', name: '', apCost: '', when: '', effects: '', perTurn: '' }));
+
+  const saveBtn = h('button', 'primary', '保存日历配置');
+  saveBtn.onclick = () => {
+    const { json, errors } = rowsToCalendar(state.configFiles.calendar, ensureCalRows());
+    void saveConfigFile('calendar', json, errors, '日历配置');
+  };
+  ops.appendChild(saveBtn);
+  sec.appendChild(ops);
+  return sec;
+}
+
+/* ============================ 成长编辑器 ============================ */
+
+function renderGrowthSection(): HTMLElement {
+  const { sec, ops } = sectionShell('角色成长（growth.json）');
+  const gr = ensureGrRows();
+  sec.appendChild(renderScalarGrid([
+    ['curve.base', '经验曲线基础值 (curve.base)'],
+    ['curve.linear', '经验曲线线性项 (curve.linear)'],
+  ], gr.scalars));
+
+  sec.appendChild(h('h4', undefined, '成长 profiles'));
+  sec.appendChild(renderObjectTable([
+    { key: 'characterId', label: '角色 ID' },
+    { key: 'initialLevel', label: '初始等级' },
+    { key: 'maxLevel', label: '等级上限' },
+    { key: 'statGrowth', label: '每级属性成长 (JSON 对象)', type: 'json' },
+    { key: 'levelEvents', label: '等级事件 (JSON：等级→场景)', type: 'json' },
+  ], gr.profiles, { characterId: '', initialLevel: '1', maxLevel: '', statGrowth: '{}', levelEvents: '{}' }));
+
+  const saveBtn = h('button', 'primary', '保存成长配置');
+  saveBtn.onclick = () => {
+    const { json, errors } = rowsToGrowth(state.configFiles.growth, ensureGrRows());
+    void saveConfigFile('growth', json, errors, '成长配置');
+  };
+  ops.appendChild(saveBtn);
+  sec.appendChild(ops);
+  return sec;
+}
+
+/* ============================ 事件编辑器 ============================ */
+
+function renderEventsSection(): HTMLElement {
+  const { sec, ops } = sectionShell('事件（events.json）');
+  const ev = ensureEvRows();
+
+  sec.appendChild(h('h4', undefined, '好感 profiles（阶段文案）'));
+  sec.appendChild(renderObjectTable([
+    { key: 'characterId', label: '角色 ID' },
+    { key: 'variable', label: '好感变量' },
+    { key: 'tiers', label: '阶段 (JSON 数组：min/stage)', type: 'json' },
+  ], ev.profiles, { characterId: '', variable: '', tiers: '[]' }));
+
+  const eventCols: ColDef[] = [
+    { key: 'id', label: 'ID' }, { key: 'characterId', label: '角色' },
+    { key: 'when', label: '触发条件 (when)' }, { key: 'scene', label: '场景' },
+    { key: 'once', label: '仅一次', type: 'checkbox' }, { key: 'priority', label: '优先级' },
+    { key: 'effects', label: '效果 (JSON 对象)', type: 'json' },
+  ];
+  const emptyEvent: RowMap = { id: '', characterId: '', when: '', scene: '', once: true, priority: '', effects: '' };
+
+  sec.appendChild(h('h4', undefined, '条件事件（events）'));
+  sec.appendChild(renderObjectTable(eventCols, ev.events, emptyEvent));
+  sec.appendChild(h('h4', undefined, '日程事件（scheduled：回合驱动）'));
+  sec.appendChild(renderObjectTable(eventCols, ev.scheduled, emptyEvent));
+
+  const saveBtn = h('button', 'primary', '保存事件配置');
+  saveBtn.onclick = () => {
+    const { json, errors } = rowsToEvents(state.configFiles.events, ensureEvRows());
+    void saveConfigFile('events', json, errors, '事件配置');
+  };
+  ops.appendChild(saveBtn);
+  sec.appendChild(ops);
+  return sec;
+}
+
+/* ============================ 鉴赏编辑器 ============================ */
+
+function renderGallerySection(): HTMLElement {
+  const { sec, ops } = sectionShell('鉴赏（gallery.json）');
+  const ga = ensureGaRows();
+  const cgCols: ColDef[] = [
+    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' }, { key: 'src', label: '素材/音乐 key (src)' },
+  ];
+  sec.appendChild(h('h4', undefined, 'CG（cgs）'));
+  sec.appendChild(renderObjectTable(cgCols, ga.cgs, { id: '', name: '', src: '' }));
+  sec.appendChild(h('h4', undefined, '鉴赏音乐（music）'));
+  sec.appendChild(renderObjectTable(cgCols, ga.music, { id: '', name: '', src: '' }));
+  sec.appendChild(h('h4', undefined, '回想（texts：跳回剧本回看）'));
+  sec.appendChild(renderObjectTable([
+    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' },
+    { key: 'scene', label: '回放场景' }, { key: 'label', label: '回放标签' },
+  ], ga.texts, { id: '', name: '', scene: '', label: '' }));
+
+  const saveBtn = h('button', 'primary', '保存鉴赏配置');
+  saveBtn.onclick = () => {
+    const { json, errors } = rowsToGallery(state.configFiles.gallery, ensureGaRows());
+    void saveConfigFile('gallery', json, errors, '鉴赏配置');
+  };
+  ops.appendChild(saveBtn);
   sec.appendChild(ops);
   return sec;
 }
@@ -312,8 +544,16 @@ export function renderConfig(container: HTMLElement): void {
   void refreshConfigSources().then(() => {
     varRows = null;
     achRows = null;
+    calRows = null;
+    evRows = null;
+    grRows = null;
+    gaRows = null;
     container.innerHTML = '';
     container.appendChild(renderVariablesSection());
     container.appendChild(renderAchievementsSection());
+    container.appendChild(renderCalendarSection());
+    container.appendChild(renderGrowthSection());
+    container.appendChild(renderEventsSection());
+    container.appendChild(renderGallerySection());
   });
 }
