@@ -1636,9 +1636,9 @@ export class PixiStage implements AdvStage {
       t.anchor.set(0.5);
       t.position.set(baseX, baseY);
       if (enabled) {
-        // 悬停：左侧高亮条滑入 + 文字提亮微右移
+        // 悬停：左侧高亮条滑入 + 文字提亮微右移（文字 anchor 居中，竖条按 baseY 垂直居中，勿用 + 偏移）
         const bar = new Graphics()
-          .roundRect(baseX - 170, baseY + 6, 4, 26, 2)
+          .roundRect(baseX - 170, baseY - 13, 4, 26, 2)
           .fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
         bar.visible = false;
         layer.addChild(bar);
