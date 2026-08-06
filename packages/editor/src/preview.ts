@@ -42,6 +42,8 @@ interface LoadPayload {
   variables?: Record<string, unknown>[];
   /** 编辑器内存中的配置 JSON（轻宿主系统用） */
   configs?: PreviewConfigs;
+  /** 项目内嵌字体（宿主从项目目录读取后下发；缺省回退系统字体） */
+  font?: { buffer: ArrayBuffer; mime: string };
   startLabel?: string;
   fast?: boolean;
 }
@@ -66,6 +68,9 @@ let affection: AffectionSystem | null = null;
 let scheduler: EventScheduler | null = null;
 /** 回合尾事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同 starter 语义） */
 let turnResumeSnap: SaveSnapshot | null = null;
+/** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时回收旧 URL） */
+let appliedFontKey = '';
+let appliedFontUrl: string | null = null;
 
 function showError(msg: string): void {
   const root = document.getElementById('preview-root');
@@ -257,10 +262,20 @@ async function boot(): Promise<void> {
   window.parent.postMessage({ type: 'surdet-preview-ready' }, '*');
 }
 
-function load(p: LoadPayload): void {
+async function load(p: LoadPayload): Promise<void> {
   if (!bus || !stage) return;
   clearError();
   try {
+    // 字体下发应用（宿主读项目内嵌字体 → ArrayBuffer 下发）：先于剧情启动，首帧即用正确字体
+    if (p.font) {
+      const key = `${p.font.buffer.byteLength}|${p.font.mime}`;
+      if (key !== appliedFontKey) {
+        if (appliedFontUrl) URL.revokeObjectURL(appliedFontUrl);
+        appliedFontUrl = URL.createObjectURL(new Blob([p.font.buffer as unknown as BlobPart], { type: p.font.mime }));
+        await stage.registerFont(appliedFontUrl);
+        appliedFontKey = key;
+      }
+    }
     const reg = new SceneRegistry();
     // 全量场景编译入注册表（逐场景捕获错误，报出具体哪个场景编译失败）
     for (const s of p.scenes ?? []) {
@@ -304,7 +319,7 @@ function load(p: LoadPayload): void {
 window.addEventListener('message', (e: MessageEvent) => {
   const d = e.data as { type?: string; payload?: LoadPayload; fast?: boolean } | null;
   if (!d || typeof d.type !== 'string') return;
-  if (d.type === 'surdet-preview-load' && d.payload) load(d.payload);
+  if (d.type === 'surdet-preview-load' && d.payload) void load(d.payload);
   if (d.type === 'surdet-preview-fast') renderer?.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
 });
 

@@ -573,10 +573,11 @@ export class PixiStage implements AdvStage {
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
       ]);
       (document.fonts as unknown as { add: (f: FontFace) => void }).add(loaded);
-      // Pixi v8：改全局默认样式 → 之后新建的文本生效；对话框/说话人长驻对象直接改样式
+      // Pixi v8：改全局默认样式 → 之后新建的文本生效；对话框/说话人/横幅等长驻对象直接改样式
       TextStyle.defaultTextStyle.fontFamily = family;
       this.#dialogText.style.fontFamily = family;
       this.#speakerText.style.fontFamily = family;
+      this.#bannerText.style.fontFamily = family;
       return true;
     } catch (err) {
       console.warn('[PixiStage] 自定义字体加载失败，回退系统字体：', err instanceof Error ? err.message : String(err));
