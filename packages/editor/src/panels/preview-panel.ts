@@ -1,7 +1,8 @@
 /**
  * 预览面板（M6 E4，父窗口侧）：iframe 承载 preview.html 运行器，
  * 工具条提供"从场景开头/从标签播放"、快进开关、重新播放。
- * 预览源 = 编辑器内存中的当前场景文本（未保存也能预览）。
+ * 预览源 = 编辑器内存中的剧本文本（未保存也能预览）；全量场景一并下发，
+ * 跨场景 @jump 在预览内可正常跳转（多场景预览）。
  */
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
@@ -26,6 +27,19 @@ export function listLabels(text: string): string[] {
     if (line.kind === 'label') labels.push((line as { name: string }).name);
   }
   return labels;
+}
+
+/** 收集全量预览场景（内存文本，含未保存编辑；同 id 去重保留先到者；纯函数可测） */
+export function collectPreviewScenes(scenes: Map<string, { id: string; text: string }>): { id: string; text: string }[] {
+  const out: { id: string; text: string }[] = [];
+  const seen = new Set<string>();
+  for (const sc of scenes.values()) {
+    const id = sc.id.trim();
+    if (id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, text: sc.text });
+  }
+  return out;
 }
 
 export function renderPreviewPanel(container: HTMLElement): void {
@@ -74,7 +88,8 @@ export function renderPreviewPanel(container: HTMLElement): void {
       type: 'surdet-preview-load',
       payload: {
         sceneId: cur.id,
-        text: cur.text,
+        // 全量场景下发：预览内跨场景 @jump 可正常跳转（多场景预览）
+        scenes: collectPreviewScenes(state.scenes),
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },

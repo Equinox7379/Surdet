@@ -1,9 +1,11 @@
 /**
- * 配置标签页（E3 完整）：变量表 + 成就 + 日历 + 成长 + 事件 + 鉴赏 六大编辑器。
+ * 配置标签页（E3 完整）：变量表 + 成就 + 日历 + 成长 + 事件 + 鉴赏 + 名词表七大编辑器。
  *  - 打开时从盘上重新读取源文件（外部修改即时可见）
  *  - 表格 ⇄ JSON 双向转换与校验全部经 config-edit.ts 纯逻辑（落盘前必过校验）
  *  - 写盘 2 空格缩进、键序稳定、未知字段经原条目合并保留；无目录连接时诚实提示
  *  - 复杂字段（effects/tiers/statGrowth/levelEvents/requires）以 JSON 文本列编辑
+ *  - 配置编辑撤销/重做（快照栈：打字合并 + 50 步上限，与剧本 undo 分栈，main.ts 按标签页路由）
+ *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
 import { writeFileHandle } from '../project-io.js';
@@ -14,13 +16,14 @@ import {
   parseEventsRows, rowsToEvents,
   parseGrowthRows, rowsToGrowth,
   parseGalleryRows, rowsToGallery,
-  parseTerminologyRows, rowsToTerminology,
+  parseTerminologyRows, rowsToTerminology, normalizeTerminologyImport,
 } from '../config-edit.js';
 import type {
   VariableRow, AchievementRow, RowMap,
   CalendarRows, EventsRows, GrowthRows, GalleryRows, TerminologyTableRows,
 } from '../config-edit.js';
 import { renderCalendarMap } from './calendar-map.js';
+import { createSnapshotHistory, snapshotPush, snapshotUndo, snapshotRedo } from '../history.js';
 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
 let requestValidateHook: () => void = () => {};
@@ -83,6 +86,72 @@ function ensureGrRows(): GrowthRows { if (!grRows) grRows = parseGrowthRows(stat
 function ensureGaRows(): GalleryRows { if (!gaRows) gaRows = parseGalleryRows(state.configFiles.gallery); return gaRows; }
 function ensureTermRows(): TerminologyTableRows { if (!termRows) termRows = parseTerminologyRows(state.configFiles.terminology); return termRows; }
 
+/* ============================ 配置编辑撤销/重做（快照栈，与剧本 undo 分栈） ============================ */
+
+/** 配置行模型全量快照（null = 尚未载入的区块，恢复时保持未载入语义） */
+interface ConfigSnapshot {
+  varRows: VariableRow[] | null;
+  achRows: AchievementRow[] | null;
+  calRows: CalendarRows | null;
+  evRows: EventsRows | null;
+  grRows: GrowthRows | null;
+  gaRows: GalleryRows | null;
+  termRows: TerminologyTableRows | null;
+}
+
+const configHist = createSnapshotHistory<ConfigSnapshot>();
+
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
+function takeConfigSnapshot(): ConfigSnapshot {
+  return clone({ varRows, achRows, calRows, evRows, grRows, gaRows, termRows });
+}
+
+/** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
+function pushConfigHistory(coalesce: boolean): void {
+  snapshotPush(configHist, takeConfigSnapshot(), Date.now(), coalesce);
+}
+
+function restoreConfigSnapshot(snap: ConfigSnapshot): void {
+  varRows = clone(snap.varRows);
+  achRows = clone(snap.achRows);
+  calRows = clone(snap.calRows);
+  evRows = clone(snap.evRows);
+  grRows = clone(snap.grRows);
+  gaRows = clone(snap.gaRows);
+  termRows = clone(snap.termRows);
+  rerenderConfig();
+}
+
+/** 配置页撤销（main.ts 在 mainTab==='config' 时路由至此） */
+export function configUndo(): void {
+  const snap = snapshotUndo(configHist, takeConfigSnapshot());
+  if (!snap) {
+    setStatus('配置：没有可撤销的编辑', true, 2500);
+    return;
+  }
+  restoreConfigSnapshot(snap);
+  setStatus('配置：已撤销（未写盘，保存后生效）', true, 2500);
+}
+
+/** 配置页重做 */
+export function configRedo(): void {
+  const snap = snapshotRedo(configHist, takeConfigSnapshot());
+  if (!snap) {
+    setStatus('配置：没有可重做的编辑', true, 2500);
+    return;
+  }
+  restoreConfigSnapshot(snap);
+  setStatus('配置：已重做（未写盘，保存后生效）', true, 2500);
+}
+
+/** 测试/调试探针：栈深（只读） */
+export function configHistoryDepth(): { past: number; future: number } {
+  return { past: configHist.past.length, future: configHist.future.length };
+}
+
 /* ============================ 通用表格/标量 UI ============================ */
 
 interface ColDef {
@@ -92,7 +161,7 @@ interface ColDef {
   type?: 'checkbox' | 'json';
 }
 
-/** 可编辑对象表格（增删行经 rerenderConfig 本地重建） */
+/** 可编辑对象表格（增删行经 rerenderConfig 本地重建；所有变更前拍撤销快照） */
 function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HTMLElement {
   const wrap = h('div');
   const table = h('table', 'cfg-table');
@@ -111,20 +180,20 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HT
         const chk = h('input');
         chk.type = 'checkbox';
         chk.checked = row[c.key] === true;
-        chk.onchange = () => { rows[i]![c.key] = chk.checked; };
+        chk.onchange = () => { pushConfigHistory(false); rows[i]![c.key] = chk.checked; };
         td.appendChild(chk);
       } else {
         const inp = h('input', c.type === 'json' ? 'mono' : '');
         inp.value = String(row[c.key] ?? '');
         inp.placeholder = c.label;
-        inp.oninput = () => { rows[i]![c.key] = inp.value; };
+        inp.oninput = () => { pushConfigHistory(true); rows[i]![c.key] = inp.value; };
         td.appendChild(inp);
       }
       tr.appendChild(td);
     }
     const tdDel = h('td');
     const del = h('button', undefined, '✕');
-    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
+    del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
@@ -132,12 +201,12 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HT
   table.appendChild(tbody);
   wrap.appendChild(table);
   const addBtn = h('button', undefined, '＋ 新增行');
-  addBtn.onclick = () => { rows.push({ ...emptyRow }); rerenderConfig(); };
+  addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow }); rerenderConfig(); };
   wrap.appendChild(addBtn);
   return wrap;
 }
 
-/** 标量字段网格（键值对输入） */
+/** 标量字段网格（键值对输入；输入合并进撤销栈） */
 function renderScalarGrid(fields: [string, string][], scalars: Record<string, string>): HTMLElement {
   const grid = h('div', 'cfg-scalars');
   for (const [key, label] of fields) {
@@ -146,7 +215,7 @@ function renderScalarGrid(fields: [string, string][], scalars: Record<string, st
     const inp = h('input', 'mono');
     inp.value = scalars[key] ?? '';
     inp.placeholder = label;
-    inp.oninput = () => { scalars[key] = inp.value; };
+    inp.oninput = () => { pushConfigHistory(true); scalars[key] = inp.value; };
     cell.append(span, inp);
     grid.appendChild(cell);
   }
@@ -262,7 +331,7 @@ function renderVariablesSection(): HTMLElement {
       const inp = h('input', cls);
       inp.value = value;
       inp.placeholder = placeholder;
-      inp.oninput = () => oninput(inp.value);
+      inp.oninput = () => { pushConfigHistory(true); oninput(inp.value); };
       return inp;
     };
     const tdName = h('td');
@@ -276,7 +345,7 @@ function renderVariablesSection(): HTMLElement {
       if (row.type === t) opt.selected = true;
       sel.appendChild(opt);
     }
-    sel.onchange = () => { rows[i]!.type = sel.value; };
+    sel.onchange = () => { pushConfigHistory(false); rows[i]!.type = sel.value; };
     tdType.appendChild(sel);
     tr.appendChild(tdType);
     const tdInit = h('td');
@@ -292,7 +361,7 @@ function renderVariablesSection(): HTMLElement {
     const ro = h('input');
     ro.type = 'checkbox';
     ro.checked = row.readonly;
-    ro.onchange = () => { rows[i]!.readonly = ro.checked; };
+    ro.onchange = () => { pushConfigHistory(false); rows[i]!.readonly = ro.checked; };
     tdRo.appendChild(ro);
     tr.appendChild(tdRo);
     const tdDesc = h('td');
@@ -301,7 +370,7 @@ function renderVariablesSection(): HTMLElement {
     const tdDel = h('td');
     const del = h('button', undefined, '✕');
     del.title = '删除该变量（被剧本引用时会要求确认）';
-    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
+    del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
@@ -310,6 +379,7 @@ function renderVariablesSection(): HTMLElement {
   sec.appendChild(table);
   const addBtn = h('button', undefined, '＋ 新增变量');
   addBtn.onclick = () => {
+    pushConfigHistory(false);
     rows.push({ name: '', type: 'number', initial: '0', min: '', max: '', readonly: false, description: '' });
     rerenderConfig();
   };
@@ -376,13 +446,13 @@ function renderAchievementsSection(): HTMLElement {
     const hid = h('input');
     hid.type = 'checkbox';
     hid.checked = row.hidden;
-    hid.onchange = () => { rows[i]!.hidden = hid.checked; };
+    hid.onchange = () => { pushConfigHistory(false); rows[i]!.hidden = hid.checked; };
     tdHidden.appendChild(hid);
     tr.appendChild(tdHidden);
     const tdDel = h('td');
     const del = h('button', undefined, '✕');
     del.title = '删除该成就';
-    del.onclick = () => { rows.splice(i, 1); rerenderConfig(); };
+    del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
@@ -392,6 +462,7 @@ function renderAchievementsSection(): HTMLElement {
 
   const addBtn = h('button', undefined, '＋ 新增成就');
   addBtn.onclick = () => {
+    pushConfigHistory(false);
     rows.push({ id: '', name: '', description: '', when: '', hidden: false });
     rerenderConfig();
   };
@@ -416,11 +487,11 @@ function renderCalendarSection(): HTMLElement {
     ['onTurnEndEventId', '回合结束事件 ID'],
   ], cal.scalars));
 
-  // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格）
-  sec.appendChild(h('h4', undefined, '地图可视化（拖拽节点调整坐标）'));
+  // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格；拖拽前拍撤销快照）
+  sec.appendChild(h('h4', undefined, '地图可视化（拖拽节点调整坐标 · 右侧圆点拖出前置连线 · 点连线删除）'));
   const mapWrap = h('div', 'calendar-map-wrap');
   sec.appendChild(mapWrap);
-  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig);
+  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig, { onDragStart: () => pushConfigHistory(false) });
 
   sec.appendChild(h('h4', undefined, '地图节点（nodes）'));
   sec.appendChild(renderObjectTable([
@@ -546,6 +617,72 @@ function renderGallerySection(): HTMLElement {
 
 /* ============================ 名词表编辑器（术语审计闭环） ============================ */
 
+/** 审计面板一键加变体（main.ts 路由）：把 variant 收进 canonical 的 variants（无条目则新建），
+ *  直接校验写盘 terminology.json；与配置页编辑共享行模型缓存与撤销栈 */
+export async function addTerminologyVariant(canonical: string, variant: string): Promise<void> {
+  const rows = ensureTermRows();
+  let row = rows.terms.find((r) => String(r.canonical ?? '').trim() === canonical);
+  let list: string[] = [];
+  if (row) {
+    try {
+      const v: unknown = JSON.parse(String(row.variants ?? '[]'));
+      if (Array.isArray(v)) list = v.filter((s): s is string => typeof s === 'string');
+    } catch { list = []; }
+    if (list.includes(variant)) {
+      setStatus(`变体 '${variant}' 已在规范词 '${canonical}' 的名词条目中`, true, 4000);
+      return;
+    }
+  }
+  pushConfigHistory(false);
+  if (!row) {
+    row = { canonical, variants: '[]' };
+    rows.terms.push(row);
+  }
+  list.push(variant);
+  row.variants = JSON.stringify(list);
+  const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
+  await saveConfigFile('terminology', json, errors, '名词表');
+}
+
+/** 名词表导出（内存行模型 → 校验 → 下载 terminology.json；未保存的编辑一并导出） */
+function exportTerminology(): void {
+  const { json, errors } = rowsToTerminology(state.configFiles.terminology, ensureTermRows());
+  if (errors.length > 0) {
+    setStatus(`名词表导出失败：${errors[0]}`, false, 6000);
+    return;
+  }
+  const blob = new Blob([JSON.stringify(json, null, 2) + '\n'], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = h('a');
+  a.href = url;
+  a.download = 'terminology.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setStatus('名词表已导出（terminology.json）', true, 4000);
+}
+
+/** 名词表导入（替换内存行模型；不自动写盘，需点“保存名词表”） */
+function importTerminology(file: File): void {
+  void file.text().then((txt) => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(txt);
+    } catch {
+      setStatus('名词表导入失败：文件不是合法 JSON', false, 6000);
+      return;
+    }
+    const res = normalizeTerminologyImport(raw);
+    if ('error' in res) {
+      setStatus(`名词表导入失败：${res.error}`, false, 6000);
+      return;
+    }
+    pushConfigHistory(false);
+    termRows = { terms: res.terms };
+    rerenderConfig();
+    setStatus(`已导入 ${res.terms.length} 条名词（未写盘，确认后点“保存名词表”）`, true, 6000);
+  });
+}
+
 function renderTerminologySection(): HTMLElement {
   const { sec, ops } = sectionShell('名词表（terminology.json · 供审计标签页 TERM_VARIANT 检查）');
   const tt = ensureTermRows();
@@ -555,12 +692,27 @@ function renderTerminologySection(): HTMLElement {
     { key: 'variants', label: '变体列表 (JSON 数组，如 ["那把剑","石剑"])', type: 'json' },
   ], tt.terms, { canonical: '', variants: '[]' }));
 
+  const exportBtn = h('button', undefined, '⤓ 导出 JSON');
+  exportBtn.title = '把当前名词表（含未保存编辑）下载为 terminology.json';
+  exportBtn.onclick = exportTerminology;
+  const importBtn = h('button', undefined, '⤒ 导入 JSON');
+  importBtn.title = '从 terminology.json 文件导入（替换当前表格，需另点保存才写盘）';
+  const fileInput = h('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+  fileInput.onchange = () => {
+    const f = fileInput.files?.[0];
+    if (f) importTerminology(f);
+    fileInput.value = '';
+  };
+  importBtn.onclick = () => fileInput.click();
   const saveBtn = h('button', 'primary', '保存名词表');
   saveBtn.onclick = () => {
     const { json, errors } = rowsToTerminology(state.configFiles.terminology, ensureTermRows());
     void saveConfigFile('terminology', json, errors, '名词表');
   };
-  ops.appendChild(saveBtn);
+  ops.append(exportBtn, importBtn, fileInput, saveBtn);
   sec.appendChild(ops);
   return sec;
 }
@@ -581,6 +733,9 @@ export function renderConfig(container: HTMLElement): void {
     grRows = null;
     gaRows = null;
     termRows = null;
+    // 从盘重读 = 基线更新：旧撤销栈失效（防撤销回上一轮的内存态）
+    configHist.past = [];
+    configHist.future = [];
     container.innerHTML = '';
     container.appendChild(renderVariablesSection());
     container.appendChild(renderAchievementsSection());

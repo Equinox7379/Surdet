@@ -1,9 +1,10 @@
 /**
  * 预览运行器（M6 E4）：iframe 内嵌精简 runner —— core 编译 + Interpreter + AdvRenderer + PixiStage。
- * 预览源 = 编辑器内存中的剧本文本（未保存也能预览，postMessage 传入）。
+ * 预览源 = 编辑器内存中的剧本文本（未保存也能预览，postMessage 传入）；
+ * 全量场景注册进 SceneRegistry，跨场景 @jump 在预览内可正常跳转（多场景预览）。
  *
  * postMessage 协议（父窗口 → 预览）：
- *  { type: 'surdet-preview-load', payload: { sceneId, text, startLabel?, fast? } } → 编译并播放
+ *  { type: 'surdet-preview-load', payload: { sceneId, scenes: [{id,text}], startLabel?, fast? } } → 编译并播放
  *  { type: 'surdet-preview-fast', fast: boolean }                                  → 切换打字速度
  * 预览就绪后向父窗口回 { type: 'surdet-preview-ready' }。
  *
@@ -14,9 +15,11 @@ import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore } fro
 import type { CoreEventMap } from '@surdet/core';
 import { AdvRenderer, Backlog, PixiStage, Typewriter } from '@surdet/renderer';
 
+interface SceneSrc { id: string; text: string }
+
 interface LoadPayload {
   sceneId: string;
-  text: string;
+  scenes: SceneSrc[];
   startLabel?: string;
   fast?: boolean;
 }
@@ -72,12 +75,22 @@ function load(p: LoadPayload): void {
   clearError();
   try {
     const registry = new SceneRegistry();
-    registry.register(compileScene(p.text, 'preview.gal', p.sceneId));
+    // 全量场景编译入注册表（逐场景捕获错误，报出具体哪个场景编译失败）
+    for (const s of p.scenes ?? []) {
+      try {
+        registry.register(compileScene(s.text, `${s.id}.gal`, s.id));
+      } catch (err) {
+        throw new Error(`场景 ${s.id} 编译失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (!registry.has(p.sceneId)) {
+      throw new Error(`入口场景 '${p.sceneId}' 不在预览场景集中`);
+    }
     interp = new Interpreter(new VariableStore([]), bus, registry);
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(p.sceneId, p.startLabel);
   } catch (err) {
-    showError(`预览编译失败：${err instanceof Error ? err.message : String(err)}`);
+    showError(`预览失败：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -7,6 +7,7 @@ import type { SceneEntry } from '../src/state.js';
 import {
   HISTORY_LIMIT, COALESCE_MS, histories, pushEdit, getHistoryFor,
   bindHistoryHooks, setCurrentText, undo, redo,
+  createSnapshotHistory, snapshotPush, snapshotUndo, snapshotRedo, SNAPSHOT_HISTORY_LIMIT,
 } from '../src/history.js';
 import type { SceneHistory } from '../src/history.js';
 
@@ -131,6 +132,56 @@ describe('history（撤销/重做）', () => {
       state.current = 's1';
       undo();
       expect(state.scenes.get('s1')!.text).toBe('a1');
+    });
+  });
+
+  describe('快照撤销栈（配置页 undo 纯逻辑）', () => {
+    it('coalesce 窗口内连续快照合并为一个撤销点', () => {
+      const hist = createSnapshotHistory<string>();
+      snapshotPush(hist, 'v0', 1000, true);
+      snapshotPush(hist, 'v1', 1000 + COALESCE_MS - 1, true);
+      expect(hist.past).toEqual(['v0']);
+    });
+
+    it('结构操作（coalesce=false）永不合并；新快照清空 redo', () => {
+      const hist = createSnapshotHistory<string>();
+      snapshotPush(hist, 'v0', 1000, false);
+      snapshotPush(hist, 'v1', 1001, false);
+      expect(hist.past).toEqual(['v0', 'v1']);
+      hist.future = ['x'];
+      snapshotPush(hist, 'v2', 1002, false);
+      expect(hist.future).toEqual([]);
+    });
+
+    it('超过 SNAPSHOT_HISTORY_LIMIT 丢弃最旧', () => {
+      const hist = createSnapshotHistory<number>();
+      for (let i = 0; i < SNAPSHOT_HISTORY_LIMIT + 5; i++) snapshotPush(hist, i, i * 10_000, false);
+      expect(hist.past).toHaveLength(SNAPSHOT_HISTORY_LIMIT);
+      expect(hist.past[0]).toBe(5);
+    });
+
+    it('undo/redo 往返：current 入对栈，恢复点正确；空栈返回 null', () => {
+      const hist = createSnapshotHistory<string>();
+      snapshotPush(hist, 's1', 1000, false);
+      snapshotPush(hist, 's2', 2000, false);
+      const u1 = snapshotUndo(hist, 'cur');
+      expect(u1).toBe('s2');
+      expect(hist.future).toEqual(['cur']);
+      const r1 = snapshotRedo(hist, 's2');
+      expect(r1).toBe('cur');
+      expect(hist.past).toEqual(['s1', 's2']);
+      // 空栈边界
+      const empty = createSnapshotHistory<string>();
+      expect(snapshotUndo(empty, 'x')).toBeNull();
+      expect(snapshotRedo(empty, 'x')).toBeNull();
+    });
+
+    it('undo 后 lastPushAt 归零：紧跟的 coalesce 快照仍产生新撤销点', () => {
+      const hist = createSnapshotHistory<string>();
+      snapshotPush(hist, 's1', 1000, false);
+      snapshotUndo(hist, 'cur');
+      snapshotPush(hist, 's3', 1001, true); // 距上次入栈仅 1ms，但已归零不合并
+      expect(hist.past).toEqual(['s3']);
     });
   });
 });
