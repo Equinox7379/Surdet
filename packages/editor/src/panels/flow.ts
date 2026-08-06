@@ -341,6 +341,89 @@ export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sam
 /** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
 export interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string }
 
+/** UI 第三阶段：箭头 marker（每边类型一个，颜色同线色）+ 蓝图式点阵网格 pattern */
+function buildFlowDefs(): SVGDefsElement {
+  const defs = el('defs');
+  for (const [kind, color] of Object.entries(EDGE_COLORS)) {
+    const m = el('marker');
+    m.setAttribute('id', `flow-arrow-${kind}`);
+    m.setAttribute('viewBox', '0 0 10 10');
+    m.setAttribute('refX', '8.5');
+    m.setAttribute('refY', '5');
+    m.setAttribute('markerWidth', '7');
+    m.setAttribute('markerHeight', '7');
+    m.setAttribute('orient', 'auto-start-reverse');
+    const p = el('path');
+    p.setAttribute('d', 'M 0 1 L 9 5 L 0 9 z');
+    p.setAttribute('fill', color);
+    m.appendChild(p);
+    defs.appendChild(m);
+  }
+  const grid = el('pattern');
+  grid.setAttribute('id', 'flow-grid');
+  grid.setAttribute('width', '26');
+  grid.setAttribute('height', '26');
+  grid.setAttribute('patternUnits', 'userSpaceOnUse');
+  const dot = el('circle');
+  dot.setAttribute('cx', '1.3');
+  dot.setAttribute('cy', '1.3');
+  dot.setAttribute('r', '1.3');
+  dot.setAttribute('fill', '#d3deeb');
+  grid.appendChild(dot);
+  defs.appendChild(grid);
+  return defs;
+}
+
+/** UI 第三阶段：小地图（全节点概览 + 当前视口框；点击居中导航） */
+function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTMLElement): SVGElement | null {
+  if (layout.boxes.size === 0) return null;
+  const pad = 40;
+  const worldW = layout.width + pad * 2;
+  const worldH = layout.height + pad * 2;
+  const s = Math.min(180 / worldW, 140 / worldH);
+  const w = Math.max(60, worldW * s);
+  const hgt = Math.max(44, worldH * s);
+  const mm = el('svg');
+  mm.setAttribute('width', String(Math.round(w)));
+  mm.setAttribute('height', String(Math.round(hgt)));
+  mm.classList.add('flow-minimap');
+  const toMm = (x: number, y: number): { x: number; y: number } => ({ x: (x + pad) * s, y: (y + pad) * s });
+  // 节点概览（当前场景蔚蓝，其余冷灰蓝）
+  for (const b of layout.boxes.values()) {
+    const r = el('rect');
+    const p = toMm(b.x, b.y);
+    r.setAttribute('x', String(p.x));
+    r.setAttribute('y', String(p.y));
+    r.setAttribute('width', String(Math.max(2, b.w * s)));
+    r.setAttribute('height', String(Math.max(1.5, b.h * s)));
+    const isCur = state.current !== null && b.node.kind === 'scene' && state.scenes.get(state.current)?.id === b.node.sceneId;
+    r.setAttribute('fill', isCur ? '#0f8ff3' : '#b3c9e2');
+    mm.appendChild(r);
+  }
+  // 当前视口框（屏幕窗口在世界坐标的投影）
+  const vp0 = toMm(-view.tx / view.k, -view.ty / view.k);
+  const vp = el('rect');
+  vp.setAttribute('x', String(vp0.x));
+  vp.setAttribute('y', String(vp0.y));
+  vp.setAttribute('width', String((cw / view.k) * s));
+  vp.setAttribute('height', String((ch / view.k) * s));
+  vp.setAttribute('fill', 'rgba(15, 143, 243, 0.10)');
+  vp.setAttribute('stroke', '#0f8ff3');
+  vp.setAttribute('stroke-width', '1');
+  mm.appendChild(vp);
+  // 点击：把对应世界坐标居中（拖拽平移可后续增强，点击导航先行）
+  mm.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    const rect = mm.getBoundingClientRect();
+    const wx = (e.clientX - rect.left) / s - pad;
+    const wy = (e.clientY - rect.top) / s - pad;
+    view.tx = cw / 2 - wx * view.k;
+    view.ty = ch / 2 - wy * view.k;
+    renderFlow(container);
+  });
+  return mm;
+}
+
 function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[], dy = 0): void {
   const a = boxes.get(edge.from);
   const b = boxes.get(edge.to);
@@ -353,6 +436,7 @@ function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>
   path.setAttribute('fill', 'none');
   path.setAttribute('stroke', EDGE_COLORS[edge.kind]);
   path.setAttribute('stroke-width', edge.kind === 'flow' ? '1' : '1.5');
+  path.setAttribute('marker-end', `url(#flow-arrow-${edge.kind})`); // UI 第三阶段：方向箭头
   if (edge.kind === 'call' || edge.kind === 'host') path.setAttribute('stroke-dasharray', '6 4');
   world.appendChild(path);
   if (edge.label) {
@@ -527,9 +611,18 @@ export function renderFlow(container: HTMLElement): void {
   svg.setAttribute('height', String(ch));
   svg.style.display = 'block';
   svg.style.background = '#eef3fa';
+  svg.appendChild(buildFlowDefs()); // UI 第三阶段：箭头 marker + 网格 pattern
   const world = el('g');
   world.setAttribute('transform', `translate(${view.tx} ${view.ty}) scale(${view.k})`);
   svg.appendChild(world);
+  // 蓝图式点阵网格（随 world 平移缩放，先于边/节点绘制在底层）
+  const gridRect = el('rect');
+  gridRect.setAttribute('x', '-4000');
+  gridRect.setAttribute('y', '-4000');
+  gridRect.setAttribute('width', '12000');
+  gridRect.setAttribute('height', '12000');
+  gridRect.setAttribute('fill', 'url(#flow-grid)');
+  world.appendChild(gridRect);
 
   // 视口对应的世界坐标矩形（裁剪用）
   const vx0 = -view.tx / view.k, vy0 = -view.ty / view.k;
@@ -585,6 +678,10 @@ export function renderFlow(container: HTMLElement): void {
   }
   // 边标签最后绘制：压在全部节点之上，永不遮挡（验收反馈二轮）
   drawEdgeLabels(world, edgeLabels);
+
+  // UI 第三阶段：小地图（右下角概览 + 视口框，点击居中导航）
+  const minimap = buildMinimap(layout, cw, ch, container);
+  if (minimap) container.appendChild(minimap);
 
   if (graph.nodes.length === 0) {
     const hint = h('div', 'empty', '暂无编译产物：打开项目后流程图从校验编译产物生成');
