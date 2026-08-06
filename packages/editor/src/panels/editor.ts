@@ -101,6 +101,43 @@ function kindBadge(l: LineModel): string {
   }
 }
 
+/* UI 第二阶段：块类型色带 —— 左侧色条 + 徽章分色，行类型一眼可辨 */
+const FLOW_CMDS = new Set(['goto', 'jump', 'call', 'if', 'elif', 'loop', 'choice', 'switch']);
+const STAGE_CMDS = new Set([
+  'bg', 'show', 'hide', 'bgm', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'wait',
+  'fadein', 'fadeout', 'particle', 'mov', 'tint', 'video', 'nvl', 'tip', 'note', 'title', 'chapter', 'center',
+]);
+
+/** 块色带类（CSS 的 .block.t-* 左色条） */
+function blockTone(l: LineModel): string {
+  if (l.kind === 'instr') {
+    if (FLOW_CMDS.has(l.name)) return 't-flow';
+    if (STAGE_CMDS.has(l.name)) return 't-stage';
+    return 't-vars';
+  }
+  switch (l.kind) {
+    case 'text': return 't-text';
+    case 'label': return 't-label';
+    case 'choice-option': return 't-choice';
+    default: return 't-dim';
+  }
+}
+
+/** 徽章分色类（CSS 的 .badge.*；与块色带同语义） */
+function badgeTone(l: LineModel): string {
+  if (l.kind === 'instr') {
+    if (FLOW_CMDS.has(l.name)) return 'flow';
+    if (STAGE_CMDS.has(l.name)) return 'stage';
+    return 'vars';
+  }
+  switch (l.kind) {
+    case 'text': return 'text';
+    case 'label': return 'label';
+    case 'choice-option': return 'choice';
+    default: return 'dim';
+  }
+}
+
 export function renderEditor(): void {
   const editorEl = document.getElementById('editor');
   if (!editorEl) return;
@@ -119,14 +156,11 @@ export function renderEditor(): void {
 }
 
 function renderBlock(line: LineModel, index: number): HTMLElement {
-  const block = h('div', 'block');
+  const block = h('div', 'block ' + blockTone(line));
   block.dataset.line = String(index);
 
   const bar = h('div', 'bar');
-  const badgeCls = line.kind === 'text' ? 'text' : line.kind === 'label' ? 'label'
-    : line.kind === 'instr' && ['goto', 'jump', 'call', 'if', 'choice'].includes(line.name) ? 'flow'
-    : line.kind === 'blank' || line.kind === 'comment' ? 'dim' : '';
-  bar.appendChild(h('span', 'badge ' + badgeCls, kindBadge(line)));
+  bar.appendChild(h('span', 'badge ' + badgeTone(line), kindBadge(line)));
   const ops = h('span', 'ops');
   const upBtn = h('button', undefined, '↑');
   upBtn.onclick = () => moveLine(index, -1);
