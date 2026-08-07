@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "intro_arrival",
+  "durationMs": 1050,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        { "atMs": 0, "durationMs": 720, "easing": "outCubic", "action": "set", "key": "castle_hall" }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:uniform",
+      "cues": [
+        { "atMs": 160, "durationMs": 620, "easing": "outCubic", "action": "show", "expression": "normal", "position": "left" }
+      ]
+    },
+    {
+      "kind": "screen",
+      "cues": [
+        { "atMs": 0, "durationMs": 0, "easing": "linear", "action": "fade", "alpha": 1 },
+        { "atMs": 20, "durationMs": 740, "easing": "inOutSine", "action": "fade", "alpha": 0 }
+      ]
+    }
+  ]
+}
