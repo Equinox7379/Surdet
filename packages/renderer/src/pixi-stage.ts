@@ -17,6 +17,7 @@ import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleVie
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
 import type { SettingsRowView } from './settings-store.js';
+import type { TimelineFrameEvent } from './timeline-player.js';
 import type { AdvStage, ChoiceOptionView, CommandRailItem, PortraitView, SpeakerProfile } from './types.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
@@ -372,6 +373,7 @@ export class PixiStage implements AdvStage {
   #fadeOverlay: Graphics;
   #bgSprite: Sprite | null = null;
   #backgroundKey: string | null = null;
+  #bgTransition: { old: Sprite | null; neu: Sprite; remain: number; dur: number } | null = null;
   #portraitSprites = new Map<string, Sprite>();
   #portraitViews = new Map<string, PortraitView>();
   #bgTextureCache = new Map<string, Texture>();
@@ -496,6 +498,8 @@ export class PixiStage implements AdvStage {
   #movTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
   /** 对话界面隐藏中（hideInterface；showText/NVL 不覆盖此状态，恢复后由下一次 showText 重建） */
   #interfaceHidden = false;
+  #timelineMoveStarts = new Map<object, Map<string, number>>();
+  #timelineValueStarts = new Map<object, number>();
   /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -897,6 +901,7 @@ export class PixiStage implements AdvStage {
   }
 
   setBackground(key: string | null): void {
+    this.#stopBackgroundTransition();
     this.#backgroundKey = key;
     if (this.#bgSprite) {
       this.#bgLayer.removeChild(this.#bgSprite);
@@ -915,7 +920,41 @@ export class PixiStage implements AdvStage {
     sprite.height = texture.height * scale;
     sprite.position.set((this.#w - sprite.width) / 2, (this.#h - sprite.height) / 2);
     this.#bgSprite = sprite;
+    sprite.alpha = 1;
     this.#bgLayer.addChildAt(sprite, 0);
+  }
+
+  #stopBackgroundTransition(): void {
+    const transition = this.#bgTransition;
+    if (!transition) return;
+    if (transition.old && transition.old.parent) transition.old.parent.removeChild(transition.old);
+    transition.old?.destroy();
+    this.#bgTransition = null;
+  }
+
+  #startTimelineBackground(key: string, durMs: number): void {
+    if (this.#backgroundKey === key && this.#bgSprite) return;
+    this.#stopBackgroundTransition();
+    const texture = this.#registeredBgs.get(key)
+      ?? this.#bgTextureCache.get(key)
+      ?? makeBackgroundTexture(key, this.#w, this.#h);
+    this.#bgTextureCache.set(key, texture);
+    const neu = new Sprite(texture);
+    const scale = Math.max(this.#w / Math.max(1, texture.width), this.#h / Math.max(1, texture.height));
+    neu.width = texture.width * scale;
+    neu.height = texture.height * scale;
+    neu.position.set((this.#w - neu.width) / 2, (this.#h - neu.height) / 2);
+    neu.alpha = 0;
+    const old = this.#bgSprite;
+    this.#backgroundKey = key;
+    this.#bgSprite = neu;
+    this.#bgLayer.addChild(neu);
+    if (!old || durMs <= 0) {
+      old?.destroy();
+      neu.alpha = 1;
+      return;
+    }
+    this.#bgTransition = { old, neu, remain: Math.max(1, durMs), dur: Math.max(1, durMs) };
   }
 
   setPortrait(key: string, opts: PortraitView): void {
@@ -1304,6 +1343,140 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 演出效果（@shake/@flash/@zoom） ============================ */
 
+  /** 时间轴 cue 的 Pixi 投影；同一接口也承载现有直接演出方法。 */
+  applyTimelineFrame(event: TimelineFrameEvent): void {
+    const cue = event.cue;
+    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && event.progress <= 0.001) {
+      this.#startTimelineBackground(cue.key, cue.durationMs);
+      return;
+    }
+    if (event.track === 'portrait' && event.target) {
+      const target = event.target;
+      if (cue.action === 'show' && event.progress <= 0.001) {
+        this.setPortrait(target, {
+          charId: target.split(':')[0] ?? target,
+          costume: target.split(':')[1] ?? 'normal',
+          expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
+          pos: typeof cue.position === 'string' ? cue.position : 'center',
+        });
+      } else if (cue.action === 'expression' && event.progress <= 0.001) {
+        const current = this.#portraitViews.get(target);
+        if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
+      } else if (cue.action === 'move') {
+        const sprite = this.#portraitSprites.get(target);
+        const targetX = typeof cue.position === 'string' ? this.#resolvePortraitX(cue.position) : null;
+        if (sprite && targetX !== null) {
+          let starts = this.#timelineMoveStarts.get(cue);
+          if (!starts) {
+            starts = new Map([[target, sprite.x]]);
+            this.#timelineMoveStarts.set(cue, starts);
+          }
+          sprite.x = starts.get(target)! + (targetX - starts.get(target)!) * event.progress;
+          if (event.progress >= 1) this.#timelineMoveStarts.delete(cue);
+        }
+      } else if (cue.action === 'show') {
+        const sprite = this.#portraitSprites.get(target);
+        if (sprite) {
+          const activeAlpha = !this.#activeSpeakerId || this.#portraitViews.get(target)?.charId === this.#activeSpeakerId ? 1 : 0.46;
+          sprite.alpha = activeAlpha * event.progress;
+          sprite.y = this.#h + 10 + (1 - event.progress) * 28;
+        }
+      } else if (cue.action === 'hide') {
+        const sprite = this.#portraitSprites.get(target);
+        if (sprite) sprite.alpha = 1 - event.progress;
+        if (event.progress >= 1) this.removePortrait(target);
+      }
+      return;
+    }
+    if (event.track === 'camera' && cue.action === 'zoom' && typeof cue.scale === 'number') {
+      let from = this.#timelineValueStarts.get(cue);
+      if (from === undefined) {
+        from = this.#worldLayer.scale.x;
+        this.#timelineValueStarts.set(cue, from);
+      }
+      const scale = from + (Math.max(0.25, Math.min(4, cue.scale)) - from) * event.progress;
+      this.#worldLayer.scale.set(scale);
+      const off = this.#zoomBaseOffset();
+      this.#worldLayer.position.set(off.x, off.y);
+      if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
+      return;
+    }
+    if (event.track === 'screen') {
+      if (cue.action === 'fade' && typeof cue.alpha === 'number') {
+        this.#fadeOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
+      } else if (cue.action === 'tint' && typeof cue.color === 'number' && typeof cue.alpha === 'number') {
+        this.#tintOverlay.tint = cue.color & 0xffffff;
+        this.#tintOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
+        this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
+      } else if (cue.action === 'flash' && event.progress <= 0.001) {
+        this.flash(cue.durationMs);
+      } else if (cue.action === 'wipe' && event.progress <= 0.001) {
+        this.wipe(cue.durationMs);
+      }
+      return;
+    }
+    if (event.track === 'particle' && typeof cue.kind === 'string' && event.progress <= 0.001) {
+      if (cue.action === 'start') this.startParticles(cue.kind);
+      else this.stopParticles();
+    }
+  }
+
+  snapshotPresentation(): unknown {
+    return {
+      version: 1,
+      backgroundKey: this.#backgroundKey,
+      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view })),
+      cameraScale: this.#worldLayer.scale.x,
+      fadeAlpha: this.#fadeOverlay.alpha,
+      tint: { color: this.#tintOverlay.tint ?? 0, alpha: this.#tintOverlay.alpha },
+      particleKind: this.#particleKind,
+    };
+  }
+
+  restorePresentation(snapshot: unknown): void {
+    this.clearPresentation();
+    if (typeof snapshot !== 'object' || snapshot === null) return;
+    const raw = snapshot as Record<string, unknown>;
+    if (typeof raw.backgroundKey === 'string') this.setBackground(raw.backgroundKey);
+    if (Array.isArray(raw.portraits)) {
+      for (const item of raw.portraits) {
+        if (typeof item !== 'object' || item === null) continue;
+        const record = item as Record<string, unknown>;
+        if (typeof record.key !== 'string' || typeof record.view !== 'object' || record.view === null) continue;
+        this.setPortrait(record.key, record.view as PortraitView);
+      }
+    }
+    if (typeof raw.cameraScale === 'number' && Number.isFinite(raw.cameraScale)) {
+      this.#worldLayer.scale.set(Math.max(0.25, Math.min(4, raw.cameraScale)));
+      const off = this.#zoomBaseOffset();
+      this.#worldLayer.position.set(off.x, off.y);
+    }
+    if (typeof raw.fadeAlpha === 'number') this.setFade(raw.fadeAlpha);
+    if (typeof raw.tint === 'object' && raw.tint !== null) {
+      const tint = raw.tint as Record<string, unknown>;
+      if (typeof tint.color === 'number' && typeof tint.alpha === 'number') {
+        this.#tintOverlay.tint = tint.color & 0xffffff;
+        this.#tintOverlay.alpha = Math.max(0, Math.min(1, tint.alpha));
+        this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
+      }
+    }
+    if (typeof raw.particleKind === 'string') this.startParticles(raw.particleKind);
+  }
+
+  clearPresentation(): void {
+    this.#stopBackgroundTransition();
+    for (const key of [...this.#portraitSprites.keys()]) this.removePortrait(key);
+    this.setBackground(null);
+    this.#timelineMoveStarts.clear();
+    this.#timelineValueStarts.clear();
+    this.#worldLayer.position.set(0, 0);
+    this.#worldLayer.scale.set(1);
+    this.setFade(0);
+    this.#tintOverlay.alpha = 0;
+    this.#tintOverlay.visible = false;
+    this.stopParticles();
+  }
+
   /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
   shake(durMs = 400, strength = 8): void {
     this.#shakeDur = Math.max(1, durMs);
@@ -1352,6 +1525,19 @@ export class PixiStage implements AdvStage {
       this.#worldLayer.scale.set(scale);
       const off = this.#zoomBaseOffset();
       this.#worldLayer.position.set(off.x, off.y);
+    }
+    if (this.#bgTransition) {
+      const transition = this.#bgTransition;
+      transition.remain = Math.max(0, transition.remain - deltaMs);
+      const t = 1 - transition.remain / transition.dur;
+      transition.neu.alpha = t;
+      if (transition.old) transition.old.alpha = 1 - t;
+      if (transition.remain === 0) {
+        if (transition.old?.parent) transition.old.parent.removeChild(transition.old);
+        transition.old?.destroy();
+        transition.neu.alpha = 1;
+        this.#bgTransition = null;
+      }
     }
     // 选择肢入场淡入（逐卡错峰：第 i 张在第 i*80ms 开始，各自 #choiceFadeDur 内渐显）
     if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
@@ -2896,6 +3082,9 @@ export class PixiStage implements AdvStage {
     this.#zoomFrom = 1;
     this.#zoomTo = 1;
     this.#zoomRemain = 0;
+    this.#stopBackgroundTransition();
+    this.#timelineMoveStarts.clear();
+    this.#timelineValueStarts.clear();
     this.stopParticles();
     this.#bannerRemain = 0;
     this.#bannerLayer.visible = false;

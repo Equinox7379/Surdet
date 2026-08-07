@@ -4,6 +4,7 @@ import {
   type TextEventPayload,
   type ChoiceEventPayload,
   type InstrEventPayload,
+  type TimelineDefinition,
 } from '@surdet/core';
 import type { Backlog } from './backlog.js';
 import { dequote } from './dequote.js';
@@ -12,6 +13,7 @@ import { Typewriter } from './text-buffer.js';
 import { FadeTween } from './transitions.js';
 import type { AdvStage, AudioHandle, ChoiceOptionView, PortraitView } from './types.js';
 import { NULL_AUDIO } from './types.js';
+import { TimelinePlayer, type TimelinePlayerSnapshot } from './timeline-player.js';
 
 /** 渲染状态机 */
 export type RenderStatus = 'idle' | 'typing' | 'awaiting' | 'choice';
@@ -84,6 +86,10 @@ export class AdvRenderer {
   #pendingVoice: string | null = null;
   /** 对话界面隐藏中（H 键惯例：隐藏对话框/说话人/等待指示器，背景立绘保留） */
   #interfaceHidden = false;
+  /** 正在播放的时间轴；同一帧可有多个非阻塞时间轴并行。 */
+  #timelineRuns = new Map<number, { player: TimelinePlayer; blocking: boolean }>();
+  #timelineSeq = 0;
+  #blockingTimelineId: number | null = null;
 
   constructor(stage: AdvStage, audio: AudioHandle = NULL_AUDIO, options: AdvRendererOptions = {}) {
     this.#stage = stage;
@@ -125,6 +131,7 @@ export class AdvRenderer {
       bus.on('instr', (p) => this.#onInstr(p)),
       bus.on('wait', (p) => this.#onWait(p)),
       bus.on('video', (p) => this.#onVideo(p)),
+      bus.on('timeline', (p) => this.#onTimeline(p)),
       bus.on('stateReset', () => this.#onStateReset()),
     );
   }
@@ -134,6 +141,7 @@ export class AdvRenderer {
     this.#unsubs = [];
     this.#stage.onSelect = null;
     this.#stage.onBacklogClose = null;
+    this.#clearTimelines();
   }
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
@@ -151,6 +159,7 @@ export class AdvRenderer {
     this.#backlogOpen = false;
     this.#nvl = false;
     this.#interfaceHidden = false;
+    this.#clearTimelines();
     // 清空 Typewriter 时先把状态置 idle，避免空文本的 onComplete 回调改变会话状态。
     this.#tw.text = '';
     this.#stage.hideChoices();
@@ -167,6 +176,7 @@ export class AdvRenderer {
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
+    this.#updateTimelines(deltaMs);
     // @wait 计时：到时（或快进中立即）结束等待并恢复解释器
     if (this.#waitDeadline !== null) {
       if (this.#skipMode || nowMs() >= this.#waitDeadline) {
@@ -303,6 +313,10 @@ export class AdvRenderer {
 
   /** 玩家点击/按键推进：等待中 → 跳过等待；打字中 → 瞬时完成；选择肢 → 确认高亮项；等待推进 → onAdvance */
   advance(): boolean {
+    if (this.#blockingTimelineId !== null) {
+      this.#skipTimeline(this.#blockingTimelineId);
+      return true;
+    }
     if (this.#waitDeadline !== null) {
       this.#waitDeadline = null;
       this.#onWaitEnd?.();
@@ -411,8 +425,102 @@ export class AdvRenderer {
   #onStateReset(): void {
     this.#waitDeadline = null;
     this.#waitSession += 1;
+    this.#clearTimelines();
+    this.#stage.clearPresentation?.();
     this.#pendingVoice = null; // 旧场景的语音关联不跨读档延续
     this.#stage.hideVideo?.(); // 停止残留视频本体（回调已由会话令牌作废；审计复核）
+  }
+
+  #onTimeline(p: { id: string; blocking: boolean; definition?: TimelineDefinition }): void {
+    const definition = p.definition;
+    if (!definition) {
+      // Lightweight hosts without a catalog may still drive the event themselves.
+      if (p.blocking) this.#onWaitEnd?.();
+      return;
+    }
+    const id = ++this.#timelineSeq;
+    const player = new TimelinePlayer(definition);
+    this.#timelineRuns.set(id, { player, blocking: p.blocking });
+    if (p.blocking) this.#blockingTimelineId = id;
+    this.#applyTimelineEvents(player.eventsAtCursor());
+    if (this.#skipMode) this.#skipTimeline(id);
+  }
+
+  #updateTimelines(deltaMs: number): void {
+    for (const [id, run] of [...this.#timelineRuns]) {
+      if (this.#skipMode) {
+        this.#skipTimeline(id);
+        continue;
+      }
+      this.#applyTimelineEvents(run.player.advance(deltaMs));
+      if (run.player.done) this.#completeTimeline(id);
+    }
+  }
+
+  #applyTimelineEvents(events: readonly import('./timeline-player.js').TimelineFrameEvent[]): void {
+    for (const event of events) this.#stage.applyTimelineFrame?.(event);
+  }
+
+  #skipTimeline(id: number): void {
+    const run = this.#timelineRuns.get(id);
+    if (!run) return;
+    this.#applyTimelineEvents(run.player.skip());
+    this.#completeTimeline(id);
+  }
+
+  #completeTimeline(id: number): void {
+    const run = this.#timelineRuns.get(id);
+    if (!run) return;
+    this.#timelineRuns.delete(id);
+    if (this.#blockingTimelineId === id) {
+      this.#blockingTimelineId = null;
+      this.#onWaitEnd?.();
+    }
+  }
+
+  #clearTimelines(): void {
+    this.#timelineRuns.clear();
+    this.#blockingTimelineId = null;
+    this.#timelineSeq += 1;
+  }
+
+  /** 供 Interpreter 的 presentation snapshot hook 使用。 */
+  snapshotPresentation(): unknown {
+    return {
+      version: 1,
+      stage: this.#stage.snapshotPresentation?.() ?? null,
+      timelines: [...this.#timelineRuns.entries()].map(([id, run]) => ({
+        id,
+        blocking: run.blocking,
+        definition: run.player.definition,
+        snapshot: run.player.snapshot(),
+      })),
+    };
+  }
+
+  /** 先恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
+  restorePresentation(payload: unknown): void {
+    this.#clearTimelines();
+    if (typeof payload !== 'object' || payload === null) return;
+    const raw = payload as Record<string, unknown>;
+    this.#stage.restorePresentation?.(raw.stage ?? null);
+    if (!Array.isArray(raw.timelines)) return;
+    for (const item of raw.timelines) {
+      if (typeof item !== 'object' || item === null) continue;
+      const record = item as Record<string, unknown>;
+      if (typeof record.definition !== 'object' || record.definition === null) continue;
+      try {
+        const player = new TimelinePlayer(record.definition as TimelineDefinition);
+        player.restore(record.snapshot as TimelinePlayerSnapshot);
+        const id = typeof record.id === 'number' ? record.id : ++this.#timelineSeq;
+        const blocking = record.blocking === true;
+        this.#timelineRuns.set(id, { player, blocking });
+        if (blocking) this.#blockingTimelineId = id;
+        this.#applyTimelineEvents(player.eventsAtCursor());
+      } catch {
+        // Corrupt presentation payload is isolated from the story position.
+      }
+    }
   }
 
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */
