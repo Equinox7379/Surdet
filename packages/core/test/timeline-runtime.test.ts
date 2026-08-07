@@ -34,7 +34,7 @@ function makeRuntime(source: string, options: { presentation?: boolean } = {}) {
     null,
     timelines,
     options.presentation ? {
-      snapshot: () => ({ active: 'intro', cursorMs: 120 }),
+      snapshot: () => ({ active: 'intro', cursorMs: 120, particleKind: null }),
       restore: (payload) => snapshots.push(payload),
     } : null,
   );
@@ -74,9 +74,9 @@ describe('timeline runtime lifecycle', () => {
     interp.start('demo');
     const snap = interp.saveSnapshot()!;
     expect(snap.position?.pc).toBe(1);
-    expect(snap.presentation).toEqual({ version: 1, payload: { active: 'intro', cursorMs: 120 } });
+    expect(snap.presentation).toEqual({ version: 1, payload: { active: 'intro', cursorMs: 120, particleKind: null } });
     interp.loadSnapshot(snap);
-    expect(snapshots).toEqual([{ active: 'intro', cursorMs: 120 }]);
+    expect(snapshots).toEqual([{ active: 'intro', cursorMs: 120, particleKind: null }]);
     expect(interp.status).toBe('awaiting-advance');
   });
 

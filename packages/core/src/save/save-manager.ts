@@ -96,8 +96,9 @@ function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-/** JSON 安全递归检查：string/有限 number/boolean/数组/普通对象 */
+/** JSON 安全递归检查：null/string/有限 number/boolean/数组/普通对象 */
 export function isJsonSafeValue(v: unknown): boolean {
+  if (v === null) return true;
   if (typeof v === 'string' || typeof v === 'boolean') return true;
   if (typeof v === 'number') return Number.isFinite(v);
   if (Array.isArray(v)) return v.every(isJsonSafeValue);

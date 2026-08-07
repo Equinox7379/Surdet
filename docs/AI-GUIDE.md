@@ -42,6 +42,8 @@ node packages/cli/dist/index.js build <游戏目录>
 node packages/cli/dist/index.js pack <游戏目录>
 ```
 
+时间轴演出是可选能力。若需要让背景、立绘、镜头和屏幕效果同时运动，在 `content/timelines/` 放置 JSON，并在 `.gal` 中用 `@timeline <id>` 引用。旧项目可以继续只使用传统演出指令。
+
 ## 2. DSL 速查
 
 ```
@@ -50,6 +52,7 @@ node packages/cli/dist/index.js pack <游戏目录>
 @scene ch01_01          # 声明场景（须与文件名一致）
 @bg castle              # 背景
 @bgm tense_01           # 音乐
+@timeline intro_arrival @ blocking  # 播放多轨开场，完成前暂停剧情
 
 @label start            # 标签（跳转锚点）
 凛：你来了。            # 说话人：内容（中/英文冒号）
@@ -77,6 +80,35 @@ node packages/cli/dist/index.js pack <游戏目录>
 @unlock_cg cg_end       # 解锁 CG（回想鉴赏）
 @autosave               # 存档点：触发 autosave 事件，宿主写入自动存档槽位
 ```
+
+### 时间轴 JSON 速查
+
+文件路径：`content/timelines/<id>.json`。`id` 必须与文件名和 `@timeline` 参数一致。
+
+```json
+{
+  "version": 1,
+  "id": "intro_arrival",
+  "durationMs": 1800,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        { "atMs": 0, "durationMs": 900, "easing": "outCubic", "action": "set", "key": "castle_night" }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:uniform",
+      "cues": [
+        { "atMs": 300, "durationMs": 700, "easing": "outCubic", "action": "show", "expression": "normal", "position": "left" }
+      ]
+    }
+  ]
+}
+```
+
+轨道类型：`background`、`portrait`、`camera`、`screen`、`particle`、`audio`。cue 使用 `atMs`、`durationMs`、`action`，动作字段按轨道类型填写；缓动支持 `linear`、`inOutSine`、`outCubic`、`inOutCubic`。先用 `@timeline intro_arrival` 做非阻塞演出；需要演出完成后才继续台词时使用 `@ blocking`。保存、读档和快进会处理时间轴游标与最终状态，禁止在脚本中手动重复补一遍同样的演出。
 
 表达式变量插值：`我是{heroName}。` 运行时替换为变量值。
 
