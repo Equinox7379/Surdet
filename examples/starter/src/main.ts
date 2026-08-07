@@ -131,9 +131,12 @@ async function main(): Promise<void> {
   await stage.init();
 
   const fontBlobUrls = new Set<string>();
+  const assetBlobUrls = new Set<string>();
   window.addEventListener('beforeunload', () => {
     for (const url of fontBlobUrls) URL.revokeObjectURL(url);
     fontBlobUrls.clear();
+    for (const url of assetBlobUrls) URL.revokeObjectURL(url);
+    assetBlobUrls.clear();
   });
 
   // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
@@ -263,6 +266,8 @@ async function main(): Promise<void> {
     get rendererStatus(): string { return renderer.status; },
     get position(): { sceneId: string; pc: number } | null { return interp.saveSnapshot()?.position ?? null; },
     titleSelect: (id: string) => titleSelect(id),
+    quickSave: () => quickSave(),
+    quickLoad: () => quickLoad(),
   };
 
   // ===== 存档富化：缩略图（舞台截图）+ 本次会话游戏时长 =====
@@ -700,17 +705,31 @@ async function main(): Promise<void> {
   async function loadAssets(): Promise<void> {
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
     const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
+    const MIME: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+      gif: 'image/gif', avif: 'image/avif', svg: 'image/svg+xml',
+      mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+    };
+    const blobAssetUrl = (rel: string, bytes: Uint8Array): string => {
+      const filename = rel.split('/').pop() ?? 'asset.bin';
+      const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+      const base = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: MIME[ext] ?? 'application/octet-stream' }));
+      assetBlobUrls.add(base);
+      // Pixi resolves its loader from the URL extension; the fragment does not affect the Blob fetch.
+      return `${base}#${filename}`;
+    };
     const register = async (rel: string, url: string): Promise<void> => {
       const parts = rel.split('/');
       const kind = parts[0] ?? '';
       const fname = parts[parts.length - 1] ?? '';
+      const format = fname.split('.').pop()?.toLowerCase();
       if (kind === 'bg' && IMG.test(fname)) {
-        await stage.registerBackground(fname.replace(IMG, ''), url);
+        await stage.registerBackground(fname.replace(IMG, ''), url, format);
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const seg = fname.replace(IMG, '').split('_');
-        if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url);
+        if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
       } else if (kind === 'avatar' && IMG.test(fname)) {
-        await stage.registerAvatar(fname.replace(IMG, ''), url);
+        await stage.registerAvatar(fname.replace(IMG, ''), url, format);
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
       }
@@ -722,7 +741,7 @@ async function main(): Promise<void> {
       for (const rel of files) {
         try {
           const bytes = await desktopAsset.read(rel);
-          await register(rel, URL.createObjectURL(new Blob([bytes as unknown as BlobPart])));
+          await register(rel, blobAssetUrl(rel, bytes));
         } catch (err) {
           console.warn('[starter] 素材加载失败:', rel, err);
         }
@@ -989,21 +1008,42 @@ async function main(): Promise<void> {
     );
   }
 
-  function quickSave(): void {
+  let quickSaveInFlight: Promise<boolean> | null = null;
+
+  function quickSave(): Promise<boolean> {
+    // 快速读档必须等当前 IPC 写入完成，否则连续 F5/F9 会读到旧槽位。
+    if (quickSaveInFlight) return quickSaveInFlight;
     const snap = interp.saveSnapshot();
-    if (!snap) return;
-    void saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(() => console.info('[starter] 快速存档'));
+    if (!snap) return Promise.resolve(false);
+    const task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
+      () => {
+        console.info('[starter] 快速存档');
+        return true;
+      },
+      (err) => {
+        console.error('[starter] 快速存档失败：', err);
+        return false;
+      },
+    );
+    quickSaveInFlight = task;
+    void task.then(() => {
+      if (quickSaveInFlight === task) quickSaveInFlight = null;
+    });
+    return task;
   }
 
-  async function quickLoad(): Promise<void> {
-    if (!await saves.has(QUICK_SLOT)) return;
+  async function quickLoad(): Promise<boolean> {
+    if (quickSaveInFlight) await quickSaveInFlight;
+    if (!await saves.has(QUICK_SLOT)) return false;
     try {
       const snap = await saves.load(QUICK_SLOT);
       interp.loadSnapshot(snap);
       clearCountedThisSession = false;
       console.info('[starter] 快速读档');
+      return true;
     } catch (err) {
       console.error('[starter] 快速读档失败：', err);
+      return false;
     }
   }
 
