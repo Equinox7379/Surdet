@@ -90,6 +90,11 @@ const NIGHT_AZURE = {
   choiceBg: 0x0d1526,
   /** 选择肢卡片默认描边 */
   choiceEdge: 0x3d5a80,
+  /** 浅色面板家族（现代 ADV 口径，用户参考图拍板）：米白底/柔影/深色正文/名牌蓝 */
+  panelBg: 0xf7f8fc,
+  panelShadow: 0x28304a,
+  panelText: 0x2c3140,
+  nameTag: 0x4285e0,
 } as const;
 
 /** 种子伪随机序列（mulberry32）：占位背景噪点同 key 稳定可复现（不用 Math.random，保住同 key 同图契约） */
@@ -478,7 +483,7 @@ export class PixiStage implements AdvStage {
     this.#dialogRubyLayer = new Container();
     this.#nvlLayer = new Container();
     this.#nvlLayer.visible = false;
-    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.glassTop, alpha: 0.78 }));
+    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.86 }));
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
     this.#bannerBars = new Graphics();
@@ -512,8 +517,8 @@ export class PixiStage implements AdvStage {
     this.#speakerPlate = new Graphics();
     // 等待推进指示器：呼吸小光点（外圈柔光 + 内圈亮点，动画见 updateContinuePulse）
     this.#continueIndicator = new Graphics()
-      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
-      .circle(0, 0, 4.5).fill({ color: NIGHT_AZURE.accent, alpha: 0.95 });
+      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.panelShadow, alpha: 0.16 })
+      .circle(0, 0, 4.5).fill({ color: 0x5a6270, alpha: 0.95 });
     this.#continueIndicator.visible = false;
     // 水平定位对齐对话框右下（历史代码只驱动 y，x 从未赋值导致贴左缘，顺手修复）
     this.#continueIndicator.x = this.#w - 68;
@@ -534,20 +539,20 @@ export class PixiStage implements AdvStage {
 
     this.#speakerText = new PText({
       text: '',
-      style: { fontSize: 22, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
       style: {
         fontSize: 26,
-        fill: NIGHT_AZURE.text,
+        fill: NIGHT_AZURE.panelText,
         lineHeight: 46,
-        // 无框 ADV 可读性兜底：单层较强文字阴影（本 pixi 版本 dropShadow 类型仅支持单实例，双层口径收敛为此）
-        dropShadow: { alpha: 0.45, blur: 6, distance: 2, color: 0x04070d },
+        // 浅色面板上只需极淡阴影（无框时代的强阴影已不适用）
+        dropShadow: { alpha: 0.12, blur: 3, distance: 1, color: 0x4a5160 },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
-    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 26));
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 140) / 26));
     // NVL 页预断行（断行禁则）：fontSize 20，估算口径与对话框一致
     this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
   }
@@ -561,7 +566,7 @@ export class PixiStage implements AdvStage {
     const fam = style.fontFamily;
     const famStr = Array.isArray(fam) ? fam.join(', ') : String(fam);
     ctx.font = `${style.fontSize}px ${famStr}`;
-    return wrapCjkMeasure(plain, this.#w - 160, (s) => ctx.measureText(s).width);
+    return wrapCjkMeasure(plain, this.#w - 140, (s) => ctx.measureText(s).width);
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
@@ -623,10 +628,10 @@ export class PixiStage implements AdvStage {
   }
 
   #layout(): void {
-    // 无框 ADV：名牌小薄片贴正文区左上，正文下移贴近底边（行距不变，断行链路零改动）
-    this.#speakerText.position.set(82, this.#h - 220);
-    this.#dialogText.position.set(70, this.#h - 140);
-    this.#dialogRubyLayer.position.set(70, this.#h - 140);
+    // 浅色大面板：名牌骑面板左上角，正文在面板内左上起排（行距不变，断行链路零改动）
+    this.#speakerText.position.set(62, this.#h - 234);
+    this.#dialogText.position.set(70, this.#h - 172);
+    this.#dialogRubyLayer.position.set(70, this.#h - 172);
     // 选择肢：画面中央纵列（每卡按自身宽度水平居中，对标柚子社）
     const step = 60;
     const startY = this.#h * 0.42 - (this.#choiceViews.length - 1) * step / 2;
@@ -637,13 +642,23 @@ export class PixiStage implements AdvStage {
     }
   }
 
-  /** 对话框面板绘制：无框 ADV 形态（精致化批次二，对标柚子社）——玻璃底/描边/强调线全撤，
-   *  正文可读性由单层加强文字阴影兜底（见构造器 #dialogText 样式；本 pixi 版本 dropShadow 类型仅支持单实例）；面板几何与可见性逻辑链路保留不动 */
+  /** 对话框面板绘制：现代 ADV 浅色悬浮大面板（用户参考图拍板）——接近全宽 + 加高，
+   *  米白半透明底 + 柔和投影（低 alpha 偏移近似，不引 blur filter）；可见性逻辑链路保留不动 */
   #drawDialogPanel(): void {
-    this.#dialogPanel.clear();
+    const g = this.#dialogPanel;
+    g.clear();
+    const x = 24;
+    const y = this.#h - 224;
+    const w = this.#w - 48;
+    const h = 200;
+    const r = 14;
+    // 柔和投影：同形下移低 alpha（悬浮感）
+    g.roundRect(x, y + 6, w, h, r).fill({ color: NIGHT_AZURE.panelShadow, alpha: 0.10 });
+    // 米白半透明面板底（隐约透出背景）
+    g.roundRect(x, y, w, h, r).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.92 });
   }
 
-  /** 说话人名牌底板绘制：无框 ADV 的小薄片（半透明深底 + 细圆角，不再描边），
+  /** 说话人名牌底板绘制：蓝色圆角名牌标签（白字），骑在浅色面板左上沿（对标用户参考图）；
    *  有说话人时显示，否则隐藏；显隐同时受隐藏界面模式（H 键）与 NVL 模式约束。 */
   #drawSpeakerPlate(): void {
     const g = this.#speakerPlate;
@@ -651,11 +666,11 @@ export class PixiStage implements AdvStage {
     const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
     g.visible = show;
     if (!show) return;
-    const x = 64;
-    const y = this.#h - 226;
+    const x = 44;
+    const y = this.#h - 240; // 面板顶 h-224，名牌骑角高出 ~16px
     const w = this.#speakerText.width + 36;
-    const h = this.#speakerText.height + 12;
-    g.roundRect(x, y, w, h, 6).fill({ color: 0x0a1322, alpha: 0.55 });
+    const h = this.#speakerText.height + 14;
+    g.roundRect(x, y, w, h, 8).fill({ color: NIGHT_AZURE.nameTag, alpha: 1 });
   }
 
   /**
@@ -818,9 +833,9 @@ export class PixiStage implements AdvStage {
         text: seg.base,
         style: {
           fontSize: 26,
-          fill: NIGHT_AZURE.text,
+          fill: NIGHT_AZURE.panelText,
           lineHeight: 46,
-          dropShadow: { alpha: 0.45, blur: 6, distance: 2, color: 0x04070d },
+          dropShadow: { alpha: 0.12, blur: 3, distance: 1, color: 0x4a5160 },
         } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
@@ -828,7 +843,7 @@ export class PixiStage implements AdvStage {
       if (seg.ruby !== undefined) {
         const r = new PText({
           text: seg.ruby,
-          style: { fontSize: 13, fill: NIGHT_AZURE.text } satisfies TextStyleOptions,
+          style: { fontSize: 13, fill: NIGHT_AZURE.panelText } satisfies TextStyleOptions,
         });
         r.anchor.set(0.5, 1);
         r.position.set(x + base.width / 2, -2);
@@ -876,10 +891,10 @@ export class PixiStage implements AdvStage {
       this.#backlogBuilt = true;
     }
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x070d1a, alpha: 0.92 }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.94 }));
     layer.addChild(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
-      style: { fontSize: 22, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: NIGHT_AZURE.panelText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 30);
     // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
     const entriesLayer = new Container();
@@ -894,7 +909,7 @@ export class PixiStage implements AdvStage {
           text: first && e.voice ? `▶ ${lineText}` : lineText,
           style: {
             fontSize: 20,
-            fill: first && e.speaker ? NIGHT_AZURE.accent : 0xd6e2f5,
+            fill: first && e.speaker ? NIGHT_AZURE.nameTag : 0x454c5c,
             fontWeight: first && e.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
         });
@@ -1193,7 +1208,7 @@ export class PixiStage implements AdvStage {
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const t = new PText({
       text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: NIGHT_AZURE.text } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: 0x333a49 } satisfies TextStyleOptions,
     });
     this.#nvlLayer.addChild(t);
     this.#nvlLines.push(t);
