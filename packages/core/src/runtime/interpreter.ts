@@ -192,6 +192,16 @@ export class Interpreter {
     this.#growth = growth;
   }
 
+  /** 宿主可在 renderer 创建后注入时间轴目录，避免破坏旧版构造器参数顺序。 */
+  setTimelineCatalog(catalog: TimelineCatalog | null): void {
+    this.#timelineCatalog = catalog;
+  }
+
+  /** 宿主可在 renderer 创建后注入演出快照钩子，兼容旧项目初始化顺序。 */
+  setPresentationHooks(hooks: PresentationSnapshotHooks | null): void {
+    this.#presentationHooks = hooks;
+  }
+
   /** 成长系统只读访问（宿主展示等级/经验条用） */
   get growth(): GrowthSystem | null {
     return this.#growth;
