@@ -517,8 +517,8 @@ export class PixiStage implements AdvStage {
     this.#speakerPlate = new Graphics();
     // 等待推进指示器：呼吸小光点（外圈柔光 + 内圈亮点，动画见 updateContinuePulse）
     this.#continueIndicator = new Graphics()
-      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.panelShadow, alpha: 0.16 })
-      .circle(0, 0, 4.5).fill({ color: 0x5a6270, alpha: 0.95 });
+      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
+      .circle(0, 0, 4.5).fill({ color: 0xeaf4ff, alpha: 0.95 });
     this.#continueIndicator.visible = false;
     // 水平定位对齐对话框右下（历史代码只驱动 y，x 从未赋值导致贴左缘，顺手修复）
     this.#continueIndicator.x = this.#w - 68;
@@ -545,10 +545,10 @@ export class PixiStage implements AdvStage {
       text: '',
       style: {
         fontSize: 26,
-        fill: NIGHT_AZURE.panelText,
+        fill: 0xffffff,
         lineHeight: 46,
-        // 浅色面板上只需极淡阴影（无框时代的强阴影已不适用）
-        dropShadow: { alpha: 0.12, blur: 3, distance: 1, color: 0x4a5160 },
+        // 深色半透明底上的白字：中等强度阴影保可读性（用户参考图口径）
+        dropShadow: { alpha: 0.4, blur: 5, distance: 2, color: 0x04070d },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
@@ -642,8 +642,8 @@ export class PixiStage implements AdvStage {
     }
   }
 
-  /** 对话框面板绘制：现代 ADV 浅色悬浮大面板（用户参考图拍板）——接近全宽 + 加高，
-   *  米白半透明底 + 柔和投影（低 alpha 偏移近似，不引 blur filter）；可见性逻辑链路保留不动 */
+  /** 对话框面板绘制：现代 ADV 悬浮大面板（用户参考图拍板）——接近全宽 + 加高，
+   *  深色半透明玻璃底（更通透，能隐约透出背景）+ 柔和投影；可见性逻辑链路保留不动 */
   #drawDialogPanel(): void {
     const g = this.#dialogPanel;
     g.clear();
@@ -654,11 +654,11 @@ export class PixiStage implements AdvStage {
     const r = 14;
     // 柔和投影：同形下移低 alpha（悬浮感）
     g.roundRect(x, y + 6, w, h, r).fill({ color: NIGHT_AZURE.panelShadow, alpha: 0.10 });
-    // 米白半透明面板底（隐约透出背景）
-    g.roundRect(x, y, w, h, r).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.92 });
+    // 深色半透明玻璃底（用户目检反馈：再透明一些，透出背景轮廓）
+    g.roundRect(x, y, w, h, r).fill({ color: NIGHT_AZURE.glassTop, alpha: 0.62 });
   }
 
-  /** 说话人名牌底板绘制：蓝色圆角名牌标签（白字），骑在浅色面板左上沿（对标用户参考图）；
+  /** 说话人名牌底板绘制：蓝色圆角名牌标签（白字），骑在面板左上沿（对标用户参考图）；
    *  有说话人时显示，否则隐藏；显隐同时受隐藏界面模式（H 键）与 NVL 模式约束。 */
   #drawSpeakerPlate(): void {
     const g = this.#speakerPlate;
@@ -833,9 +833,9 @@ export class PixiStage implements AdvStage {
         text: seg.base,
         style: {
           fontSize: 26,
-          fill: NIGHT_AZURE.panelText,
+          fill: 0xffffff,
           lineHeight: 46,
-          dropShadow: { alpha: 0.12, blur: 3, distance: 1, color: 0x4a5160 },
+          dropShadow: { alpha: 0.4, blur: 5, distance: 2, color: 0x04070d },
         } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
@@ -843,7 +843,7 @@ export class PixiStage implements AdvStage {
       if (seg.ruby !== undefined) {
         const r = new PText({
           text: seg.ruby,
-          style: { fontSize: 13, fill: NIGHT_AZURE.panelText } satisfies TextStyleOptions,
+          style: { fontSize: 13, fill: 0xf2f6ff } satisfies TextStyleOptions,
         });
         r.anchor.set(0.5, 1);
         r.position.set(x + base.width / 2, -2);
