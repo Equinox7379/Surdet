@@ -33,3 +33,4 @@ export * from './scene-lint.js';
 export * from './lint-hints.js';
 export * from './terminology-audit.js';
 export * from './systems/shop.js';
+export * from './timeline.js';
