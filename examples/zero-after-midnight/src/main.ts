@@ -53,7 +53,7 @@ import {
   buildMapView,
   GamepadPoller,
 } from '@surdet/renderer';
-import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile } from '@surdet/renderer';
+import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, FontRole } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -130,19 +130,14 @@ async function main(): Promise<void> {
   const stage = new PixiStage();
   await stage.init();
 
-  // 自定义字体（可选，M5 支柱4 / 精致化批）：game.config.json 的 font 指向项目内嵌字体（woff2/woff/ttf/otf）；
-  // await 加载完成后再进后续画面（标题首帧即用正确字体渲染，避免系统字闪变）；
-  // 加载失败/超时/文件缺失自动回退系统字体（不白屏）。不配置则用系统默认字体。
-  const fontPath = (gameConfig as { font?: string }).font;
-  if (typeof fontPath === 'string' && fontPath.length > 0) {
-    const fontUrl = await resolveFontUrl(fontPath);
-    if (fontUrl) {
-      const ok = await stage.registerFont(fontUrl);
-      if (ok) console.info('[starter] 自定义字体已加载：', fontPath);
-    } else {
-      console.warn('[starter] 未找到字体文件，回退系统字体：', fontPath);
-    }
-  }
+  const fontBlobUrls = new Set<string>();
+  window.addEventListener('beforeunload', () => {
+    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
+    fontBlobUrls.clear();
+  });
+
+  // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
+  await loadConfiguredFonts();
   const speakerProfiles: SpeakerProfile[] = Object.entries(
     ((gameConfig as { characters?: Record<string, { name?: string; avatar?: string }> }).characters ?? {}),
   ).flatMap(([id, profile]) => {
@@ -635,17 +630,29 @@ async function main(): Promise<void> {
 
   // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
-  bus.on('sceneEnd', () => {
-    if (!turnResumeSnap) return;
-    const snap = turnResumeSnap;
-    turnResumeSnap = null;
-    setTimeout(() => {
-      try {
-        interp.loadSnapshot(snap);
-      } catch (err) {
-        console.error('[starter] 回合尾事件恢复失败:', err);
-      }
-    }, 0);
+  let endingTransitionActive = false;
+  const endingSceneIds = new Set(['route_meeting_rooftop', 'route_silence_dawn', 'route_testimony_rooftop']);
+  bus.on('sceneEnd', ({ sceneId }) => {
+    if (turnResumeSnap) {
+      const snap = turnResumeSnap;
+      turnResumeSnap = null;
+      setTimeout(() => {
+        try {
+          interp.loadSnapshot(snap);
+        } catch (err) {
+          console.error('[starter] 回合尾事件恢复失败:', err);
+        }
+      }, 0);
+      return;
+    }
+    // 三条正式结局统一经过独立黑场，再回封面；不把结束状态留给玩家点击。
+    if (!endingSceneIds.has(sceneId) || endingTransitionActive) return;
+    endingTransitionActive = true;
+    stage.showEnding('THE END');
+    window.setTimeout(() => {
+      showTitleScreen();
+      endingTransitionActive = false;
+    }, 2200);
   });
 
   // ===== 字体资源解析（与 loadAssets 同口径双路）：打包环境经主进程读取 → Blob URL；dev 环境 vite glob URL =====
@@ -848,6 +855,7 @@ async function main(): Promise<void> {
       {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
         subtitle: 'AFTER MIDNIGHT  /  A CITY MYSTERY IN FIVE CALLS',
+        backgroundKey: 'title_bg',
         items: [
           { id: 'new', label: '开始游戏' },
           { id: 'load', label: '读取存档' },
@@ -858,6 +866,37 @@ async function main(): Promise<void> {
       },
       titleSelect,
     );
+  }
+
+  async function loadConfiguredFonts(): Promise<void> {
+    const cfg = gameConfig as { font?: string; fonts?: Partial<Record<FontRole, string>> };
+    const roles: FontRole[] = ['body', 'title', 'ui'];
+    const configured = cfg.fonts && typeof cfg.fonts === 'object' ? cfg.fonts : null;
+    if (configured) {
+      for (const role of roles) {
+        const path = configured[role];
+        if (typeof path !== 'string' || path.length === 0) continue;
+        const url = await resolveFontUrl(path);
+        if (!url) {
+          console.warn(`[starter] 未找到 ${role} 字体文件，使用回退字体：`, path);
+          continue;
+        }
+        if (url.startsWith('blob:')) fontBlobUrls.add(url);
+        const ok = await stage.registerFontRole(role, url);
+        if (ok) console.info(`[starter] ${role} 字体已加载：`, path);
+      }
+      return;
+    }
+    // 旧项目仍可只配置 font；旧接口会把它同时用于三个角色。
+    if (typeof cfg.font === 'string' && cfg.font.length > 0) {
+      const url = await resolveFontUrl(cfg.font);
+      if (url) {
+        if (url.startsWith('blob:')) fontBlobUrls.add(url);
+        if (await stage.registerFont(url)) console.info('[starter] 兼容单字体已加载：', cfg.font);
+      } else {
+        console.warn('[starter] 未找到字体文件，回退系统字体：', cfg.font);
+      }
+    }
   }
 
   /** 从标题页进入二级全屏页面：标题与其余覆盖层必须同时让位。 */

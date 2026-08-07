@@ -27,24 +27,31 @@
 
 @label destroy_phone
 @mod panic +1
+@set phoneOn = false
 我用椅脚砸下去。
 屏幕裂开，里面却传出正在录音的声音。
 录音里的我说：不要砸它。
+我把它砸到彻底黑屏，又捡起碎片，全部丢进一桶水的深处。
 门外的敲门声停了。
 @goto blackout_after
 
 @label seal_phone
-@set phoneOn = false
 @mod evidence +1
 我用胶带封住手机，再把它推进墙柜最里面。
-墙柜里有另一部更旧的手机。
+我没有关机。它还在亮，只是听不见我了。
+墙柜里有一部更旧的手机。
 它的屏幕显示着明天的日期。
 @goto blackout_after
 
 @label blackout_after
 @hide zhirao
+@if phoneOn == false
+我把第二部手机的电池抠了出来。
+这个动作做完，我才松了第一口气。
+活人的东西，不该一直能往外打电话。
+@endif
 公寓恢复安静。
-我坐在地板上等到天亮，期间没有再开任何灯。
+我坐在地板上，坐在一片黑里。没有再接。
 凌晨四点，墙里传来一声很轻的门铃。
 @fadeout 350
 @jump route_silence_dawn.start

@@ -28,7 +28,7 @@ import {
   AdvRenderer, AudioManager, Backlog, PixiStage, Typewriter, buildMapView,
   SettingsStore, SETTING_STEPS, stepSetting,
 } from '@surdet/renderer';
-import type { AudioHandle, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile } from '@surdet/renderer';
+import type { AudioHandle, FontRole, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile } from '@surdet/renderer';
 
 interface SceneSrc { id: string; text: string }
 
@@ -62,8 +62,10 @@ interface LoadPayload {
   variables?: Record<string, unknown>[];
   /** 编辑器内存中的配置 JSON（轻宿主系统用） */
   configs?: PreviewConfigs;
-  /** 项目内嵌字体（宿主从项目目录读取后下发；缺省回退系统字体） */
+  /** 旧版单字体协议（保留兼容） */
   font?: { buffer: ArrayBuffer; mime: string; version?: string };
+  /** 项目内嵌字体按角色下发；缺失角色独立回退。 */
+  fonts?: Partial<Record<FontRole, { buffer: ArrayBuffer; mime: string; version?: string }>>;
   /** 编辑器从项目目录读取的真实背景/立绘素材 */
   assets?: PreviewAssets;
   startLabel?: string;
@@ -96,10 +98,19 @@ let sessionStart = Date.now();
 let systemMenuOpen = false;
 let saveLoadOpen = false;
 let settingsOpen = false;
-/** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时回收旧 URL） */
-let appliedFontKey = '';
-let appliedFontUrl: string | null = null;
+/** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时按角色回收旧 URL） */
+const appliedFontKeys: Partial<Record<FontRole, string>> = {};
+const appliedFontUrls: Partial<Record<FontRole, string>> = {};
 let appliedAssetUrls: string[] = [];
+
+function releaseAppliedFontUrls(): void {
+  for (const role of ['title', 'body', 'ui'] as FontRole[]) {
+    const url = appliedFontUrls[role];
+    if (url) URL.revokeObjectURL(url);
+    delete appliedFontUrls[role];
+    delete appliedFontKeys[role];
+  }
+}
 
 /** 预览音频宿主：与 starter 同用 AudioManager，只把项目 key 解析到 iframe 内的 Blob URL。 */
 class PreviewAudio implements AudioHandle {
@@ -824,27 +835,29 @@ async function load(p: LoadPayload): Promise<void> {
     stage.setSpeakerProfiles(p.speakerProfiles ?? []);
     // 新请求即使在编译/配置阶段失败，也不能让上一轮 BGM/语音继续播放。
     releaseAppliedAssetUrls();
-    // 字体下发应用（宿主读项目内嵌字体 → ArrayBuffer 下发）：先于剧情启动，首帧即用正确字体
-    if (p.font) {
-      const key = `${p.font.buffer.byteLength}|${p.font.mime}|${p.font.version ?? ''}`;
-      if (key !== appliedFontKey) {
-        if (appliedFontUrl) URL.revokeObjectURL(appliedFontUrl);
-        appliedFontUrl = URL.createObjectURL(new Blob([p.font.buffer as unknown as BlobPart], { type: p.font.mime }));
-        const ok = await stage.registerFont(appliedFontUrl);
+    // 字体下发应用：先于剧情启动。旧版 font 映射到三个角色，避免旧项目预览变样。
+    const incomingFonts = p.fonts ?? (p.font ? { title: p.font, body: p.font, ui: p.font } : {});
+    const roles: FontRole[] = ['body', 'title', 'ui'];
+    const nextKeys = Object.fromEntries(roles.flatMap((role) => {
+      const font = incomingFonts[role];
+      return font ? [[role, `${font.buffer.byteLength}|${font.mime}|${font.version ?? ''}`]] : [];
+    })) as Partial<Record<FontRole, string>>;
+    const unchanged = roles.every((role) => nextKeys[role] === appliedFontKeys[role]);
+    if (!unchanged) {
+      releaseAppliedFontUrls();
+      stage.resetFonts();
+      for (const role of roles) {
+        const font = incomingFonts[role];
+        if (!font) continue;
+        const url = URL.createObjectURL(new Blob([font.buffer as unknown as BlobPart], { type: font.mime }));
+        const ok = await stage.registerFontRole(role, url);
         if (ok) {
-          appliedFontKey = key;
+          appliedFontUrls[role] = url;
+          appliedFontKeys[role] = nextKeys[role];
         } else {
-          URL.revokeObjectURL(appliedFontUrl);
-          appliedFontUrl = null;
-          appliedFontKey = '';
-          stage.resetFont();
+          URL.revokeObjectURL(url);
         }
       }
-    } else {
-      if (appliedFontUrl) URL.revokeObjectURL(appliedFontUrl);
-      appliedFontUrl = null;
-      appliedFontKey = '';
-      stage.resetFont();
     }
     const reg = new SceneRegistry();
     // 全量场景编译入注册表（逐场景捕获错误，报出具体哪个场景编译失败）
