@@ -1,7 +1,6 @@
 {
   "title": "Surdet Starter",
   "version": "0.1.0",
-  "font": "content/assets/fonts/MiSans-Regular.otf",
   "entryScene": "ch01_01",
   "variables": {
     "gold": {
