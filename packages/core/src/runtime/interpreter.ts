@@ -4,6 +4,7 @@ import type {
   GenericInstr,
   SetInstr,
   SwitchInstr,
+  TimelineInstr,
 } from '../dsl/ast.js';
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
@@ -14,10 +15,11 @@ import { SceneRegistry } from './scene-registry.js';
 import { ReadTracker } from './read-tracker.js';
 import { GalleryState } from '../systems/gallery-state.js';
 import type { SavePosition, SaveSnapshot, SystemSnapshots } from '../save/save-manager.js';
-import { SAVE_SCHEMA_VERSION, assertValidSnapshot } from '../save/save-manager.js';
+import { isJsonSafeValue, SAVE_SCHEMA_VERSION, assertValidSnapshot } from '../save/save-manager.js';
 import { migrateSnapshot } from '../save/migrate.js';
 import { ClearTracker } from '../systems/clear-tracker.js';
 import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
+import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -28,6 +30,12 @@ export interface SystemHooks {
   snapshot?: () => SystemSnapshots;
   /** 读档时恢复系统状态 */
   restore?: (snap: SystemSnapshots) => void;
+}
+
+/** 宿主演出状态钩子；payload 必须是 JSON 安全值。 */
+export interface PresentationSnapshotHooks {
+  snapshot: () => unknown;
+  restore: (payload: unknown) => void;
 }
 
 /** 运行时状态。paused = 宿主暂停（如交互式战斗进行中），resumeHost() 恢复 */
@@ -81,6 +89,8 @@ export interface CoreEventMap extends EventMap {
   text: TextEventPayload;
   choice: ChoiceEventPayload;
   instr: InstrEventPayload;
+  /** @timeline 时间轴启动；blocking 时解释器保持 awaiting-timer，宿主完成后调 finishWait() */
+  timeline: { id: string; blocking: boolean; durationMs?: number; definition?: TimelineDefinition };
   system: SystemEventPayload;
   /** @wait 阻塞等待：宿主按 ms 计时后调 finishWait() 恢复（玩家 advance 可跳过） */
   wait: { ms: number };
@@ -150,6 +160,8 @@ export class Interpreter {
   #growth: GrowthSystem | null;
   /** 全家桶系统存档钩子（宿主注入） */
   #systemHooks: SystemHooks;
+  #timelineCatalog: TimelineCatalog | null;
+  #presentationHooks: PresentationSnapshotHooks | null;
 
   constructor(
     store: VariableStore,
@@ -160,6 +172,8 @@ export class Interpreter {
     systemHooks: SystemHooks = {},
     clearTracker: ClearTracker = new ClearTracker(),
     growth: GrowthSystem | null = null,
+    timelineCatalog: TimelineCatalog | null = null,
+    presentationHooks: PresentationSnapshotHooks | null = null,
   ) {
     this.#store = store;
     this.#bus = bus;
@@ -169,6 +183,8 @@ export class Interpreter {
     this.#systemHooks = systemHooks;
     this.clearTracker = clearTracker;
     this.#growth = growth;
+    this.#timelineCatalog = timelineCatalog;
+    this.#presentationHooks = presentationHooks;
   }
 
   /** 注入成长系统（宿主在构造后延迟配置时；重复注入替换旧实例） */
@@ -221,7 +237,11 @@ export class Interpreter {
   #currentSavePosition(): { position: SavePosition | null; hash: string | undefined } {
     if (!this.#scene) return { position: null, hash: undefined };
     const suspended = this.#status === 'awaiting-advance' || this.#status === 'awaiting-timer';
-    const pc = suspended ? this.#pc - 1 : this.#pc;
+    const previous = this.#scene.instructions[this.#pc - 1];
+    // A blocking timeline is restored from its presentation snapshot. Point to
+    // the following instruction so load does not restart the visual sequence.
+    const resumeTimeline = suspended && previous?.op === 'timeline' && previous.blocking && this.#presentationHooks !== null;
+    const pc = suspended && !resumeTimeline ? this.#pc - 1 : this.#pc;
     return { position: { sceneId: this.#scene.sceneId, pc }, hash: this.#scene.sceneHash };
   }
 
@@ -233,6 +253,10 @@ export class Interpreter {
     if (!position) return null;
     if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
+    const presentationPayload = this.#presentationHooks?.snapshot();
+    if (presentationPayload !== undefined && !isJsonSafeValue(presentationPayload)) {
+      throw new RuntimeError('宿主演出快照必须是 JSON 安全值');
+    }
     const now = Date.now();
     return {
       meta: {
@@ -253,6 +277,7 @@ export class Interpreter {
       clears: this.clearTracker.snapshot(),
       ...(this.#growth ? { growth: this.#growth.snapshot() } : {}),
       ...(systems ? { systems } : {}),
+      ...(presentationPayload !== undefined ? { presentation: { version: 1 as const, payload: presentationPayload } } : {}),
     };
   }
 
@@ -292,6 +317,7 @@ export class Interpreter {
     this.#hostPaused = false;
     this.#jumpOverride = false;
     this.#bus.emit('stateReset', { reason: 'load' });
+    this.#presentationHooks?.restore(snap.presentation?.payload ?? null);
     if (!snap.position) {
       this.#scene = null;
       this.#pc = 0;
@@ -492,6 +518,33 @@ export class Interpreter {
               continue; // 迭代续跑
             }
             return;
+          }
+
+          case 'timeline': {
+            this.#pc++;
+            const definition = this.#timelineCatalog?.get(instr.id);
+            if (this.#timelineCatalog && !definition) {
+              throw new RuntimeError(`时间轴 '${instr.id}' 未注册（检查 content/timelines 或项目加载管线）`, instr);
+            }
+            this.#status = instr.blocking ? 'awaiting-timer' : 'running';
+            this.#resumeRequested = false;
+            this.#bus.emit('timeline', {
+              id: instr.id,
+              blocking: instr.blocking,
+              ...(definition ? { durationMs: definition.durationMs, definition } : {}),
+            });
+            if (this.#jumpOverride) {
+              this.#jumpOverride = false;
+              this.#status = 'running';
+              continue;
+            }
+            if (this.#resumeRequested) {
+              this.#resumeRequested = false;
+              this.#status = 'running';
+              continue;
+            }
+            if (instr.blocking) return;
+            break;
           }
 
           case 'video': {
