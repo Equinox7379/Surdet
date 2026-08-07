@@ -36,6 +36,7 @@ export async function openProject(): Promise<void> {
   state.dirName = dir.name;
   state.dirHandle = dir;
   state.scenes.clear();
+  state.timelines = [];
   histories.clear(); // 换项目：历史栈失效
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
   state.dirAssets = [];
@@ -84,6 +85,13 @@ export async function openProject(): Promise<void> {
     await readScenarioDir(scenarioDir, '');
   } catch {
     /* 无剧本目录：空项目 */
+  }
+  try {
+    const contentDir = await dir.getDirectoryHandle('content');
+    const timelineDir = await contentDir.getDirectoryHandle('timelines');
+    await readTimelineDir(timelineDir, '');
+  } catch {
+    /* 没有时间轴目录按空目录处理 */
   }
   const first = state.scenes.keys().next().value as string | undefined;
   state.current = first ?? null;
@@ -143,6 +151,25 @@ export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: st
         text,
         eol: text.includes('\r\n') ? '\r\n' : '\n',
         dirty: false,
+        handle: ent,
+      });
+    }
+  }
+}
+
+/** 递归读取 content/timelines 下的 JSON；文本原样保留，预览发送时再解析。 */
+export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
+  const entries = (dir as unknown as {
+    values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
+  }).values();
+  for await (const ent of entries) {
+    if (ent.kind === 'directory') {
+      await readTimelineDir(ent, prefix + ent.name + '/');
+    } else if (ent.kind === 'file' && ent.name.endsWith('.json')) {
+      state.timelines.push({
+        id: ent.name.replace(/\.json$/, ''),
+        file: prefix + ent.name,
+        text: await (await ent.getFile()).text(),
         handle: ent,
       });
     }
@@ -215,6 +242,7 @@ export function loadDemoProject(): void {
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
   state.scenes.clear();
+  state.timelines = [];
   histories.clear();
   state.gameConfigText = '';
   state.entryScene = 'demo';

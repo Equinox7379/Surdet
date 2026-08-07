@@ -2,7 +2,7 @@
  * 预览多场景：collectPreviewScenes（全量场景收集，跨场景 @jump 的预览数据源）纯逻辑测试。
  */
 import { describe, expect, it } from 'vitest';
-import { collectPreviewScenes, listLabels, parsePreviewVariables } from '../src/panels/preview-panel.js';
+import { collectPreviewScenes, listLabels, parsePreviewTimelines, parsePreviewVariables } from '../src/panels/preview-panel.js';
 
 describe('collectPreviewScenes（预览全量场景收集）', () => {
   it('按插入序输出 {id,text}（内存文本含未保存编辑）', () => {
@@ -30,6 +30,18 @@ describe('collectPreviewScenes（预览全量场景收集）', () => {
 describe('listLabels（既有能力回归：从标签播放的目标列表）', () => {
   it('收集 @label 行', () => {
     expect(listLabels('@scene s\n@label start\n凛：你好\n@label end')).toEqual(['start', 'end']);
+  });
+});
+
+describe('parsePreviewTimelines（预览时间轴传输）', () => {
+  it('保留合法 JSON，并隔离坏文件', () => {
+    const result = parsePreviewTimelines([
+      { id: 'intro', text: '{"version":1,"id":"intro","durationMs":100,"tracks":[]}' },
+      { id: 'broken', text: '{bad' },
+      { id: 'missing', text: '{"durationMs":100}' },
+    ]);
+    expect(result.definitions).toEqual([{ version: 1, id: 'intro', durationMs: 100, tracks: [] }]);
+    expect(result.issues).toHaveLength(2);
   });
 });
 

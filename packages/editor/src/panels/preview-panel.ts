@@ -164,6 +164,25 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
   }
 }
 
+/** 解析时间轴文本；单个坏文件隔离为 issue，合法定义继续进入预览。 */
+export function parsePreviewTimelines(entries: readonly { id: string; text: string }[]): { definitions: unknown[]; issues: string[] } {
+  const definitions: unknown[] = [];
+  const issues: string[] = [];
+  for (const entry of entries) {
+    try {
+      const value = JSON.parse(entry.text.replace(/^\uFEFF/, '')) as Record<string, unknown>;
+      if (typeof value.id !== 'string' || value.id.trim().length === 0) {
+        issues.push(`${entry.id}: 缺少时间轴 id`);
+        continue;
+      }
+      definitions.push(value);
+    } catch (err) {
+      issues.push(`${entry.id}: JSON 解析失败（${err instanceof Error ? err.message : String(err)}）`);
+    }
+  }
+  return { definitions, issues };
+}
+
 const IMAGE_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml',
   gif: 'image/gif', avif: 'image/avif',
@@ -212,6 +231,10 @@ async function readProjectImages(): Promise<PreviewAssets> {
   return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], avatars: [...avatars.values()], audio: [...audio.values()] };
 }
 
+async function readProjectTimelines(): Promise<unknown[]> {
+  return parsePreviewTimelines(state.timelines).definitions;
+}
+
 export function renderPreviewPanel(container: HTMLElement): void {
   container.innerHTML = '';
   const sc = state.current ? state.scenes.get(state.current) : undefined;
@@ -257,6 +280,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
     // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
     const fonts = await readProjectFonts();
     const assets = await readProjectImages();
+    const timelines = await readProjectTimelines();
     const message = {
       type: 'surdet-preview-load',
       payload: {
@@ -276,6 +300,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
         },
         fonts: Object.keys(fonts).length > 0 ? fonts : undefined,
         assets,
+        timelines: timelines.length > 0 ? timelines : undefined,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },

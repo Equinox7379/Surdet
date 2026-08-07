@@ -17,6 +17,7 @@
  */
 import {
   compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, SaveManager, QUICK_SLOT, AUTO_SLOT,
+  TimelineRegistry,
   CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler,
 } from '@surdet/core';
 import type {
@@ -68,6 +69,8 @@ interface LoadPayload {
   fonts?: Partial<Record<FontRole, { buffer: ArrayBuffer; mime: string; version?: string }>>;
   /** 编辑器从项目目录读取的真实背景/立绘素材 */
   assets?: PreviewAssets;
+  /** 编辑器项目的时间轴定义；旧协议缺省为空。 */
+  timelines?: unknown[];
   startLabel?: string;
   fast?: boolean;
 }
@@ -871,6 +874,14 @@ async function load(p: LoadPayload): Promise<void> {
     if (!reg.has(p.sceneId)) {
       throw new Error(`入口场景 '${p.sceneId}' 不在预览场景集中`);
     }
+    const timelines = new TimelineRegistry();
+    for (const definition of p.timelines ?? []) {
+      try {
+        timelines.register(definition);
+      } catch (err) {
+        console.warn('[preview] 时间轴定义无效，已跳过：', err instanceof Error ? err.message : String(err));
+      }
+    }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);
     // 轻宿主系统按配置重建（构造注入 store；形状容错：非法配置按 null 走占位横幅）
@@ -904,7 +915,11 @@ async function load(p: LoadPayload): Promise<void> {
         if (snap.achievements && achievements) achievements.restore(snap.achievements);
         if (snap.eventScheduler && scheduler) scheduler.restore(snap.eventScheduler);
       },
-    }, undefined, growth);
+    }, undefined, growth, timelines);
+    interp.setPresentationHooks({
+      snapshot: () => renderer?.snapshotPresentation() ?? null,
+      restore: (payload) => renderer?.restorePresentation(payload),
+    });
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(p.sceneId, p.startLabel);
