@@ -19,6 +19,7 @@ import {
   GrowthSystem,
   AchievementSystem,
   EventScheduler,
+  TimelineRegistry,
 } from '@surdet/core';
 import type {
   VarDeclaration,
@@ -67,6 +68,12 @@ import achievementsConfig from '../content/config/achievements.json';
 // vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
 const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
   query: '?raw',
+  import: 'default',
+});
+
+// 时间轴与剧本分离：JSON 可被 starter、编辑器预览和打包版共同加载。
+const timelineFiles = import.meta.glob('../content/timelines/**/*.json', {
+  eager: true,
   import: 'default',
 });
 
@@ -169,6 +176,8 @@ async function main(): Promise<void> {
     const id = path.split('/').pop()!.replace(/\.gal$/, '');
     registry.register(compileScene(src, path, id));
   }
+  const timelines = new TimelineRegistry();
+  for (const definition of Object.values(timelineFiles)) timelines.register(definition);
 
   // ===== M5 全家桶系统实例（数据驱动，宿主持有并驱动） =====
   // JSON 配置经 resolveJsonModule 推断为宽 string 类型，这里显式断言到引擎类型。
@@ -259,6 +268,11 @@ async function main(): Promise<void> {
   });
   settings.apply(typewriter, audio);
   renderer.subscribe(bus);
+  interp.setTimelineCatalog(timelines);
+  interp.setPresentationHooks({
+    snapshot: () => renderer.snapshotPresentation(),
+    restore: (payload) => renderer.restorePresentation(payload),
+  });
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
@@ -879,6 +893,7 @@ async function main(): Promise<void> {
     onTitleScreen = true;
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
+    stage.clearPresentation();
     // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
     renderer.resetSession({ preserveWorld: true });
     stage.showTitle(
@@ -903,6 +918,7 @@ async function main(): Promise<void> {
       case 'new': {
         onTitleScreen = false;
         renderer.resetSession();
+        stage.clearPresentation();
         stage.hideTitle();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用

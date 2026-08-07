@@ -1,8 +1,7 @@
 @scene ch01_01
 @label start
-@bg castle_hall
 @bgm tense_01
-@show lynn:uniform normal @ left
+@timeline intro_arrival @ blocking
 @unlock_cg cg_hall
 @unlock_music tense_01
 @unlock_text t_first
@@ -17,11 +16,10 @@
 @if lynn.trust >= 5
 凛：（轻声）……你还记得那天的事。
 @else
-@show lynn:uniform despair @ left
+@timeline lynn_steps_forward
 凛：（移开视线）……算了，现在说这些没用。
 @endif
 
-@mov lynn center 500
 @voice lynn_despair_01
 凛：南方的军团，明天就会攻到王城。
 
