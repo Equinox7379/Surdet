@@ -14,6 +14,7 @@ class FakeStage implements AdvStage {
   choices: { index: number; label: string }[][] = [];
   hides = 0;
   fades: number[] = [];
+  choiceHighlights: number[] = [];
   /** 模拟 PixiStage.onSelect（AdvRenderer 构造时应自动绑定） */
   onSelect: ((index: number) => void) | null = null;
   onBacklogClose: (() => void) | null = null;
@@ -41,6 +42,9 @@ class FakeStage implements AdvStage {
   hideChoices(): void {
     this.calls.push('hideChoices');
     this.hides++;
+  }
+  setChoiceHighlight(pos: number): void {
+    this.choiceHighlights.push(pos);
   }
   setFade(alpha: number): void {
     this.calls.push(`fade:${alpha.toFixed(2)}`);
@@ -142,6 +146,39 @@ describe('AdvRenderer', () => {
     expect(r.select(1)).toBe(true);
     expect(selected).toBe(1);
     expect(stage.hides).toBe(1);
+  });
+
+  it('选择肢初始不高亮，方向键首次输入才建立焦点', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+
+    bus.emit('choice', { options: [{ index: 3, label: 'A' }, { index: 7, label: 'B' }, { index: 9, label: 'C' }] });
+    expect(stage.choiceHighlights).toEqual([]);
+    expect(r.choiceConfirm()).toBe(false);
+
+    r.choiceDown();
+    expect(stage.choiceHighlights).toEqual([0]);
+    r.choiceUp();
+    expect(stage.choiceHighlights).toEqual([0, 2]);
+  });
+
+  it('推进到下一句时不先清空对白，避免对话层闪烁', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const tw = new Typewriter({ charsPerSecond: 1000 });
+    const r = new AdvRenderer(stage, new FakeAudio(), {
+      typewriter: tw,
+      onAdvance: () => bus.emit('text', { speaker: '凛', value: '下一句。' }),
+    });
+    r.subscribe(bus);
+
+    bus.emit('text', { speaker: '凛', value: '上一句。' });
+    r.update(1000);
+    const beforeAdvance = stage.texts.length;
+    expect(r.advance()).toBe(true);
+    expect(stage.texts.slice(beforeAdvance)).toEqual([{ speaker: '凛', value: '' }]);
   });
 
   it('构造时把 onSelect 绑定到 stage（PixiStage 点击路径可用，修复真实 UI 卡死）', () => {

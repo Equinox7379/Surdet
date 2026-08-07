@@ -1,0 +1,13 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+const game = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = resolve(game, '..', '..');
+const cli = resolve(repo, 'packages/cli/dist/index.js');
+const raw = execFileSync(process.execPath, [cli, 'simulate', game, '--json', '--max-paths', '500', '--max-steps', '20000'], { encoding: 'utf8' });
+const report = JSON.parse(raw);
+const endings = new Set(report.endings.map((x) => x.ending));
+for (const id of ['testimony_end', 'meeting_end', 'silence_end']) if (!endings.has(id)) throw new Error(`missing ending: ${id}`);
+if (report.runtimeErrors.length || report.deadEndScenes.length || report.budgetExhausted) throw new Error(JSON.stringify(report));
+execFileSync(process.execPath, [resolve(game, 'scripts/check-assets.mjs')], { cwd: game, stdio: 'inherit' });
+console.log(`verified ${report.sceneCount} scenes and ${endings.size} endings`);
