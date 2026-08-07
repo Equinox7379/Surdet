@@ -74,6 +74,51 @@
 | `@particle` | `@particle sakura` | ✅ | 粒子特效层（预设：snow/rain/sakura/sparkle/fireflies）；`@particle off` 清除 |
 | `@mov` | `@mov lynn left` / `@mov lynn 400 600` | ✅ | 立绘位置平移（角色 位置 [时长毫秒]；位置 = left/center/right 或裸数字 X 坐标；缺省 400ms） |
 | `@tint` | `@tint #ff6600 0.3` / `@tint #ff6600 0.3 800` | ✅ | 全屏调色叠加（颜色 hex + 透明度 [过渡毫秒]；`@tint off` 清除） |
+| `@timeline` | `@timeline intro_arrival @ blocking` | ✅ | 播放 `content/timelines/<id>.json` 中的多轨演出；默认非阻塞，追加 `@ blocking` 后等待演出完成 |
+
+### 时间轴演出
+
+时间轴是可选的 JSON 演出层，不替换现有 `@bg`、`@show`、`@mov` 等指令。场景使用时间轴前，在项目中创建同名文件：
+
+```text
+content/timelines/intro_arrival.json
+```
+
+最小结构如下：
+
+```json
+{
+  "version": 1,
+  "id": "intro_arrival",
+  "durationMs": 1800,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        { "atMs": 0, "durationMs": 900, "easing": "outCubic", "action": "set", "key": "castle_night" }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:uniform",
+      "cues": [
+        { "atMs": 300, "durationMs": 700, "easing": "outCubic", "action": "show", "expression": "normal", "position": "left" }
+      ]
+    }
+  ]
+}
+```
+
+可用轨道为 `background`、`portrait`、`camera`、`screen`、`particle`、`audio`。每个 cue 至少包含 `atMs`、`durationMs`、`action`；具体动作和字段以 `packages/core/src/timeline.ts` 的类型定义为准。支持的缓动为 `linear`、`inOutSine`、`outCubic`、`inOutCubic`。
+
+在 `.gal` 中：
+
+```gal
+@timeline intro_arrival              // 播放演出，同时继续解释剧情
+@timeline intro_arrival @ blocking   // 演出完成前暂停剧情，可点击/快进完成
+```
+
+时间轴缺少素材时沿用渲染器的占位回退，不会阻塞启动；非法 JSON 会被 lint/编辑器报告并隔离。保存与读档会记录正在播放的时间轴游标，读档后从保存位置恢复，不重复重播已经完成的演出。旧项目不含 `content/timelines` 时行为完全不变。
 
 ### 流程
 | 指令 | 示例 | 状态 | 说明 |

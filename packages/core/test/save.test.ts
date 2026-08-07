@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SaveManager, MemoryStorage, QUICK_SLOT, assertValidSnapshot } from '../src/save/save-manager.js';
+import { SaveManager, MemoryStorage, QUICK_SLOT, assertValidSnapshot, isJsonSafeValue } from '../src/save/save-manager.js';
 import type { SaveSnapshot, SaveStorage } from '../src/save/save-manager.js';
 import { GalleryState } from '../src/systems/gallery-state.js';
 import { ReadTracker } from '../src/runtime/read-tracker.js';
@@ -17,6 +17,12 @@ function makeSnap(overrides: Partial<SaveSnapshot> = {}): SaveSnapshot {
 }
 
 describe('SaveManager', () => {
+  it('JSON 安全校验接受 null，但拒绝 undefined 与非有限 number', () => {
+    expect(isJsonSafeValue({ particleKind: null, nested: [null, 1, true] })).toBe(true);
+    expect(isJsonSafeValue({ missing: undefined })).toBe(false);
+    expect(isJsonSafeValue({ invalid: Infinity })).toBe(false);
+  });
+
   it('save/load/list/has/delete', async () => {
     const sm = new SaveManager();
     await sm.save('slot1', makeSnap());
