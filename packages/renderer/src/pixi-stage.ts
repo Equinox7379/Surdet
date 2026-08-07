@@ -758,8 +758,9 @@ export class PixiStage implements AdvStage {
    * 注册真实背景素材（URL 或已加载的 Texture）。之后 @bg key 使用真实素材而非程序化占位。
    * URL 通过 Pixi Assets 异步加载；清除同名占位缓存使下一次 setBackground 生效。
    */
-  async registerBackground(key: string, src: string | Texture): Promise<void> {
-    const tex = typeof src === 'string' ? await Assets.load(src) : src;
+  async registerBackground(key: string, src: string | Texture, format?: string): Promise<void> {
+    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
     this.#registeredBgs.set(key, tex);
     this.#bgTextureCache.delete(key);
     // 资源可能在 @bg 已经投影后才完成加载；替换当前画面，避免首帧占位永久驻留。
@@ -834,8 +835,9 @@ export class PixiStage implements AdvStage {
    * 注册真实立绘素材（按 角色:服装:表情 精确匹配）。之后 @show charId:costume 对应表情
    * 使用真实素材而非程序化占位。URL 通过 Pixi Assets 异步加载。
    */
-  async registerPortrait(charId: string, costume: string, expression: string, src: string | Texture): Promise<void> {
-    const tex = typeof src === 'string' ? await Assets.load(src) : src;
+  async registerPortrait(charId: string, costume: string, expression: string, src: string | Texture, format?: string): Promise<void> {
+    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
     const cacheKey = `${charId}:${costume}:${expression}`;
     this.#registeredPortraits.set(cacheKey, tex);
     this.#portraitTextureCache.delete(cacheKey);
@@ -846,8 +848,9 @@ export class PixiStage implements AdvStage {
   }
 
   /** 注册对白区小头像；缺失时不显示头像，不猜测主立绘。 */
-  async registerAvatar(key: string, src: string | Texture): Promise<void> {
-    const tex = typeof src === 'string' ? await Assets.load(src) : src;
+  async registerAvatar(key: string, src: string | Texture, format?: string): Promise<void> {
+    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
     this.#registeredAvatars.set(key, tex);
     this.#updateSpeakerAvatar();
   }

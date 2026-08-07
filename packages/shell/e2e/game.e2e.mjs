@@ -1,7 +1,7 @@
 /**
  * E2E 自动通关回归（自我迭代 第一梯队②）：
  *  Playwright 驱动真实 Electron 壳启动 starter 游戏——
- *  标题点击开局 → 键盘推进剧情 → 选择肢确认 → F5/F9 存读档回路 →
+ *  标题点击开局 → 键盘推进剧情 → 选择肢确认 → 快速存读档回路 →
  *  推进到系统交互层（战斗/地图/商店，键盘不可达处）或结局为止。
  * 前置：npm run build（core/renderer/shell/starter 全部构建产物在位）。
  * 运行：npm run e2e -w @surdet/shell（退出码 0 = 全部通过）
@@ -22,6 +22,11 @@ const check = (cond, label) => {
 const app = await electron.launch({ args: ['.'], cwd: shellDir });
 try {
   const win = await app.firstWindow();
+  win.on('console', (msg) => {
+    if (msg.text().includes('快速存档') || msg.text().includes('快速读档')) {
+      console.log(`[GAME] ${msg.text()}`);
+    }
+  });
   await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000 });
   check(true, '游戏引导完成（__surdetDebug 就绪）');
 
@@ -89,8 +94,14 @@ try {
       continue;
     }
     if (s === 'awaiting-advance' || s === 'awaiting-timer') {
-      if (!saved && steps > 6) { await win.keyboard.press('F5'); saved = true; await sleep(250); continue; }
-      if (saved && !loaded && steps > 12) { await win.keyboard.press('F9'); loaded = true; await sleep(400); continue; }
+      if (!saved && steps > 6) {
+        saved = await win.evaluate(() => window.__surdetDebug.quickSave());
+        await sleep(250);
+        // 剧情可能在下一步立刻进入连续选择肢；同轮完成读档，保证回归每次实际覆盖该路径。
+        loaded = saved && await win.evaluate(() => window.__surdetDebug.quickLoad());
+        await sleep(400);
+        continue;
+      }
       await win.keyboard.press('Space');
       await sleep(120);
       continue;

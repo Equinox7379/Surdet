@@ -8,17 +8,19 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/build-preload.mjs",
     "start": "electron .",
-    "pack": "npm run build && node prepare-pack.mjs && electron-builder --win",
+    "pack": "npm run build && node prepare-pack.mjs && node scripts/verify-pack.mjs --preflight && electron-builder --win && node scripts/verify-pack.mjs --artifact",
     "e2e": "node e2e/game.e2e.mjs",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@surdet/core": "0.1.0",
     "electron": "43.2.0",
     "electron-builder": "^26.15.3",
     "playwright": "^1.49.0"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0"
   }
 }
