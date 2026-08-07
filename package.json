@@ -7,7 +7,6 @@
   "workspaces": [
     "packages/*",
     "examples/starter",
-    "examples/zero-after-midnight",
     "games/*"
   ],
   "scripts": {

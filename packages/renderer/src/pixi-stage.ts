@@ -394,7 +394,6 @@ export class PixiStage implements AdvStage {
   #commandRail: Container;
   #commandRailItems: CommandRailItem[] = [];
   #commandRailOnSelect: ((id: string) => void) | null = null;
-  #commandRailSuppressed = false;
   #commandRailWakeRemain = 0;
   #commandRailIdleAlpha = 0.38;
   #commandRailPointerWake: (() => void) | null = null;
@@ -440,7 +439,6 @@ export class PixiStage implements AdvStage {
   #galleryOnPlayMusic: ((id: string, src?: string) => void) | null = null;
   /** 文本回想重播回调（宿主 hostJump 到回想场景） */
   #galleryOnReplayText: ((item: GalleryItemView) => void) | null = null;
-  #galleryOnClose: (() => void) | null = null;
   #galleryViewerKey: string | null = null;
   /** 设置面板覆盖层（◀ ▶ 步进；状态归宿主，本舞台只投影与转发点击） */
   #settingsLayer: Container;
@@ -819,8 +817,7 @@ export class PixiStage implements AdvStage {
     const sprite = this.#speakerAvatar;
     if (!sprite) return;
     const profile = [...this.#speakerProfiles.values()].find((p) => p.id === this.#activeSpeakerId);
-    // 头像必须由角色资料显式声明；不要因为存在同名资源就猜测映射。
-    const key = profile?.avatarKey;
+    const key = profile?.avatarKey ?? profile?.id;
     const texture = key ? this.#registeredAvatars.get(key) : undefined;
     if (!texture || !profile || this.#interfaceHidden || this.#nvlActive) {
       sprite.visible = false;
@@ -1073,18 +1070,17 @@ export class PixiStage implements AdvStage {
     this.#dialogText.visible = !hidden;
     this.#dialogRubyLayer.visible = !hidden;
     this.#continueIndicator.visible = !hidden;
-    this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#commandRail.visible = !hidden && this.#commandRailItems.length > 0;
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
   }
 
   /** 展示现代 ADV 底部操作带。 */
   showCommandRail(items: CommandRailItem[], onSelect: (id: string) => void): void {
-    this.#commandRailSuppressed = false;
     this.#commandRailOnSelect = onSelect;
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
     this.#wakeCommandRail();
   }
 
@@ -1092,17 +1088,16 @@ export class PixiStage implements AdvStage {
   setCommandRailItems(items: CommandRailItem[]): void {
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    if (!this.#commandRailSuppressed) this.#wakeCommandRail();
+    this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
+    this.#wakeCommandRail();
   }
 
   hideCommandRail(): void {
-    this.#commandRailSuppressed = true;
     this.#commandRail.visible = false;
   }
 
   #wakeCommandRail(): void {
-    if (this.#interfaceHidden || this.#commandRailSuppressed || this.#commandRailItems.length === 0) return;
+    if (this.#interfaceHidden || this.#commandRailItems.length === 0) return;
     this.#commandRailWakeRemain = 2800;
     this.#commandRail.visible = true;
     this.#commandRail.alpha = Math.max(this.#commandRail.alpha, 0.72);
@@ -1112,33 +1107,31 @@ export class PixiStage implements AdvStage {
     const layer = this.#commandRail;
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
     if (this.#commandRailItems.length === 0) return;
-    const railH = 46;
+    const railH = 58;
     const count = this.#commandRailItems.length;
-    const slotW = 44;
-    const slotGap = 4;
-    const railPad = 8;
-    const railW = railPad * 2 + count * slotW + (count - 1) * slotGap;
-    const startX = Math.max(12, this.#w - railW - 18);
-    const top = this.#h - railH - 10;
+    const slotW = Math.min(148, Math.max(92, (this.#w - 36) / count));
+    const railW = slotW * count;
+    const startX = Math.max(18, this.#w - railW - 18);
     layer.addChild(new Graphics()
-      .roundRect(startX, top, railW, railH, 5)
-      .fill({ color: MODERN_ADV.rail, alpha: 0.82 })
-      .stroke({ width: 1, color: MODERN_ADV.line, alpha: 0.3 }));
+      .rect(0, this.#h - railH, this.#w, railH)
+      .fill({ color: MODERN_ADV.rail, alpha: 0.76 })
+      .rect(0, this.#h - railH, this.#w, 1)
+      .fill({ color: MODERN_ADV.line, alpha: 0.24 }));
 
     this.#commandRailItems.forEach((item, index) => {
       const row = new Container();
-      row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
-      const hit = new Graphics().roundRect(0, 0, slotW, railH - 6, 3).fill({ color: 0xffffff, alpha: 0.001 });
+      row.position.set(startX + index * slotW, this.#h - railH + 4);
+      const hit = new Graphics().rect(0, 0, slotW, railH - 6).fill({ color: 0xffffff, alpha: 0.001 });
       const icon = new PText({
         text: item.icon ?? '·',
         style: {
-          fontSize: 20,
+          fontSize: 17,
           fill: item.active ? MODERN_ADV.accent : MODERN_ADV.muted,
           fontWeight: item.active ? 'bold' : 'normal',
         } satisfies TextStyleOptions,
       });
-      icon.anchor.set(0.5);
-      icon.position.set(slotW / 2, (railH - 6) / 2);
+      icon.anchor.set(0.5, 0);
+      icon.position.set(slotW / 2, 3);
       const label = new PText({
         text: item.label,
         style: {
@@ -1147,12 +1140,10 @@ export class PixiStage implements AdvStage {
           letterSpacing: 1,
         } satisfies TextStyleOptions,
       });
-      // 默认只显示符号；悬停时才显示短标签，保持正文画面的低干扰。
-      label.anchor.set(0.5, 1);
-      label.position.set(slotW / 2, -4);
-      label.alpha = 0;
+      label.anchor.set(0.5, 0);
+      label.position.set(slotW / 2, 24);
       const underline = new Graphics()
-        .rect(10, railH - 8, slotW - 20, 1.5)
+        .rect(Math.max(10, slotW * 0.23), railH - 9, slotW * 0.54, 1.5)
         .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
       row.addChild(hit, icon, label, underline);
       row.alpha = item.enabled === false ? 0.38 : 1;
@@ -1161,14 +1152,12 @@ export class PixiStage implements AdvStage {
         row.cursor = 'pointer';
         row.on('pointerover', () => {
           this.#wakeCommandRail();
-          label.alpha = 1;
-          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
+          underline.clear().rect(Math.max(10, slotW * 0.23), railH - 9, slotW * 0.54, 1.5)
             .fill({ color: MODERN_ADV.accent, alpha: 0.9 });
           label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1 } satisfies TextStyleOptions;
         });
         row.on('pointerout', () => {
-          label.alpha = 0;
-          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
+          underline.clear().rect(Math.max(10, slotW * 0.23), railH - 9, slotW * 0.54, 1.5)
             .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
           label.style = {
             fontSize: 12,
@@ -1643,31 +1632,19 @@ export class PixiStage implements AdvStage {
     texts?: GalleryItemView[];
     onPlayMusic?: (id: string, src?: string) => void;
     onReplayText?: (item: GalleryItemView) => void;
-    onClose?: () => void;
   }): void {
-    this.hideSettings();
-    this.hideSaveLoad();
-    this.hideCommandRail();
     this.#galleryViews = { cgs: opts.cgs, music: opts.music, texts: opts.texts ?? [] };
     this.#galleryOnPlayMusic = opts.onPlayMusic ?? null;
     this.#galleryOnReplayText = opts.onReplayText ?? null;
-    this.#galleryOnClose = opts.onClose ?? null;
     this.#galleryMode = 'grid';
     this.#galleryViewerKey = null;
     this.#rebuildGallery();
-    this.#uiLayer.setChildIndex(this.#galleryLayer, this.#uiLayer.children.length - 1);
     this.#galleryLayer.visible = true;
   }
 
   /** 隐藏鉴赏界面 */
   hideGallery(): void {
     this.#galleryLayer.visible = false;
-    this.#commandRailSuppressed = false;
-  }
-
-  #closeGallery(): void {
-    this.hideGallery();
-    this.#galleryOnClose?.();
   }
 
   #rebuildGallery(): void {
@@ -1703,7 +1680,7 @@ export class PixiStage implements AdvStage {
       this.#galleryMode = 'grid';
       this.#rebuildGallery();
     }));
-    layer.addChild(mkBtn('✕ 关闭', this.#w - 150, false, () => this.#closeGallery()));
+    layer.addChild(mkBtn('✕ 关闭', this.#w - 150, false, () => { this.#galleryLayer.visible = false; }));
 
     if (this.#galleryMode === 'viewer' && this.#galleryViewerKey !== null) {
       this.#buildGalleryViewer(layer, this.#galleryViewerKey);
@@ -1834,21 +1811,15 @@ export class PixiStage implements AdvStage {
 
   /** 展示设置面板：◀ ▶ 步进各行；onChange 交宿主改值后应重新调用本方法刷新展示 */
   showSettings(rows: SettingsRowView[], onChange: (id: string, dir: -1 | 1) => void, onClose: () => void): void {
-    // 设置是独立覆盖层，避免操作带在设置内容下方残留并抢占命中区域。
-    this.hideSaveLoad();
-    this.hideGallery();
-    this.hideCommandRail();
     this.#settingsRows = rows;
     this.#settingsHandlers = { onChange, onClose };
     this.#rebuildSettings();
-    this.#uiLayer.setChildIndex(this.#settingsLayer, this.#uiLayer.children.length - 1);
     this.#settingsLayer.visible = true;
   }
 
   /** 隐藏设置面板 */
   hideSettings(): void {
     this.#settingsLayer.visible = false;
-    this.#commandRailSuppressed = false;
   }
 
   #rebuildSettings(): void {
@@ -1857,7 +1828,7 @@ export class PixiStage implements AdvStage {
     const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.66 });
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
-      this.hideSettings();
+      layer.visible = false;
       this.#settingsHandlers?.onClose();
     });
     layer.addChild(bg);
@@ -1896,7 +1867,7 @@ export class PixiStage implements AdvStage {
     close.on('pointerover', () => { close.style = { fontSize: 30, fill: 0xffffff } satisfies TextStyleOptions; });
     close.on('pointerout', () => { close.style = { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions; });
     close.on('pointerdown', () => {
-      this.hideSettings();
+      this.#settingsLayer.visible = false;
       this.#settingsHandlers?.onClose();
     });
     layer.addChild(close);
@@ -2123,19 +2094,13 @@ export class PixiStage implements AdvStage {
       }
       layer.addChild(t);
     });
-    this.#uiLayer.setChildIndex(this.#titleLayer, this.#uiLayer.children.length - 1);
     layer.visible = true;
   }
 
-  /** 隐藏标题画面；进入正文时默认恢复操作带，进入标题二级页时可保持操作带隐藏。 */
-  hideTitle(restoreCommandRail = true): void {
+  /** 隐藏标题画面 */
+  hideTitle(): void {
     this.#titleLayer.visible = false;
-    if (restoreCommandRail) {
-      this.#commandRailSuppressed = false;
-      this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
-    } else {
-      this.hideCommandRail();
-    }
+    this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
   }
 
   /** 展示现代 ADV 系统菜单：右侧抽屉、细线层级、悬停强调；点击遮罩关闭。 */
@@ -2269,16 +2234,13 @@ export class PixiStage implements AdvStage {
 
   /** 展示存档/读档界面：平面档案列表；load 模式空槽灰显不可选。 */
   showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
-    this.hideSettings();
-    this.hideGallery();
-    this.hideCommandRail();
     this.#saveLoadHandlers = { onSelect, onClose };
     const layer = this.#saveLoadLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
     const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.84 });
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
-      this.hideSaveLoad();
+      layer.visible = false;
       this.#saveLoadHandlers?.onClose();
     });
     layer.addChild(bg);
@@ -2304,7 +2266,7 @@ export class PixiStage implements AdvStage {
     close.on('pointerover', () => { close.style = { fontSize: 30, fill: 0xffffff } satisfies TextStyleOptions; });
     close.on('pointerout', () => { close.style = { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions; });
     close.on('pointerdown', () => {
-      this.hideSaveLoad();
+      layer.visible = false;
       this.#saveLoadHandlers?.onClose();
     });
     layer.addChild(close);
@@ -2378,20 +2340,18 @@ export class PixiStage implements AdvStage {
           marker.alpha = 0;
         });
         card.on('pointerdown', () => {
-          this.hideSaveLoad();
+          layer.visible = false;
           this.#saveLoadHandlers?.onSelect(slot.id);
         });
       }
       layer.addChild(card);
     });
-    this.#uiLayer.setChildIndex(this.#saveLoadLayer, this.#uiLayer.children.length - 1);
     layer.visible = true;
   }
 
   /** 隐藏存档/读档界面 */
   hideSaveLoad(): void {
     this.#saveLoadLayer.visible = false;
-    this.#commandRailSuppressed = false;
   }
 
   /** 展示大地图：节点（可进入者高亮可点）+ 日期/回合/行动力 + 结束回合 */
@@ -2644,7 +2604,7 @@ export class PixiStage implements AdvStage {
 
   hideChoices(): void {
     this.#clearChoices();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
   }
 
   setFade(alpha: number): void {
@@ -2753,7 +2713,6 @@ export class PixiStage implements AdvStage {
     this.#galleryViews = null;
     this.#galleryOnPlayMusic = null;
     this.#galleryOnReplayText = null;
-    this.#galleryOnClose = null;
     this.#settingsHandlers = null;
     this.#battleHandlers = null;
 
@@ -2797,7 +2756,6 @@ export class PixiStage implements AdvStage {
     this.#continueIndicator.visible = false;
     this.#continuePhase = 0;
     this.#interfaceHidden = false;
-    this.#commandRailSuppressed = false;
     this.#commandRail.visible = this.#commandRailItems.length > 0;
     this.#commandRail.alpha = this.#commandRailIdleAlpha;
     this.#commandRailWakeRemain = 0;
