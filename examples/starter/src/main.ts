@@ -549,9 +549,10 @@ async function main(): Promise<void> {
     }
   }, { passive: false });
 
-  // 右键 → 系统菜单（GalGame 惯例）
+  // 右键 → 系统菜单（GalGame 惯例）；标题画面不弹（标题自带菜单，空白处右键蹦设置框属误弹，用户反馈修复）
   stage.app!.canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    if (onTitleScreen) return;
     openSystemMenu();
   });
 
@@ -816,7 +817,10 @@ async function main(): Promise<void> {
   bus.on('text', () => checkAchievements());
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
+  /** 标题画面显示中（右键系统菜单守卫用；showTitleScreen 置真，开局/读档进入游戏置假） */
+  let onTitleScreen = false;
   function showTitleScreen(): void {
+    onTitleScreen = true;
     stage.showTitle(
       {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
@@ -837,6 +841,7 @@ async function main(): Promise<void> {
   function titleSelect(id: string): void {
     switch (id) {
       case 'new': {
+        onTitleScreen = false;
         stage.hideTitle();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
@@ -900,6 +905,7 @@ async function main(): Promise<void> {
       } else {
         void (async () => {
           try {
+            onTitleScreen = false;
             stage.hideTitle();
             interp.loadSnapshot(await saves.load(slotId));
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
