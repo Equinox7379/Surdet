@@ -1,0 +1,65 @@
+@scene common_apartment
+@label start
+@bg old_apartment_corridor
+@bgm old_room
+@fadein 350
+
+旧公寓的三楼没有声控灯。
+走廊尽头的窗关不严，雨顺着窗框流到发黑的地砖上。
+门牌三零二已经被人摘掉，只剩四个新鲜的螺丝孔。
+主角：这里以前是你住的地方？
+@se phone_ring
+许知遥：不是以前。至少不全是。
+@show zhirao:commute wet @ left
+许知遥：桌上有一台录音机。别按播放键太久。
+
+@bg old_apartment_room
+房间里没有家具，只有一张折叠桌和一台老式录音机。
+磁带已经转到一半，像有人刚刚离开。
+@se tape_click
+录音里的第一个声音是许知遥。
+许知遥（录音）：如果你听到这个，说明我没能把手机带出去。
+第二个声音紧跟着响起。
+许知遥（录音）：如果你听到这个，说明我没能把手机带出去。
+两句话的停顿、呼吸、甚至尾音都完全一样。
+主角：有人在循环她的录音。
+许知遥：不只是录音。
+
+@se voice_static
+磁带忽然多出一段杂音。
+在杂音后面，有人叫了我的旧昵称。
+那是只有我和许知遥知道的称呼。
+主角：这段话是谁告诉你的？
+许知遥：我没有告诉任何人。
+许知遥：所以我才害怕你相信我。
+
+@choice
+  保存原始录音 -> @goto save_recording
+  立刻拔掉录音机 -> @goto stop_recording
+
+@label save_recording
+@set recordingSaved = true
+@mod evidence +1
+我用手机录下整段磁带。
+最后三秒里，背景有地铁进站的广播。
+可这栋楼离地铁线很远。
+许知遥：那不是背景声。那是下一次电话会响的地方。
+@goto room_after
+
+@label stop_recording
+@mod panic +1
+我拔掉电源，录音机却又转了两圈才停。
+最后一句话没能录下来。
+墙上的霉斑在闪烁的屏幕光里像一张张张开的嘴。
+许知遥：别怕。你还没听见最糟的部分。
+@goto room_after
+
+@label room_after
+@hide zhirao
+桌下藏着一张折起的地铁图。
+图上只有一个站名被雨水晕开：北港通道。
+手机里多出一条从未发送的语音草稿，创建时间是三天前。
+它只有七秒，内容是门铃声、脚步声，和一句听不清的“别让他……”
+@autosave
+@fadeout 350
+@jump common_passage.start
