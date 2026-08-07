@@ -29,6 +29,13 @@ describe('PixiStage 素材注入', () => {
     stage.setBackground('forest');
   });
 
+  it('resetSession 默认保留宿主已注册素材，开始新游戏后仍可命中真实纹理', async () => {
+    const stage = makeStage();
+    await stage.registerBackground('castle', Texture.EMPTY);
+    stage.resetSession();
+    stage.setBackground('castle');
+  });
+
   it('registerPortrait(Texture) 后 setPortrait 命中真实素材（不落占位）', async () => {
     const stage = makeStage();
     await stage.registerPortrait('lynn', 'armor', 'despair', Texture.EMPTY);

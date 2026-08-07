@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" role="img" aria-label="moonlit field">
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#111b3d"/>
+      <stop offset=".52" stop-color="#263e67"/>
+      <stop offset="1" stop-color="#09151f"/>
+    </linearGradient>
+    <radialGradient id="moon"><stop stop-color="#fff5d7"/><stop offset=".65" stop-color="#d4e7ff" stop-opacity=".74"/><stop offset="1" stop-color="#b5d6ff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#203c5c"/><stop offset="1" stop-color="#07121d"/></linearGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#193d4c"/><stop offset="1" stop-color="#07151e"/></linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#night)"/>
+  <circle cx="1510" cy="205" r="190" fill="url(#moon)"/>
+  <circle cx="1510" cy="205" r="65" fill="#f5f0d4"/>
+  <g fill="#d9e7ff" opacity=".72">
+    <circle cx="190" cy="170" r="3"/><circle cx="340" cy="270" r="4"/><circle cx="520" cy="110" r="3"/><circle cx="780" cy="212" r="3"/><circle cx="980" cy="120" r="4"/><circle cx="1190" cy="300" r="3"/><circle cx="1670" cy="110" r="3"/><circle cx="1810" cy="310" r="4"/><circle cx="1380" cy="70" r="2"/>
+  </g>
+  <path d="M0 620L180 500L340 580L520 430L720 570L930 410L1110 570L1290 450L1470 560L1650 390L1920 570V820H0Z" fill="#112845"/>
+  <path d="M0 700L250 560L470 670L720 520L930 680L1180 520L1410 680L1680 510L1920 650V860H0Z" fill="url(#hill)"/>
+  <path d="M0 710 Q450 640 820 735 T1520 700 T1920 740V1080H0Z" fill="url(#field)"/>
+  <path d="M970 710 C1080 770 1180 880 1420 1080H730 C850 930 930 820 970 710Z" fill="#476b6f" opacity=".7"/>
+  <path d="M970 710 C1040 800 1120 910 1190 1080" stroke="#9bb9a7" stroke-width="9" opacity=".25" fill="none"/>
+  <g stroke="#76a99c" stroke-width="5" opacity=".52">
+    <path d="M100 1030L115 920M150 1080L164 950M240 1010L250 900M420 1080L430 930M580 1010L590 870M1530 1060L1544 900M1700 1080L1712 920M1840 1040L1855 890"/>
+  </g>
+  <g fill="#e8e7a4" opacity=".8">
+    <circle cx="340" cy="760" r="5"/><circle cx="510" cy="825" r="4"/><circle cx="640" cy="720" r="5"/><circle cx="1320" cy="790" r="4"/><circle cx="1500" cy="720" r="5"/><circle cx="1690" cy="850" r="4"/><circle cx="1780" cy="690" r="3"/>
+  </g>
+  <rect width="1920" height="1080" fill="#061323" opacity=".14"/>
+</svg>

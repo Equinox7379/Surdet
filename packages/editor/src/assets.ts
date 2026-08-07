@@ -7,7 +7,7 @@
  */
 import type { CompiledScene, GenericInstr } from '@surdet/core';
 
-export type AssetKind = 'bg' | 'portrait' | 'bgm' | 'se' | 'voice' | 'video' | 'cg' | 'music' | 'text';
+export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'se' | 'voice' | 'video' | 'cg' | 'music' | 'text';
 
 /** 目录扫描出的素材文件条目 */
 export interface DirAsset {
@@ -36,7 +36,7 @@ export interface AssetEntry {
 }
 
 const DIR_KIND_MAP: Record<string, AssetKind> = {
-  bg: 'bg', portrait: 'portrait', bgm: 'bgm', se: 'se', voice: 'voice', video: 'video',
+  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', se: 'se', voice: 'voice', video: 'video',
 };
 
 /** 目录名 → 素材类型（未知目录返回 null，调用方跳过） */
@@ -44,7 +44,7 @@ export function kindOfDir(name: string): AssetKind | null {
   return DIR_KIND_MAP[name] ?? null;
 }
 
-const IMG_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
+const IMG_EXT = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
 
 /** 立绘文件名解析：`角色_服装_表情.ext` → key `角色:服装` + 表情（缺省 normal） */
 export function parsePortraitFileName(fname: string): { key: string; expr: string } {
@@ -179,6 +179,6 @@ export function insertLineForAsset(e: AssetEntry): string | null {
 
 /** 素材类型中文标签（UI 展示用） */
 export const KIND_LABELS: Record<AssetKind, string> = {
-  bg: '背景', portrait: '立绘', bgm: '音乐', se: '音效', voice: '语音', video: '视频',
+  bg: '背景', portrait: '立绘', avatar: '头像', bgm: '音乐', se: '音效', voice: '语音', video: '视频',
   cg: 'CG', music: '鉴赏音乐', text: '回想',
 };

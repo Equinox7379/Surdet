@@ -1,8 +1,8 @@
 @scene ch02
+@label start
 @bg castle_hall
 @bgm tense_01
 
-@label start
 凛：第二章——全家桶系统演示。
 @calendar map_01
 凛：地图日程已接入宿主（CalendarRunner）。

@@ -16,16 +16,33 @@
  * 预览侧显示"宿主指令占位"横幅并继续（预览不实例化战斗/商店/周目宿主）。
  */
 import {
-  compileScene, EventBus, Interpreter, SceneRegistry, VariableStore,
+  compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, SaveManager, QUICK_SLOT, AUTO_SLOT,
   CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler,
 } from '@surdet/core';
 import type {
   CoreEventMap, VarDeclaration, SaveSnapshot,
+  SaveStorage, SystemSnapshots,
   CalendarConfig, GrowthConfig, AchievementDef, AffectionProfile, RelationshipEvent, ScheduledEventDef,
 } from '@surdet/core';
-import { AdvRenderer, Backlog, PixiStage, Typewriter, buildMapView } from '@surdet/renderer';
+import {
+  AdvRenderer, AudioManager, Backlog, PixiStage, Typewriter, buildMapView,
+  SettingsStore, SETTING_STEPS, stepSetting,
+} from '@surdet/renderer';
+import type { AudioHandle, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile } from '@surdet/renderer';
 
 interface SceneSrc { id: string; text: string }
+
+interface PreviewImage {
+  buffer: ArrayBuffer;
+  mime: string;
+}
+
+interface PreviewAssets {
+  backgrounds: { key: string; image: PreviewImage }[];
+  portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
+  avatars: { key: string; image: PreviewImage }[];
+  audio: { kind: 'bgm' | 'se' | 'voice'; key: string; file: PreviewImage }[];
+}
 
 /** 预览配置集（编辑器管理的四套；缺省/非法形状按无配置降级占位横幅） */
 interface PreviewConfigs {
@@ -37,13 +54,18 @@ interface PreviewConfigs {
 
 interface LoadPayload {
   sceneId: string;
+  /** 预览存档隔离键（通常为编辑器当前项目目录名） */
+  projectKey?: string;
   scenes: SceneSrc[];
+  speakerProfiles?: SpeakerProfile[];
   /** game.config.json 变量声明（父窗口提取后下发；缺省按空表） */
   variables?: Record<string, unknown>[];
   /** 编辑器内存中的配置 JSON（轻宿主系统用） */
   configs?: PreviewConfigs;
   /** 项目内嵌字体（宿主从项目目录读取后下发；缺省回退系统字体） */
-  font?: { buffer: ArrayBuffer; mime: string };
+  font?: { buffer: ArrayBuffer; mime: string; version?: string };
+  /** 编辑器从项目目录读取的真实背景/立绘素材 */
+  assets?: PreviewAssets;
   startLabel?: string;
   fast?: boolean;
 }
@@ -68,9 +90,47 @@ let affection: AffectionSystem | null = null;
 let scheduler: EventScheduler | null = null;
 /** 回合尾事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同 starter 语义） */
 let turnResumeSnap: SaveSnapshot | null = null;
+/** 当前预览存档隔离键与会话起始时间（load 在模块级串行队列中执行）。 */
+let previewProjectKey = 'untitled';
+let sessionStart = Date.now();
+let systemMenuOpen = false;
+let saveLoadOpen = false;
+let settingsOpen = false;
 /** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时回收旧 URL） */
 let appliedFontKey = '';
 let appliedFontUrl: string | null = null;
+let appliedAssetUrls: string[] = [];
+
+/** 预览音频宿主：与 starter 同用 AudioManager，只把项目 key 解析到 iframe 内的 Blob URL。 */
+class PreviewAudio implements AudioHandle {
+  #inner = new AudioManager();
+  #urls = new Map<string, string>();
+
+  setUrls(entries: readonly { kind: 'bgm' | 'se' | 'voice'; key: string; url: string }[]): void {
+    this.#urls.clear();
+    for (const e of entries) this.#urls.set(`${e.kind}:${e.key}`, e.url);
+  }
+
+  #resolve(kind: 'bgm' | 'se' | 'voice', src: string): string {
+    return this.#urls.get(`${kind}:${src}`) ?? src;
+  }
+
+  playBgm(src: string | null): void { this.#inner.playBgm(src === null ? null : this.#resolve('bgm', src)); }
+  playSe(src: string): void { this.#inner.playSe(this.#resolve('se', src)); }
+  playVoice(src: string): void { this.#inner.playVoice(this.#resolve('voice', src)); }
+  stopAll(): void { this.#inner.stopAll(); }
+  setMasterVolume(v: number): void { this.#inner.setMasterVolume(v); }
+  getMasterVolume(): number { return this.#inner.getMasterVolume(); }
+  setBgmVolume(v: number): void { this.#inner.setBgmVolume(v); }
+  getBgmVolume(): number { return this.#inner.getBgmVolume(); }
+  setSeVolume(v: number): void { this.#inner.setSeVolume(v); }
+  getSeVolume(): number { return this.#inner.getSeVolume(); }
+  setVoiceVolume(v: number): void { this.#inner.setVoiceVolume(v); }
+  getVoiceVolume(): number { return this.#inner.getVoiceVolume(); }
+  isVoicePlaying(): boolean { return this.#inner.isVoicePlaying(); }
+}
+
+const previewAudio = new PreviewAudio();
 
 function showError(msg: string): void {
   const root = document.getElementById('preview-root');
@@ -106,32 +166,465 @@ function tryBuild<T>(fn: () => T): T | null {
   }
 }
 
+function browserStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** 预览设置独立于 starter，避免编辑器预览调整音量/速度意外覆盖已安装游戏设置。 */
+function makePreviewSettingsStorage(): SettingsStorage {
+  const key = 'surdet:preview:settings';
+  return {
+    load: () => {
+      try {
+        const raw = browserStorage()?.getItem(key);
+        return raw ? JSON.parse(raw) as Partial<GameSettings> : null;
+      } catch {
+        return null;
+      }
+    },
+    save: (settings) => {
+      try {
+        browserStorage()?.setItem(key, JSON.stringify(settings));
+      } catch {
+        // 隐私模式/禁用存储时设置仍在本次预览内生效，只是不持久化。
+      }
+    },
+  };
+}
+
+/** 预览存档按项目名隔离；项目切换后同一编辑器不会显示另一项目的槽位。 */
+function makePreviewSaveStorage(getProjectKey: () => string): SaveStorage {
+  const prefix = (): string => `surdet:preview:save:${encodeURIComponent(getProjectKey() || 'untitled')}:`;
+  return {
+    read: (slot) => {
+      try {
+        const raw = browserStorage()?.getItem(`${prefix()}${slot}`);
+        return raw ? JSON.parse(raw) as SaveSnapshot : null;
+      } catch {
+        return null;
+      }
+    },
+    write: (slot, data) => {
+      try {
+        browserStorage()?.setItem(`${prefix()}${slot}`, JSON.stringify(data));
+      } catch (err) {
+        console.warn('[preview] 存档写入失败：', err);
+      }
+    },
+    delete: (slot) => {
+      try {
+        browserStorage()?.removeItem(`${prefix()}${slot}`);
+      } catch {
+        // 存储不可用时删除视为无操作。
+      }
+    },
+    list: () => {
+      const storage = browserStorage();
+      if (!storage) return [];
+      const base = prefix();
+      try {
+        return Object.keys(storage)
+          .filter((key) => key.startsWith(base))
+          .map((key) => key.slice(base.length));
+      } catch {
+        return [];
+      }
+    },
+  };
+}
+
 async function boot(): Promise<void> {
   stage = new PixiStage();
   await stage.init();
   const root = document.getElementById('preview-root');
   if (root) root.appendChild(stage.app!.canvas);
+  stage.fitWindow();
+  window.addEventListener('resize', () => stage?.fitWindow());
   bus = new EventBus<CoreEventMap>();
-  renderer = new AdvRenderer(stage, undefined, {
-    typewriter: new Typewriter({ charsPerSecond: FAST_CPS }),
+  const settings = new SettingsStore(makePreviewSettingsStorage());
+  await settings.load();
+  const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
+  renderer = new AdvRenderer(stage, previewAudio, {
+    typewriter,
     backlog: new Backlog(),
+    autoBaseDelayMs: settings.settings.autoBaseDelayMs,
+    autoPerCharMs: settings.settings.autoPerCharMs,
     onAdvance: () => guardRun(() => interp?.advance()),
     onSelect: (i) => guardRun(() => interp?.choose(i)),
     onWaitEnd: () => guardRun(() => interp?.finishWait()),
   });
+  settings.apply(typewriter, previewAudio);
   renderer.subscribe(bus);
+  const saves = new SaveManager(makePreviewSaveStorage(() => previewProjectKey));
+
+  function enrichSnapshot(snap: SaveSnapshot): SaveSnapshot {
+    const thumbnail = stage?.captureThumbnail();
+    if (thumbnail) snap.meta.thumbnail = thumbnail;
+    snap.meta.playTimeSec = Math.max(0, Math.round((Date.now() - sessionStart) / 1000));
+    return snap;
+  }
+
+  bus.on('autosave', (snap) => {
+    void saves.save(AUTO_SLOT, enrichSnapshot(snap)).catch((err) => {
+      console.warn('[preview] 自动存档失败：', err instanceof Error ? err.message : String(err));
+    });
+  });
+  bus.on('saveMismatch', (p) => {
+    stage?.showBanner?.(`存档与当前剧本不一致：${p.sceneId}`, 'tip');
+  });
+
   // 帧驱动 + 输入接线（宿主模板标准两行；此前遗漏导致打字机永不推进、点击无响应）
   stage.app!.ticker.add((ticker) => renderer?.update(ticker.deltaMS));
-  stage.app!.canvas.addEventListener('pointerdown', () => {
+
+  const closeSystemMenu = (): void => {
+    if (!systemMenuOpen) return;
+    systemMenuOpen = false;
+    stage?.hideSystemMenu();
+  };
+
+  const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
+
+  async function openSaveLoad(mode: 'save' | 'load'): Promise<void> {
+    if (!stage || !interp) return;
+    saveLoadOpen = true;
+    const requestedProjectKey = previewProjectKey;
+    const metas = await saves.list();
+    if (requestedProjectKey !== previewProjectKey) return;
+    const byId = new Map(metas.map((meta) => [meta.id, meta]));
+    const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
+      const meta = byId.get(id);
+      return {
+        id,
+        empty: !meta,
+        label: meta?.chapter,
+        updatedAt: meta?.updatedAt,
+        thumbnail: meta?.thumbnail,
+        playTimeSec: meta?.playTimeSec,
+        kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
+      };
+    });
+    stage.showSaveLoad({ mode, slots }, (slotId) => {
+      saveLoadOpen = false;
+      if (mode === 'save') {
+        const snap = interp?.saveSnapshot(slotId === QUICK_SLOT ? 'quick' : slotId === AUTO_SLOT ? 'auto' : 'manual');
+        if (!snap) {
+          stage?.showBanner?.('当前没有可存档的剧情状态', 'tip');
+          return;
+        }
+        void saves.save(slotId, enrichSnapshot(snap)).then(() => {
+          stage?.showBanner?.(`已保存至槽位 ${slotId}`, 'tip');
+        }).catch((err) => {
+          showError(`预览存档失败：${err instanceof Error ? err.message : String(err)}`);
+        });
+        return;
+      }
+      void (async () => {
+        try {
+          const snap = await saves.load(slotId);
+          interp?.loadSnapshot(snap);
+        } catch (err) {
+          showError(`预览读档失败：${err instanceof Error ? err.message : String(err)}`);
+          void openSaveLoad('load');
+        }
+      })();
+    }, () => {
+      saveLoadOpen = false;
+    });
+  }
+
+  function refreshSettingsPanel(): void {
+    if (!stage) return;
+    const current = settings.settings;
+    stage.showSettings(
+      SETTING_STEPS.map((def) => ({
+        id: def.key,
+        label: def.label,
+        display: def.format(current[def.key]),
+      })),
+      (id, dir) => {
+        const next = stepSetting(settings.settings, id as keyof GameSettings, dir);
+        void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
+          settings.apply(typewriter, previewAudio);
+          renderer?.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
+          if (settingsOpen) refreshSettingsPanel();
+        }).catch((err) => {
+          showError(`预览设置保存失败：${err instanceof Error ? err.message : String(err)}`);
+        });
+      },
+      () => {
+        settingsOpen = false;
+      },
+    );
+    settingsOpen = true;
+  }
+
+  function openSettings(): void {
+    refreshSettingsPanel();
+    refreshCommandRail();
+  }
+
+  bus.on('stateReset', () => {
+    // 读档后不允许旧的系统菜单/设置/存读档面板盖住恢复后的剧情画面。
+    stage?.hideSaveLoad();
+    stage?.hideSettings();
+    stage?.hideSystemMenu();
+    systemMenuOpen = false;
+    saveLoadOpen = false;
+    settingsOpen = false;
+    turnResumeSnap = null;
+    refreshCommandRail();
+  });
+
+  const openSystemMenu = (): void => {
+    if (!stage || !renderer) return;
+    const activeStage = stage;
+    const activeRenderer = renderer;
+    if (systemMenuOpen) {
+      closeSystemMenu();
+      return;
+    }
+    // Esc/右键在文字记录上再次操作时，先退出 Backlog，避免两个覆盖层同时可见。
+    if (activeRenderer.backlogOpen) activeRenderer.toggleBacklog();
+    systemMenuOpen = true;
+    activeStage.showSystemMenu(
+      [
+        { id: 'resume', label: '返回游戏' },
+        { id: 'save', label: '存档' },
+        { id: 'load', label: '读档' },
+        { id: 'settings', label: '设置' },
+        { id: 'backlog', label: `文字记录${activeRenderer.backlogOpen ? '（开）' : ''}` },
+        { id: 'auto', label: `自动播放${activeRenderer.autoPlay ? '（关）' : ''}` },
+        { id: 'skip', label: `快进${activeRenderer.skipMode && !activeRenderer.skipAll ? '（关）' : ''}` },
+        { id: 'skip-all', label: `全部快进${activeRenderer.skipAll ? '（关）' : ''}` },
+        { id: 'hide', label: `隐藏界面${activeRenderer.interfaceHidden ? '（恢复）' : ''}` },
+      ],
+      (id) => {
+        systemMenuOpen = false;
+        switch (id) {
+          case 'save': void openSaveLoad('save'); break;
+          case 'load': void openSaveLoad('load'); break;
+          case 'settings': openSettings(); break;
+          case 'backlog': activeRenderer.toggleBacklog(); break;
+          case 'auto': activeRenderer.toggleAuto(); break;
+          case 'skip': activeRenderer.toggleSkip(); break;
+          case 'skip-all': activeRenderer.toggleSkipAll(); break;
+          case 'hide': activeRenderer.toggleHideInterface(); break;
+          default: break; // resume：仅关闭菜单
+        }
+        refreshCommandRail();
+      },
+      () => {
+        systemMenuOpen = false;
+      },
+    );
+  };
+
+  function refreshCommandRail(): void {
+    if (!stage || !renderer) return;
+    stage.setCommandRailItems?.([
+      { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
+      { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
+      { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
+      { id: 'qsave', icon: 'S', label: '快存', tooltip: '快速存档' },
+      { id: 'qload', icon: 'L', label: '快读', tooltip: '快速读档' },
+      { id: 'settings', icon: '⚙', label: '设置', active: settingsOpen, tooltip: '打开设置' },
+      { id: 'hide', icon: '□', label: '界面', active: renderer.interfaceHidden, tooltip: '隐藏界面' },
+      { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
+    ]);
+  }
+
+  function onCommandRailSelect(id: string): void {
+    if (!stage || !renderer) return;
+    switch (id) {
+      case 'auto': renderer.toggleAuto(); break;
+      case 'skip':
+        if (settings.settings.skipStrategy >= 1) renderer.toggleSkipAll();
+        else renderer.toggleSkip();
+        break;
+      case 'backlog': renderer.toggleBacklog(); break;
+      case 'qsave': {
+        const snap = interp?.saveSnapshot('quick');
+        if (snap) {
+          void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => stage?.showBanner?.('快速存档已保存', 'tip'));
+        }
+        break;
+      }
+      case 'qload':
+        void saves.load(QUICK_SLOT).then((snap) => interp?.loadSnapshot(snap)).catch((err) => {
+          stage?.showBanner?.(`快速读档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
+        });
+        break;
+      case 'settings':
+        if (settingsOpen) {
+          settingsOpen = false;
+          stage.hideSettings();
+        } else openSettings();
+        break;
+      case 'hide': renderer.toggleHideInterface(); break;
+      case 'menu': openSystemMenu(); break;
+      default: break;
+    }
+    refreshCommandRail();
+  }
+
+  stage.showCommandRail?.([], onCommandRailSelect);
+  refreshCommandRail();
+
+  // 画布覆盖层由 Pixi 处理点击；捕获阶段先拦住通用推进，避免菜单/Backlog
+  // 关闭的同一个 pointer event 继续穿透到剧情推进逻辑。
+  stage.app!.canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || systemMenuOpen || saveLoadOpen || settingsOpen || renderer?.backlogOpen) return;
     const s = interp?.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer?.advance();
+  }, { capture: true });
+
+  // Backlog 滚轮：由宿主统一路由，PageUp/PageDown 走同一投影接口。
+  stage.app!.canvas.addEventListener('wheel', (e) => {
+    if (!renderer?.backlogOpen || systemMenuOpen || saveLoadOpen || settingsOpen) return;
+    e.preventDefault();
+    stage?.scrollBacklog?.(e.deltaY > 0 ? 120 : -120);
+  }, { passive: false });
+
+  // 右键是现代 ADV 的系统菜单快捷入口；浏览器默认菜单必须阻止。
+  stage.app!.canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (saveLoadOpen || settingsOpen) return;
+    openSystemMenu();
   });
-  // 键盘推进（Space/Enter，对齐 starter 键位习惯）
+
+  let ctrlTempSkip = false;
   window.addEventListener('keydown', (e) => {
+    if (!renderer) return;
+
+    if (e.key === 'Control') {
+      if (!ctrlTempSkip && !renderer.skipMode) {
+        ctrlTempSkip = true;
+        renderer.toggleSkip();
+        refreshCommandRail();
+      }
+      return;
+    }
+
+    if (systemMenuOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSystemMenu();
+      }
+      return;
+    }
+
+    if (saveLoadOpen || settingsOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (saveLoadOpen) {
+          saveLoadOpen = false;
+          stage?.hideSaveLoad();
+        }
+        if (settingsOpen) {
+          settingsOpen = false;
+          stage?.hideSettings();
+        }
+      }
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (renderer.backlogOpen) renderer.toggleBacklog();
+      else openSystemMenu();
+      refreshCommandRail();
+      return;
+    }
+
+    if (renderer.backlogOpen) {
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        renderer.toggleBacklog();
+      } else if (e.key === 'PageUp' || e.key === 'PageDown') {
+        e.preventDefault();
+        stage?.scrollBacklog?.(e.key === 'PageUp' ? -240 : 240);
+      }
+      return;
+    }
+
+    if (renderer.status === 'choice') {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (e.key === 'ArrowUp') renderer.choiceUp();
+        else renderer.choiceDown();
+        return;
+      }
+      if (/^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        renderer.selectChoiceAt(Number(e.key) - 1);
+        return;
+      }
+    }
+
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      const s = interp?.status;
-      if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer?.advance();
+      if (renderer.status === 'choice') renderer.choiceConfirm();
+      else {
+        const s = interp?.status;
+        if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.advance();
+      }
+      return;
+    }
+
+    if (e.key === 'F5') {
+      e.preventDefault();
+      const snap = interp?.saveSnapshot('quick');
+      if (snap) {
+        void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => {
+          stage?.showBanner?.('快速存档已保存', 'tip');
+        }).catch((err) => {
+          showError(`快速存档失败：${err instanceof Error ? err.message : String(err)}`);
+        });
+      } else {
+        stage?.showBanner?.('当前没有可存档的剧情状态', 'tip');
+      }
+      return;
+    }
+
+    if (e.key === 'F9') {
+      e.preventDefault();
+      void saves.load(QUICK_SLOT).then((snap) => {
+        interp?.loadSnapshot(snap);
+      }).catch((err) => {
+        stage?.showBanner?.(`快速读档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
+      });
+      return;
+    }
+
+    switch (e.key.toLowerCase()) {
+      case 'a': renderer.toggleAuto(); break;
+      case 's':
+        if (settings.settings.skipStrategy >= 1) renderer.toggleSkipAll();
+        else renderer.toggleSkip();
+        break;
+      case 'x': renderer.toggleSkipAll(); break;
+      case 'l': renderer.toggleBacklog(); break;
+      case 'h': renderer.toggleHideInterface(); break;
+      default: break;
+    }
+    refreshCommandRail();
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'Control' && ctrlTempSkip) {
+      ctrlTempSkip = false;
+      renderer?.toggleSkip();
+      refreshCommandRail();
+    }
+  });
+  window.addEventListener('blur', () => {
+    // 窗口切走时 Ctrl 可能收不到 keyup，避免临时快进永久卡住。
+    if (ctrlTempSkip) {
+      ctrlTempSkip = false;
+      renderer?.toggleSkip();
     }
   });
 
@@ -262,19 +755,96 @@ async function boot(): Promise<void> {
   window.parent.postMessage({ type: 'surdet-preview-ready' }, '*');
 }
 
+function releaseAppliedAssetUrls(): void {
+  previewAudio.stopAll();
+  previewAudio.setUrls([]);
+  for (const url of appliedAssetUrls) URL.revokeObjectURL(url);
+  appliedAssetUrls = [];
+}
+
+/** 注册本轮预览的图片并等待 Assets.load 完成，确保首个 @bg/@show 不会先落占位纹理。 */
+async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<void> {
+  releaseAppliedAssetUrls();
+  if (!assets || !stage) return;
+  const urls: string[] = [];
+  const audioEntries: { kind: 'bgm' | 'se' | 'voice'; key: string; url: string }[] = [];
+  const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>): Promise<void> => {
+    const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
+    try {
+      await fn(url);
+      urls.push(url);
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      console.warn('[preview] 图片素材加载失败，回退占位：', err);
+    }
+  };
+  for (const asset of assets.audio) {
+    try {
+      const url = URL.createObjectURL(new Blob([asset.file.buffer as unknown as BlobPart], { type: asset.file.mime }));
+      audioEntries.push({ kind: asset.kind, key: asset.key, url });
+      urls.push(url);
+    } catch (err) {
+      console.warn('[preview] 音频素材加载失败，回退 key：', err);
+    }
+  }
+  previewAudio.setUrls(audioEntries);
+  await Promise.all([
+    ...assets.backgrounds.map((asset) => register(
+      asset.image.buffer,
+      asset.image.mime,
+      (url) => stage!.registerBackground(asset.key, url),
+    )),
+    ...assets.portraits.map((asset) => register(
+      asset.image.buffer,
+      asset.image.mime,
+      (url) => stage!.registerPortrait(asset.charId, asset.costume, asset.expression, url),
+    )),
+    ...(assets.avatars ?? []).map((asset) => register(
+      asset.image.buffer,
+      asset.image.mime,
+      (url) => stage!.registerAvatar(asset.key, url),
+    )),
+  ]);
+  appliedAssetUrls = urls;
+}
+
 async function load(p: LoadPayload): Promise<void> {
   if (!bus || !stage) return;
   clearError();
   try {
+    previewProjectKey = p.projectKey?.trim() || 'untitled';
+    sessionStart = Date.now();
+    systemMenuOpen = false;
+    saveLoadOpen = false;
+    settingsOpen = false;
+    stage.hideSystemMenu();
+    stage.hideSaveLoad();
+    stage.hideSettings();
+    renderer?.resetSession({ clearAssets: true });
+    stage.setSpeakerProfiles(p.speakerProfiles ?? []);
+    // 新请求即使在编译/配置阶段失败，也不能让上一轮 BGM/语音继续播放。
+    releaseAppliedAssetUrls();
     // 字体下发应用（宿主读项目内嵌字体 → ArrayBuffer 下发）：先于剧情启动，首帧即用正确字体
     if (p.font) {
-      const key = `${p.font.buffer.byteLength}|${p.font.mime}`;
+      const key = `${p.font.buffer.byteLength}|${p.font.mime}|${p.font.version ?? ''}`;
       if (key !== appliedFontKey) {
         if (appliedFontUrl) URL.revokeObjectURL(appliedFontUrl);
         appliedFontUrl = URL.createObjectURL(new Blob([p.font.buffer as unknown as BlobPart], { type: p.font.mime }));
-        await stage.registerFont(appliedFontUrl);
-        appliedFontKey = key;
+        const ok = await stage.registerFont(appliedFontUrl);
+        if (ok) {
+          appliedFontKey = key;
+        } else {
+          URL.revokeObjectURL(appliedFontUrl);
+          appliedFontUrl = null;
+          appliedFontKey = '';
+          stage.resetFont();
+        }
       }
+    } else {
+      if (appliedFontUrl) URL.revokeObjectURL(appliedFontUrl);
+      appliedFontUrl = null;
+      appliedFontKey = '';
+      stage.resetFont();
     }
     const reg = new SceneRegistry();
     // 全量场景编译入注册表（逐场景捕获错误，报出具体哪个场景编译失败）
@@ -307,7 +877,21 @@ async function load(p: LoadPayload): Promise<void> {
       : null;
     store = vs;
     registry = reg;
-    interp = new Interpreter(vs, bus!, reg, undefined, undefined, {}, undefined, growth);
+    await applyPreviewAssets(p.assets);
+    interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
+      snapshot: (): SystemSnapshots => ({
+        ...(calendar ? { calendar: calendar.snapshot() } : {}),
+        ...(affection ? { affection: affection.snapshot() } : {}),
+        ...(achievements ? { achievements: achievements.snapshot() } : {}),
+        ...(scheduler ? { eventScheduler: scheduler.snapshot() } : {}),
+      }),
+      restore: (snap: SystemSnapshots): void => {
+        if (snap.calendar && calendar) calendar.restore(snap.calendar);
+        if (snap.affection && affection) affection.restore(snap.affection);
+        if (snap.achievements && achievements) achievements.restore(snap.achievements);
+        if (snap.eventScheduler && scheduler) scheduler.restore(snap.eventScheduler);
+      },
+    }, undefined, growth);
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(p.sceneId, p.startLabel);
@@ -316,10 +900,16 @@ async function load(p: LoadPayload): Promise<void> {
   }
 }
 
+let loadQueue = Promise.resolve();
+
 window.addEventListener('message', (e: MessageEvent) => {
   const d = e.data as { type?: string; payload?: LoadPayload; fast?: boolean } | null;
   if (!d || typeof d.type !== 'string') return;
-  if (d.type === 'surdet-preview-load' && d.payload) void load(d.payload);
+  if (d.type === 'surdet-preview-load' && d.payload) {
+    // 点击“重载”期间串行化读盘、资源注册和解释器启动，避免旧请求晚到时污染新会话。
+    loadQueue = loadQueue.then(() => load(d.payload!));
+    void loadQueue;
+  }
   if (d.type === 'surdet-preview-fast') renderer?.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
 });
 

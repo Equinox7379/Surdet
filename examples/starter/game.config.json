@@ -2,6 +2,12 @@
   "title": "Surdet Starter",
   "version": "0.1.0",
   "entryScene": "ch01_01",
+  "characters": {
+    "lynn": {
+      "name": "凛",
+      "avatar": "lynn"
+    }
+  },
   "variables": {
     "gold": {
       "type": "number",
