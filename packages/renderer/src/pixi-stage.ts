@@ -108,6 +108,10 @@ function seededRandom(seed: number): () => number {
   };
 }
 
+/** ADV 对话文字字体栈（用户拍板 gal 口径）：思源系优先，回退苹方/冬青/雅黑/Yu Gothic；
+ *  registerFont 加载项目内嵌字体成功后覆盖此栈 */
+const ADV_FONT_STACK = "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif";
+
 /** 程序化占位背景：冷色多段渐变 + 径向暗角 + 微噪点（夜色蔚蓝气质；
  *  色相由 key 哈希定色（冷色带），噪点由种子 PRNG 绘制 —— 同 key 稳定同图契约不变） */
 function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
@@ -470,6 +474,9 @@ export class PixiStage implements AdvStage {
   #h = 720;
 
   constructor() {
+    // 全局默认字体栈：思源系优先的 gal 口径（动态文本（选择肢/标题/Backlog/NVL）自动继承；
+    // registerFont 加载项目内嵌字体成功后覆盖
+    TextStyle.defaultTextStyle.fontFamily = ADV_FONT_STACK;
     this.#bgLayer = new Container();
     this.#portraitLayer = new Container();
     this.#worldLayer = new Container();
@@ -490,7 +497,7 @@ export class PixiStage implements AdvStage {
     this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
     this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
     this.#bannerTipBg = new Graphics();
-    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions });
+    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'bold', fontFamily: ADV_FONT_STACK } satisfies TextStyleOptions });
     this.#bannerText.anchor.set(0.5);
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
@@ -539,16 +546,18 @@ export class PixiStage implements AdvStage {
 
     this.#speakerText = new PText({
       text: '',
-      style: { fontSize: 22, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: 0xffffff, fontWeight: 'bold', fontFamily: ADV_FONT_STACK } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
       style: {
         fontSize: 26,
         fill: 0xffffff,
+        fontFamily: ADV_FONT_STACK,
         lineHeight: 46,
-        // 深色半透明底上的白字：中等强度阴影保可读性（用户参考图口径）
-        dropShadow: { alpha: 0.4, blur: 5, distance: 2, color: 0x04070d },
+        // gal 口径真描边（对应 CSS paint-order: stroke fill，非阴影假描边）：
+        // 白字 + 深色描边，浅/深背景均清晰；原 dropShadow 移除
+        stroke: { width: 4, color: 0x1a1a2a },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
@@ -834,8 +843,9 @@ export class PixiStage implements AdvStage {
         style: {
           fontSize: 26,
           fill: 0xffffff,
+          fontFamily: ADV_FONT_STACK,
           lineHeight: 46,
-          dropShadow: { alpha: 0.4, blur: 5, distance: 2, color: 0x04070d },
+          stroke: { width: 4, color: 0x1a1a2a },
         } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
@@ -843,7 +853,7 @@ export class PixiStage implements AdvStage {
       if (seg.ruby !== undefined) {
         const r = new PText({
           text: seg.ruby,
-          style: { fontSize: 13, fill: 0xf2f6ff } satisfies TextStyleOptions,
+          style: { fontSize: 13, fill: 0xf2f6ff, fontFamily: ADV_FONT_STACK, stroke: { width: 2, color: 0x1a1a2a } } satisfies TextStyleOptions,
         });
         r.anchor.set(0.5, 1);
         r.position.set(x + base.width / 2, -2);
