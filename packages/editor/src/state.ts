@@ -16,11 +16,20 @@ export interface SceneEntry {
   handle: FileSystemFileHandle | null;
 }
 
+export interface TimelineEntry {
+  id: string;
+  file: string;
+  text: string;
+  handle: FileSystemFileHandle;
+}
+
 export const state = {
   dirName: '',
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
   dirHandle: null as FileSystemDirectoryHandle | null,
   scenes: new Map<string, SceneEntry>(),
+  /** content/timelines/*.json（预览运行时与 starter 共用的演出定义） */
+  timelines: [] as TimelineEntry[],
   gameConfigText: '',
   entryScene: '',
   current: null as string | null,
