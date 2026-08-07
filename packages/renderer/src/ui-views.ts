@@ -15,6 +15,8 @@ export interface TitleItemView {
 export interface TitleView {
   title: string;
   subtitle?: string;
+  /** 标题页底图资源 key；缺失时回退到程序化暗底，保持旧宿主兼容。 */
+  backgroundKey?: string;
   items: TitleItemView[];
 }
 

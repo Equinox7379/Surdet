@@ -53,7 +53,7 @@ import {
   buildMapView,
   GamepadPoller,
 } from '@surdet/renderer';
-import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile } from '@surdet/renderer';
+import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, FontRole } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -130,19 +130,14 @@ async function main(): Promise<void> {
   const stage = new PixiStage();
   await stage.init();
 
-  // 自定义字体（可选，M5 支柱4 / 精致化批）：game.config.json 的 font 指向项目内嵌字体（woff2/woff/ttf/otf）；
-  // await 加载完成后再进后续画面（标题首帧即用正确字体渲染，避免系统字闪变）；
-  // 加载失败/超时/文件缺失自动回退系统字体（不白屏）。不配置则用系统默认字体。
-  const fontPath = (gameConfig as { font?: string }).font;
-  if (typeof fontPath === 'string' && fontPath.length > 0) {
-    const fontUrl = await resolveFontUrl(fontPath);
-    if (fontUrl) {
-      const ok = await stage.registerFont(fontUrl);
-      if (ok) console.info('[starter] 自定义字体已加载：', fontPath);
-    } else {
-      console.warn('[starter] 未找到字体文件，回退系统字体：', fontPath);
-    }
-  }
+  const fontBlobUrls = new Set<string>();
+  window.addEventListener('beforeunload', () => {
+    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
+    fontBlobUrls.clear();
+  });
+
+  // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
+  await loadConfiguredFonts();
   const speakerProfiles: SpeakerProfile[] = Object.entries(
     ((gameConfig as { characters?: Record<string, { name?: string; avatar?: string }> }).characters ?? {}),
   ).flatMap(([id, profile]) => {
@@ -669,6 +664,36 @@ async function main(): Promise<void> {
       if (p.endsWith(`/${wanted}`)) return url as string;
     }
     return null;
+  }
+
+  async function loadConfiguredFonts(): Promise<void> {
+    const cfg = gameConfig as { font?: string; fonts?: Partial<Record<FontRole, string>> };
+    const roles: FontRole[] = ['body', 'title', 'ui'];
+    const configured = cfg.fonts && typeof cfg.fonts === 'object' ? cfg.fonts : null;
+    if (configured) {
+      for (const role of roles) {
+        const path = configured[role];
+        if (typeof path !== 'string' || path.length === 0) continue;
+        const url = await resolveFontUrl(path);
+        if (!url) {
+          console.warn(`[starter] 未找到 ${role} 字体文件，使用回退字体：`, path);
+          continue;
+        }
+        if (url.startsWith('blob:')) fontBlobUrls.add(url);
+        const ok = await stage.registerFontRole(role, url);
+        if (ok) console.info(`[starter] ${role} 字体已加载：`, path);
+      }
+      return;
+    }
+    if (typeof cfg.font === 'string' && cfg.font.length > 0) {
+      const url = await resolveFontUrl(cfg.font);
+      if (url) {
+        if (url.startsWith('blob:')) fontBlobUrls.add(url);
+        if (await stage.registerFont(url)) console.info('[starter] 兼容单字体已加载：', cfg.font);
+      } else {
+        console.warn('[starter] 未找到字体文件，回退系统字体：', cfg.font);
+      }
+    }
   }
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====

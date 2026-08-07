@@ -124,9 +124,13 @@ function seededRandom(seed: number): () => number {
   };
 }
 
-/** ADV 对话文字字体栈（用户拍板 gal 口径）：思源系优先，回退苹方/冬青/雅黑/Yu Gothic；
- *  registerFont 加载项目内嵌字体成功后覆盖此栈 */
+/** 正文/UI 默认字体栈。项目内嵌字体缺失时，仍以 CJK 无衬线保证中文、日文的可读性。 */
 const ADV_FONT_STACK = "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif";
+/** 标题默认字体栈。只用于标题、章节等展示文字，避免正文随之变得难读。 */
+const ADV_TITLE_FONT_STACK = "'Source Han Serif SC', 'Noto Serif CJK SC', 'Songti SC', 'STSong', 'SimSun', serif";
+
+/** 字体角色：标题用展示字体，正文与 UI 保持无衬线的长时间阅读口径。 */
+export type FontRole = 'title' | 'body' | 'ui';
 
 /** 程序化占位背景：冷色多段渐变 + 径向暗角 + 微噪点（夜色蔚蓝气质；
  *  色相由 key 哈希定色（冷色带），噪点由种子 PRNG 绘制 —— 同 key 稳定同图契约不变） */
@@ -378,6 +382,9 @@ export class PixiStage implements AdvStage {
   #registeredPortraits = new Map<string, Texture>();
   #speakerText: PText;
   #dialogText: PText;
+  /** 避免打字机每帧把相同字符串重新送进 Pixi Text，重复触发断行和纹理重建。 */
+  #lastShownSpeaker: string | null | undefined;
+  #lastShownDialog = '';
   /** 说话人名牌底板（无框 ADV：贴正文区左上 (64, h-226) 的半透明小薄片，随说话人显隐） */
   #speakerPlate: Graphics;
   /** 对话框每行字数容量（预断行用，构造时按字号估算；M5 支柱4） */
@@ -492,6 +499,8 @@ export class PixiStage implements AdvStage {
   /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
+  /** 独立结局黑场：不复用标题或对话层，避免转场时残留可交互控件。 */
+  #endingLayer: Container;
   #menuLayer: Container;
   /** 系统菜单的右侧抽屉内容（背景遮罩留在 layer 上，不随抽屉滑动） */
   #menuPanel: Container | null = null;
@@ -512,11 +521,16 @@ export class PixiStage implements AdvStage {
 
   #w = 1280;
   #h = 720;
+  /** 项目字体按角色独立保存；默认不依赖任何系统已安装字体。 */
+  #fontFamilies: Record<FontRole, string> = {
+    title: ADV_TITLE_FONT_STACK,
+    body: ADV_FONT_STACK,
+    ui: ADV_FONT_STACK,
+  };
 
   constructor() {
-    // 全局默认字体栈：思源系优先的 gal 口径（动态文本（选择肢/标题/Backlog/NVL）自动继承；
-    // registerFont 加载项目内嵌字体成功后覆盖
-    TextStyle.defaultTextStyle.fontFamily = ADV_FONT_STACK;
+    // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
+    TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
     this.#bgLayer = new Container();
     this.#portraitLayer = new Container();
     this.#worldLayer = new Container();
@@ -539,7 +553,7 @@ export class PixiStage implements AdvStage {
     this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
     this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
     this.#bannerTipBg = new Graphics();
-    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'bold', fontFamily: ADV_FONT_STACK } satisfies TextStyleOptions });
+    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'normal', fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions });
     this.#bannerText.anchor.set(0.5);
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
@@ -550,6 +564,8 @@ export class PixiStage implements AdvStage {
     this.#particleLayer = new Container();
     this.#titleLayer = new Container();
     this.#titleLayer.visible = false;
+    this.#endingLayer = new Container();
+    this.#endingLayer.visible = false;
     this.#menuLayer = new Container();
     this.#menuLayer.visible = false;
     this.#saveLoadLayer = new Container();
@@ -586,27 +602,36 @@ export class PixiStage implements AdvStage {
       this.#dialogPanel, this.#speakerAvatar, this.#speakerPlate, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer, this.#commandRail,
       this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
       this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
-      this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer,
+      this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer, this.#endingLayer,
     );
 
     this.#speakerText = new PText({
       text: '',
-      style: { fontSize: 19, fill: MODERN_ADV.text, fontWeight: 'bold', letterSpacing: 2, fontFamily: ADV_FONT_STACK } satisfies TextStyleOptions,
+      style: {
+        fontSize: 18,
+        fill: MODERN_ADV.text,
+        fontWeight: 'normal',
+        letterSpacing: 1,
+        fontFamily: this.#fontFamilies.body,
+        stroke: { width: 1.2, color: MODERN_ADV.ink },
+      } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
       style: {
-        fontSize: 28,
+        fontSize: 25,
         fill: MODERN_ADV.text,
-        fontFamily: ADV_FONT_STACK,
-        lineHeight: 48,
+        fontWeight: 'normal',
+        fontFamily: this.#fontFamilies.body,
+        letterSpacing: 0.3,
+        lineHeight: 41,
         // gal 口径真描边（对应 CSS paint-order: stroke fill，非阴影假描边）：
         // 白字 + 深色描边，浅/深背景均清晰；原 dropShadow 移除
-        stroke: { width: 3.5, color: MODERN_ADV.ink },
+        stroke: { width: 1.35, color: MODERN_ADV.ink },
       } satisfies TextStyleOptions,
     });
     // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
-    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 28));
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
     // NVL 页预断行（断行禁则）：fontSize 20，估算口径与对话框一致
     this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
   }
@@ -630,13 +655,15 @@ export class PixiStage implements AdvStage {
   async init(canvas?: HTMLCanvasElement): Promise<void> {
     const app = new Application();
     const resolution = typeof window !== 'undefined' && window.devicePixelRatio > 0
-      ? window.devicePixelRatio
+      ? Math.min(2, window.devicePixelRatio)
       : 1;
     const opts = {
       width: this.#w,
       height: this.#h,
       background: 0x000000,
-      antialias: true,
+      // ADV 画面主要由位图和文字纹理组成；关闭 MSAA 可明显降低低端 GPU 的每帧成本，
+      // 不会影响文字本身的抗锯齿（文字仍由 Pixi 先生成纹理）。
+      antialias: false,
       resolution,
       autoDensity: true,
       canvas,
@@ -676,7 +703,8 @@ export class PixiStage implements AdvStage {
     const scale = Math.max(0.2, Math.min(window.innerWidth / this.#w, window.innerHeight / this.#h));
     const canvas = app.canvas;
     const dpr = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    const res = Math.max(0.5, dpr * scale);
+    // 窗口放大时不让后备画布按 3x/4x DPR 无限膨胀；2x 已足够保持高分屏清晰。
+    const res = Math.min(2, Math.max(0.75, dpr * scale));
     const renderer = app.renderer as unknown as { resolution: number; resize: (w: number, h: number) => void };
     if (Math.abs(renderer.resolution - res) > 0.01) {
       renderer.resolution = res;
@@ -738,38 +766,68 @@ export class PixiStage implements AdvStage {
     if (this.#backgroundKey === key) this.setBackground(key);
   }
 
+  /** 当前某个字体角色实际使用的字体族，供宿主诊断与测试使用。 */
+  getFontFamily(role: FontRole): string {
+    return this.#fontFamilies[role];
+  }
+
+  #applyTypography(): void {
+    TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
+    this.#dialogText.style.fontFamily = this.#fontFamilies.body;
+    this.#speakerText.style.fontFamily = this.#fontFamilies.body;
+    this.#bannerText.style.fontFamily = this.#fontFamilies.title;
+    // 字体角色可能在首屏之后才完成注册；允许下一次 showText 重新测量并生成纹理。
+    this.#lastShownSpeaker = undefined;
+  }
+
   /**
-   * 自定义字体（M5 支柱4）：加载项目内嵌 woff2（游戏商用字体授权复杂，引擎必须允许自带字体文件），
-   * 加载成功后设为全局默认字体；失败/超时静默回退系统字体（不白屏，只告警）。返回是否生效。
-   * 宿主在渲染文本前调用（如 game.config.json 配置 font 字段指向 content/assets/fonts/*.woff2）。
+   * 按角色加载项目内嵌字体。失败仅保留该角色的回退栈，其他角色继续工作。
+   * 变量字体以常规字重注册；舞台不通过浏览器伪粗体制造标题重量。
    */
-  async registerFont(url: string, family = 'SurdetGameFont', timeoutMs = 3000): Promise<boolean> {
+  async registerFontRole(role: FontRole, url: string, family = `SurdetGame${role[0]!.toUpperCase()}${role.slice(1)}Font`, timeoutMs = 3000): Promise<boolean> {
     if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false; // 非浏览器/测试环境
     try {
-      const face = new FontFace(family, `url(${url})`);
+      const face = new FontFace(family, `url(${url})`, { weight: '400' });
       const loaded = await Promise.race([
         face.load(),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
       ]);
       (document.fonts as unknown as { add: (f: FontFace) => void }).add(loaded);
-      // Pixi v8：改全局默认样式 → 之后新建的文本生效；对话框/说话人/横幅等长驻对象直接改样式
-      TextStyle.defaultTextStyle.fontFamily = family;
-      this.#dialogText.style.fontFamily = family;
-      this.#speakerText.style.fontFamily = family;
-      this.#bannerText.style.fontFamily = family;
+      this.#fontFamilies[role] = family;
+      this.#applyTypography();
       return true;
     } catch (err) {
-      console.warn('[PixiStage] 自定义字体加载失败，回退系统字体：', err instanceof Error ? err.message : String(err));
+      console.warn(`[PixiStage] ${role} 字体加载失败，回退系统字体：`, err instanceof Error ? err.message : String(err));
       return false;
     }
   }
 
-  /** 清除项目字体并恢复引擎字体栈（预览重载时没有 font 配置也不能沿用旧字体）。 */
+  /**
+   * 兼容旧版单字体接口：一个字体同时覆盖标题、正文和 UI。
+   * 新项目应改用 registerFontRole，以避免展示字体误用于长文本。
+   */
+  async registerFont(url: string, family = 'SurdetGameFont', timeoutMs = 3000): Promise<boolean> {
+    const ok = await this.registerFontRole('body', url, family, timeoutMs);
+    if (!ok) return false;
+    this.#fontFamilies.title = family;
+    this.#fontFamilies.ui = family;
+    this.#applyTypography();
+    return true;
+  }
+
+  /** 清除项目字体并恢复三类回退栈（预览重载时不能沿用旧项目的字体）。 */
+  resetFonts(): void {
+    this.#fontFamilies = {
+      title: ADV_TITLE_FONT_STACK,
+      body: ADV_FONT_STACK,
+      ui: ADV_FONT_STACK,
+    };
+    this.#applyTypography();
+  }
+
+  /** 旧版重置接口保留，行为等同于 resetFonts。 */
   resetFont(): void {
-    TextStyle.defaultTextStyle.fontFamily = ADV_FONT_STACK;
-    this.#dialogText.style.fontFamily = ADV_FONT_STACK;
-    this.#speakerText.style.fontFamily = ADV_FONT_STACK;
-    this.#bannerText.style.fontFamily = ADV_FONT_STACK;
+    this.resetFonts();
   }
 
   /**
@@ -917,6 +975,9 @@ export class PixiStage implements AdvStage {
   }
 
   showText(speaker: string | null, value: string): void {
+    if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
+    this.#lastShownSpeaker = speaker;
+    this.#lastShownDialog = value;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     // 现代 ADV 说话人标签：保留「」作为项目既有文本约定，但不再放入卡片。
@@ -959,11 +1020,13 @@ export class PixiStage implements AdvStage {
       const base = new PText({
         text: seg.base,
         style: {
-          fontSize: 28,
+          fontSize: 25,
           fill: MODERN_ADV.text,
+          fontWeight: 'normal',
           fontFamily: this.#dialogText.style.fontFamily,
-          lineHeight: 48,
-          stroke: { width: 3.5, color: MODERN_ADV.ink },
+          letterSpacing: 0.3,
+          lineHeight: 41,
+          stroke: { width: 1.35, color: MODERN_ADV.ink },
         } satisfies TextStyleOptions,
       });
       base.position.set(x, 0);
@@ -971,7 +1034,13 @@ export class PixiStage implements AdvStage {
       if (seg.ruby !== undefined) {
         const r = new PText({
           text: seg.ruby,
-        style: { fontSize: 13, fill: MODERN_ADV.text, fontFamily: this.#dialogText.style.fontFamily, stroke: { width: 2, color: MODERN_ADV.ink } } satisfies TextStyleOptions,
+        style: {
+          fontSize: 12,
+          fill: MODERN_ADV.text,
+          fontWeight: 'normal',
+          fontFamily: this.#dialogText.style.fontFamily,
+          stroke: { width: 0.8, color: MODERN_ADV.ink },
+        } satisfies TextStyleOptions,
         });
         r.anchor.set(0.5, 1);
         r.position.set(x + base.width / 2, -2);
@@ -1014,7 +1083,7 @@ export class PixiStage implements AdvStage {
       // 滚轮由宿主统一路由到 scrollBacklog，避免 Pixi 与宿主各处理一次导致滚动过量。
       // 空白处点击关闭仍由覆盖层自身处理。
       layer.on('pointerdown', () => {
-        layer.visible = false;
+        this.hideBacklog();
         this.onBacklogClose?.();
       });
       this.#backlogBuilt = true;
@@ -1027,6 +1096,9 @@ export class PixiStage implements AdvStage {
     })).position.set(60, 30);
     // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
     const entriesLayer = new Container();
+    // 先替换引用，再做初始滚动。旧 entriesLayer 已经随上一轮子树销毁，
+    // 不能在这里继续调用它的 position.set（第二次打开记录时会稳定触发 null.set）。
+    this.#backlogEntriesLayer = entriesLayer;
     const perLine = 40;
     let y = 0;
     for (const e of entries.slice(-120)) {
@@ -1060,7 +1132,6 @@ export class PixiStage implements AdvStage {
     this.#backlogContentH = y;
     this.#backlogScroll = 0;
     this.#applyBacklogScroll();
-    this.#backlogEntriesLayer = entriesLayer;
     layer.addChild(entriesLayer);
     layer.visible = true;
   }
@@ -1135,6 +1206,7 @@ export class PixiStage implements AdvStage {
           fontSize: 20,
           fill: item.active ? MODERN_ADV.accent : MODERN_ADV.muted,
           fontWeight: item.active ? 'bold' : 'normal',
+          fontFamily: this.#fontFamilies.ui,
         } satisfies TextStyleOptions,
       });
       icon.anchor.set(0.5);
@@ -1145,6 +1217,7 @@ export class PixiStage implements AdvStage {
           fontSize: 12,
           fill: item.enabled === false ? 0x596274 : item.active ? MODERN_ADV.text : MODERN_ADV.muted,
           letterSpacing: 1,
+          fontFamily: this.#fontFamilies.ui,
         } satisfies TextStyleOptions,
       });
       // 默认只显示符号；悬停时才显示短标签，保持正文画面的低干扰。
@@ -1164,7 +1237,7 @@ export class PixiStage implements AdvStage {
           label.alpha = 1;
           underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
             .fill({ color: MODERN_ADV.accent, alpha: 0.9 });
-          label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1 } satisfies TextStyleOptions;
+          label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
         });
         row.on('pointerout', () => {
           label.alpha = 0;
@@ -1174,6 +1247,7 @@ export class PixiStage implements AdvStage {
             fontSize: 12,
             fill: item.active ? MODERN_ADV.text : MODERN_ADV.muted,
             letterSpacing: 1,
+            fontFamily: this.#fontFamilies.ui,
           } satisfies TextStyleOptions;
         });
         row.on('pointerdown', () => this.#commandRailOnSelect?.(item.id));
@@ -1220,6 +1294,9 @@ export class PixiStage implements AdvStage {
   /** 隐藏 Backlog 覆盖层 */
   hideBacklog(): void {
     this.#backlogLayer.visible = false;
+    this.#backlogEntriesLayer = null;
+    this.#backlogContentH = 0;
+    this.#backlogScroll = 0;
   }
 
   /* ============================ 演出效果（@shake/@flash/@zoom） ============================ */
@@ -1410,8 +1487,8 @@ export class PixiStage implements AdvStage {
     if (text.length === 0) return;
     this.#bannerText.text = text;
     this.#bannerText.style = variant === 'chapter'
-      ? { fontSize: 40, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 10 } satisfies TextStyleOptions
-      : { fontSize: 20, fill: NIGHT_AZURE.plateText } satisfies TextStyleOptions;
+      ? { fontSize: 38, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions
+      : { fontSize: 20, fill: NIGHT_AZURE.plateText, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
     this.#bannerBars.visible = variant === 'chapter';
     this.#bannerTipBg.clear();
     if (variant === 'chapter') {
@@ -1466,7 +1543,7 @@ export class PixiStage implements AdvStage {
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const t = new PText({
       text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: 0x333a49 } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: 0x333a49, fontFamily: this.#fontFamilies.body } satisfies TextStyleOptions,
     });
     this.#nvlLayer.addChild(t);
     this.#nvlLines.push(t);
@@ -2062,11 +2139,24 @@ export class PixiStage implements AdvStage {
   /** 展示标题画面（精致化批次四，商业 gal 标题页口径）：大字距 logo 感标题 + 细强调线 +
    *  弱化菜单（悬停下方细线滑入）+ 轻径向暗角；enabled=false 灰显不可点 */
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
+    this.hideEnding();
     this.hideCommandRail();
     this.#titleHandler = onSelect;
     const layer = this.#titleLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x060a14, alpha: 0.97 }));
+    const titleTexture = this.#registeredBgs.get(view.backgroundKey ?? 'title_bg');
+    if (titleTexture) {
+      // 标题底图同正文背景使用 cover，避免生成素材在不同窗口被拉伸；暗幕只负责衬托标题文字。
+      const titleBg = new Sprite(titleTexture);
+      const scale = Math.max(this.#w / Math.max(1, titleTexture.width), this.#h / Math.max(1, titleTexture.height));
+      titleBg.width = titleTexture.width * scale;
+      titleBg.height = titleTexture.height * scale;
+      titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
+      layer.addChild(titleBg);
+      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x020409, alpha: 0.48 }));
+    } else {
+      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x060a14, alpha: 0.97 }));
+    }
     // 轻径向暗角：多层同心椭圆叠 alpha 近似（氛围聚焦，不引 canvas 纹理）
     const vg = new Graphics();
     for (let i = 1; i <= 5; i++) {
@@ -2076,19 +2166,19 @@ export class PixiStage implements AdvStage {
     layer.addChild(vg);
     const title = new PText({
       text: view.title,
-      style: { fontSize: 64, fill: NIGHT_AZURE.text, fontWeight: 'bold', letterSpacing: 14 } satisfies TextStyleOptions,
+      style: { fontSize: 58, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 8, fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions,
     });
     title.anchor.set(0.5);
     title.position.set(this.#w / 2, this.#h * 0.28);
     layer.addChild(title);
     // 标题下细强调线：更长更细更淡（精致化）
     layer.addChild(new Graphics()
-      .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 52, 420, 1, 0.5)
+      .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
       .fill({ color: NIGHT_AZURE.accent, alpha: 0.55 }));
     if (view.subtitle) {
-      const sub = new PText({ text: view.subtitle, style: { fontSize: 20, fill: 0x8a9ab5, letterSpacing: 4 } satisfies TextStyleOptions });
+      const sub = new PText({ text: view.subtitle, style: { fontSize: 18, fill: 0x8a9ab5, letterSpacing: 3, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions });
       sub.anchor.set(0.5);
-      sub.position.set(this.#w / 2, this.#h * 0.28 + 84);
+      sub.position.set(this.#w / 2, this.#h * 0.28 + 76);
       layer.addChild(sub);
     }
     const startY = this.#h * 0.52;
@@ -2098,7 +2188,7 @@ export class PixiStage implements AdvStage {
       const baseY = startY + i * 52;
       const t = new PText({
         text: item.label,
-        style: { fontSize: 22, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 6 } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions,
       });
       t.anchor.set(0.5);
       t.position.set(baseX, baseY);
@@ -2114,11 +2204,11 @@ export class PixiStage implements AdvStage {
         t.on('pointerdown', () => this.#titleHandler?.(item.id));
         t.on('pointerover', () => {
           line.visible = true;
-          t.style = { fontSize: 22, fill: NIGHT_AZURE.plateText, letterSpacing: 6 } satisfies TextStyleOptions;
+          t.style = { fontSize: 20, fill: NIGHT_AZURE.plateText, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
         });
         t.on('pointerout', () => {
           line.visible = false;
-          t.style = { fontSize: 22, fill: NIGHT_AZURE.text, letterSpacing: 6 } satisfies TextStyleOptions;
+          t.style = { fontSize: 20, fill: NIGHT_AZURE.text, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
         });
       }
       layer.addChild(t);
@@ -2136,6 +2226,41 @@ export class PixiStage implements AdvStage {
     } else {
       this.hideCommandRail();
     }
+  }
+
+  /** 全黑结局卡。宿主负责在展示后跳转标题，舞台只投影且不接收输入。 */
+  showEnding(text = 'THE END'): void {
+    this.hideCommandRail();
+    this.hideChoices();
+    this.hideBacklog();
+    this.hideGallery();
+    this.hideSettings();
+    this.hideSaveLoad();
+    this.hideSystemMenu();
+    this.hideTitle(false);
+    this.#endingLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#endingLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000));
+    const label = new PText({
+      text,
+      style: {
+        fontSize: 30,
+        fill: NIGHT_AZURE.text,
+        fontWeight: 'normal',
+        letterSpacing: 9,
+        fontFamily: this.#fontFamilies.title,
+      } satisfies TextStyleOptions,
+    });
+    label.anchor.set(0.5);
+    label.position.set(this.#w / 2, this.#h / 2);
+    this.#endingLayer.addChild(label);
+    this.#fadeOverlay.alpha = 0;
+    this.#uiLayer.setChildIndex(this.#endingLayer, this.#uiLayer.children.length - 1);
+    this.#endingLayer.visible = true;
+  }
+
+  /** 隐藏结局卡；多次调用保持幂等。 */
+  hideEnding(): void {
+    this.#endingLayer.visible = false;
   }
 
   /** 展示现代 ADV 系统菜单：右侧抽屉、细线层级、悬停强调；点击遮罩关闭。 */
@@ -2664,9 +2789,12 @@ export class PixiStage implements AdvStage {
    * 沿用上一个项目的背景/立绘；宿主注入纹理不主动 destroy，生命周期仍由宿主管理。
    */
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
+    this.#lastShownSpeaker = undefined;
+    this.#lastShownDialog = '';
     const preserveWorld = options.preserveWorld === true;
     const clearAssets = options.clearAssets === true;
     this.hideVideo();
+    this.hideEnding();
     this.#clearChoices();
 
     if (!preserveWorld) {

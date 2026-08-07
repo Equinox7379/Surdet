@@ -1,7 +1,12 @@
 {
   "title": "零点之后",
   "version": "0.1.0",
-  "entryScene": "common_0017",
+  "entryScene": "prologue",
+  "fonts": {
+    "title": "content/assets/fonts/NotoSerifSC-Variable.ttf",
+    "body": "content/assets/fonts/NotoSansSC-Variable.ttf",
+    "ui": "content/assets/fonts/NotoSansSC-Variable.ttf"
+  },
   "characters": {
     "zhirao": {
       "name": "许知遥"

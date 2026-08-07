@@ -87,6 +87,10 @@ export interface AdvStage {
   setCommandRailItems?(items: CommandRailItem[]): void;
   /** 隐藏操作带。 */
   hideCommandRail?(): void;
+  /** 结局黑场（宿主控制展示时长和后续跳转）。 */
+  showEnding?(text?: string): void;
+  /** 收起结局黑场。 */
+  hideEnding?(): void;
 }
 
 export interface PortraitView {

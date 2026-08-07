@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { Texture } from 'pixi.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TextStyle, Texture } from 'pixi.js';
 import { PixiStage } from '../src/pixi-stage.js';
+
+const defaultFontFamily = TextStyle.defaultTextStyle.fontFamily;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  TextStyle.defaultTextStyle.fontFamily = defaultFontFamily;
+});
 
 /**
  * 素材注入 API 测试。
@@ -73,5 +80,73 @@ describe('PixiStage 素材注入', () => {
     stage.removePortrait('lynn');
     // 完整 key 写法仍支持精确移除
     stage.removePortrait('mio:uniform');
+  });
+});
+
+describe('PixiStage 文字记录生命周期', () => {
+  it('文字记录连续打开、滚动、关闭后不引用已销毁的旧容器', () => {
+    const stage = new PixiStage();
+    const entries = [{ speaker: '凛', text: '第一条记录' }];
+
+    expect(() => {
+      stage.showBacklog(entries);
+      stage.scrollBacklog(120);
+      stage.hideBacklog();
+      stage.showBacklog([...entries, { speaker: null, text: '第二条记录' }]);
+      stage.scrollBacklog(120);
+    }).not.toThrow();
+  });
+});
+
+describe('PixiStage 结局黑场', () => {
+  it('可独立展示和隐藏，不依赖标题或对话状态', () => {
+    const stage = new PixiStage();
+    expect(() => {
+      stage.showEnding();
+      stage.hideEnding();
+      stage.hideEnding();
+    }).not.toThrow();
+  });
+});
+
+describe('PixiStage 字体角色', () => {
+  function mockFontApi(): void {
+    class FakeFontFace {
+      constructor(readonly family: string, readonly source: string) {}
+      async load(): Promise<this> { return this; }
+    }
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add: vi.fn() } });
+  }
+
+  it('按角色注册字体，正文默认字体不覆盖标题和 UI 角色', async () => {
+    mockFontApi();
+    const stage = new PixiStage();
+    await expect(stage.registerFontRole('body', 'blob:body', 'BodyFace')).resolves.toBe(true);
+    await expect(stage.registerFontRole('title', 'blob:title', 'TitleFace')).resolves.toBe(true);
+    await expect(stage.registerFontRole('ui', 'blob:ui', 'UiFace')).resolves.toBe(true);
+    expect(stage.getFontFamily('body')).toBe('BodyFace');
+    expect(stage.getFontFamily('title')).toBe('TitleFace');
+    expect(stage.getFontFamily('ui')).toBe('UiFace');
+    expect(TextStyle.defaultTextStyle.fontFamily).toBe('BodyFace');
+  });
+
+  it('旧版单字体接口仍同步覆盖三个角色，重置后回到角色回退栈', async () => {
+    mockFontApi();
+    const stage = new PixiStage();
+    await expect(stage.registerFont('blob:legacy', 'LegacyFace')).resolves.toBe(true);
+    expect(stage.getFontFamily('body')).toBe('LegacyFace');
+    expect(stage.getFontFamily('title')).toBe('LegacyFace');
+    expect(stage.getFontFamily('ui')).toBe('LegacyFace');
+    stage.resetFonts();
+    expect(stage.getFontFamily('body')).toContain('Noto Sans CJK SC');
+    expect(stage.getFontFamily('title')).toContain('Noto Serif CJK SC');
+    expect(stage.getFontFamily('ui')).toContain('Noto Sans CJK SC');
+  });
+
+  it('字体 API 不可用时独立回退，不抛出异常', async () => {
+    const stage = new PixiStage();
+    await expect(stage.registerFontRole('title', 'blob:missing')).resolves.toBe(false);
+    expect(stage.getFontFamily('title')).toContain('Noto Serif CJK SC');
   });
 });

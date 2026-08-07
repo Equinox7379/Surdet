@@ -6,6 +6,7 @@
  */
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
+import type { FontRole } from '@surdet/renderer';
 
 /** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
 let previewReadyListenerBound = false;
@@ -104,45 +105,62 @@ function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
   }
 }
 
-/** 预览字体缓存（避免每次点播放重读数 MB 字体；key = 项目目录 + 路径 + 文件版本） */
-let previewFontCacheKey = '';
-let previewFontCache: PreviewFont | null = null;
+/** 预览字体缓存（避免每次点播放重读字体；key = 项目目录 + 角色路径 + 文件版本） */
+let previewFontsCacheKey = '';
+let previewFontsCache: Partial<Record<FontRole, PreviewFont>> = {};
 
-/** 从项目目录读取 game.config.json font 指向的字体文件（File System Access 逐级句柄）；
- *  缺失/失败/无 FS API 环境返回 null（预览回退系统字体）。下发用 ArrayBuffer（iframe postMessage 结构化克隆）。 */
-async function readProjectFont(): Promise<PreviewFont | null> {
+/** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
+async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>>> {
   let cfg: Record<string, unknown>;
   try {
     cfg = state.gameConfigText.trim() ? JSON.parse(state.gameConfigText) as Record<string, unknown> : {};
   } catch {
-    return null;
+    return {};
   }
-  const fontPath = cfg.font;
-  if (typeof fontPath !== 'string' || fontPath.length === 0 || !state.dirHandle) return null;
-  const baseKey = `${state.dirName}|${fontPath}`;
+  if (!state.dirHandle) return {};
+  const configured = cfg.fonts && typeof cfg.fonts === 'object'
+    ? cfg.fonts as Partial<Record<FontRole, unknown>>
+    : null;
+  const legacy = typeof cfg.font === 'string' ? cfg.font : undefined;
+  const paths: Partial<Record<FontRole, string>> = {};
+  for (const role of ['body', 'title', 'ui'] as FontRole[]) {
+    const path = configured && typeof configured[role] === 'string' ? configured[role] as string : legacy;
+    if (path && path.length > 0) paths[role] = path;
+  }
+  if (Object.keys(paths).length === 0) return {};
   const MIME: Record<string, string> = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
+  const files = new Map<FontRole, File>();
+  const versions: string[] = [];
   try {
-    const segs = fontPath.split('/').filter((s) => s.length > 0);
-    const fname = segs.pop()!;
-    let dir: FileSystemDirectoryHandle = state.dirHandle;
-    for (const s of segs) dir = await dir.getDirectoryHandle(s);
-    const fh = await dir.getFileHandle(fname);
-    const file = await fh.getFile();
-    const key = `${baseKey}|${file.lastModified}|${file.size}`;
-    if (key === previewFontCacheKey) return previewFontCache;
-    const buffer = await file.arrayBuffer();
-    const ext = (fname.split('.').pop() ?? '').toLowerCase();
-    previewFontCacheKey = key;
-    previewFontCache = {
-      buffer,
-      mime: MIME[ext] ?? 'font/ttf',
-      version: `${file.lastModified}:${file.size}`,
-    };
-    return previewFontCache;
+    for (const role of ['body', 'title', 'ui'] as FontRole[]) {
+      const fontPath = paths[role];
+      if (!fontPath) continue;
+      const segs = fontPath.split('/').filter((s) => s.length > 0);
+      const fname = segs.pop()!;
+      let dir: FileSystemDirectoryHandle = state.dirHandle;
+      for (const s of segs) dir = await dir.getDirectoryHandle(s);
+      const file = await (await dir.getFileHandle(fname)).getFile();
+      files.set(role, file);
+      versions.push(`${role}:${fontPath}:${file.lastModified}:${file.size}`);
+    }
+    const key = `${state.dirName}|${versions.join('|')}`;
+    if (key === previewFontsCacheKey) return previewFontsCache;
+    const result: Partial<Record<FontRole, PreviewFont>> = {};
+    for (const [role, file] of files) {
+      const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+      result[role] = {
+        buffer: await file.arrayBuffer(),
+        mime: MIME[ext] ?? 'font/ttf',
+        version: `${file.lastModified}:${file.size}`,
+      };
+    }
+    previewFontsCacheKey = key;
+    previewFontsCache = result;
+    return result;
   } catch {
-    previewFontCacheKey = baseKey;
-    previewFontCache = null;
-    return null;
+    previewFontsCacheKey = '';
+    previewFontsCache = {};
+    return {};
   }
 }
 
@@ -237,7 +255,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
       return;
     }
     // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
-    const font = await readProjectFont();
+    const fonts = await readProjectFonts();
     const assets = await readProjectImages();
     const message = {
       type: 'surdet-preview-load',
@@ -256,7 +274,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
           growth: state.configFiles.growth ?? undefined,
           achievements: state.configFiles.achievements ?? undefined,
         },
-        font: font ?? undefined,
+        fonts: Object.keys(fonts).length > 0 ? fonts : undefined,
         assets,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
@@ -267,6 +285,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
       ...assets.portraits.map((a) => a.image.buffer),
       ...assets.avatars.map((a) => a.image.buffer),
       ...assets.audio.map((a) => a.file.buffer),
+      ...Object.values(fonts).map((font) => font.buffer),
     ];
     frame.contentWindow?.postMessage(message, '*', transfer);
   };
