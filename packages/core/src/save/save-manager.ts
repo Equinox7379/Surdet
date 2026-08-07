@@ -72,6 +72,8 @@ export interface SaveSnapshot {
   growth?: GrowthSnapshot;
   /** 全家桶系统状态快照（日历/战斗/好感/周目，宿主经 SystemHooks 提供，可选） */
   systems?: SystemSnapshots;
+  /** 可选的宿主演出状态；core 只验证 JSON 形状，不依赖具体渲染器。 */
+  presentation?: { version: 1; payload: unknown };
 }
 
 /**
@@ -95,11 +97,11 @@ function deepClone<T>(v: T): T {
 }
 
 /** JSON 安全递归检查：string/有限 number/boolean/数组/普通对象 */
-function isJsonSafe(v: unknown): boolean {
+export function isJsonSafeValue(v: unknown): boolean {
   if (typeof v === 'string' || typeof v === 'boolean') return true;
   if (typeof v === 'number') return Number.isFinite(v);
-  if (Array.isArray(v)) return v.every(isJsonSafe);
-  if (typeof v === 'object' && v !== null) return Object.values(v).every(isJsonSafe);
+  if (Array.isArray(v)) return v.every(isJsonSafeValue);
+  if (typeof v === 'object' && v !== null) return Object.values(v).every(isJsonSafeValue);
   return false;
 }
 
@@ -115,7 +117,7 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
   if (typeof s.variables !== 'object' || s.variables === null || Array.isArray(s.variables)) {
     fail('variables 必须是对象');
   }
-  if (!isJsonSafe(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
+  if (!isJsonSafeValue(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
   if (s.position !== null && s.position !== undefined) {
     const p = s.position as Record<string, unknown> | null;
     if (typeof p !== 'object' || p === null || typeof p.sceneId !== 'string' || typeof p.pc !== 'number') {
@@ -170,6 +172,13 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
         }
       }
     }
+  }
+  if (s.presentation !== undefined) {
+    const p = s.presentation as Record<string, unknown>;
+    if (typeof p !== 'object' || p === null || p.version !== 1 || !('payload' in p)) {
+      fail('presentation 必须是 { version: 1, payload }');
+    }
+    if (!isJsonSafeValue(p.payload)) fail('presentation.payload 必须是 JSON 安全值');
   }
   // systems 形状兜底 + 子快照深度校验（审计轮4：新增系统的子快照纳入读档入口校验，
   // 避免畸形数据在各系统 restore 中途才爆炸）

@@ -111,6 +111,13 @@ export interface WaitInstr extends DslInstrBase {
   ms: number;
 }
 
+/** @timeline id [@ blocking]：启动项目时间轴；blocking 时挂起解释器等待宿主完成。 */
+export interface TimelineInstr extends DslInstrBase {
+  op: 'timeline';
+  id: string;
+  blocking: boolean;
+}
+
 /** 选择肢（option 指令块已在流中，选中的 option 从 blockStart 开始执行） */
 export interface ChoiceInstr extends DslInstrBase {
   op: 'choice';
@@ -161,6 +168,7 @@ export type DslInstr =
   | SetInstr
   | ModifyInstr
   | WaitInstr
+  | TimelineInstr
   | SwitchInstr
   | VideoInstr
   | ChoiceInstr

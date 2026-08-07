@@ -1,4 +1,4 @@
-import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type DslDiagnostic, type DslInstr, type GenericInstr, type JumpInstr, type ModifyInstr, type SceneAst, type SetInstr, type SwitchInstr, type VideoInstr, type WaitInstr } from './ast.js';
+import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type DslDiagnostic, type DslInstr, type GenericInstr, type JumpInstr, type ModifyInstr, type SceneAst, type SetInstr, type SwitchInstr, type TimelineInstr, type VideoInstr, type WaitInstr } from './ast.js';
 import { validateExpr } from './expr-parser.js';
 import { Lexer } from './lexer.js';
 import { Parser } from './parser.js';
@@ -23,6 +23,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'exp',
   // 阻塞等待/视频（解释器挂起 awaiting-timer，宿主计时/播放结束驱动恢复）
   'wait', 'video',
+  'timeline',
   // 流程控制（解释器执行）
   'switch', 'loop', 'check', 'random',
   // 道具（解释器直改 string[] 变量）
@@ -187,6 +188,10 @@ export class SceneCompiler {
     }
     if (name === 'wait') {
       emitter.emit(this.#buildWaitInstr(args, p));
+      return;
+    }
+    if (name === 'timeline') {
+      emitter.emit(this.#buildTimelineInstr(args, modifiers, p));
       return;
     }
     if (name === 'video') {
@@ -373,6 +378,10 @@ export class SceneCompiler {
       emitter.emit(this.#buildWaitInstr(args, p));
       return;
     }
+    if (name === 'timeline') {
+      emitter.emit(this.#buildTimelineInstr(args, modifiers, p));
+      return;
+    }
     if (name === 'set') {
       emitter.emit(this.#buildSetInstr({ kind: 'instr', name, args, modifiers, pos: p }));
       return;
@@ -467,6 +476,20 @@ export class SceneCompiler {
       );
     }
     return { op: 'wait', ms, index: -1, file: p.file, line: p.line, col: p.col };
+  }
+
+  /** 解析 @timeline id [@ blocking]；时间轴本体由宿主项目目录提供。 */
+  #buildTimelineInstr(args: string[], modifiers: Map<string, string>, p: SourcePos): TimelineInstr {
+    const id = args[0];
+    if (id === undefined || id.length === 0 || args.length > 1) {
+      throw new DslError('C010', '@timeline 用法：@timeline <id> [@ blocking]', p, '形如 @timeline intro_arrival @ blocking');
+    }
+    const blockingValue = modifiers.get('blocking');
+    const blocking = modifiers.has('blocking') && (blockingValue === '' || blockingValue === 'true' || blockingValue === '1');
+    if (modifiers.has('blocking') && !blocking) {
+      throw new DslError('C010', `@timeline blocking 修饰符值非法：'${blockingValue}'`, p, '形如 @timeline intro_arrival @ blocking');
+    }
+    return { op: 'timeline', id, blocking, index: -1, file: p.file, line: p.line, col: p.col };
   }
 
   /** 解析 @switch varName v1:label1 v2:label2 ...（值与标签均不可为空） */
