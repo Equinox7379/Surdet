@@ -458,7 +458,15 @@ export class AdvRenderer {
   }
 
   #applyTimelineEvents(events: readonly import('./timeline-player.js').TimelineFrameEvent[]): void {
-    for (const event of events) this.#stage.applyTimelineFrame?.(event);
+    for (const event of events) {
+      if (event.track === 'audio' && typeof event.cue.key === 'string' && event.progress <= 0.001) {
+        if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
+        else if (event.cue.action === 'se') this.#audio.playSe(event.cue.key);
+        else if (event.cue.action === 'voice') this.#audio.playVoice(event.cue.key);
+      } else {
+        this.#stage.applyTimelineFrame?.(event);
+      }
+    }
   }
 
   #skipTimeline(id: number): void {
