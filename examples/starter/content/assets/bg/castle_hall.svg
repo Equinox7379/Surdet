@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" role="img" aria-label="dusk castle hall">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#536a95"/>
+      <stop offset="0.52" stop-color="#293552"/>
+      <stop offset="1" stop-color="#0b1425"/>
+    </linearGradient>
+    <linearGradient id="stone" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#bfc5ca"/>
+      <stop offset="0.5" stop-color="#7e8995"/>
+      <stop offset="1" stop-color="#3c4a5d"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#3a2c33"/>
+      <stop offset="1" stop-color="#100f1b"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#a7d6e8" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#3d5d86" stop-opacity=".72"/>
+    </linearGradient>
+    <linearGradient id="light" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f9dc9b" stop-opacity=".54"/>
+      <stop offset="1" stop-color="#f0a34f" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="lamp">
+      <stop stop-color="#ffe7a9" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#dc8a43" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="16"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <path d="M0 490 Q300 370 560 450 T1120 430 T1920 460 V0 H0Z" fill="#1f2b46" opacity=".45"/>
+  <rect y="0" width="1920" height="790" fill="url(#stone)"/>
+  <path d="M0 0H1920V80H0Z" fill="#263044" opacity=".72"/>
+  <path d="M0 78H1920V92H0Z" fill="#d9bd8f" opacity=".3"/>
+  <g opacity=".22" stroke="#e0e1dc" stroke-width="4">
+    <path d="M0 240H1920M0 390H1920M0 540H1920M0 690H1920"/>
+    <path d="M210 0V790M480 0V790M760 0V790M1040 0V790M1320 0V790M1600 0V790"/>
+  </g>
+  <g>
+    <path d="M130 650V185 Q130 55 260 55 Q390 55 390 185V650Z" fill="#16253d" stroke="#d7d2c6" stroke-width="20"/>
+    <path d="M165 645V190 Q165 92 260 92 Q355 92 355 190V645Z" fill="url(#glass)"/>
+    <path d="M260 90V645M165 350H355" stroke="#c7e4ea" stroke-opacity=".44" stroke-width="10"/>
+    <path d="M615 650V180 Q615 50 745 50 Q875 50 875 180V650Z" fill="#16253d" stroke="#d7d2c6" stroke-width="20"/>
+    <path d="M650 645V185 Q650 87 745 87 Q840 87 840 185V645Z" fill="url(#glass)"/>
+    <path d="M745 85V645M650 345H840" stroke="#c7e4ea" stroke-opacity=".44" stroke-width="10"/>
+    <path d="M1100 650V185 Q1100 55 1230 55 Q1360 55 1360 185V650Z" fill="#16253d" stroke="#d7d2c6" stroke-width="20"/>
+    <path d="M1135 645V190 Q1135 92 1230 92 Q1325 92 1325 190V645Z" fill="url(#glass)"/>
+    <path d="M1230 90V645M1135 350H1325" stroke="#c7e4ea" stroke-opacity=".44" stroke-width="10"/>
+    <path d="M1580 650V180 Q1580 50 1710 50 Q1840 50 1840 180V650Z" fill="#16253d" stroke="#d7d2c6" stroke-width="20"/>
+    <path d="M1615 645V185 Q1615 87 1710 87 Q1805 87 1805 185V645Z" fill="url(#glass)"/>
+    <path d="M1710 85V645M1615 345H1805" stroke="#c7e4ea" stroke-opacity=".44" stroke-width="10"/>
+  </g>
+  <g opacity=".6">
+    <ellipse cx="260" cy="480" rx="220" ry="180" fill="url(#light)" filter="url(#soft)"/>
+    <ellipse cx="745" cy="480" rx="220" ry="180" fill="url(#light)" filter="url(#soft)"/>
+    <ellipse cx="1230" cy="480" rx="220" ry="180" fill="url(#light)" filter="url(#soft)"/>
+    <ellipse cx="1710" cy="480" rx="220" ry="180" fill="url(#light)" filter="url(#soft)"/>
+  </g>
+  <rect y="650" width="1920" height="430" fill="url(#wood)"/>
+  <path d="M0 690L960 580L1920 690V1080H0Z" fill="#1a1522" opacity=".85"/>
+  <g stroke="#6e5360" stroke-width="5" opacity=".38">
+    <path d="M960 585L120 1080M960 585L350 1080M960 585L580 1080M960 585L800 1080M960 585L1120 1080M960 585L1340 1080M960 585L1580 1080M960 585L1820 1080"/>
+    <path d="M0 845H1920M0 980H1920"/>
+  </g>
+  <g>
+    <path d="M610 760 Q960 700 1310 760L1250 930H670Z" fill="#2a2531" stroke="#8c7a72" stroke-width="8"/>
+    <path d="M680 790 Q960 745 1240 790L1190 900H730Z" fill="#423744"/>
+    <path d="M720 840H1200" stroke="#b39a7d" stroke-width="5" opacity=".6"/>
+  </g>
+  <g>
+    <path d="M80 595H150V710H80Z" fill="#212a39" stroke="#d6ba84" stroke-width="7"/>
+    <ellipse cx="115" cy="570" rx="78" ry="78" fill="url(#lamp)" opacity=".6"/>
+    <circle cx="115" cy="580" r="15" fill="#ffe8af"/>
+    <path d="M1770 595H1840V710H1770Z" fill="#212a39" stroke="#d6ba84" stroke-width="7"/>
+    <ellipse cx="1805" cy="570" rx="78" ry="78" fill="url(#lamp)" opacity=".6"/>
+    <circle cx="1805" cy="580" r="15" fill="#ffe8af"/>
+  </g>
+  <rect width="1920" height="1080" fill="#081021" opacity=".12"/>
+</svg>

@@ -106,6 +106,11 @@ export class AdvRenderer {
     // 转发点击。若不绑定，宿主只给 AdvRenderer 传 onSelect 会导致真实 UI 点击选择肢无反应
     // （解释器停在 awaiting-choice，主流程卡死）。
     stage.onSelect = (index) => this.select(index);
+    stage.onBacklogClose = () => {
+      // PixiStage 的覆盖层可以自行响应点击；关闭后必须同步渲染器内部开关，
+      // 否则下一次 L 键会把状态从 true 翻成 false 而不是重新打开。
+      this.#backlogOpen = false;
+    };
   }
 
   get status(): RenderStatus {
@@ -127,6 +132,37 @@ export class AdvRenderer {
   destroy(): void {
     for (const off of this.#unsubs) off();
     this.#unsubs = [];
+    this.#stage.onSelect = null;
+    this.#stage.onBacklogClose = null;
+  }
+
+  /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
+  resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
+    this.#status = 'idle';
+    this.#current = null;
+    this.#fade = null;
+    this.#waitDeadline = null;
+    this.#waitSession += 1;
+    this.#pendingVoice = null;
+    this.#choiceIndices = [];
+    this.#choiceCursor = 0;
+    this.#skipMode = false;
+    this.#skipAll = false;
+    this.#backlogOpen = false;
+    this.#nvl = false;
+    this.#interfaceHidden = false;
+    // 清空 Typewriter 时先把状态置 idle，避免空文本的 onComplete 回调改变会话状态。
+    this.#tw.text = '';
+    this.#stage.hideChoices();
+    this.#stage.showText(null, '');
+    this.#stage.setAwaiting?.(false);
+    this.#stage.hideBacklog?.();
+    this.#stage.setNvlMode?.(false);
+    this.#stage.clearNvlText?.();
+    this.#stage.hideVideo?.();
+    this.#stage.hideInterface?.(false);
+    this.#stage.setFade(0);
+    this.#stage.resetSession?.(options);
   }
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */

@@ -16,6 +16,7 @@ class FakeStage implements AdvStage {
   fades: number[] = [];
   /** 模拟 PixiStage.onSelect（AdvRenderer 构造时应自动绑定） */
   onSelect: ((index: number) => void) | null = null;
+  onBacklogClose: (() => void) | null = null;
 
   setBackground(key: string | null): void {
     this.calls.push(`bg:${String(key)}`);
@@ -681,6 +682,15 @@ describe('R1 行为改进与新特性', () => {
     expect(r2.toggleBacklog()).toBe(false);
   });
 
+  it('Backlog 被舞台点击关闭后同步内部状态', () => {
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio(), { backlog: new Backlog() });
+    expect(r.toggleBacklog()).toBe(true);
+    stage.onBacklogClose?.();
+    expect(r.backlogOpen).toBe(false);
+    expect(r.toggleBacklog()).toBe(true);
+  });
+
   it('Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回放用）；读档后关联重置', () => {
     const bus = makeBus();
     const stage = new FakeStage();
@@ -715,6 +725,25 @@ describe('R1 行为改进与新特性', () => {
     expect(r.interfaceHidden).toBe(true);
     expect(r.toggleHideInterface()).toBe(false);
     expect(hiddenStates).toEqual([true, false]);
+  });
+
+  it('resetSession：清理等待/选择肢/Backlog/NVL 等渲染状态并恢复 idle', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio(), { backlog: new Backlog() });
+    r.subscribe(bus);
+    bus.emit('text', { speaker: '凛', value: '旧会话文本' });
+    bus.emit('choice', { options: [{ index: 0, label: '旧选项' }] });
+    r.toggleBacklog();
+    r.toggleHideInterface();
+
+    r.resetSession();
+
+    expect(r.status).toBe('idle');
+    expect(r.backlogOpen).toBe(false);
+    expect(r.interfaceHidden).toBe(false);
+    expect(stage.hides).toBeGreaterThan(0);
+    expect(stage.texts.at(-1)).toEqual({ speaker: null, value: '' });
   });
 });
 

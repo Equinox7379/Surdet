@@ -1,11 +1,12 @@
 @scene ch01_01
+@label start
 @bg castle_hall
 @bgm tense_01
+@show lynn:uniform normal @ left
 @unlock_cg cg_hall
 @unlock_music tense_01
 @unlock_text t_first
 
-@label start
 凛：你终于来了，等了你三个晚上。
 主角：让我来这里的人，是你？
 凛：是我。这片大陆已经撑不住了。
@@ -16,9 +17,11 @@
 @if lynn.trust >= 5
 凛：（轻声）……你还记得那天的事。
 @else
+@show lynn:uniform despair @ left
 凛：（移开视线）……算了，现在说这些没用。
 @endif
 
+@mov lynn center 500
 @voice lynn_despair_01
 凛：南方的军团，明天就会攻到王城。
 
@@ -30,12 +33,15 @@
 
 @label answer_silence
 凛：……你的沉默，比剑更伤人。
+@hide lynn
 @jump ch01_02.start
 
 @label answer_sword
 凛：你果然还是那个雷恩。
+@hide lynn
 @jump ch01_02.start
 
 @label answer_leave
 凛：你居然选择转身？！
+@hide lynn
 @jump ch01_02.start

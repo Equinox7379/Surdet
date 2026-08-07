@@ -26,6 +26,10 @@ export interface AdvStage {
    * 纯投影 fake 可不提供。绑定后选择肢点击 → AdvRenderer.select → 宿主 onSelect。
    */
   onSelect?: ((index: number) => void) | null;
+  /** Backlog 被舞台自身点击关闭时的反向通知（保持渲染器状态与画面同步） */
+  onBacklogClose?: (() => void) | null;
+  /** 清理一次剧情会话的画面状态（可选能力，PixiStage 实现） */
+  resetSession?(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
   /** 点击等待指示器可见性（可选能力，PixiStage 实现 ▼ 指示） */
   setAwaiting?(awaiting: boolean): void;
   /** ▼ 呼吸动画时间推进（可选能力） */
@@ -73,6 +77,16 @@ export interface AdvStage {
   scrollBacklog?(delta: number): void;
   /** 隐藏/恢复对话界面（H 键惯例：隐藏对话框/说话人栏/等待指示器，保留背景与立绘供赏画；可选能力） */
   hideInterface?(hidden: boolean): void;
+  /** 配置显示名到角色资料的显式映射；舞台不会猜测角色关系。 */
+  setSpeakerProfiles?(profiles: SpeakerProfile[]): void;
+  /** 设置当前说话角色，用于降低其他立绘的存在感。 */
+  setActiveSpeaker?(characterId: string | null): void;
+  /** 显示现代 ADV 底部操作带；宿主负责动作语义。 */
+  showCommandRail?(items: CommandRailItem[], onSelect: (id: string) => void): void;
+  /** 更新操作带的 active/enabled 状态，不重建宿主状态。 */
+  setCommandRailItems?(items: CommandRailItem[]): void;
+  /** 隐藏操作带。 */
+  hideCommandRail?(): void;
 }
 
 export interface PortraitView {
@@ -86,6 +100,28 @@ export interface PortraitView {
 export interface ChoiceOptionView {
   index: number;
   label: string;
+}
+
+/**
+ * 现代 ADV 底部操作带的单个动作。
+ * 舞台只负责投影与派发，状态（自动/快进/隐藏等）由宿主维护。
+ */
+export interface CommandRailItem {
+  id: string;
+  label: string;
+  /** 轻量图标字形；没有图标时只显示短标签。 */
+  icon?: string;
+  enabled?: boolean;
+  active?: boolean;
+  /** 供窄窗口和无障碍提示使用的完整说明。 */
+  tooltip?: string;
+}
+
+/** 可选角色资料，不配置时舞台不会从显示名猜测角色 ID。 */
+export interface SpeakerProfile {
+  id: string;
+  name: string;
+  avatarKey?: string;
 }
 
 /** 音频句柄（howler 封装实现；测试可注入 fake） */

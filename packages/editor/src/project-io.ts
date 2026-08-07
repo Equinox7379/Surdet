@@ -92,9 +92,9 @@ export async function openProject(): Promise<void> {
   onProjectLoaded(); // 崩溃保险：检查同项目未保存快照（A1）
 }
 
-/** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/bgm/se/voice/video），子目录继承类型；
+/** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/avatar/bgm/se/voice/video），子目录继承类型；
  *  未知类型的目录/文件跳过（不强制素材约定） */
-const IMG_RE = /\.(png|jpe?g|webp|gif|avif)$/i;
+const IMG_RE = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
 async function walkAssetDir(root: FileSystemDirectoryHandle): Promise<void> {
   const walk = async (dh: FileSystemDirectoryHandle, kind: AssetKind | null): Promise<void> => {
     const entries = (dh as unknown as {

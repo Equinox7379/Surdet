@@ -53,7 +53,7 @@ import {
   buildMapView,
   GamepadPoller,
 } from '@surdet/renderer';
-import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle } from '@surdet/renderer';
+import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -143,6 +143,14 @@ async function main(): Promise<void> {
       console.warn('[starter] 未找到字体文件，回退系统字体：', fontPath);
     }
   }
+  const speakerProfiles: SpeakerProfile[] = Object.entries(
+    ((gameConfig as { characters?: Record<string, { name?: string; avatar?: string }> }).characters ?? {}),
+  ).flatMap(([id, profile]) => {
+    const name = typeof profile.name === 'string' ? profile.name.trim() : '';
+    if (!name) return [];
+    return [{ id, name, avatarKey: profile.avatar ?? id }];
+  });
+  stage.setSpeakerProfiles(speakerProfiles);
   appEl.appendChild(stage.app!.canvas);
 
   // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率保持 1280×720 逻辑尺寸）
@@ -536,7 +544,9 @@ async function main(): Promise<void> {
   });
 
   // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
-  stage.app!.canvas.addEventListener('pointerdown', () => {
+  stage.app!.canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (onTitleScreen) return;
     const s = interp.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.advance();
   });
@@ -661,19 +671,21 @@ async function main(): Promise<void> {
     return null;
   }
 
-  // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | bgm|se|voice/<key>.音频 =====
+  // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
-    const IMG = /\.(png|jpe?g|webp|gif|avif)$/i;
+    const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
     const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
-    const register = (rel: string, url: string): void => {
+    const register = async (rel: string, url: string): Promise<void> => {
       const parts = rel.split('/');
       const kind = parts[0] ?? '';
       const fname = parts[parts.length - 1] ?? '';
       if (kind === 'bg' && IMG.test(fname)) {
-        void stage.registerBackground(fname.replace(IMG, ''), url);
+        await stage.registerBackground(fname.replace(IMG, ''), url);
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const seg = fname.replace(IMG, '').split('_');
-        if (seg[0]) void stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url);
+        if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url);
+      } else if (kind === 'avatar' && IMG.test(fname)) {
+        await stage.registerAvatar(fname.replace(IMG, ''), url);
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
       }
@@ -685,17 +697,17 @@ async function main(): Promise<void> {
       for (const rel of files) {
         try {
           const bytes = await desktopAsset.read(rel);
-          register(rel, URL.createObjectURL(new Blob([bytes as unknown as BlobPart])));
+          await register(rel, URL.createObjectURL(new Blob([bytes as unknown as BlobPart])));
         } catch (err) {
           console.warn('[starter] 素材加载失败:', rel, err);
         }
       }
     } else {
       // 浏览器开发环境：vite 直接提供素材 URL（无素材时 glob 为空，占位策略兜底）
-      const imgs = import.meta.glob('../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif}', { query: '?url', import: 'default', eager: true });
-      for (const [p, url] of Object.entries(imgs)) register(p.replace('../content/assets/', ''), url as string);
+      const imgs = import.meta.glob('../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg}', { query: '?url', import: 'default', eager: true });
+      for (const [p, url] of Object.entries(imgs)) await register(p.replace('../content/assets/', ''), url as string);
       const auds = import.meta.glob('../content/assets/**/*.{mp3,ogg,wav,m4a,flac}', { query: '?url', import: 'default', eager: true });
-      for (const [p, url] of Object.entries(auds)) register(p.replace('../content/assets/', ''), url as string);
+      for (const [p, url] of Object.entries(auds)) await register(p.replace('../content/assets/', ''), url as string);
     }
     console.info('[starter] 素材加载完成：音频条目', audioUrls.size);
   }
@@ -821,6 +833,10 @@ async function main(): Promise<void> {
   let onTitleScreen = false;
   function showTitleScreen(): void {
     onTitleScreen = true;
+    // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
+    interp.pauseHost();
+    // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
+    renderer.resetSession({ preserveWorld: true });
     stage.showTitle(
       {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
@@ -842,6 +858,7 @@ async function main(): Promise<void> {
     switch (id) {
       case 'new': {
         onTitleScreen = false;
+        renderer.resetSession();
         stage.hideTitle();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
@@ -905,9 +922,10 @@ async function main(): Promise<void> {
       } else {
         void (async () => {
           try {
+            const snap = await saves.load(slotId);
             onTitleScreen = false;
             stage.hideTitle();
-            interp.loadSnapshot(await saves.load(slotId));
+            interp.loadSnapshot(snap);
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
             console.info('[starter] 已读档', slotId);
           } catch (err) {
@@ -940,9 +958,28 @@ async function main(): Promise<void> {
           case 'title': showTitleScreen(); break;
           default: break; // resume：仅关闭菜单
         }
+        refreshCommandRail();
       },
       () => {},
     );
+  }
+
+  function quickSave(): void {
+    const snap = interp.saveSnapshot();
+    if (!snap) return;
+    void saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(() => console.info('[starter] 快速存档'));
+  }
+
+  async function quickLoad(): Promise<void> {
+    if (!await saves.has(QUICK_SLOT)) return;
+    try {
+      const snap = await saves.load(QUICK_SLOT);
+      interp.loadSnapshot(snap);
+      clearCountedThisSession = false;
+      console.info('[starter] 快速读档');
+    } catch (err) {
+      console.error('[starter] 快速读档失败：', err);
+    }
   }
 
 
@@ -985,8 +1022,45 @@ async function main(): Promise<void> {
     );
   }
 
+  /** 画面内操作带：动作仍复用既有键盘/系统菜单语义。 */
+  function refreshCommandRail(): void {
+    stage.setCommandRailItems?.([
+      { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
+      { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
+      { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
+      { id: 'qsave', icon: 'S', label: '快存', tooltip: '快速存档' },
+      { id: 'qload', icon: 'L', label: '快读', tooltip: '快速读档' },
+      { id: 'settings', icon: '⚙', label: '设置', active: settingsOpen, tooltip: '打开设置' },
+      { id: 'hide', icon: '□', label: '界面', active: renderer.interfaceHidden, tooltip: '隐藏界面' },
+      { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
+    ]);
+  }
+
+  function onCommandRailSelect(id: string): void {
+    switch (id) {
+      case 'auto': renderer.toggleAuto(); break;
+      case 'skip': {
+        if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) renderer.toggleSkipAll();
+        else renderer.toggleSkip();
+        break;
+      }
+      case 'backlog': renderer.toggleBacklog(); break;
+      case 'qsave': quickSave(); break;
+      case 'qload': void quickLoad(); break;
+      case 'settings':
+        settingsOpen = !settingsOpen;
+        if (settingsOpen) refreshSettingsPanel(); else stage.hideSettings();
+        break;
+      case 'hide': renderer.toggleHideInterface(); break;
+      case 'menu': openSystemMenu(); break;
+      default: break;
+    }
+    refreshCommandRail();
+  }
+
   // 手柄（M7 支柱5）：A 推进/确认 · B/Start 菜单 · 十字键/左摇杆 选择肢导航 · RB 开快进 / LB 关快进
   const gamepad = new GamepadPoller((actions) => {
+    if (onTitleScreen) return;
     for (const a of actions) {
       switch (a) {
         case 'advance': {
@@ -1006,9 +1080,11 @@ async function main(): Promise<void> {
           break;
         case 'shoulderRight':
           if (!renderer.skipMode) renderer.toggleSkip();
+          refreshCommandRail();
           break;
         case 'shoulderLeft':
           if (renderer.skipMode) renderer.toggleSkip();
+          refreshCommandRail();
           break;
         default:
           break;
@@ -1020,21 +1096,26 @@ async function main(): Promise<void> {
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
   window.addEventListener('keydown', (e) => {
+    if (onTitleScreen) return;
     if (e.key === 'Control' && !renderer.skipMode) {
       ctrlTempSkip = true;
       renderer.toggleSkip();
+      refreshCommandRail();
     }
   });
   window.addEventListener('keyup', (e) => {
+    if (onTitleScreen) return;
     if (e.key === 'Control' && ctrlTempSkip) {
       ctrlTempSkip = false;
       renderer.toggleSkip();
+      refreshCommandRail();
     }
   });
 
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   window.addEventListener('keydown', (e) => {
+    if (onTitleScreen) return;
     if (e.key === 'Escape') {
       openSystemMenu();
       return;
@@ -1065,25 +1146,13 @@ async function main(): Promise<void> {
     }
     if (e.key === 'F5') {
       e.preventDefault();
-      const snap = interp.saveSnapshot();
-      if (snap) {
-        void saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(() => console.info('[starter] 快速存档'));
-      }
+      quickSave();
     } else if (e.key === 'F9') {
       e.preventDefault();
-      void (async () => {
-        if (await saves.has(QUICK_SLOT)) {
-          try {
-            interp.loadSnapshot(await saves.load(QUICK_SLOT));
-            clearCountedThisSession = false; // 快速读档 = 进入另一周目会话
-            console.info('[starter] 快速读档');
-          } catch (err) {
-            console.error('[starter] 读档失败（存档损坏或版本不符）：', err);
-          }
-        }
-      })();
+      void quickLoad();
     } else if (e.key === 'a' || e.key === 'A') {
       console.info('[starter] 自动播放', renderer.toggleAuto() ? '开' : '关');
+      refreshCommandRail();
     } else if (e.key === 's' || e.key === 'S') {
       // 快进策略跟随设置：仅跳已读（默认，遇未读即停）或全部跳过（一路到底）
       if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) {
@@ -1091,14 +1160,18 @@ async function main(): Promise<void> {
       } else {
         console.info('[starter] 快进（已读跳过·设置）', renderer.toggleSkip() ? '开' : '关');
       }
+      refreshCommandRail();
     } else if (e.key === 'x' || e.key === 'X') {
       console.info('[starter] 快进（全部跳过）', renderer.toggleSkipAll() ? '开' : '关');
+      refreshCommandRail();
     } else if (e.key === 'l' || e.key === 'L') {
       // Backlog（文字记录）：覆盖层展示近期文本历史（点击任意处关闭）
       console.info('[starter] 文字记录', renderer.toggleBacklog() ? '开' : '关');
+      refreshCommandRail();
     } else if (e.key === 'h' || e.key === 'H') {
       // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
       console.info('[starter] 隐藏界面', renderer.toggleHideInterface() ? '开' : '关');
+      refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
       if (galleryOpen) {
@@ -1118,6 +1191,7 @@ async function main(): Promise<void> {
         refreshSettingsPanel();
       }
       console.info('[starter] 设置面板', settingsOpen ? '开' : '关');
+      refreshCommandRail();
     } else if (e.key === '[' || e.key === ']') {
       // 文本速度调整（即时持久化）：[ 减速 / ] 加速
       const next = Math.max(1, Math.min(200, settings.settings.textSpeedCps + (e.key === ']' ? 6 : -6)));
@@ -1154,6 +1228,8 @@ async function main(): Promise<void> {
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
   await loadAssets();
+  stage.showCommandRail?.([], onCommandRailSelect);
+  refreshCommandRail();
   showTitleScreen();
   console.info(`[starter] started: ${registry.all().length} scenes, ${decls.length} variables`);
 }
