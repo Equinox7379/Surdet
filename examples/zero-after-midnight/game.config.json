@@ -1,0 +1,18 @@
+{
+  "title": "零点之后",
+  "version": "0.1.0",
+  "entryScene": "common_0017",
+  "characters": {
+    "zhirao": {
+      "name": "许知遥"
+    }
+  },
+  "variables": {
+    "trust": { "type": "number", "initial": 0, "min": 0, "max": 6, "description": "对来电内容的信任" },
+    "evidence": { "type": "number", "initial": 0, "min": 0, "max": 8, "description": "已验证的证据数量" },
+    "panic": { "type": "number", "initial": 0, "min": 0, "max": 6, "description": "主角的失控程度" },
+    "route": { "type": "string", "initial": "none", "description": "地下通道后的路线" },
+    "recordingSaved": { "type": "flag", "initial": false, "description": "是否保存原始录音" },
+    "phoneOn": { "type": "flag", "initial": true, "description": "第二部手机是否保持开机" }
+  }
+}

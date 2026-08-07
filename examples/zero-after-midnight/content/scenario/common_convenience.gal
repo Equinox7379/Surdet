@@ -1,0 +1,77 @@
+@scene common_convenience
+@label start
+@bg convenience_exterior
+@bgm convenience_hum
+@fadein 350
+@se rain_window
+
+便利店的白光透过雨幕，像一块被擦得太干净的玻璃。
+我没有马上进去。
+玻璃门内侧贴着新换的促销海报，门铃被雨气熏得发白。
+@se store_bell
+门自己开了一次，又慢慢合上。
+主角：她刚才说的就是这里。
+
+手机再次震动。
+@se phone_ring
+许知遥：你看见玻璃了吗？
+@show zhirao:commute hesitant @ right
+主角：看见了。里面没有人。
+许知遥：有一个人坐在最里面，背对着你。
+主角：我只看见收银台。
+许知遥：别进来。
+
+玻璃倒影里，街对面有辆黑色轿车停着。
+车灯没开，雨刷却在动。
+我转头时，它已经拐进巷子。
+主角：你是不是在监控里见过什么？
+许知遥：监控会告诉你，我从没来过这里。
+许知遥：但门铃记得。
+
+@choice
+  观察监控 -> @goto inspect_camera
+  相信她的说法 -> @goto trust_call
+  挂断电话 -> @goto end_store_call
+
+@label inspect_camera
+@mod evidence +1
+我推门进去，店员抬头看了我一眼。
+主角：能看一下零点十七分的监控吗？
+店员：刚才？你一个人进来的。
+监控画面里，玻璃门在零点十七分自行打开。
+雨水从门缝流进来，地上却没有第二串脚印。
+主角：门铃响了几次？
+店员：两次。可门只开了一次。
+@goto store_after
+
+@label trust_call
+@mod trust +1
+我没有进门，只把手机贴近玻璃。
+电话那头的雨声忽然停了。
+许知遥：听见了吗？
+主角：什么？
+许知遥：门铃。它响第二次的时候，不要回头。
+@se store_bell
+门铃又响了一次。
+我没有回头，玻璃里的倒影却替我看见了一个湿透的女孩。
+@goto store_after
+
+@label end_store_call
+@mod panic +1
+我按下挂断，冲进便利店。
+收银台后的店员被我吓了一跳。
+主角：刚才有没有一个女孩进来？
+店员：没有。你是今晚第一个客人。
+我低头看见门口的雨水里有一张被踩湿的收据。
+收据时间是零点十七分，商品栏空白。
+@goto store_after
+
+@label store_after
+@hide zhirao
+监控的时间角标忽然跳了一格。
+00:17 变成 00:14，又变回 00:17。
+收据背面写着一行铅笔字：旧公寓，三楼，别带灯。
+字迹像许知遥，又比她更用力。
+@autosave
+@fadeout 350
+@jump common_apartment.start

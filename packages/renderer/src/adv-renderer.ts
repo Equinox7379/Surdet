@@ -71,8 +71,8 @@ export class AdvRenderer {
   #nvl = false;
   /** 当前选择肢（键盘导航用；原始 index 列表） */
   #choiceIndices: number[] = [];
-  /** 选择肢高亮位置（键盘方向键移动） */
-  #choiceCursor = 0;
+  /** 选择肢高亮位置（键盘方向键移动；-1 表示尚未建立键盘焦点） */
+  #choiceCursor = -1;
   /** 快进"全部跳过"模式（不区分已读/未读；默认快进仅跳已读） */
   #skipAll = false;
   /** @wait 截止时间戳（null = 未在等待） */
@@ -145,7 +145,7 @@ export class AdvRenderer {
     this.#waitSession += 1;
     this.#pendingVoice = null;
     this.#choiceIndices = [];
-    this.#choiceCursor = 0;
+    this.#choiceCursor = -1;
     this.#skipMode = false;
     this.#skipAll = false;
     this.#backlogOpen = false;
@@ -191,7 +191,6 @@ export class AdvRenderer {
         }
         if (this.#status === 'awaiting') {
           this.#status = 'idle';
-          this.#stage.showText(null, '');
           this.#onAdvance?.(); // 解释器同步发出下一事件（text/choice/end）
           if (nowMs() > deadline) break;
           continue;
@@ -205,7 +204,6 @@ export class AdvRenderer {
       const need = this.#autoBaseDelayMs + this.#autoPerCharMs * (this.#current?.value.length ?? 0);
       if (waited >= need && !this.#audio.isVoicePlaying()) {
         this.#status = 'idle';
-        this.#stage.showText(null, '');
         this.#onAdvance?.();
       }
     }
@@ -319,7 +317,6 @@ export class AdvRenderer {
     }
     if (this.#status === 'awaiting') {
       this.#status = 'idle';
-      this.#stage.showText(null, '');
       this.#onAdvance?.();
       return true;
     }
@@ -369,28 +366,31 @@ export class AdvRenderer {
     this.#skipMode = false;
     this.#status = 'choice';
     this.#choiceIndices = p.options.map((o) => o.index);
-    this.#choiceCursor = 0;
+    this.#choiceCursor = -1;
     this.#stage.showChoices(p.options);
-    this.#stage.setChoiceHighlight?.(0);
   }
 
   /** 选择肢键盘导航：上移（循环） */
   choiceUp(): void {
     if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return;
-    this.#choiceCursor = (this.#choiceCursor - 1 + this.#choiceIndices.length) % this.#choiceIndices.length;
+    this.#choiceCursor = this.#choiceCursor < 0
+      ? this.#choiceIndices.length - 1
+      : (this.#choiceCursor - 1 + this.#choiceIndices.length) % this.#choiceIndices.length;
     this.#stage.setChoiceHighlight?.(this.#choiceCursor);
   }
 
   /** 选择肢键盘导航：下移（循环） */
   choiceDown(): void {
     if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return;
-    this.#choiceCursor = (this.#choiceCursor + 1) % this.#choiceIndices.length;
+    this.#choiceCursor = this.#choiceCursor < 0
+      ? 0
+      : (this.#choiceCursor + 1) % this.#choiceIndices.length;
     this.#stage.setChoiceHighlight?.(this.#choiceCursor);
   }
 
   /** 确认当前高亮选项（Enter/Space） */
   choiceConfirm(): boolean {
-    if (this.#status !== 'choice' || this.#choiceIndices.length === 0) return false;
+    if (this.#status !== 'choice' || this.#choiceCursor < 0 || this.#choiceIndices.length === 0) return false;
     return this.select(this.#choiceIndices[this.#choiceCursor]!);
   }
 
