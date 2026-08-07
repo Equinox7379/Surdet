@@ -9,6 +9,7 @@ export * from './gallery.js';
 export * from './gamepad.js';
 export * from './text-buffer.js';
 export * from './transitions.js';
+export * from './timeline-player.js';
 export * from './types.js';
 export * from './adv-renderer.js';
 export * from './audio-manager.js';

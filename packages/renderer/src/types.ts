@@ -3,6 +3,8 @@
  * 内核（Interpreter）通过 EventBus 发事件，AdvRenderer 订阅后驱动 AdvStage。
  */
 
+import type { TimelineFrameEvent } from './timeline-player.js';
+
 /** 舞台投影：渲染层需要实现的显示能力（可注入 fake 测试） */
 export interface AdvStage {
   /** 设置背景（null = 黑场）。key 经渲染层解析为实际纹理。 */
@@ -59,6 +61,12 @@ export interface AdvStage {
   startParticles?(kind: string): void;
   /** @particle off：停止粒子效果（可选能力） */
   stopParticles?(): void;
+  /** 时间轴逐帧 cue 投影（可选；不实现时仍可由 headless fake 接收时间轴事件）。 */
+  applyTimelineFrame?(event: TimelineFrameEvent): void;
+  /** 获取/恢复可 JSON 序列化的世界与过渡状态。 */
+  snapshotPresentation?(): unknown;
+  restorePresentation?(snapshot: unknown): void;
+  clearPresentation?(): void;
   /** 横幅文本（@title/@chapter/@center 用 chapter 样式，@tip/@note 用 tip 样式） */
   showBanner?(text: string, variant: 'chapter' | 'tip'): void;
   /** NVL 模式开关（全屏小说文本页；开启时 AdvRenderer 不走打字机而整行追加） */
