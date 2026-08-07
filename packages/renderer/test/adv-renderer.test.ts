@@ -69,6 +69,16 @@ class FakeStage implements AdvStage {
   startParticles(kind: string): void { this.particlesStarted.push(kind); }
   stopParticles(): void { this.particlesStopped++; }
   hideInterface?: (hidden: boolean) => void;
+  timelineEvents: { track: string; progress: number }[] = [];
+  presentation: unknown = { stage: 'snapshot' };
+  restored: unknown[] = [];
+  presentationClears = 0;
+  applyTimelineFrame(event: { track: string; progress: number }): void {
+    this.timelineEvents.push({ track: event.track, progress: event.progress });
+  }
+  snapshotPresentation(): unknown { return this.presentation; }
+  restorePresentation(snapshot: unknown): void { this.restored.push(snapshot); }
+  clearPresentation(): void { this.presentationClears++; }
 }
 
 class FakeAudio implements AudioHandle {
@@ -96,6 +106,72 @@ function makeBus() {
 }
 
 describe('AdvRenderer', () => {
+  it('timeline 事件逐帧投影，阻塞时间轴完成后仅恢复一次解释器', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let completed = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd: () => { completed++; } });
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'intro',
+      blocking: true,
+      definition: {
+        version: 1, id: 'intro', durationMs: 100,
+        tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'set', key: 'hall' }] }],
+      },
+    });
+    r.update(50);
+    expect(stage.timelineEvents.some((event) => event.track === 'background')).toBe(true);
+    expect(completed).toBe(0);
+    r.advance();
+    expect(completed).toBe(1);
+    r.update(100);
+    expect(completed).toBe(1);
+  });
+
+  it('presentation snapshot restores active timeline cursor after stage state', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'intro',
+      blocking: false,
+      definition: {
+        version: 1, id: 'intro', durationMs: 100,
+        tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'zoom', scale: 1.1 }] }],
+      },
+    });
+    r.update(40);
+    const snap = r.snapshotPresentation();
+    const nextStage = new FakeStage();
+    const restored = new AdvRenderer(nextStage, new FakeAudio());
+    restored.restorePresentation(snap);
+    expect(nextStage.restored).toEqual([{ stage: 'snapshot' }]);
+    restored.update(20);
+    expect(nextStage.timelineEvents.some((event) => event.track === 'camera')).toBe(true);
+  });
+
+  it('state reset clears active presentation before stale timeline can complete', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    let completed = 0;
+    const r = new AdvRenderer(stage, new FakeAudio(), { onWaitEnd: () => { completed++; } });
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'intro',
+      blocking: true,
+      definition: {
+        version: 1, id: 'intro', durationMs: 100,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'fade', alpha: 0 }] }],
+      },
+    });
+    bus.emit('stateReset', { reason: 'load' });
+    r.update(200);
+    expect(completed).toBe(0);
+    expect(stage.presentationClears).toBe(1);
+  });
+
   it('text 事件 → 打字机 + 舞台文本投影（逐字推进到画面）', () => {
     const bus = makeBus();
     const stage = new FakeStage();

@@ -1403,7 +1403,13 @@ export class PixiStage implements AdvStage {
     }
     if (event.track === 'screen') {
       if (cue.action === 'fade' && typeof cue.alpha === 'number') {
-        this.#fadeOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
+        let from = this.#timelineValueStarts.get(cue);
+        if (from === undefined) {
+          from = this.#fadeOverlay.alpha;
+          this.#timelineValueStarts.set(cue, from);
+        }
+        this.#fadeOverlay.alpha = Math.max(0, Math.min(1, from + (cue.alpha - from) * event.progress));
+        if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
       } else if (cue.action === 'tint' && typeof cue.color === 'number' && typeof cue.alpha === 'number') {
         this.#tintOverlay.tint = cue.color & 0xffffff;
         this.#tintOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
