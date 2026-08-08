@@ -141,6 +141,12 @@ CI 已分别执行 typecheck、全量测试、正式样例和 P1/P2；`verify:p1
 - Legacy Adapter 只能调用 v2 API；v2 API 不得反向依赖 Legacy Adapter；
 - 测试 fake 应实现最小端口，不复制生产业务逻辑。
 
+### 4.2 共享资源服务
+
+背景、立绘、头像、字体角色和注册素材源不归任何单一 Layer 独占，因此由 Composition Root 创建唯一的 `RenderAssetRegistry`。它只负责资源注册、解析、引用替换、异步 generation 和释放，不创建可见界面。WorldLayer 只读解析背景/立绘，Dialogue/Menu/Gallery/SystemPanel 只读解析头像和字体；任何 Layer 都不得另建第二份纹理或字体注册缓存。
+
+`RenderAssetRegistry` 的所有可释放对象登记到 `RenderLifecycle` 的 `runtime` owner。替换同 key 资源时先准备新资源，成功后原子替换并释放旧资源；失败时保留旧资源。`resetSession({ clearAssets: false })` 不清空注册资源，`clearAssets: true` 和 Runtime dispose 才执行对应释放。
+
 应增加静态依赖检查，禁止 `layers/*` 之间的横向导入，并禁止新消费者直接访问 `stage.app`、Layer 内部 Container 或 Pixi 私有对象。
 
 ## 5. Renderer v2 公开接口
@@ -155,8 +161,8 @@ export interface RendererRuntime {
   readonly controller: PresentationController;
 
   resize(): void;
-  resetSession(options?: ResetSessionOptions): Promise<void>;
-  dispose(): Promise<void>;
+  resetSession(options?: ResetSessionOptions): void;
+  dispose(): void;
 }
 
 export interface RendererCommands {
@@ -168,6 +174,7 @@ export interface RendererCommands {
   readonly system: SystemPanelCommands;
   readonly loading: LoadingCommands;
   readonly preferences: PreferenceCommands;
+  readonly presentation: PresentationCommands;
 }
 
 export interface RendererQueries {
@@ -185,7 +192,12 @@ export interface RendererRuntimeOptions {
   preferences?: Partial<PresentationPreferences>;
   quality?: RenderQuality;
   onError?: (error: RendererError) => void;
-  onChoice?: (index: number) => void;
+  onAdvance?: () => void;
+  onSelect?: (index: number) => void;
+  onWaitEnd?: () => void;
+  typewriter?: Typewriter;
+  backlog?: Backlog;
+  pluginHost?: RendererPluginHost;
   onBacklogClose?: () => void;
   performanceMonitor?: RenderPerformanceMonitor;
 }
@@ -230,11 +242,12 @@ v2 由 Composition Root 创建 Application、Layers、Controller 和 Scheduler�
 | `system` | 战斗、地图、商店、据点指令、视频覆盖层 | `showBattle`、`showMap`、`showShop`、`showBaseCommands`、`showVideo` 及对应 hide |
 | `loading` | 启动与场景加载进度 | `showLoading`、`hideLoading` |
 | `preferences` | 画质、表现偏好、后处理 | `setQuality`、`setPresentationPreferences`、`setPostProcess` |
-| `queries.presentation` | 可序列化表现快照 | `snapshotPresentation`、`restorePresentation` 中的读取部分、`clearPresentation` 对应的新 Command |
+| `commands.presentation` | 完整表现状态的校验、恢复和清除 | `restorePresentation`、`clearPresentation`；由 Facade 协调 Controller 时间轴与 World 状态 |
+| `queries.presentation` | 可序列化完整表现快照 | `snapshotPresentation`；由 Facade 收集 Controller 时间轴与 World 状态 |
 | `queries.diagnostics` | 性能与资源快照 | `getPerformanceSnapshot`、`needsUpdate`、活动资源计数 |
 | `controller` | Core 事件投影、打字、推进、选择、自动、快进、Backlog 控制 | 当前 `AdvRenderer` 的 `subscribe`、`advance`、`select`、`toggleAuto`、`toggleSkip`、`choiceUp/Down/Confirm`、表现快照协调 |
 
-`captureThumbnail` 作为只读但有计算成本的 Query；不得改变画面。`restorePresentation` 和 `clearPresentation` 是 Command，不应继续与 snapshot Query 混在同一对象中。
+`captureThumbnail` 作为只读但有计算成本的 Query；不得改变画面。`commands.presentation.validate/restore/clear` 与 `queries.presentation.snapshot` 构成完整事务边界，不把 Controller 时间轴恢复错误地归入 WorldLayer。
 
 ### 5.5 Presentation Controller
 
@@ -256,6 +269,7 @@ export interface PresentationController extends FrameLoopTarget {
   dispatchInput(action: RendererInputAction): boolean;
   setTextSpeed(charsPerSecond: number): void;
   setAutoWait(baseDelayMs: number, perCharMs: number): void;
+  dispose(): void;
 }
 ```
 
@@ -276,6 +290,8 @@ WorldLayer 拥有世界 Container 和世界效果 Controller；其销毁必须�
 负责：ADV 对话框、Ruby、选择肢、等待指示器、NVL、Backlog、Backlog 搜索视图、Banner、Command Rail、界面隐藏、说话人资料投影。
 
 不负责：自动播放和快进策略。策略由 Presentation Controller 管理，DialogueLayer 只投影状态并派发用户选择。
+
+`setActiveSpeaker` 是一次跨层意图：Facade 同时通知 DialogueLayer 更新说话人头像/标签，并通知 WorldLayer 更新立绘聚焦。两个 Layer 彼此不引用。
 
 ### 6.3 MenuLayer
 
@@ -559,6 +575,7 @@ Windows EXE 冒烟可放在 release/manual workflow 或 Windows 专用 job；不
 ### M2：RenderLifecycle 与输入归一化
 
 - 统一登记 ticker、listener、tween、async、Blob、pool；
+- 建立唯一 `RenderAssetRegistry`，消除跨 Layer 重复缓存；
 - 输入映射为统一 action；
 - 增加幂等销毁和 50 次循环测试；
 - 保持画面行为不变。
@@ -672,4 +689,3 @@ Wave 2 只有在以下条件全部成立时才可批准：
 1. `docs/superpowers/plans/2026-08-09-renderer-v2-wave-2-implementation.md`：面向单一执行 AI 的逐任务实施计划；
 2. `docs/superpowers/plans/2026-08-09-renderer-v2-wave-2-executor-directive.md`：可直接复制给执行 AI 的最高执行指令；
 3. 实施结束后由执行 AI 生成交付报告，由总经理进行独立复审。
-
