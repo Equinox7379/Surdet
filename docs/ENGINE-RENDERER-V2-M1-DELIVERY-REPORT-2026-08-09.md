@@ -103,7 +103,7 @@ Task 5 测试覆盖：
 
 - 工具测试 6/6；
 - 能力矩阵检查通过；
-- 报告提交前仓库卫生检查通过：451 个 tracked paths；报告纳入后最终检查为 452 个 tracked paths；
+- 最终仓库卫生检查通过：453 个 tracked paths；
 - 全 workspace typecheck 通过；
 - workspace 测试通过：CLI 86、Core 298、Editor 133、Host 18、Renderer 208、Shell 32、Starter 3，共 778 tests；
 - Starter lint 通过，0 errors / 0 warnings；
@@ -152,7 +152,7 @@ node packages/shell/scripts/verify-pack.mjs --artifact
 | 菜单打开 p95 | 10.8000 ms | 11.6000 ms | 1.0741× | 1.15× | PASS |
 | 场景转场 p95 | 25.6000 ms | 27.1000 ms | 1.0586× | 1.15× | PASS |
 
-5 个指标均保存 5 个原始样本；当前基线资产为 6/6，页面错误、控制台错误和失败请求均为 0。M1 没有提高门槛、删除性能字段或吞掉错误。
+4 个性能指标均保存 5 个原始样本；当前基线资产为 6/6，页面错误、控制台错误和失败请求均为 0。M1 没有提高门槛、删除性能字段或吞掉错误。
 
 ## 7. 明确未实施范围
 
