@@ -31,6 +31,9 @@ import type {
 import { RenderQualityController, type RenderQuality } from './quality.js';
 import { DEFAULT_PRESENTATION_PREFERENCES, normalizePresentationPreferences, presentationDuration, type PresentationPreferences } from './presentation.js';
 import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } from './post-process.js';
+import { LoadingLayer } from './loading-layer.js';
+import type { LoadingProgress } from './loading-progress.js';
+import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -453,10 +456,8 @@ export class PixiStage implements AdvStage {
   #screenLayer: Container;
   /** @flash 白色闪光叠加（线性衰减） */
   #flashOverlay: Graphics;
-  /** 演出效果状态（shake/flash/zoom 均为线性衰减，由 updateEffects 每帧驱动） */
-  #shakeRemain = 0;
-  #shakeDur = 1;
-  #shakeStrength = 0;
+  /** 演出效果控制器（转场/震动由 updateEffects 统一推进） */
+  #worldEffects: WorldEffectsController;
   #flashRemain = 0;
   #flashDur = 1;
   #zoomFrom = 1;
@@ -571,6 +572,7 @@ export class PixiStage implements AdvStage {
   #presentation: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
   #postProcess: PostProcessSettings = { ...DEFAULT_POST_PROCESS };
   #colorMatrix: ColorMatrixFilter | null = null;
+  #loadingLayer: LoadingLayer;
 
   constructor() {
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
@@ -580,6 +582,16 @@ export class PixiStage implements AdvStage {
     this.#worldLayer = new Container();
     this.#worldLayer.addChild(this.#bgLayer, this.#portraitLayer);
     this.#screenLayer = new Container();
+    this.#worldEffects = new WorldEffectsController({
+      world: this.#worldLayer,
+      screen: this.#screenLayer,
+      width: this.#w,
+      height: this.#h,
+      getBasePosition: () => this.#zoomBaseOffset(),
+      setWorldPosition: (x, y) => this.#worldLayer.position.set(x, y),
+      duration: (durationMs) => presentationDuration(durationMs, this.#presentation),
+      requestFrame: () => this.#requestFrame(),
+    });
     this.#uiLayer = new Container();
     this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#fadeOverlay.alpha = 0;
@@ -623,6 +635,7 @@ export class PixiStage implements AdvStage {
     this.#shopLayer.visible = false;
     this.#baseLayer = new Container();
     this.#baseLayer.visible = false;
+    this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
     // 对话戏面板（无框 ADV 口径）：#drawDialogPanel 仅 clear() 不绘制，对象与可见性链路保留
     this.#dialogPanel = new Graphics();
     this.#drawDialogPanel();
@@ -650,6 +663,7 @@ export class PixiStage implements AdvStage {
       this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
       this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
       this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer, this.#endingLayer,
+      this.#loadingLayer.container,
     );
 
     this.#speakerText = new PText({
@@ -1297,7 +1311,7 @@ export class PixiStage implements AdvStage {
 
   /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭）。
    *  onReplayVoice：点击带语音标记的行重播（@voice 紧跟的文本行） */
-  showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void): void {
+  showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
     const layer = this.#backlogLayer;
     if (!this.#backlogBuilt) {
       layer.eventMode = 'static';
@@ -1315,6 +1329,10 @@ export class PixiStage implements AdvStage {
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
       style: { fontSize: 22, fill: NIGHT_AZURE.panelText, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 30);
+    layer.addChild(new PText({
+      text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
+      style: { fontSize: 17, fill: query.trim().length > 0 ? NIGHT_AZURE.accent : MODERN_ADV.muted } satisfies TextStyleOptions,
+    })).position.set(60, 58);
     // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
     const entriesLayer = new Container();
     // 先替换引用，再做初始滚动。旧 entriesLayer 已经随上一轮子树销毁，
@@ -1696,7 +1714,7 @@ export class PixiStage implements AdvStage {
     this.#cameraPanY = 0;
     this.#worldLayer.position.set(0, 0);
     this.#worldLayer.scale.set(1);
-    this.#shakeRemain = 0;
+    this.#worldEffects.reset();
     this.#flashRemain = 0;
     this.#flashOverlay.alpha = 0;
     this.#zoomFrom = 1;
@@ -1725,11 +1743,15 @@ export class PixiStage implements AdvStage {
   }
 
   /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
-  shake(durMs = 400, strength = 8): void {
-    this.#shakeDur = presentationDuration(durMs, this.#presentation);
-    this.#shakeRemain = this.#shakeDur;
-    this.#shakeStrength = Math.max(0, Math.min(strength, 64));
-    this.#requestFrame();
+  shake(durMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
+    this.#worldEffects.shake(presentationDuration(durMs, this.#presentation), strength, direction);
+  }
+
+  /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
+  transition(name: TransitionName | string, durMs = 600): boolean {
+    const started = this.#worldEffects.transition(name, presentationDuration(durMs, this.#presentation));
+    if (started) this.#requestFrame();
+    return started;
   }
 
   /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */
@@ -1752,19 +1774,7 @@ export class PixiStage implements AdvStage {
   /** 演出效果时间轴推进（AdvRenderer 每帧转发 ticker delta） */
   updateEffects(deltaMs: number): void {
     if (!this.#hasEffectWork()) return;
-    if (this.#shakeRemain > 0) {
-      this.#shakeRemain = Math.max(0, this.#shakeRemain - deltaMs);
-      const base = this.#zoomBaseOffset();
-      if (this.#shakeRemain === 0) {
-        this.#setWorldBasePosition();
-      } else {
-        const s = this.#shakeStrength * (this.#shakeRemain / this.#shakeDur);
-        this.#worldLayer.position.set(
-          base.x + (Math.random() * 2 - 1) * s,
-          base.y + (Math.random() * 2 - 1) * s,
-        );
-      }
-    }
+    this.#worldEffects.update(deltaMs);
     if (this.#flashRemain > 0) {
       this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
       this.#flashOverlay.alpha = this.#flashRemain / this.#flashDur;
@@ -1814,7 +1824,7 @@ export class PixiStage implements AdvStage {
     const railTarget = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
     const commandRailMoving = this.#commandRail.visible
       && (this.#commandRailWakeRemain > 0 || Math.abs(this.#commandRail.alpha - railTarget) > 0.001);
-    return this.#shakeRemain > 0
+    return this.#worldEffects.needsUpdate
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#bgTransition !== null
@@ -3282,6 +3292,16 @@ export class PixiStage implements AdvStage {
     this.#fadeOverlay.alpha = Math.max(0, Math.min(1, alpha));
   }
 
+  showLoading(progress: LoadingProgress): void {
+    this.#requestFrame();
+    this.#loadingLayer.show(progress);
+  }
+
+  hideLoading(): void {
+    this.#requestFrame();
+    this.#loadingLayer.hide();
+  }
+
   #clearChoices(): void {
     for (const view of this.#choiceViews) {
       this.#choiceLayer.removeChild(view.holder);
@@ -3296,6 +3316,7 @@ export class PixiStage implements AdvStage {
    */
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
     this.#requestFrame();
+    this.hideLoading();
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
     const preserveWorld = options.preserveWorld === true;
@@ -3396,7 +3417,7 @@ export class PixiStage implements AdvStage {
     this.#worldLayer.scale.set(1);
     this.#cameraPanX = 0;
     this.#cameraPanY = 0;
-    this.#shakeRemain = 0;
+    this.#worldEffects.reset();
     this.#flashRemain = 0;
     this.#flashOverlay.alpha = 0;
     this.#zoomFrom = 1;
@@ -3455,6 +3476,8 @@ export class PixiStage implements AdvStage {
    * setBackground/setPortrait 会把命中的注入纹理也放进占位缓存，故销毁前按注册表排除。
    */
   destroy(): void {
+    this.#worldEffects.destroy();
+    this.#loadingLayer.destroy();
     this.#clearChoices();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     const registered = new Set<Texture>([...this.#registeredBgs.values(), ...this.#registeredPortraits.values()]);

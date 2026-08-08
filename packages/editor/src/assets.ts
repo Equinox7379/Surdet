@@ -7,7 +7,7 @@
  */
 import type { CompiledScene, GenericInstr } from '@surdet/core';
 
-export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'se' | 'voice' | 'video' | 'cg' | 'music' | 'text';
+export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'cg' | 'music' | 'text';
 
 /** 目录扫描出的素材文件条目 */
 export interface DirAsset {
@@ -36,7 +36,7 @@ export interface AssetEntry {
 }
 
 const DIR_KIND_MAP: Record<string, AssetKind> = {
-  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', se: 'se', voice: 'voice', video: 'video',
+  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', ambience: 'ambience', se: 'se', voice: 'voice', video: 'video',
 };
 
 /** 目录名 → 素材类型（未知目录返回 null，调用方跳过） */
@@ -121,6 +121,7 @@ export function buildAssetInventory(opts: {
         switch (g.name) {
           case 'bg': if (a0) use(a0, 'bg', sceneId); break;
           case 'bgm': if (a0) use(a0, 'bgm', sceneId); break;
+          case 'ambience': if (a0 && a0 !== 'off') use(a0, 'ambience', sceneId); break;
           case 'se': if (a0) use(a0, 'se', sceneId); break;
           case 'voice': if (a0) use(a0, 'voice', sceneId); break;
           case 'video': if (a0) use(a0, 'video', sceneId); break;
@@ -166,6 +167,7 @@ export function insertLineForAsset(e: AssetEntry): string | null {
   switch (e.kind) {
     case 'bg': return `@bg ${e.key}`;
     case 'bgm': return `@bgm ${e.key}`;
+    case 'ambience': return `@ambience ${e.key}`;
     case 'se': return `@se ${e.key}`;
     case 'voice': return `@voice ${e.key}`;
     case 'video': return `@video ${e.key}`;
@@ -179,6 +181,6 @@ export function insertLineForAsset(e: AssetEntry): string | null {
 
 /** 素材类型中文标签（UI 展示用） */
 export const KIND_LABELS: Record<AssetKind, string> = {
-  bg: '背景', portrait: '立绘', avatar: '头像', bgm: '音乐', se: '音效', voice: '语音', video: '视频',
+  bg: '背景', portrait: '立绘', avatar: '头像', bgm: '音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
   cg: 'CG', music: '鉴赏音乐', text: '回想',
 };

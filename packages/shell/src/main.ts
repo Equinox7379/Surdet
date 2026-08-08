@@ -9,17 +9,27 @@ import { FileSaveStore } from './save-store.js';
 import { checkReleaseManifest } from './release-service.js';
 import { writeCrashReport } from './crash-reporter.js';
 import { writeJsonAtomic } from './json-file.js';
+import { FileProfileStore } from './profile-store.js';
+import { assertProfileKey } from '@surdet/host';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 /** 桌面存档目录：userData/saves（第一次访问时创建） */
 let saveStore: FileSaveStore | null = null;
+let profileStore: FileProfileStore | null = null;
 
 function getSaveStore(): FileSaveStore {
   if (!saveStore) {
     saveStore = new FileSaveStore(path.join(app.getPath('userData'), 'saves'));
   }
   return saveStore;
+}
+
+function getProfileStore(): FileProfileStore {
+  if (!profileStore) {
+    profileStore = new FileProfileStore(path.join(app.getPath('userData'), 'profile'));
+  }
+  return profileStore;
 }
 
 /** IPC sender 校验：仅接受本地 file:// 帧（打包后 asar 亦为 file://），拒绝外部/网络内容注入。 */
@@ -53,6 +63,25 @@ function registerSaveIpc(): void {
   ipcMain.handle('save:listMeta', (e) => {
     assertTrustedSender(e);
     return getSaveStore().listMeta();
+  });
+}
+
+/** 注册全局 Profile IPC：与普通 slot 存档分目录、分接口，损坏数据由 store 宽容读取为 null。 */
+function registerProfileIpc(): void {
+  ipcMain.handle('profile:read', (e, key: unknown) => {
+    assertTrustedSender(e);
+    assertProfileKey(key as string);
+    return getProfileStore().read(key as string);
+  });
+  ipcMain.handle('profile:write', (e, key: unknown, value: unknown) => {
+    assertTrustedSender(e);
+    assertProfileKey(key as string);
+    return getProfileStore().write(key as string, value);
+  });
+  ipcMain.handle('profile:delete', (e, key: unknown) => {
+    assertTrustedSender(e);
+    assertProfileKey(key as string);
+    return getProfileStore().delete(key as string);
   });
 }
 
@@ -300,6 +329,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     logLine('info', `app ready, packaged=${String(app.isPackaged)}`);
     registerSaveIpc();
+    registerProfileIpc();
     registerSettingsIpc();
     registerAppIpc();
     createWindow();

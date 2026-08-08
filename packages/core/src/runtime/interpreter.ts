@@ -28,6 +28,8 @@ import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
 export interface SystemHooks {
   /** 存档时收集系统状态（必须 JSON 安全） */
   snapshot?: () => SystemSnapshots;
+  /** 无副作用地验证所有参与系统；任何 runtime 状态写入前调用 */
+  validate?: (snap: SystemSnapshots) => void;
   /** 读档时恢复系统状态 */
   restore?: (snap: SystemSnapshots) => void;
 }
@@ -314,6 +316,7 @@ export class Interpreter {
         snap = migrated as unknown as SaveSnapshot;
       }
     }
+    if (snap.systems) this.#systemHooks.validate?.(snap.systems);
     this.#store.restore(snap.variables, { allowReadonly: true }); // 可信快照：readonly 系统变量随档恢复
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);

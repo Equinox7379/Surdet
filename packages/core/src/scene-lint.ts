@@ -208,6 +208,28 @@ export function collectSceneSpeakers(scene: CompiledScene): Set<string> {
   return out;
 }
 
+/** 引擎内置转场名称；未知名称必须在内容校验阶段报错，禁止运行时静默回退。 */
+export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set([
+  'fade', 'slide-left', 'slide-right', 'circle',
+]);
+
+export function validateTransitionInstructions(scene: CompiledScene, issues: LintIssue[]): void {
+  for (const instr of scene.instructions) {
+    if (instr.op !== 'instr' || instr.name !== 'transition') continue;
+    const name = instr.args[0] ?? 'fade';
+    if (BUILTIN_TRANSITIONS.has(name)) continue;
+    issues.push({
+      severity: 'error',
+      code: 'T010',
+      text: `${instr.file}:${instr.line}:${instr.col}: @transition 未知转场 '${name}'（支持 fade/slide-left/slide-right/circle）`,
+      file: instr.file,
+      line: instr.line,
+      col: instr.col,
+      hint: '改用 fade、slide-left、slide-right 或 circle；如需扩展，请先在引擎注册转场。',
+    });
+  }
+}
+
 /**
  * choice 后所有缩进文本行都会被当作选项；以下形态极可能是"缩进正文被误判为选项"
  * （剧情结构静默损坏），W004 警告：

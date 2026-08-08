@@ -77,6 +77,13 @@ class FakeStage implements AdvStage {
   presentation: unknown = { stage: 'snapshot' };
   restored: unknown[] = [];
   presentationClears = 0;
+  backlogViews: { text: string; voice?: string }[][] = [];
+  backlogQueries: string[] = [];
+  showBacklog(entries: readonly { speaker: string | null; text: string; voice?: string }[], _onReplayVoice?: (voice: string) => void, query?: string): void {
+    this.backlogViews.push(entries.map((entry) => ({ text: entry.text, ...(entry.voice ? { voice: entry.voice } : {}) })));
+    this.backlogQueries.push(query ?? '');
+  }
+  hideBacklog(): void {}
   applyTimelineFrame(event: { track: string; progress: number }): void {
     this.timelineEvents.push({ track: event.track, progress: event.progress });
   }
@@ -87,10 +94,12 @@ class FakeStage implements AdvStage {
 
 class FakeAudio implements AudioHandle {
   bgm: (string | null)[] = [];
+  ambience: { src: string | null; fadeMs?: number }[] = [];
   se: string[] = [];
   voice: string[] = [];
   stoppedAll = 0;
   playBgm(src: string | null): void { this.bgm.push(src); }
+  playAmbience(src: string | null, fadeMs?: number): void { this.ambience.push({ src, fadeMs }); }
   playSe(src: string): void { this.se.push(src); }
   playVoice(src: string): void { this.voice.push(src); }
   stopAll(): void { this.stoppedAll++; }
@@ -418,6 +427,18 @@ describe('AdvRenderer', () => {
     expect(stage.removed).toEqual(['lynn:armor']);
     expect(audio.bgm).toEqual(['tense_01']);
     expect(audio.voice).toEqual(['lynn_01']);
+  });
+
+  it('@ambience 支持切换与 off，并与 BGM 保持独立', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const audio = new FakeAudio();
+    const r = new AdvRenderer(stage, audio);
+    r.subscribe(bus);
+
+    bus.emit('instr', { name: 'ambience', args: ['rain_window', '800'], modifiers: new Map(), pos: { file: 'x', line: 1, col: 1 } });
+    bus.emit('instr', { name: 'ambience', args: ['off', '500'], modifiers: new Map(), pos: { file: 'x', line: 2, col: 1 } });
+    expect(audio.ambience).toEqual([{ src: 'rain_window', fadeMs: 800 }, { src: null, fadeMs: 500 }]);
   });
 
   it('M3-2 裸位置修饰符 @ left 生效（规范示例写法）', () => {
@@ -911,6 +932,11 @@ describe('R1 行为改进与新特性', () => {
     // toggleBacklog：fake stage 未实现覆盖层仍正常切换状态
     expect(r.toggleBacklog()).toBe(true);
     expect(r.backlogOpen).toBe(true);
+    r.appendBacklogSearch('四');
+    expect(stage.backlogQueries.at(-1)).toBe('四');
+    expect(stage.backlogViews.at(-1)?.map((entry) => entry.text)).toEqual(['第四行']);
+    r.handleBacklogEscape();
+    expect(r.backlogSearchQuery).toBe('');
     expect(r.toggleBacklog()).toBe(false);
     // 未注入 backlog 时 toggle 返回 false
     const r2 = new AdvRenderer(stage, new FakeAudio());

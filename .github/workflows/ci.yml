@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -16,13 +16,19 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
-      - name: Build
-        run: npm run build
+      - name: Documentation truth
+        run: npm run docs:capabilities:check
+      - name: Repository hygiene
+        run: npm run verify:hygiene
       - name: Typecheck
         run: npm run typecheck
       - name: Test
         run: npm test
-      - name: Lint starter
-        run: node packages/cli/dist/index.js lint examples/starter
-      - name: Simulate starter
-        run: node packages/cli/dist/index.js simulate examples/starter --assume battleWon=true
+      - name: Verify starter
+        run: |
+          npm run lint -w surdet-starter
+          node packages/cli/dist/index.js simulate examples/starter --assume battleWon=true
+      - name: Verify formal game
+        run: npm run verify:formal
+      - name: Verify P1/P2 gate
+        run: npm run verify:p1p2

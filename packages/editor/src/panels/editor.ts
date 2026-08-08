@@ -104,7 +104,7 @@ function kindBadge(l: LineModel): string {
 /* UI 第二阶段：块类型色带 —— 左侧色条 + 徽章分色，行类型一眼可辨 */
 const FLOW_CMDS = new Set(['goto', 'jump', 'call', 'if', 'elif', 'loop', 'choice', 'switch']);
 const STAGE_CMDS = new Set([
-  'bg', 'show', 'hide', 'bgm', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'wait',
+  'bg', 'show', 'hide', 'bgm', 'ambience', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'transition', 'wait',
   'fadein', 'fadeout', 'particle', 'mov', 'tint', 'video', 'nvl', 'tip', 'note', 'title', 'chapter', 'center',
 ]);
 

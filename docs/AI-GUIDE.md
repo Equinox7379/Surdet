@@ -31,6 +31,7 @@ node packages/cli/dist/index.js new <游戏名>        # 或 npm run build -w @s
 # 3) 静态校验（必须 0 错误；错误带 文件:行:列 + 错误码 + 修复建议 hint）
 node packages/cli/dist/index.js lint <游戏目录>
 node packages/cli/dist/index.js lint <游戏目录> --json   # 机器可读 JSON（AI 自我修正循环用，见 §5）
+node packages/cli/dist/index.js stats <游戏目录> --json  # 项目统计（只输出有效 JSON）
 
 # 4) 预览（浏览器 http://localhost:5173）
 npm run dev -w surdet-<游戏名>
@@ -42,7 +43,36 @@ node packages/cli/dist/index.js build <游戏目录>
 node packages/cli/dist/index.js pack <游戏目录>
 ```
 
+通用宿主接线：`@surdet/host` 提供 `createDefaultHost`、`connectSystemRouter`、`createSystemHooks` 和 Profile 存储。新游戏只需通过 adapter 注入自己的系统实例、配置、标题/资源回调；不要复制 starter 或正式游戏的整套 `bus.on('system')` 接线，也不要把具体场景 ID、素材 key 或结局文案写进 host 包。游戏侧可维护自己的 `system-adapters.ts`，公共 host 只负责路由与生命周期。
+
+```ts
+const host = createDefaultHost({
+  interpreter,
+  renderer,
+  stage,
+  adapters: [
+    { id: 'battle', open: (payload, context) => { /* 游戏自己的战斗规则 */ context.resume(); } },
+  ],
+});
+connectSystemRouter(bus, host);
+```
+
+交互式 adapter 在 `open` 前由 host 自动暂停解释器；结束时调用 `context.resume()`，失败时调用 `context.fail(error)`。需要存档的系统通过 `createSystemHooks` 提供 `snapshot/validate/restore`，所有参与恢复的 adapter 会先完成校验，再发生任何状态写入。
+
 时间轴演出是可选能力。若需要让背景、立绘、镜头和屏幕效果同时运动，在 `content/timelines/` 放置 JSON，并在 `.gal` 中用 `@timeline <id>` 引用。旧项目可以继续只使用传统演出指令。
+
+传统转场与震动也可直接写入场景：
+
+```gal
+@transition fade 600          # fade / slide-left / slide-right / circle
+@shake horizontal 400 12      # 方向：both / horizontal / vertical / diagonal
+@ambience rain_window 800     # 独立于 BGM 的环境音循环声道
+@ambience off 500
+```
+
+`@transition` 的时长会限制在 1..10000ms；未知转场名会被 CLI lint 和编辑器判为错误，不会静默降级。`@shake` 的省略方向写法仍兼容：`@shake 400 8`。环境音最多同时播放一条，与 BGM、SE、语音分轨独立，音量设置项为“环境音量”。
+
+开发预览支持 `.gal` 场景热更新：每个 Vite 游戏把 `import.meta.glob('../content/scenario/**/*.gal', { query: '?raw', import: 'default' })` 放在独立的 `scene-hmr-boundary.ts` 自接受模块中，主入口不自接受，避免重建 PixiStage、AudioManager、FrameScheduler 等长期实例。Vite 开发服务器收到剧本变更后会重新编译并原子替换场景注册表；若当前正停在该场景，会按新指令流限制 PC 并重放当前状态。编译失败、场景 ID 不一致时保留旧场景并在控制台报告。该能力只存在于 `import.meta.hot` 开发分支，正式构建不启动文件监听器，也不会改变正式包的运行时行为。
 
 ## 2. DSL 速查
 

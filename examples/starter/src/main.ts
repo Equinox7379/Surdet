@@ -26,8 +26,6 @@ import type {
   VarValue,
   SaveStorage,
   SaveSnapshot,
-  SaveSlotMeta,
-  SystemSnapshots,
   CombatConfig,
   CalendarConfig,
   NewGamePlusConfig,
@@ -50,13 +48,22 @@ import {
   stepSetting,
   SKIP_STRATEGY_ALL,
   buildGalleryViews,
-  buildBattleView,
-  buildMapView,
   GamepadPoller,
   FrameScheduler,
   RenderPerformanceMonitor,
+  AssetLoadQueue,
+  actionForKeyboardEvent,
 } from '@surdet/renderer';
-import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, FontRole } from '@surdet/renderer';
+import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
+import { LocalStorageProfileStorage } from '@surdet/host';
+import { connectSystemRouter, createDefaultHost, createSystemHooks } from '@surdet/host';
+import { createSystemAdapters } from './system-adapters.js';
+import { ResolvedAudio } from '../../shared/resolved-audio.js';
+import { createSettingsStorage } from '../../shared/settings-storage.js';
+import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
+import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
+import { installSceneHotReload } from '../../shared/scene-hmr.js';
+import { sceneFiles } from './scene-hmr-boundary.js';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -67,71 +74,11 @@ import shopConfig from '../content/config/shop.json';
 import growthConfig from '../content/config/growth.json';
 import achievementsConfig from '../content/config/achievements.json';
 
-// vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
-const sceneFiles = import.meta.glob('../content/scenario/**/*.gal', {
-  query: '?raw',
-  import: 'default',
-});
-
 // 时间轴与剧本分离：JSON 可被 starter、编辑器预览和打包版共同加载。
 const timelineFiles = import.meta.glob('../content/timelines/**/*.json', {
   eager: true,
   import: 'default',
 });
-
-/** 音频键 → 真实素材地址解析：注册过用映射 URL，否则原样透传（占位/缺失静默策略不变） */
-class ResolvedAudio implements AudioHandle {
-  #inner: AudioManager;
-  #urls: Map<string, string>;
-  constructor(inner: AudioManager, urls: Map<string, string>) {
-    this.#inner = inner;
-    this.#urls = urls;
-  }
-  #r(src: string): string { return this.#urls.get(src) ?? src; }
-  playBgm(src: string | null): void { this.#inner.playBgm(src === null ? null : this.#r(src)); }
-  playSe(src: string): void { this.#inner.playSe(this.#r(src)); }
-  playVoice(src: string): void { this.#inner.playVoice(this.#r(src)); }
-  stopAll(): void { this.#inner.stopAll(); }
-  setMasterVolume(v: number): void { this.#inner.setMasterVolume(v); }
-  getMasterVolume(): number { return this.#inner.getMasterVolume(); }
-  setBgmVolume(v: number): void { this.#inner.setBgmVolume(v); }
-  getBgmVolume(): number { return this.#inner.getBgmVolume(); }
-  setSeVolume(v: number): void { this.#inner.setSeVolume(v); }
-  getSeVolume(): number { return this.#inner.getSeVolume(); }
-  setVoiceVolume(v: number): void { this.#inner.setVoiceVolume(v); }
-  getVoiceVolume(): number { return this.#inner.getVoiceVolume(); }
-  isVoicePlaying(): boolean { return this.#inner.isVoicePlaying(); }
-}
-
-declare global {
-  interface Window {
-    /** Electron shell 经 preload 暴露的文件存档桥（异步 invoke IPC；浏览器环境不存在，回退 localStorage） */
-    surdetSave?: {
-      list(): Promise<string[]>;
-      read(slot: string): Promise<SaveSnapshot | null>;
-      write(slot: string, data: SaveSnapshot): Promise<void>;
-      delete(slot: string): Promise<void>;
-      listMeta(): Promise<SaveSlotMeta[]>;
-    };
-    /** 设置持久化桥（userData/settings.json；浏览器环境不存在，回退 localStorage） */
-    surdetSettings?: {
-      read(): Promise<unknown>;
-      write(data: unknown): Promise<void>;
-    };
-    /** 应用控制桥：退出/全屏/日志（Electron preload 暴露） */
-    surdetApp?: {
-      quit(): Promise<void>;
-      toggleFullscreen(): Promise<void>;
-      log(level: string, msg: string): Promise<void>;
-      reportError(context: string, message: string): Promise<string | null>;
-    };
-    /** 素材桥：打包 exe 内素材经主进程解密读取（浏览器环境不存在，回退直接 URL） */
-    surdetAsset?: {
-      list(): Promise<string[]>;
-      read(relPath: string): Promise<Uint8Array>;
-    };
-  }
-}
 
 async function main(): Promise<void> {
   const appEl = document.getElementById('app')!;
@@ -139,9 +86,16 @@ async function main(): Promise<void> {
   // 舞台
   const stage = new PixiStage();
   await stage.init();
+  const debugSessionId = `starter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const debugResourceIds = Object.freeze({
+    pixiStage: `${debugSessionId}:pixi-stage`,
+    audioManager: `${debugSessionId}:audio-manager`,
+    frameScheduler: `${debugSessionId}:frame-scheduler`,
+  });
 
   const fontBlobUrls = new Set<string>();
   const assetBlobUrls = new Set<string>();
+  let lastLoadingProgress: LoadingProgress = { total: 0, completed: 0, failed: 0, current: null, done: false };
   window.addEventListener('beforeunload', () => {
     for (const url of fontBlobUrls) URL.revokeObjectURL(url);
     fontBlobUrls.clear();
@@ -150,7 +104,6 @@ async function main(): Promise<void> {
   });
 
   // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
-  await loadConfiguredFonts();
   const speakerProfiles: SpeakerProfile[] = Object.entries(
     ((gameConfig as { characters?: Record<string, { name?: string; avatar?: string }> }).characters ?? {}),
   ).flatMap(([id, profile]) => {
@@ -184,9 +137,9 @@ async function main(): Promise<void> {
 
   // ===== M5 全家桶系统实例（数据驱动，宿主持有并驱动） =====
   // JSON 配置经 resolveJsonModule 推断为宽 string 类型，这里显式断言到引擎类型。
-  const calendar = new CalendarRunner(calendarConfig as CalendarConfig, store);
-  const combat = new CombatSolver(combatConfig as CombatConfig);
-  const affection = new AffectionSystem(
+  const calendar: CalendarRunner = new CalendarRunner(calendarConfig as CalendarConfig, store);
+  const combat: CombatSolver = new CombatSolver(combatConfig as CombatConfig);
+  const affection: AffectionSystem = new AffectionSystem(
     eventsConfig.profiles as AffectionProfile[],
     eventsConfig.events as RelationshipEvent[],
     store,
@@ -196,69 +149,34 @@ async function main(): Promise<void> {
   // 角色成长（经验/升级）：配置驱动曲线，升级属性增量写回变量仓库；状态随存档往返（引擎内聚）
   const growth = new GrowthSystem(growthConfig as GrowthConfig, store);
   // 成就系统：when 条件批量判定 + 事件触发解锁；状态经 SystemHooks 随存档往返
-  const achievements = new AchievementSystem(achievementsConfig as AchievementDef[], store);
+  const achievements: AchievementSystem = new AchievementSystem(achievementsConfig as AchievementDef[], store);
   // 事件调度器（兰斯式事件队列）：events.json scheduled[] 声明优先级事件，
   // 日历回合头/尾统一 dispatch；fired 状态经 SystemHooks 随存档往返
-  const scheduler = new EventScheduler(eventsConfig.scheduled as ScheduledEventDef[], store);
+  const scheduler: EventScheduler = new EventScheduler(eventsConfig.scheduled as ScheduledEventDef[], store);
 
   // 战斗采用交互式回合 UI：见下方 system 'battle' 事件处理（点击攻击 / 跳过行动）
 
   // 总线 + 解释器 + 渲染器（全家桶状态经 SystemHooks 随存档往返；成长系统引擎内聚，构造注入）
   const bus = new EventBus<CoreEventMap>();
-  const interp = new Interpreter(store, bus, registry, undefined, undefined, {
-    snapshot: (): SystemSnapshots => ({
-      calendar: calendar.snapshot(),
-      combat: combat.snapshot(),
-      affection: affection.snapshot(),
-      achievements: achievements.snapshot(),
-      eventScheduler: scheduler.snapshot(),
-    }),
-    restore: (s: SystemSnapshots) => {
-      if (s.calendar) calendar.restore(s.calendar);
-      if (s.combat) combat.restore(s.combat);
-      if (s.affection) affection.restore(s.affection);
-      if (s.achievements) achievements.restore(s.achievements);
-      if (s.eventScheduler) scheduler.restore(s.eventScheduler);
-    },
-  }, undefined, growth);
+  const interp = new Interpreter(store, bus, registry, undefined, undefined, createSystemHooks([
+    { id: 'calendar', snapshot: () => calendar.snapshot(), validate: (value) => calendar.validateSnapshot(value), restore: (value) => { calendar.validateSnapshot(value); calendar.restore(value); } },
+    { id: 'combat', snapshot: () => combat.snapshot(), validate: (value) => combat.validateSnapshot(value), restore: (value) => { combat.validateSnapshot(value); combat.restore(value); } },
+    { id: 'affection', snapshot: () => affection.snapshot(), validate: (value) => affection.validateSnapshot(value), restore: (value) => { affection.validateSnapshot(value); affection.restore(value); } },
+    { id: 'achievements', snapshot: () => achievements.snapshot(), validate: (value) => achievements.validateSnapshot(value), restore: (value) => { achievements.validateSnapshot(value); achievements.restore(value); } },
+    { id: 'eventScheduler', snapshot: () => scheduler.snapshot(), validate: (value) => scheduler.validateSnapshot(value), restore: (value) => { scheduler.validateSnapshot(value); scheduler.restore(value); } },
+  ]), undefined, growth);
   const audioManager = new AudioManager();
   /** 音频素材地址映射（loadAssets 填充：素材键 → Blob/文件 URL） */
   const audioUrls = new Map<string, string>();
   const audio: AudioHandle = new ResolvedAudio(audioManager, audioUrls);
 
-  // ===== 设置系统：文本速度/自动播放停留/音量（Electron 设置文件 / 浏览器 localStorage） =====
-  const desktopSettings = window.surdetSettings;
-  const settingsStorage: SettingsStorage = desktopSettings
-    ? {
-        load: async () => (await desktopSettings.read().catch(() => null)) as Partial<GameSettings> | null,
-        save: (s) =>
-          desktopSettings.write(s).catch((err) => {
-            console.error('[starter] 设置写入失败：', err);
-          }),
-      }
-    : {
-        load: () => {
-          try {
-            const raw = localStorage.getItem('surdet:settings');
-            return raw ? (JSON.parse(raw) as Partial<GameSettings>) : null;
-          } catch {
-            return null;
-          }
-        },
-        save: (s) => {
-          try {
-            localStorage.setItem('surdet:settings', JSON.stringify(s));
-          } catch (err) {
-            console.error('[starter] 设置写入失败：', err);
-          }
-        },
-      };
-  const settings = new SettingsStore(settingsStorage);
+  const settings = new SettingsStore(createSettingsStorage('starter'));
   await settings.load();
 
   // Backlog（文字记录）+ 渲染器（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
+  let videoActive = false;
   const renderer = new AdvRenderer(stage, audio, {
     typewriter,
     backlog,
@@ -267,7 +185,7 @@ async function main(): Promise<void> {
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
-    onWaitEnd: () => interp.finishWait(),
+    onWaitEnd: () => { videoActive = false; interp.finishWait(); },
   });
   settings.apply(typewriter, audio);
   renderer.subscribe(bus);
@@ -277,11 +195,48 @@ async function main(): Promise<void> {
     restore: (payload) => renderer.restorePresentation(payload),
   });
 
+  let systemMenuOpen = false;
+  let saveLoadOpen = false;
+  let onTitleScreen = false;
+  let galleryOpen = false;
+  let settingsOpen = false;
+
+  const rollbackRuntime = createRollbackRuntime({
+    interpreter: interp,
+    renderer,
+    stage,
+    audio,
+    isBlocked: () => onTitleScreen || systemMenuOpen || saveLoadOpen || galleryOpen || settingsOpen || videoActive,
+    label: 'starter',
+    onRefresh: () => refreshCommandRail(),
+  });
+  const clearRollback = (): void => rollbackRuntime.clear();
+  const canRollback = (): boolean => rollbackRuntime.canRollback();
+  const performRollback = (): boolean => rollbackRuntime.perform();
+
+  bus.on('video', () => { videoActive = true; });
+  bus.on('stateReset', () => { videoActive = false; });
+  bus.on('text', () => rollbackRuntime.captureText());
+
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
     get status(): string { return interp.status; },
     get rendererStatus(): string { return renderer.status; },
-    get position(): { sceneId: string; pc: number } | null { return interp.saveSnapshot()?.position ?? null; },
+    get sessionId(): string { return debugSessionId; },
+    get resourceIds(): typeof debugResourceIds { return { ...debugResourceIds }; },
+    get position(): { sceneId: string; pc: number; sceneHash?: string } | null {
+      const position = interp.saveSnapshot()?.position;
+      return position ? { sceneId: position.sceneId, pc: position.pc, sceneHash: position.sceneHash } : null;
+    },
+    get fontFamilies(): { body: string; title: string; ui: string } {
+      return {
+        body: stage.getFontFamily('body'),
+        title: stage.getFontFamily('title'),
+        ui: stage.getFontFamily('ui'),
+      };
+    },
+    get activeBlobUrls(): number { return assetBlobUrls.size + fontBlobUrls.size; },
+    get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     titleSelect: (id: string) => titleSelect(id),
     quickSave: () => quickSave(),
     quickLoad: () => quickLoad(),
@@ -299,266 +254,46 @@ async function main(): Promise<void> {
   /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
   let turnResumeSnap: SaveSnapshot | null = null;
 
-  // M5 system 事件 → 宿主驱动对应系统（@battle/@calendar/@affection/@event/@shop/@item）
-  bus.on('system', (p) => {
-    switch (p.type) {
-      case 'calendar': {
-        // 大地图交互：暂停剧情，玩家点选节点/结束回合；节点事件场景（场景 ID = eventId）经 hostJump 跳入
-        interp.pauseHost();
-        const renderMap = (): void => {
-          const nodes = calendar.visibleNodes().map((n) => ({
-            id: n.id,
-            name: n.name,
-            x: n.x,
-            y: n.y,
-            apCost: n.apCost,
-            isBase: n.isBase,
-            visited: calendar.hasVisited(n.id),
-            enterable: calendar.canEnter(n.id),
-          }));
-          stage.showMap(
-            buildMapView({ turn: calendar.turn, ap: calendar.ap, maxAp: calendar.maxAp, date: calendar.date, nodes }),
-            (nodeId) => {
-              const nodeDef = calendar.nodes().find((n) => n.id === nodeId);
-              const res = calendar.enter(nodeId);
-              if (!res.ok) {
-                console.info('[starter] calendar enter failed:', nodeId, res.reason);
-                renderMap();
-                return;
-              }
-              console.info('[starter] calendar enter:', nodeId);
-              // 据点节点 → 打开据点指令面板（兰斯式 base commands；无指令配置时按普通节点处理）
-              if (nodeDef?.isBase && calendar.baseCommands().length > 0) {
-                openBasePanel();
-                return;
-              }
-              if (res.eventId && registry.has(res.eventId)) {
-                interp.hostJump(res.eventId); // 节点事件场景（约定：场景 ID = eventId）
-              } else {
-                renderMap();
-              }
-            },
-            () => {
-              // 回合尾：先结算回合（advanceTurn 重置 AP/限次），再统一调度优先级事件；
-              // 事件带演出场景 → hostJump 进演出，场景结束经 sceneEnd 恢复挂起点续跑剧情
-              calendar.advanceTurn();
-              const endEv = scheduler.dispatch(store);
-              if (endEv) {
-                console.info(`[starter] 回合尾事件触发: ${endEv.id}${endEv.scene ? `（演出 → ${endEv.scene}）` : ''}`);
-                checkAchievements(); // effects 改变量后补查成就
-              }
-              if (endEv?.scene && registry.has(endEv.scene)) {
-                stage.hideMap(); // 演出场景覆盖地图（sceneEnd 恢复剧情后地图不再需要）
-                const snap = interp.saveSnapshot(); // 挂起点已越过 @calendar，恢复即续跑
-                if (snap) {
-                  turnResumeSnap = snap;
-                  interp.hostJump(endEv.scene);
-                  return;
-                }
-              }
-              interp.resumeHost(); // 无演出（或快照不可用）→ 直接恢复剧情
-            },
-          );
-        };
-        // 据点指令面板：执行指令 → 扣 AP/记次（引擎）+ 写回 effects（宿主变量）→ 刷新面板
-        let baseMsg = '选择要执行的指令。';
-        const openBasePanel = (): void => {
-          stage.showBaseCommands(
-            {
-              ap: calendar.ap,
-              maxAp: calendar.maxAp,
-              date: calendar.date,
-              message: baseMsg,
-              commands: calendar.baseCommands().map((c) => ({
-                id: c.id,
-                name: c.name,
-                apCost: c.apCost,
-                enabled: calendar.canExecBaseCommand(c.id),
-                remaining: calendar.baseCommandRemaining(c.id),
-              })),
-            },
-            (cmdId) => {
-              const res = calendar.execBaseCommand(cmdId);
-              const name = calendar.baseCommands().find((c) => c.id === cmdId)?.name ?? cmdId;
-              if (!res.ok) {
-                baseMsg = res.reason ?? '无法执行';
-                openBasePanel();
-                return;
-              }
-              // effects 写回宿主变量仓库（引擎不直改业务变量，分工一致）
-              for (const [varName, delta] of Object.entries(res.effects ?? {})) {
-                try {
-                  store.modify(varName, delta);
-                } catch (err) {
-                  console.warn('[starter] base command effect 写回失败:', varName, err);
-                }
-              }
-              baseMsg = `执行了「${name}」。`;
-              if (res.eventId && registry.has(res.eventId)) {
-                stage.hideBase();
-                interp.hostJump(res.eventId); // 指令演出事件
-                return;
-              }
-              checkAchievements(); // 效果变更后补查成就
-              openBasePanel();
-            },
-            () => {
-              stage.hideBase();
-              renderMap(); // 返回地图
-            },
-          );
-        };
-        // 回合头事件：打开地图前统一调度（优先级最高者触发；头事件只做 effects 结算——
-        // 场景演出无法在播完后回到地图（解释器无地图恢复点），演出留给回合尾事件）
-        const headEv = scheduler.dispatch(store);
-        if (headEv) {
-          console.info(`[starter] 回合头事件触发: ${headEv.id}（effects 已结算）`);
-          checkAchievements(); // effects 改变量后补查成就
-        }
-        renderMap();
-        break;
-      }
-      case 'battle': {
-        // 每次 @battle 都是新战斗：布阵后进入交互式回合 UI（点击敌方攻击 / 跳过行动）。
-        // pauseHost 冻结剧情：战斗结束 resumeHost 前，剧本不越过 @battle 推进
-        combat.start({ allies: ['sword'], enemies: ['goblin'] });
-        interp.pauseHost();
-        let battleMsg = '战斗开始！点击敌方单位发起攻击。';
-        const renderBattle = (): void => {
-          stage.showBattle(
-            buildBattleView(combat.snapshot(), (combatConfig as CombatConfig).skills),
-            {
-              onAttack: (targetUid, skillId) => {
-                // 敌方回合（AI 自动行动）忽略玩家点击，防 AI 行动窗口内误触发（审计修复）
-                if (combat.actingTeam !== (combatConfig as { teams?: string[] }).teams?.[0]) return;
-                // skillId 来自战斗覆盖层的技能选择条（null = 普攻）
-                const acting = combat.units.find((u) => u.alive && u.team === combat.actingTeam);
-                if (!acting) return;
-                try {
-                  const a = combat.act(acting.uid, targetUid, skillId ?? undefined);
-                  battleMsg = a.hit
-                    ? `${acting.name} 造成 ${a.finalDamage} 点伤害${a.crit ? '（暴击）' : ''}${a.killed ? '，击倒了目标！' : ''}`
-                    : `${acting.name} 的攻击落空了`;
-                } catch (err) {
-                  battleMsg = err instanceof Error ? err.message : String(err);
-                }
-                settleBattle();
-              },
-              onMove: (dir) => {
-                // 移动行动方单位（1D 阵型；移动消耗本次行动）
-                const moving = combat.units.find((u) => u.alive && u.team === combat.actingTeam);
-                if (!moving) return;
-                try {
-                  combat.moveUnit(moving.uid, dir);
-                  battleMsg = `${moving.name} 调整了阵型（消耗本次行动）。`;
-                } catch (err) {
-                  battleMsg = err instanceof Error ? err.message : String(err);
-                }
-                settleBattle();
-              },
-              onPass: () => {
-                // 僵局出口（宿主契约，见 CombatSolver.pass）：保证 maxTurns 在互打不到时仍生效
-                combat.pass();
-                battleMsg = '无可攻击目标，跳过本次行动。';
-                settleBattle();
-              },
-            },
-            battleMsg,
-          );
-          // 敌方 AI：短暂延迟后自动执行建议（攻击 > 接近 > 跳过），玩家无需操作敌方
-          const enemyTeam = (combatConfig as CombatConfig).teams[1] ?? 'enemies';
-          if (!combat.finished && combat.actingTeam === enemyTeam) {
-            setTimeout(() => {
-              if (combat.finished || combat.actingTeam !== enemyTeam) return;
-              const sug = combat.suggestAction(enemyTeam);
-              try {
-                if (sug.kind === 'attack') {
-                  const a = combat.act(sug.attackerUid, sug.targetUid, sug.skillId ?? undefined);
-                  battleMsg = a.hit
-                    ? `敌方攻击造成 ${a.finalDamage} 点伤害${a.crit ? '（暴击）' : ''}${a.killed ? '，我方单位倒下！' : ''}`
-                    : '敌方攻击落空了。';
-                } else if (sug.kind === 'move') {
-                  combat.moveUnit(sug.uid, sug.dir);
-                  battleMsg = '敌方正在接近……';
-                } else {
-                  combat.pass();
-                  battleMsg = '敌方在观望局势。';
-                }
-              } catch (err) {
-                battleMsg = err instanceof Error ? err.message : String(err);
-                if (!combat.finished) combat.pass(); // 异常兜底防卡死
-              }
-              settleBattle();
-            }, 650);
-          }
-        };
-        const settleBattle = (): void => {
-          if (combat.finished) {
-            stage.hideBattle();
-            store.set('battleWon', combat.winner === 'allies');
-            console.info('[starter] battle finished, winner:', combat.winner, 'ngp cleared:', ngp.isCleared());
-            interp.resumeHost(); // 战斗结束 → 恢复剧情推进
-          } else {
-            renderBattle();
-          }
-        };
-        renderBattle();
-        break;
-      }
-      case 'affection': {
-        const charId = p.args[0];
-        const tier = charId ? affection.stageOf(charId)?.stage ?? null : null;
-        console.info('[starter] affection stage:', tier);
-        break;
-      }
-      case 'event': {
-        const evId = p.args[0];
-        if (evId && affection.consumeEvent(evId)) {
-          console.info('[starter] event consumed:', evId);
-        }
-        break;
-      }
-      case 'achievement': {
-        // @achievement unlock id：剧情节点显式解锁成就（when 之外的触发途径）
-        const mode = p.args[0];
-        const id = p.args[1];
-        if (mode === 'unlock' && id) {
-          try {
-            const res = achievements.unlock(id);
-            if (res.fresh) stage.showBanner(`成就解锁：${res.def.hidden ? '???' : res.def.name}`, 'tip');
-          } catch (err) {
-            console.warn('[starter] achievement unlock failed:', err instanceof Error ? err.message : err);
-          }
-        }
-        break;
-      }
-      case 'shop': {
-        // 商店：暂停剧情 → 打开商店覆盖层；@shop 参数 = 金币变量 道具变量（缺省 gold/bag）
-        const goldVar = p.args[0] ?? 'gold';
-        const itemsVar = p.args[1] ?? 'bag';
-        interp.pauseHost();
-        let shopMsg = '欢迎光临！';
-        const renderShop = (): void => {
-          stage.showShop(
-            { gold: store.getNumber(goldVar), items: shop.items, message: shopMsg },
-            (itemId) => {
-              const res = shop.buy(goldVar, itemsVar, itemId);
-              const name = shop.items.find((i) => i.id === itemId)?.name ?? itemId;
-              shopMsg = res.ok ? `购买了「${name}」。` : (res.reason ?? '无法购买');
-              renderShop(); // 结算后刷新金币/按钮状态
-            },
-            () => {
-              interp.resumeHost(); // 离开商店 → 恢复剧情
-            },
-          );
-        };
-        renderShop();
-        break;
-      }
-      default:
-        console.info('[starter] system event:', p.type);
-    }
+  const host = createDefaultHost({
+    interpreter: interp,
+    renderer,
+    stage,
+    adapters: createSystemAdapters({
+      interpreter: interp,
+      stage,
+      store,
+      registry,
+      calendar,
+      scheduler,
+      combat,
+      combatConfig: combatConfig as CombatConfig,
+      affection,
+      shop,
+      achievements,
+      onAchievementsChanged: () => checkAchievements(),
+      onBattleResult: (winner) => store.set('battleWon', winner === 'allies'),
+      onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
+      onLog: (message) => console.info(`[starter] ${message}`),
+    }),
+    onError: (error) => console.error('[starter] 宿主 adapter 失败：', error),
+    onSystemBoundary: () => { clearRollback(); },
+    onStateReset: () => { turnResumeSnap = null; },
   });
+  connectSystemRouter(bus, host, (error) => console.error('[starter] system 路由失败：', error));
+  const debugApi = (window as unknown as { __surdetDebug?: Record<string, unknown> }).__surdetDebug;
+  if (debugApi) {
+    debugApi.systemBoundaryProbe = async (): Promise<{ opened: boolean; hadRollback: boolean; rollbackBlocked: boolean }> => {
+      rollbackRuntime.captureText();
+      const hadRollback = canRollback();
+      const opened = await host.routeSystem('calendar', {});
+      const rollbackBlocked = !canRollback();
+      host.reset();
+      return { opened, hadRollback, rollbackBlocked };
+    };
+  }
+  bus.on('stateReset', () => host.reset());
+
+  // @system 统一由 @surdet/host 路由；游戏只在上方注入配置、求解器和结果回调。
 
   // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
   stage.app!.canvas.addEventListener('pointerdown', (e) => {
@@ -627,6 +362,7 @@ async function main(): Promise<void> {
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
   bus.on('autosave', (snap) => {
+    if (rollbackRuntime.isRestoring()) return;
     void saves.save(AUTO_SLOT, enrichSnapshot(snap)).then(() => {
       console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
     });
@@ -634,6 +370,7 @@ async function main(): Promise<void> {
 
   // 存档场景哈希不匹配：存档后剧本被编辑，pc 定位可能漂移（引擎仍照常加载，此处提醒玩家）
   bus.on('saveMismatch', (p) => {
+    clearRollback();
     console.warn(`[starter] 存档与剧本版本不一致（场景 ${p.sceneId}）：定位可能漂移，建议重新开始该场景`);
   });
 
@@ -689,35 +426,13 @@ async function main(): Promise<void> {
     return null;
   }
 
-  async function loadConfiguredFonts(): Promise<void> {
-    const cfg = gameConfig as { font?: string; fonts?: Partial<Record<FontRole, string>> };
-    const roles: FontRole[] = ['body', 'title', 'ui'];
-    const configured = cfg.fonts && typeof cfg.fonts === 'object' ? cfg.fonts : null;
-    if (configured) {
-      for (const role of roles) {
-        const path = configured[role];
-        if (typeof path !== 'string' || path.length === 0) continue;
-        const url = await resolveFontUrl(path);
-        if (!url) {
-          console.warn(`[starter] 未找到 ${role} 字体文件，使用回退字体：`, path);
-          continue;
-        }
-        if (url.startsWith('blob:')) fontBlobUrls.add(url);
-        const ok = await stage.registerFontRole(role, url);
-        if (ok) console.info(`[starter] ${role} 字体已加载：`, path);
-      }
-      return;
-    }
-    if (typeof cfg.font === 'string' && cfg.font.length > 0) {
-      const url = await resolveFontUrl(cfg.font);
-      if (url) {
-        if (url.startsWith('blob:')) fontBlobUrls.add(url);
-        if (await stage.registerFont(url)) console.info('[starter] 兼容单字体已加载：', cfg.font);
-      } else {
-        console.warn('[starter] 未找到字体文件，回退系统字体：', cfg.font);
-      }
-    }
-  }
+  const configuredFontJobs = createConfiguredFontJobs({
+    config: gameConfig,
+    fontBlobUrls,
+    label: 'starter',
+    resolveFontUrl,
+    stage,
+  });
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
@@ -732,46 +447,81 @@ async function main(): Promise<void> {
       const filename = rel.split('/').pop() ?? 'asset.bin';
       const ext = filename.split('.').pop()?.toLowerCase() ?? '';
       const base = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: MIME[ext] ?? 'application/octet-stream' }));
-      assetBlobUrls.add(base);
       // Pixi resolves its loader from the URL extension; the fragment does not affect the Blob fetch.
       return `${base}#${filename}`;
     };
-    const register = async (rel: string, url: string): Promise<void> => {
+    const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
       const kind = parts[0] ?? '';
       const fname = parts[parts.length - 1] ?? '';
       const format = fname.split('.').pop()?.toLowerCase();
       if (kind === 'bg' && IMG.test(fname)) {
         await stage.registerBackground(fname.replace(IMG, ''), url, format);
+        return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const seg = fname.replace(IMG, '').split('_');
-        if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
+        if (seg[0]) {
+          await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
+          return true;
+        }
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await stage.registerAvatar(fname.replace(IMG, ''), url, format);
+        return true;
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
         audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
+        return true;
+      }
+      return false;
+    };
+    const priorityFor = (rel: string): AssetPriority => {
+      if (rel === 'bg/title_bg.png' || rel.startsWith('fonts/')) return 'critical';
+      if (rel.startsWith('bg/') || rel.startsWith('portrait/') || rel.startsWith('avatar/')) return 'scene';
+      return 'background';
+    };
+    const loadAndRegister = async (rel: string, url: string, revoke?: () => void, retain?: () => void): Promise<void> => {
+      try {
+        const retained = await register(rel, url);
+        if (retained) retain?.();
+        else revoke?.();
+      } catch (error) {
+        revoke?.();
+        throw error;
       }
     };
+    const jobs: AssetLoadJob[] = [...configuredFontJobs()];
     const desktopAsset = window.surdetAsset;
     if (desktopAsset) {
       // 打包环境：素材经主进程读取（自动解密）→ Blob URL 注册
-      const files = await desktopAsset.list();
+      const files = (await desktopAsset.list()).filter((rel) => !rel.startsWith('fonts/'));
       for (const rel of files) {
-        try {
-          const bytes = await desktopAsset.read(rel);
-          await register(rel, blobAssetUrl(rel, bytes));
-        } catch (err) {
-          console.warn('[starter] 素材加载失败:', rel, err);
-        }
+        jobs.push({
+          id: rel,
+          priority: priorityFor(rel),
+          load: async () => {
+            const bytes = await desktopAsset.read(rel);
+            const base = blobAssetUrl(rel, bytes).split('#')[0]!;
+            const filename = rel.split('/').pop() ?? 'asset.bin';
+            await loadAndRegister(rel, `${base}#${filename}`, () => URL.revokeObjectURL(base), () => assetBlobUrls.add(base));
+          },
+        });
       }
     } else {
       // 浏览器开发环境：vite 直接提供素材 URL（无素材时 glob 为空，占位策略兜底）
       const imgs = import.meta.glob('../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg}', { query: '?url', import: 'default', eager: true });
-      for (const [p, url] of Object.entries(imgs)) await register(p.replace('../content/assets/', ''), url as string);
       const auds = import.meta.glob('../content/assets/**/*.{mp3,ogg,wav,m4a,flac}', { query: '?url', import: 'default', eager: true });
-      for (const [p, url] of Object.entries(auds)) await register(p.replace('../content/assets/', ''), url as string);
+      for (const [p, url] of [...Object.entries(imgs), ...Object.entries(auds)]) {
+        const rel = p.replace('../content/assets/', '');
+        jobs.push({ id: rel, priority: priorityFor(rel), load: () => loadAndRegister(rel, url as string) });
+      }
     }
+    const finalProgress = await new AssetLoadQueue(4).run(jobs, (progress) => {
+      lastLoadingProgress = { ...progress };
+      stage.showLoading?.(progress);
+    });
+    lastLoadingProgress = { ...finalProgress };
+    if (finalProgress.failed > 0) console.warn(`[starter] ${finalProgress.failed} asset(s) failed`);
+    stage.hideLoading?.();
     console.info('[starter] 素材加载完成：音频条目', audioUrls.size);
   }
 
@@ -811,7 +561,8 @@ async function main(): Promise<void> {
     clearedAt: number;
   }
   const CLEAR_KEY = 'surdet:clearRecord';
-  function loadClearRecord(): GlobalClearRecord | null {
+  const profileStorage = new LocalStorageProfileStorage(localStorage);
+  async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
       return raw ? (JSON.parse(raw) as GlobalClearRecord) : null;
@@ -819,14 +570,32 @@ async function main(): Promise<void> {
       return null;
     }
   }
-  function saveClearRecord(rec: GlobalClearRecord): void {
+  async function loadClearRecord(): Promise<GlobalClearRecord | null> {
+    try {
+      const value = window.surdetProfile
+        ? await window.surdetProfile.read('clear-record')
+        : await profileStorage.read<GlobalClearRecord>('clear-record');
+      if (value !== null) return value as GlobalClearRecord;
+    } catch (err) {
+      console.warn('[starter] Profile 通关记录读取失败，尝试兼容记录：', err);
+    }
+    return loadLegacyClearRecord();
+  }
+  async function saveClearRecord(rec: GlobalClearRecord): Promise<void> {
+    try {
+      if (window.surdetProfile) await window.surdetProfile.write('clear-record', rec);
+      else await profileStorage.write('clear-record', rec);
+      return;
+    } catch (err) {
+      console.error('[starter] Profile 通关记录写入失败，尝试兼容记录：', err);
+    }
     try {
       localStorage.setItem(CLEAR_KEY, JSON.stringify(rec));
     } catch (err) {
-      console.error('[starter] 通关记录写入失败：', err);
+      console.error('[starter] 兼容通关记录写入失败：', err);
     }
   }
-  let clearRecord = loadClearRecord();
+  let clearRecord = await loadClearRecord();
 
   // 周目计数会话标志：同一会话（新游戏/读档之间）多次 @clear 只计 1 个周目，
   // 避免同一周目达成多结局（ClearTracker 允许）时 playthroughs 虚增
@@ -845,7 +614,7 @@ async function main(): Promise<void> {
     rec.variables = store.snapshot() as Record<string, unknown>;
     rec.clearedAt = Date.now();
     clearRecord = rec;
-    saveClearRecord(rec);
+    void saveClearRecord(rec);
     console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目 · 收集 ${rec.endings.length} 结局）`);
   });
 
@@ -889,13 +658,17 @@ async function main(): Promise<void> {
     }
   }
   // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
-  bus.on('text', () => checkAchievements());
+  bus.on('text', () => { if (!rollbackRuntime.isRestoring()) checkAchievements(); });
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   /** 标题画面显示中（右键系统菜单守卫用；showTitleScreen 置真，开局/读档进入游戏置假） */
-  let onTitleScreen = false;
   function showTitleScreen(): void {
     onTitleScreen = true;
+    clearRollback();
+    systemMenuOpen = false;
+    saveLoadOpen = false;
+    galleryOpen = false;
+    settingsOpen = false;
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
     stage.clearPresentation();
@@ -918,17 +691,18 @@ async function main(): Promise<void> {
   }
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
-  function titleSelect(id: string): void {
+  async function titleSelect(id: string): Promise<void> {
     switch (id) {
       case 'new': {
         onTitleScreen = false;
+        clearRollback();
         renderer.resetSession();
         stage.clearPresentation();
         stage.hideTitle();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
-        const rec = loadClearRecord();
+        const rec = await loadClearRecord();
         if (rec) {
           const inherited = ngp.computeInheritFrom(
             store.snapshot(),
@@ -959,9 +733,21 @@ async function main(): Promise<void> {
     }
   }
 
+  if (import.meta.hot) {
+    installSceneHotReload({
+      hot: import.meta.hot,
+      registry,
+      interpreter: interp,
+      label: 'starter',
+      sceneFiles,
+      resolveSceneUrl: (path) => new URL(path, import.meta.url).href,
+    });
+  }
+
   // ===== 存档/读档 UI：多槽位 + 快速/自动档 =====
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load'): Promise<void> {
+    saveLoadOpen = true;
     const metas = await saves.list();
     const byId = new Map(metas.map((m) => [m.id, m]));
     const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
@@ -977,6 +763,7 @@ async function main(): Promise<void> {
       };
     });
     stage.showSaveLoad({ mode, slots }, (slotId) => {
+      saveLoadOpen = false;
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
@@ -990,6 +777,7 @@ async function main(): Promise<void> {
             const snap = await saves.load(slotId);
             onTitleScreen = false;
             stage.hideTitle();
+            clearRollback();
             interp.loadSnapshot(snap);
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
             console.info('[starter] 已读档', slotId);
@@ -998,11 +786,12 @@ async function main(): Promise<void> {
           }
         })();
       }
-    }, () => {});
+    }, () => { saveLoadOpen = false; });
   }
 
   // ===== 系统菜单：Esc / 右键唤出 =====
   function openSystemMenu(): void {
+    systemMenuOpen = true;
     stage.showSystemMenu(
       [
         { id: 'resume', label: '返回游戏' },
@@ -1014,6 +803,7 @@ async function main(): Promise<void> {
         { id: 'title', label: '回到标题' },
       ],
       (id) => {
+        systemMenuOpen = false;
         switch (id) {
           case 'save': void openSaveLoad('save'); break;
           case 'load': void openSaveLoad('load'); break;
@@ -1025,7 +815,7 @@ async function main(): Promise<void> {
         }
         refreshCommandRail();
       },
-      () => {},
+      () => { systemMenuOpen = false; },
     );
   }
 
@@ -1058,6 +848,7 @@ async function main(): Promise<void> {
     if (!await saves.has(QUICK_SLOT)) return false;
     try {
       const snap = await saves.load(QUICK_SLOT);
+      clearRollback();
       interp.loadSnapshot(snap);
       clearCountedThisSession = false;
       console.info('[starter] 快速读档');
@@ -1070,7 +861,6 @@ async function main(): Promise<void> {
 
 
   // ===== 鉴赏（回想）：CG 回看 + 音乐播放；解锁状态来自 GalleryState（随存档持久化） =====
-  let galleryOpen = false;
   function openGallery(): void {
     const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
     stage.showGallery({
@@ -1083,18 +873,18 @@ async function main(): Promise<void> {
         galleryOpen = false;
         interp.hostJump(item.scene, item.label);
       },
+      onClose: () => { galleryOpen = false; },
     });
     galleryOpen = true;
   }
 
   // ===== 设置图形面板：◀ ▶ 步进（状态由 SettingsStore 持有，改后重新投影并刷新面板） =====
-  let settingsOpen = false;
   function refreshSettingsPanel(): void {
     const s = settings.settings;
     stage.showSettings(
       SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
       (id, dir) => {
-        const next = stepSetting(settings.settings, id as keyof GameSettings, dir);
+        const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
         void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
           // 改值立即投影生效（打字速度/音量/自动停留），并刷新面板展示
           settings.apply(typewriter, audio);
@@ -1116,6 +906,7 @@ async function main(): Promise<void> {
       { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
       { id: 'qsave', icon: 'S', label: '快存', tooltip: '快速存档' },
       { id: 'qload', icon: 'L', label: '快读', tooltip: '快速读档' },
+      { id: 'rollback', icon: '↶', label: '回退', enabled: canRollback(), tooltip: '回到上一条文本' },
       { id: 'settings', icon: '⚙', label: '设置', active: settingsOpen, tooltip: '打开设置' },
       { id: 'hide', icon: '□', label: '界面', active: renderer.interfaceHidden, tooltip: '隐藏界面' },
       { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
@@ -1133,6 +924,7 @@ async function main(): Promise<void> {
       case 'backlog': renderer.toggleBacklog(); break;
       case 'qsave': quickSave(); break;
       case 'qload': void quickLoad(); break;
+      case 'rollback': performRollback(); break;
       case 'settings':
         settingsOpen = !settingsOpen;
         if (settingsOpen) refreshSettingsPanel(); else stage.hideSettings();
@@ -1198,10 +990,65 @@ async function main(): Promise<void> {
     }
   });
 
+  function routeGameAction(action: GameAction): void {
+    switch (action) {
+      case 'advance': {
+        const st = interp.status;
+        if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') renderer.advance();
+        break;
+      }
+      case 'auto': renderer.toggleAuto(); break;
+      case 'skip': {
+        if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) renderer.toggleSkipAll();
+        else renderer.toggleSkip();
+        break;
+      }
+      case 'backlog': renderer.toggleBacklog(); break;
+      case 'menu': openSystemMenu(); break;
+      case 'quickSave': void quickSave(); break;
+      case 'quickLoad': void quickLoad(); break;
+      case 'rollback': performRollback(); break;
+      case 'hideUi': renderer.toggleHideInterface(); break;
+    }
+    refreshCommandRail();
+  }
+
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   window.addEventListener('keydown', (e) => {
     if (onTitleScreen) return;
+    if (renderer.backlogOpen) {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
+        e.preventDefault(); renderer.focusBacklogSearch(); return;
+      }
+      if (e.code === 'Backspace' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault(); renderer.backspaceBacklogSearch(); return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault(); renderer.appendBacklogSearch(e.key); return;
+      }
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        if (!renderer.handleBacklogEscape()) renderer.toggleBacklog();
+        refreshCommandRail();
+        return;
+      }
+      if (e.code === 'PageUp' || e.code === 'PageDown') {
+        e.preventDefault(); stage.scrollBacklog(e.code === 'PageUp' ? -240 : 240); return;
+      }
+    }
+    if (renderer.status === 'choice' && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
+      e.preventDefault();
+      if (e.code === 'ArrowUp') renderer.choiceUp(); else renderer.choiceDown();
+      return;
+    }
+    const action = actionForKeyboardEvent(e, settings.settings.keyPreset);
+    if (action) {
+      e.preventDefault(); routeGameAction(action); return;
+    }
+    if (e.code === 'KeyX' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault(); renderer.toggleSkipAll(); refreshCommandRail(); return;
+    }
     if (e.key === 'Escape') {
       openSystemMenu();
       return;
@@ -1219,6 +1066,10 @@ async function main(): Promise<void> {
       e.preventDefault();
       if (e.key === 'ArrowUp') renderer.choiceUp();
       else renderer.choiceDown();
+      return;
+    }
+    if (e.key === 'ArrowUp' && performRollback()) {
+      e.preventDefault();
       return;
     }
     if (renderer.status === 'choice' && /^[1-9]$/.test(e.key)) {

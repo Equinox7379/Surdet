@@ -21,6 +21,8 @@ import type {
 import { NULL_AUDIO } from './types.js';
 import { TimelinePlayer, type TimelinePlayerSnapshot } from './timeline-player.js';
 import type { RendererPluginHost } from './plugin-host.js';
+import type { ShakeDirection } from './world-effects-controller.js';
+import { BacklogSearchController } from './backlog-search-controller.js';
 
 /** 渲染状态机 */
 export type RenderStatus = 'idle' | 'typing' | 'awaiting' | 'choice';
@@ -78,6 +80,7 @@ export class AdvRenderer {
   #backlog: Backlog | null;
   /** Backlog 覆盖层展示中 */
   #backlogOpen = false;
+  #backlogSearch = new BacklogSearchController();
   /** NVL（全屏小说文本）模式 */
   #nvl = false;
   /** 当前选择肢（键盘导航用；原始 index 列表） */
@@ -190,6 +193,8 @@ export class AdvRenderer {
     this.#skipMode = false;
     this.#skipAll = false;
     this.#backlogOpen = false;
+    this.#backlogSearch.clear();
+    this.#backlogSearch.blur();
     this.#nvl = false;
     this.#interfaceHidden = false;
     this.#clearTimelines();
@@ -303,9 +308,11 @@ export class AdvRenderer {
     if (!this.#backlog) return false;
     this.#backlogOpen = !this.#backlogOpen;
     if (this.#backlogOpen) {
-      this.#stage.showBacklog?.(this.#backlog.entries(), (voice) => this.#audio.playVoice(voice));
+      this.#renderBacklog();
     } else {
       this.#stage.hideBacklog?.();
+      this.#backlogSearch.clear();
+      this.#backlogSearch.blur();
     }
     this.#requestFrame();
     return this.#backlogOpen;
@@ -327,9 +334,49 @@ export class AdvRenderer {
     return this.#backlogOpen;
   }
 
+  /** Ctrl+F：进入 Backlog 查询模式。 */
+  focusBacklogSearch(): boolean {
+    if (!this.#backlogOpen || !this.#backlog) return false;
+    this.#backlogSearch.focus();
+    this.#renderBacklog();
+    return true;
+  }
+
+  appendBacklogSearch(value: string): boolean {
+    if (!this.#backlogOpen || !this.#backlog || value.length === 0) return false;
+    this.#backlogSearch.append(value);
+    this.#renderBacklog();
+    return true;
+  }
+
+  backspaceBacklogSearch(): boolean {
+    if (!this.#backlogOpen || !this.#backlog) return false;
+    this.#backlogSearch.backspace();
+    this.#renderBacklog();
+    return true;
+  }
+
+  /** Escape 优先清空查询，再由宿主第二次 Escape 关闭覆盖层。 */
+  handleBacklogEscape(): boolean {
+    if (!this.#backlogOpen) return false;
+    const consumed = this.#backlogSearch.handleEscape();
+    if (consumed) this.#renderBacklog();
+    return consumed;
+  }
+
+  get backlogSearchQuery(): string {
+    return this.#backlogSearch.query;
+  }
+
   /** 舞台未实现 Backlog 覆盖层时的宿主回退取数入口 */
   backlogEntries() {
     return this.#backlog?.entries() ?? [];
+  }
+
+  #renderBacklog(): void {
+    if (!this.#backlog) return;
+    const entries = this.#backlogSearch.results(this.#backlog.entries()).map((result) => result.entry);
+    this.#stage.showBacklog?.(entries, (voice) => this.#audio.playVoice(voice), this.#backlogSearch.query);
   }
 
   /** ▼ 呼吸动画累加（PixiStage 内部时间轴驱动上下浮动） */
@@ -416,6 +463,7 @@ export class AdvRenderer {
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
     this.#backlog?.add(p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
+    if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
     if (this.#nvl) {
@@ -526,6 +574,7 @@ export class AdvRenderer {
     for (const event of events) {
       if (event.track === 'audio' && typeof event.cue.key === 'string' && (event.started || (event.final && event.cue.action === 'bgm'))) {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
+        else if (event.cue.action === 'ambience') this.#audio.playAmbience?.(event.cue.key, event.cue.durationMs);
         else if (event.cue.action === 'se') this.#audio.playSe(event.cue.key);
         else if (event.cue.action === 'voice') this.#audio.playVoice(event.cue.key);
       } else {
@@ -646,6 +695,11 @@ export class AdvRenderer {
         this.#audio.playBgm(args[0] ?? null);
         break;
       }
+      case 'ambience': {
+        const key = args[0] ?? null;
+        this.#audio.playAmbience?.(key === 'off' ? null : key, parseDur(args[1]));
+        break;
+      }
       case 'se': {
         if (args[0]) this.#audio.playSe(args[0]);
         break;
@@ -666,7 +720,21 @@ export class AdvRenderer {
         break;
       }
       case 'shake': {
-        this.#stage.shake?.(parseDur(args[0]), parseStrength(args[1]));
+        const directional = isShakeDirection(args[0]);
+        const direction: ShakeDirection = directional ? (args[0] as ShakeDirection) : 'both';
+        this.#stage.shake?.(
+          parseDur(directional ? args[1] : args[0]),
+          parseStrength(directional ? args[2] : args[1]),
+          direction,
+        );
+        break;
+      }
+      case 'transition': {
+        const name = args[0] ?? 'fade';
+        const durationMs = parseTransitionDuration(args[1]);
+        if (!this.#stage.transition?.(name, durationMs)) {
+          console.warn(`[surdet] 未知转场：${name}`);
+        }
         break;
       }
       case 'flash': {
@@ -756,6 +824,15 @@ export class AdvRenderer {
 function parseDur(raw: string | undefined): number {
   const n = raw ? parseInt(raw, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 400;
+}
+
+function parseTransitionDuration(raw: string | undefined): number {
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) ? Math.max(1, Math.min(10_000, n)) : 600;
+}
+
+function isShakeDirection(raw: string | undefined): raw is ShakeDirection {
+  return raw === 'both' || raw === 'horizontal' || raw === 'vertical' || raw === 'diagonal';
 }
 
 /** @shake 振幅（像素）：缺省 8 */

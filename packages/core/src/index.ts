@@ -35,3 +35,4 @@ export * from './terminology-audit.js';
 export * from './systems/shop.js';
 export * from './timeline.js';
 export * from './localization.js';
+export * from './project-stats.js';

@@ -136,6 +136,18 @@ describe('AudioManager', () => {
     expect(mockPlay.mock.calls.length).toBe(4);
   });
 
+  it('快照与恢复只经过公共播放接口，不暴露 Howl', () => {
+    const am = new AudioManager();
+    am.playBgm('night.mp3');
+    const snapshot = am.snapshotPlayback();
+    expect(snapshot).toEqual({ bgm: 'night.mp3', ambience: null });
+
+    am.stopAll();
+    am.restorePlayback(snapshot);
+    expect(mockPlay).toHaveBeenCalledTimes(2);
+    expect(am.snapshotPlayback()).toEqual(snapshot);
+  });
+
   it('R1 stopAll 后淡出窗口内重新 playBgm 不被旧定时器误停', () => {
     vi.useFakeTimers();
     const am = new AudioManager();
@@ -207,6 +219,45 @@ describe('AudioManager', () => {
     expect(mockHowl).toHaveBeenCalledTimes(2);
     expect(mockInstances[0]!.src).toBe('shared.ogg');
     expect(mockInstances[1]!.src).toBe('shared.ogg');
+  });
+
+  it('BGM 与环境音使用独立声道，快照包含环境音', () => {
+    const am = new AudioManager();
+    am.playBgm('music.ogg');
+    am.playAmbience('rain.ogg', 400);
+    expect(mockHowl).toHaveBeenCalledTimes(2);
+    am.playBgm('next.ogg');
+    expect(am.snapshotPlayback()).toEqual({ bgm: 'next.ogg', ambience: 'rain.ogg' });
+  });
+
+  it('同一源在 BGM 与环境音中保留两个缓存条目', () => {
+    const am = new AudioManager();
+    am.playBgm('shared.ogg');
+    am.playAmbience('shared.ogg');
+    expect(mockHowl).toHaveBeenCalledTimes(2);
+  });
+
+  it('环境音缓存上限为 8，活动环境音不会被淘汰', () => {
+    const am = new AudioManager();
+    am.playAmbience('active.ogg');
+    const active = mockInstances[0]!;
+    active.setPlaying(true);
+    for (let i = 0; i < 9; i++) am.playAmbience(`ambience-${i}.ogg`, 0);
+    expect(mockHowl).toHaveBeenCalledTimes(10);
+    expect(active.unload).not.toHaveBeenCalled();
+  });
+
+  it('stopAll、dispose 与回退恢复会处理环境音', () => {
+    const am = new AudioManager();
+    am.playAmbience('rain.ogg');
+    const snapshot = am.snapshotPlayback();
+    expect(snapshot).toEqual({ bgm: null, ambience: 'rain.ogg' });
+    am.stopAll();
+    expect(am.snapshotPlayback()).toEqual({ bgm: null, ambience: null });
+    am.restorePlayback(snapshot);
+    expect(am.snapshotPlayback()).toEqual(snapshot);
+    am.dispose();
+    expect(mockUnload).toHaveBeenCalled();
   });
 
   it('SE 缓存淘汰停止实例并保持上限 32', () => {

@@ -150,6 +150,10 @@ export interface CombatSnapshot {
   moved?: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * 战斗求解器：回合轮替行动、伤害公式、相克倍率、命中/暴击、技能冷却、胜负判定。
  * 纯逻辑可 headless 测试；rng 可注入固定值。
@@ -470,16 +474,77 @@ export class CombatSolver {
     };
   }
 
-  /** 从快照恢复（战斗中途存档/读档）。快照为 JSON 安全结构，可经 JSON 序列化往返。 */
-  restore(snap: CombatSnapshot): void {
-    // 快照内容校验（审计修复）：拒绝负 HP / 非法阵营等畸形数据
+  validateSnapshot(snap: unknown): asserts snap is CombatSnapshot {
+    if (!isRecord(snap)) throw new Error('战斗快照必须是对象');
     const teamSet = new Set(this.#config.teams);
     if (!Array.isArray(snap.units)) throw new Error('战斗快照 units 必须是数组');
-    this.#units = snap.units.map((u) => {
-      if (!teamSet.has(u.team)) throw new Error(`战斗快照含非法阵营 '${u.team}'`);
-      if (typeof u.hp !== 'number' || !Number.isFinite(u.hp) || u.hp < 0 || u.hp > u.maxHp) {
-        throw new Error(`战斗快照单位 '${u.uid}' HP 非法（须为 0~maxHp 的有限数）`);
+    if (typeof snap.turn !== 'number' || !Number.isInteger(snap.turn) || snap.turn < 1) {
+      throw new Error('战斗快照 turn 必须是 >= 1 的整数');
+    }
+    const idleWithoutTeams = snap.units.length === 0 && snap.actingTeam === '' && snap.winner === null && snap.finished === false;
+    if (typeof snap.actingTeam !== 'string' || (!teamSet.has(snap.actingTeam) && !idleWithoutTeams)) {
+      throw new Error(`战斗快照含非法行动阵营 '${String(snap.actingTeam)}'`);
+    }
+    if (snap.winner !== null && (typeof snap.winner !== 'string' || !teamSet.has(snap.winner))) {
+      throw new Error(`战斗快照含非法胜者 '${String(snap.winner)}'`);
+    }
+    if (typeof snap.finished !== 'boolean') throw new Error('战斗快照 finished 必须是布尔值');
+    const seen = new Set<string>();
+    for (const raw of snap.units) {
+      if (!isRecord(raw)) throw new Error('战斗快照 units 含非法单位');
+      const uid = raw.uid;
+      const defId = raw.defId;
+      if (typeof uid !== 'string' || uid.length === 0 || seen.has(uid)) {
+        throw new Error(`战斗快照单位 uid 非法或重复：${String(uid)}`);
       }
+      seen.add(uid);
+      if (typeof defId !== 'string' || !this.#config.units.some((def) => def.id === defId)) {
+        throw new Error(`战斗快照含未知单位定义 '${String(defId)}'`);
+      }
+      if (typeof raw.team !== 'string' || !teamSet.has(raw.team)) {
+        throw new Error(`战斗快照含非法阵营 '${String(raw.team)}'`);
+      }
+      if (typeof raw.name !== 'string') throw new Error(`战斗快照单位 '${uid}' name 非法`);
+      if (typeof raw.kind !== 'string' || !Array.isArray(raw.skills) || raw.skills.some((id) => typeof id !== 'string')) {
+        throw new Error(`战斗快照单位 '${uid}' skills/kind 非法`);
+      }
+      const numberField = (field: string): number => {
+        const value = raw[field];
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          throw new Error(`战斗快照单位 '${uid}' ${field} 必须是有限数`);
+        }
+        return value;
+      };
+      const hp = numberField('hp');
+      const maxHp = numberField('maxHp');
+      const range = numberField('range');
+      const move = numberField('move');
+      numberField('atk');
+      numberField('def');
+      numberField('position');
+      if (maxHp <= 0 || hp < 0 || hp > maxHp || range < 0 || move < 0) {
+        throw new Error(`战斗快照单位 '${uid}' HP 非法或属性范围非法`);
+      }
+      if (typeof raw.alive !== 'boolean' || !isRecord(raw.cooldowns)) {
+        throw new Error(`战斗快照单位 '${uid}' alive/cooldowns 非法`);
+      }
+      for (const [skillId, cooldown] of Object.entries(raw.cooldowns)) {
+        if (!skillId || typeof cooldown !== 'number' || !Number.isInteger(cooldown) || cooldown < 0) {
+          throw new Error(`战斗快照单位 '${uid}' cooldowns 非法`);
+        }
+      }
+    }
+    if (snap.moved !== undefined) {
+      if (!Array.isArray(snap.moved) || snap.moved.some((uid) => typeof uid !== 'string' || !seen.has(uid))) {
+        throw new Error('战斗快照 moved 必须引用现有单位');
+      }
+    }
+  }
+
+  /** 从快照恢复（战斗中途存档/读档）。快照为 JSON 安全结构，可经 JSON 序列化往返。 */
+  restore(snap: CombatSnapshot): void {
+    this.validateSnapshot(snap);
+    this.#units = snap.units.map((u) => {
       return { ...u, cooldowns: new Map(Object.entries(u.cooldowns)) };
     });
     this.#turn = Math.max(1, snap.turn);

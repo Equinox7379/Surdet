@@ -13,6 +13,7 @@ import {
   validateSceneVariables,
   validateSwitchTargets,
   validateJumpTarget,
+  validateTransitionInstructions,
 } from '@surdet/core';
 import type { CompiledScene, JumpInstr, CallInstr, LintIssue } from '@surdet/core';
 
@@ -110,6 +111,7 @@ export function validateProject(
       }
       // 场景级共享检查（与 CLI 同源）
       validateSwitchTargets(scene, issues);
+      validateTransitionInstructions(scene, issues);
       validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
       checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
       for (const instr of scene.instructions) {

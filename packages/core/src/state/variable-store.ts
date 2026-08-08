@@ -160,13 +160,15 @@ export class VariableStore {
    * readonly 变量默认跳过（系统专属、防篡改）；读档等可信恢复传 allowReadonly: true（审计修复）。
    */
   restore(data: Record<string, VarValue>, opts?: { allowReadonly?: boolean }): void {
+    const updates: Array<{ key: string; value: VarValue }> = [];
     for (const [key, value] of Object.entries(data)) {
       const decl = this.#decls.get(key);
       if (!decl) continue;
       if (decl.readonly && opts?.allowReadonly !== true) continue;
       assertType(value, decl, 'snapshot');
-      this.#values.set(key, coerce(decl, value));
+      updates.push({ key, value: coerce(decl, value) });
     }
+    for (const { key, value } of updates) this.#values.set(key, value);
   }
 
   #assertDeclared(name: string): void {

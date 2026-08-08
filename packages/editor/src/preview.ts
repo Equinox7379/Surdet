@@ -29,7 +29,7 @@ import {
   AdvRenderer, AudioManager, Backlog, PixiStage, Typewriter, FrameScheduler, RenderPerformanceMonitor, buildMapView,
   SettingsStore, SETTING_STEPS, stepSetting,
 } from '@surdet/renderer';
-import type { AudioHandle, FontRole, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile } from '@surdet/renderer';
+import type { AudioHandle, FontRole, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
 
 interface SceneSrc { id: string; text: string }
@@ -377,7 +377,7 @@ async function boot(): Promise<void> {
         display: def.format(current[def.key]),
       })),
       (id, dir) => {
-        const next = stepSetting(settings.settings, id as keyof GameSettings, dir);
+        const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
         void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
           settings.apply(typewriter, previewAudio);
           renderer?.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);

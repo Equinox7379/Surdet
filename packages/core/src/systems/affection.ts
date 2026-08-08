@@ -47,6 +47,10 @@ export interface AffectionSnapshot {
   everConsumed: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * 好感系统：阶段判定 + 事件解锁。
  */
@@ -140,7 +144,19 @@ export class AffectionSystem {
     return { consumed: [...this.#consumed], everConsumed: [...this.#everConsumed] };
   }
 
+  validateSnapshot(snap: unknown): asserts snap is AffectionSnapshot {
+    if (!isRecord(snap)) throw new Error('好感快照必须是对象');
+    if (!Array.isArray(snap.consumed) || snap.consumed.some((id) => typeof id !== 'string')) {
+      throw new Error('好感快照 consumed 必须是字符串数组');
+    }
+    if (snap.everConsumed !== undefined
+      && (!Array.isArray(snap.everConsumed) || snap.everConsumed.some((id) => typeof id !== 'string'))) {
+      throw new Error('好感快照 everConsumed 必须是字符串数组');
+    }
+  }
+
   restore(snap: AffectionSnapshot): void {
+    this.validateSnapshot(snap);
     this.#consumed = new Set(snap.consumed);
     this.#everConsumed = new Set(snap.everConsumed ?? snap.consumed);
   }

@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "id": "ambience",
+      "kind": "ui",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/compiler.test.ts",
+        "packages/renderer/test/audio-manager.test.ts",
+        "packages/renderer/test/adv-renderer.test.ts",
+        "packages/editor/src/panels/editor.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
+      "limitation": "同一时间最多播放一条环境音；与 BGM、SE、语音分轨独立。"
+    },
+    {
+      "id": "backlog",
+      "kind": "ui",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/renderer/test/backlog.test.ts",
+        "packages/renderer/test/pixi-stage.test.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"],
+      "limitation": "文字记录为当前会话级数据，不跨存档持久化。"
+    },
+    {
+      "id": "battle-formation",
+      "kind": "system",
+      "core": "planned",
+      "renderer": "planned",
+      "editor": "planned",
+      "host": "planned",
+      "tests": [],
+      "docs": ["docs/ENGINE-OPTIMIZATION-RECOMMENDATIONS-2026-08-08.md"],
+      "limitation": "当前战斗使用 1D 位置；开战前阵型编辑、占位和阻挡规则尚未定义。"
+    },
+    {
+      "id": "battle-move",
+      "kind": "system",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/combat.test.ts",
+        "packages/renderer/test/battle-view.test.ts",
+        "examples/starter/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"],
+      "limitation": "移动是 1D 位置模型，不包含阵型编辑或多位置布局。"
+    },
+    {
+      "id": "clear",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "n/a",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/compiler.test.ts",
+        "packages/core/test/interpreter-save.test.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"],
+      "limitation": "解释器负责本周目记录并广播事件；跨周目全局记录由宿主 Profile bridge 持久化。"
+    },
+    {
+      "id": "gallery-cg",
+      "kind": "ui",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/gallery.test.ts",
+        "packages/renderer/test/gallery.test.ts",
+        "packages/renderer/test/pixi-stage.test.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"]
+    },
+    {
+      "id": "gallery-text",
+      "kind": "ui",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/gallery.test.ts",
+        "packages/renderer/test/gallery.test.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"],
+      "limitation": "文本回想依配置跳转到场景与 label，不提供独立的文本资源编辑器。"
+    },
+    {
+      "id": "hot-reload",
+      "kind": "tooling",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/audit-fixes.test.ts",
+        "packages/renderer/test/scene-hot-reload.test.ts",
+        "examples/starter/src/main.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/AI-GUIDE.md"],
+      "limitation": "仅 Vite 开发环境支持 .gal 场景热替换；正式包不启动文件监听器。"
+    },
+    {
+      "id": "mov",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/compiler.test.ts",
+        "packages/renderer/test/adv-renderer.test.ts",
+        "packages/renderer/test/pixi-stage.test.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"]
+    },
+    {
+      "id": "particle",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/compiler.test.ts",
+        "packages/renderer/test/adv-renderer.test.ts",
+        "packages/renderer/test/pixi-stage.test.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"],
+      "limitation": "当前为内置轻量粒子表现，不是可编排的完整粒子编辑器。"
+    },
+    {
+      "id": "profile-storage",
+      "kind": "system",
+      "core": "n/a",
+      "renderer": "n/a",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/host/test/profile-store.test.ts",
+        "packages/shell/test/profile-store.test.ts",
+        "examples/starter/src/main.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/ENGINE-OPTIMIZATION-RECOMMENDATIONS-2026-08-08.md"],
+      "limitation": "Profile 数据与普通 slot 存档分离；Electron 损坏数据宽容回退，浏览器保留旧 localStorage 兼容读取。"
+    },
+    {
+      "id": "rollback",
+      "kind": "system",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/renderer/test/rollback-buffer.test.ts",
+        "examples/starter/src/main.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/AI-GUIDE.md"],
+      "limitation": "运行时历史缓冲默认上限 50 帧；系统交互、菜单和读写档期间不允许回退。"
+    },
+    {
+      "id": "save-hooks",
+      "kind": "system",
+      "core": "implemented",
+      "renderer": "n/a",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/interpreter-save.test.ts",
+        "packages/shell/test/e2e.spec.ts",
+        "examples/zero-after-midnight/src/main.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"]
+    },
+    {
+      "id": "tint",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/compiler.test.ts",
+        "packages/renderer/test/adv-renderer.test.ts",
+        "packages/renderer/test/pixi-stage.test.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md"]
+    },
+    {
+      "id": "transition-registry",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/renderer/test/transition-registry.test.ts",
+        "packages/core/test/compiler.test.ts",
+        "packages/cli/test/lint.test.ts",
+        "packages/editor/src/panels/editor.ts"
+      ],
+      "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
+      "limitation": "当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。"
+    }
+  ]
+}

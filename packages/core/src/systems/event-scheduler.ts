@@ -24,6 +24,10 @@ export interface EventSchedulerSnapshot {
   fired: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export class EventScheduler {
   #events: ScheduledEventDef[];
   #env: ExprEnv;
@@ -98,7 +102,16 @@ export class EventScheduler {
     return { fired: [...this.#fired] };
   }
 
+  validateSnapshot(snap: unknown): asserts snap is EventSchedulerSnapshot | undefined {
+    if (snap === undefined) return;
+    if (!isRecord(snap)) throw new Error('事件调度器快照必须是对象');
+    if (!Array.isArray(snap.fired) || snap.fired.some((id) => typeof id !== 'string')) {
+      throw new Error('事件调度器快照 fired 必须是字符串数组');
+    }
+  }
+
   restore(snap: EventSchedulerSnapshot | undefined): void {
+    this.validateSnapshot(snap);
     this.#fired = new Set(snap?.fired ?? []);
   }
 }
