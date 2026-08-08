@@ -1,5 +1,10 @@
 import type { RenderPerformanceSnapshot } from '../performance.js';
 
+export const RENDERER_BASELINE_SCHEMA_VERSION = 2 as const;
+export const RENDERER_BASELINE_MIN_SAMPLES = 5;
+
+export type RendererMetricStatistic = 'median' | 'p95';
+
 export interface RendererMetricSummary {
   coldStartMs: number;
   assetReadyMs: number;
@@ -14,6 +19,7 @@ export interface RendererMetric {
   samples: readonly number[];
   median: number;
   p95: number;
+  summaryStatistic: RendererMetricStatistic;
 }
 
 export interface RendererEnvironment {
@@ -65,7 +71,7 @@ export interface RendererDebugSnapshot {
 }
 
 export interface RendererBaseline extends RendererMetricSummary {
-  schemaVersion: 1;
+  schemaVersion: typeof RENDERER_BASELINE_SCHEMA_VERSION;
   generatedAt: string;
   sourceSha: string;
   sourceEquivalentTo?: string;
@@ -114,13 +120,29 @@ export const RENDERER_BASELINE_LIMITS: Readonly<Record<RendererMetricName, numbe
   sceneP95Ms: 1.15,
 };
 
+const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function rendererMetricSummaryStatistic(name: RendererMetricName): RendererMetricStatistic {
+  return name === 'coldStartMs' || name === 'assetReadyMs' ? 'median' : 'p95';
+}
+
+export function rendererMetricSummaryValue(name: RendererMetricName, metric: RendererMetric): number {
+  return metric[rendererMetricSummaryStatistic(name)];
+}
+
 function finiteSample(value: number): number {
   if (!Number.isFinite(value) || value < 0) throw new Error(`基线样本必须是非负有限数：${value}`);
   return value;
 }
 
 export function summarizeRendererMetric(name: RendererMetricName, samples: readonly number[]): RendererMetric {
-  if (samples.length === 0) throw new Error(`基线指标 ${name} 至少需要一个样本`);
+  if (samples.length < RENDERER_BASELINE_MIN_SAMPLES) {
+    throw new Error(`基线指标 ${name} 至少需要 ${RENDERER_BASELINE_MIN_SAMPLES} 个样本`);
+  }
   const normalized = samples.map(finiteSample).sort((a, b) => a - b);
   const middle = Math.floor(normalized.length / 2);
   const median = normalized.length % 2 === 0
@@ -132,7 +154,43 @@ export function summarizeRendererMetric(name: RendererMetricName, samples: reado
     samples: normalized,
     median,
     p95: normalized[p95Index]!,
+    summaryStatistic: rendererMetricSummaryStatistic(name),
   };
+}
+
+export function validateRendererBaseline(input: unknown): asserts input is RendererBaseline {
+  if (!isRecord(input) || input.schemaVersion !== RENDERER_BASELINE_SCHEMA_VERSION) {
+    throw new Error(`Renderer 基线 schemaVersion 必须为 ${RENDERER_BASELINE_SCHEMA_VERSION}`);
+  }
+  if (typeof input.sourceSha !== 'string' || !SOURCE_SHA_PATTERN.test(input.sourceSha)) {
+    throw new Error('Renderer 基线 sourceSha 必须是完整 40 位 SHA');
+  }
+  if (input.sourceEquivalentTo !== undefined
+    && (typeof input.sourceEquivalentTo !== 'string' || !SOURCE_SHA_PATTERN.test(input.sourceEquivalentTo))) {
+    throw new Error('Renderer 基线 sourceEquivalentTo 必须是完整 40 位 SHA');
+  }
+  if (!isRecord(input.metrics)) throw new Error('Renderer 基线 metrics 必须是对象');
+
+  for (const name of Object.keys(RENDERER_BASELINE_LIMITS) as RendererMetricName[]) {
+    const metricValue = input.metrics[name];
+    if (!isRecord(metricValue) || metricValue.name !== name || !Array.isArray(metricValue.samples)) {
+      throw new Error(`Renderer 基线缺少指标 ${name} 的完整 schema`);
+    }
+    const numericSamples = metricValue.samples.map((value) => {
+      if (typeof value !== 'number') throw new Error(`基线指标 ${name} 的样本必须是数字`);
+      return value;
+    });
+    const expected = summarizeRendererMetric(name, numericSamples);
+    if (metricValue.summaryStatistic !== expected.summaryStatistic
+      || metricValue.median !== expected.median
+      || metricValue.p95 !== expected.p95
+      || JSON.stringify(metricValue.samples) !== JSON.stringify(expected.samples)) {
+      throw new Error(`Renderer 基线指标 ${name} 的统计字段与原始样本不一致`);
+    }
+    if (input[name] !== rendererMetricSummaryValue(name, expected)) {
+      throw new Error(`Renderer 基线顶层指标 ${name} 未使用 ${expected.summaryStatistic}`);
+    }
+  }
 }
 
 function ratioFor(baseline: number, current: number): number {
