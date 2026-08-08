@@ -3,7 +3,7 @@ import { state, h, setStatus } from '../state.js';
 import { exportTimeline } from '../project-io.js';
 import {
   cloneTimeline, createCue, createTimeline, createTrack, parseTimelineText,
-  stringifyTimeline, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
+  stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
 } from '../timeline-model.js';
 
 interface CueSelection {
@@ -148,7 +148,14 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     if (cue.action === 'show' || cue.action === 'expression') setString('表情', 'expression', 'normal');
     if (cue.action === 'show' || cue.action === 'move') setString('位置', 'position', 'left / center / right');
   }
-  if (track.kind === 'camera') setNumber('缩放', 'scale', 0.25, 4, '0.01');
+  if (track.kind === 'camera') {
+    if (cue.action === 'zoom') setNumber('缩放', 'scale', 0.25, 4, '0.01');
+    if (cue.action === 'pan') {
+      setNumber('水平偏移', 'x', -2000, 2000);
+      setNumber('垂直偏移', 'y', -2000, 2000);
+    }
+    if (cue.action === 'shake') setNumber('震动强度', 'strength', 0, 64, '1');
+  }
   if (track.kind === 'screen') {
     if (cue.action === 'fade' || cue.action === 'tint') setNumber('透明度', 'alpha', 0, 1, '0.01');
     if (cue.action === 'tint') setNumber('颜色值', 'color', 0, 0xffffff, '1');
@@ -238,12 +245,54 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
     const lane = h('div', 'timeline-lane');
     for (const [cueIndex, cue] of track.cues.entries()) {
       const block = h('button', cueIndex === selectedCue?.cueIndex && trackIndex === selectedCue.trackIndex ? 'timeline-cue selected' : 'timeline-cue');
-      const left = definition.durationMs > 0 ? Math.max(0, Math.min(100, cue.atMs / definition.durationMs * 100)) : 0;
-      const width = definition.durationMs > 0 ? Math.max(2, Math.min(100 - left, Math.max(1, cue.durationMs / definition.durationMs * 100))) : 100;
-      block.style.left = `${left}%`;
-      block.style.width = `${width}%`;
-      block.textContent = cue.action;
-      block.title = `${cue.action} · ${cue.atMs}ms + ${cue.durationMs}ms`;
+      const updateGeometry = (atMs: number, durationMs: number): void => {
+        const left = definition.durationMs > 0 ? Math.max(0, Math.min(100, atMs / definition.durationMs * 100)) : 0;
+        const width = definition.durationMs > 0 ? Math.max(2, Math.min(100 - left, Math.max(1, durationMs / definition.durationMs * 100))) : 100;
+        block.style.left = `${left}%`;
+        block.style.width = `${width}%`;
+        block.title = `${cue.action} · ${Math.round(atMs)}ms + ${Math.round(durationMs)}ms · ${cue.easing}`;
+      };
+      updateGeometry(cue.atMs, cue.durationMs);
+      const label = document.createElement('span');
+      label.className = 'timeline-cue-label';
+      label.textContent = cue.action;
+      block.appendChild(label);
+      const curve = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      curve.classList.add('timeline-curve');
+      curve.setAttribute('viewBox', '0 0 100 24');
+      curve.setAttribute('preserveAspectRatio', 'none');
+      curve.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', easingPath(cue.easing));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      curve.appendChild(path);
+      block.appendChild(curve);
+      const resize = document.createElement('span');
+      resize.className = 'timeline-cue-resize';
+      resize.title = '拖动调整时长';
+      resize.onpointerdown = (event) => {
+        event.stopPropagation();
+        const startX = event.clientX;
+        const originalDuration = cue.durationMs;
+        const laneWidth = Math.max(1, lane.getBoundingClientRect().width);
+        let nextDuration = originalDuration;
+        const move = (moveEvent: PointerEvent) => {
+          const deltaMs = (moveEvent.clientX - startX) / laneWidth * definition.durationMs;
+          nextDuration = Math.max(0, Math.min(definition.durationMs - cue.atMs, Math.round(originalDuration + deltaMs)));
+          updateGeometry(cue.atMs, nextDuration);
+        };
+        const release = () => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', release);
+          updateCue({ timelineId: definition.id, trackIndex, cueIndex }, (next) => { next.durationMs = nextDuration; });
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', release, { once: true });
+        event.preventDefault();
+      };
+      block.appendChild(resize);
+      block.title = `${cue.action} · ${cue.atMs}ms + ${cue.durationMs}ms · ${cue.easing}`;
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
         selectedCue = { timelineId: definition.id, trackIndex, cueIndex };
@@ -254,7 +303,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         const move = (moveEvent: PointerEvent) => {
           const deltaMs = (moveEvent.clientX - startX) / laneWidth * definition.durationMs;
           nextAt = Math.max(0, Math.min(definition.durationMs - cue.durationMs, Math.round(originalAt + deltaMs)));
-          block.style.left = `${definition.durationMs > 0 ? nextAt / definition.durationMs * 100 : 0}%`;
+          updateGeometry(nextAt, cue.durationMs);
         };
         const release = () => {
           document.removeEventListener('pointermove', move);
@@ -281,7 +330,10 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   const workbench = h('div', 'timeline-workbench');
   const main = h('section', 'timeline-canvas');
   const canvasHead = h('div', 'timeline-canvas-head');
-  canvasHead.append(h('div', 'timeline-section-kicker', '演出轨道'));
+  const canvasTitle = h('div');
+  canvasTitle.append(h('div', 'timeline-section-kicker', '演出轨道'));
+  canvasTitle.append(h('div', 'timeline-canvas-hint', '拖动 cue 中段调整开始 · 拖动右端调整时长'));
+  canvasHead.appendChild(canvasTitle);
   const addTrack = h('button', undefined, '+ 添加轨道');
   addTrack.onclick = () => {
     commit((next) => next.tracks.push(createTrack('screen')));

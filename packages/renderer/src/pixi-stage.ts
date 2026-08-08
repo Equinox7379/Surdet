@@ -443,6 +443,9 @@ export class PixiStage implements AdvStage {
   #zoomTo = 1;
   #zoomRemain = 0;
   #zoomDur = 1;
+  /** 时间轴镜头平移，单位为舞台像素；与缩放中心偏移叠加。 */
+  #cameraPanX = 0;
+  #cameraPanY = 0;
   /** 鉴赏覆盖层（CG/音乐 两个 tab；CG 全屏回看模式） */
   #galleryLayer: Container;
   #galleryTab: 'cg' | 'music' | 'text' = 'cg';
@@ -502,6 +505,8 @@ export class PixiStage implements AdvStage {
   #interfaceHidden = false;
   #timelineMoveStarts = new Map<object, Map<string, number>>();
   #timelineValueStarts = new Map<object, number>();
+  #timelinePanStarts = new Map<object, { x: number; y: number }>();
+  #timelineTintStarts = new Map<object, { color: number; alpha: number }>();
   /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -1394,17 +1399,30 @@ export class PixiStage implements AdvStage {
       }
       return;
     }
-    if (event.track === 'camera' && cue.action === 'zoom' && typeof cue.scale === 'number') {
-      let from = this.#timelineValueStarts.get(cue);
-      if (from === undefined) {
-        from = this.#worldLayer.scale.x;
-        this.#timelineValueStarts.set(cue, from);
+    if (event.track === 'camera') {
+      if (cue.action === 'zoom' && typeof cue.scale === 'number') {
+        let from = this.#timelineValueStarts.get(cue);
+        if (from === undefined) {
+          from = this.#worldLayer.scale.x;
+          this.#timelineValueStarts.set(cue, from);
+        }
+        const scale = from + (Math.max(0.25, Math.min(4, cue.scale)) - from) * event.progress;
+        this.#worldLayer.scale.set(scale);
+        this.#setWorldBasePosition();
+        if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
+      } else if (cue.action === 'pan' && typeof cue.x === 'number' && typeof cue.y === 'number') {
+        let from = this.#timelinePanStarts.get(cue);
+        if (!from) {
+          from = { x: this.#cameraPanX, y: this.#cameraPanY };
+          this.#timelinePanStarts.set(cue, from);
+        }
+        this.#cameraPanX = from.x + (Math.max(-2000, Math.min(2000, cue.x)) - from.x) * event.progress;
+        this.#cameraPanY = from.y + (Math.max(-2000, Math.min(2000, cue.y)) - from.y) * event.progress;
+        this.#setWorldBasePosition();
+        if (event.progress >= 1) this.#timelinePanStarts.delete(cue);
+      } else if (cue.action === 'shake' && event.started && typeof cue.strength === 'number') {
+        this.shake(cue.durationMs, cue.strength);
       }
-      const scale = from + (Math.max(0.25, Math.min(4, cue.scale)) - from) * event.progress;
-      this.#worldLayer.scale.set(scale);
-      const off = this.#zoomBaseOffset();
-      this.#worldLayer.position.set(off.x, off.y);
-      if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
       return;
     }
     if (event.track === 'screen') {
@@ -1417,9 +1435,21 @@ export class PixiStage implements AdvStage {
         this.#fadeOverlay.alpha = Math.max(0, Math.min(1, from + (cue.alpha - from) * event.progress));
         if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
       } else if (cue.action === 'tint' && typeof cue.color === 'number' && typeof cue.alpha === 'number') {
-        this.#tintOverlay.tint = cue.color & 0xffffff;
-        this.#tintOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
+        let from = this.#timelineTintStarts.get(cue);
+        if (!from) {
+          const alpha = this.#tintOverlay.alpha;
+          from = {
+            // 透明叠加层没有可见的旧颜色；首次 tint 应直接淡入目标色，
+            // 否则 Pixi 默认的白色 tint 会在半透明阶段造成不必要的泛白。
+            color: alpha <= 0.001 ? cue.color & 0xffffff : Number(this.#tintOverlay.tint ?? 0),
+            alpha,
+          };
+          this.#timelineTintStarts.set(cue, from);
+        }
+        this.#tintOverlay.tint = lerpColor(from.color, cue.color & 0xffffff, event.progress);
+        this.#tintOverlay.alpha = Math.max(0, Math.min(1, from.alpha + (cue.alpha - from.alpha) * event.progress));
         this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
+        if (event.progress >= 1) this.#timelineTintStarts.delete(cue);
       } else if (cue.action === 'flash' && event.started) {
         this.flash(cue.durationMs);
       } else if (cue.action === 'wipe' && event.started) {
@@ -1439,6 +1469,7 @@ export class PixiStage implements AdvStage {
       backgroundKey: this.#backgroundKey,
       portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view })),
       cameraScale: this.#worldLayer.scale.x,
+      cameraPan: { x: this.#cameraPanX, y: this.#cameraPanY },
       fadeAlpha: this.#fadeOverlay.alpha,
       tint: { color: this.#tintOverlay.tint ?? 0, alpha: this.#tintOverlay.alpha },
       particleKind: this.#particleKind,
@@ -1460,9 +1491,13 @@ export class PixiStage implements AdvStage {
     }
     if (typeof raw.cameraScale === 'number' && Number.isFinite(raw.cameraScale)) {
       this.#worldLayer.scale.set(Math.max(0.25, Math.min(4, raw.cameraScale)));
-      const off = this.#zoomBaseOffset();
-      this.#worldLayer.position.set(off.x, off.y);
     }
+    if (typeof raw.cameraPan === 'object' && raw.cameraPan !== null) {
+      const pan = raw.cameraPan as Record<string, unknown>;
+      this.#cameraPanX = typeof pan.x === 'number' && Number.isFinite(pan.x) ? Math.max(-2000, Math.min(2000, pan.x)) : 0;
+      this.#cameraPanY = typeof pan.y === 'number' && Number.isFinite(pan.y) ? Math.max(-2000, Math.min(2000, pan.y)) : 0;
+    }
+    this.#setWorldBasePosition();
     if (typeof raw.fadeAlpha === 'number') this.setFade(raw.fadeAlpha);
     if (typeof raw.tint === 'object' && raw.tint !== null) {
       const tint = raw.tint as Record<string, unknown>;
@@ -1481,8 +1516,20 @@ export class PixiStage implements AdvStage {
     this.setBackground(null);
     this.#timelineMoveStarts.clear();
     this.#timelineValueStarts.clear();
+    this.#timelinePanStarts.clear();
+    this.#timelineTintStarts.clear();
+    this.#cameraPanX = 0;
+    this.#cameraPanY = 0;
     this.#worldLayer.position.set(0, 0);
     this.#worldLayer.scale.set(1);
+    this.#shakeRemain = 0;
+    this.#flashRemain = 0;
+    this.#flashOverlay.alpha = 0;
+    this.#zoomFrom = 1;
+    this.#zoomTo = 1;
+    this.#zoomRemain = 0;
+    this.#wipeRemain = 0;
+    this.#wipeBar.visible = false;
     this.setFade(0);
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
@@ -1517,7 +1564,7 @@ export class PixiStage implements AdvStage {
       this.#shakeRemain = Math.max(0, this.#shakeRemain - deltaMs);
       const base = this.#zoomBaseOffset();
       if (this.#shakeRemain === 0) {
-        this.#worldLayer.position.set(base.x, base.y);
+        this.#setWorldBasePosition();
       } else {
         const s = this.#shakeStrength * (this.#shakeRemain / this.#shakeDur);
         this.#worldLayer.position.set(
@@ -1535,8 +1582,7 @@ export class PixiStage implements AdvStage {
       const t = 1 - this.#zoomRemain / this.#zoomDur;
       const scale = this.#zoomFrom + (this.#zoomTo - this.#zoomFrom) * t;
       this.#worldLayer.scale.set(scale);
-      const off = this.#zoomBaseOffset();
-      this.#worldLayer.position.set(off.x, off.y);
+      this.#setWorldBasePosition();
     }
     if (this.#bgTransition) {
       const transition = this.#bgTransition;
@@ -1909,7 +1955,15 @@ export class PixiStage implements AdvStage {
   /** 当前缩放下的居中偏移（缩放锚点为画面中心；shake 结束回位也用） */
   #zoomBaseOffset(): { x: number; y: number } {
     const scale = this.#worldLayer.scale.x;
-    return { x: ((1 - scale) * this.#w) / 2, y: ((1 - scale) * this.#h) / 2 };
+    return {
+      x: ((1 - scale) * this.#w) / 2 + this.#cameraPanX,
+      y: ((1 - scale) * this.#h) / 2 + this.#cameraPanY,
+    };
+  }
+
+  #setWorldBasePosition(): void {
+    const off = this.#zoomBaseOffset();
+    this.#worldLayer.position.set(off.x, off.y);
   }
 
   /* ============================ 鉴赏覆盖层（CG/音乐） ============================ */
@@ -3088,6 +3142,8 @@ export class PixiStage implements AdvStage {
 
     this.#worldLayer.position.set(0, 0);
     this.#worldLayer.scale.set(1);
+    this.#cameraPanX = 0;
+    this.#cameraPanY = 0;
     this.#shakeRemain = 0;
     this.#flashRemain = 0;
     this.#flashOverlay.alpha = 0;
@@ -3097,6 +3153,8 @@ export class PixiStage implements AdvStage {
     this.#stopBackgroundTransition();
     this.#timelineMoveStarts.clear();
     this.#timelineValueStarts.clear();
+    this.#timelinePanStarts.clear();
+    this.#timelineTintStarts.clear();
     this.stopParticles();
     this.#bannerRemain = 0;
     this.#bannerLayer.visible = false;

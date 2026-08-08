@@ -109,6 +109,34 @@ describe('PixiStage 结局黑场', () => {
   });
 });
 
+describe('PixiStage 时间轴镜头与屏幕补间', () => {
+  it('镜头 pan 会从当前偏移补间到目标，并可序列化恢复', () => {
+    const stage = new PixiStage();
+    const cue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'pan', x: 180, y: -40 };
+    stage.applyTimelineFrame({ track: 'camera', cue, started: true, final: false, progress: 0.5, elapsedMs: 50 });
+    expect((stage.snapshotPresentation() as { cameraPan: { x: number; y: number } }).cameraPan).toEqual({ x: 90, y: -20 });
+    stage.applyTimelineFrame({ track: 'camera', cue, started: false, final: false, progress: 1, elapsedMs: 100 });
+    expect((stage.snapshotPresentation() as { cameraPan: { x: number; y: number } }).cameraPan).toEqual({ x: 180, y: -40 });
+    const restored = new PixiStage();
+    restored.restorePresentation(stage.snapshotPresentation());
+    expect((restored.snapshotPresentation() as { cameraPan: { x: number; y: number } }).cameraPan).toEqual({ x: 180, y: -40 });
+  });
+
+  it('时间轴 tint 同时补间颜色和透明度，而不是瞬间跳到目标颜色', () => {
+    const stage = new PixiStage();
+    const cue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'tint', color: 0xff0000, alpha: 0.4 };
+    stage.applyTimelineFrame({ track: 'screen', cue, started: true, final: false, progress: 0.5, elapsedMs: 50 });
+    expect((stage.snapshotPresentation() as { tint: { color: number; alpha: number } }).tint).toEqual({ color: 0xff0000, alpha: 0.2 });
+    stage.applyTimelineFrame({ track: 'screen', cue, started: false, final: false, progress: 1, elapsedMs: 100 });
+    expect((stage.snapshotPresentation() as { tint: { color: number; alpha: number } }).tint).toEqual({ color: 0xff0000, alpha: 0.4 });
+    const nextCue = { atMs: 100, durationMs: 100, easing: 'linear' as const, action: 'tint', color: 0x0000ff, alpha: 0.8 };
+    stage.applyTimelineFrame({ track: 'screen', cue: nextCue, started: true, final: false, progress: 0.5, elapsedMs: 150 });
+    const tint = (stage.snapshotPresentation() as { tint: { color: number; alpha: number } }).tint;
+    expect(tint.color).toBe(0x800080);
+    expect(tint.alpha).toBeCloseTo(0.6, 10);
+  });
+});
+
 describe('PixiStage 字体角色', () => {
   function mockFontApi(): void {
     class FakeFontFace {

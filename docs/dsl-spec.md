@@ -111,6 +111,8 @@ content/timelines/intro_arrival.json
 
 可用轨道为 `background`、`portrait`、`camera`、`screen`、`particle`、`audio`。每个 cue 至少包含 `atMs`、`durationMs`、`action`；具体动作和字段以 `packages/core/src/timeline.ts` 的类型定义为准。支持的缓动为 `linear`、`inOutSine`、`outCubic`、`inOutCubic`。
 
+其中 `camera` 支持 `zoom`（`scale` 取 0.25..4）、`pan`（`x`/`y` 为 -2000..2000 像素偏移）和 `shake`（`strength` 为 0..64）；`screen` 支持 `fade`、`tint`、`flash`、`wipe`，tint 会同时补间颜色与透明度。编辑器时间轴中，拖动 cue 中段调整开始时间，拖动右端调整时长，cue 内曲线展示当前缓动。
+
 在 `.gal` 中：
 
 ```gal

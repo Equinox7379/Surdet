@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateTimeline } from '@surdet/core';
-import { createCue, createTimeline, createTrack, parseTimelineText, stringifyTimeline } from '../src/timeline-model.js';
+import { createCue, createTimeline, createTrack, easingPath, easingValue, parseTimelineText, stringifyTimeline } from '../src/timeline-model.js';
 
 describe('时间轴编辑模型', () => {
   it('新建模板可直接通过 core 校验', () => {
@@ -39,6 +39,20 @@ describe('时间轴编辑模型', () => {
       durationMs: 600,
       tracks: [{ kind: 'portrait', target: 'lynn:uniform', cues: [createCue('portrait', 'hide')] }],
     })).toEqual([]);
+    expect(validateTimeline({
+      version: 1,
+      id: 'camera_beats',
+      durationMs: 600,
+      tracks: [{ kind: 'camera', cues: [createCue('camera', 'pan'), createCue('camera', 'shake')] }],
+    })).toEqual([]);
+  });
+
+  it('曲线预览使用与运行时一致的端点和可用路径', () => {
+    expect(easingValue('linear', 0.5)).toBe(0.5);
+    expect(easingValue('outCubic', 0)).toBe(0);
+    expect(easingValue('outCubic', 1)).toBe(1);
+    expect(easingPath('inOutSine', 5)).toMatch(/^M0\.0,22\.0 L/);
+    expect(easingPath('inOutSine', 5)).toContain('L100.0,2.0');
   });
 
   it('坏 JSON 和非法 cue 隔离为可见问题，不抛出', () => {

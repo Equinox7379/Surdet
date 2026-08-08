@@ -38,6 +38,28 @@ describe('timeline validation', () => {
     });
     expect(diagnostics.map((d) => d.code)).toEqual(['T007', 'T009']);
   });
+
+  it('accepts cinematic camera pan/shake and rejects unsafe ranges', () => {
+    expect(validateTimeline({
+      version: 1,
+      id: 'camera_beats',
+      durationMs: 900,
+      tracks: [{ kind: 'camera', cues: [
+        { atMs: 0, durationMs: 600, easing: 'inOutSine', action: 'pan', x: 180, y: -36 },
+        { atMs: 600, durationMs: 180, easing: 'outCubic', action: 'shake', strength: 14 },
+      ] }],
+    })).toEqual([]);
+    const diagnostics = validateTimeline({
+      version: 1,
+      id: 'unsafe_camera',
+      durationMs: 900,
+      tracks: [{ kind: 'camera', cues: [
+        { atMs: 0, durationMs: 100, easing: 'linear', action: 'pan', x: 3000, y: 0 },
+        { atMs: 100, durationMs: 100, easing: 'linear', action: 'shake', strength: 65 },
+      ] }],
+    });
+    expect(diagnostics.map((d) => d.path)).toEqual(['$.tracks.0.cues.0.x', '$.tracks.0.cues.1.strength']);
+  });
 });
 
 describe('TimelineRegistry', () => {
