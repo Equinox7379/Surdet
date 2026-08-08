@@ -8,8 +8,18 @@ export function buildWebTrialInfo(game: string, version: string): Record<string,
 }
 
 /** 版本补丁清单（纯函数可测）：随发布产物分发，供增量更新/版本公告消费 */
-export function buildUpdateManifest(game: string, version: string, notes: string): Record<string, string> {
-  return { engine: 'surdet', game, version, generatedAt: new Date().toISOString(), notes };
+export function buildUpdateManifest(
+  game: string,
+  version: string,
+  notes: string,
+  options: { channel?: string; downloadUrl?: string; sha256?: string } = {},
+): Record<string, string> {
+  return {
+    engine: 'surdet', game, version, generatedAt: new Date().toISOString(), notes,
+    ...(options.channel ? { channel: options.channel } : {}),
+    ...(options.downloadUrl ? { downloadUrl: options.downloadUrl } : {}),
+    ...(options.sha256 ? { sha256: options.sha256 } : {}),
+  };
 }
 
 /**

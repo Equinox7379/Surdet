@@ -6,6 +6,9 @@ import * as path from 'node:path';
 import * as url from 'node:url';
 import { assertValidSnapshot, type SaveSnapshot } from '@surdet/core'; // 复用 core 深度校验（审计修复：消灭弱版重复实现）
 import { FileSaveStore } from './save-store.js';
+import { checkReleaseManifest } from './release-service.js';
+import { writeCrashReport } from './crash-reporter.js';
+import { writeJsonAtomic } from './json-file.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -115,9 +118,7 @@ function registerSettingsIpc(): void {
       throw new Error('设置数据必须是对象');
     }
     const file = settingsPath();
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data));
-    fs.renameSync(tmp, file);
+    writeJsonAtomic(file, data);
   });
 }
 
@@ -135,6 +136,17 @@ function registerAppIpc(): void {
   ipcMain.handle('log', (e, level: unknown, msg: unknown) => {
     assertTrustedSender(e);
     logLine(typeof level === 'string' ? level : 'info', typeof msg === 'string' ? msg : String(msg));
+  });
+  ipcMain.handle('crash:report', (e, context: unknown, message: unknown) => {
+    assertTrustedSender(e);
+    return writeCrashReport(app.getPath('userData'), { context: typeof context === 'string' ? context : 'renderer', error: typeof message === 'string' ? message : String(message) });
+  });
+  ipcMain.handle('release:check', async (e, manifestUrl: unknown) => {
+    assertTrustedSender(e);
+    const currentVersion = app.getVersion();
+    const localManifest = path.join(gameRoot(), 'release', 'update-manifest.json');
+    const source = typeof manifestUrl === 'string' && /^https?:\/\//i.test(manifestUrl) ? manifestUrl : localManifest;
+    return checkReleaseManifest(source, currentVersion);
   });
   ipcMain.handle('asset:list', (e) => {
     assertTrustedSender(e);
@@ -203,7 +215,7 @@ function saveWindowState(win: BrowserWindow): void {
   try {
     const b = win.getNormalBounds();
     const s: WindowState = { x: b.x, y: b.y, width: b.width, height: b.height, fullScreen: win.isFullScreen() };
-    fs.writeFileSync(windowStatePath(), JSON.stringify(s));
+    writeJsonAtomic(windowStatePath(), s);
   } catch {
     /* 状态保存失败不影响退出 */
   }
@@ -261,11 +273,16 @@ function createWindow(): void {
 
 // 未捕获异常：落日志 + 错误框（稳定性工程：玩家可见的崩溃信息而非白屏）
 process.on('uncaughtException', (err) => {
+  writeCrashReport(app.getPath('userData'), { context: 'uncaughtException', error: err });
   logLine('fatal', err.stack ?? String(err));
   if (app.isReady()) {
     dialog.showErrorBox('运行错误', `${err.message}\n\n详细日志：userData/logs/session.log`);
     app.quit();
   }
+});
+process.on('unhandledRejection', (reason) => {
+  writeCrashReport(app.getPath('userData'), { context: 'unhandledRejection', error: reason });
+  logLine('error', `unhandledRejection: ${String(reason)}`);
 });
 
 // 单实例锁：防止双开时两个进程互写同一份存档/设置（后开者退出并聚焦已有窗口）

@@ -198,6 +198,18 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
       if (v === undefined) return;
       if (!Array.isArray(v) || !(v as unknown[]).every((x) => typeof x === 'string')) fail(`${label} 必须是字符串数组`);
     };
+    const requiredStrArr = (v: unknown, label: string): void => {
+      if (!Array.isArray(v) || !(v as unknown[]).every((x) => typeof x === 'string')) fail(`${label} 必须是字符串数组`);
+    };
+    const finite = (v: unknown, label: string): void => {
+      if (typeof v !== 'number' || !Number.isFinite(v)) fail(`${label} 必须是有限 number`);
+    };
+    const bool = (v: unknown, label: string): void => {
+      if (typeof v !== 'boolean') fail(`${label} 必须是 boolean`);
+    };
+    const stringOrNull = (v: unknown, label: string): void => {
+      if (v !== null && typeof v !== 'string') fail(`${label} 必须是 string 或 null`);
+    };
     const achievements = checkObj(sys.achievements, 'systems.achievements');
     if (achievements) strArr(achievements.unlocked, 'systems.achievements.unlocked');
     const scheduler = checkObj(sys.eventScheduler, 'systems.eventScheduler');
@@ -214,6 +226,39 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
           fail('systems.calendar.commandCounts 值必须是 number');
         }
       }
+    }
+    const combat = checkObj(sys.combat, 'systems.combat');
+    if (combat) {
+      if (!Array.isArray(combat.units)) fail('systems.combat.units 必须是数组');
+      for (const [index, rawUnit] of (combat.units as unknown[]).entries()) {
+        const label = `systems.combat.units[${index}]`;
+        if (typeof rawUnit !== 'object' || rawUnit === null || Array.isArray(rawUnit)) fail(`${label} 必须是对象`);
+        const unit = rawUnit as Record<string, unknown>;
+        for (const key of ['uid', 'defId', 'name', 'team', 'kind']) {
+          if (typeof unit[key] !== 'string') fail(`${label}.${key} 必须是 string`);
+        }
+        for (const key of ['hp', 'maxHp', 'atk', 'def', 'range', 'move', 'position']) {
+          finite(unit[key], `${label}.${key}`);
+        }
+        requiredStrArr(unit.skills, `${label}.skills`);
+        bool(unit.alive, `${label}.alive`);
+        if (typeof unit.cooldowns !== 'object' || unit.cooldowns === null || Array.isArray(unit.cooldowns)) {
+          fail(`${label}.cooldowns 必须是对象`);
+        } else if (!Object.values(unit.cooldowns as Record<string, unknown>).every((value) => typeof value === 'number' && Number.isFinite(value))) {
+          fail(`${label}.cooldowns 值必须是有限 number`);
+        }
+      }
+      finite(combat.turn, 'systems.combat.turn');
+      if ((combat.turn as number) <= 0) fail('systems.combat.turn 必须是正数');
+      if (typeof combat.actingTeam !== 'string') fail('systems.combat.actingTeam 必须是 string');
+      stringOrNull(combat.winner, 'systems.combat.winner');
+      bool(combat.finished, 'systems.combat.finished');
+      strArr(combat.moved, 'systems.combat.moved');
+    }
+    const affection = checkObj(sys.affection, 'systems.affection');
+    if (affection) {
+      requiredStrArr(affection.consumed, 'systems.affection.consumed');
+      strArr(affection.everConsumed, 'systems.affection.everConsumed');
     }
   }
 }

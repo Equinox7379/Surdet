@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TextStyle, Texture } from 'pixi.js';
+import { Assets, Sprite, Text as PText, TextStyle, Texture } from 'pixi.js';
 import { PixiStage } from '../src/pixi-stage.js';
 
 const defaultFontFamily = TextStyle.defaultTextStyle.fontFamily;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   TextStyle.defaultTextStyle.fontFamily = defaultFontFamily;
 });
@@ -34,6 +35,17 @@ describe('PixiStage 素材注入', () => {
     await stage.registerBackground('forest', Texture.EMPTY);
     await stage.registerBackground('forest', Texture.EMPTY);
     stage.setBackground('forest');
+  });
+
+  it('Blob URL 注册图片时显式选择 Pixi 解析器，避免回退占位纹理', async () => {
+    const load = vi.spyOn(Assets, 'load').mockResolvedValue(Texture.EMPTY as never);
+    const stage = makeStage();
+    await stage.registerBackground('castle', 'blob:castle', 'image/png');
+    await stage.registerPortrait('lynn', 'uniform', 'normal', 'blob:portrait', 'image/png');
+    await stage.registerAvatar('lynn', 'blob:avatar', 'image/svg+xml');
+    expect(load).toHaveBeenNthCalledWith(1, { src: 'blob:castle', parser: 'loadTextures' });
+    expect(load).toHaveBeenNthCalledWith(2, { src: 'blob:portrait', parser: 'loadTextures' });
+    expect(load).toHaveBeenNthCalledWith(3, { src: 'blob:avatar', parser: 'loadSVG' });
   });
 
   it('resetSession 默认保留宿主已注册素材，开始新游戏后仍可命中真实纹理', async () => {
@@ -66,6 +78,21 @@ describe('PixiStage 素材注入', () => {
     expect(Texture.EMPTY.destroyed).toBe(false);
   });
 
+  it('释放通过 URL 加载的 Pixi 资源，但不触碰宿主注入纹理', async () => {
+    const load = vi.spyOn(Assets, 'load').mockResolvedValue(Texture.EMPTY as never);
+    const unload = vi.spyOn(Assets, 'unload').mockResolvedValue();
+    const stage = makeStage();
+    await stage.registerBackground('castle', 'blob:castle');
+    await stage.registerPortrait('lynn', 'armor', 'normal', 'blob:portrait');
+    await stage.registerAvatar('lynn', 'blob:avatar');
+
+    await stage.releaseRegisteredAssetSources();
+
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(unload).toHaveBeenCalledWith(expect.arrayContaining(['blob:castle', 'blob:portrait', 'blob:avatar']));
+    expect(Texture.EMPTY.destroyed).toBe(false);
+  });
+
   it('removePortrait 支持纯角色 ID（规范写法 @hide lynn）：移除该角色全部立绘', async () => {
     const stage = makeStage();
     await stage.registerPortrait('lynn', 'armor', 'despair', Texture.EMPTY);
@@ -80,6 +107,93 @@ describe('PixiStage 素材注入', () => {
     stage.removePortrait('lynn');
     // 完整 key 写法仍支持精确移除
     stage.removePortrait('mio:uniform');
+  });
+
+  it('删除交叉淡化中的立绘后，下一帧不会继续写入已销毁 Sprite', async () => {
+    const destroyed = new WeakSet<Sprite>();
+    const originalDestroy = Sprite.prototype.destroy as unknown as (...args: any[]) => void;
+    vi.spyOn(Sprite.prototype, 'destroy').mockImplementation(function (this: Sprite, ...args: any[]) {
+      let x = this.x;
+      let alpha = this.alpha;
+      originalDestroy.apply(this, args);
+      destroyed.add(this);
+      Object.defineProperty(this, 'x', {
+        configurable: true,
+        get: () => x,
+        set: () => { throw new Error('write to destroyed portrait'); },
+      });
+      Object.defineProperty(this, 'alpha', {
+        configurable: true,
+        get: () => alpha,
+        set: (value: number) => {
+          if (destroyed.has(this)) throw new Error('write to destroyed portrait');
+          alpha = value;
+        },
+      });
+    });
+
+    const stage = new PixiStage();
+    await stage.registerPortrait('lynn', 'uniform', 'normal', Texture.EMPTY);
+    await stage.registerPortrait('lynn', 'uniform', 'happy', Texture.WHITE);
+    stage.setPortrait('lynn:uniform', { charId: 'lynn', costume: 'uniform', expression: 'normal', pos: 'left' });
+    stage.setPortrait('lynn:uniform', { charId: 'lynn', costume: 'uniform', expression: 'happy', pos: 'left' });
+    stage.removePortrait('lynn');
+
+    expect(() => stage.updateEffects(300)).not.toThrow();
+  });
+
+  it('删除移动中的立绘后，下一帧不会继续驱动已销毁 Sprite', async () => {
+    const destroyed = new WeakSet<Sprite>();
+    const originalDestroy = Sprite.prototype.destroy as unknown as (...args: any[]) => void;
+    vi.spyOn(Sprite.prototype, 'destroy').mockImplementation(function (this: Sprite, ...args: any[]) {
+      let x = this.x;
+      originalDestroy.apply(this, args);
+      destroyed.add(this);
+      Object.defineProperty(this, 'x', {
+        configurable: true,
+        get: () => x,
+        set: () => { throw new Error('write to destroyed portrait'); },
+      });
+    });
+
+    const stage = new PixiStage();
+    await stage.registerPortrait('lynn', 'uniform', 'normal', Texture.EMPTY);
+    stage.setPortrait('lynn:uniform', { charId: 'lynn', costume: 'uniform', expression: 'normal', pos: 'left' });
+    stage.movePortrait('lynn', 'right', 400);
+    stage.removePortrait('lynn');
+
+    expect(() => stage.updateEffects(500)).not.toThrow();
+  });
+
+  it('Ruby 文本重绘复用对象池，仅在容量增长时创建新对象', () => {
+    class FakeCanvasRenderingContext2D {
+      font = '';
+      measureText(text: string) {
+        return {
+        width: text.length * 10,
+        actualBoundingBoxAscent: 20,
+        actualBoundingBoxDescent: 5,
+        };
+      }
+    }
+    const context = new FakeCanvasRenderingContext2D();
+    vi.stubGlobal('CanvasRenderingContext2D', FakeCanvasRenderingContext2D);
+    vi.stubGlobal('document', {
+      createElement: () => ({ getContext: () => context }),
+    });
+    const destroySpy = vi.spyOn(PText.prototype, 'destroy');
+    const stage = new PixiStage();
+    const before = destroySpy.mock.calls.length;
+
+    stage.showText('凛', '甲《こう》');
+    const afterFirst = destroySpy.mock.calls.length;
+    stage.showText('凛', '甲《こう》乙《おつ》');
+    const afterLonger = destroySpy.mock.calls.length;
+
+    expect(afterFirst).toBe(before);
+    expect(afterLonger).toBe(afterFirst);
+    stage.destroy();
+    expect(destroySpy.mock.calls.length).toBeGreaterThan(afterLonger);
   });
 });
 
@@ -110,6 +224,26 @@ describe('PixiStage 结局黑场', () => {
 });
 
 describe('PixiStage 时间轴镜头与屏幕补间', () => {
+  it('静态画面不请求帧，等待指示器和演出效果激活时请求帧', () => {
+    const stage = new PixiStage();
+    let requests = 0;
+    stage.setFrameRequest(() => { requests++; });
+    expect(stage.needsUpdate()).toBe(false);
+
+    stage.setAwaiting(true);
+    expect(stage.needsUpdate()).toBe(true);
+    expect(requests).toBe(1);
+    stage.setAwaiting(false);
+    expect(stage.needsUpdate()).toBe(false);
+    expect(requests).toBe(2);
+
+    stage.flash(300);
+    expect(stage.needsUpdate()).toBe(true);
+    expect(requests).toBe(3);
+    stage.updateEffects(300);
+    expect(stage.needsUpdate()).toBe(false);
+  });
+
   it('镜头 pan 会从当前偏移补间到目标，并可序列化恢复', () => {
     const stage = new PixiStage();
     const cue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'pan', x: 180, y: -40 };

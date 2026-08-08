@@ -13,7 +13,7 @@ import {
   AUTO_SLOT,
 } from '@surdet/core';
 import type { VarDeclaration, SaveStorage, SaveSnapshot, CoreEventMap } from '@surdet/core';
-import { PixiStage, AdvRenderer, AudioManager } from '@surdet/renderer';
+import { PixiStage, AdvRenderer, AudioManager, FrameScheduler } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
 
 // vite glob：递归收录全部 .gal 剧本（子目录场景 ID 仍为文件名去扩展名，须全局唯一）
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   renderer.subscribe(bus);
 
   stage.app!.canvas.addEventListener('pointerdown', () => renderer.advance());
-  stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
+  new FrameScheduler(stage.app!, renderer, [stage]);
 
   // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率不变）
   stage.fitWindow();

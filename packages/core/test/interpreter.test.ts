@@ -191,6 +191,24 @@ describe('Interpreter', () => {
     expect(store.getBoolean('hasKey')).toBe(true);
   });
 
+  it('R3 道具指令：大数组使用只读内部引用，提交时不原地修改引用', () => {
+    const initial = Array.from({ length: 2048 }, (_, i) => `item-${i}`);
+    const { store, registry, interp } = makeRuntime([
+      { name: 'items', type: 'string[]', initial },
+    ]);
+    registry.register(compileScene(
+      '@add_item items extra\n@remove_item items item-1024',
+      's.gal', 'large-items',
+    ));
+    const before = store.getRef('items');
+    interp.start('large-items');
+
+    expect(before).toEqual(initial);
+    expect(store.get<string[]>('items')).toContain('extra');
+    expect(store.get<string[]>('items')).not.toContain('item-1024');
+    expect(store.getRef('items')).not.toBe(before);
+  });
+
   it('R3 @video：阻塞挂起 awaiting-timer，finishWait 恢复；advance 可跳过', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene('@video op_01\n凛：视频之后。', 's.gal', 'vd'));

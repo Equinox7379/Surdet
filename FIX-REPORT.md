@@ -1,7 +1,7 @@
 # Surdet 引擎审核修复报告（交接文档）
 
 > 日期：2026-08-04（两轮修复：首轮审核修复 + 反审清单闭环）
-> 范围：`C:\Users\Equinox\Documents\Default Project\surdet`（git 仓库 `Default Project` 下的 `surdet/` 子目录）
+> 范围：`E:\surdet`（git 仓库 `Default Project` 下的 `surdet/` 子目录）
 > 状态：**全部修改已落地并通过验证，但尚未提交**（工作区有 24 个文件的未暂存改动，`git diff` 可见全量细节）。
 > 验证结果：`npm run test` 全绿（cli 48 + core 169 + renderer 36 + shell 9 = **262 项通过**），`npm run typecheck` 全包通过。
 
@@ -230,7 +230,7 @@ if (this.#skipMode && p.wasRead === false) this.#skipMode = false;
 
 ## 六、验证方式（接手者复现命令）
 
-在仓库根（`Default Project/surdet`）执行（Windows PowerShell 环境）：
+在项目根（`E:\surdet`）执行（Windows PowerShell 环境）：
 
 ```powershell
 npm run test        # 全 workspace：cli 48 + core 169 + renderer 36 + shell 9 = 262，全部通过

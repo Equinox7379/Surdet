@@ -26,10 +26,11 @@ import type {
   CalendarConfig, GrowthConfig, AchievementDef, AffectionProfile, RelationshipEvent, ScheduledEventDef,
 } from '@surdet/core';
 import {
-  AdvRenderer, AudioManager, Backlog, PixiStage, Typewriter, buildMapView,
+  AdvRenderer, AudioManager, Backlog, PixiStage, Typewriter, FrameScheduler, RenderPerformanceMonitor, buildMapView,
   SettingsStore, SETTING_STEPS, stepSetting,
 } from '@surdet/renderer';
 import type { AudioHandle, FontRole, GameSettings, SaveSlotView, SettingsStorage, SpeakerProfile } from '@surdet/renderer';
+import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
 
 interface SceneSrc { id: string; text: string }
 
@@ -83,6 +84,7 @@ const NORMAL_CPS = 30;
 
 let stage: PixiStage | null = null;
 let renderer: AdvRenderer | null = null;
+let frameScheduler: FrameScheduler | null = null;
 let bus: EventBus<CoreEventMap> | null = null;
 let interp: Interpreter | null = null;
 /** 当前预览会话的变量仓库与场景注册表（供 system 事件回调使用；每次 load 重建） */
@@ -107,6 +109,11 @@ let settingsOpen = false;
 const appliedFontKeys: Partial<Record<FontRole, string>> = {};
 const appliedFontUrls: Partial<Record<FontRole, string>> = {};
 let appliedAssetUrls: string[] = [];
+const previewGeneration = new PreviewGeneration();
+
+function postPreviewDiagnostic(diagnostic: PreviewDiagnostic): void {
+  window.parent.postMessage({ type: 'surdet-preview-diagnostic', diagnostic }, '*');
+}
 
 function releaseAppliedFontUrls(): void {
   for (const role of ['title', 'body', 'ui'] as FontRole[]) {
@@ -122,9 +129,16 @@ class PreviewAudio implements AudioHandle {
   #inner = new AudioManager();
   #urls = new Map<string, string>();
 
-  setUrls(entries: readonly { kind: 'bgm' | 'se' | 'voice'; key: string; url: string }[]): void {
+  setUrls(entries: readonly { kind: 'bgm' | 'se' | 'voice'; key: string; url: string; format?: string }[]): void {
     this.#urls.clear();
-    for (const e of entries) this.#urls.set(`${e.kind}:${e.key}`, e.url);
+    for (const e of entries) {
+      this.#urls.set(`${e.kind}:${e.key}`, e.url);
+      if (e.format) this.#inner.setSourceFormat(e.url, e.format);
+    }
+  }
+
+  dispose(): void {
+    this.#inner.dispose();
   }
 
   #resolve(kind: 'bgm' | 'se' | 'voice', src: string): string {
@@ -158,6 +172,7 @@ function showError(msg: string): void {
     root.appendChild(el);
   }
   el.textContent = msg;
+  postPreviewDiagnostic({ generation: previewGeneration.current, level: 'error', phase: 'runtime', message: msg });
 }
 
 function clearError(): void {
@@ -293,8 +308,8 @@ async function boot(): Promise<void> {
     stage?.showBanner?.(`存档与当前剧本不一致：${p.sceneId}`, 'tip');
   });
 
-  // 帧驱动 + 输入接线（宿主模板标准两行；此前遗漏导致打字机永不推进、点击无响应）
-  stage.app!.ticker.add((ticker) => renderer?.update(ticker.deltaMS));
+  // 引擎帧调度：静态画面暂停 ticker，剧情事件/输入/舞台动画自动唤醒。
+  frameScheduler = new FrameScheduler(stage.app!, renderer, [stage], { monitor: new RenderPerformanceMonitor() });
 
   const closeSystemMenu = (): void => {
     if (!systemMenuOpen) return;
@@ -771,19 +786,21 @@ async function boot(): Promise<void> {
   window.parent.postMessage({ type: 'surdet-preview-ready' }, '*');
 }
 
-function releaseAppliedAssetUrls(): void {
+async function releaseAppliedAssetUrls(): Promise<void> {
   previewAudio.stopAll();
+  previewAudio.dispose();
   previewAudio.setUrls([]);
+  await stage?.releaseRegisteredAssetSources();
   for (const url of appliedAssetUrls) URL.revokeObjectURL(url);
   appliedAssetUrls = [];
 }
 
 /** 注册本轮预览的图片并等待 Assets.load 完成，确保首个 @bg/@show 不会先落占位纹理。 */
 async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<void> {
-  releaseAppliedAssetUrls();
+  await releaseAppliedAssetUrls();
   if (!assets || !stage) return;
   const urls: string[] = [];
-  const audioEntries: { kind: 'bgm' | 'se' | 'voice'; key: string; url: string }[] = [];
+  const audioEntries: { kind: 'bgm' | 'se' | 'voice'; key: string; url: string; format: string }[] = [];
   const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>): Promise<void> => {
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {
@@ -797,7 +814,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   for (const asset of assets.audio) {
     try {
       const url = URL.createObjectURL(new Blob([asset.file.buffer as unknown as BlobPart], { type: asset.file.mime }));
-      audioEntries.push({ kind: asset.kind, key: asset.key, url });
+      audioEntries.push({ kind: asset.kind, key: asset.key, url, format: asset.file.mime });
       urls.push(url);
     } catch (err) {
       console.warn('[preview] 音频素材加载失败，回退 key：', err);
@@ -808,17 +825,17 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
     ...assets.backgrounds.map((asset) => register(
       asset.image.buffer,
       asset.image.mime,
-      (url) => stage!.registerBackground(asset.key, url),
+      (url) => stage!.registerBackground(asset.key, url, asset.image.mime),
     )),
     ...assets.portraits.map((asset) => register(
       asset.image.buffer,
       asset.image.mime,
-      (url) => stage!.registerPortrait(asset.charId, asset.costume, asset.expression, url),
+      (url) => stage!.registerPortrait(asset.charId, asset.costume, asset.expression, url, asset.image.mime),
     )),
     ...(assets.avatars ?? []).map((asset) => register(
       asset.image.buffer,
       asset.image.mime,
-      (url) => stage!.registerAvatar(asset.key, url),
+      (url) => stage!.registerAvatar(asset.key, url, asset.image.mime),
     )),
   ]);
   appliedAssetUrls = urls;
@@ -826,6 +843,8 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
 
 async function load(p: LoadPayload): Promise<void> {
   if (!bus || !stage) return;
+  const generation = previewGeneration.next();
+  postPreviewDiagnostic({ generation, level: 'info', phase: 'reload', message: '预览正在重新加载…', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   clearError();
   try {
     previewProjectKey = p.projectKey?.trim() || 'untitled';
@@ -839,7 +858,7 @@ async function load(p: LoadPayload): Promise<void> {
     renderer?.resetSession({ clearAssets: true });
     stage.setSpeakerProfiles(p.speakerProfiles ?? []);
     // 新请求即使在编译/配置阶段失败，也不能让上一轮 BGM/语音继续播放。
-    releaseAppliedAssetUrls();
+    await releaseAppliedAssetUrls();
     // 字体下发应用：先于剧情启动。旧版 font 映射到三个角色，避免旧项目预览变样。
     const incomingFonts = p.fonts ?? (p.font ? { title: p.font, body: p.font, ui: p.font } : {});
     const roles: FontRole[] = ['body', 'title', 'ui'];
@@ -910,6 +929,7 @@ async function load(p: LoadPayload): Promise<void> {
     store = vs;
     registry = reg;
     await applyPreviewAssets(p.assets);
+    postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
         ...(calendar ? { calendar: calendar.snapshot() } : {}),
@@ -931,7 +951,9 @@ async function load(p: LoadPayload): Promise<void> {
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
+    postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   } catch (err) {
+    postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message: `预览失败：${err instanceof Error ? err.message : String(err)}`, sceneId: p.sceneId });
     showError(`预览失败：${err instanceof Error ? err.message : String(err)}`);
   }
 }

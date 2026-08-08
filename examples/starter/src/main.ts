@@ -53,6 +53,8 @@ import {
   buildBattleView,
   buildMapView,
   GamepadPoller,
+  FrameScheduler,
+  RenderPerformanceMonitor,
 } from '@surdet/renderer';
 import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, FontRole } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
@@ -121,6 +123,7 @@ declare global {
       quit(): Promise<void>;
       toggleFullscreen(): Promise<void>;
       log(level: string, msg: string): Promise<void>;
+      reportError(context: string, message: string): Promise<string | null>;
     };
     /** 素材桥：打包 exe 内素材经主进程解密读取（浏览器环境不存在，回退直接 URL） */
     surdetAsset?: {
@@ -580,8 +583,9 @@ async function main(): Promise<void> {
     openSystemMenu();
   });
 
-  // Pixi ticker 驱动帧推进
-  stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
+  // 引擎帧调度：静态画面暂停 ticker，剧情事件/输入/舞台动画自动唤醒。
+  const performanceMonitor = new RenderPerformanceMonitor();
+  new FrameScheduler(stage.app!, renderer, [stage], { monitor: performanceMonitor });
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
@@ -746,6 +750,7 @@ async function main(): Promise<void> {
         await stage.registerAvatar(fname.replace(IMG, ''), url, format);
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
+        audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
       }
     };
     const desktopAsset = window.surdetAsset;
@@ -1302,9 +1307,12 @@ async function main(): Promise<void> {
   window.addEventListener('error', (e) => {
     showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
+    void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
   });
   window.addEventListener('unhandledrejection', (e) => {
-    showFatal(e.reason instanceof Error ? e.reason.message : String(e.reason));
+    const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
+    showFatal(message);
+    void window.surdetApp?.reportError('renderer-unhandled-rejection', message);
   });
 
   // 启动：加载素材 → 标题画面（不再直进剧情）

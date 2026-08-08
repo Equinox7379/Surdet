@@ -9,7 +9,7 @@
 export type VarPrimitive = string | number | boolean;
 
 /** 变量可接受的全部取值形态 */
-export type VarValue = VarPrimitive | VarPrimitive[] | Record<string, VarPrimitive>;
+export type VarValue = VarPrimitive | VarValue[] | { [key: string]: VarValue };
 
 /** 声明中允许的类型标识 */
 export type VarType =

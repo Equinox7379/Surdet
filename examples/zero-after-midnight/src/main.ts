@@ -52,6 +52,8 @@ import {
   buildBattleView,
   buildMapView,
   GamepadPoller,
+  FrameScheduler,
+  RenderPerformanceMonitor,
 } from '@surdet/renderer';
 import type { SettingsStorage, GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, FontRole } from '@surdet/renderer';
 import gameConfig from '../game.config.json';
@@ -114,6 +116,7 @@ declare global {
       quit(): Promise<void>;
       toggleFullscreen(): Promise<void>;
       log(level: string, msg: string): Promise<void>;
+      reportError(context: string, message: string): Promise<string | null>;
     };
     /** 素材桥：打包 exe 内素材经主进程解密读取（浏览器环境不存在，回退直接 URL） */
     surdetAsset?: {
@@ -131,10 +134,8 @@ async function main(): Promise<void> {
   await stage.init();
 
   const fontBlobUrls = new Set<string>();
-  window.addEventListener('beforeunload', () => {
-    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
-    fontBlobUrls.clear();
-  });
+  /** 桌面壳从主进程读取素材时生成的 Blob URL；浏览器 Vite URL 不进入此集合。 */
+  const assetBlobUrls = new Set<string>();
 
   // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
   await loadConfiguredFonts();
@@ -218,7 +219,7 @@ async function main(): Promise<void> {
         load: async () => (await desktopSettings.read().catch(() => null)) as Partial<GameSettings> | null,
         save: (s) =>
           desktopSettings.write(s).catch((err) => {
-            console.error('[starter] 设置写入失败：', err);
+            console.error('[zero] 设置写入失败：', err);
           }),
       }
     : {
@@ -234,7 +235,7 @@ async function main(): Promise<void> {
           try {
             localStorage.setItem('surdet:settings', JSON.stringify(s));
           } catch (err) {
-            console.error('[starter] 设置写入失败：', err);
+            console.error('[zero] 设置写入失败：', err);
           }
         },
       };
@@ -257,12 +258,26 @@ async function main(): Promise<void> {
   settings.apply(typewriter, audio);
   renderer.subscribe(bus);
 
+  /** 正式游戏运行基线：只记轻量计数，不改变剧情和渲染行为。 */
+  const frameMetrics = {
+    frames: 0,
+    totalUpdateMs: 0,
+    maxUpdateMs: 0,
+    slowFrames: 0,
+    lastDeltaMs: 0,
+  };
+
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
     get status(): string { return interp.status; },
     get rendererStatus(): string { return renderer.status; },
     get position(): { sceneId: string; pc: number } | null { return interp.saveSnapshot()?.position ?? null; },
+    get metrics(): typeof frameMetrics & { activeBlobUrls: number } {
+      return { ...frameMetrics, activeBlobUrls: assetBlobUrls.size };
+    },
     titleSelect: (id: string) => titleSelect(id),
+    quickSave: () => quickSave(),
+    quickLoad: () => quickLoad(),
   };
 
   // ===== 存档富化：缩略图（舞台截图）+ 本次会话游戏时长 =====
@@ -300,11 +315,11 @@ async function main(): Promise<void> {
               const nodeDef = calendar.nodes().find((n) => n.id === nodeId);
               const res = calendar.enter(nodeId);
               if (!res.ok) {
-                console.info('[starter] calendar enter failed:', nodeId, res.reason);
+                console.info('[zero] calendar enter failed:', nodeId, res.reason);
                 renderMap();
                 return;
               }
-              console.info('[starter] calendar enter:', nodeId);
+              console.info('[zero] calendar enter:', nodeId);
               // 据点节点 → 打开据点指令面板（兰斯式 base commands；无指令配置时按普通节点处理）
               if (nodeDef?.isBase && calendar.baseCommands().length > 0) {
                 openBasePanel();
@@ -322,7 +337,7 @@ async function main(): Promise<void> {
               calendar.advanceTurn();
               const endEv = scheduler.dispatch(store);
               if (endEv) {
-                console.info(`[starter] 回合尾事件触发: ${endEv.id}${endEv.scene ? `（演出 → ${endEv.scene}）` : ''}`);
+                console.info(`[zero] 回合尾事件触发: ${endEv.id}${endEv.scene ? `（演出 → ${endEv.scene}）` : ''}`);
                 checkAchievements(); // effects 改变量后补查成就
               }
               if (endEv?.scene && registry.has(endEv.scene)) {
@@ -368,7 +383,7 @@ async function main(): Promise<void> {
                 try {
                   store.modify(varName, delta);
                 } catch (err) {
-                  console.warn('[starter] base command effect 写回失败:', varName, err);
+                  console.warn('[zero] base command effect 写回失败:', varName, err);
                 }
               }
               baseMsg = `执行了「${name}」。`;
@@ -390,7 +405,7 @@ async function main(): Promise<void> {
         // 场景演出无法在播完后回到地图（解释器无地图恢复点），演出留给回合尾事件）
         const headEv = scheduler.dispatch(store);
         if (headEv) {
-          console.info(`[starter] 回合头事件触发: ${headEv.id}（effects 已结算）`);
+          console.info(`[zero] 回合头事件触发: ${headEv.id}（effects 已结算）`);
           checkAchievements(); // effects 改变量后补查成就
         }
         renderMap();
@@ -474,7 +489,7 @@ async function main(): Promise<void> {
           if (combat.finished) {
             stage.hideBattle();
             store.set('battleWon', combat.winner === 'allies');
-            console.info('[starter] battle finished, winner:', combat.winner, 'ngp cleared:', ngp.isCleared());
+            console.info('[zero] battle finished, winner:', combat.winner, 'ngp cleared:', ngp.isCleared());
             interp.resumeHost(); // 战斗结束 → 恢复剧情推进
           } else {
             renderBattle();
@@ -486,13 +501,13 @@ async function main(): Promise<void> {
       case 'affection': {
         const charId = p.args[0];
         const tier = charId ? affection.stageOf(charId)?.stage ?? null : null;
-        console.info('[starter] affection stage:', tier);
+        console.info('[zero] affection stage:', tier);
         break;
       }
       case 'event': {
         const evId = p.args[0];
         if (evId && affection.consumeEvent(evId)) {
-          console.info('[starter] event consumed:', evId);
+          console.info('[zero] event consumed:', evId);
         }
         break;
       }
@@ -505,7 +520,7 @@ async function main(): Promise<void> {
             const res = achievements.unlock(id);
             if (res.fresh) stage.showBanner(`成就解锁：${res.def.hidden ? '???' : res.def.name}`, 'tip');
           } catch (err) {
-            console.warn('[starter] achievement unlock failed:', err instanceof Error ? err.message : err);
+          console.warn('[zero] achievement unlock failed:', err instanceof Error ? err.message : err);
           }
         }
         break;
@@ -534,7 +549,7 @@ async function main(): Promise<void> {
         break;
       }
       default:
-        console.info('[starter] system event:', p.type);
+        console.info('[zero] system event:', p.type);
     }
   });
 
@@ -561,8 +576,18 @@ async function main(): Promise<void> {
     openSystemMenu();
   });
 
-  // Pixi ticker 驱动帧推进
-  stage.app!.ticker.add((ticker) => renderer.update(ticker.deltaMS));
+  // 引擎帧调度：静态画面暂停 ticker，剧情事件/输入/舞台动画自动唤醒。
+  const performanceMonitor = new RenderPerformanceMonitor();
+  const frameScheduler = new FrameScheduler(stage.app!, renderer, [stage], {
+    monitor: performanceMonitor,
+    onFrame: (deltaMs, elapsed) => {
+      frameMetrics.lastDeltaMs = deltaMs;
+      frameMetrics.frames += 1;
+      frameMetrics.totalUpdateMs += elapsed;
+      frameMetrics.maxUpdateMs = Math.max(frameMetrics.maxUpdateMs, elapsed);
+      frameMetrics.slowFrames += elapsed > 8 ? 1 : 0;
+    },
+  });
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
@@ -571,7 +596,7 @@ async function main(): Promise<void> {
         read: (slot) => desktopSave.read(slot).catch(() => null),
         write: (slot, data) =>
           desktopSave.write(slot, data).catch((err) => {
-            console.error('[starter] 存档写入失败：', err);
+            console.error('[zero] 存档写入失败：', err);
           }),
         delete: (slot) => desktopSave.delete(slot).catch(() => {}),
         list: () => desktopSave.list().catch(() => []),
@@ -591,7 +616,7 @@ async function main(): Promise<void> {
           try {
             localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
           } catch (err) {
-            console.error('[starter] 存档写入失败：', err);
+            console.error('[zero] 存档写入失败：', err);
           }
         },
         delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
@@ -605,13 +630,13 @@ async function main(): Promise<void> {
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
   bus.on('autosave', (snap) => {
     void saves.save(AUTO_SLOT, enrichSnapshot(snap)).then(() => {
-      console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
+      console.info('[zero] 自动存档（ngp cleared:', ngp.isCleared(), '）');
     });
   });
 
   // 存档场景哈希不匹配：存档后剧本被编辑，pc 定位可能漂移（引擎仍照常加载，此处提醒玩家）
   bus.on('saveMismatch', (p) => {
-    console.warn(`[starter] 存档与剧本版本不一致（场景 ${p.sceneId}）：定位可能漂移，建议重新开始该场景`);
+    console.warn(`[zero] 存档与剧本版本不一致（场景 ${p.sceneId}）：定位可能漂移，建议重新开始该场景`);
   });
 
   // 读档/状态重置（审计修复 C1/M1）：关闭全部覆盖层，防止旧战斗/地图/商店 UI 残留在还原后的状态之上
@@ -640,7 +665,7 @@ async function main(): Promise<void> {
         try {
           interp.loadSnapshot(snap);
         } catch (err) {
-          console.error('[starter] 回合尾事件恢复失败:', err);
+          console.error('[zero] 回合尾事件恢复失败:', err);
         }
       }, 0);
       return;
@@ -665,7 +690,9 @@ async function main(): Promise<void> {
         const files = await desktopAsset.list();
         if (!files.includes(rel)) return null;
         const bytes = await desktopAsset.read(rel);
-        return URL.createObjectURL(new Blob([bytes as unknown as BlobPart]));
+        const ext = (fontPath.split('.').pop() ?? '').toLowerCase();
+        const mime = ext === 'woff2' ? 'font/woff2' : ext === 'woff' ? 'font/woff' : ext === 'otf' ? 'font/otf' : 'font/ttf';
+        return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime }));
       } catch {
         return null;
       }
@@ -682,31 +709,50 @@ async function main(): Promise<void> {
   async function loadAssets(): Promise<void> {
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
     const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
-    const register = async (rel: string, url: string): Promise<void> => {
+    const MIME: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+      gif: 'image/gif', avif: 'image/avif', svg: 'image/svg+xml',
+      mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+    };
+    const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
       const kind = parts[0] ?? '';
       const fname = parts[parts.length - 1] ?? '';
       if (kind === 'bg' && IMG.test(fname)) {
-        await stage.registerBackground(fname.replace(IMG, ''), url);
+        await stage.registerBackground(fname.replace(IMG, ''), url, fname.split('.').pop());
+        return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const seg = fname.replace(IMG, '').split('_');
-        if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url);
+        if (seg[0]) {
+          await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, fname.split('.').pop());
+          return true;
+        }
       } else if (kind === 'avatar' && IMG.test(fname)) {
-        await stage.registerAvatar(fname.replace(IMG, ''), url);
+        await stage.registerAvatar(fname.replace(IMG, ''), url, fname.split('.').pop());
+        return true;
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
+        audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
+        return true;
       }
+      return false;
     };
     const desktopAsset = window.surdetAsset;
     if (desktopAsset) {
       // 打包环境：素材经主进程读取（自动解密）→ Blob URL 注册
       const files = await desktopAsset.list();
       for (const rel of files) {
+        let url: string | null = null;
         try {
           const bytes = await desktopAsset.read(rel);
-          await register(rel, URL.createObjectURL(new Blob([bytes as unknown as BlobPart])));
+          const ext = (rel.split('/').pop()?.split('.').pop() ?? '').toLowerCase();
+          url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: MIME[ext] ?? 'application/octet-stream' }));
+          const retained = await register(rel, url);
+          if (retained) assetBlobUrls.add(url);
+          else URL.revokeObjectURL(url);
         } catch (err) {
-          console.warn('[starter] 素材加载失败:', rel, err);
+          if (url) URL.revokeObjectURL(url);
+          console.warn('[zero] 素材加载失败:', rel, err);
         }
       }
     } else {
@@ -716,7 +762,7 @@ async function main(): Promise<void> {
       const auds = import.meta.glob('../content/assets/**/*.{mp3,ogg,wav,m4a,flac}', { query: '?url', import: 'default', eager: true });
       for (const [p, url] of Object.entries(auds)) await register(p.replace('../content/assets/', ''), url as string);
     }
-    console.info('[starter] 素材加载完成：音频条目', audioUrls.size);
+    console.info('[zero] 素材加载完成：音频条目', audioUrls.size);
   }
 
   // ===== 致命错误覆盖层（不白屏；桌面环境同时落日志） =====
@@ -767,7 +813,7 @@ async function main(): Promise<void> {
     try {
       localStorage.setItem(CLEAR_KEY, JSON.stringify(rec));
     } catch (err) {
-      console.error('[starter] 通关记录写入失败：', err);
+      console.error('[zero] 通关记录写入失败：', err);
     }
   }
   let clearRecord = loadClearRecord();
@@ -790,14 +836,14 @@ async function main(): Promise<void> {
     rec.clearedAt = Date.now();
     clearRecord = rec;
     saveClearRecord(rec);
-    console.info(`[starter] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目 · 收集 ${rec.endings.length} 结局）`);
+    console.info(`[zero] 全局通关记录：结局 ${p.ending}（累计 ${rec.playthroughs} 周目 · 收集 ${rec.endings.length} 结局）`);
   });
 
   // @exp：角色成长结果 → 升级演出（横幅）+ levelEvents 场景跳转（配置驱动）
   bus.on('growth', (p) => {
     if (p.levelsGained > 0) {
       stage.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
-      console.info(`[starter] growth: ${p.characterId} Lv.${p.levelBefore} → Lv.${p.levelAfter}（+${p.gained} exp）`);
+    console.info(`[zero] growth: ${p.characterId} Lv.${p.levelBefore} → Lv.${p.levelAfter}（+${p.gained} exp）`);
       // 途经等级触发 levelEvents（升多级时逐级检查；场景存在才跳转，避免配置缺场景卡死剧情）
       for (const lv of p.passedLevels) {
         const scene = growth.levelEventFor(p.characterId, lv);
@@ -812,7 +858,7 @@ async function main(): Promise<void> {
           const res = achievements.unlock('level_5');
           if (res.fresh) stage.showBanner(`成就解锁：${res.def.name}`, 'tip');
         } catch (err) {
-          console.warn('[starter] level_5 unlock failed:', err instanceof Error ? err.message : err);
+          console.warn('[zero] level_5 unlock failed:', err instanceof Error ? err.message : err);
         }
       }
       checkAchievements(); // 升级后补查 when 条件成就
@@ -826,10 +872,10 @@ async function main(): Promise<void> {
       const fresh = achievements.check();
       for (const r of fresh) {
         stage.showBanner(`成就解锁：${r.def.name}`, 'tip');
-        console.info(`[starter] achievement unlocked: ${r.id}（${r.def.name}）`);
+        console.info(`[zero] achievement unlocked: ${r.id}（${r.def.name}）`);
       }
     } catch (err) {
-      console.warn('[starter] achievement check failed:', err instanceof Error ? err.message : err);
+      console.warn('[zero] achievement check failed:', err instanceof Error ? err.message : err);
     }
   }
   // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
@@ -878,12 +924,12 @@ async function main(): Promise<void> {
         if (typeof path !== 'string' || path.length === 0) continue;
         const url = await resolveFontUrl(path);
         if (!url) {
-          console.warn(`[starter] 未找到 ${role} 字体文件，使用回退字体：`, path);
+          console.warn(`[zero] 未找到 ${role} 字体文件，使用回退字体：`, path);
           continue;
         }
         if (url.startsWith('blob:')) fontBlobUrls.add(url);
         const ok = await stage.registerFontRole(role, url);
-        if (ok) console.info(`[starter] ${role} 字体已加载：`, path);
+        if (ok) console.info(`[zero] ${role} 字体已加载：`, path);
       }
       return;
     }
@@ -892,9 +938,9 @@ async function main(): Promise<void> {
       const url = await resolveFontUrl(cfg.font);
       if (url) {
         if (url.startsWith('blob:')) fontBlobUrls.add(url);
-        if (await stage.registerFont(url)) console.info('[starter] 兼容单字体已加载：', cfg.font);
+        if (await stage.registerFont(url)) console.info('[zero] 兼容单字体已加载：', cfg.font);
       } else {
-        console.warn('[starter] 未找到字体文件，回退系统字体：', cfg.font);
+        console.warn('[zero] 未找到字体文件，回退系统字体：', cfg.font);
       }
     }
   }
@@ -929,7 +975,7 @@ async function main(): Promise<void> {
           for (const [name, value] of Object.entries(inherited)) {
             if (store.has(name) && store.get(name) !== value) store.set(name, value);
           }
-          console.info(`[starter] 新周目开局（第 ${rec.playthroughs + 1} 周目，继承 ${ngp.inheritEntries().length} 项）`);
+          console.info(`[zero] 新周目开局（第 ${rec.playthroughs + 1} 周目，继承 ${ngp.inheritEntries().length} 项）`);
         }
         sessionStart = Date.now(); // 新周目重新计游戏时长
         interp.start((gameConfig as { entryScene?: string }).entryScene ?? 'ch01_01'); // 审计修复：入口场景取自配置，不再硬编码
@@ -975,10 +1021,10 @@ async function main(): Promise<void> {
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
-          console.warn('[starter] 存档失败：游戏尚未开始');
+          console.warn('[zero] 存档失败：游戏尚未开始');
           return;
         }
-        void saves.save(slotId, enrichSnapshot(snap)).then(() => console.info('[starter] 已存档', slotId));
+        void saves.save(slotId, enrichSnapshot(snap)).then(() => console.info('[zero] 已存档', slotId));
       } else {
         void (async () => {
           try {
@@ -987,9 +1033,9 @@ async function main(): Promise<void> {
             stage.hideTitle();
             interp.loadSnapshot(snap);
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
-            console.info('[starter] 已读档', slotId);
+            console.info('[zero] 已读档', slotId);
           } catch (err) {
-            console.error('[starter] 读档失败:', err);
+            console.error('[zero] 读档失败:', err);
           }
         })();
       }
@@ -1027,21 +1073,42 @@ async function main(): Promise<void> {
     );
   }
 
-  function quickSave(): void {
+  let quickSaveInFlight: Promise<boolean> | null = null;
+
+  function quickSave(): Promise<boolean> {
+    // 快速读档必须等待当前 IPC 写入完成，避免连续 F5/F9 读到旧槽位。
+    if (quickSaveInFlight) return quickSaveInFlight;
     const snap = interp.saveSnapshot();
-    if (!snap) return;
-    void saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(() => console.info('[starter] 快速存档'));
+    if (!snap) return Promise.resolve(false);
+    const task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
+      () => {
+        console.info('[zero] 快速存档');
+        return true;
+      },
+      (err) => {
+        console.error('[zero] 快速存档失败：', err);
+        return false;
+      },
+    );
+    quickSaveInFlight = task;
+    void task.then(() => {
+      if (quickSaveInFlight === task) quickSaveInFlight = null;
+    });
+    return task;
   }
 
-  async function quickLoad(): Promise<void> {
-    if (!await saves.has(QUICK_SLOT)) return;
+  async function quickLoad(): Promise<boolean> {
+    if (quickSaveInFlight) await quickSaveInFlight;
+    if (!await saves.has(QUICK_SLOT)) return false;
     try {
       const snap = await saves.load(QUICK_SLOT);
       interp.loadSnapshot(snap);
       clearCountedThisSession = false;
-      console.info('[starter] 快速读档');
+      console.info('[zero] 快速读档');
+      return true;
     } catch (err) {
-      console.error('[starter] 快速读档失败：', err);
+      console.error('[zero] 快速读档失败：', err);
+      return false;
     }
   }
 
@@ -1164,6 +1231,25 @@ async function main(): Promise<void> {
   });
   gamepad.start();
 
+  let disposePromise: Promise<void> | null = null;
+  async function disposeGameResources(): Promise<void> {
+    if (disposePromise) return disposePromise;
+    disposePromise = (async () => {
+      gamepad.stop();
+      frameScheduler.dispose();
+      renderer.destroy();
+      audioManager.dispose();
+      await stage.releaseRegisteredAssetSources();
+      stage.destroy();
+      for (const url of assetBlobUrls) URL.revokeObjectURL(url);
+      assetBlobUrls.clear();
+      for (const url of fontBlobUrls) URL.revokeObjectURL(url);
+      fontBlobUrls.clear();
+    })();
+    return disposePromise;
+  }
+  window.addEventListener('beforeunload', () => { void disposeGameResources(); });
+
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
   window.addEventListener('keydown', (e) => {
@@ -1222,26 +1308,26 @@ async function main(): Promise<void> {
       e.preventDefault();
       void quickLoad();
     } else if (e.key === 'a' || e.key === 'A') {
-      console.info('[starter] 自动播放', renderer.toggleAuto() ? '开' : '关');
+      console.info('[zero] 自动播放', renderer.toggleAuto() ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 's' || e.key === 'S') {
       // 快进策略跟随设置：仅跳已读（默认，遇未读即停）或全部跳过（一路到底）
       if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) {
-        console.info('[starter] 快进（全部跳过·设置）', renderer.toggleSkipAll() ? '开' : '关');
+        console.info('[zero] 快进（全部跳过·设置）', renderer.toggleSkipAll() ? '开' : '关');
       } else {
-        console.info('[starter] 快进（已读跳过·设置）', renderer.toggleSkip() ? '开' : '关');
+        console.info('[zero] 快进（已读跳过·设置）', renderer.toggleSkip() ? '开' : '关');
       }
       refreshCommandRail();
     } else if (e.key === 'x' || e.key === 'X') {
-      console.info('[starter] 快进（全部跳过）', renderer.toggleSkipAll() ? '开' : '关');
+      console.info('[zero] 快进（全部跳过）', renderer.toggleSkipAll() ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'l' || e.key === 'L') {
       // Backlog（文字记录）：覆盖层展示近期文本历史（点击任意处关闭）
-      console.info('[starter] 文字记录', renderer.toggleBacklog() ? '开' : '关');
+      console.info('[zero] 文字记录', renderer.toggleBacklog() ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'h' || e.key === 'H') {
       // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
-      console.info('[starter] 隐藏界面', renderer.toggleHideInterface() ? '开' : '关');
+      console.info('[zero] 隐藏界面', renderer.toggleHideInterface() ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
@@ -1251,7 +1337,7 @@ async function main(): Promise<void> {
       } else {
         openGallery();
       }
-      console.info('[starter] 鉴赏', galleryOpen ? '开' : '关');
+      console.info('[zero] 鉴赏', galleryOpen ? '开' : '关');
     } else if (e.key === 'o' || e.key === 'O') {
       // 设置图形面板：◀ ▶ 步进各设置项（即时持久化并投影生效）
       if (settingsOpen) {
@@ -1261,14 +1347,14 @@ async function main(): Promise<void> {
         settingsOpen = true;
         refreshSettingsPanel();
       }
-      console.info('[starter] 设置面板', settingsOpen ? '开' : '关');
+      console.info('[zero] 设置面板', settingsOpen ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === '[' || e.key === ']') {
       // 文本速度调整（即时持久化）：[ 减速 / ] 加速
       const next = Math.max(1, Math.min(200, settings.settings.textSpeedCps + (e.key === ']' ? 6 : -6)));
       void settings.update({ textSpeedCps: next }).then(() => {
         renderer.setTextSpeed(next);
-        console.info('[starter] 文本速度', next);
+        console.info('[zero] 文本速度', next);
       });
     }
   });
@@ -1292,9 +1378,12 @@ async function main(): Promise<void> {
   window.addEventListener('error', (e) => {
     showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
+    void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
   });
   window.addEventListener('unhandledrejection', (e) => {
-    showFatal(e.reason instanceof Error ? e.reason.message : String(e.reason));
+    const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
+    showFatal(message);
+    void window.surdetApp?.reportError('renderer-unhandled-rejection', message);
   });
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
@@ -1302,9 +1391,9 @@ async function main(): Promise<void> {
   stage.showCommandRail?.([], onCommandRailSelect);
   refreshCommandRail();
   showTitleScreen();
-  console.info(`[starter] started: ${registry.all().length} scenes, ${decls.length} variables`);
+  console.info(`[zero] started: ${registry.all().length} scenes, ${decls.length} variables`);
 }
 
 main().catch((err) => {
-  console.error('[starter] 启动失败：', err);
+  console.error('[zero] 启动失败：', err);
 });

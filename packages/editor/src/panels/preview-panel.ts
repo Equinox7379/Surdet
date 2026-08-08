@@ -7,10 +7,12 @@
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
 import type { FontRole } from '@surdet/renderer';
+import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 
 /** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
 let previewReadyListenerBound = false;
 let notifyPreviewReady: (() => void) | null = null;
+let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic) => void) | null = null;
 
 function bindPreviewReadyListenerOnce(): void {
   if (previewReadyListenerBound) return;
@@ -18,6 +20,10 @@ function bindPreviewReadyListenerOnce(): void {
   window.addEventListener('message', (e: MessageEvent) => {
     const d = e.data as { type?: string } | null;
     if (d?.type === 'surdet-preview-ready') notifyPreviewReady?.();
+    if (d?.type === 'surdet-preview-diagnostic') {
+      const diagnostic = normalizePreviewDiagnostic((d as { diagnostic?: unknown }).diagnostic);
+      if (diagnostic) notifyPreviewDiagnostic?.(diagnostic);
+    }
   });
 }
 
@@ -268,8 +274,18 @@ export function renderPreviewPanel(container: HTMLElement): void {
   frame.src = './preview.html';
   frame.title = '剧情预览';
   container.appendChild(frame);
+  const diagnostics = h('div', 'preview-diagnostics');
+  diagnostics.setAttribute('aria-live', 'polite');
+  container.appendChild(diagnostics);
 
   let ready = false;
+  let latestGeneration = 0;
+  notifyPreviewDiagnostic = (diagnostic) => {
+    if (diagnostic.generation < latestGeneration) return;
+    latestGeneration = diagnostic.generation;
+    diagnostics.textContent = `${diagnostic.level === 'error' ? '错误' : diagnostic.level === 'warning' ? '警告' : '状态'}：${diagnostic.message}${diagnostic.label ? `（@label ${diagnostic.label}）` : ''}`;
+    diagnostics.className = `preview-diagnostics ${diagnostic.level}`;
+  };
   /** 异步读取素材期间若用户重新选择播放入口，旧请求不得晚到覆盖新选择。 */
   let sendRevision = 0;
   const send = async (): Promise<void> => {

@@ -6,3 +6,14 @@ coverage/
 Thumbs.db
 release/
 packages/shell/game/
+packages/shell/.pack-stage/
+
+# Local development, visual acceptance, and AI tool artifacts
+.vite/
+/.opensquilla/
+/.superpowers/
+/memory/
+/main.js
+/preload.js
+/shot*.mjs
+/shot*.png

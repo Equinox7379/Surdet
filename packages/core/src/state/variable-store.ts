@@ -81,6 +81,20 @@ export class VariableStore {
     this.#values.set(name, coerce(decl, value));
   }
 
+  /** 批量原子设置：先完成整批校验与转换，再一次性提交，避免部分状态写入。 */
+  setMany(updates: readonly { name: string; value: VarValue }[]): void {
+    const seen = new Set<string>();
+    const prepared: Array<readonly [string, VarValue]> = [];
+    for (const { name, value } of updates) {
+      if (seen.has(name)) throw new Error(`setMany: 重复变量 '${name}'`);
+      seen.add(name);
+      const decl = this.#requireWritable(name);
+      assertType(value, decl, 'value');
+      prepared.push([name, coerce(decl, value)] as const);
+    }
+    for (const [name, value] of prepared) this.#values.set(name, value);
+  }
+
   /** number 变量增减 delta（float/delta 均可）。
    *  标量热路径：number 变量直接原地改值 + clamp，免 get/set 的防御性拷贝往返
    *  （@mod/@inc/@dec 是剧本最高频的状态操作）。非 number 走旧路径报类型错误。 */
@@ -263,12 +277,10 @@ function checkPrimitive<T extends VarPrimitive>(
 }
 
 function cloneValue(value: VarValue): VarValue {
-  if (Array.isArray(value)) return value.map((v) => cloneValue(v)) as VarValue;
+  if (Array.isArray(value)) return value.map(cloneValue);
   if (typeof value === 'object' && value !== null) {
-    const out: Record<string, VarPrimitive> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = cloneValue(v) as VarPrimitive;
-    }
+    const out: { [key: string]: VarValue } = {};
+    for (const [key, nested] of Object.entries(value)) out[key] = cloneValue(nested);
     return out;
   }
   return value;

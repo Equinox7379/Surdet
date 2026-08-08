@@ -7,20 +7,45 @@
       "kind": "portrait",
       "target": "lynn:uniform",
       "cues": [
-        { "atMs": 0, "durationMs": 240, "easing": "inOutSine", "action": "expression", "expression": "despair" },
-        { "atMs": 160, "durationMs": 620, "easing": "inOutCubic", "action": "move", "position": "center" }
+        {
+          "atMs": 0,
+          "durationMs": 574,
+          "easing": "inOutSine",
+          "action": "expression",
+          "expression": "despair"
+        },
+        {
+          "atMs": 131,
+          "durationMs": 620,
+          "easing": "inOutCubic",
+          "action": "move",
+          "position": "center"
+        }
       ]
     },
     {
       "kind": "camera",
       "cues": [
-        { "atMs": 80, "durationMs": 800, "easing": "inOutSine", "action": "zoom", "scale": 1.035 }
+        {
+          "atMs": 80,
+          "durationMs": 415,
+          "easing": "inOutSine",
+          "action": "zoom",
+          "scale": 1.035
+        }
       ]
     },
     {
       "kind": "screen",
       "cues": [
-        { "atMs": 0, "durationMs": 700, "easing": "inOutSine", "action": "tint", "color": 226050, "alpha": 0.12 }
+        {
+          "atMs": 0,
+          "durationMs": 700,
+          "easing": "inOutSine",
+          "action": "tint",
+          "color": 226050,
+          "alpha": 0.12
+        }
       ]
     }
   ]

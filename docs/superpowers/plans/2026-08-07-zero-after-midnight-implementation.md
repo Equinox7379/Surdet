@@ -22,11 +22,11 @@
 ### Task 1: Scaffold The Game Workspace
 
 **Files:**
-- Modify: `C:/Users/Equinox/Documents/Default Project/surdet/package.json`
-- Modify: `C:/Users/Equinox/Documents/Default Project/surdet/package-lock.json`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/{package.json,game.config.json,index.html,vite.config.ts,tsconfig.json}`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/src/main.ts`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/config/*.json`
+- Modify: `E:/surdet/package.json`
+- Modify: `E:/surdet/package-lock.json`
+- Create: `E:/surdet/examples/zero-after-midnight/{package.json,game.config.json,index.html,vite.config.ts,tsconfig.json}`
+- Create: `E:/surdet/examples/zero-after-midnight/src/main.ts`
+- Create: `E:/surdet/examples/zero-after-midnight/content/config/*.json`
 
 **Interfaces:** Consume the full starter runtime shell. Produce workspace package `zero-after-midnight`, whose configured entry scene is `common_0017`.
 
@@ -39,11 +39,11 @@
 ### Task 2: Define Story Data And The Shared Investigation
 
 **Files:**
-- Modify: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/game.config.json`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/common_0017.gal`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/common_convenience.gal`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/common_apartment.gal`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/common_passage.gal`
+- Modify: `E:/surdet/examples/zero-after-midnight/game.config.json`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/common_0017.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/common_convenience.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/common_apartment.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/common_passage.gal`
 
 **Interfaces:** `game.config.json` is the sole variable declaration source. Map only `zhirao` to display name `许知遥` and avatar key `zhirao`; protagonist and narrator remain unmapped pure dialogue speakers.
 
@@ -58,9 +58,9 @@
 ### Task 3: Write The Three Route Pairs
 
 **Files:**
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/route_testimony_{station,rooftop}.gal`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/route_meeting_{train,rooftop}.gal`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/scenario/route_silence_{blackout,dawn}.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/route_testimony_{station,rooftop}.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/route_meeting_{train,rooftop}.gal`
+- Create: `E:/surdet/examples/zero-after-midnight/content/scenario/route_silence_{blackout,dawn}.gal`
 
 **Interfaces:** Consume the variables declared in Task 2. Produce exactly `testimony_end`, `meeting_end`, and `silence_end` through `@clear` then `@end`.
 
@@ -74,10 +74,10 @@
 ### Task 4: Generate And Register Original Media
 
 **Files:**
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/assets/bg/{apartment_night,apartment_blackout,convenience_exterior,convenience_interior,old_apartment_corridor,old_apartment_room,underground_passage,police_archive,last_train,rooftop_rain,dawn_street}.png`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/assets/portrait/zhirao_commute_{calm,hesitant,smile,wet,alert,panic,distant,signal}.png`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/assets/avatar/zhirao.png`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/scripts/check-assets.mjs`
+- Create: `E:/surdet/examples/zero-after-midnight/content/assets/bg/{apartment_night,apartment_blackout,convenience_exterior,convenience_interior,old_apartment_corridor,old_apartment_room,underground_passage,police_archive,last_train,rooftop_rain,dawn_street}.png`
+- Create: `E:/surdet/examples/zero-after-midnight/content/assets/portrait/zhirao_commute_{calm,hesitant,smile,wet,alert,panic,distant,signal}.png`
+- Create: `E:/surdet/examples/zero-after-midnight/content/assets/avatar/zhirao.png`
+- Create: `E:/surdet/examples/zero-after-midnight/scripts/check-assets.mjs`
 
 **Interfaces:** The existing asset loader maps filename stems to background keys, `<character>_<costume>_<expression>` to portraits, and avatar filename to speaker profile key; no renderer change is required.
 
@@ -90,11 +90,11 @@
 ### Task 5: Create Original Audio And Deterministic Verification
 
 **Files:**
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/scripts/generate-audio.mjs`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/assets/bgm/*.wav`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/content/assets/se/*.wav`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/scripts/verify-simulation.mjs`
-- Create: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/README.md`
+- Create: `E:/surdet/scripts/generate-audio.mjs`
+- Create: `E:/surdet/examples/zero-after-midnight/content/assets/bgm/*.wav`
+- Create: `E:/surdet/examples/zero-after-midnight/content/assets/se/*.wav`
+- Create: `E:/surdet/examples/zero-after-midnight/scripts/verify-simulation.mjs`
+- Create: `E:/surdet/examples/zero-after-midnight/README.md`
 
 **Interfaces:** Existing `@bgm` and `@se` keys resolve via `ResolvedAudio`; the verification script consumes CLI JSON simulator output.
 
@@ -108,7 +108,7 @@
 ### Task 6: Browser Acceptance And Delivery
 
 **Files:**
-- Modify only for a concrete acceptance defect: `C:/Users/Equinox/Documents/Default Project/surdet/examples/zero-after-midnight/src/main.ts` or the directly responsible renderer file.
+- Modify only for a concrete acceptance defect: `E:/surdet/examples/zero-after-midnight/src/main.ts` or the directly responsible renderer file.
 
 **Interfaces:** Consume the completed game package and preserve all existing controls and preview behavior.
 
