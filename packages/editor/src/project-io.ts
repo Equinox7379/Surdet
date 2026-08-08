@@ -37,6 +37,9 @@ export async function openProject(): Promise<void> {
   state.dirHandle = dir;
   state.scenes.clear();
   state.timelines = [];
+  state.pendingTimelineDeletes = [];
+  state.currentTimeline = null;
+  state.previewTimelineId = null;
   histories.clear(); // 换项目：历史栈失效
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
   state.dirAssets = [];
@@ -95,6 +98,7 @@ export async function openProject(): Promise<void> {
   }
   const first = state.scenes.keys().next().value as string | undefined;
   state.current = first ?? null;
+  state.currentTimeline = state.timelines[0]?.id ?? null;
   renderAll();
   runValidate(); // 打开后立即校验
   onProjectLoaded(); // 崩溃保险：检查同项目未保存快照（A1）
@@ -170,6 +174,7 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
         id: ent.name.replace(/\.json$/, ''),
         file: prefix + ent.name,
         text: await (await ent.getFile()).text(),
+        dirty: false,
         handle: ent,
       });
     }
@@ -178,10 +183,34 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
 
 export async function saveAll(): Promise<void> {
   if (!state.fsSupported) {
-    exportCurrent();
+    const timeline = state.currentTimeline
+      ? state.timelines.find((entry) => entry.id === state.currentTimeline)
+      : undefined;
+    if (timeline) exportTimeline(timeline.id, timeline.text);
+    else exportCurrent();
     return;
   }
   let saved = 0;
+  let removed = 0;
+  if (state.dirHandle) {
+    const remaining: typeof state.pendingTimelineDeletes = [];
+    for (const pending of state.pendingTimelineDeletes) {
+      try {
+        const contentDir = await state.dirHandle.getDirectoryHandle('content');
+        let timelineDir = await contentDir.getDirectoryHandle('timelines');
+        const parts = pending.file.split('/').filter(Boolean);
+        const fileName = parts.pop();
+        if (!fileName) continue;
+        for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
+        await timelineDir.removeEntry(fileName);
+        removed++;
+      } catch (err) {
+        remaining.push(pending);
+        setStatus(`时间轴 '${pending.id}' 删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+      }
+    }
+    state.pendingTimelineDeletes = remaining;
+  }
   for (const [key, sc] of state.scenes) {
     if (!sc.dirty) continue;
     const handle = sc.handle;
@@ -217,8 +246,39 @@ export async function saveAll(): Promise<void> {
     saved++;
     void key;
   }
-  setStatus(saved > 0 ? `已保存 ${saved} 个场景` : '无待保存改动', true, 4000);
-  renderSidebar();
+  let timelineSaved = false;
+  for (const timeline of state.timelines) {
+    if (!timeline.dirty) continue;
+    try {
+      let handle = timeline.handle;
+      if (!handle) {
+        if (!state.dirHandle) {
+          exportTimeline(timeline.id, timeline.text);
+          setStatus(`演示项目无法写盘：已下载 ${timeline.id}.json`, true, 6000);
+          continue;
+        }
+        const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
+        const parts = timeline.file.split('/').filter(Boolean);
+        const fileName = parts.pop() ?? `${timeline.id}.json`;
+        let timelineDir = await contentDir.getDirectoryHandle('timelines', { create: true });
+        for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part, { create: true });
+        handle = await timelineDir.getFileHandle(fileName, { create: true });
+        timeline.handle = handle;
+      }
+      const writable = await handle.createWritable();
+      await writable.write(timeline.text);
+      await writable.close();
+      timeline.dirty = false;
+      timelineSaved = true;
+      saved++;
+    } catch (err) {
+      setStatus(`时间轴 '${timeline.id}' 保存失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+    }
+  }
+  const changed = saved + removed;
+  setStatus(changed > 0 ? `已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}` : '无待保存改动', true, 4000);
+  if (timelineSaved) renderAll();
+  else renderSidebar();
   onSaved(); // 崩溃保险：磁盘已最新，清除备份（演示项目脏标记保留时下一轮定时快照会自动重建）
 }
 
@@ -237,12 +297,24 @@ export function exportCurrent(): void {
   if (sc) exportScene(state.current, sc.text);
 }
 
+export function exportTimeline(id: string, text: string): void {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${id}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
   state.scenes.clear();
   state.timelines = [];
+  state.pendingTimelineDeletes = [];
+  state.currentTimeline = null;
+  state.previewTimelineId = null;
   histories.clear();
   state.gameConfigText = '';
   state.entryScene = 'demo';
@@ -257,7 +329,20 @@ export function loadDemoProject(): void {
     dirty: false,
     handle: null,
   });
+  state.timelines.push({
+    id: 'demo_intro',
+    file: 'demo_intro.json',
+    text: JSON.stringify({
+      version: 1,
+      id: 'demo_intro',
+      durationMs: 1200,
+      tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'inOutSine', action: 'fade', alpha: 0 }] }],
+    }, null, 2) + '\n',
+    dirty: false,
+    handle: null,
+  });
   state.current = 'demo';
+  state.currentTimeline = 'demo_intro';
   renderAll();
   runValidate();
   onProjectLoaded(); // 崩溃保险：演示项目同样支持恢复（dirName 区分）

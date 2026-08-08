@@ -20,7 +20,8 @@ export interface TimelineEntry {
   id: string;
   file: string;
   text: string;
-  handle: FileSystemFileHandle;
+  dirty: boolean;
+  handle: FileSystemFileHandle | null;
 }
 
 export const state = {
@@ -30,9 +31,14 @@ export const state = {
   scenes: new Map<string, SceneEntry>(),
   /** content/timelines/*.json（预览运行时与 starter 共用的演出定义） */
   timelines: [] as TimelineEntry[],
+  /** 由时间轴面板删除、待下一次“保存全部”从 content/timelines 移除的文件。 */
+  pendingTimelineDeletes: [] as { id: string; file: string }[],
   gameConfigText: '',
   entryScene: '',
   current: null as string | null,
+  currentTimeline: null as string | null,
+  /** 从时间轴面板发起的独立直演目标；普通剧情预览时为空。 */
+  previewTimelineId: null as string | null,
   lastValidation: null as ValidateResult | null,
   /** 场景引用图谱（Worker 或同步校验产出；自我迭代①b） */
   lastEdges: [] as { from: string; to: string; kind: 'jump' | 'call' }[],
@@ -53,8 +59,8 @@ export const state = {
   dirAssets: [] as DirAsset[],
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
-  /** 主区标签页：块编辑 / 流程图（E1a）/ 配置（E3）/ 预览（M6）/ 统计（M6）/ 审计（术语面板） */
-  mainTab: 'editor' as 'editor' | 'flow' | 'config' | 'preview' | 'stats' | 'audit',
+  /** 主区标签页：块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计 */
+  mainTab: 'editor' as 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit',
   fsSupported: typeof window !== 'undefined' && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function',
 };
 

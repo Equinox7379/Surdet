@@ -301,6 +301,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
         fonts: Object.keys(fonts).length > 0 ? fonts : undefined,
         assets,
         timelines: timelines.length > 0 ? timelines : undefined,
+        timelinePreviewId: state.previewTimelineId ?? undefined,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },
@@ -321,7 +322,10 @@ export function renderPreviewPanel(container: HTMLElement): void {
   };
   bindPreviewReadyListenerOnce();
 
-  playBtn.onclick = () => { void send(); };
+  playBtn.onclick = () => {
+    state.previewTimelineId = null;
+    void send();
+  };
   fastChk.onchange = () => {
     frame.contentWindow?.postMessage({ type: 'surdet-preview-fast', fast: fastChk.checked }, '*');
   };
