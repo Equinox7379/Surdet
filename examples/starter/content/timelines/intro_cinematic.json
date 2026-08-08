@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "id": "intro_cinematic",
+  "durationMs": 1050,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 720,
+          "easing": "outCubic",
+          "action": "set",
+          "key": "castle_hall"
+        }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:uniform",
+      "cues": [
+        {
+          "atMs": 160,
+          "durationMs": 620,
+          "easing": "outCubic",
+          "action": "show",
+          "expression": "normal",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "kind": "camera",
+      "cues": [
+        {
+          "atMs": 260,
+          "durationMs": 620,
+          "easing": "inOutSine",
+          "action": "zoom",
+          "scale": 1.035
+        },
+        {
+          "atMs": 280,
+          "durationMs": 500,
+          "easing": "outCubic",
+          "action": "pan",
+          "x": 18,
+          "y": -6
+        },
+        {
+          "atMs": 840,
+          "durationMs": 100,
+          "easing": "linear",
+          "action": "shake",
+          "strength": 5
+        }
+      ]
+    },
+    {
+      "kind": "screen",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "fade",
+          "alpha": 1
+        },
+        {
+          "atMs": 20,
+          "durationMs": 740,
+          "easing": "inOutSine",
+          "action": "fade",
+          "alpha": 0
+        },
+        {
+          "atMs": 760,
+          "durationMs": 200,
+          "easing": "inOutSine",
+          "action": "tint",
+          "color": 1056824,
+          "alpha": 0.12
+        },
+        {
+          "atMs": 940,
+          "durationMs": 110,
+          "easing": "outCubic",
+          "action": "tint",
+          "color": 1056824,
+          "alpha": 0
+        }
+      ]
+    }
+  ]
+}

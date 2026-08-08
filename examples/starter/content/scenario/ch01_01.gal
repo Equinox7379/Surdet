@@ -1,7 +1,7 @@
 @scene ch01_01
 @label start
 @bgm tense_01
-@timeline intro_arrival @ blocking
+@timeline intro_cinematic @ blocking
 @unlock_cg cg_hall
 @unlock_music tense_01
 @unlock_text t_first
