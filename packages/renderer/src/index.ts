@@ -41,3 +41,4 @@ export * from './api/renderer-input.js';
 export * from './api/renderer-commands.js';
 export * from './api/renderer-queries.js';
 export * from './api/renderer-runtime.js';
+export { createRendererRuntime } from './runtime/create-renderer-runtime.js';
