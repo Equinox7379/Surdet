@@ -129,6 +129,25 @@ describe('AdvRenderer', () => {
     expect(completed).toBe(1);
   });
 
+  it('非零起点的音频 cue 在跨过起点的帧可靠触发', () => {
+    const bus = makeBus();
+    const audio = new FakeAudio();
+    const r = new AdvRenderer(new FakeStage(), audio);
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'late_audio',
+      blocking: false,
+      definition: {
+        version: 1, id: 'late_audio', durationMs: 100,
+        tracks: [{ kind: 'audio', cues: [{ atMs: 23, durationMs: 0, easing: 'linear', action: 'se', key: 'door' }] }],
+      },
+    });
+    r.update(16);
+    expect(audio.se).toEqual([]);
+    r.update(16);
+    expect(audio.se).toEqual(['door']);
+  });
+
   it('presentation snapshot restores active timeline cursor after stage state', () => {
     const bus = makeBus();
     const stage = new FakeStage();

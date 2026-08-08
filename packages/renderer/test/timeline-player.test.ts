@@ -26,6 +26,24 @@ describe('TimelinePlayer', () => {
     expect(player.advance(250)).toHaveLength(1);
   });
 
+  it('marks a cue as started when a frame crosses a non-zero start time', () => {
+    const player = new TimelinePlayer({
+      ...definition,
+      tracks: [{ ...definition.tracks[0]!, cues: [{ atMs: 23, durationMs: 400, easing: 'linear', action: 'set', key: 'hall' }] }],
+    });
+    expect(player.advance(16)).toEqual([]);
+    const [event] = player.advance(16);
+    expect(event?.started).toBe(true);
+    expect(event?.progress).toBeGreaterThan(0);
+    expect(player.advance(16)[0]?.started).toBe(false);
+  });
+
+  it('does not re-mark a cue started after the initial cursor projection', () => {
+    const player = new TimelinePlayer(definition);
+    expect(player.eventsAtCursor().every((event) => event.started)).toBe(true);
+    expect(player.advance(16).every((event) => !event.started)).toBe(true);
+  });
+
   it('restores cursor and finalizes on skip', () => {
     const player = new TimelinePlayer(definition);
     player.advance(200);

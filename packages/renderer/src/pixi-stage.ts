@@ -562,7 +562,8 @@ export class PixiStage implements AdvStage {
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#wipeBar.visible = false;
-    this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
+    // 叠加层必须以白色为底，Graphics.tint 才能投影 cue 指定的调色值。
+    this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
     this.#particleLayer = new Container();
@@ -1346,20 +1347,20 @@ export class PixiStage implements AdvStage {
   /** 时间轴 cue 的 Pixi 投影；同一接口也承载现有直接演出方法。 */
   applyTimelineFrame(event: TimelineFrameEvent): void {
     const cue = event.cue;
-    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && event.progress <= 0.001) {
+    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && event.started) {
       this.#startTimelineBackground(cue.key, cue.durationMs);
       return;
     }
     if (event.track === 'portrait' && event.target) {
       const target = event.target;
-      if (cue.action === 'show' && event.progress <= 0.001) {
+      if (cue.action === 'show' && event.started) {
         this.setPortrait(target, {
           charId: target.split(':')[0] ?? target,
           costume: target.split(':')[1] ?? 'normal',
           expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
           pos: typeof cue.position === 'string' ? cue.position : 'center',
         });
-      } else if (cue.action === 'expression' && event.progress <= 0.001) {
+      } else if (cue.action === 'expression' && event.started) {
         const current = this.#portraitViews.get(target);
         if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
       } else if (cue.action === 'move') {
@@ -1414,14 +1415,14 @@ export class PixiStage implements AdvStage {
         this.#tintOverlay.tint = cue.color & 0xffffff;
         this.#tintOverlay.alpha = Math.max(0, Math.min(1, cue.alpha * event.progress));
         this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
-      } else if (cue.action === 'flash' && event.progress <= 0.001) {
+      } else if (cue.action === 'flash' && event.started) {
         this.flash(cue.durationMs);
-      } else if (cue.action === 'wipe' && event.progress <= 0.001) {
+      } else if (cue.action === 'wipe' && event.started) {
         this.wipe(cue.durationMs);
       }
       return;
     }
-    if (event.track === 'particle' && typeof cue.kind === 'string' && event.progress <= 0.001) {
+    if (event.track === 'particle' && typeof cue.kind === 'string' && event.started) {
       if (cue.action === 'start') this.startParticles(cue.kind);
       else this.stopParticles();
     }

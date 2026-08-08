@@ -4,6 +4,8 @@ export interface TimelineFrameEvent {
   track: TimelineTrackKind;
   target?: string;
   cue: TimelineCue;
+  /** 本帧跨过 cue 起点；用于背景、音频等一次性动作。 */
+  started: boolean;
   progress: number;
   elapsedMs: number;
 }
@@ -25,6 +27,7 @@ interface FlatCue {
 export class TimelinePlayer {
   readonly definition: TimelineDefinition;
   #cues: FlatCue[];
+  #startedCues = new Set<FlatCue>();
   #cursorMs = 0;
 
   constructor(definition: TimelineDefinition) {
@@ -60,7 +63,11 @@ export class TimelinePlayer {
   eventsAtCursor(): TimelineFrameEvent[] {
     return this.#cues
       .filter(({ cue }) => this.#isActive(cue, this.#cursorMs) || (cue.durationMs === 0 && cue.atMs === this.#cursorMs))
-      .map((entry) => this.#event(entry, this.#progress(entry.cue, this.#cursorMs)));
+      .map((entry) => {
+        const started = entry.cue.atMs === this.#cursorMs && !this.#startedCues.has(entry);
+        if (started) this.#startedCues.add(entry);
+        return this.#event(entry, this.#progress(entry.cue, this.#cursorMs), started);
+      });
   }
 
   snapshot(): TimelinePlayerSnapshot {
@@ -86,7 +93,11 @@ export class TimelinePlayer {
         return forceFinal || starts || active || completes;
       })
       .sort((a, b) => a.order - b.order)
-      .map((entry) => this.#event(entry, forceFinal ? 1 : this.#progress(entry.cue, current)));
+      .map((entry) => {
+        const started = !forceFinal && !this.#startedCues.has(entry) && previous <= entry.cue.atMs && current >= entry.cue.atMs;
+        if (started) this.#startedCues.add(entry);
+        return this.#event(entry, forceFinal ? 1 : this.#progress(entry.cue, current), started);
+      });
   }
 
   #isActive(cue: TimelineCue, atMs: number): boolean {
@@ -100,11 +111,12 @@ export class TimelinePlayer {
     return ease(cue.easing, raw);
   }
 
-  #event(entry: FlatCue, progress: number): TimelineFrameEvent {
+  #event(entry: FlatCue, progress: number, started: boolean): TimelineFrameEvent {
     return {
       track: entry.track,
       ...(entry.target ? { target: entry.target } : {}),
       cue: entry.cue,
+      started,
       progress,
       elapsedMs: this.#cursorMs,
     };
