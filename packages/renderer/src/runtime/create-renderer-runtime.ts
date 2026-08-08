@@ -128,6 +128,7 @@ class LegacyPresentationControllerAdapter implements RendererControllerPort {
   setAutoWait(baseDelayMs: number, perCharMs: number): void { this.#legacy.setAutoWait(baseDelayMs, perCharMs); }
   snapshotPresentation(): unknown { return this.#legacy.snapshotPresentation(); }
   restorePresentation(snapshot: unknown): void { this.#legacy.restorePresentation(snapshot); }
+  clearPresentation(): void { this.#legacy.clearPresentation(); }
   backlogEntries(): readonly import('../backlog.js').BacklogEntry[] { return this.#legacy.backlogEntries(); }
   backlogSearchQuery(): string { return this.#legacy.backlogSearchQuery; }
 

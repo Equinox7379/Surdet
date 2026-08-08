@@ -64,6 +64,7 @@ function fakeInternals(): FakeInternals {
     backlogSearchQuery: () => '',
     snapshotPresentation: () => ({ version: 1, source: 'controller' }),
     restorePresentation: (snapshot: unknown) => record('controller.restorePresentation', snapshot),
+    clearPresentation: () => record('controller.clearPresentation'),
     dispose: () => { disposeOrder.push('controller'); record('controller.dispose'); },
   } as unknown as RendererControllerPort;
   const scheduler = {
@@ -131,6 +132,7 @@ describe('Renderer v2 runtime facade', () => {
       'stage.showBattle',
       'stage.showLoading',
       'stage.setQuality',
+      'controller.clearPresentation',
       'stage.clearPresentation',
     ]);
   });

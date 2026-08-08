@@ -620,6 +620,15 @@ export class AdvRenderer {
     };
   }
 
+  /**
+   * 清除表现控制器持有的时间轴，不触碰对话、选择、自动、快进或 Backlog 状态。
+   * Stage 表现由 RendererFacade 在同一个 presentation command 中清除。
+   */
+  clearPresentation(): void {
+    this.#clearTimelines();
+    this.#requestFrame();
+  }
+
   /** 先恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
   restorePresentation(payload: unknown): void {
     this.#clearTimelines();
