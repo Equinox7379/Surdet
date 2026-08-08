@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('surdetSave', {
   listMeta: (): Promise<SaveSlotMeta[]> => ipcRenderer.invoke('save:listMeta') as Promise<SaveSlotMeta[]>,
 });
 
+/** Profile 持久化桥（userData/profile/<key>.json）：跨周目通关记录等全局数据，独立于 slot 存档。 */
+contextBridge.exposeInMainWorld('surdetProfile', {
+  read: (key: string): Promise<unknown | null> => ipcRenderer.invoke('profile:read', key) as Promise<unknown | null>,
+  write: (key: string, value: unknown): Promise<void> => ipcRenderer.invoke('profile:write', key, value) as Promise<void>,
+  delete: (key: string): Promise<void> => ipcRenderer.invoke('profile:delete', key) as Promise<void>,
+});
+
 /** 设置持久化桥（userData/settings.json）：文本速度/音量等设备级设置，跨存档共享 */
 contextBridge.exposeInMainWorld('surdetSettings', {
   read: (): Promise<unknown> => ipcRenderer.invoke('settings:read') as Promise<unknown>,

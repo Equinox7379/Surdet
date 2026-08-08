@@ -207,6 +207,20 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'W001')).toBe(false);
   });
 
+  it('@transition 只允许内置转场名称，未知名称报 T010', () => {
+    const ok = lintProject(makeProject({ 'content/scenario/a.gal': '@transition slide-left 600\n' }));
+    expect(ok.ok).toBe(true);
+    const bad = lintProject(makeProject({ 'content/scenario/a.gal': '@transition dissolve 600\n' }));
+    expect(bad.ok).toBe(false);
+    expect(bad.issues.some((i) => i.code === 'T010' && i.severity === 'error')).toBe(true);
+  });
+
+  it('@ambience 是已实现的环境音指令，不产生 W001/W002', () => {
+    const r = lintProject(makeProject({ 'content/scenario/a.gal': '@ambience rain_window 800\n@ambience off 500\n' }));
+    expect(r.ok).toBe(true);
+    expect(r.issues.some((i) => i.code === 'W001' || i.code === 'W002')).toBe(false);
+  });
+
   it('变量全声明且合法时无变量错误', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({

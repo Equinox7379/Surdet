@@ -30,6 +30,16 @@ function makeRuntime() {
 }
 
 describe('C1/M1：读档状态重置', () => {
+  it('SceneRegistry.replace 原子替换同 ID，拒绝未注册或不匹配 ID', () => {
+    const registry = new SceneRegistry();
+    const original = compileScene('旧文本', 's.gal', 's1');
+    const replacement = compileScene('新文本', 's.gal', 's1');
+    registry.register(original);
+    registry.replace(replacement);
+    expect(registry.get('s1')).toBe(replacement);
+    expect(() => registry.replace(compileScene('x', 'x.gal', 'missing'))).toThrow(/not registered/);
+    expect(() => registry.replace(compileScene('x', 'x.gal', 's1'), 'other')).toThrow(/mismatch|Cannot replace/);
+  });
   it('M1：宿主暂停（战斗/地图/商店进行中）读档 → 清除 hostPaused，不残留挂起，可正常推进', () => {
     const { registry, interp } = makeRuntime();
     registry.register(compileScene('凛：甲。\n凛：乙。', 's.gal', 's1'));
@@ -147,6 +157,13 @@ describe('Minor：readonly restore / 战斗越权 / 深度校验 / W008', () => 
     const snap = solver.snapshot();
     expect(() => solver.restore({ ...snap, units: snap.units.map((u) => ({ ...u, hp: -5 })) })).toThrow(/HP 非法/);
     expect(() => solver.restore({ ...snap, units: snap.units.map((u) => ({ ...u, team: 'ghost' })) })).toThrow(/非法阵营/);
+  });
+
+  it('combat 空闲快照允许无阵营配置的正式游戏恢复', () => {
+    const solver = new CombatSolver({ ...combatCfg, teams: [], units: [] });
+    const snapshot = JSON.parse(JSON.stringify(solver.snapshot()));
+    expect(snapshot.actingTeam).toBe('');
+    expect(() => solver.restore(snapshot)).not.toThrow();
   });
 
   it('assertValidSnapshot 拒绝畸形 callStack / gallery / systems', () => {

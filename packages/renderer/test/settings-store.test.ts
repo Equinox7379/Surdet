@@ -16,6 +16,7 @@ import type { SettingsStorage, GameSettings } from '../src/settings-store.js';
 class RecAudio implements AudioHandle {
   master: number[] = [];
   bgm: number[] = [];
+  ambience: number[] = [];
   se: number[] = [];
   voice: number[] = [];
   playBgm(): void {}
@@ -26,6 +27,8 @@ class RecAudio implements AudioHandle {
   getMasterVolume(): number { return this.master.at(-1) ?? 1; }
   setBgmVolume(v: number): void { this.bgm.push(v); }
   getBgmVolume(): number { return this.bgm.at(-1) ?? 1; }
+  setAmbienceVolume(v: number): void { this.ambience.push(v); }
+  getAmbienceVolume(): number { return this.ambience.at(-1) ?? 1; }
   setSeVolume(v: number): void { this.se.push(v); }
   getSeVolume(): number { return this.se.at(-1) ?? 1; }
   setVoiceVolume(v: number): void { this.voice.push(v); }
@@ -69,6 +72,19 @@ describe('SettingsStore', () => {
     expect(await store.load()).toEqual(DEFAULT_SETTINGS);
   });
 
+  it('键位预设只接受标准 ID，非法值回退 standard', async () => {
+    const store = new SettingsStore({
+      load: () => ({ keyPreset: 'user-defined-keys' } as unknown as Partial<GameSettings>),
+      save: () => {},
+    });
+    expect((await store.load()).keyPreset).toBe('standard');
+    const left = new SettingsStore({
+      load: () => ({ keyPreset: 'left-handed' } as Partial<GameSettings>),
+      save: () => {},
+    });
+    expect((await left.load()).keyPreset).toBe('left-handed');
+  });
+
   it('快进策略：枚举 clamp 到 0/1，步进在"仅跳已读/全部跳过"间切换', async () => {
     // 默认 = 仅跳已读
     expect(DEFAULT_SETTINGS.skipStrategy).toBe(SKIP_STRATEGY_READ);
@@ -106,13 +122,14 @@ describe('SettingsStore', () => {
 
   it('apply 把设置投影到打字机与音频', async () => {
     const store = new SettingsStore(new MemorySettingsStorage());
-    await store.update({ textSpeedCps: 48, masterVolume: 0.8, bgmVolume: 0.2, seVolume: 0.4, voiceVolume: 0.6 });
+    await store.update({ textSpeedCps: 48, masterVolume: 0.8, bgmVolume: 0.2, ambienceVolume: 0.3, seVolume: 0.4, voiceVolume: 0.6 });
     const tw = new Typewriter();
     const audio = new RecAudio();
     store.apply(tw, audio);
     expect(tw.speed).toBe(48);
     expect(audio.master).toEqual([0.8]);
     expect(audio.bgm).toEqual([0.2]);
+    expect(audio.ambience).toEqual([0.3]);
     expect(audio.se).toEqual([0.4]);
     expect(audio.voice).toEqual([0.6]);
   });

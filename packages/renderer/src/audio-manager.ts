@@ -1,10 +1,11 @@
 import { Howl, Howler } from 'howler';
 import type { AudioHandle } from './types.js';
+import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
 
 /** BGM 切换交叉淡入淡出时长（毫秒） */
 const BGM_FADE_MS = 350;
 
-type AudioChannel = 'bgm' | 'se' | 'voice';
+type AudioChannel = 'bgm' | 'ambience' | 'se' | 'voice';
 
 interface AudioCacheEntry {
   key: string;
@@ -14,7 +15,7 @@ interface AudioCacheEntry {
   lastUsed: number;
 }
 
-const CACHE_LIMITS: Record<AudioChannel, number> = { bgm: 8, se: 32, voice: 8 };
+const CACHE_LIMITS: Record<AudioChannel, number> = { bgm: 8, ambience: 8, se: 32, voice: 8 };
 
 /**
  * 音频管理器（howler）。
@@ -26,13 +27,17 @@ const CACHE_LIMITS: Record<AudioChannel, number> = { bgm: 8, se: 32, voice: 8 };
 export class AudioManager implements AudioHandle {
   #bgm: Howl | null = null;
   #bgmKey: string | null = null;
+  #ambience: Howl | null = null;
+  #ambienceKey: string | null = null;
   /** 切歌代际计数：延时停止旧曲的定时器仅在代际未再变化时执行，
    *  防止 A→B→A 快速切换时旧定时器误停重新启播的同名 BGM（导致永久静音）。 */
   #bgmEpoch = 0;
+  #ambienceEpoch = 0;
   #voice: Howl | null = null;
   #cache = new Map<string, AudioCacheEntry>();
   #clock = 0;
   #bgmVolume = 0.55;
+  #ambienceVolume = 0.7;
   #seVolume = 0.9;
   #voiceVolume = 1;
   /** 无扩展名的 Blob URL 不能让 Howler 自动选择 codec，宿主需在播放前注册格式。 */
@@ -90,6 +95,41 @@ export class AudioManager implements AudioHandle {
     this.#evict('se');
   }
 
+  /** 环境音循环播放；切换时只保留一个当前声道，并以代际保护延迟停止旧实例。 */
+  playAmbience(src: string | null, fadeMs = BGM_FADE_MS): void {
+    if (src === this.#ambienceKey) return;
+    const prev = this.#ambience;
+    this.#ambience = null;
+    this.#ambienceKey = src;
+    if (prev) {
+      const epoch = ++this.#ambienceEpoch;
+      const duration = Math.max(0, Number.isFinite(fadeMs) ? fadeMs : BGM_FADE_MS);
+      if (typeof (prev as { fade?: unknown }).fade === 'function' && duration > 0) {
+        prev.fade(prev.volume(), 0, duration);
+        setTimeout(() => {
+          if (epoch === this.#ambienceEpoch) prev.stop();
+        }, duration);
+      } else {
+        prev.stop();
+      }
+    }
+    if (src === null) return;
+    const h = this.#get(src, { loop: true, channel: 'ambience' });
+    this.#ambience = h;
+    h.stop();
+    const target = this.#ambienceVolume;
+    const duration = Math.max(0, Number.isFinite(fadeMs) ? fadeMs : BGM_FADE_MS);
+    if (typeof (h as { fade?: unknown }).fade === 'function' && duration > 0) {
+      h.volume(0);
+      h.play();
+      h.fade(0, target, duration);
+    } else {
+      h.volume(target);
+      h.play();
+    }
+    this.#evict('ambience');
+  }
+
   playVoice(src: string): void {
     const h = this.#get(src, { channel: 'voice' });
     this.#voice = h;
@@ -102,15 +142,27 @@ export class AudioManager implements AudioHandle {
     return this.#voice !== null && this.#voice.playing();
   }
 
-  /** 停止全部音频（BGM/SE/语音）并重置 BGM 记录 */
+  /** 停止全部音频（BGM/环境音/SE/语音）并重置活动声道记录 */
   stopAll(): void {
     Howler.stop(); // howler 全局：停止所有 Howl 的全部播放实例
     // 推进代际：使尚在等待的旧 BGM 淡出延时停止定时器全部作废。
     // 否则 stopAll 后立即 playBgm，淡出窗口（350ms）内的旧定时器会误停新启播的 BGM → 静音。
     this.#bgmEpoch++;
+    this.#ambienceEpoch++;
     this.#bgm = null;
     this.#bgmKey = null;
+    this.#ambienceKey = null;
+    this.#ambience = null;
     this.#voice = null;
+  }
+
+  snapshotPlayback(): AudioPlaybackSnapshot {
+    return { bgm: this.#bgmKey, ambience: this.#ambienceKey };
+  }
+
+  restorePlayback(snapshot: AudioPlaybackSnapshot): void {
+    this.playBgm(snapshot.bgm);
+    this.playAmbience(snapshot.ambience, 0);
   }
 
   /**
@@ -144,6 +196,15 @@ export class AudioManager implements AudioHandle {
     return this.#bgmVolume;
   }
 
+  setAmbienceVolume(v: number): void {
+    this.#ambienceVolume = AudioManager.#clamp01(v);
+    this.#applyChannelVolume('ambience');
+  }
+
+  getAmbienceVolume(): number {
+    return this.#ambienceVolume;
+  }
+
   setSeVolume(v: number): void {
     this.#seVolume = AudioManager.#clamp01(v);
     this.#applyChannelVolume('se'); // 播放中实例即时生效（审计修复）
@@ -164,7 +225,7 @@ export class AudioManager implements AudioHandle {
 
   /** 把当前声道音量即时施加到该声道所有 Howl 实例（含播放中；审计修复） */
   #applyChannelVolume(channel: AudioChannel): void {
-    const v = channel === 'se' ? this.#seVolume : this.#voiceVolume;
+    const v = channel === 'se' ? this.#seVolume : channel === 'voice' ? this.#voiceVolume : this.#ambienceVolume;
     const volume = channel === 'bgm' ? this.#bgmVolume : v;
     for (const entry of this.#cache.values()) {
       if (entry.channel === channel) entry.howl.volume(volume);
@@ -175,10 +236,11 @@ export class AudioManager implements AudioHandle {
     return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
   }
 
-  #get(src: string, opts: { loop?: boolean; channel: 'bgm' | 'se' | 'voice' }): Howl {
+  #get(src: string, opts: { loop?: boolean; channel: AudioChannel }): Howl {
     const volume = opts.channel === 'bgm' ? this.#bgmVolume
-      : opts.channel === 'se' ? this.#seVolume
-        : this.#voiceVolume;
+      : opts.channel === 'ambience' ? this.#ambienceVolume
+        : opts.channel === 'se' ? this.#seVolume
+          : this.#voiceVolume;
     const key = `${opts.channel}\u0000${src}`;
     let entry = this.#cache.get(key);
     if (!entry) {
@@ -208,13 +270,13 @@ export class AudioManager implements AudioHandle {
   }
 
   #evict(channel?: AudioChannel): void {
-    const channels: AudioChannel[] = channel ? [channel] : ['bgm', 'se', 'voice'];
+    const channels: AudioChannel[] = channel ? [channel] : ['bgm', 'ambience', 'se', 'voice'];
     for (const current of channels) {
       const entries = [...this.#cache.values()].filter((entry) => entry.channel === current);
       const limit = CACHE_LIMITS[current];
       if (entries.length <= limit) continue;
       const candidates = entries
-        .filter((entry) => entry.howl !== this.#bgm && entry.howl !== this.#voice && !entry.howl.playing())
+        .filter((entry) => entry.howl !== this.#bgm && entry.howl !== this.#ambience && entry.howl !== this.#voice && !entry.howl.playing())
         .sort((a, b) => a.lastUsed - b.lastUsed);
       let count = entries.length;
       while (count > limit) {

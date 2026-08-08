@@ -121,6 +121,17 @@ describe('VariableStore', () => {
     expect(() => s.restore({ heroName: 42 })).toThrow(TypeError);
   });
 
+  it('restore validates every declared value before committing any update', () => {
+    const store = new VariableStore([
+      { name: 'trust', type: 'number', initial: 1 },
+      { name: 'flag', type: 'boolean', initial: false },
+    ]);
+
+    expect(() => store.restore({ trust: 999, flag: 'not-a-boolean' as never })).toThrow(/flag|boolean|类型/);
+    expect(store.getNumber('trust')).toBe(1);
+    expect(store.getBoolean('flag')).toBe(false);
+  });
+
   it('R3 reset 恢复全部声明初值（新游戏）', () => {
     const s = new VariableStore(base);
     s.set('lynn.trust', 42);

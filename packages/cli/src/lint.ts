@@ -13,6 +13,7 @@ import {
   validateJumpTarget,
   validateSceneVariables,
   validateSwitchTargets,
+  validateTransitionInstructions,
   collectConfigSceneRoots as collectConfigSceneRootsFromConfigs,
   attachHints,
   type CallInstr,
@@ -150,6 +151,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     }
     // @switch 目标标签存在性（共享检查，编辑器同用）
     validateSwitchTargets(scene, issues);
+    validateTransitionInstructions(scene, issues);
     validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
     checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
   }

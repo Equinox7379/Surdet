@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * surdet CLI：new / lint / build / pack / audit / simulate。
+ * surdet CLI：new / lint / stats / build / pack / audit / simulate。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -11,6 +11,7 @@ import { cmdBuild, cmdManifest } from './build.js';
 import { cmdAudit } from './audit.js';
 import { cmdSimulate } from './simulate.js';
 import { cmdPack } from './pack.js';
+import { statsCommand } from './stats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,6 +41,8 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet new <name>        创建新游戏脚手架（games/<name>）
   surdet lint [dir]        校验游戏内容（剧本语法/结构/引用完整性）
       --json               输出机器可读 JSON（含每条问题的 hint 修复建议，AI 自我修正循环用）
+  surdet stats [dir]       输出项目文本/分支/结局/可达性/素材统计
+      --json               只输出有效 JSON
   surdet audit [dir]       AI 生产线验收：内容审计（称谓/名词表/空心分支/节奏）+ 无头试跑
       --no-run             只做内容审计，跳过无头试跑
   surdet simulate [dir]    无头自动模拟：全分支遍历 + 结局可达性 + 死路检测 + 存档往返冒烟
@@ -118,6 +121,12 @@ async function main(): Promise<number> {
         `—— ${result.sceneCount} 个场景，${errors.length} 个错误，${warnings.length} 个警告 ——\n`,
       );
       return errors.length === 0 ? 0 : 1;
+    }
+
+    case 'stats': {
+      const jsonOut = args.includes('--json');
+      const rest = args.slice(1).filter((a) => a !== '--json');
+      return await statsCommand(path.resolve(rest[0] ?? process.cwd()), { json: jsonOut });
     }
 
     case 'build': {

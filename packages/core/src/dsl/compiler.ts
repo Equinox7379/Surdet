@@ -14,7 +14,7 @@ import type { SourcePos } from './token.js';
 export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出（渲染层消费）
   'bg', 'show', 'hide', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
-  'shake', 'flash', 'zoom', 'wipe',
+  'shake', 'flash', 'zoom', 'wipe', 'transition', 'ambience',
   'particle', 'mov', 'tint',
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
   // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）

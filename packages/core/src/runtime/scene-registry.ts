@@ -15,6 +15,17 @@ export class SceneRegistry {
     this.#scenes.set(scene.sceneId, scene);
   }
 
+  /** 原子替换已注册场景；未注册 ID 视为热重载目标不匹配。 */
+  replace(scene: CompiledScene, expectedSceneId = scene.sceneId): void {
+    if (scene.sceneId !== expectedSceneId) {
+      throw new Error(`Cannot replace scene '${expectedSceneId}' with '${scene.sceneId}'`);
+    }
+    if (!this.#scenes.has(expectedSceneId)) {
+      throw new Error(`Scene '${expectedSceneId}' not registered`);
+    }
+    this.#scenes.set(expectedSceneId, scene);
+  }
+
   has(sceneId: string): boolean {
     return this.#scenes.has(sceneId);
   }

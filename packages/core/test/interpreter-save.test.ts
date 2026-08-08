@@ -268,6 +268,32 @@ describe('Interpreter 存档', () => {
     expect(interp.status).toBe(before.status);
   });
 
+  it('系统预校验失败时不提交变量，也不调用 restore', () => {
+    const store = new VariableStore(decls);
+    const bus = new EventBus<CoreEventMap>();
+    const registry = new SceneRegistry();
+    const calls: string[] = [];
+    const systems = {
+      validate: (): void => {
+        calls.push('validate');
+        throw new Error('invalid system snapshot');
+      },
+      restore: (): void => { calls.push('restore'); },
+    };
+    const interp = new Interpreter(store, bus, registry, undefined, undefined, systems);
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+
+    interp.start('s1');
+    store.set('trust', 5);
+    const incoming = interp.saveSnapshot()!;
+    incoming.variables.trust = 999;
+    incoming.systems = { calendar: { turn: 1, ap: 0, visited: [] } };
+
+    expect(() => interp.loadSnapshot(incoming)).toThrow('invalid system snapshot');
+    expect(store.getNumber('trust')).toBe(5);
+    expect(calls).toEqual(['validate']);
+  });
+
   it('读档场景哈希不匹配发 saveMismatch（剧本存档后被编辑，仍照常加载）', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));

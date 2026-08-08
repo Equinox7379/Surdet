@@ -3,6 +3,7 @@
  * 制作人向投资人/发行报进度用：字数/台词数/选择肢/结局数/预估通关时长。
  */
 import { parseScript } from './model.js';
+import { compileScene, computeProjectStats as computeCoreProjectStats } from '@surdet/core';
 
 export interface SceneStat {
   id: string;
@@ -37,27 +38,36 @@ const DEFAULT_CPS = 30;
 const TRANSITION_MS = 400;
 
 export function computeProjectStats(scenes: Iterable<{ id: string; text: string }>): ProjectStats {
+  const materialized = [...scenes];
+  const compiled = materialized.map((scene) => compileScene(scene.text, `${scene.id}.gal`, scene.id));
+  const core = computeCoreProjectStats({
+    scenes: compiled,
+    entryScene: materialized[0]?.id ?? '',
+    sourceTextByScene: Object.fromEntries(materialized.map((scene) => [scene.id, scene.text])),
+  });
   const stats: ProjectStats = {
-    scenes: 0, totalChars: 0, dialogueLines: 0, narrationLines: 0, choices: 0,
-    endings: 0, cgUnlocks: 0, waitMs: 0, estMinutes: 0, perScene: [],
+    scenes: core.sceneCount,
+    totalChars: core.totalCharacters,
+    dialogueLines: Object.values(core.speakerLines).reduce((sum, count) => sum + count, 0),
+    narrationLines: core.totalTextLines - Object.values(core.speakerLines).reduce((sum, count) => sum + count, 0),
+    choices: Object.values(core.perScene).reduce((sum, scene) => sum + scene.choiceOptionCount, 0),
+    endings: core.endingCount,
+    cgUnlocks: 0, waitMs: 0, estMinutes: 0, perScene: [],
   };
   const cgIds = new Set<string>();
   let transitionCount = 0;
 
-  for (const sc of scenes) {
-    const per: SceneStat = { id: sc.id, chars: 0, dialogueLines: 0, choices: 0 };
+  for (const sc of materialized) {
+    const coreScene = core.perScene[sc.id];
+    const per: SceneStat = {
+      id: sc.id,
+      chars: coreScene?.totalCharacters ?? 0,
+      dialogueLines: Object.values(coreScene?.speakerLines ?? {}).reduce((sum, count) => sum + count, 0),
+      choices: coreScene?.choiceOptionCount ?? 0,
+    };
     for (const line of parseScript(sc.text)) {
-      if (line.kind === 'text') {
-        const t = line as { speaker: string; value: string };
-        per.chars += t.value.length;
-        if (t.speaker.length > 0) { per.dialogueLines++; stats.dialogueLines++; }
-        else stats.narrationLines++;
-      } else if (line.kind === 'choice-option') {
-        per.choices++;
-        stats.choices++;
-      } else if (line.kind === 'instr') {
+      if (line.kind === 'instr') {
         const ins = line as { name: string; raw: string };
-        if (ins.name === 'clear') stats.endings++;
         if (ins.name === 'unlock_cg') {
           const id = ins.raw.trim().split(/\s+/)[1];
           if (id) cgIds.add(id);
@@ -69,9 +79,7 @@ export function computeProjectStats(scenes: Iterable<{ id: string; text: string 
         if (['fadein', 'fadeout', 'wipe', 'flash'].includes(ins.name)) transitionCount++;
       }
     }
-    stats.totalChars += per.chars;
     stats.perScene.push(per);
-    stats.scenes++;
   }
   stats.cgUnlocks = cgIds.size;
   const totalMs = (stats.totalChars / DEFAULT_CPS) * 1000 + stats.waitMs + transitionCount * TRANSITION_MS;

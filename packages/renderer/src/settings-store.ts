@@ -1,5 +1,6 @@
 import type { Typewriter } from './text-buffer.js';
 import type { AudioHandle } from './types.js';
+import type { KeyPreset } from './keybindings.js';
 
 /**
  * 游戏设置：文本速度/自动播放节奏/分轨音量。
@@ -21,12 +22,16 @@ export interface GameSettings {
   masterVolume: number;
   /** BGM 分轨音量 0..1 */
   bgmVolume: number;
+  /** 环境音分轨音量 0..1 */
+  ambienceVolume: number;
   /** SE 分轨音量 0..1 */
   seVolume: number;
   /** 语音分轨音量 0..1 */
   voiceVolume: number;
   /** 快进策略：0=仅跳已读 1=全部跳过（决定宿主快进键的默认行为；持久化） */
   skipStrategy: number;
+  /** 安全的内置键位预设 ID；不持久化任意键字符串。 */
+  keyPreset: KeyPreset;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -35,9 +40,11 @@ export const DEFAULT_SETTINGS: GameSettings = {
   autoPerCharMs: 40,
   masterVolume: 1,
   bgmVolume: 0.55,
+  ambienceVolume: 0.7,
   seVolume: 0.9,
   voiceVolume: 1,
   skipStrategy: SKIP_STRATEGY_READ,
+  keyPreset: 'standard',
 };
 
 /** 设置持久化后端（宿主注入；可同步或异步） */
@@ -70,9 +77,11 @@ export interface SettingsRowView {
   display: string;
 }
 
+export type NumericSettingKey = Exclude<keyof GameSettings, 'keyPreset'>;
+
 /** 设置面板步进定义：各设置项的标签/步长/范围/格式化（◀ ▶ 步进用） */
 export const SETTING_STEPS: {
-  key: keyof GameSettings;
+  key: NumericSettingKey;
   label: string;
   step: number;
   min: number;
@@ -83,6 +92,7 @@ export const SETTING_STEPS: {
   { key: 'autoBaseDelayMs', label: '自动停留', step: 200, min: 0, max: 6000, format: (v) => `${(v / 1000).toFixed(1)} 秒` },
   { key: 'masterVolume', label: '主音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'bgmVolume', label: 'BGM 音量', step: 0.1, min: 0, max: 1, format: pct },
+  { key: 'ambienceVolume', label: '环境音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'seVolume', label: '音效音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'voiceVolume', label: '语音音量', step: 0.1, min: 0, max: 1, format: pct },
   {
@@ -96,10 +106,10 @@ export const SETTING_STEPS: {
 ];
 
 /** 设置面板步进：按步进定义把某项 +1/-1 步（范围内 clamp，返回新设置对象，不改原对象） */
-export function stepSetting(current: GameSettings, key: keyof GameSettings, dir: -1 | 1): GameSettings {
+export function stepSetting(current: GameSettings, key: NumericSettingKey, dir: -1 | 1): GameSettings {
   const def = SETTING_STEPS.find((d) => d.key === key);
   if (!def) return { ...current };
-  const raw = current[key] + dir * def.step;
+  const raw = Number(current[key]) + dir * def.step;
   const v = Math.max(def.min, Math.min(def.max, Math.round(raw * 100) / 100));
   return { ...current, [key]: v };
 }
@@ -130,10 +140,12 @@ export class SettingsStore {
       autoPerCharMs: clampNum(raw.autoPerCharMs, d.autoPerCharMs, 0, 2_000),
       masterVolume: clampNum(raw.masterVolume, d.masterVolume, 0, 1),
       bgmVolume: clampNum(raw.bgmVolume, d.bgmVolume, 0, 1),
+      ambienceVolume: clampNum(raw.ambienceVolume, d.ambienceVolume, 0, 1),
       seVolume: clampNum(raw.seVolume, d.seVolume, 0, 1),
       voiceVolume: clampNum(raw.voiceVolume, d.voiceVolume, 0, 1),
       // 快进策略枚举 clamp 到 0/1（非法值回退默认"仅跳已读"）
       skipStrategy: Math.round(clampNum(raw.skipStrategy, d.skipStrategy, SKIP_STRATEGY_READ, SKIP_STRATEGY_ALL)),
+      keyPreset: raw.keyPreset === 'left-handed' ? 'left-handed' : d.keyPreset,
     };
     return this.settings;
   }
@@ -155,6 +167,7 @@ export class SettingsStore {
     tw.setSpeed(this.#settings.textSpeedCps);
     audio.setMasterVolume(this.#settings.masterVolume);
     audio.setBgmVolume(this.#settings.bgmVolume);
+    audio.setAmbienceVolume?.(this.#settings.ambienceVolume);
     audio.setSeVolume(this.#settings.seVolume);
     audio.setVoiceVolume(this.#settings.voiceVolume);
   }

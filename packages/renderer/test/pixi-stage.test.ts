@@ -23,6 +23,16 @@ describe('PixiStage 素材注入', () => {
     return new PixiStage();
   }
 
+  it('内置转场由同一帧链推进，未知名称不启动', () => {
+    const stage = makeStage();
+    expect(stage.transition('slide-left', 100)).toBe(true);
+    expect(stage.needsUpdate()).toBe(true);
+    stage.updateEffects(100);
+    expect(stage.needsUpdate()).toBe(false);
+    expect(stage.transition('not-registered', 100)).toBe(false);
+    stage.destroy();
+  });
+
   it('registerBackground(Texture) 后 setBackground 命中真实素材（不落占位）', async () => {
     const stage = makeStage();
     await stage.registerBackground('castle', Texture.EMPTY);
@@ -208,6 +218,7 @@ describe('PixiStage 文字记录生命周期', () => {
       stage.hideBacklog();
       stage.showBacklog([...entries, { speaker: null, text: '第二条记录' }]);
       stage.scrollBacklog(120);
+      stage.showBacklog(entries, undefined, '第一');
     }).not.toThrow();
   });
 });
@@ -219,6 +230,20 @@ describe('PixiStage 结局黑场', () => {
       stage.showEnding();
       stage.hideEnding();
       stage.hideEnding();
+    }).not.toThrow();
+  });
+});
+
+describe('PixiStage 加载层生命周期', () => {
+  it('可重复更新、隐藏和销毁而不抛错', () => {
+    const stage = new PixiStage();
+    expect(() => {
+      stage.showLoading({ total: 10, completed: 4, failed: 1, current: 'bg/title.png', done: false });
+      stage.showLoading({ total: 10, completed: 9, failed: 1, current: null, done: true });
+      stage.hideLoading();
+      stage.hideLoading();
+      stage.destroy();
+      stage.destroy();
     }).not.toThrow();
   });
 });

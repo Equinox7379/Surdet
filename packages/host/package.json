@@ -1,0 +1,27 @@
+{
+  "name": "@surdet/host",
+  "version": "0.1.0",
+  "description": "Surdet 通用宿主运行时与 Profile 存储契约",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0",
+    "@surdet/renderer": "0.1.0"
+  }
+}

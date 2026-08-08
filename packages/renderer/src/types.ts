@@ -8,6 +8,9 @@ import type { RenderPerformanceSnapshot } from './performance.js';
 import type { RenderQuality } from './quality.js';
 import type { PresentationPreferences } from './presentation.js';
 import type { PostProcessSettings } from './post-process.js';
+import type { LoadingProgress } from './loading-progress.js';
+import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
+import type { ShakeDirection, TransitionName } from './world-effects-controller.js';
 
 /** 帧调度器在引擎状态变化时收到的唤醒回调。 */
 export type FrameRequestHandler = () => void;
@@ -59,6 +62,10 @@ export interface AdvStage {
   onBacklogClose?: (() => void) | null;
   /** 清理一次剧情会话的画面状态（可选能力，PixiStage 实现） */
   resetSession?(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
+  /** 显示启动/场景资源加载进度（可选能力，PixiStage 实现） */
+  showLoading?(progress: LoadingProgress): void;
+  /** 隐藏启动/场景资源加载层（可选能力，PixiStage 实现） */
+  hideLoading?(): void;
   /** 点击等待指示器可见性（可选能力，PixiStage 实现 ▼ 指示） */
   setAwaiting?(awaiting: boolean): void;
   /**
@@ -69,11 +76,13 @@ export interface AdvStage {
   /** ▼ 呼吸动画时间推进（可选能力） */
   updateContinuePulse?(deltaMs: number): void;
   /** 展示 Backlog 覆盖层（可选能力，PixiStage 实现）；onReplayVoice 可选：点击带语音的行重播 */
-  showBacklog?(entries: readonly { speaker: string | null; text: string; voice?: string }[], onReplayVoice?: (voice: string) => void): void;
+  showBacklog?(entries: readonly { speaker: string | null; text: string; voice?: string }[], onReplayVoice?: (voice: string) => void, query?: string): void;
   /** 隐藏 Backlog 覆盖层（可选能力） */
   hideBacklog?(): void;
-  /** 画面震动（@shake；durMs 时长，strength 像素振幅，线性衰减） */
-  shake?(durMs: number, strength: number): void;
+  /** 画面震动（@shake；二次衰减，方向可为 both/horizontal/vertical/diagonal） */
+  shake?(durMs: number, strength: number, direction?: ShakeDirection): void;
+  /** 注册表驱动的转场；未知名称返回 false。 */
+  transition?(name: TransitionName | string, durMs: number): boolean;
   /** 白闪（@flash；线性衰减） */
   flash?(durMs: number): void;
   /** 世界层缩放（@zoom；向目标 scale 线性过渡，以画面中心为锚点） */
@@ -171,6 +180,8 @@ export interface SpeakerProfile {
 /** 音频句柄（howler 封装实现；测试可注入 fake） */
 export interface AudioHandle {
   playBgm(src: string | null): void;
+  /** 环境音循环声道（最多一个活动实例；可选以兼容轻量 fake） */
+  playAmbience?(src: string | null, fadeMs?: number): void;
   playSe(src: string): void;
   playVoice(src: string): void;
   /** 停止全部音频（BGM/SE/语音） */
@@ -181,6 +192,8 @@ export interface AudioHandle {
   /** BGM 分轨音量 0..1 */
   setBgmVolume(v: number): void;
   getBgmVolume(): number;
+  setAmbienceVolume?(value: number): void;
+  getAmbienceVolume?(): number;
   /** SE 分轨音量 0..1 */
   setSeVolume(v: number): void;
   getSeVolume(): number;
@@ -189,6 +202,10 @@ export interface AudioHandle {
   getVoiceVolume(): number;
   /** 语音是否播放中（宿主可做"语音播完再自动推进"等策略） */
   isVoicePlaying(): boolean;
+  /** 回退所需的公共音频播放快照；不暴露 Howl 或缓存内部对象。 */
+  snapshotPlayback?(): AudioPlaybackSnapshot;
+  /** 通过公共声道方法恢复音频播放状态。 */
+  restorePlayback?(snapshot: AudioPlaybackSnapshot): void;
 }
 
 /** 无音频实现（占位素材阶段用） */

@@ -34,6 +34,10 @@ export interface AchievementSnapshot {
   unlocked: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** 一次 check/unlock 的结果（宿主用于横幅/提示演出） */
 export interface AchievementUnlockResult {
   id: string;
@@ -135,7 +139,16 @@ export class AchievementSystem {
     return { unlocked: [...this.#unlocked] };
   }
 
+  validateSnapshot(snap: unknown): asserts snap is AchievementSnapshot {
+    if (!isRecord(snap)) throw new Error('成就快照必须是对象');
+    if (snap.unlocked !== undefined
+      && (!Array.isArray(snap.unlocked) || snap.unlocked.some((id) => typeof id !== 'string'))) {
+      throw new Error('成就快照 unlocked 必须是字符串数组');
+    }
+  }
+
   restore(snap: AchievementSnapshot): void {
+    this.validateSnapshot(snap);
     // 读档：只恢复当前配置中仍存在的成就（旧档含已删除成就时静默忽略）；去重防旧档污染进度计数
     this.#unlocked = [...new Set((snap.unlocked ?? []).filter((id) => this.#byId.has(id)))];
   }

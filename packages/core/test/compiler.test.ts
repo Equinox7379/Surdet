@@ -51,6 +51,11 @@ describe('Parser', () => {
 });
 
 describe('SceneCompiler', () => {
+  it('@transition 保留名称与参数，供渲染层注册表消费', () => {
+    const scene = compile('@transition slide-left 600');
+    expect(scene.instructions[0]).toMatchObject({ op: 'instr', name: 'transition', args: ['slide-left', '600'] });
+  });
+
   it('展平基础指令并索引标签', () => {
     const scene = compile(`@label start\n凛：你好。\n@bg castle`);
     expect(scene.labels.get('start')).toBe(0);

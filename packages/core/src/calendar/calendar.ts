@@ -88,6 +88,10 @@ export interface EnterNodeResult {
   eventId?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * 日历运行器：回合/行动力/节点可达性/事件触发。
  * 数据驱动：节点与规则全部来自 CalendarConfig，表达式经 ExprEnv 求值。
@@ -256,7 +260,29 @@ export class CalendarRunner {
     };
   }
 
+  validateSnapshot(snap: unknown): asserts snap is CalendarSnapshot {
+    if (!isRecord(snap)) throw new Error('日历快照必须是对象');
+    if (typeof snap.turn !== 'number' || !Number.isInteger(snap.turn) || snap.turn < 1) {
+      throw new Error('日历快照 turn 必须是 >= 1 的整数');
+    }
+    if (typeof snap.ap !== 'number' || !Number.isFinite(snap.ap) || snap.ap < 0 || snap.ap > this.#config.maxAp) {
+      throw new Error(`日历快照 ap 必须在 0~${this.#config.maxAp} 范围内`);
+    }
+    if (!Array.isArray(snap.visited) || snap.visited.some((id) => typeof id !== 'string')) {
+      throw new Error('日历快照 visited 必须是字符串数组');
+    }
+    if (snap.commandCounts !== undefined) {
+      if (!isRecord(snap.commandCounts)) throw new Error('日历快照 commandCounts 必须是对象');
+      for (const [id, count] of Object.entries(snap.commandCounts)) {
+        if (!id || typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
+          throw new Error(`日历快照 commandCounts.${id} 非法`);
+        }
+      }
+    }
+  }
+
   restore(snap: CalendarSnapshot): void {
+    this.validateSnapshot(snap);
     this.#turn = Math.max(1, snap.turn);
     this.#ap = Math.min(this.#config.maxAp, Math.max(0, snap.ap));
     this.#visited = new Set(snap.visited);

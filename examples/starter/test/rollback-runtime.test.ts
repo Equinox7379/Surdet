@@ -1,0 +1,73 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Interpreter, SaveSnapshot } from '@surdet/core';
+import type { AdvRenderer, AdvStage, AudioHandle } from '@surdet/renderer';
+import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
+
+function createTestRuntime() {
+  let pc = 1;
+  const snapshot: SaveSnapshot = {
+    meta: { id: 'test', createdAt: 1, updatedAt: 1 },
+    variables: {},
+    position: { sceneId: 's1', pc, sceneHash: 'hash-1' },
+    kind: 'manual',
+    status: 'awaiting-advance',
+    readSet: [],
+    gallery: { cgs: [], music: [] },
+  };
+  const interpreter = {
+    status: 'awaiting-advance',
+    saveSnapshot: vi.fn(() => structuredClone({ ...snapshot, position: { ...snapshot.position!, pc } })),
+    loadSnapshot: vi.fn(),
+  } as unknown as Interpreter;
+  const renderer = {
+    status: 'awaiting',
+    backlogOpen: false,
+    snapshotPresentation: vi.fn(() => ({ visible: true })),
+    resetSession: vi.fn(),
+  } as unknown as AdvRenderer;
+  const stage = {
+    restorePresentation: vi.fn(),
+  } as unknown as AdvStage;
+  const audio = {
+    snapshotPlayback: vi.fn(() => ({ bgm: null, ambience: null })),
+    restorePlayback: vi.fn(),
+  } as unknown as AudioHandle;
+  const runtime = createRollbackRuntime({
+    interpreter,
+    renderer,
+    stage,
+    audio,
+    isBlocked: () => false,
+    label: 'rollback-test',
+    onRefresh: vi.fn(),
+  });
+  return {
+    runtime,
+    setPosition(nextPc: number): void { pc = nextPc; },
+  };
+}
+
+describe('rollback runtime generation', () => {
+  it('invalidates a queued text checkpoint when a system boundary clears rollback', async () => {
+    const fixture = createTestRuntime();
+    fixture.runtime.captureText();
+    fixture.runtime.clear();
+
+    await Promise.resolve();
+
+    expect(fixture.runtime.canRollback()).toBe(false);
+  });
+
+  it('captures new checkpoints after the boundary generation advances', async () => {
+    const fixture = createTestRuntime();
+    fixture.runtime.captureText();
+    fixture.runtime.clear();
+    await Promise.resolve();
+
+    fixture.setPosition(2);
+    fixture.runtime.captureText();
+    await Promise.resolve();
+
+    expect(fixture.runtime.canRollback()).toBe(true);
+  });
+});
