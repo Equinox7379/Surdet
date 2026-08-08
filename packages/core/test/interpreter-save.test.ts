@@ -243,6 +243,31 @@ describe('Interpreter 存档', () => {
     expect(loaded.systems!.combat!.units[0]!.cooldowns['power_shot']).toBe(2);
   });
 
+  it('畸形系统快照在任何状态恢复前被拒绝', () => {
+    const { registry, interp, store } = makeInterp();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    store.set('trust', 5);
+    interp.gallery.unlockCg('before');
+    const before = {
+      variables: store.snapshot(),
+      readSet: interp.readTracker.snapshot(),
+      gallery: interp.gallery.snapshot(),
+      status: interp.status,
+    };
+    const bad = {
+      ...interp.saveSnapshot()!,
+      variables: { trust: 999 },
+      systems: { combat: { units: 'bad' } },
+    } as never;
+
+    expect(() => interp.loadSnapshot(bad)).toThrow(/systems\.combat\.units/);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(interp.readTracker.snapshot()).toEqual(before.readSet);
+    expect(interp.gallery.snapshot()).toEqual(before.gallery);
+    expect(interp.status).toBe(before.status);
+  });
+
   it('读档场景哈希不匹配发 saveMismatch（剧本存档后被编辑，仍照常加载）', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));

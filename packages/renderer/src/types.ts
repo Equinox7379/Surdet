@@ -4,9 +4,36 @@
  */
 
 import type { TimelineFrameEvent } from './timeline-player.js';
+import type { RenderPerformanceSnapshot } from './performance.js';
+import type { RenderQuality } from './quality.js';
+import type { PresentationPreferences } from './presentation.js';
+import type { PostProcessSettings } from './post-process.js';
+
+/** 帧调度器在引擎状态变化时收到的唤醒回调。 */
+export type FrameRequestHandler = () => void;
+
+/** 可向外部帧调度器声明“需要重新渲染一帧”的对象。 */
+export interface FrameRequestSource {
+  setFrameRequest(handler: FrameRequestHandler | null): void;
+}
+
+/** 可被通用帧调度器驱动的渲染对象。 */
+export interface FrameLoopTarget extends FrameRequestSource {
+  readonly needsUpdate: boolean;
+  update(deltaMs: number): void;
+}
 
 /** 舞台投影：渲染层需要实现的显示能力（可注入 fake 测试） */
 export interface AdvStage {
+  /** 引擎级画质档位，剧情和脚本不感知该设置。 */
+  setQuality?(quality: RenderQuality): void;
+  getQuality?(): RenderQuality;
+  /** 性能诊断快照，不应被剧情逻辑依赖。 */
+  getPerformanceSnapshot?(): RenderPerformanceSnapshot | null;
+  setPresentationPreferences?(preferences: Partial<PresentationPreferences>): void;
+  getPresentationPreferences?(): PresentationPreferences;
+  setPostProcess?(settings: Partial<PostProcessSettings>): void;
+  getPostProcess?(): PostProcessSettings;
   /** 设置背景（null = 黑场）。key 经渲染层解析为实际纹理。 */
   setBackground(key: string | null): void;
   /** 设置/更新立绘 */
@@ -34,6 +61,11 @@ export interface AdvStage {
   resetSession?(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
   /** 点击等待指示器可见性（可选能力，PixiStage 实现 ▼ 指示） */
   setAwaiting?(awaiting: boolean): void;
+  /**
+   * 舞台是否仍有需要逐帧推进的视觉状态。
+   * 未实现时渲染器按旧行为运行，兼容轻量 fake/宿主舞台。
+   */
+  needsUpdate?(): boolean;
   /** ▼ 呼吸动画时间推进（可选能力） */
   updateContinuePulse?(deltaMs: number): void;
   /** 展示 Backlog 覆盖层（可选能力，PixiStage 实现）；onReplayVoice 可选：点击带语音的行重播 */

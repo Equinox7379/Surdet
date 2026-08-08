@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('surdetApp', {
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>,
   toggleFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggleFullscreen') as Promise<void>,
   log: (level: string, msg: string): Promise<void> => ipcRenderer.invoke('log', level, msg) as Promise<void>,
+  reportError: (context: string, message: string): Promise<string | null> => ipcRenderer.invoke('crash:report', context, message) as Promise<string | null>,
+});
+
+contextBridge.exposeInMainWorld('surdetRelease', {
+  check: (manifestUrl?: string): Promise<unknown> => ipcRenderer.invoke('release:check', manifestUrl) as Promise<unknown>,
 });
 
 /** 素材桥：打包 exe 内素材经 AES-256-GCM 加密（SDAT2），主进程读取并解密返回字节；

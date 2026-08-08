@@ -62,4 +62,14 @@ describe('ShopSystem', () => {
     list[0]!.price = 1;
     expect(shop.items[0]!.price).toBe(30);
   });
+
+  it('背包变量类型错误时购买完全不改变金币', () => {
+    const store = new VariableStore([
+      { name: 'gold', type: 'number', initial: 100 },
+      { name: 'items', type: 'number', initial: 0 },
+    ]);
+    const shop = new ShopSystem(config, store);
+    expect(() => shop.buy('gold', 'items', 'sword')).toThrow(TypeError);
+    expect(store.getNumber('gold')).toBe(100);
+  });
 });

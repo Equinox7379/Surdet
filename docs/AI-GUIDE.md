@@ -4,7 +4,7 @@
 
 ## 0. 引擎位置与必读文件
 
-引擎根目录：`<local-path> Project\surdet`
+引擎根目录：`E:\surdet`
 
 按顺序阅读以下文件再动手：
 
@@ -17,7 +17,7 @@
 ## 1. 标准工作流
 
 ```bash
-cd "<local-path> Project\surdet"
+cd "E:\surdet"
 
 # 0) 引擎已构建。若首次/改动过源码，先全量构建：
 npm install

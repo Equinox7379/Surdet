@@ -11,9 +11,16 @@ import { dequote } from './dequote.js';
 import { stripRuby } from './ruby.js';
 import { Typewriter } from './text-buffer.js';
 import { FadeTween } from './transitions.js';
-import type { AdvStage, AudioHandle, ChoiceOptionView, PortraitView } from './types.js';
+import type {
+  AdvStage,
+  AudioHandle,
+  ChoiceOptionView,
+  FrameRequestHandler,
+  PortraitView,
+} from './types.js';
 import { NULL_AUDIO } from './types.js';
 import { TimelinePlayer, type TimelinePlayerSnapshot } from './timeline-player.js';
+import type { RendererPluginHost } from './plugin-host.js';
 
 /** 渲染状态机 */
 export type RenderStatus = 'idle' | 'typing' | 'awaiting' | 'choice';
@@ -42,6 +49,8 @@ export interface AdvRendererOptions {
   autoPerCharMs?: number;
   /** 文字记录缓冲（注入后自动记录每行文本，供历史回看） */
   backlog?: Backlog;
+  /** 可选渲染插件宿主；插件故障由宿主隔离，不得中断剧情推进。 */
+  pluginHost?: RendererPluginHost;
 }
 
 /**
@@ -90,6 +99,11 @@ export class AdvRenderer {
   #timelineRuns = new Map<number, { player: TimelinePlayer; blocking: boolean }>();
   #timelineSeq = 0;
   #blockingTimelineId: number | null = null;
+  /** 上一帧已同步给舞台的等待状态；避免空闲帧重复改写 UI 节点。 */
+  #lastAwaiting: boolean | null = null;
+  /** 绑定外部帧调度器后，状态事件/输入可唤醒已暂停的 ticker。 */
+  #frameRequest: FrameRequestHandler | null = null;
+  #pluginHost?: RendererPluginHost;
 
   constructor(stage: AdvStage, audio: AudioHandle = NULL_AUDIO, options: AdvRendererOptions = {}) {
     this.#stage = stage;
@@ -101,6 +115,8 @@ export class AdvRenderer {
     this.#autoBaseDelayMs = Math.max(0, options.autoBaseDelayMs ?? 0);
     this.#autoPerCharMs = Math.max(0, options.autoPerCharMs ?? 0);
     this.#backlog = options.backlog ?? null;
+    this.#pluginHost = options.pluginHost;
+    this.#pluginHost?.attach(stage);
     this.#tw.onComplete = () => {
       if (this.#status === 'typing') {
         this.#status = 'awaiting';
@@ -123,16 +139,31 @@ export class AdvRenderer {
     return this.#status;
   }
 
+  /**
+   * 当前帧是否需要推进。
+   * 时间轴/打字/等待/自动播放等由渲染器自身声明；舞台动画由 AdvStage.needsUpdate 声明。
+   * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
+   */
+  get needsUpdate(): boolean {
+    return this.#hasRendererWork() || this.#stage.needsUpdate?.() !== false;
+  }
+
+  /** 绑定/解绑通用帧调度器；状态事件和交互动作会通过它唤醒下一帧。 */
+  setFrameRequest(handler: FrameRequestHandler | null): void {
+    this.#frameRequest = handler;
+    if (handler && this.needsUpdate) handler();
+  }
+
   /** 订阅内核事件总线（类型化：负载由 CoreEventMap 推导） */
   subscribe(bus: EventBus<CoreEventMap>): void {
     this.#unsubs.push(
-      bus.on('text', (p) => this.#onText(p)),
-      bus.on('choice', (p) => this.#onChoice(p)),
-      bus.on('instr', (p) => this.#onInstr(p)),
-      bus.on('wait', (p) => this.#onWait(p)),
-      bus.on('video', (p) => this.#onVideo(p)),
-      bus.on('timeline', (p) => this.#onTimeline(p)),
-      bus.on('stateReset', () => this.#onStateReset()),
+      bus.on('text', (p) => { this.#onText(p); this.#requestFrame(); }),
+      bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
+      bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
+      bus.on('wait', (p) => { this.#onWait(p); this.#requestFrame(); }),
+      bus.on('video', (p) => { this.#onVideo(p); this.#requestFrame(); }),
+      bus.on('timeline', (p) => { this.#onTimeline(p); this.#requestFrame(); }),
+      bus.on('stateReset', () => { this.#onStateReset(); this.#requestFrame(); }),
     );
   }
 
@@ -142,6 +173,8 @@ export class AdvRenderer {
     this.#stage.onSelect = null;
     this.#stage.onBacklogClose = null;
     this.#clearTimelines();
+    this.#pluginHost?.detach();
+    this.#frameRequest = null;
   }
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
@@ -164,7 +197,8 @@ export class AdvRenderer {
     this.#tw.text = '';
     this.#stage.hideChoices();
     this.#stage.showText(null, '');
-    this.#stage.setAwaiting?.(false);
+    this.#lastAwaiting = null;
+    this.#syncAwaiting(false);
     this.#stage.hideBacklog?.();
     this.#stage.setNvlMode?.(false);
     this.#stage.clearNvlText?.();
@@ -172,10 +206,12 @@ export class AdvRenderer {
     this.#stage.hideInterface?.(false);
     this.#stage.setFade(0);
     this.#stage.resetSession?.(options);
+    this.#requestFrame();
   }
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
+    if (!this.needsUpdate) return;
     this.#updateTimelines(deltaMs);
     // @wait 计时：到时（或快进中立即）结束等待并恢复解释器
     if (this.#waitDeadline !== null) {
@@ -218,7 +254,7 @@ export class AdvRenderer {
       }
     }
     // 点击等待指示器投影（▼ 仅在文本等待推进时可见；fake stage 可未实现）
-    this.#stage.setAwaiting?.(this.#status === 'awaiting');
+    this.#syncAwaiting(this.#status === 'awaiting');
     this.#syncContinuePulse(deltaMs);
 
     const fade = this.#fade;
@@ -229,6 +265,26 @@ export class AdvRenderer {
     }
     // 演出效果时间轴（shake/flash/zoom 由 PixiStage 内部衰减）
     this.#stage.updateEffects?.(deltaMs);
+    this.#pluginHost?.update(deltaMs);
+  }
+
+  #hasRendererWork(): boolean {
+    return this.#timelineRuns.size > 0
+      || this.#waitDeadline !== null
+      || this.#status === 'typing'
+      || (this.#skipMode && this.#status === 'awaiting')
+      || (this.#autoPlay && this.#status === 'awaiting')
+      || this.#fade !== null;
+  }
+
+  #syncAwaiting(awaiting: boolean): void {
+    if (this.#lastAwaiting === awaiting) return;
+    this.#lastAwaiting = awaiting;
+    this.#stage.setAwaiting?.(awaiting);
+  }
+
+  #requestFrame(): void {
+    this.#frameRequest?.();
   }
 
   /** 运行时设置打字速度（每秒字符数，设置界面接入用） */
@@ -251,6 +307,7 @@ export class AdvRenderer {
     } else {
       this.#stage.hideBacklog?.();
     }
+    this.#requestFrame();
     return this.#backlogOpen;
   }
 
@@ -258,6 +315,7 @@ export class AdvRenderer {
   toggleHideInterface(): boolean {
     this.#interfaceHidden = !this.#interfaceHidden;
     this.#stage.hideInterface?.(this.#interfaceHidden);
+    this.#requestFrame();
     return this.#interfaceHidden;
   }
 
@@ -282,6 +340,7 @@ export class AdvRenderer {
   /** 切换自动播放 */
   toggleAuto(): boolean {
     this.#autoPlay = !this.#autoPlay;
+    this.#requestFrame();
     return this.#autoPlay;
   }
 
@@ -289,6 +348,7 @@ export class AdvRenderer {
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
     if (!this.#skipMode) this.#skipAll = false;
+    this.#requestFrame();
     return this.#skipMode;
   }
 
@@ -296,6 +356,7 @@ export class AdvRenderer {
   toggleSkipAll(): boolean {
     this.#skipAll = !this.#skipAll;
     this.#skipMode = this.#skipAll;
+    this.#requestFrame();
     return this.#skipAll;
   }
 
@@ -313,6 +374,7 @@ export class AdvRenderer {
 
   /** 玩家点击/按键推进：等待中 → 跳过等待；打字中 → 瞬时完成；选择肢 → 确认高亮项；等待推进 → onAdvance */
   advance(): boolean {
+    this.#requestFrame();
     if (this.#blockingTimelineId !== null) {
       this.#skipTimeline(this.#blockingTimelineId);
       return true;
@@ -340,6 +402,7 @@ export class AdvRenderer {
   /** 玩家选中选项 */
   select(index: number): boolean {
     if (this.#status !== 'choice') return false;
+    this.#requestFrame();
     this.#status = 'idle';
     this.#stage.hideChoices();
     this.#onSelect?.(index);
@@ -391,6 +454,7 @@ export class AdvRenderer {
       ? this.#choiceIndices.length - 1
       : (this.#choiceCursor - 1 + this.#choiceIndices.length) % this.#choiceIndices.length;
     this.#stage.setChoiceHighlight?.(this.#choiceCursor);
+    this.#requestFrame();
   }
 
   /** 选择肢键盘导航：下移（循环） */
@@ -400,6 +464,7 @@ export class AdvRenderer {
       ? 0
       : (this.#choiceCursor + 1) % this.#choiceIndices.length;
     this.#stage.setChoiceHighlight?.(this.#choiceCursor);
+    this.#requestFrame();
   }
 
   /** 确认当前高亮选项（Enter/Space） */
@@ -529,6 +594,7 @@ export class AdvRenderer {
         // Corrupt presentation payload is isolated from the story position.
       }
     }
+    this.#requestFrame();
   }
 
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */

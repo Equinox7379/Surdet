@@ -146,6 +146,21 @@ describe('assertValidSnapshot systems 子快照深校验（审计轮4）', () =>
     const snap = makeSnap({ systems: { calendar: { turn: '2', ap: 0, visited: [] } } as never });
     expect(() => assertValidSnapshot(snap)).toThrow(/turn/);
   });
+
+  it('combat.units 非数组 → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { combat: { units: 'bad' } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/systems\.combat\.units/);
+  });
+
+  it('affection.consumed 非字符串数组 → 读档入口拒绝', () => {
+    const snap = makeSnap({ systems: { affection: { consumed: 123 } } as never });
+    expect(() => assertValidSnapshot(snap)).toThrow(/systems\.affection\.consumed/);
+  });
+
+  it('旧 affection 快照缺少 everConsumed 时保持兼容', () => {
+    const snap = makeSnap({ systems: { affection: { consumed: ['a'] } } as never });
+    expect(() => assertValidSnapshot(snap)).not.toThrow();
+  });
 });
 
 describe('ReadTracker', () => {

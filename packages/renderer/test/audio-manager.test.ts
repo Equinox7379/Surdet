@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { mockPlay, mockStop, mockLoop, mockVolume, mockFade, mockOn, mockPlaying, mockHowlerStop, mockHowlerVolume } = vi.hoisted(() => ({
+const { mockHowl, mockPlay, mockStop, mockLoop, mockVolume, mockFade, mockOn, mockPlaying, mockUnload, mockHowlerStop, mockHowlerVolume, mockInstances } = vi.hoisted(() => ({
+  mockHowl: vi.fn(),
   mockPlay: vi.fn(),
   mockStop: vi.fn(),
   mockLoop: vi.fn(),
@@ -8,20 +9,51 @@ const { mockPlay, mockStop, mockLoop, mockVolume, mockFade, mockOn, mockPlaying,
   mockFade: vi.fn(),
   mockOn: vi.fn(),
   mockPlaying: vi.fn(() => false),
+  mockUnload: vi.fn(),
   mockHowlerStop: vi.fn(),
   mockHowlerVolume: vi.fn(() => 1),
+  mockInstances: [] as Array<{
+    src: string;
+    emit: (event: string) => void;
+    setPlaying: (value: boolean) => void;
+    playing: ReturnType<typeof vi.fn>;
+    unload: ReturnType<typeof vi.fn>;
+  }>,
 }));
 
 vi.mock('howler', () => ({
-  Howl: vi.fn().mockImplementation(() => ({
-    play: mockPlay,
-    stop: mockStop,
-    loop: mockLoop,
-    volume: mockVolume,
-    fade: mockFade,
-    on: mockOn,
-    playing: mockPlaying,
-  })),
+  Howl: mockHowl.mockImplementation((options: { src: string[] }) => {
+    const handlers = new Map<string, Array<() => void>>();
+    let isPlaying = false;
+    const playing = vi.fn(() => isPlaying);
+    const unload = vi.fn(() => mockUnload());
+    const instance = {
+      src: options.src[0] ?? '',
+      play: mockPlay,
+      stop: mockStop,
+      unload,
+      loop: mockLoop,
+      volume: mockVolume,
+      fade: mockFade,
+      on: (event: string, handler: () => void) => {
+        mockOn(event, handler);
+        const list = handlers.get(event) ?? [];
+        list.push(handler);
+        handlers.set(event, list);
+      },
+      once: (event: string, handler: () => void) => {
+        mockOn(event, handler);
+        handlers.set(event, [handler]);
+      },
+      playing,
+      emit: (event: string) => {
+        for (const handler of handlers.get(event) ?? []) handler();
+      },
+      setPlaying: (value: boolean) => { isPlaying = value; },
+    };
+    mockInstances.push(instance);
+    return instance;
+  }),
   Howler: {
     stop: mockHowlerStop,
     volume: mockHowlerVolume,
@@ -33,14 +65,17 @@ import { AudioManager } from '../src/audio-manager.js';
 describe('AudioManager', () => {
   beforeEach(() => {
     mockPlay.mockClear();
+    mockHowl.mockClear();
     mockStop.mockClear();
     mockLoop.mockClear();
     mockVolume.mockClear();
     mockFade.mockClear();
     mockOn.mockClear();
     mockPlaying.mockClear();
+    mockUnload.mockClear();
     mockHowlerStop.mockClear();
     mockHowlerVolume.mockClear();
+    mockInstances.length = 0;
     vi.useRealTimers();
   });
 
@@ -133,13 +168,80 @@ describe('AudioManager', () => {
     expect(mockHowlerVolume).toHaveBeenCalledWith(0.5);
   });
 
+  it('Blob URL 注册音频格式后把 format 传给 Howler，避免无扩展名导致 codec 失败', () => {
+    const am = new AudioManager();
+    am.setSourceFormat('blob:voice', 'audio/wav');
+    am.playVoice('blob:voice');
+    expect(mockHowl).toHaveBeenCalledWith(expect.objectContaining({ format: ['wav'] }));
+  });
+
   it('isVoicePlaying 查询当前语音实例播放状态', () => {
     const am = new AudioManager();
     expect(am.isVoicePlaying()).toBe(false);
     am.playVoice('v.mp3');
-    mockPlaying.mockReturnValueOnce(true);
+    mockInstances[0]!.playing.mockReturnValueOnce(true);
     expect(am.isVoicePlaying()).toBe(true);
     am.stopAll();
     expect(am.isVoicePlaying()).toBe(false);
+  });
+
+  it('dispose 停止播放并释放缓存的 Howl 实例，之后仍可按需复用', () => {
+    const am = new AudioManager();
+    am.playBgm('a.mp3');
+    am.playSe('b.mp3');
+    am.playVoice('c.mp3');
+
+    am.dispose();
+
+    expect(mockHowlerStop).toHaveBeenCalledTimes(1);
+    expect(mockUnload).toHaveBeenCalledTimes(3);
+    am.playSe('a.mp3');
+    expect(mockPlay).toHaveBeenCalledTimes(4);
+  });
+
+  it('同一源跨 SE/BGM 使用时按声道隔离缓存', () => {
+    const am = new AudioManager();
+    am.playSe('shared.ogg');
+    am.playBgm('shared.ogg');
+
+    expect(mockHowl).toHaveBeenCalledTimes(2);
+    expect(mockInstances[0]!.src).toBe('shared.ogg');
+    expect(mockInstances[1]!.src).toBe('shared.ogg');
+  });
+
+  it('SE 缓存淘汰停止实例并保持上限 32', () => {
+    const am = new AudioManager();
+    for (let i = 0; i < 40; i++) am.playSe(`se-${i}.ogg`);
+
+    expect(mockHowl).toHaveBeenCalledTimes(40);
+    expect(mockUnload).toHaveBeenCalledTimes(8);
+  });
+
+  it('语音缓存淘汰停止实例并保持上限 8', () => {
+    const am = new AudioManager();
+    for (let i = 0; i < 10; i++) am.playVoice(`voice-${i}.ogg`);
+
+    expect(mockHowl).toHaveBeenCalledTimes(10);
+    expect(mockUnload).toHaveBeenCalledTimes(2);
+  });
+
+  it('活动实例不被淘汰，end/stop 重复事件收敛且不影响其他声道', () => {
+    const am = new AudioManager();
+    am.playSe('shared.ogg');
+    const sharedSe = mockInstances[0]!;
+    sharedSe.setPlaying(true);
+    am.playBgm('shared.ogg');
+    const sharedBgm = mockInstances[1]!;
+
+    for (let i = 0; i < 32; i++) am.playSe(`se-${i}.ogg`);
+    const unloadBeforeEvents = mockUnload.mock.calls.length;
+    sharedSe.emit('end');
+    sharedSe.emit('stop');
+    sharedBgm.emit('end');
+    sharedBgm.emit('stop');
+
+    expect(sharedSe.unload).not.toHaveBeenCalled();
+    expect(sharedBgm.unload).not.toHaveBeenCalled();
+    expect(mockUnload.mock.calls.length).toBe(unloadBeforeEvents);
   });
 });

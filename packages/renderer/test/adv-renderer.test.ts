@@ -54,10 +54,14 @@ class FakeStage implements AdvStage {
   flashes: number[] = [];
   zooms: { scale: number; dur: number }[] = [];
   effectTicks = 0;
+  awaitingStates: boolean[] = [];
+  stageNeedsUpdate: boolean | undefined;
   shake(durMs: number, strength: number): void { this.shakes.push({ dur: durMs, strength }); }
   flash(durMs: number): void { this.flashes.push(durMs); }
   zoom(scale: number, durMs: number): void { this.zooms.push({ scale, dur: durMs }); }
   updateEffects(): void { this.effectTicks++; }
+  setAwaiting(awaiting: boolean): void { this.awaitingStates.push(awaiting); }
+  needsUpdate(): boolean { return this.stageNeedsUpdate ?? true; }
   movs: { key: string; pos: string; dur: number }[] = [];
   tints: { color: number; alpha: number; dur: number }[] = [];
   tintClears: number[] = [];
@@ -106,6 +110,64 @@ function makeBus() {
 }
 
 describe('AdvRenderer', () => {
+  it('空闲且舞台无活动效果时短路；文本开始后仍继续推进', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    stage.stageNeedsUpdate = false;
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+
+    r.update(16);
+    expect(stage.effectTicks).toBe(0);
+
+    bus.emit('text', { speaker: '凛', value: '继续。' });
+    r.update(1000);
+    expect(stage.effectTicks).toBe(1);
+    expect(stage.texts.at(-1)).toEqual({ speaker: '凛', value: '继续。' });
+  });
+
+  it('剧情空闲时不会因快进开关仍开启而持续请求帧', () => {
+    const stage = new FakeStage();
+    stage.stageNeedsUpdate = false;
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.toggleSkip();
+
+    expect(r.needsUpdate).toBe(false);
+    r.update(16);
+    expect(stage.effectTicks).toBe(0);
+  });
+
+  it('内核事件会唤醒已绑定的帧调度器', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    stage.stageNeedsUpdate = false;
+    const r = new AdvRenderer(stage, new FakeAudio());
+    let requests = 0;
+    r.setFrameRequest(() => { requests++; });
+    r.subscribe(bus);
+
+    bus.emit('text', { speaker: null, value: '唤醒。' });
+    expect(requests).toBe(1);
+  });
+
+  it('等待状态只在发生变化时同步到舞台', () => {
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.update(16);
+    r.update(16);
+    expect(stage.awaitingStates).toEqual([false]);
+
+    const bus = makeBus();
+    r.subscribe(bus);
+    bus.emit('text', { speaker: null, value: '等一下。' });
+    r.update(1000);
+    r.update(16);
+    expect(stage.awaitingStates).toEqual([false, true]);
+    expect(r.advance()).toBe(true);
+    r.update(16);
+    expect(stage.awaitingStates).toEqual([false, true, false]);
+  });
+
   it('timeline 事件逐帧投影，阻塞时间轴完成后仅恢复一次解释器', () => {
     const bus = makeBus();
     const stage = new FakeStage();

@@ -26,7 +26,7 @@
 
 ## 4. 自动验证基线
 
-执行目录：`<local-path> Project\surdet`
+执行目录：`E:\surdet`
 
 ```text
 npm run typecheck

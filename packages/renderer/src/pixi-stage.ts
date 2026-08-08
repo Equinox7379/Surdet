@@ -1,6 +1,7 @@
 import {
   Application,
   Assets,
+  ColorMatrixFilter,
   Container,
   Graphics,
   Sprite,
@@ -12,13 +13,24 @@ import {
 import type { BacklogEntry } from './backlog.js';
 import type { BattleView } from './battle-view.js';
 import { parseRuby, stripRuby } from './ruby.js';
+import { layoutRuby, type RubyGlyphLayout } from './ruby-layout.js';
 import { wrapCjk, wrapCjkMeasure } from './text-wrap.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
 import type { SettingsRowView } from './settings-store.js';
 import type { TimelineFrameEvent } from './timeline-player.js';
-import type { AdvStage, ChoiceOptionView, CommandRailItem, PortraitView, SpeakerProfile } from './types.js';
+import type {
+  AdvStage,
+  ChoiceOptionView,
+  CommandRailItem,
+  FrameRequestHandler,
+  PortraitView,
+  SpeakerProfile,
+} from './types.js';
+import { RenderQualityController, type RenderQuality } from './quality.js';
+import { DEFAULT_PRESENTATION_PREFERENCES, normalizePresentationPreferences, presentationDuration, type PresentationPreferences } from './presentation.js';
+import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } from './post-process.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -46,6 +58,14 @@ function lerpColor(a: number, b: number, t: number): number {
   const g = Math.round(ag + (bg - ag) * t);
   const bl = Math.round(ab + (bb - ab) * t);
   return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (bl & 0xff);
+}
+
+/** Blob URL 没有文件扩展名，必须根据 MIME/扩展名显式选择 Pixi 解析器。 */
+function assetParser(format: string | undefined, src: string): 'loadSVG' | 'loadTextures' | undefined {
+  const value = (format ?? src.split('?')[0]?.split('#')[0]?.split('.').pop() ?? '').toLowerCase();
+  if (value === 'svg' || value === 'image/svg+xml') return 'loadSVG';
+  if (value.startsWith('image/') || /^(png|jpg|jpeg|webp|gif|avif)$/.test(value)) return 'loadTextures';
+  return undefined;
 }
 
 /** @particle 预设参数（程序化粒子：数量/颜色/基准半径/垂直速度 px·帧⁻¹/横向摆动幅度）。
@@ -467,6 +487,8 @@ export class PixiStage implements AdvStage {
   #battleSelectedSkill: string | null = null;
   /** ruby 注音合成层（与 #dialogText 互斥显示） */
   #dialogRubyLayer: Container;
+  #rubyBasePool: PText[] = [];
+  #rubyTextPool: PText[] = [];
   /** NVL 全屏小说文本页 */
   #nvlLayer: Container;
   #nvlLines: PText[] = [];
@@ -538,6 +560,17 @@ export class PixiStage implements AdvStage {
     body: ADV_FONT_STACK,
     ui: ADV_FONT_STACK,
   };
+  /** 由 registerFontRole 加入 document.fonts 的字体面；预览重载时显式移除。 */
+  #fontFaces = new Map<FontRole, FontFace>();
+  /** 通过 URL 交给 Pixi Assets 加载的来源；Texture 注入不纳入本集合。 */
+  #registeredAssetSources = new Set<string>();
+  /** 舞台直接交互/异步资源更新时唤醒外部帧调度器。 */
+  #frameRequest: FrameRequestHandler | null = null;
+  /** 画质策略由舞台统一应用，默认 balanced 兼顾正式游戏和编辑器预览。 */
+  #quality = new RenderQualityController('balanced');
+  #presentation: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
+  #postProcess: PostProcessSettings = { ...DEFAULT_POST_PROCESS };
+  #colorMatrix: ColorMatrixFilter | null = null;
 
   constructor() {
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
@@ -728,6 +761,64 @@ export class PixiStage implements AdvStage {
     }
     canvas.style.width = `${Math.round(this.#w * scale)}px`;
     canvas.style.height = `${Math.round(this.#h * scale)}px`;
+    this.#requestFrame();
+  }
+
+  setQuality(quality: RenderQuality): void {
+    if (quality === this.#quality.quality) return;
+    const activeParticles = this.#particleKind;
+    this.#quality.setQuality(quality);
+    // 画质变化即时作用于已有粒子，剧情状态不受影响。
+    if (activeParticles) {
+      this.stopParticles();
+      this.startParticles(activeParticles);
+    }
+    this.#applyPostProcess();
+    this.#requestFrame();
+  }
+
+  getQuality(): RenderQuality {
+    return this.#quality.quality;
+  }
+
+  setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
+    this.#presentation = normalizePresentationPreferences({ ...this.#presentation, ...preferences });
+    if (!this.#presentation.particleEnabled) this.stopParticles();
+    this.#requestFrame();
+  }
+
+  getPresentationPreferences(): PresentationPreferences {
+    return { ...this.#presentation };
+  }
+
+  setPostProcess(settings: Partial<PostProcessSettings>): void {
+    this.#postProcess = normalizePostProcess({ ...this.#postProcess, ...settings });
+    this.#applyPostProcess();
+    this.#requestFrame();
+  }
+
+  getPostProcess(): PostProcessSettings {
+    return { ...this.#postProcess };
+  }
+
+  #applyPostProcess(): void {
+    const enabled = this.#postProcess.enabled && this.#quality.settings.postProcess;
+    if (!enabled) {
+      this.#worldLayer.filters = null;
+      return;
+    }
+    this.#colorMatrix ??= new ColorMatrixFilter();
+    this.#colorMatrix.reset();
+    this.#colorMatrix.saturate(this.#postProcess.saturation - 1, false);
+    this.#colorMatrix.brightness(this.#postProcess.brightness, false);
+    this.#colorMatrix.contrast(this.#postProcess.contrast, false);
+    this.#worldLayer.filters = [this.#colorMatrix];
+  }
+
+  /** 绑定/解绑通用帧调度器。 */
+  setFrameRequest(handler: FrameRequestHandler | null): void {
+    this.#frameRequest = handler;
+    if (handler && this.needsUpdate()) handler();
   }
 
   #layout(): void {
@@ -774,12 +865,14 @@ export class PixiStage implements AdvStage {
    * URL 通过 Pixi Assets 异步加载；清除同名占位缓存使下一次 setBackground 生效。
    */
   async registerBackground(key: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
     const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
+    if (typeof src === 'string') this.#registeredAssetSources.add(src);
     this.#registeredBgs.set(key, tex);
     this.#bgTextureCache.delete(key);
     // 资源可能在 @bg 已经投影后才完成加载；替换当前画面，避免首帧占位永久驻留。
     if (this.#backgroundKey === key) this.setBackground(key);
+    this.#requestFrame();
   }
 
   /** 当前某个字体角色实际使用的字体族，供宿主诊断与测试使用。 */
@@ -808,9 +901,14 @@ export class PixiStage implements AdvStage {
         face.load(),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
       ]);
-      (document.fonts as unknown as { add: (f: FontFace) => void }).add(loaded);
+      const fontSet = document.fonts as unknown as { add: (f: FontFace) => void; delete?: (f: FontFace) => boolean };
+      const previous = this.#fontFaces.get(role);
+      if (previous) fontSet.delete?.(previous);
+      fontSet.add(loaded);
+      this.#fontFaces.set(role, loaded);
       this.#fontFamilies[role] = family;
       this.#applyTypography();
+      this.#requestFrame();
       return true;
     } catch (err) {
       console.warn(`[PixiStage] ${role} 字体加载失败，回退系统字体：`, err instanceof Error ? err.message : String(err));
@@ -833,12 +931,18 @@ export class PixiStage implements AdvStage {
 
   /** 清除项目字体并恢复三类回退栈（预览重载时不能沿用旧项目的字体）。 */
   resetFonts(): void {
+    if (typeof document !== 'undefined') {
+      const fontSet = document.fonts as unknown as { delete?: (f: FontFace) => boolean };
+      for (const face of this.#fontFaces.values()) fontSet.delete?.(face);
+    }
+    this.#fontFaces.clear();
     this.#fontFamilies = {
       title: ADV_TITLE_FONT_STACK,
       body: ADV_FONT_STACK,
       ui: ADV_FONT_STACK,
     };
     this.#applyTypography();
+    this.#requestFrame();
   }
 
   /** 旧版重置接口保留，行为等同于 resetFonts。 */
@@ -851,8 +955,9 @@ export class PixiStage implements AdvStage {
    * 使用真实素材而非程序化占位。URL 通过 Pixi Assets 异步加载。
    */
   async registerPortrait(charId: string, costume: string, expression: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
     const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
+    if (typeof src === 'string') this.#registeredAssetSources.add(src);
     const cacheKey = `${charId}:${costume}:${expression}`;
     this.#registeredPortraits.set(cacheKey, tex);
     this.#portraitTextureCache.delete(cacheKey);
@@ -860,14 +965,17 @@ export class PixiStage implements AdvStage {
     for (const [spriteKey, view] of this.#portraitViews) {
       if (`${view.charId}:${view.costume}:${view.expression}` === cacheKey) this.setPortrait(spriteKey, view);
     }
+    this.#requestFrame();
   }
 
   /** 注册对白区小头像；缺失时不显示头像，不猜测主立绘。 */
   async registerAvatar(key: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = format === 'svg' ? 'loadSVG' : format ? 'loadTextures' : undefined;
+    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
     const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
+    if (typeof src === 'string') this.#registeredAssetSources.add(src);
     this.#registeredAvatars.set(key, tex);
     this.#updateSpeakerAvatar();
+    this.#requestFrame();
   }
 
   /** 配置显示名到角色 ID 的显式映射，供说话人聚焦与头像投影使用。 */
@@ -879,6 +987,7 @@ export class PixiStage implements AdvStage {
       }
     }
     this.#updateSpeakerAvatar();
+    this.#requestFrame();
   }
 
   /** 当前说话角色聚焦；未配置角色资料时传 null，所有立绘保持原始存在感。 */
@@ -889,6 +998,7 @@ export class PixiStage implements AdvStage {
       sprite.alpha = !characterId || view?.charId === characterId ? 1 : 0.46;
     }
     this.#updateSpeakerAvatar();
+    this.#requestFrame();
   }
 
   #updateSpeakerAvatar(): void {
@@ -912,6 +1022,7 @@ export class PixiStage implements AdvStage {
   }
 
   setBackground(key: string | null): void {
+    this.#requestFrame();
     this.#stopBackgroundTransition();
     this.#backgroundKey = key;
     if (this.#bgSprite) {
@@ -969,6 +1080,7 @@ export class PixiStage implements AdvStage {
   }
 
   setPortrait(key: string, opts: PortraitView): void {
+    this.#requestFrame();
     this.#portraitViews.set(key, opts);
     const cacheKey = `${opts.charId}:${opts.costume}:${opts.expression}`;
     let texture = this.#registeredPortraits.get(cacheKey)
@@ -1011,16 +1123,41 @@ export class PixiStage implements AdvStage {
     this.#portraitTweens.push({ old: existing, neu, remain: 260, dur: 260 });
   }
 
+  #detachPortraitSprites(removed: ReadonlySet<Sprite>): void {
+    this.#movTweens = this.#movTweens.filter((tw) => !removed.has(tw.sprite));
+    const orphaned = new Set<Sprite>();
+    this.#portraitTweens = this.#portraitTweens.filter((tw) => {
+      if (!removed.has(tw.old) && !removed.has(tw.neu)) return true;
+      if (!removed.has(tw.old)) orphaned.add(tw.old);
+      if (!removed.has(tw.neu)) orphaned.add(tw.neu);
+      return false;
+    });
+    const live = new Set(this.#portraitSprites.values());
+    for (const sprite of orphaned) {
+      if (live.has(sprite) || removed.has(sprite)) continue;
+      if (sprite.parent) sprite.parent.removeChild(sprite);
+      sprite.destroy();
+    }
+  }
+
   removePortrait(key: string): void {
+    this.#requestFrame();
     // key 契约：完整 `角色:服装`（与 setPortrait 第一参数一致）精确移除；
     // 纯角色 ID（规范写法 @hide lynn）移除该角色全部立绘——否则 @show lynn:armor
     // 之后 @hide lynn 查不到 'lynn:armor'，立绘永不消失（静默演出 bug）。
     const keys = this.#portraitSprites.has(key)
       ? [key]
       : [...this.#portraitSprites.keys()].filter((k) => k === key || k.startsWith(`${key}:`));
+    const removed = new Set<Sprite>();
     for (const k of keys) {
-      const sprite = this.#portraitSprites.get(k)!;
-      this.#portraitLayer.removeChild(sprite);
+      const sprite = this.#portraitSprites.get(k);
+      if (sprite) removed.add(sprite);
+    }
+    this.#detachPortraitSprites(removed);
+    for (const k of keys) {
+      const sprite = this.#portraitSprites.get(k);
+      if (!sprite) continue;
+      if (sprite.parent) sprite.parent.removeChild(sprite);
       sprite.destroy(); // 纹理由缓存共享，不随 sprite 释放
       this.#portraitSprites.delete(k);
       this.#portraitViews.delete(k);
@@ -1029,6 +1166,7 @@ export class PixiStage implements AdvStage {
 
   showText(speaker: string | null, value: string): void {
     if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
+    this.#requestFrame();
     this.#lastShownSpeaker = speaker;
     this.#lastShownDialog = value;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
@@ -1057,7 +1195,7 @@ export class PixiStage implements AdvStage {
     const segs = unclosed ? [] : parseRuby(value);
     const hasRuby = segs.some((s) => s.ruby !== undefined);
     if (!hasRuby) {
-      this.#clearRubyLayer();
+      this.#hideRubyPool();
       this.#dialogText.visible = true;
       const plain = unclosed ? stripRuby(value) : value;
       // 断行禁则（M5 支柱4）：禁则字不挂行首/行尾，……——不拆行；
@@ -1067,44 +1205,68 @@ export class PixiStage implements AdvStage {
     }
     this.#dialogText.visible = false;
     this.#dialogText.text = '';
-    this.#clearRubyLayer();
-    let x = 0;
-    for (const seg of segs) {
-      const base = new PText({
-        text: seg.base,
-        style: {
-          fontSize: 25,
-          fill: MODERN_ADV.text,
-          fontWeight: 'normal',
-          fontFamily: this.#dialogText.style.fontFamily,
-          letterSpacing: 0.3,
-          lineHeight: 41,
-          stroke: { width: 1.35, color: MODERN_ADV.ink },
-        } satisfies TextStyleOptions,
-      });
-      base.position.set(x, 0);
-      this.#dialogRubyLayer.addChild(base);
-      if (seg.ruby !== undefined) {
-        const r = new PText({
-          text: seg.ruby,
-        style: {
-          fontSize: 12,
-          fill: MODERN_ADV.text,
-          fontWeight: 'normal',
-          fontFamily: this.#dialogText.style.fontFamily,
-          stroke: { width: 0.8, color: MODERN_ADV.ink },
-        } satisfies TextStyleOptions,
-        });
-        r.anchor.set(0.5, 1);
-        r.position.set(x + base.width / 2, -2);
-        this.#dialogRubyLayer.addChild(r);
+    this.#hideRubyPool();
+    const ctx = getDialogMeasureCtx();
+    const family = this.#dialogText.style.fontFamily;
+    const familyText = Array.isArray(family) ? family.join(', ') : String(family);
+    const measure = {
+      base: (text: string): number => {
+        if (!ctx) return text.length * 25;
+        ctx.font = `25px ${familyText}`;
+        return ctx.measureText(text).width;
+      },
+      ruby: (text: string): number => {
+        if (!ctx) return text.length * 12;
+        ctx.font = `12px ${familyText}`;
+        return ctx.measureText(text).width;
+      },
+    };
+    const layouts = layoutRuby(segs, this.#w - 220, measure, 41);
+    const baseStyle = {
+      fontSize: 25,
+      fill: MODERN_ADV.text,
+      fontWeight: 'normal',
+      fontFamily: family,
+      letterSpacing: 0.3,
+      lineHeight: 41,
+      stroke: { width: 1.35, color: MODERN_ADV.ink },
+    } satisfies TextStyleOptions;
+    const rubyStyle = {
+      fontSize: 12,
+      fill: MODERN_ADV.text,
+      fontWeight: 'normal',
+      fontFamily: family,
+      stroke: { width: 0.8, color: MODERN_ADV.ink },
+    } satisfies TextStyleOptions;
+    let rubyIndex = 0;
+    layouts.forEach((layout: RubyGlyphLayout, index) => {
+      const base = this.#takeRubyText(this.#rubyBasePool, index, layout.base, baseStyle);
+      base.position.set(layout.x + (layout.width - base.width) / 2, layout.y);
+      if (layout.ruby !== undefined) {
+        const ruby = this.#takeRubyText(this.#rubyTextPool, rubyIndex++, layout.ruby, rubyStyle);
+        ruby.anchor.set(0.5, 1);
+        ruby.position.set(layout.x + layout.width / 2, layout.y - 2);
       }
-      x += base.width;
-    }
+    });
   }
 
-  #clearRubyLayer(): void {
-    this.#dialogRubyLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
+  #takeRubyText(pool: PText[], index: number, text: string, style: TextStyleOptions): PText {
+    let object = pool[index];
+    if (!object) {
+      object = new PText({ text, style });
+      pool[index] = object;
+      this.#dialogRubyLayer.addChild(object);
+    } else {
+      object.text = text;
+      object.style = style;
+    }
+    object.visible = true;
+    return object;
+  }
+
+  #hideRubyPool(): void {
+    for (const object of this.#rubyBasePool) object.visible = false;
+    for (const object of this.#rubyTextPool) object.visible = false;
   }
 
   /** 等待推进指示器可见性（呼吸小光点；同时决定面板是否保持显示） */
@@ -1117,6 +1279,12 @@ export class PixiStage implements AdvStage {
       this.#speakerText.text.length === 0
       && this.#dialogText.text.length === 0
     ) this.#dialogPanel.visible = false;
+    this.#requestFrame();
+  }
+
+  /** 是否仍有视觉状态需要逐帧推进；静态对话画面不请求额外更新。 */
+  needsUpdate(): boolean {
+    return this.#continueIndicator.visible || this.#hasEffectWork();
   }
 
   /** 呼吸小光点动画（由 AdvRenderer 每帧转发 ticker delta；alpha 呼吸 + 轻微浮动） */
@@ -1187,6 +1355,7 @@ export class PixiStage implements AdvStage {
     this.#applyBacklogScroll();
     layer.addChild(entriesLayer);
     layer.visible = true;
+    this.#requestFrame();
   }
 
   /** 隐藏/恢复对话界面（H 键惯例：隐藏对话框/说话人栏/等待指示器；背景立绘/粒子保留供赏画） */
@@ -1200,6 +1369,7 @@ export class PixiStage implements AdvStage {
     this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
+    this.#requestFrame();
   }
 
   /** 展示现代 ADV 底部操作带。 */
@@ -1223,6 +1393,7 @@ export class PixiStage implements AdvStage {
   hideCommandRail(): void {
     this.#commandRailSuppressed = true;
     this.#commandRail.visible = false;
+    this.#requestFrame();
   }
 
   #wakeCommandRail(): void {
@@ -1230,6 +1401,7 @@ export class PixiStage implements AdvStage {
     this.#commandRailWakeRemain = 2800;
     this.#commandRail.visible = true;
     this.#commandRail.alpha = Math.max(this.#commandRail.alpha, 0.72);
+    this.#requestFrame();
   }
 
   #rebuildCommandRail(): void {
@@ -1317,6 +1489,7 @@ export class PixiStage implements AdvStage {
     const maxScroll = Math.max(0, this.#backlogContentH - viewH);
     this.#backlogScroll = Math.max(-maxScroll, Math.min(0, this.#backlogScroll - delta));
     this.#applyBacklogScroll();
+    this.#requestFrame();
   }
 
   #applyBacklogScroll(): void {
@@ -1508,6 +1681,7 @@ export class PixiStage implements AdvStage {
       }
     }
     if (typeof raw.particleKind === 'string') this.startParticles(raw.particleKind);
+    this.#requestFrame();
   }
 
   clearPresentation(): void {
@@ -1534,32 +1708,50 @@ export class PixiStage implements AdvStage {
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
     this.stopParticles();
+    this.#requestFrame();
+  }
+
+  /**
+   * 卸载由 registerBackground/registerPortrait/registerAvatar 通过 URL 加载的 Pixi 资源。
+   * 已注入 Texture 不在集合内，因此不会越权销毁宿主共享纹理。
+   * 编辑器预览在 resetSession({ clearAssets: true }) 后调用此方法，
+   * 正式游戏退出时也应调用，避免 Blob URL 对应的 Texture 留在全局 Assets 缓存中。
+   */
+  async releaseRegisteredAssetSources(): Promise<void> {
+    const sources = [...this.#registeredAssetSources];
+    this.#registeredAssetSources.clear();
+    if (sources.length === 0) return;
+    await Promise.allSettled([Assets.unload(sources)]);
   }
 
   /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
   shake(durMs = 400, strength = 8): void {
-    this.#shakeDur = Math.max(1, durMs);
+    this.#shakeDur = presentationDuration(durMs, this.#presentation);
     this.#shakeRemain = this.#shakeDur;
     this.#shakeStrength = Math.max(0, Math.min(strength, 64));
+    this.#requestFrame();
   }
 
   /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */
   flash(durMs = 300): void {
-    this.#flashDur = Math.max(1, durMs);
+    this.#flashDur = presentationDuration(durMs, this.#presentation);
     this.#flashRemain = this.#flashDur;
     this.#flashOverlay.alpha = 1;
+    this.#requestFrame();
   }
 
   /** 缩放：world 层向目标 scale 线性过渡（以画面中心为锚点）。scale=1 复位 */
   zoom(scale = 1, durMs = 400): void {
     this.#zoomFrom = this.#worldLayer.scale.x;
     this.#zoomTo = Math.max(0.25, Math.min(4, scale));
-    this.#zoomDur = Math.max(1, durMs);
+    this.#zoomDur = presentationDuration(durMs, this.#presentation);
     this.#zoomRemain = this.#zoomDur;
+    this.#requestFrame();
   }
 
   /** 演出效果时间轴推进（AdvRenderer 每帧转发 ticker delta） */
   updateEffects(deltaMs: number): void {
+    if (!this.#hasEffectWork()) return;
     if (this.#shakeRemain > 0) {
       this.#shakeRemain = Math.max(0, this.#shakeRemain - deltaMs);
       const base = this.#zoomBaseOffset();
@@ -1611,10 +1803,30 @@ export class PixiStage implements AdvStage {
         this.#commandRailWakeRemain = Math.max(0, this.#commandRailWakeRemain - deltaMs);
       }
       const target = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
-      this.#commandRail.alpha += (target - this.#commandRail.alpha) * Math.min(1, deltaMs / 120);
+      const next = this.#commandRail.alpha + (target - this.#commandRail.alpha) * Math.min(1, deltaMs / 120);
+      this.#commandRail.alpha = Math.abs(target - next) <= 0.001 ? target : next;
     }
     this.#updateMenuMotion(deltaMs);
     this.#updateTransient(deltaMs);
+  }
+
+  #hasEffectWork(): boolean {
+    const railTarget = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
+    const commandRailMoving = this.#commandRail.visible
+      && (this.#commandRailWakeRemain > 0 || Math.abs(this.#commandRail.alpha - railTarget) > 0.001);
+    return this.#shakeRemain > 0
+      || this.#flashRemain > 0
+      || this.#zoomRemain > 0
+      || this.#bgTransition !== null
+      || (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0)
+      || commandRailMoving
+      || this.#menuMotionRemain > 0
+      || this.#tintRemain > 0
+      || this.#movTweens.length > 0
+      || this.#particles.length > 0
+      || this.#portraitTweens.length > 0
+      || this.#bannerRemain > 0
+      || this.#wipeRemain > 0;
   }
 
   /** 系统菜单入场：遮罩渐显，右侧抽屉短距离滑入；不使用弹跳，避免像设置面板或网页弹窗。 */
@@ -1633,9 +1845,10 @@ export class PixiStage implements AdvStage {
 
   /** @wipe：黑色竖条自左向右扫过画面（转场仪式感） */
   wipe(durMs = 600): void {
-    this.#wipeDur = Math.max(1, durMs);
+    this.#wipeDur = presentationDuration(durMs, this.#presentation);
     this.#wipeRemain = this.#wipeDur;
     this.#wipeBar.visible = true;
+    this.#requestFrame();
   }
 
   /* ============================ 演出扩展（@mov/@tint/@particle） ============================ */
@@ -1648,13 +1861,14 @@ export class PixiStage implements AdvStage {
     const keys = this.#portraitSprites.has(key)
       ? [key]
       : [...this.#portraitSprites.keys()].filter((k) => k.startsWith(`${key}:`));
-    const dur = Math.max(1, durMs);
+    const dur = presentationDuration(durMs, this.#presentation);
     for (const k of keys) {
       const sprite = this.#portraitSprites.get(k)!;
       // 重复 @mov 同一立绘：丢弃进行中的旧补间，从当前位置重新起步（不叠加抖动）
       this.#movTweens = this.#movTweens.filter((tw) => tw.sprite !== sprite);
       this.#movTweens.push({ sprite, fromX: sprite.x, toX: targetX, remain: dur, dur });
     }
+    this.#requestFrame();
   }
 
   /** 位置解析：三档预设 → 与 setPortrait 一致的 X；纯数字 → 逻辑像素坐标；其余 → null（忽略） */
@@ -1671,9 +1885,10 @@ export class PixiStage implements AdvStage {
     const cur = this.#tintCurrent();
     this.#tintFrom = cur;
     this.#tintTo = { color: color & 0xffffff, alpha: Math.max(0, Math.min(1, alpha)) };
-    this.#tintDur = Math.max(1, durMs);
+    this.#tintDur = presentationDuration(durMs, this.#presentation);
     this.#tintRemain = this.#tintDur;
     this.#tintOverlay.visible = true;
+    this.#requestFrame();
   }
 
   /** @tint off：淡出调色叠加到全透明 */
@@ -1694,12 +1909,18 @@ export class PixiStage implements AdvStage {
   /** @particle：启动预设粒子效果（snow/rain/sakura/sparkle/fireflies）。
    *  程序化实现（每粒子独立 Graphics，无纹理/Assets 依赖）；重复调用同名预设幂等，切换预设重建。 */
   startParticles(kind: string): void {
+    if (!this.#presentation.particleEnabled) return;
     if (this.#particleKind === kind) return; // 幂等
     this.stopParticles();
     const preset = PARTICLE_PRESETS[kind];
     if (!preset) return; // 未知预设静默忽略（占位策略）
     this.#particleKind = kind;
-    for (let i = 0; i < preset.count; i++) {
+    const settings = this.#quality.settings;
+    const particleCount = Math.min(
+      settings.maxParticles,
+      Math.max(1, Math.round(preset.count * settings.particleScale)),
+    );
+    for (let i = 0; i < particleCount; i++) {
       const scale = 0.6 + Math.random() * 0.8;
       const r = preset.size * scale;
       const g = preset.elongated
@@ -1716,6 +1937,7 @@ export class PixiStage implements AdvStage {
       });
     }
     this.#particlePreset = preset;
+    this.#requestFrame();
   }
 
   /** @particle off：停止并清空粒子 */
@@ -1727,6 +1949,7 @@ export class PixiStage implements AdvStage {
     this.#particles = [];
     this.#particleKind = null;
     this.#particlePreset = null;
+    this.#requestFrame();
   }
 
   /** 横幅：chapter 变体电影化（上下黑边 letterbox + 大字距渐显），tip 变体右上小胶囊；首尾淡入淡出 */
@@ -1755,6 +1978,7 @@ export class PixiStage implements AdvStage {
     this.#bannerRemain = this.#bannerDur;
     this.#bannerLayer.visible = true;
     this.#bannerLayer.alpha = 0; // 渐显由 #updateTransient 驱动（首 300ms 淡入 / 末 400ms 淡出）
+    this.#requestFrame();
   }
 
   /** NVL 模式：开启时隐藏对话框，全屏半透明文本页；关闭时恢复 */
@@ -1776,6 +2000,7 @@ export class PixiStage implements AdvStage {
       this.#dialogRubyLayer.visible = true;
       this.#drawSpeakerPlate();
     }
+    this.#requestFrame();
   }
 
   /** NVL 页条目列表（只读引用；测试断言与宿主持久化巡检用） */
@@ -1811,6 +2036,7 @@ export class PixiStage implements AdvStage {
       l.position.set(80, y);
       y += this.#nvlLineCounts[i]! * lineHeight + entryGap;
     });
+    this.#requestFrame();
   }
 
   /** NVL 页当前占用总行高（淘汰判断用；行高口径与排布一致） */
@@ -1828,6 +2054,7 @@ export class PixiStage implements AdvStage {
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
+    this.#requestFrame();
   }
 
   /** 强制停止当前 @video（读档作废：渲染层回调已被会话令牌拦截，此处移除画面本体；审计复核） */
@@ -1977,6 +2204,7 @@ export class PixiStage implements AdvStage {
     onReplayText?: (item: GalleryItemView) => void;
     onClose?: () => void;
   }): void {
+    this.#requestFrame();
     this.hideSettings();
     this.hideSaveLoad();
     this.hideCommandRail();
@@ -1993,6 +2221,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏鉴赏界面 */
   hideGallery(): void {
+    this.#requestFrame();
     this.#galleryLayer.visible = false;
     this.#commandRailSuppressed = false;
   }
@@ -2166,6 +2395,7 @@ export class PixiStage implements AdvStage {
 
   /** 展示设置面板：◀ ▶ 步进各行；onChange 交宿主改值后应重新调用本方法刷新展示 */
   showSettings(rows: SettingsRowView[], onChange: (id: string, dir: -1 | 1) => void, onClose: () => void): void {
+    this.#requestFrame();
     // 设置是独立覆盖层，避免操作带在设置内容下方残留并抢占命中区域。
     this.hideSaveLoad();
     this.hideGallery();
@@ -2179,6 +2409,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏设置面板 */
   hideSettings(): void {
+    this.#requestFrame();
     this.#settingsLayer.visible = false;
     this.#commandRailSuppressed = false;
   }
@@ -2272,6 +2503,7 @@ export class PixiStage implements AdvStage {
   /** 展示交互式战斗界面：阵营分列 + 血条；点击非行动方存活单位攻击，底部可跳过行动。
    *  宿主每次结算（act/pass）后以新的 BattleView 重新调用本方法刷新。 */
   showBattle(view: BattleView, handlers: BattleHandlers, message = ''): void {
+    this.#requestFrame();
     this.#battleHandlers = handlers;
     const layer = this.#battleLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
@@ -2386,6 +2618,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏战斗界面（战斗结束由宿主调用） */
   hideBattle(): void {
+    this.#requestFrame();
     this.#battleLayer.visible = false;
   }
 
@@ -2394,6 +2627,7 @@ export class PixiStage implements AdvStage {
   /** 展示标题画面（精致化批次四，商业 gal 标题页口径）：大字距 logo 感标题 + 细强调线 +
    *  弱化菜单（悬停下方细线滑入）+ 轻径向暗角；enabled=false 灰显不可点 */
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
+    this.#requestFrame();
     this.hideEnding();
     this.hideCommandRail();
     this.#titleHandler = onSelect;
@@ -2474,6 +2708,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏标题画面；进入正文时默认恢复操作带，进入标题二级页时可保持操作带隐藏。 */
   hideTitle(restoreCommandRail = true): void {
+    this.#requestFrame();
     this.#titleLayer.visible = false;
     if (restoreCommandRail) {
       this.#commandRailSuppressed = false;
@@ -2485,6 +2720,7 @@ export class PixiStage implements AdvStage {
 
   /** 全黑结局卡。宿主负责在展示后跳转标题，舞台只投影且不接收输入。 */
   showEnding(text = 'THE END'): void {
+    this.#requestFrame();
     this.hideCommandRail();
     this.hideChoices();
     this.hideBacklog();
@@ -2515,11 +2751,13 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏结局卡；多次调用保持幂等。 */
   hideEnding(): void {
+    this.#requestFrame();
     this.#endingLayer.visible = false;
   }
 
   /** 展示现代 ADV 系统菜单：右侧抽屉、细线层级、悬停强调；点击遮罩关闭。 */
   showSystemMenu(items: SystemMenuItemView[], onSelect: (id: string) => void, onClose: () => void): void {
+    this.#requestFrame();
     this.#menuHandlers = { onSelect, onClose };
     const layer = this.#menuLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
@@ -2617,6 +2855,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏系统菜单 */
   hideSystemMenu(): void {
+    this.#requestFrame();
     this.#menuLayer.visible = false;
     this.#menuLayer.alpha = 1;
     this.#menuPanel = null;
@@ -2649,6 +2888,7 @@ export class PixiStage implements AdvStage {
 
   /** 展示存档/读档界面：平面档案列表；load 模式空槽灰显不可选。 */
   showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
+    this.#requestFrame();
     this.hideSettings();
     this.hideGallery();
     this.hideCommandRail();
@@ -2770,12 +3010,14 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏存档/读档界面 */
   hideSaveLoad(): void {
+    this.#requestFrame();
     this.#saveLoadLayer.visible = false;
     this.#commandRailSuppressed = false;
   }
 
   /** 展示大地图：节点（可进入者高亮可点）+ 日期/回合/行动力 + 结束回合 */
   showMap(view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void): void {
+    this.#requestFrame();
     this.#mapHandlers = { onEnter, onEndTurn };
     const layer = this.#mapLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
@@ -2827,6 +3069,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏大地图 */
   hideMap(): void {
+    this.#requestFrame();
     this.#mapLayer.visible = false;
   }
 
@@ -2839,6 +3082,7 @@ export class PixiStage implements AdvStage {
     onBuy: (itemId: string) => void,
     onClose: () => void,
   ): void {
+    this.#requestFrame();
     this.#shopHandlers = { onBuy, onClose };
     const layer = this.#shopLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
@@ -2897,6 +3141,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏商店 */
   hideShop(): void {
+    this.#requestFrame();
     this.#shopLayer.visible = false;
   }
 
@@ -2905,6 +3150,7 @@ export class PixiStage implements AdvStage {
   /** 展示据点指令面板：指令列表（可执行高亮/不可执行灰显）+ 行动力余量。
    *  宿主在 onExec 里结算（CalendarRunner.execBaseCommand + 写回 effects）后重绘；onClose 回到地图。 */
   showBaseCommands(view: BasePanelView, onExec: (cmdId: string) => void, onClose: () => void): void {
+    this.#requestFrame();
     this.#baseHandlers = { onExec, onClose };
     const layer = this.#baseLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
@@ -2963,10 +3209,12 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏据点指令面板 */
   hideBase(): void {
+    this.#requestFrame();
     this.#baseLayer.visible = false;
   }
 
   showChoices(options: ChoiceOptionView[]): void {
+    this.#requestFrame();
     this.#commandRail.visible = false;
     this.#clearChoices();
     options.forEach((opt, i) => {
@@ -3018,16 +3266,19 @@ export class PixiStage implements AdvStage {
 
   /** 选择肢键盘导航高亮：提亮第 pos 项（其余恢复默认样式；卡片与文本同步重绘） */
   setChoiceHighlight(pos: number): void {
+    this.#requestFrame();
     this.#choiceHighlight = pos;
     this.#choiceViews.forEach((view, i) => this.#drawChoiceCard(view, i === pos));
   }
 
   hideChoices(): void {
+    this.#requestFrame();
     this.#clearChoices();
     this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
   }
 
   setFade(alpha: number): void {
+    this.#requestFrame();
     this.#fadeOverlay.alpha = Math.max(0, Math.min(1, alpha));
   }
 
@@ -3044,6 +3295,7 @@ export class PixiStage implements AdvStage {
    * 沿用上一个项目的背景/立绘；宿主注入纹理不主动 destroy，生命周期仍由宿主管理。
    */
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
+    this.#requestFrame();
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
     const preserveWorld = options.preserveWorld === true;
@@ -3173,7 +3425,7 @@ export class PixiStage implements AdvStage {
     this.clearNvlText();
     this.#nvlActive = false;
     this.#nvlLayer.visible = false;
-    this.#dialogRubyLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#hideRubyPool();
     this.#speakerText.text = '';
     this.#dialogText.text = '';
     this.#speakerText.visible = true;
@@ -3217,12 +3469,15 @@ export class PixiStage implements AdvStage {
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
     this.#portraitSprites.clear();
     this.#portraitViews.clear();
+    this.#destroyRubyPools();
     this.#bgSprite?.destroy();
     this.#bgSprite = null;
     this.#backgroundKey = null;
     this.#registeredBgs.clear();
     this.#registeredPortraits.clear();
     this.#registeredAvatars.clear();
+    this.resetFonts();
+    void this.releaseRegisteredAssetSources();
     if (this.app?.canvas && this.#commandRailPointerWake) {
       this.app.canvas.removeEventListener('pointermove', this.#commandRailPointerWake);
       this.app.canvas.removeEventListener('pointerdown', this.#commandRailPointerWake);
@@ -3230,5 +3485,18 @@ export class PixiStage implements AdvStage {
     this.#commandRailPointerWake = null;
     this.app?.destroy(true, { children: true });
     this.app = null;
+    this.#frameRequest = null;
+  }
+
+  #destroyRubyPools(): void {
+    this.#dialogRubyLayer.removeChildren();
+    for (const object of this.#rubyBasePool) object.destroy({ children: true });
+    for (const object of this.#rubyTextPool) object.destroy({ children: true });
+    this.#rubyBasePool = [];
+    this.#rubyTextPool = [];
+  }
+
+  #requestFrame(): void {
+    this.#frameRequest?.();
   }
 }

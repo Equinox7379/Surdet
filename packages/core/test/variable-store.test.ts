@@ -96,6 +96,19 @@ describe('VariableStore', () => {
     expect(s2.get<string[]>('items')).toEqual(['sword', 'shield']);
   });
 
+  it('recursive VarValue nested arrays/objects snapshot/restore 往返一致', () => {
+    const initial: VarValue = {
+      profile: { name: '凛', tags: ['夜', '雨'] },
+      flags: [true, false],
+      score: 7,
+    };
+    const s = new VariableStore([{ name: 'nested', type: 'object', initial }]);
+    const snapshot = s.snapshot();
+    const restored = new VariableStore([{ name: 'nested', type: 'object', initial: {} }]);
+    restored.restore(snapshot);
+    expect(restored.get('nested')).toEqual(initial);
+  });
+
   it('restore 忽略未知键并对已知键重新 clamp', () => {
     const s = new VariableStore(base);
     s.restore({ ghost: 'x', 'lynn.trust': 999 });
@@ -182,5 +195,26 @@ describe('VariableStore', () => {
     const second = s.get('cfg') as unknown as { hp: number; tags: string[] };
     expect(second.hp).toBe(10);
     expect(second.tags).toEqual(['a']);
+  });
+
+  it('setMany validates the whole batch before committing', () => {
+    const store = new VariableStore([
+      { name: 'gold', type: 'number', initial: 100 },
+      { name: 'bag', type: 'string[]', initial: [] },
+    ]);
+    expect(() => store.setMany([
+      { name: 'gold', value: 40 },
+      { name: 'bag', value: 123 as never },
+    ])).toThrow();
+    expect(store.getNumber('gold')).toBe(100);
+    expect(store.get<string[]>('bag')).toEqual([]);
+  });
+
+  it('setMany rejects duplicate names without mutation', () => {
+    const store = new VariableStore([{ name: 'gold', type: 'number', initial: 100 }]);
+    expect(() => store.setMany([
+      { name: 'gold', value: 90 }, { name: 'gold', value: 80 },
+    ])).toThrow(/重复变量/);
+    expect(store.getNumber('gold')).toBe(100);
   });
 });

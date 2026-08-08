@@ -10,6 +10,7 @@ import { cmdNew } from './new.js';
 import { cmdBuild, cmdManifest } from './build.js';
 import { cmdAudit } from './audit.js';
 import { cmdSimulate } from './simulate.js';
+import { cmdPack } from './pack.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,7 +50,7 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet build [dir]       构建游戏（vite）
       --web               同时产出 Web 试玩包信息（dist/ 可直接上传静态托管）
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
-  surdet pack              打包 Windows exe（M7）
+  surdet pack <dir>        打包指定游戏的 Windows exe（M7）
 `;
 
 async function main(): Promise<number> {
@@ -132,21 +133,7 @@ async function main(): Promise<number> {
     }
 
     case 'pack': {
-      // 打包指定游戏（缺省 starter）：surdet pack [gameDir]
-      const gameDir = args[1] ? path.resolve(args[1]) : '';
-      // __dirname = packages/cli/dist → 上溯两级到仓库根的 packages/shell
-      const shellDir = path.resolve(__dirname, '../../shell');
-      try {
-        const { execSync } = await import('node:child_process');
-        execSync('npm run pack', {
-          cwd: shellDir,
-          stdio: 'inherit',
-          env: { ...process.env, SURDET_GAME_DIR: gameDir },
-        });
-        return 0;
-      } catch {
-        return 1;
-      }
+      return await cmdPack(args[1]);
     }
 
     default:

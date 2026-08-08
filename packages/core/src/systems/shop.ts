@@ -23,6 +23,7 @@ export interface ShopStoreLike {
   getNumber(name: string): number;
   get<T extends VarValue = VarValue>(name: string): T;
   set(name: string, value: VarValue): void;
+  setMany(updates: readonly { name: string; value: VarValue }[]): void;
   modify(name: string, delta: number): void;
 }
 
@@ -48,12 +49,15 @@ export class ShopSystem {
     if (gold < item.price) {
       return { ok: false, reason: `金币不足（需 ${item.price}，当前 ${gold}）` };
     }
-    this.#store.modify(goldVar, -item.price);
-    const arr = this.#store.get<string[]>(itemsVar);
-    if (!arr.includes(itemId)) {
-      arr.push(itemId);
-      this.#store.set(itemsVar, arr);
+    const rawItems = this.#store.get(itemsVar);
+    if (!Array.isArray(rawItems) || rawItems.some((value) => typeof value !== 'string')) {
+      throw new TypeError(`商店背包变量 '${itemsVar}' 必须是 string[]`);
     }
+    const nextItems = rawItems.includes(itemId) ? rawItems : [...rawItems, itemId];
+    this.#store.setMany([
+      { name: goldVar, value: gold - item.price },
+      { name: itemsVar, value: nextItems },
+    ]);
     return { ok: true };
   }
 }

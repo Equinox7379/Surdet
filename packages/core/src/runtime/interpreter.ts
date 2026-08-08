@@ -814,16 +814,23 @@ export class Interpreter {
         // @add_item arrayVar itemId：string[] 变量去重追加
         const [vn, item] = instr.args;
         if (vn === undefined || item === undefined) throw new RuntimeError('@add_item 用法：@add_item 数组变量 道具ID', instr);
-        const arr = this.#store.get<string[]>(vn);
-        if (!arr.includes(item)) arr.push(item);
-        this.#store.set(vn, arr);
+        const current = this.#store.getRef(vn);
+        if (!Array.isArray(current) || current.some((value) => typeof value !== 'string')) {
+          throw new RuntimeError('@add_item 目标变量必须是 string[]', instr);
+        }
+        const arr = current as string[];
+        this.#store.set(vn, arr.includes(item) ? arr : [...arr, item]);
         return;
       }
       case 'remove_item': {
         // @remove_item arrayVar itemId：string[] 变量移除（不存在时无副作用）
         const [vn, item] = instr.args;
         if (vn === undefined || item === undefined) throw new RuntimeError('@remove_item 用法：@remove_item 数组变量 道具ID', instr);
-        this.#store.set(vn, this.#store.get<string[]>(vn).filter((x) => x !== item));
+        const current = this.#store.getRef(vn);
+        if (!Array.isArray(current) || current.some((value) => typeof value !== 'string')) {
+          throw new RuntimeError('@remove_item 目标变量必须是 string[]', instr);
+        }
+        this.#store.set(vn, (current as string[]).filter((x) => x !== item));
         return;
       }
       case 'has_item': {

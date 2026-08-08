@@ -8,6 +8,7 @@ import {
   auditStats,
   dryRunProject,
   declsFromConfig,
+  compileAuditEntries,
 } from '../src/audit.js';
 
 function compile(id: string, src: string) {
@@ -47,6 +48,24 @@ describe('surdet audit：内容审计', () => {
     const compiled = new Map([['s1', compile('s1', src)]]);
     const findings = auditBranches(compiled, undefined);
     expect(findings.filter((f) => f.code === 'BRANCH_THIN')).toHaveLength(1); // 仅 a 分支空心
+  });
+
+  it('BRANCH_THIN：选项块超过 32 条指令仍能找到末尾 goto', () => {
+    const filler = Array.from({ length: 33 }, (_, i) => `@set filler${i} = ${i}`).join(' ');
+    const scene = compile('long-choice', `@choice\n  走 -> ${filler} @goto branch\n@label branch\n凛：一行。\n@end`);
+    const findings = auditBranches(new Map([['long-choice', scene]]), undefined);
+    expect(findings.filter((f) => f.code === 'BRANCH_THIN')).toHaveLength(1);
+  });
+
+  it('compileAuditEntries 暴露第二遍编译失败的文件与消息', () => {
+    const result = compileAuditEntries([
+      { id: 'ok', file: 'ok.gal', source: '凛：正常。' },
+      { id: 'bad', file: 'bad.gal', source: '@if missing' },
+    ], []);
+    expect(result.compiled.has('ok')).toBe(true);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.file).toBe('bad.gal');
+    expect(result.errors[0]!.message).toMatch(/S003|endif|闭合/);
   });
 
   it('NO_EXIT：无 @end 且无跳转的场景给 info', () => {

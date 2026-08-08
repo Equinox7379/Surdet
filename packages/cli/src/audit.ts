@@ -46,6 +46,39 @@ export interface AuditResult {
   totals: { scenes: number; textLines: number; chars: number; choices: number; readingMin: number };
 }
 
+export interface AuditSourceEntry {
+  id: string;
+  file: string;
+  source: string;
+}
+
+export function compileAuditEntries(
+  entries: readonly AuditSourceEntry[],
+  customInstructions: readonly string[],
+): {
+  compiled: Map<string, CompiledScene>;
+  sceneSources: Map<string, string>;
+  errors: Array<{ file: string; message: string }>;
+} {
+  const compiled = new Map<string, CompiledScene>();
+  const sceneSources = new Map<string, string>();
+  const errors: Array<{ file: string; message: string }> = [];
+  for (const entry of entries) {
+    if (compiled.has(entry.id)) continue;
+    try {
+      const scene = compileScene(entry.source, entry.file, entry.id, customInstructions);
+      compiled.set(entry.id, scene);
+      sceneSources.set(entry.id, entry.source);
+    } catch (err) {
+      errors.push({
+        file: entry.file,
+        message: err instanceof SourceError ? err.message : String(err),
+      });
+    }
+  }
+  return { compiled, sceneSources, errors };
+}
+
 /** 分支与出口分析：空心分支（goto 目标块文本少于 2 行）与无出口场景。
  *  sources 提供时 NO_EXIT 按源码是否含 '@end' 判断（编译器自动给每个场景追加 end 指令，编译产物无法区分显式/自动）。 */
 export function auditBranches(compiled: Map<string, CompiledScene>, entryScene: string | undefined, sources?: Map<string, string>): AuditFinding[] {
@@ -59,7 +92,7 @@ export function auditBranches(compiled: Map<string, CompiledScene>, entryScene: 
       for (const opt of instr.options) {
         let gotoTarget: string | null = null;
         const end = choice.afterIndex >= 0 ? choice.afterIndex : scene.instructions.length;
-        for (let k = opt.blockStart; k < end && k < opt.blockStart + 32; k++) {
+        for (let k = opt.blockStart; k < end; k++) {
           const nx = scene.instructions[k]!;
           if (nx.op === 'jump' && nx.kind === 'goto') { gotoTarget = nx.target; break; }
           if (nx.op === 'jump' && nx.kind === 'jump') break; // 跨场景分支：交给 NO_EXIT/节奏统计
@@ -295,26 +328,28 @@ export async function cmdAudit(dir: string, opts: { noRun?: boolean }): Promise<
   for (const i of cfgIssues) write(`⚠ ${i.text}\n`);
   const entryScene = typeof configRaw['entryScene'] === 'string' ? configRaw['entryScene'] : undefined;
 
-  const compiled = new Map<string, CompiledScene>();
-  const sceneSources = new Map<string, string>();
+  const entries: AuditSourceEntry[] = [];
+  for (const file of files) {
+    entries.push({
+      id: sceneIdFromFile(file),
+      file,
+      source: fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''),
+    });
+  }
+  const { compiled, sceneSources, errors } = compileAuditEntries(entries, parsedCfg.customInstructions);
+  if (errors.length > 0) {
+    for (const error of errors) write(`✗ ${error.file}: ${error.message}\n`);
+    return 1;
+  }
+
   const speakerCounts = new Map<string, number>();
   const speakerFirstSeen = new Map<string, { file: string; line: number }>();
-  for (const file of files) {
-    const id = sceneIdFromFile(file);
-    if (compiled.has(id)) continue;
-    const source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-    try {
-      const scene = compileScene(source, file, id, parsedCfg.customInstructions);
-      compiled.set(id, scene);
-      sceneSources.set(id, source);
-      for (const instr of scene.instructions) {
-        if (instr.op === 'text' && instr.speaker) {
-          speakerCounts.set(instr.speaker, (speakerCounts.get(instr.speaker) ?? 0) + 1);
-          if (!speakerFirstSeen.has(instr.speaker)) speakerFirstSeen.set(instr.speaker, { file: instr.file, line: instr.line });
-        }
+  for (const scene of compiled.values()) {
+    for (const instr of scene.instructions) {
+      if (instr.op === 'text' && instr.speaker) {
+        speakerCounts.set(instr.speaker, (speakerCounts.get(instr.speaker) ?? 0) + 1);
+        if (!speakerFirstSeen.has(instr.speaker)) speakerFirstSeen.set(instr.speaker, { file: instr.file, line: instr.line });
       }
-    } catch {
-      // lint 已保证可编译；此处防御性跳过
     }
   }
 
