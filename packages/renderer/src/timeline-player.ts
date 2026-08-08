@@ -6,6 +6,8 @@ export interface TimelineFrameEvent {
   cue: TimelineCue;
   /** 本帧跨过 cue 起点；用于背景、音频等一次性动作。 */
   started: boolean;
+  /** 播放器被跳过至末尾时为 true；用于结算最终可见状态。 */
+  final: boolean;
   progress: number;
   elapsedMs: number;
 }
@@ -66,7 +68,7 @@ export class TimelinePlayer {
       .map((entry) => {
         const started = entry.cue.atMs === this.#cursorMs && !this.#startedCues.has(entry);
         if (started) this.#startedCues.add(entry);
-        return this.#event(entry, this.#progress(entry.cue, this.#cursorMs), started);
+        return this.#event(entry, this.#progress(entry.cue, this.#cursorMs), started, false);
       });
   }
 
@@ -96,7 +98,7 @@ export class TimelinePlayer {
       .map((entry) => {
         const started = !forceFinal && !this.#startedCues.has(entry) && previous <= entry.cue.atMs && current >= entry.cue.atMs;
         if (started) this.#startedCues.add(entry);
-        return this.#event(entry, forceFinal ? 1 : this.#progress(entry.cue, current), started);
+        return this.#event(entry, forceFinal ? 1 : this.#progress(entry.cue, current), started, forceFinal);
       });
   }
 
@@ -111,12 +113,13 @@ export class TimelinePlayer {
     return ease(cue.easing, raw);
   }
 
-  #event(entry: FlatCue, progress: number, started: boolean): TimelineFrameEvent {
+  #event(entry: FlatCue, progress: number, started: boolean, final: boolean): TimelineFrameEvent {
     return {
       track: entry.track,
       ...(entry.target ? { target: entry.target } : {}),
       cue: entry.cue,
       started,
+      final,
       progress,
       elapsedMs: this.#cursorMs,
     };

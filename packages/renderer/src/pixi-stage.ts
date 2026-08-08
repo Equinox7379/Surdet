@@ -1347,20 +1347,20 @@ export class PixiStage implements AdvStage {
   /** 时间轴 cue 的 Pixi 投影；同一接口也承载现有直接演出方法。 */
   applyTimelineFrame(event: TimelineFrameEvent): void {
     const cue = event.cue;
-    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && event.started) {
+    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && (event.started || event.final)) {
       this.#startTimelineBackground(cue.key, cue.durationMs);
       return;
     }
     if (event.track === 'portrait' && event.target) {
       const target = event.target;
-      if (cue.action === 'show' && event.started) {
+      if (cue.action === 'show' && (event.started || event.final)) {
         this.setPortrait(target, {
           charId: target.split(':')[0] ?? target,
           costume: target.split(':')[1] ?? 'normal',
           expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
           pos: typeof cue.position === 'string' ? cue.position : 'center',
         });
-      } else if (cue.action === 'expression' && event.started) {
+      } else if (cue.action === 'expression' && (event.started || event.final)) {
         const current = this.#portraitViews.get(target);
         if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
       } else if (cue.action === 'move') {
@@ -1422,7 +1422,7 @@ export class PixiStage implements AdvStage {
       }
       return;
     }
-    if (event.track === 'particle' && typeof cue.kind === 'string' && event.started) {
+    if (event.track === 'particle' && typeof cue.kind === 'string' && (event.started || event.final)) {
       if (cue.action === 'start') this.startParticles(cue.kind);
       else this.stopParticles();
     }
