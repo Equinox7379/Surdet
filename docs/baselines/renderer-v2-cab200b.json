@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
-  "generatedAt": "2026-08-08T18:05:10.392Z",
-  "sourceSha": "5ca017c2cdff15379e9fde73fef313581b0ed91a",
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-08T18:29:54.410Z",
+  "sourceSha": "16416535b4d55b0311ba54b93d5819f862b29170",
   "sourceEquivalentTo": "cab200b5aaed49b053b18ff05907aac4d02fb731",
   "environment": {
     "node": "v24.15.0",
@@ -14,57 +14,69 @@
     "playwright": "1.62.1",
     "buildMode": "electron-dev-shell-starter"
   },
-  "coldStartMs": 948.4432,
-  "assetReadyMs": 991.9490999999999,
-  "menuOpenP95Ms": 11.099999994039536,
-  "sceneP95Ms": 11.5,
+  "coldStartMs": 891.8183000000008,
+  "assetReadyMs": 948.0453000000007,
+  "menuOpenP95Ms": 10.800000011920929,
+  "sceneP95Ms": 25.600000008940697,
   "metrics": {
     "coldStartMs": {
       "name": "coldStartMs",
       "samples": [
-        948.4432
+        870.3513000000003,
+        885.2669999999998,
+        891.8183000000008,
+        905.9821000000002,
+        983.194
       ],
-      "median": 948.4432,
-      "p95": 948.4432
+      "median": 891.8183000000008,
+      "p95": 983.194,
+      "summaryStatistic": "median"
     },
     "assetReadyMs": {
       "name": "assetReadyMs",
       "samples": [
-        991.9490999999999
+        926.0294999999996,
+        932.9379000000008,
+        948.0453000000007,
+        1232.3427999999985,
+        1359.3784999999998
       ],
-      "median": 991.9490999999999,
-      "p95": 991.9490999999999
+      "median": 948.0453000000007,
+      "p95": 1359.3784999999998,
+      "summaryStatistic": "median"
     },
     "menuOpenP95Ms": {
       "name": "menuOpenP95Ms",
       "samples": [
-        6.299999997019768,
-        7.200000002980232,
-        9.600000008940697,
-        10.5,
-        11.099999994039536
+        0.800000011920929,
+        5.700000002980232,
+        9.200000002980232,
+        9.299999997019768,
+        10.800000011920929
       ],
-      "median": 9.600000008940697,
-      "p95": 11.099999994039536
+      "median": 9.200000002980232,
+      "p95": 10.800000011920929,
+      "summaryStatistic": "p95"
     },
     "sceneP95Ms": {
       "name": "sceneP95Ms",
       "samples": [
-        6.5,
-        7.899999991059303,
-        8.399999991059303,
-        9.899999991059303,
-        11.5
+        21.5,
+        23.30000001192093,
+        24,
+        24.900000005960464,
+        25.600000008940697
       ],
-      "median": 8.399999991059303,
-      "p95": 11.5
+      "median": 24,
+      "p95": 25.600000008940697,
+      "summaryStatistic": "p95"
     }
   },
   "assets": {
     "total": 6,
     "completed": 6,
     "failed": 0,
-    "durationMs": 991.9490999999999
+    "durationMs": 948.0453000000007
   },
   "resources": {
     "disposed": false,
@@ -78,11 +90,11 @@
   },
   "performance": null,
   "debug": {
-    "sessionId": "starter-1786212310254-8xug6k06lno",
+    "sessionId": "starter-1786213793992-al9znnqej24",
     "resourceIds": {
-      "pixiStage": "starter-1786212310254-8xug6k06lno:pixi-stage",
-      "audioManager": "starter-1786212310254-8xug6k06lno:audio-manager",
-      "frameScheduler": "starter-1786212310254-8xug6k06lno:frame-scheduler"
+      "pixiStage": "starter-1786213793992-al9znnqej24:pixi-stage",
+      "audioManager": "starter-1786213793992-al9znnqej24:audio-manager",
+      "frameScheduler": "starter-1786213793992-al9znnqej24:frame-scheduler"
     },
     "fontFamilies": {
       "body": "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif",
@@ -100,8 +112,9 @@
     "rawMetrics": null
   },
   "measurementDefinitions": {
-    "menuOpen": "标题页调用 __surdetDebug.titleSelect(\"settings\") 到下一帧提交的耗时。",
-    "sceneTransition": "标题页调用 __surdetDebug.titleSelect(\"new\") 到入口场景位置可观测且下一帧提交的耗时。"
+    "startup": "暖机后，每个正式样本均由独立 Electron 启动和独立临时 userData 采集；coldStart/assetReady 保存 5 个原始样本，顶层使用中位数。",
+    "menuOpen": "每个独立 Electron 正式样本先执行一次不计入统计的设置动作并重新加载，再测量 __surdetDebug.titleSelect(\"settings\") 到下一帧提交的耗时；顶层使用 5 个独立样本的 p95。",
+    "sceneTransition": "每个独立 Electron 样本在标题页调用 __surdetDebug.titleSelect(\"new\") 到入口场景位置可观测且下一帧提交的耗时；顶层使用 5 个样本的 p95。"
   },
   "bundle": {
     "totalBytes": 7522008,
@@ -167,11 +180,6 @@
       "examples/starter/dist/index.html": 903
     },
     "warnings": [
-      "No file extension was found. Consider using the \"format\" property or specify an extension.",
-      "No file extension was found. Consider using the \"format\" property or specify an extension.",
-      "No file extension was found. Consider using the \"format\" property or specify an extension.",
-      "No file extension was found. Consider using the \"format\" property or specify an extension.",
-      "No file extension was found. Consider using the \"format\" property or specify an extension.",
       "No file extension was found. Consider using the \"format\" property or specify an extension."
     ]
   },
@@ -191,7 +199,7 @@
       },
       {
         "id": "story-entry",
-        "sha256": "207426aaa12d01d8f0354ce6e507b7fe2434f11152f1d7631e4c48069eec38e2",
+        "sha256": "b064926a4b0cd5249a2c2dced12508b7661bdf99ab510590b3c429b9c04cf238",
         "width": 1264,
         "height": 681
       }
