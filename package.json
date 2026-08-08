@@ -18,6 +18,7 @@
     "verify:formal": "npm run lint -w zero-after-midnight && npm run simulate -w zero-after-midnight && node examples/zero-after-midnight/scripts/check-assets.mjs",
     "docs:capabilities": "node scripts/render-capability-matrix.mjs --write",
     "docs:capabilities:check": "node scripts/render-capability-matrix.mjs --check",
+    "verify:docs": "node --test scripts/test/capability-matrix.test.mjs && node scripts/render-capability-matrix.mjs --check",
     "verify:hygiene": "node scripts/check-repo-hygiene.mjs --tracked"
   },
   "engines": {

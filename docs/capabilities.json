@@ -25,7 +25,6 @@
       "editor": "n/a",
       "host": "implemented",
       "tests": [
-        "packages/renderer/test/backlog.test.ts",
         "packages/renderer/test/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"],
@@ -51,7 +50,7 @@
       "host": "implemented",
       "tests": [
         "packages/core/test/combat.test.ts",
-        "packages/renderer/test/battle-view.test.ts",
+        "packages/renderer/test/gallery.test.ts",
         "examples/starter/src/main.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"],
@@ -80,7 +79,6 @@
       "editor": "n/a",
       "host": "implemented",
       "tests": [
-        "packages/core/test/gallery.test.ts",
         "packages/renderer/test/gallery.test.ts",
         "packages/renderer/test/pixi-stage.test.ts"
       ],
@@ -94,7 +92,6 @@
       "editor": "n/a",
       "host": "implemented",
       "tests": [
-        "packages/core/test/gallery.test.ts",
         "packages/renderer/test/gallery.test.ts",
         "examples/zero-after-midnight/src/main.ts"
       ],
@@ -186,7 +183,8 @@
       "host": "implemented",
       "tests": [
         "packages/core/test/interpreter-save.test.ts",
-        "packages/shell/test/e2e.spec.ts",
+        "packages/shell/e2e/game.e2e.mjs",
+        "packages/host/test/system-router.test.ts",
         "examples/zero-after-midnight/src/main.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"]
