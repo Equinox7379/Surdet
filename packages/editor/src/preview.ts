@@ -71,6 +71,8 @@ interface LoadPayload {
   assets?: PreviewAssets;
   /** 编辑器项目的时间轴定义；旧协议缺省为空。 */
   timelines?: unknown[];
+  /** 编辑器时间轴面板的直演模式：临时场景仅播放目标 timeline。 */
+  timelinePreviewId?: string;
   startLabel?: string;
   fast?: boolean;
 }
@@ -882,6 +884,12 @@ async function load(p: LoadPayload): Promise<void> {
         console.warn('[preview] 时间轴定义无效，已跳过：', err instanceof Error ? err.message : String(err));
       }
     }
+    const timelinePreviewSceneId = '__surdet_timeline_preview__';
+    const directTimelineId = p.timelinePreviewId?.trim();
+    if (directTimelineId) {
+      if (!timelines.has(directTimelineId)) throw new Error(`时间轴 '${directTimelineId}' 未加载或校验失败`);
+      reg.register(compileScene(`@scene ${timelinePreviewSceneId}\n@timeline ${directTimelineId} @ blocking\n@end`, 'timeline-preview.gal', timelinePreviewSceneId));
+    }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);
     // 轻宿主系统按配置重建（构造注入 store；形状容错：非法配置按 null 走占位横幅）
@@ -922,7 +930,7 @@ async function load(p: LoadPayload): Promise<void> {
     });
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') renderer?.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
-    interp.start(p.sceneId, p.startLabel);
+    interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
   } catch (err) {
     showError(`预览失败：${err instanceof Error ? err.message : String(err)}`);
   }

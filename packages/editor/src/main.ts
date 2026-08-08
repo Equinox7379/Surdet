@@ -20,6 +20,7 @@ import { renderRightExtras } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
+import { renderTimelinePanel, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
@@ -45,6 +46,13 @@ bindFlowHooks({
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: scheduleValidate,
+});
+bindTimelineHooks({
+  onPreview: (timelineId) => {
+    state.previewTimelineId = timelineId;
+    state.mainTab = 'preview';
+    renderMainArea();
+  },
 });
 
 /** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
@@ -120,16 +128,17 @@ function renderAll(): void {
   renderMainArea();
 }
 
-/** 主区：标签页（块编辑 / 流程图 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
+/** 主区：标签页（块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'config' | 'preview' | 'stats' | 'audit'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
+    { id: 'timeline', label: '时间轴' },
     { id: 'config', label: '配置' },
     { id: 'preview', label: '预览' },
     { id: 'stats', label: '统计' },
@@ -137,7 +146,11 @@ function renderMainArea(): void {
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
-    btn.onclick = () => { state.mainTab = d.id; renderMainArea(); };
+    btn.onclick = () => {
+      state.previewTimelineId = null;
+      state.mainTab = d.id;
+      renderMainArea();
+    };
     tabs.appendChild(btn);
   }
   col.appendChild(tabs);
@@ -169,6 +182,12 @@ function renderMainArea(): void {
     col.appendChild(flowEl);
     main.appendChild(col);
     renderFlow(flowEl);
+  } else if (state.mainTab === 'timeline') {
+    const timelineEl = h('section');
+    timelineEl.id = 'timeline-view';
+    col.appendChild(timelineEl);
+    main.appendChild(col);
+    renderTimelinePanel(timelineEl);
   } else if (state.mainTab === 'preview') {
     const pvEl = h('section');
     pvEl.id = 'preview-view';
@@ -250,6 +269,10 @@ window.addEventListener('beforeunload', (e) => {
       e.returnValue = '';
       return;
     }
+  }
+  if (state.timelines.some((timeline) => timeline.dirty) || state.pendingTimelineDeletes.length > 0) {
+    e.preventDefault();
+    e.returnValue = '';
   }
 });
 
