@@ -283,6 +283,34 @@ describe('AdvRenderer', () => {
     expect(nextStage.timelineEvents.some((event) => event.track === 'camera')).toBe(true);
   });
 
+  it('presentation clear removes active timelines and prevents stale cues on the next frame', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'clearable',
+      blocking: false,
+      definition: {
+        version: 1, id: 'clearable', durationMs: 100,
+        tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'zoom', scale: 1.1 }] }],
+      },
+    });
+    r.update(40);
+    const beforeClearEvents = stage.timelineEvents.length;
+    expect((r.snapshotPresentation() as { timelines: unknown[] }).timelines).toHaveLength(1);
+
+    r.clearPresentation();
+    expect((r.snapshotPresentation() as { timelines: unknown[] }).timelines).toEqual([]);
+
+    r.update(60);
+    expect(stage.timelineEvents).toHaveLength(beforeClearEvents);
+    r.clearPresentation();
+    expect((r.snapshotPresentation() as { timelines: unknown[] }).timelines).toEqual([]);
+    r.update(60);
+    expect(stage.timelineEvents).toHaveLength(beforeClearEvents);
+  });
+
   it('state reset clears active presentation before stale timeline can complete', () => {
     const bus = makeBus();
     const stage = new FakeStage();

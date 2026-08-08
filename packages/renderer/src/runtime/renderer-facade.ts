@@ -99,6 +99,8 @@ export type RendererStagePort = Partial<AdvStage> & {
 export interface RendererControllerPort extends PresentationController {
   snapshotPresentation?: () => unknown;
   restorePresentation?: (snapshot: unknown) => void;
+  /** @internal Clear only Controller-owned presentation timelines. */
+  clearPresentation?: () => void;
   backlogEntries?: () => readonly BacklogEntry[];
   backlogSearchQuery?: () => string;
 }
@@ -349,7 +351,13 @@ export class RendererFacade {
         if (!method) this.#missing('presentation', 'restore');
         method.call(this.#controller.restorePresentation ? this.#controller : this.#stage, cloneOpaque(snapshot));
       },
-      clear: () => this.#callStage('presentation', 'clear', this.#stage.clearPresentation),
+      clear: () => {
+        this.#ensureActive('presentation', 'clear');
+        const controllerMethod = this.#controller.clearPresentation;
+        if (!controllerMethod) this.#missing('presentation', 'clear');
+        controllerMethod.call(this.#controller);
+        this.#callStage('presentation', 'clear', this.#stage.clearPresentation);
+      },
     };
 
     this.commands = { assets, world, dialogue, menu, gallery, system, loading, preferences, presentation };
