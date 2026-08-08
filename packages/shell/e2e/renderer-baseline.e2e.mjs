@@ -184,6 +184,9 @@ async function collectLaunchSample({ captureVisuals }) {
     await page.waitForTimeout(50);
 
     const titleVisual = captureVisuals ? await captureVisual(page, 'title') : null;
+    // 每个独立 Electron 正式样本先丢弃一次菜单动作，隔离首个 UI 投影的冷路径抖动。
+    await measureTitleSettings(page);
+    await reloadForReady(page);
     const menuOpenMs = await measureTitleSettings(page);
     await reloadForReady(page);
     const sceneTransitionMs = await measureSceneStart(page);
@@ -307,7 +310,7 @@ async function main() {
     },
     measurementDefinitions: {
       startup: '暖机后，每个正式样本均由独立 Electron 启动和独立临时 userData 采集；coldStart/assetReady 保存 5 个原始样本，顶层使用中位数。',
-      menuOpen: '每个独立 Electron 样本在标题页调用 __surdetDebug.titleSelect("settings") 到下一帧提交的耗时；顶层使用 5 个样本的 p95。',
+      menuOpen: '每个独立 Electron 正式样本先执行一次不计入统计的设置动作并重新加载，再测量 __surdetDebug.titleSelect("settings") 到下一帧提交的耗时；顶层使用 5 个独立样本的 p95。',
       sceneTransition: '每个独立 Electron 样本在标题页调用 __surdetDebug.titleSelect("new") 到入口场景位置可观测且下一帧提交的耗时；顶层使用 5 个样本的 p95。',
     },
     bundle: {
