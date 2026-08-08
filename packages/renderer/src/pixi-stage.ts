@@ -429,6 +429,8 @@ export class PixiStage implements AdvStage {
   #backlogBuilt = false;
   /** 世界层：包裹背景 + 立绘，@shake/@zoom 的变换载体（UI 层不受影响） */
   #worldLayer: Container;
+  /** 屏幕调色层：位于世界与 HUD 之间，tint 不应遮住对白和操作带。 */
+  #screenLayer: Container;
   /** @flash 白色闪光叠加（线性衰减） */
   #flashOverlay: Graphics;
   /** 演出效果状态（shake/flash/zoom 均为线性衰减，由 updateEffects 每帧驱动） */
@@ -539,6 +541,7 @@ export class PixiStage implements AdvStage {
     this.#portraitLayer = new Container();
     this.#worldLayer = new Container();
     this.#worldLayer.addChild(this.#bgLayer, this.#portraitLayer);
+    this.#screenLayer = new Container();
     this.#uiLayer = new Container();
     this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#fadeOverlay.alpha = 0;
@@ -566,6 +569,7 @@ export class PixiStage implements AdvStage {
     this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
+    this.#screenLayer.addChild(this.#tintOverlay);
     this.#particleLayer = new Container();
     this.#titleLayer = new Container();
     this.#titleLayer.visible = false;
@@ -692,9 +696,10 @@ export class PixiStage implements AdvStage {
     app.canvas.addEventListener('pointermove', wakeRail);
     app.canvas.addEventListener('pointerdown', wakeRail);
 
-    app.stage.addChild(this.#worldLayer, this.#particleLayer, this.#uiLayer);
-    // flash 置最末：闪光覆盖全部 UI（黑场 fade 在其下，转场与闪光可叠加；tint 叠加在 fade 之上、flash 之下）
-    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#tintOverlay, this.#flashOverlay);
+    app.stage.addChild(this.#worldLayer, this.#particleLayer, this.#screenLayer, this.#uiLayer);
+    // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
+    // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
+    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#flashOverlay);
     this.#layout();
     return undefined;
   }
