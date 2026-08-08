@@ -35,3 +35,4 @@ export * from './world-effects-controller.js';
 export * from './keybindings.js';
 export * from './backlog-search-controller.js';
 export * from './scene-hot-reload.js';
+export * from './diagnostics/renderer-baseline.js';

@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-08T18:05:10.392Z",
+  "sourceSha": "5ca017c2cdff15379e9fde73fef313581b0ed91a",
+  "sourceEquivalentTo": "cab200b5aaed49b053b18ff05907aac4d02fb731",
+  "environment": {
+    "node": "v24.15.0",
+    "npm": "11.12.1",
+    "os": "win32 10.0.26220",
+    "platform": "win32",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+    "electron": "43.2.0",
+    "playwright": "1.62.1",
+    "buildMode": "electron-dev-shell-starter"
+  },
+  "coldStartMs": 948.4432,
+  "assetReadyMs": 991.9490999999999,
+  "menuOpenP95Ms": 11.099999994039536,
+  "sceneP95Ms": 11.5,
+  "metrics": {
+    "coldStartMs": {
+      "name": "coldStartMs",
+      "samples": [
+        948.4432
+      ],
+      "median": 948.4432,
+      "p95": 948.4432
+    },
+    "assetReadyMs": {
+      "name": "assetReadyMs",
+      "samples": [
+        991.9490999999999
+      ],
+      "median": 991.9490999999999,
+      "p95": 991.9490999999999
+    },
+    "menuOpenP95Ms": {
+      "name": "menuOpenP95Ms",
+      "samples": [
+        6.299999997019768,
+        7.200000002980232,
+        9.600000008940697,
+        10.5,
+        11.099999994039536
+      ],
+      "median": 9.600000008940697,
+      "p95": 11.099999994039536
+    },
+    "sceneP95Ms": {
+      "name": "sceneP95Ms",
+      "samples": [
+        6.5,
+        7.899999991059303,
+        8.399999991059303,
+        9.899999991059303,
+        11.5
+      ],
+      "median": 8.399999991059303,
+      "p95": 11.5
+    }
+  },
+  "assets": {
+    "total": 6,
+    "completed": 6,
+    "failed": 0,
+    "durationMs": 991.9490999999999
+  },
+  "resources": {
+    "disposed": false,
+    "tickerCallbacks": null,
+    "listeners": null,
+    "activeTweens": null,
+    "activeAsyncTasks": null,
+    "blobUrls": 6,
+    "pooledObjects": {},
+    "displayObjectsByOwner": {}
+  },
+  "performance": null,
+  "debug": {
+    "sessionId": "starter-1786212310254-8xug6k06lno",
+    "resourceIds": {
+      "pixiStage": "starter-1786212310254-8xug6k06lno:pixi-stage",
+      "audioManager": "starter-1786212310254-8xug6k06lno:audio-manager",
+      "frameScheduler": "starter-1786212310254-8xug6k06lno:frame-scheduler"
+    },
+    "fontFamilies": {
+      "body": "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif",
+      "title": "'Source Han Serif SC', 'Noto Serif CJK SC', 'Songti SC', 'STSong', 'SimSun', serif",
+      "ui": "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif"
+    },
+    "activeBlobUrls": 6,
+    "status": "awaiting-timer",
+    "rendererStatus": "idle",
+    "position": {
+      "sceneId": "ch01_01",
+      "pc": 4,
+      "sceneHash": "ab61dd2e"
+    },
+    "rawMetrics": null
+  },
+  "measurementDefinitions": {
+    "menuOpen": "标题页调用 __surdetDebug.titleSelect(\"settings\") 到下一帧提交的耗时。",
+    "sceneTransition": "标题页调用 __surdetDebug.titleSelect(\"new\") 到入口场景位置可观测且下一帧提交的耗时。"
+  },
+  "bundle": {
+    "totalBytes": 7522008,
+    "files": {
+      "packages/shell/dist/crash-reporter.d.ts": 285,
+      "packages/shell/dist/crash-reporter.d.ts.map": 379,
+      "packages/shell/dist/crash-reporter.js": 1005,
+      "packages/shell/dist/crash-reporter.js.map": 1290,
+      "packages/shell/dist/index.d.ts": 191,
+      "packages/shell/dist/index.d.ts.map": 145,
+      "packages/shell/dist/index.js": 181,
+      "packages/shell/dist/index.js.map": 153,
+      "packages/shell/dist/json-file.d.ts": 275,
+      "packages/shell/dist/json-file.d.ts.map": 337,
+      "packages/shell/dist/json-file.js": 525,
+      "packages/shell/dist/json-file.js.map": 606,
+      "packages/shell/dist/main.d.ts": 45,
+      "packages/shell/dist/main.d.ts.map": 102,
+      "packages/shell/dist/main.js": 13543,
+      "packages/shell/dist/main.js.map": 13132,
+      "packages/shell/dist/preload.cjs": 2830,
+      "packages/shell/dist/preload.cjs.map": 5342,
+      "packages/shell/dist/preload.d.ts": 48,
+      "packages/shell/dist/preload.d.ts.map": 108,
+      "packages/shell/dist/preload.js": 2515,
+      "packages/shell/dist/preload.js.map": 1964,
+      "packages/shell/dist/profile-store.d.ts": 417,
+      "packages/shell/dist/profile-store.d.ts.map": 521,
+      "packages/shell/dist/profile-store.js": 1495,
+      "packages/shell/dist/profile-store.js.map": 1725,
+      "packages/shell/dist/release-service.d.ts": 891,
+      "packages/shell/dist/release-service.d.ts.map": 928,
+      "packages/shell/dist/release-service.js": 2795,
+      "packages/shell/dist/release-service.js.map": 3297,
+      "packages/shell/dist/save-store.d.ts": 1594,
+      "packages/shell/dist/save-store.d.ts.map": 704,
+      "packages/shell/dist/save-store.js": 8421,
+      "packages/shell/dist/save-store.js.map": 6221,
+      "examples/starter/dist/assets/BitmapFont-CnE4X_i9.js": 13062,
+      "examples/starter/dist/assets/browserAll-CPinlp2h.js": 43203,
+      "examples/starter/dist/assets/BufferResource-CKDNYJ1l.js": 7364,
+      "examples/starter/dist/assets/CanvasRenderer-Czr6sHKV.js": 18001,
+      "examples/starter/dist/assets/castle_hall-DAnQMUWv.svg": 4684,
+      "examples/starter/dist/assets/ch01_01-Bmk6blCW.js": 1157,
+      "examples/starter/dist/assets/ch01_02-jMYzAbUf.js": 347,
+      "examples/starter/dist/assets/ch02-MhZ4aXLu.js": 955,
+      "examples/starter/dist/assets/ch03_turn_event-BuvLe02i.js": 160,
+      "examples/starter/dist/assets/GlUniformGroupSystem-BapDC7lK.js": 16091,
+      "examples/starter/dist/assets/GpuStencilModesToPixi-3cFV54Jk.js": 3284,
+      "examples/starter/dist/assets/GpuUboSystem-CWwAbojh.js": 2224,
+      "examples/starter/dist/assets/index-CS5A3HGF.js": 583620,
+      "examples/starter/dist/assets/init-CMhKqxLX.js": 13303,
+      "examples/starter/dist/assets/lynn-C904VdqC.svg": 2606,
+      "examples/starter/dist/assets/lynn_uniform_despair-SiMfac_m.svg": 4769,
+      "examples/starter/dist/assets/lynn_uniform_night-CvsH2DCc.svg": 4035,
+      "examples/starter/dist/assets/lynn_uniform_normal-DxGmelre.svg": 4943,
+      "examples/starter/dist/assets/MiSans-Regular-BXtMKrab.otf": 6569336,
+      "examples/starter/dist/assets/night_field-6PY0XPn-.svg": 2448,
+      "examples/starter/dist/assets/RenderTargetSystem-C9mR706X.js": 46631,
+      "examples/starter/dist/assets/WebGLRenderer-BsX5hKxr.js": 52942,
+      "examples/starter/dist/assets/WebGPURenderer-Bea9A_Bi.js": 37038,
+      "examples/starter/dist/assets/webworkerAll-BodeRwpw.js": 14892,
+      "examples/starter/dist/index.html": 903
+    },
+    "warnings": [
+      "No file extension was found. Consider using the \"format\" property or specify an extension.",
+      "No file extension was found. Consider using the \"format\" property or specify an extension.",
+      "No file extension was found. Consider using the \"format\" property or specify an extension.",
+      "No file extension was found. Consider using the \"format\" property or specify an extension.",
+      "No file extension was found. Consider using the \"format\" property or specify an extension.",
+      "No file extension was found. Consider using the \"format\" property or specify an extension."
+    ]
+  },
+  "errors": {
+    "page": 0,
+    "console": 0,
+    "failedRequests": 0,
+    "messages": []
+  },
+  "visual": {
+    "states": [
+      {
+        "id": "title",
+        "sha256": "aca617dcc09733b2282be67fbe3a15c984e91cfd610358d48d6ad4d1dacc8882",
+        "width": 1264,
+        "height": 681
+      },
+      {
+        "id": "story-entry",
+        "sha256": "207426aaa12d01d8f0354ce6e507b7fe2434f11152f1d7631e4c48069eec38e2",
+        "width": 1264,
+        "height": 681
+      }
+    ]
+  }
+}
