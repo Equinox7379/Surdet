@@ -270,7 +270,10 @@ export function renderPreviewPanel(container: HTMLElement): void {
   container.appendChild(frame);
 
   let ready = false;
+  /** 异步读取素材期间若用户重新选择播放入口，旧请求不得晚到覆盖新选择。 */
+  let sendRevision = 0;
   const send = async (): Promise<void> => {
+    const revision = ++sendRevision;
     if (!ready) return;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {
@@ -281,6 +284,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
     const fonts = await readProjectFonts();
     const assets = await readProjectImages();
     const timelines = await readProjectTimelines();
+    if (revision !== sendRevision) return;
     const message = {
       type: 'surdet-preview-load',
       payload: {
@@ -314,6 +318,14 @@ export function renderPreviewPanel(container: HTMLElement): void {
       ...Object.values(fonts).map((font) => font.buffer),
     ];
     frame.contentWindow?.postMessage(message, '*', transfer);
+  };
+
+  // 从时间轴面板进入时，previewTimelineId 可能仍指向“直演”临时场景。
+  // 一旦用户选择普通剧情入口，必须立刻退出直演模式；否则下拉框显示的入口
+  // 与实际发送给 iframe 的运行场景不一致，表现为“有背景/立绘但永远没有台词”。
+  labelSel.onchange = () => {
+    state.previewTimelineId = null;
+    void send();
   };
 
   notifyPreviewReady = () => {

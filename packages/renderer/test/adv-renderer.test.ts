@@ -129,6 +129,29 @@ describe('AdvRenderer', () => {
     expect(completed).toBe(1);
   });
 
+  it('阻塞时间轴含 screen tint 时，完成后仍能投影下一句台词', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio(), {
+      onWaitEnd: () => bus.emit('text', { speaker: '凛', value: '到达。' }),
+    });
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'tinted_intro',
+      blocking: true,
+      definition: {
+        version: 1, id: 'tinted_intro', durationMs: 100,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'tint', color: 0x102038, alpha: 0.18 }] }],
+      },
+    });
+
+    r.update(120);
+    expect(stage.timelineEvents.some((event) => event.track === 'screen')).toBe(true);
+    expect(r.status).toBe('typing');
+    r.update(1000);
+    expect(stage.texts.at(-1)).toEqual({ speaker: '凛', value: '到达。' });
+  });
+
   it('非零起点的音频 cue 在跨过起点的帧可靠触发', () => {
     const bus = makeBus();
     const audio = new FakeAudio();
