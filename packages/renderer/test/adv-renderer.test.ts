@@ -148,6 +148,24 @@ describe('AdvRenderer', () => {
     expect(audio.se).toEqual(['door']);
   });
 
+  it('跳过时间轴时仍结算稍后开始的背景，避免停留在开场黑幕', () => {
+    const bus = makeBus();
+    const stage = new FakeStage();
+    const r = new AdvRenderer(stage, new FakeAudio());
+    r.subscribe(bus);
+    bus.emit('timeline', {
+      id: 'skip_background',
+      blocking: true,
+      definition: {
+        version: 1, id: 'skip_background', durationMs: 900,
+        tracks: [{ kind: 'background', cues: [{ atMs: 23, durationMs: 500, easing: 'linear', action: 'set', key: 'hall' }] }],
+      },
+    });
+    r.advance();
+    const background = stage.timelineEvents.find((event) => event.track === 'background');
+    expect(background?.progress).toBe(1);
+  });
+
   it('presentation snapshot restores active timeline cursor after stage state', () => {
     const bus = makeBus();
     const stage = new FakeStage();

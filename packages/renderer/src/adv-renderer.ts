@@ -459,7 +459,7 @@ export class AdvRenderer {
 
   #applyTimelineEvents(events: readonly import('./timeline-player.js').TimelineFrameEvent[]): void {
     for (const event of events) {
-      if (event.track === 'audio' && typeof event.cue.key === 'string' && event.started) {
+      if (event.track === 'audio' && typeof event.cue.key === 'string' && (event.started || (event.final && event.cue.action === 'bgm'))) {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
         else if (event.cue.action === 'se') this.#audio.playSe(event.cue.key);
         else if (event.cue.action === 'voice') this.#audio.playVoice(event.cue.key);

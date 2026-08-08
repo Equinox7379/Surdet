@@ -50,7 +50,7 @@ describe('TimelinePlayer', () => {
     const restored = new TimelinePlayer(definition);
     restored.restore(player.snapshot());
     expect(restored.cursorMs).toBe(200);
-    expect(restored.skip().every((e) => e.progress === 1)).toBe(true);
+    expect(restored.skip().every((e) => e.progress === 1 && e.final)).toBe(true);
     expect(restored.done).toBe(true);
   });
 
