@@ -12,6 +12,7 @@
     "start": "electron .",
     "pack": "npm run build && node prepare-pack.mjs && node scripts/verify-pack.mjs --preflight && electron-builder --win && node scripts/verify-pack.mjs --artifact",
     "e2e": "node e2e/game.e2e.mjs",
+    "e2e:renderer-baseline": "node e2e/renderer-baseline.e2e.mjs",
     "benchmark:save": "node scripts/benchmark-save-store.mjs",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
