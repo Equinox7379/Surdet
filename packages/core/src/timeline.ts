@@ -61,7 +61,7 @@ const EASINGS = new Set<TimelineEasing>(['linear', 'inOutSine', 'outCubic', 'inO
 const ACTIONS: Record<TimelineTrackKind, ReadonlySet<string>> = {
   background: new Set(['set']),
   portrait: new Set(['show', 'hide', 'move', 'expression']),
-  camera: new Set(['zoom']),
+  camera: new Set(['zoom', 'pan', 'shake']),
   screen: new Set(['fade', 'tint', 'flash', 'wipe']),
   particle: new Set(['start', 'stop']),
   audio: new Set(['bgm', 'se', 'voice']),
@@ -111,8 +111,21 @@ function validatePayload(
     if (action === 'show' || action === 'move') {
       requireString(cue.position, diagnostics, 'T009', 'portrait show/move requires position', `${path}.position`);
     }
-  } else if (kind === 'camera' && action === 'zoom') {
-    if (!isFiniteNumber(cue.scale) || cue.scale <= 0) add(diagnostics, 'T009', 'camera zoom requires a positive scale', `${path}.scale`);
+  } else if (kind === 'camera') {
+    if (action === 'zoom' && (!isFiniteNumber(cue.scale) || cue.scale <= 0)) {
+      add(diagnostics, 'T009', 'camera zoom requires a positive scale', `${path}.scale`);
+    }
+    if (action === 'pan') {
+      if (!isFiniteNumber(cue.x) || cue.x < -2000 || cue.x > 2000) {
+        add(diagnostics, 'T009', 'camera pan x must be between -2000 and 2000', `${path}.x`);
+      }
+      if (!isFiniteNumber(cue.y) || cue.y < -2000 || cue.y > 2000) {
+        add(diagnostics, 'T009', 'camera pan y must be between -2000 and 2000', `${path}.y`);
+      }
+    }
+    if (action === 'shake' && (!isFiniteNumber(cue.strength) || cue.strength < 0 || cue.strength > 64)) {
+      add(diagnostics, 'T009', 'camera shake strength must be between 0 and 64', `${path}.strength`);
+    }
   } else if (kind === 'screen') {
     if (action === 'fade') {
       if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'T009', 'screen fade alpha must be between 0 and 1', `${path}.alpha`);

@@ -7,7 +7,7 @@ export const TIMELINE_TRACKS: readonly TimelineTrackKind[] = [
 export const TIMELINE_ACTIONS: Record<TimelineTrackKind, readonly string[]> = {
   background: ['set'],
   portrait: ['show', 'hide', 'move', 'expression'],
-  camera: ['zoom'],
+  camera: ['zoom', 'pan', 'shake'],
   screen: ['fade', 'tint', 'flash', 'wipe'],
   particle: ['start', 'stop'],
   audio: ['bgm', 'se', 'voice'],
@@ -74,10 +74,30 @@ export function createCue(kind: TimelineTrackKind, action = TIMELINE_ACTIONS[kin
   const defaults: Record<TimelineTrackKind, Record<string, TimelineValue>> = {
     background: { key: 'castle_hall' },
     portrait: { expression: 'normal', position: 'center' },
-    camera: { scale: 1.03 },
+    camera: action === 'pan' ? { x: 0, y: 0 } : action === 'shake' ? { strength: 12 } : { scale: 1.03 },
     screen: action === 'tint' ? { color: 0x102038, alpha: 0.18 } : action === 'fade' ? { alpha: 0 } : {},
     particle: action === 'start' ? { kind: 'sparkle' } : {},
     audio: { key: 'tense_01' },
   };
   return cue(action, defaults[kind]);
+}
+
+/** 与运行时缓动保持同一口径，供时间轴编辑器绘制轻量曲线预览。 */
+export function easingValue(easing: TimelineEasing, t: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  switch (easing) {
+    case 'inOutSine': return -(Math.cos(Math.PI * x) - 1) / 2;
+    case 'outCubic': return 1 - Math.pow(1 - x, 3);
+    case 'inOutCubic': return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    case 'linear': return x;
+  }
+}
+
+export function easingPath(easing: TimelineEasing, samples = 20): string {
+  const count = Math.max(2, Math.round(samples));
+  return Array.from({ length: count }, (_, index) => {
+    const x = index / (count - 1) * 100;
+    const y = 24 - easingValue(easing, index / (count - 1)) * 20 - 2;
+    return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
 }
