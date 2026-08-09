@@ -133,4 +133,15 @@ describe('RenderAssetRegistry', () => {
     expect(add).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledTimes(1);
   });
+
+  it('reports a stable disposed error for post-dispose mutations', () => {
+    const { registry } = registryHarness();
+    registry.dispose();
+
+    expect(() => registry.reset()).toThrowError(expect.objectContaining({
+      code: 'RENDERER_DISPOSED',
+      domain: 'assets',
+      command: 'reset',
+    }));
+  });
 });

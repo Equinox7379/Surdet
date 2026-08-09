@@ -1,6 +1,7 @@
 import { Assets } from 'pixi.js';
 import type { Texture } from 'pixi.js';
 import type { RendererFontRole } from '../api/renderer-commands.js';
+import { RendererError } from '../api/renderer-errors.js';
 import { AsyncGeneration } from '../lifecycle/async-generation.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 
@@ -83,6 +84,7 @@ export class RenderAssetRegistry {
     this.#ownsLifecycle = options.lifecycle === undefined;
     this.#load = options.load ?? loadWithPixi;
     this.#unload = options.unload ?? unloadWithPixi;
+    this.#lifecycle.register('runtime', 'async', 'asset-generation', () => this.#generation.dispose());
   }
 
   async registerBackground(key: string, source: RenderAssetSource, format?: string): Promise<void> {
@@ -221,6 +223,7 @@ export class RenderAssetRegistry {
     this.#clearMap(this.#portraits);
     this.#clearMap(this.#avatars);
     this.#resetFontsInternal();
+    this.#lifecycle.release('runtime', 'async', 'asset-generation');
     this.#disposed = true;
     if (this.#ownsLifecycle) this.#lifecycle.dispose();
   }
@@ -305,6 +308,12 @@ export class RenderAssetRegistry {
   }
 
   #ensureActive(command: string): void {
-    if (this.#disposed) throw new Error(`Renderer asset registry is disposed: ${command}`);
+    if (this.#disposed) {
+      throw new RendererError(`Renderer asset registry is disposed: ${command}`, {
+        code: 'RENDERER_DISPOSED',
+        domain: 'assets',
+        command,
+      });
+    }
   }
 }
