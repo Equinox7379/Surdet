@@ -45,6 +45,42 @@ node packages/cli/dist/index.js pack <游戏目录>
 
 通用宿主接线：`@surdet/host` 提供 `createDefaultHost`、`connectSystemRouter`、`createSystemHooks` 和 Profile 存储。新游戏只需通过 adapter 注入自己的系统实例、配置、标题/资源回调；不要复制 starter 或正式游戏的整套 `bus.on('system')` 接线，也不要把具体场景 ID、素材 key 或结局文案写进 host 包。游戏侧可维护自己的 `system-adapters.ts`，公共 host 只负责路由与生命周期。
 
+### Renderer v2 接线（M8 起的新消费者规则）
+
+新游戏、编辑器预览和 CLI 模板必须创建一个 `RendererRuntime`：
+
+```ts
+import type { EventBus, Interpreter, CoreEventMap } from '@surdet/core';
+import { createRendererRuntime } from '@surdet/renderer';
+import type { AudioHandle, SpeakerProfile } from '@surdet/renderer';
+
+export async function wireRendererV2(
+  interpreter: Interpreter,
+  bus: EventBus<CoreEventMap>,
+  audio: AudioHandle,
+  speakerProfiles: readonly SpeakerProfile[],
+): Promise<() => void> {
+  const runtime = await createRendererRuntime({
+    audio,
+    onAdvance: () => interpreter.advance(),
+    onSelect: (index) => interpreter.choose(index),
+  });
+  const commands = runtime.commands;
+  const queries = runtime.queries;
+  const controller = runtime.controller;
+  const unsubscribe = controller.connect(bus);
+  commands.dialogue.setSpeakerProfiles(speakerProfiles);
+  const presentation = queries.presentation.snapshot();
+  commands.presentation.restore(presentation);
+  return () => {
+    unsubscribe();
+    runtime.dispose();
+  };
+}
+```
+
+`commands` 是有副作用的命令，`queries` 必须只读；输入统一调用 `controller.dispatchInput()`。不要在宿主中创建 `PixiStage`、`AdvRenderer` 或 `FrameScheduler`，不要读取 Pixi 对象或 Layer 私有字段。资源通过 `commands.assets` 注册，游戏退出时调用 `runtime.dispose()`，宿主自己创建的 Audio/Blob 资源仍由宿主释放。完整旧 API → v2 domain 映射、错误码和兼容窗口见 [Renderer v2 迁移指南](renderer-v2-migration.md)。
+
 ```ts
 const host = createDefaultHost({
   interpreter,
@@ -72,7 +108,7 @@ connectSystemRouter(bus, host);
 
 `@transition` 的时长会限制在 1..10000ms；未知转场名会被 CLI lint 和编辑器判为错误，不会静默降级。`@shake` 的省略方向写法仍兼容：`@shake 400 8`。环境音最多同时播放一条，与 BGM、SE、语音分轨独立，音量设置项为“环境音量”。
 
-开发预览支持 `.gal` 场景热更新：每个 Vite 游戏把 `import.meta.glob('../content/scenario/**/*.gal', { query: '?raw', import: 'default' })` 放在独立的 `scene-hmr-boundary.ts` 自接受模块中，主入口不自接受，避免重建 PixiStage、AudioManager、FrameScheduler 等长期实例。Vite 开发服务器收到剧本变更后会重新编译并原子替换场景注册表；若当前正停在该场景，会按新指令流限制 PC 并重放当前状态。编译失败、场景 ID 不一致时保留旧场景并在控制台报告。该能力只存在于 `import.meta.hot` 开发分支，正式构建不启动文件监听器，也不会改变正式包的运行时行为。
+开发预览支持 `.gal` 场景热更新：每个 Vite 游戏把 `import.meta.glob('../content/scenario/**/*.gal', { query: '?raw', import: 'default' })` 放在独立的 `scene-hmr-boundary.ts` 自接受模块中，主入口不自接受，避免重建 RendererRuntime、AudioManager 和长期生命周期实例。Vite 开发服务器收到剧本变更后会重新编译并原子替换场景注册表；若当前正停在该场景，会按新指令流限制 PC 并重放当前状态。编译失败、场景 ID 不一致时保留旧场景并在控制台报告。该能力只存在于 `import.meta.hot` 开发分支，正式构建不启动文件监听器，也不会改变正式包的运行时行为。
 
 ## 2. DSL 速查
 

@@ -2,6 +2,39 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "renderer-lifecycle",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/renderer/test/lifecycle/render-lifecycle.test.ts",
+        "packages/renderer/test/lifecycle/async-generation.test.ts",
+        "packages/renderer/test/integration/resource-cycles.test.ts",
+        "packages/editor/test/preview-runtime-lifecycle.test.ts"
+      ],
+      "docs": ["README.md", "docs/renderer-v2-migration.md", "docs/AI-GUIDE.md"],
+      "limitation": "正式候选仍保留 M7.5 sceneP95Ms 性能红灯；本能力不代表性能门禁已全绿。"
+    },
+    {
+      "id": "renderer-v2-runtime",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "implemented",
+      "tests": [
+        "packages/renderer/test/api/renderer-contract.test.ts",
+        "packages/renderer/test/api/query-purity.test.ts",
+        "packages/renderer/test/integration/renderer-runtime.test.ts",
+        "packages/editor/test/preview-runtime-contract.test.ts",
+        "packages/host/test/system-router.test.ts"
+      ],
+      "docs": ["README.md", "docs/renderer-v2-migration.md", "docs/AI-GUIDE.md"],
+      "limitation": "PixiStage/AdvRenderer 在当前 major 的一版兼容窗口内保留；新生产消费者必须通过 Runtime v2 接线。"
+    },
+    {
       "id": "ambience",
       "kind": "ui",
       "core": "implemented",

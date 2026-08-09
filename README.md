@@ -6,7 +6,7 @@
 
 - **内核与内容彻底分离**：游戏 = `DSL 剧本 + JSON 配置 + 素材`，任何 AI 照着规范即可产出可运行的游戏。
 - **内核零依赖**（`@surdet/core`）：DSL 编译、状态、存档、战斗求解全部 headless 可运行、可直接单测。
-- **渲染只是投影**：`@surdet/renderer`（PixiJS）只负责把内核状态画出来。
+- **渲染只是投影**：`@surdet/renderer`（PixiJS）只负责把内核状态画出来；新消费者通过 Renderer v2 的 `createRendererRuntime()`、`commands`、`queries` 和 `controller` 接线。
 - **单语言栈**：全 TypeScript，Electron 壳打包成 Windows exe，AI 从构建到打包零摩擦。
 
 ## 仓库结构
@@ -21,7 +21,7 @@ packages/
     combat/   数据驱动回合战斗求解器
     calendar/ 地图日程/回合/行动力
     systems/  后宫树/回想鉴赏/周目继承
-  renderer/  PixiJS 舞台（M3）
+  renderer/  PixiJS 舞台与 Renderer v2 Runtime（M3–M8）
   shell/     Electron 壳（M3）
   cli/       surdet 命令：new/lint/build/pack（M6）
   editor/    可视化剧本编辑器（M8）
@@ -42,7 +42,11 @@ packages/
 
 > 说明：M5 全家桶系统是"引擎侧数据驱动求解器 + `system` 事件 + 存档 hooks"，由宿主接线驱动。`examples/starter/src/main.ts` 演示了系统实例接线与存档往返：`@calendar`/`@battle`/`@affection`/`@event` 驱动 `CalendarRunner`/`CombatSolver`/`AffectionSystem`/`NewGamePlus`，系统状态经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。**示例未闭环的宿主应用逻辑**：`calendar.enter()` 的 `eventId` 仅记录不跳转场景、`ngp.unlockGallery` 未在 UI 消费、`@event` 的 `consumeEvent` 不校验 `when`（宿主应先用 `AffectionSystem.availableEvents()` 取可触发事件再消费）——这些属具体游戏逻辑，引擎只提供求解器与数据契约。
 
-当前能力与证据索引见 [Capability Matrix](docs/capability-matrix.md)。README 只保留产品概览；能力状态以该矩阵及其测试路径为准。
+当前能力与证据索引见 [Capability Matrix](docs/capability-matrix.md)。Renderer v2 的完整迁移步骤见 [Renderer v2 migration guide](docs/renderer-v2-migration.md)。README 只保留产品概览；能力状态以该矩阵及其测试路径为准。
+
+## Renderer v2 接线
+
+正式游戏、starter、编辑器预览和 CLI 模板都使用一个 `RendererRuntime`。消费者只能通过 `runtime.commands` 改变表现、通过 `runtime.queries` 读取只读状态、通过 `runtime.controller.dispatchInput()` 接收标准化输入；帧调度、Layer 生命周期、资源所有权和 disposal 由 Runtime 管理。`PixiStage` 与 `AdvRenderer` 仍保留在当前 major 的一版兼容窗口中，但新代码不得直接构造它们。请先阅读 [迁移指南](docs/renderer-v2-migration.md)，再运行 `npm run verify:renderer-legacy`。
 
 ## 已实现
 
