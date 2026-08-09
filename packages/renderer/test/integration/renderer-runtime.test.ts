@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { vi } from 'vitest';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
+import { RendererError } from '../../src/api/renderer-errors.js';
+import { PixiStage } from '../../src/pixi-stage.js';
+import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import { RendererFacade } from '../../src/runtime/renderer-facade.js';
 import type {
   RendererControllerPort,
   RendererRuntimeInternals,
   RendererStagePort,
 } from '../../src/runtime/create-renderer-runtime.js';
-import { createRendererRuntimeFromInternals } from '../../src/runtime/create-renderer-runtime.js';
+import { createRendererRuntime, createRendererRuntimeFromInternals } from '../../src/runtime/create-renderer-runtime.js';
 
 interface FakeInternals extends RendererRuntimeInternals {
   calls: Array<{ method: string; args: readonly unknown[] }>;
@@ -147,5 +152,81 @@ describe('Renderer v2 runtime facade', () => {
 
     expect(internals.calls).toContainEqual({ method: 'controller.reset', args: [{ preserveWorld: true }] });
     expect(internals.calls).toContainEqual({ method: 'controller.restorePresentation', args: [snapshot] });
+  });
+
+  it('attempts every runtime disposer after failures and reports RendererError with AggregateError', async () => {
+    const calls: string[] = [];
+    const disposers = new Map<string, () => void>();
+    const lifecycle = {
+      register: (_owner: string, _kind: string, key: string, dispose: () => void) => { disposers.set(key, dispose); },
+      release: (_owner: string, _kind: string, key: string) => {
+        const dispose = disposers.get(key);
+        disposers.delete(key);
+        if (dispose) dispose();
+        return Boolean(dispose);
+      },
+      forget: (_owner: string, _kind: string, key: string) => disposers.delete(key),
+      snapshot: () => ({ disposed: false, tickerCallbacks: 0, listeners: 0, activeTweens: 0, activeAsyncTasks: 0, blobUrls: 0, pooledObjects: {}, displayObjectsByOwner: {} }),
+      dispose: () => { calls.push('lifecycle'); throw new Error('lifecycle failure'); },
+    };
+    const internals = fakeInternals();
+    (internals as unknown as { lifecycle: unknown }).lifecycle = lifecycle;
+    internals.scheduler.dispose = () => { calls.push('scheduler'); throw new Error('scheduler failure'); };
+    internals.controller.dispose = () => { calls.push('controller'); throw new Error('controller failure'); };
+    internals.stage.destroy = () => { calls.push('stage'); throw new Error('stage failure'); };
+    (internals as unknown as { assetRegistry?: unknown }).assetRegistry = { dispose: () => { calls.push('asset-registry'); throw new Error('asset failure'); } };
+    const markDisposed = vi.spyOn(RendererFacade.prototype, 'markDisposed').mockImplementation(() => {
+      calls.push('facade');
+      throw new Error('facade failure');
+    });
+    try {
+      const runtime = await createRendererRuntimeFromInternals(internals);
+      expect(() => runtime.dispose()).toThrow(RendererError);
+      expect(calls).toEqual(['scheduler', 'controller', 'stage', 'asset-registry', 'lifecycle', 'facade']);
+      try {
+        runtime.dispose();
+      } catch {
+        // The first failed disposal is terminal and idempotent; no second cleanup is allowed.
+      }
+      const error = (() => {
+        try { runtime.dispose(); return null; } catch (cause) { return cause; }
+      })();
+      expect(error).toBeNull();
+    } finally {
+      markDisposed.mockRestore();
+    }
+  });
+
+  it('cleans all initialized resources when composition initialization fails', async () => {
+    const calls: string[] = [];
+    const lifecycle = {
+      register: () => { throw new Error('registration failure'); },
+      release: () => false,
+      forget: () => false,
+      snapshot: () => ({ disposed: false, tickerCallbacks: 0, listeners: 0, activeTweens: 0, activeAsyncTasks: 0, blobUrls: 0, pooledObjects: {}, displayObjectsByOwner: {} }),
+      dispose: () => calls.push('lifecycle'),
+    };
+    const internals = fakeInternals();
+    (internals as unknown as { lifecycle: unknown }).lifecycle = lifecycle;
+    internals.stage.destroy = () => calls.push('stage');
+    (internals as unknown as { assetRegistry?: unknown }).assetRegistry = { dispose: () => calls.push('asset-registry') };
+
+    await expect(createRendererRuntimeFromInternals(internals)).rejects.toThrow();
+    expect(calls).toEqual(['stage', 'asset-registry', 'lifecycle']);
+  });
+
+  it('cleans the real stage and registry when Pixi runtime initialization fails', async () => {
+    const init = vi.spyOn(PixiStage.prototype, 'init').mockRejectedValue(new Error('stage init failure'));
+    const stageDestroy = vi.spyOn(PixiStage.prototype, 'destroy');
+    const registryDispose = vi.spyOn(RenderAssetRegistry.prototype, 'dispose');
+    try {
+      await expect(createRendererRuntime()).rejects.toBeInstanceOf(RendererError);
+      expect(stageDestroy).toHaveBeenCalledTimes(1);
+      expect(registryDispose).toHaveBeenCalled();
+    } finally {
+      init.mockRestore();
+      stageDestroy.mockRestore();
+      registryDispose.mockRestore();
+    }
   });
 });

@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
 import { Backlog } from '../../src/backlog.js';
+import { AdvRenderer } from '../../src/adv-renderer.js';
+import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
+import { createPresentationPorts } from '../../src/adv-renderer.js';
 import type { AdvStage } from '../../src/types.js';
 
 function stageHarness(): AdvStage & {
@@ -46,10 +49,47 @@ function choiceEvent(): CoreEventMap['choice'] {
   return { options: [{ index: 10, label: '左' }, { index: 20, label: '右' }] };
 }
 
+function controllerFor(
+  stage: AdvStage,
+  options: Record<string, unknown> = {},
+): PresentationController {
+  const ports = createPresentationPorts(stage);
+  return new PresentationController(ports.commands, ports.queries, undefined, {
+    ...options,
+    commands: ports.commands,
+    queries: ports.queries,
+    bindStageCallbacks: (handlers) => {
+      stage.onSelect = handlers.onSelect;
+      stage.onBacklogClose = handlers.onBacklogClose;
+      return () => {
+        stage.onSelect = null;
+        stage.onBacklogClose = null;
+      };
+    },
+  });
+}
+
 describe('PresentationController', () => {
+  it('is an independent state machine and does not inherit AdvRenderer', () => {
+    expect(Object.getPrototypeOf(PresentationController.prototype)).not.toBe(AdvRenderer.prototype);
+  });
+
+  it('keeps AdvRenderer as a pure compatibility delegate', () => {
+    const stage = stageHarness();
+    const advance = vi.spyOn(PresentationController.prototype, 'advance');
+    try {
+      const legacy = new AdvRenderer(stage);
+      expect(legacy.advance()).toBe(false);
+      expect(advance).toHaveBeenCalledTimes(1);
+      legacy.destroy();
+    } finally {
+      advance.mockRestore();
+    }
+  });
+
   it('routes choice movement only while choosing and selects the visible choice index', () => {
     const stage = stageHarness();
-    const controller = new PresentationController(stage);
+    const controller = controllerFor(stage);
     const bus = new EventBus<CoreEventMap>();
     const off = controller.connect(bus);
     bus.emit('choice', choiceEvent());
@@ -68,7 +108,7 @@ describe('PresentationController', () => {
   it('routes advance, backlog, auto, skip, interface, scroll, and escape actions', () => {
     const stage = stageHarness();
     const advanceCalls: number[] = [];
-    const controller = new PresentationController(stage, undefined, {
+    const controller = controllerFor(stage, {
       backlog: new Backlog(),
       onAdvance: () => advanceCalls.push(1),
     });
@@ -95,7 +135,7 @@ describe('PresentationController', () => {
 
   it('connect returns an idempotent unsubscribe and dispose blocks later input', () => {
     const stage = stageHarness();
-    const controller = new PresentationController(stage);
+    const controller = controllerFor(stage);
     const bus = new EventBus<CoreEventMap>();
     const off = controller.connect(bus);
     off();
@@ -106,5 +146,34 @@ describe('PresentationController', () => {
     controller.dispose();
     controller.dispose();
     expect(controller.dispatchInput({ type: 'advance' })).toBe(false);
+  });
+
+  it('shares one idempotent lifecycle cleanup path across disconnect, unsubscribe, reconnect, and dispose', () => {
+    const stage = stageHarness();
+    const lifecycle = new RenderLifecycle();
+    const controller = controllerFor(stage, { lifecycle });
+    const bus = new EventBus<CoreEventMap>();
+
+    const firstOff = controller.connect(bus);
+    expect(lifecycle.snapshot().listeners).toBe(1);
+    controller.disconnect();
+    expect(lifecycle.snapshot().listeners).toBe(0);
+    firstOff();
+    expect(lifecycle.snapshot().listeners).toBe(0);
+
+    const secondOff = controller.connect(bus);
+    expect(lifecycle.snapshot().listeners).toBe(1);
+    const thirdOff = controller.connect(bus);
+    expect(lifecycle.snapshot().listeners).toBe(1);
+    secondOff();
+    expect(lifecycle.snapshot().listeners).toBe(1);
+    thirdOff();
+    expect(lifecycle.snapshot().listeners).toBe(0);
+    controller.connect(bus);
+    expect(lifecycle.snapshot().listeners).toBe(1);
+    controller.dispose();
+    controller.dispose();
+    expect(lifecycle.snapshot().listeners).toBe(0);
+    lifecycle.dispose();
   });
 });

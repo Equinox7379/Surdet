@@ -98,6 +98,8 @@ export type RendererStagePort = Partial<AdvStage> & {
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
 export interface RendererControllerPort extends PresentationController {
+  /** @internal True when the controller's presentation transaction also projects the stage. */
+  presentationOwnsStage?: boolean;
   snapshotPresentation?: () => unknown;
   restorePresentation?: (snapshot: unknown) => void;
   /** @internal Clear only Controller-owned presentation timelines. */
@@ -370,13 +372,18 @@ export class RendererFacade {
         const method = this.#controller.restorePresentation ?? this.#stage.restorePresentation;
         if (!method) this.#missing('presentation', 'restore');
         method.call(this.#controller.restorePresentation ? this.#controller : this.#stage, cloneOpaque(snapshot));
+        if (!this.#controller.presentationOwnsStage) {
+          this.#stage.restorePresentation?.(cloneOpaque(snapshot));
+        }
       },
       clear: () => {
         this.#ensureActive('presentation', 'clear');
         const controllerMethod = this.#controller.clearPresentation;
         if (!controllerMethod) this.#missing('presentation', 'clear');
         controllerMethod.call(this.#controller);
-        this.#callStage('presentation', 'clear', this.#stage.clearPresentation);
+        if (!this.#controller.presentationOwnsStage) {
+          this.#callStage('presentation', 'clear', this.#stage.clearPresentation);
+        }
       },
     };
 
