@@ -61,9 +61,10 @@ function controllerFor(
 ): PresentationController {
   const ports = createPresentationPorts(stage);
   return new PresentationController(ports.commands, ports.queries, undefined, {
-    ...options,
-    commands: ports.commands,
-    queries: ports.queries,
+      ...options,
+      commands: ports.commands,
+      queries: ports.queries,
+      validateStagePresentation: ports.validateStagePresentation,
     bindStageCallbacks: (handlers) => {
       stage.onSelect = handlers.onSelect;
       stage.onBacklogClose = handlers.onBacklogClose;
@@ -189,7 +190,7 @@ describe('PresentationController', () => {
     const controller = new PresentationController(ports.commands, ports.queries, undefined, {
       commands: ports.commands,
       queries: ports.queries,
-      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
+      validateStagePresentation: ports.validateStagePresentation,
     });
     const facade = new RendererFacade({
       stage,
@@ -247,6 +248,34 @@ describe('PresentationController', () => {
     }
   });
 
+  it('fails closed when a direct Controller has no Stage validator instead of skipping nested validation', () => {
+    const stage = stageHarness();
+    const ports = createPresentationPorts(stage);
+    const validateCommand = vi.fn(ports.commands.presentation.validate);
+    const commands = {
+      ...ports.commands,
+      presentation: {
+        ...ports.commands.presentation,
+        validate: validateCommand,
+      },
+    };
+    const controller = new PresentationController(commands, ports.queries);
+    const invalid = {
+      version: 1,
+      stage: { version: 1, cameraScale: 99 },
+      timelines: [],
+    };
+
+    try {
+      expect(() => controller.validatePresentation(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }),
+      );
+      expect(validateCommand).not.toHaveBeenCalled();
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it('keeps the existing presentation transaction intact when nested World restore is invalid', async () => {
     const stage = stageHarness();
     const lifecycle = new RenderLifecycle();
@@ -259,7 +288,7 @@ describe('PresentationController', () => {
     const controller = new PresentationController(ports.commands, ports.queries, undefined, {
       commands: ports.commands,
       queries: ports.queries,
-      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
+      validateStagePresentation: ports.validateStagePresentation,
       lifecycle,
     });
     const bus = new EventBus<CoreEventMap>();

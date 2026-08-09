@@ -44,6 +44,7 @@ export * from './keybindings.js';
 export * from './backlog-search-controller.js';
 export * from './scene-hot-reload.js';
 export * from './diagnostics/renderer-baseline.js';
+export * from './diagnostics/renderer-baseline-v3.js';
 export * from './api/renderer-errors.js';
 export * from './api/renderer-input.js';
 export * from './api/renderer-commands.js';

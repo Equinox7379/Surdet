@@ -1,5 +1,6 @@
 import { Texture } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
+import { createPresentationPorts } from '../../src/adv-renderer.js';
 import { PixiStage } from '../../src/pixi-stage.js';
 import { RendererFacade, type RendererControllerPort } from '../../src/runtime/renderer-facade.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
@@ -125,5 +126,24 @@ describe('legacy World contract', () => {
     });
     withoutWorldPort.commands.presentation.validate({ version: 1, stage: null, timelines: [] });
     expect(stageReceivers).toEqual([stage]);
+  });
+
+  it('passes only the stage field through the createPresentationPorts validation bridge', () => {
+    const stage = {
+      destroy: () => undefined,
+    };
+    const worldValidator = vi.fn();
+    const worldPort = { validatePresentation: worldValidator };
+    const ports = createPresentationPorts(stage as never, { worldLayer: worldPort as never });
+    const stageSnapshot = { version: 1, backgroundKey: null, cameraScale: 1 };
+
+    expect(() => ports.commands.presentation.validate({
+      version: 1,
+      stage: stageSnapshot,
+      timelines: [],
+    })).not.toThrow();
+    expect(worldValidator).toHaveBeenCalledOnce();
+    expect(worldValidator).toHaveBeenCalledWith(stageSnapshot);
+    expect(worldValidator.mock.calls[0]?.[0]).not.toHaveProperty('timelines');
   });
 });
