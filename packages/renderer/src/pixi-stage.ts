@@ -1,6 +1,5 @@
 import {
   Application,
-  Assets,
   ColorMatrixFilter,
   Container,
   Graphics,
@@ -34,6 +33,11 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
+import {
+  DEFAULT_RENDERER_FONT_FAMILIES,
+  RenderAssetRegistry,
+  type RenderAssetSource,
+} from './services/render-asset-registry.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -61,14 +65,6 @@ function lerpColor(a: number, b: number, t: number): number {
   const g = Math.round(ag + (bg - ag) * t);
   const bl = Math.round(ab + (bb - ab) * t);
   return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (bl & 0xff);
-}
-
-/** Blob URL 没有文件扩展名，必须根据 MIME/扩展名显式选择 Pixi 解析器。 */
-function assetParser(format: string | undefined, src: string): 'loadSVG' | 'loadTextures' | undefined {
-  const value = (format ?? src.split('?')[0]?.split('#')[0]?.split('.').pop() ?? '').toLowerCase();
-  if (value === 'svg' || value === 'image/svg+xml') return 'loadSVG';
-  if (value.startsWith('image/') || /^(png|jpg|jpeg|webp|gif|avif)$/.test(value)) return 'loadTextures';
-  return undefined;
 }
 
 /** @particle 预设参数（程序化粒子：数量/颜色/基准半径/垂直速度 px·帧⁻¹/横向摆动幅度）。
@@ -147,11 +143,6 @@ function seededRandom(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-/** 正文/UI 默认字体栈。项目内嵌字体缺失时，仍以 CJK 无衬线保证中文、日文的可读性。 */
-const ADV_FONT_STACK = "'Source Han Sans SC', 'Noto Sans CJK SC', '源ノ角ゴシック', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Yu Gothic', sans-serif";
-/** 标题默认字体栈。只用于标题、章节等展示文字，避免正文随之变得难读。 */
-const ADV_TITLE_FONT_STACK = "'Source Han Serif SC', 'Noto Serif CJK SC', 'Songti SC', 'STSong', 'SimSun', serif";
 
 /** 字体角色：标题用展示字体，正文与 UI 保持无衬线的长时间阅读口径。 */
 export type FontRole = 'title' | 'body' | 'ui';
@@ -399,12 +390,7 @@ export class PixiStage implements AdvStage {
   #bgTransition: { old: Sprite | null; neu: Sprite; remain: number; dur: number } | null = null;
   #portraitSprites = new Map<string, Sprite>();
   #portraitViews = new Map<string, PortraitView>();
-  #bgTextureCache = new Map<string, Texture>();
-  #portraitTextureCache = new Map<string, Texture>();
-  /** 真实背景素材（宿主 registerBackground 注入，优先于程序化占位） */
-  #registeredBgs = new Map<string, Texture>();
-  /** 真实立绘素材（key = charId:costume:expression，宿主 registerPortrait 注入） */
-  #registeredPortraits = new Map<string, Texture>();
+  readonly #assetRegistry: RenderAssetRegistry;
   #speakerText: PText;
   #dialogText: PText;
   /** 避免打字机每帧把相同字符串重新送进 Pixi Text，重复触发断行和纹理重建。 */
@@ -435,7 +421,6 @@ export class PixiStage implements AdvStage {
   #activeSpeakerId: string | null = null;
   /** 当前说话人的小头像（可选素材）。 */
   #speakerAvatar: Sprite | null = null;
-  #registeredAvatars = new Map<string, Texture>();
   /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
   #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
   /** Backlog 滚动状态 */
@@ -556,15 +541,7 @@ export class PixiStage implements AdvStage {
   #w = 1280;
   #h = 720;
   /** 项目字体按角色独立保存；默认不依赖任何系统已安装字体。 */
-  #fontFamilies: Record<FontRole, string> = {
-    title: ADV_TITLE_FONT_STACK,
-    body: ADV_FONT_STACK,
-    ui: ADV_FONT_STACK,
-  };
-  /** 由 registerFontRole 加入 document.fonts 的字体面；预览重载时显式移除。 */
-  #fontFaces = new Map<FontRole, FontFace>();
-  /** 通过 URL 交给 Pixi Assets 加载的来源；Texture 注入不纳入本集合。 */
-  #registeredAssetSources = new Set<string>();
+  #fontFamilies: Record<FontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
   /** 舞台直接交互/异步资源更新时唤醒外部帧调度器。 */
   #frameRequest: FrameRequestHandler | null = null;
   /** 画质策略由舞台统一应用，默认 balanced 兼顾正式游戏和编辑器预览。 */
@@ -574,7 +551,8 @@ export class PixiStage implements AdvStage {
   #colorMatrix: ColorMatrixFilter | null = null;
   #loadingLayer: LoadingLayer;
 
-  constructor() {
+  constructor(assetRegistry?: RenderAssetRegistry) {
+    this.#assetRegistry = assetRegistry ?? new RenderAssetRegistry();
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
     TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
     this.#bgLayer = new Container();
@@ -878,12 +856,8 @@ export class PixiStage implements AdvStage {
    * 注册真实背景素材（URL 或已加载的 Texture）。之后 @bg key 使用真实素材而非程序化占位。
    * URL 通过 Pixi Assets 异步加载；清除同名占位缓存使下一次 setBackground 生效。
    */
-  async registerBackground(key: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
-    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
-    if (typeof src === 'string') this.#registeredAssetSources.add(src);
-    this.#registeredBgs.set(key, tex);
-    this.#bgTextureCache.delete(key);
+  async registerBackground(key: string, src: RenderAssetSource, format?: string): Promise<void> {
+    await this.#assetRegistry.registerBackground(key, src, format);
     // 资源可能在 @bg 已经投影后才完成加载；替换当前画面，避免首帧占位永久驻留。
     if (this.#backgroundKey === key) this.setBackground(key);
     this.#requestFrame();
@@ -908,26 +882,12 @@ export class PixiStage implements AdvStage {
    * 变量字体以常规字重注册；舞台不通过浏览器伪粗体制造标题重量。
    */
   async registerFontRole(role: FontRole, url: string, family = `SurdetGame${role[0]!.toUpperCase()}${role.slice(1)}Font`, timeoutMs = 3000): Promise<boolean> {
-    if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false; // 非浏览器/测试环境
-    try {
-      const face = new FontFace(family, `url(${url})`, { weight: '400' });
-      const loaded = await Promise.race([
-        face.load(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
-      ]);
-      const fontSet = document.fonts as unknown as { add: (f: FontFace) => void; delete?: (f: FontFace) => boolean };
-      const previous = this.#fontFaces.get(role);
-      if (previous) fontSet.delete?.(previous);
-      fontSet.add(loaded);
-      this.#fontFaces.set(role, loaded);
-      this.#fontFamilies[role] = family;
-      this.#applyTypography();
-      this.#requestFrame();
-      return true;
-    } catch (err) {
-      console.warn(`[PixiStage] ${role} 字体加载失败，回退系统字体：`, err instanceof Error ? err.message : String(err));
-      return false;
-    }
+    const ok = await this.#assetRegistry.registerFontRole(role, url, family, timeoutMs);
+    if (!ok) return false;
+    this.#fontFamilies[role] = this.#assetRegistry.fontFamily(role);
+    this.#applyTypography();
+    this.#requestFrame();
+    return true;
   }
 
   /**
@@ -945,16 +905,8 @@ export class PixiStage implements AdvStage {
 
   /** 清除项目字体并恢复三类回退栈（预览重载时不能沿用旧项目的字体）。 */
   resetFonts(): void {
-    if (typeof document !== 'undefined') {
-      const fontSet = document.fonts as unknown as { delete?: (f: FontFace) => boolean };
-      for (const face of this.#fontFaces.values()) fontSet.delete?.(face);
-    }
-    this.#fontFaces.clear();
-    this.#fontFamilies = {
-      title: ADV_TITLE_FONT_STACK,
-      body: ADV_FONT_STACK,
-      ui: ADV_FONT_STACK,
-    };
+    this.#assetRegistry.resetFonts();
+    this.#fontFamilies = { ...DEFAULT_RENDERER_FONT_FAMILIES };
     this.#applyTypography();
     this.#requestFrame();
   }
@@ -968,13 +920,9 @@ export class PixiStage implements AdvStage {
    * 注册真实立绘素材（按 角色:服装:表情 精确匹配）。之后 @show charId:costume 对应表情
    * 使用真实素材而非程序化占位。URL 通过 Pixi Assets 异步加载。
    */
-  async registerPortrait(charId: string, costume: string, expression: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
-    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
-    if (typeof src === 'string') this.#registeredAssetSources.add(src);
+  async registerPortrait(charId: string, costume: string, expression: string, src: RenderAssetSource, format?: string): Promise<void> {
+    await this.#assetRegistry.registerPortrait(charId, costume, expression, src, format);
     const cacheKey = `${charId}:${costume}:${expression}`;
-    this.#registeredPortraits.set(cacheKey, tex);
-    this.#portraitTextureCache.delete(cacheKey);
     // 同样处理运行中替换立绘的情况：注册完成后立即为已显示的角色启动交叉淡化。
     for (const [spriteKey, view] of this.#portraitViews) {
       if (`${view.charId}:${view.costume}:${view.expression}` === cacheKey) this.setPortrait(spriteKey, view);
@@ -983,11 +931,8 @@ export class PixiStage implements AdvStage {
   }
 
   /** 注册对白区小头像；缺失时不显示头像，不猜测主立绘。 */
-  async registerAvatar(key: string, src: string | Texture, format?: string): Promise<void> {
-    const parser = typeof src === 'string' ? assetParser(format, src) : undefined;
-    const tex = typeof src === 'string' ? await Assets.load(parser ? { src, parser } : src) : src;
-    if (typeof src === 'string') this.#registeredAssetSources.add(src);
-    this.#registeredAvatars.set(key, tex);
+  async registerAvatar(key: string, src: RenderAssetSource, format?: string): Promise<void> {
+    await this.#assetRegistry.registerAvatar(key, src, format);
     this.#updateSpeakerAvatar();
     this.#requestFrame();
   }
@@ -1021,7 +966,7 @@ export class PixiStage implements AdvStage {
     const profile = [...this.#speakerProfiles.values()].find((p) => p.id === this.#activeSpeakerId);
     // 头像必须由角色资料显式声明；不要因为存在同名资源就猜测映射。
     const key = profile?.avatarKey;
-    const texture = key ? this.#registeredAvatars.get(key) : undefined;
+    const texture = key ? this.#assetRegistry.resolveAvatar(key) : null;
     if (!texture || !profile || this.#interfaceHidden || this.#nvlActive) {
       sprite.visible = false;
       return;
@@ -1045,10 +990,8 @@ export class PixiStage implements AdvStage {
       this.#bgSprite = null;
     }
     if (key === null || key.length === 0) return;
-    const texture = this.#registeredBgs.get(key)
-      ?? this.#bgTextureCache.get(key)
-      ?? makeBackgroundTexture(key, this.#w, this.#h);
-    this.#bgTextureCache.set(key, texture);
+    const texture = this.#assetRegistry.resolveBackground(key)
+      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
     const sprite = new Sprite(texture);
     // cover：保持背景比例并从中心裁切，避免真实素材被拉伸成“编辑器占位图”。
     const scale = Math.max(this.#w / Math.max(1, texture.width), this.#h / Math.max(1, texture.height));
@@ -1071,10 +1014,8 @@ export class PixiStage implements AdvStage {
   #startTimelineBackground(key: string, durMs: number): void {
     if (this.#backgroundKey === key && this.#bgSprite) return;
     this.#stopBackgroundTransition();
-    const texture = this.#registeredBgs.get(key)
-      ?? this.#bgTextureCache.get(key)
-      ?? makeBackgroundTexture(key, this.#w, this.#h);
-    this.#bgTextureCache.set(key, texture);
+    const texture = this.#assetRegistry.resolveBackground(key)
+      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
     const neu = new Sprite(texture);
     const scale = Math.max(this.#w / Math.max(1, texture.width), this.#h / Math.max(1, texture.height));
     neu.width = texture.width * scale;
@@ -1097,12 +1038,8 @@ export class PixiStage implements AdvStage {
     this.#requestFrame();
     this.#portraitViews.set(key, opts);
     const cacheKey = `${opts.charId}:${opts.costume}:${opts.expression}`;
-    let texture = this.#registeredPortraits.get(cacheKey)
-      ?? this.#portraitTextureCache.get(cacheKey);
-    if (!texture) {
-      texture = makePortraitTexture(opts.charId, opts.costume, opts.expression);
-      this.#portraitTextureCache.set(cacheKey, texture);
-    }
+    const texture = this.#assetRegistry.resolvePortrait(opts.charId, opts.costume, opts.expression)
+      ?? this.#assetRegistry.getOrCreatePortrait(cacheKey, () => makePortraitTexture(opts.charId, opts.costume, opts.expression));
     const pw = Math.min(430, this.#w * 0.36);
     const ph = (texture.height / texture.width) * pw;
     const baseY = this.#h + 10;
@@ -1736,10 +1673,7 @@ export class PixiStage implements AdvStage {
    * 正式游戏退出时也应调用，避免 Blob URL 对应的 Texture 留在全局 Assets 缓存中。
    */
   async releaseRegisteredAssetSources(): Promise<void> {
-    const sources = [...this.#registeredAssetSources];
-    this.#registeredAssetSources.clear();
-    if (sources.length === 0) return;
-    await Promise.allSettled([Assets.unload(sources)]);
+    await this.#assetRegistry.releaseRegisteredAssetSources();
   }
 
   /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
@@ -2297,12 +2231,8 @@ export class PixiStage implements AdvStage {
         cell.position.set(x, y);
         if (item.unlocked) {
           const key = item.src ?? item.id;
-          const tex = this.#registeredBgs.get(key)
-            ?? this.#bgTextureCache.get(key)
-            ?? makeBackgroundTexture(key, 320, 180);
-          if (!this.#registeredBgs.has(key) && !this.#bgTextureCache.has(key)) {
-            this.#bgTextureCache.set(key, tex);
-          }
+          const tex = this.#assetRegistry.resolveBackground(key)
+            ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, 320, 180));
           const sp = new Sprite(tex);
           sp.width = cw;
           sp.height = ch;
@@ -2379,12 +2309,8 @@ export class PixiStage implements AdvStage {
 
   /** CG 全屏回看：优先注册的真实素材，未注册回退程序化占位；点击任意处返回列表 */
   #buildGalleryViewer(layer: Container, key: string): void {
-    const tex = this.#registeredBgs.get(key)
-      ?? this.#bgTextureCache.get(key)
-      ?? makeBackgroundTexture(key, this.#w, this.#h);
-    if (!this.#registeredBgs.has(key) && !this.#bgTextureCache.has(key)) {
-      this.#bgTextureCache.set(key, tex);
-    }
+    const tex = this.#assetRegistry.resolveBackground(key)
+      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
     const sp = new Sprite(tex);
     sp.width = this.#w;
     sp.height = this.#h;
@@ -2643,7 +2569,7 @@ export class PixiStage implements AdvStage {
     this.#titleHandler = onSelect;
     const layer = this.#titleLayer;
     layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    const titleTexture = this.#registeredBgs.get(view.backgroundKey ?? 'title_bg');
+    const titleTexture = this.#assetRegistry.resolveBackground(view.backgroundKey ?? 'title_bg');
     if (titleTexture) {
       // 标题底图同正文背景使用 cover，避免生成素材在不同窗口被拉伸；暗幕只负责衬托标题文字。
       const titleBg = new Sprite(titleTexture);
@@ -3324,6 +3250,7 @@ export class PixiStage implements AdvStage {
     this.hideVideo();
     this.hideEnding();
     this.#clearChoices();
+    this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
 
     if (!preserveWorld) {
       const sprites = new Set<Sprite>([
@@ -3344,31 +3271,6 @@ export class PixiStage implements AdvStage {
         this.#bgSprite = null;
       }
       this.#backgroundKey = null;
-
-      const registered = new Set<Texture>([
-        ...this.#registeredBgs.values(),
-        ...this.#registeredPortraits.values(),
-      ]);
-      for (const tex of this.#bgTextureCache.values()) {
-        if (!registered.has(tex)) tex.destroy();
-      }
-      for (const tex of this.#portraitTextureCache.values()) {
-        if (!registered.has(tex)) tex.destroy();
-      }
-      if (clearAssets) {
-        this.#bgTextureCache.clear();
-        this.#portraitTextureCache.clear();
-        this.#registeredBgs.clear();
-        this.#registeredPortraits.clear();
-        this.#registeredAvatars.clear();
-      } else {
-        for (const [key, tex] of this.#bgTextureCache) {
-          if (!registered.has(tex)) this.#bgTextureCache.delete(key);
-        }
-        for (const [key, tex] of this.#portraitTextureCache) {
-          if (!registered.has(tex)) this.#portraitTextureCache.delete(key);
-        }
-      }
     }
 
     const clearLayer = (layer: Container): void => {
@@ -3480,15 +3382,6 @@ export class PixiStage implements AdvStage {
     this.#loadingLayer.destroy();
     this.#clearChoices();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
-    const registered = new Set<Texture>([...this.#registeredBgs.values(), ...this.#registeredPortraits.values()]);
-    for (const tex of this.#bgTextureCache.values()) {
-      if (!registered.has(tex)) tex.destroy();
-    }
-    this.#bgTextureCache.clear();
-    for (const tex of this.#portraitTextureCache.values()) {
-      if (!registered.has(tex)) tex.destroy();
-    }
-    this.#portraitTextureCache.clear();
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
     this.#portraitSprites.clear();
     this.#portraitViews.clear();
@@ -3496,11 +3389,7 @@ export class PixiStage implements AdvStage {
     this.#bgSprite?.destroy();
     this.#bgSprite = null;
     this.#backgroundKey = null;
-    this.#registeredBgs.clear();
-    this.#registeredPortraits.clear();
-    this.#registeredAvatars.clear();
-    this.resetFonts();
-    void this.releaseRegisteredAssetSources();
+    this.#assetRegistry.dispose();
     if (this.app?.canvas && this.#commandRailPointerWake) {
       this.app.canvas.removeEventListener('pointermove', this.#commandRailPointerWake);
       this.app.canvas.removeEventListener('pointerdown', this.#commandRailPointerWake);

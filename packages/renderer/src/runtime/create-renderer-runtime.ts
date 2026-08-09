@@ -9,6 +9,8 @@ import { NULL_AUDIO } from '../types.js';
 import { PixiStage } from '../pixi-stage.js';
 import { RenderPerformanceMonitor } from '../performance.js';
 import { RendererError } from '../api/renderer-errors.js';
+import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../services/render-asset-registry.js';
 import type { RendererInputAction } from '../api/renderer-input.js';
 import type {
   PresentationController,
@@ -33,6 +35,8 @@ export interface RendererRuntimeInternals {
   readonly scheduler: { dispose(): void };
   readonly monitor: RenderPerformanceMonitor;
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
+  readonly assetRegistry?: RenderAssetRegistry;
+  readonly lifecycle?: RenderLifecycle;
 }
 
 /**
@@ -151,6 +155,7 @@ export async function createRendererRuntimeFromInternals(
     controller: internals.controller,
     monitor: internals.monitor,
     resourceSnapshot: internals.resourceSnapshot,
+    assetRegistry: internals.assetRegistry,
   };
   const facade = new RendererFacade(facadeOptions);
   let disposed = false;
@@ -167,6 +172,8 @@ export async function createRendererRuntimeFromInternals(
       internals.scheduler.dispose();
       internals.controller.dispose();
       internals.stage.destroy();
+      internals.assetRegistry?.dispose();
+      internals.lifecycle?.dispose();
       facade.markDisposed();
     },
   };
@@ -189,7 +196,9 @@ function notifyRuntimeError(options: RendererRuntimeOptions, cause: unknown): Re
 }
 
 export async function createRendererRuntime(options: RendererRuntimeOptions = {}): Promise<RendererRuntime> {
-  const stage = new PixiStage();
+  const lifecycle = new RenderLifecycle();
+  const assetRegistry = new RenderAssetRegistry({ lifecycle });
+  const stage = new PixiStage(assetRegistry);
   try {
     await stage.init(options.canvas);
     if (options.quality !== undefined) stage.setQuality(options.quality);
@@ -220,9 +229,14 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       controller,
       scheduler,
       monitor,
+      assetRegistry,
+      lifecycle,
+      resourceSnapshot: () => lifecycle.snapshot(),
     });
   } catch (cause) {
     stage.destroy();
+    assetRegistry.dispose();
+    lifecycle.dispose();
     throw notifyRuntimeError(options, cause);
   }
 }
