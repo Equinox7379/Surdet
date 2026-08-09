@@ -21,7 +21,7 @@ import {
   type RendererStagePort,
 } from './renderer-facade.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
-import type { DialogueLayer } from '../layers/dialogue/dialogue-layer.js';
+import type { DialogueProjectionPort } from '../api/renderer-commands.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -34,7 +34,7 @@ export interface RendererRuntimeInternals {
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
   readonly assetRegistry?: RenderAssetRegistry;
   readonly lifecycle?: RenderLifecycle;
-  readonly dialogueLayer?: DialogueLayer;
+  readonly dialogueLayer?: DialogueProjectionPort;
 }
 
 interface CleanupParts {

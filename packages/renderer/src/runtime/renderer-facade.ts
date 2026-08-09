@@ -29,6 +29,7 @@ import { RendererCommandError, RendererError } from '../api/renderer-errors.js';
 import type {
   AssetCommands,
   DialogueCommands,
+  DialogueProjectionPort,
   GalleryCommands,
   LoadingCommands,
   MenuCommands,
@@ -52,7 +53,6 @@ import type {
 } from '../api/renderer-queries.js';
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
-import type { DialogueLayer } from '../layers/dialogue/dialogue-layer.js';
 
 /** @internal Transitional Stage port; it keeps Pixi and legacy methods out of the public API. */
 export type RendererStagePort = Partial<AdvStage> & {
@@ -115,7 +115,8 @@ export interface RendererFacadeOptions {
   monitor: RenderPerformanceMonitor;
   resourceSnapshot?: () => RendererResourceSnapshot;
   assetRegistry?: RenderAssetRegistry;
-  dialogueLayer?: DialogueLayer;
+  /** M3 public dialogue projection port; concrete Layer details stay behind it. */
+  dialogueLayer?: DialogueProjectionPort;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -172,7 +173,7 @@ export class RendererFacade {
   #monitor: RenderPerformanceMonitor;
   #resourceSnapshot?: () => RendererResourceSnapshot;
   #assetRegistry?: RenderAssetRegistry;
-  #dialogueLayer?: DialogueLayer;
+  #dialoguePort?: DialogueProjectionPort;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
 
@@ -182,7 +183,7 @@ export class RendererFacade {
     this.#monitor = options.monitor;
     this.#resourceSnapshot = options.resourceSnapshot;
     this.#assetRegistry = options.assetRegistry;
-    this.#dialogueLayer = options.dialogueLayer;
+    this.#dialoguePort = options.dialogueLayer;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -271,29 +272,42 @@ export class RendererFacade {
     };
 
     const dialogue: DialogueCommands = {
-      showText: (speaker, value) => this.#callDialogue('showText', this.#dialogueLayer?.showText, this.#stage.showText, speaker, value),
-      showChoices: (options) => this.#callDialogue('showChoices', this.#dialogueLayer?.showChoices, this.#stage.showChoices, options.slice()),
-      hideChoices: () => this.#callDialogue('hideChoices', this.#dialogueLayer?.hideChoices, this.#stage.hideChoices),
-      setAwaiting: (awaiting) => this.#callDialogue('setAwaiting', this.#dialogueLayer?.setAwaiting, this.#stage.setAwaiting, awaiting),
-      showBacklog: (entries, onReplayVoice, query) => this.#callDialogue('showBacklog', this.#dialogueLayer?.showBacklog, this.#stage.showBacklog, entries.map((entry) => ({ ...entry })), onReplayVoice, query),
-      hideBacklog: () => this.#callDialogue('hideBacklog', this.#dialogueLayer?.hideBacklog, this.#stage.hideBacklog),
-      setNvlMode: (on) => this.#callDialogue('setNvlMode', this.#dialogueLayer?.setNvlMode, this.#stage.setNvlMode, on),
-      appendNvlText: (speaker, text) => this.#callDialogue('appendNvlText', this.#dialogueLayer?.appendNvlText, this.#stage.appendNvlText, speaker, text),
-      clearNvlText: () => this.#callDialogue('clearNvlText', this.#dialogueLayer?.clearNvlText, this.#stage.clearNvlText),
-      showBanner: (text, variant) => this.#callDialogue('showBanner', this.#dialogueLayer?.showBanner, this.#stage.showBanner, text, variant),
-      setChoiceHighlight: (position) => this.#callDialogue('setChoiceHighlight', this.#dialogueLayer?.setChoiceHighlight, this.#stage.setChoiceHighlight, position),
-      scrollBacklog: (delta) => this.#callDialogue('scrollBacklog', this.#dialogueLayer?.scrollBacklog, this.#stage.scrollBacklog, delta),
-      hideInterface: (hidden) => this.#callDialogue('hideInterface', this.#dialogueLayer?.hideInterface, this.#stage.hideInterface, hidden),
-      setSpeakerProfiles: (profiles) => this.#callDialogue('setSpeakerProfiles', this.#dialogueLayer?.setSpeakerProfiles, this.#stage.setSpeakerProfiles, profiles.slice()),
-      setActiveSpeaker: (characterId) => {
-        this.#callDialogue('setActiveSpeaker', this.#dialogueLayer?.setActiveSpeaker, this.#stage.setActiveSpeaker, characterId);
-        if (this.#stage.setPortraitFocus) {
-          this.#callStage('world', 'setPortraitFocus', this.#stage.setPortraitFocus, characterId);
+      showText: (speaker, value) => {
+        if (!this.#dialoguePort) {
+          this.#callDialogue('showText', undefined, this.#stage.showText, speaker, value);
+          return;
+        }
+        const before = this.#dialoguePort.projectionVersion;
+        this.#callDialogue('showText', this.#dialoguePort.showText, this.#stage.showText, speaker, value);
+        if (this.#dialoguePort.projectionVersion !== before) {
+          this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
         }
       },
-      showCommandRail: (items, onSelect) => this.#callDialogue('showCommandRail', this.#dialogueLayer?.showCommandRail, this.#stage.showCommandRail, items.slice(), onSelect),
-      setCommandRailItems: (items) => this.#callDialogue('setCommandRailItems', this.#dialogueLayer?.setCommandRailItems, this.#stage.setCommandRailItems, items.slice()),
-      hideCommandRail: () => this.#callDialogue('hideCommandRail', this.#dialogueLayer?.hideCommandRail, this.#stage.hideCommandRail),
+      showChoices: (options) => this.#callDialogue('showChoices', this.#dialoguePort?.showChoices, this.#stage.showChoices, options.slice()),
+      hideChoices: () => this.#callDialogue('hideChoices', this.#dialoguePort?.hideChoices, this.#stage.hideChoices),
+      setAwaiting: (awaiting) => this.#callDialogue('setAwaiting', this.#dialoguePort?.setAwaiting, this.#stage.setAwaiting, awaiting),
+      showBacklog: (entries, onReplayVoice, query) => this.#callDialogue('showBacklog', this.#dialoguePort?.showBacklog, this.#stage.showBacklog, entries.map((entry) => ({ ...entry })), onReplayVoice, query),
+      hideBacklog: () => this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog),
+      setNvlMode: (on) => this.#callDialogue('setNvlMode', this.#dialoguePort?.setNvlMode, this.#stage.setNvlMode, on),
+      appendNvlText: (speaker, text) => this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text),
+      clearNvlText: () => this.#callDialogue('clearNvlText', this.#dialoguePort?.clearNvlText, this.#stage.clearNvlText),
+      showBanner: (text, variant) => this.#callDialogue('showBanner', this.#dialoguePort?.showBanner, this.#stage.showBanner, text, variant),
+      setChoiceHighlight: (position) => this.#callDialogue('setChoiceHighlight', this.#dialoguePort?.setChoiceHighlight, this.#stage.setChoiceHighlight, position),
+      scrollBacklog: (delta) => this.#callDialogue('scrollBacklog', this.#dialoguePort?.scrollBacklog, this.#stage.scrollBacklog, delta),
+      hideInterface: (hidden) => this.#callDialogue('hideInterface', this.#dialoguePort?.hideInterface, this.#stage.hideInterface, hidden),
+      setSpeakerProfiles: (profiles) => this.#callDialogue('setSpeakerProfiles', this.#dialoguePort?.setSpeakerProfiles, this.#stage.setSpeakerProfiles, profiles.slice()),
+      setActiveSpeaker: (characterId) => {
+        if (!this.#dialoguePort) {
+          this.#callDialogue('setActiveSpeaker', undefined, this.#stage.setActiveSpeaker, characterId);
+          this.#coordinateWorldFocus(characterId);
+          return;
+        }
+        this.#callDialogue('setActiveSpeaker', this.#dialoguePort.setActiveSpeaker, this.#stage.setActiveSpeaker, characterId);
+        this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
+      },
+      showCommandRail: (items, onSelect) => this.#callDialogue('showCommandRail', this.#dialoguePort?.showCommandRail, this.#stage.showCommandRail, items.slice(), onSelect),
+      setCommandRailItems: (items) => this.#callDialogue('setCommandRailItems', this.#dialoguePort?.setCommandRailItems, this.#stage.setCommandRailItems, items.slice()),
+      hideCommandRail: () => this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail),
     };
 
     const menu: MenuCommands = {
@@ -518,8 +532,14 @@ export class RendererFacade {
     this.#ensureActive('dialogue', command);
     const method = layerMethod ?? stageMethod;
     if (!method) this.#missing('dialogue', command);
-    const receiver = layerMethod ? this.#dialogueLayer : this.#stage;
+    const receiver = layerMethod ? this.#dialoguePort : this.#stage;
     return Reflect.apply(method, receiver, args as unknown as unknown[]);
+  }
+
+  /** M3 cross-layer coordination: the Facade owns the only v2 World focus call. */
+  #coordinateWorldFocus(characterId: string | null): void {
+    if (!this.#stage.setPortraitFocus) return;
+    this.#callStage('world', 'setPortraitFocus', this.#stage.setPortraitFocus, characterId);
   }
 
   #queryStage<T>(domain: string, command: string, method: (() => T) | undefined): T;

@@ -78,6 +78,19 @@ export interface DialogueCommands {
   hideCommandRail(): void;
 }
 
+/**
+ * Public renderer port for the extracted dialogue projection.
+ *
+ * `activeSpeakerId` is a pure read-only projection query. It lets the Facade
+ * coordinate the World focus after `showText` derives a speaker profile without
+ * giving DialogueLayer any World dependency or callback.
+ */
+export interface DialogueProjectionPort extends DialogueCommands {
+  readonly activeSpeakerId: string | null;
+  /** Increments only when a non-idempotent text projection is accepted. */
+  readonly projectionVersion: number;
+}
+
 export interface MenuCommands {
   showTitle(view: TitleView, onSelect: (id: string) => void): void;
   hideTitle(restoreCommandRail?: boolean): void;

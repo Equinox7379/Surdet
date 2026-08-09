@@ -29,6 +29,7 @@ describe('legacy dialogue stage contract', () => {
 
   it('keeps the existing PixiStage dialogue surface callable and repeatable', async () => {
     const stage = new PixiStage();
+    const focusSpy = vi.spyOn(stage, 'setPortraitFocus');
     try {
       await stage.registerBackground('hall', Texture.EMPTY);
       await stage.registerPortrait('lynn', 'uniform', 'normal', Texture.WHITE);
@@ -47,8 +48,19 @@ describe('legacy dialogue stage contract', () => {
 
       stage.setSpeakerProfiles([{ id: 'lynn', name: '凛', avatarKey: 'avatar-lynn' }]);
       stage.setActiveSpeaker('lynn');
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenLastCalledWith('lynn');
+      focusSpy.mockClear();
       stage.showText('凛', '对白');
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenLastCalledWith('lynn');
+      focusSpy.mockClear();
       stage.showText(null, '旁白');
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenLastCalledWith(null);
+      focusSpy.mockClear();
+      stage.showText(null, '旁白');
+      expect(focusSpy).not.toHaveBeenCalled();
       stage.showChoices([{ index: 3, label: '继续' }]);
       stage.setChoiceHighlight(0);
       stage.hideChoices();
@@ -97,6 +109,7 @@ describe('legacy dialogue stage contract', () => {
 
   it('keeps AdvRenderer callback binding and legacy lifecycle behavior', () => {
     const stage = new PixiStage();
+    const focusSpy = vi.spyOn(stage, 'setPortraitFocus');
     const bus = new EventBus<CoreEventMap>();
     const selected: number[] = [];
     const backlog = new Backlog();
@@ -106,6 +119,11 @@ describe('legacy dialogue stage contract', () => {
     });
 
     renderer.subscribe(bus);
+    stage.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+    bus.emit('text', { speaker: '凛', value: '来自 AdvRenderer 的对白' });
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy).toHaveBeenLastCalledWith('lynn');
+    focusSpy.mockClear();
     bus.emit('choice', { options: [{ index: 7, label: '选择' }] });
     stage.onSelect?.(7);
     expect(selected).toEqual([7]);
