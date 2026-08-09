@@ -282,7 +282,7 @@ export function createPresentationPorts(
     ? (snapshot: unknown) => options.worldLayer!.validatePresentation!.call(options.worldLayer, snapshot)
     : stage.validatePresentation
       ? (snapshot: unknown) => stage.validatePresentation!.call(stage, snapshot)
-      : undefined;
+      : () => undefined;
 
   const presentationCommands: RendererCommands['presentation'] = {
     validate: (snapshot) => {
