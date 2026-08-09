@@ -21,7 +21,7 @@ import {
   type RendererStagePort,
 } from './renderer-facade.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
-import type { DialogueProjectionPort } from '../api/renderer-commands.js';
+import type { DialogueProjectionPort, MenuProjectionPort } from '../api/renderer-commands.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -35,6 +35,7 @@ export interface RendererRuntimeInternals {
   readonly assetRegistry?: RenderAssetRegistry;
   readonly lifecycle?: RenderLifecycle;
   readonly dialogueLayer?: DialogueProjectionPort;
+  readonly menuLayer?: MenuProjectionPort;
 }
 
 interface CleanupParts {
@@ -128,6 +129,7 @@ export async function createRendererRuntimeFromInternals(
         ?? (internals.lifecycle ? () => internals.lifecycle!.snapshot() : undefined),
       assetRegistry: internals.assetRegistry,
       dialogueLayer: internals.dialogueLayer,
+      menuLayer: internals.menuLayer,
     };
     facade = new RendererFacade(facadeOptions);
     let disposed = false;
@@ -238,6 +240,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       lifecycle,
       resourceSnapshot: () => lifecycle.snapshot(),
       dialogueLayer: stage.dialogueLayer,
+      menuLayer: stage.menuLayer,
     });
   } catch (cause) {
     const cleanupFailures = compositionAttempted

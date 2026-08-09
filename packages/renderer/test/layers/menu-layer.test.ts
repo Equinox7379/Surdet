@@ -1,9 +1,17 @@
+import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
+import type { DialogueProjectionPort, MenuProjectionPort } from '../../src/api/renderer-commands.js';
 import type { MenuOverlayState } from '../../src/api/renderer-queries.js';
 import type { RendererControllerPort, RendererStagePort } from '../../src/runtime/renderer-facade.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
-import type { SaveLoadView, SettingsRowView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
+import { MenuLayer } from '../../src/layers/menu/menu-layer.js';
+import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import type { SaveLoadView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
+import type { SettingsRowView } from '../../src/settings-store.js';
+
+const pointerEvent = {} as FederatedPointerEvent;
 
 interface MenuHarness {
   readonly facade: RendererFacade;
@@ -68,6 +76,66 @@ function makeHarness(): MenuHarness {
       monitor: new RenderPerformanceMonitor(),
     }),
   };
+}
+
+function findText(root: Container, value: string): PText {
+  const found = root.children
+    .flatMap((child) => child.children)
+    .find((child) => child instanceof PText && child.text === value);
+  expect(found, `text ${value} should be projected`).toBeDefined();
+  return found as PText;
+}
+
+function findParentWithText(root: Container, value: string): Container {
+  const visit = (container: Container): Container | undefined => {
+    if (container.children.some((nested) => nested instanceof PText && nested.text === value)) return container;
+    for (const child of container.children) {
+      if (child instanceof Container) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const parent = visit(root);
+  expect(parent, `container containing ${value} should be projected`).toBeDefined();
+  return parent as Container;
+}
+
+function makeMenuProjection() {
+  const root = new Container();
+  const lifecycle = new RenderLifecycle();
+  const assets = new RenderAssetRegistry({ lifecycle });
+  const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+  return { root, lifecycle, assets, layer };
+}
+
+function exerciseMenuLayer(layer: MenuLayer): void {
+  layer.showTitle({ title: 'Surdet', items: [{ id: 'start', label: '开始' }] }, vi.fn());
+  layer.hideTitle(false);
+  layer.showEnding('THE END');
+  layer.hideEnding();
+  layer.showSystemMenu([{ id: 'settings', label: '设置' }], vi.fn(), vi.fn());
+  layer.update(260);
+  layer.hideSystemMenu();
+  layer.showSettings([{ id: 'textSpeed', label: '文字速度', display: '普通' }], vi.fn(), vi.fn());
+  layer.hideSettings();
+  layer.showSaveLoad({ mode: 'save', slots: [{ id: 'slot-1', empty: true }] }, vi.fn(), vi.fn());
+  layer.hideSaveLoad();
+  layer.reset();
+}
+
+function projectionSignature(root: Container): unknown {
+  const visit = (node: Container): unknown => ({
+    type: node.constructor.name,
+    visible: node.visible,
+    alpha: Number(node.alpha.toFixed(4)),
+    x: Number(node.x.toFixed(4)),
+    y: Number(node.y.toFixed(4)),
+    text: node instanceof PText ? node.text : undefined,
+    children: node.children.map((child) => visit(child)),
+  });
+  return visit(root);
 }
 
 describe('Menu v2 characterization contract', () => {
@@ -152,5 +220,236 @@ describe('Menu v2 characterization contract', () => {
 
     const query = runtime.facade.queries.overlay.menu();
     expect(query).not.toBe(runtime.facade.queries.overlay.menu());
+  });
+});
+
+describe('MenuLayer projection and lifecycle contract', () => {
+  it('uses the injected MenuProjectionPort as the sole v2 menu renderer', () => {
+    let overlay: MenuOverlayState = { type: 'none' };
+    const menu = {
+      showTitle: vi.fn(() => { overlay = { type: 'title' }; }),
+      hideTitle: vi.fn(() => { overlay = { type: 'none' }; }),
+      showEnding: vi.fn(() => { overlay = { type: 'ending' }; }),
+      hideEnding: vi.fn(() => { overlay = { type: 'none' }; }),
+      showSystemMenu: vi.fn(() => { overlay = { type: 'system-menu' }; }),
+      hideSystemMenu: vi.fn(() => { overlay = { type: 'none' }; }),
+      showSettings: vi.fn(() => { overlay = { type: 'settings' }; }),
+      hideSettings: vi.fn(() => { overlay = { type: 'none' }; }),
+      showSaveLoad: vi.fn((view: SaveLoadView) => { overlay = { type: 'save-load', mode: view.mode }; }),
+      hideSaveLoad: vi.fn(() => { overlay = { type: 'none' }; }),
+      menu: vi.fn(() => ({ ...overlay })),
+    } as unknown as MenuProjectionPort;
+    const dialogue = {
+      hideCommandRail: vi.fn(),
+      hideChoices: vi.fn(),
+      hideBacklog: vi.fn(),
+    } as unknown as DialogueProjectionPort;
+    const stage = {
+      destroy: vi.fn(),
+      hideGallery: vi.fn(),
+      setFade: vi.fn(),
+      restoreCommandRail: vi.fn(),
+      showTitle: vi.fn(),
+      showEnding: vi.fn(),
+      showSystemMenu: vi.fn(),
+      showSettings: vi.fn(),
+      showSaveLoad: vi.fn(),
+    } as unknown as RendererStagePort;
+    const facade = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: dialogue,
+      menuLayer: menu,
+    });
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+
+    facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, onSelect);
+    expect(menu.showTitle).toHaveBeenCalledOnce();
+    expect(stage.showTitle).not.toHaveBeenCalled();
+    expect(dialogue.hideCommandRail).toHaveBeenCalledOnce();
+    expect(facade.queries.overlay.menu()).toEqual({ type: 'title' });
+
+    facade.commands.menu.showEnding('THE END');
+    expect(menu.showEnding).toHaveBeenCalledOnce();
+    expect(stage.showEnding).not.toHaveBeenCalled();
+    expect(dialogue.hideChoices).toHaveBeenCalledOnce();
+    expect(dialogue.hideBacklog).toHaveBeenCalledOnce();
+    expect(stage.setFade).toHaveBeenCalledWith(0);
+    expect(facade.queries.overlay.menu()).toEqual({ type: 'ending' });
+
+    facade.commands.menu.showSettings([], vi.fn(), onClose);
+    facade.commands.menu.showSaveLoad({ mode: 'load', slots: [] }, onSelect, onClose);
+    expect(menu.showSettings).toHaveBeenCalledOnce();
+    expect(menu.showSaveLoad).toHaveBeenCalledOnce();
+    expect(stage.showSettings).not.toHaveBeenCalled();
+    expect(stage.showSaveLoad).not.toHaveBeenCalled();
+    expect(facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'load' });
+  });
+
+  it('projects title enabled/disabled selection and keeps ending visibility exclusive', () => {
+    const { root, layer, lifecycle, assets } = makeMenuProjection();
+    const onSelect = vi.fn();
+    try {
+      layer.showTitle({
+        title: 'Surdet',
+        items: [
+          { id: 'continue', label: '继续', enabled: false },
+          { id: 'start', label: '开始', enabled: true },
+        ],
+      }, onSelect);
+      expect(layer.menu()).toEqual({ type: 'title' });
+      findText(root, '继续').emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      findText(root, '开始').emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(layer.menu()).toEqual({ type: 'none' });
+
+      layer.showEnding('THE END');
+      expect(layer.menu()).toEqual({ type: 'ending' });
+      layer.showEnding('THE END');
+      expect(root.children.at(-1)?.visible).toBe(true);
+      layer.hideEnding();
+      layer.hideEnding();
+      expect(layer.menu()).toEqual({ type: 'none' });
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('forwards system, settings, save and load interactions without owning storage', () => {
+    const { root, layer, lifecycle, assets } = makeMenuProjection();
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    const onChange = vi.fn();
+    try {
+      layer.showSystemMenu([{ id: 'settings', label: '设置' }], onSelect, onClose);
+      (root.children.at(-1)?.children[0] as Container).emit('pointerdown', pointerEvent);
+      expect(onClose).toHaveBeenCalledOnce();
+      layer.showSystemMenu([{ id: 'settings', label: '设置' }], onSelect, onClose);
+      findParentWithText(root, '设置').emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledWith('settings');
+      expect(layer.menu()).toEqual({ type: 'none' });
+
+      layer.showSettings([{ id: 'textSpeed', label: '文字速度', display: '普通' }], onChange, onClose);
+      const controls = findParentWithText(root, '‹');
+      (controls.children.find((child) => child instanceof PText && child.text === '‹') as PText).emit('pointerdown', pointerEvent);
+      (controls.children.find((child) => child instanceof PText && child.text === '›') as PText).emit('pointerdown', pointerEvent);
+      expect(onChange).toHaveBeenNthCalledWith(1, 'textSpeed', -1);
+      expect(onChange).toHaveBeenNthCalledWith(2, 'textSpeed', 1);
+      layer.hideSettings();
+      layer.showSettings([{ id: 'textSpeed', label: '文字速度', display: '普通' }], onChange, onClose);
+      (root.children.at(-1)?.children[0] as Container).emit('pointerdown', pointerEvent);
+      expect(onClose).toHaveBeenCalledTimes(2);
+
+      layer.showSaveLoad({
+        mode: 'load',
+        slots: [
+          { id: 'empty', empty: true },
+          { id: 'slot-1', empty: false, label: '序章' },
+        ],
+      }, onSelect, onClose);
+      expect(layer.menu()).toEqual({ type: 'save-load', mode: 'load' });
+      findParentWithText(root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalledWith('empty');
+      findParentWithText(root, '序章').emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledWith('slot-1');
+      expect(layer.menu()).toEqual({ type: 'none' });
+
+      layer.showSaveLoad({ mode: 'save', slots: [{ id: 'empty', empty: true }] }, onSelect, onClose);
+      findParentWithText(root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledWith('empty');
+      layer.showSaveLoad({ mode: 'save', slots: [{ id: 'empty', empty: true }] }, onSelect, onClose);
+      (root.children.at(-1)?.children[0] as Container).emit('pointerdown', pointerEvent);
+      expect(onClose).toHaveBeenCalledTimes(3);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('cleans projection state before propagating callback exceptions', () => {
+    const { root, layer, lifecycle, assets } = makeMenuProjection();
+    try {
+      layer.showSystemMenu([{ id: 'boom', label: '爆炸' }], () => { throw new Error('menu callback'); }, vi.fn());
+      expect(() => findParentWithText(root, '爆炸').emit('pointerdown', pointerEvent)).toThrow('menu callback');
+      expect(layer.menu()).toEqual({ type: 'none' });
+      expect(lifecycle.snapshot().listeners).toBe(0);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('keeps deterministic projection shapes for title, ending, system, settings, save and load', () => {
+    const { root, layer, lifecycle, assets } = makeMenuProjection();
+    const capture = (show: () => void, hide: () => void): unknown => {
+      show();
+      const first = projectionSignature(root);
+      hide();
+      show();
+      const second = projectionSignature(root);
+      hide();
+      expect(second).toEqual(first);
+      return first;
+    };
+    try {
+      capture(
+        () => layer.showTitle({ title: 'Surdet', items: [{ id: 'start', label: '开始' }] }, vi.fn()),
+        () => layer.hideTitle(false),
+      );
+      capture(() => layer.showEnding('THE END'), () => layer.hideEnding());
+      capture(
+        () => layer.showSystemMenu([{ id: 'settings', label: '设置' }], vi.fn(), vi.fn()),
+        () => layer.hideSystemMenu(),
+      );
+      capture(
+        () => layer.showSettings([{ id: 'textSpeed', label: '文字速度', display: '普通' }], vi.fn(), vi.fn()),
+        () => layer.hideSettings(),
+      );
+      capture(
+        () => layer.showSaveLoad({ mode: 'save', slots: [{ id: 'slot-1', empty: true }] }, vi.fn(), vi.fn()),
+        () => layer.hideSaveLoad(),
+      );
+      capture(
+        () => layer.showSaveLoad({ mode: 'load', slots: [{ id: 'slot-1', empty: false, label: '序章' }] }, vi.fn(), vi.fn()),
+        () => layer.hideSaveLoad(),
+      );
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('keeps two independent 50-cycle batches at the same disposed menu stable point', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const runBatch = (): ReturnType<RenderLifecycle['snapshot']> => {
+      for (let i = 0; i < 50; i++) {
+        const root = new Container();
+        const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+        exerciseMenuLayer(layer);
+        layer.dispose();
+        expect(root.children).toHaveLength(0);
+      }
+      return lifecycle.snapshot();
+    };
+    try {
+      const first = runBatch();
+      const second = runBatch();
+      expect(second).toEqual(first);
+      expect(second.listeners).toBe(0);
+      expect(second.activeTweens).toBe(0);
+      expect(second.displayObjectsByOwner.menu).toBe(0);
+    } finally {
+      assets.dispose();
+      lifecycle.dispose();
+    }
   });
 });

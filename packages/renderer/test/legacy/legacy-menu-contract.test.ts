@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PixiStage } from '../../src/pixi-stage.js';
-import type { SaveLoadView, SettingsRowView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
+import type { SaveLoadView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
+import type { SettingsRowView } from '../../src/settings-store.js';
 
 describe('legacy menu projection contract', () => {
   beforeEach(() => {

@@ -12,7 +12,6 @@ import {
 import type { BattleView } from './battle-view.js';
 import type { BacklogEntry } from './backlog.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
-import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
 import type { SettingsRowView } from './settings-store.js';
 import type { TimelineFrameEvent } from './timeline-player.js';
@@ -30,7 +29,7 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
-import type { DialogueProjectionPort } from './api/renderer-commands.js';
+import type { DialogueProjectionPort, MenuProjectionPort } from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -38,6 +37,7 @@ import {
 } from './services/render-asset-registry.js';
 import { RenderLifecycle } from './lifecycle/render-lifecycle.js';
 import { DialogueLayer } from './layers/dialogue/dialogue-layer.js';
+import { MenuLayer } from './layers/menu/menu-layer.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -390,6 +390,11 @@ export class PixiStage implements AdvStage {
     return this.#dialogue;
   }
 
+  /** @internal Renderer runtime wiring for the extracted menu layer. */
+  get menuLayer(): MenuProjectionPort {
+    return this.#menu;
+  }
+
   #bgLayer: Container;
   #portraitLayer: Container;
   #uiLayer: Container;
@@ -430,10 +435,6 @@ export class PixiStage implements AdvStage {
   #galleryOnReplayText: ((item: GalleryItemView) => void) | null = null;
   #galleryOnClose: (() => void) | null = null;
   #galleryViewerKey: string | null = null;
-  /** 设置面板覆盖层（◀ ▶ 步进；状态归宿主，本舞台只投影与转发点击） */
-  #settingsLayer: Container;
-  #settingsRows: SettingsRowView[] = [];
-  #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
   /** 战斗覆盖层（阵营分列 + 血条 + 点击攻击/跳过） */
   #battleLayer: Container;
   #battleHandlers: BattleHandlers | null = null;
@@ -461,20 +462,10 @@ export class PixiStage implements AdvStage {
   #timelineValueStarts = new Map<object, number>();
   #timelinePanStarts = new Map<object, { x: number; y: number }>();
   #timelineTintStarts = new Map<object, { color: number; alpha: number }>();
-  /** 标题画面 / 系统菜单 / 存读档 / 大地图 覆盖层 */
-  #titleLayer: Container;
-  #titleHandler: ((id: string) => void) | null = null;
-  /** 独立结局黑场：不复用标题或对话层，避免转场时残留可交互控件。 */
-  #endingLayer: Container;
-  #menuLayer: Container;
-  /** 系统菜单的右侧抽屉内容（背景遮罩留在 layer 上，不随抽屉滑动） */
-  #menuPanel: Container | null = null;
-  #menuMotionRemain = 0;
-  #menuMotionDur = 260;
-  #menuMotionOffset = 46;
-  #menuHandlers: { onSelect: (id: string) => void; onClose: () => void } | null = null;
-  #saveLoadLayer: Container;
-  #saveLoadHandlers: { onSelect: (slotId: string) => void; onClose: () => void } | null = null;
+  /** M4 extracted menu projection; all title/ending/system/settings/save-load state lives here. */
+  readonly #menu: MenuLayer;
+  /** 正在播放的 @video 元素（hideVideo 强制停止用；审计复核） */
+  #activeVideo: HTMLVideoElement | null = null;
   #mapLayer: Container;
   #mapHandlers: { onEnter: (nodeId: string) => void; onEndTurn: () => void } | null = null;
   /** 商店覆盖层 */
@@ -538,14 +529,16 @@ export class PixiStage implements AdvStage {
     this.#tintOverlay.visible = false;
     this.#screenLayer.addChild(this.#tintOverlay);
     this.#particleLayer = new Container();
-    this.#titleLayer = new Container();
-    this.#titleLayer.visible = false;
-    this.#endingLayer = new Container();
-    this.#endingLayer.visible = false;
-    this.#menuLayer = new Container();
-    this.#menuLayer.visible = false;
-    this.#saveLoadLayer = new Container();
-    this.#saveLoadLayer.visible = false;
+    this.#menu = new MenuLayer({
+      uiLayer: this.#uiLayer,
+      width: this.#w,
+      height: this.#h,
+      assets: this.#assetRegistry,
+      ...(lifecycle ? { lifecycle } : {}),
+      presentation: () => this.#presentation,
+      fontFamily: (role) => this.#fontFamilies[role],
+      requestFrame: () => this.#requestFrame(),
+    });
     this.#mapLayer = new Container();
     this.#mapLayer.visible = false;
     this.#shopLayer = new Container();
@@ -555,14 +548,12 @@ export class PixiStage implements AdvStage {
     this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
     this.#galleryLayer = new Container();
     this.#galleryLayer.visible = false;
-    this.#settingsLayer = new Container();
-    this.#settingsLayer.visible = false;
     this.#battleLayer = new Container();
     this.#battleLayer.visible = false;
     this.#uiLayer.addChild(
-      this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
+      this.#galleryLayer, this.#battleLayer,
       this.#wipeBar,
-      this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer, this.#endingLayer,
+      this.#mapLayer, this.#shopLayer, this.#baseLayer,
       this.#loadingLayer.container,
     );
     this.#dialogue.mountTextDisplays();
@@ -981,6 +972,11 @@ export class PixiStage implements AdvStage {
     this.#dialogue.hideCommandRail();
   }
 
+  /** @internal Facade-only compatibility bridge for overlay dismissal. */
+  restoreCommandRail(): void {
+    this.#dialogue.restoreCommandRail();
+  }
+
   /** Backlog 滚动：delta 正数向下（看更旧内容方向为向上滚 → 负 delta），clamp 到内容范围 */
   scrollBacklog(delta: number): void {
     this.#dialogue.scrollBacklog(delta);
@@ -1266,7 +1262,7 @@ export class PixiStage implements AdvStage {
         this.#bgTransition = null;
       }
     }
-    this.#updateMenuMotion(deltaMs);
+    this.#menu.update(deltaMs);
     this.#updateTransient(deltaMs);
   }
 
@@ -1276,26 +1272,12 @@ export class PixiStage implements AdvStage {
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#bgTransition !== null
-      || this.#menuMotionRemain > 0
+      || this.#menu.needsUpdate
       || this.#tintRemain > 0
       || this.#movTweens.length > 0
       || this.#particles.length > 0
       || this.#portraitTweens.length > 0
       || this.#wipeRemain > 0;
-  }
-
-  /** 系统菜单入场：遮罩渐显，右侧抽屉短距离滑入；不使用弹跳，避免像设置面板或网页弹窗。 */
-  #updateMenuMotion(deltaMs: number): void {
-    if (this.#menuMotionRemain <= 0 || !this.#menuLayer.visible) return;
-    this.#menuMotionRemain = Math.max(0, this.#menuMotionRemain - deltaMs);
-    const progress = 1 - this.#menuMotionRemain / this.#menuMotionDur;
-    const eased = 1 - Math.pow(1 - progress, 3);
-    this.#menuLayer.alpha = Math.min(1, progress / 0.72);
-    if (this.#menuPanel) this.#menuPanel.x = this.#menuMotionOffset * (1 - eased);
-    if (this.#menuMotionRemain === 0) {
-      this.#menuLayer.alpha = 1;
-      if (this.#menuPanel) this.#menuPanel.x = 0;
-    }
   }
 
   /** @wipe：黑色竖条自左向右扫过画面（转场仪式感） */
@@ -1757,106 +1739,17 @@ export class PixiStage implements AdvStage {
   /** 展示设置面板：◀ ▶ 步进各行；onChange 交宿主改值后应重新调用本方法刷新展示 */
   showSettings(rows: SettingsRowView[], onChange: (id: string, dir: -1 | 1) => void, onClose: () => void): void {
     this.#requestFrame();
-    // 设置是独立覆盖层，避免操作带在设置内容下方残留并抢占命中区域。
     this.hideSaveLoad();
     this.hideGallery();
     this.hideCommandRail();
-    this.#settingsRows = rows;
-    this.#settingsHandlers = { onChange, onClose };
-    this.#rebuildSettings();
-    this.#uiLayer.setChildIndex(this.#settingsLayer, this.#uiLayer.children.length - 1);
-    this.#settingsLayer.visible = true;
+    this.#menu.showSettings(rows, onChange, onClose);
   }
 
   /** 隐藏设置面板 */
   hideSettings(): void {
     this.#requestFrame();
-    this.#settingsLayer.visible = false;
+    this.#menu.hideSettings();
     this.#dialogue.restoreCommandRail();
-  }
-
-  #rebuildSettings(): void {
-    const layer = this.#settingsLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.66 });
-    bg.eventMode = 'static';
-    bg.on('pointerdown', () => {
-      this.hideSettings();
-      this.#settingsHandlers?.onClose();
-    });
-    layer.addChild(bg);
-
-    const px = 240;
-    const py = 54;
-    const pw = 800;
-    const headerH = 106;
-    const rowH = 58;
-    const panelH = headerH + this.#settingsRows.length * rowH + 34;
-    layer.addChild(new Graphics()
-      .roundRect(px + 10, py + 12, pw, panelH, 6)
-      .fill({ color: 0x000000, alpha: 0.28 }));
-    layer.addChild(new Graphics()
-      .roundRect(px, py, pw, panelH, 6)
-      .fill({ color: 0x081321, alpha: 0.98 })
-      .stroke({ width: 1, color: 0x5d86a6, alpha: 0.52 }));
-    layer.addChild(new Graphics()
-      .rect(px, py, 3, panelH)
-      .fill({ color: 0x79d5e6, alpha: 0.94 }));
-    layer.addChild(new PText({
-      text: 'SETTINGS',
-      style: { fontSize: 13, fill: 0x83b4c5, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 30, py + 20);
-    layer.addChild(new PText({
-      text: '设置',
-      style: { fontSize: 28, fill: 0xf1f7ff, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 28, py + 44);
-    layer.addChild(new Graphics()
-      .rect(px + 28, py + headerH - 1, pw - 56, 1)
-      .fill({ color: 0x7ba5bd, alpha: 0.32 }));
-    const close = new PText({ text: '×', style: { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions });
-    close.position.set(px + pw - 52, py + 26);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    close.on('pointerover', () => { close.style = { fontSize: 30, fill: 0xffffff } satisfies TextStyleOptions; });
-    close.on('pointerout', () => { close.style = { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions; });
-    close.on('pointerdown', () => {
-      this.hideSettings();
-      this.#settingsHandlers?.onClose();
-    });
-    layer.addChild(close);
-
-    this.#settingsRows.forEach((row, i) => {
-      const y = py + headerH + i * rowH;
-      layer.addChild(new Graphics()
-        .rect(px + 28, y + rowH - 1, pw - 56, 1)
-        .fill({ color: 0x54748d, alpha: i === this.#settingsRows.length - 1 ? 0.18 : 0.26 }));
-      layer.addChild(new PText({
-        text: row.label,
-        style: { fontSize: 21, fill: 0xdde9f4 } satisfies TextStyleOptions,
-      })).position.set(px + 32, y + 16);
-      const controls = new Container();
-      controls.position.set(px + pw - 300, y + 9);
-      const value = new PText({
-        text: row.display,
-        style: { fontSize: 19, fill: 0xf1f7ff, fontWeight: 'bold' } satisfies TextStyleOptions,
-      });
-      value.anchor.set(0.5, 0);
-      value.position.set(150, 7);
-      const left = new PText({ text: '‹', style: { fontSize: 32, fill: 0x79d5e6 } satisfies TextStyleOptions });
-      left.position.set(52, -3);
-      const right = new PText({ text: '›', style: { fontSize: 32, fill: 0x79d5e6 } satisfies TextStyleOptions });
-      right.position.set(230, -3);
-      for (const control of [left, right]) {
-        control.eventMode = 'static';
-        control.cursor = 'pointer';
-        control.on('pointerover', () => { control.style = { fontSize: 32, fill: 0xffffff } satisfies TextStyleOptions; });
-        control.on('pointerout', () => { control.style = { fontSize: 32, fill: 0x79d5e6 } satisfies TextStyleOptions; });
-      }
-      left.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, -1));
-      right.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, 1));
-      controls.addChild(left, value, right);
-      layer.addChild(controls);
-    });
   }
 
   /* ============================ 战斗覆盖层 ============================ */
@@ -1985,92 +1878,18 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 标题画面 / 系统菜单 / 存读档 / 大地图 ============================ */
 
-  /** 展示标题画面（精致化批次四，商业 gal 标题页口径）：大字距 logo 感标题 + 细强调线 +
-   *  弱化菜单（悬停下方细线滑入）+ 轻径向暗角；enabled=false 灰显不可点 */
+  /** 展示标题画面；MenuLayer owns the projection, while this wrapper preserves legacy coordination. */
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
     this.#requestFrame();
     this.hideEnding();
     this.hideCommandRail();
-    this.#titleHandler = onSelect;
-    const layer = this.#titleLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    const titleTexture = this.#assetRegistry.resolveBackground(view.backgroundKey ?? 'title_bg');
-    if (titleTexture) {
-      // 标题底图同正文背景使用 cover，避免生成素材在不同窗口被拉伸；暗幕只负责衬托标题文字。
-      const titleBg = new Sprite(titleTexture);
-      const scale = Math.max(this.#w / Math.max(1, titleTexture.width), this.#h / Math.max(1, titleTexture.height));
-      titleBg.width = titleTexture.width * scale;
-      titleBg.height = titleTexture.height * scale;
-      titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
-      layer.addChild(titleBg);
-      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x020409, alpha: 0.48 }));
-    } else {
-      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x060a14, alpha: 0.97 }));
-    }
-    // 轻径向暗角：多层同心椭圆叠 alpha 近似（氛围聚焦，不引 canvas 纹理）
-    const vg = new Graphics();
-    for (let i = 1; i <= 5; i++) {
-      vg.ellipse(this.#w / 2, this.#h / 2, this.#w * (0.42 + i * 0.16), this.#h * (0.4 + i * 0.17))
-        .stroke({ width: 60, color: 0x020409, alpha: 0.05 * i });
-    }
-    layer.addChild(vg);
-    const title = new PText({
-      text: view.title,
-      style: { fontSize: 58, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 8, fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions,
-    });
-    title.anchor.set(0.5);
-    title.position.set(this.#w / 2, this.#h * 0.28);
-    layer.addChild(title);
-    // 标题下细强调线：更长更细更淡（精致化）
-    layer.addChild(new Graphics()
-      .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
-      .fill({ color: NIGHT_AZURE.accent, alpha: 0.55 }));
-    if (view.subtitle) {
-      const sub = new PText({ text: view.subtitle, style: { fontSize: 18, fill: 0x8a9ab5, letterSpacing: 3, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions });
-      sub.anchor.set(0.5);
-      sub.position.set(this.#w / 2, this.#h * 0.28 + 76);
-      layer.addChild(sub);
-    }
-    const startY = this.#h * 0.52;
-    view.items.forEach((item, i) => {
-      const enabled = item.enabled !== false;
-      const baseX = this.#w / 2;
-      const baseY = startY + i * 52;
-      const t = new PText({
-        text: item.label,
-        style: { fontSize: 20, fill: enabled ? NIGHT_AZURE.text : 0x4a5566, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions,
-      });
-      t.anchor.set(0.5);
-      t.position.set(baseX, baseY);
-      if (enabled) {
-        // 悬停：文字下方细线滑入（含蓄，替代旧竖条+右移）
-        const line = new Graphics()
-          .roundRect(baseX - 70, baseY + 20, 140, 1, 0.5)
-          .fill({ color: NIGHT_AZURE.accent, alpha: 0.9 });
-        line.visible = false;
-        layer.addChild(line);
-        t.eventMode = 'static';
-        t.cursor = 'pointer';
-        t.on('pointerdown', () => this.#titleHandler?.(item.id));
-        t.on('pointerover', () => {
-          line.visible = true;
-          t.style = { fontSize: 20, fill: NIGHT_AZURE.plateText, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
-        });
-        t.on('pointerout', () => {
-          line.visible = false;
-          t.style = { fontSize: 20, fill: NIGHT_AZURE.text, letterSpacing: 4, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
-        });
-      }
-      layer.addChild(t);
-    });
-    this.#uiLayer.setChildIndex(this.#titleLayer, this.#uiLayer.children.length - 1);
-    layer.visible = true;
+    this.#menu.showTitle(view, onSelect);
   }
 
   /** 隐藏标题画面；进入正文时默认恢复操作带，进入标题二级页时可保持操作带隐藏。 */
   hideTitle(restoreCommandRail = true): void {
     this.#requestFrame();
-    this.#titleLayer.visible = false;
+    this.#menu.hideTitle(restoreCommandRail);
     if (restoreCommandRail) {
       this.#dialogue.restoreCommandRail();
     } else {
@@ -2078,7 +1897,7 @@ export class PixiStage implements AdvStage {
     }
   }
 
-  /** 全黑结局卡。宿主负责在展示后跳转标题，舞台只投影且不接收输入。 */
+  /** 全黑结局卡；旧 API 的跨层隐藏顺序保持在兼容包装器。 */
   showEnding(text = 'THE END'): void {
     this.#requestFrame();
     this.hideCommandRail();
@@ -2089,289 +1908,42 @@ export class PixiStage implements AdvStage {
     this.hideSaveLoad();
     this.hideSystemMenu();
     this.hideTitle(false);
-    this.#endingLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    this.#endingLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000));
-    const label = new PText({
-      text,
-      style: {
-        fontSize: 30,
-        fill: NIGHT_AZURE.text,
-        fontWeight: 'normal',
-        letterSpacing: 9,
-        fontFamily: this.#fontFamilies.title,
-      } satisfies TextStyleOptions,
-    });
-    label.anchor.set(0.5);
-    label.position.set(this.#w / 2, this.#h / 2);
-    this.#endingLayer.addChild(label);
+    this.#menu.showEnding(text);
     this.#fadeOverlay.alpha = 0;
-    this.#uiLayer.setChildIndex(this.#endingLayer, this.#uiLayer.children.length - 1);
-    this.#endingLayer.visible = true;
   }
 
   /** 隐藏结局卡；多次调用保持幂等。 */
   hideEnding(): void {
     this.#requestFrame();
-    this.#endingLayer.visible = false;
+    this.#menu.hideEnding();
   }
 
-  /** 展示现代 ADV 系统菜单：右侧抽屉、细线层级、悬停强调；点击遮罩关闭。 */
+  /** 展示现代 ADV 系统菜单；MenuLayer owns the menu projection. */
   showSystemMenu(items: SystemMenuItemView[], onSelect: (id: string) => void, onClose: () => void): void {
     this.#requestFrame();
-    this.#menuHandlers = { onSelect, onClose };
-    const layer = this.#menuLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.alpha = 0;
-    const bg = new Graphics()
-      .rect(0, 0, this.#w, this.#h)
-      .fill({ color: 0x02060d, alpha: 0.62 });
-    bg.eventMode = 'static';
-    bg.on('pointerdown', () => {
-      layer.visible = false;
-      layer.alpha = 1;
-      this.#menuPanel = null;
-      this.#menuHandlers?.onClose();
-    });
-    layer.addChild(bg);
-
-    const panel = new Container();
-    const px = this.#w - 398;
-    const py = 34;
-    const pw = 348;
-    const headerH = 94;
-    const rowH = 54;
-    const panelH = headerH + items.length * rowH + 28;
-    panel.position.set(this.#menuMotionOffset, 0);
-    this.#menuPanel = panel;
-
-    // 只有一层轻微投影和一条冷光边缘，避免“卡片堆叠”的塑料感。
-    panel.addChild(new Graphics()
-      .roundRect(px + 10, py + 12, pw, panelH, 6)
-      .fill({ color: 0x000000, alpha: 0.28 }));
-    panel.addChild(new Graphics()
-      .roundRect(px, py, pw, panelH, 6)
-      .fill({ color: 0x081321, alpha: 0.97 })
-      .stroke({ width: 1, color: 0x5d86a6, alpha: 0.52 }));
-    panel.addChild(new Graphics()
-      .rect(px, py, 3, panelH)
-      .fill({ color: 0x79d5e6, alpha: 0.94 }));
-    panel.addChild(new Graphics()
-      .rect(px + 28, py + headerH - 1, pw - 54, 1)
-      .fill({ color: 0x7ba5bd, alpha: 0.32 }));
-    panel.addChild(new PText({
-      text: 'SYSTEM',
-      style: { fontSize: 13, fill: 0x83b4c5, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 28, py + 19);
-    panel.addChild(new PText({
-      text: '系统菜单',
-      style: { fontSize: 27, fill: 0xf1f7ff, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 27, py + 42);
-
-    items.forEach((item, i) => {
-      const row = new Container();
-      const rowY = py + headerH + i * rowH;
-      row.position.set(px + 16, rowY);
-      const hover = new Graphics()
-        .roundRect(0, 4, pw - 32, rowH - 8, 3)
-        .fill({ color: 0x173149, alpha: 0 });
-      const marker = new Graphics()
-        .rect(0, 13, 3, rowH - 26)
-        .fill({ color: 0x79d5e6, alpha: 0 });
-      const index = new PText({
-        text: String(i + 1).padStart(2, '0'),
-        style: { fontSize: 13, fill: 0x7692a8, letterSpacing: 1 } satisfies TextStyleOptions,
-      });
-      index.position.set(22, 19);
-      const label = new PText({
-        text: item.label,
-        style: { fontSize: 21, fill: 0xeaf2fb, fontWeight: 'normal' } satisfies TextStyleOptions,
-      });
-      label.position.set(62, 14);
-      row.addChild(hover, marker, index, label);
-      row.eventMode = 'static';
-      row.cursor = 'pointer';
-      row.on('pointerover', () => {
-        hover.alpha = 1;
-        marker.alpha = 1;
-        label.style = { fontSize: 21, fill: 0xffffff, fontWeight: 'bold' } satisfies TextStyleOptions;
-      });
-      row.on('pointerout', () => {
-        hover.alpha = 0;
-        marker.alpha = 0;
-        label.style = { fontSize: 21, fill: 0xeaf2fb, fontWeight: 'normal' } satisfies TextStyleOptions;
-      });
-      row.on('pointerdown', () => {
-        layer.visible = false;
-        layer.alpha = 1;
-        this.#menuPanel = null;
-        this.#menuHandlers?.onSelect(item.id);
-      });
-      panel.addChild(row);
-    });
-    layer.addChild(panel);
-    layer.visible = true;
-    this.#menuMotionRemain = this.#menuMotionDur;
+    this.#menu.showSystemMenu(items, onSelect, onClose);
   }
 
-  /** 隐藏系统菜单 */
+  /** 隐藏系统菜单。 */
   hideSystemMenu(): void {
     this.#requestFrame();
-    this.#menuLayer.visible = false;
-    this.#menuLayer.alpha = 1;
-    this.#menuPanel = null;
-    this.#menuMotionRemain = 0;
+    this.#menu.hideSystemMenu();
   }
 
-  /** 存档缩略图纹理 LRU：dataURL 每档唯一，不限量会随反复开关存档界面累积（审计修复） */
-  #thumbCache = new Map<string, Texture>();
-  /** 正在播放的 @video 元素（hideVideo 强制停止用；审计复核） */
-  #activeVideo: HTMLVideoElement | null = null;
-  #thumbTexture(url: string): Texture {
-    const hit = this.#thumbCache.get(url);
-    if (hit) {
-      // 命中即移到队尾（Map 按插入序迭代）→ 真 LRU，避免淘汰当前界面正在使用的纹理（审计复核）
-      this.#thumbCache.delete(url);
-      this.#thumbCache.set(url, hit);
-      return hit;
-    }
-    const tex = Texture.from(url);
-    this.#thumbCache.set(url, tex);
-    if (this.#thumbCache.size > 16) {
-      const oldest = this.#thumbCache.keys().next().value;
-      if (oldest !== undefined) {
-        this.#thumbCache.get(oldest)?.destroy(false);
-        this.#thumbCache.delete(oldest);
-      }
-    }
-    return tex;
-  }
 
-  /** 展示存档/读档界面：平面档案列表；load 模式空槽灰显不可选。 */
+  /** 展示存档/读档界面；MenuLayer owns the projection and thumbnail pool. */
   showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
     this.#requestFrame();
     this.hideSettings();
     this.hideGallery();
     this.hideCommandRail();
-    this.#saveLoadHandlers = { onSelect, onClose };
-    const layer = this.#saveLoadLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.84 });
-    bg.eventMode = 'static';
-    bg.on('pointerdown', () => {
-      this.hideSaveLoad();
-      this.#saveLoadHandlers?.onClose();
-    });
-    layer.addChild(bg);
-    layer.addChild(new Graphics()
-      .rect(86, 68, 3, 78)
-      .fill({ color: 0x79d5e6, alpha: 0.94 }));
-    layer.addChild(new PText({
-      text: view.mode === 'save' ? 'SAVE DATA' : 'LOAD DATA',
-      style: { fontSize: 13, fill: 0x83b4c5, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(108, 70);
-    layer.addChild(new PText({
-      text: view.mode === 'save' ? '存档' : '读档',
-      style: { fontSize: 34, fill: 0xf1f7ff, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(106, 91);
-    layer.addChild(new PText({
-      text: '记录当前剧情进度',
-      style: { fontSize: 16, fill: 0x8ba4b9 } satisfies TextStyleOptions,
-    })).position.set(255, 110);
-    const close = new PText({ text: '×', style: { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions });
-    close.position.set(this.#w - 106, 76);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    close.on('pointerover', () => { close.style = { fontSize: 30, fill: 0xffffff } satisfies TextStyleOptions; });
-    close.on('pointerout', () => { close.style = { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions; });
-    close.on('pointerdown', () => {
-      this.hideSaveLoad();
-      this.#saveLoadHandlers?.onClose();
-    });
-    layer.addChild(close);
-
-    const cols = 2;
-    const cardW = 480;
-    const cardH = 104;
-    const gapX = 22;
-    const gapY = 16;
-    const startX = 150;
-    const startY = 180;
-    view.slots.forEach((slot, i) => {
-      const x = startX + (i % cols) * (cardW + gapX);
-      const y = startY + Math.floor(i / cols) * (cardH + gapY);
-      const selectable = view.mode === 'save' || !slot.empty;
-      const card = new Container();
-      card.position.set(x, y);
-      const surface = new Graphics()
-        .roundRect(0, 0, cardW, cardH, 4)
-        .fill({ color: selectable ? 0x0b1928 : 0x09121d, alpha: 0.92 })
-        .stroke({ width: 1, color: selectable ? 0x4c6b84 : 0x263b4d, alpha: selectable ? 0.68 : 0.38 });
-      const hover = new Graphics()
-        .roundRect(0, 0, cardW, cardH, 4)
-        .fill({ color: 0x173149, alpha: 0 });
-      const marker = new Graphics()
-        .rect(0, 13, 3, cardH - 26)
-        .fill({ color: 0x79d5e6, alpha: 0 });
-      card.addChild(surface, hover, marker);
-      // 缩略图（舞台截图 dataURL；纹理异步加载完成后自动显示）
-      let textX = 28;
-      if (slot.thumbnail) {
-        const thumb = new Sprite(this.#thumbTexture(slot.thumbnail));
-        thumb.width = 128;
-        thumb.height = 72;
-        thumb.position.set(18, 16);
-        card.addChild(thumb);
-        textX = 166;
-      }
-      card.addChild(new PText({
-        text: String(i + 1).padStart(2, '0'),
-        style: { fontSize: 13, fill: selectable ? 0x79d5e6 : 0x526b7c, letterSpacing: 1 } satisfies TextStyleOptions,
-      })).position.set(textX, 14);
-      const kindLabel = slot.kind === 'auto' ? '自动' : slot.kind === 'quick' ? '快速' : '手动';
-      card.addChild(new PText({
-        text: slot.empty ? '空槽位' : (slot.label ?? '未命名场景'),
-        style: { fontSize: 21, fill: selectable ? 0xf1f7ff : 0x5b7182, fontWeight: 'bold' } satisfies TextStyleOptions,
-      })).position.set(textX, 34);
-      if (!slot.empty) {
-        const playtime = slot.playTimeSec !== undefined && slot.playTimeSec > 0
-          ? ` · ${Math.floor(slot.playTimeSec / 60)}分钟`
-          : '';
-        card.addChild(new PText({
-          text: `${kindLabel}　${formatSlotTime(slot.updatedAt)}${playtime}`,
-          style: { fontSize: 15, fill: 0x8ba4b9 } satisfies TextStyleOptions,
-        })).position.set(textX, 70);
-      } else {
-        card.addChild(new PText({
-          text: `${kindLabel}　等待记录`,
-          style: { fontSize: 15, fill: 0x5b7182 } satisfies TextStyleOptions,
-        })).position.set(textX, 70);
-      }
-      if (selectable) {
-        card.eventMode = 'static';
-        card.cursor = 'pointer';
-        card.on('pointerover', () => {
-          hover.alpha = 1;
-          marker.alpha = 1;
-        });
-        card.on('pointerout', () => {
-          hover.alpha = 0;
-          marker.alpha = 0;
-        });
-        card.on('pointerdown', () => {
-          this.hideSaveLoad();
-          this.#saveLoadHandlers?.onSelect(slot.id);
-        });
-      }
-      layer.addChild(card);
-    });
-    this.#uiLayer.setChildIndex(this.#saveLoadLayer, this.#uiLayer.children.length - 1);
-    layer.visible = true;
+    this.#menu.showSaveLoad(view, onSelect, onClose);
   }
 
-  /** 隐藏存档/读档界面 */
+  /** 隐藏存档/读档界面。 */
   hideSaveLoad(): void {
     this.#requestFrame();
-    this.#saveLoadLayer.visible = false;
+    this.#menu.hideSaveLoad();
     this.#dialogue.restoreCommandRail();
   }
 
@@ -2640,29 +2212,16 @@ export class PixiStage implements AdvStage {
       layer.removeChildren().forEach((child) => child.destroy({ children: true }));
     };
     clearLayer(this.#galleryLayer);
-    clearLayer(this.#settingsLayer);
     clearLayer(this.#battleLayer);
-    clearLayer(this.#titleLayer);
-    clearLayer(this.#menuLayer);
-    clearLayer(this.#saveLoadLayer);
+    this.#menu.reset();
     clearLayer(this.#mapLayer);
     clearLayer(this.#shopLayer);
     clearLayer(this.#baseLayer);
     this.#galleryLayer.visible = false;
-    this.#settingsLayer.visible = false;
     this.#battleLayer.visible = false;
-    this.#titleLayer.visible = false;
-    this.#menuLayer.visible = false;
-    this.#saveLoadLayer.visible = false;
     this.#mapLayer.visible = false;
     this.#shopLayer.visible = false;
     this.#baseLayer.visible = false;
-    this.#menuLayer.alpha = 1;
-    this.#menuPanel = null;
-    this.#menuMotionRemain = 0;
-    this.#titleHandler = null;
-    this.#menuHandlers = null;
-    this.#saveLoadHandlers = null;
     this.#mapHandlers = null;
     this.#shopHandlers = null;
     this.#baseHandlers = null;
@@ -2670,7 +2229,6 @@ export class PixiStage implements AdvStage {
     this.#galleryOnPlayMusic = null;
     this.#galleryOnReplayText = null;
     this.#galleryOnClose = null;
-    this.#settingsHandlers = null;
     this.#battleHandlers = null;
 
     this.#worldLayer.position.set(0, 0);
@@ -2710,6 +2268,7 @@ export class PixiStage implements AdvStage {
   destroy(): void {
     this.#worldEffects.destroy();
     this.#loadingLayer.destroy();
+    this.#menu.dispose();
     this.#dialogue.dispose();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
