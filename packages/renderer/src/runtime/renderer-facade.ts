@@ -51,6 +51,7 @@ import type {
   WorldQueries,
 } from '../api/renderer-queries.js';
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
+import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
 
 /** @internal Transitional Stage port; it keeps Pixi and legacy methods out of the public API. */
 export type RendererStagePort = Partial<AdvStage> & {
@@ -110,6 +111,7 @@ export interface RendererFacadeOptions {
   controller: RendererControllerPort;
   monitor: RenderPerformanceMonitor;
   resourceSnapshot?: () => RendererResourceSnapshot;
+  assetRegistry?: RenderAssetRegistry;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -165,6 +167,7 @@ export class RendererFacade {
   #controller: RendererControllerPort;
   #monitor: RenderPerformanceMonitor;
   #resourceSnapshot?: () => RendererResourceSnapshot;
+  #assetRegistry?: RenderAssetRegistry;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
 
@@ -173,22 +176,35 @@ export class RendererFacade {
     this.#controller = options.controller;
     this.#monitor = options.monitor;
     this.#resourceSnapshot = options.resourceSnapshot;
+    this.#assetRegistry = options.assetRegistry;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
         this.#ensureActive('assets', 'registerBackground');
+        if (this.#assetRegistry) {
+          await this.#assetRegistry.registerBackground(key, source, format);
+          return;
+        }
         const method = this.#stage.registerBackground;
         if (!method) this.#missing('assets', 'registerBackground');
         await method.call(this.#stage, key, source, format);
       },
       registerPortrait: async (charId, costume, expression, source, format) => {
         this.#ensureActive('assets', 'registerPortrait');
+        if (this.#assetRegistry) {
+          await this.#assetRegistry.registerPortrait(charId, costume, expression, source, format);
+          return;
+        }
         const method = this.#stage.registerPortrait;
         if (!method) this.#missing('assets', 'registerPortrait');
         await method.call(this.#stage, charId, costume, expression, source, format);
       },
       registerAvatar: async (key, source, format) => {
         this.#ensureActive('assets', 'registerAvatar');
+        if (this.#assetRegistry) {
+          await this.#assetRegistry.registerAvatar(key, source, format);
+          return;
+        }
         const method = this.#stage.registerAvatar;
         if (!method) this.#missing('assets', 'registerAvatar');
         await method.call(this.#stage, key, source, format);
@@ -219,6 +235,10 @@ export class RendererFacade {
       },
       releaseRegisteredAssetSources: async () => {
         this.#ensureActive('assets', 'releaseRegisteredAssetSources');
+        if (this.#assetRegistry) {
+          await this.#assetRegistry.releaseRegisteredAssetSources();
+          return;
+        }
         const method = this.#stage.releaseRegisteredAssetSources;
         if (!method) this.#missing('assets', 'releaseRegisteredAssetSources');
         await method.call(this.#stage);

@@ -68,6 +68,16 @@ export class RenderLifecycle {
     return true;
   }
 
+  /**
+   * Removes an entry without invoking its disposer. This is reserved for a
+   * higher-level owner that is about to release several resources as one
+   * batch, then performs the actual disposal itself.
+   */
+  forget(owner: ResourceOwner, kind: ResourceKind, key: string): boolean {
+    if (this.#disposed) return false;
+    return this.#removeEntry(compositeKey(owner, kind, key)) !== undefined;
+  }
+
   releaseOwner(owner: ResourceOwner): void {
     if (this.#disposed) return;
     const ids = [...(this.#ownerIndex.get(owner) ?? [])];
