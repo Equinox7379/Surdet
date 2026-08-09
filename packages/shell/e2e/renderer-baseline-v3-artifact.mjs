@@ -1,12 +1,28 @@
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const METRIC_NAMES = ['coldStartMs', 'assetReadyMs', 'menuOpenP95Ms', 'sceneP95Ms'];
 const HISTORICAL_BASELINE_PATH = 'docs/baselines/renderer-v2-cab200b.json';
+const FROZEN_SAMPLE_COMMIT = '9d39dc9';
+const FROZEN_SAMPLE_CANDIDATE_PATH = 'docs/baselines/renderer-v3-candidate-2026-08-09.json';
 
 export function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+export function readSampledAtFromFrozenCandidate(repositoryRoot, commit = FROZEN_SAMPLE_COMMIT) {
+  const source = execFileSync(
+    'git',
+    ['show', `${commit}:${FROZEN_SAMPLE_CANDIDATE_PATH}`],
+    { cwd: repositoryRoot, encoding: 'utf8' },
+  );
+  const original = JSON.parse(source);
+  if (typeof original.generatedAt !== 'string' || original.generatedAt.length === 0) {
+    throw new Error(`提交 ${commit} 的候选文件缺少原始 generatedAt`);
+  }
+  return original.generatedAt;
 }
 
 function assertUnder(parent, candidate, label) {
@@ -104,9 +120,13 @@ export function rebuildRendererBaselineV3Artifact(input, {
   repositoryRoot,
   v3,
   v2,
-  generatedAt = new Date().toISOString(),
+  sampledAt = input.sampledAt,
+  rebuiltAt = new Date().toISOString(),
   packageLockSha256 = sha256File(path.join(repositoryRoot, 'package-lock.json')),
 }) {
+  if (typeof sampledAt !== 'string' || sampledAt.length === 0) {
+    throw new Error('离线重建必须显式保留 sampledAt；首次重建请从冻结提交机械读取原始 generatedAt');
+  }
   const pairCount = input.pairCount;
   const baseline = v3.buildRendererV3Run(
     input.baselineCommit,
@@ -128,7 +148,6 @@ export function rebuildRendererBaselineV3Artifact(input, {
     currentEnvironment,
     baseline,
     current,
-    generatedAt,
   });
   const historicalPath = path.join(repositoryRoot, HISTORICAL_BASELINE_PATH);
   const historical = JSON.parse(fs.readFileSync(historicalPath, 'utf8'));
@@ -144,6 +163,8 @@ export function rebuildRendererBaselineV3Artifact(input, {
   );
   const output = {
     ...result,
+    sampledAt,
+    rebuiltAt,
     warmups: input.warmups,
     rawLaunches: input.rawLaunches,
     health: healthFromSamples(input.warmups, input.rawLaunches),

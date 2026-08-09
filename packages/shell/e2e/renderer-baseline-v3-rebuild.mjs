@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as url from 'node:url';
-import { rebuildRendererBaselineV3Artifact } from './renderer-baseline-v3-artifact.mjs';
+import {
+  readSampledAtFromFrozenCandidate,
+  rebuildRendererBaselineV3Artifact,
+} from './renderer-baseline-v3-artifact.mjs';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDir, '../../..');
@@ -16,11 +19,13 @@ if (!/^[0-9a-f]{64}$/i.test(packageLockSha256 ?? '')) {
 const v3 = await import(url.pathToFileURL(v3ModulePath).href);
 const v2 = await import(url.pathToFileURL(v2ModulePath).href);
 const input = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+const sampledAt = input.sampledAt ?? readSampledAtFromFrozenCandidate(repositoryRoot);
 const output = rebuildRendererBaselineV3Artifact(input, {
   repositoryRoot,
   v3,
   v2,
   packageLockSha256,
+  sampledAt,
 });
 fs.writeFileSync(candidatePath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
 console.log(`已按 rawLaunches 离线重建：${candidatePath}`);
@@ -28,3 +33,5 @@ for (const metric of Object.values(output.comparison.metrics)) {
   console.log(`${metric.metric} gateRatio=${metric.gateRatio.toFixed(6)} pairedMedianRatio=${metric.pairedMedianRatio.toFixed(6)} ${metric.passed ? 'PASS' : 'FAIL'}`);
 }
 console.log(`historicalV2Failures=${output.historicalComparison.failures.map((item) => item.metric).join(',') || 'none'}`);
+console.log(`sampledAt=${output.sampledAt}`);
+console.log(`rebuiltAt=${output.rebuiltAt}`);
