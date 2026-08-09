@@ -107,7 +107,7 @@ export type RendererStagePort = Partial<AdvStage> & {
 };
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
-export interface RendererControllerPort extends PresentationController {
+export interface RendererControllerPort extends Omit<PresentationController, 'snapshotPresentation' | 'restorePresentation' | 'clearPresentation' | 'backlogEntries' | 'backlogSearchQuery'> {
   /** @internal True when the controller's presentation transaction also projects the stage. */
   presentationOwnsStage?: boolean;
   snapshotPresentation?: () => unknown;

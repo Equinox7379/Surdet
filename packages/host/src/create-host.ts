@@ -1,4 +1,3 @@
-import type { AdvRenderer, AdvStage } from '@surdet/renderer';
 import type {
   DefaultHostController,
   DefaultHostOptions,
@@ -43,10 +42,8 @@ export function createDefaultHost(options: DefaultHostOptions): DefaultHostContr
     }
   };
   // 保留公共构造契约：当前 router 不直接操作渲染器，具体覆盖层由 adapter 持有。
-  const _renderer: AdvRenderer = options.renderer;
-  const _stage: AdvStage = options.stage;
-  void _renderer;
-  void _stage;
+  void options.renderer;
+  void options.stage;
 
   let active: ActiveAdapter | null = null;
   let disposed = false;

@@ -1,11 +1,18 @@
 import type { Interpreter, SaveSnapshot } from '@surdet/core';
-import type { AdvRenderer, AdvStage, AudioHandle } from '@surdet/renderer';
+import type { AudioHandle, RenderStatus } from '@surdet/renderer';
 import { RollbackBuffer } from '@surdet/renderer';
+
+export interface RollbackRendererPort {
+  readonly status: RenderStatus;
+  readonly backlogOpen: boolean;
+  resetSession(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
+  snapshotPresentation(): unknown;
+  restorePresentation(snapshot: unknown): void;
+}
 
 export interface RollbackRuntimeOptions {
   interpreter: Interpreter;
-  renderer: AdvRenderer;
-  stage: AdvStage;
+  renderer: RollbackRendererPort;
   audio: AudioHandle;
   isBlocked: () => boolean;
   label: string;
@@ -60,7 +67,7 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
     try {
       options.renderer.resetSession({ preserveWorld: false });
       options.interpreter.loadSnapshot(frame.snapshot);
-      options.stage.restorePresentation?.(frame.presentation);
+      options.renderer.restorePresentation(frame.presentation);
       options.audio.restorePlayback?.(frame.audio);
       lastRollbackKey = checkpointKey(frame.snapshot);
       return true;

@@ -126,7 +126,7 @@ export async function createRendererRuntimeFromInternals(
     }
     const facadeOptions: RendererFacadeOptions = {
       stage: internals.stage,
-      controller: internals.controller,
+      controller: internals.controller as RuntimePresentationController,
       monitor: internals.monitor,
       resourceSnapshot: internals.resourceSnapshot
         ?? (internals.lifecycle ? () => internals.lifecycle!.snapshot() : undefined),
@@ -143,7 +143,7 @@ export async function createRendererRuntimeFromInternals(
       canvas: internals.canvas,
       commands: facade.commands,
       queries: facade.queries,
-      controller: internals.controller,
+      controller: internals.controller as RuntimePresentationController,
       resize: () => facade!.resize(),
       resetSession: (options) => facade!.resetSession(options),
       dispose: () => {

@@ -1,13 +1,8 @@
-import type { AssetLoadJob, FontRole } from '@surdet/renderer';
+import type { AssetCommands, AssetLoadJob, FontRole } from '@surdet/renderer';
 
 interface FontConfig {
   font?: unknown;
   fonts?: unknown;
-}
-
-interface FontStage {
-  registerFontRole(role: FontRole, url: string): Promise<boolean>;
-  registerFont(url: string): Promise<boolean>;
 }
 
 export interface ConfiguredFontJobOptions {
@@ -15,11 +10,11 @@ export interface ConfiguredFontJobOptions {
   fontBlobUrls: Set<string>;
   label: string;
   resolveFontUrl: (fontPath: string) => Promise<string | null>;
-  stage: FontStage;
+  assets: Pick<AssetCommands, 'registerFontRole' | 'registerFont'>;
 }
 
 export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () => AssetLoadJob[] {
-  const { config, fontBlobUrls, label, resolveFontUrl, stage } = options;
+  const { config, fontBlobUrls, label, resolveFontUrl, assets } = options;
 
   async function loadConfiguredFont(role: FontRole, path: string): Promise<void> {
     const url = await resolveFontUrl(path);
@@ -29,7 +24,7 @@ export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () 
     }
     let registered = false;
     try {
-      registered = await stage.registerFontRole(role, url);
+      registered = await assets.registerFontRole(role, url);
       if (registered) console.info(`[${label}] ${role} 字体已加载：`, path);
     } finally {
       if (url.startsWith('blob:')) {
@@ -61,7 +56,7 @@ export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () 
         }
         let registered = false;
         try {
-          registered = await stage.registerFont(url);
+          registered = await assets.registerFont(url);
           if (registered) console.info(`[${label}] 兼容单字体已加载：`, cfg.font);
         } finally {
           if (url.startsWith('blob:')) {

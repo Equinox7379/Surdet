@@ -1,5 +1,5 @@
 import type { Interpreter, SystemHooks } from '@surdet/core';
-import type { AdvRenderer, AdvStage } from '@surdet/renderer';
+import type { RendererRuntime } from '@surdet/renderer';
 
 export interface ProfileStorage {
   read<T = unknown>(key: string): Promise<T | null>;
@@ -36,8 +36,8 @@ export interface HostSystemAdapter<TPayload = unknown> {
 
 export interface DefaultHostOptions {
   interpreter: Interpreter;
-  renderer: AdvRenderer;
-  stage: AdvStage;
+  renderer: RendererRuntime['controller'];
+  stage: unknown;
   adapters?: readonly HostSystemAdapter[];
   onError?: (error: unknown) => void;
   onSystemBoundary?: (phase: HostSystemBoundaryPhase) => void;
