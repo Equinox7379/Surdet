@@ -1,5 +1,4 @@
 import { type CoreEventMap, type EventBus, type Unsubscribe } from '@surdet/core';
-import type { AdvRendererOptions } from '../adv-renderer.js';
 import { FrameScheduler } from '../frame-scheduler.js';
 import { NULL_AUDIO } from '../types.js';
 import { PixiStage } from '../pixi-stage.js';
@@ -7,7 +6,10 @@ import { RenderPerformanceMonitor } from '../performance.js';
 import { RendererError } from '../api/renderer-errors.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../services/render-asset-registry.js';
-import { PresentationController as RuntimePresentationController } from './presentation-controller.js';
+import {
+  PresentationController as RuntimePresentationController,
+  type PresentationControllerOptions,
+} from './presentation-controller.js';
 import type { RendererInputAction } from '../api/renderer-input.js';
 import type {
   PresentationController,
@@ -95,9 +97,14 @@ export async function createRendererRuntimeFromInternals(
     stage: internals.stage,
     controller: internals.controller,
     monitor: internals.monitor,
-    resourceSnapshot: internals.resourceSnapshot,
+    resourceSnapshot: internals.resourceSnapshot
+      ?? (internals.lifecycle ? () => internals.lifecycle!.snapshot() : undefined),
     assetRegistry: internals.assetRegistry,
   };
+  if (internals.lifecycle) {
+    internals.lifecycle.register('runtime', 'ticker', 'frame-scheduler', () => internals.scheduler.dispose());
+    internals.lifecycle.register('runtime', 'listener', 'presentation-controller', () => internals.controller.dispose());
+  }
   const facade = new RendererFacade(facadeOptions);
   let disposed = false;
   return {
@@ -110,8 +117,13 @@ export async function createRendererRuntimeFromInternals(
     dispose: () => {
       if (disposed) return;
       disposed = true;
-      internals.scheduler.dispose();
-      internals.controller.dispose();
+      if (internals.lifecycle) {
+        internals.lifecycle.release('runtime', 'ticker', 'frame-scheduler');
+        internals.lifecycle.release('runtime', 'listener', 'presentation-controller');
+      } else {
+        internals.scheduler.dispose();
+        internals.controller.dispose();
+      }
       internals.stage.destroy();
       internals.assetRegistry?.dispose();
       internals.lifecycle?.dispose();
@@ -145,13 +157,14 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     if (options.quality !== undefined) stage.setQuality(options.quality);
     if (options.preferences !== undefined) stage.setPresentationPreferences(options.preferences);
 
-    const controllerOptions: AdvRendererOptions = {
+    const controllerOptions: PresentationControllerOptions = {
       ...(options.typewriter ? { typewriter: options.typewriter } : {}),
       ...(options.backlog ? { backlog: options.backlog } : {}),
       ...(options.pluginHost ? { pluginHost: options.pluginHost } : {}),
       ...(options.onAdvance ? { onAdvance: options.onAdvance } : {}),
       ...(options.onSelect ? { onSelect: options.onSelect } : {}),
       ...(options.onWaitEnd ? { onWaitEnd: options.onWaitEnd } : {}),
+      lifecycle,
     };
     const legacy = new RuntimePresentationController(stage, options.audio ?? NULL_AUDIO, controllerOptions);
     if (options.onBacklogClose) {

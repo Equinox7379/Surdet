@@ -1,7 +1,21 @@
 import type { SaveSnapshot, SaveSlotMeta } from '@surdet/core';
+import type { RendererResourceSnapshot } from '@surdet/renderer';
+
+interface SurdetDebugApi {
+  readonly status: string;
+  readonly rendererStatus: string;
+  readonly sessionId: string;
+  readonly resourceIds: Readonly<Record<string, string>>;
+  readonly position: { sceneId: string; pc: number; sceneHash?: string } | null;
+  readonly activeBlobUrls: number;
+  readonly resourceSnapshot?: RendererResourceSnapshot | null;
+  titleSelect(id: string): unknown;
+  [key: string]: unknown;
+}
 
 declare global {
   interface Window {
+    __surdetDebug: SurdetDebugApi;
     surdetSave?: {
       list(): Promise<string[]>;
       read(slot: string): Promise<SaveSnapshot | null>;
