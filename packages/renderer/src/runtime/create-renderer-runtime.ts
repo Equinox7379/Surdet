@@ -1,11 +1,11 @@
 import { FrameScheduler } from '../frame-scheduler.js';
 import { NULL_AUDIO } from '../types.js';
-import { PixiStage } from '../pixi-stage.js';
+import { RendererStageHost } from '../pixi-stage-host.js';
 import { RenderPerformanceMonitor } from '../performance.js';
 import { RendererError } from '../api/renderer-errors.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../services/render-asset-registry.js';
-import { createPresentationPorts } from '../adv-renderer.js';
+import { createPresentationPorts } from '../legacy/legacy-renderer-adapter.js';
 import {
   PresentationController as RuntimePresentationController,
   type PresentationControllerOptions,
@@ -174,7 +174,7 @@ function notifyRuntimeError(options: RendererRuntimeOptions, cause: unknown): Re
 }
 
 function createControllerOptions(
-  stage: PixiStage,
+  stage: RendererStageHost,
   ports: ReturnType<typeof createPresentationPorts>,
   lifecycle: RenderLifecycle,
   options: RendererRuntimeOptions,
@@ -217,13 +217,13 @@ function createControllerOptions(
 export async function createRendererRuntime(options: RendererRuntimeOptions = {}): Promise<RendererRuntime> {
   const lifecycle = new RenderLifecycle();
   let assetRegistry: RenderAssetRegistry | undefined;
-  let stage: PixiStage | undefined;
+  let stage: RendererStageHost | undefined;
   let scheduler: FrameScheduler | undefined;
   let controller: RuntimePresentationController | undefined;
   let compositionAttempted = false;
   try {
     assetRegistry = new RenderAssetRegistry({ lifecycle });
-    stage = new PixiStage(assetRegistry, lifecycle);
+    stage = new RendererStageHost(assetRegistry, lifecycle);
     await stage.init(options.canvas);
     if (options.quality !== undefined) stage.setQuality(options.quality);
     if (options.preferences !== undefined) stage.setPresentationPreferences(options.preferences);

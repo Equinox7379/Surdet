@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { RendererError } from '../../src/api/renderer-errors.js';
-import { PixiStage } from '../../src/pixi-stage.js';
+import { RendererStageHost } from '../../src/pixi-stage-host.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
 import type {
@@ -216,8 +216,8 @@ describe('Renderer v2 runtime facade', () => {
   });
 
   it('cleans the real stage and registry when Pixi runtime initialization fails', async () => {
-    const init = vi.spyOn(PixiStage.prototype, 'init').mockRejectedValue(new Error('stage init failure'));
-    const stageDestroy = vi.spyOn(PixiStage.prototype, 'destroy');
+    const init = vi.spyOn(RendererStageHost.prototype, 'init').mockRejectedValue(new Error('stage init failure'));
+    const stageDestroy = vi.spyOn(RendererStageHost.prototype, 'destroy');
     const registryDispose = vi.spyOn(RenderAssetRegistry.prototype, 'dispose');
     try {
       await expect(createRendererRuntime()).rejects.toBeInstanceOf(RendererError);
