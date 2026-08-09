@@ -5,7 +5,7 @@ import { RenderPerformanceMonitor } from '../performance.js';
 import { RendererError } from '../api/renderer-errors.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../services/render-asset-registry.js';
-import { createPresentationPorts } from '../legacy/legacy-renderer-adapter.js';
+import { createPresentationPorts, type PresentationPorts } from './presentation-ports.js';
 import {
   PresentationController as RuntimePresentationController,
   type PresentationControllerOptions,
@@ -139,7 +139,7 @@ export async function createRendererRuntimeFromInternals(
     };
     facade = new RendererFacade(facadeOptions);
     let disposed = false;
-    return {
+    const runtime: RendererRuntime = {
       canvas: internals.canvas,
       commands: facade.commands,
       queries: facade.queries,
@@ -155,6 +155,24 @@ export async function createRendererRuntimeFromInternals(
         }
       },
     };
+    // Local acceptance evidence only. This is non-enumerable and deliberately
+    // absent from the public RendererRuntime contract; the host exposes only
+    // read-only snapshots to its controlled E2E probe.
+    Object.defineProperty(runtime, '__rendererV2Debug', {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({
+        layers: Object.freeze({
+          dialogue: internals.dialogueLayer,
+          menu: internals.menuLayer,
+          gallery: internals.galleryLayer,
+          system: internals.systemPanelLayer,
+          world: internals.worldLayer,
+        }),
+      }),
+    });
+    return runtime;
   } catch (cause) {
     const cleanupFailures = runCleanup({ ...internals, facade });
     throw initializationFailure(cause, cleanupFailures);
@@ -175,7 +193,7 @@ function notifyRuntimeError(options: RendererRuntimeOptions, cause: unknown): Re
 
 function createControllerOptions(
   stage: RendererStageHost,
-  ports: ReturnType<typeof createPresentationPorts>,
+  ports: PresentationPorts,
   lifecycle: RenderLifecycle,
   options: RendererRuntimeOptions,
 ): PresentationControllerOptions {
@@ -236,7 +254,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     const controllerOptions = createControllerOptions(stage, ports, lifecycle, options);
     controller = new RuntimePresentationController(ports.commands, ports.queries, options.audio ?? NULL_AUDIO, controllerOptions);
     const monitor = options.performanceMonitor ?? new RenderPerformanceMonitor();
-    // PixiStage is the composition-root frame source and already aggregates
+    // RendererStageHost is the composition-root frame source and already aggregates
     // WorldLayer/DialogueLayer/MenuLayer update work. Registering WorldLayer
     // separately duplicates its wake-up path (WorldLayer also calls the Stage
     // callback), so keep one production scheduler source.

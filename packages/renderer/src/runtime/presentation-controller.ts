@@ -155,7 +155,7 @@ export interface PresentationControllerOptions extends AdvRendererOptions {
 
 /**
  * 独立表现状态机：订阅内核 EventBus，消费 RendererCommands/RendererQueries。
- * AdvRenderer 只在兼容层委托到这里，不复制状态或行为。
+ * 兼容包装器只在 legacy 边界委托到这里，不复制状态或行为。
  */
 export class PresentationController {
   readonly presentationOwnsStage = true;
@@ -258,7 +258,7 @@ export class PresentationController {
 
   /**
    * 当前帧是否需要推进。
-   * 时间轴/打字/等待/自动播放等由渲染器自身声明；舞台动画由 AdvStage.needsUpdate 声明。
+   * 时间轴/打字/等待/自动播放等由渲染器自身声明；舞台动画由 Stage port 声明。
    * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
    */
   get needsUpdate(): boolean {
@@ -445,7 +445,7 @@ export class PresentationController {
       this.#commands.world.setFade(v);
       if (fade.done) this.#fade = null;
     }
-    // 演出效果时间轴（shake/flash/zoom 由 PixiStage 内部衰减）
+    // 演出效果时间轴（shake/flash/zoom 由 Stage port 内部衰减）
     this.#pluginHost?.update(deltaMs);
   }
 
@@ -563,7 +563,7 @@ export class PresentationController {
     this.#commands.dialogue.showBacklog(entries, (voice) => this.#audio.playVoice(voice), this.#backlogSearch.query);
   }
 
-  /** ▼ 呼吸动画累加（PixiStage 内部时间轴驱动上下浮动） */
+  /** ▼ 呼吸动画累加（Stage port 内部时间轴驱动上下浮动） */
   #syncContinuePulse(deltaMs: number): void {
     this.#updateProjection?.(deltaMs);
   }

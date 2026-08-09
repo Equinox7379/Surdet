@@ -10,13 +10,11 @@ import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.
 import type { SettingsRowView } from '../settings-store.js';
 import type { TimelineFrameEvent } from '../timeline-player.js';
 import type {
-  AdvStage,
   ChoiceOptionView,
   CommandRailItem,
   PortraitView,
   SpeakerProfile,
 } from '../types.js';
-import type { FontRole } from '../pixi-stage.js';
 import type { ShakeDirection, TransitionName } from '../world-effects-controller.js';
 import type {
   BasePanelView,
@@ -59,20 +57,17 @@ import type {
 } from '../api/renderer-queries.js';
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
+import type { PresentationStage } from './presentation-ports.js';
 
-/** @internal Transitional Stage port; it keeps Pixi and legacy methods out of the public API. */
-export type RendererStagePort = Partial<AdvStage> & {
+/** @internal Independent narrow stage port; legacy public types do not cross this boundary. */
+export interface RendererStagePort extends PresentationStage {
   fitWindow?: () => void;
   destroy: () => void;
-  registerBackground?: (key: string, source: string, format?: string) => Promise<void>;
-  registerPortrait?: (charId: string, costume: string, expression: string, source: string, format?: string) => Promise<void>;
-  registerAvatar?: (key: string, source: string, format?: string) => Promise<void>;
-  getFontFamily?: (role: FontRole) => string;
-  registerFontRole?: (role: FontRole, url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
-  registerFont?: (url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
-  resetFonts?: () => void;
-  resetFont?: () => void;
-  releaseRegisteredAssetSources?: () => Promise<void>;
+  onSelect?: ((index: number) => void) | null;
+  onBacklogClose?: (() => void) | null;
+  resetSession?: (options?: ResetSessionOptions) => void;
+  updateContinuePulse?: (deltaMs: number) => void;
+  updateEffects?: (deltaMs: number) => void;
   showGallery?: (options: {
     cgs: GalleryItemView[];
     music: GalleryItemView[];
@@ -103,8 +98,14 @@ export type RendererStagePort = Partial<AdvStage> & {
   showBaseCommands?: (view: BasePanelView, onExecute: (commandId: string) => void, onClose: () => void) => void;
   hideBase?: () => void;
   captureThumbnail?: () => string | null;
-  validatePresentation?: (snapshot: unknown) => void;
-};
+  showLoading?: (progress: LoadingProgress) => void;
+  hideLoading?: () => void;
+  getPerformanceSnapshot?: () => RenderPerformanceSnapshot | null;
+  needsUpdate?: () => boolean;
+  snapshotPresentation?: () => unknown;
+  restorePresentation?: (snapshot: unknown) => void;
+  clearPresentation?: () => void;
+}
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
 export interface RendererControllerPort extends Omit<PresentationController, 'snapshotPresentation' | 'restorePresentation' | 'clearPresentation' | 'backlogEntries' | 'backlogSearchQuery'> {
@@ -832,7 +833,7 @@ export class RendererFacade {
     };
   }
 
-  /** Legacy fallback close: PixiStage owns the panel hide; Facade only invalidates its compatibility cache. */
+  /** Legacy fallback close: the compatibility stage owns the panel hide; Facade only invalidates its cache. */
   #wrapLegacySystemCallback<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {
     return (...args: T) => {
       this.#systemOverlay = { type: 'none' };
@@ -849,7 +850,7 @@ export class RendererFacade {
     };
   }
 
-  /** Legacy fallback close: PixiStage restores the rail; Facade only invalidates its compatibility cache. */
+  /** Legacy fallback close: the compatibility stage restores the rail; Facade only invalidates its cache. */
   #wrapLegacyGalleryClose(callback?: () => void): () => void {
     return () => {
       this.#galleryOverlay = { type: 'none' };
