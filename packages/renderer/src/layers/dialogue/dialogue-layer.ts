@@ -15,7 +15,7 @@ import type { PresentationPreferences } from '../../presentation.js';
 import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
-import type { DialogueCommands } from '../../api/renderer-commands.js';
+import type { DialogueProjectionPort } from '../../api/renderer-commands.js';
 import type {
   ChoiceOptionView,
   CommandRailItem,
@@ -32,8 +32,6 @@ export interface DialogueLayerOptions {
   readonly lifecycle?: RenderLifecycle;
   readonly preferences?: PresentationPreferences;
   readonly requestFrame?: () => void;
-  /** World focus remains a Stage/World concern; this callback is a port, not a Layer import. */
-  readonly onActiveSpeakerChanged?: (characterId: string | null) => void;
 }
 
 interface ChoiceView {
@@ -79,10 +77,10 @@ function getDialogMeasureCtx(): CanvasRenderingContext2D | null {
 
 /**
  * The dialogue projection is deliberately independent from PixiStage. It only
- * receives a display root, the shared asset registry, and narrow world/frame
- * callbacks. No other Renderer Layer is imported here.
+ * receives a display root, shared asset/lifecycle services, and a narrow frame
+ * request callback. It has no World callback and imports no other Renderer Layer.
  */
-export class DialogueLayer implements DialogueCommands {
+export class DialogueLayer implements DialogueProjectionPort {
   readonly owner = 'dialogue' as const;
 
   readonly #root: Container;
@@ -92,9 +90,9 @@ export class DialogueLayer implements DialogueCommands {
   readonly #lifecycle: RenderLifecycle;
   readonly #ownsLifecycle: boolean;
   readonly #requestFrameCallback?: () => void;
-  readonly #onActiveSpeakerChanged?: (characterId: string | null) => void;
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
+  #projectionVersion = 0;
 
   #speakerText: PText;
   #dialogText: PText;
@@ -156,7 +154,6 @@ export class DialogueLayer implements DialogueCommands {
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
     this.#requestFrameCallback = options.requestFrame;
-    this.#onActiveSpeakerChanged = options.onActiveSpeakerChanged;
     if (options.preferences) this.#preferences = { ...options.preferences };
 
     this.#choiceLayer = new Container();
@@ -253,6 +250,10 @@ export class DialogueLayer implements DialogueCommands {
 
   get activeSpeakerId(): string | null {
     return this.#activeSpeakerId;
+  }
+
+  get projectionVersion(): number {
+    return this.#projectionVersion;
   }
 
   #onSelect: ((index: number) => void) | null = null;
@@ -365,6 +366,7 @@ export class DialogueLayer implements DialogueCommands {
     this.#requestFrame();
     this.#lastShownSpeaker = speaker;
     this.#lastShownDialog = value;
+    this.#projectionVersion += 1;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${speaker}」` : '';
@@ -550,7 +552,6 @@ export class DialogueLayer implements DialogueCommands {
   setActiveSpeaker(characterId: string | null): void {
     this.#activeSpeakerId = characterId;
     this.#updateSpeakerAvatar();
-    this.#onActiveSpeakerChanged?.(characterId);
     this.#requestFrame();
   }
 

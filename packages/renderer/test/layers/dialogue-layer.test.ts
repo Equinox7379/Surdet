@@ -272,6 +272,114 @@ describe('DialogueLayer v2 projection contract', () => {
     lifecycle.dispose();
   });
 
+  it('coordinates an injected DialogueLayer and World focus exactly once', () => {
+    const stage = new DialogueStageHarness();
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const layer = new DialogueLayer({
+      uiLayer: new Container(),
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+    const ports = createPresentationPorts(stage);
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, {
+      commands: ports.commands,
+      queries: ports.queries,
+    });
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: layer,
+    });
+    const dialogueSetActiveSpeaker = vi.spyOn(layer, 'setActiveSpeaker');
+    const worldFocus = vi.spyOn(stage, 'setPortraitFocus');
+
+    try {
+      facade.commands.dialogue.setActiveSpeaker('lynn');
+
+      expect(dialogueSetActiveSpeaker).toHaveBeenCalledTimes(1);
+      expect(layer.activeSpeakerId).toBe('lynn');
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('coordinates profile-derived speaker focus once and keeps narration/repeated text idempotent', () => {
+    const stage = new DialogueStageHarness();
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const layer = new DialogueLayer({
+      uiLayer: new Container(),
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+    const ports = createPresentationPorts(stage);
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, {
+      commands: ports.commands,
+      queries: ports.queries,
+    });
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: layer,
+    });
+    const dialogueSetActiveSpeaker = vi.spyOn(layer, 'setActiveSpeaker');
+    const worldFocus = vi.spyOn(stage, 'setPortraitFocus');
+
+    try {
+      facade.commands.dialogue.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+      facade.commands.dialogue.showText('凛', '第一句');
+
+      expect(dialogueSetActiveSpeaker).toHaveBeenCalledTimes(1);
+      expect(layer.activeSpeakerId).toBe('lynn');
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+      const versionAfterProfileText = layer.projectionVersion;
+      expect(layer.activeSpeakerId).toBe('lynn');
+      expect(layer.projectionVersion).toBe(versionAfterProfileText);
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+
+      dialogueSetActiveSpeaker.mockClear();
+      worldFocus.mockClear();
+      facade.commands.dialogue.showText(null, '旁白');
+
+      expect(dialogueSetActiveSpeaker).toHaveBeenCalledTimes(1);
+      expect(layer.activeSpeakerId).toBeNull();
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith(null);
+
+      dialogueSetActiveSpeaker.mockClear();
+      worldFocus.mockClear();
+      facade.commands.dialogue.showText('未知说话人', '未知映射');
+
+      expect(dialogueSetActiveSpeaker).toHaveBeenCalledTimes(1);
+      expect(layer.activeSpeakerId).toBeNull();
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith(null);
+
+      dialogueSetActiveSpeaker.mockClear();
+      worldFocus.mockClear();
+      facade.commands.dialogue.showText('未知说话人', '未知映射');
+
+      expect(dialogueSetActiveSpeaker).not.toHaveBeenCalled();
+      expect(worldFocus).not.toHaveBeenCalled();
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
   it('keeps text, narration, and repeated text observable through dialogue commands', () => {
     const runtime = makeRuntime();
     runtime.facade.commands.dialogue.showText('凛', '同一句');

@@ -30,6 +30,7 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
+import type { DialogueProjectionPort } from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -385,7 +386,7 @@ export class PixiStage implements AdvStage {
   }
 
   /** @internal Renderer runtime wiring for the extracted dialogue layer. */
-  get dialogueLayer(): DialogueLayer {
+  get dialogueLayer(): DialogueProjectionPort {
     return this.#dialogue;
   }
 
@@ -524,7 +525,6 @@ export class PixiStage implements AdvStage {
       ...(lifecycle ? { lifecycle } : {}),
       preferences: this.#presentation,
       requestFrame: () => this.#requestFrame(),
-      onActiveSpeakerChanged: (characterId) => this.setPortraitFocus(characterId),
     });
     this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#fadeOverlay.alpha = 0;
@@ -786,6 +786,7 @@ export class PixiStage implements AdvStage {
   /** 当前说话角色聚焦；未配置角色资料时传 null，所有立绘保持原始存在感。 */
   setActiveSpeaker(characterId: string | null): void {
     this.#dialogue.setActiveSpeaker(characterId);
+    this.setPortraitFocus(this.#dialogue.activeSpeakerId);
   }
 
   /** World port used by RendererFacade to keep portrait focus separate from dialogue state. */
@@ -933,7 +934,11 @@ export class PixiStage implements AdvStage {
   }
 
   showText(speaker: string | null, value: string): void {
+    const before = this.#dialogue.projectionVersion;
     this.#dialogue.showText(speaker, value);
+    if (this.#dialogue.projectionVersion !== before) {
+      this.setPortraitFocus(this.#dialogue.activeSpeakerId);
+    }
   }
 
   /** 等待推进指示器可见性（呼吸小光点；同时决定面板是否保持显示） */
