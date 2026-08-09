@@ -25,8 +25,13 @@ export type MenuOverlayState =
   | { type: 'settings' }
   | { type: 'save-load'; mode: 'save' | 'load' };
 
+export type GalleryOverlayState =
+  | { type: 'none' }
+  | { type: 'gallery'; tab: 'cg' | 'music' | 'text'; mode: 'grid' | 'viewer'; viewerKey: string | null };
+
 export interface OverlayQueries {
   menu(): MenuOverlayState;
+  gallery(): GalleryOverlayState;
 }
 
 export interface PreferenceQueries {

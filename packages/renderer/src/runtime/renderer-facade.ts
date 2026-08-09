@@ -31,6 +31,7 @@ import type {
   DialogueCommands,
   DialogueProjectionPort,
   GalleryCommands,
+  GalleryProjectionPort,
   LoadingCommands,
   MenuCommands,
   MenuProjectionPort,
@@ -44,6 +45,7 @@ import type {
 } from '../api/renderer-commands.js';
 import type {
   DialogueQueries,
+  GalleryOverlayState,
   MenuOverlayState,
   OverlayQueries,
   PreferenceQueries,
@@ -122,6 +124,8 @@ export interface RendererFacadeOptions {
   dialogueLayer?: DialogueProjectionPort;
   /** M4 public menu projection port; concrete Layer details stay behind it. */
   menuLayer?: MenuProjectionPort;
+  /** M5 public gallery projection port; concrete Layer details stay behind it. */
+  galleryLayer?: GalleryProjectionPort;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -180,8 +184,10 @@ export class RendererFacade {
   #assetRegistry?: RenderAssetRegistry;
   #dialoguePort?: DialogueProjectionPort;
   #menuPort?: MenuProjectionPort;
+  #galleryPort?: GalleryProjectionPort;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
+  #galleryOverlay: GalleryOverlayState = { type: 'none' };
 
   constructor(options: RendererFacadeOptions) {
     this.#stage = options.stage;
@@ -191,6 +197,7 @@ export class RendererFacade {
     this.#assetRegistry = options.assetRegistry;
     this.#dialoguePort = options.dialogueLayer;
     this.#menuPort = options.menuLayer;
+    this.#galleryPort = options.galleryLayer;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -343,7 +350,7 @@ export class RendererFacade {
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
           this.#callDialogue('hideChoices', this.#dialoguePort?.hideChoices, this.#stage.hideChoices);
           this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog);
-          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#hideGalleryProjection();
           this.#callMenu('hideSettings', this.#menuPort.hideSettings);
           this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
           this.#callMenu('hideSystemMenu', this.#menuPort.hideSystemMenu);
@@ -386,7 +393,7 @@ export class RendererFacade {
       showSettings: (rows, onChange, onClose) => {
         if (this.#menuPort) {
           this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
-          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#hideGalleryProjection();
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
           this.#callMenu(
             'showSettings',
@@ -414,7 +421,7 @@ export class RendererFacade {
       showSaveLoad: (view, onSelect, onClose) => {
         if (this.#menuPort) {
           this.#callMenu('hideSettings', this.#menuPort.hideSettings);
-          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#hideGalleryProjection();
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
           this.#callMenu(
             'showSaveLoad',
@@ -442,15 +449,41 @@ export class RendererFacade {
     };
 
     const gallery: GalleryCommands = {
-      showGallery: (options) => this.#callStage('gallery', 'showGallery', this.#stage.showGallery, {
-        cgs: options.cgs.slice(),
-        music: options.music.slice(),
-        texts: options.texts?.slice(),
-        onPlayMusic: options.onPlayMusic,
-        onReplayText: options.onReplayText,
-        onClose: options.onClose,
-      }),
-      hideGallery: () => this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery),
+      showGallery: (options) => {
+        const view = {
+          cgs: options.cgs.map((item) => ({ ...item })),
+          music: options.music.map((item) => ({ ...item })),
+          texts: options.texts?.map((item) => ({ ...item })),
+          onPlayMusic: options.onPlayMusic,
+          onReplayText: options.onReplayText,
+          onClose: options.onClose,
+        };
+        if (this.#galleryPort) {
+          if (this.#menuPort) {
+            this.#callMenu('hideSettings', this.#menuPort.hideSettings);
+            this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
+          } else {
+            this.#stage.hideSettings?.();
+            this.#stage.hideSaveLoad?.();
+          }
+          this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
+          this.#callGallery('showGallery', this.#galleryPort.showGallery, view);
+          this.#syncGalleryOverlay();
+          return;
+        }
+        this.#callStage('gallery', 'showGallery', this.#stage.showGallery, view);
+        this.#galleryOverlay = { type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null };
+      },
+      hideGallery: () => {
+        if (this.#galleryPort) {
+          this.#callGallery('hideGallery', this.#galleryPort.hideGallery);
+          this.#stage.restoreCommandRail?.();
+          this.#syncGalleryOverlay();
+          return;
+        }
+        this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+        this.#galleryOverlay = { type: 'none' };
+      },
     };
 
     const system: SystemPanelCommands = {
@@ -524,6 +557,10 @@ export class RendererFacade {
         this.#ensureQueryActive('overlay', 'menu');
         return this.#menuPort ? { ...this.#menuPort.menu() } : { ...this.#menuOverlay };
       },
+      gallery: () => {
+        this.#ensureQueryActive('overlay', 'gallery');
+        return this.#galleryPort ? { ...this.#galleryPort.gallery() } : { ...this.#galleryOverlay };
+      },
     };
     const preferenceQueries: PreferenceQueries = {
       quality: () => this.#queryStage('preferences', 'quality', this.#stage.getQuality),
@@ -567,12 +604,14 @@ export class RendererFacade {
     this.#ensureActive('runtime', 'resetSession');
     this.#controller.reset(options);
     this.#menuOverlay = { type: 'none' };
+    this.#galleryOverlay = { type: 'none' };
   }
 
   /** @internal Called by the composition root after ordered disposal. */
   markDisposed(): void {
     this.#disposed = true;
     this.#menuOverlay = { type: 'none' };
+    this.#galleryOverlay = { type: 'none' };
   }
 
   #ensureActive(domain: string, command: string): void {
@@ -634,8 +673,33 @@ export class RendererFacade {
     return Reflect.apply(layerMethod, this.#menuPort, args as unknown as unknown[]);
   }
 
+  #callGallery<T, Args extends readonly unknown[]>(
+    command: string,
+    layerMethod: ((...args: Args) => T) | undefined,
+    ...args: Args
+  ): T {
+    this.#ensureActive('gallery', command);
+    if (!layerMethod) this.#missing('gallery', command);
+    return Reflect.apply(layerMethod, this.#galleryPort, args as unknown as unknown[]);
+  }
+
   #syncMenuOverlay(): void {
     this.#menuOverlay = this.#menuPort ? { ...this.#menuPort.menu() } : { type: 'none' };
+  }
+
+  #syncGalleryOverlay(): void {
+    this.#galleryOverlay = this.#galleryPort ? { ...this.#galleryPort.gallery() } : { type: 'none' };
+  }
+
+  /** Hide Gallery without restoring the command rail; the caller may be opening another overlay. */
+  #hideGalleryProjection(): void {
+    if (this.#galleryPort) {
+      this.#callGallery('hideGallery', this.#galleryPort.hideGallery);
+      this.#syncGalleryOverlay();
+      return;
+    }
+    if (this.#stage.hideGallery) this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+    this.#galleryOverlay = { type: 'none' };
   }
 
   #wrapMenuRailRestore<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {

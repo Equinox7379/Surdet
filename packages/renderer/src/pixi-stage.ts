@@ -29,7 +29,7 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
-import type { DialogueProjectionPort, MenuProjectionPort } from './api/renderer-commands.js';
+import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort } from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -38,6 +38,7 @@ import {
 import { RenderLifecycle } from './lifecycle/render-lifecycle.js';
 import { DialogueLayer } from './layers/dialogue/dialogue-layer.js';
 import { MenuLayer } from './layers/menu/menu-layer.js';
+import { GalleryLayer } from './layers/gallery/gallery-layer.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -395,6 +396,11 @@ export class PixiStage implements AdvStage {
     return this.#menu;
   }
 
+  /** @internal Renderer runtime wiring for the extracted gallery layer. */
+  get galleryLayer(): GalleryProjectionPort {
+    return this.#gallery;
+  }
+
   #bgLayer: Container;
   #portraitLayer: Container;
   #uiLayer: Container;
@@ -425,16 +431,8 @@ export class PixiStage implements AdvStage {
   /** 时间轴镜头平移，单位为舞台像素；与缩放中心偏移叠加。 */
   #cameraPanX = 0;
   #cameraPanY = 0;
-  /** 鉴赏覆盖层（CG/音乐 两个 tab；CG 全屏回看模式） */
-  #galleryLayer: Container;
-  #galleryTab: 'cg' | 'music' | 'text' = 'cg';
-  #galleryMode: 'grid' | 'viewer' = 'grid';
-  #galleryViews: { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[] } | null = null;
-  #galleryOnPlayMusic: ((id: string, src?: string) => void) | null = null;
-  /** 文本回想重播回调（宿主 hostJump 到回想场景） */
-  #galleryOnReplayText: ((item: GalleryItemView) => void) | null = null;
-  #galleryOnClose: (() => void) | null = null;
-  #galleryViewerKey: string | null = null;
+  /** M5 extracted gallery projection; all gallery state lives here. */
+  readonly #gallery: GalleryLayer;
   /** 战斗覆盖层（阵营分列 + 血条 + 点击攻击/跳过） */
   #battleLayer: Container;
   #battleHandlers: BattleHandlers | null = null;
@@ -546,12 +544,19 @@ export class PixiStage implements AdvStage {
     this.#baseLayer = new Container();
     this.#baseLayer.visible = false;
     this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
-    this.#galleryLayer = new Container();
-    this.#galleryLayer.visible = false;
+    this.#gallery = new GalleryLayer({
+      uiLayer: this.#uiLayer,
+      width: this.#w,
+      height: this.#h,
+      assets: this.#assetRegistry,
+      ...(lifecycle ? { lifecycle } : {}),
+      createBackgroundTexture: (key, width, height) => makeBackgroundTexture(key, width, height),
+      requestFrame: () => this.#requestFrame(),
+    });
     this.#battleLayer = new Container();
     this.#battleLayer.visible = false;
     this.#uiLayer.addChild(
-      this.#galleryLayer, this.#battleLayer,
+      this.#battleLayer,
       this.#wipeBar,
       this.#mapLayer, this.#shopLayer, this.#baseLayer,
       this.#loadingLayer.container,
@@ -1546,7 +1551,7 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 鉴赏覆盖层（CG/音乐） ============================ */
 
-  /** 展示鉴赏界面：CG/音乐/文本 三个 tab；CG 全屏回看、音乐播放、文本跳回场景重播 */
+  /** 展示鉴赏界面；GalleryLayer owns the projection while this wrapper preserves legacy coordination. */
   showGallery(opts: {
     cgs: GalleryItemView[];
     music: GalleryItemView[];
@@ -1559,179 +1564,14 @@ export class PixiStage implements AdvStage {
     this.hideSettings();
     this.hideSaveLoad();
     this.hideCommandRail();
-    this.#galleryViews = { cgs: opts.cgs, music: opts.music, texts: opts.texts ?? [] };
-    this.#galleryOnPlayMusic = opts.onPlayMusic ?? null;
-    this.#galleryOnReplayText = opts.onReplayText ?? null;
-    this.#galleryOnClose = opts.onClose ?? null;
-    this.#galleryMode = 'grid';
-    this.#galleryViewerKey = null;
-    this.#rebuildGallery();
-    this.#uiLayer.setChildIndex(this.#galleryLayer, this.#uiLayer.children.length - 1);
-    this.#galleryLayer.visible = true;
+    this.#gallery.showGallery(opts);
   }
 
-  /** 隐藏鉴赏界面 */
+  /** 隐藏鉴赏界面；legacy API restores the command rail after the layer is hidden. */
   hideGallery(): void {
     this.#requestFrame();
-    this.#galleryLayer.visible = false;
+    this.#gallery.hideGallery();
     this.#dialogue.restoreCommandRail();
-  }
-
-  #closeGallery(): void {
-    this.hideGallery();
-    this.#galleryOnClose?.();
-  }
-
-  #rebuildGallery(): void {
-    const layer = this.#galleryLayer;
-    layer.removeAllListeners();
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    if (!this.#galleryViews) return;
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.95 }));
-
-    const mkBtn = (label: string, x: number, active: boolean, onTap: () => void): PText => {
-      const t = new PText({
-        text: label,
-        style: { fontSize: 24, fill: active ? NIGHT_AZURE.accent : 0x8a93a8, fontWeight: active ? 'bold' : 'normal' } satisfies TextStyleOptions,
-      });
-      t.position.set(x, 30);
-      t.eventMode = 'static';
-      t.cursor = 'pointer';
-      t.on('pointerdown', onTap);
-      return t;
-    };
-    layer.addChild(mkBtn('CG', 60, this.#galleryTab === 'cg', () => {
-      this.#galleryTab = 'cg';
-      this.#galleryMode = 'grid';
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('音乐', 150, this.#galleryTab === 'music', () => {
-      this.#galleryTab = 'music';
-      this.#galleryMode = 'grid';
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('文本', 240, this.#galleryTab === 'text', () => {
-      this.#galleryTab = 'text';
-      this.#galleryMode = 'grid';
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('✕ 关闭', this.#w - 150, false, () => this.#closeGallery()));
-
-    if (this.#galleryMode === 'viewer' && this.#galleryViewerKey !== null) {
-      this.#buildGalleryViewer(layer, this.#galleryViewerKey);
-      return;
-    }
-
-    if (this.#galleryTab === 'cg') {
-      const items = this.#galleryViews.cgs;
-      if (items.length === 0) {
-        layer.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
-        return;
-      }
-      const cols = 4;
-      const cw = 270;
-      const ch = 152;
-      items.forEach((item, i) => {
-        const x = 60 + (i % cols) * (cw + 20);
-        const y = 96 + Math.floor(i / cols) * (ch + 48);
-        const cell = new Container();
-        cell.position.set(x, y);
-        if (item.unlocked) {
-          const key = item.src ?? item.id;
-          const tex = this.#assetRegistry.resolveBackground(key)
-            ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, 320, 180));
-          const sp = new Sprite(tex);
-          sp.width = cw;
-          sp.height = ch;
-          cell.addChild(sp);
-          cell.eventMode = 'static';
-          cell.cursor = 'pointer';
-          cell.on('pointerdown', () => {
-            this.#galleryMode = 'viewer';
-            this.#galleryViewerKey = key;
-            this.#rebuildGallery();
-          });
-        } else {
-          cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: 0x1c1c26, alpha: 1 }));
-          cell.addChild(new PText({ text: '?', style: { fontSize: 42, fill: 0x55555f } satisfies TextStyleOptions })).position.set(cw / 2 - 12, ch / 2 - 30);
-        }
-        cell.addChild(new PText({
-          text: item.unlocked ? item.name : '???',
-          style: { fontSize: 18, fill: item.unlocked ? 0xdddddd : 0x55555f } satisfies TextStyleOptions,
-        })).position.set(0, ch + 10);
-        layer.addChild(cell);
-      });
-      return;
-    }
-
-    // 音乐 tab：条目行，已解锁可点击播放
-    if (this.#galleryTab === 'music') {
-      const items = this.#galleryViews.music;
-      if (items.length === 0) {
-        layer.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
-        return;
-      }
-      items.forEach((item, i) => {
-        const y = 96 + i * 58;
-        const row = new Container();
-        row.position.set(60, y);
-        row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
-        row.addChild(new PText({
-          text: `${item.unlocked ? '♪' : '?'}  ${item.unlocked ? item.name : '???'}`,
-          style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
-        })).position.set(18, 10);
-        if (item.unlocked) {
-          row.eventMode = 'static';
-          row.cursor = 'pointer';
-          row.on('pointerdown', () => this.#galleryOnPlayMusic?.(item.id, item.src));
-        }
-        layer.addChild(row);
-      });
-      return;
-    }
-
-    // 文本 tab：回想条目，已解锁可点击跳回场景重播
-    const items = this.#galleryViews.texts;
-    if (items.length === 0) {
-      layer.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
-      return;
-    }
-    items.forEach((item, i) => {
-      const y = 96 + i * 58;
-      const row = new Container();
-      row.position.set(60, y);
-      row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
-      row.addChild(new PText({
-        text: `${item.unlocked ? '❐' : '?'}  ${item.unlocked ? item.name : '???'}`,
-        style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
-      })).position.set(18, 10);
-      if (item.unlocked) {
-        row.eventMode = 'static';
-        row.cursor = 'pointer';
-        row.on('pointerdown', () => this.#galleryOnReplayText?.(item));
-      }
-      layer.addChild(row);
-    });
-  }
-
-  /** CG 全屏回看：优先注册的真实素材，未注册回退程序化占位；点击任意处返回列表 */
-  #buildGalleryViewer(layer: Container, key: string): void {
-    const tex = this.#assetRegistry.resolveBackground(key)
-      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
-    const sp = new Sprite(tex);
-    sp.width = this.#w;
-    sp.height = this.#h;
-    layer.addChild(sp);
-    layer.addChild(new PText({
-      text: '点击任意处返回列表',
-      style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions,
-    })).position.set(this.#w - 250, this.#h - 44);
-    layer.eventMode = 'static';
-    layer.on('pointerdown', () => {
-      this.#galleryMode = 'grid';
-      this.#galleryViewerKey = null;
-      this.#rebuildGallery();
-    });
   }
 
   /* ============================ 设置面板 ============================ */
@@ -2211,13 +2051,12 @@ export class PixiStage implements AdvStage {
     const clearLayer = (layer: Container): void => {
       layer.removeChildren().forEach((child) => child.destroy({ children: true }));
     };
-    clearLayer(this.#galleryLayer);
     clearLayer(this.#battleLayer);
+    this.#gallery.reset();
     this.#menu.reset();
     clearLayer(this.#mapLayer);
     clearLayer(this.#shopLayer);
     clearLayer(this.#baseLayer);
-    this.#galleryLayer.visible = false;
     this.#battleLayer.visible = false;
     this.#mapLayer.visible = false;
     this.#shopLayer.visible = false;
@@ -2225,10 +2064,6 @@ export class PixiStage implements AdvStage {
     this.#mapHandlers = null;
     this.#shopHandlers = null;
     this.#baseHandlers = null;
-    this.#galleryViews = null;
-    this.#galleryOnPlayMusic = null;
-    this.#galleryOnReplayText = null;
-    this.#galleryOnClose = null;
     this.#battleHandlers = null;
 
     this.#worldLayer.position.set(0, 0);
@@ -2270,6 +2105,7 @@ export class PixiStage implements AdvStage {
     this.#loadingLayer.destroy();
     this.#menu.dispose();
     this.#dialogue.dispose();
+    this.#gallery.dispose();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
     this.#portraitSprites.clear();
