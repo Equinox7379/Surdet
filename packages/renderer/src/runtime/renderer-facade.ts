@@ -1,5 +1,5 @@
 import type { BacklogEntry } from '../backlog.js';
-import type { BattleView } from '../battle-view.js';
+import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
 import type { LoadingProgress } from '../loading-progress.js';
 import type { PostProcessSettings } from '../post-process.js';
@@ -16,7 +16,7 @@ import type {
   PortraitView,
   SpeakerProfile,
 } from '../types.js';
-import type { BattleHandlers, FontRole } from '../pixi-stage.js';
+import type { FontRole } from '../pixi-stage.js';
 import type { ShakeDirection, TransitionName } from '../world-effects-controller.js';
 import type {
   BasePanelView,
@@ -41,6 +41,7 @@ import type {
   RendererFontRole,
   ShopView,
   SystemPanelCommands,
+  SystemPanelProjectionPort,
   WorldCommands,
 } from '../api/renderer-commands.js';
 import type {
@@ -52,6 +53,7 @@ import type {
   PresentationQueries,
   RendererDiagnosticQueries,
   RendererQueries,
+  SystemPanelOverlayState,
   WorldQueries,
 } from '../api/renderer-queries.js';
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
@@ -126,6 +128,8 @@ export interface RendererFacadeOptions {
   menuLayer?: MenuProjectionPort;
   /** M5 public gallery projection port; concrete Layer details stay behind it. */
   galleryLayer?: GalleryProjectionPort;
+  /** M6 public system-panel projection port; concrete Layer details stay behind it. */
+  systemPanelLayer?: SystemPanelProjectionPort;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -185,9 +189,11 @@ export class RendererFacade {
   #dialoguePort?: DialogueProjectionPort;
   #menuPort?: MenuProjectionPort;
   #galleryPort?: GalleryProjectionPort;
+  #systemPort?: SystemPanelProjectionPort;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
   #galleryOverlay: GalleryOverlayState = { type: 'none' };
+  #systemOverlay: SystemPanelOverlayState = { type: 'none' };
 
   constructor(options: RendererFacadeOptions) {
     this.#stage = options.stage;
@@ -198,6 +204,7 @@ export class RendererFacade {
     this.#dialoguePort = options.dialogueLayer;
     this.#menuPort = options.menuLayer;
     this.#galleryPort = options.galleryLayer;
+    this.#systemPort = options.systemPanelLayer;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -493,16 +500,97 @@ export class RendererFacade {
     };
 
     const system: SystemPanelCommands = {
-      showBattle: (view, handlers, message) => this.#callStage('system', 'showBattle', this.#stage.showBattle, view, handlers, message),
-      hideBattle: () => this.#callStage('system', 'hideBattle', this.#stage.hideBattle),
-      showMap: (view, onEnter, onEndTurn) => this.#callStage('system', 'showMap', this.#stage.showMap, view, onEnter, onEndTurn),
-      hideMap: () => this.#callStage('system', 'hideMap', this.#stage.hideMap),
-      showShop: (view, onBuy, onClose) => this.#callStage('system', 'showShop', this.#stage.showShop, { ...view, items: view.items.slice() }, onBuy, onClose),
-      hideShop: () => this.#callStage('system', 'hideShop', this.#stage.hideShop),
-      showBaseCommands: (view, onExecute, onClose) => this.#callStage('system', 'showBaseCommands', this.#stage.showBaseCommands, view, onExecute, onClose),
-      hideBaseCommands: () => this.#callStage('system', 'hideBaseCommands', this.#stage.hideBase),
-      showVideo: (source, onEnd) => this.#callStage('system', 'showVideo', this.#stage.showVideo, source, onEnd),
-      hideVideo: () => this.#callStage('system', 'hideVideo', this.#stage.hideVideo),
+      showBattle: (view, handlers, message) => {
+        if (this.#systemPort) {
+          this.#callSystem('showBattle', this.#systemPort.showBattle, view, handlers, message);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'showBattle', this.#stage.showBattle, view, handlers, message);
+        this.#systemOverlay = { type: 'battle' };
+      },
+      hideBattle: () => {
+        if (this.#systemPort) {
+          this.#callSystem('hideBattle', this.#systemPort.hideBattle);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'hideBattle', this.#stage.hideBattle);
+        this.#systemOverlay = { type: 'none' };
+      },
+      showMap: (view, onEnter, onEndTurn) => {
+        if (this.#systemPort) {
+          this.#callSystem('showMap', this.#systemPort.showMap, view, this.#wrapSystemCallback(onEnter), this.#wrapSystemCallback(onEndTurn));
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'showMap', this.#stage.showMap, view, this.#wrapLegacySystemCallback(onEnter), this.#wrapLegacySystemCallback(onEndTurn));
+        this.#systemOverlay = { type: 'map' };
+      },
+      hideMap: () => {
+        if (this.#systemPort) {
+          this.#callSystem('hideMap', this.#systemPort.hideMap);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'hideMap', this.#stage.hideMap);
+        this.#systemOverlay = { type: 'none' };
+      },
+      showShop: (view, onBuy, onClose) => {
+        const copy = { ...view, items: view.items.map((item) => ({ ...item })) };
+        if (this.#systemPort) {
+          this.#callSystem('showShop', this.#systemPort.showShop, copy, onBuy, this.#wrapSystemCallback(onClose));
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'showShop', this.#stage.showShop, copy, onBuy, this.#wrapLegacySystemCallback(onClose));
+        this.#systemOverlay = { type: 'shop' };
+      },
+      hideShop: () => {
+        if (this.#systemPort) {
+          this.#callSystem('hideShop', this.#systemPort.hideShop);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'hideShop', this.#stage.hideShop);
+        this.#systemOverlay = { type: 'none' };
+      },
+      showBaseCommands: (view, onExecute, onClose) => {
+        if (this.#systemPort) {
+          this.#callSystem('showBaseCommands', this.#systemPort.showBaseCommands, view, onExecute, this.#wrapSystemCallback(onClose));
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'showBaseCommands', this.#stage.showBaseCommands, view, onExecute, this.#wrapLegacySystemCallback(onClose));
+        this.#systemOverlay = { type: 'base' };
+      },
+      hideBaseCommands: () => {
+        if (this.#systemPort) {
+          this.#callSystem('hideBaseCommands', this.#systemPort.hideBaseCommands);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'hideBaseCommands', this.#stage.hideBase);
+        this.#systemOverlay = { type: 'none' };
+      },
+      showVideo: (source, onEnd) => {
+        if (this.#systemPort) {
+          this.#callSystem('showVideo', this.#systemPort.showVideo, source, this.#wrapSystemCallback(onEnd));
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#systemOverlay = { type: 'video' };
+        this.#callStage('system', 'showVideo', this.#stage.showVideo, source, this.#wrapLegacySystemCallback(onEnd));
+      },
+      hideVideo: () => {
+        if (this.#systemPort) {
+          this.#callSystem('hideVideo', this.#systemPort.hideVideo);
+          this.#syncSystemOverlay();
+          return;
+        }
+        this.#callStage('system', 'hideVideo', this.#stage.hideVideo);
+        this.#systemOverlay = { type: 'none' };
+      },
     };
 
     const loading: LoadingCommands = {
@@ -567,6 +655,10 @@ export class RendererFacade {
         this.#ensureQueryActive('overlay', 'gallery');
         return this.#galleryPort ? { ...this.#galleryPort.gallery() } : { ...this.#galleryOverlay };
       },
+      system: () => {
+        this.#ensureQueryActive('overlay', 'system');
+        return this.#systemPort ? { ...this.#systemPort.system() } : { ...this.#systemOverlay };
+      },
     };
     const preferenceQueries: PreferenceQueries = {
       quality: () => this.#queryStage('preferences', 'quality', this.#stage.getQuality),
@@ -611,6 +703,7 @@ export class RendererFacade {
     this.#controller.reset(options);
     this.#menuOverlay = { type: 'none' };
     this.#galleryOverlay = { type: 'none' };
+    this.#systemOverlay = { type: 'none' };
   }
 
   /** @internal Called by the composition root after ordered disposal. */
@@ -618,6 +711,7 @@ export class RendererFacade {
     this.#disposed = true;
     this.#menuOverlay = { type: 'none' };
     this.#galleryOverlay = { type: 'none' };
+    this.#systemOverlay = { type: 'none' };
   }
 
   #ensureActive(domain: string, command: string): void {
@@ -689,12 +783,42 @@ export class RendererFacade {
     return Reflect.apply(layerMethod, this.#galleryPort, args as unknown as unknown[]);
   }
 
+  #callSystem<T, Args extends readonly unknown[]>(
+    command: string,
+    layerMethod: ((...args: Args) => T) | undefined,
+    ...args: Args
+  ): T {
+    this.#ensureActive('system', command);
+    if (!layerMethod) this.#missing('system', command);
+    return Reflect.apply(layerMethod, this.#systemPort, args as unknown as unknown[]);
+  }
+
   #syncMenuOverlay(): void {
     this.#menuOverlay = this.#menuPort ? { ...this.#menuPort.menu() } : { type: 'none' };
   }
 
   #syncGalleryOverlay(): void {
     this.#galleryOverlay = this.#galleryPort ? { ...this.#galleryPort.gallery() } : { type: 'none' };
+  }
+
+  #syncSystemOverlay(): void {
+    this.#systemOverlay = this.#systemPort ? { ...this.#systemPort.system() } : { type: 'none' };
+  }
+
+  /** Interactive v2 SystemPanel close: the Layer hides locally, then the Facade updates its query cache. */
+  #wrapSystemCallback<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {
+    return (...args: T) => {
+      this.#syncSystemOverlay();
+      callback(...args);
+    };
+  }
+
+  /** Legacy fallback close: PixiStage owns the panel hide; Facade only invalidates its compatibility cache. */
+  #wrapLegacySystemCallback<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {
+    return (...args: T) => {
+      this.#systemOverlay = { type: 'none' };
+      callback(...args);
+    };
   }
 
   /** Interactive v2 Gallery close: the Layer hides locally, then Facade restores cross-layer state. */

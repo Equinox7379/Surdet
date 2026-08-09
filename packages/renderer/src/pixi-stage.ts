@@ -9,7 +9,7 @@ import {
   Texture,
   type TextStyleOptions,
 } from 'pixi.js';
-import type { BattleView } from './battle-view.js';
+import type { BattleHandlers, BattleView } from './battle-view.js';
 import type { BacklogEntry } from './backlog.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
@@ -29,7 +29,7 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
-import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort } from './api/renderer-commands.js';
+import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort } from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -39,17 +39,10 @@ import { RenderLifecycle } from './lifecycle/render-lifecycle.js';
 import { DialogueLayer } from './layers/dialogue/dialogue-layer.js';
 import { MenuLayer } from './layers/menu/menu-layer.js';
 import { GalleryLayer } from './layers/gallery/gallery-layer.js';
+import { SystemPanelLayer } from './layers/system-panel/system-panel-layer.js';
 
-/** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
-export interface BattleHandlers {
-  /** 点击存活的非行动方单位 → 以当前行动方首个存活单位攻击该目标；
-   *  skillId 为玩家先前选中的技能（null = 普攻） */
-  onAttack: (targetUid: string, skillId: string | null) => void;
-  /** 跳过行动（僵局出口） */
-  onPass: () => void;
-  /** 移动行动方单位（1D 阵列；移动消耗本次行动） */
-  onMove?: (dir: -1 | 1) => void;
-}
+/** Keep the legacy public type path while the source of truth lives in battle-view.ts. */
+export type { BattleHandlers } from './battle-view.js';
 
 /** 确定性颜色生成（同一资源 key 稳定同色） */
 function hashStr(s: string): number {
@@ -401,6 +394,11 @@ export class PixiStage implements AdvStage {
     return this.#gallery;
   }
 
+  /** @internal Renderer runtime wiring for the extracted system-panel layer. */
+  get systemPanelLayer(): SystemPanelProjectionPort {
+    return this.#system;
+  }
+
   #bgLayer: Container;
   #portraitLayer: Container;
   #uiLayer: Container;
@@ -433,11 +431,6 @@ export class PixiStage implements AdvStage {
   #cameraPanY = 0;
   /** M5 extracted gallery projection; all gallery state lives here. */
   readonly #gallery: GalleryLayer;
-  /** 战斗覆盖层（阵营分列 + 血条 + 点击攻击/跳过） */
-  #battleLayer: Container;
-  #battleHandlers: BattleHandlers | null = null;
-  /** 战斗中已选技能（null = 普攻） */
-  #battleSelectedSkill: string | null = null;
   /** @wipe 擦除转场 */
   #wipeBar: Graphics;
   #wipeRemain = 0;
@@ -462,16 +455,8 @@ export class PixiStage implements AdvStage {
   #timelineTintStarts = new Map<object, { color: number; alpha: number }>();
   /** M4 extracted menu projection; all title/ending/system/settings/save-load state lives here. */
   readonly #menu: MenuLayer;
-  /** 正在播放的 @video 元素（hideVideo 强制停止用；审计复核） */
-  #activeVideo: HTMLVideoElement | null = null;
-  #mapLayer: Container;
-  #mapHandlers: { onEnter: (nodeId: string) => void; onEndTurn: () => void } | null = null;
-  /** 商店覆盖层 */
-  #shopLayer: Container;
-  #shopHandlers: { onBuy: (itemId: string) => void; onClose: () => void } | null = null;
-  /** 据点指令面板（兰斯式 base commands） */
-  #baseLayer: Container;
-  #baseHandlers: { onExec: (cmdId: string) => void; onClose: () => void } | null = null;
+  /** M6 extracted system-panel projection; all battle/map/shop/base/video state lives here. */
+  readonly #system: SystemPanelLayer;
 
   #w = 1280;
   #h = 720;
@@ -537,12 +522,6 @@ export class PixiStage implements AdvStage {
       fontFamily: (role) => this.#fontFamilies[role],
       requestFrame: () => this.#requestFrame(),
     });
-    this.#mapLayer = new Container();
-    this.#mapLayer.visible = false;
-    this.#shopLayer = new Container();
-    this.#shopLayer.visible = false;
-    this.#baseLayer = new Container();
-    this.#baseLayer.visible = false;
     this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
     this.#gallery = new GalleryLayer({
       uiLayer: this.#uiLayer,
@@ -553,12 +532,16 @@ export class PixiStage implements AdvStage {
       createBackgroundTexture: (key, width, height) => makeBackgroundTexture(key, width, height),
       requestFrame: () => this.#requestFrame(),
     });
-    this.#battleLayer = new Container();
-    this.#battleLayer.visible = false;
+    this.#system = new SystemPanelLayer({
+      uiLayer: this.#uiLayer,
+      width: this.#w,
+      height: this.#h,
+      assets: this.#assetRegistry,
+      ...(lifecycle ? { lifecycle } : {}),
+      requestFrame: () => this.#requestFrame(),
+    });
     this.#uiLayer.addChild(
-      this.#battleLayer,
       this.#wipeBar,
-      this.#mapLayer, this.#shopLayer, this.#baseLayer,
       this.#loadingLayer.container,
     );
     this.#dialogue.mountTextDisplays();
@@ -1419,48 +1402,14 @@ export class PixiStage implements AdvStage {
     this.#dialogue.clearNvlText();
   }
 
-  /** 强制停止当前 @video（读档作废：渲染层回调已被会话令牌拦截，此处移除画面本体；审计复核） */
+  /** @video projection remains a legacy delegate; cancellation is owned by SystemPanelLayer. */
   hideVideo(): void {
-    if (!this.#activeVideo) return;
-    const v = this.#activeVideo;
-    this.#activeVideo = null;
-    v.pause();
-    v.remove();
+    this.#system.hideVideo();
   }
 
-  /** @video：DOM <video> 覆盖全屏播放；结束/出错/点击跳过均回调 onEnd（素材缺失自动跳过不阻塞） */
+  /** @video projection remains a legacy delegate; the layer owns DOM listeners and generations. */
   showVideo(src: string, onEnd: () => void): void {
-    if (typeof document === 'undefined') {
-      onEnd();
-      return;
-    }
-    const v = document.createElement('video');
-    v.src = src;
-    v.autoplay = true;
-    v.playsInline = true;
-    Object.assign(v.style, {
-      position: 'fixed',
-      inset: '0',
-      width: '100%',
-      height: '100%',
-      objectFit: 'contain',
-      background: '#000',
-      zIndex: '1000',
-    });
-    this.#activeVideo = v;
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      if (this.#activeVideo === v) this.#activeVideo = null;
-      v.remove();
-      onEnd();
-    };
-    v.addEventListener('ended', finish);
-    v.addEventListener('error', finish);
-    v.addEventListener('pointerdown', finish);
-    document.body.appendChild(v);
-    void v.play().catch(finish);
+    this.#system.showVideo(src, onEnd);
   }
 
   /** 横幅/wipe/tint/mov/粒子 时间轴推进（并入 updateEffects 调用链） */
@@ -1597,126 +1546,14 @@ export class PixiStage implements AdvStage {
 
   /* ============================ 战斗覆盖层 ============================ */
 
-  /** 展示交互式战斗界面：阵营分列 + 血条；点击非行动方存活单位攻击，底部可跳过行动。
-   *  宿主每次结算（act/pass）后以新的 BattleView 重新调用本方法刷新。 */
+  /** Legacy battle entry point; SystemPanelLayer owns the projection implementation. */
   showBattle(view: BattleView, handlers: BattleHandlers, message = ''): void {
-    this.#requestFrame();
-    this.#battleHandlers = handlers;
-    const layer = this.#battleLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x05050a, alpha: 0.9 }));
-
-    layer.addChild(new PText({
-      text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
-      style: { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-
-    const teams = [...new Set(view.units.map((u) => u.team))];
-    teams.forEach((team, ti) => {
-      const x = 80 + ti * 620;
-      layer.addChild(new PText({
-        text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
-        style: { fontSize: 20, fill: team === view.actingTeam ? NIGHT_AZURE.accent : 0x8a93a8, fontWeight: 'bold' } satisfies TextStyleOptions,
-      })).position.set(x, 92);
-      view.units.filter((u) => u.team === team).forEach((u, i) => {
-        const y = 136 + i * 88;
-        const row = new Container();
-        row.position.set(x, y);
-        row.addChild(new Graphics().roundRect(0, 0, 520, 72, 10).fill({ color: u.alive ? 0x1a1a26 : 0x101016, alpha: 0.96 }));
-        row.addChild(new PText({
-          text: u.alive ? u.name : `${u.name}（倒下）`,
-          style: { fontSize: 20, fill: u.alive ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
-        })).position.set(18, 8);
-        // 血条
-        row.addChild(new Graphics().rect(18, 46, 340, 12).fill(0x333340));
-        if (u.hpRatio > 0) {
-          row.addChild(new Graphics().rect(18, 46, 340 * u.hpRatio, 12).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f));
-        }
-        row.addChild(new PText({ text: `${u.hp}/${u.maxHp}`, style: { fontSize: 16, fill: 0xbbbbbb } satisfies TextStyleOptions })).position.set(372, 40);
-        // 非行动方的存活单位可点击攻击（携带已选技能，攻击后清空选择）
-        if (u.alive && u.team !== view.actingTeam) {
-          row.eventMode = 'static';
-          row.cursor = 'pointer';
-          row.on('pointerdown', () => {
-            this.#battleHandlers?.onAttack(u.uid, this.#battleSelectedSkill);
-            this.#battleSelectedSkill = null;
-          });
-        }
-        layer.addChild(row);
-      });
-    });
-
-    // 技能选择条：行动方首个存活单位的 [普攻 + 技能]（冷却中灰显不可选）
-    const actingUnit = view.units.find((u) => u.alive && u.team === view.actingTeam);
-    if (actingUnit) {
-      const skillBtns: { id: string | null; label: string; ready: boolean }[] = [
-        { id: null, label: '普攻', ready: true },
-        ...actingUnit.skills.map((s) => ({
-          id: s.id,
-          label: s.ready ? s.name : `${s.name}（冷却 ${s.cooldown}）`,
-          ready: s.ready,
-        })),
-      ];
-      let sx = 60;
-      for (const btn of skillBtns) {
-        const selected = btn.id !== null && btn.id === this.#battleSelectedSkill;
-        const t = new PText({
-          text: btn.label,
-          style: {
-            fontSize: 18,
-            fill: selected ? 0x0a1020 : btn.ready ? NIGHT_AZURE.plateText : 0x5a6478,
-          } satisfies TextStyleOptions,
-        });
-        const pad = new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
-          .fill({ color: selected ? NIGHT_AZURE.accent : 0x141c2e, alpha: 0.95 });
-        layer.addChild(pad);
-        t.position.set(sx, this.#h - 144);
-        layer.addChild(t);
-        if (btn.ready) {
-          pad.eventMode = 'static';
-          pad.cursor = 'pointer';
-          pad.on('pointerdown', () => {
-            this.#battleSelectedSkill = btn.id;
-            this.#battleHandlers && this.showBattle(view, this.#battleHandlers, message); // 重绘高亮
-          });
-        }
-        sx += t.width + 34;
-      }
-      if (actingUnit.canMove) {
-        // 移动按钮（1D 阵型，move 值 = 移动距离；移动消耗本次行动）
-        const mkMove = (label: string, dir: -1 | 1, x: number): void => {
-          const b = new PText({
-            text: label,
-            style: { fontSize: 18, fill: 0x9ad0ff } satisfies TextStyleOptions,
-          });
-          b.position.set(x, this.#h - 144);
-          b.eventMode = 'static';
-          b.cursor = 'pointer';
-          b.on('pointerdown', () => this.#battleHandlers?.onMove?.(dir));
-          layer.addChild(b);
-        };
-        mkMove('◀ 移动', -1, sx + 30);
-        mkMove('移动 ▶', 1, sx + 140);
-      }
-    }
-
-    layer.addChild(new PText({
-      text: message.length > 0 ? message : '点击敌方单位发起攻击',
-      style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
-    })).position.set(60, this.#h - 84);
-    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
-    pass.position.set(this.#w - 210, this.#h - 84);
-    pass.eventMode = 'static';
-    pass.cursor = 'pointer';
-    pass.on('pointerdown', () => this.#battleHandlers?.onPass());
-    layer.addChild(pass);
-    layer.visible = true;
+    this.#system.showBattle(view, handlers, message);
   }
 
-  /** 隐藏战斗界面（战斗结束由宿主调用） */
+  /** Legacy battle hide delegate. */
   hideBattle(): void {
-    this.#requestFrame();
-    this.#battleLayer.visible = false;
+    this.#system.hideBattle();
   }
 
   /* ============================ 标题画面 / 系统菜单 / 存读档 / 大地图 ============================ */
@@ -1790,202 +1627,42 @@ export class PixiStage implements AdvStage {
     this.#dialogue.restoreCommandRail();
   }
 
-  /** 展示大地图：节点（可进入者高亮可点）+ 日期/回合/行动力 + 结束回合 */
+  /** Legacy map entry point; SystemPanelLayer owns the projection implementation. */
   showMap(view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void): void {
-    this.#requestFrame();
-    this.#mapHandlers = { onEnter, onEndTurn };
-    const layer = this.#mapLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0f14, alpha: 0.95 }));
-    layer.addChild(new PText({
-      text: `${view.date} —— 回合 ${view.turn}`,
-      style: { fontSize: 24, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-    layer.addChild(new PText({ text: '行动力', style: { fontSize: 16, fill: 0x9a9aa5 } satisfies TextStyleOptions })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
-    for (let i = 0; i < view.maxAp; i++) {
-      layer.addChild(new Graphics().circle(this.#w - 60 - (view.maxAp - i) * 30 + 10, 50, 10).fill(i < view.ap ? 0x57c26a : 0x333340));
-    }
-    for (const node of view.nodes) {
-      const dot = new Container();
-      dot.position.set(node.x, node.y);
-      const color = node.enterable ? NIGHT_AZURE.accent : node.visited ? 0x5a7a8a : 0x333340;
-      dot.addChild(new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }));
-      if (node.visited) {
-        dot.addChild(new PText({ text: '✓', style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions })).position.set(-9, -13);
-      }
-      const nameTag = new PText({
-        text: `${node.name}${node.apCost > 0 ? `（行动力 ${node.apCost}）` : ''}`,
-        style: { fontSize: 16, fill: node.enterable ? 0xffffff : 0x777788 } satisfies TextStyleOptions,
-      });
-      nameTag.anchor.set(0.5, 0);
-      nameTag.position.set(0, 34);
-      dot.addChild(nameTag);
-      if (node.enterable) {
-        dot.eventMode = 'static';
-        dot.cursor = 'pointer';
-        dot.on('pointerdown', () => {
-          layer.visible = false;
-          this.#mapHandlers?.onEnter(node.id);
-        });
-      }
-      layer.addChild(dot);
-    }
-    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
-    end.position.set(this.#w - 210, this.#h - 70);
-    end.eventMode = 'static';
-    end.cursor = 'pointer';
-    end.on('pointerdown', () => {
-      layer.visible = false;
-      this.#mapHandlers?.onEndTurn();
-    });
-    layer.addChild(end);
-    layer.visible = true;
+    this.#system.showMap(view, onEnter, onEndTurn);
   }
 
-  /** 隐藏大地图 */
+  /** Legacy map hide delegate. */
   hideMap(): void {
-    this.#requestFrame();
-    this.#mapLayer.visible = false;
+    this.#system.hideMap();
   }
 
   /* ============================ 商店 ============================ */
 
-  /** 展示商店覆盖层：金币 + 商品列表（购买按钮，金币不足灰显）。
-   *  宿主在 onBuy 里结算（ShopSystem.buy）后更新视图重新 showShop；离店回调 onClose。 */
+  /** Legacy shop entry point; SystemPanelLayer owns the projection implementation. */
   showShop(
     view: { gold: number; items: { id: string; name: string; price: number }[]; message?: string },
     onBuy: (itemId: string) => void,
     onClose: () => void,
   ): void {
-    this.#requestFrame();
-    this.#shopHandlers = { onBuy, onClose };
-    const layer = this.#shopLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
-    layer.addChild(new PText({
-      text: '商 店',
-      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-    layer.addChild(new PText({
-      text: `金币：${view.gold}`,
-      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
-    })).position.set(this.#w - 240, 44);
-    view.items.forEach((item, i) => {
-      const affordable = view.gold >= item.price;
-      const row = new Container();
-      row.position.set(60, 120 + i * 64);
-      row.addChild(new Graphics().roundRect(0, 0, 720, 52, 10).fill({ color: 0x1a1a26, alpha: 0.96 }));
-      row.addChild(new PText({
-        text: item.name,
-        style: { fontSize: 22, fill: 0xffffff } satisfies TextStyleOptions,
-      })).position.set(20, 13);
-      row.addChild(new PText({
-        text: `${item.price} 金币`,
-        style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions,
-      })).position.set(320, 16);
-      const btn = new PText({
-        text: affordable ? '购买' : '金币不足',
-        style: { fontSize: 20, fill: affordable ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
-      });
-      btn.position.set(580, 14);
-      if (affordable) {
-        btn.eventMode = 'static';
-        btn.cursor = 'pointer';
-        btn.on('pointerdown', () => this.#shopHandlers?.onBuy(item.id));
-      }
-      row.addChild(btn);
-      layer.addChild(row);
-    });
-    if (view.message && view.message.length > 0) {
-      layer.addChild(new PText({
-        text: view.message,
-        style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
-      })).position.set(60, this.#h - 130);
-    }
-    const close = new PText({ text: '✕ 离开商店', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
-    close.position.set(this.#w - 220, this.#h - 74);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    close.on('pointerdown', () => {
-      layer.visible = false;
-      this.#shopHandlers?.onClose();
-    });
-    layer.addChild(close);
-    layer.visible = true;
+    this.#system.showShop({ ...view, items: view.items.slice() }, onBuy, onClose);
   }
 
-  /** 隐藏商店 */
+  /** Legacy shop hide delegate. */
   hideShop(): void {
-    this.#requestFrame();
-    this.#shopLayer.visible = false;
+    this.#system.hideShop();
   }
 
   /* ============================ 据点指令（兰斯式 base commands） ============================ */
 
-  /** 展示据点指令面板：指令列表（可执行高亮/不可执行灰显）+ 行动力余量。
-   *  宿主在 onExec 里结算（CalendarRunner.execBaseCommand + 写回 effects）后重绘；onClose 回到地图。 */
+  /** Legacy base-command entry point; SystemPanelLayer owns the projection implementation. */
   showBaseCommands(view: BasePanelView, onExec: (cmdId: string) => void, onClose: () => void): void {
-    this.#requestFrame();
-    this.#baseHandlers = { onExec, onClose };
-    const layer = this.#baseLayer;
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
-    layer.addChild(new PText({
-      text: '据 点 指 令',
-      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-    layer.addChild(new PText({
-      text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
-      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
-    })).position.set(this.#w - 340, 44);
-    view.commands.forEach((cmd, i) => {
-      const row = new Container();
-      row.position.set(60, 120 + i * 64);
-      row.addChild(new Graphics().roundRect(0, 0, 860, 52, 10)
-        .fill({ color: cmd.enabled ? 0x1a1a26 : 0x101018, alpha: 0.96 }));
-      row.addChild(new PText({
-        text: cmd.name,
-        style: { fontSize: 22, fill: cmd.enabled ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
-      })).position.set(20, 13);
-      row.addChild(new PText({
-        text: `AP ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
-        style: { fontSize: 18, fill: cmd.enabled ? 0xffd77a : 0x55555f } satisfies TextStyleOptions,
-      })).position.set(360, 16);
-      const btn = new PText({
-        text: cmd.enabled ? '执行' : '不可执行',
-        style: { fontSize: 20, fill: cmd.enabled ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
-      });
-      btn.position.set(720, 14);
-      if (cmd.enabled) {
-        btn.eventMode = 'static';
-        btn.cursor = 'pointer';
-        btn.on('pointerdown', () => this.#baseHandlers?.onExec(cmd.id));
-      }
-      row.addChild(btn);
-      layer.addChild(row);
-    });
-    if (view.message && view.message.length > 0) {
-      layer.addChild(new PText({
-        text: view.message,
-        style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
-      })).position.set(60, this.#h - 130);
-    }
-    const close = new PText({ text: '◀ 返回地图', style: { fontSize: 22, fill: 0x8a8a96 } satisfies TextStyleOptions });
-    close.position.set(this.#w - 220, this.#h - 74);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    close.on('pointerdown', () => {
-      layer.visible = false;
-      this.#baseHandlers?.onClose();
-    });
-    layer.addChild(close);
-    layer.visible = true;
+    this.#system.showBaseCommands(view, onExec, onClose);
   }
 
-  /** 隐藏据点指令面板 */
+  /** Legacy base-command hide delegate. */
   hideBase(): void {
-    this.#requestFrame();
-    this.#baseLayer.visible = false;
+    this.#system.hideBaseCommands();
   }
 
   showChoices(options: ChoiceOptionView[]): void {
@@ -2028,6 +1705,7 @@ export class PixiStage implements AdvStage {
     this.hideVideo();
     this.hideEnding();
     this.#dialogue.reset();
+    this.#system.reset();
     this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
 
     if (!preserveWorld) {
@@ -2051,23 +1729,8 @@ export class PixiStage implements AdvStage {
       this.#backgroundKey = null;
     }
 
-    const clearLayer = (layer: Container): void => {
-      layer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    };
-    clearLayer(this.#battleLayer);
     this.#gallery.reset();
     this.#menu.reset();
-    clearLayer(this.#mapLayer);
-    clearLayer(this.#shopLayer);
-    clearLayer(this.#baseLayer);
-    this.#battleLayer.visible = false;
-    this.#mapLayer.visible = false;
-    this.#shopLayer.visible = false;
-    this.#baseLayer.visible = false;
-    this.#mapHandlers = null;
-    this.#shopHandlers = null;
-    this.#baseHandlers = null;
-    this.#battleHandlers = null;
 
     this.#worldLayer.position.set(0, 0);
     this.#worldLayer.scale.set(1);
@@ -2109,6 +1772,7 @@ export class PixiStage implements AdvStage {
     this.#menu.dispose();
     this.#dialogue.dispose();
     this.#gallery.dispose();
+    this.#system.dispose();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
     this.#portraitSprites.clear();

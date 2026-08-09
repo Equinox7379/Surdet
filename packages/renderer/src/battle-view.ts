@@ -1,5 +1,16 @@
 import type { CombatSnapshot } from '@surdet/core';
 
+/** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新）。 */
+export interface BattleHandlers {
+  /** 点击存活的非行动方单位 → 以当前行动方首个存活单位攻击该目标；
+   *  skillId 为玩家先前选中的技能（null = 普攻） */
+  onAttack: (targetUid: string, skillId: string | null) => void;
+  /** 跳过行动（僵局出口） */
+  onPass: () => void;
+  /** 移动行动方单位（1D 阵列；移动消耗本次行动） */
+  onMove?: (dir: -1 | 1) => void;
+}
+
 /**
  * 战斗交互式 UI 视图模型：把 CombatSnapshot 映射为渲染层展示结构。
  * 纯函数、headless 可测；PixiStage.showBattle 负责展示，宿主负责行动结算。
