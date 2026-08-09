@@ -1,8 +1,8 @@
 # Surdet Renderer v2 M8 最终限定整改交付报告
 
-日期：2026-08-10  
-项目目录：E:\surdet  
-当前停止点：WAITING_FOR_REVIEW  
+日期：2026-08-10
+项目目录：E:\surdet
+当前停止点：WAITING_FOR_REVIEW
 发布状态：RELEASE_BLOCKED（性能门禁仍有正式红灯，未取得独立最终发行批准）
 
 ## 1. 结论先行
