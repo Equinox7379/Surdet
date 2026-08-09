@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
 import { Texture } from 'pixi.js';
 import { AdvRenderer, Backlog, NULL_AUDIO, PixiStage } from '../../src/index.js';
+import { createPresentationPorts } from '../../src/adv-renderer.js';
+import { RenderPerformanceMonitor } from '../../src/performance.js';
+import { PresentationController } from '../../src/runtime/presentation-controller.js';
+import { RendererFacade } from '../../src/runtime/renderer-facade.js';
 
 describe('legacy dialogue stage contract', () => {
   beforeEach(() => {
@@ -103,6 +107,40 @@ describe('legacy dialogue stage contract', () => {
       expect(afterReset.portraits).toHaveLength(1);
     } finally {
       stage.destroy();
+      stage.destroy();
+    }
+  });
+
+  it('does not duplicate legacy speaker focus through the RendererFacade fallback', () => {
+    const stage = new PixiStage();
+    const ports = createPresentationPorts(stage);
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, {
+      commands: ports.commands,
+      queries: ports.queries,
+    });
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      // Intentionally omit dialogueLayer/dialoguePort to exercise the real legacy fallback.
+    });
+    const stageSpeaker = vi.spyOn(stage, 'setActiveSpeaker');
+    const focusSpy = vi.spyOn(stage, 'setPortraitFocus');
+
+    try {
+      facade.commands.dialogue.setActiveSpeaker('lynn');
+      expect(stageSpeaker).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenLastCalledWith('lynn');
+
+      stageSpeaker.mockClear();
+      focusSpy.mockClear();
+      facade.commands.dialogue.setActiveSpeaker(null);
+      expect(stageSpeaker).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(focusSpy).toHaveBeenLastCalledWith(null);
+    } finally {
+      controller.destroy();
       stage.destroy();
     }
   });
