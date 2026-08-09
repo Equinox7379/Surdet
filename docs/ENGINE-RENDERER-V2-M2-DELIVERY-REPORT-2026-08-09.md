@@ -1,197 +1,157 @@
-# Surdet Renderer v2 M2 交付报告
+# Surdet Renderer v2 M2 整改交付报告
 
-**日期：** 2026-08-09
-**项目目录：** `E:\surdet`
-**当前里程碑：** M2
-**状态：** `WAITING_FOR_APPROVAL`
-**远端操作：** 未推送
-**下一步：** 等待独立复审批准后，才可讨论 M3；本报告完成后本执行批次停止。
+**日期：** 2026-08-09<br>
+**项目目录：** `E:\surdet`<br>
+**当前里程碑：** M2 复审整改<br>
+**复审状态：** `WAITING_FOR_REVIEW` / `M3_BLOCKED`<br>
+**远端操作：** 未 push<br>
+**源码/测试验证 HEAD：** `d0940211827b3d1b02c9e2bed7dd431dd08234c1`<br>
+**源码提交：** `fix(renderer): repair M2 runtime lifecycle boundaries`
 
-## 1. 结论
+本报告对应 M2 独立复审提出的 `CHANGES_REQUESTED / M3_BLOCKED` 整改。严格保留已通过的 Task 6–8 主体，只修复复审指定的 Task 9 依赖方向、异常清理、生命周期计数和真实资源循环阻断项；完成 M2 后停止等待独立复审。
 
-M2 Task 6–10 已完成，源码、测试、资源循环验证、Renderer 构建、根级全量门禁和正式游戏静态/无头验收均通过。M2 没有进入 M3，也没有改变 DSL、存档格式、游戏规则、编辑器行为或正式游戏的宿主接线。
+## 1. 范围与结论
 
-本轮新增的核心边界如下：
+本轮只覆盖以下内容：
 
-- `RenderLifecycle` 成为所有 M2 资源所有权的统一登记边界，并保留旧 `ResourceLifecycle` 兼容包装。
-- `AsyncGeneration` 为重置和销毁提供统一的 generation/token/abort 语义，旧异步结果不能回写新会话。
-- `RenderAssetRegistry` 成为背景、立绘、头像、字体、Blob URL 和程序化纹理的单一资源注册/释放边界。
-- `PresentationController` 在不复制 `AdvRenderer` 状态机的前提下承接 M2 输入归一化和事件连接；现有 `AdvRenderer`、`PixiStage` 公共行为保持兼容。
-- runtime 的 scheduler、presentation controller、asset generation 进入同一生命周期诊断路径；资源循环测试证明两轮独立 50 次循环回到同一稳定点。
+- 按 `docs/superpowers/plans/2026-08-09-renderer-v2-foundation-m0-m2.md` Task 9 重做生产控制器与兼容包装器的依赖方向。
+- 修复 runtime 正常销毁、异常销毁和初始化失败时的全量清理尝试与聚合错误报告。
+- 统一显式 `disconnect()`、`connect()` 返回的 unsubscribe、reconnect 和 `dispose()` 的幂等清理入口。
+- 保留原有人工 lifecycle cycle 测试，新增真实 runtime/registry/controller 组合的两批各 50 次资源循环测试。
+- 重跑 M2 聚焦测试、Renderer 全量测试、Renderer typecheck/build、根级 `verify:all`、正式游戏验收和独立 Renderer 基线。
 
-性能与视觉证据需要按“正式验收样本”和“环境调度诊断样本”区分阅读。正式验收样本 C、F 都满足 M0 的 10%/15% 门槛；样本 C 的标题和入口视觉 hash 与 M0 完全一致。额外诊断中出现了偶发的窗口调度尾部延迟和截图相位差，原始 JSON 未被删除、未用于降低标准，也未被伪装成零波动。详见第 6 节。
+明确未做以下工作：
 
-## 2. 严格范围与明确排除项
+- 未开始 M3 `DialogueLayer` 或任何 M3–M7 Layer 抽取。
+- 未进行正式消费者 cutover、M8 cutover 或正式游戏宿主接线迁移。
+- 未修改 DSL、场景语义、存档格式、回滚格式、游戏规则、正式游戏内容或编辑器行为。
+- 未删除、读取、迁移或覆盖用户真实存档。
+- 未删除 `USER.md` 或 `SESSION-HANDOFF.md`。
+- 未 push、未 force push、未清理用户工作树，也未提交临时基线 JSON、截图、日志或 release 产物。
 
-本轮只执行既定 M2 Task 6–10：
+**结论：** 本轮源码和测试整改已完成，所有指定代码门禁和正式游戏验收通过；提交后的最终两轮 Renderer 基线均在 M0 门槛内。同时，采样期间确实出现过一轮菜单 p95 超限，原始 JSON 和失败样本均保留并在第 6 节披露。当前停止在 `WAITING_FOR_REVIEW`，不进入 M3。
 
-- **Task 6：** `RenderLifecycle`。
-- **Task 7：** `AsyncGeneration` / `GenerationToken`。
-- **Task 8：** `RenderAssetRegistry` 及 Stage/Facade 资源委托。
-- **Task 9：** `PresentationController`、键鼠/手柄输入归一化和兼容连接。
-- **Task 10：** lifecycle 诊断、资源循环验证、性能基线、全量门禁和交付报告。
+## 2. Task 9 依赖方向整改
 
-明确没有做以下工作：
-
-- 没有开始 M3 `DialogueLayer`，也没有抽取 M3–M7 的任何 UI Layer。
-- 没有实施 M8 cutover；starter、正式游戏、编辑器和 CLI 模板仍保留既有 legacy 消费者，等待后续批准的迁移阶段。
-- 没有迁移 M2 之外的生命周期、资源注册或输入控制内容。
-- 没有改变 DSL、场景语义、存档格式、游戏规则、正式游戏文案或编辑器行为。
-- 没有读取、迁移、覆盖或删除用户真实存档。
-- 没有提交 `USER.md`、`SESSION-HANDOFF.md`，没有提交日志、截图、缓存、临时 JSON 或 release 产物。
-- 没有 push、force push、清理工作树或重置用户已有修改。
-
-## 3. 提交记录
-
-本轮 M2 聚焦提交按 Task 6→10 的实现顺序如下：
-
-| 提交 | 内容 |
-|---|---|
-| `29354a01a380879b64b39efc133555080c32476` | `refactor(renderer): add owner-scoped lifecycle`：新增 owner/kind/key 资源登记、替换、owner 释放、聚合错误和兼容包装。 |
-| `db3db635d74c60b87fd65c48388cd276cfcd55de` | `refactor(renderer): add async generation cancellation`：新增 generation token、AbortSignal、过期 token 和 disposed 防护。 |
-| `680c27863ecd28978f06e6051aa4a924f6fbc227` | `refactor(renderer): centralize shared asset ownership`：引入唯一 `RenderAssetRegistry`，接入 Stage、Facade 和 runtime 资源拥有权。 |
-| `667ab3e04a2a46bc5826daaada18e758b4af3ee8` | `refactor(renderer): centralize presentation input control`：新增兼容的 `PresentationController` 和输入映射。 |
-| `c612de93e2061192b000617d9cd0bd6bb13c7053` | `refactor(renderer): complete M2 lifecycle diagnostics`：接入 scheduler/controller 生命周期、资源循环测试、调试类型声明和 post-dispose 稳定错误。 |
-| 本报告提交 | 本交付报告和 M2 验收证据。 |
-
-## 4. Task 6–10 实现证据
-
-### 4.1 RenderLifecycle
-
-文件：
-
-- `E:\surdet\packages\renderer\src\lifecycle\render-lifecycle.ts`
-- `E:\surdet\packages\renderer\test\lifecycle\render-lifecycle.test.ts`
-- `E:\surdet\packages\renderer\src\resource-lifecycle.ts`
-
-实现要点：
-
-- 锁定资源种类：`ticker`、`listener`、`tween`、`async`、`blob`、`pool`、`display`。
-- 锁定 owner：`runtime`、`world`、`dialogue`、`menu`、`gallery`、`system`、`loading`、`legacy`。
-- `(owner, kind, key)` 形成唯一复合键；重复注册先从索引移除旧项，再调用旧 disposer，最后安装新项。
-- owner 释放前先移除索引，因此 disposer 即使重入释放也不会再次处理同一条目。
-- 多个 disposer 抛错时仍继续清理，并通过 `RendererError` 的 `COMMAND_COMMIT_FAILED` 与 `AggregateError` 统一报告。
-- `ResourceLifecycle` 现在只是 `legacy/display` 语义的兼容包装，旧调用方不需要立即迁移。
-
-### 4.2 AsyncGeneration
-
-文件：
-
-- `E:\surdet\packages\renderer\src\lifecycle\async-generation.ts`
-- `E:\surdet\packages\renderer\test\lifecycle\async-generation.test.ts`
-
-实现要点：
-
-- `advance()` 使旧 token 的 `current` 变为 `false`，并 abort 旧 signal。
-- `dispose()` 使当前及后续 token 均失效；disposed 对象不能创建新 token 或推进 generation。
-- 过期异步结果在 Registry 提交阶段再次检查，不会写入新会话的资源槽位。
-
-### 4.3 RenderAssetRegistry
-
-文件：
-
-- `E:\surdet\packages\renderer\src\services\render-asset-registry.ts`
-- `E:\surdet\packages\renderer\test\services\render-asset-registry.test.ts`
-- `E:\surdet\packages\renderer\src\pixi-stage.ts`
-- `E:\surdet\packages\renderer\src\runtime\renderer-facade.ts`
-
-实现要点：
-
-- 背景、立绘、头像使用统一 Registry；立绘复合键仍保持 `charId:costume:expression` 语义。
-- URL/Blob 资源采用引用计数；最后一个引用释放时才通过 Pixi `Assets.unload` 释放。
-- 调用方注入的 `Texture` 标记为 caller-owned，Registry 不主动 destroy。
-- 程序化背景/立绘缓存由 Registry 持有并在缓存重置时销毁；替换操作采用 prepare → validate → commit，准备失败保留旧槽位。
-- 字体按 role 归属 runtime/blob，并在重复注册、重置和销毁时保持单次移除语义。
-- Registry 拥有一个 `AsyncGeneration` 和一个 `RenderLifecycle`（runtime 接入时使用共享 lifecycle）。
-- disposed 后的直接变更会抛出稳定的 `RendererError(code=RENDERER_DISPOSED, domain=assets)`，不会退化成无上下文的普通错误。
-
-### 4.4 PresentationController 与输入归一化
+### 2.1 PresentationController 成为独立生产状态机
 
 文件：
 
 - `E:\surdet\packages\renderer\src\runtime\presentation-controller.ts`
-- `E:\surdet\packages\renderer\src\adv-renderer.ts`
-- `E:\surdet\packages\renderer\src\keybindings.ts`
-- `E:\surdet\packages\renderer\src\gamepad.ts`
 - `E:\surdet\packages\renderer\test\runtime\presentation-controller.test.ts`
 
-实现要点：
+整改结果：
 
-- `PresentationController extends AdvRenderer`，复用现有已验证状态机，没有复制第二份对话/自动/快进/Backlog 状态机。
-- `connect()`、`disconnect()` 和 `dispose()` 保持幂等；runtime listener 由 lifecycle 记录。
-- `dispatchInput()` 统一处理 advance、choice、backlog、auto、skip、interface、escape。
-- 菜单、快速存档、快速读档、回退等仍由宿主负责；Renderer 不越权接管游戏规则。
-- 现有 `AdvRenderer` 构造与订阅路径保留，正式游戏行为未切换到 M8 v2 consumer。
+- `PresentationController` 是独立生产类，不再继承 `AdvRenderer`。
+- 控制器消费 `RendererCommands` 和 `RendererQueries`，不再直接依赖 Pixi Stage。
+- 对话输入/等待、choice 导航和确认、auto/skip、Backlog、界面隐藏、演出快照/恢复/清理以及 Core EventBus 连接状态均由这一份控制器状态机持有。
+- 表现操作通过 `commands.dialogue`、`commands.world`、`commands.presentation`、`commands.system` 和查询端口完成；没有第二份隐藏的表现状态机。
+- `clearPresentation()` 先清理控制器持有的活动 timelines，再清理表现端口，并请求下一帧；因此旧 timeline 不会在下一帧重新投影。
+- `snapshotPresentation()` 与 `restorePresentation()` 使用同一表现事务边界，恢复和清理不会绕过控制器状态。
+- 结构测试验证 `PresentationController.prototype` 不以 `AdvRenderer.prototype` 为原型，且控制器不含 Stage 直连状态机。
 
-### 4.5 Task 10 runtime diagnostics
+### 2.2 AdvRenderer 变为兼容委托包装器
+
+文件：
+
+- `E:\surdet\packages\renderer\src\adv-renderer.ts`
+
+整改结果：
+
+- 保留原有构造函数形状和原有公开方法/getter。
+- `AdvRenderer` 只负责把旧 Stage 适配成 `RendererCommands`/`RendererQueries`，创建或持有 `PresentationController`，再逐项委托旧 API。
+- 旧的 `status`、`needsUpdate`、对话、choice、auto/skip、Backlog、输入、snapshot/restore/clear、reset、dispose 等调用返回值保持兼容。
+- 不再保留一份旧的对话/演出/输入状态机。
+- 既有 `AdvRenderer` 兼容测试本轮仍全部通过：56 项。
+
+`rg` 结构复核结果：
+
+- `PresentationController extends AdvRenderer`：无匹配。
+- `presentation-controller.ts` 中的 `this.#stage`、Stage 直连状态机：无匹配。
+- 7 个实现/测试改动文件中没有 M3 Layer 文件、正式消费者文件或 DSL/存档文件。
+
+## 3. 异常安全清理整改
 
 文件：
 
 - `E:\surdet\packages\renderer\src\runtime\create-renderer-runtime.ts`
+- `E:\surdet\packages\renderer\test\integration\renderer-runtime.test.ts`
+
+### 3.1 runtime 异常销毁
+
+runtime 现在先建立一次清理动作列表，并对每个动作独立捕获异常。任意 disposer 抛错后，后续动作仍然会被尝试；不会因为 scheduler 或 controller 的首个异常而跳过 Stage、资源注册表、lifecycle 或 facade 标记。
+
+清理顺序保持：
+
+1. scheduler
+2. PresentationController
+3. Stage
+4. `RenderAssetRegistry`
+5. `RenderLifecycle`
+6. facade 的 disposed 标记
+
+如果清理过程中出现一个或多个异常，最终抛出 `RendererError`，其 `cause` 为 `AggregateError`，包含所有清理失败；不再把第一个普通 Error 原样向外泄漏。`dispose()` 首次调用即锁定 disposed 状态，后续调用幂等，不会再次执行全量清理。
+
+异常测试验证了：
+
+- scheduler 抛错后仍尝试 controller、stage、asset registry、lifecycle 和 facade。
+- 各 disposer 的尝试顺序为 `scheduler → controller → stage → asset-registry → lifecycle → facade`。
+- 顶层错误为 `RendererError`，并携带 `AggregateError`。
+- 第二次 `dispose()` 不重复清理。
+
+### 3.2 初始化失败清理
+
+runtime 组合初始化和真实 `PixiStage.init()` 失败路径均接入同一类全量清理机制。初始化失败时会尽可能清理已经创建的 scheduler/controller/stage/asset registry/lifecycle/facade；初始化异常和清理异常统一包装为 `RendererError(code=LAYER_INITIALIZATION_FAILED)`，其 `cause` 为 `AggregateError`。
+
+测试覆盖：
+
+- 组合初始化过程中 lifecycle 注册失败。
+- 真实 `PixiStage.init()` 失败后 Stage 与 registry 的清理。
+- 初始化清理自身抛错时仍继续后续清理。
+
+## 4. Lifecycle 计数与资源循环
+
+### 4.1 连接/断开计数
+
+`PresentationController.connect()`、显式 `disconnect()`、返回的 unsubscribe、reconnect 和 `dispose()` 现在共享一个幂等清理入口：
+
+- 新 connect 先关闭旧连接，避免重连累积 listener。
+- 返回的 unsubscribe 与显式 disconnect 执行同一个清理闭包；重复调用无副作用。
+- 断开后立即从 `RenderLifecycle` 移除 `runtime/listener/core-events`，listener 计数即时归零。
+- dispose 会复用同一入口，不会重复注销或留下旧 listener。
+
+测试覆盖顺序：connect → 显式 disconnect → reconnect → returned unsubscribe → reconnect → dispose，并在每次断开后直接检查 lifecycle listener 计数。
+
+### 4.2 人工 lifecycle cycle 测试
+
+原有手工 lifecycle cycle 测试保留，没有用新测试替换或删除。它继续验证 ticker、listener、tween、async、blob、pool、display 七类资源的注册、替换、释放和 disposed 后行为。
+
+### 4.3 真实 runtime/registry/controller 两批 50 次循环
+
+文件：
+
 - `E:\surdet\packages\renderer\test\integration\resource-cycles.test.ts`
-- `E:\surdet\examples\starter\src\surdet-window.d.ts`
-- `E:\surdet\examples\zero-after-midnight\src\surdet-window.d.ts`
 
-runtime 现在在共享 lifecycle 下登记：
+新增测试每次创建真实的：
 
-- `runtime/ticker/frame-scheduler`
-- `runtime/listener/presentation-controller`
-- `runtime/async/asset-generation`
-- 已连接的 `runtime/listener/core-events`
+- `RenderLifecycle`
+- `RenderAssetRegistry`
+- `PresentationController`
+- `RendererCommands`/`RendererQueries` 端口
+- `createRendererRuntimeFromInternals()` 组合 runtime
 
-销毁顺序测试固定为 scheduler → controller → stage，并验证重复 `dispose()` 不重复清理；生命周期最终为 disposed 且诊断 query 已标记 disposed。
+每个循环覆盖：
 
-## 5. 测试、构建和门禁结果
+- 背景和立绘资源注册
+- late async 资源加载
+- controller reset
+- `clearAssets`
+- late async 结果落后于 generation 后被丢弃
+- connect/disconnect
+- runtime dispose
+- disposed 后 snapshot/resource counters 稳定
 
-### 5.1 M2 聚焦测试
-
-命令：
-
-```powershell
-npm test -w @surdet/renderer -- render-asset-registry.test.ts resource-cycles.test.ts presentation-controller.test.ts renderer-runtime.test.ts
-npm run typecheck -w @surdet/renderer
-```
-
-结果：4 个测试文件、16 项测试通过；Renderer typecheck 通过。
-
-### 5.2 Renderer 全量
-
-命令：
-
-```powershell
-npm test -w @surdet/renderer
-npm run typecheck -w @surdet/renderer
-npm run build -w @surdet/renderer
-```
-
-结果：34 个测试文件、229 项测试全部通过；typecheck 和 build 均退出码 0。
-
-### 5.3 根级全量门禁
-
-命令与结果：
-
-| 命令/门禁 | 结果 |
-|---|---|
-| `npm run verify:all` | 通过；工具 6/6，CLI 86 项，Core 298 项，Editor 133 项，Host 18 项，Renderer 229 项，Shell 32 项，Starter 3 项；能力矩阵、类型、构建、测试、HMR 和正式样例检查均通过。 |
-| `npm run docs:capabilities:check` | 通过。 |
-| `npm run verify:hygiene` | 通过，跟踪路径 462 项。 |
-| `npm run verify:formal` | 通过；正式游戏 11 场景、23/23 choice 分支、3 结局、44 项素材、运行时错误 0。 |
-| `npm run verify:p1p2:policy` | 通过。 |
-| `node packages/shell/scripts/verify-pack.mjs --artifact` | 通过；Electron artifact 关键文件 8/8、身份和素材校验通过。 |
-
-正式游戏无头验收的可达结局为：`testimony_end`、`meeting_end`、`silence_end`；存档往返冒烟 39 次；运行时错误为 0。
-
-## 6. 资源循环、性能和视觉证据
-
-### 6.1 资源循环
-
-测试文件：
-
-`E:\surdet\packages\renderer\test\integration\resource-cycles.test.ts`
-
-测试执行两个互相独立的 50-cycle batch。每次循环覆盖 ticker、listener、tween、async、blob、pool、display；每个 batch 都释放 dialogue/world/runtime owner。
-
-第二个 batch 的 lifecycle snapshot 与第一个完全相等，稳定点为：
+测试执行两批互相独立的 50 次循环，并比较两批结束时的稳定点。两批稳定点完全相等：
 
 ```json
 {
@@ -206,128 +166,237 @@ npm run build -w @surdet/renderer
 }
 ```
 
-此外还验证了 late async token 在 generation reset 和 runtime dispose 后均失效；runtime 的 scheduler/controller/stage 销毁顺序和重复销毁幂等性均通过。
+同时验证所有 late async 结果均被丢弃，没有把旧会话资源写入新会话；第二批没有相对第一批增长。
 
-### 6.2 M0 比较基线
+## 5. 测试、构建与正式游戏验收
 
-M0 正式基线：
+所有命令均在源码提交 `d0940211827b3d1b02c9e2bed7dd431dd08234c1` 对应的工作树上执行。没有把报告提交或旧缓存结果当作源码验证结果。
+
+### 5.1 M2 聚焦测试
+
+命令：
+
+```powershell
+npm test -w @surdet/renderer -- --run test/adv-renderer.test.ts test/runtime/presentation-controller.test.ts test/integration/renderer-runtime.test.ts test/integration/resource-cycles.test.ts test/integration/presentation-clear.test.ts
+```
+
+结果：5 个测试文件、73 项测试全部通过。
+
+| 聚焦区域 | 数量 |
+|---|---:|
+| AdvRenderer 兼容测试 | 56 |
+| PresentationController 结构/输入/lifecycle | 6 |
+| runtime 异常与初始化清理 | 6 |
+| 真实资源循环与两批 50 次验证 | 4 |
+| presentation clear 事务边界 | 1 |
+| **合计** | **73** |
+
+### 5.2 Renderer 全量、typecheck、build
+
+命令：
+
+```powershell
+npm test -w @surdet/renderer
+npm run typecheck -w @surdet/renderer
+npm run build -w @surdet/renderer
+```
+
+结果：
+
+- Renderer：34 个测试文件、236 项测试全部通过。
+- Renderer typecheck：退出码 0。
+- Renderer build：退出码 0。
+
+### 5.3 根级全量门禁
+
+命令：
+
+```powershell
+npm run verify:all
+```
+
+结果：退出码 0。门禁输出包含：
+
+- 工具测试 6/6；其中 `verify-all` 唯一步骤/命令签名、能力矩阵相关测试和 `shell:false` 检查均通过。
+- CLI 86 项通过。
+- Core 298 项通过。
+- Editor 133 项通过。
+- Host 18 项通过。
+- Renderer 236 项通过。
+- Shell 32 项通过。
+- Starter 3 项通过。
+- 文档能力矩阵检查通过。
+- 跟踪路径卫生检查通过：463 个路径。
+- 所有 workspace typecheck/build、starter HMR、正式样例检查和差异检查通过。
+
+### 5.4 正式游戏验收
+
+命令：
+
+```powershell
+npm run verify:formal
+```
+
+结果：
+
+- 正式游戏 11 个场景，lint 0 错误、0 警告。
+- choice 分支覆盖 `23/23`。
+- 可达结局 3 个：`testimony_end`、`meeting_end`、`silence_end`。
+- 存档往返冒烟 39 次。
+- 资产检查 `44` 项通过。
+- 运行时错误 `0`。
+
+## 6. Renderer 基线与失败样本披露
+
+### 6.1 基线规则
+
+比较基线：
 
 `E:\surdet\docs\baselines\renderer-v2-cab200b.json`
 
-M0 顶层值：
+M0 顶层值和门槛：
 
-| 指标 | M0 值 | 统计方式 | 门槛 |
+| 指标 | M0 值 | 汇总方式 | 最大允许比例 |
 |---|---:|---|---:|
-| coldStartMs | 891.8183 ms | 5 样本中位数 | +10% |
-| assetReadyMs | 948.0453 ms | 5 样本中位数 | +10% |
-| menuOpenP95Ms | 10.8000 ms | 5 样本 p95 | +15% |
-| sceneP95Ms | 25.6000 ms | 5 样本 p95 | +15% |
+| `coldStartMs` | 891.8183 ms | 5 个独立样本 median | 1.10 |
+| `assetReadyMs` | 948.0453 ms | 5 个独立样本 median | 1.10 |
+| `menuOpenP95Ms` | 10.8000 ms | 5 个独立样本 p95 | 1.15 |
+| `sceneP95Ms` | 25.6000 ms | 5 个独立样本 p95 | 1.15 |
 
-每次当前基线均包含 1 次独立 Electron 暖机和 5 次独立 Electron 正式启动；每次启动使用独立临时 `userData`，没有使用用户正常 Electron 配置。当前基线命令没有传 `--source-equivalent-to`，因此不会写入永久等价 SHA。
+每一轮基线均执行 1 次独立 Electron 暖机，之后执行 5 次独立 Electron 正式启动；每次使用独立临时 `userData`。当前比较命令没有传 `--source-equivalent-to`，所以没有写入永久等价 SHA；正式提交后的最终基线 JSON 的 `sourceSha` 均为源码 HEAD `d094021...`。
 
-两份作为 M2 正式比较证据的独立临时基线：
-
-| 原始 JSON | cold median | asset median | menu p95 | scene p95 | 相对 M0 | 素材/错误 |
-|---|---:|---:|---:|---:|---|---|
-| `<local-path>` | 979.3989 ms | 1029.1795 ms | 10.9000 ms | 28.7000 ms | +9.82% / +8.56% / +0.93% / +12.11% | 6/6，page/console/request = 0/0/0 |
-| `<local-path>` | 936.0743 ms | 986.5899 ms | 12.3000 ms | 27.6000 ms | +4.96% / +4.07% / +13.89% / +7.81% | 6/6，page/console/request = 0/0/0 |
-
-四项比较均无 `compareRendererBaseline()` failure。两份 JSON 都通过 Renderer baseline schema 校验并保留了 5 个原始样本；其中 C 的完整原始数组为：
+原始 JSON 全部保存在系统临时目录，没有加入仓库：
 
 ```text
-C cold:  946.3225, 958.0893, 979.3989, 1000.9360, 1089.1338
-C asset: 994.1464, 1011.2540, 1029.1795, 1055.0069, 1150.4597
-C menu:  6.4000, 6.5000, 10.4000, 10.5000, 10.9000
-C scene: 26.2000, 26.3000, 27.0000, 27.4000, 28.7000
-
-F cold:  926.4486, 935.3736, 936.0743, 941.4427, 1119.5640
-F asset: 975.0453, 983.5511, 986.5899, 1179.5041, 1314.7286
-F menu:  5.9000, 7.1000, 11.0000, 11.0000, 12.3000
-F scene: 23.6000, 23.7000, 24.6000, 25.8000, 27.6000
+<local-path>
+<local-path>
+<local-path>
+<local-path>
+<local-path>
+<local-path>
 ```
 
-### 6.3 采样噪声的完整披露
+每份 JSON 都保留 schema v2、四项指标的 5 个原始样本、median、p95、汇总方式、资源计数、视觉 hash 和错误计数。
 
-在 C/F 之外，连续诊断运行曾观察到偶发的端到端等待尾部：某些正式样本的冷启动、素材就绪或菜单/场景 p95 会越过门槛。例如：
+### 6.2 六轮完整结果
 
-- A：`952.81 / 1146.29 / 12.00 / 31.90 ms`，资源和场景越界。
-- B：`1027.35 / 1103.04 / 9.00 / 29.90 ms`，冷启动、资源和场景越界。
-- D：`1049.42 / 1450.24 / 12.00 / 28.80 ms`，多项越界。
-- E：`997.50 / 1359.05 / 12.70 / 28.30 ms`，资源和菜单越界。
-- G：`925.85 / 1293.95 / 11.30 / 26.50 ms`，资源越界。
+比例为当前顶层汇总值 / M0 顶层值；菜单和场景的门槛分别为 1.15，cold 和 asset 的门槛分别为 1.10。
 
-这些结果没有被删除；对应原始 JSON 仍位于同一 Temp 目录中，且没有被提交。只读探针进一步证明：实际 renderer 资产队列在五次启动中为约 47.6–52.1 ms；同一 `waitForFunction` 端到端探针有 4 次约 50–61 ms、1 次延迟到 375.9 ms。这说明当前基线脚本的窗口/帧调度存在可见尾部抖动。该事实不应被解释为“性能永远稳定”，也不应用提高阈值来消除。
+| 轮次 | source 状态 | cold median / 比例 | asset median / 比例 | menu p95 / 比例 | scene p95 / 比例 | 资产 / 错误 |
+|---|---|---:|---:|---:|---:|---|
+| 1 | 提交前工作树 | 884.2192 / 0.991479 | 980.5169 / 1.034251 | 11.4000 / 1.055556 | 25.9000 / 1.011719 | 6/6；0/0/0 |
+| 2 | 提交前工作树 | 889.4968 / 0.997397 | 932.4402 / 0.983540 | **22.5000 / 2.083333** | 25.5000 / 0.996094 | 6/6；0/0/0 |
+| 3 | 提交前工作树 | 895.5970 / 1.004237 | 939.4049 / 0.990886 | 10.7000 / 0.990741 | 25.1000 / 0.980469 | 6/6；0/0/0 |
+| 4 | 提交前工作树 | 914.7254 / 1.025686 | 963.2650 / 1.016054 | 10.1000 / 0.935185 | 25.5000 / 0.996094 | 6/6；0/0/0 |
+| 5 | `d094021...` | 927.4641 / 1.039970 | 979.1841 / 1.032845 | 11.0000 / 1.018519 | 23.9000 / 0.933594 | 6/6；0/0/0 |
+| 6 | `d094021...` | 906.9431 / 1.016960 | 955.5919 / 1.007960 | 10.2000 / 0.944444 | 24.4000 / 0.953125 | 6/6；0/0/0 |
 
-因此，本报告的性能结论是：
+### 6.3 超限样本的完整披露
 
-1. C、F 两份独立正式比较 artifacts 在既定统计方式和既定门槛下均通过。
-2. M2 源码没有引入可由资源队列内部计时证明的串行加载回归；资源队列本身在只读探针中保持约 50 ms。
-3. Windows/Electron 端到端采样仍存在偶发的等待/帧调度尾部，独立复审如要求“每一次尝试均不得越界”，应先批准一个单独的基线采样器去抖/测量校准任务；本轮没有修改阈值、删除样本或吞掉错误。
-
-### 6.4 视觉证据
-
-M0 的标题 hash：
-
-`aca617dcc09733b2282be67fbe3a15c984e91cfd610358d48d6ad4d1dacc8882`
-
-M0 的 `story-entry` hash：
-
-`b064926a4b0cd5249a2c2dced12508b7661bdf99ab510590b3c429b9c04cf238`
-
-当前 C 基线的两个视觉 hash 与 M0 完全一致：
+第 2 轮没有被删除、替换或从统计中排除。其完整菜单原始样本为：
 
 ```text
-title       aca617dcc09733b2282be67fbe3a15c984e91cfd610358d48d6ad4d1dacc8882  MATCH
-story-entry b064926a4b0cd5249a2c2dced12508b7661bdf99ab510590b3c429b9c04cf238  MATCH
+7.8, 8.2, 10.8, 11.3, 22.5 ms
 ```
 
-当前 F 的标题 hash 仍一致；其入口 hash 不同。对同一当前代码做的截图相位探针显示：入口后约 100 ms 为淡入黑幕，约 500 ms 为背景/立绘，约 1.5 s 才出现台词，随后 position 已推进到下一条。也就是说，`story-entry` hash 对 capture 时刻敏感；不同运行中会分别捕捉黑幕、无台词立绘和有台词画面。当前运行状态仍稳定为 `sceneId=ch01_01`、`sceneHash=ab61dd2e`，素材 6/6，页面/控制台/请求错误 0。
+因此第 2 轮菜单 p95 为 22.5 ms，按既定 15% 门槛明确失败。该轮的其他原始样本也保留在上列 JSON 中：
 
-本轮没有发现资产内容被替换成默认图、正式游戏场景/文案被修改或稳定状态下的视觉结构改变；但截图采样相位问题应在后续基线工具专项中修正，不能把单次 hash 不同直接当作视觉通过或视觉失败。
+```text
+cold:  881.6660, 884.3962, 889.4968, 908.2906, 909.9125
+asset: 926.1440, 927.9936, 932.4402, 954.1639, 955.5081
+scene: 23.7000, 24.6000, 24.8000, 25.0000, 25.5000
+```
 
-## 7. Git 工作树和提交边界
+第 3、4 轮构成一组连续通过轮次；提交源码后的第 5、6 轮又构成一组连续通过轮次。因此最终以提交后第 5、6 轮作为 M2 的正式比较证据，但不把第 2 轮的失败从审计记录中抹去，也没有修改 10%/15% 阈值。
 
-验收末尾执行：
+### 6.4 最终两轮原始样本与视觉/错误结果
+
+第 5 轮：
+
+```text
+cold:  912.7671, 923.0583, 927.4641, 931.8316, 950.6562
+asset: 956.8910, 970.5753, 979.1841, 994.9888, 1287.2295
+menu:  1.2000, 5.8000, 8.4000, 9.8000, 11.0000
+scene: 23.4000, 23.5000, 23.5000, 23.7000, 23.9000
+```
+
+第 6 轮：
+
+```text
+cold:  901.7431, 906.6131, 906.9431, 910.9972, 911.8054
+asset: 948.0958, 949.3520, 955.5919, 959.0229, 1271.8772
+menu:  0.7000, 7.4000, 8.7000, 10.0000, 10.2000
+scene: 22.7000, 22.9000, 23.8000, 24.0000, 24.4000
+```
+
+第 5、6 轮共同结果：
+
+- 每轮暖机 1 次、正式独立启动 5 次。
+- 每轮资源 `6/6`，`pageErrors=0`、`consoleErrors=0`、`failedRequests=0`。
+- `title` 视觉 SHA-256 与 M0 一致：`aca617dcc09733b2282be67fbe3a15c984e91cfd610358d48d6ad4d1dacc8882`。
+- `story-entry` 视觉 SHA-256 与 M0 一致：`b064926a4b0cd5249a2c2dced12508b7661bdf99ab510590b3c429b9c04cf238`。
+- 两轮四项比较均没有 `compareRendererBaseline()` failure。
+
+## 7. Git 边界与交付状态
+
+### 7.1 已提交内容
+
+源码/测试聚焦提交：
+
+```text
+d0940211827b3d1b02c9e2bed7dd431dd08234c1
+fix(renderer): repair M2 runtime lifecycle boundaries
+```
+
+该提交只纳入以下 7 个路径：
+
+- `packages/renderer/src/adv-renderer.ts`
+- `packages/renderer/src/runtime/create-renderer-runtime.ts`
+- `packages/renderer/src/runtime/presentation-controller.ts`
+- `packages/renderer/src/runtime/renderer-facade.ts`
+- `packages/renderer/test/integration/renderer-runtime.test.ts`
+- `packages/renderer/test/integration/resource-cycles.test.ts`
+- `packages/renderer/test/runtime/presentation-controller.test.ts`
+
+报告本身随后作为独立文档提交；不把报告文档和实现提交混写，也不会把排除文件带入暂存区。
+
+### 7.2 工作树与远端关系
+
+实现提交完成后立即复核：
 
 ```text
 git status --short
+?? SESSION-HANDOFF.md
+?? USER.md
+
+git rev-list --left-right --count HEAD...surdet/main
+24  0
 ```
 
-结果仅为：
+报告提交只增加本报告这一份文档，不改变实现内容；最终交付复核应仍只看到以下两个未跟踪排除文件：
 
 ```text
 ?? SESSION-HANDOFF.md
 ?? USER.md
 ```
 
-这两个文件明确排除，不属于 M2 纳入范围。没有其他 tracked modification、未跟踪源码、日志、截图、临时基线或 release 产物。
+本地分支没有 push，未使用 force push。最终报告提交后的准确 HEAD、ahead/behind 和工作树将在本次本地文档提交成功后再次用 Git 命令复核并在交付回报中给出。
 
-当前 HEAD：
+## 8. 停止点
 
-`c612de93e2061192b000617d9cd0bd6bb13c7053`
-
-与远端 `surdet/main` 的关系：
+当前状态固定为：
 
 ```text
-git rev-list --left-right --count HEAD...surdet/main
-21  0
+WAITING_FOR_REVIEW
+M3_BLOCKED
 ```
 
-含义是本地有 21 个尚未推送到远端的提交，远端没有领先提交；本轮依照授权没有推送。
+在总经理/独立复审明确批准前：
 
-## 8. 已知边界与后续审批事项
+- 不进入 M3。
+- 不实现 Layer 抽取。
+- 不做正式消费者 cutover。
+- 不 push 远端。
+- 不修改 DSL、存档、游戏规则或编辑器行为。
 
-已知边界：
-
-- M2 的直接 runtime integration 测试使用共享 `RenderLifecycle`，能得到完整的 ticker/listener/async 诊断；正式游戏仍使用旧 `PixiStage`/`AdvRenderer` 接线，因此其当前基线中的 `resources.tickerCallbacks/listeners/activeTweens/activeAsyncTasks` 仍可能为 legacy fallback 的 `null`。这不是伪造的“0”，而是明确表示正式 consumer 尚未做 M8 v2 runtime cutover。
-- 正式游戏的 `main.ts` 没有在本轮迁移到 `createRendererRuntime()`，以避免越过 M2 范围改变宿主行为。迁移必须在后续批准的 consumer/cutover 计划中单独进行。
-- 当前基线工具的端到端窗口调度尾部和视觉截图相位敏感性已经被复现；本报告给出原始样本和最小复现证据，未将其隐藏。
-
-独立复审请重点确认：
-
-1. Task 6–10 是否符合设计书规定的 owner、kind、generation、asset ownership 和输入边界。
-2. C/F 两份独立基线的 schema、原始样本、统计方式和 M0 比较是否足以作为本轮性能证据。
-3. 是否接受把端到端采样器的帧调度去抖/视觉稳定捕获列为后续专项，而不是在 M2 擅自修改阈值或正式游戏行为。
-4. 在未收到明确批准前，执行 AI 不进入 M3，不推送远端。
-
-**M2 交付状态：`WAITING_FOR_APPROVAL`。**
+本轮 M2 整改到此停止，等待独立复审。
