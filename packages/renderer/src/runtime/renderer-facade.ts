@@ -890,6 +890,10 @@ export class RendererFacade {
 
   #validatePresentation(snapshot: unknown): void {
     this.#ensureActive('presentation', 'validate');
+    if (this.#controller.validatePresentation) {
+      this.#controller.validatePresentation.call(this.#controller, cloneOpaque(snapshot));
+      return;
+    }
     if (!isRecord(snapshot)) {
       throw new RendererCommandError('Presentation snapshot must be an object', {
         code: 'PRESENTATION_SNAPSHOT_INVALID',
@@ -904,8 +908,11 @@ export class RendererFacade {
         command: 'validate',
       });
     }
-    const validateWorld = this.#worldPort?.validatePresentation ?? this.#stage.validatePresentation;
-    if (validateWorld) validateWorld.call(this.#worldPort ?? this.#stage, snapshot.stage ?? null);
+    if (this.#worldPort?.validatePresentation) {
+      this.#worldPort.validatePresentation.call(this.#worldPort, snapshot.stage ?? null);
+    } else if (this.#stage.validatePresentation) {
+      this.#stage.validatePresentation.call(this.#stage, snapshot.stage ?? null);
+    }
   }
 
   #clearMenu(type: MenuOverlayState['type']): void {

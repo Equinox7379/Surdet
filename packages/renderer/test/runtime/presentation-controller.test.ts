@@ -7,6 +7,9 @@ import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { WorldLayer } from '../../src/layers/world/world-layer.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
+import { RendererFacade } from '../../src/runtime/renderer-facade.js';
+import { RenderPerformanceMonitor } from '../../src/performance.js';
+import { PixiStage } from '../../src/pixi-stage.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
 import type { AdvStage } from '../../src/types.js';
 
@@ -180,6 +183,70 @@ describe('PresentationController', () => {
     lifecycle.dispose();
   });
 
+  it('validates the complete presentation snapshot without changing state', () => {
+    const stage = new PixiStage();
+    const ports = createPresentationPorts(stage, { worldLayer: stage.worldLayer });
+    const controller = new PresentationController(ports.commands, ports.queries, undefined, {
+      commands: ports.commands,
+      queries: ports.queries,
+      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
+    });
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      worldLayer: stage.worldLayer,
+    });
+    const validTimeline = {
+      id: 1,
+      blocking: false,
+      definition: {
+        version: 1 as const,
+        id: 'validate-complete',
+        durationMs: 100,
+        tracks: [],
+      },
+      snapshot: {
+        version: 1 as const,
+        cursorMs: 0,
+      },
+    };
+    const before = controller.snapshotPresentation();
+    const invalidCases: readonly unknown[] = [
+      { version: 2, stage: null, timelines: [] },
+      { version: 1, stage: null, timelines: 'not-an-array' },
+      { version: 1, stage: null, timelines: [{ ...validTimeline, definition: { ...validTimeline.definition, version: 2 } }] },
+      { version: 1, stage: null, timelines: [{ ...validTimeline, snapshot: { version: 1, cursorMs: 'not-a-number' } }] },
+      {
+        version: 1,
+        stage: null,
+        timelines: [validTimeline, { ...validTimeline, id: 1 }],
+      },
+      {
+        version: 1,
+        stage: { ...(before as { stage: Record<string, unknown> }).stage, cameraScale: 99 },
+        timelines: [],
+      },
+    ];
+
+    try {
+      expect(() => facade.commands.presentation.validate({
+        version: 1,
+        stage: null,
+        timelines: [],
+      })).not.toThrow();
+      for (const payload of invalidCases) {
+        expect(() => facade.commands.presentation.validate(payload)).toThrowError(
+          expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }),
+        );
+        expect(controller.snapshotPresentation()).toEqual(before);
+      }
+    } finally {
+      controller.dispose();
+      stage.destroy();
+    }
+  });
+
   it('keeps the existing presentation transaction intact when nested World restore is invalid', async () => {
     const stage = stageHarness();
     const lifecycle = new RenderLifecycle();
@@ -192,6 +259,7 @@ describe('PresentationController', () => {
     const controller = new PresentationController(ports.commands, ports.queries, undefined, {
       commands: ports.commands,
       queries: ports.queries,
+      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
       lifecycle,
     });
     const bus = new EventBus<CoreEventMap>();

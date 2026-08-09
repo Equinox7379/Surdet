@@ -88,6 +88,8 @@ export interface PresentationControllerOptions extends AdvRendererOptions {
   readonly queries: RendererQueries;
   readonly lifecycle?: RenderLifecycle;
   readonly resetProjection?: (options?: ResetSessionOptions) => void;
+  /** Read-only nested World validation used by the shared presentation prepare path. */
+  readonly validatePresentationStage?: (snapshot: unknown) => void;
   readonly updateProjection?: (deltaMs: number) => void;
   readonly canScrollBacklog?: () => boolean;
   readonly bindStageCallbacks?: (handlers: {
@@ -106,6 +108,7 @@ export class PresentationController {
   #commands: RendererCommands;
   #queries: RendererQueries;
   #resetProjection?: (options?: ResetSessionOptions) => void;
+  #validatePresentationStage?: (snapshot: unknown) => void;
   #updateProjection?: (deltaMs: number) => void;
   #canScrollBacklog: () => boolean = () => true;
   #unbindStageCallbacks?: () => void;
@@ -168,6 +171,7 @@ export class PresentationController {
     this.#commands = commands;
     this.#queries = queries;
     this.#resetProjection = options.resetProjection;
+    this.#validatePresentationStage = options.validatePresentationStage;
     this.#updateProjection = options.updateProjection;
     this.#canScrollBacklog = options.canScrollBacklog ?? (() => true);
     this.#lifecycle = options.lifecycle;
@@ -746,6 +750,11 @@ export class PresentationController {
     };
   }
 
+  /** 只读验证完整表现快照；与 restorePresentation 共用同一准备路径。 */
+  validatePresentation(payload: unknown): void {
+    this.#preparePresentationRestore(payload);
+  }
+
   /**
    * 清除表现控制器持有的时间轴，不触碰对话、选择、自动、快进或 Backlog 状态。
    * Stage 表现由 RendererFacade 在同一个 presentation command 中清除。
@@ -776,7 +785,7 @@ export class PresentationController {
     }
     // This is a read-only validation/prepare phase. In the production composition
     // root it validates the nested World snapshot before any controller timeline is cleared.
-    this.#commands.presentation.validate(payload);
+    this.#validatePresentationStage?.(payload.stage ?? null);
     const timelines: PreparedTimelineRestore[] = [];
     let timelineSequence = this.#timelineSeq + 1;
     const ids = new Set<number>();

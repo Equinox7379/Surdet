@@ -82,4 +82,48 @@ describe('legacy World contract', () => {
       stage.destroy();
     }
   });
+
+  it('binds Presentation validation fallback methods to their actual owners', () => {
+    const stageReceivers: unknown[] = [];
+    const worldReceivers: unknown[] = [];
+    const stage = {
+      validatePresentation(this: unknown, _snapshot: unknown) {
+        stageReceivers.push(this);
+      },
+      destroy: () => undefined,
+    };
+    const worldPort = {
+      validatePresentation(this: unknown, _snapshot: unknown) {
+        worldReceivers.push(this);
+      },
+    };
+    const withWorldValidator = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      worldLayer: worldPort as never,
+    });
+
+    withWorldValidator.commands.presentation.validate({ version: 1, stage: null, timelines: [] });
+    expect(worldReceivers).toEqual([worldPort]);
+    expect(stageReceivers).toEqual([]);
+
+    const withoutWorldValidator = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      worldLayer: {} as never,
+    });
+    withoutWorldValidator.commands.presentation.validate({ version: 1, stage: null, timelines: [] });
+    expect(stageReceivers).toEqual([stage]);
+
+    stageReceivers.length = 0;
+    const withoutWorldPort = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+    });
+    withoutWorldPort.commands.presentation.validate({ version: 1, stage: null, timelines: [] });
+    expect(stageReceivers).toEqual([stage]);
+  });
 });
