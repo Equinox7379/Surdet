@@ -1,11 +1,15 @@
-import type { AdvStage } from './types.js';
 import type { RenderQuality } from './quality.js';
+
+/** Narrow formal plugin view; legacy stage types do not cross the runtime boundary. */
+export interface RendererPluginStage {
+  readonly getQuality?: () => RenderQuality;
+}
 
 export const RENDERER_PLUGIN_API = 1 as const;
 
 export interface RendererPluginContext {
   readonly deltaMs: number;
-  readonly stage: AdvStage;
+  readonly stage: RendererPluginStage;
   readonly quality?: RenderQuality;
 }
 
@@ -29,9 +33,9 @@ export class RendererPluginHost {
   #plugins = new Map<string, RendererPlugin>();
   #disabled = new Set<string>();
   #diagnostics: RendererPluginDiagnostic[] = [];
-  #stage: AdvStage | null = null;
+  #stage: RendererPluginStage | null = null;
 
-  attach(stage: AdvStage): void { this.#stage = stage; }
+  attach(stage: RendererPluginStage): void { this.#stage = stage; }
   detach(): void { this.#stage = null; }
 
   register(plugin: RendererPlugin): void {

@@ -7,7 +7,7 @@
  * 断言走只读 nvlLines 句柄（与 pixi-stage.test.ts 的 headless 策略一致）。
  */
 import { describe, expect, it } from 'vitest';
-import { PixiStage } from '../src/pixi-stage.js';
+import { PixiStage } from '../../src/pixi-stage.js';
 
 /** 默认舞台 1280x720 → NVL 每行容量 floor((1280-160)/20) = 56 字 */
 const CHARS_PER_LINE = 56;

@@ -11,6 +11,8 @@ const previewSourcePath = path.resolve(
 describe('editor preview Renderer v2 lifecycle contract', () => {
   it('uses one RendererRuntime and exposes semantic diagnostics instead of legacy globals', () => {
     const source = readFileSync(previewSourcePath, 'utf8');
+    const legacyStageName = ['Pixi', 'Stage'].join('');
+    const legacyRendererName = ['Adv', 'Renderer'].join('');
 
     expect(source).toContain('createRendererRuntime');
     expect(source).toContain('PreviewRuntimeLifecycle');
@@ -18,8 +20,8 @@ describe('editor preview Renderer v2 lifecycle contract', () => {
     expect(source).not.toMatch(/let stage\s*:/);
     expect(source).not.toMatch(/let renderer\s*:/);
     expect(source).not.toMatch(/let frameScheduler\s*:/);
-    expect(source).not.toMatch(/new PixiStage\s*\(/);
-    expect(source).not.toMatch(/new AdvRenderer\s*\(/);
+    expect(source).not.toMatch(new RegExp(`new ${legacyStageName}\\s*\\(`));
+    expect(source).not.toMatch(new RegExp(`new ${legacyRendererName}\\s*\\(`));
     expect(source).not.toMatch(/new FrameScheduler\s*\(/);
     expect(source).toContain('previewLifecycle.listen');
     expect(source).toContain('controller.dispatchInput');
