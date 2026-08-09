@@ -197,8 +197,16 @@ async function collectLaunchSample(workspaceRoot, role, pair) {
 }
 
 function assertHealthy(sample, label) {
+  const assets = sample.assetLoading;
   const errors = sample.errors;
-  if (sample.assetLoading.failed > 0 || errors.page.length > 0 || errors.console.length > 0 || errors.failedRequests.length > 0) {
+  if (!assets
+    || assets.total <= 0
+    || assets.completed !== assets.total
+    || assets.failed !== 0
+    || assets.done !== true
+    || errors.page.length > 0
+    || errors.console.length > 0
+    || errors.failedRequests.length > 0) {
     throw new Error(`${label} 不健康：${JSON.stringify(sample)}`);
   }
 }
