@@ -18,6 +18,7 @@
     "verify:p1p2:policy": "node scripts/verify-p1-p2.mjs",
     "verify:p1p2": "npm run verify:p1p2:policy && npm run verify:all",
     "verify:formal": "npm run lint -w zero-after-midnight && npm run simulate -w zero-after-midnight && node examples/zero-after-midnight/scripts/check-assets.mjs",
+    "verify:renderer-boundaries": "node --test scripts/test/renderer-boundaries.test.mjs && node scripts/check-renderer-boundaries.mjs",
     "docs:capabilities": "node scripts/render-capability-matrix.mjs --write",
     "docs:capabilities:check": "node scripts/render-capability-matrix.mjs --check",
     "verify:docs": "node scripts/render-capability-matrix.mjs --check",
