@@ -215,6 +215,107 @@ describe('GalleryLayer direct contract', () => {
     }
   });
 
+  it('coordinates an interactive v2 close after the Layer has cleared its local projection', () => {
+    const runtime = makeGalleryRuntime();
+    const order: string[] = [];
+    let facade!: RendererFacade;
+    const restoreCommandRail = vi.fn(() => {
+      order.push('restore-rail');
+      expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });
+    });
+    const onClose = vi.fn(() => {
+      order.push('host-close');
+      expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });
+    });
+    const stage = {
+      destroy: vi.fn(),
+      hideCommandRail: vi.fn(),
+      restoreCommandRail,
+      showGallery: vi.fn(),
+    } as unknown as RendererStagePort;
+    facade = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: { hideCommandRail: vi.fn() } as unknown as DialogueProjectionPort,
+      galleryLayer: runtime.layer,
+    });
+    try {
+      facade.commands.gallery.showGallery({ cgs: [], music: [], onClose });
+      findText(runtime.root, '✕ 关闭').emit('pointerdown', pointerEvent);
+
+      expect(runtime.layer.gallery()).toEqual({ type: 'none' });
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(order).toEqual(['restore-rail', 'host-close']);
+      expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(0);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('restores the v2 command rail when an interactive close has no host callback', () => {
+    const runtime = makeGalleryRuntime();
+    const restoreCommandRail = vi.fn();
+    const stage = {
+      destroy: vi.fn(),
+      hideCommandRail: vi.fn(),
+      restoreCommandRail,
+      showGallery: vi.fn(),
+    } as unknown as RendererStagePort;
+    const facade = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: { hideCommandRail: vi.fn() } as unknown as DialogueProjectionPort,
+      galleryLayer: runtime.layer,
+    });
+    try {
+      facade.commands.gallery.showGallery({ cgs: [], music: [] });
+      expect(() => findText(runtime.root, '✕ 关闭').emit('pointerdown', pointerEvent)).not.toThrow();
+
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(0);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('preserves v2 close cleanup and re-entry when the host callback throws', () => {
+    const runtime = makeGalleryRuntime();
+    const failure = new Error('gallery host close failure');
+    const restoreCommandRail = vi.fn();
+    const stage = {
+      destroy: vi.fn(),
+      hideCommandRail: vi.fn(),
+      restoreCommandRail,
+      showGallery: vi.fn(),
+    } as unknown as RendererStagePort;
+    const facade = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: { hideCommandRail: vi.fn() } as unknown as DialogueProjectionPort,
+      galleryLayer: runtime.layer,
+    });
+    try {
+      facade.commands.gallery.showGallery({ cgs: [], music: [], onClose: () => { throw failure; } });
+      expect(() => findText(runtime.root, '✕ 关闭').emit('pointerdown', pointerEvent)).toThrow(failure);
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(0);
+
+      facade.commands.gallery.showGallery({ cgs: [], music: [] });
+      findText(runtime.root, '✕ 关闭').emit('pointerdown', pointerEvent);
+      expect(restoreCommandRail).toHaveBeenCalledTimes(2);
+      expect(runtime.lifecycle.snapshot().listeners).toBe(0);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
   it('handles empty lists, repeated show/hide/reset, and callback exceptions transactionally', () => {
     const runtime = makeGalleryRuntime();
     const failure = new Error('gallery close callback');

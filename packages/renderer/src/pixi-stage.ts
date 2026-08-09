@@ -1564,7 +1564,10 @@ export class PixiStage implements AdvStage {
     this.hideSettings();
     this.hideSaveLoad();
     this.hideCommandRail();
-    this.#gallery.showGallery(opts);
+    this.#gallery.showGallery({
+      ...opts,
+      onClose: this.#restoreMenuRail(opts.onClose ?? (() => undefined)),
+    });
   }
 
   /** 隐藏鉴赏界面；legacy API restores the command rail after the layer is hidden. */
