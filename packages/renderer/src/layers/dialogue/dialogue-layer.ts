@@ -1,0 +1,1039 @@
+import {
+  Container,
+  Graphics,
+  Sprite,
+  Text as PText,
+  TextStyle,
+  Texture,
+  type TextStyleOptions,
+} from 'pixi.js';
+import type { BacklogEntry } from '../../backlog.js';
+import { parseRuby, stripRuby } from '../../ruby.js';
+import { layoutRuby, type RubyGlyphLayout } from '../../ruby-layout.js';
+import { wrapCjk, wrapCjkMeasure } from '../../text-wrap.js';
+import type { PresentationPreferences } from '../../presentation.js';
+import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
+import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
+import type { DialogueCommands } from '../../api/renderer-commands.js';
+import type {
+  ChoiceOptionView,
+  CommandRailItem,
+  FrameRequestHandler,
+  SpeakerProfile,
+} from '../../types.js';
+
+/** DialogueLayer owns only dialogue-facing display objects and projection state. */
+export interface DialogueLayerOptions {
+  readonly uiLayer: Container;
+  readonly width: number;
+  readonly height: number;
+  readonly assets: RenderAssetRegistry;
+  readonly lifecycle?: RenderLifecycle;
+  readonly preferences?: PresentationPreferences;
+  readonly requestFrame?: () => void;
+  /** World focus remains a Stage/World concern; this callback is a port, not a Layer import. */
+  readonly onActiveSpeakerChanged?: (characterId: string | null) => void;
+}
+
+interface ChoiceView {
+  readonly holder: Container;
+  readonly bg: Graphics;
+  readonly bar: Graphics;
+  readonly label: PText;
+}
+
+interface DestroyableDisplay {
+  parent?: Container | null;
+  destroy: (options?: { children?: boolean }) => void;
+}
+
+const NIGHT_AZURE = {
+  accent: 0x5ac8ff,
+  text: 0xf2f6ff,
+  choiceBg: 0x0d1526,
+  choiceEdge: 0x3d5a80,
+  panelBg: 0xf7f8fc,
+  panelText: 0x2c3140,
+  nameTag: 0x4285e0,
+  plateText: 0xeaf6ff,
+} as const;
+
+const MODERN_ADV = {
+  ink: 0x070c17,
+  text: 0xf7f9ff,
+  muted: 0xaeb9cc,
+  accent: 0x9bc7ff,
+  scrim: 0x06101e,
+  rail: 0x050914,
+  line: 0x9bc7ff,
+} as const;
+
+let dialogMeasureCtx: CanvasRenderingContext2D | null = null;
+
+function getDialogMeasureCtx(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null;
+  if (!dialogMeasureCtx) dialogMeasureCtx = document.createElement('canvas').getContext('2d');
+  return dialogMeasureCtx;
+}
+
+/**
+ * The dialogue projection is deliberately independent from PixiStage. It only
+ * receives a display root, the shared asset registry, and narrow world/frame
+ * callbacks. No other Renderer Layer is imported here.
+ */
+export class DialogueLayer implements DialogueCommands {
+  readonly owner = 'dialogue' as const;
+
+  readonly #root: Container;
+  readonly #w: number;
+  readonly #h: number;
+  readonly #assets: RenderAssetRegistry;
+  readonly #lifecycle: RenderLifecycle;
+  readonly #ownsLifecycle: boolean;
+  readonly #requestFrameCallback?: () => void;
+  readonly #onActiveSpeakerChanged?: (characterId: string | null) => void;
+  #frameRequest: FrameRequestHandler | null = null;
+  #disposed = false;
+
+  #speakerText: PText;
+  #dialogText: PText;
+  #lastShownSpeaker: string | null | undefined;
+  #lastShownDialog = '';
+  #speakerPlate: Graphics;
+  #dialogCharsPerLine = 40;
+  #dialogPanel: Graphics;
+  #dialogRubyLayer: Container;
+  #rubyBasePool: PText[] = [];
+  #rubyTextPool: PText[] = [];
+
+  #choiceLayer: Container;
+  #choiceViews: ChoiceView[] = [];
+  #choiceHighlight = -1;
+  #choiceFadeRemain = 0;
+  #choiceFadeDur = 280;
+
+  #continueIndicator: Graphics;
+  #continuePhase = 0;
+  #backlogEntriesLayer: Container | null = null;
+  #backlogScroll = 0;
+  #backlogContentH = 0;
+  #backlogLayer: Container;
+  #backlogBuilt = false;
+
+  #nvlLayer: Container;
+  #nvlLines: PText[] = [];
+  #nvlLineCounts: number[] = [];
+  #nvlActive = false;
+  #nvlCharsPerLine = 50;
+
+  #bannerLayer: Container;
+  #bannerText: PText;
+  #bannerBars: Graphics;
+  #bannerTipBg: Graphics;
+  #bannerRemain = 0;
+  #bannerDur = 1;
+
+  #commandRail: Container;
+  #commandRailItems: CommandRailItem[] = [];
+  #commandRailOnSelect: ((id: string) => void) | null = null;
+  #commandRailSuppressed = false;
+  #commandRailWakeRemain = 0;
+  #commandRailIdleAlpha = 0.38;
+  #commandRailPointerWake: (() => void) | null = null;
+
+  #speakerProfiles = new Map<string, SpeakerProfile>();
+  #activeSpeakerId: string | null = null;
+  #speakerAvatar: Sprite | null = null;
+  #interfaceHidden = false;
+  #preferences: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
+
+  constructor(options: DialogueLayerOptions) {
+    this.#root = options.uiLayer;
+    this.#w = options.width;
+    this.#h = options.height;
+    this.#assets = options.assets;
+    this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
+    this.#ownsLifecycle = options.lifecycle === undefined;
+    this.#requestFrameCallback = options.requestFrame;
+    this.#onActiveSpeakerChanged = options.onActiveSpeakerChanged;
+    if (options.preferences) this.#preferences = { ...options.preferences };
+
+    this.#choiceLayer = new Container();
+    this.#commandRail = new Container();
+    this.#commandRail.visible = false;
+
+    this.#dialogRubyLayer = new Container();
+    this.#nvlLayer = new Container();
+    this.#nvlLayer.visible = false;
+    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.86 }));
+
+    this.#bannerLayer = new Container();
+    this.#bannerLayer.visible = false;
+    this.#bannerBars = new Graphics();
+    this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
+    this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
+    this.#bannerTipBg = new Graphics();
+    this.#bannerText = new PText({
+      text: '',
+      style: {
+        fontSize: 40,
+        fill: 0xffffff,
+        fontWeight: 'normal',
+        fontFamily: this.#assets.fontFamily('title'),
+      } satisfies TextStyleOptions,
+    });
+    this.#bannerText.anchor.set(0.5);
+    this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
+
+    this.#dialogPanel = new Graphics();
+    this.#drawDialogPanel();
+    this.#speakerPlate = new Graphics();
+    this.#speakerAvatar = new Sprite(Texture.EMPTY);
+    this.#speakerAvatar.anchor.set(0.5, 1);
+    this.#speakerAvatar.visible = false;
+
+    this.#continueIndicator = new Graphics()
+      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
+      .circle(0, 0, 4.5).fill({ color: 0xeaf4ff, alpha: 0.95 });
+    this.#continueIndicator.visible = false;
+    this.#continueIndicator.x = this.#w - 68;
+
+    this.#backlogLayer = new Container();
+    this.#backlogLayer.visible = false;
+
+    this.#speakerText = new PText({
+      text: '',
+      style: {
+        fontSize: 18,
+        fill: MODERN_ADV.text,
+        fontWeight: 'normal',
+        letterSpacing: 1,
+        fontFamily: this.#assets.fontFamily('body'),
+        stroke: { width: 1.2, color: MODERN_ADV.ink },
+      } satisfies TextStyleOptions,
+    });
+    this.#dialogText = new PText({
+      text: '',
+      style: {
+        fontSize: 25,
+        fill: MODERN_ADV.text,
+        fontWeight: 'normal',
+        fontFamily: this.#assets.fontFamily('body'),
+        letterSpacing: 0.3,
+        lineHeight: 41,
+        stroke: { width: 1.35, color: MODERN_ADV.ink },
+      } satisfies TextStyleOptions,
+    });
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
+    this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
+
+    this.#mountInitialDisplays();
+  }
+
+  get onSelect(): ((index: number) => void) | null {
+    return this.#onSelect;
+  }
+
+  set onSelect(handler: ((index: number) => void) | null) {
+    this.#onSelect = handler;
+  }
+
+  get onBacklogClose(): (() => void) | null {
+    return this.#onBacklogClose;
+  }
+
+  set onBacklogClose(handler: (() => void) | null) {
+    this.#onBacklogClose = handler;
+  }
+
+  get nvlLines(): readonly PText[] {
+    return this.#nvlLines;
+  }
+
+  get activeSpeakerId(): string | null {
+    return this.#activeSpeakerId;
+  }
+
+  #onSelect: ((index: number) => void) | null = null;
+  #onBacklogClose: (() => void) | null = null;
+
+  /** Mount text last so existing Stage z-order remains unchanged. */
+  mountTextDisplays(): void {
+    if (this.#disposed || this.#dialogText.parent) return;
+    this.#root.addChild(this.#speakerText, this.#dialogText);
+    this.#registerDisplay('speaker-text', this.#speakerText);
+    this.#registerDisplay('dialog-text', this.#dialogText);
+    this.layout();
+  }
+
+  /** Move legacy text nodes to the end of the shared UI root after other overlays mount. */
+  bringTextDisplaysToFront(): void {
+    if (this.#disposed || !this.#dialogText.parent) return;
+    this.#root.addChild(this.#speakerText, this.#dialogText);
+  }
+
+  attachPointerTarget(target: { addEventListener: (type: string, listener: () => void) => void; removeEventListener: (type: string, listener: () => void) => void }): void {
+    if (this.#disposed || this.#commandRailPointerWake) return;
+    const wakeRail = () => this.#wakeCommandRail();
+    this.#commandRailPointerWake = wakeRail;
+    target.addEventListener('pointermove', wakeRail);
+    target.addEventListener('pointerdown', wakeRail);
+    this.#lifecycle.register('dialogue', 'listener', 'command-rail-pointer', () => {
+      target.removeEventListener('pointermove', wakeRail);
+      target.removeEventListener('pointerdown', wakeRail);
+      if (this.#commandRailPointerWake === wakeRail) this.#commandRailPointerWake = null;
+    });
+  }
+
+  setFrameRequest(handler: FrameRequestHandler | null): void {
+    this.#frameRequest = handler;
+    if (handler && this.needsUpdate()) handler();
+  }
+
+  setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
+    this.#preferences = { ...this.#preferences, ...preferences };
+    this.#requestFrame();
+  }
+
+  refreshSpeakerAvatar(): void {
+    this.#updateSpeakerAvatar();
+    this.#requestFrame();
+  }
+
+  applyTypography(): void {
+    TextStyle.defaultTextStyle.fontFamily = this.#assets.fontFamily('body');
+    this.#dialogText.style.fontFamily = this.#assets.fontFamily('body');
+    this.#speakerText.style.fontFamily = this.#assets.fontFamily('body');
+    this.#bannerText.style.fontFamily = this.#assets.fontFamily('title');
+    this.#lastShownSpeaker = undefined;
+  }
+
+  layout(): void {
+    this.#speakerText.position.set(92, this.#h - 226);
+    this.#dialogText.position.set(92, this.#h - 174);
+    this.#dialogRubyLayer.position.set(92, this.#h - 174);
+    this.#speakerAvatar?.position.set(58, this.#h - 54);
+    const step = 58;
+    const startY = this.#h * 0.60 - (this.#choiceViews.length - 1) * step / 2;
+    for (let i = 0; i < this.#choiceViews.length; i++) {
+      const view = this.#choiceViews[i]!;
+      const w = view.label.width + 60;
+      view.holder.position.set((this.#w - w) / 2, startY + i * step - (view.label.height + 20) / 2);
+    }
+  }
+
+  needsUpdate(): boolean {
+    return this.#continueIndicator.visible || this.#hasEffectWork();
+  }
+
+  update(deltaMs: number): void {
+    if (!this.#hasEffectWork()) return;
+    if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
+      this.#choiceFadeRemain = Math.max(0, this.#choiceFadeRemain - deltaMs);
+      const total = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
+      const elapsed = total - this.#choiceFadeRemain;
+      this.#choiceViews.forEach((view, i) => {
+        view.holder.alpha = Math.max(0, Math.min(1, (elapsed - i * 80) / this.#choiceFadeDur));
+      });
+      if (this.#choiceFadeRemain === 0) this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
+    }
+    if (this.#commandRail.visible) {
+      if (this.#commandRailWakeRemain > 0) {
+        this.#commandRailWakeRemain = Math.max(0, this.#commandRailWakeRemain - deltaMs);
+      }
+      const target = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
+      const next = this.#commandRail.alpha + (target - this.#commandRail.alpha) * Math.min(1, deltaMs / 120);
+      this.#commandRail.alpha = Math.abs(target - next) <= 0.001 ? target : next;
+      if (this.#commandRailWakeRemain === 0 && Math.abs(target - this.#commandRail.alpha) <= 0.001) {
+        this.#lifecycle.release('dialogue', 'tween', 'command-rail');
+      }
+    }
+    if (this.#bannerRemain > 0) {
+      this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
+      const elapsed = this.#bannerDur - this.#bannerRemain;
+      this.#bannerLayer.alpha = Math.min(1, elapsed / 300, this.#bannerRemain / 400);
+      if (this.#bannerRemain === 0) {
+        this.#bannerLayer.visible = false;
+        this.#lifecycle.release('dialogue', 'tween', 'banner');
+      }
+    }
+  }
+
+  showText(speaker: string | null, value: string): void {
+    if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
+    this.#requestFrame();
+    this.#lastShownSpeaker = speaker;
+    this.#lastShownDialog = value;
+    const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
+    this.setActiveSpeaker(profile?.id ?? null);
+    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${speaker}」` : '';
+    this.#drawSpeakerPlate();
+    this.#updateSpeakerAvatar();
+    this.#renderDialogText(value);
+    this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
+    if (this.#interfaceHidden) {
+      this.#dialogPanel.visible = false;
+      this.#speakerPlate.visible = false;
+      this.#speakerText.visible = false;
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+    }
+  }
+
+  showChoices(options: ChoiceOptionView[]): void {
+    this.#requestFrame();
+    this.#commandRail.visible = false;
+    this.#clearChoices();
+    options.forEach((option, index) => {
+      const holder = new Container();
+      const label = new PText({
+        text: option.label,
+        style: { fontSize: 24, fill: MODERN_ADV.text, letterSpacing: 1 } satisfies TextStyleOptions,
+      });
+      label.position.set(26, 6);
+      const bg = new Graphics();
+      const bar = new Graphics();
+      holder.addChild(bg, bar, label);
+      const view = { holder, bg, bar, label };
+      this.#choiceViews.push(view);
+      this.#registerDisplay(`choice:${index}`, holder);
+      this.#drawChoiceCard(view, false);
+      holder.eventMode = 'static';
+      holder.cursor = 'pointer';
+      holder.on('pointerdown', () => this.#onSelect?.(option.index));
+      holder.on('pointerover', () => this.#drawChoiceCard(view, true));
+      holder.on('pointerout', () => {
+        this.#drawChoiceCard(view, this.#choiceHighlight === this.#choiceViews.indexOf(view));
+      });
+      this.#choiceLayer.addChild(holder);
+    });
+    this.#choiceHighlight = -1;
+    this.layout();
+    if (this.#choiceViews.length > 0) {
+      this.#choiceFadeRemain = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
+      for (const view of this.#choiceViews) view.holder.alpha = 0;
+      this.#lifecycle.register('dialogue', 'tween', 'choice-fade', () => undefined);
+    }
+  }
+
+  hideChoices(): void {
+    this.#requestFrame();
+    this.#clearChoices();
+    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+  }
+
+  setChoiceHighlight(position: number): void {
+    this.#requestFrame();
+    this.#choiceHighlight = position;
+    this.#choiceViews.forEach((view, index) => this.#drawChoiceCard(view, index === position));
+  }
+
+  setAwaiting(awaiting: boolean): void {
+    if (this.#nvlActive || this.#interfaceHidden) return;
+    this.#continueIndicator.visible = awaiting;
+    if (awaiting) this.#dialogPanel.visible = true;
+    else if (this.#speakerText.text.length === 0 && this.#dialogText.text.length === 0) this.#dialogPanel.visible = false;
+    this.#requestFrame();
+  }
+
+  updateContinuePulse(deltaMs: number): void {
+    if (!this.#continueIndicator.visible) return;
+    this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
+    this.#continueIndicator.y = this.#h - 46 + Math.sin(this.#continuePhase) * 3;
+    this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
+  }
+
+  showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
+    const layer = this.#backlogLayer;
+    if (!this.#backlogBuilt) {
+      layer.eventMode = 'static';
+      layer.on('pointerdown', () => {
+        this.hideBacklog();
+        this.#onBacklogClose?.();
+      });
+      this.#backlogBuilt = true;
+      this.#lifecycle.register('dialogue', 'listener', 'backlog-overlay', () => {
+        layer.removeAllListeners();
+        this.#backlogBuilt = false;
+      });
+    }
+    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.94 }));
+    layer.addChild(new PText({
+      text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
+      style: { fontSize: 22, fill: NIGHT_AZURE.panelText, fontWeight: 'bold' } satisfies TextStyleOptions,
+    })).position.set(60, 30);
+    layer.addChild(new PText({
+      text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
+      style: { fontSize: 17, fill: query.trim().length > 0 ? NIGHT_AZURE.accent : MODERN_ADV.muted } satisfies TextStyleOptions,
+    })).position.set(60, 58);
+    const entriesLayer = new Container();
+    this.#backlogEntriesLayer = entriesLayer;
+    const perLine = 40;
+    let y = 0;
+    for (const entry of entries.slice(-120)) {
+      const text = entry.text.length > 0 ? entry.text : '（无文本）';
+      let first = true;
+      for (const line of wrapCjk(text, perLine)) {
+        const lineText = (first && entry.speaker ? `${entry.speaker}：` : '') + line;
+        const textNode = new PText({
+          text: first && entry.voice ? `▶ ${lineText}` : lineText,
+          style: {
+            fontSize: 20,
+            fill: first && entry.speaker ? NIGHT_AZURE.nameTag : 0x454c5c,
+            fontWeight: first && entry.speaker ? 'bold' : 'normal',
+          } satisfies TextStyleOptions,
+        });
+        textNode.position.set(60, 84 + y);
+        if (first && entry.voice && onReplayVoice) {
+          textNode.eventMode = 'static';
+          textNode.cursor = 'pointer';
+          textNode.on('pointerdown', (event) => {
+            event.stopPropagation();
+            onReplayVoice(entry.voice!);
+          });
+        }
+        entriesLayer.addChild(textNode);
+        y += 34;
+        first = false;
+      }
+    }
+    this.#backlogContentH = y;
+    this.#backlogScroll = 0;
+    this.#applyBacklogScroll();
+    layer.addChild(entriesLayer);
+    layer.visible = true;
+    this.#requestFrame();
+  }
+
+  hideBacklog(): void {
+    this.#backlogLayer.visible = false;
+    this.#backlogEntriesLayer = null;
+    this.#backlogContentH = 0;
+    this.#backlogScroll = 0;
+  }
+
+  scrollBacklog(delta: number): void {
+    if (!this.#backlogEntriesLayer || !this.#backlogLayer.visible) return;
+    const viewH = this.#h - 120;
+    const maxScroll = Math.max(0, this.#backlogContentH - viewH);
+    this.#backlogScroll = Math.max(-maxScroll, Math.min(0, this.#backlogScroll - delta));
+    this.#applyBacklogScroll();
+    this.#requestFrame();
+  }
+
+  hideInterface(hidden: boolean): void {
+    this.#interfaceHidden = hidden;
+    this.#dialogPanel.visible = !hidden;
+    this.#speakerText.visible = !hidden;
+    this.#dialogText.visible = !hidden;
+    this.#dialogRubyLayer.visible = !hidden;
+    this.#continueIndicator.visible = !hidden;
+    this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#drawSpeakerPlate();
+    this.#updateSpeakerAvatar();
+    this.#requestFrame();
+  }
+
+  setSpeakerProfiles(profiles: SpeakerProfile[]): void {
+    this.#speakerProfiles.clear();
+    for (const profile of profiles) {
+      if (profile.name.trim().length > 0 && profile.id.trim().length > 0) {
+        this.#speakerProfiles.set(profile.name.trim(), { ...profile });
+      }
+    }
+    this.#updateSpeakerAvatar();
+    this.#requestFrame();
+  }
+
+  setActiveSpeaker(characterId: string | null): void {
+    this.#activeSpeakerId = characterId;
+    this.#updateSpeakerAvatar();
+    this.#onActiveSpeakerChanged?.(characterId);
+    this.#requestFrame();
+  }
+
+  showCommandRail(items: CommandRailItem[], onSelect: (id: string) => void): void {
+    this.#commandRailSuppressed = false;
+    this.#commandRailOnSelect = onSelect;
+    this.#commandRailItems = items.map((item) => ({ ...item }));
+    this.#rebuildCommandRail();
+    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#wakeCommandRail();
+  }
+
+  setCommandRailItems(items: CommandRailItem[]): void {
+    this.#commandRailItems = items.map((item) => ({ ...item }));
+    this.#rebuildCommandRail();
+    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    if (!this.#commandRailSuppressed) this.#wakeCommandRail();
+  }
+
+  hideCommandRail(): void {
+    this.#commandRailSuppressed = true;
+    this.#commandRail.visible = false;
+    this.#lifecycle.release('dialogue', 'tween', 'command-rail');
+    this.#requestFrame();
+  }
+
+  restoreCommandRail(): void {
+    this.#commandRailSuppressed = false;
+    this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
+    this.#requestFrame();
+  }
+
+  showBanner(text: string, variant: 'chapter' | 'tip'): void {
+    if (text.length === 0) return;
+    this.#bannerText.text = text;
+    this.#bannerText.style = variant === 'chapter'
+      ? { fontSize: 38, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#assets.fontFamily('title') } satisfies TextStyleOptions
+      : { fontSize: 20, fill: NIGHT_AZURE.plateText, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
+    this.#bannerBars.visible = variant === 'chapter';
+    this.#bannerTipBg.clear();
+    if (variant === 'chapter') {
+      this.#bannerText.anchor.set(0.5);
+      this.#bannerText.position.set(this.#w / 2, this.#h * 0.4);
+    } else {
+      this.#bannerText.anchor.set(1, 0);
+      this.#bannerText.position.set(this.#w - 60, 40);
+      const tw = this.#bannerText.width;
+      const th = this.#bannerText.height;
+      this.#bannerTipBg.roundRect(this.#w - 60 - tw - 20, 32, tw + 40, th + 16, (th + 16) / 2)
+        .fill({ color: NIGHT_AZURE.choiceBg, alpha: 0.8 })
+        .stroke({ width: 1, color: NIGHT_AZURE.choiceEdge, alpha: 0.9 });
+    }
+    this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
+    this.#bannerRemain = this.#bannerDur;
+    this.#bannerLayer.visible = true;
+    this.#bannerLayer.alpha = 0;
+    this.#lifecycle.register('dialogue', 'tween', 'banner', () => undefined);
+    this.#requestFrame();
+  }
+
+  setNvlMode(on: boolean): void {
+    this.#nvlActive = on;
+    if (on) {
+      this.clearNvlText();
+      this.#nvlLayer.visible = true;
+      this.#dialogPanel.visible = false;
+      this.#speakerPlate.visible = false;
+      this.#speakerText.visible = false;
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+      this.#continueIndicator.visible = false;
+    } else {
+      this.#nvlLayer.visible = false;
+      this.#speakerText.visible = true;
+      this.#dialogText.visible = true;
+      this.#dialogRubyLayer.visible = true;
+      this.#drawSpeakerPlate();
+    }
+    this.#requestFrame();
+  }
+
+  appendNvlText(speaker: string | null, text: string): void {
+    const raw = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
+    const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
+    const textNode = new PText({
+      text: wrapped.join('\n'),
+      style: { fontSize: 20, fill: 0x333a49, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
+    });
+    this.#nvlLayer.addChild(textNode);
+    this.#nvlLines.push(textNode);
+    this.#nvlLineCounts.push(Math.max(1, wrapped.length));
+    const budget = this.#h - 120;
+    while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
+      const old = this.#nvlLines.shift()!;
+      this.#nvlLineCounts.shift();
+      this.#nvlLayer.removeChild(old);
+      old.destroy();
+    }
+    const lineHeight = 28;
+    const entryGap = 6;
+    let y = 60;
+    this.#nvlLines.forEach((line, index) => {
+      line.position.set(80, y);
+      y += this.#nvlLineCounts[index]! * lineHeight + entryGap;
+    });
+    this.#requestFrame();
+  }
+
+  clearNvlText(): void {
+    for (const line of this.#nvlLines) {
+      this.#nvlLayer.removeChild(line);
+      line.destroy();
+    }
+    this.#nvlLines = [];
+    this.#nvlLineCounts = [];
+    this.#requestFrame();
+  }
+
+  reset(): void {
+    if (this.#disposed) return;
+    this.#requestFrame();
+    this.#lastShownSpeaker = undefined;
+    this.#lastShownDialog = '';
+    this.#clearChoices();
+    this.hideBacklog();
+    this.#lifecycle.release('dialogue', 'listener', 'backlog-overlay');
+    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#backlogBuilt = false;
+    this.#nvlActive = false;
+    this.clearNvlText();
+    this.#nvlLayer.visible = false;
+    this.#hideRubyPool();
+    this.#speakerText.text = '';
+    this.#dialogText.text = '';
+    this.#speakerText.visible = true;
+    this.#dialogText.visible = true;
+    this.#dialogRubyLayer.visible = true;
+    this.#speakerPlate.clear();
+    this.#speakerPlate.visible = false;
+    if (this.#speakerAvatar) this.#speakerAvatar.visible = false;
+    this.#activeSpeakerId = null;
+    this.#dialogPanel.visible = false;
+    this.#continueIndicator.visible = false;
+    this.#continuePhase = 0;
+    this.#interfaceHidden = false;
+    this.#commandRailSuppressed = false;
+    this.#commandRail.visible = this.#commandRailItems.length > 0;
+    this.#commandRail.alpha = this.#commandRailIdleAlpha;
+    this.#commandRailWakeRemain = 0;
+    this.#lifecycle.release('dialogue', 'tween', 'command-rail');
+    this.#choiceHighlight = -1;
+    this.#bannerRemain = 0;
+    this.#lifecycle.release('dialogue', 'tween', 'banner');
+    this.#bannerLayer.visible = false;
+    this.#bannerLayer.alpha = 1;
+    this.#bannerText.text = '';
+    this.#bannerBars.visible = false;
+    this.#bannerTipBg.clear();
+  }
+
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#frameRequest = null;
+    this.#clearChoices();
+    for (const line of this.#nvlLines) {
+      this.#nvlLayer.removeChild(line);
+      line.destroy();
+    }
+    this.#nvlLines = [];
+    this.#nvlLineCounts = [];
+    this.#destroyRubyPools();
+    try {
+      this.#lifecycle.releaseOwner('dialogue');
+    } finally {
+      for (const child of [
+        this.#dialogPanel,
+        this.#speakerAvatar,
+        this.#speakerPlate,
+        this.#dialogRubyLayer,
+        this.#continueIndicator,
+        this.#choiceLayer,
+        this.#commandRail,
+        this.#backlogLayer,
+        this.#nvlLayer,
+        this.#bannerLayer,
+        this.#speakerText,
+        this.#dialogText,
+      ]) {
+        if (child?.parent) child.parent.removeChild(child);
+      }
+      if (this.#ownsLifecycle) this.#lifecycle.dispose();
+    }
+  }
+
+  #mountInitialDisplays(): void {
+    const displays: [string, DestroyableDisplay][] = [
+      ['dialog-panel', this.#dialogPanel],
+      ['speaker-avatar', this.#speakerAvatar!],
+      ['speaker-plate', this.#speakerPlate],
+      ['dialog-ruby', this.#dialogRubyLayer],
+      ['continue-indicator', this.#continueIndicator],
+      ['choice-layer', this.#choiceLayer],
+      ['command-rail', this.#commandRail],
+      ['backlog-layer', this.#backlogLayer],
+      ['nvl-layer', this.#nvlLayer],
+      ['banner-layer', this.#bannerLayer],
+    ];
+    this.#root.addChild(...displays.map(([, display]) => display as unknown as Container));
+    for (const [key, display] of displays) this.#registerDisplay(key, display);
+  }
+
+  #registerDisplay(key: string, display: DestroyableDisplay): void {
+    this.#lifecycle.register('dialogue', 'display', key, () => {
+      if (display.parent) display.parent.removeChild(display as unknown as Container);
+      display.destroy({ children: true });
+    });
+  }
+
+  #requestFrame(): void {
+    this.#requestFrameCallback?.();
+    this.#frameRequest?.();
+  }
+
+  #scaledDuration(durationMs: number): number {
+    if (this.#preferences.reducedMotion || this.#preferences.transitionScale === 0) return 1;
+    return Math.max(1, durationMs * this.#preferences.transitionScale);
+  }
+
+  #wrapDialogText(plain: string): string[] {
+    const ctx = getDialogMeasureCtx();
+    if (!ctx) return wrapCjk(plain, this.#dialogCharsPerLine);
+    const style = this.#dialogText.style;
+    const family = style.fontFamily;
+    const familyText = Array.isArray(family) ? family.join(', ') : String(family);
+    ctx.font = `${style.fontSize}px ${familyText}`;
+    return wrapCjkMeasure(plain, this.#w - 220, (text) => ctx.measureText(text).width);
+  }
+
+  #drawDialogPanel(): void {
+    this.#dialogPanel.clear();
+    this.#dialogPanel.rect(0, this.#h - 282, this.#w, 88).fill({ color: MODERN_ADV.scrim, alpha: 0.10 });
+    this.#dialogPanel.rect(0, this.#h - 194, this.#w, 112).fill({ color: MODERN_ADV.scrim, alpha: 0.25 });
+    this.#dialogPanel.rect(0, this.#h - 82, this.#w, 82).fill({ color: MODERN_ADV.scrim, alpha: 0.52 });
+  }
+
+  #drawSpeakerPlate(): void {
+    this.#speakerPlate.clear();
+    const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
+    this.#speakerPlate.visible = show;
+    if (!show) return;
+    const w = Math.max(56, this.#speakerText.width + 14);
+    this.#speakerPlate.rect(92, this.#h - 198, w, 1.5).fill({ color: MODERN_ADV.accent, alpha: 0.78 });
+  }
+
+  #renderDialogText(value: string): void {
+    const unclosed = value.split('《').length !== value.split('》').length;
+    const segs = unclosed ? [] : parseRuby(value);
+    const hasRuby = segs.some((segment) => segment.ruby !== undefined);
+    if (!hasRuby) {
+      this.#hideRubyPool();
+      this.#dialogText.visible = true;
+      const plain = unclosed ? stripRuby(value) : value;
+      this.#dialogText.text = this.#wrapDialogText(plain).join('\n');
+      return;
+    }
+    this.#dialogText.visible = false;
+    this.#dialogText.text = '';
+    this.#hideRubyPool();
+    const ctx = getDialogMeasureCtx();
+    const family = this.#dialogText.style.fontFamily;
+    const familyText = Array.isArray(family) ? family.join(', ') : String(family);
+    const measure = {
+      base: (text: string): number => {
+        if (!ctx) return text.length * 25;
+        ctx.font = `25px ${familyText}`;
+        return ctx.measureText(text).width;
+      },
+      ruby: (text: string): number => {
+        if (!ctx) return text.length * 12;
+        ctx.font = `12px ${familyText}`;
+        return ctx.measureText(text).width;
+      },
+    };
+    const layouts = layoutRuby(segs, this.#w - 220, measure, 41);
+    const baseStyle = {
+      fontSize: 25,
+      fill: MODERN_ADV.text,
+      fontWeight: 'normal',
+      fontFamily: family,
+      letterSpacing: 0.3,
+      lineHeight: 41,
+      stroke: { width: 1.35, color: MODERN_ADV.ink },
+    } satisfies TextStyleOptions;
+    const rubyStyle = {
+      fontSize: 12,
+      fill: MODERN_ADV.text,
+      fontFamily: family,
+      stroke: { width: 0.8, color: MODERN_ADV.ink },
+    } satisfies TextStyleOptions;
+    let rubyIndex = 0;
+    layouts.forEach((layout: RubyGlyphLayout, index) => {
+      const base = this.#takeRubyText(this.#rubyBasePool, index, layout.base, baseStyle);
+      base.position.set(layout.x + (layout.width - base.width) / 2, layout.y);
+      if (layout.ruby !== undefined) {
+        const ruby = this.#takeRubyText(this.#rubyTextPool, rubyIndex++, layout.ruby, rubyStyle);
+        ruby.anchor.set(0.5, 1);
+        ruby.position.set(layout.x + layout.width / 2, layout.y - 2);
+      }
+    });
+  }
+
+  #takeRubyText(pool: PText[], index: number, text: string, style: TextStyleOptions): PText {
+    let object = pool[index];
+    if (!object) {
+      object = new PText({ text, style });
+      pool[index] = object;
+      this.#dialogRubyLayer.addChild(object);
+      this.#registerDisplay(`ruby-${pool === this.#rubyBasePool ? 'base' : 'text'}:${index}`, object);
+    } else {
+      object.text = text;
+      object.style = style;
+    }
+    object.visible = true;
+    return object;
+  }
+
+  #hideRubyPool(): void {
+    for (const object of this.#rubyBasePool) object.visible = false;
+    for (const object of this.#rubyTextPool) object.visible = false;
+  }
+
+  #destroyRubyPools(): void {
+    this.#dialogRubyLayer.removeChildren();
+    for (let i = 0; i < this.#rubyBasePool.length; i++) this.#lifecycle.release('dialogue', 'display', `ruby-base:${i}`);
+    for (let i = 0; i < this.#rubyTextPool.length; i++) this.#lifecycle.release('dialogue', 'display', `ruby-text:${i}`);
+    this.#rubyBasePool = [];
+    this.#rubyTextPool = [];
+  }
+
+  #drawChoiceCard(view: ChoiceView, selected: boolean): void {
+    view.label.style = selected
+      ? { fontSize: 24, fill: MODERN_ADV.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
+      : { fontSize: 24, fill: MODERN_ADV.muted, letterSpacing: 1 } satisfies TextStyleOptions;
+    const w = view.label.width + 60;
+    const h = view.label.height + 16;
+    view.bg.clear();
+    view.bg.rect(0, 0, w, h).fill({ color: MODERN_ADV.ink, alpha: selected ? 0.12 : 0.015 });
+    view.bg.rect(0, h - 1, w, 1).fill({ color: MODERN_ADV.line, alpha: selected ? 0.9 : 0.22 });
+    view.bar.clear();
+    if (selected) view.bar.rect(0, h - 3, w, 2).fill({ color: MODERN_ADV.accent, alpha: 0.95 });
+  }
+
+  #clearChoices(): void {
+    this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
+    for (let index = 0; index < this.#choiceViews.length; index++) {
+      this.#lifecycle.release('dialogue', 'display', `choice:${index}`);
+    }
+    this.#choiceViews = [];
+    this.#choiceFadeRemain = 0;
+  }
+
+  #applyBacklogScroll(): void {
+    this.#backlogEntriesLayer?.position.set(0, this.#backlogScroll);
+  }
+
+  #nvlTotalHeight(): number {
+    let height = 0;
+    for (const count of this.#nvlLineCounts) height += count * 28 + 6;
+    return height;
+  }
+
+  #updateSpeakerAvatar(): void {
+    const sprite = this.#speakerAvatar;
+    if (!sprite) return;
+    const profile = [...this.#speakerProfiles.values()].find((item) => item.id === this.#activeSpeakerId);
+    const key = profile?.avatarKey;
+    const texture = key ? this.#assets.resolveAvatar(key) : null;
+    if (!texture || !profile || this.#interfaceHidden || this.#nvlActive) {
+      sprite.visible = false;
+      return;
+    }
+    sprite.texture = texture;
+    const size = 96;
+    sprite.width = size;
+    sprite.height = size * (texture.height / Math.max(1, texture.width));
+    sprite.position.set(54, this.#h - 52);
+    sprite.alpha = 0.94;
+    sprite.visible = true;
+  }
+
+  #rebuildCommandRail(): void {
+    const layer = this.#commandRail;
+    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    if (this.#commandRailItems.length === 0) return;
+    const railH = 46;
+    const count = this.#commandRailItems.length;
+    const slotW = 44;
+    const slotGap = 4;
+    const railPad = 8;
+    const railW = railPad * 2 + count * slotW + (count - 1) * slotGap;
+    const startX = Math.max(12, this.#w - railW - 18);
+    const top = this.#h - railH - 10;
+    layer.addChild(new Graphics()
+      .roundRect(startX, top, railW, railH, 5)
+      .fill({ color: MODERN_ADV.rail, alpha: 0.82 })
+      .stroke({ width: 1, color: MODERN_ADV.line, alpha: 0.3 }));
+
+    this.#commandRailItems.forEach((item, index) => {
+      const row = new Container();
+      row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
+      const hit = new Graphics().roundRect(0, 0, slotW, railH - 6, 3).fill({ color: 0xffffff, alpha: 0.001 });
+      const icon = new PText({
+        text: item.icon ?? '·',
+        style: {
+          fontSize: 20,
+          fill: item.active ? MODERN_ADV.accent : MODERN_ADV.muted,
+          fontWeight: item.active ? 'bold' : 'normal',
+          fontFamily: this.#assets.fontFamily('ui'),
+        } satisfies TextStyleOptions,
+      });
+      icon.anchor.set(0.5);
+      icon.position.set(slotW / 2, (railH - 6) / 2);
+      const label = new PText({
+        text: item.label,
+        style: {
+          fontSize: 12,
+          fill: item.enabled === false ? 0x596274 : item.active ? MODERN_ADV.text : MODERN_ADV.muted,
+          letterSpacing: 1,
+          fontFamily: this.#assets.fontFamily('ui'),
+        } satisfies TextStyleOptions,
+      });
+      label.anchor.set(0.5, 1);
+      label.position.set(slotW / 2, -4);
+      label.alpha = 0;
+      const underline = new Graphics()
+        .rect(10, railH - 8, slotW - 20, 1.5)
+        .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
+      row.addChild(hit, icon, label, underline);
+      row.alpha = item.enabled === false ? 0.38 : 1;
+      if (item.enabled !== false) {
+        row.eventMode = 'static';
+        row.cursor = 'pointer';
+        row.on('pointerover', () => {
+          this.#wakeCommandRail();
+          label.alpha = 1;
+          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
+            .fill({ color: MODERN_ADV.accent, alpha: 0.9 });
+          label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
+        });
+        row.on('pointerout', () => {
+          label.alpha = 0;
+          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
+            .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
+          label.style = {
+            fontSize: 12,
+            fill: item.active ? MODERN_ADV.text : MODERN_ADV.muted,
+            letterSpacing: 1,
+            fontFamily: this.#assets.fontFamily('ui'),
+          } satisfies TextStyleOptions;
+        });
+        row.on('pointerdown', () => this.#commandRailOnSelect?.(item.id));
+      }
+      layer.addChild(row);
+    });
+    layer.alpha = this.#commandRailIdleAlpha;
+  }
+
+  #wakeCommandRail(): void {
+    if (this.#interfaceHidden || this.#commandRailSuppressed || this.#commandRailItems.length === 0) return;
+    this.#commandRailWakeRemain = 2800;
+    this.#lifecycle.register('dialogue', 'tween', 'command-rail', () => undefined);
+    this.#commandRail.visible = true;
+    this.#commandRail.alpha = Math.max(this.#commandRail.alpha, 0.72);
+    this.#requestFrame();
+  }
+
+  #hasEffectWork(): boolean {
+    const railTarget = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
+    const commandRailMoving = this.#commandRail.visible
+      && (this.#commandRailWakeRemain > 0 || Math.abs(this.#commandRail.alpha - railTarget) > 0.001);
+    return (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0)
+      || commandRailMoving
+      || this.#bannerRemain > 0;
+  }
+}

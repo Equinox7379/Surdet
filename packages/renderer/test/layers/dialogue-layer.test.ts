@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
+import { Container } from 'pixi.js';
 import { Backlog } from '../../src/backlog.js';
-import { AdvStage, NULL_AUDIO, type ChoiceOptionView, type CommandRailItem, type PortraitView, type SpeakerProfile } from '../../src/types.js';
+import { NULL_AUDIO, type AdvStage, type ChoiceOptionView, type CommandRailItem, type PortraitView, type SpeakerProfile } from '../../src/types.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
+import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
+import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
@@ -24,6 +28,7 @@ class DialogueStageHarness implements AdvStage {
   hidden = false;
   profiles: SpeakerProfile[] = [];
   activeSpeakerId: string | null = null;
+  portraitFocusId: string | null = null;
   commandRailItems: CommandRailItem[] = [];
   commandRailOnSelect: ((id: string) => void) | null = null;
   commandRailHidden = false;
@@ -113,6 +118,10 @@ class DialogueStageHarness implements AdvStage {
     this.activeSpeakerId = characterId;
   }
 
+  setPortraitFocus(characterId: string | null): void {
+    this.portraitFocusId = characterId;
+  }
+
   showCommandRail(items: CommandRailItem[], onSelect: (id: string) => void): void {
     this.commandRailItems = items.map((item) => ({ ...item }));
     this.commandRailOnSelect = onSelect;
@@ -146,6 +155,49 @@ class VoiceProbe {
   playVoice(source: string): void {
     this.played.push(source);
   }
+}
+
+beforeEach(() => {
+  class FakeCanvasRenderingContext2D {
+    font = '';
+
+    measureText(text: string) {
+      return {
+        width: text.length * 10,
+        actualBoundingBoxAscent: 20,
+        actualBoundingBoxDescent: 5,
+      };
+    }
+  }
+  const context = new FakeCanvasRenderingContext2D();
+  vi.stubGlobal('CanvasRenderingContext2D', FakeCanvasRenderingContext2D);
+  vi.stubGlobal('document', {
+    createElement: () => ({ getContext: () => context }),
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function exerciseDialogueLayer(layer: DialogueLayer): void {
+  layer.mountTextDisplays();
+  layer.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+  layer.showText('凛', '同一句《どういつ》');
+  layer.showChoices([{ index: 1, label: '继续' }, { index: 2, label: '返回' }]);
+  layer.setChoiceHighlight(1);
+  layer.setAwaiting(true);
+  layer.updateContinuePulse(16);
+  layer.showBacklog([{ speaker: '凛', text: '记录', voice: 'voice-001' }], () => undefined, '记录');
+  layer.scrollBacklog(120);
+  layer.setNvlMode(true);
+  layer.appendNvlText('凛', 'NVL 行');
+  layer.setNvlMode(false);
+  layer.showBanner('第一章', 'chapter');
+  layer.showCommandRail([{ id: 'auto', label: '自动' }], () => undefined);
+  layer.hideInterface(true);
+  layer.hideInterface(false);
+  layer.reset();
 }
 
 function makeRuntime() {
@@ -184,6 +236,42 @@ function makeRuntime() {
 }
 
 describe('DialogueLayer v2 projection contract', () => {
+  it('owns its display and listener resources across two independent 50-cycle batches', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+
+    const runBatch = (): ReturnType<RenderLifecycle['snapshot']> => {
+      for (let cycle = 0; cycle < 50; cycle += 1) {
+        const root = new Container();
+        const layer = new DialogueLayer({
+          uiLayer: root,
+          width: 1280,
+          height: 720,
+          assets,
+          lifecycle,
+        });
+        exerciseDialogueLayer(layer);
+        layer.dispose();
+        expect(root.children).toHaveLength(0);
+      }
+      return lifecycle.snapshot();
+    };
+
+    const first = runBatch();
+    const second = runBatch();
+    expect(second).toEqual(first);
+    expect(second).toMatchObject({
+      disposed: false,
+      listeners: 0,
+      activeTweens: 0,
+      activeAsyncTasks: 1,
+      pooledObjects: {},
+      displayObjectsByOwner: { dialogue: 0 },
+    });
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
   it('keeps text, narration, and repeated text observable through dialogue commands', () => {
     const runtime = makeRuntime();
     runtime.facade.commands.dialogue.showText('凛', '同一句');
@@ -328,6 +416,7 @@ describe('DialogueLayer v2 projection contract', () => {
     runtime.facade.commands.dialogue.setActiveSpeaker('lynn');
     expect(runtime.stage.profiles).toEqual([{ id: 'lynn', name: '凛', avatarKey: 'avatar-lynn' }]);
     expect(runtime.stage.activeSpeakerId).toBe('lynn');
+    expect(runtime.stage.portraitFocusId).toBe('lynn');
     runtime.facade.commands.dialogue.hideInterface(false);
     expect(runtime.stage.hidden).toBe(false);
     runtime.controller.destroy();

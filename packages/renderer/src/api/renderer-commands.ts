@@ -54,6 +54,7 @@ export interface WorldCommands {
   startParticles(kind: string): void;
   stopParticles(): void;
   applyTimelineFrame(event: TimelineFrameEvent): void;
+  setPortraitFocus(characterId: string | null): void;
 }
 
 export interface DialogueCommands {

@@ -201,6 +201,7 @@ export function createPresentationPorts(
     startParticles: (kind) => stage.startParticles?.(kind),
     stopParticles: () => stage.stopParticles?.(),
     applyTimelineFrame: (event) => stage.applyTimelineFrame?.(event),
+    setPortraitFocus: (characterId) => stage.setPortraitFocus?.(characterId),
   };
 
   const dialogueCommands: RendererCommands['dialogue'] = {
