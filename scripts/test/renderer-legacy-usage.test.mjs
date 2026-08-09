@@ -50,3 +50,27 @@ test('returns every production symbol use in stable path order', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('does not grant blanket exemptions to renderer runtime or non-legacy tests', () => {
+  const root = createFixture({
+    'packages/renderer/src/runtime/bad.ts': [
+      "import type { AdvStage } from '../../types.js';",
+      "import '../legacy/legacy-renderer-adapter.js';",
+    ].join('\n'),
+    'packages/renderer/test/not-legacy.test.ts': 'const stage = new PixiStage();\n',
+    'examples/game/src/main.ts': 'const renderer = new AdvRenderer(stage);\n',
+    'packages/renderer/src/legacy/legacy-stage-adapter.ts': 'export class LegacyStageAdapter {}\n',
+    'packages/renderer/test/legacy/legacy-stage-contract.test.ts': 'const stage = new PixiStage();\n',
+    'packages/renderer/src/pixi-stage.ts': 'export class PixiStage {}\n',
+  });
+  try {
+    assert.deepEqual(checkLegacyUsage(root), [
+      'examples/game/src/main.ts uses legacy renderer symbol AdvRenderer',
+      'packages/renderer/src/runtime/bad.ts imports legacy module ../legacy/legacy-renderer-adapter',
+      'packages/renderer/src/runtime/bad.ts imports legacy renderer symbol AdvStage',
+      'packages/renderer/test/not-legacy.test.ts uses legacy renderer symbol PixiStage',
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

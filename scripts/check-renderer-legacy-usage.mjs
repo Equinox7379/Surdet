@@ -10,6 +10,7 @@ const ALLOWED_PATHS = [
   'packages/renderer/src/pixi-stage.ts',
   'packages/renderer/src/adv-renderer.ts',
   'packages/renderer/src/types.ts',
+  'packages/renderer/src/index.ts',
   'packages/renderer/test/legacy',
 ];
 const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', 'release']);
@@ -20,16 +21,6 @@ function normalizeRelative(relativePath) {
 
 function isAllowed(relativePath) {
   return ALLOWED_PATHS.some((allowed) => relativePath === allowed || relativePath.startsWith(`${allowed}/`));
-}
-
-function isRendererImplementation(relativePath) {
-  return relativePath.startsWith('packages/renderer/src/')
-    || relativePath.startsWith('packages/renderer/test/');
-}
-
-function isTestSource(relativePath) {
-  return relativePath.split('/').includes('test')
-    || relativePath.split('/').includes('tests');
 }
 
 function collectSourceFiles(root, directory = root, result = []) {
@@ -60,6 +51,15 @@ function hasDirectReference(source, symbol) {
     || new RegExp(`\\b${escaped}\\s*\\(`).test(source);
 }
 
+function legacyModuleReferences(source) {
+  const references = [];
+  const pattern = /\b(?:from\s+|import\s*)['"]([^'"]*\/legacy\/[^'"]*)['"]/g;
+  for (const match of source.matchAll(pattern)) {
+    references.push(match[1].replace(/\.js$/, ''));
+  }
+  return [...new Set(references)].sort((left, right) => left.localeCompare(right));
+}
+
 export function checkLegacyUsage(repositoryRoot) {
   const root = path.resolve(repositoryRoot);
   const failures = [];
@@ -69,8 +69,11 @@ export function checkLegacyUsage(repositoryRoot) {
   }
   for (const absolute of sourceFiles.sort()) {
     const relative = normalizeRelative(path.relative(root, absolute));
-    if (isAllowed(relative) || isRendererImplementation(relative) || isTestSource(relative)) continue;
+    if (isAllowed(relative)) continue;
     const source = fs.readFileSync(absolute, 'utf8');
+    for (const modulePath of legacyModuleReferences(source)) {
+      failures.push(`${relative} imports legacy module ${modulePath}`);
+    }
     for (const symbol of LEGACY_RENDERER_SYMBOLS) {
       if (hasImportReference(source, symbol)) {
         failures.push(`${relative} imports legacy renderer symbol ${symbol}`);
