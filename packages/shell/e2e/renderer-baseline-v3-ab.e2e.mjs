@@ -6,7 +6,8 @@ import path from 'node:path';
 import * as url from 'node:url';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(scriptDir, '../..');
+const shellDir = path.resolve(scriptDir, '..');
+const repositoryRoot = path.resolve(shellDir, '../..');
 const readyTimeout = 120000;
 const defaultPairCount = 20;
 const v3ModulePath = path.join(repositoryRoot, 'packages', 'renderer', 'dist', 'diagnostics', 'renderer-baseline-v3.js');
