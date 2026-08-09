@@ -11,9 +11,7 @@ export * from './text-buffer.js';
 export * from './transitions.js';
 export * from './timeline-player.js';
 export * from './types.js';
-export * from './adv-renderer.js';
 export * from './audio-manager.js';
-export * from './pixi-stage.js';
 export * from './ruby.js';
 export * from './ruby-layout.js';
 export * from './settings-store.js';
@@ -50,5 +48,38 @@ export * from './api/renderer-input.js';
 export * from './api/renderer-commands.js';
 export * from './api/renderer-queries.js';
 export * from './api/renderer-runtime.js';
+
+/** Renderer v2 public composition root. Consumers should create one runtime per preview/game session. */
 export { createRendererRuntime } from './runtime/create-renderer-runtime.js';
 export { PresentationController } from './runtime/presentation-controller.js';
+
+/**
+ * @deprecated Use `createRendererRuntime()` and `RendererRuntime.commands/queries`.
+ * Compatibility is retained for Wave 2 and scheduled for removal in the next major version.
+ */
+export {
+  AdvRenderer,
+  createPresentationPorts,
+  parseColor,
+} from './adv-renderer.js';
+/**
+ * @deprecated Use `createRendererRuntime()` and `RendererRuntime.commands/queries`.
+ * Compatibility is retained for Wave 2 and scheduled for removal in the next major version.
+ */
+export type {
+  AdvRendererOptions,
+  PresentationPortOptions,
+  PresentationPorts,
+  RenderStatus,
+} from './adv-renderer.js';
+
+/**
+ * @deprecated Use `createRendererRuntime()` and `RendererRuntime.commands/queries`.
+ * Compatibility is retained for Wave 2 and scheduled for removal in the next major version.
+ */
+export { PixiStage, LegacyStageAdapter } from './pixi-stage.js';
+/**
+ * @deprecated Use `createRendererRuntime()` and `RendererRuntime.commands/queries`.
+ * Compatibility is retained for Wave 2 and scheduled for removal in the next major version.
+ */
+export type { BattleHandlers, FontRole } from './pixi-stage.js';

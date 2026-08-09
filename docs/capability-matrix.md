@@ -18,6 +18,8 @@
 | `backlog` | ui | ✅ | ✅ | — | ✅ | `packages/renderer/test/pixi-stage.test.ts` | `README.md`<br>`docs/dsl-spec.md` | 文字记录为当前会话级数据，不跨存档持久化。 |
 | `gallery-cg` | ui | ✅ | ✅ | — | ✅ | `packages/renderer/test/gallery.test.ts`<br>`packages/renderer/test/pixi-stage.test.ts` | `README.md`<br>`docs/dsl-spec.md` | — |
 | `gallery-text` | ui | ✅ | ✅ | — | ✅ | `packages/renderer/test/gallery.test.ts`<br>`examples/zero-after-midnight/src/main.ts` | `README.md`<br>`docs/dsl-spec.md` | 文本回想依配置跳转到场景与 label，不提供独立的文本资源编辑器。 |
+| `renderer-lifecycle` | ui | — | ✅ | ✅ | — | `packages/renderer/test/lifecycle/render-lifecycle.test.ts`<br>`packages/renderer/test/lifecycle/async-generation.test.ts`<br>`packages/renderer/test/integration/resource-cycles.test.ts`<br>`packages/editor/test/preview-runtime-lifecycle.test.ts` | `README.md`<br>`docs/renderer-v2-migration.md`<br>`docs/AI-GUIDE.md` | 正式候选仍保留 M7.5 sceneP95Ms 性能红灯；本能力不代表性能门禁已全绿。 |
+| `renderer-v2-runtime` | ui | — | ✅ | ✅ | ✅ | `packages/renderer/test/api/renderer-contract.test.ts`<br>`packages/renderer/test/api/query-purity.test.ts`<br>`packages/renderer/test/integration/renderer-runtime.test.ts`<br>`packages/editor/test/preview-runtime-contract.test.ts`<br>`packages/host/test/system-router.test.ts` | `README.md`<br>`docs/renderer-v2-migration.md`<br>`docs/AI-GUIDE.md` | PixiStage/AdvRenderer 在当前 major 的一版兼容窗口内保留；新生产消费者必须通过 Runtime v2 接线。 |
 | `transition-registry` | ui | — | ✅ | ✅ | — | `packages/renderer/test/transition-registry.test.ts`<br>`packages/core/test/compiler.test.ts`<br>`packages/cli/test/lint.test.ts`<br>`packages/editor/src/panels/editor.ts` | `README.md`<br>`docs/dsl-spec.md`<br>`docs/AI-GUIDE.md` | 当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。 |
 
 状态含义：✅ 已有代码与测试证据；🛠️ 已列入计划但尚未作为当前能力交付；— 不适用。
