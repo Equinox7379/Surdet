@@ -467,11 +467,17 @@ export class RendererFacade {
             this.#stage.hideSaveLoad?.();
           }
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
-          this.#callGallery('showGallery', this.#galleryPort.showGallery, view);
+          this.#callGallery('showGallery', this.#galleryPort.showGallery, {
+            ...view,
+            onClose: this.#wrapGalleryClose(options.onClose),
+          });
           this.#syncGalleryOverlay();
           return;
         }
-        this.#callStage('gallery', 'showGallery', this.#stage.showGallery, view);
+        this.#callStage('gallery', 'showGallery', this.#stage.showGallery, {
+          ...view,
+          onClose: this.#wrapLegacyGalleryClose(options.onClose),
+        });
         this.#galleryOverlay = { type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null };
       },
       hideGallery: () => {
@@ -689,6 +695,23 @@ export class RendererFacade {
 
   #syncGalleryOverlay(): void {
     this.#galleryOverlay = this.#galleryPort ? { ...this.#galleryPort.gallery() } : { type: 'none' };
+  }
+
+  /** Interactive v2 Gallery close: the Layer hides locally, then Facade restores cross-layer state. */
+  #wrapGalleryClose(callback?: () => void): () => void {
+    return () => {
+      this.#stage.restoreCommandRail?.();
+      this.#syncGalleryOverlay();
+      callback?.();
+    };
+  }
+
+  /** Legacy fallback close: PixiStage restores the rail; Facade only invalidates its compatibility cache. */
+  #wrapLegacyGalleryClose(callback?: () => void): () => void {
+    return () => {
+      this.#galleryOverlay = { type: 'none' };
+      callback?.();
+    };
   }
 
   /** Hide Gallery without restoring the command rail; the caller may be opening another overlay. */
