@@ -248,6 +248,30 @@ describe('WorldLayer direct presentation contract', () => {
     }
   });
 
+  it('preserves the active speaker projection across clear and restore', async () => {
+    const runtime = makeRuntime();
+    try {
+      await registerWorldAssets(runtime.assets);
+      const lynn = { charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left' } as const;
+      const mio = { charId: 'mio', costume: 'uniform', expression: 'normal', pos: 'right' } as const;
+      runtime.layer.setPortrait('lynn:armor', lynn);
+      runtime.layer.setPortrait('mio:uniform', mio);
+      runtime.layer.setPortraitFocus('lynn');
+      const saved = snapshot(runtime);
+
+      runtime.layer.clearPresentation();
+      runtime.layer.setPortrait('lynn:armor', lynn);
+      runtime.layer.setPortrait('mio:uniform', mio);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 0.46]);
+
+      runtime.layer.setPortraitFocus('mio');
+      runtime.layer.restorePresentation(saved);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([0.46, 1]);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
   it('keeps world-only dependencies and performs two stable 50-cycle batches', async () => {
     const sourcePath = fileURLToPath(new URL('../../src/layers/world/world-layer.ts', import.meta.url));
     const source = readFileSync(sourcePath, 'utf8');

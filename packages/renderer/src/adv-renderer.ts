@@ -11,7 +11,7 @@ import {
 } from './runtime/presentation-controller.js';
 import type { RendererInputAction } from './api/renderer-input.js';
 import type { ResetSessionOptions } from './api/renderer-runtime.js';
-import type { RendererCommands, RendererFontRole } from './api/renderer-commands.js';
+import type { RendererCommands, RendererFontRole, WorldProjectionPort } from './api/renderer-commands.js';
 import type { RendererQueries } from './api/renderer-queries.js';
 import type { RendererResourceSnapshot } from './diagnostics/renderer-baseline.js';
 import type { RenderAssetRegistry } from './services/render-asset-registry.js';
@@ -112,6 +112,8 @@ export interface PresentationPorts {
 export interface PresentationPortOptions {
   readonly assetRegistry?: RenderAssetRegistry;
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
+  /** M7 production WorldLayer port; omitted for legacy stage compatibility. */
+  readonly worldLayer?: WorldProjectionPort;
 }
 
 type PresentationStage = AdvStage & {
@@ -186,22 +188,22 @@ export function createPresentationPorts(
   };
 
   const worldCommands: RendererCommands['world'] = {
-    setBackground: (key) => stage.setBackground(key),
-    setPortrait: (key, view) => stage.setPortrait(key, view),
-    removePortrait: (key) => stage.removePortrait(key),
-    setFade: (alpha) => stage.setFade(alpha),
-    shake: (durationMs = 400, strength = 8, direction = 'both') => stage.shake?.(durationMs, strength, direction),
-    transition: (name, durationMs) => stage.transition?.(name, durationMs) ?? false,
-    flash: (durationMs = 300) => stage.flash?.(durationMs),
-    zoom: (scale = 1, durationMs = 400) => stage.zoom?.(scale, durationMs),
-    wipe: (durationMs = 600) => stage.wipe?.(durationMs),
-    movePortrait: (key, pos, durationMs = 400) => stage.movePortrait?.(key, pos, durationMs),
-    setTint: (color, alpha, durationMs = 400) => stage.setTint?.(color, alpha, durationMs),
-    clearTint: (durationMs = 400) => stage.clearTint?.(durationMs),
-    startParticles: (kind) => stage.startParticles?.(kind),
-    stopParticles: () => stage.stopParticles?.(),
-    applyTimelineFrame: (event) => stage.applyTimelineFrame?.(event),
-    setPortraitFocus: (characterId) => stage.setPortraitFocus?.(characterId),
+    setBackground: (key) => { if (options.worldLayer) options.worldLayer.setBackground(key); else stage.setBackground(key); },
+    setPortrait: (key, view) => { if (options.worldLayer) options.worldLayer.setPortrait(key, view); else stage.setPortrait(key, view); },
+    removePortrait: (key) => { if (options.worldLayer) options.worldLayer.removePortrait(key); else stage.removePortrait(key); },
+    setFade: (alpha) => { if (options.worldLayer) options.worldLayer.setFade(alpha); else stage.setFade(alpha); },
+    shake: (durationMs = 400, strength = 8, direction = 'both') => { if (options.worldLayer) options.worldLayer.shake(durationMs, strength, direction); else stage.shake?.(durationMs, strength, direction); },
+    transition: (name, durationMs) => options.worldLayer?.transition(name, durationMs) ?? stage.transition?.(name, durationMs) ?? false,
+    flash: (durationMs = 300) => { if (options.worldLayer) options.worldLayer.flash(durationMs); else stage.flash?.(durationMs); },
+    zoom: (scale = 1, durationMs = 400) => { if (options.worldLayer) options.worldLayer.zoom(scale, durationMs); else stage.zoom?.(scale, durationMs); },
+    wipe: (durationMs = 600) => { if (options.worldLayer) options.worldLayer.wipe(durationMs); else stage.wipe?.(durationMs); },
+    movePortrait: (key, pos, durationMs = 400) => { if (options.worldLayer) options.worldLayer.movePortrait(key, pos, durationMs); else stage.movePortrait?.(key, pos, durationMs); },
+    setTint: (color, alpha, durationMs = 400) => { if (options.worldLayer) options.worldLayer.setTint(color, alpha, durationMs); else stage.setTint?.(color, alpha, durationMs); },
+    clearTint: (durationMs = 400) => { if (options.worldLayer) options.worldLayer.clearTint(durationMs); else stage.clearTint?.(durationMs); },
+    startParticles: (kind) => { if (options.worldLayer) options.worldLayer.startParticles(kind); else stage.startParticles?.(kind); },
+    stopParticles: () => { if (options.worldLayer) options.worldLayer.stopParticles(); else stage.stopParticles?.(); },
+    applyTimelineFrame: (event) => { if (options.worldLayer) options.worldLayer.applyTimelineFrame(event); else stage.applyTimelineFrame?.(event); },
+    setPortraitFocus: (characterId) => { if (options.worldLayer) options.worldLayer.setPortraitFocus(characterId); else stage.setPortraitFocus?.(characterId); },
   };
 
   const dialogueCommands: RendererCommands['dialogue'] = {
@@ -265,15 +267,15 @@ export function createPresentationPorts(
   };
 
   const preferenceCommands: RendererCommands['preferences'] = {
-    setQuality: (quality) => stage.setQuality?.(quality),
-    setPresentationPreferences: (preferences) => stage.setPresentationPreferences?.(preferences),
-    setPostProcess: (settings) => stage.setPostProcess?.(settings),
+    setQuality: (quality) => { if (options.worldLayer) options.worldLayer.setQuality(quality); else stage.setQuality?.(quality); },
+    setPresentationPreferences: (preferences) => { if (options.worldLayer) options.worldLayer.setPresentationPreferences(preferences); else stage.setPresentationPreferences?.(preferences); },
+    setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
   };
 
   const presentationCommands: RendererCommands['presentation'] = {
     validate: () => undefined,
-    restore: (snapshot) => stage.restorePresentation?.(snapshot),
-    clear: () => stage.clearPresentation?.(),
+    restore: (snapshot) => { if (options.worldLayer) options.worldLayer.restorePresentation(snapshot); else stage.restorePresentation?.(snapshot); },
+    clear: () => { if (options.worldLayer) options.worldLayer.clearPresentation(); else stage.clearPresentation?.(); },
   };
 
   const commands: RendererCommands = {
@@ -290,7 +292,7 @@ export function createPresentationPorts(
 
   const queries: RendererQueries = {
     world: {
-      captureThumbnail: () => stage.captureThumbnail?.() ?? null,
+      captureThumbnail: () => options.worldLayer?.captureThumbnail() ?? stage.captureThumbnail?.() ?? null,
     },
     dialogue: {
       backlogEntries: (): readonly BacklogEntry[] => [],
@@ -302,17 +304,17 @@ export function createPresentationPorts(
       system: () => ({ type: 'none' }),
     },
     preferences: {
-      quality: () => stage.getQuality?.() ?? 'balanced',
+      quality: () => options.worldLayer?.getQuality() ?? stage.getQuality?.() ?? 'balanced',
       presentationPreferences: (): PresentationPreferences => ({
-        ...(stage.getPresentationPreferences?.() ?? DEFAULT_PRESENTATION_PREFERENCES),
+        ...(options.worldLayer?.getPresentationPreferences() ?? stage.getPresentationPreferences?.() ?? DEFAULT_PRESENTATION_PREFERENCES),
       }),
       postProcess: (): PostProcessSettings => ({
-        ...(stage.getPostProcess?.() ?? DEFAULT_POST_PROCESS),
+        ...(options.worldLayer?.getPostProcess() ?? stage.getPostProcess?.() ?? DEFAULT_POST_PROCESS),
       }),
       fontFamily: (role) => stage.getFontFamily?.(role) ?? '',
     },
     presentation: {
-      snapshot: () => stage.snapshotPresentation?.() ?? null,
+      snapshot: () => options.worldLayer?.snapshotPresentation() ?? stage.snapshotPresentation?.() ?? null,
     },
     diagnostics: {
       resourceSnapshot: () => options.resourceSnapshot?.() ?? { ...EMPTY_RESOURCE_SNAPSHOT },

@@ -39,6 +39,7 @@ export * from './layers/dialogue/dialogue-layer.js';
 export * from './layers/menu/menu-layer.js';
 export * from './layers/gallery/gallery-layer.js';
 export * from './layers/system-panel/system-panel-layer.js';
+export * from './layers/world/world-layer.js';
 export * from './keybindings.js';
 export * from './backlog-search-controller.js';
 export * from './scene-hot-reload.js';

@@ -21,7 +21,7 @@ import {
   type RendererStagePort,
 } from './renderer-facade.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
-import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort } from '../api/renderer-commands.js';
+import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort, WorldProjectionPort } from '../api/renderer-commands.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -38,6 +38,7 @@ export interface RendererRuntimeInternals {
   readonly menuLayer?: MenuProjectionPort;
   readonly galleryLayer?: GalleryProjectionPort;
   readonly systemPanelLayer?: SystemPanelProjectionPort;
+  readonly worldLayer?: WorldProjectionPort;
 }
 
 interface CleanupParts {
@@ -134,6 +135,7 @@ export async function createRendererRuntimeFromInternals(
       menuLayer: internals.menuLayer,
       galleryLayer: internals.galleryLayer,
       systemPanelLayer: internals.systemPanelLayer,
+      worldLayer: internals.worldLayer,
     };
     facade = new RendererFacade(facadeOptions);
     let disposed = false;
@@ -228,11 +230,12 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     const ports = createPresentationPorts(stage, {
       assetRegistry,
       resourceSnapshot: () => lifecycle.snapshot(),
+      worldLayer: stage.worldLayer,
     });
     const controllerOptions = createControllerOptions(stage, ports, lifecycle, options);
     controller = new RuntimePresentationController(ports.commands, ports.queries, options.audio ?? NULL_AUDIO, controllerOptions);
     const monitor = options.performanceMonitor ?? new RenderPerformanceMonitor();
-    scheduler = new FrameScheduler(stage.app!, controller, [stage], { monitor });
+    scheduler = new FrameScheduler(stage.app!, controller, [stage, stage.worldLayer], { monitor });
     compositionAttempted = true;
     return await createRendererRuntimeFromInternals({
       canvas: stage.app!.canvas,
@@ -247,6 +250,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       menuLayer: stage.menuLayer,
       galleryLayer: stage.galleryLayer,
       systemPanelLayer: stage.systemPanelLayer,
+      worldLayer: stage.worldLayer,
     });
   } catch (cause) {
     const cleanupFailures = compositionAttempted

@@ -43,6 +43,7 @@ import type {
   SystemPanelCommands,
   SystemPanelProjectionPort,
   WorldCommands,
+  WorldProjectionPort,
 } from '../api/renderer-commands.js';
 import type {
   DialogueQueries,
@@ -130,6 +131,8 @@ export interface RendererFacadeOptions {
   galleryLayer?: GalleryProjectionPort;
   /** M6 public system-panel projection port; concrete Layer details stay behind it. */
   systemPanelLayer?: SystemPanelProjectionPort;
+  /** M7 public World projection port; concrete Layer details stay behind it. */
+  worldLayer?: WorldProjectionPort;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -190,6 +193,7 @@ export class RendererFacade {
   #menuPort?: MenuProjectionPort;
   #galleryPort?: GalleryProjectionPort;
   #systemPort?: SystemPanelProjectionPort;
+  #worldPort?: WorldProjectionPort;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
   #galleryOverlay: GalleryOverlayState = { type: 'none' };
@@ -205,6 +209,7 @@ export class RendererFacade {
     this.#menuPort = options.menuLayer;
     this.#galleryPort = options.galleryLayer;
     this.#systemPort = options.systemPanelLayer;
+    this.#worldPort = options.worldLayer;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -274,22 +279,22 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
-      setBackground: (key) => this.#callStage('world', 'setBackground', this.#stage.setBackground, key),
-      setPortrait: (key, view) => this.#callStage('world', 'setPortrait', this.#stage.setPortrait, key, view),
-      removePortrait: (key) => this.#callStage('world', 'removePortrait', this.#stage.removePortrait, key),
-      setFade: (alpha) => this.#callStage('world', 'setFade', this.#stage.setFade, alpha),
-      shake: (durationMs = 400, strength = 8, direction = 'both') => this.#callStage('world', 'shake', this.#stage.shake, durationMs, strength, direction),
-      transition: (name, durationMs) => this.#callStage('world', 'transition', this.#stage.transition, name, durationMs),
-      flash: (durationMs = 300) => this.#callStage('world', 'flash', this.#stage.flash, durationMs),
-      zoom: (scale = 1, durationMs = 400) => this.#callStage('world', 'zoom', this.#stage.zoom, scale, durationMs),
-      wipe: (durationMs = 600) => this.#callStage('world', 'wipe', this.#stage.wipe, durationMs),
-      movePortrait: (key, pos, durationMs = 400) => this.#callStage('world', 'movePortrait', this.#stage.movePortrait, key, pos, durationMs),
-      setTint: (color, alpha, durationMs = 400) => this.#callStage('world', 'setTint', this.#stage.setTint, color, alpha, durationMs),
-      clearTint: (durationMs = 400) => this.#callStage('world', 'clearTint', this.#stage.clearTint, durationMs),
-      startParticles: (kind) => this.#callStage('world', 'startParticles', this.#stage.startParticles, kind),
-      stopParticles: () => this.#callStage('world', 'stopParticles', this.#stage.stopParticles),
-      applyTimelineFrame: (event) => this.#callStage('world', 'applyTimelineFrame', this.#stage.applyTimelineFrame, event),
-      setPortraitFocus: (characterId) => this.#callStage('world', 'setPortraitFocus', this.#stage.setPortraitFocus, characterId),
+      setBackground: (key) => this.#callWorld('setBackground', this.#worldPort?.setBackground, this.#stage.setBackground, key),
+      setPortrait: (key, view) => this.#callWorld('setPortrait', this.#worldPort?.setPortrait, this.#stage.setPortrait, key, view),
+      removePortrait: (key) => this.#callWorld('removePortrait', this.#worldPort?.removePortrait, this.#stage.removePortrait, key),
+      setFade: (alpha) => this.#callWorld('setFade', this.#worldPort?.setFade, this.#stage.setFade, alpha),
+      shake: (durationMs = 400, strength = 8, direction = 'both') => this.#callWorld('shake', this.#worldPort?.shake, this.#stage.shake, durationMs, strength, direction),
+      transition: (name, durationMs) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs),
+      flash: (durationMs = 300) => this.#callWorld('flash', this.#worldPort?.flash, this.#stage.flash, durationMs),
+      zoom: (scale = 1, durationMs = 400) => this.#callWorld('zoom', this.#worldPort?.zoom, this.#stage.zoom, scale, durationMs),
+      wipe: (durationMs = 600) => this.#callWorld('wipe', this.#worldPort?.wipe, this.#stage.wipe, durationMs),
+      movePortrait: (key, pos, durationMs = 400) => this.#callWorld('movePortrait', this.#worldPort?.movePortrait, this.#stage.movePortrait, key, pos, durationMs),
+      setTint: (color, alpha, durationMs = 400) => this.#callWorld('setTint', this.#worldPort?.setTint, this.#stage.setTint, color, alpha, durationMs),
+      clearTint: (durationMs = 400) => this.#callWorld('clearTint', this.#worldPort?.clearTint, this.#stage.clearTint, durationMs),
+      startParticles: (kind) => this.#callWorld('startParticles', this.#worldPort?.startParticles, this.#stage.startParticles, kind),
+      stopParticles: () => this.#callWorld('stopParticles', this.#worldPort?.stopParticles, this.#stage.stopParticles),
+      applyTimelineFrame: (event) => this.#callWorld('applyTimelineFrame', this.#worldPort?.applyTimelineFrame, this.#stage.applyTimelineFrame, event),
+      setPortraitFocus: (characterId) => this.#callWorld('setPortraitFocus', this.#worldPort?.setPortraitFocus, this.#stage.setPortraitFocus, characterId),
     };
 
     const dialogue: DialogueCommands = {
@@ -363,7 +368,7 @@ export class RendererFacade {
           this.#callMenu('hideSystemMenu', this.#menuPort.hideSystemMenu);
           this.#callMenu('hideTitle', this.#menuPort.hideTitle, false);
           this.#callMenu('showEnding', this.#menuPort.showEnding, text);
-          this.#callStage('world', 'setFade', this.#stage.setFade, 0);
+          this.#callWorld('setFade', this.#worldPort?.setFade, this.#stage.setFade, 0);
           this.#syncMenuOverlay();
           return;
         }
@@ -599,9 +604,9 @@ export class RendererFacade {
     };
 
     const preferences: PreferenceCommands = {
-      setQuality: (quality) => this.#callStage('preferences', 'setQuality', this.#stage.setQuality, quality),
-      setPresentationPreferences: (preferences) => this.#callStage('preferences', 'setPresentationPreferences', this.#stage.setPresentationPreferences, { ...preferences }),
-      setPostProcess: (settings) => this.#callStage('preferences', 'setPostProcess', this.#stage.setPostProcess, { ...settings }),
+      setQuality: (quality) => this.#callWorld('setQuality', this.#worldPort?.setQuality, this.#stage.setQuality, quality),
+      setPresentationPreferences: (preferences) => this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences }),
+      setPostProcess: (settings) => this.#callWorld('setPostProcess', this.#worldPort?.setPostProcess, this.#stage.setPostProcess, { ...settings }),
     };
 
     const presentation: PresentationCommands = {
@@ -631,6 +636,7 @@ export class RendererFacade {
     const worldQueries: WorldQueries = {
       captureThumbnail: () => {
         this.#ensureQueryActive('world', 'captureThumbnail');
+        if (this.#worldPort) return this.#worldPort.captureThumbnail();
         const method = this.#stage.captureThumbnail;
         if (!method) this.#queryMissing('world', 'captureThumbnail');
         return method.call(this.#stage);
@@ -661,9 +667,9 @@ export class RendererFacade {
       },
     };
     const preferenceQueries: PreferenceQueries = {
-      quality: () => this.#queryStage('preferences', 'quality', this.#stage.getQuality),
-      presentationPreferences: () => ({ ...this.#queryStage('preferences', 'presentationPreferences', this.#stage.getPresentationPreferences) }),
-      postProcess: () => ({ ...this.#queryStage('preferences', 'postProcess', this.#stage.getPostProcess) }),
+      quality: () => this.#worldPort?.getQuality() ?? this.#queryStage('preferences', 'quality', this.#stage.getQuality),
+      presentationPreferences: () => ({ ...(this.#worldPort?.getPresentationPreferences() ?? this.#queryStage('preferences', 'presentationPreferences', this.#stage.getPresentationPreferences)) }),
+      postProcess: () => ({ ...(this.#worldPort?.getPostProcess() ?? this.#queryStage('preferences', 'postProcess', this.#stage.getPostProcess)) }),
       fontFamily: (role: RendererFontRole) => this.#queryStage('preferences', 'fontFamily', this.#stage.getFontFamily, role),
     };
     const presentationQueries: PresentationQueries = {
@@ -742,6 +748,18 @@ export class RendererFacade {
       domain,
       command,
     });
+  }
+
+  #callWorld<T, Args extends readonly unknown[]>(
+    command: string,
+    layerMethod: ((...args: Args) => T) | undefined,
+    stageMethod: ((...args: Args) => T) | undefined,
+    ...args: Args
+  ): T {
+    this.#ensureActive('world', command);
+    const method = layerMethod ?? stageMethod;
+    if (!method) this.#missing('world', command);
+    return Reflect.apply(method, layerMethod ? this.#worldPort : this.#stage, args as unknown as unknown[]);
   }
 
   #callStage<T, Args extends readonly unknown[]>(domain: string, command: string, method: ((...args: Args) => T) | undefined, ...args: Args): T {
