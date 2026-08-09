@@ -149,6 +149,37 @@ expected "setPortraitFocus" to be called 1 times, but got 2 times
 
 本次已完成 M3 要求的 Facade 依赖收紧：`RendererFacade`、Runtime internals 和 `PixiStage.dialogueLayer` getter 均使用 `DialogueProjectionPort`，不再把具体 `DialogueLayer` 类型作为 Facade 依赖。该端口只公开 M3 所需的 Dialogue commands 与两个纯查询值；它不是 M4–M8 的预先 cutover，也没有扩大消费者范围。
 
+### 4.5 第二次独立复审整改
+
+第二次独立复审确认正式 v2 typed port 主路径正确，但发现 legacy fallback 仍有一次重复的 World focus：`RendererFacade` 在未注入 Dialogue port 时先调用旧 `stage.setActiveSpeaker()`，随后又调用 `#coordinateWorldFocus()`；真实 `PixiStage.setActiveSpeaker()` 本身已经维护对白状态与立绘焦点的组合语义，因此会把 `setPortraitFocus()` 执行两次。
+
+按照复审要求，先新增了真实回归测试，再修改生产代码。测试位于 `packages/renderer/test/legacy/legacy-dialogue-contract.test.ts`，实际构造 `PixiStage`、`PresentationController` 和 `RendererFacade`，不提供 `dialogueLayer/dialoguePort`，并对真实 Stage 的 `setActiveSpeaker()` 与 `setPortraitFocus()` 设置 spy。修复前单独运行该文件时为 3 项测试：2 项通过、1 项失败；`facade.commands.dialogue.setActiveSpeaker('lynn')` 的 World focus 期望 1 次，实际为 2 次：
+
+```text
+expected "setPortraitFocus" to be called 1 times, but got 2 times
+```
+
+生产修复保持最小范围：无 Dialogue port 的 fallback 现在只调用旧 `stage.setActiveSpeaker()` 一次并立即返回，删除额外的 `#coordinateWorldFocus()`；注入 Dialogue port 的正式 v2 分支完全不变，仍由 Facade 分别调用 Dialogue 与 World 各一次。没有重新引入 DialogueLayer 的 World 回调，也没有修改 DSL、存档、游戏规则或其他 Layer。为保持既有测试夹具与真实 legacy 合同一致，`DialogueStageHarness` 的旧 Stage 模拟也补齐了同一组合语义。
+
+修复后调用次数如下：
+
+| 场景 | Stage `setActiveSpeaker` | World `setPortraitFocus` | 结果 |
+| --- | ---: | ---: | --- |
+| RendererFacade fallback，`'lynn'` | 1 | 1，参数 `lynn` | 通过 |
+| RendererFacade fallback，`null` | 1 | 1，参数 `null` | 通过 |
+| 注入 DialogueProjectionPort 的正式 v2 路径 | Dialogue 1 | World 1 | 通过 |
+| 完全相同的重复 `showText` | 保持幂等 | 0 | 既有规则保持 |
+| 直接 legacy `PixiStage` / `AdvRenderer` 路径 | 原行为保持 | 原行为保持 | 通过 |
+
+本次源码/测试整改提交完整 SHA：
+
+```text
+101d4b3802bdd05b1656216454f0bea38f8f876e
+fix(renderer): avoid duplicate legacy speaker focus
+```
+
+本次整改后仍保持 `WAITING_FOR_REVIEW`：M4 未开始、未进行消费者 cutover、未 push 远端；`USER.md` 与 `SESSION-HANDOFF.md` 仍未跟踪且未暂存。
+
 ## 5. 合同测试与行为覆盖
 
 ### 5.1 DialogueLayer 直接测试
@@ -166,9 +197,10 @@ expected "setPortraitFocus" to be called 1 times, but got 2 times
 
 ### 5.2 Legacy 兼容测试
 
-`packages/renderer/test/legacy/legacy-dialogue-contract.test.ts` 保留 2 项兼容测试，验证：
+`packages/renderer/test/legacy/legacy-dialogue-contract.test.ts` 当前包含 3 项兼容测试，验证：
 
 - 原 `PixiStage` 的完整对白公开面仍可调用、重复执行并在 reset 后保留 World projection；
+- 无 Dialogue port 的真实 `RendererFacade` fallback 不重复执行 World focus，并正确处理 `'lynn'` 与 `null`；
 - `AdvRenderer` 的 callback binding、Backlog 关闭回调和旧生命周期行为继续成立。
 
 ### 5.3 确定性视觉状态审计
@@ -229,14 +261,14 @@ npm test -w @surdet/renderer -- dialogue-layer.test.ts legacy-dialogue-contract.
 结果：
 
 - Test Files：7 passed / 7；
-- Tests：88 passed / 88；
+- Tests：89 passed / 89；
 - 失败、跳过、取消：0。
 
 ### 7.2 Renderer 单包门禁
 
 - `npm run typecheck -w @surdet/renderer`：通过；
 - `npm run build -w @surdet/renderer`：通过；
-- `npm test -w @surdet/renderer`：36 个测试文件、248 项测试通过；
+- `npm test -w @surdet/renderer`：36 个测试文件、249 项测试通过；
 - `npm run verify:renderer-boundaries`：3 个边界测试通过，仓库 Layer boundary check 通过。
 
 ### 7.3 根级全量门禁
@@ -255,7 +287,7 @@ npm run verify:all
 - CLI：86 项通过；
 - Core：298 项通过；
 - Editor：133 项通过；
-- Renderer：248 项通过，36 个文件；
+- Renderer：249 项通过，36 个文件；
 - Shell：32 项通过；
 - Starter：3 项通过；
 - formal simulation：11 个场景，选择覆盖 `23/23`，3 个结局，运行时错误 `0`，资产 `44`；
@@ -283,6 +315,13 @@ refactor(renderer): extract dialogue layer
 fix(renderer): centralize active speaker coordination
 ```
 
+第二次独立复审整改已作为新的单独聚焦提交：
+
+```text
+101d4b3802bdd05b1656216454f0bea38f8f876e
+fix(renderer): avoid duplicate legacy speaker focus
+```
+
 本次整改报告将作为单独文档提交，不与源码提交混合。
 
 ### 8.2 文件范围
@@ -305,6 +344,12 @@ fix(renderer): centralize active speaker coordination
 - `packages/renderer/src/layers/dialogue/dialogue-layer.ts`
 - `packages/renderer/src/pixi-stage.ts`
 - `packages/renderer/src/runtime/create-renderer-runtime.ts`
+- `packages/renderer/src/runtime/renderer-facade.ts`
+- `packages/renderer/test/layers/dialogue-layer.test.ts`
+- `packages/renderer/test/legacy/legacy-dialogue-contract.test.ts`
+
+第二次独立复审整改提交纳入 3 个文件：
+
 - `packages/renderer/src/runtime/renderer-facade.ts`
 - `packages/renderer/test/layers/dialogue-layer.test.ts`
 - `packages/renderer/test/legacy/legacy-dialogue-contract.test.ts`
