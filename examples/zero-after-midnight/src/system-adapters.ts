@@ -14,7 +14,6 @@ import type {
 } from '@surdet/core';
 import type { SystemEventPayload } from '@surdet/core';
 import type {
-  AdvStage,
   BattleHandlers,
   BattleView,
   BasePanelView,
@@ -23,11 +22,11 @@ import type {
 import { buildBattleView, buildMapView } from '@surdet/renderer';
 import type { HostSystemAdapter, HostSystemContext } from '@surdet/host';
 
-export interface ProjectSystemStage extends AdvStage {
+export interface ProjectSystemRenderer {
   showMap(view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void): void;
   hideMap(): void;
   showBaseCommands(view: BasePanelView, onExec: (commandId: string) => void, onClose: () => void): void;
-  hideBase(): void;
+  hideBaseCommands(): void;
   showBattle(view: BattleView, handlers: BattleHandlers, message?: string): void;
   hideBattle(): void;
   showShop(view: { gold: number; items: ShopItemDef[]; message?: string }, onBuy: (itemId: string) => void, onClose: () => void): void;
@@ -36,7 +35,7 @@ export interface ProjectSystemStage extends AdvStage {
 
 export interface ProjectSystemAdapterOptions {
   interpreter: Interpreter;
-  stage: ProjectSystemStage;
+  renderer: ProjectSystemRenderer;
   store: VariableStore;
   registry: SceneRegistry;
   calendar: CalendarRunner;
@@ -78,7 +77,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
       function openBasePanel(): void {
         let baseMsg = '选择要执行的指令。';
         const view = (): void => {
-          options.stage.showBaseCommands(
+          options.renderer.showBaseCommands(
             {
               ap: calendar.ap,
               maxAp: calendar.maxAp,
@@ -110,7 +109,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                 }
                 baseMsg = `执行了「${name}」。`;
                 if (result.eventId && options.registry.has(result.eventId)) {
-                  options.stage.hideBase();
+                  options.renderer.hideBaseCommands();
                   safeJump(options, context, result.eventId);
                   return;
                 }
@@ -121,7 +120,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
               }
             },
             () => {
-              options.stage.hideBase();
+              options.renderer.hideBaseCommands();
               renderMap();
             },
           );
@@ -141,7 +140,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
             visited: calendar.hasVisited(node.id),
             enterable: calendar.canEnter(node.id),
           }));
-          options.stage.showMap(
+          options.renderer.showMap(
             buildMapView({ turn: calendar.turn, ap: calendar.ap, maxAp: calendar.maxAp, date: calendar.date, nodes }),
             (nodeId) => {
               try {
@@ -175,7 +174,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                   options.onAchievementsChanged?.();
                 }
                 if (event?.scene && options.registry.has(event.scene)) {
-                  options.stage.hideMap();
+                  options.renderer.hideMap();
                   const snapshot = options.interpreter.saveSnapshot();
                   if (snapshot) {
                     options.onTurnResumeSnapshot?.(snapshot);
@@ -203,8 +202,8 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
       renderMap();
     },
     reset: () => {
-      options.stage.hideMap();
-      options.stage.hideBase();
+      options.renderer.hideMap();
+      options.renderer.hideBaseCommands();
     },
   };
 }
@@ -224,7 +223,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
       let battleMessage = '战斗开始！点击敌方单位发起攻击。';
       const settle = (): void => {
         if (combat.finished) {
-          options.stage.hideBattle();
+          options.renderer.hideBattle();
           options.onBattleResult?.(combat.winner);
           log(options, `battle finished: ${combat.winner ?? 'draw'}`);
           context.resume();
@@ -234,7 +233,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
       };
       const renderBattle = (): void => {
         try {
-          options.stage.showBattle(
+          options.renderer.showBattle(
             buildBattleView(combat.snapshot(), combatConfig.skills),
             {
               onAttack: (targetUid, skillId) => {
@@ -299,7 +298,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
       };
       renderBattle();
     },
-    reset: () => { options.stage.hideBattle(); },
+    reset: () => { options.renderer.hideBattle(); },
   };
 }
 
@@ -315,7 +314,7 @@ function createShopAdapter(options: ProjectSystemAdapterOptions): HostSystemAdap
       let message = '欢迎光临！';
       const renderShop = (): void => {
         try {
-          options.stage.showShop(
+          options.renderer.showShop(
             { gold: options.store.getNumber(goldVariable), items: shop.items, message },
             (itemId) => {
               try {
@@ -335,7 +334,7 @@ function createShopAdapter(options: ProjectSystemAdapterOptions): HostSystemAdap
       };
       renderShop();
     },
-    reset: () => { options.stage.hideShop(); },
+    reset: () => { options.renderer.hideShop(); },
   };
 }
 

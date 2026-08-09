@@ -9,6 +9,7 @@ interface SurdetDebugApi {
   readonly position: { sceneId: string; pc: number; sceneHash?: string } | null;
   readonly activeBlobUrls: number;
   readonly resourceSnapshot?: RendererResourceSnapshot | null;
+  readonly presentationSnapshot?: unknown;
   titleSelect(id: string): unknown;
   [key: string]: unknown;
 }
