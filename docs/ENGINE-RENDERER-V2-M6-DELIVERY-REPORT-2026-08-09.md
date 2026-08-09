@@ -282,7 +282,8 @@ git diff --check
 - `npm run verify:all`：通过；
 - `verify:tools`：6/6 通过；
 - 文档能力矩阵检查：通过；
-- 跟踪路径仓库卫生检查：479 个路径通过；
+- 源码/测试提交阶段的跟踪路径仓库卫生检查：479 个路径通过；
+- 报告纳入后的最后一次 `npm run verify:all` 复核：483 个跟踪路径通过，其余工具、边界、类型、测试、正式验收结果继续全部通过；
 - 全 workspace typecheck：通过；
 - 全 workspace tests：通过，包含 core 23/298、editor 18/133、host 3/18、cli 7/86、shell 6/32、starter 3/3 以及 Renderer 42/291；
 - `git diff --check`：通过。
