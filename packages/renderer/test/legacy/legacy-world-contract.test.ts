@@ -1,0 +1,85 @@
+import { Texture } from 'pixi.js';
+import { describe, expect, it, vi } from 'vitest';
+import { PixiStage } from '../../src/pixi-stage.js';
+import { RendererFacade, type RendererControllerPort } from '../../src/runtime/renderer-facade.js';
+import { RenderPerformanceMonitor } from '../../src/performance.js';
+
+function makeController(): RendererControllerPort {
+  return {
+    status: 'idle',
+    autoPlay: false,
+    skipMode: false,
+    skipAll: false,
+    backlogOpen: false,
+    interfaceHidden: false,
+    needsUpdate: false,
+    update: () => undefined,
+    setFrameRequest: () => undefined,
+    connect: () => () => undefined,
+    disconnect: () => undefined,
+    reset: () => undefined,
+    advance: () => false,
+    select: () => false,
+    dispatchInput: () => false,
+    setTextSpeed: () => undefined,
+    setAutoWait: () => undefined,
+    dispose: () => undefined,
+  } as unknown as RendererControllerPort;
+}
+
+describe('legacy World contract', () => {
+  it('keeps PixiStage world methods as single delegates to WorldLayer', async () => {
+    const stage = new PixiStage();
+    await stage.registerBackground('hall', Texture.EMPTY);
+    await stage.registerPortrait('lynn', 'uniform', 'normal', Texture.EMPTY);
+    const world = stage.worldLayer;
+    const background = vi.spyOn(world, 'setBackground');
+    const portrait = vi.spyOn(world, 'setPortrait');
+    const fade = vi.spyOn(world, 'setFade');
+    const snapshot = vi.spyOn(world, 'snapshotPresentation');
+    const clear = vi.spyOn(world, 'clearPresentation');
+    try {
+      stage.setBackground('hall');
+      stage.setPortrait('lynn:uniform', { charId: 'lynn', costume: 'uniform', expression: 'normal', pos: 'left' });
+      stage.setFade(0.3);
+      expect(stage.snapshotPresentation()).toBeDefined();
+      stage.clearPresentation();
+      expect(background).toHaveBeenCalledOnce();
+      expect(portrait).toHaveBeenCalledOnce();
+      expect(fade).toHaveBeenCalledOnce();
+      expect(snapshot).toHaveBeenCalledOnce();
+      expect(clear).toHaveBeenCalledOnce();
+    } finally {
+      stage.destroy();
+    }
+  });
+
+  it('uses the real WorldLayer on v2 Facade commands and keeps legacy fallback behavior', async () => {
+    const stage = new PixiStage();
+    await stage.registerBackground('hall', Texture.EMPTY);
+    const world = stage.worldLayer;
+    const worldBackground = vi.spyOn(world, 'setBackground');
+    const legacyBackground = vi.spyOn(stage, 'setBackground');
+    const facade = new RendererFacade({
+      stage,
+      controller: makeController(),
+      monitor: new RenderPerformanceMonitor(),
+      worldLayer: world,
+    });
+    try {
+      facade.commands.world.setBackground('hall');
+      expect(worldBackground).toHaveBeenCalledOnce();
+      expect(legacyBackground).not.toHaveBeenCalled();
+
+      const fallback = new RendererFacade({
+        stage,
+        controller: makeController(),
+        monitor: new RenderPerformanceMonitor(),
+      });
+      fallback.commands.world.setBackground('hall');
+      expect(legacyBackground).toHaveBeenCalledOnce();
+    } finally {
+      stage.destroy();
+    }
+  });
+});
