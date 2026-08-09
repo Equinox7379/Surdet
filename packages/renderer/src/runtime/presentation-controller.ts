@@ -52,17 +52,71 @@ function invalidPresentation(message: string, cause?: unknown): RendererCommandE
   });
 }
 
-interface PreparedTimelineRestore {
+export interface PreparedTimelineRestore {
   readonly id: number;
   readonly blocking: boolean;
   readonly player: TimelinePlayer;
   readonly events: readonly TimelineFrameEvent[];
 }
 
-interface PreparedPresentationRestore {
+export interface PreparedPresentationRestore {
   readonly stage: unknown;
   readonly timelines: readonly PreparedTimelineRestore[];
   readonly timelineSequence: number;
+}
+
+/**
+ * Shared read-only preparation for both Presentation validate and restore.
+ * The stage validator is intentionally a narrow port: it receives only the
+ * `stage` field and never the complete Presentation snapshot.
+ */
+export function preparePresentationRestore(
+  payload: unknown,
+  validateStagePresentation: ((snapshot: unknown) => void) | undefined,
+  currentTimelineSequence = 0,
+): PreparedPresentationRestore {
+  if (!isRecord(payload) || payload.version !== 1) {
+    throw invalidPresentation('Presentation snapshot must be a version 1 object');
+  }
+  const stage = payload.stage ?? null;
+  if (validateStagePresentation) {
+    validateStagePresentation(stage);
+  } else if (stage !== null) {
+    throw invalidPresentation('Presentation stage validator is not configured');
+  }
+  const timelines: PreparedTimelineRestore[] = [];
+  let timelineSequence = currentTimelineSequence + 1;
+  const ids = new Set<number>();
+  if (payload.timelines !== undefined && !Array.isArray(payload.timelines)) {
+    throw invalidPresentation('Presentation timelines must be an array');
+  }
+  for (const item of (payload.timelines ?? [])) {
+    if (!isRecord(item) || !isRecord(item.definition)) {
+      throw invalidPresentation('Presentation timeline record is invalid');
+    }
+    const diagnostics = validateTimeline(item.definition);
+    if (diagnostics.length > 0) {
+      throw invalidPresentation('Presentation timeline definition is invalid', diagnostics);
+    }
+    const player = new TimelinePlayer(item.definition as unknown as TimelineDefinition);
+    try {
+      player.restore(item.snapshot as TimelinePlayerSnapshot);
+    } catch (error) {
+      throw invalidPresentation('Presentation timeline snapshot is invalid', error);
+    }
+    const id = typeof item.id === 'number' && Number.isFinite(item.id)
+      ? item.id
+      : ++timelineSequence;
+    if (ids.has(id)) throw invalidPresentation(`Duplicate presentation timeline id '${id}'`);
+    ids.add(id);
+    timelines.push({
+      id,
+      blocking: item.blocking === true,
+      player,
+      events: player.eventsAtCursor(),
+    });
+  }
+  return { stage, timelines, timelineSequence };
 }
 
 export interface AdvRendererOptions {
@@ -89,7 +143,7 @@ export interface PresentationControllerOptions extends AdvRendererOptions {
   readonly lifecycle?: RenderLifecycle;
   readonly resetProjection?: (options?: ResetSessionOptions) => void;
   /** Read-only nested World validation used by the shared presentation prepare path. */
-  readonly validatePresentationStage?: (snapshot: unknown) => void;
+  readonly validateStagePresentation?: (snapshot: unknown) => void;
   readonly updateProjection?: (deltaMs: number) => void;
   readonly canScrollBacklog?: () => boolean;
   readonly bindStageCallbacks?: (handlers: {
@@ -108,7 +162,7 @@ export class PresentationController {
   #commands: RendererCommands;
   #queries: RendererQueries;
   #resetProjection?: (options?: ResetSessionOptions) => void;
-  #validatePresentationStage?: (snapshot: unknown) => void;
+  #validateStagePresentation?: (snapshot: unknown) => void;
   #updateProjection?: (deltaMs: number) => void;
   #canScrollBacklog: () => boolean = () => true;
   #unbindStageCallbacks?: () => void;
@@ -171,7 +225,7 @@ export class PresentationController {
     this.#commands = commands;
     this.#queries = queries;
     this.#resetProjection = options.resetProjection;
-    this.#validatePresentationStage = options.validatePresentationStage;
+    this.#validateStagePresentation = options.validateStagePresentation;
     this.#updateProjection = options.updateProjection;
     this.#canScrollBacklog = options.canScrollBacklog ?? (() => true);
     this.#lifecycle = options.lifecycle;
@@ -780,45 +834,7 @@ export class PresentationController {
   }
 
   #preparePresentationRestore(payload: unknown): PreparedPresentationRestore {
-    if (!isRecord(payload) || payload.version !== 1) {
-      throw invalidPresentation('Presentation snapshot must be a version 1 object');
-    }
-    // This is a read-only validation/prepare phase. In the production composition
-    // root it validates the nested World snapshot before any controller timeline is cleared.
-    this.#validatePresentationStage?.(payload.stage ?? null);
-    const timelines: PreparedTimelineRestore[] = [];
-    let timelineSequence = this.#timelineSeq + 1;
-    const ids = new Set<number>();
-    if (payload.timelines !== undefined && !Array.isArray(payload.timelines)) {
-      throw invalidPresentation('Presentation timelines must be an array');
-    }
-    for (const item of (payload.timelines ?? [])) {
-      if (!isRecord(item) || !isRecord(item.definition)) {
-        throw invalidPresentation('Presentation timeline record is invalid');
-      }
-      const diagnostics = validateTimeline(item.definition);
-      if (diagnostics.length > 0) {
-        throw invalidPresentation('Presentation timeline definition is invalid', diagnostics);
-      }
-      const player = new TimelinePlayer(item.definition as unknown as TimelineDefinition);
-      try {
-        player.restore(item.snapshot as TimelinePlayerSnapshot);
-      } catch (error) {
-        throw invalidPresentation('Presentation timeline snapshot is invalid', error);
-      }
-      const id = typeof item.id === 'number' && Number.isFinite(item.id)
-        ? item.id
-        : ++timelineSequence;
-      if (ids.has(id)) throw invalidPresentation(`Duplicate presentation timeline id '${id}'`);
-      ids.add(id);
-      timelines.push({
-        id,
-        blocking: item.blocking === true,
-        player,
-        events: player.eventsAtCursor(),
-      });
-    }
-    return { stage: payload.stage ?? null, timelines, timelineSequence };
+    return preparePresentationRestore(payload, this.#validateStagePresentation, this.#timelineSeq);
   }
 
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */

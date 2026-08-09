@@ -8,6 +8,7 @@ import {
   type AdvRendererOptions,
   type PresentationControllerOptions,
   type RenderStatus,
+  preparePresentationRestore,
 } from './runtime/presentation-controller.js';
 import type { RendererInputAction } from './api/renderer-input.js';
 import type { ResetSessionOptions } from './api/renderer-runtime.js';
@@ -37,7 +38,7 @@ export class AdvRenderer {
       ...options,
       commands: ports.commands,
       queries: ports.queries,
-      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
+      validateStagePresentation: ports.validateStagePresentation,
       resetProjection: (resetOptions) => stage.resetSession?.(resetOptions),
       updateProjection: (deltaMs) => {
         stage.updateContinuePulse?.(deltaMs);
@@ -109,6 +110,8 @@ export class AdvRenderer {
 export interface PresentationPorts {
   readonly commands: RendererCommands;
   readonly queries: RendererQueries;
+  /** Internal narrow port: accepts only a complete snapshot's `stage` field. */
+  readonly validateStagePresentation?: (snapshot: unknown) => void;
 }
 
 export interface PresentationPortOptions {
@@ -275,13 +278,15 @@ export function createPresentationPorts(
     setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
   };
 
+  const validateStagePresentation = options.worldLayer?.validatePresentation
+    ? (snapshot: unknown) => options.worldLayer!.validatePresentation!.call(options.worldLayer, snapshot)
+    : stage.validatePresentation
+      ? (snapshot: unknown) => stage.validatePresentation!.call(stage, snapshot)
+      : undefined;
+
   const presentationCommands: RendererCommands['presentation'] = {
     validate: (snapshot) => {
-      if (options.worldLayer?.validatePresentation) {
-        options.worldLayer.validatePresentation(snapshot);
-      } else {
-        stage.validatePresentation?.(snapshot);
-      }
+      preparePresentationRestore(snapshot, validateStagePresentation);
     },
     restore: (snapshot) => { if (options.worldLayer) options.worldLayer.restorePresentation(snapshot); else stage.restorePresentation?.(snapshot); },
     clear: () => { if (options.worldLayer) options.worldLayer.clearPresentation(); else stage.clearPresentation?.(); },
@@ -333,5 +338,5 @@ export function createPresentationPorts(
     },
   };
 
-  return { commands, queries };
+  return { commands, queries, validateStagePresentation };
 }

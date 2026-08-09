@@ -190,7 +190,7 @@ function createControllerOptions(
     ...(options.onWaitEnd ? { onWaitEnd: options.onWaitEnd } : {}),
     commands: ports.commands,
     queries: ports.queries,
-    validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
+    validateStagePresentation: ports.validateStagePresentation,
     lifecycle,
     resetProjection: (resetOptions) => stage.resetSession?.(resetOptions),
     updateProjection: (deltaMs) => {
