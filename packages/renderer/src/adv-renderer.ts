@@ -1,6 +1,7 @@
 import {
   EventBus,
   type CoreEventMap,
+  type Unsubscribe,
   type TextEventPayload,
   type ChoiceEventPayload,
   type InstrEventPayload,
@@ -157,6 +158,24 @@ export class AdvRenderer {
     if (handler && this.needsUpdate) handler();
   }
 
+  /** v2 controller connection; legacy callers may continue using subscribe(). */
+  connect(bus: EventBus<CoreEventMap>): Unsubscribe {
+    this.disconnect();
+    this.subscribe(bus);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.disconnect();
+    };
+  }
+
+  /** Remove only Core subscriptions; the presentation state remains intact. */
+  disconnect(): void {
+    for (const off of this.#unsubs) off();
+    this.#unsubs = [];
+  }
+
   /** 订阅内核事件总线（类型化：负载由 CoreEventMap 推导） */
   subscribe(bus: EventBus<CoreEventMap>): void {
     this.#unsubs.push(
@@ -171,8 +190,7 @@ export class AdvRenderer {
   }
 
   destroy(): void {
-    for (const off of this.#unsubs) off();
-    this.#unsubs = [];
+    this.disconnect();
     this.#stage.onSelect = null;
     this.#stage.onBacklogClose = null;
     this.#clearTimelines();
@@ -346,6 +364,14 @@ export class AdvRenderer {
     if (!this.#backlogOpen || !this.#backlog || value.length === 0) return false;
     this.#backlogSearch.append(value);
     this.#renderBacklog();
+    return true;
+  }
+
+  /** Scroll the visible Backlog without exposing the Stage to the host controller. */
+  scrollBacklog(delta: number): boolean {
+    if (!this.#backlogOpen || !this.#stage.scrollBacklog) return false;
+    this.#stage.scrollBacklog(delta);
+    this.#requestFrame();
     return true;
   }
 

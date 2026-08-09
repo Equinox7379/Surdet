@@ -1,3 +1,5 @@
+import type { RendererInputAction } from './api/renderer-input.js';
+
 /** 可由宿主路由的游戏动作；不持久化任意用户输入的键字符串。 */
 export type GameAction = 'advance' | 'auto' | 'skip' | 'backlog' | 'menu' | 'quickSave' | 'quickLoad' | 'rollback' | 'hideUi';
 export type KeyPreset = 'standard' | 'left-handed';
@@ -44,4 +46,16 @@ export function actionForKeyboardEvent(
     if (bindings[action].includes(event.code)) return action;
   }
   return null;
+}
+
+/** Convert only Renderer-owned host actions; menu/save/load/rollback stay with the host. */
+export function rendererInputForGameAction(action: GameAction): RendererInputAction | null {
+  switch (action) {
+    case 'advance': return { type: 'advance' };
+    case 'auto': return { type: 'auto.toggle' };
+    case 'skip': return { type: 'skip.toggle', scope: 'read' };
+    case 'backlog': return { type: 'backlog.toggle' };
+    case 'hideUi': return { type: 'interface.toggle' };
+    default: return null;
+  }
 }
