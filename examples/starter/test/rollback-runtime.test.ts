@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Interpreter, SaveSnapshot } from '@surdet/core';
-import type { AdvRenderer, AdvStage, AudioHandle } from '@surdet/renderer';
+import type { AudioHandle } from '@surdet/renderer';
+import type { RollbackRendererPort } from '../../shared/rollback-runtime.js';
 import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 
 function createTestRuntime() {
@@ -23,11 +24,9 @@ function createTestRuntime() {
     status: 'awaiting',
     backlogOpen: false,
     snapshotPresentation: vi.fn(() => ({ visible: true })),
-    resetSession: vi.fn(),
-  } as unknown as AdvRenderer;
-  const stage = {
     restorePresentation: vi.fn(),
-  } as unknown as AdvStage;
+    resetSession: vi.fn(),
+  } as unknown as RollbackRendererPort;
   const audio = {
     snapshotPlayback: vi.fn(() => ({ bgm: null, ambience: null })),
     restorePlayback: vi.fn(),
@@ -35,7 +34,6 @@ function createTestRuntime() {
   const runtime = createRollbackRuntime({
     interpreter,
     renderer,
-    stage,
     audio,
     isBlocked: () => false,
     label: 'rollback-test',

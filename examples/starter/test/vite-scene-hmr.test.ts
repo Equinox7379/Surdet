@@ -74,12 +74,25 @@ describe('real Vite .gal HMR', () => {
     await page.waitForFunction(() => typeof window.__surdetDebug !== 'undefined', undefined, { timeout: 30000 });
     await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
     await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'ch01_01', undefined, { timeout: 15000 });
+    const waitForStableResources = async (): Promise<void> => {
+      await page.waitForFunction(() => {
+        const snapshot = window.__surdetDebug.resourceSnapshot;
+        return window.__surdetDebug.assetLoading?.done === true
+          && window.__surdetDebug.rendererStatus !== 'typing'
+          && snapshot !== undefined
+          && snapshot !== null;
+      }, undefined, { timeout: 15000 });
+      await page.waitForTimeout(250);
+    };
+    await waitForStableResources();
 
     const initial = await page.evaluate(() => ({
       sessionId: window.__surdetDebug.sessionId,
       resourceIds: window.__surdetDebug.resourceIds,
       position: window.__surdetDebug.position,
       activeBlobUrls: window.__surdetDebug.activeBlobUrls,
+      resourceSnapshot: window.__surdetDebug.resourceSnapshot,
+      presentationSnapshot: window.__surdetDebug.presentationSnapshot,
     }));
     const scenePath = path.join(tempRoot, 'content', 'scenario', 'ch01_01.gal');
     const original = await readFile(scenePath, 'utf8');
@@ -93,6 +106,7 @@ describe('real Vite .gal HMR', () => {
         initial.position?.sceneHash,
         { timeout: 15000 },
       );
+      await waitForStableResources();
     } catch (error) {
       const state = await page.evaluate(() => ({
         sessionId: window.__surdetDebug.sessionId,
@@ -105,6 +119,8 @@ describe('real Vite .gal HMR', () => {
       resourceIds: window.__surdetDebug.resourceIds,
       position: window.__surdetDebug.position,
       activeBlobUrls: window.__surdetDebug.activeBlobUrls,
+      resourceSnapshot: window.__surdetDebug.resourceSnapshot,
+      presentationSnapshot: window.__surdetDebug.presentationSnapshot,
     }));
     expect(navigationCount).toBe(1);
     expect(afterValid.sessionId).toBe(initial.sessionId);
@@ -112,21 +128,52 @@ describe('real Vite .gal HMR', () => {
     expect(afterValid.activeBlobUrls).toBe(initial.activeBlobUrls);
     expect(afterValid.position?.sceneId).toBe('ch01_01');
     expect(afterValid.position?.pc).toBeGreaterThanOrEqual(0);
+    expect({
+      listeners: afterValid.resourceSnapshot?.listeners,
+      tickerCallbacks: afterValid.resourceSnapshot?.tickerCallbacks,
+      blobUrls: afterValid.resourceSnapshot?.blobUrls,
+      pooledObjects: afterValid.resourceSnapshot?.pooledObjects,
+      displayObjectsByOwner: afterValid.resourceSnapshot?.displayObjectsByOwner,
+    }).toEqual({
+      listeners: initial.resourceSnapshot?.listeners,
+      tickerCallbacks: initial.resourceSnapshot?.tickerCallbacks,
+      blobUrls: initial.resourceSnapshot?.blobUrls,
+      pooledObjects: initial.resourceSnapshot?.pooledObjects,
+      displayObjectsByOwner: initial.resourceSnapshot?.displayObjectsByOwner,
+    });
+    expect(afterValid.presentationSnapshot).toEqual(initial.presentationSnapshot);
 
     const invalidReplacement = `${validReplacement}\n@if (`;
     await writeFile(scenePath, invalidReplacement, 'utf8');
     await waitForConsole(page, messages, (message) => message.includes('场景热重载失败，保留旧场景 ch01_01'));
+    await waitForStableResources();
     const afterInvalid = await page.evaluate(() => ({
       sessionId: window.__surdetDebug.sessionId,
       resourceIds: window.__surdetDebug.resourceIds,
       position: window.__surdetDebug.position,
       activeBlobUrls: window.__surdetDebug.activeBlobUrls,
+      resourceSnapshot: window.__surdetDebug.resourceSnapshot,
+      presentationSnapshot: window.__surdetDebug.presentationSnapshot,
     }));
     expect(navigationCount).toBe(1);
     expect(afterInvalid.sessionId).toBe(initial.sessionId);
     expect(afterInvalid.resourceIds).toEqual(initial.resourceIds);
     expect(afterInvalid.activeBlobUrls).toBe(initial.activeBlobUrls);
     expect(afterInvalid.position).toEqual(afterValid.position);
+    expect({
+      listeners: afterInvalid.resourceSnapshot?.listeners,
+      tickerCallbacks: afterInvalid.resourceSnapshot?.tickerCallbacks,
+      blobUrls: afterInvalid.resourceSnapshot?.blobUrls,
+      pooledObjects: afterInvalid.resourceSnapshot?.pooledObjects,
+      displayObjectsByOwner: afterInvalid.resourceSnapshot?.displayObjectsByOwner,
+    }).toEqual({
+      listeners: afterValid.resourceSnapshot?.listeners,
+      tickerCallbacks: afterValid.resourceSnapshot?.tickerCallbacks,
+      blobUrls: afterValid.resourceSnapshot?.blobUrls,
+      pooledObjects: afterValid.resourceSnapshot?.pooledObjects,
+      displayObjectsByOwner: afterValid.resourceSnapshot?.displayObjectsByOwner,
+    });
+    expect(afterInvalid.presentationSnapshot).toEqual(afterValid.presentationSnapshot);
 
     await writeFile(scenePath, original, 'utf8');
   }, 60000);

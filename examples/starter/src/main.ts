@@ -38,8 +38,6 @@ import type {
   ScheduledEventDef,
 } from '@surdet/core';
 import {
-  PixiStage,
-  AdvRenderer,
   AudioManager,
   Backlog,
   Typewriter,
@@ -49,10 +47,11 @@ import {
   SKIP_STRATEGY_ALL,
   buildGalleryViews,
   GamepadPoller,
-  FrameScheduler,
   RenderPerformanceMonitor,
+  createRendererRuntime,
   AssetLoadQueue,
   actionForKeyboardEvent,
+  rendererInputForGameAction,
 } from '@surdet/renderer';
 import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
 import { LocalStorageProfileStorage } from '@surdet/host';
@@ -83,12 +82,9 @@ const timelineFiles = import.meta.glob('../content/timelines/**/*.json', {
 async function main(): Promise<void> {
   const appEl = document.getElementById('app')!;
 
-  // 舞台
-  const stage = new PixiStage();
-  await stage.init();
   const debugSessionId = `starter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const debugResourceIds = Object.freeze({
-    pixiStage: `${debugSessionId}:pixi-stage`,
+    rendererRuntime: `${debugSessionId}:renderer-runtime`,
     audioManager: `${debugSessionId}:audio-manager`,
     frameScheduler: `${debugSessionId}:frame-scheduler`,
   });
@@ -111,13 +107,6 @@ async function main(): Promise<void> {
     if (!name) return [];
     return [{ id, name, avatarKey: profile.avatar ?? id }];
   });
-  stage.setSpeakerProfiles(speakerProfiles);
-  appEl.appendChild(stage.app!.canvas);
-
-  // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率保持 1280×720 逻辑尺寸）
-  stage.fitWindow();
-  window.addEventListener('resize', () => stage.fitWindow());
-
   // 变量表（game.config.json）
   const decls: VarDeclaration[] = Object.entries(gameConfig.variables).map(([name, d]) => ({
     name,
@@ -173,26 +162,42 @@ async function main(): Promise<void> {
   const settings = new SettingsStore(createSettingsStorage('starter'));
   await settings.load();
 
-  // Backlog（文字记录）+ 渲染器（设置投影：文本速度/自动停留/音量）
+  // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
   let videoActive = false;
-  const renderer = new AdvRenderer(stage, audio, {
+  const performanceMonitor = new RenderPerformanceMonitor();
+  const runtime = await createRendererRuntime({
+    audio,
     typewriter,
     backlog,
-    autoBaseDelayMs: settings.settings.autoBaseDelayMs,
-    autoPerCharMs: settings.settings.autoPerCharMs,
+    performanceMonitor,
+    onError: (error) => console.error('[starter] Renderer failed:', error),
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
     onWaitEnd: () => { videoActive = false; interp.finishWait(); },
   });
+  appEl.appendChild(runtime.canvas);
+  runtime.resize();
+  window.addEventListener('resize', () => runtime.resize());
+  const renderer = runtime.controller;
+  const commands = runtime.commands;
+  const queries = runtime.queries;
+  const assets = commands.assets;
+  const dialogue = commands.dialogue;
+  const menu = commands.menu;
+  const gallery = commands.gallery;
+  const system = commands.system;
+  const loading = commands.loading;
+  const presentation = commands.presentation;
+  dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
-  renderer.subscribe(bus);
+  renderer.connect(bus);
   interp.setTimelineCatalog(timelines);
   interp.setPresentationHooks({
-    snapshot: () => renderer.snapshotPresentation(),
-    restore: (payload) => renderer.restorePresentation(payload),
+    snapshot: () => queries.presentation.snapshot(),
+    restore: (payload) => presentation.restore(payload),
   });
 
   let systemMenuOpen = false;
@@ -203,8 +208,13 @@ async function main(): Promise<void> {
 
   const rollbackRuntime = createRollbackRuntime({
     interpreter: interp,
-    renderer,
-    stage,
+    renderer: {
+      get status() { return runtime.controller.status; },
+      get backlogOpen() { return runtime.controller.backlogOpen; },
+      resetSession: (options) => runtime.resetSession(options),
+      snapshotPresentation: () => queries.presentation.snapshot(),
+      restorePresentation: (snapshot) => presentation.restore(snapshot),
+    },
     audio,
     isBlocked: () => onTitleScreen || systemMenuOpen || saveLoadOpen || galleryOpen || settingsOpen || videoActive,
     label: 'starter',
@@ -230,13 +240,15 @@ async function main(): Promise<void> {
     },
     get fontFamilies(): { body: string; title: string; ui: string } {
       return {
-        body: stage.getFontFamily('body'),
-        title: stage.getFontFamily('title'),
-        ui: stage.getFontFamily('ui'),
+        body: queries.preferences.fontFamily('body'),
+        title: queries.preferences.fontFamily('title'),
+        ui: queries.preferences.fontFamily('ui'),
       };
     },
     get activeBlobUrls(): number { return assetBlobUrls.size + fontBlobUrls.size; },
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
+    get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
+    get presentationSnapshot() { return queries.presentation.snapshot(); },
     titleSelect: (id: string) => titleSelect(id),
     quickSave: () => quickSave(),
     quickLoad: () => quickLoad(),
@@ -245,7 +257,7 @@ async function main(): Promise<void> {
   // ===== 存档富化：缩略图（舞台截图）+ 本次会话游戏时长 =====
   let sessionStart = Date.now();
   function enrichSnapshot(snap: SaveSnapshot): SaveSnapshot {
-    const thumb = stage.captureThumbnail();
+    const thumb = queries.world.captureThumbnail();
     if (thumb) snap.meta.thumbnail = thumb;
     snap.meta.playTimeSec = Math.max(0, Math.round((Date.now() - sessionStart) / 1000));
     return snap;
@@ -257,10 +269,10 @@ async function main(): Promise<void> {
   const host = createDefaultHost({
     interpreter: interp,
     renderer,
-    stage,
+    stage: system,
     adapters: createSystemAdapters({
       interpreter: interp,
-      stage,
+      renderer: system,
       store,
       registry,
       calendar,
@@ -296,31 +308,27 @@ async function main(): Promise<void> {
   // @system 统一由 @surdet/host 路由；游戏只在上方注入配置、求解器和结果回调。
 
   // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
-  stage.app!.canvas.addEventListener('pointerdown', (e) => {
+  runtime.canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (onTitleScreen) return;
     const s = interp.status;
-    if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.advance();
+    if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.dispatchInput({ type: 'advance' });
   });
 
   // 滚轮：Backlog 打开时滚动文字记录（galgame 惯例：鼠标滚轮回看历史）
-  stage.app!.canvas.addEventListener('wheel', (e) => {
+  runtime.canvas.addEventListener('wheel', (e) => {
     if (renderer.backlogOpen) {
       e.preventDefault();
-      stage.scrollBacklog(e.deltaY > 0 ? 120 : -120);
+      dialogue.scrollBacklog(e.deltaY > 0 ? 120 : -120);
     }
   }, { passive: false });
 
   // 右键 → 系统菜单（GalGame 惯例）；标题画面不弹（标题自带菜单，空白处右键蹦设置框属误弹，用户反馈修复）
-  stage.app!.canvas.addEventListener('contextmenu', (e) => {
+  runtime.canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (onTitleScreen) return;
     openSystemMenu();
   });
-
-  // 引擎帧调度：静态画面暂停 ticker，剧情事件/输入/舞台动画自动唤醒。
-  const performanceMonitor = new RenderPerformanceMonitor();
-  new FrameScheduler(stage.app!, renderer, [stage], { monitor: performanceMonitor });
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
@@ -376,14 +384,14 @@ async function main(): Promise<void> {
 
   // 读档/状态重置（审计修复 C1/M1）：关闭全部覆盖层，防止旧战斗/地图/商店 UI 残留在还原后的状态之上
   bus.on('stateReset', () => {
-    stage.hideVideo(); // 停止残留 @video 播放（审计复核）
-    stage.hideBattle();
-    stage.hideMap();
-    stage.hideShop();
-    stage.hideGallery();
-    stage.hideSaveLoad();
-    stage.hideSettings();
-    stage.hideSystemMenu();
+    system.hideVideo(); // 停止残留 @video 播放（审计复核）
+    system.hideBattle();
+    system.hideMap();
+    system.hideShop();
+    gallery.hideGallery();
+    menu.hideSaveLoad();
+    menu.hideSettings();
+    menu.hideSystemMenu();
     galleryOpen = false;
     settingsOpen = false;
   });
@@ -431,7 +439,7 @@ async function main(): Promise<void> {
     fontBlobUrls,
     label: 'starter',
     resolveFontUrl,
-    stage,
+    assets,
   });
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====
@@ -456,16 +464,16 @@ async function main(): Promise<void> {
       const fname = parts[parts.length - 1] ?? '';
       const format = fname.split('.').pop()?.toLowerCase();
       if (kind === 'bg' && IMG.test(fname)) {
-        await stage.registerBackground(fname.replace(IMG, ''), url, format);
+        await assets.registerBackground(fname.replace(IMG, ''), url, format);
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const seg = fname.replace(IMG, '').split('_');
         if (seg[0]) {
-          await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
+          await assets.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
           return true;
         }
       } else if (kind === 'avatar' && IMG.test(fname)) {
-        await stage.registerAvatar(fname.replace(IMG, ''), url, format);
+        await assets.registerAvatar(fname.replace(IMG, ''), url, format);
         return true;
       } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(fname.replace(AUD, ''), url);
@@ -517,11 +525,11 @@ async function main(): Promise<void> {
     }
     const finalProgress = await new AssetLoadQueue(4).run(jobs, (progress) => {
       lastLoadingProgress = { ...progress };
-      stage.showLoading?.(progress);
+      loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
     if (finalProgress.failed > 0) console.warn(`[starter] ${finalProgress.failed} asset(s) failed`);
-    stage.hideLoading?.();
+    loading.hideLoading();
     console.info('[starter] 素材加载完成：音频条目', audioUrls.size);
   }
 
@@ -621,7 +629,7 @@ async function main(): Promise<void> {
   // @exp：角色成长结果 → 升级演出（横幅）+ levelEvents 场景跳转（配置驱动）
   bus.on('growth', (p) => {
     if (p.levelsGained > 0) {
-      stage.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
+      dialogue.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
       console.info(`[starter] growth: ${p.characterId} Lv.${p.levelBefore} → Lv.${p.levelAfter}（+${p.gained} exp）`);
       // 途经等级触发 levelEvents（升多级时逐级检查；场景存在才跳转，避免配置缺场景卡死剧情）
       for (const lv of p.passedLevels) {
@@ -635,7 +643,7 @@ async function main(): Promise<void> {
       if (growth.levelOf(p.characterId) >= 5 && achievements.defOf('level_5')) {
         try {
           const res = achievements.unlock('level_5');
-          if (res.fresh) stage.showBanner(`成就解锁：${res.def.name}`, 'tip');
+          if (res.fresh) dialogue.showBanner(`成就解锁：${res.def.name}`, 'tip');
         } catch (err) {
           console.warn('[starter] level_5 unlock failed:', err instanceof Error ? err.message : err);
         }
@@ -650,7 +658,7 @@ async function main(): Promise<void> {
     try {
       const fresh = achievements.check();
       for (const r of fresh) {
-        stage.showBanner(`成就解锁：${r.def.name}`, 'tip');
+        dialogue.showBanner(`成就解锁：${r.def.name}`, 'tip');
         console.info(`[starter] achievement unlocked: ${r.id}（${r.def.name}）`);
       }
     } catch (err) {
@@ -671,10 +679,10 @@ async function main(): Promise<void> {
     settingsOpen = false;
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
-    stage.clearPresentation();
+    presentation.clear();
     // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
-    renderer.resetSession({ preserveWorld: true });
-    stage.showTitle(
+    runtime.resetSession({ preserveWorld: true });
+    menu.showTitle(
       {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
         subtitle: 'Surdet 引擎 · 示例游戏',
@@ -696,9 +704,9 @@ async function main(): Promise<void> {
       case 'new': {
         onTitleScreen = false;
         clearRollback();
-        renderer.resetSession();
-        stage.clearPresentation();
-        stage.hideTitle();
+        runtime.resetSession();
+        presentation.clear();
+        menu.hideTitle();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
@@ -762,7 +770,7 @@ async function main(): Promise<void> {
         kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
       };
     });
-    stage.showSaveLoad({ mode, slots }, (slotId) => {
+    menu.showSaveLoad({ mode, slots }, (slotId) => {
       saveLoadOpen = false;
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
@@ -776,7 +784,7 @@ async function main(): Promise<void> {
           try {
             const snap = await saves.load(slotId);
             onTitleScreen = false;
-            stage.hideTitle();
+            menu.hideTitle();
             clearRollback();
             interp.loadSnapshot(snap);
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
@@ -792,7 +800,7 @@ async function main(): Promise<void> {
   // ===== 系统菜单：Esc / 右键唤出 =====
   function openSystemMenu(): void {
     systemMenuOpen = true;
-    stage.showSystemMenu(
+    menu.showSystemMenu(
       [
         { id: 'resume', label: '返回游戏' },
         { id: 'save', label: '存档' },
@@ -808,7 +816,7 @@ async function main(): Promise<void> {
           case 'save': void openSaveLoad('save'); break;
           case 'load': void openSaveLoad('load'); break;
           case 'settings': settingsOpen = true; refreshSettingsPanel(); break;
-          case 'backlog': renderer.toggleBacklog(); break;
+          case 'backlog': renderer.dispatchInput({ type: 'backlog.toggle' }); break;
           case 'gallery': openGallery(); break;
           case 'title': showTitleScreen(); break;
           default: break; // resume：仅关闭菜单
@@ -863,13 +871,13 @@ async function main(): Promise<void> {
   // ===== 鉴赏（回想）：CG 回看 + 音乐播放；解锁状态来自 GalleryState（随存档持久化） =====
   function openGallery(): void {
     const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
-    stage.showGallery({
+    gallery.showGallery({
       ...views,
       onPlayMusic: (id, src) => audio.playBgm(src ?? id),
       onReplayText: (item) => {
         // 文本回想：关闭鉴赏，跳回回想场景重播（hostJump 清空调用栈）
         if (!item.scene) return;
-        stage.hideGallery();
+        gallery.hideGallery();
         galleryOpen = false;
         interp.hostJump(item.scene, item.label);
       },
@@ -881,7 +889,7 @@ async function main(): Promise<void> {
   // ===== 设置图形面板：◀ ▶ 步进（状态由 SettingsStore 持有，改后重新投影并刷新面板） =====
   function refreshSettingsPanel(): void {
     const s = settings.settings;
-    stage.showSettings(
+    menu.showSettings(
       SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
       (id, dir) => {
         const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
@@ -900,7 +908,7 @@ async function main(): Promise<void> {
 
   /** 画面内操作带：动作仍复用既有键盘/系统菜单语义。 */
   function refreshCommandRail(): void {
-    stage.setCommandRailItems?.([
+    dialogue.setCommandRailItems([
       { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
       { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
       { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
@@ -915,21 +923,23 @@ async function main(): Promise<void> {
 
   function onCommandRailSelect(id: string): void {
     switch (id) {
-      case 'auto': renderer.toggleAuto(); break;
+      case 'auto': renderer.dispatchInput({ type: 'auto.toggle' }); break;
       case 'skip': {
-        if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) renderer.toggleSkipAll();
-        else renderer.toggleSkip();
+        renderer.dispatchInput({
+          type: 'skip.toggle',
+          scope: settings.settings.skipStrategy >= SKIP_STRATEGY_ALL ? 'all' : 'read',
+        });
         break;
       }
-      case 'backlog': renderer.toggleBacklog(); break;
+      case 'backlog': renderer.dispatchInput({ type: 'backlog.toggle' }); break;
       case 'qsave': quickSave(); break;
       case 'qload': void quickLoad(); break;
       case 'rollback': performRollback(); break;
       case 'settings':
         settingsOpen = !settingsOpen;
-        if (settingsOpen) refreshSettingsPanel(); else stage.hideSettings();
+        if (settingsOpen) refreshSettingsPanel(); else menu.hideSettings();
         break;
-      case 'hide': renderer.toggleHideInterface(); break;
+      case 'hide': renderer.dispatchInput({ type: 'interface.toggle' }); break;
       case 'menu': openSystemMenu(); break;
       default: break;
     }
@@ -943,7 +953,7 @@ async function main(): Promise<void> {
       switch (a) {
         case 'advance': {
           const st = interp.status;
-          if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') renderer.advance();
+          if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') renderer.dispatchInput({ type: 'advance' });
           break;
         }
         case 'cancel':
@@ -951,17 +961,17 @@ async function main(): Promise<void> {
           openSystemMenu();
           break;
         case 'up':
-          if (renderer.status === 'choice') renderer.choiceUp();
+          if (renderer.status === 'choice') renderer.dispatchInput({ type: 'choice.move', delta: -1 });
           break;
         case 'down':
-          if (renderer.status === 'choice') renderer.choiceDown();
+          if (renderer.status === 'choice') renderer.dispatchInput({ type: 'choice.move', delta: 1 });
           break;
         case 'shoulderRight':
-          if (!renderer.skipMode) renderer.toggleSkip();
+          if (!renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
           refreshCommandRail();
           break;
         case 'shoulderLeft':
-          if (renderer.skipMode) renderer.toggleSkip();
+          if (renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
           refreshCommandRail();
           break;
         default:
@@ -977,7 +987,7 @@ async function main(): Promise<void> {
     if (onTitleScreen) return;
     if (e.key === 'Control' && !renderer.skipMode) {
       ctrlTempSkip = true;
-      renderer.toggleSkip();
+      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
       refreshCommandRail();
     }
   });
@@ -985,30 +995,39 @@ async function main(): Promise<void> {
     if (onTitleScreen) return;
     if (e.key === 'Control' && ctrlTempSkip) {
       ctrlTempSkip = false;
-      renderer.toggleSkip();
+      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
       refreshCommandRail();
     }
   });
 
   function routeGameAction(action: GameAction): void {
+    if (action === 'advance') {
+      const st = interp.status;
+      if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') {
+        renderer.dispatchInput({ type: 'advance' });
+      }
+      refreshCommandRail();
+      return;
+    }
+    if (action === 'skip') {
+      renderer.dispatchInput({
+        type: 'skip.toggle',
+        scope: settings.settings.skipStrategy >= SKIP_STRATEGY_ALL ? 'all' : 'read',
+      });
+      refreshCommandRail();
+      return;
+    }
+    const input = rendererInputForGameAction(action);
+    if (input) {
+      renderer.dispatchInput(input);
+      refreshCommandRail();
+      return;
+    }
     switch (action) {
-      case 'advance': {
-        const st = interp.status;
-        if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') renderer.advance();
-        break;
-      }
-      case 'auto': renderer.toggleAuto(); break;
-      case 'skip': {
-        if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) renderer.toggleSkipAll();
-        else renderer.toggleSkip();
-        break;
-      }
-      case 'backlog': renderer.toggleBacklog(); break;
       case 'menu': openSystemMenu(); break;
       case 'quickSave': void quickSave(); break;
       case 'quickLoad': void quickLoad(); break;
       case 'rollback': performRollback(); break;
-      case 'hideUi': renderer.toggleHideInterface(); break;
     }
     refreshCommandRail();
   }
@@ -1029,17 +1048,17 @@ async function main(): Promise<void> {
       }
       if (e.code === 'Escape') {
         e.preventDefault();
-        if (!renderer.handleBacklogEscape()) renderer.toggleBacklog();
+        if (!renderer.handleBacklogEscape()) renderer.dispatchInput({ type: 'backlog.toggle' });
         refreshCommandRail();
         return;
       }
       if (e.code === 'PageUp' || e.code === 'PageDown') {
-        e.preventDefault(); stage.scrollBacklog(e.code === 'PageUp' ? -240 : 240); return;
+        e.preventDefault(); renderer.dispatchInput({ type: 'backlog.scroll', delta: e.code === 'PageUp' ? -240 : 240 }); return;
       }
     }
     if (renderer.status === 'choice' && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
       e.preventDefault();
-      if (e.code === 'ArrowUp') renderer.choiceUp(); else renderer.choiceDown();
+      renderer.dispatchInput({ type: 'choice.move', delta: e.code === 'ArrowUp' ? -1 : 1 });
       return;
     }
     const action = actionForKeyboardEvent(e, settings.settings.keyPreset);
@@ -1047,7 +1066,7 @@ async function main(): Promise<void> {
       e.preventDefault(); routeGameAction(action); return;
     }
     if (e.code === 'KeyX' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault(); renderer.toggleSkipAll(); refreshCommandRail(); return;
+      e.preventDefault(); renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }); refreshCommandRail(); return;
     }
     if (e.key === 'Escape') {
       openSystemMenu();
@@ -1058,14 +1077,13 @@ async function main(): Promise<void> {
       e.preventDefault();
       const st = interp.status;
       if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') {
-        renderer.advance();
+        renderer.dispatchInput({ type: 'advance' });
       }
       return;
     }
     if (renderer.status === 'choice' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
-      if (e.key === 'ArrowUp') renderer.choiceUp();
-      else renderer.choiceDown();
+      renderer.dispatchInput({ type: 'choice.move', delta: e.key === 'ArrowUp' ? -1 : 1 });
       return;
     }
     if (e.key === 'ArrowUp' && performRollback()) {
@@ -1073,12 +1091,12 @@ async function main(): Promise<void> {
       return;
     }
     if (renderer.status === 'choice' && /^[1-9]$/.test(e.key)) {
-      renderer.selectChoiceAt(Number(e.key) - 1);
+      renderer.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
       return;
     }
     if (renderer.backlogOpen && (e.key === 'PageUp' || e.key === 'PageDown')) {
       e.preventDefault();
-      stage.scrollBacklog(e.key === 'PageUp' ? -240 : 240);
+      renderer.dispatchInput({ type: 'backlog.scroll', delta: e.key === 'PageUp' ? -240 : 240 });
       return;
     }
     if (e.key === 'F5') {
@@ -1088,31 +1106,31 @@ async function main(): Promise<void> {
       e.preventDefault();
       void quickLoad();
     } else if (e.key === 'a' || e.key === 'A') {
-      console.info('[starter] 自动播放', renderer.toggleAuto() ? '开' : '关');
+      console.info('[starter] 自动播放', renderer.dispatchInput({ type: 'auto.toggle' }) ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 's' || e.key === 'S') {
       // 快进策略跟随设置：仅跳已读（默认，遇未读即停）或全部跳过（一路到底）
       if (settings.settings.skipStrategy >= SKIP_STRATEGY_ALL) {
-        console.info('[starter] 快进（全部跳过·设置）', renderer.toggleSkipAll() ? '开' : '关');
+        console.info('[starter] 快进（全部跳过·设置）', renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }) ? '开' : '关');
       } else {
-        console.info('[starter] 快进（已读跳过·设置）', renderer.toggleSkip() ? '开' : '关');
+        console.info('[starter] 快进（已读跳过·设置）', renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' }) ? '开' : '关');
       }
       refreshCommandRail();
     } else if (e.key === 'x' || e.key === 'X') {
-      console.info('[starter] 快进（全部跳过）', renderer.toggleSkipAll() ? '开' : '关');
+      console.info('[starter] 快进（全部跳过）', renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }) ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'l' || e.key === 'L') {
       // Backlog（文字记录）：覆盖层展示近期文本历史（点击任意处关闭）
-      console.info('[starter] 文字记录', renderer.toggleBacklog() ? '开' : '关');
+      console.info('[starter] 文字记录', renderer.dispatchInput({ type: 'backlog.toggle' }) ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'h' || e.key === 'H') {
       // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
-      console.info('[starter] 隐藏界面', renderer.toggleHideInterface() ? '开' : '关');
+      console.info('[starter] 隐藏界面', renderer.dispatchInput({ type: 'interface.toggle' }) ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
       if (galleryOpen) {
-        stage.hideGallery();
+        gallery.hideGallery();
         galleryOpen = false;
       } else {
         openGallery();
@@ -1121,7 +1139,7 @@ async function main(): Promise<void> {
     } else if (e.key === 'o' || e.key === 'O') {
       // 设置图形面板：◀ ▶ 步进各设置项（即时持久化并投影生效）
       if (settingsOpen) {
-        stage.hideSettings();
+        menu.hideSettings();
         settingsOpen = false;
       } else {
         settingsOpen = true;
@@ -1143,7 +1161,9 @@ async function main(): Promise<void> {
   (window as unknown as Record<string, unknown>).surdetDebug = {
     interp,
     renderer,
-    stage,
+    runtime,
+    commands,
+    queries,
     store,
     settings,
     combat,
@@ -1168,7 +1188,7 @@ async function main(): Promise<void> {
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
   await loadAssets();
-  stage.showCommandRail?.([], onCommandRailSelect);
+  dialogue.showCommandRail([], onCommandRailSelect);
   refreshCommandRail();
   showTitleScreen();
   console.info(`[starter] started: ${registry.all().length} scenes, ${decls.length} variables`);
