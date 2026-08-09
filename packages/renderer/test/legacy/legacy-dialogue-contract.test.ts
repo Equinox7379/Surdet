@@ -6,6 +6,7 @@ import { createPresentationPorts } from '../../src/adv-renderer.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
+import type { DialogueProjectionPort, WorldProjectionPort } from '../../src/api/renderer-commands.js';
 
 describe('legacy dialogue stage contract', () => {
   beforeEach(() => {
@@ -141,6 +142,70 @@ describe('legacy dialogue stage contract', () => {
       expect(focusSpy).toHaveBeenLastCalledWith(null);
     } finally {
       controller.destroy();
+      stage.destroy();
+    }
+  });
+
+  it('routes v2 speaker focus through an independent World port exactly once and keeps the legacy fallback', () => {
+    const stage = new PixiStage();
+    const stageFocus = vi.spyOn(stage, 'setPortraitFocus');
+    const stageSpeaker = vi.spyOn(stage, 'setActiveSpeaker');
+    const ports = createPresentationPorts(stage);
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, {
+      commands: ports.commands,
+      queries: ports.queries,
+    });
+    let activeSpeakerId: string | null = null;
+    let projectionVersion = 0;
+    const dialoguePort = {
+      get activeSpeakerId() { return activeSpeakerId; },
+      get projectionVersion() { return projectionVersion; },
+      showText: vi.fn((_speaker: string | null, _value: string) => {
+        activeSpeakerId = 'lynn';
+        projectionVersion += 1;
+      }),
+      setActiveSpeaker: vi.fn((characterId: string | null) => {
+        activeSpeakerId = characterId;
+        projectionVersion += 1;
+      }),
+    } as unknown as DialogueProjectionPort;
+    const worldFocus = vi.fn();
+    const worldPort = { setPortraitFocus: worldFocus } as unknown as WorldProjectionPort;
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: dialoguePort,
+      worldLayer: worldPort,
+    });
+
+    try {
+      facade.commands.dialogue.showText('凛', '对白');
+      expect(dialoguePort.showText).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+      expect(stageFocus).not.toHaveBeenCalled();
+
+      worldFocus.mockClear();
+      facade.commands.dialogue.setActiveSpeaker(null);
+      expect(dialoguePort.setActiveSpeaker).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenCalledTimes(1);
+      expect(worldFocus).toHaveBeenLastCalledWith(null);
+      expect(stageFocus).not.toHaveBeenCalled();
+
+      const fallback = new RendererFacade({
+        stage,
+        controller,
+        monitor: new RenderPerformanceMonitor(),
+      });
+      stageFocus.mockClear();
+      stageSpeaker.mockClear();
+      fallback.commands.dialogue.setActiveSpeaker('lynn');
+      expect(stageSpeaker).toHaveBeenCalledTimes(1);
+      expect(stageFocus).toHaveBeenCalledTimes(1);
+      expect(stageFocus).toHaveBeenLastCalledWith('lynn');
+    } finally {
+      controller.dispose();
       stage.destroy();
     }
   });

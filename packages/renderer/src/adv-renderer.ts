@@ -126,6 +126,7 @@ type PresentationStage = AdvStage & {
   resetFont?: () => void;
   releaseRegisteredAssetSources?: () => Promise<void>;
   captureThumbnail?: () => string | null;
+  validatePresentation?: (snapshot: unknown) => void;
   getFontFamily?: (role: RendererFontRole) => string;
 };
 
@@ -273,7 +274,15 @@ export function createPresentationPorts(
   };
 
   const presentationCommands: RendererCommands['presentation'] = {
-    validate: () => undefined,
+    validate: (snapshot) => {
+      if (options.worldLayer?.validatePresentation) {
+        const raw = snapshot as Record<string, unknown>;
+        options.worldLayer.validatePresentation(raw.stage ?? null);
+      } else {
+        const raw = snapshot as Record<string, unknown>;
+        stage.validatePresentation?.(raw.stage ?? null);
+      }
+    },
     restore: (snapshot) => { if (options.worldLayer) options.worldLayer.restorePresentation(snapshot); else stage.restorePresentation?.(snapshot); },
     clear: () => { if (options.worldLayer) options.worldLayer.clearPresentation(); else stage.clearPresentation?.(); },
   };

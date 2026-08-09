@@ -470,6 +470,10 @@ export class PixiStage implements AdvStage {
     return this.#world.snapshotPresentation();
   }
 
+  validatePresentation(snapshot: unknown): void {
+    this.#world.validatePresentation?.(snapshot);
+  }
+
   restorePresentation(snapshot: unknown): void {
     this.#world.restorePresentation(snapshot);
   }

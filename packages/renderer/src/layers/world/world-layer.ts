@@ -694,6 +694,11 @@ export class WorldLayer implements WorldProjectionPort {
     };
   }
 
+  validatePresentation(snapshot: unknown): void {
+    if (snapshot === null || snapshot === undefined) return;
+    this.#prepareSnapshot(snapshot);
+  }
+
   restorePresentation(snapshot: unknown): void {
     if (snapshot === null) return;
     const prepared = this.#prepareSnapshot(snapshot);
