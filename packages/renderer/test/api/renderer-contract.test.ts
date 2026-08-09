@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type {
   ChoiceOptionView,
+  GalleryOverlayState,
   RendererCommands,
   RendererError,
   RendererInputAction,
@@ -43,6 +44,8 @@ describe('Renderer v2 public contract', () => {
       .toEqualTypeOf<(options: readonly ChoiceOptionView[]) => void>();
     expectTypeOf<RendererQueries['diagnostics']['isDisposed']>()
       .toEqualTypeOf<() => boolean>();
+    expectTypeOf<RendererQueries['overlay']['gallery']>()
+      .toEqualTypeOf<() => GalleryOverlayState>();
     expectTypeOf<RendererInputAction>().toMatchTypeOf<{ type: string }>();
     expectTypeOf<RendererError['code']>().toBeString();
     expectTypeOf<RendererError['domain']>().toBeString();

@@ -74,6 +74,7 @@ describe('Renderer v2 query purity', () => {
     runtime.queries.world.captureThumbnail();
     runtime.queries.presentation.snapshot();
     runtime.queries.overlay.menu();
+    runtime.queries.overlay.gallery();
     runtime.queries.preferences.quality();
     runtime.queries.preferences.presentationPreferences();
     runtime.queries.preferences.postProcess();

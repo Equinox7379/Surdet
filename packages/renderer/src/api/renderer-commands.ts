@@ -22,7 +22,7 @@ import type {
   TitleView,
 } from '../ui-views.js';
 import type { BattleHandlers } from '../pixi-stage.js';
-import type { MenuOverlayState } from './renderer-queries.js';
+import type { GalleryOverlayState, MenuOverlayState } from './renderer-queries.js';
 
 /** M1 intentionally accepts URL/path strings; Pixi objects remain an internal legacy detail. */
 export type RendererAssetSource = string;
@@ -120,6 +120,11 @@ export interface GalleryCommands {
     onClose?: () => void;
   }): void;
   hideGallery(): void;
+}
+
+/** Public M5 gallery projection port; overlay reads are pure and return safe values. */
+export interface GalleryProjectionPort extends GalleryCommands {
+  gallery(): GalleryOverlayState;
 }
 
 export interface ShopView {
