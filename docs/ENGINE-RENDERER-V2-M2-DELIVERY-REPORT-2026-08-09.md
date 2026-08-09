@@ -155,14 +155,14 @@ runtime 组合初始化和真实 `PixiStage.init()` 失败路径均接入同一�
 
 ```json
 {
-  "disposed": false,
+  "disposed": true,
   "tickerCallbacks": 0,
   "listeners": 0,
   "activeTweens": 0,
   "activeAsyncTasks": 0,
   "blobUrls": 0,
   "pooledObjects": {},
-  "displayObjectsByOwner": { "world": 0 }
+  "displayObjectsByOwner": {}
 }
 ```
 
