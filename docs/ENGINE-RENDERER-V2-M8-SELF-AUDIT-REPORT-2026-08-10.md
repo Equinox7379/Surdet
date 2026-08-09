@@ -1,8 +1,8 @@
 # Surdet Renderer v2 M8 交付前磁盘自检报告
 
-日期：2026-08-10  
-自检范围：M8 交付前独立磁盘、Git、源码、测试、构建产物和性能证据核验  
-最终状态：WAITING_FOR_REVIEW  
+日期：2026-08-10
+自检范围：M8 交付前独立磁盘、Git、源码、测试、构建产物和性能证据核验
+最终状态：WAITING_FOR_REVIEW
 发布状态：RELEASE_BLOCKED（未取得独立最终发行批准）
 
 ## 1. 结论先行
@@ -40,11 +40,13 @@ M8 原始授权起始 HEAD：
 docs(renderer): report Wave 2 delivery
 ~~~
 
-自检结束时 HEAD：
+自检证据核验结束时 HEAD：
 
 ~~~text
-待本报告首个本地提交完成后现场回读，并在最终元数据提交中写入
+34d5e9af2e7e6847837d8800dfd403138a1cd31a
 ~~~
+
+之后只进行本报告文件的精确落盘和 Git 元数据核对，不再改动运行时代码。
 
 自检期间没有执行 reset、checkout、stash、clean、force push 或远端写入。所有检查均在 E:\surdet 最终工作树执行。
 
@@ -366,11 +368,12 @@ HEAD...surdet/main = 74 0
 git diff --check = PASS
 ~~~
 
-报告首个本地提交后，将现场补写并复核：
+报告首个本地提交后的现场状态将在最终 Git 回读中复核；该提交只包含本报告：
 
 ~~~text
-自检结束 HEAD = 待最终元数据提交后回读
-最终 HEAD...surdet/main = 待最终元数据提交后回读
+自检证据结束 HEAD = 34d5e9af2e7e6847837d8800dfd403138a1cd31a
+报告首个提交 = ca6f9644df76aaa3e8514f2d3d436803b738e030
+最终 HEAD...surdet/main = 由最终 Git 回读确认
 git status --short = 仅四个受保护未跟踪文件
 ~~~
 
@@ -388,11 +391,11 @@ git status --short = 仅四个受保护未跟踪文件
 本轮没有源码修复，因此没有“自检整改源码提交”。本报告采用两次精确文档提交：第一次纳入完整自检报告，第二次只回填第一次提交后的最终 HEAD、status 和 ahead/behind，避免在报告中伪造尚未产生的 commit SHA。
 
 ~~~text
-首次报告提交 SHA = 待首个提交完成后回读
-最终自检报告提交 SHA = 待最终元数据提交完成后回读
+自检证据结束 HEAD = 34d5e9af2e7e6847837d8800dfd403138a1cd31a
+首次报告提交 = ca6f9644df76aaa3e8514f2d3d436803b738e030
+本报告最终文件 SHA-256、最终 HEAD 和 ahead/behind = 由最终 Git 回读回报
 ~~~
 
 ### 最终审计结论
 
 M8 的实现、测试、构建、性能证据和发布包均已在磁盘上得到可复核证明；性能正式绿灯仍未宣称，M7.5 的 sceneP95Ms 红灯和 M0→M8 历史风险均保留。等待总经理独立复审，不执行任何远端写入。
-
