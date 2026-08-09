@@ -5,8 +5,8 @@ import { AsyncGeneration } from '../../src/lifecycle/async-generation.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
-import { createPresentationPorts } from '../../src/adv-renderer.js';
-import { NULL_AUDIO, type AdvStage } from '../../src/types.js';
+import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
+import { NULL_AUDIO } from '../../src/types.js';
 import type {
   RendererControllerPort,
   RendererRuntimeInternals,
@@ -48,7 +48,7 @@ async function runRealRuntimeCycle(): Promise<RealCycleResult> {
     needsUpdate: () => false,
     resetSession: () => undefined,
     destroy: () => undefined,
-  } as unknown as AdvStage & RendererStagePort;
+  };
   const ports = createPresentationPorts(stage, {
     assetRegistry: registry,
     resourceSnapshot: () => lifecycle.snapshot(),

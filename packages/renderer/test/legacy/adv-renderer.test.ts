@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EventBus, compileScene, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
-import { AdvRenderer, Typewriter, dequote, Backlog } from '../src/index.js';
-import type { AdvStage, AudioHandle, PortraitView } from '../src/types.js';
+import { AdvRenderer, Typewriter, dequote, Backlog } from '../../src/index.js';
+import type { AdvStage, AudioHandle, PortraitView } from '../../src/types.js';
 
 /** 记录调用的 fake 舞台 */
 class FakeStage implements AdvStage {

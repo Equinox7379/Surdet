@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Assets, Sprite, Text as PText, TextStyle, Texture } from 'pixi.js';
-import { PixiStage } from '../src/pixi-stage.js';
+import { PixiStage } from '../../src/pixi-stage.js';
 
 const defaultFontFamily = TextStyle.defaultTextStyle.fontFamily;
 

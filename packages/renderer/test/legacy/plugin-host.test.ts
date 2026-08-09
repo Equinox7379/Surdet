@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { RendererPluginHost } from '../src/plugin-host.js';
-import type { AdvStage } from '../src/types.js';
+import { RendererPluginHost } from '../../src/plugin-host.js';
+import type { RendererPluginStage } from '../../src/plugin-host.js';
 
-const stage: AdvStage = { setBackground() {}, setPortrait() {}, removePortrait() {}, showText() {}, showChoices() {}, hideChoices() {}, setFade() {} };
+const stage: RendererPluginStage = { getQuality: () => 'balanced' };
 
 describe('RendererPluginHost', () => {
   it('isolates a failed plugin and keeps later plugins running', () => {
