@@ -463,6 +463,24 @@ describe('MenuLayer projection and lifecycle contract', () => {
     }
   });
 
+  it('guards the settings close button while preserving the underlying menu', () => {
+    const runtime = makeRealMenuRuntime();
+    const onClose = vi.fn();
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      runtime.facade.commands.menu.showSettings([], vi.fn(), onClose);
+
+      findText(runtime.root, '×').emit('pointerdown', pointerEvent);
+
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(1);
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
   it('coordinates real save/load selection and close paths exactly once', () => {
     const runtime = makeRealMenuRuntime();
     const onSelect = vi.fn();
@@ -503,6 +521,41 @@ describe('MenuLayer projection and lifecycle contract', () => {
       expect(() => findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent)).toThrow(failure);
       expect(runtime.restoreCommandRail).toHaveBeenCalledTimes(4);
       expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('guards the save/load close button while preserving the underlying menu', () => {
+    const runtime = makeRealMenuRuntime();
+    const onClose = vi.fn();
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      runtime.facade.commands.menu.showSaveLoad({ mode: 'load', slots: [] }, vi.fn(), onClose);
+
+      findText(runtime.root, '×').emit('pointerdown', pointerEvent);
+
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(1);
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('cleans up save/load before propagating an onClose failure', () => {
+    const runtime = makeRealMenuRuntime();
+    const failure = new Error('save/load close guard');
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      runtime.facade.commands.menu.showSaveLoad({ mode: 'save', slots: [] }, vi.fn(), () => { throw failure; });
+
+      expect(() => findText(runtime.root, '×').emit('pointerdown', pointerEvent)).toThrow(failure);
+
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+      expect(runtime.lifecycle.snapshot().listeners).toBe(1);
     } finally {
       disposeRealMenuRuntime(runtime);
     }
