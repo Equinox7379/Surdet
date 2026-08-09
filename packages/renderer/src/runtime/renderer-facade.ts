@@ -388,7 +388,13 @@ export class RendererFacade {
           this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
           this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
-          this.#callMenu('showSettings', this.#menuPort.showSettings, rows.slice(), onChange, onClose);
+          this.#callMenu(
+            'showSettings',
+            this.#menuPort.showSettings,
+            rows.slice(),
+            onChange,
+            this.#wrapMenuRailRestore(onClose),
+          );
           this.#syncMenuOverlay();
           return;
         }
@@ -410,7 +416,13 @@ export class RendererFacade {
           this.#callMenu('hideSettings', this.#menuPort.hideSettings);
           this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
-          this.#callMenu('showSaveLoad', this.#menuPort.showSaveLoad, { ...view, slots: view.slots.slice() }, onSelect, onClose);
+          this.#callMenu(
+            'showSaveLoad',
+            this.#menuPort.showSaveLoad,
+            { ...view, slots: view.slots.slice() },
+            this.#wrapMenuRailRestore(onSelect),
+            this.#wrapMenuRailRestore(onClose),
+          );
           this.#syncMenuOverlay();
           return;
         }
@@ -624,6 +636,13 @@ export class RendererFacade {
 
   #syncMenuOverlay(): void {
     this.#menuOverlay = this.#menuPort ? { ...this.#menuPort.menu() } : { type: 'none' };
+  }
+
+  #wrapMenuRailRestore<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {
+    return (...args: T) => {
+      this.#stage.restoreCommandRail?.();
+      callback(...args);
+    };
   }
 
   /** M3 cross-layer coordination: the Facade owns the only v2 World focus call. */
