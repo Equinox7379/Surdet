@@ -1,6 +1,5 @@
 {
   "schemaVersion": 3,
-  "generatedAt": "2026-08-09T14:20:55.381Z",
   "baselineCommit": "cab200b5aaed49b053b18ff05907aac4d02fb731",
   "currentCommit": "93b472bf20e351b53f151323d5080070427fd7f2",
   "pairCount": 20,
@@ -803,6 +802,8 @@
       }
     ]
   },
+  "sampledAt": "2026-08-09T13:31:47.300Z",
+  "rebuiltAt": "2026-08-09T14:48:11.573Z",
   "warmups": [
     {
       "pair": 0,

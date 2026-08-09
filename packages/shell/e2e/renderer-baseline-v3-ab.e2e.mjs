@@ -220,6 +220,7 @@ async function main() {
   const baselineCommit = gitSha(baselineRoot);
   const currentCommit = gitSha(currentRoot);
   const warmupOrder = ['baseline', 'current'];
+  const sampledAt = new Date().toISOString();
   const warmups = [];
   for (const role of warmupOrder) {
     const root = role === 'baseline' ? baselineRoot : currentRoot;
@@ -274,6 +275,8 @@ async function main() {
   );
   const output = {
     ...result,
+    sampledAt,
+    rebuiltAt: new Date().toISOString(),
     warmups,
     rawLaunches,
     health: {

@@ -42,7 +42,7 @@ export interface RendererV3RawLaunch {
     readonly completed: number;
     readonly failed: number;
     readonly current?: string | null;
-    readonly done?: boolean;
+    readonly done: boolean;
   };
   readonly errors: {
     readonly page: readonly string[];
@@ -106,7 +106,8 @@ export interface RendererV3MetricComparison {
 
 export interface RendererBaselineV3 {
   readonly schemaVersion: typeof RENDERER_BASELINE_V3_SCHEMA_VERSION;
-  readonly generatedAt: string;
+  readonly sampledAt: string;
+  readonly rebuiltAt: string;
   readonly baselineCommit: string;
   readonly currentCommit: string;
   readonly pairCount: number;
@@ -125,7 +126,7 @@ export interface RendererBaselineV3 {
   readonly historicalComparison: RendererV3HistoricalComparison;
 }
 
-export type RendererV3ComparisonResult = Omit<RendererBaselineV3, 'warmups' | 'rawLaunches' | 'health' | 'historicalComparison'>;
+export type RendererV3ComparisonResult = Omit<RendererBaselineV3, 'sampledAt' | 'rebuiltAt' | 'warmups' | 'rawLaunches' | 'health' | 'historicalComparison'>;
 
 export interface RendererV3HistoricalComparison {
   readonly baselinePath: string;
@@ -144,6 +145,7 @@ export interface RendererV3HistoricalFailure {
 
 const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const METRIC_NAMES: readonly RendererMetricName[] = [
   'coldStartMs',
   'assetReadyMs',
@@ -164,6 +166,12 @@ function assertSourceSha(value: unknown, label: string): asserts value is string
 function assertSha256(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || !SHA256_PATTERN.test(value)) {
     throw new Error(`${label} 必须是完整 64 位 SHA-256`);
+  }
+}
+
+function assertIsoTimestamp(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || !ISO_TIMESTAMP_PATTERN.test(value) || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`${label} 必须是合法 ISO 时间戳`);
   }
 }
 
@@ -341,14 +349,18 @@ function assertRawLaunch(value: unknown, label: string, pairCount: number, expec
   assertNonNegativeInteger(value.assetLoading.total, `${label}.assetLoading.total`);
   assertNonNegativeInteger(value.assetLoading.completed, `${label}.assetLoading.completed`);
   assertNonNegativeInteger(value.assetLoading.failed, `${label}.assetLoading.failed`);
+  if (value.assetLoading.total <= 0) {
+    throw new Error(`${label}.assetLoading.total 必须大于 0`);
+  }
+  if (value.assetLoading.completed !== value.assetLoading.total) {
+    throw new Error(`${label}.assetLoading.completed 必须等于 total`);
+  }
   if (value.assetLoading.current !== undefined
     && value.assetLoading.current !== null
     && typeof value.assetLoading.current !== 'string') {
     throw new Error(`${label}.assetLoading.current 必须是字符串或 null`);
   }
-  if (value.assetLoading.done !== undefined && typeof value.assetLoading.done !== 'boolean') {
-    throw new Error(`${label}.assetLoading.done 必须是布尔值`);
-  }
+  if (value.assetLoading.done !== true) throw new Error(`${label}.assetLoading.done 必须为 true`);
   if (value.assetLoading.failed !== 0) {
     throw new Error(`${label}.assetLoading.failed 必须为 0 才能作为绿色候选`);
   }
@@ -446,7 +458,6 @@ export function compareRendererBaselineV3(input: {
   readonly currentEnvironment: RendererV3Environment;
   readonly baseline: RendererV3Run;
   readonly current: RendererV3Run;
-  readonly generatedAt?: string;
 }): RendererV3ComparisonResult {
   assertSourceSha(input.baselineCommit, 'baselineCommit');
   assertSourceSha(input.currentCommit, 'currentCommit');
@@ -477,7 +488,6 @@ export function compareRendererBaselineV3(input: {
   const failures = METRIC_NAMES.map((name) => metricComparisons[name]).filter((item) => !item.passed);
   return {
     schemaVersion: RENDERER_BASELINE_V3_SCHEMA_VERSION,
-    generatedAt: input.generatedAt ?? new Date().toISOString(),
     baselineCommit: input.baselineCommit,
     currentCommit: input.currentCommit,
     pairCount: input.pairCount,
@@ -565,7 +575,8 @@ export function validateRendererBaselineV3(input: unknown): asserts input is Ren
   }
   assertSourceSha(input.baselineCommit, 'baselineCommit');
   assertSourceSha(input.currentCommit, 'currentCommit');
-  assertNonEmptyString(input.generatedAt, 'generatedAt');
+  assertIsoTimestamp(input.sampledAt, 'sampledAt');
+  assertIsoTimestamp(input.rebuiltAt, 'rebuiltAt');
   if (typeof input.pairCount !== 'number' || !Number.isInteger(input.pairCount) || input.pairCount < RENDERER_V3_MIN_INTERACTION_SAMPLES) {
     throw new Error(`Renderer v3 pairCount 至少需要 ${RENDERER_V3_MIN_INTERACTION_SAMPLES}`);
   }
@@ -630,7 +641,6 @@ export function validateRendererBaselineV3(input: unknown): asserts input is Ren
     currentEnvironment: input.environment.current,
     baseline: input.baseline,
     current: input.current,
-    generatedAt: input.generatedAt as string,
   });
   if (JSON.stringify(input.comparison) !== JSON.stringify(recomputed.comparison)) {
     throw new Error('Renderer v3 comparison 与 raw 样本重算结果不一致');
