@@ -4,8 +4,8 @@
  */
 export {
   AdvRenderer,
-  createPresentationPorts,
 } from './legacy/legacy-renderer-adapter.js';
+export { createPresentationPorts } from './runtime/presentation-ports.js';
 export type {
   AdvRendererOptions,
   PresentationPortOptions,
