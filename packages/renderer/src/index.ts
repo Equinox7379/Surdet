@@ -24,6 +24,7 @@ export * from './performance.js';
 export * from './quality.js';
 export * from './resource-lifecycle.js';
 export * from './lifecycle/render-lifecycle.js';
+export * from './lifecycle/async-generation.js';
 export * from './presentation.js';
 export * from './localization.js';
 export * from './plugin-host.js';
