@@ -14,6 +14,7 @@ const npmArgs = (...args) => [...npmPrefix, ...args];
 export const verificationSteps = [
   { id: 'tools', command: npmCommand, args: npmArgs('run', 'verify:tools') },
   { id: 'renderer-boundaries', command: npmCommand, args: npmArgs('run', 'verify:renderer-boundaries') },
+  { id: 'renderer-legacy', command: npmCommand, args: npmArgs('run', 'verify:renderer-legacy') },
   { id: 'docs', command: npmCommand, args: npmArgs('run', 'verify:docs') },
   { id: 'hygiene', command: npmCommand, args: npmArgs('run', 'verify:hygiene') },
   { id: 'types', command: npmCommand, args: npmArgs('run', 'typecheck') },
