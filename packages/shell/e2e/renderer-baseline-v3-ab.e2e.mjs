@@ -4,6 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as url from 'node:url';
+import {
+  sha256File,
+  validateRendererBaselineV3Artifact,
+} from './renderer-baseline-v3-artifact.mjs';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const shellDir = path.resolve(scriptDir, '..');
@@ -80,6 +84,7 @@ function collectEnvironment(workspaceRoot) {
     electron: readPackageVersion(workspaceRoot, 'electron'),
     playwright: readPackageVersion(workspaceRoot, 'playwright'),
     buildMode: 'electron-dev-shell-starter',
+    packageLockSha256: sha256File(path.join(workspaceRoot, 'package-lock.json')),
   };
 }
 
@@ -104,14 +109,31 @@ async function measureTitleSettings(page) {
 }
 
 async function measureSceneStart(page) {
-  const elapsed = await page.evaluate(async () => {
+  // v3 正式口径 A：从 titleSelect("new") 开始，到命令完成并提交下一帧。
+  // position.sceneId 只在正式 elapsed 捕获之后作为健康确认，不进入 sceneP95Ms。
+  return page.evaluate(async () => {
     const startedAt = performance.now();
     await window.__surdetDebug.titleSelect('new');
+    const titleSelectDoneAt = performance.now();
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    return performance.now() - startedAt;
+    const nextFrameAt = performance.now();
+    const positionDeadline = nextFrameAt + 10000;
+    let positionReadyAt = performance.now();
+    while (window.__surdetDebug?.position?.sceneId === undefined) {
+      if (performance.now() > positionDeadline) throw new Error('入口场景位置未在诊断窗口内可观测');
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    positionReadyAt = performance.now();
+    return {
+      elapsed: nextFrameAt - startedAt,
+      diagnostics: {
+        titleSelectMs: titleSelectDoneAt - startedAt,
+        positionReadyMs: positionReadyAt - startedAt,
+        nextFrameMs: nextFrameAt - startedAt,
+        positionWaitAfterCommandMs: Math.max(0, positionReadyAt - titleSelectDoneAt),
+      },
+    };
   });
-  await page.waitForFunction(() => window.__surdetDebug?.position?.sceneId !== undefined, undefined, { timeout: 10000 });
-  return elapsed;
 }
 
 async function collectLaunchSample(workspaceRoot, role, pair) {
@@ -146,7 +168,7 @@ async function collectLaunchSample(workspaceRoot, role, pair) {
     await reloadForReady(page);
     const menuOpenP95Ms = await measureTitleSettings(page);
     await reloadForReady(page);
-    const sceneP95Ms = await measureSceneStart(page);
+    const sceneMeasurement = await measureSceneStart(page);
     const assetLoading = await page.evaluate(() => ({ ...window.__surdetDebug.assetLoading }));
     return {
       pair,
@@ -154,7 +176,8 @@ async function collectLaunchSample(workspaceRoot, role, pair) {
       coldStartMs,
       assetReadyMs,
       menuOpenP95Ms,
-      sceneP95Ms,
+      sceneP95Ms: sceneMeasurement.elapsed,
+      sceneDiagnostics: sceneMeasurement.diagnostics,
       assetLoading,
       errors: {
         page: [...pageErrors],
@@ -256,25 +279,26 @@ async function main() {
     health: {
       warmups: warmups.length,
       formalSamples: rawLaunches.length,
-      assetsFailed: rawLaunches.reduce((sum, sample) => sum + Number(sample.assetLoading.failed ?? 0), 0),
-      pageErrors: rawLaunches.reduce((sum, sample) => sum + sample.errors.page.length, 0),
-      consoleErrors: rawLaunches.reduce((sum, sample) => sum + sample.errors.console.length, 0),
-      failedRequests: rawLaunches.reduce((sum, sample) => sum + sample.errors.failedRequests.length, 0),
+      assetsFailed: [...warmups, ...rawLaunches].reduce((sum, sample) => sum + Number(sample.assetLoading.failed ?? 0), 0),
+      pageErrors: [...warmups, ...rawLaunches].reduce((sum, sample) => sum + sample.errors.page.length, 0),
+      consoleErrors: [...warmups, ...rawLaunches].reduce((sum, sample) => sum + sample.errors.console.length, 0),
+      failedRequests: [...warmups, ...rawLaunches].reduce((sum, sample) => sum + sample.errors.failedRequests.length, 0),
     },
     historicalComparison: {
       baselinePath: 'docs/baselines/renderer-v2-cab200b.json',
+      baselineSha256: sha256File(path.join(repositoryRoot, 'docs', 'baselines', 'renderer-v2-cab200b.json')),
       baselineSourceSha: historical.sourceSha,
       failures: historicalComparison.failures,
     },
   };
-  v3.validateRendererBaselineV3(output);
+  validateRendererBaselineV3Artifact(output, { repositoryRoot, v3, v2 });
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
   console.log(`已写入 Renderer v3 候选 A/B 基线：${outputPath}`);
   console.log(`pairCount=${pairCount} formalSamples=${rawLaunches.length} warmupOrder=${warmupOrder.join('->')}`);
   console.log(`baseline=${baselineCommit} current=${currentCommit}`);
   for (const metric of Object.values(result.comparison.metrics)) {
-    console.log(`${metric.metric} baseline=${metric.baseline.toFixed(3)} current=${metric.current.toFixed(3)} pairedRatio=${metric.ratio.toFixed(6)} limit=${metric.limit} ${metric.passed ? 'PASS' : 'FAIL'}`);
+    console.log(`${metric.metric} ${metric.summaryStatistic} baseline=${metric.baselineSummary.toFixed(3)} current=${metric.currentSummary.toFixed(3)} gateRatio=${metric.gateRatio.toFixed(6)} pairedMedianRatio=${metric.pairedMedianRatio.toFixed(6)} limit=${metric.limit} ${metric.passed ? 'PASS' : 'FAIL'}`);
   }
   console.log(`historicalV2Failures=${historicalComparison.failures.map((item) => item.metric).join(',') || 'none'}`);
   if (result.comparison.failures.length > 0) process.exitCode = 2;
