@@ -116,6 +116,9 @@ class DialogueStageHarness implements AdvStage {
 
   setActiveSpeaker(characterId: string | null): void {
     this.activeSpeakerId = characterId;
+    // Mirror the legacy PixiStage contract: the old Stage method owns the
+    // dialogue-state + world-focus combination when no Dialogue port is injected.
+    this.setPortraitFocus(characterId);
   }
 
   setPortraitFocus(characterId: string | null): void {

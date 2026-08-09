@@ -299,7 +299,6 @@ export class RendererFacade {
       setActiveSpeaker: (characterId) => {
         if (!this.#dialoguePort) {
           this.#callDialogue('setActiveSpeaker', undefined, this.#stage.setActiveSpeaker, characterId);
-          this.#coordinateWorldFocus(characterId);
           return;
         }
         this.#callDialogue('setActiveSpeaker', this.#dialoguePort.setActiveSpeaker, this.#stage.setActiveSpeaker, characterId);
