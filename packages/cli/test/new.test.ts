@@ -25,6 +25,10 @@ describe('surdet new', () => {
     expect(fs.existsSync(path.join(target, 'game.config.json'))).toBe(true);
     expect(fs.existsSync(path.join(target, 'src/main.ts'))).toBe(true);
 
+    const generatedMain = fs.readFileSync(path.join(target, 'src/main.ts'), 'utf8');
+    expect(generatedMain).toContain('createRendererRuntime');
+    expect(generatedMain).not.toMatch(/\bPixiStage\b|\bAdvRenderer\b/);
+
     const pkg = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')) as { name: string };
     expect(pkg.name).toBe('surdet-mytest');
 

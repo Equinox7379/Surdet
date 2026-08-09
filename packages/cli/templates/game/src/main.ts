@@ -1,5 +1,5 @@
 /**
- * 游戏入口：解释器 + 渲染层 + 程序化占位素材。
+ * 游戏入口：解释器 + Renderer v2 Runtime + 程序化占位素材。
  * 替换 content/ 下的剧本、game.config.json 与素材即可做成新游戏。
  */
 import {
@@ -13,17 +13,22 @@ import {
   AUTO_SLOT,
 } from '@surdet/core';
 import type { VarDeclaration, SaveStorage, SaveSnapshot, CoreEventMap } from '@surdet/core';
-import { PixiStage, AdvRenderer, AudioManager, AssetLoadQueue, FrameScheduler, RollbackBuffer, actionForKeyboardEvent, decideSceneHotReload } from '@surdet/renderer';
-import type { AssetLoadJob, AssetPriority } from '@surdet/renderer';
+import {
+  AudioManager,
+  AssetLoadQueue,
+  RollbackBuffer,
+  actionForKeyboardEvent,
+  createRendererRuntime,
+  decideSceneHotReload,
+  rendererInputForGameAction,
+} from '@surdet/renderer';
+import type { AssetLoadJob, AssetPriority, GameAction } from '@surdet/renderer';
 import { connectSystemRouter, createDefaultHost } from '@surdet/host';
 import gameConfig from '../game.config.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
 async function main(): Promise<void> {
   const appEl = document.getElementById('app')!;
-  const stage = new PixiStage();
-  await stage.init();
-  appEl.appendChild(stage.app!.canvas);
 
   const decls: VarDeclaration[] = Object.entries(gameConfig.variables).map(([name, d]) => ({
     name,
@@ -32,15 +37,35 @@ async function main(): Promise<void> {
   const store = new VariableStore(decls);
 
   const registry = new SceneRegistry();
-  for (const [path, load] of Object.entries(sceneFiles)) {
+  for (const [scenePath, load] of Object.entries(sceneFiles)) {
     const src = (await load()) as string;
-    const id = path.split('/').pop()!.replace(/\.gal$/, '');
-    registry.register(compileScene(src, path, id));
+    const id = scenePath.split('/').pop()!.replace(/\.gal$/, '');
+    registry.register(compileScene(src, scenePath, id));
   }
 
   const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry);
   const audio = new AudioManager();
+  const runtime = await createRendererRuntime({
+    audio,
+    onAdvance: () => interp.advance(),
+    onSelect: (index) => interp.choose(index),
+  });
+  appEl.appendChild(runtime.canvas);
+  runtime.resize();
+  window.addEventListener('resize', () => runtime.resize());
+
+  const controller = runtime.controller;
+  const commands = runtime.commands;
+  const queries = runtime.queries;
+  const assets = commands.assets;
+  const loading = commands.loading;
+  const presentation = commands.presentation;
+  controller.connect(bus);
+  interp.setPresentationHooks({
+    snapshot: () => queries.presentation.snapshot(),
+    restore: (payload) => presentation.restore(payload),
+  });
 
   // 模板也使用同一资源队列；替换 content/assets 后无需重写启动加载生命周期。
   const imageFiles = import.meta.glob('../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg}', {
@@ -48,44 +73,34 @@ async function main(): Promise<void> {
     import: 'default',
     eager: true,
   });
-  const priorityFor = (rel: string): AssetPriority => {
-    if (rel === 'bg/title_bg.png' || rel.startsWith('fonts/')) return 'critical';
-    if (rel.startsWith('bg/') || rel.startsWith('portrait/') || rel.startsWith('avatar/')) return 'scene';
+  const priorityFor = (relativePath: string): AssetPriority => {
+    if (relativePath === 'bg/title_bg.png' || relativePath.startsWith('fonts/')) return 'critical';
+    if (relativePath.startsWith('bg/') || relativePath.startsWith('portrait/') || relativePath.startsWith('avatar/')) return 'scene';
     return 'background';
   };
-  const assetJobs: AssetLoadJob[] = Object.entries(imageFiles).map(([path, url]) => {
-    const rel = path.replace('../content/assets/', '');
-    const fname = rel.split('/').pop() ?? '';
-    const kind = rel.split('/')[0] ?? '';
-    const format = fname.split('.').pop()?.toLowerCase();
+  const assetJobs: AssetLoadJob[] = Object.entries(imageFiles).map(([assetPath, url]) => {
+    const relativePath = assetPath.replace('../content/assets/', '');
+    const fileName = relativePath.split('/').pop() ?? '';
+    const kind = relativePath.split('/')[0] ?? '';
+    const format = fileName.split('.').pop()?.toLowerCase();
     return {
-      id: rel,
-      priority: priorityFor(rel),
+      id: relativePath,
+      priority: priorityFor(relativePath),
       load: async () => {
         if (kind === 'bg') {
-          await stage.registerBackground(fname.replace(/\.[^.]+$/, ''), url as string, format);
+          await assets.registerBackground(fileName.replace(/\.[^.]+$/, ''), url as string, format);
         } else if (kind === 'portrait') {
-          const seg = fname.replace(/\.[^.]+$/, '').split('_');
-          if (seg[0]) await stage.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url as string, format);
+          const parts = fileName.replace(/\.[^.]+$/, '').split('_');
+          if (parts[0]) await assets.registerPortrait(parts[0], parts[1] ?? 'normal', parts[2] ?? 'normal', url as string, format);
         } else if (kind === 'avatar') {
-          await stage.registerAvatar(fname.replace(/\.[^.]+$/, ''), url as string, format);
+          await assets.registerAvatar(fileName.replace(/\.[^.]+$/, ''), url as string, format);
         }
       },
     } satisfies AssetLoadJob;
   });
-  const finalAssetProgress = await new AssetLoadQueue(4).run(assetJobs, (progress) => stage.showLoading?.(progress));
+  const finalAssetProgress = await new AssetLoadQueue(4).run(assetJobs, (progress) => loading.showLoading(progress));
   if (finalAssetProgress.failed > 0) console.warn(`[game] ${finalAssetProgress.failed} asset(s) failed`);
-  stage.hideLoading?.();
-
-  const renderer = new AdvRenderer(stage, audio, {
-    onAdvance: () => interp.advance(),
-    onSelect: (i) => interp.choose(i),
-  });
-  renderer.subscribe(bus);
-  interp.setPresentationHooks({
-    snapshot: () => renderer.snapshotPresentation(),
-    restore: (payload) => renderer.restorePresentation(payload),
-  });
+  loading.hideLoading();
 
   const rollback = new RollbackBuffer<SaveSnapshot>();
   let lastRollbackKey: string | null = null;
@@ -99,23 +114,21 @@ async function main(): Promise<void> {
     lastRollbackKey = null;
   };
   const performRollback = (): boolean => {
-    if (rollbackRestoring || interp.status !== 'awaiting-advance' || renderer.status === 'choice' || renderer.backlogOpen) return false;
+    if (rollbackRestoring || interp.status !== 'awaiting-advance' || controller.status === 'choice' || controller.backlogOpen) return false;
     const current = interp.saveSnapshot();
     const currentKey = current ? checkpointKey(current) : null;
     const first = rollback.pop();
     if (!first) return false;
-    const frame = currentKey !== null && checkpointKey(first.snapshot) === currentKey
-      ? rollback.pop()
-      : first;
+    const frame = currentKey !== null && checkpointKey(first.snapshot) === currentKey ? rollback.pop() : first;
     if (!frame) {
       rollback.push(first);
       return false;
     }
     rollbackRestoring = true;
     try {
-      renderer.resetSession();
+      runtime.resetSession();
       interp.loadSnapshot(frame.snapshot);
-      stage.restorePresentation?.(frame.presentation);
+      presentation.restore(frame.presentation);
       audio.restorePlayback?.(frame.audio);
       lastRollbackKey = checkpointKey(frame.snapshot);
       return true;
@@ -137,19 +150,14 @@ async function main(): Promise<void> {
       if (key === null || key === lastRollbackKey) return;
       rollback.push({
         snapshot,
-        presentation: renderer.snapshotPresentation(),
+        presentation: queries.presentation.snapshot(),
         audio: audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
       });
       lastRollbackKey = key;
     });
   });
 
-  stage.app!.canvas.addEventListener('pointerdown', () => renderer.advance());
-  new FrameScheduler(stage.app!, renderer, [stage]);
-
-  // 窗口自适应：等比缩放画布适配窗口尺寸（内部分辨率不变）
-  stage.fitWindow();
-  window.addEventListener('resize', () => stage.fitWindow());
+  runtime.canvas.addEventListener('pointerdown', () => controller.advance());
 
   const saveStorage: SaveStorage = {
     read: (slot) => {
@@ -168,67 +176,62 @@ async function main(): Promise<void> {
       }
     },
     delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
-    list: () =>
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith('surdet:save:'))
-        .map((k) => k.slice('surdet:save:'.length)),
+    list: () => Object.keys(localStorage)
+      .filter((key) => key.startsWith('surdet:save:'))
+      .map((key) => key.slice('surdet:save:'.length)),
   };
   const saves = new SaveManager(saveStorage);
 
   // 大系统指令由通用宿主路由；新游戏在这里注入自己的 adapters，不复制整套接线。
   const host = createDefaultHost({
     interpreter: interp,
-    renderer,
-    stage,
+    renderer: controller,
+    stage: commands.system,
     onError: (error) => console.error('[game] 宿主 adapter 失败：', error),
     onSystemBoundary: () => { clearRollback(); },
   });
   connectSystemRouter(bus, host, (error) => console.error('[game] system 路由失败：', error));
 
-  // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
   bus.on('autosave', (snap) => {
     if (rollbackRestoring) return;
     void saves.save(AUTO_SLOT, snap).then(() => console.info('[game] 自动存档'));
   });
-
-  // 存档场景哈希不匹配：存档后剧本被编辑，定位可能漂移（引擎仍照常加载，此处提醒）
   bus.on('saveMismatch', (p) => {
     clearRollback();
     console.warn(`[game] 存档与剧本版本不一致（场景 ${p.sceneId}），定位可能漂移`);
   });
 
-  window.addEventListener('keydown', (e) => {
-    const action = actionForKeyboardEvent(e, 'standard');
+  const routeGameAction = (action: GameAction): void => {
     if (action === 'quickSave') {
-      e.preventDefault();
       const snap = interp.saveSnapshot('quick');
-      if (snap) {
-        void saves.save(QUICK_SLOT, snap).then(() => console.info('[game] 快速存档'));
-      }
-    } else if (action === 'quickLoad') {
-      e.preventDefault();
+      if (snap) void saves.save(QUICK_SLOT, snap);
+      return;
+    }
+    if (action === 'quickLoad') {
       void (async () => {
         if (await saves.has(QUICK_SLOT)) {
-          try {
-            clearRollback();
-            interp.loadSnapshot(await saves.load(QUICK_SLOT));
-            console.info('[game] 快速读档');
-          } catch (err) {
-            console.error('[game] 读档失败：', err);
-          }
+          clearRollback();
+          interp.loadSnapshot(await saves.load(QUICK_SLOT));
         }
       })();
-    } else if (action === 'rollback') {
-      if (performRollback()) e.preventDefault();
-    } else if (action === 'auto') {
-      console.info('[game] 自动播放', renderer.toggleAuto() ? '开' : '关');
-    } else if (action === 'skip') {
-      console.info('[game] 快进', renderer.toggleSkip() ? '开' : '关');
+      return;
     }
+    if (action === 'rollback') {
+      performRollback();
+      return;
+    }
+    const input = rendererInputForGameAction(action);
+    if (input) controller.dispatchInput(input);
+  };
+
+  window.addEventListener('keydown', (event) => {
+    const action = actionForKeyboardEvent(event, 'standard');
+    if (!action) return;
+    event.preventDefault();
+    routeGameAction(action);
   });
 
   // Vite 开发环境热更新：只替换当前注册表中的 .gal 场景，生产构建不会包含此分支。
-  // 编译失败或场景 ID 不匹配时保留旧场景；活动场景的 PC 超界则安全限制后重放。
   if (import.meta.hot) {
     let hotReloadChain = Promise.resolve();
     import.meta.hot.on('vite:beforeUpdate', (payload) => {
@@ -267,6 +270,16 @@ async function main(): Promise<void> {
       }
     });
   }
+
+  window.addEventListener('beforeunload', () => {
+    try {
+      host.dispose();
+      runtime.dispose();
+      audio.dispose();
+    } catch (error) {
+      console.warn('[game] runtime dispose failed:', error);
+    }
+  });
 
   interp.start('ch01_01');
   console.info(`[game] started: ${registry.all().length} scenes`);
