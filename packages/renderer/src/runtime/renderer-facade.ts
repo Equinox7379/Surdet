@@ -33,6 +33,7 @@ import type {
   GalleryCommands,
   LoadingCommands,
   MenuCommands,
+  MenuProjectionPort,
   PreferenceCommands,
   PresentationCommands,
   RendererCommands,
@@ -88,6 +89,8 @@ export type RendererStagePort = Partial<AdvStage> & {
   hideSystemMenu?: () => void;
   showSaveLoad?: (view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void) => void;
   hideSaveLoad?: () => void;
+  /** @internal Facade-owned compatibility bridge for restoring the dialogue rail after an overlay closes. */
+  restoreCommandRail?: () => void;
   showMap?: (view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void) => void;
   hideMap?: () => void;
   showShop?: (view: { gold: number; items: { id: string; name: string; price: number }[]; message?: string }, onBuy: (itemId: string) => void, onClose: () => void) => void;
@@ -117,6 +120,8 @@ export interface RendererFacadeOptions {
   assetRegistry?: RenderAssetRegistry;
   /** M3 public dialogue projection port; concrete Layer details stay behind it. */
   dialogueLayer?: DialogueProjectionPort;
+  /** M4 public menu projection port; concrete Layer details stay behind it. */
+  menuLayer?: MenuProjectionPort;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -174,6 +179,7 @@ export class RendererFacade {
   #resourceSnapshot?: () => RendererResourceSnapshot;
   #assetRegistry?: RenderAssetRegistry;
   #dialoguePort?: DialogueProjectionPort;
+  #menuPort?: MenuProjectionPort;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
 
@@ -184,6 +190,7 @@ export class RendererFacade {
     this.#resourceSnapshot = options.resourceSnapshot;
     this.#assetRegistry = options.assetRegistry;
     this.#dialoguePort = options.dialogueLayer;
+    this.#menuPort = options.menuLayer;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -311,42 +318,112 @@ export class RendererFacade {
 
     const menu: MenuCommands = {
       showTitle: (view, onSelect) => {
+        if (this.#menuPort) {
+          this.#callMenu('hideEnding', this.#menuPort.hideEnding);
+          this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
+          this.#callMenu('showTitle', this.#menuPort.showTitle, { ...view, items: view.items.slice() }, onSelect);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'showTitle', this.#stage.showTitle, { ...view, items: view.items.slice() }, onSelect);
         this.#menuOverlay = { type: 'title' };
       },
       hideTitle: (restoreCommandRail) => {
+        if (this.#menuPort) {
+          this.#callMenu('hideTitle', this.#menuPort.hideTitle, restoreCommandRail);
+          if (restoreCommandRail !== false) this.#stage.restoreCommandRail?.();
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'hideTitle', this.#stage.hideTitle, restoreCommandRail);
         this.#clearMenu('title');
       },
       showEnding: (text) => {
+        if (this.#menuPort) {
+          this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
+          this.#callDialogue('hideChoices', this.#dialoguePort?.hideChoices, this.#stage.hideChoices);
+          this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog);
+          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#callMenu('hideSettings', this.#menuPort.hideSettings);
+          this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
+          this.#callMenu('hideSystemMenu', this.#menuPort.hideSystemMenu);
+          this.#callMenu('hideTitle', this.#menuPort.hideTitle, false);
+          this.#callMenu('showEnding', this.#menuPort.showEnding, text);
+          this.#callStage('world', 'setFade', this.#stage.setFade, 0);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'showEnding', this.#stage.showEnding, text);
         this.#menuOverlay = { type: 'ending' };
       },
       hideEnding: () => {
+        if (this.#menuPort) {
+          this.#callMenu('hideEnding', this.#menuPort.hideEnding);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'hideEnding', this.#stage.hideEnding);
         this.#clearMenu('ending');
       },
       showSystemMenu: (items, onSelect, onClose) => {
+        if (this.#menuPort) {
+          this.#callMenu('showSystemMenu', this.#menuPort.showSystemMenu, items.slice(), onSelect, onClose);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'showSystemMenu', this.#stage.showSystemMenu, items.slice(), onSelect, onClose);
         this.#menuOverlay = { type: 'system-menu' };
       },
       hideSystemMenu: () => {
+        if (this.#menuPort) {
+          this.#callMenu('hideSystemMenu', this.#menuPort.hideSystemMenu);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'hideSystemMenu', this.#stage.hideSystemMenu);
         this.#clearMenu('system-menu');
       },
       showSettings: (rows, onChange, onClose) => {
+        if (this.#menuPort) {
+          this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
+          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
+          this.#callMenu('showSettings', this.#menuPort.showSettings, rows.slice(), onChange, onClose);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'showSettings', this.#stage.showSettings, rows.slice(), onChange, onClose);
         this.#menuOverlay = { type: 'settings' };
       },
       hideSettings: () => {
+        if (this.#menuPort) {
+          this.#callMenu('hideSettings', this.#menuPort.hideSettings);
+          this.#stage.restoreCommandRail?.();
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'hideSettings', this.#stage.hideSettings);
         this.#clearMenu('settings');
       },
       showSaveLoad: (view, onSelect, onClose) => {
+        if (this.#menuPort) {
+          this.#callMenu('hideSettings', this.#menuPort.hideSettings);
+          this.#callStage('gallery', 'hideGallery', this.#stage.hideGallery);
+          this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
+          this.#callMenu('showSaveLoad', this.#menuPort.showSaveLoad, { ...view, slots: view.slots.slice() }, onSelect, onClose);
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'showSaveLoad', this.#stage.showSaveLoad, { ...view, slots: view.slots.slice() }, onSelect, onClose);
         this.#menuOverlay = { type: 'save-load', mode: view.mode };
       },
       hideSaveLoad: () => {
+        if (this.#menuPort) {
+          this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
+          this.#stage.restoreCommandRail?.();
+          this.#syncMenuOverlay();
+          return;
+        }
         this.#callStage('menu', 'hideSaveLoad', this.#stage.hideSaveLoad);
         this.#clearMenu('save-load');
       },
@@ -433,7 +510,7 @@ export class RendererFacade {
     const overlayQueries: OverlayQueries = {
       menu: () => {
         this.#ensureQueryActive('overlay', 'menu');
-        return { ...this.#menuOverlay };
+        return this.#menuPort ? { ...this.#menuPort.menu() } : { ...this.#menuOverlay };
       },
     };
     const preferenceQueries: PreferenceQueries = {
@@ -533,6 +610,20 @@ export class RendererFacade {
     if (!method) this.#missing('dialogue', command);
     const receiver = layerMethod ? this.#dialoguePort : this.#stage;
     return Reflect.apply(method, receiver, args as unknown as unknown[]);
+  }
+
+  #callMenu<T, Args extends readonly unknown[]>(
+    command: string,
+    layerMethod: ((...args: Args) => T) | undefined,
+    ...args: Args
+  ): T {
+    this.#ensureActive('menu', command);
+    if (!layerMethod) this.#missing('menu', command);
+    return Reflect.apply(layerMethod, this.#menuPort, args as unknown as unknown[]);
+  }
+
+  #syncMenuOverlay(): void {
+    this.#menuOverlay = this.#menuPort ? { ...this.#menuPort.menu() } : { type: 'none' };
   }
 
   /** M3 cross-layer coordination: the Facade owns the only v2 World focus call. */
