@@ -128,4 +128,40 @@ describe('legacy menu projection contract', () => {
       stage.destroy();
     }
   });
+
+  it('wraps legacy settings and save/load callbacks with one command-rail restore', () => {
+    const stage = new PixiStage();
+    const settingsClose = vi.fn();
+    const saveSelect = vi.fn();
+    const saveClose = vi.fn();
+    const settingsProjection = vi.spyOn(stage.menuLayer, 'showSettings');
+    const saveLoadProjection = vi.spyOn(stage.menuLayer, 'showSaveLoad');
+    const restoreCommandRail = vi.spyOn(stage, 'restoreCommandRail');
+
+    try {
+      stage.showSettings([], vi.fn(), settingsClose);
+      const wrappedSettingsClose = settingsProjection.mock.calls[0]?.[2];
+      expect(wrappedSettingsClose).not.toBe(settingsClose);
+      restoreCommandRail.mockClear();
+      wrappedSettingsClose?.();
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(settingsClose).toHaveBeenCalledOnce();
+
+      stage.showSaveLoad({ mode: 'load', slots: [{ id: 'slot-1', empty: false, label: '序章' }] }, saveSelect, saveClose);
+      const wrappedSaveSelect = saveLoadProjection.mock.calls[0]?.[1];
+      const wrappedSaveClose = saveLoadProjection.mock.calls[0]?.[2];
+      expect(wrappedSaveSelect).not.toBe(saveSelect);
+      expect(wrappedSaveClose).not.toBe(saveClose);
+      restoreCommandRail.mockClear();
+      wrappedSaveSelect?.('slot-1');
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(saveSelect).toHaveBeenCalledOnce();
+      restoreCommandRail.mockClear();
+      wrappedSaveClose?.();
+      expect(restoreCommandRail).toHaveBeenCalledOnce();
+      expect(saveClose).toHaveBeenCalledOnce();
+    } finally {
+      stage.destroy();
+    }
+  });
 });

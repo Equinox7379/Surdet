@@ -77,8 +77,8 @@ export class MenuLayer implements MenuProjectionPort {
   #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
   #saveLoadLayer: Container;
   #saveLoadHandlers: { onSelect: (slotId: string) => void; onClose: () => void } | null = null;
+  #saveLoadMode: 'save' | 'load' | null = null;
   #thumbCache = new Map<string, Texture>();
-  #overlay: MenuOverlayState = { type: 'none' };
 
   constructor(options: MenuLayerOptions) {
     this.#root = options.uiLayer;
@@ -114,8 +114,18 @@ export class MenuLayer implements MenuProjectionPort {
   }
 
   menu(): MenuOverlayState {
-    if (this.#overlay.type === 'save-load') return { ...this.#overlay };
-    return { ...this.#overlay };
+    if (this.#disposed) return { type: 'none' };
+    for (let i = this.#root.children.length - 1; i >= 0; i--) {
+      const layer = this.#root.children[i];
+      if (layer === this.#titleLayer && layer.visible) return { type: 'title' };
+      if (layer === this.#endingLayer && layer.visible) return { type: 'ending' };
+      if (layer === this.#menuLayer && layer.visible) return { type: 'system-menu' };
+      if (layer === this.#settingsLayer && layer.visible) return { type: 'settings' };
+      if (layer === this.#saveLoadLayer && layer.visible && this.#saveLoadMode) {
+        return { type: 'save-load', mode: this.#saveLoadMode };
+      }
+    }
+    return { type: 'none' };
   }
 
   setFrameRequest(handler: FrameRequestHandler | null): void {
@@ -214,9 +224,7 @@ export class MenuLayer implements MenuProjectionPort {
         label.eventMode = 'static';
         label.cursor = 'pointer';
         label.on('pointerdown', () => {
-          const handler = this.#titleHandler;
-          this.hideTitle(false);
-          handler?.(item.id);
+          this.#titleHandler?.(item.id);
         });
         label.on('pointerover', () => {
           line.visible = true;
@@ -231,7 +239,6 @@ export class MenuLayer implements MenuProjectionPort {
     });
     this.#bringToFront(layer);
     layer.visible = true;
-    this.#overlay = { type: 'title' };
     this.#registerListener('title', layer);
   }
 
@@ -241,7 +248,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#titleLayer, 'title');
     this.#titleLayer.visible = false;
     this.#titleHandler = null;
-    this.#clearOverlay('title');
   }
 
   showEnding(text = 'THE END'): void {
@@ -263,7 +269,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.#endingLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000), label);
     this.#bringToFront(this.#endingLayer);
     this.#endingLayer.visible = true;
-    this.#overlay = { type: 'ending' };
   }
 
   hideEnding(): void {
@@ -271,7 +276,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.#requestFrame();
     this.#clearLayer(this.#endingLayer, 'ending');
     this.#endingLayer.visible = false;
-    this.#clearOverlay('ending');
   }
 
   showSystemMenu(items: readonly SystemMenuItemView[], onSelect: (id: string) => void, onClose: () => void): void {
@@ -368,7 +372,6 @@ export class MenuLayer implements MenuProjectionPort {
     layer.visible = true;
     this.#menuMotionDur = presentationDuration(260, this.#presentation());
     this.#menuMotionRemain = this.#menuMotionDur;
-    this.#overlay = { type: 'system-menu' };
     this.#registerListener('system-menu', layer);
   }
 
@@ -381,7 +384,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.#menuPanel = null;
     this.#menuHandlers = null;
     this.#menuMotionRemain = 0;
-    this.#clearOverlay('system-menu');
   }
 
   showSettings(rows: readonly SettingsRowView[], onChange: (id: string, dir: -1 | 1) => void, onClose: () => void): void {
@@ -474,7 +476,6 @@ export class MenuLayer implements MenuProjectionPort {
     });
     this.#bringToFront(layer);
     layer.visible = true;
-    this.#overlay = { type: 'settings' };
     this.#registerListener('settings', layer);
   }
 
@@ -485,7 +486,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsLayer.visible = false;
     this.#settingsHandlers = null;
     this.#settingsRows = [];
-    this.#clearOverlay('settings');
   }
 
   showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
@@ -493,6 +493,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#requestFrame();
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
     this.#saveLoadHandlers = { onSelect, onClose };
+    this.#saveLoadMode = view.mode;
     const layer = this.#saveLoadLayer;
     const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.84 });
     bg.eventMode = 'static';
@@ -607,7 +608,6 @@ export class MenuLayer implements MenuProjectionPort {
     });
     this.#bringToFront(layer);
     layer.visible = true;
-    this.#overlay = { type: 'save-load', mode: view.mode };
     this.#registerListener('save-load', layer);
   }
 
@@ -617,7 +617,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
     this.#saveLoadLayer.visible = false;
     this.#saveLoadHandlers = null;
-    this.#clearOverlay('save-load');
+    this.#saveLoadMode = null;
   }
 
   reset(): void {
@@ -629,7 +629,6 @@ export class MenuLayer implements MenuProjectionPort {
     this.hideSettings();
     this.hideSaveLoad();
     this.#clearThumbnailCache();
-    this.#overlay = { type: 'none' };
     this.#menuMotionRemain = 0;
     this.#settingsRows = [];
   }
@@ -648,7 +647,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#menuHandlers = null;
     this.#settingsHandlers = null;
     this.#saveLoadHandlers = null;
-    this.#overlay = { type: 'none' };
+    this.#saveLoadMode = null;
     try {
       this.#lifecycle.releaseOwner('menu');
     } finally {
@@ -680,10 +679,6 @@ export class MenuLayer implements MenuProjectionPort {
   #bringToFront(layer: Container): void {
     const index = this.#root.children.length - 1;
     if (index >= 0 && this.#root.getChildIndex(layer) !== index) this.#root.setChildIndex(layer, index);
-  }
-
-  #clearOverlay(type: MenuOverlayState['type']): void {
-    if (this.#overlay.type === type) this.#overlay = { type: 'none' };
   }
 
   #thumbTexture(url: string): Texture {

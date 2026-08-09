@@ -1742,7 +1742,7 @@ export class PixiStage implements AdvStage {
     this.hideSaveLoad();
     this.hideGallery();
     this.hideCommandRail();
-    this.#menu.showSettings(rows, onChange, onClose);
+    this.#menu.showSettings(rows, onChange, this.#restoreMenuRail(onClose));
   }
 
   /** 隐藏设置面板 */
@@ -1937,7 +1937,7 @@ export class PixiStage implements AdvStage {
     this.hideSettings();
     this.hideGallery();
     this.hideCommandRail();
-    this.#menu.showSaveLoad(view, onSelect, onClose);
+    this.#menu.showSaveLoad(view, this.#restoreMenuRail(onSelect), this.#restoreMenuRail(onClose));
   }
 
   /** 隐藏存档/读档界面。 */
@@ -2285,5 +2285,12 @@ export class PixiStage implements AdvStage {
 
   #requestFrame(): void {
     this.#frameRequest?.();
+  }
+
+  #restoreMenuRail<T extends readonly unknown[]>(callback: (...args: T) => void): (...args: T) => void {
+    return (...args: T) => {
+      this.restoreCommandRail();
+      callback(...args);
+    };
   }
 }
