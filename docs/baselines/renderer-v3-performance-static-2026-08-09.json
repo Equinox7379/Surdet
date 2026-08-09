@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-09T14:23:52.463Z",
+  "roots": {
+    "m0": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-m7-5-v3-20260809-1\\baseline",
+    "current": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-m7-5-v3-20260809-1\\current",
+    "m6": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-m7-ab-20260809-2\\m6",
+    "m7": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-m7-ab-20260809-2\\m7"
+  },
+  "bundles": {
+    "m0": {
+      "sourceSha": "cab200b5aaed49b053b18ff05907aac4d02fb731",
+      "file": "examples/starter/dist/assets/index-C_rMwpEj.js",
+      "bytes": 583620,
+      "sha256": "1bb9d9e08bd25db633f53ffab4d2c738fc78a9a107fc382c57b53a6093f34023",
+      "tokenPresence": {
+        "summarizeRendererMetricV3": false,
+        "pairedMedianRatio": false,
+        "packageLockSha256": false,
+        "historicalComparison": false,
+        "__surdetDebug": true
+      }
+    },
+    "current": {
+      "sourceSha": "93b472bf20e351b53f151323d5080070427fd7f2",
+      "file": "examples/starter/dist/assets/index-15Xa0GkV.js",
+      "bytes": 626453,
+      "sha256": "a4a24f2e75180b06253ab4235be85b7febcd203586b2b723a62bfdc57c351681",
+      "tokenPresence": {
+        "summarizeRendererMetricV3": false,
+        "pairedMedianRatio": false,
+        "packageLockSha256": false,
+        "historicalComparison": false,
+        "__surdetDebug": true
+      }
+    },
+    "m6": {
+      "sourceSha": "32375052f7b4bf68d2d97308a2bbca893916d5f9",
+      "file": "examples/starter/dist/assets/index-CeLk4xCN.js",
+      "bytes": 618400,
+      "sha256": "639e2b563c80f11390f35d7a3a351f844da50bd5c273136f0cd3666d60439f03",
+      "tokenPresence": {
+        "summarizeRendererMetricV3": false,
+        "pairedMedianRatio": false,
+        "packageLockSha256": false,
+        "historicalComparison": false,
+        "__surdetDebug": true
+      }
+    },
+    "m7": {
+      "sourceSha": "12c539904ee2971f7190b8a25e846aa202c934ce",
+      "file": "examples/starter/dist/assets/index-C3YIOVOF.js",
+      "bytes": 626051,
+      "sha256": "9f7e2794f319916389ed99f35c7b5c942dd2a3a28adb2cd8b32f16e84d36b644",
+      "tokenPresence": {
+        "summarizeRendererMetricV3": false,
+        "pairedMedianRatio": false,
+        "packageLockSha256": false,
+        "historicalComparison": false,
+        "__surdetDebug": true
+      }
+    }
+  },
+  "deltas": {
+    "m0ToCurrentBytes": 42833,
+    "m6ToCurrentBytes": 8053,
+    "m6ToM7Bytes": 7651,
+    "m7ToCurrentBytes": 402
+  },
+  "changedRuntimeFilesM0ToCurrent": [
+    "examples/starter/src/surdet-window.d.ts",
+    "packages/renderer/src/adv-renderer.ts",
+    "packages/renderer/src/api/renderer-commands.ts",
+    "packages/renderer/src/api/renderer-errors.ts",
+    "packages/renderer/src/api/renderer-input.ts",
+    "packages/renderer/src/api/renderer-queries.ts",
+    "packages/renderer/src/api/renderer-runtime.ts",
+    "packages/renderer/src/battle-view.ts",
+    "packages/renderer/src/diagnostics/renderer-baseline-v3.ts",
+    "packages/renderer/src/diagnostics/renderer-baseline.ts",
+    "packages/renderer/src/gamepad.ts",
+    "packages/renderer/src/index.ts",
+    "packages/renderer/src/keybindings.ts",
+    "packages/renderer/src/layers/dialogue/dialogue-layer.ts",
+    "packages/renderer/src/layers/gallery/gallery-layer.ts",
+    "packages/renderer/src/layers/menu/menu-layer.ts",
+    "packages/renderer/src/layers/system-panel/system-panel-layer.ts",
+    "packages/renderer/src/layers/world/world-layer.ts",
+    "packages/renderer/src/lifecycle/async-generation.ts",
+    "packages/renderer/src/lifecycle/render-lifecycle.ts",
+    "packages/renderer/src/pixi-stage.ts",
+    "packages/renderer/src/resource-lifecycle.ts",
+    "packages/renderer/src/runtime/create-renderer-runtime.ts",
+    "packages/renderer/src/runtime/presentation-controller.ts",
+    "packages/renderer/src/runtime/renderer-facade.ts",
+    "packages/renderer/src/services/render-asset-registry.ts",
+    "packages/renderer/src/types.ts",
+    "packages/shell/e2e/renderer-baseline-options.mjs",
+    "packages/shell/e2e/renderer-baseline-v3-ab.e2e.mjs",
+    "packages/shell/e2e/renderer-baseline.e2e.mjs"
+  ],
+  "changedRuntimeFilesM6ToCurrent": [
+    "packages/renderer/src/adv-renderer.ts",
+    "packages/renderer/src/api/renderer-commands.ts",
+    "packages/renderer/src/api/renderer-runtime.ts",
+    "packages/renderer/src/diagnostics/renderer-baseline-v3.ts",
+    "packages/renderer/src/index.ts",
+    "packages/renderer/src/layers/world/world-layer.ts",
+    "packages/renderer/src/pixi-stage.ts",
+    "packages/renderer/src/runtime/create-renderer-runtime.ts",
+    "packages/renderer/src/runtime/presentation-controller.ts",
+    "packages/renderer/src/runtime/renderer-facade.ts",
+    "packages/shell/e2e/renderer-baseline-v3-ab.e2e.mjs"
+  ],
+  "conclusion": {
+    "v3DiagnosticTokensInStarterBundle": true,
+    "debugProbePresentInM0AndCurrent": true
+  }
+}

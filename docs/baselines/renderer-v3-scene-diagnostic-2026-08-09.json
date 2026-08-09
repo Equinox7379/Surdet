@@ -1,0 +1,334 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-09T14:19:49.968Z",
+  "probeDefinition": {
+    "formalScene": "从 titleSelect(\"new\") 开始，到命令完成并提交下一帧；与 v2 等价。",
+    "position": "position.sceneId 只作为健康确认，绝不进入 formalSceneElapsedMs。",
+    "probe": "对 baseline/current 使用完全相同的外部只读页面探针；内部 reset/load/start 没有公开端口，因此不伪造不可观测的私有阶段耗时。"
+  },
+  "sampleCount": 5,
+  "executionOrder": [
+    {
+      "ordinal": 1,
+      "role": "baseline"
+    },
+    {
+      "ordinal": 1,
+      "role": "current"
+    },
+    {
+      "ordinal": 2,
+      "role": "baseline"
+    },
+    {
+      "ordinal": 2,
+      "role": "current"
+    },
+    {
+      "ordinal": 3,
+      "role": "baseline"
+    },
+    {
+      "ordinal": 3,
+      "role": "current"
+    },
+    {
+      "ordinal": 4,
+      "role": "baseline"
+    },
+    {
+      "ordinal": 4,
+      "role": "current"
+    },
+    {
+      "ordinal": 5,
+      "role": "baseline"
+    },
+    {
+      "ordinal": 5,
+      "role": "current"
+    }
+  ],
+  "environment": {
+    "baseline": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    },
+    "current": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    }
+  },
+  "source": {
+    "baseline": "cab200b5aaed49b053b18ff05907aac4d02fb731",
+    "current": "93b472bf20e351b53f151323d5080070427fd7f2"
+  },
+  "summaries": {
+    "baseline": {
+      "sampleCount": 5,
+      "sceneMedianMs": 25.799999997019768,
+      "sceneP95Ms": 34.02000000029802,
+      "titleSelectMedianMs": 5.299999997019768,
+      "positionReadyP95Ms": 34.579999999701975,
+      "positionWaitAfterCommandP95Ms": 28.42000000178814,
+      "nextFrameP95Ms": 34.02000000029802
+    },
+    "current": {
+      "sampleCount": 5,
+      "sceneMedianMs": 24.200000002980232,
+      "sceneP95Ms": 25.31999999880791,
+      "titleSelectMedianMs": 5.299999997019768,
+      "positionReadyP95Ms": 25.799999998509882,
+      "positionWaitAfterCommandP95Ms": 20.52000000178814,
+      "nextFrameP95Ms": 25.31999999880791
+    }
+  },
+  "rawSamples": [
+    {
+      "role": "baseline",
+      "ordinal": 1,
+      "formalSceneElapsedMs": 36,
+      "diagnostics": {
+        "titleSelectMs": 6.299999997019768,
+        "positionReadyMs": 36.5,
+        "nextFrameMs": 36,
+        "positionWaitAfterCommandMs": 30.200000002980232
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "current",
+      "ordinal": 1,
+      "formalSceneElapsedMs": 25.399999998509884,
+      "diagnostics": {
+        "titleSelectMs": 5.299999997019768,
+        "positionReadyMs": 25.899999998509884,
+        "nextFrameMs": 25.399999998509884,
+        "positionWaitAfterCommandMs": 20.600000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "baseline",
+      "ordinal": 2,
+      "formalSceneElapsedMs": 25.799999997019768,
+      "diagnostics": {
+        "titleSelectMs": 5.299999997019768,
+        "positionReadyMs": 26.19999999552965,
+        "nextFrameMs": 25.799999997019768,
+        "positionWaitAfterCommandMs": 20.899999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "current",
+      "ordinal": 2,
+      "formalSceneElapsedMs": 24.200000002980232,
+      "diagnostics": {
+        "titleSelectMs": 4.5,
+        "positionReadyMs": 24.700000002980232,
+        "nextFrameMs": 24.200000002980232,
+        "positionWaitAfterCommandMs": 20.200000002980232
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "baseline",
+      "ordinal": 3,
+      "formalSceneElapsedMs": 26.100000001490116,
+      "diagnostics": {
+        "titleSelectMs": 5.600000001490116,
+        "positionReadyMs": 26.899999998509884,
+        "nextFrameMs": 26.100000001490116,
+        "positionWaitAfterCommandMs": 21.299999997019768
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "current",
+      "ordinal": 3,
+      "formalSceneElapsedMs": 25,
+      "diagnostics": {
+        "titleSelectMs": 24.899999998509884,
+        "positionReadyMs": 25.399999998509884,
+        "nextFrameMs": 25,
+        "positionWaitAfterCommandMs": 0.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "baseline",
+      "ordinal": 4,
+      "formalSceneElapsedMs": 24.700000002980232,
+      "diagnostics": {
+        "titleSelectMs": 4.700000002980232,
+        "positionReadyMs": 25.100000001490116,
+        "nextFrameMs": 24.700000002980232,
+        "positionWaitAfterCommandMs": 20.399999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "current",
+      "ordinal": 4,
+      "formalSceneElapsedMs": 23.899999998509884,
+      "diagnostics": {
+        "titleSelectMs": 5.5,
+        "positionReadyMs": 24.399999998509884,
+        "nextFrameMs": 23.899999998509884,
+        "positionWaitAfterCommandMs": 18.899999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "baseline",
+      "ordinal": 5,
+      "formalSceneElapsedMs": 22.399999998509884,
+      "diagnostics": {
+        "titleSelectMs": 4.600000001490116,
+        "positionReadyMs": 23,
+        "nextFrameMs": 22.399999998509884,
+        "positionWaitAfterCommandMs": 18.399999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "current",
+      "ordinal": 5,
+      "formalSceneElapsedMs": 22.30000000447035,
+      "diagnostics": {
+        "titleSelectMs": 5,
+        "positionReadyMs": 22.899999998509884,
+        "nextFrameMs": 22.30000000447035,
+        "positionWaitAfterCommandMs": 17.899999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    }
+  ]
+}
