@@ -103,6 +103,7 @@ export type RendererStagePort = Partial<AdvStage> & {
   showBaseCommands?: (view: BasePanelView, onExecute: (commandId: string) => void, onClose: () => void) => void;
   hideBase?: () => void;
   captureThumbnail?: () => string | null;
+  validatePresentation?: (snapshot: unknown) => void;
 };
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
@@ -876,8 +877,7 @@ export class RendererFacade {
 
   /** M3 cross-layer coordination: the Facade owns the only v2 World focus call. */
   #coordinateWorldFocus(characterId: string | null): void {
-    if (!this.#stage.setPortraitFocus) return;
-    this.#callStage('world', 'setPortraitFocus', this.#stage.setPortraitFocus, characterId);
+    this.#callWorld('setPortraitFocus', this.#worldPort?.setPortraitFocus, this.#stage.setPortraitFocus, characterId);
   }
 
   #queryStage<T>(domain: string, command: string, method: (() => T) | undefined): T;
@@ -904,6 +904,8 @@ export class RendererFacade {
         command: 'validate',
       });
     }
+    const validateWorld = this.#worldPort?.validatePresentation ?? this.#stage.validatePresentation;
+    if (validateWorld) validateWorld.call(this.#worldPort ?? this.#stage, snapshot.stage ?? null);
   }
 
   #clearMenu(type: MenuOverlayState['type']): void {

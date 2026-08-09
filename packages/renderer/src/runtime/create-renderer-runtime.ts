@@ -235,7 +235,11 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     const controllerOptions = createControllerOptions(stage, ports, lifecycle, options);
     controller = new RuntimePresentationController(ports.commands, ports.queries, options.audio ?? NULL_AUDIO, controllerOptions);
     const monitor = options.performanceMonitor ?? new RenderPerformanceMonitor();
-    scheduler = new FrameScheduler(stage.app!, controller, [stage, stage.worldLayer], { monitor });
+    // PixiStage is the composition-root frame source and already aggregates
+    // WorldLayer/DialogueLayer/MenuLayer update work. Registering WorldLayer
+    // separately duplicates its wake-up path (WorldLayer also calls the Stage
+    // callback), so keep one production scheduler source.
+    scheduler = new FrameScheduler(stage.app!, controller, [stage], { monitor });
     compositionAttempted = true;
     return await createRendererRuntimeFromInternals({
       canvas: stage.app!.canvas,

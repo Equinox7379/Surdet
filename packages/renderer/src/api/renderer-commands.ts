@@ -75,6 +75,8 @@ export interface WorldProjectionPort extends WorldCommands {
   getPostProcess(): PostProcessSettings;
   captureThumbnail(): string | null;
   snapshotPresentation(): unknown;
+  /** Read-only validation/prepare hook used before a complete presentation commit. */
+  validatePresentation?(snapshot: unknown): void;
   restorePresentation(snapshot: unknown): void;
   clearPresentation(): void;
   reset(options?: { preserveWorld?: boolean }): void;

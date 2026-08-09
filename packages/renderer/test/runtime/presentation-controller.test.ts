@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
+import { Texture } from 'pixi.js';
 import { Backlog } from '../../src/backlog.js';
 import { AdvRenderer } from '../../src/adv-renderer.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import { WorldLayer } from '../../src/layers/world/world-layer.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
 import type { AdvStage } from '../../src/types.js';
@@ -175,5 +178,56 @@ describe('PresentationController', () => {
     controller.dispose();
     expect(lifecycle.snapshot().listeners).toBe(0);
     lifecycle.dispose();
+  });
+
+  it('keeps the existing presentation transaction intact when nested World restore is invalid', async () => {
+    const stage = stageHarness();
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const world = new WorldLayer({ width: 1280, height: 720, assets, lifecycle });
+    await assets.registerBackground('hall', Texture.EMPTY);
+    world.setBackground('hall');
+
+    const ports = createPresentationPorts(stage, { worldLayer: world });
+    const controller = new PresentationController(ports.commands, ports.queries, undefined, {
+      commands: ports.commands,
+      queries: ports.queries,
+      lifecycle,
+    });
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    const definition = {
+      version: 1 as const,
+      id: 'restore-atomicity',
+      durationMs: 1000,
+      tracks: [{
+        kind: 'audio' as const,
+        cues: [{ atMs: 0, durationMs: 1000, easing: 'linear' as const, action: 'bgm', key: 'restore-atomicity' }],
+      }],
+    };
+
+    try {
+      bus.emit('timeline', { id: 'restore-atomicity', blocking: false, definition });
+      const before = controller.snapshotPresentation();
+      const stageSnapshot = (before as { stage: Record<string, unknown> }).stage;
+      const invalid = {
+        ...(before as Record<string, unknown>),
+        stage: { ...stageSnapshot, cameraScale: 99 },
+      };
+
+      expect(() => controller.restorePresentation(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }),
+      );
+      expect(controller.snapshotPresentation()).toEqual(before);
+
+      controller.restorePresentation(before);
+      expect(controller.snapshotPresentation()).toEqual(before);
+    } finally {
+      off();
+      controller.dispose();
+      world.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
   });
 });

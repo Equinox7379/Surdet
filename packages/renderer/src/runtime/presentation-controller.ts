@@ -6,6 +6,7 @@ import {
   type ChoiceEventPayload,
   type InstrEventPayload,
   type TimelineDefinition,
+  validateTimeline,
 } from '@surdet/core';
 import type { Backlog } from '../backlog.js';
 import { dequote } from '../dequote.js';
@@ -14,7 +15,8 @@ import { Typewriter } from '../text-buffer.js';
 import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
 import { NULL_AUDIO } from '../types.js';
-import { TimelinePlayer, type TimelinePlayerSnapshot } from '../timeline-player.js';
+import { TimelinePlayer, type TimelineFrameEvent, type TimelinePlayerSnapshot } from '../timeline-player.js';
+import { RendererCommandError } from '../api/renderer-errors.js';
 import type { RendererPluginHost } from '../plugin-host.js';
 import type { ShakeDirection } from '../world-effects-controller.js';
 import { BacklogSearchController } from '../backlog-search-controller.js';
@@ -35,6 +37,32 @@ const SKIP_MAX_LINES_PER_FRAME = 2000;
 /** 高精度时间（快进预算用；测试环境无 performance 时回退 Date.now） */
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function invalidPresentation(message: string, cause?: unknown): RendererCommandError {
+  return new RendererCommandError(message, {
+    code: 'PRESENTATION_SNAPSHOT_INVALID',
+    domain: 'presentation',
+    command: 'restorePresentation',
+    cause,
+  });
+}
+
+interface PreparedTimelineRestore {
+  readonly id: number;
+  readonly blocking: boolean;
+  readonly player: TimelinePlayer;
+  readonly events: readonly TimelineFrameEvent[];
+}
+
+interface PreparedPresentationRestore {
+  readonly stage: unknown;
+  readonly timelines: readonly PreparedTimelineRestore[];
+  readonly timelineSequence: number;
 }
 
 export interface AdvRendererOptions {
@@ -730,28 +758,58 @@ export class PresentationController {
 
   /** 先恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
   restorePresentation(payload: unknown): void {
+    const prepared = this.#preparePresentationRestore(payload);
     this.#clearTimelines();
-    if (typeof payload !== 'object' || payload === null) return;
-    const raw = payload as Record<string, unknown>;
-    this.#commands.presentation.restore(raw.stage ?? null);
-    if (!Array.isArray(raw.timelines)) return;
-    for (const item of raw.timelines) {
-      if (typeof item !== 'object' || item === null) continue;
-      const record = item as Record<string, unknown>;
-      if (typeof record.definition !== 'object' || record.definition === null) continue;
-      try {
-        const player = new TimelinePlayer(record.definition as TimelineDefinition);
-        player.restore(record.snapshot as TimelinePlayerSnapshot);
-        const id = typeof record.id === 'number' ? record.id : ++this.#timelineSeq;
-        const blocking = record.blocking === true;
-        this.#timelineRuns.set(id, { player, blocking });
-        if (blocking) this.#blockingTimelineId = id;
-        this.#applyTimelineEvents(player.eventsAtCursor());
-      } catch {
-        // Corrupt presentation payload is isolated from the story position.
-      }
+    this.#timelineSeq = prepared.timelineSequence;
+    this.#commands.presentation.restore(prepared.stage);
+    for (const timeline of prepared.timelines) {
+      this.#timelineRuns.set(timeline.id, { player: timeline.player, blocking: timeline.blocking });
+      if (timeline.blocking) this.#blockingTimelineId = timeline.id;
+      this.#applyTimelineEvents(timeline.events);
     }
     this.#requestFrame();
+  }
+
+  #preparePresentationRestore(payload: unknown): PreparedPresentationRestore {
+    if (!isRecord(payload) || payload.version !== 1) {
+      throw invalidPresentation('Presentation snapshot must be a version 1 object');
+    }
+    // This is a read-only validation/prepare phase. In the production composition
+    // root it validates the nested World snapshot before any controller timeline is cleared.
+    this.#commands.presentation.validate(payload);
+    const timelines: PreparedTimelineRestore[] = [];
+    let timelineSequence = this.#timelineSeq + 1;
+    const ids = new Set<number>();
+    if (payload.timelines !== undefined && !Array.isArray(payload.timelines)) {
+      throw invalidPresentation('Presentation timelines must be an array');
+    }
+    for (const item of (payload.timelines ?? [])) {
+      if (!isRecord(item) || !isRecord(item.definition)) {
+        throw invalidPresentation('Presentation timeline record is invalid');
+      }
+      const diagnostics = validateTimeline(item.definition);
+      if (diagnostics.length > 0) {
+        throw invalidPresentation('Presentation timeline definition is invalid', diagnostics);
+      }
+      const player = new TimelinePlayer(item.definition as unknown as TimelineDefinition);
+      try {
+        player.restore(item.snapshot as TimelinePlayerSnapshot);
+      } catch (error) {
+        throw invalidPresentation('Presentation timeline snapshot is invalid', error);
+      }
+      const id = typeof item.id === 'number' && Number.isFinite(item.id)
+        ? item.id
+        : ++timelineSequence;
+      if (ids.has(id)) throw invalidPresentation(`Duplicate presentation timeline id '${id}'`);
+      ids.add(id);
+      timelines.push({
+        id,
+        blocking: item.blocking === true,
+        player,
+        events: player.eventsAtCursor(),
+      });
+    }
+    return { stage: payload.stage ?? null, timelines, timelineSequence };
   }
 
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */
