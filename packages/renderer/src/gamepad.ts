@@ -9,6 +9,21 @@ export type GamepadAction =
   | 'up' | 'down' | 'left' | 'right'
   | 'shoulderLeft' | 'shoulderRight';
 
+/** Convert gamepad edges to Renderer actions without installing browser listeners. */
+export function rendererInputForGamepadAction(action: GamepadAction): RendererInputAction | null {
+  switch (action) {
+    case 'advance': return { type: 'advance' };
+    case 'cancel': return { type: 'escape' };
+    case 'up':
+    case 'left': return { type: 'choice.move', delta: -1 };
+    case 'down':
+    case 'right': return { type: 'choice.move', delta: 1 };
+    case 'shoulderLeft':
+    case 'shoulderRight': return { type: 'skip.toggle', scope: 'read' };
+    case 'menu': return null;
+  }
+}
+
 export interface GamepadSnapshot {
   buttons: boolean[];
   axes: number[];
@@ -115,3 +130,4 @@ export class GamepadPoller {
     this.#prev = null;
   }
 }
+import type { RendererInputAction } from './api/renderer-input.js';

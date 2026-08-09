@@ -1,9 +1,5 @@
-import {
-  EventBus,
-  type CoreEventMap,
-  type Unsubscribe,
-} from '@surdet/core';
-import { AdvRenderer, type AdvRendererOptions } from '../adv-renderer.js';
+import { type CoreEventMap, type EventBus, type Unsubscribe } from '@surdet/core';
+import type { AdvRendererOptions } from '../adv-renderer.js';
 import { FrameScheduler } from '../frame-scheduler.js';
 import { NULL_AUDIO } from '../types.js';
 import { PixiStage } from '../pixi-stage.js';
@@ -11,6 +7,7 @@ import { RenderPerformanceMonitor } from '../performance.js';
 import { RendererError } from '../api/renderer-errors.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../services/render-asset-registry.js';
+import { PresentationController as RuntimePresentationController } from './presentation-controller.js';
 import type { RendererInputAction } from '../api/renderer-input.js';
 import type {
   PresentationController,
@@ -44,16 +41,11 @@ export interface RendererRuntimeInternals {
  * state machine intact while exposing the M1 controller port to the facade.
  */
 class LegacyPresentationControllerAdapter implements RendererControllerPort {
-  readonly #legacy: AdvRenderer;
-  readonly #stage: RendererStagePort;
-  readonly #relay = new EventBus<CoreEventMap>();
-  #connectedCleanup: (() => void) | null = null;
-  #relayAttached = false;
+  readonly #legacy: RuntimePresentationController;
   #disposed = false;
 
-  constructor(legacy: AdvRenderer, stage: RendererStagePort) {
+  constructor(legacy: RuntimePresentationController) {
     this.#legacy = legacy;
-    this.#stage = stage;
   }
 
   get status(): PresentationController['status'] { return this.#legacy.status; }
@@ -69,30 +61,7 @@ class LegacyPresentationControllerAdapter implements RendererControllerPort {
 
   connect(bus: EventBus<CoreEventMap>): Unsubscribe {
     if (this.#disposed) return () => undefined;
-    this.#connectedCleanup?.();
-    if (!this.#relayAttached) {
-      this.#legacy.subscribe(this.#relay);
-      this.#relayAttached = true;
-    }
-
-    const unsubs: Unsubscribe[] = [
-      bus.on('text', (payload) => this.#relay.emit('text', payload)),
-      bus.on('choice', (payload) => this.#relay.emit('choice', payload)),
-      bus.on('instr', (payload) => this.#relay.emit('instr', payload)),
-      bus.on('wait', (payload) => this.#relay.emit('wait', payload)),
-      bus.on('video', (payload) => this.#relay.emit('video', payload)),
-      bus.on('timeline', (payload) => this.#relay.emit('timeline', payload)),
-      bus.on('stateReset', (payload) => this.#relay.emit('stateReset', payload)),
-    ];
-    let active = true;
-    const cleanup = (): void => {
-      if (!active) return;
-      active = false;
-      for (const unsubscribe of unsubs) unsubscribe();
-      if (this.#connectedCleanup === cleanup) this.#connectedCleanup = null;
-    };
-    this.#connectedCleanup = cleanup;
-    return cleanup;
+    return this.#legacy.connect(bus);
   }
 
   reset(options?: ResetSessionOptions): void { this.#legacy.resetSession(options); }
@@ -100,32 +69,7 @@ class LegacyPresentationControllerAdapter implements RendererControllerPort {
   select(index: number): boolean { return this.#legacy.select(index); }
 
   dispatchInput(action: RendererInputAction): boolean {
-    if (this.#disposed) return false;
-    switch (action.type) {
-      case 'advance':
-        return this.#legacy.advance();
-      case 'choice.move':
-        if (this.#legacy.status !== 'choice') return false;
-        if (action.delta < 0) this.#legacy.choiceUp();
-        else this.#legacy.choiceDown();
-        return true;
-      case 'choice.select':
-        return this.#legacy.select(action.index);
-      case 'backlog.toggle':
-        return this.#legacy.toggleBacklog();
-      case 'backlog.scroll':
-        if (!this.#legacy.backlogOpen || !this.#stage.scrollBacklog) return false;
-        this.#stage.scrollBacklog(action.delta);
-        return true;
-      case 'auto.toggle':
-        return this.#legacy.toggleAuto();
-      case 'skip.toggle':
-        return action.scope === 'all' ? this.#legacy.toggleSkipAll() : this.#legacy.toggleSkip();
-      case 'interface.toggle':
-        return this.#legacy.toggleHideInterface();
-      case 'escape':
-        return this.#legacy.handleBacklogEscape();
-    }
+    return this.#disposed ? false : this.#legacy.dispatchInput(action);
   }
 
   setTextSpeed(charsPerSecond: number): void { this.#legacy.setTextSpeed(charsPerSecond); }
@@ -139,10 +83,7 @@ class LegacyPresentationControllerAdapter implements RendererControllerPort {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    this.#connectedCleanup?.();
-    this.#connectedCleanup = null;
-    this.#relay.clear();
-    this.#legacy.destroy();
+    this.#legacy.dispose();
   }
 }
 
@@ -212,7 +153,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       ...(options.onSelect ? { onSelect: options.onSelect } : {}),
       ...(options.onWaitEnd ? { onWaitEnd: options.onWaitEnd } : {}),
     };
-    const legacy = new AdvRenderer(stage, options.audio ?? NULL_AUDIO, controllerOptions);
+    const legacy = new RuntimePresentationController(stage, options.audio ?? NULL_AUDIO, controllerOptions);
     if (options.onBacklogClose) {
       const legacyClose = stage.onBacklogClose;
       stage.onBacklogClose = () => {
@@ -220,7 +161,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
         options.onBacklogClose?.();
       };
     }
-    const controller = new LegacyPresentationControllerAdapter(legacy, stage);
+    const controller = new LegacyPresentationControllerAdapter(legacy);
     const monitor = options.performanceMonitor ?? new RenderPerformanceMonitor();
     const scheduler = new FrameScheduler(stage.app!, controller, [stage], { monitor });
     return createRendererRuntimeFromInternals({

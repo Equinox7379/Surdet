@@ -2,7 +2,7 @@
  * M7 支柱5：手柄边沿检测纯逻辑测试。
  */
 import { describe, expect, it } from 'vitest';
-import { diffGamepad, snapshotOf } from '../src/gamepad.js';
+import { diffGamepad, rendererInputForGamepadAction, snapshotOf } from '../src/gamepad.js';
 import type { GamepadSnapshot } from '../src/gamepad.js';
 
 function snap(buttons: number[], axes: number[] = [0, 0]): GamepadSnapshot {
@@ -59,5 +59,14 @@ describe('diffGamepad（边沿检测）', () => {
     const s = snapshotOf(pad);
     expect(s.buttons).toEqual([true, false]);
     expect(s.axes).toEqual([0.2, -0.7]);
+  });
+
+  it('maps gamepad renderer actions without installing listeners', () => {
+    expect(rendererInputForGamepadAction('advance')).toEqual({ type: 'advance' });
+    expect(rendererInputForGamepadAction('cancel')).toEqual({ type: 'escape' });
+    expect(rendererInputForGamepadAction('up')).toEqual({ type: 'choice.move', delta: -1 });
+    expect(rendererInputForGamepadAction('right')).toEqual({ type: 'choice.move', delta: 1 });
+    expect(rendererInputForGamepadAction('shoulderRight')).toEqual({ type: 'skip.toggle', scope: 'read' });
+    expect(rendererInputForGamepadAction('menu')).toBeNull();
   });
 });

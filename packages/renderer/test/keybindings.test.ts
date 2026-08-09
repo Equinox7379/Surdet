@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionForKeyboardEvent, bindingsForPreset, type GameAction } from '../src/keybindings.js';
+import { actionForKeyboardEvent, bindingsForPreset, rendererInputForGameAction, type GameAction } from '../src/keybindings.js';
 
 describe('keybindings', () => {
   it('provides duplicate-free standard and left-handed presets', () => {
@@ -24,5 +24,17 @@ describe('keybindings', () => {
     const bindings = bindingsForPreset('standard');
     expect(bindings).not.toHaveProperty('userDefined');
     expect(actionForKeyboardEvent({ code: 'KeyZ', ctrlKey: false, altKey: false, metaKey: false }, 'standard')).toBeNull();
+  });
+
+  it('maps only renderer-owned game actions to normalized input', () => {
+    expect(rendererInputForGameAction('advance')).toEqual({ type: 'advance' });
+    expect(rendererInputForGameAction('auto')).toEqual({ type: 'auto.toggle' });
+    expect(rendererInputForGameAction('skip')).toEqual({ type: 'skip.toggle', scope: 'read' });
+    expect(rendererInputForGameAction('backlog')).toEqual({ type: 'backlog.toggle' });
+    expect(rendererInputForGameAction('hideUi')).toEqual({ type: 'interface.toggle' });
+    expect(rendererInputForGameAction('menu')).toBeNull();
+    expect(rendererInputForGameAction('quickSave')).toBeNull();
+    expect(rendererInputForGameAction('quickLoad')).toBeNull();
+    expect(rendererInputForGameAction('rollback')).toBeNull();
   });
 });
