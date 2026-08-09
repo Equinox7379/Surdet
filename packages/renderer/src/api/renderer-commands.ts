@@ -1,5 +1,5 @@
 import type { BacklogEntry } from '../backlog.js';
-import type { BattleView } from '../battle-view.js';
+import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
 import type { LoadingProgress } from '../loading-progress.js';
 import type { PostProcessSettings } from '../post-process.js';
@@ -21,8 +21,7 @@ import type {
   SystemMenuItemView,
   TitleView,
 } from '../ui-views.js';
-import type { BattleHandlers } from '../pixi-stage.js';
-import type { GalleryOverlayState, MenuOverlayState } from './renderer-queries.js';
+import type { GalleryOverlayState, MenuOverlayState, SystemPanelOverlayState } from './renderer-queries.js';
 
 /** M1 intentionally accepts URL/path strings; Pixi objects remain an internal legacy detail. */
 export type RendererAssetSource = string;
@@ -144,6 +143,11 @@ export interface SystemPanelCommands {
   hideBaseCommands(): void;
   showVideo(source: string, onEnd: () => void): void;
   hideVideo(): void;
+}
+
+/** Public M6 system-panel projection port; overlay reads are pure and safe after disposal. */
+export interface SystemPanelProjectionPort extends SystemPanelCommands {
+  system(): SystemPanelOverlayState;
 }
 
 export interface LoadingCommands {

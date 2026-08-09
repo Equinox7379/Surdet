@@ -299,6 +299,7 @@ export function createPresentationPorts(
     overlay: {
       menu: () => ({ type: 'none' }),
       gallery: () => ({ type: 'none' }),
+      system: () => ({ type: 'none' }),
     },
     preferences: {
       quality: () => stage.getQuality?.() ?? 'balanced',

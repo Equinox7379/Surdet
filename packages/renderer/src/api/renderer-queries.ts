@@ -29,9 +29,18 @@ export type GalleryOverlayState =
   | { type: 'none' }
   | { type: 'gallery'; tab: 'cg' | 'music' | 'text'; mode: 'grid' | 'viewer'; viewerKey: string | null };
 
+export type SystemPanelOverlayState =
+  | { type: 'none' }
+  | { type: 'battle' }
+  | { type: 'map' }
+  | { type: 'shop' }
+  | { type: 'base' }
+  | { type: 'video' };
+
 export interface OverlayQueries {
   menu(): MenuOverlayState;
   gallery(): GalleryOverlayState;
+  system(): SystemPanelOverlayState;
 }
 
 export interface PreferenceQueries {
