@@ -62,6 +62,7 @@ import { createSettingsStorage } from '../../shared/settings-storage.js';
 import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
+import { createStarterOwnerTeardown } from './starter-owner-teardown.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
@@ -92,12 +93,6 @@ async function main(): Promise<void> {
   const fontBlobUrls = new Set<string>();
   const assetBlobUrls = new Set<string>();
   let lastLoadingProgress: LoadingProgress = { total: 0, completed: 0, failed: 0, current: null, done: false };
-  window.addEventListener('beforeunload', () => {
-    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
-    fontBlobUrls.clear();
-    for (const url of assetBlobUrls) URL.revokeObjectURL(url);
-    assetBlobUrls.clear();
-  });
 
   // 字体角色在标题首帧前全部加载，避免系统字体先闪现再替换；缺失时按角色独立回退。
   const speakerProfiles: SpeakerProfile[] = Object.entries(
@@ -180,7 +175,8 @@ async function main(): Promise<void> {
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
-  window.addEventListener('resize', () => runtime.resize());
+  const resizeHandler = (): void => runtime.resize();
+  window.addEventListener('resize', resizeHandler);
   const renderer = runtime.controller;
   const commands = runtime.commands;
   const queries = runtime.queries;
@@ -308,27 +304,31 @@ async function main(): Promise<void> {
   // @system 统一由 @surdet/host 路由；游戏只在上方注入配置、求解器和结果回调。
 
   // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
-  runtime.canvas.addEventListener('pointerdown', (e) => {
+  const canvasPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
     if (onTitleScreen) return;
     const s = interp.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.dispatchInput({ type: 'advance' });
-  });
+  };
+  runtime.canvas.addEventListener('pointerdown', canvasPointerDown);
 
   // 滚轮：Backlog 打开时滚动文字记录（galgame 惯例：鼠标滚轮回看历史）
-  runtime.canvas.addEventListener('wheel', (e) => {
+  const canvasWheel = (e: WheelEvent): void => {
     if (renderer.backlogOpen) {
       e.preventDefault();
       dialogue.scrollBacklog(e.deltaY > 0 ? 120 : -120);
     }
-  }, { passive: false });
+  };
+  const canvasWheelOptions: AddEventListenerOptions = { passive: false };
+  runtime.canvas.addEventListener('wheel', canvasWheel, canvasWheelOptions);
 
   // 右键 → 系统菜单（GalGame 惯例）；标题画面不弹（标题自带菜单，空白处右键蹦设置框属误弹，用户反馈修复）
-  runtime.canvas.addEventListener('contextmenu', (e) => {
+  const canvasContextMenu = (e: MouseEvent): void => {
     e.preventDefault();
     if (onTitleScreen) return;
     openSystemMenu();
-  });
+  };
+  runtime.canvas.addEventListener('contextmenu', canvasContextMenu);
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
@@ -981,24 +981,44 @@ async function main(): Promise<void> {
   });
   gamepad.start();
 
+  const ownerTeardown = createStarterOwnerTeardown({
+    runtime,
+    audioManager,
+    gamepad,
+    fontBlobUrls,
+    assetBlobUrls,
+    revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+  });
+  ownerTeardown.trackListener(() => window.removeEventListener('resize', resizeHandler));
+  ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('pointerdown', canvasPointerDown));
+  ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('wheel', canvasWheel, canvasWheelOptions));
+  ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('contextmenu', canvasContextMenu));
+  const beforeUnloadHandler = (): void => { ownerTeardown.dispose(); };
+  window.addEventListener('beforeunload', beforeUnloadHandler);
+  ownerTeardown.trackListener(() => window.removeEventListener('beforeunload', beforeUnloadHandler));
+
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
-  window.addEventListener('keydown', (e) => {
+  const ctrlKeyDown = (e: KeyboardEvent): void => {
     if (onTitleScreen) return;
     if (e.key === 'Control' && !renderer.skipMode) {
       ctrlTempSkip = true;
       renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
       refreshCommandRail();
     }
-  });
-  window.addEventListener('keyup', (e) => {
+  };
+  window.addEventListener('keydown', ctrlKeyDown);
+  ownerTeardown.trackListener(() => window.removeEventListener('keydown', ctrlKeyDown));
+  const ctrlKeyUp = (e: KeyboardEvent): void => {
     if (onTitleScreen) return;
     if (e.key === 'Control' && ctrlTempSkip) {
       ctrlTempSkip = false;
       renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
       refreshCommandRail();
     }
-  });
+  };
+  window.addEventListener('keyup', ctrlKeyUp);
+  ownerTeardown.trackListener(() => window.removeEventListener('keyup', ctrlKeyUp));
 
   function routeGameAction(action: GameAction): void {
     if (action === 'advance') {
@@ -1034,7 +1054,7 @@ async function main(): Promise<void> {
 
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
-  window.addEventListener('keydown', (e) => {
+  const keyboardHandler = (e: KeyboardEvent): void => {
     if (onTitleScreen) return;
     if (renderer.backlogOpen) {
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
@@ -1155,7 +1175,9 @@ async function main(): Promise<void> {
         console.info('[starter] 文本速度', next);
       });
     }
-  });
+  };
+  window.addEventListener('keydown', keyboardHandler);
+  ownerTeardown.trackListener(() => window.removeEventListener('keydown', keyboardHandler));
 
   // 调试钩子：浏览器 devtools / 自动化测试直接观察与驱动运行时（生产宿主可自行裁剪）
   (window as unknown as Record<string, unknown>).surdetDebug = {
@@ -1172,19 +1194,30 @@ async function main(): Promise<void> {
     openSaveLoad,
     showTitleScreen,
     openGallery,
+    rendererV2Layers: {
+      get dialogue() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { dialogue?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.dialogue?.debugSnapshot?.() ?? null; },
+      get menu() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { menu?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.menu?.debugSnapshot?.() ?? null; },
+      get gallery() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { gallery?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.gallery?.debugSnapshot?.() ?? null; },
+      get system() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { system?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.system?.debugSnapshot?.() ?? null; },
+      get world() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { world?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.world?.debugSnapshot?.() ?? null; },
+    },
   };
 
   // 错误上报（渲染层崩溃可见化；桌面环境同步落日志文件）
-  window.addEventListener('error', (e) => {
+  const errorHandler = (e: ErrorEvent): void => {
     showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
     void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
-  });
-  window.addEventListener('unhandledrejection', (e) => {
+  };
+  window.addEventListener('error', errorHandler);
+  ownerTeardown.trackListener(() => window.removeEventListener('error', errorHandler));
+  const unhandledRejectionHandler = (e: PromiseRejectionEvent): void => {
     const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
     showFatal(message);
     void window.surdetApp?.reportError('renderer-unhandled-rejection', message);
-  });
+  };
+  window.addEventListener('unhandledrejection', unhandledRejectionHandler);
+  ownerTeardown.trackListener(() => window.removeEventListener('unhandledrejection', unhandledRejectionHandler));
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
   await loadAssets();

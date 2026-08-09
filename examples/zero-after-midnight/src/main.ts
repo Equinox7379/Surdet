@@ -1012,22 +1012,21 @@ async function main(): Promise<void> {
   });
   gamepad.start();
 
-  let disposePromise: Promise<void> | null = null;
-  async function disposeGameResources(): Promise<void> {
-    if (disposePromise) return disposePromise;
-    disposePromise = (async () => {
-      gamepad.stop();
-      audioManager.dispose();
-      await assets.releaseRegisteredAssetSources();
-      runtime.dispose();
-      for (const url of assetBlobUrls) URL.revokeObjectURL(url);
-      assetBlobUrls.clear();
-      for (const url of fontBlobUrls) URL.revokeObjectURL(url);
-      fontBlobUrls.clear();
-    })();
-    return disposePromise;
+  let gameResourcesDisposed = false;
+  function disposeGameResources(): void {
+    if (gameResourcesDisposed) return;
+    gameResourcesDisposed = true;
+    // Runtime disposal owns the renderer asset registry. Keep this boundary
+    // synchronous and never issue an assets command after an external dispose.
+    gamepad.stop();
+    audioManager.dispose();
+    runtime.dispose();
+    for (const url of assetBlobUrls) URL.revokeObjectURL(url);
+    assetBlobUrls.clear();
+    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
+    fontBlobUrls.clear();
   }
-  window.addEventListener('beforeunload', () => { void disposeGameResources(); });
+  window.addEventListener('beforeunload', disposeGameResources);
 
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
