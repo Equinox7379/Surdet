@@ -1,10 +1,9 @@
 /**
  * Renderer v2 deterministic acceptance harness.
  *
- * This is deliberately a probe, not a visual golden-image test: the renderer
- * uses generated placeholder art in the starter, so each state is recorded by
- * a fresh screenshot hash plus its public overlay/resource/query state. The
- * actual Layer visual contracts remain covered by the Renderer suites.
+ * This is a controlled visual-evidence probe. Every state has a semantic
+ * projection assertion and a complete PNG SHA-256 record. Without an
+ * approved manifest the result is explicitly CANDIDATE, never visual PASS.
  */
 import { _electron as electron } from 'playwright';
 import crypto from 'node:crypto';
@@ -16,6 +15,10 @@ import * as url from 'node:url';
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const shellDir = path.resolve(scriptDir, '..');
 const readyTimeout = 120000;
+const reviewParent = path.join(shellDir, 'e2e', 'artifacts');
+const approvedManifestPath = process.env.SURDET_RENDERER_V2_APPROVED_MANIFEST
+  ? path.resolve(process.env.SURDET_RENDERER_V2_APPROVED_MANIFEST)
+  : path.join(shellDir, 'e2e', 'visual-baselines', 'renderer-v2-approved.json');
 
 function assertUnder(parent, candidate, label) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
@@ -51,10 +54,129 @@ async function readProbe(page) {
         gallery: debug?.queries?.overlay?.gallery?.() ?? null,
         system: debug?.queries?.overlay?.system?.() ?? null,
       },
+      dialogue: debug?.rendererV2Layers?.dialogue ?? null,
+      menu: debug?.rendererV2Layers?.menu ?? null,
+      gallery: debug?.rendererV2Layers?.gallery ?? null,
+      system: debug?.rendererV2Layers?.system ?? null,
+      world: debug?.rendererV2Layers?.world ?? null,
+      backlogEntries: debug?.queries?.dialogue?.backlogEntries?.() ?? [],
+      preferences: debug?.queries?.preferences?.presentationPreferences?.() ?? null,
       resources: debug?.queries?.diagnostics?.resourceSnapshot?.() ?? null,
       presentation: debug?.queries?.presentation?.snapshot?.() ?? null,
     };
   });
+}
+
+function semanticChecks(name, probe, expectedOverlay) {
+  const checks = [];
+  const add = (label, ok, actual) => checks.push({ label, ok: Boolean(ok), actual });
+  const overlays = [probe.overlays.menu, probe.overlays.gallery, probe.overlays.system];
+  const overlayNames = overlays.map(overlayName);
+  const actualOverlay = expectedOverlay === undefined
+    ? overlayNames.find((value) => value !== 'none') ?? 'none'
+    : overlayNames.find((value) => value === expectedOverlay)
+      ?? overlayNames.find((value) => value !== 'none')
+      ?? 'none';
+  if (expectedOverlay !== undefined) add('expected overlay', actualOverlay === expectedOverlay, actualOverlay);
+  const dialogue = probe.dialogue ?? {};
+  const menu = probe.menu ?? {};
+  const gallery = probe.gallery ?? {};
+  const system = probe.system ?? {};
+  switch (name) {
+    case 'title':
+      add('title menu projection', menu.overlay?.type === 'title', menu.overlay?.type);
+      add('title item count', menu.titleItemCount > 0, menu.titleItemCount);
+      break;
+    case 'settings':
+      add('settings row count', menu.settingsRowCount > 0, menu.settingsRowCount);
+      break;
+    case 'settings-command':
+      add('settings command row count', menu.settingsRowCount === 2, menu.settingsRowCount);
+      break;
+    case 'gallery-tabs':
+      add('gallery tab query', probe.overlays.gallery?.type === 'gallery', probe.overlays.gallery);
+      add('gallery CG count', gallery.cgCount > 0, gallery.cgCount);
+      add('gallery music count', gallery.musicCount > 0, gallery.musicCount);
+      break;
+    case 'gallery-command':
+      add('gallery CG count', gallery.cgCount === 1, gallery.cgCount);
+      add('gallery music count', gallery.musicCount === 1, gallery.musicCount);
+      add('gallery text count', gallery.textCount === 1, gallery.textCount);
+      break;
+    case 'adv-ruby':
+      add('Ruby base projection', dialogue.rubyBaseCount > 0, dialogue.rubyBaseCount);
+      add('Ruby text projection', dialogue.rubyTextCount > 0, dialogue.rubyTextCount);
+      add('Ruby dialogue projection advanced', dialogue.projectionVersion > 0, dialogue.projectionVersion);
+      break;
+    case 'narration':
+      add('narration speaker is null', dialogue.activeSpeakerId === null, dialogue.activeSpeakerId);
+      add('narration text projected', dialogue.dialogText.includes('旁白'), dialogue.dialogText);
+      break;
+    case 'choice':
+      add('two visible choices', dialogue.visibleChoiceCount === 2, dialogue.visibleChoiceCount);
+      add('choice labels projected', JSON.stringify(dialogue.choiceLabels) === JSON.stringify(['继续前进', '返回车站']), dialogue.choiceLabels);
+      break;
+    case 'nvl':
+      add('NVL active', dialogue.nvlActive === true, dialogue.nvlActive);
+      add('two NVL lines', dialogue.nvlLines.length === 2, dialogue.nvlLines);
+      break;
+    case 'backlog':
+      add('Backlog visible', dialogue.backlogVisible === true, dialogue.backlogVisible);
+      add('Backlog has entries', probe.backlogEntries.length > 0, probe.backlogEntries.length);
+      break;
+    case 'save-load':
+      add('save-load slot count', menu.saveLoadSlotCount === 2, menu.saveLoadSlotCount);
+      break;
+    case 'map':
+      add('map node count', system.mapNodeCount === 2, system.mapNodeCount);
+      break;
+    case 'base':
+      add('base command count', system.baseCommandCount === 2, system.baseCommandCount);
+      break;
+    case 'shop':
+      add('shop item count', system.shopItemCount === 2, system.shopItemCount);
+      break;
+    case 'battle':
+      add('battle unit count', system.battleUnitCount === 2, system.battleUnitCount);
+      break;
+    case 'particle-transition':
+      add('snow particle projection', probe.world?.particleKind === 'snow', probe.world?.particleKind);
+      add('reduced motion disabled', probe.preferences?.reducedMotion === false, probe.preferences?.reducedMotion);
+      break;
+    case 'reduced-motion':
+      add('reduced motion enabled', probe.preferences?.reducedMotion === true, probe.preferences?.reducedMotion);
+      break;
+    default:
+      throw new Error(`未定义的视觉语义断言：${name}`);
+  }
+  return { actualOverlay, checks, ok: checks.every((check) => check.ok) };
+}
+
+function readApprovedManifest() {
+  if (!fs.existsSync(approvedManifestPath)) return null;
+  const parsed = JSON.parse(fs.readFileSync(approvedManifestPath, 'utf8'));
+  const states = Array.isArray(parsed.states) ? parsed.states : [];
+  return new Map(states.filter((state) => typeof state?.name === 'string' && typeof state?.sha256 === 'string').map((state) => [state.name, state]));
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+}
+
+async function writeContactSheet(page, results, reviewRoot) {
+  const tiles = results.map((result) => {
+    const image = fs.readFileSync(result.screenshotPath).toString('base64');
+    const checks = result.semanticAssertions.map((check) => `${check.ok ? '✓' : '✗'} ${escapeHtml(check.label)}`).join('<br>');
+    return `<figure><img src="data:image/png;base64,${image}" alt="${escapeHtml(result.name)}"><figcaption><strong>${escapeHtml(result.name)}</strong><br>${escapeHtml(result.visualStatus)} · ${result.bytes} B<br>${escapeHtml(result.sha256)}<br>${checks}</figcaption></figure>`;
+  }).join('');
+  // Electron's BrowserContext does not support context.newPage(). Reuse the
+  // already-tested renderer page only after all app assertions are complete;
+  // the app is closed immediately after the artifact is written.
+  await page.setContent(`<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#10131b;color:#eef3ff;font-family:system-ui,sans-serif}main{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px}figure{margin:0;background:#1b2230;border:1px solid #44516d;padding:8px}img{display:block;width:100%;height:auto;background:#000}figcaption{font-size:12px;line-height:1.45;padding-top:7px;word-break:break-word}</style><main>${tiles}</main>`, { waitUntil: 'load' });
+  await page.evaluate(() => Promise.all([...document.images].map((image) => image.decode())));
+  const contactSheetPath = path.join(reviewRoot, 'contact-sheet.png');
+  await page.screenshot({ path: contactSheetPath, fullPage: true, type: 'png' });
+  return contactSheetPath;
 }
 
 async function clearOverlays(page) {
@@ -167,34 +289,31 @@ async function projectState(page, state) {
   await page.waitForTimeout(120);
 }
 
-async function captureState(page, tempRoot, name, expectedOverlay, results) {
-  const imagePath = path.join(tempRoot, `${name}.png`);
-  assertUnder(tempRoot, imagePath, `${name} 截图`);
+async function captureState(page, reviewRoot, name, expectedOverlay, results, approvedManifest) {
+  const imagePath = path.join(reviewRoot, `${name}.png`);
+  assertUnder(reviewRoot, imagePath, `${name} 截图`);
   const image = await page.screenshot({ path: imagePath, type: 'png' });
   const probe = await readProbe(page);
-  const overlays = [
-    overlayName(probe.overlays.menu),
-    overlayName(probe.overlays.gallery),
-    overlayName(probe.overlays.system),
-  ];
-  const actualOverlay = expectedOverlay !== undefined && overlays.includes(expectedOverlay)
-    ? expectedOverlay
-    : overlays.find((value) => value !== 'none') ?? 'none';
-  const overlayOk = expectedOverlay === undefined || actualOverlay === expectedOverlay;
-  const ok = image.length > 0 && probe.canvas !== null && overlayOk;
+  const semantic = semanticChecks(name, probe, expectedOverlay);
+  const approved = approvedManifest?.get(name);
+  const visualStatus = approved ? (approved.sha256 === sha256(image) ? 'PASS' : 'FAIL') : 'CANDIDATE';
+  const ok = image.length > 0 && probe.canvas !== null && semantic.ok && visualStatus !== 'FAIL';
   results.push({
     name,
     ok,
+    visualStatus,
     bytes: image.length,
     sha256: sha256(image),
-    overlay: actualOverlay,
+    screenshotPath: path.resolve(imagePath),
+    overlay: semantic.actualOverlay,
+    semanticAssertions: semantic.checks,
     status: probe.status,
     rendererStatus: probe.rendererStatus,
     resourceSnapshot: probe.resources,
   });
-  console.log(`${ok ? 'PASS' : 'FAIL'} visual ${name} overlay=${actualOverlay ?? '-'} sha256=${sha256(image).slice(0, 16)}`);
+  console.log(`${ok ? visualStatus : 'FAIL'} visual ${name} overlay=${semantic.actualOverlay ?? '-'} sha256=${sha256(image).slice(0, 16)}`);
   if (!ok) {
-    throw new Error(`${name} visual probe failed: ${JSON.stringify({ actualOverlay, expectedOverlay, probe })}`);
+    throw new Error(`${name} visual probe failed: ${JSON.stringify({ expectedOverlay, semantic, visualStatus, probe })}`);
   }
   return probe;
 }
@@ -203,8 +322,13 @@ async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-renderer-v2-acceptance-'));
   const userData = path.join(tempRoot, 'user-data');
   fs.mkdirSync(userData, { recursive: true });
+  fs.mkdirSync(reviewParent, { recursive: true });
+  const reviewRoot = path.join(reviewParent, `renderer-v2-review-${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`);
+  fs.mkdirSync(reviewRoot, { recursive: true });
   assertUnder(os.tmpdir(), tempRoot, '验收临时根目录');
   assertUnder(tempRoot, userData, 'Electron userData');
+  assertUnder(reviewParent, reviewRoot, '视觉 review 目录');
+  const approvedManifest = readApprovedManifest();
 
   const pageErrors = [];
   const consoleErrors = [];
@@ -231,10 +355,10 @@ async function main() {
     }
     console.log(`PASS ready assets=${ready.assets.completed}/${ready.assets.total} failed=${ready.assets.failed} fonts=${JSON.stringify(ready.fonts)}`);
 
-    await captureState(page, tempRoot, 'title', 'title', visualResults);
+    await captureState(page, reviewRoot, 'title', 'title', visualResults, approvedManifest);
     await page.evaluate(() => window.__surdetDebug.titleSelect('settings'));
     await page.waitForTimeout(120);
-    await captureState(page, tempRoot, 'settings', 'settings', visualResults);
+    await captureState(page, reviewRoot, 'settings', 'settings', visualResults, approvedManifest);
     await page.evaluate(() => window.surdetDebug.showTitleScreen());
     await page.waitForTimeout(120);
 
@@ -242,7 +366,7 @@ async function main() {
     await page.waitForTimeout(120);
     await page.evaluate(() => window.surdetDebug.commands.menu.hideTitle());
     await page.waitForTimeout(80);
-    await captureState(page, tempRoot, 'gallery-tabs', 'gallery', visualResults);
+    await captureState(page, reviewRoot, 'gallery-tabs', 'gallery', visualResults, approvedManifest);
     await page.evaluate(() => window.surdetDebug.showTitleScreen());
     await page.waitForTimeout(120);
     await clearOverlays(page);
@@ -250,41 +374,51 @@ async function main() {
     await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
     await page.waitForFunction(() => window.__surdetDebug?.position?.sceneId !== undefined, undefined, { timeout: 15000 });
     await page.waitForFunction(() => window.__surdetDebug?.status !== 'awaiting-timer', undefined, { timeout: 15000 });
-    await captureState(page, tempRoot, 'adv-ruby', undefined, visualResults);
+    await page.waitForFunction(() => window.__surdetDebug?.rendererStatus !== 'typing', undefined, { timeout: 15000 });
+    // The starter scene is the real consumer smoke path; inject the explicit
+    // Ruby-bearing text only after it reaches its stable first line so this
+    // named visual state proves the Ruby projection itself.
+    await page.evaluate(() => {
+      const d = window.surdetDebug;
+      d.commands.dialogue.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+      d.commands.dialogue.showText('凛', '这座城的夜色《よるいろ》还没有散去。');
+    });
+    await page.waitForTimeout(80);
+    await captureState(page, reviewRoot, 'adv-ruby', 'none', visualResults, approvedManifest);
 
     await clearOverlays(page);
     await projectState(page, 'narration');
-    await captureState(page, tempRoot, 'narration', undefined, visualResults);
+    await captureState(page, reviewRoot, 'narration', 'none', visualResults, approvedManifest);
     await clearOverlays(page);
     await projectState(page, 'choice');
-    await captureState(page, tempRoot, 'choice', undefined, visualResults);
+    await captureState(page, reviewRoot, 'choice', 'none', visualResults, approvedManifest);
     await clearOverlays(page);
     await projectState(page, 'nvl');
-    await captureState(page, tempRoot, 'nvl', undefined, visualResults);
+    await captureState(page, reviewRoot, 'nvl', 'none', visualResults, approvedManifest);
     await clearOverlays(page);
     await projectState(page, 'backlog');
-    await captureState(page, tempRoot, 'backlog', undefined, visualResults);
+    await captureState(page, reviewRoot, 'backlog', 'none', visualResults, approvedManifest);
     await clearOverlays(page);
 
     await projectState(page, 'settings');
-    await captureState(page, tempRoot, 'settings-command', 'settings', visualResults);
+    await captureState(page, reviewRoot, 'settings-command', 'settings', visualResults, approvedManifest);
     await clearOverlays(page);
     await projectState(page, 'save-load');
-    await captureState(page, tempRoot, 'save-load', 'save-load:load', visualResults);
+    await captureState(page, reviewRoot, 'save-load', 'save-load:load', visualResults, approvedManifest);
     await clearOverlays(page);
     await projectState(page, 'gallery');
-    await captureState(page, tempRoot, 'gallery-command', 'gallery', visualResults);
+    await captureState(page, reviewRoot, 'gallery-command', 'gallery', visualResults, approvedManifest);
     await clearOverlays(page);
 
     for (const systemState of ['map', 'base', 'shop', 'battle']) {
       await projectState(page, systemState);
-      await captureState(page, tempRoot, systemState, systemState, visualResults);
+      await captureState(page, reviewRoot, systemState, systemState, visualResults, approvedManifest);
       await clearOverlays(page);
     }
     await projectState(page, 'particle-transition');
-    await captureState(page, tempRoot, 'particle-transition', undefined, visualResults);
+    await captureState(page, reviewRoot, 'particle-transition', 'none', visualResults, approvedManifest);
     await projectState(page, 'reduced-motion');
-    await captureState(page, tempRoot, 'reduced-motion', undefined, visualResults);
+    await captureState(page, reviewRoot, 'reduced-motion', 'none', visualResults, approvedManifest);
     await clearOverlays(page);
 
     const seed = await page.evaluate(() => {
@@ -306,7 +440,19 @@ async function main() {
     if (pageErrors.length > 0 || consoleErrors.length > 0 || failedRequests.length > 0) {
       throw new Error(`runtime errors: ${JSON.stringify({ pageErrors, consoleErrors, failedRequests })}`);
     }
-    console.log(JSON.stringify({ visualResults, finalResources: finalProbe.resources, errors: { page: pageErrors.length, console: consoleErrors.length, failedRequests: failedRequests.length } }, null, 2));
+    const contactSheetPath = await writeContactSheet(page, visualResults, reviewRoot);
+    const manifest = {
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      approvedManifestPath: fs.existsSync(approvedManifestPath) ? path.resolve(approvedManifestPath) : null,
+      visualStatus: approvedManifest ? 'COMPARED' : 'CANDIDATE',
+      contactSheetPath: path.resolve(contactSheetPath),
+      states: visualResults,
+      errors: { page: pageErrors.length, console: consoleErrors.length, failedRequests: failedRequests.length },
+    };
+    const manifestPath = path.join(reviewRoot, 'manifest.json');
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    console.log(JSON.stringify({ reviewRoot: path.resolve(reviewRoot), manifestPath: path.resolve(manifestPath), contactSheetPath: path.resolve(contactSheetPath), visualResults, finalResources: finalProbe.resources, errors: manifest.errors }, null, 2));
   } finally {
     try {
       if (app) await app.close();
@@ -314,6 +460,8 @@ async function main() {
       assertUnder(os.tmpdir(), tempRoot, '验收临时根目录');
       assertUnder(tempRoot, userData, 'Electron userData');
       fs.rmSync(tempRoot, { recursive: true, force: true });
+      // Review PNGs/contact sheet intentionally remain for independent review.
+      assertUnder(reviewParent, reviewRoot, '视觉 review 目录');
     }
   }
 }

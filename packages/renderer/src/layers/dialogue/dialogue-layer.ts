@@ -34,6 +34,21 @@ export interface DialogueLayerOptions {
   readonly requestFrame?: () => void;
 }
 
+/** Read-only evidence emitted for the local renderer acceptance harness. */
+export interface DialogueLayerDebugSnapshot {
+  readonly activeSpeakerId: string | null;
+  readonly projectionVersion: number;
+  readonly speakerText: string;
+  readonly dialogText: string;
+  readonly choiceLabels: readonly string[];
+  readonly visibleChoiceCount: number;
+  readonly rubyBaseCount: number;
+  readonly rubyTextCount: number;
+  readonly backlogVisible: boolean;
+  readonly nvlActive: boolean;
+  readonly nvlLines: readonly string[];
+}
+
 interface ChoiceView {
   readonly holder: Container;
   readonly bg: Graphics;
@@ -254,6 +269,26 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   get projectionVersion(): number {
     return this.#projectionVersion;
+  }
+
+  /**
+   * Test-only read model. It reads projection state without creating display
+   * objects, registering resources, requesting a frame, or changing visibility.
+   */
+  debugSnapshot(): DialogueLayerDebugSnapshot {
+    return {
+      activeSpeakerId: this.#activeSpeakerId,
+      projectionVersion: this.#projectionVersion,
+      speakerText: String(this.#speakerText.text),
+      dialogText: String(this.#dialogText.text),
+      choiceLabels: this.#choiceViews.map((view) => String(view.label.text)),
+      visibleChoiceCount: this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
+      rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
+      rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,
+      backlogVisible: this.#backlogLayer.visible,
+      nvlActive: this.#nvlActive,
+      nvlLines: this.#nvlLines.map((line) => String(line.text)),
+    };
   }
 
   #onSelect: ((index: number) => void) | null = null;
