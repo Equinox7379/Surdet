@@ -35,6 +35,7 @@ export * from './loading-layer.js';
 export * from './rollback-buffer.js';
 export * from './transition-registry.js';
 export * from './world-effects-controller.js';
+export * from './layers/dialogue/dialogue-layer.js';
 export * from './keybindings.js';
 export * from './backlog-search-controller.js';
 export * from './scene-hot-reload.js';

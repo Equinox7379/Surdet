@@ -9,11 +9,8 @@ import {
   Texture,
   type TextStyleOptions,
 } from 'pixi.js';
-import type { BacklogEntry } from './backlog.js';
 import type { BattleView } from './battle-view.js';
-import { parseRuby, stripRuby } from './ruby.js';
-import { layoutRuby, type RubyGlyphLayout } from './ruby-layout.js';
-import { wrapCjk, wrapCjkMeasure } from './text-wrap.js';
+import type { BacklogEntry } from './backlog.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from './ui-views.js';
 import { formatSlotTime } from './ui-views.js';
 import type { GalleryItemView } from './gallery.js';
@@ -38,6 +35,8 @@ import {
   RenderAssetRegistry,
   type RenderAssetSource,
 } from './services/render-asset-registry.js';
+import { RenderLifecycle } from './lifecycle/render-lifecycle.js';
+import { DialogueLayer } from './layers/dialogue/dialogue-layer.js';
 
 /** 战斗覆盖层交互回调（宿主驱动 CombatSolver 结算后重新 showBattle 刷新） */
 export interface BattleHandlers {
@@ -366,20 +365,29 @@ function makePortraitTexture(charId: string, costume: string, expression: string
  * Pixi 舞台：内核状态的可视化投影。
  * 背景/立绘资源缺失时回退程序化占位（同 key 稳定同图），真实项目可注入真实纹理。
  */
-/** 对话框断行测量上下文（模块级惰性创建共用；非浏览器环境 null → 降级字数估算） */
-let dialogMeasureCtx: CanvasRenderingContext2D | null = null;
-function getDialogMeasureCtx(): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null;
-  if (!dialogMeasureCtx) dialogMeasureCtx = document.createElement('canvas').getContext('2d');
-  return dialogMeasureCtx;
-}
-
 export class PixiStage implements AdvStage {
   app: Application | null = null;
-  /** 外部注入：选择肢点击回调 */
-  onSelect: ((index: number) => void) | null = null;
-  /** Backlog 覆盖层被自身点击关闭时通知 AdvRenderer */
-  onBacklogClose: (() => void) | null = null;
+
+  get onSelect(): ((index: number) => void) | null {
+    return this.#dialogue.onSelect;
+  }
+
+  set onSelect(handler: ((index: number) => void) | null) {
+    this.#dialogue.onSelect = handler;
+  }
+
+  get onBacklogClose(): (() => void) | null {
+    return this.#dialogue.onBacklogClose;
+  }
+
+  set onBacklogClose(handler: (() => void) | null) {
+    this.#dialogue.onBacklogClose = handler;
+  }
+
+  /** @internal Renderer runtime wiring for the extracted dialogue layer. */
+  get dialogueLayer(): DialogueLayer {
+    return this.#dialogue;
+  }
 
   #bgLayer: Container;
   #portraitLayer: Container;
@@ -391,50 +399,9 @@ export class PixiStage implements AdvStage {
   #portraitSprites = new Map<string, Sprite>();
   #portraitViews = new Map<string, PortraitView>();
   readonly #assetRegistry: RenderAssetRegistry;
-  #speakerText: PText;
-  #dialogText: PText;
-  /** 避免打字机每帧把相同字符串重新送进 Pixi Text，重复触发断行和纹理重建。 */
-  #lastShownSpeaker: string | null | undefined;
-  #lastShownDialog = '';
-  /** 说话人名牌底板（无框 ADV：贴正文区左上 (64, h-226) 的半透明小薄片，随说话人显隐） */
-  #speakerPlate: Graphics;
-  /** 对话框每行字数容量（预断行用，构造时按字号估算；M5 支柱4） */
-  #dialogCharsPerLine = 40;
-  #choiceLayer: Container;
-  /** 选择肢卡片视图（容器 + 卡片底板 + 强调条 + 文本；高亮统一走 #drawChoiceCard 重绘） */
-  #choiceViews: { holder: Container; bg: Graphics; bar: Graphics; label: PText }[] = [];
-  /** 选择肢键盘高亮序号（-1 = 无） */
-  #choiceHighlight = -1;
-  /** 选择肢入场淡入状态（精致化批次三：卡片纵列渐显 + 逐卡错峰；由 updateEffects 驱动，不新建 ticker） */
-  #choiceFadeRemain = 0;
-  #choiceFadeDur = 280;
-  /** Modern ADV 底部操作带：仅投影动作，宿主掌握业务状态。 */
-  #commandRail: Container;
-  #commandRailItems: CommandRailItem[] = [];
-  #commandRailOnSelect: ((id: string) => void) | null = null;
-  #commandRailSuppressed = false;
-  #commandRailWakeRemain = 0;
-  #commandRailIdleAlpha = 0.38;
-  #commandRailPointerWake: (() => void) | null = null;
-  /** 角色显示名 → 角色资料的显式映射。 */
-  #speakerProfiles = new Map<string, SpeakerProfile>();
-  #activeSpeakerId: string | null = null;
-  /** 当前说话人的小头像（可选素材）。 */
-  #speakerAvatar: Sprite | null = null;
+  readonly #dialogue: DialogueLayer;
   /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
   #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
-  /** Backlog 滚动状态 */
-  #backlogEntriesLayer: Container | null = null;
-  #backlogScroll = 0;
-  #backlogContentH = 0;
-  /** 对话框半透明面板（亮色背景下保证文本可读性） */
-  #dialogPanel: Graphics;
-  /** 等待推进指示器（呼吸小光点；awaiting 时可见） */
-  #continueIndicator: Graphics;
-  #continuePhase = 0;
-  /** Backlog 覆盖层 */
-  #backlogLayer: Container;
-  #backlogBuilt = false;
   /** 世界层：包裹背景 + 立绘，@shake/@zoom 的变换载体（UI 层不受影响） */
   #worldLayer: Container;
   /** 屏幕调色层：位于世界与 HUD 之间，tint 不应遮住对白和操作带。 */
@@ -471,27 +438,6 @@ export class PixiStage implements AdvStage {
   #battleHandlers: BattleHandlers | null = null;
   /** 战斗中已选技能（null = 普攻） */
   #battleSelectedSkill: string | null = null;
-  /** ruby 注音合成层（与 #dialogText 互斥显示） */
-  #dialogRubyLayer: Container;
-  #rubyBasePool: PText[] = [];
-  #rubyTextPool: PText[] = [];
-  /** NVL 全屏小说文本页 */
-  #nvlLayer: Container;
-  #nvlLines: PText[] = [];
-  /** 每条 NVL 条目折出的行数（与 #nvlLines 平行；累计排布与淘汰用） */
-  #nvlLineCounts: number[] = [];
-  #nvlActive = false;
-  /** NVL 页每行字数容量（预断行用，构造时按字号估算；NVL 断行禁则） */
-  #nvlCharsPerLine = 50;
-  /** 横幅（@title/@chapter/@tip/@center）淡入淡出状态 */
-  #bannerLayer: Container;
-  #bannerText: PText;
-  /** chapter 横幅电影化上下黑边（letterbox，仅 chapter 变体可见） */
-  #bannerBars: Graphics;
-  /** tip 横幅右上小胶囊底板（仅 tip 变体绘制） */
-  #bannerTipBg: Graphics;
-  #bannerRemain = 0;
-  #bannerDur = 1;
   /** @wipe 擦除转场 */
   #wipeBar: Graphics;
   #wipeRemain = 0;
@@ -510,7 +456,6 @@ export class PixiStage implements AdvStage {
   /** @mov 立绘位置平移补间（旧位置 → 目标位置线性过渡） */
   #movTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
   /** 对话界面隐藏中（hideInterface；showText/NVL 不覆盖此状态，恢复后由下一次 showText 重建） */
-  #interfaceHidden = false;
   #timelineMoveStarts = new Map<object, Map<string, number>>();
   #timelineValueStarts = new Map<object, number>();
   #timelinePanStarts = new Map<object, { x: number; y: number }>();
@@ -551,7 +496,7 @@ export class PixiStage implements AdvStage {
   #colorMatrix: ColorMatrixFilter | null = null;
   #loadingLayer: LoadingLayer;
 
-  constructor(assetRegistry?: RenderAssetRegistry) {
+  constructor(assetRegistry?: RenderAssetRegistry, lifecycle?: RenderLifecycle) {
     this.#assetRegistry = assetRegistry ?? new RenderAssetRegistry();
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
     TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
@@ -571,26 +516,20 @@ export class PixiStage implements AdvStage {
       requestFrame: () => this.#requestFrame(),
     });
     this.#uiLayer = new Container();
+    this.#dialogue = new DialogueLayer({
+      uiLayer: this.#uiLayer,
+      width: this.#w,
+      height: this.#h,
+      assets: this.#assetRegistry,
+      ...(lifecycle ? { lifecycle } : {}),
+      preferences: this.#presentation,
+      requestFrame: () => this.#requestFrame(),
+      onActiveSpeakerChanged: (characterId) => this.setPortraitFocus(characterId),
+    });
     this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#fadeOverlay.alpha = 0;
     this.#flashOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
     this.#flashOverlay.alpha = 0;
-    this.#choiceLayer = new Container();
-    this.#commandRail = new Container();
-    this.#commandRail.visible = false;
-    this.#dialogRubyLayer = new Container();
-    this.#nvlLayer = new Container();
-    this.#nvlLayer.visible = false;
-    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.86 }));
-    this.#bannerLayer = new Container();
-    this.#bannerLayer.visible = false;
-    this.#bannerBars = new Graphics();
-    this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
-    this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
-    this.#bannerTipBg = new Graphics();
-    this.#bannerText = new PText({ text: '', style: { fontSize: 40, fill: 0xffffff, fontWeight: 'normal', fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions });
-    this.#bannerText.anchor.set(0.5);
-    this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
     this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
     this.#wipeBar.visible = false;
     // 叠加层必须以白色为底，Graphics.tint 才能投影 cue 指定的调色值。
@@ -614,22 +553,6 @@ export class PixiStage implements AdvStage {
     this.#baseLayer = new Container();
     this.#baseLayer.visible = false;
     this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
-    // 对话戏面板（无框 ADV 口径）：#drawDialogPanel 仅 clear() 不绘制，对象与可见性链路保留
-    this.#dialogPanel = new Graphics();
-    this.#drawDialogPanel();
-    this.#speakerPlate = new Graphics();
-    this.#speakerAvatar = new Sprite(Texture.EMPTY);
-    this.#speakerAvatar.anchor.set(0.5, 1);
-    if (this.#speakerAvatar) this.#speakerAvatar.visible = false;
-    // 等待推进指示器：呼吸小光点（外圈柔光 + 内圈亮点，动画见 updateContinuePulse）
-    this.#continueIndicator = new Graphics()
-      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
-      .circle(0, 0, 4.5).fill({ color: 0xeaf4ff, alpha: 0.95 });
-    this.#continueIndicator.visible = false;
-    // 水平定位对齐对话框右下（历史代码只驱动 y，x 从未赋值导致贴左缘，顺手修复）
-    this.#continueIndicator.x = this.#w - 68;
-    this.#backlogLayer = new Container();
-    this.#backlogLayer.visible = false;
     this.#galleryLayer = new Container();
     this.#galleryLayer.visible = false;
     this.#settingsLayer = new Container();
@@ -637,54 +560,12 @@ export class PixiStage implements AdvStage {
     this.#battleLayer = new Container();
     this.#battleLayer.visible = false;
     this.#uiLayer.addChild(
-      this.#dialogPanel, this.#speakerAvatar, this.#speakerPlate, this.#dialogRubyLayer, this.#continueIndicator, this.#choiceLayer, this.#commandRail,
-      this.#backlogLayer, this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
-      this.#nvlLayer, this.#bannerLayer, this.#wipeBar,
+      this.#galleryLayer, this.#settingsLayer, this.#battleLayer,
+      this.#wipeBar,
       this.#mapLayer, this.#shopLayer, this.#baseLayer, this.#saveLoadLayer, this.#menuLayer, this.#titleLayer, this.#endingLayer,
       this.#loadingLayer.container,
     );
-
-    this.#speakerText = new PText({
-      text: '',
-      style: {
-        fontSize: 18,
-        fill: MODERN_ADV.text,
-        fontWeight: 'normal',
-        letterSpacing: 1,
-        fontFamily: this.#fontFamilies.body,
-        stroke: { width: 1.2, color: MODERN_ADV.ink },
-      } satisfies TextStyleOptions,
-    });
-    this.#dialogText = new PText({
-      text: '',
-      style: {
-        fontSize: 25,
-        fill: MODERN_ADV.text,
-        fontWeight: 'normal',
-        fontFamily: this.#fontFamilies.body,
-        letterSpacing: 0.3,
-        lineHeight: 41,
-        // gal 口径真描边（对应 CSS paint-order: stroke fill，非阴影假描边）：
-        // 白字 + 深色描边，浅/深背景均清晰；原 dropShadow 移除
-        stroke: { width: 1.35, color: MODERN_ADV.ink },
-      } satisfies TextStyleOptions,
-    });
-    // 对话框预断行（M5 支柱4：断行禁则）：字数容量作无测量环境降级口径（像素测量见 #wrapDialogText）
-    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
-    // NVL 页预断行（断行禁则）：fontSize 20，估算口径与对话框一致
-    this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
-  }
-
-  /** 对话框断行：优先像素级测量（canvas measureText，中英混排精确），
-   *  无测量环境（node/无 canvas）降级字数估算；禁则规则由 wrap 系函数保证 */
-  #wrapDialogText(plain: string): string[] {
-    const ctx = getDialogMeasureCtx();
-    if (!ctx) return wrapCjk(plain, this.#dialogCharsPerLine);
-    const style = this.#dialogText.style;
-    const fam = style.fontFamily;
-    const famStr = Array.isArray(fam) ? fam.join(', ') : String(fam);
-    ctx.font = `${style.fontSize}px ${famStr}`;
-    return wrapCjkMeasure(plain, this.#w - 220, (s) => ctx.measureText(s).width);
+    this.#dialogue.mountTextDisplays();
   }
 
   /** 初始化 Pixi 应用与舞台层级（真实项目在 DOM 就绪后调用）。
@@ -720,16 +601,14 @@ export class PixiStage implements AdvStage {
     }
     this.app = app;
 
-    // 鼠标移动/点击唤出操作带；使用 DOM 事件而不是额外 Pixi ticker，避免覆盖层之间抢事件。
-    const wakeRail = () => this.#wakeCommandRail();
-    this.#commandRailPointerWake = wakeRail;
-    app.canvas.addEventListener('pointermove', wakeRail);
-    app.canvas.addEventListener('pointerdown', wakeRail);
+    // 鼠标移动/点击唤出操作带；监听器由 DialogueLayer 以 owner=dialogue 注册。
+    this.#dialogue.attachPointerTarget(app.canvas);
 
     app.stage.addChild(this.#worldLayer, this.#particleLayer, this.#screenLayer, this.#uiLayer);
+    this.#dialogue.bringTextDisplaysToFront();
     // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
     // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
-    this.#uiLayer.addChild(this.#speakerText, this.#dialogText, this.#fadeOverlay, this.#flashOverlay);
+    this.#uiLayer.addChild(this.#fadeOverlay, this.#flashOverlay);
     this.#layout();
     return undefined;
   }
@@ -775,6 +654,7 @@ export class PixiStage implements AdvStage {
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#presentation = normalizePresentationPreferences({ ...this.#presentation, ...preferences });
+    this.#dialogue.setPresentationPreferences(this.#presentation);
     if (!this.#presentation.particleEnabled) this.stopParticles();
     this.#requestFrame();
   }
@@ -814,42 +694,7 @@ export class PixiStage implements AdvStage {
   }
 
   #layout(): void {
-    // 无框 ADV 对话区：文字沿底部安全区排版，背景渐隐只负责可读性。
-    this.#speakerText.position.set(92, this.#h - 226);
-    this.#dialogText.position.set(92, this.#h - 174);
-    this.#dialogRubyLayer.position.set(92, this.#h - 174);
-    if (this.#speakerAvatar) this.#speakerAvatar.position.set(58, this.#h - 54);
-    // 选择肢：细线纵列位于画面中下部，不使用厚重按钮卡片。
-    const step = 58;
-    // 选择肢落在画面中下部，避开现代 ADV 立绘的脸部焦点，同时不压住底部对白安全区。
-    const startY = this.#h * 0.60 - (this.#choiceViews.length - 1) * step / 2;
-    for (let i = 0; i < this.#choiceViews.length; i++) {
-      const v = this.#choiceViews[i]!;
-      const w = v.label.width + 60;
-      v.holder.position.set((this.#w - w) / 2, startY + i * step - (v.label.height + 20) / 2);
-    }
-  }
-
-  /** 对话层只绘制三段透明渐隐，不形成卡片轮廓。 */
-  #drawDialogPanel(): void {
-    const g = this.#dialogPanel;
-    g.clear();
-    g.rect(0, this.#h - 282, this.#w, 88).fill({ color: MODERN_ADV.scrim, alpha: 0.10 });
-    g.rect(0, this.#h - 194, this.#w, 112).fill({ color: MODERN_ADV.scrim, alpha: 0.25 });
-    g.rect(0, this.#h - 82, this.#w, 82).fill({ color: MODERN_ADV.scrim, alpha: 0.52 });
-  }
-
-  /** 说话人标记：只保留一条细强调线，不再绘制名牌卡片。 */
-  #drawSpeakerPlate(): void {
-    const g = this.#speakerPlate;
-    g.clear();
-    const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
-    g.visible = show;
-    if (!show) return;
-    const x = 92;
-    const y = this.#h - 198;
-    const w = Math.max(56, this.#speakerText.width + 14);
-    g.rect(x, y, w, 1.5).fill({ color: MODERN_ADV.accent, alpha: 0.78 });
+    this.#dialogue.layout();
   }
 
   /**
@@ -870,11 +715,7 @@ export class PixiStage implements AdvStage {
 
   #applyTypography(): void {
     TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
-    this.#dialogText.style.fontFamily = this.#fontFamilies.body;
-    this.#speakerText.style.fontFamily = this.#fontFamilies.body;
-    this.#bannerText.style.fontFamily = this.#fontFamilies.title;
-    // 字体角色可能在首屏之后才完成注册；允许下一次 showText 重新测量并生成纹理。
-    this.#lastShownSpeaker = undefined;
+    this.#dialogue.applyTypography();
   }
 
   /**
@@ -933,51 +774,27 @@ export class PixiStage implements AdvStage {
   /** 注册对白区小头像；缺失时不显示头像，不猜测主立绘。 */
   async registerAvatar(key: string, src: RenderAssetSource, format?: string): Promise<void> {
     await this.#assetRegistry.registerAvatar(key, src, format);
-    this.#updateSpeakerAvatar();
+    this.#dialogue.refreshSpeakerAvatar();
     this.#requestFrame();
   }
 
   /** 配置显示名到角色 ID 的显式映射，供说话人聚焦与头像投影使用。 */
   setSpeakerProfiles(profiles: SpeakerProfile[]): void {
-    this.#speakerProfiles.clear();
-    for (const profile of profiles) {
-      if (profile.name.trim().length > 0 && profile.id.trim().length > 0) {
-        this.#speakerProfiles.set(profile.name.trim(), profile);
-      }
-    }
-    this.#updateSpeakerAvatar();
-    this.#requestFrame();
+    this.#dialogue.setSpeakerProfiles(profiles);
   }
 
   /** 当前说话角色聚焦；未配置角色资料时传 null，所有立绘保持原始存在感。 */
   setActiveSpeaker(characterId: string | null): void {
-    this.#activeSpeakerId = characterId;
+    this.#dialogue.setActiveSpeaker(characterId);
+  }
+
+  /** World port used by RendererFacade to keep portrait focus separate from dialogue state. */
+  setPortraitFocus(characterId: string | null): void {
     for (const [key, sprite] of this.#portraitSprites) {
       const view = this.#portraitViews.get(key);
       sprite.alpha = !characterId || view?.charId === characterId ? 1 : 0.46;
     }
-    this.#updateSpeakerAvatar();
     this.#requestFrame();
-  }
-
-  #updateSpeakerAvatar(): void {
-    const sprite = this.#speakerAvatar;
-    if (!sprite) return;
-    const profile = [...this.#speakerProfiles.values()].find((p) => p.id === this.#activeSpeakerId);
-    // 头像必须由角色资料显式声明；不要因为存在同名资源就猜测映射。
-    const key = profile?.avatarKey;
-    const texture = key ? this.#assetRegistry.resolveAvatar(key) : null;
-    if (!texture || !profile || this.#interfaceHidden || this.#nvlActive) {
-      sprite.visible = false;
-      return;
-    }
-    sprite.texture = texture;
-    const size = 96;
-    sprite.width = size;
-    sprite.height = size * (texture.height / Math.max(1, texture.width));
-    sprite.position.set(54, this.#h - 52);
-    sprite.alpha = 0.94;
-    sprite.visible = true;
   }
 
   setBackground(key: string | null): void {
@@ -1051,7 +868,7 @@ export class PixiStage implements AdvStage {
       sprite.height = ph;
       sprite.anchor.set(0.5, 1);
       sprite.position.set(px, baseY);
-      sprite.alpha = !this.#activeSpeakerId || opts.charId === this.#activeSpeakerId ? 1 : 0.46;
+      sprite.alpha = !this.#dialogue.activeSpeakerId || opts.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
       this.#portraitSprites.set(key, sprite);
       this.#portraitLayer.addChild(sprite);
       return;
@@ -1059,7 +876,7 @@ export class PixiStage implements AdvStage {
     if (existing.texture === texture) {
       // 同纹理：仅移动（位置/尺寸无需过渡）
       existing.position.set(px, baseY);
-      existing.alpha = !this.#activeSpeakerId || opts.charId === this.#activeSpeakerId ? 1 : 0.46;
+      existing.alpha = !this.#dialogue.activeSpeakerId || opts.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
       return;
     }
     // 纹理变化：交叉淡化（新 sprite 淡入，旧 sprite 淡出后销毁；补间在 updateEffects 推进）
@@ -1116,339 +933,52 @@ export class PixiStage implements AdvStage {
   }
 
   showText(speaker: string | null, value: string): void {
-    if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
-    this.#requestFrame();
-    this.#lastShownSpeaker = speaker;
-    this.#lastShownDialog = value;
-    const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
-    this.setActiveSpeaker(profile?.id ?? null);
-    // 现代 ADV 说话人标签：保留「」作为项目既有文本约定，但不再放入卡片。
-    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${speaker}」` : '';
-    this.#drawSpeakerPlate();
-    this.#updateSpeakerAvatar();
-    this.#renderDialogText(value);
-    // 有文本内容即显示对话框面板；清空时若不在等待推进状态则隐藏
-    this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
-    if (this.#interfaceHidden) {
-      // 隐藏界面模式：投影内容照常更新，但可见性保持隐藏（H 键赏画不被新文本打断）
-      this.#dialogPanel.visible = false;
-      this.#speakerPlate.visible = false;
-      this.#speakerText.visible = false;
-      this.#dialogText.visible = false;
-      this.#dialogRubyLayer.visible = false;
-    }
-  }
-
-  /** 对话文本渲染：含 基础字《注音》 标记时走 ruby 合成层（主字 + 上方小字）。
-   *  打字中途标记未闭合时先按纯文本渲染（stripRuby），完成后自然切换为注音形态。 */
-  #renderDialogText(value: string): void {
-    const unclosed = value.split('《').length !== value.split('》').length;
-    const segs = unclosed ? [] : parseRuby(value);
-    const hasRuby = segs.some((s) => s.ruby !== undefined);
-    if (!hasRuby) {
-      this.#hideRubyPool();
-      this.#dialogText.visible = true;
-      const plain = unclosed ? stripRuby(value) : value;
-      // 断行禁则（M5 支柱4）：禁则字不挂行首/行尾，……——不拆行；
-      // 像素级测量断行（canvas measureText，中英混排精确）；无 DOM 环境降级字数估算
-      this.#dialogText.text = this.#wrapDialogText(plain).join('\n');
-      return;
-    }
-    this.#dialogText.visible = false;
-    this.#dialogText.text = '';
-    this.#hideRubyPool();
-    const ctx = getDialogMeasureCtx();
-    const family = this.#dialogText.style.fontFamily;
-    const familyText = Array.isArray(family) ? family.join(', ') : String(family);
-    const measure = {
-      base: (text: string): number => {
-        if (!ctx) return text.length * 25;
-        ctx.font = `25px ${familyText}`;
-        return ctx.measureText(text).width;
-      },
-      ruby: (text: string): number => {
-        if (!ctx) return text.length * 12;
-        ctx.font = `12px ${familyText}`;
-        return ctx.measureText(text).width;
-      },
-    };
-    const layouts = layoutRuby(segs, this.#w - 220, measure, 41);
-    const baseStyle = {
-      fontSize: 25,
-      fill: MODERN_ADV.text,
-      fontWeight: 'normal',
-      fontFamily: family,
-      letterSpacing: 0.3,
-      lineHeight: 41,
-      stroke: { width: 1.35, color: MODERN_ADV.ink },
-    } satisfies TextStyleOptions;
-    const rubyStyle = {
-      fontSize: 12,
-      fill: MODERN_ADV.text,
-      fontWeight: 'normal',
-      fontFamily: family,
-      stroke: { width: 0.8, color: MODERN_ADV.ink },
-    } satisfies TextStyleOptions;
-    let rubyIndex = 0;
-    layouts.forEach((layout: RubyGlyphLayout, index) => {
-      const base = this.#takeRubyText(this.#rubyBasePool, index, layout.base, baseStyle);
-      base.position.set(layout.x + (layout.width - base.width) / 2, layout.y);
-      if (layout.ruby !== undefined) {
-        const ruby = this.#takeRubyText(this.#rubyTextPool, rubyIndex++, layout.ruby, rubyStyle);
-        ruby.anchor.set(0.5, 1);
-        ruby.position.set(layout.x + layout.width / 2, layout.y - 2);
-      }
-    });
-  }
-
-  #takeRubyText(pool: PText[], index: number, text: string, style: TextStyleOptions): PText {
-    let object = pool[index];
-    if (!object) {
-      object = new PText({ text, style });
-      pool[index] = object;
-      this.#dialogRubyLayer.addChild(object);
-    } else {
-      object.text = text;
-      object.style = style;
-    }
-    object.visible = true;
-    return object;
-  }
-
-  #hideRubyPool(): void {
-    for (const object of this.#rubyBasePool) object.visible = false;
-    for (const object of this.#rubyTextPool) object.visible = false;
+    this.#dialogue.showText(speaker, value);
   }
 
   /** 等待推进指示器可见性（呼吸小光点；同时决定面板是否保持显示） */
   setAwaiting(awaiting: boolean): void {
-    if (this.#nvlActive) return; // NVL 页不使用对话面板/指示器
-    if (this.#interfaceHidden) return; // 隐藏界面模式（H 键赏画）：指示器保持隐藏
-    this.#continueIndicator.visible = awaiting;
-    if (awaiting) this.#dialogPanel.visible = true;
-    else if (
-      this.#speakerText.text.length === 0
-      && this.#dialogText.text.length === 0
-    ) this.#dialogPanel.visible = false;
-    this.#requestFrame();
+    this.#dialogue.setAwaiting(awaiting);
   }
 
   /** 是否仍有视觉状态需要逐帧推进；静态对话画面不请求额外更新。 */
   needsUpdate(): boolean {
-    return this.#continueIndicator.visible || this.#hasEffectWork();
+    return this.#dialogue.needsUpdate() || this.#hasEffectWork();
   }
 
   /** 呼吸小光点动画（由 AdvRenderer 每帧转发 ticker delta；alpha 呼吸 + 轻微浮动） */
   updateContinuePulse(deltaMs: number): void {
-    if (!this.#continueIndicator.visible) return;
-    this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
-    this.#continueIndicator.y = this.#h - 46 + Math.sin(this.#continuePhase) * 3;
-    this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
+    this.#dialogue.updateContinuePulse(deltaMs);
   }
 
   /** 展示 Backlog 覆盖层（半透明黑底 + 最近 N 条，CJK 按字符数软换行；点击任意处关闭）。
    *  onReplayVoice：点击带语音标记的行重播（@voice 紧跟的文本行） */
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
-    const layer = this.#backlogLayer;
-    if (!this.#backlogBuilt) {
-      layer.eventMode = 'static';
-      // 滚轮由宿主统一路由到 scrollBacklog，避免 Pixi 与宿主各处理一次导致滚动过量。
-      // 空白处点击关闭仍由覆盖层自身处理。
-      layer.on('pointerdown', () => {
-        this.hideBacklog();
-        this.onBacklogClose?.();
-      });
-      this.#backlogBuilt = true;
-    }
-    layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.94 }));
-    layer.addChild(new PText({
-      text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
-      style: { fontSize: 22, fill: NIGHT_AZURE.panelText, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 30);
-    layer.addChild(new PText({
-      text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
-      style: { fontSize: 17, fill: query.trim().length > 0 ? NIGHT_AZURE.accent : MODERN_ADV.muted } satisfies TextStyleOptions,
-    })).position.set(60, 58);
-    // 条目层（整体滚动；CJK 断行禁则软换行，M5 支柱4：标点不挂行首/行尾，……不拆）
-    const entriesLayer = new Container();
-    // 先替换引用，再做初始滚动。旧 entriesLayer 已经随上一轮子树销毁，
-    // 不能在这里继续调用它的 position.set（第二次打开记录时会稳定触发 null.set）。
-    this.#backlogEntriesLayer = entriesLayer;
-    const perLine = 40;
-    let y = 0;
-    for (const e of entries.slice(-120)) {
-      const text = e.text.length > 0 ? e.text : '（无文本）';
-      let first = true;
-      for (const line of wrapCjk(text, perLine)) {
-        const lineText = (first && e.speaker ? `${e.speaker}：` : '') + line;
-        const t = new PText({
-          text: first && e.voice ? `▶ ${lineText}` : lineText,
-          style: {
-            fontSize: 20,
-            fill: first && e.speaker ? NIGHT_AZURE.nameTag : 0x454c5c,
-            fontWeight: first && e.speaker ? 'bold' : 'normal',
-          } satisfies TextStyleOptions,
-        });
-        t.position.set(60, 84 + y);
-        if (first && e.voice && onReplayVoice) {
-          // 点击行首播放图标区重播语音（阻止冒泡到层关闭）
-          t.eventMode = 'static';
-          t.cursor = 'pointer';
-          t.on('pointerdown', (ev) => {
-            ev.stopPropagation();
-            onReplayVoice(e.voice!);
-          });
-        }
-        entriesLayer.addChild(t);
-        y += 34;
-        first = false;
-      }
-    }
-    this.#backlogContentH = y;
-    this.#backlogScroll = 0;
-    this.#applyBacklogScroll();
-    layer.addChild(entriesLayer);
-    layer.visible = true;
-    this.#requestFrame();
+    this.#dialogue.showBacklog(entries, onReplayVoice, query);
   }
 
   /** 隐藏/恢复对话界面（H 键惯例：隐藏对话框/说话人栏/等待指示器；背景立绘/粒子保留供赏画） */
   hideInterface(hidden: boolean): void {
-    this.#interfaceHidden = hidden;
-    this.#dialogPanel.visible = !hidden;
-    this.#speakerText.visible = !hidden;
-    this.#dialogText.visible = !hidden;
-    this.#dialogRubyLayer.visible = !hidden;
-    this.#continueIndicator.visible = !hidden;
-    this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    this.#drawSpeakerPlate();
-    this.#updateSpeakerAvatar();
-    this.#requestFrame();
+    this.#dialogue.hideInterface(hidden);
   }
 
   /** 展示现代 ADV 底部操作带。 */
   showCommandRail(items: CommandRailItem[], onSelect: (id: string) => void): void {
-    this.#commandRailSuppressed = false;
-    this.#commandRailOnSelect = onSelect;
-    this.#commandRailItems = items.map((item) => ({ ...item }));
-    this.#rebuildCommandRail();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    this.#wakeCommandRail();
+    this.#dialogue.showCommandRail(items, onSelect);
   }
 
   /** 更新操作带状态并保持当前悬停/淡出机制。 */
   setCommandRailItems(items: CommandRailItem[]): void {
-    this.#commandRailItems = items.map((item) => ({ ...item }));
-    this.#rebuildCommandRail();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    if (!this.#commandRailSuppressed) this.#wakeCommandRail();
+    this.#dialogue.setCommandRailItems(items);
   }
 
   hideCommandRail(): void {
-    this.#commandRailSuppressed = true;
-    this.#commandRail.visible = false;
-    this.#requestFrame();
-  }
-
-  #wakeCommandRail(): void {
-    if (this.#interfaceHidden || this.#commandRailSuppressed || this.#commandRailItems.length === 0) return;
-    this.#commandRailWakeRemain = 2800;
-    this.#commandRail.visible = true;
-    this.#commandRail.alpha = Math.max(this.#commandRail.alpha, 0.72);
-    this.#requestFrame();
-  }
-
-  #rebuildCommandRail(): void {
-    const layer = this.#commandRail;
-    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    if (this.#commandRailItems.length === 0) return;
-    const railH = 46;
-    const count = this.#commandRailItems.length;
-    const slotW = 44;
-    const slotGap = 4;
-    const railPad = 8;
-    const railW = railPad * 2 + count * slotW + (count - 1) * slotGap;
-    const startX = Math.max(12, this.#w - railW - 18);
-    const top = this.#h - railH - 10;
-    layer.addChild(new Graphics()
-      .roundRect(startX, top, railW, railH, 5)
-      .fill({ color: MODERN_ADV.rail, alpha: 0.82 })
-      .stroke({ width: 1, color: MODERN_ADV.line, alpha: 0.3 }));
-
-    this.#commandRailItems.forEach((item, index) => {
-      const row = new Container();
-      row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
-      const hit = new Graphics().roundRect(0, 0, slotW, railH - 6, 3).fill({ color: 0xffffff, alpha: 0.001 });
-      const icon = new PText({
-        text: item.icon ?? '·',
-        style: {
-          fontSize: 20,
-          fill: item.active ? MODERN_ADV.accent : MODERN_ADV.muted,
-          fontWeight: item.active ? 'bold' : 'normal',
-          fontFamily: this.#fontFamilies.ui,
-        } satisfies TextStyleOptions,
-      });
-      icon.anchor.set(0.5);
-      icon.position.set(slotW / 2, (railH - 6) / 2);
-      const label = new PText({
-        text: item.label,
-        style: {
-          fontSize: 12,
-          fill: item.enabled === false ? 0x596274 : item.active ? MODERN_ADV.text : MODERN_ADV.muted,
-          letterSpacing: 1,
-          fontFamily: this.#fontFamilies.ui,
-        } satisfies TextStyleOptions,
-      });
-      // 默认只显示符号；悬停时才显示短标签，保持正文画面的低干扰。
-      label.anchor.set(0.5, 1);
-      label.position.set(slotW / 2, -4);
-      label.alpha = 0;
-      const underline = new Graphics()
-        .rect(10, railH - 8, slotW - 20, 1.5)
-        .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
-      row.addChild(hit, icon, label, underline);
-      row.alpha = item.enabled === false ? 0.38 : 1;
-      if (item.enabled !== false) {
-        row.eventMode = 'static';
-        row.cursor = 'pointer';
-        row.on('pointerover', () => {
-          this.#wakeCommandRail();
-          label.alpha = 1;
-          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
-            .fill({ color: MODERN_ADV.accent, alpha: 0.9 });
-          label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
-        });
-        row.on('pointerout', () => {
-          label.alpha = 0;
-          underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
-            .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
-          label.style = {
-            fontSize: 12,
-            fill: item.active ? MODERN_ADV.text : MODERN_ADV.muted,
-            letterSpacing: 1,
-            fontFamily: this.#fontFamilies.ui,
-          } satisfies TextStyleOptions;
-        });
-        row.on('pointerdown', () => this.#commandRailOnSelect?.(item.id));
-      }
-      layer.addChild(row);
-    });
-    layer.alpha = this.#commandRailIdleAlpha;
+    this.#dialogue.hideCommandRail();
   }
 
   /** Backlog 滚动：delta 正数向下（看更旧内容方向为向上滚 → 负 delta），clamp 到内容范围 */
   scrollBacklog(delta: number): void {
-    if (!this.#backlogEntriesLayer || !this.#backlogLayer.visible) return;
-    const viewH = this.#h - 120;
-    const maxScroll = Math.max(0, this.#backlogContentH - viewH);
-    this.#backlogScroll = Math.max(-maxScroll, Math.min(0, this.#backlogScroll - delta));
-    this.#applyBacklogScroll();
-    this.#requestFrame();
-  }
-
-  #applyBacklogScroll(): void {
-    if (this.#backlogEntriesLayer) this.#backlogEntriesLayer.position.set(0, this.#backlogScroll);
+    this.#dialogue.scrollBacklog(delta);
   }
 
   /** 舞台截图缩略图（存档预览用）：整屏截图缩到宽 ≤320 的 JPEG dataURL；失败返回 null */
@@ -1474,10 +1004,7 @@ export class PixiStage implements AdvStage {
 
   /** 隐藏 Backlog 覆盖层 */
   hideBacklog(): void {
-    this.#backlogLayer.visible = false;
-    this.#backlogEntriesLayer = null;
-    this.#backlogContentH = 0;
-    this.#backlogScroll = 0;
+    this.#dialogue.hideBacklog();
   }
 
   /* ============================ 演出效果（@shake/@flash/@zoom） ============================ */
@@ -1516,7 +1043,7 @@ export class PixiStage implements AdvStage {
       } else if (cue.action === 'show') {
         const sprite = this.#portraitSprites.get(target);
         if (sprite) {
-          const activeAlpha = !this.#activeSpeakerId || this.#portraitViews.get(target)?.charId === this.#activeSpeakerId ? 1 : 0.46;
+          const activeAlpha = !this.#dialogue.activeSpeakerId || this.#portraitViews.get(target)?.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
           sprite.alpha = activeAlpha * event.progress;
           sprite.y = this.#h + 10 + (1 - event.progress) * 28;
         }
@@ -1708,6 +1235,7 @@ export class PixiStage implements AdvStage {
   /** 演出效果时间轴推进（AdvRenderer 每帧转发 ticker delta） */
   updateEffects(deltaMs: number): void {
     if (!this.#hasEffectWork()) return;
+    this.#dialogue.update(deltaMs);
     this.#worldEffects.update(deltaMs);
     if (this.#flashRemain > 0) {
       this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
@@ -1733,43 +1261,21 @@ export class PixiStage implements AdvStage {
         this.#bgTransition = null;
       }
     }
-    // 选择肢入场淡入（逐卡错峰：第 i 张在第 i*80ms 开始，各自 #choiceFadeDur 内渐显）
-    if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
-      this.#choiceFadeRemain = Math.max(0, this.#choiceFadeRemain - deltaMs);
-      const total = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
-      const elapsed = total - this.#choiceFadeRemain;
-      this.#choiceViews.forEach((v, i) => {
-        v.holder.alpha = Math.max(0, Math.min(1, (elapsed - i * 80) / this.#choiceFadeDur));
-      });
-    }
-    if (this.#commandRail.visible) {
-      if (this.#commandRailWakeRemain > 0) {
-        this.#commandRailWakeRemain = Math.max(0, this.#commandRailWakeRemain - deltaMs);
-      }
-      const target = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
-      const next = this.#commandRail.alpha + (target - this.#commandRail.alpha) * Math.min(1, deltaMs / 120);
-      this.#commandRail.alpha = Math.abs(target - next) <= 0.001 ? target : next;
-    }
     this.#updateMenuMotion(deltaMs);
     this.#updateTransient(deltaMs);
   }
 
   #hasEffectWork(): boolean {
-    const railTarget = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
-    const commandRailMoving = this.#commandRail.visible
-      && (this.#commandRailWakeRemain > 0 || Math.abs(this.#commandRail.alpha - railTarget) > 0.001);
-    return this.#worldEffects.needsUpdate
+    return this.#dialogue.needsUpdate()
+      || this.#worldEffects.needsUpdate
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#bgTransition !== null
-      || (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0)
-      || commandRailMoving
       || this.#menuMotionRemain > 0
       || this.#tintRemain > 0
       || this.#movTweens.length > 0
       || this.#particles.length > 0
       || this.#portraitTweens.length > 0
-      || this.#bannerRemain > 0
       || this.#wipeRemain > 0;
   }
 
@@ -1898,107 +1404,27 @@ export class PixiStage implements AdvStage {
 
   /** 横幅：chapter 变体电影化（上下黑边 letterbox + 大字距渐显），tip 变体右上小胶囊；首尾淡入淡出 */
   showBanner(text: string, variant: 'chapter' | 'tip'): void {
-    if (text.length === 0) return;
-    this.#bannerText.text = text;
-    this.#bannerText.style = variant === 'chapter'
-      ? { fontSize: 38, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#fontFamilies.title } satisfies TextStyleOptions
-      : { fontSize: 20, fill: NIGHT_AZURE.plateText, fontFamily: this.#fontFamilies.ui } satisfies TextStyleOptions;
-    this.#bannerBars.visible = variant === 'chapter';
-    this.#bannerTipBg.clear();
-    if (variant === 'chapter') {
-      this.#bannerText.anchor.set(0.5);
-      this.#bannerText.position.set(this.#w / 2, this.#h * 0.4);
-    } else {
-      this.#bannerText.anchor.set(1, 0);
-      this.#bannerText.position.set(this.#w - 60, 40);
-      // 右上小胶囊底板（玻璃家族口径：深蓝底 + 冷灰蓝细描边）
-      const tw = this.#bannerText.width;
-      const th = this.#bannerText.height;
-      this.#bannerTipBg.roundRect(this.#w - 60 - tw - 20, 32, tw + 40, th + 16, (th + 16) / 2)
-        .fill({ color: NIGHT_AZURE.choiceBg, alpha: 0.8 })
-        .stroke({ width: 1, color: NIGHT_AZURE.choiceEdge, alpha: 0.9 });
-    }
-    this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
-    this.#bannerRemain = this.#bannerDur;
-    this.#bannerLayer.visible = true;
-    this.#bannerLayer.alpha = 0; // 渐显由 #updateTransient 驱动（首 300ms 淡入 / 末 400ms 淡出）
-    this.#requestFrame();
+    this.#dialogue.showBanner(text, variant);
   }
 
   /** NVL 模式：开启时隐藏对话框，全屏半透明文本页；关闭时恢复 */
   setNvlMode(on: boolean): void {
-    this.#nvlActive = on;
-    if (on) {
-      this.clearNvlText();
-      this.#nvlLayer.visible = true;
-      this.#dialogPanel.visible = false;
-      this.#speakerPlate.visible = false;
-      this.#speakerText.visible = false;
-      this.#dialogText.visible = false;
-      this.#dialogRubyLayer.visible = false;
-      this.#continueIndicator.visible = false;
-    } else {
-      this.#nvlLayer.visible = false;
-      this.#speakerText.visible = true;
-      this.#dialogText.visible = true;
-      this.#dialogRubyLayer.visible = true;
-      this.#drawSpeakerPlate();
-    }
-    this.#requestFrame();
+    this.#dialogue.setNvlMode(on);
   }
 
   /** NVL 页条目列表（只读引用；测试断言与宿主持久化巡检用） */
   get nvlLines(): readonly PText[] {
-    return this.#nvlLines;
+    return this.#dialogue.nvlLines;
   }
 
   /** NVL 页追加一条（wrapCjk 预断行；按折行数累计排布；超出屏幕底边淘汰最旧） */
   appendNvlText(speaker: string | null, text: string): void {
-    const raw = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
-    // 断行禁则（对齐 M5 支柱4 对话框/Backlog）：禁则字不挂行首/行尾，……——不拆行
-    const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
-    const t = new PText({
-      text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: 0x333a49, fontFamily: this.#fontFamilies.body } satisfies TextStyleOptions,
-    });
-    this.#nvlLayer.addChild(t);
-    this.#nvlLines.push(t);
-    this.#nvlLineCounts.push(Math.max(1, wrapped.length));
-    // 超底边淘汰最旧（按折行后的实际行高计算，保底至少留当前条）
-    const budget = this.#h - 120; // 上下各留 60 边距
-    while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
-      const old = this.#nvlLines.shift()!;
-      this.#nvlLineCounts.shift();
-      this.#nvlLayer.removeChild(old);
-      old.destroy();
-    }
-    // 累计排布：条目按实际折行数占高（替代旧定步长 i*35，多行条目不再重叠）
-    const lineHeight = 28; // ≥ Pixi fontSize 20 的实际行高，留行间距
-    const entryGap = 6;    // 条目之间的额外间隙
-    let y = 60;
-    this.#nvlLines.forEach((l, i) => {
-      l.position.set(80, y);
-      y += this.#nvlLineCounts[i]! * lineHeight + entryGap;
-    });
-    this.#requestFrame();
-  }
-
-  /** NVL 页当前占用总行高（淘汰判断用；行高口径与排布一致） */
-  #nvlTotalHeight(): number {
-    let h = 0;
-    for (const n of this.#nvlLineCounts) h += n * 28 + 6;
-    return h;
+    this.#dialogue.appendNvlText(speaker, text);
   }
 
   /** NVL 页清空（@nvl clear） */
   clearNvlText(): void {
-    for (const l of this.#nvlLines) {
-      this.#nvlLayer.removeChild(l);
-      l.destroy();
-    }
-    this.#nvlLines = [];
-    this.#nvlLineCounts = [];
-    this.#requestFrame();
+    this.#dialogue.clearNvlText();
   }
 
   /** 强制停止当前 @video（读档作废：渲染层回调已被会话令牌拦截，此处移除画面本体；审计复核） */
@@ -2101,12 +1527,6 @@ export class PixiStage implements AdvStage {
         this.#portraitTweens.splice(this.#portraitTweens.indexOf(tw), 1);
       }
     }
-    if (this.#bannerRemain > 0) {
-      this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
-      const elapsed = this.#bannerDur - this.#bannerRemain;
-      this.#bannerLayer.alpha = Math.min(1, elapsed / 300, this.#bannerRemain / 400);
-      if (this.#bannerRemain === 0) this.#bannerLayer.visible = false;
-    }
     if (this.#wipeRemain > 0) {
       this.#wipeRemain = Math.max(0, this.#wipeRemain - deltaMs);
       const p = 1 - this.#wipeRemain / this.#wipeDur;
@@ -2167,7 +1587,7 @@ export class PixiStage implements AdvStage {
   hideGallery(): void {
     this.#requestFrame();
     this.#galleryLayer.visible = false;
-    this.#commandRailSuppressed = false;
+    this.#dialogue.restoreCommandRail();
   }
 
   #closeGallery(): void {
@@ -2347,7 +1767,7 @@ export class PixiStage implements AdvStage {
   hideSettings(): void {
     this.#requestFrame();
     this.#settingsLayer.visible = false;
-    this.#commandRailSuppressed = false;
+    this.#dialogue.restoreCommandRail();
   }
 
   #rebuildSettings(): void {
@@ -2647,8 +2067,7 @@ export class PixiStage implements AdvStage {
     this.#requestFrame();
     this.#titleLayer.visible = false;
     if (restoreCommandRail) {
-      this.#commandRailSuppressed = false;
-      this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
+      this.#dialogue.restoreCommandRail();
     } else {
       this.hideCommandRail();
     }
@@ -2948,7 +2367,7 @@ export class PixiStage implements AdvStage {
   hideSaveLoad(): void {
     this.#requestFrame();
     this.#saveLoadLayer.visible = false;
-    this.#commandRailSuppressed = false;
+    this.#dialogue.restoreCommandRail();
   }
 
   /** 展示大地图：节点（可进入者高亮可点）+ 日期/回合/行动力 + 结束回合 */
@@ -3150,67 +2569,16 @@ export class PixiStage implements AdvStage {
   }
 
   showChoices(options: ChoiceOptionView[]): void {
-    this.#requestFrame();
-    this.#commandRail.visible = false;
-    this.#clearChoices();
-    options.forEach((opt, i) => {
-      // Container 包裹（命中区 + 细线 + 文本）：Pixi v8 起 Text 不再允许挂子节点。
-      const holder = new Container();
-      const label = new PText({
-        text: opt.label,
-        style: { fontSize: 24, fill: MODERN_ADV.text, letterSpacing: 1 } satisfies TextStyleOptions,
-      });
-      label.position.set(26, 6);
-      const bg = new Graphics();
-      const bar = new Graphics();
-      holder.addChild(bg, bar, label);
-      const view = { holder, bg, bar, label };
-      this.#choiceViews.push(view);
-      this.#drawChoiceCard(view, false);
-      holder.eventMode = 'static';
-      holder.cursor = 'pointer';
-      holder.on('pointerdown', () => this.onSelect?.(opt.index));
-      // hover 高亮：只提亮文字与底部细线，不制造按钮卡片。
-      holder.on('pointerover', () => this.#drawChoiceCard(view, true));
-      holder.on('pointerout', () => {
-        this.#drawChoiceCard(view, this.#choiceHighlight === this.#choiceViews.indexOf(view));
-      });
-      this.#choiceLayer.addChild(holder);
-    });
-    this.#choiceHighlight = -1;
-    this.#layout();
-    // 入场淡入：整体渐显 + 逐卡错峰（updateEffects 驱动；无卡片时不启动）
-    if (this.#choiceViews.length > 0) {
-      this.#choiceFadeRemain = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
-      for (const v of this.#choiceViews) v.holder.alpha = 0;
-    }
-  }
-
-  /** 选择肢绘制：透明命中区 + 低透明底色 + 单条强调线。 */
-  #drawChoiceCard(view: { holder: Container; bg: Graphics; bar: Graphics; label: PText }, selected: boolean): void {
-    view.label.style = selected
-      ? { fontSize: 24, fill: MODERN_ADV.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
-      : { fontSize: 24, fill: MODERN_ADV.muted, letterSpacing: 1 } satisfies TextStyleOptions;
-    const w = view.label.width + 60;
-    const h = view.label.height + 16;
-    view.bg.clear();
-    view.bg.rect(0, 0, w, h).fill({ color: MODERN_ADV.ink, alpha: selected ? 0.12 : 0.015 });
-    view.bg.rect(0, h - 1, w, 1).fill({ color: MODERN_ADV.line, alpha: selected ? 0.9 : 0.22 });
-    view.bar.clear();
-    if (selected) view.bar.rect(0, h - 3, w, 2).fill({ color: MODERN_ADV.accent, alpha: 0.95 });
+    this.#dialogue.showChoices(options);
   }
 
   /** 选择肢键盘导航高亮：提亮第 pos 项（其余恢复默认样式；卡片与文本同步重绘） */
   setChoiceHighlight(pos: number): void {
-    this.#requestFrame();
-    this.#choiceHighlight = pos;
-    this.#choiceViews.forEach((view, i) => this.#drawChoiceCard(view, i === pos));
+    this.#dialogue.setChoiceHighlight(pos);
   }
 
   hideChoices(): void {
-    this.#requestFrame();
-    this.#clearChoices();
-    this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#dialogue.hideChoices();
   }
 
   setFade(alpha: number): void {
@@ -3228,14 +2596,6 @@ export class PixiStage implements AdvStage {
     this.#loadingLayer.hide();
   }
 
-  #clearChoices(): void {
-    for (const view of this.#choiceViews) {
-      this.#choiceLayer.removeChild(view.holder);
-      view.holder.destroy({ children: true }); // holder 内含底板/强调条 Graphics 与文本，一并销毁
-    }
-    this.#choiceViews = [];
-  }
-
   /**
    * 清理一轮剧情会话的投影状态。资源注册表也会清空，避免编辑器预览重载后
    * 沿用上一个项目的背景/立绘；宿主注入纹理不主动 destroy，生命周期仍由宿主管理。
@@ -3243,13 +2603,11 @@ export class PixiStage implements AdvStage {
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
     this.#requestFrame();
     this.hideLoading();
-    this.#lastShownSpeaker = undefined;
-    this.#lastShownDialog = '';
     const preserveWorld = options.preserveWorld === true;
     const clearAssets = options.clearAssets === true;
     this.hideVideo();
     this.hideEnding();
-    this.#clearChoices();
+    this.#dialogue.reset();
     this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
 
     if (!preserveWorld) {
@@ -3276,7 +2634,6 @@ export class PixiStage implements AdvStage {
     const clearLayer = (layer: Container): void => {
       layer.removeChildren().forEach((child) => child.destroy({ children: true }));
     };
-    clearLayer(this.#backlogLayer);
     clearLayer(this.#galleryLayer);
     clearLayer(this.#settingsLayer);
     clearLayer(this.#battleLayer);
@@ -3286,10 +2643,6 @@ export class PixiStage implements AdvStage {
     clearLayer(this.#mapLayer);
     clearLayer(this.#shopLayer);
     clearLayer(this.#baseLayer);
-    this.#backlogEntriesLayer = null;
-    this.#backlogScroll = 0;
-    this.#backlogContentH = 0;
-    this.#backlogLayer.visible = false;
     this.#galleryLayer.visible = false;
     this.#settingsLayer.visible = false;
     this.#battleLayer.visible = false;
@@ -3331,12 +2684,6 @@ export class PixiStage implements AdvStage {
     this.#timelinePanStarts.clear();
     this.#timelineTintStarts.clear();
     this.stopParticles();
-    this.#bannerRemain = 0;
-    this.#bannerLayer.visible = false;
-    this.#bannerLayer.alpha = 1;
-    this.#bannerText.text = '';
-    this.#bannerBars.visible = false;
-    this.#bannerTipBg.clear();
     this.#wipeRemain = 0;
     this.#wipeBar.visible = false;
     this.#tintRemain = 0;
@@ -3345,28 +2692,6 @@ export class PixiStage implements AdvStage {
     this.#tintFrom = { color: 0x000000, alpha: 0 };
     this.#tintTo = { color: 0x000000, alpha: 0 };
 
-    this.clearNvlText();
-    this.#nvlActive = false;
-    this.#nvlLayer.visible = false;
-    this.#hideRubyPool();
-    this.#speakerText.text = '';
-    this.#dialogText.text = '';
-    this.#speakerText.visible = true;
-    this.#dialogText.visible = true;
-    this.#dialogRubyLayer.visible = true;
-    this.#speakerPlate.clear();
-    this.#speakerPlate.visible = false;
-    if (this.#speakerAvatar) this.#speakerAvatar.visible = false;
-    this.#activeSpeakerId = null;
-    this.#dialogPanel.visible = false;
-    this.#continueIndicator.visible = false;
-    this.#continuePhase = 0;
-    this.#interfaceHidden = false;
-    this.#commandRailSuppressed = false;
-    this.#commandRail.visible = this.#commandRailItems.length > 0;
-    this.#commandRail.alpha = this.#commandRailIdleAlpha;
-    this.#commandRailWakeRemain = 0;
-    this.#choiceHighlight = -1;
     this.setFade(0);
   }
 
@@ -3380,32 +2705,18 @@ export class PixiStage implements AdvStage {
   destroy(): void {
     this.#worldEffects.destroy();
     this.#loadingLayer.destroy();
-    this.#clearChoices();
+    this.#dialogue.dispose();
     this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
     for (const sprite of this.#portraitSprites.values()) sprite.destroy();
     this.#portraitSprites.clear();
     this.#portraitViews.clear();
-    this.#destroyRubyPools();
     this.#bgSprite?.destroy();
     this.#bgSprite = null;
     this.#backgroundKey = null;
     this.#assetRegistry.dispose();
-    if (this.app?.canvas && this.#commandRailPointerWake) {
-      this.app.canvas.removeEventListener('pointermove', this.#commandRailPointerWake);
-      this.app.canvas.removeEventListener('pointerdown', this.#commandRailPointerWake);
-    }
-    this.#commandRailPointerWake = null;
     this.app?.destroy(true, { children: true });
     this.app = null;
     this.#frameRequest = null;
-  }
-
-  #destroyRubyPools(): void {
-    this.#dialogRubyLayer.removeChildren();
-    for (const object of this.#rubyBasePool) object.destroy({ children: true });
-    for (const object of this.#rubyTextPool) object.destroy({ children: true });
-    this.#rubyBasePool = [];
-    this.#rubyTextPool = [];
   }
 
   #requestFrame(): void {

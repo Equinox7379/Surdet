@@ -130,6 +130,8 @@ export interface AdvStage {
   setSpeakerProfiles?(profiles: SpeakerProfile[]): void;
   /** 设置当前说话角色，用于降低其他立绘的存在感。 */
   setActiveSpeaker?(characterId: string | null): void;
+  /** World-only portrait focus projection, separate from dialogue speaker state. */
+  setPortraitFocus?(characterId: string | null): void;
   /** 显示现代 ADV 底部操作带；宿主负责动作语义。 */
   showCommandRail?(items: CommandRailItem[], onSelect: (id: string) => void): void;
   /** 更新操作带的 active/enabled 状态，不重建宿主状态。 */

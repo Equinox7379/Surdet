@@ -21,6 +21,7 @@ import {
   type RendererStagePort,
 } from './renderer-facade.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
+import type { DialogueLayer } from '../layers/dialogue/dialogue-layer.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -33,6 +34,7 @@ export interface RendererRuntimeInternals {
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
   readonly assetRegistry?: RenderAssetRegistry;
   readonly lifecycle?: RenderLifecycle;
+  readonly dialogueLayer?: DialogueLayer;
 }
 
 interface CleanupParts {
@@ -125,6 +127,7 @@ export async function createRendererRuntimeFromInternals(
       resourceSnapshot: internals.resourceSnapshot
         ?? (internals.lifecycle ? () => internals.lifecycle!.snapshot() : undefined),
       assetRegistry: internals.assetRegistry,
+      dialogueLayer: internals.dialogueLayer,
     };
     facade = new RendererFacade(facadeOptions);
     let disposed = false;
@@ -211,7 +214,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
   let compositionAttempted = false;
   try {
     assetRegistry = new RenderAssetRegistry({ lifecycle });
-    stage = new PixiStage(assetRegistry);
+    stage = new PixiStage(assetRegistry, lifecycle);
     await stage.init(options.canvas);
     if (options.quality !== undefined) stage.setQuality(options.quality);
     if (options.preferences !== undefined) stage.setPresentationPreferences(options.preferences);
@@ -234,6 +237,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       assetRegistry,
       lifecycle,
       resourceSnapshot: () => lifecycle.snapshot(),
+      dialogueLayer: stage.dialogueLayer,
     });
   } catch (cause) {
     const cleanupFailures = compositionAttempted
