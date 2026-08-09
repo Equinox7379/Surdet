@@ -1,8 +1,8 @@
 # Surdet Renderer v2 M6 交付报告
 
-日期：2026-08-09  
-项目：E:/surdet  
-里程碑：M6 — Task 16: Freeze and extract SystemPanelLayer  
+日期：2026-08-09
+项目：E:/surdet
+里程碑：M6 — Task 16: Freeze and extract SystemPanelLayer
 当前状态：WAITING_FOR_REVIEW
 
 ## 1. 结论
@@ -370,4 +370,3 @@ git rev-list --left-right --count HEAD...surdet/main
 - 不 force push；
 - 不提交、删除或修改 `USER.md`、`SESSION-HANDOFF.md`；
 - 等待独立复审和“批准进入 M7”。
-
