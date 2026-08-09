@@ -42,6 +42,15 @@ export interface SystemPanelLayerOptions {
   readonly requestFrame?: FrameRequestHandler;
 }
 
+/** Read-only evidence emitted for the local renderer acceptance harness. */
+export interface SystemPanelLayerDebugSnapshot {
+  readonly overlay: SystemPanelOverlayState;
+  readonly battleUnitCount: number;
+  readonly mapNodeCount: number;
+  readonly shopItemCount: number;
+  readonly baseCommandCount: number;
+}
+
 /**
  * Owns battle, map, shop, base-command and video projections.
  *
@@ -68,12 +77,16 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #battleLayer: Container;
   #battleHandlers: BattleHandlers | null = null;
   #battleSelectedSkill: string | null = null;
+  #battleUnitCount = 0;
   #mapLayer: Container;
   #mapHandlers: { onEnter: (nodeId: string) => void; onEndTurn: () => void } | null = null;
+  #mapNodeCount = 0;
   #shopLayer: Container;
   #shopHandlers: { onBuy: (itemId: string) => void; onClose: () => void } | null = null;
+  #shopItemCount = 0;
   #baseLayer: Container;
   #baseHandlers: { onExec: (cmdId: string) => void; onClose: () => void } | null = null;
+  #baseCommandCount = 0;
   #activeVideo: HTMLVideoElement | null = null;
 
   constructor(options: SystemPanelLayerOptions) {
@@ -109,6 +122,20 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     return { type: 'none' };
   }
 
+  /**
+   * Test-only read model. It reads the currently projected panel view and has
+   * no rendering, resource, listener, or frame-loop side effects.
+   */
+  debugSnapshot(): SystemPanelLayerDebugSnapshot {
+    return {
+      overlay: this.system(),
+      battleUnitCount: this.#battleUnitCount,
+      mapNodeCount: this.#mapNodeCount,
+      shopItemCount: this.#shopItemCount,
+      baseCommandCount: this.#baseCommandCount,
+    };
+  }
+
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate) handler();
@@ -127,6 +154,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#requestFrame();
     this.#clearPanel('battle', this.#battleLayer);
     this.#battleHandlers = handlers;
+    this.#battleUnitCount = view.units.length;
     const layer = this.#battleLayer;
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x05050a, alpha: 0.9 }));
     layer.addChild(new PText({
@@ -238,6 +266,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#battleLayer.visible = false;
     this.#clearPanel('battle', this.#battleLayer);
     this.#battleHandlers = null;
+    this.#battleUnitCount = 0;
   }
 
   showMap(view: MapView, onEnter: (nodeId: string) => void, onEndTurn: () => void): void {
@@ -245,6 +274,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#requestFrame();
     this.#clearPanel('map', this.#mapLayer);
     this.#mapHandlers = { onEnter, onEndTurn };
+    this.#mapNodeCount = view.nodes.length;
     const layer = this.#mapLayer;
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0f14, alpha: 0.95 }));
     layer.addChild(new PText({
@@ -300,6 +330,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapLayer.visible = false;
     this.#clearPanel('map', this.#mapLayer);
     this.#mapHandlers = null;
+    this.#mapNodeCount = 0;
   }
 
   showShop(view: ShopView, onBuy: (itemId: string) => void, onClose: () => void): void {
@@ -307,6 +338,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#requestFrame();
     this.#clearPanel('shop', this.#shopLayer);
     this.#shopHandlers = { onBuy, onClose };
+    this.#shopItemCount = view.items.length;
     const layer = this.#shopLayer;
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
@@ -359,6 +391,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#shopLayer.visible = false;
     this.#clearPanel('shop', this.#shopLayer);
     this.#shopHandlers = null;
+    this.#shopItemCount = 0;
   }
 
   showBaseCommands(view: BasePanelView, onExec: (cmdId: string) => void, onClose: () => void): void {
@@ -366,6 +399,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#requestFrame();
     this.#clearPanel('base', this.#baseLayer);
     this.#baseHandlers = { onExec, onClose };
+    this.#baseCommandCount = view.commands.length;
     const layer = this.#baseLayer;
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
@@ -423,6 +457,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#baseLayer.visible = false;
     this.#clearPanel('base', this.#baseLayer);
     this.#baseHandlers = null;
+    this.#baseCommandCount = 0;
   }
 
   showVideo(source: string, onEnd: () => void): void {
@@ -487,6 +522,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapHandlers = null;
     this.#shopHandlers = null;
     this.#baseHandlers = null;
+    this.#battleUnitCount = 0;
+    this.#mapNodeCount = 0;
+    this.#shopItemCount = 0;
+    this.#baseCommandCount = 0;
   }
 
   dispose(): void {
@@ -500,6 +539,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapHandlers = null;
     this.#shopHandlers = null;
     this.#baseHandlers = null;
+    this.#battleUnitCount = 0;
+    this.#mapNodeCount = 0;
+    this.#shopItemCount = 0;
+    this.#baseCommandCount = 0;
     this.#disposed = true;
     this.#videoGeneration.dispose();
     this.#lifecycle.releaseOwner('system');

@@ -17,3 +17,4 @@ packages/shell/.pack-stage/
 /preload.js
 /shot*.mjs
 /shot*.png
+/packages/shell/e2e/artifacts/

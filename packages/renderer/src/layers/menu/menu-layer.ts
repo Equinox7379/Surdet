@@ -38,6 +38,15 @@ export interface MenuLayerOptions {
   readonly requestFrame?: () => void;
 }
 
+/** Read-only evidence emitted for the local renderer acceptance harness. */
+export interface MenuLayerDebugSnapshot {
+  readonly overlay: MenuOverlayState;
+  readonly titleItemCount: number;
+  readonly systemMenuItemCount: number;
+  readonly settingsRowCount: number;
+  readonly saveLoadSlotCount: number;
+}
+
 interface MenuHandlers {
   readonly onSelect: (id: string) => void;
   readonly onClose: () => void;
@@ -68,6 +77,8 @@ export class MenuLayer implements MenuProjectionPort {
   #endingLayer: Container;
   #menuLayer: Container;
   #menuPanel: Container | null = null;
+  #titleItemCount = 0;
+  #systemMenuItemCount = 0;
   #menuMotionRemain = 0;
   #menuMotionDur = 260;
   #menuMotionOffset = 46;
@@ -78,6 +89,7 @@ export class MenuLayer implements MenuProjectionPort {
   #saveLoadLayer: Container;
   #saveLoadHandlers: { onSelect: (slotId: string) => void; onClose: () => void } | null = null;
   #saveLoadMode: 'save' | 'load' | null = null;
+  #saveLoadSlotCount = 0;
   #thumbCache = new Map<string, Texture>();
 
   constructor(options: MenuLayerOptions) {
@@ -128,6 +140,20 @@ export class MenuLayer implements MenuProjectionPort {
     return { type: 'none' };
   }
 
+  /**
+   * Test-only read model. It reads the already projected menu data and never
+   * creates display objects, registers resources, or requests a frame.
+   */
+  debugSnapshot(): MenuLayerDebugSnapshot {
+    return {
+      overlay: this.menu(),
+      titleItemCount: this.#titleItemCount,
+      systemMenuItemCount: this.#systemMenuItemCount,
+      settingsRowCount: this.#settingsRows.length,
+      saveLoadSlotCount: this.#saveLoadSlotCount,
+    };
+  }
+
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate) handler();
@@ -155,6 +181,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#requestFrame();
     this.#clearLayer(this.#titleLayer, 'title');
     this.#titleHandler = onSelect;
+    this.#titleItemCount = view.items.length;
     const layer = this.#titleLayer;
     const titleTexture = this.#assets.resolveBackground(view.backgroundKey ?? 'title_bg');
     if (titleTexture) {
@@ -248,6 +275,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#titleLayer, 'title');
     this.#titleLayer.visible = false;
     this.#titleHandler = null;
+    this.#titleItemCount = 0;
   }
 
   showEnding(text = 'THE END'): void {
@@ -283,6 +311,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#requestFrame();
     this.#clearLayer(this.#menuLayer, 'system-menu');
     this.#menuHandlers = { onSelect, onClose };
+    this.#systemMenuItemCount = items.length;
     const layer = this.#menuLayer;
     layer.alpha = 0;
     const bg = new Graphics()
@@ -383,6 +412,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#menuLayer.alpha = 1;
     this.#menuPanel = null;
     this.#menuHandlers = null;
+    this.#systemMenuItemCount = 0;
     this.#menuMotionRemain = 0;
   }
 
@@ -494,6 +524,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
     this.#saveLoadHandlers = { onSelect, onClose };
     this.#saveLoadMode = view.mode;
+    this.#saveLoadSlotCount = view.slots.length;
     const layer = this.#saveLoadLayer;
     const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.84 });
     bg.eventMode = 'static';
@@ -618,6 +649,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#saveLoadLayer.visible = false;
     this.#saveLoadHandlers = null;
     this.#saveLoadMode = null;
+    this.#saveLoadSlotCount = 0;
   }
 
   reset(): void {
@@ -631,6 +663,9 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearThumbnailCache();
     this.#menuMotionRemain = 0;
     this.#settingsRows = [];
+    this.#titleItemCount = 0;
+    this.#systemMenuItemCount = 0;
+    this.#saveLoadSlotCount = 0;
   }
 
   dispose(): void {
@@ -648,6 +683,9 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsHandlers = null;
     this.#saveLoadHandlers = null;
     this.#saveLoadMode = null;
+    this.#titleItemCount = 0;
+    this.#systemMenuItemCount = 0;
+    this.#saveLoadSlotCount = 0;
     try {
       this.#lifecycle.releaseOwner('menu');
     } finally {

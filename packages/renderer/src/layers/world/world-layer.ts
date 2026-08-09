@@ -33,6 +33,13 @@ export interface WorldPresentationSnapshot {
   particleKind: string | null;
 }
 
+/** Read-only evidence emitted for the local renderer acceptance harness. */
+export interface WorldLayerDebugSnapshot {
+  readonly activeSpeakerId: string | null;
+  readonly backgroundKey: string | null;
+  readonly particleKind: string | null;
+}
+
 export interface WorldLayerOptions {
   readonly width: number;
   readonly height: number;
@@ -312,6 +319,18 @@ export class WorldLayer implements WorldProjectionPort {
 
   get backgroundKey(): string | null { return this.#backgroundKey; }
   get needsUpdate(): boolean { return this.#hasEffectWork(); }
+
+  /**
+   * Test-only read model. It intentionally exposes no Pixi objects and has no
+   * rendering or lifecycle side effects.
+   */
+  debugSnapshot(): WorldLayerDebugSnapshot {
+    return {
+      activeSpeakerId: this.#activeSpeakerId,
+      backgroundKey: this.#backgroundKey,
+      particleKind: this.#particleKind,
+    };
+  }
 
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;

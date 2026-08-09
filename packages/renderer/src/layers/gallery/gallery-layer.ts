@@ -26,6 +26,14 @@ export interface GalleryLayerOptions {
   readonly requestFrame?: () => void;
 }
 
+/** Read-only evidence emitted for the local renderer acceptance harness. */
+export interface GalleryLayerDebugSnapshot {
+  readonly overlay: GalleryOverlayState;
+  readonly cgCount: number;
+  readonly musicCount: number;
+  readonly textCount: number;
+}
+
 interface GalleryViews {
   readonly cgs: GalleryItemView[];
   readonly music: GalleryItemView[];
@@ -83,6 +91,19 @@ export class GalleryLayer implements GalleryProjectionPort {
       tab: this.#galleryTab,
       mode: this.#galleryMode,
       viewerKey: this.#galleryViewerKey,
+    };
+  }
+
+  /**
+   * Test-only read model. It reads projected gallery views without touching
+   * Pixi state or requesting a frame.
+   */
+  debugSnapshot(): GalleryLayerDebugSnapshot {
+    return {
+      overlay: this.gallery(),
+      cgCount: this.#galleryViews?.cgs.length ?? 0,
+      musicCount: this.#galleryViews?.music.length ?? 0,
+      textCount: this.#galleryViews?.texts.length ?? 0,
     };
   }
 
