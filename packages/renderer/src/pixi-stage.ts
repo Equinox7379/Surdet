@@ -1,12 +1,8 @@
 import {
   Application,
-  ColorMatrixFilter,
   Container,
-  Graphics,
-  Sprite,
   Text as PText,
   TextStyle,
-  Texture,
   type TextStyleOptions,
 } from 'pixi.js';
 import type { BattleHandlers, BattleView } from './battle-view.js';
@@ -24,12 +20,12 @@ import type {
   SpeakerProfile,
 } from './types.js';
 import { RenderQualityController, type RenderQuality } from './quality.js';
-import { DEFAULT_PRESENTATION_PREFERENCES, normalizePresentationPreferences, presentationDuration, type PresentationPreferences } from './presentation.js';
-import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } from './post-process.js';
+import type { PresentationPreferences } from './presentation.js';
+import type { PostProcessSettings } from './post-process.js';
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
-import { WorldEffectsController, type ShakeDirection, type TransitionName } from './world-effects-controller.js';
-import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort } from './api/renderer-commands.js';
+import type { ShakeDirection, TransitionName } from './world-effects-controller.js';
+import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort, WorldProjectionPort } from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -40,321 +36,13 @@ import { DialogueLayer } from './layers/dialogue/dialogue-layer.js';
 import { MenuLayer } from './layers/menu/menu-layer.js';
 import { GalleryLayer } from './layers/gallery/gallery-layer.js';
 import { SystemPanelLayer } from './layers/system-panel/system-panel-layer.js';
+import { WorldLayer, makeWorldBackgroundTexture } from './layers/world/world-layer.js';
 
 /** Keep the legacy public type path while the source of truth lives in battle-view.ts. */
 export type { BattleHandlers } from './battle-view.js';
 
-/** 确定性颜色生成（同一资源 key 稳定同色） */
-function hashStr(s: string): number {
-  let h = 0;
-  for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0;
-  return Math.abs(h);
-}
-
-/** 颜色通道线性插值（RGB 分量各自 lerp 后合成） */
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
-  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
-  const r = Math.round(ar + (br - ar) * t);
-  const g = Math.round(ag + (bg - ag) * t);
-  const bl = Math.round(ab + (bb - ab) * t);
-  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (bl & 0xff);
-}
-
-/** @particle 预设参数（程序化粒子：数量/颜色/基准半径/垂直速度 px·帧⁻¹/横向摆动幅度）。
- *  每个粒子用独立 Graphics（v8 链式 API 直接建形，无纹理/Assets 依赖，与占位策略哲学一致）。 */
-interface ParticlePreset {
-  count: number;
-  color: number;
-  /** 基准半径（像素，实际尺寸乘 0.6..1.4 随机） */
-  size: number;
-  /** 垂直速度（像素/帧 @60fps；update 按 delta 归一） */
-  vy: number;
-  /** 横向摆动幅度（像素/帧） */
-  sway: number;
-  /** 雨滴等竖条形粒子 */
-  elongated?: boolean;
-}
-
-const PARTICLE_PRESETS: Record<string, ParticlePreset> = {
-  snow: { count: 60, color: 0xffffff, size: 4, vy: 0.7, sway: 0.5 },
-  rain: { count: 70, color: 0x9db8d9, size: 3, vy: 6, sway: 0.4, elongated: true },
-  sakura: { count: 40, color: 0xffc4d6, size: 5, vy: 0.9, sway: 1.2 },
-  sparkle: { count: 36, color: 0xfff2b0, size: 2.6, vy: -0.25, sway: 0.3 },
-  fireflies: { count: 24, color: 0xd8f08a, size: 3, vy: -0.15, sway: 0.5 },
-};
-
-/** 设计语言「夜色蔚蓝」：运行时画面调色板（深色玻璃底 + 冷白文字 + 蔚蓝强调，
- *  游戏内自成体系，与编辑器浅色主题 #0f8ff3 呼应但不强绑） */
-const NIGHT_AZURE = {
-  /** 对话框玻璃底渐变（深蓝黑，两段半透明 fill 叠加近似纵向渐变） */
-  glassTop: 0x0c1424,
-  glassBottom: 0x0a0f1c,
-  /** 玻璃细描边（冷蓝，低 alpha） */
-  glassEdge: 0x9fd4ff,
-  /** 强调蔚蓝（强调线/选中边/名牌细边） */
-  accent: 0x5ac8ff,
-  /** 正文冷白 */
-  text: 0xf2f6ff,
-  /** 名牌底板深蓝 */
-  plate: 0x123a5c,
-  /** 名牌/高亮文字（略暖于正文的亮冷白） */
-  plateText: 0xeaf6ff,
-  /** 选择肢卡片底 */
-  choiceBg: 0x0d1526,
-  /** 选择肢卡片默认描边 */
-  choiceEdge: 0x3d5a80,
-  /** 浅色面板家族（现代 ADV 口径，用户参考图拍板）：米白底/柔影/深色正文/名牌蓝 */
-  panelBg: 0xf7f8fc,
-  panelShadow: 0x28304a,
-  panelText: 0x2c3140,
-  nameTag: 0x4285e0,
-} as const;
-
-/**
- * Modern ADV 主画面 token。
- * 这组颜色只服务于世界层上的轻 HUD，不复用覆盖层的卡片色，避免主画面
- * 重新滑回 RPG Maker 式的厚重面板语言。
- */
-const MODERN_ADV = {
-  ink: 0x070c17,
-  text: 0xf7f9ff,
-  muted: 0xaeb9cc,
-  accent: 0x9bc7ff,
-  voice: 0xd9b670,
-  scrim: 0x06101e,
-  rail: 0x050914,
-  line: 0x9bc7ff,
-} as const;
-
-/** 种子伪随机序列（mulberry32）：占位背景噪点同 key 稳定可复现（不用 Math.random，保住同 key 同图契约） */
-function seededRandom(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /** 字体角色：标题用展示字体，正文与 UI 保持无衬线的长时间阅读口径。 */
 export type FontRole = 'title' | 'body' | 'ui';
-
-/** 程序化占位背景：冷色多段渐变 + 径向暗角 + 微噪点（夜色蔚蓝气质；
- *  色相由 key 哈希定色（冷色带），噪点由种子 PRNG 绘制 —— 同 key 稳定同图契约不变） */
-function makeBackgroundTexture(key: string, w = 1280, h = 720): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d')!;
-  const hash = hashStr(key);
-  // 冷色带（青→紫 190°..310°）：哈希定色相，同 key 稳定
-  const hue = 190 + (hash % 120);
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, `hsl(${hue}, 45%, 30%)`);
-  g.addColorStop(0.55, `hsl(${(hue + 25) % 360}, 48%, 17%)`);
-  g.addColorStop(1, `hsl(${(hue + 50) % 360}, 52%, 8%)`);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  // 径向暗角：四周压暗聚焦中心（氛围感）
-  const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.75);
-  v.addColorStop(0, 'rgba(0,0,0,0)');
-  v.addColorStop(1, 'rgba(2,4,10,0.5)');
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, w, h);
-  // 微噪点：种子 PRNG 保证同 key 可复现
-  const rnd = seededRandom(hash);
-  for (let i = 0; i < 1400; i++) {
-    const x = rnd() * w;
-    const y = rnd() * h;
-    ctx.fillStyle = rnd() > 0.5 ? 'rgba(200,225,255,0.05)' : 'rgba(0,0,0,0.08)';
-    ctx.fillRect(x, y, 1.6, 1.6);
-  }
-  return Texture.from(canvas);
-}
-
-/** 程序化占位立绘：胸像构图 + 赛璐璐风（平涂底色/阴影色/描边），表情影响五官。
- *  源纹理 800×1280（旧 400×640 的 2x），显示尺寸内不再放大插值（精致化批：修糊 + 去 RPG Maker 廉价感）；
- *  显示宽度由 setPortrait 控制，宽高比 5:8 与旧版一致，几何不变。 */
-function makePortraitTexture(charId: string, costume: string, expression: string, w = 800, h = 1280): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d')!;
-  const hash = hashStr(charId + costume);
-  const exprHash = hashStr(expression);
-
-  // 调色：平涂底色 + 阴影色 + 描边色（同色系加深，赛璐璐口径）
-  const hairHue = hash % 360;
-  const clothHue = (hash + 150) % 360;
-  const hair = `hsl(${hairHue}, 52%, 62%)`;
-  const hairDark = `hsl(${hairHue}, 50%, 46%)`;
-  const outline = `hsl(${hairHue}, 38%, 24%)`;
-  const skin = `hsl(28, 58%, 88%)`;
-  const skinDark = `hsl(26, 45%, 76%)`;
-  const cloth = `hsl(${clothHue}, 42%, 50%)`;
-  const clothDark = `hsl(${clothHue}, 42%, 38%)`;
-  const iris = `hsl(${(hash + 220) % 360}, 55%, 48%)`;
-  const lw = w * 0.008; // 描边线宽随纹理尺寸，任意分辨率下锐利
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  const cx = w / 2;
-  const headY = h * 0.30;
-  const headRx = w * 0.17;
-  const headRy = w * 0.20;
-
-  // 后发（头后大轮廓，先画）
-  ctx.fillStyle = hairDark;
-  ctx.beginPath();
-  ctx.ellipse(cx, headY - headRy * 0.06, headRx * 1.22, headRy * 1.22, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // 两侧发束（垂到肩部）
-  ctx.fillStyle = hair;
-  for (const s of [-1, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(cx + s * headRx * 1.1, headY - headRy * 0.4);
-    ctx.quadraticCurveTo(cx + s * headRx * 1.5, headY + headRy * 0.9, cx + s * headRx * 1.05, h * 0.62);
-    ctx.quadraticCurveTo(cx + s * headRx * 0.7, headY + headRy * 0.9, cx + s * headRx * 0.82, headY - headRy * 0.2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.lineWidth = lw;
-    ctx.strokeStyle = outline;
-    ctx.stroke();
-  }
-
-  // 颈（肤色 + 上端阴影）
-  ctx.fillStyle = skin;
-  ctx.fillRect(cx - w * 0.05, headY + headRy * 0.7, w * 0.1, h * 0.14);
-  ctx.fillStyle = skinDark;
-  ctx.fillRect(cx - w * 0.05, headY + headRy * 0.7, w * 0.1, h * 0.045);
-
-  // 肩/上身（底部裁切，胸像构图）
-  ctx.fillStyle = cloth;
-  ctx.beginPath();
-  ctx.moveTo(w * 0.10, h);
-  ctx.bezierCurveTo(w * 0.12, h * 0.72, w * 0.28, h * 0.64, cx - w * 0.08, h * 0.60);
-  ctx.lineTo(cx + w * 0.08, h * 0.60);
-  ctx.bezierCurveTo(w * 0.72, h * 0.64, w * 0.88, h * 0.72, w * 0.90, h);
-  ctx.closePath();
-  ctx.fill();
-  ctx.lineWidth = lw;
-  ctx.strokeStyle = outline;
-  ctx.stroke();
-  // 衣领（V 领 + 内衬阴影）
-  ctx.fillStyle = clothDark;
-  ctx.beginPath();
-  ctx.moveTo(cx - w * 0.075, h * 0.605);
-  ctx.lineTo(cx, h * 0.72);
-  ctx.lineTo(cx + w * 0.075, h * 0.605);
-  ctx.closePath();
-  ctx.fill();
-  // 下巴投在衣服上的阴影
-  ctx.fillStyle = 'rgba(10,14,26,0.18)';
-  ctx.beginPath();
-  ctx.ellipse(cx, h * 0.63, w * 0.09, h * 0.022, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 头（脸部）
-  ctx.fillStyle = skin;
-  ctx.beginPath();
-  ctx.ellipse(cx, headY, headRx, headRy, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.lineWidth = lw;
-  ctx.strokeStyle = outline;
-  ctx.stroke();
-
-  // 刘海（额前锔齿状，表情无关）
-  ctx.fillStyle = hair;
-  ctx.beginPath();
-  ctx.moveTo(cx - headRx * 1.05, headY - headRy * 0.15);
-  ctx.quadraticCurveTo(cx - headRx * 1.1, headY - headRy * 1.15, cx, headY - headRy * 1.12);
-  ctx.quadraticCurveTo(cx + headRx * 1.1, headY - headRy * 1.15, cx + headRx * 1.05, headY - headRy * 0.15);
-  // 锔齿下缘（四段尖）
-  const fringeY = headY - headRy * 0.28;
-  for (let i = 0; i < 4; i++) {
-    const x0 = cx + headRx * 1.05 - (i + 0.5) * (headRx * 2.1 / 4);
-    const x1 = cx + headRx * 1.05 - (i + 1) * (headRx * 2.1 / 4);
-    ctx.quadraticCurveTo(x0, fringeY + headRy * 0.22, x1, fringeY);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.lineWidth = lw;
-  ctx.strokeStyle = outline;
-  ctx.stroke();
-
-  // ===== 五官（表情差异：眼形/眉形/嘴形） =====
-  const eyeY = headY + headRy * 0.12;
-  const eyeX = headRx * 0.48;
-  const eyeW = w * 0.048;
-  const eyeH = w * 0.062;
-  const expr = exprHash % 3;
-  ctx.lineWidth = lw;
-  ctx.strokeStyle = outline;
-  for (const s of [-1, 1]) {
-    const ex = cx + s * eyeX;
-    if (expr === 1) {
-      // 笑眼：弯弧
-      ctx.beginPath();
-      ctx.arc(ex, eyeY + eyeH * 0.3, eyeW * 0.9, Math.PI * 1.15, Math.PI * 1.85);
-      ctx.lineWidth = lw * 1.4;
-      ctx.stroke();
-      ctx.lineWidth = lw;
-    } else {
-      // 睜眼（普通/惊讶：惊讶更大）
-      const k = expr === 2 ? 1.25 : 1;
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.ellipse(ex, eyeY, eyeW * k, eyeH * k, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // 虹膜 + 瞳孔 + 高光
-      ctx.fillStyle = iris;
-      ctx.beginPath();
-      ctx.ellipse(ex, eyeY + eyeH * 0.12 * k, eyeW * 0.62 * k, eyeH * 0.66 * k, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = outline;
-      ctx.beginPath();
-      ctx.ellipse(ex, eyeY + eyeH * 0.16 * k, eyeW * 0.3 * k, eyeH * 0.34 * k, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(ex - eyeW * 0.22, eyeY - eyeH * 0.18, eyeW * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // 眉毛（笑眼平缓，惊讶上扬）
-    const browY = eyeY - eyeH * (expr === 2 ? 1.9 : 1.55);
-    ctx.beginPath();
-    ctx.moveTo(ex - eyeW, browY + (expr === 2 ? -eyeH * 0.15 : 0));
-    ctx.quadraticCurveTo(ex, browY - eyeH * 0.22, ex + eyeW, browY);
-    ctx.lineWidth = lw * 1.2;
-    ctx.stroke();
-    ctx.lineWidth = lw;
-  }
-  // 嘴
-  const mouthY = headY + headRy * 0.58;
-  ctx.strokeStyle = outline;
-  ctx.lineWidth = lw * 1.3;
-  ctx.beginPath();
-  if (expr === 1) {
-    ctx.arc(cx, mouthY - headRy * 0.06, headRy * 0.16, Math.PI * 0.15, Math.PI * 0.85);
-  } else if (expr === 2) {
-    ctx.ellipse(cx, mouthY, headRy * 0.07, headRy * 0.11, 0, 0, Math.PI * 2);
-  } else {
-    ctx.moveTo(cx - headRy * 0.12, mouthY);
-    ctx.quadraticCurveTo(cx, mouthY + headRy * 0.05, cx + headRy * 0.12, mouthY);
-  }
-  ctx.stroke();
-  // 腮红（笑眼时明显）
-  ctx.fillStyle = expr === 1 ? 'rgba(244,140,150,0.30)' : 'rgba(244,140,150,0.14)';
-  for (const s of [-1, 1]) {
-    ctx.beginPath();
-    ctx.ellipse(cx + s * headRx * 0.62, headY + headRy * 0.38, headRy * 0.16, headRy * 0.09, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  return Texture.from(canvas);
-}
 
 /**
  * Pixi 舞台：内核状态的可视化投影。
@@ -399,60 +87,16 @@ export class PixiStage implements AdvStage {
     return this.#system;
   }
 
-  #bgLayer: Container;
-  #portraitLayer: Container;
+  /** @internal Renderer runtime wiring for the extracted world layer. */
+  get worldLayer(): WorldProjectionPort {
+    return this.#world;
+  }
+
   #uiLayer: Container;
-  #fadeOverlay: Graphics;
-  #bgSprite: Sprite | null = null;
-  #backgroundKey: string | null = null;
-  #bgTransition: { old: Sprite | null; neu: Sprite; remain: number; dur: number } | null = null;
-  #portraitSprites = new Map<string, Sprite>();
-  #portraitViews = new Map<string, PortraitView>();
   readonly #assetRegistry: RenderAssetRegistry;
   readonly #dialogue: DialogueLayer;
-  /** 立绘交叉淡化补间（旧 sprite 淡出 + 新 sprite 淡入） */
-  #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
-  /** 世界层：包裹背景 + 立绘，@shake/@zoom 的变换载体（UI 层不受影响） */
-  #worldLayer: Container;
-  /** 屏幕调色层：位于世界与 HUD 之间，tint 不应遮住对白和操作带。 */
-  #screenLayer: Container;
-  /** @flash 白色闪光叠加（线性衰减） */
-  #flashOverlay: Graphics;
-  /** 演出效果控制器（转场/震动由 updateEffects 统一推进） */
-  #worldEffects: WorldEffectsController;
-  #flashRemain = 0;
-  #flashDur = 1;
-  #zoomFrom = 1;
-  #zoomTo = 1;
-  #zoomRemain = 0;
-  #zoomDur = 1;
-  /** 时间轴镜头平移，单位为舞台像素；与缩放中心偏移叠加。 */
-  #cameraPanX = 0;
-  #cameraPanY = 0;
   /** M5 extracted gallery projection; all gallery state lives here. */
   readonly #gallery: GalleryLayer;
-  /** @wipe 擦除转场 */
-  #wipeBar: Graphics;
-  #wipeRemain = 0;
-  #wipeDur = 1;
-  /** @tint 调色叠加（颜色/透明度线性过渡到目标） */
-  #tintOverlay: Graphics;
-  #tintFrom = { color: 0x000000, alpha: 0 };
-  #tintTo = { color: 0x000000, alpha: 0 };
-  #tintRemain = 0;
-  #tintDur = 1;
-  /** @particle 粒子效果层（程序化粒子，预设 snow/rain/sakura/sparkle/fireflies） */
-  #particleLayer: Container;
-  #particleKind: string | null = null;
-  #particlePreset: ParticlePreset | null = null;
-  #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
-  /** @mov 立绘位置平移补间（旧位置 → 目标位置线性过渡） */
-  #movTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
-  /** 对话界面隐藏中（hideInterface；showText/NVL 不覆盖此状态，恢复后由下一次 showText 重建） */
-  #timelineMoveStarts = new Map<object, Map<string, number>>();
-  #timelineValueStarts = new Map<object, number>();
-  #timelinePanStarts = new Map<object, { x: number; y: number }>();
-  #timelineTintStarts = new Map<object, { color: number; alpha: number }>();
   /** M4 extracted menu projection; all title/ending/system/settings/save-load state lives here. */
   readonly #menu: MenuLayer;
   /** M6 extracted system-panel projection; all battle/map/shop/base/video state lives here. */
@@ -465,60 +109,39 @@ export class PixiStage implements AdvStage {
   /** 舞台直接交互/异步资源更新时唤醒外部帧调度器。 */
   #frameRequest: FrameRequestHandler | null = null;
   /** 画质策略由舞台统一应用，默认 balanced 兼顾正式游戏和编辑器预览。 */
-  #quality = new RenderQualityController('balanced');
-  #presentation: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
-  #postProcess: PostProcessSettings = { ...DEFAULT_POST_PROCESS };
-  #colorMatrix: ColorMatrixFilter | null = null;
   #loadingLayer: LoadingLayer;
+  readonly #world: WorldLayer;
 
   constructor(assetRegistry?: RenderAssetRegistry, lifecycle?: RenderLifecycle) {
     this.#assetRegistry = assetRegistry ?? new RenderAssetRegistry();
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
     TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
-    this.#bgLayer = new Container();
-    this.#portraitLayer = new Container();
-    this.#worldLayer = new Container();
-    this.#worldLayer.addChild(this.#bgLayer, this.#portraitLayer);
-    this.#screenLayer = new Container();
-    this.#worldEffects = new WorldEffectsController({
-      world: this.#worldLayer,
-      screen: this.#screenLayer,
+    this.#uiLayer = new Container();
+    this.#world = new WorldLayer({
       width: this.#w,
       height: this.#h,
-      getBasePosition: () => this.#zoomBaseOffset(),
-      setWorldPosition: (x, y) => this.#worldLayer.position.set(x, y),
-      duration: (durationMs) => presentationDuration(durationMs, this.#presentation),
+      assets: this.#assetRegistry,
+      ...(lifecycle ? { lifecycle } : {}),
+      createBackgroundTexture: (key, width, height) => makeWorldBackgroundTexture(key, width, height),
       requestFrame: () => this.#requestFrame(),
+      captureThumbnail: () => this.captureThumbnail(),
     });
-    this.#uiLayer = new Container();
     this.#dialogue = new DialogueLayer({
       uiLayer: this.#uiLayer,
       width: this.#w,
       height: this.#h,
       assets: this.#assetRegistry,
       ...(lifecycle ? { lifecycle } : {}),
-      preferences: this.#presentation,
+      preferences: this.#world.getPresentationPreferences(),
       requestFrame: () => this.#requestFrame(),
     });
-    this.#fadeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
-    this.#fadeOverlay.alpha = 0;
-    this.#flashOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
-    this.#flashOverlay.alpha = 0;
-    this.#wipeBar = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
-    this.#wipeBar.visible = false;
-    // 叠加层必须以白色为底，Graphics.tint 才能投影 cue 指定的调色值。
-    this.#tintOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0xffffff);
-    this.#tintOverlay.alpha = 0;
-    this.#tintOverlay.visible = false;
-    this.#screenLayer.addChild(this.#tintOverlay);
-    this.#particleLayer = new Container();
     this.#menu = new MenuLayer({
       uiLayer: this.#uiLayer,
       width: this.#w,
       height: this.#h,
       assets: this.#assetRegistry,
       ...(lifecycle ? { lifecycle } : {}),
-      presentation: () => this.#presentation,
+      presentation: () => this.#world.getPresentationPreferences(),
       fontFamily: (role) => this.#fontFamilies[role],
       requestFrame: () => this.#requestFrame(),
     });
@@ -529,7 +152,7 @@ export class PixiStage implements AdvStage {
       height: this.#h,
       assets: this.#assetRegistry,
       ...(lifecycle ? { lifecycle } : {}),
-      createBackgroundTexture: (key, width, height) => makeBackgroundTexture(key, width, height),
+      createBackgroundTexture: (key, width, height) => makeWorldBackgroundTexture(key, width, height),
       requestFrame: () => this.#requestFrame(),
     });
     this.#system = new SystemPanelLayer({
@@ -541,7 +164,7 @@ export class PixiStage implements AdvStage {
       requestFrame: () => this.#requestFrame(),
     });
     this.#uiLayer.addChild(
-      this.#wipeBar,
+      this.#world.wipeOverlay,
       this.#loadingLayer.container,
     );
     this.#dialogue.mountTextDisplays();
@@ -583,11 +206,11 @@ export class PixiStage implements AdvStage {
     // 鼠标移动/点击唤出操作带；监听器由 DialogueLayer 以 owner=dialogue 注册。
     this.#dialogue.attachPointerTarget(app.canvas);
 
-    app.stage.addChild(this.#worldLayer, this.#particleLayer, this.#screenLayer, this.#uiLayer);
+    app.stage.addChild(this.#world.worldContainer, this.#world.particleContainer, this.#world.screenContainer, this.#uiLayer);
     this.#dialogue.bringTextDisplaysToFront();
     // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
     // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
-    this.#uiLayer.addChild(this.#fadeOverlay, this.#flashOverlay);
+    this.#uiLayer.addChild(this.#world.fadeOverlay, this.#world.flashOverlay);
     this.#layout();
     return undefined;
   }
@@ -615,55 +238,28 @@ export class PixiStage implements AdvStage {
   }
 
   setQuality(quality: RenderQuality): void {
-    if (quality === this.#quality.quality) return;
-    const activeParticles = this.#particleKind;
-    this.#quality.setQuality(quality);
-    // 画质变化即时作用于已有粒子，剧情状态不受影响。
-    if (activeParticles) {
-      this.stopParticles();
-      this.startParticles(activeParticles);
-    }
-    this.#applyPostProcess();
-    this.#requestFrame();
+    this.#world.setQuality(quality);
   }
 
   getQuality(): RenderQuality {
-    return this.#quality.quality;
+    return this.#world.getQuality();
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
-    this.#presentation = normalizePresentationPreferences({ ...this.#presentation, ...preferences });
-    this.#dialogue.setPresentationPreferences(this.#presentation);
-    if (!this.#presentation.particleEnabled) this.stopParticles();
-    this.#requestFrame();
+    this.#world.setPresentationPreferences(preferences);
+    this.#dialogue.setPresentationPreferences(this.#world.getPresentationPreferences());
   }
 
   getPresentationPreferences(): PresentationPreferences {
-    return { ...this.#presentation };
+    return this.#world.getPresentationPreferences();
   }
 
   setPostProcess(settings: Partial<PostProcessSettings>): void {
-    this.#postProcess = normalizePostProcess({ ...this.#postProcess, ...settings });
-    this.#applyPostProcess();
-    this.#requestFrame();
+    this.#world.setPostProcess(settings);
   }
 
   getPostProcess(): PostProcessSettings {
-    return { ...this.#postProcess };
-  }
-
-  #applyPostProcess(): void {
-    const enabled = this.#postProcess.enabled && this.#quality.settings.postProcess;
-    if (!enabled) {
-      this.#worldLayer.filters = null;
-      return;
-    }
-    this.#colorMatrix ??= new ColorMatrixFilter();
-    this.#colorMatrix.reset();
-    this.#colorMatrix.saturate(this.#postProcess.saturation - 1, false);
-    this.#colorMatrix.brightness(this.#postProcess.brightness, false);
-    this.#colorMatrix.contrast(this.#postProcess.contrast, false);
-    this.#worldLayer.filters = [this.#colorMatrix];
+    return this.#world.getPostProcess();
   }
 
   /** 绑定/解绑通用帧调度器。 */
@@ -683,7 +279,7 @@ export class PixiStage implements AdvStage {
   async registerBackground(key: string, src: RenderAssetSource, format?: string): Promise<void> {
     await this.#assetRegistry.registerBackground(key, src, format);
     // 资源可能在 @bg 已经投影后才完成加载；替换当前画面，避免首帧占位永久驻留。
-    if (this.#backgroundKey === key) this.setBackground(key);
+    await this.#world.refreshBackgroundAsset(key);
     this.#requestFrame();
   }
 
@@ -742,11 +338,7 @@ export class PixiStage implements AdvStage {
    */
   async registerPortrait(charId: string, costume: string, expression: string, src: RenderAssetSource, format?: string): Promise<void> {
     await this.#assetRegistry.registerPortrait(charId, costume, expression, src, format);
-    const cacheKey = `${charId}:${costume}:${expression}`;
-    // 同样处理运行中替换立绘的情况：注册完成后立即为已显示的角色启动交叉淡化。
-    for (const [spriteKey, view] of this.#portraitViews) {
-      if (`${view.charId}:${view.costume}:${view.expression}` === cacheKey) this.setPortrait(spriteKey, view);
-    }
+    await this.#world.refreshPortraitAsset(charId, costume, expression);
     this.#requestFrame();
   }
 
@@ -770,146 +362,19 @@ export class PixiStage implements AdvStage {
 
   /** World port used by RendererFacade to keep portrait focus separate from dialogue state. */
   setPortraitFocus(characterId: string | null): void {
-    for (const [key, sprite] of this.#portraitSprites) {
-      const view = this.#portraitViews.get(key);
-      sprite.alpha = !characterId || view?.charId === characterId ? 1 : 0.46;
-    }
-    this.#requestFrame();
+    this.#world.setPortraitFocus(characterId);
   }
 
   setBackground(key: string | null): void {
-    this.#requestFrame();
-    this.#stopBackgroundTransition();
-    this.#backgroundKey = key;
-    if (this.#bgSprite) {
-      this.#bgLayer.removeChild(this.#bgSprite);
-      this.#bgSprite.destroy(); // 纹理由缓存共享，不随 sprite 释放
-      this.#bgSprite = null;
-    }
-    if (key === null || key.length === 0) return;
-    const texture = this.#assetRegistry.resolveBackground(key)
-      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
-    const sprite = new Sprite(texture);
-    // cover：保持背景比例并从中心裁切，避免真实素材被拉伸成“编辑器占位图”。
-    const scale = Math.max(this.#w / Math.max(1, texture.width), this.#h / Math.max(1, texture.height));
-    sprite.width = texture.width * scale;
-    sprite.height = texture.height * scale;
-    sprite.position.set((this.#w - sprite.width) / 2, (this.#h - sprite.height) / 2);
-    this.#bgSprite = sprite;
-    sprite.alpha = 1;
-    this.#bgLayer.addChildAt(sprite, 0);
-  }
-
-  #stopBackgroundTransition(): void {
-    const transition = this.#bgTransition;
-    if (!transition) return;
-    if (transition.old && transition.old.parent) transition.old.parent.removeChild(transition.old);
-    transition.old?.destroy();
-    this.#bgTransition = null;
-  }
-
-  #startTimelineBackground(key: string, durMs: number): void {
-    if (this.#backgroundKey === key && this.#bgSprite) return;
-    this.#stopBackgroundTransition();
-    const texture = this.#assetRegistry.resolveBackground(key)
-      ?? this.#assetRegistry.getOrCreateBackground(key, () => makeBackgroundTexture(key, this.#w, this.#h));
-    const neu = new Sprite(texture);
-    const scale = Math.max(this.#w / Math.max(1, texture.width), this.#h / Math.max(1, texture.height));
-    neu.width = texture.width * scale;
-    neu.height = texture.height * scale;
-    neu.position.set((this.#w - neu.width) / 2, (this.#h - neu.height) / 2);
-    neu.alpha = 0;
-    const old = this.#bgSprite;
-    this.#backgroundKey = key;
-    this.#bgSprite = neu;
-    this.#bgLayer.addChild(neu);
-    if (!old || durMs <= 0) {
-      old?.destroy();
-      neu.alpha = 1;
-      return;
-    }
-    this.#bgTransition = { old, neu, remain: Math.max(1, durMs), dur: Math.max(1, durMs) };
+    this.#world.setBackground(key);
   }
 
   setPortrait(key: string, opts: PortraitView): void {
-    this.#requestFrame();
-    this.#portraitViews.set(key, opts);
-    const cacheKey = `${opts.charId}:${opts.costume}:${opts.expression}`;
-    const texture = this.#assetRegistry.resolvePortrait(opts.charId, opts.costume, opts.expression)
-      ?? this.#assetRegistry.getOrCreatePortrait(cacheKey, () => makePortraitTexture(opts.charId, opts.costume, opts.expression));
-    const pw = Math.min(430, this.#w * 0.36);
-    const ph = (texture.height / texture.width) * pw;
-    const baseY = this.#h + 10;
-    const px = opts.pos === 'left' ? this.#w * 0.25 : opts.pos === 'right' ? this.#w * 0.75 : this.#w * 0.5;
-    const existing = this.#portraitSprites.get(key);
-    if (!existing) {
-      const sprite = new Sprite(texture);
-      sprite.width = pw;
-      sprite.height = ph;
-      sprite.anchor.set(0.5, 1);
-      sprite.position.set(px, baseY);
-      sprite.alpha = !this.#dialogue.activeSpeakerId || opts.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
-      this.#portraitSprites.set(key, sprite);
-      this.#portraitLayer.addChild(sprite);
-      return;
-    }
-    if (existing.texture === texture) {
-      // 同纹理：仅移动（位置/尺寸无需过渡）
-      existing.position.set(px, baseY);
-      existing.alpha = !this.#dialogue.activeSpeakerId || opts.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
-      return;
-    }
-    // 纹理变化：交叉淡化（新 sprite 淡入，旧 sprite 淡出后销毁；补间在 updateEffects 推进）
-    const neu = new Sprite(texture);
-    neu.width = pw;
-    neu.height = ph;
-    neu.anchor.set(0.5, 1);
-    neu.position.set(px, baseY);
-    neu.alpha = 0;
-    this.#portraitLayer.addChild(neu);
-    this.#portraitSprites.set(key, neu);
-    this.#portraitTweens.push({ old: existing, neu, remain: 260, dur: 260 });
-  }
-
-  #detachPortraitSprites(removed: ReadonlySet<Sprite>): void {
-    this.#movTweens = this.#movTweens.filter((tw) => !removed.has(tw.sprite));
-    const orphaned = new Set<Sprite>();
-    this.#portraitTweens = this.#portraitTweens.filter((tw) => {
-      if (!removed.has(tw.old) && !removed.has(tw.neu)) return true;
-      if (!removed.has(tw.old)) orphaned.add(tw.old);
-      if (!removed.has(tw.neu)) orphaned.add(tw.neu);
-      return false;
-    });
-    const live = new Set(this.#portraitSprites.values());
-    for (const sprite of orphaned) {
-      if (live.has(sprite) || removed.has(sprite)) continue;
-      if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy();
-    }
+    this.#world.setPortrait(key, opts);
   }
 
   removePortrait(key: string): void {
-    this.#requestFrame();
-    // key 契约：完整 `角色:服装`（与 setPortrait 第一参数一致）精确移除；
-    // 纯角色 ID（规范写法 @hide lynn）移除该角色全部立绘——否则 @show lynn:armor
-    // 之后 @hide lynn 查不到 'lynn:armor'，立绘永不消失（静默演出 bug）。
-    const keys = this.#portraitSprites.has(key)
-      ? [key]
-      : [...this.#portraitSprites.keys()].filter((k) => k === key || k.startsWith(`${key}:`));
-    const removed = new Set<Sprite>();
-    for (const k of keys) {
-      const sprite = this.#portraitSprites.get(k);
-      if (sprite) removed.add(sprite);
-    }
-    this.#detachPortraitSprites(removed);
-    for (const k of keys) {
-      const sprite = this.#portraitSprites.get(k);
-      if (!sprite) continue;
-      if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy(); // 纹理由缓存共享，不随 sprite 释放
-      this.#portraitSprites.delete(k);
-      this.#portraitViews.delete(k);
-    }
+    this.#world.removePortrait(key);
   }
 
   showText(speaker: string | null, value: string): void {
@@ -974,17 +439,15 @@ export class PixiStage implements AdvStage {
   captureThumbnail(): string | null {
     if (!this.app || typeof document === 'undefined') return null;
     try {
-      const extract = this.app.renderer.extract as unknown as {
-        canvas: (opts: { target: unknown }) => HTMLCanvasElement;
-      };
-      const src = extract.canvas({ target: this.app.stage });
-      const scale = Math.min(1, 320 / src.width);
+      const extract = this.app.renderer.extract as unknown as { canvas: (opts: { target: unknown }) => HTMLCanvasElement };
+      const source = extract.canvas({ target: this.app.stage });
+      const scale = Math.min(1, 320 / source.width);
       const small = document.createElement('canvas');
-      small.width = Math.max(1, Math.round(src.width * scale));
-      small.height = Math.max(1, Math.round(src.height * scale));
-      const ctx = small.getContext('2d');
-      if (!ctx) return null;
-      ctx.drawImage(src, 0, 0, small.width, small.height);
+      small.width = Math.max(1, Math.round(source.width * scale));
+      small.height = Math.max(1, Math.round(source.height * scale));
+      const context = small.getContext('2d');
+      if (!context) return null;
+      context.drawImage(source, 0, 0, small.width, small.height);
       return small.toDataURL('image/jpeg', 0.72);
     } catch {
       return null;
@@ -1000,186 +463,19 @@ export class PixiStage implements AdvStage {
 
   /** 时间轴 cue 的 Pixi 投影；同一接口也承载现有直接演出方法。 */
   applyTimelineFrame(event: TimelineFrameEvent): void {
-    const cue = event.cue;
-    if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && (event.started || event.final)) {
-      this.#startTimelineBackground(cue.key, cue.durationMs);
-      return;
-    }
-    if (event.track === 'portrait' && event.target) {
-      const target = event.target;
-      if (cue.action === 'show' && (event.started || event.final)) {
-        this.setPortrait(target, {
-          charId: target.split(':')[0] ?? target,
-          costume: target.split(':')[1] ?? 'normal',
-          expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
-          pos: typeof cue.position === 'string' ? cue.position : 'center',
-        });
-      } else if (cue.action === 'expression' && (event.started || event.final)) {
-        const current = this.#portraitViews.get(target);
-        if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
-      } else if (cue.action === 'move') {
-        const sprite = this.#portraitSprites.get(target);
-        const targetX = typeof cue.position === 'string' ? this.#resolvePortraitX(cue.position) : null;
-        if (sprite && targetX !== null) {
-          let starts = this.#timelineMoveStarts.get(cue);
-          if (!starts) {
-            starts = new Map([[target, sprite.x]]);
-            this.#timelineMoveStarts.set(cue, starts);
-          }
-          sprite.x = starts.get(target)! + (targetX - starts.get(target)!) * event.progress;
-          if (event.progress >= 1) this.#timelineMoveStarts.delete(cue);
-        }
-      } else if (cue.action === 'show') {
-        const sprite = this.#portraitSprites.get(target);
-        if (sprite) {
-          const activeAlpha = !this.#dialogue.activeSpeakerId || this.#portraitViews.get(target)?.charId === this.#dialogue.activeSpeakerId ? 1 : 0.46;
-          sprite.alpha = activeAlpha * event.progress;
-          sprite.y = this.#h + 10 + (1 - event.progress) * 28;
-        }
-      } else if (cue.action === 'hide') {
-        const sprite = this.#portraitSprites.get(target);
-        if (sprite) sprite.alpha = 1 - event.progress;
-        if (event.progress >= 1) this.removePortrait(target);
-      }
-      return;
-    }
-    if (event.track === 'camera') {
-      if (cue.action === 'zoom' && typeof cue.scale === 'number') {
-        let from = this.#timelineValueStarts.get(cue);
-        if (from === undefined) {
-          from = this.#worldLayer.scale.x;
-          this.#timelineValueStarts.set(cue, from);
-        }
-        const scale = from + (Math.max(0.25, Math.min(4, cue.scale)) - from) * event.progress;
-        this.#worldLayer.scale.set(scale);
-        this.#setWorldBasePosition();
-        if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
-      } else if (cue.action === 'pan' && typeof cue.x === 'number' && typeof cue.y === 'number') {
-        let from = this.#timelinePanStarts.get(cue);
-        if (!from) {
-          from = { x: this.#cameraPanX, y: this.#cameraPanY };
-          this.#timelinePanStarts.set(cue, from);
-        }
-        this.#cameraPanX = from.x + (Math.max(-2000, Math.min(2000, cue.x)) - from.x) * event.progress;
-        this.#cameraPanY = from.y + (Math.max(-2000, Math.min(2000, cue.y)) - from.y) * event.progress;
-        this.#setWorldBasePosition();
-        if (event.progress >= 1) this.#timelinePanStarts.delete(cue);
-      } else if (cue.action === 'shake' && event.started && typeof cue.strength === 'number') {
-        this.shake(cue.durationMs, cue.strength);
-      }
-      return;
-    }
-    if (event.track === 'screen') {
-      if (cue.action === 'fade' && typeof cue.alpha === 'number') {
-        let from = this.#timelineValueStarts.get(cue);
-        if (from === undefined) {
-          from = this.#fadeOverlay.alpha;
-          this.#timelineValueStarts.set(cue, from);
-        }
-        this.#fadeOverlay.alpha = Math.max(0, Math.min(1, from + (cue.alpha - from) * event.progress));
-        if (event.progress >= 1) this.#timelineValueStarts.delete(cue);
-      } else if (cue.action === 'tint' && typeof cue.color === 'number' && typeof cue.alpha === 'number') {
-        let from = this.#timelineTintStarts.get(cue);
-        if (!from) {
-          const alpha = this.#tintOverlay.alpha;
-          from = {
-            // 透明叠加层没有可见的旧颜色；首次 tint 应直接淡入目标色，
-            // 否则 Pixi 默认的白色 tint 会在半透明阶段造成不必要的泛白。
-            color: alpha <= 0.001 ? cue.color & 0xffffff : Number(this.#tintOverlay.tint ?? 0),
-            alpha,
-          };
-          this.#timelineTintStarts.set(cue, from);
-        }
-        this.#tintOverlay.tint = lerpColor(from.color, cue.color & 0xffffff, event.progress);
-        this.#tintOverlay.alpha = Math.max(0, Math.min(1, from.alpha + (cue.alpha - from.alpha) * event.progress));
-        this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
-        if (event.progress >= 1) this.#timelineTintStarts.delete(cue);
-      } else if (cue.action === 'flash' && event.started) {
-        this.flash(cue.durationMs);
-      } else if (cue.action === 'wipe' && event.started) {
-        this.wipe(cue.durationMs);
-      }
-      return;
-    }
-    if (event.track === 'particle' && typeof cue.kind === 'string' && (event.started || event.final)) {
-      if (cue.action === 'start') this.startParticles(cue.kind);
-      else this.stopParticles();
-    }
+    this.#world.applyTimelineFrame(event);
   }
 
   snapshotPresentation(): unknown {
-    return {
-      version: 1,
-      backgroundKey: this.#backgroundKey,
-      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view })),
-      cameraScale: this.#worldLayer.scale.x,
-      cameraPan: { x: this.#cameraPanX, y: this.#cameraPanY },
-      fadeAlpha: this.#fadeOverlay.alpha,
-      tint: { color: this.#tintOverlay.tint ?? 0, alpha: this.#tintOverlay.alpha },
-      particleKind: this.#particleKind,
-    };
+    return this.#world.snapshotPresentation();
   }
 
   restorePresentation(snapshot: unknown): void {
-    this.clearPresentation();
-    if (typeof snapshot !== 'object' || snapshot === null) return;
-    const raw = snapshot as Record<string, unknown>;
-    if (typeof raw.backgroundKey === 'string') this.setBackground(raw.backgroundKey);
-    if (Array.isArray(raw.portraits)) {
-      for (const item of raw.portraits) {
-        if (typeof item !== 'object' || item === null) continue;
-        const record = item as Record<string, unknown>;
-        if (typeof record.key !== 'string' || typeof record.view !== 'object' || record.view === null) continue;
-        this.setPortrait(record.key, record.view as PortraitView);
-      }
-    }
-    if (typeof raw.cameraScale === 'number' && Number.isFinite(raw.cameraScale)) {
-      this.#worldLayer.scale.set(Math.max(0.25, Math.min(4, raw.cameraScale)));
-    }
-    if (typeof raw.cameraPan === 'object' && raw.cameraPan !== null) {
-      const pan = raw.cameraPan as Record<string, unknown>;
-      this.#cameraPanX = typeof pan.x === 'number' && Number.isFinite(pan.x) ? Math.max(-2000, Math.min(2000, pan.x)) : 0;
-      this.#cameraPanY = typeof pan.y === 'number' && Number.isFinite(pan.y) ? Math.max(-2000, Math.min(2000, pan.y)) : 0;
-    }
-    this.#setWorldBasePosition();
-    if (typeof raw.fadeAlpha === 'number') this.setFade(raw.fadeAlpha);
-    if (typeof raw.tint === 'object' && raw.tint !== null) {
-      const tint = raw.tint as Record<string, unknown>;
-      if (typeof tint.color === 'number' && typeof tint.alpha === 'number') {
-        this.#tintOverlay.tint = tint.color & 0xffffff;
-        this.#tintOverlay.alpha = Math.max(0, Math.min(1, tint.alpha));
-        this.#tintOverlay.visible = this.#tintOverlay.alpha > 0.001;
-      }
-    }
-    if (typeof raw.particleKind === 'string') this.startParticles(raw.particleKind);
-    this.#requestFrame();
+    this.#world.restorePresentation(snapshot);
   }
 
   clearPresentation(): void {
-    this.#stopBackgroundTransition();
-    for (const key of [...this.#portraitSprites.keys()]) this.removePortrait(key);
-    this.setBackground(null);
-    this.#timelineMoveStarts.clear();
-    this.#timelineValueStarts.clear();
-    this.#timelinePanStarts.clear();
-    this.#timelineTintStarts.clear();
-    this.#cameraPanX = 0;
-    this.#cameraPanY = 0;
-    this.#worldLayer.position.set(0, 0);
-    this.#worldLayer.scale.set(1);
-    this.#worldEffects.reset();
-    this.#flashRemain = 0;
-    this.#flashOverlay.alpha = 0;
-    this.#zoomFrom = 1;
-    this.#zoomTo = 1;
-    this.#zoomRemain = 0;
-    this.#wipeRemain = 0;
-    this.#wipeBar.visible = false;
-    this.setFade(0);
-    this.#tintOverlay.alpha = 0;
-    this.#tintOverlay.visible = false;
-    this.stopParticles();
-    this.#requestFrame();
+    this.#world.clearPresentation();
   }
 
   /**
@@ -1194,86 +490,38 @@ export class PixiStage implements AdvStage {
 
   /** 画面震动：world 层随机偏移，振幅随时间线性衰减（演出冲击感） */
   shake(durMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
-    this.#worldEffects.shake(presentationDuration(durMs, this.#presentation), strength, direction);
+    this.#world.shake(durMs, strength, direction);
   }
 
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
   transition(name: TransitionName | string, durMs = 600): boolean {
-    const started = this.#worldEffects.transition(name, presentationDuration(durMs, this.#presentation));
-    if (started) this.#requestFrame();
-    return started;
+    return this.#world.transition(name, durMs);
   }
 
   /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */
   flash(durMs = 300): void {
-    this.#flashDur = presentationDuration(durMs, this.#presentation);
-    this.#flashRemain = this.#flashDur;
-    this.#flashOverlay.alpha = 1;
-    this.#requestFrame();
+    this.#world.flash(durMs);
   }
 
   /** 缩放：world 层向目标 scale 线性过渡（以画面中心为锚点）。scale=1 复位 */
   zoom(scale = 1, durMs = 400): void {
-    this.#zoomFrom = this.#worldLayer.scale.x;
-    this.#zoomTo = Math.max(0.25, Math.min(4, scale));
-    this.#zoomDur = presentationDuration(durMs, this.#presentation);
-    this.#zoomRemain = this.#zoomDur;
-    this.#requestFrame();
+    this.#world.zoom(scale, durMs);
   }
 
   /** 演出效果时间轴推进（AdvRenderer 每帧转发 ticker delta） */
   updateEffects(deltaMs: number): void {
-    if (!this.#hasEffectWork()) return;
-    this.#dialogue.update(deltaMs);
-    this.#worldEffects.update(deltaMs);
-    if (this.#flashRemain > 0) {
-      this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
-      this.#flashOverlay.alpha = this.#flashRemain / this.#flashDur;
-    }
-    if (this.#zoomRemain > 0) {
-      this.#zoomRemain = Math.max(0, this.#zoomRemain - deltaMs);
-      const t = 1 - this.#zoomRemain / this.#zoomDur;
-      const scale = this.#zoomFrom + (this.#zoomTo - this.#zoomFrom) * t;
-      this.#worldLayer.scale.set(scale);
-      this.#setWorldBasePosition();
-    }
-    if (this.#bgTransition) {
-      const transition = this.#bgTransition;
-      transition.remain = Math.max(0, transition.remain - deltaMs);
-      const t = 1 - transition.remain / transition.dur;
-      transition.neu.alpha = t;
-      if (transition.old) transition.old.alpha = 1 - t;
-      if (transition.remain === 0) {
-        if (transition.old?.parent) transition.old.parent.removeChild(transition.old);
-        transition.old?.destroy();
-        transition.neu.alpha = 1;
-        this.#bgTransition = null;
-      }
-    }
+    this.#world.update(deltaMs);
     this.#menu.update(deltaMs);
-    this.#updateTransient(deltaMs);
+    this.#dialogue.update(deltaMs);
   }
 
   #hasEffectWork(): boolean {
-    return this.#dialogue.needsUpdate()
-      || this.#worldEffects.needsUpdate
-      || this.#flashRemain > 0
-      || this.#zoomRemain > 0
-      || this.#bgTransition !== null
-      || this.#menu.needsUpdate
-      || this.#tintRemain > 0
-      || this.#movTweens.length > 0
-      || this.#particles.length > 0
-      || this.#portraitTweens.length > 0
-      || this.#wipeRemain > 0;
+    return this.#world.needsUpdate || this.#dialogue.needsUpdate() || this.#menu.needsUpdate;
   }
 
   /** @wipe：黑色竖条自左向右扫过画面（转场仪式感） */
   wipe(durMs = 600): void {
-    this.#wipeDur = presentationDuration(durMs, this.#presentation);
-    this.#wipeRemain = this.#wipeDur;
-    this.#wipeBar.visible = true;
-    this.#requestFrame();
+    this.#world.wipe(durMs);
   }
 
   /* ============================ 演出扩展（@mov/@tint/@particle） ============================ */
@@ -1281,100 +529,28 @@ export class PixiStage implements AdvStage {
   /** @mov：立绘位置平移（key 契约同 removePortrait：完整 `角色:服装` 精确；纯角色 ID 移动该角色全部立绘）。
    *  pos = left/center/right（三档预设）或裸数字（逻辑像素 X 坐标）；durMs 线性过渡。 */
   movePortrait(key: string, pos: string, durMs = 400): void {
-    const targetX = this.#resolvePortraitX(pos);
-    if (targetX === null) return;
-    const keys = this.#portraitSprites.has(key)
-      ? [key]
-      : [...this.#portraitSprites.keys()].filter((k) => k.startsWith(`${key}:`));
-    const dur = presentationDuration(durMs, this.#presentation);
-    for (const k of keys) {
-      const sprite = this.#portraitSprites.get(k)!;
-      // 重复 @mov 同一立绘：丢弃进行中的旧补间，从当前位置重新起步（不叠加抖动）
-      this.#movTweens = this.#movTweens.filter((tw) => tw.sprite !== sprite);
-      this.#movTweens.push({ sprite, fromX: sprite.x, toX: targetX, remain: dur, dur });
-    }
-    this.#requestFrame();
-  }
-
-  /** 位置解析：三档预设 → 与 setPortrait 一致的 X；纯数字 → 逻辑像素坐标；其余 → null（忽略） */
-  #resolvePortraitX(pos: string): number | null {
-    if (pos === 'left') return this.#w * 0.25;
-    if (pos === 'right') return this.#w * 0.75;
-    if (pos === 'center') return this.#w * 0.5;
-    const n = Number(pos);
-    return Number.isFinite(n) ? n : null;
+    this.#world.movePortrait(key, pos, durMs);
   }
 
   /** @tint：画面调色叠加（全屏颜色叠加 alpha 线性过渡到目标；颜色通道同步过渡） */
   setTint(color: number, alpha: number, durMs = 400): void {
-    const cur = this.#tintCurrent();
-    this.#tintFrom = cur;
-    this.#tintTo = { color: color & 0xffffff, alpha: Math.max(0, Math.min(1, alpha)) };
-    this.#tintDur = presentationDuration(durMs, this.#presentation);
-    this.#tintRemain = this.#tintDur;
-    this.#tintOverlay.visible = true;
-    this.#requestFrame();
+    this.#world.setTint(color, alpha, durMs);
   }
 
   /** @tint off：淡出调色叠加到全透明 */
   clearTint(durMs = 400): void {
-    this.setTint(this.#tintCurrent().color, 0, durMs);
-  }
-
-  /** 当前 tint 实际状态（过渡中取插值，便于从中间状态重新起步） */
-  #tintCurrent(): { color: number; alpha: number } {
-    if (this.#tintRemain <= 0) return { ...this.#tintTo };
-    const t = 1 - this.#tintRemain / this.#tintDur;
-    return {
-      color: lerpColor(this.#tintFrom.color, this.#tintTo.color, t),
-      alpha: this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * t,
-    };
+    this.#world.clearTint(durMs);
   }
 
   /** @particle：启动预设粒子效果（snow/rain/sakura/sparkle/fireflies）。
    *  程序化实现（每粒子独立 Graphics，无纹理/Assets 依赖）；重复调用同名预设幂等，切换预设重建。 */
   startParticles(kind: string): void {
-    if (!this.#presentation.particleEnabled) return;
-    if (this.#particleKind === kind) return; // 幂等
-    this.stopParticles();
-    const preset = PARTICLE_PRESETS[kind];
-    if (!preset) return; // 未知预设静默忽略（占位策略）
-    this.#particleKind = kind;
-    const settings = this.#quality.settings;
-    const particleCount = Math.min(
-      settings.maxParticles,
-      Math.max(1, Math.round(preset.count * settings.particleScale)),
-    );
-    for (let i = 0; i < particleCount; i++) {
-      const scale = 0.6 + Math.random() * 0.8;
-      const r = preset.size * scale;
-      const g = preset.elongated
-        ? new Graphics().rect(-0.8, -r * 3, 1.6, r * 6).fill({ color: preset.color, alpha: 0.75 })
-        : new Graphics().circle(0, 0, r).fill({ color: preset.color, alpha: 1 });
-      g.alpha = 0.55 + Math.random() * 0.45;
-      g.position.set(Math.random() * this.#w, Math.random() * this.#h);
-      this.#particleLayer.addChild(g);
-      this.#particles.push({
-        sprite: g,
-        vx: (Math.random() - 0.5) * preset.sway,
-        vy: preset.vy * (0.7 + Math.random() * 0.6),
-        phase: Math.random() * Math.PI * 2,
-      });
-    }
-    this.#particlePreset = preset;
-    this.#requestFrame();
+    this.#world.startParticles(kind);
   }
 
   /** @particle off：停止并清空粒子 */
   stopParticles(): void {
-    for (const p of this.#particles) {
-      this.#particleLayer.removeChild(p.sprite);
-      p.sprite.destroy();
-    }
-    this.#particles = [];
-    this.#particleKind = null;
-    this.#particlePreset = null;
-    this.#requestFrame();
+    this.#world.stopParticles();
   }
 
   /** 横幅：chapter 变体电影化（上下黑边 letterbox + 大字距渐显），tip 变体右上小胶囊；首尾淡入淡出 */
@@ -1410,92 +586,6 @@ export class PixiStage implements AdvStage {
   /** @video projection remains a legacy delegate; the layer owns DOM listeners and generations. */
   showVideo(src: string, onEnd: () => void): void {
     this.#system.showVideo(src, onEnd);
-  }
-
-  /** 横幅/wipe/tint/mov/粒子 时间轴推进（并入 updateEffects 调用链） */
-  #updateTransient(deltaMs: number): void {
-    // @tint 调色过渡（颜色通道与 alpha 同步 lerp；alpha 归零后隐藏叠加层）
-    if (this.#tintRemain > 0) {
-      this.#tintRemain = Math.max(0, this.#tintRemain - deltaMs);
-      const t = 1 - this.#tintRemain / this.#tintDur;
-      const color = lerpColor(this.#tintFrom.color, this.#tintTo.color, t);
-      const alpha = this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * t;
-      this.#tintOverlay.tint = color;
-      this.#tintOverlay.alpha = alpha;
-      if (this.#tintRemain === 0 && alpha <= 0.001) this.#tintOverlay.visible = false;
-    }
-    // @mov 立绘平移补间（水平线性过渡；垂直基线不变）
-    if (this.#movTweens.length > 0) {
-      for (let i = this.#movTweens.length - 1; i >= 0; i--) {
-        const tw = this.#movTweens[i]!;
-        tw.remain = Math.max(0, tw.remain - deltaMs);
-        const t = 1 - tw.remain / tw.dur;
-        tw.sprite.x = tw.fromX + (tw.toX - tw.fromX) * t;
-        if (tw.remain === 0) this.#movTweens.splice(i, 1);
-      }
-    }
-    // @particle 粒子漂移（delta 归一到 60fps 帧单位；出界回绕到对边，循环飘动）
-    if (this.#particles.length > 0) {
-      const frames = deltaMs / 16.667;
-      for (const p of this.#particles) {
-        p.phase += 0.02 * frames;
-        p.sprite.x += (p.vx + Math.sin(p.phase) * this.#particleSwing()) * frames;
-        p.sprite.y += p.vy * frames;
-        if (p.sprite.y > this.#h + 12) {
-          p.sprite.y = -10;
-          p.sprite.x = Math.random() * this.#w;
-        } else if (p.sprite.y < -14) {
-          p.sprite.y = this.#h + 10;
-          p.sprite.x = Math.random() * this.#w;
-        }
-        if (p.sprite.x > this.#w + 12) p.sprite.x = -10;
-        else if (p.sprite.x < -12) p.sprite.x = this.#w + 10;
-      }
-    }
-    // 立绘交叉淡化补间
-    if (this.#portraitTweens.length > 0) {
-      const done: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
-      for (const tw of this.#portraitTweens) {
-        tw.remain = Math.max(0, tw.remain - deltaMs);
-        const t = 1 - tw.remain / tw.dur;
-        tw.neu.alpha = t;
-        tw.old.alpha = 1 - t;
-        if (tw.remain === 0) done.push(tw);
-      }
-      for (const tw of done) {
-        this.#portraitLayer.removeChild(tw.old);
-        tw.old.destroy();
-        this.#portraitTweens.splice(this.#portraitTweens.indexOf(tw), 1);
-      }
-    }
-    if (this.#wipeRemain > 0) {
-      this.#wipeRemain = Math.max(0, this.#wipeRemain - deltaMs);
-      const p = 1 - this.#wipeRemain / this.#wipeDur;
-      this.#wipeBar.position.set(-this.#w + p * this.#w * 2, 0);
-      if (this.#wipeRemain === 0) {
-        this.#wipeBar.visible = false;
-        this.#wipeBar.position.set(0, 0);
-      }
-    }
-  }
-
-  /** 粒子横向摆动幅度（像素/帧）：来自当前预设，无预设时 0 */
-  #particleSwing(): number {
-    return this.#particlePreset?.sway ?? 0;
-  }
-
-  /** 当前缩放下的居中偏移（缩放锚点为画面中心；shake 结束回位也用） */
-  #zoomBaseOffset(): { x: number; y: number } {
-    const scale = this.#worldLayer.scale.x;
-    return {
-      x: ((1 - scale) * this.#w) / 2 + this.#cameraPanX,
-      y: ((1 - scale) * this.#h) / 2 + this.#cameraPanY,
-    };
-  }
-
-  #setWorldBasePosition(): void {
-    const off = this.#zoomBaseOffset();
-    this.#worldLayer.position.set(off.x, off.y);
   }
 
   /* ============================ 鉴赏覆盖层（CG/音乐） ============================ */
@@ -1589,7 +679,7 @@ export class PixiStage implements AdvStage {
     this.hideSystemMenu();
     this.hideTitle(false);
     this.#menu.showEnding(text);
-    this.#fadeOverlay.alpha = 0;
+    this.#world.setFade(0);
   }
 
   /** 隐藏结局卡；多次调用保持幂等。 */
@@ -1679,8 +769,7 @@ export class PixiStage implements AdvStage {
   }
 
   setFade(alpha: number): void {
-    this.#requestFrame();
-    this.#fadeOverlay.alpha = Math.max(0, Math.min(1, alpha));
+    this.#world.setFade(alpha);
   }
 
   showLoading(progress: LoadingProgress): void {
@@ -1707,56 +796,11 @@ export class PixiStage implements AdvStage {
     this.#dialogue.reset();
     this.#system.reset();
     this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
-
-    if (!preserveWorld) {
-      const sprites = new Set<Sprite>([
-        ...this.#portraitSprites.values(),
-        ...this.#portraitTweens.flatMap((t) => [t.old, t.neu]),
-      ]);
-      for (const sprite of sprites) {
-        if (sprite.parent) sprite.parent.removeChild(sprite);
-        sprite.destroy();
-      }
-      this.#portraitSprites.clear();
-      this.#portraitViews.clear();
-      this.#portraitTweens = [];
-      this.#movTweens = [];
-      if (this.#bgSprite) {
-        this.#bgLayer.removeChild(this.#bgSprite);
-        this.#bgSprite.destroy();
-        this.#bgSprite = null;
-      }
-      this.#backgroundKey = null;
-    }
+    this.#world.reset({ preserveWorld });
 
     this.#gallery.reset();
     this.#menu.reset();
 
-    this.#worldLayer.position.set(0, 0);
-    this.#worldLayer.scale.set(1);
-    this.#cameraPanX = 0;
-    this.#cameraPanY = 0;
-    this.#worldEffects.reset();
-    this.#flashRemain = 0;
-    this.#flashOverlay.alpha = 0;
-    this.#zoomFrom = 1;
-    this.#zoomTo = 1;
-    this.#zoomRemain = 0;
-    this.#stopBackgroundTransition();
-    this.#timelineMoveStarts.clear();
-    this.#timelineValueStarts.clear();
-    this.#timelinePanStarts.clear();
-    this.#timelineTintStarts.clear();
-    this.stopParticles();
-    this.#wipeRemain = 0;
-    this.#wipeBar.visible = false;
-    this.#tintRemain = 0;
-    this.#tintOverlay.alpha = 0;
-    this.#tintOverlay.visible = false;
-    this.#tintFrom = { color: 0x000000, alpha: 0 };
-    this.#tintTo = { color: 0x000000, alpha: 0 };
-
-    this.setFade(0);
   }
 
   /**
@@ -1767,19 +811,12 @@ export class PixiStage implements AdvStage {
    * setBackground/setPortrait 会把命中的注入纹理也放进占位缓存，故销毁前按注册表排除。
    */
   destroy(): void {
-    this.#worldEffects.destroy();
     this.#loadingLayer.destroy();
     this.#menu.dispose();
     this.#dialogue.dispose();
     this.#gallery.dispose();
     this.#system.dispose();
-    this.stopParticles(); // 粒子 Graphics 随粒子层销毁，先显式清空避免重复 destroy
-    for (const sprite of this.#portraitSprites.values()) sprite.destroy();
-    this.#portraitSprites.clear();
-    this.#portraitViews.clear();
-    this.#bgSprite?.destroy();
-    this.#bgSprite = null;
-    this.#backgroundKey = null;
+    this.#world.dispose();
     this.#assetRegistry.dispose();
     this.app?.destroy(true, { children: true });
     this.app = null;

@@ -10,6 +10,7 @@ import type { TimelineFrameEvent } from '../timeline-player.js';
 import type {
   ChoiceOptionView,
   CommandRailItem,
+  FrameRequestHandler,
   PortraitView,
   SpeakerProfile,
 } from '../types.js';
@@ -55,6 +56,28 @@ export interface WorldCommands {
   stopParticles(): void;
   applyTimelineFrame(event: TimelineFrameEvent): void;
   setPortraitFocus(characterId: string | null): void;
+}
+
+/**
+ * WorldLayer's production projection port. The command surface remains the
+ * same as WorldCommands; lifecycle, preference, snapshot, and frame-loop
+ * capabilities are kept on the concrete world owner rather than on Facade.
+ */
+export interface WorldProjectionPort extends WorldCommands {
+  readonly needsUpdate: boolean;
+  setFrameRequest(handler: FrameRequestHandler | null): void;
+  update(deltaMs: number): void;
+  setQuality(quality: RenderQuality): void;
+  getQuality(): RenderQuality;
+  setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
+  getPresentationPreferences(): PresentationPreferences;
+  setPostProcess(settings: Partial<PostProcessSettings>): void;
+  getPostProcess(): PostProcessSettings;
+  captureThumbnail(): string | null;
+  snapshotPresentation(): unknown;
+  restorePresentation(snapshot: unknown): void;
+  clearPresentation(): void;
+  reset(options?: { preserveWorld?: boolean }): void;
 }
 
 export interface DialogueCommands {
