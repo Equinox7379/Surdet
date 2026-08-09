@@ -44,7 +44,7 @@
       "tests": [
         "packages/core/test/compiler.test.ts",
         "packages/renderer/test/audio-manager.test.ts",
-        "packages/renderer/test/adv-renderer.test.ts",
+        "packages/renderer/test/legacy/adv-renderer.test.ts",
         "packages/editor/src/panels/editor.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
@@ -58,7 +58,7 @@
       "editor": "n/a",
       "host": "implemented",
       "tests": [
-        "packages/renderer/test/pixi-stage.test.ts"
+        "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"],
       "limitation": "文字记录为当前会话级数据，不跨存档持久化。"
@@ -113,7 +113,7 @@
       "host": "implemented",
       "tests": [
         "packages/renderer/test/gallery.test.ts",
-        "packages/renderer/test/pixi-stage.test.ts"
+        "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"]
     },
@@ -156,8 +156,8 @@
       "host": "n/a",
       "tests": [
         "packages/core/test/compiler.test.ts",
-        "packages/renderer/test/adv-renderer.test.ts",
-        "packages/renderer/test/pixi-stage.test.ts"
+        "packages/renderer/test/legacy/adv-renderer.test.ts",
+        "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"]
     },
@@ -170,8 +170,8 @@
       "host": "n/a",
       "tests": [
         "packages/core/test/compiler.test.ts",
-        "packages/renderer/test/adv-renderer.test.ts",
-        "packages/renderer/test/pixi-stage.test.ts"
+        "packages/renderer/test/legacy/adv-renderer.test.ts",
+        "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"],
       "limitation": "当前为内置轻量粒子表现，不是可编排的完整粒子编辑器。"
@@ -231,8 +231,8 @@
       "host": "n/a",
       "tests": [
         "packages/core/test/compiler.test.ts",
-        "packages/renderer/test/adv-renderer.test.ts",
-        "packages/renderer/test/pixi-stage.test.ts"
+        "packages/renderer/test/legacy/adv-renderer.test.ts",
+        "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
       "docs": ["README.md", "docs/dsl-spec.md"]
     },
