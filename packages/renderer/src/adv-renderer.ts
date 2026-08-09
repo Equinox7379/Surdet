@@ -37,6 +37,7 @@ export class AdvRenderer {
       ...options,
       commands: ports.commands,
       queries: ports.queries,
+      validatePresentationStage: (snapshot) => ports.commands.presentation.validate(snapshot),
       resetProjection: (resetOptions) => stage.resetSession?.(resetOptions),
       updateProjection: (deltaMs) => {
         stage.updateContinuePulse?.(deltaMs);
@@ -96,6 +97,7 @@ export class AdvRenderer {
   dispatchInput(action: RendererInputAction): boolean { return this.#controller.dispatchInput(action); }
   backlogEntries(): readonly BacklogEntry[] { return this.#controller.backlogEntries(); }
   snapshotPresentation(): unknown { return this.#controller.snapshotPresentation(); }
+  validatePresentation(snapshot: unknown): void { this.#controller.validatePresentation(snapshot); }
   clearPresentation(): void { this.#controller.clearPresentation(); }
   restorePresentation(snapshot: unknown): void { this.#controller.restorePresentation(snapshot); }
 }
@@ -276,11 +278,9 @@ export function createPresentationPorts(
   const presentationCommands: RendererCommands['presentation'] = {
     validate: (snapshot) => {
       if (options.worldLayer?.validatePresentation) {
-        const raw = snapshot as Record<string, unknown>;
-        options.worldLayer.validatePresentation(raw.stage ?? null);
+        options.worldLayer.validatePresentation(snapshot);
       } else {
-        const raw = snapshot as Record<string, unknown>;
-        stage.validatePresentation?.(raw.stage ?? null);
+        stage.validatePresentation?.(snapshot);
       }
     },
     restore: (snapshot) => { if (options.worldLayer) options.worldLayer.restorePresentation(snapshot); else stage.restorePresentation?.(snapshot); },

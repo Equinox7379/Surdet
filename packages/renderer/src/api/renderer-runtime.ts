@@ -26,6 +26,7 @@ export interface PresentationController extends FrameLoopTarget {
 
   connect(bus: EventBus<CoreEventMap>): Unsubscribe;
   reset(options?: ResetSessionOptions): void;
+  validatePresentation(snapshot: unknown): void;
   advance(): boolean;
   select(index: number): boolean;
   dispatchInput(action: RendererInputAction): boolean;
