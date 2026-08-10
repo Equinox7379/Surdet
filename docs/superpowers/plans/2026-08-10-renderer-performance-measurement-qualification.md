@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 1 已完成；下一入口为阶段 2（同提交构建等价性）。
+> 状态：阶段 2 已完成；下一入口为阶段 3（冻结 v4 Schema、比较器、验证器与判断矩阵）。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -214,6 +214,16 @@ Page 侧必须尝试记录：
 - 如同提交 manifest 不等，立即标记 current candidate NOT QUALIFIED，保存完整差异，停止后续控制；不复制 dist、不人为修复构建产物。
 - 同时记录 package-lock 字节 SHA、Node/npm/Electron/Playwright、Windows/CPU、build command、commit、root、dirty 状态。
 
+阶段 2 已完成：
+
+- [x] 先写构建等价性测试；实现不存在时测试因模块缺失失败。
+- [x] 实现 `collectBuildManifest`、`validateBuildManifest`、`compareBuildManifests` 和显式 CLI artifact 入口。
+- [x] 12 个阶段 2 测试通过；阶段 1+2 聚焦测试 21/21、`node --check` 和 `git diff --check` 通过。
+- [x] manifest 比较涵盖 shell/starter dist 全部相对路径、大小、SHA-256、bundle entry、lockfile、工具版本、OS/CPU；不使用 mtime。
+- [x] 真实同提交双 worktree build 尚未执行，保留到阶段 4 的 Q 矩阵构造前；因此没有产生新的资格数据或 build artifact。
+- [x] 阶段 2 聚焦提交：`test(shell): add build equivalence evidence`，SHA：`b2513cae5be8a311edc0c8565a7eff4e2aeba17b`。
+- [x] 下一入口：阶段 3；在阶段 3 协议提交前不得执行 Q1–Q5。
+
 ### 阶段 3：冻结 v4 Schema、比较器、验证器与判断矩阵
 
 在此阶段提交后，才允许第一次 Q1 holdout 启动。
@@ -332,8 +342,8 @@ Page 侧必须尝试记录：
 | --- | --- | --- | --- | --- |
 | 0 计划/恢复 | 已完成 | 本计划、起始 status/log、旧 v3 artifacts；`git diff --check` 通过；四个保护文件未变化；无新 worktree/Q 数据 | `593a902ee162e567679f80ea050a9d0e851c8095` | 1 启动诊断 |
 | 1 启动/资源诊断 | 已完成 | `packages/shell/test/renderer-startup-diagnostic.test.mjs` 9/9；Shell typecheck；`node --check`；`git diff --check`；未生成 Q 数据 | `d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4` | 2 构建等价性 |
-| 2 构建等价性 | 进行中 | 阶段 1 已提交；等价性实现尚未开始 | 待生成 | 3 v4 协议冻结 |
-| 3 Schema/比较器/验证器 | 未开始 | 待生成 | 待生成 | 4 Q 矩阵/runner |
+| 2 构建等价性 | 已完成 | 12 个阶段 2 测试；阶段 1+2 聚焦 21/21；`node --check`；`git diff --check`；真实双 worktree 构建保留至阶段 4；未生成 Q 数据 | `b2513cae5be8a311edc0c8565a7eff4e2aeba17b` | 3 v4 协议冻结 |
+| 3 Schema/比较器/验证器 | 进行中 | 阶段 2 已提交；候选协议实现尚未开始 | 待生成 | 4 Q 矩阵/runner |
 | 4 worktree/runner | 未开始 | 待生成 | 待生成 | 5 Q1–Q5 |
 | 5 holdout | 未开始 | 五个固定 Q artifact | 待生成 | 6 全量门禁 |
 | 6 门禁/归并 | 未开始 | 测试输出与门禁日志 | 待生成 | 7 清理 |
