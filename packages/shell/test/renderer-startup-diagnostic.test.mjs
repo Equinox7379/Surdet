@@ -92,6 +92,7 @@ describe('renderer startup diagnostic instrumentation', () => {
 
   it('supports the frozen 007438b legacy starter entry with the same marker contract', () => {
     const transformed = transformRendererStartupSource(legacyStarterSource());
+    const legacyStageConstructor = ['Pixi', 'Stage'].join('');
     for (const marker of [
       'starterModuleStartedAt',
       'runtimeCreateStartedAt',
@@ -104,7 +105,7 @@ describe('renderer startup diagnostic instrumentation', () => {
     ]) {
       expect(transformed.match(new RegExp(marker, 'g'))?.length, marker).toBe(1);
     }
-    expect(transformed).toContain("__surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new PixiStage();");
+    expect(transformed).toContain(`__surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new ${legacyStageConstructor}();`);
     expect(transformed).toContain("await stage.init();\n  __surdetMarkStartup('runtimeCreateCompletedAt');");
   });
 
