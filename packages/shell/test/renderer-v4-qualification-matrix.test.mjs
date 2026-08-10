@@ -4,6 +4,7 @@ import {
   buildQualificationMatrix,
   buildCleanupManifest,
   parseRendererV4QualificationArgs,
+  validateRepositoryRoot,
   validateQualificationPath,
 } from '../e2e/renderer-v4-worktree.mjs';
 
@@ -46,6 +47,11 @@ describe('renderer v4 qualification matrix and worktree discipline', () => {
     ]);
     expect(parsed.repositoryRoot).toContain('surdet');
     expect(parsed.tempRoot).toBe(QUALIFICATION_TEMP_ROOT);
+  });
+
+  it('accepts the repository root itself while rejecting paths outside it', () => {
+    expect(validateRepositoryRoot('E:/surdet', 'E:/surdet')).toBe('E:\\surdet');
+    expect(() => validateRepositoryRoot('E:/outside-surdet', 'E:/surdet')).toThrow(/repository-root/);
   });
 
   it('creates a cleanup manifest with exact paths and no wildcard semantics', () => {
