@@ -5,6 +5,7 @@
 **Schema**：v4  
 **任务性质**：测量体系资格化；不是 M9、不是生产性能优化、不是正式发行，也不是重新验收旧版正式 A/B。  
 **最终状态**：`PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`  
+**本轮整改状态**：`DELIVERY_REMEDIATION_COMPLETED`  
 **工作状态**：`WAITING_FOR_REVIEW`
 
 ## 1. 结论摘要
@@ -12,6 +13,8 @@
 本轮按冻结的阶段 0→8 方案完成了 Renderer v4 测量体系的诊断工具、构建等价性、Schema/比较器、Q1–Q5 holdout、全量门禁和临时 worktree 清理。五组正式资格 artifact 均能通过结构性 validator（`valid=true`），但五组资格状态均为 `not-qualified`：主指标的绝对对数比/p95 以及至少一项顺序层门均未满足预声明的重复性门槛。
 
 因此，本轮不能宣称“性能全绿”、不能把 `pairedMedianRatio` 当作通过依据，也不能把旧版 v3 的失败改写为通过。测量体系当前只得到“证据完整、失败可复核、功能门禁通过，但资格门未通过”的结论。
+
+本轮最终限定整改没有重采样。它只补齐了聚合层的机器可审计判断：五个既有 Q artifact 先逐个通过原 validator（`valid=true`），再由独立聚合 validator 按固定 Q 映射、A/B 角色交换、Q5 同根、输入 SHA 和全部 12 项指标的角色互换漂移重算。聚合结果仍为 `not-qualified`，其中 Q1/Q2 角色互换通过，Q3/Q4 角色互换未通过；该结果没有改变任一 Q JSON。
 
 本轮没有：
 
@@ -34,6 +37,8 @@
 | 构建/运行环境 | Node v24.15.0、npm 11.12.1、Electron 43.2.0、Playwright 1.62.1、Windows 10.0.26220、x64 |
 | package-lock SHA-256 | `60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f` |
 | 临时根目录 | `<local-path>`；另有两次失败尝试使用无后缀和 `-1` 根 |
+
+本轮整改新增的聚合协议为 `renderer-v4-aggregate-qualification-2026-08-10`，摘要 Schema 为 `renderer-v4-qualification-summary` v1，固定输出为 `docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`。它是既有 Q artifact 的离线归并，不是新的采样协议；`resampled=false`，不改变 v4 Schema v4、样本数、暖机数、主门限或 Q 文件。
 
 预声明的 v4 主门：
 
@@ -59,6 +64,7 @@
 | 6 | 全量门禁、正式游戏验收、证据归并；修正诊断扫描误报并保留失败日志 | `f13182f8e21a2ba9375927535c738ae0cc93946d`、`f3d728e127af8b88890beec2c3db1c826a5d200a`、`24e5b88f3b4b845a8351f4cab7eb01902976b218` |
 | 7 | 精确清理本轮 13 个 worktree，保留历史 worktree 和全部证据 | `e8fc66512de8d5db9bff0694b374216708760ecf`；计划台账修正 `e5825add34addbcacc364e1920797e6efd79f87c` |
 | 8 | 本报告；报告提交前的源码 HEAD 为 `e5825add34addbcacc364e1920797e6efd79f87c` | 本文档提交后以 `git rev-parse HEAD` 复核报告提交 SHA；本报告不自引用自身 commit SHA |
+| 最终限定整改 | 预先复现 hygiene 红灯；仅移除 20 个 stage6 日志的 Git 索引记录；先红后绿实现聚合 validator、三态 verifier 和 CLI 测试；不重采样 | 计划/索引卫生：`13970fcfb66d03a865cbac7890b1dea9cf88fa6c`；聚合工具：`a39501b1fe64364110c013a1a377d115146af1bc`；摘要：`renderer-v4-qualification-summary-2026-08-10.json` |
 
 ## 4. Q1–Q5 holdout 结果
 
@@ -107,6 +113,29 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 | `renderer-v4-q3-f7-a-b-2026-08-10.json` | `20E7C58890AE4FD22FC16419B34F4332B4F3F0A7CF69C1824DB6DAAC34577B2A` |
 | `renderer-v4-q4-f7-b-a-2026-08-10.json` | `4AD04969D67378EE5CBAB3DF9F6D7E2F744D3558435785AA619324D897FEDA2D` |
 | `renderer-v4-q5-f7-same-root-2026-08-10.json` | `EEEC84A622F89D837A68EF42ACB0F7792193F57FB7AA294031D07F103A9A3A71` |
+
+### 4.4 最终限定整改的聚合摘要
+
+聚合 CLI 使用恰好一次的显式 `--q1`、`--q2`、`--q3`、`--q4`、`--q5` 和 `--output` 参数，没有扫描目录、latest 推断或环境变量输入。每个输入先由原 v4 artifact validator 验证，再检查固定组映射、A/B 角色标签交换、Q5 same-root、build/health、raw/warmup 数量和源文件 SHA-256。
+
+角色互换漂移对全部 12 个 `RENDERER_V4_METRIC_NAMES` 指标采用冻结公式：
+
+```text
+abs(median(sort(forward.v4.paired[metric].pairedLogRatios))
+  + median(sort(reverse.v4.paired[metric].pairedLogRatios)))
+```
+
+门限复用 `RENDERER_V4_PRIMARY_LIMITS.roleSwapMedianLogDrift = log(1.10)`；没有提高门限，也没有用 `pairedMedianRatio` 取代正式判断。
+
+正式摘要事实：
+
+- `generatedAt=2026-08-10T12:57:53.388Z`；摘要 SHA-256：`31554A17096F2544AFF373A715583CF9E343230C9DCC41B6A4EE38A961B79FE6`；
+- `schemaVersion=1`、`resampled=false`、合计 200 条 raw、10 条 warmup；五个输入 SHA 与磁盘逐一匹配；
+- Q1–Q5 artifact 状态均为 `not-qualified`；Q1/Q2 角色互换通过，Q3/Q4 角色互换失败；
+- 聚合 CLI 返回退出码 `2`，表示“输入/结构合法但候选资格不通过”；五个单 artifact verifier 也均返回退出码 `2`；参数/路径/无效 artifact 测试返回 `1`，候选 fixture 返回 `0`；
+- 机器保留的聚合失败原因包括五组原始资格状态失败，以及 Q3/Q4 的 `menuOpenP95Ms`、`sceneP95Ms`、`hostFirstWindowToDebugMs`、`hostDebugToAssetDoneMs`、`pageAssetLoadMs` 角色互换漂移失败。
+
+聚合摘要没有写回或重排 Q raw；五个 Q SHA-256 仍与本报告 4.3 节的冻结值一致。
 
 ## 5. 启动/资源阶段诊断
 
@@ -176,7 +205,7 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 
 | 门禁 | 结果 |
 | --- | --- |
-| Renderer v4 聚焦测试 | 4 files / 47 passed |
+| Renderer v4 / aggregate 聚焦测试 | 5 files / 58 passed；最终 Shell 全量包含聚合测试 |
 | Renderer 全量测试 | 46 files / 325 passed |
 | Shell 全量测试 | 12 files / 98 passed |
 | `verify:renderer-boundaries` | 3/3 tests + scanner passed |
@@ -191,7 +220,7 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 | 《零点之后》 typecheck/build | 通过 |
 | `git diff --check` | 通过 |
 
-主要日志：
+主要日志（均为本轮阶段 6 生成的本地历史证据；本次整改后不再纳入 Git index，但未从磁盘删除）：
 
 - `docs/baselines/renderer-v4-stage6-v4-tests-final-2026-08-10.log`
 - `docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log`
@@ -237,6 +266,7 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 - `packages/shell/e2e/renderer-baseline-v4.mjs`
 - `packages/shell/e2e/renderer-baseline-v4-artifact.mjs`
 - `packages/shell/e2e/renderer-baseline-v4-verify.mjs`
+- `packages/shell/e2e/renderer-v4-qualification-summary.mjs`
 - `packages/shell/e2e/renderer-v4-worktree.mjs`
 - `packages/shell/e2e/renderer-v4-qualification-runner.mjs`
 
@@ -246,6 +276,7 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 - `packages/shell/test/renderer-build-equivalence.test.mjs`
 - `packages/shell/test/renderer-baseline-v4-comparison.test.mjs`
 - `packages/shell/test/renderer-v4-qualification-matrix.test.mjs`
+- `packages/shell/test/renderer-v4-qualification-summary.test.mjs`
 - `scripts/test/renderer-v4-qualification.test.mjs`
 - `scripts/test/renderer-legacy-usage.test.mjs`（仅新增诊断入口误报回归）
 - `package.json`（仅加入资格化工具测试实际执行路径）
@@ -254,7 +285,9 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 
 - `docs/superpowers/specs/2026-08-10-renderer-performance-measurement-v4-protocol.md`
 - `docs/superpowers/plans/2026-08-10-renderer-performance-measurement-qualification.md`
-- 五个 Q1–Q5 JSON、两个 build equivalence JSON、三个 cleanup/failure 记录和阶段 6 门禁日志；完整路径见本报告前述章节及 `git diff --name-status f7f4522..HEAD`。
+- `docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`
+- `docs/ENGINE-RENDERER-PERFORMANCE-MEASUREMENT-QUALIFICATION-REPORT-2026-08-10.md`
+- 五个 Q1–Q5 JSON、两个 build equivalence JSON、三个 cleanup/failure 记录和阶段 6 门禁日志；完整路径见本报告前述章节及最终 remediation report。
 
 主工作树中没有 `packages/renderer/src/**`、`examples/starter/src/**`、`examples/zero-after-midnight/src/**`、`packages/editor/src/**` 或 `packages/cli/src/**` 的生产/游戏源代码改动。Starter 插桩只存在于已删除的临时 worktree，且每个角色的唯一 source diff 已由 artifact 记录。
 
@@ -292,7 +325,7 @@ Q1–Q5 的 `groupGates` 均保持 `healthGate=true`、`buildEquivalenceGate=tru
 1. 任务书所要求的固定根目录在执行前已经存在，因此没有覆盖，而是使用了 `-2` 编号根；早期 `无后缀` 和 `-1` 根是两次 holdout 前失败尝试。三根目录均在最后逐条验证并清理，失败 JSON 不删除。
 2. Q artifact 的 raw 记录中 launcher 侧 npm 字段有 `unknown`，构建 manifest 侧记录了实际 npm 11.12.1；没有用记忆补写 raw 字段，保留两层事实。
 3. 代表性 page `PerformanceResourceTiming` 计数为 0；没有把不可见的资源时序填成 0ms 脚本耗时，也没有把它当作健康失败。资源完成健康由显式 6/6 assetLoading 字段独立判定。
-4. 冻结协议列出了 Q1/Q2、Q3/Q4 的角色交换漂移门；当前 artifact 的公开 `v4` 结构按单组保存 `phaseMetrics`、`paired`、`orderStrata` 和 `groupGates`，没有另列跨 Q 组 `roleSwap` 汇总字段。该边界没有被隐藏：本报告不把角色交换实验宣称为额外通过证据，最终资格仍保守判定为 `not-qualified`。若后续要把跨组漂移变成机器门，必须另行审查并保持本轮 holdout 原始数据不变。
+4. 原 Q artifact 仍只保存单组 `phaseMetrics`、`paired`、`orderStrata` 和 `groupGates`；本轮没有改写它们。限定整改新增独立摘要 validator，在 Q artifact 之外读取既有 `pairedLogRatios` 计算跨 Q 组 `roleSwap`，并把该计算的输入 SHA、公式、门限和失败原因写入独立 summary。这样既补上机器门，又保持 holdout 原始数据不可变；摘要最终仍为 `not-qualified`。
 5. 三次 holdout 前执行器失败没有计入 Q 统计，也没有通过重跑到绿色来抹掉；其 `qHoldoutDataStarted=false` 证据单独保留。
 
 ## 13. 受保护文件、Git 状态与远端状态
@@ -333,3 +366,95 @@ oldFormalV3ABRerun=false
 ```
 
 本报告只交付资格化证据和失败边界，不构成独立复审通过、性能优化批准、M9 开始或正式发行批准。下一步必须等待独立复审及新的明确计划。
+
+## 15. Renderer V4 最终限定整改记录
+
+### 15.1 整改前 hygiene 红灯的机器复现
+
+在 `2026-08-10T20:42:38.2748082+08:00`、HEAD `34367148e57ad821d838495d496cb7aeeeb3ac3f` 上，开始任何整改实现前执行了原命令：
+
+```text
+npm run verify:all
+exitCode=1
+failure=verify:hygiene --tracked
+trackedStage6LogCount=20
+```
+
+触发失败的精确 Git 路径为：
+
+```text
+docs/baselines/renderer-v4-stage6-boundaries-2026-08-10.log
+docs/baselines/renderer-v4-stage6-boundaries-final-2026-08-10.log
+docs/baselines/renderer-v4-stage6-e2e-renderer-v2-2026-08-10.log
+docs/baselines/renderer-v4-stage6-e2e-shell-2026-08-10.log
+docs/baselines/renderer-v4-stage6-legacy-2026-08-10.log
+docs/baselines/renderer-v4-stage6-legacy-corrected-2026-08-10.log
+docs/baselines/renderer-v4-stage6-renderer-test-2026-08-10.log
+docs/baselines/renderer-v4-stage6-shell-test-2026-08-10.log
+docs/baselines/renderer-v4-stage6-shell-test-final-2026-08-10.log
+docs/baselines/renderer-v4-stage6-v4-tests-2026-08-10.log
+docs/baselines/renderer-v4-stage6-v4-tests-final-2026-08-10.log
+docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log
+docs/baselines/renderer-v4-stage6-verifier-wrapper-failure-2026-08-10.log
+docs/baselines/renderer-v4-stage6-verify-all-2026-08-10.log
+docs/baselines/renderer-v4-stage6-verify-tools-2026-08-10.log
+docs/baselines/renderer-v4-stage6-zero-assets-2026-08-10.log
+docs/baselines/renderer-v4-stage6-zero-build-2026-08-10.log
+docs/baselines/renderer-v4-stage6-zero-lint-2026-08-10.log
+docs/baselines/renderer-v4-stage6-zero-simulate-2026-08-10.log
+docs/baselines/renderer-v4-stage6-zero-typecheck-2026-08-10.log
+```
+
+随后只从 Git index 移除上述 20 个精确路径，未修改 `.log` 忽略规则，未递归删除目录；本地磁盘复核仍有 20 个日志文件、缺失数为 0。之后 `npm run verify:hygiene` 通过，`git ls-files 'docs/baselines/renderer-v4-stage6-*.log'` 返回 0。
+
+### 15.2 测试先行、实现和退出码
+
+- 先添加 `packages/shell/test/renderer-v4-qualification-summary.test.mjs` 并运行聚焦测试；在生产聚合模块不存在时，测试因无法加载 `renderer-v4-qualification-summary.mjs` 失败，红灯证据先于实现存在。
+- 随后实现 `packages/shell/e2e/renderer-v4-qualification-summary.mjs`，复用单 artifact validator；新增显式参数 parser、输入 SHA、Q 矩阵、A/B 标签交换、Q5 same-root、全部 12 指标的角色互换公式、摘要 Schema 和三态 CLI。
+- 单 artifact verifier `packages/shell/e2e/renderer-baseline-v4-verify.mjs` 同步改为：合法 candidate-qualified=`0`、合法 not-qualified=`2`、参数/路径/内容/程序错误=`1`。
+- 聚合测试覆盖 11 项：缺参数/未知/重复参数、无效路径、Q 组错位、Q5 非同根、输出路径越界、角色漂移恰好/低于/高于 `log(1.10)`、候选 fixture exit 0、真实 Q exit 2、单 artifact 三态退出、summary 输入 SHA 和 Q artifact 不变。
+- 聚焦 V4 五文件最终结果为 58/58；Shell 全量为 13 文件、109/109；根级 `verify:tools` 为 10/10。
+
+### 15.3 Stage 5 / holdout 提交事实
+
+- Stage 4 执行器和最后一项直接阻断修复的提交为 `b8f53e5c18a98815ed42239220cfa289aec6ee00`；它是 Q1–Q5 holdout 启动前的冻结执行器入口。
+- Stage 5 五组 holdout 记录提交为 `6d6df999f4d9fe940306869193fe6c479e306087`；五组 Q JSON、raw、warmup 和失败状态均来自该已完成 holdout，不属于本轮整改生成。
+- 本轮没有修改上述两个历史提交或其 artifact；新增工具只离线读取五个 Q JSON。
+
+### 15.4 门禁、摘要和最终状态
+
+本轮最终限定整改在代码 HEAD `a39501b1fe64364110c013a1a377d115146af1bc` 上完成了 Shell 全量、`verify:tools`、Renderer boundaries、Renderer legacy、tracked hygiene、根级 `npm run verify:all` 和五个显式 verifier。根级 verify:all 退出码为 0；正式游戏门禁仍为 23/23 分支、3 个结局、44 项资产、运行时错误 0；没有重新执行正式 A/B、没有重新采样、没有修改性能阈值。
+
+最终聚合摘要：
+
+```text
+path=docs/baselines/renderer-v4-qualification-summary-2026-08-10.json
+sha256=31554A17096F2544AFF373A715583CF9E343230C9DCC41B6A4EE38A961B79FE6
+status=not-qualified
+resampled=false
+rawLaunches=200
+warmups=10
+q1q2RoleSwap=passed
+q3q4RoleSwap=failed
+aggregateExit=2
+```
+
+本报告更新、计划收尾和聚合摘要纳入最终提交后，必须再次由机器读取并填写真实的最终 HEAD、`HEAD...surdet/main`、相对整改起点的文件/行数差异、报告/计划/摘要 SHA-256，以及最终 `npm run verify:all` 和 `git diff --check` 结果；不得用本节的代码提交 SHA 冒充文档提交后的最终 HEAD。
+
+### 15.5 明确排除和授权边界
+
+本轮没有修改、暂存、提交、删除或移动 `USER.md`、`SESSION-HANDOFF.md` 及两份 art director 保护文档；没有修改 Renderer/Starter 生产代码、DSL、存档、游戏规则或正式资产。stage6 `.log` 只从 Git index 移除，磁盘证据保留。没有 push、force push、发行、M9 或旧正式 A/B。
+
+最终状态：
+
+```text
+PERFORMANCE_MEASUREMENT_NOT_QUALIFIED
+DELIVERY_REMEDIATION_COMPLETED
+RELEASE_BLOCKED
+WAITING_FOR_REVIEW
+push=false
+forcePush=false
+release=false
+m9Started=false
+resampled=false
+```
