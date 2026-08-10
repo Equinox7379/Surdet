@@ -156,18 +156,34 @@ export function transformRendererStartupSource(source) {
   const normalized = source.replace(/\r\n/g, '\n');
   const mainAnchor = 'async function main(): Promise<void> {\n';
   let transformed = replaceUnique(normalized, mainAnchor, `${mainAnchor}${startupPrelude()}\n`, 'main');
-  transformed = replaceUnique(
-    transformed,
-    '  const runtime = await createRendererRuntime({',
-    "  __surdetMarkStartup('runtimeCreateStartedAt');\n  const runtime = await createRendererRuntime({",
-    'runtime create start',
-  );
-  transformed = replaceUnique(
-    transformed,
-    '  });\n  appEl.appendChild(runtime.canvas);',
-    "  });\n  __surdetMarkStartup('runtimeCreateCompletedAt');\n  appEl.appendChild(runtime.canvas);",
-    'runtime create completion',
-  );
+  const modernRuntimeStart = '  const runtime = await createRendererRuntime({';
+  if (countOccurrences(transformed, modernRuntimeStart) === 1) {
+    transformed = replaceUnique(
+      transformed,
+      modernRuntimeStart,
+      "  __surdetMarkStartup('runtimeCreateStartedAt');\n  const runtime = await createRendererRuntime({",
+      'runtime create start',
+    );
+    transformed = replaceUnique(
+      transformed,
+      '  });\n  appEl.appendChild(runtime.canvas);',
+      "  });\n  __surdetMarkStartup('runtimeCreateCompletedAt');\n  appEl.appendChild(runtime.canvas);",
+      'runtime create completion',
+    );
+  } else {
+    transformed = replaceUnique(
+      transformed,
+      '  const stage = new PixiStage();\n',
+      "  __surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new PixiStage();\n",
+      'legacy runtime create start',
+    );
+    transformed = replaceUnique(
+      transformed,
+      '  await stage.init();\n',
+      "  await stage.init();\n  __surdetMarkStartup('runtimeCreateCompletedAt');\n",
+      'legacy runtime create completion',
+    );
+  }
   transformed = replaceUnique(
     transformed,
     '  };\n\n  // ===== 存档富化：缩略图（舞台截图）+ 本次会话游戏时长 =====',

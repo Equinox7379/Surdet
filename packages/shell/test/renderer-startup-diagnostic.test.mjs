@@ -14,9 +14,18 @@ import {
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const starterSourcePath = path.join(repositoryRoot, 'examples/starter/src/main.ts');
+const legacyStarterCommit = '007438b569ec95350fdc9d7882ad49f55bbb7968';
 
 function starterSource() {
   return fs.readFileSync(starterSourcePath, 'utf8');
+}
+
+function legacyStarterSource() {
+  return execFileSync('git', ['show', `${legacyStarterCommit}:examples/starter/src/main.ts`], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    shell: false,
+  });
 }
 
 function validSnapshot() {
@@ -79,6 +88,24 @@ describe('renderer startup diagnostic instrumentation', () => {
   it('rejects missing or ambiguous source anchors', () => {
     expect(() => transformRendererStartupSource(starterSource().replace('const runtime = await createRendererRuntime({', 'const runtime = await createRendererRuntime({\n    const runtime = await createRendererRuntime({'))).toThrow(/唯一/);
     expect(() => transformRendererStartupSource(starterSource().replace('async function loadAssets(): Promise<void> {', 'async function loadAssets(): Promise<void> {\n  async function loadAssets(): Promise<void> {'))).toThrow(/唯一/);
+  });
+
+  it('supports the frozen 007438b legacy starter entry with the same marker contract', () => {
+    const transformed = transformRendererStartupSource(legacyStarterSource());
+    for (const marker of [
+      'starterModuleStartedAt',
+      'runtimeCreateStartedAt',
+      'runtimeCreateCompletedAt',
+      'debugPublishedAt',
+      'assetLoadStartedAt',
+      'assetLoadCompletedAt',
+      'titleReadyAt',
+      'firstStableFrameAt',
+    ]) {
+      expect(transformed.match(new RegExp(marker, 'g'))?.length, marker).toBe(1);
+    }
+    expect(transformed).toContain("__surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new PixiStage();");
+    expect(transformed).toContain("await stage.init();\n  __surdetMarkStartup('runtimeCreateCompletedAt');");
   });
 
   it('rejects snapshots with missing, negative, non-finite, or fabricated marker values', () => {
