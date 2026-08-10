@@ -18,6 +18,9 @@ function videoHarness(): {
   const onWaitEnd = vi.fn();
   const frameRequest = vi.fn();
   const stage = {
+    setBackground: () => undefined,
+    setPortrait: () => undefined,
+    removePortrait: () => undefined,
     showText: () => undefined,
     showChoices: () => undefined,
     hideChoices: () => undefined,
