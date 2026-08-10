@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 0（计划冻结与提交）
+> 状态：阶段 0 已完成；下一入口为阶段 1（启动/资源阶段诊断）。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -164,9 +164,9 @@ Page 侧必须尝试记录：
 - [x] 重新读取本计划路径并确认任务书要求的计划缺失。
 - [x] 核对 HEAD、`surdet/main`、受保护工作树和最近提交历史。
 - [x] 只读审计旧 v3 validator、runner、artifact、控制 artifact 和旧正式红灯。
-- [ ] 写入本计划，执行 `git diff --check`，确认四个受保护文件仍未变化。
-- [ ] 创建本地提交：`docs(perf): freeze renderer measurement qualification plan`。
-- [ ] 下一入口：阶段 1；未完成本提交前不得创建 worktree、写诊断代码或产生 Q 数据。
+- [x] 写入本计划，执行 `git diff --check`，确认四个受保护文件仍未变化。
+- [x] 创建本地提交：`docs(perf): freeze renderer measurement qualification plan`，SHA：`593a902ee162e567679f80ea050a9d0e851c8095`。
+- [x] 下一入口：阶段 1；阶段 0 完成前没有创建 worktree、写诊断代码或产生 Q 数据。
 
 阶段 0 证据：计划文件自身、起始 `git status --short`、起始 HEAD 和旧 artifact 路径。
 
@@ -321,7 +321,7 @@ Page 侧必须尝试记录：
 
 | 阶段 | 状态 | 证据路径 | 提交 SHA | 下一入口 |
 | --- | --- | --- | --- | --- |
-| 0 计划/恢复 | 进行中（本文件待提交） | 本计划、起始 status/log、旧 v3 artifacts | 待阶段 0 提交 | 1 启动诊断 |
+| 0 计划/恢复 | 已完成 | 本计划、起始 status/log、旧 v3 artifacts；`git diff --check` 通过；四个保护文件未变化；无新 worktree/Q 数据 | `593a902ee162e567679f80ea050a9d0e851c8095` | 1 启动诊断 |
 | 1 启动/资源诊断 | 未开始 | 待生成 | 待生成 | 2 构建等价性 |
 | 2 构建等价性 | 未开始 | 待生成 | 待生成 | 3 v4 协议冻结 |
 | 3 Schema/比较器/验证器 | 未开始 | 待生成 | 待生成 | 4 Q 矩阵/runner |
@@ -333,7 +333,7 @@ Page 侧必须尝试记录：
 
 ## 阶段 0 自检与提交门槛
 
-在首次提交本计划前执行：
+阶段 0 已执行的提交前检查：
 
 ```text
 git diff --check
@@ -341,7 +341,7 @@ git status --short
 git diff -- docs/superpowers/plans/2026-08-10-renderer-performance-measurement-qualification.md
 ```
 
-提交后再次执行：
+阶段 0 提交后再次执行：
 
 ```text
 git rev-parse HEAD
@@ -349,4 +349,4 @@ git status --short
 git rev-list --left-right --count HEAD...surdet/main
 ```
 
-结果必须证明：只有本计划被暂存和提交；四个受保护文件未被触碰；未创建新资格数据；未 push；下一步仅为阶段 1。 
+结果证明：只有本计划被暂存和提交；四个受保护文件未被触碰；未创建新资格数据；未 push；下一步仅为阶段 1。
