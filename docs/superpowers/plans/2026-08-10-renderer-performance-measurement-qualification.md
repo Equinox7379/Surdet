@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 0 已完成；下一入口为阶段 1（启动/资源阶段诊断）。
+> 状态：阶段 1 已完成；下一入口为阶段 2（同提交构建等价性）。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -189,6 +189,15 @@ Page 侧必须尝试记录：
 - Host/page marker 和资源摘要在诊断结果中原样保存；marker 不可用时写原因。
 - 不在主工作树编译诊断，不把探针改动留在主工作树，不产生新的 Q artifact。
 
+阶段 1 已完成：
+
+- [x] 先写失败测试：实现不存在时测试因模块缺失失败。
+- [x] 实现统一启动/资源插桩、快照验证、诊断 runner 和 Electron 诊断入口。
+- [x] 9 个阶段 1 测试通过；Shell typecheck、三份诊断脚本 `node --check`、`git diff --check` 通过。
+- [x] 插桩测试证明只产生 `examples/starter/src/main.ts` 唯一 source diff，并记录 instrumentation/full diff SHA；没有生成 Q 数据、没有创建资格 worktree、没有修改主工作树生产入口。
+- [x] 阶段 1 聚焦提交：`test(shell): add startup resource diagnostics`，SHA：`d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4`。
+- [x] 下一入口：阶段 2（同提交构建等价性）；阶段 2 完成前不得创建 Q1–Q5 holdout 数据。
+
 ### 阶段 2：同提交构建等价性工具与测试
 
 实际路径：
@@ -322,8 +331,8 @@ Page 侧必须尝试记录：
 | 阶段 | 状态 | 证据路径 | 提交 SHA | 下一入口 |
 | --- | --- | --- | --- | --- |
 | 0 计划/恢复 | 已完成 | 本计划、起始 status/log、旧 v3 artifacts；`git diff --check` 通过；四个保护文件未变化；无新 worktree/Q 数据 | `593a902ee162e567679f80ea050a9d0e851c8095` | 1 启动诊断 |
-| 1 启动/资源诊断 | 未开始 | 待生成 | 待生成 | 2 构建等价性 |
-| 2 构建等价性 | 未开始 | 待生成 | 待生成 | 3 v4 协议冻结 |
+| 1 启动/资源诊断 | 已完成 | `packages/shell/test/renderer-startup-diagnostic.test.mjs` 9/9；Shell typecheck；`node --check`；`git diff --check`；未生成 Q 数据 | `d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4` | 2 构建等价性 |
+| 2 构建等价性 | 进行中 | 阶段 1 已提交；等价性实现尚未开始 | 待生成 | 3 v4 协议冻结 |
 | 3 Schema/比较器/验证器 | 未开始 | 待生成 | 待生成 | 4 Q 矩阵/runner |
 | 4 worktree/runner | 未开始 | 待生成 | 待生成 | 5 Q1–Q5 |
 | 5 holdout | 未开始 | 五个固定 Q artifact | 待生成 | 6 全量门禁 |
