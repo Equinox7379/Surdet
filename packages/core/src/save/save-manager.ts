@@ -96,59 +96,110 @@ function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
+function isJsonObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
 /** JSON 安全递归检查：null/string/有限 number/boolean/数组/普通对象 */
 export function isJsonSafeValue(v: unknown): boolean {
   if (v === null) return true;
   if (typeof v === 'string' || typeof v === 'boolean') return true;
   if (typeof v === 'number') return Number.isFinite(v);
   if (Array.isArray(v)) return v.every(isJsonSafeValue);
-  if (typeof v === 'object' && v !== null) return Object.values(v).every(isJsonSafeValue);
+  if (isJsonObject(v)) return Object.values(v).every(isJsonSafeValue);
   return false;
 }
 
+export type SnapshotValidationPhase = 'legacy' | 'current';
+
 /** 存档深度校验：结构非法（篡改/损坏/手工编辑出错）提前抛错，
  *  避免畸形数据在解释器执行中途才爆炸（玩家体验：读档入口即失败并给出原因）。 */
-export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot {
+export function assertValidSnapshot(
+  snap: unknown,
+  phase: SnapshotValidationPhase = 'current',
+): asserts snap is SaveSnapshot {
   const fail = (msg: string): never => {
     throw new Error(`存档结构非法：${msg}`);
   };
   if (typeof snap !== 'object' || snap === null) fail('顶层必须是对象');
   const s = snap as Record<string, unknown>;
-  if (typeof s.meta !== 'object' || s.meta === null) fail('缺少 meta 元信息');
-  if (typeof s.variables !== 'object' || s.variables === null || Array.isArray(s.variables)) {
-    fail('variables 必须是对象');
+  const strict = phase === 'current';
+  if (!isJsonObject(s.meta)) fail('meta 必须是普通对象');
+  const meta = s.meta as Record<string, unknown>;
+  if (typeof meta.id !== 'string') fail('meta.id 必须是 string');
+  if (typeof meta.createdAt !== 'number' || !Number.isFinite(meta.createdAt)) {
+    fail('meta.createdAt 必须是有限 number');
   }
-  if (!isJsonSafeValue(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
-  if (s.position !== null && s.position !== undefined) {
-    const p = s.position as Record<string, unknown> | null;
-    if (typeof p !== 'object' || p === null || typeof p.sceneId !== 'string' || typeof p.pc !== 'number') {
-      fail('position 必须是 { sceneId: string, pc: number } 或 null');
+  if (typeof meta.updatedAt !== 'number' || !Number.isFinite(meta.updatedAt)) {
+    fail('meta.updatedAt 必须是有限 number');
+  }
+  if (meta.schemaVersion !== undefined) {
+    if (typeof meta.schemaVersion !== 'number' || !Number.isFinite(meta.schemaVersion) || !Number.isInteger(meta.schemaVersion) || meta.schemaVersion < 0) {
+      fail('meta.schemaVersion 必须是受支持的有限非负整数');
     }
+    if (strict && meta.schemaVersion !== SAVE_SCHEMA_VERSION) {
+      fail(`meta.schemaVersion 必须是当前版本 ${SAVE_SCHEMA_VERSION}`);
+    }
+  } else if (strict) {
+    fail('缺少 meta.schemaVersion');
+  }
+  if (!isJsonObject(s.variables)) fail('variables 必须是普通对象');
+  if (!isJsonSafeValue(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
+
+  if (typeof s.kind !== 'string' || !(['manual', 'quick', 'auto'] as const).includes(s.kind as SaveSnapshot['kind'])) {
+    fail('kind 只能是 manual、quick 或 auto');
+  }
+
+  const validatePosition = (value: unknown, label: string): void => {
+    if (!isJsonObject(value)) {
+      fail(`${label}.sceneId 必须是 string`);
+    }
+    const position = value as Record<string, unknown>;
+    if (typeof position.sceneId !== 'string') {
+      fail(`${label}.sceneId 必须是 string`);
+    }
+    if (typeof position.pc !== 'number' || !Number.isFinite(position.pc) || !Number.isInteger(position.pc) || position.pc < 0) {
+      fail(`${label}.pc 必须是有限非负整数`);
+    }
+    if (position.sceneHash !== undefined && typeof position.sceneHash !== 'string') {
+      fail(`${label}.sceneHash 必须是 string`);
+    }
+  };
+  if (s.position === null) {
+    // null 是合法的已结束/空闲快照定位。
+  } else if (s.position !== undefined) {
+    validatePosition(s.position, 'position');
+  } else {
+    fail('缺少 position');
   }
   if (s.callStack !== undefined) {
     if (!Array.isArray(s.callStack)) {
       fail('callStack 必须是数组');
     } else {
       for (const frame of s.callStack) {
-        const fr = frame as Record<string, unknown>;
-        if (typeof fr !== 'object' || fr === null || typeof fr.sceneId !== 'string' || typeof fr.pc !== 'number') {
-          fail('callStack 元素必须是 { sceneId: string, pc: number }');
-        }
+        validatePosition(frame, 'callStack 元素');
       }
     }
   }
   if (!Array.isArray(s.readSet) || !s.readSet.every((x) => typeof x === 'string')) {
     fail('readSet 必须是字符串数组');
   }
-  if (s.gallery !== undefined) {
+  if (s.gallery === undefined) {
+    if (strict) fail('缺少 gallery');
+  } else {
     const g = s.gallery as Record<string, unknown>;
-    if (typeof g !== 'object' || g === null || !Array.isArray(g.cgs) || !Array.isArray(g.music)) {
+    if (!isJsonObject(g) || !Array.isArray(g.cgs) || !Array.isArray(g.music)) {
       fail('gallery 必须是 { cgs: string[], music: string[] }');
     }
     const cgs = g.cgs as unknown[];
     const music = g.music as unknown[];
     if (!cgs.every((x) => typeof x === 'string') || !music.every((x) => typeof x === 'string')) {
       fail('gallery.cgs / gallery.music 必须是字符串数组');
+    }
+    if (g.texts !== undefined && (!Array.isArray(g.texts) || !(g.texts as unknown[]).every((x) => typeof x === 'string'))) {
+      fail('gallery.texts 必须是字符串数组');
     }
   }
   if (s.clears !== undefined) {
@@ -167,8 +218,8 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
         if (table !== undefined) {
           if (typeof table !== 'object' || table === null || Array.isArray(table)) {
             fail(`growth.${key} 必须是对象`);
-          } else if (!Object.values(table as Record<string, unknown>).every((x) => typeof x === 'number')) {
-            fail(`growth.${key} 值必须是 number`);
+          } else if (!Object.values(table as Record<string, unknown>).every((x) => typeof x === 'number' && Number.isFinite(x))) {
+            fail(`growth.${key} 值必须是有限 number`);
           }
         }
       }
@@ -184,10 +235,12 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
   // systems 形状兜底 + 子快照深度校验（审计轮4：新增系统的子快照纳入读档入口校验，
   // 避免畸形数据在各系统 restore 中途才爆炸）
   if (s.systems !== undefined) {
-    if (typeof s.systems !== 'object' || s.systems === null || Array.isArray(s.systems)) {
-      fail('systems 必须是对象');
-    }
+    if (!isJsonObject(s.systems)) fail('systems 必须是 JSON 安全对象');
     const sys = s.systems as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(sys, 'newGamePlus') && !isJsonSafeValue(sys.newGamePlus)) {
+      fail('systems.newGamePlus 必须是 JSON 安全值');
+    }
+    if (!isJsonSafeValue(sys)) fail('systems 必须是 JSON 安全对象');
     // 子快照对象形状校验（undefined 放行 = 旧档无该字段）
     const checkObj = (v: unknown, label: string): Record<string, unknown> | undefined => {
       if (v === undefined) return undefined;
@@ -216,14 +269,14 @@ export function assertValidSnapshot(snap: unknown): asserts snap is SaveSnapshot
     if (scheduler) strArr(scheduler.fired, 'systems.eventScheduler.fired');
     const calendar = checkObj(sys.calendar, 'systems.calendar');
     if (calendar) {
-      if (calendar.turn !== undefined && typeof calendar.turn !== 'number') fail('systems.calendar.turn 必须是 number');
-      if (calendar.ap !== undefined && typeof calendar.ap !== 'number') fail('systems.calendar.ap 必须是 number');
+      if (calendar.turn !== undefined && (typeof calendar.turn !== 'number' || !Number.isFinite(calendar.turn))) fail('systems.calendar.turn 必须是有限 number');
+      if (calendar.ap !== undefined && (typeof calendar.ap !== 'number' || !Number.isFinite(calendar.ap))) fail('systems.calendar.ap 必须是有限 number');
       strArr(calendar.visited, 'systems.calendar.visited');
       if (calendar.commandCounts !== undefined) {
         if (typeof calendar.commandCounts !== 'object' || calendar.commandCounts === null || Array.isArray(calendar.commandCounts)) {
           fail('systems.calendar.commandCounts 必须是对象');
-        } else if (!Object.values(calendar.commandCounts as Record<string, unknown>).every((x) => typeof x === 'number')) {
-          fail('systems.calendar.commandCounts 值必须是 number');
+        } else if (!Object.values(calendar.commandCounts as Record<string, unknown>).every((x) => typeof x === 'number' && Number.isFinite(x))) {
+          fail('systems.calendar.commandCounts 值必须是有限 number');
         }
       }
     }

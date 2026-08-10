@@ -296,13 +296,14 @@ export class Interpreter {
   /** 从快照恢复：变量/已读/解锁 + 全家桶系统状态 + 定位到挂起点并重新驱动到挂起状态。
    *  注意：须在 UI 线程（非事件回调）调用，事件回调内调用会撞 #stepping 重入守卫。 */
   loadSnapshot(snap: SaveSnapshot): void {
-    // 深度结构校验：篡改/损坏存档在读档入口即拒绝（而非解释器执行中途爆炸）
+    // 阶段 A：迁移前只做兼容校验，允许旧 schema 缺少后续版本新增字段。
     try {
-      assertValidSnapshot(snap);
+      assertValidSnapshot(snap, 'legacy');
     } catch (err) {
       throw new RuntimeError(err instanceof Error ? err.message : String(err));
     }
     const version = snap.meta?.schemaVersion;
+    let candidate: unknown = snap;
     if (version !== undefined && version > SAVE_SCHEMA_VERSION) {
       throw new RuntimeError(
         `存档 schema 版本 ${version} 高于引擎支持的 ${SAVE_SCHEMA_VERSION}（引擎升级导致的旧档不兼容，请迁移或回退）`,
@@ -311,12 +312,22 @@ export class Interpreter {
     // schema 迁移管线（自我迭代③）：旧档先逐级升到当前版本，后续逻辑统一使用迁移后快照
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       const migrated = migrateSnapshot(snap, SAVE_SCHEMA_VERSION);
-      if (migrated !== null) {
-        this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
-        snap = migrated as unknown as SaveSnapshot;
+      if (migrated === null) {
+        throw new RuntimeError(`存档 schema 版本 ${version ?? 1} 没有到 ${SAVE_SCHEMA_VERSION} 的迁移路径`);
       }
+      candidate = migrated;
     }
+    // 阶段 B：迁移完成后必须按当前 schema 重新严格校验，不能依赖类型断言取得可信身份。
+    try {
+      assertValidSnapshot(candidate, 'current');
+    } catch (err) {
+      throw new RuntimeError(err instanceof Error ? err.message : String(err));
+    }
+    snap = candidate;
     if (snap.systems) this.#systemHooks.validate?.(snap.systems);
+    if (version === undefined || version < SAVE_SCHEMA_VERSION) {
+      this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
+    }
     this.#store.restore(snap.variables, { allowReadonly: true }); // 可信快照：readonly 系统变量随档恢复
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
