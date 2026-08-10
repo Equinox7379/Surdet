@@ -97,7 +97,7 @@ function expectedBundleEntries(files, workspaceRoot) {
   }
   const indexPath = path.join(workspaceRoot, 'examples/starter/dist/index.html');
   const html = fs.readFileSync(indexPath, 'utf8');
-  const referenced = [...html.matchAll(/(?:src|href)=["']\/?(assets\/[^"']+)["']/g)]
+  const referenced = [...html.matchAll(/(?:src|href)=["'](?:\.\/|\/)?(assets\/[^"']+)["']/g)]
     .map((match) => `examples/starter/dist/${match[1]}`)
     .filter((relativePath) => fileNames.has(relativePath));
   if (referenced.length === 0) throw new Error('starter index.html 没有引用可验证的 assets bundle entry');
