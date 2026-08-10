@@ -42,6 +42,7 @@ async function readProbe(page) {
     const debug = window.surdetDebug;
     const publicDebug = window.__surdetDebug;
     const canvas = document.querySelector('canvas');
+    const projection = publicDebug?.queries?.diagnostics?.projectionSnapshot?.() ?? null;
     return {
       canvas: canvas ? { width: canvas.width, height: canvas.height } : null,
       assets: publicDebug?.assetLoading ?? null,
@@ -50,19 +51,16 @@ async function readProbe(page) {
       rendererStatus: publicDebug?.rendererStatus ?? null,
       position: publicDebug?.position ?? null,
       overlays: {
-        menu: debug?.queries?.overlay?.menu?.() ?? null,
-        gallery: debug?.queries?.overlay?.gallery?.() ?? null,
-        system: debug?.queries?.overlay?.system?.() ?? null,
+        menu: publicDebug?.queries?.overlay?.menu?.() ?? null,
+        gallery: publicDebug?.queries?.overlay?.gallery?.() ?? null,
+        system: publicDebug?.queries?.overlay?.system?.() ?? null,
       },
-      dialogue: debug?.rendererV2Layers?.dialogue ?? null,
-      menu: debug?.rendererV2Layers?.menu ?? null,
-      gallery: debug?.rendererV2Layers?.gallery ?? null,
-      system: debug?.rendererV2Layers?.system ?? null,
-      world: debug?.rendererV2Layers?.world ?? null,
-      backlogEntries: debug?.queries?.dialogue?.backlogEntries?.() ?? [],
-      preferences: debug?.queries?.preferences?.presentationPreferences?.() ?? null,
-      resources: debug?.queries?.diagnostics?.resourceSnapshot?.() ?? null,
-      presentation: debug?.queries?.presentation?.snapshot?.() ?? null,
+      projection,
+      world: projection?.world ?? null,
+      backlogEntries: publicDebug?.queries?.dialogue?.backlogEntries?.() ?? [],
+      preferences: publicDebug?.queries?.preferences?.presentationPreferences?.() ?? null,
+      resources: publicDebug?.queries?.diagnostics?.resourceSnapshot?.() ?? null,
+      presentation: publicDebug?.queries?.presentation?.snapshot?.() ?? null,
     };
   });
 }
@@ -78,10 +76,10 @@ function semanticChecks(name, probe, expectedOverlay) {
       ?? overlayNames.find((value) => value !== 'none')
       ?? 'none';
   if (expectedOverlay !== undefined) add('expected overlay', actualOverlay === expectedOverlay, actualOverlay);
-  const dialogue = probe.dialogue ?? {};
-  const menu = probe.menu ?? {};
-  const gallery = probe.gallery ?? {};
-  const system = probe.system ?? {};
+  const dialogue = probe.projection?.dialogue ?? {};
+  const menu = probe.projection?.menu ?? {};
+  const gallery = probe.projection?.gallery ?? {};
+  const system = probe.projection?.system ?? {};
   switch (name) {
     case 'title':
       add('title menu projection', menu.overlay?.type === 'title', menu.overlay?.type);

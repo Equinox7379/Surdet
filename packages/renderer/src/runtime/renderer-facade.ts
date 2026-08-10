@@ -50,6 +50,7 @@ import type {
   OverlayQueries,
   PreferenceQueries,
   PresentationQueries,
+  RendererProjectionSnapshot,
   RendererDiagnosticQueries,
   RendererQueries,
   SystemPanelOverlayState,
@@ -135,6 +136,8 @@ export interface RendererFacadeOptions {
   systemPanelLayer?: SystemPanelProjectionPort;
   /** M7 public World projection port; concrete Layer details stay behind it. */
   worldLayer?: WorldProjectionPort;
+  /** Composition-root read model; returns plain semantic data, never a Layer. */
+  projectionSnapshot?: () => RendererProjectionSnapshot;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot => ({
@@ -147,6 +150,14 @@ const EMPTY_RESOURCE_SNAPSHOT = (disposed: boolean): RendererResourceSnapshot =>
   pooledObjects: {},
   displayObjectsByOwner: {},
 });
+
+const EMPTY_PROJECTION_SNAPSHOT: RendererProjectionSnapshot = {
+  dialogue: null,
+  menu: null,
+  gallery: null,
+  system: null,
+  world: null,
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -196,6 +207,7 @@ export class RendererFacade {
   #galleryPort?: GalleryProjectionPort;
   #systemPort?: SystemPanelProjectionPort;
   #worldPort?: WorldProjectionPort;
+  #projectionSnapshot?: () => RendererProjectionSnapshot;
   #disposed = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
   #galleryOverlay: GalleryOverlayState = { type: 'none' };
@@ -212,6 +224,7 @@ export class RendererFacade {
     this.#galleryPort = options.galleryLayer;
     this.#systemPort = options.systemPanelLayer;
     this.#worldPort = options.worldLayer;
+    this.#projectionSnapshot = options.projectionSnapshot;
 
     const assets: AssetCommands = {
       registerBackground: async (key, source, format) => {
@@ -687,6 +700,7 @@ export class RendererFacade {
         this.#disposed,
       ),
       performanceSnapshot: (): RenderPerformanceSnapshot | null => this.#monitor.snapshot(),
+      projectionSnapshot: () => cloneOpaque(this.#projectionSnapshot?.() ?? EMPTY_PROJECTION_SNAPSHOT) as RendererProjectionSnapshot,
       needsUpdate: () => this.#controller.needsUpdate || this.#stage.needsUpdate?.() === true,
       isDisposed: () => this.#disposed,
     };
