@@ -84,7 +84,7 @@ describe('renderer build equivalence', () => {
       fs.writeFileSync(path.join(root, 'packages/shell/dist/main.js'), 'main', 'utf8');
       fs.writeFileSync(path.join(root, 'packages/shell/dist/preload.js'), 'preload', 'utf8');
       fs.writeFileSync(path.join(root, 'examples/starter/dist/assets/index-test.js'), 'bundle', 'utf8');
-      fs.writeFileSync(path.join(root, 'examples/starter/dist/index.html'), '<script type="module" src="/assets/index-test.js"></script>', 'utf8');
+      fs.writeFileSync(path.join(root, 'examples/starter/dist/index.html'), '<script type="module" src="./assets/index-test.js"></script>', 'utf8');
       execFileSync('git', ['init', '--quiet'], { cwd: root, shell: false });
       execFileSync('git', ['config', 'user.email', 'manifest@example.invalid'], { cwd: root, shell: false });
       execFileSync('git', ['config', 'user.name', 'Manifest Test'], { cwd: root, shell: false });
