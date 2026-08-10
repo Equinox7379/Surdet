@@ -25,32 +25,47 @@ const NO_LINE_END = new Set([
 /** 连续出现时不可被拆散的连接符 */
 const UNBREAKABLE_RUN = new Set(['…', '—']);
 
+function normalizePerLine(value: number): number {
+  if (Number.isNaN(value)) throw new RangeError('perLine 必须是有限数字或 Infinity');
+  if (value === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER;
+  if (value <= 0 || value === Number.NEGATIVE_INFINITY) return 1;
+  return Math.max(1, Math.floor(value));
+}
+
+function normalizeMaxWidth(value: number): number {
+  if (Number.isNaN(value)) throw new RangeError('maxWidth 必须是有限数字或 Infinity');
+  if (value === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER;
+  if (value <= 0 || value === Number.NEGATIVE_INFINITY) return 1;
+  return value;
+}
+
 /**
  * 按禁则规则把文本折成多行。perLine = 目标每行字数（CJK 按字计；
  * 行首禁则触发的行允许超宽 1~2 字，属排印惯例的"悬挂"形态）。
  */
 export function wrapCjk(text: string, perLine: number): string[] {
   if (text.length === 0) return [];
-  const width = Math.max(1, Math.floor(perLine));
+  const units = Array.from(text);
+  const width = normalizePerLine(perLine);
   const lines: string[] = [];
   let i = 0;
-  while (i < text.length) {
-    let end = Math.min(i + width, text.length);
-    if (end < text.length) {
+  while (i < units.length) {
+    let end = Math.min(i + width, units.length);
+    if (end < units.length) {
       // 行尾禁则：当前行末字不可收尾 → 断点前移一字（该字随下一行）
-      if (end > i + 1 && NO_LINE_END.has(text[end - 1]!)) {
+      if (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) {
         end -= 1;
       } else {
         // 行首禁则：下一行首字不可开头 → 断点后移，把禁则字收进当前行
         // （连续禁则字/连续符一并收入，如 "……，"）
-        while (end < text.length && (NO_LINE_START.has(text[end]!)
-          || (UNBREAKABLE_RUN.has(text[end]!) && text[end] === text[end - 1]))) {
+        while (end < units.length && (NO_LINE_START.has(units[end]!)
+          || (UNBREAKABLE_RUN.has(units[end]!) && units[end] === units[end - 1]))) {
           end += 1;
         }
       }
     }
     if (end <= i) end = i + 1; // 防御：永不零宽/倒退
-    lines.push(text.slice(i, end));
+    lines.push(units.slice(i, end).join(''));
     i = end;
   }
   return lines;
@@ -63,27 +78,32 @@ export function wrapCjk(text: string, perLine: number): string[] {
  */
 export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: string) => number): string[] {
   if (text.length === 0) return [];
-  const limit = Math.max(1, maxWidth);
+  const units = Array.from(text);
+  const limit = normalizeMaxWidth(maxWidth);
   const lines: string[] = [];
   let i = 0;
-  while (i < text.length) {
+  while (i < units.length) {
     // 贪心找最长不超宽前缀（段落短，线性扫描成本可忽略）
     let end = i;
-    while (end < text.length && measure(text.slice(i, end + 1)) <= limit) end += 1;
+    while (end < units.length) {
+      const candidate = units.slice(i, end + 1).join('');
+      if (measure(candidate) > limit) break;
+      end += 1;
+    }
     if (end <= i) end = i + 1; // 单字已超宽：强制至少一字，防死循环
-    if (end < text.length) {
-      if (end > i + 1 && NO_LINE_END.has(text[end - 1]!)) {
+    if (end < units.length) {
+      if (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) {
         end -= 1; // 行尾禁则：前移
       } else {
         // 行首禁则：后移收进当前行（允许悬挂超宽）
-        while (end < text.length && (NO_LINE_START.has(text[end]!)
-          || (UNBREAKABLE_RUN.has(text[end]!) && text[end] === text[end - 1]))) {
+        while (end < units.length && (NO_LINE_START.has(units[end]!)
+          || (UNBREAKABLE_RUN.has(units[end]!) && units[end] === units[end - 1]))) {
           end += 1;
         }
       }
     }
     if (end <= i) end = i + 1;
-    lines.push(text.slice(i, end));
+    lines.push(units.slice(i, end).join(''));
     i = end;
   }
   return lines;
