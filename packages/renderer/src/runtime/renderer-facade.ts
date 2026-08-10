@@ -163,6 +163,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function cloneOpaque(value: unknown): unknown {
   if (typeof structuredClone === 'function') {
     try {
@@ -178,6 +184,22 @@ function cloneOpaque(value: unknown): unknown {
     return copy;
   }
   return value;
+}
+
+function freezePlainClone(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    for (const item of value) freezePlainClone(item);
+    return Object.freeze(value);
+  }
+  if (isPlainObject(value)) {
+    for (const item of Object.values(value)) freezePlainClone(item);
+    return Object.freeze(value);
+  }
+  return value;
+}
+
+function cloneAndFreezePlainData(value: unknown): unknown {
+  return freezePlainClone(cloneOpaque(value));
 }
 
 function cloneResourceSnapshot(snapshot: RendererResourceSnapshot, disposed: boolean): RendererResourceSnapshot {
@@ -700,7 +722,7 @@ export class RendererFacade {
         this.#disposed,
       ),
       performanceSnapshot: (): RenderPerformanceSnapshot | null => this.#monitor.snapshot(),
-      projectionSnapshot: () => cloneOpaque(this.#projectionSnapshot?.() ?? EMPTY_PROJECTION_SNAPSHOT) as RendererProjectionSnapshot,
+      projectionSnapshot: () => cloneAndFreezePlainData(this.#projectionSnapshot?.() ?? EMPTY_PROJECTION_SNAPSHOT) as RendererProjectionSnapshot,
       needsUpdate: () => this.#controller.needsUpdate || this.#stage.needsUpdate?.() === true,
       isDisposed: () => this.#disposed,
     };
