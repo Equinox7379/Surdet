@@ -1,0 +1,7 @@
+Stage 6 verifier capture wrapper failure (the verifier processes themselves completed with valid=true):
+
+PowerShell reported:
+The term '2>&1' is not recognized as a name of a cmdlet, function, script file, or executable program.
+
+The corrected capture was executed and preserved at:
+docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log

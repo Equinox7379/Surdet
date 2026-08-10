@@ -323,7 +323,7 @@ Page 侧必须尝试记录：
 
 阶段 6 已完成：
 
-- [x] v4 启动/构建/比较器/矩阵专项最终 4 文件 47/47；五个官方 verifier 均 `valid=true`、`not-qualified`。最终日志：`docs/baselines/renderer-v4-stage6-v4-tests-final-2026-08-10.log`、`docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log`；第一次 verifier 捕获 wrapper 错误原样保留在 `docs/baselines/renderer-v4-stage6-verifier-2026-08-10.log`。
+- [x] v4 启动/构建/比较器/矩阵专项最终 4 文件 47/47；五个官方 verifier 均 `valid=true`、`not-qualified`。最终日志：`docs/baselines/renderer-v4-stage6-v4-tests-final-2026-08-10.log`、`docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log`；第一次 verifier 捕获 wrapper 错误原样保留在 `docs/baselines/renderer-v4-stage6-verifier-wrapper-failure-2026-08-10.log`。
 - [x] Renderer 全量 46 文件/325 项通过，日志：`docs/baselines/renderer-v4-stage6-renderer-test-2026-08-10.log`。
 - [x] Shell 全量 12 文件/98 项通过，最终日志：`docs/baselines/renderer-v4-stage6-shell-test-final-2026-08-10.log`。
 - [x] `verify:renderer-boundaries` 最终通过，日志：`docs/baselines/renderer-v4-stage6-boundaries-final-2026-08-10.log`。

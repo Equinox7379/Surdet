@@ -1,0 +1,17 @@
+
+> surdet@0.1.0 verify:renderer-legacy
+> node --test scripts/test/renderer-legacy-usage.test.mjs && node scripts/check-renderer-legacy-usage.mjs
+
+✔ allows adapters/tests but rejects production imports (16.7881ms)
+✔ returns every production symbol use in stable path order (20.9824ms)
+✔ does not grant blanket exemptions to renderer runtime or non-legacy tests (21.3407ms)
+✔ does not classify diagnostic-only legacy entry anchors as production consumers (157.4434ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 330.1117
+Renderer legacy API usage check passed.
