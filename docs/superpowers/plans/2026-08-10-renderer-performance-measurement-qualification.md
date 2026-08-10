@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 5 Q1–Q5 holdout 已完成，正在进入阶段 6 全量门禁与证据归并；不得修改已冻结协议或重跑 Q 组。
+> 状态：阶段 6 全量门禁已完成，下一步仅清理本轮实际 worktree；不得修改已冻结协议、重跑 Q 组或进入 M9。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -321,6 +321,19 @@ Page 侧必须尝试记录：
 
 本阶段禁止 electron-builder、pack、正式 A/B、发行和 push。旧 v3 红灯必须由机器重新读取旧 artifact 证明未被覆盖，而不是重跑旧实验。
 
+阶段 6 已完成：
+
+- [x] v4 启动/构建/比较器/矩阵专项最终 4 文件 47/47；五个官方 verifier 均 `valid=true`、`not-qualified`。最终日志：`docs/baselines/renderer-v4-stage6-v4-tests-final-2026-08-10.log`、`docs/baselines/renderer-v4-stage6-verifier-corrected-2026-08-10.log`；第一次 verifier 捕获 wrapper 错误原样保留在 `docs/baselines/renderer-v4-stage6-verifier-2026-08-10.log`。
+- [x] Renderer 全量 46 文件/325 项通过，日志：`docs/baselines/renderer-v4-stage6-renderer-test-2026-08-10.log`。
+- [x] Shell 全量 12 文件/98 项通过，最终日志：`docs/baselines/renderer-v4-stage6-shell-test-final-2026-08-10.log`。
+- [x] `verify:renderer-boundaries` 最终通过，日志：`docs/baselines/renderer-v4-stage6-boundaries-final-2026-08-10.log`。
+- [x] `verify:renderer-legacy` 曾在 `docs/baselines/renderer-v4-stage6-legacy-2026-08-10.log` 原样记录诊断锚点误报；新增回归后最终 4/4 + scanner 通过，日志：`docs/baselines/renderer-v4-stage6-legacy-corrected-2026-08-10.log`。
+- [x] `verify:tools` 10/10 通过，日志：`docs/baselines/renderer-v4-stage6-verify-tools-2026-08-10.log`；`npm run verify:all` 通过，日志：`docs/baselines/renderer-v4-stage6-verify-all-2026-08-10.log`。verify:all 已实际执行 types、tests、docs、hygiene、formal、editor/starter/formal build 和 diff-check。
+- [x] Renderer v2 视觉验收通过：17 个候选状态语义断言全通过，资源 `6/6`、failed `0`、page/console/request errors `0`；原始 manifest/contact sheet/screenshot 保留在 `packages/shell/e2e/artifacts/renderer-v2-review-2026-08-10T12-08-08-815Z-52232/`，日志：`docs/baselines/renderer-v4-stage6-e2e-renderer-v2-2026-08-10.log`。
+- [x] Shell Electron E2E 通过：引导、画布、标题→剧情、F5/F9 存读档、55 steps/41 choices；日志：`docs/baselines/renderer-v4-stage6-e2e-shell-2026-08-10.log`。
+- [x] 《零点之后》直接门禁通过：11 场景 lint 0 error/0 warning；simulate 23/23 分支、3 个结局、运行时错误 0；44 项资产；typecheck/build；日志分别为 `docs/baselines/renderer-v4-stage6-zero-lint-2026-08-10.log`、`renderer-v4-stage6-zero-simulate-2026-08-10.log`、`renderer-v4-stage6-zero-assets-2026-08-10.log`、`renderer-v4-stage6-zero-typecheck-2026-08-10.log`、`renderer-v4-stage6-zero-build-2026-08-10.log`。
+- [x] 阶段 6 未执行 electron-builder/pack、旧 v3 正式 A/B、发行或 push；下一入口仅为阶段 7 的本轮 worktree 精确清理。
+
 ### 阶段 7：只清理本轮新 worktree
 
 - 先读取 `git worktree list --porcelain`，只从 Git 返回值获得精确绝对路径。
@@ -366,7 +379,7 @@ Page 侧必须尝试记录：
 | 3 Schema/比较器/验证器 | 已完成 | v4 Shell 专项 20/20；阶段 1+2 专项 21/21；`verify:tools` 10/10；Shell typecheck；协议/Schema/门限/文件名已冻结；未生成 Q 数据 | `62847272bbb941c34a4ce68508b98de6bb7fb925` | 4 Q 矩阵/runner |
 | 4 worktree/runner | 已完成 | 实际根 `...-2` 的 9 个新 worktree；007/f7 build equivalence 全部 equivalent；三次 pre-holdout 阻断及证据；阶段 1–4 专项 45/45；根级 v4 3/3；typecheck/node check/diff-check | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 5 Q1–Q5 holdout |
 | 5 holdout | 已完成 | 五个固定 Q artifact；每组官方 verifier `valid=true`；每组 2 warmups/40 raw；五组资格均 `not-qualified`；cleanup manifest stage=all-samples-written | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 6 全量门禁 |
-| 6 门禁/归并 | 未开始 | 测试输出与门禁日志 | 待生成 | 7 清理 |
+| 6 门禁/归并 | 已完成 | Renderer 46/325；Shell 12/98；v4 4/47；verify:tools 10/10；verify:all；边界/legacy；Renderer v2 E2E；Shell E2E；正式游戏 23/23、3 结局、44 资产、0 运行时错误；全部日志已保留 | `f13182f8e21a2ba9375927535c738ae0cc93946d` | 7 只清理本轮 worktree |
 | 7 清理 | 未开始 | cleanup manifest、worktree list 前后 | 待生成 | 8 报告 |
 | 8 报告/停止 | 未开始 | 最终报告、最终 status/log | 待生成 | `WAITING_FOR_REVIEW` |
 
