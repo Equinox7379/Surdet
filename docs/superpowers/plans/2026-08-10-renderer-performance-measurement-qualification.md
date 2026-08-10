@@ -385,7 +385,7 @@ Page 侧必须尝试记录：
 | 4 worktree/runner | 已完成 | 实际根 `...-2` 的 9 个新 worktree；007/f7 build equivalence 全部 equivalent；三次 pre-holdout 阻断及证据；阶段 1–4 专项 45/45；根级 v4 3/3；typecheck/node check/diff-check | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 5 Q1–Q5 holdout |
 | 5 holdout | 已完成 | 五个固定 Q artifact；每组官方 verifier `valid=true`；每组 2 warmups/40 raw；五组资格均 `not-qualified`；cleanup manifest stage=all-samples-written | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 6 全量门禁 |
 | 6 门禁/归并 | 已完成 | Renderer 46/325；Shell 12/98；v4 4/47；verify:tools 10/10；verify:all；边界/legacy；Renderer v2 E2E；Shell E2E；正式游戏 23/23、3 结局、44 资产、0 运行时错误；全部日志已保留 | `f13182f8e21a2ba9375927535c738ae0cc93946d` | 7 只清理本轮 worktree |
-| 7 清理 | 已完成 | `renderer-v4-qualification-cleanup-2026-08-10.json`、`renderer-v4-qualification-cleanup-final-2026-08-10.json`；清理前后 `git worktree list --porcelain`；13 条本轮精确路径；三根目录注册数 0 | 待本阶段文档提交后填入 | 8 最终报告 |
+| 7 清理 | 已完成 | `renderer-v4-qualification-cleanup-2026-08-10.json`、`renderer-v4-qualification-cleanup-final-2026-08-10.json`；清理前后 `git worktree list --porcelain`；13 条本轮精确路径；三根目录注册数 0 | `e8fc66512de8d5db9bff0694b374216708760ecf` | 8 最终报告 |
 | 8 报告/停止 | 进行中 | 最终报告、Q/build/门禁证据哈希、最终 status/log；尚未创建最终报告 | 待生成 | `WAITING_FOR_REVIEW` |
 
 ## 阶段 0 自检与提交门槛
