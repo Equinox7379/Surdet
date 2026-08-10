@@ -23,6 +23,43 @@
 - 每完成一个阶段，先更新本计划中的状态、证据路径、提交哈希、工作树状态和下一阶段入口，再提交；不得把进度只保存在聊天上下文中。
 - 若任务书与仓库事实冲突，记录差异并采用更保守、可审计的处理；不擅自扩大范围。
 
+## Renderer V4 最终限定整改附录（2026-08-10）
+
+本附录是对已冻结 Q1–Q5 资格协议的工具卫生和聚合判断整改，不改变阶段 0–8 的候选协议、Schema 版本、样本数量、暖机次数、门限、主指标或任何既有 Q artifact。当前整改不产生新的 Q1–Q5 holdout 数据，不重新测量、不重建、不覆盖既有 Q JSON 或旧 v3 红灯，也不进入 M9。
+
+### 已确认的整改前事实
+
+- 在 `34367148e57ad821d838495d496cb7aeeeb3ac3f` 上预先运行根级 `npm run verify:all`，因 20 个已跟踪 `docs/baselines/renderer-v4-stage6-*.log` 触发 hygiene 失败；退出码、观察时间、精确路径清单已在最终整改报告记录。
+- 20 个本地 stage6 日志是历史证据副本，必须保留在磁盘；本轮只从 Git index 移除这 20 个精确路径，不修改既有 `*.log` 忽略规则，不做宽泛删除。
+- 五个既有 Q artifact 仍是唯一资格数据源；其 JSON、SHA-256、raw、warmup、失败和 not-qualified 结论均只读保留。
+
+### 本轮新增且先冻结的聚合候选协议
+
+- 聚合协议 ID：`renderer-v4-aggregate-qualification-2026-08-10`。
+- 聚合 Schema：`renderer-v4-qualification-summary`，`schemaVersion=1`。
+- 输入必须显式提供且恰好一次：`--q1 <path> --q2 <path> --q3 <path> --q4 <path> --q5 <path> --output <path>`；禁止扫描目录、选择 latest、读取环境变量或隐式推断输入。
+- 固定权威输出：`docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`。输出必须保存每个输入的规范化路径、SHA-256、组名、状态、commit/build/health 汇总、raw/warmup 数量，以及 `resampled=false`。
+- 输入组映射固定为：Q1=`q1-007-a-b`、Q2=`q2-007-b-a`、Q3=`q3-f7-a-b`、Q4=`q4-f7-b-a`、Q5=`q5-f7-same-root`；Q1/Q2 和 Q3/Q4 必须分别互换角色，Q5 必须是同一构建根。
+- 聚合验证必须先复用现有单 artifact validator，再检查组映射、commit/build/health、raw/warmup、输入 SHA、Q5 same-root 和五组状态；不得复制或另行定义 artifact 内部验证规则。
+
+### 固定聚合统计、门限和状态规则
+
+- 对每个 `RENDERER_V4_METRIC_NAMES` 指标，角色互换漂移固定为：
+  `abs(median(sort(forward.v4.paired[metric].pairedLogRatios)) + median(sort(reverse.v4.paired[metric].pairedLogRatios)))`。
+- 使用全部 12 个指标；不删除异常值、不筛选轮次、不用 paired median ratio 替代正式统计量。
+- 角色互换门限固定为既有 `RENDERER_V4_PRIMARY_LIMITS.roleSwapMedianLogDrift = log(1.10)`，只复用该常量，不新增或调整门限。
+- 聚合状态只有 `candidate-qualified` 或 `not-qualified`：五组 artifact 均为 `candidate-qualified`、Q1/Q2 与 Q3/Q4 全部 12 指标角色互换通过、结构/commit/build/health/Q5 约束全部通过时才可为前者；否则必须为后者并保存机器可读 reasons。
+- CLI 退出码固定：合法且 candidate-qualified 为 `0`；合法但 not-qualified 为 `2`；参数、路径、JSON、Schema、结构或程序错误为 `1`。单 artifact verifier 同步采用该三态退出约定。
+
+### 本轮固定证据输出和阶段入口
+
+- 聚合实现：`packages/shell/e2e/renderer-v4-qualification-summary.mjs`。
+- 聚合测试：`packages/shell/test/renderer-v4-qualification-summary.test.mjs`。
+- 权威聚合 JSON：`docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`。
+- 最终整改报告：`docs/ENGINE-RENDERER-PERFORMANCE-MEASUREMENT-QUALIFICATION-FINAL-REMEDIATION-REPORT-2026-08-10.md`。
+- 先以失败测试证明缺失聚合实现，再实现并测试；之后只运行现有 artifact 的显式验证和聚合，不生成新的资格试验数据。
+- 完成顺序：计划附录/日志索引卫生 → 聚合测试先红 → 聚合实现与 CLI 三态退出 → 原有 Q artifact 显式验证/聚合 → 全量门禁与最终报告 → 本地聚焦提交；最终状态固定为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`、`DELIVERY_REMEDIATION_COMPLETED`、`RELEASE_BLOCKED`、`WAITING_FOR_REVIEW`，不 push。
+
 ## 恢复时的当前事实（阶段 0 开始前只读核对）
 
 - 主工作树：`E:\surdet`
