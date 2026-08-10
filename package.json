@@ -23,7 +23,7 @@
     "docs:capabilities": "node scripts/render-capability-matrix.mjs --write",
     "docs:capabilities:check": "node scripts/render-capability-matrix.mjs --check",
     "verify:docs": "node scripts/render-capability-matrix.mjs --check",
-    "verify:tools": "node --test scripts/test/capability-matrix.test.mjs scripts/test/verify-all.test.mjs scripts/test/renderer-baseline-options.test.mjs scripts/test/renderer-v2-docs.test.mjs",
+    "verify:tools": "node --test scripts/test/capability-matrix.test.mjs scripts/test/verify-all.test.mjs scripts/test/renderer-baseline-options.test.mjs scripts/test/renderer-v2-docs.test.mjs scripts/test/renderer-v4-qualification.test.mjs",
     "verify:hygiene": "node scripts/check-repo-hygiene.mjs --tracked"
   },
   "engines": {
