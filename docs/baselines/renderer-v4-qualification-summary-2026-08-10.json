@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "renderer-v4-qualification-summary",
+  "protocolId": "renderer-v4-aggregate-qualification-2026-08-10",
+  "generatedAt": "2026-08-10T12:57:53.388Z",
+  "resampled": false,
+  "inputs": {
+    "q1": {
+      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q1-007-a-b-2026-08-10.json",
+      "sha256": "6a92e21f11d45f534d0ca50800e3b6f689cc2870a9ea216e045ca9e0c97c9b44",
+      "group": "q1-007-a-b",
+      "qualificationStatus": "not-qualified",
+      "sampledAt": "2026-08-10T11:46:18.605Z",
+      "rebuiltAt": "2026-08-10T11:46:18.605Z",
+      "baselineCommit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "currentCommit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "baselineLabel": "A",
+      "currentLabel": "B",
+      "baselineRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q1-007-a-b-a",
+      "currentRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q1-007-a-b-b",
+      "pairCount": 20,
+      "warmupCount": 2,
+      "rawLaunchCount": 40,
+      "health": {
+        "warmups": 2,
+        "formalSamples": 40,
+        "assetsFailed": 0,
+        "pageErrors": 0,
+        "consoleErrors": 0,
+        "failedRequests": 0
+      },
+      "buildEquivalent": true
+    },
+    "q2": {
+      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q2-007-b-a-2026-08-10.json",
+      "sha256": "f64cc356ad7c5ad5a2c916aa4b23a8c4a9dc68e16918ab8ee26e90f26ae524c1",
+      "group": "q2-007-b-a",
+      "qualificationStatus": "not-qualified",
+      "sampledAt": "2026-08-10T11:50:06.858Z",
+      "rebuiltAt": "2026-08-10T11:50:06.858Z",
+      "baselineCommit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "currentCommit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "baselineLabel": "B",
+      "currentLabel": "A",
+      "baselineRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q2-007-b-a-b",
+      "currentRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q2-007-b-a-a",
+      "pairCount": 20,
+      "warmupCount": 2,
+      "rawLaunchCount": 40,
+      "health": {
+        "warmups": 2,
+        "formalSamples": 40,
+        "assetsFailed": 0,
+        "pageErrors": 0,
+        "consoleErrors": 0,
+        "failedRequests": 0
+      },
+      "buildEquivalent": true
+    },
+    "q3": {
+      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "sha256": "20e7c58890ae4fd22fc16419b34f4332b4f3f0a7cf69c1824db6daac34577b2a",
+      "group": "q3-f7-a-b",
+      "qualificationStatus": "not-qualified",
+      "sampledAt": "2026-08-10T11:54:14.815Z",
+      "rebuiltAt": "2026-08-10T11:54:14.815Z",
+      "baselineCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "currentCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "baselineLabel": "A",
+      "currentLabel": "B",
+      "baselineRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q3-f7-a-b-a",
+      "currentRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q3-f7-a-b-b",
+      "pairCount": 20,
+      "warmupCount": 2,
+      "rawLaunchCount": 40,
+      "health": {
+        "warmups": 2,
+        "formalSamples": 40,
+        "assetsFailed": 0,
+        "pageErrors": 0,
+        "consoleErrors": 0,
+        "failedRequests": 0
+      },
+      "buildEquivalent": true
+    },
+    "q4": {
+      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "sha256": "4ad04969d67378ee5cbab3df9f6d7e2f744d3558435785aa619324d897feda2d",
+      "group": "q4-f7-b-a",
+      "qualificationStatus": "not-qualified",
+      "sampledAt": "2026-08-10T11:58:00.104Z",
+      "rebuiltAt": "2026-08-10T11:58:00.104Z",
+      "baselineCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "currentCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "baselineLabel": "B",
+      "currentLabel": "A",
+      "baselineRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q4-f7-b-a-b",
+      "currentRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q4-f7-b-a-a",
+      "pairCount": 20,
+      "warmupCount": 2,
+      "rawLaunchCount": 40,
+      "health": {
+        "warmups": 2,
+        "formalSamples": 40,
+        "assetsFailed": 0,
+        "pageErrors": 0,
+        "consoleErrors": 0,
+        "failedRequests": 0
+      },
+      "buildEquivalent": true
+    },
+    "q5": {
+      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q5-f7-same-root-2026-08-10.json",
+      "sha256": "eeec84a622f89d837a68ef42acb0f7792193f57fb7aa294031d07f103a9a3a71",
+      "group": "q5-f7-same-root",
+      "qualificationStatus": "not-qualified",
+      "sampledAt": "2026-08-10T12:00:43.677Z",
+      "rebuiltAt": "2026-08-10T12:00:43.677Z",
+      "baselineCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "currentCommit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "baselineLabel": "same-root",
+      "currentLabel": "same-root",
+      "baselineRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q5-f7-same-root",
+      "currentRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q5-f7-same-root",
+      "pairCount": 20,
+      "warmupCount": 2,
+      "rawLaunchCount": 40,
+      "health": {
+        "warmups": 2,
+        "formalSamples": 40,
+        "assetsFailed": 0,
+        "pageErrors": 0,
+        "consoleErrors": 0,
+        "failedRequests": 0
+      },
+      "buildEquivalent": true
+    }
+  },
+  "commits": {
+    "q1": {
+      "baseline": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "current": "007438b569ec95350fdc9d7882ad49f55bbb7968"
+    },
+    "q2": {
+      "baseline": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "current": "007438b569ec95350fdc9d7882ad49f55bbb7968"
+    },
+    "q3": {
+      "baseline": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "current": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59"
+    },
+    "q4": {
+      "baseline": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "current": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59"
+    },
+    "q5": {
+      "baseline": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "current": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59"
+    }
+  },
+  "buildEquivalence": {
+    "allEquivalent": true,
+    "byGroup": {
+      "q1": true,
+      "q2": true,
+      "q3": true,
+      "q4": true,
+      "q5": true
+    }
+  },
+  "counts": {
+    "rawLaunches": 200,
+    "warmups": 10
+  },
+  "roleSwap": {
+    "threshold": 0.09531017980432493,
+    "q1q2": {
+      "forward": "q1-007-a-b",
+      "reverse": "q2-007-b-a",
+      "metrics": {
+        "coldStartMs": {
+          "forwardMedian": -0.0024197056039948696,
+          "reverseMedian": -0.025789359093179337,
+          "drift": 0.028209064697174206,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "assetReadyMs": {
+          "forwardMedian": -0.0068999729877012575,
+          "reverseMedian": 0.0005171492615533993,
+          "drift": 0.006382823726147858,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "menuOpenP95Ms": {
+          "forwardMedian": -0.01747455595195978,
+          "reverseMedian": 0.002601511036992587,
+          "drift": 0.014873044914967194,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "sceneP95Ms": {
+          "forwardMedian": -0.03312881548562955,
+          "reverseMedian": -0.015665025749408167,
+          "drift": 0.048793841235037716,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "hostLaunchToFirstWindowMs": {
+          "forwardMedian": 0.016779036873254626,
+          "reverseMedian": -0.007406413011897473,
+          "drift": 0.009372623861357152,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "hostFirstWindowToDebugMs": {
+          "forwardMedian": -0.015596473627440075,
+          "reverseMedian": 0.0031967680599337255,
+          "drift": 0.01239970556750635,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "hostDebugToAssetDoneMs": {
+          "forwardMedian": 0.04512245262193824,
+          "reverseMedian": 0.01605805702664437,
+          "drift": 0.06118050964858261,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageNavigationToDebugMs": {
+          "forwardMedian": 0.009462428310407936,
+          "reverseMedian": 0.009313656872874254,
+          "drift": 0.01877608518328219,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageRuntimeCreateMs": {
+          "forwardMedian": 0.0053214942178349675,
+          "reverseMedian": -0.02120593373070835,
+          "drift": 0.015884439512873383,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageAssetLoadMs": {
+          "forwardMedian": -0.033473895024650376,
+          "reverseMedian": 0.002239626345354904,
+          "drift": 0.03123426867929547,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageDebugToAssetDoneMs": {
+          "forwardMedian": -0.04080017796978139,
+          "reverseMedian": 0.0030045648622592236,
+          "drift": 0.037795613107522164,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageAssetDoneToStableFrameMs": {
+          "forwardMedian": -0.002827750034550006,
+          "reverseMedian": 0.0018816957460162506,
+          "drift": 0.0009460542885337555,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        }
+      },
+      "passed": true
+    },
+    "q3q4": {
+      "forward": "q3-f7-a-b",
+      "reverse": "q4-f7-b-a",
+      "metrics": {
+        "coldStartMs": {
+          "forwardMedian": -0.012833300886956018,
+          "reverseMedian": -0.01650346317382763,
+          "drift": 0.029336764060783647,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "assetReadyMs": {
+          "forwardMedian": 0.004397132469347362,
+          "reverseMedian": 0.0034722825915623583,
+          "drift": 0.00786941506090972,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "menuOpenP95Ms": {
+          "forwardMedian": -0.061559514595063286,
+          "reverseMedian": -0.13539104650513098,
+          "drift": 0.19695056110019427,
+          "threshold": 0.09531017980432493,
+          "passed": false
+        },
+        "sceneP95Ms": {
+          "forwardMedian": -0.07937134974649485,
+          "reverseMedian": -0.04070347788485999,
+          "drift": 0.12007482763135484,
+          "threshold": 0.09531017980432493,
+          "passed": false
+        },
+        "hostLaunchToFirstWindowMs": {
+          "forwardMedian": 0.014645433097067978,
+          "reverseMedian": -0.023474581194390946,
+          "drift": 0.008829148097322968,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "hostFirstWindowToDebugMs": {
+          "forwardMedian": -0.10093248875580084,
+          "reverseMedian": -0.021119540605132197,
+          "drift": 0.12205202936093304,
+          "threshold": 0.09531017980432493,
+          "passed": false
+        },
+        "hostDebugToAssetDoneMs": {
+          "forwardMedian": 0.7054365985825745,
+          "reverseMedian": 0.008834644973619086,
+          "drift": 0.7142712435561935,
+          "threshold": 0.09531017980432493,
+          "passed": false
+        },
+        "pageNavigationToDebugMs": {
+          "forwardMedian": -0.0001582366354843049,
+          "reverseMedian": 0.01010357278432228,
+          "drift": 0.009945336148837976,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageRuntimeCreateMs": {
+          "forwardMedian": -0.007273891125562136,
+          "reverseMedian": -0.043119303268444986,
+          "drift": 0.05039319439400712,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageAssetLoadMs": {
+          "forwardMedian": -0.0968045152726095,
+          "reverseMedian": -0.010765065186929313,
+          "drift": 0.10756958045953881,
+          "threshold": 0.09531017980432493,
+          "passed": false
+        },
+        "pageDebugToAssetDoneMs": {
+          "forwardMedian": -0.06363238555209366,
+          "reverseMedian": -0.004297901463327634,
+          "drift": 0.0679302870154213,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        },
+        "pageAssetDoneToStableFrameMs": {
+          "forwardMedian": -0.019638703768213025,
+          "reverseMedian": 0.005255340844307645,
+          "drift": 0.01438336292390538,
+          "threshold": 0.09531017980432493,
+          "passed": true
+        }
+      },
+      "passed": false
+    },
+    "passed": false
+  },
+  "aggregate": {
+    "valid": true,
+    "status": "not-qualified",
+    "reasons": [
+      "q1: artifact qualification status is not-qualified",
+      "q2: artifact qualification status is not-qualified",
+      "q3: artifact qualification status is not-qualified",
+      "q4: artifact qualification status is not-qualified",
+      "q5: artifact qualification status is not-qualified",
+      "q3q4.menuOpenP95Ms: role-swap median log drift exceeded threshold",
+      "q3q4.sceneP95Ms: role-swap median log drift exceeded threshold",
+      "q3q4.hostFirstWindowToDebugMs: role-swap median log drift exceeded threshold",
+      "q3q4.hostDebugToAssetDoneMs: role-swap median log drift exceeded threshold",
+      "q3q4.pageAssetLoadMs: role-swap median log drift exceeded threshold"
+    ]
+  }
+}
