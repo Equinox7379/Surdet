@@ -118,3 +118,60 @@ describe('wrapCjkMeasure（像素级断行）', () => {
     expect(lines).toEqual(['甲', '乙', '丙']);
   });
 });
+
+function hasLoneSurrogate(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+describe('wrapCjk Unicode 与边界输入安全', () => {
+  it('emoji 正好位于换行边界时不拆 surrogate，且无损往返', () => {
+    const text = '甲甲甲😀乙丙';
+    const lines = wrapCjk(text, 4);
+    expect(lines.some(hasLoneSurrogate)).toBe(false);
+    expect(lines.join('')).toBe(text);
+  });
+
+  it('扩展汉字、连续 emoji 和 emoji+中文标点均不拆分', () => {
+    for (const text of ['甲甲𠮷乙', '甲😀😀乙', '甲😀，乙']) {
+      const lines = wrapCjk(text, 2);
+      expect(lines.some(hasLoneSurrogate), text).toBe(false);
+      expect(lines.join('')).toBe(text);
+    }
+  });
+
+  it('measure 回调只收到完整 code point 字符串', () => {
+    const seen: string[] = [];
+    const measure = (value: string): number => {
+      seen.push(value);
+      expect(hasLoneSurrogate(value)).toBe(false);
+      return [...value].length * 10;
+    };
+    const text = '甲😀𠮷乙';
+    expect(wrapCjkMeasure(text, 20, measure).join('')).toBe(text);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('0、负数、小数和 Infinity 宽度都有稳定无损行为', () => {
+    for (const width of [0, -2, 1.9, Number.POSITIVE_INFINITY]) {
+      expect(wrapCjk('甲😀乙', width).join('')).toBe('甲😀乙');
+      expect(wrapCjkMeasure('甲😀乙', width, (value) => [...value].length * 10).join('')).toBe('甲😀乙');
+    }
+    expect(wrapCjk('', Number.NaN)).toEqual([]);
+    expect(wrapCjkMeasure('', Number.NaN, () => 0)).toEqual([]);
+  });
+
+  it('NaN 宽度明确拒绝，不进入同步死循环', () => {
+    expect(() => wrapCjk('甲', Number.NaN)).toThrow(/perLine/);
+    expect(() => wrapCjkMeasure('甲', Number.NaN, () => 10)).toThrow(/maxWidth/);
+  });
+});
