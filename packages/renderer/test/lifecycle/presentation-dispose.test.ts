@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
-import type { AdvStage } from '../../src/types.js';
 
 function videoHarness(): {
   controller: PresentationController;
@@ -24,7 +23,7 @@ function videoHarness(): {
     hideChoices: () => undefined,
     showVideo,
     hideVideo,
-  } as unknown as AdvStage;
+  };
   const ports = createPresentationPorts(stage);
   const controller = new PresentationController(ports.commands, ports.queries, undefined, {
     commands: ports.commands,
