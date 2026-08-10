@@ -202,6 +202,8 @@ export class PresentationController {
   #onWaitEnd?: () => void;
   /** wait/video 会话号：stateReset 后递增，残留的结束回调因此作废（审计修复 C1） */
   #waitSession = 0;
+  /** 当前是否有一个尚未结束、由本控制器启动的视频。 */
+  #videoActive = false;
   /** 最近一次 @voice 的 key：紧跟的文本行把它带进 Backlog（语音回放用） */
   #pendingVoice: string | null = null;
   /** 对话界面隐藏中（H 键惯例：隐藏对话框/说话人/等待指示器，背景立绘保留） */
@@ -262,6 +264,7 @@ export class PresentationController {
    * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
    */
   get needsUpdate(): boolean {
+    if (this.#disposed) return false;
     return this.#hasRendererWork() || this.#queries.diagnostics.needsUpdate();
   }
 
@@ -318,6 +321,12 @@ export class PresentationController {
 
   destroy(): void {
     if (this.#disposed) return;
+    this.#waitSession += 1;
+    this.#waitDeadline = null;
+    if (this.#videoActive) {
+      this.#videoActive = false;
+      this.#commands.system.hideVideo();
+    }
     this.disconnect();
     this.#unbindStageCallbacks?.();
     this.#unbindStageCallbacks = undefined;
@@ -339,6 +348,7 @@ export class PresentationController {
     this.#fade = null;
     this.#waitDeadline = null;
     this.#waitSession += 1;
+    this.#videoActive = false;
     this.#pendingVoice = null;
     this.#choiceIndices = [];
     this.#choiceCursor = -1;
@@ -393,6 +403,7 @@ export class PresentationController {
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
+    if (this.#disposed) return;
     if (!this.needsUpdate) return;
     this.#updateTimelines(deltaMs);
     // @wait 计时：到时（或快进中立即）结束等待并恢复解释器
@@ -722,6 +733,7 @@ export class PresentationController {
   #onStateReset(): void {
     this.#waitDeadline = null;
     this.#waitSession += 1;
+    this.#videoActive = false;
     this.#clearTimelines();
     this.#commands.presentation.clear();
     this.#pendingVoice = null; // 旧场景的语音关联不跨读档延续
@@ -839,14 +851,21 @@ export class PresentationController {
 
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */
   #onVideo(p: { src: string }): void {
+    if (this.#disposed) return;
     // 会话令牌：读档后 stateReset 递增会话号，残留的视频结束回调被忽略（审计修复 C1）
     const session = this.#waitSession;
     if (this.#skipMode) {
       this.#onWaitEnd?.();
       return;
     }
+    this.#videoActive = true;
+    let completed = false;
     this.#commands.system.showVideo(p.src, () => {
-      if (session === this.#waitSession) this.#onWaitEnd?.();
+      if (completed) return;
+      completed = true;
+      if (session !== this.#waitSession) return;
+      this.#videoActive = false;
+      this.#onWaitEnd?.();
     });
   }
 
