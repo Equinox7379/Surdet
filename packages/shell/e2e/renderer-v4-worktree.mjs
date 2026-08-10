@@ -42,6 +42,16 @@ export function validateQualificationPath(candidate, parent) {
   return candidatePath;
 }
 
+export function validateRepositoryRoot(candidate, expectedRoot) {
+  const expectedPath = path.resolve(expectedRoot);
+  const candidatePath = path.resolve(candidate);
+  const relative = path.relative(expectedPath, candidatePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative) || candidatePath.includes('*')) {
+    throw new Error(`repository-root 必须是工作区根目录或其内部路径：${candidatePath}`);
+  }
+  return candidatePath;
+}
+
 export function buildQualificationMatrix(tempRoot = QUALIFICATION_TEMP_ROOT) {
   const root = path.resolve(tempRoot);
   const descriptor = (id, label, commit, role) => ({

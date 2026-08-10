@@ -23,6 +23,7 @@ import {
   createQualificationWorktrees,
   parseRendererV4QualificationArgs,
   QUALIFICATION_TEMP_ROOT,
+  validateRepositoryRoot,
 } from './renderer-v4-worktree.mjs';
 
 const scriptPath = url.fileURLToPath(import.meta.url);
@@ -350,7 +351,7 @@ function writeBuildEvidence(artifactDir, commit, records) {
 async function main() {
   const parsed = parseRendererV4QualificationArgs(process.argv.slice(2));
   const repositoryRoot = path.resolve(parsed.repositoryRoot || defaultRepositoryRoot);
-  assertUnder(defaultRepositoryRoot, repositoryRoot, 'repository-root');
+  validateRepositoryRoot(repositoryRoot, defaultRepositoryRoot);
   const artifactDir = path.resolve(parsed.artifactDir);
   assertUnder(repositoryRoot, artifactDir, 'artifact-dir');
   const requestedTempRoot = path.resolve(parsed.tempRoot);
