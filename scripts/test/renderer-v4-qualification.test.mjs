@@ -13,6 +13,8 @@ const files = [
   'packages/shell/e2e/renderer-build-equivalence.mjs',
   'packages/shell/e2e/renderer-startup-diagnostic.mjs',
   'packages/shell/e2e/renderer-startup-diagnostic-runner.mjs',
+  'packages/shell/e2e/renderer-v4-worktree.mjs',
+  'packages/shell/e2e/renderer-v4-qualification-runner.mjs',
 ];
 
 test('qualification plan and v4 protocol freeze the fixed Q matrix and outputs', () => {
