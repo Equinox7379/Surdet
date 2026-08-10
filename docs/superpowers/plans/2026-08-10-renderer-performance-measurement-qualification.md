@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 2 已完成；下一入口为阶段 3（冻结 v4 Schema、比较器、验证器与判断矩阵）。
+> 状态：阶段 3 已完成；下一入口为阶段 4（构造 Q1–Q5 worktree 与 runner）。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -250,6 +250,16 @@ Page 侧必须尝试记录：
 
 创建候选冻结提交：`test(renderer): freeze v4 measurement protocol`。提交后只允许修复直接失败测试或实现阻断缺陷；不得改协议语义。
 
+阶段 3 已完成：
+
+- [x] v4 Schema、协议规格、统计规则、主门限、Q1–Q5 矩阵和固定输出文件名已提交并冻结。
+- [x] 先写失败测试；实现不存在时 v4 专项测试因模块缺失失败。
+- [x] v4 Shell 专项 20/20；阶段 1+2 专项 21/21；根级 `verify:tools` 10/10；Shell typecheck、`node --check`、`git diff --check` 通过。
+- [x] validator 会重算 raw→v3Compatible/v4/health/qualification，并拒绝 Schema、commit-role、pair/order、asset health、marker、NaN/负数、summary/paired/failure 篡改。
+- [x] `pairedMedianRatio` 明确为诊断字段；v4 主门使用 paired absolute log-ratio median/p95、order strata、健康和构建等价性。
+- [x] 阶段 3 聚焦提交：`test(renderer): freeze v4 measurement protocol`，SHA：`62847272bbb941c34a4ce68508b98de6bb7fb925`。
+- [x] 阶段 3 提交前未生成 Q1–Q5 数据；下一入口为阶段 4。
+
 ### 阶段 4：构造五组新 worktree、构建和资格执行清单
 
 实际路径：
@@ -343,8 +353,8 @@ Page 侧必须尝试记录：
 | 0 计划/恢复 | 已完成 | 本计划、起始 status/log、旧 v3 artifacts；`git diff --check` 通过；四个保护文件未变化；无新 worktree/Q 数据 | `593a902ee162e567679f80ea050a9d0e851c8095` | 1 启动诊断 |
 | 1 启动/资源诊断 | 已完成 | `packages/shell/test/renderer-startup-diagnostic.test.mjs` 9/9；Shell typecheck；`node --check`；`git diff --check`；未生成 Q 数据 | `d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4` | 2 构建等价性 |
 | 2 构建等价性 | 已完成 | 12 个阶段 2 测试；阶段 1+2 聚焦 21/21；`node --check`；`git diff --check`；真实双 worktree 构建保留至阶段 4；未生成 Q 数据 | `b2513cae5be8a311edc0c8565a7eff4e2aeba17b` | 3 v4 协议冻结 |
-| 3 Schema/比较器/验证器 | 进行中 | 阶段 2 已提交；候选协议实现尚未开始 | 待生成 | 4 Q 矩阵/runner |
-| 4 worktree/runner | 未开始 | 待生成 | 待生成 | 5 Q1–Q5 |
+| 3 Schema/比较器/验证器 | 已完成 | v4 Shell 专项 20/20；阶段 1+2 专项 21/21；`verify:tools` 10/10；Shell typecheck；协议/Schema/门限/文件名已冻结；未生成 Q 数据 | `62847272bbb941c34a4ce68508b98de6bb7fb925` | 4 Q 矩阵/runner |
+| 4 worktree/runner | 进行中 | 阶段 3 已冻结协议；真实 worktree/build 尚未开始 | 待生成 | 5 Q1–Q5 |
 | 5 holdout | 未开始 | 五个固定 Q artifact | 待生成 | 6 全量门禁 |
 | 6 门禁/归并 | 未开始 | 测试输出与门禁日志 | 待生成 | 7 清理 |
 | 7 清理 | 未开始 | cleanup manifest、worktree list 前后 | 待生成 | 8 报告 |
