@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "renderer-v4-qualification-runner-failure",
+  "protocolId": "renderer-v4-qualification-2026-08-10",
+  "phase": "stage-4-startup-instrumentation-before-q1-holdout",
+  "repositoryRoot": "E:\\surdet",
+  "requestedTempRoot": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10",
+  "selectedTempRoot": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1",
+  "group": "q1-007-a-b",
+  "worktreesCreated": [
+    "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1/q1-007-a-b-a",
+    "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1/q1-007-a-b-b"
+  ],
+  "buildsCompleted": true,
+  "qHoldoutDataStarted": false,
+  "qArtifactsWritten": [],
+  "error": {
+    "name": "Error",
+    "message": "runtime create start 锚点必须唯一，实际为 0",
+    "source": "applyRendererStartupInstrumentation"
+  },
+  "preservedCleanupManifest": "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json",
+  "status": "not-qualified-preflight"
+}
