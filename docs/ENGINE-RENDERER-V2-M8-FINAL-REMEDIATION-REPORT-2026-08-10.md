@@ -441,3 +441,226 @@ DE0AA52BEF955165213123EDA9632D14456355828A15B2FE9F4CBB548D934EDC
 6. 性能正式门禁没有关闭：M8 A/B 的 menuOpenP95Ms 失败，M7.5 冻结候选的 sceneP95Ms 红灯也继续保留。
 
 因此本报告完成后立即停止在 WAITING_FOR_REVIEW，不 push、不 force push、不发行，等待总经理独立复审及后续明确授权。
+
+---
+
+# M8 最终限定整改补充（2026-08-10，当前权威状态）
+
+本节记录总经理本轮最终限定整改在磁盘上的最终结果。它只补充并覆盖本报告历史章节中与本轮整改冲突的“当前状态”描述；此前的 M7.5/M8 红灯 artifact、原始样本、失败记录和历史结论全部保留，未被覆盖。
+
+## 11. 交付状态与范围
+
+- 本轮执行前工作树 HEAD：ce67bf2d32281cc0de6eb5b09c7d530d17606d43。
+- 本轮最终代码提交：db12cb02083c64e750527283ada2aceb10d30597。
+- 代码提交主题：fix(renderer): remove production layer debug exposure。
+- 本轮没有启动 M9，没有 push/force push，没有发行对外版本。
+- 未修改 DSL、存档格式、游戏规则、正式剧本、受保护文档或冻结的 v2 baseline。
+- 性能门禁仍不是全绿：本轮有效正式 A/B 中 assetReadyMs 与 sceneP95Ms 失败；menuOpenP95Ms 在该轮通过。不得据此宣称发布性能通过。
+
+## 12. P1-1：移除 Runtime 对真实 Layer 对象的暴露
+
+### 12.1 生产接线
+
+已删除 Runtime 上的 __rendererV2Debug.layers.dialogue/menu/gallery/system/world 实例暴露。Runtime、Starter 和 window debug 不再提供可取得真实 Layer 实例的公开或隐藏属性。
+
+保留的语义诊断入口是 RendererQueries.diagnostics.projectionSnapshot()。该入口只返回普通数据快照，覆盖 dialogue、menu、gallery、system、world 五个投影域；RendererFacade 对 provider 结果进行深克隆，PixiStageHost 从 Layer 的 debugSnapshot() 生成数据，不把 Layer 或 Pixi 对象穿过查询边界。
+
+Starter 的公开调试对象现在只暴露 typed queries；视觉 harness 通过 queries 的 projectionSnapshot 与其他查询，或 DOM 语义状态，读取状态，不再从 Runtime debug 对象取 Layer。
+
+现场静态复核结果：生产代码中只剩 renderer-runtime.test.ts 对旧属性名的“必须不存在”断言；没有生产路径重新引入 __rendererV2Debug、rendererV2Layers 或 Layer 实例引用。
+
+### 12.2 先红后绿与纯度证据
+
+先增加测试后，旧实现按预期失败：
+
+1. query-purity 测试失败：diagnostics.projectionSnapshot 不存在；
+2. runtime boundary 测试失败：Reflect.ownKeys(runtime) 仍包含 __rendererV2Debug。
+
+生产修复后，以下事实均已转绿：
+
+- query purity：修改一次返回快照中的 dialogue.choiceLabels/dialogText 后，下一次查询仍返回未被污染的 Layer 状态；
+- Runtime boundary：ownKeys 不含 __rendererV2Debug，属性读取为 undefined，且查询结果不是 Layer/Pixi 实例；
+- Renderer contract/typecheck、Renderer 全量测试和正式 Renderer v2 Electron 语义验收继续通过。
+
+最新 Renderer v2 视觉/语义 artifact：
+
+~~~text
+E:\surdet\packages\shell\e2e\artifacts\renderer-v2-review-2026-08-10T09-05-05-672Z-6304
+visualStatus = CANDIDATE
+semantic states = 17/17 PASS
+page errors = 0
+console errors = 0
+failed requests = 0
+~~~
+
+没有批准 manifest；9 个静态状态和 8 个动态状态没有被用精确 SHA 强行冻结。语义断言能力仍然保留，动态状态仍等待有依据的冻结或感知差异门限。
+
+本项整改涉及的代码/测试/工具提交为 db12cb02083c64e750527283ada2aceb10d30597；该提交共 12 个路径：
+
+~~~text
+docs/baselines/renderer-v3-menu-diagnostic-2026-08-10.json
+examples/starter/src/main.ts
+packages/renderer/src/api/renderer-queries.ts
+packages/renderer/src/pixi-stage-host.ts
+packages/renderer/src/runtime/create-renderer-runtime.ts
+packages/renderer/src/runtime/presentation-ports.ts
+packages/renderer/src/runtime/renderer-facade.ts
+packages/renderer/test/api/query-purity.test.ts
+packages/renderer/test/api/renderer-contract.test.ts
+packages/renderer/test/integration/renderer-runtime.test.ts
+packages/shell/e2e/renderer-menu-diagnostic.mjs
+packages/shell/e2e/renderer-v2-acceptance.e2e.mjs
+~~~
+
+## 13. P1-2：menuOpenP95Ms 固定诊断与正式复测
+
+### 13.1 预声明的三版本诊断
+
+没有在正式门禁上反复重跑挑选绿色轮次。诊断先固定为三版本交错 A/B：
+
+- M7.5：007438b569ec95350fdc9d7882ad49f55bbb7968；
+- 原始 M8：89c69ab427d75b064c761832bd09695778e446e6；
+- M8 前一版整改 runtime：0365cff80910597d4985408a187c4b663020e1f0；
+- 每个版本 1 次 warmup + 10 次正式样本；
+- odd round 顺序为 M7.5 → 原始 M8 → 当前，even round 反向；
+- 每次独立 Electron 启动使用隔离临时 userData；
+- 固定下一帧预算 16.67ms，记录同步命令、Menu projection commit、命令完成到下一 requestAnimationFrame、总时延和 missedFrame；
+- 诊断不重建正式 gate，不覆盖任何正式红灯 artifact。
+
+诊断原始样本与统计：
+
+| 版本 | sync 中位数 | projection 中位数 | command→next rAF p95 | total→next rAF p95 | missed |
+|---|---:|---:|---:|---:|---:|
+| M7.5 / 007438b | 1.50 ms | 1.40 ms | 16.33 ms | 17.83 ms | 1/10 |
+| 原始 M8 / 89c69ab | 1.50 ms | 1.35 ms | 1.73 ms | 3.675 ms | 0/10 |
+| 前一版 M8 / 0365cff | 1.50 ms | 1.25 ms | 235.545 ms | 237.015 ms | 2/10 |
+
+诊断 artifact：
+
+~~~text
+file   = E:\surdet\docs\baselines\renderer-v3-menu-diagnostic-2026-08-10.json
+schema = 1
+raw    = 30（每个版本 10 次）
+warmup = 3（每个版本 1 次）
+SHA256 = 1BBA300B15C144A17342246CF41B9E7966231848C3FAF1A8A607034FCB3238AB
+~~~
+
+同步命令和 projection commit 在前一版整改 runtime 中没有成为尾延迟热点；异常主要落在 command→next rAF 的调度等待，原始样本中出现 409.2 ms 与 23.3 ms 的等待。因此没有直接、可归因的生产代码热点可以支持缓存、懒加载或其他盲目优化。本轮没有伪造一个“性能修复”或调整阈值；menu 结果只按随后唯一有效正式 A/B 的实际样本记录。
+
+### 13.2 正式 20 对 A/B
+
+第一次正式命令在比较器采样前被环境一致性校验拒绝，没有生成可计入的 artifact：隔离 baseline 的旧 package-lock 字节 SHA 为 60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f，而当前为 db926b52740a2d43117a1d6cb84b3bf516395e063d97e932ae5835686b9766cd。原因是 JSON 内容相同但 CRLF/LF 字节格式不同。该轮没有被当作正式样本。
+
+之后只做了隔离临时 worktree 的环境修正，使两侧 package-lock SHA 都为 DB926B52740A2D43117A1D6CB84B3BF516395E063D97E932AE5835686B9766CD，然后执行唯一一次有效正式 20 对 A/B。没有再次运行到“连续通过”为止。
+
+~~~text
+baseline = 007438b569ec95350fdc9d7882ad49f55bbb7968
+current  = db12cb02083c64e750527283ada2aceb10d30597
+pairCount = 20
+warmups = 2
+raw formal launches = 40
+sampledAt = 2026-08-10T09:09:53.383Z
+rebuiltAt = 2026-08-10T09:11:37.693Z
+health: assetsFailed=0, pageErrors=0, consoleErrors=0, failedRequests=0
+~~~
+
+有效正式 artifact：
+
+~~~text
+file   = E:\surdet\docs\baselines\renderer-v3-m8-final-remediation-ab-2026-08-10.json
+schema = 3
+SHA256 = E2522CBFD2F475E62719E66AFAC20EEE5522A7C64C96539E02EA5C5B96D03817
+~~~
+
+官方比较器结果如下；顶层启动/资源采用 median，菜单/场景采用 p95，门限仍为 1.10/1.15：
+
+| 指标 | 统计量 | baseline | current | gateRatio | 门限 | 结果 |
+|---|---|---:|---:|---:|---:|---|
+| coldStartMs | median | 1050.1085 | 1040.50265 | 0.9908525167 | 1.10 | PASS |
+| assetReadyMs | median | 1201.49305 | 1356.7584 | 1.1292270063 | 1.10 | FAIL |
+| menuOpenP95Ms | p95 | 12.495 | 11.72 | 0.9379751903 | 1.15 | PASS |
+| sceneP95Ms | p95 | 29.16 | 35.235 | 1.2083333333 | 1.15 | FAIL |
+
+因此 menuOpenP95Ms 这项在唯一有效正式 A/B 中通过，但 assetReadyMs 和 sceneP95Ms 仍然是正式失败项。pairedMedianRatio（asset=1.0235620031、scene=1.0654630548）仅作为诊断，未覆盖正式 gate。M0/cab200b 历史风险也仍保留：coldStartMs ratio=1.1667204519、assetReadyMs ratio=1.4311113615、sceneP95Ms ratio=1.3763671870；没有更新或覆盖冻结文件。
+
+### 13.3 性能结论
+
+本轮没有证据支持对生产 Runtime 做第二个性能源码修复。menuOpenP95Ms 的旧红灯在新一轮有效 A/B 中消失，但由于 assetReadyMs 与 sceneP95Ms 仍失败，整体性能门禁仍为 FAIL。不得把环境调度诊断的结果写成已经关闭全部性能风险，也不得用 paired median、重跑次数或提高门限来改写结论。
+
+## 14. 回归门禁与正式游戏
+
+本轮最终源码上已执行并通过：
+
+| 门禁 | 结果 |
+|---|---|
+| Renderer 全量 | 46 文件 / 324 测试 |
+| Starter 全量 | 3 文件 / 5 测试 |
+| Editor 全量 | 20 文件 / 135 测试 |
+| CLI 针对测试（new + lint） | 2 文件 / 57 测试 |
+| verify:all 内 CLI | 7 文件 / 86 测试 |
+| Core / Host / Shell workspace | 298 / 18 / 44 测试 |
+| Renderer typecheck/build | PASS |
+| Starter、Shell、Editor、CLI typecheck/build | PASS |
+| verify:renderer-boundaries | 3/3 + real scan PASS |
+| verify:renderer-legacy | 3/3 + real scan PASS |
+| npm run verify:all | PASS |
+| Renderer v2 visual/semantic E2E | 17/17 semantic，错误与失败请求均为 0，视觉 CANDIDATE |
+| Shell Electron E2E | PASS；save/load=true，steps=55，choices=41 |
+| zero-after-midnight lint | 11 场景，0 error，0 warning |
+| zero-after-midnight simulate | 23/23 choices，3 endings，39 save/load，runtime errors=0 |
+| zero-after-midnight assets | 44 项 PASS |
+| zero-after-midnight build | PASS |
+| git diff --check | PASS |
+
+正式游戏验收仍为：23/23 选择分支、3 个结局、44 项源资产、运行时错误 0。未修改正式游戏代码、剧本或规则。
+
+## 15. 正式加密包与 verify-pack
+
+由于正式 Runtime 确实发生了可达代码变化，已显式指定正式游戏目录重建本地包：
+
+~~~text
+SURDET_GAME_DIR = E:\surdet\examples\zero-after-midnight
+SURDET_EXPECTED_GAME = zero-after-midnight
+SURDET_EXPECTED_ENTRY = prologue
+mode = release
+encrypted = true
+packaged asset files = 50
+~~~
+
+packages/shell 的 pack 流程已完成 preflight、electron-builder 和 verify-pack --artifact。app.asar 身份、关键文件、素材清单及 SDAT2 加密校验均通过。release 目录是 ignored 生成物，没有纳入 Git，也没有对外发行。
+
+本地包 SHA-256：
+
+| 文件 | bytes | SHA-256 |
+|---|---:|---|
+| E:\surdet\packages\shell\release\SurdetGame-0.1.0.exe | 298948608 | EAD924BCE05BE100A1C48B7BB85257E7E9E0403F6E8ED02D68581CDFE874878D |
+| E:\surdet\packages\shell\release\SurdetGame-Setup-0.1.0.exe | 299178437 | 3938A0F4BAB2E2EA34D223975C6A2C719E0651CB70E3BD7C0C1710437A80AE9E |
+| E:\surdet\packages\shell\release\win-unpacked/Surdet Game.exe | 225613824 | 5AE6BC33EC95FDCE844A3189F051A15ABF8C2C2A2F1B5BD3D56164D80863C8CD |
+
+## 16. 最终 Git 闭环与保护清单
+
+本轮代码提交 db12cb02083c64e750527283ada2aceb10d30597 的 12 个路径见第 12.2 节。最终交付证据提交将只纳入：
+
+~~~text
+docs/ENGINE-RENDERER-V2-M8-FINAL-REMEDIATION-REPORT-2026-08-10.md
+docs/baselines/renderer-v3-m8-final-remediation-ab-2026-08-10.json
+~~~
+
+明确排除且没有修改、暂存、提交、删除、移动或推送：
+
+~~~text
+USER.md
+SESSION-HANDOFF.md
+docs/SURDET-ART-DIRECTION-UPDATE-BRIEF-2026-08-09.md
+docs/SURDET-ART-DIRECTOR-HANDOFF-2026-08-09.md
+docs/baselines/renderer-v2-cab200b.json
+~~~
+
+冻结 v2 baseline 仍为：
+
+~~~text
+docs/baselines/renderer-v2-cab200b.json
+SHA256 = DE0AA52BEF955165213123EDA9632D14456355828A15B2FE9F4CBB548D934EDC
+~~~
+
+完成本节后状态为 WAITING_FOR_REVIEW：不 push、不 force push、不发行、不开始 M9，等待总经理独立复审。正式性能结论必须继续保留 assetReadyMs 与 sceneP95Ms 红灯。
