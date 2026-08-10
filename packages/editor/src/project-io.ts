@@ -190,8 +190,19 @@ export async function saveAll(): Promise<void> {
     else exportCurrent();
     return;
   }
+  const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
+    || state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingTimelineDeletes.length > 0;
   let saved = 0;
   let removed = 0;
+  let failures = 0;
+  const failureMessages: string[] = [];
+  const recordFailure = (label: string, err: unknown): void => {
+    failures++;
+    const message = err instanceof Error ? err.message : String(err);
+    failureMessages.push(`${label}：${message}`);
+    setStatus(`${label}失败：${message}`, false, 6000);
+  };
   if (state.dirHandle) {
     const remaining: typeof state.pendingTimelineDeletes = [];
     for (const pending of state.pendingTimelineDeletes) {
@@ -200,13 +211,17 @@ export async function saveAll(): Promise<void> {
         let timelineDir = await contentDir.getDirectoryHandle('timelines');
         const parts = pending.file.split('/').filter(Boolean);
         const fileName = parts.pop();
-        if (!fileName) continue;
+        if (!fileName) {
+          recordFailure(`时间轴 '${pending.id}' 删除`, new Error('文件名为空'));
+          remaining.push(pending);
+          continue;
+        }
         for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
         await timelineDir.removeEntry(fileName);
         removed++;
       } catch (err) {
         remaining.push(pending);
-        setStatus(`时间轴 '${pending.id}' 删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+        recordFailure(`时间轴 '${pending.id}' 删除`, err);
       }
     }
     state.pendingTimelineDeletes = remaining;
@@ -222,28 +237,28 @@ export async function saveAll(): Promise<void> {
           const scenarioDir = await contentDir.getDirectoryHandle('scenario', { create: true });
           const fileName = `${sc.id}.gal`;
           const fh = await scenarioDir.getFileHandle(fileName, { create: true });
-          const w = await fh.createWritable();
-          await w.write(sc.text);
-          await w.close();
+          await writeFileHandle(fh, sc.text);
           sc.handle = fh;
           sc.file = `content/scenario/${fileName}`;
           sc.dirty = false;
           saved++;
         } catch (err) {
-          setStatus(`场景 '${sc.id}' 创建失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+          recordFailure(`场景 '${sc.id}' 创建`, err);
         }
         continue;
       }
       // 演示项目（无目录句柄）：下载导出 + 保留脏标记，诚实提示（不冒充已保存）
       exportScene(sc.id, sc.text);
-      setStatus(`演示项目无法写盘：已下载 ${sc.id}.gal，请手动放入 content/scenario/（脏标记保留）`, true, 6000);
+      recordFailure(`演示项目场景 '${sc.id}' 保存`, new Error(`已下载 ${sc.id}.gal，请手动放入 content/scenario/（脏标记保留）`));
       continue;
     }
-    const writable = await handle.createWritable();
-    await writable.write(sc.text);
-    await writable.close();
-    sc.dirty = false;
-    saved++;
+    try {
+      await writeFileHandle(handle, sc.text);
+      sc.dirty = false;
+      saved++;
+    } catch (err) {
+      recordFailure(`场景 '${sc.id}' 保存`, err);
+    }
     void key;
   }
   let timelineSaved = false;
@@ -254,7 +269,7 @@ export async function saveAll(): Promise<void> {
       if (!handle) {
         if (!state.dirHandle) {
           exportTimeline(timeline.id, timeline.text);
-          setStatus(`演示项目无法写盘：已下载 ${timeline.id}.json`, true, 6000);
+          recordFailure(`演示项目时间轴 '${timeline.id}' 保存`, new Error(`已下载 ${timeline.id}.json（脏标记保留）`));
           continue;
         }
         const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
@@ -265,21 +280,32 @@ export async function saveAll(): Promise<void> {
         handle = await timelineDir.getFileHandle(fileName, { create: true });
         timeline.handle = handle;
       }
-      const writable = await handle.createWritable();
-      await writable.write(timeline.text);
-      await writable.close();
+      await writeFileHandle(handle, timeline.text);
       timeline.dirty = false;
       timelineSaved = true;
       saved++;
     } catch (err) {
-      setStatus(`时间轴 '${timeline.id}' 保存失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+      recordFailure(`时间轴 '${timeline.id}' 保存`, err);
     }
   }
+  const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
+    || state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingTimelineDeletes.length > 0;
   const changed = saved + removed;
-  setStatus(changed > 0 ? `已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}` : '无待保存改动', true, 4000);
+  if (!hadPendingChanges) {
+    setStatus('无待保存改动', true, 4000);
+  } else if (failures === 0 && !remainingDirty) {
+    setStatus(`全部成功：已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}`, true, 4000);
+  } else if (changed > 0) {
+    setStatus(`部分成功：已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}，失败 ${failures} 项`, false, 6000);
+  } else {
+    setStatus(`全部失败：${failures} 项操作失败`, false, 6000);
+  }
   if (timelineSaved) renderAll();
   else renderSidebar();
-  onSaved(); // 崩溃保险：磁盘已最新，清除备份（演示项目脏标记保留时下一轮定时快照会自动重建）
+  if (failures === 0 && !remainingDirty) {
+    onSaved(); // 崩溃保险：仅在磁盘已最新时清除备份
+  }
 }
 
 export function exportScene(id: string, text: string): void {
