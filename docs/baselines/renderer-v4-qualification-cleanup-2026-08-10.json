@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "renderer-v4-qualification-cleanup",
+  "tempRoot": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2",
+  "worktrees": [
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q1-007-a-b-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:42:42.745Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q1-007-a-b-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:42:42.892Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q2-007-b-a-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q2-007-b-a",
+      "roles": [
+        {
+          "group": "q2-007-b-a",
+          "role": "baseline",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:46:21.571Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q2-007-b-a-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q2-007-b-a",
+      "roles": [
+        {
+          "group": "q2-007-b-a",
+          "role": "current",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:46:21.685Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q3-f7-a-b-a",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q3-f7-a-b",
+      "roles": [
+        {
+          "group": "q3-f7-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:50:10.097Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q3-f7-a-b-b",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q3-f7-a-b",
+      "roles": [
+        {
+          "group": "q3-f7-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:50:10.243Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q4-f7-b-a-b",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q4-f7-b-a",
+      "roles": [
+        {
+          "group": "q4-f7-b-a",
+          "role": "baseline",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:54:18.149Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q4-f7-b-a-a",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q4-f7-b-a",
+      "roles": [
+        {
+          "group": "q4-f7-b-a",
+          "role": "current",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:54:18.282Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    },
+    {
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q5-f7-same-root",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q5-f7-same-root",
+      "roles": [
+        {
+          "group": "q5-f7-same-root",
+          "role": "baseline",
+          "label": "same-root"
+        },
+        {
+          "group": "q5-f7-same-root",
+          "role": "current",
+          "label": "same-root"
+        }
+      ],
+      "createdAt": "2026-08-10T11:58:01.491Z",
+      "stage": "samples-written",
+      "artifact": "docs/baselines/renderer-v4-q5-f7-same-root-2026-08-10.json",
+      "dirty": null,
+      "removed": false,
+      "cleaned": false
+    }
+  ],
+  "stage": "all-samples-written"
+}

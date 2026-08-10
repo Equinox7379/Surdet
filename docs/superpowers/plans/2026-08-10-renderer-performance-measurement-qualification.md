@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 4 runner 已完成，正在进行实际 worktree/build 等价性前置验证；尚未产生 Q1–Q5 holdout 数据。
+> 状态：阶段 5 Q1–Q5 holdout 已完成，正在进入阶段 6 全量门禁与证据归并；不得修改已冻结协议或重跑 Q 组。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -282,23 +282,25 @@ Page 侧必须尝试记录：
 - [x] Q1→Q5 矩阵、Q5 同根、独立路径、参数边界、cleanup manifest、串行 runner 已实现。
 - [x] 阶段 1–4 Shell 专项测试 45/45；根级 v4 结构/安全测试 3/3；Shell typecheck、`node --check`、`git diff --check` 通过。
 - [x] runner 提交：`test(shell): add v4 qualification matrix runner`，SHA：`8fa4fcc58cc3536fe63bf3bd868872b062fe4e0a`。
-- [ ] 创建实际临时 worktree、执行同提交 clean build equivalence，并在其通过后才进入阶段 5 holdout。
+- [x] 先后发现并保留两次未进入 holdout 的执行器阻断：仓库根路径等值校验、Starter 相对 `./assets/` bundle 入口解析、冻结 `007438b` 旧入口缺少 `createRendererRuntime`；对应失败证据保存在 `docs/baselines/renderer-v4-qualification-runner-failure-2026-08-10.json`、`docs/baselines/renderer-v4-qualification-runner-failure-instrumentation-2026-08-10.json` 及 cleanup 快照中，均明确 `qHoldoutDataStarted=false`。
+- [x] 以新的隔离临时根 `<local-path>` 创建 9 个新 worktree；007 两组、f7 三组 clean `npm ci` + `npm run build` 后的 build manifest 均等价，未比较 mtime；证据为 `docs/baselines/renderer-v4-build-equivalence-007-2026-08-10.json` 与 `docs/baselines/renderer-v4-build-equivalence-f7-2026-08-10.json`。
+- [x] 阶段 4 最终执行器修复提交链：`d60dfce684170704fd4fd2e1e2b7cc849078fc5c`、`c98f7cef0733aeacb1b1fb7b452026fa53f9d5e4`、`b8f53e5c18a98815ed42239220cfa289aec6ee00`；修复后才开始 Q1，未修改生产 Renderer、Starter 游戏逻辑或协议。
+- [x] 下一入口：阶段 5；实际等价性通过后已按冻结 Q 矩阵产生 holdout。
 
 ### 阶段 5：按冻结协议产生 Q1→Q5 holdout 数据
 
-- [ ] 运行前重新读取本计划、HEAD、status、log，确认阶段 3/4 提交已存在且 protocol/schema/threshold/file names 未变。
-- [ ] 执行 Q1；完整保存 warmups/raw/health/errors/build/evidence。
-- [ ] 只在 Q1 artifact 写完并校验后执行 Q2；依次执行 Q3、Q4、Q5。
-- [ ] 每组均使用两次独立 warmup、20 对、40 raw、counterbalanced 顺序、独立 Electron/userData、非并行启动。
-- [ ] 每组都执行官方 v4 validator；失败也保存 raw、failure summary、退出码和原因。
-- [ ] 产生的固定 artifact：
+- [x] 运行前重新读取本计划、HEAD、status、log；确认 protocol/schema/threshold/file names 未变后才启动 runner。首次正式 holdout 产生后未再修改这些规则。
+- [x] 按 Q1→Q2→Q3→Q4→Q5 顺序执行；每组 artifact 写完并由 runner 内部校验后才进入下一组。
+- [x] 每组均保存 2 个 warmup、20 对/40 个 formal raw、counterbalanced executionOrder、独立 Electron/userData、非并行启动，以及 host/page marker、资源 timing、interaction diagnostics、errors、assetLoading 和失败理由。
+- [x] 每组均执行官方 v4 validator；五组均 `valid=true`，但资格状态均为 `not-qualified`，没有把失败样本改写成通过。
+- [x] 产生的固定 artifact：
   - `docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json`
   - `docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json`
   - `docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json`
   - `docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json`
   - `docs/baselines/renderer-v4-q5-f7-same-root-2026-08-10.json`
-- [ ] 任何一组失败后不重跑该组，不修改协议，不跳过剩余组；按照任务书允许的顺序完成预定组，最终如实判断 NOT QUALIFIED。
-- [ ] 阶段完成后更新本计划并提交；下一入口为阶段 6。
+- [x] 五组完整 artifact 均为 2 warmups/40 raw，健康计数均为 `assetsFailed=0`、`pageErrors=0`、`consoleErrors=0`、`failedRequests=0`；`qualification.reasons` 原样保留各 phase/order gate 失败，未挑选轮次、未删异常值、未降低样本数。
+- [x] 阶段完成后更新本计划并提交；下一入口为阶段 6 全量门禁。Q 证据尚未作最终报告重建，未进入阶段 6 前不清理 worktree。
 
 ### 阶段 6：全量门禁和证据归并
 
@@ -362,8 +364,8 @@ Page 侧必须尝试记录：
 | 1 启动/资源诊断 | 已完成 | `packages/shell/test/renderer-startup-diagnostic.test.mjs` 9/9；Shell typecheck；`node --check`；`git diff --check`；未生成 Q 数据 | `d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4` | 2 构建等价性 |
 | 2 构建等价性 | 已完成 | 12 个阶段 2 测试；阶段 1+2 聚焦 21/21；`node --check`；`git diff --check`；真实双 worktree 构建保留至阶段 4；未生成 Q 数据 | `b2513cae5be8a311edc0c8565a7eff4e2aeba17b` | 3 v4 协议冻结 |
 | 3 Schema/比较器/验证器 | 已完成 | v4 Shell 专项 20/20；阶段 1+2 专项 21/21；`verify:tools` 10/10；Shell typecheck；协议/Schema/门限/文件名已冻结；未生成 Q 数据 | `62847272bbb941c34a4ce68508b98de6bb7fb925` | 4 Q 矩阵/runner |
-| 4 worktree/runner | 进行中 | 矩阵/runner 已提交；专项 45/45；真实 worktree/build equivalence 尚未开始 | `8fa4fcc58cc3536fe63bf3bd868872b062fe4e0a` | 实际构造与等价性通过后进入 5 Q1–Q5 |
-| 5 holdout | 未开始 | 五个固定 Q artifact | 待生成 | 6 全量门禁 |
+| 4 worktree/runner | 已完成 | 实际根 `...-2` 的 9 个新 worktree；007/f7 build equivalence 全部 equivalent；三次 pre-holdout 阻断及证据；阶段 1–4 专项 45/45；根级 v4 3/3；typecheck/node check/diff-check | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 5 Q1–Q5 holdout |
+| 5 holdout | 已完成 | 五个固定 Q artifact；每组官方 verifier `valid=true`；每组 2 warmups/40 raw；五组资格均 `not-qualified`；cleanup manifest stage=all-samples-written | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 6 全量门禁 |
 | 6 门禁/归并 | 未开始 | 测试输出与门禁日志 | 待生成 | 7 清理 |
 | 7 清理 | 未开始 | cleanup manifest、worktree list 前后 | 待生成 | 8 报告 |
 | 8 报告/停止 | 未开始 | 最终报告、最终 status/log | 待生成 | `WAITING_FOR_REVIEW` |
