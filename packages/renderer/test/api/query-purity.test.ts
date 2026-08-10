@@ -90,9 +90,20 @@ describe('Renderer v2 query purity', () => {
     runtime.queries.diagnostics.resourceSnapshot();
     runtime.queries.diagnostics.performanceSnapshot();
     const projection = runtime.queries.diagnostics.projectionSnapshot();
+    expect(Object.isFrozen(projection)).toBe(true);
+    expect(Object.isFrozen(projection.dialogue)).toBe(true);
+    expect(Object.isFrozen(projection.dialogue?.choiceLabels)).toBe(true);
+    expect(Object.isFrozen(projection.dialogue?.nvlLines)).toBe(true);
+    expect(Object.isFrozen(projection.menu)).toBe(true);
+    expect(Object.isFrozen(projection.menu?.overlay)).toBe(true);
+    expect(Object.isFrozen(projection.gallery)).toBe(true);
+    expect(Object.isFrozen(projection.gallery?.overlay)).toBe(true);
+    expect(Object.isFrozen(projection.system)).toBe(true);
+    expect(Object.isFrozen(projection.system?.overlay)).toBe(true);
+    expect(Object.isFrozen(projection.world)).toBe(true);
     const mutableDialogue = projection.dialogue as unknown as { choiceLabels: string[]; dialogText: string };
-    mutableDialogue.choiceLabels.push('宿主篡改');
-    mutableDialogue.dialogText = '宿主篡改';
+    expect(() => mutableDialogue.choiceLabels.push('宿主篡改')).toThrow();
+    expect(() => { mutableDialogue.dialogText = '宿主篡改'; }).toThrow();
     expect(runtime.queries.diagnostics.projectionSnapshot().dialogue?.choiceLabels).toEqual(['继续']);
     expect(runtime.queries.diagnostics.projectionSnapshot().dialogue?.dialogText).toBe('夜色渐深。');
     runtime.queries.diagnostics.needsUpdate();
@@ -106,5 +117,21 @@ describe('Renderer v2 query purity', () => {
     runtime.queries.preferences.fontFamily('body');
 
     expect(internals.observableSnapshot()).toEqual(before);
+  });
+
+  it('freezes only the cloned projection and never the provider snapshot', async () => {
+    const baseInternals = pureInternals();
+    const source = baseInternals.projectionSnapshot!();
+    const internals = {
+      ...baseInternals,
+      projectionSnapshot: () => source,
+    };
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const projection = runtime.queries.diagnostics.projectionSnapshot();
+
+    expect(Object.isFrozen(source)).toBe(false);
+    expect(projection).not.toBe(source);
+    expect(Object.isFrozen(projection)).toBe(true);
+    expect(Object.isFrozen(projection.dialogue)).toBe(true);
   });
 });

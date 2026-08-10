@@ -57,6 +57,11 @@ async function readProbe(page) {
       },
       projection,
       world: projection?.world ?? null,
+      debugBoundary: {
+        legacyLayersOnLegacyDebug: Object.prototype.hasOwnProperty.call(debug ?? {}, 'rendererV2Layers'),
+        legacyLayersOnPublicDebug: Object.prototype.hasOwnProperty.call(publicDebug ?? {}, 'rendererV2Layers'),
+        rendererDebugOnPublicDebug: Object.prototype.hasOwnProperty.call(publicDebug ?? {}, '__rendererV2Debug'),
+      },
       backlogEntries: publicDebug?.queries?.dialogue?.backlogEntries?.() ?? [],
       preferences: publicDebug?.queries?.preferences?.presentationPreferences?.() ?? null,
       resources: publicDebug?.queries?.diagnostics?.resourceSnapshot?.() ?? null,
@@ -68,6 +73,9 @@ async function readProbe(page) {
 function semanticChecks(name, probe, expectedOverlay) {
   const checks = [];
   const add = (label, ok, actual) => checks.push({ label, ok: Boolean(ok), actual });
+  add('debug exposes no legacy Layer references', probe.debugBoundary?.legacyLayersOnLegacyDebug === false
+    && probe.debugBoundary?.legacyLayersOnPublicDebug === false
+    && probe.debugBoundary?.rendererDebugOnPublicDebug === false, probe.debugBoundary);
   const overlays = [probe.overlays.menu, probe.overlays.gallery, probe.overlays.system];
   const overlayNames = overlays.map(overlayName);
   const actualOverlay = expectedOverlay === undefined

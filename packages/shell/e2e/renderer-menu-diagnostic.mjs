@@ -31,6 +31,9 @@ function parseArgs(argv) {
     currentM8: path.resolve(values.get('current-m8-root') ?? ''),
   };
   const outputPath = path.resolve(values.get('out') ?? path.join(repositoryRoot, 'docs', 'baselines', 'renderer-v3-menu-diagnostic-2026-08-10.json'));
+  const instrumentationManifestPath = values.get('instrumentation-manifest')
+    ? path.resolve(values.get('instrumentation-manifest'))
+    : null;
   const sampleCount = Number(values.get('sample-count') ?? defaultSampleCount);
   for (const [role, root] of Object.entries(roots)) {
     if (!fs.existsSync(path.join(root, 'packages', 'shell', 'dist'))) throw new Error(`${role} 缺少 shell/dist：${root}`);
@@ -38,7 +41,10 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(sampleCount) || sampleCount < 1) throw new Error('sample-count 必须是正整数');
   assertUnder(repositoryRoot, outputPath, '输出路径');
-  return { roots, outputPath, sampleCount };
+  if (instrumentationManifestPath && (!fs.existsSync(instrumentationManifestPath) || !fs.statSync(instrumentationManifestPath).isFile())) {
+    throw new Error('instrumentation manifest 不存在：' + instrumentationManifestPath);
+  }
+  return { roots, outputPath, sampleCount, instrumentationManifestPath };
 }
 
 function assertUnder(parent, candidate, label) {
@@ -197,7 +203,7 @@ function summarize(samples) {
 }
 
 async function main() {
-  const { roots, outputPath, sampleCount } = parseArgs(process.argv.slice(2));
+  const { roots, outputPath, sampleCount, instrumentationManifestPath } = parseArgs(process.argv.slice(2));
   const roles = ['m75', 'originalM8', 'currentM8'];
   const executionOrder = [];
   const warmups = [];
@@ -237,6 +243,9 @@ async function main() {
     },
     environment: Object.fromEntries(roles.map((role) => [role, collectEnvironment(roots[role])])),
     source: Object.fromEntries(roles.map((role) => [role, gitSha(roots[role])])),
+    instrumentation: instrumentationManifestPath
+      ? JSON.parse(fs.readFileSync(instrumentationManifestPath, 'utf8'))
+      : null,
     summaries: Object.fromEntries(roles.map((role) => [role, summarize(rawSamples.filter((sample) => sample.role === role))])),
     warmups,
     executionOrder,

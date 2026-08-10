@@ -1,0 +1,1249 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-10T09:51:44.799Z",
+  "protocol": {
+    "sampleCountPerRole": 10,
+    "warmupsPerRole": 1,
+    "roleCount": 3,
+    "executionOrder": "odd rounds m75 -> originalM8 -> currentM8; even rounds currentM8 -> originalM8 -> m75",
+    "isolatedUserData": true,
+    "fixedFrameBudgetMs": 16.67,
+    "missedFrameDefinition": "totalToNextRafMs > 16.67ms",
+    "noFormalGateRebuild": true,
+    "diagnosticOnly": true
+  },
+  "environment": {
+    "m75": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    },
+    "originalM8": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    },
+    "currentM8": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    }
+  },
+  "source": {
+    "m75": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+    "originalM8": "89c69ab427d75b064c761832bd09695778e446e6",
+    "currentM8": "0365cff80910597d4985408a187c4b663020e1f0"
+  },
+  "instrumentation": {
+    "schemaVersion": 1,
+    "runnerScriptPath": "packages/shell/e2e/renderer-menu-diagnostic-runner.mjs",
+    "buildCommand": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "installCommand": [
+      "npm",
+      "ci",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund"
+    ],
+    "sampleCount": 10,
+    "roles": [
+      "m75",
+      "originalM8",
+      "currentM8"
+    ],
+    "instrumentationScript": {
+      "path": "packages/shell/e2e/renderer-menu-diagnostic-instrumentation.mjs",
+      "sha256": "826642a7a5e03860147d1fcbba278ef1d8adbc75219e95f1d45b182ee09a89d1"
+    },
+    "worktrees": {
+      "m75": {
+        "originalCommit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+        "instrumentationScriptPath": "packages/shell/e2e/renderer-menu-diagnostic-instrumentation.mjs",
+        "instrumentationScriptSha256": "826642a7a5e03860147d1fcbba278ef1d8adbc75219e95f1d45b182ee09a89d1",
+        "appliedDiffCheck": true,
+        "instrumentedPaths": [
+          "examples/starter/src/main.ts"
+        ],
+        "instrumentationDiffSha256": "e92570abb45a0bba4e9caff1c36e967125cefb8c6feb8448e81c36ad769291a8",
+        "fullDiffSha256": "e92570abb45a0bba4e9caff1c36e967125cefb8c6feb8448e81c36ad769291a8",
+        "onlyUnifiedInstrumentationDiff": true,
+        "beforeStatus": "",
+        "afterStatus": [
+          " M examples/starter/src/main.ts"
+        ],
+        "lockfileSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f",
+        "node": "v24.15.0",
+        "platform": "win32",
+        "arch": "x64"
+      },
+      "originalM8": {
+        "originalCommit": "89c69ab427d75b064c761832bd09695778e446e6",
+        "instrumentationScriptPath": "packages/shell/e2e/renderer-menu-diagnostic-instrumentation.mjs",
+        "instrumentationScriptSha256": "826642a7a5e03860147d1fcbba278ef1d8adbc75219e95f1d45b182ee09a89d1",
+        "appliedDiffCheck": true,
+        "instrumentedPaths": [
+          "examples/starter/src/main.ts"
+        ],
+        "instrumentationDiffSha256": "1785b80ed384897a5724f289ea65231af17302aabadde04ac35975ad4657cff9",
+        "fullDiffSha256": "1785b80ed384897a5724f289ea65231af17302aabadde04ac35975ad4657cff9",
+        "onlyUnifiedInstrumentationDiff": true,
+        "beforeStatus": "",
+        "afterStatus": [
+          " M examples/starter/src/main.ts"
+        ],
+        "lockfileSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f",
+        "node": "v24.15.0",
+        "platform": "win32",
+        "arch": "x64"
+      },
+      "currentM8": {
+        "originalCommit": "0365cff80910597d4985408a187c4b663020e1f0",
+        "instrumentationScriptPath": "packages/shell/e2e/renderer-menu-diagnostic-instrumentation.mjs",
+        "instrumentationScriptSha256": "826642a7a5e03860147d1fcbba278ef1d8adbc75219e95f1d45b182ee09a89d1",
+        "appliedDiffCheck": true,
+        "instrumentedPaths": [
+          "examples/starter/src/main.ts"
+        ],
+        "instrumentationDiffSha256": "afbae36b45b4c3b06127a387a4c54d35c0b817a8d711d31dbb393de8e014837b",
+        "fullDiffSha256": "afbae36b45b4c3b06127a387a4c54d35c0b817a8d711d31dbb393de8e014837b",
+        "onlyUnifiedInstrumentationDiff": true,
+        "beforeStatus": "",
+        "afterStatus": [
+          " M examples/starter/src/main.ts"
+        ],
+        "lockfileSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f",
+        "node": "v24.15.0",
+        "platform": "win32",
+        "arch": "x64"
+      }
+    }
+  },
+  "summaries": {
+    "m75": {
+      "sampleCount": 10,
+      "syncCommandMedianMs": 1.400000000372529,
+      "syncCommandP95Ms": 2.0100000001490113,
+      "projectionCommitMedianMs": 1.3500000014901161,
+      "projectionCommitP95Ms": 1.8649999996647235,
+      "commandToNextRafMedianMs": 0.10000000149011612,
+      "commandToNextRafP95Ms": 214.14999999925453,
+      "totalToNextRafMedianMs": 1.5,
+      "totalToNextRafP95Ms": 215.97500000074464,
+      "missedFrameCount": 1,
+      "missedFrameRate": 0.1
+    },
+    "originalM8": {
+      "sampleCount": 10,
+      "syncCommandMedianMs": 1.400000000372529,
+      "syncCommandP95Ms": 2.0100000001490113,
+      "projectionCommitMedianMs": 1.199999999254942,
+      "projectionCommitP95Ms": 1.8549999978393314,
+      "commandToNextRafMedianMs": 0.19999999925494194,
+      "commandToNextRafP95Ms": 0.25500000175088633,
+      "totalToNextRafMedianMs": 1.6000000014901161,
+      "totalToNextRafP95Ms": 2.210000001080334,
+      "missedFrameCount": 0,
+      "missedFrameRate": 0
+    },
+    "currentM8": {
+      "sampleCount": 10,
+      "syncCommandMedianMs": 1.3999999985098839,
+      "syncCommandP95Ms": 1.5,
+      "projectionCommitMedianMs": 1.299999998882413,
+      "projectionCommitP95Ms": 1.4550000010058284,
+      "commandToNextRafMedianMs": 0.10000000149011612,
+      "commandToNextRafP95Ms": 0.19999999925494194,
+      "totalToNextRafMedianMs": 1.5,
+      "totalToNextRafP95Ms": 1.5999999998137355,
+      "missedFrameCount": 0,
+      "missedFrameRate": 0
+    }
+  },
+  "warmups": [
+    {
+      "role": "m75",
+      "ordinal": 0,
+      "sequenceIndex": 1,
+      "warmup": true,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.3999999985098839,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 0,
+      "sequenceIndex": 2,
+      "warmup": true,
+      "metrics": {
+        "syncCommandMs": 1.0999999977648258,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 393.69999999925494,
+        "totalToNextRafMs": 394.79999999701977,
+        "missedFrame": true,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 0,
+      "sequenceIndex": 3,
+      "warmup": true,
+      "metrics": {
+        "syncCommandMs": 1.199999999254942,
+        "projectionCommitMs": 1.1000000014901161,
+        "commandToNextRafMs": 368.5,
+        "totalToNextRafMs": 369.69999999925494,
+        "missedFrame": true,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    }
+  ],
+  "executionOrder": [
+    {
+      "sequenceIndex": 1,
+      "ordinal": 0,
+      "role": "m75",
+      "warmup": true
+    },
+    {
+      "sequenceIndex": 2,
+      "ordinal": 0,
+      "role": "originalM8",
+      "warmup": true
+    },
+    {
+      "sequenceIndex": 3,
+      "ordinal": 0,
+      "role": "currentM8",
+      "warmup": true
+    },
+    {
+      "sequenceIndex": 4,
+      "ordinal": 1,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 5,
+      "ordinal": 1,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 6,
+      "ordinal": 1,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 7,
+      "ordinal": 2,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 8,
+      "ordinal": 2,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 9,
+      "ordinal": 2,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 10,
+      "ordinal": 3,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 11,
+      "ordinal": 3,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 12,
+      "ordinal": 3,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 13,
+      "ordinal": 4,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 14,
+      "ordinal": 4,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 15,
+      "ordinal": 4,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 16,
+      "ordinal": 5,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 17,
+      "ordinal": 5,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 18,
+      "ordinal": 5,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 19,
+      "ordinal": 6,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 20,
+      "ordinal": 6,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 21,
+      "ordinal": 6,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 22,
+      "ordinal": 7,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 23,
+      "ordinal": 7,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 24,
+      "ordinal": 7,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 25,
+      "ordinal": 8,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 26,
+      "ordinal": 8,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 27,
+      "ordinal": 8,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 28,
+      "ordinal": 9,
+      "role": "m75",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 29,
+      "ordinal": 9,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 30,
+      "ordinal": 9,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 31,
+      "ordinal": 10,
+      "role": "currentM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 32,
+      "ordinal": 10,
+      "role": "originalM8",
+      "warmup": false
+    },
+    {
+      "sequenceIndex": 33,
+      "ordinal": 10,
+      "role": "m75",
+      "warmup": false
+    }
+  ],
+  "rawSamples": [
+    {
+      "role": "m75",
+      "ordinal": 1,
+      "sequenceIndex": 4,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.1000000014901161,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 1,
+      "sequenceIndex": 5,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.199999999254942,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.5999999977648258,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 1,
+      "sequenceIndex": 6,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.300000000745058,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.5999999977648258,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 2,
+      "sequenceIndex": 7,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.300000000745058,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.5999999977648258,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 2,
+      "sequenceIndex": 8,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.1000000014901161,
+        "projectionCommitMs": 1.1000000014901161,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 2,
+      "sequenceIndex": 9,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.5,
+        "projectionCommitMs": 1.4000000022351742,
+        "commandToNextRafMs": 0.09999999776482582,
+        "totalToNextRafMs": 1.5999999977648258,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 3,
+      "sequenceIndex": 10,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.0999999977648258,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.199999999254942,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 3,
+      "sequenceIndex": 11,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.199999999254942,
+        "projectionCommitMs": 1.1000000014901161,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.3999999985098839,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 3,
+      "sequenceIndex": 12,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.1000000014901161,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 4,
+      "sequenceIndex": 13,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.2999999970197678,
+        "projectionCommitMs": 1.199999999254942,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.3999999985098839,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 4,
+      "sequenceIndex": 14,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.8999999985098839,
+        "projectionCommitMs": 1.7999999970197678,
+        "commandToNextRafMs": 0.20000000298023224,
+        "totalToNextRafMs": 2.100000001490116,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 4,
+      "sequenceIndex": 15,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.6000000014901161,
+        "projectionCommitMs": 1.5,
+        "commandToNextRafMs": 389.19999999925494,
+        "totalToNextRafMs": 390.80000000074506,
+        "missedFrame": true,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 5,
+      "sequenceIndex": 16,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 2.100000001490116,
+        "projectionCommitMs": 2,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 2.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 5,
+      "sequenceIndex": 17,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.4000000022351742,
+        "projectionCommitMs": 1.1000000014901161,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.6000000014901161,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 5,
+      "sequenceIndex": 18,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.2999999970197678,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 6,
+      "sequenceIndex": 19,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.0999999977648258,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.2999999970197678,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 6,
+      "sequenceIndex": 20,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 2.100000001490116,
+        "projectionCommitMs": 1.8999999985098839,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 2.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 6,
+      "sequenceIndex": 21,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.4000000022351742,
+        "projectionCommitMs": 1.4000000022351742,
+        "commandToNextRafMs": 0.09999999776482582,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 7,
+      "sequenceIndex": 22,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.2000000029802322,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.09999999776482582,
+        "totalToNextRafMs": 1.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 7,
+      "sequenceIndex": 23,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.2999999970197678,
+        "projectionCommitMs": 1.199999999254942,
+        "commandToNextRafMs": 0.20000000298023224,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 7,
+      "sequenceIndex": 24,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.5,
+        "projectionCommitMs": 1.5,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.6000000014901161,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 8,
+      "sequenceIndex": 25,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.4000000022351742,
+        "projectionCommitMs": 1.300000000745058,
+        "commandToNextRafMs": 0.09999999776482582,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 8,
+      "sequenceIndex": 26,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.7000000029802322,
+        "projectionCommitMs": 1.6000000014901161,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.9000000022351742,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 8,
+      "sequenceIndex": 27,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.8999999985098839,
+        "projectionCommitMs": 1.699999999254942,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 2,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 9,
+      "sequenceIndex": 28,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.3999999985098839,
+        "projectionCommitMs": 1.300000000745058,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.5,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 9,
+      "sequenceIndex": 29,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.300000000745058,
+        "projectionCommitMs": 1.199999999254942,
+        "commandToNextRafMs": 0.30000000074505806,
+        "totalToNextRafMs": 1.6000000014901161,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 9,
+      "sequenceIndex": 30,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.5,
+        "projectionCommitMs": 1.4000000022351742,
+        "commandToNextRafMs": 0.09999999776482582,
+        "totalToNextRafMs": 1.5999999977648258,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "currentM8",
+      "ordinal": 10,
+      "sequenceIndex": 31,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.0999999977648258,
+        "projectionCommitMs": 1.0999999977648258,
+        "commandToNextRafMs": 0.10000000149011612,
+        "totalToNextRafMs": 1.199999999254942,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "originalM8",
+      "ordinal": 10,
+      "sequenceIndex": 32,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.4000000022351742,
+        "projectionCommitMs": 1.199999999254942,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.6000000014901161,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "role": "m75",
+      "ordinal": 10,
+      "sequenceIndex": 33,
+      "warmup": false,
+      "metrics": {
+        "syncCommandMs": 1.1000000014901161,
+        "projectionCommitMs": 1,
+        "commandToNextRafMs": 0.19999999925494194,
+        "totalToNextRafMs": 1.300000000745058,
+        "missedFrame": false,
+        "frameBudgetMs": 16.67
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    }
+  ]
+}

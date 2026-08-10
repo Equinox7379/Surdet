@@ -1,0 +1,1932 @@
+{
+  "schemaVersion": 3,
+  "baselineCommit": "db12cb02083c64e750527283ada2aceb10d30597",
+  "currentCommit": "db12cb02083c64e750527283ada2aceb10d30597",
+  "pairCount": 20,
+  "warmupOrder": [
+    "baseline",
+    "current"
+  ],
+  "executionOrder": [
+    {
+      "pair": 1,
+      "role": "baseline"
+    },
+    {
+      "pair": 1,
+      "role": "current"
+    },
+    {
+      "pair": 2,
+      "role": "current"
+    },
+    {
+      "pair": 2,
+      "role": "baseline"
+    },
+    {
+      "pair": 3,
+      "role": "baseline"
+    },
+    {
+      "pair": 3,
+      "role": "current"
+    },
+    {
+      "pair": 4,
+      "role": "current"
+    },
+    {
+      "pair": 4,
+      "role": "baseline"
+    },
+    {
+      "pair": 5,
+      "role": "baseline"
+    },
+    {
+      "pair": 5,
+      "role": "current"
+    },
+    {
+      "pair": 6,
+      "role": "current"
+    },
+    {
+      "pair": 6,
+      "role": "baseline"
+    },
+    {
+      "pair": 7,
+      "role": "baseline"
+    },
+    {
+      "pair": 7,
+      "role": "current"
+    },
+    {
+      "pair": 8,
+      "role": "current"
+    },
+    {
+      "pair": 8,
+      "role": "baseline"
+    },
+    {
+      "pair": 9,
+      "role": "baseline"
+    },
+    {
+      "pair": 9,
+      "role": "current"
+    },
+    {
+      "pair": 10,
+      "role": "current"
+    },
+    {
+      "pair": 10,
+      "role": "baseline"
+    },
+    {
+      "pair": 11,
+      "role": "baseline"
+    },
+    {
+      "pair": 11,
+      "role": "current"
+    },
+    {
+      "pair": 12,
+      "role": "current"
+    },
+    {
+      "pair": 12,
+      "role": "baseline"
+    },
+    {
+      "pair": 13,
+      "role": "baseline"
+    },
+    {
+      "pair": 13,
+      "role": "current"
+    },
+    {
+      "pair": 14,
+      "role": "current"
+    },
+    {
+      "pair": 14,
+      "role": "baseline"
+    },
+    {
+      "pair": 15,
+      "role": "baseline"
+    },
+    {
+      "pair": 15,
+      "role": "current"
+    },
+    {
+      "pair": 16,
+      "role": "current"
+    },
+    {
+      "pair": 16,
+      "role": "baseline"
+    },
+    {
+      "pair": 17,
+      "role": "baseline"
+    },
+    {
+      "pair": 17,
+      "role": "current"
+    },
+    {
+      "pair": 18,
+      "role": "current"
+    },
+    {
+      "pair": 18,
+      "role": "baseline"
+    },
+    {
+      "pair": 19,
+      "role": "baseline"
+    },
+    {
+      "pair": 19,
+      "role": "current"
+    },
+    {
+      "pair": 20,
+      "role": "current"
+    },
+    {
+      "pair": 20,
+      "role": "baseline"
+    }
+  ],
+  "environment": {
+    "baseline": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    },
+    "current": {
+      "node": "v24.15.0",
+      "npm": "11.12.1",
+      "os": "win32 10.0.26220",
+      "platform": "win32",
+      "arch": "x64",
+      "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics        ",
+      "electron": "43.2.0",
+      "playwright": "1.62.1",
+      "buildMode": "electron-dev-shell-starter",
+      "packageLockSha256": "60a48410727eb3c536ad005459a6e3460bb9abf77e3bdd7d19c799429e273e8f"
+    },
+    "differences": []
+  },
+  "baseline": {
+    "sourceSha": "db12cb02083c64e750527283ada2aceb10d30597",
+    "sampleCount": {
+      "coldStartMs": 20,
+      "assetReadyMs": 20,
+      "menuOpenP95Ms": 20,
+      "sceneP95Ms": 20
+    },
+    "metrics": {
+      "coldStartMs": {
+        "name": "coldStartMs",
+        "samples": [
+          912.2524000000003,
+          898.2849999999999,
+          899.3132000000005,
+          924.2964000000029,
+          959.6984000000011,
+          954.9010000000017,
+          953.2364999999991,
+          981.0803000000014,
+          953.3959999999934,
+          908.5604000000021,
+          924.3133999999991,
+          899.2848000000013,
+          926.4222000000009,
+          1023.7963000000018,
+          923.3391999999876,
+          882.1577000000107,
+          885.1512000000075,
+          928.4743000000017,
+          896.7201000000059,
+          899.3565999999992
+        ],
+        "sortedSamples": [
+          882.1577000000107,
+          885.1512000000075,
+          896.7201000000059,
+          898.2849999999999,
+          899.2848000000013,
+          899.3132000000005,
+          899.3565999999992,
+          908.5604000000021,
+          912.2524000000003,
+          923.3391999999876,
+          924.2964000000029,
+          924.3133999999991,
+          926.4222000000009,
+          928.4743000000017,
+          953.2364999999991,
+          953.3959999999934,
+          954.9010000000017,
+          959.6984000000011,
+          981.0803000000014,
+          1023.7963000000018
+        ],
+        "median": 923.8177999999953,
+        "p95": 983.2161000000015,
+        "summaryStatistic": "median",
+        "minimumSamples": 5
+      },
+      "assetReadyMs": {
+        "name": "assetReadyMs",
+        "samples": [
+          1329.0533999999998,
+          1313.2248999999993,
+          987.990600000001,
+          1035.907900000002,
+          1049.0045000000027,
+          1038.4894000000022,
+          1038.8103000000046,
+          1406.869200000001,
+          1043.2757999999958,
+          1325.5599000000002,
+          1339.7865999999995,
+          1328.8723000000027,
+          1031.313900000001,
+          1107.2572999999975,
+          1346.1498999999894,
+          975.1096000000107,
+          976.0140000000101,
+          1017.6869000000006,
+          985.8552000000054,
+          1321.372199999998
+        ],
+        "sortedSamples": [
+          975.1096000000107,
+          976.0140000000101,
+          985.8552000000054,
+          987.990600000001,
+          1017.6869000000006,
+          1031.313900000001,
+          1035.907900000002,
+          1038.4894000000022,
+          1038.8103000000046,
+          1043.2757999999958,
+          1049.0045000000027,
+          1107.2572999999975,
+          1313.2248999999993,
+          1321.372199999998,
+          1325.5599000000002,
+          1328.8723000000027,
+          1329.0533999999998,
+          1339.7865999999995,
+          1346.1498999999894,
+          1406.869200000001
+        ],
+        "median": 1046.1401499999993,
+        "p95": 1349.1858649999901,
+        "summaryStatistic": "median",
+        "minimumSamples": 5
+      },
+      "menuOpenP95Ms": {
+        "name": "menuOpenP95Ms",
+        "samples": [
+          11.599999997764826,
+          21.899999998509884,
+          6.5,
+          24.099999997764826,
+          11.100000001490116,
+          11.100000001490116,
+          10.199999999254942,
+          10.699999999254942,
+          7.5,
+          6.300000000745058,
+          12.099999997764826,
+          10.299999997019768,
+          8.300000000745058,
+          9.600000001490116,
+          6,
+          7.100000001490116,
+          22.800000000745058,
+          11.199999999254942,
+          7.300000000745058,
+          7.300000000745058
+        ],
+        "sortedSamples": [
+          6,
+          6.300000000745058,
+          6.5,
+          7.100000001490116,
+          7.300000000745058,
+          7.300000000745058,
+          7.5,
+          8.300000000745058,
+          9.600000001490116,
+          10.199999999254942,
+          10.299999997019768,
+          10.699999999254942,
+          11.100000001490116,
+          11.100000001490116,
+          11.199999999254942,
+          11.599999997764826,
+          12.099999997764826,
+          21.899999998509884,
+          22.800000000745058,
+          24.099999997764826
+        ],
+        "median": 10.249999998137355,
+        "p95": 22.865000000596048,
+        "summaryStatistic": "p95",
+        "minimumSamples": 20
+      },
+      "sceneP95Ms": {
+        "name": "sceneP95Ms",
+        "samples": [
+          23.099999997764826,
+          25,
+          26.5,
+          24.099999997764826,
+          25,
+          24.799999997019768,
+          27.700000002980232,
+          27,
+          25.800000000745058,
+          26.799999997019768,
+          26.600000001490116,
+          26,
+          28.5,
+          24.600000001490116,
+          26.399999998509884,
+          24.300000000745058,
+          23.699999999254942,
+          27,
+          27.599999997764826,
+          26
+        ],
+        "sortedSamples": [
+          23.099999997764826,
+          23.699999999254942,
+          24.099999997764826,
+          24.300000000745058,
+          24.600000001490116,
+          24.799999997019768,
+          25,
+          25,
+          25.800000000745058,
+          26,
+          26,
+          26.399999998509884,
+          26.5,
+          26.600000001490116,
+          26.799999997019768,
+          27,
+          27,
+          27.599999997764826,
+          27.700000002980232,
+          28.5
+        ],
+        "median": 26,
+        "p95": 27.74000000283122,
+        "summaryStatistic": "p95",
+        "minimumSamples": 20
+      }
+    }
+  },
+  "current": {
+    "sourceSha": "db12cb02083c64e750527283ada2aceb10d30597",
+    "sampleCount": {
+      "coldStartMs": 20,
+      "assetReadyMs": 20,
+      "menuOpenP95Ms": 20,
+      "sceneP95Ms": 20
+    },
+    "metrics": {
+      "coldStartMs": {
+        "name": "coldStartMs",
+        "samples": [
+          935.1467000000002,
+          923.1832999999988,
+          946.4327000000012,
+          933.1514000000025,
+          919.9177999999993,
+          898.6051000000007,
+          920.481200000002,
+          954.6131999999998,
+          904.037900000003,
+          1067.2448999999979,
+          930.1178999999975,
+          911.0116000000053,
+          1137.7513000000035,
+          1055.1756000000023,
+          904.3322999999946,
+          934.8191999999981,
+          925.3104999999923,
+          913.8856999999989,
+          907.4542000000074,
+          961.9133000000002
+        ],
+        "sortedSamples": [
+          898.6051000000007,
+          904.037900000003,
+          904.3322999999946,
+          907.4542000000074,
+          911.0116000000053,
+          913.8856999999989,
+          919.9177999999993,
+          920.481200000002,
+          923.1832999999988,
+          925.3104999999923,
+          930.1178999999975,
+          933.1514000000025,
+          934.8191999999981,
+          935.1467000000002,
+          946.4327000000012,
+          954.6131999999998,
+          961.9133000000002,
+          1055.1756000000023,
+          1067.2448999999979,
+          1137.7513000000035
+        ],
+        "median": 927.7141999999949,
+        "p95": 1070.7702199999983,
+        "summaryStatistic": "median",
+        "minimumSamples": 5
+      },
+      "assetReadyMs": {
+        "name": "assetReadyMs",
+        "samples": [
+          1350.4911999999995,
+          1346.5429999999997,
+          1412.220500000003,
+          1365.9321000000018,
+          1005.2430999999997,
+          1339.8267000000014,
+          1007.1257000000041,
+          1390.211500000005,
+          989.7446000000054,
+          1499.0343999999968,
+          1351.9119999999966,
+          1335.2953000000052,
+          1226.7753000000012,
+          1139.4412000000011,
+          1311.9532999999938,
+          1026.6947999999975,
+          1353.4614999999903,
+          1323.1641999999993,
+          1325.8466000000044,
+          1393.3598999999958
+        ],
+        "sortedSamples": [
+          989.7446000000054,
+          1005.2430999999997,
+          1007.1257000000041,
+          1026.6947999999975,
+          1139.4412000000011,
+          1226.7753000000012,
+          1311.9532999999938,
+          1323.1641999999993,
+          1325.8466000000044,
+          1335.2953000000052,
+          1339.8267000000014,
+          1346.5429999999997,
+          1350.4911999999995,
+          1351.9119999999966,
+          1353.4614999999903,
+          1365.9321000000018,
+          1390.211500000005,
+          1393.3598999999958,
+          1412.220500000003,
+          1499.0343999999968
+        ],
+        "median": 1337.5610000000033,
+        "p95": 1416.5611950000027,
+        "summaryStatistic": "median",
+        "minimumSamples": 5
+      },
+      "menuOpenP95Ms": {
+        "name": "menuOpenP95Ms",
+        "samples": [
+          8.399999998509884,
+          6.100000001490116,
+          10.300000000745058,
+          0.9000000022351742,
+          8.300000000745058,
+          12,
+          5.699999999254942,
+          26.100000001490116,
+          10,
+          22.600000001490116,
+          8.5,
+          10.800000000745058,
+          12.299999997019768,
+          7.800000000745058,
+          12,
+          9.899999998509884,
+          6.100000001490116,
+          11,
+          10.900000002235174,
+          5.899999998509884
+        ],
+        "sortedSamples": [
+          0.9000000022351742,
+          5.699999999254942,
+          5.899999998509884,
+          6.100000001490116,
+          6.100000001490116,
+          7.800000000745058,
+          8.300000000745058,
+          8.399999998509884,
+          8.5,
+          9.899999998509884,
+          10,
+          10.300000000745058,
+          10.800000000745058,
+          10.900000002235174,
+          11,
+          12,
+          12,
+          12.299999997019768,
+          22.600000001490116,
+          26.100000001490116
+        ],
+        "median": 9.949999999254942,
+        "p95": 22.77500000149012,
+        "summaryStatistic": "p95",
+        "minimumSamples": 20
+      },
+      "sceneP95Ms": {
+        "name": "sceneP95Ms",
+        "samples": [
+          25,
+          29.300000000745058,
+          32,
+          27.699999999254942,
+          26.300000000745058,
+          25,
+          27.199999999254942,
+          27.5,
+          22.900000002235174,
+          27.300000000745058,
+          27.5,
+          27.300000000745058,
+          26.900000002235174,
+          25.100000001490116,
+          25.5,
+          24.199999999254942,
+          24.900000002235174,
+          24.600000001490116,
+          24.700000002980232,
+          24.599999997764826
+        ],
+        "sortedSamples": [
+          22.900000002235174,
+          24.199999999254942,
+          24.599999997764826,
+          24.600000001490116,
+          24.700000002980232,
+          24.900000002235174,
+          25,
+          25,
+          25.100000001490116,
+          25.5,
+          26.300000000745058,
+          26.900000002235174,
+          27.199999999254942,
+          27.300000000745058,
+          27.300000000745058,
+          27.5,
+          27.5,
+          27.699999999254942,
+          29.300000000745058,
+          32
+        ],
+        "median": 25.90000000037253,
+        "p95": 29.435000000707806,
+        "summaryStatistic": "p95",
+        "minimumSamples": 20
+      }
+    }
+  },
+  "comparison": {
+    "metrics": {
+      "coldStartMs": {
+        "metric": "coldStartMs",
+        "summaryStatistic": "median",
+        "baselineSummary": 923.8177999999953,
+        "currentSummary": 927.7141999999949,
+        "gateRatio": 1.0042177147918125,
+        "pairedRatios": [
+          1.0250964535692095,
+          1.0277175951952877,
+          1.0523949831938424,
+          1.0095802601849357,
+          0.9585488524311369,
+          0.9410453020784344,
+          0.9656378034202455,
+          0.9730224936735539,
+          0.9482291723481211,
+          1.1746548715968639,
+          1.006279796441335,
+          1.0130401403426412,
+          1.2281131648183758,
+          1.0306499447204491,
+          0.9794150405398219,
+          1.0596962425198881,
+          1.0453699887657435,
+          0.9842875564784047,
+          1.0119704019124824,
+          1.0695571700924873
+        ],
+        "pairedMedianRatio": 1.0125052711275617,
+        "limit": 1.1,
+        "passed": true,
+        "baselineSampleCount": 20,
+        "currentSampleCount": 20
+      },
+      "assetReadyMs": {
+        "metric": "assetReadyMs",
+        "summaryStatistic": "median",
+        "baselineSummary": 1046.1401499999993,
+        "currentSummary": 1337.5610000000033,
+        "gateRatio": 1.2785676947778022,
+        "pairedRatios": [
+          1.0161301269008451,
+          1.0253712064095042,
+          1.429386575135433,
+          1.3185844996451896,
+          0.958282924429778,
+          1.2901688741358348,
+          0.9694991472456517,
+          0.9881597379486337,
+          0.9486893111102639,
+          1.1308688502118966,
+          1.0090502472557923,
+          1.004833421540958,
+          1.189526583516425,
+          1.0290663245119303,
+          0.9745967369607234,
+          1.052901950714039,
+          1.386723448639032,
+          1.3001682541064432,
+          1.344869510248561,
+          1.0544795024445028
+        ],
+        "pairedMedianRatio": 1.0409841376129845,
+        "limit": 1.1,
+        "passed": false,
+        "baselineSampleCount": 20,
+        "currentSampleCount": 20
+      },
+      "menuOpenP95Ms": {
+        "metric": "menuOpenP95Ms",
+        "summaryStatistic": "p95",
+        "baselineSummary": 22.865000000596048,
+        "currentSummary": 22.77500000149012,
+        "gateRatio": 0.9960638530897187,
+        "pairedRatios": [
+          0.7241379310455568,
+          0.27853881287238225,
+          1.5846153847300088,
+          0.037344398436458315,
+          0.7477477477144889,
+          1.0810810809359517,
+          0.558823529379539,
+          2.4392523367577104,
+          1.3333333333333333,
+          3.587301587113868,
+          0.7024793389727408,
+          1.048543689696113,
+          1.4819277103512827,
+          0.8124999999514936,
+          2,
+          1.3943661966805798,
+          0.26754385970573596,
+          0.9821428572081923,
+          1.4931506850853,
+          0.8082191777955772
+        ],
+        "pairedMedianRatio": 1.0153432734521526,
+        "limit": 1.15,
+        "passed": true,
+        "baselineSampleCount": 20,
+        "currentSampleCount": 20
+      },
+      "sceneP95Ms": {
+        "metric": "sceneP95Ms",
+        "summaryStatistic": "p95",
+        "baselineSummary": 27.74000000283122,
+        "currentSummary": 29.435000000707806,
+        "gateRatio": 1.0611031001335107,
+        "pairedRatios": [
+          1.0822510823558018,
+          1.1720000000298023,
+          1.2075471698113207,
+          1.1493775934366806,
+          1.0520000000298024,
+          1.008064516250172,
+          0.9819494583512095,
+          1.0185185185185186,
+          0.8875968992858086,
+          1.0186567165589886,
+          1.0338345864082505,
+          1.050000000028656,
+          0.9438596492012342,
+          1.0203252032508014,
+          0.9659090909636104,
+          0.995884773601356,
+          1.050632911519745,
+          0.9111111111663006,
+          0.8949275364123388,
+          0.9461538460678779
+        ],
+        "pairedMedianRatio": 1.0185876175387536,
+        "limit": 1.15,
+        "passed": true,
+        "baselineSampleCount": 20,
+        "currentSampleCount": 20
+      }
+    },
+    "failures": [
+      {
+        "metric": "assetReadyMs",
+        "summaryStatistic": "median",
+        "baselineSummary": 1046.1401499999993,
+        "currentSummary": 1337.5610000000033,
+        "gateRatio": 1.2785676947778022,
+        "pairedRatios": [
+          1.0161301269008451,
+          1.0253712064095042,
+          1.429386575135433,
+          1.3185844996451896,
+          0.958282924429778,
+          1.2901688741358348,
+          0.9694991472456517,
+          0.9881597379486337,
+          0.9486893111102639,
+          1.1308688502118966,
+          1.0090502472557923,
+          1.004833421540958,
+          1.189526583516425,
+          1.0290663245119303,
+          0.9745967369607234,
+          1.052901950714039,
+          1.386723448639032,
+          1.3001682541064432,
+          1.344869510248561,
+          1.0544795024445028
+        ],
+        "pairedMedianRatio": 1.0409841376129845,
+        "limit": 1.1,
+        "passed": false,
+        "baselineSampleCount": 20,
+        "currentSampleCount": 20
+      }
+    ]
+  },
+  "sampledAt": "2026-08-10T09:57:57.070Z",
+  "rebuiltAt": "2026-08-10T09:59:35.538Z",
+  "warmups": [
+    {
+      "pair": 0,
+      "role": "baseline",
+      "coldStartMs": 948.7372,
+      "assetReadyMs": 1365.5323,
+      "menuOpenP95Ms": 7.400000002235174,
+      "sceneP95Ms": 24.699999999254942,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.699999999254942,
+        "positionReadyMs": 25.300000000745058,
+        "nextFrameMs": 24.699999999254942,
+        "positionWaitAfterCommandMs": 20.600000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 0,
+      "role": "current",
+      "coldStartMs": 915.3218000000002,
+      "assetReadyMs": 1336.4939,
+      "menuOpenP95Ms": 10.800000000745058,
+      "sceneP95Ms": 27.800000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.100000001490116,
+        "positionReadyMs": 28.5,
+        "nextFrameMs": 27.800000000745058,
+        "positionWaitAfterCommandMs": 23.399999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    }
+  ],
+  "rawLaunches": [
+    {
+      "pair": 1,
+      "role": "baseline",
+      "coldStartMs": 912.2524000000003,
+      "assetReadyMs": 1329.0533999999998,
+      "menuOpenP95Ms": 11.599999997764826,
+      "sceneP95Ms": 23.099999997764826,
+      "sceneDiagnostics": {
+        "titleSelectMs": 22.899999998509884,
+        "positionReadyMs": 23.5,
+        "nextFrameMs": 23.099999997764826,
+        "positionWaitAfterCommandMs": 0.6000000014901161
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 1,
+      "role": "current",
+      "coldStartMs": 935.1467000000002,
+      "assetReadyMs": 1350.4911999999995,
+      "menuOpenP95Ms": 8.399999998509884,
+      "sceneP95Ms": 25,
+      "sceneDiagnostics": {
+        "titleSelectMs": 24.900000002235174,
+        "positionReadyMs": 25.600000001490116,
+        "nextFrameMs": 25,
+        "positionWaitAfterCommandMs": 0.6999999992549419
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 2,
+      "role": "current",
+      "coldStartMs": 923.1832999999988,
+      "assetReadyMs": 1346.5429999999997,
+      "menuOpenP95Ms": 6.100000001490116,
+      "sceneP95Ms": 29.300000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.800000000745058,
+        "positionReadyMs": 30.199999999254942,
+        "nextFrameMs": 29.300000000745058,
+        "positionWaitAfterCommandMs": 25.399999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 2,
+      "role": "baseline",
+      "coldStartMs": 898.2849999999999,
+      "assetReadyMs": 1313.2248999999993,
+      "menuOpenP95Ms": 21.899999998509884,
+      "sceneP95Ms": 25,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.5,
+        "positionReadyMs": 25.800000000745058,
+        "nextFrameMs": 25,
+        "positionWaitAfterCommandMs": 21.300000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 3,
+      "role": "baseline",
+      "coldStartMs": 899.3132000000005,
+      "assetReadyMs": 987.990600000001,
+      "menuOpenP95Ms": 6.5,
+      "sceneP95Ms": 26.5,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.699999999254942,
+        "positionReadyMs": 27.199999999254942,
+        "nextFrameMs": 26.5,
+        "positionWaitAfterCommandMs": 22.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 3,
+      "role": "current",
+      "coldStartMs": 946.4327000000012,
+      "assetReadyMs": 1412.220500000003,
+      "menuOpenP95Ms": 10.300000000745058,
+      "sceneP95Ms": 32,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.699999999254942,
+        "positionReadyMs": 33.19999999925494,
+        "nextFrameMs": 32,
+        "positionWaitAfterCommandMs": 27.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 4,
+      "role": "current",
+      "coldStartMs": 933.1514000000025,
+      "assetReadyMs": 1365.9321000000018,
+      "menuOpenP95Ms": 0.9000000022351742,
+      "sceneP95Ms": 27.699999999254942,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.799999997019768,
+        "positionReadyMs": 28.5,
+        "nextFrameMs": 27.699999999254942,
+        "positionWaitAfterCommandMs": 22.700000002980232
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 4,
+      "role": "baseline",
+      "coldStartMs": 924.2964000000029,
+      "assetReadyMs": 1035.907900000002,
+      "menuOpenP95Ms": 24.099999997764826,
+      "sceneP95Ms": 24.099999997764826,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.5,
+        "positionReadyMs": 24.599999997764826,
+        "nextFrameMs": 24.099999997764826,
+        "positionWaitAfterCommandMs": 20.099999997764826
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 5,
+      "role": "baseline",
+      "coldStartMs": 959.6984000000011,
+      "assetReadyMs": 1049.0045000000027,
+      "menuOpenP95Ms": 11.100000001490116,
+      "sceneP95Ms": 25,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.299999997019768,
+        "positionReadyMs": 25.599999997764826,
+        "nextFrameMs": 25,
+        "positionWaitAfterCommandMs": 20.300000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 5,
+      "role": "current",
+      "coldStartMs": 919.9177999999993,
+      "assetReadyMs": 1005.2430999999997,
+      "menuOpenP95Ms": 8.300000000745058,
+      "sceneP95Ms": 26.300000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5,
+        "positionReadyMs": 27.100000001490116,
+        "nextFrameMs": 26.300000000745058,
+        "positionWaitAfterCommandMs": 22.100000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 6,
+      "role": "current",
+      "coldStartMs": 898.6051000000007,
+      "assetReadyMs": 1339.8267000000014,
+      "menuOpenP95Ms": 12,
+      "sceneP95Ms": 25,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.900000002235174,
+        "positionReadyMs": 25.699999999254942,
+        "nextFrameMs": 25,
+        "positionWaitAfterCommandMs": 20.799999997019768
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 6,
+      "role": "baseline",
+      "coldStartMs": 954.9010000000017,
+      "assetReadyMs": 1038.4894000000022,
+      "menuOpenP95Ms": 11.100000001490116,
+      "sceneP95Ms": 24.799999997019768,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.799999997019768,
+        "positionReadyMs": 25.399999998509884,
+        "nextFrameMs": 24.799999997019768,
+        "positionWaitAfterCommandMs": 20.600000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 7,
+      "role": "baseline",
+      "coldStartMs": 953.2364999999991,
+      "assetReadyMs": 1038.8103000000046,
+      "menuOpenP95Ms": 10.199999999254942,
+      "sceneP95Ms": 27.700000002980232,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.600000001490116,
+        "positionReadyMs": 28.600000001490116,
+        "nextFrameMs": 27.700000002980232,
+        "positionWaitAfterCommandMs": 24
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 7,
+      "role": "current",
+      "coldStartMs": 920.481200000002,
+      "assetReadyMs": 1007.1257000000041,
+      "menuOpenP95Ms": 5.699999999254942,
+      "sceneP95Ms": 27.199999999254942,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.699999999254942,
+        "positionReadyMs": 27.899999998509884,
+        "nextFrameMs": 27.199999999254942,
+        "positionWaitAfterCommandMs": 23.199999999254942
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 8,
+      "role": "current",
+      "coldStartMs": 954.6131999999998,
+      "assetReadyMs": 1390.211500000005,
+      "menuOpenP95Ms": 26.100000001490116,
+      "sceneP95Ms": 27.5,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.699999999254942,
+        "positionReadyMs": 28.399999998509884,
+        "nextFrameMs": 27.5,
+        "positionWaitAfterCommandMs": 22.699999999254942
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 8,
+      "role": "baseline",
+      "coldStartMs": 981.0803000000014,
+      "assetReadyMs": 1406.869200000001,
+      "menuOpenP95Ms": 10.699999999254942,
+      "sceneP95Ms": 27,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.199999999254942,
+        "positionReadyMs": 27.799999997019768,
+        "nextFrameMs": 27,
+        "positionWaitAfterCommandMs": 22.599999997764826
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 9,
+      "role": "baseline",
+      "coldStartMs": 953.3959999999934,
+      "assetReadyMs": 1043.2757999999958,
+      "menuOpenP95Ms": 7.5,
+      "sceneP95Ms": 25.800000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.600000001490116,
+        "positionReadyMs": 26.400000002235174,
+        "nextFrameMs": 25.800000000745058,
+        "positionWaitAfterCommandMs": 21.800000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 9,
+      "role": "current",
+      "coldStartMs": 904.037900000003,
+      "assetReadyMs": 989.7446000000054,
+      "menuOpenP95Ms": 10,
+      "sceneP95Ms": 22.900000002235174,
+      "sceneDiagnostics": {
+        "titleSelectMs": 22.800000000745058,
+        "positionReadyMs": 23.400000002235174,
+        "nextFrameMs": 22.900000002235174,
+        "positionWaitAfterCommandMs": 0.6000000014901161
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 10,
+      "role": "current",
+      "coldStartMs": 1067.2448999999979,
+      "assetReadyMs": 1499.0343999999968,
+      "menuOpenP95Ms": 22.600000001490116,
+      "sceneP95Ms": 27.300000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5,
+        "positionReadyMs": 28.100000001490116,
+        "nextFrameMs": 27.300000000745058,
+        "positionWaitAfterCommandMs": 23.100000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 10,
+      "role": "baseline",
+      "coldStartMs": 908.5604000000021,
+      "assetReadyMs": 1325.5599000000002,
+      "menuOpenP95Ms": 6.300000000745058,
+      "sceneP95Ms": 26.799999997019768,
+      "sceneDiagnostics": {
+        "titleSelectMs": 6.099999997764826,
+        "positionReadyMs": 27.599999997764826,
+        "nextFrameMs": 26.799999997019768,
+        "positionWaitAfterCommandMs": 21.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 11,
+      "role": "baseline",
+      "coldStartMs": 924.3133999999991,
+      "assetReadyMs": 1339.7865999999995,
+      "menuOpenP95Ms": 12.099999997764826,
+      "sceneP95Ms": 26.600000001490116,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.899999998509884,
+        "positionReadyMs": 27.199999999254942,
+        "nextFrameMs": 26.600000001490116,
+        "positionWaitAfterCommandMs": 22.300000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 11,
+      "role": "current",
+      "coldStartMs": 930.1178999999975,
+      "assetReadyMs": 1351.9119999999966,
+      "menuOpenP95Ms": 8.5,
+      "sceneP95Ms": 27.5,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.300000000745058,
+        "positionReadyMs": 28.400000002235174,
+        "nextFrameMs": 27.5,
+        "positionWaitAfterCommandMs": 23.100000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 12,
+      "role": "current",
+      "coldStartMs": 911.0116000000053,
+      "assetReadyMs": 1335.2953000000052,
+      "menuOpenP95Ms": 10.800000000745058,
+      "sceneP95Ms": 27.300000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.899999998509884,
+        "positionReadyMs": 28,
+        "nextFrameMs": 27.300000000745058,
+        "positionWaitAfterCommandMs": 23.100000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 12,
+      "role": "baseline",
+      "coldStartMs": 899.2848000000013,
+      "assetReadyMs": 1328.8723000000027,
+      "menuOpenP95Ms": 10.299999997019768,
+      "sceneP95Ms": 26,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.400000002235174,
+        "positionReadyMs": 26.700000002980232,
+        "nextFrameMs": 26,
+        "positionWaitAfterCommandMs": 22.300000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 13,
+      "role": "baseline",
+      "coldStartMs": 926.4222000000009,
+      "assetReadyMs": 1031.313900000001,
+      "menuOpenP95Ms": 8.300000000745058,
+      "sceneP95Ms": 28.5,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.199999999254942,
+        "positionReadyMs": 29.399999998509884,
+        "nextFrameMs": 28.5,
+        "positionWaitAfterCommandMs": 24.199999999254942
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 13,
+      "role": "current",
+      "coldStartMs": 1137.7513000000035,
+      "assetReadyMs": 1226.7753000000012,
+      "menuOpenP95Ms": 12.299999997019768,
+      "sceneP95Ms": 26.900000002235174,
+      "sceneDiagnostics": {
+        "titleSelectMs": 26.700000002980232,
+        "positionReadyMs": 27.600000001490116,
+        "nextFrameMs": 26.900000002235174,
+        "positionWaitAfterCommandMs": 0.8999999985098839
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 14,
+      "role": "current",
+      "coldStartMs": 1055.1756000000023,
+      "assetReadyMs": 1139.4412000000011,
+      "menuOpenP95Ms": 7.800000000745058,
+      "sceneP95Ms": 25.100000001490116,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.100000001490116,
+        "positionReadyMs": 25.699999999254942,
+        "nextFrameMs": 25.100000001490116,
+        "positionWaitAfterCommandMs": 20.599999997764826
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 14,
+      "role": "baseline",
+      "coldStartMs": 1023.7963000000018,
+      "assetReadyMs": 1107.2572999999975,
+      "menuOpenP95Ms": 9.600000001490116,
+      "sceneP95Ms": 24.600000001490116,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.699999999254942,
+        "positionReadyMs": 25.199999999254942,
+        "nextFrameMs": 24.600000001490116,
+        "positionWaitAfterCommandMs": 20.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 15,
+      "role": "baseline",
+      "coldStartMs": 923.3391999999876,
+      "assetReadyMs": 1346.1498999999894,
+      "menuOpenP95Ms": 6,
+      "sceneP95Ms": 26.399999998509884,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.799999997019768,
+        "positionReadyMs": 27.199999999254942,
+        "nextFrameMs": 26.399999998509884,
+        "positionWaitAfterCommandMs": 21.400000002235174
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 15,
+      "role": "current",
+      "coldStartMs": 904.3322999999946,
+      "assetReadyMs": 1311.9532999999938,
+      "menuOpenP95Ms": 12,
+      "sceneP95Ms": 25.5,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.700000002980232,
+        "positionReadyMs": 26.100000001490116,
+        "nextFrameMs": 25.5,
+        "positionWaitAfterCommandMs": 21.399999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 16,
+      "role": "current",
+      "coldStartMs": 934.8191999999981,
+      "assetReadyMs": 1026.6947999999975,
+      "menuOpenP95Ms": 9.899999998509884,
+      "sceneP95Ms": 24.199999999254942,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.599999997764826,
+        "positionReadyMs": 25.099999997764826,
+        "nextFrameMs": 24.199999999254942,
+        "positionWaitAfterCommandMs": 20.5
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 16,
+      "role": "baseline",
+      "coldStartMs": 882.1577000000107,
+      "assetReadyMs": 975.1096000000107,
+      "menuOpenP95Ms": 7.100000001490116,
+      "sceneP95Ms": 24.300000000745058,
+      "sceneDiagnostics": {
+        "titleSelectMs": 24.200000002980232,
+        "positionReadyMs": 24.900000002235174,
+        "nextFrameMs": 24.300000000745058,
+        "positionWaitAfterCommandMs": 0.6999999992549419
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 17,
+      "role": "baseline",
+      "coldStartMs": 885.1512000000075,
+      "assetReadyMs": 976.0140000000101,
+      "menuOpenP95Ms": 22.800000000745058,
+      "sceneP95Ms": 23.699999999254942,
+      "sceneDiagnostics": {
+        "titleSelectMs": 23.600000001490116,
+        "positionReadyMs": 24.399999998509884,
+        "nextFrameMs": 23.699999999254942,
+        "positionWaitAfterCommandMs": 0.7999999970197678
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 17,
+      "role": "current",
+      "coldStartMs": 925.3104999999923,
+      "assetReadyMs": 1353.4614999999903,
+      "menuOpenP95Ms": 6.100000001490116,
+      "sceneP95Ms": 24.900000002235174,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.600000001490116,
+        "positionReadyMs": 25.5,
+        "nextFrameMs": 24.900000002235174,
+        "positionWaitAfterCommandMs": 20.899999998509884
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 18,
+      "role": "current",
+      "coldStartMs": 913.8856999999989,
+      "assetReadyMs": 1323.1641999999993,
+      "menuOpenP95Ms": 11,
+      "sceneP95Ms": 24.600000001490116,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5,
+        "positionReadyMs": 25.600000001490116,
+        "nextFrameMs": 24.600000001490116,
+        "positionWaitAfterCommandMs": 20.600000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 18,
+      "role": "baseline",
+      "coldStartMs": 928.4743000000017,
+      "assetReadyMs": 1017.6869000000006,
+      "menuOpenP95Ms": 11.199999999254942,
+      "sceneP95Ms": 27,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5,
+        "positionReadyMs": 27.600000001490116,
+        "nextFrameMs": 27,
+        "positionWaitAfterCommandMs": 22.600000001490116
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 19,
+      "role": "baseline",
+      "coldStartMs": 896.7201000000059,
+      "assetReadyMs": 985.8552000000054,
+      "menuOpenP95Ms": 7.300000000745058,
+      "sceneP95Ms": 27.599999997764826,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.299999997019768,
+        "positionReadyMs": 28.199999999254942,
+        "nextFrameMs": 27.599999997764826,
+        "positionWaitAfterCommandMs": 23.900000002235174
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 19,
+      "role": "current",
+      "coldStartMs": 907.4542000000074,
+      "assetReadyMs": 1325.8466000000044,
+      "menuOpenP95Ms": 10.900000002235174,
+      "sceneP95Ms": 24.700000002980232,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.400000002235174,
+        "positionReadyMs": 25.400000002235174,
+        "nextFrameMs": 24.700000002980232,
+        "positionWaitAfterCommandMs": 21
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 20,
+      "role": "current",
+      "coldStartMs": 961.9133000000002,
+      "assetReadyMs": 1393.3598999999958,
+      "menuOpenP95Ms": 5.899999998509884,
+      "sceneP95Ms": 24.599999997764826,
+      "sceneDiagnostics": {
+        "titleSelectMs": 5.099999997764826,
+        "positionReadyMs": 25.399999998509884,
+        "nextFrameMs": 24.599999997764826,
+        "positionWaitAfterCommandMs": 20.300000000745058
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    },
+    {
+      "pair": 20,
+      "role": "baseline",
+      "coldStartMs": 899.3565999999992,
+      "assetReadyMs": 1321.372199999998,
+      "menuOpenP95Ms": 7.300000000745058,
+      "sceneP95Ms": 26,
+      "sceneDiagnostics": {
+        "titleSelectMs": 4.5,
+        "positionReadyMs": 26.699999999254942,
+        "nextFrameMs": 26,
+        "positionWaitAfterCommandMs": 22.199999999254942
+      },
+      "assetLoading": {
+        "total": 6,
+        "completed": 6,
+        "failed": 0,
+        "current": null,
+        "done": true
+      },
+      "errors": {
+        "page": [],
+        "console": [],
+        "failedRequests": []
+      }
+    }
+  ],
+  "health": {
+    "warmups": 2,
+    "formalSamples": 40,
+    "assetsFailed": 0,
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "failedRequests": 0
+  },
+  "historicalComparison": {
+    "baselinePath": "docs/baselines/renderer-v2-cab200b.json",
+    "baselineSha256": "de0aa52bef955165213123eda9632d14456355828a15b2fe9f4cbb548d934edc",
+    "baselineSourceSha": "16416535b4d55b0311ba54b93d5819f862b29170",
+    "failures": [
+      {
+        "metric": "assetReadyMs",
+        "baseline": 948.0453000000007,
+        "current": 1337.5610000000033,
+        "ratio": 1.4108619071261703,
+        "limit": 1.1
+      },
+      {
+        "metric": "menuOpenP95Ms",
+        "baseline": 10.800000011920929,
+        "current": 22.77500000149012,
+        "ratio": 2.1087962941066025,
+        "limit": 1.15
+      }
+    ]
+  }
+}
