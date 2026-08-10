@@ -4,7 +4,7 @@
 **整改性质**：严格限定的工具卫生与资格聚合整改；不是重新测量、不是性能优化、不是 M9、不是正式发行。  
 **整改起点 HEAD**：`34367148e57ad821d838495d496cb7aeeeb3ac3f`  
 **代码整改提交**：`a39501b1fe64364110c013a1a377d115146af1bc`  
-**本报告创建前 evidence HEAD**：`6e27695`（报告自身提交不嵌入自身 SHA）  
+**本报告创建前 evidence HEAD**：`6e276952ca32fb834b3fc166b1961635ae722b37`（报告自身提交不嵌入自身 SHA）  
 **最终状态**：`PERFORMANCE_MEASUREMENT_NOT_QUALIFIED` / `DELIVERY_REMEDIATION_COMPLETED` / `RELEASE_BLOCKED` / `WAITING_FOR_REVIEW`
 
 ## 1. 执行边界
@@ -158,7 +158,7 @@ Stage 5 / holdout 提交事实保持分离：Stage 4 最终执行器提交为 `b
 
 ## 6. 最终门禁
 
-在本报告创建前的 evidence HEAD `6e27695` 上：
+在本报告创建前的 evidence HEAD `6e276952ca32fb834b3fc166b1961635ae722b37` 上：
 
 | 门禁 | 结果 |
 | --- | --- |
@@ -209,4 +209,3 @@ release=false
 m9Started=false
 resampled=false
 ```
-
