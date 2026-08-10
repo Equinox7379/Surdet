@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 3 已完成；下一入口为阶段 4（构造 Q1–Q5 worktree 与 runner）。
+> 状态：阶段 4 runner 已完成，正在进行实际 worktree/build 等价性前置验证；尚未产生 Q1–Q5 holdout 数据。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -276,6 +276,14 @@ Page 侧必须尝试记录：
 - 任何构建等价性失败都写入 cleanup manifest 和诊断报告，立即停止后续 Q；不得复制或覆盖 dist。
 - 阶段 4 提交包含 runner、matrix、cleanup schema 和 tests，但不包含任何 Q1–Q5 raw 数据。
 
+阶段 4 实现部分已完成，实际证据阶段进行中：
+
+- [x] 先写矩阵/清理测试；实现不存在时测试因模块缺失失败。
+- [x] Q1→Q5 矩阵、Q5 同根、独立路径、参数边界、cleanup manifest、串行 runner 已实现。
+- [x] 阶段 1–4 Shell 专项测试 45/45；根级 v4 结构/安全测试 3/3；Shell typecheck、`node --check`、`git diff --check` 通过。
+- [x] runner 提交：`test(shell): add v4 qualification matrix runner`，SHA：`8fa4fcc58cc3536fe63bf3bd868872b062fe4e0a`。
+- [ ] 创建实际临时 worktree、执行同提交 clean build equivalence，并在其通过后才进入阶段 5 holdout。
+
 ### 阶段 5：按冻结协议产生 Q1→Q5 holdout 数据
 
 - [ ] 运行前重新读取本计划、HEAD、status、log，确认阶段 3/4 提交已存在且 protocol/schema/threshold/file names 未变。
@@ -354,7 +362,7 @@ Page 侧必须尝试记录：
 | 1 启动/资源诊断 | 已完成 | `packages/shell/test/renderer-startup-diagnostic.test.mjs` 9/9；Shell typecheck；`node --check`；`git diff --check`；未生成 Q 数据 | `d87bf06a17b0ecd4eb2226fdc4bd83f38f5b4bc4` | 2 构建等价性 |
 | 2 构建等价性 | 已完成 | 12 个阶段 2 测试；阶段 1+2 聚焦 21/21；`node --check`；`git diff --check`；真实双 worktree 构建保留至阶段 4；未生成 Q 数据 | `b2513cae5be8a311edc0c8565a7eff4e2aeba17b` | 3 v4 协议冻结 |
 | 3 Schema/比较器/验证器 | 已完成 | v4 Shell 专项 20/20；阶段 1+2 专项 21/21；`verify:tools` 10/10；Shell typecheck；协议/Schema/门限/文件名已冻结；未生成 Q 数据 | `62847272bbb941c34a4ce68508b98de6bb7fb925` | 4 Q 矩阵/runner |
-| 4 worktree/runner | 进行中 | 阶段 3 已冻结协议；真实 worktree/build 尚未开始 | 待生成 | 5 Q1–Q5 |
+| 4 worktree/runner | 进行中 | 矩阵/runner 已提交；专项 45/45；真实 worktree/build equivalence 尚未开始 | `8fa4fcc58cc3536fe63bf3bd868872b062fe4e0a` | 实际构造与等价性通过后进入 5 Q1–Q5 |
 | 5 holdout | 未开始 | 五个固定 Q artifact | 待生成 | 6 全量门禁 |
 | 6 门禁/归并 | 未开始 | 测试输出与门禁日志 | 待生成 | 7 清理 |
 | 7 清理 | 未开始 | cleanup manifest、worktree list 前后 | 待生成 | 8 报告 |
