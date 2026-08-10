@@ -66,7 +66,7 @@
 - [x] 先写聚合测试并捕获缺模块红灯；随后实现 `renderer-v4-qualification-summary.mjs`、三态 single verifier 和根级工具接线；聚合实现提交：`a39501b1fe64364110c013a1a377d115146af1bc`。
 - [x] 现有五个 Q artifact 只读验证均为 `valid=true`、`not-qualified`、退出码 2；聚合摘要固定输出为 `docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`，`resampled=false`、200 raw、10 warmup，摘要 SHA：`31554a17096f2544aff373a715583cf9e343230c9dcc41b6a4ee38a961b79fe6`。
 - [x] Shell 全量 13 files/109 tests、`verify:tools` 10/10、boundaries 3/3、legacy 4/4、tracked hygiene 和 `npm run verify:all` 均通过；未重新采样、未运行旧正式 A/B、未修改门限。
-- [ ] 待最终报告/计划/摘要精确暂存和文档提交后，再由磁盘重新读取最终 HEAD、ahead/behind、工作树、文件/行数差异、三份 SHA 和 `npm run verify:all`/`git diff --check`；然后停止在 `WAITING_FOR_REVIEW`。
+- [x] 最终报告、计划和摘要已精确暂存；在 `82fca398d3f2004166b21db70d20fcb6ab5afb50` 上完成最终全量门禁和 `git diff --check`，相对整改起点统计为 27 个文件、`1329 insertions / 1954 deletions`；摘要/报告/计划 SHA 已在最终收尾复核中记录；四个保护文件仍仅为未跟踪；下一入口为 `WAITING_FOR_REVIEW`，不得 push。
 
 ## 恢复时的当前事实（阶段 0 开始前只读核对）
 

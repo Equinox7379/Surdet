@@ -5,7 +5,7 @@
 **Schema**：v4  
 **任务性质**：测量体系资格化；不是 M9、不是生产性能优化、不是正式发行，也不是重新验收旧版正式 A/B。  
 **最终状态**：`PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`  
-**本轮整改状态**：`DELIVERY_REMEDIATION_COMPLETED`  
+**本轮整改状态**：`DELIVERY_REMEDIATION_COMPLETED`
 **工作状态**：`WAITING_FOR_REVIEW`
 
 ## 1. 结论摘要
@@ -423,7 +423,7 @@ docs/baselines/renderer-v4-stage6-zero-typecheck-2026-08-10.log
 
 ### 15.4 门禁、摘要和最终状态
 
-本轮最终限定整改在代码 HEAD `a39501b1fe64364110c013a1a377d115146af1bc` 上完成了 Shell 全量、`verify:tools`、Renderer boundaries、Renderer legacy、tracked hygiene、根级 `npm run verify:all` 和五个显式 verifier。根级 verify:all 退出码为 0；正式游戏门禁仍为 23/23 分支、3 个结局、44 项资产、运行时错误 0；没有重新执行正式 A/B、没有重新采样、没有修改性能阈值。
+本轮最终限定整改的代码提交为 `a39501b1fe64364110c013a1a377d115146af1bc`；随后计划、摘要和交付报告纳入 evidence commit `82fca398d3f2004166b21db70d20fcb6ab5afb50`。在该 evidence HEAD 上，Shell 全量、`verify:tools`、Renderer boundaries、Renderer legacy、tracked hygiene、根级 `npm run verify:all` 和五个显式 verifier 均完成；根级 verify:all 退出码为 0；正式游戏门禁仍为 23/23 分支、3 个结局、44 项资产、运行时错误 0；没有重新执行正式 A/B、没有重新采样、没有修改性能阈值。
 
 最终聚合摘要：
 
@@ -439,7 +439,15 @@ q3q4RoleSwap=failed
 aggregateExit=2
 ```
 
-本报告更新、计划收尾和聚合摘要纳入最终提交后，必须再次由机器读取并填写真实的最终 HEAD、`HEAD...surdet/main`、相对整改起点的文件/行数差异、报告/计划/摘要 SHA-256，以及最终 `npm run verify:all` 和 `git diff --check` 结果；不得用本节的代码提交 SHA 冒充文档提交后的最终 HEAD。
+从整改起点 `34367148e57ad821d838495d496cb7aeeeb3ac3f` 到 evidence HEAD 的真实差异为 27 个文件、`1329 insertions / 1954 deletions`（删除的是 20 个 tracked stage6 日志；本地日志仍保留）。evidence HEAD 的 `HEAD...surdet/main` 为 `24 0`；工作树只有四个受保护未跟踪文件。该报告有意报告可复核的 evidence HEAD，不把文档自身的 commit SHA 伪装成采样或代码提交；最终收尾读取以主工作树的真实 Git 输出为准。
+
+收尾 hash ledger（摘要和计划可直接复核；报告自身 SHA 不嵌入自身，避免自引用）：
+
+```text
+summarySha256=31554a17096f2544aff373a715583cf9e343230c9dcc41b6a4ee38a961b79fe6
+planSha256=7e48692b417fc87ea892acc7c397fe90b834de5f06aa0bd0e59db5b479fbeab9
+reportSha256=由最终 Git 工作树读取并在交付回报中列出
+```
 
 ### 15.5 明确排除和授权边界
 
