@@ -18,7 +18,7 @@ import type {
   WorldCommands,
   WorldProjectionPort,
 } from '../api/renderer-commands.js';
-import type { RendererQueries } from '../api/renderer-queries.js';
+import type { RendererProjectionSnapshot, RendererQueries } from '../api/renderer-queries.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
 import { preparePresentationRestore } from './presentation-controller.js';
@@ -81,6 +81,8 @@ export interface PresentationPortOptions {
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
   /** M7 production WorldLayer port; omitted for legacy stage compatibility. */
   readonly worldLayer?: WorldProjectionPort;
+  /** Composition-root read model; returns plain semantic data, never a Layer. */
+  readonly projectionSnapshot?: () => RendererProjectionSnapshot;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT: RendererResourceSnapshot = {
@@ -281,6 +283,13 @@ export function createPresentationPorts(
     diagnostics: {
       resourceSnapshot: () => options.resourceSnapshot?.() ?? { ...EMPTY_RESOURCE_SNAPSHOT },
       performanceSnapshot: () => stage.getPerformanceSnapshot?.() ?? null,
+      projectionSnapshot: () => options.projectionSnapshot?.() ?? {
+        dialogue: null,
+        menu: null,
+        gallery: null,
+        system: null,
+        world: null,
+      },
       needsUpdate: () => stage.needsUpdate?.() !== false,
       isDisposed: () => false,
     },

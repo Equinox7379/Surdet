@@ -20,6 +20,7 @@ import type {
 } from './types.js';
 import { RenderQualityController, type RenderQuality } from './quality.js';
 import type { PresentationPreferences } from './presentation.js';
+import type { RendererProjectionSnapshot } from './api/renderer-queries.js';
 import type { PostProcessSettings } from './post-process.js';
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
@@ -89,6 +90,17 @@ export class RendererStageHost {
   /** @internal Renderer runtime wiring for the extracted world layer. */
   get worldLayer(): WorldProjectionPort {
     return this.#world;
+  }
+
+  /** @internal Composition-root semantic read model; never returns a Layer. */
+  get projectionSnapshot(): RendererProjectionSnapshot {
+    return {
+      dialogue: this.#dialogue.debugSnapshot(),
+      menu: this.#menu.debugSnapshot(),
+      gallery: this.#gallery.debugSnapshot(),
+      system: this.#system.debugSnapshot(),
+      world: this.#world.debugSnapshot(),
+    };
   }
 
   #uiLayer: Container;

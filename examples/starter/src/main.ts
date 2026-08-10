@@ -245,6 +245,7 @@ async function main(): Promise<void> {
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
+    get queries() { return queries; },
     titleSelect: (id: string) => titleSelect(id),
     quickSave: () => quickSave(),
     quickLoad: () => quickLoad(),
@@ -1194,13 +1195,6 @@ async function main(): Promise<void> {
     openSaveLoad,
     showTitleScreen,
     openGallery,
-    rendererV2Layers: {
-      get dialogue() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { dialogue?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.dialogue?.debugSnapshot?.() ?? null; },
-      get menu() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { menu?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.menu?.debugSnapshot?.() ?? null; },
-      get gallery() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { gallery?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.gallery?.debugSnapshot?.() ?? null; },
-      get system() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { system?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.system?.debugSnapshot?.() ?? null; },
-      get world() { return (runtime as unknown as { __rendererV2Debug?: { layers?: { world?: { debugSnapshot?: () => unknown } } } }).__rendererV2Debug?.layers?.world?.debugSnapshot?.() ?? null; },
-    },
   };
 
   // 错误上报（渲染层崩溃可见化；桌面环境同步落日志文件）

@@ -112,6 +112,39 @@ describe('Renderer v2 runtime facade', () => {
     expect(internals.disposeOrder).toEqual(['scheduler', 'controller', 'stage']);
   });
 
+  it('does not expose concrete Layer instances through Runtime or hidden properties', async () => {
+    const internals = fakeInternals();
+    const layerSentinel = { layerSentinel: true };
+    (internals as unknown as { dialogueLayer: unknown }).dialogueLayer = layerSentinel;
+    (internals as unknown as { projectionSnapshot: () => unknown }).projectionSnapshot = () => ({
+      dialogue: {
+        activeSpeakerId: null,
+        projectionVersion: 0,
+        speakerText: '',
+        dialogText: '',
+        choiceLabels: [],
+        visibleChoiceCount: 0,
+        rubyBaseCount: 0,
+        rubyTextCount: 0,
+        backlogVisible: false,
+        nvlActive: false,
+        nvlLines: [],
+      },
+      menu: null,
+      gallery: null,
+      system: null,
+      world: null,
+    });
+
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const ownKeys = Reflect.ownKeys(runtime).map(String);
+
+    expect(ownKeys).not.toContain('__rendererV2Debug');
+    expect((runtime as unknown as { __rendererV2Debug?: unknown }).__rendererV2Debug).toBeUndefined();
+    expect(runtime.queries.diagnostics.projectionSnapshot().dialogue).not.toBe(layerSentinel);
+    expect(runtime.queries.diagnostics.projectionSnapshot().dialogue?.dialogText).toBe('');
+  });
+
   it('delegates representative methods once across every command domain', async () => {
     const internals = fakeInternals();
     const runtime = await createRendererRuntimeFromInternals(internals);

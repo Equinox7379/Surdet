@@ -22,6 +22,7 @@ import {
 } from './renderer-facade.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort, WorldProjectionPort } from '../api/renderer-commands.js';
+import type { RendererProjectionSnapshot } from '../api/renderer-queries.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -39,6 +40,7 @@ export interface RendererRuntimeInternals {
   readonly galleryLayer?: GalleryProjectionPort;
   readonly systemPanelLayer?: SystemPanelProjectionPort;
   readonly worldLayer?: WorldProjectionPort;
+  readonly projectionSnapshot?: () => RendererProjectionSnapshot;
 }
 
 interface CleanupParts {
@@ -136,6 +138,7 @@ export async function createRendererRuntimeFromInternals(
       galleryLayer: internals.galleryLayer,
       systemPanelLayer: internals.systemPanelLayer,
       worldLayer: internals.worldLayer,
+      projectionSnapshot: internals.projectionSnapshot,
     };
     facade = new RendererFacade(facadeOptions);
     let disposed = false;
@@ -155,23 +158,6 @@ export async function createRendererRuntimeFromInternals(
         }
       },
     };
-    // Local acceptance evidence only. This is non-enumerable and deliberately
-    // absent from the public RendererRuntime contract; the host exposes only
-    // read-only snapshots to its controlled E2E probe.
-    Object.defineProperty(runtime, '__rendererV2Debug', {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: Object.freeze({
-        layers: Object.freeze({
-          dialogue: internals.dialogueLayer,
-          menu: internals.menuLayer,
-          gallery: internals.galleryLayer,
-          system: internals.systemPanelLayer,
-          world: internals.worldLayer,
-        }),
-      }),
-    });
     return runtime;
   } catch (cause) {
     const cleanupFailures = runCleanup({ ...internals, facade });
@@ -250,6 +236,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       assetRegistry,
       resourceSnapshot: () => lifecycle.snapshot(),
       worldLayer: stage.worldLayer,
+      projectionSnapshot: () => stage!.projectionSnapshot,
     });
     const controllerOptions = createControllerOptions(stage, ports, lifecycle, options);
     controller = new RuntimePresentationController(ports.commands, ports.queries, options.audio ?? NULL_AUDIO, controllerOptions);
@@ -274,6 +261,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       galleryLayer: stage.galleryLayer,
       systemPanelLayer: stage.systemPanelLayer,
       worldLayer: stage.worldLayer,
+      projectionSnapshot: () => stage!.projectionSnapshot,
     });
   } catch (cause) {
     const cleanupFailures = compositionAttempted

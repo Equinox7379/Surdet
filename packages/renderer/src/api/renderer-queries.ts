@@ -54,9 +54,63 @@ export interface PresentationQueries {
   snapshot(): unknown;
 }
 
+/** Plain-data read model for the renderer's semantic projection evidence. */
+export interface DialogueProjectionSnapshot {
+  readonly activeSpeakerId: string | null;
+  readonly projectionVersion: number;
+  readonly speakerText: string;
+  readonly dialogText: string;
+  readonly choiceLabels: readonly string[];
+  readonly visibleChoiceCount: number;
+  readonly rubyBaseCount: number;
+  readonly rubyTextCount: number;
+  readonly backlogVisible: boolean;
+  readonly nvlActive: boolean;
+  readonly nvlLines: readonly string[];
+}
+
+export interface MenuProjectionSnapshot {
+  readonly overlay: MenuOverlayState;
+  readonly titleItemCount: number;
+  readonly systemMenuItemCount: number;
+  readonly settingsRowCount: number;
+  readonly saveLoadSlotCount: number;
+}
+
+export interface GalleryProjectionSnapshot {
+  readonly overlay: GalleryOverlayState;
+  readonly cgCount: number;
+  readonly musicCount: number;
+  readonly textCount: number;
+}
+
+export interface SystemPanelProjectionSnapshot {
+  readonly overlay: SystemPanelOverlayState;
+  readonly battleUnitCount: number;
+  readonly mapNodeCount: number;
+  readonly shopItemCount: number;
+  readonly baseCommandCount: number;
+}
+
+export interface WorldProjectionSnapshot {
+  readonly activeSpeakerId: string | null;
+  readonly backgroundKey: string | null;
+  readonly particleKind: string | null;
+}
+
+export interface RendererProjectionSnapshot {
+  readonly dialogue: DialogueProjectionSnapshot | null;
+  readonly menu: MenuProjectionSnapshot | null;
+  readonly gallery: GalleryProjectionSnapshot | null;
+  readonly system: SystemPanelProjectionSnapshot | null;
+  readonly world: WorldProjectionSnapshot | null;
+}
+
 export interface RendererDiagnosticQueries {
   resourceSnapshot(): RendererResourceSnapshot;
   performanceSnapshot(): RenderPerformanceSnapshot | null;
+  /** Pure semantic projection read model; returns no Layer or Pixi object. */
+  projectionSnapshot(): RendererProjectionSnapshot;
   needsUpdate(): boolean;
   isDisposed(): boolean;
 }
