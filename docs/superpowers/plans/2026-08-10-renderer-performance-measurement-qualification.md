@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 7 本轮 worktree 已完成精确清理，下一步仅创建最终交付报告；不得修改已冻结协议、重跑 Q 组或进入 M9。
+> 状态：阶段 8 最终交付报告已提交；本轮停止在 `WAITING_FOR_REVIEW`，不得修改已冻结协议、重跑 Q 组或进入 M9。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -351,7 +351,7 @@ Page 侧必须尝试记录：
 
 `docs/ENGINE-RENDERER-PERFORMANCE-MEASUREMENT-QUALIFICATION-REPORT-2026-08-10.md`
 
-当前状态：进行中；阶段 8 仅剩最终报告、最终哈希/链接/状态复核和聚焦提交，完成后停止在 `WAITING_FOR_REVIEW`。
+当前状态：已完成；最终报告、Q/build/门禁证据哈希、worktree 清理和最终状态已记录，停止在 `WAITING_FOR_REVIEW`。
 
 报告必须包括：
 
@@ -386,7 +386,7 @@ Page 侧必须尝试记录：
 | 5 holdout | 已完成 | 五个固定 Q artifact；每组官方 verifier `valid=true`；每组 2 warmups/40 raw；五组资格均 `not-qualified`；cleanup manifest stage=all-samples-written | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 6 全量门禁 |
 | 6 门禁/归并 | 已完成 | Renderer 46/325；Shell 12/98；v4 4/47；verify:tools 10/10；verify:all；边界/legacy；Renderer v2 E2E；Shell E2E；正式游戏 23/23、3 结局、44 资产、0 运行时错误；全部日志已保留 | `f13182f8e21a2ba9375927535c738ae0cc93946d` | 7 只清理本轮 worktree |
 | 7 清理 | 已完成 | `renderer-v4-qualification-cleanup-2026-08-10.json`、`renderer-v4-qualification-cleanup-final-2026-08-10.json`；清理前后 `git worktree list --porcelain`；13 条本轮精确路径；三根目录注册数 0 | `e8fc66512de8d5db9bff0694b374216708760ecf` | 8 最终报告 |
-| 8 报告/停止 | 进行中 | 最终报告、Q/build/门禁证据哈希、最终 status/log；尚未创建最终报告 | 待生成 | `WAITING_FOR_REVIEW` |
+| 8 报告/停止 | 已完成 | `docs/ENGINE-RENDERER-PERFORMANCE-MEASUREMENT-QUALIFICATION-REPORT-2026-08-10.md`；Q/build/cleanup SHA-256；最终 `git diff --check`、status、ahead/behind、worktree 根目录复核；状态 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED` | `5a5c68bcef865f2d8347803e39325877b2541d49`（报告提交；台账收尾为后续文档提交） | `WAITING_FOR_REVIEW` |
 
 ## 阶段 0 自检与提交门槛
 
