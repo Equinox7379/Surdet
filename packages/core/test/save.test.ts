@@ -6,7 +6,7 @@ import { ReadTracker } from '../src/runtime/read-tracker.js';
 
 function makeSnap(overrides: Partial<SaveSnapshot> = {}): SaveSnapshot {
   return {
-    meta: { id: '', createdAt: 0, updatedAt: 0 },
+    meta: { id: '', createdAt: 0, updatedAt: 0, schemaVersion: 3 },
     variables: { x: 1 },
     position: { sceneId: 'ch01', pc: 3 },
     kind: 'manual',
@@ -160,6 +160,46 @@ describe('assertValidSnapshot systems 子快照深校验（审计轮4）', () =>
   it('旧 affection 快照缺少 everConsumed 时保持兼容', () => {
     const snap = makeSnap({ systems: { affection: { consumed: ['a'] } } as never });
     expect(() => assertValidSnapshot(snap)).not.toThrow();
+  });
+});
+
+describe('assertValidSnapshot 当前 schema 严格校验', () => {
+  const current = (): SaveSnapshot => makeSnap({
+    meta: { id: 'slot', createdAt: 1, updatedAt: 2, schemaVersion: 3 },
+    position: { sceneId: 'ch01', pc: 3, sceneHash: 'hash' },
+    gallery: { cgs: [], music: [], texts: [] },
+  });
+
+  it('严格验证 kind、meta、schemaVersion 和必需 gallery', () => {
+    expect(() => assertValidSnapshot({ ...current(), kind: 'broken' })).toThrow(/kind/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, id: 1 } })).toThrow(/meta\.id/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, createdAt: Number.NaN } })).toThrow(/createdAt/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, updatedAt: Number.POSITIVE_INFINITY } })).toThrow(/updatedAt/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, schemaVersion: 1.5 } })).toThrow(/schemaVersion/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, schemaVersion: -1 } })).toThrow(/schemaVersion/);
+    expect(() => assertValidSnapshot({ ...current(), gallery: undefined })).toThrow(/gallery/);
+  });
+
+  it('严格验证 gallery.texts、position.pc 和 callStack.pc', () => {
+    expect(() => assertValidSnapshot({ ...current(), gallery: { cgs: [], music: [], texts: [1] } })).toThrow(/gallery\.texts/);
+    for (const pc of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+      expect(() => assertValidSnapshot({ ...current(), position: { sceneId: 'ch01', pc } })).toThrow(/position\.pc/);
+      expect(() => assertValidSnapshot({ ...current(), callStack: [{ sceneId: 'ch01', pc }] })).toThrow(/callStack.*pc/);
+    }
+  });
+
+  it('严格验证 growth 数值和 systems.newGamePlus 的 JSON 安全性', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => assertValidSnapshot({ ...current(), growth: { levels: { lynn: value } } })).toThrow(/growth\.levels/);
+      expect(() => assertValidSnapshot({ ...current(), growth: { experience: { lynn: value } } })).toThrow(/growth\.experience/);
+    }
+    expect(() => assertValidSnapshot({ ...current(), systems: { newGamePlus: () => 'unsafe' } })).toThrow(/newGamePlus/);
+  });
+
+  it('允许当前 v3 合法快照和可 JSON 序列化的无原型对象', () => {
+    const variables = Object.create(null) as Record<string, unknown>;
+    variables.trust = 3;
+    expect(() => assertValidSnapshot({ ...current(), variables })).not.toThrow();
   });
 });
 

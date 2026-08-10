@@ -168,7 +168,7 @@ describe('Minor：readonly restore / 战斗越权 / 深度校验 / W008', () => 
 
   it('assertValidSnapshot 拒绝畸形 callStack / gallery / systems', () => {
     const good = {
-      meta: { id: '1', createdAt: 1, updatedAt: 1 },
+      meta: { id: '1', createdAt: 1, updatedAt: 1, schemaVersion: 3 },
       variables: {},
       position: null,
       kind: 'manual',

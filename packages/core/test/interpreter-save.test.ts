@@ -294,6 +294,61 @@ describe('Interpreter 存档', () => {
     expect(calls).toEqual(['validate']);
   });
 
+  it('迁移后当前 schema 校验失败时不写入状态、不发 saveMigrated、不开始恢复', () => {
+    const { bus, registry, interp, store } = makeInterp();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    store.set('trust', 5);
+    interp.gallery.unlockCg('before');
+    const before = {
+      variables: store.snapshot(),
+      readSet: interp.readTracker.snapshot(),
+      gallery: interp.gallery.snapshot(),
+      status: interp.status,
+    };
+    const events: string[] = [];
+    bus.on('saveMigrated', () => events.push('saveMigrated'));
+    bus.on('stateReset', () => events.push('stateReset'));
+    const invalidMigrated = {
+      ...interp.saveSnapshot()!,
+      variables: { trust: 999 },
+      gallery: undefined,
+      callStack: undefined,
+      meta: { ...interp.saveSnapshot()!.meta, schemaVersion: 1 },
+    } as never;
+    expect(() => interp.loadSnapshot(invalidMigrated)).toThrow(/gallery/);
+    expect(events).toEqual([]);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(interp.readTracker.snapshot()).toEqual(before.readSet);
+    expect(interp.gallery.snapshot()).toEqual(before.gallery);
+    expect(interp.status).toBe(before.status);
+  });
+
+  it('迁移成功但系统预校验失败时不发 saveMigrated 或 stateReset', () => {
+    const store = new VariableStore(decls);
+    const bus = new EventBus<CoreEventMap>();
+    const registry = new SceneRegistry();
+    const calls: string[] = [];
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    const interp = new Interpreter(store, bus, registry, undefined, undefined, {
+      validate: () => { calls.push('validate'); throw new Error('invalid migrated systems'); },
+    });
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    const events: string[] = [];
+    bus.on('saveMigrated', () => events.push('saveMigrated'));
+    bus.on('stateReset', () => events.push('stateReset'));
+    const old = {
+      ...snap,
+      callStack: undefined,
+      systems: { calendar: { turn: 1, ap: 0, visited: [] } },
+      meta: { ...snap.meta, schemaVersion: 1 },
+    } as typeof snap;
+    expect(() => interp.loadSnapshot(old)).toThrow('invalid migrated systems');
+    expect(calls).toEqual(['validate']);
+    expect(events).toEqual([]);
+  });
+
   it('读档场景哈希不匹配发 saveMismatch（剧本存档后被编辑，仍照常加载）', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));
