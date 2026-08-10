@@ -24,6 +24,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     const value = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
     validateRendererBaselineV4Artifact(value);
     console.log(JSON.stringify({ valid: true, group: value.group, status: value.qualification.status }, null, 2));
+    process.exitCode = value.qualification.status === 'candidate-qualified' ? 0 : 2;
   } catch (error) {
     console.error(error instanceof Error ? error.stack ?? error.message : String(error));
     process.exitCode = 1;

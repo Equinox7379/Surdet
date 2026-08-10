@@ -15,6 +15,7 @@ const files = [
   'packages/shell/e2e/renderer-startup-diagnostic-runner.mjs',
   'packages/shell/e2e/renderer-v4-worktree.mjs',
   'packages/shell/e2e/renderer-v4-qualification-runner.mjs',
+  'packages/shell/e2e/renderer-v4-qualification-summary.mjs',
 ];
 
 test('qualification plan and v4 protocol freeze the fixed Q matrix and outputs', () => {
@@ -37,6 +38,9 @@ test('qualification plan and v4 protocol freeze the fixed Q matrix and outputs',
   assert.match(spec, /log\(1\.10\)/);
   assert.match(spec, /log\(1\.25\)/);
   assert.match(spec, /配对中位数比只记录为诊断/);
+  assert.match(plan, /renderer-v4-aggregate-qualification-2026-08-10/);
+  assert.match(plan, /renderer-v4-qualification-summary-2026-08-10\.json/);
+  assert.match(plan, /roleSwapMedianLogDrift/);
 });
 
 test('v4 implementation remains diagnostic-only and shell-free', () => {
