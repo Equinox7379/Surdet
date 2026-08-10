@@ -1,6 +1,6 @@
 # Surdet Renderer 性能测量体系资格化执行计划
 
-> 状态：阶段 6 全量门禁已完成，下一步仅清理本轮实际 worktree；不得修改已冻结协议、重跑 Q 组或进入 M9。
+> 状态：阶段 7 本轮 worktree 已完成精确清理，下一步仅创建最终交付报告；不得修改已冻结协议、重跑 Q 组或进入 M9。
 >
 > 本计划是 2026-08-10 性能测量体系资格化阶段的唯一施工入口。它不构成 M9，不构成生产性能优化，不构成正式发行批准，也不重新验收任何旧版正式 A/B。
 
@@ -336,17 +336,22 @@ Page 侧必须尝试记录：
 
 ### 阶段 7：只清理本轮新 worktree
 
-- 先读取 `git worktree list --porcelain`，只从 Git 返回值获得精确绝对路径。
-- 规范化验证每条路径位于本轮实际临时根目录内；不得使用通配符，不得使用宽泛递归删除，不得触碰主工作树和历史 worktree。
-- 对本轮每条精确路径执行 `git worktree remove --force <path>`，随后执行 `git worktree prune`。
-- 再次列出 worktree，确认本轮根目录消失；所有 artifact、探针脚本、build manifest、cleanup manifest 保留在主仓库。
-- 更新 `renderer-v4-qualification-cleanup-2026-08-10.json`，包含 path/commit/role/createdAt/stage/artifact/dirty/removed/cleaned。
+- [x] 先读取 `git worktree list --porcelain`，只从 Git 返回值获得精确绝对路径。
+- [x] 规范化验证每条路径位于本轮实际临时根目录内；不得使用通配符，不得使用宽泛递归删除，不得触碰主工作树和历史 worktree。
+- [x] 对最终 `...-2` 根目录的 9 条精确路径，以及两次未进入 holdout 的早期失败尝试各 2 条精确路径，逐条执行 `git worktree remove --force <path>`；总计清理 13 个本轮 worktree。
+- [x] 执行 `git worktree prune`，再次列出 worktree；三个本轮资格根目录注册数均为 0，历史 M7/M8 worktree 保留。
+- [x] 所有 artifact、探针脚本、build manifest、失败记录和 cleanup manifest 保留在主仓库；未使用递归目录删除。
+- [x] 更新 `renderer-v4-qualification-cleanup-2026-08-10.json`；新增 `renderer-v4-qualification-cleanup-final-2026-08-10.json` 汇总 13 条实际清理路径及两个 pre-holdout 失败证据来源。
+- [x] 主工作树未触碰，四个受保护未跟踪文件仍未修改、暂存或提交。
+- [x] 下一入口：阶段 8 只创建最终报告并做最终只读复核；不得重跑 Q 组、不得改协议/门限、不得进入 M9。
 
 ### 阶段 8：最终报告、链接/哈希校验、聚焦提交并停止
 
 最终报告必须最后创建，固定路径：
 
 `docs/ENGINE-RENDERER-PERFORMANCE-MEASUREMENT-QUALIFICATION-REPORT-2026-08-10.md`
+
+当前状态：进行中；阶段 8 仅剩最终报告、最终哈希/链接/状态复核和聚焦提交，完成后停止在 `WAITING_FOR_REVIEW`。
 
 报告必须包括：
 
@@ -380,8 +385,8 @@ Page 侧必须尝试记录：
 | 4 worktree/runner | 已完成 | 实际根 `...-2` 的 9 个新 worktree；007/f7 build equivalence 全部 equivalent；三次 pre-holdout 阻断及证据；阶段 1–4 专项 45/45；根级 v4 3/3；typecheck/node check/diff-check | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 5 Q1–Q5 holdout |
 | 5 holdout | 已完成 | 五个固定 Q artifact；每组官方 verifier `valid=true`；每组 2 warmups/40 raw；五组资格均 `not-qualified`；cleanup manifest stage=all-samples-written | `b8f53e5c18a98815ed42239220cfa289aec6ee00` | 6 全量门禁 |
 | 6 门禁/归并 | 已完成 | Renderer 46/325；Shell 12/98；v4 4/47；verify:tools 10/10；verify:all；边界/legacy；Renderer v2 E2E；Shell E2E；正式游戏 23/23、3 结局、44 资产、0 运行时错误；全部日志已保留 | `f13182f8e21a2ba9375927535c738ae0cc93946d` | 7 只清理本轮 worktree |
-| 7 清理 | 未开始 | cleanup manifest、worktree list 前后 | 待生成 | 8 报告 |
-| 8 报告/停止 | 未开始 | 最终报告、最终 status/log | 待生成 | `WAITING_FOR_REVIEW` |
+| 7 清理 | 已完成 | `renderer-v4-qualification-cleanup-2026-08-10.json`、`renderer-v4-qualification-cleanup-final-2026-08-10.json`；清理前后 `git worktree list --porcelain`；13 条本轮精确路径；三根目录注册数 0 | 待本阶段文档提交后填入 | 8 最终报告 |
+| 8 报告/停止 | 进行中 | 最终报告、Q/build/门禁证据哈希、最终 status/log；尚未创建最终报告 | 待生成 | `WAITING_FOR_REVIEW` |
 
 ## 阶段 0 自检与提交门槛
 
