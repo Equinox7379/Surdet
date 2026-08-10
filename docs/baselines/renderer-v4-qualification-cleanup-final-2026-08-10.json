@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "renderer-v4-qualification-cleanup-final",
+  "cleanedAt": "2026-08-10T12:19:29.996Z",
+  "tempRoots": [
+    "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10",
+    "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-1",
+    "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2"
+  ],
+  "worktreeCount": 13,
+  "worktrees": [
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q1-007-a-b-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": null,
+      "stage": "pre-holdout-failure",
+      "artifact": null,
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-build-collector-failure-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q1-007-a-b-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": null,
+      "stage": "pre-holdout-failure",
+      "artifact": null,
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-build-collector-failure-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-1\\q1-007-a-b-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": null,
+      "stage": "pre-holdout-failure",
+      "artifact": null,
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-1\\q1-007-a-b-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": null,
+      "stage": "pre-holdout-failure",
+      "artifact": null,
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q1-007-a-b-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:42:42.745Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q1-007-a-b-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q1-007-a-b",
+      "roles": [
+        {
+          "group": "q1-007-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:42:42.892Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q2-007-b-a-b",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q2-007-b-a",
+      "roles": [
+        {
+          "group": "q2-007-b-a",
+          "role": "baseline",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:46:21.571Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q2-007-b-a-a",
+      "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
+      "group": "q2-007-b-a",
+      "roles": [
+        {
+          "group": "q2-007-b-a",
+          "role": "current",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:46:21.685Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q3-f7-a-b-a",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q3-f7-a-b",
+      "roles": [
+        {
+          "group": "q3-f7-a-b",
+          "role": "baseline",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:50:10.097Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q3-f7-a-b-b",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q3-f7-a-b",
+      "roles": [
+        {
+          "group": "q3-f7-a-b",
+          "role": "current",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:50:10.243Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q4-f7-b-a-b",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q4-f7-b-a",
+      "roles": [
+        {
+          "group": "q4-f7-b-a",
+          "role": "baseline",
+          "label": "B"
+        }
+      ],
+      "createdAt": "2026-08-10T11:54:18.149Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q4-f7-b-a-a",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q4-f7-b-a",
+      "roles": [
+        {
+          "group": "q4-f7-b-a",
+          "role": "current",
+          "label": "A"
+        }
+      ],
+      "createdAt": "2026-08-10T11:54:18.282Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    },
+    {
+      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10-2\\q5-f7-same-root",
+      "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
+      "group": "q5-f7-same-root",
+      "roles": [
+        {
+          "group": "q5-f7-same-root",
+          "role": "baseline",
+          "label": "same-root"
+        },
+        {
+          "group": "q5-f7-same-root",
+          "role": "current",
+          "label": "same-root"
+        }
+      ],
+      "createdAt": "2026-08-10T11:58:01.491Z",
+      "stage": "cleaned",
+      "artifact": "docs/baselines/renderer-v4-q5-f7-same-root-2026-08-10.json",
+      "dirty": false,
+      "removed": true,
+      "cleaned": true,
+      "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+    }
+  ],
+  "sourceManifests": [
+    "docs/baselines/renderer-v4-qualification-cleanup-build-collector-failure-2026-08-10.json",
+    "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json",
+    "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
+  ],
+  "postCleanupRegisteredWorktreesUnderRoots": 0
+}
