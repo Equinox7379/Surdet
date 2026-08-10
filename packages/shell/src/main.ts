@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -11,6 +11,7 @@ import { writeCrashReport } from './crash-reporter.js';
 import { writeJsonAtomic } from './json-file.js';
 import { FileProfileStore } from './profile-store.js';
 import { assertProfileKey } from '@surdet/host';
+import { resolveWindowState, type WindowState } from './window-state.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -215,29 +216,25 @@ function registerAppIpc(): void {
   });
 }
 
-/** 窗口状态记忆：userData/window-state.json（位置/尺寸/全屏，跨会话恢复） */
-interface WindowState {
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-  fullScreen?: boolean;
-}
-
 function windowStatePath(): string {
   return path.join(app.getPath('userData'), 'window-state.json');
 }
 
 function loadWindowState(): WindowState {
+  let raw: unknown = null;
   try {
-    const s = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')) as WindowState;
-    if (typeof s.width === 'number' && typeof s.height === 'number' && s.width > 0 && s.height > 0) {
-      return s;
-    }
+    raw = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')) as unknown;
   } catch {
     /* 缺失/损坏 → 默认尺寸 */
   }
-  return { width: 1280, height: 720 };
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workAreas = [primaryDisplay, ...screen.getAllDisplays().filter((display) => display.id !== primaryDisplay.id)].map(({ workArea }) => ({
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
+  }));
+  return resolveWindowState(raw, workAreas);
 }
 
 function saveWindowState(win: BrowserWindow): void {
