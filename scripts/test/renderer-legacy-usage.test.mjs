@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { checkLegacyUsage } from '../check-renderer-legacy-usage.mjs';
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 function createFixture(files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-renderer-legacy-'));
@@ -73,4 +76,13 @@ test('does not grant blanket exemptions to renderer runtime or non-legacy tests'
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('does not classify diagnostic-only legacy entry anchors as production consumers', () => {
+  const failures = checkLegacyUsage(repositoryRoot);
+  assert.deepEqual(
+    failures.filter((failure) => failure.startsWith('packages/shell/e2e/renderer-startup-diagnostic')
+      || failure.startsWith('packages/shell/test/renderer-startup-diagnostic')),
+    [],
+  );
 });

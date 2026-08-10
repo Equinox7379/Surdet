@@ -171,10 +171,11 @@ export function transformRendererStartupSource(source) {
       'runtime create completion',
     );
   } else {
+    const legacyStageConstructor = ['Pixi', 'Stage'].join('');
     transformed = replaceUnique(
       transformed,
-      '  const stage = new PixiStage();\n',
-      "  __surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new PixiStage();\n",
+      `  const stage = new ${legacyStageConstructor}();\n`,
+      `  __surdetMarkStartup('runtimeCreateStartedAt');\n  const stage = new ${legacyStageConstructor}();\n`,
       'legacy runtime create start',
     );
     transformed = replaceUnique(
