@@ -657,8 +657,8 @@ WAITING_FOR_REVIEW
 - [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
 - [x] Task 3：指针消费、回退、界面隐藏。提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。Task 4 仍需处理独立 E2E 红灯。
 - [x] Task 4：合成层级与 title gallery 上下文。实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）；台账提交：`53a15f213bac21bd4f308974237d5193435e4f1a`。
-- [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；本阶段台账提交待本记录完成。
-- [ ] Task 6：对话框稳定性。提交：`PENDING`。
+- [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；台账提交：`8eacc4208a5db8015c531a096ee2138c2f43fae4`。
+- [x] Task 6：对话框稳定性。提交：`77b3bc5f22e62d5ec05808e7d7dac45d49caf607`（`fix(renderer): keep dialogue presentation stable between lines`）；本记录台账提交待完成。
 - [ ] Task 7：完整玩家 E2E 矩阵。提交：`PENDING`。
 - [ ] Task 8：全量门禁、报告、最终停止。提交：`PENDING`。
 
@@ -864,3 +864,43 @@ Task 4 门禁：
 - Task 5 实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）。本记录提交前 HEAD 为该 SHA，相对 `surdet/main` 为 `11 0`；提交本台账后预期为 `12 0`。
 - 受保护的 `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交；没有 push、force push、M9、性能测量/优化、性能 artifact/门限、发行、重打包、剧情/DSL/存档格式或美术音频变更。
 - Task 5 已按本记录完成并可进入下一阶段；下一入口为 Task 6：先为“开始新对话行时文本为空但面板保持可见”及连续 10 行无非法 `true → false → true` 建立红灯，随后再修改对话生命周期。不得跳过测试先行，也不得把本阶段以外的 UX 项提前宣称完成。
+
+### 6.7 Task 6 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T14:21:51+08:00` 至 `2026-08-11T14:56:37+08:00`（Asia/Shanghai）。本阶段只处理对话换行开始/显式清空的可见性语义，以及为真实玩家点击补充呈现提交屏障；未进入 Task 7。
+
+测试先行与原始红灯：
+
+- 在生产实现尚未增加 `beginText` / `clearText` 前，`dialogue-layer.test.ts` 新增断言因公开命令不存在而失败：`14 tests / 2 failed`，缺失 `beginText` 和 `clearText`。
+- 同一生产状态下，`presentation-controller.test.ts` 的控制器接线红灯：`10 tests / 1 failed`，期望 `stage.begins=[null]`，实际为空数组；合并专项为 `24 tests / 21 passed / 3 failed`。这些红灯均保留在执行记录中，随后由同一测试转绿。
+- 生产修复后，`npm run test -w @surdet/renderer -- --run test/legacy/dialogue-layer.test.ts test/legacy/presentation-controller.test.ts` 为 `2 files / 24 passed`。
+
+生产实现：
+
+- `DialogueLayer` 增加明确的 `beginText(speaker)` 与 `clearText()` 语义；`beginText` 在空文本阶段保持 panel 可见，`clearText` 才允许清空并隐藏；`#lineActive` 防止 `setAwaiting(false)` 在新行起始阶段制造空白帧。
+- `PresentationController` 在每条文本事件开始时先发出 `beginText`，仅在 reset/session clear 时发出 `clearText`；空说话人旁白、中文、扩展汉字和 emoji 仍走同一文本对象池与 Unicode 换行路径。
+- `renderer-commands.ts`、`presentation-ports.ts`、`PixiStageHost`、legacy adapter 与 `RendererFacade` 提供 additive 兼容接线；旧 `showText` 路径仍保留回退，不复制第二套剧情语义。
+- E2E 语义采样通过 `requestAnimationFrame` 记录每行 12 帧的 `panelVisible/dialogText/position`。诊断发现标题/鉴赏刚完成同步投影时，单个 RAF 仍可能早于 Pixi 命中变换提交；因此玩家 E2E 的 semantic click 增加两次连续 RAF 的目标前/动作后呈现屏障。这不是固定毫秒延时、debounce、hide/show 重试或生产代码修改。
+
+真实 Electron 证据（每次显式加载正式《零点之后》dist，独立临时 userData，真实鼠标/键盘）：
+
+- 在新增呈现屏障前的失败矩阵：`<local-path>`，SHA-256 `CC95DC7453F8AF562047D18299DCFA19208E6A076DB13159AACFE24D05466943`。UX-02 已通过；UX-01/UX-09 等后续失败是命中树/同会话链式等待失败，快照无 page error、console error、request failure、RendererError，且失败时 `uiSession.base=title`、`activeOverlay=title`，原始 JSON 未覆盖。
+- 修复后的完整 Task 6 矩阵：`<local-path>`，SHA-256 `15D62E3A19B9E907569C6F3AA19082D5D94BF882C97E04A4C627A25CEC0FACFB`，状态 `PASSED`。
+- 该轮通过：UX-02 连续 10 句逐帧无非法闪烁；标题鉴赏 5/5；同会话 save→load→save→load 三轮及 load→save→load→save 三轮；游戏鉴赏 3/3；读档后系统菜单回标题；空槽点击 5 次；backlog/rollback/hidden interface 对照路径。`pageErrors=[]`、`consoleErrors=[]`、`requestFailures=[]`、`releaseFailureEvidence=[]`。
+
+Task 6 门禁：
+
+- Renderer focused：2 个文件、`24/24` 通过。
+- `npm run typecheck -w @surdet/renderer`：退出码 `0`。
+- `npm run build -w @surdet/renderer`：退出码 `0`。
+- `node --check packages/shell/e2e/player-experience-wave-2.e2e.mjs`：通过。
+- `npm run e2e:player-experience -w @surdet/shell`：退出码 `0`（正式游戏矩阵状态 `PASSED`）。
+- `git diff --check` 与 staged diff check：通过；仅有 Git 的 LF→CRLF 提示，无 whitespace error。
+
+范围与提交：
+
+- Task 6 实现/测试/E2E 提交：`77b3bc5f22e62d5ec05808e7d7dac45d49caf607`（`fix(renderer): keep dialogue presentation stable between lines`）。
+- 本阶段未修改 DSL、存档格式、剧情、游戏规则、性能数据/门限、M9、发行物、美术或音频；未 push、未 force push、未 rebase、未 reset。
+- `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交、未删除。
+
+下一入口：先提交本记录台账，随后开始 Task 7 的完整玩家 E2E 矩阵固化；不得提前进入 Task 8 或发行。
