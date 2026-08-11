@@ -60,4 +60,14 @@ describe('Player Experience Wave 4 Electron contract', () => {
     expect(source).not.toContain('titleSelect(');
     expect(source).not.toContain('commands.gallery');
   });
+
+  it('records per-case identity and completed asset evidence', () => {
+    const source = fs.readFileSync(scriptPath, 'utf8');
+    expect(source).toContain('caseEvidence(');
+    expect(source).toContain('assetComplete');
+    expect(source).toContain('title: identity.title');
+    expect(source).toContain('sourceRoot: gameSourceRoot');
+    expect(source).toContain('distRoot: path.resolve(gameDist)');
+    expect(source).toContain('assetLoading: identity.assetLoading');
+  });
 });
