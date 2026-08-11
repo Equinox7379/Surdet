@@ -79,6 +79,13 @@ function pureInternals(): RendererRuntimeInternals & { observableSnapshot(): unk
       gallery: { overlay: { type: 'none' }, cgCount: 0, musicCount: 0, textCount: 0 },
       system: { overlay: { type: 'none' }, battleUnitCount: 0, mapNodeCount: 0, shopItemCount: 0, baseCommandCount: 0 },
       world: { activeSpeakerId: 'lynn', backgroundKey: 'night', particleKind: null },
+      themeProjection: {
+        dialogue: { visibleTextFills: [0xf2f6ff], visibleGraphicsColors: [0x5ac8ff] },
+        menu: { visibleTextFills: [0xf2f6ff], visibleGraphicsColors: [0x5ac8ff] },
+        gallery: { visibleTextFills: [], visibleGraphicsColors: [] },
+        system: { visibleTextFills: [], visibleGraphicsColors: [] },
+        loading: { visibleTextFills: [], visibleGraphicsColors: [] },
+      },
     }),
     observableSnapshot: () => ({ ...state }),
   };
@@ -104,6 +111,13 @@ describe('Renderer v2 query purity', () => {
     expect(Object.isFrozen(projection.system)).toBe(true);
     expect(Object.isFrozen(projection.system?.overlay)).toBe(true);
     expect(Object.isFrozen(projection.world)).toBe(true);
+    expect(Object.isFrozen(projection.themeProjection)).toBe(true);
+    expect(Object.isFrozen(projection.themeProjection?.dialogue)).toBe(true);
+    expect(Object.isFrozen(projection.themeProjection?.dialogue.visibleTextFills)).toBe(true);
+    const mutableThemeProjection = projection.themeProjection!.dialogue as unknown as { visibleTextFills: number[] };
+    expect(() => mutableThemeProjection.visibleTextFills.push(0xdeadbe)).toThrow();
+    expect(runtime.queries.diagnostics.projectionSnapshot().themeProjection?.dialogue.visibleTextFills)
+      .toEqual([0xf2f6ff]);
     const mutableDialogue = projection.dialogue as unknown as { choiceLabels: string[]; dialogText: string };
     expect(() => mutableDialogue.choiceLabels.push('宿主篡改')).toThrow();
     expect(() => { mutableDialogue.dialogText = '宿主篡改'; }).toThrow();
@@ -136,6 +150,7 @@ describe('Renderer v2 query purity', () => {
     const projection = runtime.queries.diagnostics.projectionSnapshot();
 
     expect(Object.isFrozen(source)).toBe(false);
+    expect(Object.isFrozen(source.themeProjection)).toBe(false);
     expect(projection).not.toBe(source);
     expect(Object.isFrozen(projection)).toBe(true);
     expect(Object.isFrozen(projection.dialogue)).toBe(true);
