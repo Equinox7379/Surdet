@@ -172,4 +172,93 @@ describe('public player UI coordination', () => {
     expect(() => session.closeOverlay()).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
     expect(() => session.dismissOverlays()).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
   });
+
+  it.each([
+    ['invalid root base', { base: 'corrupt', overlay: 'none' }],
+    ['invalid root overlay', { base: 'game', overlay: 'alien' }],
+    ['invalid interfaceHidden type', { base: 'game', overlay: 'none', interfaceHidden: 'false' }],
+    ['invalid videoActive type', { base: 'game', overlay: 'none', videoActive: 0 }],
+  ])('rejects %s in restore with the public transition error', (_label, overrides) => {
+    const session = createPlayerUiSession({ base: 'game' });
+    const before = session.snapshot();
+    const invalid = {
+      ...before,
+      ...overrides,
+    } as unknown as PlayerUiSessionSnapshot;
+
+    expect(() => session.restore(invalid)).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(session.snapshot()).toBe(before);
+    expect(session.snapshot()).toEqual(before);
+  });
+
+  it.each([
+    ['null snapshot', null],
+    ['array snapshot', []],
+    ['null return frame', { base: 'game', overlay: 'none', returnStack: [null] }],
+    ['invalid return frame', { base: 'game', overlay: 'none', returnStack: [{ base: 'corrupt', overlay: 'none' }] }],
+  ])('rejects %s without leaking a native TypeError', (_label, value) => {
+    const session = createPlayerUiSession({ base: 'game' });
+    const before = session.snapshot();
+    const invalid = value === null || Array.isArray(value)
+      ? value
+      : {
+        ...before,
+        ...value,
+      };
+
+    expect(() => session.restore(invalid as unknown as PlayerUiSessionSnapshot))
+      .toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(session.snapshot()).toBe(before);
+  });
+
+  it('preserves an operation origin when an invalid restore is rejected', () => {
+    const session = createPlayerUiSession({ base: 'game' });
+    const origin = session.snapshot();
+    session.beginOperation('loading');
+    const before = session.snapshot();
+
+    const invalid = {
+      ...before,
+      base: 'corrupt',
+      operation: 'idle',
+    } as unknown as PlayerUiSessionSnapshot;
+    expect(() => session.restore(invalid)).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(session.snapshot()).toBe(before);
+    expect(session.failOperation()).toBe(origin);
+  });
+
+  it('validates constructor input and every final commit without partial writes', () => {
+    expect(() => createPlayerUiSession({ base: 'corrupt' as 'title' })).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(() => createPlayerUiSession({ overlay: 'alien' as PlayerOverlay })).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+
+    const session = createPlayerUiSession({ base: 'game' });
+    session.beginOperation('saving');
+    expect(() => session.completeOperation({ overlay: 'alien' as PlayerOverlay }))
+      .toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(session.snapshot().operation).toBe('saving');
+    expect(session.failOperation().operation).toBe('idle');
+  });
+
+  it('restores a valid nested idle snapshot as an independent frozen value', () => {
+    const session = createPlayerUiSession({ base: 'title' });
+    const input = {
+      base: 'game',
+      overlay: 'settings',
+      operation: 'idle',
+      interfaceHidden: false,
+      videoActive: false,
+      returnStack: [
+        { base: 'game', overlay: 'none' },
+        { base: 'game', overlay: 'system-menu' },
+      ],
+    } as const;
+
+    const restored = session.restore(input);
+    expect(restored).toEqual(input);
+    expect(Object.isFrozen(restored)).toBe(true);
+    expect(Object.isFrozen(restored.returnStack)).toBe(true);
+    expect(restored.returnStack.every((frame) => Object.isFrozen(frame))).toBe(true);
+    expect(restored.returnStack).not.toBe(input.returnStack);
+    expect(restored.returnStack[0]).not.toBe(input.returnStack[0]);
+  });
 });
