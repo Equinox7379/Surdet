@@ -189,6 +189,7 @@ export function createPresentationPorts(
     showCommandRail: (items, onSelect) => stage.showCommandRail?.([...items], onSelect),
     setCommandRailItems: (items) => stage.setCommandRailItems?.([...items]),
     hideCommandRail: () => stage.hideCommandRail?.(),
+    restoreCommandRail: () => stage.restoreCommandRail?.(),
   };
 
   const menuCommands: RendererCommands['menu'] = {

@@ -146,8 +146,10 @@ async function launchSession(caseId) {
           position: d?.position ?? null,
           uiSession: d?.uiSession ?? null,
           activeOverlay: d?.activeOverlay ?? null,
-          commandRailVisible: d?.commandRailVisible ?? null,
           dialogueProjection: d?.dialogueProjection ?? null,
+          // This must come from the Renderer projection, not the host's
+          // PlayerUiSession-derived expectation.
+          commandRailVisible: d?.dialogueProjection?.commandRailVisible ?? null,
           resources: d?.resourceSnapshot ?? null,
           lastRendererError: d?.lastRendererError ?? null,
           assetLoading: d?.assetLoading ?? null,

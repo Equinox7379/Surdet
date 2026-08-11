@@ -105,6 +105,7 @@ export interface DialogueCommands {
   showCommandRail(items: readonly CommandRailItem[], onSelect: (id: string) => void): void;
   setCommandRailItems(items: readonly CommandRailItem[]): void;
   hideCommandRail(): void;
+  restoreCommandRail(): void;
 }
 
 /**
@@ -120,6 +121,27 @@ export interface DialogueProjectionPort extends DialogueCommands {
   readonly projectionVersion: number;
 }
 
+export type SaveLoadSelectionResult = void | boolean | Promise<void | boolean>;
+export type SaveLoadSelectionHandler = (slotId: string) => SaveLoadSelectionResult;
+export type SaveLoadCompletionStrategy = 'legacy-sync' | 'host-transaction';
+
+/**
+ * Save/load completion policy.
+ *
+ * `legacy-sync` is the one-version compatibility default for existing callers
+ * whose callbacks finish synchronously.  New hosts must explicitly choose
+ * `host-transaction` and return a Promise whose settlement represents the
+ * complete storage transaction; the renderer never infers async work from a
+ * void or boolean return value.
+ */
+export interface SaveLoadCommandOptions {
+  readonly completion?: SaveLoadCompletionStrategy;
+  /** Receives an unhandled host-transaction failure without hiding it. */
+  readonly onTransactionError?: (error: unknown) => void;
+  /** Invoked after the renderer has hidden a successfully completed page. */
+  readonly onTransactionComplete?: () => void;
+}
+
 export interface MenuCommands {
   showTitle(view: TitleView, onSelect: (id: string) => void): void;
   hideTitle(restoreCommandRail?: boolean): void;
@@ -129,7 +151,12 @@ export interface MenuCommands {
   hideSystemMenu(): void;
   showSettings(rows: readonly SettingsRowView[], onChange: (id: string, direction: -1 | 1) => void, onClose: () => void): void;
   hideSettings(): void;
-  showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void;
+  showSaveLoad(
+    view: SaveLoadView,
+    onSelect: SaveLoadSelectionHandler,
+    onClose: () => void,
+    options?: SaveLoadCommandOptions,
+  ): void;
   hideSaveLoad(): void;
 }
 

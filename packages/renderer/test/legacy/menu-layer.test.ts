@@ -566,6 +566,82 @@ describe('MenuLayer projection and lifecycle contract', () => {
     }
   });
 
+  it('keeps the save/load page and suppressed rail pending an explicit host transaction', async () => {
+    const runtime = makeRealMenuRuntime();
+    let resolveTransaction!: (accepted: boolean) => void;
+    const transaction = new Promise<boolean>((resolve) => { resolveTransaction = resolve; });
+    const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
+      view: SaveLoadView,
+      onSelect: (slotId: string) => Promise<boolean>,
+      onClose: () => void,
+      options: unknown,
+    ) => void;
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-1', empty: true }] },
+        () => transaction,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionComplete: runtime.restoreCommandRail },
+      );
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+
+      // A pending transaction owns the page; a close click cannot create a
+      // hidden page + busy host half-state or restore the rail early.
+      findText(runtime.root, '×').emit('pointerdown', pointerEvent);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+
+      resolveTransaction(true);
+      await transaction;
+      await Promise.resolve();
+
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('reports a rejected host transaction without hiding or restoring the pending page', async () => {
+    const runtime = makeRealMenuRuntime();
+    let rejectTransaction!: (error: unknown) => void;
+    const failure = new Error('bridge write denied');
+    const transaction = new Promise<boolean>((_resolve, reject) => { rejectTransaction = reject; });
+    const onTransactionError = vi.fn();
+    const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
+      view: SaveLoadView,
+      onSelect: (slotId: string) => Promise<boolean>,
+      onClose: () => void,
+      options: unknown,
+    ) => void;
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-1', empty: true }] },
+        () => transaction,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionError },
+      );
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      rejectTransaction(failure);
+      await expect(transaction).rejects.toBe(failure);
+      await Promise.resolve();
+
+      expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledWith(failure);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
   it('guards the save/load close button while preserving the underlying menu', () => {
     const runtime = makeRealMenuRuntime();
     const onClose = vi.fn();

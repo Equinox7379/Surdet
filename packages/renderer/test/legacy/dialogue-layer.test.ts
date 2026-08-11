@@ -282,6 +282,16 @@ describe('DialogueLayer v2 projection contract', () => {
       expect(panel.visible).toBe(false);
       layer.reset();
       expect(panel.visible).toBe(false);
+
+      layer.showCommandRail([{ id: 'menu', label: '菜单' }], () => undefined);
+      expect(layer.debugSnapshot().commandRailVisible).toBe(true);
+      expect(layer.debugSnapshot().commandRailSuppressed).toBe(false);
+      layer.hideCommandRail();
+      expect(layer.debugSnapshot().commandRailVisible).toBe(false);
+      expect(layer.debugSnapshot().commandRailSuppressed).toBe(true);
+      layer.restoreCommandRail();
+      expect(layer.debugSnapshot().commandRailVisible).toBe(true);
+      expect(layer.debugSnapshot().commandRailSuppressed).toBe(false);
     } finally {
       layer.dispose();
       assets.dispose();

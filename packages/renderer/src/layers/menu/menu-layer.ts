@@ -6,7 +6,13 @@ import {
   Texture,
   type TextStyleOptions,
 } from 'pixi.js';
-import type { MenuProjectionPort, RendererFontRole } from '../../api/renderer-commands.js';
+import type {
+  MenuProjectionPort,
+  RendererFontRole,
+  SaveLoadCommandOptions,
+  SaveLoadSelectionHandler,
+  SaveLoadSelectionResult,
+} from '../../api/renderer-commands.js';
 import type { MenuOverlayState } from '../../api/renderer-queries.js';
 import { DEFAULT_PRESENTATION_PREFERENCES, presentationDuration, type PresentationPreferences } from '../../presentation.js';
 import type { FrameRequestHandler } from '../../types.js';
@@ -53,6 +59,10 @@ interface MenuHandlers {
   readonly onClose: () => void;
 }
 
+function isPromiseLike(value: SaveLoadSelectionResult): value is Promise<void | boolean> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function';
+}
+
 interface ThumbnailEntry {
   readonly texture: Texture;
   readonly dispose: () => void;
@@ -94,7 +104,9 @@ export class MenuLayer implements MenuProjectionPort {
   #settingsRows: SettingsRowView[] = [];
   #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
   #saveLoadLayer: Container;
-  #saveLoadHandlers: { onSelect: (slotId: string) => void | boolean; onClose: () => void } | null = null;
+  #saveLoadHandlers: { onSelect: SaveLoadSelectionHandler; onClose: () => void } | null = null;
+  #saveLoadOptions: SaveLoadCommandOptions = {};
+  #saveLoadTransactionPending = false;
   #saveLoadMode: 'save' | 'load' | null = null;
   #saveLoadSlotCount = 0;
   #thumbCache = new Map<string, ThumbnailEntry>();
@@ -526,17 +538,27 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsRows = [];
   }
 
-  showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
+  showSaveLoad(
+    view: SaveLoadView,
+    onSelect: SaveLoadSelectionHandler,
+    onClose: () => void,
+    options: SaveLoadCommandOptions = {},
+  ): void {
     if (this.#disposed) return;
     this.#requestFrame();
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
     this.#saveLoadHandlers = { onSelect, onClose };
+    this.#saveLoadOptions = options;
     this.#saveLoadMode = view.mode;
     this.#saveLoadSlotCount = view.slots.length;
     const layer = this.#saveLoadLayer;
     const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x02060d, alpha: 0.84 });
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
+      if (this.#saveLoadTransactionPending) {
+        this.#onPointerConsumed?.();
+        return;
+      }
       const handler = this.#saveLoadHandlers?.onClose;
       this.hideSaveLoad();
       handler?.();
@@ -564,6 +586,10 @@ export class MenuLayer implements MenuProjectionPort {
     close.on('pointerover', () => { close.style = { fontSize: 30, fill: 0xffffff } satisfies TextStyleOptions; });
     close.on('pointerout', () => { close.style = { fontSize: 30, fill: 0x8aa2b5 } satisfies TextStyleOptions; });
     close.on('pointerdown', () => {
+      if (this.#saveLoadTransactionPending) {
+        this.#onPointerConsumed?.();
+        return;
+      }
       const handler = this.#saveLoadHandlers?.onClose;
       this.hideSaveLoad();
       handler?.();
@@ -641,10 +667,35 @@ export class MenuLayer implements MenuProjectionPort {
           const handler = this.#saveLoadHandlers?.onSelect;
           try {
             const accepted = handler?.(slot.id);
+            if (this.#saveLoadOptions.completion === 'host-transaction') {
+              if (!isPromiseLike(accepted)) {
+                throw new Error('host-transaction save/load handlers must return a Promise');
+              }
+              this.#saveLoadTransactionPending = true;
+              void Promise.resolve(accepted).then(
+                (result) => {
+                  this.#saveLoadTransactionPending = false;
+                  if (result !== false) {
+                    const onComplete = this.#saveLoadOptions.onTransactionComplete;
+                    this.hideSaveLoad();
+                    onComplete?.();
+                  }
+                },
+                (error) => {
+                  this.#saveLoadTransactionPending = false;
+                  this.#handleSaveLoadTransactionError(error);
+                },
+              );
+              return;
+            }
             if (accepted !== false) this.hideSaveLoad();
           } catch (error) {
-            this.hideSaveLoad();
-            throw error;
+            if (this.#saveLoadOptions.completion === 'host-transaction') {
+              this.#handleSaveLoadTransactionError(error);
+            } else {
+              this.hideSaveLoad();
+              throw error;
+            }
           }
         });
       } else {
@@ -670,6 +721,8 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
     this.#saveLoadLayer.visible = false;
     this.#saveLoadHandlers = null;
+    this.#saveLoadOptions = {};
+    this.#saveLoadTransactionPending = false;
     this.#saveLoadMode = null;
     this.#saveLoadSlotCount = 0;
   }
@@ -704,6 +757,8 @@ export class MenuLayer implements MenuProjectionPort {
     this.#menuHandlers = null;
     this.#settingsHandlers = null;
     this.#saveLoadHandlers = null;
+    this.#saveLoadOptions = {};
+    this.#saveLoadTransactionPending = false;
     this.#saveLoadMode = null;
     this.#titleItemCount = 0;
     this.#systemMenuItemCount = 0;
@@ -716,6 +771,17 @@ export class MenuLayer implements MenuProjectionPort {
       }
       if (this.#ownsLifecycle) this.#lifecycle.dispose();
     }
+  }
+
+  #handleSaveLoadTransactionError(error: unknown): void {
+    const report = this.#saveLoadOptions.onTransactionError;
+    if (report) {
+      report(error);
+      return;
+    }
+    // Do not silently consume a rejected transaction.  Without an explicit
+    // host error boundary, rethrow on the microtask so the shell reports it.
+    queueMicrotask(() => { throw error; });
   }
 
   #registerDisplay(key: string, layer: Container): void {
