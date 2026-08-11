@@ -65,34 +65,96 @@ function freezeReturnStack(
 
 function freezeSnapshot(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
   return Object.freeze({
-    ...snapshot,
+    base: snapshot.base,
+    overlay: snapshot.overlay,
+    operation: snapshot.operation,
+    interfaceHidden: snapshot.interfaceHidden,
+    videoActive: snapshot.videoActive,
     returnStack: freezeReturnStack(snapshot.returnStack),
   });
 }
 
-function validateSnapshot(snapshot: PlayerUiSessionSnapshot): void {
+const PLAYER_BASES: readonly PlayerBase[] = ['title', 'game'];
+const PLAYER_OVERLAYS: readonly PlayerOverlay[] = [
+  'none',
+  'system-menu',
+  'save-load',
+  'settings',
+  'gallery',
+  'backlog',
+];
+const PLAYER_OPERATIONS: readonly PlayerOperation[] = [
+  'idle',
+  'saving',
+  'loading',
+  'returning-title',
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isPlayerBase(value: unknown): value is PlayerBase {
+  return typeof value === 'string' && PLAYER_BASES.includes(value as PlayerBase);
+}
+
+function isPlayerOverlay(value: unknown): value is PlayerOverlay {
+  return typeof value === 'string' && PLAYER_OVERLAYS.includes(value as PlayerOverlay);
+}
+
+function isPlayerOperation(value: unknown): value is PlayerOperation {
+  return typeof value === 'string' && PLAYER_OPERATIONS.includes(value as PlayerOperation);
+}
+
+function validateSnapshot(snapshot: unknown): asserts snapshot is PlayerUiSessionSnapshot {
+  if (!isRecord(snapshot)) {
+    throw transitionError('snapshot must be a non-null object');
+  }
+  for (const field of [
+    'base',
+    'overlay',
+    'operation',
+    'interfaceHidden',
+    'videoActive',
+    'returnStack',
+  ]) {
+    if (!hasOwn(snapshot, field)) {
+      throw transitionError(`snapshot is missing ${field}`);
+    }
+  }
+  if (!isPlayerBase(snapshot.base)) {
+    throw transitionError(`unknown base=${String(snapshot.base)}`);
+  }
+  if (!isPlayerOverlay(snapshot.overlay)) {
+    throw transitionError(`unknown overlay=${String(snapshot.overlay)}`);
+  }
+  if (!isPlayerOperation(snapshot.operation)) {
+    throw transitionError(`unknown operation=${String(snapshot.operation)}`);
+  }
+  if (typeof snapshot.interfaceHidden !== 'boolean') {
+    throw transitionError('interfaceHidden must be a boolean');
+  }
+  if (typeof snapshot.videoActive !== 'boolean') {
+    throw transitionError('videoActive must be a boolean');
+  }
   if (snapshot.interfaceHidden && (snapshot.base !== 'game' || snapshot.overlay !== 'none')) {
     throw transitionError('interfaceHidden requires base=game and overlay=none');
-  }
-  if (snapshot.operation !== 'idle'
-    && snapshot.operation !== 'saving'
-    && snapshot.operation !== 'loading'
-    && snapshot.operation !== 'returning-title') {
-    throw transitionError(`unknown operation=${String(snapshot.operation)}`);
   }
   if (!Array.isArray(snapshot.returnStack)) {
     throw transitionError('returnStack must be an array');
   }
-  for (const frame of snapshot.returnStack) {
-    if (frame.base !== 'title' && frame.base !== 'game') {
+  for (const [index, frame] of snapshot.returnStack.entries()) {
+    if (!isRecord(frame)) {
+      throw transitionError(`returnStack[${index}] must be a non-null object`);
+    }
+    if (!isPlayerBase(frame.base)) {
       throw transitionError(`unknown return frame base=${String(frame.base)}`);
     }
-    if (frame.overlay !== 'none'
-      && frame.overlay !== 'system-menu'
-      && frame.overlay !== 'save-load'
-      && frame.overlay !== 'settings'
-      && frame.overlay !== 'gallery'
-      && frame.overlay !== 'backlog') {
+    if (!isPlayerOverlay(frame.overlay)) {
       throw transitionError(`unknown return frame overlay=${String(frame.overlay)}`);
     }
   }
@@ -218,16 +280,17 @@ export class PlayerUiSession {
     if (this.#snapshot.operation !== 'idle') {
       throw transitionError(`begin-operation requires operation=idle, got ${this.#snapshot.operation}`);
     }
-    this.#operationOrigin = this.#snapshot;
-    return this.#commit({ ...this.#snapshot, operation });
+    const origin = this.#snapshot;
+    const next = this.#commit({ ...this.#snapshot, operation });
+    this.#operationOrigin = origin;
+    return next;
   }
 
   completeOperation(options: CompletePlayerOperationOptions = {}): PlayerUiSessionSnapshot {
     if (this.#snapshot.operation === 'idle') {
       throw transitionError('complete-operation requires a busy operation');
     }
-    this.#operationOrigin = null;
-    return this.#commit({
+    const next = this.#commit({
       ...this.#snapshot,
       base: options.base ?? this.#snapshot.base,
       overlay: options.overlay ?? 'none',
@@ -236,6 +299,8 @@ export class PlayerUiSession {
       videoActive: options.videoActive ?? false,
       returnStack: [],
     });
+    this.#operationOrigin = null;
+    return next;
   }
 
   failOperation(): PlayerUiSessionSnapshot {
@@ -257,15 +322,16 @@ export class PlayerUiSession {
    * re-frozen before it becomes session state.
    */
   restore(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
+    validateSnapshot(snapshot);
     if (snapshot.operation !== 'idle') {
       throw transitionError('restore requires an idle snapshot');
     }
-    validateSnapshot(snapshot);
-    this.#operationOrigin = null;
-    return this.#commit({
+    const next = this.#commit({
       ...snapshot,
       returnStack: snapshot.returnStack.map((frame) => ({ ...frame })),
     });
+    this.#operationOrigin = null;
+    return next;
   }
 
   setInterfaceHidden(hidden: boolean): PlayerUiSessionSnapshot {
@@ -285,8 +351,7 @@ export class PlayerUiSession {
   }
 
   reset(base: PlayerBase = 'title'): PlayerUiSessionSnapshot {
-    this.#operationOrigin = null;
-    return this.#commit({
+    const next = this.#commit({
       base,
       overlay: 'none',
       operation: 'idle',
@@ -294,6 +359,8 @@ export class PlayerUiSession {
       videoActive: false,
       returnStack: [],
     });
+    this.#operationOrigin = null;
+    return next;
   }
 
   #currentFrame(): PlayerOverlayFrame {
