@@ -65,6 +65,8 @@ export interface DialogueProjectionSnapshot {
   readonly rubyBaseCount: number;
   readonly rubyTextCount: number;
   readonly backlogVisible: boolean;
+  /** True when the real Backlog overlay root renders above dialogue text. */
+  readonly backlogAboveDialogueText: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
 }

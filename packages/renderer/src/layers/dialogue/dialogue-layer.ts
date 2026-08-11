@@ -48,6 +48,7 @@ export interface DialogueLayerDebugSnapshot {
   readonly rubyBaseCount: number;
   readonly rubyTextCount: number;
   readonly backlogVisible: boolean;
+  readonly backlogAboveDialogueText: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
 }
@@ -102,8 +103,10 @@ export class DialogueLayer implements DialogueProjectionPort {
   readonly owner = 'dialogue' as const;
 
   readonly #root: Container;
-  /** Dialogue-owned composition root; sibling overlays remain above this node. */
+  /** Dialogue-owned normal content root; sibling overlays remain above this node. */
   readonly #dialogueRoot: Container;
+  /** Dialogue-owned overlay root; Backlog is always above normal dialogue content. */
+  readonly #dialogueOverlayRoot: Container;
   readonly #w: number;
   readonly #h: number;
   readonly #assets: RenderAssetRegistry;
@@ -171,6 +174,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   constructor(options: DialogueLayerOptions) {
     this.#root = options.uiLayer;
     this.#dialogueRoot = new Container();
+    this.#dialogueOverlayRoot = new Container();
     this.#w = options.width;
     this.#h = options.height;
     this.#assets = options.assets;
@@ -180,7 +184,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#onPointerConsumed = options.onPointerConsumed ?? null;
     if (options.preferences) this.#preferences = { ...options.preferences };
 
-    this.#root.addChild(this.#dialogueRoot);
+    this.#root.addChild(this.#dialogueRoot, this.#dialogueOverlayRoot);
 
     this.#choiceLayer = new Container();
     this.#commandRail = new Container();
@@ -306,6 +310,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
       rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,
       backlogVisible: this.#backlogLayer.visible,
+      backlogAboveDialogueText: this.#backlogAboveDialogueText(),
       nvlActive: this.#nvlActive,
       nvlLines: this.#nvlLines.map((line) => String(line.text)),
     };
@@ -830,6 +835,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       }
       if (this.#dialogueRoot.parent) this.#dialogueRoot.parent.removeChild(this.#dialogueRoot);
       this.#dialogueRoot.destroy({ children: false });
+      if (this.#dialogueOverlayRoot.parent) this.#dialogueOverlayRoot.parent.removeChild(this.#dialogueOverlayRoot);
+      this.#dialogueOverlayRoot.destroy({ children: false });
       if (this.#ownsLifecycle) this.#lifecycle.dispose();
     }
   }
@@ -843,12 +850,19 @@ export class DialogueLayer implements DialogueProjectionPort {
       ['continue-indicator', this.#continueIndicator],
       ['choice-layer', this.#choiceLayer],
       ['command-rail', this.#commandRail],
-      ['backlog-layer', this.#backlogLayer],
       ['nvl-layer', this.#nvlLayer],
       ['banner-layer', this.#bannerLayer],
     ];
     this.#dialogueRoot.addChild(...displays.map(([, display]) => display as unknown as Container));
     for (const [key, display] of displays) this.#registerDisplay(key, display);
+    this.#dialogueOverlayRoot.addChild(this.#backlogLayer);
+    this.#registerDisplay('backlog-layer', this.#backlogLayer);
+  }
+
+  #backlogAboveDialogueText(): boolean {
+    if (this.#dialogueRoot.parent !== this.#root || this.#dialogueOverlayRoot.parent !== this.#root) return false;
+    return this.#root.getChildIndex(this.#dialogueOverlayRoot) > this.#root.getChildIndex(this.#dialogueRoot)
+      && this.#backlogLayer.parent === this.#dialogueOverlayRoot;
   }
 
   #registerDisplay(key: string, display: DestroyableDisplay): void {
