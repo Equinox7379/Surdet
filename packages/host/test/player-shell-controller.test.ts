@@ -211,6 +211,7 @@ type ProjectionHarnessOptions = {
 type ProjectionState = {
   visibleSlot: PlayerShellSlotId | null;
   visibleRequest: PlayerShellOpenRequest | null;
+  visibleSlots: Set<PlayerShellSlotId>;
   openCalls: Map<PlayerShellSlotId, number>;
   closeCalls: Map<PlayerShellSlotId, number>;
 };
@@ -219,6 +220,7 @@ function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
   const state: ProjectionState = {
     visibleSlot: null,
     visibleRequest: null,
+    visibleSlots: new Set(),
     openCalls: new Map(),
     closeCalls: new Map(),
   };
@@ -232,6 +234,7 @@ function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
         && options.openFailure.afterSideEffect) {
         state.visibleSlot = slot;
         state.visibleRequest = request;
+        state.visibleSlots.add(slot);
         throw options.openFailure.cause;
       }
       if (options.openFailure?.slot === slot
@@ -240,6 +243,7 @@ function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
       }
       state.visibleSlot = slot;
       state.visibleRequest = request;
+      state.visibleSlots.add(slot);
     },
     close() {
       const call = (state.closeCalls.get(slot) ?? 0) + 1;
@@ -249,6 +253,7 @@ function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
         && options.closeFailure.afterSideEffect) {
         state.visibleSlot = null;
         state.visibleRequest = null;
+        state.visibleSlots.delete(slot);
         throw options.closeFailure.cause;
       }
       if (options.closeFailure?.slot === slot
@@ -259,6 +264,7 @@ function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
         state.visibleSlot = null;
         state.visibleRequest = null;
       }
+      state.visibleSlots.delete(slot);
     },
   }])) as Record<PlayerShellSlotId, PlayerShellSlotProvider>;
   const session = createPlayerUiSession(options.initial ?? { base: 'game' });
@@ -362,5 +368,103 @@ describe('PlayerShellController provider projection atomicity', () => {
     expect(() => controller.commands.close()).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
     expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', returnStack: [] });
     expect(state.visibleSlot).toBeNull();
+  });
+
+  it('reset closes every real projection before converging the session and starts a fresh stack', () => {
+    const { controller, state } = makeProjectionHarness();
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+
+    controller.commands.reset('title');
+
+    expect(controller.queries.snapshot()).toMatchObject({
+      base: 'title',
+      overlay: 'none',
+      operation: 'idle',
+      returnStack: [],
+    });
+    expect(state.visibleSlot).toBeNull();
+    expect(state.visibleSlots).toEqual(new Set());
+    expect(state.closeCalls.get('settings')).toBe(1);
+    expect(state.closeCalls.get('system-menu')).toBe(1);
+
+    controller.commands.open({ slot: 'gallery', source: 'title' });
+    controller.commands.close();
+    expect(state.visibleSlots).toEqual(new Set());
+
+    controller.commands.reset('game');
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    controller.commands.close();
+    controller.commands.close();
+    controller.commands.reset('game');
+    expect(state.visibleSlots).toEqual(new Set());
+  });
+
+  it('does not claim reset success when a provider close fails and allows a safe retry', () => {
+    const cause = new Error('settings reset close failed');
+    const { controller, state } = makeProjectionHarness({
+      closeFailure: { slot: 'settings', call: 1, cause },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const origin = controller.queries.snapshot();
+
+    const error = thrownError(() => controller.commands.reset('title'));
+
+    expect(error).toBeInstanceOf(PlayerShellSlotError);
+    expect((error as PlayerShellSlotError).cause).toBe(cause);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('settings');
+    expect(state.visibleSlots).toEqual(new Set(['system-menu', 'settings']));
+
+    controller.commands.reset('title');
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'title', overlay: 'none', returnStack: [] });
+    expect(state.visibleSlots).toEqual(new Set());
+  });
+
+  it('preserves every cause when reset cleanup and compensation both fail', () => {
+    const closeCause = new Error('system menu reset close failed after side effect');
+    const compensationCause = new Error('system menu reset compensation failed');
+    const { controller, state } = makeProjectionHarness({
+      closeFailure: { slot: 'system-menu', call: 1, cause: closeCause, afterSideEffect: true },
+      openFailure: { slot: 'system-menu', call: 2, cause: compensationCause },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const origin = controller.queries.snapshot();
+
+    const error = thrownError(() => controller.commands.reset('title'));
+
+    expect(error).toBeInstanceOf(PlayerShellSlotError);
+    const aggregate = (error as PlayerShellSlotError).cause;
+    expect(aggregate).toBeInstanceOf(AggregateError);
+    expect((aggregate as AggregateError).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ cause: closeCause }),
+      expect.objectContaining({ cause: compensationCause }),
+    ]));
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlots).toEqual(new Set(['settings']));
+  });
+
+  it('closes stale projections before direct title convergence and completeOperation', () => {
+    const { controller, state } = makeProjectionHarness();
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    controller.commands.open({ slot: 'title', source: 'game' });
+
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'title', overlay: 'none', returnStack: [] });
+    expect(state.visibleSlots).toEqual(new Set(['title']));
+    expect(state.closeCalls.get('settings')).toBe(1);
+    expect(state.closeCalls.get('system-menu')).toBe(1);
+
+    controller.commands.reset('game');
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'save-load', source: 'system-menu', mode: 'load' });
+    controller.commands.beginOperation('loading');
+    controller.commands.completeOperation({ base: 'game', overlay: 'none' });
+
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', operation: 'idle', returnStack: [] });
+    expect(state.visibleSlots).toEqual(new Set());
   });
 });
