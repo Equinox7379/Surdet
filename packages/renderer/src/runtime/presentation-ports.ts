@@ -32,7 +32,7 @@ import { createRendererTheme, type RendererTheme } from '../theme.js';
 export interface PresentationStage extends
   Partial<WorldCommands>,
   Partial<Omit<DialogueCommands, 'showChoices' | 'setSpeakerProfiles' | 'showCommandRail' | 'setCommandRailItems'>>,
-  Partial<PreferenceCommands>,
+  Partial<Omit<PreferenceCommands, 'setTheme'>>,
   Partial<LoadingCommands> {
   showChoices?: (options: ChoiceOptionView[]) => void;
   setSpeakerProfiles?: (profiles: SpeakerProfile[]) => void;
@@ -59,6 +59,7 @@ export interface PresentationStage extends
   snapshotPresentation?: () => unknown;
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
+  setTheme?: (theme: RendererTheme) => void;
 }
 
 interface PresentationPortStage extends PresentationStage {
@@ -237,7 +238,10 @@ export function createPresentationPorts(
     setQuality: (quality) => { if (options.worldLayer) options.worldLayer.setQuality(quality); else stage.setQuality?.(quality); },
     setPresentationPreferences: (preferences) => { if (options.worldLayer) options.worldLayer.setPresentationPreferences(preferences); else stage.setPresentationPreferences?.(preferences); },
     setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
-    setTheme: (overrides) => { theme = createRendererTheme(overrides); },
+    setTheme: (overrides) => {
+      theme = createRendererTheme(overrides);
+      stage.setTheme?.(theme);
+    },
   };
 
   const validateStagePresentation = options.worldLayer?.validatePresentation

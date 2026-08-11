@@ -15,7 +15,7 @@ import type {
   SpeakerProfile,
 } from '../types.js';
 import type { ShakeDirection, TransitionName } from '../world-effects-controller.js';
-import type { RendererThemeOverrides } from '../theme.js';
+import type { RendererTheme, RendererThemeOverrides } from '../theme.js';
 import type {
   BasePanelView,
   MapView,
@@ -117,6 +117,7 @@ export interface DialogueCommands {
  * giving DialogueLayer any World dependency or callback.
  */
 export interface DialogueProjectionPort extends DialogueCommands {
+  setTheme(theme: RendererTheme): void;
   readonly activeSpeakerId: string | null;
   /** Increments only when a non-idempotent text projection is accepted. */
   readonly projectionVersion: number;
@@ -163,6 +164,7 @@ export interface MenuCommands {
 
 /** Public M4 menu projection port; overlay reads are pure and return safe values. */
 export interface MenuProjectionPort extends MenuCommands {
+  setTheme(theme: RendererTheme): void;
   menu(): MenuOverlayState;
 }
 
@@ -180,6 +182,7 @@ export interface GalleryCommands {
 
 /** Public M5 gallery projection port; overlay reads are pure and return safe values. */
 export interface GalleryProjectionPort extends GalleryCommands {
+  setTheme(theme: RendererTheme): void;
   gallery(): GalleryOverlayState;
 }
 
@@ -204,6 +207,7 @@ export interface SystemPanelCommands {
 
 /** Public M6 system-panel projection port; overlay reads are pure and safe after disposal. */
 export interface SystemPanelProjectionPort extends SystemPanelCommands {
+  setTheme(theme: RendererTheme): void;
   system(): SystemPanelOverlayState;
 }
 

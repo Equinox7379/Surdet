@@ -3,7 +3,9 @@ import { vi } from 'vitest';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { RendererError } from '../../src/api/renderer-errors.js';
 import { RendererStageHost } from '../../src/pixi-stage-host.js';
+import { LoadingLayer } from '../../src/loading-layer.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
 import type {
   RendererControllerPort,
@@ -188,6 +190,67 @@ describe('Renderer v2 runtime facade', () => {
 
     expect(internals.calls).toContainEqual({ method: 'controller.reset', args: [{ preserveWorld: true }] });
     expect(internals.calls).toContainEqual({ method: 'controller.restorePresentation', args: [snapshot] });
+  });
+
+  it('projects a theme through Runtime to all five real Layers exactly once', async () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const stage = new RendererStageHost(assets, lifecycle);
+    let frameRequests = 0;
+    stage.setFrameRequest(() => { frameRequests += 1; });
+    const base = fakeInternals();
+    const internals = {
+      ...base,
+      stage,
+      assetRegistry: assets,
+      lifecycle,
+      resourceSnapshot: () => lifecycle.snapshot(),
+      dialogueLayer: stage.dialogueLayer,
+      menuLayer: stage.menuLayer,
+      galleryLayer: stage.galleryLayer,
+      systemPanelLayer: stage.systemPanelLayer,
+      worldLayer: stage.worldLayer,
+    } as unknown as RendererRuntimeInternals;
+    const layers = [
+      stage.dialogueLayer,
+      stage.menuLayer,
+      stage.galleryLayer,
+      stage.systemPanelLayer,
+    ];
+    const themeSpies = layers.map((layer) => vi.spyOn(layer, 'setTheme'));
+    const loadingThemeSpy = vi.spyOn(LoadingLayer.prototype, 'setTheme');
+
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const resourcesBefore = runtime.queries.diagnostics.resourceSnapshot();
+    runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
+
+    expect(themeSpies).toHaveLength(4);
+    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+    expect(themeSpies.every((spy) => spy.mock.calls[0]?.[0].colors.accent === 0x47c8ff)).toBe(true);
+    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+    expect(loadingThemeSpy.mock.calls[0]?.[0].colors.accent).toBe(0x47c8ff);
+    expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
+    expect(frameRequests).toBe(1);
+
+    runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
+    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+    expect(frameRequests).toBe(1);
+
+    expect(() => runtime.commands.preferences.setTheme({ colors: { accent: -1 } } as never))
+      .toThrow(/RENDERER_THEME_INVALID/);
+    expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
+    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+    expect(runtime.queries.diagnostics.resourceSnapshot()).toMatchObject({
+      listeners: resourcesBefore.listeners,
+      activeTweens: resourcesBefore.activeTweens,
+      displayObjectsByOwner: resourcesBefore.displayObjectsByOwner,
+    });
+
+    runtime.dispose();
+    expect(() => runtime.commands.preferences.setTheme({ colors: { accent: 0x123456 } }))
+      .toThrow(RendererError);
   });
 
   it('attempts every runtime disposer after failures and reports RendererError with AggregateError', async () => {

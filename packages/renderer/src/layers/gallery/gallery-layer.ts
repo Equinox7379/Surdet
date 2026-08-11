@@ -12,8 +12,7 @@ import type { GalleryOverlayState } from '../../api/renderer-queries.js';
 import type { GalleryItemView } from '../../gallery.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
-
-const GALLERY_ACCENT = 0x5ac8ff;
+import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 
 /** Gallery-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface GalleryLayerOptions {
@@ -61,6 +60,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   #disposed = false;
 
   readonly #galleryLayer: Container;
+  #theme: RendererTheme = DEFAULT_RENDERER_THEME;
   #galleryTab: 'cg' | 'music' | 'text' = 'cg';
   #galleryMode: 'grid' | 'viewer' = 'grid';
   #galleryViews: GalleryViews | null = null;
@@ -110,6 +110,12 @@ export class GalleryLayer implements GalleryProjectionPort {
       musicCount: this.#galleryViews?.music.length ?? 0,
       textCount: this.#galleryViews?.texts.length ?? 0,
     };
+  }
+
+  setTheme(theme: RendererTheme): void {
+    if (this.#disposed) return;
+    this.#theme = theme;
+    this.#updateTabStyles();
   }
 
   showGallery(options: {
@@ -343,7 +349,7 @@ export class GalleryLayer implements GalleryProjectionPort {
       const active = this.#galleryTab === tab;
       text.style = {
         fontSize: 24,
-        fill: active ? GALLERY_ACCENT : 0x8a93a8,
+        fill: active ? this.#theme.colors.accent : this.#theme.colors.textMuted,
         fontWeight: active ? 'bold' : 'normal',
       } satisfies TextStyleOptions;
     }

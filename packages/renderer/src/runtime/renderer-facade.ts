@@ -119,6 +119,7 @@ export interface RendererStagePort extends PresentationStage {
   snapshotPresentation?: () => unknown;
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
+  setTheme?: (theme: RendererTheme) => void;
 }
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
@@ -708,7 +709,17 @@ export class RendererFacade {
       setPostProcess: (settings) => this.#callWorld('setPostProcess', this.#worldPort?.setPostProcess, this.#stage.setPostProcess, { ...settings }),
       setTheme: (overrides: RendererThemeOverrides) => {
         this.#ensureActive('preferences', 'setTheme');
-        this.#theme = createRendererTheme(overrides);
+        const nextTheme = createRendererTheme(overrides);
+        if (JSON.stringify(nextTheme) === JSON.stringify(this.#theme)) return;
+        this.#theme = nextTheme;
+        if (this.#stage.setTheme) {
+          this.#stage.setTheme(nextTheme);
+          return;
+        }
+        this.#dialoguePort?.setTheme(nextTheme);
+        this.#menuPort?.setTheme(nextTheme);
+        this.#galleryPort?.setTheme(nextTheme);
+        this.#systemPort?.setTheme(nextTheme);
       },
     };
 

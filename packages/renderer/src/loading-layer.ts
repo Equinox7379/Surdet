@@ -1,5 +1,6 @@
 import { Container, Graphics, Text as PText } from 'pixi.js';
 import type { LoadingProgress } from './loading-progress.js';
+import { DEFAULT_RENDERER_THEME, type RendererTheme } from './theme.js';
 
 /**
  * Persistent Pixi loading overlay. The stage owns the layer; callers only
@@ -16,20 +17,21 @@ export class LoadingLayer {
   #destroyed = false;
   readonly #width: number;
   readonly #height: number;
+  #theme: RendererTheme = DEFAULT_RENDERER_THEME;
 
   constructor(width = 1280, height = 720) {
     this.#width = width;
     this.#height = height;
-    this.#background = new Graphics().rect(0, 0, width, height).fill(0x080b14);
-    this.#barTrack = new Graphics().roundRect(0, 0, 760, 16, 8).fill({ color: 0x273248, alpha: 0.9 });
-    this.#barFill = new Graphics().roundRect(0, 0, 0, 16, 8).fill(0x5ac8ff);
+    this.#background = new Graphics().rect(0, 0, width, height).fill(this.#theme.colors.canvas);
+    this.#barTrack = new Graphics().roundRect(0, 0, 760, 16, 8).fill({ color: this.#theme.colors.line, alpha: this.#theme.opacity.surface });
+    this.#barFill = new Graphics().roundRect(0, 0, 0, 16, 8).fill(this.#theme.colors.accent);
     this.#title = new PText({
       text: '正在加载资源',
-      style: { fontSize: 30, fill: 0xf2f6ff, fontFamily: 'sans-serif' },
+      style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontFamily: 'sans-serif' },
     });
     this.#status = new PText({
       text: '准备中…',
-      style: { fontSize: 16, fill: 0xb8c7df, fontFamily: 'sans-serif' },
+      style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, fontFamily: 'sans-serif' },
     });
     this.#title.anchor.set(0.5);
     this.#status.anchor.set(0.5);
@@ -41,11 +43,29 @@ export class LoadingLayer {
     this.container.visible = false;
   }
 
+  setTheme(theme: RendererTheme): void {
+    if (this.#destroyed) return;
+    this.#theme = theme;
+    this.#background.clear().rect(0, 0, this.#width, this.#height).fill(theme.colors.canvas);
+    this.#barTrack.clear().roundRect(0, 0, 760, 16, 8).fill({ color: theme.colors.line, alpha: theme.opacity.surface });
+    this.#barFill.clear().roundRect(0, 0, 0, 16, 8).fill(theme.colors.accent);
+    this.#title.style = {
+      ...this.#title.style,
+      fontSize: theme.typography.headingSize,
+      fill: theme.colors.text,
+    };
+    this.#status.style = {
+      ...this.#status.style,
+      fontSize: theme.typography.captionSize,
+      fill: theme.colors.textMuted,
+    };
+  }
+
   show(progress: LoadingProgress): void {
     if (this.#destroyed) return;
     const settled = progress.completed + progress.failed;
     const ratio = progress.total === 0 ? 1 : Math.max(0, Math.min(1, settled / progress.total));
-    this.#barFill.clear().roundRect(0, 0, 760 * ratio, 16, 8).fill(0x5ac8ff);
+    this.#barFill.clear().roundRect(0, 0, 760 * ratio, 16, 8).fill(this.#theme.colors.accent);
     this.#barFill.position.copyFrom(this.#barTrack.position);
     this.#status.text = progress.done
       ? `资源加载完成 · ${settled}/${progress.total}`

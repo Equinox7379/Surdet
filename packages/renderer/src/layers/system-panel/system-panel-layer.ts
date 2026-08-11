@@ -16,11 +16,7 @@ import type {
 } from '../../api/renderer-commands.js';
 import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
-
-const NIGHT_AZURE = {
-  accent: 0x5ac8ff,
-  plateText: 0xeaf6ff,
-} as const;
+import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 
 type PanelName = 'battle' | 'map' | 'shop' | 'base';
 
@@ -70,6 +66,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   readonly #requestFrameCallback?: FrameRequestHandler;
   readonly #videoGeneration = new AsyncGeneration();
   #disposed = false;
+  #theme: RendererTheme = DEFAULT_RENDERER_THEME;
   #frameRequest: FrameRequestHandler | null = null;
   #listenerSequence = 0;
   #listenerKeys = new Map<PanelName, Set<string>>();
@@ -141,6 +138,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     if (handler && this.needsUpdate) handler();
   }
 
+  setTheme(theme: RendererTheme): void {
+    if (this.#disposed) return;
+    this.#theme = theme;
+  }
+
   get needsUpdate(): boolean {
     return false;
   }
@@ -159,7 +161,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x05050a, alpha: 0.9 }));
     layer.addChild(new PText({
       text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
-      style: { fontSize: 26, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 26, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
 
     const teams = [...new Set(view.units.map((u) => u.team))];
@@ -167,7 +169,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       const x = 80 + ti * 620;
       layer.addChild(new PText({
         text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
-        style: { fontSize: 20, fill: team === view.actingTeam ? NIGHT_AZURE.accent : 0x8a93a8, fontWeight: 'bold' } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: team === view.actingTeam ? this.#theme.colors.accent : 0x8a93a8, fontWeight: 'bold' } satisfies TextStyleOptions,
       })).position.set(x, 92);
       view.units.filter((u) => u.team === team).forEach((u, i) => {
         const y = 136 + i * 88;
@@ -212,11 +214,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
           text: btn.label,
           style: {
             fontSize: 18,
-            fill: selected ? 0x0a1020 : btn.ready ? NIGHT_AZURE.plateText : 0x5a6478,
+            fill: selected ? this.#theme.colors.textOnAccent : btn.ready ? this.#theme.colors.text : 0x5a6478,
           } satisfies TextStyleOptions,
         });
         const pad = new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
-          .fill({ color: selected ? NIGHT_AZURE.accent : 0x141c2e, alpha: 0.95 });
+          .fill({ color: selected ? this.#theme.colors.accent : 0x141c2e, alpha: 0.95 });
         layer.addChild(pad);
         t.position.set(sx, this.#h - 144);
         layer.addChild(t);
@@ -251,7 +253,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       text: message.length > 0 ? message : '点击敌方单位发起攻击',
       style: { fontSize: 20, fill: 0xdddddd } satisfies TextStyleOptions,
     })).position.set(60, this.#h - 84);
-    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
+    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: this.#theme.colors.accent } satisfies TextStyleOptions });
     pass.position.set(this.#w - 210, this.#h - 84);
     pass.eventMode = 'static';
     pass.cursor = 'pointer';
@@ -279,7 +281,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0f14, alpha: 0.95 }));
     layer.addChild(new PText({
       text: `${view.date} —— 回合 ${view.turn}`,
-      style: { fontSize: 24, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 24, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({ text: '行动力', style: { fontSize: 16, fill: 0x9a9aa5 } satisfies TextStyleOptions })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
     for (let i = 0; i < view.maxAp; i++) {
@@ -288,7 +290,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     for (const node of view.nodes) {
       const dot = new Container();
       dot.position.set(node.x, node.y);
-      const color = node.enterable ? NIGHT_AZURE.accent : node.visited ? 0x5a7a8a : 0x333340;
+      const color = node.enterable ? this.#theme.colors.accent : node.visited ? 0x5a7a8a : 0x333340;
       dot.addChild(new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }));
       if (node.visited) {
         dot.addChild(new PText({ text: '✓', style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions })).position.set(-9, -13);
@@ -311,7 +313,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       }
       layer.addChild(dot);
     }
-    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: NIGHT_AZURE.accent } satisfies TextStyleOptions });
+    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: this.#theme.colors.accent } satisfies TextStyleOptions });
     end.position.set(this.#w - 210, this.#h - 70);
     end.eventMode = 'static';
     end.cursor = 'pointer';
@@ -343,7 +345,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
       text: '商 店',
-      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({
       text: `金币：${view.gold}`,
@@ -358,7 +360,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       row.addChild(new PText({ text: `${item.price} 金币`, style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions })).position.set(320, 16);
       const btn = new PText({
         text: affordable ? '购买' : '金币不足',
-        style: { fontSize: 20, fill: affordable ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: affordable ? this.#theme.colors.accent : 0x5a6478 } satisfies TextStyleOptions,
       });
       btn.position.set(580, 14);
       if (affordable) {
@@ -404,7 +406,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x08080f, alpha: 0.96 }));
     layer.addChild(new PText({
       text: '据 点 指 令',
-      style: { fontSize: 32, fill: NIGHT_AZURE.plateText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 36);
     layer.addChild(new PText({
       text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
@@ -424,7 +426,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       })).position.set(360, 16);
       const btn = new PText({
         text: cmd.enabled ? '执行' : '不可执行',
-        style: { fontSize: 20, fill: cmd.enabled ? NIGHT_AZURE.accent : 0x5a6478 } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: cmd.enabled ? this.#theme.colors.accent : 0x5a6478 } satisfies TextStyleOptions,
       });
       btn.position.set(720, 14);
       if (cmd.enabled) {
