@@ -59,6 +59,8 @@ export interface DialogueLayerDebugSnapshot {
   readonly backlogAboveDialogueText: boolean;
   /** Real projected visibility; false while an overlay suppresses the rail. */
   readonly commandRailVisible: boolean;
+  /** Command-rail root stays fully visible; hover is projected per row. */
+  readonly commandRailAlpha: number;
   readonly commandRailSuppressed: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
@@ -151,9 +153,6 @@ export class DialogueLayer implements DialogueProjectionPort {
   #commandRailItems: CommandRailItem[] = [];
   #commandRailOnSelect: ((id: string) => void) | null = null;
   #commandRailSuppressed = false;
-  #commandRailWakeRemain = 0;
-  #commandRailIdleAlpha = 0.38;
-  #commandRailPointerWake: (() => void) | null = null;
   #onPointerConsumed: (() => void) | null = null;
 
   #speakerProfiles = new Map<string, SpeakerProfile>();
@@ -308,6 +307,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       backlogVisible: this.#backlogLayer.visible,
       backlogAboveDialogueText: this.#backlogAboveDialogueText(),
       commandRailVisible: this.#commandRail.visible,
+      commandRailAlpha: this.#commandRail.alpha,
       commandRailSuppressed: this.#commandRailSuppressed,
       nvlActive: this.#nvlActive,
       nvlLines: this.#nvlLines.map((line) => String(line.text)),
@@ -339,17 +339,10 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogueRoot.addChild(this.#speakerText, this.#dialogText);
   }
 
-  attachPointerTarget(target: { addEventListener: (type: string, listener: () => void) => void; removeEventListener: (type: string, listener: () => void) => void }): void {
-    if (this.#disposed || this.#commandRailPointerWake) return;
-    const wakeRail = () => this.#wakeCommandRail();
-    this.#commandRailPointerWake = wakeRail;
-    target.addEventListener('pointermove', wakeRail);
-    target.addEventListener('pointerdown', wakeRail);
-    this.#lifecycle.register('dialogue', 'listener', 'command-rail-pointer', () => {
-      target.removeEventListener('pointermove', wakeRail);
-      target.removeEventListener('pointerdown', wakeRail);
-      if (this.#commandRailPointerWake === wakeRail) this.#commandRailPointerWake = null;
-    });
+  attachPointerTarget(_target: { addEventListener: (type: string, listener: () => void) => void; removeEventListener: (type: string, listener: () => void) => void }): void {
+    // Retain the legacy composition hook, but do not attach a permanent
+    // canvas listener merely to wake a whole command rail. Pointerover/out on
+    // each row owns its local visual projection.
   }
 
   setFrameRequest(handler: FrameRequestHandler | null): void {
@@ -427,17 +420,6 @@ export class DialogueLayer implements DialogueProjectionPort {
         view.holder.alpha = Math.max(0, Math.min(1, (elapsed - i * 80) / this.#choiceFadeDur));
       });
       if (this.#choiceFadeRemain === 0) this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
-    }
-    if (this.#commandRail.visible) {
-      if (this.#commandRailWakeRemain > 0) {
-        this.#commandRailWakeRemain = Math.max(0, this.#commandRailWakeRemain - deltaMs);
-      }
-      const target = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
-      const next = this.#commandRail.alpha + (target - this.#commandRail.alpha) * Math.min(1, deltaMs / 120);
-      this.#commandRail.alpha = Math.abs(target - next) <= 0.001 ? target : next;
-      if (this.#commandRailWakeRemain === 0 && Math.abs(target - this.#commandRail.alpha) <= 0.001) {
-        this.#lifecycle.release('dialogue', 'tween', 'command-rail');
-      }
     }
     if (this.#bannerRemain > 0) {
       this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
@@ -679,14 +661,14 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
     this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    this.#wakeCommandRail();
+    this.#requestFrame();
   }
 
   setCommandRailItems(items: CommandRailItem[]): void {
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
     this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
-    if (!this.#commandRailSuppressed) this.#wakeCommandRail();
+    this.#requestFrame();
   }
 
   hideCommandRail(): void {
@@ -699,6 +681,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   restoreCommandRail(): void {
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
+    this.#commandRail.alpha = 1;
     this.#requestFrame();
   }
 
@@ -818,8 +801,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#interfaceHidden = false;
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = this.#commandRailItems.length > 0;
-    this.#commandRail.alpha = this.#commandRailIdleAlpha;
-    this.#commandRailWakeRemain = 0;
+    this.#commandRail.alpha = 1;
     this.#lifecycle.release('dialogue', 'tween', 'command-rail');
     this.#choiceHighlight = -1;
     this.#bannerRemain = 0;
@@ -1132,7 +1114,6 @@ export class DialogueLayer implements DialogueProjectionPort {
         row.eventMode = 'static';
         row.cursor = 'pointer';
         row.on('pointerover', () => {
-          this.#wakeCommandRail();
           label.alpha = 1;
           underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
             .fill({ color: this.#theme.colors.line, alpha: 0.9 });
@@ -1156,24 +1137,11 @@ export class DialogueLayer implements DialogueProjectionPort {
       }
       layer.addChild(row);
     });
-    layer.alpha = this.#commandRailIdleAlpha;
-  }
-
-  #wakeCommandRail(): void {
-    if (this.#interfaceHidden || this.#commandRailSuppressed || this.#commandRailItems.length === 0) return;
-    this.#commandRailWakeRemain = 2800;
-    this.#lifecycle.register('dialogue', 'tween', 'command-rail', () => undefined);
-    this.#commandRail.visible = true;
-    this.#commandRail.alpha = Math.max(this.#commandRail.alpha, 0.72);
-    this.#requestFrame();
+    layer.alpha = 1;
   }
 
   #hasEffectWork(): boolean {
-    const railTarget = this.#commandRailWakeRemain > 0 ? 0.94 : this.#commandRailIdleAlpha;
-    const commandRailMoving = this.#commandRail.visible
-      && (this.#commandRailWakeRemain > 0 || Math.abs(this.#commandRail.alpha - railTarget) > 0.001);
     return (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0)
-      || commandRailMoving
       || this.#bannerRemain > 0;
   }
 }
