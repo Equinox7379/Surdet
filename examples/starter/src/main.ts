@@ -64,13 +64,13 @@ import {
   createPlayerUiSession,
   createSystemHooks,
   createElectronSaveStorage,
+  createRollbackRuntime,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import type { PlayerOverlay, PlayerShellController } from '@surdet/host';
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
-import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { createStarterOwnerTeardown } from './starter-owner-teardown.js';
@@ -257,6 +257,7 @@ async function main(): Promise<void> {
     onRefresh: () => refreshCommandRail(),
   });
   const clearRollback = (): void => rollbackRuntime.clear();
+  const clearRollbackForBoundary = (): void => rollbackRuntime.clearForBoundary();
   const canRollback = (): boolean => rollbackRuntime.canRollback();
   const performRollback = (): boolean => rollbackRuntime.perform();
 
@@ -329,7 +330,7 @@ async function main(): Promise<void> {
       onLog: (message) => console.info(`[starter] ${message}`),
     }),
     onError: (error) => console.error('[starter] 宿主 adapter 失败：', error),
-    onSystemBoundary: () => { clearRollback(); },
+    onSystemBoundary: () => { clearRollbackForBoundary(); },
     onStateReset: () => { turnResumeSnap = null; },
   });
   connectSystemRouter(bus, host, (error) => console.error('[starter] system 路由失败：', error));

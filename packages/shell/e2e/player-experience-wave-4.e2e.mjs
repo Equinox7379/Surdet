@@ -427,6 +427,56 @@ async function runBacklogCase(session) {
   };
 }
 
+async function runRollbackCase(session) {
+  await session.waitTitle();
+  await session.clickTarget('title:new');
+  await session.waitFor('正式游戏剧情入口', () => window.__surdetDebug?.uiSession?.base === 'game'
+    && window.__surdetDebug?.position !== null);
+  const progression = [];
+  for (let index = 0; index < 8; index += 1) {
+    progression.push(await session.advanceStoryStep(`连续回退种子文本 ${index + 1}`));
+  }
+
+  const rollbacks = [];
+  for (let index = 0; index < 4; index += 1) {
+    await session.waitFor(`第 ${index + 1} 次回退前稳定`, () => {
+      const debug = window.__surdetDebug;
+      return debug?.status === 'awaiting-advance'
+        && debug?.activeOverlay === null
+        && debug?.dialogueProjection?.commandRailVisible === true;
+    }, undefined, 12000);
+    const before = await session.snapshot();
+    const expected = progression[progression.length - 2 - index]?.after?.position ?? null;
+    await session.clickTarget('rail:rollback');
+    await session.waitFor(`第 ${index + 1} 次回退完成`, (positionKeyExpected) => {
+      const position = window.__surdetDebug?.position;
+      return position ? `${position.sceneId}:${position.pc}` === positionKeyExpected : positionKeyExpected === 'null';
+    }, positionKey(expected), 12000);
+    const after = await session.snapshot();
+    if (positionKey(after?.position) !== positionKey(expected)) {
+      throw new Error(`第 ${index + 1} 次回退没有回到恰好前一状态：${JSON.stringify({ before, expected, after })}`);
+    }
+    rollbacks.push({
+      attempt: index + 1,
+      before: before?.position ?? null,
+      expected,
+      after: after?.position ?? null,
+      overlay: after?.activeOverlay ?? null,
+    });
+  }
+
+  return {
+    source: 'game',
+    path: ['title:new', 'story:advance×8', 'rail:rollback×4'],
+    progression: progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+    })),
+    rollbacks,
+    consecutiveWithoutAdvance: true,
+  };
+}
+
 async function runCase(caseId) {
   let session;
   const assertions = {
@@ -441,6 +491,16 @@ async function runCase(caseId) {
         ok: true,
         userData: session.userData,
         assertions: await runBacklogCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'D') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runRollbackCase(session),
         events: cloneJson(session.events),
         screenshots: cloneJson(session.screenshots),
       };
