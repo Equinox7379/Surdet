@@ -58,7 +58,7 @@ WAITING_FOR_REVIEW
 
 - `packages/renderer/src/theme.ts` 提供 `DEFAULT_RENDERER_THEME`、`createRendererTheme()` 和严格数值/键校验；结果递归冻结但不冻结调用方 patch。
 - `commands.preferences.setTheme()` 与 `queries.preferences.theme()` 是唯一主题更新/查询入口；非法 patch 不改变旧主题，已 dispose 的 Runtime 按 RendererError 契约失败。
-- Menu、Dialogue、Gallery、SystemPanel、Loading 五类真实 Layer 都消费同一个冻结主题意图，只重绘已有 Graphics/TextStyle，不销毁重建资源 owner、监听器、补间或 Container。
+- Menu、Dialogue、Gallery、SystemPanel、Loading 五类 Layer 都消费同一个冻结主题意图；本报告原始验收只证明了命令/查询同步和 Layer 收到 `setTheme`，并没有把它们冒充成已显示 Pixi 对象的直接重绘证据。该缺口由本次最终整改报告补足。
 - 相同主题更新保持幂等并只请求一帧；主题查询不暴露 Pixi 或可写引用。
 
 ### 3.3 项目接线
@@ -94,9 +94,11 @@ Task 7 的失败 artifact 未删除，保留在本机临时目录作为红灯证
 
 固定槽 defaults 六项缺一不可；不提供 override 仍能使用 Renderer-backed defaults。override 仅能覆盖固定 ID；查询快照只返回冻结绑定数据，不暴露 Provider 或真实 Layer。UI `save-load` 槽只是界面槽，不是 SaveManager 的数据槽 `1`、`quick`、`auto`。
 
-## 6. 主题接线验收
+## 6. 主题接线验收（原 Wave 3 报告口径修正）
 
-已用 Runtime v2 真实命令验证 accent override 会同步到五类 Layer：Dialogue、Menu、Gallery、SystemPanel、Loading。另已验证：
+本报告原始 Wave 3 验收的直接证据边界是：`commands.preferences.setTheme()` 与 `queries.preferences.theme()` 的状态同步，以及五类 Layer 收到主题更新；当时没有读取已经显示的 Pixi `TextStyle`/`Graphics`，因此不能单独据此声称“五类真实 Layer 主题投影通过”。五类已显示对象的真实换色、恢复默认和资源计数证据见 `ENGINE-PLAYER-SHELL-FOUNDATION-WAVE-3-FINAL-REMEDIATION-REPORT-2026-08-11.md`。
+
+原报告已验证：
 
 - 同一主题重复设置幂等且只请求一帧；
 - 非法颜色、opacity、尺寸、未知键和 disposed Runtime 均按契约拒绝；
