@@ -1,9 +1,85 @@
-import { describe, expect, it } from 'vitest';
+import { Container, Graphics, Text as PText, Texture } from 'pixi.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_RENDERER_THEME,
   createRendererTheme,
   type RendererThemeOverrides,
 } from '../src/theme.js';
+import { DialogueLayer } from '../src/layers/dialogue/dialogue-layer.js';
+import { GalleryLayer } from '../src/layers/gallery/gallery-layer.js';
+import { MenuLayer } from '../src/layers/menu/menu-layer.js';
+import { SystemPanelLayer } from '../src/layers/system-panel/system-panel-layer.js';
+import { LoadingLayer } from '../src/loading-layer.js';
+import { RenderLifecycle } from '../src/lifecycle/render-lifecycle.js';
+import { RenderAssetRegistry } from '../src/services/render-asset-registry.js';
+
+function findText(root: Container, text: string): PText {
+  const visit = (node: Container): PText | undefined => {
+    if (node instanceof PText && node.text === text) return node;
+    for (const child of node.children) {
+      if (child instanceof Container) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const found = visit(root);
+  expect(found, `Pixi text ${text} should be visible`).toBeDefined();
+  return found as PText;
+}
+
+function graphicsColors(graphics: Graphics): number[] {
+  return graphics.context.instructions.flatMap((instruction) => {
+    if (!('data' in instruction) || typeof instruction.data !== 'object' || instruction.data === null) return [];
+    const data = instruction.data as { style?: unknown };
+    if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) return [];
+    const color = (data.style as { color?: unknown }).color;
+    return typeof color === 'number' ? [color] : [];
+  });
+}
+
+function findGraphicsWithColor(root: Container, color: number): Graphics {
+  const visit = (node: Container): Graphics | undefined => {
+    if (node instanceof Graphics && graphicsColors(node).includes(color)) return node;
+    for (const child of node.children) {
+      if (child instanceof Container) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const found = visit(root);
+  expect(found, `Pixi Graphics with color 0x${color.toString(16)} should be visible`).toBeDefined();
+  return found as Graphics;
+}
+
+function makeProjectionHarness() {
+  const root = new Container();
+  const lifecycle = new RenderLifecycle();
+  const assets = new RenderAssetRegistry({ lifecycle });
+  const requestFrame = vi.fn();
+  return { root, lifecycle, assets, requestFrame };
+}
+
+function customTheme() {
+  return createRendererTheme({
+    colors: {
+      canvas: 0x102030,
+      panel: 0x203040,
+      surface: 0x304050,
+      surfaceStrong: 0x405060,
+      line: 0x506070,
+      accent: 0x123456,
+      accentSoft: 0x234567,
+      text: 0x345678,
+      textMuted: 0x456789,
+      textDisabled: 0x56789a,
+      textOnAccent: 0x6789ab,
+    },
+  });
+}
 
 describe('RendererTheme', () => {
   it('provides the complete immutable Surdet default token set', () => {
@@ -87,5 +163,170 @@ describe('RendererTheme', () => {
 
     expect(() => createRendererTheme(malformed as never)).toThrow(/RENDERER_THEME_INVALID/);
     expect(DEFAULT_RENDERER_THEME.colors.accent).toBe(before);
+  });
+});
+
+describe('live Pixi player-layer theme projection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('repaints an already visible Menu title and accent decoration', () => {
+    const { root, lifecycle, assets, requestFrame } = makeProjectionHarness();
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle, requestFrame });
+    const theme = customTheme();
+
+    layer.showTitle({ title: 'Surdet', items: [{ id: 'start', label: '开始' }] }, vi.fn());
+    const title = findText(root, 'Surdet');
+    expect(title.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    expect(findGraphicsWithColor(root, DEFAULT_RENDERER_THEME.colors.accent)).toBeDefined();
+    const frameCount = requestFrame.mock.calls.length;
+
+    layer.setTheme(theme);
+
+    expect(title.style.fill).toBe(theme.colors.text);
+    expect(findGraphicsWithColor(root, theme.colors.accent)).toBeDefined();
+    expect(requestFrame).toHaveBeenCalledTimes(frameCount);
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('repaints already visible Menu system/settings/save-load objects', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const theme = customTheme();
+
+    layer.showSystemMenu([{ id: 'settings', label: '设置' }], vi.fn(), vi.fn());
+    const systemTitle = findText(root, '系统菜单');
+    layer.setTheme(theme);
+    expect(systemTitle.style.fill).toBe(theme.colors.text);
+    layer.hideSystemMenu();
+
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+    layer.showSettings([{ id: 'textSpeed', label: '文本速度', display: '普通' }], vi.fn(), vi.fn());
+    const settingsLabel = findText(root, '文本速度');
+    layer.setTheme(theme);
+    expect(settingsLabel.style.fill).toBe(theme.colors.text);
+    layer.hideSettings();
+
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+    layer.showSaveLoad({ mode: 'save', slots: [{ id: 'slot-1', empty: true, label: '空槽位' }] }, vi.fn(), vi.fn());
+    const saveLoadLabel = findText(root, '空槽位');
+    layer.setTheme(theme);
+    expect(saveLoadLabel.style.fill).toBe(theme.colors.text);
+
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('repaints already visible Dialogue text, command rail, and backlog', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new DialogueLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const theme = customTheme();
+    class FakeCanvasRenderingContext2D {
+      font = '';
+      letterSpacing = '';
+      textLetterSpacing = '';
+
+      measureText(value: string) {
+        return {
+          width: value.length * 20,
+          actualBoundingBoxAscent: 16,
+          actualBoundingBoxDescent: 4,
+        };
+      }
+    }
+    vi.stubGlobal('CanvasRenderingContext2D', FakeCanvasRenderingContext2D);
+    vi.stubGlobal('document', {
+      createElement: () => ({
+        getContext: () => new FakeCanvasRenderingContext2D(),
+      }),
+    });
+
+    layer.mountTextDisplays();
+    layer.showText('Lynn', 'Hello dialogue');
+    const dialogText = findText(root, 'Hello dialogue');
+    layer.setTheme(theme);
+    expect(dialogText.style.fill).toBe(theme.colors.text);
+
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+    layer.showCommandRail([{ id: 'auto', label: 'AUTO' }], vi.fn());
+    const commandText = findText(root, 'AUTO');
+    layer.setTheme(theme);
+    expect(commandText.style.fill).toBe(theme.colors.textMuted);
+
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+    layer.showBacklog([{ speaker: 'Lynn', text: 'Backlog line' }]);
+    const backlogText = findText(root, 'Lynn：Backlog line');
+    layer.setTheme(theme);
+    expect(backlogText.style.fill).toBe(theme.colors.accent);
+
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('repaints already visible Gallery labels and content', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new GalleryLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+      createBackgroundTexture: () => Texture.EMPTY,
+    });
+    const theme = customTheme();
+
+    layer.showGallery({
+      cgs: [{ id: 'cg-1', name: '夜景', unlocked: true }],
+      music: [],
+      texts: [],
+    });
+    const tab = findText(root, 'CG');
+    const content = findText(root, '夜景');
+    layer.setTheme(theme);
+    expect(tab.style.fill).toBe(theme.colors.accent);
+    expect(content.style.fill).toBe(theme.colors.text);
+
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('repaints an already visible SystemPanel battle object', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new SystemPanelLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const theme = customTheme();
+
+    layer.showBattle({
+      turn: 1,
+      actingTeam: 'player',
+      finished: false,
+      winner: null,
+      units: [],
+    }, { onAttack: vi.fn(), onPass: vi.fn() });
+    const heading = findText(root, '回合 1 —— 当前行动：player');
+    layer.setTheme(theme);
+    expect(heading.style.fill).toBe(theme.colors.text);
+
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('repaints an already visible Loading overlay without replacing its objects', () => {
+    const loading = new LoadingLayer(1280, 720);
+    const theme = customTheme();
+    loading.show({ total: 2, completed: 0, failed: 0, done: false, current: 'background' });
+    const title = findText(loading.container, '正在加载资源');
+    const originalTitle = title;
+    loading.setTheme(theme);
+    expect(title.style.fill).toBe(theme.colors.text);
+    expect(findGraphicsWithColor(loading.container, theme.colors.accent)).toBeDefined();
+    expect(title).toBe(originalTitle);
+    loading.destroy();
   });
 });
