@@ -11,6 +11,7 @@ import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import type { SaveLoadView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
 import type { SettingsRowView } from '../../src/settings-store.js';
+import { createPlayerUiSession } from '../../../host/src/player-ui.js';
 
 const pointerEvent = {} as FederatedPointerEvent;
 
@@ -603,9 +604,13 @@ describe('MenuLayer projection and lifecycle contract', () => {
       await Promise.resolve();
       await Promise.resolve();
     };
-    const onTransactionComplete = vi.fn(runtime.restoreCommandRail);
+    const uiSession = createPlayerUiSession({ base: 'game', overlay: 'save-load' });
+    const onTransactionComplete = vi.fn(() => {
+      if (uiSession.snapshot().operation !== 'idle') uiSession.completeOperation({ overlay: 'none' });
+      runtime.restoreCommandRail();
+    });
     const onTransactionError = vi.fn();
-    const playerUiBeginOperation = vi.fn();
+    const playerUiBeginOperation = vi.fn(() => uiSession.beginOperation('saving'));
     try {
       runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
       runtime.hideCommandRail.mockClear();
@@ -613,9 +618,6 @@ describe('MenuLayer projection and lifecycle contract', () => {
       let resolveFirst!: (accepted: boolean) => void;
       const firstTransaction = new Promise<boolean>((resolve) => { resolveFirst = resolve; });
       const firstSelect = vi.fn(() => {
-        if (playerUiBeginOperation.mock.calls.length > 0) {
-          throw new Error('PLAYER_UI_INVALID_TRANSITION: duplicate begin-operation');
-        }
         playerUiBeginOperation();
         return firstTransaction;
       });
@@ -633,6 +635,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
 
       expect(firstSelect).toHaveBeenCalledOnce();
       expect(playerUiBeginOperation).toHaveBeenCalledOnce();
+      expect(uiSession.snapshot().operation).toBe('saving');
       expect(pointerConsumed).toHaveBeenCalledTimes(2);
       expect(onTransactionError).not.toHaveBeenCalled();
       expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
@@ -645,6 +648,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
       await flushTransaction();
 
       expect(onTransactionComplete).toHaveBeenCalledOnce();
+      expect(uiSession.snapshot().operation).toBe('idle');
       expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
       expect(runtime.isCommandRailVisible()).toBe(true);
       expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
@@ -711,6 +715,66 @@ describe('MenuLayer projection and lifecycle contract', () => {
       await flushTransaction();
       expect(rejectedSelect).toHaveBeenCalledTimes(2);
       expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('rolls back host-transaction ownership after a synchronous throw or non-Promise result', async () => {
+    const runtime = makeRealMenuRuntime();
+    const onTransactionError = vi.fn();
+    const syncFailure = new Error('synchronous save failure');
+    let resolveRetry!: (accepted: boolean) => void;
+    const retryTransaction = new Promise<boolean>((resolve) => { resolveRetry = resolve; });
+    const onSelect = vi.fn()
+      .mockImplementationOnce(() => { throw syncFailure; })
+      .mockImplementationOnce(() => retryTransaction);
+    const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
+      view: SaveLoadView,
+      onSelect: (slotId: string) => Promise<boolean>,
+      onClose: () => void,
+      options: unknown,
+    ) => void;
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-1', empty: true }] },
+        onSelect,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionError },
+      );
+
+      const slot = findParentWithText(runtime.root, '空槽位');
+      slot.emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledWith(syncFailure);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+
+      slot.emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledTimes(2);
+      resolveRetry(false);
+      await retryTransaction;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+
+      const noPromiseFailure = new Error('host-transaction save/load handlers must return a Promise');
+      const noPromiseSelect = vi.fn(() => false);
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-2', empty: true }] },
+        noPromiseSelect,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionError },
+      );
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(noPromiseSelect).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledTimes(2);
+      expect(onTransactionError.mock.calls[1]?.[0]).toBeInstanceOf(Error);
+      expect((onTransactionError.mock.calls[1]?.[0] as Error).message).toBe(noPromiseFailure.message);
       expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
     } finally {
       disposeRealMenuRuntime(runtime);
