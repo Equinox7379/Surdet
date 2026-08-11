@@ -168,4 +168,91 @@ describe('RenderLifecycle', () => {
     });
     expect(Object.isFrozen(afterRelease.events)).toBe(true);
   });
+
+  it('bounds event history while retaining the newest event and complete active identity', () => {
+    const lifecycle = new RenderLifecycle();
+    const activeDisposer = vi.fn();
+    lifecycle.register('runtime', 'listener', 'active', activeDisposer);
+
+    for (let index = 0; index < 2_048; index += 1) {
+      const key = `churn-${index}`;
+      lifecycle.register('runtime', 'ticker', key, () => undefined);
+      lifecycle.release('runtime', 'ticker', key);
+    }
+
+    const diagnostics = lifecycle.diagnostics();
+    expect(diagnostics.events.length).toBe(1_024);
+    expect(diagnostics.events.at(-1)).toMatchObject({
+      owner: 'runtime',
+      kind: 'ticker',
+      key: 'churn-2047',
+      action: 'dispose',
+      path: 'release',
+      outcome: 'success',
+    });
+    expect(diagnostics.events.some((event) => event.key === 'active')).toBe(false);
+    expect(diagnostics.active).toEqual([
+      expect.objectContaining({
+        owner: 'runtime',
+        kind: 'listener',
+        key: 'active',
+        active: true,
+      }),
+    ]);
+
+    const before = JSON.stringify(diagnostics);
+    expect(JSON.stringify(lifecycle.diagnostics())).toBe(before);
+    expect(activeDisposer).not.toHaveBeenCalled();
+  });
+
+  it('records both sides of replacement and retains all lifecycle paths and failure causes', () => {
+    const lifecycle = new RenderLifecycle();
+    const firstCause = new Error('replacement disposer failed');
+
+    lifecycle.register('runtime', 'async', 'replace-me', () => undefined);
+    lifecycle.register('runtime', 'async', 'replace-me', () => undefined);
+    lifecycle.forget('dialogue', 'listener', 'missing');
+    lifecycle.register('dialogue', 'listener', 'forgotten', () => undefined);
+    lifecycle.forget('dialogue', 'listener', 'forgotten');
+    lifecycle.register('menu', 'listener', 'release-me', () => undefined);
+    lifecycle.release('menu', 'listener', 'release-me');
+    lifecycle.register('gallery', 'listener', 'owner-release', () => undefined);
+    lifecycle.releaseOwner('gallery');
+    lifecycle.register('system', 'listener', 'dispose-me', () => undefined);
+    lifecycle.register('loading', 'listener', 'failure', () => { throw firstCause; });
+
+    expect(() => lifecycle.release('loading', 'listener', 'failure')).toThrow(RendererError);
+    lifecycle.dispose();
+
+    const events = lifecycle.diagnostics().events;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        owner: 'runtime',
+        kind: 'async',
+        key: 'replace-me',
+        action: 'dispose',
+        path: 'replace',
+        outcome: 'success',
+      }),
+      expect.objectContaining({
+        owner: 'runtime',
+        kind: 'async',
+        key: 'replace-me',
+        action: 'register',
+        path: 'replace',
+        outcome: 'success',
+      }),
+      expect.objectContaining({ action: 'forget', path: 'forget', outcome: 'success', key: 'forgotten' }),
+      expect.objectContaining({ action: 'dispose', path: 'release', outcome: 'success', key: 'release-me' }),
+      expect.objectContaining({ action: 'dispose', path: 'releaseOwner', outcome: 'success', key: 'owner-release' }),
+      expect.objectContaining({ action: 'dispose', path: 'dispose', outcome: 'success', key: 'dispose-me' }),
+      expect.objectContaining({
+        action: 'dispose',
+        path: 'release',
+        outcome: 'failure',
+        key: 'failure',
+        cause: firstCause.message,
+      }),
+    ]));
+  });
 });
