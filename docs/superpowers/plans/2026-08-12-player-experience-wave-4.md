@@ -921,7 +921,7 @@ Expected: 全部 exit 0，tracked log 为空。不得提高阈值、删测试或
 
 不得写不存在的字段为 0；artifact schema 缺失字段写“未观测”。
 
-- [ ] **Step 6: 更新计划台账并提交文档**
+- [x] **Step 6: 更新计划台账并提交文档**
 
 将本文 checkbox 和每项真实结果更新后：
 
@@ -1176,4 +1176,5 @@ WAITING_FOR_REVIEW
 - Task 9 Step 2 已按计划顺序完成且全部 exit `0`：Core build/typecheck；Renderer build/typecheck；Host build/typecheck；Shell build/typecheck（含 sandbox preload）；Starter typecheck/build；Zero typecheck/build；CLI typecheck/build。构建仅更新 ignored dist，不产生 tracked 源码差异。下一入口：Task 9 Step 3，正式 Zero lint/simulate/assets。
 - Task 9 Step 3 已完成且全部 exit `0`：`npm run lint -w zero-after-midnight` → `11 个场景，0 个错误，0 个警告`；`npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000` → 探索 24 条、choice `23/23`、save/load `39`、3 个结局可达、运行时错误 `0`；`node examples/zero-after-midnight/scripts/check-assets.mjs` → `assets ok: 44`。下一入口：Task 9 Step 4，仓库边界与总门禁。
 - Task 9 Step 4 已完成且全部 exit `0`：`npm run verify:renderer-boundaries` → 3/3；`npm run verify:renderer-legacy` → 4/4；`npm run verify:tools` → 10/10；`npm run verify:hygiene` → tracked 616 paths；`npm run verify:all` → exit `0`，包含 docs/hygiene/types/workspace tests/formal/editor/starter/Zero/build/diff-check 等步骤；显式 `git diff --check` → exit `0`；显式 tracked log 检查 → `tracked-log-count=0`。下一入口：Task 9 Step 5，编写真实交付报告。
-- Task 9 Step 5 已真实创建权威报告：`E:\surdet\docs\ENGINE-PLAYER-EXPERIENCE-WAVE-4-DELIVERY-REPORT-2026-08-12.md`；当前字节数=`18082`；SHA-256=`AD8632D8BF8F043CC1E0B09FE80EA2555C197F59C53B751B08CD2A27CDD77C52`。报告以 `38e8a62be9429bcdcf3255dbcb49da51a58c69ab` 为报告前最终代码 HEAD，明确列出 G1–G6 红绿证据、正式 Zero 身份、两份 corrected A–J artifact、历史失败轮次、全量门禁和保护边界。下一入口：Task 9 Step 6，精确提交报告与计划台账。
+- Task 9 Step 5 已真实创建权威报告：`E:\surdet\docs\ENGINE-PLAYER-EXPERIENCE-WAVE-4-DELIVERY-REPORT-2026-08-12.md`；初始版本字节数=`18082`、SHA-256=`AD8632D8BF8F043CC1E0B09FE80EA2555C197F59C53B751B08CD2A27CDD77C52`。报告以 `38e8a62be9429bcdcf3255dbcb49da51a58c69ab` 为报告前最终代码 HEAD，明确列出 G1–G6 红绿证据、正式 Zero 身份、两份 corrected A–J artifact、历史失败轮次、全量门禁和保护边界。
+- Task 9 Step 6 首次普通文档提交为 `64cac1a25f4e6156cd598f97fed578fd3f88ecb8`；提交前 `git diff --cached --check` 发现报告开头三处 Markdown 尾随空格。未 amend，已在工作树移除尾随空格；修正后报告字节数=`18076`、SHA-256=`907FB88394569EA58B4D39E252320960BCFDF1D71BCEE59588B9004A07F93877`。本次将以新的普通文档提交收口，并在其后执行 Task 9 Step 7 最终门禁。
