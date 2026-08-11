@@ -656,7 +656,7 @@ WAITING_FOR_REVIEW
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 - [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
 - [x] Task 3：指针消费、回退、界面隐藏。提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。Task 4 仍需处理独立 E2E 红灯。
-- [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
+- [x] Task 4：合成层级与 title gallery 上下文。实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）；台账提交待本记录完成。
 - [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
 - [ ] Task 6：对话框稳定性。提交：`PENDING`。
 - [ ] Task 7：完整玩家 E2E 矩阵。提交：`PENDING`。
@@ -796,3 +796,36 @@ Task 2 实现提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zer
 - 四个受保护未跟踪文件未修改、未暂存；没有 push、force push、发行或重新打包正式 EXE。
 
 本阶段实现提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。下一入口：提交本次台账 SHA 后仅进入 Task 4，先为 overlay z-order 与 title/game gallery return context 建立红灯测试。不得把本阶段仍失败的 UX 项标为已知限制后跳过。
+
+### 6.5 Task 4 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T13:42:49+08:00` 至 `2026-08-11T13:50:02+08:00`（Asia/Shanghai）。本阶段只处理覆盖层合成顺序、Gallery 输入边界和 title/game Gallery 返回上下文；Task 1 暴露的资源释放错误仍未宣称修复，Task 5 尚未开始。
+
+测试先行与生产实现：
+
+- Dialogue z-order 回归先红：在生产代码仍把文本节点追加到共享 UI root 时，新增“打开 overlay 后再次更新文本仍低于 overlay”的测试失败（overlay sibling index 低于 text）。随后将 Dialogue 的 panel、speaker、text、ruby、indicator、command rail 等显示对象归入 Dialogue 自有 `#dialogueRoot`，`bringTextDisplaysToFront()` 只在该容器内部排序；同一组回归转绿。
+- Gallery tab 生命周期回归先红：新增“hide 后再次 show 保持 tab 控件实例”的测试在原实现中失败（hide 的 `#clearLayer()` 销毁 header/tab）。生产修复改为 show/hide 只清理内容与 listener，保留稳定的全屏 blocker/header/tab；只有 dispose 的完整清理路径销毁整棵 Gallery 树。同一测试转绿。
+- Gallery 输入回归覆盖完整视口 blocker、显式 tab `hitArea` 和内容重建稳定性；最终 `packages/renderer/test/layers/gallery-layer.test.ts` 为 `12/12`，`packages/renderer/test/legacy/dialogue-layer.test.ts` 为 `12/12`，`packages/renderer/test/api/renderer-contract.test.ts` 为 `3/3`，聚焦合计 `27/27`。
+- 标题进入二级页时，Host 现在明确收起标题交互菜单但保留/重建正确的返回上下文；没有修改公共 Renderer API，也没有修改 Starter、DSL、存档、剧情、游戏规则或玩家内容。
+
+真实 Electron 玩家路径（每次均构建并显式加载 `E:\surdet\examples\zero-after-midnight\dist`，不是 Starter，使用独立临时 userData，真实鼠标点击）：
+
+- 最终脚本矩阵：`<local-path>`。
+- SHA-256：`948C27E5655CCB49C36D97E003412321BDB2DA7834F1E998676AB72B0D9D1551`。
+- Task 4 目标路径通过：标题 `title → gallery → music → text → close` 连续 `5/5`；游戏 `game → gallery → music/text → close` 连续 `3/3`。两种入口的关闭结果分别保持 title/game base 与 command rail 语义。
+- 该次完整脚本仍以非零退出结束：UX-03 空槽/读档路径和 UX-05/07/08 后续位置链路仍失败（前置失败导致后续等待超时），因此不能把矩阵标为全绿，也不能把 Task 5/6 的缺陷降级为已知限制。该次矩阵的 `releaseFailureEvidence` 为空不覆盖此前真实资源失败证据。
+- Task 1 资源释放原始证据继续保留：`<local-path>`，SHA-256 `4D401FBD52BDC5DC5EBE715F06400C284765A538F1E2C84023156E65C3E0E9F4`；真实条目仍是 `owner=menu`、`kind=pool`、`key=thumbnail:<data-url>`、原始 cause `TypeError: Cannot read properties of undefined (reading 'destroy')`。
+
+Task 4 门禁：
+
+- `npm run test -w @surdet/renderer -- --run test/legacy/dialogue-layer.test.ts test/layers/gallery-layer.test.ts test/api/renderer-contract.test.ts`：`27/27` 通过。
+- `npm run typecheck -w @surdet/renderer`：退出码 `0`。
+- `npm run typecheck -w zero-after-midnight`：退出码 `0`。
+- `npm run build -w zero-after-midnight`：退出码 `0`；仅保留既有 Vite 大 chunk advisory。
+- `git diff --check`：通过；无日志、截图、构建产物或临时文件进入提交。
+
+范围与提交：
+
+- Task 4 实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）。本提交只包含 6 个预期文件：正式游戏 `main.ts`、Dialogue/Gallery 生产层、两份 Renderer 回归测试和 Shell 玩家 E2E 脚本。
+- 当前 HEAD 在台账提交前为 `5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`；相对 `surdet/main` 为 `9 0`。四个受保护未跟踪文件仍未修改、未暂存、未提交。
+- 未进入 Task 5 之前不得修改菜单资源所有权；下一入口为 Task 5：先按真实 `menu/pool/thumbnail` 注册/show/hide/reset/release 顺序建立业务复现红灯，随后修复 empty slot 与 save/load/title 生命周期根因。
