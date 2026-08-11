@@ -14,8 +14,10 @@ import {
 } from './player-ui.js';
 import {
   PLAYER_SHELL_SLOT_IDS,
+  PlayerShellSlotError,
   type PlayerShellOpenRequest,
   type PlayerShellSlotId,
+  type PlayerShellSlotContext,
   type PlayerShellSlotRegistry,
   type PlayerShellSlotRegistrySnapshot,
 } from './player-shell-slots.js';
@@ -51,6 +53,11 @@ export interface PlayerShellControllerOptions {
 }
 
 type Source = PlayerShellOpenRequest['source'];
+
+type ActiveProjection = Readonly<{
+  readonly request: PlayerShellOpenRequest;
+  readonly context: PlayerShellSlotContext;
+}>;
 
 function controllerError(code: string, message: string): Error {
   return new Error(`${code}: ${message}`);
@@ -147,7 +154,11 @@ function commitAndOpen(
   slots: PlayerShellSlotRegistry,
   request: PlayerShellOpenRequest,
   origin: PlayerUiSessionSnapshot,
-): void {
+): PlayerShellSlotContext {
+  const context: PlayerShellSlotContext = {
+    source: request.source,
+    returnTo: { base: origin.base, overlay: origin.overlay },
+  };
   try {
     switch (request.slot) {
       case 'title':
@@ -168,55 +179,12 @@ function commitAndOpen(
           `unknown slot=${String((request as { slot?: unknown }).slot)}`,
         );
     }
-    slots.open(request, {
-      source: request.source,
-      returnTo: { base: origin.base, overlay: origin.overlay },
-    });
+    slots.open(request, context);
+    return context;
   } catch (error) {
     session.restore(origin);
     throw error;
   }
-}
-
-function returnedOverlayRequest(
-  snapshot: PlayerUiSessionSnapshot,
-): PlayerShellOpenRequest | null {
-  switch (snapshot.overlay) {
-    case 'system-menu':
-      return { slot: 'system-menu', source: 'game' };
-    case 'settings':
-      return {
-        slot: 'settings',
-        source: snapshot.returnStack.at(-1)?.overlay === 'system-menu'
-          ? 'system-menu'
-          : snapshot.base,
-      };
-    case 'gallery':
-      return { slot: 'gallery', source: snapshot.base };
-    case 'backlog':
-      return { slot: 'backlog', source: 'game' };
-    case 'save-load':
-      // The PlayerUiSession frame intentionally does not carry save/load
-      // mode. Save/load completes through the operation transaction path;
-      // there is no supported nested save/load return projection to reopen.
-      return null;
-    case 'none':
-      return null;
-    default:
-      return null;
-  }
-}
-
-function reopenReturnedProjection(
-  slots: PlayerShellSlotRegistry,
-  snapshot: PlayerUiSessionSnapshot,
-): void {
-  const request = returnedOverlayRequest(snapshot);
-  if (!request) return;
-  slots.open(request, {
-    source: request.source,
-    returnTo: snapshot.returnStack.at(-1) ?? { base: snapshot.base, overlay: 'none' },
-  });
 }
 
 export function createPlayerShellController(
@@ -226,22 +194,73 @@ export function createPlayerShellController(
   const inputGate = options?.inputGate ?? new PlayerInputGate();
   const slots = options?.slots;
   if (!slots) throw controllerError('PLAYER_SHELL_INVALID_OPTIONS', 'slots are required');
+  let activeProjections: readonly ActiveProjection[] = [];
 
   const commands: PlayerShellCommands = {
     open(request) {
       const origin = session.snapshot();
       assertOpenRequest(request, origin);
-      commitAndOpen(session, slots, request, origin);
+      const previous = activeProjections;
+      try {
+        const context = commitAndOpen(session, slots, request, origin);
+        activeProjections = request.slot === 'title'
+          ? []
+          : [...activeProjections, { request, context }];
+      } catch (error) {
+        activeProjections = previous;
+        throw error;
+      }
     },
     close() {
       const origin = session.snapshot();
       const slot = overlaySlot(origin.overlay);
+      const previous = activeProjections;
+      const current = previous.at(-1);
+      if (!current || current.request.slot !== slot) {
+        throw controllerError(
+          'PLAYER_UI_INVALID_TRANSITION',
+          `close has no active provider request for slot=${slot}`,
+        );
+      }
+      let providerCloseStarted = false;
       try {
         const returned = session.closeOverlay();
+        providerCloseStarted = true;
         slots.close(slot);
-        reopenReturnedProjection(slots, returned);
+        const next = previous.slice(0, -1);
+        const parent = next.at(-1);
+        if (returned.overlay !== 'none') {
+          if (!parent) {
+            throw controllerError(
+              'PLAYER_SHELL_SLOT_FAILED',
+              `missing parent provider for returned overlay=${returned.overlay}`,
+            );
+          }
+          slots.open(parent.request, parent.context);
+        }
+        activeProjections = next;
       } catch (error) {
-        session.restore(origin);
+        const compensationErrors: unknown[] = [];
+        if (providerCloseStarted) {
+          try {
+            slots.open(current.request, current.context);
+          } catch (compensationError) {
+            compensationErrors.push(compensationError);
+          }
+        }
+        try {
+          session.restore(origin);
+        } catch (restoreError) {
+          compensationErrors.push(restoreError);
+        }
+        activeProjections = previous;
+        if (compensationErrors.length > 0) {
+          throw new PlayerShellSlotError(
+            'PLAYER_SHELL_SLOT_FAILED',
+            'provider close transaction compensation failed',
+            new AggregateError([error, ...compensationErrors], 'player shell close transaction failed'),
+          );
+        }
         throw error;
       }
     },
