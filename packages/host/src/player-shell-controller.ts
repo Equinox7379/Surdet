@@ -187,6 +187,98 @@ function commitAndOpen(
   }
 }
 
+function restoreProjectionStack(
+  slots: PlayerShellSlotRegistry,
+  projections: readonly ActiveProjection[],
+): void {
+  const errors: unknown[] = [];
+  for (const projection of projections) {
+    try {
+      slots.open(projection.request, projection.context);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'player shell projection restore failed');
+  }
+}
+
+/**
+ * Closes a projection stack from the top down.  The caller keeps its active
+ * ledger and Session unchanged until this function returns successfully.
+ * A provider is reopened when its close throws because the provider may have
+ * performed its side effect before reporting the error.
+ */
+function closeProjectionStack(
+  slots: PlayerShellSlotRegistry,
+  projections: readonly ActiveProjection[],
+  message: string,
+): void {
+  const closed: ActiveProjection[] = [];
+  for (let index = projections.length - 1; index >= 0; index -= 1) {
+    const projection = projections[index]!;
+    try {
+      slots.close(projection.request.slot);
+      closed.push(projection);
+    } catch (error) {
+      const compensationErrors: unknown[] = [];
+      try {
+        slots.open(projection.request, projection.context);
+      } catch (compensationError) {
+        compensationErrors.push(compensationError);
+      }
+      try {
+        restoreProjectionStack(slots, [...closed].reverse());
+      } catch (compensationError) {
+        compensationErrors.push(compensationError);
+      }
+      if (compensationErrors.length > 0) {
+        throw new PlayerShellSlotError(
+          'PLAYER_SHELL_SLOT_FAILED',
+          message,
+          new AggregateError([error, ...compensationErrors], message),
+        );
+      }
+      throw error;
+    }
+  }
+}
+
+function rollbackProjectionMutation(
+  slots: PlayerShellSlotRegistry,
+  session: PlayerUiSession,
+  origin: PlayerUiSessionSnapshot,
+  projections: readonly ActiveProjection[],
+  restoreProjections: boolean,
+  error: unknown,
+  message: string,
+): never {
+  const compensationErrors: unknown[] = [];
+  if (restoreProjections) {
+    try {
+      restoreProjectionStack(slots, projections);
+    } catch (compensationError) {
+      compensationErrors.push(compensationError);
+    }
+  }
+  if (session.snapshot() !== origin && origin.operation === 'idle') {
+    try {
+      session.restore(origin);
+    } catch (restoreError) {
+      compensationErrors.push(restoreError);
+    }
+  }
+  if (compensationErrors.length > 0) {
+    throw new PlayerShellSlotError(
+      'PLAYER_SHELL_SLOT_FAILED',
+      message,
+      new AggregateError([error, ...compensationErrors], message),
+    );
+  }
+  throw error;
+}
+
 export function createPlayerShellController(
   options: PlayerShellControllerOptions,
 ): PlayerShellController {
@@ -201,11 +293,33 @@ export function createPlayerShellController(
       const origin = session.snapshot();
       assertOpenRequest(request, origin);
       const previous = activeProjections;
+      if (request.slot === 'title') {
+        if (origin.operation !== 'idle') {
+          throw controllerError('PLAYER_UI_INVALID_TRANSITION', 'title open requires operation=idle');
+        }
+        let projectionsClosed = false;
+        try {
+          closeProjectionStack(slots, previous, 'title projection convergence failed');
+          projectionsClosed = true;
+          const context = commitAndOpen(session, slots, request, origin);
+          activeProjections = [{ request, context }];
+        } catch (error) {
+          activeProjections = previous;
+          rollbackProjectionMutation(
+            slots,
+            session,
+            origin,
+            previous,
+            projectionsClosed,
+            error,
+            'title projection convergence compensation failed',
+          );
+        }
+        return;
+      }
       try {
         const context = commitAndOpen(session, slots, request, origin);
-        activeProjections = request.slot === 'title'
-          ? []
-          : [...activeProjections, { request, context }];
+        activeProjections = [...activeProjections, { request, context }];
       } catch (error) {
         activeProjections = previous;
         throw error;
@@ -268,7 +382,30 @@ export function createPlayerShellController(
       session.beginOperation(operation);
     },
     completeOperation(operationOptions) {
-      session.completeOperation(operationOptions);
+      const origin = session.snapshot();
+      if (origin.operation === 'idle') {
+        session.completeOperation(operationOptions);
+        return;
+      }
+      const previous = activeProjections;
+      let projectionsClosed = false;
+      try {
+        closeProjectionStack(slots, previous, 'operation completion projection cleanup failed');
+        projectionsClosed = true;
+        session.completeOperation(operationOptions);
+        activeProjections = [];
+      } catch (error) {
+        activeProjections = previous;
+        rollbackProjectionMutation(
+          slots,
+          session,
+          origin,
+          previous,
+          projectionsClosed,
+          error,
+          'operation completion projection compensation failed',
+        );
+      }
     },
     failOperation(error) {
       session.failOperation();
@@ -282,8 +419,27 @@ export function createPlayerShellController(
       inputGate.consumeCurrentPointer();
     },
     reset(base = 'title') {
-      session.reset(base);
-      inputGate.reset();
+      const origin = session.snapshot();
+      const previous = activeProjections;
+      let projectionsClosed = false;
+      try {
+        closeProjectionStack(slots, previous, 'player shell reset projection cleanup failed');
+        projectionsClosed = true;
+        session.reset(base);
+        inputGate.reset();
+        activeProjections = [];
+      } catch (error) {
+        activeProjections = previous;
+        rollbackProjectionMutation(
+          slots,
+          session,
+          origin,
+          previous,
+          projectionsClosed,
+          error,
+          'player shell reset projection compensation failed',
+        );
+      }
     },
   };
 
