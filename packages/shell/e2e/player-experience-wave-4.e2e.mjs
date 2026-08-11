@@ -157,13 +157,14 @@ async function launchSession(caseId) {
     });
   });
 
-  return {
+  const session = {
     caseId,
     caseRoot,
     userData,
     app,
     page,
     events,
+    identity: null,
     async snapshot() {
       if (page.isClosed()) return null;
       return page.evaluate(() => {
@@ -347,32 +348,52 @@ async function launchSession(caseId) {
       await app.close();
     },
   };
+
+  return session;
+}
+
+async function prepareSession(session) {
+  await session.waitForAssets();
+  session.identity = await session.snapshot();
+  return session.identity;
+}
+
+function caseEvidence(session, caseId, ok, assertions, error = null) {
+  const identity = session?.identity ?? { title: null, assetLoading: null };
+  const assetLoading = identity.assetLoading ?? null;
+  const assetComplete = assetLoading?.done === true
+    && assetLoading.total > 0
+    && assetLoading.completed === assetLoading.total
+    && assetLoading.failed === 0;
+  const evidence = {
+    id: caseId,
+    ok,
+    title: identity.title ?? null,
+    sourceRoot: gameSourceRoot,
+    distRoot: path.resolve(gameDist),
+    userData: session?.userData ?? path.join(tempRoot, caseId, 'user-data'),
+    assetLoading: identity.assetLoading,
+    assetComplete,
+    assertions,
+    events: cloneJson(session?.events ?? emptyEvents()),
+    screenshots: cloneJson(session?.screenshots ?? []),
+  };
+  if (error) {
+    evidence.error = errorText(error);
+    evidence.errorStack = error instanceof Error ? error.stack ?? null : null;
+  }
+  return evidence;
 }
 
 async function runSmokeCase() {
   let session;
   try {
     session = await launchSession('smoke');
+    await prepareSession(session);
     await session.waitTitle();
-    return {
-      id: 'A',
-      ok: true,
-      userData: session.userData,
-      events: cloneJson(session.events),
-      screenshots: cloneJson(session.screenshots),
-      assertions: { smoke: true, formalGame: true, distRoot: path.resolve(gameDist) },
-    };
+    return caseEvidence(session, 'A', true, { smoke: true, formalGame: true });
   } catch (error) {
-    return {
-      id: 'A',
-      ok: false,
-      userData: session?.userData ?? path.join(tempRoot, 'smoke', 'user-data'),
-      events: cloneJson(session?.events ?? emptyEvents()),
-      screenshots: cloneJson(session?.screenshots ?? []),
-      assertions: { smoke: true, formalGame: true, distRoot: path.resolve(gameDist) },
-      error: errorText(error),
-      errorStack: error instanceof Error ? error.stack ?? null : null,
-    };
+    return caseEvidence(session, 'A', false, { smoke: true, formalGame: true }, error);
   } finally {
     if (session) await session.close();
   }
@@ -768,95 +789,34 @@ async function runCase(caseId) {
   };
   try {
     session = await launchSession(caseId);
+    await prepareSession(session);
+    const finish = (assertionSnapshot) => caseEvidence(session, caseId, true, assertionSnapshot);
     if (caseId === 'C') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runBacklogCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runBacklogCase(session));
     }
     if (caseId === 'D') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runRollbackCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runRollbackCase(session));
     }
     if (caseId === 'B') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runGameGalleryCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runGameGalleryCase(session));
     }
     if (caseId === 'E') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runSaveLoadCase(session, 'immediate'),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runSaveLoadCase(session, 'immediate'));
     }
     if (caseId === 'F') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runSaveLoadRoundTripCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runSaveLoadRoundTripCase(session));
     }
     if (caseId === 'G') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runTitleCleanupCase(session, false),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runTitleCleanupCase(session, false));
     }
     if (caseId === 'H') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runTitleCleanupCase(session, true),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runTitleCleanupCase(session, true));
     }
     if (caseId === 'I') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runCommandRailCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runCommandRailCase(session));
     }
     if (caseId === 'J') {
-      return {
-        id: caseId,
-        ok: true,
-        userData: session.userData,
-        assertions: await runFullscreenCase(session),
-        events: cloneJson(session.events),
-        screenshots: cloneJson(session.screenshots),
-      };
+      return finish(await runFullscreenCase(session));
     }
     if (caseId !== 'A') {
       throw new Error(`Wave 4 case ${caseId} 未被路由到任何执行器。`);
@@ -907,25 +867,9 @@ async function runCase(caseId) {
     if (finalSnapshot?.uiSession?.base !== 'title' || finalSnapshot?.activeOverlay !== 'title') {
       throw new Error(`标题 Gallery 关闭后的 return context 错误：${JSON.stringify(finalSnapshot)}`);
     }
-    return {
-      id: caseId,
-      ok: true,
-      userData: session.userData,
-      assertions: { ...assertions, returnBase: finalSnapshot.uiSession.base },
-      events: cloneJson(session.events),
-      screenshots: cloneJson(session.screenshots),
-    };
+    return finish({ ...assertions, returnBase: finalSnapshot.uiSession.base });
   } catch (error) {
-    return {
-      id: caseId,
-      ok: false,
-      userData: session?.userData ?? path.join(tempRoot, caseId, 'user-data'),
-      assertions,
-      events: cloneJson(session?.events ?? emptyEvents()),
-      screenshots: cloneJson(session?.screenshots ?? []),
-      error: errorText(error),
-      errorStack: error instanceof Error ? error.stack ?? null : null,
-    };
+    return caseEvidence(session, caseId, false, assertions, error);
   } finally {
     if (session) await session.close();
   }
