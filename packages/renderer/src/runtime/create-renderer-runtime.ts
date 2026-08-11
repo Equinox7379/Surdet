@@ -33,6 +33,7 @@ export interface RendererRuntimeInternals {
   readonly scheduler: { dispose(): void };
   readonly monitor: RenderPerformanceMonitor;
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
+  readonly resourceLedger?: () => import('../lifecycle/render-lifecycle.js').RenderLifecycleDiagnosticSnapshot;
   readonly assetRegistry?: RenderAssetRegistry;
   readonly lifecycle?: RenderLifecycle;
   readonly dialogueLayer?: DialogueProjectionPort;
@@ -132,6 +133,8 @@ export async function createRendererRuntimeFromInternals(
       monitor: internals.monitor,
       resourceSnapshot: internals.resourceSnapshot
         ?? (internals.lifecycle ? () => internals.lifecycle!.snapshot() : undefined),
+      resourceLedger: internals.resourceLedger
+        ?? (internals.lifecycle ? () => internals.lifecycle!.diagnostics() : undefined),
       assetRegistry: internals.assetRegistry,
       dialogueLayer: internals.dialogueLayer,
       menuLayer: internals.menuLayer,
@@ -259,6 +262,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       assetRegistry,
       lifecycle,
       resourceSnapshot: () => lifecycle.snapshot(),
+      resourceLedger: () => lifecycle.diagnostics(),
       dialogueLayer: stage.dialogueLayer,
       menuLayer: stage.menuLayer,
       galleryLayer: stage.galleryLayer,

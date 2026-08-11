@@ -7,6 +7,7 @@ import type { PresentationPreferences } from '../presentation.js';
 import type { RenderPerformanceMonitor, RenderPerformanceSnapshot } from '../performance.js';
 import type { RenderQuality } from '../quality.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
+import type { RenderLifecycleDiagnosticSnapshot } from '../lifecycle/render-lifecycle.js';
 import type { SettingsRowView } from '../settings-store.js';
 import type { TimelineFrameEvent } from '../timeline-player.js';
 import type {
@@ -139,6 +140,7 @@ export interface RendererFacadeOptions {
   controller: RendererControllerPort;
   monitor: RenderPerformanceMonitor;
   resourceSnapshot?: () => RendererResourceSnapshot;
+  resourceLedger?: () => RenderLifecycleDiagnosticSnapshot;
   assetRegistry?: RenderAssetRegistry;
   /** M3 public dialogue projection port; concrete Layer details stay behind it. */
   dialogueLayer?: DialogueProjectionPort;
@@ -225,6 +227,13 @@ function cloneResourceSnapshot(snapshot: RendererResourceSnapshot, disposed: boo
   };
 }
 
+function cloneResourceLedger(snapshot: RenderLifecycleDiagnosticSnapshot): RenderLifecycleDiagnosticSnapshot {
+  return {
+    active: snapshot.active.map((entry) => ({ ...entry })),
+    events: snapshot.events.map((event) => ({ ...event })),
+  };
+}
+
 /**
  * M1 compatibility facade. Every public command delegates to exactly one existing
  * Stage operation; no Pixi display object or legacy implementation is copied here.
@@ -237,6 +246,7 @@ export class RendererFacade {
   #controller: RendererControllerPort;
   #monitor: RenderPerformanceMonitor;
   #resourceSnapshot?: () => RendererResourceSnapshot;
+  #resourceLedger?: () => RenderLifecycleDiagnosticSnapshot;
   #assetRegistry?: RenderAssetRegistry;
   #dialoguePort?: DialogueProjectionPort;
   #menuPort?: MenuProjectionPort;
@@ -256,6 +266,7 @@ export class RendererFacade {
     this.#controller = options.controller;
     this.#monitor = options.monitor;
     this.#resourceSnapshot = options.resourceSnapshot;
+    this.#resourceLedger = options.resourceLedger;
     this.#assetRegistry = options.assetRegistry;
     this.#dialoguePort = options.dialogueLayer;
     this.#menuPort = options.menuLayer;
@@ -799,6 +810,7 @@ export class RendererFacade {
         this.#resourceSnapshot?.() ?? EMPTY_RESOURCE_SNAPSHOT(this.#disposed),
         this.#disposed,
       ),
+      resourceLedger: () => cloneResourceLedger(this.#resourceLedger?.() ?? { active: [], events: [] }),
       performanceSnapshot: (): RenderPerformanceSnapshot | null => this.#monitor.snapshot(),
       projectionSnapshot: () => cloneAndFreezePlainData(this.#projectionSnapshot?.() ?? EMPTY_PROJECTION_SNAPSHOT) as RendererProjectionSnapshot,
       needsUpdate: () => this.#controller.needsUpdate || this.#stage.needsUpdate?.() === true,

@@ -138,4 +138,34 @@ describe('RenderLifecycle', () => {
     (snapshot.pooledObjects as Record<string, number>).world = 99;
     expect(lifecycle.snapshot().pooledObjects).not.toHaveProperty('world');
   });
+
+  it('records read-only resource identity and release path diagnostics', () => {
+    const lifecycle = new RenderLifecycle();
+    lifecycle.register('dialogue', 'listener', 'hmr-pointer', () => undefined);
+
+    const active = lifecycle.diagnostics();
+    expect(active.active).toHaveLength(1);
+    expect(active.active[0]).toMatchObject({
+      owner: 'dialogue',
+      kind: 'listener',
+      key: 'hmr-pointer',
+      active: true,
+    });
+    expect(active.active[0]?.source.length).toBeGreaterThan(0);
+    expect(Object.isFrozen(active)).toBe(true);
+    expect(Object.isFrozen(active.active)).toBe(true);
+
+    lifecycle.release('dialogue', 'listener', 'hmr-pointer');
+    const afterRelease = lifecycle.diagnostics();
+    expect(afterRelease.active).toHaveLength(0);
+    expect(afterRelease.events.at(-1)).toMatchObject({
+      owner: 'dialogue',
+      kind: 'listener',
+      key: 'hmr-pointer',
+      action: 'dispose',
+      path: 'release',
+      outcome: 'success',
+    });
+    expect(Object.isFrozen(afterRelease.events)).toBe(true);
+  });
 });
