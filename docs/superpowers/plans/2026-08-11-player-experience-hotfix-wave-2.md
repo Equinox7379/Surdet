@@ -653,7 +653,7 @@ WAITING_FOR_REVIEW
 > 执行 AI 从 Task 0 开始逐项更新。不得预先勾选，不得删除失败历史。
 
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
-- [ ] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`IMPLEMENTATION_COMMIT_PENDING`。
+- [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 - [ ] Task 2：单一 UI 会话状态。提交：`PENDING`。
 - [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
@@ -732,4 +732,6 @@ git status --short =
 
 Task 1 范围：仅加入失败可定位诊断、正式游戏 E2E 的显式入口策略和语义只读调试投影；尚未修改任何剧情、DSL、存档、玩家规则、性能数据、门限、美术、音频或发行流程。四个受保护未跟踪文件未触碰。
 
-下一入口：完成 Task 1 聚焦提交并在随后台账提交中记录真实 SHA，然后开始 Task 2 的状态机红灯测试。Task 1 的失败矩阵必须继续保留，不能声明 UX 修复完成。
+Task 1 实现提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
+
+下一入口：提交本次台账 SHA 后开始 Task 2 的状态机红灯测试。Task 1 的失败矩阵必须继续保留，不能声明 UX 修复完成。
