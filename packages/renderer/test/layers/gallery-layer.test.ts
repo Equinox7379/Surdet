@@ -16,12 +16,14 @@ interface GalleryRuntime {
   readonly layer: GalleryLayer;
   readonly lifecycle: RenderLifecycle;
   readonly assets: RenderAssetRegistry;
+  readonly requestFrame: ReturnType<typeof vi.fn>;
 }
 
 function makeGalleryRuntime(): GalleryRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
+  const requestFrame = vi.fn();
   const layer = new GalleryLayer({
     uiLayer: root,
     width: 1280,
@@ -29,8 +31,9 @@ function makeGalleryRuntime(): GalleryRuntime {
     assets,
     lifecycle,
     createBackgroundTexture: () => new Texture(),
+    requestFrame,
   });
-  return { root, layer, lifecycle, assets };
+  return { root, layer, lifecycle, assets, requestFrame };
 }
 
 function disposeGalleryRuntime(runtime: GalleryRuntime): void {
@@ -274,6 +277,61 @@ describe('GalleryLayer direct contract', () => {
       expect(onClose).toHaveBeenCalledOnce();
       expect(runtime.layer.gallery()).toEqual({ type: 'none' });
       expect(runtime.lifecycle.snapshot().listeners).toBe(0);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('requests a frame for every visible tab rebuild after the initial projection', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({
+        cgs: [{ id: 'cg-1', name: '初遇', unlocked: true, src: 'cg-1' }],
+        music: [{ id: 'music-1', name: '主题曲', unlocked: true, src: 'theme.mp3' }],
+        texts: [{ id: 'text-1', name: '第一夜', unlocked: true, scene: 'prologue', label: 'start' }],
+      });
+      runtime.requestFrame.mockClear();
+
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.gallery()).toMatchObject({ type: 'gallery', tab: 'music', mode: 'grid' });
+      expect(findText(runtime.root, '♪  主题曲').text).toBe('♪  主题曲');
+      expect(runtime.requestFrame).toHaveBeenCalled();
+
+      runtime.requestFrame.mockClear();
+      findText(runtime.root, '文本').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.gallery()).toMatchObject({ type: 'gallery', tab: 'text', mode: 'grid' });
+      expect(findText(runtime.root, '❐  第一夜').text).toBe('❐  第一夜');
+      expect(runtime.requestFrame).toHaveBeenCalled();
+
+      runtime.requestFrame.mockClear();
+      findText(runtime.root, 'CG').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.gallery()).toMatchObject({ type: 'gallery', tab: 'cg', mode: 'grid' });
+      expect(findText(runtime.root, '初遇').text).toBe('初遇');
+      expect(runtime.requestFrame).toHaveBeenCalled();
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('requests a frame when the CG viewer returns to the gallery list', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({
+        cgs: [{ id: 'cg-1', name: '初遇', unlocked: true, src: 'cg-asset' }],
+        music: [],
+        texts: [],
+      });
+      runtime.requestFrame.mockClear();
+
+      findParentWithText(runtime.root, '初遇').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.gallery()).toMatchObject({ type: 'gallery', tab: 'cg', mode: 'viewer', viewerKey: 'cg-asset' });
+      expect(findText(runtime.root, '点击任意处返回列表').text).toBe('点击任意处返回列表');
+
+      runtime.requestFrame.mockClear();
+      findParentWithText(runtime.root, '点击任意处返回列表').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.gallery()).toEqual({ type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null });
+      expect(findText(runtime.root, '初遇').text).toBe('初遇');
+      expect(runtime.requestFrame).toHaveBeenCalled();
     } finally {
       disposeGalleryRuntime(runtime);
     }
