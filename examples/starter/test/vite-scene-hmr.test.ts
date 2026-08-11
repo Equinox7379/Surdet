@@ -12,6 +12,28 @@ let activeTempRoot: string | undefined;
 let activeServer: ViteDevServer | undefined;
 let activeBrowser: Browser | undefined;
 
+interface HmrPresentationSnapshot {
+  readonly version: number;
+  readonly stage: {
+    readonly backgroundKey: string | null;
+    readonly particleKind: string | null;
+    readonly portraits: readonly {
+      readonly key: string;
+      readonly view: {
+        readonly charId: string;
+        readonly costume: string;
+        readonly expression: string;
+        readonly pos: string;
+      };
+    }[];
+  };
+  readonly timelines: readonly {
+    readonly id: number;
+    readonly blocking: boolean;
+    readonly definition: { readonly id: string; readonly durationMs: number };
+  }[];
+}
+
 afterEach(async () => {
   await activeBrowser?.close();
   await activeServer?.close();
@@ -50,7 +72,7 @@ async function waitForConsole(page: Page, messages: string[], predicate: (messag
 }
 
 describe('real Vite .gal HMR', () => {
-  it('keeps the running page and long-lived resources, clamps valid edits, and rejects invalid edits', async () => {
+  it('keeps the running page and long-lived resources across two valid edits, an invalid edit, and recovery', async () => {
     const tempRoot = await copyStarterToTemp();
     const server = await createServer({
       root: tempRoot,
@@ -72,34 +94,113 @@ describe('real Vite .gal HMR', () => {
     page.on('framenavigated', () => { navigationCount += 1; });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window.__surdetDebug !== 'undefined', undefined, { timeout: 30000 });
-    await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
-    await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'ch01_01', undefined, { timeout: 15000 });
+
     const waitForStableResources = async (): Promise<void> => {
       await page.waitForFunction(() => {
         const snapshot = window.__surdetDebug.resourceSnapshot;
         return window.__surdetDebug.assetLoading?.done === true
-          && window.__surdetDebug.rendererStatus !== 'typing'
           && snapshot !== undefined
           && snapshot !== null;
       }, undefined, { timeout: 15000 });
       await page.waitForTimeout(250);
     };
+
+    // main.ts finishes its asynchronous asset phase before titleSelect is safe.
+    // This makes the initial listener ledger deterministic rather than racing
+    // the final showTitleScreen() projection.
+    await waitForStableResources();
+    await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
+    await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'ch01_01', undefined, { timeout: 15000 });
     await waitForStableResources();
 
-    const initial = await page.evaluate(() => ({
+    const captureState = async () => page.evaluate(() => ({
       sessionId: window.__surdetDebug.sessionId,
       resourceIds: window.__surdetDebug.resourceIds,
       position: window.__surdetDebug.position,
       activeBlobUrls: window.__surdetDebug.activeBlobUrls,
       resourceSnapshot: window.__surdetDebug.resourceSnapshot,
+      resourceLedger: window.__surdetDebug.resourceLedger,
       presentationSnapshot: window.__surdetDebug.presentationSnapshot,
+      presentationIdentity: (() => {
+        const snapshot = window.__surdetDebug.presentationSnapshot as HmrPresentationSnapshot | undefined;
+        if (!snapshot) return null;
+        return {
+          version: snapshot.version,
+          stage: {
+            backgroundKey: snapshot.stage.backgroundKey,
+            particleKind: snapshot.stage.particleKind,
+            portraits: snapshot.stage.portraits.map((portrait) => ({
+              key: portrait.key,
+              charId: portrait.view.charId,
+              costume: portrait.view.costume,
+              expression: portrait.view.expression,
+              pos: portrait.view.pos,
+            })),
+          },
+          timelines: snapshot.timelines
+            .map((timeline) => ({
+              id: timeline.id,
+              blocking: timeline.blocking,
+              definitionId: timeline.definition.id,
+              durationMs: timeline.definition.durationMs,
+            }))
+            .sort((left, right) => left.id - right.id),
+        };
+      })(),
     }));
+    const listenerKeys = (state: Awaited<ReturnType<typeof captureState>>): string[] => (
+      state.resourceLedger?.active
+        .filter((entry) => entry.kind === 'listener')
+        .map((entry) => `${entry.owner}:${entry.key}`)
+        .sort() ?? []
+    );
+    const expectedListenerKeys = [
+      'dialogue:command-rail-pointer',
+      'runtime:core-events',
+      'runtime:presentation-controller',
+    ].sort();
+    const expectStableResources = (
+      before: Awaited<ReturnType<typeof captureState>>,
+      after: Awaited<ReturnType<typeof captureState>>,
+    ): void => {
+      expect(after.sessionId).toBe(before.sessionId);
+      expect(after.resourceIds).toEqual(before.resourceIds);
+      expect(after.activeBlobUrls).toBe(before.activeBlobUrls);
+      expect({
+        tickerCallbacks: after.resourceSnapshot?.tickerCallbacks,
+        blobUrls: after.resourceSnapshot?.blobUrls,
+        pooledObjects: after.resourceSnapshot?.pooledObjects,
+        displayObjectsByOwner: after.resourceSnapshot?.displayObjectsByOwner,
+      }).toEqual({
+        tickerCallbacks: before.resourceSnapshot?.tickerCallbacks,
+        blobUrls: before.resourceSnapshot?.blobUrls,
+        pooledObjects: before.resourceSnapshot?.pooledObjects,
+        displayObjectsByOwner: before.resourceSnapshot?.displayObjectsByOwner,
+      });
+      expect(listenerKeys(after)).toEqual(expectedListenerKeys);
+      expect(after.resourceSnapshot?.listeners).toBe(expectedListenerKeys.length);
+      expect(after.resourceLedger?.active
+        .filter((entry) => entry.kind === 'listener')
+        .every((entry) => entry.source.length > 0)).toBe(true);
+      // Camera/fade/timeline cursors are intentionally time-varying; compare
+      // the semantic stage identity that HMR must preserve instead. A running
+      // timeline may legitimately complete between two HMR observations.
+      expect(after.presentationIdentity?.version).toBe(before.presentationIdentity?.version);
+      expect(after.presentationIdentity?.stage).toEqual(before.presentationIdentity?.stage);
+    };
+
+    const initial = await captureState();
+    expect(listenerKeys(initial)).toEqual(expectedListenerKeys);
+    expect(initial.resourceSnapshot?.listeners).toBe(expectedListenerKeys.length);
+
     const scenePath = path.join(tempRoot, 'content', 'scenario', 'ch01_01.gal');
     const original = await readFile(scenePath, 'utf8');
-    const validReplacement = original.replace('等了你三个晚上', '等了你四个晚上');
-    expect(validReplacement).not.toBe(original);
+    const validReplacementOne = original.replace('等了你三个晚上', '等了你四个晚上');
+    const validReplacementTwo = validReplacementOne.replace('等了你四个晚上', '等了你五个晚上');
+    expect(validReplacementOne).not.toBe(original);
+    expect(validReplacementTwo).not.toBe(validReplacementOne);
 
-    await writeFile(scenePath, validReplacement, 'utf8');
+    await writeFile(scenePath, validReplacementOne, 'utf8');
     try {
       await page.waitForFunction(
         (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
@@ -111,70 +212,54 @@ describe('real Vite .gal HMR', () => {
       const state = await page.evaluate(() => ({
         sessionId: window.__surdetDebug.sessionId,
         position: window.__surdetDebug.position,
+        resourceLedger: window.__surdetDebug.resourceLedger,
       }));
       throw new Error(`${String(error)}\nHMR console=${messages.join(' | ')}\nHMR state=${JSON.stringify(state)}`);
     }
-    const afterValid = await page.evaluate(() => ({
-      sessionId: window.__surdetDebug.sessionId,
-      resourceIds: window.__surdetDebug.resourceIds,
-      position: window.__surdetDebug.position,
-      activeBlobUrls: window.__surdetDebug.activeBlobUrls,
-      resourceSnapshot: window.__surdetDebug.resourceSnapshot,
-      presentationSnapshot: window.__surdetDebug.presentationSnapshot,
-    }));
+    const afterValidOne = await captureState();
     expect(navigationCount).toBe(1);
-    expect(afterValid.sessionId).toBe(initial.sessionId);
-    expect(afterValid.resourceIds).toEqual(initial.resourceIds);
-    expect(afterValid.activeBlobUrls).toBe(initial.activeBlobUrls);
-    expect(afterValid.position?.sceneId).toBe('ch01_01');
-    expect(afterValid.position?.pc).toBeGreaterThanOrEqual(0);
-    expect({
-      listeners: afterValid.resourceSnapshot?.listeners,
-      tickerCallbacks: afterValid.resourceSnapshot?.tickerCallbacks,
-      blobUrls: afterValid.resourceSnapshot?.blobUrls,
-      pooledObjects: afterValid.resourceSnapshot?.pooledObjects,
-      displayObjectsByOwner: afterValid.resourceSnapshot?.displayObjectsByOwner,
-    }).toEqual({
-      listeners: initial.resourceSnapshot?.listeners,
-      tickerCallbacks: initial.resourceSnapshot?.tickerCallbacks,
-      blobUrls: initial.resourceSnapshot?.blobUrls,
-      pooledObjects: initial.resourceSnapshot?.pooledObjects,
-      displayObjectsByOwner: initial.resourceSnapshot?.displayObjectsByOwner,
-    });
-    expect(afterValid.presentationSnapshot).toEqual(initial.presentationSnapshot);
+    expectStableResources(initial, afterValidOne);
+    expect(afterValidOne.position?.sceneId).toBe('ch01_01');
+    expect(afterValidOne.position?.pc).toBeGreaterThanOrEqual(0);
 
-    const invalidReplacement = `${validReplacement}\n@if (`;
+    await writeFile(scenePath, validReplacementTwo, 'utf8');
+    await page.waitForFunction(
+      (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
+      afterValidOne.position?.sceneHash,
+      { timeout: 15000 },
+    );
+    await waitForStableResources();
+    const afterValidTwo = await captureState();
+    expect(navigationCount).toBe(1);
+    expectStableResources(afterValidOne, afterValidTwo);
+    expect(afterValidTwo.position?.sceneId).toBe('ch01_01');
+    expect(afterValidTwo.position?.pc).toBeGreaterThanOrEqual(0);
+
+    const invalidReplacement = `${validReplacementTwo}\n@if (`;
     await writeFile(scenePath, invalidReplacement, 'utf8');
     await waitForConsole(page, messages, (message) => message.includes('场景热重载失败，保留旧场景 ch01_01'));
     await waitForStableResources();
-    const afterInvalid = await page.evaluate(() => ({
-      sessionId: window.__surdetDebug.sessionId,
-      resourceIds: window.__surdetDebug.resourceIds,
-      position: window.__surdetDebug.position,
-      activeBlobUrls: window.__surdetDebug.activeBlobUrls,
-      resourceSnapshot: window.__surdetDebug.resourceSnapshot,
-      presentationSnapshot: window.__surdetDebug.presentationSnapshot,
-    }));
+    const afterInvalid = await captureState();
     expect(navigationCount).toBe(1);
-    expect(afterInvalid.sessionId).toBe(initial.sessionId);
-    expect(afterInvalid.resourceIds).toEqual(initial.resourceIds);
-    expect(afterInvalid.activeBlobUrls).toBe(initial.activeBlobUrls);
-    expect(afterInvalid.position).toEqual(afterValid.position);
-    expect({
-      listeners: afterInvalid.resourceSnapshot?.listeners,
-      tickerCallbacks: afterInvalid.resourceSnapshot?.tickerCallbacks,
-      blobUrls: afterInvalid.resourceSnapshot?.blobUrls,
-      pooledObjects: afterInvalid.resourceSnapshot?.pooledObjects,
-      displayObjectsByOwner: afterInvalid.resourceSnapshot?.displayObjectsByOwner,
-    }).toEqual({
-      listeners: afterValid.resourceSnapshot?.listeners,
-      tickerCallbacks: afterValid.resourceSnapshot?.tickerCallbacks,
-      blobUrls: afterValid.resourceSnapshot?.blobUrls,
-      pooledObjects: afterValid.resourceSnapshot?.pooledObjects,
-      displayObjectsByOwner: afterValid.resourceSnapshot?.displayObjectsByOwner,
-    });
-    expect(afterInvalid.presentationSnapshot).toEqual(afterValid.presentationSnapshot);
+    expectStableResources(afterValidTwo, afterInvalid);
+    expect(afterInvalid.position).toEqual(afterValidTwo.position);
 
     await writeFile(scenePath, original, 'utf8');
+    await page.waitForFunction(
+      (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
+      afterInvalid.position?.sceneHash,
+      { timeout: 15000 },
+    );
+    await page.waitForFunction(
+      (originalHash) => window.__surdetDebug.position?.sceneHash === originalHash,
+      initial.position?.sceneHash,
+      { timeout: 15000 },
+    );
+    await waitForStableResources();
+    const afterRestore = await captureState();
+    expect(navigationCount).toBe(1);
+    expectStableResources(afterValidTwo, afterRestore);
+    expect(afterRestore.position?.sceneId).toBe('ch01_01');
+    expect(afterRestore.position?.sceneHash).toBe(initial.position?.sceneHash);
   }, 60000);
 });

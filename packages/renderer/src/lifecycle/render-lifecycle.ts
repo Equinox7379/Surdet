@@ -9,6 +9,31 @@ interface ResourceEntry {
   readonly kind: ResourceKind;
   readonly key: string;
   readonly dispose: () => void;
+  readonly source: string;
+}
+
+export interface RenderLifecycleDiagnosticEntry {
+  readonly owner: ResourceOwner;
+  readonly kind: ResourceKind;
+  readonly key: string;
+  readonly source: string;
+  readonly active: true;
+}
+
+export interface RenderLifecycleDiagnosticEvent {
+  readonly owner: ResourceOwner;
+  readonly kind: ResourceKind;
+  readonly key: string;
+  readonly source: string;
+  readonly action: 'register' | 'dispose' | 'forget';
+  readonly path: string;
+  readonly outcome: 'success' | 'failure';
+  readonly cause?: string;
+}
+
+export interface RenderLifecycleDiagnosticSnapshot {
+  readonly active: readonly RenderLifecycleDiagnosticEntry[];
+  readonly events: readonly RenderLifecycleDiagnosticEvent[];
 }
 
 export interface RenderLifecycleDisposalFailure {
@@ -19,6 +44,15 @@ export interface RenderLifecycleDisposalFailure {
 }
 
 const RESOURCE_ERROR_CODE = 'COMMAND_COMMIT_FAILED' as const;
+
+function captureResourceSource(): string {
+  const frame = new Error().stack
+    ?.split(/\r?\n/)
+    .slice(2)
+    .find((line) => !line.includes('render-lifecycle'))
+    ?.trim();
+  return frame ?? 'unknown';
+}
 
 function compositeKey(owner: ResourceOwner, kind: ResourceKind, key: string): string {
   return `${owner}\u0000${kind}\u0000${key}`;
@@ -35,6 +69,7 @@ export class RenderLifecycle {
   #entries = new Map<string, ResourceEntry>();
   #ownerIndex = new Map<ResourceOwner, Set<string>>();
   #displayOwners = new Set<ResourceOwner>();
+  #events: RenderLifecycleDiagnosticEvent[] = [];
   #disposed = false;
 
   register(owner: ResourceOwner, kind: ResourceKind, key: string, dispose: () => void): void {
@@ -48,21 +83,25 @@ export class RenderLifecycle {
     }
 
     const id = compositeKey(owner, kind, key);
+    const source = captureResourceSource();
     const old = this.#entries.get(id);
     if (old) {
       this.#removeEntry(id);
       let failure: RenderLifecycleDisposalFailure | undefined;
       try {
         old.dispose();
+        this.#recordEvent(old, 'dispose', 'replace', 'success');
       } catch (error) {
+        this.#recordEvent(old, 'dispose', 'replace', 'failure', error);
         failure = this.#failureRecord(old, error);
       }
-      this.#addEntry({ owner, kind, key, dispose });
+      this.#addEntry({ owner, kind, key, dispose, source });
       if (failure) this.#throwDisposalFailure('replace', [failure]);
       return;
     }
 
-    this.#addEntry({ owner, kind, key, dispose });
+    this.#addEntry({ owner, kind, key, dispose, source });
+    this.#recordEvent({ owner, kind, key, source }, 'register', 'register', 'success');
   }
 
   release(owner: ResourceOwner, kind: ResourceKind, key: string): boolean {
@@ -82,7 +121,10 @@ export class RenderLifecycle {
    */
   forget(owner: ResourceOwner, kind: ResourceKind, key: string): boolean {
     if (this.#disposed) return false;
-    return this.#removeEntry(compositeKey(owner, kind, key)) !== undefined;
+    const entry = this.#removeEntry(compositeKey(owner, kind, key));
+    if (!entry) return false;
+    this.#recordEvent(entry, 'forget', 'forget', 'success');
+    return true;
   }
 
   releaseOwner(owner: ResourceOwner): void {
@@ -138,6 +180,21 @@ export class RenderLifecycle {
     };
   }
 
+  /** Read-only identity ledger for diagnosing owner lifecycle transitions. */
+  diagnostics(): RenderLifecycleDiagnosticSnapshot {
+    const active = [...this.#entries.values()].map((entry) => Object.freeze({
+      owner: entry.owner,
+      kind: entry.kind,
+      key: entry.key,
+      source: entry.source,
+      active: true as const,
+    }));
+    return Object.freeze({
+      active: Object.freeze(active),
+      events: Object.freeze(this.#events.map((event) => Object.freeze({ ...event }))),
+    });
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -172,11 +229,32 @@ export class RenderLifecycle {
     for (const entry of entries) {
       try {
         entry.dispose();
+        this.#recordEvent(entry, 'dispose', command, 'success');
       } catch (error) {
+        this.#recordEvent(entry, 'dispose', command, 'failure', error);
         failures.push(this.#failureRecord(entry, error));
       }
     }
     if (failures.length > 0) this.#throwDisposalFailure(command, failures);
+  }
+
+  #recordEvent(
+    entry: Pick<ResourceEntry, 'owner' | 'kind' | 'key' | 'source'>,
+    action: RenderLifecycleDiagnosticEvent['action'],
+    path: string,
+    outcome: RenderLifecycleDiagnosticEvent['outcome'],
+    cause?: unknown,
+  ): void {
+    this.#events.push(Object.freeze({
+      owner: entry.owner,
+      kind: entry.kind,
+      key: entry.key,
+      source: entry.source,
+      action,
+      path,
+      outcome,
+      ...(cause === undefined ? {} : { cause: cause instanceof Error ? cause.message : String(cause) }),
+    }));
   }
 
   #failureRecord(entry: ResourceEntry, cause: unknown): RenderLifecycleDisposalFailure {

@@ -7,6 +7,7 @@ import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.
 import type { RendererFontRole } from './renderer-commands.js';
 import type { RendererTheme } from '../theme.js';
 import type { LayerThemeProjectionSnapshot } from '../theme-projection.js';
+import type { RenderLifecycleDiagnosticSnapshot } from '../lifecycle/render-lifecycle.js';
 
 export interface WorldQueries {
   /** Expensive but read-only visual capture; does not change the visible stage. */
@@ -126,6 +127,8 @@ export interface RendererThemeProjectionSnapshot {
 
 export interface RendererDiagnosticQueries {
   resourceSnapshot(): RendererResourceSnapshot;
+  /** Read-only lifecycle identity ledger for diagnostics; never exposes disposers or display objects. */
+  resourceLedger?(): RenderLifecycleDiagnosticSnapshot;
   performanceSnapshot(): RenderPerformanceSnapshot | null;
   /** Pure semantic projection read model; returns no Layer or Pixi object. */
   projectionSnapshot(): RendererProjectionSnapshot;

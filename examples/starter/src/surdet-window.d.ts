@@ -1,5 +1,5 @@
 import type { SaveSnapshot, SaveSlotMeta } from '@surdet/core';
-import type { RendererResourceSnapshot } from '@surdet/renderer';
+import type { RenderLifecycleDiagnosticSnapshot, RendererResourceSnapshot } from '@surdet/renderer';
 
 interface SurdetDebugApi {
   readonly status: string;
@@ -9,6 +9,7 @@ interface SurdetDebugApi {
   readonly position: { sceneId: string; pc: number; sceneHash?: string } | null;
   readonly activeBlobUrls: number;
   readonly resourceSnapshot?: RendererResourceSnapshot | null;
+  readonly resourceLedger?: RenderLifecycleDiagnosticSnapshot | null;
   readonly presentationSnapshot?: unknown;
   titleSelect(id: string): unknown;
   [key: string]: unknown;
