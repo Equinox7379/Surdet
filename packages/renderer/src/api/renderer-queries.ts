@@ -67,6 +67,9 @@ export interface DialogueProjectionSnapshot {
   readonly backlogVisible: boolean;
   /** True when the real Backlog overlay root renders above dialogue text. */
   readonly backlogAboveDialogueText: boolean;
+  /** Real command-rail projection state; not derived from host session flags. */
+  readonly commandRailVisible: boolean;
+  readonly commandRailSuppressed: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
 }

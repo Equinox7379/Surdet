@@ -55,11 +55,11 @@ describe('FileSaveStore', () => {
     expect(sanitizeSlot('a_b')).toBe('a_ub');
   });
 
-  it('损坏的存档文件 read 返回 null 而非抛错', () => {
+  it('损坏的存档文件 read 必须抛错而不是伪装成空槽位', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     fs.writeFileSync(path.join(dir, 'bad.json'), '{ not valid json');
-    expect(store.read('bad')).toBeNull();
+    expect(() => store.read('bad')).toThrow();
   });
 
   it('write 原子写：临时文件不残留，内容可完整读回', () => {
@@ -122,16 +122,14 @@ describe('FileSaveStore', () => {
     expect(store.list()).toEqual(['s1']);
   });
 
-  it('R3 主档损坏时回退 .bak 备份（上次成功写入的版本）', () => {
+  it('主档损坏时不静默回退 .bak，必须把损坏错误交给上层', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     store.write('s1', makeSnap('s1')); // v1
     store.write('s1', { ...makeSnap('s1'), variables: { trust: 77 } }); // v2，v1 成为 .bak
     // 主档损坏（模拟断电截断）
     fs.writeFileSync(path.join(dir, 's1.json'), '{ corrupted');
-    const got = store.read('s1');
-    expect(got).not.toBeNull();
-    expect(got!.variables).toEqual({ trust: 5 }); // 恢复的是 v1
+    expect(() => store.read('s1')).toThrow();
   });
 
   it('R3 每次 write 前生成 .bak（list 不把它当槽位）', () => {

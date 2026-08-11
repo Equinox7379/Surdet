@@ -88,8 +88,8 @@ export class FileSaveStore {
       }
       return null;
     }
-    // 主档存在但损坏（断电/截断）：回退上一次成功写入前的 .bak 备份
-    return this.#readFile(`${file}.bak`);
+    // 主档存在但损坏必须交给上层处理；回退 .bak 会把数据损坏伪装成成功读档。
+    throw new Error(`存档文件存在但无法读取：${file}`);
   }
 
   /** 编码变更前的槽位文件名（不安全字符 → _，下划线保留）；与新编码结果相同时返回 null（无需回退） */
@@ -104,23 +104,23 @@ export class FileSaveStore {
     const legacy = this.#legacyFileFor(slot);
     if (legacy === null) return;
     for (const f of [legacy, `${legacy}.bak`]) {
-      try {
-        if (fs.existsSync(f)) fs.unlinkSync(f);
-      } catch {
-        // 清理失败不影响主流程（最坏情况：残留旧文件，read 仍优先新文件）
-      }
+      if (fs.existsSync(f)) fs.unlinkSync(f);
     }
   }
 
-  /** 读取单个存档文件；缺失/损坏返回 null（渲染层收到 null 而非主进程抛错） */
+  /** 读取单个存档文件；仅缺失返回 null，I/O/解析/结构错误全部上抛。 */
   #readFile(file: string): SaveSnapshot | null {
     if (!fs.existsSync(file)) return null;
     try {
       // 读隔离：JSON.parse 每次读盘产出的本就是全新对象图（无共享引用），
       // 直接返回即满足与 MemoryStorage.read 一致的隔离契约，无需二次克隆
-      return JSON.parse(fs.readFileSync(file, 'utf8')) as SaveSnapshot;
-    } catch {
-      return null;
+      const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('存档 JSON 顶层必须是对象');
+      }
+      return parsed as SaveSnapshot;
+    } catch (error) {
+      throw new Error(`存档文件读取或解析失败：${file}`, { cause: error });
     }
   }
 
@@ -144,14 +144,10 @@ export class FileSaveStore {
     // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
     fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, file);
-    // 存档落盘成功后才更新索引：索引是优化而非正确性依赖，写失败不影响存档本身
-    try {
-      const index = this.readIndex();
-      index[sanitizeSlot(slot)] = { ...data.meta, id: slot };
-      this.writeIndex(index);
-    } catch {
-      // 索引更新失败：下次 listMeta 无索引时回退逐文件读取，自愈
-    }
+    // 索引更新失败也必须向上层报告：写入事务不能把部分成功伪装成成功。
+    const index = this.readIndex();
+    index[sanitizeSlot(slot)] = { ...data.meta, id: slot };
+    this.writeIndex(index);
     // 审计终审修复：隐式迁移收尾——新文件落盘后清理旧编码文件（含 .bak），
     // 否则 delete 后 read 会经 legacy 回退把旧档复活成僵尸存档
     this.#removeLegacyFiles(slot);
@@ -167,21 +163,21 @@ export class FileSaveStore {
     const index = this.readIndex();
     if (index[sanitizeSlot(slot)] !== undefined) {
       delete index[sanitizeSlot(slot)];
-      try {
-        this.writeIndex(index);
-      } catch {
-        // 同上：索引失败不影响删除结果
-      }
+      this.writeIndex(index);
     }
   }
 
-  /** 读取索引；缺失/损坏视为空表 */
+  /** 读取索引；仅缺失视为空表，损坏或 I/O 错误必须上抛。 */
   private readIndex(): Record<string, SaveSlotMeta> {
+    if (!fs.existsSync(this.indexPath())) return {};
     try {
       const raw = JSON.parse(fs.readFileSync(this.indexPath(), 'utf8')) as Record<string, SaveSlotMeta>;
-      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-    } catch {
-      return {};
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('存档索引顶层必须是对象');
+      }
+      return raw;
+    } catch (error) {
+      throw new Error(`存档索引读取或解析失败：${this.indexPath()}`, { cause: error });
     }
   }
 

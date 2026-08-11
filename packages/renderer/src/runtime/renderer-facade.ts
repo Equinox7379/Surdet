@@ -37,12 +37,19 @@ import type {
   PresentationCommands,
   RendererCommands,
   RendererFontRole,
+  SaveLoadCommandOptions,
+  SaveLoadSelectionHandler,
+  SaveLoadSelectionResult,
   ShopView,
   SystemPanelCommands,
   SystemPanelProjectionPort,
   WorldCommands,
   WorldProjectionPort,
 } from '../api/renderer-commands.js';
+
+function isPromiseLikeSaveLoadResult(value: SaveLoadSelectionResult): value is Promise<void | boolean> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function';
+}
 import type {
   DialogueQueries,
   GalleryOverlayState,
@@ -88,7 +95,12 @@ export interface RendererStagePort extends PresentationStage {
   hideEnding?: () => void;
   showSystemMenu?: (items: SystemMenuItemView[], onSelect: (id: string) => void, onClose: () => void) => void;
   hideSystemMenu?: () => void;
-  showSaveLoad?: (view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void) => void;
+  showSaveLoad?: (
+    view: SaveLoadView,
+    onSelect: SaveLoadSelectionHandler,
+    onClose: () => void,
+    options?: SaveLoadCommandOptions,
+  ) => void;
   hideSaveLoad?: () => void;
   /** @internal Facade-owned compatibility bridge for restoring the dialogue rail after an overlay closes. */
   restoreCommandRail?: () => void;
@@ -231,6 +243,7 @@ export class RendererFacade {
   #worldPort?: WorldProjectionPort;
   #projectionSnapshot?: () => RendererProjectionSnapshot;
   #disposed = false;
+  #saveLoadTransactionPending = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
   #galleryOverlay: GalleryOverlayState = { type: 'none' };
   #systemOverlay: SystemPanelOverlayState = { type: 'none' };
@@ -398,6 +411,7 @@ export class RendererFacade {
       showCommandRail: (items, onSelect) => this.#callDialogue('showCommandRail', this.#dialoguePort?.showCommandRail, this.#stage.showCommandRail, items.slice(), onSelect),
       setCommandRailItems: (items) => this.#callDialogue('setCommandRailItems', this.#dialoguePort?.setCommandRailItems, this.#stage.setCommandRailItems, items.slice()),
       hideCommandRail: () => this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail),
+      restoreCommandRail: () => this.#callDialogue('restoreCommandRail', this.#dialoguePort?.restoreCommandRail, this.#stage.restoreCommandRail),
     };
 
     const menu: MenuCommands = {
@@ -495,8 +509,13 @@ export class RendererFacade {
         this.#callStage('menu', 'hideSettings', this.#stage.hideSettings);
         this.#clearMenu('settings');
       },
-      showSaveLoad: (view, onSelect, onClose) => {
+      showSaveLoad: (view, onSelect, onClose, options) => {
         if (this.#menuPort) {
+          this.#saveLoadTransactionPending = false;
+          const menuOptions = options;
+          const close = options?.completion === 'host-transaction'
+            ? onClose
+            : this.#wrapMenuRailRestore(onClose);
           this.#callMenu('hideSettings', this.#menuPort.hideSettings);
           this.#hideGalleryProjection();
           this.#callDialogue('hideCommandRail', this.#dialoguePort?.hideCommandRail, this.#stage.hideCommandRail);
@@ -504,19 +523,32 @@ export class RendererFacade {
             'showSaveLoad',
             this.#menuPort.showSaveLoad,
             { ...view, slots: view.slots.slice() },
-            this.#wrapSaveLoadSelect(onSelect),
-            this.#wrapMenuRailRestore(onClose),
+            this.#wrapSaveLoadSelect(onSelect, menuOptions),
+            close,
+            menuOptions,
           );
           this.#syncMenuOverlay();
           return;
         }
-        this.#callStage('menu', 'showSaveLoad', this.#stage.showSaveLoad, { ...view, slots: view.slots.slice() }, onSelect, onClose);
+        const selection = options?.completion === 'host-transaction'
+          ? this.#wrapSaveLoadSelect(onSelect, options)
+          : onSelect;
+        this.#callStage(
+          'menu',
+          'showSaveLoad',
+          this.#stage.showSaveLoad,
+          { ...view, slots: view.slots.slice() },
+          selection,
+          onClose,
+          options,
+        );
         this.#menuOverlay = { type: 'save-load', mode: view.mode };
       },
       hideSaveLoad: () => {
         if (this.#menuPort) {
+          const transactionPending = this.#saveLoadTransactionPending;
           this.#callMenu('hideSaveLoad', this.#menuPort.hideSaveLoad);
-          this.#stage.restoreCommandRail?.();
+          if (!transactionPending) this.#stage.restoreCommandRail?.();
           this.#syncMenuOverlay();
           return;
         }
@@ -947,8 +979,28 @@ export class RendererFacade {
    * behavior. Callback failures still restore the rail before rethrowing.
    */
   #wrapSaveLoadSelect<T extends readonly unknown[]>(
-    callback: (...args: T) => void | boolean,
-  ): (...args: T) => void | boolean {
+    callback: (...args: T) => SaveLoadSelectionResult,
+    options: SaveLoadCommandOptions = {},
+  ): (...args: T) => SaveLoadSelectionResult {
+    if (options.completion === 'host-transaction') {
+      return (...args: T): SaveLoadSelectionResult => {
+        const result = callback(...args);
+        if (!isPromiseLikeSaveLoadResult(result)) {
+          throw new Error('host-transaction save/load handlers must return a Promise');
+        }
+        this.#saveLoadTransactionPending = true;
+        return Promise.resolve(result).then(
+          (accepted) => {
+            this.#saveLoadTransactionPending = false;
+            return accepted;
+          },
+          (error) => {
+            this.#saveLoadTransactionPending = false;
+            throw error;
+          },
+        );
+      };
+    }
     return (...args: T) => {
       try {
         const accepted = callback(...args);

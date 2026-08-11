@@ -25,7 +25,15 @@ import type { PostProcessSettings } from './post-process.js';
 import { LoadingLayer } from './loading-layer.js';
 import type { LoadingProgress } from './loading-progress.js';
 import type { ShakeDirection, TransitionName } from './world-effects-controller.js';
-import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort, WorldProjectionPort } from './api/renderer-commands.js';
+import type {
+  DialogueProjectionPort,
+  GalleryProjectionPort,
+  MenuProjectionPort,
+  SaveLoadCommandOptions,
+  SaveLoadSelectionHandler,
+  SystemPanelProjectionPort,
+  WorldProjectionPort,
+} from './api/renderer-commands.js';
 import {
   DEFAULT_RENDERER_FONT_FAMILIES,
   RenderAssetRegistry,
@@ -702,9 +710,14 @@ export class RendererStageHost {
 
 
   /** 展示存档/读档界面；MenuLayer owns the projection and thumbnail pool. */
-  showSaveLoad(view: SaveLoadView, onSelect: (slotId: string) => void, onClose: () => void): void {
+  showSaveLoad(
+    view: SaveLoadView,
+    onSelect: SaveLoadSelectionHandler,
+    onClose: () => void,
+    options?: SaveLoadCommandOptions,
+  ): void {
     this.#requestFrame();
-    this.#menu.showSaveLoad(view, onSelect, onClose);
+    this.#menu.showSaveLoad(view, onSelect, onClose, options);
   }
 
   /** 隐藏存档/读档界面。 */

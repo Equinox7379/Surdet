@@ -62,6 +62,7 @@ import {
   createDefaultHost,
   createPlayerUiSession,
   createSystemHooks,
+  createElectronSaveStorage,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import type { PlayerOverlay } from '@surdet/host';
@@ -212,6 +213,12 @@ async function main(): Promise<void> {
   const isOverlay = (overlay: PlayerOverlay): boolean => uiSnapshot().overlay === overlay;
   const isVideoActive = (): boolean => uiSnapshot().videoActive;
   const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle';
+  const restoreCommandRailForPlayerContext = (): void => {
+    const snapshot = uiSnapshot();
+    if (snapshot.base === 'game' && snapshot.overlay === 'none' && snapshot.operation === 'idle' && !snapshot.interfaceHidden) {
+      dialogue.restoreCommandRail();
+    }
+  };
 
   const rollbackRuntime = createRollbackRuntime({
     interpreter: interp,
@@ -256,6 +263,8 @@ async function main(): Promise<void> {
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
+    get dialogueProjection() { return queries.diagnostics.projectionSnapshot().dialogue; },
+    get commandRailVisible() { return queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true; },
     get uiSession() { return Object.freeze({ ...uiSnapshot() }); },
     get queries() { return queries; },
     titleSelect: (id: string) => titleSelect(id),
@@ -355,17 +364,7 @@ async function main(): Promise<void> {
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
   const saveStorage: SaveStorage = desktopSave
-    ? {
-        read: (slot) => desktopSave.read(slot).catch(() => null),
-        write: (slot, data) =>
-          desktopSave.write(slot, data).catch((err) => {
-            console.error('[starter] 存档写入失败：', err);
-          }),
-        delete: (slot) => desktopSave.delete(slot).catch(() => {}),
-        list: () => desktopSave.list().catch(() => []),
-        // 元信息索引：列表界面不读存档体（主进程读 index.json）
-        listMeta: () => desktopSave.listMeta().catch(() => []),
-      }
+    ? createElectronSaveStorage(desktopSave)
     : {
         read: (slot) => {
           try {
@@ -414,7 +413,10 @@ async function main(): Promise<void> {
     menu.hideSaveLoad();
     menu.hideSettings();
     menu.hideSystemMenu();
-    uiSession.reset(uiSnapshot().base);
+    // 读档期间保留正在进行的 save/load 事务；否则 quickLoad 的 stateReset
+    // 会先把 operation 清成 idle，随后完成/失败分支只能抛出二次状态错误。
+    // 空闲状态仍保留原有的完整 UI 会话重置语义。
+    if (!isUiBusy()) uiSession.reset(uiSnapshot().base);
   });
 
   // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
@@ -774,7 +776,15 @@ async function main(): Promise<void> {
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load'): Promise<void> {
     if (uiSnapshot().overlay === 'none') uiSession.openOverlay('save-load');
-    const metas = await saves.list();
+    let metas: Awaited<ReturnType<typeof saves.list>>;
+    try {
+      metas = await saves.list();
+    } catch (err) {
+      if (isOverlay('save-load')) uiSession.closeOverlay();
+      console.error('[starter] 存档列表读取失败:', err);
+      refreshCommandRail();
+      return;
+    }
     const byId = new Map(metas.map((m) => [m.id, m]));
     const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
       const m = byId.get(id);
@@ -788,31 +798,56 @@ async function main(): Promise<void> {
         kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
       };
     });
-    menu.showSaveLoad({ mode, slots }, (slotId) => {
+    menu.showSaveLoad({ mode, slots }, async (slotId) => {
+      inputGate.consumeCurrentPointer();
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
           console.warn('[starter] 存档失败：游戏尚未开始');
-          return;
+          return false;
         }
-        void saves.save(slotId, enrichSnapshot(snap)).then(() => console.info('[starter] 已存档', slotId));
+        const origin = uiSnapshot();
+        uiSession.beginOperation('saving');
+        try {
+          await saves.save(slotId, enrichSnapshot(snap));
+          uiSession.completeOperation({
+            base: origin.base,
+            overlay: 'none',
+            interfaceHidden: origin.interfaceHidden,
+            videoActive: origin.videoActive,
+          });
+          console.info('[starter] 已存档', slotId);
+          refreshCommandRail();
+          return true;
+        } catch (err) {
+          uiSession.failOperation();
+          console.error('[starter] 存档失败:', err);
+          return false;
+        }
       } else {
-        void (async () => {
-          try {
-            const snap = await saves.load(slotId);
-            if (isOverlay('save-load')) uiSession.closeOverlay();
-            uiSession.enterGame();
-            menu.hideTitle();
-            clearRollback();
-            interp.loadSnapshot(snap);
-            clearCountedThisSession = false; // 读档 = 进入另一周目会话
-            console.info('[starter] 已读档', slotId);
-          } catch (err) {
-            console.error('[starter] 读档失败:', err);
-          }
-        })();
+        uiSession.beginOperation('loading');
+        try {
+          const snap = await saves.load(slotId);
+          uiSession.completeOperation({ base: 'game', overlay: 'none' });
+          menu.hideTitle();
+          clearRollback();
+          interp.loadSnapshot(snap);
+          clearCountedThisSession = false; // 读档 = 进入另一周目会话
+          console.info('[starter] 已读档', slotId);
+          refreshCommandRail();
+          return true;
+        } catch (err) {
+          uiSession.failOperation();
+          console.error('[starter] 读档失败:', err);
+          return false;
+        }
       }
-    }, () => { if (isOverlay('save-load') && !isUiBusy()) uiSession.closeOverlay(); });
+    }, () => {
+      if (isOverlay('save-load') && !isUiBusy()) {
+        uiSession.closeOverlay();
+        restoreCommandRailForPlayerContext();
+      }
+    }, { completion: 'host-transaction', onTransactionComplete: restoreCommandRailForPlayerContext });
   }
 
   // ===== 系统菜单：Esc / 右键唤出 =====
@@ -850,15 +885,28 @@ async function main(): Promise<void> {
 
   function quickSave(): Promise<boolean> {
     // 快速读档必须等当前 IPC 写入完成，否则连续 F5/F9 会读到旧槽位。
-    if (quickSaveInFlight) return quickSaveInFlight;
+    if (quickSaveInFlight || isUiBusy()) return quickSaveInFlight ?? Promise.resolve(false);
     const snap = interp.saveSnapshot();
     if (!snap) return Promise.resolve(false);
+    const origin = uiSnapshot();
+    const railWasVisible = queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true;
+    uiSession.beginOperation('saving');
+    if (railWasVisible) dialogue.hideCommandRail();
     const task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
       () => {
+        uiSession.completeOperation({
+          base: origin.base,
+          overlay: origin.overlay,
+          interfaceHidden: origin.interfaceHidden,
+          videoActive: origin.videoActive,
+        });
+        if (railWasVisible) dialogue.restoreCommandRail();
         console.info('[starter] 快速存档');
         return true;
       },
       (err) => {
+        uiSession.failOperation();
+        if (railWasVisible) dialogue.restoreCommandRail();
         console.error('[starter] 快速存档失败：', err);
         return false;
       },
@@ -872,15 +920,34 @@ async function main(): Promise<void> {
 
   async function quickLoad(): Promise<boolean> {
     if (quickSaveInFlight) await quickSaveInFlight;
-    if (!await saves.has(QUICK_SLOT)) return false;
+    try {
+      if (!await saves.has(QUICK_SLOT)) return false;
+    } catch (err) {
+      console.error('[starter] 快速读档槽位读取失败：', err);
+      return false;
+    }
+    if (isUiBusy()) return false;
+    const origin = uiSnapshot();
+    const railWasVisible = queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true;
+    uiSession.beginOperation('loading');
+    if (railWasVisible) dialogue.hideCommandRail();
     try {
       const snap = await saves.load(QUICK_SLOT);
       clearRollback();
       interp.loadSnapshot(snap);
+      uiSession.completeOperation({
+        base: origin.base,
+        overlay: origin.overlay,
+        interfaceHidden: origin.interfaceHidden,
+        videoActive: origin.videoActive,
+      });
+      if (railWasVisible) dialogue.restoreCommandRail();
       clearCountedThisSession = false;
       console.info('[starter] 快速读档');
       return true;
     } catch (err) {
+      uiSession.failOperation();
+      if (railWasVisible) dialogue.restoreCommandRail();
       console.error('[starter] 快速读档失败：', err);
       return false;
     }

@@ -49,6 +49,9 @@ export interface DialogueLayerDebugSnapshot {
   readonly rubyTextCount: number;
   readonly backlogVisible: boolean;
   readonly backlogAboveDialogueText: boolean;
+  /** Real projected visibility; false while an overlay suppresses the rail. */
+  readonly commandRailVisible: boolean;
+  readonly commandRailSuppressed: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
 }
@@ -311,6 +314,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,
       backlogVisible: this.#backlogLayer.visible,
       backlogAboveDialogueText: this.#backlogAboveDialogueText(),
+      commandRailVisible: this.#commandRail.visible,
+      commandRailSuppressed: this.#commandRailSuppressed,
       nvlActive: this.#nvlActive,
       nvlLines: this.#nvlLines.map((line) => String(line.text)),
     };

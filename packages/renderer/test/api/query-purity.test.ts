@@ -70,6 +70,8 @@ function pureInternals(): RendererRuntimeInternals & { observableSnapshot(): unk
         rubyTextCount: 0,
         backlogVisible: false,
         backlogAboveDialogueText: true,
+        commandRailVisible: true,
+        commandRailSuppressed: false,
         nvlActive: false,
         nvlLines: [],
       },
