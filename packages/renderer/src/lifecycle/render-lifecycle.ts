@@ -44,6 +44,7 @@ export interface RenderLifecycleDisposalFailure {
 }
 
 const RESOURCE_ERROR_CODE = 'COMMAND_COMMIT_FAILED' as const;
+export const RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT = 1024;
 
 function captureResourceSource(): string {
   const frame = new Error().stack
@@ -69,7 +70,9 @@ export class RenderLifecycle {
   #entries = new Map<string, ResourceEntry>();
   #ownerIndex = new Map<ResourceOwner, Set<string>>();
   #displayOwners = new Set<ResourceOwner>();
-  #events: RenderLifecycleDiagnosticEvent[] = [];
+  #events: Array<RenderLifecycleDiagnosticEvent | undefined> = new Array(RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT);
+  #eventStart = 0;
+  #eventCount = 0;
   #disposed = false;
 
   register(owner: ResourceOwner, kind: ResourceKind, key: string, dispose: () => void): void {
@@ -95,7 +98,9 @@ export class RenderLifecycle {
         this.#recordEvent(old, 'dispose', 'replace', 'failure', error);
         failure = this.#failureRecord(old, error);
       }
-      this.#addEntry({ owner, kind, key, dispose, source });
+      const replacement = { owner, kind, key, dispose, source };
+      this.#addEntry(replacement);
+      this.#recordEvent(replacement, 'register', 'replace', 'success');
       if (failure) this.#throwDisposalFailure('replace', [failure]);
       return;
     }
@@ -189,9 +194,14 @@ export class RenderLifecycle {
       source: entry.source,
       active: true as const,
     }));
+    const events = Array.from({ length: this.#eventCount }, (_, index) => {
+      const event = this.#events[(this.#eventStart + index) % RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT];
+      if (!event) throw new Error('Renderer lifecycle diagnostic ring buffer is inconsistent');
+      return Object.freeze({ ...event });
+    });
     return Object.freeze({
       active: Object.freeze(active),
-      events: Object.freeze(this.#events.map((event) => Object.freeze({ ...event }))),
+      events: Object.freeze(events),
     });
   }
 
@@ -245,7 +255,7 @@ export class RenderLifecycle {
     outcome: RenderLifecycleDiagnosticEvent['outcome'],
     cause?: unknown,
   ): void {
-    this.#events.push(Object.freeze({
+    const event = Object.freeze({
       owner: entry.owner,
       kind: entry.kind,
       key: entry.key,
@@ -254,7 +264,14 @@ export class RenderLifecycle {
       path,
       outcome,
       ...(cause === undefined ? {} : { cause: cause instanceof Error ? cause.message : String(cause) }),
-    }));
+    });
+    const index = (this.#eventStart + this.#eventCount) % RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT;
+    this.#events[index] = event;
+    if (this.#eventCount < RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT) {
+      this.#eventCount += 1;
+    } else {
+      this.#eventStart = (this.#eventStart + 1) % RENDER_LIFECYCLE_DIAGNOSTIC_EVENT_LIMIT;
+    }
   }
 
   #failureRecord(entry: ResourceEntry, cause: unknown): RenderLifecycleDisposalFailure {
