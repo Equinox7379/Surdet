@@ -659,7 +659,7 @@ WAITING_FOR_REVIEW
 - [x] Task 4：合成层级与 title gallery 上下文。实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）；台账提交：`53a15f213bac21bd4f308974237d5193435e4f1a`。
 - [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；台账提交：`8eacc4208a5db8015c531a096ee2138c2f43fae4`。
 - [x] Task 6：对话框稳定性。提交：`77b3bc5f22e62d5ec05808e7d7dac45d49caf607`（`fix(renderer): keep dialogue presentation stable between lines`）；本记录台账提交待完成。
-- [ ] Task 7：完整玩家 E2E 矩阵。提交：`PENDING`。
+- [x] Task 7：完整玩家 E2E 矩阵。提交：`22ae65837b030282f939123a0fb7f5ca7224944c`（`test(shell): gate player experience hotfix wave 2`）；本记录台账提交待完成。
 - [ ] Task 8：全量门禁、报告、最终停止。提交：`PENDING`。
 
 当前事实（任务书生成时）：
@@ -904,3 +904,38 @@ Task 6 门禁：
 - `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交、未删除。
 
 下一入口：先提交本记录台账，随后开始 Task 7 的完整玩家 E2E 矩阵固化；不得提前进入 Task 8 或发行。
+
+### 6.8 Task 7 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T15:05:00+08:00` 至 `2026-08-11T16:32:00+08:00`（Asia/Shanghai）。本阶段只固化真实玩家 Electron 验收矩阵与测试证据，没有修改生产 Renderer、Core、Host、Starter 运行时代码，也没有改变 verify-all 快速门禁接线；未进入 Task 8。
+
+执行协议：
+
+- 正式游戏构建完成后，每个顶层 case A–I 都独立启动 Electron，并使用独立临时 `userData`；每次完整矩阵包含 9 个独立 userData。case 内的 save/load/title 序列保持同一 Electron 会话。
+- 每轮显式使用 `E:\surdet\examples\zero-after-midnight\dist`，不是默认 Starter；动作通过真实鼠标/键盘事件，语义调试接口只读取快照，`showTitleScreen()` 仅用于 case 间返回标题的初始化，不代替被测覆盖层动作。
+- 每个 case 收集 pageerror、console error、request failure、unhandled rejection、窗口意外关闭、RendererError、资源快照、解释器位置和 UI session；`renderer resource release failed`、`COMMAND_COMMIT_FAILED` 和未处理异常均为失败。
+
+测试先行与失败证据（全部原始 JSON 保留在系统临时目录）：
+
+- 第一版完整矩阵暴露测试夹具错误：B 使用 Space 误测鉴赏页；C/D 的浏览器谓词错误引用 Node 闭包。`...task7-mBjqsN...` SHA-256 `971DC7268D978314FA100F6579C2694B0DC3B7AD40845B73056549FC83222BE4`，状态 `FAILED`，6/9 case 通过。
+- 修正 B 为真实 gallery tab click、修正 C/D 为浏览器内安全谓词后，第二轮仍暴露真实输入边界：单次 Space/画布左键可能只完成当前打字机/等待阶段而未改变位置。`...task7-PE2n82...` SHA-256 `10CDF4B38E025087FAC93CA6A6D39A823DF85F74020E361FA4BC652F57BB0E26`，状态 `FAILED`，7/9 case 通过。
+- 将正常同一输入扩展为最多四次、仍要求真实位置变化后，C 的回退耗尽断言先暴露历史缓冲重复检查点：`...task7-5apRBB...` SHA-256 `32A5C77FE62D61ECFF25C11595CE8B92007C980F4F05DD82273D45858A7BFDE0`，状态 `FAILED`，8/9 case 通过。
+- 增加每次回退前 `awaiting-advance` 稳定状态护栏后，单次 no-op 仍不足以证明历史已耗尽；`...task7-PMIc0K...` SHA-256 `B55B1F0755727282952F07A85999DAA99B2933AAFE66FCCB84F15E37CB39F46B`，状态 `FAILED`，8/9 case 通过；随后同一问题在 `...task7-TO0dx6...` 再现，SHA-256 `0F735BD521422F06F0D1094EECD9910A307AC0737DE7E42E19E76B7600BAE2FE`。
+- 最小测试夹具修正是：只有连续两次稳定 no-op 才判定回退缓冲已耗尽，随后再额外验证 4/5 次 no-op；没有延时、debounce、hide/show 重试或生产逻辑修改。
+
+两轮最终独立矩阵：
+
+- 第一轮：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-jy037r\task7-player-experience-matrix.json`，SHA-256 `77A676492DC8299BDF0DB32BB534DF2FACBA570E258237212464581F1003808D`，schema `2`，状态 `PASSED`，A–I `9/9`。
+- 第二轮：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-Qbo9QI\task7-player-experience-matrix.json`，SHA-256 `262F75BB15C180C52428276A9123E6697AF05D981AD46F058D8B9F4A07FED473`，schema `2`，状态 `PASSED`，A–I `9/9`。
+- 两轮均无 page error、console error、request failure、unhandled rejection、意外窗口关闭或 `releaseFailureEvidence`；正式游戏资产加载快照为 `total=48/completed=48/failed=0/done=true`。
+- A–I 覆盖标题鉴赏、系统菜单/记录/设置/鉴赏、可用与已耗尽回退、H/界面隐藏恢复、空槽、两种 save/load 顺序、load/title/new、三条正常对照路径，以及连续 10 句逐帧对话采样。
+
+Task 7 门禁与范围：
+
+- 两轮 `npm run e2e:player-experience -w @surdet/shell` 均退出码 `0`；每轮内部顺序构建 core → renderer → host → shell → zero-after-midnight，构建成功。
+- `node --check packages/shell/e2e/player-experience-wave-2.e2e.mjs`：通过；`git diff --check`：通过。
+- 精确修改文件只有 `packages/shell/e2e/player-experience-wave-2.e2e.mjs`；未修改 `packages/shell/package.json`、`scripts/verify-all.mjs` 或 `scripts/test/verify-all.test.mjs`，因为既有独立 `e2e:player-experience` 脚本已满足本阶段执行路径，快速门禁未被长 Electron E2E 重复污染。
+- Task 7 实现提交：`22ae65837b030282f939123a0fb7f5ca7224944c`（`test(shell): gate player experience hotfix wave 2`）。提交后 `HEAD...surdet/main = 15 0`。
+- 受保护的 `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交、未删除；没有 push、force push、M9、性能测量/优化、性能 artifact/门限、发行、重打包、剧情/DSL/存档格式或美术音频变更。
+
+下一入口：提交本台账后进入 Task 8，按计划顺序执行全量回归、正式游戏门禁、两类 Electron E2E、最终交付报告；Task 8 完成前不得声明 Wave 2 完成，不得 push。
