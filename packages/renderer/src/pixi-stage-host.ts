@@ -45,6 +45,7 @@ import { MenuLayer } from './layers/menu/menu-layer.js';
 import { GalleryLayer } from './layers/gallery/gallery-layer.js';
 import { SystemPanelLayer } from './layers/system-panel/system-panel-layer.js';
 import { WorldLayer, makeWorldBackgroundTexture } from './layers/world/world-layer.js';
+import type { RendererTheme } from './theme.js';
 
 /** Keep the legacy public type path while the source of truth lives in battle-view.ts. */
 export type { BattleHandlers } from './battle-view.js';
@@ -294,6 +295,15 @@ export class RendererStageHost {
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate()) handler();
+  }
+
+  setTheme(theme: RendererTheme): void {
+    this.#dialogue.setTheme(theme);
+    this.#menu.setTheme(theme);
+    this.#gallery.setTheme(theme);
+    this.#system.setTheme(theme);
+    this.#loadingLayer.setTheme(theme);
+    this.#requestFrame();
   }
 
   #layout(): void {

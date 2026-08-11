@@ -324,22 +324,23 @@ npm run test -w @surdet/renderer -- --run test/theme.test.ts test/api/renderer-c
 - Test: `packages/renderer/test/legacy/menu-layer.test.ts`
 - Test: `packages/renderer/test/legacy/pixi-stage.test.ts`
 
-- [ ] 先写失败测试，通过 Runtime v2 调 `setTheme({colors:{accent:0x47c8ff}})`，证明五类真实 Layer 都收到主题；不能只测 Host 保存值。
-- [ ] 另测：一次 setTheme 只请求一帧；相同主题幂等；非法输入不改变旧值；disposed 遵守 RendererError；查询篡改不污染。
-- [ ] 红灯运行上述五个测试文件。
-- [ ] 机械迁移 Surdet 当前 `NIGHT_AZURE` / `MODERN_ADV` 默认值，不重新设计视觉。删除 Layer 内同义主题常量；确属玩法语义的色值必须注释说明。
-- [ ] 每个 Layer 实现 `setTheme(theme)`，只重绘 Graphics/TextStyle；不得销毁重建 Container、Texture、音频、监听器或资源 owner。
-- [ ] 绿灯与边界：
+- [x] 先写失败测试，通过 Runtime v2 调 `setTheme({colors:{accent:0x47c8ff}})`，证明五类真实 Layer 都收到主题；不能只测 Host 保存值。
+- [x] 另测：一次 setTheme 只请求一帧；相同主题幂等；非法输入不改变旧值；disposed 遵守 RendererError；查询篡改不污染。
+- [x] 红灯运行上述五个测试文件：首次生产接线前 5 个文件中已有 70/71 通过，新增真实 Runtime 断言因 Layer 没有 `setTheme` 而失败。
+- [x] 机械迁移 Surdet 当前 `NIGHT_AZURE` / `MODERN_ADV` 默认值，不重新设计视觉。删除 Layer 内同义主题常量；确属玩法语义的色值必须注释说明。
+- [x] 每个 Layer 实现 `setTheme(theme)`，只重绘 Graphics/TextStyle；不得销毁重建 Container、Texture、音频、监听器或资源 owner。
+- [x] 绿灯与边界：
 
 ```powershell
 npm run test -w @surdet/renderer -- --run test/theme.test.ts test/api/query-purity.test.ts test/integration/renderer-runtime.test.ts test/legacy/menu-layer.test.ts test/legacy/pixi-stage.test.ts
 npm run typecheck -w @surdet/renderer
 npm run build -w @surdet/renderer
-npm run verify:renderer-boundaries
-npm run verify:renderer-legacy
+  npm run verify:renderer-boundaries
+  npm run verify:renderer-legacy
 ```
 
-- [ ] 提交：`git commit -m "feat(renderer): apply theme across player layers"`。
+- [x] 绿灯：5 个文件、71/71；Renderer typecheck/build、boundary 3/3 和 legacy 4/4 均通过；验证了单帧请求、同主题幂等、非法输入保留旧值、disposed 错误和资源计数不增长。
+- [x] 提交：`git commit -m "feat(renderer): apply theme across player layers"`。
 
 ---
 
@@ -496,7 +497,7 @@ WAITING_FOR_REVIEW
 | 2 | 测试先于生产代码运行；模块不存在导致测试未收集（1 个测试文件失败、0 个测试收集） | 固定槽测试 5/5；Host typecheck 通过；覆盖六 defaults、缺失 default、未知 override/open、this 绑定、cause 保留、冻结快照和 Provider 隔离 | `c4ffce8737e6326309076a27622200ee969ebd26` | implemented |
 | 3 | 测试先于生产代码运行；Controller 模块不存在导致测试文件失败、0 项收集 | Controller 聚焦 8/8；Host 全量 7 文件、46/46；Host typecheck 通过；覆盖来源校验、title/gallery、双层返回、Provider open/close 原子回滚、save/load 失败恢复和错误边界、指针消费与查询纯度 | `112351ee9e7a2a3b1e6f4d2a7b2fbe7e754815b3` | implemented |
 | 4 | 主题模块不存在，且运行时 `preferences.theme()` 不存在；聚焦命令 2 个测试套件失败（主题套件无法收集，查询纯度 1 项失败） | Theme/contract/query-purity 3 文件、19/19；Renderer typecheck 通过；Facade/兼容 ports 提供冻结主题的最小契约实现，尚未接线 Layer | `8843b9b5071718f234f7a9273efac866118bb777` | implemented |
-| 5 | pending | pending | pending | not-started |
+| 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | pending（待提交） | implemented |
 | 6 | pending | pending | pending | not-started |
 | 7 | pending | pending | pending | not-started |
 | 8 | pending | pending | pending | not-started |

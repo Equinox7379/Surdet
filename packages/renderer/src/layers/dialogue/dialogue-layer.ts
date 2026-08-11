@@ -22,6 +22,7 @@ import type {
   FrameRequestHandler,
   SpeakerProfile,
 } from '../../types.js';
+import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 
 /** DialogueLayer owns only dialogue-facing display objects and projection state. */
 export interface DialogueLayerOptions {
@@ -67,27 +68,6 @@ interface DestroyableDisplay {
   parent?: Container | null;
   destroy: (options?: { children?: boolean }) => void;
 }
-
-const NIGHT_AZURE = {
-  accent: 0x5ac8ff,
-  text: 0xf2f6ff,
-  choiceBg: 0x0d1526,
-  choiceEdge: 0x3d5a80,
-  panelBg: 0xf7f8fc,
-  panelText: 0x2c3140,
-  nameTag: 0x4285e0,
-  plateText: 0xeaf6ff,
-} as const;
-
-const MODERN_ADV = {
-  ink: 0x070c17,
-  text: 0xf7f9ff,
-  muted: 0xaeb9cc,
-  accent: 0x9bc7ff,
-  scrim: 0x06101e,
-  rail: 0x050914,
-  line: 0x9bc7ff,
-} as const;
 
 let dialogMeasureCtx: CanvasRenderingContext2D | null = null;
 
@@ -147,6 +127,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #backlogBuilt = false;
 
   #nvlLayer: Container;
+  #nvlBackground: Graphics;
   #nvlLines: PText[] = [];
   #nvlLineCounts: number[] = [];
   #nvlActive = false;
@@ -173,6 +154,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #speakerAvatar: Sprite | null = null;
   #interfaceHidden = false;
   #preferences: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
+  #theme: RendererTheme = DEFAULT_RENDERER_THEME;
 
   constructor(options: DialogueLayerOptions) {
     this.#root = options.uiLayer;
@@ -196,7 +178,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogRubyLayer = new Container();
     this.#nvlLayer = new Container();
     this.#nvlLayer.visible = false;
-    this.#nvlLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.86 }));
+    this.#nvlBackground = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.86 });
+    this.#nvlLayer.addChild(this.#nvlBackground);
 
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
@@ -224,8 +207,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerAvatar.visible = false;
 
     this.#continueIndicator = new Graphics()
-      .circle(0, 0, 9).fill({ color: NIGHT_AZURE.accent, alpha: 0.22 })
-      .circle(0, 0, 4.5).fill({ color: 0xeaf4ff, alpha: 0.95 });
+      .circle(0, 0, 9).fill({ color: this.#theme.colors.accent, alpha: 0.22 })
+      .circle(0, 0, 4.5).fill({ color: this.#theme.colors.text, alpha: 0.95 });
     this.#continueIndicator.visible = false;
     this.#continueIndicator.x = this.#w - 68;
 
@@ -236,23 +219,23 @@ export class DialogueLayer implements DialogueProjectionPort {
       text: '',
       style: {
         fontSize: 18,
-        fill: MODERN_ADV.text,
+        fill: this.#theme.colors.text,
         fontWeight: 'normal',
         letterSpacing: 1,
         fontFamily: this.#assets.fontFamily('body'),
-        stroke: { width: 1.2, color: MODERN_ADV.ink },
+        stroke: { width: 1.2, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
     });
     this.#dialogText = new PText({
       text: '',
       style: {
         fontSize: 25,
-        fill: MODERN_ADV.text,
+        fill: this.#theme.colors.text,
         fontWeight: 'normal',
         fontFamily: this.#assets.fontFamily('body'),
         letterSpacing: 0.3,
         lineHeight: 41,
-        stroke: { width: 1.35, color: MODERN_ADV.ink },
+        stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
     });
     this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
@@ -358,6 +341,32 @@ export class DialogueLayer implements DialogueProjectionPort {
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate()) handler();
+  }
+
+  setTheme(theme: RendererTheme): void {
+    if (this.#disposed) return;
+    this.#theme = theme;
+    this.#drawDialogPanel();
+    this.#drawSpeakerPlate();
+    this.#continueIndicator.clear()
+      .circle(0, 0, 9).fill({ color: theme.colors.accent, alpha: 0.22 })
+      .circle(0, 0, 4.5).fill({ color: theme.colors.text, alpha: 0.95 });
+    this.#speakerText.style = {
+      ...this.#speakerText.style,
+      fill: theme.colors.text,
+      stroke: { width: 1.2, color: theme.colors.textOnAccent },
+    } satisfies TextStyleOptions;
+    this.#dialogText.style = {
+      ...this.#dialogText.style,
+      fill: theme.colors.text,
+      stroke: { width: 1.35, color: theme.colors.textOnAccent },
+    } satisfies TextStyleOptions;
+    for (const ruby of [...this.#rubyBasePool, ...this.#rubyTextPool]) {
+      ruby.style = { ...ruby.style, fill: theme.colors.text, stroke: { width: 0.8, color: theme.colors.textOnAccent } } satisfies TextStyleOptions;
+    }
+    this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
+    this.#bannerText.style = { ...this.#bannerText.style, fill: theme.colors.text } satisfies TextStyleOptions;
+    for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
@@ -480,7 +489,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       const holder = new Container();
       const label = new PText({
         text: option.label,
-        style: { fontSize: 24, fill: MODERN_ADV.text, letterSpacing: 1 } satisfies TextStyleOptions,
+        style: { fontSize: 24, fill: this.#theme.colors.text, letterSpacing: 1 } satisfies TextStyleOptions,
       });
       label.position.set(26, 6);
       const bg = new Graphics();
@@ -554,14 +563,14 @@ export class DialogueLayer implements DialogueProjectionPort {
       });
     }
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: NIGHT_AZURE.panelBg, alpha: 0.94 }));
+    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.94 }));
     layer.addChild(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
-      style: { fontSize: 22, fill: NIGHT_AZURE.panelText, fontWeight: 'bold' } satisfies TextStyleOptions,
+      style: { fontSize: 22, fill: this.#theme.colors.textOnAccent, fontWeight: 'bold' } satisfies TextStyleOptions,
     })).position.set(60, 30);
     layer.addChild(new PText({
       text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
-      style: { fontSize: 17, fill: query.trim().length > 0 ? NIGHT_AZURE.accent : MODERN_ADV.muted } satisfies TextStyleOptions,
+      style: { fontSize: 17, fill: query.trim().length > 0 ? this.#theme.colors.accent : this.#theme.colors.textMuted } satisfies TextStyleOptions,
     })).position.set(60, 58);
     const entriesLayer = new Container();
     this.#backlogEntriesLayer = entriesLayer;
@@ -576,7 +585,7 @@ export class DialogueLayer implements DialogueProjectionPort {
           text: first && entry.voice ? `▶ ${lineText}` : lineText,
           style: {
             fontSize: 20,
-            fill: first && entry.speaker ? NIGHT_AZURE.nameTag : 0x454c5c,
+            fill: first && entry.speaker ? this.#theme.colors.accent : this.#theme.colors.textMuted,
             fontWeight: first && entry.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
         });
@@ -682,8 +691,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (text.length === 0) return;
     this.#bannerText.text = text;
     this.#bannerText.style = variant === 'chapter'
-      ? { fontSize: 38, fill: NIGHT_AZURE.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#assets.fontFamily('title') } satisfies TextStyleOptions
-      : { fontSize: 20, fill: NIGHT_AZURE.plateText, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
+      ? { fontSize: 38, fill: this.#theme.colors.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#assets.fontFamily('title') } satisfies TextStyleOptions
+      : { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
     this.#bannerBars.visible = variant === 'chapter';
     this.#bannerTipBg.clear();
     if (variant === 'chapter') {
@@ -695,8 +704,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       const tw = this.#bannerText.width;
       const th = this.#bannerText.height;
       this.#bannerTipBg.roundRect(this.#w - 60 - tw - 20, 32, tw + 40, th + 16, (th + 16) / 2)
-        .fill({ color: NIGHT_AZURE.choiceBg, alpha: 0.8 })
-        .stroke({ width: 1, color: NIGHT_AZURE.choiceEdge, alpha: 0.9 });
+        .fill({ color: this.#theme.colors.surface, alpha: 0.8 })
+        .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.9 });
     }
     this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
     this.#bannerRemain = this.#bannerDur;
@@ -899,9 +908,9 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #drawDialogPanel(): void {
     this.#dialogPanel.clear();
-    this.#dialogPanel.rect(0, this.#h - 282, this.#w, 88).fill({ color: MODERN_ADV.scrim, alpha: 0.10 });
-    this.#dialogPanel.rect(0, this.#h - 194, this.#w, 112).fill({ color: MODERN_ADV.scrim, alpha: 0.25 });
-    this.#dialogPanel.rect(0, this.#h - 82, this.#w, 82).fill({ color: MODERN_ADV.scrim, alpha: 0.52 });
+    this.#dialogPanel.rect(0, this.#h - 282, this.#w, 88).fill({ color: this.#theme.colors.scrim, alpha: 0.10 });
+    this.#dialogPanel.rect(0, this.#h - 194, this.#w, 112).fill({ color: this.#theme.colors.scrim, alpha: 0.25 });
+    this.#dialogPanel.rect(0, this.#h - 82, this.#w, 82).fill({ color: this.#theme.colors.scrim, alpha: 0.52 });
   }
 
   #drawSpeakerPlate(): void {
@@ -910,7 +919,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerPlate.visible = show;
     if (!show) return;
     const w = Math.max(56, this.#speakerText.width + 14);
-    this.#speakerPlate.rect(92, this.#h - 198, w, 1.5).fill({ color: MODERN_ADV.accent, alpha: 0.78 });
+    this.#speakerPlate.rect(92, this.#h - 198, w, 1.5).fill({ color: this.#theme.colors.line, alpha: 0.78 });
   }
 
   #renderDialogText(value: string): void {
@@ -945,18 +954,18 @@ export class DialogueLayer implements DialogueProjectionPort {
     const layouts = layoutRuby(segs, this.#w - 220, measure, 41);
     const baseStyle = {
       fontSize: 25,
-      fill: MODERN_ADV.text,
+      fill: this.#theme.colors.text,
       fontWeight: 'normal',
       fontFamily: family,
       letterSpacing: 0.3,
       lineHeight: 41,
-      stroke: { width: 1.35, color: MODERN_ADV.ink },
+      stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
     } satisfies TextStyleOptions;
     const rubyStyle = {
       fontSize: 12,
-      fill: MODERN_ADV.text,
+      fill: this.#theme.colors.text,
       fontFamily: family,
-      stroke: { width: 0.8, color: MODERN_ADV.ink },
+      stroke: { width: 0.8, color: this.#theme.colors.textOnAccent },
     } satisfies TextStyleOptions;
     let rubyIndex = 0;
     layouts.forEach((layout: RubyGlyphLayout, index) => {
@@ -1000,15 +1009,15 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #drawChoiceCard(view: ChoiceView, selected: boolean): void {
     view.label.style = selected
-      ? { fontSize: 24, fill: MODERN_ADV.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
-      : { fontSize: 24, fill: MODERN_ADV.muted, letterSpacing: 1 } satisfies TextStyleOptions;
+      ? { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
+      : { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions;
     const w = view.label.width + 60;
     const h = view.label.height + 16;
     view.bg.clear();
-    view.bg.rect(0, 0, w, h).fill({ color: MODERN_ADV.ink, alpha: selected ? 0.12 : 0.015 });
-    view.bg.rect(0, h - 1, w, 1).fill({ color: MODERN_ADV.line, alpha: selected ? 0.9 : 0.22 });
+    view.bg.rect(0, 0, w, h).fill({ color: this.#theme.colors.textOnAccent, alpha: selected ? 0.12 : 0.015 });
+    view.bg.rect(0, h - 1, w, 1).fill({ color: this.#theme.colors.line, alpha: selected ? 0.9 : 0.22 });
     view.bar.clear();
-    if (selected) view.bar.rect(0, h - 3, w, 2).fill({ color: MODERN_ADV.accent, alpha: 0.95 });
+    if (selected) view.bar.rect(0, h - 3, w, 2).fill({ color: this.#theme.colors.line, alpha: 0.95 });
   }
 
   #clearChoices(): void {
@@ -1063,8 +1072,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     const top = this.#h - railH - 10;
     layer.addChild(new Graphics()
       .roundRect(startX, top, railW, railH, 5)
-      .fill({ color: MODERN_ADV.rail, alpha: 0.82 })
-      .stroke({ width: 1, color: MODERN_ADV.line, alpha: 0.3 }));
+      .fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.82 })
+      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.3 }));
 
     this.#commandRailItems.forEach((item, index) => {
       const row = new Container();
@@ -1074,7 +1083,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         text: item.icon ?? '·',
         style: {
           fontSize: 20,
-          fill: item.active ? MODERN_ADV.accent : MODERN_ADV.muted,
+          fill: item.active ? this.#theme.colors.line : this.#theme.colors.textMuted,
           fontWeight: item.active ? 'bold' : 'normal',
           fontFamily: this.#assets.fontFamily('ui'),
         } satisfies TextStyleOptions,
@@ -1085,7 +1094,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         text: item.label,
         style: {
           fontSize: 12,
-          fill: item.enabled === false ? 0x596274 : item.active ? MODERN_ADV.text : MODERN_ADV.muted,
+          fill: item.enabled === false ? this.#theme.colors.textDisabled : item.active ? this.#theme.colors.text : this.#theme.colors.textMuted,
           letterSpacing: 1,
           fontFamily: this.#assets.fontFamily('ui'),
         } satisfies TextStyleOptions,
@@ -1095,7 +1104,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       label.alpha = 0;
       const underline = new Graphics()
         .rect(10, railH - 8, slotW - 20, 1.5)
-        .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
+        .fill({ color: this.#theme.colors.line, alpha: item.active ? 0.9 : 0 });
       row.addChild(hit, icon, label, underline);
       row.alpha = item.enabled === false ? 0.38 : 1;
       if (item.enabled !== false) {
@@ -1105,16 +1114,16 @@ export class DialogueLayer implements DialogueProjectionPort {
           this.#wakeCommandRail();
           label.alpha = 1;
           underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
-            .fill({ color: MODERN_ADV.accent, alpha: 0.9 });
-          label.style = { fontSize: 12, fill: MODERN_ADV.text, letterSpacing: 1, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
+            .fill({ color: this.#theme.colors.line, alpha: 0.9 });
+          label.style = { fontSize: 12, fill: this.#theme.colors.text, letterSpacing: 1, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
         });
         row.on('pointerout', () => {
           label.alpha = 0;
           underline.clear().rect(10, railH - 8, slotW - 20, 1.5)
-            .fill({ color: MODERN_ADV.accent, alpha: item.active ? 0.9 : 0 });
+            .fill({ color: this.#theme.colors.line, alpha: item.active ? 0.9 : 0 });
           label.style = {
             fontSize: 12,
-            fill: item.active ? MODERN_ADV.text : MODERN_ADV.muted,
+            fill: item.active ? this.#theme.colors.text : this.#theme.colors.textMuted,
             letterSpacing: 1,
             fontFamily: this.#assets.fontFamily('ui'),
           } satisfies TextStyleOptions;

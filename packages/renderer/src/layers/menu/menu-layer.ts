@@ -25,12 +25,7 @@ import {
   type TitleView,
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
-
-const NIGHT_AZURE = {
-  accent: 0x5ac8ff,
-  text: 0xf2f6ff,
-  plateText: 0xeaf6ff,
-} as const;
+import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 
 /** Menu-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface MenuLayerOptions {
@@ -88,6 +83,7 @@ export class MenuLayer implements MenuProjectionPort {
   readonly #onPointerConsumed: (() => void) | null;
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
+  #theme: RendererTheme = DEFAULT_RENDERER_THEME;
 
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -179,6 +175,11 @@ export class MenuLayer implements MenuProjectionPort {
     if (handler && this.needsUpdate) handler();
   }
 
+  setTheme(theme: RendererTheme): void {
+    if (this.#disposed) return;
+    this.#theme = theme;
+  }
+
   get needsUpdate(): boolean {
     return this.#menuMotionRemain > 0 && this.#menuLayer.visible;
   }
@@ -225,7 +226,7 @@ export class MenuLayer implements MenuProjectionPort {
       text: view.title,
       style: {
         fontSize: 58,
-        fill: NIGHT_AZURE.text,
+        fill: this.#theme.colors.text,
         fontWeight: 'normal',
         letterSpacing: 8,
         fontFamily: this.#fontFamily('title'),
@@ -236,7 +237,7 @@ export class MenuLayer implements MenuProjectionPort {
     layer.addChild(title);
     layer.addChild(new Graphics()
       .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
-      .fill({ color: NIGHT_AZURE.accent, alpha: 0.55 }));
+      .fill({ color: this.#theme.colors.accent, alpha: 0.55 }));
     if (view.subtitle) {
       const subtitle = new PText({
         text: view.subtitle,
@@ -255,7 +256,7 @@ export class MenuLayer implements MenuProjectionPort {
         text: item.label,
         style: {
           fontSize: 20,
-          fill: enabled ? NIGHT_AZURE.text : 0x4a5566,
+          fill: enabled ? this.#theme.colors.text : 0x4a5566,
           letterSpacing: 4,
           fontFamily: this.#fontFamily('ui'),
         } satisfies TextStyleOptions,
@@ -265,7 +266,7 @@ export class MenuLayer implements MenuProjectionPort {
       if (enabled) {
         const line = new Graphics()
           .roundRect(baseX - 70, baseY + 20, 140, 1, 0.5)
-          .fill({ color: NIGHT_AZURE.accent, alpha: 0.9 });
+          .fill({ color: this.#theme.colors.accent, alpha: 0.9 });
         line.visible = false;
         layer.addChild(line);
         label.eventMode = 'static';
@@ -275,11 +276,11 @@ export class MenuLayer implements MenuProjectionPort {
         });
         label.on('pointerover', () => {
           line.visible = true;
-          label.style = { fontSize: 20, fill: NIGHT_AZURE.plateText, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          label.style = { fontSize: 20, fill: this.#theme.colors.text, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
         });
         label.on('pointerout', () => {
           line.visible = false;
-          label.style = { fontSize: 20, fill: NIGHT_AZURE.text, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          label.style = { fontSize: 20, fill: this.#theme.colors.text, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
         });
       }
       layer.addChild(label);
@@ -306,7 +307,7 @@ export class MenuLayer implements MenuProjectionPort {
       text,
       style: {
         fontSize: 30,
-        fill: NIGHT_AZURE.text,
+        fill: this.#theme.colors.text,
         fontWeight: 'normal',
         letterSpacing: 9,
         fontFamily: this.#fontFamily('title'),
