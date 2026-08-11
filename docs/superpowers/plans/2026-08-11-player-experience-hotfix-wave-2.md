@@ -654,7 +654,7 @@ WAITING_FOR_REVIEW
 
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
-- [ ] Task 2：单一 UI 会话状态。提交：`IMPLEMENTATION_COMMIT_PENDING`。
+- [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
 - [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
 - [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
@@ -764,4 +764,6 @@ Task 2 门禁：
 
 范围与遗留：四个受保护未跟踪文件未触碰；没有修改 DSL、存档格式、剧情、性能数据/门限、M9 或发行物。Task 1 的两份失败 JSON 仍保留在系统临时目录，Task 1 的 UX 红灯尚未声明修复完成；Task 3 仍需处理 pointer consumption、rollback 和 interface hidden 的实际输入语义。
 
-下一入口：完成 Task 2 聚焦提交并在随后台账提交中记录真实 SHA，然后开始 Task 3 的输入门禁红灯测试。
+Task 2 实现提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
+
+下一入口：提交本次台账 SHA 后开始 Task 3 的输入门禁红灯测试。
