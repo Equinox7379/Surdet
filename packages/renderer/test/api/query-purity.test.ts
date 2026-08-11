@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
+import type { RenderLifecycleDiagnosticSnapshot } from '../../src/lifecycle/render-lifecycle.js';
 import type {
   RendererControllerPort,
   RendererRuntimeInternals,
@@ -154,5 +155,50 @@ describe('Renderer v2 query purity', () => {
     expect(projection).not.toBe(source);
     expect(Object.isFrozen(projection)).toBe(true);
     expect(Object.isFrozen(projection.dialogue)).toBe(true);
+  });
+
+  it('returns an immutable, isolated resource ledger without changing lifecycle state', async () => {
+    const baseInternals = pureInternals();
+    const source: RenderLifecycleDiagnosticSnapshot = {
+      active: [{ owner: 'menu', kind: 'listener', key: 'title', source: 'menu.ts:1', active: true }],
+      events: [{
+        owner: 'menu',
+        kind: 'listener',
+        key: 'title',
+        source: 'menu.ts:1',
+        action: 'dispose',
+        path: 'release',
+        outcome: 'failure',
+        cause: 'title listener failed',
+      }],
+    };
+    let reads = 0;
+    const internals = {
+      ...baseInternals,
+      resourceLedger: () => {
+        reads += 1;
+        return source;
+      },
+    };
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const before = internals.observableSnapshot();
+
+    const ledger = runtime.queries.diagnostics.resourceLedger!();
+    expect(reads).toBe(1);
+    expect(ledger).not.toBe(source);
+    expect(Object.isFrozen(ledger)).toBe(true);
+    expect(Object.isFrozen(ledger.active)).toBe(true);
+    expect(Object.isFrozen(ledger.events)).toBe(true);
+    expect(Object.isFrozen(ledger.active[0])).toBe(true);
+    expect(Object.isFrozen(ledger.events[0])).toBe(true);
+    expect(() => (ledger.active as unknown as unknown[]).push({})).toThrow();
+    expect(() => (ledger.events[0] as unknown as { cause: string }).cause = 'tampered').toThrow();
+
+    const second = runtime.queries.diagnostics.resourceLedger!();
+    expect(reads).toBe(2);
+    expect(second).toEqual(ledger);
+    expect(source.active[0]?.key).toBe('title');
+    expect(source.events[0]?.cause).toBe('title listener failed');
+    expect(internals.observableSnapshot()).toEqual(before);
   });
 });

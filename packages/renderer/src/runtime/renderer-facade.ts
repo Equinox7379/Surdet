@@ -228,10 +228,7 @@ function cloneResourceSnapshot(snapshot: RendererResourceSnapshot, disposed: boo
 }
 
 function cloneResourceLedger(snapshot: RenderLifecycleDiagnosticSnapshot): RenderLifecycleDiagnosticSnapshot {
-  return {
-    active: snapshot.active.map((entry) => ({ ...entry })),
-    events: snapshot.events.map((event) => ({ ...event })),
-  };
+  return cloneAndFreezePlainData(snapshot) as RenderLifecycleDiagnosticSnapshot;
 }
 
 /**
