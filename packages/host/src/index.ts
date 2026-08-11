@@ -26,6 +26,7 @@ export type {
   PlayerBase,
   PlayerInputGateSnapshot,
   PlayerOverlay,
+  PlayerOverlayFrame,
   PlayerOperation,
   PlayerUiSessionInitialState,
   PlayerUiSessionSnapshot,

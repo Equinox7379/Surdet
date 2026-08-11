@@ -14,12 +14,18 @@ export type PlayerOperation =
   | 'loading'
   | 'returning-title';
 
+export interface PlayerOverlayFrame {
+  readonly base: PlayerBase;
+  readonly overlay: PlayerOverlay;
+}
+
 export interface PlayerUiSessionSnapshot {
   readonly base: PlayerBase;
   readonly overlay: PlayerOverlay;
   readonly operation: PlayerOperation;
   readonly interfaceHidden: boolean;
   readonly videoActive: boolean;
+  readonly returnStack: readonly PlayerOverlayFrame[];
 }
 
 export interface PlayerUiSessionInitialState {
@@ -44,8 +50,24 @@ function transitionError(message: string): Error {
   return new Error(`PLAYER_UI_INVALID_TRANSITION: ${message}`);
 }
 
+function freezeOverlayFrame(frame: PlayerOverlayFrame): PlayerOverlayFrame {
+  return Object.freeze({
+    base: frame.base,
+    overlay: frame.overlay,
+  });
+}
+
+function freezeReturnStack(
+  returnStack: readonly PlayerOverlayFrame[],
+): readonly PlayerOverlayFrame[] {
+  return Object.freeze(returnStack.map(freezeOverlayFrame));
+}
+
 function freezeSnapshot(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
-  return Object.freeze(snapshot);
+  return Object.freeze({
+    ...snapshot,
+    returnStack: freezeReturnStack(snapshot.returnStack),
+  });
 }
 
 function validateSnapshot(snapshot: PlayerUiSessionSnapshot): void {
@@ -58,6 +80,22 @@ function validateSnapshot(snapshot: PlayerUiSessionSnapshot): void {
     && snapshot.operation !== 'returning-title') {
     throw transitionError(`unknown operation=${String(snapshot.operation)}`);
   }
+  if (!Array.isArray(snapshot.returnStack)) {
+    throw transitionError('returnStack must be an array');
+  }
+  for (const frame of snapshot.returnStack) {
+    if (frame.base !== 'title' && frame.base !== 'game') {
+      throw transitionError(`unknown return frame base=${String(frame.base)}`);
+    }
+    if (frame.overlay !== 'none'
+      && frame.overlay !== 'system-menu'
+      && frame.overlay !== 'save-load'
+      && frame.overlay !== 'settings'
+      && frame.overlay !== 'gallery'
+      && frame.overlay !== 'backlog') {
+      throw transitionError(`unknown return frame overlay=${String(frame.overlay)}`);
+    }
+  }
 }
 
 function initialSnapshot(initial: PlayerUiSessionInitialState | undefined): PlayerUiSessionSnapshot {
@@ -67,6 +105,7 @@ function initialSnapshot(initial: PlayerUiSessionInitialState | undefined): Play
     operation: initial?.operation ?? 'idle',
     interfaceHidden: initial?.interfaceHidden ?? false,
     videoActive: initial?.videoActive ?? false,
+    returnStack: [],
   };
   validateSnapshot(snapshot);
   return freezeSnapshot(snapshot);
@@ -99,7 +138,29 @@ export class PlayerUiSession {
     if (this.#snapshot.interfaceHidden) {
       throw transitionError('open-overlay requires interfaceHidden=false');
     }
-    return this.#commit({ ...this.#snapshot, overlay });
+    if (this.#snapshot.returnStack.length !== 0) {
+      throw transitionError('open-overlay requires an empty return stack');
+    }
+    return this.#commit({
+      ...this.#snapshot,
+      overlay,
+      returnStack: [this.#currentFrame()],
+    });
+  }
+
+  pushOverlay(overlay: ActiveOverlay): PlayerUiSessionSnapshot {
+    this.#requireIdle('push-overlay');
+    if (this.#snapshot.overlay === 'none') {
+      throw transitionError('push-overlay requires an active overlay');
+    }
+    if (this.#snapshot.interfaceHidden) {
+      throw transitionError('push-overlay requires interfaceHidden=false');
+    }
+    return this.#commit({
+      ...this.#snapshot,
+      overlay,
+      returnStack: [...this.#snapshot.returnStack, this.#currentFrame()],
+    });
   }
 
   closeOverlay(): PlayerUiSessionSnapshot {
@@ -107,7 +168,22 @@ export class PlayerUiSession {
     if (this.#snapshot.overlay === 'none') {
       throw transitionError('close-overlay requires an active overlay');
     }
-    return this.#commit({ ...this.#snapshot, overlay: 'none' });
+    const returnStack = this.#snapshot.returnStack;
+    const frame = returnStack.at(-1);
+    if (!frame) {
+      return this.#commit({ ...this.#snapshot, overlay: 'none', returnStack: [] });
+    }
+    return this.#commit({
+      ...this.#snapshot,
+      base: frame.base,
+      overlay: frame.overlay,
+      returnStack: returnStack.slice(0, -1),
+    });
+  }
+
+  dismissOverlays(): PlayerUiSessionSnapshot {
+    this.#requireIdle('dismiss-overlays');
+    return this.#commit({ ...this.#snapshot, overlay: 'none', returnStack: [] });
   }
 
   enterTitle(): PlayerUiSessionSnapshot {
@@ -115,7 +191,13 @@ export class PlayerUiSession {
     if (this.#snapshot.overlay !== 'none') {
       throw transitionError('enter-title requires overlay=none');
     }
-    return this.#commit({ ...this.#snapshot, base: 'title', interfaceHidden: false });
+    return this.#commit({
+      ...this.#snapshot,
+      base: 'title',
+      overlay: 'none',
+      interfaceHidden: false,
+      returnStack: [],
+    });
   }
 
   enterGame(): PlayerUiSessionSnapshot {
@@ -123,7 +205,13 @@ export class PlayerUiSession {
     if (this.#snapshot.overlay !== 'none') {
       throw transitionError('enter-game requires overlay=none');
     }
-    return this.#commit({ ...this.#snapshot, base: 'game', interfaceHidden: false });
+    return this.#commit({
+      ...this.#snapshot,
+      base: 'game',
+      overlay: 'none',
+      interfaceHidden: false,
+      returnStack: [],
+    });
   }
 
   beginOperation(operation: BusyOperation): PlayerUiSessionSnapshot {
@@ -146,6 +234,7 @@ export class PlayerUiSession {
       operation: 'idle',
       interfaceHidden: options.interfaceHidden ?? false,
       videoActive: options.videoActive ?? false,
+      returnStack: [],
     });
   }
 
@@ -186,7 +275,15 @@ export class PlayerUiSession {
       operation: 'idle',
       interfaceHidden: false,
       videoActive: false,
+      returnStack: [],
     });
+  }
+
+  #currentFrame(): PlayerOverlayFrame {
+    return {
+      base: this.#snapshot.base,
+      overlay: this.#snapshot.overlay,
+    };
   }
 
   #requireIdle(action: string): void {

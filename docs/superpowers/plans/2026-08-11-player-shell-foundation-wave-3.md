@@ -213,8 +213,8 @@ git log --oneline -1
 - Modify: `packages/host/src/index.ts`
 - Test: `packages/host/test/player-ui-coordination.test.ts`
 
-- [ ] 先写失败测试：game → system-menu → settings → close 回 system-menu → close 回 game；title → gallery → close；operation reject 恢复完整栈；success/dismiss/reset 清栈；根/数组/frame 冻结；篡改不污染；busy 时拒绝。
-- [ ] 红灯：
+- [x] 先写失败测试：game → system-menu → settings → close 回 system-menu → close 回 game；title → gallery → close；operation reject 恢复完整栈；success/dismiss/reset 清栈；根/数组/frame 冻结；篡改不污染；busy 时拒绝。
+- [x] 红灯：
 
 ```powershell
 npm run test -w @surdet/host -- --run test/player-ui-coordination.test.ts
@@ -222,8 +222,8 @@ npm run test -w @surdet/host -- --run test/player-ui-coordination.test.ts
 
 Expected: 因 `returnStack` / `pushOverlay` / `dismissOverlays` 不存在失败。记录测试总数与首个失败。
 
-- [ ] 实现最小返回栈；内部数组永不直接返回；operation origin 保存完整 snapshot。
-- [ ] 绿灯与类型：
+- [x] 实现最小返回栈；内部数组永不直接返回；operation origin 保存完整 snapshot。
+- [x] 绿灯与类型：
 
 ```powershell
 npm run test -w @surdet/host -- --run test/player-ui-coordination.test.ts
@@ -492,7 +492,7 @@ WAITING_FOR_REVIEW
 | Task | Red evidence | Green evidence | Commit | Review status |
 | --- | --- | --- | --- | --- |
 | 0 | N/A（文档基线任务无红灯） | HEAD `9bbec32946e169a5d081b29863edddaad64959fe`；任务书 25173 字节 / SHA-256 `639A934053C9879DFABAA287B71E3CC3010B2F5E3249004CC02EC923C5DA2D65`；清洁室记录已创建；修正后 diff-check 通过；tracked logs 为空 | `445cf5106f9ca9c0401044b7e9cfa121c45ffcb4`（Task 0 基线提交） | implemented |
-| 1 | pending | pending | pending | not-started |
+| 1 | 13 项中 5 项失败；首个失败为快照缺少 `returnStack`，随后 `session.pushOverlay is not a function`；红灯发生于生产代码修改前 | 聚焦测试 13/13；`npm run typecheck -w @surdet/host` 通过；覆盖嵌套返回、title/gallery、失败恢复、成功清栈、reset、递归冻结、篡改隔离和 busy 拒绝 | pending（实现提交后回填） | implemented |
 | 2 | pending | pending | pending | not-started |
 | 3 | pending | pending | pending | not-started |
 | 4 | pending | pending | pending | not-started |
