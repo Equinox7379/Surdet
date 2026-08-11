@@ -230,6 +230,10 @@ async function main() {
       await waitOverlay('gallery:text');
       await clickTarget('gallery:close');
       await waitTitle();
+      const titleReturn = await snapshot();
+      if (titleReturn?.uiSession?.base !== 'title' || titleReturn?.commandRailVisible !== false) {
+        throw new Error(`标题鉴赏关闭后的 return context 错误：${JSON.stringify(titleReturn)}`);
+      }
       console.log(`INFO UX-01 round=${round} completed`);
     }
     await assertNoRuntimeError('UX-01');
@@ -247,6 +251,33 @@ async function main() {
     await press('F5');
     await waitFor('second quick save IPC', () => window.surdetSave?.list().then((slots) => slots.includes('quick')), undefined, 15000);
     await assertNoRuntimeError('UX-09');
+  });
+
+  await runCase('UX-01 game → gallery → music/text → close ×3', async () => {
+    await prepareTitle();
+    await clickTarget('title:new');
+    await waitGame();
+    for (let round = 1; round <= 3; round++) {
+      await press('g');
+      await waitOverlay('gallery:cg');
+      await clickTarget('gallery:music');
+      await waitOverlay('gallery:music');
+      await clickTarget('gallery:text');
+      await waitOverlay('gallery:text');
+      await clickTarget('gallery:close');
+      await waitFor('鉴赏返回游戏', () => {
+        const debug = window.__surdetDebug;
+        return debug?.uiSession?.base === 'game'
+          && debug?.activeOverlay === null
+          && debug?.commandRailVisible === true;
+      });
+      const gameReturn = await snapshot();
+      if (gameReturn?.uiSession?.base !== 'game' || gameReturn?.commandRailVisible !== true) {
+        throw new Error(`游戏鉴赏关闭后的 return context 错误：${JSON.stringify(gameReturn)}`);
+      }
+      console.log(`INFO UX-01 game round=${round} completed`);
+    }
+    await assertNoRuntimeError('UX-01 game');
   });
 
   await runCase('UX-04 load → system menu → title', async () => {
