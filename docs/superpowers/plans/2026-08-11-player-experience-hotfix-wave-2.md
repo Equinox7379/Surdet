@@ -655,7 +655,7 @@ WAITING_FOR_REVIEW
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 - [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
-- [ ] Task 3：指针消费、回退、界面隐藏。实现已完成，提交：`IMPLEMENTATION_COMMIT_PENDING`；Task 4 仍需处理独立 E2E 红灯。
+- [x] Task 3：指针消费、回退、界面隐藏。提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。Task 4 仍需处理独立 E2E 红灯。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
 - [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
 - [ ] Task 6：对话框稳定性。提交：`PENDING`。
@@ -795,4 +795,4 @@ Task 2 实现提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zer
 - 当前只增加 Renderer 公开运行时接线所需的 typed callback，没有改 DSL、存档格式、剧情、游戏规则、性能数据/门限、M9、发行物、美术或音频。
 - 四个受保护未跟踪文件未修改、未暂存；没有 push、force push、发行或重新打包正式 EXE。
 
-下一入口：先提交本阶段实现与本台账的精确变更；随后仅进入 Task 4，先为 overlay z-order 与 title/game gallery return context 建立红灯测试。不得把本阶段仍失败的 UX 项标为已知限制后跳过。
+本阶段实现提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。下一入口：提交本次台账 SHA 后仅进入 Task 4，先为 overlay z-order 与 title/game gallery return context 建立红灯测试。不得把本阶段仍失败的 UX 项标为已知限制后跳过。
