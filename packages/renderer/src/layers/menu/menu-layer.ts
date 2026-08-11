@@ -694,12 +694,14 @@ export class MenuLayer implements MenuProjectionPort {
         card.on('pointerdown', (event) => {
           const handler = this.#saveLoadHandlers?.onSelect;
           if (this.#saveLoadOptions.completion === 'host-transaction') {
-            if (this.#saveLoadTransactionPending) {
+          if (this.#saveLoadTransactionPending) {
               this.#onPointerConsumed?.();
               event.stopPropagation?.();
               return;
             }
             this.#saveLoadTransactionPending = true;
+            const onTransactionComplete = this.#saveLoadOptions.onTransactionComplete;
+            const onTransactionError = this.#saveLoadOptions.onTransactionError;
             try {
               const accepted = handler?.(slot.id);
               if (!isPromiseLike(accepted)) {
@@ -709,19 +711,18 @@ export class MenuLayer implements MenuProjectionPort {
                 (result) => {
                   this.#saveLoadTransactionPending = false;
                   if (result !== false) {
-                    const onComplete = this.#saveLoadOptions.onTransactionComplete;
                     this.hideSaveLoad();
-                    onComplete?.();
+                    onTransactionComplete?.();
                   }
                 },
                 (error) => {
                   this.#saveLoadTransactionPending = false;
-                  this.#handleSaveLoadTransactionError(error);
+                  this.#handleSaveLoadTransactionError(error, onTransactionError);
                 },
               );
             } catch (error) {
               this.#saveLoadTransactionPending = false;
-              this.#handleSaveLoadTransactionError(error);
+              this.#handleSaveLoadTransactionError(error, onTransactionError);
             }
             return;
           }
@@ -808,8 +809,7 @@ export class MenuLayer implements MenuProjectionPort {
     }
   }
 
-  #handleSaveLoadTransactionError(error: unknown): void {
-    const report = this.#saveLoadOptions.onTransactionError;
+  #handleSaveLoadTransactionError(error: unknown, report = this.#saveLoadOptions.onTransactionError): void {
     if (report) {
       report(error);
       return;
