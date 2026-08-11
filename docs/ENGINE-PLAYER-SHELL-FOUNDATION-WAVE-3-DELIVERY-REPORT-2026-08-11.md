@@ -1,7 +1,7 @@
 # Surdet Player Shell Foundation Wave 3 交付报告
 
-> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED`  
-> 复核阶段：`WAITING_FOR_REVIEW`  
+> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED`
+> 复核阶段：`WAITING_FOR_REVIEW`
 > 本轮没有 push、没有进入 M9、没有处理性能测量或正式发行。
 
 ## 1. 交付结论
