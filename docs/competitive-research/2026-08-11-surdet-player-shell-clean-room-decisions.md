@@ -1,7 +1,7 @@
 # Surdet Player Shell Foundation Wave 3：清洁室设计记录
 
-日期：2026-08-11  
-范围：`PLAYER_SHELL_FOUNDATION_WAVE_3` Task 0  
+日期：2026-08-11
+范围：`PLAYER_SHELL_FOUNDATION_WAVE_3` Task 0
 状态：已冻结，供本轮实现与复核使用
 
 ## 记录目的
