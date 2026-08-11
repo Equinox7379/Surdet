@@ -127,7 +127,7 @@ export interface RendererThemeProjectionSnapshot {
 
 export interface RendererDiagnosticQueries {
   resourceSnapshot(): RendererResourceSnapshot;
-  /** Read-only lifecycle identity ledger for diagnostics; never exposes disposers or display objects. */
+  /** Recursively frozen, isolated lifecycle identity ledger; never exposes disposers or display objects. */
   resourceLedger?(): RenderLifecycleDiagnosticSnapshot;
   performanceSnapshot(): RenderPerformanceSnapshot | null;
   /** Pure semantic projection read model; returns no Layer or Pixi object. */
