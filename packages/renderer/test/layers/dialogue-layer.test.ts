@@ -52,6 +52,29 @@ function alphaSnapshot(layer: DialogueLayer): number {
   return (layer.debugSnapshot() as unknown as { commandRailAlpha: number }).commandRailAlpha;
 }
 
+interface BacklogLayoutSnapshot {
+  readonly headerY: number;
+  readonly viewportTop: number;
+  readonly viewportBottom: number;
+  readonly scroll: number;
+  readonly contentHeight: number;
+  readonly hasMask: boolean;
+  readonly searchVisible: boolean;
+  readonly idleSearchHintVisible: boolean;
+}
+
+function backlogLayoutSnapshot(layer: DialogueLayer): BacklogLayoutSnapshot {
+  return (layer.debugSnapshot() as unknown as { backlogLayout: BacklogLayoutSnapshot }).backlogLayout;
+}
+
+function backlogRoot(root: Container): Container {
+  const overlayRoot = root.children[1];
+  expect(overlayRoot).toBeInstanceOf(Container);
+  const layer = (overlayRoot as Container).children[0];
+  expect(layer).toBeInstanceOf(Container);
+  return layer as Container;
+}
+
 describe('DialogueLayer command rail stability', () => {
   it('keeps the command rail fully visible and idle after show and a long wait', () => {
     const runtime = makeRuntime();
@@ -111,6 +134,65 @@ describe('DialogueLayer command rail stability', () => {
       expect(label.alpha).toBe(0);
       expect(alphaSnapshot(runtime.layer)).toBe(1);
       expect(runtime.lifecycle.snapshot().activeTweens).toBe(0);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('keeps a fixed backlog header and clips long Chinese/emoji entries below it', () => {
+    const runtime = makeRuntime();
+    try {
+      const entries = Array.from({ length: 120 }, (_, index) => ({
+        speaker: index % 2 === 0 ? '凛' : null,
+        text: `第 ${index} 条记录：雨夜中的长文本🙂𠀀，用于验证正文裁剪。`,
+        voice: index % 3 === 0 ? `voice-${index}` : undefined,
+      }));
+      runtime.layer.showBacklog(entries);
+
+      const first = backlogLayoutSnapshot(runtime.layer);
+      expect(first).toMatchObject({
+        headerY: 30,
+        viewportTop: 76,
+        viewportBottom: 684,
+        scroll: 0,
+        hasMask: true,
+        searchVisible: false,
+        idleSearchHintVisible: false,
+      });
+      expect(first.contentHeight).toBeGreaterThan(first.viewportBottom - first.viewportTop);
+      const layer = backlogRoot(runtime.root);
+      expect(layer.children.some((child) => child instanceof PText && child.text === 'Ctrl+F 搜索')).toBe(false);
+      const entriesLayer = layer.children.find((child) => child instanceof Container && child.mask) as Container | undefined;
+      expect(entriesLayer?.mask).toBeDefined();
+
+      runtime.layer.scrollBacklog(240);
+      const afterScroll = backlogLayoutSnapshot(runtime.layer);
+      expect(afterScroll.headerY).toBe(first.headerY);
+      expect(afterScroll.scroll).toBeLessThan(0);
+      expect(afterScroll.viewportTop).toBe(first.viewportTop);
+      expect(afterScroll.viewportBottom).toBe(first.viewportBottom);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('shows only an active query in the backlog header', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.showBacklog([{ speaker: '凛', text: '雨声继续🙂' }], undefined, '雨');
+
+      const layout = backlogLayoutSnapshot(runtime.layer);
+      expect(layout).toMatchObject({
+        headerY: 30,
+        viewportTop: 92,
+        viewportBottom: 684,
+        hasMask: true,
+        searchVisible: true,
+        idleSearchHintVisible: false,
+      });
+      const layer = backlogRoot(runtime.root);
+      expect(layer.children.some((child) => child instanceof PText && child.text === '搜索：雨')).toBe(true);
+      expect(layer.children.some((child) => child instanceof PText && child.text === 'Ctrl+F 搜索')).toBe(false);
     } finally {
       disposeRuntime(runtime);
     }
