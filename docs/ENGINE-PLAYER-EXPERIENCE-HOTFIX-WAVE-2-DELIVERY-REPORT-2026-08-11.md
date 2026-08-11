@@ -2,7 +2,7 @@
 
 日期：2026-08-11
 项目：Surdet / 《零点之后》
-状态：交付实现完成，等待独立复审；未 push
+状态：限定整改完成，等待独立复审；未 push
 
 ## 1. 结论
 
@@ -11,10 +11,11 @@
 当前结论为：
 
 ```text
-PLAYER_EXPERIENCE_HOTFIX_WAVE_2_IMPLEMENTED
-STABILITY_WAVE_1_RETAINED
+PLAYER_EXPERIENCE_HOTFIX_WAVE_2_REMEDIATED
+ENGINE_PLAYER_UI_COORDINATION_IMPLEMENTED
+UX_06_REMEDIATED
+SAVE_FAILURE_PROPAGATION_REMEDIATED
 PERFORMANCE_WORK_DEFERRED
-PERFORMANCE_MEASUREMENT_NOT_QUALIFIED_RETAINED
 M9_NOT_STARTED
 NOT_PUSHED
 WAITING_FOR_REVIEW
@@ -22,10 +23,10 @@ WAITING_FOR_REVIEW
 
 本轮不是 M9，不是性能优化，不是性能资格化，不是正式发行，也没有重新采样 Q1–Q5、修改性能 artifact/门限、重新打包正式 EXE、修改剧情/DSL/存档格式、修改美术或音频内容。
 
-报告生成前的代码最终 HEAD 为：
+R2 代码/测试最终 HEAD 为：
 
 ```text
-f2d261013595ef17cbb1cbaf20eafdcf4645982c
+9d01801e79d2939970d059a57cde827a729532b0
 ```
 
 初始交付文档提交为：
@@ -34,7 +35,7 @@ f2d261013595ef17cbb1cbaf20eafdcf4645982c
 e713f2c（docs(engine): report player experience hotfix wave 2）
 ```
 
-本报告所对应的最终运行时/测试代码 HEAD 为 `f2d261013595ef17cbb1cbaf20eafdcf4645982c`；后续文档修订只包含报告与计划台账，不改变运行时代码。当前 Git 最终 HEAD 以文档修订提交后的最终复核输出为准。
+本报告所对应的最终运行时/测试代码 HEAD 为 `9d01801e79d2939970d059a57cde827a729532b0`；随后只允许提交报告与计划台账，不改变运行时代码。最终 Git HEAD 以文档提交后的复核输出为准，且不会 push。
 
 ## 2. 起始与范围
 
@@ -44,11 +45,11 @@ Wave 2 起始基线：
 4a162b9446bb10be3f720b98531d532db568dd6e
 ```
 
-Task 8 报告生成前：
+R2 代码提交后：
 
 ```text
-HEAD = f2d261013595ef17cbb1cbaf20eafdcf4645982c
-HEAD...surdet/main = 16 0
+HEAD = 9d01801e79d2939970d059a57cde827a729532b0
+HEAD...surdet/main = 21 0
 ```
 
 工作树在整个施工期间均保留且未触碰以下四个受保护未跟踪文件：
@@ -124,7 +125,7 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 
 ### 4.3 玩家 UI 状态机
 
-`examples/zero-after-midnight/src/player-ui-session.ts` 成为唯一状态来源，覆盖：
+`packages/host/src/player-ui.ts` 提供的公共 `PlayerUiSession` 成为宿主协调的唯一状态来源，正式游戏、Starter 和 CLI 模板共享同一 typed contract，覆盖：
 
 - base：`title` / `game`；
 - overlay：`none`、`system-menu`、`save-load`、`settings`、`gallery`、`backlog`；
@@ -167,10 +168,13 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 | 命令 | 结果 |
 | --- | --- |
 | `npm run test -w @surdet/core` | 23 files / 304 tests passed |
-| `npm run test -w @surdet/renderer` | 47 files / 349 tests passed |
-| `npm run test -w @surdet/host` | 3 files / 18 tests passed |
+| `npm run test -w @surdet/renderer` | 47 files / 351 tests passed |
+| `npm run test -w @surdet/host` | 5 files / 28 tests passed |
 | `npm run test -w @surdet/shell` | 15 files / 122 tests passed |
+| `npm run test -w surdet-starter` | 4 files / 7 tests passed |
 | `npm run test -w zero-after-midnight` | 2 files / 21 tests passed；同时 assets 44、11 scenes、3 endings |
+| `npm test -w surdet-editor` | 21 files / 142 tests passed |
+| `npm test -w @surdet/cli` | 7 files / 86 tests passed |
 
 五个 workspace 的 typecheck 全部退出码 `0`；五个 workspace 的 build 全部退出码 `0`。正式游戏 Vite 构建只产生既有大 chunk advisory，没有 lint warning，也没有构建失败。
 
@@ -179,7 +183,7 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 - `npm run verify:renderer-boundaries`：`3/3` 通过；
 - `npm run verify:renderer-legacy`：`4/4` 通过；
 - `npm run verify:tools`：`10/10` 通过；
-- `npm run verify:hygiene`：tracked `583` paths 通过；
+- `npm run verify:hygiene`：tracked `587` paths 通过；
 - `npm run lint -w zero-after-midnight`：`11` scenes、`0 errors`、`0 warnings`；
 - `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000`：`23/23` choice branches、`3` endings、`39` save/load smoke、`0` runtime errors；
 - `node examples/zero-after-midnight/scripts/check-assets.mjs`：`assets ok: 44`；
@@ -216,6 +220,56 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 
 最终测试只改了 E2E 观测夹具：真实输入最多继续到位置变化；回退只有连续两次稳定 no-op 后才判定历史耗尽，再额外验证 no-op。没有修改生产逻辑来掩盖测试失败。
 
+## 7.5 独立复审后的最终限定整改（R1/R2/R3）
+
+总经理复审要求只处理三个阻断项：公共 Player UI 协调层、真实 Dialogue Backlog 合成顺序，以及异步存档错误传播/命令栏事务边界。本节是对前述 Task 记录的补充，不覆盖原始失败证据。
+
+### R3：公共 Player UI 协调层
+
+- `packages/host/src/player-ui.ts` 公开 `PlayerUiSession`、`PlayerInputGate` 和纯 selectors；正式游戏、Starter、CLI 模板不再各自维护互相漂移的 UI 状态副本。
+- `562a764021b03c98cf3fdc315e4933f68de9cf0c`：`refactor(host): share player UI coordination`。
+- Host focused `8/8`；Starter `4 files / 7 tests`；Zero `2 files / 21 tests`；typed contract/build/typecheck 通过。
+
+### R1：真实 Dialogue Backlog 合成顺序
+
+- 复审前真实 Backlog 红灯是 `DialogueLayer` 自身层级问题：正文重排会把正文追加到与 Backlog 相同的 root，导致 Backlog 不能稳定位于正文之上。修复为 Dialogue content root 与 Dialogue overlay root 两层；Backlog 只进入 overlay root，正文排序不越界。
+- `backlogAboveDialogueText` 只作为普通数据快照返回，不暴露 Pixi 对象。
+- `c5cb38d354395328056afb387b45e1decfed6d88`：`fix(renderer): preserve real backlog overlay order`。
+- R1 真实 Dialogue 测试先红后绿；本次最终 Renderer 全量包含该回归且 `47 files / 351 tests` 通过。
+
+### R2：异步存档错误传播与命令栏事务边界
+
+#### 修复前红灯与根因
+
+1. Renderer `menu-layer.test.ts` 在 host transaction 尚未有正式契约时：`22 tests | 21 passed | 1 failed`；异步 handler 返回后页面已提前隐藏，无法证明 pending 期间可继续操作。
+2. Shell `save-store.test.ts`：`19 tests | 17 passed | 2 failed`；损坏 JSON 与损坏主存档被静默转为 `null`/回退 `.bak`。
+3. Host adapter 测试先于生产模块执行：`Cannot find module '../src/electron-save-storage.js'`。
+4. 生产修复后旧版 Starter 真实 Electron E2E 首次复测仍发现：`stateReset` 在 `quickLoad` 的 `loading` 事务中调用 `uiSession.reset()`，随后完成分支失败，catch 又调用 `failOperation()`，原始错误被 `PLAYER_UI_INVALID_TRANSITION: fail-operation requires a busy operation` 遮蔽。该失败命令、堆栈和输出均保留在本次执行记录中。
+
+#### 最小修复
+
+- 新增 `packages/host/src/electron-save-storage.ts`，Electron bridge 的读取、写入、删除、列表和元数据操作直接向上传播拒绝；只有明确的 missing-file 仍返回 `null`。
+- `packages/shell/src/save-store.ts` 不再吞掉损坏 JSON、非法顶层结构、索引读写失败或删除失败；损坏主存档不再静默回退 `.bak`。
+- `MenuLayer` 增加显式 `host-transaction` 契约：pending 保持 save-load 页面，重复关闭/背景点击只消费当前事件；Promise 成功才 hide，返回 `false` 或 reject 保持页面，未提供错误边界时 reject 在 microtask 重新抛出。
+- `RendererFacade`、PixiStage host 和 legacy adapter 传递 typed options；正式 Host 明确使用 host transaction，并在 `onTransactionComplete` 中恢复命令栏。旧同步调用路径继续保持兼容。
+- Starter/Zero 的异步存读档使用真实 Electron storage 与 begin/commit/fail/restore 事务。Starter 的 `stateReset` 只有在 UI session 空闲时才执行完整 reset；busy save/load 期间保留事务，让 quickLoad 成功完成或失败恢复能够各自执行一次。
+
+#### R2 验证结果
+
+- R2 提交：`9d01801e79d2939970d059a57cde827a729532b0`，message `fix(player): complete wave 2 remediation`。
+- Renderer `47 files / 351 tests`、Host `5 files / 28 tests`、Shell `15 files / 122 tests`、Starter `4 files / 7 tests`、Zero `2 files / 21 tests`、Editor `21 files / 142 tests`、CLI `7 files / 86 tests` 全部通过。
+- Renderer/Host/Shell/Starter/Zero typecheck 与 build 通过；`verify:renderer-boundaries` `3/3`、`verify:renderer-legacy` `4/4`、`npm run verify:all` 退出码 `0`；`git diff --check` 通过。
+- `npm run e2e -w @surdet/shell` 修复后通过：Starter 快速存档和快速读档均成功，读档后剧情可继续推进，未再出现状态机二次错误。
+
+#### R2 后两轮正式玩家验收
+
+两轮均由独立 Electron 启动、独立临时 `userData`，显式加载 `E:\surdet\examples\zero-after-midnight\dist`，不是默认 Starter；每轮 A–I `9/9`，schema `2`、`status=PASSED`，页面错误、控制台错误、失败请求、未处理 rejection 和 `releaseFailureEvidence` 均为 `0`。
+
+- 第一轮：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-DtjHPd\task7-player-experience-matrix.json`；SHA-256 `28FFBB1A3FF2EAA5671DE79BD90E03DF80248ECDCD1EDE2176513BA2B737598C`。
+- 第二轮：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-zSiTX2\task7-player-experience-matrix.json`；SHA-256 `38FE8420F2B2B6CAF5CBD0A49B4BE24520D49A27BE9950383875913D880372B2`。
+- 两轮均覆盖标题/游戏 Gallery、空槽、save/load 两种顺序、load/title/new、Backlog、rollback、隐藏界面和三条已确认正常对照路径；正式游戏仍为 `23/23` 分支、`3` 结局、`44` 项项目资产、`0` 运行时错误。
+- `npm run e2e:renderer-v2 -w @surdet/shell` 通过；17 个视觉状态仍标记为 `CANDIDATE`，没有将截图升级为永久视觉金样。
+
 ## 8. 实际提交与文件范围
 
 从 Wave 2 起始 HEAD 到本报告生成前，已提交的实际提交如下：
@@ -238,8 +292,11 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 | Task 6 ledger | `07496c38550c1fc2372e88b12cf8f823f4c69aa2` | `docs(engine): record task 6 dialogue stability` |
 | Task 7 implementation | `22ae65837b030282f939123a0fb7f5ca7224944c` | `test(shell): gate player experience hotfix wave 2` |
 | Task 7 ledger | `f2d261013595ef17cbb1cbaf20eafdcf4645982c` | `docs(engine): record task 7 player matrix` |
+| R3 implementation | `562a764021b03c98cf3fdc315e4933f68de9cf0c` | `refactor(host): share player UI coordination` |
+| R1 implementation | `c5cb38d354395328056afb387b45e1decfed6d88` | `fix(renderer): preserve real backlog overlay order` |
+| R2 implementation | `9d01801e79d2939970d059a57cde827a729532b0` | `fix(player): complete wave 2 remediation` |
 
-从 Wave 2 起始基线核对：`git diff --stat 4a162b9446bb10be3f720b98531d532db568dd6e...HEAD` 为 `30 files changed, 3518 insertions(+), 179 deletions(-)`。完整 name-status 已核对，实际改动只涉及本 Wave 2 的计划台账、正式游戏 UI/输入、Renderer 相关生命周期/Layer/测试、Shell 接线/测试和玩家 E2E；没有构建产物、截图、日志、缓存或性能 artifact 进入提交。
+从 Wave 2 起始基线核对，R2 代码提交后的完整 name-status 已核对；实际改动只涉及本 Wave 2 的计划台账、正式游戏 UI/输入、Renderer 相关生命周期/Layer/测试、Host/Shell 接线/测试和玩家 E2E；没有构建产物、截图、日志、缓存或性能 artifact 进入提交。R2 本地提交实际新增/修改 20 个文件，详见 `9d01801e79d2939970d059a57cde827a729532b0`。
 
 实际文件清单：
 
@@ -247,6 +304,7 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 - 正式游戏：`examples/zero-after-midnight/package.json`、`src/main.ts`、`src/player-input-gate.ts`、`src/player-ui-session.ts`、`test/player-input-gate.test.ts`、`test/player-ui-session.test.ts`；
 - Renderer：`src/api/renderer-commands.ts`、`src/api/renderer-runtime.ts`、`src/layers/dialogue/dialogue-layer.ts`、`src/layers/gallery/gallery-layer.ts`、`src/layers/menu/menu-layer.ts`、`src/legacy/legacy-stage-adapter.ts`、`src/lifecycle/render-lifecycle.ts`、`src/pixi-stage-host.ts`、`src/runtime/create-renderer-runtime.ts`、`src/runtime/presentation-controller.ts`、`src/runtime/presentation-ports.ts`、`src/runtime/renderer-facade.ts`，以及对应 `resource-cycles`、Gallery、Dialogue、Menu、PresentationController、RenderLifecycle 测试；
 - Shell：`e2e/player-experience-wave-2.e2e.mjs`、`package.json`、`src/main-entry-policy.ts`、`src/main.ts`、`test/main-entry-policy.test.mjs`。
+- R2 追加/修改：`examples/starter/src/main.ts`、`examples/zero-after-midnight/src/main.ts`、`packages/host/src/electron-save-storage.ts`、`packages/host/src/index.ts`、`packages/host/test/electron-save-storage.test.ts`、`packages/renderer/src/api/renderer-commands.ts`、`packages/renderer/src/api/renderer-queries.ts`、`packages/renderer/src/layers/dialogue/dialogue-layer.ts`、`packages/renderer/src/layers/menu/menu-layer.ts`、`packages/renderer/src/legacy/legacy-stage-adapter.ts`、`packages/renderer/src/pixi-stage-host.ts`、`packages/renderer/src/runtime/presentation-ports.ts`、`packages/renderer/src/runtime/renderer-facade.ts`、对应 Renderer query/runtime/dialogue/menu 测试、`packages/shell/src/save-store.ts`、`packages/shell/test/save-store.test.ts` 和 `packages/shell/e2e/player-experience-wave-2.e2e.mjs`。
 
 ## 9. 性能、发布与保护边界
 
@@ -257,7 +315,7 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 
 ## 10. 最终交付后检查（报告提交后执行）
 
-以下项目已在初始报告/台账提交 `e713f2c` 后执行并通过；随后只做文档事实回填，回填后再次复核：
+以下项目已在 R2 代码提交 `9d01801e79d2939970d059a57cde827a729532b0` 后执行并通过；随后只做文档事实回填，文档提交后还会再次复核：
 
 - `npm run verify:all`：退出码 `0`；
 - `git diff --check`：通过；
