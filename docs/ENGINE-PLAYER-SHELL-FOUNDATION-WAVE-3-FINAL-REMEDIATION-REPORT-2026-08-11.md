@@ -95,8 +95,23 @@ HEAD...surdet/main: 20 0
 | --- | --- | --- |
 | `1efd75f1058e6d23fe6ae43fc40578773439e184` | `fix(renderer): complete theme token identity audit` | R1：补齐 Gallery music/text/CG 分支及五类 Layer 的显式 token 绑定，并以 fail-closed 审计阻止未来遗漏；真实 Gallery 红灯修复前为 13 项失败，修复后焦点主题/Gallery/SystemPanel/Menu/Dialogue 测试 87/87。 |
 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a` | `fix(shell): make scene hmr lifecycle assertion deterministic` | R2：加入只读资源 owner/key/source/release 台账，Starter 调试查询只返回普通数据；修正启动等待竞态，回归覆盖两次合法 HMR、一次非法 HMR、一次恢复合法 HMR。 |
+| `72cfea6c8d14db80e40ce1662090c99b628de747` | `docs(engine): record wave 3 final remediation diagnostics` | R3：三份文档完成 Theme/HMR 事实修正。 |
+| `ba598386e02a7df06deffc4df82d3a0cda695f53` | `docs(engine): finalize wave 3 remediation delivery` | R4：最终整改报告归档。 |
+| `7d53eeadd0bb3586111508d87458005cbc419fa0` | `docs(engine): close wave 3 execution ledger` | R4：执行台账收口。 |
+| `fbf08a0cd898ed372797a7ebcdc5c444d86a471e` | `docs(engine): record wave 3 ledger close` | R4：补记 Wave 3 台账关闭事实。 |
+| `fb94389b846faf18f47cf6d76ffc94673f3eabf2` | `docs(engine): normalize wave 3 ledger hash` | R4：台账哈希规范化。 |
 
-R3 三份文档更新已由普通提交 `72cfea6c8d14db80e40ce1662090c99b628de747` 归档。R4 在该提交之后完成全部最终门禁；本报告随后以新的普通提交归档。文档不伪造自引用的最终字节数/SHA-256，均以落盘后机器复核为准。
+R3 三份文档更新已由普通提交 `72cfea6c8d14db80e40ce1662090c99b628de747` 归档。R4 在该提交之后完成全部最终门禁；随后由 `ba598386`、`7d53eead`、`fbf08a0c` 和 `fb94389b` 完成报告、台账、遗漏记录和哈希规范化闭环。文档不伪造自引用的最终字节数/SHA-256，均以落盘后机器复核为准。
+
+### 2.3 诊断设施最终微型收口（F1–F3）
+
+本轮严格限定为 RenderLifecycle 诊断事件历史、resourceLedger 只读合同和三份 artifact 台账文档；未修改 Theme、PlayerShellController、Starter HMR 场景替换、DSL、存档、剧情、美术、音频或性能体系。
+
+| 项目 | 修复前红灯 | 修复后绿灯 | 提交 |
+| --- | --- | --- | --- |
+| F1 RenderLifecycle 事件历史 | 同一聚焦命令中生命周期套件 9 项有 2 项失败：2048 次注册/释放后事件为 4097，且 replacement 缺少新资源 `register/replace` 事件 | 固定容量 1024 的环形缓冲淘汰最旧事件；active owner/kind/key/source 保留；replacement 同时记录旧 `dispose/replace` 与新 `register/replace`；forget/release/releaseOwner/dispose/failure cause 保留；生命周期聚焦 9/9 | `cff8691105523cf1edd8f23598808a6d31d50417` |
+| F2 resourceLedger | 同一聚焦命令中 query-purity 套件 3 项有 1 项失败：Facade 返回的根 ledger 未冻结 | `resourceLedger` 复用深克隆 + 递归冻结路径；根、active/events 数组、entry/event 均不可写；查询不改变生命周期状态；query-purity 与 Renderer typecheck 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
+| F3 artifact 台账 | 三份文档把当前 Wave 3 artifact 错写成“不输出错误数组字段” | 当前 Wave 3 artifact 为 schemaVersion=1；顶层无 `expectedRendererErrors` 汇总字段，但每个 `case.events` 含错误数组；C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其余 case 均为 0；所有 case 的 page/console/request/unhandled/release 为 0 且 `unexpectedWindowClosed=false`；Wave 2 旧 schema 缺失字段仍按未观测记录 | 待本轮三份文档普通提交归档 |
 
 ## 3. R1：PlayerUiSession 完整快照运行时校验
 
@@ -312,7 +327,7 @@ R2 证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typ
 E:\surdet\examples\zero-after-midnight\dist
 ```
 
-每轮均记录 `schemaVersion`、A–F 结果、正式 dist 路径、独立 userData、资产加载和错误分类。历史 Wave 3 artifact 的权威错误台账为：`unexpected page errors = 0`、`unexpected console errors = 0`、`unexpected request failures = 0`、`unexpected unhandled rejections = 0`、`unexpected release failures = 0`；`expected injected Renderer errors = 1 per run`。R4 当前 artifact 的 schema 不输出这些数值型错误数组，当前结论只依据其可观测字段和每个 case 的 `ok=true`，不把缺失字段写成数值 0/1。历史记录中的 expected Renderer error 来自场景 C 的 save reject 注入，用于验证失败后的 retry success，不是非预期产品错误。
+每轮均记录 `schemaVersion`、A–F 结果、正式 dist 路径、独立 userData、资产加载和错误分类。历史 Wave 3 artifact 的权威错误台账为：`unexpected page errors = 0`、`unexpected console errors = 0`、`unexpected request failures = 0`、`unexpected unhandled rejections = 0`、`unexpected release failures = 0`；`expected injected Renderer errors = 1 per run`。R4 当前 Wave 3 artifact 为 `schemaVersion=1`：顶层没有单独的 `expectedRendererErrors` 汇总字段，但每个 `case.events` 都包含错误数组；case C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其他 case 的两项均为 0。全部 case 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 均为 0，`unexpectedWindowClosed=false`。历史记录中的 expected Renderer error 来自场景 C 的 save reject 注入，用于验证失败后的 retry success，不是非预期产品错误。
 
 ### 7.1 Wave 3 A–F：历史两轮与 R4 当前复验
 
@@ -322,7 +337,7 @@ E:\surdet\examples\zero-after-midnight\dist
 | round-1 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-shell-wave-3-uYMkKg\task7-player-shell-wave-3-matrix.json` | 77835 | `ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC` | A–F 6/6 |
 | round-2 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-shell-wave-3-CWLvRm\task7-player-shell-wave-3-matrix.json` | 77835 | `D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D` | A–F 6/6 |
 
-R4 当前复验和历史两轮均为 6 个独立 Electron / 6 个独立 userData，正式路径均为 Zero dist。R4 当前 artifact 的 schema 顶层字段为 `schemaVersion/phase/runKind/generatedAt/formalGame/isolation/cases/status`，没有单独的数值型 `expectedRendererErrors` 或错误数组字段；因此不能把缺失字段写成观测到的 0 或 1。当前 artifact 的 A–F 每个 case 均为 `ok=true`，并保留场景 C 的 expected save-reject 语义在脚本/测试日志中的独立记账。历史两轮 artifact 明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，均来自注入的 save reject 及其上报，不属于非预期产品错误。
+R4 当前复验和历史两轮均为 6 个独立 Electron / 6 个独立 userData，正式路径均为 Zero dist。R4 当前 artifact 的 schema 顶层字段为 `schemaVersion/phase/runKind/generatedAt/formalGame/isolation/cases/status`，其中 `schemaVersion=1`；顶层没有 `expectedRendererErrors` 汇总字段，但每个 `case.events` 都包含错误数组。当前 case C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其他 case 两项均为 0；全部 case 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 均为 0，`unexpectedWindowClosed=false`，并且 A–F 每个 case 均为 `ok=true`。历史两轮 artifact 明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，均来自注入的 save reject 及其上报，不属于非预期产品错误。
 
 本次同会话另有一轮 Wave 2 运行在 case I 启动时以 Windows 进程码 `3221226505` 终止，未生成完整矩阵；临时证据根为 `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-Kyw1Je`，该失败未被删除。随后在相同代码、正式 Zero dist、独立 Electron/userData 下重新运行并通过，详见下表。
 
