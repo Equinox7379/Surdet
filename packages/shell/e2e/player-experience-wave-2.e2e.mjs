@@ -446,8 +446,12 @@ async function caseB(session) {
   await session.press('Space');
   if (positionKey((await session.snapshot()).position) !== settingsPosition) throw new Error('settings 内 Space 推进了剧情');
   await session.clickTarget('settings:close');
-  await session.waitFor('settings 关闭', () => window.__surdetDebug?.activeOverlay === null);
-  checks.push({ overlay: 'settings', position: settingsPosition });
+  await session.waitOverlay('system-menu');
+  const returnedToSystemMenu = await session.snapshot();
+  if (returnedToSystemMenu.uiSession?.overlay !== 'system-menu') throw new Error('settings 关闭未恢复 system-menu 返回上下文');
+  checks.push({ overlay: 'settings', position: settingsPosition, returnedTo: 'system-menu' });
+  await session.clickTarget('system:resume');
+  await session.waitFor('settings 返回游戏', () => window.__surdetDebug?.activeOverlay === null);
 
   await session.press('g');
   await session.waitOverlay('gallery:cg');

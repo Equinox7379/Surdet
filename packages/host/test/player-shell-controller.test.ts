@@ -91,6 +91,22 @@ describe('PlayerShellController', () => {
     expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', returnStack: [] });
   });
 
+  it('reprojects the returned parent slot after closing a nested overlay', () => {
+    const { controller, events } = makeHarness({ base: 'game' });
+
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    controller.commands.close();
+
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'system-menu' });
+    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual([
+      'open:system-menu',
+      'open:settings',
+      'close:settings',
+      'open:system-menu',
+    ]);
+  });
+
   it('rejects an invalid source before calling the provider', () => {
     const { controller, events } = makeHarness({ base: 'game' });
     const before = controller.queries.snapshot();

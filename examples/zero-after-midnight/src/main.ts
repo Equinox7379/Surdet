@@ -442,6 +442,19 @@ async function main(): Promise<void> {
     get uiSession() {
       return freezeDebug({ ...uiSnapshot() });
     },
+    get playerShell() {
+      const shell = playerShell;
+      if (!shell) return null;
+      return freezeDebug({
+        snapshot: shell.queries.snapshot(),
+        slots: shell.queries.slots(),
+        canAdvance: shell.queries.canAdvance(),
+        canRollback: shell.queries.canRollback(),
+      });
+    },
+    get theme() {
+      return queries.preferences.theme();
+    },
     get activeOverlay(): string | null { return debugActiveOverlay(); },
     get commandRailVisible(): boolean { return debugCommandRailVisible(); },
     get dialogueProjection() { return debugProjection().dialogue; },
