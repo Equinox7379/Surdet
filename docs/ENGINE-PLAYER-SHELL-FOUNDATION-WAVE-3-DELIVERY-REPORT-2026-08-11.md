@@ -30,7 +30,7 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 | `fbf08a0cd898ed372797a7ebcdc5c444d86a471e` | `docs(engine): record wave 3 ledger close` | R4 补记 Wave 3 台账关闭事实 |
 | `fb94389b846faf18f47cf6d76ffc94673f3eabf2` | `docs(engine): normalize wave 3 ledger hash` | R4 台账哈希规范化 |
 
-R4 最终代码下 Renderer 为 48 文件 / 384 tests，Host 为 8 文件 / 70 tests，Starter 为 4 文件 / 7 tests；R4 当前 Wave 3 A–F 和 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。历史两轮 Wave 3 与历史成功 Wave 2 artifact 继续保留为可复核证据。Wave 3 artifact：
+R4 基线代码下 Renderer 为 48 文件 / 384 tests；F1/F2 新增 3 项回归后当前 Renderer 为 48 文件 / 387 tests。Host 为 8 文件 / 70 tests，Starter 为 4 文件 / 7 tests；R4 当前 Wave 3 A–F 和 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。历史两轮 Wave 3 与历史成功 Wave 2 artifact 继续保留为可复核证据。Wave 3 artifact：
 
 - `<local-path>`：77,835 bytes，`B0AB3B65125DA3DFABF7FC97CEEDAA8663D71D9F2C5D71FAC034FDC804B0587B`，R4 当前 A–F 6/6；
 - `<local-path>`：77,835 bytes，`ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC`，A–F 6/6；
@@ -56,7 +56,7 @@ R3 文档提交后的机器复核：HEAD `72cfea6c8d14db80e40ce1662090c99b628de7
 | 项目 | 修复前红灯 | 修复后绿灯 | 提交 |
 | --- | --- | --- | --- |
 | F1 RenderLifecycle 事件历史 | 生命周期聚焦套件 9 项中 2 项失败：2048 次注册/释放后 events=4097；replacement 没有新资源 `register/replace` 事件 | 1024 容量环形缓冲保留最新事件并淘汰最旧事件；active identity、replacement 双侧事件、forget/release/releaseOwner/dispose 和 failure cause 保留；9/9 通过 | `cff8691105523cf1edd8f23598808a6d31d50417` |
-| F2 resourceLedger | query-purity 套件 3 项中 1 项失败：返回 ledger 根对象未冻结 | Facade 返回独立深克隆、递归冻结的普通数据；根/数组/entry/event 均不可写；查询纯度与 Renderer typecheck 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
+| F2 resourceLedger | query-purity 套件 3 项中 1 项失败：返回 ledger 根对象未冻结 | Facade 返回独立深克隆、递归冻结的普通数据；根/数组/entry/event 均不可写；查询纯度与 Renderer typecheck 通过；最终 Renderer 48/387 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
 | F3 artifact 台账 | 当前 Wave 3 artifact 被错误描述为没有错误数组字段 | 已按真实 artifact 更正：顶层无 `expectedRendererErrors` 汇总字段，但每个 `case.events` 有错误数组；C 为 2/1，其他 case 为 0/0；所有错误/窗口关闭字段为 0/false；Wave 2 旧 schema 缺失字段仍不冒充 0 | 本文档、Final Remediation Report、Execution Plan 的本轮普通文档提交 |
 
 最终状态：
@@ -202,7 +202,7 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 | --- | --- |
 | `npm run docs:capabilities` / `npm run verify:docs` | PASS |
 | Core | 23 文件 / 304 tests PASS |
-| Renderer | 48 文件 / 384 tests PASS |
+| Renderer | 48 文件 / 387 tests PASS（F1/F2 新增 3 项回归） |
 | Host | 8 文件 / 70 tests PASS |
 | Shell | 16 文件 / 125 tests PASS |
 | Starter HMR 聚焦 | 1/1 PASS；两次合法、一次非法、一次恢复合法 HMR，长期 listener 语义集合稳定 |
