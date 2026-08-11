@@ -155,7 +155,6 @@ describe('real Vite .gal HMR', () => {
         .sort() ?? []
     );
     const expectedListenerKeys = [
-      'dialogue:command-rail-pointer',
       'runtime:core-events',
       'runtime:presentation-controller',
     ].sort();

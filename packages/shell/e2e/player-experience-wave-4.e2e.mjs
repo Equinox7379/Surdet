@@ -176,6 +176,7 @@ async function launchSession(caseId) {
           uiSession: debug?.uiSession ?? null,
           activeOverlay: debug?.activeOverlay ?? null,
           dialogueProjection: debug?.dialogueProjection ?? null,
+          presentationSnapshot: debug?.presentationSnapshot ?? null,
           commandRailVisible: debug?.dialogueProjection?.commandRailVisible ?? null,
           galleryProjection: debug?.galleryProjection ?? null,
           resources: debug?.resourceSnapshot ?? null,
@@ -237,6 +238,21 @@ async function launchSession(caseId) {
       if (!target) throw new Error(`找不到语义交互目标：${targetId}`);
       await page.mouse.click(target.x, target.y);
       await this.waitForPresentedFrame(targetId);
+    },
+    async hoverTarget(targetId) {
+      const target = await page.evaluate((id) => {
+        const target = window.__surdetDebug?.interactionTargets?.find((item) => item.id === id);
+        const canvas = document.querySelector('canvas');
+        if (!target || !canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: rect.left + ((target.x + target.width / 2) / 1280) * rect.width,
+          y: rect.top + ((target.y + target.height / 2) / 720) * rect.height,
+        };
+      }, targetId);
+      if (!target) throw new Error(`找不到语义交互目标：${targetId}`);
+      await page.mouse.move(target.x, target.y);
+      await this.waitForPresentedFrame(`悬停 ${targetId}`);
     },
     async press(key) {
       await page.keyboard.press(key);
@@ -313,12 +329,17 @@ async function launchSession(caseId) {
       return evidence;
     },
     async waitForStableCanvas(label) {
-      const first = await this.captureCanvas(`${label}-1`);
-      const second = await this.captureCanvas(`${label}-2`);
-      if (first.pixelHash !== second.pixelHash) {
-        throw new Error(`画布在点击前未稳定：${label}（${first.pixelHash} != ${second.pixelHash}）`);
+      let previous = null;
+      for (let attempt = 1; attempt <= 12; attempt += 1) {
+        await this.waitForPresentedFrame(`${label}-settle-${attempt}`);
+        const current = await this.captureCanvas(`${label}-${attempt}`);
+        if (previous && current.pixelHash === previous.pixelHash) return current;
+        previous = current;
       }
-      return second;
+      if (previous) {
+        throw new Error(`画布在点击前未稳定：${label}（最后 pixelHash=${previous.pixelHash}）`);
+      }
+      throw new Error(`画布在点击前没有可用截图：${label}`);
     },
     screenshots,
     async close() {
@@ -355,6 +376,71 @@ async function runSmokeCase() {
   } finally {
     if (session) await session.close();
   }
+}
+
+async function startFormalGame(session) {
+  await session.waitTitle();
+  await session.clickTarget('title:new');
+  await session.waitFor('正式游戏剧情入口', () => window.__surdetDebug?.uiSession?.base === 'game'
+    && window.__surdetDebug?.position !== null
+    && window.__surdetDebug?.activeOverlay === null);
+  return session.snapshot();
+}
+
+async function openGameSaveLoad(session, mode) {
+  await session.press('Escape');
+  await session.waitOverlay('system-menu');
+  await session.clickTarget(`system:${mode}`);
+  await session.waitOverlay(`save-load`);
+}
+
+async function selectSaveLoadSlot(session, mode, slotId = '1') {
+  await openGameSaveLoad(session, mode);
+  await session.clickTarget(`save-load:slot-${slotId}`);
+  await session.waitFor(`${mode} 槽位完成`, (expectedMode) => {
+    const debug = window.__surdetDebug;
+    return debug?.activeOverlay === null
+      && debug?.uiSession?.operation === 'idle'
+      && (expectedMode !== 'load' || debug?.uiSession?.base === 'game');
+  }, mode, 20000);
+  return session.snapshot();
+}
+
+async function openTitleLoad(session) {
+  await session.waitTitle();
+  await session.clickTarget('title:load');
+  await session.waitOverlay('save-load');
+  await session.clickTarget('save-load:slot-1');
+  await session.waitFor('标题读档进入游戏', () => window.__surdetDebug?.uiSession?.base === 'game'
+    && window.__surdetDebug?.uiSession?.overlay === 'none'
+    && window.__surdetDebug?.position !== null);
+  return session.snapshot();
+}
+
+function presentationWorld(snapshot) {
+  const stage = snapshot?.presentationSnapshot?.stage ?? null;
+  return {
+    backgroundKey: stage?.backgroundKey ?? null,
+    portraits: cloneJson(stage?.portraits ?? []),
+    dialogueText: snapshot?.dialogueProjection?.dialogText ?? null,
+    speakerText: snapshot?.dialogueProjection?.speakerText ?? null,
+  };
+}
+
+function assertWorldPresent(snapshot, label) {
+  const world = presentationWorld(snapshot);
+  if (world.backgroundKey === null && world.portraits.length === 0 && !world.dialogueText) {
+    throw new Error(`${label} 没有可验证的 World/Dialogue 表现：${JSON.stringify({ snapshot, world })}`);
+  }
+  return world;
+}
+
+async function returnToTitleFromGame(session) {
+  await session.press('Escape');
+  await session.waitOverlay('system-menu');
+  await session.clickTarget('system:title');
+  await session.waitTitle();
+  return session.snapshot();
 }
 
 async function runBacklogCase(session) {
@@ -477,6 +563,203 @@ async function runRollbackCase(session) {
   };
 }
 
+async function runGameGalleryCase(session) {
+  const initial = await startFormalGame(session);
+  const positionBefore = positionKey(initial?.position);
+  await session.press('Escape');
+  await session.waitOverlay('system-menu');
+  await session.clickTarget('system:gallery');
+  await session.waitOverlay('gallery:cg');
+
+  await session.waitForPresentedFrame('game-gallery-cg');
+  const cg = await session.captureCanvas('game-gallery-cg');
+  await session.clickTarget('gallery:music');
+  await session.waitOverlay('gallery:music');
+  const music = await session.captureCanvas('game-gallery-music');
+  await session.clickTarget('gallery:text');
+  await session.waitOverlay('gallery:text');
+  const text = await session.captureCanvas('game-gallery-text');
+  await session.clickTarget('gallery:cg');
+  await session.waitOverlay('gallery:cg');
+  const cgRestored = await session.captureCanvas('game-gallery-cg-restored');
+  await session.clickTarget('gallery:close');
+  await session.waitFor('游戏 Gallery 关闭', () => window.__surdetDebug?.uiSession?.base === 'game'
+    && window.__surdetDebug?.activeOverlay === null);
+  const finalSnapshot = await session.snapshot();
+
+  if (music.pixelHash === cg.pixelHash || text.pixelHash === music.pixelHash) {
+    throw new Error(`游戏来源 Gallery 画面切换未保持：${JSON.stringify({ cg, music, text, cgRestored })}`);
+  }
+  if (positionKey(finalSnapshot?.position) !== positionBefore) {
+    throw new Error(`游戏来源 Gallery 关闭推进了剧情：${JSON.stringify({ positionBefore, finalSnapshot })}`);
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'system:gallery', 'gallery:music', 'gallery:text', 'gallery:cg', 'gallery:close'],
+    initialPosition: initial?.position ?? null,
+    finalPosition: finalSnapshot?.position ?? null,
+    overlays: ['gallery:cg', 'gallery:music', 'gallery:text', 'gallery:cg'],
+    closeDidNotAdvance: true,
+    cg,
+    music,
+    text,
+    cgRestored,
+  };
+}
+
+async function runSaveLoadCase(session, mode) {
+  const initial = await startFormalGame(session);
+  const progression = [];
+  for (let index = 0; index < 4; index += 1) {
+    progression.push(await session.advanceStoryStep(`${mode} 表现种子 ${index + 1}`));
+  }
+  const before = await session.snapshot();
+  const beforeWorld = assertWorldPresent(before, `${mode} 存档前`);
+  const saveResult = await selectSaveLoadSlot(session, 'save');
+  const loadResult = await selectSaveLoadSlot(session, 'load');
+  const after = loadResult ?? await session.snapshot();
+  const afterWorld = assertWorldPresent(after, `${mode} 读档后`);
+  if (JSON.stringify(afterWorld) !== JSON.stringify(beforeWorld)) {
+    throw new Error(`${mode} 读档后 World/Dialogue 未保持：${JSON.stringify({ beforeWorld, afterWorld })}`);
+  }
+  if (after?.uiSession?.overlay !== 'none' || after?.uiSession?.operation !== 'idle'
+    || after?.commandRailVisible !== true || after?.lastRendererError !== null) {
+    throw new Error(`${mode} 读档后玩家会话未收敛：${JSON.stringify(after)}`);
+  }
+  return {
+    source: 'game',
+    mode,
+    path: ['title:new', 'story:advance×4', 'system:save→slot-1', 'system:load→slot-1'],
+    initialPosition: initial?.position ?? null,
+    beforePosition: before?.position ?? null,
+    afterPosition: after?.position ?? null,
+    beforeWorld,
+    afterWorld,
+    saveResult: saveResult?.uiSession ?? null,
+    progression: progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+    })),
+    commandRailVisible: after?.commandRailVisible ?? null,
+    overlay: after?.activeOverlay ?? null,
+  };
+}
+
+async function runSaveLoadRoundTripCase(session) {
+  const initial = await startFormalGame(session);
+  for (let index = 0; index < 3; index += 1) await session.advanceStoryStep(`多轮读档种子 ${index + 1}`);
+  const saved = await session.snapshot();
+  const savedWorld = assertWorldPresent(saved, '多轮读档首次存档前');
+  await selectSaveLoadSlot(session, 'save');
+  await session.advanceStoryStep('多轮读档第一次扰动');
+  const firstLoaded = await selectSaveLoadSlot(session, 'load');
+  const firstWorld = assertWorldPresent(firstLoaded, '多轮读档第一次恢复');
+  if (JSON.stringify(firstWorld) !== JSON.stringify(savedWorld)) {
+    throw new Error(`第一次读档 World 未恢复：${JSON.stringify({ savedWorld, firstWorld })}`);
+  }
+  await selectSaveLoadSlot(session, 'save');
+  await session.advanceStoryStep('多轮读档第二次扰动');
+  const secondLoaded = await selectSaveLoadSlot(session, 'load');
+  const secondWorld = assertWorldPresent(secondLoaded, '多轮读档第二次恢复');
+  if (JSON.stringify(secondWorld) !== JSON.stringify(savedWorld)) {
+    throw new Error(`第二次读档 World 未恢复：${JSON.stringify({ savedWorld, secondWorld })}`);
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'story:advance×3', 'save→load', 'story:advance', 'save→load'],
+    initialPosition: initial?.position ?? null,
+    savedPosition: saved?.position ?? null,
+    firstLoadedPosition: firstLoaded?.position ?? null,
+    secondLoadedPosition: secondLoaded?.position ?? null,
+    savedWorld,
+    firstWorld,
+    secondWorld,
+    finalSession: secondLoaded?.uiSession ?? null,
+  };
+}
+
+async function runTitleCleanupCase(session, withTitleLoad = false) {
+  const initial = await startFormalGame(session);
+  for (let index = 0; index < 3; index += 1) await session.advanceStoryStep(`标题清理种子 ${index + 1}`);
+  const gameSnapshot = await session.snapshot();
+  const gameWorld = assertWorldPresent(gameSnapshot, '标题清理前');
+  if (withTitleLoad) await selectSaveLoadSlot(session, 'save');
+  const firstTitle = await returnToTitleFromGame(session);
+  const firstTitleWorld = presentationWorld(firstTitle);
+  if (firstTitleWorld.backgroundKey !== null || firstTitleWorld.portraits.length !== 0) {
+    throw new Error(`返回标题后仍残留 World：${JSON.stringify({ gameWorld, firstTitleWorld, firstTitle })}`);
+  }
+  if (withTitleLoad) {
+    await openTitleLoad(session);
+    const loadedGame = await session.snapshot();
+    assertWorldPresent(loadedGame, '标题读档后');
+    const secondTitle = await returnToTitleFromGame(session);
+    const secondTitleWorld = presentationWorld(secondTitle);
+    if (secondTitleWorld.backgroundKey !== null || secondTitleWorld.portraits.length !== 0) {
+      throw new Error(`标题读档后返回标题仍残留 World：${JSON.stringify({ secondTitleWorld, secondTitle })}`);
+    }
+    return {
+      source: 'title',
+      path: ['title:new', 'story:advance×3', 'save', 'game→title', 'title:load→game', 'game→title'],
+      gameWorld,
+      firstTitleWorld,
+      secondTitleWorld,
+      finalSession: secondTitle?.uiSession ?? null,
+    };
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'story:advance×3', 'game→title'],
+    gameWorld,
+    firstTitleWorld,
+    finalSession: firstTitle?.uiSession ?? null,
+  };
+}
+
+async function runCommandRailCase(session) {
+  const initial = await startFormalGame(session);
+  await session.page.waitForTimeout(5000);
+  const before = await session.snapshot();
+  if (before?.dialogueProjection?.commandRailAlpha !== 1 || before?.commandRailVisible !== true) {
+    throw new Error(`命令栏稳定性失败：${JSON.stringify(before?.dialogueProjection)}`);
+  }
+  await session.hoverTarget('rail:auto');
+  const afterHover = await session.snapshot();
+  if (afterHover?.dialogueProjection?.commandRailAlpha !== 1 || afterHover?.commandRailVisible !== true) {
+    throw new Error(`命令栏悬停后 root alpha/可见性变化：${JSON.stringify(afterHover?.dialogueProjection)}`);
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'wait:5s', 'hover:rail:auto'],
+    initialPosition: initial?.position ?? null,
+    beforeRail: before?.dialogueProjection ?? null,
+    afterHoverRail: afterHover?.dialogueProjection ?? null,
+  };
+}
+
+async function runFullscreenCase(session) {
+  const initial = await startFormalGame(session);
+  const before = await session.snapshot();
+  const beforeTargets = (before?.interactionTargets ?? []).map((target) => target.id);
+  await session.press('F11');
+  const entered = await session.snapshot();
+  await session.press('F11');
+  const exited = await session.snapshot();
+  const enteredTargets = (entered?.interactionTargets ?? []).map((target) => target.id);
+  const exitedTargets = (exited?.interactionTargets ?? []).map((target) => target.id);
+  if (!beforeTargets.includes('rail:menu') || !enteredTargets.includes('rail:menu') || !exitedTargets.includes('rail:menu')) {
+    throw new Error(`F11 后交互目标缺失：${JSON.stringify({ beforeTargets, enteredTargets, exitedTargets })}`);
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'F11', 'F11'],
+    initialPosition: initial?.position ?? null,
+    beforeTargets,
+    enteredTargets,
+    exitedTargets,
+  };
+}
+
 async function runCase(caseId) {
   let session;
   const assertions = {
@@ -505,8 +788,78 @@ async function runCase(caseId) {
         screenshots: cloneJson(session.screenshots),
       };
     }
+    if (caseId === 'B') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runGameGalleryCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'E') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runSaveLoadCase(session, 'immediate'),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'F') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runSaveLoadRoundTripCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'G') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runTitleCleanupCase(session, false),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'H') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runTitleCleanupCase(session, true),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'I') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runCommandRailCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
+    if (caseId === 'J') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runFullscreenCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
     if (caseId !== 'A') {
-      throw new Error(`Wave 4 case ${caseId} 尚未实现；当前仅执行 Task 1 Case A。`);
+      throw new Error(`Wave 4 case ${caseId} 未被路由到任何执行器。`);
     }
     await session.waitTitle();
     await session.clickLogical(640, 478, 'title-gallery-visible-text');

@@ -5,6 +5,11 @@ import * as path from 'node:path';
 import { cmdNew } from '../src/new.js';
 import { lintProject } from '../src/lint.js';
 
+const gameTemplateMain = fs.readFileSync(
+  new URL('../templates/game/src/main.ts', import.meta.url),
+  'utf8',
+);
+
 function makeFakeEngine(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-engine-'));
   fs.writeFileSync(
@@ -15,6 +20,14 @@ function makeFakeEngine(): string {
 }
 
 describe('surdet new', () => {
+  it('模板使用公共 Presentation 与标题会话边界', () => {
+    expect(gameTemplateMain).toContain('connectInterpreterPresentation');
+    expect(gameTemplateMain).toContain('enterPlayerTitleSession');
+    expect(gameTemplateMain).toContain('clearForBoundary');
+    expect(gameTemplateMain).not.toContain('interp.setPresentationHooks');
+    expect(gameTemplateMain).not.toContain('preserveWorld: true');
+  });
+
   it('创建脚手架 + 注册 workspace + lint 通过', async () => {
     const engine = makeFakeEngine();
     const code = await cmdNew('mytest', engine);
@@ -31,6 +44,11 @@ describe('surdet new', () => {
     expect(generatedMain).toContain('createRendererPlayerShellSlots');
     expect(generatedMain).toContain('createRendererTheme');
     expect(generatedMain).toContain('createPlayerUiSession');
+    expect(generatedMain).toContain('connectInterpreterPresentation');
+    expect(generatedMain).toContain('enterPlayerTitleSession');
+    expect(generatedMain).toContain('clearForBoundary');
+    expect(generatedMain).not.toContain('interp.setPresentationHooks');
+    expect(generatedMain).not.toContain('preserveWorld: true');
     expect(generatedMain).not.toMatch(/new PlayerInputGate\(\)/);
     expect(generatedMain).not.toMatch(/\bPixiStage\b|\bAdvRenderer\b/);
 

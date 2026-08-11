@@ -16,7 +16,6 @@ import type { VarDeclaration, SaveStorage, SaveSnapshot, CoreEventMap } from '@s
 import {
   AudioManager,
   AssetLoadQueue,
-  RollbackBuffer,
   actionForKeyboardEvent,
   createRendererRuntime,
   createRendererTheme,
@@ -25,11 +24,14 @@ import {
 } from '@surdet/renderer';
 import type { AssetLoadJob, AssetPriority, GameAction } from '@surdet/renderer';
 import {
+  connectInterpreterPresentation,
   connectSystemRouter,
   createDefaultHost,
   createPlayerShellController,
   createRendererPlayerShellSlots,
   createPlayerUiSession,
+  createRollbackRuntime,
+  enterPlayerTitleSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import type { PlayerShellController } from '@surdet/host';
@@ -99,9 +101,9 @@ async function main(): Promise<void> {
   });
   commands.preferences.setTheme(createRendererTheme());
   controller.connect(bus);
-  interp.setPresentationHooks({
-    snapshot: () => queries.presentation.snapshot(),
-    restore: (payload) => presentation.restore(payload),
+  const presentationConnection = connectInterpreterPresentation({
+    interpreter: interp,
+    renderer: runtime,
   });
 
   // 模板也使用同一资源队列；替换 content/assets 后无需重写启动加载生命周期。
@@ -139,60 +141,35 @@ async function main(): Promise<void> {
   if (finalAssetProgress.failed > 0) console.warn(`[game] ${finalAssetProgress.failed} asset(s) failed`);
   loading.hideLoading();
 
-  const rollback = new RollbackBuffer<SaveSnapshot>();
-  let lastRollbackKey: string | null = null;
-  let rollbackRestoring = false;
-  const checkpointKey = (snapshot: SaveSnapshot): string | null => {
-    const position = snapshot.position;
-    return position ? `${position.sceneId}:${position.pc}:${position.sceneHash ?? ''}` : null;
-  };
-  const clearRollback = (): void => {
-    rollback.clear();
-    lastRollbackKey = null;
-  };
-  const performRollback = (): boolean => {
-    if (rollbackRestoring || interp.status !== 'awaiting-advance' || controller.status === 'choice' || controller.backlogOpen) return false;
-    const current = interp.saveSnapshot();
-    const currentKey = current ? checkpointKey(current) : null;
-    const first = rollback.pop();
-    if (!first) return false;
-    const frame = currentKey !== null && checkpointKey(first.snapshot) === currentKey ? rollback.pop() : first;
-    if (!frame) {
-      rollback.push(first);
-      return false;
-    }
-    rollbackRestoring = true;
-    try {
-      runtime.resetSession();
-      interp.loadSnapshot(frame.snapshot);
-      presentation.restore(frame.presentation);
-      audio.restorePlayback?.(frame.audio);
-      lastRollbackKey = checkpointKey(frame.snapshot);
-      return true;
-    } catch (error) {
-      rollback.push(frame);
-      console.warn('[game] 回退失败：', error);
-      return false;
-    } finally {
-      rollbackRestoring = false;
-    }
-  };
-  bus.on('text', () => {
-    if (rollbackRestoring) return;
-    queueMicrotask(() => {
-      if (rollbackRestoring) return;
-      const snapshot = interp.saveSnapshot();
-      if (!snapshot || interp.status !== 'awaiting-advance') return;
-      const key = checkpointKey(snapshot);
-      if (key === null || key === lastRollbackKey) return;
-      rollback.push({
-        snapshot,
-        presentation: queries.presentation.snapshot(),
-        audio: audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
-      });
-      lastRollbackKey = key;
-    });
+  const rollbackRuntime = createRollbackRuntime({
+    interpreter: interp,
+    renderer: {
+      get status() { return runtime.controller.status; },
+      get backlogOpen() { return runtime.controller.backlogOpen; },
+      resetSession: (options) => runtime.resetSession(options),
+      snapshotPresentation: () => queries.presentation.snapshot(),
+      restorePresentation: (snapshot) => commands.presentation.restore(snapshot),
+    },
+    audio,
+    isBlocked: () => {
+      const snapshot = playerShell?.queries.snapshot();
+      return snapshot ? snapshot.overlay !== 'none' || snapshot.operation !== 'idle' : true;
+    },
+    label: 'game-template',
+    onRefresh: () => undefined,
   });
+  const clearRollback = (): void => rollbackRuntime.clear();
+  const clearRollbackForBoundary = (): void => rollbackRuntime.clearForBoundary();
+  const performRollback = (): boolean => rollbackRuntime.perform();
+  bus.on('text', () => rollbackRuntime.captureText());
+
+  const showTitleScreen = (): void => {
+    enterPlayerTitleSession({
+      shell: playerShell!,
+      renderer: runtime,
+      openTitle: () => playerShell!.commands.open({ slot: 'title', source: 'title' }),
+    });
+  };
 
   runtime.canvas.addEventListener('pointerdown', (event) => {
     const decision = playerShell!.decidePointer(event);
@@ -235,12 +212,12 @@ async function main(): Promise<void> {
     renderer: controller,
     stage: commands.system,
     onError: (error) => console.error('[game] 宿主 adapter 失败：', error),
-    onSystemBoundary: () => { clearRollback(); },
+    onSystemBoundary: () => { clearRollbackForBoundary(); },
   });
   connectSystemRouter(bus, host, (error) => console.error('[game] system 路由失败：', error));
 
   bus.on('autosave', (snap) => {
-    if (rollbackRestoring) return;
+    if (rollbackRuntime.isRestoring()) return;
     void saves.save(AUTO_SLOT, snap).then(() => console.info('[game] 自动存档'));
   });
   bus.on('saveMismatch', (p) => {
@@ -320,6 +297,7 @@ async function main(): Promise<void> {
 
   window.addEventListener('beforeunload', () => {
     try {
+      presentationConnection.disconnect();
       host.dispose();
       runtime.dispose();
       audio.dispose();
