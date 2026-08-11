@@ -861,6 +861,45 @@ describe('MenuLayer projection and lifecycle contract', () => {
     }
   });
 
+  it('retains the deferred completion callback when the provider closes before settlement', async () => {
+    const runtime = makeRealMenuRuntime();
+    let resolveTransaction!: (accepted: boolean) => void;
+    const transaction = new Promise<boolean>((resolve) => { resolveTransaction = resolve; });
+    const onTransactionComplete = vi.fn(() => runtime.restoreCommandRail());
+    const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
+      view: SaveLoadView,
+      onSelect: (slotId: string) => SaveLoadSelectionResult,
+      onClose: () => void,
+      options: unknown,
+    ) => void;
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-1', empty: true }] },
+        () => transaction,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionComplete },
+      );
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+
+      // PlayerShellController.completeOperation closes the real Provider before
+      // the deferred selection Promise settles. The callback must survive that
+      // provider teardown and run exactly once after success.
+      runtime.facade.commands.menu.hideSaveLoad();
+      resolveTransaction(true);
+      await transaction;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(onTransactionComplete).toHaveBeenCalledOnce();
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
   it('guards the save/load close button while preserving the underlying menu', () => {
     const runtime = makeRealMenuRuntime();
     const onClose = vi.fn();
