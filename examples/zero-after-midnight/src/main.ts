@@ -72,6 +72,80 @@ import shopConfig from '../content/config/shop.json';
 import growthConfig from '../content/config/growth.json';
 import achievementsConfig from '../content/config/achievements.json';
 
+interface DebugInteractionTarget {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+type DebugErrorValue = {
+  readonly name: string;
+  readonly message: string;
+  readonly code?: string;
+  readonly domain?: string;
+  readonly command?: string;
+  readonly owner?: string;
+  readonly kind?: string;
+  readonly key?: string;
+  readonly cause?: DebugErrorValue;
+  readonly errors?: readonly DebugErrorValue[];
+};
+
+function freezeDebug<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value as Record<string, unknown>)) freezeDebug(child);
+  if (Array.isArray(value)) {
+    for (const child of value) freezeDebug(child);
+  }
+  return Object.freeze(value);
+}
+
+function serializeDebugError(value: unknown, depth = 0): DebugErrorValue {
+  if (depth > 5) return { name: 'Error', message: '[cause depth limit]' };
+  if (value instanceof AggregateError) {
+    return freezeDebug({
+      name: value.name,
+      message: value.message,
+      errors: value.errors.map((entry) => serializeDebugError(entry, depth + 1)),
+    });
+  }
+  if (value instanceof Error) {
+    const candidate = value as Error & {
+      code?: unknown;
+      domain?: unknown;
+      command?: unknown;
+      owner?: unknown;
+      kind?: unknown;
+      key?: unknown;
+      cause?: unknown;
+    };
+    const output: Record<string, unknown> = {
+      name: value.name,
+      message: value.message,
+    };
+    for (const field of ['code', 'domain', 'command', 'owner', 'kind', 'key'] as const) {
+      if (typeof candidate[field] === 'string') output[field] = candidate[field];
+    }
+    if (candidate.cause !== undefined && candidate.cause !== value) output.cause = serializeDebugError(candidate.cause, depth + 1);
+    return freezeDebug(output) as DebugErrorValue;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const candidate = value as Record<string, unknown>;
+    const output: Record<string, unknown> = {
+      name: typeof candidate.name === 'string' ? candidate.name : 'Error',
+      message: typeof candidate.message === 'string' ? candidate.message : String(candidate),
+    };
+    for (const field of ['code', 'domain', 'command', 'owner', 'kind', 'key'] as const) {
+      if (typeof candidate[field] === 'string') output[field] = candidate[field];
+    }
+    if (candidate.cause !== undefined && candidate.cause !== value) output.cause = serializeDebugError(candidate.cause, depth + 1);
+    return freezeDebug(output) as DebugErrorValue;
+  }
+  return { name: typeof value, message: String(value) };
+}
+
 async function main(): Promise<void> {
   const appEl = document.getElementById('app')!;
 
@@ -152,13 +226,17 @@ async function main(): Promise<void> {
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
   let videoActive = false;
+  let lastRendererError: DebugErrorValue | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
     audio,
     typewriter,
     backlog,
     performanceMonitor,
-    onError: (error) => console.error('[zero] Renderer failed:', error),
+    onError: (error) => {
+      lastRendererError = serializeDebugError(error);
+      console.error('[zero] Renderer failed:', error);
+    },
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
@@ -186,6 +264,83 @@ async function main(): Promise<void> {
   let onTitleScreen = false;
   let galleryOpen = false;
   let settingsOpen = false;
+
+  function debugProjection(): ReturnType<typeof queries.diagnostics.projectionSnapshot> {
+    return queries.diagnostics.projectionSnapshot();
+  }
+
+  function debugActiveOverlay(): string | null {
+    const projection = debugProjection();
+    const gallerySnapshot = projection.gallery;
+    if (gallerySnapshot && gallerySnapshot.overlay.type !== 'none') return `gallery:${gallerySnapshot.overlay.tab}`;
+    const menuSnapshot = projection.menu;
+    if (menuSnapshot && menuSnapshot.overlay.type !== 'none') return menuSnapshot.overlay.type;
+    if (projection.dialogue?.backlogVisible) return 'backlog';
+    const systemSnapshot = projection.system;
+    if (systemSnapshot && systemSnapshot.overlay.type !== 'none') return systemSnapshot.overlay.type;
+    return null;
+  }
+
+  function debugCommandRailVisible(): boolean {
+    return !onTitleScreen
+      && !renderer.interfaceHidden
+      && !systemMenuOpen
+      && !saveLoadOpen
+      && !galleryOpen
+      && !settingsOpen
+      && !videoActive
+      && debugActiveOverlay() === null;
+  }
+
+  function debugInteractionTargets(): readonly DebugInteractionTarget[] {
+    const projection = debugProjection();
+    const targets: DebugInteractionTarget[] = [];
+    const add = (id: string, x: number, y: number, width: number, height: number): void => {
+      targets.push({ id, x, y, width, height });
+    };
+    const galleryOverlay = projection.gallery?.overlay;
+    if (galleryOverlay && galleryOverlay.type !== 'none') {
+      add('gallery:cg', 42, 12, 96, 62);
+      add('gallery:music', 132, 12, 112, 62);
+      add('gallery:text', 220, 12, 60, 62);
+      add('gallery:close', 1120, 10, 150, 66);
+      return freezeDebug(targets);
+    }
+    const menuSnapshot = projection.menu;
+    const menuOverlay = menuSnapshot?.overlay;
+    if (menuOverlay?.type === 'title') {
+      const items = ['new', 'load', 'gallery', 'settings', 'quit'];
+      items.forEach((id, index) => add(`title:${id}`, 390, 350 + index * 52, 500, 48));
+      return freezeDebug(targets);
+    }
+    if (menuOverlay?.type === 'system-menu') {
+      ['resume', 'save', 'load', 'settings', 'backlog', 'gallery', 'title']
+        .forEach((id, index) => add(`system:${id}`, 892, 128 + index * 54, 318, 50));
+      return freezeDebug(targets);
+    }
+    if (menuOverlay?.type === 'settings') {
+      add('settings:close', 1140, 70, 70, 70);
+      return freezeDebug(targets);
+    }
+    if (menuOverlay?.type === 'save-load') {
+      for (let index = 0; index < (menuSnapshot?.saveLoadSlotCount ?? 0); index++) {
+        const column = index % 2;
+        const row = Math.floor(index / 2);
+        add(`save-load:slot-${index + 1}`, 150 + column * 502, 180 + row * 120, 480, 104);
+      }
+      add('save-load:close', 1160, 62, 70, 70);
+      return freezeDebug(targets);
+    }
+    if (projection.dialogue?.backlogVisible) {
+      add('backlog:close', 0, 0, 1280, 720);
+      return freezeDebug(targets);
+    }
+    if (debugCommandRailVisible()) {
+      ['auto', 'skip', 'backlog', 'qsave', 'qload', 'rollback', 'settings', 'hide', 'menu']
+        .forEach((id, index) => add(`rail:${id}`, 812 + index * 48, 658, 44, 46));
+    }
+    return freezeDebug(targets);
+  }
 
   const rollbackRuntime = createRollbackRuntime({
     interpreter: interp,
@@ -242,6 +397,22 @@ async function main(): Promise<void> {
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
+    get uiSession() {
+      return freezeDebug({
+        base: onTitleScreen ? 'title' : 'game',
+        overlay: debugActiveOverlay(),
+        operation: 'idle',
+        interfaceHidden: renderer.interfaceHidden,
+        videoActive,
+      });
+    },
+    get activeOverlay(): string | null { return debugActiveOverlay(); },
+    get commandRailVisible(): boolean { return debugCommandRailVisible(); },
+    get dialogueProjection() { return debugProjection().dialogue; },
+    get interactionTargets(): readonly DebugInteractionTarget[] { return debugInteractionTargets(); },
+    get lastRendererError(): DebugErrorValue | null {
+      return lastRendererError ? freezeDebug({ ...lastRendererError }) : null;
+    },
     titleSelect: (id: string) => titleSelect(id),
     quickSave: () => quickSave(),
     quickLoad: () => quickLoad(),
@@ -1223,12 +1394,14 @@ async function main(): Promise<void> {
 
   // 错误上报（渲染层崩溃可见化；桌面环境同步落日志文件）
   window.addEventListener('error', (e) => {
+    lastRendererError = serializeDebugError(e.error ?? e.message);
     showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
     void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
   });
   window.addEventListener('unhandledrejection', (e) => {
     const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
+    lastRendererError = serializeDebugError(e.reason ?? message);
     showFatal(message);
     void window.surdetApp?.reportError('renderer-unhandled-rejection', message);
   });

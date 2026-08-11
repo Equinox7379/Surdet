@@ -12,6 +12,7 @@ import { writeJsonAtomic } from './json-file.js';
 import { FileProfileStore } from './profile-store.js';
 import { assertProfileKey } from '@surdet/host';
 import { resolveWindowState, type WindowState } from './window-state.js';
+import { resolveGamePaths } from './main-entry-policy.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -104,11 +105,18 @@ function logLine(level: string, msg: string): void {
   }
 }
 
-/** 游戏根目录：打包后为 asar 内 game/；开发时为 examples/starter */
+/** 游戏路径：开发默认 starter；仅显式 E2E 环境可加载指定正式游戏 dist。 */
+function gamePaths(): ReturnType<typeof resolveGamePaths> {
+  return resolveGamePaths({
+    isPackaged: app.isPackaged,
+    packagedRoot: path.join(app.getAppPath(), 'game'),
+    developmentRoot: path.resolve(__dirname, '../../../examples/starter'),
+    env: process.env,
+  });
+}
+
 function gameRoot(): string {
-  return app.isPackaged
-    ? path.join(app.getAppPath(), 'game')
-    : path.resolve(__dirname, '../../../examples/starter');
+  return gamePaths().sourceRoot;
 }
 
 /** 窗口标题：优先取游戏 game.config.json 的 title 字段（游戏品牌化），缺省默认 */
@@ -291,9 +299,7 @@ function createWindow(): void {
   });
   // 打包后游戏产物在 asar 内的 game/ 目录；开发时指向 starter 的 vite 构建产物
   // __dirname = packages/shell/dist → 上溯三级到仓库根的 examples/
-  const entry = app.isPackaged
-    ? path.join(app.getAppPath(), 'game', 'index.html')
-    : path.resolve(__dirname, '../../../examples/starter/dist/index.html');
+  const entry = gamePaths().entry;
   void win.loadFile(entry);
 }
 

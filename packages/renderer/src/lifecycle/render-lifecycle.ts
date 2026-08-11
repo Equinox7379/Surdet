@@ -11,6 +11,13 @@ interface ResourceEntry {
   readonly dispose: () => void;
 }
 
+export interface RenderLifecycleDisposalFailure {
+  readonly owner: ResourceOwner;
+  readonly kind: ResourceKind;
+  readonly key: string;
+  readonly cause: unknown;
+}
+
 const RESOURCE_ERROR_CODE = 'COMMAND_COMMIT_FAILED' as const;
 
 function compositeKey(owner: ResourceOwner, kind: ResourceKind, key: string): string {
@@ -44,14 +51,14 @@ export class RenderLifecycle {
     const old = this.#entries.get(id);
     if (old) {
       this.#removeEntry(id);
-      let failure: unknown;
+      let failure: RenderLifecycleDisposalFailure | undefined;
       try {
         old.dispose();
       } catch (error) {
-        failure = error;
+        failure = this.#failureRecord(old, error);
       }
       this.#addEntry({ owner, kind, key, dispose });
-      if (failure !== undefined) this.#throwDisposalFailure('replace', [failure]);
+      if (failure) this.#throwDisposalFailure('replace', [failure]);
       return;
     }
 
@@ -161,18 +168,27 @@ export class RenderLifecycle {
   }
 
   #disposeEntries(entries: readonly ResourceEntry[], command: string): void {
-    const failures: unknown[] = [];
+    const failures: RenderLifecycleDisposalFailure[] = [];
     for (const entry of entries) {
       try {
         entry.dispose();
       } catch (error) {
-        failures.push(error);
+        failures.push(this.#failureRecord(entry, error));
       }
     }
     if (failures.length > 0) this.#throwDisposalFailure(command, failures);
   }
 
-  #throwDisposalFailure(command: string, failures: readonly unknown[]): never {
+  #failureRecord(entry: ResourceEntry, cause: unknown): RenderLifecycleDisposalFailure {
+    return Object.freeze({
+      owner: entry.owner,
+      kind: entry.kind,
+      key: entry.key,
+      cause,
+    });
+  }
+
+  #throwDisposalFailure(command: string, failures: readonly RenderLifecycleDisposalFailure[]): never {
     throw new RendererError(`Renderer resource ${command} failed`, {
       code: RESOURCE_ERROR_CODE,
       domain: 'lifecycle',
