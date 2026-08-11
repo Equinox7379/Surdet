@@ -1,14 +1,14 @@
 # Surdet Player Shell Foundation Wave 3 交付报告
 
-> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED_WITH_BASELINE_GATE_EXCEPTION`
+> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_FINAL_REMEDIATION_COMPLETE`
 > 复核阶段：`WAITING_FOR_REVIEW`
-> 本轮没有 push、没有进入 M9、没有处理性能测量或正式发行。
+> 本轮第三次最终限定整改没有 push、没有进入 M9、没有处理性能测量或正式发行。
 
 ## 1. 交付结论
 
 Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、默认壳编排和 Renderer 主题令牌收回公共引擎层。行为实现位于 `packages/host` 与 `packages/renderer`；Starter、《零点之后》和 CLI 模板只负责公共接口接线与正式验收，没有创建第二套 PlayerShellController，也没有复制 Host 状态机。
 
-本报告依据所有门禁完成后的实现 HEAD `abc5f913702c863b89ff7d6e86ce79c03f7332da` 编写。该 HEAD 包含 Task 8 文档/能力矩阵提交和 Task 8 台账提交；本报告本身随后以独立普通文档提交归档。报告提交后的真实仓库 HEAD、文件字节数和 SHA-256 由提交后机器复核记录，不在文件内容中伪造自引用提交哈希。
+本报告原始主体依据 Wave 3 Task 8 交付时点编写；本次第三次最终限定整改后的权威事实以本节及同目录 `ENGINE-PLAYER-SHELL-FOUNDATION-WAVE-3-FINAL-REMEDIATION-REPORT-2026-08-11.md` 为准。报告本身的后续普通文档提交、最终仓库 HEAD、文件字节数和 SHA-256 由提交后机器复核记录，不在文件内容中伪造自引用提交哈希。
 
 ### 最终微型收口补充（以本节为当前权威）
 
@@ -21,7 +21,9 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 | `78d9cbc50391c8cfbc212151ccba40564de57e90` | `test(shell): gate colliding theme restoration` | 正式 Zero Electron F 覆盖 text/accent 同值碰撞 |
 | `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83` | `test(shell): fix colliding theme predicate` | 修正页面谓词的跨环境变量捕获；最终 F 证据由该脚本产生 |
 | `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26` | `fix(renderer): preserve save load transaction callbacks` | 最终 Wave 2 save/load 异步完成/错误回调保留 |
-| `c7ec48abc22149f20b12e7b4973280d6a66f4443` | `docs(engine): record wave 3 micro remediation` | 三份报告/计划台账完成 D1 修正并归档 |
+| `c7ec48abc22149f20b12e7b4973280d6a66f4443` | `docs(engine): record wave 3 micro remediation` | 三份报告/计划台账完成 D1 修正并归档（历史） |
+| `1efd75f1058e6d23fe6ae43fc40578773439e184` | `fix(renderer): complete theme token identity audit` | R1 补齐 Gallery 分支及五层 Layer 显式 token 身份；真实 Gallery 红灯 13 项，焦点主题/Gallery/SystemPanel/Menu/Dialogue 87/87 |
+| `a38443bdf6ffdc4de0027286999832c3c6d9f13a` | `fix(shell): make scene hmr lifecycle assertion deterministic` | R2 资源 owner/key/source/release 台账与确定性 HMR 回归；两次合法、一次非法、一次恢复合法 HMR |
 
 最终代码下 Renderer 为 48 文件 / 381 tests，Host 为 8 文件 / 70 tests；两轮 Wave 3 A–F 和一轮成功的 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。Wave 3 最终 artifact：
 
@@ -32,15 +34,17 @@ Wave 2 最终成功 artifact 为 `<local-path>`：743,880 bytes，`F34E57580ACCB
 
 错误台账按 artifact 能观测字段记录：Wave 3 两轮的 unexpected page/console/request/unhandled/release/window-close 均为 0；每轮 `expectedRendererErrors = 1`（`expectedErrors = 2`，来自场景 C 注入 save reject）。Wave 2 成功 artifact 的 A–I 9/9 及 page/console/request/unhandled/window-close 均为 0；该旧脚本未输出 releaseFailures/expectedRendererErrors 字段，不将缺失字段冒充为数值 0。
 
-`npm run verify:all` 已运行但当前退出码为 1，唯一失败是 Starter `vite-scene-hmr.test.ts` 的 `listeners: 4 → 3`；在冻结基线 `4e0e752` 的隔离 worktree 中同样失败，因此本轮 S1/S2/D1 不扩大范围修复它。其余 workspace tests/typecheck/build、renderer boundaries/legacy、tools、docs、hygiene、Zero lint/simulate/assets 均通过。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
+旧的 `verify:all` exit code 1 与 `listeners: 4 → 3` 已作为历史证据保留；R2 已关闭该门禁例外，最终 R4 必须在最终 HEAD 上重新执行并以真实 exit code 0 为交付条件。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
 
-最终微型收口提交后的机器复核：HEAD `c7ec48abc22149f20b12e7b4973280d6a66f4443`，`HEAD...surdet/main = 37 0`；工作树仍只有四个受保护未跟踪文件，`git diff --check` 通过，tracked logs 为空。最终报告的字节数和 SHA-256 以提交后机器输出为准，不在报告内伪造自引用摘要。
+R2 实现/测试提交后的机器复核：HEAD `a38443bdf6ffdc4de0027286999832c3c6d9f13a`，`HEAD...surdet/main = 40 0`；工作树仍只有四个受保护未跟踪文件，`git diff --check` 通过，tracked logs 为空。R3/R4 文档提交后的真实 HEAD、报告字节数和 SHA-256 以最终机器输出为准，不在报告内伪造自引用摘要。
 
 最终状态：
 
 ```text
 PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED
-BASELINE_STARTER_HMR_GATE_EXCEPTION_RECORDED
+THEME_TOKEN_IDENTITY_FULLY_VERIFIED
+STARTER_HMR_RESOURCE_LIFECYCLE_VERIFIED
+EXPECTED_ERROR_LEDGER_RETAINED
 ENGINE_FIRST_OWNERSHIP_VERIFIED
 PLAYER_OVERLAY_RETURN_STACK_IMPLEMENTED
 FIXED_PLAYER_SHELL_SLOTS_IMPLEMENTED
@@ -134,7 +138,23 @@ Task 7 的失败 artifact 未删除，保留在本机临时目录作为红灯证
 - 主题更新不增长资源 owner、监听器或显示对象数量；
 - Starter、Zero、CLI scaffold 均从公共 Renderer Theme 接线。
 
-## 7. Electron 证据
+## 7. Starter Vite HMR 诊断与修复
+
+R2 在独立临时 worktree 中用相同 Node `v24.15.0`、npm `11.12.1`、lockfile、构建顺序和测试入口对比冻结基线 `4e0e752b7a23a6e7fab341e93f8cb13831254034` 与当前 R1 HEAD `1efd75f1058e6d23fe6ae43fc40578773439e184`。基线一次观测为 `4 → 4`，当前原测试复现 `4 → 3`；两边没有跳过 HMR 或改变资源清理。
+
+Renderer 只读 resource ledger 确认唯一消失项为 `owner=menu / kind=listener / key=title`，注册来源为 `MenuLayer.#registerListener`，HMR 后通过 `release` 路径 dispose；长期 listener 为：
+
+```text
+dialogue:command-rail-pointer
+runtime:presentation-controller
+runtime:core-events
+```
+
+因此 `4 → 3` 的根因是 Starter 异步 `loadAssets()` 完成后的 `showTitleScreen()` 与测试过早 `titleSelect('new')` 竞争，导致瞬态标题 listener 被采入初始快照；不是生产 listener 丢失或泄漏。R2 增加冻结普通数据诊断（owner/kind/key/source、register/dispose/forget path/outcome/cause），并让测试等待 `assetLoading.done` 后再启动游戏，不暴露 Layer/Pixi/disposer。
+
+最终 HMR 回归 1/1 通过，覆盖：初始加载、两次合法编辑、非法编辑回滚、恢复合法文件、无导航、session/resource IDs 不变、Blob/ticker/display owner 不泄漏、三项 listener 语义集合稳定、stage 语义身份保持和恢复后的场景哈希。动态时间轴游标与相机/淡入淡出只按其自然推进验证，不作错误的精确值相等断言。
+
+## 8. Electron 证据
 
 以下正式玩家矩阵均明确加载 `E:\surdet\examples\zero-after-midnight\dist`，每个 case 使用独立 Electron 和独立临时 userData。Wave 3 artifact 的权威错误台账为：unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 `expectedRendererErrors = 1`、`expectedErrors = 2`，只来自场景 C 的 save reject 注入，用于验证 retry success，不是非预期产品错误。Wave 2 使用的旧脚本没有输出 releaseFailures/expectedRendererErrors 字段，成功 artifact 的可观测 page/console/request/unhandled/window-close 仍均为 0。
 
@@ -155,7 +175,7 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 
 旧 Wave 2 三条正常对照路径继续通过；Wave 3 修改了 settings 子层关闭后的父 system-menu 重新投影合同，Wave 2 B 断言已同步到该已验收返回语义。本次另有一轮 Wave 2 在 case I 启动时以 `3221226505` 终止，临时根 `<local-path>` 保留；随后同条件成功 artifact 如上，不隐藏失败。
 
-## 8. 全量门禁
+## 9. 全量门禁
 
 | 门禁 | 结果 |
 | --- | --- |
@@ -164,14 +184,15 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 | Renderer | 48 文件 / 381 tests PASS |
 | Host | 8 文件 / 70 tests PASS |
 | Shell | 16 文件 / 125 tests PASS |
-| Starter | 6/7 test files PASS；`vite-scene-hmr.test.ts` 的 `listeners: 4 → 3` 在冻结基线 `4e0e752` 隔离复现同样失败 |
+| Starter HMR 聚焦 | 1/1 PASS；两次合法、一次非法、一次恢复合法 HMR，长期 listener 语义集合稳定 |
+| Starter 全量 | R4 在最终 HEAD 上执行并记录；不接受旧的 HMR 基线例外 |
 | Zero | 2 文件 / 21 tests PASS；内置模拟校验 11 scenes / 3 endings / 44 assets |
 | CLI | 7 文件 / 86 tests PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
 | `npm run verify:tools` | 10/10 PASS |
 | `npm run verify:hygiene` | 605 tracked paths PASS |
-| `npm run verify:all` | exit code 1；唯一失败为上述基线既有 Starter Vite HMR，其他 workspace tests/typechecks/builds 与工具门禁通过 |
+| `npm run verify:all` | R4 在最终 HEAD 上执行并记录；必须 exit code 0 |
 | Shell 通用 E2E | PASS |
 | Renderer v2 Electron E2E | PASS；17 个视觉状态均为 CANDIDATE/语义通过，未冒充人工批准金样 |
 | Wave 2 / Wave 3 玩家 E2E | A–I 9/9；A–F 两轮各 6/6 |
@@ -182,7 +203,7 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 | `git diff --check` | PASS |
 | `git ls-files '*.log'` | 空 |
 
-## 9. Git、保护文件和延期项
+## 10. Git、保护文件和延期项
 
 Task 8 文档提交完成后，最终报告提交前的实现 HEAD 为 `abc5f913702c863b89ff7d6e86ce79c03f7332da`，相对 `surdet/main` 为 `18 0`。最终报告提交是独立的普通文档提交，不 push；提交后的真实 HEAD、ahead/behind、status、报告字节数和 SHA-256 由最终机器复核输出。
 
@@ -203,7 +224,7 @@ Task 8 文档提交完成后，最终报告提交前的实现 HEAD 为 `abc5f913
 - M9、正式发行、EXE 重新打包、Wave 4–6 资产/Schema/预览窗口能力、音频工程计划均未开始。
 - 一版 `PixiStage`/`AdvRenderer`/`AdvStage` 兼容窗口继续保留，待后续独立迁移周期和复审后再决定收口。
 
-## 10. 复审入口
+## 11. 复审入口
 
 建议独立复审按以下顺序复核：
 

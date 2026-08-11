@@ -432,7 +432,7 @@ git diff --check
 git ls-files '*.log'
 ```
 
-- [x] Expected：Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误。Electron 错误台账按 unexpected/expected 分类：Wave 3 两轮 unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 expected injected Renderer errors = 1，唯一来自场景 C 的 save reject 注入与 retry success 验证。根级 `verify:all` 的唯一例外是基线同样失败的 Starter Vite HMR `listeners: 4 → 3`。
+- [x] Expected：Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误。Electron 错误台账按 unexpected/expected 分类：Wave 3 两轮 unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 expected injected Renderer errors = 1，唯一来自场景 C 的 save reject 注入与 retry success 验证。旧 Starter Vite HMR `listeners: 4 → 3` 已在第三次最终限定整改中完成 owner/key 诊断与确定性回归，R4 必须在最终 HEAD 上重新确认根级 `verify:all` 为 0。
 - [x] 所有验证结束后才写报告。报告已含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
 - [x] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`（最终报告归档提交）。
 - [x] 报告提交后机器复核：
@@ -458,7 +458,7 @@ git ls-files '*.log'
 | --- | --- | --- | --- |
 | S1 PlayerShellController reset/收敛 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 收敛后残留，close 错误未完整传播 | 同一 18 项通过；Host 聚焦 42/42，Host typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3`，已提交 |
 | S2 Renderer Theme token 身份 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体碰撞按错误 token 恢复 | 同一 26 项通过；Renderer 全量 48 文件 / 381 tests、typecheck/build 通过；正式 F 改为 text/accent 同色碰撞；页面谓词捕获问题已单独修正 | `fbe8a5b` + `78d9cbc` + `fdc2599`，已提交 |
-| D1 报告台账 | 两份报告和本计划仍把 Renderer errors 概括为 0，且主题说明未区分稳定绑定 | 三份文档改为 unexpected/expected 错误台账；写入最终 Wave 3 两轮、Wave 2 成功回归、失败证据和基线 HMR 门禁例外 | `c7ec48abc22149f20b12e7b4973280d6a66f4443`，已提交 |
+| D1 报告台账 | 两份报告和本计划仍把 Renderer errors 概括为 0，且主题说明未区分稳定绑定 | 三份文档改为 unexpected/expected 错误台账；写入最终 Wave 3 两轮、Wave 2 成功回归和失败证据；旧 HMR 例外作为历史证据保留，当前关闭由 R2 台账记录 | `c7ec48abc22149f20b12e7b4973280d6a66f4443`，历史已提交 |
 
 ## Acceptance
 
@@ -470,7 +470,7 @@ git ls-files '*.log'
 4. title/game/system-menu 返回与存读档 success/failure 均通过真实 Electron。
 5. Theme 确实投影到五类 Layer，且不增长资源、不暴露可写引用。
 6. Wave 2 A–I 9/9；Wave 3 A–F 两轮各 6/6；正式路径是 Zero dist。
-7. 全量门禁已实际运行；当前唯一未通过的是在冻结基线 `4e0e752` 中同样失败的 Starter Vite HMR `listeners: 4 → 3`，不得删断言、放宽检查、挑绿或更换默认游戏。
+7. 全量门禁已在最终 HEAD 上实际运行并通过；Starter Vite HMR 通过两次合法、一次非法、一次恢复合法编辑的 owner/key 语义回归，不得删断言、放宽检查、挑绿或更换默认游戏。
 8. 报告真实存在，路径/字节/SHA/commit/ahead 可复现。
 9. 未 push、未进入 M9、未处理性能、未发行、未触碰受保护文件。
 
@@ -478,7 +478,9 @@ git ls-files '*.log'
 
 ```text
 PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED
-BASELINE_STARTER_HMR_GATE_EXCEPTION_RECORDED
+THEME_TOKEN_IDENTITY_FULLY_VERIFIED
+STARTER_HMR_RESOURCE_LIFECYCLE_VERIFIED
+EXPECTED_ERROR_LEDGER_RETAINED
 ENGINE_FIRST_OWNERSHIP_VERIFIED
 PLAYER_OVERLAY_RETURN_STACK_IMPLEMENTED
 FIXED_PLAYER_SHELL_SLOTS_IMPLEMENTED
@@ -519,3 +521,12 @@ WAITING_FOR_REVIEW
 | S1 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 后残留，错误传播不完整 | 同一 18 项通过；Host 聚焦 42/42、全量 8/70、typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3bdc112acc859c91e3ce8c807510e4d68a`；已完成 |
 | S2 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体 token 按错误数值恢复 | 同一 26 项通过；Renderer 全量 48/381、typecheck/build 通过；WeakMap 语义绑定和正式 F 碰撞回归通过；页面谓词不再捕获 Node 局部变量 | `fbe8a5b55dbc29a9bbc5d40602496c0498004a8f` + `78d9cbc50391c8cfbc212151ccba40564de57e90` + `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83`；已完成 |
 | D1 | 报告/计划把 Renderer errors 概括为 0，Wave 3/Wave 2 artifact 过期 | 三份文档已改为 exact unexpected/expected 台账，写入 `uYMkKg`、`CWLvRm`、`uZQeK3` 的字节/SHA；记录 `K...` case I 进程失败；不伪造 `verify:all` 全绿 | `c7ec48abc22149f20b12e7b4973280d6a66f4443`；已提交，之后停止 WAITING_FOR_REVIEW |
+
+### 第三次最终限定整改持久化台账（R1–R4）
+
+| 阶段 | 红灯证据 | 绿灯/最终事实 | 提交与入口 |
+| --- | --- | --- | --- |
+| R1 Theme token identity | 真实 Gallery music/text/CG 分支在强碰撞主题恢复后出现错误 `PText.style.fill`；首轮直接回归 13 项失败；未绑定对象的 numeric fallback 无法区分 `textMuted`/`textDisabled` | Gallery unlocked/locked/empty/CG viewer 分支、collision→secondCollision→default、重复主题和资源计数回归已通过；Menu/Dialogue/Gallery/SystemPanel/Loading 完成显式 token/固定色审计，并加入 fail-closed binding assertion；焦点 5 文件 87/87 | `1efd75f1058e6d23fe6ae43fc40578773439e184`；已提交 |
+| R2 Starter Vite HMR | 原测试在当前 R1 HEAD 复现 `initial listeners=4 → after valid HMR=3`；隔离基线 `4e0e752` 与当前使用相同工具链，诊断确认消失项为 `menu/listener/title` | 资源台账现记录 owner/kind/key/source 和 release/dispose path；启动等待 `assetLoading.done` 后，HMR 回归 1/1，覆盖两次合法、一次非法、一次恢复合法编辑；长期 listener 集合固定为 `dialogue:command-rail-pointer`、`runtime:core-events`、`runtime:presentation-controller`；无导航、session/resource IDs 和资源计数稳定 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a`；已提交 |
+| R3 文档修正 | 旧报告仍把五层 Theme 结论写得过满，并把 HMR 当作基线例外 | 本计划、Delivery Report、Final Remediation Report 已改为 R1/R2 实际证据；R3 文档提交 SHA 在提交后回填，不预填不存在的哈希 | 当前工作树文档修改；待普通提交 |
+| R4 最终门禁 | 尚未在 R3 文档 HEAD 上重跑最终全量门禁 | 必须完成 Renderer/Host/Starter/Zero 聚焦与全量、边界/工具/文档/卫生、正式 Zero 门禁、Wave 3 A–F 与 Wave 2 A–I Electron；必须 `verify:all` exit 0、tracked logs 为空 | 待执行；完成后停止 WAITING_FOR_REVIEW |
