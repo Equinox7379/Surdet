@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "lint": "surdet lint .",
     "simulate": "surdet simulate . --max-paths 500 --max-steps 20000",
-    "test": "node scripts/verify-simulation.mjs",
+    "test": "node scripts/verify-simulation.mjs && vitest run test/player-ui-session.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
