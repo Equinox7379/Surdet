@@ -1,6 +1,10 @@
 import { Container, Text as PText, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
-import type { DialogueProjectionPort, MenuProjectionPort } from '../../src/api/renderer-commands.js';
+import type {
+  DialogueProjectionPort,
+  MenuProjectionPort,
+  SaveLoadSelectionResult,
+} from '../../src/api/renderer-commands.js';
 import type { MenuOverlayState } from '../../src/api/renderer-queries.js';
 import type { RendererControllerPort, RendererStagePort } from '../../src/runtime/renderer-facade.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
@@ -596,7 +600,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
     const runtime = makeRealMenuRuntime(pointerConsumed);
     const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
       view: SaveLoadView,
-      onSelect: (slotId: string) => Promise<boolean>,
+      onSelect: (slotId: string) => SaveLoadSelectionResult,
       onClose: () => void,
       options: unknown,
     ) => void;
@@ -732,7 +736,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
       .mockImplementationOnce(() => retryTransaction);
     const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
       view: SaveLoadView,
-      onSelect: (slotId: string) => Promise<boolean>,
+      onSelect: (slotId: string) => SaveLoadSelectionResult,
       onClose: () => void,
       options: unknown,
     ) => void;
@@ -787,7 +791,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
     const transaction = new Promise<boolean>((resolve) => { resolveTransaction = resolve; });
     const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
       view: SaveLoadView,
-      onSelect: (slotId: string) => Promise<boolean>,
+      onSelect: (slotId: string) => SaveLoadSelectionResult,
       onClose: () => void,
       options: unknown,
     ) => void;
@@ -830,7 +834,7 @@ describe('MenuLayer projection and lifecycle contract', () => {
     const onTransactionError = vi.fn();
     const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
       view: SaveLoadView,
-      onSelect: (slotId: string) => Promise<boolean>,
+      onSelect: (slotId: string) => SaveLoadSelectionResult,
       onClose: () => void,
       options: unknown,
     ) => void;
