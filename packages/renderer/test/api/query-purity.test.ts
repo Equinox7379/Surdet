@@ -118,6 +118,9 @@ describe('Renderer v2 query purity', () => {
     runtime.queries.preferences.presentationPreferences();
     runtime.queries.preferences.postProcess();
     runtime.queries.preferences.fontFamily('body');
+    const theme = runtime.queries.preferences.theme();
+    expect(Object.isFrozen(theme)).toBe(true);
+    expect(Object.isFrozen(theme.colors)).toBe(true);
 
     expect(internals.observableSnapshot()).toEqual(before);
   });
