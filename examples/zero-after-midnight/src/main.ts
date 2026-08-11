@@ -458,6 +458,7 @@ async function main(): Promise<void> {
     get activeOverlay(): string | null { return debugActiveOverlay(); },
     get commandRailVisible(): boolean { return debugCommandRailVisible(); },
     get dialogueProjection() { return debugProjection().dialogue; },
+    get themeProjection() { return debugProjection().themeProjection ?? null; },
     get interactionTargets(): readonly DebugInteractionTarget[] { return debugInteractionTargets(); },
     get lastRendererError(): DebugErrorValue | null {
       return lastRendererError ? freezeDebug({ ...lastRendererError }) : null;

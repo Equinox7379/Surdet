@@ -165,6 +165,7 @@ async function launchSession(caseId) {
           activeOverlay: semantic?.activeOverlay ?? null,
           dialogueProjection: semantic?.dialogueProjection ?? null,
           commandRailVisible: semantic?.dialogueProjection?.commandRailVisible ?? null,
+          themeProjection: semantic?.themeProjection ?? null,
           resources: semantic?.resourceSnapshot ?? null,
           lastRendererError: semantic?.lastRendererError ?? null,
           assetLoading: semantic?.assetLoading ?? null,
@@ -458,18 +459,34 @@ async function caseE(session) {
 async function caseF(session) {
   await startGame(session);
   const before = await session.snapshot();
-  await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } }));
+  const beforeDialogueFills = before.themeProjection?.dialogue?.visibleTextFills ?? [];
+  if (!beforeDialogueFills.includes(0xf2f6ff)) throw new Error('主题场景未找到已显示的正式对话文字');
+  await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: 0x47c8ff, text: 0x123456 } }));
   await session.waitFor('accent 主题投影', () => window.__surdetDebug?.theme?.colors?.accent === 0x47c8ff);
   const accent = await session.snapshot();
+  const accentDialogueFills = accent.themeProjection?.dialogue?.visibleTextFills ?? [];
+  if (!accentDialogueFills.includes(0x123456)) throw new Error('已显示的正式对话文字未发生真实 Pixi 主题投影');
   await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({}));
   await session.waitFor('默认主题恢复', () => window.__surdetDebug?.theme?.colors?.accent === 0x5ac8ff);
   const restored = await session.snapshot();
+  const restoredDialogueFills = restored.themeProjection?.dialogue?.visibleTextFills ?? [];
   if (accent.theme?.colors?.accent !== 0x47c8ff || restored.theme?.colors?.accent !== 0x5ac8ff) throw new Error('Theme command/query 未同步');
+  if (!restoredDialogueFills.includes(0xf2f6ff)) throw new Error('默认主题恢复后正式对话文字未恢复');
   if (JSON.stringify(before.resources) !== JSON.stringify(accent.resources)
     || JSON.stringify(before.resources) !== JSON.stringify(restored.resources)) {
     throw new Error('Theme 切换增长了 Renderer 资源计数');
   }
-  return { before: before.theme, accent: accent.theme, restored: restored.theme, resources: restored.resources };
+  return {
+    before: before.theme,
+    accent: accent.theme,
+    restored: restored.theme,
+    themeProjection: {
+      before: before.themeProjection?.dialogue,
+      accent: accent.themeProjection?.dialogue,
+      restored: restored.themeProjection?.dialogue,
+    },
+    resources: restored.resources,
+  };
 }
 
 async function main() {
