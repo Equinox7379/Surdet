@@ -663,15 +663,20 @@ export class MenuLayer implements MenuProjectionPort {
           hover.alpha = 0;
           marker.alpha = 0;
         });
-        card.on('pointerdown', () => {
+        card.on('pointerdown', (event) => {
           const handler = this.#saveLoadHandlers?.onSelect;
-          try {
-            const accepted = handler?.(slot.id);
-            if (this.#saveLoadOptions.completion === 'host-transaction') {
+          if (this.#saveLoadOptions.completion === 'host-transaction') {
+            if (this.#saveLoadTransactionPending) {
+              this.#onPointerConsumed?.();
+              event.stopPropagation?.();
+              return;
+            }
+            this.#saveLoadTransactionPending = true;
+            try {
+              const accepted = handler?.(slot.id);
               if (!isPromiseLike(accepted)) {
                 throw new Error('host-transaction save/load handlers must return a Promise');
               }
-              this.#saveLoadTransactionPending = true;
               void Promise.resolve(accepted).then(
                 (result) => {
                   this.#saveLoadTransactionPending = false;
@@ -686,16 +691,18 @@ export class MenuLayer implements MenuProjectionPort {
                   this.#handleSaveLoadTransactionError(error);
                 },
               );
-              return;
+            } catch (error) {
+              this.#saveLoadTransactionPending = false;
+              this.#handleSaveLoadTransactionError(error);
             }
+            return;
+          }
+          try {
+            const accepted = handler?.(slot.id);
             if (accepted !== false) this.hideSaveLoad();
           } catch (error) {
-            if (this.#saveLoadOptions.completion === 'host-transaction') {
-              this.#handleSaveLoadTransactionError(error);
-            } else {
-              this.hideSaveLoad();
-              throw error;
-            }
+            this.hideSaveLoad();
+            throw error;
           }
         });
       } else {

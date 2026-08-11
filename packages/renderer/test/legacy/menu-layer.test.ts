@@ -30,6 +30,8 @@ interface RealMenuRuntime {
   readonly assets: RenderAssetRegistry;
   readonly facade: RendererFacade;
   readonly restoreCommandRail: ReturnType<typeof vi.fn>;
+  readonly hideCommandRail: ReturnType<typeof vi.fn>;
+  readonly isCommandRailVisible: () => boolean;
 }
 
 function makeController(): RendererControllerPort {
@@ -127,21 +129,34 @@ function makeMenuProjection(onPointerConsumed?: () => void) {
   return { root, lifecycle, assets, layer };
 }
 
-function makeRealMenuRuntime(): RealMenuRuntime {
+function makeRealMenuRuntime(onPointerConsumed?: () => void): RealMenuRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
-  const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
-  const restoreCommandRail = vi.fn();
+  const layer = new MenuLayer({
+    uiLayer: root,
+    width: 1280,
+    height: 720,
+    assets,
+    lifecycle,
+    ...(onPointerConsumed ? { onPointerConsumed } : {}),
+  });
+  let commandRailVisible = true;
+  const restoreCommandRail = vi.fn(() => {
+    commandRailVisible = true;
+  });
+  const hideCommandRail = vi.fn(() => {
+    commandRailVisible = false;
+  });
   const stage = {
     destroy: vi.fn(),
     hideGallery: vi.fn(),
-    hideCommandRail: vi.fn(),
+    hideCommandRail,
     restoreCommandRail,
     setFade: vi.fn(),
   } as unknown as RendererStagePort;
   const dialogue = {
-    hideCommandRail: vi.fn(),
+    hideCommandRail,
     hideChoices: vi.fn(),
     hideBacklog: vi.fn(),
   } as unknown as DialogueProjectionPort;
@@ -152,7 +167,16 @@ function makeRealMenuRuntime(): RealMenuRuntime {
     dialogueLayer: dialogue,
     menuLayer: layer,
   });
-  return { root, layer, lifecycle, assets, facade, restoreCommandRail };
+  return {
+    root,
+    layer,
+    lifecycle,
+    assets,
+    facade,
+    restoreCommandRail,
+    hideCommandRail,
+    isCommandRailVisible: () => commandRailVisible,
+  };
 }
 
 function disposeRealMenuRuntime(runtime: RealMenuRuntime): void {
@@ -563,6 +587,133 @@ describe('MenuLayer projection and lifecycle contract', () => {
       layer.dispose();
       assets.dispose();
       lifecycle.dispose();
+    }
+  });
+
+  it('guards repeated valid save/load slot clicks while a host transaction is pending and permits retries', async () => {
+    const pointerConsumed = vi.fn();
+    const runtime = makeRealMenuRuntime(pointerConsumed);
+    const showSaveLoad = runtime.facade.commands.menu.showSaveLoad as unknown as (
+      view: SaveLoadView,
+      onSelect: (slotId: string) => Promise<boolean>,
+      onClose: () => void,
+      options: unknown,
+    ) => void;
+    const flushTransaction = async (): Promise<void> => {
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    const onTransactionComplete = vi.fn(runtime.restoreCommandRail);
+    const onTransactionError = vi.fn();
+    const playerUiBeginOperation = vi.fn();
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      runtime.hideCommandRail.mockClear();
+
+      let resolveFirst!: (accepted: boolean) => void;
+      const firstTransaction = new Promise<boolean>((resolve) => { resolveFirst = resolve; });
+      const firstSelect = vi.fn(() => {
+        if (playerUiBeginOperation.mock.calls.length > 0) {
+          throw new Error('PLAYER_UI_INVALID_TRANSITION: duplicate begin-operation');
+        }
+        playerUiBeginOperation();
+        return firstTransaction;
+      });
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-1', empty: true }] },
+        firstSelect,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionComplete, onTransactionError },
+      );
+
+      const firstSlot = findParentWithText(runtime.root, '空槽位');
+      firstSlot.emit('pointerdown', pointerEvent);
+      firstSlot.emit('pointerdown', pointerEvent);
+      firstSlot.emit('pointerdown', pointerEvent);
+
+      expect(firstSelect).toHaveBeenCalledOnce();
+      expect(playerUiBeginOperation).toHaveBeenCalledOnce();
+      expect(pointerConsumed).toHaveBeenCalledTimes(2);
+      expect(onTransactionError).not.toHaveBeenCalled();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(runtime.isCommandRailVisible()).toBe(false);
+      expect(runtime.hideCommandRail).toHaveBeenCalledOnce();
+      expect(runtime.restoreCommandRail).not.toHaveBeenCalled();
+
+      resolveFirst(true);
+      await firstTransaction;
+      await flushTransaction();
+
+      expect(onTransactionComplete).toHaveBeenCalledOnce();
+      expect(runtime.restoreCommandRail).toHaveBeenCalledOnce();
+      expect(runtime.isCommandRailVisible()).toBe(true);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+
+      let resolveFalse!: (accepted: boolean) => void;
+      let resolveFalseRetry!: (accepted: boolean) => void;
+      const falseTransaction = new Promise<boolean>((resolve) => { resolveFalse = resolve; });
+      const falseRetryTransaction = new Promise<boolean>((resolve) => { resolveFalseRetry = resolve; });
+      const falseSelect = vi.fn()
+        .mockImplementationOnce(() => falseTransaction)
+        .mockImplementationOnce(() => falseRetryTransaction);
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-2', empty: true }] },
+        falseSelect,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionComplete, onTransactionError },
+      );
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      resolveFalse(false);
+      await falseTransaction;
+      await flushTransaction();
+      expect(falseSelect).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      expect(onTransactionComplete).toHaveBeenCalledOnce();
+      expect(runtime.isCommandRailVisible()).toBe(false);
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(falseSelect).toHaveBeenCalledTimes(2);
+      resolveFalseRetry(true);
+      await falseRetryTransaction;
+      await flushTransaction();
+      expect(onTransactionComplete).toHaveBeenCalledTimes(2);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+
+      let rejectTransaction!: (error: unknown) => void;
+      let resolveRejectedRetry!: (accepted: boolean) => void;
+      const rejection = new Error('save denied');
+      const rejectedTransaction = new Promise<boolean>((_resolve, reject) => { rejectTransaction = reject; });
+      const rejectedRetryTransaction = new Promise<boolean>((resolve) => { resolveRejectedRetry = resolve; });
+      const rejectedSelect = vi.fn()
+        .mockImplementationOnce(() => rejectedTransaction)
+        .mockImplementationOnce(() => rejectedRetryTransaction);
+      showSaveLoad(
+        { mode: 'save', slots: [{ id: 'slot-3', empty: true }] },
+        rejectedSelect,
+        vi.fn(),
+        { completion: 'host-transaction', onTransactionComplete, onTransactionError },
+      );
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      rejectTransaction(rejection);
+      await expect(rejectedTransaction).rejects.toBe(rejection);
+      await flushTransaction();
+      expect(rejectedSelect).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(onTransactionError).toHaveBeenCalledWith(rejection);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+
+      findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent);
+      expect(rejectedSelect).toHaveBeenCalledTimes(2);
+      resolveRejectedRetry(false);
+      await rejectedRetryTransaction;
+      await flushTransaction();
+      expect(rejectedSelect).toHaveBeenCalledTimes(2);
+      expect(onTransactionError).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+    } finally {
+      disposeRealMenuRuntime(runtime);
     }
   });
 
