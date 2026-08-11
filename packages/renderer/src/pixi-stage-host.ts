@@ -163,6 +163,7 @@ export class RendererStageHost {
       presentation: () => this.#world.getPresentationPreferences(),
       fontFamily: (role) => this.#fontFamilies[role],
       requestFrame: () => this.#requestFrame(),
+      onPointerConsumed: () => this.#dialogue.onPointerConsumed?.(),
     });
     this.#loadingLayer = new LoadingLayer(this.#w, this.#h);
     this.#gallery = new GalleryLayer({

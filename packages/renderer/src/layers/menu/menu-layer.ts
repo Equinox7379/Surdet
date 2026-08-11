@@ -36,6 +36,7 @@ export interface MenuLayerOptions {
   readonly presentation?: () => PresentationPreferences;
   readonly fontFamily?: (role: RendererFontRole) => string;
   readonly requestFrame?: () => void;
+  readonly onPointerConsumed?: (() => void) | null;
 }
 
 /** Read-only evidence emitted for the local renderer acceptance harness. */
@@ -50,6 +51,11 @@ export interface MenuLayerDebugSnapshot {
 interface MenuHandlers {
   readonly onSelect: (id: string) => void;
   readonly onClose: () => void;
+}
+
+interface ThumbnailEntry {
+  readonly texture: Texture;
+  readonly dispose: () => void;
 }
 
 /**
@@ -69,6 +75,7 @@ export class MenuLayer implements MenuProjectionPort {
   readonly #presentation: () => PresentationPreferences;
   readonly #fontFamily: (role: RendererFontRole) => string;
   readonly #requestFrameCallback?: () => void;
+  readonly #onPointerConsumed: (() => void) | null;
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
 
@@ -87,10 +94,10 @@ export class MenuLayer implements MenuProjectionPort {
   #settingsRows: SettingsRowView[] = [];
   #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
   #saveLoadLayer: Container;
-  #saveLoadHandlers: { onSelect: (slotId: string) => void; onClose: () => void } | null = null;
+  #saveLoadHandlers: { onSelect: (slotId: string) => void | boolean; onClose: () => void } | null = null;
   #saveLoadMode: 'save' | 'load' | null = null;
   #saveLoadSlotCount = 0;
-  #thumbCache = new Map<string, Texture>();
+  #thumbCache = new Map<string, ThumbnailEntry>();
 
   constructor(options: MenuLayerOptions) {
     this.#root = options.uiLayer;
@@ -102,6 +109,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#presentation = options.presentation ?? (() => DEFAULT_PRESENTATION_PREFERENCES);
     this.#fontFamily = options.fontFamily ?? ((role) => this.#assets.fontFamily(role));
     this.#requestFrameCallback = options.requestFrame;
+    this.#onPointerConsumed = options.onPointerConsumed ?? null;
 
     this.#titleLayer = new Container();
     this.#endingLayer = new Container();
@@ -631,8 +639,22 @@ export class MenuLayer implements MenuProjectionPort {
         });
         card.on('pointerdown', () => {
           const handler = this.#saveLoadHandlers?.onSelect;
-          this.hideSaveLoad();
-          handler?.(slot.id);
+          try {
+            const accepted = handler?.(slot.id);
+            if (accepted !== false) this.hideSaveLoad();
+          } catch (error) {
+            this.hideSaveLoad();
+            throw error;
+          }
+        });
+      } else {
+        // Empty load slots are real hit targets so their click cannot fall
+        // through to the full-screen close surface. They intentionally do
+        // not have an onSelect handler: the event is consumed and is a no-op.
+        card.eventMode = 'static';
+        card.on('pointerdown', (event) => {
+          this.#onPointerConsumed?.();
+          event.stopPropagation?.();
         });
       }
       layer.addChild(card);
@@ -724,11 +746,36 @@ export class MenuLayer implements MenuProjectionPort {
     if (hit) {
       this.#thumbCache.delete(url);
       this.#thumbCache.set(url, hit);
-      return hit;
+      return hit.texture;
     }
-    const texture = Texture.from(url);
-    this.#thumbCache.set(url, texture);
-    this.#lifecycle.register('menu', 'pool', `thumbnail:${url}`, () => texture.destroy(false));
+
+    // Pixi v8 treats a string passed to Texture.from() as an already cached
+    // asset id. Save thumbnails are raw data URLs, not Assets-cache entries;
+    // calling Texture.from(dataUrl) therefore returns undefined and leaves a
+    // disposer that fails later during reset/release. Create an owned image
+    // texture for data URLs, while retaining the cache-owned path for normal
+    // asset ids. The non-DOM test/runtime fallback uses the shared white
+    // texture and deliberately does not destroy it.
+    let entry: ThumbnailEntry;
+    if (url.startsWith('data:')) {
+      if (typeof Image !== 'undefined') {
+        const image = new Image();
+        image.src = url;
+        const texture = Texture.from(image);
+        entry = { texture, dispose: () => texture.destroy(true) };
+      } else {
+        entry = { texture: Texture.WHITE, dispose: () => undefined };
+      }
+    } else {
+      const cached = Texture.from(url) as Texture | undefined;
+      if (cached) {
+        entry = { texture: cached, dispose: () => undefined };
+      } else {
+        entry = { texture: Texture.WHITE, dispose: () => undefined };
+      }
+    }
+    this.#thumbCache.set(url, entry);
+    this.#lifecycle.register('menu', 'pool', `thumbnail:${url}`, entry.dispose);
     if (this.#thumbCache.size > 16) {
       const oldest = this.#thumbCache.keys().next().value;
       if (oldest !== undefined) {
@@ -736,7 +783,7 @@ export class MenuLayer implements MenuProjectionPort {
         this.#lifecycle.release('menu', 'pool', `thumbnail:${oldest}`);
       }
     }
-    return texture;
+    return entry.texture;
   }
 
   #clearThumbnailCache(): void {

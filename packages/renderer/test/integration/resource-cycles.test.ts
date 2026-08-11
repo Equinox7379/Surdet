@@ -14,6 +14,7 @@ import type {
 } from '../../src/runtime/create-renderer-runtime.js';
 import { createRendererRuntimeFromInternals } from '../../src/runtime/create-renderer-runtime.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
+import { RendererStageHost } from '../../src/pixi-stage-host.js';
 
 interface RealCycleResult {
   snapshot: ReturnType<RenderLifecycle['snapshot']>;
@@ -130,6 +131,70 @@ function runCycleBatch(lifecycle: RenderLifecycle, batch: number): void {
 }
 
 describe('Renderer M2 resource lifecycle integration', () => {
+  it('keeps real menu/gallery/dialogue overlay cycles at the same stable resource point', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const stage = new RendererStageHost(assets, lifecycle);
+    const emptyTitle = { title: 'Surdet', items: [{ id: 'new', label: '开始' }] };
+    const saveLoad = {
+      mode: 'load' as const,
+      slots: [
+        { id: 'empty', empty: true },
+        { id: 'saved', empty: false, label: '序章', thumbnail: 'data:image/png;base64,cycle' },
+      ],
+    };
+    const gallery = { cgs: [], music: [], texts: [] };
+    const baseline = lifecycle.snapshot();
+
+    try {
+      for (let cycle = 0; cycle < 25; cycle += 1) {
+        stage.showSystemMenu([{ id: 'resume', label: '返回游戏' }], () => undefined, () => undefined);
+        stage.hideSystemMenu();
+        stage.showSaveLoad(saveLoad, () => undefined, () => undefined);
+        stage.hideSaveLoad();
+        stage.showGallery(gallery);
+        stage.hideGallery();
+        stage.showBacklog([]);
+        stage.hideBacklog();
+        stage.resetSession();
+        expect(lifecycle.snapshot()).toEqual(baseline);
+      }
+
+      for (let cycle = 0; cycle < 10; cycle += 1) {
+        stage.showSaveLoad({ ...saveLoad, mode: 'save' }, () => undefined, () => undefined);
+        stage.hideSaveLoad();
+        stage.showSaveLoad(saveLoad, () => undefined, () => undefined);
+        stage.hideSaveLoad();
+        expect(Object.keys(lifecycle.snapshot().pooledObjects)).toHaveLength(1);
+        stage.resetSession();
+        expect(lifecycle.snapshot()).toEqual(baseline);
+      }
+
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        stage.showTitle(emptyTitle, () => undefined);
+        stage.hideTitle(false);
+        stage.resetSession({ preserveWorld: true });
+        stage.showSaveLoad(saveLoad, () => undefined, () => undefined);
+        stage.hideSaveLoad();
+        stage.resetSession({ clearAssets: true });
+        expect(lifecycle.snapshot()).toEqual(baseline);
+      }
+    } finally {
+      stage.destroy();
+      lifecycle.dispose();
+    }
+
+    expect(lifecycle.snapshot()).toMatchObject({
+      disposed: true,
+      tickerCallbacks: 0,
+      listeners: 0,
+      activeTweens: 0,
+      activeAsyncTasks: 0,
+      blobUrls: 0,
+      pooledObjects: {},
+    });
+  });
+
   it('keeps the second independent 50-cycle batch at the same stable resource point', () => {
     const lifecycle = new RenderLifecycle();
     runCycleBatch(lifecycle, 0);

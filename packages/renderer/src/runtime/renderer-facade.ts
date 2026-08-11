@@ -476,7 +476,7 @@ export class RendererFacade {
             'showSaveLoad',
             this.#menuPort.showSaveLoad,
             { ...view, slots: view.slots.slice() },
-            this.#wrapMenuRailRestore(onSelect),
+            this.#wrapSaveLoadSelect(onSelect),
             this.#wrapMenuRailRestore(onClose),
           );
           this.#syncMenuOverlay();
@@ -909,6 +909,27 @@ export class RendererFacade {
     return (...args: T) => {
       this.#stage.restoreCommandRail?.();
       callback(...args);
+    };
+  }
+
+  /**
+   * Save/load selection may be rejected by the host (for example a stale or
+   * forged empty-slot id). Preserve the overlay and hidden command rail for
+   * that explicit `false` result; legacy void callbacks keep the old success
+   * behavior. Callback failures still restore the rail before rethrowing.
+   */
+  #wrapSaveLoadSelect<T extends readonly unknown[]>(
+    callback: (...args: T) => void | boolean,
+  ): (...args: T) => void | boolean {
+    return (...args: T) => {
+      try {
+        const accepted = callback(...args);
+        if (accepted !== false) this.#stage.restoreCommandRail?.();
+        return accepted;
+      } catch (error) {
+        this.#stage.restoreCommandRail?.();
+        throw error;
+      }
     };
   }
 

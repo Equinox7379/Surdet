@@ -112,11 +112,18 @@ function findParentWithText(root: Container, value: string): Container {
   return parent as Container;
 }
 
-function makeMenuProjection() {
+function makeMenuProjection(onPointerConsumed?: () => void) {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
-  const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+  const layer = new MenuLayer({
+    uiLayer: root,
+    width: 1280,
+    height: 720,
+    assets,
+    lifecycle,
+    ...(onPointerConsumed ? { onPointerConsumed } : {}),
+  });
   return { root, lifecycle, assets, layer };
 }
 
@@ -521,8 +528,41 @@ describe('MenuLayer projection and lifecycle contract', () => {
       expect(() => findParentWithText(runtime.root, '空槽位').emit('pointerdown', pointerEvent)).toThrow(failure);
       expect(runtime.restoreCommandRail).toHaveBeenCalledTimes(4);
       expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+
+      const restoreCountBeforeRejected = runtime.restoreCommandRail.mock.calls.length;
+      runtime.facade.commands.menu.showSaveLoad(
+        { mode: 'load', slots: [{ id: 'stale', empty: false, label: '陈旧记录' }] },
+        () => false,
+        onClose,
+      );
+      findParentWithText(runtime.root, '陈旧记录').emit('pointerdown', pointerEvent);
+      expect(runtime.restoreCommandRail).toHaveBeenCalledTimes(restoreCountBeforeRejected);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'load' });
+      runtime.facade.commands.menu.hideSaveLoad();
+      expect(runtime.restoreCommandRail).toHaveBeenCalledTimes(restoreCountBeforeRejected + 1);
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
     } finally {
       disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('keeps the save/load page open when the host rejects a selection', () => {
+    const { root, layer, lifecycle, assets } = makeMenuProjection();
+    const onSelect = vi.fn(() => false);
+    try {
+      layer.showSaveLoad({
+        mode: 'load',
+        slots: [{ id: 'slot-stale', empty: false, label: '旧记录' }],
+      }, onSelect, vi.fn());
+
+      findParentWithText(root, '旧记录').emit('pointerdown', pointerEvent);
+
+      expect(onSelect).toHaveBeenCalledWith('slot-stale');
+      expect(layer.menu()).toEqual({ type: 'save-load', mode: 'load' });
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
     }
   });
 
@@ -751,6 +791,53 @@ describe('MenuLayer projection and lifecycle contract', () => {
       expect(from).toHaveBeenCalledOnce();
     } finally {
       from.mockRestore();
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('consumes an empty load slot without selecting or closing the page', () => {
+    const onPointerConsumed = vi.fn();
+    const { root, layer, lifecycle, assets } = makeMenuProjection(onPointerConsumed);
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    try {
+      layer.showSaveLoad({
+        mode: 'load',
+        slots: [{ id: 'slot-empty', empty: true }],
+      }, onSelect, onClose);
+
+      const card = findParentWithText(root, '空槽位');
+      expect(card.eventMode).toBe('static');
+      card.emit('pointerdown', pointerEvent);
+
+      expect(onPointerConsumed).toHaveBeenCalledOnce();
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(layer.menu()).toEqual({ type: 'save-load', mode: 'load' });
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('releases a real data-url thumbnail without a renderer lifecycle error', () => {
+    const { layer, lifecycle, assets } = makeMenuProjection();
+    const thumbnail = 'data:image/png;base64,task5-real-thumbnail';
+    const show = (): void => layer.showSaveLoad({
+      mode: 'load',
+      slots: [{ id: 'slot-1', empty: false, label: '序章', thumbnail }],
+    }, vi.fn(), vi.fn());
+    try {
+      show();
+      layer.hideSaveLoad();
+      show();
+
+      expect(() => layer.reset()).not.toThrow();
+      expect(lifecycle.snapshot().pooledObjects).toEqual({});
+    } finally {
       layer.dispose();
       assets.dispose();
       lifecycle.dispose();
