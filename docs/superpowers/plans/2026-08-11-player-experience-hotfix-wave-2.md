@@ -660,7 +660,7 @@ WAITING_FOR_REVIEW
 - [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；台账提交：`8eacc4208a5db8015c531a096ee2138c2f43fae4`。
 - [x] Task 6：对话框稳定性。提交：`77b3bc5f22e62d5ec05808e7d7dac45d49caf607`（`fix(renderer): keep dialogue presentation stable between lines`）；本记录台账提交待完成。
 - [x] Task 7：完整玩家 E2E 矩阵。提交：`22ae65837b030282f939123a0fb7f5ca7224944c`（`test(shell): gate player experience hotfix wave 2`）；本记录台账提交待完成。
-- [ ] Task 8：全量门禁、报告、最终停止。提交：`PENDING`。
+- [x] Task 8：全量门禁、报告、最终停止。报告与台账提交：`DOC_FINAL_HEAD_PENDING`（报告提交后需再执行最终 verify:all 并回填真实 SHA）。
 
 当前事实（任务书生成时）：
 
@@ -939,3 +939,25 @@ Task 7 门禁与范围：
 - 受保护的 `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交、未删除；没有 push、force push、M9、性能测量/优化、性能 artifact/门限、发行、重打包、剧情/DSL/存档格式或美术音频变更。
 
 下一入口：提交本台账后进入 Task 8，按计划顺序执行全量回归、正式游戏门禁、两类 Electron E2E、最终交付报告；Task 8 完成前不得声明 Wave 2 完成，不得 push。
+
+### 6.9 Task 8 实际执行记录（2026-08-11，报告提交前）
+
+执行时间：`2026-08-11T15:18:45+08:00` 至 `2026-08-11T15:25:00+08:00`（Asia/Shanghai）。本阶段已完成 Task 8 规定的全量回归、正式游戏门禁、Shell/Renderer/玩家 Electron E2E 和交付报告草稿；报告/台账文档提交后的最终 `verify:all` 与最终 SHA 回填仍待本次文档提交完成。
+
+全量门禁：
+
+- Core `23 files / 304 tests`、Renderer `47 files / 349 tests`、Host `3 files / 18 tests`、Shell `15 files / 122 tests`、正式游戏 `2 files / 21 tests` 全部通过。
+- Core、Renderer、Host、Shell、zero-after-midnight 五个 workspace typecheck 与 build 全部退出码 `0`。
+- Renderer boundary `3/3`、legacy `4/4`、tools `10/10`、hygiene `583 tracked paths` 通过。
+- 正式游戏 lint：11 scenes、0 errors、0 warnings；simulate：23/23 choices、3 endings、39 save/load smoke、0 runtime errors；assets：44。
+- `npm run e2e -w @surdet/shell` 通过；`npm run e2e:renderer-v2 -w @surdet/shell` 通过，17 个视觉状态均为语义通过的 `CANDIDATE`；`npm run verify:all` 退出码 `0`。
+- Task 8 额外正式玩家矩阵：A–I `9/9`，正式 dist、9 个独立 userData，JSON schema 2 / PASSED；证据 `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-KkP9lN\task7-player-experience-matrix.json`，SHA-256 `8CAC0F83539CE02366776B7D7B8B0D5B06C08E4E92E2E141122376B611CC69E6`。
+
+提交前状态：
+
+- 代码/测试当前 HEAD：`f2d261013595ef17cbb1cbaf20eafdcf4645982c`；相对 `surdet/main` 为 `16 0`。
+- 待提交文件仅为 `docs/ENGINE-PLAYER-EXPERIENCE-HOTFIX-WAVE-2-DELIVERY-REPORT-2026-08-11.md` 与本计划文件；四个受保护未跟踪文件仍未修改、未暂存。
+- `git diff --check` 通过；`git ls-files '*.log'` 为空。
+- 仍未 push、未 force push、未开始 M9、未处理性能工作、未发行。
+
+下一步：只暂存报告与本计划，创建 `docs(engine): report player experience hotfix wave 2` 文档提交；提交后重新执行 `npm run verify:all`、`git diff --check`、`git status --short` 和 ahead/behind，随后回填真实最终文档 SHA 并停止等待独立复审。
