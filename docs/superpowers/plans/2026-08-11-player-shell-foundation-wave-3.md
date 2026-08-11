@@ -491,7 +491,7 @@ WAITING_FOR_REVIEW
 
 | Task | Red evidence | Green evidence | Commit | Review status |
 | --- | --- | --- | --- | --- |
-| 0 | N/A（文档基线任务无红灯） | HEAD `9bbec32946e169a5d081b29863edddaad64959fe`；任务书 25173 字节 / SHA-256 `639A934053C9879DFABAA287B71E3CC3010B2F5E3249004CC02EC923C5DA2D65`；清洁室记录已创建；diff-check 通过；tracked logs 为空 | pending（基线提交后回填） | implemented |
+| 0 | N/A（文档基线任务无红灯） | HEAD `9bbec32946e169a5d081b29863edddaad64959fe`；任务书 25173 字节 / SHA-256 `639A934053C9879DFABAA287B71E3CC3010B2F5E3249004CC02EC923C5DA2D65`；清洁室记录已创建；修正后 diff-check 通过；tracked logs 为空 | `445cf5106f9ca9c0401044b7e9cfa121c45ffcb4`（Task 0 基线提交） | implemented |
 | 1 | pending | pending | pending | not-started |
 | 2 | pending | pending | pending | not-started |
 | 3 | pending | pending | pending | not-started |
