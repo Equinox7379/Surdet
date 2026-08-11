@@ -195,6 +195,29 @@ describe('Renderer M2 resource lifecycle integration', () => {
     });
   });
 
+  it('does not leave a dialogue command-rail tween after repeated item rebuilds', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const stage = new RendererStageHost(assets, lifecycle);
+    try {
+      stage.showCommandRail([
+        { id: 'auto', label: '自动', icon: 'A' },
+        { id: 'menu', label: '菜单', icon: 'M' },
+      ], () => undefined);
+      for (let index = 0; index < 20; index += 1) {
+        stage.setCommandRailItems([
+          { id: 'auto', label: `自动-${index}`, icon: 'A' },
+          { id: 'menu', label: '菜单', icon: 'M' },
+        ]);
+      }
+
+      expect(lifecycle.snapshot()).toMatchObject({ activeTweens: 0 });
+    } finally {
+      stage.destroy();
+      lifecycle.dispose();
+    }
+  });
+
   it('keeps the second independent 50-cycle batch at the same stable resource point', () => {
     const lifecycle = new RenderLifecycle();
     runCycleBatch(lifecycle, 0);
