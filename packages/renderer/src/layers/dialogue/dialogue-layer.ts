@@ -23,7 +23,13 @@ import type {
   SpeakerProfile,
 } from '../../types.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
-import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
+import {
+  bindThemeGraphicsProjection,
+  bindThemeTextProjection,
+  readThemeProjection,
+  repaintThemeProjection,
+  type LayerThemeProjectionSnapshot,
+} from '../../theme-projection.js';
 
 /** DialogueLayer owns only dialogue-facing display objects and projection state. */
 export interface DialogueLayerOptions {
@@ -179,16 +185,19 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogRubyLayer = new Container();
     this.#nvlLayer = new Container();
     this.#nvlLayer.visible = false;
-    this.#nvlBackground = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.86 });
+    this.#nvlBackground = bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.86 }),
+      ['panel'],
+    );
     this.#nvlLayer.addChild(this.#nvlBackground);
 
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
-    this.#bannerBars = new Graphics();
+    this.#bannerBars = bindThemeGraphicsProjection(new Graphics(), ['scrim', 'scrim']);
     this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: this.#theme.colors.scrim, alpha: 0.85 });
     this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: this.#theme.colors.scrim, alpha: 0.85 });
-    this.#bannerTipBg = new Graphics();
-    this.#bannerText = new PText({
+    this.#bannerTipBg = bindThemeGraphicsProjection(new Graphics(), ['surface', 'line']);
+    this.#bannerText = bindThemeTextProjection(new PText({
       text: '',
       style: {
         fontSize: 40,
@@ -196,27 +205,27 @@ export class DialogueLayer implements DialogueProjectionPort {
         fontWeight: 'normal',
         fontFamily: this.#assets.fontFamily('title'),
       } satisfies TextStyleOptions,
-    });
+    }), { fill: 'text' });
     this.#bannerText.anchor.set(0.5);
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
 
-    this.#dialogPanel = new Graphics();
+    this.#dialogPanel = bindThemeGraphicsProjection(new Graphics(), ['scrim', 'scrim', 'scrim']);
     this.#drawDialogPanel();
-    this.#speakerPlate = new Graphics();
+    this.#speakerPlate = bindThemeGraphicsProjection(new Graphics(), ['line']);
     this.#speakerAvatar = new Sprite(Texture.EMPTY);
     this.#speakerAvatar.anchor.set(0.5, 1);
     this.#speakerAvatar.visible = false;
 
-    this.#continueIndicator = new Graphics()
+    this.#continueIndicator = bindThemeGraphicsProjection(new Graphics()
       .circle(0, 0, 9).fill({ color: this.#theme.colors.accent, alpha: 0.22 })
-      .circle(0, 0, 4.5).fill({ color: this.#theme.colors.text, alpha: 0.95 });
+      .circle(0, 0, 4.5).fill({ color: this.#theme.colors.text, alpha: 0.95 }), ['accent', 'text']);
     this.#continueIndicator.visible = false;
     this.#continueIndicator.x = this.#w - 68;
 
     this.#backlogLayer = new Container();
     this.#backlogLayer.visible = false;
 
-    this.#speakerText = new PText({
+    this.#speakerText = bindThemeTextProjection(new PText({
       text: '',
       style: {
         fontSize: 18,
@@ -226,8 +235,8 @@ export class DialogueLayer implements DialogueProjectionPort {
         fontFamily: this.#assets.fontFamily('body'),
         stroke: { width: 1.2, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
-    });
-    this.#dialogText = new PText({
+    }), { fill: 'text', stroke: 'textOnAccent' });
+    this.#dialogText = bindThemeTextProjection(new PText({
       text: '',
       style: {
         fontSize: 25,
@@ -238,7 +247,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         lineHeight: 41,
         stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
-    });
+    }), { fill: 'text', stroke: 'textOnAccent' });
     this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
     this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
 
@@ -986,12 +995,14 @@ export class DialogueLayer implements DialogueProjectionPort {
     let object = pool[index];
     if (!object) {
       object = new PText({ text, style });
+      bindThemeTextProjection(object, { fill: 'text', stroke: 'textOnAccent' });
       pool[index] = object;
       this.#dialogRubyLayer.addChild(object);
       this.#registerDisplay(`ruby-${pool === this.#rubyBasePool ? 'base' : 'text'}:${index}`, object);
     } else {
       object.text = text;
       object.style = style;
+      bindThemeTextProjection(object, { fill: 'text', stroke: 'textOnAccent' });
     }
     object.visible = true;
     return object;
