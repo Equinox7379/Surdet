@@ -461,28 +461,34 @@ async function caseF(session) {
   const before = await session.snapshot();
   const beforeDialogueFills = before.themeProjection?.dialogue?.visibleTextFills ?? [];
   if (!beforeDialogueFills.includes(0xf2f6ff)) throw new Error('主题场景未找到已显示的正式对话文字');
-  await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: 0x47c8ff, text: 0x123456 } }));
-  await session.waitFor('accent 主题投影', () => window.__surdetDebug?.theme?.colors?.accent === 0x47c8ff);
-  const accent = await session.snapshot();
-  const accentDialogueFills = accent.themeProjection?.dialogue?.visibleTextFills ?? [];
-  if (!accentDialogueFills.includes(0x123456)) throw new Error('已显示的正式对话文字未发生真实 Pixi 主题投影');
+  const collisionColor = 0x123456;
+  await session.page.evaluate((color) => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: color, text: color } }), collisionColor);
+  await session.waitFor('同色主题投影', () => window.__surdetDebug?.theme?.colors?.accent === collisionColor
+    && window.__surdetDebug?.theme?.colors?.text === collisionColor);
+  const collision = await session.snapshot();
+  const collisionDialogueFills = collision.themeProjection?.dialogue?.visibleTextFills ?? [];
+  if (!collisionDialogueFills.includes(collisionColor)) throw new Error('已显示的正式对话文字未发生同色主题投影');
   await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({}));
-  await session.waitFor('默认主题恢复', () => window.__surdetDebug?.theme?.colors?.accent === 0x5ac8ff);
+  await session.waitFor('默认主题恢复', () => window.__surdetDebug?.theme?.colors?.accent === 0x5ac8ff
+    && window.__surdetDebug?.theme?.colors?.text === 0xf2f6ff);
   const restored = await session.snapshot();
   const restoredDialogueFills = restored.themeProjection?.dialogue?.visibleTextFills ?? [];
-  if (accent.theme?.colors?.accent !== 0x47c8ff || restored.theme?.colors?.accent !== 0x5ac8ff) throw new Error('Theme command/query 未同步');
+  if (collision.theme?.colors?.accent !== collisionColor
+    || collision.theme?.colors?.text !== collisionColor
+    || restored.theme?.colors?.accent !== 0x5ac8ff
+    || restored.theme?.colors?.text !== 0xf2f6ff) throw new Error('Theme command/query 未同步');
   if (!restoredDialogueFills.includes(0xf2f6ff)) throw new Error('默认主题恢复后正式对话文字未恢复');
-  if (JSON.stringify(before.resources) !== JSON.stringify(accent.resources)
+  if (JSON.stringify(before.resources) !== JSON.stringify(collision.resources)
     || JSON.stringify(before.resources) !== JSON.stringify(restored.resources)) {
     throw new Error('Theme 切换增长了 Renderer 资源计数');
   }
   return {
     before: before.theme,
-    accent: accent.theme,
+    collision: collision.theme,
     restored: restored.theme,
     themeProjection: {
       before: before.themeProjection?.dialogue,
-      accent: accent.themeProjection?.dialogue,
+      collision: collision.themeProjection?.dialogue,
       restored: restored.themeProjection?.dialogue,
     },
     resources: restored.resources,
@@ -497,7 +503,7 @@ async function main() {
     ['C', 'save reject → retry success', caseC],
     ['D', 'load success → title', caseD],
     ['E', 'default six-slot registry without override', caseE],
-    ['F', 'theme accent sync → restore default', caseF],
+    ['F', 'colliding theme text/accent → restore default', caseF],
   ];
   const selected = smoke ? specifications.slice(0, 1) : specifications;
   const cases = [];
