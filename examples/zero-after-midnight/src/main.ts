@@ -62,6 +62,7 @@ import {
   createPlayerShellController,
   createRendererPlayerShellSlots,
   createPlayerUiSession,
+  createRollbackRuntime,
   createSystemHooks,
   createElectronSaveStorage,
   shouldRestoreInterfaceOnPointer,
@@ -69,7 +70,6 @@ import {
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
-import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
@@ -399,6 +399,7 @@ async function main(): Promise<void> {
     onRefresh: () => refreshCommandRail(),
   });
   const clearRollback = (): void => rollbackRuntime.clear();
+  const clearRollbackForBoundary = (): void => rollbackRuntime.clearForBoundary();
   const canRollback = (): boolean => rollbackRuntime.canRollback();
   const performRollback = (): boolean => rollbackRuntime.perform();
 
@@ -502,7 +503,7 @@ async function main(): Promise<void> {
       onLog: (message) => console.info(`[zero] ${message}`),
     }),
     onError: (error) => console.error('[zero] 宿主 adapter 失败：', error),
-    onSystemBoundary: () => { clearRollback(); },
+    onSystemBoundary: () => { clearRollbackForBoundary(); },
     onStateReset: () => { turnResumeSnap = null; },
   });
   connectSystemRouter(bus, host, (error) => console.error('[zero] system 路由失败：', error));

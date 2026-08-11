@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Interpreter, SaveSnapshot } from '@surdet/core';
 import type { AudioHandle } from '@surdet/renderer';
-import type { RollbackRendererPort } from '../../shared/rollback-runtime.js';
-import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
+import type { RollbackRendererPort } from '@surdet/host';
+import { createRollbackRuntime } from '@surdet/host';
 
 function createTestRuntime() {
   let pc = 1;

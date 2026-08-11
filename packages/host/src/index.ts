@@ -62,6 +62,8 @@ export type {
   RendererPlayerShellSlotsOptions,
   RendererPlayerShellViews,
 } from './renderer-player-shell-slots.js';
+export { createRollbackRuntime } from './rollback-runtime.js';
+export type { RollbackRendererPort, RollbackRuntime, RollbackRuntimeOptions } from './rollback-runtime.js';
 export {
   assertProfileKey,
   LocalStorageProfileStorage,
