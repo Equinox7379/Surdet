@@ -329,6 +329,7 @@ npm run test -w @surdet/renderer -- --run test/theme.test.ts test/api/renderer-c
 - [x] 红灯运行上述五个测试文件：首次生产接线前 5 个文件中已有 70/71 通过，新增真实 Runtime 断言因 Layer 没有 `setTheme` 而失败。
 - [x] 机械迁移 Surdet 当前 `NIGHT_AZURE` / `MODERN_ADV` 默认值，不重新设计视觉。删除 Layer 内同义主题常量；确属玩法语义的色值必须注释说明。
 - [x] 每个 Layer 实现 `setTheme(theme)`，只重绘 Graphics/TextStyle；不得销毁重建 Container、Texture、音频、监听器或资源 owner。
+- [x] 最终整改补充：Player UI `PText`/`Graphics` 通过内部 `WeakMap` 保存稳定语义 token；同值颜色/字号/字距、同色主题下新建对象和 Graphics context 重建均不再依赖当前数值反推，未绑定旧兼容/玩法对象才使用后备映射。
 - [x] 绿灯与边界：
 
 ```powershell
@@ -384,7 +385,7 @@ npm run build -w @surdet/renderer
   - F 测试 accent 同步到五类 Layer，再恢复默认；资源计数不增长。
 - [x] artifact 固定含 `schemaVersion/status/formalGame/isolation/cases`、PlayerShell snapshot、binding snapshot、Renderer projection/resource、page/console/request/unhandled/release 数组；失败也落盘且退出非零。
 - [x] npm 命令：`"e2e:player-shell-wave-3": "node e2e/player-shell-wave-3.e2e.mjs"`。
-- [x] 先 smoke，再跑两轮 Wave 3；各 A–F 6/6，正式路径为 `E:\\surdet\\examples\\zero-after-midnight\\dist`；已记录绝对路径、字节和 SHA：smoke `<local-path>`（10334，`67676fe35cdcdac4ff41d06e6d0b57d2cb408dbfe447680d1721d6bc72c6ef64`）；round-1 `<local-path>`（60278，`c2ce916ac3be3952470f032939afd53ebea1c60c5118fa6b183b2a9f953f1a9f`）；round-2 `<local-path>`（60278，`c02ab654346bd9f540dab62f0f816f970cf5c346879b2cf3c022ebe3a76df941`）。
+- [x] 先 smoke，再跑两轮 Wave 3；各 A–F 6/6，正式路径为 `E:\\surdet\\examples\\zero-after-midnight\\dist`；Task 7 的历史 artifact 仍保留在本行；最终微型收口后的两轮 artifact、字节、SHA 和错误台账见下方“当前微型收口持久化台账”，不覆盖历史证据。
 - [x] 再跑 `npm run e2e:player-experience -w @surdet/shell`，Wave 2 A–I 9/9；artifact `<local-path>`（729483，`cabe7851959283ef08f2fdd35e20622e861cc3e0aa2b85cad04305f43be654c4`）。旧 Wave 2 B 断言已按已冻结的 settings → system-menu → game 返回合同更新。
 - [x] 提交：`git commit -m "test(shell): gate player shell wave 3"`，真实提交 `35b3009934b34a5683036eb412e5e0cb2940a1cd`。
 
@@ -431,7 +432,7 @@ git diff --check
 git ls-files '*.log'
 ```
 
-- [x] Expected：全部退出 0；Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误；Electron 错误数组全空。
+- [x] Expected：Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误。Electron 错误台账按 unexpected/expected 分类：Wave 3 两轮 unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 expected injected Renderer errors = 1，唯一来自场景 C 的 save reject 注入与 retry success 验证。根级 `verify:all` 的唯一例外是基线同样失败的 Starter Vite HMR `listeners: 4 → 3`。
 - [x] 所有验证结束后才写报告。报告已含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
 - [x] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`（最终报告归档提交）。
 - [x] 报告提交后机器复核：
@@ -447,9 +448,17 @@ git diff --check
 git ls-files '*.log'
 ```
 
-- [ ] 不 push，停止等待独立复审。
+- [x] 不 push，停止等待独立复审。
 
 ---
+
+### 最终微型收口台账（S1 / S2 / D1）
+
+| 项目 | 修复前红灯 | 修复后绿灯 | 提交/状态 |
+| --- | --- | --- | --- |
+| S1 PlayerShellController reset/收敛 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 收敛后残留，close 错误未完整传播 | 同一 18 项通过；Host 聚焦 42/42，Host typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3`，已提交 |
+| S2 Renderer Theme token 身份 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体碰撞按错误 token 恢复 | 同一 26 项通过；Renderer 全量 48 文件 / 381 tests、typecheck/build 通过；正式 F 改为 text/accent 同色碰撞；页面谓词捕获问题已单独修正 | `fbe8a5b` + `78d9cbc` + `fdc2599`，已提交 |
+| D1 报告台账 | 两份报告和本计划仍把 Renderer errors 概括为 0，且主题说明未区分稳定绑定 | 三份文档改为 unexpected/expected 错误台账；写入最终 Wave 3 两轮、Wave 2 成功回归、失败证据和基线 HMR 门禁例外 | 当前文档修改，待普通文档提交 |
 
 ## Acceptance
 
@@ -461,7 +470,7 @@ git ls-files '*.log'
 4. title/game/system-menu 返回与存读档 success/failure 均通过真实 Electron。
 5. Theme 确实投影到五类 Layer，且不增长资源、不暴露可写引用。
 6. Wave 2 A–I 9/9；Wave 3 A–F 两轮各 6/6；正式路径是 Zero dist。
-7. 全量门禁通过；不得删断言、放宽检查、挑绿或更换默认游戏。
+7. 全量门禁已实际运行；当前唯一未通过的是在冻结基线 `4e0e752` 中同样失败的 Starter Vite HMR `listeners: 4 → 3`，不得删断言、放宽检查、挑绿或更换默认游戏。
 8. 报告真实存在，路径/字节/SHA/commit/ahead 可复现。
 9. 未 push、未进入 M9、未处理性能、未发行、未触碰受保护文件。
 
@@ -469,6 +478,7 @@ git ls-files '*.log'
 
 ```text
 PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED
+BASELINE_STARTER_HMR_GATE_EXCEPTION_RECORDED
 ENGINE_FIRST_OWNERSHIP_VERIFIED
 PLAYER_OVERLAY_RETURN_STACK_IMPLEMENTED
 FIXED_PLAYER_SHELL_SLOTS_IMPLEMENTED
@@ -499,5 +509,13 @@ WAITING_FOR_REVIEW
 | 4 | 主题模块不存在，且运行时 `preferences.theme()` 不存在；聚焦命令 2 个测试套件失败（主题套件无法收集，查询纯度 1 项失败） | Theme/contract/query-purity 3 文件、19/19；Renderer typecheck 通过；Facade/兼容 ports 提供冻结主题的最小契约实现，尚未接线 Layer | `8843b9b5071718f234f7a9273efac866118bb777` | implemented |
 | 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
 | 6 | Host/Starter/Zero/CLI 聚焦红灯已保留：Host 3/3 因 `createRendererPlayerShellSlots is not a function` 失败；Starter 2/2、Zero 新接线断言、CLI scaffold 断言分别因公共 Controller/helper/Theme 接线不存在而失败；其余既有 Zero 22 项通过 | Host 全量 8 文件 49/49；Starter 全量 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 86/86、typecheck/build；Host typecheck/build；Renderer-backed helper 只依赖 public commands/queries 并内部唯一创建固定六槽 Registry；`git diff --check` 通过 | `8032f1e24b5c4ecbcf88823f74686f408043b814` | implemented |
-| 7 | 契约红灯 3 项失败（脚本/命令/正式路径约束尚未存在）；首轮正式 A–F 为 5/6，B 在 settings 关闭后暴露真实父 system-menu 未重新投影；新增 Host 回归在修复前收到 `open:system-menu, open:settings, close:settings`，缺少父槽位 `open:system-menu`；旧 Wave 2 B 断言也因新返回合同暂时失败 | Host 全量 8 文件 50/50；Host typecheck；Shell 契约 3/3、Shell typecheck；最终 smoke 1/1；Wave 3 两轮各 A–F 6/6，正式 Zero dist、每案独立 Electron/userData，错误数组为空；Wave 2 A–I 9/9；`git diff --check` 通过；tracked logs 为空。Controller 关闭嵌套 overlay 后按返回栈重新投影父槽，E2E 使用真实 requestAnimationFrame 等待呈现动画完成；artifact 路径/字节/SHA 已写入本行 | `35b3009934b34a5683036eb412e5e0cb2940a1cd` | implemented |
-| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | `npm run docs:capabilities` / `npm run verify:docs` 通过；迁移指南、README、AI-GUIDE 和生成能力矩阵已落盘。根级门禁全部退出 0：Core 23 文件/304 测试、Renderer 48/368、Host 8/50、Shell 16/125、Starter 4/7、Zero 2/21、CLI 7/86；boundary 3/3、legacy 4/4、tools 10/10、hygiene 601 paths、`npm run verify:all`；通用 Shell E2E、Renderer v2 视觉候选、正式 Zero dist 的 Wave 2 A–I 与 Wave 3 A–F 均通过。Wave 3 round-1 artifact `<local-path>`（60278，`c2ce916ac3be3952470f032939afd53ebea1c60c5118fa6b183b2a9f953f1a9f`）；round-2 `<local-path>`（60278，`c02ab654346bd9f540dab62f0f816f970cf5c346879b2cf3c022ebe3a76df941`）；Task 8 最终重跑 `<local-path>`（60278，`c32c64e3bed554ebe2d8f56fc257b21703a623781cb9f1c052a0dac03dd70da6`）；Wave 2 最新 `<local-path>`（761716，`c6f6b82e23d022045b4245e84d6648ae323351a0622e6d7995a2a9f3ae4afdbe`）。Zero lint 11 场景/0 错误/0 警告，simulate 23/23、3 结局、0 运行时错误，assets 44，typecheck/build 通过；`git diff --check` 通过且 tracked logs 为空 | `54c440b`（Task 8 文档与能力矩阵提交） | implemented |
+| 7 | 契约红灯 3 项失败（脚本/命令/正式路径约束尚未存在）；首轮正式 A–F 为 5/6，B 在 settings 关闭后暴露真实父 system-menu 未重新投影；新增 Host 回归在修复前收到 `open:system-menu, open:settings, close:settings`，缺少父槽位 `open:system-menu`；旧 Wave 2 B 断言也因新返回合同暂时失败 | Host 全量 8 文件 50/50；Host typecheck；Shell 契约 3/3、Shell typecheck；最终 smoke 1/1；Wave 3 两轮各 A–F 6/6，正式 Zero dist、每案独立 Electron/userData；unexpected page/console/request/unhandled/release errors 均为 0，expected injected Renderer errors = 1 per run（仅来自场景 C save reject 注入后的 retry success）；Wave 2 A–I 9/9；`git diff --check` 通过；tracked logs 为空。Controller 关闭嵌套 overlay 后按返回栈重新投影父槽，E2E 使用真实 requestAnimationFrame 等待呈现动画完成；artifact 路径/字节/SHA 已写入本行 | `35b3009934b34a5683036eb412e5e0cb2940a1cd` | implemented |
+| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | 历史 Task 8 证据保留；最终微型收口事实见下方持久化台账：S1/S2 直接回归、Renderer 48/381、Host 8/70、两轮 Wave 3 A–F、一轮 Wave 2 A–I、Zero 专项均通过；`npm run verify:all` 当前唯一失败为基线同样失败的 Starter Vite HMR `listeners: 4 → 3` | `54c440b`（历史 Task 8 文档提交）；最终微型台账待普通文档提交 |
+
+### 当前微型收口持久化台账（S1 / S2 / D1）
+
+| 阶段 | 红灯证据 | 绿灯/最终事实 | 提交与入口 |
+| --- | --- | --- | --- |
+| S1 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 后残留，错误传播不完整 | 同一 18 项通过；Host 聚焦 42/42、全量 8/70、typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3bdc112acc859c91e3ce8c807510e4d68a`；已完成 |
+| S2 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体 token 按错误数值恢复 | 同一 26 项通过；Renderer 全量 48/381、typecheck/build 通过；WeakMap 语义绑定和正式 F 碰撞回归通过；页面谓词不再捕获 Node 局部变量 | `fbe8a5b55dbc29a9bbc5d40602496c0498004a8f` + `78d9cbc50391c8cfbc212151ccba40564de57e90` + `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83`；已完成 |
+| D1 | 报告/计划把 Renderer errors 概括为 0，Wave 3/Wave 2 artifact 过期 | 三份文档已改为 exact unexpected/expected 台账，写入 `uYMkKg`、`CWLvRm`、`uZQeK3` 的字节/SHA；记录 `K...` case I 进程失败；不伪造 `verify:all` 全绿 | 文档修改待提交；之后停止 WAITING_FOR_REVIEW |

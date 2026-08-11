@@ -1,10 +1,12 @@
 # Surdet Player Shell Foundation Wave 3 最终限定整改报告
 
-> 交付状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_FINAL_REMEDIATION_COMPLETE`
+> 交付状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_FINAL_REMEDIATION_COMPLETE_WITH_BASELINE_GATE_EXCEPTION`
 >
 > 复审状态：`WAITING_FOR_REVIEW`
 >
 > 本轮严格限定为 R1–R3：PlayerUiSession 快照运行时校验、PlayerShellController 嵌套 Provider 补偿一致性、已显示 Player Layer 的真实主题投影。未进入 M9、未进行性能工作、未 push、未发行。
+
+> 本次最终微型收口只处理 S1 reset/收敛状态一致性、S2 同值主题 token 身份和 D1 台账修正。S1/S2 及正式 Wave 2/Wave 3 玩家路径均通过；根级 `npm run verify:all` 仍被基线既有的 Starter Vite HMR 测试阻断（基线 `4e0e752` 隔离复现同样为 `listeners: 4 → 3`），因此本报告不把该门禁写成全绿。
 
 ## 1. 结论与范围
 
@@ -20,6 +22,7 @@
 
 ```text
 PLAYER_SHELL_FOUNDATION_WAVE_3_FINAL_REMEDIATION_COMPLETE
+BASELINE_STARTER_HMR_GATE_EXCEPTION_RECORDED
 PLAYER_UI_SNAPSHOT_VALIDATION_VERIFIED
 PLAYER_SHELL_PROVIDER_ATOMICITY_VERIFIED
 LIVE_RENDERER_THEME_PROJECTION_VERIFIED
@@ -47,13 +50,13 @@ HEAD: f0a0e3f7dc984c56a8136d3d39554639053b9ea3
 HEAD...surdet/main: 20 0
 ```
 
-本次实现/测试提交均为普通新提交，没有 amend、rebase、reset、squash 或历史改写。提交后的实现与测试 HEAD（生成本报告前）为：
+本次实现/测试提交均为普通新提交，没有 amend、rebase、reset、squash 或历史改写。R1–R3 阶段提交后的实现与测试 HEAD（本报告历史主体生成时）为：
 
 ```text
 90ba895fd7e47c6a80b75a61dbff201597cd52cd
 ```
 
-本轮提交完整 SHA 如下：
+本轮 R1–R3 提交完整 SHA 如下：
 
 | 顺序 | 完整提交 SHA | 提交信息 | 责任范围 |
 | ---: | --- | --- | --- |
@@ -69,6 +72,18 @@ HEAD...surdet/main: 20 0
 | 10 | `90ba895fd7e47c6a80b75a61dbff201597cd52cd` | `test(renderer): verify theme projection query purity` | 主题 projection query 的普通数据、深克隆和冻结纯度测试 |
 
 本报告和历史报告口径修正将在上述实现/测试提交之后以新的普通文档提交归档。由于一个文件不能在自身内容中无矛盾地写入“包含该字段之后自身的 SHA-256”，本报告不伪造自引用哈希；最终报告文件的真实字节数、SHA-256、最终 HEAD、ahead/behind 和工作树由提交后机器复核输出记录。
+
+### 2.1 本次最终微型收口追加提交
+
+| 完整提交 SHA | 提交信息 | 责任范围 |
+| --- | --- | --- |
+| `40980f3bdc112acc859c91e3ce8c807510e4d68a` | `fix(host): converge player shell reset projections` | S1：reset/title/completeOperation 先清理真实 Provider，保持 Session、Provider、活动投影和 InputGate 一致，并保留原始/补偿错误 |
+| `fbe8a5b55dbc29a9bbc5d40602496c0498004a8f` | `fix(renderer): preserve semantic theme token identity` | S2：以内部 WeakMap 保存 Player UI 颜色、字号和字距的稳定语义身份；同值 token 不再靠数值反推 |
+| `78d9cbc50391c8cfbc212151ccba40564de57e90` | `test(shell): gate colliding theme restoration` | 正式 Zero Electron F 场景改为 text/accent 同值碰撞并验证恢复 |
+| `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83` | `test(shell): fix colliding theme predicate` | 修正页面谓词不得捕获 Node 局部变量；最终两轮 F 证据均由修正后的测试脚本产生 |
+| `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26` | `fix(renderer): preserve save load transaction callbacks` | 最终代码下 Wave 2 save/load 异步回调回归：Provider teardown 后仍完成成功/错误回调，命令栏恢复 |
+
+文档台账修正将在上述四个实现/测试提交之后另建普通文档提交；不 amend 既有提交。
 
 ## 3. R1：PlayerUiSession 完整快照运行时校验
 
@@ -160,11 +175,17 @@ HEAD...surdet/main: 20 0
 | 检查 | 结果 |
 | --- | --- |
 | R2 聚焦测试 | 14/14 |
-| Host 全量测试 | 8 文件 / 66 tests |
+| Host 全量测试 | 8 文件 / 70 tests |
 | Host typecheck | PASS |
 | Host build | PASS |
 | `PLAYER_SHELL_SLOT_FAILED` 与原始 cause | 通过 |
 | Provider/Session 最终状态一致 | 通过 |
+
+### 4.5 最终微型整改：reset/收敛状态一致性
+
+独立复审基线上的直接回归在生产修复前先形成红灯：`player-shell-controller.test.ts` 的 18 项中 4 项失败，真实 Provider 的 `visibleSlot` 在 `system-menu → settings → reset('title')` 后仍为 `settings`，且 close 失败被吞掉或留下 Session/Provider 分裂。修复后同一 18 项全部通过。
+
+Controller 现在先按活动栈自顶向下清理真实 Provider，只有清理成功才提交 Session reset/title/completeOperation；失败时保留原始 cause，补偿失败通过 `PlayerShellSlotError` + `AggregateError` 报告，并保留可安全重试的活动台账。成功收敛后的真实合同为：Session 的目标 base、`overlay=none`、`operation=idle`、`returnStack=[]`，Provider 实际可见状态为空，Controller 活动 projection 为空，InputGate 已 reset；随后重新 open/close 使用全新栈。
 
 ## 5. R3：五类已显示 Layer 的真实主题投影
 
@@ -192,6 +213,7 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 核心行为：
 
 - `repaintThemeProjection()` 递归访问已有显示树，原地更新现有 `PText.style` 和 `Graphics.context` instruction 的颜色，不替换 Container、Texture、监听器、资源 owner 或音频。
+- Player UI 的 `PText` 与 `Graphics` 在创建时通过内部 `WeakMap` 绑定稳定的语义 token（颜色、字号、字距）；绑定对象在同色主题和 Graphics context 重建后仍按原语义重绘。数值反推只保留给未绑定的旧兼容/玩法对象，不能决定已绑定 Player token 的身份。
 - 每个 Layer 只重绘自己的拥有树：Menu 的 title/ending/menu/settings/saveLoad；Dialogue 的 dialogueRoot/overlayRoot；Gallery 的 galleryLayer；SystemPanel 的 battle/map/shop/base；Loading 的自身背景、进度条和文字。
 - `readThemeProjection()` 返回冻结的普通数据对象；`RendererQueries.diagnostics.projectionSnapshot.themeProjection` 不暴露 Pixi、Layer 或可写引用。
 - `setTheme()` 保持相同主题幂等、一次有效更新只请求一帧、非法 patch 不改变旧主题、disposed Runtime 按 RendererError 合同失败。
@@ -199,7 +221,7 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 
 ### 5.3 五类真实 DisplayObject 证据
 
-真实 Renderer 测试 `packages/renderer/test/theme.test.ts` 20/20 通过，覆盖以下已显示对象：
+真实 Renderer 测试 `packages/renderer/test/theme.test.ts` 26/26 通过；最终 Renderer 全量为 48 文件 / 381 tests 通过，覆盖以下已显示对象，并增加同色 token、字体碰撞、同色主题下新建对象、重复主题和资源计数回归：
 
 | Layer | 已显示内容 | 读取的真实投影 | 结论 |
 | --- | --- | --- | --- |
@@ -222,6 +244,12 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 
 这两层共同证明了命令/查询状态、Layer 主题意图和已显示 Pixi DisplayObject 真实重绘三者没有混淆。
 
+### 5.5 最终微型整改：同值主题 token 身份
+
+独立复审基线上的同色回归在生产修复前先形成红灯：`theme.test.ts` 的 26 项中 5 项失败；Menu、Gallery、Dialogue、SystemPanel 的同值颜色恢复会把默认 `text` 错恢复成 `accent`，字体碰撞会把 `uiSize` 错恢复成另一字号。修复后同一 26 项全部通过，最终 Renderer 全量为 48 文件 / 381 tests 通过（其中包含最终 save/load 回调回归测试）。
+
+整改后的绑定 API 在对象创建时把 Player UI 的颜色、字号和字距语义写入内部 `WeakMap`；切换 `A → B → C → default`、同主题重复设置、同色主题下新建对象，以及 Graphics instruction/context 重建都按稳定语义恢复。绑定不进入公共 query；查询继续只返回冻结普通数据，生命周期资源计数不增长。未绑定旧兼容/玩法对象仍可走 legacy fallback，但该 fallback 不再参与已绑定 Player token 身份判定。
+
 ## 6. Electron 玩家证据
 
 所有 Wave 3 artifact 均使用独立 Electron、独立临时 `userData`，并明确加载正式游戏：
@@ -230,14 +258,18 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 E:\surdet\examples\zero-after-midnight\dist
 ```
 
-每轮均记录 `schemaVersion`、A–F 结果、pageErrors、consoleErrors、requestFailures、unhandledRejections、Renderer errors、asset loading、正式 dist 路径和 userData 唯一性；三份结果的上述错误集合均为 0。
+每轮均记录 `schemaVersion`、A–F 结果、正式 dist 路径、独立 userData、资产加载和错误分类。权威错误台账为：`unexpected page errors = 0`、`unexpected console errors = 0`、`unexpected request failures = 0`、`unexpected unhandled rejections = 0`、`unexpected release failures = 0`；`expected injected Renderer errors = 1 per run`。每轮唯一的 expected Renderer error 来自场景 C 的 save reject 注入，用于验证失败后的 retry success，不是非预期产品错误。
 
-### 6.1 Wave 3 A–F 两轮
+### 6.1 Wave 3 A–F 两轮（最终代码 `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26`）
 
 | 轮次 | Artifact 绝对路径 | 字节数 | SHA-256 | 结果 |
 | --- | --- | ---: | --- | --- |
-| round-1 | `<local-path>` | 77837 | `C081E803E41C2335BB5B0E5AFE9B0AD38814ADE5CC3EB76FF86D47CA459B8192` | A–F 6/6 |
-| round-2 | `<local-path>` | 77840 | `F6C3E2E8089C83F0AB2F6FFDEF9CF4060FAC3339E9CD18628CD4E951FC3A7945` | A–F 6/6 |
+| round-1 | `<local-path>` | 77835 | `ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC` | A–F 6/6 |
+| round-2 | `<local-path>` | 77835 | `D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D` | A–F 6/6 |
+
+两轮每轮均为 6 个独立 Electron / 6 个独立 userData；正式 artifact 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 和 `unexpectedWindowClosed` 均为 0。每轮场景 C 另记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，均来自注入的 save reject 及其上报，不属于非预期产品错误。
+
+本次同会话另有一轮 Wave 2 运行在 case I 启动时以 Windows 进程码 `3221226505` 终止，未生成完整矩阵；临时证据根为 `<local-path>`，该失败未被删除。随后在相同代码、正式 Zero dist、独立 Electron/userData 下重新运行并通过，详见下表。
 
 场景覆盖：
 
@@ -246,15 +278,15 @@ E:\surdet\examples\zero-after-midnight\dist
 - C：save reject → retry success；
 - D：load success → title；
 - E：无 override 时的固定六槽 defaults；
-- F：主题 accent/text 同步、已显示真实 Dialogue 对象换色、恢复默认和资源计数稳定。
+- F：正式 Dialogue 文字在 `text === accent` 同色主题下换色、恢复默认 `text=0xf2f6ff`（不误恢复成 `accent=0x5ac8ff`），并保持资源计数稳定。
 
 ### 6.2 Wave 2 A–I 回归
 
 | Artifact 绝对路径 | 字节数 | SHA-256 | 结果 |
 | --- | ---: | --- | --- |
-| `<local-path>` | 712574 | `1633778C985264FE7E283FA0AE2B132A90D7FEDE5D51ED499DD2DDE2AE1D6D59` | A–I 9/9 |
+| `<local-path>` | 743880 | `F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39` | A–I 9/9 |
 
-Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData；page/console/request/unhandled/release failure 全部为 0。R2 修复没有破坏 Wave 2 玩家路径。
+Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData；成功 artifact 的 page/console/request/unhandled/unexpectedWindowClosed 全部为 0，且 A–I 全部通过。该旧脚本未在 artifact schema 中单独输出 `releaseFailures` 和 expected Renderer error 数组；不能把缺失字段写成已观测的数值 0。R2/S1/S2 修复没有破坏 Wave 2 玩家路径。
 
 ## 7. 正式《零点之后》结果
 
@@ -282,16 +314,17 @@ Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData�
 | 命令/范围 | 结果 |
 | --- | --- |
 | Host R1/R2 聚焦 | 2 files / 38 tests PASS（24 + 14） |
-| Host 全量 | 8 files / 66 tests PASS |
+| Host 全量 | 8 files / 70 tests PASS |
 | Host typecheck/build | PASS |
 | Renderer R3 聚焦 | 4 files / 75 tests PASS |
-| Renderer 全量 | 48 files / 374 tests PASS |
+| Renderer 全量 | 48 files / 381 tests PASS |
 | Renderer typecheck/build | PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
 | `npm run verify:tools` | 10/10 PASS |
 | `npm run verify:hygiene` | PASS，604 tracked paths |
-| `npm run verify:all` | exit code 0 |
+| Starter 全量测试 | 6/7 test files PASS；`vite-scene-hmr.test.ts` 在当前代码失败，且在基线 `4e0e752` 隔离 worktree 同样失败：`listeners: 4 → 3` |
+| `npm run verify:all` | exit code 1；唯一失败为上述基线既有 Starter Vite HMR 测试，其余 verify:tools/boundaries/legacy/docs/hygiene、workspace tests/typechecks/builds 均通过 |
 | Shell generic E2E | PASS（仅作通用 Shell 回归，不冒充正式 Zero E2E） |
 | Renderer v2 Electron E2E | PASS；17 个视觉状态均为 CANDIDATE/语义通过，未冒充人工批准金样 |
 | Wave 3 Electron | 两轮 A–F 各 6/6 PASS |
@@ -299,7 +332,7 @@ Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData�
 | `git diff --check` | PASS |
 | `git ls-files '*.log'` | 空 |
 
-`npm run verify:all` 已包含各 workspace 的测试、类型检查、构建、正式 Zero 验收及工具门禁；R1/R2/R3 的直接回归测试也已单独运行并记录在上表。
+`npm run verify:all` 已实际运行，但没有通过；失败证据和基线复现已如实记录。R1/R2/S1/S2 的直接回归测试、正式 Zero 验收以及两轮 Wave 3/一轮 Wave 2 玩家路径均已单独运行并记录在上表。没有修改 Starter HMR，因为它不属于本轮 S1/S2/D1 范围且在冻结基线中已经失败。
 
 ## 9. 代码与测试文件清单
 
@@ -337,14 +370,14 @@ Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData�
 
 ## 10. Git、保护文件与性能延期
 
-本报告提交前的机器状态为：
+本次文档提交前的机器状态为：
 
 ```text
-HEAD: 90ba895fd7e47c6a80b75a61dbff201597cd52cd
-HEAD...surdet/main: 30 0
+HEAD: fdc259984fcc07225d5d4dbec1cd784b2a9aaf83
+HEAD...surdet/main: 36 0
 ```
 
-最终文档提交后必须再次运行并记录：`git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 `git ls-files '*.log'`。本报告不将提交后尚不存在的 SHA 或自引用文件摘要写成既成事实；提交后机器复核的真实结果以最终交付回报为准。
+最终文档提交后必须再次运行并记录：`git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 `git ls-files '*.log'`。本报告不将提交后尚不存在的 SHA 或自引用文件摘要写成既成事实；提交后机器复核的真实结果以最终交付回报为准。由于 `verify:all` 的基线 HMR 例外，本报告不得宣称“全量门禁全部通过”。
 
 工作树必须只保留以下四个受保护未跟踪文件：
 
@@ -366,7 +399,7 @@ HEAD...surdet/main: 30 0
 1. 核对最终提交后的 HEAD、工作树、`HEAD...surdet/main`、`git diff --check` 和 tracked log。
 2. 运行 Host R1/R2 聚焦测试，检查非法快照失败保持原状态，以及嵌套 Provider 的真实活动/可见状态。
 3. 运行 Renderer `theme.test.ts` 和 `query-purity.test.ts`，直接读取已显示 Pixi DisplayObject 的颜色变化。
-4. 检查 Wave 3 两份和 Wave 2 一份 artifact 的正式 Zero dist、独立 userData、schema、错误数组和资产状态。
+4. 检查 Wave 3 两份和 Wave 2 一份 artifact 的正式 Zero dist、独立 userData、schema、unexpected/expected 错误分类和资产状态。
 5. 运行 `npm run verify:all` 与正式 Zero lint/simulate/assets/typecheck/build。
 
 本轮完成后停止在 `WAITING_FOR_REVIEW`，等待总经理独立复审；未经新的明确授权，不执行 M9、性能工作、发行或 push。

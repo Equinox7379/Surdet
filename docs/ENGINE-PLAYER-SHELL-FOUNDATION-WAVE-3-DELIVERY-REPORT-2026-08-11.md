@@ -1,6 +1,6 @@
 # Surdet Player Shell Foundation Wave 3 交付报告
 
-> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED`
+> 状态：`PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED_WITH_BASELINE_GATE_EXCEPTION`
 > 复核阶段：`WAITING_FOR_REVIEW`
 > 本轮没有 push、没有进入 M9、没有处理性能测量或正式发行。
 
@@ -10,10 +10,34 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 
 本报告依据所有门禁完成后的实现 HEAD `abc5f913702c863b89ff7d6e86ce79c03f7332da` 编写。该 HEAD 包含 Task 8 文档/能力矩阵提交和 Task 8 台账提交；本报告本身随后以独立普通文档提交归档。报告提交后的真实仓库 HEAD、文件字节数和 SHA-256 由提交后机器复核记录，不在文件内容中伪造自引用提交哈希。
 
+### 最终微型收口补充（以本节为当前权威）
+
+本报告原有的 Wave 3 交付数字和“verify:all 通过”描述属于历史交付时点；最终微型收口后的事实以本节及同目录 `ENGINE-PLAYER-SHELL-FOUNDATION-WAVE-3-FINAL-REMEDIATION-REPORT-2026-08-11.md` 为准。追加提交链为：
+
+| 完整 SHA | 提交信息 | 结果 |
+| --- | --- | --- |
+| `40980f3bdc112acc859c91e3ce8c807510e4d68a` | `fix(host): converge player shell reset projections` | S1 reset/title/completeOperation 与真实 Provider 收敛一致 |
+| `fbe8a5b55dbc29a9bbc5d40602496c0498004a8f` | `fix(renderer): preserve semantic theme token identity` | S2 同值颜色/字号/字距使用稳定 WeakMap 语义身份 |
+| `78d9cbc50391c8cfbc212151ccba40564de57e90` | `test(shell): gate colliding theme restoration` | 正式 Zero Electron F 覆盖 text/accent 同值碰撞 |
+| `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83` | `test(shell): fix colliding theme predicate` | 修正页面谓词的跨环境变量捕获；最终 F 证据由该脚本产生 |
+| `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26` | `fix(renderer): preserve save load transaction callbacks` | 最终 Wave 2 save/load 异步完成/错误回调保留 |
+
+最终代码下 Renderer 为 48 文件 / 381 tests，Host 为 8 文件 / 70 tests；两轮 Wave 3 A–F 和一轮成功的 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。Wave 3 最终 artifact：
+
+- `<local-path>`：77,835 bytes，`ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC`，A–F 6/6；
+- `<local-path>`：77,835 bytes，`D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D`，A–F 6/6。
+
+Wave 2 最终成功 artifact 为 `<local-path>`：743,880 bytes，`F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39`，A–I 9/9。此前同会话的 `K...` 临时证据在 case I 启动时以 `3221226505` 终止，未生成完整 JSON，未被删除；不能把该失败隐藏或改写成通过。
+
+错误台账按 artifact 能观测字段记录：Wave 3 两轮的 unexpected page/console/request/unhandled/release/window-close 均为 0；每轮 `expectedRendererErrors = 1`（`expectedErrors = 2`，来自场景 C 注入 save reject）。Wave 2 成功 artifact 的 A–I 9/9 及 page/console/request/unhandled/window-close 均为 0；该旧脚本未输出 releaseFailures/expectedRendererErrors 字段，不将缺失字段冒充为数值 0。
+
+`npm run verify:all` 已运行但当前退出码为 1，唯一失败是 Starter `vite-scene-hmr.test.ts` 的 `listeners: 4 → 3`；在冻结基线 `4e0e752` 的隔离 worktree 中同样失败，因此本轮 S1/S2/D1 不扩大范围修复它。其余 workspace tests/typecheck/build、renderer boundaries/legacy、tools、docs、hygiene、Zero lint/simulate/assets 均通过。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
+
 最终状态：
 
 ```text
 PLAYER_SHELL_FOUNDATION_WAVE_3_IMPLEMENTED
+BASELINE_STARTER_HMR_GATE_EXCEPTION_RECORDED
 ENGINE_FIRST_OWNERSHIP_VERIFIED
 PLAYER_OVERLAY_RETURN_STACK_IMPLEMENTED
 FIXED_PLAYER_SHELL_SLOTS_IMPLEMENTED
@@ -58,7 +82,7 @@ WAITING_FOR_REVIEW
 
 - `packages/renderer/src/theme.ts` 提供 `DEFAULT_RENDERER_THEME`、`createRendererTheme()` 和严格数值/键校验；结果递归冻结但不冻结调用方 patch。
 - `commands.preferences.setTheme()` 与 `queries.preferences.theme()` 是唯一主题更新/查询入口；非法 patch 不改变旧主题，已 dispose 的 Runtime 按 RendererError 契约失败。
-- Menu、Dialogue、Gallery、SystemPanel、Loading 五类 Layer 都消费同一个冻结主题意图；本报告原始验收只证明了命令/查询同步和 Layer 收到 `setTheme`，并没有把它们冒充成已显示 Pixi 对象的直接重绘证据。该缺口由本次最终整改报告补足。
+- Menu、Dialogue、Gallery、SystemPanel、Loading 五类 Layer 都消费同一个冻结主题意图；本报告原始验收只证明了命令/查询同步和 Layer 收到 `setTheme`，并没有把它们冒充成已显示 Pixi 对象的直接重绘证据。该缺口由本次最终整改报告补足。当前实现使用内部 `WeakMap` 为 Player UI `PText`/`Graphics` 保存稳定语义 token；数值反推仅是未绑定旧兼容/玩法对象的后备路径，不是 Player token 身份来源。
 - 相同主题更新保持幂等并只请求一帧；主题查询不暴露 Pixi 或可写引用。
 
 ### 3.3 项目接线
@@ -109,25 +133,24 @@ Task 7 的失败 artifact 未删除，保留在本机临时目录作为红灯证
 
 ## 7. Electron 证据
 
-以下正式玩家矩阵均明确加载 `E:\surdet\examples\zero-after-midnight\dist`，每个 case 使用独立 Electron 和独立临时 userData；页面错误、console 错误、失败请求、unhandled rejection 和 release failure 均为 0。
+以下正式玩家矩阵均明确加载 `E:\surdet\examples\zero-after-midnight\dist`，每个 case 使用独立 Electron 和独立临时 userData。Wave 3 artifact 的权威错误台账为：unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 `expectedRendererErrors = 1`、`expectedErrors = 2`，只来自场景 C 的 save reject 注入，用于验证 retry success，不是非预期产品错误。Wave 2 使用的旧脚本没有输出 releaseFailures/expectedRendererErrors 字段，成功 artifact 的可观测 page/console/request/unhandled/window-close 仍均为 0。
 
 ### Wave 3 A–F
 
 | 轮次 | Artifact | 字节数 | SHA-256 | 结果 |
 | --- | --- | ---: | --- | --- |
-| round-1 | `<local-path>` | 60278 | `c2ce916ac3be3952470f032939afd53ebea1c60c5118fa6b183b2a9f953f1a9f` | A–F 6/6 |
-| round-2 | `<local-path>` | 60278 | `c02ab654346bd9f540dab62f0f816f970cf5c346879b2cf3c022ebe3a76df941` | A–F 6/6 |
-| Task 8 final rerun | `<local-path>` | 60278 | `c32c64e3bed554ebe2d8f56fc257b21703a623781cb9f1c052a0dac03dd70da6` | A–F 6/6 |
+| final round-1 | `<local-path>` | 77835 | `ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC` | A–F 6/6 |
+| final round-2 | `<local-path>` | 77835 | `D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D` | A–F 6/6 |
 
-A title→gallery→close、B game→system-menu→settings→close、C save reject→retry success、D load success→title、E 无 override 的六槽 defaults、F 主题 accent 同步/恢复默认全部通过。
+A title→gallery→close、B game→system-menu→settings→close、C save reject→retry success、D load success→title、E 无 override 的六槽 defaults、F 正式 Dialogue 文字在 text/accent 同色主题下换色并恢复默认全部通过。
 
 ### Wave 2 A–I 回归
 
 | Artifact | 字节数 | SHA-256 | 结果 |
 | --- | ---: | --- | --- |
-| `<local-path>` | 761716 | `c6f6b82e23d022045b4245e84d6648ae323351a0622e6d7995a2a9f3ae4afdbe` | A–I 9/9 |
+| `<local-path>` | 743880 | `F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39` | A–I 9/9 |
 
-旧 Wave 2 三条正常对照路径继续通过；Wave 3 修改了 settings 子层关闭后的父 system-menu 重新投影合同，Wave 2 B 断言已同步到该已验收返回语义。
+旧 Wave 2 三条正常对照路径继续通过；Wave 3 修改了 settings 子层关闭后的父 system-menu 重新投影合同，Wave 2 B 断言已同步到该已验收返回语义。本次另有一轮 Wave 2 在 case I 启动时以 `3221226505` 终止，临时根 `<local-path>` 保留；随后同条件成功 artifact 如上，不隐藏失败。
 
 ## 8. 全量门禁
 
@@ -135,17 +158,17 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 | --- | --- |
 | `npm run docs:capabilities` / `npm run verify:docs` | PASS |
 | Core | 23 文件 / 304 tests PASS |
-| Renderer | 48 文件 / 368 tests PASS |
-| Host | 8 文件 / 50 tests PASS |
+| Renderer | 48 文件 / 381 tests PASS |
+| Host | 8 文件 / 70 tests PASS |
 | Shell | 16 文件 / 125 tests PASS |
-| Starter | 4 文件 / 7 tests PASS |
+| Starter | 6/7 test files PASS；`vite-scene-hmr.test.ts` 的 `listeners: 4 → 3` 在冻结基线 `4e0e752` 隔离复现同样失败 |
 | Zero | 2 文件 / 21 tests PASS；内置模拟校验 11 scenes / 3 endings / 44 assets |
 | CLI | 7 文件 / 86 tests PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
 | `npm run verify:tools` | 10/10 PASS |
-| `npm run verify:hygiene` | 601 tracked paths PASS |
-| `npm run verify:all` | exit code 0 |
+| `npm run verify:hygiene` | 605 tracked paths PASS |
+| `npm run verify:all` | exit code 1；唯一失败为上述基线既有 Starter Vite HMR，其他 workspace tests/typechecks/builds 与工具门禁通过 |
 | Shell 通用 E2E | PASS |
 | Renderer v2 Electron E2E | PASS；17 个视觉状态均为 CANDIDATE/语义通过，未冒充人工批准金样 |
 | Wave 2 / Wave 3 玩家 E2E | A–I 9/9；A–F 两轮各 6/6 |
@@ -185,7 +208,7 @@ Task 8 文档提交完成后，最终报告提交前的实现 HEAD 为 `abc5f913
 2. `docs/capabilities.json` 与生成的 `docs/capability-matrix.md` 一致性；
 3. Host 六槽、返回栈和 Controller 测试；
 4. Renderer 五类 Layer 主题真实投影和 query purity；
-5. 两轮 Wave 3 与 Wave 2 artifact 的 `formalGame`、隔离 userData、错误数组；
+5. 两轮 Wave 3 与 Wave 2 artifact 的 `formalGame`、隔离 userData、unexpected/expected 错误分类；
 6. `npm run verify:all` 和正式 Zero dist 的玩家路径。
 
 未获得下一阶段批准前，本任务停留在 `WAITING_FOR_REVIEW`，不执行 push 或任何 Wave 4/M9 工作。
