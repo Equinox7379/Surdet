@@ -966,7 +966,7 @@ Task 7 门禁与范围：
 
 本节记录总经理独立复审后唯一授权的 R1/R2/R3 整改；不得据此启动 M9、性能工作、发行或 push。阶段必须按 R3 → R1 → R2 的依赖顺序完成，每阶段使用新的普通提交，不改写既有 18 个提交。
 
-### 7.1 R3 公共 Player UI 协调层（已完成，提交待记录）
+### 7.1 R3 公共 Player UI 协调层（已完成）
 
 - 起始 HEAD：`ce94d393ce8cfd709ebb972129403e7d6e6ee9f5`；工作树仅四个受保护未跟踪文件；`HEAD...surdet/main=18 0`。
 - 测试先行：新增公共契约测试后，在生产模块尚不存在时运行 `npm test -w @surdet/host -- --run test/player-ui-coordination.test.ts`，得到模块缺失红灯：`Cannot find module '../src/player-ui.js'`。
@@ -975,4 +975,17 @@ Task 7 门禁与范围：
 - 验证：Host focused `8/8`；zero `2 files/21 tests`；Starter `4 files/7 tests`；Host、Starter、zero typecheck 均退出码 `0`；Host build 退出码 `0`。
 - Starter 对照护栏：`examples/starter/test/player-ui-integration.test.ts` 验证公共导入、无旧五布尔状态、菜单/Backlog/隐藏界面同步决策。
 - 失败证据：公共模块缺失红灯已保留在本台账；R3 当前没有未解决测试失败。
+- 提交：`562a764021b03c98cf3fdc315e4933f68de9cf0c`（`refactor(host): share player UI coordination`）；提交后 `HEAD...surdet/main=19 0`。
+- 受保护文件仍仅未跟踪、未修改、未暂存；未 push、未进入 M9、未处理性能工作。
 - 下一入口：R1，先为真实 Dialogue Backlog 内部合成层级增加红灯。
+
+### 7.2 R1 Dialogue Backlog 真实合成层级（已完成，提交待记录）
+
+- 测试先行红灯：将旧的外部 sibling overlay 测试替换为真实 `DialogueLayer.showBacklog()` 测试后，在生产修复前运行 `npm test -w @surdet/renderer -- --run test/legacy/dialogue-layer.test.ts`，`14 tests | 13 passed | 1 failed`；真实 Backlog 与正文同属 `#dialogueRoot` 时实际比较为 `0 > 0` 失败。
+- 根因：旧结构中 `#backlogLayer` 初始位于 `#dialogueRoot` 的 child 7，`mountTextDisplays()`/`bringTextDisplaysToFront()` 把正文重新挂到同一容器末尾，Backlog 不能形成稳定覆盖顺序；旧测试只把一个人工 overlay 加到共享 root，证明的是 sibling root 顺序，不是实际 Backlog。
+- 生产修复：Dialogue 建立 `#dialogueRoot` 普通内容根与 `#dialogueOverlayRoot` 覆盖根；panel/avatar/name/ruby/text/options/rail/NVL/banner 只进入 content root，Backlog 只进入 overlay root；`bringTextDisplaysToFront()` 仅在 content root 内重排，不会越过 Backlog。共享 UI root 的固定顺序保持 `World < Dialogue content < Dialogue overlay < Menu/Gallery/System < Loading/Fatal`。
+- 只读语义：`DialogueLayerDebugSnapshot`/`DialogueProjectionSnapshot` 新增 `backlogAboveDialogueText`，只返回普通数据，不暴露 Container/DisplayObject；重复 show/hide/mount/bring、reset/dispose 均覆盖。
+- E2E：`packages/shell/e2e/player-experience-wave-2.e2e.mjs` 的 case B 真实打开 Backlog，并断言正式 Renderer projection 的 `backlogVisible=true` 与 `backlogAboveDialogueText=true`，同时保留位置不推进断言。
+- 验证：Renderer R1 focused `3 files/23 tests`；DialogueLayer `14/14`、query purity `2/2`、runtime projection `7/7`；Renderer typecheck/build 均退出码 `0`。
+- 失败证据：生产修复前的真实 Backlog 红灯保留在本台账；R1 当前无未解决测试失败。
+- 下一入口：R2，先为异步 Save/Load 错误传播与 command rail pending/resolve/reject 契约增加红灯。

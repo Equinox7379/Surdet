@@ -349,7 +349,8 @@ describe('DialogueLayer v2 projection contract', () => {
       expect(consumed).toBe(1);
 
       layer.showBacklog([], undefined);
-      const backlogLayer = dialogueRoot.children[7] as Container;
+      const dialogueOverlayRoot = root.children[1] as Container;
+      const backlogLayer = dialogueOverlayRoot.children[0] as Container;
       backlogLayer.emit('pointerdown', {} as FederatedPointerEvent);
       expect(consumed).toBe(2);
     } finally {
@@ -359,7 +360,7 @@ describe('DialogueLayer v2 projection contract', () => {
     }
   });
 
-  it('keeps overlay containers above dialogue text after text is refreshed', () => {
+  it('keeps the real Backlog overlay above dialogue text across repeated projection changes', () => {
     const lifecycle = new RenderLifecycle();
     const assets = new RenderAssetRegistry({ lifecycle });
     const root = new Container();
@@ -370,25 +371,44 @@ describe('DialogueLayer v2 projection contract', () => {
       assets,
       lifecycle,
     });
-    const overlay = new Container();
-
     try {
-      const dialogueRoot = root.children[0] as Container;
+      const contentRoot = root.children[0] as Container;
+      const findBacklogRoot = (): Container | undefined => root.children
+        .filter((child): child is Container => child instanceof Container)
+        .find((candidate) => candidate.children.some((child) => child instanceof Container
+          && child.children.some((entry) => entry instanceof PText && String(entry.text).includes('文字记录'))));
+
       layer.mountTextDisplays();
-      layer.showText(null, '第一句');
-      root.addChild(overlay);
+      layer.showText('凛', '第一句');
+      layer.showBacklog([{ speaker: '凛', text: '记录一' }]);
+      const firstOverlayRoot = findBacklogRoot();
+      expect(firstOverlayRoot).toBeDefined();
+      const firstSpeakerText = contentRoot.children.find((child) => child instanceof PText && String(child.text).includes('凛'));
+      const firstDialogText = contentRoot.children.find((child) => child instanceof PText && String(child.text).includes('第一句'));
+      expect(firstSpeakerText).toBeDefined();
+      expect(firstDialogText).toBeDefined();
+      expect(root.getChildIndex(firstOverlayRoot!)).toBeGreaterThan(root.getChildIndex(contentRoot));
+      expect(layer.debugSnapshot().backlogAboveDialogueText).toBe(true);
 
-      layer.bringTextDisplaysToFront();
-      const firstText = dialogueRoot.children.find((child) => child instanceof PText && child.text === '第一句');
-      expect(firstText).toBeDefined();
-      expect(root.getChildIndex(overlay)).toBeGreaterThan(root.getChildIndex(dialogueRoot));
+      for (let round = 0; round < 3; round += 1) {
+        layer.bringTextDisplaysToFront();
+        layer.showText('凛', `第二句-${round}`);
+        layer.bringTextDisplaysToFront();
+        layer.hideBacklog();
+        layer.showBacklog([{ speaker: '凛', text: `记录-${round}` }]);
+        const overlayRoot = findBacklogRoot();
+        expect(overlayRoot).toBeDefined();
+        expect(root.getChildIndex(overlayRoot!)).toBeGreaterThan(root.getChildIndex(contentRoot));
+        expect(layer.debugSnapshot().backlogAboveDialogueText).toBe(true);
+      }
 
-      layer.showText(null, '第二句');
-      layer.bringTextDisplaysToFront();
-      const secondText = dialogueRoot.children.find((child) => child instanceof PText && child.text === '第二句');
-      expect(secondText).toBeDefined();
-      expect(root.getChildIndex(overlay)).toBeGreaterThan(root.getChildIndex(dialogueRoot));
+      layer.hideBacklog();
+      layer.showBacklog([{ speaker: null, text: '旁白记录' }]);
+      expect(layer.debugSnapshot().backlogAboveDialogueText).toBe(true);
+      layer.reset();
+      layer.reset();
     } finally {
+      layer.dispose();
       layer.dispose();
       assets.dispose();
       lifecycle.dispose();

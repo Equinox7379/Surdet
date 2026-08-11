@@ -424,12 +424,17 @@ async function caseB(session) {
   await session.waitOverlay('system-menu');
   await session.clickTarget('system:backlog');
   await session.waitOverlay('backlog');
-  const backlogPosition = positionKey((await session.snapshot()).position);
+  const backlogState = await session.snapshot();
+  const backlogPosition = positionKey(backlogState.position);
+  if (backlogState.dialogueProjection?.backlogVisible !== true
+    || backlogState.dialogueProjection?.backlogAboveDialogueText !== true) {
+    throw new Error(`真实 Backlog 合成层级未高于对白正文：${JSON.stringify(backlogState.dialogueProjection)}`);
+  }
   await session.press('Space');
   if (positionKey((await session.snapshot()).position) !== backlogPosition) throw new Error('backlog 内 Space 推进了剧情');
   await session.clickTarget('backlog:close');
   await session.waitFor('backlog 关闭', () => window.__surdetDebug?.activeOverlay === null);
-  checks.push({ overlay: 'backlog', position: backlogPosition });
+  checks.push({ overlay: 'backlog', position: backlogPosition, projection: backlogState.dialogueProjection });
 
   await session.press('Escape');
   await session.waitOverlay('system-menu');
