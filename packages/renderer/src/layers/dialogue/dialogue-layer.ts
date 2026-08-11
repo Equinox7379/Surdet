@@ -185,14 +185,14 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
     this.#bannerBars = new Graphics();
-    this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
-    this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: 0x05070d, alpha: 0.85 });
+    this.#bannerBars.rect(0, 0, this.#w, 90).fill({ color: this.#theme.colors.scrim, alpha: 0.85 });
+    this.#bannerBars.rect(0, this.#h - 90, this.#w, 90).fill({ color: this.#theme.colors.scrim, alpha: 0.85 });
     this.#bannerTipBg = new Graphics();
     this.#bannerText = new PText({
       text: '',
       style: {
         fontSize: 40,
-        fill: 0xffffff,
+        fill: this.#theme.colors.text,
         fontWeight: 'normal',
         fontFamily: this.#assets.fontFamily('title'),
       } satisfies TextStyleOptions,
@@ -744,7 +744,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const textNode = new PText({
       text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: 0x333a49, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
     });
     this.#nvlLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
