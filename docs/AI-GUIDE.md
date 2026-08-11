@@ -81,6 +81,35 @@ export async function wireRendererV2(
 
 `commands` 是有副作用的命令，`queries` 必须只读；输入统一调用 `controller.dispatchInput()`。不要在宿主中创建 `PixiStage`、`AdvRenderer` 或 `FrameScheduler`，不要读取 Pixi 对象或 Layer 私有字段。资源通过 `commands.assets` 注册，游戏退出时调用 `runtime.dispose()`，宿主自己创建的 Audio/Blob 资源仍由宿主释放。完整旧 API → v2 domain 映射、错误码和兼容窗口见 [Renderer v2 迁移指南](renderer-v2-migration.md)。
 
+### Player Shell Foundation Wave 3
+
+玩家菜单、覆盖层返回关系、存读档操作状态和输入消费统一交给 `@surdet/host` 的 `PlayerShellController`。新项目不要复制 `systemMenuOpen`、`saveLoadOpen`、`settingsOpen`、`galleryOpen` 或 `onTitleScreen` 等局部真相源，也不要在游戏目录复制 Host 状态机：
+
+```ts
+import {
+  createPlayerShellController,
+  createRendererPlayerShellSlots,
+  createPlayerUiSession,
+} from '@surdet/host';
+import { createRendererTheme } from '@surdet/renderer';
+
+const slots = createRendererPlayerShellSlots({
+  renderer: { commands, queries },
+  views: { title, systemMenu, saveLoad, settings, gallery, backlog },
+});
+const playerShell = createPlayerShellController({
+  slots,
+  session: createPlayerUiSession({ base: 'title' }),
+  onError: reportPlayerShellError,
+});
+
+commands.preferences.setTheme(createRendererTheme({
+  colors: { accent: 0x47c8ff },
+}));
+```
+
+固定六槽必须有完整 defaults，`overrides` 只能覆盖既有槽位；`title`、`game`、`system-menu` 是显式来源，Controller 维护返回栈和父菜单重投影。`save-load` UI 槽与 SaveManager 的数据槽（例如 `1`、`quick`、`auto`）不是同一个概念。稳定错误码包括 `PLAYER_UI_INVALID_TRANSITION`、`PLAYER_SHELL_SOURCE_INVALID`、`PLAYER_SHELL_SLOT_UNKNOWN`、`PLAYER_SHELL_SLOT_DEFAULTS_INVALID` 和 `PLAYER_SHELL_SLOT_FAILED`；Provider 或存读档失败不得静默吞掉。完整接口、真值表和一版兼容窗口见 [Player Shell 迁移指南](player-shell-migration.md)。
+
 ```ts
 const host = createDefaultHost({
   interpreter,

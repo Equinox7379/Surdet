@@ -401,9 +401,9 @@ npm run build -w @surdet/renderer
 - Modify: 本计划
 - Create last: `docs/ENGINE-PLAYER-SHELL-FOUNDATION-WAVE-3-DELIVERY-REPORT-2026-08-11.md`
 
-- [ ] 能力矩阵新增 `player-shell-coordination` 与 `renderer-theme-tokens`，填写真实测试/文档路径；运行 `npm run docs:capabilities` 和 `npm run verify:docs`。
-- [ ] 迁移文档必须含：旧手工编排 → Controller；六槽/default/override；来源返回；Theme override；一版兼容窗口；错误码；“UI 槽不是存档槽”。
-- [ ] 串行执行最终门禁：
+- [x] 能力矩阵新增 `player-shell-coordination` 与 `renderer-theme-tokens`，填写真实测试/文档路径；运行 `npm run docs:capabilities` 和 `npm run verify:docs` 均通过。
+- [x] 迁移文档已覆盖：旧手工编排 → Controller；六槽/default/override；来源返回；Theme override；一版兼容窗口；错误码；“UI 槽不是存档槽”。
+- [x] 串行执行最终门禁：
 
 ```powershell
 npm run test -w @surdet/core
@@ -431,7 +431,7 @@ git diff --check
 git ls-files '*.log'
 ```
 
-- [ ] Expected：全部退出 0；Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误；Electron 错误数组全空。
+- [x] Expected：全部退出 0；Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误；Electron 错误数组全空。
 - [ ] 所有验证结束后才写报告。报告含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
 - [ ] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`。
 - [ ] 报告提交后机器复核：
