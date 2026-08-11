@@ -13,6 +13,7 @@ import type { GalleryItemView } from '../../gallery.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
 
 /** Gallery-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface GalleryLayerOptions {
@@ -112,10 +113,16 @@ export class GalleryLayer implements GalleryProjectionPort {
     };
   }
 
+  themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
+    return readThemeProjection(this.#galleryLayer);
+  }
+
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    const previous = this.#theme;
     this.#theme = theme;
     this.#updateTabStyles();
+    repaintThemeProjection(this.#root, previous, theme);
   }
 
   showGallery(options: {

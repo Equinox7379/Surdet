@@ -1,6 +1,7 @@
 import { Container, Graphics, Text as PText } from 'pixi.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from './theme.js';
+import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from './theme-projection.js';
 
 /**
  * Persistent Pixi loading overlay. The stage owns the layer; callers only
@@ -45,20 +46,20 @@ export class LoadingLayer {
 
   setTheme(theme: RendererTheme): void {
     if (this.#destroyed) return;
+    const previous = this.#theme;
     this.#theme = theme;
+    repaintThemeProjection(this.container, previous, theme);
     this.#background.clear().rect(0, 0, this.#width, this.#height).fill(theme.colors.canvas);
     this.#barTrack.clear().roundRect(0, 0, 760, 16, 8).fill({ color: theme.colors.line, alpha: theme.opacity.surface });
     this.#barFill.clear().roundRect(0, 0, 0, 16, 8).fill(theme.colors.accent);
-    this.#title.style = {
-      ...this.#title.style,
-      fontSize: theme.typography.headingSize,
-      fill: theme.colors.text,
-    };
-    this.#status.style = {
-      ...this.#status.style,
-      fontSize: theme.typography.captionSize,
-      fill: theme.colors.textMuted,
-    };
+    this.#title.style.fontSize = theme.typography.headingSize;
+    this.#title.style.fill = theme.colors.text;
+    this.#status.style.fontSize = theme.typography.captionSize;
+    this.#status.style.fill = theme.colors.textMuted;
+  }
+
+  themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
+    return readThemeProjection(this.container);
   }
 
   show(progress: LoadingProgress): void {

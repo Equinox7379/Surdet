@@ -26,6 +26,7 @@ import {
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
 
 /** Menu-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface MenuLayerOptions {
@@ -170,6 +171,16 @@ export class MenuLayer implements MenuProjectionPort {
     };
   }
 
+  themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
+    return readThemeProjection(
+      this.#titleLayer,
+      this.#endingLayer,
+      this.#menuLayer,
+      this.#settingsLayer,
+      this.#saveLoadLayer,
+    );
+  }
+
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate) handler();
@@ -177,7 +188,9 @@ export class MenuLayer implements MenuProjectionPort {
 
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    const previous = this.#theme;
     this.#theme = theme;
+    repaintThemeProjection(this.#root, previous, theme);
   }
 
   get needsUpdate(): boolean {

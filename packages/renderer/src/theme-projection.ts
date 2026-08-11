@@ -1,0 +1,152 @@
+import { Container, Graphics, Text as PText } from 'pixi.js';
+import type { RendererTheme } from './theme.js';
+
+type ThemeColorKey = keyof RendererTheme['colors'];
+
+export interface LayerThemeProjectionSnapshot {
+  readonly visibleTextFills: readonly number[];
+  readonly visibleGraphicsColors: readonly number[];
+}
+
+const LEGACY_THEME_COLORS: ReadonlyMap<number, ThemeColorKey> = new Map([
+  [0x020409, 'canvas'],
+  [0x060a14, 'canvas'],
+  [0x02060d, 'scrim'],
+  [0x05050a, 'scrim'],
+  [0x081321, 'surface'],
+  [0x0d1526, 'panel'],
+  [0x0b1928, 'surfaceStrong'],
+  [0x79d5e6, 'accentSoft'],
+  [0x5d86a6, 'line'],
+  [0x7ba5bd, 'line'],
+  [0x83b4c5, 'accentSoft'],
+  [0x8a9ab5, 'textMuted'],
+  [0x8a93a8, 'textMuted'],
+  [0x8aa2b5, 'textMuted'],
+  [0x8ba4b9, 'textMuted'],
+  [0x7692a8, 'textMuted'],
+  [0x54748d, 'line'],
+  [0x526b7c, 'textDisabled'],
+  [0x5b7182, 'textDisabled'],
+  [0xdde9f4, 'text'],
+  [0x55555f, 'textDisabled'],
+  [0x5a6478, 'textDisabled'],
+  [0x596274, 'textDisabled'],
+  [0xf1f7ff, 'text'],
+  [0xeaf2fb, 'text'],
+  [0xf2f6ff, 'text'],
+  [0xffffff, 'text'],
+  [0xdddddd, 'text'],
+  [0x1a1a26, 'surfaceStrong'],
+  [0x141c2e, 'surface'],
+  [0x1e1e2c, 'surfaceStrong'],
+  [0x14141a, 'surface'],
+]);
+
+function mapThemeColor(color: number, previous: RendererTheme, next: RendererTheme): number {
+  const currentEntries = Object.entries(previous.colors) as Array<[ThemeColorKey, number]>;
+  const currentToken = currentEntries.find(([, value]) => value === color)?.[0]
+    ?? LEGACY_THEME_COLORS.get(color);
+  return currentToken ? next.colors[currentToken] : color;
+}
+
+function mapThemeNumber(value: number, previous: RendererTheme, next: RendererTheme): number {
+  const groups: Array<readonly [number, number]> = [
+    [previous.typography.titleSize, next.typography.titleSize],
+    [previous.typography.headingSize, next.typography.headingSize],
+    [previous.typography.bodySize, next.typography.bodySize],
+    [previous.typography.uiSize, next.typography.uiSize],
+    [previous.typography.captionSize, next.typography.captionSize],
+    [previous.typography.titleLetterSpacing, next.typography.titleLetterSpacing],
+    [previous.typography.uiLetterSpacing, next.typography.uiLetterSpacing],
+  ];
+  return groups.find(([from]) => from === value)?.[1] ?? value;
+}
+
+function repaintText(text: PText, previous: RendererTheme, next: RendererTheme): void {
+  if (typeof text.style.fill === 'number') {
+    text.style.fill = mapThemeColor(text.style.fill, previous, next);
+  }
+  if (typeof text.style.fontSize === 'number') {
+    text.style.fontSize = mapThemeNumber(text.style.fontSize, previous, next);
+  }
+  if (typeof text.style.letterSpacing === 'number') {
+    text.style.letterSpacing = mapThemeNumber(text.style.letterSpacing, previous, next);
+  }
+  const stroke = text.style.stroke;
+  if (typeof stroke === 'number') {
+    text.style.stroke = mapThemeColor(stroke, previous, next);
+  } else if (stroke && typeof stroke === 'object' && 'color' in stroke && typeof stroke.color === 'number') {
+    text.style.stroke = { ...stroke, color: mapThemeColor(stroke.color, previous, next) };
+  }
+}
+
+function repaintGraphics(graphics: Graphics, previous: RendererTheme, next: RendererTheme): void {
+  const context = graphics.context.clone();
+  let changed = false;
+  for (const instruction of context.instructions) {
+    if (!('data' in instruction) || typeof instruction.data !== 'object' || instruction.data === null) continue;
+    const data = instruction.data as { style?: unknown };
+    if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) continue;
+    const style = data.style as { color?: unknown };
+    if (typeof style.color !== 'number') continue;
+    const color = mapThemeColor(style.color, previous, next);
+    if (color === style.color) continue;
+    style.color = color;
+    changed = true;
+  }
+  if (changed) graphics.context = context;
+}
+
+/**
+ * Repaints already-mounted Player UI display objects without replacing their
+ * containers, listeners, textures, or lifecycle ownership.
+ */
+export function repaintThemeProjection(
+  root: Container,
+  previous: RendererTheme,
+  next: RendererTheme,
+): void {
+  const visit = (node: Container): void => {
+    if (node instanceof PText) repaintText(node, previous, next);
+    if (node instanceof Graphics) repaintGraphics(node, previous, next);
+    for (const child of node.children) {
+      if (child instanceof Container) visit(child);
+    }
+  };
+  visit(root);
+}
+
+/** Read-only semantic evidence derived from the currently visible Pixi tree. */
+export function readThemeProjection(
+  ...roots: readonly Container[]
+): LayerThemeProjectionSnapshot {
+  const visibleTextFills: number[] = [];
+  const visibleGraphicsColors: number[] = [];
+  const visit = (node: Container, parentVisible: boolean): void => {
+    const visible = parentVisible && node.visible;
+    if (!visible) return;
+    if (node instanceof PText && typeof node.style.fill === 'number') {
+      visibleTextFills.push(node.style.fill);
+    }
+    if (node instanceof Graphics) visibleGraphicsColors.push(...graphicsColors(node));
+    for (const child of node.children) {
+      if (child instanceof Container) visit(child, visible);
+    }
+  };
+  for (const root of roots) visit(root, true);
+  return Object.freeze({
+    visibleTextFills: Object.freeze(visibleTextFills),
+    visibleGraphicsColors: Object.freeze(visibleGraphicsColors),
+  });
+}
+
+function graphicsColors(graphics: Graphics): number[] {
+  return graphics.context.instructions.flatMap((instruction) => {
+    if (!('data' in instruction) || typeof instruction.data !== 'object' || instruction.data === null) return [];
+    const data = instruction.data as { style?: unknown };
+    if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) return [];
+    const color = (data.style as { color?: unknown }).color;
+    return typeof color === 'number' ? [color] : [];
+  });
+}

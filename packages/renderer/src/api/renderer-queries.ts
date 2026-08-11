@@ -6,6 +6,7 @@ import type { RenderQuality } from '../quality.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { RendererFontRole } from './renderer-commands.js';
 import type { RendererTheme } from '../theme.js';
+import type { LayerThemeProjectionSnapshot } from '../theme-projection.js';
 
 export interface WorldQueries {
   /** Expensive but read-only visual capture; does not change the visible stage. */
@@ -111,6 +112,16 @@ export interface RendererProjectionSnapshot {
   readonly gallery: GalleryProjectionSnapshot | null;
   readonly system: SystemPanelProjectionSnapshot | null;
   readonly world: WorldProjectionSnapshot | null;
+  /** Real visible Pixi style evidence; contains plain data only. */
+  readonly themeProjection?: RendererThemeProjectionSnapshot;
+}
+
+export interface RendererThemeProjectionSnapshot {
+  readonly dialogue: LayerThemeProjectionSnapshot;
+  readonly menu: LayerThemeProjectionSnapshot;
+  readonly gallery: LayerThemeProjectionSnapshot;
+  readonly system: LayerThemeProjectionSnapshot;
+  readonly loading: LayerThemeProjectionSnapshot;
 }
 
 export interface RendererDiagnosticQueries {
