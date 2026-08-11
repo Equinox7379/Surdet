@@ -5,6 +5,7 @@ import {
   createRendererTheme,
   type RendererThemeOverrides,
 } from '../src/theme.js';
+import { bindThemeTextProjection, repaintThemeProjection } from '../src/theme-projection.js';
 import { DialogueLayer } from '../src/layers/dialogue/dialogue-layer.js';
 import { GalleryLayer } from '../src/layers/gallery/gallery-layer.js';
 import { MenuLayer } from '../src/layers/menu/menu-layer.js';
@@ -77,6 +78,36 @@ function customTheme() {
       textMuted: 0x456789,
       textDisabled: 0x56789a,
       textOnAccent: 0x6789ab,
+    },
+  });
+}
+
+function collisionTheme() {
+  return createRendererTheme({
+    colors: {
+      accent: 0x123456,
+      text: 0x123456,
+      textMuted: 0x234567,
+      textDisabled: 0x234567,
+    },
+    typography: {
+      bodySize: 28,
+      uiSize: 28,
+    },
+  });
+}
+
+function secondCollisionTheme() {
+  return createRendererTheme({
+    colors: {
+      accent: 0x345678,
+      text: 0x345678,
+      textMuted: 0x456789,
+      textDisabled: 0x456789,
+    },
+    typography: {
+      bodySize: 32,
+      uiSize: 32,
     },
   });
 }
@@ -187,6 +218,157 @@ describe('live Pixi player-layer theme projection', () => {
     expect(title.style.fill).toBe(theme.colors.text);
     expect(findGraphicsWithColor(root, theme.colors.accent)).toBeDefined();
     expect(requestFrame).toHaveBeenCalledTimes(frameCount);
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('restores Menu text and accent to their own defaults after a same-value collision', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    layer.showTitle({ title: 'Surdet', items: [{ id: 'start', label: '开始' }] }, vi.fn());
+    const title = findText(root, 'Surdet');
+
+    layer.setTheme(collisionTheme());
+    expect(title.style.fill).toBe(0x123456);
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+
+    expect(title.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    expect(findGraphicsWithColor(root, DEFAULT_RENDERER_THEME.colors.accent)).toBeDefined();
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('restores Gallery text and disabled text after same-value collisions', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new GalleryLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+      createBackgroundTexture: () => Texture.EMPTY,
+    });
+    layer.showGallery({
+      cgs: [
+        { id: 'cg-1', name: '已解锁', unlocked: true },
+        { id: 'cg-2', name: '未解锁', unlocked: false },
+      ],
+      music: [],
+      texts: [],
+    });
+    const unlocked = findText(root, '已解锁');
+    const disabled = findText(root, '???');
+
+    layer.setTheme(collisionTheme());
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+
+    expect(unlocked.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    expect(disabled.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textDisabled);
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
+  it('restores Dialogue and SystemPanel text identities after same-value collisions', () => {
+    const dialogueHarness = makeProjectionHarness();
+    const dialogue = new DialogueLayer({
+      uiLayer: dialogueHarness.root,
+      width: 1280,
+      height: 720,
+      assets: dialogueHarness.assets,
+      lifecycle: dialogueHarness.lifecycle,
+    });
+    class FakeCanvasRenderingContext2D {
+      font = '';
+      letterSpacing = '';
+      textLetterSpacing = '';
+
+      measureText(value: string) {
+        return { width: value.length * 20, actualBoundingBoxAscent: 16, actualBoundingBoxDescent: 4 };
+      }
+    }
+    vi.stubGlobal('CanvasRenderingContext2D', FakeCanvasRenderingContext2D);
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => new FakeCanvasRenderingContext2D() }) });
+    dialogue.mountTextDisplays();
+    dialogue.showText('Lynn', 'Collision dialogue');
+    const dialogueText = findText(dialogueHarness.root, 'Collision dialogue');
+    dialogue.setTheme(collisionTheme());
+    dialogue.setTheme(DEFAULT_RENDERER_THEME);
+    expect(dialogueText.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+
+    const systemHarness = makeProjectionHarness();
+    const system = new SystemPanelLayer({
+      uiLayer: systemHarness.root,
+      width: 1280,
+      height: 720,
+      assets: systemHarness.assets,
+      lifecycle: systemHarness.lifecycle,
+    });
+    system.showBattle({ turn: 1, actingTeam: 'player', finished: false, winner: null, units: [] }, {
+      onAttack: vi.fn(),
+      onPass: vi.fn(),
+    });
+    const heading = findText(systemHarness.root, '回合 1 —— 当前行动：player');
+    system.setTheme(collisionTheme());
+    system.setTheme(DEFAULT_RENDERER_THEME);
+    expect(heading.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+
+    dialogue.dispose();
+    dialogueHarness.assets.dispose();
+    dialogueHarness.lifecycle.dispose();
+    system.dispose();
+    systemHarness.assets.dispose();
+    systemHarness.lifecycle.dispose();
+  });
+
+  it('keeps Loading text and progress identities stable under a same-value collision', () => {
+    const loading = new LoadingLayer(1280, 720);
+    loading.show({ total: 2, completed: 0, failed: 0, done: false, current: 'background' });
+    const title = findText(loading.container, '正在加载资源');
+
+    loading.setTheme(collisionTheme());
+    loading.setTheme(DEFAULT_RENDERER_THEME);
+
+    expect(title.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    expect(findGraphicsWithColor(loading.container, DEFAULT_RENDERER_THEME.colors.accent)).toBeDefined();
+    loading.destroy();
+  });
+
+  it('does not infer typography token identity from equal numeric values', () => {
+    const root = new Container();
+    const text = new PText({ style: { fontSize: DEFAULT_RENDERER_THEME.typography.uiSize, letterSpacing: DEFAULT_RENDERER_THEME.typography.uiLetterSpacing } });
+    bindThemeTextProjection(text, { fontSize: 'uiSize', letterSpacing: 'uiLetterSpacing' });
+    root.addChild(text);
+    const collision = collisionTheme();
+    repaintThemeProjection(root, DEFAULT_RENDERER_THEME, collision);
+    expect(text.style.fontSize).toBe(collision.typography.uiSize);
+    expect(text.style.letterSpacing).toBe(collision.typography.uiLetterSpacing);
+    const second = secondCollisionTheme();
+    repaintThemeProjection(root, collision, second);
+    repaintThemeProjection(root, second, DEFAULT_RENDERER_THEME);
+    expect(text.style.fontSize).toBe(DEFAULT_RENDERER_THEME.typography.uiSize);
+    expect(text.style.letterSpacing).toBe(DEFAULT_RENDERER_THEME.typography.uiLetterSpacing);
+  });
+
+  it('binds objects created while a colliding custom theme is active', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const collision = collisionTheme();
+    const second = secondCollisionTheme();
+    layer.setTheme(collision);
+    layer.showTitle({ title: 'New under collision', items: [{ id: 'start', label: '开始' }] }, vi.fn());
+    const title = findText(root, 'New under collision');
+    const resources = lifecycle.snapshot();
+
+    layer.setTheme(collision);
+    layer.setTheme(collision);
+    layer.setTheme(second);
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+
+    expect(title.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    expect(lifecycle.snapshot()).toEqual(resources);
     layer.dispose();
     assets.dispose();
     lifecycle.dispose();

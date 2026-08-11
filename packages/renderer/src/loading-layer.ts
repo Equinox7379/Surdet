@@ -1,7 +1,13 @@
 import { Container, Graphics, Text as PText } from 'pixi.js';
 import type { LoadingProgress } from './loading-progress.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from './theme.js';
-import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from './theme-projection.js';
+import {
+  bindThemeGraphicsProjection,
+  bindThemeTextProjection,
+  readThemeProjection,
+  repaintThemeProjection,
+  type LayerThemeProjectionSnapshot,
+} from './theme-projection.js';
 
 /**
  * Persistent Pixi loading overlay. The stage owns the layer; callers only
@@ -23,17 +29,20 @@ export class LoadingLayer {
   constructor(width = 1280, height = 720) {
     this.#width = width;
     this.#height = height;
-    this.#background = new Graphics().rect(0, 0, width, height).fill(this.#theme.colors.canvas);
-    this.#barTrack = new Graphics().roundRect(0, 0, 760, 16, 8).fill({ color: this.#theme.colors.line, alpha: this.#theme.opacity.surface });
-    this.#barFill = new Graphics().roundRect(0, 0, 0, 16, 8).fill(this.#theme.colors.accent);
-    this.#title = new PText({
+    this.#background = bindThemeGraphicsProjection(new Graphics().rect(0, 0, width, height).fill(this.#theme.colors.canvas), ['canvas']);
+    this.#barTrack = bindThemeGraphicsProjection(
+      new Graphics().roundRect(0, 0, 760, 16, 8).fill({ color: this.#theme.colors.line, alpha: this.#theme.opacity.surface }),
+      ['line'],
+    );
+    this.#barFill = bindThemeGraphicsProjection(new Graphics().roundRect(0, 0, 0, 16, 8).fill(this.#theme.colors.accent), ['accent']);
+    this.#title = bindThemeTextProjection(new PText({
       text: '正在加载资源',
       style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontFamily: 'sans-serif' },
-    });
-    this.#status = new PText({
+    }), { fill: 'text', fontSize: 'headingSize' });
+    this.#status = bindThemeTextProjection(new PText({
       text: '准备中…',
       style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, fontFamily: 'sans-serif' },
-    });
+    }), { fill: 'textMuted', fontSize: 'captionSize' });
     this.#title.anchor.set(0.5);
     this.#status.anchor.set(0.5);
     this.#barTrack.position.set((width - 760) / 2, height / 2);

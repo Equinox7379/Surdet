@@ -17,7 +17,12 @@ import type {
 import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
-import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
+import {
+  bindThemeTextProjection,
+  readThemeProjection,
+  repaintThemeProjection,
+  type LayerThemeProjectionSnapshot,
+} from '../../theme-projection.js';
 
 type PanelName = 'battle' | 'map' | 'shop' | 'base';
 
@@ -169,10 +174,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#battleUnitCount = view.units.length;
     const layer = this.#battleLayer;
     layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.9 }));
-    layer.addChild(new PText({
+    const heading = bindThemeTextProjection(new PText({
       text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
       style: { fontSize: 26, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
+    }), { fill: 'text' });
+    layer.addChild(heading).position.set(60, 36);
 
     const teams = [...new Set(view.units.map((u) => u.team))];
     teams.forEach((team, ti) => {

@@ -26,7 +26,13 @@ import {
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
-import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
+import {
+  bindThemeGraphicsProjection,
+  bindThemeTextProjection,
+  readThemeProjection,
+  repaintThemeProjection,
+  type LayerThemeProjectionSnapshot,
+} from '../../theme-projection.js';
 
 /** Menu-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface MenuLayerOptions {
@@ -243,7 +249,7 @@ export class MenuLayer implements MenuProjectionPort {
         .stroke({ width: 60, color: this.#theme.colors.canvas, alpha: 0.05 * i });
     }
     layer.addChild(vignette);
-    const title = new PText({
+    const title = bindThemeTextProjection(new PText({
       text: view.title,
       style: {
         fontSize: 58,
@@ -252,13 +258,13 @@ export class MenuLayer implements MenuProjectionPort {
         letterSpacing: 8,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
-    });
+    }), { fill: 'text' });
     title.anchor.set(0.5);
     title.position.set(this.#w / 2, this.#h * 0.28);
     layer.addChild(title);
-    layer.addChild(new Graphics()
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
-      .fill({ color: this.#theme.colors.accent, alpha: 0.55 }));
+      .fill({ color: this.#theme.colors.accent, alpha: 0.55 }), ['accent']));
     if (view.subtitle) {
       const subtitle = new PText({
         text: view.subtitle,
@@ -273,7 +279,7 @@ export class MenuLayer implements MenuProjectionPort {
       const enabled = item.enabled !== false;
       const baseX = this.#w / 2;
       const baseY = startY + i * 52;
-      const label = new PText({
+      const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
           fontSize: 20,
@@ -281,7 +287,7 @@ export class MenuLayer implements MenuProjectionPort {
           letterSpacing: 4,
           fontFamily: this.#fontFamily('ui'),
         } satisfies TextStyleOptions,
-      });
+      }), { fill: enabled ? 'text' : 'textDisabled' });
       label.anchor.set(0.5);
       label.position.set(baseX, baseY);
       if (enabled) {

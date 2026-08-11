@@ -2,6 +2,14 @@ import { Container, Graphics, Text as PText } from 'pixi.js';
 import type { RendererTheme } from './theme.js';
 
 type ThemeColorKey = keyof RendererTheme['colors'];
+type ThemeTypographyKey = keyof RendererTheme['typography'];
+
+export interface ThemeTextProjectionBinding {
+  readonly fill?: ThemeColorKey;
+  readonly stroke?: ThemeColorKey;
+  readonly fontSize?: ThemeTypographyKey;
+  readonly letterSpacing?: ThemeTypographyKey;
+}
 
 export interface LayerThemeProjectionSnapshot {
   readonly visibleTextFills: readonly number[];
@@ -43,14 +51,43 @@ const LEGACY_THEME_COLORS: ReadonlyMap<number, ThemeColorKey> = new Map([
   [0x14141a, 'surface'],
 ]);
 
-function mapThemeColor(color: number, previous: RendererTheme, next: RendererTheme): number {
+const TEXT_BINDINGS = new WeakMap<PText, ThemeTextProjectionBinding>();
+const GRAPHICS_BINDINGS = new WeakMap<Graphics, readonly (ThemeColorKey | null)[]>();
+
+/**
+ * Associates the semantic roles of an existing text object with the object,
+ * rather than recovering them from its current numeric values.  The binding
+ * is renderer-internal and is never returned by a public query.
+ */
+export function bindThemeTextProjection<T extends PText>(
+  text: T,
+  binding: ThemeTextProjectionBinding,
+): T {
+  TEXT_BINDINGS.set(text, Object.freeze({ ...binding }));
+  return text;
+}
+
+/**
+ * Associates the color-bearing Graphics instructions, in instruction order,
+ * with semantic roles. `null` explicitly marks a gameplay/legacy color that
+ * must not be interpreted as a Player UI theme token.
+ */
+export function bindThemeGraphicsProjection<T extends Graphics>(
+  graphics: T,
+  tokens: readonly (ThemeColorKey | null)[],
+): T {
+  GRAPHICS_BINDINGS.set(graphics, Object.freeze([...tokens]));
+  return graphics;
+}
+
+function mapLegacyThemeColor(color: number, previous: RendererTheme, next: RendererTheme): number {
   const currentEntries = Object.entries(previous.colors) as Array<[ThemeColorKey, number]>;
   const currentToken = currentEntries.find(([, value]) => value === color)?.[0]
     ?? LEGACY_THEME_COLORS.get(color);
   return currentToken ? next.colors[currentToken] : color;
 }
 
-function mapThemeNumber(value: number, previous: RendererTheme, next: RendererTheme): number {
+function mapLegacyThemeNumber(value: number, previous: RendererTheme, next: RendererTheme): number {
   const groups: Array<readonly [number, number]> = [
     [previous.typography.titleSize, next.typography.titleSize],
     [previous.typography.headingSize, next.typography.headingSize],
@@ -64,25 +101,35 @@ function mapThemeNumber(value: number, previous: RendererTheme, next: RendererTh
 }
 
 function repaintText(text: PText, previous: RendererTheme, next: RendererTheme): void {
+  const binding = TEXT_BINDINGS.get(text);
   if (typeof text.style.fill === 'number') {
-    text.style.fill = mapThemeColor(text.style.fill, previous, next);
+    text.style.fill = binding?.fill ? next.colors[binding.fill] : mapLegacyThemeColor(text.style.fill, previous, next);
   }
   if (typeof text.style.fontSize === 'number') {
-    text.style.fontSize = mapThemeNumber(text.style.fontSize, previous, next);
+    text.style.fontSize = binding?.fontSize
+      ? next.typography[binding.fontSize]
+      : mapLegacyThemeNumber(text.style.fontSize, previous, next);
   }
   if (typeof text.style.letterSpacing === 'number') {
-    text.style.letterSpacing = mapThemeNumber(text.style.letterSpacing, previous, next);
+    text.style.letterSpacing = binding?.letterSpacing
+      ? next.typography[binding.letterSpacing]
+      : mapLegacyThemeNumber(text.style.letterSpacing, previous, next);
   }
   const stroke = text.style.stroke;
   if (typeof stroke === 'number') {
-    text.style.stroke = mapThemeColor(stroke, previous, next);
+    text.style.stroke = binding?.stroke ? next.colors[binding.stroke] : mapLegacyThemeColor(stroke, previous, next);
   } else if (stroke && typeof stroke === 'object' && 'color' in stroke && typeof stroke.color === 'number') {
-    text.style.stroke = { ...stroke, color: mapThemeColor(stroke.color, previous, next) };
+    text.style.stroke = {
+      ...stroke,
+      color: binding?.stroke ? next.colors[binding.stroke] : mapLegacyThemeColor(stroke.color, previous, next),
+    };
   }
 }
 
 function repaintGraphics(graphics: Graphics, previous: RendererTheme, next: RendererTheme): void {
   const context = graphics.context.clone();
+  const bindings = GRAPHICS_BINDINGS.get(graphics);
+  let colorIndex = 0;
   let changed = false;
   for (const instruction of context.instructions) {
     if (!('data' in instruction) || typeof instruction.data !== 'object' || instruction.data === null) continue;
@@ -90,7 +137,13 @@ function repaintGraphics(graphics: Graphics, previous: RendererTheme, next: Rend
     if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) continue;
     const style = data.style as { color?: unknown };
     if (typeof style.color !== 'number') continue;
-    const color = mapThemeColor(style.color, previous, next);
+    const token = bindings?.[colorIndex] ?? undefined;
+    const color = token === null
+      ? style.color
+      : token
+        ? next.colors[token]
+        : mapLegacyThemeColor(style.color, previous, next);
+    colorIndex += 1;
     if (color === style.color) continue;
     style.color = color;
     changed = true;

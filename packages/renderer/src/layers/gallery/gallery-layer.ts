@@ -13,7 +13,12 @@ import type { GalleryItemView } from '../../gallery.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
-import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
+import {
+  bindThemeTextProjection,
+  readThemeProjection,
+  repaintThemeProjection,
+  type LayerThemeProjectionSnapshot,
+} from '../../theme-projection.js';
 
 /** Gallery-only rendering port. Cross-layer visibility decisions stay in the Facade. */
 export interface GalleryLayerOptions {
@@ -212,10 +217,10 @@ export class GalleryLayer implements GalleryProjectionPort {
       this.#galleryHeader = header;
       layer.addChild(header);
       const mkBtn = (label: string, x: number, width: number, onTap: () => void): PText => {
-        const t = new PText({
+        const t = bindThemeTextProjection(new PText({
           text: label,
           style: { fontSize: 24, fill: this.#theme.colors.textMuted, fontWeight: 'normal' } satisfies TextStyleOptions,
-        });
+        }), { fill: 'textMuted' });
         t.position.set(x, 30);
         // Use a stable logical hit box instead of relying on the rendered glyph
         // bounds, which vary with font loading and can miss a real player click.
@@ -278,12 +283,17 @@ export class GalleryLayer implements GalleryProjectionPort {
           });
         } else {
           cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: this.#theme.colors.surfaceStrong, alpha: 1 }));
-          cell.addChild(new PText({ text: '?', style: { fontSize: 42, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions })).position.set(cw / 2 - 12, ch / 2 - 30);
+          const question = bindThemeTextProjection(
+            new PText({ text: '?', style: { fontSize: 42, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions }),
+            { fill: 'textDisabled' },
+          );
+          cell.addChild(question).position.set(cw / 2 - 12, ch / 2 - 30);
         }
-        cell.addChild(new PText({
+        const itemLabel = bindThemeTextProjection(new PText({
           text: item.unlocked ? item.name : '???',
           style: { fontSize: 18, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        })).position.set(0, ch + 10);
+        }), { fill: item.unlocked ? 'text' : 'textDisabled' });
+        cell.addChild(itemLabel).position.set(0, ch + 10);
         content.addChild(cell);
       });
       this.#registerListener();
@@ -359,6 +369,7 @@ export class GalleryLayer implements GalleryProjectionPort {
         fill: active ? this.#theme.colors.accent : this.#theme.colors.textMuted,
         fontWeight: active ? 'bold' : 'normal',
       } satisfies TextStyleOptions;
+      bindThemeTextProjection(text, { fill: active ? 'accent' : 'textMuted' });
     }
   }
 
