@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PLAYER_SHELL_SLOT_IDS,
+  PlayerShellSlotError,
   createPlayerShellSlotRegistry,
   type PlayerShellOpenRequest,
   type PlayerShellSlotContext,
@@ -68,7 +69,10 @@ describe('PlayerShellController', () => {
       overlay: 'none',
       returnStack: [],
     });
-    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual(['open:gallery', 'close:gallery']);
+    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual([
+      'open:gallery',
+      'close:gallery',
+    ]);
   });
 
   it('coordinates game system-menu/settings with two level return', () => {
@@ -142,7 +146,11 @@ describe('PlayerShellController', () => {
 
     expect(() => controller.commands.close()).toThrow(/PLAYER_SHELL_SLOT_FAILED/);
     expect(controller.queries.snapshot()).toEqual(before);
-    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual(['open:gallery', 'close:gallery']);
+    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual([
+      'open:gallery',
+      'close:gallery',
+      'open:gallery',
+    ]);
   });
 
   it('restores a save/load origin and reports a failed operation once', () => {
@@ -186,3 +194,173 @@ describe('PlayerShellController', () => {
 });
 
 type PlayerShellInitialState = PlayerUiSessionInitialState;
+
+type ProjectionFailure = {
+  readonly slot: PlayerShellSlotId;
+  readonly call: number;
+  readonly cause: Error;
+  readonly afterSideEffect?: boolean;
+};
+
+type ProjectionHarnessOptions = {
+  readonly initial?: PlayerShellInitialState;
+  readonly openFailure?: ProjectionFailure;
+  readonly closeFailure?: ProjectionFailure;
+};
+
+type ProjectionState = {
+  visibleSlot: PlayerShellSlotId | null;
+  visibleRequest: PlayerShellOpenRequest | null;
+  openCalls: Map<PlayerShellSlotId, number>;
+  closeCalls: Map<PlayerShellSlotId, number>;
+};
+
+function makeProjectionHarness(options: ProjectionHarnessOptions = {}) {
+  const state: ProjectionState = {
+    visibleSlot: null,
+    visibleRequest: null,
+    openCalls: new Map(),
+    closeCalls: new Map(),
+  };
+  const providers = Object.fromEntries(PLAYER_SHELL_SLOT_IDS.map((slot) => [slot, {
+    id: `projection-${slot}`,
+    open(request: PlayerShellOpenRequest, _context: PlayerShellSlotContext) {
+      const call = (state.openCalls.get(slot) ?? 0) + 1;
+      state.openCalls.set(slot, call);
+      if (options.openFailure?.slot === slot
+        && options.openFailure.call === call
+        && options.openFailure.afterSideEffect) {
+        state.visibleSlot = slot;
+        state.visibleRequest = request;
+        throw options.openFailure.cause;
+      }
+      if (options.openFailure?.slot === slot
+        && options.openFailure.call === call) {
+        throw options.openFailure.cause;
+      }
+      state.visibleSlot = slot;
+      state.visibleRequest = request;
+    },
+    close() {
+      const call = (state.closeCalls.get(slot) ?? 0) + 1;
+      state.closeCalls.set(slot, call);
+      if (options.closeFailure?.slot === slot
+        && options.closeFailure.call === call
+        && options.closeFailure.afterSideEffect) {
+        state.visibleSlot = null;
+        state.visibleRequest = null;
+        throw options.closeFailure.cause;
+      }
+      if (options.closeFailure?.slot === slot
+        && options.closeFailure.call === call) {
+        throw options.closeFailure.cause;
+      }
+      if (state.visibleSlot === slot) {
+        state.visibleSlot = null;
+        state.visibleRequest = null;
+      }
+    },
+  }])) as Record<PlayerShellSlotId, PlayerShellSlotProvider>;
+  const session = createPlayerUiSession(options.initial ?? { base: 'game' });
+  const slots = createPlayerShellSlotRegistry({ defaults: providers });
+  const controller = createPlayerShellController({ session, slots });
+  return { controller, state };
+}
+
+function thrownError(action: () => void): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected action to throw');
+}
+
+describe('PlayerShellController provider projection atomicity', () => {
+  it('keeps the child projection when child close itself fails', () => {
+    const cause = new Error('settings close failed');
+    const { controller, state } = makeProjectionHarness({
+      closeFailure: { slot: 'settings', call: 1, cause },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const origin = controller.queries.snapshot();
+
+    const error = thrownError(() => controller.commands.close());
+
+    expect(error).toBeInstanceOf(PlayerShellSlotError);
+    expect((error as PlayerShellSlotError).cause).toBe(cause);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('settings');
+  });
+
+  it('compensates a closed child when parent reopen fails and preserves its exact request', () => {
+    const cause = new Error('system menu reopen failed');
+    const { controller, state } = makeProjectionHarness({
+      openFailure: { slot: 'system-menu', call: 2, cause },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'save-load', source: 'system-menu', mode: 'load' });
+    const origin = controller.queries.snapshot();
+
+    const error = thrownError(() => controller.commands.close());
+
+    expect(error).toBeInstanceOf(PlayerShellSlotError);
+    expect((error as PlayerShellSlotError).cause).toBe(cause);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('save-load');
+    expect(state.visibleRequest).toMatchObject({ slot: 'save-load', source: 'system-menu', mode: 'load' });
+
+    controller.commands.close();
+    expect(controller.queries.snapshot().overlay).toBe('system-menu');
+    expect(state.visibleSlot).toBe('system-menu');
+    controller.commands.close();
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', returnStack: [] });
+    expect(state.visibleSlot).toBeNull();
+  });
+
+  it('compensates when parent open performed a side effect before throwing', () => {
+    const cause = new Error('system menu reopen completed then failed');
+    const { controller, state } = makeProjectionHarness({
+      openFailure: { slot: 'system-menu', call: 2, cause, afterSideEffect: true },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const origin = controller.queries.snapshot();
+
+    expect(() => controller.commands.close()).toThrow(/PLAYER_SHELL_SLOT_FAILED/);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('settings');
+  });
+
+  it('keeps title/gallery state consistent on a single-level close failure', () => {
+    const cause = new Error('gallery close failed');
+    const { controller, state } = makeProjectionHarness({
+      initial: { base: 'title' },
+      closeFailure: { slot: 'gallery', call: 1, cause },
+    });
+    controller.commands.open({ slot: 'gallery', source: 'title' });
+    const origin = controller.queries.snapshot();
+
+    const error = thrownError(() => controller.commands.close());
+    expect(error).toBeInstanceOf(PlayerShellSlotError);
+    expect((error as PlayerShellSlotError).cause).toBe(cause);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('gallery');
+  });
+
+  it('returns through a normal nested close and rejects duplicate close without pollution', () => {
+    const { controller, state } = makeProjectionHarness();
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    controller.commands.close();
+    expect(controller.queries.snapshot().overlay).toBe('system-menu');
+    expect(state.visibleSlot).toBe('system-menu');
+    controller.commands.close();
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', returnStack: [] });
+    expect(state.visibleSlot).toBeNull();
+    expect(() => controller.commands.close()).toThrow(/PLAYER_UI_INVALID_TRANSITION/);
+    expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none', returnStack: [] });
+    expect(state.visibleSlot).toBeNull();
+  });
+});
