@@ -6,6 +6,7 @@ import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { GalleryLayer } from '../../src/layers/gallery/gallery-layer.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import { DEFAULT_RENDERER_THEME, createRendererTheme } from '../../src/theme.js';
 import type { GalleryItemView } from '../../src/gallery.js';
 
 const pointerEvent = {} as FederatedPointerEvent;
@@ -70,6 +71,47 @@ function findParentWithText(root: Container, value: string): Container {
   return parent as Container;
 }
 
+function findGraphicsWithColor(root: Container, color: number): Graphics {
+  const colors = (graphics: Graphics): number[] => graphics.context.instructions.flatMap((instruction) => {
+    if (!('data' in instruction) || typeof instruction.data !== 'object' || instruction.data === null) return [];
+    const data = instruction.data as { style?: unknown };
+    if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) return [];
+    const value = (data.style as { color?: unknown }).color;
+    return typeof value === 'number' ? [value] : [];
+  });
+  const visit = (node: Container): Graphics | undefined => {
+    if (node instanceof Graphics && colors(node).includes(color)) return node;
+    for (const child of node.children) {
+      if (child instanceof Container) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const found = visit(root);
+  expect(found, `Pixi Graphics with color 0x${color.toString(16)} should be visible`).toBeDefined();
+  return found as Graphics;
+}
+
+function collisionTheme(color: number) {
+  return createRendererTheme({
+    colors: {
+      canvas: color,
+      panel: color,
+      surface: color,
+      surfaceStrong: color,
+      line: color,
+      accent: color,
+      accentSoft: color,
+      text: color,
+      textMuted: color,
+      textDisabled: color,
+      textOnAccent: color,
+    },
+  });
+}
+
 function exerciseGalleryLayer(layer: GalleryLayer): void {
   layer.showGallery({
     cgs: [{ id: 'cg-1', name: '初遇', unlocked: true, src: 'cg-1' }],
@@ -105,6 +147,83 @@ function makeController(): RendererControllerPort {
 }
 
 describe('GalleryLayer direct contract', () => {
+  it('preserves every real Gallery text and Graphics token through strong collisions', () => {
+    const runtime = makeGalleryRuntime();
+    const collision = collisionTheme(0x123456);
+    const secondCollision = collisionTheme(0x345678);
+
+    const cycleTheme = (): void => {
+      const before = runtime.lifecycle.snapshot();
+      runtime.layer.setTheme(collision);
+      runtime.layer.setTheme(secondCollision);
+      runtime.layer.setTheme(secondCollision);
+      runtime.layer.setTheme(DEFAULT_RENDERER_THEME);
+      expect(runtime.lifecycle.snapshot()).toEqual(before);
+    };
+
+    try {
+      runtime.layer.showGallery({
+        cgs: [
+          { id: 'cg-unlocked', name: '夜景', unlocked: true, src: 'cg-unlocked' },
+          { id: 'cg-locked', name: '未解锁 CG', unlocked: false, src: 'cg-locked' },
+        ],
+        music: [
+          { id: 'music-unlocked', name: '主题曲', unlocked: true, src: 'theme.mp3' },
+          { id: 'music-locked', name: '终章', unlocked: false, src: 'ending.mp3' },
+        ],
+        texts: [
+          { id: 'text-unlocked', name: '第一夜', unlocked: true, scene: 'prologue', label: 'start' },
+          { id: 'text-locked', name: '终夜', unlocked: false, scene: 'ending' },
+        ],
+      });
+      cycleTheme();
+      expect(findText(runtime.root, '夜景').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+      expect(findText(runtime.root, '???').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textDisabled);
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.panel);
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.surfaceStrong);
+
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+      cycleTheme();
+      expect(findParentWithText(runtime.root, '♪  主题曲').children.find((child) => child instanceof PText)).toMatchObject({
+        style: expect.objectContaining({ fill: DEFAULT_RENDERER_THEME.colors.text }),
+      });
+      expect(findParentWithText(runtime.root, '?  ???').children.find((child) => child instanceof PText)).toMatchObject({
+        style: expect.objectContaining({ fill: DEFAULT_RENDERER_THEME.colors.textDisabled }),
+      });
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.panel);
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.surfaceStrong);
+
+      findText(runtime.root, '文本').emit('pointerdown', pointerEvent);
+      cycleTheme();
+      expect(findParentWithText(runtime.root, '❐  第一夜').children.find((child) => child instanceof PText)).toMatchObject({
+        style: expect.objectContaining({ fill: DEFAULT_RENDERER_THEME.colors.text }),
+      });
+      expect(findParentWithText(runtime.root, '?  ???').children.find((child) => child instanceof PText)).toMatchObject({
+        style: expect.objectContaining({ fill: DEFAULT_RENDERER_THEME.colors.textDisabled }),
+      });
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.panel);
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.surfaceStrong);
+
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+      cycleTheme();
+      expect(findText(runtime.root, '暂无音乐条目（gallery.json 未配置）').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
+
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+      findText(runtime.root, '文本').emit('pointerdown', pointerEvent);
+      cycleTheme();
+      expect(findText(runtime.root, '暂无文本回想条目（gallery.json 未配置 texts）').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
+
+      runtime.layer.showGallery({ cgs: [{ id: 'cg-viewer', name: 'viewer', unlocked: true, src: 'cg-viewer' }], music: [], texts: [] });
+      findParentWithText(runtime.root, 'viewer').emit('pointerdown', pointerEvent);
+      cycleTheme();
+      expect(findText(runtime.root, '点击任意处返回列表').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+      findGraphicsWithColor(runtime.root, DEFAULT_RENDERER_THEME.colors.panel);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
   it('projects CG, music, and text tabs from already-filtered view models', () => {
     const runtime = makeGalleryRuntime();
     const onPlayMusic = vi.fn();

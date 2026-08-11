@@ -352,6 +352,13 @@ describe('live Pixi player-layer theme projection', () => {
     expect(text.style.letterSpacing).toBe(DEFAULT_RENDERER_THEME.typography.uiLetterSpacing);
   });
 
+  it('fails closed when a color-bearing object has no semantic or explicit fixed-color binding', () => {
+    const root = new Container();
+    root.addChild(new PText({ text: 'unbound', style: { fill: 0x123456 } }));
+    expect(() => repaintThemeProjection(root, DEFAULT_RENDERER_THEME, collisionTheme()))
+      .toThrow(/theme projection binding audit failed/);
+  });
+
   it('binds objects created while a colliding custom theme is active', () => {
     const { root, lifecycle, assets } = makeProjectionHarness();
     const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });

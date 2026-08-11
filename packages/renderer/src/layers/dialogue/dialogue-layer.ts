@@ -499,13 +499,13 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#clearChoices();
     options.forEach((option, index) => {
       const holder = new Container();
-      const label = new PText({
+      const label = bindThemeTextProjection(new PText({
         text: option.label,
         style: { fontSize: 24, fill: this.#theme.colors.text, letterSpacing: 1 } satisfies TextStyleOptions,
-      });
+      }), { fill: 'text' });
       label.position.set(26, 6);
-      const bg = new Graphics();
-      const bar = new Graphics();
+      const bg = bindThemeGraphicsProjection(new Graphics(), ['textOnAccent', 'line']);
+      const bar = bindThemeGraphicsProjection(new Graphics(), ['line']);
       holder.addChild(bg, bar, label);
       const view = { holder, bg, bar, label };
       this.#choiceViews.push(view);
@@ -575,15 +575,18 @@ export class DialogueLayer implements DialogueProjectionPort {
       });
     }
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.94 }));
-    layer.addChild(new PText({
+    layer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.94 }),
+      ['panel'],
+    ));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
       style: { fontSize: 22, fill: this.#theme.colors.textOnAccent, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 30);
-    layer.addChild(new PText({
+    }), { fill: 'textOnAccent' })).position.set(60, 30);
+    layer.addChild(bindThemeTextProjection(new PText({
       text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
       style: { fontSize: 17, fill: query.trim().length > 0 ? this.#theme.colors.accent : this.#theme.colors.textMuted } satisfies TextStyleOptions,
-    })).position.set(60, 58);
+    }), { fill: query.trim().length > 0 ? 'accent' : 'textMuted' })).position.set(60, 58);
     const entriesLayer = new Container();
     this.#backlogEntriesLayer = entriesLayer;
     const perLine = 40;
@@ -593,14 +596,14 @@ export class DialogueLayer implements DialogueProjectionPort {
       let first = true;
       for (const line of wrapCjk(text, perLine)) {
         const lineText = (first && entry.speaker ? `${entry.speaker}：` : '') + line;
-        const textNode = new PText({
+        const textNode = bindThemeTextProjection(new PText({
           text: first && entry.voice ? `▶ ${lineText}` : lineText,
           style: {
             fontSize: 20,
             fill: first && entry.speaker ? this.#theme.colors.accent : this.#theme.colors.textMuted,
             fontWeight: first && entry.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
-        });
+        }), { fill: first && entry.speaker ? 'accent' : 'textMuted' });
         textNode.position.set(60, 84 + y);
         if (first && entry.voice && onReplayVoice) {
           textNode.eventMode = 'static';
@@ -751,10 +754,10 @@ export class DialogueLayer implements DialogueProjectionPort {
   appendNvlText(speaker: string | null, text: string): void {
     const raw = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
-    const textNode = new PText({
+    const textNode = bindThemeTextProjection(new PText({
       text: wrapped.join('\n'),
       style: { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
-    });
+    }), { fill: 'text' });
     this.#nvlLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
     this.#nvlLineCounts.push(Math.max(1, wrapped.length));
@@ -1025,6 +1028,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     view.label.style = selected
       ? { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
       : { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions;
+    bindThemeTextProjection(view.label, { fill: selected ? 'text' : 'textMuted' });
     const w = view.label.width + 60;
     const h = view.label.height + 16;
     view.bg.clear();
@@ -1084,16 +1088,19 @@ export class DialogueLayer implements DialogueProjectionPort {
     const railW = railPad * 2 + count * slotW + (count - 1) * slotGap;
     const startX = Math.max(12, this.#w - railW - 18);
     const top = this.#h - railH - 10;
-    layer.addChild(new Graphics()
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(startX, top, railW, railH, 5)
       .fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.82 })
-      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.3 }));
+      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.3 }), ['surfaceStrong', 'line']));
 
     this.#commandRailItems.forEach((item, index) => {
       const row = new Container();
       row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
-      const hit = new Graphics().roundRect(0, 0, slotW, railH - 6, 3).fill({ color: 0xffffff, alpha: 0.001 });
-      const icon = new PText({
+      const hit = bindThemeGraphicsProjection(
+        new Graphics().roundRect(0, 0, slotW, railH - 6, 3).fill({ color: 0xffffff, alpha: 0.001 }),
+        [null],
+      );
+      const icon = bindThemeTextProjection(new PText({
         text: item.icon ?? '·',
         style: {
           fontSize: 20,
@@ -1101,10 +1108,10 @@ export class DialogueLayer implements DialogueProjectionPort {
           fontWeight: item.active ? 'bold' : 'normal',
           fontFamily: this.#assets.fontFamily('ui'),
         } satisfies TextStyleOptions,
-      });
+      }), { fill: item.active ? 'line' : 'textMuted' });
       icon.anchor.set(0.5);
       icon.position.set(slotW / 2, (railH - 6) / 2);
-      const label = new PText({
+      const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
           fontSize: 12,
@@ -1112,13 +1119,13 @@ export class DialogueLayer implements DialogueProjectionPort {
           letterSpacing: 1,
           fontFamily: this.#assets.fontFamily('ui'),
         } satisfies TextStyleOptions,
-      });
+      }), { fill: item.enabled === false ? 'textDisabled' : item.active ? 'text' : 'textMuted' });
       label.anchor.set(0.5, 1);
       label.position.set(slotW / 2, -4);
       label.alpha = 0;
-      const underline = new Graphics()
+      const underline = bindThemeGraphicsProjection(new Graphics()
         .rect(10, railH - 8, slotW - 20, 1.5)
-        .fill({ color: this.#theme.colors.line, alpha: item.active ? 0.9 : 0 });
+        .fill({ color: this.#theme.colors.line, alpha: item.active ? 0.9 : 0 }), ['line']);
       row.addChild(hit, icon, label, underline);
       row.alpha = item.enabled === false ? 0.38 : 1;
       if (item.enabled !== false) {
