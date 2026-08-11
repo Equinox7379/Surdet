@@ -25,6 +25,10 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 | `1efd75f1058e6d23fe6ae43fc40578773439e184` | `fix(renderer): complete theme token identity audit` | R1 补齐 Gallery 分支及五层 Layer 显式 token 身份；真实 Gallery 红灯 13 项，焦点主题/Gallery/SystemPanel/Menu/Dialogue 87/87 |
 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a` | `fix(shell): make scene hmr lifecycle assertion deterministic` | R2 资源 owner/key/source/release 台账与确定性 HMR 回归；两次合法、一次非法、一次恢复合法 HMR |
 | `72cfea6c8d14db80e40ce1662090c99b628de747` | `docs(engine): record wave 3 final remediation diagnostics` | R3 三份文档完成主题/HMR事实修正并归档 |
+| `ba598386e02a7df06deffc4df82d3a0cda695f53` | `docs(engine): finalize wave 3 remediation delivery` | R4 最终整改报告归档 |
+| `7d53eeadd0bb3586111508d87458005cbc419fa0` | `docs(engine): close wave 3 execution ledger` | R4 执行台账收口 |
+| `fbf08a0cd898ed372797a7ebcdc5c444d86a471e` | `docs(engine): record wave 3 ledger close` | R4 补记 Wave 3 台账关闭事实 |
+| `fb94389b846faf18f47cf6d76ffc94673f3eabf2` | `docs(engine): normalize wave 3 ledger hash` | R4 台账哈希规范化 |
 
 R4 最终代码下 Renderer 为 48 文件 / 384 tests，Host 为 8 文件 / 70 tests，Starter 为 4 文件 / 7 tests；R4 当前 Wave 3 A–F 和 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。历史两轮 Wave 3 与历史成功 Wave 2 artifact 继续保留为可复核证据。Wave 3 artifact：
 
@@ -39,11 +43,21 @@ Wave 2 artifact：
 
 此前同会话的 `K...` 临时证据在 case I 启动时以 `3221226505` 终止，未生成完整 JSON，未被删除；不能把该失败隐藏或改写成通过。
 
-错误台账严格按 artifact schema 的可观测字段记录：R4 当前 Wave 3 artifact 顶层不包含数值型 `expectedRendererErrors` 或错误数组字段，A–F 每个 case 均为 `ok=true`；场景 C 的 expected save-reject 仍在测试脚本/日志中单独记账。历史 Wave 3 两轮明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，来自场景 C 注入 save reject。R4 当前 Wave 2 artifact 的可观测 page/console/request/unhandled/unexpectedWindowClosed 全部为 0；旧 schema 未输出 releaseFailures/expectedRendererErrors，缺失字段不写成数值 0。
+错误台账严格按 artifact schema 的可观测字段记录：R4 当前 Wave 3 artifact 为 `schemaVersion=1`，顶层没有 `expectedRendererErrors` 汇总字段，但每个 `case.events` 都包含错误数组；case C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其他 case 两项均为 0。全部 case 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 均为 0，`unexpectedWindowClosed=false`。历史 Wave 3 两轮明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，来自场景 C 注入 save reject。R4 当前 Wave 2 artifact 的旧 schema 确实缺少 `releaseFailures`/`expectedRendererErrors`，这些字段按“未观测”记录，不能冒充 0。
 
 旧的 `verify:all` exit code 1 与 `listeners: 4 → 3` 已作为历史证据保留；R4 已在 R3 文档提交之后重新执行并取得 `verify:all` exit code 0，HMR 聚焦 1/1。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
 
-R3 文档提交后的机器复核：HEAD `72cfea6c8d14db80e40ce1662090c99b628de747`，`HEAD...surdet/main = 41 0`；R4 门禁在该提交之后执行并通过。最终文档提交后的真实 HEAD、报告字节数和 SHA-256 以最终机器输出为准，不在报告内伪造自引用摘要。
+R3 文档提交后的机器复核：HEAD `72cfea6c8d14db80e40ce1662090c99b628de747`，`HEAD...surdet/main = 41 0`；R4 门禁在该提交之后执行并通过。`ba598386`、`7d53eead`、`fbf08a0c` 和 `fb94389b` 构成随后报告/台账闭环；最终文档提交后的真实 HEAD、报告字节数和 SHA-256 以最终机器输出为准，不在报告内伪造自引用摘要。
+
+### 1.1 诊断设施最终微型收口（F1–F3）
+
+本轮只处理 RenderLifecycle 诊断历史、resourceLedger 公开只读合同和三份 artifact 台账文档；不得据此重新解释为 M9、性能工作或玩家功能变更。
+
+| 项目 | 修复前红灯 | 修复后绿灯 | 提交 |
+| --- | --- | --- | --- |
+| F1 RenderLifecycle 事件历史 | 生命周期聚焦套件 9 项中 2 项失败：2048 次注册/释放后 events=4097；replacement 没有新资源 `register/replace` 事件 | 1024 容量环形缓冲保留最新事件并淘汰最旧事件；active identity、replacement 双侧事件、forget/release/releaseOwner/dispose 和 failure cause 保留；9/9 通过 | `cff8691105523cf1edd8f23598808a6d31d50417` |
+| F2 resourceLedger | query-purity 套件 3 项中 1 项失败：返回 ledger 根对象未冻结 | Facade 返回独立深克隆、递归冻结的普通数据；根/数组/entry/event 均不可写；查询纯度与 Renderer typecheck 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
+| F3 artifact 台账 | 当前 Wave 3 artifact 被错误描述为没有错误数组字段 | 已按真实 artifact 更正：顶层无 `expectedRendererErrors` 汇总字段，但每个 `case.events` 有错误数组；C 为 2/1，其他 case 为 0/0；所有错误/窗口关闭字段为 0/false；Wave 2 旧 schema 缺失字段仍不冒充 0 | 本文档、Final Remediation Report、Execution Plan 的本轮普通文档提交 |
 
 最终状态：
 

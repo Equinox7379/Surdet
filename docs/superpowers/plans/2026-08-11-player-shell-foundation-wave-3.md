@@ -383,7 +383,7 @@ npm run build -w @surdet/renderer
   - D load success → title：不恢复旧 menu，无 release failure。
   - E 不提供 override：六槽仍有默认 Provider，`overridden=false`。
   - F 测试 accent 同步到五类 Layer，再恢复默认；资源计数不增长。
-- [x] artifact 固定含 `schemaVersion/status/formalGame/isolation/cases`、PlayerShell snapshot、binding snapshot、Renderer projection/resource、page/console/request/unhandled/release 数组；失败也落盘且退出非零。
+- [x] artifact 固定含 `schemaVersion/status/formalGame/isolation/cases`、PlayerShell snapshot、binding snapshot、Renderer projection/resource 和每案事件台账；当前 Wave 3 artifact 为 `schemaVersion=1`，顶层没有 `expectedRendererErrors` 汇总字段，但每个 `case.events` 都有错误数组。case C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其他 case 两项均为 0；全部 case 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 均为 0，`unexpectedWindowClosed=false`。失败也落盘且退出非零。
 - [x] npm 命令：`"e2e:player-shell-wave-3": "node e2e/player-shell-wave-3.e2e.mjs"`。
 - [x] 先 smoke，再跑两轮 Wave 3；各 A–F 6/6，正式路径为 `E:\\surdet\\examples\\zero-after-midnight\\dist`；Task 7 的历史 artifact 仍保留在本行；最终微型收口后的两轮 artifact、字节、SHA 和错误台账见下方“当前微型收口持久化台账”，不覆盖历史证据。
 - [x] 再跑 `npm run e2e:player-experience -w @surdet/shell`，Wave 2 A–I 9/9；artifact `<local-path>`（729483，`cabe7851959283ef08f2fdd35e20622e861cc3e0aa2b85cad04305f43be654c4`）。旧 Wave 2 B 断言已按已冻结的 settings → system-menu → game 返回合同更新。
@@ -432,7 +432,7 @@ git diff --check
 git ls-files '*.log'
 ```
 
-- [x] Expected：Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误。Electron 错误台账按 unexpected/expected 分类：Wave 3 两轮 unexpected page/console/request/unhandled/release/window-close errors 均为 0；每轮 expected injected Renderer errors = 1，唯一来自场景 C 的 save reject 注入与 retry success 验证。旧 Starter Vite HMR `listeners: 4 → 3` 已在第三次最终限定整改中完成 owner/key 诊断与确定性回归，R4 必须在最终 HEAD 上重新确认根级 `verify:all` 为 0。
+- [x] Expected：Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误。历史 Wave 3 两轮的 unexpected page/console/request/unhandled/release/window-close errors 均为 0，每轮 expected injected Renderer errors = 1、expectedErrors = 2，来自场景 C 的 save reject 注入与 retry success 验证。R4 当前 Wave 3 artifact 的真实台账改为：顶层无 `expectedRendererErrors` 汇总字段，但每个 `case.events` 有错误数组；C 为 2/1，其他 case 为 0/0，全部 page/console/request/unhandled/release 为 0 且 `unexpectedWindowClosed=false`。Wave 2 旧 schema 缺少 `releaseFailures`/`expectedRendererErrors`，按未观测记录。旧 Starter Vite HMR `listeners: 4 → 3` 已在第三次最终限定整改中完成 owner/key 诊断与确定性回归，R4 必须在最终 HEAD 上重新确认根级 `verify:all` 为 0。
 - [x] 所有验证结束后才写报告。报告已含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
 - [x] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`（最终报告归档提交）。
 - [x] 报告提交后机器复核：
@@ -512,7 +512,7 @@ WAITING_FOR_REVIEW
 | 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
 | 6 | Host/Starter/Zero/CLI 聚焦红灯已保留：Host 3/3 因 `createRendererPlayerShellSlots is not a function` 失败；Starter 2/2、Zero 新接线断言、CLI scaffold 断言分别因公共 Controller/helper/Theme 接线不存在而失败；其余既有 Zero 22 项通过 | Host 全量 8 文件 49/49；Starter 全量 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 86/86、typecheck/build；Host typecheck/build；Renderer-backed helper 只依赖 public commands/queries 并内部唯一创建固定六槽 Registry；`git diff --check` 通过 | `8032f1e24b5c4ecbcf88823f74686f408043b814` | implemented |
 | 7 | 契约红灯 3 项失败（脚本/命令/正式路径约束尚未存在）；首轮正式 A–F 为 5/6，B 在 settings 关闭后暴露真实父 system-menu 未重新投影；新增 Host 回归在修复前收到 `open:system-menu, open:settings, close:settings`，缺少父槽位 `open:system-menu`；旧 Wave 2 B 断言也因新返回合同暂时失败 | Host 全量 8 文件 50/50；Host typecheck；Shell 契约 3/3、Shell typecheck；最终 smoke 1/1；Wave 3 两轮各 A–F 6/6，正式 Zero dist、每案独立 Electron/userData；unexpected page/console/request/unhandled/release errors 均为 0，expected injected Renderer errors = 1 per run（仅来自场景 C save reject 注入后的 retry success）；Wave 2 A–I 9/9；`git diff --check` 通过；tracked logs 为空。Controller 关闭嵌套 overlay 后按返回栈重新投影父槽，E2E 使用真实 requestAnimationFrame 等待呈现动画完成；artifact 路径/字节/SHA 已写入本行 | `35b3009934b34a5683036eb412e5e0cb2940a1cd` | implemented |
-| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | 历史 Task 8 证据保留；第三次最终限定整改后的 R4 事实见下方 R1–R4 台账：Renderer 48/384、Host 8/70、Starter 4/7、Starter HMR 1/1、Wave 3 当前 A–F 6/6、Wave 2 当前 A–I 9/9、Zero 专项和 `npm run verify:all` exit 0；旧的 `listeners: 4 → 3` 与 verify:all exit 1 仅为历史证据 | `54c440b`（历史 Task 8 文档提交）；微型收口文档提交 `c7ec48a` |
+| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | 历史 Task 8 证据保留；第三次最终限定整改后的 R4 事实见下方 R1–R4 台账：Renderer 48/384、Host 8/70、Starter 4/7、Starter HMR 1/1、Wave 3 当前 A–F 6/6、Wave 2 当前 A–I 9/9、Zero 专项和 `npm run verify:all` exit 0；当前 artifact 错误数组与 C=2/1 台账见本行上方；旧的 `listeners: 4 → 3` 与 verify:all exit 1 仅为历史证据 | `54c440b`（历史 Task 8 文档提交）；微型收口文档提交 `c7ec48a` |
 
 ### 当前微型收口持久化台账（S1 / S2 / D1）
 
@@ -529,4 +529,12 @@ WAITING_FOR_REVIEW
 | R1 Theme token identity | 真实 Gallery music/text/CG 分支在强碰撞主题恢复后出现错误 `PText.style.fill`；首轮直接回归 13 项失败；未绑定对象的 numeric fallback 无法区分 `textMuted`/`textDisabled` | Gallery unlocked/locked/empty/CG viewer 分支、collision→secondCollision→default、重复主题和资源计数回归已通过；Menu/Dialogue/Gallery/SystemPanel/Loading 完成显式 token/固定色审计，并加入 fail-closed binding assertion；焦点 5 文件 87/87 | `1efd75f1058e6d23fe6ae43fc40578773439e184`；已提交 |
 | R2 Starter Vite HMR | 原测试在当前 R1 HEAD 复现 `initial listeners=4 → after valid HMR=3`；隔离基线 `4e0e752` 与当前使用相同工具链，诊断确认消失项为 `menu/listener/title` | 资源台账现记录 owner/kind/key/source 和 release/dispose path；启动等待 `assetLoading.done` 后，HMR 回归 1/1，覆盖两次合法、一次非法、一次恢复合法编辑；长期 listener 集合固定为 `dialogue:command-rail-pointer`、`runtime:core-events`、`runtime:presentation-controller`；无导航、session/resource IDs 和资源计数稳定 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a`；已提交 |
 | R3 文档修正 | 旧报告仍把五层 Theme 结论写得过满，并把 HMR 当作基线例外 | 本计划、Delivery Report、Final Remediation Report 已改为 R1/R2 实际证据；R3 普通提交为 `72cfea6c8d14db80e40ce1662090c99b628de747` | `72cfea6c8d14db80e40ce1662090c99b628de747`；已提交 |
-| R4 最终门禁 | R3 提交前的历史门禁曾有 Starter HMR `4 → 3` / verify:all exit 1；该失败证据保留 | R4 在 R3 HEAD 后完成：Renderer 48/384、Host 8/70、Starter 4/7、HMR 1/1、Renderer/Host/Starter/Zero typecheck/build、边界/工具/文档/卫生、正式 Zero 门禁、Wave 3 当前 A–F 6/6、Wave 2 当前 A–I 9/9、`npm run verify:all` exit 0、tracked logs 为空；停止 WAITING_FOR_REVIEW | 报告归档：`ba598386e02a7df06deffc4df82d3a0cda695f53`；台账收口：`7d53eeadd0bb3586111508d87458005cbc419fa0` |
+| R4 最终门禁 | R3 提交前的历史门禁曾有 Starter HMR `4 → 3` / verify:all exit 1；该失败证据保留 | R4 在 R3 HEAD 后完成：Renderer 48/384、Host 8/70、Starter 4/7、HMR 1/1、Renderer/Host/Starter/Zero typecheck/build、边界/工具/文档/卫生、正式 Zero 门禁、Wave 3 当前 A–F 6/6、Wave 2 当前 A–I 9/9、`npm run verify:all` exit 0、tracked logs 为空；当前 Wave 3 artifact 顶层无 `expectedRendererErrors` 汇总字段但每案 `case.events` 有错误数组，C 为 2/1、其余 0/0；停止 WAITING_FOR_REVIEW | 报告归档：`ba598386e02a7df06deffc4df82d3a0cda695f53`；台账收口：`7d53eeadd0bb3586111508d87458005cbc419fa0` |
+
+### 诊断设施最终微型收口台账（F1–F3）
+
+| 阶段 | 红灯证据 | 绿灯/最终事实 | 提交与入口 |
+| --- | --- | --- | --- |
+| F1 RenderLifecycle 诊断历史 | 生命周期聚焦套件 9 项中 2 项失败：2048 次注册/释放后 events=4097；replacement 缺少新资源 `register/replace` 事件 | 1024 容量环形缓冲保留最新事件、淘汰最旧事件；active owner/kind/key/source、replacement 双侧事件、forget/release/releaseOwner/dispose/failure cause 保留；9/9 通过 | `cff8691105523cf1edd8f23598808a6d31d50417`；已提交 |
+| F2 resourceLedger 只读合同 | query-purity 套件 3 项中 1 项失败：Facade 返回的 ledger 根对象未冻结 | `resourceLedger` 为独立深克隆、递归冻结的普通数据；根/数组/entry/event 均不可写；查询纯度和 Renderer typecheck 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c`；已提交 |
+| F3 artifact 台账 | 三份文档把当前 Wave 3 artifact 错写为不输出错误数组 | 真实 artifact `schemaVersion=1`；顶层无 `expectedRendererErrors` 汇总字段但每个 `case.events` 有错误数组；C `expectedErrors=2`、`expectedRendererErrors=1`，其他 case 为 0/0；所有 page/console/request/unhandled/release 为 0、`unexpectedWindowClosed=false`；Wave 2 旧 schema 缺失字段仍按未观测记录 | 本计划、两份报告以本轮普通文档提交归档；此前遗漏的 `fbf08a0cd898ed372797a7ebcdc5c444d86a471e` 已纳入完整提交链 |
