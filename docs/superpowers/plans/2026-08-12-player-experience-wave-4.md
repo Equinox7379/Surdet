@@ -931,7 +931,7 @@ git diff --cached --check
 git commit -m "docs(engine): report player experience wave 4"
 ```
 
-- [ ] **Step 7: 在最终 HEAD 再跑一次总门禁**
+- [x] **Step 7: 在最终 HEAD 再跑一次总门禁**
 
 ```powershell
 npm run verify:all
@@ -944,7 +944,7 @@ git rev-list --left-right --count HEAD...surdet/main
 
 最终 `git status --short` 只能是四个受保护未跟踪文件。若报告提交改变了门禁输入，必须以这次最终运行作为权威结果。
 
-- [ ] **Step 8: 停止，不 push**
+- [x] **Step 8: 停止，不 push**
 
 最终状态必须写为：
 
@@ -1178,3 +1178,6 @@ WAITING_FOR_REVIEW
 - Task 9 Step 4 已完成且全部 exit `0`：`npm run verify:renderer-boundaries` → 3/3；`npm run verify:renderer-legacy` → 4/4；`npm run verify:tools` → 10/10；`npm run verify:hygiene` → tracked 616 paths；`npm run verify:all` → exit `0`，包含 docs/hygiene/types/workspace tests/formal/editor/starter/Zero/build/diff-check 等步骤；显式 `git diff --check` → exit `0`；显式 tracked log 检查 → `tracked-log-count=0`。下一入口：Task 9 Step 5，编写真实交付报告。
 - Task 9 Step 5 已真实创建权威报告：`E:\surdet\docs\ENGINE-PLAYER-EXPERIENCE-WAVE-4-DELIVERY-REPORT-2026-08-12.md`；初始版本字节数=`18082`、SHA-256=`AD8632D8BF8F043CC1E0B09FE80EA2555C197F59C53B751B08CD2A27CDD77C52`。报告以 `38e8a62be9429bcdcf3255dbcb49da51a58c69ab` 为报告前最终代码 HEAD，明确列出 G1–G6 红绿证据、正式 Zero 身份、两份 corrected A–J artifact、历史失败轮次、全量门禁和保护边界。
 - Task 9 Step 6 首次普通文档提交为 `64cac1a25f4e6156cd598f97fed578fd3f88ecb8`；提交前 `git diff --cached --check` 发现报告开头三处 Markdown 尾随空格。未 amend，已在工作树移除尾随空格；修正后报告字节数=`18076`、SHA-256=`907FB88394569EA58B4D39E252320960BCFDF1D71BCEE59588B9004A07F93877`。本次将以新的普通文档提交收口，并在其后执行 Task 9 Step 7 最终门禁。
+- Task 9 Step 6 收口提交：`27fe2362f7d5a651f96d48be6469bb4634ce7311` — `docs(engine): normalize wave 4 delivery records`；报告与计划台账已提交，四个受保护文件未暂存。
+- Task 9 Step 7 在该提交上完成：`npm run verify:all` exit `0`；`git diff --check` exit `0`；`git ls-files '*.log'` 为 `0`；`git status --short` 仅四个受保护未跟踪文件；`git rev-list --left-right --count HEAD...surdet/main` 为 `12 0`；报告 bytes=`18076`、SHA-256=`907FB88394569EA58B4D39E252320960BCFDF1D71BCEE59588B9004A07F93877`。下一步只需把本台账的完成状态提交为普通文档提交，再在该真实最终 HEAD 重跑一次 `verify:all` 并停止。
+- Task 9 Step 8：不 push，保持 `WAITING_FOR_REVIEW`；不进入 M9、不做性能/发行/部署。
