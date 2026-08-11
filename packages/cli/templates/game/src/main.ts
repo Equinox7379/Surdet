@@ -19,18 +19,20 @@ import {
   RollbackBuffer,
   actionForKeyboardEvent,
   createRendererRuntime,
+  createRendererTheme,
   decideSceneHotReload,
   rendererInputForGameAction,
 } from '@surdet/renderer';
 import type { AssetLoadJob, AssetPriority, GameAction } from '@surdet/renderer';
 import {
-  PlayerInputGate,
-  canAdvance,
   connectSystemRouter,
   createDefaultHost,
+  createPlayerShellController,
+  createRendererPlayerShellSlots,
   createPlayerUiSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
+import type { PlayerShellController } from '@surdet/host';
 import gameConfig from '../game.config.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
@@ -54,12 +56,12 @@ async function main(): Promise<void> {
   const interp = new Interpreter(store, bus, registry);
   const audio = new AudioManager();
   const playerUiSession = createPlayerUiSession({ base: 'game' });
-  const inputGate = new PlayerInputGate();
+  let playerShell: PlayerShellController | null = null;
   const runtime = await createRendererRuntime({
     audio,
     onAdvance: () => interp.advance(),
     onSelect: (index) => interp.choose(index),
-    onPointerConsumed: () => inputGate.consumeCurrentPointer(),
+    onPointerConsumed: () => playerShell?.commands.consumePointer(),
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
@@ -71,6 +73,31 @@ async function main(): Promise<void> {
   const assets = commands.assets;
   const loading = commands.loading;
   const presentation = commands.presentation;
+  const slots = createRendererPlayerShellSlots({
+    renderer: { commands, queries },
+    views: {
+      title: () => ({
+        view: { title: gameConfig.title ?? 'Surdet Game', items: [] },
+        onSelect: () => undefined,
+      }),
+      systemMenu: () => ({ items: [], onSelect: () => undefined, onClose: () => undefined }),
+      saveLoad: (request) => ({
+        view: { mode: request.mode, slots: [] },
+        onSelect: async () => false,
+        onClose: () => undefined,
+        options: { completion: 'host-transaction' as const },
+      }),
+      settings: () => ({ rows: [], onChange: () => undefined, onClose: () => undefined }),
+      gallery: () => ({ cgs: [], music: [], texts: [], onClose: () => undefined }),
+      backlog: () => ({ entries: [] }),
+    },
+  });
+  playerShell = createPlayerShellController({
+    slots,
+    session: playerUiSession,
+    onError: (error) => console.error('[game] player shell operation failed:', error),
+  });
+  commands.preferences.setTheme(createRendererTheme());
   controller.connect(bus);
   interp.setPresentationHooks({
     snapshot: () => queries.presentation.snapshot(),
@@ -168,7 +195,7 @@ async function main(): Promise<void> {
   });
 
   runtime.canvas.addEventListener('pointerdown', (event) => {
-    const decision = inputGate.decidePointer(playerUiSession.snapshot(), event);
+    const decision = playerShell!.decidePointer(event);
     if (decision === 'restore-interface') {
       if (shouldRestoreInterfaceOnPointer(playerUiSession.snapshot())) {
         playerUiSession.setInterfaceHidden(false);
@@ -176,7 +203,7 @@ async function main(): Promise<void> {
       }
       return;
     }
-    if (decision === 'advance' && canAdvance(playerUiSession.snapshot())) controller.advance();
+    if (decision === 'advance' && playerShell!.queries.canAdvance()) controller.advance();
   });
 
   const saveStorage: SaveStorage = {

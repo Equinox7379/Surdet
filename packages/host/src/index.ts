@@ -56,6 +56,12 @@ export type {
   PlayerShellControllerOptions,
   PlayerShellQueries,
 } from './player-shell-controller.js';
+export { createRendererPlayerShellSlots } from './renderer-player-shell-slots.js';
+export type {
+  RendererPlayerShellRenderer,
+  RendererPlayerShellSlotsOptions,
+  RendererPlayerShellViews,
+} from './renderer-player-shell-slots.js';
 export {
   assertProfileKey,
   LocalStorageProfileStorage,
