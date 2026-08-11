@@ -24,19 +24,26 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 | `c7ec48abc22149f20b12e7b4973280d6a66f4443` | `docs(engine): record wave 3 micro remediation` | 三份报告/计划台账完成 D1 修正并归档（历史） |
 | `1efd75f1058e6d23fe6ae43fc40578773439e184` | `fix(renderer): complete theme token identity audit` | R1 补齐 Gallery 分支及五层 Layer 显式 token 身份；真实 Gallery 红灯 13 项，焦点主题/Gallery/SystemPanel/Menu/Dialogue 87/87 |
 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a` | `fix(shell): make scene hmr lifecycle assertion deterministic` | R2 资源 owner/key/source/release 台账与确定性 HMR 回归；两次合法、一次非法、一次恢复合法 HMR |
+| `72cfea6c8d14db80e40ce1662090c99b628de747` | `docs(engine): record wave 3 final remediation diagnostics` | R3 三份文档完成主题/HMR事实修正并归档 |
 
-最终代码下 Renderer 为 48 文件 / 381 tests，Host 为 8 文件 / 70 tests；两轮 Wave 3 A–F 和一轮成功的 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。Wave 3 最终 artifact：
+R4 最终代码下 Renderer 为 48 文件 / 384 tests，Host 为 8 文件 / 70 tests，Starter 为 4 文件 / 7 tests；R4 当前 Wave 3 A–F 和 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。历史两轮 Wave 3 与历史成功 Wave 2 artifact 继续保留为可复核证据。Wave 3 artifact：
 
+- `<local-path>`：77,835 bytes，`B0AB3B65125DA3DFABF7FC97CEEDAA8663D71D9F2C5D71FAC034FDC804B0587B`，R4 当前 A–F 6/6；
 - `<local-path>`：77,835 bytes，`ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC`，A–F 6/6；
 - `<local-path>`：77,835 bytes，`D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D`，A–F 6/6。
 
-Wave 2 最终成功 artifact 为 `<local-path>`：743,880 bytes，`F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39`，A–I 9/9。此前同会话的 `K...` 临时证据在 case I 启动时以 `3221226505` 终止，未生成完整 JSON，未被删除；不能把该失败隐藏或改写成通过。
+Wave 2 artifact：
 
-错误台账按 artifact 能观测字段记录：Wave 3 两轮的 unexpected page/console/request/unhandled/release/window-close 均为 0；每轮 `expectedRendererErrors = 1`（`expectedErrors = 2`，来自场景 C 注入 save reject）。Wave 2 成功 artifact 的 A–I 9/9 及 page/console/request/unhandled/window-close 均为 0；该旧脚本未输出 releaseFailures/expectedRendererErrors 字段，不将缺失字段冒充为数值 0。
+- R4 当前成功 artifact：`<local-path>`：712,416 bytes，`BDCCB87EC1A9D8408E4894D0B4C5E1EFB9CCEE9F50AAEDEAE77E27DA26036ABB`，A–I 9/9；
+- 历史成功 artifact：`<local-path>`：743,880 bytes，`F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39`，A–I 9/9。
 
-旧的 `verify:all` exit code 1 与 `listeners: 4 → 3` 已作为历史证据保留；R2 已关闭该门禁例外，最终 R4 必须在最终 HEAD 上重新执行并以真实 exit code 0 为交付条件。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
+此前同会话的 `K...` 临时证据在 case I 启动时以 `3221226505` 终止，未生成完整 JSON，未被删除；不能把该失败隐藏或改写成通过。
 
-R2 实现/测试提交后的机器复核：HEAD `a38443bdf6ffdc4de0027286999832c3c6d9f13a`，`HEAD...surdet/main = 40 0`；工作树仍只有四个受保护未跟踪文件，`git diff --check` 通过，tracked logs 为空。R3/R4 文档提交后的真实 HEAD、报告字节数和 SHA-256 以最终机器输出为准，不在报告内伪造自引用摘要。
+错误台账严格按 artifact schema 的可观测字段记录：R4 当前 Wave 3 artifact 顶层不包含数值型 `expectedRendererErrors` 或错误数组字段，A–F 每个 case 均为 `ok=true`；场景 C 的 expected save-reject 仍在测试脚本/日志中单独记账。历史 Wave 3 两轮明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，来自场景 C 注入 save reject。R4 当前 Wave 2 artifact 的可观测 page/console/request/unhandled/unexpectedWindowClosed 全部为 0；旧 schema 未输出 releaseFailures/expectedRendererErrors，缺失字段不写成数值 0。
+
+旧的 `verify:all` exit code 1 与 `listeners: 4 → 3` 已作为历史证据保留；R4 已在 R3 文档提交之后重新执行并取得 `verify:all` exit code 0，HMR 聚焦 1/1。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
+
+R3 文档提交后的机器复核：HEAD `72cfea6c8d14db80e40ce1662090c99b628de747`，`HEAD...surdet/main = 41 0`；R4 门禁在该提交之后执行并通过。最终文档提交后的真实 HEAD、报告字节数和 SHA-256 以最终机器输出为准，不在报告内伪造自引用摘要。
 
 最终状态：
 
@@ -181,21 +188,21 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 | --- | --- |
 | `npm run docs:capabilities` / `npm run verify:docs` | PASS |
 | Core | 23 文件 / 304 tests PASS |
-| Renderer | 48 文件 / 381 tests PASS |
+| Renderer | 48 文件 / 384 tests PASS |
 | Host | 8 文件 / 70 tests PASS |
 | Shell | 16 文件 / 125 tests PASS |
 | Starter HMR 聚焦 | 1/1 PASS；两次合法、一次非法、一次恢复合法 HMR，长期 listener 语义集合稳定 |
-| Starter 全量 | R4 在最终 HEAD 上执行并记录；不接受旧的 HMR 基线例外 |
+| Starter 全量 | 4 文件 / 7 tests PASS；typecheck/build PASS |
 | Zero | 2 文件 / 21 tests PASS；内置模拟校验 11 scenes / 3 endings / 44 assets |
 | CLI | 7 文件 / 86 tests PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
 | `npm run verify:tools` | 10/10 PASS |
 | `npm run verify:hygiene` | 605 tracked paths PASS |
-| `npm run verify:all` | R4 在最终 HEAD 上执行并记录；必须 exit code 0 |
+| `npm run verify:all` | exit code 0 |
 | Shell 通用 E2E | PASS |
 | Renderer v2 Electron E2E | PASS；17 个视觉状态均为 CANDIDATE/语义通过，未冒充人工批准金样 |
-| Wave 2 / Wave 3 玩家 E2E | A–I 9/9；A–F 两轮各 6/6 |
+| Wave 2 / Wave 3 玩家 E2E | R4 当前 Wave 2 A–I 9/9；R4 当前 Wave 3 A–F 6/6；历史 Wave 3 两轮各 6/6 |
 | Zero lint | 11 场景、0 errors、0 warnings |
 | Zero simulate | 23/23 choice、3 endings、0 runtime errors |
 | Zero assets | `assets ok: 44` |
@@ -205,7 +212,7 @@ A title→gallery→close、B game→system-menu→settings→close、C save rej
 
 ## 10. Git、保护文件和延期项
 
-Task 8 文档提交完成后，最终报告提交前的实现 HEAD 为 `abc5f913702c863b89ff7d6e86ce79c03f7332da`，相对 `surdet/main` 为 `18 0`。最终报告提交是独立的普通文档提交，不 push；提交后的真实 HEAD、ahead/behind、status、报告字节数和 SHA-256 由最终机器复核输出。
+R3 文档提交后的机器状态为 HEAD `72cfea6c8d14db80e40ce1662090c99b628de747`，相对 `surdet/main` 为 `41 0`。R4 最终门禁已在该提交之后执行并通过；最终报告归档提交和计划台账收口提交仍使用独立普通提交，不 push，提交后的真实 HEAD、ahead/behind、status、报告字节数和 SHA-256 由最终机器复核输出。
 
 工作树允许且必须保留的四个未跟踪文件为：
 
