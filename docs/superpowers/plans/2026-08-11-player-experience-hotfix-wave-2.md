@@ -652,7 +652,7 @@ WAITING_FOR_REVIEW
 
 > 执行 AI 从 Task 0 开始逐项更新。不得预先勾选，不得删除失败历史。
 
-- [x] Task 0：基线、整改前门禁、计划提交。提交：`docs(engine): freeze player experience hotfix wave 2`（本阶段提交后补录真实 SHA）。
+- [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
 - [ ] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`PENDING`。
 - [ ] Task 2：单一 UI 会话状态。提交：`PENDING`。
 - [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
