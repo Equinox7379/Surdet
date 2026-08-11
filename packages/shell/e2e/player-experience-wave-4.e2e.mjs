@@ -91,6 +91,10 @@ function cloneJson(value) {
   return value === undefined ? null : JSON.parse(JSON.stringify(value));
 }
 
+function positionKey(position) {
+  return position ? `${position.sceneId}:${position.pc}` : 'null';
+}
+
 function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
@@ -167,6 +171,7 @@ async function launchSession(caseId) {
         return {
           title: document.title,
           status: debug?.status ?? null,
+          rendererStatus: debug?.rendererStatus ?? null,
           position: debug?.position ?? null,
           uiSession: debug?.uiSession ?? null,
           activeOverlay: debug?.activeOverlay ?? null,
@@ -232,6 +237,46 @@ async function launchSession(caseId) {
       if (!target) throw new Error(`找不到语义交互目标：${targetId}`);
       await page.mouse.click(target.x, target.y);
       await this.waitForPresentedFrame(targetId);
+    },
+    async press(key) {
+      await page.keyboard.press(key);
+      await this.waitForPresentedFrame(`按键 ${key}`);
+    },
+    async wheel(deltaY, label) {
+      await page.mouse.wheel(0, deltaY);
+      await this.waitForPresentedFrame(label);
+    },
+    async advanceStoryStep(label) {
+      const before = await this.snapshot();
+      const expectedPosition = positionKey(before?.position);
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        await this.waitFor(`${label} 等待剧情输入`, () => {
+          const debug = window.__surdetDebug;
+          return ['awaiting-advance', 'awaiting-timer', 'choice'].includes(debug?.status)
+            || debug?.rendererStatus === 'choice';
+        }, undefined, 12000);
+        await this.press('Space');
+        try {
+          await this.waitFor(`${label} 解释器位置变化`, (positionKeyExpected) => {
+            const position = window.__surdetDebug?.position;
+            return position
+              ? `${position.sceneId}:${position.pc}` !== positionKeyExpected
+              : positionKeyExpected !== 'null';
+          }, expectedPosition, 5000);
+          await this.waitFor('剧情空闲或等待', () => {
+            const debug = window.__surdetDebug;
+            return debug?.uiSession?.base === 'game'
+              && debug?.uiSession?.overlay === 'none'
+              && debug?.uiSession?.operation === 'idle'
+              && debug?.activeOverlay === null;
+          }, undefined, 12000);
+          return { before, after: await this.snapshot(), attempts: attempt };
+        } catch {
+          // A real ADV input can first finish a typewriter/timer boundary.
+          // Keep the same real key path and retain the final failure if it never advances.
+        }
+      }
+      throw new Error(`${label} 连续 4 次真实 Space 后位置仍为 ${expectedPosition}`);
     },
     async captureCanvas(label) {
       if (page.isClosed()) throw new Error(`窗口已关闭，无法截图：${label}`);
@@ -312,6 +357,76 @@ async function runSmokeCase() {
   }
 }
 
+async function runBacklogCase(session) {
+  await session.waitTitle();
+  await session.clickTarget('title:new');
+  await session.waitFor('正式游戏剧情入口', () => window.__surdetDebug?.uiSession?.base === 'game'
+    && window.__surdetDebug?.position !== null);
+  const initial = await session.snapshot();
+  const progression = [];
+  for (let index = 0; index < 18; index += 1) {
+    progression.push(await session.advanceStoryStep(`Backlog 种子文本 ${index + 1}`));
+  }
+
+  await session.press('Escape');
+  await session.waitOverlay('system-menu');
+  await session.clickTarget('system:backlog');
+  await session.waitOverlay('backlog');
+  const before = await session.snapshot();
+  const beforeCanvas = await session.captureCanvas('backlog-before-scroll');
+  const beforeLayout = before?.dialogueProjection?.backlogLayout ?? null;
+  if (before?.dialogueProjection?.backlogVisible !== true) {
+    throw new Error(`真实 Backlog 未显示：${JSON.stringify(before?.dialogueProjection)}`);
+  }
+  if (!beforeLayout || beforeLayout.hasMask !== true || beforeLayout.viewportTop <= beforeLayout.headerY) {
+    throw new Error(`Backlog fixed-header/layout projection 无效：${JSON.stringify(beforeLayout)}`);
+  }
+  if (beforeLayout.contentHeight <= beforeLayout.viewportBottom - beforeLayout.viewportTop) {
+    throw new Error(`Backlog 种子不足以验证正文裁剪：${JSON.stringify(beforeLayout)}`);
+  }
+
+  await session.wheel(720, '真实 Backlog 滚轮');
+  await session.press('PageDown');
+  const after = await session.snapshot();
+  const afterCanvas = await session.captureCanvas('backlog-after-scroll');
+  const afterLayout = after?.dialogueProjection?.backlogLayout ?? null;
+  if (!afterLayout) throw new Error('Backlog 滚动后缺少布局投影');
+  if (afterLayout.headerY !== beforeLayout.headerY
+    || afterLayout.viewportTop !== beforeLayout.viewportTop
+    || afterLayout.viewportBottom !== beforeLayout.viewportBottom) {
+    throw new Error(`Backlog header/viewport 滚动后发生位移：${JSON.stringify({ beforeLayout, afterLayout })}`);
+  }
+  if (afterLayout.scroll >= beforeLayout.scroll) {
+    throw new Error(`Backlog 真实滚轮/PageDown 未改变正文滚动：${JSON.stringify({ beforeLayout, afterLayout })}`);
+  }
+
+  const backlogPosition = positionKey(before.position);
+  await session.clickTarget('backlog:close');
+  await session.waitFor('Backlog 关闭', () => window.__surdetDebug?.activeOverlay === null);
+  const afterClose = await session.snapshot();
+  if (positionKey(afterClose?.position) !== backlogPosition) {
+    throw new Error(`Backlog 关闭推进了剧情：${JSON.stringify({ backlogPosition, afterClose })}`);
+  }
+  return {
+    source: 'game',
+    path: ['title:new', 'story:advance×18', 'system:backlog', 'backlog:wheel', 'backlog:PageDown', 'backlog:close'],
+    initialPosition: initial?.position ?? null,
+    progression: progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+      text: step.after?.dialogueProjection?.dialogText ?? null,
+      attempts: step.attempts,
+    })),
+    beforeLayout,
+    afterLayout,
+    beforeCanvas,
+    afterCanvas,
+    backlogPosition,
+    closePosition: afterClose?.position ?? null,
+    closeDidNotAdvance: true,
+  };
+}
+
 async function runCase(caseId) {
   let session;
   const assertions = {
@@ -320,6 +435,16 @@ async function runCase(caseId) {
   };
   try {
     session = await launchSession(caseId);
+    if (caseId === 'C') {
+      return {
+        id: caseId,
+        ok: true,
+        userData: session.userData,
+        assertions: await runBacklogCase(session),
+        events: cloneJson(session.events),
+        screenshots: cloneJson(session.screenshots),
+      };
+    }
     if (caseId !== 'A') {
       throw new Error(`Wave 4 case ${caseId} 尚未实现；当前仅执行 Task 1 Case A。`);
     }

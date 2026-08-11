@@ -23,4 +23,9 @@ describe('BacklogSearchController', () => {
     controller.clear();
     expect(controller.query).toBe('');
   });
+
+  it('matches trimmed CJK and emoji queries without changing the entry identity', () => {
+    const entries = [{ speaker: '凛', text: '雨夜🙂继续' }];
+    expect(searchBacklog(entries, ' 雨夜🙂 ')).toEqual([{ index: 0, entry: entries[0] }]);
+  });
 });

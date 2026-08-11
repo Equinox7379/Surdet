@@ -31,6 +31,23 @@ import {
   type LayerThemeProjectionSnapshot,
 } from '../../theme-projection.js';
 
+const BACKLOG_HEADER_Y = 30;
+const BACKLOG_SEARCH_Y = 58;
+const BACKLOG_VIEWPORT_TOP_IDLE = 76;
+const BACKLOG_VIEWPORT_TOP_SEARCH = 92;
+const BACKLOG_VIEWPORT_BOTTOM_INSET = 36;
+
+export interface DialogueBacklogLayoutSnapshot {
+  readonly headerY: number;
+  readonly viewportTop: number;
+  readonly viewportBottom: number;
+  readonly scroll: number;
+  readonly contentHeight: number;
+  readonly hasMask: boolean;
+  readonly searchVisible: boolean;
+  readonly idleSearchHintVisible: boolean;
+}
+
 /** DialogueLayer owns only dialogue-facing display objects and projection state. */
 export interface DialogueLayerOptions {
   readonly uiLayer: Container;
@@ -62,6 +79,7 @@ export interface DialogueLayerDebugSnapshot {
   /** Command-rail root stays fully visible; hover is projected per row. */
   readonly commandRailAlpha: number;
   readonly commandRailSuppressed: boolean;
+  readonly backlogLayout: DialogueBacklogLayoutSnapshot;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
 }
@@ -130,6 +148,10 @@ export class DialogueLayer implements DialogueProjectionPort {
   #continueIndicator: Graphics;
   #continuePhase = 0;
   #backlogEntriesLayer: Container | null = null;
+  #backlogMask: Graphics | null = null;
+  #backlogViewportTop = BACKLOG_VIEWPORT_TOP_IDLE;
+  #backlogSearchVisible = false;
+  #backlogIdleSearchHintVisible = false;
   #backlogScroll = 0;
   #backlogContentH = 0;
   #backlogLayer: Container;
@@ -309,6 +331,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       commandRailVisible: this.#commandRail.visible,
       commandRailAlpha: this.#commandRail.alpha,
       commandRailSuppressed: this.#commandRailSuppressed,
+      backlogLayout: this.#backlogLayoutSnapshot(),
       nvlActive: this.#nvlActive,
       nvlLines: this.#nvlLines.map((line) => String(line.text)),
     };
@@ -557,6 +580,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       });
     }
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#backlogMask = null;
     layer.addChild(bindThemeGraphicsProjection(
       new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.94 }),
       ['panel'],
@@ -564,13 +588,29 @@ export class DialogueLayer implements DialogueProjectionPort {
     layer.addChild(bindThemeTextProjection(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
       style: { fontSize: 22, fill: this.#theme.colors.textOnAccent, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'textOnAccent' })).position.set(60, 30);
-    layer.addChild(bindThemeTextProjection(new PText({
-      text: query.trim().length > 0 ? `搜索：${query}` : 'Ctrl+F 搜索',
-      style: { fontSize: 17, fill: query.trim().length > 0 ? this.#theme.colors.accent : this.#theme.colors.textMuted } satisfies TextStyleOptions,
-    }), { fill: query.trim().length > 0 ? 'accent' : 'textMuted' })).position.set(60, 58);
+    }), { fill: 'textOnAccent' })).position.set(60, BACKLOG_HEADER_Y);
+    const normalizedQuery = query.trim();
+    this.#backlogSearchVisible = normalizedQuery.length > 0;
+    this.#backlogIdleSearchHintVisible = false;
+    this.#backlogViewportTop = this.#backlogSearchVisible
+      ? BACKLOG_VIEWPORT_TOP_SEARCH
+      : BACKLOG_VIEWPORT_TOP_IDLE;
+    if (this.#backlogSearchVisible) {
+      layer.addChild(bindThemeTextProjection(new PText({
+        text: `搜索：${normalizedQuery}`,
+        style: { fontSize: 17, fill: this.#theme.colors.accent } satisfies TextStyleOptions,
+      }), { fill: 'accent' })).position.set(60, BACKLOG_SEARCH_Y);
+    }
     const entriesLayer = new Container();
     this.#backlogEntriesLayer = entriesLayer;
+    const viewportBottom = this.#h - BACKLOG_VIEWPORT_BOTTOM_INSET;
+    const viewportHeight = Math.max(0, viewportBottom - this.#backlogViewportTop);
+    const mask = bindThemeGraphicsProjection(
+      new Graphics().rect(0, this.#backlogViewportTop, this.#w, viewportHeight).fill(0xffffff),
+      [null],
+    );
+    entriesLayer.mask = mask;
+    this.#backlogMask = mask;
     const perLine = 40;
     let y = 0;
     for (const entry of entries.slice(-120)) {
@@ -586,7 +626,7 @@ export class DialogueLayer implements DialogueProjectionPort {
             fontWeight: first && entry.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
         }), { fill: first && entry.speaker ? 'accent' : 'textMuted' });
-        textNode.position.set(60, 84 + y);
+        textNode.position.set(60, this.#backlogViewportTop + y);
         if (first && entry.voice && onReplayVoice) {
           textNode.eventMode = 'static';
           textNode.cursor = 'pointer';
@@ -604,21 +644,26 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#backlogContentH = y;
     this.#backlogScroll = 0;
     this.#applyBacklogScroll();
-    layer.addChild(entriesLayer);
+    layer.addChild(entriesLayer, mask);
     layer.visible = true;
     this.#requestFrame();
   }
 
   hideBacklog(): void {
     this.#backlogLayer.visible = false;
+    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
     this.#backlogEntriesLayer = null;
+    this.#backlogMask = null;
+    this.#backlogViewportTop = BACKLOG_VIEWPORT_TOP_IDLE;
+    this.#backlogSearchVisible = false;
+    this.#backlogIdleSearchHintVisible = false;
     this.#backlogContentH = 0;
     this.#backlogScroll = 0;
   }
 
   scrollBacklog(delta: number): void {
     if (!this.#backlogEntriesLayer || !this.#backlogLayer.visible) return;
-    const viewH = this.#h - 120;
+    const viewH = this.#h - BACKLOG_VIEWPORT_BOTTOM_INSET - this.#backlogViewportTop;
     const maxScroll = Math.max(0, this.#backlogContentH - viewH);
     this.#backlogScroll = Math.max(-maxScroll, Math.min(0, this.#backlogScroll - delta));
     this.#applyBacklogScroll();
@@ -874,6 +919,19 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (this.#dialogueRoot.parent !== this.#root || this.#dialogueOverlayRoot.parent !== this.#root) return false;
     return this.#root.getChildIndex(this.#dialogueOverlayRoot) > this.#root.getChildIndex(this.#dialogueRoot)
       && this.#backlogLayer.parent === this.#dialogueOverlayRoot;
+  }
+
+  #backlogLayoutSnapshot(): DialogueBacklogLayoutSnapshot {
+    return {
+      headerY: BACKLOG_HEADER_Y,
+      viewportTop: this.#backlogViewportTop,
+      viewportBottom: this.#h - BACKLOG_VIEWPORT_BOTTOM_INSET,
+      scroll: this.#backlogScroll,
+      contentHeight: this.#backlogContentH,
+      hasMask: this.#backlogMask !== null,
+      searchVisible: this.#backlogSearchVisible,
+      idleSearchHintVisible: this.#backlogIdleSearchHintVisible,
+    };
   }
 
   #registerDisplay(key: string, display: DestroyableDisplay): void {
