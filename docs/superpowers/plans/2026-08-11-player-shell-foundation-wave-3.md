@@ -494,7 +494,7 @@ WAITING_FOR_REVIEW
 | 0 | N/A（文档基线任务无红灯） | HEAD `9bbec32946e169a5d081b29863edddaad64959fe`；任务书 25173 字节 / SHA-256 `639A934053C9879DFABAA287B71E3CC3010B2F5E3249004CC02EC923C5DA2D65`；清洁室记录已创建；修正后 diff-check 通过；tracked logs 为空 | `445cf5106f9ca9c0401044b7e9cfa121c45ffcb4`（Task 0 基线提交） | implemented |
 | 1 | 13 项中 5 项失败；首个失败为快照缺少 `returnStack`，随后 `session.pushOverlay is not a function`；红灯发生于生产代码修改前 | 聚焦测试 13/13；`npm run typecheck -w @surdet/host` 通过；覆盖嵌套返回、title/gallery、失败恢复、成功清栈、reset、递归冻结、篡改隔离和 busy 拒绝 | `a6286a2581db40a6683136a4a015045b5f3250e5` | implemented |
 | 2 | 测试先于生产代码运行；模块不存在导致测试未收集（1 个测试文件失败、0 个测试收集） | 固定槽测试 5/5；Host typecheck 通过；覆盖六 defaults、缺失 default、未知 override/open、this 绑定、cause 保留、冻结快照和 Provider 隔离 | `c4ffce8737e6326309076a27622200ee969ebd26` | implemented |
-| 3 | 测试先于生产代码运行；Controller 模块不存在导致测试文件失败、0 项收集 | Controller 聚焦 8/8；Host 全量 7 文件、46/46；Host typecheck 通过；覆盖来源校验、title/gallery、双层返回、Provider open/close 原子回滚、save/load 失败恢复和错误边界、指针消费与查询纯度 | pending（实现提交后回填） | implemented |
+| 3 | 测试先于生产代码运行；Controller 模块不存在导致测试文件失败、0 项收集 | Controller 聚焦 8/8；Host 全量 7 文件、46/46；Host typecheck 通过；覆盖来源校验、title/gallery、双层返回、Provider open/close 原子回滚、save/load 失败恢复和错误边界、指针消费与查询纯度 | `112351ee9e7a2a3b1e6f4d2a7b2fbe7e754815b3` | implemented |
 | 4 | pending | pending | pending | not-started |
 | 5 | pending | pending | pending | not-started |
 | 6 | pending | pending | pending | not-started |
