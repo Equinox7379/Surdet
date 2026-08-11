@@ -204,7 +204,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     layer.eventMode = 'auto';
 
     if (!this.#galleryHeader) {
-      const blocker = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.95 });
+      const blocker = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 });
       blocker.eventMode = 'static';
       layer.addChild(blocker);
 
@@ -214,7 +214,7 @@ export class GalleryLayer implements GalleryProjectionPort {
       const mkBtn = (label: string, x: number, width: number, onTap: () => void): PText => {
         const t = new PText({
           text: label,
-          style: { fontSize: 24, fill: 0x8a93a8, fontWeight: 'normal' } satisfies TextStyleOptions,
+          style: { fontSize: 24, fill: this.#theme.colors.textMuted, fontWeight: 'normal' } satisfies TextStyleOptions,
         });
         t.position.set(x, 30);
         // Use a stable logical hit box instead of relying on the rendered glyph
@@ -249,7 +249,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'cg') {
       const items = views.cgs;
       if (items.length === 0) {
-        content.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -277,12 +277,12 @@ export class GalleryLayer implements GalleryProjectionPort {
             this.#rebuildGallery();
           });
         } else {
-          cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: 0x1c1c26, alpha: 1 }));
-          cell.addChild(new PText({ text: '?', style: { fontSize: 42, fill: 0x55555f } satisfies TextStyleOptions })).position.set(cw / 2 - 12, ch / 2 - 30);
+          cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: this.#theme.colors.surfaceStrong, alpha: 1 }));
+          cell.addChild(new PText({ text: '?', style: { fontSize: 42, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions })).position.set(cw / 2 - 12, ch / 2 - 30);
         }
         cell.addChild(new PText({
           text: item.unlocked ? item.name : '???',
-          style: { fontSize: 18, fill: item.unlocked ? 0xdddddd : 0x55555f } satisfies TextStyleOptions,
+          style: { fontSize: 18, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
         })).position.set(0, ch + 10);
         content.addChild(cell);
       });
@@ -293,7 +293,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'music') {
       const items = views.music;
       if (items.length === 0) {
-        content.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -301,10 +301,10 @@ export class GalleryLayer implements GalleryProjectionPort {
         const y = 96 + i * 58;
         const row = new Container();
         row.position.set(60, y);
-        row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
+        row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }));
         row.addChild(new PText({
           text: `${item.unlocked ? '♪' : '?'}  ${item.unlocked ? item.name : '???'}`,
-          style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+          style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
         })).position.set(18, 10);
         if (item.unlocked) {
           row.eventMode = 'static';
@@ -319,7 +319,7 @@ export class GalleryLayer implements GalleryProjectionPort {
 
     const items = views.texts;
     if (items.length === 0) {
-      content.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+      content.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
       this.#registerListener();
       return;
     }
@@ -327,10 +327,10 @@ export class GalleryLayer implements GalleryProjectionPort {
       const y = 96 + i * 58;
       const row = new Container();
       row.position.set(60, y);
-      row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? 0x1e1e2c : 0x14141a, alpha: 0.95 }));
+      row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }));
       row.addChild(new PText({
         text: `${item.unlocked ? '❐' : '?'}  ${item.unlocked ? item.name : '???'}`,
-        style: { fontSize: 20, fill: item.unlocked ? 0xffffff : 0x55555f } satisfies TextStyleOptions,
+        style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
       })).position.set(18, 10);
       if (item.unlocked) {
         row.eventMode = 'static';
@@ -371,7 +371,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     content.addChild(sp);
     content.addChild(new PText({
       text: '点击任意处返回列表',
-      style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions,
+      style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions,
     })).position.set(this.#w - 250, this.#h - 44);
     content.eventMode = 'static';
     content.on('pointerdown', () => {
