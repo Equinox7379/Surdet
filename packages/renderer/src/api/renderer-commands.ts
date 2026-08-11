@@ -15,6 +15,7 @@ import type {
   SpeakerProfile,
 } from '../types.js';
 import type { ShakeDirection, TransitionName } from '../world-effects-controller.js';
+import type { RendererThemeOverrides } from '../theme.js';
 import type {
   BasePanelView,
   MapView,
@@ -215,6 +216,7 @@ export interface PreferenceCommands {
   setQuality(quality: RenderQuality): void;
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
   setPostProcess(settings: Partial<PostProcessSettings>): void;
+  setTheme(overrides: RendererThemeOverrides): void;
 }
 
 export interface PresentationCommands {

@@ -5,6 +5,7 @@ import type { RenderPerformanceSnapshot } from '../performance.js';
 import type { RenderQuality } from '../quality.js';
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { RendererFontRole } from './renderer-commands.js';
+import type { RendererTheme } from '../theme.js';
 
 export interface WorldQueries {
   /** Expensive but read-only visual capture; does not change the visible stage. */
@@ -48,6 +49,7 @@ export interface PreferenceQueries {
   presentationPreferences(): PresentationPreferences;
   postProcess(): PostProcessSettings;
   fontFamily(role: RendererFontRole): string;
+  theme(): RendererTheme;
 }
 
 export interface PresentationQueries {

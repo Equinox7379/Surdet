@@ -22,6 +22,7 @@ import type { RendererProjectionSnapshot, RendererQueries } from '../api/rendere
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
 import { preparePresentationRestore } from './presentation-controller.js';
+import { createRendererTheme, type RendererTheme } from '../theme.js';
 
 /**
  * Narrow stage capability consumed only by the runtime port factory.
@@ -231,10 +232,12 @@ export function createPresentationPorts(
     hideLoading: () => stage.hideLoading?.(),
   };
 
+  let theme: RendererTheme = createRendererTheme();
   const preferenceCommands: RendererCommands['preferences'] = {
     setQuality: (quality) => { if (options.worldLayer) options.worldLayer.setQuality(quality); else stage.setQuality?.(quality); },
     setPresentationPreferences: (preferences) => { if (options.worldLayer) options.worldLayer.setPresentationPreferences(preferences); else stage.setPresentationPreferences?.(preferences); },
     setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
+    setTheme: (overrides) => { theme = createRendererTheme(overrides); },
   };
 
   const validateStagePresentation = options.worldLayer?.validatePresentation
@@ -285,6 +288,7 @@ export function createPresentationPorts(
         ...(options.worldLayer?.getPostProcess() ?? stage.getPostProcess?.() ?? DEFAULT_POST_PROCESS),
       }),
       fontFamily: (role) => stage.getFontFamily?.(role) ?? '',
+      theme: () => theme,
     },
     presentation: {
       snapshot: () => options.worldLayer?.snapshotPresentation() ?? stage.snapshotPresentation?.() ?? null,

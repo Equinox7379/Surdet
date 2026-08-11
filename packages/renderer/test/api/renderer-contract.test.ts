@@ -7,6 +7,8 @@ import type {
   RendererInputAction,
   RendererQueries,
   RendererRuntime,
+  RendererTheme,
+  RendererThemeOverrides,
 } from '../../src/index.js';
 import { RendererError as RendererErrorClass } from '../../src/index.js';
 
@@ -48,6 +50,10 @@ describe('Renderer v2 public contract', () => {
       .returns.toHaveProperty('dialogue');
     expectTypeOf<RendererQueries['overlay']['gallery']>()
       .toEqualTypeOf<() => GalleryOverlayState>();
+    expectTypeOf<RendererCommands['preferences']['setTheme']>()
+      .toEqualTypeOf<(overrides: RendererThemeOverrides) => void>();
+    expectTypeOf<RendererQueries['preferences']['theme']>()
+      .toEqualTypeOf<() => RendererTheme>();
     expectTypeOf<RendererInputAction>().toMatchTypeOf<{ type: string }>();
     expectTypeOf<RendererError['code']>().toBeString();
     expectTypeOf<RendererError['domain']>().toBeString();

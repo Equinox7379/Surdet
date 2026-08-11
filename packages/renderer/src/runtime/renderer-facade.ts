@@ -66,6 +66,7 @@ import type {
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
 import type { PresentationStage } from './presentation-ports.js';
+import { createRendererTheme, type RendererTheme, type RendererThemeOverrides } from '../theme.js';
 
 /** @internal Independent narrow stage port; legacy public types do not cross this boundary. */
 export interface RendererStagePort extends PresentationStage {
@@ -242,6 +243,7 @@ export class RendererFacade {
   #systemPort?: SystemPanelProjectionPort;
   #worldPort?: WorldProjectionPort;
   #projectionSnapshot?: () => RendererProjectionSnapshot;
+  #theme: RendererTheme = createRendererTheme();
   #disposed = false;
   #saveLoadTransactionPending = false;
   #menuOverlay: MenuOverlayState = { type: 'none' };
@@ -704,6 +706,10 @@ export class RendererFacade {
       setQuality: (quality) => this.#callWorld('setQuality', this.#worldPort?.setQuality, this.#stage.setQuality, quality),
       setPresentationPreferences: (preferences) => this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences }),
       setPostProcess: (settings) => this.#callWorld('setPostProcess', this.#worldPort?.setPostProcess, this.#stage.setPostProcess, { ...settings }),
+      setTheme: (overrides: RendererThemeOverrides) => {
+        this.#ensureActive('preferences', 'setTheme');
+        this.#theme = createRendererTheme(overrides);
+      },
     };
 
     const presentation: PresentationCommands = {
@@ -768,6 +774,7 @@ export class RendererFacade {
       presentationPreferences: () => ({ ...(this.#worldPort?.getPresentationPreferences() ?? this.#queryStage('preferences', 'presentationPreferences', this.#stage.getPresentationPreferences)) }),
       postProcess: () => ({ ...(this.#worldPort?.getPostProcess() ?? this.#queryStage('preferences', 'postProcess', this.#stage.getPostProcess)) }),
       fontFamily: (role: RendererFontRole) => this.#queryStage('preferences', 'fontFamily', this.#stage.getFontFamily, role),
+      theme: () => this.#theme,
     };
     const presentationQueries: PresentationQueries = {
       snapshot: () => {
