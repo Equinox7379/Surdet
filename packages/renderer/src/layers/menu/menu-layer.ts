@@ -190,7 +190,15 @@ export class MenuLayer implements MenuProjectionPort {
     if (this.#disposed) return;
     const previous = this.#theme;
     this.#theme = theme;
-    repaintThemeProjection(this.#root, previous, theme);
+    repaintThemeProjection(
+      this.#titleLayer,
+      previous,
+      theme,
+    );
+    repaintThemeProjection(this.#endingLayer, previous, theme);
+    repaintThemeProjection(this.#menuLayer, previous, theme);
+    repaintThemeProjection(this.#settingsLayer, previous, theme);
+    repaintThemeProjection(this.#saveLoadLayer, previous, theme);
   }
 
   get needsUpdate(): boolean {

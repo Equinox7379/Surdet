@@ -147,7 +147,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     if (this.#disposed) return;
     const previous = this.#theme;
     this.#theme = theme;
-    repaintThemeProjection(this.#root, previous, theme);
+    repaintThemeProjection(this.#battleLayer, previous, theme);
+    repaintThemeProjection(this.#mapLayer, previous, theme);
+    repaintThemeProjection(this.#shopLayer, previous, theme);
+    repaintThemeProjection(this.#baseLayer, previous, theme);
   }
 
   get needsUpdate(): boolean {

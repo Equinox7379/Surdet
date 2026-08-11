@@ -122,7 +122,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     const previous = this.#theme;
     this.#theme = theme;
     this.#updateTabStyles();
-    repaintThemeProjection(this.#root, previous, theme);
+    repaintThemeProjection(this.#galleryLayer, previous, theme);
   }
 
   showGallery(options: {
