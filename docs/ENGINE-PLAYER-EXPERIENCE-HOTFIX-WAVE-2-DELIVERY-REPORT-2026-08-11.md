@@ -1,7 +1,7 @@
 # Surdet Player Experience Hotfix Wave 2 交付报告
 
-日期：2026-08-11  
-项目：Surdet / 《零点之后》  
+日期：2026-08-11
+项目：Surdet / 《零点之后》
 状态：交付实现完成，等待独立复审；未 push
 
 ## 1. 结论
@@ -28,7 +28,13 @@ WAITING_FOR_REVIEW
 f2d261013595ef17cbb1cbaf20eafdcf4645982c
 ```
 
-报告与最终台账文档提交完成后的最终 HEAD 将在本报告修订提交中回填；该文档提交只包含报告与计划台账，不改变运行时代码。
+初始交付文档提交为：
+
+```text
+e713f2c（docs(engine): report player experience hotfix wave 2）
+```
+
+本报告所对应的最终运行时/测试代码 HEAD 为 `f2d261013595ef17cbb1cbaf20eafdcf4645982c`；后续文档修订只包含报告与计划台账，不改变运行时代码。当前 Git 最终 HEAD 以文档修订提交后的最终复核输出为准。
 
 ## 2. 起始与范围
 
@@ -251,7 +257,7 @@ Host save/load 采用 begin → commit / fail → restore / finally：
 
 ## 10. 最终交付后检查（报告提交后执行）
 
-以下项目在报告/台账提交后的最终 HEAD 上执行并回填：
+以下项目已在初始报告/台账提交 `e713f2c` 后执行并通过；随后只做文档事实回填，回填后再次复核：
 
 - `npm run verify:all`：退出码 `0`；
 - `git diff --check`：通过；

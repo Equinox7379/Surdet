@@ -660,7 +660,7 @@ WAITING_FOR_REVIEW
 - [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；台账提交：`8eacc4208a5db8015c531a096ee2138c2f43fae4`。
 - [x] Task 6：对话框稳定性。提交：`77b3bc5f22e62d5ec05808e7d7dac45d49caf607`（`fix(renderer): keep dialogue presentation stable between lines`）；本记录台账提交待完成。
 - [x] Task 7：完整玩家 E2E 矩阵。提交：`22ae65837b030282f939123a0fb7f5ca7224944c`（`test(shell): gate player experience hotfix wave 2`）；本记录台账提交待完成。
-- [x] Task 8：全量门禁、报告、最终停止。报告与台账提交：`DOC_FINAL_HEAD_PENDING`（报告提交后需再执行最终 verify:all 并回填真实 SHA）。
+- [x] Task 8：全量门禁、报告、最终停止。初始报告/台账提交：`e713f2c`；最终运行时/测试代码 HEAD：`f2d261013595ef17cbb1cbaf20eafdcf4645982c`；后续仅为文档事实回填。
 
 当前事实（任务书生成时）：
 
@@ -960,4 +960,4 @@ Task 7 门禁与范围：
 - `git diff --check` 通过；`git ls-files '*.log'` 为空。
 - 仍未 push、未 force push、未开始 M9、未处理性能工作、未发行。
 
-下一步：只暂存报告与本计划，创建 `docs(engine): report player experience hotfix wave 2` 文档提交；提交后重新执行 `npm run verify:all`、`git diff --check`、`git status --short` 和 ahead/behind，随后回填真实最终文档 SHA 并停止等待独立复审。
+下一步：初始报告/台账提交 `e713f2c` 已完成，其后 `npm run verify:all` 已再次通过；本次纯文档事实回填完成后再做最终 `verify:all`、diff/status/ahead-behind 复核，然后停止等待独立复审。
