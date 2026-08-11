@@ -21,6 +21,7 @@ Wave 3 已把玩家系统界面的来源/返回语义、固定系统界面槽、
 | `78d9cbc50391c8cfbc212151ccba40564de57e90` | `test(shell): gate colliding theme restoration` | 正式 Zero Electron F 覆盖 text/accent 同值碰撞 |
 | `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83` | `test(shell): fix colliding theme predicate` | 修正页面谓词的跨环境变量捕获；最终 F 证据由该脚本产生 |
 | `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26` | `fix(renderer): preserve save load transaction callbacks` | 最终 Wave 2 save/load 异步完成/错误回调保留 |
+| `c7ec48abc22149f20b12e7b4973280d6a66f4443` | `docs(engine): record wave 3 micro remediation` | 三份报告/计划台账完成 D1 修正并归档 |
 
 最终代码下 Renderer 为 48 文件 / 381 tests，Host 为 8 文件 / 70 tests；两轮 Wave 3 A–F 和一轮成功的 Wave 2 A–I 均使用正式 `E:\surdet\examples\zero-after-midnight\dist`、独立 Electron/userData 并通过。Wave 3 最终 artifact：
 
@@ -32,6 +33,8 @@ Wave 2 最终成功 artifact 为 `<local-path>`：743,880 bytes，`F34E57580ACCB
 错误台账按 artifact 能观测字段记录：Wave 3 两轮的 unexpected page/console/request/unhandled/release/window-close 均为 0；每轮 `expectedRendererErrors = 1`（`expectedErrors = 2`，来自场景 C 注入 save reject）。Wave 2 成功 artifact 的 A–I 9/9 及 page/console/request/unhandled/window-close 均为 0；该旧脚本未输出 releaseFailures/expectedRendererErrors 字段，不将缺失字段冒充为数值 0。
 
 `npm run verify:all` 已运行但当前退出码为 1，唯一失败是 Starter `vite-scene-hmr.test.ts` 的 `listeners: 4 → 3`；在冻结基线 `4e0e752` 的隔离 worktree 中同样失败，因此本轮 S1/S2/D1 不扩大范围修复它。其余 workspace tests/typecheck/build、renderer boundaries/legacy、tools、docs、hygiene、Zero lint/simulate/assets 均通过。性能结论仍为 `PERFORMANCE_MEASUREMENT_NOT_QUALIFIED`，未开始 M9、未 push、未发行。
+
+最终微型收口提交后的机器复核：HEAD `c7ec48abc22149f20b12e7b4973280d6a66f4443`，`HEAD...surdet/main = 37 0`；工作树仍只有四个受保护未跟踪文件，`git diff --check` 通过，tracked logs 为空。最终报告的字节数和 SHA-256 以提交后机器输出为准，不在报告内伪造自引用摘要。
 
 最终状态：
 
