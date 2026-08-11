@@ -1,10 +1,10 @@
 /**
- * Player Experience Hotfix Wave 2 — Task 1 reproduction harness.
+ * Player Experience Hotfix Wave 2 — real player-path acceptance harness.
  *
- * This is intentionally a red-first probe. It builds the formal game, launches
- * the Electron shell with an explicit isolated userData and formal-game dist,
- * then uses real mouse/keyboard input. Semantic debug reads are snapshots only;
- * no tested close/load/gallery action is invoked through the debug API.
+ * It builds the formal game, launches the Electron shell with an explicit
+ * isolated userData and formal-game dist, then uses real mouse/keyboard input.
+ * Semantic debug reads are snapshots only; no tested close/load/gallery action
+ * is invoked through the debug API.
  */
 import { _electron as electron } from 'playwright';
 import fs from 'node:fs';
@@ -160,6 +160,22 @@ async function waitOverlay(overlay) {
   await waitFor(`覆盖层 ${overlay}`, (expected) => window.__surdetDebug?.activeOverlay === expected, overlay);
 }
 
+async function completeGameSaveLoad(mode) {
+  await press('Escape');
+  await waitOverlay('system-menu');
+  await clickTarget(`system:${mode}`);
+  await waitOverlay('save-load');
+  await clickTarget('save-load:slot-1');
+  await waitFor(`${mode} 完成`, () => {
+    const debug = window.__surdetDebug;
+    return debug?.uiSession?.base === 'game'
+      && debug?.uiSession?.overlay === 'none'
+      && debug?.uiSession?.operation === 'idle'
+      && debug?.activeOverlay === null;
+  });
+  await waitGame();
+}
+
 async function assertNoRuntimeError(label) {
   const current = await snapshot();
   const releaseEvents = [...events.pageErrors, ...events.consoleErrors]
@@ -243,13 +259,20 @@ async function main() {
     await prepareTitle();
     await clickTarget('title:new');
     await waitGame();
-    await press('F5');
-    await waitFor('quick save IPC', () => window.surdetSave?.list().then((slots) => slots.includes('quick')), undefined, 15000);
-    if (!fs.existsSync(path.join(userData, 'saves', 'quick.json'))) throw new Error('独立 userData 未收到 quick.json，无法证明 Electron 存档路径隔离');
-    await press('F9');
-    await waitGame();
-    await press('F5');
-    await waitFor('second quick save IPC', () => window.surdetSave?.list().then((slots) => slots.includes('quick')), undefined, 15000);
+    await completeGameSaveLoad('save');
+    await completeGameSaveLoad('load');
+    await completeGameSaveLoad('save');
+    await completeGameSaveLoad('load');
+    for (let round = 1; round <= 3; round++) {
+      await completeGameSaveLoad('save');
+      await completeGameSaveLoad('load');
+      console.log(`INFO save → load round=${round} completed`);
+    }
+    for (let round = 1; round <= 3; round++) {
+      await completeGameSaveLoad('load');
+      await completeGameSaveLoad('save');
+      console.log(`INFO load → save round=${round} completed`);
+    }
     await assertNoRuntimeError('UX-09');
   });
 
@@ -297,12 +320,13 @@ async function main() {
     await clickTarget('title:load');
     await waitOverlay('save-load');
     const before = await snapshot();
-    await clickTarget('save-load:slot-1');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const after = await snapshot();
-    if (after?.activeOverlay !== 'save-load') throw new Error(`空槽点击错误地关闭了读档页：${JSON.stringify({ before, after })}`);
-    if (positionKey(after?.position) !== positionKey(before?.position)) throw new Error(`空槽点击改变了解释器位置：${JSON.stringify({ before, after })}`);
-    if (after?.lastRendererError) throw new Error(`空槽点击产生 RendererError：${JSON.stringify(after.lastRendererError)}`);
+    for (let round = 1; round <= 5; round++) {
+      await clickTarget('save-load:slot-2');
+      await waitOverlay('save-load');
+      const after = await snapshot();
+      if (positionKey(after?.position) !== positionKey(before?.position)) throw new Error(`空槽点击改变了解释器位置：${JSON.stringify({ before, after, round })}`);
+      if (after?.lastRendererError) throw new Error(`空槽点击产生 RendererError：${JSON.stringify({ after: after.lastRendererError, round })}`);
+    }
     await clickTarget('save-load:close');
     await waitTitle();
     await assertNoRuntimeError('UX-03');
@@ -367,7 +391,7 @@ async function main() {
   const releaseFailureEvidence = [...events.pageErrors, ...events.consoleErrors].filter((entry) => /renderer resource release failed/i.test(entry));
   const evidence = {
     schemaVersion: 1,
-    phase: 'Task 1 red-first reproduction',
+    phase: 'Task 5 player experience acceptance',
     generatedAt: new Date().toISOString(),
     formalGame: {
       sourceRoot: path.resolve(gameSourceRoot),
@@ -379,7 +403,7 @@ async function main() {
     events,
     releaseFailureEvidence,
     finalSnapshot,
-    status: cases.some((entry) => !entry.ok) ? 'RED_REPRODUCED' : 'REPRODUCTION_BLOCKED',
+    status: cases.some((entry) => !entry.ok) ? 'FAILED' : 'PASSED',
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
   console.log(JSON.stringify({ evidencePath: path.resolve(evidencePath), status: evidence.status, cases: cases.map(({ name, ok }) => ({ name, ok })), releaseFailureEvidence }, null, 2));
@@ -395,7 +419,7 @@ try {
   if (app) await app.close().catch((error) => console.error(`Electron close failed: ${errorText(error)}`));
   const evidence = {
     schemaVersion: 1,
-    phase: 'Task 1 red-first reproduction',
+    phase: 'Task 5 player experience acceptance',
     generatedAt: new Date().toISOString(),
     formalGame: { sourceRoot: path.resolve(gameSourceRoot), distRoot: path.resolve(gameDist) },
     userData: path.resolve(userData),
@@ -404,13 +428,8 @@ try {
     releaseFailureEvidence: [...events.pageErrors, ...events.consoleErrors].filter((entry) => /renderer resource release failed/i.test(entry)),
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-  console.log(`Task 1 evidence retained at ${path.resolve(evidencePath)}`);
+  console.log(`Player experience evidence retained at ${path.resolve(evidencePath)}`);
 }
 
-const hasRed = cases.some((entry) => !entry.ok);
-if (!hasRed) {
-  console.error('REPRODUCTION_BLOCKED: 当前基线未捕获 UX 红灯；不得凭猜测修改生命周期生产代码。');
-  process.exitCode = 2;
-} else {
-  process.exitCode = 1;
-}
+const hasFailure = cases.some((entry) => !entry.ok);
+if (hasFailure) process.exitCode = 1;

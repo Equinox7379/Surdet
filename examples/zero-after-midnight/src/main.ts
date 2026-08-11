@@ -953,12 +953,15 @@ async function main(): Promise<void> {
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load'): Promise<void> {
     if (uiSnapshot().overlay !== 'none') return;
+    const originBase = uiSnapshot().base;
     uiSession.openOverlay('save-load');
     let metas: Awaited<ReturnType<typeof saves.list>>;
     try {
       metas = await saves.list();
     } catch (err) {
       uiSession.closeOverlay();
+      if (originBase === 'title') showTitleScreen();
+      else refreshCommandRail();
       console.error('[zero] 存档列表读取失败:', err);
       return;
     }
@@ -975,17 +978,38 @@ async function main(): Promise<void> {
         kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
       };
     });
-    menu.showSaveLoad({ mode, slots }, (slotId) => {
+    const slotById = new Map(slots.map((slot) => [slot.id, slot]));
+    const restoreSaveLoadAfterFailure = (err: unknown, operation: 'saving' | 'loading'): void => {
+      uiSession.failOperation();
+      menu.showSaveLoad({ mode, slots }, onSelect, onClose);
+      refreshCommandRail();
+      console.error(operation === 'saving' ? '[zero] 存档失败:' : '[zero] 读档失败:', err);
+    };
+    const onSelect = (slotId: string): boolean | void => {
       inputGate.consumeCurrentPointer();
+      if (mode === 'load') {
+        const slot = slotById.get(slotId);
+        if (!slot || slot.empty) {
+          console.warn('[zero] 忽略无效读档槽位：', slotId);
+          return false;
+        }
+      }
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
           console.warn('[zero] 存档失败：游戏尚未开始');
-          return;
+          return false;
         }
         const origin = uiSnapshot();
         uiSession.beginOperation('saving');
-        void saves.save(slotId, enrichSnapshot(snap)).then(
+        let write: Promise<void>;
+        try {
+          write = saves.save(slotId, enrichSnapshot(snap));
+        } catch (err) {
+          restoreSaveLoadAfterFailure(err, 'saving');
+          return;
+        }
+        void write.then(
           () => {
             uiSession.completeOperation({
               base: origin.base,
@@ -996,10 +1020,7 @@ async function main(): Promise<void> {
             console.info('[zero] 已存档', slotId);
             refreshCommandRail();
           },
-          (err) => {
-            uiSession.failOperation();
-            console.error('[zero] 存档失败:', err);
-          },
+          (err) => restoreSaveLoadAfterFailure(err, 'saving'),
         );
       } else {
         void (async () => {
@@ -1014,19 +1035,20 @@ async function main(): Promise<void> {
             console.info('[zero] 已读档', slotId);
             refreshCommandRail();
           } catch (err) {
-            uiSession.failOperation();
-            console.error('[zero] 读档失败:', err);
+            restoreSaveLoadAfterFailure(err, 'loading');
           }
         })();
       }
-    }, () => {
+    };
+    const onClose = (): void => {
       inputGate.consumeCurrentPointer();
       if (isUiBusy() || !isOverlay('save-load')) return;
       const base = uiSnapshot().base;
       uiSession.closeOverlay();
       if (base === 'title') showTitleScreen();
       else refreshCommandRail();
-    });
+    };
+    menu.showSaveLoad({ mode, slots }, onSelect, onClose);
   }
 
   function toggleBacklog(): void {
@@ -1315,6 +1337,13 @@ async function main(): Promise<void> {
       if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') {
         renderer.dispatchInput({ type: 'advance' });
       }
+      refreshCommandRail();
+      return;
+    }
+    if (action === 'hideUi') {
+      if (isUiBusy() || uiSnapshot().overlay !== 'none') return;
+      uiSession.toggleInterface();
+      renderer.dispatchInput({ type: 'interface.toggle' });
       refreshCommandRail();
       return;
     }
