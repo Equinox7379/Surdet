@@ -17,6 +17,7 @@ import type {
 import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
 
 type PanelName = 'battle' | 'map' | 'shop' | 'base';
 
@@ -133,6 +134,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     };
   }
 
+  themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
+    return readThemeProjection(this.#battleLayer, this.#mapLayer, this.#shopLayer, this.#baseLayer);
+  }
+
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate) handler();
@@ -140,7 +145,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
 
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    const previous = this.#theme;
     this.#theme = theme;
+    repaintThemeProjection(this.#root, previous, theme);
   }
 
   get needsUpdate(): boolean {

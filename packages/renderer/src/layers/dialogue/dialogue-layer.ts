@@ -23,6 +23,7 @@ import type {
   SpeakerProfile,
 } from '../../types.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { readThemeProjection, repaintThemeProjection, type LayerThemeProjectionSnapshot } from '../../theme-projection.js';
 
 /** DialogueLayer owns only dialogue-facing display objects and projection state. */
 export interface DialogueLayerOptions {
@@ -304,6 +305,10 @@ export class DialogueLayer implements DialogueProjectionPort {
     };
   }
 
+  themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
+    return readThemeProjection(this.#dialogueRoot, this.#dialogueOverlayRoot);
+  }
+
   #onSelect: ((index: number) => void) | null = null;
   #onBacklogClose: (() => void) | null = null;
 
@@ -345,28 +350,25 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    const previous = this.#theme;
     this.#theme = theme;
     this.#drawDialogPanel();
     this.#drawSpeakerPlate();
     this.#continueIndicator.clear()
       .circle(0, 0, 9).fill({ color: theme.colors.accent, alpha: 0.22 })
       .circle(0, 0, 4.5).fill({ color: theme.colors.text, alpha: 0.95 });
-    this.#speakerText.style = {
-      ...this.#speakerText.style,
-      fill: theme.colors.text,
-      stroke: { width: 1.2, color: theme.colors.textOnAccent },
-    } satisfies TextStyleOptions;
-    this.#dialogText.style = {
-      ...this.#dialogText.style,
-      fill: theme.colors.text,
-      stroke: { width: 1.35, color: theme.colors.textOnAccent },
-    } satisfies TextStyleOptions;
+    this.#speakerText.style.fill = theme.colors.text;
+    this.#speakerText.style.stroke = { width: 1.2, color: theme.colors.textOnAccent };
+    this.#dialogText.style.fill = theme.colors.text;
+    this.#dialogText.style.stroke = { width: 1.35, color: theme.colors.textOnAccent };
     for (const ruby of [...this.#rubyBasePool, ...this.#rubyTextPool]) {
-      ruby.style = { ...ruby.style, fill: theme.colors.text, stroke: { width: 0.8, color: theme.colors.textOnAccent } } satisfies TextStyleOptions;
+      ruby.style.fill = theme.colors.text;
+      ruby.style.stroke = { width: 0.8, color: theme.colors.textOnAccent };
     }
     this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
-    this.#bannerText.style = { ...this.#bannerText.style, fill: theme.colors.text } satisfies TextStyleOptions;
+    this.#bannerText.style.fill = theme.colors.text;
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
+    repaintThemeProjection(this.#root, previous, theme);
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {

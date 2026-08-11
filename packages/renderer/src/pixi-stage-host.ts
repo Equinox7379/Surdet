@@ -117,6 +117,13 @@ export class RendererStageHost {
       gallery: this.#gallery.debugSnapshot(),
       system: this.#system.debugSnapshot(),
       world: this.#world.debugSnapshot(),
+      themeProjection: {
+        dialogue: this.#dialogue.themeProjectionSnapshot(),
+        menu: this.#menu.themeProjectionSnapshot(),
+        gallery: this.#gallery.themeProjectionSnapshot(),
+        system: this.#system.themeProjectionSnapshot(),
+        loading: this.#loadingLayer.themeProjectionSnapshot(),
+      },
     };
   }
 
