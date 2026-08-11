@@ -368,7 +368,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
     this.#bannerText.style.fill = theme.colors.text;
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
-    repaintThemeProjection(this.#root, previous, theme);
+    repaintThemeProjection(this.#dialogueRoot, previous, theme);
+    repaintThemeProjection(this.#dialogueOverlayRoot, previous, theme);
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
