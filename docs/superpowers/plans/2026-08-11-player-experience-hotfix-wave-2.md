@@ -656,8 +656,8 @@ WAITING_FOR_REVIEW
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 - [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
 - [x] Task 3：指针消费、回退、界面隐藏。提交：`a4f67b36cb3071f8d98a92de24a6b8c874afde04`（`fix(engine): consume player ui input before dialogue advance`）。Task 4 仍需处理独立 E2E 红灯。
-- [x] Task 4：合成层级与 title gallery 上下文。实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）；台账提交待本记录完成。
-- [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
+- [x] Task 4：合成层级与 title gallery 上下文。实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）；台账提交：`53a15f213bac21bd4f308974237d5193435e4f1a`。
+- [x] Task 5：empty slot、save/load/title 生命周期根因。实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）；本阶段台账提交待本记录完成。
 - [ ] Task 6：对话框稳定性。提交：`PENDING`。
 - [ ] Task 7：完整玩家 E2E 矩阵。提交：`PENDING`。
 - [ ] Task 8：全量门禁、报告、最终停止。提交：`PENDING`。
@@ -829,3 +829,38 @@ Task 4 门禁：
 - Task 4 实现提交：`5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`（`fix(renderer): preserve overlay input and composition order`）。本提交只包含 6 个预期文件：正式游戏 `main.ts`、Dialogue/Gallery 生产层、两份 Renderer 回归测试和 Shell 玩家 E2E 脚本。
 - 当前 HEAD 在台账提交前为 `5e52d44da7f3d8409a8ed187f235a0c3ee9af73d`；相对 `surdet/main` 为 `9 0`。四个受保护未跟踪文件仍未修改、未暂存、未提交。
 - 未进入 Task 5 之前不得修改菜单资源所有权；下一入口为 Task 5：先按真实 `menu/pool/thumbnail` 注册/show/hide/reset/release 顺序建立业务复现红灯，随后修复 empty slot 与 save/load/title 生命周期根因。
+
+### 6.6 Task 5 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T14:00:00+08:00` 至 `2026-08-11T14:21:51+08:00`（Asia/Shanghai；精确恢复核对时间为 `2026-08-11T14:21:51.9777749+08:00`）。本阶段严格限制在 empty slot、真实菜单资源释放、save/load 事务恢复和回标题生命周期；未进入 Task 6。
+
+测试先行与真实失败证据：
+
+- Renderer 业务复现先红：在生产修复前，执行 `npm run test -w @surdet/renderer -- --run test/legacy/menu-layer.test.ts` 得到 `19 tests | 18 passed | 1 failed`。同一真实 data-URL thumbnail 路径按 `register/show/hide/reset/release` 顺序失败，顶层错误为 `Renderer resource release failed`，`code=COMMAND_COMMIT_FAILED`、`command=release`，失败条目为 `owner=menu`、`kind=pool`、`key=thumbnail:data:image/png;base64,task5-real-thumbnail`，原始 cause 为 `TypeError: Cannot read properties of undefined (reading 'destroy')`；根因是 Pixi v8 在无有效 DOM Image 的测试环境中把原始 data URL 当作缓存资产 ID，`Texture.from(string)` 返回未定义对象。
+- Empty load slot 回归随后先红：同一测试文件扩展到 `20 tests | 19 passed | 1 failed`，空槽卡片的目标断言为 `eventMode='static'`，生产代码实际为 `undefined`。该红灯证明空槽既未形成可消费的阻挡交互，也不能单独保证宿主不会收到伪造/陈旧槽位。
+- Task 1 的正式 Electron 失败证据没有被覆盖或删除：资源失败矩阵仍保留在 `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task1-r9XqQn\task1-failure-matrix.json`，SHA-256 为 `4D401FBD52BDC5DC5EBE715F06400C284765A538F1E2C84023156E65C3E0E9F4`；此前各轮失败 JSON 也继续保留在临时目录。
+
+生产修复与边界：
+
+- `MenuLayer` 为 data URL 建立可真实销毁的 Image-backed texture；非 DOM 测试回退到共享 `Texture.WHITE`，只由 cache entry 的 disposer 负责释放。普通资源缺失也只使用共享白纹理，不注册错误的独立销毁者。缓存生命周期保持 hide 保留、reset/dispose 释放，重复 release/reset/dispose 幂等。
+- 空 load slot 现在只建立静态、可命中的消费面，不注册 selectable handler；pointerdown 只消费当前事件并停止传播，不调用 onSelect。有效槽位先由 Host 完成事务，再按返回值决定是否关闭 overlay；失败或 `false` 结果保持读档页和 command rail 的正确状态。
+- Save/load Host 流程改为 try/commit/catch/restore/finally：空槽/不存在槽位 no-op；保存/读取失败恢复操作前的 UI session、overlay 和 command rail，并保留序列化错误诊断；成功才提交目标状态。H 键与界面按钮共用同一 UI session 语义，隐藏界面的第一次左键只恢复界面。
+- Renderer 的真实 disposer 失败仍会从 `RenderLifecycle` 抛出带 owner/kind/key/cause 元数据的 `RendererError`；本阶段没有 catch/ignore、warning 降级、延时或重复 hide/show 伪修复。
+
+专项测试与资源循环：
+
+- `npm run test -w @surdet/renderer -- --run test/lifecycle/render-lifecycle.test.ts test/legacy/menu-layer.test.ts test/integration/resource-cycles.test.ts`：3 个文件、`32/32` 通过（lifecycle `6/6`、menu `21/21`、resource cycles `5/5`）。
+- 真实 Renderer 资源循环覆盖：25 轮 system/save-load/gallery/backlog show/hide/reset；10 轮 save/load 交替；3 轮 title/reset/load；最终 stage destroy 与 lifecycle dispose 后监听器、显示对象、补间和资源注册均收敛到基线。
+- `npm run test -w @surdet/shell`：15 个文件、`122/122` 通过；`npm run typecheck -w @surdet/renderer`、`npm run build -w @surdet/renderer`、`npm run typecheck -w zero-after-midnight` 均退出码 `0`；`node --check packages/shell/e2e/player-experience-wave-2.e2e.mjs` 通过。
+
+正式游戏真实 Electron 验收：
+
+- 最终矩阵显式加载 `E:\surdet\examples\zero-after-midnight\dist`（不是 Starter），每次使用独立临时 userData，并使用真实鼠标点击：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task1-tLoqwP\task1-failure-matrix.json`。
+- 该矩阵 SHA-256：`F607750FE44FB5A595CAE9DBF72F6E3D2EEE8E89B0E94675CF8D37560B37A41B`；`npm run e2e:player-experience -w @surdet/shell` 退出码 `0`，6 个验收 case 全部通过：标题鉴赏 5/5、正式游戏鉴赏 3/3、空槽点击 5 次保持读档页、真实 save/load 交替、load 后系统菜单回标题、backlog/rollback/hidden interface 位置语义。
+- 最终 E2E 的 `pageErrors=[]`、`consoleErrors=[]`、`requestFailures=[]`、`releaseFailureEvidence=[]`；正式游戏路径已验证，不是默认 Starter。旧红灯证据仍保留，不能只报告绿色轮次。
+
+提交、范围与下一入口：
+
+- Task 5 实现提交：`93d0a1d13faddb22f038c9d85eece27915742f64`（`fix(renderer): make player resource transitions idempotent`）。本记录提交前 HEAD 为该 SHA，相对 `surdet/main` 为 `11 0`；提交本台账后预期为 `12 0`。
+- 受保护的 `SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文档仍仅为未跟踪文件，未修改、未暂存、未提交；没有 push、force push、M9、性能测量/优化、性能 artifact/门限、发行、重打包、剧情/DSL/存档格式或美术音频变更。
+- Task 5 已按本记录完成并可进入下一阶段；下一入口为 Task 6：先为“开始新对话行时文本为空但面板保持可见”及连续 10 行无非法 `true → false → true` 建立红灯，随后再修改对话生命周期。不得跳过测试先行，也不得把本阶段以外的 UX 项提前宣称完成。
