@@ -394,7 +394,7 @@ npm run build -w @surdet/renderer
 
 **Files:**
 - Modify: `docs/capabilities.json`
-- Regenerate: `docs/CAPABILITY-MATRIX.md`
+- Regenerate: `docs/capability-matrix.md`
 - Create: `docs/player-shell-migration.md`
 - Modify: `README.md`
 - Modify: `docs/AI-GUIDE.md`
@@ -432,9 +432,9 @@ git ls-files '*.log'
 ```
 
 - [x] Expected：全部退出 0；Zero 仍是 11 场景、23/23 分支、3 结局、44 项项目资产、0 模拟运行时错误；Electron 错误数组全空。
-- [ ] 所有验证结束后才写报告。报告含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
-- [ ] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`。
-- [ ] 报告提交后机器复核：
+- [x] 所有验证结束后才写报告。报告已含：起点/HEAD、逐 Task 全 SHA、引擎/项目归属、红绿证据、六槽 fallback、返回栈真值表、五 Layer Theme、两轮 Wave 3 与一轮 Wave 2 artifact 路径/字节/SHA、门禁、受保护文件、延期项和性能红灯保留声明。
+- [x] 提交文档：`git commit -m "docs(engine): publish player shell wave 3"`（最终报告归档提交）。
+- [x] 报告提交后机器复核：
 
 ```powershell
 $report = 'E:\surdet\docs\ENGINE-PLAYER-SHELL-FOUNDATION-WAVE-3-DELIVERY-REPORT-2026-08-11.md'
