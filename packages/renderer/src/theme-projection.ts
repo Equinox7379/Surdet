@@ -5,8 +5,9 @@ type ThemeColorKey = keyof RendererTheme['colors'];
 type ThemeTypographyKey = keyof RendererTheme['typography'];
 
 export interface ThemeTextProjectionBinding {
-  readonly fill?: ThemeColorKey;
-  readonly stroke?: ThemeColorKey;
+  /** `null` marks an explicit gameplay/legacy color that must not be remapped. */
+  readonly fill?: ThemeColorKey | null;
+  readonly stroke?: ThemeColorKey | null;
   readonly fontSize?: ThemeTypographyKey;
   readonly letterSpacing?: ThemeTypographyKey;
 }
@@ -103,7 +104,11 @@ function mapLegacyThemeNumber(value: number, previous: RendererTheme, next: Rend
 function repaintText(text: PText, previous: RendererTheme, next: RendererTheme): void {
   const binding = TEXT_BINDINGS.get(text);
   if (typeof text.style.fill === 'number') {
-    text.style.fill = binding?.fill ? next.colors[binding.fill] : mapLegacyThemeColor(text.style.fill, previous, next);
+    text.style.fill = binding?.fill === null
+      ? text.style.fill
+      : binding?.fill
+        ? next.colors[binding.fill]
+        : mapLegacyThemeColor(text.style.fill, previous, next);
   }
   if (typeof text.style.fontSize === 'number') {
     text.style.fontSize = binding?.fontSize
@@ -117,11 +122,19 @@ function repaintText(text: PText, previous: RendererTheme, next: RendererTheme):
   }
   const stroke = text.style.stroke;
   if (typeof stroke === 'number') {
-    text.style.stroke = binding?.stroke ? next.colors[binding.stroke] : mapLegacyThemeColor(stroke, previous, next);
+    text.style.stroke = binding?.stroke === null
+      ? stroke
+      : binding?.stroke
+        ? next.colors[binding.stroke]
+        : mapLegacyThemeColor(stroke, previous, next);
   } else if (stroke && typeof stroke === 'object' && 'color' in stroke && typeof stroke.color === 'number') {
     text.style.stroke = {
       ...stroke,
-      color: binding?.stroke ? next.colors[binding.stroke] : mapLegacyThemeColor(stroke.color, previous, next),
+      color: binding?.stroke === null
+        ? stroke.color
+        : binding?.stroke
+          ? next.colors[binding.stroke]
+          : mapLegacyThemeColor(stroke.color, previous, next),
     };
   }
 }
@@ -151,6 +164,37 @@ function repaintGraphics(graphics: Graphics, previous: RendererTheme, next: Rend
   if (changed) graphics.context = context;
 }
 
+function hasColoredText(text: PText): boolean {
+  if (typeof text.style.fill === 'number') return true;
+  const stroke = text.style.stroke;
+  return typeof stroke === 'number'
+    || (typeof stroke === 'object' && stroke !== null && 'color' in stroke && typeof stroke.color === 'number');
+}
+
+/**
+ * Fails closed when a color-bearing player-layer object was created without an
+ * explicit semantic binding. Fixed gameplay/legacy colors must use a `null`
+ * binding so they remain intentionally outside the theme token set.
+ */
+export function assertThemeProjectionBindings(...roots: readonly Container[]): void {
+  const missing: string[] = [];
+  const visit = (node: Container): void => {
+    if (node instanceof PText && hasColoredText(node) && !TEXT_BINDINGS.has(node)) {
+      missing.push(`PText:${node.text.slice(0, 40)}`);
+    }
+    if (node instanceof Graphics && graphicsColors(node).length > 0 && !GRAPHICS_BINDINGS.has(node)) {
+      missing.push('Graphics');
+    }
+    for (const child of node.children) {
+      if (child instanceof Container) visit(child);
+    }
+  };
+  for (const root of roots) visit(root);
+  if (missing.length > 0) {
+    throw new Error(`Renderer theme projection binding audit failed: ${missing.join(', ')}`);
+  }
+}
+
 /**
  * Repaints already-mounted Player UI display objects without replacing their
  * containers, listeners, textures, or lifecycle ownership.
@@ -160,6 +204,7 @@ export function repaintThemeProjection(
   previous: RendererTheme,
   next: RendererTheme,
 ): void {
+  assertThemeProjectionBindings(root);
   const visit = (node: Container): void => {
     if (node instanceof PText) repaintText(node, previous, next);
     if (node instanceof Graphics) repaintGraphics(node, previous, next);

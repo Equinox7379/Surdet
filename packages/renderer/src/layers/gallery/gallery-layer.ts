@@ -14,6 +14,7 @@ import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import {
+  bindThemeGraphicsProjection,
   bindThemeTextProjection,
   readThemeProjection,
   repaintThemeProjection,
@@ -209,7 +210,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     layer.eventMode = 'auto';
 
     if (!this.#galleryHeader) {
-      const blocker = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 });
+      const blocker = bindThemeGraphicsProjection(
+        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 }),
+        ['panel'],
+      );
       blocker.eventMode = 'static';
       layer.addChild(blocker);
 
@@ -254,7 +258,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'cg') {
       const items = views.cgs;
       if (items.length === 0) {
-        content.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(bindThemeTextProjection(
+          new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
+          { fill: 'textMuted' },
+        )).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -282,7 +289,10 @@ export class GalleryLayer implements GalleryProjectionPort {
             this.#rebuildGallery();
           });
         } else {
-          cell.addChild(new Graphics().rect(0, 0, cw, ch).fill({ color: this.#theme.colors.surfaceStrong, alpha: 1 }));
+          cell.addChild(bindThemeGraphicsProjection(
+            new Graphics().rect(0, 0, cw, ch).fill({ color: this.#theme.colors.surfaceStrong, alpha: 1 }),
+            ['surfaceStrong'],
+          ));
           const question = bindThemeTextProjection(
             new PText({ text: '?', style: { fontSize: 42, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions }),
             { fill: 'textDisabled' },
@@ -303,7 +313,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'music') {
       const items = views.music;
       if (items.length === 0) {
-        content.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(bindThemeTextProjection(
+          new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
+          { fill: 'textMuted' },
+        )).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -311,11 +324,14 @@ export class GalleryLayer implements GalleryProjectionPort {
         const y = 96 + i * 58;
         const row = new Container();
         row.position.set(60, y);
-        row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }));
-        row.addChild(new PText({
+        row.addChild(bindThemeGraphicsProjection(
+          new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }),
+          [item.unlocked ? 'surfaceStrong' : 'panel'],
+        ));
+        row.addChild(bindThemeTextProjection(new PText({
           text: `${item.unlocked ? '♪' : '?'}  ${item.unlocked ? item.name : '???'}`,
           style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        })).position.set(18, 10);
+        }), { fill: item.unlocked ? 'text' : 'textDisabled' })).position.set(18, 10);
         if (item.unlocked) {
           row.eventMode = 'static';
           row.cursor = 'pointer';
@@ -329,7 +345,10 @@ export class GalleryLayer implements GalleryProjectionPort {
 
     const items = views.texts;
     if (items.length === 0) {
-      content.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(60, 100);
+      content.addChild(bindThemeTextProjection(
+        new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
+        { fill: 'textMuted' },
+      )).position.set(60, 100);
       this.#registerListener();
       return;
     }
@@ -337,11 +356,14 @@ export class GalleryLayer implements GalleryProjectionPort {
       const y = 96 + i * 58;
       const row = new Container();
       row.position.set(60, y);
-      row.addChild(new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }));
-      row.addChild(new PText({
+      row.addChild(bindThemeGraphicsProjection(
+        new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }),
+        [item.unlocked ? 'surfaceStrong' : 'panel'],
+      ));
+      row.addChild(bindThemeTextProjection(new PText({
         text: `${item.unlocked ? '❐' : '?'}  ${item.unlocked ? item.name : '???'}`,
         style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      })).position.set(18, 10);
+      }), { fill: item.unlocked ? 'text' : 'textDisabled' })).position.set(18, 10);
       if (item.unlocked) {
         row.eventMode = 'static';
         row.cursor = 'pointer';
@@ -380,10 +402,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     sp.width = this.#w;
     sp.height = this.#h;
     content.addChild(sp);
-    content.addChild(new PText({
+    content.addChild(bindThemeTextProjection(new PText({
       text: '点击任意处返回列表',
       style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-    })).position.set(this.#w - 250, this.#h - 44);
+    }), { fill: 'text' })).position.set(this.#w - 250, this.#h - 44);
     content.eventMode = 'static';
     content.on('pointerdown', () => {
       this.#galleryMode = 'grid';

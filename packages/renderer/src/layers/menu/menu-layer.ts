@@ -239,16 +239,22 @@ export class MenuLayer implements MenuProjectionPort {
       titleBg.height = titleTexture.height * scale;
       titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
       layer.addChild(titleBg);
-      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.canvas, alpha: 0.48 }));
+      layer.addChild(bindThemeGraphicsProjection(
+        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.canvas, alpha: 0.48 }),
+        ['canvas'],
+      ));
     } else {
-      layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.97 }));
+      layer.addChild(bindThemeGraphicsProjection(
+        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.97 }),
+        ['panel'],
+      ));
     }
     const vignette = new Graphics();
     for (let i = 1; i <= 5; i++) {
       vignette.ellipse(this.#w / 2, this.#h / 2, this.#w * (0.42 + i * 0.16), this.#h * (0.4 + i * 0.17))
         .stroke({ width: 60, color: this.#theme.colors.canvas, alpha: 0.05 * i });
     }
-    layer.addChild(vignette);
+    layer.addChild(bindThemeGraphicsProjection(vignette, ['canvas', 'canvas', 'canvas', 'canvas', 'canvas']));
     const title = bindThemeTextProjection(new PText({
       text: view.title,
       style: {
@@ -266,10 +272,10 @@ export class MenuLayer implements MenuProjectionPort {
       .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
       .fill({ color: this.#theme.colors.accent, alpha: 0.55 }), ['accent']));
     if (view.subtitle) {
-      const subtitle = new PText({
+      const subtitle = bindThemeTextProjection(new PText({
         text: view.subtitle,
         style: { fontSize: 18, fill: this.#theme.colors.textMuted, letterSpacing: 3, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions,
-      });
+      }), { fill: 'textMuted' });
       subtitle.anchor.set(0.5);
       subtitle.position.set(this.#w / 2, this.#h * 0.28 + 76);
       layer.addChild(subtitle);
@@ -291,9 +297,9 @@ export class MenuLayer implements MenuProjectionPort {
       label.anchor.set(0.5);
       label.position.set(baseX, baseY);
       if (enabled) {
-        const line = new Graphics()
+        const line = bindThemeGraphicsProjection(new Graphics()
           .roundRect(baseX - 70, baseY + 20, 140, 1, 0.5)
-          .fill({ color: this.#theme.colors.accent, alpha: 0.9 });
+          .fill({ color: this.#theme.colors.accent, alpha: 0.9 }), ['accent']);
         line.visible = false;
         layer.addChild(line);
         label.eventMode = 'static';
@@ -330,7 +336,7 @@ export class MenuLayer implements MenuProjectionPort {
     if (this.#disposed) return;
     this.#requestFrame();
     this.#clearLayer(this.#endingLayer, 'ending');
-    const label = new PText({
+    const label = bindThemeTextProjection(new PText({
       text,
       style: {
         fontSize: 30,
@@ -339,10 +345,13 @@ export class MenuLayer implements MenuProjectionPort {
         letterSpacing: 9,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
-    });
+    }), { fill: 'text' });
     label.anchor.set(0.5);
     label.position.set(this.#w / 2, this.#h / 2);
-    this.#endingLayer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill(this.#theme.colors.canvas), label);
+    this.#endingLayer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill(this.#theme.colors.canvas),
+      ['canvas'],
+    ), label);
     this.#bringToFront(this.#endingLayer);
     this.#endingLayer.visible = true;
   }
@@ -362,9 +371,9 @@ export class MenuLayer implements MenuProjectionPort {
     this.#systemMenuItemCount = items.length;
     const layer = this.#menuLayer;
     layer.alpha = 0;
-    const bg = new Graphics()
+    const bg = bindThemeGraphicsProjection(new Graphics()
       .rect(0, 0, this.#w, this.#h)
-      .fill({ color: this.#theme.colors.scrim, alpha: 0.62 });
+      .fill({ color: this.#theme.colors.scrim, alpha: 0.62 }), ['scrim']);
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       const handler = this.#menuHandlers?.onClose;
@@ -382,47 +391,48 @@ export class MenuLayer implements MenuProjectionPort {
     const panelH = headerH + items.length * rowH + 28;
     panel.position.set(this.#menuMotionOffset, 0);
     this.#menuPanel = panel;
-    panel.addChild(new Graphics()
+    panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px + 10, py + 12, pw, panelH, 6)
-      .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }));
-    panel.addChild(new Graphics()
+      .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }), ['canvas']));
+    panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px, py, pw, panelH, 6)
       .fill({ color: this.#theme.colors.surface, alpha: 0.97 })
-      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }));
-    panel.addChild(new Graphics()
+      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }), ['surface', 'line']));
+    panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px, py, 3, panelH)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }));
-    panel.addChild(new Graphics()
+      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
+    panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px + 28, py + headerH - 1, pw - 54, 1)
-      .fill({ color: this.#theme.colors.line, alpha: 0.32 }));
-    panel.addChild(new PText({
+      .fill({ color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
+    panel.addChild(bindThemeTextProjection(new PText({
       text: 'SYSTEM',
       style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 28, py + 19);
-    panel.addChild(new PText({
+    }), { fill: 'accentSoft' })).position.set(px + 28, py + 19);
+    panel.addChild(bindThemeTextProjection(new PText({
       text: '系统菜单',
       style: { fontSize: 27, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 27, py + 42);
+    }), { fill: 'text' })).position.set(px + 27, py + 42);
 
     items.forEach((item, i) => {
       const row = new Container();
       const rowY = py + headerH + i * rowH;
       row.position.set(px + 16, rowY);
-      const hover = new Graphics()
+      const hover = bindThemeGraphicsProjection(new Graphics()
         .roundRect(0, 4, pw - 32, rowH - 8, 3)
-        .fill({ color: 0x173149, alpha: 0 });
-      const marker = new Graphics()
+        // Transparent interaction geometry is a fixed hit-area color, not a theme token.
+        .fill({ color: 0x173149, alpha: 0 }), [null]);
+      const marker = bindThemeGraphicsProjection(new Graphics()
         .rect(0, 13, 3, rowH - 26)
-        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 });
-      const index = new PText({
+        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 }), ['accentSoft']);
+      const index = bindThemeTextProjection(new PText({
         text: String(i + 1).padStart(2, '0'),
         style: { fontSize: 13, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions,
-      });
+      }), { fill: 'textMuted' });
       index.position.set(22, 19);
-      const label = new PText({
+      const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: { fontSize: 21, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions,
-      });
+      }), { fill: 'text' });
       label.position.set(62, 14);
       row.addChild(hover, marker, index, label);
       row.eventMode = 'static';
@@ -471,7 +481,10 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsRows = rows.map((row) => ({ ...row }));
     this.#settingsHandlers = { onChange, onClose };
     const layer = this.#settingsLayer;
-    const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.66 });
+    const bg = bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.66 }),
+      ['scrim'],
+    );
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       const handler = this.#settingsHandlers?.onClose;
@@ -486,28 +499,28 @@ export class MenuLayer implements MenuProjectionPort {
     const headerH = 106;
     const rowH = 58;
     const panelH = headerH + this.#settingsRows.length * rowH + 34;
-    layer.addChild(new Graphics()
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px + 10, py + 12, pw, panelH, 6)
-      .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }));
-    layer.addChild(new Graphics()
+      .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }), ['canvas']));
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px, py, pw, panelH, 6)
       .fill({ color: this.#theme.colors.surface, alpha: 0.98 })
-      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }));
-    layer.addChild(new Graphics()
+      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }), ['surface', 'line']));
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px, py, 3, panelH)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }));
-    layer.addChild(new PText({
+      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: 'SETTINGS',
       style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 30, py + 20);
-    layer.addChild(new PText({
+    }), { fill: 'accentSoft' })).position.set(px + 30, py + 20);
+    layer.addChild(bindThemeTextProjection(new PText({
       text: '设置',
       style: { fontSize: 28, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(px + 28, py + 44);
-    layer.addChild(new Graphics()
+    }), { fill: 'text' })).position.set(px + 28, py + 44);
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px + 28, py + headerH - 1, pw - 56, 1)
-      .fill({ color: this.#theme.colors.line, alpha: 0.32 }));
-    const close = new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions });
+      .fill({ color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
+    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
     close.position.set(px + pw - 52, py + 26);
     close.eventMode = 'static';
     close.cursor = 'pointer';
@@ -522,24 +535,24 @@ export class MenuLayer implements MenuProjectionPort {
 
     this.#settingsRows.forEach((row, i) => {
       const y = py + headerH + i * rowH;
-      layer.addChild(new Graphics()
+      layer.addChild(bindThemeGraphicsProjection(new Graphics()
         .rect(px + 28, y + rowH - 1, pw - 56, 1)
-        .fill({ color: this.#theme.colors.line, alpha: i === this.#settingsRows.length - 1 ? 0.18 : 0.26 }));
-      layer.addChild(new PText({
+        .fill({ color: this.#theme.colors.line, alpha: i === this.#settingsRows.length - 1 ? 0.18 : 0.26 }), ['line']));
+      layer.addChild(bindThemeTextProjection(new PText({
         text: row.label,
         style: { fontSize: 21, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-      })).position.set(px + 32, y + 16);
+      }), { fill: 'text' })).position.set(px + 32, y + 16);
       const controls = new Container();
       controls.position.set(px + pw - 300, y + 9);
-      const value = new PText({
+      const value = bindThemeTextProjection(new PText({
         text: row.display,
         style: { fontSize: 19, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-      });
+      }), { fill: 'text' });
       value.anchor.set(0.5, 0);
       value.position.set(150, 7);
-      const left = new PText({ text: '‹', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions });
+      const left = bindThemeTextProjection(new PText({ text: '‹', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft' });
       left.position.set(52, -3);
-      const right = new PText({ text: '›', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions });
+      const right = bindThemeTextProjection(new PText({ text: '›', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft' });
       right.position.set(230, -3);
       for (const control of [left, right]) {
         control.eventMode = 'static';
@@ -580,7 +593,10 @@ export class MenuLayer implements MenuProjectionPort {
     this.#saveLoadMode = view.mode;
     this.#saveLoadSlotCount = view.slots.length;
     const layer = this.#saveLoadLayer;
-    const bg = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.84 });
+    const bg = bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.84 }),
+      ['scrim'],
+    );
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       if (this.#saveLoadTransactionPending) {
@@ -592,22 +608,22 @@ export class MenuLayer implements MenuProjectionPort {
       handler?.();
     });
     layer.addChild(bg);
-    layer.addChild(new Graphics()
+    layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(86, 68, 3, 78)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }));
-    layer.addChild(new PText({
+      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: view.mode === 'save' ? 'SAVE DATA' : 'LOAD DATA',
       style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(108, 70);
-    layer.addChild(new PText({
+    }), { fill: 'accentSoft' })).position.set(108, 70);
+    layer.addChild(bindThemeTextProjection(new PText({
       text: view.mode === 'save' ? '存档' : '读档',
       style: { fontSize: 34, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(106, 91);
-    layer.addChild(new PText({
+    }), { fill: 'text' })).position.set(106, 91);
+    layer.addChild(bindThemeTextProjection(new PText({
       text: '记录当前剧情进度',
       style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
-    })).position.set(255, 110);
-    const close = new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions });
+    }), { fill: 'textMuted' })).position.set(255, 110);
+    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
     close.position.set(this.#w - 106, 76);
     close.eventMode = 'static';
     close.cursor = 'pointer';
@@ -637,16 +653,19 @@ export class MenuLayer implements MenuProjectionPort {
       const selectable = view.mode === 'save' || !slot.empty;
       const card = new Container();
       card.position.set(x, y);
-      const surface = new Graphics()
+      const surface = bindThemeGraphicsProjection(new Graphics()
         .roundRect(0, 0, cardW, cardH, 4)
         .fill({ color: selectable ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.92 })
-        .stroke({ width: 1, color: selectable ? this.#theme.colors.line : this.#theme.colors.textDisabled, alpha: selectable ? 0.68 : 0.38 });
-      const hover = new Graphics()
+        .stroke({ width: 1, color: selectable ? this.#theme.colors.line : this.#theme.colors.textDisabled, alpha: selectable ? 0.68 : 0.38 }),
+        [selectable ? 'surfaceStrong' : 'panel', selectable ? 'line' : 'textDisabled'],
+      );
+      const hover = bindThemeGraphicsProjection(new Graphics()
         .roundRect(0, 0, cardW, cardH, 4)
-        .fill({ color: 0x173149, alpha: 0 });
-      const marker = new Graphics()
+        // Transparent interaction geometry is a fixed hit-area color, not a theme token.
+        .fill({ color: 0x173149, alpha: 0 }), [null]);
+      const marker = bindThemeGraphicsProjection(new Graphics()
         .rect(0, 13, 3, cardH - 26)
-        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 });
+        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 }), ['accentSoft']);
       card.addChild(surface, hover, marker);
       let textX = 28;
       if (slot.thumbnail) {
@@ -657,28 +676,28 @@ export class MenuLayer implements MenuProjectionPort {
         card.addChild(thumb);
         textX = 166;
       }
-      card.addChild(new PText({
+      card.addChild(bindThemeTextProjection(new PText({
         text: String(i + 1).padStart(2, '0'),
         style: { fontSize: 13, fill: selectable ? this.#theme.colors.accentSoft : this.#theme.colors.textDisabled, letterSpacing: 1 } satisfies TextStyleOptions,
-      })).position.set(textX, 14);
+      }), { fill: selectable ? 'accentSoft' : 'textDisabled' })).position.set(textX, 14);
       const kindLabel = slot.kind === 'auto' ? '自动' : slot.kind === 'quick' ? '快速' : '手动';
-      card.addChild(new PText({
+      card.addChild(bindThemeTextProjection(new PText({
         text: slot.empty ? '空槽位' : (slot.label ?? '未命名场景'),
         style: { fontSize: 21, fill: selectable ? this.#theme.colors.text : this.#theme.colors.textDisabled, fontWeight: 'bold' } satisfies TextStyleOptions,
-      })).position.set(textX, 34);
+      }), { fill: selectable ? 'text' : 'textDisabled' })).position.set(textX, 34);
       if (!slot.empty) {
         const playtime = slot.playTimeSec !== undefined && slot.playTimeSec > 0
           ? ` · ${Math.floor(slot.playTimeSec / 60)}分钟`
           : '';
-        card.addChild(new PText({
+        card.addChild(bindThemeTextProjection(new PText({
           text: `${kindLabel}　${formatSlotTime(slot.updatedAt)}${playtime}`,
           style: { fontSize: 15, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
-        })).position.set(textX, 70);
+        }), { fill: 'textMuted' })).position.set(textX, 70);
       } else {
-        card.addChild(new PText({
+        card.addChild(bindThemeTextProjection(new PText({
           text: `${kindLabel}　等待记录`,
           style: { fontSize: 15, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        })).position.set(textX, 70);
+        }), { fill: 'textDisabled' })).position.set(textX, 70);
       }
       if (selectable) {
         card.eventMode = 'static';

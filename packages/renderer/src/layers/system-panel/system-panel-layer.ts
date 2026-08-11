@@ -18,6 +18,7 @@ import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import {
+  bindThemeGraphicsProjection,
   bindThemeTextProjection,
   readThemeProjection,
   repaintThemeProjection,
@@ -173,7 +174,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#battleHandlers = handlers;
     this.#battleUnitCount = view.units.length;
     const layer = this.#battleLayer;
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.9 }));
+    layer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.9 }),
+      ['panel'],
+    ));
     const heading = bindThemeTextProjection(new PText({
       text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
       style: { fontSize: 26, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
@@ -183,25 +187,32 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     const teams = [...new Set(view.units.map((u) => u.team))];
     teams.forEach((team, ti) => {
       const x = 80 + ti * 620;
-      layer.addChild(new PText({
+      layer.addChild(bindThemeTextProjection(new PText({
         text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
         style: { fontSize: 20, fill: team === view.actingTeam ? this.#theme.colors.accent : this.#theme.colors.textMuted, fontWeight: 'bold' } satisfies TextStyleOptions,
-      })).position.set(x, 92);
+      }), { fill: team === view.actingTeam ? 'accent' : 'textMuted' })).position.set(x, 92);
       view.units.filter((u) => u.team === team).forEach((u, i) => {
         const y = 136 + i * 88;
         const row = new Container();
         row.position.set(x, y);
-        row.addChild(new Graphics().roundRect(0, 0, 520, 72, 10).fill({ color: u.alive ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }));
-        row.addChild(new PText({
+        row.addChild(bindThemeGraphicsProjection(
+          new Graphics().roundRect(0, 0, 520, 72, 10).fill({ color: u.alive ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }),
+          [u.alive ? 'surfaceStrong' : 'panel'],
+        ));
+        row.addChild(bindThemeTextProjection(new PText({
           text: u.alive ? u.name : `${u.name}（倒下）`,
           style: { fontSize: 20, fill: u.alive ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        })).position.set(18, 8);
+        }), { fill: u.alive ? 'text' : 'textDisabled' })).position.set(18, 8);
         // Combat HP track/fill colors encode gameplay health, not a Player UI theme role.
-        row.addChild(new Graphics().rect(18, 46, 340, 12).fill(0x333340));
+        // Combat HP track/fill colors encode gameplay health, not a Player UI theme role.
+        row.addChild(bindThemeGraphicsProjection(new Graphics().rect(18, 46, 340, 12).fill(0x333340), [null]));
         if (u.hpRatio > 0) {
-          row.addChild(new Graphics().rect(18, 46, 340 * u.hpRatio, 12).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f));
+          row.addChild(bindThemeGraphicsProjection(
+            new Graphics().rect(18, 46, 340 * u.hpRatio, 12).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f),
+            [null],
+          ));
         }
-        row.addChild(new PText({ text: `${u.hp}/${u.maxHp}`, style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(372, 40);
+        row.addChild(bindThemeTextProjection(new PText({ text: `${u.hp}/${u.maxHp}`, style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' })).position.set(372, 40);
         if (u.alive && u.team !== view.actingTeam) {
           row.eventMode = 'static';
           row.cursor = 'pointer';
@@ -227,15 +238,18 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       let sx = 60;
       for (const btn of skillBtns) {
         const selected = btn.id !== null && btn.id === this.#battleSelectedSkill;
-        const t = new PText({
+        const t = bindThemeTextProjection(new PText({
           text: btn.label,
           style: {
             fontSize: 18,
             fill: selected ? this.#theme.colors.textOnAccent : btn.ready ? this.#theme.colors.text : this.#theme.colors.textDisabled,
           } satisfies TextStyleOptions,
-        });
-        const pad = new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
-          .fill({ color: selected ? this.#theme.colors.accent : this.#theme.colors.surface, alpha: 0.95 });
+        }), { fill: selected ? 'textOnAccent' : btn.ready ? 'text' : 'textDisabled' });
+        const pad = bindThemeGraphicsProjection(
+          new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
+            .fill({ color: selected ? this.#theme.colors.accent : this.#theme.colors.surface, alpha: 0.95 }),
+          [selected ? 'accent' : 'surface'],
+        );
         layer.addChild(pad);
         t.position.set(sx, this.#h - 144);
         layer.addChild(t);
@@ -251,10 +265,10 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       }
       if (actingUnit.canMove) {
         const mkMove = (label: string, dir: -1 | 1, x: number): void => {
-          const b = new PText({
+          const b = bindThemeTextProjection(new PText({
             text: label,
             style: { fontSize: 18, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions,
-          });
+          }), { fill: 'accentSoft' });
           b.position.set(x, this.#h - 144);
           b.eventMode = 'static';
           b.cursor = 'pointer';
@@ -266,11 +280,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       }
     }
 
-    layer.addChild(new PText({
+    layer.addChild(bindThemeTextProjection(new PText({
       text: message.length > 0 ? message : '点击敌方单位发起攻击',
       style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-    })).position.set(60, this.#h - 84);
-    const pass = new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: this.#theme.colors.accent } satisfies TextStyleOptions });
+    }), { fill: 'text' })).position.set(60, this.#h - 84);
+    const pass = bindThemeTextProjection(new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: this.#theme.colors.accent } satisfies TextStyleOptions }), { fill: 'accent' });
     pass.position.set(this.#w - 210, this.#h - 84);
     pass.eventMode = 'static';
     pass.cursor = 'pointer';
@@ -295,28 +309,37 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapHandlers = { onEnter, onEndTurn };
     this.#mapNodeCount = view.nodes.length;
     const layer = this.#mapLayer;
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 }));
-    layer.addChild(new PText({
+    layer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 }),
+      ['panel'],
+    ));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: `${view.date} —— 回合 ${view.turn}`,
       style: { fontSize: 24, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-    layer.addChild(new PText({ text: '行动力', style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
+    }), { fill: 'text' })).position.set(60, 36);
+    layer.addChild(bindThemeTextProjection(new PText({ text: '行动力', style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
     // AP and visited-node colors encode gameplay availability/state; keep them outside theme tokens.
     for (let i = 0; i < view.maxAp; i++) {
-      layer.addChild(new Graphics().circle(this.#w - 60 - (view.maxAp - i) * 30 + 10, 50, 10).fill(i < view.ap ? 0x57c26a : 0x333340));
+      layer.addChild(bindThemeGraphicsProjection(
+        new Graphics().circle(this.#w - 60 - (view.maxAp - i) * 30 + 10, 50, 10).fill(i < view.ap ? 0x57c26a : 0x333340),
+        [null],
+      ));
     }
     for (const node of view.nodes) {
       const dot = new Container();
       dot.position.set(node.x, node.y);
       const color = node.enterable ? this.#theme.colors.accent : node.visited ? 0x5a7a8a : 0x333340;
-      dot.addChild(new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }));
+      dot.addChild(bindThemeGraphicsProjection(
+        new Graphics().circle(0, 0, 26).fill({ color, alpha: node.enterable ? 0.95 : 0.6 }),
+        [node.enterable ? 'accent' : null],
+      ));
       if (node.visited) {
-        dot.addChild(new PText({ text: '✓', style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions })).position.set(-9, -13);
+        dot.addChild(bindThemeTextProjection(new PText({ text: '✓', style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(-9, -13);
       }
-      const nameTag = new PText({
+      const nameTag = bindThemeTextProjection(new PText({
         text: `${node.name}${node.apCost > 0 ? `（行动力 ${node.apCost}）` : ''}`,
         style: { fontSize: 16, fill: node.enterable ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      });
+      }), { fill: node.enterable ? 'text' : 'textDisabled' });
       nameTag.anchor.set(0.5, 0);
       nameTag.position.set(0, 34);
       dot.addChild(nameTag);
@@ -331,7 +354,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       }
       layer.addChild(dot);
     }
-    const end = new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: this.#theme.colors.accent } satisfies TextStyleOptions });
+    const end = bindThemeTextProjection(new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: this.#theme.colors.accent } satisfies TextStyleOptions }), { fill: 'accent' });
     end.position.set(this.#w - 210, this.#h - 70);
     end.eventMode = 'static';
     end.cursor = 'pointer';
@@ -360,27 +383,36 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#shopHandlers = { onBuy, onClose };
     this.#shopItemCount = view.items.length;
     const layer = this.#shopLayer;
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }));
-    layer.addChild(new PText({
+    layer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }),
+      ['panel'],
+    ));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: '商 店',
       style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
-    layer.addChild(new PText({
+    }), { fill: 'text' })).position.set(60, 36);
+    layer.addChild(bindThemeTextProjection(new PText({
       text: `金币：${view.gold}`,
       // Gold is an in-world economy indicator, not a generic UI accent.
       style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
-    })).position.set(this.#w - 240, 44);
+    }), { fill: null })).position.set(this.#w - 240, 44);
     view.items.forEach((item, i) => {
       const affordable = view.gold >= item.price;
       const row = new Container();
       row.position.set(60, 120 + i * 64);
-      row.addChild(new Graphics().roundRect(0, 0, 720, 52, 10).fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.96 }));
-      row.addChild(new PText({ text: item.name, style: { fontSize: 22, fill: this.#theme.colors.text } satisfies TextStyleOptions })).position.set(20, 13);
-      row.addChild(new PText({ text: `${item.price} 金币`, style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions })).position.set(320, 16);
-      const btn = new PText({
+      row.addChild(bindThemeGraphicsProjection(
+        new Graphics().roundRect(0, 0, 720, 52, 10).fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.96 }),
+        ['surfaceStrong'],
+      ));
+      row.addChild(bindThemeTextProjection(new PText({ text: item.name, style: { fontSize: 22, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(20, 13);
+      row.addChild(bindThemeTextProjection(
+        new PText({ text: `${item.price} 金币`, style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions }),
+        { fill: null },
+      )).position.set(320, 16);
+      const btn = bindThemeTextProjection(new PText({
         text: affordable ? '购买' : '金币不足',
       style: { fontSize: 20, fill: affordable ? this.#theme.colors.accent : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      });
+      }), { fill: affordable ? 'accent' : 'textDisabled' });
       btn.position.set(580, 14);
       if (affordable) {
         btn.eventMode = 'static';
@@ -391,9 +423,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       layer.addChild(row);
     });
     if (view.message && view.message.length > 0) {
-      layer.addChild(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions })).position.set(60, this.#h - 130);
+      layer.addChild(bindThemeTextProjection(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(60, this.#h - 130);
     }
-    const close = new PText({ text: '✕ 离开商店', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions });
+    const close = bindThemeTextProjection(new PText({ text: '✕ 离开商店', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
     close.position.set(this.#w - 220, this.#h - 74);
     close.eventMode = 'static';
     close.cursor = 'pointer';
@@ -422,32 +454,38 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#baseHandlers = { onExec, onClose };
     this.#baseCommandCount = view.commands.length;
     const layer = this.#baseLayer;
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }));
-    layer.addChild(new PText({
+    layer.addChild(bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }),
+      ['panel'],
+    ));
+    layer.addChild(bindThemeTextProjection(new PText({
       text: '据 点 指 令',
       style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    })).position.set(60, 36);
+    }), { fill: 'text' })).position.set(60, 36);
     // AP is a gameplay resource indicator; its gold-colored label is intentionally not a theme token.
-    layer.addChild(new PText({
+    layer.addChild(bindThemeTextProjection(new PText({
       text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
       style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
-    })).position.set(this.#w - 340, 44);
+    }), { fill: null })).position.set(this.#w - 340, 44);
     view.commands.forEach((cmd, i) => {
       const row = new Container();
       row.position.set(60, 120 + i * 64);
-      row.addChild(new Graphics().roundRect(0, 0, 860, 52, 10).fill({ color: cmd.enabled ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }));
-      row.addChild(new PText({
+      row.addChild(bindThemeGraphicsProjection(
+        new Graphics().roundRect(0, 0, 860, 52, 10).fill({ color: cmd.enabled ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }),
+        [cmd.enabled ? 'surfaceStrong' : 'panel'],
+      ));
+      row.addChild(bindThemeTextProjection(new PText({
         text: cmd.name,
         style: { fontSize: 22, fill: cmd.enabled ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      })).position.set(20, 13);
-      row.addChild(new PText({
+      }), { fill: cmd.enabled ? 'text' : 'textDisabled' })).position.set(20, 13);
+      row.addChild(bindThemeTextProjection(new PText({
         text: `AP ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
         style: { fontSize: 18, fill: cmd.enabled ? 0xffd77a : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      })).position.set(360, 16);
-      const btn = new PText({
+      }), { fill: cmd.enabled ? null : 'textDisabled' })).position.set(360, 16);
+      const btn = bindThemeTextProjection(new PText({
         text: cmd.enabled ? '执行' : '不可执行',
       style: { fontSize: 20, fill: cmd.enabled ? this.#theme.colors.accent : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      });
+      }), { fill: cmd.enabled ? 'accent' : 'textDisabled' });
       btn.position.set(720, 14);
       if (cmd.enabled) {
         btn.eventMode = 'static';
@@ -458,9 +496,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       layer.addChild(row);
     });
     if (view.message && view.message.length > 0) {
-      layer.addChild(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions })).position.set(60, this.#h - 130);
+      layer.addChild(bindThemeTextProjection(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(60, this.#h - 130);
     }
-    const close = new PText({ text: '◀ 返回地图', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions });
+    const close = bindThemeTextProjection(new PText({ text: '◀ 返回地图', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
     close.position.set(this.#w - 220, this.#h - 74);
     close.eventMode = 'static';
     close.cursor = 'pointer';
