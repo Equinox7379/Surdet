@@ -34,6 +34,22 @@ export type {
   PrimaryPointerLike,
 } from './player-ui.js';
 export {
+  PLAYER_SHELL_SLOT_IDS,
+  PlayerShellSlotError,
+  createPlayerShellSlotRegistry,
+} from './player-shell-slots.js';
+export type {
+  PlayerShellOpenRequest,
+  PlayerShellSlotBindingSnapshot,
+  PlayerShellSlotContext,
+  PlayerShellSlotErrorCode,
+  PlayerShellSlotId,
+  PlayerShellSlotProvider,
+  PlayerShellSlotRegistry,
+  PlayerShellSlotRegistrySnapshot,
+  PlayerShellSource,
+} from './player-shell-slots.js';
+export {
   assertProfileKey,
   LocalStorageProfileStorage,
   MemoryProfileStorage,
