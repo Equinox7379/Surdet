@@ -67,6 +67,14 @@ export class RendererStageHost {
     this.#dialogue.onBacklogClose = handler;
   }
 
+  get onPointerConsumed(): (() => void) | null {
+    return this.#dialogue.onPointerConsumed;
+  }
+
+  set onPointerConsumed(handler: (() => void) | null) {
+    this.#dialogue.onPointerConsumed = handler;
+  }
+
   /** @internal Renderer runtime wiring for the extracted dialogue layer. */
   get dialogueLayer(): DialogueProjectionPort {
     return this.#dialogue;

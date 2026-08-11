@@ -63,11 +63,14 @@ import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
 import {
+  canAdvance,
   canRollback as canRollbackFromSession,
   createPlayerUiSession,
+  shouldRestoreInterfaceOnPointer,
   shouldShowCommandRail,
   type PlayerOverlay,
 } from './player-ui-session.js';
+import { PlayerInputGate } from './player-input-gate.js';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -232,6 +235,7 @@ async function main(): Promise<void> {
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
   const uiSession = createPlayerUiSession({ base: 'title' });
+  const inputGate = new PlayerInputGate();
   let lastRendererError: DebugErrorValue | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
@@ -247,6 +251,12 @@ async function main(): Promise<void> {
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
     onWaitEnd: () => { uiSession.setVideoActive(false); interp.finishWait(); },
+    onPointerConsumed: () => inputGate.consumeCurrentPointer(),
+    onBacklogClose: () => {
+      inputGate.consumeCurrentPointer();
+      if (uiSession.snapshot().overlay === 'backlog') uiSession.closeOverlay();
+      refreshCommandRail();
+    },
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
@@ -465,10 +475,19 @@ async function main(): Promise<void> {
 
   // @system 统一由 @surdet/host 路由；游戏只在上方注入配置、求解器和结果回调。
 
-  // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
+  // 点击画布：先让本次同步事件中的 Pixi UI 回调标记消费，再统一决定是否推进。
   runtime.canvas.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    if (isTitleScreen()) return;
+    const decision = inputGate.decidePointer(uiSnapshot(), e);
+    if (decision === 'ignore') return;
+    if (decision === 'restore-interface') {
+      if (shouldRestoreInterfaceOnPointer(uiSnapshot())) {
+        uiSession.setInterfaceHidden(false);
+        renderer.dispatchInput({ type: 'interface.toggle' });
+        refreshCommandRail();
+      }
+      return;
+    }
+    if (!canAdvance(uiSnapshot())) return;
     const s = interp.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.dispatchInput({ type: 'advance' });
   });
@@ -873,6 +892,7 @@ async function main(): Promise<void> {
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
+    inputGate.consumeCurrentPointer();
     switch (id) {
       case 'new': {
         clearRollback();
@@ -954,6 +974,7 @@ async function main(): Promise<void> {
       };
     });
     menu.showSaveLoad({ mode, slots }, (slotId) => {
+      inputGate.consumeCurrentPointer();
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
@@ -997,6 +1018,7 @@ async function main(): Promise<void> {
         })();
       }
     }, () => {
+      inputGate.consumeCurrentPointer();
       if (isUiBusy() || !isOverlay('save-load')) return;
       const base = uiSnapshot().base;
       uiSession.closeOverlay();
@@ -1032,6 +1054,7 @@ async function main(): Promise<void> {
         { id: 'title', label: '回到标题' },
       ],
       (id) => {
+        inputGate.consumeCurrentPointer();
         if (isOverlay('system-menu')) uiSession.closeOverlay();
         switch (id) {
           case 'save': void openSaveLoad('save'); break;
@@ -1044,7 +1067,10 @@ async function main(): Promise<void> {
         }
         refreshCommandRail();
       },
-      () => { if (isOverlay('system-menu')) uiSession.closeOverlay(); },
+      () => {
+        inputGate.consumeCurrentPointer();
+        if (isOverlay('system-menu')) uiSession.closeOverlay();
+      },
     );
   }
 
@@ -1116,8 +1142,12 @@ async function main(): Promise<void> {
     const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
     gallery.showGallery({
       ...views,
-      onPlayMusic: (id, src) => audio.playBgm(src ?? id),
+      onPlayMusic: (id, src) => {
+        inputGate.consumeCurrentPointer();
+        audio.playBgm(src ?? id);
+      },
       onReplayText: (item) => {
+        inputGate.consumeCurrentPointer();
         // 文本回想：关闭鉴赏，跳回回想场景重播（hostJump 清空调用栈）
         if (!item.scene) return;
         gallery.hideGallery();
@@ -1125,6 +1155,7 @@ async function main(): Promise<void> {
         interp.hostJump(item.scene, item.label);
       },
       onClose: () => {
+        inputGate.consumeCurrentPointer();
         const base = uiSnapshot().base;
         if (isOverlay('gallery')) uiSession.closeOverlay();
         if (base === 'title') showTitleScreen();
@@ -1140,6 +1171,7 @@ async function main(): Promise<void> {
     menu.showSettings(
       SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
       (id, dir) => {
+        inputGate.consumeCurrentPointer();
         const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
         void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
           // 改值立即投影生效（打字速度/音量/自动停留），并刷新面板展示
@@ -1149,6 +1181,7 @@ async function main(): Promise<void> {
         });
       },
       () => {
+        inputGate.consumeCurrentPointer();
         const base = uiSnapshot().base;
         if (isOverlay('settings')) uiSession.closeOverlay();
         // 标题页设置关闭后回到标题页；游戏中设置则保持当前剧情画面。
@@ -1174,6 +1207,7 @@ async function main(): Promise<void> {
   }
 
   function onCommandRailSelect(id: string): void {
+    inputGate.consumeCurrentPointer();
     switch (id) {
       case 'auto': renderer.dispatchInput({ type: 'auto.toggle' }); break;
       case 'skip': {

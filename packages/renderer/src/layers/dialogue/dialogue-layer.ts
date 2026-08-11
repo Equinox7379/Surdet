@@ -32,6 +32,8 @@ export interface DialogueLayerOptions {
   readonly lifecycle?: RenderLifecycle;
   readonly preferences?: PresentationPreferences;
   readonly requestFrame?: () => void;
+  /** Marks the synchronous pointer event as consumed by a Dialogue UI target. */
+  readonly onPointerConsumed?: (() => void) | null;
 }
 
 /** Read-only evidence emitted for the local renderer acceptance harness. */
@@ -154,6 +156,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #commandRailWakeRemain = 0;
   #commandRailIdleAlpha = 0.38;
   #commandRailPointerWake: (() => void) | null = null;
+  #onPointerConsumed: (() => void) | null = null;
 
   #speakerProfiles = new Map<string, SpeakerProfile>();
   #activeSpeakerId: string | null = null;
@@ -169,6 +172,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
     this.#requestFrameCallback = options.requestFrame;
+    this.#onPointerConsumed = options.onPointerConsumed ?? null;
     if (options.preferences) this.#preferences = { ...options.preferences };
 
     this.#choiceLayer = new Container();
@@ -257,6 +261,14 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   set onBacklogClose(handler: (() => void) | null) {
     this.#onBacklogClose = handler;
+  }
+
+  get onPointerConsumed(): (() => void) | null {
+    return this.#onPointerConsumed;
+  }
+
+  set onPointerConsumed(handler: (() => void) | null) {
+    this.#onPointerConsumed = handler;
   }
 
   get nvlLines(): readonly PText[] {
@@ -438,7 +450,10 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#drawChoiceCard(view, false);
       holder.eventMode = 'static';
       holder.cursor = 'pointer';
-      holder.on('pointerdown', () => this.#onSelect?.(option.index));
+      holder.on('pointerdown', () => {
+        this.#onPointerConsumed?.();
+        this.#onSelect?.(option.index);
+      });
       holder.on('pointerover', () => this.#drawChoiceCard(view, true));
       holder.on('pointerout', () => {
         this.#drawChoiceCard(view, this.#choiceHighlight === this.#choiceViews.indexOf(view));
@@ -486,6 +501,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (!this.#backlogBuilt) {
       layer.eventMode = 'static';
       layer.on('pointerdown', () => {
+        this.#onPointerConsumed?.();
         this.hideBacklog();
         this.#onBacklogClose?.();
       });
@@ -527,6 +543,7 @@ export class DialogueLayer implements DialogueProjectionPort {
           textNode.eventMode = 'static';
           textNode.cursor = 'pointer';
           textNode.on('pointerdown', (event) => {
+            this.#onPointerConsumed?.();
             event.stopPropagation();
             onReplayVoice(entry.voice!);
           });
@@ -1048,7 +1065,10 @@ export class DialogueLayer implements DialogueProjectionPort {
             fontFamily: this.#assets.fontFamily('ui'),
           } satisfies TextStyleOptions;
         });
-        row.on('pointerdown', () => this.#commandRailOnSelect?.(item.id));
+        row.on('pointerdown', () => {
+          this.#onPointerConsumed?.();
+          this.#commandRailOnSelect?.(item.id);
+        });
       }
       layer.addChild(row);
     });

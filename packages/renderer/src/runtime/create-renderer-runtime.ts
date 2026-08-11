@@ -184,7 +184,9 @@ function createControllerOptions(
   options: RendererRuntimeOptions,
 ): PresentationControllerOptions {
   const previousBacklogClose = stage.onBacklogClose;
+  const previousPointerConsumed = stage.onPointerConsumed;
   if (options.pluginHost) options.pluginHost.attach(stage);
+  stage.onPointerConsumed = options.onPointerConsumed ?? null;
   return {
     ...(options.typewriter ? { typewriter: options.typewriter } : {}),
     ...(options.backlog ? { backlog: options.backlog } : {}),
@@ -212,6 +214,7 @@ function createControllerOptions(
       return () => {
         stage.onSelect = null;
         stage.onBacklogClose = null;
+        stage.onPointerConsumed = previousPointerConsumed;
       };
     },
     detachPlugin: () => options.pluginHost?.detach(),

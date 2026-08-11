@@ -655,7 +655,7 @@ WAITING_FOR_REVIEW
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 - [x] Task 2：单一 UI 会话状态。提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
-- [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
+- [ ] Task 3：指针消费、回退、界面隐藏。实现已完成，提交：`IMPLEMENTATION_COMMIT_PENDING`；Task 4 仍需处理独立 E2E 红灯。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
 - [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
 - [ ] Task 6：对话框稳定性。提交：`PENDING`。
@@ -767,3 +767,32 @@ Task 2 门禁：
 Task 2 实现提交：`f5e3c9231f6a7965254d886828d420be5cd8163c`（`refactor(zero-after-midnight): centralize player ui session state`）。
 
 下一入口：提交本次台账 SHA 后开始 Task 3 的输入门禁红灯测试。
+
+### 6.4 Task 3 实际执行记录（2026-08-11）
+
+本阶段执行时间：`2026-08-11T12:57:08+08:00` 至 `2026-08-11T12:58:01+08:00`（Asia/Shanghai）。本记录只覆盖 Task 3；真实玩家 E2E 中尚未关闭的 UX-01、UX-03 及其链式失败继续保留，不能提前标记为修复完成。
+
+测试先行与生产实现：
+
+- 首次运行 `npx vitest run examples/zero-after-midnight/test/player-input-gate.test.ts packages/renderer/test/legacy/dialogue-layer.test.ts` 时，输入门禁测试因 `src/player-input-gate.ts` 尚不存在而红灯；同一轮新增的 Dialogue consumed 回归也先以 `consumed=0` 对 `expected=1` 红灯。
+- 新增 `PlayerInputGate` 后，同一输入门禁测试转绿：`7/7`。覆盖正常游戏面主键推进、覆盖层忽略、UI 当前事件消费且不污染下一次指针、隐藏界面首次点击只恢复、rollback success/no-op 消费、右键及非主键忽略；实现没有定时器或延迟。
+- Dialogue legacy 回归转绿：`11/11`；新增命令栏和全屏 backlog pointer handler 的同步消费断言，两个 handler 均在宿主回调前标记当前事件。
+- 《零点之后》工作区测试转绿：资产 `44`、`11` 个场景、`3` 个结局验证通过；`PlayerUiSession` `14/14`、`PlayerInputGate` `7/7`，合计 `21/21`。
+- `npm run typecheck -w zero-after-midnight`：退出码 `0`；Renderer typecheck、Shell typecheck 和 Renderer build 已在本阶段生产接线完成后通过；`git diff --check`：通过（仅有 Git 的 LF→CRLF 提示，无 whitespace error）。
+
+正式游戏真实 Electron 证据（本阶段最终运行，显式加载 `E:\\surdet\\examples\\zero-after-midnight\\dist`，不是 Starter，使用独立临时 `userData`）：
+
+- 原始矩阵：`<local-path>`。
+- SHA-256：`660776E6411A5A1D6CCBEF1DDB5D88AD81787E78034E86AAB187742BFD2564CD`。
+- UX-01 `title → gallery → music → text → close ×5`：仍失败，music overlay 到 text 的切换等待超时；快照保留 `base=title`、`activeOverlay=gallery:music`。
+- UX-03 `load → empty slot`：仍失败，空槽错误关闭读档页，并再次保留真实 `RendererError`：`code=COMMAND_COMMIT_FAILED`、`command=release`、`owner=menu`、`kind=pool`、`key=thumbnail:<data-url>`、原始 cause `TypeError: Cannot read properties of undefined (reading 'destroy')`。
+- UX-09 `new game → save → load → save`：该轮通过；UX-04 以及前置红灯后的 UX-05/07/08 链式位置检查结果原样保留，未用后续污染状态冒充通过。
+- 页面错误数组和 `releaseFailureEvidence` 均保留；没有捕获后忽略、降级为 warning 或通过延时伪装成功。Task 1 的其他三份失败矩阵仍保留在临时目录，未被覆盖。
+
+本阶段接线范围：
+
+- `PlayerInputGate` 统一 canvas pointerdown 的语义决策；`DialogueLayer`、`RendererStageHost` 和 runtime wiring 增加同步 `onPointerConsumed` 端口；标题、存读档、系统菜单、设置、鉴赏、command rail、backlog close 等宿主回调在同一事件中显式消费。
+- 当前只增加 Renderer 公开运行时接线所需的 typed callback，没有改 DSL、存档格式、剧情、游戏规则、性能数据/门限、M9、发行物、美术或音频。
+- 四个受保护未跟踪文件未修改、未暂存；没有 push、force push、发行或重新打包正式 EXE。
+
+下一入口：先提交本阶段实现与本台账的精确变更；随后仅进入 Task 4，先为 overlay z-order 与 title/game gallery return context 建立红灯测试。不得把本阶段仍失败的 UX 项标为已知限制后跳过。
