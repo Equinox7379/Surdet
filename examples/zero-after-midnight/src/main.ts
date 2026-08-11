@@ -54,7 +54,17 @@ import {
 } from '@surdet/renderer';
 import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
 import { LocalStorageProfileStorage } from '@surdet/host';
-import { connectSystemRouter, createDefaultHost, createSystemHooks } from '@surdet/host';
+import {
+  canAdvance,
+  canRollback as canRollbackFromSession,
+  connectSystemRouter,
+  createDefaultHost,
+  createPlayerUiSession,
+  createSystemHooks,
+  shouldRestoreInterfaceOnPointer,
+  shouldShowCommandRail,
+  PlayerInputGate,
+} from '@surdet/host';
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
@@ -62,15 +72,7 @@ import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
-import {
-  canAdvance,
-  canRollback as canRollbackFromSession,
-  createPlayerUiSession,
-  shouldRestoreInterfaceOnPointer,
-  shouldShowCommandRail,
-  type PlayerOverlay,
-} from './player-ui-session.js';
-import { PlayerInputGate } from './player-input-gate.js';
+import type { PlayerOverlay } from '@surdet/host';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';

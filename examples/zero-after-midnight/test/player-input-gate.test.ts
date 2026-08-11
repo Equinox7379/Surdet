@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   PlayerInputGate,
   type PointerDecision,
-} from '../src/player-input-gate.ts';
+} from '@surdet/host';
 import {
   createPlayerUiSession,
   type PlayerUiSessionSnapshot,
-} from '../src/player-ui-session.ts';
+} from '@surdet/host';
 
 function decide(
   gate: PlayerInputGate,

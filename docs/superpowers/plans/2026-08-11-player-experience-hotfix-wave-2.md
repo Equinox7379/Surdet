@@ -961,3 +961,18 @@ Task 7 门禁与范围：
 - 仍未 push、未 force push、未开始 M9、未处理性能工作、未发行。
 
 下一步：初始报告/台账提交 `e713f2c` 已完成，其后 `npm run verify:all` 已再次通过；本次纯文档事实回填完成后再做最终 `verify:all`、diff/status/ahead-behind 复核，然后停止等待独立复审。
+
+## 7. 最终限定整改台账（2026-08-11）
+
+本节记录总经理独立复审后唯一授权的 R1/R2/R3 整改；不得据此启动 M9、性能工作、发行或 push。阶段必须按 R3 → R1 → R2 的依赖顺序完成，每阶段使用新的普通提交，不改写既有 18 个提交。
+
+### 7.1 R3 公共 Player UI 协调层（已完成，提交待记录）
+
+- 起始 HEAD：`ce94d393ce8cfd709ebb972129403e7d6e6ee9f5`；工作树仅四个受保护未跟踪文件；`HEAD...surdet/main=18 0`。
+- 测试先行：新增公共契约测试后，在生产模块尚不存在时运行 `npm test -w @surdet/host -- --run test/player-ui-coordination.test.ts`，得到模块缺失红灯：`Cannot find module '../src/player-ui.js'`。
+- 生产实现：新增 `packages/host/src/player-ui.ts`，公开 `PlayerUiSession`、`PlayerInputGate`、纯状态谓词和同步 pointer-consumption snapshot；`packages/host/src/index.ts` 导出 typed public contract。
+- 迁移：zero 入口/测试改为消费 `@surdet/host`，删除 zero 本地两份状态实现；Starter 删除 `systemMenuOpen/saveLoadOpen/onTitleScreen/galleryOpen/settingsOpen` 五套可写状态，改为公共 session/gate；CLI game template 接入相同 session/gate。
+- 验证：Host focused `8/8`；zero `2 files/21 tests`；Starter `4 files/7 tests`；Host、Starter、zero typecheck 均退出码 `0`；Host build 退出码 `0`。
+- Starter 对照护栏：`examples/starter/test/player-ui-integration.test.ts` 验证公共导入、无旧五布尔状态、菜单/Backlog/隐藏界面同步决策。
+- 失败证据：公共模块缺失红灯已保留在本台账；R3 当前没有未解决测试失败。
+- 下一入口：R1，先为真实 Dialogue Backlog 内部合成层级增加红灯。

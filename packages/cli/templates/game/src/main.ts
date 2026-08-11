@@ -23,7 +23,14 @@ import {
   rendererInputForGameAction,
 } from '@surdet/renderer';
 import type { AssetLoadJob, AssetPriority, GameAction } from '@surdet/renderer';
-import { connectSystemRouter, createDefaultHost } from '@surdet/host';
+import {
+  PlayerInputGate,
+  canAdvance,
+  connectSystemRouter,
+  createDefaultHost,
+  createPlayerUiSession,
+  shouldRestoreInterfaceOnPointer,
+} from '@surdet/host';
 import gameConfig from '../game.config.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
@@ -46,10 +53,13 @@ async function main(): Promise<void> {
   const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry);
   const audio = new AudioManager();
+  const playerUiSession = createPlayerUiSession({ base: 'game' });
+  const inputGate = new PlayerInputGate();
   const runtime = await createRendererRuntime({
     audio,
     onAdvance: () => interp.advance(),
     onSelect: (index) => interp.choose(index),
+    onPointerConsumed: () => inputGate.consumeCurrentPointer(),
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
@@ -157,7 +167,17 @@ async function main(): Promise<void> {
     });
   });
 
-  runtime.canvas.addEventListener('pointerdown', () => controller.advance());
+  runtime.canvas.addEventListener('pointerdown', (event) => {
+    const decision = inputGate.decidePointer(playerUiSession.snapshot(), event);
+    if (decision === 'restore-interface') {
+      if (shouldRestoreInterfaceOnPointer(playerUiSession.snapshot())) {
+        playerUiSession.setInterfaceHidden(false);
+        controller.dispatchInput({ type: 'interface.toggle' });
+      }
+      return;
+    }
+    if (decision === 'advance' && canAdvance(playerUiSession.snapshot())) controller.advance();
+  });
 
   const saveStorage: SaveStorage = {
     read: (slot) => {

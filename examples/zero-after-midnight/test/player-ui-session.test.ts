@@ -7,7 +7,7 @@ import {
   shouldShowCommandRail,
   type PlayerOverlay,
   type PlayerUiSessionSnapshot,
-} from '../src/player-ui-session.ts';
+} from '@surdet/host';
 
 const blockingOverlays: readonly Exclude<PlayerOverlay, 'none'>[] = [
   'system-menu',
