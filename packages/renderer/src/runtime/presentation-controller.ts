@@ -363,7 +363,7 @@ export class PresentationController {
     // 清空 Typewriter 时先把状态置 idle，避免空文本的 onComplete 回调改变会话状态。
     this.#tw.text = '';
     this.#commands.dialogue.hideChoices();
-    this.#commands.dialogue.showText(null, '');
+    this.#clearText();
     this.#lastAwaiting = null;
     this.#syncAwaiting(false);
     this.#commands.dialogue.hideBacklog();
@@ -668,17 +668,16 @@ export class PresentationController {
       this.#awaitSince = nowMs();
       return;
     }
+    this.#beginText(p.speaker);
     if (p.value.length === 0) {
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，
       // 否则状态机永远卡在 typing（Typewriter 空文本 done=true 但不触发 onComplete），剧情无法推进。
       this.#status = 'awaiting';
       this.#awaitSince = nowMs();
-      this.#syncText();
       return;
     }
     this.#status = 'typing';
     this.#tw.text = p.value;
-    this.#commands.dialogue.showText(p.speaker, '');
   }
 
   #onChoice(p: ChoiceEventPayload): void {
@@ -1024,6 +1023,16 @@ export class PresentationController {
   #syncText(): void {
     const c = this.#current;
     if (c) this.#commands.dialogue.showText(c.speaker, c.value);
+  }
+
+  #beginText(speaker: string | null): void {
+    if (this.#commands.dialogue.beginText) this.#commands.dialogue.beginText(speaker);
+    else this.#commands.dialogue.showText(speaker, '');
+  }
+
+  #clearText(): void {
+    if (this.#commands.dialogue.clearText) this.#commands.dialogue.clearText();
+    else this.#commands.dialogue.showText(null, '');
   }
 }
 

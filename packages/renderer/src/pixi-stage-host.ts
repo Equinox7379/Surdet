@@ -400,6 +400,14 @@ export class RendererStageHost {
     this.#dialogue.showText(speaker, value);
   }
 
+  beginText(speaker: string | null): void {
+    this.#dialogue.beginText(speaker);
+  }
+
+  clearText(): void {
+    this.#dialogue.clearText();
+  }
+
   /** 等待推进指示器可见性（呼吸小光点；同时决定面板是否保持显示） */
   setAwaiting(awaiting: boolean): void {
     this.#dialogue.setAwaiting(awaiting);

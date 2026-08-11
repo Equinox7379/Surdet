@@ -84,6 +84,10 @@ export interface WorldProjectionPort extends WorldCommands {
 
 export interface DialogueCommands {
   showText(speaker: string | null, value: string): void;
+  /** Additive internal lifecycle command: begin a line while keeping its panel visible. */
+  beginText?(speaker: string | null): void;
+  /** Additive internal lifecycle command: explicitly clear and hide the current line. */
+  clearText?(): void;
   showChoices(options: readonly ChoiceOptionView[]): void;
   hideChoices(): void;
   setAwaiting(awaiting: boolean): void;

@@ -42,6 +42,7 @@ export interface DialogueLayerDebugSnapshot {
   readonly projectionVersion: number;
   readonly speakerText: string;
   readonly dialogText: string;
+  readonly panelVisible: boolean;
   readonly choiceLabels: readonly string[];
   readonly visibleChoiceCount: number;
   readonly rubyBaseCount: number;
@@ -117,6 +118,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #dialogText: PText;
   #lastShownSpeaker: string | null | undefined;
   #lastShownDialog = '';
+  #lineActive = false;
   #speakerPlate: Graphics;
   #dialogCharsPerLine = 40;
   #dialogPanel: Graphics;
@@ -298,6 +300,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       projectionVersion: this.#projectionVersion,
       speakerText: String(this.#speakerText.text),
       dialogText: String(this.#dialogText.text),
+      panelVisible: this.#dialogPanel.visible,
       choiceLabels: this.#choiceViews.map((view) => String(view.label.text)),
       visibleChoiceCount: this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
       rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
@@ -419,6 +422,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   showText(speaker: string | null, value: string): void {
     if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
     this.#requestFrame();
+    if ((speaker ?? '').length > 0 || value.length > 0) this.#lineActive = true;
     this.#lastShownSpeaker = speaker;
     this.#lastShownDialog = value;
     this.#projectionVersion += 1;
@@ -436,6 +440,26 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#dialogText.visible = false;
       this.#dialogRubyLayer.visible = false;
     }
+  }
+
+  /** Begin a new ADV line without exposing a transient empty-panel frame. */
+  beginText(speaker: string | null): void {
+    this.#lineActive = true;
+    this.#lastShownSpeaker = undefined;
+    this.#lastShownDialog = '';
+    this.showText(speaker, '');
+    if (!this.#interfaceHidden && !this.#nvlActive) this.#dialogPanel.visible = true;
+  }
+
+  /** Explicitly clear the current line; unlike beginText this is allowed to hide the panel. */
+  clearText(): void {
+    if (this.#disposed) return;
+    this.#lineActive = false;
+    this.#lastShownSpeaker = undefined;
+    this.#lastShownDialog = '';
+    this.showText(null, '');
+    this.#dialogPanel.visible = false;
+    this.#continueIndicator.visible = false;
   }
 
   showChoices(options: ChoiceOptionView[]): void {
@@ -493,7 +517,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (this.#nvlActive || this.#interfaceHidden) return;
     this.#continueIndicator.visible = awaiting;
     if (awaiting) this.#dialogPanel.visible = true;
-    else if (this.#speakerText.text.length === 0 && this.#dialogText.text.length === 0) this.#dialogPanel.visible = false;
+    else if (!this.#lineActive && this.#speakerText.text.length === 0 && this.#dialogText.text.length === 0) this.#dialogPanel.visible = false;
     this.#requestFrame();
   }
 
@@ -735,6 +759,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
+    this.#lineActive = false;
     this.#clearChoices();
     this.hideBacklog();
     this.#lifecycle.release('dialogue', 'listener', 'backlog-overlay');

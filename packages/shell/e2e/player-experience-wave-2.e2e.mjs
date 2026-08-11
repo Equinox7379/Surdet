@@ -76,6 +76,7 @@ const events = {
   windowClosed: false,
 };
 const cases = [];
+const dialogueFrameEvidence = [];
 
 async function snapshot() {
   if (!page || page.isClosed()) return null;
@@ -94,6 +95,23 @@ async function snapshot() {
       assetLoading: d?.assetLoading ?? null,
     };
   });
+}
+
+async function sampleDialogueFrames(frameCount = 12) {
+  return page.evaluate(async (count) => {
+    const frames = [];
+    for (let index = 0; index < count; index += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const projection = window.__surdetDebug?.dialogueProjection;
+      frames.push({
+        frame: index,
+        panelVisible: projection?.panelVisible ?? null,
+        dialogText: projection?.dialogText ?? null,
+        position: window.__surdetDebug?.position ?? null,
+      });
+    }
+    return frames;
+  }, frameCount);
 }
 
 async function withWatchdog(label, operation, timeoutMs = 5000) {
@@ -126,6 +144,7 @@ async function canvasPoint(x, y) {
 }
 
 async function clickTarget(id) {
+  await waitForPresentedFrame(`${id} 目标`);
   const target = await page.evaluate((targetId) => {
     const target = window.__surdetDebug?.interactionTargets?.find((item) => item.id === targetId);
     const canvas = document.querySelector('canvas');
@@ -140,10 +159,17 @@ async function clickTarget(id) {
   if (!target) throw new Error(`找不到语义交互目标：${id}`);
   console.log(`INFO semantic click ${id} @ (${target.x.toFixed(1)},${target.y.toFixed(1)})`);
   await withWatchdog(`点击 ${id}`, () => page.mouse.click(target.x, target.y));
+  await waitForPresentedFrame(id);
 }
 
 async function press(key) {
   await withWatchdog(`按键 ${key}`, () => page.keyboard.press(key));
+}
+
+async function waitForPresentedFrame(label) {
+  await withWatchdog(`等待 ${label} 完成渲染提交`, () => page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  })));
 }
 
 async function waitTitle() {
@@ -236,7 +262,33 @@ async function main() {
   }
   await waitTitle();
 
+  await runCase('UX-02 连续十句对话逐帧无面板闪烁', async () => {
+    await prepareTitle();
+    await clickTarget('title:new');
+    await waitGame();
+    for (let line = 0; line < 10; line += 1) {
+      await waitFor('等待对话行可推进', () => ['awaiting-advance', 'awaiting-timer'].includes(window.__surdetDebug?.status), undefined, 12000);
+      const before = await snapshot();
+      const framePromise = sampleDialogueFrames(12);
+      await press('Space');
+      const frames = await framePromise;
+      const after = await snapshot();
+      dialogueFrameEvidence.push({ line: line + 1, before, after, frames });
+      const visibleValues = frames.map((frame) => frame.panelVisible).filter((value) => value !== null);
+      for (let index = 0; index < visibleValues.length - 2; index += 1) {
+        if (visibleValues[index] === true && visibleValues[index + 1] === false && visibleValues[index + 2] === true) {
+          throw new Error(`对话行 ${line + 1} 出现非法 panel true → false → true：${JSON.stringify(frames)}`);
+        }
+      }
+      if (visibleValues.length > 0 && visibleValues.some((value) => value !== true)) {
+        throw new Error(`对话行 ${line + 1} 出现非设计性 panel 隐藏：${JSON.stringify(frames)}`);
+      }
+    }
+    await assertNoRuntimeError('UX-02');
+  });
+
   await runCase('UX-01 title → gallery → music → text → close ×5', async () => {
+    await prepareTitle();
     for (let round = 1; round <= 5; round++) {
       await clickTarget('title:gallery');
       await waitOverlay('gallery:cg');
@@ -391,7 +443,7 @@ async function main() {
   const releaseFailureEvidence = [...events.pageErrors, ...events.consoleErrors].filter((entry) => /renderer resource release failed/i.test(entry));
   const evidence = {
     schemaVersion: 1,
-    phase: 'Task 5 player experience acceptance',
+    phase: 'Task 6 dialogue stability acceptance',
     generatedAt: new Date().toISOString(),
     formalGame: {
       sourceRoot: path.resolve(gameSourceRoot),
@@ -403,6 +455,7 @@ async function main() {
     events,
     releaseFailureEvidence,
     finalSnapshot,
+    dialogueFrameEvidence,
     status: cases.some((entry) => !entry.ok) ? 'FAILED' : 'PASSED',
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
@@ -419,12 +472,13 @@ try {
   if (app) await app.close().catch((error) => console.error(`Electron close failed: ${errorText(error)}`));
   const evidence = {
     schemaVersion: 1,
-    phase: 'Task 5 player experience acceptance',
+    phase: 'Task 6 dialogue stability acceptance',
     generatedAt: new Date().toISOString(),
     formalGame: { sourceRoot: path.resolve(gameSourceRoot), distRoot: path.resolve(gameDist) },
     userData: path.resolve(userData),
     cases,
     events: { ...events, intentionalClose },
+    dialogueFrameEvidence,
     releaseFailureEvidence: [...events.pageErrors, ...events.consoleErrors].filter((entry) => /renderer resource release failed/i.test(entry)),
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
