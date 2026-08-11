@@ -90,6 +90,14 @@ export class LegacyStageAdapter implements AdvStage {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
   }
+  beginText(speaker: string | null): void {
+    const before = this.host.dialogueLayer.projectionVersion;
+    this.host.beginText(speaker);
+    if (this.host.dialogueLayer.projectionVersion !== before) {
+      this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
+    }
+  }
+  clearText(): void { this.host.clearText(); }
   setAwaiting(awaiting: boolean): void { this.host.setAwaiting(awaiting); }
   needsUpdate(): boolean { return this.host.needsUpdate(); }
   updateContinuePulse(deltaMs: number): void { this.host.updateContinuePulse(deltaMs); }

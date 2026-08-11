@@ -15,6 +15,8 @@ class DialogueStageHarness implements AdvStage {
   background: string | null = null;
   portraits = new Map<string, PortraitView>();
   texts: { speaker: string | null; value: string }[] = [];
+  begins: (string | null)[] = [];
+  clears = 0;
   choices: ChoiceOptionView[] = [];
   choiceHighlight = -1;
   awaiting = false;
@@ -51,6 +53,14 @@ class DialogueStageHarness implements AdvStage {
 
   showText(speaker: string | null, value: string): void {
     this.texts.push({ speaker, value });
+  }
+
+  beginText(speaker: string | null): void {
+    this.begins.push(speaker);
+  }
+
+  clearText(): void {
+    this.clears += 1;
   }
 
   showChoices(options: ChoiceOptionView[]): void {
@@ -239,6 +249,82 @@ function makeRuntime() {
 }
 
 describe('DialogueLayer v2 projection contract', () => {
+  it('keeps a new empty line visible until explicit clear/reset', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const root = new Container();
+    const layer = new DialogueLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+
+    try {
+      const dialogueRoot = root.children[0] as Container;
+      const panel = dialogueRoot.children[0] as Container;
+      const beginText = (layer as unknown as { beginText: (speaker: string | null) => void }).beginText;
+      const clearText = (layer as unknown as { clearText: () => void }).clearText;
+
+      beginText.call(layer, null);
+      expect(panel.visible).toBe(true);
+
+      layer.showText(null, '第一行逐字更新');
+      expect(panel.visible).toBe(true);
+
+      beginText.call(layer, null);
+      expect(panel.visible).toBe(true);
+      layer.showText(null, '第二行');
+      expect(panel.visible).toBe(true);
+
+      clearText.call(layer);
+      expect(panel.visible).toBe(false);
+      layer.reset();
+      expect(panel.visible).toBe(false);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('does not produce a panel true-false-true transition across ten empty-to-typed lines', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const root = new Container();
+    const layer = new DialogueLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+
+    try {
+      const dialogueRoot = root.children[0] as Container;
+      const panel = dialogueRoot.children[0] as Container;
+      const beginText = (layer as unknown as { beginText: (speaker: string | null) => void }).beginText;
+      const visibility: boolean[] = [];
+      for (let index = 0; index < 10; index += 1) {
+        beginText.call(layer, null);
+        visibility.push(panel.visible);
+        layer.showText(null, `连续对话 ${index} 中文𠀀🙂`);
+        visibility.push(panel.visible);
+      }
+
+      expect(visibility).toHaveLength(20);
+      for (let index = 0; index < visibility.length - 2; index += 1) {
+        expect(visibility.slice(index, index + 3)).not.toEqual([true, false, true]);
+      }
+      expect(visibility.every(Boolean)).toBe(true);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
   it('marks command rail and full-screen backlog pointer handlers as consumed', () => {
     const lifecycle = new RenderLifecycle();
     const assets = new RenderAssetRegistry({ lifecycle });

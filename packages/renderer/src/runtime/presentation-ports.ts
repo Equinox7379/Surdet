@@ -164,6 +164,14 @@ export function createPresentationPorts(
 
   const dialogueCommands: RendererCommands['dialogue'] = {
     showText: (speaker, value) => stage.showText(speaker, value),
+    beginText: (speaker) => {
+      if (stage.beginText) stage.beginText(speaker);
+      else stage.showText(speaker, '');
+    },
+    clearText: () => {
+      if (stage.clearText) stage.clearText();
+      else stage.showText(null, '');
+    },
     showChoices: (options) => stage.showChoices([...options]),
     hideChoices: () => stage.hideChoices(),
     setAwaiting: (awaiting) => stage.setAwaiting?.(awaiting),

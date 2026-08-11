@@ -346,6 +346,34 @@ export class RendererFacade {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
         }
       },
+      beginText: (speaker) => {
+        if (!this.#dialoguePort) {
+          if (this.#stage.beginText) this.#callDialogue('beginText', undefined, this.#stage.beginText, speaker);
+          else this.#callDialogue('beginText', undefined, this.#stage.showText, speaker, '');
+          return;
+        }
+        const before = this.#dialoguePort.projectionVersion;
+        if (this.#dialoguePort.beginText) {
+          this.#callDialogue('beginText', this.#dialoguePort.beginText, this.#stage.beginText, speaker);
+        } else {
+          this.#callDialogue('beginText', this.#dialoguePort.showText, this.#stage.showText, speaker, '');
+        }
+        if (this.#dialoguePort.projectionVersion !== before) {
+          this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
+        }
+      },
+      clearText: () => {
+        if (!this.#dialoguePort) {
+          if (this.#stage.clearText) this.#callDialogue('clearText', undefined, this.#stage.clearText);
+          else this.#callDialogue('clearText', undefined, this.#stage.showText, null, '');
+          return;
+        }
+        if (this.#dialoguePort.clearText) {
+          this.#callDialogue('clearText', this.#dialoguePort.clearText, this.#stage.clearText);
+        } else {
+          this.#callDialogue('clearText', this.#dialoguePort.showText, this.#stage.showText, null, '');
+        }
+      },
       showChoices: (options) => this.#callDialogue('showChoices', this.#dialoguePort?.showChoices, this.#stage.showChoices, options.slice()),
       hideChoices: () => this.#callDialogue('hideChoices', this.#dialoguePort?.hideChoices, this.#stage.hideChoices),
       setAwaiting: (awaiting) => this.#callDialogue('setAwaiting', this.#dialoguePort?.setAwaiting, this.#stage.setAwaiting, awaiting),

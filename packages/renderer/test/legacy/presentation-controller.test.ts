@@ -15,6 +15,8 @@ import type { AdvStage } from '../../src/types.js';
 
 function stageHarness(): AdvStage & {
   texts: string[];
+  begins: (string | null)[];
+  clears: number;
   highlights: number[];
   hidden: boolean[];
   scrolls: number[];
@@ -22,6 +24,8 @@ function stageHarness(): AdvStage & {
 } {
   const stage = {
     texts: [] as string[],
+    begins: [] as (string | null)[],
+    clears: 0,
     highlights: [] as number[],
     hidden: [] as boolean[],
     scrolls: [] as number[],
@@ -30,6 +34,8 @@ function stageHarness(): AdvStage & {
     setPortrait: () => undefined,
     removePortrait: () => undefined,
     showText: (_speaker: string | null, value: string) => { stage.texts.push(value); },
+    beginText: (speaker: string | null) => { stage.begins.push(speaker); },
+    clearText: () => { stage.clears += 1; },
     showChoices: () => undefined,
     hideChoices: () => undefined,
     setFade: () => undefined,
@@ -43,6 +49,8 @@ function stageHarness(): AdvStage & {
     needsUpdate: () => true,
   } as unknown as AdvStage & {
     texts: string[];
+    begins: (string | null)[];
+    clears: number;
     highlights: number[];
     hidden: boolean[];
     scrolls: number[];
@@ -138,6 +146,30 @@ describe('PresentationController', () => {
     expect(controller.dispatchInput({ type: 'escape' })).toBe(true);
     expect(controller.dispatchInput({ type: 'advance' })).toBe(true);
     expect(advanceCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('uses explicit begin-line and clear-text commands instead of empty showText for lifecycle boundaries', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage, { typewriter: undefined });
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+
+    try {
+      bus.emit('text', { speaker: null, value: '第一句中文𠀀🙂' });
+      expect(stage.begins).toEqual([null]);
+      expect(stage.texts).toEqual([]);
+
+      controller.update(1_000);
+      expect(stage.texts.at(-1)).toBe('第一句中文𠀀🙂');
+      expect(stage.begins).toHaveLength(1);
+
+      controller.resetSession({ preserveWorld: true });
+      expect(stage.clears).toBe(1);
+      expect(stage.texts).toEqual(['第一句中文𠀀🙂']);
+    } finally {
+      off();
+      controller.dispose();
+    }
   });
 
   it('connect returns an idempotent unsubscribe and dispose blocks later input', () => {
