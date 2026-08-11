@@ -1,6 +1,7 @@
 import {
   Container,
   Graphics,
+  Rectangle,
   Sprite,
   Text as PText,
   Texture,
@@ -67,6 +68,9 @@ export class GalleryLayer implements GalleryProjectionPort {
   #galleryOnReplayText: ((item: GalleryItemView) => void) | null = null;
   #galleryOnClose: (() => void) | null = null;
   #galleryViewerKey: string | null = null;
+  #galleryHeader: Container | null = null;
+  #galleryContent: Container | null = null;
+  #galleryTabs: { cg: PText; music: PText; text: PText } | null = null;
 
   constructor(options: GalleryLayerOptions) {
     this.#root = options.uiLayer;
@@ -80,6 +84,7 @@ export class GalleryLayer implements GalleryProjectionPort {
 
     this.#galleryLayer = new Container();
     this.#galleryLayer.visible = false;
+    this.#galleryLayer.eventMode = 'none';
     this.#root.addChild(this.#galleryLayer);
     this.#registerDisplay('gallery-layer', this.#galleryLayer);
   }
@@ -117,7 +122,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   }): void {
     if (this.#disposed) return;
     this.#requestFrame();
-    this.#clearLayer();
+    this.#clearContent();
     this.#galleryViews = {
       cgs: options.cgs.map((item) => ({ ...item })),
       music: options.music.map((item) => ({ ...item })),
@@ -131,13 +136,15 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryViewerKey = null;
     this.#rebuildGallery();
     this.#bringToFront();
+    this.#galleryLayer.eventMode = 'auto';
     this.#galleryLayer.visible = true;
   }
 
   hideGallery(): void {
     if (this.#disposed) return;
     this.#requestFrame();
-    this.#clearLayer();
+    this.#clearContent();
+    this.#galleryLayer.eventMode = 'none';
     this.#galleryLayer.visible = false;
     this.#galleryOnPlayMusic = null;
     this.#galleryOnReplayText = null;
@@ -157,6 +164,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#galleryLayer.eventMode = 'none';
     this.#clearLayer();
     this.#galleryViews = null;
     this.#galleryOnPlayMusic = null;
@@ -172,46 +180,55 @@ export class GalleryLayer implements GalleryProjectionPort {
   }
 
   #rebuildGallery(): void {
-    this.#clearLayer();
     const layer = this.#galleryLayer;
     const views = this.#galleryViews;
     if (!views) return;
 
-    layer.addChild(new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.95 }));
+    // Keep the tab controls alive across content rebuilds. Replacing the
+    // active pointer target during its own dispatch leaves the Pixi event
+    // boundary with a stale hit tree in the title-page path.
+    this.#clearContent();
+    layer.eventMode = 'auto';
 
-    const mkBtn = (label: string, x: number, active: boolean, onTap: () => void): PText => {
-      const t = new PText({
-        text: label,
-        style: { fontSize: 24, fill: active ? GALLERY_ACCENT : 0x8a93a8, fontWeight: active ? 'bold' : 'normal' } satisfies TextStyleOptions,
-      });
-      t.position.set(x, 30);
-      t.eventMode = 'static';
-      t.cursor = 'pointer';
-      t.on('pointerdown', onTap);
-      return t;
-    };
-    layer.addChild(mkBtn('CG', 60, this.#galleryTab === 'cg', () => {
-      this.#galleryTab = 'cg';
-      this.#galleryMode = 'grid';
-      this.#galleryViewerKey = null;
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('音乐', 150, this.#galleryTab === 'music', () => {
-      this.#galleryTab = 'music';
-      this.#galleryMode = 'grid';
-      this.#galleryViewerKey = null;
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('文本', 240, this.#galleryTab === 'text', () => {
-      this.#galleryTab = 'text';
-      this.#galleryMode = 'grid';
-      this.#galleryViewerKey = null;
-      this.#rebuildGallery();
-    }));
-    layer.addChild(mkBtn('✕ 关闭', this.#w - 150, false, () => this.#closeGallery()));
+    if (!this.#galleryHeader) {
+      const blocker = new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: 0x0a0a12, alpha: 0.95 });
+      blocker.eventMode = 'static';
+      layer.addChild(blocker);
+
+      const header = new Container();
+      this.#galleryHeader = header;
+      layer.addChild(header);
+      const mkBtn = (label: string, x: number, width: number, onTap: () => void): PText => {
+        const t = new PText({
+          text: label,
+          style: { fontSize: 24, fill: 0x8a93a8, fontWeight: 'normal' } satisfies TextStyleOptions,
+        });
+        t.position.set(x, 30);
+        // Use a stable logical hit box instead of relying on the rendered glyph
+        // bounds, which vary with font loading and can miss a real player click.
+        t.hitArea = new Rectangle(0, -18, width, 62);
+        t.eventMode = 'static';
+        t.cursor = 'pointer';
+        t.on('pointerdown', onTap);
+        header.addChild(t);
+        return t;
+      };
+      this.#galleryTabs = {
+        cg: mkBtn('CG', 60, 96, () => this.#selectGalleryTab('cg')),
+        music: mkBtn('音乐', 150, 112, () => this.#selectGalleryTab('music')),
+        text: mkBtn('文本', 240, 60, () => this.#selectGalleryTab('text')),
+      };
+      const close = mkBtn('✕ 关闭', this.#w - 150, 150, () => this.#closeGallery());
+      close.eventMode = 'static';
+    }
+    this.#updateTabStyles();
+
+    const content = new Container();
+    this.#galleryContent = content;
+    layer.addChild(content);
 
     if (this.#galleryMode === 'viewer' && this.#galleryViewerKey !== null) {
-      this.#buildGalleryViewer(layer, this.#galleryViewerKey);
+      this.#buildGalleryViewer(content, this.#galleryViewerKey);
       this.#registerListener();
       return;
     }
@@ -219,7 +236,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'cg') {
       const items = views.cgs;
       if (items.length === 0) {
-        layer.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -254,7 +271,7 @@ export class GalleryLayer implements GalleryProjectionPort {
           text: item.unlocked ? item.name : '???',
           style: { fontSize: 18, fill: item.unlocked ? 0xdddddd : 0x55555f } satisfies TextStyleOptions,
         })).position.set(0, ch + 10);
-        layer.addChild(cell);
+        content.addChild(cell);
       });
       this.#registerListener();
       return;
@@ -263,7 +280,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     if (this.#galleryTab === 'music') {
       const items = views.music;
       if (items.length === 0) {
-        layer.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+        content.addChild(new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
         this.#registerListener();
         return;
       }
@@ -281,7 +298,7 @@ export class GalleryLayer implements GalleryProjectionPort {
           row.cursor = 'pointer';
           row.on('pointerdown', () => this.#galleryOnPlayMusic?.(item.id, item.src));
         }
-        layer.addChild(row);
+        content.addChild(row);
       });
       this.#registerListener();
       return;
@@ -289,7 +306,7 @@ export class GalleryLayer implements GalleryProjectionPort {
 
     const items = views.texts;
     if (items.length === 0) {
-      layer.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
+      content.addChild(new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: 0x8a8a96 } satisfies TextStyleOptions })).position.set(60, 100);
       this.#registerListener();
       return;
     }
@@ -307,24 +324,44 @@ export class GalleryLayer implements GalleryProjectionPort {
         row.cursor = 'pointer';
         row.on('pointerdown', () => this.#galleryOnReplayText?.({ ...item }));
       }
-      layer.addChild(row);
+      content.addChild(row);
     });
     this.#registerListener();
   }
 
-  #buildGalleryViewer(layer: Container, key: string): void {
+  #selectGalleryTab(tab: 'cg' | 'music' | 'text'): void {
+    this.#galleryTab = tab;
+    this.#galleryMode = 'grid';
+    this.#galleryViewerKey = null;
+    this.#rebuildGallery();
+  }
+
+  #updateTabStyles(): void {
+    const tabs = this.#galleryTabs;
+    if (!tabs) return;
+    for (const [tab, text] of Object.entries(tabs) as Array<['cg' | 'music' | 'text', PText]>) {
+      const active = this.#galleryTab === tab;
+      text.style = {
+        fontSize: 24,
+        fill: active ? GALLERY_ACCENT : 0x8a93a8,
+        fontWeight: active ? 'bold' : 'normal',
+      } satisfies TextStyleOptions;
+    }
+  }
+
+  #buildGalleryViewer(content: Container, key: string): void {
     const tex = this.#assets.resolveBackground(key)
       ?? this.#assets.getOrCreateBackground(key, () => this.#createBackgroundTexture(key, this.#w, this.#h));
     const sp = new Sprite(tex);
     sp.width = this.#w;
     sp.height = this.#h;
-    layer.addChild(sp);
-    layer.addChild(new PText({
+    content.addChild(sp);
+    content.addChild(new PText({
       text: '点击任意处返回列表',
       style: { fontSize: 20, fill: 0xffffff } satisfies TextStyleOptions,
     })).position.set(this.#w - 250, this.#h - 44);
-    layer.eventMode = 'static';
-    layer.on('pointerdown', () => {
+    content.eventMode = 'static';
+    content.on('pointerdown', () => {
       this.#galleryMode = 'grid';
       this.#galleryViewerKey = null;
       this.#rebuildGallery();
@@ -346,13 +383,33 @@ export class GalleryLayer implements GalleryProjectionPort {
 
   #registerListener(): void {
     this.#lifecycle.release('gallery', 'listener', 'gallery');
-    this.#lifecycle.register('gallery', 'listener', 'gallery', () => this.#galleryLayer.removeAllListeners());
+    this.#lifecycle.register('gallery', 'listener', 'gallery', () => {
+      this.#galleryLayer.removeAllListeners();
+      this.#galleryContent?.removeAllListeners();
+    });
+    // Every tab/viewer rebuild replaces the child hit targets. Reassert the
+    // sibling-layer order at the same boundary so a legacy/menu projection
+    // cannot become the next real pointer target.
+    this.#bringToFront();
   }
 
   #clearLayer(): void {
+    this.#clearContent();
+    this.#galleryLayer.removeAllListeners();
+    this.#galleryHeader = null;
+    this.#galleryTabs = null;
+    this.#galleryLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+  }
+
+  #clearContent(): void {
     this.#lifecycle.release('gallery', 'listener', 'gallery');
     this.#galleryLayer.removeAllListeners();
-    this.#galleryLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#galleryContent?.removeAllListeners();
+    const content = this.#galleryContent;
+    if (content?.parent) content.parent.removeChild(content);
+    content?.removeChildren().forEach((child) => child.destroy({ children: true }));
+    content?.destroy({ children: false });
+    this.#galleryContent = null;
   }
 
   #bringToFront(): void {

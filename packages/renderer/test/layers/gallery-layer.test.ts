@@ -1,4 +1,4 @@
-import { Container, Sprite, Text as PText, Texture, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text as PText, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { DialogueProjectionPort, MenuProjectionPort } from '../../src/api/renderer-commands.js';
 import { RendererFacade, type RendererControllerPort, type RendererStagePort } from '../../src/runtime/renderer-facade.js';
@@ -160,6 +160,64 @@ describe('GalleryLayer direct contract', () => {
     }
   });
 
+  it('uses the gallery root as a full-viewport input blocker while visible', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+
+      const galleryRoot = runtime.root.children[0] as Container;
+      const blocker = galleryRoot.children[0];
+      expect(blocker).toBeInstanceOf(Graphics);
+      expect(blocker?.eventMode).toBe('static');
+
+      runtime.layer.hideGallery();
+      expect(galleryRoot.eventMode).toBe('none');
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('gives gallery tabs explicit hit areas independent of glyph bounds', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+
+      const textTab = findText(runtime.root, '文本');
+      expect(textTab.hitArea).toEqual(expect.objectContaining(new Rectangle(0, -18, 60, 62)));
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('keeps the tab controls stable while rebuilding gallery content', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+      const textTab = findText(runtime.root, '文本');
+
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+
+      expect(findText(runtime.root, '文本')).toBe(textTab);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('keeps the tab controls stable across hide and re-entry', () => {
+    const runtime = makeGalleryRuntime();
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+      const textTab = findText(runtime.root, '文本');
+
+      runtime.layer.hideGallery();
+      runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
+
+      expect(findText(runtime.root, '文本')).toBe(textTab);
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
   it('opens and closes the CG viewer without exposing display objects through queries', () => {
     const runtime = makeGalleryRuntime();
     try {
@@ -173,7 +231,7 @@ describe('GalleryLayer direct contract', () => {
       expect(runtime.root.children.some((child) => child instanceof Sprite)).toBe(false);
       expect(findText(runtime.root, '点击任意处返回列表').text).toBe('点击任意处返回列表');
 
-      (runtime.root.children[0] as Container).emit('pointerdown', pointerEvent);
+      findParentWithText(runtime.root, '点击任意处返回列表').emit('pointerdown', pointerEvent);
       expect(runtime.layer.gallery()).toEqual({ type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null });
     } finally {
       disposeGalleryRuntime(runtime);

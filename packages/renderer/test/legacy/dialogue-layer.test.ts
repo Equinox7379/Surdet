@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
-import { Container, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { Backlog } from '../../src/backlog.js';
 import { NULL_AUDIO, type AdvStage, type ChoiceOptionView, type CommandRailItem, type PortraitView, type SpeakerProfile } from '../../src/types.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
@@ -255,16 +255,53 @@ describe('DialogueLayer v2 projection contract', () => {
     });
 
     try {
+      const dialogueRoot = root.children[0] as Container;
       layer.showCommandRail([{ id: 'auto', label: '自动' }], (id) => selected.push(id));
-      const commandRail = root.children[6] as Container;
+      const commandRail = dialogueRoot.children[6] as Container;
       commandRail.children[1]?.emit('pointerdown', {} as FederatedPointerEvent);
       expect(selected).toEqual(['auto']);
       expect(consumed).toBe(1);
 
       layer.showBacklog([], undefined);
-      const backlogLayer = root.children[7] as Container;
+      const backlogLayer = dialogueRoot.children[7] as Container;
       backlogLayer.emit('pointerdown', {} as FederatedPointerEvent);
       expect(consumed).toBe(2);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
+  it('keeps overlay containers above dialogue text after text is refreshed', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const root = new Container();
+    const layer = new DialogueLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+    const overlay = new Container();
+
+    try {
+      const dialogueRoot = root.children[0] as Container;
+      layer.mountTextDisplays();
+      layer.showText(null, '第一句');
+      root.addChild(overlay);
+
+      layer.bringTextDisplaysToFront();
+      const firstText = dialogueRoot.children.find((child) => child instanceof PText && child.text === '第一句');
+      expect(firstText).toBeDefined();
+      expect(root.getChildIndex(overlay)).toBeGreaterThan(root.getChildIndex(dialogueRoot));
+
+      layer.showText(null, '第二句');
+      layer.bringTextDisplaysToFront();
+      const secondText = dialogueRoot.children.find((child) => child instanceof PText && child.text === '第二句');
+      expect(secondText).toBeDefined();
+      expect(root.getChildIndex(overlay)).toBeGreaterThan(root.getChildIndex(dialogueRoot));
     } finally {
       layer.dispose();
       assets.dispose();

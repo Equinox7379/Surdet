@@ -883,7 +883,9 @@ async function main(): Promise<void> {
 
   /** 从标题页进入二级全屏页面：标题与其余覆盖层必须同时让位。 */
   function leaveTitleForOverlay(): void {
-    // 保留封面作为覆盖页面的底图；只收起正文操作带和其他互斥页面。
+    // 标题背景与可交互菜单必须一起退出活动 overlay；二级页关闭后由
+    // showTitleScreen() 重新投影标题页，避免隐藏按钮继续抢占命中测试。
+    menu.hideTitle(false);
     dialogue.hideCommandRail();
     menu.hideSaveLoad();
     menu.hideSettings();

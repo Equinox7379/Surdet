@@ -101,6 +101,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   readonly owner = 'dialogue' as const;
 
   readonly #root: Container;
+  /** Dialogue-owned composition root; sibling overlays remain above this node. */
+  readonly #dialogueRoot: Container;
   readonly #w: number;
   readonly #h: number;
   readonly #assets: RenderAssetRegistry;
@@ -166,6 +168,7 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   constructor(options: DialogueLayerOptions) {
     this.#root = options.uiLayer;
+    this.#dialogueRoot = new Container();
     this.#w = options.width;
     this.#h = options.height;
     this.#assets = options.assets;
@@ -174,6 +177,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrameCallback = options.requestFrame;
     this.#onPointerConsumed = options.onPointerConsumed ?? null;
     if (options.preferences) this.#preferences = { ...options.preferences };
+
+    this.#root.addChild(this.#dialogueRoot);
 
     this.#choiceLayer = new Container();
     this.#commandRail = new Container();
@@ -306,19 +311,22 @@ export class DialogueLayer implements DialogueProjectionPort {
   #onSelect: ((index: number) => void) | null = null;
   #onBacklogClose: (() => void) | null = null;
 
-  /** Mount text last so existing Stage z-order remains unchanged. */
+  /** Mount text inside the Dialogue-owned composition root. */
   mountTextDisplays(): void {
     if (this.#disposed || this.#dialogText.parent) return;
-    this.#root.addChild(this.#speakerText, this.#dialogText);
+    this.#dialogueRoot.addChild(this.#speakerText, this.#dialogText);
     this.#registerDisplay('speaker-text', this.#speakerText);
     this.#registerDisplay('dialog-text', this.#dialogText);
     this.layout();
   }
 
-  /** Move legacy text nodes to the end of the shared UI root after other overlays mount. */
+  /**
+   * Keep legacy text above other Dialogue displays without reordering sibling
+   * Menu/Gallery/System layers in the shared UI root.
+   */
   bringTextDisplaysToFront(): void {
     if (this.#disposed || !this.#dialogText.parent) return;
-    this.#root.addChild(this.#speakerText, this.#dialogText);
+    this.#dialogueRoot.addChild(this.#speakerText, this.#dialogText);
   }
 
   attachPointerTarget(target: { addEventListener: (type: string, listener: () => void) => void; removeEventListener: (type: string, listener: () => void) => void }): void {
@@ -795,6 +803,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       ]) {
         if (child?.parent) child.parent.removeChild(child);
       }
+      if (this.#dialogueRoot.parent) this.#dialogueRoot.parent.removeChild(this.#dialogueRoot);
+      this.#dialogueRoot.destroy({ children: false });
       if (this.#ownsLifecycle) this.#lifecycle.dispose();
     }
   }
@@ -812,7 +822,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       ['nvl-layer', this.#nvlLayer],
       ['banner-layer', this.#bannerLayer],
     ];
-    this.#root.addChild(...displays.map(([, display]) => display as unknown as Container));
+    this.#dialogueRoot.addChild(...displays.map(([, display]) => display as unknown as Container));
     for (const [key, display] of displays) this.#registerDisplay(key, display);
   }
 
