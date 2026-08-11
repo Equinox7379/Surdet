@@ -109,4 +109,19 @@ describe('Renderer-backed player shell slots', () => {
     expect(errors).toHaveLength(1);
     expect(renderer.commands.menu.showSaveLoad).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['title', 'game'] as const)('keeps Gallery delegation identical for the %s source', (source) => {
+    const { renderer, slots } = createHarness();
+    const controller = createPlayerShellController({
+      slots,
+      session: createPlayerUiSession({ base: source }),
+    });
+
+    controller.commands.open({ slot: 'gallery', source });
+    expect(controller.queries.snapshot()).toMatchObject({ base: source, overlay: 'gallery' });
+    controller.commands.close();
+    expect(controller.queries.snapshot()).toMatchObject({ base: source, overlay: 'none' });
+    expect(renderer.commands.gallery.showGallery).toHaveBeenCalledOnce();
+    expect(renderer.commands.gallery.hideGallery).toHaveBeenCalledOnce();
+  });
 });

@@ -203,6 +203,12 @@ export class GalleryLayer implements GalleryProjectionPort {
     const views = this.#galleryViews;
     if (!views) return;
 
+    // Rebuilds replace the visible Pixi subtree synchronously, but a static
+    // title screen may have an idle FrameScheduler. Wake one frame at the
+    // single rebuild boundary so tab switches and viewer return cannot leave
+    // the semantic projection ahead of the committed canvas.
+    this.#requestFrame();
+
     // Keep the tab controls alive across content rebuilds. Replacing the
     // active pointer target during its own dispatch leaves the Pixi event
     // boundary with a stale hit tree in the title-page path.
