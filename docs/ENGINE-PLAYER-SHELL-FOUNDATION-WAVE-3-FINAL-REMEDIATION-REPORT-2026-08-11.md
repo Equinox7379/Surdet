@@ -96,7 +96,7 @@ HEAD...surdet/main: 20 0
 | `1efd75f1058e6d23fe6ae43fc40578773439e184` | `fix(renderer): complete theme token identity audit` | R1：补齐 Gallery music/text/CG 分支及五类 Layer 的显式 token 绑定，并以 fail-closed 审计阻止未来遗漏；真实 Gallery 红灯修复前为 13 项失败，修复后焦点主题/Gallery/SystemPanel/Menu/Dialogue 测试 87/87。 |
 | `a38443bdf6ffdc4de0027286999832c3c6d9f13a` | `fix(shell): make scene hmr lifecycle assertion deterministic` | R2：加入只读资源 owner/key/source/release 台账，Starter 调试查询只返回普通数据；修正启动等待竞态，回归覆盖两次合法 HMR、一次非法 HMR、一次恢复合法 HMR。 |
 
-本报告、交付报告和执行计划的 R3 文档更新提交，以及 R4 最终门禁后的报告归档提交，均必须使用新的普通提交；文档不得预填尚不存在的提交 SHA。报告自引用的最终字节数/SHA-256 以落盘后机器复核为准。
+R3 三份文档更新已由普通提交 `72cfea6c8d14db80e40ce1662090c99b628de747` 归档。R4 在该提交之后完成全部最终门禁；本报告随后以新的普通提交归档。文档不伪造自引用的最终字节数/SHA-256，均以落盘后机器复核为准。
 
 ## 3. R1：PlayerUiSession 完整快照运行时校验
 
@@ -234,13 +234,13 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 
 ### 5.3 五类真实 DisplayObject 证据
 
-真实 Renderer 测试 `packages/renderer/test/theme.test.ts` 26/26 通过；最终 Renderer 全量为 48 文件 / 381 tests 通过，覆盖以下已显示对象，并增加同色 token、字体碰撞、同色主题下新建对象、重复主题和资源计数回归：
+真实 Renderer 测试 `packages/renderer/test/theme.test.ts` 27/27 通过；最终 Renderer 全量为 48 文件 / 384 tests 通过，覆盖以下已显示对象，并增加同色 token、字体碰撞、同色主题下新建对象、重复主题和资源计数回归：
 
 | Layer | 已显示内容 | 读取的真实投影 | 结论 |
 | --- | --- | --- | --- |
 | MenuLayer | title、可用菜单项、accent 装饰、system-menu、settings、save-load | 真实 `PText.style.fill` 与 Graphics instruction | 主题更新后原地换色，恢复默认后恢复 |
 | DialogueLayer | 对话文字、说话人、选项/command rail、backlog overlay | 真实 Dialogue/overlay 树的文本与装饰颜色 | 主题更新后原地换色，资源计数不增 |
-| GalleryLayer | gallery 标签和当前可见内容 | 真实 gallery DisplayObject 文本/图形颜色 | 主题更新后原地换色 |
+| GalleryLayer | gallery 标签、unlocked/locked music 与 text、空列表提示、CG viewer 返回提示 | 真实 gallery DisplayObject 文本/图形颜色 | 主题更新后原地换色，恢复默认后按原 token 恢复 |
 | SystemPanelLayer | battle/map/shop/base 中至少一个已显示 Panel | 真实 Panel 文本/图形颜色 | 主题更新后原地换色 |
 | LoadingLayer | loading 背景、进度条和文字 | 真实 Loading DisplayObject 颜色 | 主题更新后原地换色 |
 
@@ -259,7 +259,7 @@ R3 先新增真实 Layer 红灯测试：用真实 Pixi `Container`、`Graphics`�
 
 ### 5.5 最终微型整改：同值主题 token 身份
 
-独立复审基线上的同色回归在生产修复前先形成红灯：`theme.test.ts` 的 26 项中 5 项失败；Menu、Gallery、Dialogue、SystemPanel 的同值颜色恢复会把默认 `text` 错恢复成 `accent`，字体碰撞会把 `uiSize` 错恢复成另一字号。修复后同一 26 项全部通过，最终 Renderer 全量为 48 文件 / 381 tests 通过（其中包含最终 save/load 回调回归测试）。
+独立复审基线上的同色回归在生产修复前先形成红灯：原 `theme.test.ts` 的 26 项中 5 项失败；Menu、Gallery、Dialogue、SystemPanel 的同值颜色恢复会把默认 `text` 错恢复成 `accent`，字体碰撞会把 `uiSize` 错恢复成另一字号。R1 又增加了 fail-closed 遗漏审计和真实 Gallery 分支，最终主题套件为 27/27；最终 Renderer 全量为 48 文件 / 384 tests 通过。
 
 整改后的绑定 API 在对象创建时把 Player UI 的颜色、字号和字距语义写入内部 `WeakMap`；切换 `A → B → C → default`、同主题重复设置、同色主题下新建对象，以及 Graphics instruction/context 重建都按稳定语义恢复。绑定不进入公共 query；查询继续只返回冻结普通数据，生命周期资源计数不增长。未绑定旧兼容/玩法对象仍可走 legacy fallback，但该 fallback 不再参与已绑定 Player token 身份判定。
 
@@ -302,7 +302,7 @@ runtime:listener:core-events
 
 同一回归现在覆盖：初始加载 → 合法 HMR 1 → 合法 HMR 2 → 非法 HMR 回滚 → 恢复合法文件。最终页面导航次数为 1；三项长期 listener 始终为上述集合；资源数量、Blob URL、ticker、display owner、sessionId、resourceIds 保持；非法编辑保留旧场景，恢复合法文件后场景哈希回到初始值，交互路径仍可继续。动态相机/淡入淡出/时间轴游标不作错误的精确相等断言，但 stage 的背景、粒子和立绘语义身份保持。
 
-R2 证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typecheck/build、Starter typecheck 均通过。R4 将在最终 HEAD 上重新执行完整 Starter/Renderer/Host/Zero 和根级 `verify:all` 门禁。
+R2 证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typecheck/build、Starter typecheck 均通过。R4 最终 HEAD 上 Renderer 48/384、Host 8/70、Starter 4/7、根级 `verify:all` exit code 0。
 
 ## 7. Electron 玩家证据
 
@@ -312,16 +312,17 @@ R2 证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typ
 E:\surdet\examples\zero-after-midnight\dist
 ```
 
-每轮均记录 `schemaVersion`、A–F 结果、正式 dist 路径、独立 userData、资产加载和错误分类。权威错误台账为：`unexpected page errors = 0`、`unexpected console errors = 0`、`unexpected request failures = 0`、`unexpected unhandled rejections = 0`、`unexpected release failures = 0`；`expected injected Renderer errors = 1 per run`。每轮唯一的 expected Renderer error 来自场景 C 的 save reject 注入，用于验证失败后的 retry success，不是非预期产品错误。
+每轮均记录 `schemaVersion`、A–F 结果、正式 dist 路径、独立 userData、资产加载和错误分类。历史 Wave 3 artifact 的权威错误台账为：`unexpected page errors = 0`、`unexpected console errors = 0`、`unexpected request failures = 0`、`unexpected unhandled rejections = 0`、`unexpected release failures = 0`；`expected injected Renderer errors = 1 per run`。R4 当前 artifact 的 schema 不输出这些数值型错误数组，当前结论只依据其可观测字段和每个 case 的 `ok=true`，不把缺失字段写成数值 0/1。历史记录中的 expected Renderer error 来自场景 C 的 save reject 注入，用于验证失败后的 retry success，不是非预期产品错误。
 
-### 7.1 Wave 3 A–F 两轮（历史最终代码 `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26`）
+### 7.1 Wave 3 A–F：历史两轮与 R4 当前复验
 
 | 轮次 | Artifact 绝对路径 | 字节数 | SHA-256 | 结果 |
 | --- | --- | ---: | --- | --- |
+| R4-current | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-shell-wave-3-hEp080\task7-player-shell-wave-3-matrix.json` | 77835 | `B0AB3B65125DA3DFABF7FC97CEEDAA8663D71D9F2C5D71FAC034FDC804B0587B` | A–F 6/6 |
 | round-1 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-shell-wave-3-uYMkKg\task7-player-shell-wave-3-matrix.json` | 77835 | `ACC8DB1006F797F3FB94E984CD009F414B70CC0616256043BAB9FD95936954FC` | A–F 6/6 |
 | round-2 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-shell-wave-3-CWLvRm\task7-player-shell-wave-3-matrix.json` | 77835 | `D99630BFE50FDE4DA5FD4A65819140FAFCB81D53159028DBBF3BBFAE300C1D8D` | A–F 6/6 |
 
-两轮每轮均为 6 个独立 Electron / 6 个独立 userData；正式 artifact 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`releaseFailures` 和 `unexpectedWindowClosed` 均为 0。每轮场景 C 另记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，均来自注入的 save reject 及其上报，不属于非预期产品错误。
+R4 当前复验和历史两轮均为 6 个独立 Electron / 6 个独立 userData，正式路径均为 Zero dist。R4 当前 artifact 的 schema 顶层字段为 `schemaVersion/phase/runKind/generatedAt/formalGame/isolation/cases/status`，没有单独的数值型 `expectedRendererErrors` 或错误数组字段；因此不能把缺失字段写成观测到的 0 或 1。当前 artifact 的 A–F 每个 case 均为 `ok=true`，并保留场景 C 的 expected save-reject 语义在脚本/测试日志中的独立记账。历史两轮 artifact 明确记录 `expectedRendererErrors = 1`、`expectedErrors = 2`，均来自注入的 save reject 及其上报，不属于非预期产品错误。
 
 本次同会话另有一轮 Wave 2 运行在 case I 启动时以 Windows 进程码 `3221226505` 终止，未生成完整矩阵；临时证据根为 `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-Kyw1Je`，该失败未被删除。随后在相同代码、正式 Zero dist、独立 Electron/userData 下重新运行并通过，详见下表。
 
@@ -338,9 +339,10 @@ E:\surdet\examples\zero-after-midnight\dist
 
 | Artifact 绝对路径 | 字节数 | SHA-256 | 结果 |
 | --- | ---: | --- | --- |
+| R4-current `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-8rnt6C\task7-player-experience-matrix.json` | 712416 | `BDCCB87EC1A9D8408E4894D0B4C5E1EFB9CCEE9F50AAEDEAE77E27DA26036ABB` | A–I 9/9 |
 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-2-task7-uZQeK3\task7-player-experience-matrix.json` | 743880 | `F34E57580ACCB129B896FF71BE461748D0E776A90773CBB1B7D984A76DBDAE39` | A–I 9/9 |
 
-Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData；成功 artifact 的 page/console/request/unhandled/unexpectedWindowClosed 全部为 0，且 A–I 全部通过。该旧脚本未在 artifact schema 中单独输出 `releaseFailures` 和 expected Renderer error 数组；不能把缺失字段写成已观测的数值 0。R2/S1/S2 修复没有破坏 Wave 2 玩家路径。
+Wave 2 R4 当前回归和历史成功回归均明确加载正式 Zero dist，9 个 case 使用独立 userData；当前成功 artifact 的可观测 page/console/request/unhandled/unexpectedWindowClosed 全部为 0，且 A–I 全部通过。该旧脚本未在 artifact schema 中单独输出 `releaseFailures` 和 expected Renderer error 数组；不能把缺失字段写成已观测的数值 0。R2/S1/S2 修复没有破坏 Wave 2 玩家路径。
 
 ## 8. 正式《零点之后》结果
 
@@ -363,31 +365,36 @@ Wave 2 回归仍明确加载正式 Zero dist，9 个 case 使用独立 userData�
 
 ## 9. 测试与门禁
 
-### 8.1 聚焦与全量
+### 9.1 聚焦与全量
 
 | 命令/范围 | 结果 |
 | --- | --- |
-| Host R1/R2 聚焦 | 2 files / 38 tests PASS（24 + 14） |
+| Renderer Theme/query 聚焦 | 2 files / 29 tests PASS（theme 27 + query-purity 2） |
+| Host 聚焦 | 2 files / 42 tests PASS（player-shell-controller + player-ui-coordination） |
+| Renderer lifecycle 聚焦 | `render-lifecycle.test.ts` 7/7 PASS |
+| Starter HMR 聚焦 | `vite-scene-hmr.test.ts` 1/1 PASS；两次合法 HMR、一次非法 HMR、一次恢复合法 HMR，语义 listener 集合稳定 |
+| Host R1/R2 聚焦（历史整改） | 2 files / 38 tests PASS（24 + 14） |
 | Host 全量 | 8 files / 70 tests PASS |
 | Host typecheck/build | PASS |
-| Renderer R3 聚焦 | 4 files / 75 tests PASS |
-| Renderer 全量 | 48 files / 381 tests PASS |
+| Renderer R1/R2/R3 聚焦 | 5 files / 87 tests PASS（历史焦点集合） |
+| Renderer 全量 | 48 files / 384 tests PASS |
 | Renderer typecheck/build | PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
 | `npm run verify:tools` | 10/10 PASS |
-| `npm run verify:hygiene` | PASS，604 tracked paths |
-| Starter 聚焦 HMR | `vite-scene-hmr.test.ts` 1/1 PASS；两次合法 HMR、一次非法 HMR、一次恢复合法 HMR，语义 listener 集合稳定 |
-| Starter 全量测试 | R4 在最终 HEAD 上执行并记录；不得再保留旧的 `listeners: 4 → 3` 基线例外 |
-| `npm run verify:all` | R4 在最终 HEAD 上执行并记录；必须 exit code 0，任何失败都不得以基线例外关闭 |
+| `npm run verify:hygiene` | PASS，605 tracked paths |
+| Starter 全量测试 | 4 files / 7 tests PASS |
+| Starter typecheck/build | PASS |
+| Zero typecheck/build | PASS |
+| `npm run verify:all` | exit code 0 |
 | Shell generic E2E | PASS（仅作通用 Shell 回归，不冒充正式 Zero E2E） |
 | Renderer v2 Electron E2E | PASS；17 个视觉状态均为 CANDIDATE/语义通过，未冒充人工批准金样 |
-| Wave 3 Electron | 两轮 A–F 各 6/6 PASS |
-| Wave 2 Electron | 一轮 A–I 9/9 PASS |
+| Wave 3 Electron | R4 当前 A–F 6/6 PASS；历史两轮各 6/6 PASS |
+| Wave 2 Electron | R4 当前 A–I 9/9 PASS；历史成功回归 9/9 PASS |
 | `git diff --check` | PASS |
 | `git ls-files '*.log'` | 空 |
 
-R2 已将旧的 HMR 基线例外关闭；最终门禁结果以 R4 在最终 HEAD 上的实际输出为准。不得把历史 `4 → 3` 失败或旧的 `verify:all` exit code 1 继续写成当前状态。
+R2 已将旧的 HMR 基线例外关闭；R4 在当前提交链上重新确认 Starter HMR 1/1 与根级 `verify:all` exit code 0。历史 `4 → 3` 失败和旧的 `verify:all` exit code 1 仅作为整改前证据保留，不是当前状态。
 
 ## 10. 代码与测试文件清单
 
@@ -432,16 +439,16 @@ R2 已将旧的 HMR 基线例外关闭；最终门禁结果以 R4 在最终 HEAD
 
 ## 11. Git、保护文件与性能延期
 
-R2 实现/测试提交后的机器状态为：
+R3 文档提交后的机器状态为：
 
 ```text
-HEAD: a38443bdf6ffdc4de0027286999832c3c6d9f13a
-HEAD...surdet/main: 40 0
+HEAD: 72cfea6c8d14db80e40ce1662090c99b628de747
+HEAD...surdet/main: 41 0
 ```
 
-R3 文档提交和 R4 最终门禁后必须再次运行并记录：`git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 `git ls-files '*.log'`。本报告不将提交后尚不存在的 SHA 或自引用文件摘要写成既成事实；提交后机器复核的真实结果以最终交付回报为准。
+R4 的聚焦、全量、正式 Zero 和 Electron 门禁均已在上述 R3 提交之后执行并通过。最终报告归档提交和随后计划台账收口提交的真实 SHA、最终 HEAD、ahead/behind、status、diff-check 和 tracked-log 结果在提交后机器复核中记录；本报告不伪造提交后尚不存在的 SHA 或自引用文件摘要。
 
-R4 完成后将以新的普通提交归档最终报告；最终报告文件的字节数与 SHA-256 由同一提交后的机器复核单独记录。由于文件不能无矛盾地嵌入其自身最终 SHA，本报告不伪造自引用摘要。
+最终报告文件在归档提交后重新读取并计算字节数/SHA-256；由于文件不能无矛盾地嵌入其自身最终 SHA，本报告不伪造自引用摘要，真实摘要以最终机器复核为准。
 
 工作树必须只保留以下四个受保护未跟踪文件：
 
