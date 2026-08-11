@@ -17,6 +17,10 @@ describe('Zero public player shell coordination', () => {
     expect(zeroMain).toContain('createPlayerUiSession');
     expect(zeroMain).toContain('createRollbackRuntime');
     expect(zeroMain).toContain('clearRollbackForBoundary');
+    expect(zeroMain).toContain('connectInterpreterPresentation');
+    expect(zeroMain).toContain('enterPlayerTitleSession');
+    expect(zeroMain).toContain('presentationConnection.disconnect()');
+    expect(zeroMain).not.toContain('preserveWorld: true');
     expect(zeroMain).not.toContain("from '../../shared/rollback-runtime.js'");
     expect(zeroMain).not.toMatch(/new PlayerInputGate\(\)/);
     expect(zeroMain).not.toMatch(/uiSession\.(openOverlay|closeOverlay|beginOperation|completeOperation|failOperation|reset|enterGame|enterTitle)/);

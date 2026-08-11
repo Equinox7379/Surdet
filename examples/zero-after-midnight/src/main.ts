@@ -57,6 +57,7 @@ import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerPro
 import { LocalStorageProfileStorage } from '@surdet/host';
 import {
   canRollback as canRollbackFromSession,
+  connectInterpreterPresentation,
   connectSystemRouter,
   createDefaultHost,
   createPlayerShellController,
@@ -65,6 +66,7 @@ import {
   createRollbackRuntime,
   createSystemHooks,
   createElectronSaveStorage,
+  enterPlayerTitleSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import { createSystemAdapters } from './system-adapters.js';
@@ -301,6 +303,10 @@ async function main(): Promise<void> {
   dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
   renderer.connect(bus);
+  const presentationConnection = connectInterpreterPresentation({
+    interpreter: interp,
+    renderer: runtime,
+  });
 
   const uiSnapshot = () => playerShell!.queries.snapshot();
   const isTitleScreen = (): boolean => uiSnapshot().base === 'title';
@@ -961,18 +967,20 @@ async function main(): Promise<void> {
 
   /** 标题画面显示中；来源/返回由 PlayerShellController 持有。 */
   function showTitleScreen(): void {
-    playerShell!.commands.reset('title');
     clearRollback();
-    // 标题页是全屏根视图：先关闭同级覆盖层，防止旧页面残留在标题菜单之上或之下。
-    menu.hideSaveLoad();
-    menu.hideSettings();
-    gallery.hideGallery();
-    menu.hideSystemMenu();
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
-    // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
-    runtime.resetSession({ preserveWorld: true });
-    playerShell!.commands.open({ slot: 'title', source: 'title' });
+    const ensureTitleProjection = (): void => {
+      if (queries.overlay.menu().type !== 'title') {
+        playerShell!.commands.open({ slot: 'title', source: 'title' });
+      }
+    };
+    enterPlayerTitleSession({
+      shell: playerShell!,
+      renderer: runtime,
+      openTitle: ensureTitleProjection,
+    });
+    ensureTitleProjection();
   }
 
   /** 从标题页进入二级全屏页面：标题与其余覆盖层必须同时让位。 */
@@ -1402,6 +1410,7 @@ async function main(): Promise<void> {
     // synchronous and never issue an assets command after an external dispose.
     gamepad.stop();
     audioManager.dispose();
+    presentationConnection.disconnect();
     runtime.dispose();
     for (const url of assetBlobUrls) URL.revokeObjectURL(url);
     assetBlobUrls.clear();

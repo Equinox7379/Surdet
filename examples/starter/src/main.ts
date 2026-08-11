@@ -59,12 +59,14 @@ import {
   LocalStorageProfileStorage,
   connectSystemRouter,
   createDefaultHost,
+  connectInterpreterPresentation,
   createPlayerShellController,
   createRendererPlayerShellSlots,
   createPlayerUiSession,
   createSystemHooks,
   createElectronSaveStorage,
   createRollbackRuntime,
+  enterPlayerTitleSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import type { PlayerOverlay, PlayerShellController } from '@surdet/host';
@@ -225,9 +227,9 @@ async function main(): Promise<void> {
   settings.apply(typewriter, audio);
   renderer.connect(bus);
   interp.setTimelineCatalog(timelines);
-  interp.setPresentationHooks({
-    snapshot: () => queries.presentation.snapshot(),
-    restore: (payload) => presentation.restore(payload),
+  const presentationConnection = connectInterpreterPresentation({
+    interpreter: interp,
+    renderer: runtime,
   });
 
   const uiSnapshot = () => playerShell!.queries.snapshot();
@@ -784,19 +786,20 @@ async function main(): Promise<void> {
 
   /** 标题画面显示中；来源/返回由 PlayerShellController 持有。 */
   function showTitleScreen(): void {
-    playerShell!.commands.reset('title');
     clearRollback();
-    menu.hideSaveLoad();
-    menu.hideSettings();
-    menu.hideSystemMenu();
-    gallery.hideGallery();
-    dialogue.hideBacklog();
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
-    presentation.clear();
-    // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
-    runtime.resetSession({ preserveWorld: true });
-    playerShell!.commands.open({ slot: 'title', source: 'title' });
+    const ensureTitleProjection = (): void => {
+      if (queries.overlay.menu().type !== 'title') {
+        playerShell!.commands.open({ slot: 'title', source: 'title' });
+      }
+    };
+    enterPlayerTitleSession({
+      shell: playerShell!,
+      renderer: runtime,
+      openTitle: ensureTitleProjection,
+    });
+    ensureTitleProjection();
   }
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
@@ -1194,7 +1197,15 @@ async function main(): Promise<void> {
   gamepad.start();
 
   const ownerTeardown = createStarterOwnerTeardown({
-    runtime,
+    runtime: {
+      dispose: () => {
+        try {
+          presentationConnection.disconnect();
+        } finally {
+          runtime.dispose();
+        }
+      },
+    },
     audioManager,
     gamepad,
     fontBlobUrls,

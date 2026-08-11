@@ -15,6 +15,11 @@ describe('Starter public player UI coordination', () => {
     expect(starterMain).toContain('createRendererPlayerShellSlots');
     expect(starterMain).toContain('createRendererTheme');
     expect(starterMain).toContain('createPlayerUiSession');
+    expect(starterMain).toContain('connectInterpreterPresentation');
+    expect(starterMain).toContain('enterPlayerTitleSession');
+    expect(starterMain).toContain('presentationConnection.disconnect()');
+    expect(starterMain).not.toContain('interp.setPresentationHooks');
+    expect(starterMain).not.toContain('preserveWorld: true');
     expect(starterMain).not.toMatch(/new PlayerInputGate\(\)/);
     expect(starterMain).not.toMatch(/uiSession\.(openOverlay|closeOverlay|beginOperation|completeOperation|failOperation|reset|enterGame|enterTitle)/);
     expect(starterMain).not.toMatch(/inputGate\.decidePointer/);
