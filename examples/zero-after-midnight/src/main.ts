@@ -62,6 +62,12 @@ import { createRollbackRuntime } from '../../shared/rollback-runtime.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
+import {
+  canRollback as canRollbackFromSession,
+  createPlayerUiSession,
+  shouldShowCommandRail,
+  type PlayerOverlay,
+} from './player-ui-session.js';
 import gameConfig from '../game.config.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
@@ -225,7 +231,7 @@ async function main(): Promise<void> {
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
-  let videoActive = false;
+  const uiSession = createPlayerUiSession({ base: 'title' });
   let lastRendererError: DebugErrorValue | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
@@ -240,7 +246,7 @@ async function main(): Promise<void> {
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
-    onWaitEnd: () => { videoActive = false; interp.finishWait(); },
+    onWaitEnd: () => { uiSession.setVideoActive(false); interp.finishWait(); },
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
@@ -259,11 +265,11 @@ async function main(): Promise<void> {
   settings.apply(typewriter, audio);
   renderer.connect(bus);
 
-  let systemMenuOpen = false;
-  let saveLoadOpen = false;
-  let onTitleScreen = false;
-  let galleryOpen = false;
-  let settingsOpen = false;
+  const uiSnapshot = () => uiSession.snapshot();
+  const isTitleScreen = (): boolean => uiSnapshot().base === 'title';
+  const isOverlay = (overlay: PlayerOverlay): boolean => uiSnapshot().overlay === overlay;
+  const isVideoActive = (): boolean => uiSnapshot().videoActive;
+  const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle';
 
   function debugProjection(): ReturnType<typeof queries.diagnostics.projectionSnapshot> {
     return queries.diagnostics.projectionSnapshot();
@@ -282,13 +288,7 @@ async function main(): Promise<void> {
   }
 
   function debugCommandRailVisible(): boolean {
-    return !onTitleScreen
-      && !renderer.interfaceHidden
-      && !systemMenuOpen
-      && !saveLoadOpen
-      && !galleryOpen
-      && !settingsOpen
-      && !videoActive
+    return shouldShowCommandRail(uiSnapshot())
       && debugActiveOverlay() === null;
   }
 
@@ -352,7 +352,7 @@ async function main(): Promise<void> {
       restorePresentation: (snapshot) => presentation.restore(snapshot),
     },
     audio,
-    isBlocked: () => onTitleScreen || systemMenuOpen || saveLoadOpen || galleryOpen || settingsOpen || videoActive,
+    isBlocked: () => isTitleScreen() || uiSnapshot().overlay !== 'none' || isUiBusy() || isVideoActive(),
     label: 'zero',
     onRefresh: () => refreshCommandRail(),
   });
@@ -360,8 +360,8 @@ async function main(): Promise<void> {
   const canRollback = (): boolean => rollbackRuntime.canRollback();
   const performRollback = (): boolean => rollbackRuntime.perform();
 
-  bus.on('video', () => { videoActive = true; });
-  bus.on('stateReset', () => { videoActive = false; });
+  bus.on('video', () => { uiSession.setVideoActive(true); });
+  bus.on('stateReset', () => { uiSession.setVideoActive(false); });
   bus.on('text', () => rollbackRuntime.captureText());
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
@@ -398,13 +398,7 @@ async function main(): Promise<void> {
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
     get uiSession() {
-      return freezeDebug({
-        base: onTitleScreen ? 'title' : 'game',
-        overlay: debugActiveOverlay(),
-        operation: 'idle',
-        interfaceHidden: renderer.interfaceHidden,
-        videoActive,
-      });
+      return freezeDebug({ ...uiSnapshot() });
     },
     get activeOverlay(): string | null { return debugActiveOverlay(); },
     get commandRailVisible(): boolean { return debugCommandRailVisible(); },
@@ -474,14 +468,14 @@ async function main(): Promise<void> {
   // 点击画布推进文本（标题/覆盖层期间解释器不在等待态 → 静默忽略，不抛错）
   runtime.canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    if (onTitleScreen) return;
+    if (isTitleScreen()) return;
     const s = interp.status;
     if (s === 'awaiting-advance' || s === 'awaiting-timer') renderer.dispatchInput({ type: 'advance' });
   });
 
   // 滚轮：Backlog 打开时滚动文字记录（galgame 惯例：鼠标滚轮回看历史）
   runtime.canvas.addEventListener('wheel', (e) => {
-    if (renderer.backlogOpen) {
+    if (isOverlay('backlog')) {
       e.preventDefault();
       renderer.dispatchInput({ type: 'backlog.scroll', delta: e.deltaY > 0 ? 120 : -120 });
     }
@@ -490,7 +484,7 @@ async function main(): Promise<void> {
   // 右键 → 系统菜单（GalGame 惯例）；标题画面不弹（标题自带菜单，空白处右键蹦设置框属误弹，用户反馈修复）
   runtime.canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (onTitleScreen) return;
+    if (isTitleScreen()) return;
     openSystemMenu();
   });
 
@@ -556,8 +550,6 @@ async function main(): Promise<void> {
     menu.hideSaveLoad();
     menu.hideSettings();
     menu.hideSystemMenu();
-    galleryOpen = false;
-    settingsOpen = false;
   });
 
   // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
@@ -840,21 +832,15 @@ async function main(): Promise<void> {
   bus.on('text', () => { if (!rollbackRuntime.isRestoring()) checkAchievements(); });
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
-  /** 标题画面显示中（右键系统菜单守卫用；showTitleScreen 置真，开局/读档进入游戏置假） */
+  /** 标题画面显示中（右键系统菜单守卫用；由 PlayerUiSession 统一维护） */
   function showTitleScreen(): void {
-    onTitleScreen = true;
+    uiSession.reset('title');
     clearRollback();
-    systemMenuOpen = false;
-    saveLoadOpen = false;
-    galleryOpen = false;
-    settingsOpen = false;
     // 标题页是全屏根视图：先关闭同级覆盖层，防止旧页面残留在标题菜单之上或之下。
     menu.hideSaveLoad();
     menu.hideSettings();
     gallery.hideGallery();
     menu.hideSystemMenu();
-    galleryOpen = false;
-    settingsOpen = false;
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
     // 保留背景/立绘资源，方便从标题页读取存档后继续投影；开始新游戏时再做全量清理。
@@ -883,18 +869,16 @@ async function main(): Promise<void> {
     menu.hideSaveLoad();
     menu.hideSettings();
     gallery.hideGallery();
-    galleryOpen = false;
-    settingsOpen = false;
   }
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
     switch (id) {
       case 'new': {
-        onTitleScreen = false;
         clearRollback();
         runtime.resetSession();
         menu.hideTitle();
+        uiSession.enterGame();
         store.reset();
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
@@ -923,7 +907,7 @@ async function main(): Promise<void> {
         break;
       case 'settings':
         leaveTitleForOverlay();
-        settingsOpen = true;
+        uiSession.openOverlay('settings');
         refreshSettingsPanel();
         break;
       case 'quit':
@@ -946,8 +930,16 @@ async function main(): Promise<void> {
   // ===== 存档/读档 UI：多槽位 + 快速/自动档 =====
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load'): Promise<void> {
-    saveLoadOpen = true;
-    const metas = await saves.list();
+    if (uiSnapshot().overlay !== 'none') return;
+    uiSession.openOverlay('save-load');
+    let metas: Awaited<ReturnType<typeof saves.list>>;
+    try {
+      metas = await saves.list();
+    } catch (err) {
+      uiSession.closeOverlay();
+      console.error('[zero] 存档列表读取失败:', err);
+      return;
+    }
     const byId = new Map(metas.map((m) => [m.id, m]));
     const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
       const m = byId.get(id);
@@ -962,39 +954,73 @@ async function main(): Promise<void> {
       };
     });
     menu.showSaveLoad({ mode, slots }, (slotId) => {
-      saveLoadOpen = false;
       if (mode === 'save') {
         const snap = interp.saveSnapshot();
         if (!snap) {
           console.warn('[zero] 存档失败：游戏尚未开始');
           return;
         }
-        void saves.save(slotId, enrichSnapshot(snap)).then(() => console.info('[zero] 已存档', slotId));
+        const origin = uiSnapshot();
+        uiSession.beginOperation('saving');
+        void saves.save(slotId, enrichSnapshot(snap)).then(
+          () => {
+            uiSession.completeOperation({
+              base: origin.base,
+              overlay: 'none',
+              interfaceHidden: origin.interfaceHidden,
+              videoActive: origin.videoActive,
+            });
+            console.info('[zero] 已存档', slotId);
+            refreshCommandRail();
+          },
+          (err) => {
+            uiSession.failOperation();
+            console.error('[zero] 存档失败:', err);
+          },
+        );
       } else {
         void (async () => {
+          uiSession.beginOperation('loading');
           try {
             const snap = await saves.load(slotId);
-            onTitleScreen = false;
+            interp.loadSnapshot(snap);
             menu.hideTitle();
             clearRollback();
-            interp.loadSnapshot(snap);
+            uiSession.completeOperation({ base: 'game', overlay: 'none' });
             clearCountedThisSession = false; // 读档 = 进入另一周目会话
             console.info('[zero] 已读档', slotId);
+            refreshCommandRail();
           } catch (err) {
+            uiSession.failOperation();
             console.error('[zero] 读档失败:', err);
           }
         })();
       }
     }, () => {
-      saveLoadOpen = false;
-      if (onTitleScreen) showTitleScreen();
+      if (isUiBusy() || !isOverlay('save-load')) return;
+      const base = uiSnapshot().base;
+      uiSession.closeOverlay();
+      if (base === 'title') showTitleScreen();
       else refreshCommandRail();
     });
   }
 
+  function toggleBacklog(): void {
+    if (isUiBusy()) return;
+    if (isOverlay('backlog')) {
+      renderer.dispatchInput({ type: 'backlog.toggle' });
+      uiSession.closeOverlay();
+    } else if (uiSnapshot().base === 'game' && uiSnapshot().overlay === 'none') {
+      uiSession.openOverlay('backlog');
+      renderer.dispatchInput({ type: 'backlog.toggle' });
+    }
+    refreshCommandRail();
+  }
+
   // ===== 系统菜单：Esc / 右键唤出 =====
   function openSystemMenu(): void {
-    systemMenuOpen = true;
+    if (isTitleScreen() || isUiBusy() || uiSnapshot().overlay !== 'none') return;
+    uiSession.openOverlay('system-menu');
     menu.showSystemMenu(
       [
         { id: 'resume', label: '返回游戏' },
@@ -1006,19 +1032,19 @@ async function main(): Promise<void> {
         { id: 'title', label: '回到标题' },
       ],
       (id) => {
-        systemMenuOpen = false;
+        if (isOverlay('system-menu')) uiSession.closeOverlay();
         switch (id) {
           case 'save': void openSaveLoad('save'); break;
           case 'load': void openSaveLoad('load'); break;
-          case 'settings': settingsOpen = true; refreshSettingsPanel(); break;
-          case 'backlog': renderer.dispatchInput({ type: 'backlog.toggle' }); break;
+          case 'settings': uiSession.openOverlay('settings'); refreshSettingsPanel(); break;
+          case 'backlog': toggleBacklog(); break;
           case 'gallery': openGallery(); break;
           case 'title': showTitleScreen(); break;
           default: break; // resume：仅关闭菜单
         }
         refreshCommandRail();
       },
-      () => { systemMenuOpen = false; },
+      () => { if (isOverlay('system-menu')) uiSession.closeOverlay(); },
     );
   }
 
@@ -1026,19 +1052,36 @@ async function main(): Promise<void> {
 
   function quickSave(): Promise<boolean> {
     // 快速读档必须等待当前 IPC 写入完成，避免连续 F5/F9 读到旧槽位。
-    if (quickSaveInFlight) return quickSaveInFlight;
+    if (quickSaveInFlight || isUiBusy()) return quickSaveInFlight ?? Promise.resolve(false);
     const snap = interp.saveSnapshot();
     if (!snap) return Promise.resolve(false);
-    const task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
-      () => {
-        console.info('[zero] 快速存档');
-        return true;
-      },
-      (err) => {
-        console.error('[zero] 快速存档失败：', err);
-        return false;
-      },
-    );
+    const origin = uiSnapshot();
+    uiSession.beginOperation('saving');
+    let task: Promise<boolean>;
+    try {
+      task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
+        () => {
+          uiSession.completeOperation({
+            base: origin.base,
+            overlay: origin.overlay,
+            interfaceHidden: origin.interfaceHidden,
+            videoActive: origin.videoActive,
+          });
+          console.info('[zero] 快速存档');
+          refreshCommandRail();
+          return true;
+        },
+        (err) => {
+          uiSession.failOperation();
+          console.error('[zero] 快速存档失败：', err);
+          return false;
+        },
+      );
+    } catch (err) {
+      uiSession.failOperation();
+      console.error('[zero] 快速存档失败：', err);
+      return Promise.resolve(false);
+    }
     quickSaveInFlight = task;
     void task.then(() => {
       if (quickSaveInFlight === task) quickSaveInFlight = null;
@@ -1048,15 +1091,20 @@ async function main(): Promise<void> {
 
   async function quickLoad(): Promise<boolean> {
     if (quickSaveInFlight) await quickSaveInFlight;
+    if (isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
     if (!await saves.has(QUICK_SLOT)) return false;
+    uiSession.beginOperation('loading');
     try {
       const snap = await saves.load(QUICK_SLOT);
       clearRollback();
       interp.loadSnapshot(snap);
+      uiSession.completeOperation({ base: 'game', overlay: 'none' });
       clearCountedThisSession = false;
       console.info('[zero] 快速读档');
+      refreshCommandRail();
       return true;
     } catch (err) {
+      uiSession.failOperation();
       console.error('[zero] 快速读档失败：', err);
       return false;
     }
@@ -1073,16 +1121,17 @@ async function main(): Promise<void> {
         // 文本回想：关闭鉴赏，跳回回想场景重播（hostJump 清空调用栈）
         if (!item.scene) return;
         gallery.hideGallery();
-        galleryOpen = false;
+        if (isOverlay('gallery')) uiSession.closeOverlay();
         interp.hostJump(item.scene, item.label);
       },
       onClose: () => {
-        galleryOpen = false;
-        if (onTitleScreen) showTitleScreen();
+        const base = uiSnapshot().base;
+        if (isOverlay('gallery')) uiSession.closeOverlay();
+        if (base === 'title') showTitleScreen();
         else refreshCommandRail();
       },
     });
-    galleryOpen = true;
+    if (uiSnapshot().overlay === 'none') uiSession.openOverlay('gallery');
   }
 
   // ===== 设置图形面板：◀ ▶ 步进（状态由 SettingsStore 持有，改后重新投影并刷新面板） =====
@@ -1096,13 +1145,14 @@ async function main(): Promise<void> {
           // 改值立即投影生效（打字速度/音量/自动停留），并刷新面板展示
           settings.apply(typewriter, audio);
           renderer.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
-          if (settingsOpen) refreshSettingsPanel();
+          if (isOverlay('settings')) refreshSettingsPanel();
         });
       },
       () => {
-        settingsOpen = false;
+        const base = uiSnapshot().base;
+        if (isOverlay('settings')) uiSession.closeOverlay();
         // 标题页设置关闭后回到标题页；游戏中设置则保持当前剧情画面。
-        if (onTitleScreen) showTitleScreen();
+        if (base === 'title') showTitleScreen();
         else refreshCommandRail();
       },
     );
@@ -1113,12 +1163,12 @@ async function main(): Promise<void> {
     dialogue.setCommandRailItems([
       { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
       { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
-      { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
+      { id: 'backlog', icon: '▤', label: '记录', active: isOverlay('backlog'), tooltip: '打开文字记录' },
       { id: 'qsave', icon: '↓', label: '快存', tooltip: '快速存档' },
       { id: 'qload', icon: '↑', label: '快读', tooltip: '快速读档' },
-      { id: 'rollback', icon: '↶', label: '回退', enabled: canRollback(), tooltip: '回到上一条文本' },
-      { id: 'settings', icon: '⚙', label: '设置', active: settingsOpen, tooltip: '打开设置' },
-      { id: 'hide', icon: '□', label: '界面', active: renderer.interfaceHidden, tooltip: '隐藏界面' },
+      { id: 'rollback', icon: '↶', label: '回退', enabled: canRollbackFromSession(uiSnapshot()) && canRollback(), tooltip: '回到上一条文本' },
+      { id: 'settings', icon: '⚙', label: '设置', active: isOverlay('settings'), tooltip: '打开设置' },
+      { id: 'hide', icon: '□', label: '界面', active: uiSnapshot().interfaceHidden, tooltip: '隐藏界面' },
       { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
     ]);
   }
@@ -1133,15 +1183,20 @@ async function main(): Promise<void> {
         });
         break;
       }
-      case 'backlog': renderer.dispatchInput({ type: 'backlog.toggle' }); break;
+      case 'backlog': toggleBacklog(); break;
       case 'qsave': quickSave(); break;
       case 'qload': void quickLoad(); break;
       case 'rollback': performRollback(); break;
       case 'settings':
-        settingsOpen = !settingsOpen;
-        if (settingsOpen) refreshSettingsPanel(); else menu.hideSettings();
+        if (isOverlay('settings')) {
+          menu.hideSettings();
+          uiSession.closeOverlay();
+        } else if (uiSnapshot().overlay === 'none') {
+          uiSession.openOverlay('settings');
+          refreshSettingsPanel();
+        }
         break;
-      case 'hide': renderer.dispatchInput({ type: 'interface.toggle' }); break;
+      case 'hide': uiSession.toggleInterface(); renderer.dispatchInput({ type: 'interface.toggle' }); break;
       case 'menu': openSystemMenu(); break;
       default: break;
     }
@@ -1150,7 +1205,7 @@ async function main(): Promise<void> {
 
   // 手柄（M7 支柱5）：A 推进/确认 · B/Start 菜单 · 十字键/左摇杆 选择肢导航 · RB 开快进 / LB 关快进
   const gamepad = new GamepadPoller((actions) => {
-    if (onTitleScreen) return;
+    if (isTitleScreen()) return;
     for (const a of actions) {
       switch (a) {
         case 'advance': {
@@ -1202,7 +1257,7 @@ async function main(): Promise<void> {
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
   window.addEventListener('keydown', (e) => {
-    if (onTitleScreen) return;
+    if (isTitleScreen()) return;
     if (e.key === 'Control' && !renderer.skipMode) {
       ctrlTempSkip = true;
       renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
@@ -1210,7 +1265,7 @@ async function main(): Promise<void> {
     }
   });
   window.addEventListener('keyup', (e) => {
-    if (onTitleScreen) return;
+    if (isTitleScreen()) return;
     if (e.key === 'Control' && ctrlTempSkip) {
       ctrlTempSkip = false;
       renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
@@ -1253,8 +1308,8 @@ async function main(): Promise<void> {
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   window.addEventListener('keydown', (e) => {
-    if (onTitleScreen) return;
-    if (renderer.backlogOpen) {
+    if (isTitleScreen()) return;
+    if (isOverlay('backlog')) {
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
         e.preventDefault(); renderer.focusBacklogSearch(); return;
       }
@@ -1266,7 +1321,7 @@ async function main(): Promise<void> {
       }
       if (e.code === 'Escape') {
         e.preventDefault();
-        if (!renderer.handleBacklogEscape()) renderer.dispatchInput({ type: 'backlog.toggle' });
+        if (!renderer.handleBacklogEscape()) toggleBacklog();
         refreshCommandRail();
         return;
       }
@@ -1312,7 +1367,7 @@ async function main(): Promise<void> {
       renderer.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
       return;
     }
-    if (renderer.backlogOpen && (e.key === 'PageUp' || e.key === 'PageDown')) {
+    if (isOverlay('backlog') && (e.key === 'PageUp' || e.key === 'PageDown')) {
       e.preventDefault();
       renderer.dispatchInput({ type: 'backlog.scroll', delta: e.key === 'PageUp' ? -240 : 240 });
       return;
@@ -1339,31 +1394,34 @@ async function main(): Promise<void> {
       refreshCommandRail();
     } else if (e.key === 'l' || e.key === 'L') {
       // Backlog（文字记录）：覆盖层展示近期文本历史（点击任意处关闭）
-      console.info('[zero] 文字记录', renderer.dispatchInput({ type: 'backlog.toggle' }) ? '开' : '关');
+      toggleBacklog();
+      console.info('[zero] 文字记录', isOverlay('backlog') ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'h' || e.key === 'H') {
       // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
-      console.info('[zero] 隐藏界面', renderer.dispatchInput({ type: 'interface.toggle' }) ? '开' : '关');
+      uiSession.toggleInterface();
+      renderer.dispatchInput({ type: 'interface.toggle' });
+      console.info('[zero] 隐藏界面', uiSnapshot().interfaceHidden ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
-      if (galleryOpen) {
+      if (isOverlay('gallery')) {
         gallery.hideGallery();
-        galleryOpen = false;
+        uiSession.closeOverlay();
       } else {
         openGallery();
       }
-      console.info('[zero] 鉴赏', galleryOpen ? '开' : '关');
+      console.info('[zero] 鉴赏', isOverlay('gallery') ? '开' : '关');
     } else if (e.key === 'o' || e.key === 'O') {
       // 设置图形面板：◀ ▶ 步进各设置项（即时持久化并投影生效）
-      if (settingsOpen) {
+      if (isOverlay('settings')) {
         menu.hideSettings();
-        settingsOpen = false;
+        uiSession.closeOverlay();
       } else {
-        settingsOpen = true;
+        uiSession.openOverlay('settings');
         refreshSettingsPanel();
       }
-      console.info('[zero] 设置面板', settingsOpen ? '开' : '关');
+      console.info('[zero] 设置面板', isOverlay('settings') ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === '[' || e.key === ']') {
       // 文本速度调整（即时持久化）：[ 减速 / ] 加速

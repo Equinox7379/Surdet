@@ -654,7 +654,7 @@ WAITING_FOR_REVIEW
 
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
 - [x] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
-- [ ] Task 2：单一 UI 会话状态。提交：`PENDING`。
+- [ ] Task 2：单一 UI 会话状态。提交：`IMPLEMENTATION_COMMIT_PENDING`。
 - [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
 - [ ] Task 5：empty slot、save/load/title 生命周期根因。提交：`PENDING`。
@@ -735,3 +735,33 @@ Task 1 范围：仅加入失败可定位诊断、正式游戏 E2E 的显式入�
 Task 1 实现提交：`b342b06a62f7b02b09eb3f3e52d95ca864de3e69`（`test(engine): reproduce player experience wave 2 failures`）。
 
 下一入口：提交本次台账 SHA 后开始 Task 2 的状态机红灯测试。Task 1 的失败矩阵必须继续保留，不能声明 UX 修复完成。
+
+### 6.3 Task 2 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T12:43:27.8511165+08:00`（Asia/Shanghai）。
+
+测试先行与实现：
+
+- 首次运行 `npx vitest run examples/zero-after-midnight/test/player-ui-session.test.ts` 时，因 `src/player-ui-session.ts` 尚不存在而红灯（模块解析失败，未执行任何测试）。
+- 创建表驱动测试后，`PlayerUiSession` 实现覆盖 title/game、五类实际阻塞 overlay（加 `none` 共六种状态）、title/game gallery 返回上下文、overlay 互斥、interface hidden、video active、非法 transition、reset、保存/读档成功提交和失败快照回滚。
+- 纯查询 `canAdvance`、`canRollback`、`shouldRestoreInterfaceOnPointer`、`shouldShowCommandRail` 只读取同一只读快照；状态机 transition 不调用 Renderer 或执行副作用；快照递归需求在本结构中由冻结扁平普通对象满足。
+- 补充的 busy-load 视频完成测试先红：`set-video-active requires operation=idle, got loading`。修复为允许运行时视频完成/状态重置在 busy operation 中更新 `videoActive`，其他玩家 transition 仍拒绝 busy 状态；同一测试转绿。
+- 最终状态机测试：`14/14` 通过。
+
+主入口迁移：
+
+- `examples/zero-after-midnight/src/main.ts` 删除 `systemMenuOpen`、`saveLoadOpen`、`onTitleScreen`、`galleryOpen`、`settingsOpen` 和独立 `videoActive` 可写真相；标题/游戏 base、互斥 overlay、busy save/load、界面隐藏和 video 均从 `PlayerUiSession` 派生。
+- Save/load 与 quick save/load 使用 begin/complete/fail operation：成功提交目标状态，失败恢复操作前快照；backlog、settings、gallery 和 system menu 入口改用同一 overlay 状态。
+- `examples/zero-after-midnight/package.json` 的 workspace test 现在运行既有 simulation verification 与 `test/player-ui-session.test.ts`。
+
+Task 2 门禁：
+
+- `npm run test -w zero-after-midnight`：通过；资产 `44`、11 场景、3 结局验证通过，PlayerUiSession `14/14`。
+- `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000`：`23/23` choice 分支、`0` 运行时错误、`3` 个结局、`39` 次存读档 smoke。
+- `npm run typecheck -w zero-after-midnight`：退出码 `0`。
+- `npm run build -w zero-after-midnight`：退出码 `0`；仅保留既有 Vite 大 chunk advisory，不改门禁。
+- `git diff --check`：通过。
+
+范围与遗留：四个受保护未跟踪文件未触碰；没有修改 DSL、存档格式、剧情、性能数据/门限、M9 或发行物。Task 1 的两份失败 JSON 仍保留在系统临时目录，Task 1 的 UX 红灯尚未声明修复完成；Task 3 仍需处理 pointer consumption、rollback 和 interface hidden 的实际输入语义。
+
+下一入口：完成 Task 2 聚焦提交并在随后台账提交中记录真实 SHA，然后开始 Task 3 的输入门禁红灯测试。
