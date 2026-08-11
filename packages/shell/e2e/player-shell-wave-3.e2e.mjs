@@ -463,8 +463,8 @@ async function caseF(session) {
   if (!beforeDialogueFills.includes(0xf2f6ff)) throw new Error('主题场景未找到已显示的正式对话文字');
   const collisionColor = 0x123456;
   await session.page.evaluate((color) => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: color, text: color } }), collisionColor);
-  await session.waitFor('同色主题投影', () => window.__surdetDebug?.theme?.colors?.accent === collisionColor
-    && window.__surdetDebug?.theme?.colors?.text === collisionColor);
+  await session.waitFor('同色主题投影', () => window.__surdetDebug?.theme?.colors?.accent === 0x123456
+    && window.__surdetDebug?.theme?.colors?.text === 0x123456);
   const collision = await session.snapshot();
   const collisionDialogueFills = collision.themeProjection?.dialogue?.visibleTextFills ?? [];
   if (!collisionDialogueFills.includes(collisionColor)) throw new Error('已显示的正式对话文字未发生同色主题投影');
