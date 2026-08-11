@@ -294,6 +294,44 @@ describe('Interpreter 存档', () => {
     expect(calls).toEqual(['validate']);
   });
 
+  it('Presentation 预校验失败时在任何状态写入前拒绝并不发 stateReset', () => {
+    const { bus, registry, interp, store } = makeInterp();
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    store.set('trust', 5);
+    interp.gallery.unlockCg('before');
+    const before = {
+      variables: store.snapshot(),
+      readSet: interp.readTracker.snapshot(),
+      gallery: interp.gallery.snapshot(),
+      status: interp.status,
+    };
+    const calls: string[] = [];
+    interp.setPresentationHooks({
+      snapshot: () => ({ stage: 'current' }),
+      validate: (payload: unknown) => {
+        calls.push(`validate:${JSON.stringify(payload)}`);
+        throw new Error('invalid presentation snapshot');
+      },
+      restore: () => { calls.push('restore'); },
+    } as never);
+    const events: string[] = [];
+    bus.on('stateReset', () => events.push('stateReset'));
+    const incoming = interp.saveSnapshot()!;
+    incoming.variables.trust = 999;
+    incoming.readSet = ['incoming#1'];
+    incoming.gallery = { cgs: ['incoming'], music: [] };
+    incoming.presentation = { version: 1, payload: { stage: 'incoming' } };
+
+    expect(() => interp.loadSnapshot(incoming)).toThrow('invalid presentation snapshot');
+    expect(calls).toEqual(['validate:{"stage":"incoming"}']);
+    expect(events).toEqual([]);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(interp.readTracker.snapshot()).toEqual(before.readSet);
+    expect(interp.gallery.snapshot()).toEqual(before.gallery);
+    expect(interp.status).toBe(before.status);
+  });
+
   it('迁移后当前 schema 校验失败时不写入状态、不发 saveMigrated、不开始恢复', () => {
     const { bus, registry, interp, store } = makeInterp();
     registry.register(compileScene('凛：甲。', 's.gal', 's1'));

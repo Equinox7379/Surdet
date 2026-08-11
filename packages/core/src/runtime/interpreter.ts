@@ -37,6 +37,7 @@ export interface SystemHooks {
 /** 宿主演出状态钩子；payload 必须是 JSON 安全值。 */
 export interface PresentationSnapshotHooks {
   snapshot: () => unknown;
+  validate?: (payload: unknown) => void;
   restore: (payload: unknown) => void;
 }
 
@@ -325,6 +326,7 @@ export class Interpreter {
     }
     snap = candidate;
     if (snap.systems) this.#systemHooks.validate?.(snap.systems);
+    this.#presentationHooks?.validate?.(snap.presentation?.payload ?? null);
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
     }
