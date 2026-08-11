@@ -246,11 +246,11 @@ git commit -m "feat(host): add player overlay return stack"
 - Modify: `packages/host/src/index.ts`
 - Create: `packages/host/test/player-shell-slots.test.ts`
 
-- [ ] 先写失败测试：六 defaults 完整；缺一构造失败；override 只替换对应槽；未知 ID 拒绝；open/close 各调用一次且 this 正确；cause 保留；snapshot 固定顺序、冻结、不暴露 Provider。
-- [ ] 红灯：`npm run test -w @surdet/host -- --run test/player-shell-slots.test.ts`。
-- [ ] 用固定数组驱动实现；不得用开放式字符串 Map 接受新 ID。
-- [ ] 绿灯：聚焦测试 + Host typecheck。
-- [ ] 提交：
+- [x] 先写失败测试：六 defaults 完整；缺一构造失败；override 只替换对应槽；未知 ID 拒绝；open/close 各调用一次且 this 正确；cause 保留；snapshot 固定顺序、冻结、不暴露 Provider。
+- [x] 红灯：`npm run test -w @surdet/host -- --run test/player-shell-slots.test.ts`。红灯证据为模块不存在，测试未收集。
+- [x] 用固定数组驱动实现；不得用开放式字符串 Map 接受新 ID。
+- [x] 绿灯：聚焦测试 5/5；Host typecheck 通过。
+- [x] 提交：
 
 ```powershell
 git add packages/host/src/player-shell-slots.ts packages/host/src/index.ts packages/host/test/player-shell-slots.test.ts docs/superpowers/plans/2026-08-11-player-shell-foundation-wave-3.md
@@ -493,7 +493,7 @@ WAITING_FOR_REVIEW
 | --- | --- | --- | --- | --- |
 | 0 | N/A（文档基线任务无红灯） | HEAD `9bbec32946e169a5d081b29863edddaad64959fe`；任务书 25173 字节 / SHA-256 `639A934053C9879DFABAA287B71E3CC3010B2F5E3249004CC02EC923C5DA2D65`；清洁室记录已创建；修正后 diff-check 通过；tracked logs 为空 | `445cf5106f9ca9c0401044b7e9cfa121c45ffcb4`（Task 0 基线提交） | implemented |
 | 1 | 13 项中 5 项失败；首个失败为快照缺少 `returnStack`，随后 `session.pushOverlay is not a function`；红灯发生于生产代码修改前 | 聚焦测试 13/13；`npm run typecheck -w @surdet/host` 通过；覆盖嵌套返回、title/gallery、失败恢复、成功清栈、reset、递归冻结、篡改隔离和 busy 拒绝 | `a6286a2581db40a6683136a4a015045b5f3250e5` | implemented |
-| 2 | pending | pending | pending | not-started |
+| 2 | 测试先于生产代码运行；模块不存在导致测试未收集（1 个测试文件失败、0 个测试收集） | 固定槽测试 5/5；Host typecheck 通过；覆盖六 defaults、缺失 default、未知 override/open、this 绑定、cause 保留、冻结快照和 Provider 隔离 | pending（实现提交后回填） | implemented |
 | 3 | pending | pending | pending | not-started |
 | 4 | pending | pending | pending | not-started |
 | 5 | pending | pending | pending | not-started |
