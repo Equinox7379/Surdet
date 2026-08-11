@@ -1,7 +1,7 @@
 # Surdet Player Experience Wave 4 交付报告
 
-状态：`PLAYER_EXPERIENCE_WAVE_4_IMPLEMENTED`  
-交付性质：公共 Renderer/Host 契约修复与正式《零点之后》玩家路径验收  
+状态：`PLAYER_EXPERIENCE_WAVE_4_IMPLEMENTED`
+交付性质：公共 Renderer/Host 契约修复与正式《零点之后》玩家路径验收
 报告日期：2026-08-12
 
 ## 1. 结论与范围
@@ -12,7 +12,7 @@ Wave 4 Task 0 → Task 9 已按计划串行完成。六项目标体验问题 G1�
 
 最终代码提交（报告写入前、用于所有 Wave 4 玩家 artifact 的源码提交）：
 
-`38e8a62be9429bcdcf3255dbcb49da51a58c69ab`  
+`38e8a62be9429bcdcf3255dbcb49da51a58c69ab`
 `test(shell): gate player experience wave 4`
 
 该提交之后只会创建本报告和计划台账的文档提交；文档提交不会改变运行时代码。包含交付文档后的最终 Git HEAD、ahead/behind 和工作树状态，以 Task 9 Step 7 的最终命令输出为准，未在本报告中预填不存在的提交哈希。
