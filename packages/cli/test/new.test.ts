@@ -27,6 +27,11 @@ describe('surdet new', () => {
 
     const generatedMain = fs.readFileSync(path.join(target, 'src/main.ts'), 'utf8');
     expect(generatedMain).toContain('createRendererRuntime');
+    expect(generatedMain).toContain('createPlayerShellController');
+    expect(generatedMain).toContain('createRendererPlayerShellSlots');
+    expect(generatedMain).toContain('createRendererTheme');
+    expect(generatedMain).toContain('createPlayerUiSession');
+    expect(generatedMain).not.toMatch(/new PlayerInputGate\(\)/);
     expect(generatedMain).not.toMatch(/\bPixiStage\b|\bAdvRenderer\b/);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')) as { name: string };

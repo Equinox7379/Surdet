@@ -27,6 +27,7 @@ describe('PlayerUiSession', () => {
       operation: 'idle',
       interfaceHidden: false,
       videoActive: false,
+      returnStack: [{ base: 'game', overlay: 'none' }],
     });
     expect(session.closeOverlay()).toMatchObject({
       base: 'game',
@@ -78,6 +79,7 @@ describe('PlayerUiSession', () => {
       operation: 'idle',
       interfaceHidden: false,
       videoActive: false,
+      returnStack: [],
     });
   });
 
@@ -141,6 +143,7 @@ describe('PlayerUiSession', () => {
       operation: 'idle',
       interfaceHidden: false,
       videoActive: false,
+      returnStack: [],
     });
   });
 

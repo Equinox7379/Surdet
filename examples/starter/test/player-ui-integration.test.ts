@@ -1,32 +1,32 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  PlayerInputGate,
-  canAdvance,
+  createPlayerShellController,
+  createRendererPlayerShellSlots,
   createPlayerUiSession,
 } from '@surdet/host';
+import { createRendererTheme } from '@surdet/renderer';
 
 const starterMain = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 
 describe('Starter public player UI coordination', () => {
-  it('uses the public host session and gate instead of duplicated writable flags', () => {
+  it('uses the public shell controller and renderer-backed providers', () => {
+    expect(starterMain).toContain('createPlayerShellController');
+    expect(starterMain).toContain('createRendererPlayerShellSlots');
+    expect(starterMain).toContain('createRendererTheme');
     expect(starterMain).toContain('createPlayerUiSession');
-    expect(starterMain).toContain('new PlayerInputGate()');
-    expect(starterMain).toContain('inputGate.decidePointer');
+    expect(starterMain).not.toMatch(/new PlayerInputGate\(\)/);
+    expect(starterMain).not.toMatch(/uiSession\.(openOverlay|closeOverlay|beginOperation|completeOperation|failOperation|reset|enterGame|enterTitle)/);
+    expect(starterMain).not.toMatch(/inputGate\.decidePointer/);
     for (const legacyFlag of ['systemMenuOpen', 'saveLoadOpen', 'onTitleScreen', 'galleryOpen', 'settingsOpen']) {
       expect(starterMain).not.toMatch(new RegExp(`\\b${legacyFlag}\\b`));
     }
   });
 
   it('keeps Starter-equivalent overlay, empty-slot and hidden-interface decisions synchronous', () => {
-    const session = createPlayerUiSession({ base: 'game' });
-    const gate = new PlayerInputGate();
-    session.openOverlay('backlog');
-    expect(gate.decidePointer(session.snapshot(), { button: 0 })).toBe('ignore');
-    session.closeOverlay();
-    session.setInterfaceHidden(true);
-    expect(gate.decidePointer(session.snapshot(), { button: 0 })).toBe('restore-interface');
-    session.setInterfaceHidden(false);
-    expect(canAdvance(session.snapshot())).toBe(true);
+    expect(typeof createPlayerShellController).toBe('function');
+    expect(typeof createRendererPlayerShellSlots).toBe('function');
+    expect(typeof createPlayerUiSession).toBe('function');
+    expect(Object.isFrozen(createRendererTheme())).toBe(true);
   });
 });

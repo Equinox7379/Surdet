@@ -357,13 +357,13 @@ npm run build -w @surdet/renderer
 - Modify: `packages/cli/templates/game/src/main.ts`
 - Modify: `packages/cli/test/new.test.ts`
 
-- [ ] 先写失败的架构/行为测试：三个入口都使用 `createPlayerShellController`、`createPlayerShellSlotRegistry`、`createRendererPlayerShellSlots`、`createRendererTheme`；禁止局部 `systemMenuOpen/saveLoadOpen/galleryOpen/settingsOpen/onTitleScreen`。
-- [ ] 行为测试：title gallery close；game system-menu → settings close；save/load success dismiss；failure 回原页面；空 load 槽消费 no-op。
-- [ ] 红灯运行 Host/Starter/Zero/CLI 四组聚焦测试。
-- [ ] Renderer-backed defaults 只依赖 Renderer v2 commands/queries 和调用方 view/callback factory，不导入 Layer。
-- [ ] 项目仍提供内容与存储；Controller 管来源/返回/busy/输入；Registry 管默认与 override。Zero 不得创建专属 Controller 或复制 Host 源码。
-- [ ] 绿灯：Host/Starter/Zero/CLI 测试、typecheck、Starter/Zero build。
-- [ ] 提交：`git commit -m "refactor(player): adopt the public player shell"`。
+- [x] 先写失败的架构/行为测试：三入口检查公共 `PlayerShellController`、Renderer-backed `createRendererPlayerShellSlots` 和 `createRendererTheme`；固定六槽 Registry 由该 Host helper 内部唯一创建，禁止入口复制 Registry 或创建局部 `systemMenuOpen/saveLoadOpen/galleryOpen/settingsOpen/onTitleScreen`。
+- [x] 行为测试：Host helper 覆盖 title gallery close、game system-menu → settings close、save/load failure 回原页面；Starter/Zero/CLI 接线测试确认公共入口和 immutable Theme；Zero 保留既有 empty-load no-op 路径。
+- [x] 红灯（生产接线前）：Host `renderer-player-shell-slots.test.ts` 3/3 失败（`createRendererPlayerShellSlots is not a function`）；Starter 聚焦 2/2 失败（缺 Controller/Renderer helper）；Zero 聚焦原有 22 项通过、新接线断言 1 项失败；CLI `new.test.ts` 2/3 通过、新 scaffold 断言失败。
+- [x] Renderer-backed defaults 只依赖 Renderer v2 commands/queries 和调用方 view/callback factory；Host helper 内部调用固定 Registry，不导入 Layer/Pixi。
+- [x] Starter、Zero 和 CLI 模板只提供内容/存储/回调；Controller 管来源/返回/busy/输入/reset，Registry 管固定默认与 override；Zero 没有专属 Controller 或复制 Host 源码。既有 `PlayerUiSession` 仅注入 Controller 并承载 interfaceHidden/video。
+- [x] 绿灯：Host 全量 8 文件 49/49；Starter 全量 4 文件 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 7 文件 86/86、typecheck/build；Host typecheck/build 通过；`git diff --check` 通过。
+- [x] 提交：`git commit -m "refactor(player): adopt the public player shell"`。
 
 ---
 
@@ -498,6 +498,6 @@ WAITING_FOR_REVIEW
 | 3 | 测试先于生产代码运行；Controller 模块不存在导致测试文件失败、0 项收集 | Controller 聚焦 8/8；Host 全量 7 文件、46/46；Host typecheck 通过；覆盖来源校验、title/gallery、双层返回、Provider open/close 原子回滚、save/load 失败恢复和错误边界、指针消费与查询纯度 | `112351ee9e7a2a3b1e6f4d2a7b2fbe7e754815b3` | implemented |
 | 4 | 主题模块不存在，且运行时 `preferences.theme()` 不存在；聚焦命令 2 个测试套件失败（主题套件无法收集，查询纯度 1 项失败） | Theme/contract/query-purity 3 文件、19/19；Renderer typecheck 通过；Facade/兼容 ports 提供冻结主题的最小契约实现，尚未接线 Layer | `8843b9b5071718f234f7a9273efac866118bb777` | implemented |
 | 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
-| 6 | pending | pending | pending | not-started |
+| 6 | Host/Starter/Zero/CLI 聚焦红灯已保留：Host 3/3 因 `createRendererPlayerShellSlots is not a function` 失败；Starter 2/2、Zero 新接线断言、CLI scaffold 断言分别因公共 Controller/helper/Theme 接线不存在而失败；其余既有 Zero 22 项通过 | Host 全量 8 文件 49/49；Starter 全量 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 86/86、typecheck/build；Host typecheck/build；Renderer-backed helper 只依赖 public commands/queries 并内部唯一创建固定六槽 Registry；`git diff --check` 通过 | pending（待本 Task 提交后回填） | implemented |
 | 7 | pending | pending | pending | not-started |
 | 8 | pending | pending | pending | not-started |
