@@ -48,6 +48,12 @@ packages/
 
 正式游戏、starter、编辑器预览和 CLI 模板都使用一个 `RendererRuntime`。消费者只能通过 `runtime.commands` 改变表现、通过 `runtime.queries` 读取只读状态、通过 `runtime.controller.dispatchInput()` 接收标准化输入；帧调度、Layer 生命周期、资源所有权和 disposal 由 Runtime 管理。`PixiStage` 与 `AdvRenderer` 仍保留在当前 major 的一版兼容窗口中，但新代码不得直接构造它们。请先阅读 [迁移指南](docs/renderer-v2-migration.md)，再运行 `npm run verify:renderer-legacy`。
 
+### Player Shell Foundation Wave 3
+
+`@surdet/host` 现在提供公共 `PlayerShellController`、不可变 overlay 返回栈和固定六个 UI 槽（`title`、`system-menu`、`save-load`、`settings`、`gallery`、`backlog`）。Starter、《零点之后》和 CLI 模板共享同一套 Controller/Registry；游戏侧只提供视图、存储和业务回调，不再维护 `systemMenuOpen` 等同义布尔状态。来源与返回关系由 Controller 管理，Provider 失败会回滚并保留原始错误；UI 槽只是界面槽，不是存档数据槽。
+
+Renderer 主题通过 `createRendererTheme()` 和 `commands.preferences.setTheme()` 接线，冻结的 token 会投影到 Dialogue、Menu、Gallery、SystemPanel、Loading 五类 Layer。当前保留一版兼容窗口；本 Wave 不包含视觉编辑器，也不改变 DSL、存档或游戏规则。性能测量资格化仍未完成，不能将本次 UI 能力交付视为性能门禁通过。
+
 ## 已实现
 
 - **状态系统**：类型安全变量/flag、范围 clamp、readonly、存档快照、拒绝 Infinity/NaN、声明表深拷贝、get 防御性深拷贝、**object 变量 JSON 安全递归校验**（拒绝 undefined/函数/NaN 等存档序列化会静默丢失的值）；标量 `@mod/@inc/@dec/@toggle` 走免拷贝热路径

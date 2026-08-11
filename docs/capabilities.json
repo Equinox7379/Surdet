@@ -251,6 +251,55 @@
       ],
       "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
       "limitation": "当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。"
+    },
+    {
+      "id": "player-shell-coordination",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "implemented",
+      "tests": [
+        "packages/host/test/player-ui-coordination.test.ts",
+        "packages/host/test/player-shell-controller.test.ts",
+        "packages/host/test/player-shell-slots.test.ts",
+        "packages/host/test/renderer-player-shell-slots.test.ts",
+        "packages/shell/test/player-experience-e2e-contract.test.ts",
+        "packages/shell/e2e/player-shell-wave-3.e2e.mjs",
+        "packages/shell/e2e/player-experience-wave-2.e2e.mjs",
+        "examples/starter/test/player-ui-integration.test.ts",
+        "examples/zero-after-midnight/test/player-ui-integration.test.ts"
+      ],
+      "docs": [
+        "README.md",
+        "docs/player-shell-migration.md",
+        "docs/renderer-v2-migration.md",
+        "docs/AI-GUIDE.md"
+      ],
+      "limitation": "当前提供固定六个 UI 槽与一版兼容窗口；UI 槽不是存档数据槽位，本 Wave 不包含可视化编辑器或性能资格化。"
+    },
+    {
+      "id": "renderer-theme-tokens",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "n/a",
+      "host": "n/a",
+      "tests": [
+        "packages/renderer/test/theme.test.ts",
+        "packages/renderer/test/integration/renderer-runtime.test.ts",
+        "packages/renderer/test/api/query-purity.test.ts",
+        "examples/starter/test/player-ui-integration.test.ts",
+        "examples/zero-after-midnight/test/player-ui-integration.test.ts",
+        "packages/cli/test/new.test.ts"
+      ],
+      "docs": [
+        "README.md",
+        "docs/player-shell-migration.md",
+        "docs/renderer-v2-migration.md",
+        "docs/AI-GUIDE.md"
+      ],
+      "limitation": "主题令牌以不可变快照投影到五类真实 Layer；不改变 DSL、存档、剧情或规则，也不代表性能门禁已资格化。"
     }
   ]
 }
