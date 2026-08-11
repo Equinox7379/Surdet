@@ -110,7 +110,7 @@ R3 三份文档更新已由普通提交 `72cfea6c8d14db80e40ce1662090c99b628de74
 | 项目 | 修复前红灯 | 修复后绿灯 | 提交 |
 | --- | --- | --- | --- |
 | F1 RenderLifecycle 事件历史 | 同一聚焦命令中生命周期套件 9 项有 2 项失败：2048 次注册/释放后事件为 4097，且 replacement 缺少新资源 `register/replace` 事件 | 固定容量 1024 的环形缓冲淘汰最旧事件；active owner/kind/key/source 保留；replacement 同时记录旧 `dispose/replace` 与新 `register/replace`；forget/release/releaseOwner/dispose/failure cause 保留；生命周期聚焦 9/9 | `cff8691105523cf1edd8f23598808a6d31d50417` |
-| F2 resourceLedger | 同一聚焦命令中 query-purity 套件 3 项有 1 项失败：Facade 返回的根 ledger 未冻结 | `resourceLedger` 复用深克隆 + 递归冻结路径；根、active/events 数组、entry/event 均不可写；查询不改变生命周期状态；query-purity 与 Renderer typecheck 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
+| F2 resourceLedger | 同一聚焦命令中 query-purity 套件 3 项有 1 项失败：Facade 返回的根 ledger 未冻结 | `resourceLedger` 复用深克隆 + 递归冻结路径；根、active/events 数组、entry/event 均不可写；查询不改变生命周期状态；query-purity 与 Renderer typecheck 通过；最终 Renderer 全量 48 文件 / 387 tests 通过 | `462c97b64118c5afe192fa2218611e0a2b0ae93c` |
 | F3 artifact 台账 | 三份文档把当前 Wave 3 artifact 错写成“不输出错误数组字段” | 当前 Wave 3 artifact 为 schemaVersion=1；顶层无 `expectedRendererErrors` 汇总字段，但每个 `case.events` 含错误数组；C 为 `expectedErrors=2`、`expectedRendererErrors=1`，其余 case 均为 0；所有 case 的 page/console/request/unhandled/release 为 0 且 `unexpectedWindowClosed=false`；Wave 2 旧 schema 缺失字段仍按未观测记录 | 待本轮三份文档普通提交归档 |
 
 ## 3. R1：PlayerUiSession 完整快照运行时校验
@@ -317,7 +317,7 @@ runtime:listener:core-events
 
 同一回归现在覆盖：初始加载 → 合法 HMR 1 → 合法 HMR 2 → 非法 HMR 回滚 → 恢复合法文件。最终页面导航次数为 1；三项长期 listener 始终为上述集合；资源数量、Blob URL、ticker、display owner、sessionId、resourceIds 保持；非法编辑保留旧场景，恢复合法文件后场景哈希回到初始值，交互路径仍可继续。动态相机/淡入淡出/时间轴游标不作错误的精确相等断言，但 stage 的背景、粒子和立绘语义身份保持。
 
-R2 证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typecheck/build、Starter typecheck 均通过。R4 最终 HEAD 上 Renderer 48/384、Host 8/70、Starter 4/7、根级 `verify:all` exit code 0。
+R2 历史证据：`render-lifecycle.test.ts` 7/7、Starter Vite HMR 1/1、Renderer typecheck/build、Starter typecheck 均通过。R4 基线时 Renderer 为 48/384；F1/F2 新增回归后最终 Renderer 为 48/387，Host 8/70、Starter 4/7，根级 `verify:all` exit code 0。
 
 ## 7. Electron 玩家证据
 
@@ -392,7 +392,7 @@ Wave 2 R4 当前回归和历史成功回归均明确加载正式 Zero dist，9 �
 | Host 全量 | 8 files / 70 tests PASS |
 | Host typecheck/build | PASS |
 | Renderer R1/R2/R3 聚焦 | 5 files / 87 tests PASS（历史焦点集合） |
-| Renderer 全量 | 48 files / 384 tests PASS |
+| Renderer 全量 | 48 files / 387 tests PASS（F1/F2 新增 3 项回归） |
 | Renderer typecheck/build | PASS |
 | `npm run verify:renderer-boundaries` | 3/3 PASS |
 | `npm run verify:renderer-legacy` | 4/4 PASS |
