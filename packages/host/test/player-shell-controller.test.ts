@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   PLAYER_SHELL_SLOT_IDS,
   PlayerShellSlotError,
@@ -10,6 +10,7 @@ import {
 } from '../src/player-shell-slots.js';
 import { createPlayerUiSession, type PlayerUiSessionInitialState } from '../src/player-ui.js';
 import { createPlayerShellController } from '../src/player-shell-controller.js';
+import { enterPlayerTitleSession } from '../src/player-title-session.js';
 
 type Event = {
   readonly kind: 'open' | 'close';
@@ -190,6 +191,28 @@ describe('PlayerShellController', () => {
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.returnStack)).toBe(true);
     expect(controller.queries.slots().bindings.every((binding) => !('provider' in binding))).toBe(true);
+  });
+
+  it('supports the public clean title boundary without reopening stale providers', () => {
+    const { controller, events } = makeHarness({ base: 'game' });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const resetSession = vi.fn();
+    const openTitle = vi.fn();
+    const options = { shell: controller, renderer: { resetSession }, openTitle };
+
+    enterPlayerTitleSession(options);
+    enterPlayerTitleSession(options);
+
+    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual([
+      'open:system-menu',
+      'open:settings',
+      'close:settings',
+      'close:system-menu',
+    ]);
+    expect(resetSession).toHaveBeenCalledOnce();
+    expect(resetSession).toHaveBeenCalledWith({ preserveWorld: false });
+    expect(openTitle).toHaveBeenCalledOnce();
   });
 });
 

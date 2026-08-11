@@ -66,6 +66,8 @@ export { createRollbackRuntime } from './rollback-runtime.js';
 export type { RollbackRendererPort, RollbackRuntime, RollbackRuntimeOptions } from './rollback-runtime.js';
 export { connectInterpreterPresentation } from './presentation-connection.js';
 export type { InterpreterPresentationConnection } from './presentation-connection.js';
+export { enterPlayerTitleSession } from './player-title-session.js';
+export type { EnterPlayerTitleSessionOptions } from './player-title-session.js';
 export {
   assertProfileKey,
   LocalStorageProfileStorage,
