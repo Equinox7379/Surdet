@@ -11,6 +11,26 @@ export { createDefaultHost } from './create-host.js';
 export { createSystemHooks } from './save-hooks.js';
 export { connectSystemRouter } from './system-router.js';
 export {
+  PlayerInputGate,
+  PlayerUiSession,
+  canAdvance,
+  canRollback,
+  createPlayerUiSession,
+  shouldRestoreInterfaceOnPointer,
+  shouldShowCommandRail,
+} from './player-ui.js';
+export type {
+  CompletePlayerOperationOptions,
+  PlayerBase,
+  PlayerInputGateSnapshot,
+  PlayerOverlay,
+  PlayerOperation,
+  PlayerUiSessionInitialState,
+  PlayerUiSessionSnapshot,
+  PointerDecision,
+  PrimaryPointerLike,
+} from './player-ui.js';
+export {
   assertProfileKey,
   LocalStorageProfileStorage,
   MemoryProfileStorage,

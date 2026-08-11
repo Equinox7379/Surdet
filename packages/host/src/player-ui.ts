@@ -52,7 +52,10 @@ function validateSnapshot(snapshot: PlayerUiSessionSnapshot): void {
   if (snapshot.interfaceHidden && (snapshot.base !== 'game' || snapshot.overlay !== 'none')) {
     throw transitionError('interfaceHidden requires base=game and overlay=none');
   }
-  if (snapshot.operation !== 'idle' && snapshot.operation !== 'saving' && snapshot.operation !== 'loading' && snapshot.operation !== 'returning-title') {
+  if (snapshot.operation !== 'idle'
+    && snapshot.operation !== 'saving'
+    && snapshot.operation !== 'loading'
+    && snapshot.operation !== 'returning-title') {
     throw transitionError(`unknown operation=${String(snapshot.operation)}`);
   }
 }
@@ -69,6 +72,13 @@ function initialSnapshot(initial: PlayerUiSessionInitialState | undefined): Play
   return freezeSnapshot(snapshot);
 }
 
+/**
+ * Shared synchronous player UI state machine.
+ *
+ * The host owns this coordination state; games only provide rendering and
+ * storage adapters.  A busy operation records its exact origin so a failed
+ * transaction can restore the complete pre-operation context.
+ */
 export class PlayerUiSession {
   #snapshot: PlayerUiSessionSnapshot;
   #operationOrigin: PlayerUiSessionSnapshot | null = null;
@@ -105,11 +115,7 @@ export class PlayerUiSession {
     if (this.#snapshot.overlay !== 'none') {
       throw transitionError('enter-title requires overlay=none');
     }
-    return this.#commit({
-      ...this.#snapshot,
-      base: 'title',
-      interfaceHidden: false,
-    });
+    return this.#commit({ ...this.#snapshot, base: 'title', interfaceHidden: false });
   }
 
   enterGame(): PlayerUiSessionSnapshot {
@@ -117,11 +123,7 @@ export class PlayerUiSession {
     if (this.#snapshot.overlay !== 'none') {
       throw transitionError('enter-game requires overlay=none');
     }
-    return this.#commit({
-      ...this.#snapshot,
-      base: 'game',
-      interfaceHidden: false,
-    });
+    return this.#commit({ ...this.#snapshot, base: 'game', interfaceHidden: false });
   }
 
   beginOperation(operation: BusyOperation): PlayerUiSessionSnapshot {
@@ -225,4 +227,41 @@ export function shouldRestoreInterfaceOnPointer(snapshot: PlayerUiSessionSnapsho
 
 export function shouldShowCommandRail(snapshot: PlayerUiSessionSnapshot): boolean {
   return canAdvance(snapshot);
+}
+
+export type PointerDecision = 'advance' | 'ignore' | 'restore-interface';
+
+export interface PrimaryPointerLike {
+  readonly button: number;
+}
+
+export interface PlayerInputGateSnapshot {
+  readonly currentPointerConsumed: boolean;
+}
+
+/**
+ * Shared synchronous pointer-consumption protocol for game canvases.
+ * UI handlers mark the current event before the canvas decides whether the
+ * interpreter may advance; exactly one decision consumes the mark.
+ */
+export class PlayerInputGate {
+  #currentPointerConsumed = false;
+
+  snapshot(): PlayerInputGateSnapshot {
+    return Object.freeze({ currentPointerConsumed: this.#currentPointerConsumed });
+  }
+
+  consumeCurrentPointer(): void {
+    this.#currentPointerConsumed = true;
+  }
+
+  decidePointer(snapshot: PlayerUiSessionSnapshot, pointer: PrimaryPointerLike): PointerDecision {
+    const consumed = this.#currentPointerConsumed;
+    this.#currentPointerConsumed = false;
+
+    if (pointer.button !== 0 || consumed) return 'ignore';
+    if (shouldRestoreInterfaceOnPointer(snapshot)) return 'restore-interface';
+    if (canAdvance(snapshot)) return 'advance';
+    return 'ignore';
+  }
 }
