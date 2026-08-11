@@ -497,7 +497,7 @@ WAITING_FOR_REVIEW
 | 2 | 测试先于生产代码运行；模块不存在导致测试未收集（1 个测试文件失败、0 个测试收集） | 固定槽测试 5/5；Host typecheck 通过；覆盖六 defaults、缺失 default、未知 override/open、this 绑定、cause 保留、冻结快照和 Provider 隔离 | `c4ffce8737e6326309076a27622200ee969ebd26` | implemented |
 | 3 | 测试先于生产代码运行；Controller 模块不存在导致测试文件失败、0 项收集 | Controller 聚焦 8/8；Host 全量 7 文件、46/46；Host typecheck 通过；覆盖来源校验、title/gallery、双层返回、Provider open/close 原子回滚、save/load 失败恢复和错误边界、指针消费与查询纯度 | `112351ee9e7a2a3b1e6f4d2a7b2fbe7e754815b3` | implemented |
 | 4 | 主题模块不存在，且运行时 `preferences.theme()` 不存在；聚焦命令 2 个测试套件失败（主题套件无法收集，查询纯度 1 项失败） | Theme/contract/query-purity 3 文件、19/19；Renderer typecheck 通过；Facade/兼容 ports 提供冻结主题的最小契约实现，尚未接线 Layer | `8843b9b5071718f234f7a9273efac866118bb777` | implemented |
-| 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | pending（待提交） | implemented |
+| 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
 | 6 | pending | pending | pending | not-started |
 | 7 | pending | pending | pending | not-started |
 | 8 | pending | pending | pending | not-started |
