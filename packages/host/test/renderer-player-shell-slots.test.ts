@@ -80,7 +80,7 @@ describe('Renderer-backed player shell slots', () => {
     expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'system-menu' });
     controller.commands.close();
     expect(controller.queries.snapshot()).toMatchObject({ base: 'game', overlay: 'none' });
-    expect(renderer.commands.menu.showSystemMenu).toHaveBeenCalledTimes(1);
+    expect(renderer.commands.menu.showSystemMenu).toHaveBeenCalledTimes(2);
     expect(renderer.commands.menu.showSettings).toHaveBeenCalledTimes(1);
     expect(renderer.commands.menu.hideSettings).toHaveBeenCalledTimes(1);
     expect(renderer.commands.menu.hideSystemMenu).toHaveBeenCalledTimes(1);

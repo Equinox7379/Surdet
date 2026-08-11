@@ -178,6 +178,47 @@ function commitAndOpen(
   }
 }
 
+function returnedOverlayRequest(
+  snapshot: PlayerUiSessionSnapshot,
+): PlayerShellOpenRequest | null {
+  switch (snapshot.overlay) {
+    case 'system-menu':
+      return { slot: 'system-menu', source: 'game' };
+    case 'settings':
+      return {
+        slot: 'settings',
+        source: snapshot.returnStack.at(-1)?.overlay === 'system-menu'
+          ? 'system-menu'
+          : snapshot.base,
+      };
+    case 'gallery':
+      return { slot: 'gallery', source: snapshot.base };
+    case 'backlog':
+      return { slot: 'backlog', source: 'game' };
+    case 'save-load':
+      // The PlayerUiSession frame intentionally does not carry save/load
+      // mode. Save/load completes through the operation transaction path;
+      // there is no supported nested save/load return projection to reopen.
+      return null;
+    case 'none':
+      return null;
+    default:
+      return null;
+  }
+}
+
+function reopenReturnedProjection(
+  slots: PlayerShellSlotRegistry,
+  snapshot: PlayerUiSessionSnapshot,
+): void {
+  const request = returnedOverlayRequest(snapshot);
+  if (!request) return;
+  slots.open(request, {
+    source: request.source,
+    returnTo: snapshot.returnStack.at(-1) ?? { base: snapshot.base, overlay: 'none' },
+  });
+}
+
 export function createPlayerShellController(
   options: PlayerShellControllerOptions,
 ): PlayerShellController {
@@ -196,8 +237,9 @@ export function createPlayerShellController(
       const origin = session.snapshot();
       const slot = overlaySlot(origin.overlay);
       try {
-        session.closeOverlay();
+        const returned = session.closeOverlay();
         slots.close(slot);
+        reopenReturnedProjection(slots, returned);
       } catch (error) {
         session.restore(origin);
         throw error;
