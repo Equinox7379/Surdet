@@ -374,19 +374,19 @@ npm run build -w @surdet/renderer
 - Modify: `packages/shell/package.json`
 - Create: `packages/shell/test/player-experience-e2e-contract.test.ts`
 
-- [ ] 先写 E2E 契约红灯测试。
-- [ ] 新脚本固定每 case 独立 Electron/userData：
+- [x] 先写 E2E 契约红灯测试；首次运行 3 项契约断言因脚本、npm 命令和正式游戏路径约束缺失而失败，生产接线前完成。
+- [x] 新脚本固定每 case 独立 Electron/userData：
   - A title → gallery → close：回 title，栈清零。
   - B game → system-menu → settings → close：先回 system-menu，再回 game。
   - C save reject：保留页面/栈/隐藏 rail；重试成功清零。
   - D load success → title：不恢复旧 menu，无 release failure。
   - E 不提供 override：六槽仍有默认 Provider，`overridden=false`。
   - F 测试 accent 同步到五类 Layer，再恢复默认；资源计数不增长。
-- [ ] artifact 固定含 `schemaVersion/status/formalGame/isolation/cases`、PlayerShell snapshot、binding snapshot、Renderer projection/resource、page/console/request/unhandled/release 数组；失败也落盘且退出非零。
-- [ ] npm 命令：`"e2e:player-shell-wave-3": "node e2e/player-shell-wave-3.e2e.mjs"`。
-- [ ] 先 smoke，再跑两轮 Wave 3；各 A–F 6/6，正式路径必须是 `E:\\surdet\\examples\\zero-after-midnight\\dist`；记录绝对路径、字节和 SHA。
-- [ ] 再跑 `npm run e2e:player-experience -w @surdet/shell`，Wave 2 A–I 必须 9/9。
-- [ ] 提交：`git commit -m "test(shell): gate player shell wave 3"`。
+- [x] artifact 固定含 `schemaVersion/status/formalGame/isolation/cases`、PlayerShell snapshot、binding snapshot、Renderer projection/resource、page/console/request/unhandled/release 数组；失败也落盘且退出非零。
+- [x] npm 命令：`"e2e:player-shell-wave-3": "node e2e/player-shell-wave-3.e2e.mjs"`。
+- [x] 先 smoke，再跑两轮 Wave 3；各 A–F 6/6，正式路径为 `E:\\surdet\\examples\\zero-after-midnight\\dist`；已记录绝对路径、字节和 SHA：smoke `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-shell-wave-3-4dBYZL\\task7-player-shell-wave-3-smoke.json`（10334，`67676fe35cdcdac4ff41d06e6d0b57d2cb408dbfe447680d1721d6bc72c6ef64`）；round-1 `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-shell-wave-3-rUcQ90\\task7-player-shell-wave-3-matrix.json`（60278，`c2ce916ac3be3952470f032939afd53ebea1c60c5118fa6b183b2a9f953f1a9f`）；round-2 `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-shell-wave-3-PSjAYz\\task7-player-shell-wave-3-matrix.json`（60278，`c02ab654346bd9f540dab62f0f816f970cf5c346879b2cf3c022ebe3a76df941`）。
+- [x] 再跑 `npm run e2e:player-experience -w @surdet/shell`，Wave 2 A–I 9/9；artifact `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-experience-wave-2-task7-0q88F3\\task7-player-experience-matrix.json`（729483，`cabe7851959283ef08f2fdd35e20622e861cc3e0aa2b85cad04305f43be654c4`）。旧 Wave 2 B 断言已按已冻结的 settings → system-menu → game 返回合同更新。
+- [x] 提交：`git commit -m "test(shell): gate player shell wave 3"`，真实提交 `35b3009934b34a5683036eb412e5e0cb2940a1cd`。
 
 ---
 
@@ -499,5 +499,5 @@ WAITING_FOR_REVIEW
 | 4 | 主题模块不存在，且运行时 `preferences.theme()` 不存在；聚焦命令 2 个测试套件失败（主题套件无法收集，查询纯度 1 项失败） | Theme/contract/query-purity 3 文件、19/19；Renderer typecheck 通过；Facade/兼容 ports 提供冻结主题的最小契约实现，尚未接线 Layer | `8843b9b5071718f234f7a9273efac866118bb777` | implemented |
 | 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
 | 6 | Host/Starter/Zero/CLI 聚焦红灯已保留：Host 3/3 因 `createRendererPlayerShellSlots is not a function` 失败；Starter 2/2、Zero 新接线断言、CLI scaffold 断言分别因公共 Controller/helper/Theme 接线不存在而失败；其余既有 Zero 22 项通过 | Host 全量 8 文件 49/49；Starter 全量 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 86/86、typecheck/build；Host typecheck/build；Renderer-backed helper 只依赖 public commands/queries 并内部唯一创建固定六槽 Registry；`git diff --check` 通过 | `8032f1e24b5c4ecbcf88823f74686f408043b814` | implemented |
-| 7 | pending | pending | pending | not-started |
+| 7 | 契约红灯 3 项失败（脚本/命令/正式路径约束尚未存在）；首轮正式 A–F 为 5/6，B 在 settings 关闭后暴露真实父 system-menu 未重新投影；新增 Host 回归在修复前收到 `open:system-menu, open:settings, close:settings`，缺少父槽位 `open:system-menu`；旧 Wave 2 B 断言也因新返回合同暂时失败 | Host 全量 8 文件 50/50；Host typecheck；Shell 契约 3/3、Shell typecheck；最终 smoke 1/1；Wave 3 两轮各 A–F 6/6，正式 Zero dist、每案独立 Electron/userData，错误数组为空；Wave 2 A–I 9/9；`git diff --check` 通过；tracked logs 为空。Controller 关闭嵌套 overlay 后按返回栈重新投影父槽，E2E 使用真实 requestAnimationFrame 等待呈现动画完成；artifact 路径/字节/SHA 已写入本行 | `35b3009934b34a5683036eb412e5e0cb2940a1cd` | implemented |
 | 8 | pending | pending | pending | not-started |
