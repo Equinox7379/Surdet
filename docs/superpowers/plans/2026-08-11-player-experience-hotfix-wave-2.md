@@ -653,7 +653,7 @@ WAITING_FOR_REVIEW
 > 执行 AI 从 Task 0 开始逐项更新。不得预先勾选，不得删除失败历史。
 
 - [x] Task 0：基线、整改前门禁、计划提交。提交：`fe43fc7453b3bc1566dca21a116591d54353af74`（`docs(engine): freeze player experience hotfix wave 2`）。
-- [ ] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`PENDING`。
+- [ ] Task 1：真实失败 E2E、lifecycle 可定位错误。提交：`IMPLEMENTATION_COMMIT_PENDING`。
 - [ ] Task 2：单一 UI 会话状态。提交：`PENDING`。
 - [ ] Task 3：指针消费、回退、界面隐藏。提交：`PENDING`。
 - [ ] Task 4：合成层级与 title gallery 上下文。提交：`PENDING`。
@@ -710,3 +710,26 @@ git status --short =
 范围核对：四个受保护未跟踪文件未修改、未暂存；本计划文件是唯一允许进入 Task 0 提交的新增文件。性能测量、性能 artifact、门限、M9、发行物和玩家内容均未触碰。
 
 下一入口：Task 1。Task 1 开始前必须以本台账和 Task 0 提交后的新 HEAD 为准，先建立真实 Electron 失败证据，再进行任何生产修复。
+
+### 6.2 Task 1 实际执行记录（2026-08-11）
+
+执行时间：`2026-08-11T12:29:13.5192702+08:00`（Asia/Shanghai）。当前仍处于 Task 1，尚未开始 Task 2。
+
+测试先行与生命周期诊断：
+
+- 先运行 `npm run test -w @surdet/renderer -- --run test/lifecycle/render-lifecycle.test.ts`，原始红灯为 `6 tests / 4 passed / 2 failed`；在生产实现尚未增加失败记录时，`AggregateError.errors` 只有原始 `Error`，缺少 `owner/kind/key`。
+- 红灯覆盖了两种要求：单条 `release` 的 `command='release'`，以及 `releaseOwner` 的多个 disposer 失败全部保留。
+- 修复 `RenderLifecycle` 后，同一命令转绿：`6 tests / 6 passed`。失败记录为递归边界内的不可变普通对象，保留原始 `cause`，不暴露 disposer 或资源对象；entries 仍先移除再调用 disposer。
+- Shell 注入策略测试：`5 tests / 5 passed`。
+- Renderer、Shell、zero-after-midnight typecheck：均退出码 `0`。
+- `node --check packages/shell/e2e/player-experience-wave-2.e2e.mjs`：通过；`git diff --check`：通过。
+
+真实 Electron 红灯证据（两次均显式加载正式游戏 `E:\\surdet\\examples\\zero-after-midnight\\dist`，不是 Starter）：
+
+- `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-experience-wave-2-task1-r9XqQn\\task1-failure-matrix.json`，SHA-256 `4D401FBD52BDC5DC5EBE715F06400C284765A538F1E2C84023156E65C3E0E9F4`。UX-01 在 title→gallery→music 后切换 text 超时；UX-03 空槽点击错误关闭读档页，并捕获真实 `RendererError`：`code=COMMAND_COMMIT_FAILED`、`command=release`，失败条目 `owner=menu`、`kind=pool`、`key=thumbnail:<data-url>`，原始 cause 为 `TypeError: Cannot read properties of undefined (reading 'destroy')`；页面错误栈来自 `RenderLifecycle.release`。UX-09 和 UX-04 在该轮分别通过；其余位置探针因前置红灯保留失败，不隐藏。
+- `C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-experience-wave-2-task1-QGP8WB\\task1-failure-matrix.json`，SHA-256 `A8B0124C776D89E011A4E9060624DDAFA951A32A40ED509CD78A42377B9B7662`。正式游戏与独立 userData 再次确认；UX-01、UX-03 仍红，后续链式 case 因前置状态污染而失败，但该轮没有新的资源错误证据。该失败文件保留，不能用来覆盖第一轮真实资源证据。
+- 两次 Electron 启动均使用本轮新建的精确临时 `userData`，监听了 page error、console error、request failure、窗口关闭和 watchdog；脚本使用 `shell:false`，未引入 DEP0190。
+
+Task 1 范围：仅加入失败可定位诊断、正式游戏 E2E 的显式入口策略和语义只读调试投影；尚未修改任何剧情、DSL、存档、玩家规则、性能数据、门限、美术、音频或发行流程。四个受保护未跟踪文件未触碰。
+
+下一入口：完成 Task 1 聚焦提交并在随后台账提交中记录真实 SHA，然后开始 Task 2 的状态机红灯测试。Task 1 的失败矩阵必须继续保留，不能声明 UX 修复完成。

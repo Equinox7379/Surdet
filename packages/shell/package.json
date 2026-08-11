@@ -12,6 +12,7 @@
     "start": "electron .",
     "pack": "npm run build && node prepare-pack.mjs && node scripts/verify-pack.mjs --preflight && electron-builder --win && node scripts/verify-pack.mjs --artifact",
     "e2e": "node e2e/game.e2e.mjs",
+    "e2e:player-experience": "node e2e/player-experience-wave-2.e2e.mjs",
     "e2e:renderer-v2": "node e2e/renderer-v2-acceptance.e2e.mjs",
     "e2e:renderer-baseline": "node e2e/renderer-baseline.e2e.mjs",
     "e2e:renderer-baseline:v3": "node e2e/renderer-baseline-v3-ab.e2e.mjs",
