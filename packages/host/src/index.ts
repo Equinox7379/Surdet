@@ -49,6 +49,13 @@ export type {
   PlayerShellSlotRegistrySnapshot,
   PlayerShellSource,
 } from './player-shell-slots.js';
+export { createPlayerShellController } from './player-shell-controller.js';
+export type {
+  PlayerShellCommands,
+  PlayerShellController,
+  PlayerShellControllerOptions,
+  PlayerShellQueries,
+} from './player-shell-controller.js';
 export {
   assertProfileKey,
   LocalStorageProfileStorage,

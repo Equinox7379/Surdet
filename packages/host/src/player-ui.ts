@@ -251,6 +251,23 @@ export class PlayerUiSession {
     return this.#snapshot;
   }
 
+  /**
+   * Restore a previously captured idle snapshot after an external provider
+   * rejected a committed UI transition.  The snapshot is validated and
+   * re-frozen before it becomes session state.
+   */
+  restore(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
+    if (snapshot.operation !== 'idle') {
+      throw transitionError('restore requires an idle snapshot');
+    }
+    validateSnapshot(snapshot);
+    this.#operationOrigin = null;
+    return this.#commit({
+      ...snapshot,
+      returnStack: snapshot.returnStack.map((frame) => ({ ...frame })),
+    });
+  }
+
   setInterfaceHidden(hidden: boolean): PlayerUiSessionSnapshot {
     this.#requireIdle('set-interface-hidden');
     if (hidden && (this.#snapshot.base !== 'game' || this.#snapshot.overlay !== 'none')) {
@@ -350,6 +367,10 @@ export class PlayerInputGate {
 
   consumeCurrentPointer(): void {
     this.#currentPointerConsumed = true;
+  }
+
+  reset(): void {
+    this.#currentPointerConsumed = false;
   }
 
   decidePointer(snapshot: PlayerUiSessionSnapshot, pointer: PrimaryPointerLike): PointerDecision {
