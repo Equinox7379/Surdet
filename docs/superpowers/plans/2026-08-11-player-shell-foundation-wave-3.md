@@ -458,7 +458,7 @@ git ls-files '*.log'
 | --- | --- | --- | --- |
 | S1 PlayerShellController reset/收敛 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 收敛后残留，close 错误未完整传播 | 同一 18 项通过；Host 聚焦 42/42，Host typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3`，已提交 |
 | S2 Renderer Theme token 身份 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体碰撞按错误 token 恢复 | 同一 26 项通过；Renderer 全量 48 文件 / 381 tests、typecheck/build 通过；正式 F 改为 text/accent 同色碰撞；页面谓词捕获问题已单独修正 | `fbe8a5b` + `78d9cbc` + `fdc2599`，已提交 |
-| D1 报告台账 | 两份报告和本计划仍把 Renderer errors 概括为 0，且主题说明未区分稳定绑定 | 三份文档改为 unexpected/expected 错误台账；写入最终 Wave 3 两轮、Wave 2 成功回归、失败证据和基线 HMR 门禁例外 | 当前文档修改，待普通文档提交 |
+| D1 报告台账 | 两份报告和本计划仍把 Renderer errors 概括为 0，且主题说明未区分稳定绑定 | 三份文档改为 unexpected/expected 错误台账；写入最终 Wave 3 两轮、Wave 2 成功回归、失败证据和基线 HMR 门禁例外 | `c7ec48abc22149f20b12e7b4973280d6a66f4443`，已提交 |
 
 ## Acceptance
 
@@ -510,7 +510,7 @@ WAITING_FOR_REVIEW
 | 5 | 5 个聚焦文件首次运行 70/71；新增真实 Runtime 断言因 `setTheme` 尚未存在而失败 | 5 文件、71/71；Renderer typecheck/build；boundary 3/3；legacy 4/4；单帧、幂等、非法输入、disposed、资源计数和五类真实 Layer 接收主题均通过 | `7dc7668ae9e41a332d05c319d82ec79e4be55497` | implemented |
 | 6 | Host/Starter/Zero/CLI 聚焦红灯已保留：Host 3/3 因 `createRendererPlayerShellSlots is not a function` 失败；Starter 2/2、Zero 新接线断言、CLI scaffold 断言分别因公共 Controller/helper/Theme 接线不存在而失败；其余既有 Zero 22 项通过 | Host 全量 8 文件 49/49；Starter 全量 7/7、typecheck/build；Zero 全量 21/21、integration 23/23、typecheck/build；CLI 全量 86/86、typecheck/build；Host typecheck/build；Renderer-backed helper 只依赖 public commands/queries 并内部唯一创建固定六槽 Registry；`git diff --check` 通过 | `8032f1e24b5c4ecbcf88823f74686f408043b814` | implemented |
 | 7 | 契约红灯 3 项失败（脚本/命令/正式路径约束尚未存在）；首轮正式 A–F 为 5/6，B 在 settings 关闭后暴露真实父 system-menu 未重新投影；新增 Host 回归在修复前收到 `open:system-menu, open:settings, close:settings`，缺少父槽位 `open:system-menu`；旧 Wave 2 B 断言也因新返回合同暂时失败 | Host 全量 8 文件 50/50；Host typecheck；Shell 契约 3/3、Shell typecheck；最终 smoke 1/1；Wave 3 两轮各 A–F 6/6，正式 Zero dist、每案独立 Electron/userData；unexpected page/console/request/unhandled/release errors 均为 0，expected injected Renderer errors = 1 per run（仅来自场景 C save reject 注入后的 retry success）；Wave 2 A–I 9/9；`git diff --check` 通过；tracked logs 为空。Controller 关闭嵌套 overlay 后按返回栈重新投影父槽，E2E 使用真实 requestAnimationFrame 等待呈现动画完成；artifact 路径/字节/SHA 已写入本行 | `35b3009934b34a5683036eb412e5e0cb2940a1cd` | implemented |
-| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | 历史 Task 8 证据保留；最终微型收口事实见下方持久化台账：S1/S2 直接回归、Renderer 48/381、Host 8/70、两轮 Wave 3 A–F、一轮 Wave 2 A–I、Zero 专项均通过；`npm run verify:all` 当前唯一失败为基线同样失败的 Starter Vite HMR `listeners: 4 → 3` | `54c440b`（历史 Task 8 文档提交）；最终微型台账待普通文档提交 |
+| 8 | N/A（文档与验收任务；Task 8 开始前 `npm run verify:docs` 已通过，未修改生产源码） | 历史 Task 8 证据保留；最终微型收口事实见下方持久化台账：S1/S2 直接回归、Renderer 48/381、Host 8/70、两轮 Wave 3 A–F、一轮 Wave 2 A–I、Zero 专项均通过；`npm run verify:all` 当前唯一失败为基线同样失败的 Starter Vite HMR `listeners: 4 → 3` | `54c440b`（历史 Task 8 文档提交）；微型收口文档提交 `c7ec48a` |
 
 ### 当前微型收口持久化台账（S1 / S2 / D1）
 
@@ -518,4 +518,4 @@ WAITING_FOR_REVIEW
 | --- | --- | --- | --- |
 | S1 | `player-shell-controller.test.ts` 18 项中 4 项失败；真实 Provider 在 reset/title 后残留，错误传播不完整 | 同一 18 项通过；Host 聚焦 42/42、全量 8/70、typecheck/build 通过；Session、Provider、active projection、InputGate 收敛一致 | `40980f3bdc112acc859c91e3ce8c807510e4d68a`；已完成 |
 | S2 | `theme.test.ts` 26 项中 5 项失败；同值颜色/字体 token 按错误数值恢复 | 同一 26 项通过；Renderer 全量 48/381、typecheck/build 通过；WeakMap 语义绑定和正式 F 碰撞回归通过；页面谓词不再捕获 Node 局部变量 | `fbe8a5b55dbc29a9bbc5d40602496c0498004a8f` + `78d9cbc50391c8cfbc212151ccba40564de57e90` + `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83`；已完成 |
-| D1 | 报告/计划把 Renderer errors 概括为 0，Wave 3/Wave 2 artifact 过期 | 三份文档已改为 exact unexpected/expected 台账，写入 `uYMkKg`、`CWLvRm`、`uZQeK3` 的字节/SHA；记录 `K...` case I 进程失败；不伪造 `verify:all` 全绿 | 文档修改待提交；之后停止 WAITING_FOR_REVIEW |
+| D1 | 报告/计划把 Renderer errors 概括为 0，Wave 3/Wave 2 artifact 过期 | 三份文档已改为 exact unexpected/expected 台账，写入 `uYMkKg`、`CWLvRm`、`uZQeK3` 的字节/SHA；记录 `K...` case I 进程失败；不伪造 `verify:all` 全绿 | `c7ec48abc22149f20b12e7b4973280d6a66f4443`；已提交，之后停止 WAITING_FOR_REVIEW |

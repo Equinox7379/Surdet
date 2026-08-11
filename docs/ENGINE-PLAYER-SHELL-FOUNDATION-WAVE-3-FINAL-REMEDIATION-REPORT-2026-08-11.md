@@ -82,8 +82,9 @@ HEAD...surdet/main: 20 0
 | `78d9cbc50391c8cfbc212151ccba40564de57e90` | `test(shell): gate colliding theme restoration` | 正式 Zero Electron F 场景改为 text/accent 同值碰撞并验证恢复 |
 | `fdc259984fcc07225d5d4dbec1cd784b2a9aaf83` | `test(shell): fix colliding theme predicate` | 修正页面谓词不得捕获 Node 局部变量；最终两轮 F 证据均由修正后的测试脚本产生 |
 | `f4ae2f8e89c44a54a927dc96ecdf7f31041cbf26` | `fix(renderer): preserve save load transaction callbacks` | 最终代码下 Wave 2 save/load 异步回调回归：Provider teardown 后仍完成成功/错误回调，命令栏恢复 |
+| `c7ec48abc22149f20b12e7b4973280d6a66f4443` | `docs(engine): record wave 3 micro remediation` | 三份报告/计划台账完成 D1 修正并归档 |
 
-文档台账修正将在上述四个实现/测试提交之后另建普通文档提交；不 amend 既有提交。
+文档台账修正已在上述实现/测试提交之后以普通提交 `c7ec48abc22149f20b12e7b4973280d6a66f4443` 归档；未 amend 既有提交。
 
 ## 3. R1：PlayerUiSession 完整快照运行时校验
 
@@ -378,6 +379,8 @@ HEAD...surdet/main: 36 0
 ```
 
 最终文档提交后必须再次运行并记录：`git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 `git ls-files '*.log'`。本报告不将提交后尚不存在的 SHA 或自引用文件摘要写成既成事实；提交后机器复核的真实结果以最终交付回报为准。由于 `verify:all` 的基线 HMR 例外，本报告不得宣称“全量门禁全部通过”。
+
+提交后的机器复核结果：最终 HEAD 为 `c7ec48abc22149f20b12e7b4973280d6a66f4443`，相对 `surdet/main` 为 `37 0`；`git diff --check` 通过，`git ls-files '*.log'` 为空，工作树只保留四个受保护未跟踪文件。最终报告文件的字节数与 SHA-256 由同一提交后的机器复核单独记录；由于文件不能无矛盾地嵌入其自身最终 SHA，本报告不伪造自引用摘要。`npm run verify:all` 在该 HEAD 仍为 exit code 1，唯一失败仍是冻结基线同样失败的 Starter Vite HMR `listeners: 4 → 3`。
 
 工作树必须只保留以下四个受保护未跟踪文件：
 
