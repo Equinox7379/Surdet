@@ -80,5 +80,7 @@ export interface RendererRuntimeOptions {
   backlog?: Backlog;
   pluginHost?: RendererPluginHost;
   onBacklogClose?: () => void;
+  /** Called synchronously by Dialogue UI handlers before their host callback. */
+  onPointerConsumed?: () => void;
   performanceMonitor?: RenderPerformanceMonitor;
 }

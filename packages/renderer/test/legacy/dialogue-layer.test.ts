@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus, type CoreEventMap } from '@surdet/core';
-import { Container } from 'pixi.js';
+import { Container, type FederatedPointerEvent } from 'pixi.js';
 import { Backlog } from '../../src/backlog.js';
 import { NULL_AUDIO, type AdvStage, type ChoiceOptionView, type CommandRailItem, type PortraitView, type SpeakerProfile } from '../../src/types.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
@@ -239,6 +239,39 @@ function makeRuntime() {
 }
 
 describe('DialogueLayer v2 projection contract', () => {
+  it('marks command rail and full-screen backlog pointer handlers as consumed', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const root = new Container();
+    let consumed = 0;
+    const selected: string[] = [];
+    const layer = new DialogueLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+      onPointerConsumed: () => { consumed += 1; },
+    });
+
+    try {
+      layer.showCommandRail([{ id: 'auto', label: '自动' }], (id) => selected.push(id));
+      const commandRail = root.children[6] as Container;
+      commandRail.children[1]?.emit('pointerdown', {} as FederatedPointerEvent);
+      expect(selected).toEqual(['auto']);
+      expect(consumed).toBe(1);
+
+      layer.showBacklog([], undefined);
+      const backlogLayer = root.children[7] as Container;
+      backlogLayer.emit('pointerdown', {} as FederatedPointerEvent);
+      expect(consumed).toBe(2);
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
   it('owns its display and listener resources across two independent 50-cycle batches', () => {
     const lifecycle = new RenderLifecycle();
     const assets = new RenderAssetRegistry({ lifecycle });
