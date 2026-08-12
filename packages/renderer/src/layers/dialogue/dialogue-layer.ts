@@ -435,12 +435,16 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogText.position.set(92, this.#h - 174);
     this.#dialogRubyLayer.position.set(92, this.#h - 174);
     this.#speakerAvatar?.position.set(58, this.#h - 54);
-    const step = 58;
-    const startY = this.#h * 0.60 - (this.#choiceViews.length - 1) * step / 2;
-    for (let i = 0; i < this.#choiceViews.length; i++) {
-      const view = this.#choiceViews[i]!;
-      const w = view.label.width + 60;
-      view.holder.position.set((this.#w - w) / 2, startY + i * step - (view.label.height + 20) / 2);
+    const gap = 12;
+    const heights = this.#choiceViews.map((view) => view.label.height + 16);
+    const totalHeight = heights.reduce((sum, height) => sum + height, 0)
+      + Math.max(0, heights.length - 1) * gap;
+    let y = (this.#h - totalHeight) / 2;
+    for (const [index, view] of this.#choiceViews.entries()) {
+      const width = view.label.width + 60;
+      const height = heights[index]!;
+      view.holder.position.set((this.#w - width) / 2, y);
+      y += height + gap;
     }
   }
 
