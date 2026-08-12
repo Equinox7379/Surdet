@@ -338,6 +338,85 @@ NOT_PUSHED
 WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
+## Phase 2 最新收口台账 — Case B choice 入场稳定判定修正
+
+本节是当前执行轮次的最新台账，覆盖前文的“当前 runner、当前 artifact 和当前 HEAD”字段；此前所有 Phase 2 失败 artifact、截图和提交链均保留为历史记录，不删除、不覆盖、不重跑挑绿。本轮继续停留在 Wave 5C Phase 2，只修改 Shell runner、Shell contract 及本计划/交付报告。
+
+### 本轮范围与先红后绿
+
+- 未修改 Host、Renderer、Core、Starter、CLI、Zero 生产代码；未回滚或重写已有 Wave 5C 提交。
+- Shell contract 先以 10 项、1 项失败、exit 1 证明旧 runner 没有候选态/稳定态分离合同；失败点是缺少 `isTargetChoiceCandidate()`、`choiceCandidateSnapshot` 和 `choiceSettledSnapshot`。
+- 最小 runner 修正后同一 contract 为 10/10、exit 0。
+- `isTargetChoiceCandidate()` 要求 `common_0017`、Core `awaiting-choice`、Renderer `choice`、3 条正式 label、3 个 bounds，但不要求入场瞬间 `visibleChoiceCount === 3`；`waitChoice()` 再要求稳定的 `visibleChoiceCount === 3`、3 个 bounds 和双层状态。
+- `node --check`、Shell typecheck、Shell build 均 exit 0。
+
+代码提交：
+
+```text
+e5d0d6f3d55fcc9da89c5409fef53a034257d508
+fix(shell): wait for settled wave 5c choices
+```
+
+实际修改文件仅为：
+
+- `packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`
+- `packages/shell/test/player-experience-wave-5c-e2e-contract.test.ts`
+
+### 唯一一次正式 Electron 证据
+
+只执行仓库实际存在的正式脚本一次：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+使用正式入口 `E:\surdet\examples\zero-after-midnight\dist`、2 个独立 Electron session、独立临时 `userData`，重新构建后运行；没有复用旧 dist、旧 artifact 或旧截图。命令 exit 1 后立即停止，没有再次修改 runner 或重跑寻找绿色结果。
+
+最新 artifact：
+
+- 路径：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-jhI6dG\wave-5c-rollback-restore-atomicity.json`
+- 字节数：`4,314,660`
+- SHA-256：`5D6046F2767492C51FD79FD3C26065AC7C4161B9077C09F3F43EB0757A2593E6`
+- `status=FAILED`；`ARTIFACT_HEAD=e5d0d6f3d55fcc9da89c5409fef53a034257d508`
+- `actualSessions=2`；`actualAttempts=13`（Case A=12，Case B=1）；`regularScreenshots=3`
+- page/console/request/unhandled/renderer/release/window close 错误通道均为 0。
+
+Case A 12/12 `validHistory=true` 完整通过。Case B 已到达 `common_0017 pc=32`，候选快照为 Core `awaiting-choice` + Renderer `choice` + 3 labels + 3 bounds + `visibleChoiceCount=1`；稳定快照随后为 `visibleChoiceCount=3`，并完成第一次真实 `choice:0` 鼠标点击。第一次回退从 `pc=39` 回到 `pc=38` 且 `validHistory=true`；之后在第二次回退目标等待处超时，最后为 Core `awaiting-advance`、Renderer `typing`、无 choice 投影。第二次 choice 点击没有发生，故 Case B 不构成正式通过，artifact 原样保留。
+
+三张当前 artifact 截图均存在且记录哈希匹配：
+
+| 截图 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `prologue-rapid-rollback/screenshots/start.png` | 877,848 | `CCA6FEAE9CE5CBB67AB239500BC0F1C4B02300C0DE2710C463E113980493D301` |
+| `prologue-rapid-rollback/screenshots/end.png` | 878,233 | `316CA3BB12C01B2385785DD9E85F51563455604639FDA43EF875F0041669B39E` |
+| `common-0017-choice-rollback/screenshots/start.png` | 990,004 | `42594ED7ED49E3E733C0932D41549A4A82AB9B52C6497A888E9FEEF33CA8AA3B` |
+
+### 三个 HEAD、资格和停止条件
+
+```text
+CODE_EVIDENCE_HEAD=e5d0d6f3d55fcc9da89c5409fef53a034257d508
+ARTIFACT_HEAD=e5d0d6f3d55fcc9da89c5409fef53a034257d508
+DOCUMENT_CLOSURE_HEAD=本次普通文档提交；精确完整 SHA 以提交后 git rev-parse HEAD 为准
+```
+
+代码与 artifact 已提交绑定，但 Case B 未完成第二次真实 choice 鼠标点击及完整回退检查，因此不得写 `WAVE_5C_FORMAL_EVIDENCE_QUALIFIED`，也不得宣称玩家幽灵 choice 或黑屏根因已确认/已修复。普通 save/quick-save 在活动 Fade 期间的表现快照仍未评估。
+
+本轮必须保留：
+
+```text
+ROLLBACK_TRANSIENT_FADE_CHECKPOINTS_BLOCKED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+CASE_B_FORMAL_EVIDENCE_BLOCKED
+WAVE_5C_PHASE_2_FINAL_EVIDENCE_ATTEMPT_COMPLETE
+NOT_PUSHED
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
+
+文档提交后必须重新读取真实 `git rev-parse HEAD`、`git log -1`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 tracked `.log`；六个受保护未跟踪文件必须仍保持未触碰。
+
 ## Phase 2 最新收口 — Case B 自动选择 runner 缺陷修正
 
 本节覆盖上一节之后的最新一次 runner 修正和唯一有效正式 Electron 尝试；此前所有失败 artifact 均保留，不删除、不覆盖、不重跑挑绿。
