@@ -162,6 +162,34 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(waitChoiceSource).toContain('choiceBounds?.length === 3');
   });
 
+  it('validates each choice rollback from observed backward invariants', () => {
+    const source = runnerSource();
+    expect(source).not.toMatch(/const\s+rollbackTargets\s*=/);
+    expect(source).not.toContain('Math.min(index, rollbackTargets.length - 1)');
+    expect(source).not.toContain('positionKey(expected?.position)');
+
+    const choiceStart = source.indexOf('async function runChoiceCase(');
+    expect(choiceStart).toBeGreaterThanOrEqual(0);
+    const choiceSource = source.slice(choiceStart);
+    for (const token of [
+      'rollbackInvariant',
+      'sameScene',
+      'positionChanged',
+      'movedBackward',
+      'stableAfterRestore',
+      'noStaleChoice',
+      "after?.position?.sceneId === 'common_0017'",
+      'after?.position?.pc < before?.position?.pc',
+      "await session.clickTarget('rail:rollback'",
+      'await session.waitGameStable(',
+      'choiceLabels.length === 0',
+      'choiceBounds.length === 0',
+    ]) {
+      expect(choiceSource).toContain(token);
+    }
+    expect(choiceSource).not.toContain('expected:');
+  });
+
   it('uses real player input and forbids debug or direct interpreter shortcuts', () => {
     const source = runnerSource();
     expect(source).toContain('page.mouse.click');
