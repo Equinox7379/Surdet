@@ -28,6 +28,8 @@ export interface PresentationController extends FrameLoopTarget {
   disconnect(): void;
   reset(options?: ResetSessionOptions): void;
   resetSession(options?: ResetSessionOptions): void;
+  /** True only when the presentation is safe to capture as a rollback checkpoint. */
+  canCaptureRollbackCheckpoint(): boolean;
   validatePresentation(snapshot: unknown): void;
   snapshotPresentation(): unknown;
   restorePresentation(snapshot: unknown): void;
