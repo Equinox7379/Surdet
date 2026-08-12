@@ -517,7 +517,7 @@ npm run e2e:player-experience:wave5c -w @surdet/shell
 最新 artifact：
 
 - 路径：`<local-path>`
-- 字节数：`4,314,660`
+- 字节数：`4,937,654`
 - SHA-256：`4AC9C59943D27CFDA71AA4C7D5B6775E69E212111FDD0823AF9AEFABC1AB25C9`
 - `status=PASSED`
 - `ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357`
