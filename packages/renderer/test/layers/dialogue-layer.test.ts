@@ -1,6 +1,6 @@
 import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_RENDERER_THEME } from '../../src/theme.js';
+import { createRendererTheme, DEFAULT_RENDERER_THEME } from '../../src/theme.js';
 import type { ChoiceOptionView, CommandRailItem } from '../../src/types.js';
 import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
@@ -177,6 +177,41 @@ describe('DialogueLayer visual layout contracts', () => {
       const indicatorBounds = indicator!.getBounds();
       const railBounds = rail!.getBounds();
       expect(boundsOverlap(indicatorBounds, railBounds)).toBe(false);
+      expect(railBounds.x - ((indicator as Container).x + 9)).toBeGreaterThanOrEqual(9);
+
+      const anchoredX = (indicator as Container).x;
+      const anchoredY = (indicator as Container).y;
+      for (const deltaMs of [16, 16, 16, 16]) {
+        runtime.layer.updateContinuePulse(deltaMs);
+        expect((indicator as Container).x).toBe(anchoredX);
+        expect(Math.abs((indicator as Container).y - anchoredY)).toBeLessThanOrEqual(3);
+      }
+
+      const visibleChildCount = rail!.children.length;
+      const beforeLifecycle = runtime.lifecycle.snapshot();
+      runtime.layer.setCommandRailItems([
+        { id: 'auto', label: '自动-更新', icon: 'A' },
+        { id: 'menu', label: '菜单', icon: 'M', enabled: false },
+      ]);
+      runtime.layer.hideCommandRail();
+      expect((indicator as Container).visible).toBe(true);
+      expect((indicator as Container).x).toBe(1280 - 68);
+      expect((indicator as Container).y).toBe(720 - 46);
+      runtime.layer.restoreCommandRail();
+      expect((indicator as Container).visible).toBe(true);
+      expect((indicator as Container).x).toBe(Math.round(rail!.getBounds().x) - 19);
+      expect(rail!.children.length).toBe(visibleChildCount);
+      const afterLifecycle = runtime.lifecycle.snapshot();
+      expect(afterLifecycle.tickerCallbacks).toBe(beforeLifecycle.tickerCallbacks);
+      expect(afterLifecycle.listeners).toBe(beforeLifecycle.listeners);
+      expect(afterLifecycle.activeTweens).toBe(beforeLifecycle.activeTweens);
+      expect(afterLifecycle.displayObjectsByOwner.dialogue).toBe(beforeLifecycle.displayObjectsByOwner.dialogue);
+
+      runtime.layer.setCommandRailItems(Array.from({ length: 60 }, (_, index) => ({
+        id: `item-${index}`,
+        label: `项${index}`,
+      })));
+      expect((indicator as Container).visible).toBe(false);
     } finally {
       disposeRuntime(runtime);
     }
@@ -185,12 +220,35 @@ describe('DialogueLayer visual layout contracts', () => {
   it('uses the white text theme token for the backlog header', () => {
     const runtime = makeRuntime();
     try {
-      runtime.layer.showBacklog([{ speaker: '凛', text: '记录内容' }]);
-      const header = backlogRoot(runtime.root).children.find(
+      runtime.layer.showBacklog(Array.from({ length: 120 }, (_, index) => ({
+        speaker: '凛',
+        text: `记录内容 ${index}：用于验证标题与正文滚动层级。`,
+      })));
+      const layer = backlogRoot(runtime.root);
+      const header = layer.children.find(
         (child) => child instanceof PText
           && child.text === '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
       );
       expect(header).toBeInstanceOf(PText);
+      expect((header as PText).style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+      expect((header as PText).y).toBe(30);
+      expect(runtime.layer.debugSnapshot().backlogAboveDialogueText).toBe(true);
+      expect(backlogLayoutSnapshot(runtime.layer)).toMatchObject({
+        headerY: 30,
+        viewportTop: 76,
+        hasMask: true,
+      });
+      const entriesLayer = layer.children.find((child) => child instanceof Container && child.mask) as Container | undefined;
+      expect(entriesLayer?.mask).toBeDefined();
+
+      runtime.layer.scrollBacklog(240);
+      expect((header as PText).y).toBe(30);
+      expect(backlogLayoutSnapshot(runtime.layer).scroll).toBeLessThan(0);
+
+      const customText = 0xffffff;
+      runtime.layer.setTheme(createRendererTheme({ colors: { text: customText } }));
+      expect((header as PText).style.fill).toBe(customText);
+      runtime.layer.setTheme(DEFAULT_RENDERER_THEME);
       expect((header as PText).style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
     } finally {
       disposeRuntime(runtime);

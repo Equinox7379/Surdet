@@ -100,6 +100,13 @@ interface ChoiceView {
   readonly label: PText;
 }
 
+interface CommandRailLayout {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 interface DestroyableDisplay {
   parent?: Container | null;
   destroy: (options?: { children?: boolean }) => void;
@@ -156,6 +163,9 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #continueIndicator: Graphics;
   #continuePhase = 0;
+  #continueAwaiting = false;
+  #continueIndicatorAnchorX = 0;
+  #continueIndicatorAnchorY = 0;
   #backlogEntriesLayer: Container | null = null;
   #backlogMask: Graphics | null = null;
   #backlogViewportTop = BACKLOG_VIEWPORT_TOP_IDLE;
@@ -184,6 +194,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #commandRailItems: CommandRailItem[] = [];
   #commandRailOnSelect: ((id: string) => void) | null = null;
   #commandRailSuppressed = false;
+  #commandRailLayout: CommandRailLayout | null = null;
   #onPointerConsumed: (() => void) | null = null;
 
   #speakerProfiles = new Map<string, SpeakerProfile>();
@@ -251,6 +262,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       .circle(0, 0, 4.5).fill({ color: this.#theme.colors.text, alpha: 0.95 }), ['accent', 'text']);
     this.#continueIndicator.visible = false;
     this.#continueIndicator.x = this.#w - 68;
+    this.#continueIndicator.y = this.#h - 46;
 
     this.#backlogLayer = new Container();
     this.#backlogLayer.visible = false;
@@ -446,6 +458,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       view.holder.position.set((this.#w - width) / 2, y);
       y += height + gap;
     }
+    this.#applyContinueIndicatorAnchor();
   }
 
   needsUpdate(): boolean {
@@ -514,6 +527,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#lastShownDialog = '';
     this.showText(null, '');
     this.#dialogPanel.visible = false;
+    this.#continueAwaiting = false;
     this.#continueIndicator.visible = false;
   }
 
@@ -570,16 +584,18 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setAwaiting(awaiting: boolean): void {
     if (this.#nvlActive || this.#interfaceHidden) return;
+    this.#continueAwaiting = awaiting;
     this.#continueIndicator.visible = awaiting;
     if (awaiting) this.#dialogPanel.visible = true;
     else if (!this.#lineActive && this.#speakerText.text.length === 0 && this.#dialogText.text.length === 0) this.#dialogPanel.visible = false;
+    this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
 
   updateContinuePulse(deltaMs: number): void {
     if (!this.#continueIndicator.visible) return;
     this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
-    this.#continueIndicator.y = this.#h - 46 + Math.sin(this.#continuePhase) * 3;
+    this.#continueIndicator.y = this.#continueIndicatorAnchorY + Math.sin(this.#continuePhase) * 3;
     this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
   }
 
@@ -606,8 +622,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     ));
     layer.addChild(bindThemeTextProjection(new PText({
       text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
-      style: { fontSize: 22, fill: this.#theme.colors.textOnAccent, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'textOnAccent' })).position.set(60, BACKLOG_HEADER_Y);
+      style: { fontSize: 22, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'text' })).position.set(60, BACKLOG_HEADER_Y);
     const normalizedQuery = query.trim();
     this.#backlogSearchVisible = normalizedQuery.length > 0;
     this.#backlogIdleSearchHintVisible = false;
@@ -725,6 +741,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
     this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
 
@@ -732,6 +749,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailItems = items.map((item) => ({ ...item }));
     this.#rebuildCommandRail();
     this.#commandRail.visible = !this.#interfaceHidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
+    this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
 
@@ -739,6 +757,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailSuppressed = true;
     this.#commandRail.visible = false;
     this.#lifecycle.release('dialogue', 'tween', 'command-rail');
+    this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
 
@@ -746,6 +765,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
     this.#commandRail.alpha = 1;
+    this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
 
@@ -860,6 +880,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (this.#speakerAvatar) this.#speakerAvatar.visible = false;
     this.#activeSpeakerId = null;
     this.#dialogPanel.visible = false;
+    this.#continueAwaiting = false;
     this.#continueIndicator.visible = false;
     this.#continuePhase = 0;
     this.#interfaceHidden = false;
@@ -1138,7 +1159,10 @@ export class DialogueLayer implements DialogueProjectionPort {
   #rebuildCommandRail(): void {
     const layer = this.#commandRail;
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
-    if (this.#commandRailItems.length === 0) return;
+    if (this.#commandRailItems.length === 0) {
+      this.#commandRailLayout = null;
+      return;
+    }
     const railH = 46;
     const count = this.#commandRailItems.length;
     const slotW = 44;
@@ -1147,6 +1171,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const railW = railPad * 2 + count * slotW + (count - 1) * slotGap;
     const startX = Math.max(12, this.#w - railW - 18);
     const top = this.#h - railH - 10;
+    this.#commandRailLayout = { x: startX, y: top, width: railW, height: railH };
     layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(startX, top, railW, railH, 5)
       .fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.82 })
@@ -1215,6 +1240,29 @@ export class DialogueLayer implements DialogueProjectionPort {
       layer.addChild(row);
     });
     layer.alpha = 1;
+  }
+
+  #applyContinueIndicatorAnchor(): void {
+    if (!this.#continueAwaiting) {
+      this.#continueIndicator.visible = false;
+      return;
+    }
+
+    const rail = this.#commandRail.visible ? this.#commandRailLayout : null;
+    if (rail) {
+      const x = rail.x - 19;
+      if (x - 9 < 0) {
+        this.#continueIndicator.visible = false;
+        return;
+      }
+      this.#continueIndicatorAnchorX = x;
+      this.#continueIndicatorAnchorY = rail.y + rail.height / 2;
+    } else {
+      this.#continueIndicatorAnchorX = this.#w - 68;
+      this.#continueIndicatorAnchorY = this.#h - 46;
+    }
+    this.#continueIndicator.position.set(this.#continueIndicatorAnchorX, this.#continueIndicatorAnchorY);
+    this.#continueIndicator.visible = true;
   }
 
   #hasEffectWork(): boolean {
