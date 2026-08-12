@@ -474,3 +474,83 @@ WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
 代码提交后 `HEAD...surdet/main=13 0`；Shell contract、node syntax check、Shell typecheck/build 已通过；本轮不重复执行根级 `verify:all`。六个受保护未跟踪文件保持未触碰。
+
+## Phase 2 最终收口台账 — Case B runner 观察型回退验证
+
+本节覆盖前文旧固定 rollback target 记录，前文 artifact、截图和提交链全部保留为历史证据。本轮只修改 Shell runner、Shell contract 及本计划/交付报告；没有修改 Host、Renderer、Core、Starter、CLI、Zero 生产代码，也没有修改 `packages/shell/package.json`。
+
+### Task 1：固定目标红灯
+
+旧 Runner 使用 `const rollbackTargets = [branchStep.before, selected]`，并要求第二次回退回到较晚的 `selected` 位置。先新增观察型回退合同后，旧 Runner 的 Shell contract 为 11 项、10 项通过、1 项失败、exit 1；失败点明确为固定 `rollbackTargets` 仍存在。
+
+### Task 2：最小观察型修正
+
+修正后删除固定 rollback target 序列和静态 expected pc 判断。每次真实 `rail:rollback` 均：
+
+- 先记录 `before` snapshot/canvas；
+- 通过公开 target 使用真实 `page.mouse.click()`；
+- 等待当前位置相对 before 发生变化，而不是等待预设目标；
+- 通过 `waitGameStable()` 等待恢复稳定；
+- 读取 `after` snapshot/canvas；
+- 验证 `sameScene`、前后 pc 数字性、`positionChanged`、`movedBackward`、`stableAfterRestore`、`noStaleChoice`、`choiceMismatch` 和 `visualMismatch`；
+- 记录 `rollbackInvariant`、`before`、`after`、`frameSamples`，不再将预知的历史 frame 写成 `expected`。
+
+代码提交：
+
+```text
+5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+fix(shell): validate observed choice rollbacks
+```
+
+修正后同一 Shell contract 为 11/11、exit 0；`node --check`、Shell typecheck、Shell build 均 exit 0。
+
+### Task 3–4：唯一正式 Electron 验证
+
+代码提交后只运行一次：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+使用正式入口 `E:\surdet\examples\zero-after-midnight\dist`、2 个独立 Electron session 和独立临时 userData，重新构建，没有复用旧 dist、旧 artifact 或旧截图。命令 exit 0，未再次运行。
+
+最新 artifact：
+
+- 路径：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-VVls8U\wave-5c-rollback-restore-atomicity.json`
+- 字节数：`4,314,660`
+- SHA-256：`4AC9C59943D27CFDA71AA4C7D5B6775E69E212111FDD0823AF9AEFABC1AB25C9`
+- `status=PASSED`
+- `ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357`
+- `actualSessions=2`；`actualAttempts=14`；`regularScreenshots=4`
+- page/console/request/unhandled/renderer/release/window-close 错误通道全部为 0。
+
+Case A 12/12 `validHistory=true`。Case B 2/2 `validHistory=true`：第一次回退 `pc39→pc38`，第二次回退 `pc38→pc31`；两次均同为 `common_0017`、严格向前历史回退、稳定恢复、无残留 choice、无 visual mismatch。两次 `choice:0` 均为真实 `page.mouse.click()`，随后重新推进并完成第二次 choice。
+
+四张当前截图均存在且磁盘字节数/SHA-256 与 artifact 匹配：
+
+| 截图 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `prologue-rapid-rollback/screenshots/start.png` | 877,859 | `8A6CA5CEE089232B3608A5C8786BF605361251E2746F04F755BD06063240D7C8` |
+| `prologue-rapid-rollback/screenshots/end.png` | 878,228 | `752E0B3915648A1A6DDA3C3B95799531433FB12B44F2D573C86155907B4370D1` |
+| `common-0017-choice-rollback/screenshots/start.png` | 990,004 | `42594ED7ED49E3E733C0932D41549A4A82AB9B52C6497A888E9FEEF33CA8AA3B` |
+| `common-0017-choice-rollback/screenshots/end.png` | 983,307 | `BE0EE39CDAAC35738E0635CE1E6F64B0A6E433B71591953F28F52712B2A234F5` |
+
+### Task 5：资格与停止
+
+```text
+CODE_EVIDENCE_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+DOCUMENT_CLOSURE_HEAD=本次普通文档提交；精确完整 SHA 以提交后 git rev-parse HEAD 为准
+```
+
+由于代码与 artifact 已绑定，且 Case A/B 均完整通过，本轮可写：
+
+```text
+WAVE_5C_CASE_B_FORMAL_EVIDENCE_QUALIFIED
+PLAYER_BLACK_SCREEN_FIX_AWAITING_MANUAL_VALIDATION
+GHOST_CHOICE_FIX_AWAITING_MANUAL_VALIDATION
+```
+
+不得写“玩家黑屏已经修复”。用户报告的实机黑屏仍须部署后人工复测；普通 save/quick-save 在活动 Fade 期间的表现快照仍未评估。
+
+文档提交后必须重新读取真实 `git rev-parse HEAD`、`git log -1`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 tracked `.log`；六个受保护未跟踪文件必须保持未触碰。不得 push、部署、发行、打包或开始 Wave 5B/M9。

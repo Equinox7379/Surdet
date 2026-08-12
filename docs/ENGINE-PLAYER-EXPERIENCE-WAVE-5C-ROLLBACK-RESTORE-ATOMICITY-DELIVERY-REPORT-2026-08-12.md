@@ -606,6 +606,168 @@ WAVE_5B_NOT_STARTED
 WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
+## 11. Case B runner 最小语义修正与一次最终验证
+
+本节是当前 Wave 5C Phase 2 的最新权威事实，覆盖前文关于当前 runner、当前 artifact、当前代码 HEAD 和资格状态的字段。前文所有失败 artifact、截图和提交记录均继续保留，不删除、不覆盖、不重跑挑绿。
+
+### 11.1 合法红灯与最小修正
+
+旧 Runner 在 Case B 中使用：
+
+```text
+const rollbackTargets = [branchStep.before, selected]
+```
+
+并将第二次回退要求为 `selected` 的位置。该模型错误地把一个较晚状态当作第二次回退的预设目标；它不是引擎行为红灯，而是 Runner 对历史方向的错误假设。
+
+本轮先增加静态合同测试，旧 Runner 上得到合法红灯：
+
+- Shell Wave 5C contract：11 项中 1 项失败、10 项通过、exit 1；
+- 失败点明确是当前 source 仍包含固定 `rollbackTargets` 序列；
+- 没有修改生产代码来制造红灯。
+
+最小修正后，同一合同转绿：
+
+- Shell Wave 5C contract：11/11、exit 0；
+- `node --check packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`：exit 0；
+- Shell typecheck：exit 0；
+- Shell build：exit 0。
+
+修正后的 Case B 每次回退均采用观察型验证：
+
+1. 记录回退前完整 snapshot 和 canvas metrics；
+2. 通过公开 `rail:rollback` target 执行真实 `page.mouse.click()`；
+3. 只等待当前位置相对回退前发生变化，不等待预设 pc；
+4. 调用既有 `waitGameStable()`，等待恢复稳定；
+5. 读取回退后 snapshot 和 canvas metrics；
+6. 验证 `sameScene`、前后 pc 均为数字、`positionChanged`、`movedBackward`、`stableAfterRestore`、`noStaleChoice` 和视觉不变量；
+7. 将结果写入 `rollbackInvariant`、`before`、`after`、`frameSamples`，不再用 misleading 的固定 `expected` 快照表示预知历史位置。
+
+本轮代码提交：
+
+```text
+CODE_EVIDENCE_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+fix(shell): validate observed choice rollbacks
+```
+
+实际代码改动仅为：
+
+- `packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`
+- `packages/shell/test/player-experience-wave-5c-e2e-contract.test.ts`
+
+没有修改 Host、Renderer、Core、Starter、CLI、Zero 生产代码，也没有修改 `packages/shell/package.json`。
+
+### 11.2 唯一一次正式 Electron 验证
+
+代码提交后只执行一次仓库现有正式脚本：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+该次运行重新构建 Core、Renderer、Host、Shell 和《零点之后》，使用正式入口：
+
+```text
+E:\surdet\examples\zero-after-midnight\dist
+```
+
+使用两个独立 Electron session 和独立临时 userData，没有复用旧 dist、旧 artifact 或旧截图。命令 exit 0；按照任务书，本轮不再重复运行 Electron。
+
+最新正式 artifact：
+
+- 路径：[wave-5c-rollback-restore-atomicity.json](<C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-VVls8U\wave-5c-rollback-restore-atomicity.json>)
+- 字节数：`4,314,660`
+- SHA-256：`4AC9C59943D27CFDA71AA4C7D5B6775E69E212111FDD0823AF9AEFABC1AB25C9`
+- `status=PASSED`
+- `ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357`
+- `execution.actualSessions=2`
+- `execution.actualAttempts=14`（Case A=12，Case B=2）
+- `execution.regularScreenshots=4`
+
+artifact 的事件总计全部为 0：
+
+```text
+pageErrors=0
+consoleErrors=0
+requestFailures=0
+unhandledRejections=0
+rendererErrors=0
+releaseFailures=0
+unexpectedWindowClosed=0
+```
+
+### 11.3 Case A 与 Case B 结果
+
+Case A `prologue-rapid-rollback`：
+
+- `ok=true`；12/12 次 `validHistory=true`；
+- 每次回退均按历史位置递减；
+- 12 次回退没有 black-screen/gradual-dark、背景丢失、立绘丢失或 Fade boundary mismatch；
+- 错误通道全部为空。
+
+Case B `common-0017-choice-rollback`：
+
+- `ok=true`；2/2 次 `validHistory=true`；
+- 第一次真实 choice 点击：`choice:0`，`page.mouse.click`，坐标 `{x:632,y:351.85}`，时间 `2026-08-12T11:23:29.799Z`；
+- 第一次观察型回退：`common_0017 pc=39 → pc=38`；
+- 第二次观察型回退：`common_0017 pc=38 → pc=31`；
+- 两次回退均满足：`sameScene=true`、`positionChanged=true`、`movedBackward=true`、`stableAfterRestore=true`、`noStaleChoice=true`；
+- 两次回退的 `choiceMismatch` 各字段均为 `false`；
+- 两次回退的视觉 mismatch 各字段均为 `false`，没有黑屏或显著渐暗；
+- 回退后重新通过真实普通文本推进抵达同组三选一，并完成第二次真实 choice 点击：`choice:0`，`page.mouse.click`，坐标 `{x:632,y:351.85}`，时间 `2026-08-12T11:23:32.909Z`；
+- 没有使用数字键、Enter、debug action、直接 Interpreter 调用或其他自动选择 shortcut。
+
+四张当前 artifact 截图均已从磁盘核对存在，字节数和 SHA-256 与 artifact 记录一致：
+
+| 截图 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `prologue-rapid-rollback/screenshots/start.png` | 877,859 | `8A6CA5CEE089232B3608A5C8786BF605361251E2746F04F755BD06063240D7C8` |
+| `prologue-rapid-rollback/screenshots/end.png` | 878,228 | `752E0B3915648A1A6DDA3C3B95799531433FB12B44F2D573C86155907B4370D1` |
+| `common-0017-choice-rollback/screenshots/start.png` | 990,004 | `42594ED7ED49E3E733C0932D41549A4A82AB9B52C6497A888E9FEEF33CA8AA3B` |
+| `common-0017-choice-rollback/screenshots/end.png` | 983,307 | `BE0EE39CDAAC35738E0635CE1E6F64B0A6E433B71591953F28F52712B2A234F5` |
+
+### 11.4 三个 HEAD 与资格结论
+
+```text
+CODE_EVIDENCE_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357
+DOCUMENT_CLOSURE_HEAD=本次普通文档提交；精确完整 SHA 以提交后 git rev-parse HEAD 为准
+```
+
+`CODE_EVIDENCE_HEAD == ARTIFACT_HEAD`，且 Case A/B 均完整完成，因此本轮可以标记：
+
+```text
+WAVE_5C_CASE_B_FORMAL_EVIDENCE_QUALIFIED
+```
+
+但这不等于玩家黑屏问题已经由自动化彻底证明修复。用户已经在正式游戏中报告过黑屏现象，仍需部署后的人工实机复测，因此继续保留：
+
+```text
+PLAYER_BLACK_SCREEN_FIX_AWAITING_MANUAL_VALIDATION
+GHOST_CHOICE_FIX_AWAITING_MANUAL_VALIDATION
+```
+
+普通 save/quick-save 在 Fade 活动期间的表现快照语义不属于本轮验证范围；本轮也没有修改性能、存档格式、剧情、DSL、资产、音频或发行流程。
+
+### 11.5 本轮 Git 与停止状态
+
+- 代码提交前 HEAD：`5eb55227fe5b6ff1fdb0578980d32204fb6c3357`；相对 `surdet/main=17 0`；
+- 文档提交将在本节之后创建一个普通本地提交；其完整 SHA 以提交后只读 `git rev-parse HEAD` 为准；
+- 旧的 jhI6dG 失败 artifact 及此前全部失败 artifact 均保留；
+- 本轮没有运行根级 `npm run verify:all`，不伪称本轮重新执行；本轮范围内 Shell contract、语法、typecheck、build 和唯一正式 Electron 均通过；
+- 未 push、未部署、未发行、未打包、未开始 Wave 5B、未开始 M9、未处理性能。
+
+本轮最终状态：
+
+```text
+WAVE_5C_CASE_B_FORMAL_EVIDENCE_QUALIFIED
+PLAYER_BLACK_SCREEN_FIX_AWAITING_MANUAL_VALIDATION
+GHOST_CHOICE_FIX_AWAITING_MANUAL_VALIDATION
+NOT_PUSHED
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
+
 ## 10. Case B choice 入场稳定判定修正与最后一次有效正式验证
 
 本节是当前执行轮次的最新事实，覆盖第 9 节中关于当前 runner、当前 artifact 和当前代码证据的字段；第 9 节及更早章节的 artifact、截图和失败记录全部保留为历史证据，不删除、不覆盖、不重跑挑绿。本轮仍只修改 Shell runner 与 Shell contract，未修改 Host、Renderer、Core、Starter、CLI、Zero 生产代码。
