@@ -207,7 +207,7 @@ artifact 必须记录真实 \`head/sourceRoot/distRoot/protocol/actual sessions/
 
 | Task | 状态 | 红灯/绿灯与证据 | 提交 SHA | 下一阶段入口 |
 | --- | --- | --- | --- | --- |
-| Task 0 | in progress | 基线核验已完成；\`verify:all\` exit 0；计划文件待提交 | 待 Task 0 普通提交后记录 | 先确认计划提交与受保护文件未触碰，再进入 Task 1 |
+| Task 0 | completed | 基线核验完成；\`verify:all\` exit 0；受保护文件未触碰；计划提交后文档卫生待校正 | 31c657551ab6849bebc349c6f3459594643f61d9 | 完成文档台账校正后进入 Task 1 |
 | Task 1 | not started | — | — | — |
 | Task 2 | not started | — | — | — |
 | Task 3 | not started | — | — | — |
@@ -227,4 +227,3 @@ artifact 必须记录真实 \`head/sourceRoot/distRoot/protocol/actual sessions/
 - \`docs/SURDET-ART-DIRECTION-UPDATE-BRIEF-2026-08-09.md\`
 - \`docs/SURDET-ART-DIRECTOR-HANDOFF-2026-08-09.md\`
 - \`docs/superpowers/plans/2026-08-12-player-experience-wave-5b-layout-polish.md\`
-
