@@ -341,3 +341,20 @@ WAITING_FOR_REVIEW
 ```
 
 不得自行进入下一主题、M9、性能、发行或 push。
+
+## Current execution scope closure
+
+本次实际授权以 2026-08-12 用户任务书附件为准，范围收窄为公共
+`DialogueLayer` 的三项布局/主题修复、其 Renderer 测试、相关 Renderer/正式
+Zero 门禁、计划台账和简短交付报告。磁盘上本计划草稿中原列出的 Shell
+Wave 5B runner、Shell contract、Electron 截图矩阵和 Task 5 扩展门禁不属于
+本次授权，均未执行、未新增、未修改；人工视觉验收留待总经理审阅后另行部署。
+
+### Scoped closure ledger
+
+| Item | Status | Evidence |
+|---|---|---|
+| Public DialogueLayer implementation | completed | Choice centering, continue-indicator deconfliction, and Backlog header token are in commits `4ee8a5d3717cb037b7f92beb861d3fbd1d413bf8` and `7f5cf6c5e238bf91b1ef49ff6b248ccedb067b35`. |
+| Renderer / Zero focused gates | completed | Dialogue focused `8/8`; Renderer `49 files / 403 passed`; Renderer and Zero typecheck/build passed; Zero lint `11 scenes, 0 errors, 0 warnings`; simulate `23/23`, 3 endings, runtime errors `0`; assets `44`; diff check passed; tracked `.log` empty. |
+| Electron visual validation | intentionally not run | This run did not create a Shell runner, did not deploy, and did not run an Electron screenshot matrix. Manual visual validation is pending review. |
+| Remote / release actions | not performed | No push, packaging, release, or M9/performance work. |
