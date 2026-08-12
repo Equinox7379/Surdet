@@ -1,6 +1,7 @@
 import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
-import { describe, expect, it, vi } from 'vitest';
-import type { CommandRailItem } from '../../src/types.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_RENDERER_THEME } from '../../src/theme.js';
+import type { ChoiceOptionView, CommandRailItem } from '../../src/types.js';
 import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
@@ -17,6 +18,26 @@ const railItems: CommandRailItem[] = [
   { id: 'auto', label: '自动', icon: 'A' },
   { id: 'menu', label: '菜单', icon: 'M', enabled: false },
 ];
+
+beforeEach(() => {
+  class FakeCanvasRenderingContext2D {
+    font = '';
+    letterSpacing = '';
+    textLetterSpacing = '';
+
+    measureText(text: string) {
+      return { width: text.length * 10, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 5 };
+    }
+  }
+  vi.stubGlobal('CanvasRenderingContext2D', FakeCanvasRenderingContext2D);
+  vi.stubGlobal('document', {
+    createElement: () => ({ getContext: () => new FakeCanvasRenderingContext2D() }),
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function makeRuntime(): DialogueRuntime {
   const root = new Container();
@@ -48,6 +69,12 @@ function commandRailRoot(root: Container): Container {
   return rail as Container;
 }
 
+function dialogueRoot(root: Container): Container {
+  const dialogueRoot = root.children[0];
+  expect(dialogueRoot).toBeInstanceOf(Container);
+  return dialogueRoot as Container;
+}
+
 function alphaSnapshot(layer: DialogueLayer): number {
   return (layer.debugSnapshot() as unknown as { commandRailAlpha: number }).commandRailAlpha;
 }
@@ -74,6 +101,102 @@ function backlogRoot(root: Container): Container {
   expect(layer).toBeInstanceOf(Container);
   return layer as Container;
 }
+
+function boundsOverlap(
+  left: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  right: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
+}
+
+describe('DialogueLayer visual layout contracts', () => {
+  it('centers choice groups around the logical canvas midpoint', () => {
+    const runtime = makeRuntime();
+    try {
+      const onSelect = vi.fn();
+      runtime.layer.onSelect = onSelect;
+      const cases: readonly ChoiceOptionView[][] = [
+        [{ index: 0, label: '单项选择' }],
+        [
+          { index: 0, label: '双项选择：短' },
+          { index: 1, label: '双项选择：较长的中文文本' },
+        ],
+        [
+          { index: 0, label: '三项：左' },
+          { index: 1, label: '三项：这是一条明显更长的中文选项，用来验证卡片高度差异' },
+          { index: 2, label: '三项：右' },
+        ],
+      ];
+
+      for (const options of cases) {
+        runtime.layer.showChoices(options);
+        const bounds = runtime.layer.debugSnapshot().choiceBounds;
+        const top = Math.min(...bounds.map((item) => item.y));
+        const bottom = Math.max(...bounds.map((item) => item.y + item.height));
+        const groupCenterY = (top + bottom) / 2;
+
+        expect(Math.abs(groupCenterY - 720 / 2)).toBeLessThanOrEqual(1);
+        expect(bounds.every((item) => item.x >= 0 && item.y >= 0
+          && item.x + item.width <= 1280 && item.y + item.height <= 720)).toBe(true);
+        expect(bounds.every((item) => Math.abs(item.x + item.width / 2 - 1280 / 2) <= 1)).toBe(true);
+        for (let index = 1; index < bounds.length; index += 1) {
+          const previous = bounds[index - 1]!;
+          const current = bounds[index]!;
+          expect(current.y - (previous.y + previous.height)).toBeCloseTo(12, 5);
+        }
+
+        const choiceLayer = dialogueRoot(runtime.root).children[5] as Container;
+        (choiceLayer.children[0] as Container).emit('pointerdown', {} as FederatedPointerEvent);
+        expect(onSelect).toHaveBeenLastCalledWith(options[0]!.index);
+        const lifecycle = runtime.lifecycle.snapshot();
+        expect(lifecycle.tickerCallbacks).toBe(0);
+        expect(lifecycle.listeners).toBe(0);
+        expect(lifecycle.activeTweens).toBe(1);
+      }
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('keeps the continue indicator clear of the visible command rail', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.showCommandRail(railItems, () => undefined);
+      runtime.layer.setAwaiting(true);
+      runtime.layer.updateContinuePulse(0);
+
+      const root = dialogueRoot(runtime.root);
+      const indicator = root.children[4];
+      const rail = root.children[6];
+      expect(indicator).toBeInstanceOf(Container);
+      expect(rail).toBeInstanceOf(Container);
+
+      const indicatorBounds = indicator!.getBounds();
+      const railBounds = rail!.getBounds();
+      expect(boundsOverlap(indicatorBounds, railBounds)).toBe(false);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('uses the white text theme token for the backlog header', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.showBacklog([{ speaker: '凛', text: '记录内容' }]);
+      const header = backlogRoot(runtime.root).children.find(
+        (child) => child instanceof PText
+          && child.text === '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
+      );
+      expect(header).toBeInstanceOf(PText);
+      expect((header as PText).style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+});
 
 describe('DialogueLayer command rail stability', () => {
   it('keeps the command rail fully visible and idle after show and a long wait', () => {
