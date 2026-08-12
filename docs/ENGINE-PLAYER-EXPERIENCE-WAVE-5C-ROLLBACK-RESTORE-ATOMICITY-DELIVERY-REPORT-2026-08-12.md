@@ -676,7 +676,7 @@ E:\surdet\examples\zero-after-midnight\dist
 最新正式 artifact：
 
 - 路径：[wave-5c-rollback-restore-atomicity.json](<C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-VVls8U\wave-5c-rollback-restore-atomicity.json>)
-- 字节数：`4,314,660`
+- 字节数：`4,937,654`
 - SHA-256：`4AC9C59943D27CFDA71AA4C7D5B6775E69E212111FDD0823AF9AEFABC1AB25C9`
 - `status=PASSED`
 - `ARTIFACT_HEAD=5eb55227fe5b6ff1fdb0578980d32204fb6c3357`
