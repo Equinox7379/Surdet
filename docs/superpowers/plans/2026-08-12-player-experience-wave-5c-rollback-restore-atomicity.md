@@ -239,7 +239,7 @@ Phase 2 从既有诊断收口继续，未创建 Wave 5D；不覆盖上方 Phase 
 | Phase 2 聚焦绿灯 | completed | Renderer 3 文件 24/24；Host rollback 6/6；Shell contract 7/7 | `74feb12e0602ceed89da6fa02827c089bda071df` |
 | 唯一正式 Electron A+B | completed-with-blocker | Case A 12/12 validHistory；Case B 到 common_0017 后在真实 choice 点击前 timeout，0 attempts；artifact 保留，命令 exit 1，不重跑挑绿 | `<local-path>` |
 | 受影响模块全量门禁 | completed | Renderer 49/400、Host 11/87、Shell 19/144、Starter 4/7、CLI 7/87、Zero 2/21；typecheck/build 全部 0；verify:all 0；Zero 23/23、3 结局、44 assets、0 runtime errors | `74feb12e0602ceed89da6fa02827c089bda071df` |
-| Phase 2 报告与台账 | completed | 本次仅更新本计划与 Wave 5C 报告；不得触碰 Wave 5B 计划；文档内容已完成，提交后执行最终只读 Git 核验 | 本次普通 docs 提交；真实 SHA 以提交后 `git log -1` 为准 |
+| Phase 2 报告与台账 | completed | 本次仅更新本计划与 Wave 5C 报告；不得触碰 Wave 5B 计划；文档内容已完成，提交后执行最终只读 Git 核验 | `d50473397ed909072cbec183470721a613442662` — `docs(engine): record wave 5c phase 2 evidence` |
 
 ### Phase 2 正式 artifact 台账
 
