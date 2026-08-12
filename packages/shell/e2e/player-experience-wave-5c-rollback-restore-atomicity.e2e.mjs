@@ -764,20 +764,20 @@ async function runChoiceCase(session) {
   await session.waitFor('choice branch selected', () => window.__surdetDebug?.status !== 'awaiting-choice'
     && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
-  const selected = await session.snapshot();
-  const branchStep = await session.advanceTextOne('choice branch text');
-  const rollbackTargets = [branchStep.before, selected];
+  const choiceBranchSelected = await session.snapshot();
+  session.caseEvidence.choiceBranchSelectedSnapshot = choiceBranchSelected;
+  await session.advanceTextOne('choice branch text');
   const rollbackAttempts = [];
   for (let index = 0; index < protocol.cases[1].rollbackCount; index += 1) {
     const before = await session.snapshot();
     const beforeCanvas = await session.canvasMetrics();
-    const expected = rollbackTargets[Math.min(index, rollbackTargets.length - 1)];
     await session.clickTarget('rail:rollback', 'choice rail:rollback ' + (index + 1));
-    await session.waitFor('choice rollback target ' + (index + 1), (expectedKey) => {
+    await session.waitFor('choice rollback position changed ' + (index + 1), (beforeKey) => {
       const position = window.__surdetDebug?.position;
       const currentKey = position ? String(position.sceneId) + ':' + String(position.pc) : 'null';
-      return currentKey === expectedKey;
-    }, positionKey(expected?.position), 10000);
+      return currentKey !== beforeKey;
+    }, positionKey(before?.position), 10000);
+    await session.waitGameStable('choice rollback ' + (index + 1));
     const after = await session.snapshot();
     const afterCanvas = await session.canvasMetrics();
     const frameSamples = [];
@@ -785,29 +785,74 @@ async function runChoiceCase(session) {
       await session.waitFrames(1, 'choice rollback observation ' + (index + 1) + ':' + frame);
       frameSamples.push(await session.snapshot());
     }
+    const beforePositionNumeric = typeof before?.position?.pc === 'number';
+    const afterPositionNumeric = typeof after?.position?.pc === 'number';
+    const sameScene = before?.position?.sceneId === 'common_0017'
+      && after?.position?.sceneId === 'common_0017';
+    const positionChanged = positionKey(after?.position) !== positionKey(before?.position);
+    const movedBackward = beforePositionNumeric
+      && afterPositionNumeric
+      && after?.position?.pc < before?.position?.pc;
+    const stableAfterRestore = after?.uiSession?.base === 'game'
+      && after?.uiSession?.overlay === 'none'
+      && after?.uiSession?.operation === 'idle'
+      && after?.rendererStatus !== 'typing'
+      && (after?.interpreterStatus === 'awaiting-advance' || after?.interpreterStatus === 'awaiting-choice');
+    const choiceLabels = after?.choiceLabels || [];
+    const choiceBounds = after?.choiceBounds || [];
     const stale = choiceMismatch(after);
-    if (Object.values(stale).some(Boolean)) {
+    const noStaleChoice = after?.interpreterStatus !== 'awaiting-choice'
+      && after?.rendererStatus !== 'choice'
+      && Number(after?.choiceVisibleCount || 0) === 0
+      && choiceLabels.length === 0
+      && choiceBounds.length === 0;
+    if (Object.values(stale).some(Boolean) || !noStaleChoice) {
       await session.recordAnomaly('STALE_CHOICE_UI', JSON.stringify(stale), after, afterCanvas);
     }
-    const visual = visualMismatch(expected, after, null, afterCanvas);
+    const visual = visualMismatch(before, after, beforeCanvas, afterCanvas);
     if (hasMismatch(visual)) {
       await session.recordAnomaly('BLACK_SCREEN_GRADUAL_OR_INSTANT', JSON.stringify(visual), after, afterCanvas);
     }
+    const rollbackInvariant = {
+      sameScene,
+      beforePositionNumeric,
+      afterPositionNumeric,
+      positionChanged,
+      movedBackward,
+      stableAfterRestore,
+      noStaleChoice,
+      choiceMismatch: stale,
+      visualMismatch: visual,
+    };
+    const validHistory = sameScene
+      && beforePositionNumeric
+      && afterPositionNumeric
+      && positionChanged
+      && movedBackward
+      && stableAfterRestore
+      && noStaleChoice
+      && !Object.values(stale).some(Boolean)
+      && !hasMismatch(visual);
     const attempt = {
       index: index + 1,
       mode: 'settled',
       rollbackInput: 'rail:rollback',
-      validHistory: positionKey(after?.position) === positionKey(expected?.position),
+      validHistory,
       before,
-      expected,
       after,
       beforeCanvas,
       afterCanvas,
       frameSamples,
+      rollbackInvariant,
+      sameScene,
+      positionChanged,
+      movedBackward,
+      stableAfterRestore,
+      noStaleChoice,
       visualMismatch: visual,
       choiceMismatch: stale,
       choiceBefore,
-      selected,
+      choiceBranchSelected,
       actualChoiceClick: { target: 'choice:0', point: choicePoint, clickedAt: initialChoiceClickAt, input: 'page.mouse.click' },
        choiceCandidateSnapshot,
        choiceSettledSnapshot,
@@ -821,6 +866,9 @@ async function runChoiceCase(session) {
     };
     session.attempts.push(attempt);
     rollbackAttempts.push(attempt);
+    if (!attempt.validHistory) {
+      throw new Error('choice rollback invariant failed: ' + JSON.stringify(rollbackInvariant));
+    }
   }
 
   let nextChoiceCandidateSnapshot = null;
@@ -853,7 +901,7 @@ async function runChoiceCase(session) {
   session.caseEvidence.postRollbackChoice = nextChoiceSettledSnapshot;
   await session.waitGameStable('choice end');
   await session.captureScreenshot('end');
-  return { choiceBefore, selected, rollbackAttempts };
+  return { choiceBefore, choiceBranchSelected, rollbackAttempts };
 }
 
 async function runCase(caseConfig) {
