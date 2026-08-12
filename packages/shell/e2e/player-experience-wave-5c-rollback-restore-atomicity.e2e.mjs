@@ -26,20 +26,25 @@ const evidencePath = path.join(tempRoot, 'wave-5c-rollback-restore-atomicity.jso
 
 const protocol = Object.freeze({
   name: 'wave5c-rollback-restore-atomicity',
-  maxValidRollbacks: 24,
-  maxRegularScreenshots: 4,
+  phase: 2,
+  maxSessions: 2,
+  maxValidRollbacks: 14,
+  maxRegularScreenshots: 8,
   cases: Object.freeze([
     Object.freeze({
       id: 'prologue-rapid-rollback',
       mode: 'rapid',
       rollbackCount: 12,
       advanceCount: 14,
+      rollbackInput: 'rail:rollback',
     }),
     Object.freeze({
       id: 'common-0017-choice-rollback',
       mode: 'settled',
       rollbackCount: 2,
       advanceCount: 0,
+      rollbackInput: 'rail:rollback',
+      maxAdvanceSteps: 96,
     }),
   ]),
 });
@@ -291,6 +296,8 @@ async function launchSession(caseId, mode) {
     screenshots,
     anomalies,
     attempts: [],
+    observations: [],
+    caseEvidence: null,
     identity: null,
     lastSnapshot: null,
     async waitFor(label, predicate, arg, timeoutMs) {
@@ -339,6 +346,9 @@ async function launchSession(caseId, mode) {
           dialogueProjection: dialogue,
           choiceVisibleCount: dialogue?.visibleChoiceCount ?? 0,
           choiceLabels: dialogue?.choiceLabels || [],
+          choiceBounds: dialogue?.choiceBounds || [],
+          fadeTweenActive: debug?.fadeTweenActive ?? null,
+          canCaptureRollbackCheckpoint: debug?.canCaptureRollbackCheckpoint ?? null,
           resourceSnapshot: debug?.resourceSnapshot || null,
           resourceLedger: debug?.resourceLedger || null,
           lastRendererError: debug?.lastRendererError || null,
@@ -356,7 +366,7 @@ async function launchSession(caseId, mode) {
         const dataUrl = typeof thumbnail === 'string' && thumbnail.length > 0 ? thumbnail : fallback;
         const sourceWidth = canvas instanceof HTMLCanvasElement ? canvas.width : 0;
         const sourceHeight = canvas instanceof HTMLCanvasElement ? canvas.height : 0;
-        if (!dataUrl) return { dataUrl: '', width: sourceWidth, height: sourceHeight, meanLuma: null, blackPixelRatio: null };
+        if (!dataUrl) return { dataUrl: '', source: 'unavailable', width: sourceWidth, height: sourceHeight, meanLuma: null, blackPixelRatio: null };
         const image = new Image();
         image.src = dataUrl;
         await new Promise((resolve) => { image.onload = resolve; image.onerror = resolve; });
@@ -367,7 +377,7 @@ async function launchSession(caseId, mode) {
         probe.height = Math.max(1, Math.min(180, imageHeight));
         const context = probe.getContext('2d');
         if (!context || !image.complete || image.naturalWidth === 0) {
-          return { dataUrl, width: sourceWidth, height: sourceHeight, meanLuma: null, blackPixelRatio: null };
+          return { dataUrl, source: thumbnail ? 'visualThumbnail' : 'canvas-fallback', width: sourceWidth, height: sourceHeight, meanLuma: null, blackPixelRatio: null };
         }
         context.drawImage(image, 0, 0, probe.width, probe.height);
         const pixels = context.getImageData(0, 0, probe.width, probe.height).data;
@@ -381,6 +391,7 @@ async function launchSession(caseId, mode) {
         }
         return {
           dataUrl,
+          source: thumbnail ? 'visualThumbnail' : 'canvas-fallback',
           width: sourceWidth,
           height: sourceHeight,
           meanLuma: count > 0 ? luma / count : null,
@@ -389,7 +400,8 @@ async function launchSession(caseId, mode) {
       });
       return {
         canvasPngHash: result.dataUrl ? sha256Text(result.dataUrl) : null,
-        pixelHashMethod: result.dataUrl ? 'renderer-stage-thumbnail-dataurl-sha256' : 'unavailable',
+        pixelHashMethod: result.dataUrl ? `${result.source}-dataurl-sha256` : 'unavailable',
+        visualSource: result.source,
         meanLuma: result.meanLuma,
         blackPixelRatio: result.blackPixelRatio,
         canvasWidth: result.width,
@@ -457,6 +469,7 @@ async function launchSession(caseId, mode) {
       if (!point) throw new Error('找不到真实交互目标：' + targetId);
       await page.mouse.click(point.x, point.y);
       await this.waitFrames(2, label || targetId);
+      return point;
     },
     async clickCanvas(x, y, label) {
       const bounds = await page.locator('canvas').boundingBox();
@@ -505,6 +518,7 @@ async function launchSession(caseId, mode) {
         return window.__surdetDebug?.position?.sceneId === 'common_0017'
           && window.__surdetDebug?.status === 'choice'
           && projection?.visibleChoiceCount === 3
+          && projection?.choiceBounds?.length === 3
           && JSON.stringify(projection?.choiceLabels || []) === JSON.stringify([
             '记录她说的时间',
             '追问失踪的原因',
@@ -603,6 +617,35 @@ async function runPrologueCase(session) {
   await session.waitAssetsAndTitle();
   await session.clickTarget('title:new', 'title:new');
   await session.waitScene('prologue');
+  await session.waitFor('active FadeTween observation', () => window.__surdetDebug?.fadeTweenActive === true, undefined, 12000);
+  const activeFade = await session.snapshot();
+  session.observations.push({
+    kind: 'fade-active-player-path',
+    fadeTweenActive: activeFade?.fadeTweenActive ?? null,
+    fadeAlpha: activeFade?.fadeAlpha ?? null,
+    canCaptureRollbackCheckpoint: activeFade?.canCaptureRollbackCheckpoint ?? null,
+    scene: activeFade?.position?.sceneId ?? null,
+    snapshot: activeFade,
+  });
+  await session.waitFor('stable rollback checkpoint boundary', () => {
+    const debug = window.__surdetDebug;
+    return debug?.fadeTweenActive === false && debug?.canCaptureRollbackCheckpoint === true;
+  }, undefined, 12000);
+  const stableBoundary = await session.snapshot();
+  session.observations.push({
+    kind: 'stable-rollback-boundary',
+    fadeTweenActive: stableBoundary?.fadeTweenActive ?? null,
+    fadeAlpha: stableBoundary?.fadeAlpha ?? null,
+    canCaptureRollbackCheckpoint: stableBoundary?.canCaptureRollbackCheckpoint ?? null,
+    scene: stableBoundary?.position?.sceneId ?? null,
+    snapshot: stableBoundary,
+  });
+  session.caseEvidence = {
+    fadeActiveObserved: activeFade?.fadeTweenActive === true,
+    activeFade,
+    stableBoundary,
+    rollbackInput: 'rail:rollback',
+  };
   const checkpoints = [];
   for (let index = 0; index < protocol.cases[0].advanceCount; index += 1) {
     const step = await session.advanceOne('prologue advance ' + (index + 1));
@@ -615,7 +658,7 @@ async function runPrologueCase(session) {
     const checkpoint = checkpoints.pop();
     if (!checkpoint) throw new Error('prologue rollback 缺少合法历史检查点');
     const expectedKey = positionKey(checkpoint.snapshot?.position);
-    await session.page.keyboard.press('ArrowUp');
+    await session.clickTarget('rail:rollback', 'rail:rollback ' + (index + 1));
     await session.waitFor('rapid rollback target ' + (index + 1), (expected) => {
       const position = window.__surdetDebug?.position;
       const current = position ? String(position.sceneId) + ':' + String(position.pc) : 'null';
@@ -629,12 +672,14 @@ async function runPrologueCase(session) {
       frameSamples.push(await session.snapshot());
     }
     const mismatch = visualMismatch(checkpoint.snapshot, after, checkpoint.canvas, afterCanvas);
+    mismatch.fadeBoundary = after?.fadeTweenActive !== false || after?.canCaptureRollbackCheckpoint !== true;
     if (hasMismatch(mismatch)) {
       await session.recordAnomaly('BLACK_SCREEN_GRADUAL_OR_INSTANT', JSON.stringify(mismatch), after, afterCanvas);
     }
     const attempt = {
       index: index + 1,
       mode: 'rapid',
+      rollbackInput: 'rail:rollback',
       validHistory: positionKey(after?.position) === expectedKey,
       before,
       expected: checkpoint.snapshot,
@@ -661,16 +706,22 @@ async function runPrologueCase(session) {
 async function runChoiceCase(session) {
   await session.waitAssetsAndTitle();
   await session.clickTarget('title:new', 'title:new');
-  await session.waitScene('common_0017');
-  for (let index = 0; index < 80; index += 1) {
+  let reachedChoice = false;
+  for (let index = 0; index < protocol.cases[1].maxAdvanceSteps; index += 1) {
     const current = await session.snapshot();
-    if (current?.choiceVisibleCount === 3 && current?.interpreterStatus === 'choice') break;
+    if (current?.position?.sceneId === 'common_0017'
+      && current?.choiceVisibleCount === 3
+      && current?.interpreterStatus === 'choice') {
+      reachedChoice = true;
+      break;
+    }
     await session.advanceOne('common_0017 advance ' + (index + 1));
   }
+  if (!reachedChoice) throw new Error('未通过真实推进到达 common_0017 三选一');
   await session.waitChoice();
   await session.captureScreenshot('start');
   const choiceBefore = await session.snapshot();
-  await session.clickCanvas(640, 374, 'real choice option');
+  const choicePoint = await session.clickTarget('choice:0', 'real choice option choice:0');
   await session.waitFor('choice branch selected', () => window.__surdetDebug?.status !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
   const selected = await session.snapshot();
@@ -681,8 +732,12 @@ async function runChoiceCase(session) {
     const before = await session.snapshot();
     const beforeCanvas = await session.canvasMetrics();
     const expected = rollbackTargets[Math.min(index, rollbackTargets.length - 1)];
-    await session.page.keyboard.press('ArrowUp');
-    await session.waitFrames(1, 'choice rapid rollback ' + (index + 1));
+    await session.clickTarget('rail:rollback', 'choice rail:rollback ' + (index + 1));
+    await session.waitFor('choice rollback target ' + (index + 1), (expectedKey) => {
+      const position = window.__surdetDebug?.position;
+      const currentKey = position ? String(position.sceneId) + ':' + String(position.pc) : 'null';
+      return currentKey === expectedKey;
+    }, positionKey(expected?.position), 10000);
     const after = await session.snapshot();
     const afterCanvas = await session.canvasMetrics();
     const frameSamples = [];
@@ -701,7 +756,8 @@ async function runChoiceCase(session) {
     const attempt = {
       index: index + 1,
       mode: 'settled',
-      validHistory: after?.position !== null,
+      rollbackInput: 'rail:rollback',
+      validHistory: positionKey(after?.position) === positionKey(expected?.position),
       before,
       expected,
       after,
@@ -712,7 +768,8 @@ async function runChoiceCase(session) {
       choiceMismatch: stale,
       choiceBefore,
       selected,
-      actualChoiceClick: { x: 640, y: 374, input: 'page.mouse.click' },
+      actualChoiceClick: { target: 'choice:0', point: choicePoint, input: 'page.mouse.click' },
+      choiceBounds: choiceBefore?.choiceBounds || [],
       pageErrors: [...session.events.pageErrors],
       consoleErrors: [...session.events.consoleErrors],
       requestFailures: [...session.events.requestFailures],
@@ -723,6 +780,29 @@ async function runChoiceCase(session) {
     session.attempts.push(attempt);
     rollbackAttempts.push(attempt);
   }
+
+  let nextChoice = null;
+  for (let index = 0; index < protocol.cases[1].maxAdvanceSteps; index += 1) {
+    const current = await session.snapshot();
+    if (current?.interpreterStatus === 'choice' && current.choiceVisibleCount > 0) {
+      nextChoice = current;
+      break;
+    }
+    await session.advanceOne('next real choice advance ' + (index + 1));
+  }
+  if (!nextChoice) throw new Error('回退后未能正常推进到新的真实 choice');
+  const nextChoicePoint = await session.clickTarget('choice:0', 'next real choice option choice:0');
+  await session.waitFor('next choice branch selected', () => window.__surdetDebug?.status !== 'choice'
+    && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
+  session.caseEvidence = {
+    rollbackInput: 'rail:rollback',
+    commonChoiceScene: choiceBefore?.position?.sceneId ?? null,
+    initialChoice: choiceBefore,
+    initialChoiceClick: { target: 'choice:0', point: choicePoint, input: 'page.mouse.click' },
+    postRollbackChoice: nextChoice,
+    postRollbackChoiceClick: { target: 'choice:0', point: nextChoicePoint, input: 'page.mouse.click' },
+    ghostChoiceObserved: rollbackAttempts.some((attempt) => Object.values(attempt.choiceMismatch).some(Boolean)),
+  };
   await session.waitGameStable('choice end');
   await session.captureScreenshot('end');
   return { choiceBefore, selected, rollbackAttempts };
@@ -740,6 +820,8 @@ async function runCase(caseConfig) {
       userData: session.tempUserData,
       identity: session.identity,
       attempts: session.attempts,
+      observations: session.observations,
+      caseEvidence: session.caseEvidence,
       anomalies: session.anomalies,
       screenshots: session.screenshots,
       events: session.events,
@@ -755,6 +837,8 @@ async function runCase(caseConfig) {
       userData: session.tempUserData,
       identity: session.identity,
       attempts: session.attempts,
+      observations: session.observations,
+      caseEvidence: session.caseEvidence,
       anomalies: session.anomalies,
       screenshots: session.screenshots,
       events: session.events,
@@ -826,9 +910,11 @@ async function main() {
     const allEventsClear = cases.every((item) => Object.entries(item.events).every(([key, value]) => key === 'unexpectedWindowClosed' ? value === false : value.length === 0));
     const allHistoryValid = cases.every((item) => item.attempts.every((attempt) => attempt.validHistory));
     const status = cases.length === protocol.cases.length
-      && actualAttempts <= protocol.maxValidRollbacks
+      && cases.length === protocol.maxSessions
+      && actualAttempts === protocol.maxValidRollbacks
       && allHistoryValid
       && allEventsClear
+      && cases.every((item) => item.caseEvidence !== null)
       && cases.every((item) => item.ok)
       ? 'PASSED'
       : 'FAILED';

@@ -383,6 +383,13 @@ async function main(): Promise<void> {
       add('backlog:close', 0, 0, 1280, 720);
       return freezeDebug(targets);
     }
+    const choiceBounds = projection.dialogue?.choiceBounds ?? [];
+    if (projection.dialogue?.visibleChoiceCount && choiceBounds.length > 0) {
+      choiceBounds.forEach((bounds, index) => {
+        add(`choice:${index}`, bounds.x, bounds.y, bounds.width, bounds.height);
+      });
+      return freezeDebug(targets);
+    }
     if (debugCommandRailVisible()) {
       ['auto', 'skip', 'backlog', 'qsave', 'qload', 'rollback', 'settings', 'hide', 'menu']
         .forEach((id, index) => add(`rail:${id}`, 812 + index * 48, 658, 44, 46));
@@ -395,6 +402,7 @@ async function main(): Promise<void> {
     renderer: {
       get status() { return runtime.controller.status; },
       get backlogOpen() { return runtime.controller.backlogOpen; },
+      canCaptureRollbackCheckpoint: () => queries.presentation.canCaptureRollbackCheckpoint(),
       resetSession: (options) => runtime.resetSession(options),
       snapshotPresentation: () => queries.presentation.snapshot(),
       restorePresentation: (snapshot) => presentation.restore(snapshot),
@@ -447,6 +455,8 @@ async function main(): Promise<void> {
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get resourceLedger() { return queries.diagnostics.resourceLedger?.() ?? null; },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
+    get canCaptureRollbackCheckpoint(): boolean { return queries.presentation.canCaptureRollbackCheckpoint(); },
+    get fadeTweenActive(): boolean { return !queries.presentation.canCaptureRollbackCheckpoint(); },
     get visualThumbnail(): string | null { return queries.world.captureThumbnail(); },
     get uiSession() {
       return freezeDebug({ ...uiSnapshot() });

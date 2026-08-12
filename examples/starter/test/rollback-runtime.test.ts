@@ -23,6 +23,7 @@ function createTestRuntime() {
   const renderer = {
     status: 'awaiting',
     backlogOpen: false,
+    canCaptureRollbackCheckpoint: () => true,
     snapshotPresentation: vi.fn(() => ({ visible: true })),
     restorePresentation: vi.fn(),
     resetSession: vi.fn(),

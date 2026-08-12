@@ -131,6 +131,8 @@ export interface RendererControllerPort extends Omit<PresentationController, 'sn
   restorePresentation?: (snapshot: unknown) => void;
   /** @internal Clear only Controller-owned presentation timelines. */
   clearPresentation?: () => void;
+  /** @internal Stable rollback checkpoint boundary exposed by the v2 controller. */
+  canCaptureRollbackCheckpoint?: () => boolean;
   backlogEntries?: () => readonly BacklogEntry[];
   backlogSearchQuery?: () => string;
 }
@@ -800,6 +802,10 @@ export class RendererFacade {
         this.#ensureQueryActive('presentation', 'snapshot');
         const snapshot = this.#controller.snapshotPresentation?.() ?? this.#stage.snapshotPresentation?.() ?? null;
         return cloneOpaque(snapshot);
+      },
+      canCaptureRollbackCheckpoint: () => {
+        this.#ensureQueryActive('presentation', 'canCaptureRollbackCheckpoint');
+        return this.#controller.canCaptureRollbackCheckpoint?.() ?? true;
       },
     };
     const diagnosticQueries: RendererDiagnosticQueries = {

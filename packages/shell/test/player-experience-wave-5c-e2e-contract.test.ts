@@ -39,8 +39,12 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
       "'prologue-rapid-rollback'",
       "'common-0017-choice-rollback'",
       'rollbackCount: 12',
-      'maxValidRollbacks: 24',
-      'maxRegularScreenshots: 4',
+      'maxSessions: 2',
+      'maxValidRollbacks: 14',
+      'maxRegularScreenshots: 8',
+      "rollbackInput: 'rail:rollback'",
+      "'rail:rollback'",
+      "'choice:0'",
       'page.mouse.click',
       'page.keyboard.press',
       'validHistory',
@@ -76,6 +80,11 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
       'activeTransition',
       'choiceVisibleCount',
       'choiceLabels',
+      'choiceBounds',
+      'fadeTweenActive',
+      'canCaptureRollbackCheckpoint',
+      'rollbackInput',
+      'caseEvidence',
       'resourceSnapshot',
       'resourceLedger',
       'lastRendererError',
@@ -99,12 +108,14 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(source).toContain('sha256');
     expect(source).toContain('screenshotSha256');
     expect(source).toContain('pixelHash');
+    expect(source).toContain('visualThumbnail');
   });
 
   it('uses real player input and forbids debug or direct interpreter shortcuts', () => {
     const source = runnerSource();
     expect(source).toContain('page.mouse.click');
     expect(source).toContain('page.keyboard.press');
+    expect(source).toContain("clickTarget('rail:rollback'");
     expect(source).not.toContain('performRollback(');
     expect(source).not.toContain('titleSelect(');
     expect(source).not.toContain('interpreter.position =');
@@ -128,6 +139,9 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(mainSource).not.toContain('interpreter.position =');
     expect(mainSource).toContain('__surdetDebug');
     expect(mainSource).toContain('presentationSnapshot');
+    expect(mainSource).toContain('canCaptureRollbackCheckpoint');
+    expect(mainSource).toContain('fadeTweenActive');
+    expect(mainSource).toContain('choiceBounds');
     expect(mainSource).toContain('visualThumbnail');
   });
 });

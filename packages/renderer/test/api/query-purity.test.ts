@@ -66,6 +66,7 @@ function pureInternals(): RendererRuntimeInternals & { observableSnapshot(): unk
         speakerText: '凛',
         dialogText: '夜色渐深。',
         choiceLabels: ['继续'],
+        choiceBounds: [{ x: 300, y: 400, width: 200, height: 42 }],
         visibleChoiceCount: 1,
         rubyBaseCount: 0,
         rubyTextCount: 0,
