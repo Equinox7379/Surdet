@@ -447,6 +447,7 @@ async function main(): Promise<void> {
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get resourceLedger() { return queries.diagnostics.resourceLedger?.() ?? null; },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
+    get visualThumbnail(): string | null { return queries.world.captureThumbnail(); },
     get uiSession() {
       return freezeDebug({ ...uiSnapshot() });
     },
