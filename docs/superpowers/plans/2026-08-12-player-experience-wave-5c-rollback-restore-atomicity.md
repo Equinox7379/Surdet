@@ -207,11 +207,15 @@ artifact 必须记录真实 \`head/sourceRoot/distRoot/protocol/actual sessions/
 
 | Task | 状态 | 红灯/绿灯与证据 | 提交 SHA | 下一阶段入口 |
 | --- | --- | --- | --- | --- |
-| Task 0 | completed | 基线核验完成；\`verify:all\` exit 0；受保护文件未触碰；计划提交后文档卫生待校正 | 31c657551ab6849bebc349c6f3459594643f61d9 | 完成文档台账校正后进入 Task 1 |
-| Task 1 | not started | — | — | — |
-| Task 2 | not started | — | — | — |
-| Task 3 | not started | — | — | — |
-| Task 4 | not started | — | — | — |
+| Task 0 | completed | 基线核验完成；\`verify:all\` exit 0；受保护文件未触碰；计划台账校正已完成 | 3d15999c3337f8eeddb620a7aaf9b9d105906d75 | 进入 Task 1 |
+| Task 1 | completed | Shell contract 先红后绿：runner/package script 尚不存在时 7/7 失败；加入正式入口 runner 后 7/7 通过。只运行一次有效正式诊断：artifact=C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-experience-wave-5c-rbQmX9\\wave-5c-rollback-restore-atomicity.json，bytes=4074802，SHA-256=02FD96027B0C0A762F792DC53238886C75C50D97F1EF293F43F7E667F01B514E，head=3d15999c3337f8eeddb620a7aaf9b9d105906d75；2 sessions，12 attempts（A=12，B=0），3 screenshots，全部错误数组为 0。Case A 12/12 validHistory=true，但黑屏告警来自无效 WebGL canvas.toDataURL 读回，三张实际截图均显示完整场景；Case B 在 common_0017 选择点超时，未形成 ghost-choice 证据。初次 setup artifact 保留：C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-player-experience-wave-5c-kqn2j2\\wave-5c-rollback-restore-atomicity.json，bytes=1803，SHA-256=3F7C53EB0E4F95F0F051AA9940ACBA0EE3BE2AE01566F8E9AF71B17B6303AF89。为修正诊断 probe，visualThumbnail contract 先新增 1/7 红灯，增加只读 WorldQueries 接线后 7/7 通过；未重跑正式矩阵。结论：PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED，未进入生产修复 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 进入 Task 2 |
+| Task 2 | completed | Host rollback-runtime 5/5；Renderer presentation-clear/world-effects 3/3；未发现直接因果 mismatch。reenterOnReset 明确为 DEFENSIVE_FUTURE_INVARIANT，不是玩家根因证据。Shell/Zero typecheck 与 build 均 exit 0 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 条件停止：不进入 Task 3/4 生产修复 |
+| Task 3 | not entered | Task 1 没有真实黑屏或可见 causal mismatch；不修改公共恢复生产代码 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 条件分支停止 |
+| Task 4 | not entered | Case B 未到达真实 common_0017 选择点；没有 Ghost Choice 证据，不制造红灯 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 条件分支停止 |
+| Task 5 | completed | 唯一有效正式诊断已保留；不因 probe 修订重跑正式矩阵 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 进入诊断报告收口 |
+| Task 6 | not entered | 条件停止分支不运行生产修复后的全量门禁；Task 0 baseline verify:all exit 0 已记录 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 进入 Task 7 |
+| Task 7 | completed | 交付诊断报告真实落盘，含 artifact、红绿测试、错误证据、未解决项和保护边界 | （本次文档收口提交） | 进入 Task 8 |
+| Task 8 | completed | 停止在 WAITING_FOR_INDEPENDENT_REVIEW；未 push、未部署、未开始 Wave 5B/M9 | （本次文档收口提交） | 等待独立复审 |
 | Task 5 | not started | — | — | — |
 | Task 6 | not started | — | — | — |
 | Task 7 | not started | — | — | — |
