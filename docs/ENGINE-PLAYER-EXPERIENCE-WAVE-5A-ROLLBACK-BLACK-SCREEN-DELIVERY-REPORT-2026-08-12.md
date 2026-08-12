@@ -1,30 +1,34 @@
 # Surdet Player Experience Wave 5A
 
-## 回退黑屏修复交付报告
+## 回退黑屏事实与状态交付报告
 
 日期：2026-08-12
 范围：只执行 Wave 5A；未开始 Wave 5B、M9、性能工作或发行。
 
 ## 1. 结论与证据边界
 
-本轮已在 Host 公共回退事务层修复两个由红灯直接证明的问题：
+本轮在 Host 公共回退事务层保留并验证了两项有直接测试证据的行为修正，但它们不等于已经确认玩家黑屏根因：
 
-1. 回退恢复事务可在 `resetSession` 的同步回调链中重入，导致第二次回退再次消费历史并重复执行恢复；现在 `restoring` 期间的 `perform()` 明确返回 `false`，不修改历史、不调用解释器或 Renderer。
-2. 成功恢复后，恢复到的 cycle boundary 没有继续留在回退缓冲中；在任务书固定的“推进 4 条文本 → 回退 4 次”重复协议下，下一 cycle 会缺少第 4 个合法检查点。现在成功恢复会保留该 boundary，连续 cycle 可以继续产生 4 次有效回退。
+1. `restoring` 期间的 `perform()` 明确返回 `false`，不修改历史、不调用解释器或 Renderer。这是安全的防御性重入保护；当前证据来自 `reenterOnReset: true` mock 的 future-invariant 测试，不能宣称真实玩家调用链已证实会在 `resetSession` 内重入 `perform()`。状态：`DEFENSIVE_REENTRY_GUARD_ADDED`。
+2. 成功恢复后，恢复到的 cycle boundary 继续留在回退缓冲中；在任务书固定的“推进 4 条文本 → 回退 4 次”重复协议下，连续 cycle 可以继续产生 4 次有效回退，修复了已验证的 history/no-op 边界缺陷。状态：`CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED`。
 
 Renderer 的效果恢复回归测试在修复前已经通过，因此本轮没有凭猜测修改 Renderer 生产表现代码；只新增了 WorldLayer 表现不变量测试。正式 Zero Electron 路径按固定 8 session × 20 回退协议重新运行后 160/160 通过，未观测到黑屏、背景/立绘消失或 Renderer/resource release 错误。
 
-这不等同于宣称用户偶发的实机黑屏现象从此在所有机器、所有时序下绝对不可能出现。用户反馈仍是有效红灯；本轮结论是：公共 Host 回退事务的已证实缺陷已修复，正式多进程真实输入矩阵未再复现黑屏，交付等待独立复审。
+玩家报告的“多次回退后画面逐渐变暗或直接黑屏、切场景后恢复”目前仍未取得根因证据。最终压力运行只能说明在预定义协议下未复现，不能据此宣告玩家问题闭合。状态：`PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED`、`PLAYER_BLACK_SCREEN_NOT_REPRODUCED_UNDER_STRESS_PROTOCOL`。
 
 最终状态：
 
 ```text
-PLAYER_EXPERIENCE_WAVE_5A_ROLLBACK_BLACK_SCREEN_REMEDIATED
-ENGINE_LAYER_FIX_VERIFIED
+DEFENSIVE_GUARDS_ADDED
+CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_NOT_REPRODUCED_UNDER_STRESS_PROTOCOL
+FINAL_COMMIT_EVIDENCE_QUALIFIED
 PERFORMANCE_WORK_DEFERRED
 M9_NOT_STARTED
 NOT_PUSHED
-WAITING_FOR_REVIEW
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
 ## 2. 用户红灯路径
@@ -92,11 +96,11 @@ fix(host): guard rollback restore boundaries
 
 交付报告和计划收口将在实现提交之后另行创建普通文档提交；不会改写实现提交历史。
 
-## 4. 根因调用链与最小修复
+## 4. 已验证的公共行为与未确认的玩家现象
 
-### 4.1 已证明的 HOST_REENTRY
+### 4.1 防御性重入保护（不是玩家黑屏根因证明）
 
-真实玩家输入链为：
+生产回退入口仍由真实 `rail:rollback` 输入调用；但本轮没有证据证明真实玩家调用链会在 `resetSession` 内同步重入 `perform()`。可复现的红灯只来自 `reenterOnReset: true` 的 mock future-invariant 测试：
 
 ```text
 rail:rollback 的真实 pointer input
@@ -104,18 +108,18 @@ rail:rollback 的真实 pointer input
   → performRollback()
   → createRollbackRuntime().perform()
   → renderer.resetSession()
-  → reset 回调链中再次进入 runtime.perform()
+  → mock reset 回调主动再次进入 runtime.perform()
 ```
 
-修复前，外层 `perform()` 已经开始恢复，但 `canRollback()` 没有把 `restoring` 作为禁止条件，回调内的嵌套 `perform()` 可以再次成功。红灯观察到嵌套结果 `[false, true]`（即第二次实际成功）以及第二次 reset/host reset。
+修复前，mock 外层 `perform()` 已经开始恢复，但 `canRollback()` 没有把 `restoring` 作为禁止条件，mock 回调内的嵌套 `perform()` 可以再次成功。红灯观察到嵌套结果 `[false, true]`（即第二次实际成功）以及第二次 reset/host reset；这证明防御性不变量缺失，不证明真实玩家黑屏调用链已经发生。
 
-现在入口先检查 `restoring`，外层事务拥有恢复权期间嵌套输入返回 `false`，不 pop/push 历史、不调用 `loadSnapshot`、`resetSession`、`restorePresentation` 或音频恢复。事务结束后才释放恢复状态。
+现在入口先检查 `restoring`，外层事务拥有恢复权期间嵌套输入返回 `false`，不 pop/push 历史、不调用 `loadSnapshot`、`resetSession`、`restorePresentation` 或音频恢复。事务结束后才释放恢复状态。状态：`DEFENSIVE_REENTRY_GUARD_ADDED`。
 
-### 4.2 已证明的 cycle-boundary 历史缺口
+### 4.2 已证明的 cycle-boundary/history 缺陷
 
 固定协议要求每个 cycle 都真实推进 4 条文本，再真实回退 4 次。修复前，第一次 cycle 恢复到起点后，恢复帧从历史中消费掉；下一 cycle 的 4 次推进只能形成不足 4 个可消费的历史边界，固定协议的第 4 次回退变成无历史 no-op。该问题不是通过重复点击或无历史次数凑数得到的，而是正式协议本身暴露的公共历史连续性缺口。
 
-修复后成功恢复会把目标 boundary frame 保留在回退缓冲中。下一次回退先消费当前重复 boundary，再沿前一历史帧回退，因此每个真实 cycle 都能完成 4 次有效回退。
+修复后成功恢复会把目标 boundary frame 保留在回退缓冲中。下一次回退先消费当前重复 boundary，再沿前一历史帧回退，因此每个真实 cycle 都能完成 4 次有效回退。状态：`CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED`。这项修正只证明 history/no-op 边界行为，不证明玩家黑屏根因。
 
 ### 4.3 Renderer 表现证据
 
@@ -123,7 +127,7 @@ rail:rollback 的真实 pointer input
 
 ## 5. 测试先行红灯与绿灯
 
-### 5.1 Task 2 初始红灯
+### 5.1 Task 2 防御性 future-invariant 红灯
 
 命令：
 
@@ -131,7 +135,7 @@ rail:rollback 的真实 pointer input
 npm run test -w @surdet/host -- --run test/rollback-runtime.test.ts
 ```
 
-结果：exit code `1`，4 tests 中 `3 passed / 1 failed`。新增同步重入测试实际观察到 `[false, true]`，并发生第二次 reset/host reset。
+结果：exit code `1`，4 tests 中 `3 passed / 1 failed`。`reenterOnReset: true` mock future-invariant 测试观察到 `[false, true]`，并发生第二次 reset/host reset。该红灯只证明防御性重入不变量缺失，不是正式玩家黑屏根因复现。
 
 Renderer 表现不变量命令：
 
@@ -317,14 +321,23 @@ result=smoke 完成 4/4 有效回退；按协议因未达到正式 160 次而标
 
 ## 8. Git 与保护边界
 
-实现提交后、报告创建前：
+本轮最终证据运行与历史文档收口的事实关系如下：
 
-- HEAD：`de235fe273df45e3d0021f3d3b32271458235542`
-- `HEAD...surdet/main`：`1 0`
+```text
+CODE_EVIDENCE_HEAD=95147d40fc71151577e7bf0528f345ab5c96491c
+ARTIFACT_HEAD=95147d40fc71151577e7bf0528f345ab5c96491c
+DOCUMENT_CLOSURE_HEAD=c1a6f3e1eb8b9065ed4602dc6bb423c173d48320
+```
+
+`CODE_EVIDENCE_HEAD` 与 `ARTIFACT_HEAD` 完全一致，因此本次正式矩阵满足 `FINAL_COMMIT_EVIDENCE_QUALIFIED`。`DOCUMENT_CLOSURE_HEAD` 是只包含最终证据报告/计划收口的文档提交；它没有改变被测代码或 artifact。当前事实与状态收口还会创建一份新的普通 docs 提交；该新提交的真实 `git rev-parse HEAD` 在提交后只读复核和最终回报中记录，不把它错误地写成被测代码或 artifact 的 HEAD。
+
+本轮事实收口开始前实际只读值：
+
+- 当前 HEAD：`c1a6f3e1eb8b9065ed4602dc6bb423c173d48320`
+- `HEAD...surdet/main`：`4 0`
+- `git rev-list --count surdet/main..HEAD`：`4`
 - 暂存区：空
 - `git ls-files '*.log'`：空
-
-本报告和计划台账会在实现提交之后创建一个普通文档提交；文档提交不改变已验证的代码和 artifact。最终 HEAD、最终 `HEAD...surdet/main`、最终工作树和本报告文件的磁盘字节数/SHA-256以文档提交后重新读取结果为准，并在最终回报中列出。
 
 以下文件未修改、未暂存、未提交、未删除、未移动：
 
@@ -352,18 +365,31 @@ Wave 5B 计划文件也未触碰。没有 push、force push、rebase、reset、c
 - 640 张截图全部存在且路径唯一；字节数和 SHA-256 完整性不匹配为 `0`。
 - 160 个 after canvas 均未达到黑屏线 `blackPixelRatio >= 0.985`；最大 after `blackPixelRatio=0.17835043670902193`；本次未发现黑屏。
 - `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures` 和 `unexpectedWindowClosed` 全部为 `0`。
-- 本次矩阵执行前当前 HEAD：`95147d40fc71151577e7bf0528f345ab5c96491c`；当时 `HEAD...surdet/main=3 0`。文档收口提交会使仓库 HEAD 前进；该提交的真实完整 SHA 在提交后只读复核中记录，避免在包含自身的报告内伪造自引用 SHA。
+- `CODE_EVIDENCE_HEAD` 与 `ARTIFACT_HEAD` 均为 `95147d40fc71151577e7bf0528f345ab5c96491c`；`DOCUMENT_CLOSURE_HEAD` 为 `c1a6f3e1eb8b9065ed4602dc6bb423c173d48320`。三者职责不同：前两者绑定被测代码和 artifact，后者只绑定上一轮文档收口。
+- 当前事实收口开始前实际 HEAD 为 `c1a6f3e1eb8b9065ed4602dc6bb423c173d48320`，`HEAD...surdet/main=4 0`；本轮新普通 docs 提交后的最终 HEAD、ahead/behind 和报告磁盘摘要以提交后只读命令为准，并在最终回报中列出。
 - 本次证据收口只允许修改本报告和 Wave 5A 计划台账；未修改生产源码、Host/Renderer/Shell 实现、Wave 5B 计划或受保护文件。
 - Wave 5B 的真实计划路径为 `docs/superpowers/plans/2026-08-12-player-experience-wave-5b-layout-polish.md`；本轮未读取、未修改、未暂存、未提交。
-- `verify:all` 仅引用此前独立 exit `0`，本次没有重新执行；未进行性能工作、未进入 M9、未 push、未部署、未发行。
+- `verify:all` 将作为本次事实收口的最终门禁执行并如实记录 exit code；未进行性能工作、未进入 M9、未 push、未部署、未发行。
+
+本轮保留的两项代码改动及证据边界：
+
+- `CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED`：`rollback.push(frame)` 保留恢复到的 cycle boundary，修复固定协议下后续 cycle 的 history/no-op 边界缺陷。
+- `DEFENSIVE_REENTRY_GUARD_ADDED`：`restoring` 期间拒绝再次 `perform()`，是安全的防御性 future-invariant；没有证据证明真实 `resetSession` 调用链会重入 `perform()`。
+- 尚未证明：玩家报告的逐渐变暗/黑屏/切场景恢复的真实根因。
+- `PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED`：根因未确认。
+- `PLAYER_BLACK_SCREEN_NOT_REPRODUCED_UNDER_STRESS_PROTOCOL`：预定义压力协议下未复现，不能外推为玩家问题已闭合。
 
 最终停止状态：
 
 ```text
-PLAYER_EXPERIENCE_WAVE_5A_FINAL_EVIDENCE_REMEDIATION_COMPLETE
-ENGINE_LAYER_FIX_RETAINED
+DEFENSIVE_GUARDS_ADDED
+CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_NOT_REPRODUCED_UNDER_STRESS_PROTOCOL
+FINAL_COMMIT_EVIDENCE_QUALIFIED
 PERFORMANCE_WORK_DEFERRED
 M9_NOT_STARTED
 NOT_PUSHED
-WAITING_FOR_REVIEW
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
 ```
