@@ -216,11 +216,6 @@ artifact 必须记录真实 \`head/sourceRoot/distRoot/protocol/actual sessions/
 | Task 6 | not entered | 条件停止分支不运行生产修复后的全量门禁；Task 0 baseline verify:all exit 0 已记录 | 6331a387bd9b99957e737c1b70fd731d72c2ada3 | 进入 Task 7 |
 | Task 7 | completed | 交付诊断报告真实落盘，含 artifact、红绿测试、错误证据、未解决项和保护边界 | （本次文档收口提交） | 进入 Task 8 |
 | Task 8 | completed | 停止在 WAITING_FOR_INDEPENDENT_REVIEW；未 push、未部署、未开始 Wave 5B/M9 | （本次文档收口提交） | 等待独立复审 |
-| Task 5 | not started | — | — | — |
-| Task 6 | not started | — | — | — |
-| Task 7 | not started | — | — | — |
-| Task 8 | not started | — | — | 停止在 WAITING_FOR_INDEPENDENT_REVIEW |
-
 ## Protected-file audit
 
 本文件创建时，以下六个文件均未被修改、暂存、提交、删除或移动：
@@ -231,3 +226,48 @@ artifact 必须记录真实 \`head/sourceRoot/distRoot/protocol/actual sessions/
 - \`docs/SURDET-ART-DIRECTION-UPDATE-BRIEF-2026-08-09.md\`
 - \`docs/SURDET-ART-DIRECTOR-HANDOFF-2026-08-09.md\`
 - \`docs/superpowers/plans/2026-08-12-player-experience-wave-5b-layout-polish.md\`
+
+## Phase 2 Execution Ledger — Rollback Stable Boundary + Load Transient Cleanup
+
+Phase 2 从既有诊断收口继续，未创建 Wave 5D；不覆盖上方 Phase 1 Task 0–8 的历史记录。Phase 2 起点为 `a752c8228327810bc77a574a034cf4d02334c509`，远端为 `a1cf342d31396c67491617a50fd87980a3955d24`，起点关系为 `5 0`。
+
+| Phase 2 阶段 | 状态 | 证据 | 提交/入口 |
+| --- | --- | --- | --- |
+| 稳定检查点与恢复瞬态红灯 | completed | Host 聚焦 6 项中 1 项红灯；Renderer presentation-controller 聚焦 12 项中 2 项红灯；分别覆盖 fade active checkpoint 与 stateReset choice/transient 残留 | 从 `a752c82` 进入实现 |
+| 公共层最小实现 | completed | `canCaptureRollbackCheckpoint()` 纯查询；Host 必需端口；captureText 在 presentation snapshot 前拒绝不稳定 checkpoint；stateReset 清理最小交互瞬态 | `5c52d53e9674f4b01c406bb9083e97a971d84934` |
+| 公共类型契约收紧 | completed | Presentation runtime 与 RendererControllerPort 对稳定 checkpoint 能力使用正式必需类型；无行为性兼容回退 | `8e5df703f4c4d6dd48e9dc1b822db7ba2e6661b2`、`74feb12e0602ceed89da6fa02827c089bda071df` |
+| Phase 2 聚焦绿灯 | completed | Renderer 3 文件 24/24；Host rollback 6/6；Shell contract 7/7 | `74feb12e0602ceed89da6fa02827c089bda071df` |
+| 唯一正式 Electron A+B | completed-with-blocker | Case A 12/12 validHistory；Case B 到 common_0017 后在真实 choice 点击前 timeout，0 attempts；artifact 保留，命令 exit 1，不重跑挑绿 | `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-rIKJIY\wave-5c-rollback-restore-atomicity.json` |
+| 受影响模块全量门禁 | completed | Renderer 49/400、Host 11/87、Shell 19/144、Starter 4/7、CLI 7/87、Zero 2/21；typecheck/build 全部 0；verify:all 0；Zero 23/23、3 结局、44 assets、0 runtime errors | `74feb12e0602ceed89da6fa02827c089bda071df` |
+| Phase 2 报告与台账 | completed | 本次仅更新本计划与 Wave 5C 报告；不得触碰 Wave 5B 计划；文档内容已完成，提交后执行最终只读 Git 核验 | 本次普通 docs 提交；真实 SHA 以提交后 `git log -1` 为准 |
+
+### Phase 2 正式 artifact 台账
+
+- 路径：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-rIKJIY\wave-5c-rollback-restore-atomicity.json`
+- 字节数：`3,748,653`
+- SHA-256：`BB456B68E39B84724D3E2ED5727D03A83201AD61A510C15B16A85D8108C6B49E`
+- `status=FAILED`、`execution.actualSessions=2`、`execution.actualAttempts=12`、`regularScreenshots=2`。
+- `ARTIFACT_HEAD=5c52d53e9674f4b01c406bb9083e97a971d84934`；`CODE_EVIDENCE_HEAD=74feb12e0602ceed89da6fa02827c089bda071df`。artifact 在后两个公共类型契约提交前生成，保留为历史失败证据，不宣称为当前最终代码绑定证据。
+- Case A 观察到 `fadeTweenActive=true → false`、`canCaptureRollbackCheckpoint=false → true`，12 次真实 `rail:rollback` 均 `validHistory=true`，错误数组为 0。
+- Case B `attempts=0`，在真实 choice 点击前等待超时；幽灵选择未建立，玩家反馈仍保留。
+
+### Phase 2 当前状态
+
+```text
+FADE_CHECKPOINT_STABLE_BOUNDARY_ENFORCED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+FADE_ACTIVE_PLAYER_PATH_OBSERVED
+CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED
+DEFENSIVE_REENTRY_GUARD_ADDED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_NOT_REPRODUCED_UNDER_STRESS_PROTOCOL
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+GHOST_CHOICE_ROOT_CAUSE_UNCONFIRMED
+WAVE_5C_PHASE_2_IMPLEMENTATION_PRESENT
+FORMAL_EVIDENCE_BLOCKED
+WAVE_5B_NOT_STARTED
+NOT_PUSHED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
+
+文档提交后必须重新记录真实 `git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 tracked `.log`；受保护六文件必须仍保持未跟踪且未触碰。
