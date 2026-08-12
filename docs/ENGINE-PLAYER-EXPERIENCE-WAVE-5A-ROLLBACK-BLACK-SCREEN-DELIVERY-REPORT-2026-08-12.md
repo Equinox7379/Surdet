@@ -174,7 +174,7 @@ npm run test -w @surdet/shell -- --run test/player-experience-wave-5a-e2e-contra
 - 正式入口：`E:\surdet\examples\zero-after-midnight\dist`；实际页面为 `file:///E:/surdet/examples/zero-after-midnight/dist/index.html`；
 - 没有调用 `performRollback()`、debug action、`titleSelect()` 或直接修改解释器位置来代替玩家输入。
 
-### 6.2 最终 artifact
+### 6.2 本次最终证据收口 artifact（权威）
 
 正式命令：
 
@@ -187,12 +187,14 @@ exit code：`0`
 artifact：
 
 ```text
-path=C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-EAYFom\wave-5a-rollback-1786518935217.json
-bytes=67859728
-sha256=7d431465c097406c6ea7433a3cb554433604793a23344be6fa235e70248c6ae1
+path=C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-LNsj5z\wave-5a-rollback-1786521263206.json
+bytes=67859787
+sha256=259087456f6999d1405813c5ab3ec017c13ceb9b7af0347b455ae0d094b3d2e0
 status=PASSED
-head=2edc65d55cae85bd7fd296501c5e2d896d36be9d
+head=95147d40fc71151577e7bf0528f345ab5c96491c
 ```
+
+这次矩阵在当前已提交实现 HEAD 上全新构建并运行，没有复用旧 dist、旧 artifact 或旧截图。独立读取 `Get-Item` 与 `Get-FileHash -Algorithm SHA256` 的结果分别为 `67859787` bytes 和上述 SHA-256；独立 Node 校验脚本再次确认 artifact `head` 等于 `git rev-parse HEAD`。
 
 8 个 session 均各完成 20/20：
 
@@ -212,9 +214,9 @@ artifact 中每个 attempt 的 `before`、`expected`、`after` 均包含：位�
 每个 session 保存 80 张截图，共 640 张；截图的绝对路径、字节数、PNG SHA-256、canvas data URL hash、宽高、meanLuma 和 blackPixelRatio 都写入 artifact。所有 640 个路径均存在，重新计算的 PNG SHA/字节数不匹配为 `0`。截图目录位于：
 
 ```text
-C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-EAYFom\session-01-settled\screenshots
+C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-LNsj5z\session-01-settled\screenshots
 ...
-C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-EAYFom\session-08-rapid\screenshots
+C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-LNsj5z\session-08-rapid\screenshots
 ```
 
 所有截图画布尺寸为 `1211x681`。恢复后的 160 张 after canvas 指标：
@@ -236,7 +238,22 @@ releaseFailures=0
 unexpectedWindowClosed=0
 ```
 
-### 6.3 历史失败/先前通过 artifact 保留情况
+### 6.3 旧最终 artifact（历史证据，非本次权威证据）
+
+旧的完整通过 artifact 仍然保留，但它是在实现提交前、工作树含有未提交实现时生成的，不能作为最终提交绑定证据：
+
+```text
+path=C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-EAYFom\wave-5a-rollback-1786518935217.json
+bytes=67859728
+sha256=7d431465c097406c6ea7433a3cb554433604793a23344be6fa235e70248c6ae1
+status=PASSED
+head=2edc65d55cae85bd7fd296501c5e2d896d36be9d
+reason=实现提交 de235fe273df45e3d0021f3d3b32271458235542 之前生成；保留为历史内容证据，不作为最终 HEAD 的权威证据
+```
+
+本次新 artifact（6.2）才是绑定 `head=95147d40fc71151577e7bf0528f345ab5c96491c` 的 Wave 5A 权威证据。
+
+### 6.4 历史失败/更早通过 artifact 保留情况
 
 以下文件均在系统临时目录中保留，未覆盖、未加入 Git：
 
@@ -292,11 +309,11 @@ result=smoke 完成 4/4 有效回退；按协议因未达到正式 160 次而标
 | `npm run build -w @surdet/renderer` | exit 0 |
 | `npm run build -w @surdet/shell` | exit 0 |
 | `npm run build -w zero-after-midnight` | exit 0 |
-| `npm run verify:all` | exit 0 |
+| `npm run verify:all` | 本次证据收口未重跑；引用此前独立复核 exit 0 |
 | `git diff --check`（实现提交前） | exit 0 |
 | `git ls-files '*.log'` | 空 |
 
-`verify:all` 独立确认正式《零点之后》仍为 11 个场景、23/23 choice 分支、3 个可达结局、44 项资产、运行时错误 0。没有执行性能资格化、旧版正式 A/B、pack、electron-builder 或 EXE 发行构建。
+此前独立运行的 `verify:all` 确认正式《零点之后》仍为 11 个场景、23/23 choice 分支、3 个可达结局、44 项资产、运行时错误 0；本次仅做证据收口，未把该历史 exit 0 伪称为本轮重新执行。没有执行性能资格化、旧版正式 A/B、pack、electron-builder 或 EXE 发行构建。
 
 ## 8. Git 与保护边界
 
@@ -324,3 +341,29 @@ Wave 5B 计划文件也未触碰。没有 push、force push、rebase、reset、c
 ## 9. 后续停止点
 
 本轮到此停止，等待总经理独立复审。不得自动进入 Wave 5B，不得开始 M9、性能、资产、音频、剧情、存档格式、发行或 EXE 打包。
+
+## 10. 最终证据收口记录
+
+- 本次新 artifact：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-LNsj5z\wave-5a-rollback-1786521263206.json`。
+- 新 artifact 磁盘字节数：`67859787`。
+- 新 artifact SHA-256：`259087456f6999d1405813c5ab3ec017c13ceb9b7af0347b455ae0d094b3d2e0`。
+- 新 artifact `status=PASSED`，`head=95147d40fc71151577e7bf0528f345ab5c96491c`，`actualSessions=8`，`actualAttempts=160`。
+- 8 个 session 各为 `20/20`；前四个为 `settled`，后四个为 `rapid`；160 次 `validHistory=true`。
+- 640 张截图全部存在且路径唯一；字节数和 SHA-256 完整性不匹配为 `0`。
+- 160 个 after canvas 均未达到黑屏线 `blackPixelRatio >= 0.985`；最大 after `blackPixelRatio=0.17835043670902193`；本次未发现黑屏。
+- `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures` 和 `unexpectedWindowClosed` 全部为 `0`。
+- 本次矩阵执行前当前 HEAD：`95147d40fc71151577e7bf0528f345ab5c96491c`；当时 `HEAD...surdet/main=3 0`。文档收口提交会使仓库 HEAD 前进；该提交的真实完整 SHA 在提交后只读复核中记录，避免在包含自身的报告内伪造自引用 SHA。
+- 本次证据收口只允许修改本报告和 Wave 5A 计划台账；未修改生产源码、Host/Renderer/Shell 实现、Wave 5B 计划或受保护文件。
+- Wave 5B 的真实计划路径为 `docs/superpowers/plans/2026-08-12-player-experience-wave-5b-layout-polish.md`；本轮未读取、未修改、未暂存、未提交。
+- `verify:all` 仅引用此前独立 exit `0`，本次没有重新执行；未进行性能工作、未进入 M9、未 push、未部署、未发行。
+
+最终停止状态：
+
+```text
+PLAYER_EXPERIENCE_WAVE_5A_FINAL_EVIDENCE_REMEDIATION_COMPLETE
+ENGINE_LAYER_FIX_RETAINED
+PERFORMANCE_WORK_DEFERRED
+M9_NOT_STARTED
+NOT_PUSHED
+WAITING_FOR_REVIEW
+```
