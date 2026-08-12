@@ -487,7 +487,7 @@ async function launchSession(caseId, mode) {
           && debug?.uiSession?.overlay === 'none'
           && debug?.uiSession?.operation === 'idle'
           && debug?.rendererStatus !== 'typing'
-          && (debug?.status === 'awaiting-advance' || debug?.status === 'choice');
+          && (debug?.status === 'awaiting-advance' || debug?.status === 'awaiting-choice');
       }, undefined, 30000);
     },
     async advanceOne(label) {
@@ -516,7 +516,8 @@ async function launchSession(caseId, mode) {
       await this.waitFor('common_0017 choice', () => {
         const projection = window.__surdetDebug?.dialogueProjection;
         return window.__surdetDebug?.position?.sceneId === 'common_0017'
-          && window.__surdetDebug?.status === 'choice'
+          && window.__surdetDebug?.status === 'awaiting-choice'
+          && window.__surdetDebug?.rendererStatus === 'choice'
           && projection?.visibleChoiceCount === 3
           && projection?.choiceBounds?.length === 3
           && JSON.stringify(projection?.choiceLabels || []) === JSON.stringify([
@@ -603,7 +604,7 @@ function hasMismatch(mismatch) {
 function choiceMismatch(snapshot) {
   const labels = snapshot?.choiceLabels || [];
   const visible = Number(snapshot?.choiceVisibleCount || 0);
-  const interpreterChoice = snapshot?.interpreterStatus === 'choice';
+  const interpreterChoice = snapshot?.interpreterStatus === 'awaiting-choice';
   const rendererChoice = snapshot?.rendererStatus === 'choice';
   return {
     staleVisibleWithoutPending: !interpreterChoice && visible > 0,
@@ -711,7 +712,9 @@ async function runChoiceCase(session) {
     const current = await session.snapshot();
     if (current?.position?.sceneId === 'common_0017'
       && current?.choiceVisibleCount === 3
-      && current?.interpreterStatus === 'choice') {
+      && current?.choiceBounds?.length === 3
+      && current?.interpreterStatus === 'awaiting-choice'
+      && current?.rendererStatus === 'choice') {
       reachedChoice = true;
       break;
     }
@@ -722,7 +725,8 @@ async function runChoiceCase(session) {
   await session.captureScreenshot('start');
   const choiceBefore = await session.snapshot();
   const choicePoint = await session.clickTarget('choice:0', 'real choice option choice:0');
-  await session.waitFor('choice branch selected', () => window.__surdetDebug?.status !== 'choice'
+  await session.waitFor('choice branch selected', () => window.__surdetDebug?.status !== 'awaiting-choice'
+    && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
   const selected = await session.snapshot();
   const branchStep = await session.advanceOne('choice branch text');
@@ -784,7 +788,10 @@ async function runChoiceCase(session) {
   let nextChoice = null;
   for (let index = 0; index < protocol.cases[1].maxAdvanceSteps; index += 1) {
     const current = await session.snapshot();
-    if (current?.interpreterStatus === 'choice' && current.choiceVisibleCount > 0) {
+    if (current?.interpreterStatus === 'awaiting-choice'
+      && current?.rendererStatus === 'choice'
+      && current.choiceVisibleCount > 0
+      && current?.choiceBounds?.length === current.choiceVisibleCount) {
       nextChoice = current;
       break;
     }
@@ -792,7 +799,8 @@ async function runChoiceCase(session) {
   }
   if (!nextChoice) throw new Error('回退后未能正常推进到新的真实 choice');
   const nextChoicePoint = await session.clickTarget('choice:0', 'next real choice option choice:0');
-  await session.waitFor('next choice branch selected', () => window.__surdetDebug?.status !== 'choice'
+  await session.waitFor('next choice branch selected', () => window.__surdetDebug?.status !== 'awaiting-choice'
+    && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
   session.caseEvidence = {
     rollbackInput: 'rail:rollback',
