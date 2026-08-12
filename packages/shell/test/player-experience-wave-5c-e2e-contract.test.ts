@@ -111,6 +111,16 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(source).toContain('visualThumbnail');
   });
 
+  it('keeps Core awaiting-choice distinct from Renderer choice', () => {
+    const source = runnerSource();
+    expect(source).toContain("debug?.status === 'awaiting-choice'");
+    expect(source).toContain("window.__surdetDebug?.rendererStatus === 'choice'");
+    expect(source).not.toContain("debug?.status === 'choice'");
+    expect(source).not.toContain("window.__surdetDebug?.status === 'choice'");
+    expect(source).not.toContain("snapshot?.interpreterStatus === 'choice'");
+    expect(source).not.toContain("current?.interpreterStatus === 'choice'");
+  });
+
   it('uses real player input and forbids debug or direct interpreter shortcuts', () => {
     const source = runnerSource();
     expect(source).toContain('page.mouse.click');

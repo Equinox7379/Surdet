@@ -179,6 +179,7 @@ describe('rollback runtime — consecutive player rollback', () => {
     fixture.runtime.captureText();
     await Promise.resolve();
 
+    expect(fixture.interpreter.saveSnapshot).not.toHaveBeenCalled();
     expect(fixture.renderer.snapshotPresentation).not.toHaveBeenCalled();
     expect(fixture.runtime.canRollback()).toBe(false);
 
@@ -187,6 +188,7 @@ describe('rollback runtime — consecutive player rollback', () => {
     fixture.runtime.captureText();
     await Promise.resolve();
 
+    expect(fixture.interpreter.saveSnapshot).toHaveBeenCalledTimes(1);
     expect(fixture.renderer.snapshotPresentation).toHaveBeenCalledTimes(1);
     expect(fixture.runtime.canRollback()).toBe(true);
   });

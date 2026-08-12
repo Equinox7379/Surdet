@@ -108,13 +108,13 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
     const generation = captureGeneration;
     Promise.resolve().then(() => {
       if (restoring || generation !== captureGeneration) return;
+      if (!options.renderer.canCaptureRollbackCheckpoint()) return;
       const snapshot = options.interpreter.saveSnapshot();
       if (!snapshot || options.interpreter.status === 'running'
         || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
       const key = checkpointKey(snapshot);
       if (key === null || key === lastRollbackKey) return;
       try {
-        if (!options.renderer.canCaptureRollbackCheckpoint()) return;
         rollback.push({
           snapshot,
           presentation: options.renderer.snapshotPresentation(),
