@@ -70,4 +70,20 @@ describe('Player Experience Wave 4 Electron contract', () => {
     expect(source).toContain('distRoot: path.resolve(gameDist)');
     expect(source).toContain('assetLoading: identity.assetLoading');
   });
+
+  it('requires visible portrait, long-form progression, and real fullscreen click evidence', () => {
+    const source = fs.readFileSync(scriptPath, 'utf8');
+    expect(source).toContain('portraits.length >= 1');
+    expect(source).toContain('portraitProjection');
+    expect(source).toContain('index < 20');
+    expect(source).toContain('story:advance×${progression.length}');
+    expect(source).toContain('commandRailAlphaSamples');
+    expect(source).toContain('await session.clickTarget(\'rail:menu\')');
+    expect(source).toContain("await session.waitOverlay('system-menu')");
+    expect(source).toContain("await session.clickTarget('system:resume')");
+    expect(source).toContain('fullscreen');
+    expect(source).toContain('lastSnapshot: cloneJson(session?.lastSnapshot)');
+    expect(source).toContain('errorStack');
+    expect(source).toContain("git', ['rev-parse', 'HEAD']");
+  });
 });

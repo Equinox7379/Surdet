@@ -165,9 +165,10 @@ async function launchSession(caseId) {
     page,
     events,
     identity: null,
+    lastSnapshot: null,
     async snapshot() {
       if (page.isClosed()) return null;
-      return page.evaluate(() => {
+      const snapshot = await page.evaluate(() => {
         const debug = window.__surdetDebug;
         return {
           title: document.title,
@@ -186,6 +187,8 @@ async function launchSession(caseId) {
           interactionTargets: debug?.interactionTargets ?? null,
         };
       });
+      this.lastSnapshot = snapshot;
+      return snapshot;
     },
     async waitFor(label, predicate, arg = undefined, timeoutMs = 15000) {
       if (page.isClosed()) throw new Error(`窗口已关闭，无法等待：${label}`);
@@ -272,7 +275,14 @@ async function launchSession(caseId) {
           return ['awaiting-advance', 'awaiting-timer', 'choice'].includes(debug?.status)
             || debug?.rendererStatus === 'choice';
         }, undefined, 12000);
-        await this.press('Space');
+        const inputKey = await page.evaluate(() => {
+          const debug = window.__surdetDebug;
+          // A fresh choice has no highlighted cursor yet; select the first
+          // visible option through the same real keyboard contract a player
+          // can use, instead of repeatedly sending an unbound confirmation.
+          return debug?.status === 'choice' || debug?.rendererStatus === 'choice' ? '1' : 'Space';
+        });
+        await this.press(inputKey);
         try {
           await this.waitFor(`${label} 解释器位置变化`, (positionKeyExpected) => {
             const position = window.__surdetDebug?.position;
@@ -329,6 +339,80 @@ async function launchSession(caseId) {
       screenshots.push(evidence);
       return evidence;
     },
+    async captureCanvasRegion(label, logicalX, logicalY, logicalWidth, logicalHeight) {
+      if (page.isClosed()) throw new Error(`窗口已关闭，无法局部截图：${label}`);
+      const canvas = await page.locator('canvas').boundingBox();
+      if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
+        throw new Error(`找不到可见正式游戏画布：${label}`);
+      }
+      const scaleX = canvas.width / 1280;
+      const scaleY = canvas.height / 720;
+      const clip = {
+        x: canvas.x + logicalX * scaleX,
+        y: canvas.y + logicalY * scaleY,
+        width: logicalWidth * scaleX,
+        height: logicalHeight * scaleY,
+      };
+      const screenshotDir = path.join(caseRoot, 'screenshots');
+      fs.mkdirSync(screenshotDir, { recursive: true });
+      const safeLabel = String(label).replace(/[^a-z0-9._-]+/gi, '-');
+      const screenshotPath = path.join(screenshotDir, `${safeLabel}.png`);
+      await page.screenshot({ path: screenshotPath, clip, animations: 'disabled' });
+      const screenshotSha256 = sha256File(screenshotPath);
+      const evidence = {
+        label,
+        path: screenshotPath,
+        bytes: fs.statSync(screenshotPath).size,
+        screenshotSha256,
+        pixelHash: screenshotSha256,
+        pixelHashMethod: 'sha256(clipped-rendered-canvas-PNG-bytes)',
+        logicalRect: { x: logicalX, y: logicalY, width: logicalWidth, height: logicalHeight },
+        viewportRect: clip,
+      };
+      screenshots.push(evidence);
+      return evidence;
+    },
+    async viewportEvidence(label) {
+      if (page.isClosed()) throw new Error(`窗口已关闭，无法读取 viewport：${label}`);
+      return page.evaluate((evidenceLabel) => {
+        const canvas = document.querySelector('canvas');
+        const rect = canvas?.getBoundingClientRect() ?? null;
+        return {
+          label: evidenceLabel,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          outerWidth: window.outerWidth,
+          outerHeight: window.outerHeight,
+          devicePixelRatio: window.devicePixelRatio,
+          canvas: rect ? {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            aspectRatio: rect.width / Math.max(1, rect.height),
+          } : null,
+        };
+      }, label);
+    },
+    async targetBounds(targetId) {
+      if (page.isClosed()) throw new Error(`窗口已关闭，无法读取交互目标：${targetId}`);
+      return page.evaluate((id) => {
+        const target = window.__surdetDebug?.interactionTargets?.find((item) => item.id === id);
+        const canvas = document.querySelector('canvas');
+        if (!target || !canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          id,
+          logical: { x: target.x, y: target.y, width: target.width, height: target.height },
+          viewport: {
+            x: rect.left + (target.x / 1280) * rect.width,
+            y: rect.top + (target.y / 720) * rect.height,
+            width: (target.width / 1280) * rect.width,
+            height: (target.height / 720) * rect.height,
+          },
+        };
+      }, targetId);
+    },
     async waitForStableCanvas(label) {
       let previous = null;
       for (let attempt = 1; attempt <= 12; attempt += 1) {
@@ -374,7 +458,10 @@ function caseEvidence(session, caseId, ok, assertions, error = null) {
     userData: session?.userData ?? path.join(tempRoot, caseId, 'user-data'),
     assetLoading: identity.assetLoading,
     assetComplete,
-    assertions,
+    assertions: {
+      ...cloneJson(assertions),
+      lastSnapshot: cloneJson(session?.lastSnapshot),
+    },
     events: cloneJson(session?.events ?? emptyEvents()),
     screenshots: cloneJson(session?.screenshots ?? []),
   };
@@ -443,9 +530,96 @@ function presentationWorld(snapshot) {
   return {
     backgroundKey: stage?.backgroundKey ?? null,
     portraits: cloneJson(stage?.portraits ?? []),
+    portraitProjection: portraitProjection(snapshot),
     dialogueText: snapshot?.dialogueProjection?.dialogText ?? null,
     speakerText: snapshot?.dialogueProjection?.speakerText ?? null,
   };
+}
+
+function portraitProjection(snapshot) {
+  const portraits = snapshot?.presentationSnapshot?.stage?.portraits;
+  if (!Array.isArray(portraits)) return [];
+  return portraits.map((portrait) => ({
+    key: portrait?.key ?? null,
+    character: portrait?.view?.charId ?? null,
+    costume: portrait?.view?.costume ?? null,
+    expression: portrait?.view?.expression ?? null,
+    position: portrait?.view?.pos ?? null,
+    // WorldPresentationSnapshot contains projected portraits only; an entry
+    // therefore represents a visible World portrait in the public query.
+    visible: true,
+  }));
+}
+
+function visualWorldKey(snapshot) {
+  const world = presentationWorld(snapshot);
+  return JSON.stringify({ backgroundKey: world.backgroundKey, portraitProjection: world.portraitProjection });
+}
+
+function assertWorldWithPortraits(snapshot, label) {
+  const world = presentationWorld(snapshot);
+  if (world.backgroundKey === null) {
+    throw new Error(`${label} 缺少背景：${JSON.stringify(world)}`);
+  }
+  if (!Array.isArray(world.portraits) || world.portraits.length < 1) {
+    throw new Error(`${label} 没有真实立绘投影：${JSON.stringify({ snapshot, world })}`);
+  }
+  if (world.portraitProjection.some((portrait) => Object.values(portrait).some((value) => value === null))) {
+    throw new Error(`${label} 立绘投影字段不完整：${JSON.stringify(world.portraitProjection)}`);
+  }
+  return world;
+}
+
+function assertRestoredState(before, after, label) {
+  const beforeWorld = presentationWorld(before);
+  const afterWorld = presentationWorld(after);
+  if (JSON.stringify(afterWorld) !== JSON.stringify(beforeWorld)) {
+    throw new Error(`${label} World/Dialogue/portrait projection 未完整恢复：${JSON.stringify({ beforeWorld, afterWorld })}`);
+  }
+  if (positionKey(after?.position) !== positionKey(before?.position)) {
+    throw new Error(`${label} 剧情位置未恢复：${JSON.stringify({ before: before?.position, after: after?.position })}`);
+  }
+  if (after?.commandRailVisible !== before?.commandRailVisible
+    || after?.activeOverlay !== before?.activeOverlay
+    || after?.uiSession?.base !== before?.uiSession?.base
+    || after?.uiSession?.overlay !== before?.uiSession?.overlay
+    || after?.uiSession?.operation !== 'idle'
+    || after?.lastRendererError !== null) {
+    throw new Error(`${label} command rail/overlay/session 未恢复或未收敛：${JSON.stringify({ before, after })}`);
+  }
+}
+
+async function advanceUntilPortraits(session, label, maxSteps = 80) {
+  const progression = [];
+  let current = await session.snapshot();
+  if (presentationWorld(current).portraits.length >= 1) {
+    return { snapshot: current, progression, advances: 0 };
+  }
+  for (let index = 0; index < maxSteps; index += 1) {
+    const step = await session.advanceStoryStep(`${label} ${index + 1}`);
+    progression.push(step);
+    current = step.after;
+    if (presentationWorld(current).portraits.length >= 1) {
+      assertWorldWithPortraits(current, `${label} 完成`);
+      return { snapshot: current, progression, advances: index + 1 };
+    }
+  }
+  throw new Error(`${label} 在 ${maxSteps} 次真实推进后仍没有立绘：${JSON.stringify(current)}`);
+}
+
+async function advanceUntilVisualChange(session, referenceSnapshot, label, maxSteps = 80) {
+  const referenceKey = visualWorldKey(referenceSnapshot);
+  const progression = [];
+  let current = referenceSnapshot;
+  for (let index = 0; index < maxSteps; index += 1) {
+    const step = await session.advanceStoryStep(`${label} ${index + 1}`);
+    progression.push(step);
+    current = step.after;
+    if (visualWorldKey(current) !== referenceKey) {
+      return { snapshot: current, progression, advances: index + 1 };
+    }
+  }
+  throw new Error(`${label} 在 ${maxSteps} 次真实推进后没有改变背景或立绘：${JSON.stringify(current)}`);
 }
 
 function assertWorldPresent(snapshot, label) {
@@ -630,37 +804,36 @@ async function runGameGalleryCase(session) {
 
 async function runSaveLoadCase(session, mode) {
   const initial = await startFormalGame(session);
-  const progression = [];
-  for (let index = 0; index < 4; index += 1) {
-    progression.push(await session.advanceStoryStep(`${mode} 表现种子 ${index + 1}`));
-  }
-  const before = await session.snapshot();
-  const beforeWorld = assertWorldPresent(before, `${mode} 存档前`);
+  const portraitSeed = await advanceUntilPortraits(session, `${mode} 立绘种子`);
+  const before = portraitSeed.snapshot;
+  const beforeWorld = assertWorldWithPortraits(before, `${mode} 存档前`);
   const saveResult = await selectSaveLoadSlot(session, 'save');
+  const perturbation = await advanceUntilVisualChange(session, before, `${mode} World 扰动`);
   const loadResult = await selectSaveLoadSlot(session, 'load');
   const after = loadResult ?? await session.snapshot();
-  const afterWorld = assertWorldPresent(after, `${mode} 读档后`);
-  if (JSON.stringify(afterWorld) !== JSON.stringify(beforeWorld)) {
-    throw new Error(`${mode} 读档后 World/Dialogue 未保持：${JSON.stringify({ beforeWorld, afterWorld })}`);
-  }
-  if (after?.uiSession?.overlay !== 'none' || after?.uiSession?.operation !== 'idle'
-    || after?.commandRailVisible !== true || after?.lastRendererError !== null) {
-    throw new Error(`${mode} 读档后玩家会话未收敛：${JSON.stringify(after)}`);
-  }
+  const afterWorld = assertWorldWithPortraits(after, `${mode} 读档后`);
+  assertRestoredState(before, after, `${mode} 读档后`);
   return {
     source: 'game',
     mode,
-    path: ['title:new', 'story:advance×4', 'system:save→slot-1', 'system:load→slot-1'],
+    path: ['title:new', `story:advance×${portraitSeed.advances}→portrait`, 'save→slot-1', `world:perturb×${perturbation.advances}`, 'load→slot-1'],
     initialPosition: initial?.position ?? null,
     beforePosition: before?.position ?? null,
     afterPosition: after?.position ?? null,
     beforeWorld,
     afterWorld,
     saveResult: saveResult?.uiSession ?? null,
-    progression: progression.map((step) => ({
+    portraitSeedProgression: portraitSeed.progression.map((step) => ({
       before: step.before?.position ?? null,
       after: step.after?.position ?? null,
+      world: presentationWorld(step.after),
     })),
+    perturbationProgression: perturbation.progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+      world: presentationWorld(step.after),
+    })),
+    perturbationWorld: presentationWorld(perturbation.snapshot),
     commandRailVisible: after?.commandRailVisible ?? null,
     overlay: after?.activeOverlay ?? null,
   };
@@ -668,26 +841,22 @@ async function runSaveLoadCase(session, mode) {
 
 async function runSaveLoadRoundTripCase(session) {
   const initial = await startFormalGame(session);
-  for (let index = 0; index < 3; index += 1) await session.advanceStoryStep(`多轮读档种子 ${index + 1}`);
-  const saved = await session.snapshot();
-  const savedWorld = assertWorldPresent(saved, '多轮读档首次存档前');
+  const portraitSeed = await advanceUntilPortraits(session, '多轮读档立绘种子');
+  const saved = portraitSeed.snapshot;
+  const savedWorld = assertWorldWithPortraits(saved, '多轮读档首次存档前');
   await selectSaveLoadSlot(session, 'save');
-  await session.advanceStoryStep('多轮读档第一次扰动');
+  const firstPerturbation = await advanceUntilVisualChange(session, saved, '多轮读档第一次扰动');
   const firstLoaded = await selectSaveLoadSlot(session, 'load');
-  const firstWorld = assertWorldPresent(firstLoaded, '多轮读档第一次恢复');
-  if (JSON.stringify(firstWorld) !== JSON.stringify(savedWorld)) {
-    throw new Error(`第一次读档 World 未恢复：${JSON.stringify({ savedWorld, firstWorld })}`);
-  }
+  const firstWorld = assertWorldWithPortraits(firstLoaded, '多轮读档第一次恢复');
+  assertRestoredState(saved, firstLoaded, '多轮读档第一次恢复');
   await selectSaveLoadSlot(session, 'save');
-  await session.advanceStoryStep('多轮读档第二次扰动');
+  const secondPerturbation = await advanceUntilVisualChange(session, firstLoaded, '多轮读档第二次扰动');
   const secondLoaded = await selectSaveLoadSlot(session, 'load');
-  const secondWorld = assertWorldPresent(secondLoaded, '多轮读档第二次恢复');
-  if (JSON.stringify(secondWorld) !== JSON.stringify(savedWorld)) {
-    throw new Error(`第二次读档 World 未恢复：${JSON.stringify({ savedWorld, secondWorld })}`);
-  }
+  const secondWorld = assertWorldWithPortraits(secondLoaded, '多轮读档第二次恢复');
+  assertRestoredState(saved, secondLoaded, '多轮读档第二次恢复');
   return {
     source: 'game',
-    path: ['title:new', 'story:advance×3', 'save→load', 'story:advance', 'save→load'],
+    path: ['title:new', `story:advance×${portraitSeed.advances}→portrait`, 'save→load', `world:perturb×${firstPerturbation.advances}`, 'save→load', `world:perturb×${secondPerturbation.advances}`, 'save→load'],
     initialPosition: initial?.position ?? null,
     savedPosition: saved?.position ?? null,
     firstLoadedPosition: firstLoaded?.position ?? null,
@@ -695,6 +864,19 @@ async function runSaveLoadRoundTripCase(session) {
     savedWorld,
     firstWorld,
     secondWorld,
+    portraitSeedProgression: portraitSeed.progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+      world: presentationWorld(step.after),
+    })),
+    firstPerturbation: {
+      advances: firstPerturbation.advances,
+      world: presentationWorld(firstPerturbation.snapshot),
+    },
+    secondPerturbation: {
+      advances: secondPerturbation.advances,
+      world: presentationWorld(secondPerturbation.snapshot),
+    },
     finalSession: secondLoaded?.uiSession ?? null,
   };
 }
@@ -739,45 +921,178 @@ async function runTitleCleanupCase(session, withTitleLoad = false) {
 
 async function runCommandRailCase(session) {
   const initial = await startFormalGame(session);
+  const commandRailAlphaSamples = [];
+  const progression = [];
+  const recordRail = (label, snapshot) => {
+    const projection = snapshot?.dialogueProjection ?? null;
+    const alpha = projection?.commandRailAlpha ?? null;
+    const visible = snapshot?.commandRailVisible ?? null;
+    const transientChoice = snapshot?.status === 'choice' || snapshot?.rendererStatus === 'choice';
+    commandRailAlphaSamples.push({
+      label,
+      alpha,
+      visible,
+      status: snapshot?.status ?? null,
+      position: snapshot?.position ?? null,
+      dialogText: projection?.dialogText ?? null,
+    });
+    if (alpha !== 1) throw new Error(`${label} commandRailAlpha 不是 1：${JSON.stringify(snapshot)}`);
+    if (visible !== true && !transientChoice) {
+      throw new Error(`${label} commandRailVisible 意外变为 false：${JSON.stringify(snapshot)}`);
+    }
+  };
+
+  recordRail('initial', initial);
   await session.page.waitForTimeout(5000);
-  const before = await session.snapshot();
-  if (before?.dialogueProjection?.commandRailAlpha !== 1 || before?.commandRailVisible !== true) {
-    throw new Error(`命令栏稳定性失败：${JSON.stringify(before?.dialogueProjection)}`);
+  const settled = await session.snapshot();
+  recordRail('after-wait-5s', settled);
+
+  for (let index = 0; index < 20; index += 1) {
+    const step = await session.advanceStoryStep(`命令栏真实对话推进 ${index + 1}`);
+    const beforePosition = positionKey(step.before?.position);
+    const afterPosition = positionKey(step.after?.position);
+    const beforeText = step.before?.dialogueProjection?.dialogText ?? null;
+    const afterText = step.after?.dialogueProjection?.dialogText ?? null;
+    if (beforePosition === afterPosition && beforeText === afterText) {
+      throw new Error(`第 ${index + 1} 次推进没有位置或当前文本变化：${JSON.stringify(step)}`);
+    }
+    progression.push(step);
+    recordRail(`story-advance-${index + 1}`, step.after);
   }
+
+  // If the twentieth input landed on an allowed choice transient, keep using
+  // real player input until the ordinary dialogue rail is visible again.
+  let final = await session.snapshot();
+  for (let extra = 0; extra < 4 && final?.commandRailVisible !== true; extra += 1) {
+    const step = await session.advanceStoryStep(`命令栏结束态恢复 ${extra + 1}`);
+    progression.push(step);
+    recordRail(`story-recovery-${extra + 1}`, step.after);
+    final = step.after;
+  }
+  if (final?.commandRailVisible !== true) {
+    throw new Error(`20 次真实推进后命令栏没有回到普通对话态：${JSON.stringify(final)}`);
+  }
+
+  const beforeHover = await session.snapshot();
+  recordRail('before-hover', beforeHover);
+  const targetBefore = await session.captureCanvasRegion('rail-auto-before-hover', 808, 650, 52, 62);
+  const outsideLeftBefore = await session.captureCanvasRegion('rail-outside-left-before-hover', 760, 650, 44, 62);
+  const outsideRightBefore = await session.captureCanvasRegion('rail-outside-right-before-hover', 866, 650, 44, 62);
   await session.hoverTarget('rail:auto');
   const afterHover = await session.snapshot();
-  if (afterHover?.dialogueProjection?.commandRailAlpha !== 1 || afterHover?.commandRailVisible !== true) {
-    throw new Error(`命令栏悬停后 root alpha/可见性变化：${JSON.stringify(afterHover?.dialogueProjection)}`);
+  recordRail('after-hover', afterHover);
+  const targetAfter = await session.captureCanvasRegion('rail-auto-after-hover', 808, 650, 52, 62);
+  const outsideLeftAfter = await session.captureCanvasRegion('rail-outside-left-after-hover', 760, 650, 44, 62);
+  const outsideRightAfter = await session.captureCanvasRegion('rail-outside-right-after-hover', 866, 650, 44, 62);
+  if (targetBefore.pixelHash === targetAfter.pixelHash) {
+    throw new Error(`rail:auto 悬停没有可观察的局部投影变化：${JSON.stringify({ targetBefore, targetAfter })}`);
+  }
+  if (outsideLeftBefore.pixelHash !== outsideLeftAfter.pixelHash
+    || outsideRightBefore.pixelHash !== outsideRightAfter.pixelHash) {
+    throw new Error(`rail:auto 悬停改变了目标按钮之外的 rail：${JSON.stringify({ outsideLeftBefore, outsideLeftAfter, outsideRightBefore, outsideRightAfter })}`);
   }
   return {
     source: 'game',
-    path: ['title:new', 'wait:5s', 'hover:rail:auto'],
+    path: ['title:new', 'wait:5s', `story:advance×${progression.length}`, 'hover:rail:auto'],
     initialPosition: initial?.position ?? null,
-    beforeRail: before?.dialogueProjection ?? null,
+    settledPosition: settled?.position ?? null,
+    finalPosition: final?.position ?? null,
+    progressionCount: progression.length,
+    progression: progression.map((step) => ({
+      before: step.before?.position ?? null,
+      after: step.after?.position ?? null,
+      beforeText: step.before?.dialogueProjection?.dialogText ?? null,
+      afterText: step.after?.dialogueProjection?.dialogText ?? null,
+    })),
+    commandRailAlphaSamples,
+    beforeRail: beforeHover?.dialogueProjection ?? null,
     afterHoverRail: afterHover?.dialogueProjection ?? null,
+    hoverEvidence: {
+      targetBefore,
+      targetAfter,
+      outsideLeftBefore,
+      outsideLeftAfter,
+      outsideRightBefore,
+      outsideRightAfter,
+    },
   };
 }
 
 async function runFullscreenCase(session) {
   const initial = await startFormalGame(session);
   const before = await session.snapshot();
+  const beforeViewport = await session.viewportEvidence('before-F11');
+  const beforeCanvas = await session.captureCanvas('fullscreen-before');
+  const beforeMenuTarget = await session.targetBounds('rail:menu');
   const beforeTargets = (before?.interactionTargets ?? []).map((target) => target.id);
+  if (!beforeMenuTarget) throw new Error('F11 前缺少 rail:menu 可点击坐标');
   await session.press('F11');
+  await session.waitForPresentedFrame('F11-entered');
   const entered = await session.snapshot();
-  await session.press('F11');
-  const exited = await session.snapshot();
+  const enteredViewport = await session.viewportEvidence('after-F11-enter');
+  const enteredCanvas = await session.captureCanvas('fullscreen-entered');
+  const enteredMenuTarget = await session.targetBounds('rail:menu');
   const enteredTargets = (entered?.interactionTargets ?? []).map((target) => target.id);
+  if (!enteredMenuTarget) throw new Error('F11 后缺少 rail:menu 可点击坐标');
+  await session.clickTarget('rail:menu');
+  await session.waitOverlay('system-menu');
+  const fullscreenMenu = await session.snapshot();
+  const fullscreenMenuPosition = positionKey(fullscreenMenu?.position);
+  await session.clickTarget('system:resume');
+  await session.waitFor('全屏 system-menu 关闭', () => window.__surdetDebug?.activeOverlay === null);
+  const fullscreenAfterClose = await session.snapshot();
+  if (positionKey(fullscreenAfterClose?.position) !== positionKey(initial?.position)
+    || fullscreenMenuPosition !== positionKey(initial?.position)) {
+    throw new Error(`全屏菜单开关推进了剧情：${JSON.stringify({ initial, fullscreenMenu, fullscreenAfterClose })}`);
+  }
+
+  await session.press('F11');
+  await session.waitForPresentedFrame('F11-exited');
+  const exited = await session.snapshot();
+  const exitedViewport = await session.viewportEvidence('after-F11-exit');
+  const exitedCanvas = await session.captureCanvas('fullscreen-exited');
+  const exitedMenuTarget = await session.targetBounds('rail:menu');
   const exitedTargets = (exited?.interactionTargets ?? []).map((target) => target.id);
+  if (!exitedMenuTarget) throw new Error('退出 F11 后缺少 rail:menu 可点击坐标');
+  await session.clickTarget('rail:menu');
+  await session.waitOverlay('system-menu');
+  const exitedMenu = await session.snapshot();
+  await session.clickTarget('system:resume');
+  await session.waitFor('退出全屏 system-menu 关闭', () => window.__surdetDebug?.activeOverlay === null);
+  const exitedAfterClose = await session.snapshot();
+  if (positionKey(exitedAfterClose?.position) !== positionKey(initial?.position)
+    || positionKey(exitedMenu?.position) !== positionKey(initial?.position)) {
+    throw new Error(`退出全屏菜单开关推进了剧情：${JSON.stringify({ initial, exitedMenu, exitedAfterClose })}`);
+  }
+
+  const viewports = [beforeViewport, enteredViewport, exitedViewport];
+  for (const viewport of viewports) {
+    if (!viewport.canvas || Math.abs(viewport.canvas.aspectRatio - (1280 / 720)) > 0.02) {
+      throw new Error(`F11 阶段画布发生拉伸或缺失：${JSON.stringify(viewport)}`);
+    }
+  }
   if (!beforeTargets.includes('rail:menu') || !enteredTargets.includes('rail:menu') || !exitedTargets.includes('rail:menu')) {
     throw new Error(`F11 后交互目标缺失：${JSON.stringify({ beforeTargets, enteredTargets, exitedTargets })}`);
   }
   return {
     source: 'game',
-    path: ['title:new', 'F11', 'F11'],
+    path: ['title:new', 'F11→page.mouse.click rail:menu→system:resume', 'F11→page.mouse.click rail:menu→system:resume'],
     initialPosition: initial?.position ?? null,
+    beforeViewport,
+    enteredViewport,
+    exitedViewport,
+    beforeCanvas,
+    enteredCanvas,
+    exitedCanvas,
+    beforeMenuTarget,
+    enteredMenuTarget,
+    exitedMenuTarget,
     beforeTargets,
     enteredTargets,
     exitedTargets,
+    fullscreenMenuPosition,
+    exitedMenuPosition: positionKey(exitedMenu?.position),
+    menuClicksUsed: 2,
   };
 }
 
