@@ -297,6 +297,7 @@ async function launchSession(caseId) {
               && debug?.uiSession?.operation === 'idle'
               && debug?.activeOverlay === null;
           }, undefined, 12000);
+          await this.waitFor('剧情表现投影完成', () => window.__surdetDebug?.rendererStatus !== 'typing', undefined, 20000);
           return { before, after: await this.snapshot(), attempts: attempt };
         } catch {
           // A real ADV input can first finish a typewriter/timer boundary.

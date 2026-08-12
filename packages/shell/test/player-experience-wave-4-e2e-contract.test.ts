@@ -83,6 +83,7 @@ describe('Player Experience Wave 4 Electron contract', () => {
     expect(source).toContain("await session.clickTarget('system:resume')");
     expect(source).toContain('fullscreen');
     expect(source).toContain("debug?.rendererStatus !== 'typing'");
+    expect(source).toContain("剧情表现投影完成");
     expect(source).toContain('lastSnapshot: cloneJson(session?.lastSnapshot)');
     expect(source).toContain('errorStack');
     expect(source).toContain("git', ['rev-parse', 'HEAD']");
