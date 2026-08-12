@@ -382,3 +382,92 @@ M9_NOT_STARTED
 NOT_PUSHED
 WAITING_FOR_REVIEW
 ```
+
+## 10. Wave 4 最终证据微型收口（总经理复审整改）
+
+本节是对本报告中旧的 E/F/I/J 证据质量的补充和收口，不删除历史记录，也不把旧 artifact 重新解释为新证据。本节权威范围仅限玩家证据 runner、静态契约测试、artifact 留证和本轮最终矩阵；没有修改 Renderer、Host、Core 或《零点之后》的生产实现。
+
+### 10.1 原证据为什么不足
+
+独立复审指出，旧的 `LxD7Q9` 与 `PHO3Gv` 两份完整矩阵虽然 A–J 语义结果为 `10/10`，但不能作为本轮最终证据：
+
+- E/F 的保存前后 `portraits` 为空，未证明真实立绘参与存读档恢复；
+- I 只记录 `title:new → wait:5s → story/hover`，没有固定的 20 次真实玩家推进，也没有每次命令栏 alpha/可见性记录和局部 hover 证据；
+- J 只记录了交互目标 ID，没有在 F11 前后用 `page.mouse.click()` 真正点击 `rail:menu` 并恢复；
+- 原先的标题 Gallery Case A 只检查了 `activeOverlay`，因此属于“内部语义假绿”：它证明状态机切到了 `gallery:music`/`gallery:text`，但没有证明静态标题画布已经提交新内容。后续 Task 1 的真实 `requestFrame` 红灯和画布 pixel hash 红灯已经证明该区别；公共 `GalleryLayer.#rebuildGallery()` 修复后，标题和游戏来源都以渲染画布证据通过。
+
+旧 artifact 仍保留在临时目录并在前文台账中列出，但不再冒充 E/F/I/J 的最终权威证据。
+
+### 10.2 本轮测试先行与真实失败轨迹
+
+本轮先加入静态防漏契约，再改 runner：
+
+- 红灯：契约测试 `5 passed / 1 failed`，失败断言为 runner 没有强制 `portraits.length >= 1`、`portraitProjection`、20 次推进、alpha 样本、真实 F11 菜单点击和失败留证字段；
+- 绿灯：同一契约测试 `1 file / 6 tests passed`，并通过 `node --check packages/shell/e2e/player-experience-wave-4.e2e.mjs`；
+- E 初始两次红灯是 runner 对新鲜 choice 使用 `Space`/`Enter`，未完成真实选项确认，不是产品错误；失败 artifact 未删除：
+  - `<local-path>`，SHA-256 `60AF1C0324EDF905285B49801A749DD93522291C088E437F5A98C3575E5C89E6`；
+  - `<local-path>`，SHA-256 `553A4C2725A63E8147E5F25BC5CC505B45FDA0E8755606BC54BA36ADB0265F89`；
+  - runner 改为真实数字键 `1` 选择首项后，E 通过；
+- 提交后完整矩阵曾真实暴露 F 的打字机取样时序红灯：
+  - `cY0Z7q` artifact，bytes `199018`，SHA-256 `747D464008F7F26B69BBE1509101E65EB17F776117A32C42DEA9AD672C9184C1`，F 在保存前取到中间文本“别”，读档后仍在空文本边界；
+  - `EyMdel` artifact，bytes `26653`，SHA-256 `59ADB7F0C6218F8EF0ECD9DECA5F400246C86FC0E16CAA24002AA9ED0EA35F1F`，F 在保存前取到“别”，读档后取到完整文本“别开灯。”；
+  - 两份失败的 `events.pageErrors/consoleErrors/requestFailures/unhandledRejections/rendererErrors/releaseFailures` 均为空，说明是证据采样时序而非资源或 Renderer 运行时错误；
+  - runner 增加基于公开 `rendererStatus !== 'typing'` 的语义稳定等待后，同一 F 测试通过；没有固定延时、没有放宽恢复断言、没有修改生产代码。
+- 最终 runner HEAD 上曾有一轮 I 的真实局部 hover 红灯：`6tK2NL` artifact，bytes `217665`，SHA-256 `533C0062DF777DC7B9268B63331D9BEA5AEBE7AD89B0B139A8BE0B95FAE1DC42`；20 次推进与 alpha 记录均通过，失败仅为 `rail:auto` 局部 PNG 前后相同，六类错误数组均为空。随后同一 HEAD 的 I 单项和两轮全量矩阵均通过；该失败 artifact 保留，不被绿色轮次覆盖。
+
+本轮 runner-only 修正形成三个独立普通提交：
+
+1. `10e993f04c0031f22001bee126c78abe7cd638ba` — `test(shell): strengthen wave 4 evidence contracts`；
+2. `ff8e75849d06b1e0827288b7a26d17ee30ce97e6` — `test(shell): stabilize save-load evidence capture`；
+3. `1cd27079260facb8e3d3aff00b12a6d0777f3509` — `test(shell): capture settled dialogue evidence`。
+
+实际改动仅为：
+
+- `E:\surdet\packages\shell\e2e\player-experience-wave-4.e2e.mjs`；
+- `E:\surdet\packages\shell\test\player-experience-wave-4-e2e-contract.test.ts`。
+
+### 10.3 E/F/I/J 最终可复核证据
+
+- E：正式《零点之后》、独立 Electron/userData、真实数字键选择、存档前至少一项真实立绘投影、真实 World 扰动、读档后背景/立绘/portrait projection/对话/说话人/剧情位置恢复；最终两轮矩阵的 E 均通过。
+- F：三次 save/load round-trip，保存前后均有真实 `zhirao:commute` portrait projection；两轮扰动后每次读档恢复，最终矩阵的 F 均通过。
+- I：正式 Zero 入口连续 20 次真实 `advanceStoryStep`，每步位置或对话发生变化；最终记录 `commandRailAlphaSamples=24`，样本 alpha 均为 `1` 且普通状态可见；`rail:auto` 使用真实鼠标 hover，目标局部 PNG hash 变化，左右相邻区域 hash 保持不变。
+- J：两轮 F11 前后均用真实 `page.mouse.click()` 点击 `rail:menu`，等待 `system-menu`，再真实点击 `system:resume`；`menuClicksUsed=2`，剧情位置保持不变；before/entered/exited 画布 aspect ratio 均为 `1.77826725403818`。
+
+### 10.4 两轮最终完整矩阵（同一最终 runner HEAD）
+
+两轮均通过同一正式入口 `E:\surdet\examples\zero-after-midnight\dist`，每个 case 使用独立 Electron 和独立 userData；artifact 的 `head` 均来自运行时真实 `git rev-parse HEAD`，为 `1cd27079260facb8e3d3aff00b12a6d0777f3509`。
+
+| 轮次 | artifact | bytes | SHA-256 | 结果 |
+|---|---|---:|---|---|
+| 1 | `<local-path>` | 240489 | `4EA455CCB37C97B407A715267EB67E7A72D5817A6E9BB530C398A0D3AF596FD8` | A–J `10/10`, `PASSED` |
+| 2 | `<local-path>` | 240517 | `A1493E90F8942A5C616EAEE91385C04CA31C31CED1C717587E9570D07044D58F` | A–J `10/10`, `PASSED` |
+
+两份 artifact 的结构核对结果一致：正式标题 `零点之后 / AFTER MIDNIGHT`；source root 为 `E:\surdet\examples\zero-after-midnight`；dist root 为 `E:\surdet\examples\zero-after-midnight\dist`；每个 case `assetLoading=48/48/0/done=true`；E/F 真实立绘计数均为 `1`；I `progressionCount=20`、alpha 样本 `24`；J 真实菜单点击 `2`；`pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures` 六类数组在全部 case 均为空。
+
+### 10.5 三项 harness 证据质量修正
+
+1. artifact 顶层 `head` 改为运行时执行 `git rev-parse HEAD` 的真实值，不再写 `unknown`；
+2. `caseEvidence()` 在失败时继续保留已经采集的 `events`、`assertions`、`screenshots`、`error`、`errorStack` 和最新 `lastSnapshot`；上述 E/F/I 失败 artifact 验证了这一点；
+3. 删除 runner 中不存在的 `window.surdetDebug.showTitleScreen()` 调用，避免 harness 自身 setup 错误污染后续 case。
+
+### 10.6 本轮边界与最终状态
+
+- 未修改 Renderer/Host/Core、正式游戏剧情/资产/音频、DSL、存档格式、性能 artifact/比较器/门限；
+- 未进入 M9，未做性能工作，未发行，未 push；
+- 四个受保护文件未修改、未暂存、未提交、未删除、未移动：`SESSION-HANDOFF.md`、`USER.md`、`docs/SURDET-ART-DIRECTION-UPDATE-BRIEF-2026-08-09.md`、`docs/SURDET-ART-DIRECTOR-HANDOFF-2026-08-09.md`；
+- `AGENTS.md` 是本轮执行期间由外部环境新增的未跟踪文件，未被本轮修改、暂存、提交或删除，不能将其误列为本轮交付内容；
+- 报告/计划台账提交后的最终 `HEAD`、ahead/behind、工作树和本报告字节数/SHA-256 以提交后最后一次只读核对为准，并在最终回报中记录真实值，不在提交前臆造。
+
+本轮最终停止状态：
+
+```text
+PLAYER_EXPERIENCE_WAVE_4_EVIDENCE_REMEDIATION_COMPLETE
+VISIBLE_EF_RESTORE_EVIDENCE_VERIFIED
+COMMAND_RAIL_20_STEP_EVIDENCE_VERIFIED
+F11_REAL_MOUSE_EVIDENCE_VERIFIED
+WAVE_4_MATRIX_TWO_FINAL_RUNS_PASSED
+PERFORMANCE_WORK_DEFERRED
+M9_NOT_STARTED
+NOT_PUSHED
+WAITING_FOR_REVIEW
+```

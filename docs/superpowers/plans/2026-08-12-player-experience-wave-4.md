@@ -1181,3 +1181,23 @@ WAITING_FOR_REVIEW
 - Task 9 Step 6 收口提交：`27fe2362f7d5a651f96d48be6469bb4634ce7311` — `docs(engine): normalize wave 4 delivery records`；报告与计划台账已提交，四个受保护文件未暂存。
 - Task 9 Step 7 在该提交上完成：`npm run verify:all` exit `0`；`git diff --check` exit `0`；`git ls-files '*.log'` 为 `0`；`git status --short` 仅四个受保护未跟踪文件；`git rev-list --left-right --count HEAD...surdet/main` 为 `12 0`；报告 bytes=`18076`、SHA-256=`907FB88394569EA58B4D39E252320960BCFDF1D71BCEE59588B9004A07F93877`。下一步只需把本台账的完成状态提交为普通文档提交，再在该真实最终 HEAD 重跑一次 `verify:all` 并停止。
 - Task 9 Step 8：不 push，保持 `WAITING_FOR_REVIEW`；不进入 M9、不做性能/发行/部署。
+
+### Wave 4 最终证据微型收口（独立复审后，completed）
+
+- 起始复核：本轮开始时 `HEAD=8a2f34a9ddcfa12213cbcd396b35289286973d23`，`HEAD...surdet/main=13 0`，工作树仅四个受保护未跟踪文件；未修改任何生产实现、性能文件或受保护文件。
+- 先行红灯：新增 E/F/I/J 证据契约后，`npm run test -w @surdet/shell -- --run player-experience-wave-4-e2e-contract.test.ts` 为 `5 passed / 1 failed`；失败点为缺少真实立绘、长推进、alpha、F11 鼠标点击和失败证据字段约束。
+- 先行绿灯：同一契约测试修复后为 `1 file / 6 tests passed`，runner `node --check` 通过。
+- runner 只修改 `packages/shell/e2e/player-experience-wave-4.e2e.mjs` 与 `packages/shell/test/player-experience-wave-4-e2e-contract.test.ts`，并依次提交：
+  - `10e993f04c0031f22001bee126c78abe7cd638ba` — `test(shell): strengthen wave 4 evidence contracts`；
+  - `ff8e75849d06b1e0827288b7a26d17ee30ce97e6` — `test(shell): stabilize save-load evidence capture`；
+  - `1cd27079260facb8e3d3aff00b12a6d0777f3509` — `test(shell): capture settled dialogue evidence`。
+- E/F/I/J 单项证据：E 在真实数字键 choice 修正后通过；F 先后保留两次 typing 取样红灯，增加公开 `rendererStatus !== 'typing'` 语义同步后通过；I 曾保留一次局部 hover hash 红灯，同一最终 runner HEAD 单项随后通过；J 真实 F11→`page.mouse.click(rail:menu)`→resume 两次通过。所有失败 artifact 原样保留。
+- 最终两轮完整 A–J 矩阵均在同一最终 runner HEAD `1cd27079260facb8e3d3aff00b12a6d0777f3509` 上通过，正式入口为 `E:\surdet\examples\zero-after-midnight\dist`：
+  - 轮 1：`<local-path>`，bytes `240489`，SHA-256 `4EA455CCB37C97B407A715267EB67E7A72D5817A6E9BB530C398A0D3AF596FD8`；
+  - 轮 2：`<local-path>`，bytes `240517`，SHA-256 `A1493E90F8942A5C616EAEE91385C04CA31C31CED1C717587E9570D07044D58F`；
+  - 两轮均 `status=PASSED`、A–J `10/10`、资产 `48/48/0/done=true`、E/F portrait count `1`、I progression `20`/alpha samples `24`、J real menu clicks `2`，六类错误数组全部为空。
+- 旧 `LxD7Q9`/`PHO3Gv` 只作为历史有限证据；不再把其空 portraits、旧 I 等待路径或旧 J target-ID 记录称为最终 E/F/I/J 证据。
+- 三项 harness 证据修正已验证：真实 `git rev-parse HEAD`；失败 case 保留 events/assertions/screenshots/error/errorStack/lastSnapshot；移除不存在的 `window.surdetDebug.showTitleScreen()`。
+- 本轮新增外部未跟踪 `AGENTS.md` 未被修改、暂存、提交或删除；它不属于本轮允许交付文件。四个受保护文件仍未触碰。
+- 代码证据收口完成后，下一步只允许：精确暂存本轮报告与本计划、创建普通文档提交、在最终 HEAD 运行 `npm run verify:all`、`git diff --check`、tracked log/status/ahead-behind 复核；不得 push、不得进入 M9、不得做性能工作。
+- 状态：`FINAL_EVIDENCE_REMEDIATION=COMPLETED`；`WAITING_FOR_REVIEW`。
