@@ -472,3 +472,16 @@ WAITING_FOR_REVIEW
 - 文档提交已创建并读取真实值：`755fdea892df8b55ea14035076945cf02251eaca`，提交信息 `docs(player): deliver wave 5a rollback evidence`；其后在该 HEAD 上重新执行 `npm run verify:all`，exit code `0`。
 - 当前最终复核：`HEAD=755fdea892df8b55ea14035076945cf02251eaca`、`HEAD...surdet/main=2 0`、`git diff --check` exit code `0`、tracked `.log` 为空；工作树仅保留五个保护文件和既有未跟踪 Wave 5B 计划。两次普通本地提交均未 push。
 - 当前停止状态：`PLAYER_EXPERIENCE_WAVE_5A_ROLLBACK_BLACK_SCREEN_REMEDIATED`、`ENGINE_LAYER_FIX_VERIFIED`、`PERFORMANCE_WORK_DEFERRED`、`M9_NOT_STARTED`、`NOT_PUSHED`、`WAITING_FOR_REVIEW`。不进入 Wave 5B。
+
+### Final evidence remediation — completed (2026-08-12)
+
+- 收口前只读核对：`git rev-parse HEAD=95147d40fc71151577e7bf0528f345ab5c96491c`；`git rev-list --left-right --count HEAD...surdet/main=3 0`；工作树只有 `AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术方向/交接文档和既有 Wave 5B 计划这六个未跟踪文件。六个文件全程未触碰。
+- 按固定正式协议重新执行一次：`npm run e2e:player-experience:wave5a -w @surdet/shell`，exit code `0`。本次从当前已提交 HEAD 重新构建并运行，使用新临时根目录和新独立 userData，没有复用旧 dist、旧 artifact 或旧截图；未调用 `performRollback()`、debug action、`titleSelect()` 或直接修改解释器位置。
+- 新权威 artifact：`<local-path>`；`bytes=67859787`；SHA-256=`259087456f6999d1405813c5ab3ec017c13ceb9b7af0347b455ae0d094b3d2e0`；`status=PASSED`；`head=95147d40fc71151577e7bf0528f345ab5c96491c`。
+- 新 artifact 的独立磁盘复核：`actualSessions=8`、`actualAttempts=160`；8 个 session 各 `20/20`；前四个 `settled`、后四个 `rapid`；160 次 `validHistory=true`；每次都有 `before/after` 表现快照和 `backgroundKey`、`portraits`、`fadeAlpha`、`tint`、`timelines` 等字段。
+- 截图完整性独立复核：640 条 screenshot records、640 个唯一路径；全部存在；字节数与 `canvasPngHash`/`screenshotSha256` 不匹配为 `0`。160 个 after canvas 的 `maxAfterBlackPixelRatio=0.17835043670902193`，未触发 `blackPixelRatio >= 0.985`。
+- 所有事件错误数组和窗口状态独立复核为零：`pageErrors=0`、`consoleErrors=0`、`requestFailures=0`、`unhandledRejections=0`、`rendererErrors=0`、`releaseFailures=0`、`unexpectedWindowClosed=0`。
+- 旧 artifact 保留为历史证据：`<local-path>`；`head=2edc65d55cae85bd7fd296501c5e2d896d36be9d`；它在实现提交前生成，不再作为最终 HEAD 权威证据。
+- 报告已纠正 Wave 5B 路径为 `docs/superpowers/plans/2026-08-12-player-experience-wave-5b-layout-polish.md`。本次未修改该文件。
+- `npm run verify:all` 未在本次证据收口重跑；仅引用此前独立 exit code `0`。本次未修改生产源码、未修改性能数据/门限、未进入 M9、未 push。
+- 下一入口：创建唯一一份普通文档提交，仅包含本报告与本计划；提交后做只读 Git/报告磁盘核对，然后停止在 `WAITING_FOR_REVIEW`。
