@@ -134,6 +134,34 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(source).not.toContain('await page.keyboard.press(key)');
   });
 
+  it('separates target choice candidate arrival from settled choice entry', () => {
+    const source = runnerSource();
+    expect(source).toContain('function isTargetChoiceCandidate(');
+    expect(source).toContain('choiceCandidateSnapshot');
+    expect(source).toContain('choiceSettledSnapshot');
+    expect(source).toContain('await session.waitChoice();');
+
+    const candidateStart = source.indexOf('function isTargetChoiceCandidate(');
+    const candidateEnd = source.indexOf('\n}', candidateStart);
+    expect(candidateStart).toBeGreaterThanOrEqual(0);
+    expect(candidateEnd).toBeGreaterThan(candidateStart);
+    const candidateSource = source.slice(candidateStart, candidateEnd);
+    expect(candidateSource).not.toContain('visibleChoiceCount === 3');
+    expect(candidateSource).toContain("sceneId === 'common_0017'");
+    expect(candidateSource).toContain("interpreterStatus === 'awaiting-choice'");
+    expect(candidateSource).toContain("rendererStatus === 'choice'");
+    expect(candidateSource).toContain('choiceLabels.length === 3');
+    expect(candidateSource).toContain('choiceBounds.length === 3');
+
+    const waitChoiceStart = source.indexOf('async waitChoice()');
+    const waitChoiceEnd = source.indexOf('\n    },', waitChoiceStart);
+    expect(waitChoiceStart).toBeGreaterThanOrEqual(0);
+    expect(waitChoiceEnd).toBeGreaterThan(waitChoiceStart);
+    const waitChoiceSource = source.slice(waitChoiceStart, waitChoiceEnd);
+    expect(waitChoiceSource).toContain('visibleChoiceCount === 3');
+    expect(waitChoiceSource).toContain('choiceBounds?.length === 3');
+  });
+
   it('uses real player input and forbids debug or direct interpreter shortcuts', () => {
     const source = runnerSource();
     expect(source).toContain('page.mouse.click');

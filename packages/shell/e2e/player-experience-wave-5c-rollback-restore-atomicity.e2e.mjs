@@ -114,6 +114,26 @@ function positionKey(position) {
   return position ? String(position.sceneId) + ':' + String(position.pc) : 'null';
 }
 
+const TARGET_CHOICE_LABELS = Object.freeze([
+  '记录她说的时间',
+  '追问失踪的原因',
+  '先挂断电话',
+]);
+
+function isTargetChoiceCandidate(snapshot) {
+  const sceneId = snapshot?.position?.sceneId;
+  const interpreterStatus = snapshot?.interpreterStatus;
+  const rendererStatus = snapshot?.rendererStatus;
+  const choiceLabels = snapshot?.choiceLabels || [];
+  const choiceBounds = snapshot?.choiceBounds || [];
+  return sceneId === 'common_0017'
+    && interpreterStatus === 'awaiting-choice'
+    && rendererStatus === 'choice'
+    && choiceLabels.length === 3
+    && choiceBounds.length === 3
+    && JSON.stringify(choiceLabels) === JSON.stringify(TARGET_CHOICE_LABELS);
+}
+
 function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
@@ -517,19 +537,16 @@ async function launchSession(caseId, mode) {
       await this.waitFor('scene ' + sceneId, (expected) => window.__surdetDebug?.position?.sceneId === expected, sceneId, 30000);
     },
     async waitChoice() {
-      await this.waitFor('common_0017 choice', () => {
+      await this.waitFor('common_0017 choice', (expectedLabels) => {
         const projection = window.__surdetDebug?.dialogueProjection;
         return window.__surdetDebug?.position?.sceneId === 'common_0017'
           && window.__surdetDebug?.status === 'awaiting-choice'
           && window.__surdetDebug?.rendererStatus === 'choice'
           && projection?.visibleChoiceCount === 3
           && projection?.choiceBounds?.length === 3
-          && JSON.stringify(projection?.choiceLabels || []) === JSON.stringify([
-            '记录她说的时间',
-            '追问失踪的原因',
-            '先挂断电话',
-          ]);
-      }, undefined, 30000);
+          && JSON.stringify(projection?.choiceLabels || []) === JSON.stringify(expectedLabels);
+      }, TARGET_CHOICE_LABELS, 30000);
+      return this.snapshot();
     },
     async recordAnomaly(type, message, snapshot, canvas) {
       const anomaly = {
@@ -711,29 +728,39 @@ async function runPrologueCase(session) {
 async function runChoiceCase(session) {
   await session.waitAssetsAndTitle();
   await session.clickTarget('title:new', 'title:new');
-  let reachedChoice = false;
+  let choiceCandidateSnapshot = null;
   for (let index = 0; index < protocol.cases[1].maxAdvanceSteps; index += 1) {
     const current = await session.snapshot();
-    if (current?.position?.sceneId === 'common_0017'
-      && current?.choiceVisibleCount === 3
-      && current?.choiceBounds?.length === 3
-      && current?.interpreterStatus === 'awaiting-choice'
-      && current?.rendererStatus === 'choice'
-      && JSON.stringify(current?.choiceLabels || []) === JSON.stringify([
-        '记录她说的时间',
-        '追问失踪的原因',
-        '先挂断电话',
-      ])) {
-      reachedChoice = true;
+    if (isTargetChoiceCandidate(current)) {
+      choiceCandidateSnapshot = cloneJson(current);
       break;
     }
     await session.advanceTextOne('common_0017 advance ' + (index + 1));
   }
-  if (!reachedChoice) throw new Error('未通过真实推进到达 common_0017 三选一');
-  await session.waitChoice();
+  if (!choiceCandidateSnapshot) throw new Error('未通过真实推进到达 common_0017 三选一');
+  const choiceSettledSnapshot = await session.waitChoice();
+  session.caseEvidence = {
+    rollbackInput: 'rail:rollback',
+    commonChoiceScene: choiceSettledSnapshot?.position?.sceneId ?? null,
+    choiceCandidateSnapshot,
+    choiceSettledSnapshot,
+    initialChoiceClick: null,
+    postRollbackChoiceCandidateSnapshot: null,
+    postRollbackChoiceSettledSnapshot: null,
+    postRollbackChoiceClick: null,
+    ghostChoiceObserved: false,
+  };
   await session.captureScreenshot('start');
-  const choiceBefore = await session.snapshot();
+  const choiceBefore = choiceSettledSnapshot;
+  const initialChoiceClickAt = new Date().toISOString();
   const choicePoint = await session.clickTarget('choice:0', 'real choice option choice:0');
+  session.caseEvidence.initialChoiceClick = {
+    order: 1,
+    target: 'choice:0',
+    point: choicePoint,
+    clickedAt: initialChoiceClickAt,
+    input: 'page.mouse.click',
+  };
   await session.waitFor('choice branch selected', () => window.__surdetDebug?.status !== 'awaiting-choice'
     && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
@@ -781,7 +808,9 @@ async function runChoiceCase(session) {
       choiceMismatch: stale,
       choiceBefore,
       selected,
-      actualChoiceClick: { target: 'choice:0', point: choicePoint, input: 'page.mouse.click' },
+      actualChoiceClick: { target: 'choice:0', point: choicePoint, clickedAt: initialChoiceClickAt, input: 'page.mouse.click' },
+       choiceCandidateSnapshot,
+       choiceSettledSnapshot,
       choiceBounds: choiceBefore?.choiceBounds || [],
       pageErrors: [...session.events.pageErrors],
       consoleErrors: [...session.events.consoleErrors],
@@ -794,32 +823,34 @@ async function runChoiceCase(session) {
     rollbackAttempts.push(attempt);
   }
 
-  let nextChoice = null;
+  let nextChoiceCandidateSnapshot = null;
   for (let index = 0; index < protocol.cases[1].maxAdvanceSteps; index += 1) {
     const current = await session.snapshot();
-    if (current?.interpreterStatus === 'awaiting-choice'
-      && current?.rendererStatus === 'choice'
-      && current.choiceVisibleCount > 0
-      && current?.choiceBounds?.length === current.choiceVisibleCount) {
-      nextChoice = current;
+    if (isTargetChoiceCandidate(current)) {
+      nextChoiceCandidateSnapshot = cloneJson(current);
       break;
     }
     await session.advanceTextOne('next real choice advance ' + (index + 1));
   }
-  if (!nextChoice) throw new Error('回退后未能正常推进到新的真实 choice');
+  if (!nextChoiceCandidateSnapshot) throw new Error('回退后未能正常推进到新的真实 choice');
+  const nextChoiceSettledSnapshot = await session.waitChoice();
+  const nextChoiceClickAt = new Date().toISOString();
   const nextChoicePoint = await session.clickTarget('choice:0', 'next real choice option choice:0');
+  session.caseEvidence.postRollbackChoiceCandidateSnapshot = nextChoiceCandidateSnapshot;
+  session.caseEvidence.postRollbackChoiceSettledSnapshot = nextChoiceSettledSnapshot;
+  session.caseEvidence.postRollbackChoiceClick = {
+    order: 2,
+    target: 'choice:0',
+    point: nextChoicePoint,
+    clickedAt: nextChoiceClickAt,
+    input: 'page.mouse.click',
+  };
+  session.caseEvidence.ghostChoiceObserved = rollbackAttempts.some((attempt) => Object.values(attempt.choiceMismatch).some(Boolean));
   await session.waitFor('next choice branch selected', () => window.__surdetDebug?.status !== 'awaiting-choice'
     && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
-  session.caseEvidence = {
-    rollbackInput: 'rail:rollback',
-    commonChoiceScene: choiceBefore?.position?.sceneId ?? null,
-    initialChoice: choiceBefore,
-    initialChoiceClick: { target: 'choice:0', point: choicePoint, input: 'page.mouse.click' },
-    postRollbackChoice: nextChoice,
-    postRollbackChoiceClick: { target: 'choice:0', point: nextChoicePoint, input: 'page.mouse.click' },
-    ghostChoiceObserved: rollbackAttempts.some((attempt) => Object.values(attempt.choiceMismatch).some(Boolean)),
-  };
+  session.caseEvidence.initialChoice = choiceBefore;
+  session.caseEvidence.postRollbackChoice = nextChoiceSettledSnapshot;
   await session.waitGameStable('choice end');
   await session.captureScreenshot('end');
   return { choiceBefore, selected, rollbackAttempts };
