@@ -69,6 +69,7 @@ function fakeInternals(): FakeInternals {
     setAutoWait: () => undefined,
     backlogEntries: () => [],
     backlogSearchQuery: () => '',
+    canCaptureRollbackCheckpoint: () => true,
     snapshotPresentation: () => ({ version: 1, source: 'controller' }),
     restorePresentation: (snapshot: unknown) => record('controller.restorePresentation', snapshot),
     clearPresentation: () => record('controller.clearPresentation'),
@@ -125,6 +126,7 @@ describe('Renderer v2 runtime facade', () => {
         speakerText: '',
         dialogText: '',
         choiceLabels: [],
+        choiceBounds: [],
         visibleChoiceCount: 0,
         rubyBaseCount: 0,
         rubyTextCount: 0,
@@ -190,6 +192,22 @@ describe('Renderer v2 runtime facade', () => {
 
     expect(internals.calls).toContainEqual({ method: 'controller.reset', args: [{ preserveWorld: true }] });
     expect(internals.calls).toContainEqual({ method: 'controller.restorePresentation', args: [snapshot] });
+  });
+
+  it('exposes the stable rollback boundary as a pure public query', async () => {
+    const internals = fakeInternals();
+    let safe = false;
+    (internals.controller as unknown as { canCaptureRollbackCheckpoint: () => boolean })
+      .canCaptureRollbackCheckpoint = () => safe;
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const before = internals.observableSnapshot();
+
+    expect(runtime.queries.presentation.canCaptureRollbackCheckpoint()).toBe(false);
+    expect(internals.observableSnapshot()).toEqual(before);
+
+    safe = true;
+    expect(runtime.queries.presentation.canCaptureRollbackCheckpoint()).toBe(true);
+    expect(internals.observableSnapshot()).toEqual(before);
   });
 
   it('projects a theme through Runtime to all five real Layers exactly once', async () => {

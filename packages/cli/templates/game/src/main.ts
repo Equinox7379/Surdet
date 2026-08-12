@@ -146,6 +146,7 @@ async function main(): Promise<void> {
     renderer: {
       get status() { return runtime.controller.status; },
       get backlogOpen() { return runtime.controller.backlogOpen; },
+      canCaptureRollbackCheckpoint: () => queries.presentation.canCaptureRollbackCheckpoint(),
       resetSession: (options) => runtime.resetSession(options),
       snapshotPresentation: () => queries.presentation.snapshot(),
       restorePresentation: (snapshot) => commands.presentation.restore(snapshot),

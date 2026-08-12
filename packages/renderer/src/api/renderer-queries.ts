@@ -56,6 +56,8 @@ export interface PreferenceQueries {
 
 export interface PresentationQueries {
   snapshot(): unknown;
+  /** Whether the current presentation can be captured as a stable rollback checkpoint. */
+  canCaptureRollbackCheckpoint(): boolean;
 }
 
 /** Plain-data read model for the renderer's semantic projection evidence. */
@@ -65,6 +67,12 @@ export interface DialogueProjectionSnapshot {
   readonly speakerText: string;
   readonly dialogText: string;
   readonly choiceLabels: readonly string[];
+  readonly choiceBounds: readonly {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  }[];
   readonly visibleChoiceCount: number;
   readonly rubyBaseCount: number;
   readonly rubyTextCount: number;

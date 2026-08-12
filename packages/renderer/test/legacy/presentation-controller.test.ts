@@ -18,6 +18,8 @@ function stageHarness(): AdvStage & {
   begins: (string | null)[];
   clears: number;
   highlights: number[];
+  choices: { index: number; label: string }[];
+  fades: number[];
   hidden: boolean[];
   scrolls: number[];
   backlogShown: number;
@@ -27,6 +29,8 @@ function stageHarness(): AdvStage & {
     begins: [] as (string | null)[],
     clears: 0,
     highlights: [] as number[],
+    choices: [] as { index: number; label: string }[],
+    fades: [] as number[],
     hidden: [] as boolean[],
     scrolls: [] as number[],
     backlogShown: 0,
@@ -36,9 +40,9 @@ function stageHarness(): AdvStage & {
     showText: (_speaker: string | null, value: string) => { stage.texts.push(value); },
     beginText: (speaker: string | null) => { stage.begins.push(speaker); },
     clearText: () => { stage.clears += 1; },
-    showChoices: () => undefined,
-    hideChoices: () => undefined,
-    setFade: () => undefined,
+    showChoices: (options: { index: number; label: string }[]) => { stage.choices = options.map((option) => ({ ...option })); },
+    hideChoices: () => { stage.choices = []; },
+    setFade: (alpha: number) => { stage.fades.push(alpha); },
     setChoiceHighlight: (position: number) => { stage.highlights.push(position); },
     hideInterface: (hidden: boolean) => { stage.hidden.push(hidden); },
     showBacklog: () => { stage.backlogShown += 1; },
@@ -52,6 +56,8 @@ function stageHarness(): AdvStage & {
     begins: (string | null)[];
     clears: number;
     highlights: number[];
+    choices: { index: number; label: string }[];
+    fades: number[];
     hidden: boolean[];
     scrolls: number[];
     backlogShown: number;
@@ -118,6 +124,69 @@ describe('PresentationController', () => {
 
     off();
     controller.dispose();
+  });
+
+  it('blocks rollback checkpoint capture while a real FadeTween is active', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage);
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    let frameRequests = 0;
+    controller.setFrameRequest(() => { frameRequests += 1; });
+
+    bus.emit('instr', { name: 'fadeout', args: ['100'], modifiers: new Map(), pos: { file: 'test', line: 1, col: 1 } });
+    const requestsAfterStart = frameRequests;
+    const fadesBeforeQuery = [...stage.fades];
+
+    expect(controller.canCaptureRollbackCheckpoint()).toBe(false);
+    expect(frameRequests).toBe(requestsAfterStart);
+    expect(stage.fades).toEqual(fadesBeforeQuery);
+
+    controller.update(50);
+    expect(controller.canCaptureRollbackCheckpoint()).toBe(false);
+    expect(stage.fades.at(-1)).toBeCloseTo(0.5, 5);
+
+    controller.update(50);
+    expect(controller.canCaptureRollbackCheckpoint()).toBe(true);
+    expect(stage.fades.at(-1)).toBeCloseTo(1, 5);
+
+    off();
+    controller.dispose();
+  });
+
+  it('clears choice projection and transient choice state through the public stateReset event', () => {
+    const stage = stageHarness();
+    const selected: number[] = [];
+    const controller = controllerFor(stage, { onSelect: (index: number) => selected.push(index) });
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+
+    try {
+      bus.emit('choice', choiceEvent());
+      controller.choiceDown();
+      expect(controller.status).toBe('choice');
+      expect(stage.choices).toEqual([{ index: 10, label: '左' }, { index: 20, label: '右' }]);
+
+      bus.emit('stateReset', { reason: 'load' });
+      expect(controller.status).toBe('idle');
+      expect(stage.choices).toEqual([]);
+      expect(controller.choiceConfirm()).toBe(false);
+
+      bus.emit('text', { speaker: null, value: '恢复后的普通文本' });
+      controller.update(10_000);
+      expect(controller.status).toBe('awaiting');
+      expect(stage.texts.at(-1)).toBe('恢复后的普通文本');
+
+      bus.emit('choice', choiceEvent());
+      expect(controller.status).toBe('choice');
+      expect(stage.choices).toHaveLength(2);
+      expect(controller.selectChoiceAt(1)).toBe(true);
+      expect(selected).toEqual([20]);
+      expect(stage.choices).toEqual([]);
+    } finally {
+      off();
+      controller.dispose();
+    }
   });
 
   it('routes advance, backlog, auto, skip, interface, scroll, and escape actions', () => {

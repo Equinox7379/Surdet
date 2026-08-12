@@ -259,6 +259,15 @@ export class PresentationController {
   }
 
   /**
+   * A rollback checkpoint may only capture a presentation that has no active
+   * FadeTween. The query is deliberately side-effect free: it neither updates
+   * the tween nor requests a frame.
+   */
+  canCaptureRollbackCheckpoint(): boolean {
+    return this.#fade === null || this.#fade.done;
+  }
+
+  /**
    * 当前帧是否需要推进。
    * 时间轴/打字/等待/自动播放等由渲染器自身声明；舞台动画由 Stage port 声明。
    * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
@@ -730,6 +739,7 @@ export class PresentationController {
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
+    this.#clearRestoreInteractiveTransients();
     this.#waitDeadline = null;
     this.#waitSession += 1;
     this.#videoActive = false;
@@ -737,6 +747,25 @@ export class PresentationController {
     this.#commands.presentation.clear();
     this.#pendingVoice = null; // 旧场景的语音关联不跨读档延续
     this.#commands.system.hideVideo(); // 停止残留视频本体（回调已由会话令牌作废；审计复核）
+  }
+
+  /**
+   * Clear only interaction state that belongs to the pre-restore event stream.
+   * The restored Core event stream is the sole source allowed to project the
+   * next text or choice; this intentionally does not reset user preferences
+   * or the broader Player/Renderer session.
+   */
+  #clearRestoreInteractiveTransients(): void {
+    this.#status = 'idle';
+    this.#current = null;
+    this.#fade = null;
+    this.#choiceIndices = [];
+    this.#choiceCursor = -1;
+    this.#tw.text = '';
+    this.#pendingVoice = null;
+    this.#commands.dialogue.hideChoices();
+    this.#clearText();
+    this.#syncAwaiting(false);
   }
 
   #onTimeline(p: { id: string; blocking: boolean; definition?: TimelineDefinition }): void {

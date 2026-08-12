@@ -296,6 +296,7 @@ export function createPresentationPorts(
     },
     presentation: {
       snapshot: () => options.worldLayer?.snapshotPresentation() ?? stage.snapshotPresentation?.() ?? null,
+      canCaptureRollbackCheckpoint: () => true,
     },
     diagnostics: {
       resourceSnapshot: () => options.resourceSnapshot?.() ?? { ...EMPTY_RESOURCE_SNAPSHOT },

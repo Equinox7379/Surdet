@@ -5,6 +5,8 @@ import { RollbackBuffer } from '@surdet/renderer';
 export interface RollbackRendererPort {
   readonly status: RenderStatus;
   readonly backlogOpen: boolean;
+  /** True only when the renderer can produce a stable presentation checkpoint. */
+  canCaptureRollbackCheckpoint(): boolean;
   resetSession(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
   snapshotPresentation(): unknown;
   restorePresentation(snapshot: unknown): void;
@@ -112,6 +114,7 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       const key = checkpointKey(snapshot);
       if (key === null || key === lastRollbackKey) return;
       try {
+        if (!options.renderer.canCaptureRollbackCheckpoint()) return;
         rollback.push({
           snapshot,
           presentation: options.renderer.snapshotPresentation(),

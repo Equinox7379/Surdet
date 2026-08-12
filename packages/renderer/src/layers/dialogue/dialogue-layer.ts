@@ -48,6 +48,13 @@ export interface DialogueBacklogLayoutSnapshot {
   readonly idleSearchHintVisible: boolean;
 }
 
+export interface DialogueChoiceBoundsSnapshot {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** DialogueLayer owns only dialogue-facing display objects and projection state. */
 export interface DialogueLayerOptions {
   readonly uiLayer: Container;
@@ -69,6 +76,8 @@ export interface DialogueLayerDebugSnapshot {
   readonly dialogText: string;
   readonly panelVisible: boolean;
   readonly choiceLabels: readonly string[];
+  /** Local logical bounds of the currently projected choice cards. */
+  readonly choiceBounds: readonly DialogueChoiceBoundsSnapshot[];
   readonly visibleChoiceCount: number;
   readonly rubyBaseCount: number;
   readonly rubyTextCount: number;
@@ -323,6 +332,12 @@ export class DialogueLayer implements DialogueProjectionPort {
       dialogText: String(this.#dialogText.text),
       panelVisible: this.#dialogPanel.visible,
       choiceLabels: this.#choiceViews.map((view) => String(view.label.text)),
+      choiceBounds: this.#choiceViews.map((view) => ({
+        x: view.holder.x,
+        y: view.holder.y,
+        width: view.holder.width,
+        height: view.holder.height,
+      })),
       visibleChoiceCount: this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
       rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
       rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,

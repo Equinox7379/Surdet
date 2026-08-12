@@ -4,9 +4,14 @@ import type { AudioHandle } from '@surdet/renderer';
 import type { RollbackRendererPort } from '../src/rollback-runtime.js';
 import { createRollbackRuntime } from '../src/rollback-runtime.js';
 
-function createRollbackFixture(options: { failRestore?: boolean; reenterOnReset?: boolean } = {}) {
+function createRollbackFixture(options: {
+  failRestore?: boolean;
+  reenterOnReset?: boolean;
+  checkpointSafe?: boolean;
+} = {}) {
   let pc = 0;
   let failRestore = options.failRestore === true;
+  let checkpointSafe = options.checkpointSafe !== false;
   let runtime: ReturnType<typeof createRollbackRuntime>;
   const reentrantResults: boolean[] = [];
   const stateReset = vi.fn();
@@ -31,6 +36,7 @@ function createRollbackFixture(options: { failRestore?: boolean; reenterOnReset?
   const renderer = {
     status: 'awaiting',
     backlogOpen: false,
+    canCaptureRollbackCheckpoint: vi.fn(() => checkpointSafe),
     snapshotPresentation: vi.fn(() => ({ visible: true })),
     restorePresentation: vi.fn(() => {
       if (failRestore) throw new Error('presentation restore failed');
@@ -64,6 +70,7 @@ function createRollbackFixture(options: { failRestore?: boolean; reenterOnReset?
     reentrantResults,
     setPosition(nextPc: number): void { pc = nextPc; },
     setRestoreFailure(value: boolean): void { failRestore = value; },
+    setCheckpointSafe(value: boolean): void { checkpointSafe = value; },
   };
 }
 
@@ -163,5 +170,24 @@ describe('rollback runtime — consecutive player rollback', () => {
       expect(fixture.runtime.perform()).toBe(true);
     }
     expect(fixture.interpreter.saveSnapshot()?.position?.pc).toBe(0);
+  });
+
+  it('skips unstable presentation checkpoints and captures the next stable text only', async () => {
+    const fixture = createRollbackFixture({ checkpointSafe: false });
+
+    fixture.setPosition(1);
+    fixture.runtime.captureText();
+    await Promise.resolve();
+
+    expect(fixture.renderer.snapshotPresentation).not.toHaveBeenCalled();
+    expect(fixture.runtime.canRollback()).toBe(false);
+
+    fixture.setCheckpointSafe(true);
+    fixture.setPosition(2);
+    fixture.runtime.captureText();
+    await Promise.resolve();
+
+    expect(fixture.renderer.snapshotPresentation).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.canRollback()).toBe(true);
   });
 });
