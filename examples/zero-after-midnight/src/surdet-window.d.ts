@@ -11,6 +11,7 @@ interface SurdetDebugApi {
   readonly resourceSnapshot?: RendererResourceSnapshot | null;
   readonly resourceLedger?: RenderLifecycleDiagnosticSnapshot | null;
   readonly presentationSnapshot?: unknown;
+  readonly visualThumbnail?: string | null;
   titleSelect(id: string): unknown;
   [key: string]: unknown;
 }
