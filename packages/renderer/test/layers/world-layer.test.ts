@@ -248,6 +248,40 @@ describe('WorldLayer direct presentation contract', () => {
     }
   });
 
+  it('invalidates every pending visual effect before applying a rollback snapshot', async () => {
+    const runtime = makeRuntime();
+    try {
+      await registerWorldAssets(runtime.assets);
+      runtime.layer.setBackground('hall');
+      runtime.layer.setPortrait('lynn:armor', {
+        charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left',
+      });
+      const target = snapshot(runtime);
+
+      runtime.layer.transition('fade', 1_000);
+      runtime.layer.setFade(1);
+      runtime.layer.setTint(0xff0000, 1, 1_000);
+      runtime.layer.flash(1_000);
+      runtime.layer.zoom(1.6, 1_000);
+      runtime.layer.wipe(1_000);
+      runtime.layer.movePortrait('lynn:armor', 'right', 1_000);
+      runtime.layer.shake(1_000, 12);
+      runtime.layer.startParticles('snow');
+
+      runtime.layer.restorePresentation(target);
+      runtime.layer.update(2_000);
+
+      expect(snapshot(runtime)).toEqual(target);
+      expect(runtime.layer.needsUpdate).toBe(false);
+      expect(runtime.lifecycle.snapshot().activeTweens).toBe(0);
+      expect(runtime.layer.fadeOverlay.alpha).toBe(0);
+      expect(runtime.layer.wipeOverlay.visible).toBe(false);
+      expect(runtime.layer.flashOverlay.alpha).toBe(0);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
   it('preserves the active speaker projection across clear and restore', async () => {
     const runtime = makeRuntime();
     try {

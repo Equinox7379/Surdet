@@ -445,6 +445,7 @@ async function main(): Promise<void> {
     get activeBlobUrls(): number { return assetBlobUrls.size + fontBlobUrls.size; },
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
+    get resourceLedger() { return queries.diagnostics.resourceLedger?.() ?? null; },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
     get uiSession() {
       return freezeDebug({ ...uiSnapshot() });

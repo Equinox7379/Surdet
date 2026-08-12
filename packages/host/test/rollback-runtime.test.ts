@@ -4,10 +4,11 @@ import type { AudioHandle } from '@surdet/renderer';
 import type { RollbackRendererPort } from '../src/rollback-runtime.js';
 import { createRollbackRuntime } from '../src/rollback-runtime.js';
 
-function createRollbackFixture(options: { failRestore?: boolean } = {}) {
+function createRollbackFixture(options: { failRestore?: boolean; reenterOnReset?: boolean } = {}) {
   let pc = 0;
   let failRestore = options.failRestore === true;
   let runtime: ReturnType<typeof createRollbackRuntime>;
+  const reentrantResults: boolean[] = [];
   const stateReset = vi.fn();
   const hostReset = vi.fn();
   const onSystemBoundary = vi.fn(() => runtime.clearForBoundary());
@@ -38,6 +39,7 @@ function createRollbackFixture(options: { failRestore?: boolean } = {}) {
       stateReset();
       hostReset();
       onSystemBoundary();
+      if (options.reenterOnReset) reentrantResults.push(runtime.perform());
     }),
   } as unknown as RollbackRendererPort;
   const audio = {
@@ -59,6 +61,7 @@ function createRollbackFixture(options: { failRestore?: boolean } = {}) {
     stateReset,
     hostReset,
     onSystemBoundary,
+    reentrantResults,
     setPosition(nextPc: number): void { pc = nextPc; },
     setRestoreFailure(value: boolean): void { failRestore = value; },
   };
@@ -118,5 +121,47 @@ describe('rollback runtime — consecutive player rollback', () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it('rejects a synchronous perform reentry while the outer restore owns the transaction', async () => {
+    const fixture = createRollbackFixture({ reenterOnReset: true });
+    for (let frame = 1; frame <= 3; frame += 1) {
+      fixture.setPosition(frame);
+      fixture.runtime.captureText();
+      await Promise.resolve();
+    }
+
+    expect(fixture.runtime.perform()).toBe(true);
+    expect(fixture.reentrantResults).toEqual([false]);
+    expect(fixture.stateReset).toHaveBeenCalledTimes(1);
+    expect(fixture.hostReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the restored cycle boundary so four advances can feed four valid rollbacks again', async () => {
+    const fixture = createRollbackFixture();
+
+    fixture.setPosition(0);
+    fixture.runtime.captureText();
+    await Promise.resolve();
+    for (let frame = 1; frame <= 4; frame += 1) {
+      fixture.setPosition(frame);
+      fixture.runtime.captureText();
+      await Promise.resolve();
+    }
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect(fixture.runtime.perform()).toBe(true);
+    }
+    expect(fixture.interpreter.saveSnapshot()?.position?.pc).toBe(0);
+
+    for (let frame = 1; frame <= 4; frame += 1) {
+      fixture.setPosition(frame);
+      fixture.runtime.captureText();
+      await Promise.resolve();
+    }
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect(fixture.runtime.perform()).toBe(true);
+    }
+    expect(fixture.interpreter.saveSnapshot()?.position?.pc).toBe(0);
   });
 });
