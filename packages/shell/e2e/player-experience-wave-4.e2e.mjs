@@ -511,6 +511,16 @@ async function selectSaveLoadSlot(session, mode, slotId = '1') {
       && debug?.uiSession?.operation === 'idle'
       && (expectedMode !== 'load' || debug?.uiSession?.base === 'game');
   }, mode, 20000);
+  if (mode === 'load') {
+    // The host transaction can become idle before the restored dialogue
+    // projection finishes its typewriter transition. Capture only after the
+    // public renderer state leaves that transient phase; this is a semantic
+    // readiness condition, not a fixed delay.
+    await session.waitFor('读档表现投影完成', () => {
+      const debug = window.__surdetDebug;
+      return debug?.rendererStatus !== 'typing';
+    }, undefined, 20000);
+  }
   return session.snapshot();
 }
 
