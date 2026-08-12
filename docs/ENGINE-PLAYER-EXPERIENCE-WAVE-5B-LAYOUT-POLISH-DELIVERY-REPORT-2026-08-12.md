@@ -79,7 +79,7 @@
 1. `4ee8a5d3717cb037b7f92beb861d3fbd1d413bf8` — `feat(renderer): center dialogue choices`
 2. `7f5cf6c5e238bf91b1ef49ff6b248ccedb067b35` — `fix(renderer): polish dialogue layout`
 
-报告生成前的实现 HEAD 为 `7f5cf6c5e238bf91b1ef49ff6b248ccedb067b35`，当时相对 `surdet/main` 为 `2 0`；本报告和计划台账的普通文档提交完成后，以终端复核输出作为最终文档闭环 HEAD、ahead/behind 和工作树事实，并在交付回复中重新读取本报告与计划文件的字节数和 SHA-256。
+实现 HEAD 为 `7f5cf6c5e238bf91b1ef49ff6b248ccedb067b35`，实现提交完成后相对 `surdet/main` 为 `2 0`。首个文档提交 `5a1ab9d86c151b1b22a0a779be28a15b2e8a1efc` 落盘后立即复核到：HEAD=`5a1ab9d86c151b1b22a0a779be28a15b2e8a1efc`、`HEAD...surdet/main=3 0`；本报告为 `5746` 字节、SHA-256=`D541C9DB272ED22E4573E0527A231D6B751D8F0F0F719768D15B3E05C8DF5210`；计划为 `18271` 字节、SHA-256=`55206D909B2B8F9A0EEF5D0D670C740668B30314FC3CD3F2AAA1C842F39CB0CA`。随后仅有本报告/计划的事实台账元数据收口提交，不改变任何生产实现；最终 HEAD、最终文档字节数和 SHA-256 以交付回复中的最后一次磁盘复核为准。
 
 本轮：
 
