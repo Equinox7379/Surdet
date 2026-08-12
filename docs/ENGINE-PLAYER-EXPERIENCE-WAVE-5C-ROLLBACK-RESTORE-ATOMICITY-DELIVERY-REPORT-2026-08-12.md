@@ -3,10 +3,10 @@
 ## Rollback Restore Atomicity — 诊断交付报告
 
 日期：2026-08-12
-状态：`WAVE_5C_PHASE_2_IMPLEMENTATION_PRESENT / FORMAL_EVIDENCE_BLOCKED`
+状态：`WAVE_5C_PHASE_2_EVIDENCE_CLOSED / FORMAL_EVIDENCE_BLOCKED`
 停止点：`WAITING_FOR_INDEPENDENT_REVIEW`
 
-> 本报告保留 Phase 1 的诊断历史，并在文末追加 Phase 2 的当前权威收口。Phase 2 已有公共层实现和完整回归门禁，但唯一正式 Electron Case B 未完成，因此不能把本轮交付写成完整的玩家问题修复通过。
+> 本报告保留 Phase 1 以及首次 Phase 2 的历史证据，并在文末追加本次 Case B runner 语义修正后的最新权威收口。公共层实现和回归门禁通过，但本次唯一实际 Electron 运行仍未完成 Case B 的真实选择点击，因此不能把本轮交付写成完整的玩家问题修复通过。
 
 ## 1. 结论先行
 
@@ -23,7 +23,9 @@
 - `NOT_PUSHED`
 - `WAITING_FOR_INDEPENDENT_REVIEW`
 
-## 2. 代码与提交边界
+## 2. Phase 1 历史代码与提交边界
+
+本节保留 Phase 1 的历史记录；本次最新代码、artifact 与文档闭环见第 8 节。
 
 ### CODE_EVIDENCE_HEAD
 
@@ -200,7 +202,7 @@ NOT_PUSHED
 WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
-## 7. Phase 2：Rollback Stable Boundary + Load Transient Cleanup
+## 7. Phase 2 首轮实现与证据（历史台账；最新收口见第 8 节）
 
 ### 7.1 范围、起点与实现提交
 
@@ -211,8 +213,8 @@ Phase 2 起点与远端事实：
 - 起点代码 HEAD：`a752c8228327810bc77a574a034cf4d02334c509`
 - 远端基线：`a1cf342d31396c67491617a50fd87980a3955d24`
 - 起点 `HEAD...surdet/main`：`5 0`
-- 当前代码证据 HEAD：`74feb12e0602ceed89da6fa02827c089bda071df`
-- 当前代码证据 HEAD 相对 `surdet/main`：`8 0`（文档收口提交前）
+- 首轮代码证据 HEAD：`74feb12e0602ceed89da6fa02827c089bda071df`
+- 首轮代码证据 HEAD 相对 `surdet/main`：`8 0`（首轮文档收口提交前）
 
 生产实现提交链：
 
@@ -312,7 +314,7 @@ Case B 在真实推进到 `common_0017` 的过程中，`advanceOne → waitGameS
 - `git diff --check`：exit 0；
 - `git ls-files '*.log'`：empty。
 
-### 7.5 当前结论与停止点
+### 7.5 首轮结论与停止点（历史记录）
 
 已由单元/集成证据支持：
 
@@ -334,11 +336,142 @@ GHOST_CHOICE_ROOT_CAUSE_UNCONFIRMED
 GHOST_CHOICE_VIA_RAIL_ROLLBACK_NOT_REPRODUCED_IN_THIS_PROTOCOL
 ```
 
-本轮实现已经落地，但正式 Case B 证据链未闭合，所以当前交付状态为 `WAVE_5C_PHASE_2_IMPLEMENTATION_PRESENT / FORMAL_EVIDENCE_BLOCKED`，不是“玩家黑屏已修复”。未 push、未部署、未发行、未重新打包、未开始 Wave 5B/M9、未处理性能工作。
+首轮实现已经落地，但首轮正式 Case B 证据链未闭合，所以首轮交付状态为 `WAVE_5C_PHASE_2_IMPLEMENTATION_PRESENT / FORMAL_EVIDENCE_BLOCKED`，不是“玩家黑屏已修复”。未 push、未部署、未发行、未重新打包、未开始 Wave 5B/M9、未处理性能工作。
 
 文档收口前 Git 状态：
 
-- `CODE_EVIDENCE_HEAD=74feb12e0602ceed89da6fa02827c089bda071df`；
+- 首轮 `CODE_EVIDENCE_HEAD=74feb12e0602ceed89da6fa02827c089bda071df`；
 - `HEAD...surdet/main=8 0`；
 - 工作树仅有六个受保护未跟踪文件；
 - 本次文档提交后的最终 HEAD、关系和工作树以提交后只读核验为准，并在最终交付回报中给出。
+
+## 8. Case B runner 语义修正与最终证据收口
+
+本节是本轮最新事实，覆盖并 supersede 第 7 节中“当前代码证据”和“唯一正式 Electron”字段；第 7 节的旧 artifact 仍作为历史证据保留，不删除、不覆盖、不改写。
+
+### 8.1 任务边界与代码提交
+
+本轮只处理 Wave 5C Phase 2 的两个已定位问题：
+
+1. Shell runner 将 Core Interpreter 的 `awaiting-choice` 与 Renderer Presentation 的 `choice` 混写；
+2. Host `captureText()` 在 `interpreter.saveSnapshot()` 之后才检查 `renderer.canCaptureRollbackCheckpoint()`。
+
+没有修改 Core 或 Renderer 的真实状态名，没有开始 Wave 5B，没有进行性能、发行、部署或 EXE 打包，也没有触碰六个受保护未跟踪文件。
+
+先红后绿证据：
+
+- Shell Wave 5C contract 在生产修改前为 8 项、1 失败（exit 1）：旧 runner 没有以 Core `debug.status === 'awaiting-choice'` 进入选择合同；
+- Host `rollback-runtime` 在生产修改前为 6 项、1 失败（exit 1）：不安全 checkpoint 仍调用了 `interpreter.saveSnapshot()`；
+- 修复后 Shell contract 为 8/8（exit 0），Host rollback 聚焦为 6/6（exit 0）；
+- `node --check packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`、Host/Shell typecheck 和 build 均 exit 0。
+
+runner 现在明确使用：
+
+- Core 稳定状态：`awaiting-advance` 或 `awaiting-choice`；
+- 选择等待的联合条件：Core `awaiting-choice`、Renderer `choice`、3 个可见 choice、3 个 choice bounds 和三项正式文案；
+- `choiceMismatch()` 分别按 `interpreterStatus === 'awaiting-choice'` 与 `rendererStatus === 'choice'` 判断；
+- 选择点击前、点击后和回退后的下一次选择均保持上述双层语义，不把两个层的状态名替换成同一个字符串。
+
+Host 现在在同一 microtask 中先检查 `canCaptureRollbackCheckpoint()`，再调用 `interpreter.saveSnapshot()`。不安全时不会调用 Core snapshot、Renderer presentation snapshot、history 写入或延迟补抓；下一条稳定 text 才允许形成新的 history frame。
+
+代码修正已先提交为一个普通本地提交：
+
+`CODE_EVIDENCE_HEAD = 123f0971b0eb278d017cb1ed95df3e6a33b37b04`
+
+提交信息：`fix(player): align wave 5c rollback checkpoint semantics`
+
+本提交实际修改文件仅为：
+
+- `packages/host/src/rollback-runtime.ts`
+- `packages/host/test/rollback-runtime.test.ts`
+- `packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`
+- `packages/shell/test/player-experience-wave-5c-e2e-contract.test.ts`
+
+### 8.2 正式 Electron 命令与 artifact
+
+任务书给出的连字符命令 `npm run e2e:player-experience-wave5c -w @surdet/shell` 已按原样尝试一次，但仓库 package script 不存在该名称，npm 在启动 Electron 前以 exit 1 报 `Missing script`。允许范围内不能修改 `packages/shell/package.json`；该仓库实际存在并由 contract 测试约束的正式脚本名称是带冒号的：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+随后只执行了一次真正的 Electron 矩阵运行，使用当前已提交代码构建的正式入口 `E:\surdet\examples\zero-after-midnight\dist`、2 个独立 Electron session 和独立临时 userData；没有复用旧 artifact 或旧截图，也没有重跑到绿色。该次真实 Electron 命令 exit 1，因为 Case B 未完成，不是因为隐藏错误或门禁被放宽。
+
+最新正式 artifact（本次权威内容证据）：
+
+- 路径：`<local-path>`
+- 字节数：`3,754,110`
+- SHA-256：`B3E623FCA2BBC68FFA910C39200BB9155659143685B1A1A0F012C136E7834793`
+- `status`：`FAILED`
+- `ARTIFACT_HEAD`：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`
+- `execution.actualSessions`：`2`
+- `execution.actualAttempts`：`12`（Case A=12，Case B=0）
+- 常规截图记录：`2`
+- 聚合错误：`pageErrors=0`、`consoleErrors=0`、`requestFailures=0`、`unhandledRejections=0`、`rendererErrors=0`、`releaseFailures=0`、`unexpectedWindowClosed=0`。
+
+新 artifact 的 `ARTIFACT_HEAD` 与被测代码的 `CODE_EVIDENCE_HEAD` 完全一致，因此代码与 artifact 的提交绑定条件满足；但因为 Case B 没有完成真实选择点击，整体仍不能标记 `WAVE_5C_FORMAL_EVIDENCE_QUALIFIED`。
+
+### 8.3 Case A 与 Case B 的真实结果
+
+Case A `prologue-rapid-rollback`：
+
+- `ok=true`；12/12 次真实 `rail:rollback`；12/12 `validHistory=true`；0 个 visual mismatch；错误数组为空；
+- 观察到活动 Fade 时 `fadeTweenActive=true`、`canCaptureRollbackCheckpoint=false`、`fadeAlpha=0.9947297777770128`；稳定后 `fadeTweenActive=false`、`canCaptureRollbackCheckpoint=true`、`fadeAlpha=0`；
+- 新 artifact 的代表截图已存在并与记录匹配：`start.png` 877847 bytes，SHA-256 `b3bfe0e407bb22cfb1eaa7e5fa312db4683dafb51dec1fb9babb69b68b9bc4a9`；`end.png` 878233 bytes，SHA-256 `316ca3bb12c01b2385785dd9e85f51563455604639fda43ef875f0041669b39e`；
+- 这只能证明本次 Case A 协议下没有观察到黑屏，不能证明玩家报告的黑屏根因已经定位或修复。
+
+Case B `common-0017-choice-rollback`：
+
+- 本次未能通过真实推进到目标 `common_0017` 三选一点；
+- 最后快照为 `common_convenience`、`pc=39`、Core `awaiting-advance`、Renderer `awaiting`、`visibleChoiceCount=0`、`choiceBounds=[]`；
+- 真实 choice 点击为 0，真实 rail 回退为 0，Case B attempts/observations/screenshots 均为 0；
+- 失败信息为 `未通过真实推进到达 common_0017 三选一`；
+- 因此本次没有取得“回退后幽灵 choice”的产品证据，也不能把它写成已排除或已修复；失败 artifact 原样保留，未继续猜测性改 runner 或重跑。
+
+### 8.4 历史 artifact、三个 HEAD 与资格结论
+
+旧 Phase 2 artifact：
+
+- `<local-path>`
+- `head=5c52d53e9674f4b01c406bb9083e97a971d84934`
+- 该文件早于后续公共契约提交生成，标记为 `HISTORICAL_PHASE_2_EVIDENCE_NOT_COMMIT_BOUND`，仅作历史失败证据保留。
+
+本次三个 HEAD 必须分开理解：
+
+- `CODE_EVIDENCE_HEAD`：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`，实际被测的 runner/Host 修正代码提交；
+- `ARTIFACT_HEAD`：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`，最新 artifact 内真实记录的 HEAD；
+- `DOCUMENT_CLOSURE_HEAD`：本报告与计划的本次普通文档提交；提交前无法预写其自引用 SHA，最终真实值以提交后 `git rev-parse HEAD` 和最终交付回报为准。
+
+虽然 `CODE_EVIDENCE_HEAD == ARTIFACT_HEAD`，但 Case B 未完整执行，所以本轮不写 `WAVE_5C_FORMAL_EVIDENCE_QUALIFIED`。必须保留以下边界：
+
+```text
+ROLLBACK_TRANSIENT_FADE_CHECKPOINTS_BLOCKED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+GHOST_CHOICE_VIA_RAIL_ROLLBACK_NOT_ESTABLISHED
+CASE_B_FORMAL_EVIDENCE_BLOCKED
+```
+
+普通 save/quick-save 在 Fade 活动期间的表现快照语义不属于本轮已验证范围；不能写成所有存档/读档期间的 Fade 问题已修复。`rollback.push(frame)` 的周期边界历史修复与 `restoring` 防御性重入保护分别保持 `CYCLE_BOUNDARY_HISTORY_FIX_VERIFIED`、`DEFENSIVE_REENTRY_GUARD_ADDED`；后者的 mock reentry 测试仅是 future-invariant 防护证据，不是真实玩家调用链根因复现。
+
+### 8.5 最终门禁与停止状态（文档提交前）
+
+- Host rollback 聚焦：6/6；Shell Wave 5C contract：8/8；
+- Renderer 全量：49 文件、400/400；Host：11 文件、87/87；Shell：19 文件、144/144；Starter：4 文件、7/7；CLI：7 文件、87/87；Zero：2 文件、21/21；
+- Host/Shell typecheck、build：exit 0；
+- 根级 `npm run verify:all`：本次代码提交上 exit 0；
+- `git diff --check`：exit 0；`git ls-files '*.log'`：empty；
+- 文档提交前 `git rev-parse HEAD`：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`；`HEAD...surdet/main`：`11 0`；
+- 工作树仅有六个受保护未跟踪文件：`AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件和 Wave 5B 计划；它们未被修改、暂存、提交、删除或移动。
+
+最终状态：
+
+```text
+WAVE_5C_PHASE_2_EVIDENCE_CLOSED
+NOT_PUSHED
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
+
+未 push、未部署、未发行、未重新打包、未开始 M9、未处理性能工作；完成本次普通文档提交后停止。

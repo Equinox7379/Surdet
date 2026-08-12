@@ -237,11 +237,11 @@ Phase 2 从既有诊断收口继续，未创建 Wave 5D；不覆盖上方 Phase 
 | 公共层最小实现 | completed | `canCaptureRollbackCheckpoint()` 纯查询；Host 必需端口；captureText 在 presentation snapshot 前拒绝不稳定 checkpoint；stateReset 清理最小交互瞬态 | `5c52d53e9674f4b01c406bb9083e97a971d84934` |
 | 公共类型契约收紧 | completed | Presentation runtime 与 RendererControllerPort 对稳定 checkpoint 能力使用正式必需类型；无行为性兼容回退 | `8e5df703f4c4d6dd48e9dc1b822db7ba2e6661b2`、`74feb12e0602ceed89da6fa02827c089bda071df` |
 | Phase 2 聚焦绿灯 | completed | Renderer 3 文件 24/24；Host rollback 6/6；Shell contract 7/7 | `74feb12e0602ceed89da6fa02827c089bda071df` |
-| 唯一正式 Electron A+B | completed-with-blocker | Case A 12/12 validHistory；Case B 到 common_0017 后在真实 choice 点击前 timeout，0 attempts；artifact 保留，命令 exit 1，不重跑挑绿 | `<local-path>` |
-| 受影响模块全量门禁 | completed | Renderer 49/400、Host 11/87、Shell 19/144、Starter 4/7、CLI 7/87、Zero 2/21；typecheck/build 全部 0；verify:all 0；Zero 23/23、3 结局、44 assets、0 runtime errors | `74feb12e0602ceed89da6fa02827c089bda071df` |
+| 首轮正式 Electron A+B（历史） | completed-with-blocker | Case A 12/12 validHistory；Case B 到 common_0017 后在真实 choice 点击前 timeout，0 attempts；旧 artifact 保留，命令 exit 1，不重跑挑绿 | `<local-path>` |
+| 受影响模块全量门禁（代码修正后） | completed | Renderer 49/400、Host 11/87、Shell 19/144、Starter 4/7、CLI 7/87、Zero 2/21；typecheck/build 全部 0；verify:all 0；Zero 23/23、3 结局、44 assets、0 runtime errors | `123f0971b0eb278d017cb1ed95df3e6a33b37b04` |
 | Phase 2 报告与台账 | completed | 本次仅更新本计划与 Wave 5C 报告；不得触碰 Wave 5B 计划；文档内容已完成，提交后执行最终只读 Git 核验 | `d50473397ed909072cbec183470721a613442662` — `docs(engine): record wave 5c phase 2 evidence` |
 
-### Phase 2 正式 artifact 台账
+### Phase 2 首轮正式 artifact 台账（历史 runner）
 
 - 路径：`<local-path>`
 - 字节数：`3,748,653`
@@ -251,7 +251,7 @@ Phase 2 从既有诊断收口继续，未创建 Wave 5D；不覆盖上方 Phase 
 - Case A 观察到 `fadeTweenActive=true → false`、`canCaptureRollbackCheckpoint=false → true`，12 次真实 `rail:rollback` 均 `validHistory=true`，错误数组为 0。
 - Case B `attempts=0`，在真实 choice 点击前等待超时；幽灵选择未建立，玩家反馈仍保留。
 
-### Phase 2 当前状态
+### Phase 2 首轮当前状态（历史文档收口）
 
 ```text
 FADE_CHECKPOINT_STABLE_BOUNDARY_ENFORCED
@@ -271,3 +271,69 @@ WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
 文档提交后必须重新记录真实 `git rev-parse HEAD`、`git rev-list --left-right --count HEAD...surdet/main`、`git status --short`、`git diff --check` 和 tracked `.log`；受保护六文件必须仍保持未跟踪且未触碰。
+
+## Phase 2 最新收口台账 — Case B runner 语义修正
+
+本节是当前执行的最终台账，覆盖上方“当前”字段；上方首轮 artifact、提交和计数均保留为历史记录，不得解释为本次最新证据。
+
+### Task 1：Core/Renderer choice 状态语义
+
+- 生产修改前 Shell contract：8 项、1 失败、exit 1；失败原因是旧 runner 没有要求 Core `awaiting-choice`。
+- 修复后 Shell contract：8/8、exit 0。
+- runner 现在分别使用 Core `awaiting-choice` 和 Renderer `choice`，并同时要求 3 个 visible choice、3 个 bounds 与正式 labels；不得再使用 Core `choice`。
+- 普通本地代码提交：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`，`fix(player): align wave 5c rollback checkpoint semantics`。
+
+### Task 2：Host 稳定检查点顺序
+
+- 生产修改前 Host rollback 聚焦：6 项、1 失败、exit 1；不安全 checkpoint 仍调用 Core `saveSnapshot()`。
+- 修复后 Host rollback 聚焦：6/6、exit 0。
+- `captureText()` 在同一 microtask 中先检查 `canCaptureRollbackCheckpoint()`，不安全时不调用 Core/Renderer snapshot、不写 history、不排队；后续稳定 text 才生成 history。
+
+### Task 3：唯一真实 Electron 运行
+
+任务书中的连字符命令 `npm run e2e:player-experience-wave5c -w @surdet/shell` 已按原样执行一次，但仓库不存在该 script，npm 在 Electron 启动前 exit 1。由于 `packages/shell/package.json` 不在本轮允许修改范围，没有通过改名掩盖差异；随后只使用仓库现有、contract 约束的冒号脚本运行了一次真实 Electron：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+该次正式运行使用 `E:\surdet\examples\zero-after-midnight\dist`、2 个独立 Electron session 和独立临时 userData，artifact exit 1 后立即停止，没有重跑挑绿。
+
+最新 artifact：
+
+- 路径：`<local-path>`
+- 字节数：`3,754,110`
+- SHA-256：`B3E623FCA2BBC68FFA910C39200BB9155659143685B1A1A0F012C136E7834793`
+- `status=FAILED`；`ARTIFACT_HEAD=123f0971b0eb278d017cb1ed95df3e6a33b37b04`；`actualSessions=2`；`actualAttempts=12`；常规截图记录 2；六类错误数组和 `unexpectedWindowClosed` 均为 0。
+- Case A：12/12 `validHistory=true`，`fadeTweenActive=true/canCaptureRollbackCheckpoint=false/fadeAlpha≈0.9947297778` 到稳定 `false/true/0`。
+- Case B：未到达 `common_0017` 三选一点；最后 `common_convenience pc=39`、Core `awaiting-advance`、Renderer `awaiting`、无 choice；真实 choice 点击 0、rail 回退 0、attempts/observations/screenshots 0；失败信息 `未通过真实推进到达 common_0017 三选一`。
+
+### 三个 HEAD 与资格状态
+
+```text
+CODE_EVIDENCE_HEAD=123f0971b0eb278d017cb1ed95df3e6a33b37b04
+ARTIFACT_HEAD=123f0971b0eb278d017cb1ed95df3e6a33b37b04
+DOCUMENT_CLOSURE_HEAD=本次普通文档提交；精确 SHA 以提交后 git rev-parse HEAD 为准
+```
+
+`CODE_EVIDENCE_HEAD == ARTIFACT_HEAD`，但 Case B 没有完成真实 choice 点击，故不得标记 `WAVE_5C_FORMAL_EVIDENCE_QUALIFIED`。旧 artifact 的 `head=5c52d53e...` 继续标记为历史、未绑定最终提交的证据。
+
+### 最新门禁与停止状态
+
+- Host rollback 6/6；Shell Wave 5C contract 8/8；Node syntax check、Host/Shell typecheck/build 均 exit 0；
+- Renderer 49 文件 400/400；Host 11 文件 87/87；Shell 19 文件 144/144；Starter 4 文件 7/7；CLI 7 文件 87/87；Zero 2 文件 21/21；
+- `npm run verify:all` exit 0；`git diff --check` exit 0；`git ls-files '*.log'` empty；
+- 代码提交后真实 HEAD：`123f0971b0eb278d017cb1ed95df3e6a33b37b04`；`HEAD...surdet/main=11 0`；工作树仅六个受保护未跟踪文件；
+- 本轮没有修改、暂存、提交、删除或移动受保护文件；没有 push、Wave 5B、M9、性能工作、部署、发行或打包。
+
+```text
+WAVE_5C_PHASE_2_EVIDENCE_CLOSED
+ROLLBACK_TRANSIENT_FADE_CHECKPOINTS_BLOCKED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+CASE_B_FORMAL_EVIDENCE_BLOCKED
+WAVE_5B_NOT_STARTED
+NOT_PUSHED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
