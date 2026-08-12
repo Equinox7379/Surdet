@@ -131,8 +131,6 @@ export interface RendererControllerPort extends Omit<PresentationController, 'sn
   restorePresentation?: (snapshot: unknown) => void;
   /** @internal Clear only Controller-owned presentation timelines. */
   clearPresentation?: () => void;
-  /** @internal Stable rollback checkpoint boundary exposed by the v2 controller. */
-  canCaptureRollbackCheckpoint?: () => boolean;
   backlogEntries?: () => readonly BacklogEntry[];
   backlogSearchQuery?: () => string;
 }
