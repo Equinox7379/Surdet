@@ -462,11 +462,13 @@ WAITING_FOR_REVIEW
 - Smoke 证据仍保留：入口校验失败 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-nzxZck\wave-5a-smoke.json`，bytes `1699`，SHA-256 `450b56d943d153dc13cb60003f44f1ee04eaaad61576a510890012ba88205390`；修正入口校验后的真实 smoke artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-ZwHx7u\wave-5a-smoke.json`，bytes `208691`，SHA-256 `4a9b2577b69e68f352ea8cacadc57f51f875ef8bc6fc950d546a4737cde0f34e`，完成 4/4 有效回退但按协议因非正式 160 次而标记 smoke/FAILED。
 - 下一入口：Task 5，运行受影响模块门禁，生成交付报告、收口台账并停止在 `WAITING_FOR_REVIEW`；不进入 Wave 5B、M9、性能或发行。
 
-### Task 5 — delivery report prepared, awaiting documentation commit (2026-08-12)
+### Task 5 — completed, delivery report and local commits verified (2026-08-12)
 
 - 实现提交已创建并读取真实值：`de235fe273df45e3d0021f3d3b32271458235542`，提交信息 `fix(host): guard rollback restore boundaries`。
-- 交付报告已真实创建：`E:\surdet\docs\ENGINE-PLAYER-EXPERIENCE-WAVE-5A-ROLLBACK-BLACK-SCREEN-DELIVERY-REPORT-2026-08-12.md`；当前磁盘 bytes `15266`，SHA-256 `1f26edf7eefbcc181dc80bb60a27bc121c13252d9c8e9748c53c8474ab2ddd67`。
+- 交付报告已真实创建并提交：`E:\surdet\docs\ENGINE-PLAYER-EXPERIENCE-WAVE-5A-ROLLBACK-BLACK-SCREEN-DELIVERY-REPORT-2026-08-12.md`；最终磁盘 bytes `15264`，SHA-256 `00d2d2795cc5a494e394001a265e21f94b67161c9f3aa243c6e9a3b2799c4fc0`。
 - 报告已写入：用户红灯路径、HOST_REENTRY 和 cycle-boundary 根因调用链、Task 2/3 红灯与绿灯、正式 8×20 证据、历史失败 artifact、截图/字段完整性审计、门禁、保护文件和停止边界。
 - Task 4 最终正式 artifact：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5a-EAYFom\wave-5a-rollback-1786518935217.json`，bytes `67859728`，SHA-256 `7d431465c097406c6ea7433a3cb554433604793a23344be6fa235e70248c6ae1`，`PASSED`，8/8 session、160/160 attempts；字段缺失 `0`，640 张截图完整性不匹配 `0`，事件总数全部为 `0`。
 - 受影响模块测试、typecheck、build 和仓库级 `npm run verify:all` 均已 exit code `0`；Renderer `49 files / 397 tests`，Host `11 files / 86 tests`，Wave 5A Shell contract `6/6`。
-- 当前停止状态：`PLAYER_EXPERIENCE_WAVE_5A_ROLLBACK_BLACK_SCREEN_REMEDIATED`、`ENGINE_LAYER_FIX_VERIFIED`、`PERFORMANCE_WORK_DEFERRED`、`M9_NOT_STARTED`、`NOT_PUSHED`、`WAITING_FOR_REVIEW`。下一步仅创建普通文档提交并复核；不进入 Wave 5B。
+- 文档提交已创建并读取真实值：`755fdea892df8b55ea14035076945cf02251eaca`，提交信息 `docs(player): deliver wave 5a rollback evidence`；其后在该 HEAD 上重新执行 `npm run verify:all`，exit code `0`。
+- 当前最终复核：`HEAD=755fdea892df8b55ea14035076945cf02251eaca`、`HEAD...surdet/main=2 0`、`git diff --check` exit code `0`、tracked `.log` 为空；工作树仅保留五个保护文件和既有未跟踪 Wave 5B 计划。两次普通本地提交均未 push。
+- 当前停止状态：`PLAYER_EXPERIENCE_WAVE_5A_ROLLBACK_BLACK_SCREEN_REMEDIATED`、`ENGINE_LAYER_FIX_VERIFIED`、`PERFORMANCE_WORK_DEFERRED`、`M9_NOT_STARTED`、`NOT_PUSHED`、`WAITING_FOR_REVIEW`。不进入 Wave 5B。
