@@ -337,3 +337,61 @@ WAVE_5B_NOT_STARTED
 NOT_PUSHED
 WAITING_FOR_INDEPENDENT_REVIEW
 ```
+
+## Phase 2 最新收口 — Case B 自动选择 runner 缺陷修正
+
+本节覆盖上一节之后的最新一次 runner 修正和唯一有效正式 Electron 尝试；此前所有失败 artifact 均保留，不删除、不覆盖、不重跑挑绿。
+
+### 先红后绿
+
+- 生产修改前 Shell Wave 5C contract：9 项、1 失败、exit 1；失败来自旧 `advanceOne()` 在看到 choice 时自动发送数字键 `1`，同时缺少普通文本专用 helper 合同。
+- 最小修正后 Shell Wave 5C contract：9/9、exit 0。
+- `advanceTextOne()` 只接受 Core `awaiting-advance`、Renderer 非 `choice`、`choiceVisibleCount === 0` 的前置条件，只发送 `page.keyboard.press('Space')`；不再发送 `1`、`Enter` 或任何自动 choice 键。
+- 如果推进后发现 choice，下一轮只允许上层确认目标；意外 choice 会使 helper 以最后快照失败停止，不得自动跨过。
+
+普通 runner/contract 提交：
+
+`fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf` — `fix(shell): prevent automatic choice selection in wave 5c runner`
+
+### 唯一有效正式 Electron 运行
+
+只使用仓库实际脚本：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+正式入口：`E:\surdet\examples\zero-after-midnight\dist`；2 个独立 Electron session；独立临时 userData；重新构建；没有复用旧 dist、旧 artifact 或旧截图。命令 exit 1 后立即停止，没有再次修改 runner 或运行 Electron。
+
+最新 artifact：
+
+- 路径：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-wNkaxI\wave-5c-rollback-restore-atomicity.json`
+- 字节数：`3,818,391`
+- SHA-256：`CBCB5D2F79E04AF84F5651417AC535B796C9BD06839D941CCB4A67BE925D8EAA`
+- `status=FAILED`；`ARTIFACT_HEAD=fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`；`actualSessions=2`；`actualAttempts=12`；`regularScreenshots=2`；所有错误通道与 `unexpectedWindowClosed` 为 0。
+- Case A：12/12 `validHistory=true`；2 张截图存在且哈希匹配：start `877816` bytes / `2D9275C4356957C11F89FF1AC89112C4A33A7FE1645D0471FBF0A38023D1B70C`，end `878228` bytes / `752E0B3915648A1A6DDA3C3B95799531433FB12B44F2D573C86155907B4370D1`。
+- Case B：通过 `Space` 推进到 `common_0017 pc=32`，Core `awaiting-choice`、Renderer `choice`、choice labels=3、choice bounds=3，但 `visibleChoiceCount=1`，不满足目标值 3；helper 正确停止，choice 鼠标点击和 rail 回退均为 0，attempts/observations/screenshots 均为 0。完整 lastSnapshot 和失败栈保存在 artifact。
+
+### 最新三个 HEAD 与状态
+
+```text
+CODE_EVIDENCE_HEAD=fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf
+ARTIFACT_HEAD=fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf
+DOCUMENT_CLOSURE_HEAD=本次普通文档提交；精确 SHA 以提交后 git rev-parse HEAD 为准
+```
+
+`CODE_EVIDENCE_HEAD == ARTIFACT_HEAD`，但 Case B 没有完成两次真实 choice 鼠标点击和 rollback 检查，因此不得标记 `WAVE_5C_FORMAL_EVIDENCE_QUALIFIED`。本轮最终状态：
+
+```text
+WAVE_5C_PHASE_2_FINAL_EVIDENCE_ATTEMPT_COMPLETE
+ROLLBACK_TRANSIENT_FADE_CHECKPOINTS_BLOCKED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+CASE_B_FORMAL_EVIDENCE_BLOCKED
+NOT_PUSHED
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
+
+代码提交后 `HEAD...surdet/main=13 0`；Shell contract、node syntax check、Shell typecheck/build 已通过；本轮不重复执行根级 `verify:all`。六个受保护未跟踪文件保持未触碰。

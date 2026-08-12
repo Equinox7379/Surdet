@@ -3,10 +3,10 @@
 ## Rollback Restore Atomicity — 诊断交付报告
 
 日期：2026-08-12
-状态：`WAVE_5C_PHASE_2_EVIDENCE_CLOSED / FORMAL_EVIDENCE_BLOCKED`
+状态：`WAVE_5C_PHASE_2_FINAL_EVIDENCE_ATTEMPT_COMPLETE / FORMAL_EVIDENCE_BLOCKED`
 停止点：`WAITING_FOR_INDEPENDENT_REVIEW`
 
-> 本报告保留 Phase 1 以及首次 Phase 2 的历史证据，并在文末追加本次 Case B runner 语义修正后的最新权威收口。公共层实现和回归门禁通过，但本次唯一实际 Electron 运行仍未完成 Case B 的真实选择点击，因此不能把本轮交付写成完整的玩家问题修复通过。
+> 本报告保留 Phase 1、首次 Phase 2 以及前一次 runner 收口的历史证据，并在文末追加本次“禁止自动选择 choice”修正后的最新权威收口。公共层实现和回归门禁保持不变；本次唯一实际 Electron 运行虽已绕过自动数字键，但 Case B 的目标可见 choice 前置条件仍未全部满足，因此不能把本轮交付写成完整的玩家问题修复通过。
 
 ## 1. 结论先行
 
@@ -475,3 +475,133 @@ WAITING_FOR_INDEPENDENT_REVIEW
 ```
 
 未 push、未部署、未发行、未重新打包、未开始 M9、未处理性能工作；完成本次普通文档提交后停止。
+
+## 9. Case B 自动选择 runner 缺陷修正与一次有效正式验证
+
+本节是本次执行的最新权威事实。它只修改 Shell E2E runner 与 Shell contract；Host、Renderer、Core、Starter、CLI、Zero 生产代码及此前 Wave 5C 生产提交均未修改、未回滚。
+
+### 9.1 先红后绿与最小 runner 修正
+
+独立复审指出，旧的通用 `advanceOne()` 在看到 choice 时会构造并发送数字键 `1`，这会绕过真实 choice 鼠标输入并把剧情推进到下一场景。
+
+本轮先增加 contract 红灯：
+
+- Shell Wave 5C contract：9 项中 1 项失败，exit 1；
+- 失败点是 runner 尚无 `advanceTextOne()`，且仍存在“发现 choice 后发送 `1`”的自动选择实现。
+
+最小修正后，同一 contract 转绿：
+
+- Shell Wave 5C contract：9/9，exit 0；
+- `advanceTextOne()` 只允许在 Core `awaiting-advance`、Renderer 不为 `choice`、`choiceVisibleCount === 0` 时发送 `page.keyboard.press('Space')`；
+- 不发送 `1`、`Enter` 或其他 choice 快捷键；
+- 推进后若观察到 choice，返回状态给上层；若下一轮不是目标 `common_0017` 三选一，前置条件失败并停止，写入最后快照，不自动跨过；
+- Case B 的真实 choice 仍只通过 `clickTarget('choice:0')` → `page.mouse.click(...)`；
+- 普通文本推进和两个 choice 分支路径均改用 `advanceTextOne()`。
+
+本次 runner/contract 代码提交：
+
+`CODE_EVIDENCE_HEAD = fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`
+
+提交信息：`fix(shell): prevent automatic choice selection in wave 5c runner`
+
+### 9.2 唯一一次正式 Electron 运行
+
+本轮只使用仓库实际存在的命令，没有修改 `packages/shell/package.json`，也没有使用不存在的连字符命令：
+
+```text
+npm run e2e:player-experience:wave5c -w @surdet/shell
+```
+
+该命令重新构建并使用正式入口：
+
+`E:\surdet\examples\zero-after-midnight\dist`
+
+使用 2 个独立 Electron session 和独立临时 userData。命令 exit 1；这是本轮唯一真实 Electron 运行。新 artifact 失败后立即停止，没有再次修改 runner，也没有再次运行寻找绿色结果。此前 rIKJIY、VnMuGB 等失败 artifact 均继续保留。
+
+最新 artifact：
+
+- 路径：`C:\Users\Equinox\AppData\Local\Temp\surdet-player-experience-wave-5c-wNkaxI\wave-5c-rollback-restore-atomicity.json`
+- 字节数：`3,818,391`
+- SHA-256：`CBCB5D2F79E04AF84F5651417AC535B796C9BD06839D941CCB4A67BE925D8EAA`
+- `status=FAILED`
+- `ARTIFACT_HEAD=fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`
+- `execution.actualSessions=2`
+- `execution.actualAttempts=12`（Case A=12，Case B=0）
+- `execution.regularScreenshots=2`
+- `pageErrors=0`、`consoleErrors=0`、`requestFailures=0`、`unhandledRejections=0`、`rendererErrors=0`、`releaseFailures=0`、`unexpectedWindowClosed=0`
+
+### 9.3 Case A
+
+Case A `prologue-rapid-rollback` 完整通过：
+
+- `ok=true`；12/12 `validHistory=true`；2 条 Fade 稳定性观察；2 张截图；
+- 沿用真实 `rail:rollback` 与 Fade/visualThumbnail 证据；本次没有新增回退次数或截图数量；
+- `start.png`：877816 bytes，SHA-256 `2D9275C4356957C11F89FF1AC89112C4A33A7FE1645D0471FBF0A38023D1B70C`；
+- `end.png`：878228 bytes，SHA-256 `752E0B3915648A1A6DDA3C3B95799531433FB12B44F2D573C86155907B4370D1`；
+- 两张截图均存在，artifact 中的 `screenshotSha256` 与磁盘哈希一致；
+- 错误通道全部为空。
+
+### 9.4 Case B：自动选择已消失，但目标可见 choice 合同未完成
+
+本次 Case B 使用 `advanceTextOne()` 后确实到达了目标场景和 Core/Renderer 选择状态，但公开语义快照没有满足完整目标合同：
+
+- 场景：`common_0017`；
+- `pc=32`；
+- Core：`awaiting-choice`；
+- Renderer：`choice`；
+- 三条 choice label 完整匹配：
+  - `记录她说的时间`
+  - `追问失踪的原因`
+  - `先挂断电话`
+- `choiceBounds.length=3`；
+- 但 `visibleChoiceCount=1`，任务书要求为 `3`；
+- 因此 `advanceTextOne()` 在下一轮检查时按设计停止，未发送数字键，未自动选择，未进入 `waitChoice()` 后的真实 `page.mouse.click()`；
+- Case B 真实 choice 点击：0；真实 rail 回退：0；attempts/observations/screenshots：均为 0；
+- 最后快照已完整写入 artifact，包含场景、Core/Renderer 状态、labels、bounds、背景、立绘、表现、资源快照和错误通道。
+
+这不是产品绿灯，也不是幽灵 choice 已被否定。它证明本轮已移除 runner 的自动 `1` 选择路径，但正式 Case B 仍因 `visibleChoiceCount=1` 与目标合同的 `3` 不一致而阻断。由于本轮规定失败后停止，不对该新观察做猜测性生产修复或 runner 修正。
+
+### 9.5 三个 HEAD 与资格结论
+
+- `CODE_EVIDENCE_HEAD`：`fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`；实际被测 runner/contract 修正提交；
+- `ARTIFACT_HEAD`：`fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`；新 artifact 内真实记录的 HEAD；
+- `DOCUMENT_CLOSURE_HEAD`：本报告与计划本次普通文档提交；精确 SHA 以提交后 `git rev-parse HEAD` 和最终交付回报为准。
+
+虽然 `CODE_EVIDENCE_HEAD == ARTIFACT_HEAD`，但 Case B 没有完成目标 choice 的真实鼠标点击、回退和第二次 choice 点击，因此不得写：
+
+```text
+WAVE_5C_FORMAL_EVIDENCE_QUALIFIED
+```
+
+也不得写“玩家幽灵选择已完全修复”或“玩家黑屏根因已确认”。必须继续保留：
+
+```text
+ROLLBACK_TRANSIENT_FADE_CHECKPOINTS_BLOCKED
+LOAD_RESTORE_INTERACTIVE_TRANSIENTS_CLEARED
+PLAYER_BLACK_SCREEN_ROOT_CAUSE_UNCONFIRMED
+PLAYER_BLACK_SCREEN_AWAITING_MANUAL_VALIDATION
+CASE_B_FORMAL_EVIDENCE_BLOCKED
+```
+
+普通 save/quick-save 在 Fade 活动期间的表现快照语义仍不属于本轮已验证范围。
+
+### 9.6 本轮门禁、Git 与停止状态
+
+- Shell Wave 5C contract：9/9；
+- `node --check packages/shell/e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs`：exit 0；
+- Shell typecheck：exit 0；
+- Shell build：exit 0；
+- 正式 Wave 5C Electron E2E：exit 1，失败 artifact 已保留，未重跑；
+- 本轮按范围未重新运行根级 `npm run verify:all`；此前生产修复及全量门禁仍由前一轮代码 HEAD 复核通过；
+- 代码提交后 HEAD：`fec4b83acb3c0dfe654d27ed005dcde2f93dfaaf`；提交前相对 `surdet/main`：`13 0`；
+- 文档提交前工作树仅有六个受保护未跟踪文件；它们未被修改、暂存、提交、删除或移动；
+- 未 push、未部署、未发行、未打包、未开始 Wave 5B、未开始 M9、未处理性能或其他产品功能。
+
+最终状态：
+
+```text
+WAVE_5C_PHASE_2_FINAL_EVIDENCE_ATTEMPT_COMPLETE
+NOT_PUSHED
+WAVE_5B_NOT_STARTED
+WAITING_FOR_INDEPENDENT_REVIEW
+```
