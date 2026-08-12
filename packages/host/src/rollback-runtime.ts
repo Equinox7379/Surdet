@@ -61,10 +61,11 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
     && options.renderer.status !== 'choice'
     && !options.renderer.backlogOpen
     && !options.isBlocked()
+    && !restoring
     && rollback.size > 0;
 
   const perform = (): boolean => {
-    if (!canRollback()) return false;
+    if (restoring || !canRollback()) return false;
     const current = options.interpreter.saveSnapshot();
     const currentKey = current ? checkpointKey(current) : null;
     const first = rollback.pop();
@@ -85,6 +86,10 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       options.renderer.restorePresentation(frame.presentation);
       options.audio.restorePlayback?.(frame.audio);
       lastRollbackKey = checkpointKey(frame.snapshot);
+      // Keep the restored boundary available for the next real text cycle.
+      // The next perform() consumes this current duplicate before taking the
+      // preceding frame, matching the same invariant as the initial capture.
+      rollback.push(frame);
       return true;
     } catch (error) {
       rollback.push(frame);
