@@ -490,14 +490,18 @@ async function launchSession(caseId, mode) {
           && (debug?.status === 'awaiting-advance' || debug?.status === 'awaiting-choice');
       }, undefined, 30000);
     },
-    async advanceOne(label) {
+    async advanceTextOne(label) {
       await this.waitGameStable(label + ' before');
       const before = await this.snapshot();
+      if (before?.interpreterStatus !== 'awaiting-advance'
+        || before?.rendererStatus === 'choice'
+        || before?.choiceVisibleCount !== 0) {
+        throw new Error('普通文本推进前置条件不满足，停止而不是自动选择 choice：' + JSON.stringify(before));
+      }
       const canvas = await this.canvasMetrics();
       const beforeKey = positionKey(before?.position);
       const beforeText = before?.dialogueProjection?.dialogText || null;
-      const key = before?.rendererStatus === 'choice' || before?.choiceVisibleCount > 0 ? '1' : 'Space';
-      await page.keyboard.press(key);
+      await page.keyboard.press('Space');
       await this.waitFor(label + ' position/text change', ({ expectedKey, expectedText }) => {
         const debug = window.__surdetDebug;
         const position = debug?.position;
@@ -649,7 +653,7 @@ async function runPrologueCase(session) {
   };
   const checkpoints = [];
   for (let index = 0; index < protocol.cases[0].advanceCount; index += 1) {
-    const step = await session.advanceOne('prologue advance ' + (index + 1));
+     const step = await session.advanceTextOne('prologue advance ' + (index + 1));
     checkpoints.push({ snapshot: step.before, canvas: step.canvas });
   }
   await session.captureScreenshot('start');
@@ -714,11 +718,16 @@ async function runChoiceCase(session) {
       && current?.choiceVisibleCount === 3
       && current?.choiceBounds?.length === 3
       && current?.interpreterStatus === 'awaiting-choice'
-      && current?.rendererStatus === 'choice') {
+      && current?.rendererStatus === 'choice'
+      && JSON.stringify(current?.choiceLabels || []) === JSON.stringify([
+        '记录她说的时间',
+        '追问失踪的原因',
+        '先挂断电话',
+      ])) {
       reachedChoice = true;
       break;
     }
-    await session.advanceOne('common_0017 advance ' + (index + 1));
+    await session.advanceTextOne('common_0017 advance ' + (index + 1));
   }
   if (!reachedChoice) throw new Error('未通过真实推进到达 common_0017 三选一');
   await session.waitChoice();
@@ -729,7 +738,7 @@ async function runChoiceCase(session) {
     && window.__surdetDebug?.rendererStatus !== 'choice'
     && window.__surdetDebug?.dialogueProjection?.visibleChoiceCount === 0, undefined, 10000);
   const selected = await session.snapshot();
-  const branchStep = await session.advanceOne('choice branch text');
+  const branchStep = await session.advanceTextOne('choice branch text');
   const rollbackTargets = [branchStep.before, selected];
   const rollbackAttempts = [];
   for (let index = 0; index < protocol.cases[1].rollbackCount; index += 1) {
@@ -795,7 +804,7 @@ async function runChoiceCase(session) {
       nextChoice = current;
       break;
     }
-    await session.advanceOne('next real choice advance ' + (index + 1));
+    await session.advanceTextOne('next real choice advance ' + (index + 1));
   }
   if (!nextChoice) throw new Error('回退后未能正常推进到新的真实 choice');
   const nextChoicePoint = await session.clickTarget('choice:0', 'next real choice option choice:0');

@@ -121,6 +121,19 @@ describe('Player Experience Wave 5C rollback restore atomicity contract', () => 
     expect(source).not.toContain("current?.interpreterStatus === 'choice'");
   });
 
+  it('never auto-selects a choice while advancing ordinary text', () => {
+    const source = runnerSource();
+    expect(source).toContain('async advanceTextOne(');
+    expect(source).not.toContain('async advanceOne(');
+    expect(source).toContain("before?.interpreterStatus !== 'awaiting-advance'");
+    expect(source).toContain("before?.rendererStatus === 'choice'");
+    expect(source).toContain('before?.choiceVisibleCount !== 0');
+    expect(source).toContain("await page.keyboard.press('Space')");
+    expect(source).not.toContain("await page.keyboard.press('1')");
+    expect(source).not.toContain("const key = before?.rendererStatus === 'choice'");
+    expect(source).not.toContain('await page.keyboard.press(key)');
+  });
+
   it('uses real player input and forbids debug or direct interpreter shortcuts', () => {
     const source = runnerSource();
     expect(source).toContain('page.mouse.click');
