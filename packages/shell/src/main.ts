@@ -66,6 +66,14 @@ function registerSaveIpc(): void {
     assertTrustedSender(e);
     return getSaveStore().listMeta();
   });
+  ipcMain.handle('save:listBackupMeta', (e) => {
+    assertTrustedSender(e);
+    return getSaveStore().listBackupMeta();
+  });
+  ipcMain.handle('save:restoreBackup', (e, slot: string) => {
+    assertTrustedSender(e);
+    getSaveStore().restoreBackup(slot);
+  });
 }
 
 /** 注册全局 Profile IPC：与普通 slot 存档分目录、分接口，损坏数据由 store 宽容读取为 null。 */

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { SaveSnapshot, SaveSlotMeta } from '@surdet/core';
+import { assertValidSnapshot, type SaveSnapshot, type SaveSlotMeta } from '@surdet/core';
 
 /**
  * 桌面存档存储：按槽位写入 userData/saves/<slot>.json。
@@ -72,6 +72,60 @@ export class FileSaveStore {
     return metas;
   }
 
+  /** 列出磁盘上可显式恢复的上一版备份；备份内容损坏时保留原始解析原因。 */
+  listBackupMeta(): SaveSlotMeta[] {
+    const metas = new Map<string, SaveSlotMeta>();
+    for (const name of fs.readdirSync(this.dir).filter((f) => f.endsWith('.json.bak'))) {
+      const snapshot = this.#readBackupFile(path.join(this.dir, name));
+      metas.set(snapshot.meta.id, snapshot.meta);
+    }
+    return [...metas.values()];
+  }
+
+  /**
+   * 显式将上一版备份复制为主档。备份先完整读取并校验，校验失败时不触碰主档或索引；
+   * 成功后保留 .bak，普通 read 仍只读取主档。
+   */
+  restoreBackup(slot: string): void {
+    const backupFile = this.#backupFileFor(slot);
+    if (backupFile === null) throw new Error(`存档槽位 '${slot}' 没有可恢复备份`);
+    const backup = this.#readBackupFile(backupFile);
+    const file = this.fileFor(slot);
+    const mainBefore = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    const indexFile = this.indexPath();
+    const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
+    const index = this.readIndex();
+    const tmp = `${file}.restore.tmp`;
+    try {
+      fs.copyFileSync(backupFile, tmp);
+      fs.renameSync(tmp, file);
+      index[sanitizeSlot(slot)] = { ...backup.meta, id: slot };
+      this.writeIndex(index);
+    } catch (error) {
+      try {
+        if (mainBefore === null) {
+          if (fs.existsSync(file)) fs.unlinkSync(file);
+        } else {
+          fs.writeFileSync(tmp, mainBefore);
+          fs.renameSync(tmp, file);
+        }
+        if (indexBefore === null) {
+          if (fs.existsSync(indexFile)) fs.unlinkSync(indexFile);
+        } else {
+          fs.writeFileSync(`${indexFile}.restore.tmp`, indexBefore);
+          fs.renameSync(`${indexFile}.restore.tmp`, indexFile);
+        }
+      } catch (compensationError) {
+        throw new Error(`显式恢复失败且无法可靠恢复原主档/索引：${slot}`, {
+          cause: compensationError,
+        });
+      }
+      throw error;
+    } finally {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    }
+  }
+
   read(slot: string): SaveSnapshot | null {
     const file = this.fileFor(slot);
     const direct = this.#readFile(file);
@@ -107,6 +161,21 @@ export class FileSaveStore {
     }
   }
 
+  #backupFileFor(slot: string): string | null {
+    const direct = `${this.fileFor(slot)}.bak`;
+    if (fs.existsSync(direct)) return direct;
+    const legacy = this.#legacyFileFor(slot);
+    if (legacy !== null && fs.existsSync(`${legacy}.bak`)) return `${legacy}.bak`;
+    return null;
+  }
+
+  #readBackupFile(file: string): SaveSnapshot {
+    const snapshot = this.#readFile(file);
+    if (snapshot === null) throw new Error(`备份文件不存在：${file}`);
+    assertValidSnapshot(snapshot, 'legacy');
+    return snapshot;
+  }
+
   /** 读取单个存档文件；仅缺失返回 null，I/O/解析/结构错误全部上抛。 */
   #readFile(file: string): SaveSnapshot | null {
     if (!fs.existsSync(file)) return null;
@@ -138,7 +207,7 @@ export class FileSaveStore {
     }
     const file = this.fileFor(slot);
     const tmp = `${file}.tmp`;
-    // 覆盖前备份上一版（.bak）：主档意外损坏时 read 回退恢复，玩家不丢上次进度
+    // 覆盖前备份上一版（.bak）：供玩家通过显式恢复动作取回上一版进度
     if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
     // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
     fs.writeFileSync(tmp, json);

@@ -11,6 +11,8 @@ export interface ElectronSaveBridge {
   delete(slot: string): Promise<void>;
   list(): Promise<string[]>;
   listMeta(): Promise<SaveSlotMeta[]>;
+  listBackupMeta(): Promise<SaveSlotMeta[]>;
+  restoreBackup(slot: string): Promise<void>;
 }
 
 /**
@@ -27,5 +29,7 @@ export function createElectronSaveStorage(bridge: ElectronSaveBridge): SaveStora
     delete: (slot) => bridge.delete(slot),
     list: () => bridge.list(),
     listMeta: () => bridge.listMeta(),
+    listBackupMeta: () => bridge.listBackupMeta(),
+    restoreBackup: (slot) => bridge.restoreBackup(slot),
   };
 }

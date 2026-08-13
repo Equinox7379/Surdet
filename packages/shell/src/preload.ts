@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('surdetSave', {
     ipcRenderer.invoke('save:delete', slot) as Promise<void>,
   /** 槽位元信息索引（列表界面用，主进程无需全量读取存档体） */
   listMeta: (): Promise<SaveSlotMeta[]> => ipcRenderer.invoke('save:listMeta') as Promise<SaveSlotMeta[]>,
+  listBackupMeta: (): Promise<SaveSlotMeta[]> => ipcRenderer.invoke('save:listBackupMeta') as Promise<SaveSlotMeta[]>,
+  restoreBackup: (slot: string): Promise<void> => ipcRenderer.invoke('save:restoreBackup', slot) as Promise<void>,
 });
 
 /** Profile 持久化桥（userData/profile/<key>.json）：跨周目通关记录等全局数据，独立于 slot 存档。 */
