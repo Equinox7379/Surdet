@@ -1,8 +1,10 @@
 # 《零点之后》BGM 可听性与资产质量 Wave 1 交付报告
 
-日期：2026-08-13  
-范围：仅限《零点之后》十首 BGM 的离线 PCM16 电平分析、确定性归一化和相关验证。  
-状态：`BGM_AUDIBILITY_BASELINE_IMPLEMENTED`  
+日期：2026-08-13
+
+范围：仅限《零点之后》十首 BGM 的离线 PCM16 电平分析、确定性归一化和相关验证。
+
+状态：`BGM_AUDIBILITY_BASELINE_IMPLEMENTED`
 质量标记：`INTERIM_AUDIBLE_PLACEHOLDER` / `AUDIO_QUALITY_NOT_FINAL` / `MANUAL_AUDIO_REVIEW_PENDING`
 
 ## 1. 结论先行
@@ -162,12 +164,12 @@ Renderer 音频聚焦测试 `21/21`、Shell Gallery 音频契约 `3/3` 和 Zero 
 
 请总经理手动执行并记录结果：
 
-A. 标题页 → 鉴赏 → 音乐 → 点击一首已解锁 BGM，连续听至少 5 秒；  
-B. 点击第二首已解锁 BGM，确认能够切换；  
-C. 回到第一首，确认能够重新播放；  
-D. 进入游戏内鉴赏页重复 A–C；  
-E. 关闭鉴赏页，确认无黑屏、无 `resource release failed`、无剧情推进、无窗口关闭；  
-F. 确认系统主音量和 BGM 音量均不是 0。
+- A. 标题页 → 鉴赏 → 音乐 → 点击一首已解锁 BGM，连续听至少 5 秒。
+- B. 点击第二首已解锁 BGM，确认能够切换。
+- C. 回到第一首，确认能够重新播放。
+- D. 进入游戏内鉴赏页重复 A–C。
+- E. 关闭鉴赏页，确认无黑屏、无 `resource release failed`、无剧情推进、无窗口关闭。
+- F. 确认系统主音量和 BGM 音量均不是 0。
 
 当前人工状态只能写：`MANUAL_AUDIO_REVIEW_PENDING`。执行 AI 没有代填“听见了”或“人工试听通过”。
 

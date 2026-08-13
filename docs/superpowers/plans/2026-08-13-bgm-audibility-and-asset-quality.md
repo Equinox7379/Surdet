@@ -658,8 +658,9 @@ WAITING_FOR_INDEPENDENT_REVIEW
 
 ### Task 6 — completed: delivery report, evidence re-read, and local closure
 
-- 交付报告已真实创建：`docs/ENGINE-BGM-AUDIBILITY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`，磁盘复核为 `13456` bytes，SHA-256 `D64D12FFB517E9D35F0DA18C4825B8001DD52E45AD8E147B9B1476CA3EC273B3`。
+- 交付报告已真实创建：`docs/ENGINE-BGM-AUDIBILITY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`，去除 Markdown 行尾空格后磁盘复核为 `13454` bytes，SHA-256 `7436427BBCAED7D8076330B3C27E57CDC0CC46566A129A489B8A6C817E61D13E`。
 - 正式 baseline 已重新读取：`docs/baselines/zero-after-midnight-bgm-audibility-baseline-2026-08-13.json`，`14920` bytes，SHA-256 `1BC6448D2E49018F154730A5A8C72B4971E9ED5CEA7E6219FC52348CFF630C9D`。
 - 代码/资产提交已完成：`565192adfa83499d837652b1f06b21f051822054`，提交前精确暂存清单仅含十首 WAV、音频分析器、音频测试、Zero package 和 baseline；未夹带计划、报告、构建产物、日志或受保护文件。
 - 报告和本计划台账将作为第二个普通本地文档提交；该提交完成后的真实 HEAD、`HEAD...surdet/main` 和 `git status --short` 将在提交后只读复核，并在最终回报中给出。没有使用 amend/rebase/reset/squash，也不会 push。
 - 最终保留状态：`BGM_AUDIBILITY_BASELINE_IMPLEMENTED`、`TEN_BGM_ASSETS_NORMALIZED`、`GALLERY_PLAYBACK_CHAIN_RETAINED`、`INTERIM_AUDIBLE_PLACEHOLDER`、`AUDIO_QUALITY_NOT_FINAL`、`MANUAL_AUDIO_REVIEW_PENDING`、`PERFORMANCE_WORK_DEFERRED`、`M9_NOT_STARTED`、`NOT_PUSHED`、`WAITING_FOR_INDEPENDENT_REVIEW`。
+- 文档卫生收口只涉及报告 Markdown 行尾空格；不改变证据、资产、代码或运行时行为。该修正将作为新的普通文档提交，前两个提交不改写。
