@@ -31,6 +31,77 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
+## 9. 因果桥人工红灯修复与项目所有者最终复测（2026-08-14）
+
+本报告前文的 `HUMAN_ACCEPTANCE_NOT_STARTED` 与后续 GrowthSystem 收口停止状态属于当时的历史事实，已由本节的新鲜人工结果 supersede；不得再把它们解释为当前状态。
+
+项目所有者首次执行 16 步人工路径时，打开项目、双场景、无 UUID 噪声、A/B 不同可见文本、保存前真实预览、保存及刷新重开均通过，但发现两项真实因果桥红灯：路径 A/B 只显示内部 objectRef，没有可读“当前对象”与 `trust + path_a/path_b` 直接关系；点击任意因果轨迹事件也不会返回块编辑定位。
+
+最小修复提交 `dd54667a6f6024e98979417f388aa6c2180d7e3a fix(editor): restore causal authoring bridge` 完成了三项对症修正：共享 authoring object-index 复用 Core 内联指令解析来提取 choice effects 与跳转；editor 因果区显示可读当前对象、位置和直接引用；preview/main 使用同一 `window` 事件桥完成轨迹反向选择。与症状匹配的红灯、authoring/editor 聚焦测试、两个工作区 typecheck/build和桌面 fixture 只读索引均已通过；没有重跑 FORMAL、`verify:all`、Electron、性能、pack、部署或发行。文档闭合提交为 `3da114754c37e83e624649e2391c7f03acc12e0f docs(editor): close causal bridge ledger`。
+
+项目所有者随后只复测原失败点并明确反馈“非常顺利”。当前人工事实为：
+
+- 可读“当前对象”显示正常；
+- 路径 A 显示 `trust + path_a`，路径 B 显示 `trust + path_b`；
+- 点击因果轨迹事件能够返回块编辑并定位对应对象；
+- 此前已通过的 A/B 真实预览、手工编辑、保存和刷新重开继续有效。
+
+据此，Stage 6 Wave 1 项目所有者人工验收通过。该结论不等于授权普通 push，也不等于批准 Stage 6 Wave 2。因额度即将耗尽，项目所有者决定由 DeepSeek V4 临时总经理与临时执行 AI 接班，最长六天；临时总经理应先独立复审本节、两笔提交和真实 Git，再向项目所有者提出下一步。
+
+当前真实 Git 身份（写入本节前的提交状态）：
+
+```text
+branch=main
+HEAD=3da114754c37e83e624649e2391c7f03acc12e0f
+surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01
+ahead/behind=36 0
+push=未执行
+```
+
+最终停止状态更新为：
+
+```text
+STAGE_6_WAVE_1_HUMAN_ACCEPTANCE_PASSED_BY_OWNER
+CAUSAL_BRIDGE_HUMAN_RETEST_PASSED
+READY_FOR_TEMPORARY_MANAGER_INDEPENDENT_REVIEW
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_AUTHORIZED
+```
+
+## 10. 已验收基线普通 push（2026-08-14）
+
+项目所有者明确要求先 push，以便临时 DeepSeek V4 团队在施工期间拥有稳定回退锚点。推送前已重新抓取 `surdet/main` 并确认远端没有新提交；实际只执行一次普通命令：
+
+```text
+git push surdet main:main
+```
+
+远端返回：
+
+```text
+5994ec7..3da1147  main -> main
+```
+
+随后从远端只读复核：
+
+```text
+git ls-remote surdet refs/heads/main
+3da114754c37e83e624649e2391c7f03acc12e0f  refs/heads/main
+```
+
+当前本地 `HEAD`、本地 `surdet/main` 与远端 `refs/heads/main` 均为 `3da114754c37e83e624649e2391c7f03acc12e0f`，ahead/behind=`0 0`。本次 push 只包含已经提交的历史，没有包含未提交的 Stage 6 最终闭合文档、长期路线台账、临时交接书、受保护文件、`.learnings/` 或 `.dsh` 临时附件；没有部署、打包、发行或进入 Wave 2。
+
+当前最终状态：
+
+```text
+STAGE_6_WAVE_1_HUMAN_ACCEPTANCE_PASSED_BY_OWNER
+CAUSAL_BRIDGE_HUMAN_RETEST_PASSED
+PUSH_COMPLETED_FOR_VERIFIED_BASELINE
+REMOTE_MAIN_AT_3DA1147
+LOCAL_REMOTE_SYNCED
+STAGE_6_WAVE_2_NOT_AUTHORIZED
+```
+
 ## 11. 项目所有者人工验收与因果桥最小修复（2026-08-14 03:01–03:14）
 
 项目所有者使用真实 Chrome/Edge、编辑器根地址和桌面隔离 fixture 完成了 Stage 6 Wave 1 人工路径。项目打开、双场景、`.gal` 无持久 UUID 污染、真实键盘路径 A、真实鼠标路径 B、不同可见后续台词、手工编辑、未保存内存预览、保存及刷新重开均通过；保存后的 `ch01_01.gal` 为 `290` bytes、SHA-256=`C0ED835EDA4ADA19C123FFEB08E3DD9C9695C734924CC33DB9E7995AE1C761B6`，`[STAGE6-OWNER-PROBE]` 在磁盘中存在。

@@ -1792,3 +1792,18 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 已精确暂存并创建普通本地代码证据提交：`dd54667a6f6024e98979417f388aa6c2180d7e3a fix(editor): restore causal authoring bridge`。`git show --name-status HEAD` 只有本轮两份 Stage 6 文档、authoring object-index 源码/测试以及 editor 因果桥源码/样式/测试共 10 个文件；没有长期路线台账、AGENTS、受保护文件、handoff、fixture、artifact、日志或构建产物。
 - 提交后真实 Git：branch=`main`；`HEAD=dd54667a6f6024e98979417f388aa6c2180d7e3a`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`35 0`；tracked 工作树和暂存区均为空，只有既有未跟踪治理/交接文件；tracked `*.log` 无输出；没有 push。
 - 本条只记录提交后真实身份，不重新运行测试、构建、FORMAL、`verify:all` 或人工路径。下一步只将本条闭合记录追加到两份当前 Stage 6 文档并创建纯文档提交；最终仍停在 `HUMAN_CAUSAL_BRIDGE_RETEST_PENDING`，不得宣布 Stage 6 Wave 1 完成或进入 Wave 2。
+
+### Causal bridge human retest passed; temporary handoff prepared (2026-08-14 03:23 +08:00)
+
+- 文档闭合提交已创建：`3da114754c37e83e624649e2391c7f03acc12e0f docs(editor): close causal bridge ledger`；`git show --name-status HEAD` 只有本任务书与 Stage 6 Wave 1 交付报告。提交后 branch=`main`，`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`，ahead/behind=`36 0`；tracked 工作树和暂存区均为空，只有既有未跟踪治理/交接文件；未 push。
+- 项目所有者随后完成且明确通过原失败的三点复测，反馈为“非常顺利”：右侧因果区出现可读“当前对象”；路径 A/B 分别显示 `trust + path_a`、`trust + path_b` 直接关系；点击因果轨迹事件可返回块编辑并定位相应对象。未要求重复此前已经通过的打开项目、A/B 可见预览、编辑、保存和刷新重开路径。
+- 因此人工结论从 `HUMAN_CAUSAL_BRIDGE_RETEST_PENDING` 更新为 `CAUSAL_BRIDGE_HUMAN_RETEST_PASSED`，并与此前部分人工通过事实合并为 `STAGE_6_WAVE_1_HUMAN_ACCEPTANCE_PASSED_BY_OWNER`。这不自动授权 push 或 Wave 2。
+- 因额度即将耗尽，项目所有者决定由 DeepSeek V4 临时总经理与临时执行 AI 接班，期限最长六天，Codex 将在最晚 2026-08-20 重新接手；期间 Codex 在额度允许时继续复审，项目所有者可随时撤换临时团队。已准备角色分离交接书；本轮不提交交接书、长期路线台账或本条人工验收闭合，等待临时总经理独立复审。
+- 最终停止状态：`STAGE_6_WAVE_1_HUMAN_ACCEPTANCE_PASSED_BY_OWNER` / `CAUSAL_BRIDGE_HUMAN_RETEST_PASSED` / `READY_FOR_TEMPORARY_MANAGER_INDEPENDENT_REVIEW` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_AUTHORIZED`。
+
+### Verified baseline pushed for rollback (2026-08-14 03:28 +08:00)
+
+- 项目所有者明确批准先将当前已提交验收基线推送到远端，作为临时 DeepSeek V4 团队施工期间的回退锚点。推送前重新 `git fetch surdet main`，确认远端没有新提交；随后只执行一次普通 `git push surdet main:main`，未使用 force push。
+- 实际 push 结果：`5994ec7..3da1147 main -> main`。随后 `git ls-remote surdet refs/heads/main` 返回 `3da114754c37e83e624649e2391c7f03acc12e0f`；本地 `HEAD` 与 `surdet/main` 均为该 SHA，ahead/behind=`0 0`。
+- 本次 push 只推送已经提交的历史，不包含当前工作树中未提交的 Stage 6 最终闭合文档、长期路线台账、两份临时交接书、受保护文件、`.learnings/` 或 `.dsh` 临时附件。没有执行部署、打包、发行或进入 Wave 2。
+- 当前停止状态：`STAGE_6_WAVE_1_HUMAN_ACCEPTANCE_PASSED_BY_OWNER` / `CAUSAL_BRIDGE_HUMAN_RETEST_PASSED` / `PUSH_COMPLETED_FOR_VERIFIED_BASELINE` / `LOCAL_REMOTE_SYNCED` / `READY_FOR_TEMPORARY_MANAGER_INDEPENDENT_REVIEW` / `STAGE_6_WAVE_2_NOT_AUTHORIZED`。
