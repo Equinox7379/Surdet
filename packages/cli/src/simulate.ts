@@ -1,29 +1,14 @@
 /**
- * surdet simulate —— Headless 自动模拟测试（差异化支柱 2）。
+ * surdet simulate —— Node 文件系统适配器。
  *
- * core 完全 headless = 可以无渲染跑完整个游戏。本命令：
- *  - 自动遍历：解释器驱动全部场景，文本/wait 自动快进，choice 全分支 DFS 枚举（路径预算内）
- *  - 已访问剪枝：(定位, 变量) 状态签名去重，循环剧情自然收敛不爆炸
- *  - 存档往返冒烟：choice 分支经 saveSnapshot/loadSnapshot 走存档机制（天然验证快照一致性）
- *  - 产出报告：分支覆盖率 / 结局可达性 / 死路场景 / 运行时错误 / 循环剪枝次数
- *
- * 与 audit 的 dryRun（单路径、首选选项、遇宿主指令即停）互补：simulate 穿透宿主指令
- * （无宿主时 @battle/@calendar 等只是事件，直接继续），探索全部分支。
+ * 场景编译和运行模拟由 @surdet/authoring / @surdet/core 负责；本文件只把
+ * 本机项目目录转换成 ProjectSnapshot，并保留历史 CLI 报告外观。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-  compileScene,
-  SourceError,
-  VariableStore,
-  SceneRegistry,
-  Interpreter,
-  EventBus,
-  GrowthSystem,
-} from '@surdet/core';
-import type { CoreEventMap, VarValue, GrowthConfig } from '@surdet/core';
+import { compileScene, type VarValue } from '@surdet/core';
+import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
-import { declsFromConfig } from './audit.js';
 
 export interface SimulateOptions {
   /** 路径预算（缺省 500）：choice 组合是乘积增长，超预算停止展开新路径 */
@@ -40,38 +25,21 @@ export interface SimulateReport {
   pathsExplored: number;
   pathBudget: number;
   budgetExhausted: boolean;
-  /** choice 分支覆盖：静态总数（编译产物）与实际走过的分支数 */
   choiceBranches: { total: number; visited: number };
   endings: { ending: string; times: number }[];
-  /** 场景结束但该段剧情未触发任何 @clear（无结局出口；宿主事件场景常见，人工甄别） */
   deadEndScenes: string[];
   cyclesPruned: number;
   saveRoundtrips: number;
   runtimeErrors: { scene: string | null; message: string }[];
 }
 
-function parseAssumeValue(raw: string): VarValue {
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  return raw;
-}
-
-/** 编译全部场景进注册表；任何编译失败直接抛错（先跑 surdet lint 定位） */
-function loadScenes(projectDir: string): { registry: SceneRegistry; choiceBranchTotal: number } {
-  const dir = path.join(projectDir, 'content/scenario');
-  const registry = new SceneRegistry();
-  let choiceBranchTotal = 0;
-  for (const file of findGalFiles(dir)) {
-    const id = sceneIdFromFile(file);
-    const source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-    const scene = compileScene(source, file, id);
-    registry.register(scene);
-    for (const instr of scene.instructions) {
-      if (instr.op === 'choice') choiceBranchTotal += (instr as { options: unknown[] }).options.length;
-    }
+function digest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
   }
-  return { registry, choiceBranchTotal };
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function readJsonIfExists(full: string): Record<string, unknown> | null {
@@ -83,141 +51,90 @@ function readJsonIfExists(full: string): Record<string, unknown> | null {
   }
 }
 
-export function simulateProject(projectDir: string, opts: SimulateOptions = {}): SimulateReport {
-  const budget = opts.maxPaths ?? 500;
-  const stepLimit = opts.maxStepsPerPath ?? 20000;
+function loadSnapshot(projectDir: string): ProjectSnapshot {
+  const config = readJsonIfExists(path.join(projectDir, 'game.config.json'));
+  const entryScene = typeof config?.['entryScene'] === 'string' ? config['entryScene'] : '';
+  if (entryScene.length === 0) throw new Error('simulate 需要 game.config.json 声明 entryScene（模拟从入口场景出发）');
 
-  // 入口场景与变量声明
-  const gameCfg = readJsonIfExists(path.join(projectDir, 'game.config.json'));
-  const entryScene = typeof gameCfg?.['entryScene'] === 'string' ? (gameCfg['entryScene'] as string) : '';
-  if (entryScene.length === 0) {
-    throw new Error('simulate 需要 game.config.json 声明 entryScene（模拟从入口场景出发）');
-  }
-  const store = new VariableStore(gameCfg ? declsFromConfig(gameCfg) : []);
-  for (const [name, raw] of Object.entries(opts.assume ?? {})) {
-    store.set(name, parseAssumeValue(raw)); // 未声明变量 → VariableStore 抛错，直接暴露配置缺陷
-  }
-
-  const { registry, choiceBranchTotal } = loadScenes(projectDir);
-  if (!registry.has(entryScene)) {
+  const customInstructions = Array.isArray(config?.['customInstructions'])
+    ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
+    : [];
+  const sceneFiles = findGalFiles(path.join(projectDir, 'content/scenario'));
+  const files = sceneFiles.map((fullPath) => {
+    const text = fs.readFileSync(fullPath, 'utf8').replace(/^\uFEFF/, '');
+    const id = sceneIdFromFile(fullPath);
+    return {
+      id,
+      path: fullPath,
+      text,
+      bytes: Buffer.byteLength(text, 'utf8'),
+      sha256: digest(text),
+      compiled: compileScene(text, fullPath, id, customInstructions),
+    };
+  });
+  if (!files.some((file) => file.id === entryScene)) {
     throw new Error(`entryScene '${entryScene}' 未找到对应场景文件（content/scenario/${entryScene}.gal）`);
   }
 
-  // 成长系统：growth.json 存在则接线（@exp 无系统会抛运行时错误——如实报告而非静默）
-  const growthCfg = readJsonIfExists(path.join(projectDir, 'content/config/growth.json'));
-  const growth = growthCfg ? new GrowthSystem(growthCfg as unknown as GrowthConfig, store) : null;
-
-  const bus = new EventBus<CoreEventMap>();
-  const interp = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, growth);
-
-  const seenSigs = new Set<string>();
-  const choiceTaken = new Set<string>();
-  const endingCounts = new Map<string, number>();
-  const deadEnds = new Set<string>();
-  const runtimeErrors: SimulateReport['runtimeErrors'] = [];
-  let paths = 1;
-  let budgetExhausted = false;
-  let cyclesPruned = 0;
-  let saveRoundtrips = 0;
-  let segmentSawClear = false;
-  const choicePayload: { options: number } = { options: 0 };
-
-  bus.on('choice', (p) => { choicePayload.options = p.options.length; });
-  bus.on('clear', (p) => {
-    endingCounts.set(p.ending, (endingCounts.get(p.ending) ?? 0) + 1);
-    segmentSawClear = true;
-  });
-  bus.on('sceneEnd', (p) => {
-    if (!segmentSawClear) deadEnds.add(p.sceneId);
-    segmentSawClear = false;
-  });
-
-  const posScene = (): string | null => interp.saveSnapshot()?.position?.sceneId ?? null;
-  const recordError = (message: string): void => {
-    runtimeErrors.push({ scene: posScene(), message });
+  const configPath = path.join(projectDir, 'game.config.json');
+  const configText = config === null ? null : fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
+  const configFile = configText === null ? null : {
+    path: configPath,
+    text: configText,
+    bytes: Buffer.byteLength(configText, 'utf8'),
+    sha256: digest(configText),
   };
-
-  /** 当前挂起点状态签名（定位 + 变量）：重入同签名 = 循环，剪枝 */
-  const signature = (): string => {
-    const snap = interp.saveSnapshot();
-    return JSON.stringify([snap?.position ?? null, snap?.variables ?? null]);
-  };
-
-  /** 单路径驱动：推进到 choice（交给 branch）/ ended / 错误 / 步数上限 */
-  const drive = (): void => {
-    let steps = 0;
-    for (;;) {
-      const st = interp.status;
-      if (st === 'ended' || st === 'idle') return;
-      if (++steps > stepLimit) {
-        recordError(`单路径步数超过 ${stepLimit}，疑似死循环（检查 @loop 是否有挂起点/条件出口）`);
-        return;
-      }
-      try {
-        if (st === 'awaiting-advance') { interp.advance(); continue; }
-        if (st === 'awaiting-timer') { interp.finishWait(); continue; }
-        if (st === 'awaiting-choice') { branch(); return; }
-        recordError(`意外状态 '${st}'，模拟无法推进`);
-        return;
-      } catch (err) {
-        recordError(err instanceof SourceError ? err.message : err instanceof Error ? err.message : String(err));
-        return;
-      }
-    }
-  };
-
-  /** choice 分支枚举：快照恢复 + 逐选项 explore（存档往返冒烟天然发生） */
-  const branch = (): void => {
-    const snap = interp.saveSnapshot();
-    if (!snap) return;
-    saveRoundtrips++;
-    const sig = signature();
-    if (seenSigs.has(sig)) { cyclesPruned++; return; }
-    seenSigs.add(sig);
-    const optionCount = choicePayload.options;
-    const choiceKey = `${snap.position?.sceneId ?? '?'}#${snap.position?.pc ?? -1}`;
-    for (let i = 0; i < optionCount; i++) {
-      if (paths >= budget) { budgetExhausted = true; return; }
-      const ck = `${choiceKey}#${i}`;
-      if (choiceTaken.has(ck)) continue;
-      choiceTaken.add(ck);
-      paths++;
-      try {
-        interp.loadSnapshot(structuredClone(snap));
-        saveRoundtrips++;
-      } catch (err) {
-        recordError(`读档恢复失败：${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-      try {
-        interp.choose(i);
-      } catch (err) {
-        recordError(`choose(${i}) 失败：${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-      drive();
-    }
-  };
-
-  try {
-    interp.start(entryScene);
-    drive();
-  } catch (err) {
-    recordError(err instanceof SourceError ? err.message : err instanceof Error ? err.message : String(err));
-  }
-
+  const projectFiles = configFile === null ? files : [...files, configFile];
+  const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
+    ? config['variables'] as Record<string, unknown>
+    : {};
   return {
+    rootIdentity: projectDir,
+    revision: digest(projectFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
+    files: projectFiles,
+    configFile,
+    config: config ?? {},
     entryScene,
-    sceneCount: registry.all().length,
-    pathsExplored: paths,
-    pathBudget: budget,
-    budgetExhausted,
-    choiceBranches: { total: choiceBranchTotal, visited: choiceTaken.size },
-    endings: [...endingCounts.entries()].map(([ending, times]) => ({ ending, times })),
-    deadEndScenes: [...deadEnds],
-    cyclesPruned,
-    saveRoundtrips,
-    runtimeErrors,
+    variables,
+    scenes: files.map(({ id, path: scenePath, text, bytes, sha256, compiled }) => ({
+      id,
+      path: scenePath,
+      file: { path: scenePath, text, bytes, sha256 },
+      document: parseSceneDocument(text),
+      compiled,
+    })),
+    timelines: [],
+  };
+}
+
+function parseAssumeValue(raw: string): VarValue {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  return raw;
+}
+
+export function simulateProject(projectDir: string, opts: SimulateOptions = {}): SimulateReport {
+  const snapshot = loadSnapshot(projectDir);
+  const initialVariables: Record<string, VarValue> = {};
+  for (const [name, raw] of Object.entries(opts.assume ?? {})) initialVariables[name] = parseAssumeValue(raw);
+  const report = simulateSnapshot(snapshot, {
+    maxPaths: opts.maxPaths,
+    maxStepsPerPath: opts.maxStepsPerPath,
+    initialVariables,
+  });
+  return {
+    entryScene: report.entryScene,
+    sceneCount: snapshot.scenes.length,
+    pathsExplored: report.paths.length,
+    pathBudget: opts.maxPaths ?? 500,
+    budgetExhausted: report.budgetExhausted,
+    choiceBranches: report.choiceBranches,
+    endings: report.endings,
+    deadEndScenes: report.deadEndScenes,
+    cyclesPruned: report.cyclesPruned,
+    saveRoundtrips: report.saveRoundtrips,
+    runtimeErrors: report.runtimeErrors,
   };
 }
 
@@ -265,9 +182,7 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
     }
     if (report.runtimeErrors.length > 0) {
       w(`运行时错误（${report.runtimeErrors.length}）：`);
-      for (const e of report.runtimeErrors.slice(0, 20)) {
-        w(`  ✗ ${e.scene ?? '?'}：${e.message}`);
-      }
+      for (const e of report.runtimeErrors.slice(0, 20)) w(`  ✗ ${e.scene ?? '?'}：${e.message}`);
     } else {
       w('运行时错误：0 ✓');
     }

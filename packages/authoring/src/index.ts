@@ -5,3 +5,8 @@ export * from './object-index.js';
 export * from './change-session.js';
 export * from './operations.js';
 export * from './scene-document.js';
+export * from './validation.js';
+export * from './simulation.js';
+export * from './evidence.js';
+export * from './diff.js';
+export * from './runtime-trace.js';

@@ -7,13 +7,6 @@ import {
   checkExprOperands,
   checkExprVars,
   parseVariableConfig,
-  checkChoiceSuspects,
-  collectSceneSpeakers,
-  checkConsumedModifiers,
-  validateJumpTarget,
-  validateSceneVariables,
-  validateSwitchTargets,
-  validateTransitionInstructions,
   collectConfigSceneRoots as collectConfigSceneRootsFromConfigs,
   attachHints,
   type CallInstr,
@@ -22,6 +15,12 @@ import {
   type JumpInstr,
 } from '@surdet/core';
 import type { LintIssue } from '@surdet/core';
+import {
+  buildObjectIndex,
+  parseSceneDocument,
+  validateSnapshot,
+  type ProjectSnapshot,
+} from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 import { lintGalleryConfig } from './gallery-config-lint.js';
 
@@ -31,6 +30,77 @@ export interface LintResult {
   issues: LintIssue[];
   sceneCount: number;
   ok: boolean;
+}
+
+function authoringDigest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function readConfigRaw(root: string): Record<string, unknown> | null {
+  const file = path.join(root, 'game.config.json');
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function makeAuthoringSnapshot(
+  root: string,
+  scenes: Map<string, CompiledScene>,
+  config: Record<string, unknown> | null,
+): ProjectSnapshot {
+  const files = [...scenes.values()].map((scene) => {
+    const scenePath = scene.instructions[0]?.file ?? path.join(root, 'content/scenario', `${scene.sceneId}.gal`);
+    const text = fs.readFileSync(scenePath, 'utf8').replace(/^\uFEFF/, '');
+    return {
+      path: scenePath,
+      text,
+      bytes: Buffer.byteLength(text, 'utf8'),
+      sha256: authoringDigest(text),
+    };
+  });
+  const configPath = path.join(root, 'game.config.json');
+  const configText = config === null ? null : fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
+  const configFile = configText === null ? null : {
+    path: configPath,
+    text: configText,
+    bytes: Buffer.byteLength(configText, 'utf8'),
+    sha256: authoringDigest(configText),
+  };
+  const allFiles = configFile === null ? files : [...files, configFile];
+  const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
+    ? config['variables'] as Record<string, unknown>
+    : {};
+  const entryScene = typeof config?.['entryScene'] === 'string' ? config['entryScene'] : undefined;
+  return {
+    rootIdentity: root,
+    revision: authoringDigest(allFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
+    files: allFiles,
+    configFile,
+    config: config ?? {},
+    ...(entryScene === undefined ? {} : { entryScene }),
+    variables,
+    scenes: [...scenes.values()].map((compiled) => {
+      const scenePath = compiled.instructions[0]?.file ?? path.join(root, 'content/scenario', `${compiled.sceneId}.gal`);
+      const text = fs.readFileSync(scenePath, 'utf8').replace(/^\uFEFF/, '');
+      const file = files.find((candidate) => candidate.path === scenePath)!;
+      return {
+        id: compiled.sceneId,
+        path: scenePath,
+        file,
+        document: parseSceneDocument(text),
+        compiled,
+      };
+    }),
+    timelines: [],
+  };
 }
 
 /**
@@ -47,7 +117,6 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const files = findGalFiles(dir);
   const issues: LintIssue[] = [];
   const scenes = new Map<string, CompiledScene>();
-  const sceneLabels = new Map<string, Set<string>>();
 
   const { variables, types, readonlyVars, hasConfig, customInstructions, entryScene } = loadVariables(root, issues);
 
@@ -86,23 +155,11 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
       const scene = compileScene(source, file, sceneId, customInstructions);
       sceneSourceFiles.set(sceneId, file);
       scenes.set(sceneId, scene);
-      sceneLabels.set(sceneId, new Set(scene.labels.keys()));
-      for (const d of scene.diagnostics) {
-        issues.push({
-          severity: 'warning',
-          text: `${d.file}:${d.line}:${d.col}: ${d.message}${d.hint ? `（${d.hint}）` : ''} [${d.code}]`,
-          code: d.code,
-          file: d.file,
-          line: d.line,
-          col: d.col,
-        });
-      }
     } catch (err) {
       // 编译失败：登记场景存在（避免后续 @jump 误报 J001"目标场景不存在"，掩盖真正的编译错误）。
       // 失败场景同样计入 sceneCount / LINT_DUP 冲突判定（文件确实存在）。
       failedScenes.add(sceneId);
       sceneSourceFiles.set(sceneId, file);
-      sceneLabels.set(sceneId, new Set());
       // SourceError 统一携带位置与错误码（DslError/LexError/RuntimeError 皆继承自它）
       if (err instanceof SourceError) {
         const p = err.pos;
@@ -122,39 +179,15 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     }
   }
 
-  // 跨场景 jump/call 校验 + @scene 一致性 + 变量引用校验
-  for (const [sceneId, scene] of scenes) {
-    for (const instr of scene.instructions) {
-      if (instr.op === 'jump' && instr.kind === 'jump') {
-        validateJumpTarget(sceneId, instr as JumpInstr, sceneLabels, failedScenes, issues);
-      }
-      if (instr.op === 'call') {
-        // @call 与 @jump 同等静态校验：目标场景/标签拼错应在 lint 发现，
-        // 不拖到运行时 SceneRegistry.resolve 才抛错（AI 批量生成剧本场景需要快速反馈）
-        validateJumpTarget(sceneId, instr as CallInstr, sceneLabels, failedScenes, issues, '@call');
-      }
-      if (instr.op === 'instr' && instr.name === 'scene') {
-        const declared = instr.args[0];
-        if (declared !== undefined && declared !== sceneId) {
-          issues.push({
-            severity: 'error',
-            code: 'SCENE_ID',
-            text: `${instr.file}:${instr.line}:${instr.col}: @scene 声明 '${declared}' 与文件名推导的场景 ID '${sceneId}' 不一致`,
-            file: instr.file,
-            line: instr.line,
-            col: instr.col,
-          });
-        }
-      }
-      if (instr.op === 'instr') {
-        checkConsumedModifiers(instr, issues);
-      }
-    }
-    // @switch 目标标签存在性（共享检查，编辑器同用）
-    validateSwitchTargets(scene, issues);
-    validateTransitionInstructions(scene, issues);
-    validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
-    checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
+  // Core/authoring 提供唯一的场景、变量、引用和修饰符校验结果；本文件只保留
+  // Node 文件系统、配置扩展和 Gallery/growth 等 CLI 专属适配。
+  if (scenes.size > 0) {
+    const shared = validateSnapshot(
+      makeAuthoringSnapshot(root, scenes, readConfigRaw(root)),
+      undefined,
+      { failedScenes },
+    );
+    issues.push(...shared.issues);
   }
 
   // 未使用标签（W006）+ 场景可达性（W007，需配置 entryScene；配置驱动的 hostJump 目标场景也算可达根）

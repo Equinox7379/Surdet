@@ -1,6 +1,7 @@
 import type {
   ChoiceInstr,
   CompiledScene,
+  DslInstr,
   GenericInstr,
   SetInstr,
   SwitchInstr,
@@ -20,6 +21,7 @@ import { migrateSnapshot } from '../save/migrate.js';
 import { ClearTracker } from '../systems/clear-tracker.js';
 import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
 import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
+import type { VarValue } from '../state/types.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -87,6 +89,16 @@ export interface SystemEventPayload {
   pos: SourcePos;
 }
 
+/** 只读运行时因果轨迹；观察既有解释语义，不参与状态决策。 */
+export interface RuntimeTraceEventPayload {
+  kind: 'instruction' | 'choice' | 'state' | 'condition' | 'control-flow' | 'scene-end';
+  source: { sceneId: string; index: number; op: string; file: string; line: number; col: number };
+  stateDelta?: { variable: string; before: VarValue | undefined; after: VarValue | undefined }[];
+  condition?: { expression: string; result: boolean };
+  controlFlow?: { from: string; to: string };
+  choice?: { optionIndex: number; label: string };
+}
+
 /** 解释器事件映射：EventBus 各事件的载荷类型，订阅/发射端自动推导，宿主接线无需断言 */
 export interface CoreEventMap extends EventMap {
   text: TextEventPayload;
@@ -113,6 +125,7 @@ export interface CoreEventMap extends EventMap {
   stateReset: { reason: 'load' };
   /** 旧档在读档前已迁移到当前 schema（宿主可记录日志；自我迭代③） */
   saveMigrated: { from: number; to: number };
+  runtimeTrace: RuntimeTraceEventPayload;
 }
 
 /** 运行时错误（带场景/指令位置） */
@@ -434,6 +447,9 @@ export class Interpreter {
     if (opt.when !== null && !evalExprBoolean(opt.when, this.#store)) {
       throw new RuntimeError(`选项 ${index}（${opt.label}）的条件未满足，无法选择`, opt.pos);
     }
+    this.#emitRuntimeTrace('choice', choice, {
+      choice: { optionIndex: index, label: opt.label },
+    });
     this.#pendingChoice = null;
     this.#pc = opt.blockStart;
     this.#status = 'running';
@@ -458,6 +474,42 @@ export class Interpreter {
     } finally {
       this.#stepping = false;
     }
+  }
+
+  #runtimeNode(sceneId: string, index: number): string {
+    return `scene:${sceneId}#${index}`;
+  }
+
+  #emitRuntimeTrace(
+    kind: RuntimeTraceEventPayload['kind'],
+    instr: DslInstr,
+    extras: Partial<Pick<RuntimeTraceEventPayload, 'stateDelta' | 'condition' | 'controlFlow' | 'choice'>> = {},
+  ): void {
+    this.#bus.emit('runtimeTrace', {
+      kind,
+      source: {
+        sceneId: this.#scene?.sceneId ?? '',
+        index: instr.index,
+        op: instr.op,
+        file: instr.file,
+        line: instr.line,
+        col: instr.col,
+      },
+      ...extras,
+    });
+  }
+
+  #emitStateTrace(instr: DslInstr, before: Record<string, VarValue>): void {
+    const after = this.#store.snapshot();
+    const names = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+    const stateDelta = names
+      .filter((name) => JSON.stringify(before[name]) !== JSON.stringify(after[name]))
+      .map((variable) => ({
+        variable,
+        before: before[variable],
+        after: after[variable],
+      }));
+    if (stateDelta.length > 0) this.#emitRuntimeTrace('state', instr, { stateDelta });
   }
 
   /** 迭代主循环：顺序执行直到挂起/结束。事件回调内推进通过 resume 续跑。
@@ -490,6 +542,9 @@ export class Interpreter {
           instr,
         );
       }
+
+      const variablesBefore = this.#store.snapshot();
+      this.#emitRuntimeTrace('instruction', instr);
 
       try {
         switch (instr.op) {
@@ -600,28 +655,43 @@ export class Interpreter {
           case 'set': {
             this.#execSet(instr);
             this.#pc++;
+            this.#emitStateTrace(instr, variablesBefore);
             break;
           }
 
           case 'modify': {
             this.#store.modify(instr.varName, instr.delta);
             this.#pc++;
+            this.#emitStateTrace(instr, variablesBefore);
             break;
           }
 
           case 'condJump': {
             const cond = evalExprBoolean(instr.expr, this.#store);
             this.#pc = cond ? this.#pc + 1 : instr.target;
+            this.#emitRuntimeTrace('condition', instr, {
+              condition: { expression: instr.expr, result: cond },
+            });
             break;
           }
 
           case 'jump': {
+            const from = this.#runtimeNode(this.#scene.sceneId, instr.index);
             if (instr.kind === 'goto') {
               if (instr.gotoIndex === null) {
                 throw new RuntimeError(`未解析的 goto 目标 '${instr.target}'`, instr);
               }
+              this.#emitRuntimeTrace('control-flow', instr, {
+                controlFlow: {
+                  from,
+                  to: `label:${this.#scene.sceneId}.${instr.target}`,
+                },
+              });
               this.#pc = instr.gotoIndex;
             } else {
+              this.#emitRuntimeTrace('control-flow', instr, {
+                controlFlow: { from, to: `scene:${instr.target}` },
+              });
               const { scene, pc } = this.#registry.resolve(instr.target);
               this.#scene = scene;
               this.#pc = pc;
@@ -637,6 +707,12 @@ export class Interpreter {
                 instr,
               );
             }
+            this.#emitRuntimeTrace('control-flow', instr, {
+              controlFlow: {
+                from: this.#runtimeNode(this.#scene.sceneId, instr.index),
+                to: `scene:${instr.target}`,
+              },
+            });
             const { scene, pc } = this.#registry.resolve(instr.target);
             this.#callStack.push({ sceneId: this.#scene!.sceneId, pc: this.#pc + 1 });
             this.#scene = scene;
@@ -688,6 +764,7 @@ export class Interpreter {
             // 场景/游戏结束事件：宿主可接结局演出、ED、返回标题画面。
             // 回调内可调用 start()（经 #resumeRequested 延迟重启，见 start 的 #stepping 分支）。
             this.#resumeRequested = false;
+            this.#emitRuntimeTrace('scene-end', instr);
             this.#bus.emit('sceneEnd', { sceneId: this.#scene.sceneId });
             if (this.#jumpOverride) {
               this.#jumpOverride = false; // hostJump 回调重入（审计修复 M2）
@@ -704,6 +781,7 @@ export class Interpreter {
 
           case 'instr': {
             this.#execGeneric(instr);
+            this.#emitStateTrace(instr, variablesBefore);
             // hostJump 在事件回调内已重设 pc 时不再自增（否则跳过目标指令）
             if (this.#jumpOverride) {
               this.#jumpOverride = false;
