@@ -1065,7 +1065,7 @@ feat(editor): add causal authoring bridge
 - Consumes: 构建后的 14 项 CLI、editor preview、Core/Presentation trace。
 - Produces: 一个不可覆盖的 Stage 6 Wave 1 artifact、桌面人工 fixture 和聚合 pass/fail 退出码。
 
-- [ ] **Step 1: 写 harness 静态红灯测试或自检入口**
+- [x] **Step 1: 写 harness 静态红灯测试或自检入口**
 
 harness 必须在启动时验证：原始 Starter 场景/config 哈希、运行 HEAD、目标桌面 fixture 不存在、artifact 目录唯一。不得删除已存在的同名目录；使用时间戳/随机后缀创建新目录。
 
@@ -1136,7 +1136,7 @@ artifact 至少包含：
 
 写完后从磁盘重新读取路径、bytes 和 SHA-256。失败时 status=`FAILED`，保留 artifact，不重跑、不覆盖。
 
-- [ ] **Step 6: 先跑语法检查与受影响构建**
+- [x] **Step 6: 先跑语法检查与受影响构建**
 
 ```powershell
 node --check packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs
@@ -1147,7 +1147,7 @@ npm run build -w @surdet/renderer
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 7: 聚合 harness 只运行一次**
+- [x] **Step 7: 聚合 harness 只运行一次**
 
 ```powershell
 node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs
@@ -1456,3 +1456,31 @@ STAGE_6_WAVE_2_NOT_STARTED
 - Task 7 本轮实际修改文件为：本计划、`packages/editor/src/causal-selection.ts`、`src/authoring-project-storage.ts`、`src/state.ts`、`src/main.ts`、`src/panels/editor.ts`、`src/panels/right.ts`、`src/panels/preview-panel.ts`、`src/styles.css`、`test/causal-selection.test.ts`、`test/authoring-project-storage.test.ts`；没有修改 Core/Renderer/Host/Shell/Zero、CLI、长期路线台账或受保护文件。
 - Task 7 提交前新鲜 Git 事实：branch=`main`；`HEAD=70daa389bd0e125a2d53c7ef6cdd9d8e4bb50044`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`13 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划和上述 Task 7 白名单；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
 - Task 7 当前状态：`TASK_7_GREEN_LOCALLY` / `SHARED_OBJECT_INDEX_IN_MEMORY_VERIFIED` / `BIDIRECTIONAL_CAUSAL_SELECTION_VERIFIED` / `STAGE_5_EDITOR_REGRESSION_GREEN` / `TASK_7_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 7 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(editor): add causal authoring bridge` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 8。
+
+### Task 7 — Step 8 completed after commit (2026-08-13 22:13 +08:00)
+
+- 已按 Task 7 白名单精确提交：`git log --oneline -1`=`e06e2bd feat(editor): add causal authoring bridge`；提交后真实 `HEAD=e06e2bd704538ad3203b9ea2927d04956803095a`；`git show --name-status HEAD` 仅包含本计划、`packages/editor/src/authoring-project-storage.ts`、`src/causal-selection.ts`、`src/main.ts`、`src/panels/editor.ts`、`src/panels/preview-panel.ts`、`src/panels/right.ts`、`src/state.ts`、`src/styles.css`、`test/authoring-project-storage.test.ts` 和 `test/causal-selection.test.ts`。
+- 提交后真实远端关系：`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；`git rev-list --left-right --count HEAD...surdet/main`=`14 0`。`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；tracked 工作树和暂存区均为空。`git status --short --untracked-files=all` 仅保留既有未跟踪的 `AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件、两份 handoff 和长期路线台账，未触碰、未暂存、未提交，未 push。
+- Task 7 最终状态：`TASK_7_COMPLETED_LOCALLY` / `SHARED_OBJECT_INDEX_IN_MEMORY_VERIFIED` / `BIDIRECTIONAL_CAUSAL_SELECTION_VERIFIED` / `STAGE_5_EDITOR_REGRESSION_GREEN` / `NOT_PUSHED`。下一停止点：先完整读取 Task 8 与 Task 9 的实施范围，再按 Task 8 规定建立唯一聚合纵向 harness 红灯；不邀请项目所有者人工验收。
+
+### Task 8 — Step 1 completed; Steps 2–9 pending (2026-08-13 22:30 +08:00)
+
+- 已先写并运行 Task 8 规定的 harness 自检红灯：`node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs --self-check` 初次 exit `1`，真实错误为 `HARNESS_SELF_CHECK_NOT_IMPLEMENTED`；红灯没有被改写成通过。随后完成同一入口的最小自检实现，重新运行 `node --check packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` exit `0`，以及 `node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs --self-check` exit `0`；自检真实读取 Starter scene/config、运行 HEAD、唯一桌面 fixture 目标和唯一 artifact 路径，未创建 fixture、未写入原始 Starter。
+- Task 8 当前实现文件为新建 `packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` 与修改 `packages/shell/package.json`；尚未运行 CLI 能力链、正式 editor preview/Renderer 双路径、artifact、受影响构建或聚合 harness。自检输出的本轮候选 fixture 与 artifact 均位于桌面/系统临时目录且尚不存在，未纳入 Git。
+- 本记录前新鲜 Git 事实：`HEAD=e06e2bd704538ad3203b9ea2927d04956803095a`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`14 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划、`packages/shell/package.json` 和上述 harness；暂存区为空；既有受保护文件、handoff 和长期路线台账保持未跟踪、未触碰、未暂存、未提交。
+- 当前状态：`TASK_8_SELF_CHECK_RED_REPRODUCED_AND_ENTRY_READY` / `TASK_8_IMPLEMENTATION_IN_PROGRESS` / `NOT_PUSHED`。下一停止点：先按 Task 8 Step 6 运行 `node --check` 与 Core、Authoring、CLI、Renderer、Editor 五个受影响 build，然后只按 Step 7 执行一次聚合 harness；不提前运行正式路径，不循环重跑，不邀请人工验收。
+
+### Task 8 — Steps 1–6 completed; Steps 7–9 pending (2026-08-13 22:31 +08:00)
+
+- 已完成 Task 8 Step 6 规定的实际检查：`node --check packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` exit `0`；`npm run build -w @surdet/core` exit `0`；`npm run build -w @surdet/authoring` exit `0`；`npm run build -w @surdet/cli` exit `0`；`npm run build -w @surdet/renderer` exit `0`；`npm run build -w surdet-editor` exit `0`。Editor 产出 `867 modules transformed`，preview chunk `594.54 kB` / gzip `175.92 kB` 的既有 warning 保留，未修改性能门限。
+- Harness 已实现 Task 8 Step 2–5 所需逻辑但尚未实际执行聚合路径：只 spawn built CLI 的 14 项能力顺序、事务期间 fixture 文件树不变、commit 后唯一预期文件变化、正式 editor `preview.html` 的公开 `postMessage`、真实键盘/鼠标两条路径、错误通道和不可覆盖 artifact；没有直接 import authoring 内部函数，没有写入原始 Starter。
+- 当前状态：`TASK_8_BUILD_GREEN` / `AGGREGATE_HARNESS_NOT_YET_RUN` / `NOT_PUSHED`。下一停止点：按任务书只运行一次 `node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs`；成功则从磁盘回读唯一 artifact 与桌面 fixture，失败则保留 FAILED artifact、记录最后通过节点/第一失败节点并停止，不重跑。
+
+### Task 8 — Step 7 completed with failure; Steps 8–9 stopped (2026-08-13 22:32 +08:00)
+
+- 已按任务书只运行一次聚合命令：`node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs`，exit `1`。没有重跑、没有切换路径、没有挑绿、没有修改生产代码或 runner。最后一个通过节点为 `change.write-operations-before-red`；第一个失败节点为 `project.validate.red`。
+- 失败真实现象：任务要求的故意坏标签路径没有返回可继续使用的 `project.validate` 成功信封（其中 `result.ok=false`、`J002`、`objectRef`、`action`），而是在快照编译阶段由 CLI 返回 exit `1` 的失败信封：`error.code=PROJECT_INVALID`，消息为 `content/scenario/ch01_01.gal:4:3: 跳转目标标签 '@label missing_label' 不存在 ... [C002]`。因此 `redEvidenceId=null`、`greenEvidenceId=null`、`traceIds=[]`，没有到达 patch、green validation、simulate、runtime trace、diff、commit 或正式 editor preview；这只能证明当前聚合 harness 的红灯语义与现有 CLI 错误边界不匹配，不能归因于生产恢复或 editor/Renderer 功能。
+- 失败 artifact 已保留且禁止覆盖：`C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-1-yTB3Ek\agent-ready-authoring-wave-1.json`；从磁盘重新读取 `status=FAILED`、`bytes=6513`、`sha256=A9CE9274C80C2DE38579FFA5951DAF2EA33241EA8196F35F907306A45A166D08`；artifact `runHead=e06e2bd704538ad3203b9ea2927d04956803095a`、`changeId=chg_0001`、`workingRevision=0`、`lastPassedNode=change.write-operations-before-red`、`firstFailedNode=project.validate.red`。
+- 桌面 fixture 已保留但未被事务提交：`C:\Users\Equinox\Desktop\surdet-stage6-agent-fixture-1786631494344-20a8ef48a582`。artifact 与磁盘回读均证明 `beforeBegin=afterBegin=afterSceneCreateBeforeRed=6f414fa1280b75a43436e5fa2a92527dd0ff7e56391a551b42258a05effab08a`；fixture 没有 `content/scenario` 写入，未创建 `node_modules`、`dist`、`src`、`test` 或 Git 元数据；没有 preview server、人工入口或 PASSED artifact。
+- 原始 Starter 身份仍未变化：`game.config.json` bytes=`1623`、SHA-256=`6700EECADE602051B3CD6F9458D2B5B7EDE71BCBA706BF1F4E6AB21849ADE3A4`、Git blob=`86ad869719dbb3cfcc065ced9c637a49b3ce6179`；`content/scenario/ch01_01.gal` bytes=`1035`、SHA-256=`713414BD2F14C7AF159989115902B3D2067BEB30E428077900D98461D87193E0`、Git blob=`50b253ef3b683b4d848d7795b8142ab72fd7a690`。artifact 的全部 preview 错误通道仍为空，但这不是 preview 通过证据，因为 preview 尚未启动。
+- Task 8 失败收口前状态：`TASK_8_AGGREGATE_FAILED_AT_PROJECT_VALIDATE_RED` / `HARNESS_RED_SEMANTICS_MISMATCH_UNRESOLVED` / `WAITING_FOR_REVIEW` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。Task 8 Step 8（人工入口）和 Task 9（聚焦测试、verify:all、最终报告）均停止；下一停止点：等待总经理独立复审失败 artifact、CLI 错误边界和当前 diff，另行决定是否授权一个新的最小 harness 红灯语义整改；本轮不修改、不重跑。

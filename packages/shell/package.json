@@ -14,6 +14,7 @@
     "e2e": "node e2e/game.e2e.mjs",
     "e2e:player-experience": "node e2e/player-experience-wave-2.e2e.mjs",
     "e2e:player-experience:wave4": "node e2e/player-experience-wave-4.e2e.mjs",
+    "e2e:authoring:wave1": "node e2e/agent-ready-authoring-wave-1.e2e.mjs",
     "e2e:player-experience:wave5a": "node e2e/player-experience-wave-5a-rollback-black-screen.e2e.mjs",
     "e2e:player-experience:wave5c": "node e2e/player-experience-wave-5c-rollback-restore-atomicity.e2e.mjs",
     "e2e:gallery-music": "node e2e/player-experience-gallery-music.e2e.mjs",
