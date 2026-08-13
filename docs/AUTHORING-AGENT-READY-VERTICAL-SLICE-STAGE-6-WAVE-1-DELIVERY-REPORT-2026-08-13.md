@@ -31,6 +31,34 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
+## 10. Post-commit closure for shared simulation path evidence
+
+本轮四个 authoring/CLI 源码与测试文件、当前 Stage 6 Wave 1 任务书和本交付报告已精确暂存并创建普通本地提交。提交后立即回读：
+
+```text
+git log --oneline -1 = 9ca3a2f fix(authoring): preserve simulation path evidence
+git rev-parse HEAD = 9ca3a2f050969fe5bd02996b31dc212ac7662e4b
+surdet/main = 5994ec7bd64b2106da6e47cd86e88fb4df82ed01
+ahead/behind = 33 0
+```
+
+`git show --name-status HEAD` 只包含上述六个允许文件；提交后 tracked 工作树和暂存区为空，既有未跟踪治理/交接文件未触碰；`git diff --check`、`git diff --cached --check` 均 exit=`0`；`git ls-files '*.log'` 无输出。该提交没有 push。
+
+提交后交付报告从磁盘读取为 `29750` bytes / SHA-256=`8B651D3B408C2988D724F9F99E00E1000B3E4A588E78FBD8C761648742B9F418`；既有 FORMAL artifact、Starter 文件身份和 4173 PID=`36436` 保持本节前述事实。接下来只做本报告与任务书的文档闭合提交，不重跑测试、`verify:all`、FORMAL/DIAGNOSTIC 或人工路径。
+
+本轮最终仍不进入人工验收或 Wave 2：
+
+```text
+STAGE_6_SHARED_SIMULATION_PATH_EVIDENCE_RESTORED
+STARTER_SIMULATION_PATH_COUNT_TRUSTWORTHY
+TASK_9_VERIFY_ALL_PASSED
+FORMAL_AGGREGATE_REMAINS_VALID
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
 ## 9. Shared simulation path evidence closure
 
 ### 9.1 复审发现与最小修正
