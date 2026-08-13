@@ -1786,3 +1786,9 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 聚焦绿灯：authoring `object-index + validation + operations` 为 3 files / 6 tests、exit=`0`；authoring typecheck/build 均 exit=`0`；editor `causal-selection + preview-causal-trace + authoring-project-storage` 为 3 files / 7 tests、exit=`0`；editor typecheck/build 均 exit=`0`。editor build 为 Vite `6.4.3`、`867 modules transformed`，只保留既有 preview chunk 超过 500 kB warning，未调整性能门限。
 - 已使用修复后的共享 authoring dist 对项目所有者实际桌面 fixture 只读建索引：路径 A 当前 objectRef=`scene:ch01_01/choice-option:5@4eaa04ff-e7122dd0`，references=`[variable:trust,label:ch01_01.path_a]`；路径 B objectRef=`scene:ch01_01/choice-option:6@4eaa04ff-4bc5d719`，references=`[variable:trust,label:ch01_01.path_b]`。4173 服务仍由 PID=`36436` 提供 HTTP `200` 的“Surdet 剧本编辑器”，已读取新构建 `assets/main-CsqBD9ql.js`；其中包含新“当前对象”/可读选项文本和统一事件名，不含旧的 document 轨迹 dispatch 形状。
 - 本轮没有运行 FORMAL/DIAGNOSTIC、`verify:all`、Electron、性能、pack、部署或发行；没有修改 Starter、fixture、artifact、Core、Renderer、Host、Shell、Zero 或音频。长期路线台账仅由经理同步人工红灯、修复状态与复测提醒，继续保持未跟踪且不进入提交。代码与测试现在进入精确范围审查和本地普通提交；提交后只要求项目所有者复测原失败的第 5/6/8 步，当前仍为 `HUMAN_CAUSAL_BRIDGE_RETEST_PENDING` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。
+
+### Causal bridge human-red closure — code commit and document closure (2026-08-14 03:14 +08:00)
+
+- 已精确暂存并创建普通本地代码证据提交：`dd54667a6f6024e98979417f388aa6c2180d7e3a fix(editor): restore causal authoring bridge`。`git show --name-status HEAD` 只有本轮两份 Stage 6 文档、authoring object-index 源码/测试以及 editor 因果桥源码/样式/测试共 10 个文件；没有长期路线台账、AGENTS、受保护文件、handoff、fixture、artifact、日志或构建产物。
+- 提交后真实 Git：branch=`main`；`HEAD=dd54667a6f6024e98979417f388aa6c2180d7e3a`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`35 0`；tracked 工作树和暂存区均为空，只有既有未跟踪治理/交接文件；tracked `*.log` 无输出；没有 push。
+- 本条只记录提交后真实身份，不重新运行测试、构建、FORMAL、`verify:all` 或人工路径。下一步只将本条闭合记录追加到两份当前 Stage 6 文档并创建纯文档提交；最终仍停在 `HUMAN_CAUSAL_BRIDGE_RETEST_PENDING`，不得宣布 Stage 6 Wave 1 完成或进入 Wave 2。
