@@ -31,7 +31,7 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
-## 9. 项目所有者人工验收与因果桥最小修复（2026-08-14 03:01–03:13）
+## 11. 项目所有者人工验收与因果桥最小修复（2026-08-14 03:01–03:14）
 
 项目所有者使用真实 Chrome/Edge、编辑器根地址和桌面隔离 fixture 完成了 Stage 6 Wave 1 人工路径。项目打开、双场景、`.gal` 无持久 UUID 污染、真实键盘路径 A、真实鼠标路径 B、不同可见后续台词、手工编辑、未保存内存预览、保存及刷新重开均通过；保存后的 `ch01_01.gal` 为 `290` bytes、SHA-256=`C0ED835EDA4ADA19C123FFEB08E3DD9C9695C734924CC33DB9E7995AE1C761B6`，`[STAGE6-OWNER-PROBE]` 在磁盘中存在。
 
@@ -55,6 +55,17 @@ HUMAN_CAUSAL_BRIDGE_RETEST_PENDING
 NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
+
+### 11.1 因果桥修复提交身份
+
+本轮因果桥修复已创建普通本地提交：
+
+```text
+dd54667a6f6024e98979417f388aa6c2180d7e3a
+fix(editor): restore causal authoring bridge
+```
+
+该提交只包含本报告、当前 Stage 6 Wave 1 任务书和八个允许的 authoring/editor 源码与测试文件。提交后 `HEAD...surdet/main=35 0`，tracked 工作树干净、暂存区为空、tracked `*.log` 无输出；长期路线台账、桌面 fixture、FORMAL artifact 和受保护文件均未进入提交。没有 push。当前仍只等待项目所有者复测因果面板可读关系与轨迹反向定位。
 
 ## 10. Post-commit closure for shared simulation path evidence
 
