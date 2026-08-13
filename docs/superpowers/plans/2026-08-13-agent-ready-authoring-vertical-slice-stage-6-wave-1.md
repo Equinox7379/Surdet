@@ -1069,7 +1069,7 @@ feat(editor): add causal authoring bridge
 
 harness 必须在启动时验证：原始 Starter 场景/config 哈希、运行 HEAD、目标桌面 fixture 不存在、artifact 目录唯一。不得删除已存在的同名目录；使用时间戳/随机后缀创建新目录。
 
-- [ ] **Step 2: 实现公开能力链**
+- [x] **Step 2: 实现公开能力链**
 
 harness 只能 spawn 构建后的 `surdet` CLI，按下列顺序：
 
@@ -1093,11 +1093,11 @@ change.commit
 
 不得 import authoring 内部函数绕过 CLI。
 
-- [ ] **Step 3: 验证红灯期间与提交前不写盘**
+- [x] **Step 3: 验证红灯期间与提交前不写盘**
 
 在 begin、故意红灯、修正后绿灯、diff 后分别重新读取 fixture 文件树哈希；都必须等于 begin 前。只有 commit 成功后才允许变化。
 
-- [ ] **Step 4: 驱动正式 editor preview/Renderer 两条路径**
+- [x] **Step 4: 驱动正式 editor preview/Renderer 两条路径**
 
 构建 editor 后启动仅绑定 `127.0.0.1` 的 Vite preview。Playwright 直接打开正式 `preview.html`，由父测试页通过公开 `postMessage` 加载已提交 fixture 场景；使用真实键盘/鼠标选择两个选项，分别得到 trace A/B。必须验证：
 
@@ -1110,7 +1110,7 @@ Core runtimeTrace 存在
 pageErrors/consoleErrors/requestFailures/unhandledRejections/rendererErrors/releaseFailures 全为空
 ```
 
-- [ ] **Step 5: 写唯一 artifact**
+- [x] **Step 5: 写唯一 artifact**
 
 artifact 至少包含：
 
@@ -1155,7 +1155,7 @@ node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs
 
 Expected: exit `0` 且 artifact status=`PASSED`。若失败，记录最后通过节点和第一失败节点，停止在 `WAITING_FOR_REVIEW`；不得循环重跑，不得自动修改生产代码猜测修复。
 
-- [ ] **Step 8: 准备桌面人工验收入口但不代替项目所有者执行**
+- [x] **Step 8: 准备桌面人工验收入口但不代替项目所有者执行**
 
 复用 harness 创建的桌面 fixture。fixture 只能复制 Starter 的 `game.config.json` 与 `content/**`，不得复制 `node_modules`、`dist`、`src`、`test` 或仓库 Git 元数据；创建前后都要重新核对原始 Starter 哈希。随后启动：
 
@@ -1165,7 +1165,7 @@ npm run preview -w surdet-editor -- --host 127.0.0.1 --port 4173
 
 只确认 HTTP 200、页面标题和 fixture 路径可访问；不把服务器可访问写成人工通过。将 URL、PID、fixture 路径和 16 步人工验收清单写入报告与计划强制提醒点。
 
-- [ ] **Step 9: 更新 Execution Ledger 并提交 harness**
+- [x] **Step 9: 更新 Execution Ledger 并提交 harness**
 
 Commit message:
 
@@ -1187,7 +1187,7 @@ test(authoring): verify agent-ready vertical slice
 - Consumes: Tasks 1–8 的提交、测试、artifact 和桌面 fixture。
 - Produces: 可独立复审的最终报告、本地文档收口提交和人工验收强制提醒。
 
-- [ ] **Step 1: 运行聚焦工作区测试**
+- [x] **Step 1: 运行聚焦工作区测试**
 
 ```powershell
 npm run test -w @surdet/core
@@ -1200,7 +1200,7 @@ npm run test -w @surdet/shell
 
 Expected: 全部 exit `0`。不得再出现 Stage 5 的两个 EOL 红灯。
 
-- [ ] **Step 2: 运行 typecheck 与 build**
+- [x] **Step 2: 运行 typecheck 与 build**
 
 ```powershell
 npm run typecheck -w @surdet/core
@@ -1227,7 +1227,7 @@ npm run verify:all
 
 Expected: exit `0`。若失败，只记录一次结果并判断与本轮关系；不得循环运行。不要运行性能资格化、多轮 Electron、pack 或发行。
 
-- [ ] **Step 4: 从磁盘重新读取所有关键证据**
+- [x] **Step 4: 从磁盘重新读取所有关键证据**
 
 必须重新读取：
 
@@ -1238,7 +1238,7 @@ Expected: exit `0`。若失败，只记录一次结果并判断与本轮关系�
 - `git status`、tracked log、diff checks；
 - Tasks 1–8 的真实提交与文件范围。
 
-- [ ] **Step 5: 写交付报告**
+- [x] **Step 5: 写交付报告**
 
 报告必须区分：
 
@@ -1256,7 +1256,7 @@ STAGE_6_WAVE_2_NOT_STARTED
 
 末尾必须有“建议由总经理登记的事实”，不得修改长期路线台账。
 
-- [ ] **Step 6: 写人工验收强制提醒点**
+- [x] **Step 6: 写人工验收强制提醒点**
 
 明确要求项目所有者使用 Chrome/Edge 与桌面 fixture 完成：
 
@@ -1279,7 +1279,7 @@ STAGE_6_WAVE_2_NOT_STARTED
 16. 确认修改仍在且无脏标记
 ```
 
-- [ ] **Step 7: 精确暂存最终文档并提交**
+- [x] **Step 7: 精确暂存最终文档并提交**
 
 ```powershell
 git add -- docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md
@@ -1288,7 +1288,7 @@ git diff --cached --name-status
 git commit -m "docs(authoring): report stage 6 wave 1 delivery"
 ```
 
-- [ ] **Step 8: 提交后最终回读并停止**
+- [x] **Step 8: 提交后最终回读并停止**
 
 ```powershell
 git log -1 --oneline
@@ -1701,3 +1701,14 @@ STAGE_6_WAVE_2_NOT_STARTED
 - DIAGNOSTIC 全绿后实际运行并通过：`node --check packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` exit=`0`；`node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs --preview-harness-self-check` exit=`0`，输出 `PREVIEW_HARNESS_SELF_CHECK_PASSED`、`framePathname=/preview.html`、`delayedNavigation=true`、`browserDisconnected=true`、`childExited=true`、`port=4174`，且该入口复用了正式 Vite launcher、`packages/editor` cwd 与 `packages/editor/dist/preview.html`；`npm run build -w surdet-editor` exit=`0`；聚焦 preview contract tests `preview-causal-trace.test.ts`、`preview-runtime-contract.test.ts`、`preview-runtime-lifecycle.test.ts` 共 `3` files / `4` tests 全部通过；`npm run typecheck -w surdet-editor` exit=`0`；`git diff --check` exit=`0`。editor build 的既有大 chunk warning 被原样保留，没有修改性能门限。
 - 诊断结束后只读资源复核确认 `127.0.0.1:4173`、`127.0.0.1:4174` 均无监听；本轮 runner、Vite child、Playwright Chromium 无残留。三次 DIAGNOSTIC 均使用唯一 fixture/artifact；失败证据保留，未覆盖任何历史正式 FAILED artifact。当前状态为：`DIAGNOSTIC_HARNESS_STABLE` / `FORMAL_NOT_YET_RUN` / `TASK_8_STEP_8_NOT_STARTED` / `TASK_9_NOT_STARTED` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。
 - 本条 Ledger 与 runner 一并精确暂存；下一步仅执行 `git diff --cached --check`、`git diff --cached --name-status`，确认暂存区只有上述两个文件后创建普通本地提交 `test(authoring): stabilize preview diagnostic harness`。提交后必须立即重新读取真实 `git log --oneline -1`、`git rev-parse HEAD`、`git show --name-status HEAD`，将该 HEAD 作为新的 `CODE_EVIDENCE_HEAD`；不得 amend、rebase、squash 或 push。提交成功后才允许创建全新 FORMAL fixture/artifact，并只运行一次正式聚合；在此之前不运行 FORMAL。
+
+### Task 8/9 formal closure — FORMAL 通过，Task 9 verify:all 在 Starter typecheck 阻断（2026-08-14 01:26 +08:00）
+
+- 基于 `CODE_EVIDENCE_HEAD=b9d9703e1c442cb927b59fd53026638a4345680d`，唯一一次正式命令 `node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` exit=`0`。新的 FORMAL artifact 为 `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-1-EdIstQ\agent-ready-authoring-wave-1.json`；从磁盘重新读取 `bytes=7591`、SHA-256=`77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0`、`status=PASSED`、`evidenceClass=FORMAL`、`runHead=b9d9703e1c442cb927b59fd53026638a4345680d`。`redEvidenceId=validation_1786641372228_70db929f-3567-409d-9571-fe9c7dad2cda`；`greenEvidenceId=validation_1786641372763_6f3bfc3a-35a5-4a31-a36e-a3dcb291e882`；preview traceIds=`preview-1786641375189-9f24e3ca-32d8-45df-8f97-ea102cd45670`、`preview-1786641375591-79cda540-8a7a-4e49-a6e6-251bf22060d4`；CLI traceIds=`trace_1786641373123_3e3e4549-644a-4170-a365-4a41ccf26f49`、`trace_1786641373284_ed70f639-5f28-437b-9f9a-0ffeb4ec0e08`；`choiceCoverage=2/2`；`stateOutcomes=[-1,1]`。A 使用真实键盘得到可见 `Agent 路径 A 后续台词。`、trust=`1`；B 使用真实鼠标得到可见 `Agent 路径 B 后续台词。`、trust=`-1`。runner 在 PASSED 前断言 Core runtime trace、`coreEmitted=true` 和同一演出的 `presentationApplied=true`；六项错误通道为空，`unexpectedWindowClosed=false`。
+- FORMAL fixture 为 `C:\Users\Equinox\Desktop\surdet-stage6-agent-fixture-1786641370693-4e4e09d75522`，fixture tree SHA-256=`F1FAAE3691476879280FF0B5875F2DA42746A4862B6A6C2C12BBF1D2F6371973`。从磁盘重新读取 `content/scenario/ch01_01.gal`=`270` bytes / SHA-256=`7F8661943B2A13D397A2D84EB848E4D36D0949A8B8C0A39220EC70036B90D794`；`game.config.json`=`1619` bytes / SHA-256=`BE77454A4A928C1ABC042BE531B29619667AB9F4ACE169467FDF71FB2A63F92B`。原始 Starter 仍未修改：scenario=`1035` bytes / SHA-256=`713414BD2F14C7AF159989115902B3D2067BEB30E428077900D98461D87193E0`；config=`1623` bytes / SHA-256=`6700EECADE602051B3CD6F9458D2B5B7EDE71BCBA706BF1F4E6AB21849ADE3A4`；artifact `originalStarter.unchanged=true`。此前六份正式 FAILED artifact 与本轮三份 DIAGNOSTIC artifact 均保留，未覆盖、删除或复用。
+- FORMAL artifact 的成功清理字段为 `browserClosed=true`、`previewServerRetained=true`、`harnessSelfCheckPortFree=true`、`previewPortFree=false`。runner 退出后的只读检查发现 retained child 实际已退出、4173 已释放；没有把 artifact 字段写成仍存活的进程事实。随后按 Task 8 Step 8 执行 `npm run preview -w surdet-editor -- --host 127.0.0.1 --port 4173`，实际 listener PID=`36436`，URL=`http://127.0.0.1:4173/preview.html`，HTTP=`200`，页面标题=`Surdet 预览`，命令行指向 `E:\surdet\packages\editor\node_modules\vite\bin\vite.js preview --host 127.0.0.1 --port 4173`。该入口仅供项目所有者人工验收准备，不是人工通过证据。
+- Task 9 Step 1 已实际运行且全部 exit=`0`：Core=`24 files/317 tests`；authoring=`10/16`；CLI=`11/103`；editor=`24/147`；Renderer=`49/406`；Shell=`20/156`。Task 9 Step 2 的 14 个实际 npm 子命令（Core、authoring、CLI、Renderer、Host、Shell、editor 各 typecheck/build）均 exit=`0`；外层 PowerShell 编排器另有 `$args` 保留变量造成的数组索引警告，不是 npm 子命令失败。
+- Task 9 Step 3 只运行一次 `npm run verify:all`，真实 exit=`1`。`verify:tools`、Renderer boundaries/legacy、docs、hygiene 通过；首个失败节点=`verify:types` 的 `examples/starter` typecheck，真实错误为 `src/main.ts(394,33)` 的 save bridge 缺少 `listBackupMeta`、`restoreBackup`，不匹配 `ElectronSaveBridge`。本轮没有修改 Starter、Shell 生产代码或 save bridge，没有放宽断言，没有重跑。该失败属于当前最终全仓门禁阻断，不得把 Task 9 全仓验证写成通过。
+- Task 9 Step 4–6 已完成：交付报告已创建为 `docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md`；创建后从磁盘读取 `bytes=15244`、SHA-256=`44A8FC771AD7EB39789F9B9C73D231E02B17B9343AA321D50A3D5D410BFB47A8`。报告区分 FORMAL 自动化事实、verify:all 失败、人工验收未开始、强制 16 步提醒和未解决问题。追加本条前任务书从磁盘读取 `bytes=172302`、SHA-256=`085287AA31113BC0B9AEB22BBB5FFCB731AD09CDF02B265BFA01466E7DA6E518`；追加本条后任务书身份必须在提交前再次从磁盘读取，不把自记录前哈希冒写成最终哈希。
+- 当前真实 Git（文档提交前）：branch=`main`；`HEAD=b9d9703e1c442cb927b59fd53026638a4345680d`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`28 0`；tracked 在途文件为本任务书和新交付报告，暂存区为空；`git diff --check` exit=`0`；`git diff --cached --check` exit=`0`；`git ls-files '*.log'` 无输出。下一步只精确暂存上述两个文档，核对 cached 范围后创建普通文档提交 `docs(authoring): report stage 6 wave 1 delivery`；不暂存 fixture、artifact、日志、构建产物、长期路线台账、AGENTS、受保护文件或 handoff，不 push。
+- 当前停止状态：`STAGE_6_WAVE_1_IMPLEMENTED_LOCALLY` / `FORMAL_AGGREGATE_PASSED` / `TASK_9_VERIFY_ALL_BLOCKED_AT_STARTER_TYPECHECK` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED_AFTER_STAGE_6_WAVE_1` / `STAGE_6_WAVE_2_NOT_STARTED`。总经理独立复审前不邀请项目所有者验收，不进入 Wave 2，不对 Starter 类型边界自行修复。
