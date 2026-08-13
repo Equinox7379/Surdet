@@ -349,7 +349,7 @@ npm run build -w surdet-editor
 
 Expected: 全部 exit `0`；此前两个混合 EOL 红灯转绿；原始 Starter 文件 Git 身份不变。
 
-- [ ] **Step 7: 更新 Execution Ledger 并提交**
+- [x] **Step 7: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -377,7 +377,7 @@ feat(authoring): add lossless scene documents
 - Consumes: `parseSceneDocument`、Core `compileScene`、调用方注入的 `sha256(text)`。
 - Produces: `ProjectStorage`、`ProjectSnapshot`、`loadProjectSnapshot`、`buildObjectIndex`、`inspectProject`、`inspectObject`。
 
-- [ ] **Step 1: 写快照与对象引用红灯**
+- [x] **Step 1: 写快照与对象引用红灯**
 
 测试必须证明文件顺序不影响修订、命名对象身份可读、匿名引用绑定修订、重复文本仍得到不同引用：
 
@@ -395,7 +395,7 @@ it('gives duplicate dialogue lines distinct revision-scoped refs', async () => {
 });
 ```
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 ```powershell
 npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts
@@ -403,7 +403,7 @@ npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-i
 
 Expected: FAIL；模块未实现。
 
-- [ ] **Step 3: 定义平台无关存储和快照类型**
+- [x] **Step 3: 定义平台无关存储和快照类型**
 
 使用以下窄接口，不在 authoring import `node:*` 或 DOM：
 
@@ -429,7 +429,7 @@ export interface TextHasher {
 
 `loadProjectSnapshot` 只接受规范 `/` 相对路径，稳定排序后读取 `game.config.json`、`content/scenario/**/*.gal`、`content/timelines/**/*.json` 和已识别素材键；项目修订基于 `path + NUL + file.sha256` 的稳定串再哈希，不含时间戳和绝对路径。
 
-- [ ] **Step 4: 实现对象索引**
+- [x] **Step 4: 实现对象索引**
 
 公共对象至少包含：
 
@@ -447,7 +447,7 @@ export interface AuthoringObject {
 
 规则：场景/标签/变量/时间轴/素材用语义 ID；匿名对象引用含项目修订短码、规范路径、对象种类、行位置和原内容短指纹。`inspectObject` 对不存在返回 `OBJECT_NOT_FOUND`，候选多于一个返回 `OBJECT_AMBIGUOUS`，绝不挑第一个猜测。
 
-- [ ] **Step 5: 运行绿灯**
+- [x] **Step 5: 运行绿灯**
 
 ```powershell
 npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts
@@ -1350,3 +1350,17 @@ STAGE_6_WAVE_2_NOT_STARTED
 - `npm install --package-lock-only --ignore-scripts` exit `0`；随后首次执行任务书绿灯序列时，authoring 测试已通过但 editor 测试/typecheck/build 因本机 `node_modules` 尚未出现 `@surdet/authoring` workspace link 而失败。该接线失败已保留；执行一次 `npm install --ignore-scripts` exit `0`（新增 1 个 workspace link，npm 输出的 audit warning 未引入本轮代码变更），再按同一绿灯序列重跑，全部 exit `0`。
 - 最终绿灯事实：`npm run test -w @surdet/authoring -- test/scene-document.test.ts` 为 1 文件/2 测试通过；`npm run test -w surdet-editor -- test/model.test.ts test/model-roundtrip.test.ts` 为 2 文件/13 测试通过，包含原先 `ch01_01.gal`、`ch02.gal` 两个混合 EOL 断言；`npm run typecheck -w @surdet/authoring`、`npm run typecheck -w surdet-editor` 均 exit `0`；两个 build 均 exit `0`。editor Vite 构建为 855 modules transformed，保留既有 preview 592.90 kB / gzip 175.41 kB 大 chunk warning，未修改性能门限。
 - Task 1 没有修改 Core、Renderer、Host、Shell、CLI、Starter、《零点之后》或任何测试文件；原始 Starter 未被写入。当前实际修改文件为上述 authoring 文件、根/ editor 包清单、锁文件、`packages/editor/src/model.ts`、`packages/editor/src/panels/editor.ts` 和本计划。当前状态：`TASK_1_GREEN_LOCALLY` / `STAGE_5_EOL_RED_FIXED_IN_SHARED_AUTHORING_LAYER` / `TASK_1_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 1 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add lossless scene documents`。
+
+### Task 1 — Step 7 completed after commit (2026-08-13 21:05 +08:00)
+
+- 已按 Task 1 白名单精确暂存并核对：`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git diff --cached --name-status` 仅包含本计划、根 `package.json`/`package-lock.json`、editor 包清单与模型/面板、以及 `packages/authoring` 的 7 个新文件。已创建普通本地提交：`5e5520eb1a416cc1e54768beee47f19f5537c880 feat(authoring): add lossless scene documents`。
+- 提交后立即真实回读：`git log --oneline -1`=`5e5520e feat(authoring): add lossless scene documents`；`git rev-parse HEAD`=`5e5520eb1a416cc1e54768beee47f19f5537c880`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`7 0`。`git diff --check`、`git diff --cached --check` 均 exit `0`；tracked 工作树和暂存区为空；`git ls-files '*.log'` 无输出；既有未跟踪文件保持原样，未 push。
+- 本条记录没有改写 Task 1 提交；Task 1 最终状态：`TASK_1_COMPLETED_LOCALLY` / `STAGE_5_EOL_RED_FIXED_IN_SHARED_AUTHORING_LAYER` / `NOT_PUSHED`。下一停止点：Task 2 先建立项目快照、修订和对象索引红灯。
+
+### Task 2 — Steps 1–5 completed; Step 6 pending commit (2026-08-13 21:07–21:11 +08:00)
+
+- 已先写并运行任务书规定的红灯：`npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts` 首次 exit `1`；2 个测试文件均因 `project-snapshot.js`/`object-index.js` 尚未存在而无法收集测试，未把缺失模块误写成业务通过。
+- 已实现平台无关 `ProjectStorage`/`ProjectFile`/`TextHasher`、规范项目路径过滤、稳定排序读取、Core `compileScene` 快照、`path + NUL + sha256` 修订计算、配置/变量/时间轴摘要、语义对象与修订期匿名 `objectRef`、引用/被引用关系、`inspectProject` 和 `inspectObject`。authoring 未 import Node `fs`、DOM 或 Git。
+- Task 2 受影响文件仅为：新增 `packages/authoring/src/project-storage.ts`、`src/project-snapshot.ts`、`src/object-index.ts`、`test/project-snapshot.test.ts`、`test/object-index.test.ts`；修改 `src/contracts.ts`、`src/index.ts` 和本计划。没有修改 Core、CLI、editor、Renderer、Host、Shell、Starter、《零点之后》或长期路线台账。
+- 首次绿灯序列中两个测试已通过（2 个文件/2 个测试），但 typecheck/build 暴露 3 个类型问题：场景文档类型未从 `scene-document.ts` 导出，以及无 `noUncheckedIndexedAccess` 防护的目标索引；已做对应的最小类型导出和空值收敛修正。随后按同一聚焦序列重跑：`npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts` exit `0`；`npm run typecheck -w @surdet/authoring` exit `0`；`npm run build -w @surdet/authoring` exit `0`。
+- 当前状态：`TASK_2_GREEN_LOCALLY` / `PROJECT_REVISION_ORDER_STABLE` / `REVISION_SCOPED_OBJECT_REFS_VERIFIED` / `TASK_2_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 2 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): index project objects`。
