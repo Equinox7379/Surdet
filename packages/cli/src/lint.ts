@@ -23,6 +23,7 @@ import {
 } from '@surdet/core';
 import type { LintIssue } from '@surdet/core';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
+import { lintGalleryConfig } from './gallery-config-lint.js';
 
 export type { LintIssue } from '@surdet/core';
 
@@ -185,6 +186,13 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
 
   // growth.json 非表达式校验（审计轮4）：statGrowth 键必须已声明变量、levelEvents 场景必须存在
   lintGrowthConfig(root, variables, scenes, failedScenes, issues, hasConfig);
+
+  lintGalleryConfig({
+    root,
+    scenes,
+    failedSceneIds: failedScenes,
+    issues,
+  });
 
   // 按错误码补齐修复建议（M5 支柱1：--json 输出携带，供 AI 自我修正循环消费）
   attachHints(issues);
