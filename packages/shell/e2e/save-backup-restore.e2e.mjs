@@ -123,6 +123,14 @@ const waitForGameText = () => waitFor('游戏处于可推进文本', () => {
     && (debug?.dialogueProjection?.visibleChoiceCount ?? 0) === 0;
 });
 
+const waitForPlayerGameIdle = () => waitFor('PlayerShell 已进入可交互游戏态', () => {
+  const debug = window.__surdetDebug;
+  return debug?.uiSession?.base === 'game'
+    && debug?.uiSession?.overlay === 'none'
+    && debug?.uiSession?.operation === 'idle'
+    && debug?.activeOverlay === null;
+});
+
 let firstSavePosition = null;
 let secondSavePosition = null;
 let restoredPosition = null;
@@ -135,6 +143,7 @@ try {
   await clickTarget('title:new');
   await waitFor('标题 → 新游戏', () => window.__surdetDebug?.status !== 'idle' && window.__surdetDebug?.position !== null);
   await waitForGameText();
+  await waitForPlayerGameIdle();
 
   firstSavePosition = await page.evaluate(() => window.__surdetDebug.position);
   await page.keyboard.press('Escape');
@@ -143,6 +152,7 @@ try {
   await waitForOverlay('save-load');
   await clickTarget('save-load:slot-1');
   await waitFor('第一次保存完成并回到游戏', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
+  await waitForPlayerGameIdle();
   check(firstSavePosition !== null, '已记录第一次保存位置');
 
   await waitForGameText();
@@ -157,6 +167,7 @@ try {
   await waitForOverlay('save-load');
   await clickTarget('save-load:slot-1');
   await waitFor('覆盖保存完成并回到游戏', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
+  await waitForPlayerGameIdle();
 
   await page.keyboard.press('Escape');
   await waitForOverlay('system-menu');
