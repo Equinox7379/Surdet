@@ -1,10 +1,12 @@
-# Surdet Stage 6 Wave 2 设计规格（修订版）
+# Surdet Stage 6 Wave 2 设计规格（修订版 2）
 # Existing-Asset Presentation Authoring Vertical Slice
 # （既有资源驱动的场景演出纵向切片）
 
-> 状态：**设计规格（修订版），待项目所有者复核批准。**
+> 状态：**设计规格（修订版 2），待项目所有者复核批准。**
 > 本文件只做设计，不授权实施、不派发执行 AI、不制作实施任务书。
-> 修订记录：项目所有者已批准设计方向；Codex 给出"有条件批准"，本轮按七项意见整篇修订（身份不变量、单 patch 原子化、错误语义统一、diff 来源、FORMAL 可见变化、合同面收紧、全文一致性）。
+> 修订记录：
+> - 修订版 1：项目所有者批准方向后，按 Codex 七项意见整篇修订（身份不变量、单 patch 原子化、错误语义统一、diff 来源、FORMAL 可见变化、合同面收紧、全文一致性）。
+> - 修订版 2：完整逐行核对 Renderer 投影快照与 timeline 播放实现，修正"投影证据字段可能缺失、需跨层授权"的错误假设——事实上 `presentation.snapshot().stage` 已完整暴露 `portraits` 与 `fadeAlpha`，本 Wave 投影证据无需跨层授权。
 > 修订时间：2026-08-14（Asia/Shanghai）。修订者：临时总经理（DeepSeek V4）。
 
 ## 一、阶段归属与产品目标
@@ -15,7 +17,7 @@ Wave 2 的产品目标（项目所有者已批准方向）：
 
 > 让外部桌面 Agent 能发现项目中已有的背景和立绘资源，通过共享类型化 authoring 能力创建或修改一段最小 timeline，将其连接到场景，并在正式 Surdet Presentation 预览中证明背景切换、角色登场和一次 screen fade 确实发生；项目所有者能够在编辑器中理解、反向定位、预览、保存和重开这段演出。
 
-为什么现在做：Wave 1 的类型化写操作止于 `scene` 与 `variable`；timeline 是 Galgame 演出的核心对象，且 Core 的 timeline 数据模型与校验已成熟（见第三节），是能力扩展的最近真实缺口，同时不触碰存档、配置或性能边界。
+为什么现在做：Wave 1 的类型化写操作止于 `scene` 与 `variable`；timeline 是 Galgame 演出的核心对象，且 Core 的 timeline 数据模型、校验与 Renderer 的播放/投影实现均已成熟（见第三节），是能力扩展的最近真实缺口，同时不触碰存档、配置或性能边界。
 
 ## 二、范围约束（项目所有者已确认，逐条固化）
 
@@ -30,17 +32,21 @@ Wave 2 的产品目标（项目所有者已批准方向）：
 9. 不重构完整时间轴编辑器，也不重构已有 timeline 面板。
 10. 资源合同只建立 backgrounds 与 portraits 两类；avatar、fonts 不进入本 Wave 的资源发现合同。
 
-## 三、真实代码事实基础（2026-08-14 只读调研结论）
+## 三、真实代码事实基础（2026-08-14 逐行核对结论）
 
-以下事实来自本仓库磁盘实测，是设计规格的落点依据：
+以下事实来自本仓库磁盘实测（逐行读取对应源码文件），是设计规格的落点依据：
 
 1. **Core timeline 模型已成熟。** `packages/core/src/timeline.ts` 定义 `TimelineDefinition`（version=1、id、durationMs、tracks[]），track kind 为 `background | portrait | camera | screen | particle | audio`，cue 为 `{ atMs, durationMs, easing, action, [payload] }`；`validateTimeline()` 提供 T001–T010 完整校验；`TimelineRegistry` 提供注册与重复 id 拒绝（T010）。本 Wave 开放的 6 个 action 全部在 `ACTIONS` 表内（background:set；portrait:show/hide/move/expression；screen:fade/tint/flash/wipe）。
-2. **@timeline DSL 已存在。** `@timeline <id> [@ blocking]` 由 `dsl/compiler.ts` 解析（错误码 C010）；`examples/starter/content/scenario/ch01_01.gal` 第 3、17 行已有真实使用（`intro_cinematic` blocking、`lynn_steps_forward`）。
+2. **@timeline DSL 已存在。** `@timeline <id> [@ blocking]` 由 `dsl/compiler.ts` 解析（错误码 C010）；`examples/starter/content/scenario/ch01_01.gal` 第 3、17 行已有真实使用。
 3. **资源目录约定已存在。** `content/assets/bg/<key>.svg`（castle_hall、night_field）、`content/assets/portrait/<角色>_<服装>_<表情>.svg`（lynn_uniform_normal / night / despair）。目录中另有 avatar、fonts，但不进入本 Wave 合同。
-4. **authoring 现状。** `AuthoringObject.kind` 已预留 `'timeline' | 'asset'`；object-index 已对 timeline 文件建立语义索引（`timeline:<name>`）；`ProjectSnapshot` 已把 `content/timelines/*.json` 纳入快照与修订；`ProjectWriteStorage` 事务体系可 staging 任意项目文件。缺口：track/cue 层级索引、asset 索引、timeline 类型化操作、timeline 校验接线与对象级 diff 尚不存在。
-5. **Renderer 投影现状。** renderer-queries 已有 `backgroundKey`；stage 已有 fadeOverlay 与 portrait focus 通道。cue 级只读 Presentation 证据字段是否足够证明"背景切换、立绘登场、fade 发生"，留待实施中按第八节边界验证；设计上默认不改 Renderer。
-6. **editor 现状。** `packages/editor/src/panels/timeline-panel.ts`（`renderTimelinePanel`/`bindTimelineHooks`）与主界面「时间轴」tab 已存在，提供现有 timeline 面板与 Cue 检查器；本 Wave 复用，不新建第二套 timeline UI、不重构。
-7. **既有示例。** Starter 现有 3 个 timeline（intro_cinematic、intro_arrival、lynn_steps_forward），含 background.set、portrait.show/expression/move、camera、screen.fade/tint 的完整用例，可作为数据契约与 fixture 的参照。
+4. **Renderer timeline 播放已完整实现。** `timeline-player.ts`（TimelinePlayer 的 advance/skip/eventsAtCursor + `TimelineFrameEvent{ track, target, cue, started, final, progress, elapsedMs }`）→ `presentation-controller.ts`（`#applyTimelineEvents` → `world.applyTimelineFrame`）→ `world-layer.ts`（`applyTimelineFrame` 处理 background/portrait/camera/screen/particle）。blocking timeline 结束通过 `#completeTimeline` 触发 `onWaitEnd`。
+5. **投影快照有两条路径，字段不同（本 Wave 关键事实）：**
+   - `presentation.snapshot()`（RendererFacade → presentation-controller.`snapshotPresentation()`）返回 `{ version:1, stage: WorldPresentationSnapshot, timelines: [...] }`。其中 `WorldPresentationSnapshot`（world-layer.ts）字段为：`backgroundKey`、`portraits: [{ key, view: { charId, costume, expression, pos } }]`、`cameraScale`、`cameraPan`、`fadeAlpha`、`tint`、`particleKind`。**立绘与 fade 的证据字段已完整存在。** editor 预览的因果轨迹（Wave 1 既有机制）正是读取该 API。
+   - `diagnostics.projectionSnapshot().world` 是精简的 `WorldProjectionSnapshot`：仅 `activeSpeakerId`、`backgroundKey`、`particleKind`，**不含 portraits、fadeAlpha、camera、tint**，不能用于立绘与 fade 的投影证据。
+6. **screen.fade 语义。** cue 只有目标 `alpha`（无 fromAlpha）；起始值隐式取当前 `fadeOverlay.alpha`，插值到目标 alpha；`durationMs=0` 的 cue 瞬时完成（progress=1）。因此"一次可见 fade"必须用两段 cue 表达（见第九节）。
+7. **portrait 语义。** portrait.show 的 `target`（`role:outfit`）拆分为 charId/costume，expression 取 cue.expression，pos 取 cue.position；`setPortrait` 后 `#portraitViews` 记录 `{ key: target, view: {charId,costume,expression,pos} }`，并投影进 `stage.portraits`。
+8. **editor timeline 面板已存在。** `packages/editor/src/panels/timeline-panel.ts` 提供轨道工作台、Cue 检查器（`renderInspector`）、直演（`onPreview`）、导出 JSON、拖动调整 cue 起止；本 Wave 复用，不新建第二套 timeline UI。
+9. **authoring 现状。** `AuthoringObject.kind` 已预留 `'timeline' | 'asset'`；object-index 已对 timeline 文件建立语义索引；`ProjectSnapshot` 已把 `content/timelines/*.json` 纳入快照与修订；`ProjectWriteStorage` 事务体系可 staging 任意项目文件。缺口：track/cue 层级索引、asset 索引、timeline 类型化操作、timeline 校验接线与对象级 diff 尚不存在（这些是本 Wave 的共享层工作）。
 
 ## 四、A. 共享 authoring 能力（精确目录）
 
@@ -49,20 +55,20 @@ Wave 2 的产品目标（项目所有者已批准方向）：
 1. **timeline.create（新增）**
    - 输入：`{ operationId, timelineId, definition: TimelineDefinition }`；definition 只能包含开放 track/action 白名单，否则 `UNSUPPORTED_OPERATION`。
    - **身份不变量（写入前强制校验）：** `timelineId === definition.id === content/timelines/<file-stem>.json 的 file-stem`。三者任一不一致，在写入前拒绝，不生成任何文件，返回 `VALIDATION_FAILED`。
-   - **已存在语义：** `timelineId` 或目标文件 `content/timelines/<timelineId>.json` 已存在时，沿用 `scene.create` 的前置条件语义，返回 `OBJECT_PRECONDITION_FAILED`。不得使用 `OBJECT_AMBIGUOUS`——该码只表示查询或引用确实匹配到多个对象。
+   - **已存在语义：** `timelineId` 或目标文件已存在时，返回 `OBJECT_PRECONDITION_FAILED`（不用 `OBJECT_AMBIGUOUS`）。
    - **结构校验：** 写入前经 Core `validateTimeline`；结构错误返回 validation error，本次 create 失败，不 staging 文件。
    - 产出：objectRef `timeline:<timelineId>`、timeline fingerprint 与修订增量。
 2. **timeline.patch（新增，单 patch 原子）**
    - 输入：`{ operationId, timelineId, patch: TimelinePatchOperation }`。**一个 capability 调用只执行一个 typed patch**；多个 patch 通过同一个 change 事务串行执行，每次成功后 `workingRevision` 增加，调用方必须重新 `object.inspect` 获取新 objectRef 与 fingerprint。
    - patch 白名单（五种）与 `expectedFingerprint` 校验目标：
-     - `addTrack`：校验 `timeline:<id>` 的 timeline fingerprint（父对象是 timeline）；
+     - `addTrack`：校验 `timeline:<id>` 的 timeline fingerprint；
      - `removeTrack`：校验目标 `trackRef` 的 track fingerprint；
      - `insertCue`：校验目标 `trackRef` 的 track fingerprint；
      - `replaceCue`：校验目标 `cueRef` 的 cue fingerprint；
      - `removeCue`：校验目标 `cueRef` 的 cue fingerprint。
-   - **原子性：** 一次 patch 全有或全无；任何失败（指纹不符、引用不存在、白名单外、结构错误）都不得修改 `workingFiles`、`workingRevision` 或 operation ledger。禁止对失效引用的模糊重定位。
+   - **原子性：** 一次 patch 全有或全无；任何失败都不得修改 `workingFiles`、`workingRevision` 或 operation ledger。禁止失效引用的模糊重定位。
 3. **project.inspect 扩展：只读资源目录**
-   - 新增 `assets` 字段：`{ backgrounds: AssetEntry[], portraits: AssetEntry[] }`，字段见第七节。不含 avatar、fonts。
+   - 新增 `assets` 字段：`{ backgrounds: AssetEntry[], portraits: AssetEntry[] }`，字段见第七节。
 4. **object.inspect 扩展**
    - 支持 `timeline` / `track` / `cue` / `asset`（asset 仅 background 与 portrait）四类 objectRef，返回结构、来源位置（timeline 文件路径 + JSON 路径）、references 与 referencedBy。
 5. **scene.patch 复用已有 @timeline 连接**
@@ -70,7 +76,7 @@ Wave 2 的产品目标（项目所有者已批准方向）：
 6. **project.validate 复用 Core validateTimeline**
    - 共享 validation 对快照内每个 timeline 文件调用 Core `validateTimeline`，结构诊断归入统一 validation error 信封；追加资源引用检查：cue.key / track.target+expression 解析失败记为 warning（见第七节，不拒绝、不阻止 commit）。
 7. **change.diff 对象级差异**
-   - 见第五、六节：对象级 semantic diff 由已成功执行的类型化 operation ledger 产生；file 层沿用既有统一 JSON diff。
+   - 对象级 semantic diff 由已成功执行的类型化 operation ledger 产生；file 层沿用既有统一 JSON diff（见第五、六节）。
 8. **capabilities.describe 自动扩展**：能力数由注册表生成，新增上述能力后自动反映。
 
 ## 五、B. 对象身份、指纹与冲突行为
@@ -94,8 +100,8 @@ Wave 2 的产品目标（项目所有者已批准方向）：
 
 1. **scene instruction → timeline（静态，共享索引）**：`@timeline <id>` 指令节点 references `timeline:<id>`。
 2. **timeline → asset（静态，共享索引）**：background cue 的 `key` → `asset:bg:<key>`；portrait track 的 `target`（`role:outfit`）+ cue `expression` → `asset:portrait:<role>:<outfit>:<expression>`。
-3. **timeline cue → Presentation event（运行时）**：优先复用既有 Core timeline 运行事件（id/blocking/durationMs）与 Renderer 只读 `queries.presentation.snapshot()` 的变化（backgroundKey、portrait 可见性、fadeAlpha）。若实施红灯证明这两者不足以把投影归因到具体 cue，按第八节边界停止并申请最小跨层授权，不得在 authoring/editor 复刻投影。
-4. **Presentation event → timeline cue（编辑器反向定位）**：editor 预览 trace 与共享索引联动，从画面事件反查 `timeline:<id>/track:<n>/cue:<m>` 并跳转定位；复用 Wave 1 的 window 事件桥，不建第二套导航。
+3. **timeline cue → Presentation event（运行时，证据已具备）**：Core 的 `@timeline` 运行事件（id/blocking/durationMs）经 presentation-controller 驱动 `applyTimelineFrame`，最终投影进 `presentation.snapshot().stage`（backgroundKey/portraits/fadeAlpha）。**该投影证据字段已存在，无需跨层授权**；"cue → 投影"的归因通过帧事件顺序与 stage 快照时间序列对齐完成。
+4. **Presentation event → timeline cue（编辑器反向定位）**：editor 预览 trace（Wave 1 既有 window 事件桥）与共享索引联动，从画面事件反查 `timeline:<id>/track:<n>/cue:<m>` 并跳转定位。
 5. editor 因果区沿用 Wave 1 的"当前对象 / 直接引用 / 直接被引用 / observedImpact"，对象范围扩展到 timeline/track/cue/asset（background/portrait）。
 
 **对象级 semantic diff 的来源：** timeline 可按稳定语义 ID `timeline:<id>` 对齐；track/cue 没有持久语义 ID，**禁止按 track/cue 语义 id 对齐**。本 Wave 的对象级 semantic diff 由已成功执行的类型化 operation ledger 产生，每条至少包含：
@@ -121,26 +127,24 @@ potentialImpact、observedImpact
 
 ## 八、E. 公共层边界
 
-1. **Core / Renderer / Host / Shell 默认零改动。** timeline 数据模型、validateTimeline、@timeline DSL、解释器事件与 Renderer 投影全部复用现状。
-2. **最小跨层授权条件（三条任一满足即停止并申请）**：
+1. **Core / Renderer / Host / Shell 默认零改动。** timeline 数据模型、validateTimeline、@timeline DSL、TimelinePlayer、presentation-controller、applyTimelineFrame 与 `presentation.snapshot().stage`（含 portraits/fadeAlpha）全部复用现状。
+2. **投影证据无需跨层授权。** 已逐行确认 `presentation.snapshot().stage`（`WorldPresentationSnapshot`）完整暴露 `backgroundKey`、`portraits`、`fadeAlpha`，满足本 Wave 的"背景切换 / 立绘登场 / fade 发生"证据要求；FORMAL 不得改用 `projectionSnapshot().world`（其 `WorldProjectionSnapshot` 缺 portraits/fadeAlpha）。
+3. **最小跨层授权条件（仅以下两条任一满足即停止并申请）**：
    - 红灯证明缺少必要的纯类型导出（authoring 需要 Core 类型但未导出）；
-   - 红灯证明缺少校验信息（现有 validateTimeline 不足以支撑本 Wave 契约）；
-   - 红灯证明缺少只读 Presentation 证据字段（snapshot/trace 无法证明背景切换、立绘登场或 fade 发生）。
-3. 申请获批前，不得用 authoring/CLI/editor 内的替代实现绕过：禁止复制第二套 timeline 校验、第二套运行语义或第二套 Presentation 投影。
+   - 红灯证明需要 `stage` 之外的新增投影维度（例如需要把投影归因到具体 cue 而现有 frame 事件与 stage 快照不足以对齐）。
+4. 申请获批前，不得用 authoring/CLI/editor 内的替代实现绕过：禁止复制第二套 timeline 校验、第二套运行语义或第二套 Presentation 投影。
 
 ## 九、F. 证据分层（含 FORMAL 真实可见变化）
 
 1. **静态**：timeline 结构校验（Core validateTimeline）+ 资源引用 resolved 检查（warning 级），红灯/绿灯落在共享 validate 与 CLI 合同测试。
 2. **运行**：Core `@timeline` blocking 运行证据——simulate / runtime run-from 的 trace 含 timeline 启动事件、等待与完成，运行无错误。
-3. **投影（FORMAL 强制真实可见变化）**：
-   - 正式 `preview.html` 中通过只读 presentation snapshot 证明真实状态迁移，不允许只验证 cue 存在、事件名存在或"最终状态本来就等于目标状态"。
-   - **fade**：fixture 使用两段 screen.fade cue 表达一次可见黑场淡出循环——
-     - cue 1：`atMs=0`、`durationMs=0`、`alpha=1`（瞬时压到黑场）；
-     - cue 2：`atMs=50`、`durationMs=700`、`alpha=0`（非零时长淡出）。
-     - FORMAL 必须证明 fadeAlpha 轨迹：播放前 = 0；播放中达到 1；在 cue 2 的非零时长过程中至少读取到一次 0 与 1 之间的值；播放完成后回到 0。
-   - **背景**：播放前 `backgroundKey ≠ night_field`，播放后 `backgroundKey = night_field`。
-   - **立绘**：`lynn:uniform:night` 播放前不可见，播放后才可见。
-   - 上述三者必须由 snapshot 的时间序列证明真实前后差异。
+3. **投影（FORMAL，证据字段路径已确认）**：读取 `queries.presentation.snapshot()`，字段路径为 `stage.*`（即 `WorldPresentationSnapshot`），逐项证明真实前后变化，不允许只验证 cue 存在、事件名存在或"最终状态本来就等于目标状态"。
+   - **fade（用 `stage.fadeAlpha`）**：fixture 用两段 screen.fade cue——
+     - cue 1：`atMs=0`、`durationMs=0`、`alpha=1`（瞬时压到黑场，fadeAlpha 0→1）；
+     - cue 2：`atMs=50`、`durationMs=700`、`alpha=0`（非零时长淡出，fadeAlpha 1→0）。
+     - FORMAL 必须证明 `stage.fadeAlpha` 轨迹：播放前 = 0；播放中达到 1；在 cue 2 的非零时长过程中至少读取到一次 0 与 1 之间的值；播放完成后回到 0。
+   - **背景（用 `stage.backgroundKey`）**：播放前 `stage.backgroundKey ≠ night_field`，播放后 = night_field。
+   - **立绘（用 `stage.portraits`）**：播放前 `stage.portraits` 不含 `key === 'lynn:uniform'`；播放后含该 key，且 `view.expression === 'night'`。
 4. **人工**：项目所有者真实预览、反向定位、保存和重开验收（见第十四节）。
 
 ## 十、G. harness 纪律
@@ -238,10 +242,12 @@ export interface ProjectInspectAssets {
 editor（同一 authoring 真相 + 现有 timeline 面板/Cue 检查器）
    │ 因果区：scene→timeline→asset；预览 trace→cue 反向定位
    ▼
-正式 preview.html → Renderer（既有投影通道，零改动）
-   │ queries.presentation.snapshot()：backgroundKey / portrait / fadeAlpha
+正式 preview.html → Renderer（既有播放与投影通道，零改动）
+   │ TimelinePlayer → presentation-controller → world.applyTimelineFrame
+   │ queries.presentation.snapshot().stage：
+   │   backgroundKey / portraits[] / fadeAlpha / camera / tint
    ▼
-trace + snapshot 证据 → 静态·运行·投影·人工 四层验收
+trace + stage 快照证据 → 静态·运行·投影·人工 四层验收
 ```
 
 ## 十四、最小 fixture 与人工验收路径
@@ -267,14 +273,14 @@ trace + snapshot 证据 → 静态·运行·投影·人工 四层验收
 - `packages/cli/src/authoring/`：authoring-service.ts 注册 timeline.create/patch 与 assets 查询；命令表面新增两条命令。
 - `packages/cli/test/`：新增 CLI 合同与纵向切片测试。
 - `packages/editor/src/`：因果区/预览面板对象范围扩展（复用 Wave 1 机制与现有 timeline 面板/Cue 检查器，不重构）。
-- 不修改：Core、Renderer、Host、Shell 生产代码（默认）、Starter 内容、game.config、growth、存档 schema、Wave 1 任务书与交付报告。
-- 文档：本设计规格（修订版）；获批后另建 Wave 2 实施任务书与交付报告。
+- **不修改：Core、Renderer、Host、Shell 生产代码（零改动，投影证据字段已存在）、Starter 内容、game.config、growth、存档 schema、Wave 1 任务书与交付报告。**
+- 文档：本设计规格（修订版 2）；获批后另建 Wave 2 实施任务书与交付报告。
 
 ## 十六、风险与停止条件
 
-1. 若实施红灯证明 Renderer 现有只读投影证据不足以证明"背景切换/立绘登场/fade 发生" → 停止，按第八节申请最小跨层授权。
-2. 若 track/cue 指纹的规范化序列化在实现中出现不稳定 → 停止，先固化规范化规则再继续。
-3. 若发现任何需要"按 track/cue 持久语义 ID 对齐"的用例 → 停止，回到第五节的 operation-ledger diff 约定，不得引入持久 UUID 或模糊树匹配。
+1. 若 track/cue 指纹的规范化序列化在实现中出现不稳定 → 停止，先固化规范化规则再继续。
+2. 若发现任何需要"按 track/cue 持久语义 ID 对齐"的用例 → 停止，回到第五节的 operation-ledger diff 约定，不得引入持久 UUID 或模糊树匹配。
+3. 若实施红灯证明需要 `stage` 之外的新增投影维度（例如必须把投影归因到具体 cue 而现有 frame 事件 + stage 快照不足以对齐）→ 停止，按第八节申请最小跨层授权。
 4. DIAGNOSTIC 第 3 次仍失败 → 停止并复审方法，不修一处跑一处。
 5. 任何需要修改 Core 校验语义、存档 schema 或 Starter 内容的发现 → 停止并上报。
 6. FORMAL 失败（含资源 unresolved、投影前后无真实变化）→ 保留失败 artifact，停止等待总经理独立复审。
@@ -285,13 +291,13 @@ trace + snapshot 证据 → 静态·运行·投影·人工 四层验收
 2. **类型化契约而非图形界面**：参考 Studio 的时间轴是给人操作的 GUI 工作流；Surdet 把演出能力表达为带指纹的单 patch 契约对象（timeline/track/cue），外部桌面 Agent 可编程、可验证、可回滚——这是"外部 Agent 友好引擎"路线的直接延伸，不是复制 GUI。
 3. **双向因果延伸到演出层**：Wave 1 证明"文本 ↔ 画面"的因果桥；Wave 2 把同一机制延伸到"画面事件 ↔ timeline cue"，让项目所有者从最终投影反向理解演出是怎么发生的。
 4. **既有资产驱动的创作**：资源只读发现（backgrounds + portraits）强化"不生成、不搬运，只编排已有资产"的轻量创作哲学，与 placeholder 渐进哲学一致。
-5. **证据分层可验证**：静态 → 运行 → 投影（含 fadeAlpha 前后真实轨迹）→ 人工四层证据，任何一层都不冒充上一层；FORMAL 单次取证与预检纪律是 Wave 1 治理教训的直接产物。
+5. **证据分层可验证**：静态 → 运行 → 投影（stage 快照的 fadeAlpha/portraits 前后真实轨迹）→ 人工四层证据，任何一层都不冒充上一层；FORMAL 单次取证与预检纪律是 Wave 1 治理教训的直接产物。
 
 ## 十八、设计规格停止状态
 
 ```text
 STAGE_6_WAVE_2_DIRECTION_APPROVED_BY_OWNER
-WAVE_2_DESIGN_SPEC_REVISED
+WAVE_2_DESIGN_SPEC_REVISED_V2
 WAITING_FOR_PROJECT_OWNER_REVISED_SPEC_REVIEW
 WAVE_2_IMPLEMENTATION_PLAN_NOT_AUTHORIZED
 EXECUTION_AI_NOT_DISPATCHED
