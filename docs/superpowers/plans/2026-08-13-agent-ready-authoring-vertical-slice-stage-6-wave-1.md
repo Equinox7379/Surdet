@@ -457,7 +457,7 @@ npm run build -w @surdet/authoring
 
 Expected: exit `0`。
 
-- [ ] **Step 6: 更新 Execution Ledger 并提交**
+- [x] **Step 6: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -1364,3 +1364,10 @@ STAGE_6_WAVE_2_NOT_STARTED
 - Task 2 受影响文件仅为：新增 `packages/authoring/src/project-storage.ts`、`src/project-snapshot.ts`、`src/object-index.ts`、`test/project-snapshot.test.ts`、`test/object-index.test.ts`；修改 `src/contracts.ts`、`src/index.ts` 和本计划。没有修改 Core、CLI、editor、Renderer、Host、Shell、Starter、《零点之后》或长期路线台账。
 - 首次绿灯序列中两个测试已通过（2 个文件/2 个测试），但 typecheck/build 暴露 3 个类型问题：场景文档类型未从 `scene-document.ts` 导出，以及无 `noUncheckedIndexedAccess` 防护的目标索引；已做对应的最小类型导出和空值收敛修正。随后按同一聚焦序列重跑：`npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts` exit `0`；`npm run typecheck -w @surdet/authoring` exit `0`；`npm run build -w @surdet/authoring` exit `0`。
 - 当前状态：`TASK_2_GREEN_LOCALLY` / `PROJECT_REVISION_ORDER_STABLE` / `REVISION_SCOPED_OBJECT_REFS_VERIFIED` / `TASK_2_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 2 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): index project objects`。
+
+### Task 2 — post-commit type-boundary closure (2026-08-13 21:11 +08:00)
+
+- 已创建任务书规定的主提交并立即回读：`git log --oneline -1`=`7885326 feat(authoring): index project objects`；`git rev-parse HEAD`=`78853268148f8a09963dbb576862d9ab20ae75e9`；提交范围为本计划、Task 2 的 authoring 快照/索引/存储文件和两份测试。
+- 提交后复核发现 `project-snapshot.ts` 与 `object-index.ts` 仍需要把类型直接收敛到公共 `contracts.ts`，避免依赖 Task 1 文件的类型重导出；已撤回 `scene-document.ts` 的非必要空行/出口改动，重新执行 Task 2 聚焦测试、typecheck、build，均 exit `0`。这两处纯类型导入修正属于 Task 2 白名单，当前待做一个不改写主提交的普通本地闭合提交。
+- 主提交后真实关系：`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`8 0`；`git diff --check` 和 `git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；tracked 工作树当前只剩上述两个 Task 2 类型导入修改，暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
+- 当前状态：`TASK_2_MAIN_COMMIT_RECORDED` / `TASK_2_TYPE_BOUNDARY_VERIFIED` / `TASK_2_CLOSURE_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存两个 Task 2 类型导入文件与本计划，创建普通本地闭合提交，然后进入 Task 3。

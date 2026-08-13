@@ -1,4 +1,4 @@
-import { splitInstruction, type SceneDocumentLine } from './scene-document.js';
+import { splitInstruction } from './scene-document.js';
 import type { AuthoringObject } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
 
