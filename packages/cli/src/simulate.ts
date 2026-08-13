@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { compileScene, type VarValue } from '@surdet/core';
+import { compileScene, type GrowthConfig, type VarValue } from '@surdet/core';
 import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 
@@ -84,7 +84,22 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
     bytes: Buffer.byteLength(configText, 'utf8'),
     sha256: digest(configText),
   };
-  const projectFiles = configFile === null ? files : [...files, configFile];
+  const growthPath = path.join(projectDir, 'content/config/growth.json');
+  const growthText = fs.existsSync(growthPath)
+    ? fs.readFileSync(growthPath, 'utf8').replace(/^\uFEFF/, '')
+    : null;
+  const growthFile = growthText === null ? null : {
+    path: growthPath,
+    text: growthText,
+    bytes: Buffer.byteLength(growthText, 'utf8'),
+    sha256: digest(growthText),
+  };
+  const growthConfig = growthText === null ? null : JSON.parse(growthText) as GrowthConfig;
+  const projectFiles = [
+    ...files,
+    ...(configFile === null ? [] : [configFile]),
+    ...(growthFile === null ? [] : [growthFile]),
+  ];
   const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
     ? config['variables'] as Record<string, unknown>
     : {};
@@ -94,6 +109,8 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
     files: projectFiles,
     configFile,
     config: config ?? {},
+    growthFile,
+    growthConfig,
     entryScene,
     variables,
     scenes: files.map(({ id, path: scenePath, text, bytes, sha256, compiled }) => ({

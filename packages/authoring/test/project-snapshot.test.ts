@@ -13,9 +13,13 @@ function digest(text: string): string {
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
-function fixtureStorage(order: 'normal' | 'reverse' = 'normal'): ProjectStorage {
+function fixtureStorage(
+  order: 'normal' | 'reverse' = 'normal',
+  growthText = JSON.stringify({ curve: { base: 10 }, profiles: [] }),
+): ProjectStorage {
   const contents: Record<string, string> = {
     'game.config.json': '{"entryScene":"prologue","variables":{}}',
+    'content/config/growth.json': growthText,
     'content/scenario/prologue.gal': '@scene prologue\n凛：一样\n凛：一样\n@end',
     'content/scenario/other.gal': '@scene other\n凛：另一场\n@end',
     'content/timelines/intro.json': '{"tracks":[]}',
@@ -42,10 +46,23 @@ describe('project snapshot', () => {
 
     expect(normal.revision).toBe(reverse.revision);
     expect(normal.files.map((file) => file.path)).toEqual([
+      'content/config/growth.json',
       'content/scenario/other.gal',
       'content/scenario/prologue.gal',
       'content/timelines/intro.json',
       'game.config.json',
     ]);
+  });
+
+  it('includes growth config in the snapshot and revision', async () => {
+    const original = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const changed = await loadProjectSnapshot(
+      fixtureStorage('normal', JSON.stringify({ curve: { base: 20 }, profiles: [] })),
+      hasher,
+    );
+
+    expect(original.growthFile?.path).toBe('content/config/growth.json');
+    expect(original.growthConfig).toEqual({ curve: { base: 10 }, profiles: [] });
+    expect(original.revision).not.toBe(changed.revision);
   });
 });

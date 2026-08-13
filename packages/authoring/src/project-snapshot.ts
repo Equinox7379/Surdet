@@ -1,4 +1,4 @@
-import { compileScene, type CompiledScene } from '@surdet/core';
+import { compileScene, type CompiledScene, type GrowthConfig } from '@surdet/core';
 import { parseSceneDocument } from './scene-document.js';
 import type { SceneDocumentLine } from './contracts.js';
 import type { ProjectFile, ProjectStorage, TextHasher } from './project-storage.js';
@@ -18,6 +18,8 @@ export interface ProjectSnapshot {
   files: ProjectFile[];
   configFile: ProjectFile | null;
   config: Record<string, unknown>;
+  growthFile?: ProjectFile | null;
+  growthConfig?: GrowthConfig | null;
   entryScene?: string;
   variables: Record<string, unknown>;
   scenes: ProjectSnapshotScene[];
@@ -43,11 +45,15 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const revisionInput = canonicalFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n');
   const revision = await hasher.sha256(revisionInput);
   const configFile = canonicalFiles.find((file) => file.path === 'game.config.json') ?? null;
+  const growthFile = canonicalFiles.find((file) => file.path === 'content/config/growth.json') ?? null;
   let config: Record<string, unknown> = {};
   if (configFile !== null && configFile.text.trim().length > 0) {
     const parsed: unknown = JSON.parse(configFile.text);
     config = asRecord(parsed);
   }
+  const growthConfig = growthFile === null || growthFile.text.trim().length === 0
+    ? null
+    : JSON.parse(growthFile.text) as GrowthConfig;
   const customInstructions = Array.isArray(config['customInstructions'])
     ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
     : [];
@@ -70,6 +76,8 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
     files: canonicalFiles,
     configFile,
     config,
+    growthFile,
+    growthConfig,
     ...(typeof config['entryScene'] === 'string' && config['entryScene'].length > 0
       ? { entryScene: config['entryScene'] }
       : {}),
