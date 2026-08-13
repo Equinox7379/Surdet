@@ -1,6 +1,25 @@
 import type { SaveSnapshot, SaveSlotMeta } from '@surdet/core';
 import type { RenderLifecycleDiagnosticSnapshot, RendererResourceSnapshot } from '@surdet/renderer';
 
+interface SurdetAudioPlaybackDebug {
+  readonly bgm: string | null;
+  readonly ambience: string | null;
+  readonly bgmPlaying: boolean;
+  readonly bgmPlayCount: number;
+  readonly bgmSource: string | null;
+  readonly howlerErrors: readonly { type: 'loaderror' | 'playerror'; message: string }[];
+}
+
+interface SurdetGalleryMusicPlaybackDebug {
+  readonly callbackCount: number;
+  readonly lastRequest: {
+    readonly id: string;
+    readonly source: string;
+    readonly resolvedSource: string | null;
+    readonly sourceResolved: boolean;
+  } | null;
+}
+
 interface SurdetDebugApi {
   readonly status: string;
   readonly rendererStatus: string;
@@ -14,6 +33,8 @@ interface SurdetDebugApi {
   readonly canCaptureRollbackCheckpoint?: boolean;
   readonly fadeTweenActive?: boolean;
   readonly visualThumbnail?: string | null;
+  readonly audioPlayback?: SurdetAudioPlaybackDebug;
+  readonly galleryMusicPlayback?: SurdetGalleryMusicPlaybackDebug;
   titleSelect(id: string): unknown;
   [key: string]: unknown;
 }

@@ -124,6 +124,15 @@ describe('AudioManager', () => {
     expect(mockPlay).toHaveBeenCalledTimes(afterFirst);
   });
 
+  it('Gallery 预览对当前正在播放的同一 BGM 也会重新播放', () => {
+    const am = new AudioManager();
+    am.playBgm('midnight_rain.wav');
+    const firstPlayCount = mockPlay.mock.calls.length;
+    am.playBgm('midnight_rain.wav', { restart: true });
+    expect(mockPlay).toHaveBeenCalledTimes(firstPlayCount + 1);
+    expect(mockStop).toHaveBeenCalledTimes(2);
+  });
+
   it('stopAll 停止全部音频（BGM/SE/语音）并重置 BGM 记录', () => {
     const am = new AudioManager();
     am.playBgm('a.mp3');

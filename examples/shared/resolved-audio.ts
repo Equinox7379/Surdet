@@ -1,4 +1,9 @@
-import type { AudioHandle, AudioPlaybackSnapshot } from '@surdet/renderer';
+import type {
+  AudioBgmDiagnosticSnapshot,
+  AudioHandle,
+  AudioPlaybackSnapshot,
+  BgmPlaybackOptions,
+} from '@surdet/renderer';
 import { AudioManager } from '@surdet/renderer';
 
 export class ResolvedAudio implements AudioHandle {
@@ -11,7 +16,9 @@ export class ResolvedAudio implements AudioHandle {
   }
 
   #r(src: string): string { return this.#urls.get(src) ?? src; }
-  playBgm(src: string | null): void { this.#inner.playBgm(src === null ? null : this.#r(src)); }
+  playBgm(src: string | null, options?: BgmPlaybackOptions): void {
+    this.#inner.playBgm(src === null ? null : this.#r(src), options);
+  }
   playSe(src: string): void { this.#inner.playSe(this.#r(src)); }
   playVoice(src: string): void { this.#inner.playVoice(this.#r(src)); }
   playAmbience(src: string | null, fadeMs?: number): void { this.#inner.playAmbience?.(src === null ? null : this.#r(src), fadeMs); }
@@ -27,6 +34,12 @@ export class ResolvedAudio implements AudioHandle {
   setVoiceVolume(v: number): void { this.#inner.setVoiceVolume(v); }
   getVoiceVolume(): number { return this.#inner.getVoiceVolume(); }
   isVoicePlaying(): boolean { return this.#inner.isVoicePlaying(); }
+
+  isBgmPlaying(): boolean { return this.#inner.isBgmPlaying(); }
+
+  snapshotBgmDiagnostics(): AudioBgmDiagnosticSnapshot {
+    return this.#inner.snapshotBgmDiagnostics();
+  }
 
   snapshotPlayback(): AudioPlaybackSnapshot {
     const snapshot = this.#inner.snapshotPlayback?.() ?? { bgm: null, ambience: null };
