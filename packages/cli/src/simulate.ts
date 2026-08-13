@@ -143,7 +143,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
   return {
     entryScene: report.entryScene,
     sceneCount: snapshot.scenes.length,
-    pathsExplored: report.paths.length,
+    pathsExplored: report.pathsExplored,
     pathBudget: opts.maxPaths ?? 500,
     budgetExhausted: report.budgetExhausted,
     choiceBranches: report.choiceBranches,

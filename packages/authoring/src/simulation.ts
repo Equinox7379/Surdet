@@ -20,10 +20,14 @@ export interface SimulationOptions {
 
 export type SimulationStatus = 'passed' | 'failed' | 'incomplete';
 
+export type SimulationPathTermination = 'ended' | 'error' | 'pruned' | 'budget-exhausted';
+
 export interface SimulationPath {
   choices: number[];
   finalVariables: Record<string, VarValue>;
   status: 'passed' | 'failed';
+  termination: SimulationPathTermination;
+  prunedReason?: 'state-signature' | 'path-budget';
   error?: string;
 }
 
@@ -35,6 +39,7 @@ export interface SimulationRuntimeError {
 export interface SimulationReport {
   status: SimulationStatus;
   entryScene: string;
+  pathsExplored: number;
   choiceBranches: { total: number; visited: number };
   paths: SimulationPath[];
   budgetExhausted: boolean;
@@ -125,6 +130,7 @@ export function simulateSnapshot(
   let budgetExhausted = false;
   let cyclesPruned = 0;
   let saveRoundtrips = 0;
+  let pathsExplored = 0;
   let segmentSawClear = false;
 
   bus.on('choice', (payload) => { latestChoices = payload.options; });
@@ -142,11 +148,32 @@ export function simulateSnapshot(
       choices: [...choices],
       finalVariables: store.snapshot(),
       status,
+      termination: error === undefined ? 'ended' : 'error',
       ...(error === undefined ? {} : { error }),
     });
     if (error !== undefined) {
       runtimeErrors.push({ scene: interpreter.position?.sceneId ?? null, message: error });
     }
+  };
+
+  const recordPruned = (
+    choices: number[],
+    reason: SimulationPath['prunedReason'],
+    termination: Extract<SimulationPathTermination, 'pruned' | 'budget-exhausted'>,
+  ): void => {
+    paths.push({
+      choices: [...choices],
+      finalVariables: store.snapshot(),
+      status: 'passed',
+      termination,
+      prunedReason: reason,
+    });
+  };
+
+  const beginPath = (): boolean => {
+    if (pathsExplored >= maxPaths) return false;
+    pathsExplored++;
+    return true;
   };
 
   const drive = (choices: number[]): void => {
@@ -183,13 +210,15 @@ export function simulateSnapshot(
         const signature = JSON.stringify([base.position, store.snapshot()]);
         if (seenSignatures.has(signature)) {
           cyclesPruned++;
+          recordPruned(choices, 'state-signature', 'pruned');
           return;
         }
         seenSignatures.add(signature);
         const position = base.position;
         for (const option of latestChoices) {
-          if (paths.length >= maxPaths) {
+          if (!beginPath()) {
             budgetExhausted = true;
+            recordPruned(choices, 'path-budget', 'budget-exhausted');
             return;
           }
           const branchKey = `${position?.sceneId ?? '?'}#${position?.pc ?? -1}#${option.index}`;
@@ -209,8 +238,13 @@ export function simulateSnapshot(
 
   try {
     if (entryScene.length === 0) throw new Error('模拟需要 entryScene');
-    interpreter.start(entryScene);
-    drive([]);
+    if (!beginPath()) {
+      budgetExhausted = true;
+      recordPruned([], 'path-budget', 'budget-exhausted');
+    } else {
+      interpreter.start(entryScene);
+      drive([]);
+    }
   } catch (error) {
     finish([], 'failed', errorText(error));
   }
@@ -218,6 +252,7 @@ export function simulateSnapshot(
   return {
     status: runtimeErrors.length > 0 ? 'failed' : budgetExhausted ? 'incomplete' : 'passed',
     entryScene,
+    pathsExplored,
     choiceBranches: { total: choiceTotal, visited: choiceBranches.size },
     paths,
     budgetExhausted,
