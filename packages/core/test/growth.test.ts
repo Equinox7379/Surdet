@@ -126,6 +126,119 @@ describe('GrowthSystem（角色成长）', () => {
   });
 });
 
+describe('GrowthSystem gainExp 原子提交', () => {
+  function expectNoStateMutation(
+    store: VariableStore,
+    growth: GrowthSystem,
+    action: () => void,
+  ): void {
+    const beforeVariables = store.snapshot();
+    const beforeGrowth = growth.snapshot();
+    expect(action).toThrow();
+    expect(store.snapshot()).toEqual(beforeVariables);
+    expect(growth.snapshot()).toEqual(beforeGrowth);
+  }
+
+  it('未声明的后续 statGrowth 目标不会留下前一个属性的部分写入', () => {
+    const store = new VariableStore(decls);
+    const growth = new GrowthSystem(
+      {
+        curve,
+        profiles: [{
+          characterId: 'lynn',
+          statGrowth: { 'lynn.atk': 2, 'lynn.missing': 3 },
+        }],
+      },
+      store,
+    );
+
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 30));
+  });
+
+  it('非 number 的后续 statGrowth 目标不会留下前一个属性的部分写入', () => {
+    const store = new VariableStore([
+      ...decls,
+      { name: 'lynn.flag', type: 'boolean', initial: false },
+    ]);
+    const growth = new GrowthSystem(
+      {
+        curve,
+        profiles: [{
+          characterId: 'lynn',
+          statGrowth: { 'lynn.atk': 2, 'lynn.flag': 1 },
+        }],
+      },
+      store,
+    );
+
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 30));
+  });
+
+  it('readonly 的后续 statGrowth 目标不会留下前一个属性的部分写入', () => {
+    const store = new VariableStore([
+      ...decls,
+      { name: 'lynn.locked', type: 'number', initial: 4, readonly: true },
+    ]);
+    const growth = new GrowthSystem(
+      {
+        curve,
+        profiles: [{
+          characterId: 'lynn',
+          statGrowth: { 'lynn.atk': 2, 'lynn.locked': 1 },
+        }],
+      },
+      store,
+    );
+
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 30));
+  });
+
+  it('非有限的后续 statGrowth 增量不会留下前一个属性的部分写入', () => {
+    const store = new VariableStore(decls);
+    const growth = new GrowthSystem(
+      {
+        curve,
+        profiles: [{
+          characterId: 'lynn',
+          statGrowth: {
+            'lynn.atk': 2,
+            'lynn.hp': Number.POSITIVE_INFINITY as unknown as number,
+          },
+        }],
+      },
+      store,
+    );
+
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 30));
+  });
+
+  it('合法连升仍按原有 clamp 规则一次性提交全部属性、等级和经验', () => {
+    const store = new VariableStore([
+      { name: 'lynn.atk', type: 'number', initial: 5, max: 7 },
+      { name: 'lynn.hp', type: 'number', initial: 20 },
+    ]);
+    const growth = new GrowthSystem(
+      {
+        curve,
+        profiles: [{
+          characterId: 'lynn',
+          statGrowth: { 'lynn.atk': 2, 'lynn.hp': 10 },
+        }],
+      },
+      store,
+    );
+
+    expect(growth.gainExp('lynn', 30)).toMatchObject({
+      levelBefore: 1,
+      levelAfter: 3,
+      levelsGained: 2,
+      passedLevels: [2, 3],
+    });
+    expect(store.snapshot()).toEqual({ 'lynn.atk': 7, 'lynn.hp': 40 });
+    expect(growth.snapshot()).toEqual({ levels: { lynn: 3 }, experience: { lynn: 5 } });
+  });
+});
+
 describe('@exp 指令（解释器集成）', () => {
   const baseDecls: VarDeclaration[] = [
     { name: 'lynn.atk', type: 'number', initial: 5 },

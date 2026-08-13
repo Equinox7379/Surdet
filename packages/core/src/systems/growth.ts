@@ -134,17 +134,10 @@ export class GrowthSystem {
       xp -= need;
       level += 1;
       passed.push(level);
-      // 属性成长写回：变量必须已声明且为 number（严格策略：未声明/类型不符在升级时即抛错，
-      // 尽早暴露 growth.json 配置缺陷，与类注释"严格策略"一致）
-      for (const [varName, delta] of Object.entries(profile.statGrowth ?? {})) {
-        const cur = this.#store.get(varName);
-        if (typeof cur !== 'number') {
-          throw new Error(`GrowthSystem: statGrowth 变量 '${varName}' 未声明或非 number（growth.json 配置缺陷）`);
-        }
-        this.#store.modify(varName, delta);
-      }
     }
 
+    const updates = this.#prepareStatGrowthUpdates(profile, passed.length);
+    this.#store.setMany(updates);
     this.#levels.set(characterId, level);
     this.#experience.set(characterId, xp);
     return {
@@ -168,6 +161,41 @@ export class GrowthSystem {
       levels: Object.fromEntries(this.#levels),
       experience: Object.fromEntries(this.#experience),
     };
+  }
+
+  #prepareStatGrowthUpdates(
+    profile: GrowthProfile,
+    levelsGained: number,
+  ): Array<{ name: string; value: number }> {
+    if (levelsGained === 0) return [];
+
+    const updates: Array<{ name: string; value: number }> = [];
+    for (const [varName, delta] of Object.entries(profile.statGrowth ?? {})) {
+      if (!Number.isFinite(delta)) {
+        throw new Error(
+          "GrowthSystem: statGrowth variable '" + varName + "' 增量必须是有限 number",
+        );
+      }
+      if (!this.#store.has(varName)) {
+        throw new Error(
+          "GrowthSystem: statGrowth variable '" + varName + "' 未声明或非 number（growth.json 配置缺陷）",
+        );
+      }
+      const current = this.#store.get(varName);
+      if (typeof current !== 'number') {
+        throw new Error(
+          "GrowthSystem: statGrowth variable '" + varName + "' 未声明或非 number（growth.json 配置缺陷）",
+        );
+      }
+      const next = current + delta * levelsGained;
+      if (!Number.isFinite(next)) {
+        throw new Error(
+          "GrowthSystem: statGrowth variable '" + varName + "' 最终值必须是有限 number",
+        );
+      }
+      updates.push({ name: varName, value: next });
+    }
+    return updates;
   }
 
   restore(snap: GrowthSnapshot): void {
