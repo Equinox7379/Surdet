@@ -906,21 +906,48 @@ The executor must update this section as work happens. Do not overwrite the plan
 - Game contract test result: red `npx vitest run test/gallery-content-contract.test.ts` exit `1` with `4` failed tests on the old declaration graph; same command after the approved declarative edits exit `0`, `1` file / `4` tests passed.
 - Zero lint result after Task 2: `npm run build -w @surdet/cli` exit `0`; `npm run lint -w zero-after-midnight` exit `0`; `11` scenes, `0` errors, `0` warnings.
 - Zero simulate result: `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000` exit `0`; `23/23` choice branches, `3` endings, `39` save/load smoke cycles, runtime errors `0`.
-- Commit SHA/message: to be filled with the real SHA immediately after the focused Task 2 commit; message `feat(zero): wire valid gallery content`.
+- Commit SHA/message: `a86682b15b786df7cd5bb0339db89d542b6f18e6` / `feat(zero): wire valid gallery content`.
 - Changed paths: `examples/zero-after-midnight/test/gallery-content-contract.test.ts`, `examples/zero-after-midnight/game.config.json`, `examples/zero-after-midnight/content/config/gallery.json`, and the eleven exact scenario files listed above. No assets or runtime code changed.
 
 ### Task 3 — verification and hand-off
 
-- Every final command with real exit result:
-- Delivery-report byte length:
-- Delivery-report SHA-256:
-- Final plan byte length:
-- Final plan SHA-256:
-- Report/ledger commit SHA/message:
-- Final `git rev-parse HEAD`:
-- Final `HEAD...surdet/main`:
-- Final `git status --short`:
-- Explicit stop statement: `WAITING_FOR_REVIEW`.
+- Every final command with real exit result: the first Task 3 run reached `npm run lint -w surdet-starter`, which exited `1` on the pre-existing dangling `tense_01` declaration. After the explicitly authorized Starter-only correction, `npm run lint -w surdet-starter` exited `0` (`4` scenes, `0` errors, `0` warnings); `npm run typecheck -w surdet-starter` exited `0`; `npm run build -w surdet-starter` exited `0`; `npm run lint -w zero-after-midnight` exited `0` (`11` scenes, `0` errors, `0` warnings); `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000` exited `0` (`23/23` choices, `3` endings, `39` save/load smoke, runtime errors `0`); `node examples/zero-after-midnight/scripts/check-assets.mjs` exited `0` (`assets ok: 44`); `npm run typecheck -w zero-after-midnight` exited `0`; `npm run build -w zero-after-midnight` exited `0`. Earlier Task 3 commands that were fresh before the Starter gate remain recorded in the initial Task 3 entry: CLI test, Core/CLI typecheck and build all exited `0`.
+- Delivery-report path: `docs/ENGINE-PLAYER-EXPERIENCE-WAVE-6-GALLERY-CONTENT-INTEGRITY-DELIVERY-REPORT-2026-08-12.md`.
+- Delivery-report byte length: `16109`.
+- Delivery-report SHA-256: `2336F5BC3590E0DD8390E43F3C144ABC541AF5969F05B9D166CFF6CB5C14BC26`.
+- Final plan byte length/SHA-256: read from disk after the last plan edit and reported in the final handoff; not embedded in the plan itself because embedding a file's own hash would change that hash.
+- Report/ledger commit SHA/message: the real SHA is read from `git rev-parse HEAD` after the single allowed documentation commit; message `docs(engine): record wave 6 gallery integrity`. No pre-existing or guessed SHA is written here.
+- Final code/content `git rev-parse HEAD` before the documentation commit: `8a6a455591471078985d91e0f6bee102c9be7dae`.
+- Final pre-documentation `HEAD...surdet/main`: `3 0`.
+- Final pre-documentation `git status --short`: this plan modified, the delivery report untracked for the authorized documentation commit, plus only the five protected untracked files; no other tracked or untracked task artifact.
+- Explicit stop statement after the documentation commit: `WAITING_FOR_REVIEW`; no push, deployment, packaging, release, performance, M9, or manual visual validation.
+
+#### Authorized Task 3 continuation — Starter dangling music declaration
+
+- Written authorization: the original “all files under `examples/starter/` unchanged” rule was amended only for `examples/starter/content/config/gallery.json`, `examples/starter/content/scenario/ch01_01.gal`, and `examples/starter/content/scenario/ch02.gal`; all other Wave 6 restrictions remain active.
+- Reconfirmed start before the authorized edit: HEAD `a86682b15b786df7cd5bb0339db89d542b6f18e6`; `HEAD...surdet/main=2 0`; only this plan was a tracked modification plus the five protected untracked files; `git diff --check` passed; tracked `.log` was empty.
+- Mechanical `tense_01` inventory before edit: exactly four references — `gallery.json` music entry; `ch01_01.gal` `@bgm`; `ch01_01.gal` `@unlock_music`; `ch02.gal` `@bgm`. Starter `content/assets/bgm` was absent, confirming the declared source was not an available asset.
+- Authorized edit: set Starter `gallery.json.music` to `[]`; deleted only `@bgm tense_01` and `@unlock_music tense_01` from `ch01_01.gal`; deleted only `@bgm tense_01` from `ch02.gal`. No audio was created, copied, renamed, replaced, or downloaded.
+- Starter green result: `npm run lint -w surdet-starter` exit `0`; `4` scenes, `0` errors, `0` warnings. The prior red was the single G003 error for the missing `tense_01` BGM.
+- Starter typecheck: `npm run typecheck -w surdet-starter` exit `0`.
+- Starter build: `npm run build -w surdet-starter` exit `0` (`vite v6.4.3`, `864` modules transformed).
+- Post-edit `rg -n "tense_01" examples/starter/content`: exit `1`, no matches.
+- Post-edit diff scope: exactly the three authorized Starter files and this plan; `git diff --check` passed.
+- Starter repair commit SHA/message: `8a6a455591471078985d91e0f6bee102c9be7dae` / `fix(starter): remove missing gallery music reference`.
+- Remaining Task 3 commands after this gate: all completed after the Starter commit; see the final verification entry below.
+
+#### Task 3 resumed final verification after authorized Starter repair
+
+- `npm run lint -w zero-after-midnight`: exit `0`; `11` scenes, `0` errors, `0` warnings.
+- `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000`: exit `0`; `23/23` choice branches, `3` endings, `39` save/load smoke cycles, runtime errors `0`.
+- `node examples/zero-after-midnight/scripts/check-assets.mjs`: exit `0`; `assets ok: 44`.
+- `npm run typecheck -w zero-after-midnight`: exit `0`.
+- `npm run build -w zero-after-midnight`: exit `0` (`907` modules transformed; only the existing Vite chunk-size advisory was printed).
+- Direct Zero residue check: `rg -n "castle_hall|night_field|tense_01|ch01_01|ch01_02" examples/zero-after-midnight/game.config.json examples/zero-after-midnight/content/config examples/zero-after-midnight/content/scenario` returned no matches (exit `1`, the expected no-match result).
+- Direct Zero unlock check: `22` lines total, `11` `@unlock_text`, `11` `@unlock_music`, `0` `@unlock_cg`; `midnight_rain` appears in its two approved source scenes.
+- `Get-FileHash examples/zero-after-midnight/content/assets/avatar/zhirao.png -Algorithm SHA256`: `87344B6E86657483E1F7968C208DA67D60AB59BBFE249225BBC72DD74776649D`; the asset was read only.
+- Direct Starter residue check: `rg -n "tense_01" examples/starter/content` returned no matches (exit `1`, expected).
+- Scope check from Task 0 start `7fb3cdef7551225c11ce96f19663ada205d10e82..HEAD`: only the Wave 6 plan, Task 1 CLI/Core files, Task 2 Zero files, and the three authorized Starter files appear. Working-tree diff before report creation is only this plan.
 
 ---
 
@@ -928,18 +955,18 @@ The executor must update this section as work happens. Do not overwrite the plan
 
 Before claiming this task book is complete, check every statement below against the actual diff and command output:
 
-- [ ] The implementation works at the generic `@surdet/cli` lint boundary; it is not a Zero-only check hidden in a content script.
-- [ ] `G001`–`G008` have a code, machine-readable location, and a useful core hint.
-- [ ] The linter derives asset stems from the filesystem and does not hard-code a `.png`, `.wav`, or `.mp3` extension.
-- [ ] The linter tolerates an optional missing avatar configuration, but rejects an explicit broken avatar key.
-- [ ] The empty CG list is represented as `[]`; no fake `cg` asset or placeholder source was created.
-- [ ] Every configured music/text ID has exactly one corresponding appropriate unlock instruction somewhere in the actual Zero scenarios, except that `midnight_rain` deliberately has two source scenes and must still be valid under idempotent unlock semantics.
-- [ ] No scene, label, BGM asset, Gallery field, avatar image, art, or audio asset was invented or renamed merely to make the check pass.
-- [ ] The old Starter residue names have no remaining references in Zero's runtime configuration or scenario content.
-- [ ] All code/content edits are covered by focused red-to-green evidence before the final consumer checks.
-- [ ] No shell/Electron visual runner, new screenshot collection, bulk performance test, artifact rewrite, or documentation reorganization was added.
-- [ ] The final reports distinguish fresh commands from prior historical evidence.
-- [ ] No protected untracked file was touched.
-- [ ] The branch was not pushed, deployed, packaged, or released.
+- [x] The implementation works at the generic `@surdet/cli` lint boundary; it is not a Zero-only check hidden in a content script.
+- [x] `G001`–`G008` have a code, machine-readable location, and a useful core hint.
+- [x] The linter derives asset stems from the filesystem and does not hard-code a `.png`, `.wav`, or `.mp3` extension.
+- [x] The linter tolerates an optional missing avatar configuration, but rejects an explicit broken avatar key.
+- [x] The empty CG list is represented as `[]`; no fake `cg` asset or placeholder source was created.
+- [x] Every configured music/text ID has exactly one corresponding appropriate unlock instruction somewhere in the actual Zero scenarios, except that `midnight_rain` deliberately has two source scenes and must still be valid under idempotent unlock semantics.
+- [x] No scene, label, BGM asset, Gallery field, avatar image, art, or audio asset was invented or renamed merely to make the check pass.
+- [x] The old Starter residue names have no remaining references in Zero's runtime configuration or scenario content.
+- [x] All code/content edits are covered by focused red-to-green evidence before the final consumer checks.
+- [x] No shell/Electron visual runner, new screenshot collection, bulk performance test, artifact rewrite, or documentation reorganization was added.
+- [x] The final reports distinguish fresh commands from prior historical evidence.
+- [x] No protected untracked file was touched.
+- [x] The branch was not pushed, deployed, packaged, or released.
 
 When every applicable box is true, the only permitted conclusion is local implementation readiness and a request for independent review. The general manager decides whether to authorize a normal push and the later manual deployment.
