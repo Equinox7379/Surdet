@@ -24,6 +24,8 @@ declare global {
       write(slot: string, data: SaveSnapshot): Promise<void>;
       delete(slot: string): Promise<void>;
       listMeta(): Promise<SaveSlotMeta[]>;
+      listBackupMeta(): Promise<SaveSlotMeta[]>;
+      restoreBackup(slot: string): Promise<void>;
     };
     surdetSettings?: { read(): Promise<unknown>; write(data: unknown): Promise<void> };
     surdetProfile?: {
