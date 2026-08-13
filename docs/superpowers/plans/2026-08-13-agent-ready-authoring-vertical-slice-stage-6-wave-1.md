@@ -1,0 +1,1329 @@
+# Surdet Stage 6 Wave 1 Agent-Ready Authoring Vertical Slice Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Do not create subagents or parallel workers unless the project owner separately authorizes their exact scope.
+
+**Goal:** 建立外部桌面 Agent 可通过 Surdet 公共能力安全制作、验证、提交一个双分支可玩短章，并让项目所有者在现有编辑器中理解、反向定位、预览和接管该成果。
+
+**Architecture:** 新增单一 `@surdet/authoring` 工作区，依赖纯运行语义层 `@surdet/core`，内聚无损项目快照、对象索引、隔离事务、类型化创作操作、校验/模拟、三层差异和证据。`@surdet/cli` 提供 Node 文件系统、事务目录与稳定 JSON 适配；`surdet-editor` 提供 File System Access 与最小双向因果界面；正式 Core/Renderer 运行链产生运行与 Presentation 应用证据，不建立第二套运行时。
+
+**Tech Stack:** TypeScript 5.7、ESM、Node.js ≥20、Vitest 3、Vite 6、Playwright 1.49、Electron 43、现有 `@surdet/core` / `@surdet/renderer` / `@surdet/host` / `@surdet/shell`。
+
+## Global Constraints
+
+- 先完整读取 `E:\surdet\AGENTS.md`、长期路线台账、本计划、批准规格和 Stage 5 最新任务/报告，再核对真实 Git 基线。
+- 外部桌面 Agent 负责自然语言理解和编排；Surdet 不内置模型、聊天页、提示词管理或 Agent 专属项目格式。
+- 只新增一个公共工作区 `@surdet/authoring`；不得提前拆 `protocol`、`evidence`、`transactions`、`agent-sdk` 或 `mcp` 包。
+- `@surdet/core` 保持纯运行语义，不依赖 authoring、CLI、editor、Node 文件系统、DOM 或 Git。
+- 命名对象使用语义身份；匿名对象使用修订期 `objectRef`；禁止永久 UUID 污染、永久旁路索引和模糊 patch。
+- 所有 Agent 写入默认进入原生隔离事务；`change.commit` 前不得修改真实项目文件。
+- `change.commit` 不是 Git commit；未经项目所有者明确授权，不得 push、部署、打包、发行、rebase、reset、amend、squash 或进入 Wave 2。
+- 不修改《零点之后》、原始 `examples/starter` 内容、音频、美术、Gallery、性能门限、发行配置或受保护文件。
+- Stage 5 的混合 LF/CRLF 红灯是本轮无损写入的相关前置条件；禁止批量归一化、放宽断言或隐藏全文件格式变化。
+- 自动证据必须区分静态校验、Core 模拟、正式 Presentation 应用与项目所有者人工观察；自动化不得填写人工通过。
+- 失败 evidence/artifact 不得被后续成功运行覆盖；不得循环重跑聚合正式路径。
+- 执行 AI 不修改、暂存或提交长期路线台账；每个 Task 的事实只追加到本计划 `Execution Ledger`，最终报告增加“建议由总经理登记的事实”。
+- 每项 Task 只暂存该 Task 白名单文件与本计划；不夹带 AGENTS、受保护文件、handoff、长期台账、日志、临时 fixture、构建产物或其他既有未跟踪文件。
+- 每次提交前运行 `git diff --check` 与 `git diff --cached --check`，并用 `git diff --cached --name-status` 核对精确范围。
+- 所有人工 fixture 放在桌面易选择路径；所有自动故障 fixture 与 artifact 放在仓库外临时/本机应用数据目录。
+
+---
+
+## 0. 权威文件与真实基线
+
+### 必读文件
+
+- `E:\surdet\AGENTS.md`
+- `E:\surdet\docs\superpowers\plans\2026-08-13-project-roadmap-and-decision-ledger.md`
+- `E:\surdet\docs\superpowers\specs\2026-08-13-agent-ready-authoring-vertical-slice-design.md`
+- `E:\surdet\docs\superpowers\plans\2026-08-13-editor-minimum-authoring-loop-stage-5.md`
+- `E:\surdet\docs\EDITOR-MINIMUM-AUTHORING-LOOP-STAGE-5-DELIVERY-REPORT-2026-08-13.md`
+- 本计划
+
+### 计划编写时的只读基线
+
+```text
+branch = main
+HEAD = 0cad5757b6217e446e4655803f07758e503f3578
+surdet/main = 5994ec7bd64b2106da6e47cd86e88fb4df82ed01
+HEAD...surdet/main = 4 0
+tracked worktree = clean
+staging area = empty
+```
+
+该基线只说明任务书创建时的事实。执行时必须重新读取，禁止复制本段充当新鲜证据。
+
+## 1. 文件结构与职责
+
+### 新增 `packages/authoring`
+
+- `packages/authoring/package.json`：工作区身份、脚本和 Core 依赖。
+- `packages/authoring/tsconfig.json`：源码与测试类型检查。
+- `packages/authoring/tsconfig.build.json`：只构建 `src` 到 `dist`。
+- `packages/authoring/src/contracts.ts`：能力信封、错误代码、对象/事务/证据公共类型。
+- `packages/authoring/src/scene-document.ts`：逐行保留 EOL 的无损场景文档与类型化 block 序列化。
+- `packages/authoring/src/project-storage.ts`：平台无关项目存储、哈希与事务仓储窄接口。
+- `packages/authoring/src/project-snapshot.ts`：项目文件读取、规范路径、项目修订和只读快照。
+- `packages/authoring/src/object-index.ts`：语义身份、修订期对象引用、引用与源位置索引。
+- `packages/authoring/src/change-session.ts`：事务状态、幂等 operation、工作修订和冲突检查。
+- `packages/authoring/src/operations.ts`：`scene.create`、`scene.patch`、`variable.ensure` 类型化操作。
+- `packages/authoring/src/validation.ts`：共享项目校验门面。
+- `packages/authoring/src/simulation.ts`：共享分支模拟与确定性显式路径运行。
+- `packages/authoring/src/evidence.ts`：统一证据信封、artifact 身份和失败保留。
+- `packages/authoring/src/diff.ts`：人类摘要、语义差异和原始文件差异。
+- `packages/authoring/src/runtime-trace.ts`：Core 轨迹归一化、状态因果与查询。
+- `packages/authoring/src/index.ts`：唯一公共导出面。
+- `packages/authoring/test/*.test.ts`：各模块聚焦契约。
+
+### CLI 适配
+
+- `packages/cli/src/authoring/node-project-storage.ts`：安全 Node 项目文件适配器。
+- `packages/cli/src/authoring/node-change-store.ts`：本机 Surdet 数据目录中的跨进程事务与 evidence 存储。
+- `packages/cli/src/authoring/authoring-service.ts`：能力名到共享内核调用的薄路由。
+- `packages/cli/src/authoring-command.ts`：CLI 参数/JSON 输入、stdout/stderr 与退出码。
+- `packages/cli/src/index.ts`：注册 `capabilities/project/object/change/scene/variable/runtime` 命令族。
+- `packages/cli/src/lint.ts`、`packages/cli/src/simulate.ts`：保留旧 CLI 外观，但改为共享 authoring 校验/模拟的薄包装。
+- `packages/cli/test/authoring-contract.test.ts`：14 项能力 JSON 合同与无噪声输出。
+- `packages/cli/test/authoring-vertical-slice.test.ts`：公共 CLI 红灯到绿灯事务链。
+
+### Core 与正式运行证据
+
+- `packages/core/src/runtime/interpreter.ts`：发出只读、结构化的运行因果事件，不改变现有游戏语义。
+- `packages/core/test/interpreter-trace.test.ts`：状态变化、选择和跳转轨迹。
+- `packages/editor/src/preview.ts`：把 Core 事件与 Presentation snapshot 配对，并发送父窗口轨迹事件。
+- `packages/editor/src/panels/preview-panel.ts`：接收并保存当前预览 trace。
+- `packages/editor/test/preview-causal-trace.test.ts`：预览消息合同与 Presentation 应用证据。
+
+### 编辑器最小双向因果桥
+
+- `packages/editor/src/model.ts`：改为从 `@surdet/authoring` 重导出共享场景文档 API。
+- `packages/editor/src/validate.ts`：改为共享 authoring 校验的适配器，不保留第二套项目校验真相。
+- `packages/editor/src/state.ts`：当前 `selectedObjectRef`、当前 trace 与反向定位请求。
+- `packages/editor/src/panels/editor.ts`：块选择映射到对象引用并接受轨迹反向定位。
+- `packages/editor/src/panels/right.ts`：紧凑可折叠因果检查区。
+- `packages/editor/src/panels/preview-panel.ts`：轨迹列表、对象过滤与事件点击回跳。
+- `packages/editor/src/main.ts`：装配对象选择和反向跳转钩子。
+- `packages/editor/src/styles.css`：最小因果区和选择态样式。
+- `packages/editor/test/causal-selection.test.ts`：对象 ↔ trace 双向选择纯逻辑测试。
+
+### 聚合路径与交付
+
+- `packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs`：唯一聚合纵向 harness；通过公共 CLI 建 fixture，再驱动正式 editor preview/Renderer 路径跑两分支并写 artifact。
+- `docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md`：最终真实交付报告。
+- 本计划：Execution Ledger、命令、提交和停止状态。
+
+---
+
+### Task 0: 重新建立真实基线并冻结范围
+
+**Files:**
+- Modify: `docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md`
+
+**Interfaces:**
+- Consumes: 本计划第 0 节列出的权威文件。
+- Produces: 新鲜 Git/测试基线和本轮唯一有效 Execution Ledger 起点。
+
+- [ ] **Step 1: 完整读取权威文件和执行技能**
+
+Run:
+
+```powershell
+Get-Content -LiteralPath E:\surdet\AGENTS.md -Raw
+Get-Content -LiteralPath E:\surdet\docs\superpowers\plans\2026-08-13-project-roadmap-and-decision-ledger.md -Raw
+Get-Content -LiteralPath E:\surdet\docs\superpowers\specs\2026-08-13-agent-ready-authoring-vertical-slice-design.md -Raw
+Get-Content -LiteralPath E:\surdet\docs\superpowers\plans\2026-08-13-editor-minimum-authoring-loop-stage-5.md -Raw
+Get-Content -LiteralPath E:\surdet\docs\EDITOR-MINIMUM-AUTHORING-LOOP-STAGE-5-DELIVERY-REPORT-2026-08-13.md -Raw
+Get-Content -LiteralPath E:\surdet\docs\superpowers\plans\2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md -Raw
+```
+
+Expected: 六份文件均能完整读取；执行 AI 能复述当前唯一主题、禁止项和最终停止点。
+
+- [ ] **Step 2: 重新读取 Git 身份和现有修改归属**
+
+Run:
+
+```powershell
+git branch --show-current
+git rev-parse HEAD
+git rev-parse surdet/main
+git rev-list --left-right --count HEAD...surdet/main
+git status --short --untracked-files=all
+git diff --check
+git diff --cached --check
+git ls-files '*.log'
+git log -8 --oneline
+```
+
+Expected: 记录真实结果，不要求必须等于计划编写基线；若出现未知 tracked 修改或暂存内容，停止并报告，不 reset/checkout/清理。
+
+- [ ] **Step 3: 重新建立 Stage 5 EOL 红灯**
+
+Run:
+
+```powershell
+npm run test -w surdet-editor -- test/model-roundtrip.test.ts
+```
+
+Expected before Task 1 implementation: exit `1`；只允许 `ch01_01.gal` 与 `ch02.gal` 的混合 EOL 逐字节断言失败。若失败集合不同，记录新鲜结果并在继续前判断相关性。
+
+- [ ] **Step 4: 在本计划末尾追加 Task 0 Execution Ledger**
+
+必须写入：时间、branch、HEAD、远端关系、tracked/未跟踪状态、Stage 5 红灯实际数量、实际运行命令、当前停止状态和下一步。不得修改长期路线台账。
+
+- [ ] **Step 5: 提交基线记录**
+
+```powershell
+git add -- docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md
+git diff --cached --check
+git diff --cached --name-status
+git commit -m "docs(authoring): record stage 6 wave 1 baseline"
+```
+
+Expected: 提交只修改本计划；不 push。
+
+---
+
+### Task 1: 建立 `@surdet/authoring` 与逐行 EOL 无损场景文档
+
+**Files:**
+- Create: `packages/authoring/package.json`
+- Create: `packages/authoring/tsconfig.json`
+- Create: `packages/authoring/tsconfig.build.json`
+- Create: `packages/authoring/src/contracts.ts`
+- Create: `packages/authoring/src/scene-document.ts`
+- Create: `packages/authoring/src/index.ts`
+- Create: `packages/authoring/test/scene-document.test.ts`
+- Modify: `packages/editor/src/model.ts`
+- Modify: `packages/editor/test/model-roundtrip.test.ts`
+- Modify: `packages/editor/package.json`
+- Modify: `package.json`
+- Modify: `package-lock.json`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: `LineModel`、`parseLine`、`parseScript`、`serializeScript`、rebuild helpers 的现有 editor 行为。
+- Produces: `SceneDocumentLine`、`parseSceneDocument(text)`、`serializeSceneDocument(lines, defaultEol)`、`replaceLine`、`insertLinesAfter`；editor 的旧导入名继续由 `model.ts` 重导出，但实现真相只有 authoring 一份。
+
+- [ ] **Step 1: 写 authoring package 与 EOL 红灯测试**
+
+`packages/authoring/package.json` 必须是：
+
+```json
+{
+  "name": "@surdet/authoring",
+  "version": "0.1.0",
+  "description": "Surdet shared authoring kernel: project objects, isolated changes and causal evidence",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0"
+  }
+}
+```
+
+测试至少包含以下精确断言：
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { insertLinesAfter, parseSceneDocument, serializeSceneDocument } from '../src/scene-document.js';
+
+describe('scene document EOL identity', () => {
+  it('roundtrips mixed LF/CRLF byte-for-byte', () => {
+    const source = '@scene mixed\r\n凛：第一行\n凛：第二行\r\n@end';
+    expect(serializeSceneDocument(parseSceneDocument(source), '\n')).toBe(source);
+  });
+
+  it('inserts with the anchor EOL without changing unrelated delimiters', () => {
+    const source = '@scene mixed\r\n凛：第一行\n@end';
+    const next = insertLinesAfter(parseSceneDocument(source), 1, [{ kind: 'text', speaker: '凛', value: '新增', raw: '凛：新增' }]);
+    expect(serializeSceneDocument(next, '\n')).toBe('@scene mixed\r\n凛：第一行\n凛：新增\n@end');
+  });
+});
+```
+
+- [ ] **Step 2: 运行红灯**
+
+Run:
+
+```powershell
+npm run test -w @surdet/authoring -- test/scene-document.test.ts
+```
+
+Expected: FAIL；package 或 `scene-document` 导出尚不存在。
+
+- [ ] **Step 3: 实现逐行终止符模型**
+
+公共类型必须保留原始行与该行终止符，而不是只记录文件主 EOL：
+
+```ts
+export type SceneEol = '\r\n' | '\n' | '\r' | '';
+
+export type SceneDocumentLine =
+  | { kind: 'blank'; raw: string; eol: SceneEol }
+  | { kind: 'comment'; raw: string; eol: SceneEol }
+  | { kind: 'label'; name: string; raw: string; eol: SceneEol }
+  | { kind: 'choice-option'; raw: string; eol: SceneEol }
+  | { kind: 'text'; speaker: string; value: string; sep: string; raw: string; eol: SceneEol }
+  | { kind: 'instr'; name: string; raw: string; eol: SceneEol };
+```
+
+实现规则：
+
+```ts
+export function parseSceneDocument(text: string): SceneDocumentLine[] {
+  if (text === '') return [parseSceneLine('', '', '')];
+  const chunks = text.match(/.*?(?:\r\n|\n|\r|$)/g)?.filter((chunk) => chunk.length > 0) ?? [];
+  const out: SceneDocumentLine[] = [];
+  let previous = '';
+  for (const chunk of chunks) {
+    const match = /(\r\n|\n|\r)$/.exec(chunk);
+    const eol = (match?.[1] ?? '') as SceneEol;
+    const raw = eol ? chunk.slice(0, -eol.length) : chunk;
+    const line = parseSceneLine(raw, previous, eol);
+    out.push(line);
+    previous = line.kind === 'instr' && line.name === 'choice' ? 'choice' : line.kind;
+  }
+  return out;
+}
+
+export function serializeSceneDocument(lines: readonly SceneDocumentLine[], defaultEol: Exclude<SceneEol, ''> = '\n'): string {
+  return lines.map((line, index) => line.raw + (line.eol || (index < lines.length - 1 ? defaultEol : ''))).join('');
+}
+```
+
+`parseSceneLine(raw, previousKind, eol = '')` 的第三参数必须有默认值，以兼容 editor 现有双参数调用。插入 helper 必须在不改无关行终止符的前提下，为原末行补上邻近/default EOL，并让新末行保持 `eol=''`。
+
+- [ ] **Step 4: 让 editor `model.ts` 成为兼容重导出**
+
+保留现有 import 名，避免一次性改所有面板：
+
+```ts
+export {
+  parseSceneLine as parseLine,
+  parseSceneDocument as parseScript,
+  serializeSceneDocument as serializeScript,
+  rebuildTextRaw,
+  rebuildLabelRaw,
+  splitInstruction as splitInstr,
+  rebuildInstructionRaw as rebuildInstrRaw,
+} from '@surdet/authoring';
+export type { SceneDocumentLine as LineModel } from '@surdet/authoring';
+```
+
+同步修改 editor 创建新行的字面量，显式给出 `eol`，不得使用类型断言绕过。
+
+- [ ] **Step 5: 更新工作区依赖与锁文件**
+
+根 `build`、`test`、`typecheck` 中确保 authoring 在 Core 之后、CLI/editor 之前；editor 增加 `@surdet/authoring: 0.1.0`。
+
+Run:
+
+```powershell
+npm install --package-lock-only --ignore-scripts
+```
+
+Expected: lockfile 出现 `packages/authoring` 与 `node_modules/@surdet/authoring` workspace link，不新增第三方运行依赖。
+
+- [ ] **Step 6: 运行绿灯**
+
+```powershell
+npm run test -w @surdet/authoring -- test/scene-document.test.ts
+npm run test -w surdet-editor -- test/model.test.ts test/model-roundtrip.test.ts
+npm run typecheck -w @surdet/authoring
+npm run typecheck -w surdet-editor
+npm run build -w @surdet/authoring
+npm run build -w surdet-editor
+```
+
+Expected: 全部 exit `0`；此前两个混合 EOL 红灯转绿；原始 Starter 文件 Git 身份不变。
+
+- [ ] **Step 7: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(authoring): add lossless scene documents
+```
+
+提交范围只能包含本 Task 文件和本计划。
+
+---
+
+### Task 2: 项目快照、修订与对象索引
+
+**Files:**
+- Create: `packages/authoring/src/project-storage.ts`
+- Create: `packages/authoring/src/project-snapshot.ts`
+- Create: `packages/authoring/src/object-index.ts`
+- Create: `packages/authoring/test/project-snapshot.test.ts`
+- Create: `packages/authoring/test/object-index.test.ts`
+- Modify: `packages/authoring/src/contracts.ts`
+- Modify: `packages/authoring/src/index.ts`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: `parseSceneDocument`、Core `compileScene`、调用方注入的 `sha256(text)`。
+- Produces: `ProjectStorage`、`ProjectSnapshot`、`loadProjectSnapshot`、`buildObjectIndex`、`inspectProject`、`inspectObject`。
+
+- [ ] **Step 1: 写快照与对象引用红灯**
+
+测试必须证明文件顺序不影响修订、命名对象身份可读、匿名引用绑定修订、重复文本仍得到不同引用：
+
+```ts
+it('gives duplicate dialogue lines distinct revision-scoped refs', async () => {
+  const snapshot = await fixtureSnapshot({
+    'game.config.json': '{"entryScene":"prologue","variables":{}}',
+    'content/scenario/prologue.gal': '@scene prologue\n凛：一样\n凛：一样\n@end',
+  });
+  const index = await buildObjectIndex(snapshot);
+  const texts = index.objects.filter((object) => object.kind === 'text');
+  expect(texts).toHaveLength(2);
+  expect(texts[0]!.objectRef).not.toBe(texts[1]!.objectRef);
+  expect(texts.every((object) => object.objectRef.includes(snapshot.revision.slice(0, 8)))).toBe(true);
+});
+```
+
+- [ ] **Step 2: 运行红灯**
+
+```powershell
+npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts
+```
+
+Expected: FAIL；模块未实现。
+
+- [ ] **Step 3: 定义平台无关存储和快照类型**
+
+使用以下窄接口，不在 authoring import `node:*` 或 DOM：
+
+```ts
+export interface ProjectFile {
+  path: string;
+  text: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface ProjectStorage {
+  readonly rootIdentity: string;
+  listFiles(): Promise<string[]>;
+  readText(path: string): Promise<ProjectFile>;
+  exists(path: string): Promise<boolean>;
+}
+
+export interface TextHasher {
+  sha256(text: string): Promise<string>;
+}
+```
+
+`loadProjectSnapshot` 只接受规范 `/` 相对路径，稳定排序后读取 `game.config.json`、`content/scenario/**/*.gal`、`content/timelines/**/*.json` 和已识别素材键；项目修订基于 `path + NUL + file.sha256` 的稳定串再哈希，不含时间戳和绝对路径。
+
+- [ ] **Step 4: 实现对象索引**
+
+公共对象至少包含：
+
+```ts
+export interface AuthoringObject {
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'asset';
+  semanticId?: string;
+  objectRef: string;
+  parentRef?: string;
+  source?: { path: string; line: number; col: number; raw: string };
+  references: string[];
+  referencedBy: string[];
+}
+```
+
+规则：场景/标签/变量/时间轴/素材用语义 ID；匿名对象引用含项目修订短码、规范路径、对象种类、行位置和原内容短指纹。`inspectObject` 对不存在返回 `OBJECT_NOT_FOUND`，候选多于一个返回 `OBJECT_AMBIGUOUS`，绝不挑第一个猜测。
+
+- [ ] **Step 5: 运行绿灯**
+
+```powershell
+npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/object-index.test.ts
+npm run typecheck -w @surdet/authoring
+npm run build -w @surdet/authoring
+```
+
+Expected: exit `0`。
+
+- [ ] **Step 6: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(authoring): index project objects
+```
+
+---
+
+### Task 3: 原生隔离事务、类型化操作与恢复 journal
+
+**Files:**
+- Create: `packages/authoring/src/change-session.ts`
+- Create: `packages/authoring/src/operations.ts`
+- Create: `packages/authoring/test/change-session.test.ts`
+- Create: `packages/authoring/test/operations.test.ts`
+- Create: `packages/authoring/test/commit-recovery.test.ts`
+- Modify: `packages/authoring/src/contracts.ts`
+- Modify: `packages/authoring/src/project-storage.ts`
+- Modify: `packages/authoring/src/index.ts`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: `ProjectSnapshot`、`ObjectIndex`、无损场景文档。
+- Produces: `ChangeRepository`、`beginChange`、`applySceneCreate`、`applyScenePatch`、`ensureVariable`、`commitChange`、`rollbackChange`。
+
+- [ ] **Step 1: 写事务状态与幂等红灯**
+
+至少包含：
+
+```ts
+it('replays identical operationId but rejects a different payload', async () => {
+  const change = await beginFixtureChange();
+  const input = createSceneInput('op-create', 'branch_a');
+  const first = await applySceneCreate(change, input);
+  const replay = await applySceneCreate(change, input);
+  expect(replay).toEqual(first);
+  await expect(applySceneCreate(change, { ...input, sceneId: 'branch_b' }))
+    .rejects.toMatchObject({ code: 'OPERATION_ID_CONFLICT' });
+});
+```
+
+并故障注入：提交第二个文件替换失败，第一个文件必须恢复；恢复也失败时返回 `COMMIT_RECOVERY_FAILED` 并保留 journal。
+
+- [ ] **Step 2: 运行红灯**
+
+```powershell
+npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations.test.ts test/commit-recovery.test.ts
+```
+
+Expected: FAIL。
+
+- [ ] **Step 3: 定义事务与仓储接口**
+
+```ts
+export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
+
+export interface ChangeRecord {
+  changeId: string;
+  projectRootIdentity: string;
+  baseRevision: string;
+  workingRevision: number;
+  status: ChangeStatus;
+  baseFiles: Record<string, { sha256: string }>;
+  workingFiles: Record<string, string>;
+  operations: Record<string, { requestHash: string; result: unknown }>;
+  latestValidation?: { workingRevision: number; evidenceId: string; errors: number };
+}
+
+export interface ChangeRepository {
+  create(record: ChangeRecord): Promise<void>;
+  read(changeId: string): Promise<ChangeRecord | null>;
+  write(record: ChangeRecord): Promise<void>;
+  writeEvidence(changeId: string, evidenceId: string, value: unknown): Promise<void>;
+  readEvidence(changeId: string, evidenceId: string): Promise<unknown | null>;
+  writeJournal(changeId: string, value: unknown): Promise<void>;
+}
+
+export interface ProjectWriteStorage extends ProjectStorage {
+  stageText(path: string, text: string, changeId: string): Promise<{ stagedIdentity: string; sha256: string }>;
+  replaceFromStage(path: string, stagedIdentity: string): Promise<void>;
+  restoreText(path: string, originalText: string): Promise<void>;
+  removeStage(stagedIdentity: string): Promise<void>;
+}
+```
+
+`ProjectWriteStorage` 是提交器唯一允许使用的写入口。`stageText` 只能在 `change.commit` 已通过新鲜校验和冲突检查之后调用；它在目标文件同目录创建随机命名临时文件并回读 SHA，再逐文件原子替换。`stagedIdentity` 是仓储生成的不透明值，调用方不得传任意绝对路径。恢复 journal 必须记录每个文件的原 SHA、目标 SHA、临时文件身份、是否已替换和是否已恢复。`change.begin` 至 commit 调用前，项目目录内不得出现 staging 或任何其他写入。
+
+- [ ] **Step 4: 实现最小类型化 block 输入**
+
+```ts
+export type SceneBlockInput =
+  | { kind: 'text'; speaker?: string; value: string }
+  | { kind: 'label'; name: string }
+  | { kind: 'instruction'; name: string; args?: string[]; modifiers?: Record<string, string> }
+  | { kind: 'choice'; options: { label: string; when?: string; effects?: { name: string; args: string[] }[]; target: { kind: 'goto' | 'jump'; value: string } }[] };
+
+export type ScenePatchOperation =
+  | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
+  | { kind: 'insertAfter'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
+  | { kind: 'replaceChoiceOption'; target: string; expectedFingerprint: string; option: Extract<SceneBlockInput, { kind: 'choice' }>['options'][number] }
+  | { kind: 'removeObject'; target: string; expectedFingerprint: string };
+```
+
+`scene.create` 只接受合法场景 ID；`variable.ensure` 只写 `game.config.json.variables`，相同合同幂等，不同类型/初值返回 `OBJECT_PRECONDITION_FAILED`。
+
+- [ ] **Step 5: 实现提交检查和恢复**
+
+提交前必须：当前状态 OPEN、最新校验绑定当前修订且 error=0、重读所有受影响文件哈希。任何冲突将事务标记 STALE 且写入数为 0。替换过程中每一步更新 journal；成功后回读最终 SHA，才标记 COMMITTED。
+
+- [ ] **Step 6: 运行绿灯**
+
+```powershell
+npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations.test.ts test/commit-recovery.test.ts
+npm run typecheck -w @surdet/authoring
+npm run build -w @surdet/authoring
+```
+
+- [ ] **Step 7: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(authoring): add isolated change transactions
+```
+
+---
+
+### Task 4: 共享校验、模拟、三层差异与 Core 因果轨迹
+
+**Files:**
+- Create: `packages/authoring/src/validation.ts`
+- Create: `packages/authoring/src/simulation.ts`
+- Create: `packages/authoring/src/evidence.ts`
+- Create: `packages/authoring/src/diff.ts`
+- Create: `packages/authoring/src/runtime-trace.ts`
+- Create: `packages/authoring/test/validation.test.ts`
+- Create: `packages/authoring/test/simulation.test.ts`
+- Create: `packages/authoring/test/diff.test.ts`
+- Create: `packages/authoring/test/runtime-trace.test.ts`
+- Create: `packages/core/test/interpreter-trace.test.ts`
+- Modify: `packages/core/src/runtime/interpreter.ts`
+- Modify: `packages/cli/src/lint.ts`
+- Modify: `packages/cli/src/simulate.ts`
+- Modify: `packages/editor/src/validate.ts`
+- Modify: `packages/authoring/src/index.ts`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: Core 编译/解释器/scene-lint、ProjectSnapshot、ObjectIndex、ChangeRecord。
+- Produces: `validateSnapshot`、`simulateSnapshot`、`runExplicitPath`、`createChangeDiff`、`queryTrace`、Core `runtimeTrace` event。
+
+- [ ] **Step 1: 写共享校验与模拟红灯**
+
+红灯 fixture 必须包含不存在标签：
+
+```ts
+expect(result.issues).toContainEqual(expect.objectContaining({
+  severity: 'error',
+  code: 'J002',
+  objectRef: expect.stringContaining('choice-option'),
+  action: expect.stringContaining('创建或修正标签'),
+}));
+```
+
+模拟绿灯 fixture 必须断言：
+
+```ts
+expect(report.status).toBe('passed');
+expect(report.choiceBranches).toEqual({ total: 2, visited: 2 });
+expect(report.paths.map((path) => path.finalVariables.trust).sort()).toEqual([-1, 1]);
+```
+
+预算耗尽必须为 `incomplete`，不能 `passed`。
+
+这里的 `J002` 是现有 Core 场景校验 issue code，不是能力信封的错误 code；能力调用本身成功，但 `result.issues` 含语义错误。不得另造第二套“标签不存在”校验编号。
+
+- [ ] **Step 2: 写 Core 因果事件红灯**
+
+`interpreter-trace.test.ts` 必须断言选择、变量差异、条件和跳转源位置：
+
+```ts
+expect(events).toContainEqual(expect.objectContaining({
+  kind: 'state',
+  source: expect.objectContaining({ sceneId: 'prologue', op: 'set' }),
+  stateDelta: [{ variable: 'trust', before: 0, after: 1 }],
+}));
+expect(events).toContainEqual(expect.objectContaining({
+  kind: 'control-flow',
+  controlFlow: expect.objectContaining({ to: 'label:prologue.trust' }),
+}));
+```
+
+- [ ] **Step 3: 运行红灯**
+
+```powershell
+npm run test -w @surdet/core -- test/interpreter-trace.test.ts
+npm run test -w @surdet/authoring -- test/validation.test.ts test/simulation.test.ts test/diff.test.ts test/runtime-trace.test.ts
+```
+
+- [ ] **Step 4: 在 Core 增加只读 trace 事件**
+
+扩展 `CoreEventMap`：
+
+```ts
+export interface RuntimeTraceEventPayload {
+  kind: 'instruction' | 'choice' | 'state' | 'condition' | 'control-flow' | 'scene-end';
+  source: { sceneId: string; index: number; op: string; file: string; line: number; col: number };
+  stateDelta?: { variable: string; before: VarValue | undefined; after: VarValue | undefined }[];
+  condition?: { expression: string; result: boolean };
+  controlFlow?: { from: string; to: string };
+  choice?: { optionIndex: number; label: string };
+}
+
+export interface CoreEventMap extends EventMap {
+  runtimeTrace: RuntimeTraceEventPayload;
+  // 保留所有既有事件
+}
+```
+
+trace 必须观察既有语义，不改变 pc、状态或事件顺序；同一输入下顺序稳定。
+
+- [ ] **Step 5: 实现共享校验并迁移旧入口**
+
+`validateSnapshot` 复用 Core 检查并补充 `objectRef`/`action`；CLI `lintProject` 与 editor `validateProject` 改为薄适配。对仍只存在 Node 的 Gallery/配置文件扫描，通过 snapshot 数据输入共享纯函数，CLI 不保留第二套结果真相。
+
+- [ ] **Step 6: 实现模拟、显式路径运行和证据信封**
+
+```ts
+export interface EvidenceEnvelope<T> {
+  schemaVersion: 1;
+  evidenceId: string;
+  capability: string;
+  status: 'passed' | 'failed' | 'incomplete' | 'timed_out';
+  engineIdentity: { version: string; gitHead: string };
+  projectRevision: string;
+  changeId?: string;
+  workingRevision?: number;
+  createdAt: string;
+  result: T;
+  artifact?: { path: string; bytes: number; sha256: string };
+}
+```
+
+`runExplicitPath` 接受场景/标签、初始变量、显式选择序列和可选 seed；不得自行猜选项。
+
+- [ ] **Step 7: 实现三层差异与影响分层**
+
+返回：
+
+```ts
+export interface ChangeDiff {
+  summary: { createdScenes: number; modifiedScenes: number; changedVariables: number; warnings: string[] };
+  semantic: { kind: string; objectBefore?: string; objectAfter?: string; operationId: string; directChange: unknown; potentialImpact: unknown[]; observedImpact: unknown[] }[];
+  files: { path: string; beforeSha256?: string; afterSha256?: string; unifiedDiff: string; unexpectedFormatChange: boolean }[];
+}
+```
+
+只改一条台词却改动无关行终止符时，测试必须得到 `unexpectedFormatChange=true` 并阻断提交。
+
+- [ ] **Step 8: 运行绿灯和旧入口回归**
+
+```powershell
+npm run test -w @surdet/core -- test/interpreter.test.ts test/interpreter-trace.test.ts
+npm run test -w @surdet/authoring
+npm run test -w @surdet/cli -- test/lint.test.ts test/simulate.test.ts
+npm run test -w surdet-editor -- test/validate.test.ts
+npm run typecheck -w @surdet/core
+npm run typecheck -w @surdet/authoring
+npm run typecheck -w @surdet/cli
+npm run typecheck -w surdet-editor
+```
+
+- [ ] **Step 9: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(authoring): add validation simulation and evidence
+```
+
+---
+
+### Task 5: 结构化 CLI/JSON 与跨进程事务目录
+
+**Files:**
+- Create: `packages/cli/src/authoring/node-project-storage.ts`
+- Create: `packages/cli/src/authoring/node-change-store.ts`
+- Create: `packages/cli/src/authoring/authoring-service.ts`
+- Create: `packages/cli/src/authoring-command.ts`
+- Create: `packages/cli/test/authoring-contract.test.ts`
+- Create: `packages/cli/test/authoring-vertical-slice.test.ts`
+- Modify: `packages/cli/src/index.ts`
+- Modify: `packages/cli/package.json`
+- Modify: `package-lock.json`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: 全部 14 项 authoring 公共能力。
+- Produces: 稳定 CLI 命令、单 JSON stdout、Node 存储和本机事务证据目录。
+
+- [ ] **Step 1: 写 CLI 合同红灯**
+
+测试通过 spawn 构建后的 CLI，不直接 import 内部 service；至少断言：
+
+```ts
+const result = runCli(['capabilities', 'describe', '--json']);
+expect(result.status).toBe(0);
+expect(() => JSON.parse(result.stdout)).not.toThrow();
+expect(result.stdout.trim().startsWith('{')).toBe(true);
+expect(result.stdout.trim().endsWith('}')).toBe(true);
+expect(result.stderr).toBe('');
+expect(JSON.parse(result.stdout).result.capabilities).toHaveLength(14);
+```
+
+错误路径必须 stdout 为错误信封，stderr 只在 `--debug` 出现内部堆栈。
+
+- [ ] **Step 2: 运行红灯**
+
+```powershell
+npm run build -w @surdet/core
+npm run build -w @surdet/authoring
+npm run build -w @surdet/cli
+npm run test -w @surdet/cli -- test/authoring-contract.test.ts
+```
+
+Expected: FAIL；authoring 命令尚未注册。
+
+- [ ] **Step 3: 实现安全 NodeProjectStorage**
+
+要求：
+
+```ts
+export class NodeProjectStorage implements ProjectWriteStorage {
+  constructor(readonly rootIdentity: string, private readonly rootRealPath: string) {}
+  static async open(projectRoot: string): Promise<NodeProjectStorage>;
+  listFiles(): Promise<string[]>;
+  readText(relativePath: string): Promise<ProjectFile>;
+  exists(relativePath: string): Promise<boolean>;
+  stageText(relativePath: string, text: string, changeId: string): Promise<{ stagedIdentity: string; sha256: string }>;
+  replaceFromStage(relativePath: string, stagedIdentity: string): Promise<void>;
+  restoreText(relativePath: string, originalText: string): Promise<void>;
+  removeStage(stagedIdentity: string): Promise<void>;
+}
+```
+
+所有路径使用 `realpath`、`path.resolve` 和 `path.relative` 验证仍在根目录；拒绝 `..`、绝对路径、junction/symlink 逃逸并返回 `PATH_OUTSIDE_PROJECT`。`stageText` 只在 commit 临界区于目标同目录创建 `.surdet-<changeId>-<nonce>.tmp`；提交成功或完整恢复成功后清理本次临时文件。恢复失败时立即停止写入，在项目外保留 journal、文件身份和失败 evidence，并在错误结果中列出尚存临时文件供人工处理，不得静默清理或继续尝试。
+
+- [ ] **Step 4: 实现 NodeChangeStore**
+
+默认根目录：
+
+```text
+%LOCALAPPDATA%\Surdet\agent-changes\<project-identity>\<changeId>
+```
+
+仅测试允许通过 `SURDET_AGENT_DATA_DIR` 指向仓库外临时目录。每次 evidence 使用独立文件名，禁止固定 `latest.json` 覆盖失败证据。
+
+- [ ] **Step 5: 注册 14 项命令**
+
+先在 `@surdet/authoring` 定义并由 CLI 原样序列化统一信封：
+
+```ts
+export interface CapabilitySuccess<T> {
+  schemaVersion: 1;
+  capability: string;
+  ok: true;
+  operationId?: string;
+  projectRevision: string;
+  changeId?: string;
+  workingRevision?: number;
+  result: T;
+}
+
+export interface CapabilityFailure {
+  schemaVersion: 1;
+  capability: string;
+  ok: false;
+  operationId?: string;
+  projectRevision?: string;
+  changeId?: string;
+  workingRevision?: number;
+  error: {
+    code: 'CAPABILITY_UNAVAILABLE' | 'INVALID_REQUEST' | 'UNSUPPORTED_OBJECT_KIND' | 'UNSUPPORTED_OPERATION' |
+      'PROJECT_NOT_FOUND' | 'PROJECT_INVALID' | 'PATH_OUTSIDE_PROJECT' | 'OBJECT_NOT_FOUND' |
+      'OBJECT_AMBIGUOUS' | 'OBJECT_REF_STALE' | 'OBJECT_PRECONDITION_FAILED' | 'CHANGE_NOT_FOUND' |
+      'CHANGE_NOT_OPEN' | 'OPERATION_ID_CONFLICT' | 'PROJECT_CHANGED_SINCE_BEGIN' |
+      'VALIDATION_REQUIRED' | 'VALIDATION_STALE' | 'VALIDATION_FAILED' | 'SIMULATION_INCOMPLETE' |
+      'RUNTIME_FAILED' | 'RUNTIME_TIMED_OUT' | 'COMMIT_FAILED_RECOVERED' | 'COMMIT_RECOVERY_FAILED';
+    category: 'request' | 'not-found' | 'conflict' | 'validation' | 'runtime' | 'commit';
+    message: string;
+    retriable: boolean;
+    action: string;
+    objectRef?: string;
+  };
+}
+```
+
+成功 exit `0`；合同/校验/冲突失败使用稳定非零 exit code，但 stdout 仍只输出一个 `CapabilityFailure` JSON。未使用 `--json` 时保留现有 CLI 的人类文本外观。
+
+命令外观固定为：
+
+```text
+surdet capabilities describe --json
+surdet project inspect --project <root> --json
+surdet object inspect --project <root> --ref <ref> --json
+surdet change begin --project <root> --json
+surdet scene create --change <id> --input <json-file> --json
+surdet scene patch --change <id> --input <json-file> --json
+surdet variable ensure --change <id> --input <json-file> --json
+surdet project validate --change <id> --json
+surdet project simulate --change <id> --json
+surdet runtime run-from --change <id> --input <json-file> --json
+surdet runtime read-trace --change <id> --trace <id> --query <json-file> --json
+surdet change diff --change <id> --json
+surdet change commit --change <id> --json
+surdet change rollback --change <id> --json
+```
+
+写请求只接受 JSON 文件或 stdin，禁止把复杂剧情内容塞进 shell 参数。`capabilities.describe` 的能力列表和错误代码从真实注册表生成。
+
+- [ ] **Step 6: 建立红灯到绿灯 CLI 集成测试**
+
+测试必须：开始事务 → 创建带坏标签的短章 → validate 返回 error/objectRef/action → 使用 `scene.patch` 修正 → validate 绿灯 → simulate `2/2` → diff → commit。提交前 fixture 文件 SHA 不变；提交后只预期文件变化。
+
+- [ ] **Step 7: 运行绿灯**
+
+```powershell
+npm run test -w @surdet/cli -- test/authoring-contract.test.ts test/authoring-vertical-slice.test.ts
+npm run typecheck -w @surdet/cli
+npm run build -w @surdet/cli
+```
+
+- [ ] **Step 8: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(cli): expose agent authoring capabilities
+```
+
+---
+
+### Task 6: 正式 preview/Renderer 的 Presentation 应用证据
+
+**Files:**
+- Modify: `packages/editor/src/preview.ts`
+- Modify: `packages/editor/src/panels/preview-panel.ts`
+- Create: `packages/editor/test/preview-causal-trace.test.ts`
+- Modify: `packages/editor/package.json`
+- Modify: `package-lock.json`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: Core `runtimeTrace`、authoring `RuntimeTraceEvent`/`EvidenceEnvelope`、Renderer `queries.presentation.snapshot()`。
+- Produces: `surdet-preview-trace-start`、`surdet-preview-trace-event`、`surdet-preview-trace-complete` 父窗口消息。
+
+- [ ] **Step 1: 写消息合同红灯**
+
+```ts
+expect(previewSource).toContain("type: 'surdet-preview-trace-event'");
+expect(previewSource).toContain('coreEmitted: true');
+expect(previewSource).toContain('presentationApplied');
+expect(previewSource).toContain('queries.presentation.snapshot()');
+```
+
+纯归一化测试还要证明旧 generation 的事件被父窗口丢弃。
+
+- [ ] **Step 2: 运行红灯**
+
+```powershell
+npm run test -w surdet-editor -- test/preview-causal-trace.test.ts
+```
+
+- [ ] **Step 3: 实现 preview 轨迹适配器**
+
+每次 load 创建新 `traceId`；Core trace 事件到达时记录源对象/位置、state/control-flow，并在 Renderer 处理同一同步事件后读取 presentation snapshot。演出项必须分别记录：
+
+```ts
+{
+  coreEmitted: true,
+  presentationApplied: boolean,
+  presentationBefore: unknown,
+  presentationAfter: unknown
+}
+```
+
+不得把 `presentationApplied` 自动转换成人工可见通过。编译/运行错误发送 complete status `failed`，保留最后事件与第一错误。
+
+- [ ] **Step 4: 父窗口保存当前 trace**
+
+`preview-panel.ts` 只接收当前 iframe source 和当前 generation 的事件；切换/重载时新 trace 不覆盖旧失败 trace 的 artifact，由聚合 harness 负责持久化。UI 只保存当前预览 trace 供 Task 7 展示。
+
+- [ ] **Step 5: 运行绿灯**
+
+```powershell
+npm run test -w surdet-editor -- test/preview-causal-trace.test.ts test/preview-runtime-contract.test.ts test/preview-runtime-lifecycle.test.ts
+npm run typecheck -w surdet-editor
+npm run build -w surdet-editor
+```
+
+- [ ] **Step 6: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(authoring): trace formal runtime causality
+```
+
+---
+
+### Task 7: 编辑器最小双向因果桥
+
+**Files:**
+- Create: `packages/editor/src/causal-selection.ts`
+- Create: `packages/editor/src/authoring-project-storage.ts`
+- Create: `packages/editor/test/causal-selection.test.ts`
+- Create: `packages/editor/test/authoring-project-storage.test.ts`
+- Modify: `packages/editor/src/state.ts`
+- Modify: `packages/editor/src/panels/editor.ts`
+- Modify: `packages/editor/src/panels/right.ts`
+- Modify: `packages/editor/src/panels/preview-panel.ts`
+- Modify: `packages/editor/src/main.ts`
+- Modify: `packages/editor/src/styles.css`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: authoring `ProjectStorage` / ObjectIndex、当前 editor 内存项目、当前 preview trace。
+- Produces: `selectAuthoringObject(ref)`、`filterTraceByObject(ref, trace)`、`locateObjectForTraceEvent(event)`、紧凑因果区与双向跳转。
+
+- [ ] **Step 1: 写双向选择红灯**
+
+```ts
+it('filters trace by selected object and locates source from a trace event', () => {
+  const selected = 'scene:prologue/text:2@abcd';
+  const trace = [
+    { step: 1, sourceRef: selected, kind: 'text' },
+    { step: 2, sourceRef: 'scene:prologue/choice:1@efgh', kind: 'choice' },
+  ];
+  expect(filterTraceByObject(selected, trace)).toEqual([trace[0]]);
+  expect(locateObjectForTraceEvent(trace[1])).toBe('scene:prologue/choice:1@efgh');
+});
+```
+
+- [ ] **Step 2: 运行红灯**
+
+```powershell
+npm run test -w surdet-editor -- test/causal-selection.test.ts
+```
+
+- [ ] **Step 3: 接入共享对象索引**
+
+实现 `createEditorProjectStorage(state)`：把当前内存中的 `game.config.json`、`content/scenario/<scene.file>`、`content/timelines/<timeline.file>` 和已载入配置文件映射为只读 `ProjectStorage`，SHA 使用 Web Crypto；必须读取包含尚未保存编辑的内存文本，不能为了建索引重新从磁盘覆盖 dirty 内容。项目打开、场景文本改变和校验完成后，以防抖单飞方式重建当前 authoring snapshot/index；旧异步结果不得覆盖较新的编辑修订。`state` 增加：
+
+```ts
+selectedObjectRef: null as string | null,
+authoringIndex: null as ObjectIndex | null,
+previewTrace: [] as RuntimeTraceEvent[],
+selectedTraceStep: null as number | null,
+```
+
+不得在 editor 内生成另一种对象 ID。
+
+- [ ] **Step 4: 块选择映射对象引用**
+
+每个 `.block` 设置 `data-object-ref`；点击空白/台词/标签/指令/选择项时更新选择态并刷新右栏。轨迹反向定位使用 index 的 source path + line，调用现有 `jumpToScene`，不复制导航逻辑。
+
+- [ ] **Step 5: 实现紧凑因果检查区**
+
+右栏新增可折叠“因果”区，只显示：当前对象、直接引用、直接被引用、`potentialImpact`、当前 trace 的 `observedImpact`。无 trace 时明确显示“尚无本次预览观察证据”，不得用静态推断冒充观察。
+
+- [ ] **Step 6: 实现轨迹过滤与回跳**
+
+预览面板在现有 diagnostics 下方显示当前 trace 的紧凑事件列表；选中对象时过滤；点击事件切回块编辑并定位对象。页面布局不得新增全屏大图或 AI 对话栏。
+
+- [ ] **Step 7: 运行绿灯与 Stage 5 回归**
+
+```powershell
+npm run test -w surdet-editor -- test/causal-selection.test.ts test/authoring-project-storage.test.ts test/model-roundtrip.test.ts test/preview-scenes.test.ts test/project-io.test.ts test/validate.test.ts
+npm run typecheck -w surdet-editor
+npm run build -w surdet-editor
+```
+
+Expected: 全部 exit `0`；Stage 5 编辑—预览—保存—重开所依赖的路径未被移除。
+
+- [ ] **Step 8: 更新 Execution Ledger 并提交**
+
+Commit message:
+
+```text
+feat(editor): add causal authoring bridge
+```
+
+---
+
+### Task 8: 唯一聚合纵向 harness 与桌面人工 fixture
+
+**Files:**
+- Create: `packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs`
+- Modify: `packages/shell/package.json`
+- Modify: current plan ledger
+- Runtime-only, do not commit: desktop fixture and temporary artifact directory
+
+**Interfaces:**
+- Consumes: 构建后的 14 项 CLI、editor preview、Core/Presentation trace。
+- Produces: 一个不可覆盖的 Stage 6 Wave 1 artifact、桌面人工 fixture 和聚合 pass/fail 退出码。
+
+- [ ] **Step 1: 写 harness 静态红灯测试或自检入口**
+
+harness 必须在启动时验证：原始 Starter 场景/config 哈希、运行 HEAD、目标桌面 fixture 不存在、artifact 目录唯一。不得删除已存在的同名目录；使用时间戳/随机后缀创建新目录。
+
+- [ ] **Step 2: 实现公开能力链**
+
+harness 只能 spawn 构建后的 `surdet` CLI，按下列顺序：
+
+```text
+capabilities.describe
+project.inspect
+change.begin
+variable.ensure
+scene.create（包含故意坏标签）
+project.validate（预期红灯）
+object.inspect
+scene.patch（修正标签）
+project.validate（绿灯）
+project.simulate（2/2）
+runtime.runFrom（路径 A）
+runtime.runFrom（路径 B）
+runtime.readTrace
+change.diff
+change.commit
+```
+
+不得 import authoring 内部函数绕过 CLI。
+
+- [ ] **Step 3: 验证红灯期间与提交前不写盘**
+
+在 begin、故意红灯、修正后绿灯、diff 后分别重新读取 fixture 文件树哈希；都必须等于 begin 前。只有 commit 成功后才允许变化。
+
+- [ ] **Step 4: 驱动正式 editor preview/Renderer 两条路径**
+
+构建 editor 后启动仅绑定 `127.0.0.1` 的 Vite preview。Playwright 直接打开正式 `preview.html`，由父测试页通过公开 `postMessage` 加载已提交 fixture 场景；使用真实键盘/鼠标选择两个选项，分别得到 trace A/B。必须验证：
+
+```text
+路径 A/B 后续文本不同
+trust 结果分别为 1 和 -1
+Core runtimeTrace 存在
+基础演出至少一项 coreEmitted=true
+同一演出 presentationApplied=true
+pageErrors/consoleErrors/requestFailures/unhandledRejections/rendererErrors/releaseFailures 全为空
+```
+
+- [ ] **Step 5: 写唯一 artifact**
+
+artifact 至少包含：
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "PASSED",
+  "runHead": "...",
+  "projectRevision": "...",
+  "changeId": "...",
+  "workingRevision": 0,
+  "redEvidenceId": "...",
+  "greenEvidenceId": "...",
+  "traceIds": ["...", "..."],
+  "choiceCoverage": { "total": 2, "visited": 2 },
+  "stateOutcomes": [-1, 1],
+  "originalStarter": { "unchanged": true },
+  "errors": [],
+  "lastPassedNode": "...",
+  "firstFailedNode": null
+}
+```
+
+写完后从磁盘重新读取路径、bytes 和 SHA-256。失败时 status=`FAILED`，保留 artifact，不重跑、不覆盖。
+
+- [ ] **Step 6: 先跑语法检查与受影响构建**
+
+```powershell
+node --check packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs
+npm run build -w @surdet/core
+npm run build -w @surdet/authoring
+npm run build -w @surdet/cli
+npm run build -w @surdet/renderer
+npm run build -w surdet-editor
+```
+
+- [ ] **Step 7: 聚合 harness 只运行一次**
+
+```powershell
+node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs
+```
+
+Expected: exit `0` 且 artifact status=`PASSED`。若失败，记录最后通过节点和第一失败节点，停止在 `WAITING_FOR_REVIEW`；不得循环重跑，不得自动修改生产代码猜测修复。
+
+- [ ] **Step 8: 准备桌面人工验收入口但不代替项目所有者执行**
+
+复用 harness 创建的桌面 fixture。fixture 只能复制 Starter 的 `game.config.json` 与 `content/**`，不得复制 `node_modules`、`dist`、`src`、`test` 或仓库 Git 元数据；创建前后都要重新核对原始 Starter 哈希。随后启动：
+
+```powershell
+npm run preview -w surdet-editor -- --host 127.0.0.1 --port 4173
+```
+
+只确认 HTTP 200、页面标题和 fixture 路径可访问；不把服务器可访问写成人工通过。将 URL、PID、fixture 路径和 16 步人工验收清单写入报告与计划强制提醒点。
+
+- [ ] **Step 9: 更新 Execution Ledger 并提交 harness**
+
+Commit message:
+
+```text
+test(authoring): verify agent-ready vertical slice
+```
+
+不得提交 fixture、artifact、日志、`dist` 或本机事务目录。
+
+---
+
+### Task 9: 最终聚焦验证、一次全仓门禁、交付报告与停止
+
+**Files:**
+- Create: `docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md`
+- Modify: current plan ledger
+
+**Interfaces:**
+- Consumes: Tasks 1–8 的提交、测试、artifact 和桌面 fixture。
+- Produces: 可独立复审的最终报告、本地文档收口提交和人工验收强制提醒。
+
+- [ ] **Step 1: 运行聚焦工作区测试**
+
+```powershell
+npm run test -w @surdet/core
+npm run test -w @surdet/authoring
+npm run test -w @surdet/cli
+npm run test -w surdet-editor
+npm run test -w @surdet/renderer
+npm run test -w @surdet/shell
+```
+
+Expected: 全部 exit `0`。不得再出现 Stage 5 的两个 EOL 红灯。
+
+- [ ] **Step 2: 运行 typecheck 与 build**
+
+```powershell
+npm run typecheck -w @surdet/core
+npm run typecheck -w @surdet/authoring
+npm run typecheck -w @surdet/cli
+npm run typecheck -w @surdet/renderer
+npm run typecheck -w @surdet/host
+npm run typecheck -w @surdet/shell
+npm run typecheck -w surdet-editor
+npm run build -w @surdet/core
+npm run build -w @surdet/authoring
+npm run build -w @surdet/cli
+npm run build -w @surdet/renderer
+npm run build -w @surdet/host
+npm run build -w @surdet/shell
+npm run build -w surdet-editor
+```
+
+- [ ] **Step 3: 最终只运行一次全仓门禁**
+
+```powershell
+npm run verify:all
+```
+
+Expected: exit `0`。若失败，只记录一次结果并判断与本轮关系；不得循环运行。不要运行性能资格化、多轮 Electron、pack 或发行。
+
+- [ ] **Step 4: 从磁盘重新读取所有关键证据**
+
+必须重新读取：
+
+- artifact path/bytes/SHA-256/status/runHead/projectRevision/changeId/traceIds；
+- 桌面 fixture 目标场景与 config bytes/SHA-256；
+- 原始 Starter 对应文件 bytes/SHA-256 与 Git blob；
+- `git rev-parse HEAD`、`surdet/main`、ahead/behind；
+- `git status`、tracked log、diff checks；
+- Tasks 1–8 的真实提交与文件范围。
+
+- [ ] **Step 5: 写交付报告**
+
+报告必须区分：
+
+```text
+已验证事实
+合理推断
+尚未验证（项目所有者视觉/操作）
+失败证据与保留位置
+本轮修改范围
+实际命令及退出码
+提交身份
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
+末尾必须有“建议由总经理登记的事实”，不得修改长期路线台账。
+
+- [ ] **Step 6: 写人工验收强制提醒点**
+
+明确要求项目所有者使用 Chrome/Edge 与桌面 fixture 完成：
+
+```text
+1. 打开本机 editor URL
+2. 选择桌面 fixture
+3. 确认两个 Agent 场景存在
+4. 确认 .gal 无 UUID 噪声
+5. 选择台词查看直接因果
+6. 选择选项查看变量变化与跳转
+7. 运行路径 A
+8. 点击轨迹事件反向定位对象
+9. 运行路径 B
+10. 确认不同后续文本
+11. 手工修改一句台词
+12. 预览修改
+13. 保存全部
+14. 刷新编辑器
+15. 重开同一 fixture
+16. 确认修改仍在且无脏标记
+```
+
+- [ ] **Step 7: 精确暂存最终文档并提交**
+
+```powershell
+git add -- docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md
+git diff --cached --check
+git diff --cached --name-status
+git commit -m "docs(authoring): report stage 6 wave 1 delivery"
+```
+
+- [ ] **Step 8: 提交后最终回读并停止**
+
+```powershell
+git log -1 --oneline
+git rev-parse HEAD
+git rev-parse surdet/main
+git rev-list --left-right --count HEAD...surdet/main
+git show --name-status --format=fuller HEAD
+git diff --check
+git diff --cached --check
+git ls-files '*.log'
+git status --short --branch
+```
+
+最终状态必须是：
+
+```text
+STAGE_6_WAVE_1_IMPLEMENTED_LOCALLY
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
+NOT_PUSHED_AFTER_STAGE_6_WAVE_1
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
+执行 AI 在此停止。不得自行邀请项目所有者验收；先由总经理独立复审提交、diff、命令、artifact 和 fixture 身份。
+
+---
+
+## Execution Ledger
+
+> 执行 AI 从 Task 0 开始按时间顺序追加。每笔必须包含：时间、HEAD/远端关系、工作树、本 Task 实际修改文件、实际命令与退出码、红灯/绿灯、artifact、提交、当前状态、未解决问题和下一停止点。不得预先填写未运行的结果，不得改写历史失败记录。
+
+### Plan creation — completed by manager AI (2026-08-13)
+
+- 项目所有者已批准正式设计规格并授权编写实施任务书。
+- 本计划依据真实仓库文件映射创建；生产实现尚未开始。
+- 计划规定执行 AI 不修改长期路线台账，不创建子 AI，不 push，不进入 Wave 2。
+- 下一步：项目所有者选择由现有执行 AI 按计划施工，或另行授权当前会话执行；任何执行均从 Task 0 重新核对真实基线开始。
