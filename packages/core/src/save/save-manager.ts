@@ -365,6 +365,7 @@ export class SaveManager {
         schemaVersion: SAVE_SCHEMA_VERSION,
       },
     };
+    assertValidSnapshot(stamped, 'current');
     await this.#storage.write(slot, deepClone(stamped));
   }
 
