@@ -31,6 +31,78 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
+## 9. Shared simulation path evidence closure
+
+### 9.1 复审发现与最小修正
+
+上一轮 GrowthSystem 接线修复后，`npm run verify:all` 已通过，但项目所有者复审发现 Starter 的模拟输出仍为“探索 0 条、状态签名剪枝 7 次”，同时已有 choice 分支、存档往返和 `demo_end` 证据。这是共享 authoring 报告模型与 CLI 映射的证据一致性问题：状态签名剪枝没有失败，但 `paths.length` 不能代表实际已经进入过的路径数量。
+
+本轮先实际运行 `npm run simulate -w surdet-starter`，exit=`0`，保留了该矛盾作为红灯证据；随后增加最小红灯后，`npm run test -w @surdet/authoring -- test/simulation.test.ts` 首次 exit=`1`，1 个文件 / 6 个测试中 3 个 `pathsExplored` 断言失败，说明公共报告字段尚不存在。没有修改 Core、GrowthSystem、Starter 内容或其他生产层。
+
+最小修正只落在共享 authoring 模拟和 CLI 合同：
+
+- `SimulationReport` 增加 `pathsExplored`；根路径计数为 1，每个真实 choice branch 在进入前计数；`maxPaths` 依据该计数而不是 `paths.length`，超预算时在进入分支前停止并设置 `budgetExhausted`。
+- `SimulationPath` 增加明确的 `termination`；状态签名剪枝保留 `status=passed`、`termination=pruned`、`prunedReason=state-signature` 的结果，超预算保留 `termination=budget-exhausted` 的非错误结果。剪枝既不伪装为自然结束，也不写入 runtime error。
+- CLI 直接使用共享报告的 `report.pathsExplored`；没有复制模拟逻辑、没有放宽断言、没有引入 fallback 或第二套状态机。
+
+实际修改文件只有：
+
+- `packages/authoring/src/simulation.ts`
+- `packages/authoring/test/simulation.test.ts`
+- `packages/cli/src/simulate.ts`
+- `packages/cli/test/simulate.test.ts`
+
+### 9.2 验证事实
+
+聚焦验证全部通过：
+
+- `npm run test -w @surdet/authoring -- test/simulation.test.ts`：exit=`0`，1 个文件 / 6 个测试；
+- `npm run typecheck -w @surdet/authoring`：exit=`0`；`npm run build -w @surdet/authoring`：exit=`0`；
+- `npm run test -w @surdet/cli -- test/simulate.test.ts`：exit=`0`，1 个文件 / 9 个测试；
+- `npm run typecheck -w @surdet/cli`：exit=`0`；`npm run build -w @surdet/cli`：exit=`0`。
+
+修正后的 `npm run simulate -w surdet-starter` exit=`0`，实际输出为：
+
+```text
+路径：探索 13 条（预算 500）；状态签名剪枝 7 次循环
+choice 分支覆盖：2/3
+存档往返冒烟：25 次 save/load
+结局可达：demo_end（12 次）
+运行时错误：0 ✓
+```
+
+这里的 `探索 13 条` 来自共享 `pathsExplored=13`，不是从 `paths.length` 推断；CLI 测试同时将 CLI 结果与同一快照直接调用 `simulateSnapshot` 的 `pathsExplored` 对比。循环测试确认 `cyclesPruned>0`、出口 `demo_end` 可达、`runtimeErrors=[]`，并能区分 state-signature prune 与自然 ended；预算测试确认根路径/分支计数不超过 `maxPaths`、状态为 incomplete、`budgetExhausted=true`。
+
+随后只运行一次 `npm run verify:all`，实际 exit=`0`。全量工具、边界/legacy、文档、hygiene、workspace typecheck/build、tests、Starter lint/simulate 和 diff-check 均通过。本轮没有重新运行 FORMAL/DIAGNOSTIC 聚合、没有运行 Electron 矩阵、性能资格化、pack、部署或发行。
+
+### 9.3 证据边界与最终停止点
+
+既有 FORMAL artifact 只读复核且身份保持不变，未重跑、未覆盖：
+
+```text
+path=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-1-EdIstQ\agent-ready-authoring-wave-1.json
+bytes=7591
+sha256=77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0
+status=PASSED
+evidenceClass=FORMAL
+runHead=b9d9703e1c442cb927b59fd53026638a4345680d
+```
+
+`git diff --quiet -- examples/starter` exit=`0`；Starter 内容、配置、资产和类型声明均未修改。4173 preview server 仍由 PID=`36436` 监听，本轮没有停止或重启。人工验收仍未开始，执行 AI 没有代替项目所有者填写视觉、声音、操作或手感结论。
+
+本轮没有修改 GrowthSystem 接线、Core、Renderer、Host、Shell、editor、Zero、Starter、Task 8 runner、长期路线台账、artifact、fixture 或受保护文件；没有 push、部署、打包、发行或进入 Wave 2。下一步是完成本轮代码证据与文档的本地普通提交，随后等待总经理独立复审。
+
+```text
+STAGE_6_SHARED_SIMULATION_PATH_EVIDENCE_RESTORED
+STARTER_SIMULATION_PATH_COUNT_TRUSTWORTHY
+TASK_9_VERIFY_ALL_PASSED
+FORMAL_AGGREGATE_REMAINS_VALID
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
 ### Post-commit closure for the shared simulation fix
 
 本轮第一笔修复提交已按精确暂存范围创建并立即回读：

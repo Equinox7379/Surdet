@@ -80,6 +80,33 @@ function growthFixtureStorage(withGrowth: boolean): ProjectStorage {
   };
 }
 
+function loopFixtureStorage(): ProjectStorage {
+  const contents: Record<string, string> = {
+    'game.config.json': JSON.stringify({ entryScene: 'prologue' }),
+    'content/scenario/prologue.gal': [
+      '@scene prologue',
+      '@label top',
+      '@choice',
+      '  再来一次 -> @goto top',
+      '  离开 -> @goto exit',
+      '@label exit',
+      '凛：再见。',
+      '@clear done',
+      '@end',
+    ].join('\n'),
+  };
+  return {
+    rootIdentity: 'loop-fixture',
+    listFiles: async () => Object.keys(contents),
+    readText: async (path): Promise<ProjectFile> => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+      return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
 describe('simulateSnapshot', () => {
   it('enumerates both choices and preserves their final variables', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
@@ -87,7 +114,9 @@ describe('simulateSnapshot', () => {
 
     expect(report.status).toBe('passed');
     expect(report.choiceBranches).toEqual({ total: 2, visited: 2 });
+    expect(report.pathsExplored).toBe(3);
     expect(report.paths.map((path) => path.finalVariables.trust).sort()).toEqual([-1, 1]);
+    expect(report.paths.every((path) => path.termination === 'ended')).toBe(true);
   });
 
   it('reports an exhausted path budget as incomplete', async () => {
@@ -96,6 +125,9 @@ describe('simulateSnapshot', () => {
 
     expect(report.status).toBe('incomplete');
     expect(report.budgetExhausted).toBe(true);
+    expect(report.pathsExplored).toBe(1);
+    expect(report.pathsExplored).toBeLessThanOrEqual(1);
+    expect(report.paths.some((path) => path.termination === 'budget-exhausted')).toBe(true);
   });
 
   it('runs only the explicitly selected branch', async () => {
@@ -104,6 +136,24 @@ describe('simulateSnapshot', () => {
 
     expect(report.status).toBe('passed');
     expect(report.finalVariables.trust).toBe(-1);
+  });
+
+  it('records state-signature pruning without losing path evidence', async () => {
+    const snapshot = await loadProjectSnapshot(loopFixtureStorage(), hasher);
+    const report = await simulateSnapshot(snapshot);
+
+    expect(report.status).toBe('passed');
+    expect(report.runtimeErrors).toEqual([]);
+    expect(report.cyclesPruned).toBeGreaterThan(0);
+    expect(report.pathsExplored).toBeGreaterThan(0);
+    expect(report.paths.length).toBeGreaterThan(0);
+    expect(report.paths.some((path) => (
+      path.status === 'passed'
+      && path.termination === 'pruned'
+      && path.prunedReason === 'state-signature'
+    ))).toBe(true);
+    expect(report.paths.some((path) => path.termination === 'ended')).toBe(true);
+    expect(report.endings).toEqual([{ ending: 'done', times: 1 }]);
   });
 
   it('uses one GrowthSystem runtime for simulated and explicit paths', async () => {

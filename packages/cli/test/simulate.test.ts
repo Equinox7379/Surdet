@@ -3,9 +3,12 @@
  * 循环剪枝、步数上限死循环报告、运行时错误收集、--assume 注入。
  */
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { loadProjectSnapshot, simulateSnapshot } from '@surdet/authoring';
+import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { simulateProject } from '../src/simulate.js';
 
 function makeProject(files: Record<string, string>): string {
@@ -53,6 +56,26 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(r.cyclesPruned).toBeGreaterThan(0); // 回到同一 (定位,变量) 签名被剪枝
     expect(r.endings.map((e) => e.ending)).toEqual(['done']); // 出口分支仍被探索到
     expect(r.pathsExplored).toBeLessThan(10);
+    expect(r.pathsExplored).toBeGreaterThan(0);
+  });
+
+  it('CLI pathsExplored 与共享 simulateSnapshot 的探索计数一致', async () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'ch1' }),
+      'content/scenario/ch1.gal': '@scene ch1\n@label top\n@choice\n  再来一次 -> @goto top\n  离开 -> @goto exit\n@label exit\n凛：再见。\n@clear done\n@end\n',
+    });
+    const cliReport = simulateProject(dir);
+    const storage = await NodeProjectStorage.open(dir);
+    const snapshot = await loadProjectSnapshot(storage, {
+      sha256: async (text) => createHash('sha256').update(text).digest('hex'),
+    });
+    const sharedReport = simulateSnapshot(snapshot);
+
+    expect(cliReport.pathsExplored).toBe(sharedReport.pathsExplored);
+    expect(cliReport.pathsExplored).toBeGreaterThan(0);
+    expect(cliReport.cyclesPruned).toBeGreaterThan(0);
+    expect(cliReport.endings).toEqual([{ ending: 'done', times: 1 }]);
+    expect(cliReport.runtimeErrors).toEqual([]);
   });
 
   it('无挂起点死循环：单路径步数上限兜底并如实报告', () => {
