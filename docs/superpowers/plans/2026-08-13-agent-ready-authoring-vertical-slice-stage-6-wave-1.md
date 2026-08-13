@@ -1157,13 +1157,13 @@ Expected: exit `0` 且 artifact status=`PASSED`。若失败，记录最后通过
 
 - [x] **Step 8: 准备桌面人工验收入口但不代替项目所有者执行**
 
-复用 harness 创建的桌面 fixture。fixture 只能复制 Starter 的 `game.config.json` 与 `content/**`，不得复制 `node_modules`、`dist`、`src`、`test` 或仓库 Git 元数据；创建前后都要重新核对原始 Starter 哈希。随后启动：
+复用 harness 创建的桌面 fixture。fixture 只能复制 Starter 的 `game.config.json` 与 `content/**`，不得复制 `node_modules`、`dist`、`src`、`test` 或仓库 Git 元数据；创建前后都要重新核对原始 Starter 哈希。FORMAL runner 的正式 preview 入口固定为 `/preview.html`；该入口只用于正式预览证据，不是完整编辑器人工验收入口。随后启动：
 
 ```powershell
 npm run preview -w surdet-editor -- --host 127.0.0.1 --port 4173
 ```
 
-只确认 HTTP 200、页面标题和 fixture 路径可访问；不把服务器可访问写成人工通过。将 URL、PID、fixture 路径和 16 步人工验收清单写入报告与计划强制提醒点。
+只确认 HTTP 200、页面标题和 fixture 路径可访问；不把服务器可访问写成人工通过。项目所有者执行 16 步人工验收时必须在 Chrome/Edge 打开 editor 根地址 `http://127.0.0.1:4173/`（标题应为 `Surdet 剧本编辑器`）；不得把 `/preview.html` 写成完整编辑器人工验收入口。将两个 URL、PID、fixture 路径和 16 步人工验收清单写入报告与计划强制提醒点。
 
 - [x] **Step 9: 更新 Execution Ledger 并提交 harness**
 
@@ -1711,4 +1711,15 @@ STAGE_6_WAVE_2_NOT_STARTED
 - Task 9 Step 3 只运行一次 `npm run verify:all`，真实 exit=`1`。`verify:tools`、Renderer boundaries/legacy、docs、hygiene 通过；首个失败节点=`verify:types` 的 `examples/starter` typecheck，真实错误为 `src/main.ts(394,33)` 的 save bridge 缺少 `listBackupMeta`、`restoreBackup`，不匹配 `ElectronSaveBridge`。本轮没有修改 Starter、Shell 生产代码或 save bridge，没有放宽断言，没有重跑。该失败属于当前最终全仓门禁阻断，不得把 Task 9 全仓验证写成通过。
 - Task 9 Step 4–6 已完成：交付报告已创建为 `docs/AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md`；创建后从磁盘读取 `bytes=15244`、SHA-256=`44A8FC771AD7EB39789F9B9C73D231E02B17B9343AA321D50A3D5D410BFB47A8`。报告区分 FORMAL 自动化事实、verify:all 失败、人工验收未开始、强制 16 步提醒和未解决问题。追加本条前任务书从磁盘读取 `bytes=172302`、SHA-256=`085287AA31113BC0B9AEB22BBB5FFCB731AD09CDF02B265BFA01466E7DA6E518`；追加本条后任务书身份必须在提交前再次从磁盘读取，不把自记录前哈希冒写成最终哈希。
 - 当前真实 Git（文档提交前）：branch=`main`；`HEAD=b9d9703e1c442cb927b59fd53026638a4345680d`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`28 0`；tracked 在途文件为本任务书和新交付报告，暂存区为空；`git diff --check` exit=`0`；`git diff --cached --check` exit=`0`；`git ls-files '*.log'` 无输出。下一步只精确暂存上述两个文档，核对 cached 范围后创建普通文档提交 `docs(authoring): report stage 6 wave 1 delivery`；不暂存 fixture、artifact、日志、构建产物、长期路线台账、AGENTS、受保护文件或 handoff，不 push。
-- 当前停止状态：`STAGE_6_WAVE_1_IMPLEMENTED_LOCALLY` / `FORMAL_AGGREGATE_PASSED` / `TASK_9_VERIFY_ALL_BLOCKED_AT_STARTER_TYPECHECK` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED_AFTER_STAGE_6_WAVE_1` / `STAGE_6_WAVE_2_NOT_STARTED`。总经理独立复审前不邀请项目所有者验收，不进入 Wave 2，不对 Starter 类型边界自行修复。
+ - 当前停止状态：`STAGE_6_WAVE_1_IMPLEMENTED_LOCALLY` / `FORMAL_AGGREGATE_PASSED` / `TASK_9_VERIFY_ALL_BLOCKED_AT_STARTER_TYPECHECK` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED_AFTER_STAGE_6_WAVE_1` / `STAGE_6_WAVE_2_NOT_STARTED`。总经理独立复审前不邀请项目所有者验收，不进入 Wave 2，不对 Starter 类型边界自行修复。
+
+### Starter save bridge declaration and Task 9 verify:all retry — stopped at starter simulation (2026-08-14 01:41 +08:00)
+
+- 本轮是总经理批准的单一低风险收口主题。Task 0 重新读取 `E:\surdet\AGENTS.md`、长期路线台账、当前 Stage 6 Wave 1 任务书和交付报告；真实 Git 基线为：branch=`main`；`HEAD=b88d45a2b8af0d59bd79a5de82983de04cd710d0`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`29 0`。tracked 工作树没有未知修改，暂存区为空；既有未跟踪治理文件、受保护文件、handoff 和长期路线台账均未触碰；4173 listener 为 PID=`36436`，本轮未停止、未重启。
+- 修改前只运行一次 `npm run typecheck -w surdet-starter`，exit=`1`；真实红灯为 `examples/starter/src/main.ts(394,33)` 的 `ElectronSaveBridge` 缺少 `listBackupMeta`、`restoreBackup`。
+- 最小修正只修改 `examples/starter/src/surdet-window.d.ts`，复用已有 `SaveSlotMeta`，补充 `listBackupMeta(): Promise<SaveSlotMeta[]>` 与 `restoreBackup(slot: string): Promise<void>`；没有修改 Starter runtime/main.ts、内容、配置、资产、Shell runtime 或 `createElectronSaveStorage`，没有增加 fallback、兼容层、类型断言或 `any`。
+- 修正后 `npm run typecheck -w surdet-starter` exit=`0`。
+- 沿用当前 4173 服务完成只读人工入口地址核对：`http://127.0.0.1:4173/` 返回 HTTP `200`、标题=`Surdet 剧本编辑器`；`http://127.0.0.1:4173/preview.html` 返回 HTTP `200`、标题=`Surdet 预览`。FORMAL runner 使用 `/preview.html`；项目所有者的 16 步人工验收必须从 editor 根地址 `/` 开始，`/preview.html` 不是完整编辑器人工验收入口；人工状态仍为 `HUMAN_ACCEPTANCE_NOT_STARTED`，执行 AI 未代填结果。
+- 按本轮授权只重新运行一次 `npm run verify:all`，真实 exit=`1`。`verify:tools`、Renderer boundaries/legacy、docs、hygiene、`verify:types`（含 Starter typecheck）、`verify:tests` 和 `verify:starter-lint` 均通过；最后一个通过节点=`verify:starter-lint`，第一个失败节点=`verify:starter-simulate`。真实输出显示 `examples/starter` 的 `ch02.gal:14:1` 在 `@exp` 处需要宿主注入 `GrowthSystem`，命令因此停止；没有重跑、没有切换 case、没有修改其它文件，也没有把该失败归因于本次声明修正。
+- 既有 FORMAL artifact 身份保持不变：`C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-1-EdIstQ\agent-ready-authoring-wave-1.json`，`bytes=7591`，SHA-256=`77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0`，`status=PASSED`，`evidenceClass=FORMAL`，`runHead=b9d9703e1c442cb927b59fd53026638a4345680d`；本轮未重跑、未覆盖、未修改该 artifact 或任何历史失败 evidence/fixture。
+- 本条完成时真实 Git：tracked 在途文件为 `examples/starter/src/surdet-window.d.ts`、本计划和交付报告；暂存区为空；`git diff --check` 与 `git diff --cached --check` 均 exit=`0`；`git ls-files '*.log'` 无输出；4173 listener 仍为 PID=`36436`。当前停止状态：`STAGE_6_WAVE_1_FORMAL_AGGREGATE_PASSED` / `STARTER_SAVE_BRIDGE_DECLARATION_ALIGNED` / `TASK_9_VERIFY_ALL_FAILED_AT_STARTER_SIMULATE` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。下一停止点：只精确暂存本轮允许的 Starter 类型声明、本计划和交付报告，创建 `fix(starter): align save bridge declaration` 普通本地提交；不 push、不部署、不打包、不发行、不进入 Wave 2。
