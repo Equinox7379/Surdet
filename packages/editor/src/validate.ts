@@ -6,16 +6,13 @@
 import {
   compileScene,
   SourceError,
-  parseVariableConfig,
-  checkChoiceSuspects,
-  collectSceneSpeakers,
-  checkConsumedModifiers,
-  validateSceneVariables,
-  validateSwitchTargets,
-  validateJumpTarget,
-  validateTransitionInstructions,
 } from '@surdet/core';
 import type { CompiledScene, JumpInstr, CallInstr, LintIssue } from '@surdet/core';
+import {
+  buildObjectIndex,
+  parseSceneDocument,
+  validateSnapshot,
+} from '@surdet/authoring';
 
 export type Issue = LintIssue;
 
@@ -42,6 +39,22 @@ export interface ValidateResult {
   scenes: Map<string, CompiledScene>;
 }
 
+function validationDigest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function compileConfigForCustomInstructions(raw: Record<string, unknown>, _path: string): string[] {
+  const custom = raw['customInstructions'];
+  return Array.isArray(custom) && custom.every((value) => typeof value === 'string')
+    ? custom as string[]
+    : [];
+}
+
 export function validateProject(
   sceneSources: SceneSource[],
   entryScene?: string,
@@ -49,22 +62,13 @@ export function validateProject(
 ): ValidateResult {
   const issues: Issue[] = [];
   const compiled = new Map<string, CompiledScene>();
-  const labels = new Map<string, Set<string>>();
   const failedScenes = new Set<string>();
 
   // 配置解析（共享实现）：变量表/类型表/readonly 集/customInstructions + 声明形状校验
-  let variables = new Set<string>();
-  let types = new Map<string, string>();
-  let readonlyVars = new Set<string>();
   let customInstructions: string[] = [];
-  let hasConfig = false;
   if (config && config.raw) {
-    hasConfig = true;
-    const parsed = parseVariableConfig(config.raw, config.path, issues);
-    variables = parsed.variables;
-    types = parsed.types;
-    readonlyVars = parsed.readonlyVars;
-    customInstructions = parsed.customInstructions;
+    const parsed = compileConfigForCustomInstructions(config.raw, config.path);
+    customInstructions = parsed;
   }
 
   // 场景 ID（basename）重复检测（对齐 CLI LINT_DUP：运行时 sceneId = 文件名去扩展名）
@@ -98,43 +102,8 @@ export function validateProject(
     try {
       const scene = compileScene(sc.source, sc.file, sc.id, customInstructions);
       compiled.set(sc.id, scene);
-      labels.set(sc.id, new Set(scene.labels.keys()));
-      for (const d of scene.diagnostics) {
-        issues.push({
-          severity: 'warning',
-          code: d.code,
-          text: `${d.file}:${d.line}:${d.col}: ${d.message}${d.hint ? `（${d.hint}）` : ''} [${d.code}]`,
-          file: d.file,
-          line: d.line,
-          col: d.col,
-        });
-      }
-      // 场景级共享检查（与 CLI 同源）
-      validateSwitchTargets(scene, issues);
-      validateTransitionInstructions(scene, issues);
-      validateSceneVariables(scene, variables, types, readonlyVars, issues, hasConfig);
-      checkChoiceSuspects(scene, collectSceneSpeakers(scene), issues);
-      for (const instr of scene.instructions) {
-        if (instr.op === 'instr') {
-          checkConsumedModifiers(instr, issues);
-          if (instr.name === 'scene') {
-            const declared = instr.args[0];
-            if (declared !== undefined && declared !== sc.id) {
-              issues.push({
-                severity: 'error',
-                code: 'SCENE_ID',
-                text: `${instr.file}:${instr.line}:${instr.col}: @scene 声明 '${declared}' 与文件名推导的场景 ID '${sc.id}' 不一致`,
-                file: instr.file,
-                line: instr.line,
-                col: instr.col,
-              });
-            }
-          }
-        }
-      }
     } catch (err) {
       failedScenes.add(sc.id);
-      labels.set(sc.id, new Set());
       if (err instanceof SourceError) {
         const p = err.pos;
         issues.push({
@@ -151,17 +120,40 @@ export function validateProject(
     }
   }
 
-  // 跨场景 jump/call 目标校验（共享实现）
-  for (const [sceneId, scene] of compiled) {
-    for (const instr of scene.instructions) {
-      if (instr.op === 'jump' && instr.kind === 'jump') {
-        validateJumpTarget(sceneId, instr as JumpInstr, labels, failedScenes, issues);
-      }
-      if (instr.op === 'call') {
-        validateJumpTarget(sceneId, instr as CallInstr, labels, failedScenes, issues, '@call');
-      }
-    }
-  }
+  const sharedFiles = [...sceneSources].filter((source) => compiled.has(source.id)).map((source) => ({
+    path: source.file,
+    text: source.source,
+    bytes: source.source.length,
+    sha256: validationDigest(source.source),
+  }));
+  const configFile = config?.raw === undefined || config?.raw === null ? null : {
+    path: config.path,
+    text: JSON.stringify(config.raw),
+    bytes: JSON.stringify(config.raw).length,
+    sha256: validationDigest(JSON.stringify(config.raw)),
+  };
+  const configRaw = config?.raw ?? {};
+  const configVariables = typeof configRaw['variables'] === 'object' && configRaw['variables'] !== null && !Array.isArray(configRaw['variables'])
+    ? configRaw['variables'] as Record<string, unknown>
+    : {};
+  const sharedSnapshot = {
+    rootIdentity: 'editor-validation',
+    revision: validationDigest(sharedFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
+    files: configFile === null ? sharedFiles : [...sharedFiles, configFile],
+    configFile,
+    config: configRaw,
+    ...(typeof configRaw['entryScene'] === 'string' ? { entryScene: configRaw['entryScene'] } : entryScene === undefined ? {} : { entryScene }),
+    variables: configVariables,
+    scenes: [...compiled.entries()].map(([id, scene]) => {
+      const source = sceneSources.find((candidate) => candidate.id === id && candidate.file === scene.instructions[0]?.file)
+        ?? sceneSources.find((candidate) => candidate.id === id)!;
+      const file = sharedFiles.find((candidate) => candidate.path === source.file)!;
+      return { id, path: source.file, file, document: parseSceneDocument(source.source), compiled: scene };
+    }),
+    timelines: [],
+  };
+  const shared = validateSnapshot(sharedSnapshot, buildObjectIndex(sharedSnapshot), { failedScenes });
+  issues.push(...shared.issues);
 
   // 未使用标签（W006）
   const localRefs = new Map<string, Set<string>>();

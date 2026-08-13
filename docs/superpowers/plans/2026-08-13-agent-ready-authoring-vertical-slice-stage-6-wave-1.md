@@ -576,7 +576,7 @@ npm run typecheck -w @surdet/authoring
 npm run build -w @surdet/authoring
 ```
 
-- [ ] **Step 7: 更新 Execution Ledger 并提交**
+- [x] **Step 7: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -610,7 +610,7 @@ feat(authoring): add isolated change transactions
 - Consumes: Core 编译/解释器/scene-lint、ProjectSnapshot、ObjectIndex、ChangeRecord。
 - Produces: `validateSnapshot`、`simulateSnapshot`、`runExplicitPath`、`createChangeDiff`、`queryTrace`、Core `runtimeTrace` event。
 
-- [ ] **Step 1: 写共享校验与模拟红灯**
+- [x] **Step 1: 写共享校验与模拟红灯**
 
 红灯 fixture 必须包含不存在标签：
 
@@ -635,7 +635,7 @@ expect(report.paths.map((path) => path.finalVariables.trust).sort()).toEqual([-1
 
 这里的 `J002` 是现有 Core 场景校验 issue code，不是能力信封的错误 code；能力调用本身成功，但 `result.issues` 含语义错误。不得另造第二套“标签不存在”校验编号。
 
-- [ ] **Step 2: 写 Core 因果事件红灯**
+- [x] **Step 2: 写 Core 因果事件红灯**
 
 `interpreter-trace.test.ts` 必须断言选择、变量差异、条件和跳转源位置：
 
@@ -651,14 +651,14 @@ expect(events).toContainEqual(expect.objectContaining({
 }));
 ```
 
-- [ ] **Step 3: 运行红灯**
+- [x] **Step 3: 运行红灯**
 
 ```powershell
 npm run test -w @surdet/core -- test/interpreter-trace.test.ts
 npm run test -w @surdet/authoring -- test/validation.test.ts test/simulation.test.ts test/diff.test.ts test/runtime-trace.test.ts
 ```
 
-- [ ] **Step 4: 在 Core 增加只读 trace 事件**
+- [x] **Step 4: 在 Core 增加只读 trace 事件**
 
 扩展 `CoreEventMap`：
 
@@ -680,11 +680,11 @@ export interface CoreEventMap extends EventMap {
 
 trace 必须观察既有语义，不改变 pc、状态或事件顺序；同一输入下顺序稳定。
 
-- [ ] **Step 5: 实现共享校验并迁移旧入口**
+- [x] **Step 5: 实现共享校验并迁移旧入口**
 
 `validateSnapshot` 复用 Core 检查并补充 `objectRef`/`action`；CLI `lintProject` 与 editor `validateProject` 改为薄适配。对仍只存在 Node 的 Gallery/配置文件扫描，通过 snapshot 数据输入共享纯函数，CLI 不保留第二套结果真相。
 
-- [ ] **Step 6: 实现模拟、显式路径运行和证据信封**
+- [x] **Step 6: 实现模拟、显式路径运行和证据信封**
 
 ```ts
 export interface EvidenceEnvelope<T> {
@@ -704,7 +704,7 @@ export interface EvidenceEnvelope<T> {
 
 `runExplicitPath` 接受场景/标签、初始变量、显式选择序列和可选 seed；不得自行猜选项。
 
-- [ ] **Step 7: 实现三层差异与影响分层**
+- [x] **Step 7: 实现三层差异与影响分层**
 
 返回：
 
@@ -718,7 +718,7 @@ export interface ChangeDiff {
 
 只改一条台词却改动无关行终止符时，测试必须得到 `unexpectedFormatChange=true` 并阻断提交。
 
-- [ ] **Step 8: 运行绿灯和旧入口回归**
+- [x] **Step 8: 运行绿灯和旧入口回归**
 
 ```powershell
 npm run test -w @surdet/core -- test/interpreter.test.ts test/interpreter-trace.test.ts
@@ -1386,3 +1386,21 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 首次绿灯序列中 3 个文件/5 个测试已通过，但 typecheck/build 暴露 3 个本轮类型问题：`SceneDocumentLine` 应从公共合同导入、scene.create 草稿的可选 `sep` 需物化、`ensureVariable` 的布尔结果需显式泛型；均已做最小修正。随后按同一聚焦序列重跑：3 个文件/5 个测试 exit `0`；`npm run typecheck -w @surdet/authoring` exit `0`；`npm run build -w @surdet/authoring` exit `0`。
 - 故障注入事实：第二文件替换失败时第一文件恢复且返回 `COMMIT_FAILED_RECOVERED`；恢复再失败时事务变为 `STALE`，journal 保留并返回 `COMMIT_RECOVERY_FAILED`；operationId 相同负载重放不增加工作修订，不同负载返回 `OPERATION_ID_CONFLICT`。
 - 当前状态：`TASK_3_GREEN_LOCALLY` / `ISOLATED_WRITE_BEFORE_COMMIT_VERIFIED` / `ATOMIC_RECOVERY_BOUNDARY_VERIFIED` / `TASK_3_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 3 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add isolated change transactions`。
+
+### Task 3 — Step 7 completed after commit (2026-08-13 21:20 +08:00)
+
+- 已按 Task 3 白名单精确暂存并通过 `git diff --check`、`git diff --cached --check`；`git diff --cached --name-status` 仅包含本计划、Task 3 的 authoring 合同/存储/事务/操作文件及三份测试。已创建普通本地提交：`132a5b3017988e3d49627537ec600f21bce72aa2 feat(authoring): add isolated change transactions`。
+- 提交后立即真实回读：`git log --oneline -1`=`132a5b3 feat(authoring): add isolated change transactions`；`git rev-parse HEAD`=`132a5b3017988e3d49627537ec600f21bce72aa2`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`10 0`。提交后 tracked 工作树和暂存区为空；`git diff --check`、`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；未 push。
+- Task 3 最终状态：`TASK_3_COMPLETED_LOCALLY` / `ISOLATED_WRITE_BEFORE_COMMIT_VERIFIED` / `ATOMIC_RECOVERY_BOUNDARY_VERIFIED` / `NOT_PUSHED`。下一停止点：Task 4 先建立共享校验、双分支模拟、三层差异和 Core runtime trace 红灯。
+
+### Task 4 — Steps 1–8 completed; Step 9 pending commit (2026-08-13 21:25–21:39 +08:00)
+
+- 已先写并运行任务书规定的两个红灯：`npm run test -w @surdet/core -- test/interpreter-trace.test.ts` 首次 exit `1`，新 trace 测试收到空事件数组；`npm run test -w @surdet/authoring -- test/validation.test.ts test/simulation.test.ts test/diff.test.ts test/runtime-trace.test.ts` 首次 exit `1`，4 个测试套件因 `validation.js`、`simulation.js`、`diff.js`、`runtime-trace.js` 尚不存在而无法收集。红灯输出已保留，未重跑挑绿。
+- 已在 Core 解释器公共事件面增加只读 `runtimeTrace`：包含 instruction、choice、state、condition、control-flow、scene-end 及源文件位置；状态差异从指令执行前后快照计算，跳转目标、条件结果和选择索引只观察既有语义，不写入状态、不改变 pc、不改变既有事件顺序。新增 `packages/core/test/interpreter-trace.test.ts` 覆盖 `@set` 状态因果、选择和 `@goto` 标签目标。
+- 已新增共享 authoring 模块：`src/validation.ts`（复用 Core scene-lint 并补 objectRef/action）、`src/simulation.ts`（全分支预算、循环剪枝、save/load 往返和显式选择路径）、`src/evidence.ts`（EvidenceEnvelope）、`src/diff.ts`（semantic/file/format 三层差异）和 `src/runtime-trace.ts`（轨迹归一化与查询），并从 `src/index.ts` 唯一导出。新测试为 4 个文件、6 个测试。
+- CLI `lintProject` 已改为把成功编译场景转换为 ProjectSnapshot，调用 authoring 共享校验；Node 专属的配置扩展、growth、Gallery、W006/W007 仍留在适配层。CLI `simulateProject` 已改为只负责本机目录读取与历史报告映射，实际分支运行统一走 authoring/Core。editor `validateProject` 已改为共享校验适配并保留编辑器专属重复 ID、未使用标签和可达性提示。没有增加第二套解释器、模拟器或标签错误编号。
+- 已执行 Task 4 红灯后的聚焦绿灯与旧入口回归：`npm run test -w @surdet/core -- test/interpreter.test.ts test/interpreter-trace.test.ts` exit `0`，2 个文件/45 个测试通过；`npm run test -w @surdet/authoring` exit `0`，10 个文件/15 个测试通过；`npm run test -w @surdet/cli -- test/lint.test.ts test/simulate.test.ts` exit `0`，2 个文件/61 个测试通过；`npm run test -w surdet-editor -- test/validate.test.ts` exit `0`，1 个文件/7 个测试通过。
+- `npm run typecheck -w @surdet/core`、`@surdet/authoring`、`@surdet/cli`、`surdet-editor` 均 exit `0`；`npm run build -w @surdet/core`、`@surdet/authoring`、`@surdet/cli`、`surdet-editor` 均 exit `0`。editor build 保留既有 preview chunk 约 592.90 kB 的 warning，未修改性能门限。
+- 本 Task 实际修改文件为：本计划；`packages/core/src/runtime/interpreter.ts`、`packages/core/test/interpreter-trace.test.ts`；`packages/authoring/src/index.ts`、`src/validation.ts`、`src/simulation.ts`、`src/evidence.ts`、`src/diff.ts`、`src/runtime-trace.ts` 及 4 份对应测试；`packages/cli/src/lint.ts`、`packages/cli/src/simulate.ts`；`packages/editor/src/validate.ts`。没有修改 Core 其他生产模块、Renderer、Host、Shell、Zero、Starter、长期路线台账或受保护文件；没有 artifact、日志、Electron 路径或人工验收。
+- Task 4 提交前新鲜 Git 事实：branch=`main`；`HEAD=132a5b3017988e3d49627537ec600f21bce72aa2`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`10 0`；tracked 工作树为本计划及上列 Task 4 文件，暂存区为空；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。既有未跟踪 `AGENTS.md`、受保护文件、handoff 和长期路线台账集合未触碰。
+- 当前状态：`TASK_4_GREEN_LOCALLY` / `RUNTIME_TRACE_READ_ONLY_VERIFIED` / `SHARED_VALIDATION_SIMULATION_AND_DIFF_VERIFIED` / `TASK_4_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本 Task 白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add validation simulation and evidence` 普通本地提交；提交后立即回读真实 HEAD，再进入 Task 5。
