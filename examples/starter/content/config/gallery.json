@@ -3,9 +3,7 @@
     { "id": "cg_hall", "name": "大厅重逢", "src": "castle_hall" },
     { "id": "cg_field", "name": "夜路同行", "src": "night_field" }
   ],
-  "music": [
-    { "id": "tense_01", "name": "紧张时刻", "src": "tense_01" }
-  ],
+  "music": [],
   "texts": [
     { "id": "t_first", "name": "大厅初遇", "scene": "ch01_01", "label": "start" },
     { "id": "t_night", "name": "夜路同行", "scene": "ch01_02", "label": "start" }
