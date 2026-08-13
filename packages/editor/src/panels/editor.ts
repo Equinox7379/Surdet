@@ -14,8 +14,9 @@ export function currentText(): string {
 }
 
 /** 当前场景的换行风格（序列化时保持源文件风格） */
-export function currentEol(): string {
-  return state.current ? state.scenes.get(state.current)?.eol ?? '\n' : '\n';
+export function currentEol(): '\r\n' | '\n' {
+  const eol = state.current ? state.scenes.get(state.current)?.eol ?? '\n' : '\n';
+  return eol === '\r\n' ? '\r\n' : '\n';
 }
 
 export function updateLine(index: number, next: LineModel): void {
@@ -35,7 +36,14 @@ export function deleteLine(index: number): void {
 
 export function insertLine(index: number): void {
   const lines = parseScript(currentText());
-  lines.splice(index + 1, 0, { kind: 'text', speaker: '', value: '新台词', sep: '：', raw: '新台词' });
+  lines.splice(index + 1, 0, {
+    kind: 'text',
+    speaker: '',
+    value: '新台词',
+    sep: '：',
+    raw: '新台词',
+    eol: index + 1 >= lines.length ? '' : currentEol(),
+  });
   setCurrentText(serializeScript(lines, currentEol()));
   renderEditor();
 }
@@ -210,7 +218,7 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
     ta.oninput = () => {
       const prev = index > 0 ? parseScript(currentText())[index - 1]! : null;
       const prevKind = line.kind === 'choice-option' ? 'choice' : prev ? prevKindOf(prev) : '';
-      commit(parseLine(ta.value, prevKind));
+      commit(parseLine(ta.value, prevKind, line.eol));
     };
     fields.appendChild(ta);
   }
@@ -223,7 +231,7 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
   rawInput.oninput = () => {
     const prev = index > 0 ? parseScript(currentText())[index - 1]! : null;
     const prevKind = prev ? prevKindOf(prev) : '';
-    updateLine(index, parseLine(rawInput.value, prevKind));
+    updateLine(index, parseLine(rawInput.value, prevKind, line.eol));
   };
   rawWrap.appendChild(rawInput);
   block.appendChild(rawWrap);
