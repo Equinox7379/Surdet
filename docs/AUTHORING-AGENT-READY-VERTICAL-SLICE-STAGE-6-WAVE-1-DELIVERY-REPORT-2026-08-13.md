@@ -31,6 +31,21 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
+### Post-commit closure for the shared simulation fix
+
+本轮第一笔修复提交已按精确暂存范围创建并立即回读：
+
+```text
+git log --oneline -1 = d8b20de fix(authoring): preserve growth simulation semantics
+git rev-parse HEAD = d8b20de25d190edcd2c246254bce288a942d888e
+surdet/main = 5994ec7bd64b2106da6e47cd86e88fb4df82ed01
+ahead/behind = 31 0
+```
+
+`git show --name-status HEAD` 只有本报告第 8 节列出的 7 个 authoring/CLI 源码与测试文件，以及本任务书和本报告；没有夹带长期路线台账、AGENTS、受保护文件、handoff、fixture、artifact、日志或构建产物。提交后 tracked 工作树和暂存区均为空，既有未跟踪治理文件保持原样；`git diff --check`、`git diff --cached --check` 均 exit `0`，`git ls-files '*.log'` 无输出。
+
+这笔本地提交没有 push。4173 listener PID `36436` 仍保留供项目所有者后续人工验收准备；没有重新运行 FORMAL/DIAGNOSTIC 聚合，也没有邀请或代替项目所有者验收。最终仍停止在：`READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。
+
 ## 1. 本轮范围与实际修改
 
 此前有界 harness 稳定化只修改了：
