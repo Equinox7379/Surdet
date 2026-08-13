@@ -162,6 +162,55 @@ describe('SaveManager 写入前校验', () => {
   });
 });
 
+describe('SaveManager 显式备份恢复契约（Task 1）', () => {
+  it('覆盖槽位保留上一版备份元信息与内容', async () => {
+    const storage = new MemoryStorage();
+    const manager = new SaveManager(storage);
+    await manager.save('slot', makeSnap({
+      meta: { id: '', createdAt: 1, updatedAt: 1, schemaVersion: 3, label: '旧快照' },
+      variables: { version: 1 },
+    }));
+    await manager.save('slot', makeSnap({
+      meta: { id: '', createdAt: 1, updatedAt: 2, schemaVersion: 3, label: '新快照' },
+      variables: { version: 2 },
+    }));
+
+    await expect(manager.listBackupMeta()).resolves.toEqual([
+      expect.objectContaining({ id: 'slot', label: '旧快照' }),
+    ]);
+    await manager.restoreBackup('slot');
+    await expect(manager.load('slot')).resolves.toEqual(expect.objectContaining({
+      variables: { version: 1 },
+      meta: expect.objectContaining({ label: '旧快照', id: 'slot' }),
+    }));
+  });
+
+  it('显式恢复后普通 load 读取旧版本且备份仍可见', async () => {
+    const storage = new MemoryStorage();
+    const manager = new SaveManager(storage);
+    await manager.save('slot', makeSnap({ variables: { version: 'old' } }));
+    const old = await manager.load('slot');
+    await manager.save('slot', makeSnap({ variables: { version: 'new' } }));
+
+    await manager.restoreBackup('slot');
+
+    expect(await manager.load('slot')).toEqual(old);
+    expect(await manager.listBackupMeta()).toEqual([old.meta]);
+  });
+
+  it('没有备份时显式恢复失败且不改变主档', async () => {
+    const storage = new MemoryStorage();
+    const manager = new SaveManager(storage);
+    await manager.save('slot', makeSnap({ variables: { version: 'only' } }));
+    const before = await manager.load('slot');
+
+    await expect(manager.restoreBackup('slot')).rejects.toThrow(/备份/);
+
+    await expect(manager.load('slot')).resolves.toEqual(before);
+    await expect(manager.listBackupMeta()).resolves.toEqual([]);
+  });
+});
+
 describe('GalleryState', () => {
   it('解锁与去重 + snapshot/restore', () => {
     const g = new GalleryState();
