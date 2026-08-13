@@ -4,6 +4,7 @@
 import { state, h, setStatus } from '../state.js';
 import { renderSidebar } from './sidebar.js';
 import { renderEditor } from './editor.js';
+import { filterTraceByObject, selectAuthoringObject, type CausalTraceEvent } from '../causal-selection.js';
 
 export function renderRightExtras(): void {
   const right = document.getElementById('right');
@@ -40,6 +41,64 @@ export function renderRightExtras(): void {
   right.appendChild(edgesBox);
   updateEdges();
   updateGraph();
+  const causal = h('div');
+  causal.id = 'causal-box';
+  right.appendChild(causal);
+  updateCausalPanel();
+}
+
+function refList(parent: HTMLElement, label: string, refs: readonly string[]): void {
+  parent.appendChild(h('div', 'causal-label', label));
+  if (refs.length === 0) {
+    parent.appendChild(h('div', 'empty', '无'));
+    return;
+  }
+  const list = h('div', 'causal-refs');
+  for (const ref of refs) {
+    const button = h('button', 'causal-ref', ref);
+    button.onclick = () => {
+      state.selectedObjectRef = selectAuthoringObject(ref);
+      document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
+    };
+    list.appendChild(button);
+  }
+  parent.appendChild(list);
+}
+
+/** 更新紧凑因果区；观察证据只来自当前 preview trace，不以静态推断冒充运行事实。 */
+export function updateCausalPanel(): void {
+  const box = document.getElementById('causal-box');
+  if (!box) return;
+  box.innerHTML = '';
+  box.appendChild(h('h3', undefined, '因果'));
+  const selected = state.selectedObjectRef;
+  const index = state.authoringIndex;
+  const object = selected === null || index === null
+    ? undefined
+    : index.objects.find((candidate) => candidate.objectRef === selected || candidate.semanticId === selected);
+  if (!selected) {
+    box.appendChild(h('div', 'empty', '点击块或预览轨迹事件查看因果'));
+    return;
+  }
+  if (!object) {
+    box.appendChild(h('div', 'empty', '对象索引正在更新，或当前 objectRef 已过期'));
+    return;
+  }
+  box.appendChild(h('div', 'causal-current', object.objectRef));
+  refList(box, '直接引用', object.references);
+  refList(box, '直接被引用', object.referencedBy);
+  const potential = h('div', 'causal-impact');
+  potential.appendChild(h('div', 'causal-label', 'potentialImpact'));
+  potential.appendChild(h('div', undefined, object.references.length > 0 ? `可能影响 ${object.references.length} 个直接目标` : '当前对象没有直接引用目标'));
+  box.appendChild(potential);
+  const observed = h('div', 'causal-impact');
+  observed.appendChild(h('div', 'causal-label', 'observedImpact'));
+  const trace = state.previewTrace.map((event, step) => ({ step, event })) satisfies CausalTraceEvent[];
+  const hits = filterTraceByObject(object.objectRef, trace, index ?? undefined);
+  if (state.previewTrace.length === 0) observed.appendChild(h('div', 'empty', '尚无本次预览观察证据'));
+  else if (hits.length === 0) observed.appendChild(h('div', 'empty', '当前对象未出现在本次预览轨迹中'));
+  else observed.appendChild(h('div', undefined, `本次预览观察到 ${hits.length} 个事件`));
+  box.appendChild(observed);
 }
 
 /** 场景拓扑图（自我迭代⑤）：BFS 分层布局的 SVG 小图，节点点击切换场景。

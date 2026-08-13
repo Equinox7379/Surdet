@@ -9,6 +9,7 @@ import { parseScript } from '../model.js';
 import type { EvidenceEnvelope, RuntimeTraceEvent } from '@surdet/authoring';
 import type { FontRole } from '@surdet/renderer';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
+import { locateObjectForTraceEvent, type CausalTraceEvent } from '../causal-selection.js';
 
 /** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
 let previewReadyListenerBound = false;
@@ -404,6 +405,38 @@ export function renderPreviewPanel(container: HTMLElement): void {
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
   container.appendChild(diagnostics);
+  const traceBox = h('div', 'preview-trace');
+  traceBox.id = 'preview-trace';
+  traceBox.appendChild(h('h3', undefined, '因果轨迹'));
+  const traceList = h('div', 'preview-trace-list');
+  traceBox.appendChild(traceList);
+  container.appendChild(traceBox);
+
+  const renderTraceList = (): void => {
+    traceList.innerHTML = '';
+    const events = currentPreviewTrace.filter((message): message is PreviewTraceEventMessage => message.type === 'surdet-preview-trace-event');
+    if (events.length === 0) {
+      traceList.appendChild(h('div', 'empty', '尚无本次预览观察证据'));
+      return;
+    }
+    for (const message of events) {
+      const source = message.event.source;
+      const ref = locateObjectForTraceEvent({ event: message.event } satisfies CausalTraceEvent, state.authoringIndex ?? undefined);
+      const button = h('button', message.sequence === state.selectedTraceStep ? 'preview-trace-event selected' : 'preview-trace-event');
+      button.textContent = `#${message.sequence} ${message.event.kind} · ${source.sceneId}:${source.line}${message.presentationApplied ? ' · 演出已应用' : ''}`;
+      button.title = ref ?? '当前对象索引尚未定位该事件';
+      button.onclick = () => {
+        state.selectedTraceStep = message.sequence;
+        state.selectedObjectRef = ref;
+        document.dispatchEvent(new CustomEvent('surdet-preview-trace-select', {
+          detail: { event: message.event, objectRef: ref, sequence: message.sequence },
+        }));
+        renderTraceList();
+      };
+      traceList.appendChild(button);
+    }
+  };
+  renderTraceList();
 
   let currentTraceId: string | null = null;
   let currentTraceGeneration = -1;
@@ -414,12 +447,17 @@ export function renderPreviewPanel(container: HTMLElement): void {
       currentTraceGeneration = message.generation;
       currentTraceId = message.traceId;
       currentPreviewTrace = [message];
+      state.previewTrace = [];
+      state.selectedTraceStep = null;
+      renderTraceList();
       return;
     }
     const current = acceptPreviewTraceMessage(message, currentTraceGeneration);
     if (current === null) return;
     if (current.traceId !== currentTraceId) return;
     currentPreviewTrace = [...currentPreviewTrace, current];
+    if (current.type === 'surdet-preview-trace-event') state.previewTrace = [...state.previewTrace, current.event];
+    renderTraceList();
   };
 
   let ready = false;
@@ -437,6 +475,9 @@ export function renderPreviewPanel(container: HTMLElement): void {
     currentTraceId = null;
     currentTraceGeneration = -1;
     currentPreviewTrace = [];
+    state.previewTrace = [];
+    state.selectedTraceStep = null;
+    renderTraceList();
     if (!ready) return;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {

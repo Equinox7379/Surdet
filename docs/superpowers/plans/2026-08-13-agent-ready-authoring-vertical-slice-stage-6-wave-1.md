@@ -988,7 +988,7 @@ feat(authoring): trace formal runtime causality
 - Consumes: authoring `ProjectStorage` / ObjectIndex、当前 editor 内存项目、当前 preview trace。
 - Produces: `selectAuthoringObject(ref)`、`filterTraceByObject(ref, trace)`、`locateObjectForTraceEvent(event)`、紧凑因果区与双向跳转。
 
-- [ ] **Step 1: 写双向选择红灯**
+- [x] **Step 1: 写双向选择红灯**
 
 ```ts
 it('filters trace by selected object and locates source from a trace event', () => {
@@ -1002,13 +1002,13 @@ it('filters trace by selected object and locates source from a trace event', () 
 });
 ```
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 ```powershell
 npm run test -w surdet-editor -- test/causal-selection.test.ts
 ```
 
-- [ ] **Step 3: 接入共享对象索引**
+- [x] **Step 3: 接入共享对象索引**
 
 实现 `createEditorProjectStorage(state)`：把当前内存中的 `game.config.json`、`content/scenario/<scene.file>`、`content/timelines/<timeline.file>` 和已载入配置文件映射为只读 `ProjectStorage`，SHA 使用 Web Crypto；必须读取包含尚未保存编辑的内存文本，不能为了建索引重新从磁盘覆盖 dirty 内容。项目打开、场景文本改变和校验完成后，以防抖单飞方式重建当前 authoring snapshot/index；旧异步结果不得覆盖较新的编辑修订。`state` 增加：
 
@@ -1021,19 +1021,19 @@ selectedTraceStep: null as number | null,
 
 不得在 editor 内生成另一种对象 ID。
 
-- [ ] **Step 4: 块选择映射对象引用**
+- [x] **Step 4: 块选择映射对象引用**
 
 每个 `.block` 设置 `data-object-ref`；点击空白/台词/标签/指令/选择项时更新选择态并刷新右栏。轨迹反向定位使用 index 的 source path + line，调用现有 `jumpToScene`，不复制导航逻辑。
 
-- [ ] **Step 5: 实现紧凑因果检查区**
+- [x] **Step 5: 实现紧凑因果检查区**
 
 右栏新增可折叠“因果”区，只显示：当前对象、直接引用、直接被引用、`potentialImpact`、当前 trace 的 `observedImpact`。无 trace 时明确显示“尚无本次预览观察证据”，不得用静态推断冒充观察。
 
-- [ ] **Step 6: 实现轨迹过滤与回跳**
+- [x] **Step 6: 实现轨迹过滤与回跳**
 
 预览面板在现有 diagnostics 下方显示当前 trace 的紧凑事件列表；选中对象时过滤；点击事件切回块编辑并定位对象。页面布局不得新增全屏大图或 AI 对话栏。
 
-- [ ] **Step 7: 运行绿灯与 Stage 5 回归**
+- [x] **Step 7: 运行绿灯与 Stage 5 回归**
 
 ```powershell
 npm run test -w surdet-editor -- test/causal-selection.test.ts test/authoring-project-storage.test.ts test/model-roundtrip.test.ts test/preview-scenes.test.ts test/project-io.test.ts test/validate.test.ts
@@ -1043,7 +1043,7 @@ npm run build -w surdet-editor
 
 Expected: 全部 exit `0`；Stage 5 编辑—预览—保存—重开所依赖的路径未被移除。
 
-- [ ] **Step 8: 更新 Execution Ledger 并提交**
+- [x] **Step 8: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -1438,3 +1438,21 @@ STAGE_6_WAVE_2_NOT_STARTED
 - Task 6 本轮实际修改文件为：本计划、`packages/editor/src/preview.ts`、`packages/editor/src/panels/preview-panel.ts`、`packages/editor/test/preview-causal-trace.test.ts`；`packages/editor/package.json` 与 `package-lock.json` 本轮不需要变更，现有 `@surdet/authoring` 依赖已满足类型导入。
 - Task 6 提交前新鲜 Git 事实：branch=`main`；`HEAD=06e15b5c0db35fe8dbedd225180bb234a3fd2fe4`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`12 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划、两份 preview 源文件和 Task 6 测试；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
 - Task 6 当前状态：`TASK_6_GREEN_LOCALLY` / `PREVIEW_CORE_PRESENTATION_TRACE_VERIFIED` / `STALE_GENERATION_REJECTION_VERIFIED` / `TASK_6_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 6 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(authoring): trace formal runtime causality` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 7。
+
+### Task 6 — Step 6 completed after commit (2026-08-13 22:04 +08:00)
+
+- 已按 Task 6 白名单精确暂存并通过 `git diff --check`、`git diff --cached --check`；`git diff --cached --name-status` 仅包含本计划、`packages/editor/src/preview.ts`、`packages/editor/src/panels/preview-panel.ts` 和 `packages/editor/test/preview-causal-trace.test.ts`。已创建任务书规定的普通本地提交：`70daa389bd0e125a2d53c7ef6cdd9d8e4bb50044 feat(authoring): trace formal runtime causality`。
+- 提交后立即真实回读：`git log --oneline -1`=`70daa38 feat(authoring): trace formal runtime causality`；`git rev-parse HEAD`=`70daa389bd0e125a2d53c7ef6cdd9d8e4bb50044`；`git show --name-status HEAD` 仅显示上述 4 个文件；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`13 0`。
+- 提交后真实工作树：tracked 工作树和暂存区均为空；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。既有未跟踪的 `AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件、两份 handoff 和长期路线台账仍未触碰、未暂存、未提交；未 push。
+- Task 6 最终状态：`TASK_6_COMPLETED_LOCALLY` / `PREVIEW_CORE_PRESENTATION_TRACE_VERIFIED` / `STALE_GENERATION_REJECTION_VERIFIED` / `NOT_PUSHED`。本条记录将在下一 Task 的精确提交中固化，不 amend、不改写 Task 6 提交。下一停止点：Task 7 先建立编辑器最小双向因果桥红灯，不邀请项目所有者人工验收。
+
+### Task 7 — Steps 1–8 completed; commit pending (2026-08-13 22:05–22:12 +08:00)
+
+- 已先建立并实际运行双向选择红灯：`npm run test -w surdet-editor -- test/causal-selection.test.ts` 首次 exit `1`，测试套件因 `../src/causal-selection.js` 尚不存在而无法收集；没有把缺失模块误写成业务通过。
+- 已实现 `packages/editor/src/causal-selection.ts` 的 `selectAuthoringObject`、按共享 objectRef 过滤 trace、按 source/path/line 反查对象；新增 `packages/editor/src/authoring-project-storage.ts`，以 Web Crypto SHA-256 将当前 state 内存（包括 dirty 场景、game.config、timeline 和已载入配置）映射为只读 ProjectStorage，并由共享 `loadProjectSnapshot`/`buildObjectIndex` 建索引。没有从磁盘覆盖 dirty 文本，没有在 editor 生成第二种对象 ID。
+- `state.ts` 增加任务书规定的 selectedObjectRef、authoringIndex、previewTrace、selectedTraceStep；`main.ts` 接入防抖单飞索引重建和 revision 丢弃旧结果，项目打开、编辑/配置/流程变更及校验入口均触发重建。`editor.ts` 为每个 `.block` 设置共享 `data-object-ref` 并支持点击选择；`right.ts` 增加紧凑因果区，分开显示直接引用、直接被引用、potentialImpact 和仅来自本次 preview 的 observedImpact；无 trace 明确显示“尚无本次预览观察证据”。
+- `preview-panel.ts` 在现有 diagnostics 下方保存当前 trace 事件列表，按 selected object 过滤/定位并通过既有 `jumpToScene` 事件桥回块编辑；`styles.css` 只增加紧凑因果/轨迹样式，没有全屏图或 AI 对话栏。新增 `causal-selection.test.ts`、`authoring-project-storage.test.ts`。
+- 按 Task 7 Step 7 实际运行：`npm run test -w surdet-editor -- test/causal-selection.test.ts test/authoring-project-storage.test.ts test/model-roundtrip.test.ts test/preview-scenes.test.ts test/project-io.test.ts test/validate.test.ts` exit `0`，6 个文件/29 个测试通过；`npm run typecheck -w surdet-editor` exit `0`；`npm run build -w surdet-editor` exit `0`，867 modules transformed，preview chunk `594.54 kB` / gzip `175.92 kB` 的既有 warning 保留，未修改性能门限。Stage 5 编辑—预览—保存—重开相关回归未被移除。
+- Task 7 本轮实际修改文件为：本计划、`packages/editor/src/causal-selection.ts`、`src/authoring-project-storage.ts`、`src/state.ts`、`src/main.ts`、`src/panels/editor.ts`、`src/panels/right.ts`、`src/panels/preview-panel.ts`、`src/styles.css`、`test/causal-selection.test.ts`、`test/authoring-project-storage.test.ts`；没有修改 Core/Renderer/Host/Shell/Zero、CLI、长期路线台账或受保护文件。
+- Task 7 提交前新鲜 Git 事实：branch=`main`；`HEAD=70daa389bd0e125a2d53c7ef6cdd9d8e4bb50044`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`13 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划和上述 Task 7 白名单；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
+- Task 7 当前状态：`TASK_7_GREEN_LOCALLY` / `SHARED_OBJECT_INDEX_IN_MEMORY_VERIFIED` / `BIDIRECTIONAL_CAUSAL_SELECTION_VERIFIED` / `STAGE_5_EDITOR_REGRESSION_GREEN` / `TASK_7_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 7 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(editor): add causal authoring bridge` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 8。

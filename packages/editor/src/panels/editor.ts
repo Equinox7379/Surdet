@@ -8,6 +8,7 @@ import {
   parseScript, serializeScript, parseLine, splitInstr, rebuildInstrRaw, rebuildTextRaw, rebuildLabelRaw,
 } from '../model.js';
 import type { LineModel } from '../model.js';
+import { selectAuthoringObject } from '../causal-selection.js';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -146,6 +147,27 @@ function badgeTone(l: LineModel): string {
   }
 }
 
+function sourcePathForCurrentScene(): string {
+  const scene = state.current ? state.scenes.get(state.current) : undefined;
+  if (!scene) return '';
+  return scene.file.startsWith('content/scenario/') ? scene.file : `content/scenario/${scene.file}`;
+}
+
+function objectRefForLine(line: number): string | null {
+  const sourcePath = sourcePathForCurrentScene();
+  return state.authoringIndex?.objects.find((object) => object.source?.path === sourcePath && object.source.line === line + 1)?.objectRef ?? null;
+}
+
+export function refreshEditorObjectRefs(): void {
+  document.querySelectorAll<HTMLElement>('#editor .block').forEach((block) => {
+    const line = Number(block.dataset.line);
+    const ref = Number.isInteger(line) ? objectRefForLine(line) : null;
+    if (ref) block.dataset.objectRef = ref;
+    else delete block.dataset.objectRef;
+    block.classList.toggle('selected', ref !== null && ref === state.selectedObjectRef);
+  });
+}
+
 export function renderEditor(): void {
   const editorEl = document.getElementById('editor');
   if (!editorEl) return;
@@ -164,8 +186,14 @@ export function renderEditor(): void {
 }
 
 function renderBlock(line: LineModel, index: number): HTMLElement {
-  const block = h('div', 'block ' + blockTone(line));
+  const objectRef = objectRefForLine(index);
+  const block = h('div', `block ${blockTone(line)}${objectRef === state.selectedObjectRef ? ' selected' : ''}`);
   block.dataset.line = String(index);
+  block.dataset.objectRef = objectRef ?? '';
+  block.addEventListener('click', () => {
+    state.selectedObjectRef = selectAuthoringObject(block.dataset.objectRef ?? null);
+    document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
+  });
 
   const bar = h('div', 'bar');
   bar.appendChild(h('span', 'badge ' + badgeTone(line), kindBadge(line)));
