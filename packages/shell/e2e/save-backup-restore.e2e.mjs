@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as url from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const shellDir = path.resolve(scriptDir, '..');
@@ -19,6 +20,19 @@ const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-save-backup-r
 const evidencePath = path.join(evidenceRoot, 'save-backup-restore.json');
 const userData = path.join(evidenceRoot, 'user-data');
 fs.mkdirSync(userData, { recursive: true });
+
+const gitHeadResult = spawnSync('git', ['rev-parse', 'HEAD'], {
+  cwd: repoRoot,
+  env: { ...process.env },
+  shell: false,
+  encoding: 'utf8',
+});
+if (gitHeadResult.error) throw gitHeadResult.error;
+if (gitHeadResult.status !== 0) {
+  throw new Error(`无法读取当前 Git HEAD（exit=${gitHeadResult.status}）：${gitHeadResult.stderr ?? ''}`);
+}
+const runHead = gitHeadResult.stdout.trim();
+if (!/^[0-9a-f]{40}$/i.test(runHead)) throw new Error(`git rev-parse HEAD 返回非法值：${runHead}`);
 
 const failures = [];
 const events = {
@@ -32,6 +46,7 @@ const events = {
 
 const sha256File = (filePath) => crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 const errorText = (error) => error instanceof Error ? error.stack || error.message : String(error);
+const positionKey = (position) => position ? `${position.sceneId}:${position.pc}` : 'null';
 const check = (condition, label) => {
   if (condition) {
     console.log(`PASS  ${label}`);
@@ -84,12 +99,18 @@ const snapshot = () => page.evaluate(() => {
     activeOverlay: debug?.activeOverlay ?? null,
     commandRailVisible: debug?.commandRailVisible ?? null,
     uiSession: debug?.uiSession ?? null,
+    assetLoading: debug?.assetLoading ?? null,
     interactionTargets: debug?.interactionTargets ?? [],
   };
 });
 
-const waitFor = async (label, predicate, timeout = 30000) => {
-  await page.waitForFunction(predicate, undefined, { timeout });
+const waitFor = async (label, predicate, arg = undefined, timeout = 30000) => {
+  await page.waitForFunction(predicate, arg, { timeout });
+  console.log(`PASS  ${label}`);
+};
+
+const waitForPresentedFrame = async (label) => {
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   console.log(`PASS  ${label}`);
 };
 
@@ -107,7 +128,7 @@ const clickLogical = async (logicalX, logicalY, button = 'left') => {
   const point = await canvasPoint(logicalX, logicalY);
   if (!point) throw new Error('找不到正式游戏画布');
   await page.mouse.click(point.x, point.y, { button });
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+  await waitForPresentedFrame('真实鼠标输入后的呈现帧');
 };
 
 const clickTarget = async (targetId) => {
@@ -117,11 +138,53 @@ const clickTarget = async (targetId) => {
 };
 
 const waitForOverlay = (overlay) => waitFor(`overlay=${overlay}`, (expected) => window.__surdetDebug?.activeOverlay === expected, overlay);
+const pressKey = async (key) => {
+  await page.keyboard.press(key);
+  await waitForPresentedFrame(`真实按键 ${key} 后的呈现帧`);
+};
 const waitForGameText = () => waitFor('游戏处于可推进文本', () => {
   const debug = window.__surdetDebug;
   return debug?.status === 'awaiting-advance' && debug?.rendererStatus !== 'choice'
     && (debug?.dialogueProjection?.visibleChoiceCount ?? 0) === 0;
 });
+
+const advanceStoryStep = async (label, beforePosition) => {
+  const expectedPosition = positionKey(beforePosition);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    await waitFor(`${label} 等待剧情输入（${attempt}/4）`, () => {
+      const debug = window.__surdetDebug;
+      return ['awaiting-advance', 'awaiting-timer', 'choice'].includes(debug?.status)
+        || debug?.rendererStatus === 'choice';
+    }, undefined, 12000);
+    const inputKey = await page.evaluate(() => {
+      const debug = window.__surdetDebug;
+      return debug?.status === 'choice' || debug?.rendererStatus === 'choice' ? '1' : 'Space';
+    });
+    await pressKey(inputKey);
+    try {
+      await waitFor(`${label} 公开剧情位置变化（${attempt}/4）`, (positionKeyExpected) => {
+        const position = window.__surdetDebug?.position;
+        return position
+          ? `${position.sceneId}:${position.pc}` !== positionKeyExpected
+          : positionKeyExpected !== 'null';
+      }, expectedPosition, 5000);
+      await waitFor(`${label} PlayerShell 回到可交互游戏态`, () => {
+        const debug = window.__surdetDebug;
+        return debug?.uiSession?.base === 'game'
+          && debug?.uiSession?.overlay === 'none'
+          && debug?.uiSession?.operation === 'idle'
+          && debug?.activeOverlay === null;
+      }, undefined, 12000);
+      await waitFor(`${label} Renderer 表现投影完成`, () => window.__surdetDebug?.rendererStatus !== 'typing', undefined, 20000);
+      return await page.evaluate(() => window.__surdetDebug.position);
+    } catch (error) {
+      if (attempt === 4) {
+        throw new Error(`${label} 连续 4 次真实输入后位置仍为 ${expectedPosition}: ${errorText(error)}`);
+      }
+    }
+  }
+  throw new Error(`${label} 未能取得不同的公开剧情位置`);
+};
 
 const waitForPlayerGameIdle = () => waitFor('PlayerShell 已进入可交互游戏态', () => {
   const debug = window.__surdetDebug;
@@ -134,8 +197,19 @@ const waitForPlayerGameIdle = () => waitFor('PlayerShell 已进入可交互游�
 let firstSavePosition = null;
 let secondSavePosition = null;
 let restoredPosition = null;
+let initialAssetLoading = null;
+let backupRestoreTargetVisible = false;
 let title = null;
 try {
+  await waitFor('Renderer semantic debug surface', () => window.__surdetDebug?.uiSession !== undefined);
+  await waitFor('正式 Zero 资源加载完成', () => {
+    const progress = window.__surdetDebug?.assetLoading;
+    return progress?.done === true
+      && progress.total > 0
+      && progress.completed === progress.total
+      && progress.failed === 0;
+  }, undefined, 120000);
+  initialAssetLoading = await page.evaluate(() => window.__surdetDebug?.assetLoading ?? null);
   await page.waitForFunction(() => window.__surdetDebug?.interactionTargets?.some((item) => item.id === 'title:new'), undefined, { timeout: 30000 });
   title = await page.title();
   check(title.includes('零点之后') || title.includes('AFTER MIDNIGHT'), `正式窗口标题：${title}`);
@@ -146,7 +220,7 @@ try {
   await waitForPlayerGameIdle();
 
   firstSavePosition = await page.evaluate(() => window.__surdetDebug.position);
-  await page.keyboard.press('Escape');
+  await pressKey('Escape');
   await waitForOverlay('system-menu');
   await clickTarget('system:save');
   await waitForOverlay('save-load');
@@ -155,13 +229,10 @@ try {
   await waitForPlayerGameIdle();
   check(firstSavePosition !== null, '已记录第一次保存位置');
 
-  await waitForGameText();
-  await page.keyboard.press('Space');
-  await waitForGameText();
-  secondSavePosition = await page.evaluate(() => window.__surdetDebug.position);
-  check(JSON.stringify(secondSavePosition) !== JSON.stringify(firstSavePosition), '第二次保存前剧情位置已变化');
+  secondSavePosition = await advanceStoryStep('覆盖前推进', firstSavePosition);
+  check(positionKey(secondSavePosition) !== positionKey(firstSavePosition), '第二次保存前剧情位置已变化');
 
-  await page.keyboard.press('Escape');
+  await pressKey('Escape');
   await waitForOverlay('system-menu');
   await clickTarget('system:save');
   await waitForOverlay('save-load');
@@ -169,7 +240,7 @@ try {
   await waitFor('覆盖保存完成并回到游戏', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
   await waitForPlayerGameIdle();
 
-  await page.keyboard.press('Escape');
+  await pressKey('Escape');
   await waitForOverlay('system-menu');
   await clickTarget('system:load');
   await waitForOverlay('save-load');
@@ -181,11 +252,13 @@ try {
     const targets = window.__surdetDebug?.interactionTargets ?? [];
     return targets.find((item) => item.id === 'save-load:slot-1') ?? null;
   });
+  backupRestoreTargetVisible = restoreLabel !== null;
   check(restoreLabel !== null, '读档页公开槽位命中区域存在');
   await clickLogical(515, 258);
   await waitFor('恢复备份并读取完成并关闭读档页', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
   restoredPosition = await page.evaluate(() => window.__surdetDebug.position);
   check(JSON.stringify(restoredPosition) === JSON.stringify(firstSavePosition), '恢复后位置等于第一次保存位置');
+  check(positionKey(restoredPosition) !== positionKey(secondSavePosition), '恢复后位置不同于覆盖前位置');
 } catch (error) {
   failures.push(errorText(error));
   console.error(errorText(error));
@@ -193,9 +266,12 @@ try {
   const evidence = {
     schemaVersion: 1,
     status: failures.length === 0 ? 'PASSED' : 'FAILED',
+    runHead,
     gameDist,
     userData,
     title,
+    initialAssetLoading,
+    backupRestoreTargetVisible,
     firstSavePosition,
     secondSavePosition,
     restoredPosition,
@@ -204,6 +280,7 @@ try {
     note: 'All actions used real page.mouse.click or keyboard input; __surdetDebug was read-only evidence and target geometry.',
   };
   fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', 'utf8');
+  console.log(`EVIDENCE_HEAD=${runHead}`);
   console.log(`EVIDENCE_PATH=${evidencePath}`);
   console.log(`EVIDENCE_BYTES=${fs.statSync(evidencePath).size}`);
   console.log(`EVIDENCE_SHA256=${sha256File(evidencePath)}`);
