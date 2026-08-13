@@ -21,7 +21,9 @@ const shellDir = path.resolve(scriptDir, '..');
 const repoRoot = path.resolve(shellDir, '../..');
 const starterRoot = path.join(repoRoot, 'examples', 'starter');
 const cliEntry = path.join(repoRoot, 'packages', 'cli', 'dist', 'index.js');
-const editorDist = path.join(repoRoot, 'packages', 'editor', 'dist');
+const editorRoot = path.join(repoRoot, 'packages', 'editor');
+const editorDist = path.join(editorRoot, 'dist');
+const editorPreviewHtml = path.join(editorDist, 'preview.html');
 const desktopRoot = path.join(os.homedir(), 'Desktop');
 const runToken = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 const fixtureRoot = path.join(desktopRoot, `surdet-stage6-agent-fixture-${runToken}`);
@@ -34,7 +36,8 @@ const parentUrl = 'http://127.0.0.1:4173/__surdet-stage6-parent.html';
 const previewPort = 4173;
 const harnessSelfCheckPort = 4174;
 const harnessSelfCheckParentUrl = `http://127.0.0.1:${harnessSelfCheckPort}/__surdet-harness-self-check-parent.html`;
-const viteCli = path.join(repoRoot, 'packages', 'editor', 'node_modules', 'vite', 'bin', 'vite.js');
+const viteCli = path.join(editorRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+const evidenceClass = process.argv.includes('--diagnostic') ? 'DIAGNOSTIC' : 'FORMAL';
 const starterTrackedFiles = [
   'game.config.json',
   path.join('content', 'scenario', 'ch01_01.gal'),
@@ -66,6 +69,15 @@ let previewBrowser = null;
 let previewBrowserClosePromise = null;
 let previewPage = null;
 let previewPageClosing = false;
+const resourceCleanup = {
+  browserClosed: false,
+  previewChildExitObserved: false,
+  previewChildCloseObserved: false,
+  previewServerReleased: false,
+  previewServerRetained: false,
+  previewPortFree: null,
+  harnessSelfCheckPortFree: null,
+};
 
 const previewErrors = {
   pageErrors: [],
@@ -300,6 +312,7 @@ function variableDeclarations(config) {
 function sceneBlocks() {
   return [
     { kind: 'text', speaker: '凛', value: 'Agent 纵向切片起点。' },
+    { kind: 'instruction', name: 'bg', args: ['night_field'] },
     {
       kind: 'choice',
       options: [
@@ -427,6 +440,7 @@ async function closePreviewBrowser() {
   previewBrowserClosePromise ??= browser.close();
   try {
     await previewBrowserClosePromise;
+    resourceCleanup.browserClosed = !browser.isConnected();
   } finally {
     if (previewBrowser === browser) previewBrowser = null;
     previewPage = null;
@@ -436,7 +450,16 @@ async function closePreviewBrowser() {
 
 async function stopPreviewServer() {
   const server = previewServer;
-  if (!server || keepPreviewServer) return;
+  if (!server) {
+    resourceCleanup.previewServerReleased = true;
+    resourceCleanup.previewServerRetained = false;
+    return;
+  }
+  if (keepPreviewServer) {
+    resourceCleanup.previewServerRetained = true;
+    resourceCleanup.previewServerReleased = false;
+    return;
+  }
   const child = server.child;
   try {
     if (child.exitCode === null && child.signalCode === null) {
@@ -451,10 +474,18 @@ async function stopPreviewServer() {
       }
       await waitForChildClose(child, 5000);
     }
+    resourceCleanup.previewChildExitObserved = server.exitObserved || child.exitCode !== null || child.signalCode !== null;
+    resourceCleanup.previewChildCloseObserved = server.closeObserved;
+    assert(resourceCleanup.previewChildExitObserved, `preview child pid=${server.pid ?? 'unknown'} 未观察到 exit`);
+    assert(resourceCleanup.previewChildCloseObserved, `preview child pid=${server.pid ?? 'unknown'} 未观察到 close`);
   } catch (error) {
     throw new Error(`PREVIEW_CLEANUP_FAILED pid=${server.pid ?? 'unknown'}：${errorText(error)}`);
   } finally {
-    if (previewServer === server) previewServer = null;
+    if (previewServer === server) {
+      previewServer = null;
+      resourceCleanup.previewServerReleased = true;
+      resourceCleanup.previewServerRetained = false;
+    }
   }
 }
 
@@ -478,17 +509,36 @@ async function cleanupOwnedResources() {
 function retainPreviewServerForManualAcceptance() {
   assert(previewServer?.child, '人工入口保留时没有本轮 preview child');
   assert(Number.isInteger(previewServer.pid), `人工入口保留时 preview PID 无效：${previewServer.pid}`);
+  resourceCleanup.previewServerRetained = true;
+  resourceCleanup.previewServerReleased = false;
   previewServer.child.stdout?.destroy();
   previewServer.child.stderr?.destroy();
   previewServer.child.unref();
 }
 
+async function verifyResourceCleanup() {
+  resourceCleanup.previewPortFree = await portIsFree(previewPort);
+  resourceCleanup.harnessSelfCheckPortFree = await portIsFree(harnessSelfCheckPort);
+  assert(resourceCleanup.browserClosed, '资源清理后 Playwright browser 仍未确认断开');
+  assert(resourceCleanup.harnessSelfCheckPortFree, `资源清理后 harness self-check 端口 ${harnessSelfCheckPort} 仍被占用`);
+  if (keepPreviewServer) {
+    assert(resourceCleanup.previewServerRetained, '正式人工入口应保留 preview server，但未记录保留状态');
+    assert(!resourceCleanup.previewPortFree, `正式人工入口保留时 preview 端口 ${previewPort} 意外空闲`);
+  } else {
+    assert(resourceCleanup.previewServerReleased, '资源清理后 preview server 未释放');
+    assert(resourceCleanup.previewPortFree, `资源清理后 preview 端口 ${previewPort} 仍被占用`);
+    assert(resourceCleanup.previewChildExitObserved, '资源清理后 preview child 未确认 exit');
+    assert(resourceCleanup.previewChildCloseObserved, '资源清理后 preview child 未确认 close');
+  }
+}
+
 async function startPreviewServer(port = previewPort) {
   const serverUrl = `http://127.0.0.1:${port}/preview.html`;
   await assertPortFree(port, port === previewPort ? '正式 editor preview' : 'harness self-check preview');
+  assert(fs.existsSync(editorPreviewHtml), `找不到 editor preview 入口：${editorPreviewHtml}`);
   assert(fs.existsSync(viteCli), `找不到 editor Vite CLI：${viteCli}`);
   const child = spawn(process.execPath, [viteCli, 'preview', '--host', '127.0.0.1', `--port=${port}`], {
-    cwd: repoRoot,
+    cwd: editorRoot,
     env: { ...process.env },
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -517,52 +567,6 @@ async function startPreviewServer(port = previewPort) {
   assert(/<title>Surdet 预览<\/title>/u.test(pageText), 'editor preview 标题不是“Surdet 预览”');
   previewServer.stdout = stdout;
   previewServer.stderr = stderr;
-  return previewServer;
-}
-
-async function startHarnessSelfCheckServer(port) {
-  const serverUrl = `http://127.0.0.1:${port}/preview.html`;
-  await assertPortFree(port, 'harness self-check');
-  const html = '<!doctype html><html><head><title>Surdet 预览</title></head><body><canvas></canvas><script>window.parent.postMessage({type:"surdet-preview-ready"},"*");</script></body></html>';
-  const source = `
-const http = require('node:http');
-const html = ${JSON.stringify(html)};
-const server = http.createServer((request, response) => {
-  if (request.url !== '/preview.html') {
-    response.writeHead(404);
-    response.end();
-    return;
-  }
-  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  response.end(html);
-});
-server.listen(${port}, '127.0.0.1');
-`;
-  const child = spawn(process.execPath, ['-e', source], {
-    cwd: repoRoot,
-    env: { ...process.env },
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-  child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
-  previewServer = createOwnedServerState(child, stdout, stderr);
-  const deadline = Date.now() + 10000;
-  let status = null;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) break;
-    try {
-      const response = await fetch(serverUrl);
-      status = response.status;
-      if (status === 200) break;
-    } catch {
-      // The owned self-check server is still binding its isolated port.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert(status === 200, `harness self-check server 未返回 HTTP 200（status=${status}, exit=${child.exitCode}）\n${stdout}\n${stderr}`);
   return previewServer;
 }
 
@@ -634,6 +638,16 @@ async function runFormalPreview(page, fixtureConfig, fixtureSceneText) {
         canvasBox.y + ((bounds.y + bounds.height / 2) / 720) * canvasBox.height,
       );
     }
+    const projection = await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null);
+    const text = projection?.dialogue?.dialogText ?? '';
+    assert(typeof text === 'string' && text.length > 0, `${pathName} 未读到后续可见台词投影`);
+    await previewFrame.waitForFunction(
+      () => window.surdetPreviewDebug?.rendererStatus === 'awaiting',
+      undefined,
+      { timeout: 30000 },
+    );
+    await previewFrame.evaluate(() => window.focus());
+    await page.keyboard.press('Space');
     const completeMessage = await waitPreviewMessage(page, startIndex, 'surdet-preview-trace-complete', 30000);
     const complete = await completeMessage.jsonValue();
     assert(complete.traceId === traceId, `${pathName} complete traceId 不一致`);
@@ -649,9 +663,6 @@ async function runFormalPreview(page, fixtureConfig, fixtureSceneText) {
     assert(stateEvent, `${pathName} 没有 trust state trace`);
     const trustDelta = stateEvent.stateDelta.find((delta) => delta.variable === 'trust');
     assert(trustDelta.after === (choiceIndex === 0 ? 1 : -1), `${pathName} trust 结果错误：${JSON.stringify(trustDelta)}`);
-    const projection = await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null);
-    const text = projection?.dialogue?.dialogText ?? '';
-    assert(typeof text === 'string' && text.length > 0, `${pathName} 未读到后续可见台词投影`);
     return {
       path: pathName,
       traceId,
@@ -695,6 +706,7 @@ function artifactPayload(status, error = null) {
   };
   const payload = {
     schemaVersion: 1,
+    evidenceClass,
     status,
     runHead,
     projectRevision,
@@ -710,6 +722,7 @@ function artifactPayload(status, error = null) {
     fixture: fixtureIdentity ? { path: fixtureRoot, ...fixtureIdentity } : { path: fixtureRoot },
     treeHashes,
     preview: previewEvidence,
+    resourceCleanup: { ...resourceCleanup },
     errors: error === null ? [] : [errorText(error)],
     errorChannels: previewErrors,
     lastPassedNode,
@@ -737,7 +750,7 @@ async function runPreviewHarnessSelfCheck() {
   await assertPortFree(harnessSelfCheckPort, 'harness self-check');
 
   try {
-    const server = await startHarnessSelfCheckServer(harnessSelfCheckPort);
+    const server = await startPreviewServer(harnessSelfCheckPort);
     ownedServerState = server;
     ownedBrowserState.child = server.child;
     previewBrowser = await chromium.launch({ headless: true });
@@ -1030,8 +1043,10 @@ async function run() {
     assert(fs.existsSync(fixtureRoot), '人工 fixture 路径不存在');
     assert(fs.existsSync(path.join(fixtureRoot, 'content', 'scenario', 'ch01_01.gal')), '人工 fixture 目标场景不存在');
   });
-  keepPreviewServer = true;
-  retainPreviewServerForManualAcceptance();
+  if (!process.argv.includes('--diagnostic')) {
+    keepPreviewServer = true;
+    retainPreviewServerForManualAcceptance();
+  }
 
   fixtureIdentity = readFixtureTree();
   assertStarterUnchanged(starterIdentity);
@@ -1078,14 +1093,17 @@ async function main() {
   try {
     await run();
     await cleanupOwnedResources();
+    await verifyResourceCleanup();
     const artifact = writeArtifactOnce('PASSED');
     console.log(JSON.stringify({ ...artifact, fixturePath: fixtureRoot, previewUrl, previewPid: previewServer?.pid ?? null }, null, 2));
     return 0;
   } catch (error) {
     if (firstFailedNode === null) firstFailedNode = 'startup';
+    keepPreviewServer = false;
     let cleanupError = null;
     try {
       await cleanupOwnedResources();
+      await verifyResourceCleanup();
     } catch (errorDuringCleanup) {
       cleanupError = errorDuringCleanup;
     }
