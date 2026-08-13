@@ -89,6 +89,10 @@ export interface SaveStorage {
   /** 元信息索引（可选优化）：不读完整存档体即取得全部槽位 meta，
    *  避免列表界面为拿元信息全量解析每个存档。未实现时 SaveManager.list 回退逐槽读取。 */
   listMeta?(): SaveSlotMeta[] | Promise<SaveSlotMeta[]>;
+  /** 上一版本备份的元信息（每槽位最多一个；可选后端能力）。 */
+  listBackupMeta?(): SaveSlotMeta[] | Promise<SaveSlotMeta[]>;
+  /** 显式将上一版本备份恢复为主档；没有备份时必须失败。 */
+  restoreBackup?(slot: string): void | Promise<void>;
 }
 
 /** JSON 深拷贝（存档数据均为 JSON 安全值） */
@@ -319,22 +323,34 @@ export function assertValidSnapshot(
 /** 内存存储（默认；可测） */
 export class MemoryStorage implements SaveStorage {
   #data = new Map<string, SaveSnapshot>();
+  #backup = new Map<string, SaveSnapshot>();
   async read(slot: string): Promise<SaveSnapshot | null> {
     // 读隔离与 write 对称：返回深拷贝，外部篡改读档结果不污染存储（防御性拷贝原则）
     const data = this.#data.get(slot);
     return data === undefined ? null : deepClone(data);
   }
   async write(slot: string, data: SaveSnapshot): Promise<void> {
+    const current = this.#data.get(slot);
+    if (current !== undefined) this.#backup.set(slot, deepClone(current));
     this.#data.set(slot, deepClone(data));
   }
   async delete(slot: string): Promise<void> {
     this.#data.delete(slot);
+    this.#backup.delete(slot);
   }
   async list(): Promise<string[]> {
     return [...this.#data.keys()];
   }
   async listMeta(): Promise<SaveSlotMeta[]> {
     return [...this.#data.values()].map((s) => deepClone(s.meta));
+  }
+  async listBackupMeta(): Promise<SaveSlotMeta[]> {
+    return [...this.#backup.values()].map((s) => deepClone(s.meta));
+  }
+  async restoreBackup(slot: string): Promise<void> {
+    const backup = this.#backup.get(slot);
+    if (backup === undefined) throw new Error(`存档槽位 '${slot}' 没有可恢复备份`);
+    this.#data.set(slot, deepClone(backup));
   }
 }
 
@@ -395,6 +411,21 @@ export class SaveManager {
       if (snap) metas.push(snap.meta);
     }
     return metas.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** 可恢复备份元信息（按更新时间倒序）。不读取或修改主档。 */
+  async listBackupMeta(): Promise<SaveSlotMeta[]> {
+    if (!this.#storage.listBackupMeta) return [];
+    const metas = await this.#storage.listBackupMeta();
+    return metas.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** 显式恢复上一版本备份；后续普通 load 仍从主档读取。 */
+  async restoreBackup(slot: string): Promise<void> {
+    if (!this.#storage.restoreBackup) {
+      throw new Error(`存储后端不支持备份恢复：${slot}`);
+    }
+    await this.#storage.restoreBackup(slot);
   }
 
   async has(slot: string): Promise<boolean> {
