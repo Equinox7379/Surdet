@@ -11,12 +11,15 @@
  *   panels/sidebar  场景列表　panels/editor 块编辑区　panels/issues 校验编排+结果　panels/right 变量/拓扑/引用
  */
 import { state, h } from './state.js';
+import { buildObjectIndex } from '@surdet/authoring';
+import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
+import { locateObjectForTraceEvent, selectAuthoringObject, type CausalTraceEvent } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
 import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject } from './project-io.js';
 import { renderSidebar, bindSidebarHooks, bindSidebarRenderAll } from './panels/sidebar.js';
-import { renderEditor } from './panels/editor.js';
+import { refreshEditorObjectRefs, renderEditor } from './panels/editor.js';
 import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
-import { renderRightExtras } from './panels/right.js';
+import { renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
@@ -28,24 +31,93 @@ import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
 } from './autosave.js';
 
+/* ============================ authoring 内存索引（单飞 + 防抖） ============================ */
+
+let authoringRevision = 0;
+let authoringTimer: ReturnType<typeof setTimeout> | null = null;
+let authoringRunning = false;
+let authoringQueued = false;
+
+function scheduleAuthoringIndexRebuild(): void {
+  authoringRevision += 1;
+  if (authoringRunning) {
+    authoringQueued = true;
+    return;
+  }
+  if (authoringTimer) clearTimeout(authoringTimer);
+  authoringTimer = setTimeout(() => {
+    authoringTimer = null;
+    void rebuildAuthoringIndex();
+  }, 80);
+}
+
+async function rebuildAuthoringIndex(): Promise<void> {
+  if (authoringRunning) {
+    authoringQueued = true;
+    return;
+  }
+  authoringRunning = true;
+  const revision = authoringRevision;
+  try {
+    const snapshot = await loadEditorProjectSnapshot();
+    const index = buildObjectIndex(snapshot);
+    if (revision === authoringRevision) {
+      state.authoringIndex = index;
+      refreshEditorObjectRefs();
+      updateCausalPanel();
+    } else {
+      authoringQueued = true;
+    }
+  } catch {
+    if (revision === authoringRevision) {
+      state.authoringIndex = null;
+      refreshEditorObjectRefs();
+      updateCausalPanel();
+    }
+  } finally {
+    authoringRunning = false;
+    if (authoringQueued || revision !== authoringRevision) {
+      authoringQueued = false;
+      scheduleAuthoringIndexRebuild();
+    }
+  }
+}
+
+function resetAuthoringState(): void {
+  state.selectedObjectRef = null;
+  state.authoringIndex = null;
+  state.previewTrace = [];
+  state.selectedTraceStep = null;
+  scheduleAuthoringIndexRebuild();
+}
+
 /* ============================ 模块装配（钩子注入，保持无环） ============================ */
 
 bindHistoryHooks({
-  onEdited: scheduleValidate,
+  onEdited: () => {
+    scheduleValidate();
+    scheduleAuthoringIndexRebuild();
+  },
   onHistoryNav: () => { renderEditor(); renderSidebar(); },
 });
-bindProjectIoHooks({ renderAll, runValidate, renderSidebar, onProjectLoaded: tryAutosaveRecover, onSaved: clearAutosave });
+bindProjectIoHooks({
+  renderAll,
+  runValidate: () => { runValidate(); scheduleAuthoringIndexRebuild(); },
+  renderSidebar,
+  onProjectLoaded: () => { resetAuthoringState(); tryAutosaveRecover(); },
+  onSaved: clearAutosave,
+});
 bindSidebarHooks({ renderEditor });
 bindSidebarRenderAll(renderAll);
 bindFlowHooks({
   // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到该 @label 行
   openScene: (sceneKey, line) => jumpToScene(sceneKey, line !== undefined ? Math.max(0, line - 1) : undefined),
   // 流程图结构变更（重命名/删除）后重新调度校验
-  requestValidate: scheduleValidate,
+  requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
 });
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
-  requestValidate: scheduleValidate,
+  requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
 });
 bindTimelineHooks({
   onPreview: (timelineId) => {
@@ -66,6 +138,33 @@ function jumpToScene(sceneKey: string, line?: number): void {
     target?.classList.add('selected');
   }
 }
+
+document.addEventListener('surdet-authoring-selection', () => {
+  refreshEditorObjectRefs();
+  updateCausalPanel();
+});
+
+window.addEventListener('surdet-preview-trace-select', (event) => {
+  const detail = (event as CustomEvent<{ event?: unknown; objectRef?: string | null }>).detail;
+  if (!detail || !detail.event) return;
+  const ref = selectAuthoringObject(detail.objectRef ?? locateObjectForTraceEvent(detail.event as CausalTraceEvent, state.authoringIndex ?? undefined));
+  state.selectedObjectRef = ref;
+  const object = ref && state.authoringIndex
+    ? state.authoringIndex.objects.find((candidate) => candidate.objectRef === ref || candidate.semanticId === ref)
+    : undefined;
+  if (object?.source) {
+    const sceneKey = [...state.scenes.keys()].find((key) => {
+      const scene = state.scenes.get(key)!;
+      const file = scene.file.startsWith('content/scenario/') ? scene.file : `content/scenario/${scene.file}`;
+      return file === object.source!.path || file.endsWith(`/${object.source!.path}`) || object.source!.path.endsWith(`/${file}`);
+    });
+    if (sceneKey) {
+      jumpToScene(sceneKey, object.source.line - 1);
+      return;
+    }
+  }
+  updateCausalPanel();
+});
 bindSearchHooks({
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
   onEdited: scheduleValidate,
@@ -305,6 +404,7 @@ function tryAutosaveRecover(): void {
   }
   renderAll();
   runValidate();
+  scheduleAuthoringIndexRebuild();
   renderSidebar();
 }
 
@@ -316,3 +416,5 @@ setInterval(() => {
 }, AUTOSAVE_INTERVAL_MS);
 
 renderAll();
+runValidate();
+scheduleAuthoringIndexRebuild();

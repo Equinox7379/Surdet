@@ -4,6 +4,7 @@
  */
 import type { ValidateResult } from './validate.js';
 import type { DirAsset } from './assets.js';
+import type { ObjectIndex, RuntimeTraceEvent } from '@surdet/authoring';
 
 export interface SceneEntry {
   /** 场景 ID（basename；引擎运行时语义） */
@@ -40,6 +41,11 @@ export const state = {
   /** 从时间轴面板发起的独立直演目标；普通剧情预览时为空。 */
   previewTimelineId: null as string | null,
   lastValidation: null as ValidateResult | null,
+  /** 当前 authoring 内存快照的共享对象索引；不生成 editor 私有对象 ID。 */
+  selectedObjectRef: null as string | null,
+  authoringIndex: null as ObjectIndex | null,
+  previewTrace: [] as RuntimeTraceEvent[],
+  selectedTraceStep: null as number | null,
   /** 场景引用图谱（Worker 或同步校验产出；自我迭代①b） */
   lastEdges: [] as { from: string; to: string; kind: 'jump' | 'call' }[],
   /** content/config/*.json 原始对象（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
