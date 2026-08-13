@@ -371,3 +371,12 @@ Expected: 普通本地提交成功；提交内容与报告逐项一致；不 pus
 - 已创建并从磁盘重新读取交付报告：`docs/EDITOR-MINIMUM-AUTHORING-LOOP-STAGE-5-DELIVERY-REPORT-2026-08-13.md`，`8072` bytes，SHA-256=`47F2807F698977F8A1E988168FFCAB9168B566D398E5EF92197D0926AE570A85`。报告明确区分人工通过、editor 全量测试仍有 2 个换行红灯、typecheck/build 通过、没有 editor 源码/测试修改及 Stage 6 未开始。
 - Task 6 前 Git 复核命令全部 exit `0`：`git diff --check`、`git diff --cached --check`；branch=`main`；`HEAD=a4789271860fa6b82f91803253b2ab2d7ddfe333`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`1 0`；tracked `.log` 为空；tracked 工作树和暂存区为空，既有未跟踪文件保持原样。
 - 本 Task 6 实际修改文件：仅 Stage 5 任务书和 Stage 5 交付报告；不暂存长期路线台账、AGENTS、受保护文件、handoff、临时 fixture、日志、dist 或 editor 源文件/测试。Step 3/4 按下方精确暂存、提交和最终回读命令完成后，停止在 `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `NOT_PUSHED_AFTER_STAGE_5` / `STAGE_6_NOT_STARTED`。
+
+### Task 6 — Steps 3–4 completed after prior commit (2026-08-13 19:17 +08:00)
+
+- 对上一笔 Stage 5 文档提交执行提交后真实回读：`git log --oneline -1` 返回 `af2603a docs(editor): record stage 5 minimum authoring loop`；`git rev-parse HEAD` 返回 `af2603a9d9afbaebfcdec5a2c570cf998e6e0353`。这证明原 Task 6 Steps 3–4 已在该提交后实际完成；此前标题中的“pending commit”只是遗漏更新的历史台账文字。
+- 同一提交后真实 Git 身份：branch=`main`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；`git rev-list --left-right --count HEAD...surdet/main = 2 0`。
+- 提交后工作树和暂存区：tracked 工作树无修改，暂存区为空；`git status --short --untracked-files=all` 仅列出既有未跟踪的 `AGENTS.md`、受保护文件、handoff 文件和长期路线台账；没有 editor、Core、Renderer、Host、Shell、Zero 或其他生产/测试文件变化。
+- 提交后检查：`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。
+- 上一提交后从磁盘读取的文档身份：任务书 `30,852` bytes、SHA-256=`C7579D7FBB7545E34A5C476DE9276FA4BBE8537A86E74C05359D50CD461CBC1E`；交付报告 `8,072` bytes、SHA-256=`47F2807F698977F8A1E988168FFCAB9168B566D398E5EF92197D0926AE570A85`。交付报告正文与人工证据一致，本次不修改报告。
+- 本次更正只补记任务书 Ledger；随后创建新的普通本地文档提交，提交范围只允许该任务书，不 amend、不 rebase、不 squash、不 push。最终停止状态：`STAGE_5_MINIMUM_AUTHORING_LOOP_VERIFIED` / `HUMAN_ACCEPTANCE_PASSED_BY_OWNER` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `NOT_PUSHED_AFTER_STAGE_5` / `STAGE_6_NOT_STARTED`。
