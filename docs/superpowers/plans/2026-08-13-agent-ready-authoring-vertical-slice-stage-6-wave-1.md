@@ -169,7 +169,7 @@ Expected before Task 1 implementation: exit `1`；只允许 `ch01_01.gal` 与 `c
 
 必须写入：时间、branch、HEAD、远端关系、tracked/未跟踪状态、Stage 5 红灯实际数量、实际运行命令、当前停止状态和下一步。不得修改长期路线台账。
 
-- [ ] **Step 5: 提交基线记录**
+- [x] **Step 5: 提交基线记录**
 
 ```powershell
 git add -- docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md
@@ -203,7 +203,7 @@ Expected: 提交只修改本计划；不 push。
 - Consumes: `LineModel`、`parseLine`、`parseScript`、`serializeScript`、rebuild helpers 的现有 editor 行为。
 - Produces: `SceneDocumentLine`、`parseSceneDocument(text)`、`serializeSceneDocument(lines, defaultEol)`、`replaceLine`、`insertLinesAfter`；editor 的旧导入名继续由 `model.ts` 重导出，但实现真相只有 authoring 一份。
 
-- [ ] **Step 1: 写 authoring package 与 EOL 红灯测试**
+- [x] **Step 1: 写 authoring package 与 EOL 红灯测试**
 
 `packages/authoring/package.json` 必须是：
 
@@ -253,7 +253,7 @@ describe('scene document EOL identity', () => {
 });
 ```
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 Run:
 
@@ -263,7 +263,7 @@ npm run test -w @surdet/authoring -- test/scene-document.test.ts
 
 Expected: FAIL；package 或 `scene-document` 导出尚不存在。
 
-- [ ] **Step 3: 实现逐行终止符模型**
+- [x] **Step 3: 实现逐行终止符模型**
 
 公共类型必须保留原始行与该行终止符，而不是只记录文件主 EOL：
 
@@ -305,7 +305,7 @@ export function serializeSceneDocument(lines: readonly SceneDocumentLine[], defa
 
 `parseSceneLine(raw, previousKind, eol = '')` 的第三参数必须有默认值，以兼容 editor 现有双参数调用。插入 helper 必须在不改无关行终止符的前提下，为原末行补上邻近/default EOL，并让新末行保持 `eol=''`。
 
-- [ ] **Step 4: 让 editor `model.ts` 成为兼容重导出**
+- [x] **Step 4: 让 editor `model.ts` 成为兼容重导出**
 
 保留现有 import 名，避免一次性改所有面板：
 
@@ -324,7 +324,7 @@ export type { SceneDocumentLine as LineModel } from '@surdet/authoring';
 
 同步修改 editor 创建新行的字面量，显式给出 `eol`，不得使用类型断言绕过。
 
-- [ ] **Step 5: 更新工作区依赖与锁文件**
+- [x] **Step 5: 更新工作区依赖与锁文件**
 
 根 `build`、`test`、`typecheck` 中确保 authoring 在 Core 之后、CLI/editor 之前；editor 增加 `@surdet/authoring: 0.1.0`。
 
@@ -336,7 +336,7 @@ npm install --package-lock-only --ignore-scripts
 
 Expected: lockfile 出现 `packages/authoring` 与 `node_modules/@surdet/authoring` workspace link，不新增第三方运行依赖。
 
-- [ ] **Step 6: 运行绿灯**
+- [x] **Step 6: 运行绿灯**
 
 ```powershell
 npm run test -w @surdet/authoring -- test/scene-document.test.ts
@@ -1335,3 +1335,18 @@ STAGE_6_WAVE_2_NOT_STARTED
 - `git status --short --untracked-files=all` 只列出既有未跟踪文件：`AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件、`docs/handoff-20260813-165825.md`、`docs/handoff-20260813-170533-general-manager.md` 和长期路线台账；没有未知 tracked 修改或暂存内容，本轮不触碰这些文件。
 - 已按任务书运行 `npm run test -w surdet-editor -- test/model-roundtrip.test.ts`，exit `1`。Vitest 实际为 1 个测试文件、6 个测试：4 passed、2 failed；失败仅为 `ch01_01.gal` 和 `ch02.gal` 的混合 CRLF/LF `parse → serialize` 逐字节断言，`ch01_02.gal`、`ch03_turn_event.gal` 及 CRLF 专项通过。红灯证据按原始命令输出保留；未重跑、未放宽、未删除。
 - 本 Task 0 截至本记录没有修改任何生产代码、测试、Starter、《零点之后》、Core/Renderer/Host/Shell、编辑器或 CLI 文件；当前实际修改文件仅本计划。当前状态：`TASK_0_BASELINE_RECORDED` / `STAGE_5_EOL_RED_REPRODUCED` / `TASK_0_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本计划，核对缓存 diff 后创建 `docs(authoring): record stage 6 wave 1 baseline` 普通本地提交。
+
+### Task 0 — Step 5 completed after commit (2026-08-13 20:57 +08:00)
+
+- 已精确暂存本计划；`git diff --cached --check` exit `0`；`git diff --cached --name-status` 仅为 `M docs/superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md`。已创建任务书规定的普通本地提交：`3152470bfe055806311fce3f00ca1df50e7c4c0f docs(authoring): record stage 6 wave 1 baseline`。
+- 提交后立即真实回读：`git log --oneline -1`=`3152470 docs(authoring): record stage 6 wave 1 baseline`；`git rev-parse HEAD`=`3152470bfe055806311fce3f00ca1df50e7c4c0f`。该提交只包含本计划，未 push。
+- 本条提交后 Ledger 收口记录本身导致当前 tracked 工作树仅有本计划未提交修改，暂存区为空；既有未跟踪文件集合不变；下一 Task 将在本计划白名单内一并固化这条真实提交记录，不 amend、不改写 Task 0 提交。
+- Task 0 最终事实状态：`TASK_0_COMPLETED_LOCALLY` / `STAGE_5_EOL_RED_REPRODUCED` / `NOT_PUSHED`。下一停止点：Task 1 先建立并运行 authoring EOL 红灯，随后只做最小无损实现。
+
+### Task 1 — Steps 1–6 completed; Step 7 pending commit (2026-08-13 20:59–21:05 +08:00)
+
+- 已先写并运行任务书规定的 authoring EOL 红灯：`npm run test -w @surdet/authoring -- test/scene-document.test.ts` 首次 exit `1`，1 个测试文件未收集测试，失败原因是预期的 `../src/scene-document.js` 尚不存在；没有把该红灯改写成通过。
+- 已在最小范围实现逐行 EOL 文档：新增 `packages/authoring/package.json`、`tsconfig.json`、`tsconfig.build.json`、`src/contracts.ts`、`src/scene-document.ts`、`src/index.ts` 和 `test/scene-document.test.ts`；editor `src/model.ts` 改为兼容重导出，`src/panels/editor.ts` 为新行及原始行编辑保留 EOL，`packages/editor/package.json` 增加共享依赖，根 `package.json` 调整 Core → authoring → CLI/editor 顺序，`package-lock.json` 记录 workspace link。没有修改 `packages/editor/test/model-roundtrip.test.ts`，其现有断言作为回归红灯直接转绿。
+- `npm install --package-lock-only --ignore-scripts` exit `0`；随后首次执行任务书绿灯序列时，authoring 测试已通过但 editor 测试/typecheck/build 因本机 `node_modules` 尚未出现 `@surdet/authoring` workspace link 而失败。该接线失败已保留；执行一次 `npm install --ignore-scripts` exit `0`（新增 1 个 workspace link，npm 输出的 audit warning 未引入本轮代码变更），再按同一绿灯序列重跑，全部 exit `0`。
+- 最终绿灯事实：`npm run test -w @surdet/authoring -- test/scene-document.test.ts` 为 1 文件/2 测试通过；`npm run test -w surdet-editor -- test/model.test.ts test/model-roundtrip.test.ts` 为 2 文件/13 测试通过，包含原先 `ch01_01.gal`、`ch02.gal` 两个混合 EOL 断言；`npm run typecheck -w @surdet/authoring`、`npm run typecheck -w surdet-editor` 均 exit `0`；两个 build 均 exit `0`。editor Vite 构建为 855 modules transformed，保留既有 preview 592.90 kB / gzip 175.41 kB 大 chunk warning，未修改性能门限。
+- Task 1 没有修改 Core、Renderer、Host、Shell、CLI、Starter、《零点之后》或任何测试文件；原始 Starter 未被写入。当前实际修改文件为上述 authoring 文件、根/ editor 包清单、锁文件、`packages/editor/src/model.ts`、`packages/editor/src/panels/editor.ts` 和本计划。当前状态：`TASK_1_GREEN_LOCALLY` / `STAGE_5_EOL_RED_FIXED_IN_SHARED_AUTHORING_LAYER` / `TASK_1_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 1 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add lossless scene documents`。

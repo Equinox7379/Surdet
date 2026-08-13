@@ -1,0 +1,23 @@
+{
+  "name": "@surdet/authoring",
+  "version": "0.1.0",
+  "description": "Surdet shared authoring kernel: project objects, isolated changes and causal evidence",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0"
+  }
+}

@@ -11,9 +11,9 @@
     "games/*"
   ],
   "scripts": {
-    "build": "npm run build -w @surdet/core && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/shell && npm run build -w surdet-editor && npm run build -w surdet-starter",
-    "test": "npm run build -w @surdet/core && npm run test --workspaces --if-present",
-    "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run typecheck --workspaces --if-present",
+    "build": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/shell && npm run build -w surdet-editor && npm run build -w surdet-starter",
+    "test": "npm run build -w @surdet/core && npm run test -w @surdet/authoring && npm run test --workspaces --if-present",
+    "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run typecheck -w @surdet/authoring && npm run typecheck --workspaces --if-present",
     "verify:all": "node scripts/verify-all.mjs",
     "verify:p1p2:policy": "node scripts/verify-p1-p2.mjs",
     "verify:p1p2": "npm run verify:p1p2:policy && npm run verify:all",
