@@ -13,7 +13,11 @@
 import { state, h } from './state.js';
 import { buildObjectIndex } from '@surdet/authoring';
 import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
-import { locateObjectForTraceEvent, selectAuthoringObject, type CausalTraceEvent } from './causal-selection.js';
+import {
+  listenForPreviewTraceSelection,
+  locateObjectForTraceEvent,
+  selectAuthoringObject,
+} from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
 import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject } from './project-io.js';
 import { renderSidebar, bindSidebarHooks, bindSidebarRenderAll } from './panels/sidebar.js';
@@ -144,10 +148,9 @@ document.addEventListener('surdet-authoring-selection', () => {
   updateCausalPanel();
 });
 
-window.addEventListener('surdet-preview-trace-select', (event) => {
-  const detail = (event as CustomEvent<{ event?: unknown; objectRef?: string | null }>).detail;
+listenForPreviewTraceSelection((detail) => {
   if (!detail || !detail.event) return;
-  const ref = selectAuthoringObject(detail.objectRef ?? locateObjectForTraceEvent(detail.event as CausalTraceEvent, state.authoringIndex ?? undefined));
+  const ref = selectAuthoringObject(detail.objectRef ?? locateObjectForTraceEvent(detail.event, state.authoringIndex ?? undefined));
   state.selectedObjectRef = ref;
   const object = ref && state.authoringIndex
     ? state.authoringIndex.objects.find((candidate) => candidate.objectRef === ref || candidate.semanticId === ref)

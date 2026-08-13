@@ -236,7 +236,10 @@ main { display: flex; flex: 1; min-height: 0; }
 .chip:hover { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
 .edge { font-size: 12px; color: var(--dim); padding: 2px 0; }
 #graph-box { overflow-x: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-md); padding: 6px; margin-bottom: 6px; }
-.causal-current { padding: 7px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--accent-soft); color: var(--accent-strong); font: 11px Consolas, monospace; overflow-wrap: anywhere; }
+.causal-current { padding: 7px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--accent-soft); color: var(--accent-strong); overflow-wrap: anywhere; }
+.causal-current-title { font-size: 12px; font-weight: 750; }
+.causal-current-location { margin-top: 3px; color: var(--dim); font-size: 11px; }
+.causal-current-ref { margin-top: 5px; color: var(--dim); font: 10px Consolas, monospace; }
 .causal-label { margin-top: 10px; margin-bottom: 3px; color: var(--dim); font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
 .causal-refs { display: flex; flex-direction: column; gap: 3px; }
 .causal-ref { padding: 3px 5px; border-color: transparent; background: transparent; color: var(--accent-strong); text-align: left; font: 10px Consolas, monospace; overflow-wrap: anywhere; }

@@ -4,7 +4,13 @@
 import { state, h, setStatus } from '../state.js';
 import { renderSidebar } from './sidebar.js';
 import { renderEditor } from './editor.js';
-import { filterTraceByObject, selectAuthoringObject, type CausalTraceEvent } from '../causal-selection.js';
+import {
+  describeAuthoringObject,
+  describeAuthoringReference,
+  filterTraceByObject,
+  selectAuthoringObject,
+  type CausalTraceEvent,
+} from '../causal-selection.js';
 
 export function renderRightExtras(): void {
   const right = document.getElementById('right');
@@ -55,7 +61,8 @@ function refList(parent: HTMLElement, label: string, refs: readonly string[]): v
   }
   const list = h('div', 'causal-refs');
   for (const ref of refs) {
-    const button = h('button', 'causal-ref', ref);
+    const button = h('button', 'causal-ref', describeAuthoringReference(ref));
+    button.title = ref;
     button.onclick = () => {
       state.selectedObjectRef = selectAuthoringObject(ref);
       document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
@@ -84,7 +91,13 @@ export function updateCausalPanel(): void {
     box.appendChild(h('div', 'empty', '对象索引正在更新，或当前 objectRef 已过期'));
     return;
   }
-  box.appendChild(h('div', 'causal-current', object.objectRef));
+  box.appendChild(h('div', 'causal-label', '当前对象'));
+  const display = describeAuthoringObject(object);
+  const current = h('div', 'causal-current');
+  current.appendChild(h('div', 'causal-current-title', display.title));
+  if (display.location) current.appendChild(h('div', 'causal-current-location', display.location));
+  current.appendChild(h('div', 'causal-current-ref', display.objectRef));
+  box.appendChild(current);
   refList(box, '直接引用', object.references);
   refList(box, '直接被引用', object.referencedBy);
   const potential = h('div', 'causal-impact');
