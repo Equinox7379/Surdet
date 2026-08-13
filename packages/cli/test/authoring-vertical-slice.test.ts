@@ -94,7 +94,7 @@ describe('agent authoring CLI vertical slice', () => {
       patch: {
         kind: 'replaceChoiceOption',
         target: issue.objectRef,
-        expectedFingerprint: fingerprint('  正向 @set trust = 1 -> @jump agent.missing'),
+        expectedFingerprint: fingerprint('  正向 -> @set trust = 1 @jump agent.missing'),
         option: { label: '正向', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'jump', value: 'agent.positive' } },
       },
     });
@@ -107,6 +107,36 @@ describe('agent authoring CLI vertical slice', () => {
     const simulated = runCli(['project', 'simulate', '--change', changeId, '--json'], env);
     expect(simulated.status).toBe(0);
     expect(body(simulated).result.choiceBranches).toEqual({ total: 2, visited: 2 });
+
+    const runtimeAInput = writeJson(requestDir, 'runtime-a.json', { sceneId: 'agent', choices: [0], seed: 701 });
+    const runtimeBInput = writeJson(requestDir, 'runtime-b.json', { sceneId: 'agent', choices: [1], seed: 702 });
+    const runtimeA = runCli(['runtime', 'run-from', '--change', changeId, '--input', runtimeAInput, '--json'], env);
+    const runtimeB = runCli(['runtime', 'run-from', '--change', changeId, '--input', runtimeBInput, '--json'], env);
+    expect(runtimeA.status).toBe(0);
+    expect(runtimeB.status).toBe(0);
+    const runtimeABody = body(runtimeA);
+    const runtimeBBody = body(runtimeB);
+    expect(runtimeABody.result.finalVariables.trust).toBe(1);
+    expect(runtimeBBody.result.finalVariables.trust).toBe(-1);
+    expect(runtimeABody.result.traceId).not.toBe(runtimeBBody.result.traceId);
+
+    const traceQuery = writeJson(requestDir, 'trust-trace-query.json', { variable: 'trust' });
+    const traceA = runCli(['runtime', 'read-trace', '--change', changeId, '--trace', runtimeABody.result.traceId, '--query', traceQuery, '--json'], env);
+    const traceB = runCli(['runtime', 'read-trace', '--change', changeId, '--trace', runtimeBBody.result.traceId, '--query', traceQuery, '--json'], env);
+    expect(traceA.status).toBe(0);
+    expect(traceB.status).toBe(0);
+    expect(body(traceA).result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'state',
+        stateDelta: expect.arrayContaining([expect.objectContaining({ variable: 'trust', after: 1 })]),
+      }),
+    ]));
+    expect(body(traceB).result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'state',
+        stateDelta: expect.arrayContaining([expect.objectContaining({ variable: 'trust', after: -1 })]),
+      }),
+    ]));
 
     const diff = runCli(['change', 'diff', '--change', changeId, '--json'], env);
     expect(diff.status).toBe(0);

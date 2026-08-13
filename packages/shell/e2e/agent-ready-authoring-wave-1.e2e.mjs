@@ -622,7 +622,7 @@ async function run() {
   });
 
   await step('scene.patch-and-project.validate.green', async () => {
-    const badRaw = '  路径 A @set trust = 1 -> @jump ch01_01.missing_label';
+    const badRaw = '  路径 A -> @set trust = 1 @jump ch01_01.missing_label';
     const patchInput = writeInput('scene-main-patch.json', {
       operationId: 'stage6-scene-main-patch',
       sceneId: 'ch01_01',
@@ -795,11 +795,13 @@ async function main() {
     );
     const serializedBadOption = [
       badOption.label,
+      ...(badOption.when === undefined ? [] : [`[if:${badOption.when}]`]),
+      '->',
       ...(badOption.effects ?? []).map((effect) => `@${effect.name} ${effect.args.join(' ')}`),
-      `-> @${badOption.target.kind} ${badOption.target.value}`,
+      `@${badOption.target.kind} ${badOption.target.value}`,
     ].join(' ');
     assert(
-      serializedBadOption === '路径 A @set trust = 1 -> @jump ch01_01.missing_label',
+      serializedBadOption === '路径 A -> @set trust = 1 @jump ch01_01.missing_label',
       `self-check 故意红灯序列化不匹配：${serializedBadOption}`,
     );
     return { status: 'SELF_CHECK_PASSED', fixtureRoot, artifactPath, runHead: startupHead };
