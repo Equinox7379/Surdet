@@ -1,8 +1,8 @@
 # Surdet 存档备份与显式恢复 Wave 1 交付报告
 
-状态：`WAITING_FOR_REVIEW` / `NOT_PUSHED` / `NOT_DEPLOYED`
+状态：`FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED` / `WAITING_FOR_REVIEW` / `NOT_PUSHED` / `NOT_DEPLOYED`
 
-本轮属于路线台账的“阶段 3：存档、备份与显式恢复边界”。本报告只记录本轮已经在磁盘和命令输出中证明的事实；正式 Electron 玩家恢复路径在本轮被测试 harness 的菜单呈现阻断，不能宣称整条玩家路径已通过。
+本轮属于路线台账的“阶段 3：存档、备份与显式恢复边界”。本报告只记录已经从磁盘和命令输出重新核对的事实。独立复审后，本轮唯一一次正式 Electron 路径已证明第一次保存位置、不同的覆盖前位置、真实恢复动作以及恢复回第一次位置；这证明了自动化玩家路径，但不等于项目所有者人工视觉、声音或手感验收通过。
 
 ## 1. 范围与停止边界
 
@@ -16,6 +16,7 @@
 - `packages/renderer/src/ui-views.ts`、`packages/renderer/src/api/renderer-commands.ts`、`packages/renderer/src/layers/menu/menu-layer.ts`、`packages/renderer/src/runtime/renderer-facade.ts`：只在 load + `backupAvailable` 时投影“恢复备份并读取”，区分普通槽位点击，host transaction pending 期间消费重复输入。
 - `examples/zero-after-midnight/src/main.ts`、`examples/zero-after-midnight/src/surdet-window.d.ts` 及直接测试：列出备份元信息，显式恢复后复用 `completeLoadedSnapshot` 正常读档完成路径；浏览器 localStorage 与 Electron 存储保持同一契约。
 - `packages/shell/e2e/save-backup-restore.e2e.mjs`：一条最小正式入口 E2E runner；debug 仅读取状态和交互几何，输入使用 `page.mouse.click`/键盘。
+- 本次独立复审仅在上述 E2E runner 增加资源完成等待、输入后双 `requestAnimationFrame`、`waitForOverlay` 的期望参数传递、运行时 `git rev-parse HEAD` artifact 字段，以及复用 Wave 4 语义的最多 4 次真实推进；没有修改 Core、Renderer、Host、Zero 生产逻辑。
 
 明确没有处理：音频/BGM、性能、编辑器、Gallery、回退黑屏、Ghost Choice、备份 `.bak` 以外的恢复策略、剧情、美术、DSL、存档 schema 版本、发行、部署和 M9。未运行 `verify:all`、性能资格化、pack 或发行。
 
@@ -36,10 +37,11 @@ Task 0 真实起点：
 4. `f9c92b217f5d7526e2b48ba2015f5ad49007a1da` — `test(shell): use visible rail for save restore e2e`
 5. `ad23e20aae809f2f04c98407751d552830ce0620` — `test(shell): open save menu through player keybinding`
 6. `2144d3c6fb90d7e2e486433920aefc5d74246c63` — `test(shell): wait for player game transaction idle`
+7. `fc82f5cebcdfb84438d10a3b9b6616664e82ba49` — `test(shell): use semantic advance for backup restore e2e`
 
 后三个提交只修正本轮新增的 E2E harness，不修改生产代码；它们是为区分“产品恢复缺陷”和“测试入口未打开菜单”而保留的本地普通提交。任务书原定的三类主题提交因此多出三枚测试设施提交，属于本轮实际偏差，未隐去。
 
-文档收口提交尚未创建；本报告和计划将在本次收口提交中纳入。当前代码 HEAD 为 `2144d3c6fb90d7e2e486433920aefc5d74246c63`，当前相对 `surdet/main` 为 `15 0`。
+上一轮文档收口提交为 `7b37fc93bd339230840317526a9de70b9a2df9f2`；本轮 runner 普通提交为 `fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。当前真实代码 HEAD 为 `fc82f5cebcdfb84438d10a3b9b6616664e82ba49`，相对 `surdet/main` 为 `17 0`。以下“工作树保留未提交计划和报告修改”是本报告文档提交前的真实快照；文档收口后以最终 `git status` 为准，长期路线台账仍不暂存、不提交、不 push。
 
 ## 3. 红灯 → 绿灯证据
 
@@ -62,16 +64,53 @@ Task 0 真实起点：
 - Renderer/Zero typecheck/build 均 exit `0`。
 - 已证明：恢复按钮文案仅由 Renderer MenuLayer 在读档页、有效 `backupAvailable` 槽位内投影；普通槽位点击不走恢复；host transaction pending 时重复恢复点击被消费；Zero 恢复成功路径调用恢复后再普通 load，并复用 `completeLoadedSnapshot`。
 
-## 4. 正式 Electron 证据：阻断而非通过
+## 4. 正式 Electron 证据：一次路径有效通过
 
-正式入口和隔离条件均正确：
+### 4.1 代码与 artifact 身份
 
-- `E:\surdet\examples\zero-after-midnight\dist`
-- 每次独立临时 `userData`
-- 窗口标题实际为 `零点之后 / AFTER MIDNIGHT`
-- 标题 → 新游戏 → 可推进文本均通过
+- `CODE_EVIDENCE_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`
+- `ARTIFACT_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`
+- 两者一致；artifact 的 `runHead` 来自 runner 运行时执行的 `git rev-parse HEAD`。
+- `DOCUMENT_CLOSURE_HEAD`：由本报告与任务计划共同产生的本轮文档提交 HEAD；提交后必须立即通过 `git rev-parse HEAD` 重新读取，最终值登记在长期路线台账和本轮最终回执中，不在提交前伪填。
 
-但最小路径尚未走到存档页。四次保留的失败 artifact 如下：
+### 4.2 有效路径条件
+
+本轮只运行了一次正式 runner，使用了：
+
+- 正式入口：`E:\surdet\examples\zero-after-midnight\dist`
+- 独立临时 `userData`：`<local-path>`
+- 窗口标题：`零点之后 / AFTER MIDNIGHT`
+- 资源加载：`total=48 / completed=48 / failed=0`
+- `backupRestoreTargetVisible=true`
+- `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures`：全部为 `0`
+
+真实玩家输入路径通过了：
+
+- 标题 → 新游戏 → 可推进文本 → PlayerShell `base=game / overlay=none / operation=idle`；
+- 真实 `Escape` → `system-menu`；
+- 保存槽位 1 → 回到游戏；
+- 复用 Wave 4 语义的真实 `Space` 输入：第一次输入完成文字边界，第二次输入后公开位置从 `prologue:7` 变为 `prologue:8`；
+- 覆盖槽位 1 → 回到游戏，并保留上一版本备份；
+- 进入读档页，公开恢复按钮目标存在；
+- 真实鼠标命中恢复按钮区域，而不是普通槽位点击或内部调用；
+- 恢复动作结束、读档页关闭，恢复后公开位置回到 `prologue:7`，且不同于覆盖前的 `prologue:8`。
+
+### 4.3 新鲜 artifact
+
+artifact：`<local-path>`
+
+| 字段 | 磁盘实测值 |
+|---|---|
+| 状态 | `PASSED` |
+| 字节数 | `1,097` |
+| SHA-256 | `D078476A7379FDFBD80F7147DAABFD8D7BB54068837CB07704B94D9385BC692F` |
+| `runHead` | `fc82f5cebcdfb84438d10a3b9b6616664e82ba49` |
+| `firstSavePosition` | `prologue:7` |
+| `secondSavePosition` | `prologue:8` |
+| `restoredPosition` | `prologue:7` |
+| `failures` | 空数组 |
+
+此前四份菜单入口失败 artifact 仍保留，作为历史阻断证据：
 
 | 尝试 | 输入入口 | artifact | 字节数 | SHA-256 | 失败点 |
 |---|---|---|---:|---|---|
@@ -80,25 +119,23 @@ Task 0 真实起点：
 | 3 | `Escape` 键 | `<local-path>` | 1052 | `1D4558AC2E01DB358256E65C32C83CE334CBFE760BB53BE2397F1FCCDF6DA0FE` | 等待 `activeOverlay=system-menu` 超时 |
 | 4 | `Escape` 键 + `base=game/operation=idle` 等待 | `<local-path>` | 1052 | `7BF898B84A9ABEBAD6CC9E7094693BB623F8EB90AE9532EA76B9A44ACC758F3B` | 等待 `activeOverlay=system-menu` 超时 |
 
-四份 artifact 的 `pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures` 均为空；最后一份还证明 PlayerShell 已进入 `base=game / overlay=none / operation=idle`。因此当前事实是：菜单呈现入口的新增 E2E harness 仍阻断，不能据此判断 FileSaveStore、Host、Renderer 恢复功能在正式玩家路径失败，也不能把显式恢复写成 Electron 已通过。
-
-本轮没有再重跑路径，也没有删除或覆盖任何历史 artifact。正式 Electron 结果：`FORMAL_ELECTRON_SAVE_RESTORE_BLOCKED_BY_HARNESS_MENU_ENTRY`。
+四份历史 artifact 没有被删除或覆盖；新鲜 artifact 的错误通道也全部为空。当前正式 Electron 自动化结果为 `FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED`。该结果只证明自动化真实输入路径和存档恢复契约，不等于项目所有者人工视觉、声音或操作手感验收通过。
 
 ## 5. 尚未证明和后续入口
 
 尚未证明：
 
-- 正式 Electron 中从菜单保存槽位 1、覆盖槽位 1、进入读档页并点击“恢复备份并读取”的完整玩家路径；
-- 恢复后正式窗口位置是否回到第一次保存点；
-- 正式 Electron 下恢复按钮的可见命中位置、页面关闭时序和 command rail 恢复时序。
+- 项目所有者按桌面 11 步草案进行的人工实机验收；
+- 人工验收中的视觉、声音和操作手感是否符合项目所有者标准；
+- 任何部署、发行或远端 push 结果。
 
 不得宣称：
 
-- “所有存档/读档期间的恢复已通过”；
-- “正式玩家路径已验证”；
-- “Electron 恢复功能已通过”。
+- “项目所有者已经人工验收通过”；
+- “正式发行或部署已经完成”；
+- “下一阶段已经获准开始”。
 
-下一步必须先由独立复审确认新的菜单入口证据方案，再继续；本轮不自动进入下一阶段。
+下一步停止在总经理独立复审。只有总经理复审通过并明确给出部署授权后，才可把最终被测 HEAD 写入部署指令，请项目所有者按 11 步草案进行人工验收；本轮不自动部署、不进入阶段 4。
 
 ## 6. 当前收口状态
 
@@ -106,13 +143,15 @@ Task 0 真实起点：
 - Shell 显式恢复：已实现并由临时目录测试验证。
 - Renderer 恢复按钮/事务输入：已实现并由聚焦测试验证。
 - Zero 接线：已实现并由直接测试、typecheck/build 和模拟验证。
-- 正式 Electron：阻断，未取得完整玩家证据。
+- 正式 Electron：自动化真实路径有效通过；人工验收尚未进行。
 - `verify:all`：按任务书未运行，不伪称本轮全量通过。
 - 是否修改 BGM：否；上一轮本地 BGM 提交仍未获批准推送。
 - 是否 push：否。
 - 是否部署/打包/发行：否。
 - 是否进入 M9：否。
-- `DOCUMENT_CLOSURE_HEAD`：本报告提交完成后产生；不得在提交前伪填。
+- `CODE_EVIDENCE_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
+- `ARTIFACT_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
+- `DOCUMENT_CLOSURE_HEAD`：本轮计划与报告共同产生的文档提交 HEAD；提交后按命令重新读取，并登记在长期路线台账和本轮最终回执中。
 
 最终状态：
 
@@ -122,7 +161,7 @@ CORE_BACKUP_CONTRACT_VERIFIED
 SHELL_EXPLICIT_RESTORE_VERIFIED
 RENDERER_BACKUP_ACTION_VERIFIED
 ZERO_EXPLICIT_RECOVERY_VERIFIED
-FORMAL_ELECTRON_SAVE_RESTORE_BLOCKED_BY_HARNESS_MENU_ENTRY
+FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED
 AUDIO_PRODUCTION_DEFERRED
 PERFORMANCE_WORK_DEFERRED
 M9_NOT_STARTED
