@@ -142,6 +142,8 @@ export interface SaveLoadCommandOptions {
   readonly onTransactionError?: (error: unknown) => void;
   /** Invoked after the renderer has hidden a successfully completed page. */
   readonly onTransactionComplete?: () => void;
+  /** Explicitly restores the slot backup before the caller loads the restored main save. */
+  readonly onRestore?: SaveLoadSelectionHandler;
 }
 
 export interface MenuCommands {

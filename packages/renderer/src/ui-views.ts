@@ -42,6 +42,8 @@ export interface SaveSlotView {
   thumbnail?: string;
   /** 游戏时长（秒；卡片展示 h/m） */
   playTimeSec?: number;
+  /** 该槽位存在可由玩家明确触发的上一版本备份。仅 load 页面投影。 */
+  backupAvailable?: boolean;
 }
 
 export interface SaveLoadView {
