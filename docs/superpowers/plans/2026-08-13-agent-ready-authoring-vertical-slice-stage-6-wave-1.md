@@ -1478,6 +1478,12 @@ STAGE_6_WAVE_2_NOT_STARTED
 
 ### Task 8 — Step 7 completed with failure; Steps 8–9 stopped (2026-08-13 22:32 +08:00)
 
+### Task 8 — Step 9 completed after commit (2026-08-13 22:33 +08:00)
+
+- 已精确暂存并提交 Task 8 白名单与本计划：`git diff --cached --check` exit `0`；`git diff --cached --name-status` 仅为本计划、`packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs` 和 `packages/shell/package.json`；普通本地提交为 `73c4b1f848b57d8b037696c7ade95667fd04e994 test(authoring): verify agent-ready vertical slice`。
+- 提交后立即真实回读：`git log --oneline -1`=`73c4b1f test(authoring): verify agent-ready vertical slice`；`git rev-parse HEAD`=`73c4b1f848b57d8b037696c7ade95667fd04e994`；`git show --name-status HEAD` 与上述三文件范围一致；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`15 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 工作树和暂存区均为空；既有受保护文件、handoff 和长期路线台账仍未跟踪、未触碰、未暂存、未提交；未 push。
+- Task 8 最终停止事实：失败 artifact 与桌面 fixture 保留；没有 `change.commit`、没有正式 preview server、没有人工验收、没有 Task 9 全仓门禁、没有 Stage 6 Wave 1 PASSED 结论。此条记录本身在当前普通提交之后追加，下一停止点是只提交本条台账收口后停止等待总经理复审，不 amend、不重跑、不修改 runner。
+
 - 已按任务书只运行一次聚合命令：`node packages/shell/e2e/agent-ready-authoring-wave-1.e2e.mjs`，exit `1`。没有重跑、没有切换路径、没有挑绿、没有修改生产代码或 runner。最后一个通过节点为 `change.write-operations-before-red`；第一个失败节点为 `project.validate.red`。
 - 失败真实现象：任务要求的故意坏标签路径没有返回可继续使用的 `project.validate` 成功信封（其中 `result.ok=false`、`J002`、`objectRef`、`action`），而是在快照编译阶段由 CLI 返回 exit `1` 的失败信封：`error.code=PROJECT_INVALID`，消息为 `content/scenario/ch01_01.gal:4:3: 跳转目标标签 '@label missing_label' 不存在 ... [C002]`。因此 `redEvidenceId=null`、`greenEvidenceId=null`、`traceIds=[]`，没有到达 patch、green validation、simulate、runtime trace、diff、commit 或正式 editor preview；这只能证明当前聚合 harness 的红灯语义与现有 CLI 错误边界不匹配，不能归因于生产恢复或 editor/Renderer 功能。
 - 失败 artifact 已保留且禁止覆盖：`<local-path>`；从磁盘重新读取 `status=FAILED`、`bytes=6513`、`sha256=A9CE9274C80C2DE38579FFA5951DAF2EA33241EA8196F35F907306A45A166D08`；artifact `runHead=e06e2bd704538ad3203b9ea2927d04956803095a`、`changeId=chg_0001`、`workingRevision=0`、`lastPassedNode=change.write-operations-before-red`、`firstFailedNode=project.validate.red`。
