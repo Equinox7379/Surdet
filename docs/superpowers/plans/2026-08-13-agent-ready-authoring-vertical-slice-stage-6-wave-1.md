@@ -1219,7 +1219,7 @@ npm run build -w @surdet/shell
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 3: 最终只运行一次全仓门禁**
+- [x] **Step 3: 最终只运行一次全仓门禁**
 
 ```powershell
 npm run verify:all
@@ -1723,3 +1723,19 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 按本轮授权只重新运行一次 `npm run verify:all`，真实 exit=`1`。`verify:tools`、Renderer boundaries/legacy、docs、hygiene、`verify:types`（含 Starter typecheck）、`verify:tests` 和 `verify:starter-lint` 均通过；最后一个通过节点=`verify:starter-lint`，第一个失败节点=`verify:starter-simulate`。真实输出显示 `examples/starter` 的 `ch02.gal:14:1` 在 `@exp` 处需要宿主注入 `GrowthSystem`，命令因此停止；没有重跑、没有切换 case、没有修改其它文件，也没有把该失败归因于本次声明修正。
 - 既有 FORMAL artifact 身份保持不变：`<local-path>`，`bytes=7591`，SHA-256=`77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0`，`status=PASSED`，`evidenceClass=FORMAL`，`runHead=b9d9703e1c442cb927b59fd53026638a4345680d`；本轮未重跑、未覆盖、未修改该 artifact 或任何历史失败 evidence/fixture。
 - 本条完成时真实 Git：tracked 在途文件为 `examples/starter/src/surdet-window.d.ts`、本计划和交付报告；暂存区为空；`git diff --check` 与 `git diff --cached --check` 均 exit=`0`；`git ls-files '*.log'` 无输出；4173 listener 仍为 PID=`36436`。当前停止状态：`STAGE_6_WAVE_1_FORMAL_AGGREGATE_PASSED` / `STARTER_SAVE_BRIDGE_DECLARATION_ALIGNED` / `TASK_9_VERIFY_ALL_FAILED_AT_STARTER_SIMULATE` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。下一停止点：只精确暂存本轮允许的 Starter 类型声明、本计划和交付报告，创建 `fix(starter): align save bridge declaration` 普通本地提交；不 push、不部署、不打包、不发行、不进入 Wave 2。
+
+### Shared authoring GrowthSystem rollback — Task 0–9 closure before commit (2026-08-14 01:49–02:08 +08:00)
+
+- 本轮重新读取并遵守 `E:\surdet\AGENTS.md`、长期路线台账、Stage 6 设计规格、当前 Stage 6 Wave 1 任务书、Stage 5 最新任务书和 Stage 5 交付报告；长期路线台账保持未跟踪、未修改、未暂存、未提交。当前唯一主题是恢复共享 authoring 模拟运行时的 `GrowthSystem` 接线，不进入其他 Stage 6/Wave 2 主题。
+- Task 0 新鲜基线：branch=`main`；`HEAD=43964488196d685c1efe31bfcd4483651b22c12c`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`30 0`；tracked 工作树干净、暂存区为空；既有 `.learnings`、AGENTS、受保护文件、handoff 和长期路线台账均为原有未跟踪文件，未触碰；4173 listener 为 PID=`36436`，未停止或重启。
+- 当前真实红灯：只运行一次 `npm run simulate -w surdet-starter`，exit=`1`；`examples/starter/content/scenario/ch02.gal:14:1` 的 `@exp` 报 `需要宿主注入 GrowthSystem（解释器构造参数或 setGrowth）`，重复错误通道如命令输出所示。没有运行 `verify:all` 重造该红灯。
+- 最小实现只修改以下七个代码/测试文件：`packages/authoring/src/project-storage.ts`、`packages/authoring/src/project-snapshot.ts`、`packages/authoring/src/simulation.ts`、`packages/authoring/test/project-snapshot.test.ts`、`packages/authoring/test/simulation.test.ts`、`packages/cli/src/simulate.ts`、`packages/cli/test/simulate.test.ts`。快照纳入 `content/config/growth.json` 与 revision；共享 `runtimeFor` 创建并注入 Core `GrowthSystem`；`simulateSnapshot` 与 `runExplicitPath` 共用该运行时；CLI 只读取并传递 growth 配置；无 growth 配置时 `@exp` 仍严格失败。未修改 Core、Renderer、Host、Shell、editor、Zero、Starter 内容/配置/资产、存档格式、FORMAL/DIAGNOSTIC runner 或 artifact。
+- authoring 聚焦测试 `npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/simulation.test.ts` exit=`0`：2 个文件、7 个测试通过。
+- CLI 聚焦测试首次在 authoring dist 尚未刷新时 exit=`1`，真实现象是 CLI 读到旧 workspace dist 后仍报告缺少 `GrowthSystem`；随后 `npm run build -w @surdet/authoring` exit=`0`，同一 `npm run test -w @surdet/cli -- test/simulate.test.ts` 重新运行 exit=`0`：1 个文件、8 个测试通过。该首次结果记录为构建接线前置问题，没有通过放宽断言或新增 fallback 处理。
+- `npm run typecheck -w @surdet/authoring`、`npm run build -w @surdet/authoring`、`npm run typecheck -w @surdet/cli`、`npm run build -w @surdet/cli` 均实际 exit=`0`。
+- `npm run simulate -w surdet-starter` 修复后实际 exit=`0`；正式 Starter 4 场景加载，运行时错误=`0`。`git diff --quiet -- examples/starter` exit=`0`；Starter `content/config/growth.json` 为 `313` bytes / SHA-256=`5470F286FF88F315EA735AA4A7F66FB5C4F04F2AF9A0E72E0BE28A69092BF5A0`，`content/scenario/ch02.gal` 为 `872` bytes / SHA-256=`4B34D54B2F984D19D23BC8688DD50DBF02ADC53359E00DF4B4B7141E8B2E7760`。
+- 前置门禁均通过：`npm run verify:formal`、`npm run build -w surdet-editor`、`npm run build -w surdet-starter`、`npm run build -w zero-after-midnight`、`git diff --check` 均 exit=`0`。editor/Starter/Zero 构建仅产生 ignored build output，没有 tracked 源码变化。
+- 本轮唯一一次新的 `npm run verify:all` 实际 exit=`0`，通过 `verify:tools`、Renderer boundaries/legacy、docs、hygiene、types、tests、Starter lint/simulate 及其余工作区门禁；没有运行 FORMAL/DIAGNOSTIC 聚合、Electron 矩阵、性能资格化、pack、部署或发行。
+- 既有 FORMAL artifact 从磁盘重新读取且身份保持不变：`<local-path>`；`bytes=7591`；SHA-256=`77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0`；`status=PASSED`；`evidenceClass=FORMAL`；`runHead=b9d9703e1c442cb927b59fd53026638a4345680d`。本轮没有重跑、覆盖或修改它，也没有修改任何历史 FAILED/DIAGNOSTIC artifact 或桌面 fixture。
+- 本轮报告在追加本条计划记录前从磁盘读取为 `E:\surdet\docs\AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md`，`bytes=23842`，SHA-256=`88ACD53FE0C6C757DFF491EF5E37313C3B54DBFEF02D8D792B04D4B5B9A5D474`。计划最终字节数/哈希将在本条追加后、提交前重新读取，不引用旧值。
+- 当前文档提交前真实状态：tracked 在途文件仅为本计划、本报告和上述七个代码/测试文件；暂存区为空；`git diff --check`=`0`；`git diff --cached --check`=`0`；`git ls-files '*.log'` 无输出；4173 listener PID=`36436`；未 push。当前状态：`STAGE_6_SHARED_GROWTH_SIMULATION_RESTORED` / `STARTER_SIMULATE_PASSED` / `TASK_9_VERIFY_ALL_PASSED` / `FORMAL_AGGREGATE_REMAINS_VALID` / `READY_FOR_INDEPENDENT_MANAGER_REVIEW` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `STAGE_6_WAVE_2_NOT_STARTED`。下一停止点：精确暂存本轮七个代码/测试文件、本计划和本报告，核对范围后创建普通本地提交 `fix(authoring): preserve growth simulation semantics`；提交后立即重新读取真实 HEAD、提交文件范围、文档/Starter/artifact 身份和工作树，不 push、不邀请人工验收、不进入 Wave 2。

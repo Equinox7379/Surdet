@@ -1,5 +1,6 @@
 import {
   EventBus,
+  GrowthSystem,
   Interpreter,
   SceneRegistry,
   VariableStore,
@@ -88,7 +89,11 @@ function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue>
   const registry = new SceneRegistry();
   for (const scene of snapshot.scenes) registry.register(scene.compiled);
   const bus = new EventBus<CoreEventMap>();
-  return { store, bus, interpreter: new Interpreter(store, bus, registry) };
+  const interpreter = new Interpreter(store, bus, registry);
+  if (snapshot.growthConfig !== undefined && snapshot.growthConfig !== null) {
+    interpreter.setGrowth(new GrowthSystem(snapshot.growthConfig, store));
+  }
+  return { store, bus, interpreter };
 }
 
 function errorText(error: unknown): string {

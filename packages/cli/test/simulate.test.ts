@@ -76,6 +76,31 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(r.runtimeErrors[0]!.message).toMatch(/GrowthSystem/);
   });
 
+  it('Node 文件系统适配器把 growth.json 交给共享模拟运行时', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({
+        entryScene: 'ch1',
+        variables: {
+          'lynn.atk': { type: 'number', initial: 5 },
+          'lynn.hp': { type: 'number', initial: 20 },
+        },
+      }),
+      'content/config/growth.json': JSON.stringify({
+        curve: { base: 10, linear: 5 },
+        profiles: [{
+          characterId: 'lynn',
+          initialLevel: 1,
+          statGrowth: { 'lynn.atk': 2, 'lynn.hp': 10 },
+        }],
+      }),
+      'content/scenario/ch1.gal': '@scene ch1\n@exp lynn 10\n@clear growth_ok\n@end\n',
+    });
+    const r = simulateProject(dir);
+
+    expect(r.runtimeErrors).toEqual([]);
+    expect(r.endings).toEqual([{ ending: 'growth_ok', times: 1 }]);
+  });
+
   it('--assume 注入宿主变量：仅宿主可置位的条件分支变为可达', () => {
     const files = {
       'game.config.json': JSON.stringify({ entryScene: 'ch1', variables: { battleWon: { type: 'flag', initial: false } } }),

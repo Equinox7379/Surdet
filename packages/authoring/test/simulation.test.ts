@@ -42,6 +42,44 @@ function fixtureStorage(): ProjectStorage {
   };
 }
 
+function growthFixtureStorage(withGrowth: boolean): ProjectStorage {
+  const contents: Record<string, string> = {
+    'game.config.json': JSON.stringify({
+      entryScene: 'prologue',
+      variables: {
+        'lynn.atk': { type: 'number', initial: 5 },
+        'lynn.hp': { type: 'number', initial: 20 },
+      },
+    }),
+    'content/scenario/prologue.gal': [
+      '@scene prologue',
+      '@exp lynn 10',
+      '凛：成长完成。',
+      '@end',
+    ].join('\n'),
+  };
+  if (withGrowth) {
+    contents['content/config/growth.json'] = JSON.stringify({
+      curve: { base: 10, linear: 5 },
+      profiles: [{
+        characterId: 'lynn',
+        initialLevel: 1,
+        statGrowth: { 'lynn.atk': 2, 'lynn.hp': 10 },
+      }],
+    });
+  }
+  return {
+    rootIdentity: withGrowth ? 'growth-fixture' : 'no-growth-fixture',
+    listFiles: async () => Object.keys(contents),
+    readText: async (path): Promise<ProjectFile> => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+      return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
 describe('simulateSnapshot', () => {
   it('enumerates both choices and preserves their final variables', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
@@ -66,5 +104,28 @@ describe('simulateSnapshot', () => {
 
     expect(report.status).toBe('passed');
     expect(report.finalVariables.trust).toBe(-1);
+  });
+
+  it('uses one GrowthSystem runtime for simulated and explicit paths', async () => {
+    const snapshot = await loadProjectSnapshot(growthFixtureStorage(true), hasher);
+    const report = await simulateSnapshot(snapshot);
+    const explicit = await runExplicitPath(snapshot, { sceneId: 'prologue', choices: [] });
+
+    expect(report.status).toBe('passed');
+    expect(report.runtimeErrors).toEqual([]);
+    expect(report.paths[0]?.finalVariables['lynn.atk']).toBe(7);
+    expect(report.paths[0]?.finalVariables['lynn.hp']).toBe(30);
+    expect(explicit.status).toBe('passed');
+    expect(explicit.finalVariables['lynn.atk']).toBe(7);
+    expect(explicit.finalVariables['lynn.hp']).toBe(30);
+  });
+
+  it('keeps @exp strict when the snapshot has no growth config', async () => {
+    const snapshot = await loadProjectSnapshot(growthFixtureStorage(false), hasher);
+    const report = await simulateSnapshot(snapshot);
+
+    expect(report.status).toBe('failed');
+    expect(report.runtimeErrors).toHaveLength(1);
+    expect(report.runtimeErrors[0]?.message).toMatch(/GrowthSystem/);
   });
 });

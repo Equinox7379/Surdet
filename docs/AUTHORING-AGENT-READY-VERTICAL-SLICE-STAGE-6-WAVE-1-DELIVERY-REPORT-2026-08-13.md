@@ -10,7 +10,8 @@
 - 正式 A/B editor preview 路径均到达真实 `preview.html`，使用真实键盘与真实鼠标输入，记录了不同的可见后续台词、`trust=1/-1`、两条 preview trace、`choiceCoverage=2/2` 和 `stateOutcomes=[-1,1]`。正式 runner 在写入 PASSED 前实际断言了 Core runtime trace、基础演出 `coreEmitted=true` 以及同一演出的 `presentationApplied=true`。
 - Task 9 Step 1 的六个工作区测试和 Step 2 的 14 个 typecheck/build 子命令均返回 exit `0`。
 - Task 9 Step 3 的首次 `npm run verify:all` 已按原任务书只运行一次，但 exit `1`，首个失败节点为 `verify:types` 中 `examples/starter` 的 save bridge 类型不一致；本次授权收口只补齐了 Starter 类型声明后重新运行一次 `verify:all`，没有重跑挑绿或放宽门禁。
-- 本次重新运行的 `npm run verify:all` 已通过 `verify:types`、`verify:tests` 和 `verify:starter-lint`，但 exit `1`，首个失败节点变为 `verify:starter-simulate`：`examples/starter/content/scenario/ch02.gal:14:1` 的 `@exp` 需要宿主注入 `GrowthSystem`。因此 Task 9 全仓门禁仍不能写成通过；该失败不是本次类型声明修正的直接症状，本轮不扩大修复范围。
+- Starter 类型声明收口后的那次历史 `npm run verify:all` 已通过 `verify:types`、`verify:tests` 和 `verify:starter-lint`，但 exit `1`，首个失败节点为 `verify:starter-simulate`：`examples/starter/content/scenario/ch02.gal:14:1` 的 `@exp` 需要宿主注入 `GrowthSystem`。该历史结果不是类型声明修正的直接症状，已在本报告后续的共享模拟修复记录中闭合。
+- 本轮获批的共享 authoring 模拟回退已恢复 `growth.json` 快照接线、Core `GrowthSystem` 注入和 CLI Node 文件适配；authoring/CLI 聚焦合同、typecheck/build、Starter simulate、必要前置门禁和唯一一次新的 `npm run verify:all` 均通过。Starter 内容、Core、Renderer、Host、Shell、editor、Zero 和 FORMAL/DIAGNOSTIC 聚合均未被修改或重跑。
 - Task 8 FORMAL runner 的正式 preview 入口固定为 `http://127.0.0.1:4173/preview.html`；它只证明正式 preview，不是完整编辑器人工验收入口。当前 4173 服务未停止或重启，根地址 `http://127.0.0.1:4173/` 返回 HTTP `200`、标题为 `Surdet 剧本编辑器`，`/preview.html` 返回 HTTP `200`、标题为 `Surdet 预览`。项目所有者执行 16 步人工验收时必须在 Chrome/Edge 打开根地址 `/`，人工验收仍为 `HUMAN_ACCEPTANCE_NOT_STARTED`，没有自动填写视觉、操作或手感结论。
 
 最终状态：
@@ -19,7 +20,10 @@
 STAGE_6_WAVE_1_IMPLEMENTED_LOCALLY
 FORMAL_AGGREGATE_PASSED
 STARTER_SAVE_BRIDGE_DECLARATION_ALIGNED
-TASK_9_VERIFY_ALL_FAILED_AT_STARTER_SIMULATE
+STAGE_6_SHARED_GROWTH_SIMULATION_RESTORED
+STARTER_SIMULATE_PASSED
+TASK_9_VERIFY_ALL_PASSED
+FORMAL_AGGREGATE_REMAINS_VALID
 READY_FOR_INDEPENDENT_MANAGER_REVIEW
 WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 HUMAN_ACCEPTANCE_NOT_STARTED
@@ -245,7 +249,7 @@ npm run preview -w surdet-editor -- --host 127.0.0.1 --port 4173
 
 任务书列出的 14 个 npm 子命令均返回 exit `0`：Core、authoring、CLI、Renderer、Host、Shell、editor 各一个 typecheck 和 build。外层 PowerShell 编排器另有数组索引警告，原因是编排变量使用了 PowerShell 保留的 `$args` 名称；这些警告不来自 npm 子命令，且 14 个实际 npm exit 均为 `0`。本轮没有运行性能矩阵、pack、electron-builder、部署或发行。
 
-### Step 3：一次 verify:all（首次结果与本次授权收口结果）
+### Step 3：一次 verify:all（Starter 收口历史结果）
 
 原 Task 9 首次实际只运行一次：
 
@@ -279,7 +283,44 @@ examples/starter/content/scenario/ch02.gal:14:1
 
 `verify:all` 按脚本在该节点停止；本轮没有重跑、没有切换 case、没有修改其它生产文件，也没有把这个 Starter 内容/宿主能力问题写成类型声明已经解决。Task 9 Step 3 仍未通过，必须等待独立复审决定是否另行授权。
 
-## 7. Git 与停止点
+### Step 3A：共享 GrowthSystem 回退后的唯一最终门禁
+
+本轮授权的唯一主题是恢复 Stage 6 共享 authoring 模拟运行时丢失的 Starter `GrowthSystem` 接线。实现没有新增第二套模拟器：
+
+- `packages/authoring/src/project-storage.ts` 现在把 `content/config/growth.json` 纳入快照路径；
+- `packages/authoring/src/project-snapshot.ts` 把该文件纳入 `files` 与 `revision`，并为已加载快照提供 `growthFile` / `growthConfig`；
+- `packages/authoring/src/simulation.ts` 在共享 `runtimeFor` 中按快照配置创建 Core `GrowthSystem`，再注入 `Interpreter`；`simulateSnapshot` 与 `runExplicitPath` 共用这一运行时；没有配置时仍严格保留 `@exp` 缺少 `GrowthSystem` 的错误；
+- `packages/cli/src/simulate.ts` 只读取 Node 项目中的 `growth.json` 并传给共享快照，没有复制 GrowthSystem 或 DFS 模拟逻辑；
+- 测试只覆盖 authoring/CLI 的共享合同，未修改 Starter 内容或任何 Core 生产实现。
+
+本轮实际命令与结果：
+
+- `npm run test -w @surdet/authoring -- test/project-snapshot.test.ts test/simulation.test.ts`：exit `0`，2 个文件 / 7 个测试通过；
+- `npm run test -w @surdet/cli -- test/simulate.test.ts`：在刷新本地 authoring dist 前首次运行因 stale workspace dist 读到旧共享实现而 exit `1`；随后 `npm run build -w @surdet/authoring` exit `0`，同一 CLI 聚焦测试重新运行 exit `0`，1 个文件 / 8 个测试通过。该首次结果是构建接线前置问题，不是通过放宽断言获得的业务绿灯；
+- `npm run typecheck -w @surdet/authoring`：exit `0`；`npm run build -w @surdet/authoring`：exit `0`；`npm run typecheck -w @surdet/cli`：exit `0`；`npm run build -w @surdet/cli`：exit `0`；
+- `npm run simulate -w surdet-starter`：exit `0`；Starter 4 场景加载，运行时错误 `0`。本命令未修改 Starter 内容；
+- `npm run verify:formal`：exit `0`；`npm run build -w surdet-editor`、`npm run build -w surdet-starter`、`npm run build -w zero-after-midnight`：均 exit `0`；`git diff --check`：exit `0`；
+- 本轮唯一一次新的 `npm run verify:all`：exit `0`。`verify:tools`、Renderer boundaries/legacy、docs、hygiene、types、tests、Starter lint/simulate 以及其余工作区门禁全部通过。没有运行 FORMAL/DIAGNOSTIC 聚合、Electron 矩阵、性能资格化、pack、部署或发行。
+
+本轮唯一允许的源代码/测试修改文件为：
+
+- `packages/authoring/src/project-storage.ts`
+- `packages/authoring/src/project-snapshot.ts`
+- `packages/authoring/src/simulation.ts`
+- `packages/authoring/test/project-snapshot.test.ts`
+- `packages/authoring/test/simulation.test.ts`
+- `packages/cli/src/simulate.ts`
+- `packages/cli/test/simulate.test.ts`
+
+Starter 未修改事实：`git diff --quiet -- examples/starter` exit `0`；当前 Starter 的 `content/config/growth.json` 与 `content/scenario/ch02.gal` 均保持仓库版本。既有 FORMAL artifact 身份未变：
+
+- `<local-path>`
+- `status=PASSED`、`evidenceClass=FORMAL`、`runHead=b9d9703e1c442cb927b59fd53026638a4345680d`
+- `bytes=7591`、SHA-256=`77AA59BBA30EF16EE4F2E3791485C061519F79DD4A43DD5F7515F0147B9F13D0`
+
+本轮未重新运行该 FORMAL artifact 对应的聚合，也未修改任何旧失败 artifact、诊断 artifact、桌面 fixture 或项目所有者文件。
+
+## 7. Git 与停止点（Starter 收口历史记录）
 
 本次文档提交前回读的真实 Git 基线：
 
@@ -292,18 +333,49 @@ ahead/behind=29 0
 
 本轮代码证据提交未 push；诊断稳定化提交没有夹带 fixture、artifact、日志、构建产物、长期路线台账或受保护文件。本次文档收口提交只允许包含 Starter 类型声明、本报告和当前 Stage 6 Wave 1 任务书；桌面 fixture、FORMAL artifact、诊断 artifact 和历史 FAILED artifact 均不进入 Git。当前没有 push、部署、打包、发行或人工验收。
 
-未解决问题：
+上一轮 Starter 声明收口完成时的未解决问题：
 
 - Starter save bridge 类型声明已对齐，`npm run typecheck -w surdet-starter` 已通过；但新的唯一 `verify:all` 运行在 `verify:starter-simulate` 因 `ch02.gal` 的 `@exp` 宿主 `GrowthSystem` 缺失而失败，不能宣称 Task 9 全仓验证通过；
 - 项目所有者尚未进行 Chrome/Edge 人工验收；
 - 本地 4173 preview server 为人工入口准备而保留，根地址是人工验收入口，`/preview.html` 仅是 FORMAL preview 入口，不能写成部署或发行；
 - 不进入 Wave 2，不开始扩展市场、MCP、内置 AI、音频、性能、美术、Gallery 或发行工作。
 
-建议由总经理登记的事实：FORMAL editor preview A/B 聚合已经通过且既有 artifact 身份保持不变；Starter save bridge 声明已在允许范围内对齐，Starter typecheck 已通过，但新的唯一 `verify:all` 运行在 `verify:starter-simulate` 因 `ch02.gal` 的 `@exp` 宿主注入问题失败。当前应先独立复审 FORMAL 证据、声明修正和新的失败范围，再决定是否批准任何后续修复或人工验收。
+建议由总经理登记的历史事实：FORMAL editor preview A/B 聚合已经通过且既有 artifact 身份保持不变；Starter save bridge 声明已在允许范围内对齐，Starter typecheck 已通过，但当时唯一的 `verify:all` 运行在 `verify:starter-simulate` 因 `ch02.gal` 的 `@exp` 宿主注入问题失败。该问题已由本报告第 3A 节记录的共享 authoring 修复闭合。
 
 ```text
 READY_FOR_INDEPENDENT_MANAGER_REVIEW
 WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
+## 8. 本轮共享 GrowthSystem 修复的真实收口
+
+本轮代码与测试修改均在以下真实工作树基线之上完成并验证：
+
+```text
+branch=main
+validation HEAD=43964488196d685c1efe31bfcd4483651b22c12c
+surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01
+ahead/behind=30 0
+```
+
+验证完成后、文档提交前，tracked 工作树包含且仅包含本轮七个 authoring/CLI 源码与测试文件以及本计划和本报告；暂存区为空。`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。既有未跟踪的 AGENTS、长期路线台账、受保护文件、handoff 与 `.learnings` 文件均未触碰、未暂存。
+
+当前 4173 listener 仍为 PID `36436`，本轮未停止、未重启；人工入口仍为 `http://127.0.0.1:4173/`，FORMAL preview 入口仍为 `http://127.0.0.1:4173/preview.html`。项目所有者人工验收状态仍为 `HUMAN_ACCEPTANCE_NOT_STARTED`，执行 AI 没有代填视觉、声音、操作或手感结论。
+
+本轮没有重新运行 FORMAL/DIAGNOSTIC 聚合，没有修改或覆盖任何历史 artifact/fixture，没有修改 Starter 内容或 Core、Renderer、Host、Shell、editor、Zero 生产代码，没有 push、部署、打包、发行或进入 Wave 2。当前应交由总经理独立复审共享模拟接线修复、`verify:all` 唯一通过结果和未开始的人工验收。
+
+最终停止状态：
+
+```text
+STAGE_6_SHARED_GROWTH_SIMULATION_RESTORED
+STARTER_SIMULATE_PASSED
+TASK_9_VERIFY_ALL_PASSED
+FORMAL_AGGREGATE_REMAINS_VALID
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
 NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
