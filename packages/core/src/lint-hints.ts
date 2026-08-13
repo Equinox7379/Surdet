@@ -38,6 +38,16 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   J003: '目标场景存在但编译失败：先修复目标场景自身的语法/结构错误，本错误会自动消失。',
   J004: '@switch 分支目标标签不存在：在本场景补 @label 该标签，或改正分支标签拼写。',
 
+  /* ---- Gallery 内容完整性（Wave 6） ---- */
+  G001: 'gallery.json 结构非法：cgs/music 必须为数组；每项须有非空 id/name，text 须有 scene，src/label 若提供必须为非空字符串。',
+  G002: 'gallery.json 同一分类内存在重复 id：保留一个唯一 ID，并让对应 @unlock_* 使用该唯一 ID。',
+  G003: 'Gallery 素材键不存在：CG 的 src/id 必须对应 content/assets/bg/<key>.*，音乐必须对应 content/assets/bgm/<key>.*；改正键或在独立素材任务中导入资产。',
+  G004: '文本回想目标场景不存在：把 gallery.json texts[].scene 改为 content/scenario 下真实场景 ID，或先修复该场景。',
+  G005: '文本回想标签不存在：移除可选 label 以从场景开头回放，或改为目标场景真实的 @label。',
+  G006: '@unlock_cg/@unlock_music/@unlock_text 没有对应的 gallery.json 条目：补齐同分类 id 或修正解锁指令参数。',
+  G007: 'Gallery 条目永远不会解锁：在合适的剧情到达点加入对应 @unlock_*，或删除尚未拥有内容的条目。',
+  G008: '角色头像配置无效：characters.<id>.avatar 必须是 content/assets/avatar 中真实存在的非空素材键。',
+
   /* ---- 变量（V） ---- */
   V001: '赋值/修改目标变量未声明：在 game.config.json 的 variables 表声明该变量（含 type 与 initial）。',
   V002: '表达式引用了未声明变量：在 game.config.json 的 variables 表声明该变量；若为系统内建变量请核对拼写。',
