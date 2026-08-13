@@ -1,5 +1,6 @@
 import { compileScene, type CompiledScene } from '@surdet/core';
-import { parseSceneDocument, type SceneDocumentLine } from './scene-document.js';
+import { parseSceneDocument } from './scene-document.js';
+import type { SceneDocumentLine } from './contracts.js';
 import type { ProjectFile, ProjectStorage, TextHasher } from './project-storage.js';
 import { isSnapshotPath, normalizeProjectPath } from './project-storage.js';
 
