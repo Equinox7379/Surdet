@@ -232,6 +232,13 @@ async function main(): Promise<void> {
   /** 音频素材地址映射（loadAssets 填充：素材键 → Blob/文件 URL） */
   const audioUrls = new Map<string, string>();
   const audio: AudioHandle = new ResolvedAudio(audioManager, audioUrls);
+  let galleryMusicCallbackCount = 0;
+  let lastGalleryMusicRequest: {
+    readonly id: string;
+    readonly source: string;
+    readonly resolvedSource: string | null;
+    readonly sourceResolved: boolean;
+  } | null = null;
 
   const settings = new SettingsStore(createSettingsStorage('zero'));
   await settings.load();
@@ -352,6 +359,12 @@ async function main(): Promise<void> {
       add('gallery:music', 132, 12, 112, 62);
       add('gallery:text', 220, 12, 60, 62);
       add('gallery:close', 1120, 10, 150, 66);
+      if (galleryOverlay.tab === 'music') {
+        const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
+        views.music.forEach((item, index) => {
+          if (item.unlocked) add(`gallery:music:${item.id}`, 60, 96 + index * 58, 720, 46);
+        });
+      }
       return freezeDebug(targets);
     }
     const menuSnapshot = projection.menu;
@@ -454,6 +467,23 @@ async function main(): Promise<void> {
     get assetLoading(): LoadingProgress { return { ...lastLoadingProgress }; },
     get resourceSnapshot() { return queries.diagnostics.resourceSnapshot(); },
     get resourceLedger() { return queries.diagnostics.resourceLedger?.() ?? null; },
+    get audioPlayback() {
+      const snapshot = audio.snapshotPlayback?.() ?? { bgm: null, ambience: null };
+      const diagnostics = audioManager.snapshotBgmDiagnostics();
+      return freezeDebug({
+        ...snapshot,
+        bgmPlaying: diagnostics.playing,
+        bgmPlayCount: diagnostics.playCount,
+        bgmSource: diagnostics.source,
+        howlerErrors: diagnostics.errors,
+      });
+    },
+    get galleryMusicPlayback() {
+      return freezeDebug({
+        callbackCount: galleryMusicCallbackCount,
+        lastRequest: lastGalleryMusicRequest ? { ...lastGalleryMusicRequest } : null,
+      });
+    },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
     get canCaptureRollbackCheckpoint(): boolean { return queries.presentation.canCaptureRollbackCheckpoint(); },
     get fadeTweenActive(): boolean { return !queries.presentation.canCaptureRollbackCheckpoint(); },
@@ -965,7 +995,16 @@ async function main(): Promise<void> {
       ...views,
       onPlayMusic: (id: string, src?: string) => {
         playerShell!.commands.consumePointer();
-        audio.playBgm(src ?? id);
+        galleryMusicCallbackCount += 1;
+        const source = src ?? id;
+        const resolvedSource = audioUrls.get(source) ?? null;
+        lastGalleryMusicRequest = {
+          id,
+          source,
+          resolvedSource,
+          sourceResolved: resolvedSource !== null,
+        };
+        audio.playBgm(source, { restart: true });
       },
       onReplayText: (item: (typeof views.texts)[number]) => {
         playerShell!.commands.consumePointer();

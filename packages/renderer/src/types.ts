@@ -180,8 +180,24 @@ export interface SpeakerProfile {
 }
 
 /** 音频句柄（howler 封装实现；测试可注入 fake） */
+export interface AudioBgmDiagnosticError {
+  readonly type: 'loaderror' | 'playerror';
+  readonly message: string;
+}
+
+export interface AudioBgmDiagnosticSnapshot {
+  readonly source: string | null;
+  readonly playing: boolean;
+  readonly playCount: number;
+  readonly errors: readonly AudioBgmDiagnosticError[];
+}
+
+export interface BgmPlaybackOptions {
+  readonly restart?: boolean;
+}
+
 export interface AudioHandle {
-  playBgm(src: string | null): void;
+  playBgm(src: string | null, options?: BgmPlaybackOptions): void;
   /** 环境音循环声道（最多一个活动实例；可选以兼容轻量 fake） */
   playAmbience?(src: string | null, fadeMs?: number): void;
   playSe(src: string): void;
@@ -208,11 +224,15 @@ export interface AudioHandle {
   snapshotPlayback?(): AudioPlaybackSnapshot;
   /** 通过公共声道方法恢复音频播放状态。 */
   restorePlayback?(snapshot: AudioPlaybackSnapshot): void;
+  /** 当前 BGM 的只读播放状态，供宿主诊断 Gallery 预览等实际播放路径。 */
+  isBgmPlaying?(): boolean;
+  /** 当前 BGM 的只读源与 Howler 错误摘要；不暴露 Howl 或缓存对象。 */
+  snapshotBgmDiagnostics?(): AudioBgmDiagnosticSnapshot;
 }
 
 /** 无音频实现（占位素材阶段用） */
 export const NULL_AUDIO: AudioHandle = {
-  playBgm() {},
+  playBgm(_src, _options) {},
   playSe() {},
   playVoice() {},
   stopAll() {},

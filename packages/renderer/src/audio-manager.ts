@@ -1,5 +1,10 @@
 import { Howl, Howler } from 'howler';
-import type { AudioHandle } from './types.js';
+import type {
+  AudioBgmDiagnosticError,
+  AudioBgmDiagnosticSnapshot,
+  AudioHandle,
+  BgmPlaybackOptions,
+} from './types.js';
 import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
 
 /** BGM 切换交叉淡入淡出时长（毫秒） */
@@ -42,6 +47,8 @@ export class AudioManager implements AudioHandle {
   #voiceVolume = 1;
   /** 无扩展名的 Blob URL 不能让 Howler 自动选择 codec，宿主需在播放前注册格式。 */
   #sourceFormats = new Map<string, string>();
+  #bgmErrors: AudioBgmDiagnosticError[] = [];
+  #bgmPlayCount = 0;
 
   /**
    * 为音频源登记格式。打包/编辑器预览使用 Blob URL 时必须调用，
@@ -53,8 +60,27 @@ export class AudioManager implements AudioHandle {
     if (normalized) this.#sourceFormats.set(src, normalized === 'mpeg' ? 'mp3' : normalized);
   }
 
-  playBgm(src: string | null): void {
-    if (src === this.#bgmKey) return;
+  playBgm(src: string | null, options?: BgmPlaybackOptions): void {
+    const restart = options?.restart === true;
+    if (src === this.#bgmKey && !restart) return;
+    if (src === this.#bgmKey && restart && this.#bgm) {
+      const h = this.#bgm;
+      h.stop();
+      this.#bgmErrors = [];
+      const target = this.#bgmVolume;
+      if (typeof (h as { fade?: unknown }).fade === 'function') {
+        h.volume(0);
+        this.#bgmPlayCount += 1;
+        h.play();
+        h.fade(0, target, BGM_FADE_MS);
+      } else {
+        h.volume(target);
+        this.#bgmPlayCount += 1;
+        h.play();
+      }
+      return;
+    }
+    this.#bgmErrors = [];
     const prev = this.#bgm;
     this.#bgm = null;
     this.#bgmKey = src;
@@ -81,9 +107,11 @@ export class AudioManager implements AudioHandle {
     const target = this.#bgmVolume;
     if (typeof (h as { fade?: unknown }).fade === 'function') {
       h.volume(0);
+      this.#bgmPlayCount += 1;
       h.play();
       h.fade(0, target, BGM_FADE_MS);
     } else {
+      this.#bgmPlayCount += 1;
       h.play();
     }
     this.#evict('bgm');
@@ -142,6 +170,21 @@ export class AudioManager implements AudioHandle {
     return this.#voice !== null && this.#voice.playing();
   }
 
+  /** BGM 的真实 Howler 播放状态；不以逻辑 key 快照冒充已发声。 */
+  isBgmPlaying(): boolean {
+    return this.#bgm !== null && this.#bgm.playing();
+  }
+
+  /** 只读 BGM 诊断：实际传给 Howler 的 source、播放状态与原始错误摘要。 */
+  snapshotBgmDiagnostics(): AudioBgmDiagnosticSnapshot {
+    return {
+      source: this.#bgmKey,
+      playing: this.isBgmPlaying(),
+      playCount: this.#bgmPlayCount,
+      errors: this.#bgmErrors.map((error) => ({ ...error })),
+    };
+  }
+
   /** 停止全部音频（BGM/环境音/SE/语音）并重置活动声道记录 */
   stopAll(): void {
     Howler.stop(); // howler 全局：停止所有 Howl 的全部播放实例
@@ -151,6 +194,7 @@ export class AudioManager implements AudioHandle {
     this.#ambienceEpoch++;
     this.#bgm = null;
     this.#bgmKey = null;
+    this.#bgmErrors = [];
     this.#ambienceKey = null;
     this.#ambience = null;
     this.#voice = null;
@@ -250,8 +294,11 @@ export class AudioManager implements AudioHandle {
         loop: opts.loop ?? false,
         volume,
         ...(format ? { format: [format] } : {}),
-        onloaderror: () => {
-          // 音频缺失：占位素材阶段静默
+        onloaderror: (_id, error) => {
+          if (opts.channel === 'bgm') this.#recordBgmError('loaderror', error);
+        },
+        onplayerror: (_id, error) => {
+          if (opts.channel === 'bgm') this.#recordBgmError('playerror', error);
         },
       });
       entry = { key, src, channel: opts.channel, howl: h, lastUsed: ++this.#clock };
@@ -267,6 +314,11 @@ export class AudioManager implements AudioHandle {
       entry.lastUsed = ++this.#clock;
     }
     return entry.howl;
+  }
+
+  #recordBgmError(type: AudioBgmDiagnosticError['type'], error: unknown): void {
+    this.#bgmErrors.push({ type, message: typeof error === 'string' ? error : String(error) });
+    if (this.#bgmErrors.length > 8) this.#bgmErrors.shift();
   }
 
   #evict(channel?: AudioChannel): void {

@@ -775,7 +775,7 @@ async function main(): Promise<void> {
     const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
     return {
       ...views,
-      onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id),
+      onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id, { restart: true }),
       onReplayText: (item: (typeof views.texts)[number]) => {
         if (!item.scene) return;
         playerShell!.commands.close();
