@@ -321,7 +321,7 @@ function badSceneBlocks() {
   assert(choice?.kind === 'choice', '无法构造 Agent choice fixture');
   choice.options[0] = {
     ...choice.options[0],
-    target: { kind: 'goto', value: 'missing_label' },
+    target: { kind: 'jump', value: 'ch01_01.missing_label' },
   };
   return blocks;
 }
@@ -622,7 +622,7 @@ async function run() {
   });
 
   await step('scene.patch-and-project.validate.green', async () => {
-    const badRaw = '  路径 A @set trust = 1 -> @goto missing_label';
+    const badRaw = '  路径 A @set trust = 1 -> @jump ch01_01.missing_label';
     const patchInput = writeInput('scene-main-patch.json', {
       operationId: 'stage6-scene-main-patch',
       sceneId: 'ch01_01',
@@ -784,6 +784,24 @@ async function main() {
     assert(/^[0-9a-f]{40}$/i.test(startupHead), 'self-check HEAD invalid');
     assert(!fs.existsSync(fixtureRoot), `self-check fixture already exists：${fixtureRoot}`);
     assert(!fs.existsSync(artifactPath), `self-check artifact already exists：${artifactPath}`);
+    const badBlocks = badSceneBlocks();
+    const badChoice = badBlocks.find((block) => block.kind === 'choice');
+    assert(badChoice?.kind === 'choice', 'self-check 无法读取故意红灯 choice');
+    const badOption = badChoice.options[0];
+    assert(badOption, 'self-check 无法读取故意红灯 option');
+    assert(
+      badOption.target.kind === 'jump' && badOption.target.value === 'ch01_01.missing_label',
+      `self-check 故意红灯必须使用 project-level jump：${JSON.stringify(badOption.target)}`,
+    );
+    const serializedBadOption = [
+      badOption.label,
+      ...(badOption.effects ?? []).map((effect) => `@${effect.name} ${effect.args.join(' ')}`),
+      `-> @${badOption.target.kind} ${badOption.target.value}`,
+    ].join(' ');
+    assert(
+      serializedBadOption === '路径 A @set trust = 1 -> @jump ch01_01.missing_label',
+      `self-check 故意红灯序列化不匹配：${serializedBadOption}`,
+    );
     return { status: 'SELF_CHECK_PASSED', fixtureRoot, artifactPath, runHead: startupHead };
   }
 
