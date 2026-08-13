@@ -17,6 +17,14 @@ function isInside(root: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
 function pathError(value: string): AuthoringOperationError {
   return new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `路径不在项目根目录内：${value}`);
 }
@@ -27,6 +35,9 @@ function safeStageName(value: string): string {
 
 /** Node 文件系统适配器；所有相对路径先做项目根和 symlink/junction 校验。 */
 export class NodeProjectStorage implements ProjectWriteStorage {
+  private readonly stagedParents = new Map<string, string[]>();
+  private readonly pendingCreatedParents = new Set<string>();
+
   constructor(readonly rootIdentity: string, private readonly rootRealPath: string) {}
 
   static async open(projectRoot: string): Promise<NodeProjectStorage> {
@@ -41,9 +52,10 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     return new NodeProjectStorage(real, real);
   }
 
-  private resolveRelative(relativePath: string, allowMissing = false): string {
+  private resolveRelative(relativePath: string): string {
     try {
       normalizeProjectPath(relativePath);
+      if (path.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath)) throw new Error('absolute path');
     } catch {
       throw pathError(relativePath);
     }
@@ -53,17 +65,16 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   }
 
   private async assertSafeTarget(relativePath: string, allowMissing = false): Promise<string> {
-    const candidate = this.resolveRelative(relativePath, allowMissing);
+    const candidate = this.resolveRelative(relativePath);
     try {
+      await this.assertSafeParent(path.dirname(candidate), relativePath, { allowMissing });
       const stat = await fs.lstat(candidate);
-      if (stat.isSymbolicLink()) throw pathError(relativePath);
+      if (stat.isSymbolicLink() || !stat.isFile()) throw pathError(relativePath);
       const real = await fs.realpath(candidate);
-      if (!isInside(this.rootRealPath, real)) throw pathError(relativePath);
-      if (!stat.isFile() && !allowMissing) throw pathError(relativePath);
+      if (!isInside(this.rootRealPath, real) || !samePath(real, candidate)) throw pathError(relativePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' && allowMissing) {
-        const parent = await this.assertSafeParent(path.dirname(candidate), relativePath);
-        return path.join(parent, path.basename(candidate));
+        return candidate;
       }
       if (error instanceof AuthoringOperationError) throw error;
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new AuthoringOperationError('PROJECT_NOT_FOUND', `项目文件不存在：${relativePath}`);
@@ -72,16 +83,47 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     return candidate;
   }
 
-  private async assertSafeParent(parent: string, original: string): Promise<string> {
+  private async assertSafeParent(
+    parent: string,
+    original: string,
+    options: { allowMissing?: boolean; createMissing?: boolean } = {},
+    createdParents: string[] = [],
+  ): Promise<string> {
     if (!isInside(this.rootRealPath, parent)) throw pathError(original);
-    try {
-      const real = await fs.realpath(parent);
-      if (!isInside(this.rootRealPath, real)) throw pathError(original);
-      return real;
-    } catch (error) {
-      if (error instanceof AuthoringOperationError) throw error;
-      throw pathError(original);
+    const relative = path.relative(this.rootRealPath, parent);
+    const segments = relative.length === 0 ? [] : relative.split(path.sep);
+    let current = this.rootRealPath;
+
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      let stat: Awaited<ReturnType<typeof fs.lstat>>;
+      try {
+        stat = await fs.lstat(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw pathError(original);
+        if (!options.createMissing) {
+          if (options.allowMissing) return parent;
+          throw pathError(original);
+        }
+        try {
+          await fs.mkdir(current);
+          createdParents.push(current);
+        } catch (mkdirError) {
+          if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw pathError(original);
+        }
+        stat = await fs.lstat(current).catch(() => { throw pathError(original); });
+      }
+
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw pathError(original);
+      let real: string;
+      try {
+        real = await fs.realpath(current);
+      } catch {
+        throw pathError(original);
+      }
+      if (!isInside(this.rootRealPath, real) || !samePath(real, current)) throw pathError(original);
     }
+    return current;
   }
 
   private async assertSafeStage(stagedIdentity: string): Promise<string> {
@@ -89,11 +131,12 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     if (!isInside(this.rootRealPath, candidate) || !path.basename(candidate).startsWith('.surdet-')) {
       throw pathError(stagedIdentity);
     }
+    await this.assertSafeParent(path.dirname(candidate), stagedIdentity);
     try {
       const stat = await fs.lstat(candidate);
       if (!stat.isFile() || stat.isSymbolicLink()) throw pathError(stagedIdentity);
       const real = await fs.realpath(candidate);
-      if (!isInside(this.rootRealPath, real)) throw pathError(stagedIdentity);
+      if (!isInside(this.rootRealPath, real) || !samePath(real, candidate)) throw pathError(stagedIdentity);
     } catch (error) {
       if (error instanceof AuthoringOperationError) throw error;
       throw new AuthoringOperationError('PROJECT_NOT_FOUND', `暂存文件不存在：${stagedIdentity}`);
@@ -131,31 +174,41 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   }
 
   async exists(relativePath: string): Promise<boolean> {
-    const candidate = this.resolveRelative(relativePath, true);
+    const candidate = this.resolveRelative(relativePath);
     try {
-      await this.assertSafeTarget(relativePath);
-      return true;
+      await this.assertSafeTarget(relativePath, true);
+      try {
+        const stat = await fs.lstat(candidate);
+        return stat.isFile() && !stat.isSymbolicLink();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      }
     } catch (error) {
       if (error instanceof AuthoringOperationError && error.code === 'PROJECT_NOT_FOUND') return false;
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-      if (!isInside(this.rootRealPath, candidate)) throw pathError(relativePath);
-      return false;
+      throw error;
     }
   }
 
   async stageText(relativePath: string, text: string, changeId: string): Promise<{ stagedIdentity: string; sha256: string }> {
-    const target = await this.assertSafeTarget(relativePath, true);
-    const parent = await this.assertSafeParent(path.dirname(target), relativePath);
-    const stagedIdentity = path.join(parent, `.surdet-${safeStageName(changeId)}-${crypto.randomUUID()}.tmp`);
-    const bytes = Buffer.from(text, 'utf8');
+    const createdParents: string[] = [];
+    let stagedIdentity: string | undefined;
     try {
+      const target = await this.assertSafeTarget(relativePath, true);
+      const parent = await this.assertSafeParent(path.dirname(target), relativePath, { createMissing: true }, createdParents);
+      stagedIdentity = path.join(parent, `.surdet-${safeStageName(changeId)}-${crypto.randomUUID()}.tmp`);
+      const bytes = Buffer.from(text, 'utf8');
       await fs.writeFile(stagedIdentity, bytes, { flag: 'wx' });
+      await this.assertSafeStage(stagedIdentity);
       const reread = await fs.readFile(stagedIdentity);
       const digest = sha256(reread);
       if (digest !== sha256(bytes)) throw new Error(`暂存文件身份不匹配：${relativePath}`);
+      this.stagedParents.set(stagedIdentity, [...createdParents]);
+      for (const directory of createdParents) this.pendingCreatedParents.add(directory);
       return { stagedIdentity, sha256: digest };
     } catch (error) {
-      await fs.rm(stagedIdentity, { force: true }).catch(() => undefined);
+      if (stagedIdentity !== undefined) await fs.rm(stagedIdentity, { force: true }).catch(() => undefined);
+      await this.cleanupDirectories(createdParents);
       throw error;
     }
   }
@@ -188,10 +241,104 @@ export class NodeProjectStorage implements ProjectWriteStorage {
       throw error;
     });
     if (staged !== null) await fs.rm(staged, { force: true });
+    const createdParents = this.stagedParents.get(stagedIdentity);
+    this.stagedParents.delete(stagedIdentity);
+    if (createdParents !== undefined) {
+      for (const directory of createdParents) this.pendingCreatedParents.add(directory);
+    }
+    await this.cleanupPendingDirectories();
   }
 
   async removePath(relativePath: string): Promise<void> {
     const target = await this.assertSafeTarget(relativePath);
     await fs.rm(target, { force: true });
+  }
+
+  private async cleanupDirectories(directories: readonly string[]): Promise<void> {
+    const unique = [...new Set(directories)].sort((left, right) => {
+      const depth = (value: string) => value.split(path.sep).length;
+      return depth(right) - depth(left);
+    });
+    for (const directory of unique) {
+      if (!isInside(this.rootRealPath, directory) || samePath(this.rootRealPath, directory)) continue;
+      let stat: Awaited<ReturnType<typeof fs.lstat>>;
+      try {
+        stat = await fs.lstat(directory);
+      } catch {
+        continue;
+      }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
+      let real: string;
+      try {
+        real = await fs.realpath(directory);
+      } catch {
+        continue;
+      }
+      if (!isInside(this.rootRealPath, real) || !samePath(real, directory)) continue;
+      let entries: string[];
+      try {
+        entries = await fs.readdir(directory);
+      } catch {
+        continue;
+      }
+      if (entries.length !== 0) continue;
+      try {
+        await fs.rmdir(directory);
+      } catch {
+        // A race or a newly-created user entry leaves the directory in place.
+      }
+    }
+  }
+
+  private async cleanupPendingDirectories(): Promise<void> {
+    const directories = [...this.pendingCreatedParents].sort((left, right) => {
+      const depth = (value: string) => value.split(path.sep).length;
+      return depth(right) - depth(left);
+    });
+    for (const directory of directories) {
+      if (!isInside(this.rootRealPath, directory) || samePath(this.rootRealPath, directory)) {
+        this.pendingCreatedParents.delete(directory);
+        continue;
+      }
+      let stat: Awaited<ReturnType<typeof fs.lstat>>;
+      try {
+        stat = await fs.lstat(directory);
+      } catch {
+        this.pendingCreatedParents.delete(directory);
+        continue;
+      }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        this.pendingCreatedParents.delete(directory);
+        continue;
+      }
+      let real: string;
+      try {
+        real = await fs.realpath(directory);
+      } catch {
+        this.pendingCreatedParents.delete(directory);
+        continue;
+      }
+      if (!isInside(this.rootRealPath, real) || !samePath(real, directory)) {
+        this.pendingCreatedParents.delete(directory);
+        continue;
+      }
+      let entries: string[];
+      try {
+        entries = await fs.readdir(directory);
+      } catch {
+        continue;
+      }
+      if (entries.length === 0) {
+        try {
+          await fs.rmdir(directory);
+          this.pendingCreatedParents.delete(directory);
+        } catch {
+          // Keep it pending when another staged file still owns the directory.
+        }
+      } else if (!entries.some((entry) => entry.startsWith('.surdet-'))) {
+        // A committed or user file now occupies the directory; never remove it later.
+        this.pendingCreatedParents.delete(directory);
+      }
+    }
   }
 }
