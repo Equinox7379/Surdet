@@ -484,7 +484,7 @@ feat(authoring): index project objects
 - Consumes: `ProjectSnapshot`、`ObjectIndex`、无损场景文档。
 - Produces: `ChangeRepository`、`beginChange`、`applySceneCreate`、`applyScenePatch`、`ensureVariable`、`commitChange`、`rollbackChange`。
 
-- [ ] **Step 1: 写事务状态与幂等红灯**
+- [x] **Step 1: 写事务状态与幂等红灯**
 
 至少包含：
 
@@ -502,7 +502,7 @@ it('replays identical operationId but rejects a different payload', async () => 
 
 并故障注入：提交第二个文件替换失败，第一个文件必须恢复；恢复也失败时返回 `COMMIT_RECOVERY_FAILED` 并保留 journal。
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 ```powershell
 npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations.test.ts test/commit-recovery.test.ts
@@ -510,7 +510,7 @@ npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations
 
 Expected: FAIL。
 
-- [ ] **Step 3: 定义事务与仓储接口**
+- [x] **Step 3: 定义事务与仓储接口**
 
 ```ts
 export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
@@ -546,7 +546,7 @@ export interface ProjectWriteStorage extends ProjectStorage {
 
 `ProjectWriteStorage` 是提交器唯一允许使用的写入口。`stageText` 只能在 `change.commit` 已通过新鲜校验和冲突检查之后调用；它在目标文件同目录创建随机命名临时文件并回读 SHA，再逐文件原子替换。`stagedIdentity` 是仓储生成的不透明值，调用方不得传任意绝对路径。恢复 journal 必须记录每个文件的原 SHA、目标 SHA、临时文件身份、是否已替换和是否已恢复。`change.begin` 至 commit 调用前，项目目录内不得出现 staging 或任何其他写入。
 
-- [ ] **Step 4: 实现最小类型化 block 输入**
+- [x] **Step 4: 实现最小类型化 block 输入**
 
 ```ts
 export type SceneBlockInput =
@@ -564,11 +564,11 @@ export type ScenePatchOperation =
 
 `scene.create` 只接受合法场景 ID；`variable.ensure` 只写 `game.config.json.variables`，相同合同幂等，不同类型/初值返回 `OBJECT_PRECONDITION_FAILED`。
 
-- [ ] **Step 5: 实现提交检查和恢复**
+- [x] **Step 5: 实现提交检查和恢复**
 
 提交前必须：当前状态 OPEN、最新校验绑定当前修订且 error=0、重读所有受影响文件哈希。任何冲突将事务标记 STALE 且写入数为 0。替换过程中每一步更新 journal；成功后回读最终 SHA，才标记 COMMITTED。
 
-- [ ] **Step 6: 运行绿灯**
+- [x] **Step 6: 运行绿灯**
 
 ```powershell
 npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations.test.ts test/commit-recovery.test.ts
@@ -1371,3 +1371,18 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 提交后复核发现 `project-snapshot.ts` 与 `object-index.ts` 仍需要把类型直接收敛到公共 `contracts.ts`，避免依赖 Task 1 文件的类型重导出；已撤回 `scene-document.ts` 的非必要空行/出口改动，重新执行 Task 2 聚焦测试、typecheck、build，均 exit `0`。这两处纯类型导入修正属于 Task 2 白名单，当前待做一个不改写主提交的普通本地闭合提交。
 - 主提交后真实关系：`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`8 0`；`git diff --check` 和 `git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；tracked 工作树当前只剩上述两个 Task 2 类型导入修改，暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
 - 当前状态：`TASK_2_MAIN_COMMIT_RECORDED` / `TASK_2_TYPE_BOUNDARY_VERIFIED` / `TASK_2_CLOSURE_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存两个 Task 2 类型导入文件与本计划，创建普通本地闭合提交，然后进入 Task 3。
+
+### Task 2 — closure commit completed (2026-08-13 21:12 +08:00)
+
+- 已精确暂存并提交两个 Task 2 类型导入修正与本计划：`d4895fb179948fa684e6575aff1d2bf1b90b2166 fix(authoring): close project snapshot type boundary`。提交后立即回读 `git log --oneline -1`=`d4895fb fix(authoring): close project snapshot type boundary`、`git rev-parse HEAD`=`d4895fb179948fa684e6575aff1d2bf1b90b2166`；`git show --name-status HEAD` 仅为本计划、`src/object-index.ts`、`src/project-snapshot.ts`。
+- 提交后真实 Git 状态：`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`9 0`；tracked 工作树和暂存区为空；`git diff --check`、`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；既有未跟踪文件保持原样，未 push。
+- Task 2 最终停止状态：`TASK_2_COMPLETED_LOCALLY` / `PROJECT_REVISION_ORDER_STABLE` / `REVISION_SCOPED_OBJECT_REFS_VERIFIED` / `NOT_PUSHED`。下一停止点：Task 3 先建立原生隔离事务、operationId 幂等和恢复 journal 红灯。
+
+### Task 3 — Steps 1–6 completed; Step 7 pending commit (2026-08-13 21:16–21:21 +08:00)
+
+- 已先运行任务书规定的事务红灯：`npm run test -w @surdet/authoring -- test/change-session.test.ts test/operations.test.ts test/commit-recovery.test.ts` exit `1`；3 个测试文件因 `change-session.js`/`operations.js` 尚不存在而无法收集测试。红灯期间没有真实项目文件写入。
+- 已实现 `ChangeRecord`、`ChangeRepository`、`ProjectWriteStorage`、`ChangeSession`、内存仓储、`change.begin`/rollback/commit、operationId 幂等和负载冲突、`scene.create`、`scene.patch` 的类型化 block/精确指纹前置条件、`variable.ensure`、新鲜校验门槛、磁盘基线冲突检查、同目录 staging、逐文件 journal、原子替换和恢复失败停止。新增文件恢复使用可选 `removePath`，旧文件仍只通过 `restoreText` 恢复；没有引入任意路径、任意文本 patch 或第二套对象状态机。
+- Task 3 只修改 `packages/authoring/src/change-session.ts`、`src/operations.ts`、`src/contracts.ts`、`src/project-storage.ts`、`src/index.ts`，以及 `test/change-session.test.ts`、`test/operations.test.ts`、`test/commit-recovery.test.ts` 和本计划。测试全部使用内存/故障注入存储；没有修改、暂存或写入真实项目、Starter、《零点之后》或其他工作区。
+- 首次绿灯序列中 3 个文件/5 个测试已通过，但 typecheck/build 暴露 3 个本轮类型问题：`SceneDocumentLine` 应从公共合同导入、scene.create 草稿的可选 `sep` 需物化、`ensureVariable` 的布尔结果需显式泛型；均已做最小修正。随后按同一聚焦序列重跑：3 个文件/5 个测试 exit `0`；`npm run typecheck -w @surdet/authoring` exit `0`；`npm run build -w @surdet/authoring` exit `0`。
+- 故障注入事实：第二文件替换失败时第一文件恢复且返回 `COMMIT_FAILED_RECOVERED`；恢复再失败时事务变为 `STALE`，journal 保留并返回 `COMMIT_RECOVERY_FAILED`；operationId 相同负载重放不增加工作修订，不同负载返回 `OPERATION_ID_CONFLICT`。
+- 当前状态：`TASK_3_GREEN_LOCALLY` / `ISOLATED_WRITE_BEFORE_COMMIT_VERIFIED` / `ATOMIC_RECOVERY_BOUNDARY_VERIFIED` / `TASK_3_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 3 文件白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add isolated change transactions`。
