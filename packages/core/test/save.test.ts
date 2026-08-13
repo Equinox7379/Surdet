@@ -16,6 +16,28 @@ function makeSnap(overrides: Partial<SaveSnapshot> = {}): SaveSnapshot {
   };
 }
 
+class RecordingStorage implements SaveStorage {
+  readonly writes: Array<{ slot: string; data: SaveSnapshot }> = [];
+  #data = new Map<string, SaveSnapshot>();
+
+  async read(slot: string): Promise<SaveSnapshot | null> {
+    return this.#data.get(slot) ?? null;
+  }
+
+  async write(slot: string, data: SaveSnapshot): Promise<void> {
+    this.writes.push({ slot, data });
+    this.#data.set(slot, data);
+  }
+
+  async delete(slot: string): Promise<void> {
+    this.#data.delete(slot);
+  }
+
+  async list(): Promise<string[]> {
+    return [...this.#data.keys()];
+  }
+}
+
 describe('SaveManager', () => {
   it('JSON 安全校验接受 null，但拒绝 undefined 与非有限 number', () => {
     expect(isJsonSafeValue({ particleKind: null, nested: [null, 1, true] })).toBe(true);
@@ -95,6 +117,48 @@ describe('SaveManager', () => {
     await sm.save('s1', makeSnap());
     const metas = await sm.list();
     expect(metas.map((m) => m.id)).toEqual(['s1']);
+  });
+});
+
+describe('SaveManager 写入前校验', () => {
+  it('非 JSON 安全变量在触及存储后端前被拒绝', async () => {
+    const storage = new RecordingStorage();
+    const manager = new SaveManager(storage);
+    const invalid = makeSnap({
+      variables: { x: undefined } as unknown as SaveSnapshot['variables'],
+    });
+
+    await expect(manager.save('slot', invalid)).rejects.toThrow(/variables.*JSON 安全/);
+    expect(storage.writes).toEqual([]);
+  });
+
+  it('非法 gallery 结构不会覆盖既有有效槽位', async () => {
+    const storage = new MemoryStorage();
+    const manager = new SaveManager(storage);
+    await manager.save('slot', makeSnap({ variables: { x: 1 } }));
+    const before = await manager.load('slot');
+    const invalid = makeSnap({
+      variables: { x: 99 },
+      gallery: { cgs: [], music: [123] } as unknown as SaveSnapshot['gallery'],
+    });
+
+    await expect(manager.save('slot', invalid)).rejects.toThrow(/gallery\.cgs.*gallery\.music/);
+    expect(await manager.load('slot')).toEqual(before);
+  });
+
+  it('有效快照先盖章为 current schema 后才写入', async () => {
+    const storage = new RecordingStorage();
+    const manager = new SaveManager(storage);
+    const input = makeSnap({
+      meta: { id: 'wrong', createdAt: 0, updatedAt: 0, schemaVersion: 1 },
+    });
+
+    await manager.save('real-slot', input);
+    expect(storage.writes).toHaveLength(1);
+    expect(storage.writes[0]).toMatchObject({
+      slot: 'real-slot',
+      data: { meta: { id: 'real-slot', schemaVersion: 3 } },
+    });
   });
 });
 
