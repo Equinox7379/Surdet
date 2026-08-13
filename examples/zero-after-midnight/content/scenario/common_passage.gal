@@ -1,7 +1,9 @@
 @scene common_passage
 @label start
+@unlock_text common_passage
 @bg underground_passage
 @bgm underground_signal
+@unlock_music underground_signal
 @fadein 350
 @se fluorescent
 

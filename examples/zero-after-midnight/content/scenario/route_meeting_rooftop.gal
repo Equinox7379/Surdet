@@ -1,7 +1,9 @@
 @scene route_meeting_rooftop
 @label start
+@unlock_text route_meeting_rooftop
 @bg rooftop_rain
 @bgm ending_meeting
+@unlock_music ending_meeting
 @fadein 500
 @se wind
 

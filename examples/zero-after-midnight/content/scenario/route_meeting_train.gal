@@ -1,7 +1,9 @@
 @scene route_meeting_train
 @label start
+@unlock_text route_meeting_train
 @bg last_train
 @bgm last_train
+@unlock_music last_train
 @fadein 500
 @se subway_pass
 

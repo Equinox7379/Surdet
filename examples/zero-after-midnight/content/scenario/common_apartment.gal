@@ -1,7 +1,9 @@
 @scene common_apartment
 @label start
+@unlock_text common_apartment
 @bg old_apartment_corridor
 @bgm old_room
+@unlock_music old_room
 @fadein 350
 
 旧公寓的三楼没有声控灯。

@@ -1,7 +1,9 @@
 @scene common_convenience
 @label start
+@unlock_text common_convenience
 @bg convenience_exterior
 @bgm convenience_hum
+@unlock_music convenience_hum
 @fadein 350
 @se rain_window
 

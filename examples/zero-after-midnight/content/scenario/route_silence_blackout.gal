@@ -1,7 +1,9 @@
 @scene route_silence_blackout
 @label start
+@unlock_text route_silence_blackout
 @bg apartment_blackout
 @bgm blackout
+@unlock_music blackout
 @fadein 500
 @se power_cut
 

@@ -1,7 +1,9 @@
 @scene route_testimony_rooftop
 @label start
+@unlock_text route_testimony_rooftop
 @bg rooftop_rain
 @bgm ending_testimony
+@unlock_music ending_testimony
 @fadein 500
 @se wind
 

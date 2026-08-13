@@ -1,6 +1,8 @@
 @scene prologue
+@unlock_text prologue
 @bg apartment_night
 @bgm midnight_rain
+@unlock_music midnight_rain
 @fadein 600
 @se rain_window
 

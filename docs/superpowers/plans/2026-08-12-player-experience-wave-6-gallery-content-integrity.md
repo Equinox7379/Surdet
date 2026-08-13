@@ -895,19 +895,19 @@ The executor must update this section as work happens. Do not overwrite the plan
 - CLI proportional gates: `npm run test -w @surdet/cli` exit `0` (`8` files / `95` tests); `npm run typecheck -w @surdet/core` exit `0`; `npm run build -w @surdet/core` exit `0`; `npm run typecheck -w @surdet/cli` first exit `1` on optional `unknown` `src/label` narrowing, then exit `0` after the minimal explicit narrowing; `npm run build -w @surdet/cli` exit `0`.
 - Starter lint result: `npm run lint -w surdet-starter` exit `1`; the existing Starter Gallery declares music `tense_01`, but `examples/starter/content/assets/bgm` is absent and no matching BGM file exists. CG sources (`castle_hall`, `night_field`) and text scenes exist. This is a pre-existing invalid Starter declaration, not a linter false positive; no Starter exemption or edit was added.
 - Zero lint result before Task 2 (must be red because of real current configuration): `npm run lint -w zero-after-midnight` exit `1`; `12` errors covering Starter CG/music residue, missing `ch01_01`/`ch01_02` text scenes/labels, and all five configured entries lacking matching unlocks.
-- Commit SHA/message: to be filled with the real SHA immediately after the focused Task 1 commit; message `feat(cli): validate gallery content integrity`.
+- Commit SHA/message: `7d8b7fcadaabe45513b06d0927ce4512c33abe49` / `feat(cli): validate gallery content integrity`.
 - Changed paths: `packages/cli/src/gallery-config-lint.ts`, `packages/cli/src/lint.ts`, `packages/cli/test/gallery-config-lint.test.ts`, `packages/core/src/lint-hints.ts`, and this plan’s execution ledger only.
 
 ### Task 2 — Zero content repair
 
-- Exact `gallery.json` validation result:
-- Exact eleven text unlock sources:
-- Exact eleven music unlock sources:
-- Game contract test result:
-- Zero lint result after Task 2:
-- Zero simulate result:
-- Commit SHA/message:
-- Changed paths:
+- Exact `gallery.json` validation result: `cgs=[]`; music IDs exactly `midnight_rain`, `old_room`, `convenience_hum`, `underground_signal`, `investigation`, `last_train`, `ending_testimony`, `ending_meeting`, `blackout`, `ending_silence`; text IDs exactly `prologue`, `common_0017`, `common_apartment`, `common_convenience`, `common_passage`, `route_testimony_station`, `route_testimony_rooftop`, `route_meeting_train`, `route_meeting_rooftop`, `route_silence_blackout`, `route_silence_dawn`.
+- Exact eleven text unlock sources: `prologue.gal:2 @unlock_text prologue`; `common_0017.gal:3 @unlock_text common_0017`; `common_apartment.gal:3 @unlock_text common_apartment`; `common_convenience.gal:3 @unlock_text common_convenience`; `common_passage.gal:3 @unlock_text common_passage`; `route_testimony_station.gal:3 @unlock_text route_testimony_station`; `route_testimony_rooftop.gal:3 @unlock_text route_testimony_rooftop`; `route_meeting_train.gal:3 @unlock_text route_meeting_train`; `route_meeting_rooftop.gal:3 @unlock_text route_meeting_rooftop`; `route_silence_blackout.gal:3 @unlock_text route_silence_blackout`; `route_silence_dawn.gal:3 @unlock_text route_silence_dawn`.
+- Exact eleven music unlock sources: `prologue.gal:5 @unlock_music midnight_rain`; `common_0017.gal:6 @unlock_music midnight_rain`; `common_apartment.gal:6 @unlock_music old_room`; `common_convenience.gal:6 @unlock_music convenience_hum`; `common_passage.gal:6 @unlock_music underground_signal`; `route_testimony_station.gal:6 @unlock_music investigation`; `route_testimony_rooftop.gal:6 @unlock_music ending_testimony`; `route_meeting_train.gal:6 @unlock_music last_train`; `route_meeting_rooftop.gal:6 @unlock_music ending_meeting`; `route_silence_blackout.gal:6 @unlock_music blackout`; `route_silence_dawn.gal:6 @unlock_music ending_silence`. The duplicate `midnight_rain` source is intentional.
+- Game contract test result: red `npx vitest run test/gallery-content-contract.test.ts` exit `1` with `4` failed tests on the old declaration graph; same command after the approved declarative edits exit `0`, `1` file / `4` tests passed.
+- Zero lint result after Task 2: `npm run build -w @surdet/cli` exit `0`; `npm run lint -w zero-after-midnight` exit `0`; `11` scenes, `0` errors, `0` warnings.
+- Zero simulate result: `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000` exit `0`; `23/23` choice branches, `3` endings, `39` save/load smoke cycles, runtime errors `0`.
+- Commit SHA/message: to be filled with the real SHA immediately after the focused Task 2 commit; message `feat(zero): wire valid gallery content`.
+- Changed paths: `examples/zero-after-midnight/test/gallery-content-contract.test.ts`, `examples/zero-after-midnight/game.config.json`, `examples/zero-after-midnight/content/config/gallery.json`, and the eleven exact scenario files listed above. No assets or runtime code changed.
 
 ### Task 3 — verification and hand-off
 
