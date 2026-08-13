@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@surdet/authoring": "0.1.0",
     "@surdet/core": "0.1.0"
   }
 }

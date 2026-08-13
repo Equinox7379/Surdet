@@ -731,7 +731,7 @@ npm run typecheck -w @surdet/cli
 npm run typecheck -w surdet-editor
 ```
 
-- [ ] **Step 9: 更新 Execution Ledger 并提交**
+- [x] **Step 9: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -759,7 +759,7 @@ feat(authoring): add validation simulation and evidence
 - Consumes: 全部 14 项 authoring 公共能力。
 - Produces: 稳定 CLI 命令、单 JSON stdout、Node 存储和本机事务证据目录。
 
-- [ ] **Step 1: 写 CLI 合同红灯**
+- [x] **Step 1: 写 CLI 合同红灯**
 
 测试通过 spawn 构建后的 CLI，不直接 import 内部 service；至少断言：
 
@@ -775,7 +775,7 @@ expect(JSON.parse(result.stdout).result.capabilities).toHaveLength(14);
 
 错误路径必须 stdout 为错误信封，stderr 只在 `--debug` 出现内部堆栈。
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 ```powershell
 npm run build -w @surdet/core
@@ -786,7 +786,7 @@ npm run test -w @surdet/cli -- test/authoring-contract.test.ts
 
 Expected: FAIL；authoring 命令尚未注册。
 
-- [ ] **Step 3: 实现安全 NodeProjectStorage**
+- [x] **Step 3: 实现安全 NodeProjectStorage**
 
 要求：
 
@@ -806,7 +806,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
 
 所有路径使用 `realpath`、`path.resolve` 和 `path.relative` 验证仍在根目录；拒绝 `..`、绝对路径、junction/symlink 逃逸并返回 `PATH_OUTSIDE_PROJECT`。`stageText` 只在 commit 临界区于目标同目录创建 `.surdet-<changeId>-<nonce>.tmp`；提交成功或完整恢复成功后清理本次临时文件。恢复失败时立即停止写入，在项目外保留 journal、文件身份和失败 evidence，并在错误结果中列出尚存临时文件供人工处理，不得静默清理或继续尝试。
 
-- [ ] **Step 4: 实现 NodeChangeStore**
+- [x] **Step 4: 实现 NodeChangeStore**
 
 默认根目录：
 
@@ -816,7 +816,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
 
 仅测试允许通过 `SURDET_AGENT_DATA_DIR` 指向仓库外临时目录。每次 evidence 使用独立文件名，禁止固定 `latest.json` 覆盖失败证据。
 
-- [ ] **Step 5: 注册 14 项命令**
+- [x] **Step 5: 注册 14 项命令**
 
 先在 `@surdet/authoring` 定义并由 CLI 原样序列化统一信封：
 
@@ -879,11 +879,11 @@ surdet change rollback --change <id> --json
 
 写请求只接受 JSON 文件或 stdin，禁止把复杂剧情内容塞进 shell 参数。`capabilities.describe` 的能力列表和错误代码从真实注册表生成。
 
-- [ ] **Step 6: 建立红灯到绿灯 CLI 集成测试**
+- [x] **Step 6: 建立红灯到绿灯 CLI 集成测试**
 
 测试必须：开始事务 → 创建带坏标签的短章 → validate 返回 error/objectRef/action → 使用 `scene.patch` 修正 → validate 绿灯 → simulate `2/2` → diff → commit。提交前 fixture 文件 SHA 不变；提交后只预期文件变化。
 
-- [ ] **Step 7: 运行绿灯**
+- [x] **Step 7: 运行绿灯**
 
 ```powershell
 npm run test -w @surdet/cli -- test/authoring-contract.test.ts test/authoring-vertical-slice.test.ts
@@ -891,7 +891,7 @@ npm run typecheck -w @surdet/cli
 npm run build -w @surdet/cli
 ```
 
-- [ ] **Step 8: 更新 Execution Ledger 并提交**
+- [x] **Step 8: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -1404,3 +1404,20 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 本 Task 实际修改文件为：本计划；`packages/core/src/runtime/interpreter.ts`、`packages/core/test/interpreter-trace.test.ts`；`packages/authoring/src/index.ts`、`src/validation.ts`、`src/simulation.ts`、`src/evidence.ts`、`src/diff.ts`、`src/runtime-trace.ts` 及 4 份对应测试；`packages/cli/src/lint.ts`、`packages/cli/src/simulate.ts`；`packages/editor/src/validate.ts`。没有修改 Core 其他生产模块、Renderer、Host、Shell、Zero、Starter、长期路线台账或受保护文件；没有 artifact、日志、Electron 路径或人工验收。
 - Task 4 提交前新鲜 Git 事实：branch=`main`；`HEAD=132a5b3017988e3d49627537ec600f21bce72aa2`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`10 0`；tracked 工作树为本计划及上列 Task 4 文件，暂存区为空；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。既有未跟踪 `AGENTS.md`、受保护文件、handoff 和长期路线台账集合未触碰。
 - 当前状态：`TASK_4_GREEN_LOCALLY` / `RUNTIME_TRACE_READ_ONLY_VERIFIED` / `SHARED_VALIDATION_SIMULATION_AND_DIFF_VERIFIED` / `TASK_4_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本 Task 白名单与本计划，核对缓存 diff 后创建 `feat(authoring): add validation simulation and evidence` 普通本地提交；提交后立即回读真实 HEAD，再进入 Task 5。
+
+### Task 4 — Step 9 completed after commit (2026-08-13 21:40 +08:00)
+
+- 已按 Task 4 白名单精确暂存并通过 `git diff --cached --check`；`git diff --cached --name-status` 仅包含本计划、Task 4 authoring 模块/测试、Core trace、CLI lint/simulate 和 editor validate。已创建普通本地提交：`e1e3129c50a3db4a1cab2280e091b5529b81a4f7 feat(authoring): add validation simulation and evidence`。
+- 提交后立即真实回读：`git log --oneline -1`=`e1e3129 feat(authoring): add validation simulation and evidence`；`git rev-parse HEAD`=`e1e3129c50a3db4a1cab2280e091b5529b81a4f7`；`git show --name-status HEAD` 与上述 Task 4 白名单一致；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`11 0`。
+- 提交后 tracked 工作树和暂存区为空；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出；既有未跟踪受保护文件、handoff 和长期路线台账仍未触碰；未 push。
+- Task 4 最终状态：`TASK_4_COMPLETED_LOCALLY` / `RUNTIME_TRACE_READ_ONLY_VERIFIED` / `SHARED_VALIDATION_SIMULATION_AND_DIFF_VERIFIED` / `NOT_PUSHED`。本条台账记录尚未提交，将在 Task 5 只携带当前任务书进入下一次精确提交，不 amend、不改写 Task 4 提交。下一停止点：Task 5 先建立结构化 CLI/JSON 与跨进程事务目录红灯。
+
+### Task 5 — Steps 1–8 completed; commit pending (2026-08-13 21:50–21:56 +08:00)
+
+- 已先建立并实际运行 CLI 合同红灯：`npm run build -w @surdet/core` exit `0`、`npm run build -w @surdet/authoring` exit `0`、`npm run build -w @surdet/cli` exit `0`，随后 `npm run test -w @surdet/cli -- test/authoring-contract.test.ts` 首次 exit `1`。红灯实际为 1 个测试文件/2 个测试失败：`capabilities describe` 得到非零状态且错误信封为空，缺失原因是 authoring 命令尚未注册；错误输出未被改写成通过。
+- 已在 Task 5 白名单内完成最小实现：`packages/cli/src/authoring/node-project-storage.ts` 通过 realpath/path.resolve/path.relative 校验项目边界、拒绝 symlink/junction 逃逸、同目录随机暂存和安全替换；`packages/cli/src/authoring/node-change-store.ts` 将 transaction、working-files、独立 evidence、journal、diff 和 trace 保存在项目外事务目录；`packages/cli/src/authoring/authoring-service.ts` 以既有 authoring/Core 能力串接全部 14 项能力；`packages/cli/src/authoring-command.ts` 输出单一 JSON 信封、稳定错误代码和默认无 stderr 的调试边界；`packages/cli/src/index.ts` 注册固定命令前缀；CLI 包清单及 `package-lock.json` 增加 `@surdet/authoring` workspace 依赖。没有修改 `packages/authoring` 公共实现、Core、Renderer、Host、Shell、editor、Zero 或长期路线台账。
+- `npm install --package-lock-only --ignore-scripts` exit `0`；npm 报告的 audit warning 未触发本轮代码变更。红灯后的合同绿灯 `npm run build -w @surdet/cli` exit `0`、`npm run test -w @surdet/cli -- test/authoring-contract.test.ts` exit `0`，为 1 个文件/2 个测试通过；错误路径 stdout 为 `PROJECT_NOT_FOUND` 失败信封且默认 stderr 为空。
+- Task 5 垂直切片实际通过 `npm run test -w @surdet/cli -- test/authoring-contract.test.ts test/authoring-vertical-slice.test.ts`：2 个文件/3 个测试通过。spawn 的正式 CLI 实际完成 begin → variable.ensure → scene.create（坏跳转）→ validate 返回 J002/objectRef/action → scene.patch → validate 绿灯 → simulate `choiceBranches={total:2,visited:2}` → diff → commit；提交前临时项目文件保持原 SHA 且未产生 agent.gal，提交后仅预期 config 与新场景变化，原 prologue 不变。测试项目和 `SURDET_AGENT_DATA_DIR` 均为仓库外临时目录，没有写入真实项目。
+- 按 Task 5 Step 7 实际运行：`npm run typecheck -w @surdet/cli` exit `0`；`npm run build -w @surdet/cli` exit `0`。当前无 Electron artifact、人工验收或发行产物；本轮不运行聚合正式路径，下一 Task 仍按任务书另行建立自己的红灯。
+- 提交前新鲜 Git 事实：branch=`main`；`HEAD=e1e3129c50a3db4a1cab2280e091b5529b81a4f7`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`11 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划、Task 5 白名单中的 `package-lock.json`、CLI 包清单、CLI index 和四个新 authoring/测试文件；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
+- Task 5 当前状态：`TASK_5_GREEN_LOCALLY` / `CLI_JSON_CONTRACT_VERIFIED` / `CROSS_PROCESS_CHANGE_AND_COMMIT_VERIFIED` / `TASK_5_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本 Task 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(cli): expose agent authoring capabilities` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 6。

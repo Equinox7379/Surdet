@@ -12,6 +12,7 @@ import { cmdAudit } from './audit.js';
 import { cmdSimulate } from './simulate.js';
 import { cmdPack } from './pack.js';
 import { statsCommand } from './stats.js';
+import { authoringCommand } from './authoring-command.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,8 @@ const HELP = `Surdet Engine CLI v${VERSION}
       --web               同时产出 Web 试玩包信息（dist/ 可直接上传静态托管）
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
   surdet pack <dir>        打包指定游戏的 Windows exe（M7）
+  surdet capabilities describe --json
+  surdet project|object|change|scene|variable|runtime ... --json
 `;
 
 async function main(): Promise<number> {
@@ -69,6 +72,10 @@ async function main(): Promise<number> {
   }
 
   const cmd = args[0];
+
+  if (cmd !== undefined && ['capabilities', 'project', 'object', 'change', 'scene', 'variable', 'runtime'].includes(cmd)) {
+    return await authoringCommand(args);
+  }
 
   switch (cmd) {
     case 'new': {
