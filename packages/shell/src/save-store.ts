@@ -41,7 +41,6 @@ export class FileSaveStore {
   }
 
   list(): string[] {
-    if (!fs.existsSync(this.dir)) return [];
     return fs.readdirSync(this.dir)
       .filter((f) => f.endsWith('.json') && f !== INDEX_FILE && !f.endsWith('.tmp'))
       .map((f) => f.slice(0, -'.json'.length));
