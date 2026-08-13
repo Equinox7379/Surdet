@@ -122,7 +122,7 @@ staging area = empty
 - Consumes: 本计划第 0 节列出的权威文件。
 - Produces: 新鲜 Git/测试基线和本轮唯一有效 Execution Ledger 起点。
 
-- [ ] **Step 1: 完整读取权威文件和执行技能**
+- [x] **Step 1: 完整读取权威文件和执行技能**
 
 Run:
 
@@ -137,7 +137,7 @@ Get-Content -LiteralPath E:\surdet\docs\superpowers\plans\2026-08-13-agent-ready
 
 Expected: 六份文件均能完整读取；执行 AI 能复述当前唯一主题、禁止项和最终停止点。
 
-- [ ] **Step 2: 重新读取 Git 身份和现有修改归属**
+- [x] **Step 2: 重新读取 Git 身份和现有修改归属**
 
 Run:
 
@@ -155,7 +155,7 @@ git log -8 --oneline
 
 Expected: 记录真实结果，不要求必须等于计划编写基线；若出现未知 tracked 修改或暂存内容，停止并报告，不 reset/checkout/清理。
 
-- [ ] **Step 3: 重新建立 Stage 5 EOL 红灯**
+- [x] **Step 3: 重新建立 Stage 5 EOL 红灯**
 
 Run:
 
@@ -165,7 +165,7 @@ npm run test -w surdet-editor -- test/model-roundtrip.test.ts
 
 Expected before Task 1 implementation: exit `1`；只允许 `ch01_01.gal` 与 `ch02.gal` 的混合 EOL 逐字节断言失败。若失败集合不同，记录新鲜结果并在继续前判断相关性。
 
-- [ ] **Step 4: 在本计划末尾追加 Task 0 Execution Ledger**
+- [x] **Step 4: 在本计划末尾追加 Task 0 Execution Ledger**
 
 必须写入：时间、branch、HEAD、远端关系、tracked/未跟踪状态、Stage 5 红灯实际数量、实际运行命令、当前停止状态和下一步。不得修改长期路线台账。
 
@@ -1327,3 +1327,11 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 本计划依据真实仓库文件映射创建；生产实现尚未开始。
 - 计划规定执行 AI 不修改长期路线台账，不创建子 AI，不 push，不进入 Wave 2。
 - 下一步：项目所有者选择由现有执行 AI 按计划施工，或另行授权当前会话执行；任何执行均从 Task 0 重新核对真实基线开始。
+
+### Task 0 — Steps 1–4 completed; Step 5 pending commit (2026-08-13 20:56 +08:00)
+
+- 已按任务书完整读取六份权威文件，并已读取并遵守本轮可用的 Git、交付物磁盘核验和完成前验证规范。当前唯一主题为 Stage 6 Wave 1 外部 Agent 友好创作纵向切片；不创建子 AI、不并行施工、不修改长期路线台账，不进入 Wave 2，不邀请项目所有者人工验收。
+- Task 0 新鲜 Git 基线实际结果：branch=`main`；`HEAD=297fb92bc6ba1257c774dddfba753151508642ca`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；`HEAD...surdet/main=5 0`。tracked 工作树和暂存区均无修改；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。
+- `git status --short --untracked-files=all` 只列出既有未跟踪文件：`AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件、`docs/handoff-20260813-165825.md`、`docs/handoff-20260813-170533-general-manager.md` 和长期路线台账；没有未知 tracked 修改或暂存内容，本轮不触碰这些文件。
+- 已按任务书运行 `npm run test -w surdet-editor -- test/model-roundtrip.test.ts`，exit `1`。Vitest 实际为 1 个测试文件、6 个测试：4 passed、2 failed；失败仅为 `ch01_01.gal` 和 `ch02.gal` 的混合 CRLF/LF `parse → serialize` 逐字节断言，`ch01_02.gal`、`ch03_turn_event.gal` 及 CRLF 专项通过。红灯证据按原始命令输出保留；未重跑、未放宽、未删除。
+- 本 Task 0 截至本记录没有修改任何生产代码、测试、Starter、《零点之后》、Core/Renderer/Host/Shell、编辑器或 CLI 文件；当前实际修改文件仅本计划。当前状态：`TASK_0_BASELINE_RECORDED` / `STAGE_5_EOL_RED_REPRODUCED` / `TASK_0_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本计划，核对缓存 diff 后创建 `docs(authoring): record stage 6 wave 1 baseline` 普通本地提交。
