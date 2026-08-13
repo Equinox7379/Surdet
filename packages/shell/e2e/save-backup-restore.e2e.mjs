@@ -137,7 +137,7 @@ try {
   await waitForGameText();
 
   firstSavePosition = await page.evaluate(() => window.__surdetDebug.position);
-  await clickLogical(640, 360, 'right');
+  await clickTarget('rail:menu');
   await waitForOverlay('system-menu');
   await clickTarget('system:save');
   await waitForOverlay('save-load');
@@ -151,14 +151,14 @@ try {
   secondSavePosition = await page.evaluate(() => window.__surdetDebug.position);
   check(JSON.stringify(secondSavePosition) !== JSON.stringify(firstSavePosition), '第二次保存前剧情位置已变化');
 
-  await clickLogical(640, 360, 'right');
+  await clickTarget('rail:menu');
   await waitForOverlay('system-menu');
   await clickTarget('system:save');
   await waitForOverlay('save-load');
   await clickTarget('save-load:slot-1');
   await waitFor('覆盖保存完成并回到游戏', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
 
-  await clickLogical(640, 360, 'right');
+  await clickTarget('rail:menu');
   await waitForOverlay('system-menu');
   await clickTarget('system:load');
   await waitForOverlay('save-load');
