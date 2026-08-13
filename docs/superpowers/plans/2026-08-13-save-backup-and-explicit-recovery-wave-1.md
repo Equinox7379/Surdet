@@ -49,20 +49,20 @@
 
 ## Task 4：比例适当的综合验证
 
-- [ ] Core、Shell、Host、Renderer、Zero 聚焦测试。
-- [ ] Core、Shell、Host、Renderer、Zero typecheck/build。
-- [ ] `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000`。
-- [ ] 仅一次最小正式 Electron 路径：新游戏 → 推进 → 保存槽位 1 → 再推进 → 覆盖槽位 1 → 进入读档 → 点击“恢复备份并读取” → 验证回到第一次保存位置。
-- [ ] 不运行 verify:all、性能资格化、多轮 Electron 矩阵、pack 或发行。
-- [ ] `git diff --check`、`git ls-files '*.log'`。
+- [x] Core、Shell、Host、Renderer、Zero 聚焦测试（已有本轮任务证据：Core 28/28、Shell 24/24、Host 2/2、Renderer 28/28、Zero 32/32）。
+- [x] Core、Shell、Host、Renderer、Zero typecheck/build（本次复审又重建 5 个工作区，均 exit 0）。
+- [x] `npm run simulate -w zero-after-midnight -- --max-paths 500 --max-steps 20000`（已有本轮任务证据：23/23 choice 分支、3 结局、39 次 save/load、运行时错误 0）。
+- [x] 仅一次最小正式 Electron 路径：新游戏 → 推进 → 保存槽位 1 → 再推进 → 覆盖槽位 1 → 进入读档 → 点击“恢复备份并读取” → 验证回到第一次保存位置（runner 提交 `fc82f5cebcdfb84438d10a3b9b6616664e82ba49`，artifact `PASSED`）。
+- [x] 不运行 verify:all、性能资格化、多轮 Electron 矩阵、pack 或发行。
+- [x] `git diff --check`、`git ls-files '*.log'`。
 
 ## Task 5：报告、台账与停止
 
-- [ ] 创建 `docs/ENGINE-SAVE-BACKUP-AND-EXPLICIT-RECOVERY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`。
-- [ ] 更新本计划 Execution Ledger；长期路线台账只做事实更新，不暂存/提交。
-- [ ] 报告真实提交链、最终 HEAD、远端关系、工作树、备份按钮是否真实存在、`.bak` 是否仍不自动恢复、主档/index 失败行为、Electron 路径结果及未证明边界。
-- [ ] 重新读取报告/计划字节数和 SHA-256，精确暂存本报告与本计划，创建最后文档提交。
-- [ ] 停止：`WAITING_FOR_REVIEW`、`NOT_PUSHED`、`NOT_DEPLOYED`。
+- [x] 创建 `docs/ENGINE-SAVE-BACKUP-AND-EXPLICIT-RECOVERY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`。
+- [x] 更新本计划 Execution Ledger；长期路线台账只做事实更新，不暂存/提交。
+- [x] 报告真实提交链、最终 HEAD、远端关系、工作树、备份按钮是否真实存在、`.bak` 是否仍不自动恢复、主档/index 失败行为、Electron 路径结果及未证明边界。
+- [x] 重新读取报告/计划字节数和 SHA-256，精确暂存本报告与本计划，创建本轮最后文档提交（正式 Electron 自动化路径已通过；提交后仍等待总经理独立复审）。
+- [x] 停止：`WAITING_FOR_REVIEW`、`NOT_PUSHED`、`NOT_DEPLOYED`。
 
 ## Execution Ledger
 
@@ -104,16 +104,27 @@
 - 实现：SaveLoadView 增加 `backupAvailable`；MenuLayer 只在 load 页绘制“恢复备份并读取”并消费 pending 输入；RendererFacade 接通恢复事务；Zero 接线列出备份、显式恢复后复用正常 `completeLoadedSnapshot`；window bridge 类型已更新。
 - 普通提交：`86cc43c85d5f1d8178d1549563bec7a710bb68f5`（`feat(renderer): add explicit save backup action`）。
 
-### Task 4 — blocked
+### Task 4 — completed after limited harness advance fix
 
-- 预备门禁已完成：Core Save 28/28、Shell FileSaveStore 24/24、Host bridge 2/2、Renderer Menu 28/28、Zero 直接相关套件 32/32；Core/Shell/Host/Renderer/Zero typecheck/build 均 exit `0`；Zero simulate 为 23/23 choice 分支、3 结局、39 次 save/load、运行时错误 `0`。
-- 正式入口确为 `E:\surdet\examples\zero-after-midnight\dist`，独立 userData；四次临时证据均在菜单打开处阻断：`MTnBcf`（右键）、`EoNMHh`（命令栏鼠标）、`ayltGb`（Escape）、`Mu3tNU`（Escape + PlayerShell game/idle 等待）。四次均先验证窗口标题和标题→新游戏→可推进文本；均未进入保存/恢复阶段。
-- 四份失败 artifact 均保留在系统临时目录，状态均为 `FAILED`，错误数组全部为空；失败点均为等待 `activeOverlay === 'system-menu'` 超时。不能把这解释为产品恢复失败，也不能作为显式恢复玩家路径通过证据。
-- 为排除 runner 自身问题，新增了命令栏/键位/PlayerShell idle 等最小 harness 修正并分别普通提交；仍无法取得菜单呈现红/绿闭环后，按阻断规则停止，不再继续 Electron 试跑。
+- 预备门禁已完成：Core Save 28/28、Shell FileSaveStore 24/24、Host bridge 2/2、Renderer Menu 28/28、Zero 直接相关套件 32/32；既有 Zero simulate 证据为 23/23 choice 分支、3 结局、39 次 save/load、运行时错误 `0`。
+- 本轮只修改 `packages/shell/e2e/save-backup-restore.e2e.mjs`，复用 Wave 4 的最多 4 次真实输入、choice 键盘选择、公开 `sceneId:pc` 变化、PlayerShell idle 和 Renderer 非 typing 语义；没有修改 Core、Renderer、Host、Shell 生产代码或 Zero 生产代码。
+- `node --check packages/shell/e2e/save-backup-restore.e2e.mjs`、`git diff --check`、`npm run build -w @surdet/shell`、`npm run build -w zero-after-midnight` 均通过。
+- 精确暂存区只包含 runner；普通本地提交为 `fc82f5cebcdfb84438d10a3b9b6616664e82ba49`（`test(shell): use semantic advance for backup restore e2e`）。
+- 提交后只运行一次正式 Electron 路径：正式 dist 为 `E:\surdet\examples\zero-after-midnight\dist`，独立临时 userData，资源 `48/48` 完成，恢复按钮公开目标可见并命中，所有错误通道为空。
+- 新鲜 artifact：`C:\Users\Equinox\AppData\Local\Temp\surdet-save-backup-restore-l5qflh\save-backup-restore.json`，`1,097` bytes，SHA-256 `D078476A7379FDFBD80F7147DAABFD8D7BB54068837CB07704B94D9385BC692F`，`status=PASSED`，`runHead=fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
+- 有效位置证据：第一次保存 `prologue:7`，覆盖前第二位置 `prologue:8`，恢复后 `prologue:7`；恢复后位置与覆盖前不同。当前正式路径状态为 `FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED`，仍需总经理独立复审后决定是否进入部署人工验收。
 
-### Task 5 — completed (blocked delivery closure)
+### Task 5 — completed (verified delivery closure)
 
-- 已生成阻断交付报告，保留已通过的 Core/Shell/Host/Renderer/Zero 单元/构建/模拟证据，明确显式恢复的正式 Electron 路径尚未验证。
-- 报告当前磁盘字节数 `9184`，SHA-256 `460BC7B3BBEF10F3AB55FDC867C7ECE1FE8E82A19098B382F2BD8E859805C540`；计划当前磁盘字节数 `10113`，SHA-256 `70C426E502580CD5D7942A549599FC8DF6A883C9C5F55BE53F404FD89025221A`。
-- `git diff --check` exit `0`；`git ls-files '*.log'` 为空；长期路线台账仍未暂存/提交。文档收口提交只允许包含本报告和本计划，创建后在最终回复记录真实 SHA。
+- 已按新鲜正式路径结果更新本计划与交付报告：菜单入口和推进语义均已取得有效证据，明确区分代码提交 HEAD 与 artifact `runHead`。
+- 报告/计划的最新字节数和 SHA-256 将在所有编辑完成后从磁盘重新读取；`DOCUMENT_CLOSURE_HEAD` 只在本轮文档提交后通过 `git rev-parse HEAD` 读取，不在提交前伪填。长期路线台账继续未跟踪、未暂存、未提交。
+- `git diff --check` exit `0`；`git ls-files '*.log'` 为空；本轮文档提交只允许包含本计划与交付报告，不 push、不部署、不发行。
 - 停止：`WAITING_FOR_REVIEW`、`NOT_PUSHED`、`NOT_DEPLOYED`；不进入下一主题。
+
+### Manager review — conditionally approved, limited harness follow-up authorized
+
+- 2026-08-13 17:22，总经理独立核对真实 `HEAD`、远端关系、工作树、runner/计划/报告 diff、新鲜 artifact 及历史 artifact 的磁盘字节数和 SHA-256；报告中的 `FAILED` 状态、`runHead`、资源 `48/48`、错误通道为空和三个位置均为 `prologue:7` 与磁盘一致。
+- 新鲜复核：`node --check packages/shell/e2e/save-backup-restore.e2e.mjs` exit `0`；`git diff --check` exit `0`；本轮未重新运行 Electron，也未重复五工作区构建。
+- 复审结论：**有条件批准本轮菜单入口/资源等待/双帧呈现/运行时 HEAD harness 修正；不批准 Stage 3 正式 Electron 路径通过。** 当前失败仍属于推进语义证据缺口，不能归因为生产恢复逻辑失败。
+- 当前唯一授权后续：只修改 `packages/shell/e2e/save-backup-restore.e2e.mjs`，复用 Wave 4 的“最多四次真实键盘输入，直到公开剧情位置变化”语义；完成必要语法检查与 Shell/Zero 构建后，只运行一次完整恢复路径。禁止修改生产逻辑、扩大范围、循环挑绿、部署、push 或进入下一阶段。
+- 当前状态：`MANAGER_REVIEW_CONDITIONALLY_APPROVED` / `LIMITED_HARNESS_ADVANCE_FIX_AUTHORIZED` / `NOT_PUSHED` / `NOT_DEPLOYED` / `STAGE_4_NOT_STARTED`。
