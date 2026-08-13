@@ -59,10 +59,10 @@
 ## Task 5：报告、台账与停止
 
 - [x] 创建 `docs/ENGINE-SAVE-BACKUP-AND-EXPLICIT-RECOVERY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`。
-- [x] 更新本计划 Execution Ledger；长期路线台账只做事实更新，不暂存/提交。
+- [x] 更新本计划 Execution Ledger；长期路线台账本轮只读，不编辑、不暂存、不提交。
 - [x] 报告真实提交链、最终 HEAD、远端关系、工作树、备份按钮是否真实存在、`.bak` 是否仍不自动恢复、主档/index 失败行为、Electron 路径结果及未证明边界。
 - [x] 重新读取报告/计划字节数和 SHA-256，精确暂存本报告与本计划，创建本轮最后文档提交（正式 Electron 自动化路径已通过；提交后仍等待总经理独立复审）。
-- [x] 停止：`WAITING_FOR_REVIEW`、`NOT_PUSHED`、`NOT_DEPLOYED`。
+- [x] 停止：`FORMAL_ELECTRON_SAVE_RESTORE_REPORTED_AS_VERIFIED`、`WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`、`HUMAN_ACCEPTANCE_NOT_STARTED`、`NOT_PUSHED`、`NOT_DEPLOYED`、`STAGE_4_NOT_STARTED`。
 
 ## Execution Ledger
 
@@ -114,17 +114,19 @@
 - 新鲜 artifact：`<local-path>`，`1,097` bytes，SHA-256 `D078476A7379FDFBD80F7147DAABFD8D7BB54068837CB07704B94D9385BC692F`，`status=PASSED`，`runHead=fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
 - 有效位置证据：第一次保存 `prologue:7`，覆盖前第二位置 `prologue:8`，恢复后 `prologue:7`；恢复后位置与覆盖前不同。当前正式路径状态为 `FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED`，仍需总经理独立复审后决定是否进入部署人工验收。
 
-### Task 5 — completed (verified delivery closure)
+### Task 5 — completed (verified delivery closure; final governance wording)
 
 - 已按新鲜正式路径结果更新本计划与交付报告：菜单入口和推进语义均已取得有效证据，明确区分代码提交 HEAD 与 artifact `runHead`。
-- 报告/计划的最新字节数和 SHA-256 将在所有编辑完成后从磁盘重新读取；`DOCUMENT_CLOSURE_HEAD` 只在本轮文档提交后通过 `git rev-parse HEAD` 读取，不在提交前伪填。长期路线台账继续未跟踪、未暂存、未提交。
-- `git diff --check` exit `0`；`git ls-files '*.log'` 为空；本轮文档提交只允许包含本计划与交付报告，不 push、不部署、不发行。
-- 停止：`WAITING_FOR_REVIEW`、`NOT_PUSHED`、`NOT_DEPLOYED`；不进入下一主题。
+- `CODE_EVIDENCE_HEAD=fc82f5cebcdfb84438d10a3b9b6616664e82ba49`；`ARTIFACT_HEAD=fc82f5cebcdfb84438d10a3b9b6616664e82ba49`；artifact `status=PASSED`，位置为 `prologue:7 → prologue:8 → prologue:7`，错误通道全部为空。
+- 文档收口提交后的真实 `DOCUMENT_CLOSURE_HEAD` 必须以提交后立即执行的 `git rev-parse HEAD` 为准，不在提交前伪填；本轮长期路线台账保持只读、未跟踪、未暂存、未提交。
+- `git diff --check` exit `0`；`git ls-files '*.log'` 为空；文档暂存区只允许包含本计划与交付报告，不 push、不部署、不发行。
+- 停止：`FORMAL_ELECTRON_SAVE_RESTORE_REPORTED_AS_VERIFIED`、`WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`、`HUMAN_ACCEPTANCE_NOT_STARTED`、`NOT_PUSHED`、`NOT_DEPLOYED`、`STAGE_4_NOT_STARTED`；不进入下一主题。
 
-### Manager review — conditionally approved, limited harness follow-up authorized
+### Manager review — historical pre-fix conditional approval and limited harness authorization
 
-- 2026-08-13 17:22，总经理独立核对真实 `HEAD`、远端关系、工作树、runner/计划/报告 diff、新鲜 artifact 及历史 artifact 的磁盘字节数和 SHA-256；报告中的 `FAILED` 状态、`runHead`、资源 `48/48`、错误通道为空和三个位置均为 `prologue:7` 与磁盘一致。
+- 以下内容是 2026-08-13 17:22 的修复前历史状态，已被后续 `fc82f5cebcdfb84438d10a3b9b6616664e82ba49` runner 提交及一次有效正式 Electron 路径 supersede；不得当作当前阻断状态。
+- 当时总经理独立核对真实 `HEAD`、远端关系、工作树、runner/计划/报告 diff、新鲜 artifact 及历史 artifact 的磁盘字节数和 SHA-256；报告中的 `FAILED` 状态、`runHead`、资源 `48/48`、错误通道为空和三个位置均为 `prologue:7` 与磁盘一致。
 - 新鲜复核：`node --check packages/shell/e2e/save-backup-restore.e2e.mjs` exit `0`；`git diff --check` exit `0`；本轮未重新运行 Electron，也未重复五工作区构建。
 - 复审结论：**有条件批准本轮菜单入口/资源等待/双帧呈现/运行时 HEAD harness 修正；不批准 Stage 3 正式 Electron 路径通过。** 当前失败仍属于推进语义证据缺口，不能归因为生产恢复逻辑失败。
 - 当前唯一授权后续：只修改 `packages/shell/e2e/save-backup-restore.e2e.mjs`，复用 Wave 4 的“最多四次真实键盘输入，直到公开剧情位置变化”语义；完成必要语法检查与 Shell/Zero 构建后，只运行一次完整恢复路径。禁止修改生产逻辑、扩大范围、循环挑绿、部署、push 或进入下一阶段。
-- 当前状态：`MANAGER_REVIEW_CONDITIONALLY_APPROVED` / `LIMITED_HARNESS_ADVANCE_FIX_AUTHORIZED` / `NOT_PUSHED` / `NOT_DEPLOYED` / `STAGE_4_NOT_STARTED`。
+- 历史状态：`MANAGER_REVIEW_CONDITIONALLY_APPROVED` / `LIMITED_HARNESS_ADVANCE_FIX_AUTHORIZED` / `FORMAL_ELECTRON_SAVE_RESTORE_BLOCKED_BY_HARNESS_ADVANCE_SEMANTICS` / `NOT_PUSHED` / `NOT_DEPLOYED` / `STAGE_4_NOT_STARTED`。
