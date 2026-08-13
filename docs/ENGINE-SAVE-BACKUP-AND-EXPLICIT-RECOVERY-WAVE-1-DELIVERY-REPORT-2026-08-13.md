@@ -1,6 +1,6 @@
 # Surdet 存档备份与显式恢复 Wave 1 交付报告
 
-状态：`FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED` / `WAITING_FOR_REVIEW` / `NOT_PUSHED` / `NOT_DEPLOYED`
+状态：`FORMAL_ELECTRON_SAVE_RESTORE_REPORTED_AS_VERIFIED` / `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW` / `HUMAN_ACCEPTANCE_NOT_STARTED` / `NOT_PUSHED` / `NOT_DEPLOYED` / `STAGE_4_NOT_STARTED`
 
 本轮属于路线台账的“阶段 3：存档、备份与显式恢复边界”。本报告只记录已经从磁盘和命令输出重新核对的事实。独立复审后，本轮唯一一次正式 Electron 路径已证明第一次保存位置、不同的覆盖前位置、真实恢复动作以及恢复回第一次位置；这证明了自动化玩家路径，但不等于项目所有者人工视觉、声音或手感验收通过。
 
@@ -71,7 +71,7 @@ Task 0 真实起点：
 - `CODE_EVIDENCE_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`
 - `ARTIFACT_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`
 - 两者一致；artifact 的 `runHead` 来自 runner 运行时执行的 `git rev-parse HEAD`。
-- `DOCUMENT_CLOSURE_HEAD`：由本报告与任务计划共同产生的本轮文档提交 HEAD；提交后必须立即通过 `git rev-parse HEAD` 重新读取，最终值登记在长期路线台账和本轮最终回执中，不在提交前伪填。
+- `DOCUMENT_CLOSURE_HEAD`：由本报告与任务计划共同产生的本轮文档提交 HEAD；提交后必须立即通过 `git rev-parse HEAD` 重新读取，并在本轮最终回执中报告真实值。长期路线台账对执行 AI 只读，不在其中登记。
 
 ### 4.2 有效路径条件
 
@@ -151,7 +151,7 @@ artifact：`C:\Users\Equinox\AppData\Local\Temp\surdet-save-backup-restore-l5qfl
 - 是否进入 M9：否。
 - `CODE_EVIDENCE_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
 - `ARTIFACT_HEAD`：`fc82f5cebcdfb84438d10a3b9b6616664e82ba49`。
-- `DOCUMENT_CLOSURE_HEAD`：本轮计划与报告共同产生的文档提交 HEAD；提交后按命令重新读取，并登记在长期路线台账和本轮最终回执中。
+- `DOCUMENT_CLOSURE_HEAD`：本轮计划与报告共同产生的文档提交 HEAD；提交后按命令重新读取，并在本轮最终回执中报告真实值。长期路线台账对执行 AI 只读，不在其中登记。
 
 最终状态：
 
@@ -161,11 +161,26 @@ CORE_BACKUP_CONTRACT_VERIFIED
 SHELL_EXPLICIT_RESTORE_VERIFIED
 RENDERER_BACKUP_ACTION_VERIFIED
 ZERO_EXPLICIT_RECOVERY_VERIFIED
-FORMAL_ELECTRON_SAVE_RESTORE_VERIFIED
+FORMAL_ELECTRON_SAVE_RESTORE_REPORTED_AS_VERIFIED
 AUDIO_PRODUCTION_DEFERRED
 PERFORMANCE_WORK_DEFERRED
 M9_NOT_STARTED
 NOT_PUSHED
 NOT_DEPLOYED
-WAITING_FOR_REVIEW
+WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
+STAGE_4_NOT_STARTED
 ```
+
+## 建议由总经理登记的事实
+
+以下仅列出建议总经理在独立复审后登记的客观事实，不替总经理作阶段批准、部署或路线裁决：
+
+- 时间：2026-08-13；本轮唯一正式 Electron 自动化路径已运行一次并保留 artifact。
+- runner 提交：`CODE_EVIDENCE_HEAD=fc82f5cebcdfb84438d10a3b9b6616664e82ba49`，提交信息为 `test(shell): use semantic advance for backup restore e2e`；该提交只包含 `packages/shell/e2e/save-backup-restore.e2e.mjs`。
+- artifact：`C:\Users\Equinox\AppData\Local\Temp\surdet-save-backup-restore-l5qflh\save-backup-restore.json`；磁盘实测 `1,097` bytes；SHA-256 `D078476A7379FDFBD80F7147DAABFD8D7BB54068837CB07704B94D9385BC692F`；`status=PASSED`；`runHead` 与 `CODE_EVIDENCE_HEAD` 一致。
+- 自动化位置证据：`firstSavePosition=prologue:7`、`secondSavePosition=prologue:8`、`restoredPosition=prologue:7`；恢复后位置与覆盖前位置不同。
+- 资源与错误通道：资源 `48/48`、`failed=0`、`backupRestoreTargetVisible=true`；`pageErrors`、`consoleErrors`、`requestFailures`、`unhandledRejections`、`rendererErrors`、`releaseFailures`、`failures` 全部为空数组。
+- 人工验收：尚未进行；视觉、声音和操作手感尚未由项目所有者确认。
+- Git 与外部动作：`DOCUMENT_CLOSURE_HEAD` 以文档提交后真实 `git rev-parse HEAD` 为准；未 push、未部署、未打包、未发行；阶段 4 未开始。
+- 建议下一步：由总经理独立复审提交、diff、命令证据和 artifact；如需人工 11 步验收，应先由总经理另行明确部署授权，执行 AI 不自动部署。
