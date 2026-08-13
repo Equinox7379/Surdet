@@ -48,6 +48,29 @@ describe('typed authoring operations', () => {
     expect(await storage.exists('content/scenario/branch_a.gal')).toBe(false);
   });
 
+  it('serializes typed choice effects as instructions after the arrow', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await ensureVariable(change, { operationId: 'op-choice-variable', name: 'trust', type: 'number', initial: 0 });
+    await applySceneCreate(change, {
+      operationId: 'op-choice-scene',
+      sceneId: 'choice_effects',
+      blocks: [{
+        kind: 'choice',
+        options: [
+          { label: '路径 A', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'path_a' } },
+          { label: '路径 B', effects: [{ name: 'set', args: ['trust', '=', '-1'] }], target: { kind: 'goto', value: 'path_b' } },
+        ],
+      }],
+    });
+
+    const raw = change.record.workingFiles['content/scenario/choice_effects.gal'];
+    expect(raw).toContain('  路径 A -> @set trust = 1 @goto path_a');
+    expect(raw).toContain('  路径 B -> @set trust = -1 @goto path_b');
+    expect(raw).not.toContain('  路径 A @set trust = 1 -> @goto path_a');
+    expect(raw).not.toContain('  路径 B @set trust = -1 -> @goto path_b');
+  });
+
   it('requires an exact fingerprint for scene patches', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const change = await beginChange(snapshot, new InMemoryChangeRepository());

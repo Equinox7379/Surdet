@@ -23,10 +23,11 @@ function scenePath(sceneId: string): string {
 function renderChoiceOption(option: Extract<SceneBlockInput, { kind: 'choice' }>['options'][number]): string {
   let raw = `  ${option.label}`;
   if (option.when !== undefined) raw += ` [if:${option.when}]`;
+  raw += ' ->';
   for (const effect of option.effects ?? []) {
     raw += ` @${effect.name}${effect.args.length > 0 ? ` ${effect.args.join(' ')}` : ''}`;
   }
-  raw += ` -> @${option.target.kind} ${option.target.value}`;
+  raw += ` @${option.target.kind} ${option.target.value}`;
   return raw;
 }
 
