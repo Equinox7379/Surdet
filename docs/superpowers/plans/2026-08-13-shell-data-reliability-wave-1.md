@@ -186,13 +186,17 @@ Only touch a file below when a red test proves the need:
   - `npm run build -w zero-after-midnight` → exit `0` (Vite emitted only its existing chunk-size warning).
 - `npm run verify:hygiene` → exit `0` (`644` tracked paths).
 - Renderer boundary/legacy checks were not required because no Renderer file changed. No Electron smoke, `verify:all`, performance qualification, or large Electron matrix was run; no desktop bridge source (`main.ts`/`preload.ts`) changed.
-- Task 4 final pre-report checks remain to be recorded after the report/ledger are finalized: `git status --short`, `git diff --check`, `git ls-files '*.log'`, `git rev-parse HEAD`, and `git rev-list --left-right --count HEAD...surdet/main`.
+- Final post-report checks after the first document closure commit were recorded as: `git status --short` containing only the five protected files and the untracked long-term roadmap ledger; `git diff --check` exit `0`; `git ls-files '*.log'` empty; `git rev-parse HEAD` `89cb61a1c6ea7f34c481e4bd29844fa25a9005cf`; and `git rev-list --left-right --count HEAD...surdet/main` `8 0`.
 
-### Task 5 — delivery report and ledger (in progress)
+### Task 5 — delivery report and ledger (completed)
 
 - Delivery report created at `E:\surdet\docs\ENGINE-SHELL-DATA-RELIABILITY-WAVE-1-DELIVERY-REPORT-2026-08-13.md`.
 - Independent disk re-read before the final ledger append:
   - report bytes: `10754`;
   - report SHA-256: `476DB8F6126440E3F66FEDFB77B74A88FCBF870EB210C4344FB8BA1E097CD2A2`.
-- Plan metadata before this Task 5 ledger append was `19461` bytes / `E258EBCC676F977D5B6FA6C72C99260BB25543F82B8A23523FE0FB9F59C14DA4`; final plan metadata will be re-read after the append and after the document-only commit.
-- Only the delivery report and this Wave 1 plan may be staged for the document closure commit. The roadmap ledger and protected files remain untracked and untouched.
+- Plan metadata before this Task 5 ledger append was `19461` bytes / `E258EBCC676F977D5B6FA6C72C99260BB25543F82B8A23523FE0FB9F59C14DA4`; after the first document closure commit it was independently re-read as `20199` bytes / `12BACD13F87C5ECF87ACF7060CA5FD415A106AD1D9497B8FD1EBEC7375733EFA`.
+- The first document closure commit was:
+  - `89cb61a1c6ea7f34c481e4bd29844fa25a9005cf`
+  - `docs(host): record shell data reliability wave`
+- Only the delivery report and this Wave 1 plan were staged in that document commit. The roadmap ledger and protected files remain untracked and untouched.
+- The final ledger wording correction is this plan-only normal commit; its real SHA and resulting final HEAD are recorded by the final read-only handoff. No source file, report content, roadmap ledger, or protected file is changed by that correction.
