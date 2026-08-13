@@ -1,7 +1,9 @@
 @scene route_silence_dawn
 @label start
+@unlock_text route_silence_dawn
 @bg dawn_street
 @bgm ending_silence
+@unlock_music ending_silence
 @fadein 700
 @se city_morning
 

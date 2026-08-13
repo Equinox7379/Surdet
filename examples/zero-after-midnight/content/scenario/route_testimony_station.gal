@@ -1,7 +1,9 @@
 @scene route_testimony_station
 @label start
+@unlock_text route_testimony_station
 @bg police_archive
 @bgm investigation
+@unlock_music investigation
 @fadein 500
 @se scanner
 

@@ -1,13 +1,28 @@
 {
-  "cgs": [
-    { "id": "cg_hall", "name": "大厅重逢", "src": "castle_hall" },
-    { "id": "cg_field", "name": "夜路同行", "src": "night_field" }
-  ],
+  "cgs": [],
   "music": [
-    { "id": "tense_01", "name": "紧张时刻", "src": "tense_01" }
+    { "id": "midnight_rain", "name": "午夜雨声", "src": "midnight_rain" },
+    { "id": "old_room", "name": "旧屋", "src": "old_room" },
+    { "id": "convenience_hum", "name": "便利店白噪", "src": "convenience_hum" },
+    { "id": "underground_signal", "name": "地下信号", "src": "underground_signal" },
+    { "id": "investigation", "name": "调查记录", "src": "investigation" },
+    { "id": "last_train", "name": "末班列车", "src": "last_train" },
+    { "id": "ending_testimony", "name": "证词", "src": "ending_testimony" },
+    { "id": "ending_meeting", "name": "会面", "src": "ending_meeting" },
+    { "id": "blackout", "name": "断电", "src": "blackout" },
+    { "id": "ending_silence", "name": "沉默", "src": "ending_silence" }
   ],
   "texts": [
-    { "id": "t_first", "name": "大厅初遇", "scene": "ch01_01", "label": "start" },
-    { "id": "t_night", "name": "夜路同行", "scene": "ch01_02", "label": "start" }
+    { "id": "prologue", "name": "午夜来电", "scene": "prologue" },
+    { "id": "common_0017", "name": "红色笔记", "scene": "common_0017", "label": "start" },
+    { "id": "common_apartment", "name": "旧公寓", "scene": "common_apartment", "label": "start" },
+    { "id": "common_convenience", "name": "雨夜便利店", "scene": "common_convenience", "label": "start" },
+    { "id": "common_passage", "name": "地下通道", "scene": "common_passage", "label": "start" },
+    { "id": "route_testimony_station", "name": "档案室", "scene": "route_testimony_station", "label": "start" },
+    { "id": "route_testimony_rooftop", "name": "屋顶的证词", "scene": "route_testimony_rooftop", "label": "start" },
+    { "id": "route_meeting_train", "name": "末班列车", "scene": "route_meeting_train", "label": "start" },
+    { "id": "route_meeting_rooftop", "name": "雨夜屋顶", "scene": "route_meeting_rooftop", "label": "start" },
+    { "id": "route_silence_blackout", "name": "停电的房间", "scene": "route_silence_blackout", "label": "start" },
+    { "id": "route_silence_dawn", "name": "黎明街道", "scene": "route_silence_dawn", "label": "start" }
   ]
 }

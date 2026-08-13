@@ -1,7 +1,9 @@
 @scene common_0017
 @label start
+@unlock_text common_0017
 @bg apartment_night
 @bgm midnight_rain
+@unlock_music midnight_rain
 @fadein 500
 
 雨从窗外一直涌进来。
