@@ -31,6 +31,31 @@ NOT_PUSHED
 STAGE_6_WAVE_2_NOT_STARTED
 ```
 
+## 9. 项目所有者人工验收与因果桥最小修复（2026-08-14 03:01–03:13）
+
+项目所有者使用真实 Chrome/Edge、编辑器根地址和桌面隔离 fixture 完成了 Stage 6 Wave 1 人工路径。项目打开、双场景、`.gal` 无持久 UUID 污染、真实键盘路径 A、真实鼠标路径 B、不同可见后续台词、手工编辑、未保存内存预览、保存及刷新重开均通过；保存后的 `ch01_01.gal` 为 `290` bytes、SHA-256=`C0ED835EDA4ADA19C123FFEB08E3DD9C9695C734924CC33DB9E7995AE1C761B6`，`[STAGE6-OWNER-PROBE]` 在磁盘中存在。
+
+人工验收发现两个阻断：choice-option 因果区只显示裸 revision-scoped objectRef，没有 `trust` 与 `path_a/path_b` 直接关系；点击任意因果轨迹事件均不切回块编辑。独立根因分别为共享 object-index 只识别箭头后立即出现的 goto/jump、漏掉 choice effects，以及 preview 在 document 发事件而 main 在 window 监听。
+
+经项目所有者授权，本轮最小修复：
+
+- `@surdet/authoring` object-index 复用 Core `parseInlineInstructions`，从真实 choice option 同时索引变量 effect 与最终 goto/jump；
+- editor 因果区新增“当前对象”、人类可读标题、来源行和可读直接引用，objectRef 降为次要身份信息；
+- preview 与 main 共用唯一轨迹选择事件桥，不再分别绑定 document/window；
+- 新增 authoring choice relationships 及 editor 事件桥/人类说明聚焦合同。
+
+真实红灯：authoring object-index 新断言得到 `references=[]`；editor 事件桥和可读说明函数不存在，两条测试失败。修复后聚焦验证为：authoring 3 files / 6 tests、editor 3 files / 7 tests 全部通过；两个工作区 typecheck/build 均 exit=`0`。使用修复后共享 dist 对真实桌面 fixture 建索引得到路径 A `[variable:trust,label:ch01_01.path_a]`、路径 B `[variable:trust,label:ch01_01.path_b]`。新 editor build 已由保留中的 4173 服务提供，根页面 HTTP `200`、标题“Surdet 剧本编辑器”、bundle=`assets/main-CsqBD9ql.js`。
+
+本轮没有重跑 FORMAL/DIAGNOSTIC、`verify:all`、Electron 或性能矩阵；既有 FORMAL 与此前通过的人工作者路径仍有效。当前不宣布整轮人工验收通过，只等待项目所有者复测原失败的三点：当前对象/直接关系显示、路径 A/B 的 `trust + path_*` 关系，以及点击轨迹事件切回块编辑定位对象。
+
+```text
+STAGE_6_CAUSAL_BRIDGE_FIX_IMPLEMENTED
+FOCUSED_TESTS_TYPECHECK_BUILDS_PASSED
+HUMAN_CAUSAL_BRIDGE_RETEST_PENDING
+NOT_PUSHED
+STAGE_6_WAVE_2_NOT_STARTED
+```
+
 ## 10. Post-commit closure for shared simulation path evidence
 
 本轮四个 authoring/CLI 源码与测试文件、当前 Stage 6 Wave 1 任务书和本交付报告已精确暂存并创建普通本地提交。提交后立即回读：

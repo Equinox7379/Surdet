@@ -9,7 +9,11 @@ import { parseScript } from '../model.js';
 import type { EvidenceEnvelope, RuntimeTraceEvent } from '@surdet/authoring';
 import type { FontRole } from '@surdet/renderer';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
-import { locateObjectForTraceEvent, type CausalTraceEvent } from '../causal-selection.js';
+import {
+  dispatchPreviewTraceSelection,
+  locateObjectForTraceEvent,
+  type CausalTraceEvent,
+} from '../causal-selection.js';
 
 /** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
 let previewReadyListenerBound = false;
@@ -428,9 +432,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
       button.onclick = () => {
         state.selectedTraceStep = message.sequence;
         state.selectedObjectRef = ref;
-        document.dispatchEvent(new CustomEvent('surdet-preview-trace-select', {
-          detail: { event: message.event, objectRef: ref, sequence: message.sequence },
-        }));
+        dispatchPreviewTraceSelection({ event: message.event, objectRef: ref, sequence: message.sequence });
         renderTraceList();
       };
       traceList.appendChild(button);

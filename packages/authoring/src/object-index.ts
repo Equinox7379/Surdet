@@ -1,3 +1,4 @@
+import { parseInlineInstructions } from '@surdet/core';
 import { splitInstruction } from './scene-document.js';
 import type { AuthoringObject } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
@@ -44,7 +45,52 @@ function addObject(objects: AuthoringObject[], object: AuthoringObject, candidat
 }
 
 function addReferenceCandidate(candidates: Map<string, string[]>, objectRef: string, target: string): void {
-  candidates.get(objectRef)?.push(target);
+  const current = candidates.get(objectRef);
+  if (current !== undefined && !current.includes(target)) current.push(target);
+}
+
+const VARIABLE_REFERENCE_INSTRUCTIONS = new Set(['set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag']);
+
+function referenceTargetsForInstruction(name: string, args: readonly string[], sceneId: string): string[] {
+  if (name === 'goto' || name === 'loop') {
+    const target = args.join(' ');
+    return target.length > 0 ? [`label:${sceneId}.${target}`] : [];
+  }
+  if (name === 'jump' || name === 'call') {
+    const targetScene = args.join(' ').split('.')[0] ?? '';
+    return targetScene.length > 0 ? [`scene:${targetScene}`] : [];
+  }
+  if (VARIABLE_REFERENCE_INSTRUCTIONS.has(name)) {
+    const variable = args[0];
+    return variable !== undefined && variable.length > 0 ? [`variable:${variable}`] : [];
+  }
+  return [];
+}
+
+function choiceOptionReferenceTargets(raw: string, scene: ProjectSnapshotScene, lineNumber: number): string[] {
+  const trimmed = raw.trimStart();
+  const arrowIndex = trimmed.indexOf(' -> ');
+  if (arrowIndex < 0) return [];
+  const inline = trimmed.slice(arrowIndex + 4).trim();
+  if (inline.length === 0) return [];
+  try {
+    const instructions = parseInlineInstructions(inline, scene.path, lineNumber, raw.length - trimmed.length + arrowIndex + 5);
+    const targets: string[] = [];
+    let jumpSeen = false;
+    for (const instruction of instructions) {
+      if (instruction.name === 'goto' || instruction.name === 'jump') {
+        if (jumpSeen) continue;
+        jumpSeen = true;
+      }
+      for (const target of referenceTargetsForInstruction(instruction.name, instruction.args, scene.id)) {
+        if (!targets.includes(target)) targets.push(target);
+      }
+    }
+    return targets;
+  } catch {
+    // Invalid choice syntax is reported by shared validation; keep the source object indexable.
+    return [];
+  }
 }
 
 function addSceneObjects(
@@ -69,9 +115,8 @@ function addSceneObjects(
         referencedBy: [],
       };
       addObject(objects, object, candidates);
-      const target = /->\s*@(?:goto|jump)\s+([^\s]+)/.exec(line.raw)?.[1];
-      if (target !== undefined) {
-        addReferenceCandidate(candidates, objectRef, target.includes('.') ? `scene:${target.split('.')[0]}` : `label:${scene.id}.${target}`);
+      for (const target of choiceOptionReferenceTargets(line.raw, scene, lineNumber)) {
+        addReferenceCandidate(candidates, objectRef, target);
       }
       continue;
     }
@@ -102,15 +147,8 @@ function addSceneObjects(
       };
       addObject(objects, object, candidates);
       currentChoiceRef = name === 'choice' ? objectRef : null;
-      if (name === 'goto' || name === 'loop') {
-        const target = args.join(' ');
-        addReferenceCandidate(candidates, objectRef, `label:${scene.id}.${target}`);
-      } else if (name === 'jump' || name === 'call') {
-        const target = args.join(' ').split('.')[0] ?? '';
-        if (target.length > 0) addReferenceCandidate(candidates, objectRef, `scene:${target}`);
-      } else if (name === 'set' || name === 'mod' || ['inc', 'dec', 'toggle', 'flag', 'unflag'].includes(name)) {
-        const variable = args[0];
-        if (variable !== undefined && variable.length > 0) addReferenceCandidate(candidates, objectRef, `variable:${variable}`);
+      for (const target of referenceTargetsForInstruction(name, args, scene.id)) {
+        addReferenceCandidate(candidates, objectRef, target);
       }
       continue;
     }
