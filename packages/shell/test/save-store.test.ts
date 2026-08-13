@@ -173,6 +173,62 @@ describe('FileSaveStore', () => {
     expect(fs.existsSync(path.join(dir, 's1.json.bak'))).toBe(true);
     expect(store.list()).toEqual(['s1']);
   });
+
+  it('显式列出并恢复上一版备份：主档、索引元信息更新且 .bak 保留', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', { ...makeSnap('s1'), meta: { id: 's1', createdAt: 1, updatedAt: 1 }, variables: { trust: 1 } });
+    store.write('s1', { ...makeSnap('s1'), meta: { id: 's1', createdAt: 1, updatedAt: 2 }, variables: { trust: 2 } });
+
+    expect(store.listBackupMeta()).toEqual([expect.objectContaining({ id: 's1', updatedAt: 1 })]);
+    store.restoreBackup('s1');
+
+    expect(store.read('s1')?.variables).toEqual({ trust: 1 });
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).s1.updatedAt).toBe(1);
+    expect(fs.existsSync(path.join(dir, 's1.json.bak'))).toBe(true);
+  });
+
+  it('没有备份时显式恢复失败且主档/index 字节不变', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', makeSnap('s1'));
+    const mainBefore = fs.readFileSync(path.join(dir, 's1.json'));
+    const indexBefore = fs.readFileSync(path.join(dir, 'index.json'));
+
+    expect(() => store.restoreBackup('s1')).toThrow(/备份/);
+
+    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
+  });
+
+  it('损坏或非法 .bak 在写入前失败并保留原始原因与主档/index 字节', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', makeSnap('s1'));
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } });
+    const mainBefore = fs.readFileSync(path.join(dir, 's1.json'));
+    const indexBefore = fs.readFileSync(path.join(dir, 'index.json'));
+    fs.writeFileSync(path.join(dir, 's1.json.bak'), '{ invalid backup');
+
+    let failure: unknown;
+    try {
+      store.restoreBackup('s1');
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      message: expect.stringContaining('存档文件读取或解析失败'),
+      cause: expect.any(SyntaxError),
+    });
+    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
+
+    fs.writeFileSync(path.join(dir, 's1.json.bak'), JSON.stringify({ ...makeSnap('s1'), gallery: { cgs: [1] } }));
+    expect(() => store.restoreBackup('s1')).toThrow(/gallery/);
+    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
+  });
 });
 
 

@@ -19,12 +19,16 @@ describe('Electron SaveStorage bridge', () => {
     const deleteFailure = new Error('delete denied');
     const listFailure = new Error('list denied');
     const listMetaFailure = new Error('list-meta denied');
+    const listBackupMetaFailure = new Error('list-backup-meta denied');
+    const restoreBackupFailure = new Error('restore-backup denied');
     const bridge = {
       read: vi.fn(async (slot: string) => slot === 'missing' ? null : Promise.reject(readFailure)),
       write: vi.fn(async () => { throw writeFailure; }),
       delete: vi.fn(async () => { throw deleteFailure; }),
       list: vi.fn(async () => { throw listFailure; }),
       listMeta: vi.fn(async () => { throw listMetaFailure; }),
+      listBackupMeta: vi.fn(async () => { throw listBackupMetaFailure; }),
+      restoreBackup: vi.fn(async () => { throw restoreBackupFailure; }),
     };
     const storage = createElectronSaveStorage(bridge);
 
@@ -34,6 +38,8 @@ describe('Electron SaveStorage bridge', () => {
     await expect(storage.delete('slot-1')).rejects.toBe(deleteFailure);
     await expect(storage.list()).rejects.toBe(listFailure);
     await expect(storage.listMeta?.()).rejects.toBe(listMetaFailure);
+    await expect(storage.listBackupMeta?.()).rejects.toBe(listBackupMetaFailure);
+    await expect(storage.restoreBackup?.('slot-1')).rejects.toBe(restoreBackupFailure);
   });
 
   it('keeps a failed save transaction from claiming success and allows the next save', async () => {
@@ -45,6 +51,8 @@ describe('Electron SaveStorage bridge', () => {
       delete: async () => undefined,
       list: async () => [],
       listMeta: async () => [],
+      listBackupMeta: async () => [],
+      restoreBackup: async () => undefined,
     };
     const saves = new SaveManager(createElectronSaveStorage(bridge));
     const session = createPlayerUiSession({
