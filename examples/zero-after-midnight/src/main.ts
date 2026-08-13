@@ -9,6 +9,7 @@ import {
   EventBus,
   VariableStore,
   SaveManager,
+  assertValidSnapshot,
   QUICK_SLOT,
   AUTO_SLOT,
   CalendarRunner,
@@ -608,25 +609,42 @@ async function main(): Promise<void> {
     ? createElectronSaveStorage(desktopSave)
     : {
         read: (slot) => {
-          try {
-            const raw = localStorage.getItem(`surdet:save:${slot}`);
-            return raw ? (JSON.parse(raw) as SaveSnapshot) : null;
-          } catch {
-            return null;
-          }
+          const raw = localStorage.getItem(`surdet:save:${slot}`);
+          if (raw === null) return null;
+          const parsed: unknown = JSON.parse(raw);
+          assertValidSnapshot(parsed, 'legacy');
+          return parsed;
         },
         write: (slot, data) => {
-          try {
-            localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
-          } catch (err) {
-            console.error('[zero] 存档写入失败：', err);
-          }
+          const key = `surdet:save:${slot}`;
+          const current = localStorage.getItem(key);
+          if (current !== null) localStorage.setItem(`${key}.bak`, current);
+          localStorage.setItem(key, JSON.stringify(data));
         },
-        delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
+        delete: (slot) => {
+          const key = `surdet:save:${slot}`;
+          localStorage.removeItem(key);
+          localStorage.removeItem(`${key}.bak`);
+        },
         list: () =>
           Object.keys(localStorage)
-            .filter((k) => k.startsWith('surdet:save:'))
+            .filter((k) => k.startsWith('surdet:save:') && !k.endsWith('.bak'))
             .map((k) => k.slice('surdet:save:'.length)),
+        listBackupMeta: () => Object.keys(localStorage)
+          .filter((k) => k.startsWith('surdet:save:') && k.endsWith('.bak'))
+          .map((key) => {
+            const parsed: unknown = JSON.parse(localStorage.getItem(key)!);
+            assertValidSnapshot(parsed, 'legacy');
+            return parsed.meta;
+          }),
+        restoreBackup: (slot) => {
+          const key = `surdet:save:${slot}`;
+          const raw = localStorage.getItem(`${key}.bak`);
+          if (raw === null) throw new Error(`存档槽位 '${slot}' 没有可恢复备份`);
+          const parsed: unknown = JSON.parse(raw);
+          assertValidSnapshot(parsed, 'legacy');
+          localStorage.setItem(key, JSON.stringify(parsed));
+        },
       };
   const saves = new SaveManager(saveStorage);
 
@@ -976,7 +994,11 @@ async function main(): Promise<void> {
       view: { mode, slots: activeSaveLoad.slots },
       onSelect: (slotId: string) => selectSaveLoad(mode, slotId),
       onClose: closeSaveLoad,
-      options: { completion: 'host-transaction' as const, onTransactionComplete: restoreCommandRailForPlayerContext },
+      options: {
+        completion: 'host-transaction' as const,
+        onTransactionComplete: restoreCommandRailForPlayerContext,
+        ...(mode === 'load' ? { onRestore: (slotId: string) => restoreSaveLoad(slotId) } : {}),
+      },
     };
   }
 
@@ -1109,8 +1131,10 @@ async function main(): Promise<void> {
   ): Promise<void> {
     if (source === 'title') leaveTitleForOverlay();
     let metas: Awaited<ReturnType<typeof saves.list>>;
+    let backupMetas: Awaited<ReturnType<typeof saves.listBackupMeta>> = [];
     try {
       metas = await saves.list();
+      if (mode === 'load') backupMetas = await saves.listBackupMeta();
     } catch (err) {
       if (source === 'title') showTitleScreen();
       else refreshCommandRail();
@@ -1118,6 +1142,7 @@ async function main(): Promise<void> {
       return;
     }
     const byId = new Map(metas.map((m) => [m.id, m]));
+    const backupIds = new Set(backupMetas.map((m) => m.id));
     const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
       const m = byId.get(id);
       return {
@@ -1127,11 +1152,22 @@ async function main(): Promise<void> {
         updatedAt: m?.updatedAt,
         thumbnail: m?.thumbnail,
         playTimeSec: m?.playTimeSec,
+        backupAvailable: mode === 'load' && backupIds.has(id),
         kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
       };
     });
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
+  }
+
+  function completeLoadedSnapshot(snap: SaveSnapshot): void {
+    interp.loadSnapshot(snap);
+    menu.hideTitle();
+    clearRollback();
+    playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+    activeSaveLoad = null;
+    clearCountedThisSession = false; // 读档 = 进入另一周目会话
+    refreshCommandRail();
   }
 
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
@@ -1173,18 +1209,33 @@ async function main(): Promise<void> {
     playerShell!.commands.beginOperation('loading');
     try {
       const snap = await saves.load(slotId);
-      interp.loadSnapshot(snap);
-      menu.hideTitle();
-      clearRollback();
-      playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
-      activeSaveLoad = null;
-      clearCountedThisSession = false; // 读档 = 进入另一周目会话
+      completeLoadedSnapshot(snap);
       console.info('[zero] 已读档', slotId);
-      refreshCommandRail();
       return true;
     } catch (err) {
       playerShell!.commands.failOperation(err);
       console.error('[zero] 读档失败:', err);
+      return false;
+    }
+  }
+
+  async function restoreSaveLoad(slotId: string): Promise<boolean> {
+    playerShell!.commands.consumePointer();
+    const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
+    if (!slot || slot.empty || !slot.backupAvailable) {
+      console.warn('[zero] 忽略无效备份恢复槽位：', slotId);
+      return false;
+    }
+    playerShell!.commands.beginOperation('loading');
+    try {
+      await saves.restoreBackup(slotId);
+      const snap = await saves.load(slotId);
+      completeLoadedSnapshot(snap);
+      console.info('[zero] 已恢复备份并读档', slotId);
+      return true;
+    } catch (err) {
+      playerShell!.commands.failOperation(err);
+      console.error('[zero] 备份恢复失败:', err);
       return false;
     }
   }

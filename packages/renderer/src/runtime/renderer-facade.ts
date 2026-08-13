@@ -523,7 +523,9 @@ export class RendererFacade {
       showSaveLoad: (view, onSelect, onClose, options) => {
         if (this.#menuPort) {
           this.#saveLoadTransactionPending = false;
-          const menuOptions = options;
+          const menuOptions = options?.onRestore
+            ? { ...options, onRestore: this.#wrapSaveLoadSelect(options.onRestore, options) }
+            : options;
           const close = options?.completion === 'host-transaction'
             ? onClose
             : this.#wrapMenuRailRestore(onClose);
@@ -541,6 +543,9 @@ export class RendererFacade {
           this.#syncMenuOverlay();
           return;
         }
+        const menuOptions = options?.onRestore
+          ? { ...options, onRestore: this.#wrapSaveLoadSelect(options.onRestore, options) }
+          : options;
         const selection = options?.completion === 'host-transaction'
           ? this.#wrapSaveLoadSelect(onSelect, options)
           : onSelect;
@@ -551,7 +556,7 @@ export class RendererFacade {
           { ...view, slots: view.slots.slice() },
           selection,
           onClose,
-          options,
+          menuOptions,
         );
         this.#menuOverlay = { type: 'save-load', mode: view.mode };
       },

@@ -699,6 +699,59 @@ export class MenuLayer implements MenuProjectionPort {
           style: { fontSize: 15, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions,
         }), { fill: 'textDisabled' })).position.set(textX, 70);
       }
+      if (view.mode === 'load' && slot.backupAvailable) {
+        const restore = bindThemeTextProjection(new PText({
+          text: '恢复备份并读取',
+          style: { fontSize: 14, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions,
+        }), { fill: 'accentSoft' });
+        restore.position.set(cardW - 174, 70);
+        restore.eventMode = 'static';
+        restore.cursor = 'pointer';
+        restore.on('pointerover', () => { restore.style = { fontSize: 14, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
+        restore.on('pointerout', () => { restore.style = { fontSize: 14, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions; });
+        restore.on('pointerdown', (event) => {
+          event.stopPropagation?.();
+          const handler = this.#saveLoadOptions.onRestore;
+          if (this.#saveLoadOptions.completion === 'host-transaction') {
+            if (this.#saveLoadTransactionPending) {
+              this.#onPointerConsumed?.();
+              return;
+            }
+            this.#saveLoadTransactionPending = true;
+            const onTransactionComplete = this.#saveLoadOptions.onTransactionComplete;
+            const onTransactionError = this.#saveLoadOptions.onTransactionError;
+            try {
+              const accepted = handler?.(slot.id);
+              if (!isPromiseLike(accepted)) throw new Error('host-transaction save/load handlers must return a Promise');
+              void Promise.resolve(accepted).then(
+                (result) => {
+                  this.#saveLoadTransactionPending = false;
+                  if (result !== false) {
+                    this.hideSaveLoad();
+                    onTransactionComplete?.();
+                  }
+                },
+                (error) => {
+                  this.#saveLoadTransactionPending = false;
+                  this.#handleSaveLoadTransactionError(error, onTransactionError);
+                },
+              );
+            } catch (error) {
+              this.#saveLoadTransactionPending = false;
+              this.#handleSaveLoadTransactionError(error, onTransactionError);
+            }
+          } else {
+            try {
+              const accepted = handler?.(slot.id);
+              if (accepted !== false) this.hideSaveLoad();
+            } catch (error) {
+              this.hideSaveLoad();
+              throw error;
+            }
+          }
+        });
+        card.addChild(restore);
+      }
       if (selectable) {
         card.eventMode = 'static';
         card.cursor = 'pointer';

@@ -103,6 +103,22 @@ function findText(root: Container, value: string): PText {
   return found as PText;
 }
 
+function findTextDeep(root: Container, value: string): PText {
+  const visit = (node: Container): PText | undefined => {
+    if (node instanceof PText && node.text === value) return node;
+    for (const child of node.children) {
+      if (child instanceof Container) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const found = visit(root);
+  expect(found, `text ${value} should be projected`).toBeDefined();
+  return found as PText;
+}
+
 function findParentWithText(root: Container, value: string): Container {
   const visit = (container: Container): Container | undefined => {
     if (container.children.some((nested) => nested instanceof PText && nested.text === value)) return container;
@@ -300,6 +316,77 @@ describe('Menu v2 characterization contract', () => {
 
     const query = runtime.facade.queries.overlay.menu();
     expect(query).not.toBe(runtime.facade.queries.overlay.menu());
+  });
+});
+
+describe('Menu backup restore projection contract', () => {
+  it('shows restore only for load backups and keeps normal card selection separate', () => {
+    const runtime = makeRealMenuRuntime();
+    const onSelect = vi.fn(() => false);
+    const onRestore = vi.fn(() => false);
+    const options = { onRestore } as unknown as Parameters<typeof runtime.facade.commands.menu.showSaveLoad>[3];
+    try {
+      runtime.facade.commands.menu.showSaveLoad({
+        mode: 'load',
+        slots: [
+          { id: 'backup', empty: false, label: '有备份', backupAvailable: true } as never,
+          { id: 'normal', empty: false, label: '普通存档' },
+        ],
+      }, onSelect, vi.fn(), options);
+
+      expect(findTextDeep(runtime.root, '恢复备份并读取')).toBeDefined();
+      findParentWithText(runtime.root, '普通存档').emit('pointerdown', pointerEvent);
+      expect(onSelect).toHaveBeenCalledWith('normal');
+      expect(onRestore).not.toHaveBeenCalled();
+
+      runtime.facade.commands.menu.showSaveLoad({
+        mode: 'save',
+        slots: [{ id: 'backup', empty: false, label: '有备份', backupAvailable: true } as never],
+      }, onSelect, vi.fn(), options);
+      expect(() => findTextDeep(runtime.root, '恢复备份并读取')).toThrow();
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
+  });
+
+  it('consumes repeated restore clicks while its host transaction is pending', async () => {
+    const pointerConsumed = vi.fn();
+    const runtime = makeRealMenuRuntime(pointerConsumed);
+    let resolveRestore!: (accepted: boolean) => void;
+    const transaction = new Promise<boolean>((resolve) => { resolveRestore = resolve; });
+    const onRestore = vi.fn(() => transaction);
+    const onTransactionComplete = vi.fn();
+    const onTransactionError = vi.fn();
+    const options = {
+      completion: 'host-transaction',
+      onRestore,
+      onTransactionComplete,
+      onTransactionError,
+    } as unknown as Parameters<typeof runtime.facade.commands.menu.showSaveLoad>[3];
+    try {
+      runtime.facade.commands.menu.showTitle({ title: 'Surdet', items: [] }, vi.fn());
+      runtime.facade.commands.menu.showSaveLoad({
+        mode: 'load',
+        slots: [{ id: 'backup', empty: false, label: '有备份', backupAvailable: true } as never],
+      }, vi.fn(), vi.fn(), options);
+      const restore = findTextDeep(runtime.root, '恢复备份并读取');
+      restore.emit('pointerdown', pointerEvent);
+      restore.emit('pointerdown', pointerEvent);
+
+      expect(onRestore).toHaveBeenCalledOnce();
+      expect(pointerConsumed).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'load' });
+      expect(runtime.isCommandRailVisible()).toBe(false);
+
+      resolveRestore(true);
+      await transaction;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onTransactionComplete).toHaveBeenCalledOnce();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'title' });
+    } finally {
+      disposeRealMenuRuntime(runtime);
+    }
   });
 });
 
