@@ -915,7 +915,7 @@ feat(cli): expose agent authoring capabilities
 - Consumes: Core `runtimeTrace`、authoring `RuntimeTraceEvent`/`EvidenceEnvelope`、Renderer `queries.presentation.snapshot()`。
 - Produces: `surdet-preview-trace-start`、`surdet-preview-trace-event`、`surdet-preview-trace-complete` 父窗口消息。
 
-- [ ] **Step 1: 写消息合同红灯**
+- [x] **Step 1: 写消息合同红灯**
 
 ```ts
 expect(previewSource).toContain("type: 'surdet-preview-trace-event'");
@@ -926,13 +926,13 @@ expect(previewSource).toContain('queries.presentation.snapshot()');
 
 纯归一化测试还要证明旧 generation 的事件被父窗口丢弃。
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 ```powershell
 npm run test -w surdet-editor -- test/preview-causal-trace.test.ts
 ```
 
-- [ ] **Step 3: 实现 preview 轨迹适配器**
+- [x] **Step 3: 实现 preview 轨迹适配器**
 
 每次 load 创建新 `traceId`；Core trace 事件到达时记录源对象/位置、state/control-flow，并在 Renderer 处理同一同步事件后读取 presentation snapshot。演出项必须分别记录：
 
@@ -947,11 +947,11 @@ npm run test -w surdet-editor -- test/preview-causal-trace.test.ts
 
 不得把 `presentationApplied` 自动转换成人工可见通过。编译/运行错误发送 complete status `failed`，保留最后事件与第一错误。
 
-- [ ] **Step 4: 父窗口保存当前 trace**
+- [x] **Step 4: 父窗口保存当前 trace**
 
 `preview-panel.ts` 只接收当前 iframe source 和当前 generation 的事件；切换/重载时新 trace 不覆盖旧失败 trace 的 artifact，由聚合 harness 负责持久化。UI 只保存当前预览 trace 供 Task 7 展示。
 
-- [ ] **Step 5: 运行绿灯**
+- [x] **Step 5: 运行绿灯**
 
 ```powershell
 npm run test -w surdet-editor -- test/preview-causal-trace.test.ts test/preview-runtime-contract.test.ts test/preview-runtime-lifecycle.test.ts
@@ -959,7 +959,7 @@ npm run typecheck -w surdet-editor
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 6: 更新 Execution Ledger 并提交**
+- [x] **Step 6: 更新 Execution Ledger 并提交**
 
 Commit message:
 
@@ -1421,3 +1421,20 @@ STAGE_6_WAVE_2_NOT_STARTED
 - 按 Task 5 Step 7 实际运行：`npm run typecheck -w @surdet/cli` exit `0`；`npm run build -w @surdet/cli` exit `0`。当前无 Electron artifact、人工验收或发行产物；本轮不运行聚合正式路径，下一 Task 仍按任务书另行建立自己的红灯。
 - 提交前新鲜 Git 事实：branch=`main`；`HEAD=e1e3129c50a3db4a1cab2280e091b5529b81a4f7`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`11 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划、Task 5 白名单中的 `package-lock.json`、CLI 包清单、CLI index 和四个新 authoring/测试文件；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
 - Task 5 当前状态：`TASK_5_GREEN_LOCALLY` / `CLI_JSON_CONTRACT_VERIFIED` / `CROSS_PROCESS_CHANGE_AND_COMMIT_VERIFIED` / `TASK_5_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存本 Task 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(cli): expose agent authoring capabilities` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 6。
+
+### Task 5 — Step 8 completed after commit (2026-08-13 21:57 +08:00)
+
+- 已按 Task 5 白名单精确暂存并通过 `git diff --check`、`git diff --cached --check`；`git diff --cached --name-status` 仅包含本计划、`package-lock.json`、`packages/cli/package.json`、`packages/cli/src/index.ts`、四个 CLI authoring 源文件和两份 CLI 合同/垂直切片测试。已创建任务书规定的普通本地提交：`06e15b5c0db35fe8dbedd225180bb234a3fd2fe4 feat(cli): expose agent authoring capabilities`。
+- 提交后立即真实回读：`git log --oneline -1`=`06e15b5 feat(cli): expose agent authoring capabilities`；`git rev-parse HEAD`=`06e15b5c0db35fe8dbedd225180bb234a3fd2fe4`；`git show --name-status HEAD` 仅显示上述 10 个 Task 5 文件；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`12 0`。
+- 提交后真实工作树：tracked 工作树和暂存区均为空；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。既有未跟踪的 `AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份艺术交接文件、两份 handoff 和长期路线台账仍未触碰、未暂存、未提交；未 push。
+- Task 5 最终状态：`TASK_5_COMPLETED_LOCALLY` / `CLI_JSON_CONTRACT_VERIFIED` / `CROSS_PROCESS_CHANGE_AND_COMMIT_VERIFIED` / `NOT_PUSHED`。本条记录将在下一 Task 的精确提交中固化，不 amend、不改写 Task 5 提交。下一停止点：Task 6 先按任务书建立 preview causal-trace 消息合同红灯，不邀请项目所有者人工验收。
+
+### Task 6 — Steps 1–6 completed; commit pending (2026-08-13 21:59–22:03 +08:00)
+
+- 已先建立并实际运行消息合同红灯：`npm run test -w surdet-editor -- test/preview-causal-trace.test.ts` 首次 exit `1`；1 个测试文件/2 个测试均失败，原因分别是 `preview.ts` 尚未声明 `surdet-preview-trace-start/event/complete` 合同，以及父窗口归一化/旧 generation 丢弃函数尚不存在。红灯保持原始失败事实，未把 source assertion 或运行时导入错误改写成通过。
+- 已在 Task 6 白名单内实现 preview 轨迹适配：每次 load 生成新的 `traceId` 和 generation，Core `runtimeTrace` 记录 source/位置及事件；通过 microtask 在 Renderer 同步处理后读取 `queries.presentation.snapshot()`，逐事件发送 `coreEmitted: true`、`presentationApplied`、`presentationBefore`、`presentationAfter`；编译/运行错误保留第一错误和最后事件并发送 failed complete；自然 `sceneEnd` 才发送 passed complete，避免首次 load 后提前宣称运行完成。没有修改 Core、Renderer、Host、Shell、authoring 公共实现、Zero、长期路线台账或受保护文件。
+- `preview-panel.ts` 新增三类消息的结构化归一化、当前 generation/source 过滤、当前预览 trace 保存和 Task 7 读取入口；旧 generation 迟到事件直接丢弃，不覆盖当前 trace，也没有把 `presentationApplied` 转换成人工可见通过。新增 `packages/editor/test/preview-causal-trace.test.ts` 覆盖消息合同和旧 generation 丢弃。
+- 按 Task 6 Step 5 实际运行：`npm run test -w surdet-editor -- test/preview-causal-trace.test.ts test/preview-runtime-contract.test.ts test/preview-runtime-lifecycle.test.ts` exit `0`，3 个文件/4 个测试通过；`npm run typecheck -w surdet-editor` exit `0`；`npm run build -w surdet-editor` exit `0`，865 modules transformed，preview chunk 约 `594.54 kB` 的既有大 chunk warning 保留，未修改性能门限。没有运行 Electron、聚合正式路径或人工验收。
+- Task 6 本轮实际修改文件为：本计划、`packages/editor/src/preview.ts`、`packages/editor/src/panels/preview-panel.ts`、`packages/editor/test/preview-causal-trace.test.ts`；`packages/editor/package.json` 与 `package-lock.json` 本轮不需要变更，现有 `@surdet/authoring` 依赖已满足类型导入。
+- Task 6 提交前新鲜 Git 事实：branch=`main`；`HEAD=06e15b5c0db35fe8dbedd225180bb234a3fd2fe4`；`surdet/main=5994ec7bd64b2106da6e47cd86e88fb4df82ed01`；ahead/behind=`12 0`；`git diff --check` exit `0`；`git diff --cached --check` exit `0`；`git ls-files '*.log'` 无输出。tracked 未提交文件仅为本计划、两份 preview 源文件和 Task 6 测试；暂存区为空；既有未跟踪受保护文件、handoff 和长期路线台账未触碰。
+- Task 6 当前状态：`TASK_6_GREEN_LOCALLY` / `PREVIEW_CORE_PRESENTATION_TRACE_VERIFIED` / `STALE_GENERATION_REJECTION_VERIFIED` / `TASK_6_COMMIT_PENDING` / `NOT_PUSHED`。下一停止点：只暂存 Task 6 白名单与本计划，核对缓存范围和 `git diff --cached --check` 后创建 `feat(authoring): trace formal runtime causality` 普通本地提交；提交后立即回读真实 HEAD，再追加提交后事实并进入 Task 7。

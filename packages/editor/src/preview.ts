@@ -25,6 +25,7 @@ import type {
   SaveStorage, SystemSnapshots,
   CalendarConfig, GrowthConfig, AchievementDef, AffectionProfile, RelationshipEvent, ScheduledEventDef,
 } from '@surdet/core';
+import type { RuntimeTraceEvent } from '@surdet/authoring';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
   SettingsStore, SETTING_STEPS, stepSetting,
@@ -111,6 +112,115 @@ let appliedAssetUrls: string[] = [];
 const previewGeneration = new PreviewGeneration();
 let runtimeLifecycle: PreviewRuntimeLifecycle<RendererRuntime> | null = null;
 
+interface ActivePreviewTrace {
+  traceId: string;
+  generation: number;
+  sceneId: string;
+  label?: string;
+  sequence: number;
+  events: RuntimeTraceEvent[];
+  firstError?: string;
+  status: 'running' | 'passed' | 'failed';
+  completionScheduled: boolean;
+  completed: boolean;
+}
+
+let activePreviewTrace: ActivePreviewTrace | null = null;
+
+function createPreviewTraceId(): string {
+  return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
+}
+
+function clonePresentation<T>(value: T): T {
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
+function presentationChanged(before: unknown, after: unknown): boolean {
+  try {
+    return JSON.stringify(before) !== JSON.stringify(after);
+  } catch {
+    return before !== after;
+  }
+}
+
+function startPreviewTrace(generation: number, payload: LoadPayload): ActivePreviewTrace {
+  const trace: ActivePreviewTrace = {
+    traceId: createPreviewTraceId(),
+    generation,
+    sceneId: payload.sceneId,
+    sequence: 0,
+    events: [],
+    status: 'running',
+    completionScheduled: false,
+    completed: false,
+    ...(payload.startLabel === undefined ? {} : { label: payload.startLabel }),
+  };
+  activePreviewTrace = trace;
+  window.parent.postMessage({
+    type: 'surdet-preview-trace-start',
+    traceId: trace.traceId,
+    generation: trace.generation,
+    sceneId: trace.sceneId,
+    ...(trace.label === undefined ? {} : { label: trace.label }),
+  }, '*');
+  return trace;
+}
+
+function captureRuntimeTrace(event: RuntimeTraceEvent, presentationSnapshot: () => unknown): void {
+  const trace = activePreviewTrace;
+  if (!trace || trace.completed) return;
+  const sequence = trace.sequence++;
+  const presentationBefore = clonePresentation(presentationSnapshot());
+  // Core runtimeTrace is emitted before the corresponding text/choice/instruction
+  // event. A microtask observes the Renderer after all synchronous handlers for
+  // that Core step have completed, without inventing a second state machine.
+  queueMicrotask(() => {
+    const presentationAfter = clonePresentation(presentationSnapshot());
+    trace.events.push(event);
+    window.parent.postMessage({
+      type: 'surdet-preview-trace-event',
+      traceId: trace.traceId,
+      generation: trace.generation,
+      sequence,
+      coreEmitted: true,
+      presentationApplied: presentationChanged(presentationBefore, presentationAfter),
+      presentationBefore,
+      presentationAfter,
+      event,
+    }, '*');
+  });
+}
+
+function schedulePreviewTraceComplete(trace: ActivePreviewTrace, status: 'passed' | 'failed'): void {
+  if (status === 'failed') trace.status = 'failed';
+  else if (trace.status === 'running') trace.status = 'passed';
+  if (trace.completionScheduled) return;
+  trace.completionScheduled = true;
+  queueMicrotask(() => {
+    if (trace.completed) return;
+    trace.completed = true;
+    window.parent.postMessage({
+      type: 'surdet-preview-trace-complete',
+      traceId: trace.traceId,
+      generation: trace.generation,
+      status: trace.status === 'failed' ? 'failed' : 'passed',
+      eventCount: trace.events.length,
+      ...(trace.firstError === undefined ? {} : { firstError: trace.firstError }),
+      ...(trace.events.at(-1) === undefined ? {} : { lastEvent: trace.events.at(-1) }),
+    }, '*');
+  });
+}
+
+function failPreviewTrace(trace: ActivePreviewTrace | null, message: string): void {
+  if (!trace || trace.completed) return;
+  trace.firstError ??= message;
+  schedulePreviewTraceComplete(trace, 'failed');
+}
+
 function postPreviewDiagnostic(diagnostic: PreviewDiagnostic): void {
   window.parent.postMessage({ type: 'surdet-preview-diagnostic', diagnostic }, '*');
 }
@@ -163,6 +273,7 @@ class PreviewAudio implements AudioHandle {
 const previewAudio = new PreviewAudio();
 
 function showError(msg: string): void {
+  failPreviewTrace(activePreviewTrace, msg);
   const root = document.getElementById('preview-root');
   if (!root) return;
   let el = document.getElementById('preview-error');
@@ -300,6 +411,7 @@ async function boot(): Promise<void> {
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
   controller.connect(bus);
+  bus.on('runtimeTrace', (event) => captureRuntimeTrace(event, () => queries.presentation.snapshot()));
   const saves = new SaveManager(makePreviewSaveStorage(() => previewProjectKey));
 
   function enrichSnapshot(snap: SaveSnapshot): SaveSnapshot {
@@ -768,6 +880,9 @@ async function boot(): Promise<void> {
 
   // 回合尾事件场景播完 → 恢复挂起点续跑（loadSnapshot 不可在事件回调内直调，延迟到下一 tick）
   bus.on('sceneEnd', () => {
+    if (!turnResumeSnap && interp?.status === 'ended') {
+      schedulePreviewTraceComplete(activePreviewTrace!, 'passed');
+    }
     if (!turnResumeSnap || !interp) return;
     const snap = turnResumeSnap;
     turnResumeSnap = null;
@@ -847,6 +962,7 @@ async function load(p: LoadPayload): Promise<void> {
   const dialogue = commands.dialogue;
   const presentation = commands.presentation;
   const generation = previewGeneration.next();
+  const trace = startPreviewTrace(generation, p);
   postPreviewDiagnostic({ generation, level: 'info', phase: 'reload', message: '预览正在重新加载…', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   clearError();
   try {
@@ -956,8 +1072,10 @@ async function load(p: LoadPayload): Promise<void> {
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
     postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   } catch (err) {
-    postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message: `预览失败：${err instanceof Error ? err.message : String(err)}`, sceneId: p.sceneId });
-    showError(`预览失败：${err instanceof Error ? err.message : String(err)}`);
+    const message = `预览失败：${err instanceof Error ? err.message : String(err)}`;
+    failPreviewTrace(trace, message);
+    postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message, sceneId: p.sceneId });
+    showError(message);
   }
 }
 

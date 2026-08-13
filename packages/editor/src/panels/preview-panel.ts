@@ -6,6 +6,7 @@
  */
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
+import type { EvidenceEnvelope, RuntimeTraceEvent } from '@surdet/authoring';
 import type { FontRole } from '@surdet/renderer';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 
@@ -13,6 +14,127 @@ import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-d
 let previewReadyListenerBound = false;
 let notifyPreviewReady: (() => void) | null = null;
 let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic) => void) | null = null;
+let notifyPreviewTrace: ((message: PreviewTraceMessage, source: MessageEventSource | null) => void) | null = null;
+
+export interface PreviewTraceStartMessage {
+  type: 'surdet-preview-trace-start';
+  traceId: string;
+  generation: number;
+  sceneId: string;
+  label?: string;
+}
+
+export interface PreviewTraceEventMessage {
+  type: 'surdet-preview-trace-event';
+  traceId: string;
+  generation: number;
+  sequence: number;
+  coreEmitted: true;
+  presentationApplied: boolean;
+  presentationBefore: unknown;
+  presentationAfter: unknown;
+  event: RuntimeTraceEvent;
+}
+
+export interface PreviewTraceCompleteMessage {
+  type: 'surdet-preview-trace-complete';
+  traceId: string;
+  generation: number;
+  status: 'passed' | 'failed';
+  eventCount: number;
+  firstError?: string;
+  lastEvent?: RuntimeTraceEvent;
+}
+
+export type PreviewTraceMessage = PreviewTraceStartMessage | PreviewTraceEventMessage | PreviewTraceCompleteMessage;
+
+/** 与 authoring EvidenceEnvelope 的 result 形状保持兼容，供后续正式证据接线使用。 */
+export type PreviewTraceEvidence = EvidenceEnvelope<{
+  traceId: string;
+  generation: number;
+  eventCount: number;
+  firstError?: string;
+}>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRuntimeTraceEvent(value: unknown): value is RuntimeTraceEvent {
+  if (!isRecord(value) || !isRecord(value['source'])) return false;
+  const source = value['source'];
+  return typeof value['kind'] === 'string'
+    && typeof source['sceneId'] === 'string'
+    && Number.isInteger(source['index'])
+    && typeof source['op'] === 'string'
+    && typeof source['file'] === 'string'
+    && Number.isInteger(source['line'])
+    && Number.isInteger(source['col']);
+}
+
+/** 只接受预览 iframe 输出的三类结构化轨迹消息；不把内部状态当成人工验收。 */
+export function normalizePreviewTraceMessage(value: unknown): PreviewTraceMessage | null {
+  if (!isRecord(value) || typeof value['type'] !== 'string' || typeof value['traceId'] !== 'string'
+    || value['traceId'].trim().length === 0 || !Number.isInteger(value['generation']) || (value['generation'] as number) < 0) {
+    return null;
+  }
+  const type = value['type'];
+  const traceId = value['traceId'];
+  const generation = value['generation'] as number;
+  if (type === 'surdet-preview-trace-start') {
+    if (typeof value['sceneId'] !== 'string' || value['sceneId'].trim().length === 0) return null;
+    return {
+      type,
+      traceId,
+      generation,
+      sceneId: value['sceneId'],
+      ...(typeof value['label'] === 'string' ? { label: value['label'] } : {}),
+    };
+  }
+  if (type === 'surdet-preview-trace-event') {
+    if (!Number.isInteger(value['sequence']) || value['sequence'] as number < 0
+      || value['coreEmitted'] !== true || typeof value['presentationApplied'] !== 'boolean'
+      || !('presentationBefore' in value) || !('presentationAfter' in value)
+      || !isRuntimeTraceEvent(value['event'])) return null;
+    return {
+      type,
+      traceId,
+      generation,
+      sequence: value['sequence'] as number,
+      coreEmitted: true,
+      presentationApplied: value['presentationApplied'],
+      presentationBefore: value['presentationBefore'],
+      presentationAfter: value['presentationAfter'],
+      event: value['event'],
+    };
+  }
+  if (type === 'surdet-preview-trace-complete') {
+    if (!['passed', 'failed'].includes(String(value['status'])) || !Number.isInteger(value['eventCount'])
+      || (value['eventCount'] as number) < 0 || (value['lastEvent'] !== undefined && !isRuntimeTraceEvent(value['lastEvent']))) return null;
+    return {
+      type,
+      traceId,
+      generation,
+      status: value['status'] as 'passed' | 'failed',
+      eventCount: value['eventCount'] as number,
+      ...(typeof value['firstError'] === 'string' ? { firstError: value['firstError'] } : {}),
+      ...(value['lastEvent'] === undefined ? {} : { lastEvent: value['lastEvent'] }),
+    };
+  }
+  return null;
+}
+
+/** 父窗口只接受当前 iframe generation；旧预览的迟到消息必须丢弃。 */
+export function acceptPreviewTraceMessage(message: PreviewTraceMessage | null, currentGeneration: number): PreviewTraceMessage | null {
+  return message !== null && message.generation === currentGeneration ? message : null;
+}
+
+let currentPreviewTrace: PreviewTraceMessage[] = [];
+
+/** Task 7 展示用的当前预览轨迹快照；只返回当前 iframe 的浅拷贝。 */
+export function getCurrentPreviewTrace(): readonly PreviewTraceMessage[] {
+  return currentPreviewTrace.slice();
+}
 
 function bindPreviewReadyListenerOnce(): void {
   if (previewReadyListenerBound) return;
@@ -23,6 +145,10 @@ function bindPreviewReadyListenerOnce(): void {
     if (d?.type === 'surdet-preview-diagnostic') {
       const diagnostic = normalizePreviewDiagnostic((d as { diagnostic?: unknown }).diagnostic);
       if (diagnostic) notifyPreviewDiagnostic?.(diagnostic);
+    }
+    if (d?.type === 'surdet-preview-trace-start' || d?.type === 'surdet-preview-trace-event' || d?.type === 'surdet-preview-trace-complete') {
+      const trace = normalizePreviewTraceMessage(e.data);
+      if (trace) notifyPreviewTrace?.(trace, e.source);
     }
   });
 }
@@ -243,6 +369,7 @@ async function readProjectTimelines(): Promise<unknown[]> {
 
 export function renderPreviewPanel(container: HTMLElement): void {
   container.innerHTML = '';
+  currentPreviewTrace = [];
   const sc = state.current ? state.scenes.get(state.current) : undefined;
 
   const toolbar = h('div', 'preview-toolbar');
@@ -278,6 +405,23 @@ export function renderPreviewPanel(container: HTMLElement): void {
   diagnostics.setAttribute('aria-live', 'polite');
   container.appendChild(diagnostics);
 
+  let currentTraceId: string | null = null;
+  let currentTraceGeneration = -1;
+  notifyPreviewTrace = (message, source) => {
+    if (source !== frame.contentWindow) return;
+    if (message.type === 'surdet-preview-trace-start') {
+      if (currentTraceGeneration >= 0 && message.generation < currentTraceGeneration) return;
+      currentTraceGeneration = message.generation;
+      currentTraceId = message.traceId;
+      currentPreviewTrace = [message];
+      return;
+    }
+    const current = acceptPreviewTraceMessage(message, currentTraceGeneration);
+    if (current === null) return;
+    if (current.traceId !== currentTraceId) return;
+    currentPreviewTrace = [...currentPreviewTrace, current];
+  };
+
   let ready = false;
   let latestGeneration = 0;
   notifyPreviewDiagnostic = (diagnostic) => {
@@ -290,6 +434,9 @@ export function renderPreviewPanel(container: HTMLElement): void {
   let sendRevision = 0;
   const send = async (): Promise<void> => {
     const revision = ++sendRevision;
+    currentTraceId = null;
+    currentTraceGeneration = -1;
+    currentPreviewTrace = [];
     if (!ready) return;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {
