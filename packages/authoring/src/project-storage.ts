@@ -1,6 +1,6 @@
 import type { ProjectFile, ProjectStorage, TextHasher } from './contracts.js';
 
-export type { ProjectFile, ProjectStorage, TextHasher } from './contracts.js';
+export type { ProjectFile, ProjectStorage, ProjectWriteStorage, TextHasher } from './contracts.js';
 
 export function normalizeProjectPath(path: string): string {
   if (path.length === 0 || path.includes('\0') || path.includes('\\') || path.startsWith('/')) {
