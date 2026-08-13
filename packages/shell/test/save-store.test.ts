@@ -116,6 +116,39 @@ describe('FileSaveStore', () => {
     expect(store.listMeta().map((m) => m.id)).toEqual(['legacy']);
   });
 
+  it('listMeta 索引损坏时保留索引读取失败及原始 cause', () => {
+    const dir = makeDir();
+    fs.writeFileSync(path.join(dir, 'index.json'), '{ not valid json');
+    const store = new FileSaveStore(dir);
+
+    let failure: unknown;
+    try {
+      store.listMeta();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      message: expect.stringContaining('存档索引读取或解析失败'),
+      cause: expect.any(SyntaxError),
+    });
+  });
+
+  it('list 的目录 I/O 失败继续向上抛出而不是伪装成空列表', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    let failure: unknown;
+    try {
+      store.list();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: 'ENOENT' });
+  });
+
   it('index.json 不被当作存档槽位（list 排除索引与临时文件）', () => {
     const store = new FileSaveStore(makeDir());
     store.write('s1', makeSnap('s1'));
