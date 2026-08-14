@@ -18,7 +18,7 @@ function runCli(args: string[], env: NodeJS.ProcessEnv = {}): { status: number |
 }
 
 describe('agent authoring CLI JSON contract', () => {
-  it('describes exactly the registered 17 capabilities with one JSON stdout document', () => {
+  it('describes exactly the registered 20 capabilities with one JSON stdout document', () => {
     const result = runCli(['capabilities', 'describe', '--json']);
 
     expect(result.status).toBe(0);
@@ -26,7 +26,7 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stdout.trim().startsWith('{')).toBe(true);
     expect(result.stdout.trim().endsWith('}')).toBe(true);
     expect(result.stderr).toBe('');
-    expect(JSON.parse(result.stdout).result.capabilities).toHaveLength(17);
+    expect(JSON.parse(result.stdout).result.capabilities).toHaveLength(20);
   });
 
   it('returns a structured failure envelope without a stack on the default error path', () => {
