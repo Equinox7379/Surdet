@@ -195,3 +195,116 @@ STAGE_6_WAVE_3_NOT_STARTED
 ## Execution Ledger
 
 > 执行 AI 从 Task 0 开始按时间顺序追加；不得预填未运行结果，不得改写历史失败记录。
+
+### Task 0 基线（2026-08-14 12:0x +08:00）
+
+- 按序完整读取 AGENTS.md、长期路线台账（含 4.72–4.79）、本任务书、设计规格修订版 2、Wave 1 任务书/交付报告与临时执行 AI 交接书。设计规格磁盘实测 `27681` bytes、SHA-256=`D534A8FB4142E806B2D21A4022B49E5DB057C2BF7C2C321E58BD6BF184BE54F0`；本任务书磁盘实测 `18901` bytes、SHA-256=`C541310C4007D68AEC035273BB53A5C87849DDE3362BA3EBA825DB3BD119055B`，均与台账 4.75/4.78 一致。
+- 真实 Git：branch=`main`；`HEAD=44c289fb74b194bfa48ccd09479b3714d43f0015`；`surdet/main=3da114754c37e83e624649e2391c7f03acc12e0f`；ahead/behind=`7 0`；tracked 工作树与暂存区干净，既有未跟踪治理文件未触碰。
+
+### Task 1 红灯（2026-08-14 12:0x +08:00）
+
+- 五个新 authoring 测试文件先写红灯：`test/timeline-operations.test.ts`、`test/asset-catalog.test.ts`、`test/timeline-object-index.test.ts`、`test/validation-timeline.test.ts`、`test/diff-ledger.test.ts`。首次运行 exit=`1`，5 个文件全部失败（模块尚不存在 + 3 个真实断言红灯：track/cue 对象缺失、timeline 因果边缺失、指纹能力缺失）。红灯证据保留在本轮 Ledger，未改写为通过。
+- CLI 纵向测试 `packages/cli/test/authoring-presentation-wave2.test.ts` 与 editor 测试 `packages/editor/test/presentation-asset-catalog.test.ts` 在实现前同样以红灯起步（`timeline` 命令族未注册 → exit=`1`）。
+
+### Task 2 实现（2026-08-14 12:0x +08:00）
+
+- 共享层：新增 `asset-catalog.ts`（只读解析 bg/portrait 命名与支持格式，resolved=格式受支持）、`timeline-operations.ts`（timeline.create 身份不变量/白名单/Core 校验；五种单 patch 原子操作；SHA-256 规范化指纹）；扩展 `object-index.ts`（timeline/track/cue/asset 对象与四向因果、@timeline 指令边）、`validation.ts`（validateTimeline 结构 error、资源引用 warning、TIMELINE_MISSING）、`diff.ts`（operation ledger 对象级 diff）、`contracts.ts`/`index.ts`。
+- CLI：注册 `timeline.create`/`timeline.patch`/`project.assets`（capabilities 14→17）；object.inspect 支持 `--change` 事务视图并附 SHA-256 指纹；project.inspect 扩展 assets catalog；validate 注入 assetCatalog；simulate 显式场景（代理 entryScene，共享模拟器不复制）。
+- editor：project-io 记录 handle→资产相对路径；authoring-project-storage.listFiles 枚举 content/assets 路径（不读内容，快照仍排除资产）；causal-selection 扩展 track/cue/asset 显示与 stage→cue 反向定位纯函数；preview-panel 对 @timeline 事件用前后 stage 差异定位 cue；right.ts 时间轴对象展示轨道/Cue 子列表。
+- harness：新增 `packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`（--preflight/--diagnostic/缺省 FORMAL），shell 注册 `e2e:authoring:wave2`（`node e2e/...` workspace 路径）。
+
+### Task 3 聚焦绿灯（2026-08-14 12:0x +08:00）
+
+- authoring 五文件聚焦测试 5 files / 30 tests 全绿；authoring typecheck/build exit=`0`。
+- CLI `test/authoring-presentation-wave2.test.ts` 1/1 通过（完整纵向链：17 能力 → assets/inspect catalog 一致 → begin → scene.create agent_probe → timeline.create → object.inspect 指纹 → 三种 patch 串行 → 指纹过期 OBJECT_REF_STALE → 白名单外 UNSUPPORTED_OPERATION → 身份不一致 VALIDATION_FAILED → validate 绿灯 → simulate 显式 agent_probe → run-from 显式 → diff ledger 4 条 → commit 磁盘回读）；CLI typecheck/build exit=`0`。
+- editor `test/presentation-asset-catalog.test.ts` 4/4 通过；editor typecheck/build exit=`0`（既有大 chunk warning 保留，未修改性能门限）。
+- `node --check packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs` exit=`0`。
+- 未运行整包测试、`verify:all`、Electron、性能矩阵（任务书禁止整包）。
+
+### 代码证据提交与 preflight（2026-08-14 12:0x +08:00）
+
+- 代码证据提交 `748458e0621fa83096afc701647eb100cd4e34a0 feat(authoring): add presentation timeline authoring`：24 个白名单文件（+3087/-38），`git diff --cached --check` exit=`0`，`--name-status` 精确核对无夹带。
+- preflight 基于 `748458e` 运行 exit=`0`：`PREFLIGHT_PASSED`、`runHead=748458e`、CLI/editor dist 与 Vite CLI 存在、正式 launcher 启动真实 preview.html（frame pathname=/preview.html、canvas、surdet-preview-ready）、Starter 只读 catalog 门槛通过。preflight 不创建 fixture/artifact。
+
+### DIAGNOSTIC 1 失败（2026-08-14 12:0x +08:00）——harness 资产传输序列化缺陷
+
+- 新 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-2-A3U5pW\agent-ready-presentation-wave-2.json`：`8965` bytes、SHA-256=`E08628B9B7E44534423BD9CEE7F53A5A9C8DF8E59B90441361B1172EFA8C6818`、`status=FAILED`、`runHead=748458e`、最后通过 `editor.preview.frame`、首个失败（artifact 实测）`startup`（postMessage transfer 列表在 Playwright evaluate 序列化后不再 transferable；本记录按 4.81 以 artifact 实测为准修正措辞）。
+- 根因是 runner 把 ArrayBuffer 作为 evaluate 参数传递的序列化假设错误；修正为 base64 载荷 + 浏览器侧重建 ArrayBuffer 后再 transfer。修正提交 `dc7f93a086fa569c828944d3b733c6c56bb66091 test(authoring): fix wave 2 preview asset transfer`。未修改生产代码或其它断言。
+
+### DIAGNOSTIC 2 失败（2026-08-14 12:0x +08:00）——harness 消息等待谓词序列化缺陷
+
+- 新 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-2-FLPA0O\agent-ready-presentation-wave-2.json`：`10986` bytes、SHA-256=`4683149199BEA2EC6AB43CED9E95904A1566436D64DBDA5E913DDD2F14E7851D`、`status=FAILED`、`runHead=dc7f93a`、最后通过 `editor.preview.frame`、首个失败 `editor.preview.trace-start.scene-target`（waitForFunction 不能序列化谓词函数）。
+- 根因是 runner 把 predicate 源码字符串传进浏览器侧 waitForFunction；修正为 Node 侧 50ms 轮询父窗口消息数组（消息只增不丢）。修正提交 `7dda6a7d485d715c77e5bb1774b66b30afca7ea3 test(authoring): poll preview messages in wave 2 runner`。未修改生产代码或其它断言。
+
+### DIAGNOSTIC 3 失败（2026-08-14 12:0x +08:00）——fade 帧采样错过 1.0 平台期 → 停止
+
+- 新 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-2-Pt8CvR\agent-ready-presentation-wave-2.json`：`15442` bytes、SHA-256=`54D354FB40D833E408EC409975230089698C9474C0E57F81388F693F64807705`、`status=FAILED`、`runHead=7dda6a7`、最后通过 `editor.preview.timeline-event.clean-baseline`、首个失败 `editor.preview.fade.frame-sampling`。
+- 已通过的证据：显式 `agent_probe/start` 目标断言通过（trace-start 记录 targetSceneId/targetLabel）；触发 agent_blackout 前 `stage.portraits` 不含 `lynn:uniform`、`backgroundKey ≠ night_field`、`fadeAlpha === 0` 干净基线断言通过；第一帧后 `backgroundKey === night_field` 通过。
+- 失败事实：rAF 帧采样最大 `fadeAlpha=0.9985963032133129`，未达到严格 `1`。根因是采样注入发生在 timeline 事件消息到达 parent 之后（消息传递 + evaluate 往返约 100ms+），而 cue1（atMs=0、durationMs=0、alpha=1）的 `alpha=1` 平台只有 50ms 就被 cue2 淡出覆盖；采样因此从淡出中段开始，错过 1.0 平台。这不是 Core/Renderer/editor 生产缺陷，也不是 fade 没有发生（`0.9986→0` 的淡出轨迹与第一帧 microtask 快照都证明 fade 真实发生）。
+- 已就绪但未执行的方法修正（等待授权）：(1) 把 rAF 采样注入提前到 `surdet-preview-trace-start` 消息到达时（timeline 触发前），使采样覆盖 cue1 的 1.0 平台；(2) 用 timeline 事件的 `presentationAfter.stage.fadeAlpha === 1` 第一帧快照与 rAF 采样互证"达到 1"；(3) 中间值断言（0<α<1）与完成后回 0 断言保持不变。
+- 按任务书与设计规格 G.4：第 3 次 DIAGNOSTIC 仍失败，停止取证，不修一处跑一次。三份 FAILED artifact 均保留、未覆盖、未复用；三个桌面 fixture 保留；未 push、未改史。
+
+### 停止状态（2026-08-14 12:0x +08:00）
+
+```text
+DIAGNOSTIC_BUDGET_EXHAUSTED
+DIAGNOSTIC_1_HARNESS_TRANSFER_FIXED_AND_COMMITTED
+DIAGNOSTIC_2_HARNESS_WAIT_FIXED_AND_COMMITTED
+DIAGNOSTIC_3_FADE_SAMPLING_WINDOW_CONFIRMED
+FADE_SAMPLING_METHOD_FIX_READY_PENDING_AUTHORIZATION
+CODE_EVIDENCE_CHAIN = 748458e -> dc7f93a -> 7dda6a7
+FORMAL_NOT_RUN
+STAGE_6_WAVE_2_NOT_VERIFIED
+HUMAN_ACCEPTANCE_NOT_STARTED
+NOT_PUSHED_AFTER_STAGE_6_WAVE_2
+STAGE_6_WAVE_3_NOT_STARTED
+```
+
+下一停止点：向临时总经理报告三次失败证据与方法复审结论，申请"修正 fade 采样窗口并重新开始 DIAGNOSTIC 序列（≤3 次）"的裁决；未获批前不修改 runner、不运行 DIAGNOSTIC/FORMAL、不创建交付报告。
+
+### 治理收口与重新取证授权（2026-08-14 12:4x +08:00）
+
+临时总经理按台账 4.80/4.81 书面授权（经项目所有者转达）：本轮唯一主题是 DIAGNOSTIC 方法修正 + 提交治理收口 + 重新取证。
+
+- **方法修正（两个文件，白名单）**：
+  1. `packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`：(a) rAF 采样注入提前到 `surdet-preview-trace-start` 消息到达时（interp.start 之前发出，覆盖 cue1 的 `alpha=1` 平台）；(b) clean-baseline 步骤新增断言：timeline 事件第一帧 `presentationAfter.stage.fadeAlpha === 1`（容差 0.001），作为"达到 1"的主证据；(c) 中间值（0<α<1）与完成后回 0 断言不变。
+  2. `packages/cli/test/authoring-contract.test.ts`：能力数断言 14→17 最小更新（只改数字断言与用例名，未改其它逻辑）。
+- **聚焦验证（真实运行，exit 0）**：`node --check packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`；`npm run test -w @surdet/cli -- test/authoring-contract.test.ts`（2/2 通过）；`npm run e2e:authoring:wave2 -w @surdet/shell -- --preflight`（`PREFLIGHT_PASSED`）。未运行整包测试、`verify:all`、Electron、性能矩阵。
+- **提交治理**：精确暂存上述两个文件（`git diff --cached --check` exit=`0`，`--name-status` 只有二者）后创建普通本地提交：
+
+```text
+dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32
+test(authoring): fix wave 2 fade sampling window
+```
+
+- **HEAD 链与治理收口说明**：本 Wave 代码证据链为 `748458e → dc7f93a → 7dda6a7 → dcf2905`。此前三次 DIAGNOSTIC 的 `artifact.runHead` 分别为 `748458e`、`dc7f93a`、`7dda6a7`，滚动变化不满足任务书"固定 CODE_EVIDENCE_HEAD"契约，已按 4.80/4.81 收口：不把三次失败取证伪装成同一 frozen HEAD 下的证据；自本轮起，**新 CODE_EVIDENCE_HEAD = `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`**，其后所有 DIAGNOSTIC/FORMAL 的 `artifact.runHead` 必须等于它。
+- **非阻断遗留确认（4.81 第 6 条）**：Temp 下 59 个 `surdet-player-experience-wave-2-task*` 目录，最后写入时间均为 2026-08-11，来源是历史 Player Experience Wave 2 的 CLI 测试残留，与本轮 Stage 6 Wave 2 无关；本轮未创建、未触碰该类目录（详情记入交付报告）。
+- **非阻断遗留确认（4.81 第 6 条）**：Temp 下 59 个 `surdet-player-experience-wave-2-task*` 目录，最后写入时间均为 2026-08-11，来源是历史 Player Experience Wave 2 的 CLI 测试残留，与本轮 Stage 6 Wave 2 无关；本轮未创建、未触碰该类目录（详情记入交付报告）。
+- 重新取证预算：DIAGNOSTIC ≤3 次（新预算，每次唯一 artifact 路径）；全绿后冻结 runner，只运行一次 FORMAL。未 push、未改史、未修改生产代码。
+
+### 重新取证 DIAGNOSTIC 1（新预算，2026-08-14 12:4x +08:00）——PASSED
+
+- 新 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-2-Jf9GXC\agent-ready-presentation-wave-2.json`：磁盘实测 `15958` bytes、SHA-256=`0348226AE1E983BB3CF9423BF1066245088E5B0F12F3221E5662EE0EACCDFF6A`、`status=PASSED`、`evidenceClass=DIAGNOSTIC`、`runHead=dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`（等于新 CODE_EVIDENCE_HEAD）。
+- 关键证据：`targetSceneId=agent_probe`、`targetLabel=start`；触发前 `stage.fadeAlpha=0`、`backgroundKey` 为空、`portraits` 为空；第一帧 `presentationAfter.stage.fadeAlpha=1` 且 `backgroundKey=night_field`；播放完成后 `backgroundKey=night_field`、`lynn:uniform` 表情 `night`、`fadeAlpha=0`；rAF 帧采样 41 帧，`max=1`、中间值（0<α<1）28 帧、最后一帧 `0`；六类错误通道全空；browser/Vite 清理字段全成功。旧三份 FAILED artifact 未覆盖、未复用。
+
+### 唯一 FORMAL（2026-08-14 12:4x +08:00）——PASSED
+
+- 命令：`npm run e2e:authoring:wave2 -w @surdet/shell`（缺省 FORMAL），实际 exit=`0`，只运行一次。
+- 新 artifact `C:\Users\Equinox\AppData\Local\Temp\surdet-agent-ready-wave-2-0A6Yfx\agent-ready-presentation-wave-2.json`：磁盘实测 `15368` bytes、SHA-256=`737FF06901BBB34084FB9078FFE3A617C72A6FC7A13565BCEF0544E2A751FCC2`、`status=PASSED`、`evidenceClass=FORMAL`、`runHead=dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`（等于 CODE_EVIDENCE_HEAD）。
+- FORMAL 断言全部通过：显式场景 `targetSceneId=agent_probe`/`targetLabel=start`（trace-start 实测一致）；触发 agent_blackout 前 `stage.portraits` 不含 `lynn:uniform`、`backgroundKey ≠ night_field`、`fadeAlpha === 0`；第一帧 `fadeAlpha === 1` 且 `backgroundKey === night_field`；播放后 `stage.backgroundKey === 'night_field'`、`stage.portraits` 含 `lynn:uniform` 且 `view.expression === 'night'`；rAF 帧采样 37 帧（`max=1`、中间值 28 帧、最后一帧 `0`）；catalog 门槛 `night_field`/`lynn_uniform_night` 均 `resolved=true` 且 `project.assets` 与 `project.inspect.assets` 逐字段一致；六类错误通道全空；`originalStarter.unchanged=true`；browser/Vite/端口清理字段全成功。
+- fixture `C:\Users\Equinox\Desktop\surdet-stage6-wave2-fixture-1786682657381-12c09a8c3cde`：25 个文件；`content/scenario/agent_probe.gal` 为 `72` bytes、SHA-256=`231C5AAD5865D0333C36B8E6DF24FBA3DA783B3EBA364E3A016496764417399A`；`content/timelines/agent_blackout.json` 为 `952` bytes、SHA-256=`547D4E7F5AE797046FE46D2BBE8AA17A8F0FA0DE2C652382F2747F16C44B7AF7`；无 `.surdet-*` 临时文件。
+
+### 最终停止状态（2026-08-14 12:4x +08:00）
+
+```text
+STAGE_6_WAVE_2_IMPLEMENTED_LOCALLY
+STAGE_6_WAVE_2_FORMAL_PASSED
+FORMAL_AGGREGATE_RUNHEAD_MATCHES_CODE_EVIDENCE_HEAD
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+HUMAN_ACCEPTANCE_NOT_STARTED
+NOT_PUSHED_AFTER_STAGE_6_WAVE_2
+STAGE_6_WAVE_3_NOT_STARTED
+```
+
+下一停止点：任务书与新建交付报告完成文档闭合提交后停在 `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`，等待临时总经理独立复审；人工验收与 push 均需项目所有者另行明确授权。
