@@ -9,9 +9,14 @@ import {
   type VarValue,
 } from '@surdet/core';
 import {
+  applyTimelineCreate,
+  applyTimelinePatch,
+  assetPathsFromFiles,
   AuthoringOperationError,
   beginChange,
+  buildAssetCatalog,
   buildObjectIndex,
+  buildOperationLedgerDiff,
   commitChange,
   createChangeDiff,
   createEvidenceEnvelope,
@@ -26,6 +31,7 @@ import {
   recordValidation,
   rollbackChange,
   simulateSnapshot,
+  timelineFingerprint,
   validateSnapshot,
   loadProjectSnapshot,
   type AuthoringObject,
@@ -37,6 +43,8 @@ import {
   type RuntimeTraceEvent,
   type SceneCreateInput,
   type ScenePatchInput,
+  type TimelineCreateInput,
+  type TimelinePatchInput,
   type TraceQuery,
   type VariableEnsureInput,
 } from '@surdet/authoring';
@@ -46,11 +54,14 @@ import { NodeProjectStorage } from './node-project-storage.js';
 export const AUTHORING_CAPABILITIES = [
   'capabilities.describe',
   'project.inspect',
+  'project.assets',
   'object.inspect',
   'change.begin',
   'scene.create',
   'scene.patch',
   'variable.ensure',
+  'timeline.create',
+  'timeline.patch',
   'project.validate',
   'project.simulate',
   'runtime.run-from',
@@ -224,7 +235,7 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
       directChange: { path: filePath },
       potentialImpact: [],
       observedImpact: [],
-      kind: filePath === 'game.config.json' ? 'variable' : 'scene',
+      kind: filePath === 'game.config.json' ? 'variable' : filePath.startsWith('content/timelines/') ? 'timeline' : 'scene',
     });
     return diff;
   });
@@ -236,7 +247,8 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
       changedVariables: paths.includes('game.config.json') ? 1 : 0,
       warnings: diffFiles.flatMap((file) => file.unexpectedFormatChange ? [`${file.path}: 检测到与语义修改无关的行终止符变化`] : []),
     },
-    semantic: files.flatMap((file) => file.semantic),
+    // 文件级 JSON diff 保留；timeline/track/cue 的对象级 diff 只来自已执行的类型化 operation ledger。
+    semantic: [...files.flatMap((file) => file.semantic), ...buildOperationLedgerDiff(session.record)],
     files: files.flatMap((file) => file.files),
   };
 }
@@ -307,14 +319,43 @@ export class AuthoringService {
     const storage = await NodeProjectStorage.open(projectRoot);
     const snapshot = await loadSnapshot(storage);
     const index = buildObjectIndex(snapshot);
-    return { projectRevision: snapshot.revision, result: inspectProject(snapshot, index) };
+    const assetPaths = assetPathsFromFiles(await storage.listFiles());
+    return { projectRevision: snapshot.revision, result: inspectProject(snapshot, index, assetPaths) };
   }
 
-  async inspectObject(projectRoot: string, objectRef: string): Promise<ServiceResult<AuthoringObject>> {
+  async projectAssets(projectRoot: string): Promise<ServiceResult<{ backgrounds: unknown[]; portraits: unknown[] }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
     const snapshot = await loadSnapshot(storage);
+    const assetPaths = assetPathsFromFiles(await storage.listFiles());
+    return {
+      projectRevision: snapshot.revision,
+      result: buildAssetCatalog(assetPaths),
+    };
+  }
+
+  async inspectObject(projectRoot: string, objectRef: string, changeId?: string): Promise<ServiceResult<AuthoringObject>> {
+    // 带 --change 时读取事务 workingFiles 的对象（patch 指纹以事务内当前状态为准）。
+    const snapshot = changeId === undefined
+      ? await loadSnapshot(await NodeProjectStorage.open(projectRoot))
+      : (await openChangeContext(changeId)).snapshot;
     const object = inspectObject(buildObjectIndex(snapshot), objectRef);
+    // timeline/track/cue 附当前 SHA-256 指纹，供后续类型化 patch 的 expectedFingerprint 使用。
+    if ((object.kind === 'timeline' || object.kind === 'track' || object.kind === 'cue') && object.details !== undefined) {
+      object.fingerprint = await timelineFingerprint(object.details, { sha256: async (text) => hashText(text) });
+    }
     return { projectRevision: snapshot.revision, result: object };
+  }
+
+  async timelineCreate(changeId: string, input: TimelineCreateInput): Promise<ServiceResult<unknown>> {
+    const context = await openChangeContext(changeId);
+    const result = await applyTimelineCreate(context.session, input, { sha256: async (text) => hashText(text) });
+    return { ...metadataForChange(context.session), result };
+  }
+
+  async timelinePatch(changeId: string, input: TimelinePatchInput): Promise<ServiceResult<unknown>> {
+    const context = await openChangeContext(changeId);
+    const result = await applyTimelinePatch(context.session, input, { sha256: async (text) => hashText(text) });
+    return { ...metadataForChange(context.session), result };
   }
 
   async begin(projectRoot: string): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
@@ -353,7 +394,9 @@ export class AuthoringService {
   async validate(changeId: string): Promise<ServiceResult<ReturnType<typeof validateSnapshot> & { evidenceId: string }>> {
     const context = await openChangeContext(changeId);
     const index = buildObjectIndex(context.snapshot);
-    const validation = validateSnapshot(context.snapshot, index);
+    const assetPaths = assetPathsFromFiles(await context.storage.listFiles());
+    const assetCatalog = buildAssetCatalog(assetPaths);
+    const validation = validateSnapshot(context.snapshot, index, { assetCatalog });
     const evidence = validationEvidence(context.snapshot.revision, changeId, context.session.record.workingRevision, validation);
     await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
     await recordValidation(context.session, {
@@ -366,9 +409,18 @@ export class AuthoringService {
     };
   }
 
-  async simulate(changeId: string): Promise<ServiceResult<ReturnType<typeof simulateSnapshot>>> {
+  async simulate(changeId: string, input?: { sceneId?: string }): Promise<ServiceResult<ReturnType<typeof simulateSnapshot>>> {
     const context = await openChangeContext(changeId);
-    const simulation = simulateSnapshot(context.snapshot);
+    // 显式场景选择：不依赖 game.config.entryScene，不默认从 ch01_01 启动。
+    const sceneId = input?.sceneId;
+    let snapshot = context.snapshot;
+    if (sceneId !== undefined) {
+      if (!snapshot.scenes.some((scene) => scene.id === sceneId)) {
+        throw new AuthoringOperationError('PROJECT_NOT_FOUND', `模拟目标场景不存在：${sceneId}`);
+      }
+      snapshot = { ...snapshot, entryScene: sceneId };
+    }
+    const simulation = simulateSnapshot(snapshot);
     const evidence = simulationEvidence(context.snapshot.revision, changeId, context.session.record.workingRevision, simulation);
     await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
     if (simulation.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限');

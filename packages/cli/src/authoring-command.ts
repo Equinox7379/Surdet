@@ -168,7 +168,8 @@ async function dispatch(service: AuthoringService, command: string, subcommand: 
   const capability = capabilityFor(command, subcommand);
   if (capability === 'capabilities.describe') return { value: await service.describeCapabilities() };
   if (capability === 'project.inspect') return { value: await service.inspectProject(required(args.project, '--project')) };
-  if (capability === 'object.inspect') return { value: await service.inspectObject(required(args.project, '--project'), required(args.ref, '--ref')) };
+  if (capability === 'project.assets') return { value: await service.projectAssets(required(args.project, '--project')) };
+  if (capability === 'object.inspect') return { value: await service.inspectObject(required(args.project, '--project'), required(args.ref, '--ref'), args.change) };
   if (capability === 'change.begin') return { value: await service.begin(required(args.project, '--project')) };
   if (capability === 'scene.create') {
     const input = readJsonFile(args.input) as Parameters<AuthoringService['sceneCreate']>[1];
@@ -182,8 +183,21 @@ async function dispatch(service: AuthoringService, command: string, subcommand: 
     const input = readJsonFile(args.input) as Parameters<AuthoringService['variableEnsure']>[1];
     return { value: await service.variableEnsure(required(args.change, '--change'), input), operationId: input.operationId };
   }
+  if (capability === 'timeline.create') {
+    const input = readJsonFile(args.input) as Parameters<AuthoringService['timelineCreate']>[1];
+    return { value: await service.timelineCreate(required(args.change, '--change'), input), operationId: input.operationId };
+  }
+  if (capability === 'timeline.patch') {
+    const input = readJsonFile(args.input) as Parameters<AuthoringService['timelinePatch']>[1];
+    return { value: await service.timelinePatch(required(args.change, '--change'), input), operationId: input.operationId };
+  }
   if (capability === 'project.validate') return { value: await service.validate(required(args.change, '--change')) };
-  if (capability === 'project.simulate') return { value: await service.simulate(required(args.change, '--change')) };
+  if (capability === 'project.simulate') {
+    const input = readOptionalJsonFile(args.input);
+    if (!isRecord(input)) throw new Error('project.simulate 输入必须是 JSON 对象');
+    const sceneId = typeof input['sceneId'] === 'string' ? input['sceneId'] : undefined;
+    return { value: await service.simulate(required(args.change, '--change'), { sceneId }) };
+  }
   if (capability === 'runtime.run-from') {
     const input = readJsonFile(args.input);
     if (!isRecord(input)) throw new Error('runtime.run-from 输入必须是 JSON 对象');

@@ -37,13 +37,17 @@ export interface ProjectStorage {
 }
 
 export interface AuthoringObject {
-  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'asset';
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset';
   semanticId?: string;
   objectRef: string;
   parentRef?: string;
   source?: { path: string; line: number; col: number; raw: string };
   references: string[];
   referencedBy: string[];
+  /** 对象结构（timeline 为 definition；track/cue 为对应 JSON 片段；asset 为 catalog 条目或 null）。 */
+  details?: unknown;
+  /** SHA-256 规范化 JSON 指纹（timeline/track/cue；由 hasher 注入方填充）。 */
+  fingerprint?: string;
 }
 
 export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
@@ -111,4 +115,70 @@ export interface VariableEnsureInput {
   readonly?: boolean;
   min?: number;
   max?: number;
+}
+
+/** Stage 6 Wave 2：本 Wave 唯一允许写入的 track kind。 */
+export type Wave2TrackKind = 'background' | 'portrait' | 'screen';
+
+/** Stage 6 Wave 2：本 Wave 唯一允许写入的 action（background.set / portrait.* / screen.fade）。 */
+export type Wave2Action = 'set' | 'show' | 'hide' | 'move' | 'expression' | 'fade';
+
+export interface TimelineCueInput {
+  atMs: number;
+  durationMs: number;
+  easing: string;
+  action: Wave2Action;
+  key?: string;
+  expression?: string;
+  position?: string;
+  alpha?: number;
+}
+
+export interface TimelineCreateInput {
+  operationId: string;
+  timelineId: string;
+  definition: unknown;
+}
+
+export type TimelinePatchOperation =
+  | { kind: 'addTrack'; expectedFingerprint: string; trackKind: Wave2TrackKind; target?: string }
+  | { kind: 'removeTrack'; expectedFingerprint: string; trackRef: string }
+  | { kind: 'insertCue'; expectedFingerprint: string; trackRef: string; cue: TimelineCueInput }
+  | { kind: 'replaceCue'; expectedFingerprint: string; cueRef: string; cue: TimelineCueInput }
+  | { kind: 'removeCue'; expectedFingerprint: string; cueRef: string };
+
+export interface TimelinePatchInput {
+  operationId: string;
+  timelineId: string;
+  patch: TimelinePatchOperation;
+}
+
+/** 只读资源发现条目（共享 asset catalog 统一解析）。 */
+export interface AssetEntry {
+  kind: 'background' | 'portrait';
+  key: string;
+  role?: string;
+  outfit?: string;
+  expression?: string;
+  sourcePath: string;
+  format: string;
+  resolved: boolean;
+}
+
+export interface ProjectAssetCatalog {
+  backgrounds: AssetEntry[];
+  portraits: AssetEntry[];
+}
+
+/** operation ledger 产生的对象级 diff 条目（track/cue 无持久语义 ID，不按数组位置猜身份）。 */
+export interface LedgerDiffEntry {
+  kind: string;
+  operationId: string;
+  objectBefore?: string;
+  objectAfter?: string;
+  fingerprintBefore?: string;
+  fingerprintAfter?: string;
+  directChange: unknown;
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
 }

@@ -1,0 +1,258 @@
+import { describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const cliEntry = path.join(repoRoot, 'packages/cli/dist/index.js');
+
+function runCli(args: string[], env: NodeJS.ProcessEnv): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [cliEntry, ...args], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function writeJson(dir: string, name: string, value: unknown): string {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8');
+  return file;
+}
+
+function body(result: { stdout: string }): any {
+  return JSON.parse(result.stdout) as any;
+}
+
+function fixtureProject(): { root: string; data: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-wave2-cli-'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-wave2-data-'));
+  fs.mkdirSync(path.join(root, 'content/scenario'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'content/timelines'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'content/assets/portrait'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ entryScene: 'ch01_01', variables: {} }), 'utf8');
+  fs.writeFileSync(path.join(root, 'content/scenario/ch01_01.gal'), '@scene ch01_01\n凛：基础。\n@end\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'content/assets/bg/night_field.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8');
+  fs.writeFileSync(path.join(root, 'content/assets/bg/castle_hall.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8');
+  fs.writeFileSync(path.join(root, 'content/assets/portrait/lynn_uniform_night.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8');
+  return { root, data };
+}
+
+const agentBlackout = {
+  version: 1,
+  id: 'agent_blackout',
+  durationMs: 800,
+  tracks: [
+    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] },
+    { kind: 'portrait', target: 'lynn:uniform', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'night', position: 'left' }] },
+    {
+      kind: 'screen',
+      cues: [
+        { atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 },
+        { atMs: 50, durationMs: 700, easing: 'inOutSine', action: 'fade', alpha: 0 },
+      ],
+    },
+  ],
+};
+
+describe('agent authoring presentation wave 2 CLI vertical slice', () => {
+  it('runs the full timeline authoring chain with explicit scene selection', () => {
+    const { root, data } = fixtureProject();
+    const env = { SURDET_AGENT_DATA_DIR: data };
+
+    // capabilities.describe 自动扩展为 17 项能力。
+    const capabilities = runCli(['capabilities', 'describe', '--json'], env);
+    expect(capabilities.status).toBe(0);
+    expect(body(capabilities).result.capabilities).toEqual([
+      'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect', 'change.begin',
+      'scene.create', 'scene.patch', 'variable.ensure', 'timeline.create', 'timeline.patch',
+      'project.validate', 'project.simulate', 'runtime.run-from', 'runtime.read-trace',
+      'change.diff', 'change.commit', 'change.rollback',
+    ]);
+
+    // project.assets 与 project.inspect.assets 共享同一 catalog 解析。
+    const assets = runCli(['project', 'assets', '--project', root, '--json'], env);
+    expect(assets.status).toBe(0);
+    const assetsBody = body(assets);
+    const nightField = assetsBody.result.backgrounds.find((entry: any) => entry.key === 'night_field');
+    expect(nightField).toEqual({
+      kind: 'background', key: 'night_field', sourcePath: 'content/assets/bg/night_field.svg', format: 'svg', resolved: true,
+    });
+    const lynnNight = assetsBody.result.portraits.find((entry: any) => entry.expression === 'night');
+    expect(lynnNight?.role).toBe('lynn');
+    expect(lynnNight?.resolved).toBe(true);
+    const inspect = runCli(['project', 'inspect', '--project', root, '--json'], env);
+    expect(inspect.status).toBe(0);
+    expect(body(inspect).result.assets).toEqual(assetsBody.result);
+
+    const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).changeId as string;
+    const requestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-wave2-input-'));
+
+    // scene.create agent_probe：只含 @label start 与 @timeline agent_blackout @ blocking。
+    const sceneInput = writeJson(requestDir, 'scene.json', {
+      operationId: 'op-scene-probe',
+      sceneId: 'agent_probe',
+      blocks: [
+        { kind: 'label', name: 'start' },
+        { kind: 'instruction', name: 'timeline', args: ['agent_blackout'], modifiers: { blocking: '' } },
+      ],
+    });
+    expect(runCli(['scene', 'create', '--change', changeId, '--input', sceneInput, '--json'], env).status).toBe(0);
+
+    // timeline.create agent_blackout。
+    const timelineInput = writeJson(requestDir, 'timeline.json', {
+      operationId: 'op-timeline-create',
+      timelineId: 'agent_blackout',
+      definition: agentBlackout,
+    });
+    const created = runCli(['timeline', 'create', '--change', changeId, '--input', timelineInput, '--json'], env);
+    expect(created.status).toBe(0);
+    const createdBody = body(created);
+    expect(createdBody.result.objectRef).toBe('timeline:agent_blackout');
+    expect(createdBody.result.path).toBe('content/timelines/agent_blackout.json');
+    expect(createdBody.result.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+
+    // object.inspect（事务内）：timeline/track/cue 附 SHA-256 指纹。
+    const timelineInspect = runCli(['object', 'inspect', '--project', root, '--ref', 'timeline:agent_blackout', '--change', changeId, '--json'], env);
+    expect(timelineInspect.status).toBe(0);
+    const timelineObject = body(timelineInspect).result;
+    expect(timelineObject.fingerprint).toBe(createdBody.result.fingerprint);
+    const trackInspect = runCli(['object', 'inspect', '--project', root, '--ref', 'timeline:agent_blackout/track:0', '--change', changeId, '--json'], env);
+    expect(trackInspect.status).toBe(0);
+    const trackObject = body(trackInspect).result;
+    expect(trackObject.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(trackObject.references).toContain('asset:bg:night_field');
+    const cueInspect = runCli(['object', 'inspect', '--project', root, '--ref', 'timeline:agent_blackout/track:1/cue:0', '--change', changeId, '--json'], env);
+    expect(cueInspect.status).toBe(0);
+    expect(body(cueInspect).result.references).toContain('asset:portrait:lynn:uniform:night');
+    const assetInspect = runCli(['object', 'inspect', '--project', root, '--ref', 'asset:bg:night_field', '--change', changeId, '--json'], env);
+    expect(assetInspect.status).toBe(0);
+    expect(body(assetInspect).result.kind).toBe('asset');
+
+    // timeline.patch 单 patch 原子：addTrack → insertCue → removeCue 串行，每次 workingRevision 增加。
+    const addInput = writeJson(requestDir, 'patch-add.json', {
+      operationId: 'op-patch-add',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'addTrack', expectedFingerprint: createdBody.result.fingerprint, trackKind: 'screen' },
+    });
+    const added = runCli(['timeline', 'patch', '--change', changeId, '--input', addInput, '--json'], env);
+    expect(added.status).toBe(0);
+    const addedBody = body(added);
+    expect(addedBody.result.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    const newTrackRef = 'timeline:agent_blackout/track:3';
+    const newTrack = runCli(['object', 'inspect', '--project', root, '--ref', newTrackRef, '--change', changeId, '--json'], env);
+    expect(newTrack.status).toBe(0);
+    const newTrackFingerprint = body(newTrack).result.fingerprint as string;
+    const insertInput = writeJson(requestDir, 'patch-insert.json', {
+      operationId: 'op-patch-insert',
+      timelineId: 'agent_blackout',
+      patch: {
+        kind: 'insertCue',
+        expectedFingerprint: newTrackFingerprint,
+        trackRef: newTrackRef,
+        cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 0 },
+      },
+    });
+    expect(runCli(['timeline', 'patch', '--change', changeId, '--input', insertInput, '--json'], env).status).toBe(0);
+    const newCue = runCli(['object', 'inspect', '--project', root, '--ref', 'timeline:agent_blackout/track:3/cue:0', '--change', changeId, '--json'], env);
+    expect(newCue.status).toBe(0);
+    const removeInput = writeJson(requestDir, 'patch-remove.json', {
+      operationId: 'op-patch-remove',
+      timelineId: 'agent_blackout',
+      patch: {
+        kind: 'removeCue',
+        expectedFingerprint: body(newCue).result.fingerprint,
+        cueRef: 'timeline:agent_blackout/track:3/cue:0',
+      },
+    });
+    expect(runCli(['timeline', 'patch', '--change', changeId, '--input', removeInput, '--json'], env).status).toBe(0);
+
+    // 指纹过期 → OBJECT_REF_STALE，且事务不变。
+    const staleInput = writeJson(requestDir, 'patch-stale.json', {
+      operationId: 'op-patch-stale',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'addTrack', expectedFingerprint: '0'.repeat(64), trackKind: 'screen' },
+    });
+    const stale = runCli(['timeline', 'patch', '--change', changeId, '--input', staleInput, '--json'], env);
+    expect(stale.status).toBe(1);
+    expect(body(stale).error.code).toBe('OBJECT_REF_STALE');
+
+    // 白名单外 track kind → UNSUPPORTED_OPERATION。
+    const unsupported = runCli(['timeline', 'create', '--change', changeId, '--input', writeJson(requestDir, 'tl-camera.json', {
+      operationId: 'op-camera',
+      timelineId: 'camera_probe',
+      definition: {
+        version: 1, id: 'camera_probe', durationMs: 100,
+        tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'zoom', scale: 1 }] }],
+      },
+    }), '--json'], env);
+    expect(unsupported.status).toBe(1);
+    expect(body(unsupported).error.code).toBe('UNSUPPORTED_OPERATION');
+
+    // 身份不变量：timelineId 与 definition.id 不一致 → VALIDATION_FAILED。
+    const mismatch = runCli(['timeline', 'create', '--change', changeId, '--input', writeJson(requestDir, 'tl-mismatch.json', {
+      operationId: 'op-mismatch',
+      timelineId: 'other',
+      definition: agentBlackout,
+    }), '--json'], env);
+    expect(mismatch.status).toBe(1);
+    expect(body(mismatch).error.code).toBe('VALIDATION_FAILED');
+
+    // project.validate：结构与资源引用绿灯。
+    const validated = runCli(['project', 'validate', '--change', changeId, '--json'], env);
+    expect(validated.status).toBe(0);
+    const validatedBody = body(validated);
+    expect(validatedBody.result.ok).toBe(true);
+    expect(validatedBody.result.issues.filter((issue: any) => issue.severity === 'error')).toHaveLength(0);
+
+    // project.simulate 显式场景：entryScene 记录为 agent_probe。
+    const simulateInput = writeJson(requestDir, 'simulate.json', { sceneId: 'agent_probe' });
+    const simulated = runCli(['project', 'simulate', '--change', changeId, '--input', simulateInput, '--json'], env);
+    expect(simulated.status).toBe(0);
+    const simulatedBody = body(simulated);
+    expect(simulatedBody.result.entryScene).toBe('agent_probe');
+    expect(simulatedBody.result.status).toBe('passed');
+    expect(simulatedBody.result.runtimeErrors).toHaveLength(0);
+
+    // runtime.run-from 显式场景与标签。
+    const runInput = writeJson(requestDir, 'run-from.json', { sceneId: 'agent_probe', label: 'start' });
+    const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
+    expect(run.status).toBe(0);
+    expect(body(run).result.sceneId).toBe('agent_probe');
+    expect(body(run).result.status).toBe('passed');
+
+    // change.diff：对象级 semantic diff 来自 operation ledger（timeline.create + 三次 patch）。
+    const diffed = runCli(['change', 'diff', '--change', changeId, '--json'], env);
+    expect(diffed.status).toBe(0);
+    const diffBody = body(diffed);
+    expect(diffBody.result.files.map((file: any) => file.path)).toEqual([
+      'content/scenario/agent_probe.gal',
+      'content/timelines/agent_blackout.json',
+    ]);
+    // semantic 包含文件级条目（scene/timeline）与 ledger 对象级条目；ledger 条目以 timeline. 前缀标识。
+    const ledgerKinds = diffBody.result.semantic.map((entry: any) => entry.kind).filter((kind: string) => kind.startsWith('timeline.'));
+    expect(ledgerKinds).toEqual(['timeline.create', 'timeline.patch.addTrack', 'timeline.patch.insertCue', 'timeline.patch.removeCue']);
+
+    // change.commit 后磁盘回读。
+    const committed = runCli(['change', 'commit', '--change', changeId, '--json'], env);
+    expect(committed.status).toBe(0);
+    expect(body(committed).result.status).toBe('COMMITTED');
+    const probeText = fs.readFileSync(path.join(root, 'content/scenario/agent_probe.gal'), 'utf8');
+    expect(probeText).toContain('@scene agent_probe');
+    expect(probeText).toContain('@label start');
+    expect(probeText).toContain('@timeline agent_blackout @blocking');
+    const timelineText = fs.readFileSync(path.join(root, 'content/timelines/agent_blackout.json'), 'utf8');
+    const committedDefinition = JSON.parse(timelineText) as { id: string; tracks: any[] };
+    expect(committedDefinition.id).toBe('agent_blackout');
+    expect(committedDefinition.tracks).toHaveLength(4);
+    expect(committedDefinition.tracks[3]?.cues).toHaveLength(0);
+    // 资源保持只读：SVG 文件身份不变。
+    expect(fs.readFileSync(path.join(root, 'content/assets/bg/night_field.svg'), 'utf8')).toBe('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  });
+});

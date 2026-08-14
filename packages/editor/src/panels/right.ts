@@ -98,6 +98,13 @@ export function updateCausalPanel(): void {
   if (display.location) current.appendChild(h('div', 'causal-current-location', display.location));
   current.appendChild(h('div', 'causal-current-ref', display.objectRef));
   box.appendChild(current);
+  // Wave 2：时间轴对象展示轨道/Cue 子对象，可点击定位到具体 cue。
+  if (object.kind === 'timeline' && index) {
+    const children = index.objects.filter((candidate) => candidate.parentRef === object.objectRef && (candidate.kind === 'track' || candidate.kind === 'cue'));
+    if (children.length > 0) {
+      refList(box, '轨道 / Cue', children.map((candidate) => candidate.objectRef));
+    }
+  }
   refList(box, '直接引用', object.references);
   refList(box, '直接被引用', object.referencedBy);
   const potential = h('div', 'causal-impact');

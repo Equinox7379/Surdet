@@ -75,11 +75,11 @@ export async function openProject(): Promise<void> {
   try {
     const contentDir = await dir.getDirectoryHandle('content');
     const assetsDir = await contentDir.getDirectoryHandle('assets');
-    await walkAssetDir(assetsDir);
+    await walkAssetDir(assetsDir, 'content/assets');
   } catch { /* 无素材目录 */ }
   try {
     const publicDir = await dir.getDirectoryHandle('public');
-    await walkAssetDir(publicDir);
+    await walkAssetDir(publicDir, 'public');
   } catch { /* 无 public 目录 */ }
   // 递归读取 content/scenario/**/*.gal
   try {
@@ -107,15 +107,29 @@ export async function openProject(): Promise<void> {
 /** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/avatar/bgm/se/voice/video），子目录继承类型；
  *  未知类型的目录/文件跳过（不强制素材约定） */
 const IMG_RE = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
-async function walkAssetDir(root: FileSystemDirectoryHandle): Promise<void> {
-  const walk = async (dh: FileSystemDirectoryHandle, kind: AssetKind | null): Promise<void> => {
+
+/** handle → 项目相对路径（'/' 分隔；供共享 asset catalog 的路径元数据枚举，不读文件内容）。 */
+const assetPathByHandle = new WeakMap<FileSystemFileHandle, string>();
+
+export function recordAssetPath(handle: FileSystemFileHandle, relativePath: string): void {
+  assetPathByHandle.set(handle, relativePath);
+}
+
+export function assetPathForHandle(handle: FileSystemFileHandle): string | undefined {
+  return assetPathByHandle.get(handle);
+}
+
+async function walkAssetDir(root: FileSystemDirectoryHandle, basePath: string): Promise<void> {
+  const walk = async (dh: FileSystemDirectoryHandle, kind: AssetKind | null, relative: string): Promise<void> => {
     const entries = (dh as unknown as {
       values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
     }).values();
     for await (const ent of entries) {
       if (ent.kind === 'directory') {
-        await walk(ent, kind ?? kindOfDir(ent.name));
+        await walk(ent, kind ?? kindOfDir(ent.name), relative.length === 0 ? ent.name : `${relative}/${ent.name}`);
       } else if (ent.kind === 'file' && kind) {
+        const filePath = relative.length === 0 ? ent.name : `${relative}/${ent.name}`;
+        recordAssetPath(ent, `${basePath}/${filePath}`);
         if (kind === 'portrait') {
           const { key, expr } = parsePortraitFileName(ent.name);
           state.dirAssets.push({ key, kind, expr, handle: ent, isImage: IMG_RE.test(ent.name) });
@@ -126,7 +140,7 @@ async function walkAssetDir(root: FileSystemDirectoryHandle): Promise<void> {
       }
     }
   };
-  await walk(root, null);
+  await walk(root, null, '');
 }
 
 /** 配置文件写盘（E3 共用：创建可写流 → 写入 → 关闭） */

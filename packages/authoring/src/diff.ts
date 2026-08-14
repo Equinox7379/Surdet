@@ -12,6 +12,8 @@ export interface ChangeDiff {
     kind: string;
     objectBefore?: string;
     objectAfter?: string;
+    fingerprintBefore?: string;
+    fingerprintAfter?: string;
     operationId: string;
     directChange: unknown;
     potentialImpact: unknown[];
@@ -74,6 +76,55 @@ function hasFormatOnlyLineChange(before: string, after: string): boolean {
     const other = right[index];
     return other !== undefined && line.raw === other.raw && line.eol !== other.eol;
   });
+}
+
+function isLedgerDiffEntry(value: unknown): value is {
+  kind: string;
+  operationId: string;
+  directChange: unknown;
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+  objectBefore?: string;
+  objectAfter?: string;
+  fingerprintBefore?: string;
+  fingerprintAfter?: string;
+} {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record['kind'] === 'string'
+    && typeof record['operationId'] === 'string'
+    && 'directChange' in record
+    && Array.isArray(record['potentialImpact'])
+    && Array.isArray(record['observedImpact']);
+}
+
+/**
+ * 从已成功执行的类型化 operation ledger 产生对象级 semantic diff。
+ * timeline 按稳定语义 ID 对齐；track/cue 没有持久语义 ID，diff 只来自 ledger 记录，
+ * 不按 JSON 数组位置猜测身份、不做模糊树匹配。
+ */
+export function buildOperationLedgerDiff(record: {
+  operations: Record<string, { requestHash: string; result: unknown }>;
+}): ChangeDiff['semantic'] {
+  const entries: ChangeDiff['semantic'] = [];
+  for (const [operationId, operation] of Object.entries(record.operations)) {
+    const result = operation.result;
+    if (typeof result !== 'object' || result === null) continue;
+    const diffEntry = (result as Record<string, unknown>)['diffEntry'];
+    if (!isLedgerDiffEntry(diffEntry)) continue;
+    entries.push({
+      kind: diffEntry.kind,
+      ...(diffEntry.objectBefore === undefined ? {} : { objectBefore: diffEntry.objectBefore }),
+      ...(diffEntry.objectAfter === undefined ? {} : { objectAfter: diffEntry.objectAfter }),
+      ...(diffEntry.fingerprintBefore === undefined ? {} : { fingerprintBefore: diffEntry.fingerprintBefore }),
+      ...(diffEntry.fingerprintAfter === undefined ? {} : { fingerprintAfter: diffEntry.fingerprintAfter }),
+      operationId: diffEntry.operationId,
+      directChange: diffEntry.directChange,
+      potentialImpact: diffEntry.potentialImpact,
+      observedImpact: diffEntry.observedImpact,
+    });
+  }
+  return entries;
 }
 
 export function createChangeDiff(input: ChangeDiffInput): ChangeDiff {
