@@ -14,7 +14,7 @@ import {
   type LintIssue,
 } from '@surdet/core';
 import type { ObjectIndex } from './object-index.js';
-import { buildObjectIndex } from './object-index.js';
+import { buildObjectIndex, buildSpeakerCharacterRefs } from './object-index.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 import { validateTimeline, type TimelineDefinition } from '@surdet/core';
 import type { ProjectAssetCatalog } from './contracts.js';
@@ -36,11 +36,20 @@ export interface ValidationOptions {
   assetCatalog?: ProjectAssetCatalog;
 }
 
+function isRecordLike(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function actionFor(code: string): string {
   switch (code) {
     case 'J002': return '创建或修正标签，再重新校验该跳转';
     case 'J001': return '创建目标场景或修正跳转目标';
     case 'J003': return '先修复目标场景的语法或结构错误';
+    case 'CHARACTER_INVALID': return '修正 game.config.json 的角色表结构（name 必须非空）';
+    case 'ENTRY_SCENE_MISSING': return '创建该入口场景或把 entryScene 改为存在的场景';
+    case 'SPEAKER_UNRESOLVED': return '创建对应角色（character.ensure）或修正台词 speaker';
     default: return `修正 ${code} 对应的源码问题`;
   }
 }
@@ -128,6 +137,85 @@ export function validateSnapshot(
         validateJumpTarget(sceneId, instr as CallInstr, labels, failedScenes, rawIssues, '@call');
       }
     }
+  }
+
+  // Stage 6 Wave 3：项目级创作配置——characters 结构、entryScene 存在性、speaker/avatar 引用。
+  const charactersValue = snapshot.config['characters'];
+  const characters: Record<string, unknown> = {};
+  if (charactersValue !== undefined) {
+    if (typeof charactersValue !== 'object' || charactersValue === null || Array.isArray(charactersValue)) {
+      rawIssues.push({
+        severity: 'error',
+        code: 'CHARACTER_INVALID',
+        text: `${configPath}: characters 必须是对象`,
+        file: configPath,
+        line: 1,
+        col: 1,
+      });
+    } else {
+      Object.assign(characters, charactersValue as Record<string, unknown>);
+    }
+  }
+  for (const [id, rawDeclaration] of Object.entries(characters)) {
+    const record = isRecordLike(rawDeclaration);
+    if (record === null || typeof record['name'] !== 'string' || record['name'].trim().length === 0) {
+      rawIssues.push({
+        severity: 'error',
+        code: 'CHARACTER_INVALID',
+        text: `${configPath}: 角色 '${id}' 必须包含非空 name`,
+        file: configPath,
+        line: 1,
+        col: 1,
+      });
+    }
+  }
+
+  const resolvedAvatars = new Map(
+    (options.assetCatalog?.avatars ?? []).filter((entry) => entry.resolved).map((entry) => [entry.key, entry]),
+  );
+  for (const [id, rawDeclaration] of Object.entries(characters)) {
+    const record = isRecordLike(rawDeclaration);
+    const avatar = record === null ? undefined : record['avatar'];
+    if (typeof avatar === 'string' && avatar.trim().length > 0 && !resolvedAvatars.has(avatar.trim())) {
+      rawIssues.push({
+        severity: 'warning',
+        code: 'ASSET_UNRESOLVED',
+        text: `${configPath}: 角色 '${id}' 的头像资源 '${avatar}' 未解析（catalog 中不存在或格式不受支持）`,
+        file: configPath,
+        line: 1,
+        col: 1,
+      });
+    }
+  }
+
+  const entryScene = snapshot.config['entryScene'];
+  if (typeof entryScene === 'string' && entryScene.trim().length > 0 && !scenes.has(entryScene.trim())) {
+    rawIssues.push({
+      severity: 'error',
+      code: 'ENTRY_SCENE_MISSING',
+      text: `${configPath}: 入口场景 '${entryScene}' 不存在`,
+      file: configPath,
+      line: 1,
+      col: 1,
+    });
+  }
+
+  // 台词 speaker → 角色（placeholder 哲学：缺失只 warning，不阻止 commit；speaker 可为 ID 或显示名）。
+  const speakerRefMap = buildSpeakerCharacterRefs(characters);
+  for (const scene of snapshot.scenes) {
+    scene.document.forEach((line, lineIndex) => {
+      if (line.kind !== 'text') return;
+      const speaker = line.speaker.trim();
+      if (speaker.length === 0 || speakerRefMap.has(speaker)) return;
+      rawIssues.push({
+        severity: 'warning',
+        code: 'SPEAKER_UNRESOLVED',
+        text: `${scene.path}:${lineIndex + 1}: 台词 speaker '${speaker}' 不在 characters 中`,
+        file: scene.path,
+        line: lineIndex + 1,
+        col: 1,
+      });
+    });
   }
 
   // Stage 6 Wave 2：时间轴结构校验与资源引用检查（结构错误进 error 信封，资源 unresolved 只 warning）。

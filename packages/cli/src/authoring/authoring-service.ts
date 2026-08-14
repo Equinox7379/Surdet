@@ -9,7 +9,12 @@ import {
   type VarValue,
 } from '@surdet/core';
 import {
+  applyCharacterEnsure,
+  applyCharacterRemove,
+  applyEntrySceneSet,
   applyTimelineCreate,
+  charactersFingerprint,
+  entrySceneFingerprint,
   applyTimelinePatch,
   assetPathsFromFiles,
   AuthoringOperationError,
@@ -36,6 +41,9 @@ import {
   loadProjectSnapshot,
   type AuthoringObject,
   type ChangeSession,
+  type CharacterEnsureInput,
+  type CharacterRemoveInput,
+  type EntrySceneSetInput,
   type ProjectFile,
   type ProjectSnapshot,
   type ProjectStorage,
@@ -60,8 +68,11 @@ export const AUTHORING_CAPABILITIES = [
   'scene.create',
   'scene.patch',
   'variable.ensure',
+  'character.ensure',
+  'character.remove',
   'timeline.create',
   'timeline.patch',
+  'project.entry-scene.set',
   'project.validate',
   'project.simulate',
   'runtime.run-from',
@@ -343,6 +354,13 @@ export class AuthoringService {
     if ((object.kind === 'timeline' || object.kind === 'track' || object.kind === 'cue') && object.details !== undefined) {
       object.fingerprint = await timelineFingerprint(object.details, { sha256: async (text) => hashText(text) });
     }
+    // Wave 3：character 附角色表指纹；entry-scene 附 entryScene 字段指纹（供 character.ensure/remove 与 entry-scene.set 使用）。
+    if (object.kind === 'character') {
+      object.fingerprint = await charactersFingerprint(snapshot.config, { sha256: async (text) => hashText(text) });
+    }
+    if (object.kind === 'entry-scene') {
+      object.fingerprint = await entrySceneFingerprint(snapshot.config, { sha256: async (text) => hashText(text) });
+    }
     return { projectRevision: snapshot.revision, result: object };
   }
 
@@ -355,6 +373,24 @@ export class AuthoringService {
   async timelinePatch(changeId: string, input: TimelinePatchInput): Promise<ServiceResult<unknown>> {
     const context = await openChangeContext(changeId);
     const result = await applyTimelinePatch(context.session, input, { sha256: async (text) => hashText(text) });
+    return { ...metadataForChange(context.session), result };
+  }
+
+  async characterEnsure(changeId: string, input: CharacterEnsureInput): Promise<ServiceResult<unknown>> {
+    const context = await openChangeContext(changeId);
+    const result = await applyCharacterEnsure(context.session, input, { sha256: async (text) => hashText(text) });
+    return { ...metadataForChange(context.session), result };
+  }
+
+  async characterRemove(changeId: string, input: CharacterRemoveInput): Promise<ServiceResult<unknown>> {
+    const context = await openChangeContext(changeId);
+    const result = await applyCharacterRemove(context.session, input, { sha256: async (text) => hashText(text) });
+    return { ...metadataForChange(context.session), result };
+  }
+
+  async entrySceneSet(changeId: string, input: EntrySceneSetInput): Promise<ServiceResult<unknown>> {
+    const context = await openChangeContext(changeId);
+    const result = await applyEntrySceneSet(context.session, input, { sha256: async (text) => hashText(text) });
     return { ...metadataForChange(context.session), result };
   }
 

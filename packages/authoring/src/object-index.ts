@@ -104,6 +104,7 @@ function addSceneObjects(
   scene: ProjectSnapshotScene,
   objects: AuthoringObject[],
   candidates: Map<string, string[]>,
+  speakerRefMap: Map<string, string>,
 ): void {
   addObject(objects, sceneObject(scene), candidates);
   let currentChoiceRef: string | null = null;
@@ -160,16 +161,84 @@ function addSceneObjects(
     }
     currentChoiceRef = null;
     if (line.kind === 'text') {
+      const textRef = anonymousRef(snapshot.revision, scene.id, 'text', lineNumber, line.raw);
       addObject(objects, {
         kind: 'text',
-        objectRef: anonymousRef(snapshot.revision, scene.id, 'text', lineNumber, line.raw),
+        objectRef: textRef,
         parentRef: sceneRef,
         source: sourceOf(scene.path, lineNumber, line.raw),
         references: [],
         referencedBy: [],
       }, candidates);
+      // Wave 3：台词 speaker → 角色（speaker 可为角色 ID 或显示名；空 speaker 为旁白，不建边）。
+      const speaker = line.speaker.trim();
+      const characterRef = speaker.length > 0 ? speakerRefMap.get(speaker) : undefined;
+      if (characterRef !== undefined) addReferenceCandidate(candidates, textRef, characterRef);
     }
   }
+}
+
+/** Wave 3：characters 角色表、avatar 资源与 entryScene 的配置对象与因果边。 */
+function addConfigObjects(
+  snapshot: ProjectSnapshot,
+  objects: AuthoringObject[],
+  candidates: Map<string, string[]>,
+): void {
+  const ensureAvatar = (avatar: string, source: { path: string; line: number; raw: string }): void => {
+    const ref = `asset:avatar:${avatar}`;
+    if (objects.some((object) => object.objectRef === ref)) return;
+    addObject(objects, {
+      kind: 'asset',
+      semanticId: ref,
+      objectRef: ref,
+      source: sourceOf(source.path, source.line, source.raw),
+      references: [],
+      referencedBy: [],
+    }, candidates);
+  };
+
+  const configSource = (raw: string): { path: string; line: number; raw: string } => ({ path: 'game.config.json', line: 1, raw });
+  const charactersValue = snapshot.config['characters'];
+  if (typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)) {
+    for (const [id, rawDeclaration] of Object.entries(charactersValue as Record<string, unknown>)) {
+      const declaration = isRecordValue(rawDeclaration) ? rawDeclaration : null;
+      const avatar = declaration?.['avatar'];
+      const characterRef = `character:${id}`;
+      const raw = typeof rawDeclaration === 'string' ? rawDeclaration : JSON.stringify(rawDeclaration);
+      addObject(objects, {
+        kind: 'character',
+        semanticId: characterRef,
+        objectRef: characterRef,
+        source: sourceOf('game.config.json', 1, raw),
+        references: [],
+        referencedBy: [],
+        ...(declaration === null ? {} : { details: declaration }),
+      }, candidates);
+      if (typeof avatar === 'string' && avatar.trim().length > 0) {
+        const ref = `asset:avatar:${avatar.trim()}`;
+        ensureAvatar(avatar.trim(), configSource(raw));
+        addReferenceCandidate(candidates, characterRef, ref);
+      }
+    }
+  }
+
+  const entryScene = snapshot.config['entryScene'];
+  if (typeof entryScene === 'string' && entryScene.trim().length > 0) {
+    addObject(objects, {
+      kind: 'entry-scene',
+      semanticId: 'config:entryScene',
+      objectRef: 'config:entryScene',
+      source: sourceOf('game.config.json', 1, JSON.stringify(entryScene)),
+      references: [],
+      referencedBy: [],
+      details: entryScene,
+    }, candidates);
+    addReferenceCandidate(candidates, 'config:entryScene', `scene:${entryScene.trim()}`);
+  }
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function assetRefForCue(track: Record<string, unknown>, cue: Record<string, unknown>): string | null {
@@ -279,10 +348,42 @@ function addTimelineObjects(
   for (const assetRef of timelineAssets) addReferenceCandidate(candidates, timelineRef, assetRef);
 }
 
+/**
+ * speaker 令牌 → 角色引用：匹配角色 ID 或显示名（name）；同名冲突时不建立该令牌的边。
+ * 供 object-index 与共享 validation 共用，不复制第二套映射。
+ */
+export function buildSpeakerCharacterRefs(characters: Record<string, unknown>): Map<string, string> {
+  const byId = new Map<string, string>();
+  const byName = new Map<string, string[]>();
+  for (const id of Object.keys(characters)) {
+    byId.set(id, `character:${id}`);
+    const raw = characters[id];
+    const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : null;
+    const name = record === null ? undefined : record['name'];
+    if (typeof name === 'string' && name.trim().length > 0) {
+      const list = byName.get(name.trim()) ?? [];
+      list.push(`character:${id}`);
+      byName.set(name.trim(), list);
+    }
+  }
+  const result = new Map<string, string>(byId);
+  for (const [name, refs] of byName) {
+    if (refs.length === 1 && !result.has(name)) result.set(name, refs[0]!);
+  }
+  return result;
+}
+
 export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   const objects: AuthoringObject[] = [];
   const candidates = new Map<string, string[]>();
-  for (const scene of snapshot.scenes) addSceneObjects(snapshot, scene, objects, candidates);
+  const charactersValue = snapshot.config['characters'];
+  const characters = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
+    ? charactersValue as Record<string, unknown>
+    : {};
+  const speakerRefMap = buildSpeakerCharacterRefs(characters);
+  for (const scene of snapshot.scenes) addSceneObjects(snapshot, scene, objects, candidates, speakerRefMap);
   for (const [name, declaration] of Object.entries(snapshot.variables)) {
     addObject(objects, {
       kind: 'variable',
@@ -298,6 +399,7 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
       referencedBy: [],
     }, candidates);
   }
+  addConfigObjects(snapshot, objects, candidates);
   for (const timeline of snapshot.timelines) addTimelineObjects(timeline.path, timeline.text, objects, candidates);
 
   const byRef = new Map(objects.map((object) => [object.objectRef, object]));
@@ -330,8 +432,11 @@ export interface ProjectInspection {
   rootIdentity: string;
   revision: string;
   entryScene?: string;
+  title?: string;
   scenes: { id: string; path: string }[];
   variables: { name: string; declaration: unknown }[];
+  /** 角色表（Wave 3）：id/name/avatar/declaration。 */
+  characters: { id: string; name?: string; avatar?: string; declaration: unknown }[];
   /** 只读资源目录（共享 asset catalog 解析结果）；输入仅是资产路径元数据。 */
   assets: ProjectAssetCatalog;
   objectCount: number;
@@ -343,12 +448,27 @@ export function inspectProject(
   index = buildObjectIndex(snapshot),
   assetPaths: readonly string[] = [],
 ): ProjectInspection {
+  const charactersValue = snapshot.config['characters'];
+  const characters = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
+    ? Object.entries(charactersValue as Record<string, unknown>).map(([id, declaration]) => {
+        const record = isRecordValue(declaration) ? declaration : {};
+        return {
+          id,
+          ...(typeof record['name'] === 'string' ? { name: record['name'] } : {}),
+          ...(typeof record['avatar'] === 'string' ? { avatar: record['avatar'] } : {}),
+          declaration: record,
+        };
+      })
+    : [];
+  const title = typeof snapshot.config['title'] === 'string' ? snapshot.config['title'] : undefined;
   return {
     rootIdentity: snapshot.rootIdentity,
     revision: snapshot.revision,
     ...(snapshot.entryScene === undefined ? {} : { entryScene: snapshot.entryScene }),
+    ...(title === undefined ? {} : { title }),
     scenes: snapshot.scenes.map((scene) => ({ id: scene.id, path: scene.path })),
     variables: Object.entries(snapshot.variables).map(([name, declaration]) => ({ name, declaration })),
+    characters,
     assets: buildAssetCatalog(assetPaths),
     objectCount: index.objects.length,
     referenceCount: index.objects.reduce((total, object) => total + object.references.length, 0),

@@ -37,6 +37,7 @@ function rerenderConfig(): void {
   const root = document.getElementById('config-view');
   if (!root) return;
   root.innerHTML = '';
+  root.appendChild(renderCharactersSection());
   root.appendChild(renderVariablesSection());
   root.appendChild(renderAchievementsSection());
   root.appendChild(renderCalendarSection());
@@ -310,6 +311,33 @@ async function saveVariables(): Promise<void> {
   state.gameConfigText = text;
   requestValidateHook();
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
+}
+
+/** 角色表（Wave 3）：只读展示 characters（id/name/avatar）；写入由外部 Agent 的类型化能力完成，编辑器不复制第二套写实现。 */
+function renderCharactersSection(): HTMLElement {
+  const { sec, ops } = sectionShell('角色表（game.config.json）');
+  const characters = parseConfigObj()['characters'];
+  const entries = typeof characters === 'object' && characters !== null && !Array.isArray(characters)
+    ? Object.entries(characters as Record<string, unknown>)
+    : [];
+  if (entries.length === 0) {
+    sec.appendChild(h('div', 'empty', '暂无角色（外部 Agent 可用 character.ensure 创建）'));
+    return sec;
+  }
+  const table = h('table', 'cfg-table');
+  const head = h('tr');
+  for (const label of ['ID', '显示名', '头像']) head.appendChild(h('th', undefined, label));
+  table.appendChild(head);
+  for (const [id, raw] of entries) {
+    const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+    const row = h('tr');
+    row.appendChild(h('td', undefined, id));
+    row.appendChild(h('td', undefined, typeof record['name'] === 'string' ? record['name'] as string : ''));
+    row.appendChild(h('td', undefined, typeof record['avatar'] === 'string' ? record['avatar'] as string : ''));
+    table.appendChild(row);
+  }
+  sec.appendChild(table);
+  return sec;
 }
 
 function renderVariablesSection(): HTMLElement {

@@ -78,9 +78,11 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     track: '轨道',
     cue: 'Cue',
     asset: '素材',
+    character: '角色',
+    'entry-scene': '入口场景',
   };
   const semanticName = object.semanticId?.slice(object.semanticId.indexOf(':') + 1);
-  const title = ['scene', 'variable', 'timeline', 'track', 'cue', 'asset'].includes(object.kind)
+  const title = ['scene', 'variable', 'timeline', 'track', 'cue', 'asset', 'character', 'entry-scene'].includes(object.kind)
     ? `${kindNames[object.kind]} ${semanticName ?? object.objectRef}`
     : object.source
       ? quotedSummary(object.kind, raw)
@@ -100,6 +102,9 @@ export function describeAuthoringReference(ref: string): string {
     return `标签 ${value}`;
   }
   if (ref.startsWith('scene:')) return `场景 ${ref.slice('scene:'.length)}`;
+  if (ref.startsWith('character:')) return `角色 ${ref.slice('character:'.length)}`;
+  if (ref.startsWith('asset:avatar:')) return `头像 ${ref.slice('asset:avatar:'.length)}`;
+  if (ref.startsWith('config:entryScene')) return '入口场景';
   if (ref.startsWith('asset:bg:')) return `背景 ${ref.slice('asset:bg:'.length)}`;
   if (ref.startsWith('asset:portrait:')) {
     const value = ref.slice('asset:portrait:'.length);

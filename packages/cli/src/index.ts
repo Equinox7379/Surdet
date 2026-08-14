@@ -56,7 +56,7 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
   surdet pack <dir>        打包指定游戏的 Windows exe（M7）
   surdet capabilities describe --json
-  surdet project|object|change|scene|variable|timeline|runtime ... --json
+  surdet project|object|change|scene|variable|character|timeline|runtime ... --json
 `;
 
 async function main(): Promise<number> {
@@ -73,7 +73,7 @@ async function main(): Promise<number> {
 
   const cmd = args[0];
 
-  if (cmd !== undefined && ['capabilities', 'project', 'object', 'change', 'scene', 'variable', 'timeline', 'runtime'].includes(cmd)) {
+  if (cmd !== undefined && ['capabilities', 'project', 'object', 'change', 'scene', 'variable', 'character', 'timeline', 'runtime'].includes(cmd)) {
     return await authoringCommand(args);
   }
 
