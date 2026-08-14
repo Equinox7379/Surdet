@@ -77,17 +77,17 @@ Core、Renderer、Host、Shell 生产代码（投影证据字段已存在，零�
 - **禁止整包 `npm run test -w <pkg>`**：整包测试包含与本轮无关的历史红灯面（如 editor 全量测试的既有断言、Wave 1 遗留面），重复运行浪费额度；必须按上面写死的文件级命令运行。
 - `verify:all`、Electron、性能矩阵不在本轮。
 
-### Task 4：更新 Execution Ledger 与交付报告
+### Task 4：更新 Execution Ledger 与交付报告（FORMAL 完成后才执行）
 
-任务书末尾追加 Execution Ledger；新建 `docs/EXISTING-ASSET-PRESENTATION-AUTHORING-STAGE-6-WAVE-2-DELIVERY-REPORT-2026-08-14.md`，末尾列"建议由总经理登记的事实"，不得修改长期路线台账。
+在唯一 FORMAL 完成后，才执行本 Task：任务书末尾追加 Execution Ledger；新建 `docs/EXISTING-ASSET-PRESENTATION-AUTHORING-STAGE-6-WAVE-2-DELIVERY-REPORT-2026-08-14.md`，末尾列"建议由总经理登记的事实"，不得修改长期路线台账。FORMAL 之前不得写最终交付报告（若 FORMAL 失败，只记录失败事实并保留 artifact）。
 
 ### Task 5：磁盘回读
 
-从磁盘重新读取：HEAD/远端关系/工作树；所有新增文件路径、字节数与 SHA-256；DIAGNOSTIC/FORMAL artifact 的 path/bytes/SHA-256/status/runHead；失败证据保留。
+从磁盘重新读取：HEAD/远端关系/工作树；所有新增文件路径、字节数与 SHA-256；DIAGNOSTIC/FORMAL artifact 的 path/bytes/SHA-256/status/runHead（必须等于 `CODE_EVIDENCE_HEAD`）；失败证据保留。
 
-### Task 6：精确暂存、普通本地提交、停止
+### Task 6：两次提交与停止（顺序见 6.2）
 
-`git add --` 白名单文件 → `git diff --cached --check` → `git diff --cached --name-status` 核对只有白名单文件 → 创建普通本地提交 → 提交后立即回读 → 停止在 `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`。不得 push、部署、打包、发行、改史。
+按 6.2 顺序完成两次普通本地提交：先**代码证据提交**（仅代码白名单文件，记录 `CODE_EVIDENCE_HEAD`），取证完成后最后**文档闭合提交**（仅本任务书与交付报告）。每次提交：`git add --` 精确文件 → `git diff --cached --check` → `git diff --cached --name-status` 核对范围 → 提交 → 提交后立即回读。两次提交都不得 push、部署、打包、发行、改史；停止在 `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`。
 
 ## 五、各能力实现规格（契约要点）
 
@@ -107,7 +107,7 @@ Core、Renderer、Host、Shell 生产代码（投影证据字段已存在，零�
 `packages/shell/package.json` 注册：
 
 ```json
-"e2e:authoring:wave2": "node packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs"
+"e2e:authoring:wave2": "node e2e/agent-ready-presentation-wave-2.e2e.mjs"
 ```
 
 - **preflight**（先于任何 DIAGNOSTIC，与正式路径同 launcher/cwd/dist/入口/fixture；禁止替身 server、错误入口、只测内部函数的自检）：
@@ -130,14 +130,24 @@ npm run e2e:authoring:wave2 -w @surdet/shell
 
 第 3 次 DIAGNOSTIC 仍失败 → 停止并复审方法，不修一处跑一次（禁止"一修一 FORMAL"）。
 
-### 6.2 artifact 回读要求（每次 DIAGNOSTIC 与 FORMAL 后从磁盘回读）
+### 6.2 提交与取证顺序（写死）
+
+1. 代码、测试、editor 接线与 runner 全部完成后，先精确暂存**代码白名单文件**（不含本任务书与交付报告），核对 `git diff --cached --check` 与 `git diff --cached --name-status`，创建**代码证据提交**（如 `feat(authoring): add presentation timeline authoring`），提交后立即回读并记录 `CODE_EVIDENCE_HEAD`。
+2. preflight、全部 DIAGNOSTIC 与唯一 FORMAL **必须基于 `CODE_EVIDENCE_HEAD` 的已提交 runner**，不得在未提交工作树上取证。
+3. DIAGNOSTIC 最多 3 次，每次生成新的 artifact；诊断全绿后只运行一次 FORMAL；每次运行的 `artifact.runHead` 必须等于 `CODE_EVIDENCE_HEAD`。
+4. 失败 artifact 必须保留，不得重跑、覆盖或筛选。
+5. FORMAL 完成后，才更新本任务书 Execution Ledger 与新建 Wave 2 交付报告。
+6. 最后精确暂存**仅本任务书与交付报告**，核对缓存范围后创建**文档闭合提交**（如 `docs(authoring): report stage 6 wave 2 presentation slice`）。
+7. 代码证据提交与文档闭合提交**两次都不得 push**、部署、打包、发行或改史。
+
+### 6.3 artifact 回读要求（每次 DIAGNOSTIC 与 FORMAL 后从磁盘回读）
 
 - `path`（DIAGNOSTIC 每次唯一路径；FORMAL 单份唯一路径）；
-- `status`（PASSED/FAILED）、`evidenceClass`（DIAGNOSTIC/FORMAL）、`runHead`（必须等于冻结 runner 的提交 HEAD）、`targetSceneId`、`targetLabel`；
+- `status`（PASSED/FAILED）、`evidenceClass`（DIAGNOSTIC/FORMAL）、`runHead`（必须等于 `CODE_EVIDENCE_HEAD`）、`targetSceneId`、`targetLabel`；
 - `bytes` 与 `SHA-256`（磁盘实测，不得凭记忆填写）；
 - 失败 artifact 一律保留，不得删除、覆盖或筛选。
 
-### 6.3 显式场景选择（所有正式运行）
+### 6.4 显式场景选择（所有正式运行）
 
 CLI `runtime.run-from`、共享 authoring 模拟、preview 启动与 FORMAL **必须显式指定 `sceneId = agent_probe`、`label = start`**：
 
@@ -146,7 +156,7 @@ CLI `runtime.run-from`、共享 authoring 模拟、preview 启动与 FORMAL **�
 - artifact 必须记录 `targetSceneId = 'agent_probe'` 与 `targetLabel = 'start'`；
 - FORMAL 必须断言目标场景确实为 agent_probe/start（preview 实际加载的场景 ID 与 artifact 记录一致）。
 
-### 6.4 browser/Vite 清理与 FORMAL 断言
+### 6.5 browser/Vite 清理与 FORMAL 断言
 
 1. browser 与 Vite child 由 runner 精确拥有，成功/失败路径都清理（Wave 1 4.59/4.60 教训固化）。
 2. FORMAL 断言（使用 `queries.presentation.snapshot()` 的 `stage.*`，**不得用 `projectionSnapshot().world`**）：
@@ -160,7 +170,7 @@ CLI `runtime.run-from`、共享 authoring 模拟、preview 启动与 FORMAL **�
 
 1. fixture = Starter 隔离副本（`game.config.json` + `content/**`），不含 node_modules/dist/src/test/Git 元数据；创建前后核对原始 Starter 身份不变。
 2. Agent 编排：`scene.create agent_probe`（含 `@label start` 与 `@timeline agent_blackout @ blocking`）→ `timeline.create agent_blackout`（background.set night_field + portrait.show lynn:uniform:night + screen.fade 两段 cue：`atMs=0,durationMs=0,alpha=1` 与 `atMs=50,durationMs=700,alpha=0`）→ `project.validate` → `change.diff` → `change.commit`。
-3. **显式场景选择**：所有正式运行（CLI `runtime.run-from`、共享模拟、preview 启动、FORMAL）显式指定 `sceneId = agent_probe`、`label = start`，不得依赖 `game.config.entryScene`、不得默认从 `ch01_01` 启动；artifact 记录 `targetSceneId`/`targetLabel`（见 6.3）。
+3. **显式场景选择**：所有正式运行（CLI `runtime.run-from`、共享模拟、preview 启动、FORMAL）显式指定 `sceneId = agent_probe`、`label = start`，不得依赖 `game.config.entryScene`、不得默认从 `ch01_01` 启动；artifact 记录 `targetSceneId`/`targetLabel`（见 6.4）。
 4. 人工验收（项目所有者 Chrome/Edge，只报告异常）：编辑器打开 fixture → 显式选择 agent_probe 场景 → 因果区从 `@timeline` 指令看到 `timeline:agent_blackout` 与背景/立绘资产引用 → 预览真实看到背景切到 night_field、lynn 登场、一次 fade 淡出 → 从预览轨迹反向定位到 timeline cue → 用现有 timeline 面板/Cue 检查器微调一处 cue（如 expression 改 despair）→ 预览 → 保存 → 刷新重开仍在。
 
 ## 八、与本轮无关的历史问题（明确不处理）
