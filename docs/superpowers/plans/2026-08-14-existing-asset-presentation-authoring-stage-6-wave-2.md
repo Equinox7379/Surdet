@@ -18,7 +18,7 @@
 
 ### 约束 1：FORMAL 初始基线必须干净
 
-Starter `ch01_01.gal` 原有 `@timeline intro_cinematic @ blocking`（会显示 `lynn:uniform`），因此**禁止**把 `@timeline agent_blackout` 简单追加到 Starter 场景末尾。本任务书采用方式 (a)：**由 Agent 用 `scene.create` 在隔离 fixture 中创建只含 `@timeline agent_blackout @ blocking` 的新隔离场景**（如 `agent_probe.gal`，可带 `@label start`，不含任何其它 `@timeline` 或立绘指令）。FORMAL 必须证明触发 agent_blackout 之前 `stage.portraits` 不含 `lynn:uniform`、`stage.backgroundKey ≠ night_field`、`stage.fadeAlpha = 0`；不得用"场景后面追加"冒充立绘从不可见到可见。
+Starter `ch01_01.gal` 原有 `@timeline intro_cinematic @ blocking`（会显示 `lynn:uniform`），因此**禁止**把 `@timeline agent_blackout` 简单追加到 Starter 场景末尾。本任务书采用方式 (a)：**由 Agent 用 `scene.create` 在隔离 fixture 中创建新隔离场景 `agent_probe`**（文件 `content/scenario/agent_probe.gal`，含 `@label start` 与 `@timeline agent_blackout @ blocking`，不含任何其它 `@timeline` 或立绘指令）。FORMAL 必须证明触发 agent_blackout 之前 `stage.portraits` 不含 `lynn:uniform`、`stage.backgroundKey ≠ night_field`、`stage.fadeAlpha = 0`；不得用"场景后面追加"冒充立绘从不可见到可见。
 
 ### 约束 2：资源发现必须共享且只读
 
@@ -43,7 +43,7 @@ FORMAL 证明 `0 < stage.fadeAlpha < 1` 必须用**实际播放帧时间序列�
 - `packages/cli/test/`：新增 CLI 合同与纵向切片测试。
 - `packages/editor/src/`：`authoring-project-storage.ts`（`listFiles` 扩展资产路径元数据）、`project-io.ts`（如需要，仅枚举资产路径）、`causal-selection.ts`/`panels/right.ts`/`panels/preview-panel.ts`（因果区对象范围扩展，复用 Wave 1 机制与现有 timeline 面板/Cue 检查器）。
 - `packages/editor/test/`：新增聚焦测试。
-- `packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`（新 runner）与 `packages/shell/package.json`（脚本注册）。
+- `packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`（新 runner）与 `packages/shell/package.json`（新增脚本 `e2e:authoring:wave2` 指向该 runner；runner 参数：`--preflight`=入口一致性预检、`--diagnostic`=有界诊断、缺省=唯一 FORMAL）。
 - 本任务书与新建的 Wave 2 交付报告。
 
 ### 禁止修改/触碰
@@ -66,14 +66,16 @@ Core、Renderer、Host、Shell 生产代码（投影证据字段已存在，零�
 
 按共享层 → CLI → editor → harness 顺序：asset-catalog（只读解析）→ timeline-operations（create/patch）→ object-index 扩展 → validation 接线 → diff ledger → CLI 命令 → editor 接线 → Wave 2 runner。任何一处发现需要修改白名单外文件，立即停止并报告，不猜测性扩大。
 
-### Task 3：聚焦验证
+### Task 3：聚焦验证（精确测试文件，禁止整包测试）
 
-- `npm run test -w @surdet/authoring`（新增聚焦文件）；
+- `npm run test -w @surdet/authoring -- test/timeline-operations.test.ts test/asset-catalog.test.ts test/timeline-object-index.test.ts test/validation-timeline.test.ts test/diff-ledger.test.ts`；
 - `npm run typecheck -w @surdet/authoring`、`npm run build -w @surdet/authoring`；
-- `npm run test -w @surdet/cli`（新增聚焦文件）+ typecheck/build；
-- `npm run test -w surdet-editor`（新增聚焦文件）+ typecheck/build；
-- `node --check packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs` + preflight（约束 3 的入口一致性预检：与正式路径同 launcher/cwd/dist/入口/fixture）。
-- 只运行与改动匹配的聚焦面；`verify:all`、Electron、性能矩阵不在本轮。
+- `npm run test -w @surdet/cli -- test/authoring-presentation-wave2.test.ts`；CLI typecheck/build；
+- `npm run test -w surdet-editor -- test/presentation-asset-catalog.test.ts`；editor typecheck/build；
+- `node --check packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs`；
+- preflight：`npm run e2e:authoring:wave2 -w @surdet/shell -- --preflight`（入口一致性预检：与正式路径同 launcher/cwd/dist/入口/fixture，禁止替身 server、错误入口、只测内部函数的自检）。
+- **禁止整包 `npm run test -w <pkg>`**：整包测试包含与本轮无关的历史红灯面（如 editor 全量测试的既有断言、Wave 1 遗留面），重复运行浪费额度；必须按上面写死的文件级命令运行。
+- `verify:all`、Electron、性能矩阵不在本轮。
 
 ### Task 4：更新 Execution Ledger 与交付报告
 
@@ -98,13 +100,56 @@ Core、Renderer、Host、Shell 生产代码（投影证据字段已存在，零�
 7. **scene.patch 复用**：instruction block 写 `@timeline <id> [@ blocking]` 已是既有能力；只补 object-index 因果边（`@timeline` 指令 → `timeline:<id>`）与 validate 的目标 timeline 存在性检查。
 8. **change.diff**：timeline 按稳定语义 ID `timeline:<id>` 对齐；track/cue **没有持久语义 ID**，对象级 semantic diff 由已成功执行的类型化 operation ledger 产生，每条含 `operationId / operation kind / objectBefore / objectAfter / fingerprintBefore / fingerprintAfter / directChange / potentialImpact / observedImpact`；文件级 JSON diff 保留但不得用数组位置猜身份、不做模糊树匹配。
 
-## 六、harness 纪律（Wave 1 治理教训固化）
+## 六、harness 纪律与正式运行命令（写死，不得替换）
 
-1. 先跑与正式路径**同 launcher、cwd、dist、入口、fixture** 的 preflight；禁止替身 server、错误入口、只测内部函数的自检。
-2. 聚焦测试按需运行；完整 DIAGNOSTIC 每次产生增量证据，**默认最多 3 次**；第 3 次仍失败 → 停止并复审方法，不修一处跑一次。
-3. runner 冻结提交且诊断全绿后，**只运行一次 FORMAL**；失败保留 artifact、不重跑、不覆盖。
-4. browser 与 Vite child 由 runner 精确拥有，成功/失败路径都清理。
-5. FORMAL 断言（使用 `queries.presentation.snapshot()` 的 `stage.*`，**不得用 `projectionSnapshot().world`**）：
+### 6.1 注册脚本与三条命令
+
+`packages/shell/package.json` 注册：
+
+```json
+"e2e:authoring:wave2": "node packages/shell/e2e/agent-ready-presentation-wave-2.e2e.mjs"
+```
+
+- **preflight**（先于任何 DIAGNOSTIC，与正式路径同 launcher/cwd/dist/入口/fixture；禁止替身 server、错误入口、只测内部函数的自检）：
+
+```text
+npm run e2e:authoring:wave2 -w @surdet/shell -- --preflight
+```
+
+- **DIAGNOSTIC**（最多 3 次；每次必须产生新的增量 artifact，路径唯一、不得覆盖旧 artifact）：
+
+```text
+npm run e2e:authoring:wave2 -w @surdet/shell -- --diagnostic
+```
+
+- **FORMAL**（runner 候选版本冻结提交且诊断全绿后，只运行一次；失败保留 artifact，禁止重跑与覆盖）：
+
+```text
+npm run e2e:authoring:wave2 -w @surdet/shell
+```
+
+第 3 次 DIAGNOSTIC 仍失败 → 停止并复审方法，不修一处跑一次（禁止"一修一 FORMAL"）。
+
+### 6.2 artifact 回读要求（每次 DIAGNOSTIC 与 FORMAL 后从磁盘回读）
+
+- `path`（DIAGNOSTIC 每次唯一路径；FORMAL 单份唯一路径）；
+- `status`（PASSED/FAILED）、`evidenceClass`（DIAGNOSTIC/FORMAL）、`runHead`（必须等于冻结 runner 的提交 HEAD）、`targetSceneId`、`targetLabel`；
+- `bytes` 与 `SHA-256`（磁盘实测，不得凭记忆填写）；
+- 失败 artifact 一律保留，不得删除、覆盖或筛选。
+
+### 6.3 显式场景选择（所有正式运行）
+
+CLI `runtime.run-from`、共享 authoring 模拟、preview 启动与 FORMAL **必须显式指定 `sceneId = agent_probe`、`label = start`**：
+
+- 不得依赖 `game.config.entryScene`，不得默认从 `ch01_01` 启动；
+- CLI run-from 输入 JSON 显式携带场景/标签；共享模拟入口显式传初始场景；preview 父页 postMessage 显式加载 `agent_probe`；
+- artifact 必须记录 `targetSceneId = 'agent_probe'` 与 `targetLabel = 'start'`；
+- FORMAL 必须断言目标场景确实为 agent_probe/start（preview 实际加载的场景 ID 与 artifact 记录一致）。
+
+### 6.4 browser/Vite 清理与 FORMAL 断言
+
+1. browser 与 Vite child 由 runner 精确拥有，成功/失败路径都清理（Wave 1 4.59/4.60 教训固化）。
+2. FORMAL 断言（使用 `queries.presentation.snapshot()` 的 `stage.*`，**不得用 `projectionSnapshot().world`**）：
    - 初始（触发 agent_blackout 前）：`stage.portraits` 不含 `key === 'lynn:uniform'`；`stage.backgroundKey !== 'night_field'`；`stage.fadeAlpha === 0`（约束 1）；
    - 播放后：`stage.backgroundKey === 'night_field'`；`stage.portraits` 含 `key === 'lynn:uniform'` 且 `view.expression === 'night'`；
    - fade 轨迹：达到 1 → **帧采样**捕获至少一次 `0 < fadeAlpha < 1` → 播放完成后回到 0（约束 3）；
@@ -114,8 +159,9 @@ Core、Renderer、Host、Shell 生产代码（投影证据字段已存在，零�
 ## 七、最小 fixture 与人工验收路径
 
 1. fixture = Starter 隔离副本（`game.config.json` + `content/**`），不含 node_modules/dist/src/test/Git 元数据；创建前后核对原始 Starter 身份不变。
-2. Agent 编排：`scene.create agent_probe`（只含 `@timeline agent_blackout @ blocking`）→ `timeline.create agent_blackout`（background.set night_field + portrait.show lynn:uniform:night + screen.fade 两段 cue：`atMs=0,durationMs=0,alpha=1` 与 `atMs=50,durationMs=700,alpha=0`）→ `project.validate` → `change.diff` → `change.commit`。
-3. 人工验收（项目所有者 Chrome/Edge，只报告异常）：编辑器打开 fixture → 因果区从 `@timeline` 指令看到 `timeline:agent_blackout` 与背景/立绘资产引用 → 预览真实看到背景切到 night_field、lynn 登场、一次 fade 淡出 → 从预览轨迹反向定位到 timeline cue → 用现有 timeline 面板/Cue 检查器微调一处 cue（如 expression 改 despair）→ 预览 → 保存 → 刷新重开仍在。
+2. Agent 编排：`scene.create agent_probe`（含 `@label start` 与 `@timeline agent_blackout @ blocking`）→ `timeline.create agent_blackout`（background.set night_field + portrait.show lynn:uniform:night + screen.fade 两段 cue：`atMs=0,durationMs=0,alpha=1` 与 `atMs=50,durationMs=700,alpha=0`）→ `project.validate` → `change.diff` → `change.commit`。
+3. **显式场景选择**：所有正式运行（CLI `runtime.run-from`、共享模拟、preview 启动、FORMAL）显式指定 `sceneId = agent_probe`、`label = start`，不得依赖 `game.config.entryScene`、不得默认从 `ch01_01` 启动；artifact 记录 `targetSceneId`/`targetLabel`（见 6.3）。
+4. 人工验收（项目所有者 Chrome/Edge，只报告异常）：编辑器打开 fixture → 显式选择 agent_probe 场景 → 因果区从 `@timeline` 指令看到 `timeline:agent_blackout` 与背景/立绘资产引用 → 预览真实看到背景切到 night_field、lynn 登场、一次 fade 淡出 → 从预览轨迹反向定位到 timeline cue → 用现有 timeline 面板/Cue 检查器微调一处 cue（如 expression 改 despair）→ 预览 → 保存 → 刷新重开仍在。
 
 ## 八、与本轮无关的历史问题（明确不处理）
 
