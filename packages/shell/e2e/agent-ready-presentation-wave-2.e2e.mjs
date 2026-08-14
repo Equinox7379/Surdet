@@ -889,23 +889,8 @@ async function run() {
     targetLabel = startMessage.label ?? null;
     assert(targetSceneId === TARGET_SCENE_ID, `preview 实际加载场景不是 ${TARGET_SCENE_ID}：${targetSceneId}`);
     assert(targetLabel === TARGET_LABEL, `preview 实际起始标签不是 ${TARGET_LABEL}：${targetLabel}`);
-  });
-
-  await step('editor.preview.timeline-event.clean-baseline', async () => {
-    const timelineMessage = await waitPreviewMessage(page, loadStartIndex, (message) => (
-      message?.type === 'surdet-preview-trace-event' && message?.event?.source?.op === 'timeline'
-    ), 30000);
-    const before = timelineMessage.presentationBefore;
-    const after = timelineMessage.presentationAfter;
-    assert(before && typeof before === 'object' && before.stage, 'timeline 事件缺少 presentationBefore.stage');
-    assertCleanStage(before.stage, '触发 agent_blackout 前');
-    stageBefore = before.stage;
-    stageAfterFirstFrame = after && typeof after === 'object' && after.stage ? after.stage : null;
-    assert(stageAfterFirstFrame?.backgroundKey === 'night_field', `第一帧后 backgroundKey 不是 night_field：${JSON.stringify(stageAfterFirstFrame)}`);
-  });
-
-  await step('editor.preview.fade.frame-sampling', async () => {
-    // 帧采样：rAF 回调以每帧粒度收集 stage.fadeAlpha（覆盖 cue2 的 700ms 淡出窗口），禁止单次固定 sleep。
+    // 方法修正：trace-start 在 interp.start 之前发出，rAF 采样此刻注入可覆盖 cue1 的 alpha=1 平台期
+    // （上一轮在 timeline 事件消息到达后才注入，错过 atMs=0..50 的 1.0 平台）。
     await previewFrame.evaluate(() => {
       window.__surdetWave2Samples = [];
       let frames = 0;
@@ -921,10 +906,29 @@ async function run() {
           });
         }
         frames += 1;
-        if (frames < 120) requestAnimationFrame(collect);
+        if (frames < 150) requestAnimationFrame(collect);
       };
       requestAnimationFrame(collect);
     });
+  });
+
+  await step('editor.preview.timeline-event.clean-baseline', async () => {
+    const timelineMessage = await waitPreviewMessage(page, loadStartIndex, (message) => (
+      message?.type === 'surdet-preview-trace-event' && message?.event?.source?.op === 'timeline'
+    ), 30000);
+    const before = timelineMessage.presentationBefore;
+    const after = timelineMessage.presentationAfter;
+    assert(before && typeof before === 'object' && before.stage, 'timeline 事件缺少 presentationBefore.stage');
+    assertCleanStage(before.stage, '触发 agent_blackout 前');
+    stageBefore = before.stage;
+    stageAfterFirstFrame = after && typeof after === 'object' && after.stage ? after.stage : null;
+    assert(stageAfterFirstFrame?.backgroundKey === 'night_field', `第一帧后 backgroundKey 不是 night_field：${JSON.stringify(stageAfterFirstFrame)}`);
+    // 方法修正：cue1（atMs=0、durationMs=0、alpha=1）在第一帧 microtask 快照中瞬时到 1，这是“达到 1”的主证据。
+    assert(Math.abs(Number(stageAfterFirstFrame?.fadeAlpha ?? -1) - 1) < 0.001, `第一帧后 fadeAlpha 未达到 1：${JSON.stringify(stageAfterFirstFrame?.fadeAlpha)}`);
+  });
+
+  await step('editor.preview.fade.frame-sampling', async () => {
+    // 帧采样已从 trace-start 起持续收集（覆盖 cue2 的 700ms 淡出窗口），这里只等待播放完成并回读。
     const completeMessage = await waitPreviewMessage(page, loadStartIndex, (message) => (
       message?.type === 'surdet-preview-trace-complete'
     ), 30000);
@@ -935,7 +939,8 @@ async function run() {
     assert(fadeSamples.length > 0, 'fade 帧采样为空');
     const alphas = fadeSamples.map((sample) => Number(sample.fadeAlpha));
     const maxAlpha = Math.max(...alphas);
-    assert(Math.abs(maxAlpha - 1) < 0.001, `fade 未达到 1（max=${maxAlpha}）`);
+    // rAF 采样与第一帧快照互证“达到 1”；主证据是第一帧 presentationAfter.stage.fadeAlpha === 1。
+    assert(Math.abs(maxAlpha - 1) < 0.001, `fade 采样未互证达到 1（max=${maxAlpha}）`);
     assert(alphas.some((alpha) => alpha > 0 && alpha < 1), 'fade 轨迹没有 0 与 1 之间的中间值');
   });
 
