@@ -521,29 +521,25 @@ const MIME_BY_FORMAT = {
   avif: 'image/avif',
 };
 
-/** 用 CLI 共享 catalog（不复制命名解析）构造 preview 资产二进制载荷。 */
+/** 用 CLI 共享 catalog（不复制命名解析）构造 preview 资产载荷；二进制以 base64 进 evaluate，浏览器侧重建 ArrayBuffer。 */
 function buildPreviewAssets(catalogResult) {
   const backgrounds = [];
   const portraits = [];
-  const transfer = [];
   for (const entry of catalogResult.backgrounds) {
     const buffer = fs.readFileSync(path.join(fixtureRoot, entry.sourcePath));
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-    backgrounds.push({ key: entry.key, image: { buffer: arrayBuffer, mime: MIME_BY_FORMAT[entry.format] ?? 'application/octet-stream' } });
-    transfer.push(arrayBuffer);
+    backgrounds.push({ key: entry.key, mime: MIME_BY_FORMAT[entry.format] ?? 'application/octet-stream', b64: buffer.toString('base64') });
   }
   for (const entry of catalogResult.portraits) {
     const buffer = fs.readFileSync(path.join(fixtureRoot, entry.sourcePath));
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     portraits.push({
       charId: entry.role,
       costume: entry.outfit,
       expression: entry.expression,
-      image: { buffer: arrayBuffer, mime: MIME_BY_FORMAT[entry.format] ?? 'application/octet-stream' },
+      mime: MIME_BY_FORMAT[entry.format] ?? 'application/octet-stream',
+      b64: buffer.toString('base64'),
     });
-    transfer.push(arrayBuffer);
   }
-  return { assets: { backgrounds, portraits, avatars: [], audio: [] }, transfer };
+  return { backgrounds, portraits };
 }
 
 function readFixtureScenes() {
@@ -858,14 +854,34 @@ async function run() {
       return name ? [{ id, name }] : [];
     }),
     timelines: readFixtureTimelines(),
-    assets: previewAssets.assets,
     fast: true,
   };
-  await page.evaluate(({ message, transfer }) => {
+  await page.evaluate(({ base, backgrounds, portraits }) => {
+    const decode = (image) => {
+      const binary = atob(image.b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+      return { buffer: bytes.buffer, mime: image.mime };
+    };
+    const decodedBackgrounds = backgrounds.map((asset) => ({ key: asset.key, image: decode(asset) }));
+    const decodedPortraits = portraits.map((asset) => ({
+      charId: asset.charId,
+      costume: asset.costume,
+      expression: asset.expression,
+      image: decode(asset),
+    }));
+    const payload = {
+      ...base,
+      assets: { backgrounds: decodedBackgrounds, portraits: decodedPortraits, avatars: [], audio: [] },
+    };
     const iframe = document.querySelector('#stage6-preview-frame');
     if (!iframe || !iframe.contentWindow) throw new Error('正式 preview iframe 不可用');
-    iframe.contentWindow.postMessage(message, '*', transfer);
-  }, { message: { type: 'surdet-preview-load', payload }, transfer: previewAssets.transfer });
+    const transfer = [
+      ...decodedBackgrounds.map((asset) => asset.image.buffer),
+      ...decodedPortraits.map((asset) => asset.image.buffer),
+    ];
+    iframe.contentWindow.postMessage({ type: 'surdet-preview-load', payload }, '*', transfer);
+  }, { base: payload, backgrounds: previewAssets.backgrounds, portraits: previewAssets.portraits });
 
   await step('editor.preview.trace-start.scene-target', async () => {
     const startMessage = await waitPreviewMessage(page, loadStartIndex, (message) => message?.type === 'surdet-preview-trace-start', 30000);
