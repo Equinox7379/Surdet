@@ -698,14 +698,16 @@ async function run() {
   });
 
   await step('scene.patch.nova-line', async () => {
-    const anchorRef = `scene:${TARGET_SCENE_ID}/instruction:1@${projectRevision.slice(0, 8)}-${fingerprint('@scene ' + TARGET_SCENE_ID)}`;
+    // 锚点必须是 @label start 行：nova 台词插入到 start 之后，保证从 start 启动的 preview 可达
+    // （此前用 @scene 行作锚点会把 nova 台词插到 start 之前，start 启动永远看不到它）。
+    const anchorRef = `scene:${TARGET_SCENE_ID}/instruction:2@${projectRevision.slice(0, 8)}-${fingerprint('@label ' + TARGET_LABEL)}`;
     const input = writeInput('scene-patch-nova.json', {
       operationId: 'stage6-wave3-scene-patch-nova',
       sceneId: TARGET_SCENE_ID,
       patch: {
         kind: 'insertAfter',
         anchor: anchorRef,
-        expectedFingerprint: fingerprint('@scene ' + TARGET_SCENE_ID),
+        expectedFingerprint: fingerprint('@label ' + TARGET_LABEL),
         blocks: [{ kind: 'text', speaker: NOVA_ID, value: NOVA_LINE }],
       },
     });
