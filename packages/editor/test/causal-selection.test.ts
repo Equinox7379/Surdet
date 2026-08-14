@@ -6,6 +6,7 @@ import {
   filterTraceByObject,
   listenForPreviewTraceSelection,
   locateObjectForTraceEvent,
+  parseTimelineObjectRef,
 } from '../src/causal-selection.js';
 
 describe('causal selection bridge', () => {
@@ -36,6 +37,14 @@ describe('causal selection bridge', () => {
     received = null;
     dispatchPreviewTraceSelection(detail, target);
     expect(received).toBeNull();
+  });
+
+  it('parses timeline/track/cue object refs for timeline panel jumps', () => {
+    expect(parseTimelineObjectRef('timeline:agent_blackout')).toEqual({ timelineId: 'agent_blackout', trackIndex: null, cueIndex: null });
+    expect(parseTimelineObjectRef('timeline:agent_blackout/track:2')).toEqual({ timelineId: 'agent_blackout', trackIndex: 2, cueIndex: null });
+    expect(parseTimelineObjectRef('timeline:agent_blackout/track:2/cue:0')).toEqual({ timelineId: 'agent_blackout', trackIndex: 2, cueIndex: 0 });
+    expect(parseTimelineObjectRef('scene:prologue/text:2@abcd')).toBeNull();
+    expect(parseTimelineObjectRef('variable:trust')).toBeNull();
   });
 
   it('describes the current authoring object and direct references for humans', () => {

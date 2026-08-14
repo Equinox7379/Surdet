@@ -417,3 +417,12 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
   shell.appendChild(content);
   container.appendChild(shell);
 }
+
+/** 供因果跳转使用：切到指定时间轴并选中对应 cue（trackIndex/cueIndex 可选）。 */
+export function selectTimelineCue(timelineId: string, trackIndex?: number, cueIndex?: number): void {
+  state.currentTimeline = timelineId;
+  selectedCue = typeof trackIndex === 'number'
+    ? { timelineId, trackIndex, cueIndex: typeof cueIndex === 'number' ? cueIndex : 0 }
+    : null;
+  renderTimelinePanel(rootContainer);
+}

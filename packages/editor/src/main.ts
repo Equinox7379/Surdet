@@ -16,6 +16,7 @@ import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
 import {
   listenForPreviewTraceSelection,
   locateObjectForTraceEvent,
+  parseTimelineObjectRef,
   selectAuthoringObject,
 } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
@@ -27,7 +28,7 @@ import { renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
-import { renderTimelinePanel, bindTimelineHooks } from './panels/timeline-panel.js';
+import { renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
@@ -143,8 +144,20 @@ function jumpToScene(sceneKey: string, line?: number): void {
   }
 }
 
+/** 时间轴/轨道/Cue 引用 → 切到时间轴页签并选中对应 cue；返回是否已处理。 */
+function jumpToTimelineObjectIfNeeded(ref: string | null): boolean {
+  if (!ref) return false;
+  const parsed = parseTimelineObjectRef(ref);
+  if (!parsed) return false;
+  state.mainTab = 'timeline';
+  renderMainArea();
+  selectTimelineCue(parsed.timelineId, parsed.trackIndex ?? undefined, parsed.cueIndex ?? undefined);
+  return true;
+}
+
 document.addEventListener('surdet-authoring-selection', () => {
   refreshEditorObjectRefs();
+  jumpToTimelineObjectIfNeeded(state.selectedObjectRef);
   updateCausalPanel();
 });
 
@@ -166,6 +179,7 @@ listenForPreviewTraceSelection((detail) => {
       return;
     }
   }
+  if (jumpToTimelineObjectIfNeeded(ref)) return;
   updateCausalPanel();
 });
 bindSearchHooks({
