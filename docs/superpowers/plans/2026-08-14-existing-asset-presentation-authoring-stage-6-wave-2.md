@@ -294,17 +294,27 @@ test(authoring): fix wave 2 fade sampling window
 - FORMAL 断言全部通过：显式场景 `targetSceneId=agent_probe`/`targetLabel=start`（trace-start 实测一致）；触发 agent_blackout 前 `stage.portraits` 不含 `lynn:uniform`、`backgroundKey ≠ night_field`、`fadeAlpha === 0`；第一帧 `fadeAlpha === 1` 且 `backgroundKey === night_field`；播放后 `stage.backgroundKey === 'night_field'`、`stage.portraits` 含 `lynn:uniform` 且 `view.expression === 'night'`；rAF 帧采样 37 帧（`max=1`、中间值 28 帧、最后一帧 `0`）；catalog 门槛 `night_field`/`lynn_uniform_night` 均 `resolved=true` 且 `project.assets` 与 `project.inspect.assets` 逐字段一致；六类错误通道全空；`originalStarter.unchanged=true`；browser/Vite/端口清理字段全成功。
 - fixture `C:\Users\Equinox\Desktop\surdet-stage6-wave2-fixture-1786682657381-12c09a8c3cde`：25 个文件；`content/scenario/agent_probe.gal` 为 `72` bytes、SHA-256=`231C5AAD5865D0333C36B8E6DF24FBA3DA783B3EBA364E3A016496764417399A`；`content/timelines/agent_blackout.json` 为 `952` bytes、SHA-256=`547D4E7F5AE797046FE46D2BBE8AA17A8F0FA0DE2C652382F2747F16C44B7AF7`；无 `.surdet-*` 临时文件。
 
-### 最终停止状态（2026-08-14 12:4x +08:00）
+### FORMAL 之后的 editor 因果跳转修正（2026-08-14 2026-08-14 15:22）——人工验收发现并修复
+
+- 项目所有者人工验收发现：因果轨迹中 timeline 事件（agent_probe:3）点击无跳转反应（editor 只对场景内对象跳块编辑，对 timeline/track/cue 引用无跳转）。
+- 临时总经理亲自修复（红灯→绿灯）：新增 `parseTimelineObjectRef` 纯函数（红灯 exit 1 留证）；`timeline-panel.selectTimelineCue` 导出；`main.ts` 统一跳转（trace 选择与因果区引用按钮都走 `jumpToTimelineObjectIfNeeded`）。
+- 聚焦验证（真实运行）：`npm run test -w surdet-editor -- test/causal-selection.test.ts` 4/4、`npm run typecheck -w surdet-editor` exit 0、`npm run build -w surdet-editor` exit 0（新 bundle `main-BhHN5A_I.js`）。
+- 普通本地提交：`8b9d11c8d46fbbca25ecc13ea9d0dce00776ca26 fix(editor): jump timeline cue from causal trace`（仅 4 个 editor 文件，+50/-1），未 push。
+- 项目所有者已在该基线上复测通过（"没毛病，通过"）。
+
+### 最终停止状态（2026-08-14 2026-08-14 15:22）
 
 ```text
 STAGE_6_WAVE_2_IMPLEMENTED_LOCALLY
 STAGE_6_WAVE_2_FORMAL_PASSED
 FORMAL_AGGREGATE_RUNHEAD_MATCHES_CODE_EVIDENCE_HEAD
+FORMAL_EVIDENCE_BASELINE = dcf2905
+POST_FORMAL_EDITOR_CUE_JUMP_FIX = 8b9d11c
+STAGE_6_WAVE_2_HUMAN_ACCEPTANCE_PASSED_BY_OWNER
 READY_FOR_INDEPENDENT_MANAGER_REVIEW
 WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
-HUMAN_ACCEPTANCE_NOT_STARTED
 NOT_PUSHED_AFTER_STAGE_6_WAVE_2
 STAGE_6_WAVE_3_NOT_STARTED
 ```
 
-下一停止点：任务书与新建交付报告完成文档闭合提交后停在 `WAITING_FOR_INDEPENDENT_MANAGER_REVIEW`，等待临时总经理独立复审；人工验收与 push 均需项目所有者另行明确授权。
+下一停止点：FORMAL 自动化证据基线仍为 `dcf2905`（不重跑、不改写）；`8b9d11c` 是 FORMAL 之后的 editor 因果跳转修正；项目所有者已在 `8b9d11c` 基线上完成人工复测并通过。push 与 Wave 3 均需项目所有者另行明确授权。

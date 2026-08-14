@@ -11,6 +11,7 @@
 - FORMAL 证明：显式 `agent_probe/start` 启动（不依赖 game.config.entryScene）；触发 `agent_blackout` 前舞台干净（无 lynn、无 night_field、fadeAlpha=0）；播放后背景切换到 night_field、lynn（uniform/night）登场、fade 真实发生并回到 0；fade 轨迹用 rAF 帧采样证明（达到 1 → 中间值 → 回 0）。
 - 资源门槛：night_field 与 lynn_uniform_night 在共享 catalog 中 `resolved=true`；CLI `project.assets` 与 `project.inspect.assets` 逐字段一致。
 - 三次历史 DIAGNOSTIC 失败（上一预算）与一次新预算 DIAGNOSTIC 的 artifact 全部保留；失败根因（两次 harness 序列化缺陷、一次采样窗口缺陷）已修复并提交，治理按台账 4.80/4.81 收口。
+- FORMAL 之后新增一笔 editor 因果轨迹跳转修正 `8b9d11c`（仅 4 个 editor 文件，含回归测试）；项目所有者已在该基线上完成人工验收并复测通过（详见第 9 节）。
 
 ## 1. 本轮范围与实际修改
 
@@ -64,10 +65,12 @@ npm run e2e:authoring:wave2 -w @surdet/shell -- --preflight                     
 748458e feat(authoring): add presentation timeline authoring            （24 个白名单文件，+3087/-38）
 dc7f93a test(authoring): fix wave 2 preview asset transfer              （DIAGNOSTIC 1 根因修复）
 7dda6a7 test(authoring): poll preview messages in wave 2 runner         （DIAGNOSTIC 2 根因修复）
-dcf2905 test(authoring): fix wave 2 fade sampling window                （方法修正 + CLI 合同 14→17；本报告取证基线）
+dcf2905 test(authoring): fix wave 2 fade sampling window                （方法修正 + CLI 合同 14→17；FORMAL 取证基线）
+3a4d8ca docs(authoring): report stage 6 wave 2 presentation slice      （任务书 + 本报告的文档闭合提交）
+8b9d11c fix(editor): jump timeline cue from causal trace               （FORMAL 之后的 editor 因果跳转修正，4 文件 +50/-1）
 ```
 
-CODE_EVIDENCE_HEAD = `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`。此前三次 DIAGNOSTIC 的 `runHead` 滚动（748458e/dc7f93a/7dda6a7）不满足“固定 CODE_EVIDENCE_HEAD”契约，已按台账 4.80/4.81 收口：不以滚动修复伪装 frozen HEAD；自 `dcf2905` 起所有 DIAGNOSTIC/FORMAL 的 `artifact.runHead` 均等于 CODE_EVIDENCE_HEAD。
+CODE_EVIDENCE_HEAD（FORMAL 取证基线）= `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`。此前三次 DIAGNOSTIC 的 `runHead` 滚动（748458e/dc7f93a/7dda6a7）不满足“固定 CODE_EVIDENCE_HEAD”契约，已按台账 4.80/4.81 收口：不以滚动修复伪装 frozen HEAD；自 `dcf2905` 起所有 DIAGNOSTIC/FORMAL 的 `artifact.runHead` 均等于 CODE_EVIDENCE_HEAD。**FORMAL 自动化证据基线仍为 `dcf2905`，不重跑、不改写；`8b9d11c` 是 FORMAL 之后的 editor 因果跳转修正，项目所有者已在 `8b9d11c` 基线上完成人工复测并通过。**
 
 ## 4. DIAGNOSTIC 证据（新预算）
 
@@ -105,7 +108,7 @@ CODE_EVIDENCE_HEAD = `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`。此前三次 D
 
 ## 8. 未解决问题与非阻断遗留
 
-- 人工验收未开始：需项目所有者另行授权后按任务书第七节路径（编辑器打开 fixture → 因果区 → 预览 → 反向定位 → 微调 cue → 保存重开）执行，执行 AI 不代填视觉/操作结论。
+- 人工验收已由项目所有者完成并通过：主体路径（编辑器打开 fixture → 显式 agent_probe → 因果区与下钻 → 预览背景切换/立绘登场/fade → 微调 cue → 保存 → 刷新重开）全部正常；验收发现因果轨迹 timeline 事件点击不跳转的 editor 缺陷，已由临时总经理修复（`8b9d11c`）并经项目所有者复测通过（见第 9 节）。
 - push 未授权；Wave 3 未授权。
 - 非阻断遗留（台账 4.81 第 6 条）：`%TEMP%` 下 59 个 `surdet-player-experience-wave-2-task*` 目录，最后写入时间均为 2026-08-11，来源是历史 Player Experience Wave 2 的 CLI 测试残留（早于本 Wave 三天），与本轮 Stage 6 Wave 2 无关；本轮未创建、未触碰，未清理（清理不在本任务书白名单）。
 - 任务书 Execution Ledger 与长期路线台账的分工保持：本报告不修改长期路线台账。
@@ -118,15 +121,25 @@ CODE_EVIDENCE_HEAD = `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`。此前三次 D
 4. 三次历史 DIAGNOSTIC 失败根因已闭环（transfer 序列化、谓词序列化、fade 采样窗口），治理按 4.80/4.81 收口，不以滚动 runHead 伪装 frozen HEAD。
 5. 建议授权项目所有者人工验收（任务书第七节路径），人工通过后再由项目所有者另行决定 push。
 
+## 9. FORMAL 之后的 editor 修正与人工验收通过
+
+- FORMAL 自动化证据基线仍为 `dcf2905837e7da2ce80c4ae1a60d0b7ee379fc32`（不重跑、不改写）。
+- `8b9d11c8d46fbbca25ecc13ea9d0dce00776ca26 fix(editor): jump timeline cue from causal trace` 是 FORMAL 之后的 editor 因果轨迹跳转修正：仅修改 `packages/editor/src/causal-selection.ts`、`packages/editor/src/main.ts`、`packages/editor/src/panels/timeline-panel.ts` 与 `packages/editor/test/causal-selection.test.ts`（+50/-1），未触碰 Core/Renderer/Host/Shell/authoring/CLI/Starter。
+- 聚焦验证（真实运行）：红灯 `npm run test -w surdet-editor -- test/causal-selection.test.ts` 首次 exit 1（`parseTimelineObjectRef is not a function`）；修复后同一命令 4/4、`npm run typecheck -w surdet-editor` exit 0、`npm run build -w surdet-editor` exit 0。
+- 项目所有者已在 `8b9d11c` 基线上完成人工复测并反馈“没毛病，通过”：因果轨迹 timeline 事件现在跳转时间轴面板并选中对应 cue。
+- 本次修正不改变 FORMAL 的取证结论（取证的是 dcf2905 基线），只闭合人工验收发现的一条 editor 真实点击链缺陷。
+
 ## 最终状态
 
 ```text
 STAGE_6_WAVE_2_IMPLEMENTED_LOCALLY
 STAGE_6_WAVE_2_FORMAL_PASSED
 FORMAL_AGGREGATE_RUNHEAD_MATCHES_CODE_EVIDENCE_HEAD
+FORMAL_EVIDENCE_BASELINE = dcf2905
+POST_FORMAL_EDITOR_CUE_JUMP_FIX = 8b9d11c
+STAGE_6_WAVE_2_HUMAN_ACCEPTANCE_PASSED_BY_OWNER
 READY_FOR_INDEPENDENT_MANAGER_REVIEW
 WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
-HUMAN_ACCEPTANCE_NOT_STARTED
 NOT_PUSHED_AFTER_STAGE_6_WAVE_2
 STAGE_6_WAVE_3_NOT_STARTED
 ```
