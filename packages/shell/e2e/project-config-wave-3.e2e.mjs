@@ -71,6 +71,7 @@ let entryScene = null;
 let speakerProfiles = [];
 let dialogueProjection = null;
 let advanceMethod = null;
+let previewProbe = null;
 
 const resourceCleanup = {
   browserClosed: false,
@@ -557,6 +558,7 @@ function artifactPayload(status, error = null) {
     speakerProfiles,
     dialogueProjection,
     advanceMethod,
+    previewProbe,
     originalStarter,
     fixture: fixtureIdentity ? { path: fixtureRoot, ...fixtureIdentity } : { path: fixtureRoot },
     treeHashes,
@@ -698,17 +700,22 @@ async function run() {
   });
 
   await step('scene.patch.nova-line', async () => {
-    // 锚点必须是 @label start 行：nova 台词插入到 start 之后，保证从 start 启动的 preview 可达
-    // （此前用 @scene 行作锚点会把 nova 台词插到 start 之前，start 启动永远看不到它）。
-    const anchorRef = `scene:${TARGET_SCENE_ID}/instruction:2@${projectRevision.slice(0, 8)}-${fingerprint('@label ' + TARGET_LABEL)}`;
+    // 锚点 = lynn 开场行（instruction:3，@scene=1、@label start=2、lynn 开场=3）：
+    // nova 台词插入到 lynn 行之后、@end 之前，保证 start 启动先见 lynn 开场、推进一次到 nova 台词。
+    // （曾用 @scene 行作锚点会把 nova 插到 start 之前，start 启动永远看不到它；
+    //   曾用 @label start 行作锚点会把 nova 变成第一句，推进断言时序反转。）
+    const anchorRef = `scene:${TARGET_SCENE_ID}/instruction:3@${projectRevision.slice(0, 8)}-${fingerprint('lynn：开场。')}`;
     const input = writeInput('scene-patch-nova.json', {
       operationId: 'stage6-wave3-scene-patch-nova',
       sceneId: TARGET_SCENE_ID,
       patch: {
         kind: 'insertAfter',
         anchor: anchorRef,
-        expectedFingerprint: fingerprint('@label ' + TARGET_LABEL),
-        blocks: [{ kind: 'text', speaker: NOVA_ID, value: NOVA_LINE }],
+        expectedFingerprint: fingerprint('lynn：开场。'),
+        // speaker 必须用显示名（NOVA_NAME）：渲染层 dialogue-layer 的 speakerProfiles 按 name 索引，
+        // 用 id（nova）会查不到 profile 导致 activeSpeakerId 恒为 null（validation 接受 id 或 name，
+        // 但渲染层只认 name；与 Starter 台词一律用中文显示名一致）。
+        blocks: [{ kind: 'text', speaker: NOVA_NAME, value: NOVA_LINE }],
       },
     });
     success('scene.patch', runCli(['scene', 'patch', '--change', changeId, '--input', input]));
@@ -861,16 +868,40 @@ async function run() {
 
   await step('editor.preview.dialogue-projection.nova', async () => {
     // 等待投影台词精确变为 nova 台词（第一句 lynn 开场台词已非空，不能用“非空”作为条件）。
-    await previewFrame.waitForFunction((expected) => {
-      const projection = window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.();
-      return projection?.dialogue?.dialogText === expected;
-    }, NOVA_LINE, { timeout: 30000 });
+    try {
+      await previewFrame.waitForFunction((expected) => {
+        const projection = window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.();
+        return projection?.dialogue?.dialogText === expected;
+      }, NOVA_LINE, { timeout: 30000 });
+    } catch (err) {
+      // DIAGNOSTIC 失败现场：收集探针可见性与实际投影，供根因定位（FORMAL 路径同构）。
+      previewProbe = await previewFrame.evaluate(() => {
+        const dbg = window.surdetPreviewDebug ?? null;
+        const runtime = dbg?.runtime ?? null;
+        const controller = runtime?.controller ?? null;
+        let projection = null;
+        try { projection = runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null; } catch (e) { projection = { probeError: String(e) }; }
+        return {
+          hasDebug: typeof window.surdetPreviewDebug,
+          debugKeys: dbg ? Object.keys(dbg) : null,
+          hasRuntime: !!runtime,
+          runtimeKeys: runtime ? Object.keys(runtime) : null,
+          hasController: !!controller,
+          hasDispatchInput: typeof controller?.dispatchInput,
+          hasProjectionSnapshot: typeof runtime?.queries?.diagnostics?.projectionSnapshot,
+          rendererStatus: dbg?.rendererStatus ?? null,
+          projection,
+        };
+      }).catch((probeErr) => ({ probeFailed: String(probeErr) }));
+      throw err;
+    }
     const projection = await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null);
     assert(projection?.dialogue?.dialogText === NOVA_LINE, `投影台词不是 nova 台词：${JSON.stringify(projection?.dialogue?.dialogText)}`);
-    assert(projection?.world?.activeSpeakerId === NOVA_ID, `投影 speaker 不是 nova：${JSON.stringify(projection?.world?.activeSpeakerId)}`);
+    // world.activeSpeakerId 是 @show 舞台角色（本场景无 @show 恒为 null）；说话人看 dialogue.activeSpeakerId
+    assert(projection?.dialogue?.activeSpeakerId === NOVA_ID, `投影 speaker 不是 nova：${JSON.stringify(projection?.dialogue?.activeSpeakerId)}`);
     dialogueProjection = {
       dialogText: projection?.dialogue?.dialogText ?? null,
-      activeSpeakerId: projection?.world?.activeSpeakerId ?? null,
+      activeSpeakerId: projection?.dialogue?.activeSpeakerId ?? null,
       speakerProfileName: novaProfile?.name ?? null,
     };
   });
