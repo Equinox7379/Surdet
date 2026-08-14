@@ -112,15 +112,15 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     expect(body(ensured).result.objectRef).toBe('character:nova');
     expect(body(ensured).result.created).toBe(true);
 
-    // scene.patch 在 agent_probe 的 @scene 行后追加 nova 台词。
-    const anchorRef = `scene:agent_probe/instruction:1@${revision.slice(0, 8)}-${fingerprint('@scene agent_probe')}`;
+    // scene.patch 在 agent_probe 的 @label start 行后追加 nova 台词（保证 start 启动路径可达）。
+    const anchorRef = `scene:agent_probe/instruction:2@${revision.slice(0, 8)}-${fingerprint('@label start')}`;
     const patchInput = writeJson(requestDir, 'patch.json', {
       operationId: 'op-scene-patch-nova',
       sceneId: 'agent_probe',
       patch: {
         kind: 'insertAfter',
         anchor: anchorRef,
-        expectedFingerprint: fingerprint('@scene agent_probe'),
+        expectedFingerprint: fingerprint('@label start'),
         blocks: [{ kind: 'text', speaker: 'nova', value: '诺瓦登场台词。' }],
       },
     });
@@ -184,6 +184,11 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     expect(committedConfig.characters['nova']).toEqual({ name: '诺瓦', avatar: 'nova' });
     const sceneText = fs.readFileSync(path.join(root, 'content/scenario/agent_probe.gal'), 'utf8');
     expect(sceneText).toContain('nova：诺瓦登场台词。');
+    // start 启动路径可达性：@label start 之后紧跟 nova 台词（插入位置不变量）。
+    const startIndex = sceneText.indexOf('@label start');
+    const novaIndex = sceneText.indexOf('nova：诺瓦登场台词。');
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(novaIndex).toBeGreaterThan(startIndex);
     // 资源只读：avatar 文件身份不变。
     expect(fs.readFileSync(path.join(root, 'content/assets/avatar/lynn.svg'), 'utf8')).toBe('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
   });
