@@ -12,6 +12,7 @@ import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-d
 import {
   dispatchPreviewTraceSelection,
   locateObjectForTraceEvent,
+  locateTimelineCuesForStageChange,
   type CausalTraceEvent,
 } from '../causal-selection.js';
 
@@ -426,13 +427,26 @@ export function renderPreviewPanel(container: HTMLElement): void {
     for (const message of events) {
       const source = message.event.source;
       const ref = locateObjectForTraceEvent({ event: message.event } satisfies CausalTraceEvent, state.authoringIndex ?? undefined);
+      // @timeline 指令事件：用同一事件的前后 stage 快照差异反查具体 timeline cue（Wave 2 反向定位）。
+      let selectedRef = ref;
+      const instruction = ref === null ? undefined : state.authoringIndex?.byRef.get(ref);
+      const timelineTarget = instruction?.references.find((candidate) => candidate.startsWith('timeline:'));
+      if (source.op === 'timeline' && timelineTarget !== undefined && state.authoringIndex !== null) {
+        const cueRefs = locateTimelineCuesForStageChange(
+          message.presentationBefore,
+          message.presentationAfter,
+          state.authoringIndex,
+          timelineTarget,
+        );
+        if (cueRefs.length > 0) selectedRef = cueRefs[0]!;
+      }
       const button = h('button', message.sequence === state.selectedTraceStep ? 'preview-trace-event selected' : 'preview-trace-event');
       button.textContent = `#${message.sequence} ${message.event.kind} · ${source.sceneId}:${source.line}${message.presentationApplied ? ' · 演出已应用' : ''}`;
-      button.title = ref ?? '当前对象索引尚未定位该事件';
+      button.title = selectedRef ?? '当前对象索引尚未定位该事件';
       button.onclick = () => {
         state.selectedTraceStep = message.sequence;
-        state.selectedObjectRef = ref;
-        dispatchPreviewTraceSelection({ event: message.event, objectRef: ref, sequence: message.sequence });
+        state.selectedObjectRef = selectedRef;
+        dispatchPreviewTraceSelection({ event: message.event, objectRef: selectedRef, sequence: message.sequence });
         renderTraceList();
       };
       traceList.appendChild(button);

@@ -1,5 +1,6 @@
 import { loadProjectSnapshot, type ProjectFile, type ProjectStorage, type TextHasher } from '@surdet/authoring';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
+import { assetPathForHandle } from './project-io.js';
 
 export interface EditorProjectStorage extends ProjectStorage, TextHasher {}
 
@@ -38,6 +39,17 @@ export function createEditorProjectStorage(source = state): EditorProjectStorage
     }
     return result;
   };
+  /** 资产路径元数据：只枚举 content/assets 下的 bg/portrait 文件路径，不读文件内容。 */
+  const assetPaths = (): string[] => {
+    const paths: string[] = [];
+    for (const asset of source.dirAssets) {
+      if (asset.kind !== 'bg' && asset.kind !== 'portrait') continue;
+      const relative = asset.handle === null ? undefined : assetPathForHandle(asset.handle);
+      if (relative === undefined || !relative.startsWith('content/assets/')) continue;
+      paths.push(relative);
+    }
+    return paths;
+  };
   const sha256 = async (text: string): Promise<string> => {
     const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return hex(digest);
@@ -46,7 +58,7 @@ export function createEditorProjectStorage(source = state): EditorProjectStorage
     rootIdentity: `editor:${source.dirName || 'untitled'}`,
     sha256,
     async listFiles(): Promise<string[]> {
-      return [...files().keys()].sort((a, b) => a.localeCompare(b));
+      return [...new Set([...files().keys(), ...assetPaths()])].sort((a, b) => a.localeCompare(b));
     },
     async readText(filePath: string): Promise<ProjectFile> {
       const text = files().get(filePath);

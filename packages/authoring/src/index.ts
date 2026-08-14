@@ -10,3 +10,5 @@ export * from './simulation.js';
 export * from './evidence.js';
 export * from './diff.js';
 export * from './runtime-trace.js';
+export * from './asset-catalog.js';
+export * from './timeline-operations.js';

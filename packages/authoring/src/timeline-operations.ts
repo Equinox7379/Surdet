@@ -1,0 +1,292 @@
+import { validateTimeline, type TimelineDefinition } from '@surdet/core';
+import {
+  AuthoringOperationError,
+  runOperation,
+  stableStringify,
+  type ChangeSession,
+} from './change-session.js';
+import type {
+  LedgerDiffEntry,
+  TimelineCreateInput,
+  TimelineCueInput,
+  TimelinePatchInput,
+  TimelinePatchOperation,
+  Wave2Action,
+  Wave2TrackKind,
+} from './contracts.js';
+import { normalizeProjectPath } from './project-storage.js';
+import type { TextHasher } from './project-storage.js';
+
+const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'screen']);
+const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
+  background: new Set(['set']),
+  portrait: new Set(['show', 'hide', 'move', 'expression']),
+  screen: new Set(['fade']),
+};
+
+export function timelinePathFor(timelineId: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(timelineId)) {
+    throw new AuthoringOperationError('VALIDATION_FAILED', `时间轴 ID 非法：${timelineId}`);
+  }
+  return normalizeProjectPath(`content/timelines/${timelineId}.json`);
+}
+
+export function trackRefFor(timelineId: string, trackIndex: number): string {
+  return `timeline:${timelineId}/track:${trackIndex}`;
+}
+
+export function cueRefFor(timelineId: string, trackIndex: number, cueIndex: number): string {
+  return `timeline:${timelineId}/track:${trackIndex}/cue:${cueIndex}`;
+}
+
+/** 指纹规范化：键序稳定、无无关空白；SHA-256 由调用方注入的 hasher 完成。 */
+export function canonicalTimelineJson(value: unknown): string {
+  return stableStringify(value);
+}
+
+export async function timelineFingerprint(value: unknown, hasher: TextHasher): Promise<string> {
+  return hasher.sha256(canonicalTimelineJson(value));
+}
+
+export function parseTimelineDefinition(text: string): TimelineDefinition {
+  const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new AuthoringOperationError('PROJECT_INVALID', '时间轴文件不是 JSON 对象');
+  }
+  return parsed as TimelineDefinition;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Wave 2 白名单校验：返回第一条违规描述，全合法返回 null。 */
+export function checkWave2Definition(definition: unknown): string | null {
+  if (!isRecord(definition) || !Array.isArray(definition['tracks'])) {
+    return 'timeline tracks 必须是数组';
+  }
+  const tracks = definition['tracks'] as unknown[];
+  for (const rawTrack of tracks) {
+    if (!isRecord(rawTrack) || typeof rawTrack['kind'] !== 'string' || !Array.isArray(rawTrack['cues'])) {
+      return 'track 形状非法';
+    }
+    const kind = rawTrack['kind'];
+    if (!WAVE2_TRACK_KINDS.has(kind)) {
+      return `track kind 不在 Wave 2 白名单内：${kind}`;
+    }
+    const allowed = WAVE2_ACTIONS[kind]!;
+    for (const rawCue of rawTrack['cues'] as unknown[]) {
+      if (!isRecord(rawCue) || typeof rawCue['action'] !== 'string' || !allowed.has(rawCue['action'])) {
+        return `cue action 不在 Wave 2 白名单内：${isRecord(rawCue) ? String(rawCue['action']) : String(rawCue)}`;
+      }
+    }
+  }
+  return null;
+}
+
+function cueAllowedOn(kind: string, cue: TimelineCueInput): boolean {
+  const allowed = WAVE2_ACTIONS[kind];
+  return allowed !== undefined && allowed.has(cue.action);
+}
+
+export interface TimelineCreateResult {
+  timelineId: string;
+  path: string;
+  objectRef: string;
+  fingerprint: string;
+  diffEntry: LedgerDiffEntry;
+}
+
+export interface TimelinePatchResult {
+  timelineId: string;
+  objectRef: string;
+  fingerprint: string;
+  diffEntry: LedgerDiffEntry;
+}
+
+function parseTrackRef(ref: string, timelineId: string): number | null {
+  const prefix = `timeline:${timelineId}/track:`;
+  if (!ref.startsWith(prefix)) return null;
+  const raw = ref.slice(prefix.length);
+  if (!/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+function parseCueRef(ref: string, timelineId: string): { track: number; cue: number } | null {
+  const prefix = `timeline:${timelineId}/track:`;
+  if (!ref.startsWith(prefix)) return null;
+  const rest = ref.slice(prefix.length);
+  const match = /^(\d+)\/cue:(\d+)$/.exec(rest);
+  if (match === null) return null;
+  return { track: Number(match[1]), cue: Number(match[2]) };
+}
+
+export async function applyTimelineCreate(
+  change: ChangeSession,
+  input: TimelineCreateInput,
+  hasher: TextHasher,
+): Promise<TimelineCreateResult> {
+  const path = timelinePathFor(input.timelineId);
+  return runOperation<TimelineCreateResult>(change, input, async (record) => {
+    if (record.workingFiles[path] !== undefined) {
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `时间轴已存在：${input.timelineId}`);
+    }
+    const definition = input.definition;
+    if (!isRecord(definition) || definition['id'] !== input.timelineId) {
+      throw new AuthoringOperationError(
+        'VALIDATION_FAILED',
+        `timelineId 必须与 definition.id 一致：timelineId=${input.timelineId}`,
+      );
+    }
+    const whitelistViolation = checkWave2Definition(definition);
+    if (whitelistViolation !== null) {
+      throw new AuthoringOperationError('UNSUPPORTED_OPERATION', whitelistViolation);
+    }
+    const diagnostics = validateTimeline(definition);
+    if (diagnostics.length > 0) {
+      throw new AuthoringOperationError('VALIDATION_FAILED', '时间轴结构校验失败', {
+        diagnostics: diagnostics.map((item) => ({ code: item.code, message: item.message, path: item.path })),
+      });
+    }
+    const fingerprint = await timelineFingerprint(definition, hasher);
+    const text = `${JSON.stringify(definition, null, 2)}\n`;
+    return {
+      result: {
+        timelineId: input.timelineId,
+        path,
+        objectRef: `timeline:${input.timelineId}`,
+        fingerprint,
+        diffEntry: {
+          kind: 'timeline.create',
+          operationId: input.operationId,
+          objectAfter: `timeline:${input.timelineId}`,
+          fingerprintAfter: fingerprint,
+          directChange: { path },
+          potentialImpact: [],
+          observedImpact: [],
+        },
+      },
+      workingFiles: { ...record.workingFiles, [path]: text },
+    };
+  });
+}
+
+export async function applyTimelinePatch(
+  change: ChangeSession,
+  input: TimelinePatchInput,
+  hasher: TextHasher,
+): Promise<TimelinePatchResult> {
+  const path = timelinePathFor(input.timelineId);
+  return runOperation<TimelinePatchResult>(change, input, async (record) => {
+    const source = record.workingFiles[path];
+    if (source === undefined) {
+      throw new AuthoringOperationError('OBJECT_NOT_FOUND', `时间轴不存在：${input.timelineId}`);
+    }
+    const definition = parseTimelineDefinition(source);
+    const patch: TimelinePatchOperation = input.patch;
+    const fingerprintBefore = await timelineFingerprint(definition, hasher);
+    const next = JSON.parse(JSON.stringify(definition)) as TimelineDefinition;
+    const tracks = next.tracks;
+    let changedRef: string | null = null;
+
+    if (patch.kind === 'addTrack') {
+      if (patch.expectedFingerprint !== fingerprintBefore) {
+        throw new AuthoringOperationError('OBJECT_REF_STALE', `timeline fingerprint 不匹配：${input.timelineId}`);
+      }
+      if (!WAVE2_TRACK_KINDS.has(patch.trackKind)) {
+        throw new AuthoringOperationError('UNSUPPORTED_OPERATION', `track kind 不在 Wave 2 白名单内：${patch.trackKind}`);
+      }
+      tracks.push({
+        kind: patch.trackKind as Wave2TrackKind,
+        ...(patch.target === undefined ? {} : { target: patch.target }),
+        cues: [],
+      });
+      changedRef = trackRefFor(input.timelineId, tracks.length - 1);
+    } else if (patch.kind === 'removeTrack') {
+      const index = parseTrackRef(patch.trackRef, input.timelineId);
+      if (index === null || tracks[index] === undefined) {
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`);
+      }
+      const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
+      if (patch.expectedFingerprint !== trackFingerprint) {
+        throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
+      }
+      changedRef = patch.trackRef;
+      tracks.splice(index, 1);
+    } else if (patch.kind === 'insertCue') {
+      const index = parseTrackRef(patch.trackRef, input.timelineId);
+      if (index === null || tracks[index] === undefined) {
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`);
+      }
+      const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
+      if (patch.expectedFingerprint !== trackFingerprint) {
+        throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
+      }
+      if (!cueAllowedOn(tracks[index]!.kind, patch.cue)) {
+        throw new AuthoringOperationError('UNSUPPORTED_OPERATION', `cue action 不在该 track 白名单内：${patch.cue.action}`);
+      }
+      tracks[index]!.cues.push({ ...patch.cue } as typeof tracks[number]['cues'][number]);
+      changedRef = cueRefFor(input.timelineId, index, tracks[index]!.cues.length - 1);
+    } else {
+      const parsed = parseCueRef(patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef, input.timelineId);
+      const track = parsed === null ? undefined : tracks[parsed.track];
+      const cue = track === undefined || parsed === null ? undefined : track.cues[parsed.cue];
+      if (parsed === null || cue === undefined) {
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `cue 引用不存在：${patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef}`);
+      }
+      const cueFingerprint = await timelineFingerprint(cue, hasher);
+      if (patch.expectedFingerprint !== cueFingerprint) {
+        throw new AuthoringOperationError('OBJECT_REF_STALE', `cue fingerprint 不匹配：${patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef}`);
+      }
+      changedRef = patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef;
+      if (patch.kind === 'replaceCue') {
+        if (!cueAllowedOn(track!.kind, patch.cue)) {
+          throw new AuthoringOperationError('UNSUPPORTED_OPERATION', `cue action 不在该 track 白名单内：${patch.cue.action}`);
+        }
+        track!.cues[parsed.cue] = { ...patch.cue } as typeof cue;
+      } else {
+        track!.cues.splice(parsed.cue, 1);
+      }
+    }
+
+    const diagnostics = validateTimeline(next);
+    if (diagnostics.length > 0) {
+      throw new AuthoringOperationError('VALIDATION_FAILED', 'patch 后时间轴结构校验失败', {
+        diagnostics: diagnostics.map((item) => ({ code: item.code, message: item.message, path: item.path })),
+      });
+    }
+    const whitelistViolation = checkWave2Definition(next);
+    if (whitelistViolation !== null) {
+      throw new AuthoringOperationError('UNSUPPORTED_OPERATION', whitelistViolation);
+    }
+    const fingerprintAfter = await timelineFingerprint(next, hasher);
+    return {
+      result: {
+        timelineId: input.timelineId,
+        objectRef: `timeline:${input.timelineId}`,
+        fingerprint: fingerprintAfter,
+        diffEntry: {
+          kind: `timeline.patch.${patch.kind}`,
+          operationId: input.operationId,
+          objectBefore: `timeline:${input.timelineId}`,
+          objectAfter: `timeline:${input.timelineId}`,
+          fingerprintBefore,
+          fingerprintAfter,
+          directChange: { patch: patch.kind, ...(changedRef === null ? {} : { changedRef }) },
+          potentialImpact: [],
+          observedImpact: [],
+        },
+      },
+      workingFiles: { ...record.workingFiles, [path]: `${JSON.stringify(next, null, 2)}\n` },
+    };
+  });
+}
+
+export type {
+  TimelineCreateInput,
+  TimelineCueInput,
+  TimelinePatchInput,
+  TimelinePatchOperation,
+  Wave2Action,
+  Wave2TrackKind,
+} from './contracts.js';
