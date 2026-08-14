@@ -441,14 +441,14 @@ async function readPreviewMessages(page) {
 }
 
 async function waitPreviewMessage(page, startIndex, predicate, timeoutMs = 30000) {
-  const handle = await page.waitForFunction(({ start, check }) => {
-    const messages = window.__surdetStage6Messages ?? [];
-    const hit = messages.slice(start).find((message) => check(message) === true);
-    return hit ?? null;
-  }, { start: startIndex, check: predicate.toString() }, { timeout: timeoutMs });
-  const value = await handle.jsonValue();
-  if (!value) throw new Error('waitForFunction 未命中预期消息');
-  return value;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const messages = await readPreviewMessages(page);
+    const hit = messages.slice(startIndex).find((message) => predicate(message) === true);
+    if (hit !== undefined) return hit;
+    assert(Date.now() < deadline, `waitPreviewMessage 超时：${predicate.toString().slice(0, 120)}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 async function waitForFormalPreviewFrame(page, timeoutMs = 30000) {
