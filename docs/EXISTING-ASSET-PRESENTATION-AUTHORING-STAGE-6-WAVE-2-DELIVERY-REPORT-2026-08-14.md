@@ -119,7 +119,7 @@ CODE_EVIDENCE_HEAD（FORMAL 取证基线）= `dcf2905837e7da2ce80c4ae1a60d0b7ee3
 2. 唯一 FORMAL 通过且 `artifact.runHead === CODE_EVIDENCE_HEAD`；DIAGNOSTIC/FORMAL artifact 身份见第 4/5 节。
 3. CLI 能力面 14→17（project.assets、timeline.create、timeline.patch），`authoring-contract.test.ts` 已按 4.81 授权更新为 17。
 4. 三次历史 DIAGNOSTIC 失败根因已闭环（transfer 序列化、谓词序列化、fade 采样窗口），治理按 4.80/4.81 收口，不以滚动 runHead 伪装 frozen HEAD。
-5. 建议授权项目所有者人工验收（任务书第七节路径），人工通过后再由项目所有者另行决定 push。
+5. 项目所有者人工验收已通过；push 仍需项目所有者另行明确授权。
 
 ## 9. FORMAL 之后的 editor 修正与人工验收通过
 
