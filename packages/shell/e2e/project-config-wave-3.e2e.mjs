@@ -728,9 +728,14 @@ async function run() {
 
   await step('project.validate.green', async () => {
     const body = success('project.validate', runCli(['project', 'validate', '--change', changeId]));
+    // 绿灯 = 无 error（placeholder 哲学允许其它场景的 speaker/资源 warning，如 Starter 的 '主角' 台词）。
     assert(body.result.ok === true, `绿灯校验仍有 error：${JSON.stringify(body.result.issues)}`);
     assert(body.result.issues.filter((issue) => issue.severity === 'error').length === 0, '校验含 error');
-    assert(body.result.issues.filter((issue) => issue.code === 'SPEAKER_UNRESOLVED').length === 0, '校验含未解析 speaker warning');
+    // 目标场景 agent_probe 的 nova/lynn 台词 speaker 必须全部解析。
+    const targetSpeakerWarnings = body.result.issues.filter((issue) => (
+      issue.code === 'SPEAKER_UNRESOLVED' && issue.file.includes(`${TARGET_SCENE_ID}.gal`)
+    ));
+    assert(targetSpeakerWarnings.length === 0, `目标场景含未解析 speaker：${JSON.stringify(targetSpeakerWarnings)}`);
     assert(body.result.issues.filter((issue) => issue.code === 'ASSET_UNRESOLVED').length === 0, '校验含未解析资源 warning');
     assertTreeUnchanged(fixtureIdentity, 'afterGreenValidation');
   });
