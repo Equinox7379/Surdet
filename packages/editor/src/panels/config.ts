@@ -771,6 +771,7 @@ export function renderConfig(container: HTMLElement): void {
     configHist.past = [];
     configHist.future = [];
     container.innerHTML = '';
+    container.appendChild(renderCharactersSection());
     container.appendChild(renderVariablesSection());
     container.appendChild(renderAchievementsSection());
     container.appendChild(renderCalendarSection());
