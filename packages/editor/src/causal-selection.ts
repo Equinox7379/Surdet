@@ -118,6 +118,23 @@ export function describeAuthoringReference(ref: string): string {
   return ref;
 }
 
+export interface TimelineObjectRef {
+  timelineId: string;
+  trackIndex: number | null;
+  cueIndex: number | null;
+}
+
+/** 解析 timeline:<id>[/track:<n>[/cue:<m>]] 引用；非 timeline 引用返回 null。 */
+export function parseTimelineObjectRef(ref: string): TimelineObjectRef | null {
+  if (!ref.startsWith('timeline:')) return null;
+  const rest = ref.slice('timeline:'.length);
+  const cueMatch = /^(.+?)\/track:(\d+)\/cue:(\d+)$/.exec(rest);
+  if (cueMatch) return { timelineId: cueMatch[1]!, trackIndex: Number(cueMatch[2]), cueIndex: Number(cueMatch[3]) };
+  const trackMatch = /^(.+?)\/track:(\d+)$/.exec(rest);
+  if (trackMatch) return { timelineId: trackMatch[1]!, trackIndex: Number(trackMatch[2]), cueIndex: null };
+  return { timelineId: rest, trackIndex: null, cueIndex: null };
+}
+
 export function selectAuthoringObject(ref: string | null): string | null {
   return typeof ref === 'string' && ref.trim().length > 0 ? ref : null;
 }
