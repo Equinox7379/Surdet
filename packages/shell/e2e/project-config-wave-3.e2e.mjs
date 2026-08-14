@@ -835,10 +835,11 @@ async function run() {
   });
 
   await step('editor.preview.dialogue-projection.nova', async () => {
-    await previewFrame.waitForFunction(() => {
+    // 等待投影台词精确变为 nova 台词（第一句 lynn 开场台词已非空，不能用“非空”作为条件）。
+    await previewFrame.waitForFunction((expected) => {
       const projection = window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.();
-      return projection?.dialogue?.dialogText && projection?.dialogue?.dialogText.length > 0;
-    }, undefined, { timeout: 30000 });
+      return projection?.dialogue?.dialogText === expected;
+    }, NOVA_LINE, { timeout: 30000 });
     const projection = await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null);
     assert(projection?.dialogue?.dialogText === NOVA_LINE, `投影台词不是 nova 台词：${JSON.stringify(projection?.dialogue?.dialogText)}`);
     assert(projection?.world?.activeSpeakerId === NOVA_ID, `投影 speaker 不是 nova：${JSON.stringify(projection?.world?.activeSpeakerId)}`);
