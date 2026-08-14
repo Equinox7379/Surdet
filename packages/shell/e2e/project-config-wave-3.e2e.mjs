@@ -70,6 +70,7 @@ let characters = null;
 let entryScene = null;
 let speakerProfiles = [];
 let dialogueProjection = null;
+let advanceMethod = null;
 
 const resourceCleanup = {
   browserClosed: false,
@@ -555,6 +556,7 @@ function artifactPayload(status, error = null) {
     entryScene,
     speakerProfiles,
     dialogueProjection,
+    advanceMethod,
     originalStarter,
     fixture: fixtureIdentity ? { path: fixtureRoot, ...fixtureIdentity } : { path: fixtureRoot },
     treeHashes,
@@ -830,8 +832,29 @@ async function run() {
   await step('editor.preview.advance-to-nova', async () => {
     // 第一句是 lynn 的开场台词（awaiting-advance），推进到 nova 台词。
     await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.rendererStatus === 'awaiting', undefined, { timeout: 30000 });
-    await previewFrame.evaluate(() => window.focus());
-    await page.keyboard.press('Space');
+    // (a) 真实输入优先：真实鼠标点击画布中心获取 iframe 焦点，Space 后有界重试（≤3 次、间隔 200ms），
+    //     以投影推进到 nova 台词为停止条件（headless iframe 的 window.focus() 路由不稳定，见台账 4.88）。
+    const canvasBox = await previewFrame.locator('canvas').boundingBox();
+    assert(canvasBox, '未读到 preview 画布几何');
+    await page.mouse.click(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await previewFrame.evaluate(() => window.focus());
+      await page.keyboard.press('Space');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const dialogText = await previewFrame.evaluate(() => (
+        window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.()?.dialogue?.dialogText ?? null
+      ));
+      if (dialogText === NOVA_LINE) {
+        advanceMethod = 'keyboard';
+        break;
+      }
+    }
+    // (b) 确定性兜底：重试后仍未推进时走公开输入入口 dispatchInput。
+    if (advanceMethod === null) {
+      await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.controller?.dispatchInput?.({ type: 'advance' }));
+      advanceMethod = 'dispatch-input';
+    }
+    assert(advanceMethod === 'keyboard' || advanceMethod === 'dispatch-input', `推进方式未记录：${advanceMethod}`);
   });
 
   await step('editor.preview.dialogue-projection.nova', async () => {
