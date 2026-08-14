@@ -39,11 +39,11 @@ export function createEditorProjectStorage(source = state): EditorProjectStorage
     }
     return result;
   };
-  /** 资产路径元数据：只枚举 content/assets 下的 bg/portrait 文件路径，不读文件内容。 */
+  /** 资产路径元数据：只枚举 content/assets 下的 bg/portrait/avatar 文件路径，不读文件内容。 */
   const assetPaths = (): string[] => {
     const paths: string[] = [];
     for (const asset of source.dirAssets) {
-      if (asset.kind !== 'bg' && asset.kind !== 'portrait') continue;
+      if (asset.kind !== 'bg' && asset.kind !== 'portrait' && asset.kind !== 'avatar') continue;
       const relative = asset.handle === null ? undefined : assetPathForHandle(asset.handle);
       if (relative === undefined || !relative.startsWith('content/assets/')) continue;
       paths.push(relative);

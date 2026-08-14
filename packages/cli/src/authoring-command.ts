@@ -80,10 +80,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function capabilityFor(command: string, subcommand: string): string {
-  const capability = `${command}.${subcommand}`;
+function capabilityFor(command: string, subcommand: string, subsubcommand = ''): string {
+  const capability = subsubcommand.length > 0 ? `${command}.${subcommand}.${subsubcommand}` : `${command}.${subcommand}`;
   if (!AUTHORING_CAPABILITIES.includes(capability as (typeof AUTHORING_CAPABILITIES)[number])) {
-    throw new Error(`未知 authoring 命令：${command} ${subcommand}`);
+    throw new Error(`未知 authoring 命令：${command} ${subcommand}${subsubcommand.length > 0 ? ` ${subsubcommand}` : ''}`);
   }
   return capability;
 }
@@ -164,8 +164,8 @@ function failureEnvelope(capability: string, error: unknown): Record<string, unk
   };
 }
 
-async function dispatch(service: AuthoringService, command: string, subcommand: string, args: ParsedArgs): Promise<{ value: ServiceResult<unknown>; operationId?: string }> {
-  const capability = capabilityFor(command, subcommand);
+async function dispatch(service: AuthoringService, command: string, subcommand: string, args: ParsedArgs, subsubcommand = ''): Promise<{ value: ServiceResult<unknown>; operationId?: string }> {
+  const capability = capabilityFor(command, subcommand, subsubcommand);
   if (capability === 'capabilities.describe') return { value: await service.describeCapabilities() };
   if (capability === 'project.inspect') return { value: await service.inspectProject(required(args.project, '--project')) };
   if (capability === 'project.assets') return { value: await service.projectAssets(required(args.project, '--project')) };
@@ -190,6 +190,18 @@ async function dispatch(service: AuthoringService, command: string, subcommand: 
   if (capability === 'timeline.patch') {
     const input = readJsonFile(args.input) as Parameters<AuthoringService['timelinePatch']>[1];
     return { value: await service.timelinePatch(required(args.change, '--change'), input), operationId: input.operationId };
+  }
+  if (capability === 'character.ensure') {
+    const input = readJsonFile(args.input) as Parameters<AuthoringService['characterEnsure']>[1];
+    return { value: await service.characterEnsure(required(args.change, '--change'), input), operationId: input.operationId };
+  }
+  if (capability === 'character.remove') {
+    const input = readJsonFile(args.input) as Parameters<AuthoringService['characterRemove']>[1];
+    return { value: await service.characterRemove(required(args.change, '--change'), input), operationId: input.operationId };
+  }
+  if (capability === 'project.entry-scene.set') {
+    const input = readJsonFile(args.input) as Parameters<AuthoringService['entrySceneSet']>[1];
+    return { value: await service.entrySceneSet(required(args.change, '--change'), input), operationId: input.operationId };
   }
   if (capability === 'project.validate') return { value: await service.validate(required(args.change, '--change')) };
   if (capability === 'project.simulate') {
@@ -217,12 +229,15 @@ async function dispatch(service: AuthoringService, command: string, subcommand: 
 export async function authoringCommand(args: readonly string[]): Promise<number> {
   const command = args[0] ?? '';
   const subcommand = args[1] ?? '';
+  // 三词命令（如 project entry-scene set）：subsubcommand 参与能力名与参数解析；-- 开头的是参数不是命令词。
+  const rawThird = args[2] ?? '';
+  const subsubcommand = rawThird.length > 0 && !rawThird.startsWith('--') ? rawThird : '';
   let parsed: ParsedArgs = { json: false, debug: false };
-  let capability = `${command}.${subcommand}`;
+  let capability = subsubcommand.length > 0 ? `${command}.${subcommand}.${subsubcommand}` : `${command}.${subcommand}`;
   try {
-    parsed = parseArgs(args.slice(2));
-    capability = capabilityFor(command, subcommand);
-    const dispatched = await dispatch(new AuthoringService(), command, subcommand, parsed);
+    parsed = parseArgs(args.slice(subsubcommand.length > 0 ? 3 : 2));
+    capability = capabilityFor(command, subcommand, subsubcommand);
+    const dispatched = await dispatch(new AuthoringService(), command, subcommand, parsed, subsubcommand);
     process.stdout.write(`${JSON.stringify(successEnvelope(capability, dispatched.value, dispatched.operationId))}\n`);
     return 0;
   } catch (error) {

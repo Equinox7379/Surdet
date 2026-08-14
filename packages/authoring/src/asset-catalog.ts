@@ -17,8 +17,13 @@ export function portraitAssetRef(role: string, outfit: string, expression: strin
   return `asset:portrait:${role}:${outfit}:${expression}`;
 }
 
+export function avatarAssetRef(name: string): string {
+  return `asset:avatar:${name}`;
+}
+
 const BG_PREFIX = 'content/assets/bg/';
 const PORTRAIT_PREFIX = 'content/assets/portrait/';
+const AVATAR_PREFIX = 'content/assets/avatar/';
 
 function extensionOf(sourcePath: string): string {
   const base = sourcePath.slice(sourcePath.lastIndexOf('/') + 1);
@@ -39,6 +44,7 @@ function stemOf(sourcePath: string): string {
 export function buildAssetCatalog(paths: readonly string[]): ProjectAssetCatalog {
   const backgrounds: AssetEntry[] = [];
   const portraits: AssetEntry[] = [];
+  const avatars: AssetEntry[] = [];
   const seen = new Set<string>();
   for (const sourcePath of [...paths].sort((a, b) => a.localeCompare(b))) {
     if (sourcePath.startsWith(BG_PREFIX)) {
@@ -73,12 +79,23 @@ export function buildAssetCatalog(paths: readonly string[]): ProjectAssetCatalog
       }
       continue;
     }
-    // avatar、fonts、public/ 与其它目录不进入本 Wave 的两类资源合同。
+    if (sourcePath.startsWith(AVATAR_PREFIX)) {
+      const key = stemOf(sourcePath);
+      if (key.length === 0 || key.startsWith('.')) continue;
+      const format = extensionOf(sourcePath);
+      const entry: AssetEntry = { kind: 'avatar', key, sourcePath, format, resolved: isSupportedAssetFormat(format) };
+      if (!seen.has(entry.sourcePath)) {
+        seen.add(entry.sourcePath);
+        avatars.push(entry);
+      }
+      continue;
+    }
+    // fonts、public/ 与其它目录不进入三类资源合同。
   }
-  return { backgrounds, portraits };
+  return { backgrounds, portraits, avatars };
 }
 
-/** 从任意项目文件路径集合中筛出资产路径元数据（仅 bg/portrait 两类合同）。 */
+/** 从任意项目文件路径集合中筛出资产路径元数据（三类合同）。 */
 export function assetPathsFromFiles(paths: readonly string[]): string[] {
-  return paths.filter((path) => path.startsWith(BG_PREFIX) || path.startsWith(PORTRAIT_PREFIX));
+  return paths.filter((path) => path.startsWith(BG_PREFIX) || path.startsWith(PORTRAIT_PREFIX) || path.startsWith(AVATAR_PREFIX));
 }

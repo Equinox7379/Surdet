@@ -37,7 +37,7 @@ export interface ProjectStorage {
 }
 
 export interface AuthoringObject {
-  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset';
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene';
   semanticId?: string;
   objectRef: string;
   parentRef?: string;
@@ -155,7 +155,7 @@ export interface TimelinePatchInput {
 
 /** 只读资源发现条目（共享 asset catalog 统一解析）。 */
 export interface AssetEntry {
-  kind: 'background' | 'portrait';
+  kind: 'background' | 'portrait' | 'avatar';
   key: string;
   role?: string;
   outfit?: string;
@@ -168,6 +168,31 @@ export interface AssetEntry {
 export interface ProjectAssetCatalog {
   backgrounds: AssetEntry[];
   portraits: AssetEntry[];
+  avatars: AssetEntry[];
+}
+
+/** Stage 6 Wave 3：项目级创作配置写操作输入。 */
+export interface CharacterEnsureInput {
+  operationId: string;
+  id: string;
+  name: string;
+  /** undefined=保留原值；null=移除；字符串=设置。 */
+  avatar?: string | null;
+  /** 当前角色表（characters 字段）规范化 JSON 片段的 SHA-256；角色表缺失时 = 空对象指纹。 */
+  expectedFingerprint: string;
+}
+
+export interface CharacterRemoveInput {
+  operationId: string;
+  id: string;
+  expectedFingerprint: string;
+}
+
+export interface EntrySceneSetInput {
+  operationId: string;
+  sceneId: string;
+  /** 当前 entryScene 字段规范化 JSON 片段指纹；缺失时 = 空指纹。 */
+  expectedFingerprint: string;
 }
 
 /** operation ledger 产生的对象级 diff 条目（track/cue 无持久语义 ID，不按数组位置猜身份）。 */
