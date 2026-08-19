@@ -356,4 +356,86 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(timelineError.code).toMatch(/^T\d{3}$/);
     expect(timelineError.text).toContain('content/timelines/broken.json');
   });
+
+  // Reliability Phase 2B（A2）：canonical timeline identity = filename stem == definition.id。
+  // validate 与 simulate/run-from 必须共享同一 invariant，禁止 alias/fallback 双真相。
+  it.each([
+    {
+      label: 'CASE B filename ref (foo.json id=bar ref=foo)',
+      ref: 'foo',
+      files: { 'foo.json': { id: 'bar' } },
+      mismatchText: "definition.id 'bar' 与文件名派生 ID 'foo' 不一致",
+      expectMissingFoo: false,
+      expectMissingRef: false,
+      duplicate: false,
+    },
+    {
+      label: 'CASE C internal ref (foo.json id=bar ref=bar)',
+      ref: 'bar',
+      files: { 'foo.json': { id: 'bar' } },
+      mismatchText: "definition.id 'bar' 与文件名派生 ID 'foo' 不一致",
+      expectMissingFoo: false,
+      expectMissingRef: true,
+      duplicate: false,
+    },
+    {
+      label: 'CASE D duplicate internal ids (a/b.json id=shared)',
+      ref: 'shared',
+      files: { 'a.json': { id: 'shared' }, 'b.json': { id: 'shared' } },
+      mismatchText: "definition.id 'shared' 与文件名派生 ID 'a' 不一致",
+      expectMissingFoo: false,
+      expectMissingRef: false,
+      duplicate: true,
+    },
+  ])('enforces canonical timeline identity end to end ($label)', ({ ref, files, mismatchText, expectMissingRef, duplicate }) => {
+    const { root, data } = fixtureProject();
+    const env = { SURDET_AGENT_DATA_DIR: data };
+    fs.writeFileSync(path.join(root, 'content/scenario/ch01_01.gal'), `@scene ch01_01\n@timeline ${ref} @ blocking\n凛：你好。\n@end\n`, 'utf8');
+    for (const [file, partial] of Object.entries(files)) {
+      fs.writeFileSync(path.join(root, 'content/timelines', file), JSON.stringify({
+        version: 1,
+        durationMs: 900,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }],
+        ...partial,
+      }), 'utf8');
+    }
+    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01' });
+
+    const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).result.changeId;
+
+    // validate：capability 成功执行，内部 result.ok=false，MISMATCH 诊断带文件路径与两个 ID。
+    const validated = runCli(['project', 'validate', '--change', changeId, '--json'], env);
+    expect(validated.status).toBe(0);
+    const validatedBody = body(validated);
+    expect(validatedBody.ok).toBe(true);
+    expect(validatedBody.result.ok).toBe(false);
+    const mismatch = validatedBody.result.issues.find((issue: any) => issue.code === 'TIMELINE_ID_MISMATCH');
+    expect(mismatch).toBeDefined();
+    expect(mismatch.text).toContain(mismatchText);
+    // CASE B 核心：文件真实存在（filename 引用）不得新增误导性 TIMELINE_MISSING 'foo'。
+    expect(validatedBody.result.issues.some((issue: any) => issue.code === 'TIMELINE_MISSING' && issue.text.includes("'foo'"))).toBe(false);
+    if (expectMissingRef) {
+      expect(validatedBody.result.issues.some((issue: any) => issue.code === 'TIMELINE_MISSING' && issue.text.includes(`'${ref}'`))).toBe(true);
+    }
+    if (duplicate) {
+      const dup = validatedBody.result.issues.find((issue: any) => issue.code === 'TIMELINE_ID_DUPLICATE');
+      expect(dup).toBeDefined();
+      expect(dup.text).toContain('content/timelines/a.json');
+      expect(dup.text).toContain('content/timelines/b.json');
+    }
+
+    // simulate / run-from：runtime loader 同一 invariant → RUNTIME_FAILED（不再有 CASE C 的 runtime PASS）。
+    const simulateInput = writeJson(root, 'simulate-input.json', { sceneId: 'ch01_01' });
+    const simulated = runCli(['project', 'simulate', '--change', changeId, '--input', simulateInput, '--json'], env);
+    expect(simulated.status).not.toBe(0);
+    expect(body(simulated).error.code).toBe('RUNTIME_FAILED');
+    expect(body(simulated).error.message).toContain(mismatchText);
+
+    const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
+    expect(run.status).not.toBe(0);
+    expect(body(run).error.code).toBe('RUNTIME_FAILED');
+    expect(body(run).error.message).toContain(mismatchText);
+  });
 });

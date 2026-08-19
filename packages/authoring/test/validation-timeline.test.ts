@@ -177,3 +177,79 @@ describe('malformed timeline structural safety (Phase 2A)', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+/* ============ Reliability Phase 2B（A2）：canonical timeline identity ============
+ * 规则：filename stem == definition.id == typed authoring timelineId，唯一 canonical 身份。
+ * mismatch 文件仍算 filename presence（不新增误导 MISSING），但绝不进入 usable/asset traversal。 */
+
+const mismatchedTimeline = JSON.stringify({
+  version: 1,
+  id: 'other_show',
+  durationMs: 800,
+  // 资源 key 故意指向不存在的 bg：mismatch 文件不进入 asset traversal，因此不应产生 ASSET_UNRESOLVED。
+  tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'ghost_bg' }] }],
+});
+
+describe('canonical timeline identity (Phase 2B)', () => {
+  it('CASE B: reports TIMELINE_ID_MISMATCH for a filename reference without adding misleading MISSING', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText, // 引用 agent_blackout（filename）
+      'content/timelines/agent_blackout.json': mismatchedTimeline, // 内部 id=other_show
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    const mismatch = result.issues.find((issue) => issue.code === 'TIMELINE_ID_MISMATCH');
+    expect(mismatch).toBeDefined();
+    expect(mismatch!.severity).toBe('error');
+    expect(mismatch!.text).toContain("definition.id 'other_show'");
+    expect(mismatch!.text).toContain("文件名派生 ID 'agent_blackout'");
+    // 文件真实存在且 parse 成功：不得额外新增误导性 TIMELINE_MISSING。
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_MISSING')).toBe(false);
+    // mismatch 文件不进入 asset traversal：ghost_bg 不产生 ASSET_UNRESOLVED。
+    expect(result.issues.some((issue) => issue.code === 'ASSET_UNRESOLVED' && issue.file === 'content/timelines/agent_blackout.json')).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it('CASE C: internal-id reference gets MISMATCH plus TIMELINE_MISSING for the absent canonical file', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText.replace('agent_blackout @ blocking', 'other_show @ blocking'),
+      'content/timelines/agent_blackout.json': mismatchedTimeline,
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_ID_MISMATCH')).toBe(true);
+    const missing = result.issues.find((issue) => issue.code === 'TIMELINE_MISSING');
+    expect(missing).toBeDefined();
+    expect(missing!.text).toContain("'other_show'");
+    expect(result.ok).toBe(false);
+  });
+
+  it('CASE D: duplicate internal ids across files produce MISMATCH plus TIMELINE_ID_DUPLICATE with both paths', async () => {
+    const shared = (file: string) => JSON.stringify({
+      version: 1,
+      id: 'shared',
+      durationMs: 800,
+      tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: file === 'a.json' ? 'castle_hall' : 'night_field' }] }],
+    });
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText,
+      'content/timelines/a.json': shared('a.json'),
+      'content/timelines/b.json': shared('b.json'),
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    // 两个文件都与各自 filename stem 不一致：各得一个 MISMATCH。
+    expect(result.issues.filter((issue) => issue.code === 'TIMELINE_ID_MISMATCH')).toHaveLength(2);
+    // 同时报告内部身份争夺：duplicate 诊断必须给出两个冲突文件路径。
+    const duplicate = result.issues.find((issue) => issue.code === 'TIMELINE_ID_DUPLICATE');
+    expect(duplicate).toBeDefined();
+    expect(duplicate!.severity).toBe('error');
+    expect(duplicate!.text).toContain("'shared'");
+    expect(duplicate!.text).toContain('content/timelines/a.json');
+    expect(duplicate!.text).toContain('content/timelines/b.json');
+    expect(result.ok).toBe(false);
+  });
+});

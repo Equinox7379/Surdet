@@ -11,6 +11,7 @@ import {
   type VarValue,
 } from '@surdet/core';
 import type { ProjectSnapshot } from './project-snapshot.js';
+import { timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
 export interface SimulationOptions {
   maxPaths?: number;
@@ -100,6 +101,10 @@ export function buildTimelineRegistry(snapshot: ProjectSnapshot): TimelineRegist
     } catch (error) {
       throw new Error(`${timeline.path}: 时间轴 JSON 解析失败（${error instanceof Error ? error.message : String(error)}）`);
     }
+    // Phase 2B（A2）：canonical identity invariant 与 validation 共享同一 helper——
+    // filename stem == definition.id，divergence 时 fail-loud。不做 alias/fallback/改写。
+    const conflict = timelineIdentityConflict(timeline.path, parsed);
+    if (conflict !== null) throw new Error(timelineIdentityMismatchMessage(conflict));
     try {
       registry.register(parsed);
     } catch (error) {
