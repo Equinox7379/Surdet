@@ -270,3 +270,30 @@ HUMAN_ACCEPTANCE_FINAL_STEP_PENDING（微调角色名→保存→重开 仍在�
 NOT_PUSHED_AFTER_STAGE_6_WAVE_3
 WAVE_4_NOT_STARTED
 ```
+
+### Final Reliability Patch：display-name 改名 speaker 引用完整性（2026-08-19 +08:00）
+
+> Independent Review 裁决 APPROVED_WITH_REQUIRED_FIX 后的 Wave 3 closure blocker 修复（F1：DISPLAY_NAME_REFERENCE_BREAK = PROVEN / HIGH）：character display name 改名后，scene 中使用旧显示名的 speaker 引用无声失效（SPEAKER_UNRESOLVED 仅 warning、causal edge 丢失、仍可 commit）。
+
+- **基线核对**：施工前 HEAD=`3229e54319a1ac626777cd2e257162e3f50ab4ab`；`surdet/main=4169b75`；ahead/behind=`11 0`；工作树与暂存区干净。
+- **RED（先于生产代码）**：`packages/authoring/test/config-operations.test.ts` 新增 8 个测试。首次运行 `npm run test -w @surdet/authoring -- test/config-operations.test.ts` exit=`1`，6 个失败精确复现 F1：场景 speaker 未迁移、reload 后 SPEAKER_UNRESOLVED×4、显示名冲突/ID 冲突/歧义旧名均被静默接受。（另 2 个失败为 fixture 未注册 baseFiles 的原子性用例与既有 stale 用例，随后修正 fixture 为真实 begin 语义。）
+- **修复语义（落点 @surdet/authoring，Editor/CLI/Agent 共享）**：`applyCharacterEnsure` 在同一 change 事务内——
+  1. 指纹门控（OBJECT_REF_STALE）之后、任何写入之前：新显示名与其它角色显示名或其它角色 ID 冲突 → OBJECT_AMBIGUOUS fail-loud（零写入）；
+  2. 旧显示名不唯一（同名多角色或被角色 ID 遮蔽）且被台词引用 → OBJECT_AMBIGUOUS fail-loud（不猜归属）；
+  3. 旧显示名经 name 路径唯一解析到本角色时：`parseSceneDocument` 结构化解析全部 `content/scenario/*.gal`，仅修改 speaker 字段精确等于旧显示名的台词行（exact token replacement，缩进/value/EOL/其余行字节不变），迁移文本与 game.config.json 角色名修改作为同一事务提交（commitChange 磁盘基线检测 + stage/替换/恢复，任一文件失败全量回滚）；
+  4. `potentialImpact` 不再硬编码空数组：精确列出每次迁移的 `{path, line, from, to}`（流入 operation ledger 与 change.diff 语义输出），result 新增 `speakerMigrations` 机器可读证据；
+  5. character ID 不变；speaker 全面 ID 化、runtime/renderer 契约、普通对白正文、label、asset key 均不触碰。
+- **Editor 侧（仅 IO 适配，无迁移逻辑）**：`EditorWriteStorage` 写侧从仅 game.config.json 扩展到场景文件（state.scenes 句柄映射）；commit 后同步被迁移场景的内存文本；保存状态提示带迁移计数。迁移语义 100% 在共享层。
+- **F2 补齐**：avatar update（nova→nova2 持久化）与 avatar clear（null → 属性移除）补测试，共享路径与 Editor commitCharacterTable 路径（空串→null）均覆盖；实现本已正确，仅补测试。
+- **聚焦绿灯（真实运行，全部 exit 0）**：authoring 4 文件 30/30（含 8 新测试）；editor project-config-display/authoring-project-storage/causal-selection 15/15（含 3 更新+2 新增）；CLI authoring-project-config-wave3 + authoring-contract 3/3；typecheck×2 与 build×2 全绿。未运行 FORMAL E2E、整包测试、Electron。
+- **代码提交**：`a1effc9e2dbf86d9eea87134e0c376263555e896 fix(authoring): preserve speaker refs on character rename`（5 文件 +484/-42，`git diff --cached --check` exit=`0`，范围仅 authoring config-operations + editor 桥接/面板 + 两侧测试）。
+- **LOW findings（F3 undo 穿越保存 / F4 冲突基线来自内存）未处理**，按裁决留待后续。
+- **停止状态**：
+
+```text
+WAVE_3_REFERENCE_INTEGRITY_FIX_COMMITTED_LOCALLY = a1effc9
+WAITING_FOR_ARCHITECT_REVIEW
+WAVE_3_HUMAN_ACCEPTANCE_PENDING
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```
