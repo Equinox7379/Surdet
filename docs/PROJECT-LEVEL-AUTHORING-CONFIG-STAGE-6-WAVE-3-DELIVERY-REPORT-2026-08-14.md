@@ -168,3 +168,52 @@ HUMAN_ACCEPTANCE_FINAL_STEP_PENDING（微调角色名→保存→重开：待项
 NOT_PUSHED_AFTER_STAGE_6_WAVE_3
 WAVE_4_NOT_STARTED
 ```
+
+## 9. Final Reliability Patch：display-name 改名 speaker 引用完整性（2026-08-19）
+
+Independent Review 对 3ee9b78 裁决 APPROVED_WITH_REQUIRED_FIX；本节记录 Wave 3 closure blocker（F1 DISPLAY_NAME_REFERENCE_BREAK = PROVEN / HIGH）的修复。
+
+### 9.1 根因与修复语义
+
+根因：speaker 令牌可通过角色 ID **或唯一显示名** 解析（`buildSpeakerCharacterRefs`），而 `applyCharacterEnsure` 改名只改 `characters[id].name`，旧显示名 speaker 引用随即失配——SPEAKER_UNRESOLVED 仅 warning、object-index 边丢失、事务仍可 commit，Human 与 Agent 双路径均受影响（Starter“凛”、Zero“许知遥”为真实风险例证）。
+
+修复全部落在共享 `applyCharacterEnsure`（同事务）：
+
+1. **冲突前置 fail-loud（零写入）**：新显示名与其它角色显示名或其它角色 ID 冲突 → OBJECT_AMBIGUOUS；
+2. **歧义旧名 fail-loud**：旧显示名不唯一且被台词引用 → OBJECT_AMBIGUOUS（不猜归属；未引用则放行）；
+3. **结构化 speaker 迁移**：旧显示名唯一解析到本角色时，`parseSceneDocument` 解析全部场景，仅重写 speaker 字段精确等于旧显示名的台词行（保留缩进/value 前空格/EOL，其余字节不变；旧名恰为本角色 ID 时走 ID 路径不迁移），与 config 改名同一事务提交，任一文件写失败经 commitChange journal 全量回滚；
+4. **potentialImpact 修正**：从硬编码 `[]` 改为精确迁移列表 `{path, line, from, to}`（流入 ledger 与 change.diff）；result 附 `speakerMigrations`；
+5. character ID 不变，不触碰正文/label/asset key/runtime/renderer 契约。
+
+Editor 侧仅 IO 适配：`EditorWriteStorage` 支持场景句柄写回 + commit 后同步内存场景文本 + 状态栏迁移计数；迁移算法零 Editor 逻辑。
+
+### 9.2 RED → GREEN（真实运行）
+
+- RED：`npm run test -w @surdet/authoring -- test/config-operations.test.ts` exit=`1`（6 失败：speaker 未迁移 / reload SPEAKER_UNRESOLVED×4 / 三类冲突静默接受）。
+- GREEN（全部 exit 0）：authoring 30/30（8 新）；editor 15/15（project-config-display 9 + authoring-project-storage 2 + causal-selection 4，覆盖迁移落盘/正文不动/avatar 更新与清除/冲突零写/外部基线 fail-loud/no-op）；CLI 3/3（wave3 纵向 + 合同）；`@surdet/authoring` 与 `surdet-editor` typecheck/build 全绿。
+- F2（avatar update/clear）：共享路径 + Editor 空串→null 路径补测试通过；实现未改。
+- 未运行 FORMAL E2E（历史证据不变）、整包测试、verify:all、Electron。
+
+### 9.3 提交
+
+```text
+a1effc9e2dbf86d9eea87134e0c376263555e896 fix(authoring): preserve speaker refs on character rename
+  packages/authoring/src/config-operations.ts           |  90 ++++++-
+  packages/authoring/test/config-operations.test.ts     | 277 ++++++++++++++++
+  packages/editor/src/authoring-project-storage.ts      |  55 ++--
+  packages/editor/src/panels/config.ts                  |   3 +-
+  packages/editor/test/project-config-display.test.ts   | 101 ++++++--
+  5 files changed, 484 insertions(+), 42 deletions(-)
+```
+
+### 9.4 停止点
+
+```text
+WAVE_3_REFERENCE_INTEGRITY_FIX_COMMITTED_LOCALLY = a1effc9
+WAITING_FOR_ARCHITECT_REVIEW
+WAVE_3_HUMAN_ACCEPTANCE_PENDING
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```
+
+LOW findings F3（undo 可穿越成功角色保存）/ F4（冲突基线来自 Editor 内存）未处理，留待后续轮次。
