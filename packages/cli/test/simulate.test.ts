@@ -146,3 +146,57 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(() => simulateProject(missing)).toThrow(/ghost/);
   });
 });
+
+describe('R4-A：legacy simulate timeline wiring（磁盘 timelines 进入 snapshot）', () => {
+  const introTimeline = JSON.stringify({
+    version: 1,
+    id: 'intro',
+    durationMs: 3000,
+    tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'fade', alpha: 0.5 }] }],
+  });
+
+  it('R4A-1 合法 timeline：@timeline intro 不再误报未注册（paired oracle 正向）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 's1' }),
+      'content/scenario/s1.gal': '@scene s1\n@timeline intro @ blocking\n凛：黎明。\n@end\n',
+      'content/timelines/intro.json': introTimeline,
+    });
+    const r = simulateProject(dir);
+    expect(r.runtimeErrors).toEqual([]);
+  });
+
+  it('R4A-2 缺失 timeline：@timeline ghost 仍必须失败（paired oracle 负向，防"关掉检查"式假绿）', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 's1' }),
+      'content/scenario/s1.gal': '@scene s1\n@timeline ghost @ blocking\n凛：黎明。\n@end\n',
+      'content/timelines/intro.json': introTimeline,
+    });
+    const r = simulateProject(dir);
+    expect(r.runtimeErrors.length).toBe(1);
+    expect(r.runtimeErrors[0]!.message).toMatch(/'ghost' 未注册/);
+  });
+
+  it('R4A-3 malformed timeline JSON：fail-loud 报文件路径 + JSON 解析根因，不退化为"未注册"', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 's1' }),
+      'content/scenario/s1.gal': '@scene s1\n@timeline intro @ blocking\n凛：黎明。\n@end\n',
+      'content/timelines/intro.json': '{ oops',
+    });
+    expect(() => simulateProject(dir)).toThrow(/时间轴 JSON 解析失败/);
+    expect(() => simulateProject(dir)).toThrow(/content\/timelines\/intro\.json/);
+  });
+
+  it('R4A-4 identity mismatch：foo.json 内 definition.id=bar 必须 A2 fail-loud，不得 alias/改写', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 's1' }),
+      'content/scenario/s1.gal': '@scene s1\n@timeline foo @ blocking\n凛：黎明。\n@end\n',
+      'content/timelines/foo.json': JSON.stringify({
+        version: 1,
+        id: 'bar',
+        durationMs: 3000,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'fade', alpha: 0.5 }] }],
+      }),
+    });
+    expect(() => simulateProject(dir)).toThrow(/definition\.id 'bar' 与文件名派生 ID 'foo' 不一致/);
+  });
+});

@@ -22,6 +22,7 @@ import {
   type ProjectSnapshot,
 } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
+import { authoringDigest, collectTimelineFiles } from './timeline-loader.js';
 import { lintGalleryConfig } from './gallery-config-lint.js';
 
 export type { LintIssue } from '@surdet/core';
@@ -30,15 +31,6 @@ export interface LintResult {
   issues: LintIssue[];
   sceneCount: number;
   ok: boolean;
-}
-
-function authoringDigest(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index++) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function readConfigRaw(root: string): Record<string, unknown> | null {
@@ -51,25 +43,7 @@ function readConfigRaw(root: string): Record<string, unknown> | null {
   }
 }
 
-/** Phase 2C（A3）：递归枚举 content/timelines 下的 .json（遵守 ProjectSnapshot 的 isSnapshotPath
- *  契约：'content/timelines/' 前缀 + .json 扩展名大小写不敏感），返回 forward-slash 项目相对路径。 */
-function collectTimelineFiles(dir: string, prefix: string, out: { path: string; text: string; bytes: number; sha256: string }[]): void {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return; // 无 timelines 目录：空集合（complete scope 下由引用检查负责报告缺失）
-  }
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      collectTimelineFiles(path.join(dir, entry.name), `${prefix}${entry.name}/`, out);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) {
-      const text = fs.readFileSync(path.join(dir, entry.name), 'utf8').replace(/^\uFEFF/, '');
-      out.push({ path: `content/timelines/${prefix}${entry.name}`, text, bytes: Buffer.byteLength(text, 'utf8'), sha256: authoringDigest(text) });
-    }
-  }
-}
-
+/** Phase 2C（A3）：磁盘真实 timelines 进入 snapshot；发现规则共享自 timeline-loader（R4-A）。 */
 function makeAuthoringSnapshot(
   root: string,
   scenes: Map<string, CompiledScene>,
@@ -94,8 +68,7 @@ function makeAuthoringSnapshot(
     sha256: authoringDigest(configText),
   };
   // Phase 2C：磁盘真实 timelines 进入 snapshot（lint 是完整项目静态检查，complete scope）。
-  const timelineFiles: { path: string; text: string; bytes: number; sha256: string }[] = [];
-  collectTimelineFiles(path.join(root, 'content/timelines'), '', timelineFiles);
+  const timelineFiles = collectTimelineFiles(root);
   const allFiles = [...files, ...(configFile === null ? [] : [configFile]), ...timelineFiles];
   const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
     ? config['variables'] as Record<string, unknown>

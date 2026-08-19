@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { compileScene, type GrowthConfig, type VarValue } from '@surdet/core';
 import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
+import { authoringDigest, collectTimelineFiles } from './timeline-loader.js';
 
 export interface SimulateOptions {
   /** 路径预算（缺省 500）：choice 组合是乘积增长，超预算停止展开新路径 */
@@ -31,15 +32,6 @@ export interface SimulateReport {
   cyclesPruned: number;
   saveRoundtrips: number;
   runtimeErrors: { scene: string | null; message: string }[];
-}
-
-function digest(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index++) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function readJsonIfExists(full: string): Record<string, unknown> | null {
@@ -68,7 +60,7 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
       path: fullPath,
       text,
       bytes: Buffer.byteLength(text, 'utf8'),
-      sha256: digest(text),
+      sha256: authoringDigest(text),
       compiled: compileScene(text, fullPath, id, customInstructions),
     };
   });
@@ -82,7 +74,7 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
     path: configPath,
     text: configText,
     bytes: Buffer.byteLength(configText, 'utf8'),
-    sha256: digest(configText),
+    sha256: authoringDigest(configText),
   };
   const growthPath = path.join(projectDir, 'content/config/growth.json');
   const growthText = fs.existsSync(growthPath)
@@ -92,20 +84,25 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
     path: growthPath,
     text: growthText,
     bytes: Buffer.byteLength(growthText, 'utf8'),
-    sha256: digest(growthText),
+    sha256: authoringDigest(growthText),
   };
   const growthConfig = growthText === null ? null : JSON.parse(growthText) as GrowthConfig;
+  // R4-A：磁盘真实 timelines 进入 snapshot（发现规则与 lint/A3 共享自 timeline-loader），
+  // simulateSnapshot → buildTimelineRegistry 由此获得真实 TimelineRegistry；
+  // malformed / identity mismatch 由该链路 fail-loud，本文件不解析 timeline 语义。
+  const timelineFiles = collectTimelineFiles(projectDir);
   const projectFiles = [
     ...files,
     ...(configFile === null ? [] : [configFile]),
     ...(growthFile === null ? [] : [growthFile]),
+    ...timelineFiles,
   ];
   const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
     ? config['variables'] as Record<string, unknown>
     : {};
   return {
     rootIdentity: projectDir,
-    revision: digest(projectFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
+    revision: authoringDigest(projectFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
     files: projectFiles,
     configFile,
     config: config ?? {},
@@ -120,7 +117,7 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
       document: parseSceneDocument(text),
       compiled,
     })),
-    timelines: [],
+    timelines: timelineFiles,
   };
 }
 
