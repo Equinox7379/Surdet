@@ -160,7 +160,13 @@ export class FileSaveStore {
     const legacy = entries.filter((f) => !f.startsWith(CANONICAL_SLOT_PREFIX)).sort();
     for (const f of canonical) {
       const snap = this.#readFile(path.join(this.dir, f)); // 损坏 → 大声失败
-      if (snap && typeof snap.meta?.id === 'string') metas.set(snap.meta.id, snap.meta); // canonical 优先
+      if (snap === null) continue;
+      // 状态 3：canonical 物理/逻辑所有权不一致 → 枚举时同样大声失败。
+      // 不得把含他人 meta.id 的 canonical(S) 静默重释为该逻辑槽位的合法表示，
+      // 否则列表暴露可见但 read 不可达的幻影槽位。
+      const owner = decodeCanonicalSlotStem(f.slice(0, -'.json'.length));
+      this.#assertOwnedBy(snap, owner, path.join(this.dir, f));
+      metas.set(snap.meta.id, snap.meta); // canonical 优先
     }
     for (const f of legacy) {
       const snap = this.#readFile(path.join(this.dir, f));
@@ -182,6 +188,11 @@ export class FileSaveStore {
     ];
     for (const name of ordered) {
       const snapshot = this.#readBackupFile(path.join(this.dir, name));
+      if (name.startsWith(CANONICAL_SLOT_PREFIX)) {
+        // canonical 备份所有权不一致 → 大声失败（不暴露幻影备份）
+        const owner = decodeCanonicalSlotStem(name.slice(0, -'.json.bak'.length));
+        this.#assertOwnedBy(snapshot, owner, path.join(this.dir, name));
+      }
       metas.set(snapshot.meta.id, snapshot.meta);
     }
     return [...metas.values()];
@@ -387,15 +398,24 @@ export class FileSaveStore {
     }
   }
 
-  /** 读取索引；仅缺失视为空表，损坏或 I/O 错误必须上抛。 */
+  /** 读取索引；仅缺失视为空表，损坏或 I/O 错误必须上抛。
+   *  返回空原型对象：逻辑槽位 ID 是任意 JS 字符串，在普通对象上赋值 '__proto__'
+   *  键会触发 Object.prototype.__proto__ 访问器——条目静默丢失并污染对象原型。
+   *  空原型对象上 '__proto__'/'constructor'/'toString' 等键均为普通自有属性，
+   *  索引的写入/删除/序列化对任意逻辑键安全。（JSON.parse 以 DefineOwnProperty
+   *  落键，本身不触发访问器；此处统一复制到空原型对象供后续操作。） */
   private readIndex(): Record<string, SaveSlotMeta> {
-    if (!fs.existsSync(this.indexPath())) return {};
+    if (!fs.existsSync(this.indexPath())) {
+      return Object.create(null) as Record<string, SaveSlotMeta>;
+    }
     try {
       const raw = JSON.parse(fs.readFileSync(this.indexPath(), 'utf8')) as Record<string, SaveSlotMeta>;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new Error('存档索引顶层必须是对象');
       }
-      return raw;
+      const index = Object.create(null) as Record<string, SaveSlotMeta>;
+      for (const [key, value] of Object.entries(raw)) index[key] = value;
+      return index;
     } catch (error) {
       throw new Error(`存档索引读取或解析失败：${this.indexPath()}`, { cause: error });
     }
