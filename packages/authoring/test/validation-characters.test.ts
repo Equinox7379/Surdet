@@ -96,4 +96,29 @@ describe('character validation wiring', () => {
     expect(result.issues.every((issue) => issue.severity !== 'error')).toBe(true);
     expect(result.ok).toBe(true);
   });
+
+  it('URL-leading text lines do not produce SPEAKER_UNRESOLVED false diagnostics (N2)', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': JSON.stringify({
+        entryScene: 'agent_probe',
+        characters: { lynn: { name: '凛', avatar: 'lynn' } },
+      }),
+      'content/scenario/agent_probe.gal': [
+        '@scene agent_probe',
+        '@label start',
+        'https://example.com/story',
+        'http://example.com/story',
+        'ftp://example.com/story',
+        'custom+proto://host',
+        '凛：正常台词。',
+        '@end',
+      ].join('\n'),
+    }), hasher);
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    const speakerIssues = result.issues.filter((issue) => issue.code === 'SPEAKER_UNRESOLVED');
+    expect(speakerIssues).toHaveLength(0);
+    // 不得对 URL scheme 产生 character.ensure 建议（action 仅随 issue 出现，此处断言无该 issue 即无该 action）
+    expect(result.issues.some((issue) => issue.code === 'SPEAKER_UNRESOLVED' && /character\.ensure/.test(issue.action ?? ''))).toBe(false);
+    expect(result.ok).toBe(true);
+  });
 });

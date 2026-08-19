@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Lexer, LexError, parseInlineInstructions } from '../src/dsl/lexer.js';
+import { Lexer, LexError, extractSpeaker, parseInlineInstructions } from '../src/dsl/lexer.js';
 import type { InstructionToken, TextToken } from '../src/dsl/token.js';
 
 const lex = (src: string) => new Lexer().tokenize(src, 'test.gal');
@@ -91,6 +91,19 @@ describe('Lexer', () => {
   it('未闭合引号抛 L004', () => {
     expect(() => lex('@set msg = "abc')).toThrow(/L004/);
     expect(() => lex('@set msg = \'abc')).toThrow(/L004/);
+  });
+});
+
+describe('extractSpeaker exported semantic helper (N2 shared truth)', () => {
+  it('generic URL schemes are not speakers; normal speakers survive', () => {
+    expect(extractSpeaker('https://example.com/story')).toBeNull();
+    expect(extractSpeaker('http://example.com/story')).toBeNull();
+    expect(extractSpeaker('ftp://example.com/story')).toBeNull();
+    expect(extractSpeaker('custom+proto://host')).toBeNull();
+    expect(extractSpeaker('旁白：你好')).toBe('旁白');
+    expect(extractSpeaker('旁白：/远处钟声/')).toBe('旁白');
+    expect(extractSpeaker('12:30')).toBeNull();
+    expect(extractSpeaker('注意:这里有内容')).toBe('注意');
   });
 });
 
