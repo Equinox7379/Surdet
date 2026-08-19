@@ -11,7 +11,7 @@ import type {
   LedgerDiffEntry,
 } from './contracts.js';
 import type { TextHasher } from './project-storage.js';
-import { parseSceneDocument, serializeSceneDocument } from './scene-document.js';
+import { isValidSpeakerToken, parseSceneDocument, serializeSceneDocument } from './scene-document.js';
 import { buildSpeakerCharacterRefs } from './object-index.js';
 
 const CONFIG_PATH = 'game.config.json';
@@ -140,46 +140,68 @@ export async function applyCharacterEnsure(
     const existingRecord = existing !== undefined && isRecord(existing) ? existing : null;
     const existingName = existingRecord !== null && typeof existingRecord['name'] === 'string' ? existingRecord['name'] : undefined;
     const nameChanges = existingName !== input.name;
+    // 与 object-index speaker 解析契约一致的 canonical token（trim 后）；只用于语义判定，不格式化磁盘值。
+    const oldSpeakerToken = existingName !== undefined ? existingName.trim() : undefined;
+    const newSpeakerKey = input.name.trim();
 
     // 语义冲突前置检查（任何写入之前 fail-loud）：新显示名不得与其它角色的显示名或 ID
-    // 冲突——任一情况都会让 speaker 令牌解析产生歧义或静默失配。
+    // 冲突——任一情况都会让 speaker 令牌解析产生歧义或静默失配（比较用 trim 语义）。
     if (nameChanges) {
       for (const [otherId, otherRaw] of Object.entries(characters)) {
         if (otherId === input.id) continue;
-        if (otherId === input.name) {
+        if (otherId === newSpeakerKey) {
           throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `新显示名 '${input.name}' 与角色 ID '${otherId}' 冲突（speaker 解析会产生歧义）`);
         }
         const otherRecord = isRecord(otherRaw) ? otherRaw : null;
-        if (otherRecord !== null && otherRecord['name'] === input.name) {
+        const otherName = otherRecord !== null && typeof otherRecord['name'] === 'string' ? otherRecord['name'] as string : undefined;
+        if (otherName !== undefined && otherName.trim() === newSpeakerKey) {
           throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `新显示名 '${input.name}' 与角色 '${otherId}' 的显示名冲突`);
         }
       }
     }
 
-    // display-name 改名：同一事务内同步迁移 speaker 令牌精确等于旧显示名的台词行。
+    // display-name 改名：同一事务内同步迁移 speaker 令牌精确等于旧显示名 canonical token 的台词行。
     // 迁移结果先落在本地（handler 任何失败都不得污染 record.workingFiles）。
     const speakerMigrations: SpeakerMigrationImpact[] = [];
     const migratedFiles: Record<string, string> = {};
-    if (!created && nameChanges && existingName !== undefined) {
+    if (!created && nameChanges && oldSpeakerToken !== undefined) {
       const speakerRefMap = buildSpeakerCharacterRefs(characters);
-      const resolved = speakerRefMap.get(existingName);
-      if (resolved === undefined && existingName !== input.id) {
+      const resolved = speakerRefMap.get(oldSpeakerToken);
+      if (resolved === undefined && oldSpeakerToken !== input.id) {
         // 旧显示名不唯一（或被角色 ID 遮蔽）且被台词引用时无法证明归属，拒绝猜测。
         for (const [path, text] of Object.entries(record.workingFiles)) {
           if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
-          if (parseSceneDocument(text).some((line) => line.kind === 'text' && line.speaker === existingName)) {
+          if (parseSceneDocument(text).some((line) => line.kind === 'text' && line.speaker === oldSpeakerToken)) {
             throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `旧显示名 '${existingName}' 不唯一且被 ${path} 引用，无法确定 speaker 归属`);
           }
         }
-      } else if (resolved === `character:${input.id}` && existingName !== input.id) {
-        // 旧显示名经 name 路径唯一解析到本角色：迁移所有 speaker === 旧显示名的台词。
+      } else if (resolved === `character:${input.id}` && oldSpeakerToken !== input.id) {
+        // 旧显示名经 name 路径唯一解析到本角色：迁移所有 speaker === canonical token 的台词。
         //（若旧显示名恰等于本角色 ID，则令牌走 ID 路径，改名后仍解析到本角色，无需迁移。）
+        let referenceCount = 0;
         for (const [path, text] of Object.entries(record.workingFiles)) {
           if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
-          const migrated = migrateSceneSpeakerTokens(text, existingName, input.name, path);
-          if (migrated !== null) {
-            migratedFiles[path] = migrated.text;
-            speakerMigrations.push(...migrated.impacts);
+          for (const line of parseSceneDocument(text)) {
+            if (line.kind === 'text' && line.speaker === oldSpeakerToken) referenceCount += 1;
+          }
+        }
+        if (referenceCount > 0) {
+          // F1：存在需要迁移的显示名 speaker 引用时，新名字必须能作为当前 DSL 的合法
+          // speaker token 表达（与 parser 同一语法源），否则 fail-loud、零改动。
+          // 无引用时不对 display name 施加 speaker 语法限制（普通人名格式合法）。
+          if (!isValidSpeakerToken(input.name)) {
+            throw new AuthoringOperationError(
+              'VALIDATION_FAILED',
+              `角色 '${input.id}' 存在 ${referenceCount} 处按显示名解析的台词 speaker 引用，但新名字 '${input.name}' 无法作为 Surdet speaker token 表达（1-24 字符、不含空白与冒号）；请改用可表达的名字，或先手动迁移这些台词`,
+            );
+          }
+          for (const [path, text] of Object.entries(record.workingFiles)) {
+            if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+            const migrated = migrateSceneSpeakerTokens(text, oldSpeakerToken, input.name, path);
+            if (migrated !== null) {
+              migratedFiles[path] = migrated.text;
+              speakerMigrations.push(...migrated.impacts);
+            }
           }
         }
       }

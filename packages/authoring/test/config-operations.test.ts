@@ -512,3 +512,133 @@ describe('character.ensure display-name rename reference integrity', () => {
     expect(change.record.workingFiles['content/scenario/s1.gal']).toBe(SCENE_1);
   });
 });
+
+/* ===== Wave 3 final closure：F1 speaker token 安全 + F2 padded 旧名 + F4 ID 同名 ===== */
+
+/** 单场景 fixture：可自定义 nova.name 与场景内容。 */
+function speakerFixture(options?: {
+  novaName?: string;
+  sceneText?: string;
+  omitNovaSpeaker?: boolean;
+}): Record<string, string> {
+  const novaName = options?.novaName ?? '诺瓦';
+  const sceneText = options?.omitNovaSpeaker === true
+    ? '@scene s1\n凛：你好。\n@end\n'
+    : (options?.sceneText ?? '@scene s1\n诺瓦：hello\n凛：你好。\n@end\n');
+  return {
+    'game.config.json': JSON.stringify({
+      title: 'TokenSafety',
+      entryScene: 's1',
+      characters: { nova: { name: novaName }, lynn: { name: '凛' } },
+      variables: {},
+    }),
+    'content/scenario/s1.gal': sceneText,
+  };
+}
+
+async function renameNova(change: ChangeSession, name: string): Promise<unknown> {
+  const fp = await currentTableFingerprint(change);
+  return applyCharacterEnsure(change, {
+    operationId: `op-token-${name.length}-${name.slice(0, 4)}`,
+    id: 'nova',
+    name,
+    expectedFingerprint: fp,
+  }, hasher);
+}
+
+describe('character.ensure speaker token safety (F1)', () => {
+  it('F1-A: whitespace new name with existing refs fails loud with zero mutation', async () => {
+    const change = await openWithFiles(speakerFixture());
+    const before = JSON.stringify(change.record.workingFiles);
+    await expect(renameNova(change, 'John Smith')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(before);
+    expect(change.record.workingRevision).toBe(0);
+    expect(Object.keys(change.record.operations)).toHaveLength(0);
+  });
+
+  it('F1-B: trailing whitespace new name with existing refs fails loud', async () => {
+    const change = await openWithFiles(speakerFixture());
+    const before = JSON.stringify(change.record.workingFiles);
+    await expect(renameNova(change, '诺瓦测试 ')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(before);
+    expect(change.record.workingRevision).toBe(0);
+  });
+
+  it('F1-C: colon-containing new name with existing refs fails loud', async () => {
+    const change = await openWithFiles(speakerFixture());
+    const before = JSON.stringify(change.record.workingFiles);
+    await expect(renameNova(change, '凛：里')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(before);
+    expect(change.record.workingRevision).toBe(0);
+  });
+
+  it('F1-D: over-length new name (>24 chars) with existing refs fails loud', async () => {
+    const change = await openWithFiles(speakerFixture());
+    const before = JSON.stringify(change.record.workingFiles);
+    await expect(renameNova(change, '诺'.repeat(25))).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(before);
+    expect(change.record.workingRevision).toBe(0);
+  });
+
+  it('F1-E: flexible display name allowed when no speaker references exist', async () => {
+    const change = await openWithFiles(speakerFixture({ omitNovaSpeaker: true }));
+    const result = (await renameNova(change, 'John Smith')) as { diffEntry: { potentialImpact: unknown[] }; speakerMigrations?: unknown[] };
+    expect(result).toBeTruthy();
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!) as { characters: Record<string, { name: string }> };
+    expect(config.characters['nova']!.name).toBe('John Smith');
+    expect(result.speakerMigrations ?? []).toHaveLength(0);
+    expect(result.diffEntry.potentialImpact).toEqual([]);
+    // 无引用场景不迁移
+    expect(change.record.workingFiles['content/scenario/s1.gal']).toBe('@scene s1\n凛：你好。\n@end\n');
+  });
+});
+
+describe('character.ensure padded legacy display name (F2)', () => {
+  it('migrates refs resolved via the trimmed canonical token', async () => {
+    const files = speakerFixture({ novaName: ' 诺瓦 ' });
+    // 前置：object-index 语义确实能把 speaker“诺瓦”解析到 nova（trim 契约）
+    const preSnapshot = await loadProjectSnapshot({
+      rootIdentity: 'padded-root',
+      listFiles: async () => Object.keys(files),
+      readText: async (path: string) => ({ path, text: files[path]!, bytes: files[path]!.length, sha256: await hasher.sha256(files[path]!) }),
+      exists: async (path: string) => path in files,
+    }, hasher);
+    const preIndex = buildObjectIndex(preSnapshot);
+    const preText = preIndex.objects.find((object) => object.kind === 'text' && object.source?.raw.includes('诺瓦：hello'));
+    expect(preText?.references).toEqual(['character:nova']);
+
+    const change = await openWithFiles(files);
+    const result = (await renameNova(change, '诺瓦测试')) as { speakerMigrations?: Array<{ path: string; line: number; from: string; to: string }> };
+    const scene = change.record.workingFiles['content/scenario/s1.gal']!;
+    expect(scene).toContain('诺瓦测试：hello');
+    expect(scene).not.toContain('诺瓦：hello');
+    expect(result.speakerMigrations ?? []).toEqual([{ path: 'content/scenario/s1.gal', line: 2, from: '诺瓦', to: '诺瓦测试' }]);
+
+    // reload：无 SPEAKER_UNRESOLVED，因果边仍指向 nova
+    const working = change.record.workingFiles;
+    const reloaded = await loadProjectSnapshot({
+      rootIdentity: 'padded-reload',
+      listFiles: async () => Object.keys(working),
+      readText: async (path: string) => ({ path, text: working[path]!, bytes: working[path]!.length, sha256: await hasher.sha256(working[path]!) }),
+      exists: async (path: string) => path in working,
+    }, hasher);
+    const validation = validateSnapshot(reloaded);
+    expect(validation.issues.filter((issue) => issue.code === 'SPEAKER_UNRESOLVED')).toHaveLength(0);
+    const index = buildObjectIndex(reloaded);
+    const migrated = index.objects.find((object) => object.kind === 'text' && object.source?.raw.includes('诺瓦测试：hello'));
+    expect(migrated?.references).toEqual(['character:nova']);
+  });
+});
+
+describe('character.ensure old name equals character id (F4 regression)', () => {
+  it('keeps ID-path speaker tokens unmigrated when renaming away from name==id', async () => {
+    const files = speakerFixture({ novaName: 'nova', sceneText: '@scene s1\nnova：hello\n凛：你好。\n@end\n' });
+    const change = await openWithFiles(files);
+    const result = (await renameNova(change, '诺瓦')) as { speakerMigrations?: unknown[] };
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!) as { characters: Record<string, { name: string }> };
+    expect(config.characters['nova']!.name).toBe('诺瓦');
+    // nova 走角色 ID 解析路径，speaker token 保持 nova：不迁移
+    expect(change.record.workingFiles['content/scenario/s1.gal']).toBe('@scene s1\nnova：hello\n凛：你好。\n@end\n');
+    expect(result.speakerMigrations ?? []).toHaveLength(0);
+  });
+});
