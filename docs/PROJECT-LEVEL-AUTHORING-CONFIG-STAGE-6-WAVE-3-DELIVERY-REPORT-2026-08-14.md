@@ -115,3 +115,56 @@ STAGE_6_WAVE_4_NOT_STARTED
 ```
 
 等待临时总经理复审（对照长期台账 4.88 授权范围与预算使用），随后提交项目所有者人工验收。
+
+## 8. Closure Patch：角色表人工编辑经共享 Authoring 语义（2026-08-19）
+
+Wave 3 人工验收其余步骤通过后，唯一遗留步骤“微调角色名 → 保存 → 刷新/重开仍在”因角色表只读而无法执行。Architect 裁决该不对称不符合 Human + Agent shared authoring 方向后，以 closure patch 补齐（不扩大为 Wave 4、不动 FORMAL 证据链）。
+
+### 8.1 实现与调用链
+
+- `packages/editor/src/authoring-project-storage.ts` 新增 `commitCharacterTable(rows)` 与 `GameConfigWriteStorage`（FSA 句柄 → ProjectWriteStorage 的 IO 适配）。真实调用链：
+
+```text
+Editor 角色表输入（config.ts 行模型）
+  → saveCharacters()（edit local draft → 保存按钮，与其它配置区块同模型）
+  → commitCharacterTable(rows)
+  → @surdet/authoring: beginChange → applyCharacterEnsure（character.ensure，expectedFingerprint 链式传递）
+  → validateSnapshot + recordValidation（error=0 门）
+  → commitChange（磁盘基线哈希冲突检测 + stage/替换/恢复 journal）
+  → writeFileHandle(game.config.json) → state.gameConfigText 同步 → 重渲染/触发校验
+```
+
+- `packages/editor/src/panels/config.ts`：显示名/头像可编辑，ID 只读（语义身份），保存按钮 + 撤销/重做接入。
+- 编辑器未新增任何 character JSON 写逻辑：指纹门控（OBJECT_REF_STALE）、输入校验（VALIDATION_FAILED，name 非空）、事务全有或全无、磁盘冲突检测（PROJECT_CHANGED_SINCE_BEGIN）全部由共享层执行；Editor 与 CLI / Agent 对 display name 使用同一字段（`characters[id].name`）与同一 validation。
+- 已知边界（如实记录）：浏览器 FSA 写无跨进程原子 rename，本编辑器写路径的崩溃原子性与编辑器其它保存路径一致（staging 在内存，journal 保留）；多文件事务恢复能力未在本轮使用（只写 game.config.json）。
+
+### 8.2 红灯 → 绿灯（真实运行）
+
+- 红灯：新增 4 测试后 `npm run test -w surdet-editor -- test/project-config-display.test.ts` exit=`1`（4 失败：`commitCharacterTable is not a function`；既有 3 测试通过）。
+- 绿灯（全部 exit 0）：
+  - `npm run test -w surdet-editor -- test/project-config-display.test.ts` → 7/7
+  - `npm run test -w surdet-editor -- test/authoring-project-storage.test.ts test/causal-selection.test.ts` → 6/6
+  - `npm run typecheck -w surdet-editor` / `npm run build -w surdet-editor` → exit 0
+  - `npm run test -w @surdet/authoring -- test/config-operations.test.ts test/asset-catalog-avatars.test.ts test/object-index-characters.test.ts test/validation-characters.test.ts` → 22/22（共享层零改动回归）
+- 测试覆盖：display name 修改落盘且 reload 持久（round-trip 经 loadProjectSnapshot 重读磁盘）；character ID 集合与未修改字段不变；外部磁盘基线变化 fail-loud 不覆盖；空白 name 走共享校验 VALIDATION_FAILED 不落盘；无改动 no-op 不写盘。
+- 未运行 FORMAL E2E（runner 冻结于 b0b51ed，历史证据不变）、整包测试、verify:all、Electron、性能矩阵。
+
+### 8.3 提交
+
+```text
+3ee9b78da7fe5040e63d3802c21e87ef7c626989 fix(editor): edit characters through shared authoring
+  packages/editor/src/authoring-project-storage.ts | 186 ++++++++++++++
+  packages/editor/src/panels/config.ts             | 109 ++++--
+  packages/editor/test/project-config-display.test.ts | 178 +++++++++++
+  3 files changed, 451 insertions(+), 22 deletions(-)
+```
+
+### 8.4 停止点（closure patch 后）
+
+```text
+WAVE_3_CLOSURE_PATCH_COMMITTED_LOCALLY = 3ee9b78
+WAITING_FOR_ARCHITECT_REVIEW
+HUMAN_ACCEPTANCE_FINAL_STEP_PENDING（微调角色名→保存→重开：待项目所有者实机验收）
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```

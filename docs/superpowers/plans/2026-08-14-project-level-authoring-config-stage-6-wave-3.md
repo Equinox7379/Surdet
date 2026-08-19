@@ -242,3 +242,31 @@ STAGE_6_WAVE_4_NOT_STARTED
 ```
 
 下一停止点：交付报告已创建，等待临时总经理复审（对照长期台账 4.88 授权范围与预算使用）与项目所有者人工验收。
+
+### Closure Patch：角色表人工编辑（2026-08-19 +08:00）
+
+> Architect 裁决后的 Wave 3 closure patch（不扩大为 Wave 4）：Editor 角色表由只读改为经共享 authoring 语义可编辑，补齐 Wave 3 人工验收最后一步“微调角色名 → 保存 → 重开仍在”。
+
+- **基线核对（Task 0，真实 Git）**：branch=`main`；施工前 HEAD=`52f7e0d5a09bf9f7f92646f0adf37e07898debf1`；`surdet/main=4169b75ddaeccd0c8e0aa556b5bc5e8f882fc1b6`；ahead/behind=`9 0`；tracked 工作树与暂存区干净；既有未跟踪治理文件未触碰。
+- **红灯（先于生产代码）**：`packages/editor/test/project-config-display.test.ts` 新增 4 个测试（display name 经共享 character.ensure 修改并 reload 持久化 / 外部磁盘基线变化 fail-loud 不覆盖 / 空白 name 沿用共享校验 VALIDATION_FAILED 不落盘 / 无改动 no-op）。首次运行 `npm run test -w surdet-editor -- test/project-config-display.test.ts` exit=`1`，4 个新测试全部失败（`commitCharacterTable is not a function`，编辑器共享写路径缺失），既有 3 个测试保持通过。
+- **实现（3 文件，仅 packages/editor）**：
+  - `src/authoring-project-storage.ts`：新增 `commitCharacterTable(rows)`——editor 内存快照 → `beginChange` → 逐差异角色 `applyCharacterEnsure`（expectedFingerprint 链式传递，avatar 未变传 undefined=保留、空串按 null=清除）→ `validateSnapshot` + `recordValidation`（error=0 门）→ `commitChange`（磁盘基线哈希冲突检测 PROJECT_CHANGED_SINCE_BEGIN + stage/替换/恢复 journal）。新增 `GameConfigWriteStorage`（FSA 句柄 → ProjectWriteStorage 的 IO 适配：读真盘做冲突检测，staging 在内存，替换经 `writeFileHandle`）。语义全部在 @surdet/authoring，编辑器零第二套写逻辑。
+  - `src/panels/config.ts`：角色表显示名/头像变为可编辑输入（ID 保持只读，title 说明语义身份不可改）；新增“保存角色表”按钮走 `saveCharacters()`（edit local draft → Save → 共享事务 commit，与其它配置区块保存模型一致）；charRows 行缓存并入配置页撤销/重做快照栈；renderConfig 进入时重置缓存。
+  - `test/project-config-display.test.ts`：上述 4 测试（内存版 game.config 句柄模拟磁盘）。
+- **聚焦绿灯（真实运行，全部 exit 0）**：
+  - `npm run test -w surdet-editor -- test/project-config-display.test.ts` → 7/7（4 新 + 3 既有）
+  - `npm run test -w surdet-editor -- test/authoring-project-storage.test.ts test/causal-selection.test.ts` → 6/6（相邻回归）
+  - `npm run typecheck -w surdet-editor` → exit 0；`npm run build -w surdet-editor` → exit 0（chunk >500kB 为既有提示）
+  - `npm run test -w @surdet/authoring -- test/config-operations.test.ts test/asset-catalog-avatars.test.ts test/object-index-characters.test.ts test/validation-characters.test.ts` → 22/22（共享层未改动，回归确认）
+  - 未修改 @surdet/authoring / CLI / Core / Renderer / Host / Shell；未运行 FORMAL E2E、整包测试、verify:all、Electron、性能矩阵。
+- **代码提交**：`3ee9b78da7fe5040e63d3802c21e87ef7c626989 fix(editor): edit characters through shared authoring`（3 文件 +451/-22，`git diff --cached --check` exit=`0`，`--name-status` 精确核对无夹带）。
+- **范围裁决落实**：display name=可编辑；avatar=可编辑（复用共享操作既有 avatar 设置/清除语义，仅一格输入接线）；character ID=只读（rename 属于更大引用迁移能力，未实现）；未新增角色创建/删除 UI。
+- **停止状态（closure patch 后）**：
+
+```text
+WAVE_3_CLOSURE_PATCH_COMMITTED_LOCALLY = 3ee9b78
+WAITING_FOR_ARCHITECT_REVIEW
+HUMAN_ACCEPTANCE_FINAL_STEP_PENDING（微调角色名→保存→重开 仍在：待项目所有者实机验收）
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```
