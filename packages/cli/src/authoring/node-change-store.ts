@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { ChangeRecord, ChangeRepository } from '@surdet/authoring';
+import { AuthoringOperationError, type ChangeRecord, type ChangeRepository } from '@surdet/authoring';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -61,21 +61,33 @@ export class NodeChangeStore implements ChangeRepository {
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
   }
 
+  /** R5：changeId 全局解析。legacy 进程级序号（chg_0001）可能在多个项目目录下存在同名
+   *  journal——必须收集全部匹配后裁决：0 → not-found；1 → 打开；>1 → fail-loud
+   *  （CHANGE_ID_AMBIGUOUS），禁止 first-match 静默选择错误项目的 context。 */
   static async openByChangeId(changeId: string): Promise<OpenChangeResult | null> {
     const root = dataRoot();
     const projects = await fs.readdir(root, { withFileTypes: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     });
+    const matches: { projectDirectory: string; record: ChangeRecord }[] = [];
     for (const project of projects) {
       if (!project.isDirectory()) continue;
       const transaction = path.join(root, project.name, safeId(changeId), 'transaction.json');
       const record = await readJson<ChangeRecord>(transaction);
       if (record === null || record.changeId !== changeId) continue;
-      const store = new NodeChangeStore(root, record.projectRootIdentity, path.join(root, project.name));
-      return { store, record };
+      matches.push({ projectDirectory: path.join(root, project.name), record });
     }
-    return null;
+    if (matches.length === 0) return null;
+    if (matches.length > 1) {
+      throw new AuthoringOperationError(
+        'CHANGE_ID_AMBIGUOUS',
+        `变更事务 '${changeId}' 在 ${matches.length} 个项目中存在同名记录（${matches.map((m) => m.record.projectRootIdentity).join(' | ')}）——请为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档冲突的旧事务后重试`,
+        { changeId, matchCount: matches.length, projectRootIdentities: matches.map((m) => m.record.projectRootIdentity) },
+      );
+    }
+    const first = matches[0]!;
+    return { store: new NodeChangeStore(root, first.record.projectRootIdentity, first.projectDirectory), record: first.record };
   }
 
   private changeDirectory(changeId: string): string {

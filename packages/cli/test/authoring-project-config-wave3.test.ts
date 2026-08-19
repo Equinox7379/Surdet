@@ -53,7 +53,9 @@ function fixtureProject(): { root: string; data: string } {
 }
 
 describe('agent authoring project config wave 3 CLI vertical slice', () => {
-  it('runs the full project-config chain with character and entryScene writes', () => {
+  // 主链串行 spawn 多个 CLI 子进程；R5 change-isolation 测试加入后并行负载挤爆默认 5s
+  // 预算——按 wave2 先例显式放宽为纯时间预算修正（非生产回归）。
+  it('runs the full project-config chain with character and entryScene writes', { timeout: 15000 }, () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 

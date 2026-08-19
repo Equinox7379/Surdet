@@ -19,6 +19,7 @@ type ErrorCode =
   | 'OBJECT_PRECONDITION_FAILED'
   | 'CHANGE_NOT_FOUND'
   | 'CHANGE_NOT_OPEN'
+  | 'CHANGE_ID_AMBIGUOUS'
   | 'OPERATION_ID_CONFLICT'
   | 'PROJECT_CHANGED_SINCE_BEGIN'
   | 'VALIDATION_REQUIRED'
@@ -95,7 +96,7 @@ function codeFor(error: unknown): ErrorCode {
       && code !== 'UNSUPPORTED_OPERATION' && code !== 'PROJECT_NOT_FOUND' && code !== 'PROJECT_INVALID'
       && code !== 'PATH_OUTSIDE_PROJECT' && code !== 'OBJECT_NOT_FOUND' && code !== 'OBJECT_AMBIGUOUS'
       && code !== 'OBJECT_REF_STALE' && code !== 'OBJECT_PRECONDITION_FAILED' && code !== 'CHANGE_NOT_FOUND'
-      && code !== 'CHANGE_NOT_OPEN' && code !== 'OPERATION_ID_CONFLICT' && code !== 'PROJECT_CHANGED_SINCE_BEGIN'
+      && code !== 'CHANGE_NOT_OPEN' && code !== 'CHANGE_ID_AMBIGUOUS' && code !== 'OPERATION_ID_CONFLICT' && code !== 'PROJECT_CHANGED_SINCE_BEGIN'
       && code !== 'VALIDATION_REQUIRED' && code !== 'VALIDATION_STALE' && code !== 'VALIDATION_FAILED'
       && code !== 'SIMULATION_INCOMPLETE' && code !== 'RUNTIME_FAILED' && code !== 'RUNTIME_TIMED_OUT'
       && code !== 'COMMIT_FAILED_RECOVERED' && code !== 'COMMIT_RECOVERY_FAILED') return 'PROJECT_INVALID';
@@ -109,6 +110,7 @@ function codeFor(error: unknown): ErrorCode {
 
 function categoryFor(code: ErrorCode): ErrorCategory {
   if (code === 'PROJECT_NOT_FOUND' || code === 'CHANGE_NOT_FOUND' || code === 'OBJECT_NOT_FOUND') return 'not-found';
+  if (code === 'CHANGE_ID_AMBIGUOUS') return 'conflict';
   if (code === 'PATH_OUTSIDE_PROJECT' || code === 'OBJECT_REF_STALE' || code === 'OBJECT_PRECONDITION_FAILED'
     || code === 'CHANGE_NOT_OPEN' || code === 'OPERATION_ID_CONFLICT' || code === 'PROJECT_CHANGED_SINCE_BEGIN') return 'conflict';
   if (code === 'VALIDATION_REQUIRED' || code === 'VALIDATION_STALE' || code === 'VALIDATION_FAILED'
@@ -128,6 +130,7 @@ function actionFor(code: ErrorCode): string {
     case 'VALIDATION_FAILED': return '修复 validation error 后重新校验';
     case 'SIMULATION_INCOMPLETE': return '缩小项目或提高任务允许的模拟预算后重新模拟';
     case 'PROJECT_CHANGED_SINCE_BEGIN': return '重新开始 change，避免覆盖事务外修改';
+    case 'CHANGE_ID_AMBIGUOUS': return '为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档同名旧事务后重试';
     case 'COMMIT_RECOVERY_FAILED': return '停止写入，检查项目外 journal 与临时文件后人工恢复';
     default: return '检查请求、项目和上一条结构化错误详情';
   }
@@ -156,7 +159,8 @@ function failureEnvelope(capability: string, error: unknown): Record<string, unk
       code,
       category: categoryFor(code),
       message: error instanceof Error ? error.message : String(error),
-      retriable: code !== 'COMMIT_RECOVERY_FAILED',
+      // CHANGE_ID_AMBIGUOUS 由 journal 状态决定：不隔离/归档前重试同一 changeId 仍会 ambiguous。
+      retriable: code !== 'COMMIT_RECOVERY_FAILED' && code !== 'CHANGE_ID_AMBIGUOUS',
       action: actionFor(code),
       ...((error !== null && typeof error === 'object' && 'details' in error && isRecord(error.details))
         ? error.details : {}),
