@@ -60,7 +60,9 @@ const agentBlackout = {
 };
 
 describe('agent authoring presentation wave 2 CLI vertical slice', () => {
-  it('runs the full timeline authoring chain with explicit scene selection', () => {
+  // 主链串行 spawn 20+ 个 CLI 子进程，历史耗时 ~4.2-4.5s；同文件测试增多后并行负载会挤爆
+  // 默认 5s 预算——显式放宽为纯时间预算修正（非生产回归）。
+  it('runs the full timeline authoring chain with explicit scene selection', { timeout: 15000 }, () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 
@@ -331,5 +333,27 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(runBody.ok).toBe(false);
     expect(runBody.error.code).toBe('RUNTIME_FAILED');
     expect(runBody.error.message).toMatch(messagePattern);
+  });
+
+  // Reliability Phase 2A（A1）：malformed timeline 上 project.validate 必须返回结构化 validation
+  // 信封（含 T0xx + 文件路径），不得 crash 成 INVALID_REQUEST/raw TypeError。
+  it('returns structured validation diagnostics for a missing-tracks timeline', () => {
+    const { root, data } = fixtureProject();
+    const env = { SURDET_AGENT_DATA_DIR: data };
+    fs.writeFileSync(path.join(root, 'content/timelines/broken.json'), JSON.stringify({ version: 1, id: 'broken', durationMs: 900 }), 'utf8');
+
+    const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).result.changeId;
+
+    const validated = runCli(['project', 'validate', '--change', changeId, '--json'], env);
+    expect(validated.status).toBe(0);
+    const validatedBody = body(validated);
+    expect(validatedBody.ok).toBe(true);
+    expect(validatedBody.result.ok).toBe(false);
+    const timelineError = validatedBody.result.issues.find((issue: any) => issue.file === 'content/timelines/broken.json' && issue.severity === 'error');
+    expect(timelineError).toBeDefined();
+    expect(timelineError.code).toMatch(/^T\d{3}$/);
+    expect(timelineError.text).toContain('content/timelines/broken.json');
   });
 });

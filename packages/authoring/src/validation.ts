@@ -219,7 +219,11 @@ export function validateSnapshot(
   }
 
   // Stage 6 Wave 2：时间轴结构校验与资源引用检查（结构错误进 error 信封，资源 unresolved 只 warning）。
-  const timelineDefinitions = new Map<string, TimelineDefinition>();
+  // Phase 2A（A1）：区分两个概念——「引用存在性」（JSON parse 成功即算，保持既有 filename 语义，
+  // parse 失败的文件名不进存在集合，与修复前 map 行为一致）与「结构可用 definition」（validateTimeline
+  // 无 diagnostic 才可进入 semantic/asset traversal）。invalid definition 绝不进入 asset traversal。
+  const parsedTimelineNames = new Set<string>();
+  const usableTimelineDefinitions = new Map<string, TimelineDefinition>();
   for (const timeline of snapshot.timelines) {
     const name = timeline.path.slice(timeline.path.lastIndexOf('/') + 1, -'.json'.length);
     let definition: TimelineDefinition;
@@ -240,7 +244,9 @@ export function validateSnapshot(
       });
       continue;
     }
-    for (const diagnostic of validateTimeline(definition)) {
+    parsedTimelineNames.add(name);
+    const diagnostics = validateTimeline(definition);
+    for (const diagnostic of diagnostics) {
       rawIssues.push({
         severity: 'error',
         code: diagnostic.code,
@@ -250,16 +256,18 @@ export function validateSnapshot(
         col: 1,
       });
     }
-    timelineDefinitions.set(name, definition);
+    if (diagnostics.length === 0) usableTimelineDefinitions.set(name, definition);
   }
 
   // @timeline 指令的目标存在性（只有快照确实包含时间轴集合时才检查，避免 editor 内联校验误报）。
+  // 依据 parsedTimelineNames：结构非法但 parse 成功的文件仍视为存在（与 A1 修复前语义一致，
+  // 其结构问题已由 T0xx error 单独报告）；parse 失败的文件名不在集合中（同样与修复前一致）。
   if (snapshot.timelines.length > 0) {
     for (const scene of scenes.values()) {
       for (const instr of scene.instructions) {
         if (instr.op !== 'timeline') continue;
         const id = (instr as { id: string }).id;
-        if (timelineDefinitions.has(id)) continue;
+        if (parsedTimelineNames.has(id)) continue;
         rawIssues.push({
           severity: 'error',
           code: 'TIMELINE_MISSING',
@@ -284,7 +292,8 @@ export function validateSnapshot(
     );
     for (const timeline of snapshot.timelines) {
       const name = timeline.path.slice(timeline.path.lastIndexOf('/') + 1, -'.json'.length);
-      const definition = timelineDefinitions.get(name);
+      // 仅结构可用的 definition 参与 asset traversal：结构非法的（已报 T0xx error）不进入。
+      const definition = usableTimelineDefinitions.get(name);
       if (definition === undefined) continue;
       definition.tracks.forEach((track) => {
         track.cues.forEach((cue) => {
