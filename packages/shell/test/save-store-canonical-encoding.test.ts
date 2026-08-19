@@ -154,7 +154,7 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
 });
 
 describe('A5 canonical 文件所有权防御（状态 3）', () => {
-  it('canonical 物理路径内容属于他人逻辑 id：read 失败，list 按真实逻辑身份暴露', () => {
+  it('canonical 物理路径内容属于他人逻辑 id：read/list/listMeta 全部大声失败', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     // 在 '存' 的 canonical 物理路径上放入 meta.id 为 'other' 的快照
@@ -164,14 +164,105 @@ describe('A5 canonical 文件所有权防御（状态 3）', () => {
       'utf8',
     );
     expect(() => store.read('存')).toThrow(); // 拒绝把他人快照当作 '存' 返回
-    const ids = store.list();
-    expect(ids).toContain('other'); // 真实逻辑身份仍可被发现
-    expect(ids).not.toContain('存'); // 绝不把他人快照挂在 '存' 下
+    expect(store.read('other')).toBeNull(); // canonical('存') 不是 'other' 的候选路径，不得幻影暴露
+    // R1 状态 3：canonical 物理/逻辑所有权不一致 → FAIL LOUD。
+    // 列表不得把 canonical('存') 静默重释为 'other' 的合法物理表示（那样 list 显示 'other'
+    // 而 read('other') 为 null，产生可见但不可读的幻影槽位）。
+    expect(() => store.list()).toThrow();
+    expect(() => store.listMeta()).toThrow();
+  });
+
+  it('canonical 备份属于他人逻辑 id：备份枚举大声失败，恢复绝不冒用', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    fs.writeFileSync(
+      path.join(dir, `${canonicalSlotStem('存')}.json.bak`),
+      JSON.stringify(makeSnap('other')),
+      'utf8',
+    );
+    expect(() => store.listBackupMeta()).toThrow(); // 枚举即失败，不暴露幻影备份
+    expect(() => store.restoreBackup('存')).toThrow(/所有权不匹配/); // 备份属主不符 → 大声失败
+    expect(() => store.restoreBackup('other')).toThrow(/备份/); // 'other' 没有自己的备份，不得冒用他人备份
   });
 
   it('write 拒绝 meta.id 与槽位不一致的数据（写入期即失败，防止种下不一致状态）', () => {
     const store = new FileSaveStore(makeDir());
     expect(() => store.write('存', makeSnap('other'))).toThrow();
     expect(store.read('存')).toBeNull();
+  });
+});
+
+describe('A5 索引逻辑键安全：任意 JS 字符串 vs Object 原型', () => {
+  // index.json 以任意逻辑槽位 ID 为键；这些键可能与 Object.prototype 属性同名。
+  const KEYS = ['__proto__', 'constructor', 'prototype', 'toString', '', '存'];
+
+  function readRawIndex(dir: string): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) as Record<string, unknown>;
+  }
+
+  function hasOwn(o: object, k: string): boolean {
+    return Object.prototype.hasOwnProperty.call(o, k);
+  }
+
+  it('首次写入：index.json 把全部逻辑键保存为自有属性（含 __proto__）', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    for (const k of KEYS) store.write(k, makeSnap(k));
+    const raw = readRawIndex(dir);
+    for (const k of KEYS) {
+      expect(hasOwn(raw, k)).toBe(true);
+      expect((raw[k] as { id: string }).id).toBe(k);
+    }
+  });
+
+  it('覆写：同一逻辑键条目被更新，不丢失不重复', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    for (const k of KEYS) store.write(k, makeSnap(k));
+    for (const k of KEYS) {
+      store.write(k, { ...makeSnap(k), meta: { id: k, createdAt: 1, updatedAt: 9 } });
+    }
+    const raw = readRawIndex(dir);
+    for (const k of KEYS) {
+      expect(hasOwn(raw, k)).toBe(true);
+      expect((raw[k] as { updatedAt: number }).updatedAt).toBe(9);
+    }
+  });
+
+  it('read/listMeta 按逻辑键精确命中，互不串扰', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    for (const k of KEYS) store.write(k, makeSnap(k));
+    for (const k of KEYS) expect(store.read(k)?.meta.id).toBe(k);
+    expect(store.listMeta().map((m) => m.id).sort()).toEqual([...KEYS].sort());
+  });
+
+  it('delete：精确移除目标索引条目，其余键不受影响', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    for (const k of KEYS) store.write(k, makeSnap(k));
+    store.delete('__proto__');
+    store.delete('');
+    const raw = readRawIndex(dir);
+    expect(hasOwn(raw, '__proto__')).toBe(false);
+    expect(hasOwn(raw, '')).toBe(false);
+    for (const k of ['constructor', 'prototype', 'toString', '存']) {
+      expect(hasOwn(raw, k)).toBe(true);
+    }
+    expect(store.read('__proto__')).toBeNull();
+    expect(store.read('')).toBeNull();
+  });
+
+  it('索引操作不污染 Object.prototype', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    for (const k of KEYS) store.write(k, makeSnap(k));
+    for (const k of KEYS) store.read(k);
+    store.listMeta();
+    store.delete('constructor');
+    const probe: Record<string, unknown> = {};
+    expect(probe['id']).toBeUndefined();
+    expect(probe['createdAt']).toBeUndefined();
+    expect(probe['updatedAt']).toBeUndefined();
   });
 });
