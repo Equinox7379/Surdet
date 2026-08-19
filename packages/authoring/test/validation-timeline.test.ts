@@ -117,3 +117,63 @@ describe('timeline validation wiring', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+/* ============ Reliability Phase 2A（A1）：malformed timeline 不得让 validation crash ============ */
+
+describe('malformed timeline structural safety (Phase 2A)', () => {
+  const malformedCases = [
+    {
+      label: 'missing tracks',
+      definition: JSON.stringify({ version: 1, id: 'agent_blackout', durationMs: 800 }),
+    },
+    {
+      label: 'track missing cues',
+      definition: JSON.stringify({ version: 1, id: 'agent_blackout', durationMs: 800, tracks: [{ kind: 'background' }] }),
+    },
+  ];
+
+  it.each(malformedCases)('returns structured T005 diagnostics with assetCatalog instead of throwing ($label)', async ({ definition }) => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText,
+      'content/timelines/agent_blackout.json': definition,
+    }), hasher);
+
+    let result: ReturnType<typeof validateSnapshot>;
+    expect(() => {
+      result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    }).not.toThrow();
+    expect(result!.ok).toBe(false);
+    const t005 = result!.issues.find((issue) => issue.code.startsWith('T0') && issue.file === 'content/timelines/agent_blackout.json');
+    expect(t005).toBeDefined();
+    expect(t005!.severity).toBe('error');
+  });
+
+  it('does not add TIMELINE_MISSING when a referenced timeline parses but is structurally invalid', async () => {
+    // baseline 语义锁定：文件存在且 JSON parse 成功（即使结构非法）→ 不报 TIMELINE_MISSING（C1 probe）。
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText,
+      'content/timelines/agent_blackout.json': JSON.stringify({ version: 1, id: 'agent_blackout', durationMs: 800 }),
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_MISSING')).toBe(false);
+    expect(result.issues.some((issue) => issue.file === 'content/timelines/agent_blackout.json' && issue.severity === 'error')).toBe(true);
+    expect(result.ok).toBe(false);
+  });
+
+  it('keeps TIMELINE_MISSING for a referenced timeline whose JSON fails to parse', async () => {
+    // baseline 语义锁定：JSON parse 失败 → TIMELINE_JSON error，且引用处报 TIMELINE_MISSING（C2 probe）。
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"agent_probe","variables":{}}',
+      'content/scenario/agent_probe.gal': agentProbeText,
+      'content/timelines/agent_blackout.json': '{"version": 1, not-json',
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_JSON')).toBe(true);
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_MISSING')).toBe(true);
+    expect(result.ok).toBe(false);
+  });
+});
