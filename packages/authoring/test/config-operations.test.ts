@@ -642,3 +642,40 @@ describe('character.ensure old name equals character id (F4 regression)', () => 
     expect(result.speakerMigrations ?? []).toHaveLength(0);
   });
 });
+
+describe('character.ensure URL line not corrupted by speaker rename (N2)', () => {
+  const URL_SCENE = '@scene s1\nhttps://example.com/story\n凛：你好。\n@end\n';
+
+  function urlFixture(): Record<string, string> {
+    return {
+      'game.config.json': JSON.stringify({
+        title: 'URL',
+        entryScene: 's1',
+        characters: { web: { name: 'https' }, lynn: { name: '凛', avatar: 'lynn' } },
+        variables: {},
+      }),
+      'content/scenario/s1.gal': URL_SCENE,
+    };
+  }
+
+  it('renaming a character whose display name equals a URL scheme leaves URL lines untouched', async () => {
+    const change = await openWithFiles(urlFixture());
+    const fp = await currentTableFingerprint(change);
+    const result = await applyCharacterEnsure(change, {
+      operationId: 'op-rename-https',
+      id: 'web',
+      name: '官网',
+      expectedFingerprint: fp,
+    }, hasher);
+
+    // working scene 的 URL 行必须原样保留，绝不能变成 官网://example.com/story
+    expect(change.record.workingFiles['content/scenario/s1.gal']).toBe(URL_SCENE);
+    // URL 行不得被记录为 speaker migration
+    const migrations = (result as { speakerMigrations?: Array<{ path: string; line: number; from: string; to: string }> }).speakerMigrations ?? [];
+    expect(migrations).toHaveLength(0);
+    expect(result.diffEntry.potentialImpact).toEqual([]);
+    // config 改名本身成功
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!) as { characters: Record<string, { name: string }> };
+    expect(config.characters['web']!.name).toBe('官网');
+  });
+});

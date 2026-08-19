@@ -1,9 +1,13 @@
+import { extractSpeaker } from '@surdet/core';
 import type { SceneDocumentLine, SceneDocumentLineInput, SceneEol } from './contracts.js';
 
-/** speaker token 语法单一来源：1..24 字符、不含空白与半/全角冒号（与 core lexer extractSpeaker 同规则）。 */
+/**
+ * speaker token validity 语法（用于 authoring mutation，如角色改名时校验新显示名能否作为
+ * speaker token 表达）。注意：这不是行级 speaker 提取语义——“一行文本是否含 speaker、
+ * speaker token 是什么”由 @surdet/core extractSpeaker 作为唯一语义事实源决定（N2）。
+ */
 const SPEAKER_TOKEN_SOURCE = '[^\\s：:]{1,24}';
 const SPEAKER_TOKEN_RE = new RegExp(`^${SPEAKER_TOKEN_SOURCE}$`);
-const SPEAKER_RE = new RegExp(`^(${SPEAKER_TOKEN_SOURCE})([：:])(.*)$`);
 const INSTR_NAME_RE = /^@([^\s]+)/;
 
 /** 字符串能否作为合法 speaker token 出现在台词行（非纯数字；parser 与角色改名迁移共享同一语法源）。 */
@@ -25,13 +29,16 @@ export function parseSceneLine(raw: string, previousKind: string, eol: SceneEol 
   if (/^\s/.test(raw) && (previousKind === 'choice' || previousKind === 'choice-option')) {
     return { kind: 'choice-option', raw, eol };
   }
-  const match = SPEAKER_RE.exec(trimmed);
-  if (match && !/^\d+$/.test(match[1]!)) {
+  // N2：speaker existence 由 @surdet/core extractSpeaker 唯一决定（含 URL scheme guard、
+  // 纯数字/空白/长度规则）；本函数只把已确认存在的 speaker 映射到 document model。
+  const speaker = extractSpeaker(trimmed);
+  if (speaker !== null) {
+    const sep = trimmed[speaker.length]!;
     return {
       kind: 'text',
-      speaker: match[1]!,
-      value: match[3]!.trimStart(),
-      sep: match[2]!,
+      speaker,
+      value: trimmed.slice(speaker.length + 1).trimStart(),
+      sep,
       raw,
       eol,
     };
