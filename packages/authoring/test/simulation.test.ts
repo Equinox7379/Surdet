@@ -192,7 +192,7 @@ const TIMELINE_DEFINITION = JSON.stringify({
 });
 
 /** 场景引用指定 timeline；项目 timelines 目录恒包含合法 intro_cine（valid 与 missing 用同一 registry 内容区分）。 */
-function timelineFixtureStorage(referencedTimelineId: string): ProjectStorage {
+function timelineFixtureStorage(referencedTimelineId: string, definitionId: string = 'intro_cine'): ProjectStorage {
   const contents: Record<string, string> = {
     'game.config.json': JSON.stringify({ entryScene: 'prologue' }),
     'content/scenario/prologue.gal': [
@@ -201,7 +201,7 @@ function timelineFixtureStorage(referencedTimelineId: string): ProjectStorage {
       '凛：到达。',
       '@end',
     ].join('\n'),
-    'content/timelines/intro_cine.json': TIMELINE_DEFINITION,
+    'content/timelines/intro_cine.json': JSON.stringify({ ...JSON.parse(TIMELINE_DEFINITION), id: definitionId }),
   };
   return {
     rootIdentity: `timeline-fixture-${referencedTimelineId}`,
@@ -240,5 +240,14 @@ describe('simulateSnapshot timeline runtime dependency', () => {
 
     expect(report.status).toBe('failed');
     expect(report.error).toMatch(/时间轴 'intro_ghost' 未注册/);
+  });
+
+  it('Phase 2B: fails loud when definition.id diverges from the filename stem (identity invariant)', async () => {
+    // Phase 2B 前：runtime 按 internal id 注册，@timeline other 反而 PASS（identity split，CASE C 镜像）。
+    const snapshot = await loadProjectSnapshot(timelineFixtureStorage('other', 'other'), hasher);
+
+    expect(() => simulateSnapshot(snapshot)).toThrow(/definition\.id 'other' 与文件名派生 ID 'intro_cine' 不一致/);
+    await expect(runExplicitPath(snapshot, { sceneId: 'prologue', choices: [] }))
+      .rejects.toThrow(/definition\.id 'other' 与文件名派生 ID 'intro_cine' 不一致/);
   });
 });

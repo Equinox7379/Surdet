@@ -15,6 +15,7 @@ import {
 } from '@surdet/core';
 import type { ObjectIndex } from './object-index.js';
 import { buildObjectIndex, buildSpeakerCharacterRefs } from './object-index.js';
+import { timelineIdFromPath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 import { validateTimeline, type TimelineDefinition } from '@surdet/core';
 import type { ProjectAssetCatalog } from './contracts.js';
@@ -50,6 +51,8 @@ function actionFor(code: string): string {
     case 'CHARACTER_INVALID': return '修正 game.config.json 的角色表结构（name 必须非空）';
     case 'ENTRY_SCENE_MISSING': return '创建该入口场景或把 entryScene 改为存在的场景';
     case 'SPEAKER_UNRESOLVED': return '创建对应角色（character.ensure）或修正台词 speaker';
+    case 'TIMELINE_ID_MISMATCH': return '把 definition.id 改为与文件名 stem 一致（或重命名文件并同步场景引用）';
+    case 'TIMELINE_ID_DUPLICATE': return '为冲突文件分配唯一的 canonical ID（文件名 stem == definition.id）';
     default: return `修正 ${code} 对应的源码问题`;
   }
 }
@@ -222,10 +225,13 @@ export function validateSnapshot(
   // Phase 2A（A1）：区分两个概念——「引用存在性」（JSON parse 成功即算，保持既有 filename 语义，
   // parse 失败的文件名不进存在集合，与修复前 map 行为一致）与「结构可用 definition」（validateTimeline
   // 无 diagnostic 才可进入 semantic/asset traversal）。invalid definition 绝不进入 asset traversal。
+  // Phase 2B（A2）：canonical identity = filename stem == definition.id（共享 timeline-identity helper）。
+  // mismatch 文件仍是 filename presence（不新增误导 MISSING），但不是 identity-valid，绝不进入 usable。
   const parsedTimelineNames = new Set<string>();
   const usableTimelineDefinitions = new Map<string, TimelineDefinition>();
+  const internalIdFirstFile = new Map<string, string>();
   for (const timeline of snapshot.timelines) {
-    const name = timeline.path.slice(timeline.path.lastIndexOf('/') + 1, -'.json'.length);
+    const name = timelineIdFromPath(timeline.path);
     let definition: TimelineDefinition;
     try {
       const parsed: unknown = JSON.parse(timeline.text.replace(/^\uFEFF/, ''));
@@ -245,6 +251,36 @@ export function validateSnapshot(
       continue;
     }
     parsedTimelineNames.add(name);
+    // 跨文件内部身份争夺：不同文件声明相同 string definition.id 时立即给出两个冲突路径，
+    // 不等 runtime loader 才第一次发现。
+    const internalId = (definition as { id?: unknown }).id;
+    if (typeof internalId === 'string') {
+      const firstFile = internalIdFirstFile.get(internalId);
+      if (firstFile === undefined) {
+        internalIdFirstFile.set(internalId, timeline.path);
+      } else {
+        rawIssues.push({
+          severity: 'error',
+          code: 'TIMELINE_ID_DUPLICATE',
+          text: `${firstFile} 与 ${timeline.path}: 两个时间轴文件使用相同的 definition.id '${internalId}'（canonical ID 必须与文件名 stem 一致）`,
+          file: timeline.path,
+          line: 1,
+          col: 1,
+        });
+      }
+    }
+    // canonical identity 检查（id 为字符串才比较；结构非法 id 由 validateTimeline 的 T0xx 负责）。
+    const conflict = timelineIdentityConflict(timeline.path, definition);
+    if (conflict !== null) {
+      rawIssues.push({
+        severity: 'error',
+        code: 'TIMELINE_ID_MISMATCH',
+        text: timelineIdentityMismatchMessage(conflict),
+        file: timeline.path,
+        line: 1,
+        col: 1,
+      });
+    }
     const diagnostics = validateTimeline(definition);
     for (const diagnostic of diagnostics) {
       rawIssues.push({
@@ -256,7 +292,7 @@ export function validateSnapshot(
         col: 1,
       });
     }
-    if (diagnostics.length === 0) usableTimelineDefinitions.set(name, definition);
+    if (conflict === null && diagnostics.length === 0) usableTimelineDefinitions.set(name, definition);
   }
 
   // @timeline 指令的目标存在性（只有快照确实包含时间轴集合时才检查，避免 editor 内联校验误报）。
@@ -291,9 +327,8 @@ export function validateSnapshot(
         .map((entry) => [`${entry.role ?? ''}:${entry.outfit ?? ''}:${entry.expression ?? ''}`, entry]),
     );
     for (const timeline of snapshot.timelines) {
-      const name = timeline.path.slice(timeline.path.lastIndexOf('/') + 1, -'.json'.length);
-      // 仅结构可用的 definition 参与 asset traversal：结构非法的（已报 T0xx error）不进入。
-      const definition = usableTimelineDefinitions.get(name);
+      // 仅 identity-valid 且结构可用的 definition 参与 asset traversal（Phase 2A/2B）。
+      const definition = usableTimelineDefinitions.get(timelineIdFromPath(timeline.path));
       if (definition === undefined) continue;
       definition.tracks.forEach((track) => {
         track.cues.forEach((cue) => {
