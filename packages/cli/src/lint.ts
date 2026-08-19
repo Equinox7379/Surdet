@@ -373,6 +373,8 @@ interface ConfigExprScan {
   extraAllowed?: readonly string[];
   /** 从解析后的 JSON 提取待校验的表达式字符串 */
   extract: (cfg: Record<string, unknown>) => string[];
+  /** 结构性诊断（N1 等非表达式检查）：emit(text) 以统一 code/severity 落 issue */
+  inspect?: (cfg: Record<string, unknown>, emit: (text: string) => void) => void;
 }
 
 const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
@@ -400,6 +402,25 @@ const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
         );
       }
       return exprs;
+    },
+    // N1（Reliability Phase 3B）：nodes[].when 是旧 Editor 误写的 legacy 字段——
+    // Runtime isVisible 与上方表达式扫描均不读取，静默失效必须暴露为 error；
+    // baseCommands[].when 是合法独立字段，不在此列。
+    inspect: (cfg, emit) => {
+      const nodes = cfg['nodes'];
+      if (!Array.isArray(nodes)) return;
+      for (const n of nodes) {
+        if (!n || typeof n !== 'object' || Array.isArray(n) || !('when' in n)) continue;
+        const node = n as Record<string, unknown>;
+        const id = String(node['id'] ?? '');
+        const canonical = node['visibleWhen'];
+        const legacy = node['when'];
+        if (canonical !== undefined && canonical !== legacy) {
+          emit(`节点 '${id}' 同时存在冲突的 visibleWhen（'${String(canonical)}'）与 legacy when（'${String(legacy)}'）——Runtime 只读取 visibleWhen，请人工确认后删除 when`);
+        } else {
+          emit(`节点 '${id}' 使用 legacy 字段 when（'${String(legacy)}'）——Runtime 不读取该字段，开放条件会静默失效；请改为 visibleWhen（修复后的 Editor 保存会自动正规化）`);
+        }
+      }
     },
   },
   {
@@ -491,6 +512,11 @@ function lintConfigExpressions(
     const rel = path.join('content/config', scan.file);
     for (const expr of scan.extract(cfg)) {
       check(expr, rel, scan.extraAllowed);
+    }
+    if (scan.inspect !== undefined) {
+      scan.inspect(cfg, (text) => {
+        issues.push({ severity: 'error', code: 'CALENDAR_NODE_LEGACY_WHEN', text: `${rel}: ${text}`, file: rel, line: 0, col: 0 });
+      });
     }
   }
 }
