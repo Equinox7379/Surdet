@@ -179,3 +179,66 @@ describe('simulateSnapshot', () => {
     expect(report.runtimeErrors[0]?.message).toMatch(/GrowthSystem/);
   });
 });
+
+/* ============ Reliability Phase 1：headless runtime 必须使用真实 TimelineRegistry ============ */
+
+const TIMELINE_DEFINITION = JSON.stringify({
+  version: 1,
+  id: 'intro_cine',
+  durationMs: 900,
+  tracks: [
+    { kind: 'background', cues: [{ atMs: 0, durationMs: 400, easing: 'outCubic', action: 'set', key: 'hall' }] },
+  ],
+});
+
+/** 场景引用指定 timeline；项目 timelines 目录恒包含合法 intro_cine（valid 与 missing 用同一 registry 内容区分）。 */
+function timelineFixtureStorage(referencedTimelineId: string): ProjectStorage {
+  const contents: Record<string, string> = {
+    'game.config.json': JSON.stringify({ entryScene: 'prologue' }),
+    'content/scenario/prologue.gal': [
+      '@scene prologue',
+      `@timeline ${referencedTimelineId} @ blocking`,
+      '凛：到达。',
+      '@end',
+    ].join('\n'),
+    'content/timelines/intro_cine.json': TIMELINE_DEFINITION,
+  };
+  return {
+    rootIdentity: `timeline-fixture-${referencedTimelineId}`,
+    listFiles: async () => Object.keys(contents),
+    readText: async (path): Promise<ProjectFile> => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+      return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
+describe('simulateSnapshot timeline runtime dependency', () => {
+  it('passes when the referenced timeline definition is registered', async () => {
+    const snapshot = await loadProjectSnapshot(timelineFixtureStorage('intro_cine'), hasher);
+    const report = await simulateSnapshot(snapshot);
+
+    expect(report.status).toBe('passed');
+    expect(report.runtimeErrors).toEqual([]);
+    expect(report.paths.every((path) => path.termination === 'ended')).toBe(true);
+  });
+
+  it('fails loud when a scene references a timeline missing from the project registry', async () => {
+    const snapshot = await loadProjectSnapshot(timelineFixtureStorage('intro_ghost'), hasher);
+    const report = await simulateSnapshot(snapshot);
+
+    expect(report.status).toBe('failed');
+    expect(report.runtimeErrors.length).toBeGreaterThan(0);
+    expect(report.runtimeErrors[0]?.message).toMatch(/时间轴 'intro_ghost' 未注册/);
+  });
+
+  it('runExplicitPath fails loud for the same missing timeline', async () => {
+    const snapshot = await loadProjectSnapshot(timelineFixtureStorage('intro_ghost'), hasher);
+    const report = await runExplicitPath(snapshot, { sceneId: 'prologue', choices: [] });
+
+    expect(report.status).toBe('failed');
+    expect(report.error).toMatch(/时间轴 'intro_ghost' 未注册/);
+  });
+});
