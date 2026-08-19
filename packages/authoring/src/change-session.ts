@@ -72,6 +72,16 @@ export class ChangeSession {
 
 let changeSequence = 0;
 
+/** R5：change identity 的全局唯一随机段。Web Crypto 在 Node 19+ 与浏览器/Electron
+ *  均为全局标准（editor preview 同源用法）；不引入 node:crypto 依赖，保持 authoring 跨平台。 */
+function changeIdentityRandom(): string {
+  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (cryptoApi?.randomUUID === undefined) {
+    throw new Error('change identity 生成需要 Web Crypto（crypto.randomUUID）');
+  }
+  return cryptoApi.randomUUID();
+}
+
 export async function beginChange(
   snapshot: ProjectSnapshot,
   repository: ChangeRepository,
@@ -80,8 +90,10 @@ export async function beginChange(
   changeSequence += 1;
   const baseFiles = Object.fromEntries(snapshot.files.map((file) => [file.path, { sha256: file.sha256 }]));
   const baseContents = Object.fromEntries(snapshot.files.map((file) => [file.path, file.text]));
+  // R5：进程级序号只作可读前缀（decoration），唯一性由完整 UUID 承担——
+  // 跨 project / process / restart 全局可解析，杜绝共享 data dir 下的 chg_0001 撞号。
   const record: ChangeRecord = {
-    changeId: `chg_${String(changeSequence).padStart(4, '0')}`,
+    changeId: `chg_${String(changeSequence).padStart(4, '0')}_${changeIdentityRandom()}`,
     projectRootIdentity: snapshot.rootIdentity,
     baseRevision: snapshot.revision,
     workingRevision: 0,
