@@ -288,4 +288,48 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(runBody.error.code).toBe('RUNTIME_FAILED');
     expect(runBody.error.message).toMatch(/时间轴 'agent_ghost' 未注册/);
   });
+
+  // Reliability Phase 1 F1：simulate 的 runtime construction failure（malformed timeline）必须在
+  // AuthoringService 边界统一归类为 RUNTIME_FAILED 并保留 root cause，而不是依赖 message heuristic。
+  it.each([
+    {
+      label: 'invalid JSON timeline',
+      file: 'broken.json',
+      content: '{"version": 1, "id": "broken", not-json',
+      messagePattern: /broken\.json.*时间轴 JSON 解析失败/,
+    },
+    {
+      label: 'invalid TimelineDefinition (missing tracks)',
+      file: 'no_tracks.json',
+      content: JSON.stringify({ version: 1, id: 'no_tracks', durationMs: 900 }),
+      messagePattern: /no_tracks\.json.*track/,
+    },
+  ])('classifies simulate runtime loader failure as RUNTIME_FAILED ($label)', ({ file, content, messagePattern }) => {
+    const { root, data } = fixtureProject();
+    const env = { SURDET_AGENT_DATA_DIR: data };
+    // 场景不引用坏 timeline 也会失败：loader 在 runtime 构造期解析全部 timeline 文件。
+    fs.writeFileSync(path.join(root, `content/timelines/${file}`), content, 'utf8');
+    const simulateInput = writeJson(root, 'simulate-input.json', { sceneId: 'ch01_01' });
+
+    const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).result.changeId;
+
+    const simulated = runCli(['project', 'simulate', '--change', changeId, '--input', simulateInput, '--json'], env);
+    expect(simulated.status).not.toBe(0);
+    const simulatedBody = body(simulated);
+    expect(simulatedBody.ok).toBe(false);
+    expect(simulatedBody.error.code).toBe('RUNTIME_FAILED');
+    expect(simulatedBody.error.category).toBe('runtime');
+    expect(simulatedBody.error.message).toMatch(messagePattern);
+
+    // runtime.run-from 同源失败，回归确认仍为 RUNTIME_FAILED。
+    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01' });
+    const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
+    expect(run.status).not.toBe(0);
+    const runBody = body(run);
+    expect(runBody.ok).toBe(false);
+    expect(runBody.error.code).toBe('RUNTIME_FAILED');
+    expect(runBody.error.message).toMatch(messagePattern);
+  });
 });

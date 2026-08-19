@@ -465,7 +465,16 @@ export class AuthoringService {
       }
       snapshot = { ...snapshot, entryScene: sceneId };
     }
-    const simulation = simulateSnapshot(snapshot);
+    // simulate 是 runtime verification capability：建立 runtime（含 TimelineRegistry 加载）时
+    // 的构造失败在 Service 边界统一归类为 RUNTIME_FAILED，保留文件路径等 root cause——
+    // 不依赖 CLI 层对 message 的启发式归类（runTrace 同一模式）。
+    let simulation: ReturnType<typeof simulateSnapshot>;
+    try {
+      simulation = simulateSnapshot(snapshot);
+    } catch (error) {
+      if (error instanceof AuthoringOperationError) throw error;
+      throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
+    }
     const evidence = simulationEvidence(context.snapshot.revision, changeId, context.session.record.workingRevision, simulation);
     await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
     if (simulation.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限');
