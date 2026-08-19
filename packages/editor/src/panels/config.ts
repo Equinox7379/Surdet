@@ -405,7 +405,8 @@ async function saveCharacters(): Promise<void> {
     charRows = null; // 提交成功：行缓存从新基线重建
     rerenderConfig();
     requestValidateHook();
-    setStatus(`角色表已保存（${result.changed} 个角色更新）`, true, 4000);
+    const migrationNote = result.speakerMigrations.length > 0 ? `，同步迁移 ${result.speakerMigrations.length} 处台词 speaker` : '';
+    setStatus(`角色表已保存（${result.changed} 个角色更新${migrationNote}）`, true, 4000);
   } catch (err) {
     const code = err instanceof AuthoringOperationError ? `${err.code}：` : '';
     setStatus(`角色表未保存：${code}${err instanceof Error ? err.message : String(err)}`, false, 8000);
