@@ -9,6 +9,8 @@
  */
 import { state, h, setStatus } from '../state.js';
 import { writeFileHandle } from '../project-io.js';
+import { AuthoringOperationError } from '@surdet/authoring';
+import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -48,6 +50,7 @@ function rerenderConfig(): void {
 }
 
 /* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
+let charRows: CharacterTableEditRow[] | null = null;
 let varRows: VariableRow[] | null = null;
 let achRows: AchievementRow[] | null = null;
 let calRows: CalendarRows | null = null;
@@ -79,6 +82,23 @@ function parseConfigObj(): Record<string, unknown> {
   }
 }
 
+function ensureCharRows(): CharacterTableEditRow[] {
+  if (!charRows) {
+    const characters = parseConfigObj()['characters'];
+    charRows = typeof characters === 'object' && characters !== null && !Array.isArray(characters)
+      ? Object.entries(characters as Record<string, unknown>).map(([id, raw]) => {
+        const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+        return {
+          id,
+          name: typeof record['name'] === 'string' ? record['name'] as string : '',
+          avatar: typeof record['avatar'] === 'string' ? record['avatar'] as string : '',
+        };
+      })
+      : [];
+  }
+  return charRows;
+}
+
 function ensureVarRows(): VariableRow[] { if (!varRows) varRows = parseVariablesToRows(parseConfigObj()); return varRows; }
 function ensureAchRows(): AchievementRow[] { if (!achRows) achRows = parseAchievementsToRows(state.configFiles.achievements); return achRows; }
 function ensureCalRows(): CalendarRows { if (!calRows) calRows = parseCalendarRows(state.configFiles.calendar); return calRows; }
@@ -92,6 +112,7 @@ function ensureTermRows(): TerminologyTableRows { if (!termRows) termRows = pars
 /** 配置行模型全量快照（null = 尚未载入的区块，恢复时保持未载入语义；
  *  gameConfigText 一并入快照：撤销变量保存后内存态同步回退，覆盖顶层键口径） */
 interface ConfigSnapshot {
+  charRows: CharacterTableEditRow[] | null;
   varRows: VariableRow[] | null;
   achRows: AchievementRow[] | null;
   calRows: CalendarRows | null;
@@ -109,7 +130,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ varRows, achRows, calRows, evRows, grRows, gaRows, termRows }), gameConfigText: state.gameConfigText };
+  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows }), gameConfigText: state.gameConfigText };
 }
 
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
@@ -118,6 +139,7 @@ function pushConfigHistory(coalesce: boolean): void {
 }
 
 function restoreConfigSnapshot(snap: ConfigSnapshot): void {
+  charRows = clone(snap.charRows);
   varRows = clone(snap.varRows);
   achRows = clone(snap.achRows);
   calRows = clone(snap.calRows);
@@ -313,31 +335,81 @@ async function saveVariables(): Promise<void> {
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
 }
 
-/** 角色表（Wave 3）：只读展示 characters（id/name/avatar）；写入由外部 Agent 的类型化能力完成，编辑器不复制第二套写实现。 */
+/** 角色表（Wave 3 closure）：显示名/头像可编辑；保存经 @surdet/authoring 的共享
+ *  character.ensure 事务语义写盘（与 CLI / Agent 同一 semantic truth），编辑器不复制第二套写实现。
+ *  ID 是语义身份，本轮保持只读（rename 属于更大的引用迁移能力）。 */
 function renderCharactersSection(): HTMLElement {
   const { sec, ops } = sectionShell('角色表（game.config.json）');
-  const characters = parseConfigObj()['characters'];
-  const entries = typeof characters === 'object' && characters !== null && !Array.isArray(characters)
-    ? Object.entries(characters as Record<string, unknown>)
-    : [];
-  if (entries.length === 0) {
+  const rows = ensureCharRows();
+  if (rows.length === 0) {
     sec.appendChild(h('div', 'empty', '暂无角色（外部 Agent 可用 character.ensure 创建）'));
     return sec;
   }
   const table = h('table', 'cfg-table');
-  const head = h('tr');
-  for (const label of ['ID', '显示名', '头像']) head.appendChild(h('th', undefined, label));
-  table.appendChild(head);
-  for (const [id, raw] of entries) {
-    const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-    const row = h('tr');
-    row.appendChild(h('td', undefined, id));
-    row.appendChild(h('td', undefined, typeof record['name'] === 'string' ? record['name'] as string : ''));
-    row.appendChild(h('td', undefined, typeof record['avatar'] === 'string' ? record['avatar'] as string : ''));
-    table.appendChild(row);
-  }
+  const thead = h('thead');
+  const hr = h('tr');
+  for (const label of ['ID（只读）', '显示名', '头像']) hr.appendChild(h('th', undefined, label));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = h('tbody');
+  rows.forEach((row, i) => {
+    const tr = h('tr');
+    const tdId = h('td', 'mono', row.id);
+    tdId.title = '角色 ID 是语义身份（speaker/因果/avatar 引用键），暂不支持在编辑器改名';
+    tr.appendChild(tdId);
+    const tdName = h('td');
+    const name = h('input');
+    name.value = row.name;
+    name.placeholder = '显示名';
+    name.oninput = () => { pushConfigHistory(true); rows[i]!.name = name.value; };
+    tdName.appendChild(name);
+    tr.appendChild(tdName);
+    const tdAvatar = h('td');
+    const avatar = h('input', 'mono');
+    avatar.value = row.avatar;
+    avatar.placeholder = '头像 key（空 = 清除）';
+    avatar.oninput = () => { pushConfigHistory(true); rows[i]!.avatar = avatar.value; };
+    tdAvatar.appendChild(avatar);
+    tr.appendChild(tdAvatar);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
   sec.appendChild(table);
+  const saveBtn = h('button', 'primary', '保存角色表');
+  saveBtn.onclick = () => { void saveCharacters(); };
+  ops.appendChild(saveBtn);
+  sec.appendChild(ops);
   return sec;
+}
+
+/** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
+async function saveCharacters(): Promise<void> {
+  const rows = ensureCharRows();
+  let handle = state.handles.gameConfig;
+  if (!handle && state.dirHandle) {
+    try {
+      handle = await state.dirHandle.getFileHandle('game.config.json', { create: true });
+      state.handles.gameConfig = handle;
+    } catch { /* 创建失败走下方提示 */ }
+  }
+  if (!handle) {
+    setStatus('角色表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
+    return;
+  }
+  try {
+    const result = await commitCharacterTable(rows);
+    if (result.changed === 0) {
+      setStatus('角色表无改动', true, 4000);
+      return;
+    }
+    charRows = null; // 提交成功：行缓存从新基线重建
+    rerenderConfig();
+    requestValidateHook();
+    setStatus(`角色表已保存（${result.changed} 个角色更新）`, true, 4000);
+  } catch (err) {
+    const code = err instanceof AuthoringOperationError ? `${err.code}：` : '';
+    setStatus(`角色表未保存：${code}${err instanceof Error ? err.message : String(err)}`, false, 8000);
+  }
 }
 
 function renderVariablesSection(): HTMLElement {
@@ -760,6 +832,7 @@ export function renderConfig(container: HTMLElement): void {
   loading.style.padding = '12px';
   container.appendChild(loading);
   void refreshConfigSources().then(() => {
+    charRows = null;
     varRows = null;
     achRows = null;
     calRows = null;
