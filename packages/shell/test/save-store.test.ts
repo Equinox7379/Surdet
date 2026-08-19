@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { FileSaveStore, sanitizeSlot, MAX_SAVE_BYTES } from '../src/save-store.js';
+import { FileSaveStore, sanitizeSlot, canonicalSlotStem, MAX_SAVE_BYTES } from '../src/save-store.js';
 
 function makeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-save-'));
@@ -160,8 +160,8 @@ describe('FileSaveStore', () => {
     const store = new FileSaveStore(dir);
     store.write('s1', makeSnap('s1')); // v1
     store.write('s1', { ...makeSnap('s1'), variables: { trust: 77 } }); // v2，v1 成为 .bak
-    // 主档损坏（模拟断电截断）
-    fs.writeFileSync(path.join(dir, 's1.json'), '{ corrupted');
+    // 主档损坏（模拟断电截断）——物理文件名为 A5 后的 canonical 词干
+    fs.writeFileSync(path.join(dir, `${canonicalSlotStem('s1')}.json`), '{ corrupted');
     expect(() => store.read('s1')).toThrow();
   });
 
@@ -170,7 +170,7 @@ describe('FileSaveStore', () => {
     const store = new FileSaveStore(dir);
     store.write('s1', makeSnap('s1'));
     store.write('s1', makeSnap('s1'));
-    expect(fs.existsSync(path.join(dir, 's1.json.bak'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, `${canonicalSlotStem('s1')}.json.bak`))).toBe(true);
     expect(store.list()).toEqual(['s1']);
   });
 
@@ -185,19 +185,20 @@ describe('FileSaveStore', () => {
 
     expect(store.read('s1')?.variables).toEqual({ trust: 1 });
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).s1.updatedAt).toBe(1);
-    expect(fs.existsSync(path.join(dir, 's1.json.bak'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, `${canonicalSlotStem('s1')}.json.bak`))).toBe(true);
   });
 
   it('没有备份时显式恢复失败且主档/index 字节不变', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     store.write('s1', makeSnap('s1'));
-    const mainBefore = fs.readFileSync(path.join(dir, 's1.json'));
+    const mainFile = path.join(dir, `${canonicalSlotStem('s1')}.json`);
+    const mainBefore = fs.readFileSync(mainFile);
     const indexBefore = fs.readFileSync(path.join(dir, 'index.json'));
 
     expect(() => store.restoreBackup('s1')).toThrow(/备份/);
 
-    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(mainFile)).toEqual(mainBefore);
     expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
   });
 
@@ -206,9 +207,10 @@ describe('FileSaveStore', () => {
     const store = new FileSaveStore(dir);
     store.write('s1', makeSnap('s1'));
     store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } });
-    const mainBefore = fs.readFileSync(path.join(dir, 's1.json'));
+    const mainFile = path.join(dir, `${canonicalSlotStem('s1')}.json`);
+    const mainBefore = fs.readFileSync(mainFile);
     const indexBefore = fs.readFileSync(path.join(dir, 'index.json'));
-    fs.writeFileSync(path.join(dir, 's1.json.bak'), '{ invalid backup');
+    fs.writeFileSync(path.join(dir, `${canonicalSlotStem('s1')}.json.bak`), '{ invalid backup');
 
     let failure: unknown;
     try {
@@ -221,12 +223,12 @@ describe('FileSaveStore', () => {
       message: expect.stringContaining('存档文件读取或解析失败'),
       cause: expect.any(SyntaxError),
     });
-    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(mainFile)).toEqual(mainBefore);
     expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
 
-    fs.writeFileSync(path.join(dir, 's1.json.bak'), JSON.stringify({ ...makeSnap('s1'), gallery: { cgs: [1] } }));
+    fs.writeFileSync(path.join(dir, `${canonicalSlotStem('s1')}.json.bak`), JSON.stringify({ ...makeSnap('s1'), gallery: { cgs: [1] } }));
     expect(() => store.restoreBackup('s1')).toThrow(/gallery/);
-    expect(fs.readFileSync(path.join(dir, 's1.json'))).toEqual(mainBefore);
+    expect(fs.readFileSync(mainFile)).toEqual(mainBefore);
     expect(fs.readFileSync(path.join(dir, 'index.json'))).toEqual(indexBefore);
   });
 });
@@ -242,7 +244,8 @@ describe('FileSaveStore 槽位编码兼容（审计复核）', () => {
     const got = store.read('slot_1');
     expect(got?.meta.id).toBe('slot_1'); // 回退读命中
     store.write('slot_1', snap);
-    expect(fs.existsSync(path.join(dir, 'slot_u1.json'))).toBe(true); // 隐式迁移
+    expect(fs.existsSync(path.join(dir, `${canonicalSlotStem('slot_1')}.json`))).toBe(true); // 新写入落 canonical 物理身份
+    expect(fs.existsSync(path.join(dir, 'slot_1.json'))).toBe(false); // 所有权验证通过后清理 legacy
     expect(store.read('slot_1')?.meta.id).toBe('slot_1');
   });
 
@@ -272,12 +275,12 @@ describe('FileSaveStore legacy 迁移闭合：delete/listMeta（审计终审）'
     const dir = makeDir();
     const store = new FileSaveStore(dir);
     fs.writeFileSync(path.join(dir, 'slot_a.json'), JSON.stringify(makeSnap('slot_a')), 'utf8');
-    store.write('slot_a', makeSnap('slot_a')); // 迁移到新文件名并清理 legacy
+    store.write('slot_a', makeSnap('slot_a')); // 新写入落 canonical 并清理已验证 legacy
     expect(fs.existsSync(path.join(dir, 'slot_a.json'))).toBe(false);  // legacy 已清理
-    expect(fs.existsSync(path.join(dir, 'slot_ua.json'))).toBe(true);  // 新编码文件在位
+    expect(fs.existsSync(path.join(dir, `${canonicalSlotStem('slot_a')}.json`))).toBe(true);  // canonical 文件在位
     expect(store.read('slot_a')?.meta.id).toBe('slot_a');
     store.delete('slot_a');
-    expect(fs.existsSync(path.join(dir, 'slot_ua.json'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, `${canonicalSlotStem('slot_a')}.json`))).toBe(false);
     expect(store.read('slot_a')).toBeNull(); // 修复前：legacy 残留 → 删除后复活
   });
 
