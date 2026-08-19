@@ -18,8 +18,8 @@ export function scheduleValidate(): void {
   validateTimer = setTimeout(runValidate, 300);
 }
 
-/** 组装校验输入（Worker 与同步回退共用） */
-function buildValidateInput(): { sources: { key: string; id: string; file: string; source: string }[]; entryScene: string | undefined; config: { raw: Record<string, unknown> | null; path: string } } {
+/** 组装校验输入（Worker 与同步回退共用；Phase 2C 接入 state.timelines，保留未保存编辑缓冲） */
+function buildValidateInput(): { sources: { key: string; id: string; file: string; source: string }[]; entryScene: string | undefined; config: { raw: Record<string, unknown> | null; path: string }; timelines: { path: string; text: string }[] } {
   const sources = [...state.scenes.entries()].map(([key, sc]) => ({ key, id: sc.id, file: sc.file, source: sc.text }));
   let configRaw: Record<string, unknown> | null = null;
   if (state.gameConfigText) {
@@ -29,7 +29,12 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
       configRaw = null;
     }
   }
-  return { sources, entryScene: state.entryScene || undefined, config: { raw: configRaw, path: 'game.config.json' } };
+  // 内存 timelines（file 相对 timelines 目录，含子目录前缀）→ 项目相对路径；不重读磁盘，未保存缓冲优先。
+  const timelines = state.timelines.map((timeline) => ({
+    path: timeline.file.startsWith('content/timelines/') ? timeline.file : `content/timelines/${timeline.file}`,
+    text: timeline.text,
+  }));
+  return { sources, entryScene: state.entryScene || undefined, config: { raw: configRaw, path: 'game.config.json' }, timelines };
 }
 
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。
@@ -49,7 +54,7 @@ export function applyValidation(issues: Issue[], edges: { from: string; to: stri
 
 function runValidateSync(): void {
   const input = buildValidateInput();
-  const result = validateProject(input.sources, input.entryScene, input.config);
+  const result = validateProject(input.sources, input.entryScene, input.config, input.timelines);
   const edges: { from: string; to: string; kind: 'jump' | 'call' }[] = [];
   for (const [sceneId, scene] of result.scenes) {
     for (const instr of scene.instructions) {

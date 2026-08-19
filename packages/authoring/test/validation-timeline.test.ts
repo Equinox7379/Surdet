@@ -253,3 +253,68 @@ describe('canonical timeline identity (Phase 2B)', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+/* ============ Reliability Phase 2C（A3）：显式 timeline reference scope ============
+ * 默认 complete：ProjectSnapshot 即完整项目，@timeline 引用完整性不因文件数量跳过；
+ * partial 只跳过 reference completeness，不削弱 JSON/结构/identity/asset 校验。 */
+
+const ghostSceneText = ['@scene ghost_probe', '@timeline ghost_cine @ blocking', '凛：你好。', '@end'].join('\n');
+const unrelatedGoodTimeline = JSON.stringify({
+  version: 1,
+  id: 'unrelated',
+  durationMs: 900,
+  tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }],
+});
+
+describe('explicit timeline reference scope (Phase 2C)', () => {
+  it('A3-R1: default scope reports TIMELINE_MISSING for a reference with zero timeline files', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"ghost_probe","variables":{}}',
+      'content/scenario/ghost_probe.gal': ghostSceneText,
+      // 故意不放置任何 content/timelines/*.json
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot));
+    const missing = result.issues.find((issue) => issue.code === 'TIMELINE_MISSING');
+    expect(missing).toBeDefined();
+    expect(missing!.severity).toBe('error');
+    expect(missing!.text).toContain("'ghost_cine'");
+    expect(result.ok).toBe(false);
+  });
+
+  it('A3-R2: reference verdict is count-independent (0 files vs 1 unrelated file agree)', async () => {
+    const zeroFiles = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"ghost_probe","variables":{}}',
+      'content/scenario/ghost_probe.gal': ghostSceneText,
+    }), hasher);
+    const oneUnrelated = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"ghost_probe","variables":{}}',
+      'content/scenario/ghost_probe.gal': ghostSceneText,
+      'content/timelines/unrelated.json': unrelatedGoodTimeline,
+    }), hasher);
+
+    const zeroResult = validateSnapshot(zeroFiles, buildObjectIndex(zeroFiles), { assetCatalog: catalog });
+    const oneResult = validateSnapshot(oneUnrelated, buildObjectIndex(oneUnrelated), { assetCatalog: catalog });
+    // 同一引用在两种文件数量下必须同判 missing，且 1 文件场景的 unrelated 自身合法无 identity 诊断。
+    expect(zeroResult.issues.some((issue) => issue.code === 'TIMELINE_MISSING' && issue.text.includes("'ghost_cine'"))).toBe(true);
+    expect(oneResult.issues.some((issue) => issue.code === 'TIMELINE_MISSING' && issue.text.includes("'ghost_cine'"))).toBe(true);
+    expect(oneResult.issues.some((issue) => issue.file === 'content/timelines/unrelated.json' && issue.severity === 'error')).toBe(false);
+  });
+
+  it('partial scope skips only reference completeness, keeping JSON/structural/identity validation', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"entryScene":"ghost_probe","variables":{}}',
+      'content/scenario/ghost_probe.gal': ghostSceneText,
+      // 同时具备结构缺陷（缺 tracks → T005）与 identity 缺陷（id≠stem → MISMATCH）。
+      'content/timelines/broken.json': '{"version":1,"id":"divergent","durationMs":900}',
+    }), hasher);
+
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog, timelineReferenceScope: 'partial' });
+    // partial：不根据 absent 文件推断 missing。
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_MISSING')).toBe(false);
+    // 但已提供文件的 JSON 结构校验（T005）与 canonical identity（MISMATCH）照常执行。
+    expect(result.issues.some((issue) => issue.code === 'T005' && issue.file === 'content/timelines/broken.json')).toBe(true);
+    expect(result.issues.some((issue) => issue.code === 'TIMELINE_ID_MISMATCH' && issue.file === 'content/timelines/broken.json')).toBe(true);
+    expect(result.ok).toBe(false);
+  });
+});

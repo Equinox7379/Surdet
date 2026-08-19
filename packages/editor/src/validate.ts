@@ -33,6 +33,13 @@ export interface ProjectConfig {
   path: string;
 }
 
+/** Phase 2C（A3）：项目 timelines 的最小输入（来自 state.timelines，保留未保存编辑缓冲）。 */
+export interface TimelineSource {
+  /** 项目相对路径（如 content/timelines/intro.json；与 authoring snapshot 契约一致） */
+  path: string;
+  text: string;
+}
+
 export interface ValidateResult {
   issues: Issue[];
   /** 编译成功的场景（供引用分析/图谱） */
@@ -59,6 +66,7 @@ export function validateProject(
   sceneSources: SceneSource[],
   entryScene?: string,
   config?: ProjectConfig,
+  timelines: TimelineSource[] = [],
 ): ValidateResult {
   const issues: Issue[] = [];
   const compiled = new Map<string, CompiledScene>();
@@ -150,9 +158,14 @@ export function validateProject(
       const file = sharedFiles.find((candidate) => candidate.path === source.file)!;
       return { id, path: source.file, file, document: parseSceneDocument(source.source), compiled: scene };
     }),
-    timelines: [],
+    timelines: timelines.map((timeline) => ({
+      path: timeline.path,
+      text: timeline.text,
+      bytes: timeline.text.length,
+      sha256: validationDigest(timeline.text),
+    })),
   };
-  const shared = validateSnapshot(sharedSnapshot, buildObjectIndex(sharedSnapshot), { failedScenes });
+  const shared = validateSnapshot(sharedSnapshot, buildObjectIndex(sharedSnapshot), { failedScenes, timelineReferenceScope: 'complete' });
   issues.push(...shared.issues);
 
   // 未使用标签（W006）

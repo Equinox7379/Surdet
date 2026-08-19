@@ -260,7 +260,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   const workingSnapshot = await loadProjectSnapshot(workingFilesStorage(session.record, base), base);
   const index = buildObjectIndex(workingSnapshot);
   const assetCatalog = buildAssetCatalog(assetPathsFromFiles(await base.listFiles()));
-  const validation = validateSnapshot(workingSnapshot, index, { assetCatalog });
+  const validation = validateSnapshot(workingSnapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
   const errors = validation.issues.filter((issue) => issue.severity === 'error');
   await recordValidation(session, {
     evidenceId: `editor:validation:${Date.now()}`,
