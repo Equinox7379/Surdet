@@ -420,6 +420,41 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('trust'))).toBe(false);
   });
 
+  it('N1/RED6：calendar nodes[].when（legacy）报 CALENDAR_NODE_LEGACY_WHEN error；baseCommands[].when 不误报', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/config/calendar.json': JSON.stringify({
+        nodes: [
+          { id: 'a', name: 'A', x: 0, y: 0, apCost: 1, when: 'trust >= 1' },
+          { id: 'b', name: 'B', x: 0, y: 0, apCost: 1, visibleWhen: 'trust >= 2' },
+        ],
+        baseCommands: [{ id: 'rest', name: '休息', when: 'trust >= 10' }],
+      }),
+    });
+    const r = lintProject(dir);
+    const legacy = r.issues.filter((i) => i.code === 'CALENDAR_NODE_LEGACY_WHEN');
+    expect(legacy).toHaveLength(1); // 仅 nodes[].when；baseCommands[].when 是合法独立字段
+    expect(legacy[0]!.severity).toBe('error');
+    expect(legacy[0]!.text).toContain("'a'");
+    expect(r.ok).toBe(false);
+    // canonical visibleWhen（已声明 trust）与 baseCommands when 均不产生 V002
+    expect(r.issues.some((i) => i.code === 'V002')).toBe(false);
+  });
+
+  it('N1/RED7：visibleWhen 与 legacy when 冲突报 conflict 诊断', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/config/calendar.json': JSON.stringify({
+        nodes: [{ id: 'a', name: 'A', x: 0, y: 0, apCost: 1, visibleWhen: 'trust >= 5', when: 'trust >= 9' }],
+      }),
+    });
+    const r = lintProject(dir);
+    expect(r.ok).toBe(false);
+    const legacy = r.issues.find((i) => i.code === 'CALENDAR_NODE_LEGACY_WHEN');
+    expect(legacy).toBeTruthy();
+    expect(legacy!.text).toContain('冲突');
+  });
+
   it('jump 到编译失败场景报 J003 而非误报 J001', () => {
     const dir = makeProject({
       'content/scenario/bad.gal': `@if x\nA\n`, // 未闭合 if → S003 编译失败

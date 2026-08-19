@@ -347,7 +347,7 @@ function checkExprCell(cell: string | boolean | undefined, label: string, errors
 
 /* ============================ calendar.json ============================ */
 
-export const CALENDAR_NODE_KEYS = ['id', 'name', 'x', 'y', 'isBase', 'apCost', 'requires', 'when', 'eventId'];
+export const CALENDAR_NODE_KEYS = ['id', 'name', 'x', 'y', 'isBase', 'apCost', 'requires', 'visibleWhen', 'eventId'];
 export const CALENDAR_CMD_KEYS = ['id', 'name', 'apCost', 'when', 'effects', 'perTurn'];
 export const CALENDAR_SCALAR_KEYS = ['maxAp', 'maxTurns', 'dateTemplate', 'weeksPerMonth', 'onTurnStartEventId', 'onTurnEndEventId'];
 
@@ -357,13 +357,51 @@ export interface CalendarRows {
   baseCommands: RowMap[];
 }
 
+/** N1（Reliability Phase 3B）：calendar node 开放条件的 canonical 字段是 visibleWhen
+ *  （Core CalendarRunner 与 CLI lint 只消费它）；旧 Editor 误写的 nodes[].when 是 Runtime
+ *  从未读取的 legacy 字段。保存前对源条目（浅拷贝，原对象不动）做确定性正规化：
+ *  - when-only / 与 visibleWhen 等值的冗余 → 迁移为 visibleWhen 并删除 when
+ *    （旧 UI 该列即“开放条件”，历史 author intent 确定）；
+ *  - 双字段冲突 → fail-loud（errors 阻止保存），禁止静默选择或猜测；
+ *  - 正规化后的条目才交给 applyRowsToList，成功保存的节点绝不携带 when；
+ *    unknown 字段照常经主键合并保留。baseCommands[].when 是合法独立字段，不在此列。 */
+function normalizeCalendarSourceNodes(raw: unknown, errors: string[]): unknown[] {
+  const orig = origList(raw, 'nodes').map((e) => ({ ...(e as Record<string, unknown>) }));
+  for (const node of orig) {
+    if (!('when' in node)) continue;
+    const id = String(node['id'] ?? '');
+    const canonical = typeof node['visibleWhen'] === 'string' ? (node['visibleWhen'] as string).trim() : '';
+    const legacy = typeof node['when'] === 'string' ? (node['when'] as string).trim() : '';
+    if (canonical !== '' && legacy !== '' && canonical !== legacy) {
+      errors.push(`地图节点 '${id}' 同时存在冲突的 visibleWhen（'${canonical}'）与 legacy when（'${legacy}'）——请人工确认后仅保留一个条件`);
+      continue;
+    }
+    if (canonical === '' && legacy !== '') node['visibleWhen'] = node['when'];
+    delete node['when'];
+  }
+  return orig;
+}
+
 export function parseCalendarRows(raw: unknown): CalendarRows {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const scalars: Record<string, string> = {};
   for (const k of CALENDAR_SCALAR_KEYS) scalars[k] = String(toCell(obj[k]));
+  // N1：legacy when-only 的历史值在 UI 呈现为 canonical visibleWhen（保存时经
+  // normalizeCalendarSourceNodes 正规化删除 when）；双字段冲突由保存侧 fail-loud。
+  const origNodes = Array.isArray(obj['nodes'])
+    ? (obj['nodes'] as unknown[]).filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && !Array.isArray(e))
+    : [];
+  const nodes = listToRows(raw, 'nodes', CALENDAR_NODE_KEYS).map((row, i) => {
+    const legacy = origNodes[i];
+    if (legacy !== undefined && String(row['visibleWhen'] ?? '').trim() === ''
+      && typeof legacy['when'] === 'string' && (legacy['when'] as string).trim() !== '') {
+      row['visibleWhen'] = legacy['when'];
+    }
+    return row;
+  });
   return {
     scalars,
-    nodes: listToRows(raw, 'nodes', CALENDAR_NODE_KEYS),
+    nodes,
     baseCommands: listToRows(raw, 'baseCommands', CALENDAR_CMD_KEYS),
   };
 }
@@ -380,11 +418,11 @@ export function rowsToCalendar(raw: unknown, rows: CalendarRows): { json: Record
     if (!Number.isFinite(n)) errors.push(`日历 ${k} 不是数字：${t}`);
     else json[k] = n;
   }
-  json.nodes = applyRowsToList(origList(raw, 'nodes'), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id');
+  json.nodes = applyRowsToList(normalizeCalendarSourceNodes(raw, errors), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id');
   json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id');
   checkUniqueId(rows.nodes, 'id', '地图节点', errors);
   checkUniqueId(rows.baseCommands, 'id', '据点指令', errors);
-  for (const r of rows.nodes) checkExprCell(r.when, `地图节点 ${String(r.id ?? '')} 的 when`, errors);
+  for (const r of rows.nodes) checkExprCell(r.visibleWhen, `地图节点 ${String(r.id ?? '')} 的 visibleWhen`, errors);
   for (const r of rows.baseCommands) checkExprCell(r.when, `据点指令 ${String(r.id ?? '')} 的 when`, errors);
   return { json, errors };
 }

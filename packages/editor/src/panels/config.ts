@@ -607,9 +607,9 @@ function renderCalendarSection(): HTMLElement {
     { key: 'isBase', label: '据点', type: 'checkbox' },
     { key: 'apCost', label: 'AP 消耗' },
     { key: 'requires', label: '前置节点 (JSON 数组)', type: 'json' },
-    { key: 'when', label: '开放条件 (when)' },
+    { key: 'visibleWhen', label: '开放条件 (visibleWhen)' },
     { key: 'eventId', label: '关联事件' },
-  ], cal.nodes, { id: '', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' }));
+  ], cal.nodes, { id: '', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' }));
 
   sec.appendChild(h('h4', undefined, '据点指令（baseCommands）'));
   sec.appendChild(renderObjectTable([

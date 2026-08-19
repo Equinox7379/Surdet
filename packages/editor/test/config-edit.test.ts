@@ -3,8 +3,8 @@
  * 剧本变量引用收集（删除保护）。
  */
 import { describe, expect, it } from 'vitest';
-import { compileScene } from '@surdet/core';
-import type { CompiledScene } from '@surdet/core';
+import { compileScene, CalendarRunner } from '@surdet/core';
+import type { CompiledScene, MapNodeDef } from '@surdet/core';
 import {
   parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -179,7 +179,7 @@ describe('calendar ⇄ JSON', () => {
 
   it('非法输入拦截：重复节点 ID / 坏 when / 坏 JSON / 非数字标量', () => {
     const rows = parseCalendarRows(calendarRaw);
-    rows.nodes.push({ id: 'map_01', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' });
+    rows.nodes.push({ id: 'map_01', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' });
     rows.baseCommands[0]!.when = 'trust >=';
     rows.baseCommands[1]!.effects = '{bad';
     rows.scalars.maxAp = 'abc';
@@ -208,13 +208,84 @@ describe('calendar ⇄ JSON', () => {
       ],
     };
     const insRows = parseCalendarRows(insRaw);
-    insRows.nodes.splice(1, 0, { id: 'new', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', when: '', eventId: '' });
+    insRows.nodes.splice(1, 0, { id: 'new', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' });
     const insJson = rowsToCalendar(insRaw, insRows);
     const insNodes = insJson.json.nodes as Record<string, unknown>[];
     expect(insNodes.map((n) => n.id)).toEqual(['a', 'new', 'b']);
     expect(insNodes[0]!.custom).toBe('A私有');
     expect(insNodes[1]!.custom).toBeUndefined();
     expect(insNodes[2]!.custom).toBe('B私有');
+  });
+});
+
+describe('N1：calendar node 开放条件 canonical visibleWhen（Editor → Runtime 语义一致）', () => {
+  const baseCfg = { maxAp: 3, maxTurns: 10, dateTemplate: '第{turn}周' };
+  const envOf = (locked: boolean) => ({ getVariable: (name: string) => (name === 'lockedFlag' ? locked : undefined) });
+
+  it('RED1 新建条件：row.visibleWhen 保存为 canonical，不输出 when', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'locked', name: 'L', x: 0, y: 0, apCost: 1 }] };
+    const rows = parseCalendarRows(raw);
+    rows.nodes[0]!.visibleWhen = 'locked == true';
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    const node = (json.nodes as Record<string, unknown>[])[0]!;
+    expect(node.visibleWhen).toBe('locked == true');
+    expect('when' in node).toBe(false);
+  });
+
+  it('RED2 legacy when-only：parse 迁移显示 + 保存正规化为 visibleWhen（未知字段保留）', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'n1', name: 'L', x: 0, y: 0, apCost: 1, when: 'legacyFlag == true', futureField: { k: 1 } }] };
+    const rows = parseCalendarRows(raw);
+    expect(rows.nodes[0]!.visibleWhen).toBe('legacyFlag == true');
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    const node = (json.nodes as Record<string, unknown>[])[0]!;
+    expect(node.visibleWhen).toBe('legacyFlag == true');
+    expect('when' in node).toBe(false);
+    expect(node.futureField).toEqual({ k: 1 });
+  });
+
+  it('RED3 canonical roundtrip：已有 visibleWhen 在 UI 可见可改，关闭 stale runtime condition', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'n1', name: 'L', x: 0, y: 0, apCost: 1, visibleWhen: 'oldFlag == true' }] };
+    const rows = parseCalendarRows(raw);
+    expect(rows.nodes[0]!.visibleWhen).toBe('oldFlag == true');
+    rows.nodes[0]!.visibleWhen = 'newFlag == true';
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    const node = (json.nodes as Record<string, unknown>[])[0]!;
+    expect(node.visibleWhen).toBe('newFlag == true');
+    expect('when' in node).toBe(false);
+  });
+
+  it('RED4 双字段等值冗余：保存正规化（保留 visibleWhen、删除 when）', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'n1', name: 'L', x: 0, y: 0, apCost: 1, visibleWhen: 'A', when: 'A' }] };
+    const rows = parseCalendarRows(raw);
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    const node = (json.nodes as Record<string, unknown>[])[0]!;
+    expect(node.visibleWhen).toBe('A');
+    expect('when' in node).toBe(false);
+  });
+
+  it('RED5 双字段冲突：fail-loud 阻止保存，源对象不被改动', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'n1', name: 'L', x: 0, y: 0, apCost: 1, visibleWhen: 'A', when: 'B' }] };
+    const rows = parseCalendarRows(raw);
+    const { errors } = rowsToCalendar(raw, rows);
+    expect(errors.some((e) => e.includes('冲突'))).toBe(true);
+    expect(raw.nodes[0]!.when).toBe('B');
+    expect(raw.nodes[0]!.visibleWhen).toBe('A');
+  });
+
+  it('跨层 oracle：Editor 保存的节点交 CalendarRunner，可见性语义正确（lockedFlag=false 隐藏 / true 显示）', () => {
+    const raw = { ...baseCfg, nodes: [{ id: 'locked', name: 'L', x: 0, y: 0, apCost: 1 }] };
+    const rows = parseCalendarRows(raw);
+    rows.nodes[0]!.visibleWhen = 'lockedFlag == true';
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    const node = (json.nodes as unknown as MapNodeDef[])[0]!;
+    const cfg = { maxAp: 3, maxTurns: 10, dateTemplate: 'x', nodes: [node] };
+    expect(new CalendarRunner(cfg, envOf(false)).isVisible(node)).toBe(false);
+    expect(new CalendarRunner(cfg, envOf(true)).isVisible(node)).toBe(true);
   });
 });
 
