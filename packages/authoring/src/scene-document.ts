@@ -1,7 +1,15 @@
 import type { SceneDocumentLine, SceneDocumentLineInput, SceneEol } from './contracts.js';
 
-const SPEAKER_RE = /^([^\s：:]{1,24})([：:])(.*)$/;
+/** speaker token 语法单一来源：1..24 字符、不含空白与半/全角冒号（与 core lexer extractSpeaker 同规则）。 */
+const SPEAKER_TOKEN_SOURCE = '[^\\s：:]{1,24}';
+const SPEAKER_TOKEN_RE = new RegExp(`^${SPEAKER_TOKEN_SOURCE}$`);
+const SPEAKER_RE = new RegExp(`^(${SPEAKER_TOKEN_SOURCE})([：:])(.*)$`);
 const INSTR_NAME_RE = /^@([^\s]+)/;
+
+/** 字符串能否作为合法 speaker token 出现在台词行（非纯数字；parser 与角色改名迁移共享同一语法源）。 */
+export function isValidSpeakerToken(token: string): boolean {
+  return SPEAKER_TOKEN_RE.test(token) && !/^\d+$/.test(token);
+}
 
 export function parseSceneLine(raw: string, previousKind: string, eol: SceneEol = ''): SceneDocumentLine {
   const trimmed = raw.trimStart();
