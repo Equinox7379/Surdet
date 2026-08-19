@@ -3,6 +3,7 @@ import {
   GrowthSystem,
   Interpreter,
   SceneRegistry,
+  TimelineRegistry,
   VariableStore,
   type CoreEventMap,
   type SaveSnapshot,
@@ -84,6 +85,30 @@ function cloneSnapshot(snapshot: SaveSnapshot): SaveSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as SaveSnapshot;
 }
 
+/**
+ * 从项目快照构造真实 Core TimelineRegistry：headless 模拟 / 运行轨迹与 Editor Preview
+ * 共享同一 timeline runtime truth。JSON 解析与 validation 输入契约一致（容忍 UTF-8 BOM）；
+ * 结构非法或 ID 重复由 Core `TimelineRegistry.register` 的 validateTimeline fail-loud，
+ * 本处不做任何静默跳过（验证通道不得 skip invalid 后继续给 PASS）。
+ */
+export function buildTimelineRegistry(snapshot: ProjectSnapshot): TimelineRegistry {
+  const registry = new TimelineRegistry();
+  for (const timeline of snapshot.timelines) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(timeline.text.replace(/^\uFEFF/, ''));
+    } catch (error) {
+      throw new Error(`${timeline.path}: 时间轴 JSON 解析失败（${error instanceof Error ? error.message : String(error)}）`);
+    }
+    try {
+      registry.register(parsed);
+    } catch (error) {
+      throw new Error(`${timeline.path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return registry;
+}
+
 function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue> | undefined): {
   store: VariableStore;
   bus: EventBus<CoreEventMap>;
@@ -94,7 +119,8 @@ function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue>
   const registry = new SceneRegistry();
   for (const scene of snapshot.scenes) registry.register(scene.compiled);
   const bus = new EventBus<CoreEventMap>();
-  const interpreter = new Interpreter(store, bus, registry);
+  // timelineCatalog 为构造器第 9 参（preview.ts 同一模式；growth 维持既有 setGrowth 注入）。
+  const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, buildTimelineRegistry(snapshot));
   if (snapshot.growthConfig !== undefined && snapshot.growthConfig !== null) {
     interpreter.setGrowth(new GrowthSystem(snapshot.growthConfig, store));
   }

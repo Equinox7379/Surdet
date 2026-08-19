@@ -64,12 +64,13 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 
-    // capabilities.describe 自动扩展为 17 项能力。
+    // capabilities.describe 当前能力面 20 项（Wave 3 扩展 character.ensure/remove + project.entry-scene.set）。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
     expect(body(capabilities).result.capabilities).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect', 'change.begin',
-      'scene.create', 'scene.patch', 'variable.ensure', 'timeline.create', 'timeline.patch',
+      'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure', 'character.remove',
+      'timeline.create', 'timeline.patch', 'project.entry-scene.set',
       'project.validate', 'project.simulate', 'runtime.run-from', 'runtime.read-trace',
       'change.diff', 'change.commit', 'change.rollback',
     ]);
@@ -254,5 +255,37 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(committedDefinition.tracks[3]?.cues).toHaveLength(0);
     // 资源保持只读：SVG 文件身份不变。
     expect(fs.readFileSync(path.join(root, 'content/assets/bg/night_field.svg'), 'utf8')).toBe('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  });
+
+  // Reliability Phase 1（R1-A/R1-B）：headless simulate/run-from 注入真实 TimelineRegistry 后，
+  // 场景引用缺失 timeline 必须 fail-loud——不再可能 validate=error 而 simulate/run-from=passed。
+  it('fails loud in simulate and run-from when the scene references a missing timeline', () => {
+    const { root, data } = fixtureProject();
+    const env = { SURDET_AGENT_DATA_DIR: data };
+    // 场景引用 agent_ghost；timelines 目录只落盘合法 agent_blackout（registry 有内容但缺 ghost）。
+    fs.writeFileSync(path.join(root, 'content/scenario/ghost_probe.gal'), '@scene ghost_probe\n@timeline agent_ghost @ blocking\n凛：到达。\n@end\n', 'utf8');
+    fs.writeFileSync(path.join(root, 'content/timelines/agent_blackout.json'), JSON.stringify(agentBlackout), 'utf8');
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ entryScene: 'ghost_probe', variables: {} }), 'utf8');
+
+    const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).result.changeId;
+
+    const simulateInput = writeJson(root, 'simulate-ghost.json', { sceneId: 'ghost_probe' });
+    const simulated = runCli(['project', 'simulate', '--change', changeId, '--input', simulateInput, '--json'], env);
+    // 模拟失败按既有 CLI contract 走结构化错误信封（ok:false + RUNTIME_FAILED），不再 false-green。
+    expect(simulated.status).not.toBe(0);
+    const simulatedBody = body(simulated);
+    expect(simulatedBody.ok).toBe(false);
+    expect(simulatedBody.error.code).toBe('RUNTIME_FAILED');
+    expect(simulatedBody.error.message).toMatch(/时间轴 'agent_ghost' 未注册/);
+
+    const runInput = writeJson(root, 'run-ghost.json', { sceneId: 'ghost_probe' });
+    const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
+    expect(run.status).not.toBe(0);
+    const runBody = body(run);
+    expect(runBody.ok).toBe(false);
+    expect(runBody.error.code).toBe('RUNTIME_FAILED');
+    expect(runBody.error.message).toMatch(/时间轴 'agent_ghost' 未注册/);
   });
 });

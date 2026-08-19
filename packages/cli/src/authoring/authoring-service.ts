@@ -22,6 +22,7 @@ import {
   buildAssetCatalog,
   buildObjectIndex,
   buildOperationLedgerDiff,
+  buildTimelineRegistry,
   commitChange,
   createChangeDiff,
   createEvidenceEnvelope,
@@ -289,7 +290,15 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
   const events: RuntimeTraceEvent[] = [];
   const bus = new EventBus<CoreEventMap>();
   bus.on('runtimeTrace', (event) => events.push(event));
-  const interpreter = new Interpreter(store, bus, registry);
+  // 与共享 simulateSnapshot / Editor Preview 同一 timeline runtime truth：注入项目真实
+  // TimelineRegistry（非法 timeline 在验证通道 fail-loud，映射为 RUNTIME_FAILED 结构化错误）。
+  let timelines: ReturnType<typeof buildTimelineRegistry>;
+  try {
+    timelines = buildTimelineRegistry(snapshot);
+  } catch (error) {
+    throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
+  }
+  const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, timelines);
   let choiceCursor = 0;
   let latestChoices: { index: number; label: string }[] = [];
   bus.on('choice', (event) => { latestChoices = event.options; });
@@ -460,7 +469,11 @@ export class AuthoringService {
     const evidence = simulationEvidence(context.snapshot.revision, changeId, context.session.record.workingRevision, simulation);
     await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
     if (simulation.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限');
-    if (simulation.status === 'failed') throw new AuthoringOperationError('RUNTIME_FAILED', '项目模拟包含运行时失败');
+    if (simulation.status === 'failed') {
+      // 附首个运行时错误根因，Agent 无需二次取证据即可定位（如缺失时间轴的未注册 ID）。
+      const firstError = simulation.runtimeErrors[0]?.message;
+      throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`);
+    }
     return { ...metadataForChange(context.session, context.snapshot.revision), result: simulation };
   }
 
