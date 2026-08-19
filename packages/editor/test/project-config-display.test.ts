@@ -1,6 +1,15 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { buildAssetCatalog, buildObjectIndex, loadProjectSnapshot } from '@surdet/authoring';
-import { createEditorProjectStorage } from '../src/authoring-project-storage.js';
+import {
+  AuthoringOperationError,
+  buildAssetCatalog,
+  buildObjectIndex,
+  loadProjectSnapshot,
+} from '@surdet/authoring';
+import {
+  commitCharacterTable,
+  createEditorProjectStorage,
+  type CharacterTableEditRow,
+} from '../src/authoring-project-storage.js';
 import { recordAssetPath } from '../src/project-io.js';
 import { describeAuthoringReference } from '../src/causal-selection.js';
 import { state } from '../src/state.js';
@@ -72,5 +81,170 @@ describe('project config display', () => {
     expect(describeAuthoringReference('asset:avatar:lynn')).toBe('头像 lynn');
     expect(describeAuthoringReference('config:entryScene')).toBe('入口场景');
     expect(index.byRef.get('config:entryScene')?.references).toEqual(['scene:ch01_01']);
+  });
+});
+
+/* ================= Wave 3 closure：角色表经共享 character.ensure 语义写盘 ================= */
+
+/** 内存版 game.config.json 句柄：读返回当前内容，写记录日志并更新内容（模拟真实磁盘）。 */
+function memoryGameConfigHandle(initial: string): {
+  handle: FileSystemFileHandle;
+  read: () => string;
+  writes: string[];
+} {
+  let content = initial;
+  const writes: string[] = [];
+  const handle = {
+    kind: 'file',
+    name: 'game.config.json',
+    getFile: async () => ({ text: async () => content }),
+    createWritable: async () => ({
+      write: async (data: unknown) => {
+        const text = String(data);
+        writes.push(text);
+        content = text;
+      },
+      close: async () => {},
+    }),
+  } as unknown as FileSystemFileHandle;
+  return { handle, read: () => content, writes };
+}
+
+const CHARACTER_FIXTURE_CONFIG = {
+  title: 'Starter',
+  entryScene: 'ch01_01',
+  characters: {
+    lynn: { name: '凛', avatar: 'lynn' },
+    nova: { name: '诺瓦', avatar: 'lynn' },
+  },
+  variables: {},
+};
+
+function characterFixtureText(): string {
+  return `${JSON.stringify(CHARACTER_FIXTURE_CONFIG, null, 2)}\n`;
+}
+
+describe('character table editing through shared authoring semantics', () => {
+  const saved = {
+    gameConfigText: state.gameConfigText,
+    scenes: state.scenes,
+    timelines: state.timelines,
+    configFiles: state.configFiles,
+    handles: state.handles,
+    dirName: state.dirName,
+    dirHandle: state.dirHandle,
+  };
+
+  afterEach(() => {
+    state.gameConfigText = saved.gameConfigText;
+    state.scenes = saved.scenes;
+    state.timelines = saved.timelines;
+    state.configFiles = saved.configFiles;
+    state.handles = saved.handles;
+    state.dirName = saved.dirName;
+    state.dirHandle = saved.dirHandle;
+  });
+
+  function installFixture(diskText: string): ReturnType<typeof memoryGameConfigHandle> {
+    const disk = memoryGameConfigHandle(diskText);
+    state.dirName = 'character-edit-project';
+    state.dirHandle = {} as FileSystemDirectoryHandle;
+    state.gameConfigText = diskText;
+    state.scenes = new Map([['ch01_01', {
+      id: 'ch01_01', file: 'ch01_01.gal', text: '@scene ch01_01\n凛：你好。\n诺瓦：登场台词。\n@end\n', eol: '\n', dirty: false, handle: null,
+    }]]);
+    state.timelines = [];
+    state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+    state.handles = { gameConfig: disk.handle, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
+    return disk;
+  }
+
+  it('edits display name via shared character.ensure and persists after reload', async () => {
+    const disk = installFixture(characterFixtureText());
+    const rows: CharacterTableEditRow[] = [
+      { id: 'lynn', name: '凛', avatar: 'lynn' },
+      { id: 'nova', name: '诺瓦测试', avatar: 'lynn' },
+    ];
+
+    const result = await commitCharacterTable(rows);
+
+    expect(result.changed).toBe(1);
+    // 提交后语义状态：nova.name 更新；ID 集合与其它字段不变（C/D）
+    const committed = JSON.parse(disk.read()) as typeof CHARACTER_FIXTURE_CONFIG;
+    expect(committed.characters.nova?.name).toBe('诺瓦测试');
+    expect(committed.characters.nova?.avatar).toBe('lynn');
+    expect(committed.characters.lynn?.name).toBe('凛');
+    expect(Object.keys(committed.characters)).toEqual(['lynn', 'nova']);
+    expect(committed.title).toBe('Starter');
+    expect(committed.entryScene).toBe('ch01_01');
+    expect(committed.variables).toEqual({});
+    // editor 内存态同步为提交后的文本
+    expect(state.gameConfigText).toBe(disk.read());
+    // round-trip：重新从磁盘加载共享快照，修改仍存在（E）
+    const reloaded = await loadProjectSnapshot({
+      rootIdentity: 'reload-fixture',
+      listFiles: async () => ['game.config.json', 'content/scenario/ch01_01.gal'],
+      readText: async (path: string) => {
+        const text = path === 'game.config.json'
+          ? disk.read()
+          : '@scene ch01_01\n凛：你好。\n诺瓦：登场台词。\n@end\n';
+        return { path, text, bytes: text.length, sha256: `reload:${path}` };
+      },
+      exists: async () => true,
+    }, { sha256: async (text) => `sha:${text.length}` });
+    expect((reloaded.config['characters'] as Record<string, { name?: string }>)['nova']?.name).toBe('诺瓦测试');
+  });
+
+  it('fails loud when the disk baseline changed externally (no silent overwrite)', async () => {
+    const disk = installFixture(characterFixtureText());
+    // 外部 Agent 在编辑器同步之后改写磁盘（characters 表变化）
+    const external = { ...CHARACTER_FIXTURE_CONFIG, characters: { ...CHARACTER_FIXTURE_CONFIG.characters, nova: { name: '外部诺瓦', avatar: 'lynn' } } };
+    disk.writes.length = 0;
+    const externalText = `${JSON.stringify(external, null, 2)}\n`;
+    // 直接改写“磁盘”内容（不经 editor 写路径）
+    void await (disk.handle as unknown as { createWritable: () => Promise<{ write: (d: string) => Promise<void>; close: () => Promise<void> }> }).createWritable().then(async (w) => {
+      await w.write(externalText);
+      await w.close();
+    });
+
+    const rows: CharacterTableEditRow[] = [
+      { id: 'lynn', name: '凛', avatar: 'lynn' },
+      { id: 'nova', name: '诺瓦测试', avatar: 'lynn' },
+    ];
+    disk.writes.length = 0;
+
+    await expect(commitCharacterTable(rows)).rejects.toMatchObject({
+      code: expect.stringMatching(/^(OBJECT_REF_STALE|PROJECT_CHANGED_SINCE_BEGIN)$/),
+    });
+    // fail-loud：编辑器写路径未覆盖外部内容
+    expect(disk.writes).toHaveLength(0);
+    expect(JSON.parse(disk.read()).characters.nova?.name).toBe('外部诺瓦');
+  });
+
+  it('rejects invalid input through shared validation and keeps disk untouched', async () => {
+    const disk = installFixture(characterFixtureText());
+    const rows: CharacterTableEditRow[] = [
+      { id: 'lynn', name: '凛', avatar: 'lynn' },
+      { id: 'nova', name: '   ', avatar: 'lynn' },
+    ];
+    disk.writes.length = 0;
+
+    await expect(commitCharacterTable(rows)).rejects.toBeInstanceOf(AuthoringOperationError);
+    await expect(commitCharacterTable(rows)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(disk.writes).toHaveLength(0);
+    expect(state.gameConfigText).toBe(characterFixtureText());
+  });
+
+  it('is a no-op write when nothing changed', async () => {
+    const disk = installFixture(characterFixtureText());
+    const rows: CharacterTableEditRow[] = [
+      { id: 'lynn', name: '凛', avatar: 'lynn' },
+      { id: 'nova', name: '诺瓦', avatar: 'lynn' },
+    ];
+
+    const result = await commitCharacterTable(rows);
+
+    expect(result.changed).toBe(0);
+    expect(disk.writes).toHaveLength(0);
   });
 });
