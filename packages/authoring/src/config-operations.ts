@@ -11,6 +11,8 @@ import type {
   LedgerDiffEntry,
 } from './contracts.js';
 import type { TextHasher } from './project-storage.js';
+import { parseSceneDocument, serializeSceneDocument } from './scene-document.js';
+import { buildSpeakerCharacterRefs } from './object-index.js';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -66,6 +68,41 @@ export interface CharacterOperationResult {
   objectRef: string;
   fingerprint: string;
   diffEntry: LedgerDiffEntry;
+  /** display-name 改名时在同一事务内同步迁移的台词 speaker 引用。 */
+  speakerMigrations?: SpeakerMigrationImpact[];
+}
+
+/** 一次 speaker 令牌迁移的机器可读证据（进入 operation ledger 的 potentialImpact）。 */
+export interface SpeakerMigrationImpact {
+  path: string;
+  line: number;
+  from: string;
+  to: string;
+}
+
+/**
+ * display-name 改名的 speaker 引用迁移：只修改解析后 speaker 字段精确等于 from 的
+ * 台词行（结构化 token 替换，非全文替换），value/缩进/EOL/其余行字节保持不变。
+ */
+function migrateSceneSpeakerTokens(
+  text: string,
+  from: string,
+  to: string,
+  path: string,
+): { text: string; impacts: SpeakerMigrationImpact[] } | null {
+  const document = parseSceneDocument(text);
+  const impacts: SpeakerMigrationImpact[] = [];
+  let touched = false;
+  for (let index = 0; index < document.length; index++) {
+    const line = document[index]!;
+    if (line.kind !== 'text' || line.speaker !== from) continue;
+    const indent = line.raw.slice(0, line.raw.length - line.raw.trimStart().length);
+    line.raw = `${indent}${to}${line.sep}${line.raw.slice(indent.length + from.length + line.sep.length)}`;
+    touched = true;
+    impacts.push({ path, line: index + 1, from, to });
+  }
+  if (!touched) return null;
+  return { text: serializeSceneDocument(document), impacts };
 }
 
 export interface EntrySceneSetResult {
@@ -100,6 +137,54 @@ export async function applyCharacterEnsure(
     }
     const existing = characters[input.id];
     const created = existing === undefined;
+    const existingRecord = existing !== undefined && isRecord(existing) ? existing : null;
+    const existingName = existingRecord !== null && typeof existingRecord['name'] === 'string' ? existingRecord['name'] : undefined;
+    const nameChanges = existingName !== input.name;
+
+    // 语义冲突前置检查（任何写入之前 fail-loud）：新显示名不得与其它角色的显示名或 ID
+    // 冲突——任一情况都会让 speaker 令牌解析产生歧义或静默失配。
+    if (nameChanges) {
+      for (const [otherId, otherRaw] of Object.entries(characters)) {
+        if (otherId === input.id) continue;
+        if (otherId === input.name) {
+          throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `新显示名 '${input.name}' 与角色 ID '${otherId}' 冲突（speaker 解析会产生歧义）`);
+        }
+        const otherRecord = isRecord(otherRaw) ? otherRaw : null;
+        if (otherRecord !== null && otherRecord['name'] === input.name) {
+          throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `新显示名 '${input.name}' 与角色 '${otherId}' 的显示名冲突`);
+        }
+      }
+    }
+
+    // display-name 改名：同一事务内同步迁移 speaker 令牌精确等于旧显示名的台词行。
+    // 迁移结果先落在本地（handler 任何失败都不得污染 record.workingFiles）。
+    const speakerMigrations: SpeakerMigrationImpact[] = [];
+    const migratedFiles: Record<string, string> = {};
+    if (!created && nameChanges && existingName !== undefined) {
+      const speakerRefMap = buildSpeakerCharacterRefs(characters);
+      const resolved = speakerRefMap.get(existingName);
+      if (resolved === undefined && existingName !== input.id) {
+        // 旧显示名不唯一（或被角色 ID 遮蔽）且被台词引用时无法证明归属，拒绝猜测。
+        for (const [path, text] of Object.entries(record.workingFiles)) {
+          if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+          if (parseSceneDocument(text).some((line) => line.kind === 'text' && line.speaker === existingName)) {
+            throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `旧显示名 '${existingName}' 不唯一且被 ${path} 引用，无法确定 speaker 归属`);
+          }
+        }
+      } else if (resolved === `character:${input.id}` && existingName !== input.id) {
+        // 旧显示名经 name 路径唯一解析到本角色：迁移所有 speaker === 旧显示名的台词。
+        //（若旧显示名恰等于本角色 ID，则令牌走 ID 路径，改名后仍解析到本角色，无需迁移。）
+        for (const [path, text] of Object.entries(record.workingFiles)) {
+          if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+          const migrated = migrateSceneSpeakerTokens(text, existingName, input.name, path);
+          if (migrated !== null) {
+            migratedFiles[path] = migrated.text;
+            speakerMigrations.push(...migrated.impacts);
+          }
+        }
+      }
+    }
+
     const next: Record<string, unknown> = {};
     if (existing !== undefined && isRecord(existing)) Object.assign(next, existing);
     next['name'] = input.name;
@@ -121,6 +206,7 @@ export async function applyCharacterEnsure(
         ...(created ? { created: true } : {}),
         objectRef: `character:${input.id}`,
         fingerprint: fingerprintAfter,
+        ...(speakerMigrations.length > 0 ? { speakerMigrations } : {}),
         diffEntry: {
           kind: 'config.character.ensure',
           operationId: input.operationId,
@@ -129,11 +215,11 @@ export async function applyCharacterEnsure(
           fingerprintBefore,
           fingerprintAfter,
           directChange: { path: CONFIG_PATH, character: input.id, created },
-          potentialImpact: [],
+          potentialImpact: speakerMigrations,
           observedImpact: [],
         },
       },
-      workingFiles: { ...record.workingFiles, [CONFIG_PATH]: serializeConfig(config) },
+      workingFiles: { ...record.workingFiles, ...migratedFiles, [CONFIG_PATH]: serializeConfig(config) },
     };
   });
 }

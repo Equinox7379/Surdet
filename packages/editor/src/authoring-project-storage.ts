@@ -16,6 +16,7 @@ import {
   type ProjectFile,
   type ProjectStorage,
   type ProjectWriteStorage,
+  type SpeakerMigrationImpact,
   type TextHasher,
 } from '@surdet/authoring';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
@@ -114,6 +115,8 @@ export interface CharacterTableCommitResult {
   updatedText: string;
   /** 实际产生的 character.ensure 操作数。 */
   changed: number;
+  /** 改名在同一事务内同步迁移的台词 speaker 引用（共享层返回的机器可读证据）。 */
+  speakerMigrations: SpeakerMigrationImpact[];
 }
 
 const CONFIG_PATH = 'game.config.json';
@@ -136,17 +139,24 @@ function workingFilesStorage(record: ChangeRecord, base: EditorProjectStorage): 
   };
 }
 
-/** game.config.json 的浏览器写侧存储：读真盘（供 commitChange 做基线冲突检测），
- *  staging 在内存，替换/恢复经 File System Access 句柄写回。本轮只写既有 game.config.json。 */
-class GameConfigWriteStorage implements ProjectWriteStorage {
+/** 浏览器写侧存储：读真盘（供 commitChange 做基线冲突检测），staging 在内存，
+ *  替换/恢复经 File System Access 句柄写回。支持 game.config.json 与既有场景文件
+ *  （character.ensure 改名会在同一事务里同步迁移场景 speaker 令牌）。 */
+class EditorWriteStorage implements ProjectWriteStorage {
   readonly rootIdentity: string;
   private readonly staged = new Map<string, string>();
 
   constructor(
     private readonly base: EditorProjectStorage,
-    private readonly handle: FileSystemFileHandle,
+    private readonly gameConfigHandle: FileSystemFileHandle,
+    private readonly sceneHandles: Map<string, FileSystemFileHandle>,
   ) {
     this.rootIdentity = base.rootIdentity;
+  }
+
+  private handleFor(path: string): FileSystemFileHandle | undefined {
+    if (path === CONFIG_PATH) return this.gameConfigHandle;
+    return this.sceneHandles.get(path);
   }
 
   async listFiles(): Promise<string[]> {
@@ -154,14 +164,16 @@ class GameConfigWriteStorage implements ProjectWriteStorage {
   }
 
   async readText(filePath: string): Promise<ProjectFile> {
-    if (filePath !== CONFIG_PATH) return this.base.readText(filePath);
-    const text = await (await this.handle.getFile()).text();
+    const handle = this.handleFor(filePath);
+    if (handle === undefined) return this.base.readText(filePath);
+    const text = await (await handle.getFile()).text();
     return { path: filePath, text, bytes: bytesOf(text), sha256: await this.base.sha256(text) };
   }
 
   async exists(filePath: string): Promise<boolean> {
-    if (filePath !== CONFIG_PATH) return this.base.exists(filePath);
-    return true;
+    if (filePath === CONFIG_PATH) return true;
+    if (this.sceneHandles.has(filePath)) return true;
+    return this.base.exists(filePath);
   }
 
   async stageText(path: string, text: string, changeId: string): Promise<{ stagedIdentity: string; sha256: string }> {
@@ -171,14 +183,17 @@ class GameConfigWriteStorage implements ProjectWriteStorage {
   }
 
   async replaceFromStage(path: string, stagedIdentity: string): Promise<void> {
+    const handle = this.handleFor(path);
+    if (handle === undefined) throw new Error(`编辑器写侧不支持该文件：${path}`);
     const text = this.staged.get(stagedIdentity);
     if (text === undefined) throw new Error(`staged 内容不存在：${path}`);
-    await writeFileHandle(this.handle, text);
+    await writeFileHandle(handle, text);
   }
 
   async restoreText(path: string, originalText: string): Promise<void> {
-    if (path !== CONFIG_PATH) throw new Error(`编辑器写侧只支持 ${CONFIG_PATH}：${path}`);
-    await writeFileHandle(this.handle, originalText);
+    const handle = this.handleFor(path);
+    if (handle === undefined) throw new Error(`编辑器写侧不支持该文件：${path}`);
+    await writeFileHandle(handle, originalText);
   }
 
   async removeStage(stagedIdentity: string): Promise<void> {
@@ -215,6 +230,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   };
   let fingerprint = await charactersFingerprint(snapshot.config, base);
   let changed = 0;
+  const speakerMigrations: SpeakerMigrationImpact[] = [];
   for (const row of rows) {
     const baseline = baselineOf(row.id);
     if (baseline === undefined) {
@@ -233,10 +249,11 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     }, base);
     fingerprint = result.fingerprint;
     changed += 1;
+    if (result.speakerMigrations !== undefined) speakerMigrations.push(...result.speakerMigrations);
   }
   const workingText = session.record.workingFiles[CONFIG_PATH] ?? '';
   if (changed === 0) {
-    return { changeId: session.record.changeId, updatedText: workingText, changed: 0 };
+    return { changeId: session.record.changeId, updatedText: workingText, changed: 0, speakerMigrations };
   }
 
   // 共享校验门（与 CLI project.validate 同构）：对象索引 + 资产目录 + 快照校验，error 必须 = 0。
@@ -253,8 +270,18 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     throw new AuthoringOperationError('VALIDATION_FAILED', `角色表校验未通过：${errors[0]!.code} ${errors[0]!.text}`);
   }
 
-  await commitChange(session, new GameConfigWriteStorage(base, handle));
+  // 场景句柄映射：character.ensure 改名迁移会在同一事务内改写场景 speaker 令牌。
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) {
+    if (scene.handle !== null) sceneHandles.set(scenarioPath(scene), scene.handle);
+  }
+  await commitChange(session, new EditorWriteStorage(base, handle, sceneHandles));
   const updatedText = session.record.workingFiles[CONFIG_PATH]!;
   state.gameConfigText = updatedText;
-  return { changeId: session.record.changeId, updatedText, changed };
+  // 同步被迁移场景的 editor 内存态（磁盘已是新文本，内存不得停留旧 speaker）。
+  for (const scene of state.scenes.values()) {
+    const migrated = session.record.workingFiles[scenarioPath(scene)];
+    if (migrated !== undefined && migrated !== scene.text) scene.text = migrated;
+  }
+  return { changeId: session.record.changeId, updatedText, changed, speakerMigrations };
 }
