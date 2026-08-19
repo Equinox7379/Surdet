@@ -4,13 +4,14 @@
  * 结果按 seq 对齐，过期结果直接丢弃（校验永远以最新编辑快照为准）。
  */
 import { validateProject } from './validate.js';
-import type { SceneSource, ProjectConfig } from './validate.js';
+import type { SceneSource, ProjectConfig, TimelineSource } from './validate.js';
 
 interface ValidateRequest {
   seq: number;
   sources: SceneSource[];
   entryScene?: string;
   config?: ProjectConfig;
+  timelines?: TimelineSource[];
 }
 
 interface SceneEdge {
@@ -20,9 +21,9 @@ interface SceneEdge {
 }
 
 self.onmessage = (e: MessageEvent<ValidateRequest>) => {
-  const { seq, sources, entryScene, config } = e.data;
+  const { seq, sources, entryScene, config, timelines } = e.data;
   try {
-    const result = validateProject(sources, entryScene, config);
+    const result = validateProject(sources, entryScene, config, timelines ?? []);
     // 引用图谱在 Worker 内算好，只回传纯数据（structuredClone 友好）
     const edges: SceneEdge[] = [];
     for (const [sceneId, scene] of result.scenes) {

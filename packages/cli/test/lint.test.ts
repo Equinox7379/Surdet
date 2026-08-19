@@ -587,3 +587,46 @@ describe('lint hint（M5 支柱1：AI 自我修正闭环）', () => {
     expect(parsed.issues.every((i) => typeof i.code === 'string' && typeof i.text === 'string' && typeof i.hint === 'string')).toBe(true);
   });
 });
+
+/* ============ Reliability Phase 2C（A3）：lint 接入磁盘 timelines（complete scope） ============ */
+
+const lintIntroTimeline = JSON.stringify({
+  version: 1,
+  id: 'intro_cine',
+  durationMs: 900,
+  tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }],
+});
+const lintUnrelatedTimeline = lintIntroTimeline.replace('"intro_cine"', '"unrelated"');
+
+describe('lint timeline reference validation (Phase 2C)', () => {
+  it('L1: 0 个 timeline 文件 + @timeline ghost → TIMELINE_MISSING', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@scene a\n@timeline ghost_cine @ blocking\n凛：x\n@end\n`,
+    });
+    const r = lintProject(dir);
+    const missing = r.issues.find((i) => i.code === 'TIMELINE_MISSING');
+    expect(missing).toBeDefined();
+    expect(missing!.text).toContain("'ghost_cine'");
+    expect(r.ok).toBe(false);
+  });
+
+  it('L2: 磁盘存在合法 intro.json + @timeline intro → 不报 TIMELINE_MISSING', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@scene a\n@timeline intro_cine @ blocking\n凛：x\n@end\n`,
+      'content/timelines/intro_cine.json': lintIntroTimeline,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'TIMELINE_MISSING')).toBe(false);
+  });
+
+  it('L3: 加入无关 timeline 不改变 ghost 引用判定（count 独立）', () => {
+    const dir = makeProject({
+      'content/scenario/a.gal': `@scene a\n@timeline ghost_cine @ blocking\n凛：x\n@end\n`,
+      'content/timelines/unrelated.json': lintUnrelatedTimeline,
+    });
+    const r = lintProject(dir);
+    expect(r.issues.some((i) => i.code === 'TIMELINE_MISSING' && i.text.includes("'ghost_cine'"))).toBe(true);
+    // unrelated 自身 canonical（filename==id）且结构合法：不产生 identity/结构诊断。
+    expect(r.issues.some((i) => i.file.replace(/\\/g, '/').includes('content/timelines/unrelated.json') && i.severity === 'error')).toBe(false);
+  });
+});

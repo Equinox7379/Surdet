@@ -73,3 +73,47 @@ describe('validateProject', () => {
     expect(without.issues.some((i) => i.code === 'W001')).toBe(true);
   });
 });
+
+/* ============ Reliability Phase 2C（A3）：Editor 实时校验接入真实 timelines ============ */
+
+const introTimelineText = JSON.stringify({
+  version: 1,
+  id: 'intro_cine',
+  durationMs: 900,
+  tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }],
+});
+const tl = (id: string) => ({ path: `content/timelines/${id}.json`, text: introTimelineText.replace('"intro_cine"', `"${id}"`) });
+
+describe('timeline reference validation wiring (Phase 2C)', () => {
+  it('E1: 合法 timeline 存在于项目 timelines → 不报 TIMELINE_MISSING', () => {
+    const r = validateProject(
+      [sc('a', '@scene a\n@timeline intro_cine @ blocking\n凛：x\n@end')],
+      undefined,
+      undefined,
+      [tl('intro_cine')],
+    );
+    expect(r.issues.some((i) => i.code === 'TIMELINE_MISSING')).toBe(false);
+  });
+
+  it('E2: 引用不存在的 timeline → 报 TIMELINE_MISSING', () => {
+    const r = validateProject(
+      [sc('a', '@scene a\n@timeline ghost_cine @ blocking\n凛：x\n@end')],
+      undefined,
+      undefined,
+      [tl('intro_cine')],
+    );
+    const missing = r.issues.find((i) => i.code === 'TIMELINE_MISSING');
+    expect(missing).toBeDefined();
+    expect(missing!.text).toContain("'ghost_cine'");
+  });
+
+  it('E3: 项目无任何 timeline 文件且引用 ghost → 仍报 TIMELINE_MISSING（不依赖 count gate）', () => {
+    const r = validateProject(
+      [sc('a', '@scene a\n@timeline ghost_cine @ blocking\n凛：x\n@end')],
+      undefined,
+      undefined,
+      [],
+    );
+    expect(r.issues.some((i) => i.code === 'TIMELINE_MISSING' && i.text.includes("'ghost_cine'"))).toBe(true);
+  });
+});

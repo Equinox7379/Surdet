@@ -441,7 +441,7 @@ export class AuthoringService {
     const index = buildObjectIndex(context.snapshot);
     const assetPaths = assetPathsFromFiles(await context.storage.listFiles());
     const assetCatalog = buildAssetCatalog(assetPaths);
-    const validation = validateSnapshot(context.snapshot, index, { assetCatalog });
+    const validation = validateSnapshot(context.snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
     const evidence = validationEvidence(context.snapshot.revision, changeId, context.session.record.workingRevision, validation);
     await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
     await recordValidation(context.session, {

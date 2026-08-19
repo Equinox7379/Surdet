@@ -35,6 +35,14 @@ export interface ValidationOptions {
   failedScenes?: ReadonlySet<string>;
   /** 只读资源目录（project.inspect/assets 同源）；缺省时不执行资源引用检查。 */
   assetCatalog?: ProjectAssetCatalog;
+  /**
+   * Phase 2C（A3）：@timeline 引用完整性检查的显式 scope。
+   * - complete（默认）：snapshot 即完整项目，无论 timeline 文件数量都检查引用完整性。
+   * - partial：调用方明确声明 timeline catalog 不完整（如内联/局部校验），只跳过
+   *   “根据 absent 文件推断 TIMELINE_MISSING”；已提供文件的 JSON/结构/identity/asset
+   *   校验照常执行。不得用 timeline 数量隐式推断 scope。
+   */
+  timelineReferenceScope?: 'complete' | 'partial';
 }
 
 function isRecordLike(value: unknown): Record<string, unknown> | null {
@@ -295,10 +303,10 @@ export function validateSnapshot(
     if (conflict === null && diagnostics.length === 0) usableTimelineDefinitions.set(name, definition);
   }
 
-  // @timeline 指令的目标存在性（只有快照确实包含时间轴集合时才检查，避免 editor 内联校验误报）。
+  // @timeline 指令的目标存在性（Phase 2C：显式 scope，默认 complete——不得再用 timeline 数量猜 scope）。
   // 依据 parsedTimelineNames：结构非法但 parse 成功的文件仍视为存在（与 A1 修复前语义一致，
   // 其结构问题已由 T0xx error 单独报告）；parse 失败的文件名不在集合中（同样与修复前一致）。
-  if (snapshot.timelines.length > 0) {
+  if ((options.timelineReferenceScope ?? 'complete') === 'complete') {
     for (const scene of scenes.values()) {
       for (const instr of scene.instructions) {
         if (instr.op !== 'timeline') continue;
