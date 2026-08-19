@@ -297,3 +297,24 @@ WAVE_3_HUMAN_ACCEPTANCE_PENDING
 NOT_PUSHED_AFTER_STAGE_6_WAVE_3
 WAVE_4_NOT_STARTED
 ```
+
+### Speaker Token Safety Patch：F1/F2 收口（2026-08-19 +08:00）
+
+> Second Independent Review 对 a1effc9 裁决 APPROVED_WITH_REQUIRED_FIX 后的 Wave 3 final closure。F1（HIGH）：新 display name 在存在 speaker reference migration 时可能不是合法 Surdet speaker token（含空格/冒号/超 24 字符），迁移后台词 silently 退化为 narration 或错误 speaker；F2（同批）：旧 display name 带首尾空白时 object-index 按 trim 解析、migration 按原文匹配，漏迁移。
+
+- **基线核对**：施工前 HEAD=`4bda25caae68fd897539266c72b383d55aabaf1b`；`surdet/main=4169b75`；ahead/behind=`13 0`；工作树与暂存区干净。
+- **RED（先于生产代码）**：`config-operations.test.ts` 新增 7 个测试（F1-A 空格 / F1-B 尾空白 / F1-C 冒号 / F1-D 超 24 字符 / F1-E 无引用边界 / F2 padded 旧名 / F4 name==id 回归）。首次运行 exit=`1`：F1-A/B/C/D 全部 `promise resolved instead of rejecting`（非法 token 被静默迁移并写入 ledger 伪 impact），F2 场景漏迁移（`expected '@scene s1\n诺瓦：hello…' to contain '诺瓦测试：hello'`）；F1-E/F4 如预期绿（边界保护与既有 ID 路径行为）。
+- **实现（仅 @surdet/authoring，Editor/CLI 零改动自动受益）**：
+  - `scene-document.ts`：speaker token 语法提取为单一来源（`SPEAKER_TOKEN_SOURCE` 派生 `SPEAKER_RE` 与新 `isValidSpeakerToken(token)`——1..24 字符、不含空白与半/全角冒号、非纯数字，与 core lexer extractSpeaker 同规则；core 禁改，语法知识留在 authoring 解析层）。parser 与 rename 共享同一 grammar helper，无第二份 regex。
+  - `config-operations.ts`：F2——migration 的旧 token 改用 `existingName.trim()`（canonical form，与 object-index byName 契约一致），歧义检测/归属判定/行匹配全部走 canonical token，不格式化磁盘值；冲突比较同步改 trim 语义。F1——迁移前先零改动计数需迁移引用（referenceCount），>0 时验证 `isValidSpeakerToken(input.name)`，非法则 VALIDATION_FAILED fail-loud（零 mutation、无 ledger 记录）；referenceCount=0 时不施加 speaker 语法限制（"John Smith" 等普通人名 display name 合法——产品边界保持）。
+- **聚焦绿灯（真实运行，全部 exit 0）**：authoring 4 文件 37/37（27 config-operations 含 7 新 + avatars/index/validation 回归）；editor 3 文件 15/15（迁移/冲突/avatar 路径回归，验证共享层修复自动覆盖 Editor）；CLI 2 文件 3/3；typecheck×2、build×2 全绿。未运行 FORMAL E2E、整包测试、Electron。
+- **代码提交**：`1945b9e781f1f778fa9e6cd4b39f2a868ba1867a fix(authoring): validate renamed speaker tokens`（3 文件 +176/-16，`git diff --cached --check` exit=`0`，仅 authoring 两生产文件 + 测试）。
+- **停止状态**：
+
+```text
+WAVE_3_SPEAKER_TOKEN_SAFETY_COMMITTED_LOCALLY = 1945b9e
+WAITING_FOR_ARCHITECT_REVIEW
+WAVE_3_HUMAN_ACCEPTANCE_PENDING
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```

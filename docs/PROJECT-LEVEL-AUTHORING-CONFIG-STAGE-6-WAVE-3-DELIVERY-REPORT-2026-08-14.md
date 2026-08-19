@@ -217,3 +217,44 @@ WAVE_4_NOT_STARTED
 ```
 
 LOW findings F3（undo 可穿越成功角色保存）/ F4（冲突基线来自 Editor 内存）未处理，留待后续轮次。
+
+## 10. Speaker Token Safety Patch：F1/F2 收口（2026-08-19）
+
+Second Independent Review 对 a1effc9 裁决 APPROVED_WITH_REQUIRED_FIX；本节记录 Wave 3 final closure patch。
+
+### 10.1 根因与修复语义
+
+- **F1（HIGH，silent semantic drift）**：scene speaker parser 的 token 语法是 1..24 字符、不含空白与半/全角冒号、非纯数字（authoring `SPEAKER_RE` 与 core lexer `extractSpeaker` 同规则），但 `character.ensure` 对 display name 只校验非空——改名迁移时若新名字含空格（"John Smith"）、尾空白、冒号（"凛：里"）或超 24 字符，迁移产物会重新解析为 narration 或错误 speaker，而事务仍 validation green。
+- **F2**：object-index speaker 解析按 `name.trim()` 建 lookup，migration 旧名匹配用未 trim 的 `existingName`——历史 padded 名（" 诺瓦 "）的旧引用漏迁移。
+
+修复（仅 @surdet/authoring，Editor/CLI/Agent 经共享层自动获得）：
+
+1. `scene-document.ts` 新增 `isValidSpeakerToken(token)`，与 `SPEAKER_RE` 共用同一 `SPEAKER_TOKEN_SOURCE` 语法源——parser 与 rename 一条规则，无复制的 regex；
+2. F2：rename 的旧 token 判定统一为 `existingName.trim()`（canonical form），歧义检测、归属判定、台词行匹配与冲突比较全部与 object-index 契约一致；不格式化磁盘存量值；
+3. F1：迁移前先零改动扫描统计需迁移引用数（referenceCount）；>0 时验证 `isValidSpeakerToken(input.name)`，非法 → `VALIDATION_FAILED` fail-loud（明确提示：名字本身可存在，但无法用于迁移现存 display-name speaker 引用），零 mutation、零 ledger 记录；referenceCount=0 时不施加 speaker 语法限制——"John Smith" 等普通人名 display name 仍合法（产品边界）。
+
+### 10.2 RED → GREEN（真实运行）
+
+- RED：`npm run test -w @surdet/authoring -- test/config-operations.test.ts` exit=`1`——F1-A/B/C/D 非法 token 均被静默接受并产生伪 potentialImpact，F2 场景漏迁移；F1-E（无引用放行）与 F4（name==id 走 ID 路径不迁移）如预期绿。
+- GREEN（全部 exit 0）：authoring 37/37（7 新测试）；editor 15/15；CLI 3/3；typecheck/build ×2 全绿。
+- 未运行 FORMAL E2E、整包测试、Electron。
+
+### 10.3 提交
+
+```text
+1945b9e781f1f778fa9e6cd4b39f2a868ba1867a fix(authoring): validate renamed speaker tokens
+  packages/authoring/src/config-operations.ts       |  52 ++++++---
+  packages/authoring/src/scene-document.ts          |  10 +-
+  packages/authoring/test/config-operations.test.ts | 130 +++++++++++++++
+  3 files changed, 176 insertions(+), 16 deletions(-)
+```
+
+### 10.4 停止点
+
+```text
+WAVE_3_SPEAKER_TOKEN_SAFETY_COMMITTED_LOCALLY = 1945b9e
+WAITING_FOR_ARCHITECT_REVIEW
+WAVE_3_HUMAN_ACCEPTANCE_PENDING
+NOT_PUSHED_AFTER_STAGE_6_WAVE_3
+WAVE_4_NOT_STARTED
+```
