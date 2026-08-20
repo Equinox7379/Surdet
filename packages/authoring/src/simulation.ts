@@ -86,6 +86,14 @@ function cloneSnapshot(snapshot: SaveSnapshot): SaveSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as SaveSnapshot;
 }
 
+function simulationStateSignature(snapshot: SaveSnapshot): string {
+  return JSON.stringify([
+    snapshot.position,
+    snapshot.callStack ?? [],
+    snapshot.variables,
+  ]);
+}
+
 /**
  * 从项目快照构造真实 Core TimelineRegistry：headless 模拟 / 运行轨迹与 Editor Preview
  * 共享同一 timeline runtime truth。JSON 解析与 validation 输入契约一致（容忍 UTF-8 BOM）；
@@ -238,7 +246,7 @@ export function simulateSnapshot(
           finish(choices, 'failed', '无法为 choice 创建分支快照');
           return;
         }
-        const signature = JSON.stringify([base.position, store.snapshot()]);
+        const signature = simulationStateSignature(base);
         if (seenSignatures.has(signature)) {
           cyclesPruned++;
           recordPruned(choices, 'state-signature', 'pruned');
