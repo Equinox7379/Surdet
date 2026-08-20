@@ -4,7 +4,8 @@
   "description": "Surdet CLI: create, lint, build and pack galgame projects",
   "type": "module",
   "bin": {
-    "surdet": "./dist/index.js"
+    "surdet": "./dist/index.js",
+    "surdet-agent-port": "./dist/agent-port/main.js"
   },
   "files": [
     "dist",
