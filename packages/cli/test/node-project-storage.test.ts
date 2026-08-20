@@ -223,4 +223,38 @@ describe('NodeProjectStorage safe parent creation', () => {
       fs.rmSync(outside, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform === 'win32')(
+    'keeps complete old and staged bytes when a locked target blocks replacement',
+    { timeout: 10_000 },
+    async () => {
+      const root = createProjectRoot('surdet-node-storage-locked-replace-');
+      const target = path.join(root, 'game.config.json');
+      const oldText = fs.readFileSync(target, 'utf8');
+      const newText = '{"entryScene":"locked_probe","variables":{}}';
+      let locked: fs.promises.FileHandle | undefined;
+
+      try {
+        const storage = await NodeProjectStorage.open(root);
+        const staged = await storage.stageText('game.config.json', newText, 'chg_locked_replace');
+        locked = await fs.promises.open(target, 'r+');
+
+        await expect(storage.replaceFromStage('game.config.json', staged.stagedIdentity))
+          .rejects.toMatchObject({ code: 'EPERM' });
+
+        expect(fs.readFileSync(target, 'utf8')).toBe(oldText);
+        expect(fs.readFileSync(staged.stagedIdentity, 'utf8')).toBe(newText);
+
+        await locked.close();
+        locked = undefined;
+
+        await storage.replaceFromStage('game.config.json', staged.stagedIdentity);
+        expect(fs.readFileSync(target, 'utf8')).toBe(newText);
+        expect(fs.existsSync(staged.stagedIdentity)).toBe(false);
+      } finally {
+        await locked?.close().catch(() => undefined);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

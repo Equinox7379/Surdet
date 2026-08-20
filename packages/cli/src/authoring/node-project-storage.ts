@@ -7,6 +7,7 @@ import {
   type ProjectFile,
   type ProjectWriteStorage,
 } from '@surdet/authoring';
+import { replaceFileByRename } from './node-file-replacement.js';
 
 function sha256(value: Uint8Array | string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -216,14 +217,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   async replaceFromStage(relativePath: string, stagedIdentity: string): Promise<void> {
     const target = await this.assertSafeTarget(relativePath, true);
     const staged = await this.assertSafeStage(stagedIdentity);
-    try {
-      await fs.rename(staged, target);
-    } catch (error) {
-      // Windows 不允许 rename 覆盖现有文件；仍保持同目录、已校验暂存文件的替换边界。
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
-      await fs.copyFile(staged, target);
-      await fs.rm(staged, { force: true });
-    }
+    await replaceFileByRename(staged, target);
   }
 
   async restoreText(relativePath: string, originalText: string): Promise<void> {
