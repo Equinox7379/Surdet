@@ -2,6 +2,8 @@ import type {
   ChangeRecord,
   ChangeRepository,
   ChangeStatus,
+  ChangeIntentMetadata,
+  EvidenceFreshness,
   ProjectWriteStorage,
 } from './contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
@@ -86,7 +88,9 @@ export async function beginChange(
   snapshot: ProjectSnapshot,
   repository: ChangeRepository,
   storage?: ProjectWriteStorage,
+  intent?: ChangeIntentMetadata,
 ): Promise<ChangeSession> {
+  const boundedIntent = validateIntentMetadata(intent);
   changeSequence += 1;
   const baseFiles = Object.fromEntries(snapshot.files.map((file) => [file.path, { sha256: file.sha256 }]));
   const baseContents = Object.fromEntries(snapshot.files.map((file) => [file.path, file.text]));
@@ -102,9 +106,31 @@ export async function beginChange(
     baseContents,
     workingFiles: { ...baseContents },
     operations: {},
+    ...(boundedIntent === undefined ? {} : { intent: boundedIntent }),
   };
   await repository.create(record);
   return new ChangeSession(record, repository, storage);
+}
+
+function validateIntentMetadata(intent: ChangeIntentMetadata | undefined): ChangeIntentMetadata | undefined {
+  if (intent === undefined) return undefined;
+  if (intent.intent !== undefined && (typeof intent.intent !== 'string' || intent.intent.length > 2000)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', 'change intent 最长为 2,000 字符');
+  }
+  if (intent.acceptanceCriteria !== undefined) {
+    if (!Array.isArray(intent.acceptanceCriteria) || intent.acceptanceCriteria.length > 20
+      || intent.acceptanceCriteria.some((item) => typeof item !== 'string' || item.length > 500)) {
+      throw new AuthoringOperationError('INVALID_REQUEST', 'acceptanceCriteria 最多 20 项且每项最长 500 字符');
+    }
+  }
+  if (intent.initiator !== undefined && !['external-agent', 'human', 'automation'].includes(intent.initiator)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', 'initiator 不在允许的枚举内');
+  }
+  return {
+    ...(intent.intent === undefined ? {} : { intent: intent.intent }),
+    ...(intent.acceptanceCriteria === undefined ? {} : { acceptanceCriteria: [...intent.acceptanceCriteria] }),
+    ...(intent.initiator === undefined ? {} : { initiator: intent.initiator }),
+  };
 }
 
 export function openChange(
@@ -152,6 +178,67 @@ export async function runOperation<T>(
   await change.repository.write(next);
   Object.assign(change.record, next);
   return outcome.result;
+}
+
+export async function recordSimulationEvidence(
+  change: ChangeSession,
+  input: { evidenceId: string; status: 'passed' | 'failed' | 'incomplete' },
+): Promise<void> {
+  assertOpen(change);
+  const next = clone(change.record);
+  next.latestSimulation = {
+    evidenceId: input.evidenceId,
+    status: input.status,
+    workingRevision: change.record.workingRevision,
+  };
+  await change.repository.write(next);
+  Object.assign(change.record, next);
+}
+
+export async function recordRuntimeTrace(
+  change: ChangeSession,
+  input: { traceId: string; status: 'passed' },
+): Promise<void> {
+  assertOpen(change);
+  const next = clone(change.record);
+  next.runtimeTraces = [
+    ...(next.runtimeTraces ?? []).filter((trace) => trace.traceId !== input.traceId),
+    { traceId: input.traceId, status: input.status, workingRevision: change.record.workingRevision },
+  ];
+  await change.repository.write(next);
+  Object.assign(change.record, next);
+}
+
+export async function recordDiffEvidence(
+  change: ChangeSession,
+  input: { evidenceId: string },
+): Promise<void> {
+  assertOpen(change);
+  const next = clone(change.record);
+  next.latestDiff = {
+    evidenceId: input.evidenceId,
+    workingRevision: change.record.workingRevision,
+  };
+  await change.repository.write(next);
+  Object.assign(change.record, next);
+}
+
+export function evidenceFreshness(
+  evidence: { evidenceId?: string; workingRevision?: number; status?: 'passed' | 'failed' | 'incomplete'; errors?: number } | undefined,
+  currentWorkingRevision: number,
+): EvidenceFreshness {
+  if (evidence === undefined) return { status: 'missing', currentWorkingRevision };
+  const status = evidence.status === 'failed' || (evidence.errors ?? 0) > 0
+    ? 'failed'
+    : evidence.status === 'incomplete'
+      ? 'incomplete'
+      : evidence.workingRevision === currentWorkingRevision ? 'fresh' : 'stale';
+  return {
+    ...(evidence.evidenceId === undefined ? {} : { evidenceId: evidence.evidenceId }),
+    status,
+    ...(evidence.workingRevision === undefined ? {} : { workingRevision: evidence.workingRevision }),
+    currentWorkingRevision,
+  };
 }
 
 export async function recordValidation(
@@ -321,4 +408,10 @@ export async function commitChange(
   return { changeId: change.record.changeId, status: 'COMMITTED', files: paths };
 }
 
-export type { ChangeRecord, ChangeRepository, ChangeStatus } from './contracts.js';
+export type {
+  ChangeIntentMetadata,
+  ChangeRecord,
+  ChangeRepository,
+  ChangeStatus,
+  EvidenceFreshness,
+} from './contracts.js';

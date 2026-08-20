@@ -52,6 +52,19 @@ export interface AuthoringObject {
 
 export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
 
+export interface ChangeIntentMetadata {
+  intent?: string;
+  acceptanceCriteria?: string[];
+  initiator?: 'external-agent' | 'human' | 'automation';
+}
+
+export interface EvidenceFreshness {
+  evidenceId?: string;
+  status: 'missing' | 'fresh' | 'stale' | 'failed' | 'incomplete';
+  workingRevision?: number;
+  currentWorkingRevision?: number;
+}
+
 export interface ChangeRecord {
   changeId: string;
   projectRootIdentity: string;
@@ -63,6 +76,21 @@ export interface ChangeRecord {
   workingFiles: Record<string, string>;
   operations: Record<string, { requestHash: string; result: unknown }>;
   latestValidation?: { workingRevision: number; evidenceId: string; errors: number };
+  intent?: ChangeIntentMetadata;
+  latestSimulation?: {
+    workingRevision: number;
+    evidenceId: string;
+    status: 'passed' | 'failed' | 'incomplete';
+  };
+  runtimeTraces?: {
+    traceId: string;
+    workingRevision: number;
+    status: 'passed';
+  }[];
+  latestDiff?: {
+    workingRevision: number;
+    evidenceId: string;
+  };
 }
 
 export interface ChangeRepository {

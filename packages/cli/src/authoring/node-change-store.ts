@@ -3,13 +3,10 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { AuthoringOperationError, type ChangeRecord, type ChangeRepository } from '@surdet/authoring';
+import { projectIdentityFromRoot } from './project-identity.js';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function projectIdentity(rootIdentity: string): string {
-  return crypto.createHash('sha256').update(rootIdentity).digest('hex').slice(0, 32);
 }
 
 function safeId(value: string): string {
@@ -56,7 +53,7 @@ export class NodeChangeStore implements ChangeRepository {
 
   static async forProject(rootIdentity: string): Promise<NodeChangeStore> {
     const root = dataRoot();
-    const projectDirectory = path.join(root, projectIdentity(rootIdentity));
+    const projectDirectory = path.join(root, projectIdentityFromRoot(rootIdentity));
     await fs.mkdir(projectDirectory, { recursive: true });
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
   }
