@@ -1863,6 +1863,96 @@ NOT_PUSHED
 WAVE_5_NOT_STARTED
 ```
 
+### 2026-08-21 Task 0 fresh-gate revalidation
+
+```text
+TASK_0_REVALIDATION_TIME = 2026-08-21 02:17:57 +08:00
+TASK_0_AUTHORIZATION = OWNER_AUTHORIZED_WAVE_4_IMPLEMENTATION
+TASK_0_BRANCH = main
+TASK_0_HEAD = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+TASK_0_SURDET_MAIN = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+TASK_0_AHEAD_BEHIND = 0 0
+TASK_0_TRACKED_WORKTREE = CLEAN
+TASK_0_STAGING_AREA = EMPTY
+TASK_0_DIFF_CHECK = PASS
+TASK_0_CACHED_DIFF_CHECK = PASS
+TASK_0_TRACKED_LOG_FILES = NONE
+TASK_0_KNOWN_UNTRACKED_GOVERNANCE = PRESERVED
+TASK_0_ROADMAP_MODIFIED = NO
+TASK_0_PROTECTED_FILES_MODIFIED = NO
+TASK_0_SCOPE_EXPANSION = NO
+TASK_0_PUSH = NOT_AUTHORIZED
+TASK_0_MCP_SERVER_VERSION = 2.0.0
+TASK_0_MCP_CORE_VERSION = 2.0.0
+TASK_0_MCP_CLIENT_VERSION = 2.0.0
+TASK_0_MCP_LICENSES = MIT
+TASK_0_MCP_NODE_ENGINE = >=20
+TASK_0_OFFICIAL_STDIO_API = serveStdio_FACTORY_AND_STDERR_LOGGING_CONFIRMED
+TASK_0_OFFICIAL_TOOL_API = McpServer_REGISTER_TOOL_CONFIRMED
+TASK_0_OFFICIAL_CLIENT_API = Client_AND_StdioClientTransport_CONFIRMED
+TASK_0_CLIENT_DOC_REDIRECT = REQUESTED_docs/client.md_RETURNED_404_CURRENT_OFFICIAL_GUIDE_docs/clients/connect.md_READ
+TASK_0_AUTHORITY_READBACK = AGENTS_ROADMAP_DESIGN_TASKBOOK_WAVE3_REPORT_SOURCE_TEST_CONFIGS
+TASK_0_BASELINE_CONFIRMED = YES
+TASK_0_IMPLEMENTATION_STARTED = NO
+```
+
+Task 0 fresh evidence confirms the owner-supplied `f7ab58d... / 0/0` baseline. The historical planning snapshot above remains unchanged. The current official MCP client guide is under `docs/clients/connect.md`; it confirms `Client` with `StdioClientTransport` over the `@modelcontextprotocol/client/stdio` subpath after the requested historical `docs/client.md` URL returned 404. No source, test, roadmap, protected file, or long-term ledger was modified during this revalidation.
+
+### 2026-08-21 Task 1 capability registry result
+
+```text
+TASK_1_RED = npm run test -w @surdet/authoring -- capability-registry.test.ts ; EXIT_CODE=1 ; missing exports reproduced
+TASK_1_GREEN = npm run test -w @surdet/authoring -- capability-registry.test.ts ; EXIT_CODE=0 ; 3 tests passed
+TASK_1_TYPECHECK = npm run typecheck -w @surdet/authoring ; EXIT_CODE=0
+TASK_1_BUILD = npm run build -w @surdet/authoring ; EXIT_CODE=0
+TASK_1_COMMIT = 319be273ca5371d2402e6d6f32491ce71b4ef1ca
+TASK_1_COMMIT_PARENT = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+TASK_1_COMMIT_MESSAGE = feat(authoring): define agent capability registry
+TASK_1_COMMIT_FILES = 4_EXACT_FILES
+TASK_1_SCOPE = capability-contract_registry_index_test_only
+TASK_1_STATUS = PASS
+```
+
+Task 1 defines one protocol-independent 20-capability registry, strict object schemas, minimum policies, side effects, idempotency classes, error/repair metadata, examples, and deterministic native-to-MCP name mapping. No CLI, MCP dependency, project storage, or non-authoring production layer was modified.
+
+### 2026-08-21 Task 2 repairable envelope result
+
+```text
+TASK_2_RED = npm run test -w @surdet/authoring -- error-catalog.test.ts ; EXIT_CODE=1 ; missing error API reproduced
+TASK_2_GREEN = npm run test -w @surdet/authoring -- capability-registry.test.ts error-catalog.test.ts ; EXIT_CODE=0 ; 2 files / 6 tests passed
+TASK_2_TYPECHECK = npm run typecheck -w @surdet/authoring ; EXIT_CODE=0
+TASK_2_BUILD = npm run build -w @surdet/authoring ; EXIT_CODE=0
+TASK_2_COMMIT = 70b15d2894e4e3b14725f158bf49b492bc78efa7
+TASK_2_COMMIT_PARENT = 319be273ca5371d2402e6d6f32491ce71b4ef1ca
+TASK_2_COMMIT_MESSAGE = feat(authoring): define repairable agent envelopes
+TASK_2_COMMIT_FILES = 4_EXACT_CHANGED_FILES_WITHIN_TASK_ALLOWLIST
+TASK_2_SCOPE = shared_error_catalog_normalization_envelopes_only
+TASK_2_STATUS = PASS
+```
+
+Task 2 adds the complete error code catalog, deterministic category/retry/repair mappings, typed success/failure envelopes, and strict envelope JSON schema. Stale object errors repair through `object.inspect`; recovery failure is terminal/manual; legacy `retriable` and `action` fields are absent. No CLI dispatch or MCP dependency was changed.
+
+### 2026-08-21 Task 3 evidence and observe result
+
+```text
+TASK_3_RED_AUTHORING = npm run test -w @surdet/authoring -- change-session.test.ts ; EXIT_CODE=1 ; missing intent/evidence APIs reproduced
+TASK_3_RED_CLI = npm run test -w @surdet/cli -- authoring-observe-mode.test.ts ; EXIT_CODE=1 ; validateProject missing reproduced
+TASK_3_GREEN_AUTHORING = npm run test -w @surdet/authoring -- change-session.test.ts commit-recovery.test.ts ; EXIT_CODE=0 ; 2 files / 6 tests passed
+TASK_3_GREEN_AUTHORING_BUILD = npm run build -w @surdet/authoring ; EXIT_CODE=0
+TASK_3_GREEN_CLI = npm run test -w @surdet/cli -- authoring-observe-mode.test.ts authoring-vertical-slice.test.ts ; EXIT_CODE=0 ; 2 files / 2 tests passed
+TASK_3_AUTHORING_TYPECHECK = npm run typecheck -w @surdet/authoring ; EXIT_CODE=0
+TASK_3_CLI_TYPECHECK = npm run typecheck -w @surdet/cli ; EXIT_CODE=0
+TASK_3_CLI_BUILD = npm run build -w @surdet/cli ; EXIT_CODE=0
+TASK_3_COMMIT = 4112169f3c941f04c085b733eef2c17bdfe09deb
+TASK_3_COMMIT_PARENT = 70b15d2894e4e3b14725f158bf49b492bc78efa7
+TASK_3_COMMIT_MESSAGE = feat(authoring): preserve agent change evidence
+TASK_3_COMMIT_FILES = 7_EXACT_FILES
+TASK_3_SCOPE = authoring_change_metadata_evidence_freshness_cli_observe_only
+TASK_3_STATUS = PASS
+```
+
+Task 3 persists bounded intent outside project contents, records simulation/runtime/diff freshness without advancing the working revision, exposes a stable project identity derived from the canonical root identity, and provides true project-level validate/simulate paths that do not create or write a change. Active changes report base `projectRevision` plus independent `workingSnapshotRevision`; mutation remains isolated from project disk. No MCP dependency, Core/Renderer/Host/Shell/Editor/Starter/Zero production code was modified.
+
 不得自行进入 Task 11；由总经理/Architect/小衡复审两类提交、关键 diff 与 artifact。
 
 ---
@@ -2134,4 +2224,279 @@ WAITING_FOR_OWNER_IMPLEMENTATION_AUTHORIZATION
 NO_PRODUCTION_CODE_CHANGED_BY_TASKBOOK_AUTHORING
 NOT_PUSHED_AFTER_WAVE_4_DESIGN
 WAVE_5_NOT_STARTED
+```
+
+### 2026-08-21 Task 4 evidence and native CLI contract migration
+
+```text
+TASK_4_EXECUTION_TIME = 2026-08-21 02:51:58 +08:00
+TASK_4_RED = PASS
+TASK_4_RED_COMMAND = npm run build -w @surdet/authoring; npm run build -w @surdet/cli; npm run test -w @surdet/cli -- authoring-contract.test.ts authoring-presentation-wave2.test.ts authoring-project-config-wave3.test.ts
+TASK_4_RED_EXIT = 1
+TASK_4_RED_EVIDENCE = legacy capability string/envelope assertions failed; unknown input fields were accepted before dispatcher/schema migration
+TASK_4_GREEN_FOCUSED_COMMAND = npm run test -w @surdet/cli -- authoring-contract.test.ts authoring-presentation-wave2.test.ts authoring-project-config-wave3.test.ts authoring-vertical-slice.test.ts
+TASK_4_GREEN_FOCUSED_EXIT = 0
+TASK_4_GREEN_FOCUSED_RESULT = 4 files / 14 tests passed
+TASK_4_TYPECHECK_COMMAND = npm run typecheck -w @surdet/cli
+TASK_4_TYPECHECK_EXIT = 0
+TASK_4_BUILD_COMMAND = npm run build -w @surdet/cli
+TASK_4_BUILD_EXIT = 0
+TASK_4_FULL_CLI_COMMAND = npm run test -w @surdet/cli
+TASK_4_FULL_CLI_INITIAL_EXIT = 1
+TASK_4_FULL_CLI_INITIAL_FAILURE = stale packages/cli/test/change-isolation.test.ts assertion expected removed error.retriable=false
+TASK_4_CONTRACT_SYNC_COMMIT = e879ad7
+TASK_4_CONTRACT_SYNC_SCOPE = packages/cli/test/change-isolation.test.ts only; retryDisposition=manual-recovery and no retriable field
+TASK_4_CONTRACT_SYNC_RETEST = npm run test -w @surdet/cli -- change-isolation.test.ts; exit 0; 6 tests passed
+TASK_4_FULL_CLI_FINAL_EXIT = 0
+TASK_4_FULL_CLI_FINAL_RESULT = 16 files / 141 tests passed
+TASK_4_SCOPE = shared dispatcher, MCP v2 JSON Schema adapter, native CLI envelope/registry migration, exact MCP dependencies, contract test migration
+TASK_4_PROJECT_ROOT_CONTEXT = injected by dispatcher; rejected from payload schema
+TASK_4_SHARED_DISPATCHER = PASS
+TASK_4_SHARED_SCHEMA_VALIDATOR = PASS
+TASK_4_SHARED_ENVELOPE = PASS
+TASK_4_UNKNOWN_INPUT_REJECTION = PASS
+TASK_4_NO_CLI_PRIVATE_ERROR_CATALOG = PASS
+TASK_4_MCP_DEPENDENCIES = @modelcontextprotocol/core@2.0.0,@modelcontextprotocol/server@2.0.0 dependencies; @modelcontextprotocol/client@2.0.0 devDependency
+TASK_4_CODE_COMMIT = 04c5392
+TASK_4_CODE_COMMIT_PARENT = e879ad7
+TASK_4_CODE_COMMIT_MESSAGE = refactor(cli): share agent authoring contract
+TASK_4_CODE_COMMIT_SCOPE = package-lock.json; packages/cli/package.json; packages/cli/src/authoring-command.ts; packages/cli/src/authoring/authoring-dispatcher.ts; packages/cli/src/authoring/authoring-service.ts; packages/cli/src/authoring/schema-validator.ts; packages/cli/test/authoring-contract.test.ts; packages/cli/test/authoring-presentation-wave2.test.ts; packages/cli/test/authoring-project-config-wave3.test.ts
+TASK_4_PUSH = NOT_AUTHORIZED
+TASK_4_ROADMAP_MODIFIED = NO
+TASK_4_FORBIDDEN_PRODUCTION_FILES_MODIFIED = NO
+TASK_4_NEXT = TASK_5_SINGLE_PROJECT_SESSION_POLICY_RESUME
+```
+
+### 2026-08-21 Task 5 evidence and session policy/resume contract
+
+```text
+TASK_5_EXECUTION_TIME = 2026-08-21 03:00:31 +08:00
+TASK_5_RED = PASS
+TASK_5_RED_COMMAND = npm run test -w @surdet/cli -- agent-port-session.test.ts
+TASK_5_RED_EXIT = 1
+TASK_5_RED_EVIDENCE = agent-port/session.ts did not exist; independent session contract suite could not load the implementation
+TASK_5_GREEN_FOCUSED_COMMAND = npm run test -w @surdet/cli -- agent-port-session.test.ts
+TASK_5_GREEN_FOCUSED_EXIT = 0
+TASK_5_GREEN_FOCUSED_RESULT = 1 file / 8 tests passed
+TASK_5_STORAGE_REGRESSION_COMMAND = npm run test -w @surdet/cli -- agent-port-session.test.ts node-project-storage.test.ts change-isolation.test.ts
+TASK_5_STORAGE_REGRESSION_EXIT = 0
+TASK_5_STORAGE_REGRESSION_RESULT = 3 files / 20 tests passed
+TASK_5_TYPECHECK_COMMAND = npm run typecheck -w @surdet/cli
+TASK_5_TYPECHECK_EXIT = 0
+TASK_5_BUILD_COMMAND = npm run build -w @surdet/cli
+TASK_5_BUILD_EXIT = 0
+TASK_5_ARGUMENT_PARSER = PASS
+TASK_5_POLICY_MATRIX = PASS
+TASK_5_SINGLE_PROJECT_BINDING = PASS
+TASK_5_CONTEXT_INJECTION_REJECTION = PASS
+TASK_5_OBSERVE_NO_MUTATION = PASS
+TASK_5_STAGE_COMMIT_BLOCK = PASS
+TASK_5_APPLY_NO_HIDDEN_CHANGE = PASS
+TASK_5_RESUME_OWNERSHIP = PASS
+TASK_5_ONE_ACTIVE_CHANGE = PASS
+TASK_5_CLOSE_PRESERVES_OPEN = PASS
+TASK_5_OWNED_CHANGE_LOOKUP = PASS
+TASK_5_CONTRACT_SYNC_COMMIT = e879ad7
+TASK_5_ERROR_MAPPING_COMMIT = 40a8a9d
+TASK_5_CODE_COMMIT = 3eedfdb
+TASK_5_CODE_COMMIT_PARENT = 40a8a9d
+TASK_5_CODE_COMMIT_MESSAGE = feat(cli): bind agent port sessions
+TASK_5_CODE_COMMIT_SCOPE = packages/cli/src/agent-port/args.ts; packages/cli/src/agent-port/policy.ts; packages/cli/src/agent-port/session.ts; packages/cli/src/authoring/node-change-store.ts; packages/cli/test/agent-port-session.test.ts
+TASK_5_PUSH = NOT_AUTHORIZED
+TASK_5_ROADMAP_MODIFIED = NO
+TASK_5_FORBIDDEN_PRODUCTION_FILES_MODIFIED = NO
+TASK_5_NEXT = TASK_6_MCP_STDIO_TOOL_PROJECTION
+```
+
+### 2026-08-21 Task 6 evidence and MCP stdio tool projection
+
+```text
+TASK_6_EXECUTION_TIME = 2026-08-21 03:06:55 +08:00
+TASK_6_RED = PASS
+TASK_6_RED_COMMAND = npm run test -w @surdet/cli -- agent-port-tools.test.ts
+TASK_6_RED_EXIT = 1
+TASK_6_RED_EVIDENCE = agent-port/server.ts did not exist; typed MCP projection suite could not load the implementation
+TASK_6_GREEN_FOCUSED_COMMAND = npm run test -w @surdet/cli -- agent-port-tools.test.ts agent-port-session.test.ts
+TASK_6_GREEN_FOCUSED_EXIT = 0
+TASK_6_GREEN_FOCUSED_RESULT = 2 files / 13 tests passed
+TASK_6_TYPECHECK_COMMAND = npm run typecheck -w @surdet/cli
+TASK_6_TYPECHECK_EXIT = 0
+TASK_6_BUILD_COMMAND = npm run build -w @surdet/cli
+TASK_6_BUILD_EXIT = 0
+TASK_6_POLICY_TOOL_COUNTS = observe=allowedCapabilitiesForPolicy(observe)+session; stage=allowedCapabilitiesForPolicy(stage)+session; apply=21
+TASK_6_TYPED_PROJECTION = PASS
+TASK_6_OUTPUT_SCHEMA = FULL_ENVELOPE_SCHEMA_FROM_CREATE_ENVELOPE_JSON_SCHEMA
+TASK_6_ANNOTATIONS = PASS
+TASK_6_DOMAIN_FAILURE = isError=true_and_structuredContent_failure_envelope_PASS
+TASK_6_PROTOCOL_FAILURE = unknown_tool_rejected_as_protocol_error_PASS
+TASK_6_INVALID_POLICY_SMOKE_STATUS = 1
+TASK_6_INVALID_POLICY_SMOKE_STDOUT = EMPTY
+TASK_6_INVALID_POLICY_SMOKE_STDERR = Surdet Agent Port failed: INVALID_REQUEST
+TASK_6_REAL_STDIO_CLIENT = @modelcontextprotocol/client Client+StdioClientTransport
+TASK_6_REAL_STDIO_INITIALIZE_TOOLS_LIST = PASS
+TASK_6_REAL_STDIO_TOOL_COUNT = 21
+TASK_6_REAL_STDIO_UNIQUE_TOOL_NAMES = PASS
+TASK_6_REAL_STDIO_STDOUT_PROTOCOL_PURITY = PASS
+TASK_6_REAL_STDIO_READY_BANNER = STDERR_ONLY
+TASK_6_SCOPE = typed tool projection, policy-filtered MCP server, legacy reject stdio entry, second CLI bin, protocol/security regressions
+TASK_6_CODE_COMMIT = 108d9ab
+TASK_6_CODE_COMMIT_PARENT = 3eedfdb
+TASK_6_CODE_COMMIT_MESSAGE = feat(cli): expose typed MCP agent tools
+TASK_6_CODE_COMMIT_SCOPE = packages/cli/package.json; packages/cli/src/agent-port/main.ts; packages/cli/src/agent-port/server.ts; packages/cli/src/agent-port/tool-projection.ts; packages/cli/test/agent-port-tools.test.ts
+TASK_6_PUSH = NOT_AUTHORIZED
+TASK_6_ROADMAP_MODIFIED = NO
+TASK_6_FORBIDDEN_PRODUCTION_FILES_MODIFIED = NO
+TASK_6_NEXT = TASK_7_INVOCATION_LEDGER_AND_DELIVERY_CAPSULE
+```
+
+### 2026-08-21 Task 7 evidence and invocation ledger / delivery capsule
+
+```text
+TASK_7_EXECUTION_TIME = 2026-08-21 03:20:10 +08:00
+TASK_7_RED = PASS
+TASK_7_RED_COMMAND = npm run test -w @surdet/cli -- agent-port-capsule.test.ts
+TASK_7_RED_EXIT = 1
+TASK_7_RED_EVIDENCE = delivery-capsule module did not exist; capsule suite failed during module loading before any test ran
+TASK_7_GREEN_FOCUSED_COMMAND = npm run test -w @surdet/cli -- agent-port-capsule.test.ts agent-port-session.test.ts agent-port-tools.test.ts
+TASK_7_GREEN_FOCUSED_EXIT = 0
+TASK_7_GREEN_FOCUSED_RESULT = 3 files / 18 tests passed
+TASK_7_CAPSULE_TESTS = 5 passed; failure retention, OPEN stage, committed apply resume, stale evidence freshness, immutable/disk identity
+TASK_7_TYPECHECK_COMMAND = npm run typecheck -w @surdet/cli
+TASK_7_TYPECHECK_EXIT = 0
+TASK_7_BUILD_COMMAND = npm run build -w @surdet/cli
+TASK_7_BUILD_EXIT = 0
+TASK_7_DIFF_CHECK = git diff --check; exit 0
+TASK_7_CACHED_DIFF_CHECK = git diff --cached --check; exit 0 before commit
+TASK_7_INVOCATION_LEDGER = independent JSON records with monotonic sequence + UUID; stableStringify(input) SHA-256 only; failed calls retained; no raw input/text/prompt
+TASK_7_CAPSULE_STORAGE = payload.json plus identity.json; temporary write + atomic rename; disk reread bytes/SHA-256 identity
+TASK_7_CAPSULE_DERIVATION = PASS; transaction, invocation, evidence, diff, trace and latest journal are read from project-external change storage
+TASK_7_PROJECT_MUTATION_CONTRACT = OPEN stage occurred=false and before=after; committed apply occurred=true with changed revision; empty change warning retained
+TASK_7_EVIDENCE_FRESHNESS = PASS; validation/simulation/runtime/diff report stale after later mutation without deleting prior evidence
+TASK_7_MCP_CAPSULE_TOOL = PASS; stage=21 tools, apply=22 tools, unresumed observe excludes capsule; stage call returned structured immutable artifact identity
+TASK_7_CODE_COMMIT = 58e6804b10c52388365da539ca1e2e7b79c5ec01
+TASK_7_CODE_COMMIT_PARENT = 108d9abf4b393dae11bae2a74b54b3874ff21e40
+TASK_7_CODE_COMMIT_MESSAGE = feat(cli): seal agent delivery capsules
+TASK_7_CODE_COMMIT_SCOPE = packages/cli/src/agent-port/invocation-ledger.ts; packages/cli/src/agent-port/delivery-capsule.ts; packages/cli/src/agent-port/session.ts; packages/cli/src/agent-port/server.ts; packages/cli/src/authoring/node-change-store.ts; packages/cli/test/agent-port-capsule.test.ts; packages/cli/test/agent-port-tools.test.ts
+TASK_7_PUSH = NOT_AUTHORIZED
+TASK_7_ROADMAP_MODIFIED = NO
+TASK_7_FORBIDDEN_PRODUCTION_FILES_MODIFIED = NO
+TASK_7_NEXT = TASK_8_SECURITY_COUNTERTESTS
+```
+
+### 2026-08-21 Task 8 evidence and security countertests
+
+```text
+TASK_8_EXECUTION_TIME = 2026-08-21 03:27:22 +08:00
+TASK_8_RED = PASS
+TASK_8_RED_COMMAND = npm run test -w @surdet/cli -- agent-port-security.test.ts
+TASK_8_RED_EXIT = 1
+TASK_8_RED_EVIDENCE = security test file did not exist; the new security suite could not load
+TASK_8_POLICY_NEGATIVE_CONTROL = PASS
+TASK_8_POLICY_NEGATIVE_CONTROL_ACTION = temporarily changed session policy gate to false && isCapabilityAllowed; restored immediately with apply_patch
+TASK_8_POLICY_NEGATIVE_CONTROL_COMMAND = npm run test -w @surdet/cli -- agent-port-security.test.ts -t "rejects observe begin"
+TASK_8_POLICY_NEGATIVE_CONTROL_EXIT = 1
+TASK_8_POLICY_NEGATIVE_CONTROL_EVIDENCE = observe change.begin returned success and the rejection assertion failed
+TASK_8_SECURITY_GREEN_COMMAND = npm run test -w @surdet/cli -- agent-port-security.test.ts
+TASK_8_SECURITY_GREEN_EXIT = 0
+TASK_8_SECURITY_GREEN_RESULT = 1 file / 12 tests passed
+TASK_8_FOCUSED_REGRESSION_COMMAND = npm run test -w @surdet/cli -- agent-port-security.test.ts agent-port-session.test.ts agent-port-tools.test.ts agent-port-capsule.test.ts
+TASK_8_FOCUSED_REGRESSION_EXIT = 0
+TASK_8_FOCUSED_REGRESSION_RESULT = 4 files / 30 tests passed
+TASK_8_FULL_CLI_COMMAND = npm run test -w @surdet/cli
+TASK_8_FULL_CLI_EXIT = 0
+TASK_8_FULL_CLI_RESULT = 20 files / 171 tests passed
+TASK_8_TYPECHECK_COMMAND = npm run typecheck -w @surdet/cli
+TASK_8_TYPECHECK_EXIT = 0
+TASK_8_BUILD_COMMAND = npm run build -w @surdet/cli
+TASK_8_BUILD_EXIT = 0
+TASK_8_BOUNDARY_COVERAGE = policy/state gates; payload context/path/extra rejection; project ownership; terminal change resume; operationId conflict; external project stale; recovery-failed no retry; stdout purity; SIGINT/SIGTERM child cleanup
+TASK_8_PRODUCTION_FILES_MODIFIED = NO
+TASK_8_CODE_COMMIT = 873c4615ac19e4a950cb4f68ac4c9821e4d057c7
+TASK_8_CODE_COMMIT_PARENT = 58e6804b10c52388365da539ca1e2e7b79c5ec01
+TASK_8_CODE_COMMIT_MESSAGE = test(cli): enforce agent port boundaries
+TASK_8_CODE_COMMIT_SCOPE = packages/cli/test/agent-port-security.test.ts
+TASK_8_PUSH = NOT_AUTHORIZED
+TASK_8_ROADMAP_MODIFIED = NO
+TASK_8_FORBIDDEN_PRODUCTION_FILES_MODIFIED = NO
+TASK_8_NEXT = TASK_9_DETERMINISTIC_REAL_STDIO_RUNNER
+```
+
+### 2026-08-21 Task 9/10 deterministic runner evidence and bounded diagnostic stop
+
+```text
+TASK_9_EXECUTION_TIME = 2026-08-21 03:41:51 +08:00
+TASK_9_STATIC_RED = PASS
+TASK_9_STATIC_RED_COMMAND = node --check packages/cli/e2e/agent-port-wave-4.e2e.mjs; node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode preflight
+TASK_9_STATIC_RED_EXIT = 1
+TASK_9_STATIC_RED_EVIDENCE = initial runner skeleton rejected preflight as not implemented
+TASK_9_PROTOCOL_NEGOTIATION_REPAIR = PASS
+TASK_9_PROTOCOL_NEGOTIATION_EVIDENCE = official Client v2 auto negotiation required because the real launcher serves legacy=reject
+TASK_9_FOCUSED_AUTHORING_COMMAND = npm run test -w @surdet/authoring
+TASK_9_FOCUSED_AUTHORING_EXIT = 0
+TASK_9_FOCUSED_AUTHORING_RESULT = 22 files / 132 tests passed
+TASK_9_FOCUSED_CLI_COMMAND = npm run test -w @surdet/cli
+TASK_9_FOCUSED_CLI_EXIT = 0
+TASK_9_FOCUSED_CLI_RESULT = 20 files / 171 tests passed
+TASK_9_TYPECHECK_AUTHORING_EXIT = 0
+TASK_9_TYPECHECK_CLI_EXIT = 0
+TASK_9_BUILD_AUTHORING_EXIT = 0
+TASK_9_BUILD_CLI_EXIT = 0
+TASK_9_PREFLIGHT_COMMAND = node --check packages/cli/e2e/agent-port-wave-4.e2e.mjs; node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode preflight
+TASK_9_PREFLIGHT_EXIT = 0
+TASK_9_PREFLIGHT_RESULT = launcher/initialize/tools-list/read-only inspect/stdout purity/child cleanup PASS
+TASK_9_RUNNER_COMMIT = 6107a3fe48de9dd619d10f8871d47e78f899a620
+TASK_9_RUNNER_COMMIT_PARENT = 873c4615ac19e4a950cb4f68ac4c9821e4d057c7
+TASK_9_RUNNER_COMMIT_SCOPE = packages/cli/e2e/agent-port-wave-4.e2e.mjs only
+TASK_9_PUSH = NOT_AUTHORIZED
+
+TASK_10_FINAL_FOCUSED_RERUN_EXIT = 0
+TASK_10_VERIFY_ALL_COMMAND = npm run verify:all
+TASK_10_VERIFY_ALL_EXIT = 0
+TASK_10_VERIFY_ALL_RUN_COUNT = 1
+TASK_10_DIAGNOSTIC_ATTEMPT_1_RUN_HEAD = 6107a3fe48de9dd619d10f8871d47e78f899a620
+TASK_10_DIAGNOSTIC_ATTEMPT_1_EXIT = 1
+TASK_10_DIAGNOSTIC_ATTEMPT_1_FIRST_FAILED_NODE = stage-connect-and-discover / surdet_capabilities_describe
+TASK_10_DIAGNOSTIC_ATTEMPT_1_FAILURE = MCP output schema rejected registry metadata JSON Schema and mcpTool; no structuredContent
+TASK_10_DIAGNOSTIC_ATTEMPT_1_ARTIFACT = E:\surdet\packages\cli\e2e\artifacts\agent-port-wave-4-diagnostic-Wdr0lC\evidence.json
+TASK_10_DIAGNOSTIC_ATTEMPT_1_ARTIFACT_BYTES = 740
+TASK_10_DIAGNOSTIC_ATTEMPT_1_ARTIFACT_SHA256 = 16E809B9FD2F0CA0277FE822297D281422C5B7FEDCFB53628F5CF11537D090
+TASK_10_DIAGNOSTIC_ATTEMPT_1_IDENTITY_READBACK = PASS
+TASK_10_DIAGNOSTIC_ATTEMPT_1_REPAIR_COMMIT = ca1ab808faee0e25b3c51dd44565ca9935d49d3b
+TASK_10_DIAGNOSTIC_ATTEMPT_1_REPAIR_SCOPE = packages/authoring/src/capability-registry.ts; packages/cli/test/agent-port-tools.test.ts
+TASK_10_DIAGNOSTIC_ATTEMPT_1_REPAIR_VERIFICATION = focused MCP tools 5 tests PASS; authoring test/typecheck/build and CLI typecheck/build exit 0
+
+TASK_10_DIAGNOSTIC_ATTEMPT_2_RUN_HEAD = ca1ab808faee0e25b3c51dd44565ca9935d49d3b
+TASK_10_DIAGNOSTIC_ATTEMPT_2_EXIT = 1
+TASK_10_DIAGNOSTIC_ATTEMPT_2_FIRST_FAILED_NODE = stage-connect-and-discover / surdet_object_inspect timeline
+TASK_10_DIAGNOSTIC_ATTEMPT_2_FAILURE = MCP output schema rejected nested timeline details; no structuredContent
+TASK_10_DIAGNOSTIC_ATTEMPT_2_ARTIFACT = E:\surdet\packages\cli\e2e\artifacts\agent-port-wave-4-diagnostic-vC7Diz\evidence.json
+TASK_10_DIAGNOSTIC_ATTEMPT_2_ARTIFACT_BYTES = 726
+TASK_10_DIAGNOSTIC_ATTEMPT_2_ARTIFACT_SHA256 = BB924C244502C72A20D6267237BC4DE36E7CEFECA9F33E9CBCEE5823BE3B610B
+TASK_10_DIAGNOSTIC_ATTEMPT_2_IDENTITY_READBACK = PASS
+TASK_10_DIAGNOSTIC_ATTEMPT_2_REPAIR_COMMIT = 0a712640f600c0955579144f045668e822e39896
+TASK_10_DIAGNOSTIC_ATTEMPT_2_REPAIR_SCOPE = packages/authoring/src/capability-registry.ts; packages/cli/test/agent-port-tools.test.ts
+TASK_10_DIAGNOSTIC_ATTEMPT_2_REPAIR_VERIFICATION = focused MCP tools 6 tests PASS; authoring test/typecheck and CLI typecheck/build exit 0
+
+TASK_10_DIAGNOSTIC_ATTEMPT_3_RUN_HEAD = 0a712640f600c0955579144f045668e822e39896
+TASK_10_DIAGNOSTIC_ATTEMPT_3_EXIT = 1
+TASK_10_DIAGNOSTIC_ATTEMPT_3_FIRST_FAILED_NODE = stage-connect-and-discover / surdet_object_inspect config:entryScene
+TASK_10_DIAGNOSTIC_ATTEMPT_3_FAILURE = MCP output schema still requires object details, while config:entryScene details is a scalar string
+TASK_10_DIAGNOSTIC_ATTEMPT_3_ARTIFACT = E:\surdet\packages\cli\e2e\artifacts\agent-port-wave-4-diagnostic-giII4f\evidence.json
+TASK_10_DIAGNOSTIC_ATTEMPT_3_ARTIFACT_BYTES = 726
+TASK_10_DIAGNOSTIC_ATTEMPT_3_ARTIFACT_SHA256 = A205F9BC2A2E6A78EBF8DE5120A58C08901826E6C564791089FC9BFE450D354B
+TASK_10_DIAGNOSTIC_ATTEMPT_3_IDENTITY_READBACK = PASS
+TASK_10_DIAGNOSTIC_BUDGET = 3
+TASK_10_DIAGNOSTIC_BUDGET_USED = 3
+TASK_10_FORMAL = NOT_STARTED
+TASK_10_FORMAL_REASON = third DIAGNOSTIC failed; taskbook requires stop and forbids FORMAL rerun/continuation
+TASK_10_PRODUCTION_AFTER_THIRD_DIAGNOSTIC = NO_CHANGE
+TASK_10_LAST_CODE_EVIDENCE_HEAD = 0a712640f600c0955579144f045668e822e39896
+TASK_10_REMOTE_MAIN = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+TASK_10_AHEAD_BEHIND = 13/0
+TASK_10_UNRELATED_TRACKED_CHANGES = NO
+TASK_10_PROTECTED_UNTRACKED_GOVERNANCE = PRESERVED_NOT_STAGED
+TASK_10_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+TASK_10_STATUS = BLOCKED_AT_DIAGNOSTIC_BUDGET_EXHAUSTED
+TASK_10_PUSH = NOT_AUTHORIZED
+TASK_10_WAVE_5 = NOT_STARTED
 ```
