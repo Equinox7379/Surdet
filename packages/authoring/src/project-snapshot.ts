@@ -1,4 +1,5 @@
 import { compileScene, type CompiledScene, type GrowthConfig } from '@surdet/core';
+import { parseProjectConfigDocument } from './config-document.js';
 import { parseSceneDocument } from './scene-document.js';
 import type { SceneDocumentLine } from './contracts.js';
 import type { ProjectFile, ProjectStorage, TextHasher } from './project-storage.js';
@@ -48,8 +49,7 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const growthFile = canonicalFiles.find((file) => file.path === 'content/config/growth.json') ?? null;
   let config: Record<string, unknown> = {};
   if (configFile !== null && configFile.text.trim().length > 0) {
-    const parsed: unknown = JSON.parse(configFile.text);
-    config = asRecord(parsed);
+    config = parseProjectConfigDocument(configFile.text);
   }
   const growthConfig = growthFile === null || growthFile.text.trim().length === 0
     ? null

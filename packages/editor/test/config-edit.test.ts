@@ -47,6 +47,12 @@ describe('变量表 ⇄ JSON', () => {
     expect(text).toContain('\n  "title"'); // 2 空格缩进
   });
 
+  it('applyVariablesToConfig rejects a non-object top-level config', () => {
+    expect(() => applyVariablesToConfig('[]', {
+      route: { type: 'string', initial: '' },
+    })).toThrow(/game\.config\.json.*JSON 对象/);
+  });
+
   it('非法输入被校验拦截：重复名/坏 initial/min>max/坏类型', () => {
     const { errors } = rowsToVariables([
       { name: 'a', type: 'number', initial: '1', min: '', max: '', readonly: false, description: '' },

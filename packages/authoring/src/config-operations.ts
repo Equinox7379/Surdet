@@ -4,6 +4,7 @@ import {
   stableStringify,
   type ChangeSession,
 } from './change-session.js';
+import { parseProjectConfigDocument } from './config-document.js';
 import type {
   CharacterEnsureInput,
   CharacterRemoveInput,
@@ -18,17 +19,6 @@ const CONFIG_PATH = 'game.config.json';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseConfig(text: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
-  } catch (error) {
-    throw new AuthoringOperationError('PROJECT_INVALID', `game.config.json 解析失败：${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!isRecord(parsed)) throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json 必须是 JSON 对象');
-  return parsed;
 }
 
 function serializeConfig(config: Record<string, unknown>): string {
@@ -125,7 +115,7 @@ export async function applyCharacterEnsure(
       throw new AuthoringOperationError('VALIDATION_FAILED', '角色 name 必须是非空字符串');
     }
     const source = record.workingFiles[CONFIG_PATH] ?? '{}';
-    const config = parseConfig(source);
+    const config = parseProjectConfigDocument(source);
     const charactersValue = config['characters'];
     if (charactersValue !== undefined && !isRecord(charactersValue)) {
       throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json.characters 必须是对象');
@@ -256,7 +246,7 @@ export async function applyCharacterRemove(
       throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ID 非法：${input.id}`);
     }
     const source = record.workingFiles[CONFIG_PATH] ?? '{}';
-    const config = parseConfig(source);
+    const config = parseProjectConfigDocument(source);
     const charactersValue = config['characters'];
     if (charactersValue !== undefined && !isRecord(charactersValue)) {
       throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json.characters 必须是对象');
@@ -302,7 +292,7 @@ export async function applyEntrySceneSet(
   return runOperation<EntrySceneSetResult>(change, input, async (record) => {
     // 并发保护优先：指纹不符（OBJECT_REF_STALE）先于业务校验（场景存在性）。
     const source = record.workingFiles[CONFIG_PATH] ?? '{}';
-    const config = parseConfig(source);
+    const config = parseProjectConfigDocument(source);
     const fingerprintBefore = await entrySceneFingerprint(config, hasher);
     if (input.expectedFingerprint !== fingerprintBefore) {
       throw new AuthoringOperationError('OBJECT_REF_STALE', 'entryScene 指纹不匹配');

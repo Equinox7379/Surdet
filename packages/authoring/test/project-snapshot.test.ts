@@ -16,9 +16,10 @@ const hasher: TextHasher = { sha256: async (text) => digest(text) };
 function fixtureStorage(
   order: 'normal' | 'reverse' = 'normal',
   growthText = JSON.stringify({ curve: { base: 10 }, profiles: [] }),
+  configText = '{"entryScene":"prologue","variables":{}}',
 ): ProjectStorage {
   const contents: Record<string, string> = {
-    'game.config.json': '{"entryScene":"prologue","variables":{}}',
+    'game.config.json': configText,
     'content/config/growth.json': growthText,
     'content/scenario/prologue.gal': '@scene prologue\n凛：一样\n凛：一样\n@end',
     'content/scenario/other.gal': '@scene other\n凛：另一场\n@end',
@@ -64,5 +65,19 @@ describe('project snapshot', () => {
     expect(original.growthFile?.path).toBe('content/config/growth.json');
     expect(original.growthConfig).toEqual({ curve: { base: 10 }, profiles: [] });
     expect(original.revision).not.toBe(changed.revision);
+  });
+
+  it('rejects a syntactically valid non-object game.config.json', async () => {
+    await expect(loadProjectSnapshot(
+      fixtureStorage(
+        'normal',
+        JSON.stringify({ curve: { base: 10 }, profiles: [] }),
+        '[]',
+      ),
+      hasher,
+    )).rejects.toMatchObject({
+      code: 'PROJECT_INVALID',
+      message: expect.stringMatching(/game\.config\.json.*JSON 对象/),
+    });
   });
 });

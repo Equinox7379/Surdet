@@ -14,3 +14,4 @@ export * from './asset-catalog.js';
 export * from './timeline-operations.js';
 export * from './timeline-identity.js';
 export * from './config-operations.js';
+export * from './config-document.js';
