@@ -15,9 +15,9 @@ import {
  *
  * 结构单射性证明要点（本文件以机械 oracle 永久钉住）：
  * 1. canonical 词干 = '~sv1' 前缀 + 单遍 token 流；字面量字母表 [a-z0-9_-]，
- *    其余每个 UTF-16 码元 → '~' + 恰好 4 位小写十六进制（定宽，无歧义边界）。
- *    从左到右解析唯一 → 编码对 JS 字符串单射；decoder 为严格逆映射。
- * 2. 大写字母也走转义：NTFS 文件名大小写不敏感，字面保留大小写会产生物理别名。
+ *    A-Z → '~u' + 小写字母，其余每个 UTF-16 码元 → '~' + 恰好 4 位小写十六进制。
+ *    uppercase token 的 'u' 不是十六进制字符，所以边界唯一；decoder 为严格逆映射。
+ * 2. 所有 canonical 输出均为小写：NTFS 文件名大小写不敏感时不会制造物理别名。
  * 3. 与 legacy 命名空间不相交：legacy L1（sanitizeSlot）与 L0 的输出字母表
  *    ⊆ [A-Za-z0-9_-]（L1 逐码元产出字面量 [a-zA-Z0-9-] 或 '_u'/'_xHH'；
  *    L0 逐码元产出字面量 [a-zA-Z0-9_-] 或 '_'），永远不可能含 '~'；
@@ -40,6 +40,18 @@ function makeSnap(slot: string): Parameters<FileSaveStore['write']>[1] {
   };
 }
 
+/**
+ * R2 compactness contract for the legacy safe ASCII alphabet:
+ * - [A-Za-z0-9-] remains a compact physical identity, including uppercase and mixed case;
+ * - each logical code unit may consume at most three canonical body characters;
+ * - the bound is intentionally below the five-character generic `~hhhh` escape so a
+ *   one-character uppercase ID cannot regress to the old 1→5 expansion.
+ */
+const SAFE_ASCII_COMPACTNESS_INVARIANT = {
+  logicalAlphabet: /^[A-Za-z0-9-]+$/,
+  maxCanonicalBodyCharsPerLogicalUnit: 3,
+} as const;
+
 describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
   it('历史碰撞对的 canonical 物理身份不同', () => {
     const a = canonicalSlotStem('存');
@@ -57,6 +69,30 @@ describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
     }
   });
 
+  it('R2 SAFE_ASCII_COMPACTNESS_INVARIANT：大写与混合大小写不回退到 1→5 膨胀', () => {
+    const samples = [
+      'A',
+      'Save',
+      'SAVE',
+      'QuickSave1',
+      'PLAYERPROFILE-SAVE-SLOT',
+      'QuickSave1-MixedCase-Checkpoint-2026',
+    ];
+
+    for (const s of samples) {
+      expect(s).toMatch(SAFE_ASCII_COMPACTNESS_INVARIANT.logicalAlphabet);
+      const body = canonicalSlotStem(s).slice(CANONICAL_SLOT_PREFIX.length);
+      expect(body.length).toBeLessThanOrEqual(
+        s.length * SAFE_ASCII_COMPACTNESS_INVARIANT.maxCanonicalBodyCharsPerLogicalUnit,
+      );
+      const encoded = canonicalSlotStem(s);
+      expect(encoded).toBe(canonicalSlotStem(s));
+      expect(decodeCanonicalSlotStem(encoded)).toBe(s);
+      expect(encoded).toBe(encoded.toLowerCase());
+      expect(encoded.toLowerCase()).not.toBe(canonicalSlotStem(s.toLowerCase()).toLowerCase());
+    }
+  });
+
   it('空字符串确定性编码且可解码', () => {
     expect(canonicalSlotStem('')).toBe(CANONICAL_SLOT_PREFIX);
     expect(decodeCanonicalSlotStem(CANONICAL_SLOT_PREFIX)).toBe('');
@@ -66,13 +102,18 @@ describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
 describe('A5 机械单射 oracle：全部 65,536 个 UTF-16 码元', () => {
   it('单码元字符串两两不同且 decode∘encode 精确往返', () => {
     const stems = new Set<string>();
+    const folded = new Set<string>();
     for (let c = 0; c <= 0xffff; c += 1) {
       const s = String.fromCharCode(c);
       const stem = canonicalSlotStem(s);
       stems.add(stem);
+      folded.add(stem.toLowerCase());
       expect(decodeCanonicalSlotStem(stem)).toBe(s);
+      expect(canonicalSlotStem(decodeCanonicalSlotStem(stem))).toBe(stem);
+      expect(stem).toBe(stem.toLowerCase());
     }
     expect(stems.size).toBe(0x10000);
+    expect(folded.size).toBe(0x10000);
   });
 
   it('legacy 命名空间不相交 oracle：L1/L0 单码元输出永不含 canonical 标记符', () => {
@@ -102,6 +143,8 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
     '~sv1', // 形似 canonical 前缀本身
     '~sv1~0041', // 形似已编码词干
     '~0041',
+    '~ua', // 形似 uppercase token 的逻辑文本，不能被 decoder 误解释
+    '~uA',
     'a b',
     'trail ', // 尾随空格（Windows 不允许）
     'dot.', // 尾随点（Windows 不允许）
@@ -122,6 +165,8 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
     'a/b\\c:d*e?f"g<h>i|j', // 全部 Windows 非法字符
     '中文存档名 一',
     'slot\u007f\u0080\u00ff', // DEL 与高位拉丁
+    'QuickSave1',
+    'quicksave1',
     '-leading-dash',
     '_underscore_',
     'x'.repeat(64),
@@ -136,7 +181,21 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
 
   it('语料全部 decode∘encode 精确往返', () => {
     for (const s of CORPUS) {
-      expect(decodeCanonicalSlotStem(canonicalSlotStem(s))).toBe(s);
+      const stem = canonicalSlotStem(s);
+      expect(decodeCanonicalSlotStem(stem)).toBe(s);
+      expect(canonicalSlotStem(decodeCanonicalSlotStem(stem))).toBe(stem);
+    }
+  });
+
+  it('Windows case-fold oracle：大小写逻辑 ID 在物理层仍两两可区分', () => {
+    const pairs = [
+      ['A', 'a'],
+      ['Save', 'save'],
+      ['SAVE', 'save'],
+      ['QuickSave1', 'quicksave1'],
+    ] as const;
+    for (const [a, b] of pairs) {
+      expect(canonicalSlotStem(a).toLowerCase()).not.toBe(canonicalSlotStem(b).toLowerCase());
     }
   });
 

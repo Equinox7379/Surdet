@@ -50,18 +50,22 @@ export const CANONICAL_SLOT_PREFIX = '~sv1';
 /** A5 canonical 槽位存储身份：确定性、对任意 JS 字符串单射、Windows 安全。
  *  文法：前缀 '~sv1' + 单遍 token 流——
  *  - 字面量字母表 [a-z0-9_-] 直出（普通安全 ASCII 逻辑 ID 仅增长一个前缀的长度）；
- *  - 大写字母与其余全部 UTF-16 码元 → '~' + 恰好 4 位小写十六进制（定宽、无歧义边界；
- *    大写不直出：NTFS 大小写不敏感，直出大小写会产生物理别名）；
- *  - 从左到右解析唯一（字面量 1 字符 / 转义定长 5 字符），decodeCanonicalSlotStem
- *    是严格逆映射 → 编码单射。
+ *  - A-Z → '~u' + 对应的小写字母（固定 3 字符短 token）；
+ *  - 其余全部 UTF-16 码元 → '~' + 恰好 4 位小写十六进制（固定 5 字符通用 token）；
+ *  - uppercase token 的第二字符是非十六进制的 'u'，因此它与通用 token 的边界
+ *    机械分离；所有 canonical 输出均为小写，NTFS 大小写折叠不会制造别名；
+ *  - 从左到右解析唯一（字面量 1 字符 / uppercase token 3 字符 / 通用 token 5 字符），
+ *    decodeCanonicalSlotStem 是严格逆映射 → 编码单射。
  *  其他性质：不做 Unicode 归一化（NFC/NFD、孤立代理、嵌入 NUL 等不同 JS 字符串保持
  *  不同物理身份）；词干恒以 '~sv1' 开头 → 不可能等于 Windows 保留设备名
- *  （CON/NUL/COM1…）；字面量不含空格与 '.'、转义以十六进制数字收尾 → 无尾随空格/点。 */
+ *  （CON/NUL/COM1…）；字面量不含空格与 '.'、token 以字母或十六进制数字收尾 → 无尾随空格/点。 */
 export function canonicalSlotStem(slot: string): string {
   let out = CANONICAL_SLOT_PREFIX;
   for (let i = 0; i < slot.length; i += 1) {
     const unit = slot.charCodeAt(i);
-    if (
+    if (unit >= 0x41 && unit <= 0x5a) {
+      out += `~u${String.fromCharCode(unit + 0x20)}`;
+    } else if (
       (unit >= 0x30 && unit <= 0x39) || // 0-9
       (unit >= 0x61 && unit <= 0x7a) || // a-z
       unit === 0x2d || // -
@@ -86,6 +90,15 @@ export function decodeCanonicalSlotStem(stem: string): string {
   while (i < body.length) {
     const ch = body.charAt(i);
     if (ch === '~') {
+      if (body.charAt(i + 1) === 'u') {
+        const letter = body.charAt(i + 2);
+        if (letter < 'a' || letter > 'z') {
+          throw new Error(`canonical 槽位词干含非法大写 token：${stem}`);
+        }
+        out += String.fromCharCode(letter.charCodeAt(0) - 0x20);
+        i += 3;
+        continue;
+      }
       const hex = body.slice(i + 1, i + 5);
       if (hex.length !== 4 || !/^[0-9a-f]{4}$/.test(hex)) {
         throw new Error(`canonical 槽位词干含非法转义：${stem}`);
