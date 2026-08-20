@@ -420,6 +420,34 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'V002' && i.text.includes('trust'))).toBe(false);
   });
 
+  it('events.json scheduled[].when uses the same undeclared-variable lint as events[].when', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({
+        entryScene: 'prologue',
+        variables: { turn: { type: 'number', initial: 1 } },
+      }),
+      'content/scenario/prologue.gal': '@scene prologue\n旁白：开始。\n@end\n',
+      'content/scenario/turn_event.gal': '@scene turn_event\n旁白：事件。\n@end\n',
+      'content/config/events.json': JSON.stringify({
+        events: [
+          { id: 'ok', characterId: 'system', when: 'turn > 0', scene: 'turn_event', once: false },
+        ],
+        scheduled: [
+          { id: 'bad', characterId: 'system', when: 'ghost > 0', scene: 'turn_event', once: false },
+        ],
+      }),
+    });
+
+    const result = lintProject(dir);
+    const ghostIssues = result.issues.filter(
+      (issue) => issue.code === 'V002' && issue.text.includes('ghost'),
+    );
+    expect(ghostIssues).toHaveLength(1);
+    expect(result.issues.some(
+      (issue) => issue.code === 'V002' && issue.text.includes('turn'),
+    )).toBe(false);
+  });
+
   it('N1/RED6：calendar nodes[].when（legacy）报 CALENDAR_NODE_LEGACY_WHEN error；baseCommands[].when 不误报', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ variables: { trust: { type: 'number', initial: 0 } } }),
