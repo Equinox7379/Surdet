@@ -2,6 +2,7 @@
  * 配置编辑纯逻辑（E3）：变量表（game.config.json variables）与成就表（achievements.json）
  * 的行模型 ⇄ JSON 双向转换与校验。UI 只管表格，落盘前全部经此处校验（编辑器不产出非法配置）。
  */
+import { parseProjectConfigDocument } from '@surdet/authoring';
 import { parseExpr, collectVars } from '@surdet/core';
 import type { CompiledScene, GenericInstr, ChoiceInstr, CondJumpInstr, SetInstr, ModifyInstr, SwitchInstr, TextInstr } from '@surdet/core';
 
@@ -119,10 +120,9 @@ export function rowsToVariables(rows: VariableRow[]): { variables: Record<string
 
 /** 把新 variables 表合并回 game.config.json 文本（保留其余顶层键与 2 空格缩进；键序稳定） */
 export function applyVariablesToConfig(originalText: string, variables: Record<string, unknown>): string {
-  let obj: Record<string, unknown> = {};
-  if (originalText.trim().length > 0) {
-    obj = JSON.parse(originalText) as Record<string, unknown>;
-  }
+  const obj = originalText.trim().length === 0
+    ? {}
+    : parseProjectConfigDocument(originalText);
   obj['variables'] = variables;
   return JSON.stringify(obj, null, 2);
 }
