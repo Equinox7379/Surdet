@@ -1274,3 +1274,242 @@ artifact SHA-256 = 58EA6B0E7B9442CDEB71201084CFF9885C517921A72DF133D09A96F5E8A08
 ```
 
 Both failures reproduce the confirmed A7 non-object-config symptoms. The RED artifacts remain immutable in the unique batch root; no production file was changed before or during RED.
+
+### 2026-08-21 01:27:29 +08:00 Task 2 R4 implementation and code evidence
+
+```text
+R46_TASK_2 = COMPLETED
+R4_IMPLEMENTATION = PASS
+R4_SHARED_PARSER = packages/authoring/src/config-document.ts
+R4_SHARED_PARSER_EXPORT = packages/authoring/src/index.ts
+R4_SHARED_CONSUMERS = project-snapshot.ts; config-operations.ts; packages/editor/src/config-edit.ts
+R4_PRIVATE_PARSE_CONFIG_REMOVED = YES
+R4_NON_OBJECT_TOP_LEVEL_REJECTION = PROJECT_INVALID
+R4_EMPTY_CONFIG_BEHAVIOR_PRESERVED = YES
+R4_NESTED_VARIABLE_VALIDATION_EXPANDED = NO
+R4_FOCUSED_GREEN = PASS; Authoring and Editor targeted tests each passed
+R4_AUTHORING_FULL = PASS; 20 files / 124 tests
+R4_AUTHORING_TYPECHECK = PASS; exit 0
+R4_AUTHORING_BUILD = PASS; exit 0
+R4_EDITOR_FULL = PASS; 26 files / 173 tests
+R4_EDITOR_TYPECHECK = PASS; exit 0
+R4_EDITOR_BUILD = PASS; exit 0
+R4_CODE_EVIDENCE_HEAD = 325fd0688a638fe52f59edfd9f798f5420dca347
+R4_CODE_EVIDENCE_PARENT = 27aca62d2c1759b3a9e1bde4b81a042e4b0861f5
+R4_CODE_EVIDENCE_MESSAGE = fix(authoring): reject non-object project config
+R4_CODE_EVIDENCE_SCOPE = EXACT_R4_WHITELIST_PLUS_TASKBOOK
+REMOTE_MAIN_AFTER_R4 = 27aca62d2c1759b3a9e1bde4b81a042e4b0861f5
+AHEAD_BEHIND_AFTER_R4 = 1/0
+R5_R6 = NOT_STARTED
+WAVE_4 = PAUSED
+PUSH = NOT_PERFORMED
+```
+
+R4 code commit scope read back exactly:
+
+```text
+A docs/superpowers/plans/2026-08-21-pre-wave-4-reliability-r4-r6-closure-batch.md
+A packages/authoring/src/config-document.ts
+M packages/authoring/src/config-operations.ts
+M packages/authoring/src/index.ts
+M packages/authoring/src/project-snapshot.ts
+M packages/authoring/test/project-snapshot.test.ts
+M packages/editor/src/config-edit.ts
+M packages/editor/test/config-edit.test.ts
+```
+
+R4 artifact identities, all read from the unique batch root:
+
+| artifact | bytes | SHA-256 |
+|---|---:|---|
+| `r4-authoring-red.json` | 2291 | `2677469C6327E03BFEFA4C5CDC580F09436714C7A57059774E738489DDB4EA6E` |
+| `r4-editor-red.json` | 10492 | `58EA6B0E7B9442CDEB71201084CFF9885C517921A72DF133D09A96F5E8A08389` |
+| `r4-authoring-green.json` | 1421 | `DDAE33E380DAEDFA3DC0D498713D27BDFA5D8C453ECAA1D9BBE0817687F6D9DF` |
+| `r4-editor-green.json` | 9625 | `5363C3AC7CCDD1EB1456E3BE80F16E05D7AB2362E2E705FE3C156C3788D0C9F0` |
+| `r4-authoring-full.txt` | 1289 | `2E79E49045692708829F65BF5579181CE322A82AF9500D82ABC969BFDBA8F2D0` |
+| `r4-authoring-typecheck.txt` | 74 | `9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78` |
+| `r4-authoring-build.txt` | 67 | `D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9` |
+| `r4-editor-full.txt` | 1549 | `4FDD379C1F5F0E9B8C5B417A677EF6C26E4BAAECD8AD6AE5EA647AC27DE8AA4F` |
+| `r4-editor-typecheck.txt` | 70 | `6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3` |
+| `r4-editor-build.txt` | 1998 | `91446F3ABB67D5C7B055EE14776C72E3B63E4FF0DFD8E8A82A0F43E39F07E005` |
+```
+
+No R4 suite was rerun after the code commit; the taskbook is now the only expected tracked modification before continuing directly to Task 3.
+
+### 2026-08-21 01:29:34 +08:00 Task 3 R5 generic reentrancy evidence
+
+```text
+R46_TASK_3 = COMPLETED
+R5_RED = VALID; exit 1; actual first text was 第二条 instead of 第一条
+R5_GREEN = PASS; exit 0; target instruction zero preserved
+R5_GENERIC_BRANCH_FIX = YES
+R5_CLEAR_SPECIAL_CASE = NO
+R5_RECURSIVE_STEP_ADDED = NO
+R5_HOST_JUMP_PRECEDENCE = PRESERVED
+R5_CORE_FULL = PASS; 24 files / 319 tests
+R5_CORE_TYPECHECK = PASS; exit 0
+R5_CORE_BUILD = PASS; exit 0
+R5_CODE_EVIDENCE_HEAD = 67b7d915f1fd97c03fdca18ad5eb356b096771ef
+R5_CODE_EVIDENCE_PARENT = 325fd0688a638fe52f59edfd9f798f5420dca347
+R5_CODE_EVIDENCE_MESSAGE = fix(core): preserve generic start reentrancy
+R5_CODE_EVIDENCE_SCOPE = EXACTLY_TWO_CORE_FILES
+REMOTE_MAIN_AFTER_R5 = 27aca62d2c1759b3a9e1bde4b81a042e4b0861f5
+AHEAD_BEHIND_AFTER_R5 = 2/0
+R6 = NOT_STARTED
+WAVE_4 = PAUSED
+PUSH = NOT_PERFORMED
+```
+
+R5 code commit scope read back exactly:
+
+```text
+M packages/core/src/runtime/interpreter.ts
+M packages/core/test/interpreter.test.ts
+```
+
+R5 artifact identities, all read from the unique batch root:
+
+| artifact | bytes | SHA-256 |
+|---|---:|---|
+| `r5-core-red.json` | 12286 | `E72DDC901750BCB66228DC7E7B13C651F00902FE91B5726F4DBACF77B5EDA1BB` |
+| `r5-core-green.json` | 11414 | `7FDDE9B2B4B27022CF328C885E7EF52DBCE21EDCD1AB1661BE4E669FFF867C3F` |
+| `r5-core-full.txt` | 3125 | `19DB72B9F16CE00FEFDD725F858A093F3F8F8F1A0B643D3B94D2E251BAA9FD10` |
+| `r5-core-typecheck.txt` | 69 | `A18A84F9CE7D19E0E4C7B6261986CBBED38BC76378B22D4492897B461F0FA2DA` |
+| `r5-core-build.txt` | 62 | `0943F1AA4B29D9DA4EADBA76586FAC5B15FF29332FEBCDB4A810A8AF64AEED8D` |
+```
+
+R5 RED/GREEN and adjacent gates passed without rerunning R4; the taskbook remains the only tracked modification between lane commits. Continue directly to Task 4.
+
+### 2026-08-21 01:32:23 +08:00 Task 4 R6 scheduled-expression lint evidence
+
+```text
+R46_TASK_4 = COMPLETED
+R6_RUNTIME_ORACLE = PASS; exit 0; undefined scheduled expression remains strict at Runtime
+R6_RED = VALID; exit 1; scheduled ghost expression produced zero V002 issues
+R6_GREEN_INITIAL_ARTIFACT = HARNESS_INVALID; exit 0; 0 passed / 0 failed because the filter contained an extra space
+HARNESS_CORRECTION = 1
+R6_GREEN = PASS; exit 0; corrected artifact 1 passed / 0 failed
+R6_SHARED_EXTRACTOR = extractWhenExpressions(events + scheduled)
+R6_SECOND_LINT_PASS = NO
+R6_RUNTIME_MODIFIED = NO
+R6_CLI_FULL = PASS; 15 files / 138 tests
+R6_CLI_TYPECHECK = PASS; exit 0
+R6_CLI_BUILD = PASS; exit 0
+R6_CODE_EVIDENCE_HEAD = ee4b198fa8d2922bff0b4fc5c732b678ef247474
+R6_CODE_EVIDENCE_PARENT = 67b7d915f1fd97c03fdca18ad5eb356b096771ef
+R6_CODE_EVIDENCE_MESSAGE = fix(cli): lint scheduled event conditions
+R6_CODE_EVIDENCE_SCOPE = EXACTLY_TWO_CLI_FILES
+REMOTE_MAIN_AFTER_R6 = 27aca62d2c1759b3a9e1bde4b81a042e4b0861f5
+AHEAD_BEHIND_AFTER_R6 = 3/0
+WAVE_4 = PAUSED
+PUSH = NOT_PERFORMED
+```
+
+R6 code commit scope read back exactly:
+
+```text
+M packages/cli/src/lint.ts
+M packages/cli/test/lint.test.ts
+```
+
+R6 artifact identities, all read from the unique batch root:
+
+| artifact | bytes | SHA-256 | status |
+|---|---:|---|---|
+| `r6-runtime-oracle.json` | 2807 | `DC06D24962985B26D24E374424B46A3585DAD93C26E164B97AC2128C9C53844C` | PASS; 1/0 |
+| `r6-cli-red.json` | 18683 | `849CD79050838EFDEFDA98E926B98B4EFC03E662E969724E6F2AD1DB8B74181D` | VALID RED; 0/1 |
+| `r6-cli-green.json` | 17782 | `11BA3295078E5896274A52834CD2C2C72B39CFC71FB937F847ACF9D63CE79374` | HARNESS_INVALID; 0/0 |
+| `r6-cli-green-harness-correction-1.json` | 17815 | `73BA96A446E99F0418998BDD53F59D51E090861493034489D6C1768974E55F38` | PASS; 1/0 |
+| `r6-cli-full.txt` | 5121 | `E72BA3CCD7993E94F4A594D52DFDA0DF3A334C04C350E69DD2ECB6EB2B8919B9` | PASS |
+| `r6-cli-typecheck.txt` | 68 | `AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917` | PASS |
+| `r6-cli-build.txt` | 61 | `898D2AD82D33C86E701D8865F20A428CA48DB35240DD429FD8E62F480C2EA93E` | PASS |
+```
+
+The initial zero-test green artifact was preserved and is not used as success evidence. The corrected run matched the intended test and passed. R4 and R5 were not rerun; continue to Task 5 aggregate scope verification.
+
+### 2026-08-21 01:39:56 +08:00 Task 5 aggregate verification and artifact manifest
+
+```text
+R46_TASK_5 = COMPLETED
+BATCH_SCOPE = PASS
+R4_COMMIT_SCOPE = EXACT_R4_WHITELIST_PLUS_TASKBOOK
+R5_COMMIT_SCOPE = EXACTLY_TWO_CORE_FILES
+R6_COMMIT_SCOPE = EXACTLY_TWO_CLI_FILES
+TASKBOOK_ONLY_TRACKED_MODIFICATION_BEFORE_FINAL_DOCS = YES
+STAGING_BEFORE_FINAL_DOCS = EMPTY
+GIT_DIFF_CHECK = PASS
+GIT_DIFF_CACHED_CHECK = PASS
+TRACKED_LOG_FILES = NONE
+R46_VERIFY_ALL_COMMAND = npm run verify:all 2>&1 | Tee-Object -FilePath r46-verify-all.txt
+R46_VERIFY_ALL = PASS; exit 0; process completed through final verify:diff-check with no non-zero node
+R46_VERIFY_ALL_NODES = 14 sequential nodes reached completion
+R46_VERIFY_TOOLS = PASS; 10/10
+R46_RENDERER_BOUNDARIES = PASS; 3/3
+R46_RENDERER_LEGACY = PASS; 4/4
+R46_HYGIENE = PASS; 739 tracked paths
+R46_AUTHORING_TESTS = PASS; 20 files / 124 tests
+R46_CLI_TESTS = PASS; 15 files / 138 tests
+R46_CORE_TESTS = PASS; 24 files / 319 tests
+R46_EDITOR_TESTS = PASS; 26 files / 173 tests
+R46_HOST_TESTS = PASS; 11 files / 87 tests
+R46_RENDERER_TESTS = PASS; 49 files / 406 tests
+R46_SHELL_TESTS = PASS; 22 files / 195 tests
+R46_STARTER_TESTS = PASS; 4 files / 7 tests
+R46_ZERO_TESTS = PASS; 4 files / 29 tests
+R46_STARTER_LINT = PASS
+R46_STARTER_SIMULATE = PASS; executed only as an internal verify:all node
+R46_FORMAL = PASS; executed only as an internal verify:all node
+R46_EDITOR_BUILD = PASS
+R46_STARTER_BUILD = PASS
+R46_FORMAL_BUILD = PASS
+R46_DIFF_CHECK = PASS; line-ending warning only
+R46_VERIFY_ALL_STANDALONE_STARTER_SIMULATE = NO
+R46_VERIFY_ALL_ELECTRON = NO
+R46_VERIFY_ALL_PERFORMANCE_PACK_DEPLOY_RELEASE = NO
+WAVE_4 = PAUSED
+PUSH = NOT_PERFORMED
+```
+
+The aggregate log completed after all listed nodes and contains no failing node. It includes the repository's existing Zero speaker warnings and build chunk-size warnings; they did not produce a non-zero node. No lane code, test, package manifest, lockfile, or forbidden file was changed after the R6 commit.
+
+Final aggregate artifact identities, all read from the unique batch root:
+
+```text
+R46_ARTIFACT_COUNT = 23
+R46_ARTIFACT_MANIFEST_PATH = <local-path>
+R46_ARTIFACT_MANIFEST_BYTES = 4271
+R46_ARTIFACT_MANIFEST_SHA256 = E67DDD2556F4B17F406504E297F57B19C32F847F8BD4FB93FB1C3EBF22432DFC
+```
+
+The manifest includes the preserved `r6-cli-green.json` harness-invalid artifact and the corrected `r6-cli-green-harness-correction-1.json` pass artifact. No temporary artifact was added to the repository.
+
+### 2026-08-21 01:41:19 +08:00 Task 6.1 frozen delivery report identity
+
+```text
+R46_TASK_6_1 = COMPLETED
+R46_REPORT_PATH = E:\surdet\docs\PRE-WAVE-4-RELIABILITY-R4-R6-CLOSURE-BATCH-DELIVERY-REPORT-2026-08-21.md
+R46_REPORT_BYTES = 23642
+R46_REPORT_SHA256 = 7C52EDBBC49887F8C858AD1DDAE2BAEA0F168949DEED1F7022BFED0BF4853CB5
+R46_REPORT_IDENTITY_READBACK = PASS
+R46_REPORT_SELF_HASH_INCLUDED = NO
+R46_REPORT_MODIFIED_AFTER_FREEZE = NO
+```
+
+The report identity was read from disk before this ledger append and read back again afterward; only this taskbook changed. The report intentionally contains neither its own bytes/SHA nor a pre-commit docs closure hash.
+
+### 2026-08-21 01:45:45 +08:00 Task 6.1 pre-commit formatting correction
+
+```text
+R46_REPORT_PRE_FORMAT_IDENTITY = HISTORICAL_PRE_VALIDATION_IDENTITY
+R46_REPORT_PRE_FORMAT_BYTES = 23642
+R46_REPORT_PRE_FORMAT_SHA256 = 7C52EDBBC49887F8C858AD1DDAE2BAEA0F168949DEED1F7022BFED0BF4853CB5
+R46_REPORT_FORMAT_CORRECTION = REMOVED_THREE_INTENTIONAL_MARKDOWN_TRAILING_SPACES
+R46_REPORT_FINAL_FROZEN_BYTES = 23636
+R46_REPORT_FINAL_FROZEN_SHA256 = E8BBF44D1A5C9CAD39800A37D1C5998D25E55415C0D70DB4C0C8DEE7FAA4B6F9
+R46_REPORT_FINAL_IDENTITY_READBACK = PASS
+R46_TESTS_RERUN_DURING_CORRECTION = NO
+R46_PRODUCTION_FILES_MODIFIED_DURING_CORRECTION = NO
+R46_REPORT_MODIFIED_AFTER_FINAL_FREEZE = NO
+```
+
+The pre-format identity is historical only. The final report identity above was read from disk after the whitespace correction and passed the required cached diff check; no test, build, or production file was rerun or changed.
