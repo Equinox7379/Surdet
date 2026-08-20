@@ -93,6 +93,10 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
     expect((described.structuredContent as any).ok).toBe(true);
+    const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
+    expect(capabilities.isError).not.toBe(true);
+    expect((capabilities.structuredContent as any).ok).toBe(true);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(20);
     if (policy === 'stage') {
       const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
       expect(begun.isError).not.toBe(true);
