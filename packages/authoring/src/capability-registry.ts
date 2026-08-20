@@ -53,6 +53,8 @@ const jsonValueSchema: JsonSchema = {
   ],
 };
 
+const jsonObjectSchema: JsonSchema = { type: 'object' };
+
 const stringMapSchema: JsonSchema = {
   type: 'object',
   patternProperties: { '^.*$': stringSchema },
@@ -328,19 +330,20 @@ const changeDiffSchema = strictObject({
 
 const capabilitySummarySchema = strictObject({
   id: stringSchema,
+  mcpTool: stringSchema,
   title: stringSchema,
   purpose: stringSchema,
   minimumPolicy: { enum: ['observe', 'stage', 'apply'] },
-  inputSchema: jsonValueSchema,
-  outputSchema: jsonValueSchema,
+  inputSchema: jsonObjectSchema,
+  outputSchema: jsonObjectSchema,
   sideEffects: stringArraySchema,
   idempotency: stringSchema,
   preconditions: stringArraySchema,
   possibleErrors: stringArraySchema,
   repairRecipes: stringArraySchema,
-  minimalExample: strictObject({ input: jsonValueSchema, expectedResultShape: jsonValueSchema }, ['input', 'expectedResultShape']),
+  minimalExample: strictObject({ input: jsonObjectSchema, expectedResultShape: jsonObjectSchema }, ['input', 'expectedResultShape']),
 }, [
-  'id', 'title', 'purpose', 'minimumPolicy', 'inputSchema', 'outputSchema', 'sideEffects',
+  'id', 'mcpTool', 'title', 'purpose', 'minimumPolicy', 'inputSchema', 'outputSchema', 'sideEffects',
   'idempotency', 'preconditions', 'possibleErrors', 'repairRecipes', 'minimalExample',
 ]);
 
