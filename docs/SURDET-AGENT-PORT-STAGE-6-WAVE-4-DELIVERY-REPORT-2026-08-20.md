@@ -207,3 +207,81 @@ PRE_DOCUMENT_CLOSURE_STATUS = HISTORICAL_SNAPSHOT_ONLY
 PRE_DOCUMENT_CLOSURE_REPORT_IDENTITY_CORRECTION = Wdr0lC SHA-256 corrected above
 DOCUMENT_SELF_COMMIT_HASH = NOT_REQUIRED_BY_OWNER
 ```
+
+## 8. Task 10 recovery 2 — complete output-schema conformance scan
+
+本轮按授权先建立集中式红灯，再实施一次 registry-only 修复，随后只运行一次恢复 DIAGNOSTIC。既有生产服务、dispatcher、领域返回、envelope、权限策略和 runner 均未修改。
+
+```ini
+RECOVERY2_AUTHORIZATION = OWNER_AUTHORIZED_OUTPUT_SCHEMA_CONFORMANCE_SCAN_THEN_ONE_DIAGNOSTIC
+RECOVERY2_INITIAL_HEAD = f022a5024c5461cf9b0dbf4a7381d7a37e5f2d48
+RECOVERY2_INITIAL_PARENT = ba22c488f045621909432114d68b4a0ea121aff3
+RECOVERY2_ALLOWED_CODE_FILES = packages/authoring/src/capability-registry.ts; packages/cli/test/agent-port-output-contract.test.ts
+RECOVERY2_CODE_FORBIDDEN_SCOPE = authoring-service; authoring-dispatcher; object-index; runner; Core/Renderer/Host/Shell/Editor/Starter
+
+RECOVERY2_CONFORMANCE_RED_COMMAND = npm run test -w @surdet/cli -- test/agent-port-output-contract.test.ts
+RECOVERY2_CONFORMANCE_RED_EXIT = 1
+RECOVERY2_CONFORMANCE_RED_RESULT = 7 mismatching cases were aggregated in one scan before repair
+RECOVERY2_CONFORMANCE_RED_CASES = project.validate[project], project.validate[working], project.simulate[project], project.simulate[working], runtime.run-from[working], runtime.read-trace[working-nested-events], change.diff[working]
+RECOVERY2_CONFORMANCE_RED_MISMATCH_FIELDS = validate.view; validate.working.scenes; validate.working.freshness; simulate.view; simulate.working top-level report fields; simulate.working.freshness; runtime.run-from.freshness; runtime.read-trace.view; runtime.read-trace.events[].source/stateDelta nested objects; change.diff.view
+RECOVERY2_CONFORMANCE_RED_METHOD = real AuthoringService + dispatcher + registry schema-validator; the scan collected all issues instead of stopping at the first mismatch
+
+RECOVERY2_REGISTRY_REPAIR = PASS
+RECOVERY2_REGISTRY_REPAIR_DETAILS = project/working oneOf branches; shared evidenceFreshnessSchema; exact working schemas for run-from/read-trace/diff; explicit nested trace source/stateDelta; closed validation working scenes serialization field
+RECOVERY2_DOMAIN_RETURN_MODIFIED = NO
+RECOVERY2_ENVELOPE_MODIFIED = NO
+RECOVERY2_GLOBAL_JSON_VALUE_SCHEMA_EXPANDED = NO
+RECOVERY2_PERMISSIVE_SCHEMA_ESCAPE = NO_EMPTY_ENVELOPE; NO_ADDITIONAL_PROPERTIES_TRUE
+
+RECOVERY2_CONFORMANCE_GREEN_COMMAND = npm run test -w @surdet/cli -- test/agent-port-output-contract.test.ts
+RECOVERY2_CONFORMANCE_GREEN_EXIT = 0
+RECOVERY2_CONFORMANCE_GREEN_RESULT = 1 file / 1 test passed; 23 real dispatcher cases
+RECOVERY2_CONFORMANCE_FORMAL_COVERAGE = capabilities.describe; project.inspect; project.assets; change.begin; variable.ensure; object.inspect string/object/omitted; character.ensure; timeline.create/patch; scene.create; project.entry-scene.set; project.validate project/working; project.simulate project/working; runtime.run-from; runtime.read-trace nested events; change.diff; change.commit
+RECOVERY2_AGENT_PORT_TOOLS_COMMAND = npm run test -w @surdet/cli -- test/agent-port-tools.test.ts
+RECOVERY2_AGENT_PORT_TOOLS_EXIT = 0
+RECOVERY2_AGENT_PORT_TOOLS_RESULT = 1 file / 6 tests passed
+RECOVERY2_AUTHORING_REGISTRY_COMMAND = npm run test -w @surdet/authoring -- test/capability-registry.test.ts
+RECOVERY2_AUTHORING_REGISTRY_EXIT = 0
+RECOVERY2_AUTHORING_REGISTRY_RESULT = 1 file / 3 tests passed
+RECOVERY2_AUTHORING_TYPECHECK = EXIT_CODE=0
+RECOVERY2_AUTHORING_BUILD = EXIT_CODE=0
+RECOVERY2_CLI_TYPECHECK = EXIT_CODE=0
+RECOVERY2_CLI_BUILD = EXIT_CODE=0
+
+RECOVERY2_CODE_EVIDENCE_HEAD = d5239d84127552a00918409a28201da5e5aa66dc
+RECOVERY2_CODE_EVIDENCE_PARENT = f022a5024c5461cf9b0dbf4a7381d7a37e5f2d48
+RECOVERY2_CODE_COMMIT_MESSAGE = fix(cli): align formal output schemas
+RECOVERY2_CODE_COMMIT_SCOPE = packages/authoring/src/capability-registry.ts; packages/cli/test/agent-port-output-contract.test.ts
+RECOVERY2_CODE_COMMIT_PUSH = NOT_PERFORMED
+RECOVERY2_REMOTE_MAIN_AT_CODE_EVIDENCE = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+RECOVERY2_AHEAD_BEHIND_AT_CODE_EVIDENCE = 17/0
+```
+
+## 9. Task 10 recovery 2 — bounded DIAGNOSTIC stop
+
+```ini
+RECOVERY2_PREFLIGHT_COMMAND = node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode preflight
+RECOVERY2_PREFLIGHT_EXIT = 0
+RECOVERY2_PREFLIGHT_RESULT = launcher/initialize/tools-list/read-only inspect/stdout purity/child cleanup PASS
+RECOVERY2_DIAGNOSTIC_COMMAND = node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode diagnostic
+RECOVERY2_DIAGNOSTIC_RUN_HEAD = d5239d84127552a00918409a28201da5e5aa66dc
+RECOVERY2_DIAGNOSTIC_EXIT = 1
+RECOVERY2_DIAGNOSTIC_LAST_PASSED_NODE = observe-resume-readback
+RECOVERY2_DIAGNOSTIC_FIRST_FAILED_NODE = apply-stage-and-resume
+RECOVERY2_DIAGNOSTIC_FAILURE = committed project inspect omitted agent_port_intro
+RECOVERY2_DIAGNOSTIC_PROJECT_MUTATED = UNKNOWN
+RECOVERY2_DIAGNOSTIC_ARTIFACT = E:\surdet\packages\cli\e2e\artifacts\agent-port-wave-4-diagnostic-ILJH9c\evidence.json
+RECOVERY2_DIAGNOSTIC_ARTIFACT_BYTES = 896
+RECOVERY2_DIAGNOSTIC_ARTIFACT_SHA256 = 56B6B15F25AA54FCE6E22F8B4FA02A994F4B4E3D2E24AF1B16E480B8A11B9E73
+RECOVERY2_DIAGNOSTIC_IDENTITY_READBACK = PASS
+RECOVERY2_DIAGNOSTIC_BUDGET = 2/3 USED; 1 REMAINING; LAST BUDGET NOT USED
+RECOVERY2_VERIFY_ALL = NOT_RUN_AFTER_DIAGNOSTIC_FAILURE
+RECOVERY2_FORMAL = NOT_STARTED
+RECOVERY2_RUNNER_MODIFIED = NO
+RECOVERY2_EXTERNAL_AGENT_ACCEPTANCE = NOT_STARTED
+RECOVERY2_OWNER_ACCEPTANCE = NOT_STARTED
+RECOVERY2_WAVE_5 = NOT_STARTED
+RECOVERY2_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+```
+
+本次诊断不是 schema conformance 的失败：前两个节点已通过，失败发生在 committed project inspect 的内容断言，真实错误为缺少 `agent_port_intro`。按授权，最后一次 DIAGNOSTIC 预算保留；没有运行 recovery `verify:all`，没有运行 FORMAL，没有修改 runner，也没有开始外部 Agent 或 Owner 验收。该失败 artifact 已保留，当前 Wave 4 仍未完成。
