@@ -15,3 +15,5 @@ export * from './timeline-operations.js';
 export * from './timeline-identity.js';
 export * from './config-operations.js';
 export * from './config-document.js';
+export * from './capability-contract.js';
+export * from './capability-registry.js';
