@@ -62,7 +62,7 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     // 能力面 17 → 20。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
-    expect(body(capabilities).result.capabilities).toEqual([
+    expect(body(capabilities).result.capabilities.map((definition: any) => definition.id)).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect', 'change.begin',
       'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure', 'character.remove',
       'timeline.create', 'timeline.patch', 'project.entry-scene.set',
@@ -158,7 +158,7 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     expect(simulatedBody.result.runtimeErrors).toHaveLength(0);
 
     // run-from 显式目标场景：trace 中出现 speaker=nova 的台词事件。
-    const runInput = writeJson(requestDir, 'run.json', { sceneId: 'agent_probe', label: 'start' });
+    const runInput = writeJson(requestDir, 'run.json', { sceneId: 'agent_probe', label: 'start', choices: [] });
     const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
     expect(run.status).toBe(0);
     const runBody = body(run);
