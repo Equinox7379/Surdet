@@ -55,9 +55,28 @@ class FaultyWriteStorage implements ProjectWriteStorage {
   async removeStage(stagedIdentity: string): Promise<void> { this.staged.delete(stagedIdentity); }
 }
 
-async function beginFixture(storage: FaultyWriteStorage) {
+class PostReplaceCleanupFaultStorage extends FaultyWriteStorage {
+  readonly removeStageCalls: string[] = [];
+
+  constructor(files: Record<string, string>) {
+    super(files, Number.POSITIVE_INFINITY, false);
+  }
+
+  override async removeStage(stagedIdentity: string): Promise<void> {
+    this.removeStageCalls.push(stagedIdentity);
+    if (this.removeStageCalls.length === 1) {
+      throw new Error('injected post-replacement cleanup failure');
+    }
+    await super.removeStage(stagedIdentity);
+  }
+}
+
+async function beginFixture(
+  storage: FaultyWriteStorage,
+  repository: InMemoryChangeRepository = new InMemoryChangeRepository(),
+) {
   const snapshot = await loadProjectSnapshot(storage, hasher);
-  const change = await beginChange(snapshot, new InMemoryChangeRepository(), storage);
+  const change = await beginChange(snapshot, repository, storage);
   await applySceneCreate(change, { operationId: 'op-scene', sceneId: 'branch_a' });
   await ensureVariable(change, { operationId: 'op-variable', name: 'trust', type: 'number', initial: 0 });
   await recordValidation(change, { evidenceId: 'evidence-valid', errors: 0 });
@@ -91,5 +110,29 @@ describe('atomic commit recovery', () => {
     await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_RECOVERY_FAILED' });
     expect(change.record.status).toBe('STALE');
     expect(repository.journals.get(change.record.changeId)).toBeDefined();
+  });
+
+  it('commits after verified replacements even when staged cleanup fails', async () => {
+    const storage = new PostReplaceCleanupFaultStorage({
+      'game.config.json': '{"entryScene":"prologue","variables":{}}',
+      'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
+    });
+    const repository = new InMemoryChangeRepository();
+    const change = await beginFixture(storage, repository);
+
+    const committed = await commitChange(change, storage);
+
+    expect(committed).toEqual({
+      changeId: change.record.changeId,
+      status: 'COMMITTED',
+      files: ['content/scenario/branch_a.gal', 'game.config.json'],
+    });
+    expect(storage.files['content/scenario/branch_a.gal']).toContain('@scene branch_a');
+    expect(storage.files['game.config.json']).toContain('"trust"');
+    expect(storage.removeStageCalls).toHaveLength(2);
+    expect(storage.staged.size).toBe(1);
+    expect(change.record.status).toBe('COMMITTED');
+    expect((await repository.read(change.record.changeId))?.status).toBe('COMMITTED');
+    expect(repository.journals.get(change.record.changeId)).toMatchObject({ status: 'COMMITTED' });
   });
 });
