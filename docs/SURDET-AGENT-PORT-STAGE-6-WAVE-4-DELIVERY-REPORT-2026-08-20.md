@@ -358,3 +358,76 @@ RECOVERY3_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ```
 
 最终结论：本轮最终 DIAGNOSTIC 已通过并获得真实提交后 timeline 证据；恢复 `verify:all` 在 CLI 测试收集阶段失败，首个失败是诊断 artifact fixture 被全量 Vitest 发现并解析其失效的相对 `tsconfig` 继承路径。按任务书没有运行 FORMAL、没有重跑任何门禁、没有删除 artifact、没有 push，也没有开始外部 Agent 或 Owner 验收。Wave 4 尚未完成，停止等待独立总经理复审。
+
+## 11. Task 10 recovery 4 — CLI artifact discovery isolation and final formal evidence
+
+本轮只修复已确认的 CLI 测试发现污染：在 `packages/cli/package.json` 的 test script 中追加 Vitest 官方 `--exclude "e2e/artifacts/**"`。六个历史 DIAGNOSTIC 目录及其 fixture、历史失败证据均未修改、删除、移动或覆盖；runner、MCP、registry、dispatcher/service、领域逻辑和其它生产代码均未修改。上一轮 `RECOVERY3_VERIFY_ALL` 保留为历史失败事实，不被本轮结果改写。
+
+```ini
+RECOVERY4_AUTHORIZATION = OWNER_AUTHORIZED_CLI_TEST_DISCOVERY_MUST_EXCLUDE_PRESERVED_AGENT_PORT_ARTIFACTS
+RECOVERY4_INITIAL_HEAD = 59eb4f43ad847fb5836935c465ee9f7bd5558a77
+RECOVERY4_INITIAL_PARENT = c959c7c49c2a753bb79d4ee2b7ee8047fc5819f8
+RECOVERY4_REMOTE_MAIN = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+RECOVERY4_AHEAD_BEHIND_INITIAL = 21/0
+RECOVERY4_PRESERVED_DIAGNOSTIC_DIRECTORIES = 6
+RECOVERY4_PRESERVED_FIXTURE_TEST_FILES_PER_DIRECTORY = 8
+RECOVERY4_ARTIFACTS_MODIFIED = NO
+RECOVERY3_VERIFY_ALL = HISTORICAL_FAILED
+RECOVERY3_VERIFY_ALL_REASON = 48 preserved artifact fixture suites were incorrectly discovered by CLI Vitest
+
+RECOVERY4_ALLOWED_PACKAGE_FILE = packages/cli/package.json
+RECOVERY4_TEST_SCRIPT = vitest run --passWithNoTests --exclude "e2e/artifacts/**"
+RECOVERY4_TEST_DISCOVERY_COMMAND = npm exec -w @surdet/cli -- vitest list --exclude "e2e/artifacts/**"
+RECOVERY4_TEST_DISCOVERY_EXIT = 0
+RECOVERY4_TEST_DISCOVERY_ARTIFACT_MATCHES = 0
+RECOVERY4_TEST_DISCOVERY_FORMAL_CASES = 173
+RECOVERY4_CLI_TEST_COMMAND = npm run test -w @surdet/cli
+RECOVERY4_CLI_TEST_EXIT = 0
+RECOVERY4_CLI_TEST_RESULT = 21 test files; 173 tests; 0 failed suites
+RECOVERY4_DIFF_CHECK = EXIT_CODE=0
+RECOVERY4_CACHED_DIFF_CHECK = EXIT_CODE=0
+
+DIAGNOSTIC_CODE_EVIDENCE_HEAD = c959c7c49c2a753bb79d4ee2b7ee8047fc5819f8
+GATE_HYGIENE_HEAD = ee5f11d3ef6f6750e2bd8f9bce4b79a7e9fad0db
+GATE_HYGIENE_PARENT = 59eb4f43ad847fb5836935c465ee9f7bd5558a77
+GATE_HYGIENE_COMMIT_MESSAGE = test(cli): exclude preserved agent-port artifacts
+GATE_HYGIENE_COMMIT_SCOPE = packages/cli/package.json
+GATE_HYGIENE_COMMIT_PUSH = NOT_PERFORMED
+DIAGNOSTIC_RERUN = NO
+DIAGNOSTIC_BUDGET = 3/3 USED; UNCHANGED
+REMOTE_MAIN_AT_GATE_HYGIENE = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+AHEAD_BEHIND_AT_GATE_HYGIENE = 22/0
+
+RECOVERY4_VERIFY_ALL_COMMAND = npm run verify:all
+RECOVERY4_VERIFY_ALL_RUN_COUNT = 1
+RECOVERY4_VERIFY_ALL_EXIT = 0
+RECOVERY4_VERIFY_ALL_RESULT = PASS; workspace type/build/test/starter/editor/formal-build/diff gates completed
+FORMAL_COMMAND = node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode formal
+FORMAL_RUN_COUNT = 1
+FORMAL_EXIT = 0
+FORMAL_EVIDENCE_CLASS = FORMAL
+FORMAL_STATUS = PASSED
+FORMAL_RUN_HEAD = ee5f11d3ef6f6750e2bd8f9bce4b79a7e9fad0db
+FORMAL_PROJECT_MUTATED = YES
+FORMAL_COMMITTED = YES
+FORMAL_ARTIFACT = E:\surdet\packages\cli\e2e\artifacts\agent-port-wave-4-formal-D8YsXD\evidence.json
+FORMAL_ARTIFACT_BYTES = 227425
+FORMAL_ARTIFACT_SHA256 = B68352588A8748F0690C85567EB416755CF1425E66E7AC565B915A66D66CBFB1
+FORMAL_IDENTITY_READBACK = PASS
+FORMAL_FRESH_OBSERVE_OBJECT = timeline:agent_port_intro
+FORMAL_FRESH_OBSERVE_SOURCE = content/timelines/agent_port_intro.json
+FORMAL_FRESH_OBSERVE_FINGERPRINT = 279CA04F8DFBC1940B9171893517F5B892152E99B99F476C6A516D16E3878719
+FORMAL_TIMELINE_DISK_PATH = content/timelines/agent_port_intro.json
+FORMAL_TIMELINE_DISK_BYTES = 1070
+FORMAL_TIMELINE_DISK_SHA256 = D41AE646896A1FD86926073A7FA7CEF611DC1BF3242F45E5FCAB94181E05A205
+FORMAL_TIMELINE_DISK_JSON_ID = agent_port_intro
+FORMAL_STARTER_UNCHANGED = YES
+FORMAL_ERROR_CHANNELS = protocol=[]; domainUnexpected=[]; stderrUnexpected=[]; unhandledRejections=[]; childCleanupFailures=[]
+REAL_EXTERNAL_AGENT_ACCEPTANCE = NOT_STARTED
+OWNER_ACCEPTANCE = NOT_STARTED
+WAVE_5 = NOT_STARTED
+PUSH = NOT_PERFORMED
+NEXT_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+```
+
+本轮恢复门禁与唯一 FORMAL 均通过。没有重跑 DIAGNOSTIC，没有修改历史 artifact，没有 push，也没有开始真实外部 Agent、Owner 验收或 Wave 5。文档将在本轮以一次 docs-only closure commit 收口，文档自身最终 bytes/SHA-256 从磁盘回读后在交接中报告，不制造自指 correction commit。
