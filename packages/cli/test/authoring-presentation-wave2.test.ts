@@ -69,7 +69,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     // capabilities.describe 当前能力面 20 项（Wave 3 扩展 character.ensure/remove + project.entry-scene.set）。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
-    expect(body(capabilities).result.capabilities).toEqual([
+    expect(body(capabilities).result.capabilities.map((definition: any) => definition.id)).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect', 'change.begin',
       'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure', 'character.remove',
       'timeline.create', 'timeline.patch', 'project.entry-scene.set',
@@ -186,13 +186,13 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(stale.status).toBe(1);
     expect(body(stale).error.code).toBe('OBJECT_REF_STALE');
 
-    // 白名单外 track kind → UNSUPPORTED_OPERATION。
+    // 白名单外 cue action → UNSUPPORTED_OPERATION。
     const unsupported = runCli(['timeline', 'create', '--change', changeId, '--input', writeJson(requestDir, 'tl-camera.json', {
       operationId: 'op-camera',
       timelineId: 'camera_probe',
       definition: {
         version: 1, id: 'camera_probe', durationMs: 100,
-        tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'zoom', scale: 1 }] }],
+        tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'zoom' }] }],
       },
     }), '--json'], env);
     expect(unsupported.status).toBe(1);
@@ -224,7 +224,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(simulatedBody.result.runtimeErrors).toHaveLength(0);
 
     // runtime.run-from 显式场景与标签。
-    const runInput = writeJson(requestDir, 'run-from.json', { sceneId: 'agent_probe', label: 'start' });
+    const runInput = writeJson(requestDir, 'run-from.json', { sceneId: 'agent_probe', label: 'start', choices: [] });
     const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
     expect(run.status).toBe(0);
     expect(body(run).result.sceneId).toBe('agent_probe');
@@ -282,7 +282,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(simulatedBody.error.code).toBe('RUNTIME_FAILED');
     expect(simulatedBody.error.message).toMatch(/时间轴 'agent_ghost' 未注册/);
 
-    const runInput = writeJson(root, 'run-ghost.json', { sceneId: 'ghost_probe' });
+    const runInput = writeJson(root, 'run-ghost.json', { sceneId: 'ghost_probe', choices: [] });
     const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
     expect(run.status).not.toBe(0);
     const runBody = body(run);
@@ -326,7 +326,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(simulatedBody.error.message).toMatch(messagePattern);
 
     // runtime.run-from 同源失败，回归确认仍为 RUNTIME_FAILED。
-    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01' });
+    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01', choices: [] });
     const run = runCli(['runtime', 'run-from', '--change', changeId, '--input', runInput, '--json'], env);
     expect(run.status).not.toBe(0);
     const runBody = body(run);
@@ -399,7 +399,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
         ...partial,
       }), 'utf8');
     }
-    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01' });
+    const runInput = writeJson(root, 'run-input.json', { sceneId: 'ch01_01', choices: [] });
 
     const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
     expect(begun.status).toBe(0);

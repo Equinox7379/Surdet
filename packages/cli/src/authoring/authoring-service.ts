@@ -18,6 +18,8 @@ import {
   applyTimelinePatch,
   assetPathsFromFiles,
   AuthoringOperationError,
+  AUTHORING_CAPABILITY_REGISTRY,
+  AUTHORING_CONTRACT_VERSION,
   beginChange,
   buildAssetCatalog,
   buildObjectIndex,
@@ -31,6 +33,7 @@ import {
   inspectObject,
   inspectProject,
   normalizeTrace,
+  nativeCapabilityToMcpTool,
   openChange,
   applySceneCreate,
   applyScenePatch,
@@ -65,29 +68,6 @@ import {
 import { NodeChangeStore } from './node-change-store.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
-
-export const AUTHORING_CAPABILITIES = [
-  'capabilities.describe',
-  'project.inspect',
-  'project.assets',
-  'object.inspect',
-  'change.begin',
-  'scene.create',
-  'scene.patch',
-  'variable.ensure',
-  'character.ensure',
-  'character.remove',
-  'timeline.create',
-  'timeline.patch',
-  'project.entry-scene.set',
-  'project.validate',
-  'project.simulate',
-  'runtime.run-from',
-  'runtime.read-trace',
-  'change.diff',
-  'change.commit',
-  'change.rollback',
-] as const;
 
 export interface ServiceMetadata {
   projectIdentity: string;
@@ -343,8 +323,21 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
 }
 
 export class AuthoringService {
-  async describeCapabilities(): Promise<ServiceResult<{ capabilities: string[] }>> {
-    return { projectIdentity: 'unbound', projectRevision: 'unbound', result: { capabilities: [...AUTHORING_CAPABILITIES] } };
+  async describeCapabilities(): Promise<ServiceResult<{
+    contractVersion: typeof AUTHORING_CONTRACT_VERSION;
+    capabilities: Array<(typeof AUTHORING_CAPABILITY_REGISTRY)[number] & { mcpTool: string }>;
+  }>> {
+    return {
+      projectIdentity: 'unbound',
+      projectRevision: 'unbound',
+      result: {
+        contractVersion: AUTHORING_CONTRACT_VERSION,
+        capabilities: AUTHORING_CAPABILITY_REGISTRY.map((definition) => ({
+          ...definition,
+          mcpTool: nativeCapabilityToMcpTool(definition.id),
+        })),
+      },
+    };
   }
 
   async inspectProject(projectRoot: string): Promise<ServiceResult<ReturnType<typeof inspectProject>>> {
