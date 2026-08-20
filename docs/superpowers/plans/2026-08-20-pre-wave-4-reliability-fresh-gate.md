@@ -954,6 +954,215 @@ WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 NOT_PUSHED
 ```
 
+### 2026-08-20 Fresh Gate 执行取证（Owner 已授权）
+
+本节记录本轮从 Task 0 到 Task 7 的实际执行结果。所有动态 Gate 均按任务书只正式运行一次；预期 exit `1` 的业务红灯被保留为成功取证，不曾触发生产修复或循环重跑。N7 按任务书只做 Windows 平台、源码和 Node 官方原语合同核对，不宣称动态文件损坏复现。
+
+```text
+EXECUTION_AUTHORIZATION = OWNER_APPROVED
+GATE_BASE_HEAD = 23c24f85a4de44ce7f6e6dd0f69f6f75dd03b47b
+LOCAL_TRACKING_SURDET_MAIN = 0b14ca14ff16b275efe1a3578ade37dbbb2994ec
+BRANCH = main
+AHEAD_BEHIND = 3 0
+GATE_ROOT = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd
+NODE = v24.15.0
+NPM = 11.12.1
+PWSH = 7.6.5
+TRACKED_WORKTREE_BEFORE_DOCS = CLEAN
+STAGING_AREA_BEFORE_DOCS = EMPTY
+DIFF_CHECK_BEFORE_DOCS = PASS
+CACHED_DIFF_CHECK_BEFORE_DOCS = PASS
+TRACKED_LOGS_BEFORE_DOCS = NONE
+PRODUCTION_FILES_CHANGED = FALSE
+WAVE_4_RUN = NO
+VERIFY_ALL_RUN = NO
+ELECTRON_RUN = NO
+PERFORMANCE_PACK_DEPLOY_RELEASE_RUN = NO
+PUSH = NO
+```
+
+Task 0 工作树中已存在的 untracked 内容全部保留，未被整理或暂存：`.dsh/`、`.learnings/`、`AGENTS.md`、`SESSION-HANDOFF.md`、`USER.md`、两份 art-direction 文件、四份 handoff 文件和长期路线台账 `docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md`。
+
+#### 源码身份回读
+
+以下 bytes/SHA-256 均在 Task 7 从磁盘重新读取；这些文件只读，未修改。
+
+| Ref | 文件 | bytes | SHA-256 |
+|---|---|---:|---|
+| S1 | `packages/authoring/src/simulation.ts` | 11958 | `ABD8ADA43A1B5682A4B88F2F8311306AF96890911C026881858586A71611AC26` |
+| S2 | `packages/authoring/src/change-session.ts` | 12068 | `EF181C68172482FA7E3A6B88D50779478C02B067C9A88DF92FCC14940FC4C0CE` |
+| S3 | `packages/authoring/src/project-snapshot.ts` | 3471 | `A792131D360473BA50E3AE0F0F5E94E86A01F6908F95176B0718B2189EDFFE19` |
+| S4 | `packages/authoring/src/config-operations.ts` | 15349 | `9B09AC7F50572D331670655ADF7A5BD2C87F527687E0CBD302061664F3120E70` |
+| S5 | `packages/core/src/runtime/interpreter.ts` | 46567 | `EC5FDABCE9A74B5C543A55F43DA633AB58B671B373A4E3BD98CEF7377F0F9679` |
+| S6 | `packages/core/src/systems/event-scheduler.ts` | 4594 | `E7B7BA35590391A68D03DB730D37269C45B3C0C1BF8070C770527502E28AA6D0` |
+| S7 | `packages/core/test/event-scheduler.test.ts` | 4918 | `E59CD884EF68D2669DC75918A6192551FC0C0BC0EFABC55AD04085D9D8704EAE` |
+| S8 | `packages/cli/src/lint.ts` | 24336 | `4A607AAE925F18D28DECD926743AFC3C806A494D0964DFD718ED96662EEF7C12` |
+| S9 | `packages/cli/src/authoring/node-project-storage.ts` | 13865 | `615814F547A28DC478F628C31B27FA1B714589B58E4FCAEE01AD924FE90C7CF8` |
+| S10 | `packages/editor/src/config-edit.ts` | 26648 | `DEEC923FF465B70944EBACE6572A1594C27C1B486DBDA47D7943913B1AC004A4` |
+| S11 | `packages/editor/src/project-io.ts` | 16703 | `B091F03915722965913BFD78596F7E977E6E5D250419D19B4AD920FFC6A90AB1` |
+
+#### Gate 结果矩阵
+
+每项都包含 `findingId`、相关源码 Ref、正式命令、exit code、合同预期、首个失败、artifact 身份、分类、生产文件变化和下一步权限边界。
+
+##### SIM-STATE-1
+
+```text
+findingId = SIM-STATE-1
+sourceFiles = S1, S5
+command = npm run test -w @surdet/authoring -- __fresh-gate-sim-state.test.ts --reporter=json --outputFile="<gateRoot>\sim-state-1-vitest.json"
+exitCode = 1
+expectedContract = 两个不同 caller 的完整控制流状态不能因 position/variables 相同而合并；第二条路径应暴露真实错误
+actualFirstFailure = AssertionError: expected 'passed' to be 'failed'
+artifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\sim-state-1-vitest.json
+artifactBytes = 1283
+artifactSHA256 = C46774EDE4C4B5DE46AB24D58198BAC7B8D28FF886A5C97F73E3764C21E57223
+classification = SIM_STATE_1_REPRODUCED
+productionFilesChanged = false
+nextAllowedAction = 总经理可另行制作 SIM-STATE-1 修复任务书；本轮未授权施工
+```
+
+artifact 的实际结果是 simulation `status = passed`，与预期的 `failed` 不符，证明第二条错误路径被当前状态签名剪枝。
+
+##### TX-COMMIT-POSTREPLACE
+
+```text
+findingId = TX-COMMIT-POSTREPLACE
+sourceFiles = S2
+command = npm run test -w @surdet/authoring -- __fresh-gate-tx-postreplace.test.ts --reporter=json --outputFile="<gateRoot>\tx-postreplace-vitest.json"
+exitCode = 1
+expectedContract = 不得出现 projectChanged=true、commit 抛错且 record.status=OPEN 的不可解释三联态
+actualFirstFailure = AssertionError: expected { threw: true, …(2) } to not deeply equal { threw: true, …(2) }
+observedTriple = { threw: true, projectChanged: true, status: 'OPEN' }
+artifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\tx-postreplace-vitest.json
+artifactBytes = 1309
+artifactSHA256 = 9360BDE7095470B5ADD5C9CB998D6CA16113ABC60C542030DF00D1154E6C2623
+classification = TX_COMMIT_POSTREPLACE_REPRODUCED
+productionFilesChanged = false
+nextAllowedAction = 总经理可另行制作 TX-COMMIT-POSTREPLACE 修复任务书；本轮不决定 commit point 或回滚方向
+```
+
+##### N7-WINDOWS-REPLACEMENT
+
+```text
+findingId = N7-WINDOWS-REPLACEMENT
+sourceFiles = S9
+command = node -p "JSON.stringify({platform:process.platform,node:process.version})" + Select-String fallback/source identity checks
+exitCode = 0
+expectedContract = win32 下 EEXIST/EPERM fallback 的覆盖式 copyFile 不提供原子替换保证
+actualPlatform = {"platform":"win32","node":"v24.15.0"}
+actualSource = fs.rename(staged,target)；catch EEXIST/EPERM 后 fs.copyFile(staged,target)，再 fs.rm(staged,{force:true})
+artifactPath = NONE_BY_DESIGN
+classification = N7_SOURCE_CONTRACT_CONFIRMED
+productionFilesChanged = false
+nextAllowedAction = 先由总经理授权独立 Windows replacement design；本轮不实现、不做概率性 crash/copy 实验
+```
+
+官方 Node 文档规定 `fsPromises.copyFile(src, dest)` 默认会覆盖目标，且不保证 copy 操作的原子性；本轮据此确认平台原语合同，没有声称动态文件损坏已复现：[Node.js fsPromises.copyFile documentation](https://nodejs.org/api/fs.html#fspromisescopyfilesrc-dest-mode)。
+
+```text
+N7_FIX_ALGORITHM = NOT_DECIDED_IN_FRESH_GATE
+REQUIRES_SEPARATE_WINDOWS_REPLACEMENT_DESIGN = TRUE
+PROBABILISTIC_CRASH_TEST = NOT_RUN_BY_DESIGN
+REAL_PROJECT_FILES_TOUCHED = NO
+```
+
+##### A7-INVALID-CONFIG
+
+```text
+findingId = A7-INVALID-CONFIG
+sourceFiles = S3, S4, S10, S11
+authoringCommand = npm run test -w @surdet/authoring -- __fresh-gate-a7-config-shape.test.ts --reporter=json --outputFile="<gateRoot>\a7-authoring-vitest.json"
+authoringExitCode = 1
+authoringExpectedContract = syntactically valid但顶层非 object 的 game.config.json 必须 fail-loud
+authoringActualFirstFailure = Error: promise resolved "{ …(10) }" instead of rejecting
+authoringArtifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\a7-authoring-vitest.json
+authoringArtifactBytes = 1811
+authoringArtifactSHA256 = 6C7ACA4D7FD3ADCBA96B3F71C6D56002219A96F44939B960E3CA0748A2DE5974
+authoringClassification = A7_AUTHORING_REPRODUCED
+editorCommand = npm run test -w surdet-editor -- __fresh-gate-a7-config-shape.test.ts --reporter=json --outputFile="<gateRoot>\a7-editor-vitest.json"
+editorExitCode = 1
+editorExpectedContract = 顶层 array 等非法 config shape 必须在变量保存入口 fail-loud
+editorActualFirstFailure = AssertionError: expected [Function] to throw an error
+editorArtifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\a7-editor-vitest.json
+editorArtifactBytes = 1848
+editorArtifactSHA256 = 40A661374E12B59D660E99700E5A91DD958E829BBED7785EE3D1136CB98BFDB8
+editorClassification = A7_EDITOR_REPRODUCED
+classification = A7_FULL_CHAIN_REPRODUCED
+productionFilesChanged = false
+nextAllowedAction = 总经理可另行制作共享 Authoring/Editor 对齐的 A7 修复任务书；本轮不修改配置语义
+```
+
+##### M1-GENERIC-START-REENTRANCY
+
+```text
+findingId = M1-GENERIC-START-REENTRANCY
+sourceFiles = S5
+command = npm run test -w @surdet/core -- __fresh-gate-m1-generic-start.test.ts --reporter=json --outputFile="<gateRoot>\m1-generic-start-vitest.json"
+exitCode = 1
+expectedContract = clear 回调内 start 新场景后，目标场景首条指令必须从 instruction zero 执行
+actualFirstFailure = AssertionError: expected [ '第二条' ] to deeply equal [ '第一条' ]
+artifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\m1-generic-start-vitest.json
+artifactBytes = 1900
+artifactSHA256 = B8CAEE1652AEC096969B7FCB24BF1B9A9CFB22E3E175C4AA7353C03E94B9BDF0
+classification = M1_GENERIC_START_REENTRANCY_REPRODUCED
+productionFilesChanged = false
+nextAllowedAction = 总经理可另行制作 generic/事件分支统一重入消费语义的 M1 修复任务书；本轮未修改 Interpreter
+```
+
+##### N4-SCHEDULED-WHEN-LINT
+
+```text
+findingId = N4-SCHEDULED-WHEN-LINT
+runtimeSourceFiles = S6, S7
+runtimeCommand = npm run test -w @surdet/core -- event-scheduler.test.ts -t "条件求值严格策略" --reporter=json --outputFile="<gateRoot>\n4-runtime-oracle.json"
+runtimeExitCode = 0
+runtimeExpectedContract = EventScheduler.eligible() 对未声明变量保持严格抛错
+runtimeActual = 目标既有测试 passed；numPassedTests=1，numFailedTests=0
+runtimeArtifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\n4-runtime-oracle.json
+runtimeArtifactBytes = 2806
+runtimeArtifactSHA256 = D117922A0625586DC51AB10F64A0B32CE886BD920D1CA3AC52A6A2D4CCD51B72
+runtimeClassification = N4_RUNTIME_STRICT_PASS
+cliSourceFiles = S8
+cliCommand = npm run test -w @surdet/cli -- __fresh-gate-n4-scheduled-when.test.ts --reporter=json --outputFile="<gateRoot>\n4-cli-lint.json"
+cliExitCode = 1
+cliExpectedContract = events.json scheduled[].when 中 ghost > 0 必须产生 V002
+cliActualFirstFailure = AssertionError: expected false to be true // Object.is equality
+cliArtifactPath = C:\Users\Equinox\AppData\Local\Temp\surdet-pre-wave4-reliability-b8f61e117dcd4782974b19f5825230dd\n4-cli-lint.json
+cliArtifactBytes = 1865
+cliArtifactSHA256 = 39BACDA17AFF30CEAB1E5710D6CA4AD3AFC24FA2BD112B6A04AD56F314600793
+cliClassification = N4_CLI_LINT_REPRODUCED
+classification = N4_PAIRED_SEMANTIC_GAP_REPRODUCED
+productionFilesChanged = false
+nextAllowedAction = 总经理可另行制作 N4 scanner 统一化修复任务书；本轮不修改 lint
+```
+
+#### 临时测试与 artifact 闭合
+
+```text
+TEMPORARY_TESTS = six taskbook paths, all Test-Path=False after evidence readback
+ARTIFACTS = seven JSON files retained under GATE_ROOT
+ARTIFACT_DELETION = NONE
+PRODUCTION_SOURCE_DIFF = NONE
+EXISTING_FORMAL_TEST_DIFF = NONE
+```
+
+本轮没有创建 M2-TINT-RESTORE 或 N9-EDITOR-CLI-W007 测试；二者只登记为后置 backlog。六个动态 Gate 中五个产生匹配合同的业务红灯，N4 为 Runtime 先绿、CLI 后红的 paired semantic gap；N7 为源码/平台原语合同确认。所有结果仍是 Fresh Gate 取证，不是修复完成或关闭声明。
+
+```text
+TASK_0 = COMPLETED
+TASK_1_SIM_STATE_1 = REPRODUCED
+TASK_2_TX_COMMIT_POSTREPLACE = REPRODUCED
+TASK_3_N7_WINDOWS_REPLACEMENT = SOURCE_CONTRACT_CONFIRMED
+TASK_4_A7_INVALID_CONFIG = FULL_CHAIN_REPRODUCED
+TASK_5_M1_GENERIC_START_REENTRANCY = REPRODUCED
+TASK_6_N4_SCHEDULED_WHEN_LINT = PAIRED_SEMANTIC_GAP_REPRODUCED
+TASK_7 = COMPLETED
+PRODUCTION_FIXES = NOT_STARTED
+WAVE_4_IMPLEMENTATION = PAUSED
+NEXT_STOP = TASK_8_REPORT_THEN_TASK_9_DOCS_ONLY_COMMIT
+```
+
 执行 AI 不得自行进入 R1，不得修改生产代码，不得把“红灯确认”写成“缺陷修复”。
 
 ---
