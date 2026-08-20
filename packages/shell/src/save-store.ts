@@ -112,6 +112,12 @@ export function decodeCanonicalSlotStem(stem: string): string {
       throw new Error(`canonical 槽位词干含非法字面量：${stem}`);
     }
   }
+  // 严格 canonicality：decoder 的接受语言必须等于 encoder 的输出范围。
+  // 例如旧 R1 的 `~sv1~0041` 虽能解出 'A'，但其 canonical 拼写已经是
+  // `~sv1~ua`；接受前者会让 list() 暴露 read() 无法按新 canonical 路径命中的幻影槽位。
+  if (canonicalSlotStem(out) !== stem) {
+    throw new Error(`canonical 槽位词干不是唯一规范拼写：${stem}`);
+  }
   return out;
 }
 
