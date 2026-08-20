@@ -1,0 +1,224 @@
+import type {
+  AuthoringEnvelope,
+  EnvelopeContext,
+  EnvelopeErrorShape,
+  EnvelopeRepairAction,
+  JsonSchema,
+  RetryDisposition,
+} from './capability-contract.js';
+import { AUTHORING_CONTRACT_VERSION, AUTHORING_ENVELOPE_SCHEMA_VERSION } from './capability-contract.js';
+import type { AuthoringCapabilityId } from './capability-registry.js';
+import { AuthoringOperationError } from './change-session.js';
+
+export const AUTHORING_ERROR_CODES = [
+  'CAPABILITY_UNAVAILABLE', 'INVALID_REQUEST', 'UNSUPPORTED_OBJECT_KIND',
+  'UNSUPPORTED_OPERATION', 'PROJECT_NOT_FOUND', 'PROJECT_INVALID',
+  'PATH_OUTSIDE_PROJECT', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS',
+  'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'CHANGE_NOT_FOUND',
+  'CHANGE_NOT_OPEN', 'CHANGE_ID_AMBIGUOUS', 'OPERATION_ID_CONFLICT',
+  'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE',
+  'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'SIMULATION_INCOMPLETE',
+  'RUNTIME_EVIDENCE_REQUIRED', 'RUNTIME_FAILED', 'RUNTIME_TIMED_OUT',
+  'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED',
+  'SESSION_STATE_INVALID', 'POLICY_BLOCKED', 'PROJECT_IDENTITY_MISMATCH',
+  'CONTRACT_VERSION_UNSUPPORTED',
+] as const;
+
+export type AuthoringErrorCode = (typeof AUTHORING_ERROR_CODES)[number];
+export type ErrorCategory = 'request' | 'not-found' | 'conflict' | 'validation' | 'runtime' | 'commit';
+export type RepairAction = EnvelopeRepairAction & {
+  capability?: AuthoringCapabilityId | 'session.describe';
+};
+
+export interface AuthoringErrorDefinition {
+  code: AuthoringErrorCode;
+  category: ErrorCategory;
+  retryDisposition: RetryDisposition;
+  repairActions: readonly RepairAction[];
+}
+
+const action = (
+  capability: AuthoringCapabilityId | 'session.describe',
+  reason: string,
+  requiredFreshFacts: string[] = [],
+  inputTemplate?: Readonly<Record<string, unknown>>,
+  terminal = false,
+): RepairAction => ({
+  capability,
+  reason,
+  ...(requiredFreshFacts.length > 0 ? { requiredFreshFacts } : {}),
+  ...(inputTemplate === undefined ? {} : { inputTemplate }),
+  ...(terminal ? { terminal: true } : {}),
+});
+
+const terminalAction = (reason: string): RepairAction => ({ reason, terminal: true });
+
+const jsonObjectValueSchema: JsonSchema = {
+  oneOf: [
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'null' },
+    { type: 'array', items: { type: 'string' } },
+    { type: 'object', patternProperties: { '^.*$': { type: 'string' } }, additionalProperties: false },
+  ],
+};
+
+const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefinition, 'code'>> = {
+  CAPABILITY_UNAVAILABLE: { category: 'request', retryDisposition: 'never', repairActions: [] },
+  INVALID_REQUEST: { category: 'request', retryDisposition: 'same-request', repairActions: [] },
+  UNSUPPORTED_OBJECT_KIND: { category: 'request', retryDisposition: 'never', repairActions: [] },
+  UNSUPPORTED_OPERATION: { category: 'request', retryDisposition: 'never', repairActions: [] },
+  PROJECT_NOT_FOUND: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('project.inspect', '重新读取项目事实并确认项目根与对象路径。')] },
+  PROJECT_INVALID: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.validate', '读取最新校验问题并完成类型化修复。')] },
+  PATH_OUTSIDE_PROJECT: { category: 'conflict', retryDisposition: 'never', repairActions: [] },
+  OBJECT_NOT_FOUND: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('object.inspect', '用最新项目或事务视图重新解析对象引用。')] },
+  OBJECT_AMBIGUOUS: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('project.inspect', '读取对象索引并改用唯一 objectRef。')] },
+  OBJECT_REF_STALE: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('object.inspect', '先读取对象当前 fingerprint，再生成新的 typed mutation。', ['object fingerprint', 'project revision'])] },
+  OBJECT_PRECONDITION_FAILED: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('object.inspect', '先读取对象当前 fingerprint，再生成新的 typed mutation。', ['object fingerprint', 'project revision'])] },
+  CHANGE_NOT_FOUND: { category: 'not-found', retryDisposition: 'never', repairActions: [] },
+  CHANGE_NOT_OPEN: { category: 'conflict', retryDisposition: 'never', repairActions: [] },
+  CHANGE_ID_AMBIGUOUS: { category: 'conflict', retryDisposition: 'manual-recovery', repairActions: [terminalAction('多个 change identity 无法安全猜测；由人工选择并恢复。')] },
+  OPERATION_ID_CONFLICT: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('同一 operationId 已绑定另一负载，不得改写或重试不同 payload。')] },
+  PROJECT_CHANGED_SINCE_BEGIN: { category: 'conflict', retryDisposition: 'new-change', repairActions: [action('project.inspect', '重新读取项目基线。'), action('change.begin', '在新鲜项目基线上创建新的 change。')] },
+  VALIDATION_REQUIRED: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.validate', '为当前 workingRevision 取得新鲜校验证据。')] },
+  VALIDATION_STALE: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.validate', 'mutation 后重新运行校验并绑定当前 workingRevision。')] },
+  VALIDATION_FAILED: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.validate', '读取 typed issue 与 objectRef，修复后重新校验。')] },
+  SIMULATION_REQUIRED: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.simulate', '在当前 revision 上取得新鲜模拟证据。')] },
+  SIMULATION_INCOMPLETE: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.simulate', '调整明确的模拟预算或路径后重新模拟。')] },
+  RUNTIME_EVIDENCE_REQUIRED: { category: 'runtime', retryDisposition: 'after-repair', repairActions: [action('runtime.run-from', '使用明确 sceneId 与 choices 运行路径。'), action('runtime.read-trace', '读取新鲜 trace 以确认运行时结果。')] },
+  RUNTIME_FAILED: { category: 'runtime', retryDisposition: 'after-repair', repairActions: [action('project.validate', '先修复校验问题，再重跑明确 runtime path。')] },
+  RUNTIME_TIMED_OUT: { category: 'runtime', retryDisposition: 'after-repair', repairActions: [action('runtime.run-from', '检查路径与 maxSteps 后重新运行。')] },
+  COMMIT_FAILED_RECOVERED: { category: 'commit', retryDisposition: 'after-inspect', repairActions: [action('session.describe', '读取事务状态与恢复信息。'), action('project.inspect', '确认项目文件与 revision 后再决定是否重试。')] },
+  COMMIT_RECOVERY_FAILED: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('提交恢复失败；必须人工检查 journal、staged identity 与项目文件。')] },
+  SESSION_STATE_INVALID: { category: 'conflict', retryDisposition: 'after-repair', repairActions: [action('session.describe', '重新读取 Port session 状态后按允许状态继续。')] },
+  POLICY_BLOCKED: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('当前启动 policy 不允许该动作；由项目所有者重启 Port 并显式选择 policy。')] },
+  PROJECT_IDENTITY_MISMATCH: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('项目身份不匹配；不得跨项目猜测或继续写入。')] },
+  CONTRACT_VERSION_UNSUPPORTED: { category: 'request', retryDisposition: 'never', repairActions: [terminalAction('调用方必须升级到双方支持的 authoring contract version。')] },
+};
+
+export const AUTHORING_ERROR_CATALOG: Readonly<Record<AuthoringErrorCode, AuthoringErrorDefinition>> = Object.fromEntries(
+  AUTHORING_ERROR_CODES.map((code) => [code, { code, ...defaultDefinitions[code] }]),
+) as Record<AuthoringErrorCode, AuthoringErrorDefinition>;
+
+export function errorDefinition(code: AuthoringErrorCode): AuthoringErrorDefinition {
+  return AUTHORING_ERROR_CATALOG[code];
+}
+
+function isAuthoringErrorCode(value: string): value is AuthoringErrorCode {
+  return (AUTHORING_ERROR_CODES as readonly string[]).includes(value);
+}
+
+export interface NormalizedAuthoringError extends EnvelopeErrorShape {
+  code: AuthoringErrorCode;
+  category: ErrorCategory;
+  retryDisposition: RetryDisposition;
+  repairActions: RepairAction[];
+}
+
+export function normalizeAuthoringError(error: unknown): NormalizedAuthoringError {
+  const sourceCode = error instanceof AuthoringOperationError ? error.code : undefined;
+  const code: AuthoringErrorCode = sourceCode !== undefined && isAuthoringErrorCode(sourceCode)
+    ? sourceCode
+    : 'INVALID_REQUEST';
+  const definition = errorDefinition(code);
+  const message = error instanceof Error ? error.message : String(error);
+  const details = error instanceof AuthoringOperationError ? error.details : undefined;
+  return {
+    code,
+    category: definition.category,
+    message,
+    ...(details === undefined ? {} : { details }),
+    retryDisposition: definition.retryDisposition,
+    repairActions: definition.repairActions.map((item) => ({
+      ...item,
+      ...(item.requiredFreshFacts === undefined ? {} : { requiredFreshFacts: [...item.requiredFreshFacts] }),
+    })),
+  };
+}
+
+function envelopeBaseSchema(): JsonSchema {
+  return {
+    type: 'object',
+    properties: {
+      schemaVersion: { const: AUTHORING_ENVELOPE_SCHEMA_VERSION },
+      contractVersion: { const: AUTHORING_CONTRACT_VERSION },
+      sessionId: { type: 'string' },
+      capability: { type: 'string' },
+      projectIdentity: { type: 'string' },
+      projectRevision: { type: 'string' },
+      changeId: { type: 'string' },
+      workingRevision: { type: 'integer' },
+      operationId: { type: 'string' },
+    },
+  };
+}
+
+export function createSuccessEnvelope<T>(context: EnvelopeContext, result: T): AuthoringEnvelope<T> {
+  return {
+    ...context,
+    schemaVersion: AUTHORING_ENVELOPE_SCHEMA_VERSION,
+    contractVersion: AUTHORING_CONTRACT_VERSION,
+    ok: true,
+    result,
+  };
+}
+
+export function createFailureEnvelope(context: EnvelopeContext, error: unknown): AuthoringEnvelope<never> {
+  return {
+    ...context,
+    schemaVersion: AUTHORING_ENVELOPE_SCHEMA_VERSION,
+    contractVersion: AUTHORING_CONTRACT_VERSION,
+    ok: false,
+    error: normalizeAuthoringError(error),
+  };
+}
+
+export function createEnvelopeJsonSchema(resultSchema: JsonSchema): JsonSchema {
+  const base = envelopeBaseSchema();
+  const baseProperties = base.properties as Record<string, JsonSchema>;
+  const errorSchema: JsonSchema = {
+    type: 'object',
+    properties: {
+      code: { enum: [...AUTHORING_ERROR_CODES] },
+      category: { enum: ['request', 'not-found', 'conflict', 'validation', 'runtime', 'commit'] },
+      message: { type: 'string' },
+      details: { type: 'object', patternProperties: { '^.*$': jsonObjectValueSchema }, additionalProperties: false },
+      retryDisposition: { enum: ['same-request', 'after-inspect', 'after-repair', 'new-change', 'manual-recovery', 'never'] },
+      repairActions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            capability: { type: 'string' },
+            reason: { type: 'string' },
+            requiredFreshFacts: { type: 'array', items: { type: 'string' } },
+            inputTemplate: { type: 'object', patternProperties: { '^.*$': jsonObjectValueSchema }, additionalProperties: false },
+            terminal: { type: 'boolean' },
+          },
+          required: ['reason'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['code', 'category', 'message', 'retryDisposition', 'repairActions'],
+    additionalProperties: false,
+  };
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    oneOf: [
+      {
+        type: 'object',
+        properties: { ...baseProperties, ok: { const: true }, result: resultSchema },
+        required: ['schemaVersion', 'contractVersion', 'sessionId', 'capability', 'projectIdentity', 'ok', 'result'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: { ...baseProperties, ok: { const: false }, error: errorSchema },
+        required: ['schemaVersion', 'contractVersion', 'sessionId', 'capability', 'projectIdentity', 'ok', 'error'],
+        additionalProperties: false,
+      },
+    ],
+  };
+}
