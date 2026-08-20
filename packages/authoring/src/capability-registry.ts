@@ -54,6 +54,9 @@ const jsonValueSchema: JsonSchema = {
 };
 
 const jsonObjectSchema: JsonSchema = { type: 'object' };
+const inspectionDetailsSchema: JsonSchema = {
+  oneOf: [stringSchema, jsonObjectSchema],
+};
 
 const stringMapSchema: JsonSchema = {
   type: 'object',
@@ -251,7 +254,7 @@ const objectInspectionSchema = strictObject({
   semanticId: stringSchema,
   parentRef: stringSchema,
   source: strictObject({ path: stringSchema, line: integerSchema, col: integerSchema, raw: stringSchema }, ['path', 'line', 'col', 'raw']),
-  details: jsonObjectSchema,
+  details: inspectionDetailsSchema,
   fingerprint: stringSchema,
   references: stringArraySchema,
   referencedBy: stringArraySchema,

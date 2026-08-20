@@ -122,11 +122,14 @@ describe('Surdet Agent Port MCP tool projection', () => {
     await session.close();
   });
 
-  it('keeps structured timeline inspection details available over MCP', async () => {
+  it('preserves every legal object inspection details shape over MCP', async () => {
     const { session, client, server } = await connected('stage');
     try {
       const begun = await client.callTool({ name: 'surdet_change_begin', arguments: { intent: 'inspect timeline details', acceptanceCriteria: ['structured output'], initiator: 'external-agent' } });
       expect(begun.isError).not.toBe(true);
+
+      const entrySceneInspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'config:entryScene' } });
+      const ordinaryObjectInspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'scene:start' } });
       const created = await client.callTool({
         name: 'surdet_timeline_create',
         arguments: {
@@ -141,9 +144,20 @@ describe('Surdet Agent Port MCP tool projection', () => {
         },
       });
       expect(created.isError).not.toBe(true);
-      const inspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_details' } });
-      expect(inspected.isError).not.toBe(true);
-      expect((inspected.structuredContent as any).result.details.tracks).toHaveLength(1);
+      const timelineInspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_details' } });
+
+      expect(entrySceneInspected.isError).not.toBe(true);
+      expect((entrySceneInspected.structuredContent as any).ok).toBe(true);
+      expect((entrySceneInspected.structuredContent as any).result.details).toBe('start');
+
+      expect(ordinaryObjectInspected.isError).not.toBe(true);
+      expect((ordinaryObjectInspected.structuredContent as any).ok).toBe(true);
+      expect((ordinaryObjectInspected.structuredContent as any).result).not.toHaveProperty('details');
+
+      expect(timelineInspected.isError).not.toBe(true);
+      expect((timelineInspected.structuredContent as any).ok).toBe(true);
+      expect((timelineInspected.structuredContent as any).result.details.tracks).toHaveLength(1);
+      expect((timelineInspected.structuredContent as any).result.details.tracks[0].cues).toHaveLength(1);
     } finally {
       await client.close();
       await server.close();
