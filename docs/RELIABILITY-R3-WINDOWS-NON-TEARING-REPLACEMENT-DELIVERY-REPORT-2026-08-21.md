@@ -180,7 +180,7 @@ R3_CLOSED = NO
 NEXT_STOP = WAITING_FOR_INDEPENDENT_FINAL_REVIEW
 ```
 
-代码证据提交和 docs-only closure 的真实 HEAD 将在 Task 6 从磁盘回读后追加到本任务书与本报告；在此之前不 push、不进入 R4。
+历史记录：在 Task 6 代码提交完成、docs-only closure 尚未回读时，曾暂记“真实 HEAD 将在 Task 6 追加”；实际 R3 docs-only closure 身份已在下方记录。
 
 ## Task 6 代码证据提交身份
 
@@ -207,3 +207,31 @@ NEXT_STOP = WAITING_FOR_INDEPENDENT_FINAL_REVIEW
 ```
 
 本段记录代码证据提交已经从磁盘回读；本报告随后只作为 R3 文档收口的一部分提交，未重新运行测试或修改生产代码。
+
+## R3-DOC-1 docs-only closure identity correction
+
+```text
+R3_DOC_1 = CLOSED
+R3_DOCS_CLOSURE_COMMIT_HISTORICAL_VALUE = PENDING
+R3_DOCUMENT_CLOSURE_HEAD = d079f3fcf4eded33836123c4caf3308285430526
+R3_DOCUMENT_CLOSURE_PARENT = 4d3e42468846c15310c244fb7f2660d77f68ca98
+R3_DOCUMENT_CLOSURE_MESSAGE = docs(cli): report R3 Windows replacement contract
+R3_DOCUMENT_CLOSURE_SCOPE = EXACTLY:
+  docs/superpowers/plans/2026-08-21-reliability-r3-windows-non-tearing-replacement.md
+  docs/RELIABILITY-R3-WINDOWS-NON-TEARING-REPLACEMENT-DELIVERY-REPORT-2026-08-21.md
+R3_DOCUMENT_CLOSURE_REMOTE_MAIN = 0c8358acfd7131709c97fd53014f2ffe30a78065
+R3_DOCUMENT_CLOSURE_AHEAD_BEHIND = 2/0
+R3_DOCUMENT_CLOSURE_IDENTITY_READBACK = PASS
+R3_DOCS_ONLY_CLOSURE_CORRECTION = PASS
+R3_IMPLEMENTATION = PASS
+R3_PRODUCTION_FILES_MODIFIED = NO
+R3_TEST_FILES_MODIFIED = NO
+TESTS_RERUN = NO
+PUSH = NOT_PERFORMED
+R3_CLOSED = NO
+R4_TO_R6 = NOT_STARTED
+WAVE_4 = PAUSED
+NEXT_GATE = INDEPENDENT_FINAL_RECHECK
+```
+
+`PENDING` 仅是 docs-only correction 前的历史快照；本报告现在明确记录真实 R3 docs-only closure 提交身份。本轮只修正文档身份，不重跑测试、不修改生产代码。
