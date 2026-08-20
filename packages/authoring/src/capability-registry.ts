@@ -58,6 +58,13 @@ const inspectionDetailsSchema: JsonSchema = {
   oneOf: [stringSchema, jsonObjectSchema],
 };
 
+const evidenceFreshnessSchema = strictObject({
+  evidenceId: stringSchema,
+  status: { enum: ['missing', 'fresh', 'stale', 'failed', 'incomplete'] },
+  workingRevision: integerSchema,
+  currentWorkingRevision: integerSchema,
+}, ['status', 'currentWorkingRevision']);
+
 const stringMapSchema: JsonSchema = {
   type: 'object',
   patternProperties: { '^.*$': stringSchema },
@@ -272,10 +279,29 @@ const validationIssueSchema = strictObject({
   action: stringSchema,
 }, ['severity', 'code', 'text', 'file', 'line', 'col', 'action']);
 
-const validationViewSchema = strictObject({
+// validateSnapshot keeps its compiled-scene map on the working result. It is
+// an empty JSON object on the MCP wire; keep that implementation field
+// explicitly closed instead of weakening the whole working result schema.
+const validationScenesSchema = strictObject({});
+
+const validationProjectResultSchema = strictObject({
+  view: { const: 'project' },
   ok: booleanSchema,
   issues: arrayOf(validationIssueSchema),
-}, ['ok', 'issues']);
+}, ['view', 'ok', 'issues']);
+
+const validationWorkingResultSchema = strictObject({
+  view: { const: 'working' },
+  ok: booleanSchema,
+  issues: arrayOf(validationIssueSchema),
+  scenes: validationScenesSchema,
+  evidenceId: stringSchema,
+  freshness: evidenceFreshnessSchema,
+}, ['view', 'ok', 'issues', 'scenes', 'evidenceId', 'freshness']);
+
+const validationOutputSchema: JsonSchema = {
+  oneOf: [validationProjectResultSchema, validationWorkingResultSchema],
+};
 
 const simulationPathSchema = strictObject({
   choices: arrayOf(integerSchema),
@@ -286,7 +312,7 @@ const simulationPathSchema = strictObject({
   error: stringSchema,
 }, ['choices', 'finalVariables', 'status', 'termination']);
 
-const simulationReportSchema = strictObject({
+const simulationReportProperties: SchemaProperties = {
   status: { enum: ['passed', 'failed', 'incomplete'] },
   entryScene: stringSchema,
   pathsExplored: integerSchema,
@@ -299,10 +325,32 @@ const simulationReportSchema = strictObject({
   cyclesPruned: integerSchema,
   saveRoundtrips: integerSchema,
   seed: numberSchema,
-}, [
+};
+
+const simulationReportRequired = [
   'status', 'entryScene', 'pathsExplored', 'choiceBranches', 'paths', 'budgetExhausted',
   'runtimeErrors', 'endings', 'deadEndScenes', 'cyclesPruned', 'saveRoundtrips',
-]);
+];
+
+const simulationReportSchema = strictObject(simulationReportProperties, simulationReportRequired);
+
+const simulationProjectResultSchema = strictObject({
+  view: { const: 'project' },
+  status: { enum: ['passed', 'failed', 'incomplete'] },
+  report: simulationReportSchema,
+}, ['view', 'status', 'report']);
+
+const simulationWorkingResultSchema = strictObject({
+  ...simulationReportProperties,
+  view: { const: 'working' },
+  report: simulationReportSchema,
+  evidenceId: stringSchema,
+  freshness: evidenceFreshnessSchema,
+}, [...simulationReportRequired, 'view', 'report', 'evidenceId', 'freshness']);
+
+const simulationOutputSchema: JsonSchema = {
+  oneOf: [simulationProjectResultSchema, simulationWorkingResultSchema],
+};
 
 const runtimeChoicesSchema = arrayOf(integerSchema);
 const traceQuerySchema = strictObject({
@@ -312,9 +360,33 @@ const traceQuerySchema = strictObject({
   variable: stringSchema,
 });
 
-const traceEventsSchema = arrayOf(jsonValueSchema);
+const traceSourceSchema = strictObject({
+  sceneId: stringSchema,
+  index: integerSchema,
+  op: stringSchema,
+  file: stringSchema,
+  line: integerSchema,
+  col: integerSchema,
+}, ['sceneId', 'index', 'op', 'file', 'line', 'col']);
 
-const changeDiffSchema = strictObject({
+const traceStateDeltaSchema = strictObject({
+  variable: stringSchema,
+  before: jsonValueSchema,
+  after: jsonValueSchema,
+}, ['variable']);
+
+const traceEventSchema = strictObject({
+  kind: { enum: ['instruction', 'choice', 'state', 'condition', 'control-flow', 'scene-end'] },
+  source: traceSourceSchema,
+  stateDelta: arrayOf(traceStateDeltaSchema),
+  condition: strictObject({ expression: stringSchema, result: booleanSchema }, ['expression', 'result']),
+  controlFlow: strictObject({ from: stringSchema, to: stringSchema }, ['from', 'to']),
+  choice: strictObject({ optionIndex: integerSchema, label: stringSchema }, ['optionIndex', 'label']),
+}, ['kind', 'source']);
+
+const traceEventsSchema = arrayOf(traceEventSchema);
+
+const changeDiffProperties: SchemaProperties = {
   summary: strictObject({
     createdScenes: integerSchema,
     modifiedScenes: integerSchema,
@@ -329,7 +401,25 @@ const changeDiffSchema = strictObject({
     unifiedDiff: stringSchema,
     unexpectedFormatChange: booleanSchema,
   }, ['path', 'unifiedDiff', 'unexpectedFormatChange'])),
-}, ['summary', 'semantic', 'files']);
+};
+
+const changeDiffResultSchema = strictObject({
+  ...changeDiffProperties,
+  view: { const: 'working' },
+  evidenceId: stringSchema,
+  freshness: evidenceFreshnessSchema,
+}, ['summary', 'semantic', 'files', 'view', 'evidenceId', 'freshness']);
+
+const runtimeRunFromResultSchema = strictObject({
+  view: { const: 'working' },
+  traceId: stringSchema,
+  status: { const: 'passed' },
+  sceneId: stringSchema,
+  choices: runtimeChoicesSchema,
+  finalVariables: jsonValueSchema,
+  eventCount: integerSchema,
+  freshness: evidenceFreshnessSchema,
+}, ['view', 'traceId', 'status', 'sceneId', 'choices', 'finalVariables', 'eventCount', 'freshness']);
 
 const capabilitySummarySchema = strictObject({
   id: stringSchema,
@@ -418,28 +508,28 @@ const definitions = {
   },
   validate: {
     inputSchema: emptyInputSchema,
-    outputSchema: strictObject({ view: validationViewSchema, ok: booleanSchema, issues: arrayOf(validationIssueSchema), evidenceId: stringSchema }, ['view', 'ok', 'issues']),
-    example: { input: {}, expectedResultShape: { view: { ok: true, issues: [] }, ok: true, issues: [] } },
+    outputSchema: validationOutputSchema,
+    example: { input: {}, expectedResultShape: { view: 'project', ok: true, issues: [] } },
   },
   simulate: {
     inputSchema: strictObject({ sceneId: stringSchema }),
-    outputSchema: strictObject({ view: simulationReportSchema, status: { enum: ['passed', 'failed', 'incomplete'] }, report: simulationReportSchema, evidenceId: stringSchema }, ['view', 'status', 'report']),
-    example: { input: {}, expectedResultShape: { view: { status: 'passed' }, status: 'passed', report: { status: 'passed' } } },
+    outputSchema: simulationOutputSchema,
+    example: { input: {}, expectedResultShape: { view: 'project', status: 'passed', report: { status: 'passed' } } },
   },
   runFrom: {
     inputSchema: strictObject({ sceneId: stringSchema, label: stringSchema, variables: jsonValueSchema, choices: runtimeChoicesSchema, maxSteps: integerSchema, seed: integerSchema }, ['sceneId', 'choices']),
-    outputSchema: strictObject({ view: jsonValueSchema, traceId: stringSchema, status: { const: 'passed' }, sceneId: stringSchema, choices: runtimeChoicesSchema, finalVariables: jsonValueSchema, eventCount: integerSchema }, ['view', 'traceId', 'status', 'sceneId', 'choices', 'finalVariables', 'eventCount']),
-    example: { input: { sceneId: 'agent_port_entry', choices: [0] }, expectedResultShape: { traceId: 'trace_...', status: 'passed', sceneId: 'agent_port_entry', choices: [0], finalVariables: {}, eventCount: 1 } },
+    outputSchema: runtimeRunFromResultSchema,
+    example: { input: { sceneId: 'agent_port_entry', choices: [0] }, expectedResultShape: { view: 'working', traceId: 'trace_...', status: 'passed', sceneId: 'agent_port_entry', choices: [0], finalVariables: {}, eventCount: 1, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   readTrace: {
     inputSchema: strictObject({ traceId: stringSchema, query: traceQuerySchema }, ['traceId']),
-    outputSchema: strictObject({ traceId: stringSchema, events: traceEventsSchema, count: integerSchema, freshness: jsonValueSchema }, ['traceId', 'events', 'count']),
-    example: { input: { traceId: 'trace_...' }, expectedResultShape: { traceId: 'trace_...', events: [], count: 0 } },
+    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, freshness: evidenceFreshnessSchema }, ['view', 'traceId', 'events', 'count', 'freshness']),
+    example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   diff: {
     inputSchema: emptyInputSchema,
-    outputSchema: strictObject({ summary: changeDiffSchema.properties instanceof Object ? (changeDiffSchema.properties as Record<string, JsonSchema>)['summary']! : jsonValueSchema, semantic: arrayOf(diffEntrySchema), files: changeDiffSchema.properties instanceof Object ? (changeDiffSchema.properties as Record<string, JsonSchema>)['files']! : jsonValueSchema, evidenceId: stringSchema, freshness: jsonValueSchema }, ['summary', 'semantic', 'files']),
-    example: { input: {}, expectedResultShape: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [] } },
+    outputSchema: changeDiffResultSchema,
+    example: { input: {}, expectedResultShape: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [], view: 'working', evidenceId: 'diff_...', freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   commit: {
     inputSchema: emptyInputSchema,
@@ -589,6 +679,18 @@ export function getCapabilityDefinition(id: AuthoringCapabilityId): AuthoringCap
   return definition;
 }
 
+function isStrictObjectSchema(schema: JsonSchema): boolean {
+  return schema['type'] === 'object' && schema['additionalProperties'] === false;
+}
+
+function isStrictObjectOrUnionSchema(schema: JsonSchema): boolean {
+  if (isStrictObjectSchema(schema)) return true;
+  const variants = schema['oneOf'];
+  return Array.isArray(variants)
+    && variants.length > 0
+    && variants.every((variant) => typeof variant === 'object' && variant !== null && isStrictObjectSchema(variant as JsonSchema));
+}
+
 export function assertCapabilityRegistry(definitions: readonly CapabilityDefinition[]): void {
   if (definitions.length !== AUTHORING_CAPABILITY_IDS.length) {
     throw new Error(`authoring registry 必须是 ${AUTHORING_CAPABILITY_IDS.length} 项，实际 ${definitions.length}`);
@@ -606,8 +708,8 @@ export function assertCapabilityRegistry(definitions: readonly CapabilityDefinit
     if (definition.inputSchema['type'] !== 'object' || definition.inputSchema['additionalProperties'] !== false) {
       throw new Error(`${definition.id} inputSchema 必须是严格 object schema`);
     }
-    if (definition.outputSchema['type'] !== 'object' || definition.outputSchema['additionalProperties'] !== false) {
-      throw new Error(`${definition.id} outputSchema 必须是严格 object schema`);
+    if (!isStrictObjectOrUnionSchema(definition.outputSchema)) {
+      throw new Error(`${definition.id} outputSchema 必须是严格 object 或严格 object oneOf schema`);
     }
     if (definition.sideEffects.length === 0 || definition.possibleErrors.length === 0 || definition.repairRecipes.length === 0) {
       throw new Error(`${definition.id} 必须声明副作用、错误和修复配方`);
