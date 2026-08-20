@@ -3,7 +3,14 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { AuthoringOperationError, type ChangeRecord, type ChangeRepository } from '@surdet/authoring';
+import type { InvocationRecord } from '../agent-port/invocation-ledger.js';
 import { projectIdentityFromRoot } from './project-identity.js';
+
+export interface ArtifactIdentity {
+  path: string;
+  bytes: number;
+  sha256: string;
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -182,5 +189,106 @@ export class NodeChangeStore implements ChangeRepository {
 
   async readTrace(changeId: string, traceId: string): Promise<unknown | null> {
     return readJson(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`));
+  }
+
+  async writeInvocation(changeId: string, record: InvocationRecord): Promise<string> {
+    const directory = path.join(this.changeDirectory(changeId), 'invocations');
+    await fs.mkdir(directory, { recursive: true });
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    let nextSequence = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const match = /^(\d+)-[^/]+\.json$/.exec(entry.name);
+      if (match !== null) nextSequence = Math.max(nextSequence, Number(match[1]));
+    }
+    const file = path.join(directory, `${String(nextSequence + 1).padStart(8, '0')}-${record.invocationId}.json`);
+    await writeJson(file, record);
+    return record.invocationId;
+  }
+
+  async readInvocations(changeId: string): Promise<InvocationRecord[]> {
+    const directory = path.join(this.changeDirectory(changeId), 'invocations');
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    const files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const records: InvocationRecord[] = [];
+    for (const file of files) {
+      const record = await readJson<InvocationRecord>(path.join(directory, file.name));
+      if (record !== null) records.push(record);
+    }
+    return records;
+  }
+
+  async readAllEvidence(changeId: string): Promise<unknown[]> {
+    const directory = path.join(this.changeDirectory(changeId), 'evidence');
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    const files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const values: unknown[] = [];
+    for (const file of files) {
+      const value = await readJson<unknown>(path.join(directory, file.name));
+      if (value !== null) values.push(value);
+    }
+    return values;
+  }
+
+  async readDiff(changeId: string): Promise<unknown | null> {
+    return readJson(path.join(this.changeDirectory(changeId), 'diff.json'));
+  }
+
+  async readLatestJournal(changeId: string): Promise<unknown | null> {
+    const directory = path.join(this.changeDirectory(changeId), 'journals');
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    const files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const latest = files.at(-1);
+    return latest === undefined ? null : readJson(path.join(directory, latest.name));
+  }
+
+  async writeCapsulePayload(changeId: string, capsuleId: string, payload: unknown): Promise<ArtifactIdentity> {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)
+      || Object.prototype.hasOwnProperty.call(payload, 'artifactIdentity')) {
+      throw new AuthoringOperationError('INVALID_REQUEST', 'delivery capsule payload 不得包含 artifactIdentity');
+    }
+    const capsuleDirectory = path.join(this.changeDirectory(changeId), 'capsules', safeId(capsuleId));
+    await fs.mkdir(capsuleDirectory, { recursive: true });
+    const payloadPath = path.join(capsuleDirectory, 'payload.json');
+    const payloadText = `${JSON.stringify(payload, null, 2)}\n`;
+    const temporaryPayload = path.join(capsuleDirectory, `.payload-${crypto.randomUUID()}.tmp`);
+    try {
+      await fs.writeFile(temporaryPayload, payloadText, 'utf8');
+      await fs.rename(temporaryPayload, payloadPath);
+    } catch (error) {
+      await fs.rm(temporaryPayload, { force: true });
+      throw error;
+    }
+    const bytes = await fs.readFile(payloadPath);
+    const identity: ArtifactIdentity = {
+      path: payloadPath,
+      bytes: bytes.byteLength,
+      sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+    };
+    const identityPath = path.join(capsuleDirectory, 'identity.json');
+    const temporaryIdentity = path.join(capsuleDirectory, `.identity-${crypto.randomUUID()}.tmp`);
+    try {
+      await fs.writeFile(temporaryIdentity, `${JSON.stringify(identity, null, 2)}\n`, 'utf8');
+      await fs.rename(temporaryIdentity, identityPath);
+    } catch (error) {
+      await fs.rm(temporaryIdentity, { force: true });
+      throw error;
+    }
+    return identity;
   }
 }

@@ -23,6 +23,8 @@ import { AuthoringService } from '../authoring/authoring-service.js';
 import { NodeChangeStore } from '../authoring/node-change-store.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
+import { recordInvocation } from './invocation-ledger.js';
+import { generateDeliveryCapsule, type SealedDeliveryCapsule } from './delivery-capsule.js';
 import { isCapabilityAllowed } from './policy.js';
 import type { AgentPortOptions } from './args.js';
 
@@ -131,8 +133,27 @@ function capabilityAvailability(
   };
 }
 
+function evidenceIdsFromValue(value: unknown, key = '', depth = 0): string[] {
+  if (depth > 8 || value === null || value === undefined) return [];
+  if (key === 'evidenceId' || key === 'traceId') return typeof value === 'string' ? [value] : [];
+  if (Array.isArray(value)) return value.flatMap((item) => evidenceIdsFromValue(item, '', depth + 1));
+  if (typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([childKey, childValue]) => evidenceIdsFromValue(childValue, childKey, depth + 1));
+}
+
+function evidenceIdsFromRecord(record: ChangeRecord | undefined): string[] {
+  if (record === undefined) return [];
+  return [
+    record.latestValidation?.evidenceId,
+    record.latestSimulation?.evidenceId,
+    record.latestDiff?.evidenceId,
+    ...(record.runtimeTraces ?? []).map((trace) => trace.traceId),
+  ].filter((value): value is string => value !== undefined);
+}
+
 export class AgentPortSession {
   private activeChangeIdValue?: string;
+  private lastChangeIdValue?: string;
 
   constructor(
     readonly sessionId: string,
@@ -147,10 +168,20 @@ export class AgentPortSession {
     private readonly service = new AuthoringService(),
   ) {
     this.activeChangeIdValue = activeChangeId;
+    this.lastChangeIdValue = activeChangeId;
   }
 
   get activeChangeId(): string | undefined {
     return this.activeChangeIdValue;
+  }
+
+  get lastChangeId(): string | undefined {
+    return this.lastChangeIdValue;
+  }
+
+  canExposeDeliveryCapsule(): boolean {
+    if (this.policy === 'observe') return this.wasResumed && this.activeChangeIdValue !== undefined;
+    return this.lastChangeIdValue !== undefined;
   }
 
   private async activeRecord(): Promise<ChangeRecord | undefined> {
@@ -208,6 +239,11 @@ export class AgentPortSession {
   }
 
   async invoke(capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<AuthoringEnvelope<unknown>> {
+    const beforeChangeId = this.activeChangeIdValue;
+    const beforeOpened = beforeChangeId === undefined ? undefined : await NodeChangeStore.openByChangeId(beforeChangeId);
+    const beforeRecord = beforeOpened?.record;
+    let envelope: AuthoringEnvelope<unknown>;
+    let operationId: string | undefined;
     try {
       const definition = getCapabilityDefinition(capability);
       if (!isCapabilityAllowed(this.policy, definition)) throw policyBlocked(capability, this.policy);
@@ -218,15 +254,18 @@ export class AgentPortSession {
       if (capability === 'change.commit') await this.commitEvidenceGate();
 
       const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, this.service);
+      operationId = dispatched.operationId ?? (typeof input['operationId'] === 'string' ? input['operationId'] : undefined);
       const value = dispatched.value;
       if (capability === 'change.begin') {
         const changeId = (value.result as { changeId?: unknown }).changeId;
         if (typeof changeId !== 'string' || changeId.length === 0) throw new AuthoringOperationError('SESSION_STATE_INVALID', 'change.begin 未返回有效 changeId');
         this.activeChangeIdValue = changeId;
+        this.lastChangeIdValue = changeId;
       } else if (capability === 'change.commit' || capability === 'change.rollback') {
+        this.lastChangeIdValue = this.activeChangeIdValue;
         this.activeChangeIdValue = undefined;
       }
-      return createSuccessEnvelope({
+      envelope = createSuccessEnvelope({
         sessionId: this.sessionId,
         capability,
         projectIdentity: value.projectIdentity,
@@ -236,8 +275,47 @@ export class AgentPortSession {
         ...(dispatched.operationId === undefined ? {} : { operationId: dispatched.operationId }),
       }, value.result);
     } catch (error) {
-      return this.failure(capability, error);
+      envelope = this.failure(capability, error);
     }
+
+    const changeId = envelope.changeId ?? beforeChangeId;
+    if (changeId !== undefined) {
+      try {
+        const afterOpened = await NodeChangeStore.openByChangeId(changeId);
+        const afterRecord = afterOpened?.record;
+        const invocationStore = afterOpened?.store ?? beforeOpened?.store;
+        if (invocationStore === undefined) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        await recordInvocation(invocationStore, changeId, {
+          sessionId: this.sessionId,
+          capability,
+          ...(operationId === undefined ? {} : { operationId }),
+          ok: envelope.ok,
+          ...(envelope.ok ? {} : { errorCode: envelope.error.code }),
+          ...(beforeRecord?.baseRevision === undefined ? {} : { projectRevisionBefore: beforeRecord.baseRevision }),
+          ...(envelope.projectRevision === undefined ? {} : { projectRevisionAfter: envelope.projectRevision }),
+          ...(beforeRecord?.workingRevision === undefined ? {} : { workingRevisionBefore: beforeRecord.workingRevision }),
+          ...(afterRecord?.workingRevision === undefined ? {} : { workingRevisionAfter: afterRecord.workingRevision }),
+          input,
+          evidenceIds: [
+            ...evidenceIdsFromValue(envelope.ok ? envelope.result : undefined),
+            ...evidenceIdsFromRecord(afterRecord),
+          ],
+        });
+      } catch (error) {
+        return this.failure(capability, new AuthoringOperationError(
+          'INVOCATION_LEDGER_WRITE_FAILED',
+          `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
+        ));
+      }
+    }
+    return envelope;
+  }
+
+  async generateDeliveryCapsule(label?: string): Promise<SealedDeliveryCapsule> {
+    if (!this.canExposeDeliveryCapsule()) {
+      throw new AuthoringOperationError('SESSION_STATE_INVALID', '当前 session 没有允许生成 delivery capsule 的 resumed/open change');
+    }
+    return generateDeliveryCapsule(this, label);
   }
 
   async describe(): Promise<SessionDescription> {
