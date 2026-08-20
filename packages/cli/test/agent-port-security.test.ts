@@ -1,0 +1,282 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AuthoringOperationError } from '@surdet/authoring';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
+import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
+
+const temporaryRoots: string[] = [];
+
+function makeProject(name: string): string {
+  const root = fs.mkdtempSync(path.join(process.cwd(), `.surdet-agent-security-${name}-`));
+  temporaryRoots.push(root);
+  fs.mkdirSync(path.join(root, 'content', 'scenario'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {} }), 'utf8');
+  fs.writeFileSync(path.join(root, 'content', 'scenario', 'start.gal'), '@scene start\n凛：开始。\n@end\n', 'utf8');
+  return root;
+}
+
+function projectBytes(root: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const walk = (directory: string, relativeDirectory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const relative = relativeDirectory.length === 0 ? entry.name : path.join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) walk(absolute, relative);
+      else if (entry.isFile()) result.set(relative, fs.readFileSync(absolute, 'utf8'));
+    }
+  };
+  walk(root, '');
+  return result;
+}
+
+function dataBytes(root: string): Map<string, string> {
+  return fs.existsSync(root) ? projectBytes(root) : new Map();
+}
+
+async function open(root: string, data: string, policy: 'observe' | 'stage' | 'apply', resumeChangeId?: string): Promise<AgentPortSession> {
+  process.env['SURDET_AGENT_DATA_DIR'] = data;
+  return openAgentPortSession({ projectRoot: root, policy, ...(resumeChangeId === undefined ? {} : { resumeChangeId }) });
+}
+
+function expectFailure(value: any, code: string): void {
+  expect(value.ok).toBe(false);
+  expect(value.error.code).toBe(code);
+}
+
+async function beginWithScene(session: AgentPortSession, sceneId = 'security-scene'): Promise<string> {
+  expect((await session.invoke('change.begin', {})).ok).toBe(true);
+  expect((await session.invoke('scene.create', { operationId: `op-${sceneId}`, sceneId })).ok).toBe(true);
+  return session.activeChangeId!;
+}
+
+async function freshEvidence(session: AgentPortSession): Promise<void> {
+  expect((await session.invoke('project.validate', {})).ok).toBe(true);
+  expect((await session.invoke('project.simulate', {})).ok).toBe(true);
+  expect((await session.invoke('runtime.run-from', { sceneId: 'start', choices: [] })).ok).toBe(true);
+  expect((await session.invoke('change.diff', {})).ok).toBe(true);
+}
+
+async function createCommitted(root: string, data: string): Promise<string> {
+  const session = await open(root, data, 'apply');
+  const changeId = await beginWithScene(session, 'committed');
+  await freshEvidence(session);
+  expect((await session.invoke('change.commit', {})).ok).toBe(true);
+  await session.close();
+  return changeId;
+}
+
+async function waitForClose(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode !== null) return;
+  await new Promise<void>((resolve) => child.once('close', () => resolve()));
+}
+
+describe('Surdet Agent Port security and cleanup countertests', () => {
+  afterEach(() => {
+    delete process.env['SURDET_AGENT_DATA_DIR'];
+    vi.restoreAllMocks();
+    for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('rejects observe begin and observe/stage commit without mutation', async () => {
+    const root = makeProject('policy');
+    const observeData = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    const stageData = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(observeData, stageData);
+    const beforeProject = projectBytes(root);
+    const beforeObserveData = dataBytes(observeData);
+    const observe = await open(root, observeData, 'observe');
+    expectFailure(await observe.invoke('change.begin', {}), 'POLICY_BLOCKED');
+    expectFailure(await observe.invoke('change.commit', {}), 'POLICY_BLOCKED');
+    expect(projectBytes(root)).toEqual(beforeProject);
+    expect(dataBytes(observeData)).toEqual(beforeObserveData);
+    await observe.close();
+
+    const stage = await open(root, stageData, 'stage');
+    await beginWithScene(stage, 'stage-policy');
+    const beforeWorking = (await stage.describe()).activeChange?.workingRevision;
+    expectFailure(await stage.invoke('change.commit', {}), 'POLICY_BLOCKED');
+    expect((await stage.describe()).activeChange?.workingRevision).toBe(beforeWorking);
+    expect(projectBytes(root)).toEqual(beforeProject);
+    await stage.close();
+  });
+
+  it('rejects context, path and extra-field injection before changing the working change', async () => {
+    const root = makeProject('injection');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    const changeId = await beginWithScene(session, 'injection');
+    const before = await NodeChangeStore.openByChangeId(changeId);
+    expect(before).not.toBeNull();
+    const beforeRecord = before!.record;
+    const beforeProject = projectBytes(root);
+    expectFailure(await session.invoke('scene.create', {
+      operationId: 'op-injected',
+      sceneId: 'blocked',
+      projectRoot: root,
+      changeId: 'forged',
+      cwd: root,
+      path: '../outside',
+      extra: true,
+    }), 'INVALID_REQUEST');
+    const after = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(after.workingRevision).toBe(beforeRecord.workingRevision);
+    expect(after.workingFiles).toEqual(beforeRecord.workingFiles);
+    expect(after.operations).toEqual(beforeRecord.operations);
+    expect(projectBytes(root)).toEqual(beforeProject);
+    await session.close();
+  });
+
+  it('rejects resuming a change owned by another project', async () => {
+    const rootA = makeProject('owner-a');
+    const rootB = makeProject('owner-b');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const owner = await open(rootA, data, 'stage');
+    const changeId = await beginWithScene(owner, 'owned');
+    const beforeA = projectBytes(rootA);
+    const beforeB = projectBytes(rootB);
+    await expect(open(rootB, data, 'stage', changeId)).rejects.toMatchObject({ code: 'PROJECT_IDENTITY_MISMATCH' });
+    expect(projectBytes(rootA)).toEqual(beforeA);
+    expect(projectBytes(rootB)).toEqual(beforeB);
+    await owner.close();
+  });
+
+  it.each(['committed', 'rolled-back', 'stale'] as const)('rejects resuming a %s change', async (kind) => {
+    const root = makeProject(`resume-${kind}`);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    const changeId = await beginWithScene(session, `resume-${kind}`);
+    if (kind === 'committed') {
+      await freshEvidence(session);
+      expect((await session.invoke('change.commit', {})).ok).toBe(true);
+    } else if (kind === 'rolled-back') {
+      expect((await session.invoke('change.rollback', {})).ok).toBe(true);
+    } else {
+      await freshEvidence(session);
+      fs.appendFileSync(path.join(root, 'content', 'scenario', `resume-${kind}.gal`), '# external change\n', 'utf8');
+      expectFailure(await session.invoke('change.commit', {}), 'PROJECT_CHANGED_SINCE_BEGIN');
+      expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
+    }
+    await session.close();
+    await expect(open(root, data, 'apply', changeId)).rejects.toMatchObject({ code: 'CHANGE_NOT_OPEN' });
+  });
+
+  it('rejects a second begin and preserves the first active change', async () => {
+    const root = makeProject('single-begin');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    const first = await beginWithScene(session, 'first');
+    const before = (await NodeChangeStore.openByChangeId(first))!.record;
+    expectFailure(await session.invoke('change.begin', {}), 'SESSION_STATE_INVALID');
+    const after = (await NodeChangeStore.openByChangeId(first))!.record;
+    expect(session.activeChangeId).toBe(first);
+    expect(after.workingRevision).toBe(before.workingRevision);
+    expect(after.workingFiles).toEqual(before.workingFiles);
+    await session.close();
+  });
+
+  it('rejects operationId reuse with a different payload and preserves the first result', async () => {
+    const root = makeProject('operation-id');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    const changeId = await beginWithScene(session, 'first-operation');
+    const before = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expectFailure(await session.invoke('scene.create', { operationId: 'op-first-operation', sceneId: 'different-a' }), 'OPERATION_ID_CONFLICT');
+    const after = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(after.workingRevision).toBe(before.workingRevision);
+    expect(after.workingFiles).toEqual(before.workingFiles);
+    expect(Object.keys(after.operations)).toEqual(Object.keys(before.operations));
+    await session.close();
+  });
+
+  it('marks the change stale when the project changes externally before commit', async () => {
+    const root = makeProject('external-change');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    const changeId = await beginWithScene(session, 'external');
+    await freshEvidence(session);
+    const externalPath = path.join(root, 'content', 'scenario', 'external.gal');
+    expect(fs.existsSync(externalPath)).toBe(false);
+    fs.writeFileSync(externalPath, '@scene external\n@end\n# external change\n', 'utf8');
+    const result = await session.invoke('change.commit', {});
+    expectFailure(result, 'PROJECT_CHANGED_SINCE_BEGIN');
+    expect(fs.readFileSync(externalPath, 'utf8')).toBe('@scene external\n@end\n# external change\n');
+    expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
+    await session.close();
+  });
+
+  it('does not retry a recovery-failed commit or alter the post-failure state again', async () => {
+    const root = makeProject('recovery');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    const changeId = await beginWithScene(session, 'recovery-a');
+    expect((await session.invoke('scene.create', { operationId: 'op-recovery-b', sceneId: 'recovery-b' })).ok).toBe(true);
+    await freshEvidence(session);
+    const originalReplace = NodeProjectStorage.prototype.replaceFromStage;
+    let replaceCalls = 0;
+    const replaceSpy = vi.spyOn(NodeProjectStorage.prototype, 'replaceFromStage').mockImplementation(async function(this: NodeProjectStorage, relativePath, stagedIdentity) {
+      replaceCalls += 1;
+      if (replaceCalls === 2) throw new Error('simulated locked target');
+      return originalReplace.call(this, relativePath, stagedIdentity);
+    });
+    const removePathSpy = vi.spyOn(NodeProjectStorage.prototype, 'removePath').mockRejectedValue(new Error('simulated remove failure'));
+    try {
+      expectFailure(await session.invoke('change.commit', {}), 'COMMIT_RECOVERY_FAILED');
+      const afterFailure = projectBytes(root);
+      const journal = await (await NodeChangeStore.openByChangeId(changeId))!.store.readLatestJournal(changeId) as any;
+      expect(journal.status).toBe('RECOVERY_FAILED');
+      expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
+      expectFailure(await session.invoke('change.commit', {}), 'CHANGE_NOT_OPEN');
+      expect(replaceCalls).toBe(2);
+      expect(projectBytes(root)).toEqual(afterFailure);
+    } finally {
+      replaceSpy.mockRestore();
+      removePathSpy.mockRestore();
+    }
+    await session.close();
+  });
+
+  it.each(['SIGINT', 'SIGTERM'] as const)('keeps %s cleanup and stdout protocol-safe', async (signal) => {
+    const root = makeProject(`signal-${signal}`);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const entry = path.resolve(process.cwd(), 'dist', 'agent-port', 'main.js');
+    const child = spawn(process.execPath, [entry, '--project', root, '--policy', 'observe'], {
+      cwd: process.cwd(),
+      env: { ...process.env, SURDET_AGENT_DATA_DIR: data },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Agent Port did not become ready: ${stderr}`)), 5000);
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (chunk.toString('utf8').includes('Surdet Agent Port ready:')) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    child.kill(signal);
+    await waitForClose(child);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('Surdet Agent Port ready:');
+    expect(child.exitCode ?? child.signalCode).not.toBeNull();
+  });
+});
