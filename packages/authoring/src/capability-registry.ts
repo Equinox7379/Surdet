@@ -251,7 +251,7 @@ const objectInspectionSchema = strictObject({
   semanticId: stringSchema,
   parentRef: stringSchema,
   source: strictObject({ path: stringSchema, line: integerSchema, col: integerSchema, raw: stringSchema }, ['path', 'line', 'col', 'raw']),
-  details: jsonValueSchema,
+  details: jsonObjectSchema,
   fingerprint: stringSchema,
   references: stringArraySchema,
   referencedBy: stringArraySchema,
