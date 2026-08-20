@@ -780,14 +780,21 @@ export class Interpreter {
           }
 
           case 'instr': {
+            this.#resumeRequested = false;
             this.#execGeneric(instr);
             this.#emitStateTrace(instr, variablesBefore);
             // hostJump 在事件回调内已重设 pc 时不再自增（否则跳过目标指令）
             if (this.#jumpOverride) {
               this.#jumpOverride = false;
-            } else {
-              this.#pc++;
+              this.#status = 'running';
+              continue;
             }
+            if (this.#resumeRequested) {
+              this.#resumeRequested = false;
+              this.#status = 'running';
+              continue;
+            }
+            this.#pc++;
             break;
           }
         }
