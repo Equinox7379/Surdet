@@ -542,6 +542,24 @@ describe('Interpreter', () => {
     expect(restarts).toBe(2);
   });
 
+  it('generic instruction callback start() preserves target instruction zero', () => {
+    const store = new VariableStore([]);
+    const bus = new EventBus<CoreEventMap>();
+    const registry = new SceneRegistry();
+    const interp = new Interpreter(store, bus, registry);
+    registry.register(compileScene('@clear old_end\n@end', 'source.gal', 'source'));
+    registry.register(compileScene('第一条\n第二条\n@end', 'title.gal', 'title'));
+    const texts: string[] = [];
+    bus.on('text', (payload) => texts.push(payload.value));
+    bus.on('clear', () => interp.start('title'));
+
+    interp.start('source');
+
+    expect(texts).toEqual(['第一条']);
+    expect(interp.position).toEqual({ sceneId: 'title', pc: 1 });
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
   it('start 清理残留 pendingChoice（前一次 awaiting-choice 后重启不悬挂）', () => {
     const { registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('@choice\n  A -> @goto a\n@label a\n凛：A。\n@end', 's.gal', 's1'));
