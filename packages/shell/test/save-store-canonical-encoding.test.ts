@@ -100,11 +100,17 @@ describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
         s.length * SAFE_ASCII_COMPACTNESS_INVARIANT.maxCanonicalBodyCharsPerLogicalUnit,
       );
       const encoded = canonicalSlotStem(s);
-      expect(encoded).toBe(canonicalSlotStem(s));
       expect(decodeCanonicalSlotStem(encoded)).toBe(s);
       expect(encoded).toBe(encoded.toLowerCase());
       expect(encoded.toLowerCase()).not.toBe(canonicalSlotStem(s.toLowerCase()).toLowerCase());
     }
+  });
+
+  it('canonical grammar persistence：代表性安全 ASCII 物理词干保持精确拼写', () => {
+    expect(canonicalSlotStem('A')).toBe('~sv1~ua');
+    expect(canonicalSlotStem('Save')).toBe('~sv1~usave');
+    expect(canonicalSlotStem('SAVE')).toBe('~sv1~us~ua~uv~ue');
+    expect(canonicalSlotStem('QuickSave1')).toBe('~sv1~uquick~usave1');
   });
 
   it('严格 decoder 拒绝所有可由 literal/uppercase-short token 表达的通用转义别名', () => {
@@ -234,6 +240,66 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
 });
 
 describe('A5 canonical 文件所有权防御（状态 3）', () => {
+  it('canonical main 的实际目录项大小写/扩展名变体：read/list/listMeta 全部大声失败', () => {
+    for (const entryName of ['~sv1~uA.json', '~sv1~ua.JSON', '~SV1~UA.json']) {
+      const dir = makeDir();
+      const store = new FileSaveStore(dir);
+      const file = path.join(dir, entryName);
+      const before = Buffer.from(JSON.stringify(makeSnap('A')), 'utf8');
+      fs.writeFileSync(file, before);
+
+      expect(() => store.read('A')).toThrow(/canonical|规范|大小写|拼写/);
+      expect(() => store.list()).toThrow(/canonical|规范|大小写|拼写/);
+      expect(() => store.listMeta()).toThrow(/canonical|规范|大小写|拼写/);
+      expect(fs.readFileSync(file)).toEqual(before);
+    }
+  });
+
+  it('canonical backup 的实际目录项大小写/扩展名变体：restore/listBackupMeta 全部大声失败', () => {
+    for (const entryName of ['~sv1~uA.json.bak', '~sv1~ua.json.BAK']) {
+      const dir = makeDir();
+      const store = new FileSaveStore(dir);
+      const file = path.join(dir, entryName);
+      const before = Buffer.from(JSON.stringify(makeSnap('A')), 'utf8');
+      fs.writeFileSync(file, before);
+
+      expect(() => store.restoreBackup('A')).toThrow(/canonical|规范|大小写|拼写/);
+      expect(() => store.listBackupMeta()).toThrow(/canonical|规范|大小写|拼写/);
+      expect(fs.readdirSync(dir).sort()).toEqual([entryName]);
+      expect(fs.readFileSync(file)).toEqual(before);
+    }
+  });
+
+  it('delete 面对 canonical main/backup 大小写变体：先失败且保持原文件字节不变', () => {
+    for (const entryName of ['~sv1~uA.json', '~sv1~ua.JSON', '~sv1~uA.json.bak', '~sv1~ua.json.BAK']) {
+      const dir = makeDir();
+      const store = new FileSaveStore(dir);
+      const file = path.join(dir, entryName);
+      const before = Buffer.from(JSON.stringify(makeSnap('A')), 'utf8');
+      fs.writeFileSync(file, before);
+
+      expect(() => store.delete('A')).toThrow(/canonical|规范|大小写|拼写/);
+      expect(fs.existsSync(file)).toBe(true);
+      expect(fs.readFileSync(file)).toEqual(before);
+    }
+  });
+
+  it('write 面对 canonical main 大小写/扩展名变体：先失败且不备份、不覆盖原文件', () => {
+    for (const entryName of ['~sv1~uA.json', '~sv1~ua.JSON', '~SV1~UA.json']) {
+      const dir = makeDir();
+      const store = new FileSaveStore(dir);
+      const file = path.join(dir, entryName);
+      const before = Buffer.from(JSON.stringify(makeSnap('A')), 'utf8');
+      fs.writeFileSync(file, before);
+
+      expect(() => store.write('A', { ...makeSnap('A'), meta: { id: 'A', createdAt: 1, updatedAt: 2 } })).toThrow(
+        /canonical|规范|大小写|拼写/,
+      );
+      expect(fs.readdirSync(dir).sort()).toEqual([entryName]);
+      expect(fs.readFileSync(file)).toEqual(before);
+    }
+  });
+
   it('canonical 前缀下的非 canonical 文件名：list/listMeta 必须大声失败，不产生幻影槽位', () => {
     for (const [alias, logical] of [
       ['~sv1~0041', 'A'],

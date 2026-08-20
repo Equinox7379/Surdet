@@ -47,6 +47,18 @@ function legacyL0Stem(slot: string): string {
  *  '~' 是 Windows 合法文件名字符，无位置限制。 */
 export const CANONICAL_SLOT_PREFIX = '~sv1';
 
+const CANONICAL_SLOT_PREFIX_FOLDED = CANONICAL_SLOT_PREFIX.toLowerCase();
+
+/** 只做 ASCII 大小写折叠，避免把 Unicode 归一化混入物理文件名判定。 */
+function asciiCaseFold(value: string): string {
+  return value.replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0x20));
+}
+
+/** canonical 命名空间分类必须大小写不敏感，否则会把前缀变体误降级为 legacy。 */
+function isCanonicalNamespaceEntry(name: string): boolean {
+  return asciiCaseFold(name).startsWith(CANONICAL_SLOT_PREFIX_FOLDED);
+}
+
 /** A5 canonical 槽位存储身份：确定性、对任意 JS 字符串单射、Windows 安全。
  *  文法：前缀 '~sv1' + 单遍 token 流——
  *  - 字面量字母表 [a-z0-9_-] 直出（普通安全 ASCII 逻辑 ID 仅增长一个前缀的长度）；
@@ -133,6 +145,42 @@ export class FileSaveStore {
     return path.join(this.dir, `${canonicalSlotStem(slot)}.json`);
   }
 
+  /**
+   * 按真实目录项名称确认物理文件是否存在。
+   *
+   * 不能用 existsSync(expectedPath) 证明拼写正确：Windows 会对路径做大小写
+   * 折叠，从而让 case-variant 目录项伪装成 canonical 文件。这里先枚举目录，
+   * 只接受逐字符完全相等的 entry；大小写折叠相同但拼写不同则大声失败。
+   */
+  #exactPhysicalEntry(expectedName: string): string | null {
+    const entries = fs.readdirSync(this.dir);
+    const expectedFolded = asciiCaseFold(expectedName);
+    const variant = entries.find(
+      (entry) => entry !== expectedName && asciiCaseFold(entry) === expectedFolded,
+    );
+    if (variant !== undefined) {
+      throw new Error(
+        `canonical 物理目录项拼写不规范：实际 '${variant}' 与期望 '${expectedName}' 大小写折叠相同但不完全相等`,
+      );
+    }
+    return entries.includes(expectedName) ? path.join(this.dir, expectedName) : null;
+  }
+
+  #exactCanonicalEntry(slot: string, suffix: '.json' | '.json.bak'): string | null {
+    return this.#exactPhysicalEntry(`${canonicalSlotStem(slot)}${suffix}`);
+  }
+
+  /** 验证枚举得到的 canonical basename 是唯一规范拼写，并返回其逻辑属主。 */
+  #canonicalOwnerForEntry(name: string, suffix: '.json' | '.json.bak'): string {
+    const stem = name.slice(0, -suffix.length);
+    const owner = decodeCanonicalSlotStem(stem);
+    const expected = `${canonicalSlotStem(owner)}${suffix}`;
+    if (name !== expected) {
+      throw new Error(`canonical 物理目录项不是唯一规范拼写：实际 '${name}'，期望 '${expected}'`);
+    }
+    return owner;
+  }
+
   private indexPath(): string {
     return path.join(this.dir, INDEX_FILE);
   }
@@ -173,18 +221,21 @@ export class FileSaveStore {
     for (const m of Object.values(index)) {
       if (m && typeof m.id === 'string' && !metas.has(m.id)) metas.set(m.id, m);
     }
-    const entries = fs.readdirSync(this.dir)
-      .filter((f) => f.endsWith('.json') && f !== INDEX_FILE && !f.endsWith('.tmp'));
-    const canonical = entries.filter((f) => f.startsWith(CANONICAL_SLOT_PREFIX)).sort();
-    const legacy = entries.filter((f) => !f.startsWith(CANONICAL_SLOT_PREFIX)).sort();
+    const entries = fs.readdirSync(this.dir).filter((f) => {
+      const folded = asciiCaseFold(f);
+      return folded.endsWith('.json') && folded !== INDEX_FILE && !folded.endsWith('.tmp');
+    });
+    const canonical = entries.filter(isCanonicalNamespaceEntry).sort();
+    const legacy = entries.filter((f) => !isCanonicalNamespaceEntry(f)).sort();
     for (const f of canonical) {
-      const snap = this.#readFile(path.join(this.dir, f)); // 损坏 → 大声失败
+      const owner = this.#canonicalOwnerForEntry(f, '.json');
+      const file = path.join(this.dir, f);
+      const snap = this.#readFile(file); // 损坏 → 大声失败
       if (snap === null) continue;
       // 状态 3：canonical 物理/逻辑所有权不一致 → 枚举时同样大声失败。
       // 不得把含他人 meta.id 的 canonical(S) 静默重释为该逻辑槽位的合法表示，
       // 否则列表暴露可见但 read 不可达的幻影槽位。
-      const owner = decodeCanonicalSlotStem(f.slice(0, -'.json'.length));
-      this.#assertOwnedBy(snap, owner, path.join(this.dir, f));
+      this.#assertOwnedBy(snap, owner, file);
       metas.set(snap.meta.id, snap.meta); // canonical 优先
     }
     for (const f of legacy) {
@@ -200,18 +251,20 @@ export class FileSaveStore {
    *  同一逻辑身份去重；canonical 备份优先于 legacy 备份。 */
   listBackupMeta(): SaveSlotMeta[] {
     const metas = new Map<string, SaveSlotMeta>();
-    const baks = fs.readdirSync(this.dir).filter((f) => f.endsWith('.json.bak'));
+    const baks = fs.readdirSync(this.dir).filter((f) => asciiCaseFold(f).endsWith('.json.bak'));
     const ordered = [
-      ...baks.filter((f) => !f.startsWith(CANONICAL_SLOT_PREFIX)).sort(),
-      ...baks.filter((f) => f.startsWith(CANONICAL_SLOT_PREFIX)).sort(),
+      ...baks.filter((f) => !isCanonicalNamespaceEntry(f)).sort(),
+      ...baks.filter(isCanonicalNamespaceEntry).sort(),
     ];
     for (const name of ordered) {
-      const snapshot = this.#readBackupFile(path.join(this.dir, name));
-      if (name.startsWith(CANONICAL_SLOT_PREFIX)) {
+      const file = path.join(this.dir, name);
+      let owner: string | null = null;
+      if (isCanonicalNamespaceEntry(name)) {
         // canonical 备份所有权不一致 → 大声失败（不暴露幻影备份）
-        const owner = decodeCanonicalSlotStem(name.slice(0, -'.json.bak'.length));
-        this.#assertOwnedBy(snapshot, owner, path.join(this.dir, name));
+        owner = this.#canonicalOwnerForEntry(name, '.json.bak');
       }
+      const snapshot = this.#readBackupFile(file);
+      if (owner !== null) this.#assertOwnedBy(snapshot, owner, file);
       metas.set(snapshot.meta.id, snapshot.meta);
     }
     return [...metas.values()];
@@ -228,22 +281,28 @@ export class FileSaveStore {
     if (backupFile === null) throw new Error(`存档槽位 '${slot}' 没有可恢复备份`);
     const backup = this.#readBackupFile(backupFile);
     const file = this.#canonicalFileFor(slot);
-    const mainBefore = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    const mainEntry = this.#exactCanonicalEntry(slot, '.json');
+    const mainBefore = mainEntry === null ? null : fs.readFileSync(mainEntry);
     const indexFile = this.indexPath();
     const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
     const index = this.readIndex();
     const tmp = `${file}.restore.tmp`;
+    this.#exactPhysicalEntry(path.basename(tmp));
     try {
       fs.copyFileSync(backupFile, tmp);
+      this.#exactPhysicalEntry(path.basename(file));
       fs.renameSync(tmp, file);
       this.#setIndexEntry(index, slot, { ...backup.meta, id: slot });
       this.writeIndex(index);
     } catch (error) {
       try {
         if (mainBefore === null) {
-          if (fs.existsSync(file)) fs.unlinkSync(file);
+          const currentMain = this.#exactPhysicalEntry(path.basename(file));
+          if (currentMain !== null) fs.unlinkSync(currentMain);
         } else {
+          this.#exactPhysicalEntry(path.basename(tmp));
           fs.writeFileSync(tmp, mainBefore);
+          this.#exactPhysicalEntry(path.basename(file));
           fs.renameSync(tmp, file);
         }
         if (indexBefore === null) {
@@ -259,15 +318,16 @@ export class FileSaveStore {
       }
       throw error;
     } finally {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+      const tmpEntry = this.#exactPhysicalEntry(path.basename(tmp));
+      if (tmpEntry !== null) fs.unlinkSync(tmpEntry);
     }
   }
 
   /** 读取槽位存档（A5 顺序：canonical 权威 → legacy 懒回退，均验证所有权）。
    *  读取 legacy 不重写、不迁移（懒兼容）；主档损坏大声失败，不静默回退 .bak。 */
   read(slot: string): SaveSnapshot | null {
-    const canonical = this.#canonicalFileFor(slot);
-    if (fs.existsSync(canonical)) {
+    const canonical = this.#exactCanonicalEntry(slot, '.json');
+    if (canonical !== null) {
       const snap = this.#readFile(canonical);
       if (snap !== null) {
         // canonical 命名空间无碰撞，此处仍验证所有权：物理存储身份不是
@@ -305,11 +365,15 @@ export class FileSaveStore {
       throw new Error(`存档槽位 '${slot}' 超出大小上限（${MAX_SAVE_BYTES} 字节）`);
     }
     const file = this.#canonicalFileFor(slot);
+    const existingFile = this.#exactCanonicalEntry(slot, '.json');
+    const existingBackup = this.#exactCanonicalEntry(slot, '.json.bak');
     const tmp = `${file}.tmp`;
+    this.#exactPhysicalEntry(path.basename(tmp));
     // 覆盖前备份上一版（.bak）：供玩家通过显式恢复动作取回上一版进度
-    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
+    if (existingFile !== null) fs.copyFileSync(existingFile, existingBackup ?? `${file}.bak`);
     // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
     fs.writeFileSync(tmp, json);
+    this.#exactPhysicalEntry(path.basename(file));
     fs.renameSync(tmp, file);
     // 索引更新失败也必须向上层报告：写入事务不能把部分成功伪装成成功。
     const index = this.readIndex();
@@ -323,9 +387,10 @@ export class FileSaveStore {
   delete(slot: string): void {
     // canonical 主档/备份：该命名空间无碰撞，且 write 期已强制 meta.id === slot，
     // 物理身份即属主身份，直接删除。
-    const canonical = this.#canonicalFileFor(slot);
-    for (const f of [canonical, `${canonical}.bak`]) {
-      if (fs.existsSync(f)) fs.unlinkSync(f);
+    const canonical = this.#exactCanonicalEntry(slot, '.json');
+    const backup = this.#exactCanonicalEntry(slot, '.json.bak');
+    for (const f of [canonical, backup]) {
+      if (f !== null) fs.unlinkSync(f);
     }
     // legacy 文件：历史碰撞可能使其内容实际属于别的逻辑槽位，
     // 必须独立验证所有权后才删除（损坏不可证明 → 保留，不误毁）。
@@ -356,8 +421,8 @@ export class FileSaveStore {
    *  - legacy 备份属主不符 → 不是该槽位的备份（历史碰撞别名），继续找下一个候选；
    *  - 备份文件损坏 → 大声失败（保留原行为）。 */
   #backupFileFor(slot: string): string | null {
-    const canonical = `${this.#canonicalFileFor(slot)}.bak`;
-    if (fs.existsSync(canonical)) {
+    const canonical = this.#exactCanonicalEntry(slot, '.json.bak');
+    if (canonical !== null) {
       const snap = this.#readBackupFile(canonical);
       this.#assertOwnedBy(snap, slot, canonical);
       return canonical;
