@@ -303,13 +303,21 @@ export async function commitChange(
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交失败但已恢复：${String(error)}`);
   }
 
-  for (const entry of journal.files) await storage.removeStage(entry.stagedIdentity);
   journal.status = 'COMMITTED';
   await change.repository.writeJournal(change.record.changeId, journal);
   const next = clone(change.record);
   next.status = 'COMMITTED';
   await change.repository.write(next);
   Object.assign(change.record, next);
+
+  for (const entry of journal.files) {
+    try {
+      await storage.removeStage(entry.stagedIdentity);
+    } catch {
+      // Content and transaction are already COMMITTED. The committed journal
+      // retains the staged identity for later inspection; cleanup is best-effort.
+    }
+  }
   return { changeId: change.record.changeId, status: 'COMMITTED', files: paths };
 }
 
