@@ -52,6 +52,20 @@ const SAFE_ASCII_COMPACTNESS_INVARIANT = {
   maxCanonicalBodyCharsPerLogicalUnit: 3,
 } as const;
 
+const NON_CANONICAL_ALIASES = [
+  ['~sv1~0041', 'A'],
+  ['~sv1~0042', 'B'],
+  ['~sv1~0061', 'a'],
+  ['~sv1~007a', 'z'],
+  ['~sv1~0030', '0'],
+  ['~sv1~002d', '-'],
+  ['~sv1~005f', '_'],
+  ['~sv1~0041a', 'Aa'],
+  ['~sv1~0053ave', 'Save'],
+  ['~sv1~0053~0041~0056~0045', 'SAVE'],
+  ['~sv1~0051uick~0053ave1', 'QuickSave1'],
+] as const;
+
 describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
   it('历史碰撞对的 canonical 物理身份不同', () => {
     const a = canonicalSlotStem('存');
@@ -90,6 +104,13 @@ describe('A5 canonical 编码：历史碰撞对与格式钉死', () => {
       expect(decodeCanonicalSlotStem(encoded)).toBe(s);
       expect(encoded).toBe(encoded.toLowerCase());
       expect(encoded.toLowerCase()).not.toBe(canonicalSlotStem(s.toLowerCase()).toLowerCase());
+    }
+  });
+
+  it('严格 decoder 拒绝所有可由 literal/uppercase-short token 表达的通用转义别名', () => {
+    for (const [alias, logical] of NON_CANONICAL_ALIASES) {
+      expect(canonicalSlotStem(logical)).not.toBe(alias);
+      expect(() => decodeCanonicalSlotStem(alias)).toThrow();
     }
   });
 
@@ -213,6 +234,22 @@ describe('A5 边界语料：多码元组合、Windows 安全与大小写', () =>
 });
 
 describe('A5 canonical 文件所有权防御（状态 3）', () => {
+  it('canonical 前缀下的非 canonical 文件名：list/listMeta 必须大声失败，不产生幻影槽位', () => {
+    for (const [alias, logical] of [
+      ['~sv1~0041', 'A'],
+      ['~sv1~0061', 'a'],
+    ] as const) {
+      const dir = makeDir();
+      const store = new FileSaveStore(dir);
+      fs.writeFileSync(path.join(dir, `${alias}.json`), JSON.stringify(makeSnap(logical)), 'utf8');
+
+      // 这是 R1 宽松 decoder 曾经接受的文件名，但它不是 canonicalSlotStem(meta.id)。
+      expect(store.read(logical)).toBeNull();
+      expect(() => store.list()).toThrow();
+      expect(() => store.listMeta()).toThrow();
+    }
+  });
+
   it('canonical 物理路径内容属于他人逻辑 id：read/list/listMeta 全部大声失败', () => {
     const dir = makeDir();
     const store = new FileSaveStore(dir);
