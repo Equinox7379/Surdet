@@ -107,6 +107,48 @@ function loopFixtureStorage(): ProjectStorage {
   };
 }
 
+function callStackIdentityFixtureStorage(): ProjectStorage {
+  const contents: Record<string, string> = {
+    'game.config.json': JSON.stringify({ entryScene: 'entry', variables: {} }),
+    'content/scenario/entry.gal': [
+      '@scene entry',
+      '@choice',
+      '  路径 A -> @jump caller_a',
+      '  路径 B -> @jump caller_b',
+      '@end',
+    ].join('\n'),
+    'content/scenario/caller_a.gal': [
+      '@scene caller_a',
+      '@call shared',
+      '@clear safe_end',
+      '@end',
+    ].join('\n'),
+    'content/scenario/caller_b.gal': [
+      '@scene caller_b',
+      '@call shared',
+      '@check false',
+      '@end',
+    ].join('\n'),
+    'content/scenario/shared.gal': [
+      '@scene shared',
+      '@choice',
+      '  继续 -> @goto done',
+      '@label done',
+      '@return',
+    ].join('\n'),
+  };
+  return {
+    rootIdentity: 'simulation-call-stack-identity',
+    listFiles: async () => Object.keys(contents),
+    readText: async (path): Promise<ProjectFile> => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+      return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
 describe('simulateSnapshot', () => {
   it('enumerates both choices and preserves their final variables', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
@@ -136,6 +178,18 @@ describe('simulateSnapshot', () => {
 
     expect(report.status).toBe('passed');
     expect(report.finalVariables.trust).toBe(-1);
+  });
+
+  it('distinguishes equal position and variables when call stacks differ', async () => {
+    const snapshot = await loadProjectSnapshot(callStackIdentityFixtureStorage(), hasher);
+    const report = await simulateSnapshot(snapshot, { maxPaths: 20, maxStepsPerPath: 200 });
+
+    expect(report.status).toBe('failed');
+    expect(report.runtimeErrors).toHaveLength(1);
+    expect(report.runtimeErrors[0]?.scene).toBe('caller_b');
+    expect(report.runtimeErrors[0]?.message).toContain('@check 断言失败');
+    expect(report.endings).toEqual([{ ending: 'safe_end', times: 1 }]);
+    expect(report.budgetExhausted).toBe(false);
   });
 
   it('records state-signature pruning without losing path evidence', async () => {
