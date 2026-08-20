@@ -123,7 +123,8 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
     expect(ambiguous.status).toBe(1);
     const err = body(ambiguous).error;
     expect(err.code).toBe('CHANGE_ID_AMBIGUOUS');
-    expect(err.retriable).toBe(false);
+    expect(err.retryDisposition).toBe('manual-recovery');
+    expect(err).not.toHaveProperty('retriable');
     expect(err.message).toContain('chg_legacy');
     expect(err.message).toContain('2');
 
