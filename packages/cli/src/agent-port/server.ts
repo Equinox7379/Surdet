@@ -1,4 +1,4 @@
-import { McpServer, type CallToolResult, type JsonSchemaType } from '@modelcontextprotocol/server';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import {
   AUTHORING_CONTRACT_VERSION,
   AUTHORING_ENVELOPE_SCHEMA_VERSION,
@@ -21,6 +21,13 @@ const emptyInputSchema: JsonSchema = {
   additionalProperties: false,
 };
 
+const capsuleInputSchema: JsonSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: { label: { type: 'string', maxLength: 120 } },
+  additionalProperties: false,
+};
+
 const freshnessSchema: JsonSchema = {
   type: 'object',
   properties: {
@@ -30,6 +37,60 @@ const freshnessSchema: JsonSchema = {
     currentWorkingRevision: { type: 'integer' },
   },
   required: ['status'],
+  additionalProperties: false,
+};
+
+const capsuleOutputSchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    capsuleVersion: { const: '1.0.0' },
+    capsuleId: { type: 'string' },
+    generatedAt: { type: 'string' },
+    sessionId: { type: 'string' },
+    policy: { enum: ['observe', 'stage', 'apply'] },
+    contractVersion: { const: AUTHORING_CONTRACT_VERSION },
+    projectIdentity: { type: 'string' },
+    baseProjectRevision: { type: 'string' },
+    currentProjectRevision: { type: 'string' },
+    changeId: { type: 'string' },
+    changeStatus: { enum: ['OPEN', 'COMMITTED', 'ROLLED_BACK', 'STALE'] },
+    workingRevision: { type: 'integer' },
+    intent: { type: 'string' },
+    acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+    operations: { type: 'array', items: {} },
+    invocationSummary: {},
+    objectDiff: {},
+    causalImpact: { type: 'object', properties: { potentialImpact: { type: 'array', items: {} }, observedImpact: { type: 'array', items: {} } }, required: ['potentialImpact', 'observedImpact'], additionalProperties: false },
+    validation: freshnessSchema,
+    simulation: freshnessSchema,
+    runtime: freshnessSchema,
+    warnings: { type: 'array', items: {} },
+    manualReviewRequired: { type: 'array', items: {} },
+    projectMutation: {
+      type: 'object',
+      properties: {
+        occurred: { type: 'boolean' },
+        expectedByPolicy: { type: 'boolean' },
+        beforeRevision: { type: 'string' },
+        afterRevision: { type: 'string' },
+      },
+      required: ['occurred', 'expectedByPolicy', 'beforeRevision', 'afterRevision'],
+      additionalProperties: false,
+    },
+    artifactIdentity: {
+      type: 'object',
+      properties: { path: { type: 'string' }, bytes: { type: 'integer' }, sha256: { type: 'string' } },
+      required: ['path', 'bytes', 'sha256'],
+      additionalProperties: false,
+    },
+  },
+  required: [
+    'capsuleVersion', 'capsuleId', 'generatedAt', 'sessionId', 'policy', 'contractVersion',
+    'projectIdentity', 'baseProjectRevision', 'currentProjectRevision', 'changeId', 'changeStatus',
+    'acceptanceCriteria', 'operations', 'invocationSummary', 'objectDiff', 'causalImpact',
+    'validation', 'simulation', 'runtime', 'warnings', 'manualReviewRequired', 'projectMutation',
+    'artifactIdentity',
+  ],
   additionalProperties: false,
 };
 
@@ -156,6 +217,37 @@ export function createAgentPortServer(session: AgentPortSession): McpServer {
   for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
     if (!isCapabilityAllowed(session.policy, definition)) continue;
     registerProjectedTool(server, session, projectCapabilityTool(definition), definition.id);
+  }
+  if (session.policy !== 'observe' || session.canExposeDeliveryCapsule()) {
+    server.registerTool('surdet_delivery_capsule', {
+      title: 'Seal delivery capsule',
+      description: 'Persist an immutable, evidence-backed delivery capsule for the bound change.',
+      inputSchema: standardSchemaFromJson(capsuleInputSchema),
+      outputSchema: standardSchemaFromJson(createEnvelopeJsonSchema(capsuleOutputSchema)),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async (input) => {
+      try {
+        const payload = input as Record<string, unknown>;
+        const label = typeof payload['label'] === 'string' ? payload['label'] : undefined;
+        const capsule = await session.generateDeliveryCapsule(label);
+        return resultForEnvelope(createSuccessEnvelope({
+          sessionId: session.sessionId,
+          capability: 'surdet_delivery_capsule',
+          projectIdentity: capsule.projectIdentity,
+          projectRevision: capsule.currentProjectRevision,
+          changeId: capsule.changeId,
+          workingRevision: capsule.workingRevision,
+        }, capsule));
+      } catch (error) {
+        return resultForEnvelope(createFailureEnvelope({
+          sessionId: session.sessionId,
+          capability: 'surdet_delivery_capsule',
+          projectIdentity: session.projectIdentity,
+          projectRevision: session.openedProjectRevision,
+          ...(session.lastChangeId === undefined ? {} : { changeId: session.lastChangeId }),
+        }, error));
+      }
+    });
   }
   return server;
 }

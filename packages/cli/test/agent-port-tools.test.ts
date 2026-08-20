@@ -73,9 +73,11 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const { session, client, server } = await connected(policy);
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name);
-    expect(names).toHaveLength(allowed.length + 1);
+    const capsuleExposed = policy !== 'observe';
+    expect(names).toHaveLength(allowed.length + 1 + (capsuleExposed ? 1 : 0));
     expect(new Set(names).size).toBe(names.length);
     expect(names).toContain('surdet_session_describe');
+    if (capsuleExposed) expect(names).toContain('surdet_delivery_capsule');
     for (const id of allowed) expect(names).toContain(nativeCapabilityToMcpTool(id));
     if (policy === 'observe') {
       expect(names).not.toContain('surdet_change_begin');
@@ -83,11 +85,22 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_rollback');
       expect(names).not.toContain('surdet_change_commit');
     }
-    if (policy === 'stage') expect(names).not.toContain('surdet_change_commit');
-    if (policy === 'apply') expect(names).toHaveLength(21);
+    if (policy === 'stage') {
+      expect(names).not.toContain('surdet_change_commit');
+      expect(names).toHaveLength(21);
+    }
+    if (policy === 'apply') expect(names).toHaveLength(22);
     const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
     expect((described.structuredContent as any).ok).toBe(true);
+    if (policy === 'stage') {
+      const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
+      expect(begun.isError).not.toBe(true);
+      const capsule = await client.callTool({ name: 'surdet_delivery_capsule', arguments: { label: 'tool projection test' } });
+      expect(capsule.isError).not.toBe(true);
+      expect((capsule.structuredContent as any).ok).toBe(true);
+      expect((capsule.structuredContent as any).result.artifactIdentity.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
     await client.close();
     await server.close();
     await session.close();
