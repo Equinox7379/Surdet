@@ -39,6 +39,14 @@ export interface OpenChangeResult {
   record: ChangeRecord;
 }
 
+function sameRootIdentity(left: string, right: string): boolean {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
 /**
  * 文件系统变更仓库：事务和证据在项目目录之外持久化，允许每个 CLI 进程
  * 通过 changeId 重新打开同一事务。证据和 trace 均使用独立文件名，失败
@@ -85,6 +93,22 @@ export class NodeChangeStore implements ChangeRepository {
     }
     const first = matches[0]!;
     return { store: new NodeChangeStore(root, first.record.projectRootIdentity, first.projectDirectory), record: first.record };
+  }
+
+  static async openOwnedChange(changeId: string, projectRootIdentity: string): Promise<OpenChangeResult | null> {
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    if (opened === null) return null;
+    if (!sameRootIdentity(opened.record.projectRootIdentity, projectRootIdentity)) {
+      throw new AuthoringOperationError(
+        'PROJECT_IDENTITY_MISMATCH',
+        `变更事务 '${changeId}' 不属于当前项目`,
+        { changeId, expected: projectRootIdentity, actual: opened.record.projectRootIdentity },
+      );
+    }
+    if (opened.record.status !== 'OPEN') {
+      throw new AuthoringOperationError('CHANGE_NOT_OPEN', `变更事务不是 OPEN：${opened.record.status}`);
+    }
+    return opened;
   }
 
   private changeDirectory(changeId: string): string {
