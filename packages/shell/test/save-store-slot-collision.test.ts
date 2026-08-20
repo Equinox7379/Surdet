@@ -180,7 +180,7 @@ describe('A5 共存与公共身份', () => {
     expect(store.list()).toEqual([SLOT_A]);
     const metas = store.listMeta();
     expect(metas.map((m) => m.id)).toEqual([SLOT_A]);
-    expect(metas[0].updatedAt).toBe(9); // canonical 表示优先
+    expect(metas[0]?.updatedAt).toBe(9); // canonical 表示优先
   });
 
   it('共存状态 2：canonical B + 碰撞 legacy A —— list/listMeta 同时暴露 A 与 B', () => {
