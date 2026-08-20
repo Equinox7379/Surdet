@@ -1044,3 +1044,55 @@ PUSH = NOT_AUTHORIZED
 ```
 
 差异复核确认：生产改动只有将 `COMMITTED` journal、repository record 和内存 record 提前到 commit point，并将逐 entry `removeStage()` 改为 best-effort；正式测试只增加 post-replacement cleanup fault storage、repository 注入和永久回归断言。未修改 CLI/Editor/Core/Shell/Renderer/Host/Starter/Zero、长期路线台账或受保护文件。下一步仅按精确路径暂存并创建代码证据提交。
+
+### 2026-08-20 Task 4 代码证据提交完成
+
+```text
+R2_TASK_4 = COMPLETED
+R2_CODE_EVIDENCE_HEAD = e2acb7ee444950b06756cf035ff761c0e8e2477b
+R2_CODE_EVIDENCE_PARENT = d423927a1c7e02c49d3fedd463d8afb2f0ea9719
+R2_CODE_COMMIT_MESSAGE = fix(authoring): close post-replacement commits
+R2_CODE_COMMIT_SCOPE = exactly:
+  docs/superpowers/plans/2026-08-20-reliability-r2-post-replacement-commit-contract.md (A)
+  packages/authoring/src/change-session.ts (M)
+  packages/authoring/test/commit-recovery.test.ts (M)
+R2_CODE_COMMIT_PUSHED = NO
+REMOTE_MAIN_AT_CODE_COMMIT = d423927a1c7e02c49d3fedd463d8afb2f0ea9719
+RAW_REV_LIST_SURDET_MAIN_THREE_DOTS_HEAD_AT_CODE_COMMIT = 0 1
+```
+
+代码提交后未修改任何生产文件；未跟踪治理、handoff、`.dsh`、`.learnings` 和受保护文件仍原样保留且未暂存。Task 5 仅允许新增交付报告，随后 Task 6 仅允许提交任务书与报告。
+
+### 2026-08-20 Task 5 交付报告身份
+
+```text
+R2_TASK_5 = COMPLETED
+R2_REPORT_PATH = E:\surdet\docs\RELIABILITY-R2-POST-REPLACEMENT-COMMIT-CONTRACT-DELIVERY-REPORT-2026-08-20.md
+R2_REPORT_BYTES = 7774
+R2_REPORT_SHA256 = CB79498D3C0B4C0FBE8C0741A46714326DEE980CD6D63AFE053D91B7792655EF
+R2_REPORT_FIRST_LINE = RELIABILITY_R2_POST_REPLACEMENT_COMMIT_CONTRACT_FIXED — PERMANENT_REGRESSION_PASSED; SHARED_TRANSACTION_VERIFIED; ARCHITECT_REVIEW_WAIVED_BY_OWNER; WAITING_FOR_INDEPENDENT_FINAL_REVIEW; NOT_PUSHED; WAVE_4_PAUSED
+R2_REPORT_IDENTITY_READBACK = PASS
+R2_REPORT_MUTATION_AFTER_IDENTITY_READBACK = NONE
+R2_CODE_EVIDENCE_HEAD = e2acb7ee444950b06756cf035ff761c0e8e2477b
+R2_CODE_EVIDENCE_PARENT = d423927a1c7e02c49d3fedd463d8afb2f0ea9719
+ARCHITECT_REVIEW = WAIVED_BY_OWNER
+ARCHITECT_PASS = NOT_CLAIMED
+```
+
+### 2026-08-20 Task 6 docs-only closure 提交前检查
+
+```text
+R2_TASK_6_PRECOMMIT = READY
+DOCS_ONLY_CLOSURE_FILES = exactly:
+  docs/superpowers/plans/2026-08-20-reliability-r2-post-replacement-commit-contract.md
+  docs/RELIABILITY-R2-POST-REPLACEMENT-COMMIT-CONTRACT-DELIVERY-REPORT-2026-08-20.md
+EXPECTED_DOCS_COMMIT_MESSAGE = docs(reliability): report post-replacement commit fix
+PRODUCTION_CODE_AFTER_CODE_COMMIT = UNCHANGED
+FORMAL_TEST_AFTER_CODE_COMMIT = UNCHANGED
+FORBIDDEN_SCOPE_DIFF_EXIT = 0
+R3_TO_R6 = NOT_STARTED
+WAVE_4 = PAUSED
+PUSH = NOT_AUTHORIZED
+```
+
+Task 6 只允许暂存上述两个文档、执行 staged diff 检查并创建 docs-only closure；其后停止在 `WAITING_FOR_INDEPENDENT_FINAL_REVIEW`。
