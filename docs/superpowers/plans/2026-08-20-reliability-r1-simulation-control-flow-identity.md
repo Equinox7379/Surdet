@@ -1064,3 +1064,76 @@ PUSH = NOT_PERFORMED
 ```
 
 该阻断不是 stale lock；只读 ACL 回读显示当前执行环境不能写入 `.git` 目录或 index。不得删除 lock、修改 ACL、使用 reset/checkout、绕过 Git 或虚构 commit。当前 R1 源码与正式测试改动保留在工作树，等待具备 Git 写权限的执行环境恢复后，从 Task 4 精确暂存继续。
+
+### 2026-08-20 R1 Task 4 恢复、独立 Shell 门清理与 verify:all recovery
+
+```text
+R1_RECOVERY_ENVIRONMENT = GIT_METADATA_WRITE_ENABLED
+R1_RECOVERY_SCOPE = TASK_4_RESTORE_THEN_TASK_5_6_ONLY
+R1_CODE_EVIDENCE_HEAD = dc9c7cd3037e5eb4cef10b93804505bf8e864ef3
+R1_CODE_EVIDENCE_PARENT = 0052927df0ceb30941cb8b17af479623f23204bc
+R1_CODE_EVIDENCE_COMMIT = fix(authoring): preserve simulation call stack identity
+R1_CODE_EVIDENCE_SCOPE = A docs/superpowers/plans/2026-08-20-reliability-r1-simulation-control-flow-identity.md; M packages/authoring/src/simulation.ts; M packages/authoring/test/simulation.test.ts
+R1_CODE_EVIDENCE_STAGE = EXACT_APPROVED_SCOPE
+R1_CODE_EVIDENCE_WORKTREE_AFTER_COMMIT = TRACKED_CLEAN
+R1_CODE_EVIDENCE_STAGING_AFTER_COMMIT = EMPTY
+
+SHELL_GATE_CLEANUP_HEAD = 54e2d73ba7008a9559e50b9aacafac2bae66a350
+SHELL_GATE_CLEANUP_PARENT = dc9c7cd3037e5eb4cef10b93804505bf8e864ef3
+SHELL_GATE_CLEANUP_COMMIT = test(shell): satisfy slot collision type safety
+SHELL_GATE_CLEANUP_SCOPE = M packages/shell/test/save-store-slot-collision.test.ts
+SHELL_GATE_CLEANUP_PRODUCTION_CODE_CHANGED = NO
+SHELL_TYPECHECK_AFTER_FIX_EXIT = 0
+SHELL_TESTS_AFTER_FIX_EXIT = 0
+SHELL_TESTS_AFTER_FIX_RESULT = 22 files / 195 tests passed
+SHELL_GATE_CLEANUP_WORKTREE_AFTER_COMMIT = TRACKED_CLEAN
+SHELL_GATE_CLEANUP_STAGING_AFTER_COMMIT = EMPTY
+```
+
+恢复提交前对目标测试的精确变化为：`expect(metas[0].updatedAt).toBe(9);` 改为 `expect(metas[0]?.updatedAt).toBe(9);`。没有重跑 R1 RED/GREEN、Authoring、CLI 或 Starter；恢复阶段只执行了批准的 Shell typecheck、Shell full tests 和一次新的 `verify:all`。
+
+首次 `verify:all` 的失败 artifact 保留为 `verify-all.txt`，没有覆盖。它在 `verify:types` 首次命中未修改的 `packages/shell/test/save-store-slot-collision.test.ts(183,12): error TS2532: Object is possibly 'undefined'.`；child exit 为 2，外层 exit 在 30 秒执行窗口结束前未捕获。该失败与 R1 两个生产/正式回归文件无关。
+
+恢复后的 `verify:all` 只执行一次，写入新的 `verify-all-after-shell-type-fix.txt`，执行回执为 `VERIFY_ALL_RECOVERY_EXIT=0`。tools 10/10、renderer boundaries 3/3、renderer legacy 4/4、hygiene 730 paths、全部 workspace typecheck、Authoring 20/122、CLI 14/129、Core 24/318、Editor 26/172、Host 11/87、Renderer 49/406、Shell 22/195、Starter 4/7、Zero 4/29、Starter lint 0 errors/4 warnings、Starter simulate 13 paths/7 cycles/25 save-load/0 runtime errors、Zero simulate 259 paths/9 cycles/23/23 choices/367 save-load/0 runtime errors、editor/starter/formal build 以及最后 diff-check 均通过。
+
+恢复阶段唯一 R1 证据根目录仍为：
+
+`<local-path>`
+
+恢复阶段新增 artifact 身份：
+
+| 文件 | bytes | SHA-256 | 结果 |
+|---|---:|---|---|
+| `<local-path>` | 70 | `C857562C23D33A2D3D9B7269D2DC4EDEFC7483B65EF7903E3C06E4934CC9FA13` | PASS; exit 0 |
+| `<local-path>` | 2966 | `16C260CBFF8704E528163B1D60CF923B270D13A3A9D427F62F7F132ACA62D76A` | PASS; 22 files / 195 tests |
+| `<local-path>` | 56272 | `D6D1C04009A891EC5E16346C103EDD9C8A890B4C41CE83B4EA49BD44E2891D71` | PASS; recovery exit 0 |
+```
+
+恢复后真实 Git 基线：
+
+```text
+HEAD = 54e2d73ba7008a9559e50b9aacafac2bae66a350
+HEAD_PARENT = dc9c7cd3037e5eb4cef10b93804505bf8e864ef3
+REMOTE_MAIN = 0b14ca14ff16b275efe1a3578ade37dbbb2994ec
+RAW_REV_LIST_LEFT_RIGHT = 0 7
+TRACKED_WORKTREE = CLEAN
+STAGED_WORKTREE = EMPTY
+KNOWN_UNTRACKED_GOVERNANCE_AND_PROTECTED_FILES = PRESERVED_UNTOUCHED
+PUSH = NOT_PERFORMED
+R2_TO_R6 = NOT_STARTED
+WAVE_4 = PAUSED
+```
+
+### 2026-08-20 Task 5 交付报告
+
+```text
+R1_TASK_5 = COMPLETED
+DELIVERY_REPORT = docs/RELIABILITY-R1-SIMULATION-CONTROL-FLOW-IDENTITY-DELIVERY-REPORT-2026-08-20.md
+DELIVERY_REPORT_BYTES = 9727
+DELIVERY_REPORT_SHA256 = 3D9B12C2F1ECEA55FCCD9FBD8212F678291E2DD12F8583E8E75569188750B4C6
+DELIVERY_REPORT_FIRST_LINE = RELIABILITY_R1_SIMULATION_CONTROL_FLOW_IDENTITY_FIXED — PERMANENT_REGRESSION_PASSED; SHARED_SIMULATION_VERIFIED; WAITING_FOR_ARCHITECT_REVIEW; NOT_PUSHED; WAVE_4_PAUSED
+DELIVERY_REPORT_SCOPE = R1 evidence, recovery gate, exact artifact identities, negative scope and Architect handoff only
+DELIVERY_REPORT_RE_READ = YES
+```
+
+Task 5 报告已回读并与磁盘 artifact、代码证据提交、Shell 独立测试提交及恢复 `verify:all` 结果核对一致。Task 6 只允许精确暂存本任务书与交付报告，创建 docs-only closure commit 后立即回读最终 HEAD；不得在此后运行额外测试或进入下一可靠性主题。
