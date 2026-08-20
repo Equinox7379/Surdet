@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ChangeRecord } from '../src/contracts.js';
 import type { ProjectFile, ProjectStorage, ProjectWriteStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { InMemoryChangeRepository, beginChange, commitChange, recordValidation } from '../src/change-session.js';
@@ -14,6 +15,28 @@ function digest(text: string): string {
 }
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
+
+function isCommittedJournal(value: unknown): boolean {
+  return typeof value === 'object'
+    && value !== null
+    && (value as { status?: unknown }).status === 'COMMITTED';
+}
+
+class PersistedCommitEventRepository extends InMemoryChangeRepository {
+  constructor(private readonly events: string[]) {
+    super();
+  }
+
+  override async writeJournal(changeId: string, value: unknown): Promise<void> {
+    await super.writeJournal(changeId, value);
+    if (isCommittedJournal(value)) this.events.push('journal-persisted:COMMITTED');
+  }
+
+  override async write(record: ChangeRecord): Promise<void> {
+    await super.write(record);
+    if (record.status === 'COMMITTED') this.events.push('record-persisted:COMMITTED');
+  }
+}
 
 class FaultyWriteStorage implements ProjectWriteStorage {
   readonly rootIdentity = 'fixture-root';
@@ -58,11 +81,12 @@ class FaultyWriteStorage implements ProjectWriteStorage {
 class PostReplaceCleanupFaultStorage extends FaultyWriteStorage {
   readonly removeStageCalls: string[] = [];
 
-  constructor(files: Record<string, string>) {
+  constructor(files: Record<string, string>, private readonly events: string[]) {
     super(files, Number.POSITIVE_INFINITY, false);
   }
 
   override async removeStage(stagedIdentity: string): Promise<void> {
+    this.events.push(`cleanup-attempt:${stagedIdentity}`);
     this.removeStageCalls.push(stagedIdentity);
     if (this.removeStageCalls.length === 1) {
       throw new Error('injected post-replacement cleanup failure');
@@ -113,13 +137,16 @@ describe('atomic commit recovery', () => {
   });
 
   it('commits after verified replacements even when staged cleanup fails', async () => {
+    const events: string[] = [];
+    const repository = new PersistedCommitEventRepository(events);
     const storage = new PostReplaceCleanupFaultStorage({
       'game.config.json': '{"entryScene":"prologue","variables":{}}',
       'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
-    });
-    const repository = new InMemoryChangeRepository();
+    }, events);
     const change = await beginFixture(storage, repository);
 
+    events.length = 0;
+    expect(events).toEqual([]);
     const committed = await commitChange(change, storage);
 
     expect(committed).toEqual({
@@ -133,6 +160,36 @@ describe('atomic commit recovery', () => {
     expect(storage.staged.size).toBe(1);
     expect(change.record.status).toBe('COMMITTED');
     expect((await repository.read(change.record.changeId))?.status).toBe('COMMITTED');
-    expect(repository.journals.get(change.record.changeId)).toMatchObject({ status: 'COMMITTED' });
+
+    const failedStagedIdentity = storage.removeStageCalls[0];
+    if (failedStagedIdentity === undefined) throw new Error('missing failed staged identity');
+    const journal = repository.journals.get(change.record.changeId) as {
+      status: string;
+      files: Array<{ stagedIdentity: string; replaced: boolean }>;
+    } | undefined;
+    if (journal === undefined) throw new Error('missing committed journal');
+
+    expect(journal.status).toBe('COMMITTED');
+    expect(journal.files.map((entry) => entry.stagedIdentity)).toEqual(storage.removeStageCalls);
+    expect(journal.files.map((entry) => entry.stagedIdentity)).toContain(failedStagedIdentity);
+    const failedEntry = journal.files.find((entry) => entry.stagedIdentity === failedStagedIdentity);
+    if (failedEntry === undefined) throw new Error('failed staged identity missing from journal');
+    expect(failedEntry.replaced).toBe(true);
+    expect(storage.staged.has(failedStagedIdentity)).toBe(true);
+    expect([...storage.staged.keys()]).toEqual([failedStagedIdentity]);
+
+    const cleanupEvents = storage.removeStageCalls.map((stagedIdentity) => `cleanup-attempt:${stagedIdentity}`);
+    expect(events).toEqual([
+      'journal-persisted:COMMITTED',
+      'record-persisted:COMMITTED',
+      ...cleanupEvents,
+    ]);
+    const journalPersistedIndex = events.indexOf('journal-persisted:COMMITTED');
+    const recordPersistedIndex = events.indexOf('record-persisted:COMMITTED');
+    const firstCleanupIndex = events.findIndex((event) => event.startsWith('cleanup-attempt:'));
+    expect(journalPersistedIndex).toBeGreaterThanOrEqual(0);
+    expect(recordPersistedIndex).toBeGreaterThan(journalPersistedIndex);
+    expect(firstCleanupIndex).toBeGreaterThan(recordPersistedIndex);
+    expect(cleanupEvents).toHaveLength(2);
   });
 });
