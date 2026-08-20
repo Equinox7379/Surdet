@@ -1096,3 +1096,52 @@ PUSH = NOT_AUTHORIZED
 ```
 
 Task 6 只允许暂存上述两个文档、执行 staged diff 检查并创建 docs-only closure；其后停止在 `WAITING_FOR_INDEPENDENT_FINAL_REVIEW`。
+
+### 2026-08-20 R2 测试合同补强记录
+
+```text
+R2_TEST_CONTRACT_REINFORCEMENT = COMPLETED
+R2_PRE_REINFORCEMENT_INDEPENDENT_FINAL_REVIEW = NEEDS_FIX
+R2_PRE_REINFORCEMENT_GAP = permanent regression did not prove persistence completion before cleanup, and did not prove failed staged identity retention in committed journal
+R2_IMPLEMENTATION_CHANGED = NO
+R2_PRODUCTION_FILES_CHANGED_THIS_ROUND = NONE
+R2_M1_ORDERING_CONTRACT = PASS
+R2_M2_STAGED_IDENTITY_RETENTION = PASS
+R2_TEST_CONTRACT_HEAD = 855d3d10c29b69d48c3280087da06b69fcdb52a2
+R2_TEST_CONTRACT_PARENT = a9b8a5bf12e6c7bec81a75af68d75aedc85b6407
+R2_TEST_COMMIT_MESSAGE = test(authoring): prove post-replacement commit ordering
+R2_TEST_COMMIT_SCOPE = exactly packages/authoring/test/commit-recovery.test.ts
+R2_TEST_COMMIT_PUSHED = NO
+```
+
+本轮补强仍只使用测试替身可观察能力。`PersistedCommitEventRepository` 在 `await super.writeJournal()` / `await super.write()` 完成后才记录 persisted 事件；`PostReplaceCleanupFaultStorage` 在 `removeStage()` 尝试入口记录 cleanup 事件。准备阶段完成后清空共享事件数组，再进入 `commitChange()`。正式断言要求完整事件序列为：
+
+```text
+journal-persisted:COMMITTED
+record-persisted:COMMITTED
+cleanup-attempt:<first staged identity>
+cleanup-attempt:<second staged identity>
+```
+
+同时，测试取得第一次失败的 `storage.removeStageCalls[0]`，明确断言 repository journal 为 `COMMITTED`、`journal.files` 仍包含该 identity、对应 entry 的 `replaced === true`、失败 staged entry 仍存在于 storage，且 journal identities 与 cleanup attempts 完全一致。该顺序断言会使“先 cleanup、吞错、最后写 COMMITTED”的实现失败。
+
+本轮实际验证（未运行 `verify:all`、Authoring 全量、CLI、Starter simulate、Electron、FORMAL/DIAGNOSTIC、性能、pack、部署或发行）：
+
+| 命令 | exit | 结果 |
+|---|---:|---|
+| `npm run test -w @surdet/authoring -- commit-recovery.test.ts -t "commits after verified replacements even when staged cleanup fails" --reporter=json --outputFile=<local-path>` | 0 | 1 passed / 2 pending |
+| `npm run test -w @surdet/authoring -- commit-recovery.test.ts --reporter=json --outputFile=<local-path>` | 0 | 3 passed / 0 failed |
+| `npm run typecheck -w @surdet/authoring` | 0 | PASS |
+| `git diff --check` | 0 | PASS |
+| `git diff --cached --check` | 0 | PASS |
+
+新增 artifact 身份（新文件名，未覆盖原 RED/GREEN）：
+
+| artifact | bytes | SHA-256 |
+|---|---:|---|
+| `<local-path>` | 1472 | `6EEF42249464984C10929AACD9574C25FC1874A59F498F59CA36ED77E6F29182` |
+| `<local-path>` | 1530 | `FC04B466B9FADFE21128FFE2AF23605BEBA1746AB2F8A7252274868E34487FBB` |
+| `<local-path>` | 74 | `9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78` |
+```
+
+生产语义在本轮没有修改；原有 production `verify:all` 证据继续保留有效。本节只补强永久测试合同，并在取得第一笔测试提交后等待第二笔 docs-only closure。
