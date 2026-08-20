@@ -364,7 +364,7 @@ function checkSceneReachability(
  * content/config/*.json 内 DSL 表达式的声明式扫描表。
  * 新增配置文件只需在此加一条（file + 表达式提取器 + 可选内建变量豁免）。
  * 当前覆盖：calendar.json nodes[].visibleWhen + baseCommands[].when、
- * combat.json damage.base（内建 atk/def/power）、events.json events[].when、
+ * combat.json damage.base（内建 atk/def/power）、events.json events[].when + scheduled[].when、
  * ngp.json clearCondition、achievements.json [].when。
  */
 interface ConfigExprScan {
@@ -375,6 +375,15 @@ interface ConfigExprScan {
   extract: (cfg: Record<string, unknown>) => string[];
   /** 结构性诊断（N1 等非表达式检查）：emit(text) 以统一 code/severity 落 issue */
   inspect?: (cfg: Record<string, unknown>, emit: (text: string) => void) => void;
+}
+
+function extractWhenExpressions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> =>
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+    .map((entry) => entry['when'])
+    .filter((when): when is string => typeof when === 'string');
 }
 
 const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
@@ -435,14 +444,10 @@ const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
   },
   {
     file: 'events.json',
-    extract: (cfg) => {
-      const events = cfg['events'];
-      if (!Array.isArray(events)) return [];
-      return events
-        .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object')
-        .map((e) => e['when'])
-        .filter((v): v is string => typeof v === 'string');
-    },
+    extract: (cfg) => [
+      ...extractWhenExpressions(cfg['events']),
+      ...extractWhenExpressions(cfg['scheduled']),
+    ],
   },
   {
     file: 'ngp.json',
