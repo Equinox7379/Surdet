@@ -117,13 +117,21 @@ export interface NormalizedAuthoringError extends EnvelopeErrorShape {
 }
 
 export function normalizeAuthoringError(error: unknown): NormalizedAuthoringError {
-  const sourceCode = error instanceof AuthoringOperationError ? error.code : undefined;
+  const sourceCode = error instanceof AuthoringOperationError
+    ? error.code
+    : typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : undefined;
   const code: AuthoringErrorCode = sourceCode !== undefined && isAuthoringErrorCode(sourceCode)
     ? sourceCode
     : 'INVALID_REQUEST';
   const definition = errorDefinition(code);
   const message = error instanceof Error ? error.message : String(error);
-  const details = error instanceof AuthoringOperationError ? error.details : undefined;
+  const details = error instanceof AuthoringOperationError
+    ? error.details
+    : typeof error === 'object' && error !== null && 'details' in error && typeof error.details === 'object' && error.details !== null && !Array.isArray(error.details)
+      ? error.details as Record<string, unknown>
+      : undefined;
   return {
     code,
     category: definition.category,
