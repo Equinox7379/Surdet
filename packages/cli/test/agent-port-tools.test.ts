@@ -121,4 +121,33 @@ describe('Surdet Agent Port MCP tool projection', () => {
     await server.close();
     await session.close();
   });
+
+  it('keeps structured timeline inspection details available over MCP', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      const begun = await client.callTool({ name: 'surdet_change_begin', arguments: { intent: 'inspect timeline details', acceptanceCriteria: ['structured output'], initiator: 'external-agent' } });
+      expect(begun.isError).not.toBe(true);
+      const created = await client.callTool({
+        name: 'surdet_timeline_create',
+        arguments: {
+          operationId: 'op-mcp-timeline-details',
+          timelineId: 'mcp_timeline_details',
+          definition: {
+            version: 1,
+            id: 'mcp_timeline_details',
+            durationMs: 100,
+            tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] }],
+          },
+        },
+      });
+      expect(created.isError).not.toBe(true);
+      const inspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_details' } });
+      expect(inspected.isError).not.toBe(true);
+      expect((inspected.structuredContent as any).result.details.tracks).toHaveLength(1);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
 });
