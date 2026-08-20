@@ -17,3 +17,4 @@ export * from './config-operations.js';
 export * from './config-document.js';
 export * from './capability-contract.js';
 export * from './capability-registry.js';
+export * from './error-catalog.js';

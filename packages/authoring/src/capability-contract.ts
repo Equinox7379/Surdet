@@ -22,6 +22,47 @@ export type RetryDisposition =
   | 'never';
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
+export interface EnvelopeContext {
+  sessionId: string;
+  capability: string;
+  projectIdentity: string;
+  projectRevision?: string;
+  changeId?: string;
+  workingRevision?: number;
+  operationId?: string;
+}
+
+export interface EnvelopeRepairAction {
+  capability?: string;
+  reason: string;
+  requiredFreshFacts?: string[];
+  inputTemplate?: Readonly<Record<string, unknown>>;
+  terminal?: boolean;
+}
+
+export interface EnvelopeErrorShape {
+  code: string;
+  category: string;
+  message: string;
+  details?: Record<string, unknown>;
+  retryDisposition: RetryDisposition;
+  repairActions: EnvelopeRepairAction[];
+}
+
+export type AuthoringEnvelope<T> =
+  | (EnvelopeContext & {
+      schemaVersion: typeof AUTHORING_ENVELOPE_SCHEMA_VERSION;
+      contractVersion: typeof AUTHORING_CONTRACT_VERSION;
+      ok: true;
+      result: T;
+    })
+  | (EnvelopeContext & {
+      schemaVersion: typeof AUTHORING_ENVELOPE_SCHEMA_VERSION;
+      contractVersion: typeof AUTHORING_CONTRACT_VERSION;
+      ok: false;
+      error: EnvelopeErrorShape;
+    });
+
 export interface CapabilityDefinition<TId extends string = string> {
   id: TId;
   title: string;
