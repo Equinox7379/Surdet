@@ -385,8 +385,13 @@ async function runEvidence(modeName) {
   let validationRequiredRedLight = false;
   let repeatedCommitCode;
   let applyInspect;
+  let applyTimelineReadback;
+  let applyTimelineDiskIdentity;
+  let applyCommitStatus;
+  let projectMutated = 'UNKNOWN';
   let stageClose;
   let applyClose;
+  let applyObserveClose;
 
   try {
     await node('stage-connect-and-discover', async () => {
@@ -436,6 +441,8 @@ async function runEvidence(modeName) {
         const diff = resultOf(await callTool(applyPort, 'surdet_change_diff'), 'apply change.diff');
         const committed = resultOf(await callTool(applyPort, 'surdet_change_commit'), 'apply change.commit');
         assert(committed.status === 'COMMITTED', 'apply commit did not commit');
+        applyCommitStatus = committed.status;
+        projectMutated = true;
         const repeated = expectedFailure(await callTool(applyPort, 'surdet_change_commit'), ['SESSION_STATE_INVALID', 'CHANGE_NOT_OPEN'], 'repeated apply commit');
         repeatedCommitCode = repeated.error.code;
         const capsule = resultOf(await callTool(applyPort, 'surdet_delivery_capsule', { label: 'formal committed capsule' }), 'apply delivery capsule');
@@ -443,13 +450,49 @@ async function runEvidence(modeName) {
         assert(capsule.projectMutation.occurred === true && capsule.projectMutation.expectedByPolicy === true, 'apply capsule mutation proof failed');
         applyWorkflow = { ...applyWorkflow, validation, simulation, runtimePaths: [runtimeA, runtimeB], trace, diff, capsule, committed };
         applyInspect = resultOf(await callTool(applyPort, 'surdet_project_inspect'), 'apply project.inspect after commit');
-        const inspectionText = JSON.stringify(applyInspect);
-        for (const expected of ['agent_port_entry', 'agent_port_result', 'agent_port_intro', 'agent.route', 'agent_guide']) {
-          assert(inspectionText.includes(expected), `committed project inspect omitted ${expected}`);
-        }
+        assert(applyInspect.entryScene === 'agent_port_entry', 'committed project inspect entryScene mismatch');
+        assert(applyInspect.scenes.some((scene) => scene.id === 'agent_port_entry'), 'committed project inspect omitted agent_port_entry scene');
+        assert(applyInspect.scenes.some((scene) => scene.id === 'agent_port_result'), 'committed project inspect omitted agent_port_result scene');
+        assert(applyInspect.variables.some((variable) => variable.name === 'agent.route'), 'committed project inspect omitted agent.route variable');
+        assert(applyInspect.characters.some((character) => character.id === 'agent_guide'), 'committed project inspect omitted agent_guide character');
       } finally {
         applyClose = await closePort(applyPort, errors);
       }
+
+      const observePort = await connectPort({ projectRoot: applyFixture, policy: 'observe', dataDir: applyData });
+      try {
+        const observeTools = await listTools(observePort);
+        assert(!observeTools.includes('surdet_change_begin') && !observeTools.includes('surdet_change_commit'), 'fresh observe exposed mutation tools');
+        const timeline = resultOf(await callTool(observePort, 'surdet_object_inspect', { objectRef: 'timeline:agent_port_intro' }), 'fresh observe timeline object.inspect');
+        assert(timeline.kind === 'timeline', 'fresh timeline object.inspect kind mismatch');
+        assert(timeline.objectRef === 'timeline:agent_port_intro', 'fresh timeline object.inspect objectRef mismatch');
+        assert(timeline.details?.id === 'agent_port_intro', 'fresh timeline object.inspect details id mismatch');
+        assert(timeline.source?.path === 'content/timelines/agent_port_intro.json', 'fresh timeline object.inspect source path mismatch');
+        assert(typeof timeline.fingerprint === 'string' && timeline.fingerprint.length > 0, 'fresh timeline object.inspect fingerprint missing');
+        applyTimelineReadback = {
+          kind: timeline.kind,
+          objectRef: timeline.objectRef,
+          detailsId: timeline.details.id,
+          sourcePath: timeline.source.path,
+          fingerprint: timeline.fingerprint,
+        };
+      } finally {
+        applyObserveClose = await closePort(observePort, errors);
+      }
+
+      const timelinePath = path.join(applyFixture, 'content/timelines/agent_port_intro.json');
+      assert(fs.existsSync(timelinePath), 'committed timeline file missing from apply fixture');
+      const timelineBytes = fs.readFileSync(timelinePath);
+      const timelineJson = JSON.parse(timelineBytes.toString('utf8'));
+      assert(timelineJson.id === 'agent_port_intro', 'committed timeline disk id mismatch');
+      const timelineRelativePath = path.relative(applyFixture, timelinePath).split(path.sep).join('/');
+      applyTimelineDiskIdentity = {
+        path: timelineRelativePath,
+        bytes: timelineBytes.byteLength,
+        sha256: sha256(timelineBytes),
+        jsonId: timelineJson.id,
+      };
+      assert(applyTimelineDiskIdentity.sha256.length > 0, 'committed timeline disk sha256 missing');
     });
 
     const stageAfterFinal = hashTree(stageFixture);
@@ -458,9 +501,10 @@ async function runEvidence(modeName) {
     assert(originalStarterBefore.sha256 === originalStarterAfter.sha256, 'original Starter changed');
     assert(stageBefore.sha256 === stageAfterFinal.sha256, 'stage fixture changed after observe readback');
     assert(applyBefore.sha256 !== applyAfter.sha256, 'apply fixture did not change after commit');
+    assert(projectMutated === true, 'committed apply projectMutated was not true');
     assert(validationRequiredRedLight, 'resume validation-required red light was not observed');
     const payload = {
-      schemaVersion: '1.0.0', evidenceClass, status: 'PASSED', runHead,
+      schemaVersion: '1.0.0', evidenceClass, status: 'PASSED', runHead, projectMutated,
       contractVersion: '1.0.0', engineVersion: process.env.SURDET_ENGINE_VERSION ?? '0.1.0',
       launcher: { entry: 'packages/cli/dist/agent-port/main.js', transport: 'stdio', sdkServer: '2.0.0', sdkClient: '2.0.0', legacy: 'reject' },
       stage: {
@@ -472,7 +516,8 @@ async function runEvidence(modeName) {
         policy: 'apply', toolNames: applyTools, resumedChangeId: applyWorkflow.changeId, validationRequiredRedLight,
         repeatedCommitCode, committed: applyWorkflow.committed?.status === 'COMMITTED',
         projectBeforeSha256: applyBefore.sha256, projectAfterSha256: applyAfter.sha256, capsule: applyWorkflow.capsule,
-        stdoutProtocolPurity: applyClose?.stdoutProtocolPurity === true,
+        projectMutated, inspect: applyInspect, freshObserveTimeline: applyTimelineReadback, timelineDisk: applyTimelineDiskIdentity,
+        stdoutProtocolPurity: applyClose?.stdoutProtocolPurity === true && applyObserveClose?.stdoutProtocolPurity === true,
       },
       repairChain: {
         errorCode: 'OBJECT_PRECONDITION_FAILED', retryDisposition: 'after-inspect', repairTool: 'surdet_object_inspect', repaired: true,
@@ -486,15 +531,19 @@ async function runEvidence(modeName) {
       originalStarter: { before: originalStarterBefore, after: originalStarterAfter, unchanged: originalStarterBefore.sha256 === originalStarterAfter.sha256 },
       fixtures: { stage: { before: stageBefore, after: stageAfterFinal }, apply: { before: applyBefore, after: applyAfter } },
       errors, milestones, lastPassedNode, firstFailedNode,
-      childCleanup: { stage: stageClose, apply: applyClose },
+      childCleanup: { stage: stageClose, apply: applyClose, applyObserve: applyObserveClose },
       manualAcceptance: { externalAgentLowContext: 'NOT_RUN', ownerEditorPreview: 'NOT_RUN' },
     };
     const artifact = writeArtifact(directory, payload);
     console.log(JSON.stringify({ ...payload, artifactIdentity: artifact.identity, identityPath: artifact.identityPath }));
   } catch (error) {
+    const applyAfterOnFailure = fs.existsSync(applyFixture) ? hashTree(applyFixture) : null;
+    if (applyCommitStatus === 'COMMITTED') projectMutated = true;
+    else if (applyAfterOnFailure !== null) projectMutated = applyBefore.sha256 !== applyAfterOnFailure.sha256;
     const failure = {
       schemaVersion: '1.0.0', evidenceClass, status: 'FAILED', runHead,
-      lastPassedNode, firstFailedNode: firstFailedNode ?? currentNode, failure: String(error), projectMutated: 'UNKNOWN',
+      lastPassedNode, firstFailedNode: firstFailedNode ?? currentNode, failure: String(error), projectMutated,
+      applyCommitStatus, applyBefore, applyAfter: applyAfterOnFailure, applyInspect, freshObserveTimeline: applyTimelineReadback, timelineDisk: applyTimelineDiskIdentity,
       errors, milestones, nextAllowedAction: 'TASK_9_REVIEW', notRerun: true,
     };
     const artifact = writeArtifact(directory, failure);
