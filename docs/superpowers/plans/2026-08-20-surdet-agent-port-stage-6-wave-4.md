@@ -2564,7 +2564,7 @@ TASK_10_RECOVERY2_CONFORMANCE_RED_COMMAND = npm run test -w @surdet/cli -- test/
 TASK_10_RECOVERY2_CONFORMANCE_RED_EXIT = 1
 TASK_10_RECOVERY2_CONFORMANCE_RED_RESULT = one centralized scan aggregated 7 mismatching capability cases before repair
 TASK_10_RECOVERY2_CONFORMANCE_RED_CASES = project.validate[project], project.validate[working], project.simulate[project], project.simulate[working], runtime.run-from[working], runtime.read-trace[working-nested-events], change.diff[working]
-TASK_10_RECOVERY2_CONFORMANCE_RED_MISMATCH_FIELDS = validate.view; validate.working.scenes; validate.working.freshness; simulate.view; simulate.working.top-level report fields; simulate.working.freshness; runtime.run-from.freshness; runtime.read-trace.view; runtime.read-trace.events[].source/stateDelta nested objects; change.diff.view
+TASK_10_RECOVERY2_CONFORMANCE_RED_MISMATCH_FIELDS = validate.project.view; validate.working.view/scenes/freshness; simulate.project.view; simulate.working.view/entryScene/pathsExplored/choiceBranches/paths/budgetExhausted/runtimeErrors/endings/deadEndScenes/cyclesPruned/saveRoundtrips/freshness; runtime.run-from.freshness; runtime.read-trace.view/events[].source/events[].stateDelta; change.diff.view
 TASK_10_RECOVERY2_CONFORMANCE_RED_EVIDENCE = real AuthoringService + dispatcher + registry schema-validator; all listed cases were scanned and reported in one assertion rather than stopping at the first mismatch
 
 TASK_10_RECOVERY2_REGISTRY_REPAIR = PASS

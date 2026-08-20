@@ -223,7 +223,7 @@ RECOVERY2_CONFORMANCE_RED_COMMAND = npm run test -w @surdet/cli -- test/agent-po
 RECOVERY2_CONFORMANCE_RED_EXIT = 1
 RECOVERY2_CONFORMANCE_RED_RESULT = 7 mismatching cases were aggregated in one scan before repair
 RECOVERY2_CONFORMANCE_RED_CASES = project.validate[project], project.validate[working], project.simulate[project], project.simulate[working], runtime.run-from[working], runtime.read-trace[working-nested-events], change.diff[working]
-RECOVERY2_CONFORMANCE_RED_MISMATCH_FIELDS = validate.view; validate.working.scenes; validate.working.freshness; simulate.view; simulate.working top-level report fields; simulate.working.freshness; runtime.run-from.freshness; runtime.read-trace.view; runtime.read-trace.events[].source/stateDelta nested objects; change.diff.view
+RECOVERY2_CONFORMANCE_RED_MISMATCH_FIELDS = validate.project.view; validate.working.view/scenes/freshness; simulate.project.view; simulate.working.view/entryScene/pathsExplored/choiceBranches/paths/budgetExhausted/runtimeErrors/endings/deadEndScenes/cyclesPruned/saveRoundtrips/freshness; runtime.run-from.freshness; runtime.read-trace.view/events[].source/events[].stateDelta; change.diff.view
 RECOVERY2_CONFORMANCE_RED_METHOD = real AuthoringService + dispatcher + registry schema-validator; the scan collected all issues instead of stopping at the first mismatch
 
 RECOVERY2_REGISTRY_REPAIR = PASS
