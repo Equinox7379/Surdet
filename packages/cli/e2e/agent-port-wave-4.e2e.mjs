@@ -123,7 +123,7 @@ function expectedFailure(envelope, codes, label) {
   return envelope;
 }
 
-async function connectPort({ projectRoot, policy, resumeChangeId, dataDir }) {
+async function connectPort({ projectRoot, policy, resumeChangeId, dataDir, versionNegotiation = { mode: 'auto' } }) {
   const args = [portEntry, '--project', projectRoot, '--policy', policy];
   if (resumeChangeId !== undefined) args.push('--resume-change', resumeChangeId);
   const transport = new StdioClientTransport({
@@ -139,7 +139,7 @@ async function connectPort({ projectRoot, policy, resumeChangeId, dataDir }) {
   transport.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
   const client = new Client(
     { name: 'surdet-wave-4-evidence', version: '1.0.0' },
-    { versionNegotiation: { mode: 'auto' } },
+    { versionNegotiation },
   );
   await client.connect(transport);
   return { client, transport, protocolErrors, get stderr() { return stderr; } };
@@ -302,31 +302,72 @@ async function authoringWorkflow(port, { pendingMutation = false } = {}) {
   return { changeId, traceId: runtimeA.traceId, runtimePaths: [runtimeA, runtimeB], validation, simulation, trace, diff, capsule, failedInvocation };
 }
 
+async function runPreflightLeg({ label, fixture, data, versionNegotiation }) {
+  const errors = { protocol: [], stderrUnexpected: [], childCleanupFailures: [] };
+  const port = await connectPort({ projectRoot: fixture, policy: 'observe', dataDir: data, versionNegotiation });
+  const protocolEra = port.client.getProtocolEra();
+  const negotiatedProtocolVersion = port.client.getNegotiatedProtocolVersion();
+  let close;
+  try {
+    const names = await listTools(port);
+    assert(names.includes('surdet_session_describe'), `${label} session tool missing`);
+    assert(names.includes('surdet_project_inspect'), `${label} inspect tool missing`);
+    assert(!names.includes('surdet_change_begin') && !names.includes('surdet_change_commit'), `${label} exposed mutation tool`);
+    assert(!names.includes('surdet_delivery_capsule'), `${label} exposed unresumed capsule`);
+    resultOf(await callTool(port, 'surdet_session_describe'), `${label} session.describe`);
+    resultOf(await callTool(port, 'surdet_project_inspect'), `${label} project.inspect`);
+    if (label === 'modern/auto') resultOf(await callTool(port, 'surdet_project_assets'), `${label} project.assets`);
+    if (label === 'legacy/2025') {
+      assert(protocolEra === 'legacy', `${label} protocol era was ${protocolEra}`);
+      assert(negotiatedProtocolVersion === '2025-11-25', `${label} protocol version was ${negotiatedProtocolVersion}`);
+    } else {
+      assert(protocolEra === 'modern', `${label} protocol era was ${protocolEra}`);
+    }
+  } finally {
+    close = await closePort(port, errors);
+  }
+  assert(close.stdoutProtocolPurity === true, `${label} stdout protocol purity failed`);
+  assert(errors.protocol.length === 0, `${label} protocol errors: ${errors.protocol.join('; ')}`);
+  assert(errors.stderrUnexpected.length === 0, `${label} unexpected stderr: ${errors.stderrUnexpected.join('; ')}`);
+  assert(errors.childCleanupFailures.length === 0, `${label} cleanup errors: ${errors.childCleanupFailures.join('; ')}`);
+  return {
+    label,
+    protocolEra,
+    negotiatedProtocolVersion,
+    toolsList: true,
+    sessionDescribe: true,
+    projectInspect: true,
+    policyFilter: true,
+    stdoutProtocolPurity: close.stdoutProtocolPurity,
+    childCleanup: true,
+  };
+}
+
 async function runPreflight() {
   assert(fs.existsSync(portEntry), `Agent Port launcher missing: ${portEntry}`);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-wave-4-preflight-'));
-  const fixture = path.join(directory, 'fixture');
-  const data = path.join(directory, 'data');
-  copyStarter(fixture);
-  fs.mkdirSync(data, { recursive: true });
-  const errors = { protocol: [], domainUnexpected: [], stderrUnexpected: [], unhandledRejections: [], childCleanupFailures: [] };
-  const port = await connectPort({ projectRoot: fixture, policy: 'observe', dataDir: data });
   try {
-    const names = await listTools(port);
-    assert(names.includes('surdet_session_describe'), 'preflight session tool missing');
-    assert(names.includes('surdet_project_inspect'), 'preflight inspect tool missing');
-    assert(!names.includes('surdet_change_begin') && !names.includes('surdet_change_commit'), 'preflight exposed mutation tool');
-    assert(!names.includes('surdet_delivery_capsule'), 'unresumed observe exposed capsule');
-    resultOf(await callTool(port, 'surdet_session_describe'), 'preflight session.describe');
-    resultOf(await callTool(port, 'surdet_project_inspect'), 'preflight project.inspect');
-    resultOf(await callTool(port, 'surdet_project_assets'), 'preflight project.assets');
+    const modernFixture = path.join(directory, 'modern-fixture');
+    const modernData = path.join(directory, 'modern-data');
+    const legacyFixture = path.join(directory, 'legacy-fixture');
+    const legacyData = path.join(directory, 'legacy-data');
+    copyStarter(modernFixture);
+    copyStarter(legacyFixture);
+    fs.mkdirSync(modernData, { recursive: true });
+    fs.mkdirSync(legacyData, { recursive: true });
+    const modern = await runPreflightLeg({
+      label: 'modern/auto', fixture: modernFixture, data: modernData, versionNegotiation: { mode: 'auto' },
+    });
+    const legacy = await runPreflightLeg({
+      label: 'legacy/2025', fixture: legacyFixture, data: legacyData, versionNegotiation: { mode: 'legacy' },
+    });
+    console.log(JSON.stringify({
+      status: 'PASSED', mode: 'preflight', launcher: portEntry,
+      modern, legacy, policyFilter: true, stdoutProtocolPurity: true, childCleanup: true,
+    }));
   } finally {
-    await closePort(port, errors);
     fs.rmSync(directory, { recursive: true, force: true });
   }
-  assert(errors.protocol.length === 0, `preflight protocol errors: ${errors.protocol.join('; ')}`);
-  assert(errors.childCleanupFailures.length === 0, `preflight cleanup errors: ${errors.childCleanupFailures.join('; ')}`);
-  console.log(JSON.stringify({ status: 'PASSED', mode: 'preflight', launcher: portEntry, tools: 'policy-filtered', stdoutProtocolPurity: true }));
 }
 
 async function runAcceptancePrep() {
