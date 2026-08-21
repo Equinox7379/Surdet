@@ -156,9 +156,7 @@ function resultForEnvelope(envelope: AuthoringEnvelope<unknown>): CallToolResult
     isError: !envelope.ok,
     content: [{
       type: 'text',
-      text: envelope.ok
-        ? `${envelope.capability} completed`
-        : `${envelope.error.code}: ${envelope.error.message}`,
+      text: JSON.stringify(envelope),
     }],
     structuredContent: envelope as unknown as Record<string, unknown>,
   };

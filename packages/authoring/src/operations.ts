@@ -1,3 +1,4 @@
+import { compileScene } from '@surdet/core';
 import { insertLinesAfter, parseSceneDocument, parseSceneLine, rebuildTextRaw, serializeSceneDocument, splitInstruction } from './scene-document.js';
 import type {
   SceneBlockInput,
@@ -110,6 +111,16 @@ function checkPatchPrecondition(lines: readonly SceneDocumentLine[], patch: Scen
   }
 }
 
+function validateSceneCandidate(path: string, sceneId: string, text: string): void {
+  try {
+    // Core is the shared GAL parser/compiler. Validate the complete candidate
+    // before runOperation is allowed to persist any working state.
+    compileScene(text, path, sceneId);
+  } catch (error) {
+    throw new AuthoringOperationError('INVALID_REQUEST', error instanceof Error ? error.message : String(error));
+  }
+}
+
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
   return runOperation(change, input, (record) => {
@@ -126,6 +137,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
       { kind: 'instr', name: 'end', raw: '@end', eol: '\n' as const },
     ];
     const text = serializeSceneDocument(lines);
+    validateSceneCandidate(path, input.sceneId, text);
     return {
       result: { sceneId: input.sceneId, path },
       workingFiles: { ...record.workingFiles, [path]: text },
@@ -163,9 +175,11 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       }
       nextLines = lines.filter((_, lineIndex) => lineIndex !== index);
     }
+    const text = serializeSceneDocument(nextLines, defaultEol(nextLines));
+    validateSceneCandidate(path, sceneId, text);
     return {
       result: { path, line: index + 1, kind: patch.kind },
-      workingFiles: { ...record.workingFiles, [path]: serializeSceneDocument(nextLines, defaultEol(nextLines)) },
+      workingFiles: { ...record.workingFiles, [path]: text },
     };
   });
 }

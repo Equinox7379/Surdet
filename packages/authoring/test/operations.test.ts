@@ -61,7 +61,7 @@ describe('typed authoring operations', () => {
           { label: '路径 A', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'path_a' } },
           { label: '路径 B', effects: [{ name: 'set', args: ['trust', '=', '-1'] }], target: { kind: 'goto', value: 'path_b' } },
         ],
-      }],
+      }, { kind: 'label', name: 'path_a' }, { kind: 'label', name: 'path_b' }],
     });
 
     const raw = change.record.workingFiles['content/scenario/choice_effects.gal'];
@@ -79,5 +79,30 @@ describe('typed authoring operations', () => {
       sceneId: 'prologue',
       patch: { kind: 'replaceText', target: 'scene:prologue/text:2@bad-bad', expectedFingerprint: 'bad', value: '篡改' },
     })).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+  });
+
+  it('validates a typed scene patch candidate before persisting working state', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(snapshot, repository);
+    const sceneLine = '@scene prologue';
+    const beforeFiles = { ...change.record.workingFiles };
+
+    await expect(applyScenePatch(change, {
+      operationId: 'op-invalid-patch-set',
+      sceneId: 'prologue',
+      patch: {
+        kind: 'insertAfter',
+        anchor: `scene:prologue/instr:1@${digest(sceneLine)}`,
+        expectedFingerprint: digest(sceneLine),
+        blocks: [{ kind: 'instruction', name: 'set', args: ['affinity', '2'] }],
+      },
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('C004'),
+    });
+    expect(change.record.workingFiles).toEqual(beforeFiles);
+    expect(change.record.workingRevision).toBe(0);
+    expect(change.record.operations).toEqual({});
   });
 });
