@@ -1968,7 +1968,7 @@ Task 3 persists bounded intent outside project contents, records simulation/runt
 - Consumes: 总经理明确的“批准开始真实外部 Agent 验收”授权。
 - Produces: 低上下文外部 Agent 证据和项目所有者 Editor/预览结果。
 
-- [ ] **Step 1: 只在书面授权后准备 fixture**
+- [x] **Step 1: 只在书面授权后准备 fixture**
 
 ```powershell
 node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode acceptance-prep
@@ -1976,7 +1976,7 @@ node packages/cli/e2e/agent-port-wave-4.e2e.mjs --mode acceptance-prep
 
 Expected：创建新的桌面 Starter 副本、独立 `SURDET_AGENT_DATA_DIR`、stage MCP 配置；原 Starter hash 不变。该模式不调用创作工具。
 
-- [ ] **Step 2: 给新上下文外部 Agent 的唯一提示词**
+- [x] **Step 2: 给新上下文外部 Agent 的唯一提示词**
 
 必须原样使用以下低上下文提示，不附源码、任务书、schema 速查或调用顺序：
 
@@ -1986,7 +1986,7 @@ Expected：创建新的桌面 Starter 副本、独立 `SURDET_AGENT_DATA_DIR`、
 请在已绑定的隔离项目里建立一个短小但完整的双分支 Galgame 片段：至少包含两个场景、一个变量、一个角色、一个使用项目既有背景和立绘的演出时间轴、一个有 A/B 两条结果的选择，并把新片段设为入口。你需要自行发现能力和参数，先在 stage 中完成创作，再完成校验、模拟、两条路径的正式运行证据、轨迹读取、对象级差异和交付胶囊。遇到工具错误时，请根据 Surdet 返回的结构化修复动作自行修正。完成后只汇报 changeId、胶囊路径/字节数/SHA-256、校验与两条路径结果，以及是否触碰真实项目。
 ```
 
-- [ ] **Step 3: 验证外部 Agent 没有旁路**
+- [x] **Step 3: 验证外部 Agent 没有旁路**
 
 审核其调用历史：
 
@@ -2001,7 +2001,7 @@ stage 项目磁盘不变
 
 任何一项失败都视为产品合同缺口，记录第一个失败点；不临时加长提示词让验收“通过”。
 
-- [ ] **Step 4: 项目所有者批准后 apply resume**
+- [x] **Step 4: 项目所有者批准后 apply resume**
 
 项目所有者明确授权 fixture apply 后，停止 stage Port，以：
 
@@ -3183,4 +3183,41 @@ W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_APPLY = NOT_PERFORMED
 W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_OWNER_ACCEPTANCE = NOT_STARTED
 W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_WAVE_5 = NOT_STARTED
 W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_NEXT = WAITING_FOR_OWNER_APPLY_RESUME_AUTHORIZATION
+```
+
+
+### 2026-08-21 OWNER-AUTHORIZED-APPLY-RESUME — XuYFfo 隔离项目落盘
+
+项目所有者明确批准对 `XuYFfo` 隔离 fixture 执行 apply resume，并要求与文档降噪连续完成。正式 Agent Port 以 `policy=apply`、`--resume-change chg_0001_c1d714af-1441-4369-bbbb-b89dc0d1b960` 恢复唯一 OPEN change；重新取得 fresh validation、定向 simulation、无 label runtime trace 与 diff 后才调用 `change.commit`。随后生成 committed capsule，并以全新 observe 进程回读场景和时间轴。
+
+```ini
+W4_OWNER_APPLY_RESUME = PASS
+W4_OWNER_APPLY_RUN_HEAD = 126c3a59f7a5eafdcb8c55b3124cdb0a0f91b9d2
+W4_OWNER_APPLY_CHANGE = chg_0001_c1d714af-1441-4369-bbbb-b89dc0d1b960
+W4_OWNER_APPLY_CHANGE_STATUS = COMMITTED
+W4_OWNER_APPLY_VALIDATION = PASS; 0 errors; 3 baseline warnings
+W4_OWNER_APPLY_SIMULATION = PASS; sceneId=agent_semantic_guidance_probe; runtimeErrors=0
+W4_OWNER_APPLY_RUNTIME = PASS; trace_1787325373553_3d254108-dba1-4f5a-85f5-ae0a989a9f4e
+W4_OWNER_APPLY_CAPSULE_ID = 62acf2ff-10d2-49d7-97c3-e20e0cc7506a
+W4_OWNER_APPLY_CAPSULE_BYTES = 23288
+W4_OWNER_APPLY_CAPSULE_SHA256 = 00105159E6186BDC73F2F3B1B1A3E6FFD136D85428DAD06AEC9D73E3BF091D2A
+W4_OWNER_APPLY_PROJECT_REVISION_BEFORE = d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f
+W4_OWNER_APPLY_PROJECT_REVISION_AFTER = 5bd7a67b33c84c0e14ce0ccae17239779b3024f643ebb7ad80d501799bd1edee
+W4_OWNER_APPLY_PROJECT_TREE_BEFORE = 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6
+W4_OWNER_APPLY_PROJECT_TREE_AFTER = B312B65D84766F8AC3E324ED8EF80F9C80200847A009B1FB38E744B0CC38AA99
+W4_OWNER_APPLY_PROJECT_FILES_AFTER = 39; 6706602 bytes
+W4_OWNER_APPLY_ADDED_FILES = content/scenario/agent_semantic_guidance_probe.gal; content/timelines/agent_semantic_guidance_timeline.json
+W4_OWNER_APPLY_SCENE_BYTES = 234
+W4_OWNER_APPLY_SCENE_SHA256 = DC55DFD60EF8980A3FBFFD04AE0BCDAE4EFE4D5D09F39A06BD5F289DEBD641FA
+W4_OWNER_APPLY_TIMELINE_BYTES = 618
+W4_OWNER_APPLY_TIMELINE_SHA256 = BE15AE3BF7AD6360046587706D0B2B74707097087BE3AF58AD4E891B8AC46806
+W4_OWNER_APPLY_STARTER_UNCHANGED = YES; 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6
+W4_OWNER_APPLY_EVIDENCE_BYTES = 81389
+W4_OWNER_APPLY_EVIDENCE_SHA256 = DC91E618E09B40D8C50C784C6D44D85E0955CBB828322692C56D600F7EF3CE1C
+W4_OWNER_APPLY_IDENTITY_BYTES = 200
+W4_OWNER_APPLY_IDENTITY_SHA256 = 043290D434E424F9C9C6090A8E2D10B141D77702A076AAD6C026F7723E556646
+W4_OWNER_APPLY_OWNER_EDITOR_PREVIEW_ACCEPTANCE = NOT_STARTED
+W4_OWNER_APPLY_PUSH = NOT_PERFORMED
+W4_OWNER_APPLY_WAVE_5 = NOT_STARTED
+W4_OWNER_APPLY_NEXT = OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE
 ```
