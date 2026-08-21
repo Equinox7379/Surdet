@@ -785,3 +785,27 @@ NEXT_STOP = WAITING_FOR_OWNER_APPLY_RESUME_AUTHORIZATION
 ```
 
 本结果关闭 `timeline` 指令名和 `runtime.run-from.label` 的外部可发现性缺口，但不是 Wave 4 最终关闭。按 Task 11，下一道独立门是项目所有者明确授权对该隔离 fixture 执行 apply resume；随后才邀请项目所有者完成 Editor/预览人工路径。
+
+
+### 项目所有者授权的 apply resume
+
+项目所有者随后明确批准对 `XuYFfo` 隔离 fixture 执行 apply resume。正式 Agent Port 在 HEAD `126c3a59f7a5eafdcb8c55b3124cdb0a0f91b9d2` 上以 apply 策略恢复 `chg_0001_c1d714af-1441-4369-bbbb-b89dc0d1b960`，先重新运行 fresh validation、定向 simulation、runtime 与 trace，再提交 change。提交结果为 `COMMITTED`；提交后 fresh observe 进程可以读取普通 scene 与 timeline 对象。
+
+Committed capsule `62acf2ff-10d2-49d7-97c3-e20e0cc7506a` 为 23,288 bytes / SHA-256 `00105159E6186BDC73F2F3B1B1A3E6FFD136D85428DAD06AEC9D73E3BF091D2A`。它证明 fixture project revision 从 `d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f` 变为 `5bd7a67b33c84c0e14ce0ccae17239779b3024f643ebb7ad80d501799bd1edee`，且 mutation 符合 apply policy。
+
+磁盘回读显示 fixture 从 37 files / 6,705,750 bytes 变为 39 files / 6,706,602 bytes，只新增：
+
+- `content/scenario/agent_semantic_guidance_probe.gal`：234 bytes / SHA-256 `DC55DFD60EF8980A3FBFFD04AE0BCDAE4EFE4D5D09F39A06BD5F289DEBD641FA`；
+- `content/timelines/agent_semantic_guidance_timeline.json`：618 bytes / SHA-256 `BE15AE3BF7AD6360046587706D0B2B74707097087BE3AF58AD4E891B8AC46806`。
+
+原始 Starter 在 apply 前后均为 37 files / 6,705,750 bytes，tree SHA-256 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`。Apply evidence 为 81,389 bytes / SHA-256 `DC91E618E09B40D8C50C784C6D44D85E0955CBB828322692C56D600F7EF3CE1C`；identity 为 200 bytes / SHA-256 `043290D434E424F9C9C6090A8E2D10B141D77702A076AAD6C026F7723E556646`。
+
+```ini
+OWNER_AUTHORIZED_APPLY_RESUME = PASSED
+FIXTURE_CHANGE = COMMITTED
+ORIGINAL_STARTER_UNCHANGED = YES
+OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE = NOT_STARTED
+PUSH = NOT_PERFORMED
+WAVE_5 = NOT_STARTED
+NEXT_STOP = OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE
+```
