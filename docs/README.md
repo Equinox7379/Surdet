@@ -1,0 +1,61 @@
+# Surdet 文档索引
+
+本目录只保留三类内容：当前技术事实、当前/近期任务证据、仍被自动化使用的机器基线。已经闭合且不再指导施工的旧报告和旧任务书由 Git 历史保存，不继续占据日常阅读入口。
+
+## 从这里开始
+
+| 目的 | 文档 |
+|---|---|
+| 理解当前架构 | [architecture.md](architecture.md) |
+| 编写或生成剧本 | [dsl-spec.md](dsl-spec.md) |
+| 查看实现能力与验证入口 | [capability-matrix.md](capability-matrix.md) |
+| 查看尚未实现或尚未资格化的边界 | [known-limitations.md](known-limitations.md) |
+| 给外部 Agent 建立创作上下文 | [AI-GUIDE.md](AI-GUIDE.md) |
+| 使用 AI 剧本模板 | [ai-writing-prompt.md](ai-writing-prompt.md) |
+| 迁移 Renderer 消费方 | [renderer-v2-migration.md](renderer-v2-migration.md) |
+| 迁移 Player Shell | [player-shell-migration.md](player-shell-migration.md) |
+
+`capabilities.json` 是能力矩阵的机器可读来源，由 `npm run docs:capabilities` 生成；不要手工维护第二份能力真相。
+
+## 当前阶段
+
+Stage 6 Wave 4 正在完成外部 Agent Port 的最后人工门。FORMAL、真实外部 Agent、自修复与语义引导 smoke 已有证据；项目所有者批准的 apply-resume 已写入桌面隔离 fixture。当前仍等待项目所有者在 Editor/预览中确认可编辑对象和真实演出，因此尚未宣称 Wave 4 最终关闭，也尚未 push。
+
+- [Wave 4 设计规格](superpowers/specs/2026-08-20-surdet-agent-port-stage-6-wave-4-design.md)
+- [Wave 4 总任务书与 Execution Ledger](superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md)
+- [Wave 4 交付报告](SURDET-AGENT-PORT-STAGE-6-WAVE-4-DELIVERY-REPORT-2026-08-20.md)
+
+## 最近的 Authoring 演进
+
+- [Wave 1：Agent-ready authoring vertical slice](superpowers/plans/2026-08-13-agent-ready-authoring-vertical-slice-stage-6-wave-1.md)
+- [Wave 1 交付报告](AUTHORING-AGENT-READY-VERTICAL-SLICE-STAGE-6-WAVE-1-DELIVERY-REPORT-2026-08-13.md)
+- [Wave 2：既有资源驱动的场景演出](superpowers/plans/2026-08-14-existing-asset-presentation-authoring-stage-6-wave-2.md)
+- [Wave 2 交付报告](EXISTING-ASSET-PRESENTATION-AUTHORING-STAGE-6-WAVE-2-DELIVERY-REPORT-2026-08-14.md)
+- [Wave 3：项目级配置 authoring](superpowers/plans/2026-08-14-project-level-authoring-config-stage-6-wave-3.md)
+- [Wave 3 交付报告](PROJECT-LEVEL-AUTHORING-CONFIG-STAGE-6-WAVE-3-DELIVERY-REPORT-2026-08-14.md)
+
+## Pre-Wave 4 可靠性证据
+
+- [Fresh Gate](superpowers/plans/2026-08-20-pre-wave-4-reliability-fresh-gate.md)
+- [R1：Simulation control-flow identity](superpowers/plans/2026-08-20-reliability-r1-simulation-control-flow-identity.md)
+- [R2：Post-replacement commit contract](superpowers/plans/2026-08-20-reliability-r2-post-replacement-commit-contract.md)
+- [R3：Windows non-tearing replacement](superpowers/plans/2026-08-21-reliability-r3-windows-non-tearing-replacement.md)
+- [R4–R6 批次收口](superpowers/plans/2026-08-21-pre-wave-4-reliability-r4-r6-closure-batch.md)
+
+对应交付报告保留在 `docs/` 根目录，便于对照代码证据提交与文档闭合提交。
+
+## 机器证据
+
+- `baselines/`：Renderer 与特定资格化协议使用的冻结 JSON。部分路径被测试和 runner 直接引用，不应当作普通文档删除或改名。
+- `examples/`：文档中需要实际 typecheck 的代码样例。
+- `capabilities.json`：由共享 capability metadata 生成的机器入口。
+
+## 长期台账与受保护资料
+
+长期路线与决策台账保持其既有本地治理状态，本轮文档降噪没有修改、移动、暂存或提交它。`USER.md`、`SESSION-HANDOFF.md`、美术方向资料和历史 handoff 同样不属于日常技术文档清理范围。
+
+## 历史资料如何恢复
+
+本轮移除的是已经闭合的旧交付报告、旧任务书和工作笔记；没有重写 Git 历史。需要审计时可以使用文件名或提交日期在 Git 历史中读取原文。不要为了“看起来完整”把全部历史报告重新复制回当前树。
+
+文档治理规则见 [archive/README.md](archive/README.md)。
