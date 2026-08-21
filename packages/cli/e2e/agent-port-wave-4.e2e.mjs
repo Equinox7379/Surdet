@@ -73,9 +73,28 @@ function newDirectory(label) {
   return fs.mkdtempSync(path.join(artifactRoot, `agent-port-wave-4-${label.toLowerCase()}-`));
 }
 
+function isWithinPath(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return relative.length > 0 && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
+}
+
+function newDesktopAcceptanceDirectory() {
+  const desktopRoot = path.join(os.homedir(), 'Desktop');
+  assert(fs.existsSync(desktopRoot), `Desktop directory missing: ${desktopRoot}`);
+  const directory = fs.mkdtempSync(path.join(desktopRoot, 'surdet-agent-port-acceptance-'));
+  assert(!isWithinPath(repoRoot, directory), `acceptance prep must be outside repository: ${directory}`);
+  assert(isWithinPath(desktopRoot, directory), `acceptance prep must be on Desktop: ${directory}`);
+  return directory;
+}
+
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function readFileIdentity(file) {
+  const bytes = fs.readFileSync(file);
+  return { path: file, bytes: bytes.byteLength, sha256: sha256(bytes) };
 }
 
 function writeArtifact(directory, value) {
@@ -311,28 +330,111 @@ async function runPreflight() {
 }
 
 async function runAcceptancePrep() {
-  const directory = newDirectory('acceptance-prep');
-  const stageFixture = path.join(directory, 'fixture-stage');
-  const applyFixture = path.join(directory, 'fixture-apply');
-  copyStarter(stageFixture);
-  copyStarter(applyFixture);
-  const config = {
-    schemaVersion: '1.0.0',
-    project: { stageFixture, applyFixture },
-    mcp: {
-      stage: { command: process.execPath, args: [portEntry, '--project', stageFixture, '--policy', 'stage'] },
-      apply: { command: process.execPath, args: [portEntry, '--project', applyFixture, '--policy', 'apply'] },
+  const originalStarterBefore = hashTree(starterRoot);
+  const directory = newDesktopAcceptanceDirectory();
+  const projectRoot = path.join(directory, 'project');
+  const dataDir = path.join(directory, 'agent-data');
+  const stageConfigPath = path.join(directory, 'mcp-stage.json');
+  const applyTemplatePath = path.join(directory, 'apply-resume-template.json');
+  copyStarter(projectRoot);
+  fs.mkdirSync(dataDir, { recursive: true });
+  const dataBefore = hashTree(dataDir);
+
+  const stageConfig = {
+    mcpServers: {
+      'Surdet Agent Port': {
+        command: process.execPath,
+        args: [portEntry, '--project', projectRoot, '--policy', 'stage'],
+        env: { SURDET_AGENT_DATA_DIR: dataDir, SURDET_GIT_HEAD: runHead },
+      },
     },
-    instructions: 'Use the local Surdet Agent Port over stdio; do not edit fixture files directly.',
   };
-  writeJson(path.join(directory, 'mcp-config.json'), config);
+  const applyResumeTemplate = {
+    schemaVersion: '1.0.0',
+    project: projectRoot,
+    SURDET_AGENT_DATA_DIR: dataDir,
+    policy: 'apply',
+    resumeChange: '<CHANGE_ID_REQUIRED_AFTER_OWNER_APPROVAL>',
+    status: 'NOT_AUTHORIZED',
+  };
+  writeJson(stageConfigPath, stageConfig);
+  writeJson(applyTemplatePath, applyResumeTemplate);
+
+  const rereadStageConfig = JSON.parse(fs.readFileSync(stageConfigPath, 'utf8'));
+  const rereadApplyResumeTemplate = JSON.parse(fs.readFileSync(applyTemplatePath, 'utf8'));
+  const stageServer = rereadStageConfig.mcpServers?.['Surdet Agent Port'];
+  assert(stageServer !== undefined, 'stage MCP server entry missing');
+  const stageProjectArgumentIndex = stageServer.args.indexOf('--project');
+  const stageDataDir = stageServer.env?.SURDET_AGENT_DATA_DIR;
+  const stageProject = stageServer.args[stageProjectArgumentIndex + 1];
+  assert(stageServer.command === process.execPath, 'stage MCP command mismatch');
+  assert(path.isAbsolute(stageServer.command), 'stage MCP command must be absolute');
+  assert(path.isAbsolute(stageServer.args[0]), 'stage MCP server entry must be absolute');
+  assert(stageServer.args.includes('--policy') && stageServer.args[stageServer.args.indexOf('--policy') + 1] === 'stage', 'stage MCP policy mismatch');
+  assert(stageProject === projectRoot, 'stage MCP project mismatch');
+  assert(path.isAbsolute(stageProject), 'stage MCP project must be absolute');
+  assert(stageDataDir === dataDir, 'stage MCP data directory mismatch');
+  assert(path.isAbsolute(stageDataDir), 'stage MCP data directory must be absolute');
+  assert(!stageServer.args.includes('--resume-change'), 'stage MCP must not include resume-change');
+  assert(rereadApplyResumeTemplate.project === projectRoot, 'apply template project mismatch');
+  assert(rereadApplyResumeTemplate.SURDET_AGENT_DATA_DIR === dataDir, 'apply template data directory mismatch');
+  assert(rereadApplyResumeTemplate.policy === 'apply', 'apply template policy mismatch');
+  assert(rereadApplyResumeTemplate.resumeChange === '<CHANGE_ID_REQUIRED_AFTER_OWNER_APPROVAL>', 'apply template resume change placeholder mismatch');
+  assert(rereadApplyResumeTemplate.status === 'NOT_AUTHORIZED', 'apply template must remain unauthorized');
+
+  const originalStarterAfter = hashTree(starterRoot);
+  const projectFixture = hashTree(projectRoot);
+  const dataAfter = hashTree(dataDir);
+  const prepRootOutsideRepository = !isWithinPath(repoRoot, directory);
+  const prepRootOnDesktop = isWithinPath(path.join(os.homedir(), 'Desktop'), directory);
+  const dataDirEmpty = dataAfter.fileCount === 0 && dataAfter.bytes === 0;
+  const projectFixtureEqualsStarter = projectFixture.sha256 === originalStarterBefore.sha256;
+  const checks = {
+    PREP_ROOT_OUTSIDE_REPOSITORY: prepRootOutsideRepository,
+    PREP_ROOT_ON_DESKTOP: prepRootOnDesktop,
+    PROJECT_ROOT_EXISTS: fs.existsSync(projectRoot),
+    DATA_DIR_EXISTS: fs.existsSync(dataDir),
+    DATA_DIR_EMPTY: dataDirEmpty,
+    STAGE_AND_APPLY_TEMPLATE_PROJECT_IDENTITY_SAME: stageProject === rereadApplyResumeTemplate.project,
+    STAGE_AND_APPLY_TEMPLATE_DATA_DIR_SAME: stageDataDir === rereadApplyResumeTemplate.SURDET_AGENT_DATA_DIR,
+    STAGE_POLICY: stageServer.args[stageServer.args.indexOf('--policy') + 1],
+    APPLY_TEMPLATE_STATUS: rereadApplyResumeTemplate.status,
+    TOOLS_CALLED: [],
+    CHANGE_CREATED: false,
+    ORIGINAL_STARTER_UNCHANGED: originalStarterBefore.sha256 === originalStarterAfter.sha256,
+    PROJECT_FIXTURE_EQUALS_STARTER_AT_PREP: projectFixtureEqualsStarter,
+  };
+  assert(checks.PREP_ROOT_OUTSIDE_REPOSITORY, 'acceptance prep root is inside repository');
+  assert(checks.PREP_ROOT_ON_DESKTOP, 'acceptance prep root is not on Desktop');
+  assert(checks.PROJECT_ROOT_EXISTS, 'acceptance project root missing');
+  assert(checks.DATA_DIR_EXISTS, 'acceptance data directory missing');
+  assert(checks.DATA_DIR_EMPTY, 'acceptance data directory is not empty');
+  assert(checks.STAGE_AND_APPLY_TEMPLATE_PROJECT_IDENTITY_SAME, 'stage/apply project identity mismatch');
+  assert(checks.STAGE_AND_APPLY_TEMPLATE_DATA_DIR_SAME, 'stage/apply data directory mismatch');
+  assert(checks.STAGE_POLICY === 'stage', 'stage policy mismatch');
+  assert(checks.APPLY_TEMPLATE_STATUS === 'NOT_AUTHORIZED', 'apply template is authorized');
+  assert(checks.ORIGINAL_STARTER_UNCHANGED, 'original Starter changed during acceptance preparation');
+  assert(checks.PROJECT_FIXTURE_EQUALS_STARTER_AT_PREP, 'acceptance project does not equal Starter at preparation');
+
   const payload = {
     schemaVersion: '1.0.0', evidenceClass: 'ACCEPTANCE_PREP', status: 'PREPARED', runHead,
-    originalStarter: hashTree(starterRoot), stageFixture: hashTree(stageFixture), applyFixture: hashTree(applyFixture),
-    mcpConfigPath: path.join(directory, 'mcp-config.json'), toolsCalled: [],
+    acceptanceRoot: directory, projectRoot, dataDir,
+    stageConfigPath, applyResumeTemplatePath,
+    originalStarter: { before: originalStarterBefore, after: originalStarterAfter, unchanged: checks.ORIGINAL_STARTER_UNCHANGED },
+    projectFixture, dataDirectory: { before: dataBefore, after: dataAfter, empty: checks.DATA_DIR_EMPTY },
+    stageConfig: readFileIdentity(stageConfigPath), applyResumeTemplate: readFileIdentity(applyTemplatePath),
+    checks, toolsCalled: [], changeCreated: false,
   };
   const artifact = writeArtifact(directory, payload);
-  console.log(JSON.stringify({ ...payload, artifactIdentity: artifact.identity, identityPath: artifact.identityPath }));
+  const readback = {
+    stageConfig: readFileIdentity(stageConfigPath),
+    applyResumeTemplate: readFileIdentity(applyTemplatePath),
+    evidence: readFileIdentity(path.join(directory, 'evidence.json')),
+    identity: readFileIdentity(artifact.identityPath),
+  };
+  assert(readback.evidence.bytes === artifact.identity.bytes, 'evidence bytes readback mismatch');
+  assert(readback.evidence.sha256 === artifact.identity.sha256, 'evidence sha256 readback mismatch');
+  console.log(JSON.stringify({ ...payload, artifactIdentity: artifact.identity, identityPath: artifact.identityPath, readback }));
 }
 
 async function runEvidence(modeName) {
