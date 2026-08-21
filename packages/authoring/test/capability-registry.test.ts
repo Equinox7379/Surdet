@@ -58,4 +58,19 @@ describe('authoring capability registry', () => {
     const timelinePatch = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'timeline.patch')!;
     expect(timelinePatch.repairRecipes.join(' ')).toContain('childRefs');
   });
+
+  it('publishes exact timeline instruction and run-from label semantics', () => {
+    const sceneCreate = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'scene.create')!;
+    const blockAlternatives = (((sceneCreate.inputSchema.properties as any).blocks.items as any).oneOf) as any[];
+    const instruction = blockAlternatives.find((schema) => schema.properties?.kind?.const === 'instruction');
+    expect(instruction.properties.name.description).toContain("exactly 'timeline'");
+    expect(instruction.properties.name.description).toContain("never 'timeline.play'");
+    expect(instruction.properties.name.examples).toContain('timeline');
+
+    const runFrom = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'runtime.run-from')!;
+    const label = (runFrom.inputSchema.properties as any).label;
+    expect(label.description).toContain('in-scene @label');
+    expect(label.description).toContain('omit');
+    expect(runFrom.repairRecipes.join(' ')).toContain('omit label');
+  });
 });

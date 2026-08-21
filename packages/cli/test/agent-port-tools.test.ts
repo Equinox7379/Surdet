@@ -79,6 +79,15 @@ describe('Surdet Agent Port MCP tool projection', () => {
     expect((standardSchemaFromJson(AUTHORING_CAPABILITY_REGISTRY[0]!.inputSchema)['~standard'].jsonSchema as any).input({ target: 'draft-2020-12' })).toEqual(
       AUTHORING_CAPABILITY_REGISTRY[0]!.inputSchema,
     );
+
+    const sceneCreate = projectCapabilityTool(AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'scene.create')!);
+    const sceneCreateSchema = (sceneCreate.inputSchema['~standard'].jsonSchema as any).input({ target: 'draft-2020-12' });
+    const instruction = sceneCreateSchema.properties.blocks.items.oneOf.find((schema: any) => schema.properties?.kind?.const === 'instruction');
+    expect(instruction.properties.name.description).toContain("exactly 'timeline'");
+
+    const runFrom = projectCapabilityTool(AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'runtime.run-from')!);
+    const runFromSchema = (runFrom.inputSchema['~standard'].jsonSchema as any).input({ target: 'draft-2020-12' });
+    expect(runFromSchema.properties.label.description).toContain('in-scene @label');
   });
 
   it.each([
