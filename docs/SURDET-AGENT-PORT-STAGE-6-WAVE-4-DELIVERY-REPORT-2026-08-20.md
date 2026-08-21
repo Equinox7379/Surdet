@@ -751,3 +751,12 @@ W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_WAVE_5 = NOT_STARTED
 ```
 
 下一步仅允许生成一个全新的桌面 `acceptance-prep`，使用唯一 MCP 服务名做一次针对性外部 Agent smoke：确认 Agent 能从 schema 直接写出 `@timeline <id>`，并在从场景开头运行时省略 `label`。旧 `hq1LZa` change 保持 OPEN 作为证据，不复用、不回滚、不 apply。
+
+
+### W4-EXTERNAL-AGENT-SEMANTIC-GUIDANCE-1 新鲜验收入口
+
+唯一一次新的 acceptance-prep 已通过，run head 为 `109e4354a7e48feec51952412aa05e0cced994cd`，生成隔离根目录 `C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-XuYFfo`。项目 fixture 为 37 files / 6,705,750 bytes，tree SHA-256 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`，与 Starter 完全一致；Starter prep 前后身份相同。Agent data dir 为 0 文件，prep 未调用工具、未创建 change。
+
+原始 stage 配置为 552 bytes / SHA-256 `743FA513DCA58119DBC85956A62893499AAB373ED679D45E8A1E21370BD71A25`。为防止桌面 Agent 复用旧名称对应的 MCP 进程，另生成唯一配置 `mcp-stage-semantic-guidance-XuYFfo.json`，服务名为 `Surdet Agent Port Semantic Guidance XuYFfo`，577 bytes / SHA-256 `9FCD67F63D533EB09032A646E3959C0D94EB9D23F37F9DB3B5B6DE8676CCBD2A`。该配置仍指向正式 `E:\surdet\packages\cli\dist\agent-port\main.js`、同一 XuYFfo fixture、同一空 data dir 与 `policy=stage`。
+
+Prep evidence 为 22,872 bytes / SHA-256 `4B3FC2152E64E704456428BE9864AFEA34D789396C84A2F0CA92489422572DA3`；identity 为 194 bytes / SHA-256 `A43B8E5851F6D44237969FB4F4A4EDE117F143E1B30B4606EDE1BF6C05177386`。当前停止在 `WAITING_FOR_TARGETED_EXTERNAL_AGENT_SMOKE`；未启动外部 Agent，未 apply、未 push、未进入 Wave 5。
