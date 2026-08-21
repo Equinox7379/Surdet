@@ -131,6 +131,95 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     await session.close();
   });
 
+  it('rejects an invalid typed scene candidate atomically before writing the change', async () => {
+    const root = makeProject('scene-atomicity');
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({
+      entryScene: 'start',
+      variables: { affinity: { type: 'number', initial: 0 } },
+    }), 'utf8');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    const before = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    const beforeProject = projectBytes(root);
+
+    const invalid = await session.invoke('scene.create', {
+      operationId: 'op-invalid-set',
+      sceneId: 'invalid-set',
+      blocks: [{
+        kind: 'choice',
+        options: [{
+          label: '继续',
+          effects: [{ name: 'set', args: ['affinity', '2'] }],
+          target: { kind: 'goto', value: 'done' },
+        }],
+      }, { kind: 'label', name: 'done' }],
+    });
+    const afterInvalid = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expectFailure(invalid, 'INVALID_REQUEST');
+    if (invalid.ok) throw new Error('invalid typed scene candidate unexpectedly succeeded');
+    expect(invalid.error.message).toContain('C004');
+    expect(invalid.error.message).toContain('@set');
+    expect(invalid.error.message).toContain('=');
+    expect(afterInvalid.workingFiles).toEqual(before.workingFiles);
+    expect(afterInvalid.workingRevision).toBe(before.workingRevision);
+    expect(afterInvalid.operations).toEqual(before.operations);
+    expect(projectBytes(root)).toEqual(beforeProject);
+
+    const valid = await session.invoke('scene.create', {
+      operationId: 'op-valid-set',
+      sceneId: 'valid-set',
+      blocks: [{
+        kind: 'choice',
+        options: [{
+          label: '继续',
+          effects: [{ name: 'set', args: ['affinity', '=', '2'] }],
+          target: { kind: 'goto', value: 'done' },
+        }],
+      }, { kind: 'label', name: 'done' }],
+    });
+    expect(valid.ok).toBe(true);
+    const afterValid = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(afterValid.workingRevision).toBe(before.workingRevision + 1);
+    expect(afterValid.operations).toHaveProperty('op-valid-set');
+    expect(afterValid.workingFiles['content/scenario/valid-set.gal']).toContain('@set affinity = 2');
+    expect(projectBytes(root)).toEqual(beforeProject);
+    await session.close();
+  });
+
+  it('rolls back a poisoned OPEN change without parsing its working snapshot', async () => {
+    const root = makeProject('poisoned-rollback');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    expect(opened).not.toBeNull();
+    const poisoned = {
+      ...opened!.record,
+      workingRevision: 1,
+      workingFiles: {
+        ...opened!.record.workingFiles,
+        'content/scenario/start.gal': '@scene start\n@choice\n  继续 @set affinity 2 -> @goto start\n@end\n',
+      },
+    };
+    await opened!.store.write(poisoned);
+    const beforeProject = projectBytes(root);
+
+    const rolledBack = await session.invoke('change.rollback', {});
+    expect(rolledBack.ok).toBe(true);
+    if (rolledBack.ok === false) throw new Error(rolledBack.error.message);
+    const after = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(after.status).toBe('ROLLED_BACK');
+    expect(after.workingFiles).toEqual(after.baseContents);
+    expect(rolledBack.result).toEqual({ changeId, status: 'ROLLED_BACK' });
+    expect(projectBytes(root)).toEqual(beforeProject);
+    await session.close();
+  });
+
   it('rejects resuming a change owned by another project', async () => {
     const rootA = makeProject('owner-a');
     const rootB = makeProject('owner-b');

@@ -146,11 +146,10 @@ function loadSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot> {
   });
 }
 
-async function openChangeContext(changeId: string): Promise<{
+async function openChangeIdentityContext(changeId: string): Promise<{
   store: NodeChangeStore;
   session: ChangeSession;
   storage: NodeProjectStorage;
-  snapshot: ProjectSnapshot;
 }> {
   const opened = await NodeChangeStore.openByChangeId(changeId);
   if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
@@ -159,8 +158,19 @@ async function openChangeContext(changeId: string): Promise<{
     throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
   }
   const session = openChange(opened.record, opened.store, storage);
+  return { store: opened.store, session, storage };
+}
+
+async function openChangeContext(changeId: string): Promise<{
+  store: NodeChangeStore;
+  session: ChangeSession;
+  storage: NodeProjectStorage;
+  snapshot: ProjectSnapshot;
+}> {
+  const identity = await openChangeIdentityContext(changeId);
+  const { session } = identity;
   const snapshot = await loadSnapshot(new WorkingProjectStorage(session.record));
-  return { store: opened.store, session, storage, snapshot };
+  return { ...identity, snapshot };
 }
 
 function metadataForChange(session: ChangeSession, projectRevision = session.record.baseRevision): ServiceMetadata {
@@ -667,7 +677,10 @@ export class AuthoringService {
   }
 
   async rollback(changeId: string): Promise<ServiceResult<{ changeId: string; status: 'ROLLED_BACK' }>> {
-    const context = await openChangeContext(changeId);
+    // Rollback is the recovery escape hatch for an OPEN change. It must not
+    // parse workingFiles: a poisoned snapshot is precisely what rollback must
+    // be able to clear without evaluating.
+    const context = await openChangeIdentityContext(changeId);
     const record = await rollbackChange(context.session);
     return { ...metadataForChange(context.session), result: { changeId: record.changeId, status: 'ROLLED_BACK' } };
   }

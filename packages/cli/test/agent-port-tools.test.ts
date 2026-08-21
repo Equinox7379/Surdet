@@ -26,6 +26,22 @@ function makeProject(name: string): string {
   return root;
 }
 
+function textContent(result: { content?: readonly unknown[] }): string {
+  const text = result.content?.find((item): item is { type: 'text'; text: string } => (
+    typeof item === 'object'
+    && item !== null
+    && (item as { type?: unknown }).type === 'text'
+    && typeof (item as { text?: unknown }).text === 'string'
+  ))?.text;
+  if (text === undefined) throw new Error('MCP result did not contain a text content block');
+  return text;
+}
+
+function textEnvelope(result: { content?: readonly unknown[] }): Record<string, unknown> {
+  const text = textContent(result);
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
 async function sessionFor(policy: 'observe' | 'stage' | 'apply'): Promise<AgentPortSession> {
   const root = makeProject(policy);
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-tools-data-'));
@@ -120,6 +136,41 @@ describe('Surdet Agent Port MCP tool projection', () => {
     await client.close();
     await server.close();
     await session.close();
+  });
+
+  it('keeps the complete success and failure envelope visible to text-only MCP hosts', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      const mismatches: string[] = [];
+      const compareTextEnvelope = (label: string, result: any): void => {
+        try {
+          expect(textContent(result)).toBe(JSON.stringify(result.structuredContent));
+          expect(textEnvelope(result)).toEqual(result.structuredContent);
+        } catch (error) {
+          mismatches.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+
+      const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
+      compareTextEnvelope('session.describe success', described);
+
+      const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
+      compareTextEnvelope('change.begin success', begun);
+      const begunEnvelope = textEnvelope(begun);
+      if (typeof begunEnvelope.changeId !== 'string' || begunEnvelope.changeId.length === 0) {
+        mismatches.push('change.begin success: text envelope did not expose a real changeId');
+      }
+
+      const failed = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'scene:missing' } });
+      compareTextEnvelope('object.inspect failure', failed);
+      if (textEnvelope(failed).ok !== false) mismatches.push('object.inspect failure: text envelope was not a failure envelope');
+
+      expect(mismatches).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
   });
 
   it('preserves every legal object inspection details shape over MCP', async () => {
