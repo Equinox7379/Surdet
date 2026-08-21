@@ -71,7 +71,7 @@
       "editor": "planned",
       "host": "planned",
       "tests": [],
-      "docs": ["docs/ENGINE-OPTIMIZATION-RECOMMENDATIONS-2026-08-08.md"],
+      "docs": ["docs/known-limitations.md"],
       "limitation": "当前战斗使用 1D 位置；开战前阵型编辑、占位和阻挡规则尚未定义。"
     },
     {
@@ -189,7 +189,7 @@
         "examples/starter/src/main.ts",
         "examples/zero-after-midnight/src/main.ts"
       ],
-      "docs": ["README.md", "docs/ENGINE-OPTIMIZATION-RECOMMENDATIONS-2026-08-08.md"],
+      "docs": ["README.md", "docs/AI-GUIDE.md"],
       "limitation": "Profile 数据与普通 slot 存档分离；Electron 损坏数据宽容回退，浏览器保留旧 localStorage 兼容读取。"
     },
     {
