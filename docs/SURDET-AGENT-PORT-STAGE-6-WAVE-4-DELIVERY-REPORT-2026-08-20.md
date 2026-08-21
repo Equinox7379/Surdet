@@ -637,3 +637,36 @@ W4_EXTERNAL_AGENT_RECOVERY_2A_PUSH = NOT_PERFORMED
 W4_EXTERNAL_AGENT_RECOVERY_2A_WAVE_5 = NOT_STARTED
 W4_EXTERNAL_AGENT_RECOVERY_2A_STOP = WAITING_FOR_LIGHTWEIGHT_INDEPENDENT_FINAL_REVIEW
 ```
+
+## 15. W4-EXTERNAL-AGENT-CONCURRENCY-1：外部 Agent 并发丢写修复
+
+新的桌面隔离验收中，外部 Agent 最终顺序重建的 `chg_0004_6252857d-ddfb-4ab4-b78e-2dad60526076` 完成了完整创作链：校验通过、模拟 6 条路径、A/B 两条 runtime trace 均通过、胶囊生成且真实项目未变。其胶囊为 29,543 bytes，SHA-256 `B7348C3395C83A08F225E26EE876187149165E0AC1636D13168F86E47F927DA1`。
+
+但同一验收的 `chg_0003` 揭示了新的 High 级合同缺陷：外部 Agent 并发发出两个 `scene.create` 和一个 `character.ensure`，三个 envelope 均为 success，却基于相同旧 revision 整份回写事务，导致部分成功操作静默丢失。Agent 发现状态不完整后回滚该 change，并在 `chg_0004` 顺序重建成功。因此本次外部验收只能记为 `NEEDS_FIX`，apply 未获授权；Agent 对“前两次探测 change 已回滚”的口头概括也不精确，磁盘上实际有三个先前 change 均为 `ROLLED_BACK`。
+
+本轮在 `AgentPortSession` 增加无依赖 FIFO 队列，将同一 session 的整个 `invoke()`——包括策略/状态检查、dispatch、session 状态更新和 invocation ledger 写入——线性化。共享 authoring 操作、schema、领域返回与项目存储没有修改。永久红灯并发提交两个场景与一个变量：修复前三个调用均成功而最终 `workingRevision=1`；修复后 revision 严格为 `0→1→2→3`，三个 operation、两个场景和变量全部保留，项目字节不变。
+
+```ini
+W4_EXTERNAL_AGENT_CONCURRENCY_1_RED = PASS; exit=1; expected workingRevision=3, received=1
+W4_EXTERNAL_AGENT_CONCURRENCY_1_GREEN_FOCUSED = PASS; 1 file / 9 tests
+W4_EXTERNAL_AGENT_CONCURRENCY_1_AGENT_PORT_SUITE = PASS; 5 files / 36 tests
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CLI_SUITE = PASS; 21 files / 177 tests
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CLI_TYPECHECK = PASS; exit=0
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CLI_BUILD = PASS; exit=0
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CODE_EVIDENCE_HEAD = 985e3c91ab3a0bbe6337a37016cb6e35ce055a5d
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CODE_EVIDENCE_PARENT = 6a3e41c347b03db8a4e00f58b12e35baee1b1dba
+W4_EXTERNAL_AGENT_CONCURRENCY_1_CODE_SCOPE = packages/cli/src/agent-port/session.ts; packages/cli/test/agent-port-session.test.ts
+W4_EXTERNAL_AGENT_CONCURRENCY_1_REMOTE_MAIN_AT_CODE_EVIDENCE = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+W4_EXTERNAL_AGENT_CONCURRENCY_1_AHEAD_BEHIND_AT_CODE_EVIDENCE = 33/0
+W4_EXTERNAL_AGENT_CONCURRENCY_1_DIAGNOSTIC = NOT_RUN
+W4_EXTERNAL_AGENT_CONCURRENCY_1_FORMAL = NOT_RERUN
+W4_EXTERNAL_AGENT_CONCURRENCY_1_VERIFY_ALL = NOT_RUN
+W4_EXTERNAL_AGENT_CONCURRENCY_1_EXTERNAL_AGENT_RETRY = NOT_STARTED; NEW_ACCEPTANCE_ROOT_REQUIRED
+W4_EXTERNAL_AGENT_CONCURRENCY_1_OWNER_ACCEPTANCE = NOT_STARTED
+W4_EXTERNAL_AGENT_CONCURRENCY_1_APPLY = NOT_AUTHORIZED
+W4_EXTERNAL_AGENT_CONCURRENCY_1_PUSH = NOT_PERFORMED
+W4_EXTERNAL_AGENT_CONCURRENCY_1_WAVE_5 = NOT_STARTED
+W4_EXTERNAL_AGENT_CONCURRENCY_1_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+```
+
+非阻断观察：现有 `chg_0004` 的 `game.config.json` diff 含换行格式变化，未来 apply 前应人工复核；本轮没有复用该 change，也没有为修复重跑 DIAGNOSTIC、FORMAL、`verify:all` 或外部 Agent。
