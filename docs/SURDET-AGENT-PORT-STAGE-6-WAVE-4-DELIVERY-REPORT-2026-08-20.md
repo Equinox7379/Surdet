@@ -716,3 +716,38 @@ W4_EXTERNAL_AGENT_SELF_REPAIR_1_WAVE_5 = NOT_STARTED
 ### 全新外部验收入口
 
 唯一一次新的 acceptance-prep 已通过，生成桌面隔离根目录 `C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-hq1LZa`。MCP stage 配置为 552 bytes / SHA-256 `DCFCEF1D3EF47A15EF49675E7CEE9A19CDEE744A7F8432EA9D22CB224719F2FD`；prep evidence 为 22,872 bytes / SHA-256 `14C31C8514E7A504E83878E30CFA24FC8773CA00954B1E0139DCB2EAA1DC73C5`。data dir 为 0 文件，fixture 与原始 Starter 的 tree SHA-256 均为 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`。prep 未调用任何 Agent Port 工具、未创建 change，停止在 `WAITING_FOR_EXTERNAL_AGENT_STAGE_ACCEPTANCE`。
+
+
+## 17. W4-EXTERNAL-AGENT-SEMANTIC-GUIDANCE-1：时间轴指令与 `run-from` 标签说明
+
+`hq1LZa` 的外部 Agent 自修复验收已经实际通过。唯一 change 为 `chg_0001_47cb7f06-5492-497a-841d-77dd6624701e`，最终 `workingRevision=6` 且保持 OPEN；Agent 通过公开 schema 取得 `initiator=external-agent`、portrait `timelineTarget=lynn:uniform` 和 timeline/track `childRefs`，先触发真实 `ASSET_UNRESOLVED`，再完成对象级修复。最终 fresh validation 不再含资产引用 warning，模拟 13 条路径且运行时错误为 0，runtime trace 通过。
+
+交付胶囊从磁盘回读为 31,132 bytes，SHA-256 `0D25201E49B7611211DC2767729147D53B57B5703FB42B0B74EC5A91D762246F`；胶囊保留 6 条 fresh validation warning，并以 `VALIDATION_WARNINGS` 标记人工复核。项目 revision 前后相同，真实项目未修改，未执行 apply。
+
+验收也暴露了两个相邻的可发现性问题：外部 Agent 把场景时间轴指令写成 `timeline.play`，因此产生新增 `W001`；第一次调用 `runtime.run-from` 时又把 `label` 当作场景标识使用。源码核对确认解释器与 `run-from` 实现正确，问题只在 capability schema 没有发布精确 DSL 名称与 label 含义。
+
+本轮以 `W4-EXTERNAL-AGENT-SEMANTIC-GUIDANCE-1` 做最小共享合同修复：`scene.create`/`scene.patch` 的 instruction schema 现在明确时间轴指令名必须为 `timeline`、timeline id 放在 `args[0]`，且不得使用 `timeline.play`；`runtime.run-from.label` 明确为目标场景内部的 `@label` 锚点，从场景开头执行必须省略。CLI MCP schema 继续直接投影共享 registry，没有增加第二套说明或业务语义。
+
+红灯分别证明共享 registry 与 MCP 投影此前缺少这些说明；修复后 authoring 聚焦 5/5、CLI 聚焦 7/7、authoring 全套 22 files / 135 tests、两个工作区 typecheck/build 均通过。CLI 全套没有被写成全绿：20 个文件、176 个测试通过，但 `authoring-presentation-wave2` 的主测试在并行负载下超过 15 秒超时；该文件随后单独运行 8/8 通过，主路径耗时 8,921ms。没有为此修改测试时限或生产代码。
+
+```ini
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CODE_EVIDENCE_HEAD = e132a80c6df22b59641694d8839cd6f18c4b6dcd
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CODE_EVIDENCE_PARENT = 831cd9bb2c8d457514168a1b4e2208c1d6d80d4d
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CODE_SCOPE = 3 shared-contract/source-test files
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_RUNTIME_CHANGED = NO
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_AUTHORING_FOCUSED = PASS; 5/5
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CLI_FOCUSED = PASS; 7/7
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_AUTHORING_SUITE = PASS; 22 files / 135 tests
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CLI_AGGREGATE = NOT_FULLY_GREEN; 20 files / 176 tests passed; 1 parallel-load timeout
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_CLI_TIMED_OUT_FILE_ISOLATED = PASS; 8/8
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_TYPECHECK_BUILD = PASS; authoring and CLI
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_DIAGNOSTIC = NOT_RUN
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_FORMAL = NOT_RERUN
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_VERIFY_ALL = NOT_RUN
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_APPLY = NOT_PERFORMED
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_PUSH = NOT_PERFORMED
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_OWNER_ACCEPTANCE = NOT_STARTED
+W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_WAVE_5 = NOT_STARTED
+```
+
+下一步仅允许生成一个全新的桌面 `acceptance-prep`，使用唯一 MCP 服务名做一次针对性外部 Agent smoke：确认 Agent 能从 schema 直接写出 `@timeline <id>`，并在从场景开头运行时省略 `label`。旧 `hq1LZa` change 保持 OPEN 作为证据，不复用、不回滚、不 apply。
