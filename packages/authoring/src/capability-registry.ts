@@ -84,8 +84,16 @@ const sceneLabelBlockSchema = strictObject({
 
 const sceneInstructionBlockSchema = strictObject({
   kind: { const: 'instruction' },
-  name: stringSchema,
-  args: stringArraySchema,
+  name: {
+    type: 'string',
+    description: "DSL instruction name without '@'. To play a timeline use exactly 'timeline' (never 'timeline.play'); put the timeline id in args[0].",
+    examples: ['timeline', 'set', 'jump'],
+  },
+  args: {
+    type: 'array',
+    items: stringSchema,
+    description: "Instruction arguments without '@'. For name='timeline', args[0] is the exact timeline id.",
+  },
   modifiers: stringMapSchema,
 }, ['kind', 'name']);
 
@@ -523,7 +531,14 @@ const definitions = {
     example: { input: {}, expectedResultShape: { view: 'project', status: 'passed', report: { status: 'passed' } } },
   },
   runFrom: {
-    inputSchema: strictObject({ sceneId: stringSchema, label: stringSchema, variables: jsonValueSchema, choices: runtimeChoicesSchema, maxSteps: integerSchema, seed: integerSchema }, ['sceneId', 'choices']),
+    inputSchema: strictObject({
+      sceneId: { type: 'string', description: 'exact scene id to run' },
+      label: { type: 'string', description: 'optional in-scene @label name; omit label to start at the beginning of sceneId; never pass a scene id or descriptive text here' },
+      variables: jsonValueSchema,
+      choices: runtimeChoicesSchema,
+      maxSteps: integerSchema,
+      seed: integerSchema,
+    }, ['sceneId', 'choices']),
     outputSchema: runtimeRunFromResultSchema,
     example: { input: { sceneId: 'agent_port_entry', choices: [0] }, expectedResultShape: { view: 'working', traceId: 'trace_...', status: 'passed', sceneId: 'agent_port_entry', choices: [0], finalVariables: {}, eventCount: 1, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
@@ -596,8 +611,8 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.assets': { title: 'Inspect project assets', purpose: 'Read the shared background, portrait, and avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
-  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
+  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
   'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.remove': { title: 'Remove character', purpose: 'Remove one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
@@ -606,7 +621,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
   'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
-  'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['inspect the scene, validate, and retry with explicit choices'] },
+  'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
   'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
   'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
   'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
