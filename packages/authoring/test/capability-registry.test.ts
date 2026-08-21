@@ -42,4 +42,20 @@ describe('authoring capability registry', () => {
       expect(definition.minimalExample.expectedResultShape).toEqual(expect.any(Object));
     }
   });
+
+  it('publishes the exact change initiator enum and timeline self-repair hints', () => {
+    const begin = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'change.begin')!;
+    const beginProperties = begin.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(beginProperties['initiator']?.['enum']).toEqual(['external-agent', 'human', 'automation']);
+
+    const assets = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'project.assets')!;
+    const assetProperties = (((assets.outputSchema.properties as any).portraits.items as any).properties) as Record<string, unknown>;
+    expect(assetProperties).toHaveProperty('timelineTarget');
+
+    const inspect = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'object.inspect')!;
+    expect(inspect.outputSchema.properties).toHaveProperty('childRefs');
+
+    const timelinePatch = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'timeline.patch')!;
+    expect(timelinePatch.repairRecipes.join(' ')).toContain('childRefs');
+  });
 });

@@ -92,6 +92,14 @@ function validationFreshness(record: ChangeRecord, values: unknown[]): EvidenceF
   return evidenceFreshness(record.latestValidation, record.workingRevision);
 }
 
+function freshValidationWarnings(record: ChangeRecord, values: unknown[]): unknown[] {
+  const evidence = latestEvidence(values, 'project.validate');
+  if (evidence === undefined || evidence['workingRevision'] !== record.workingRevision) return [];
+  const result = isRecord(evidence['result']) ? evidence['result'] : undefined;
+  const issues = Array.isArray(result?.['issues']) ? result['issues'] : [];
+  return issues.filter((issue) => isRecord(issue) && issue['severity'] === 'warning');
+}
+
 function simulationFreshness(record: ChangeRecord, values: unknown[]): EvidenceFreshness {
   const evidence = latestEvidence(values, 'project.simulate');
   if (evidence !== undefined) {
@@ -199,10 +207,13 @@ export async function generateDeliveryCapsule(
   const emptyChange = paths.length === 0;
   const isCommittedMutation = record.status === 'COMMITTED' && !emptyChange;
   const warnings: unknown[] = [];
+  const validationWarnings = freshValidationWarnings(record, evidence);
+  warnings.push(...validationWarnings);
   if (emptyChange) warnings.push('EMPTY_CHANGE');
   if (record.status === 'STALE') warnings.push('STALE_CHANGE');
   if (isRecord(journal) && journal['status'] === 'RECOVERY_FAILED') warnings.push('RECOVERY_FAILED');
   const manualReviewRequired: unknown[] = [];
+  if (validationWarnings.length > 0) manualReviewRequired.push('VALIDATION_WARNINGS');
   if (record.status === 'STALE') manualReviewRequired.push('STALE_CHANGE');
   if (isRecord(journal) && journal['status'] === 'RECOVERY_FAILED') manualReviewRequired.push('RECOVERY_FAILED');
 

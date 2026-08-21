@@ -79,6 +79,10 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(capsule.projectMutation).toEqual(expect.objectContaining({ occurred: false, expectedByPolicy: false }));
     expect(capsule.projectMutation.beforeRevision).toBe(capsule.projectMutation.afterRevision);
     expect(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'))).toEqual(before);
+    expect(capsule.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: 'warning', code: 'SPEAKER_UNRESOLVED' }),
+    ]));
+    expect(capsule.manualReviewRequired).toContain('VALIDATION_WARNINGS');
     await session.close();
   });
 

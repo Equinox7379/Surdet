@@ -59,6 +59,11 @@ describe('timeline object index', () => {
     expect(timeline).toBeDefined();
     expect(timeline!.kind).toBe('timeline');
     expect(timeline!.source?.path).toBe('content/timelines/agent_blackout.json');
+    expect(timeline!.childRefs).toEqual([
+      'timeline:agent_blackout/track:0',
+      'timeline:agent_blackout/track:1',
+      'timeline:agent_blackout/track:2',
+    ]);
     const tracks = index.objects.filter((object) => object.kind === 'track');
     expect(tracks.map((object) => object.objectRef)).toEqual([
       'timeline:agent_blackout/track:0',
@@ -70,6 +75,10 @@ describe('timeline object index', () => {
     expect(cues).toHaveLength(4);
     expect(cues[0]!.objectRef).toBe('timeline:agent_blackout/track:0/cue:0');
     expect(cues[0]!.parentRef).toBe('timeline:agent_blackout/track:0');
+    expect(index.byRef.get('timeline:agent_blackout/track:2')!.childRefs).toEqual([
+      'timeline:agent_blackout/track:2/cue:0',
+      'timeline:agent_blackout/track:2/cue:1',
+    ]);
   });
 
   it('links scene instruction -> timeline -> cue -> asset in four directions', async () => {
@@ -134,6 +143,7 @@ describe('timeline object index', () => {
     const index = buildObjectIndex(snapshot);
     const timeline = index.byRef.get('timeline:broken');
     expect(timeline).toBeDefined();
+    expect(timeline!.childRefs).toEqual([]);
     expect(index.objects.filter((object) => object.kind === 'cue')).toHaveLength(0);
   });
 });

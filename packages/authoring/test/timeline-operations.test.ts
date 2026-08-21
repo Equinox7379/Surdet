@@ -227,7 +227,7 @@ describe('timeline.patch', () => {
 
   it('rejects missing refs with OBJECT_NOT_FOUND', async () => {
     const { change } = await created();
-    await expect(applyTimelinePatch(change, {
+    const error = await applyTimelinePatch(change, {
       operationId: 'op-missing',
       timelineId: 'agent_blackout',
       patch: {
@@ -235,7 +235,18 @@ describe('timeline.patch', () => {
         expectedFingerprint: 'whatever',
         trackRef: trackRefFor('agent_blackout', 9),
       },
-    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_NOT_FOUND' });
+    }, hasher).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      code: 'OBJECT_NOT_FOUND',
+      details: {
+        requestedRef: 'timeline:agent_blackout/track:9',
+        availableTrackRefs: [
+          'timeline:agent_blackout/track:0',
+          'timeline:agent_blackout/track:1',
+          'timeline:agent_blackout/track:2',
+        ],
+      },
+    });
   });
 
   it('rejects whitelist violations inside patch cues', async () => {

@@ -44,6 +44,8 @@ export interface AuthoringObject {
   source?: { path: string; line: number; col: number; raw: string };
   references: string[];
   referencedBy: string[];
+  /** 可直接继续 inspect 的一层子对象引用；用于 Agent 无猜测地遍历结构化对象。 */
+  childRefs?: string[];
   /** 对象结构（timeline 为 definition；track/cue 为对应 JSON 片段；asset 为 catalog 条目或 null）。 */
   details?: unknown;
   /** SHA-256 规范化 JSON 指纹（timeline/track/cue；由 hasher 注入方填充）。 */
@@ -185,6 +187,8 @@ export interface TimelinePatchInput {
 export interface AssetEntry {
   kind: 'background' | 'portrait' | 'avatar';
   key: string;
+  /** 可直接复制到 timeline portrait track.target 的规范值；仅 portrait 提供。 */
+  timelineTarget?: string;
   role?: string;
   outfit?: string;
   expression?: string;
