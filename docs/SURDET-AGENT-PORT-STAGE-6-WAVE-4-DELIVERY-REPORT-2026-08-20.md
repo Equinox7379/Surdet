@@ -670,3 +670,44 @@ W4_EXTERNAL_AGENT_CONCURRENCY_1_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ```
 
 非阻断观察：现有 `chg_0004` 的 `game.config.json` diff 含换行格式变化，未来 apply 前应人工复核；本轮没有复用该 change，也没有为修复重跑 DIAGNOSTIC、FORMAL、`verify:all` 或外部 Agent。
+
+
+## 16. W4-EXTERNAL-AGENT-SELF-REPAIR-1：Agent 可发现修复合同
+
+并发修复后的隔离 stage 验收已经证明成功 mutation 不再静默丢失，并完整走通校验、模拟、两条 runtime 路径与胶囊生成；但外部 Agent 为修正 portrait 引用连续猜测 7 种 trackRef 仍全部失败，最终留下新增 `ASSET_UNRESOLVED` warning。独立磁盘回读还确认胶囊的 `warnings=[]`、`manualReviewRequired=[]`，与 fresh validation 的 6 条 warning 不一致。另有两次无效 initiator 探测，原因是 MCP schema 仅声明 string，而共享合同实际只接受三个枚举值。
+
+本轮建立匹配症状的红灯后完成四项共享修复：
+
+- `object.inspect` 为 timeline/track 返回精确 `childRefs`，无需猜测 track/cue ref；
+- `project.assets.portraits[].timelineTarget` 给出可直接复制的 portrait track target；
+- capability schema 精确发布 initiator 枚举，并说明 timeline target/key/expression 的来源；
+- `OBJECT_NOT_FOUND` 返回可用 track/cue refs，delivery capsule 携带 fresh validation warnings 与 `VALIDATION_WARNINGS` 人工复核标记。
+
+MCP 仍是共享 authoring 合同的薄投影；没有复制第二套对象遍历、资产命名或时间轴修复逻辑。没有重跑 DIAGNOSTIC/FORMAL/`verify:all`，没有 apply、push 或进入 Wave 5。
+
+```ini
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_RED_AUTHORING = exit 1; 5 expected failures / 27 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_RED_CLI = exit 1; 2 expected failures / 12 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_GREEN_AUTHORING_FOCUSED = PASS; 27/27
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_GREEN_CLI_FOCUSED = PASS; 12/12
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_ADJACENT_CLI = PASS; 9/9
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_AUTHORING_SUITE = PASS; 22 files / 134 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CLI_SUITE = PASS; 21 files / 177 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_AUTHORING_TYPECHECK = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_AUTHORING_BUILD = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CLI_TYPECHECK = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CLI_BUILD = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CODE_EVIDENCE_HEAD = b58474ec287baa7e6886caba03460e950b2bd644
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CODE_EVIDENCE_COMMIT_MESSAGE = fix(agent-port): expose timeline repair contracts
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_REMOTE_MAIN_AT_CODE_EVIDENCE = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_DIAGNOSTIC = NOT_RUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_FORMAL = NOT_RERUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_VERIFY_ALL = NOT_RUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_EXTERNAL_AGENT_RETRY = NOT_STARTED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_APPLY = NOT_AUTHORIZED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_OWNER_ACCEPTANCE = NOT_STARTED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_PUSH = NOT_PERFORMED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_WAVE_5 = NOT_STARTED
+```
+
+下一步仅生成一次新的 desktop acceptance-prep，再把新的 stage 配置交给外部 Agent 验证“发现 warning → 通过 schema/childRefs/timelineTarget 自修复 → fresh validate → capsule warning 交接”。旧 `keRRcy` change 保持 OPEN 作为历史验收证据，不复用、不 apply。
