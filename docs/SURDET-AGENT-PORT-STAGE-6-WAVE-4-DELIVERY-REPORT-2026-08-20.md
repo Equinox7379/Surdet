@@ -760,3 +760,28 @@ W4_EXTERNAL_AGENT_SEMANTIC_GUIDANCE_1_WAVE_5 = NOT_STARTED
 原始 stage 配置为 552 bytes / SHA-256 `743FA513DCA58119DBC85956A62893499AAB373ED679D45E8A1E21370BD71A25`。为防止桌面 Agent 复用旧名称对应的 MCP 进程，另生成唯一配置 `mcp-stage-semantic-guidance-XuYFfo.json`，服务名为 `Surdet Agent Port Semantic Guidance XuYFfo`，577 bytes / SHA-256 `9FCD67F63D533EB09032A646E3959C0D94EB9D23F37F9DB3B5B6DE8676CCBD2A`。该配置仍指向正式 `E:\surdet\packages\cli\dist\agent-port\main.js`、同一 XuYFfo fixture、同一空 data dir 与 `policy=stage`。
 
 Prep evidence 为 22,872 bytes / SHA-256 `4B3FC2152E64E704456428BE9864AFEA34D789396C84A2F0CA92489422572DA3`；identity 为 194 bytes / SHA-256 `A43B8E5851F6D44237969FB4F4A4EDE117F143E1B30B4606EDE1BF6C05177386`。当前停止在 `WAITING_FOR_TARGETED_EXTERNAL_AGENT_SMOKE`；未启动外部 Agent，未 apply、未 push、未进入 Wave 5。
+
+
+### 定向外部 Agent smoke 结果
+
+外部桌面 Agent 仅使用 `Surdet Agent Port Semantic Guidance XuYFfo`，在 `XuYFfo` fixture 中创建唯一 OPEN change `chg_0001_c1d714af-1441-4369-bbbb-b89dc0d1b960`，最终 `workingRevision=2`。它从 schema 直接读取并复述了精确语义：场景时间轴指令名为 `timeline`、不得使用 `timeline.play`；`runtime.run-from.label` 仅表示场景内部 `@label`，从场景开头运行时省略。
+
+独立磁盘回读确认场景 diff 实际包含 `@timeline agent_semantic_guidance_timeline`，不含 `timeline.play`；时间轴引用真实背景 `castle_hall` 与 portrait target `lynn:uniform`。Fresh validation 为 passed/0 error，仅保留 Starter 的 3 条 `SPEAKER_UNRESOLVED`，新场景和时间轴产生 0 条 issue。定向 simulation 以 `agent_semantic_guidance_probe` 为入口，探索 1 条路径且 runtime errors 为空。
+
+`runtime.run-from` invocation ledger 的 input SHA-256 为 `909316563AB461465A9E2B20649AA743EAA653B791507CFB692D54C1AEDA57F6`，与 canonical input `{"choices":[],"sceneId":"agent_semantic_guidance_probe"}` 的磁盘外独立计算结果相同，证明没有传递 `label`。Trace `trace_1787324488874_ceb0527a-6e88-4106-92a6-dcfa5aedd5ba` 共 6 个事件，其中 index 2 为 `kind=instruction`、`op=timeline`、场景第 3 行，证明时间轴指令真实执行，而不是只抵达场景结尾。
+
+交付胶囊 `a4d0a259-1c01-4499-8558-f5a189a11638` 从磁盘回读为 16,955 bytes / SHA-256 `75E1487D5430B0D1F77C2919B2BF473766A23E72D7E63C3B81C0B4FC13B2D0F4`。胶囊记录 11 次 change 内调用（10 成功、1 次结构校验失败后单次修复），`projectMutation.occurred=false`，项目 revision 前后均为 `d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f`。
+
+独立 manifest 对比排除 `dist`、`node_modules` 与临时 Surdet 数据后，fixture 与 Starter 均为 37 files / 6,705,750 bytes，逐文件 path/bytes/SHA-256 差异数为 0。change 保持 OPEN，未执行 apply、commit 或 rollback；真实项目未触碰。
+
+```ini
+EXTERNAL_AGENT_SEMANTIC_GUIDANCE_SMOKE = PASSED
+FINAL_CHANGE = OPEN
+PROJECT_MUTATION = NO
+APPLY = NOT_PERFORMED
+OWNER_ACCEPTANCE = NOT_STARTED
+WAVE_5 = NOT_STARTED
+NEXT_STOP = WAITING_FOR_OWNER_APPLY_RESUME_AUTHORIZATION
+```
+
+本结果关闭 `timeline` 指令名和 `runtime.run-from.label` 的外部可发现性缺口，但不是 Wave 4 最终关闭。按 Task 11，下一道独立门是项目所有者明确授权对该隔离 fixture 执行 apply resume；随后才邀请项目所有者完成 Editor/预览人工路径。
