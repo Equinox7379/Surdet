@@ -3019,3 +3019,39 @@ W4_EXTERNAL_AGENT_CONCURRENCY_1_PUSH = NOT_PERFORMED
 W4_EXTERNAL_AGENT_CONCURRENCY_1_WAVE_5 = NOT_STARTED
 W4_EXTERNAL_AGENT_CONCURRENCY_1_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ```
+
+
+### 2026-08-21 W4-EXTERNAL-AGENT-SELF-REPAIR-1 — 演出对象可发现性与胶囊警告闭环
+
+并发修复后的全新隔离 stage 验收证明并发 mutation 已不再丢写：同批两个合法 mutation 分别推进 `workingRevision 0→1→2`，非法 scene 请求被原子拒绝且修正后成功；最终 validate、simulate、A/B trace 和 delivery capsule 均完成，真实项目未修改。验收同时暴露四个 Agent 自修复合同缺口：`change.begin.initiator` 的公开 schema 未列出真实枚举；timeline/track inspect 不暴露精确子对象引用；portrait catalog 未显式标注可复制的 timeline target；胶囊未携带 fresh validation warnings。
+
+本轮只在共享 `@surdet/authoring` 合同/对象索引/时间轴错误细节与 CLI 胶囊汇总层修复：timeline 与 track 现在提供一层 `childRefs`；portrait 资产提供 `timelineTarget`；不存在的 track/cue 返回可用引用；initiator schema 精确枚举；timeline schema/repairRecipes 指明 target、expression 与 refs 的来源；胶囊携带当前 working revision 的 validation warnings，并以 `VALIDATION_WARNINGS` 标记人工复核。没有增加 MCP 专属业务语义，没有修改 Core/Renderer/Host/Shell/Starter。
+
+```ini
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_ACCEPTANCE_ROOT = <local-path>
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_ACCEPTANCE_CHANGE = chg_0001_e6056ab6-91d4-4324-ab73-8629c98a4d95; OPEN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CONCURRENCY = PASS; valid concurrent mutations retained; invalid request atomically rejected
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CREATIVE_PATH = PASS; validation/simulation/A/B traces/capsule; projectMutation=false
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_DISCOVERABILITY_BEFORE_FIX = NEEDS_FIX; initiator enum hidden; trackRef guessed; portrait target ambiguous; capsule warnings empty
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_RED_AUTHORING = PASS; exit=1; 5 expected failures / 27 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_RED_CLI = PASS; exit=1; 2 expected failures / 12 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_GREEN_AUTHORING_FOCUSED = PASS; 4 files / 27 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_GREEN_CLI_FOCUSED = PASS; 2 files / 12 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_ADJACENT_CLI = PASS; 2 files / 9 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_AUTHORING_SUITE = PASS; 22 files / 134 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CLI_SUITE = PASS; 21 files / 177 tests
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_AUTHORING_TYPECHECK_BUILD = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CLI_TYPECHECK_BUILD = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_DIFF_CHECK = PASS
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CODE_EVIDENCE_HEAD = b58474ec287baa7e6886caba03460e950b2bd644
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CODE_EVIDENCE_COMMIT_MESSAGE = fix(agent-port): expose timeline repair contracts
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_CODE_SCOPE = 12 authoring/CLI source and test files
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_DIAGNOSTIC = NOT_RUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_FORMAL = NOT_RERUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_VERIFY_ALL = NOT_RUN
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_APPLY = NOT_AUTHORIZED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_PUSH = NOT_PERFORMED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_OWNER_ACCEPTANCE = NOT_STARTED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_WAVE_5 = NOT_STARTED
+W4_EXTERNAL_AGENT_SELF_REPAIR_1_NEXT = ONE_FRESH_ACCEPTANCE_PREP_THEN_EXTERNAL_AGENT_STAGE_ACCEPTANCE
+```
