@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   try {
     const options = parseAgentPortArgs(process.argv.slice(2));
     session = await openAgentPortSession(options);
-    handle = serveStdio(() => createAgentPortServer(session!), { legacy: 'reject', onerror: (error) => process.stderr.write(`MCP: ${error.message}\n`) });
+    handle = serveStdio(() => createAgentPortServer(session!), { legacy: 'serve', onerror: (error) => process.stderr.write(`MCP: ${error.message}\n`) });
     process.stderr.write(`Surdet Agent Port ready: ${session.projectIdentity} (${session.policy})\n`);
 
     let closing = false;
