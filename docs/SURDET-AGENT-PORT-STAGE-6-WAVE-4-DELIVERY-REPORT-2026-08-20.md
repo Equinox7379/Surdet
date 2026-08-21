@@ -511,3 +511,102 @@ NEXT_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ```
 
 本轮的新 acceptance-prep 只证明了全新的桌面 project、独立空 data dir、可加载 stage MCP 配置和同项目 resume 模板；它不构成真实外部 Agent stage 验收。FORMAL 仍只指向历史 `ee5f11d3…`，没有重跑。文档自身的 `DOCUMENT_CLOSURE_HEAD` 与 `FINAL_HEAD` 不自引用写入，最终以 docs-only commit 后的真实 Git readback 为准，避免产生新的文档身份循环。
+
+## 13. W4-EXTERNAL-AGENT-RECOVERY-2：结果可见性、场景原子性与 rollback 逃生通道
+
+真实外部 Agent 的验收记录显示，失败不是 Agent 能力评价，而是一条可复现的共享故障链：成功 MCP 载荷只出现在 `structuredContent`，text-only host 无法取得 changeId/指纹/结构化结果；非法 typed `scene.create` 候选在校验前写入 working state；随后 poisoned working snapshot 使正式 rollback 也被解析步骤阻断。本轮只修复这三项直接相关合同。
+
+### 历史现场与证据身份
+
+```ini
+RECOVERY2_HISTORICAL_EXTERNAL_AGENT_ACCEPTANCE = FAILED
+RECOVERY2_OWNER_ACCEPTANCE = NOT_STARTED
+RECOVERY2_OLD_CHANGE = DO_NOT_RESUME
+RECOVERY2_FAILURE_RECORD_PATH = C:\Users\Equinox\WorkBuddy\2026-08-21-14-34-18\surdet-tool-call-record.md
+RECOVERY2_FAILURE_RECORD_KIND = RECONSTRUCTED_TOOL_CALL_RECORD; NOT_RAW_MACHINE_LOG
+RECOVERY2_FAILURE_RECORD_BYTES = 7753
+RECOVERY2_FAILURE_RECORD_SHA256 = 9D5B250D0EA88076DE7C634C0E2ACAB7F1DC296484C698C55AF3C98AD93C2A7C
+RECOVERY2_RAW_MACHINE_LOG = NOT_PROVIDED; RECONSTRUCTION_NOT_RELABELED
+
+RECOVERY2_HISTORICAL_ACCEPTANCE_ROOT = C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-sukIH3
+RECOVERY2_HISTORICAL_ACCEPTANCE_ROOT_MODIFIED = NO
+RECOVERY2_HISTORICAL_ACCEPTANCE_PROJECT_FILES = 37
+RECOVERY2_HISTORICAL_ACCEPTANCE_PROJECT_BYTES = 6705750
+RECOVERY2_HISTORICAL_ACCEPTANCE_PROJECT_TREE_SHA256 = 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6
+RECOVERY2_HISTORICAL_ACCEPTANCE_DATA_FILE_COUNT = 0
+RECOVERY2_HISTORICAL_ACCEPTANCE_CHANGE_ID = NOT_CREATED
+RECOVERY2_HISTORICAL_ACCEPTANCE_CAPSULE = NOT_CREATED
+RECOVERY2_HISTORICAL_ACCEPTANCE_EVIDENCE_BYTES = 22872
+RECOVERY2_HISTORICAL_ACCEPTANCE_EVIDENCE_SHA256 = 55AE6A7461DA64BBCEDD8DB707A43E6FD0EB3F375A76DAF0F3741468D104FED4
+RECOVERY2_HISTORICAL_ACCEPTANCE_IDENTITY_BYTES = 194
+RECOVERY2_HISTORICAL_ACCEPTANCE_IDENTITY_SHA256 = 9BC6B1109E1A339202A27A0EEFBE2E6E9027340A7A7AF2D788088E911FF8DE95
+```
+
+上述 `surdet-tool-call-record.md` 的文件正文自标为“完整重建”，因此本报告将其作为 reconstructed record 记录，未声称它是原始 MCP wire/machine log。旧 acceptance root 已从磁盘重新核对，project tree、空 data directory、prepared evidence/identity 均保持原身份；本轮没有复用或修改它。
+
+### RED 取证
+
+```ini
+RECOVERY2_INITIAL_HEAD = 52e11e2a5c5efcc14d178a97b656120de3e05bf5
+RECOVERY2_INITIAL_PARENT = fa9f7cf4d495eaecf35b66f50698ad839c61df8e
+RECOVERY2_REMOTE_MAIN = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+RECOVERY2_AHEAD_BEHIND_INITIAL = 27/0
+RECOVERY2_RED_COMMAND = npm exec -w @surdet/cli -- vitest run test/agent-port-tools.test.ts test/agent-port-security.test.ts --reporter=verbose
+RECOVERY2_RED_EXIT = 1
+RECOVERY2_RED_RESULT = 2 test files; 3 failed; 18 passed
+RECOVERY2_RED_FAILURES = text-only envelope parse; invalid scene.create persisted candidate; poisoned rollback blocked by C004 parsing
+RECOVERY2_RED_LOG_PATH = C:\Users\Equinox\Desktop\surdet-w4-recovery2-red-text-20260821.log
+RECOVERY2_RED_LOG_BYTES = 5904
+RECOVERY2_RED_LOG_SHA256 = 1CA2FB0770AB0D035F66758CDE3EC89AD9A8FF92558BED80A15B837E976B60BD
+```
+
+### 最小修复与 GREEN 证据
+
+`packages/cli/src/agent-port/server.ts` 现在对成功和失败 envelope 使用同一 `JSON.stringify(fullEnvelope)` text 投影，同时保留同一 envelope 的 `structuredContent`。`packages/authoring/src/operations.ts` 在 `runOperation()` 能够持久化前使用 Core 共享 `compileScene()` 校验 scene.create/scene.patch 的完整候选；校验失败不会写入 workingFiles、workingRevision 或 operation ledger。`packages/cli/src/authoring/authoring-service.ts` 为 rollback 使用仅打开 change record/repository/project identity 的 context，不调用 `loadProjectSnapshot`，因此 poisoned workingFiles 仍可回滚到 baseContents。
+
+新增回归覆盖：text-only host 的 session.describe、change.begin（从 text 取得真实 changeId）和失败 envelope；非法 `@set affinity 2` 的 scene.create 原子拒绝及合法 `@set affinity = 2`；scene.patch 候选同一校验边界；含非法 DSL 的 OPEN change 正式 rollback。所有测试均使用真实 MCP/AuthoringService/NodeChangeStore 路径，未修改真实项目内容。
+
+```ini
+RECOVERY2_GREEN_AUTHORING_COMMAND = npm exec -w @surdet/authoring -- vitest run test/operations.test.ts test/change-session.test.ts --reporter=verbose
+RECOVERY2_GREEN_AUTHORING_EXIT = 0
+RECOVERY2_GREEN_AUTHORING_RESULT = 2 test files; 7 tests passed
+RECOVERY2_GREEN_AUTHORING_LOG_PATH = C:\Users\Equinox\Desktop\surdet-w4-recovery2-green-authoring-20260821.log
+RECOVERY2_GREEN_AUTHORING_LOG_BYTES = 1181
+RECOVERY2_GREEN_AUTHORING_LOG_SHA256 = 1211D8BD41DF5B97ABEE85E1AC8E9DA0D0BDA27DBE327F472F5B6DDF737AA1BF
+RECOVERY2_GREEN_CLI_COMMAND = npm exec -w @surdet/cli -- vitest run test/agent-port-output-contract.test.ts test/agent-port-tools.test.ts test/agent-port-session.test.ts test/agent-port-security.test.ts --reporter=verbose
+RECOVERY2_GREEN_CLI_EXIT = 0
+RECOVERY2_GREEN_CLI_RESULT = 4 test files; 30 tests passed
+RECOVERY2_GREEN_CLI_LOG_PATH = C:\Users\Equinox\Desktop\surdet-w4-recovery2-green-cli-20260821.log
+RECOVERY2_GREEN_CLI_LOG_BYTES = 4880
+RECOVERY2_GREEN_CLI_LOG_SHA256 = 6CD0D857130384FA38BE090C30E04DFF82C20A74011569350E399ADD861D8F36
+RECOVERY2_AUTHORING_TYPECHECK = PASS; exit=0
+RECOVERY2_AUTHORING_BUILD = PASS; exit=0
+RECOVERY2_CLI_TYPECHECK = PASS; exit=0
+RECOVERY2_CLI_BUILD = PASS; exit=0
+RECOVERY2_DUAL_ERA_PREFLIGHT = PASS; exit=0
+RECOVERY2_MODERN_PREFLIGHT = PASS; negotiated=2026-07-28
+RECOVERY2_LEGACY_2025_11_25_PREFLIGHT = PASS; negotiated=2025-11-25
+RECOVERY2_POLICY_FILTER = PASS
+RECOVERY2_STDOUT_PROTOCOL_PURITY = PASS
+RECOVERY2_CHILD_CLEANUP = PASS
+```
+
+### Git 与停止门
+
+```ini
+RECOVERY2_CODE_EVIDENCE_HEAD = b3ea00749de1dd6638492839d07d518d2af2dc74
+RECOVERY2_CODE_EVIDENCE_PARENT = 52e11e2a5c5efcc14d178a97b656120de3e05bf5
+RECOVERY2_CODE_EVIDENCE_COMMIT_MESSAGE = fix(agent-port): restore external acceptance recovery paths
+RECOVERY2_CODE_EVIDENCE_SCOPE = packages/authoring/src/operations.ts; packages/authoring/test/operations.test.ts; packages/cli/src/agent-port/server.ts; packages/cli/src/authoring/authoring-service.ts; packages/cli/test/agent-port-security.test.ts; packages/cli/test/agent-port-tools.test.ts
+RECOVERY2_CODE_EVIDENCE_PUSH = NOT_PERFORMED
+RECOVERY2_DOCUMENT_CLOSURE_HEAD = POST_COMMIT_GIT_READBACK_ONLY; NOT_SELF_EMBEDDED
+RECOVERY2_DIAGNOSTIC = DO_NOT_RERUN
+RECOVERY2_FORMAL = DO_NOT_RERUN
+RECOVERY2_VERIFY_ALL = DO_NOT_RUN_IN_THIS_REPAIR
+RECOVERY2_EXTERNAL_AGENT_RETRY = NOT_STARTED
+RECOVERY2_OWNER_ACCEPTANCE = NOT_STARTED
+RECOVERY2_WAVE_5 = NOT_STARTED
+RECOVERY2_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+```
+
+本轮代码修复与直接相关验证完成，但不宣称新的外部 Agent 验收通过，也不宣称 Wave 4 CLOSED。文档只追加本次恢复事实；docs-only 提交后的真实 HEAD、parent、remote、ahead/behind、工作树和文档 bytes/SHA-256 以最终 Git readback 为准，避免为文档自身身份制造自指提交循环。
