@@ -146,19 +146,27 @@ function loadSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot> {
   });
 }
 
+async function openChangeRecordContext(changeId: string): Promise<{
+  store: NodeChangeStore;
+  session: ChangeSession;
+}> {
+  const opened = await NodeChangeStore.openByChangeId(changeId);
+  if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+  return { store: opened.store, session: openChange(opened.record, opened.store) };
+}
+
 async function openChangeIdentityContext(changeId: string): Promise<{
   store: NodeChangeStore;
   session: ChangeSession;
   storage: NodeProjectStorage;
 }> {
-  const opened = await NodeChangeStore.openByChangeId(changeId);
-  if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
-  const storage = await NodeProjectStorage.open(opened.record.projectRootIdentity);
-  if (storage.rootIdentity !== opened.record.projectRootIdentity) {
+  const recordContext = await openChangeRecordContext(changeId);
+  const storage = await NodeProjectStorage.open(recordContext.session.record.projectRootIdentity);
+  if (storage.rootIdentity !== recordContext.session.record.projectRootIdentity) {
     throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
   }
-  const session = openChange(opened.record, opened.store, storage);
-  return { store: opened.store, session, storage };
+  const session = openChange(recordContext.session.record, recordContext.store, storage);
+  return { store: recordContext.store, session, storage };
 }
 
 async function openChangeContext(changeId: string): Promise<{
@@ -680,7 +688,7 @@ export class AuthoringService {
     // Rollback is the recovery escape hatch for an OPEN change. It must not
     // parse workingFiles: a poisoned snapshot is precisely what rollback must
     // be able to clear without evaluating.
-    const context = await openChangeIdentityContext(changeId);
+    const context = await openChangeRecordContext(changeId);
     const record = await rollbackChange(context.session);
     return { ...metadataForChange(context.session), result: { changeId: record.changeId, status: 'ROLLED_BACK' } };
   }

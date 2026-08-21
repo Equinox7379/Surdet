@@ -189,7 +189,7 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     await session.close();
   });
 
-  it('rolls back a poisoned OPEN change without parsing its working snapshot', async () => {
+  it('rolls back a poisoned OPEN change without reading the project directory', async () => {
     const root = makeProject('poisoned-rollback');
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
     temporaryRoots.push(data);
@@ -208,6 +208,9 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     };
     await opened!.store.write(poisoned);
     const beforeProject = projectBytes(root);
+    const unavailableRoot = `${root}-unavailable`;
+    fs.renameSync(root, unavailableRoot);
+    temporaryRoots.push(unavailableRoot);
 
     const rolledBack = await session.invoke('change.rollback', {});
     expect(rolledBack.ok).toBe(true);
@@ -216,7 +219,8 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     expect(after.status).toBe('ROLLED_BACK');
     expect(after.workingFiles).toEqual(after.baseContents);
     expect(rolledBack.result).toEqual({ changeId, status: 'ROLLED_BACK' });
-    expect(projectBytes(root)).toEqual(beforeProject);
+    expect(fs.existsSync(root)).toBe(false);
+    expect(projectBytes(unavailableRoot)).toEqual(beforeProject);
     await session.close();
   });
 
