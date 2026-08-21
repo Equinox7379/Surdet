@@ -710,4 +710,9 @@ W4_EXTERNAL_AGENT_SELF_REPAIR_1_PUSH = NOT_PERFORMED
 W4_EXTERNAL_AGENT_SELF_REPAIR_1_WAVE_5 = NOT_STARTED
 ```
 
-下一步仅生成一次新的 desktop acceptance-prep，再把新的 stage 配置交给外部 Agent 验证“发现 warning → 通过 schema/childRefs/timelineTarget 自修复 → fresh validate → capsule warning 交接”。旧 `keRRcy` change 保持 OPEN 作为历史验收证据，不复用、不 apply。
+计划中的下一动作是仅生成一次新的 desktop acceptance-prep，再把新的 stage 配置交给外部 Agent 验证“发现 warning → 通过 schema/childRefs/timelineTarget 自修复 → fresh validate → capsule warning 交接”。旧 `keRRcy` change 保持 OPEN 作为历史验收证据，不复用、不 apply；下节记录该 prep 的实际结果。
+
+
+### 全新外部验收入口
+
+唯一一次新的 acceptance-prep 已通过，生成桌面隔离根目录 `C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-hq1LZa`。MCP stage 配置为 552 bytes / SHA-256 `DCFCEF1D3EF47A15EF49675E7CEE9A19CDEE744A7F8432EA9D22CB224719F2FD`；prep evidence 为 22,872 bytes / SHA-256 `14C31C8514E7A504E83878E30CFA24FC8773CA00954B1E0139DCB2EAA1DC73C5`。data dir 为 0 文件，fixture 与原始 Starter 的 tree SHA-256 均为 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`。prep 未调用任何 Agent Port 工具、未创建 change，停止在 `WAITING_FOR_EXTERNAL_AGENT_STAGE_ACCEPTANCE`。
