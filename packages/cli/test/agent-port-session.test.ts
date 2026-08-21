@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { parseAgentPortArgs } from '../src/agent-port/args.js';
 import { allowedCapabilitiesForPolicy } from '../src/agent-port/policy.js';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import {
   openAgentPortSession,
   type AgentPortSession,
@@ -168,6 +169,52 @@ describe('Surdet Agent Port session and policy contract', () => {
     const first = session.activeChangeId;
     expectFailure(await session.invoke('change.begin', {}), 'SESSION_STATE_INVALID');
     expect(session.activeChangeId).toBe(first);
+    await session.close();
+  });
+
+  it('serializes concurrent invocations without losing successful mutations', async () => {
+    const root = makeProject('concurrent-invocations');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const beforeProject = projectBytes(root);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+
+    const results = await Promise.all([
+      session.invoke('scene.create', { operationId: 'op-concurrent-a', sceneId: 'concurrent-a' }),
+      session.invoke('scene.create', { operationId: 'op-concurrent-b', sceneId: 'concurrent-b' }),
+      session.invoke('variable.ensure', {
+        operationId: 'op-concurrent-variable',
+        name: 'agent.concurrent',
+        type: 'number',
+        initial: 0,
+      }),
+    ]);
+    expect(results.every((result) => result.ok)).toBe(true);
+
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    expect(opened).not.toBeNull();
+    expect(opened!.record.workingRevision).toBe(3);
+    expect(Object.keys(opened!.record.operations)).toEqual([
+      'op-concurrent-a',
+      'op-concurrent-b',
+      'op-concurrent-variable',
+    ]);
+    expect(opened!.record.workingFiles['content/scenario/concurrent-a.gal']).toContain('@scene concurrent-a');
+    expect(opened!.record.workingFiles['content/scenario/concurrent-b.gal']).toContain('@scene concurrent-b');
+    expect(JSON.parse(opened!.record.workingFiles['game.config.json']!)).toMatchObject({
+      variables: { 'agent.concurrent': { type: 'number', initial: 0 } },
+    });
+
+    const invocations = (await opened!.store.readInvocations(changeId))
+      .filter((invocation) => invocation.operationId?.startsWith('op-concurrent-'));
+    expect(invocations.map((invocation) => [invocation.workingRevisionBefore, invocation.workingRevisionAfter])).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 3],
+    ]);
+    expect(projectBytes(root)).toEqual(beforeProject);
     await session.close();
   });
 

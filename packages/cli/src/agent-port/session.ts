@@ -154,6 +154,7 @@ function evidenceIdsFromRecord(record: ChangeRecord | undefined): string[] {
 export class AgentPortSession {
   private activeChangeIdValue?: string;
   private lastChangeIdValue?: string;
+  private invocationTail: Promise<void> = Promise.resolve();
 
   constructor(
     readonly sessionId: string,
@@ -239,6 +240,20 @@ export class AgentPortSession {
   }
 
   async invoke(capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<AuthoringEnvelope<unknown>> {
+    const previous = this.invocationTail;
+    let release!: () => void;
+    this.invocationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.invokeSerial(capability, input);
+    } finally {
+      release();
+    }
+  }
+
+  private async invokeSerial(capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<AuthoringEnvelope<unknown>> {
     const beforeChangeId = this.activeChangeIdValue;
     const beforeOpened = beforeChangeId === undefined ? undefined : await NodeChangeStore.openByChangeId(beforeChangeId);
     const beforeRecord = beforeOpened?.record;
