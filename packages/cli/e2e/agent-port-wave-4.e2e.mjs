@@ -419,7 +419,7 @@ async function runAcceptancePrep() {
   const payload = {
     schemaVersion: '1.0.0', evidenceClass: 'ACCEPTANCE_PREP', status: 'PREPARED', runHead,
     acceptanceRoot: directory, projectRoot, dataDir,
-    stageConfigPath, applyResumeTemplatePath,
+    stageConfigPath, applyTemplatePath,
     originalStarter: { before: originalStarterBefore, after: originalStarterAfter, unchanged: checks.ORIGINAL_STARTER_UNCHANGED },
     projectFixture, dataDirectory: { before: dataBefore, after: dataAfter, empty: checks.DATA_DIR_EMPTY },
     stageConfig: readFileIdentity(stageConfigPath), applyResumeTemplate: readFileIdentity(applyTemplatePath),
