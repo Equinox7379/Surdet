@@ -66,6 +66,7 @@ export function buildAssetCatalog(paths: readonly string[]): ProjectAssetCatalog
       const entry: AssetEntry = {
         kind: 'portrait',
         key: `${role}:${outfit}`,
+        timelineTarget: `${role}:${outfit}`,
         role,
         outfit,
         expression,

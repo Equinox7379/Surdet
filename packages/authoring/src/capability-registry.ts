@@ -154,15 +154,15 @@ const timelineCueSchema = strictObject({
   durationMs: numberSchema,
   easing: { enum: ['linear', 'inOutSine', 'outCubic', 'inOutCubic'] },
   action: stringSchema,
-  key: stringSchema,
-  expression: stringSchema,
+  key: { type: 'string', description: 'background set cue only: copy project.assets.backgrounds[].key' },
+  expression: { type: 'string', description: 'portrait cue only: copy project.assets.portraits[].expression for the selected timelineTarget' },
   position: stringSchema,
   alpha: numberSchema,
 }, ['atMs', 'durationMs', 'easing', 'action']);
 
 const timelineTrackSchema = strictObject({
   kind: { enum: ['background', 'portrait', 'screen'] },
-  target: stringSchema,
+  target: { type: 'string', description: 'portrait track only: copy project.assets.portraits[].timelineTarget; omit for background and screen' },
   cues: arrayOf(timelineCueSchema),
 }, ['kind', 'cues']);
 
@@ -221,6 +221,7 @@ const diffEntrySchema = strictObject({
 const assetEntrySchema = strictObject({
   kind: { enum: ['background', 'portrait', 'avatar'] },
   key: stringSchema,
+  timelineTarget: { type: 'string', description: 'canonical portrait track.target; copy this value instead of constructing it' },
   role: stringSchema,
   outfit: stringSchema,
   expression: stringSchema,
@@ -265,6 +266,7 @@ const objectInspectionSchema = strictObject({
   fingerprint: stringSchema,
   references: stringArraySchema,
   referencedBy: stringArraySchema,
+  childRefs: stringArraySchema,
 }, ['kind', 'objectRef', 'references', 'referencedBy']);
 
 const validationIssueSchema = strictObject({
@@ -462,7 +464,11 @@ const definitions = {
     example: { input: { objectRef: 'scene:prologue' }, expectedResultShape: { kind: 'scene', objectRef: 'scene:prologue', references: [], referencedBy: [] } },
   },
   begin: {
-    inputSchema: strictObject({ intent: stringSchema, acceptanceCriteria: stringArraySchema, initiator: stringSchema }),
+    inputSchema: strictObject({
+      intent: stringSchema,
+      acceptanceCriteria: stringArraySchema,
+      initiator: { enum: ['external-agent', 'human', 'automation'], description: 'who initiated this change' },
+    }),
     outputSchema: strictObject({ changeId: stringSchema, baseRevision: stringSchema, workingRevision: integerSchema }, ['changeId', 'baseRevision', 'workingRevision']),
     example: { input: {}, expectedResultShape: { changeId: 'chg_...', baseRevision: '...', workingRevision: 0 } },
   },
@@ -588,7 +594,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
   'project.inspect': { title: 'Inspect project', purpose: 'Read the canonical project object and revision view.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'project.assets': { title: 'Inspect project assets', purpose: 'Read the shared background, portrait, and avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
-  'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference and its current fingerprint.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
+  'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
   'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
@@ -596,7 +602,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.remove': { title: 'Remove character', purpose: 'Remove one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'timeline.create': { title: 'Create timeline', purpose: 'Create one validated Wave 2 presentation timeline.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'definition passes the shared timeline whitelist'], possibleErrors: [...commonErrors, 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one timeline track or cue using its current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one timeline track or cue using its current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['object.inspect the timeline and copy an exact trackRef from childRefs; inspect that track and copy an exact cueRef from childRefs', 'copy portrait target from project.assets.portraits[].timelineTarget', ...mutateRepair] },
   'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
   'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },

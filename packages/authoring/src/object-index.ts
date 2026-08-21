@@ -273,6 +273,7 @@ function addTimelineObjects(
 ): void {
   const name = timelinePath.slice(timelinePath.lastIndexOf('/') + 1, -'.json'.length);
   const timelineRef = `timeline:${name}`;
+  const timelineChildRefs: string[] = [];
   let definition: Record<string, unknown> | null = null;
   try {
     const parsed: unknown = JSON.parse(timelineText.replace(/^\uFEFF/, ''));
@@ -287,6 +288,7 @@ function addTimelineObjects(
     source: sourceOf(timelinePath, 1, timelineText),
     references: [],
     referencedBy: [],
+    childRefs: timelineChildRefs,
     ...(definition === null ? {} : { details: definition }),
   }, candidates);
   if (definition === null || !Array.isArray(definition['tracks'])) return;
@@ -310,6 +312,8 @@ function addTimelineObjects(
     const track = asRecord(rawTrack);
     if (track === null) return;
     const trackRef = `timeline:${name}/track:${trackIndex}`;
+    timelineChildRefs.push(trackRef);
+    const trackChildRefs: string[] = [];
     const trackRaw = JSON.stringify(track);
     addObject(objects, {
       kind: 'track',
@@ -318,6 +322,7 @@ function addTimelineObjects(
       source: sourceOf(timelinePath, 1, trackRaw),
       references: [],
       referencedBy: [],
+      childRefs: trackChildRefs,
       details: track,
     }, candidates);
     const trackAssets = new Set<string>();
@@ -326,6 +331,7 @@ function addTimelineObjects(
       const cue = asRecord(rawCue);
       if (cue === null) return;
       const cueRef = `timeline:${name}/track:${trackIndex}/cue:${cueIndex}`;
+      trackChildRefs.push(cueRef);
       const cueRaw = JSON.stringify(cue);
       addObject(objects, {
         kind: 'cue',

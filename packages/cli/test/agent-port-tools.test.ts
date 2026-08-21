@@ -209,6 +209,15 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect((timelineInspected.structuredContent as any).ok).toBe(true);
       expect((timelineInspected.structuredContent as any).result.details.tracks).toHaveLength(1);
       expect((timelineInspected.structuredContent as any).result.details.tracks[0].cues).toHaveLength(1);
+      expect((timelineInspected.structuredContent as any).result.childRefs).toEqual([
+        'timeline:mcp_timeline_details/track:0',
+      ]);
+
+      const trackInspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_details/track:0' } });
+      expect(trackInspected.isError).not.toBe(true);
+      expect((trackInspected.structuredContent as any).result.childRefs).toEqual([
+        'timeline:mcp_timeline_details/track:0/cue:0',
+      ]);
     } finally {
       await client.close();
       await server.close();

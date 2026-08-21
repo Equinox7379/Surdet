@@ -29,6 +29,7 @@ describe('shared asset catalog', () => {
     expect(catalog.portraits[1]).toEqual({
       kind: 'portrait',
       key: 'lynn:uniform',
+      timelineTarget: 'lynn:uniform',
       role: 'lynn',
       outfit: 'uniform',
       expression: 'night',

@@ -187,6 +187,10 @@ export async function applyTimelinePatch(
     const fingerprintBefore = await timelineFingerprint(definition, hasher);
     const next = JSON.parse(JSON.stringify(definition)) as TimelineDefinition;
     const tracks = next.tracks;
+    const availableTrackRefs = (): string[] => tracks.map((_track, index) => trackRefFor(input.timelineId, index));
+    const availableCueRefs = (): string[] => tracks.flatMap((track, trackIndex) => (
+      track.cues.map((_cue, cueIndex) => cueRefFor(input.timelineId, trackIndex, cueIndex))
+    ));
     let changedRef: string | null = null;
 
     if (patch.kind === 'addTrack') {
@@ -205,7 +209,12 @@ export async function applyTimelinePatch(
     } else if (patch.kind === 'removeTrack') {
       const index = parseTrackRef(patch.trackRef, input.timelineId);
       if (index === null || tracks[index] === undefined) {
-        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`);
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`, {
+          timelineId: input.timelineId,
+          timelineRef: `timeline:${input.timelineId}`,
+          requestedRef: patch.trackRef,
+          availableTrackRefs: availableTrackRefs(),
+        });
       }
       const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
       if (patch.expectedFingerprint !== trackFingerprint) {
@@ -216,7 +225,12 @@ export async function applyTimelinePatch(
     } else if (patch.kind === 'insertCue') {
       const index = parseTrackRef(patch.trackRef, input.timelineId);
       if (index === null || tracks[index] === undefined) {
-        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`);
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `track 引用不存在：${patch.trackRef}`, {
+          timelineId: input.timelineId,
+          timelineRef: `timeline:${input.timelineId}`,
+          requestedRef: patch.trackRef,
+          availableTrackRefs: availableTrackRefs(),
+        });
       }
       const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
       if (patch.expectedFingerprint !== trackFingerprint) {
@@ -232,7 +246,12 @@ export async function applyTimelinePatch(
       const track = parsed === null ? undefined : tracks[parsed.track];
       const cue = track === undefined || parsed === null ? undefined : track.cues[parsed.cue];
       if (parsed === null || cue === undefined) {
-        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `cue 引用不存在：${patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef}`);
+        throw new AuthoringOperationError('OBJECT_NOT_FOUND', `cue 引用不存在：${patch.cueRef}`, {
+          timelineId: input.timelineId,
+          timelineRef: `timeline:${input.timelineId}`,
+          requestedRef: patch.cueRef,
+          availableCueRefs: availableCueRefs(),
+        });
       }
       const cueFingerprint = await timelineFingerprint(cue, hasher);
       if (patch.expectedFingerprint !== cueFingerprint) {
