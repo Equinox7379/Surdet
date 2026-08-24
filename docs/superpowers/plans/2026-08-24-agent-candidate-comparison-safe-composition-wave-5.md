@@ -2513,3 +2513,19 @@ ARTIFACTS=$wave5Root/task2-red.json t2-green.log t2-build.log
 GIT=PENDING_STEP6
 STOP=TASK_3_IMMUTABLE_INTEGRATION_PLAN_AND_STORE
 ~~~
+
+### 2026-08-24T19:20Z — Task 3 immutable integration plans and shared dry-run
+
+~~~text
+TASK=3_IMMUTABLE_INTEGRATION_PLAN_PLAN_STORE_DRY_RUN
+START_HEAD=645b07f fix(authoring): enforce two-candidate comparison floor
+END_HEAD=(本提交)
+FILES_CREATED=packages/authoring/src/integration-plan.ts(ConflictResolution*/IdenticalUnitResolution/PlannedReplayOperation/IntegrationPlan/Draft/ComparisonWithManifests;verifyComparisonFingerprint 固定字段集;buildIntegrationPlan 闭包+裁决+identical 去重+Kahn 拓扑(primaryObject,capsuleSHA,minSeq);integrationOperationId=cmp_<fp12>_<seq4>_<digest12>;sealDryRunResult 语义投影排除 decidedAt/reason/message); packages/authoring/src/integration-execution.ts(八项 capability 穷尽 switch→既有 apply 函数,仅替换 operationId=integrationOperationId,default=COMPOSITION_PLAN_INVALID); packages/cli/src/authoring/node-composition-store.ts(readCandidate 只信 capsule identity+projectIdentityFromRoot 归属核对;writePlan create-only 幂等回读 stableStringify 同义判定;readPlan sidecar 三方核对 CAPSULE_IDENTITY_MISMATCH;无中央 index); packages/cli/src/authoring/composition-service.ts(短 project lease 读 snapshot;每次现场重算 comparison 拒绝旧 JSON;dry-run InMemoryChangeRepository+beginChange+replayCompositionOperation 后丢弃;指纹回读与封存 manifest 同源 scene/timeline 文本 SHA)
+FILES_CHANGED=node-change-store.ts(readCapsulePayload 错误码 CHANGE_STORE_CORRUPT→CAPSULE_IDENTITY_MISMATCH×2); authoring index.ts(+integration-plan/integration-execution)
+RED=task3-red-authoring.json(模块未实现 exit1)
+GREEN=authoring integration-plan+candidate-comparison 24 passed;cli node-composition-store+composition-service 8 passed;双包 typecheck/build exit0
+NOTES=candidateManifests 为运行时附带视图不参与指纹不持久化;identical 组任一成员入选即代表全组 provenance 记全体;单候选比较非法已由 645b07f 修正为规格 2..8;variable type 字面量为 number 非 int(core variable-store 合法集)
+ARTIFACTS=$wave5Root/task3-red-authoring.json t3-green-a.log t3-green-b.log
+GIT=PENDING_STEP7
+STOP=TASK_4_INTEGRATION_EXECUTE_CAS_RESUME_COMMIT_GATE
+~~~
