@@ -31,7 +31,7 @@ const VERSION = readVersion();
 /** 参数值识别：--assume k=v 的值位置不可能是项目目录（防止误当作位置参数） */
 function isFlagValue(args: string[], a: string): boolean {
   const i = args.indexOf(a);
-  return i > 0 && (args[i - 1] === '--assume' || args[i - 1] === '--max-paths' || args[i - 1] === '--max-steps');
+  return i > 0 && (args[i - 1] === '--assume' || args[i - 1] === '--max-paths' || args[i - 1] === '--max-steps' || args[i - 1] === '--seed');
 }
 
 const HELP = `Surdet Engine CLI v${VERSION}
@@ -49,6 +49,7 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet simulate [dir]    无头自动模拟：全分支遍历 + 结局可达性 + 死路检测 + 存档往返冒烟
       --max-paths N        路径预算（缺省 500）
       --max-steps N        单路径步数上限（缺省 20000）
+      --seed N              evidence 随机 seed（缺省 1592639710）
       --assume k=v         开局变量注入（可重复，如 --assume battleWon=true）
       --json               输出机器可读 JSON 报告
   surdet build [dir]       构建游戏（vite）

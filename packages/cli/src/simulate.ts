@@ -18,6 +18,8 @@ export interface SimulateOptions {
   maxStepsPerPath?: number;
   /** 开局变量注入（宿主才能设置的变量，如 battleWon=true），值按 boolean/number/string 解析 */
   assume?: Record<string, string>;
+  /** evidence 模式随机种子；缺省使用 Authoring 共享默认 seed */
+  seed?: number;
 }
 
 export interface SimulateReport {
@@ -32,6 +34,7 @@ export interface SimulateReport {
   cyclesPruned: number;
   saveRoundtrips: number;
   runtimeErrors: { scene: string | null; message: string }[];
+  seed: number;
 }
 
 function readJsonIfExists(full: string): Record<string, unknown> | null {
@@ -136,6 +139,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
     maxPaths: opts.maxPaths,
     maxStepsPerPath: opts.maxStepsPerPath,
     initialVariables,
+    seed: opts.seed,
   });
   return {
     entryScene: report.entryScene,
@@ -149,6 +153,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
     cyclesPruned: report.cyclesPruned,
     saveRoundtrips: report.saveRoundtrips,
     runtimeErrors: report.runtimeErrors,
+    seed: report.seed,
   };
 }
 
@@ -160,6 +165,7 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
     const a = argv[i]!;
     if (a === '--max-paths') opts.maxPaths = Number(argv[++i]);
     else if (a === '--max-steps') opts.maxStepsPerPath = Number(argv[++i]);
+    else if (a === '--seed') opts.seed = Number(argv[++i]);
     else if (a === '--assume') {
       const kv = argv[++i] ?? '';
       const eq = kv.indexOf('=');

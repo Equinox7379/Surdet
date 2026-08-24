@@ -27,6 +27,7 @@ function arrayOf(items: JsonSchema): JsonSchema {
 const stringSchema: JsonSchema = { type: 'string' };
 const numberSchema: JsonSchema = { type: 'number' };
 const integerSchema: JsonSchema = { type: 'integer' };
+const seedSchema: JsonSchema = { type: 'integer', minimum: 0, maximum: 4294967295 };
 const booleanSchema: JsonSchema = { type: 'boolean' };
 const nullSchema: JsonSchema = { type: 'null' };
 const stringArraySchema: JsonSchema = arrayOf(stringSchema);
@@ -334,12 +335,13 @@ const simulationReportProperties: SchemaProperties = {
   deadEndScenes: stringArraySchema,
   cyclesPruned: integerSchema,
   saveRoundtrips: integerSchema,
-  seed: numberSchema,
+  seed: seedSchema,
 };
 
 const simulationReportRequired = [
   'status', 'entryScene', 'pathsExplored', 'choiceBranches', 'paths', 'budgetExhausted',
   'runtimeErrors', 'endings', 'deadEndScenes', 'cyclesPruned', 'saveRoundtrips',
+  'seed',
 ];
 
 const simulationReportSchema = strictObject(simulationReportProperties, simulationReportRequired);
@@ -428,8 +430,9 @@ const runtimeRunFromResultSchema = strictObject({
   choices: runtimeChoicesSchema,
   finalVariables: jsonValueSchema,
   eventCount: integerSchema,
+  seed: seedSchema,
   freshness: evidenceFreshnessSchema,
-}, ['view', 'traceId', 'status', 'sceneId', 'choices', 'finalVariables', 'eventCount', 'freshness']);
+}, ['view', 'traceId', 'status', 'sceneId', 'choices', 'finalVariables', 'eventCount', 'seed', 'freshness']);
 
 const capabilitySummarySchema = strictObject({
   id: stringSchema,
@@ -526,7 +529,7 @@ const definitions = {
     example: { input: {}, expectedResultShape: { view: 'project', ok: true, issues: [] } },
   },
   simulate: {
-    inputSchema: strictObject({ sceneId: stringSchema }),
+    inputSchema: strictObject({ sceneId: stringSchema, seed: seedSchema }),
     outputSchema: simulationOutputSchema,
     example: { input: {}, expectedResultShape: { view: 'project', status: 'passed', report: { status: 'passed' } } },
   },
@@ -537,15 +540,15 @@ const definitions = {
       variables: jsonValueSchema,
       choices: runtimeChoicesSchema,
       maxSteps: integerSchema,
-      seed: integerSchema,
+      seed: seedSchema,
     }, ['sceneId', 'choices']),
     outputSchema: runtimeRunFromResultSchema,
     example: { input: { sceneId: 'agent_port_entry', choices: [0] }, expectedResultShape: { view: 'working', traceId: 'trace_...', status: 'passed', sceneId: 'agent_port_entry', choices: [0], finalVariables: {}, eventCount: 1, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   readTrace: {
     inputSchema: strictObject({ traceId: stringSchema, query: traceQuerySchema }, ['traceId']),
-    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, freshness: evidenceFreshnessSchema }, ['view', 'traceId', 'events', 'count', 'freshness']),
-    example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
+    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: evidenceFreshnessSchema }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
+    example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, seed: 1592639710, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   diff: {
     inputSchema: emptyInputSchema,

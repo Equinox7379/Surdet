@@ -5,6 +5,8 @@ import {
   SceneRegistry,
   TimelineRegistry,
   VariableStore,
+  assertValidRandomSeed,
+  createSeededRandomSource,
   type CoreEventMap,
   type SaveSnapshot,
   type VarDeclaration,
@@ -12,6 +14,8 @@ import {
 } from '@surdet/core';
 import type { ProjectSnapshot } from './project-snapshot.js';
 import { timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
+
+export const DEFAULT_AUTHORING_EVIDENCE_SEED = 0x5eedc0de;
 
 export interface SimulationOptions {
   maxPaths?: number;
@@ -50,7 +54,7 @@ export interface SimulationReport {
   deadEndScenes: string[];
   cyclesPruned: number;
   saveRoundtrips: number;
-  seed?: number;
+  seed: number;
 }
 
 export interface ExplicitPathOptions {
@@ -68,7 +72,7 @@ export interface ExplicitPathReport {
   choices: number[];
   finalVariables: Record<string, VarValue>;
   error?: string;
-  seed?: number;
+  seed: number;
 }
 
 function declarations(snapshot: ProjectSnapshot): VarDeclaration[] {
@@ -91,6 +95,7 @@ function simulationStateSignature(snapshot: SaveSnapshot): string {
     snapshot.position,
     snapshot.callStack ?? [],
     snapshot.variables,
+    snapshot.random ?? null,
   ]);
 }
 
@@ -122,7 +127,7 @@ export function buildTimelineRegistry(snapshot: ProjectSnapshot): TimelineRegist
   return registry;
 }
 
-function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue> | undefined): {
+function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue> | undefined, seed: number): {
   store: VariableStore;
   bus: EventBus<CoreEventMap>;
   interpreter: Interpreter;
@@ -134,6 +139,7 @@ function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue>
   const bus = new EventBus<CoreEventMap>();
   // timelineCatalog 为构造器第 9 参（preview.ts 同一模式；growth 维持既有 setGrowth 注入）。
   const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, buildTimelineRegistry(snapshot));
+  interpreter.setRandomSource(createSeededRandomSource(seed));
   if (snapshot.growthConfig !== undefined && snapshot.growthConfig !== null) {
     interpreter.setGrowth(new GrowthSystem(snapshot.growthConfig, store));
   }
@@ -148,10 +154,12 @@ export function simulateSnapshot(
   snapshot: ProjectSnapshot,
   options: SimulationOptions = {},
 ): SimulationReport {
+  const seed = options.seed ?? DEFAULT_AUTHORING_EVIDENCE_SEED;
+  assertValidRandomSeed(seed);
   const entryScene = snapshot.entryScene ?? snapshot.scenes[0]?.id ?? '';
   const maxPaths = options.maxPaths ?? 500;
   const maxSteps = options.maxStepsPerPath ?? 20_000;
-  const { store, bus, interpreter } = runtimeFor(snapshot, options.initialVariables);
+  const { store, bus, interpreter } = runtimeFor(snapshot, options.initialVariables, seed);
   const choiceTotal = snapshot.scenes.reduce(
     (total, scene) => total + scene.compiled.instructions.reduce(
       (count, instr) => count + (instr.op === 'choice' ? instr.options.length : 0),
@@ -300,7 +308,7 @@ export function simulateSnapshot(
     deadEndScenes: [...deadEndScenes],
     cyclesPruned,
     saveRoundtrips,
-    ...(options.seed === undefined ? {} : { seed: options.seed }),
+    seed,
   };
 }
 
@@ -308,7 +316,9 @@ export async function runExplicitPath(
   snapshot: ProjectSnapshot,
   options: ExplicitPathOptions,
 ): Promise<ExplicitPathReport> {
-  const { store, bus, interpreter } = runtimeFor(snapshot, options.variables);
+  const seed = options.seed ?? DEFAULT_AUTHORING_EVIDENCE_SEED;
+  assertValidRandomSeed(seed);
+  const { store, bus, interpreter } = runtimeFor(snapshot, options.variables, seed);
   let latestChoices: { index: number; label: string }[] = [];
   let cursor = 0;
   bus.on('choice', (payload) => { latestChoices = payload.options; });
@@ -336,7 +346,7 @@ export async function runExplicitPath(
       sceneId: options.sceneId,
       choices: options.choices.slice(0, cursor),
       finalVariables: store.snapshot(),
-      ...(options.seed === undefined ? {} : { seed: options.seed }),
+      seed,
     };
   } catch (error) {
     return {
@@ -345,7 +355,7 @@ export async function runExplicitPath(
       choices: options.choices.slice(0, cursor),
       finalVariables: store.snapshot(),
       error: errorText(error),
-      ...(options.seed === undefined ? {} : { seed: options.seed }),
+      seed,
     };
   }
 }
