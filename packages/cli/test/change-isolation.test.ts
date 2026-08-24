@@ -15,6 +15,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const cliEntry = path.join(repoRoot, 'packages/cli/dist/index.js');
@@ -46,7 +47,9 @@ function makeProject(parent: string, name: string, marker: string): string {
 }
 
 function readTransaction(dataDir: string, projectRoot: string, changeId: string): any {
-  const file = path.join(dataDir, projectDirName(projectRoot), changeId, 'transaction.json');
+  const directory = path.join(dataDir, projectDirName(projectRoot), changeId);
+  const head = JSON.parse(fs.readFileSync(path.join(directory, 'record-head.json'), 'utf8')) as { recordVersion: number };
+  const file = path.join(directory, 'records', `${String(head.recordVersion).padStart(10, '0')}.json`);
   return JSON.parse(fs.readFileSync(file, 'utf8')) as any;
 }
 
@@ -62,6 +65,11 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
     const begunA = runCli(['change', 'begin', '--project', projectA, '--json'], env);
     expect(begunA.status).toBe(0);
     const idA = body(begunA).changeId as string;
+    const changeDirectory = path.join(data, projectDirName(projectA), idA);
+    expect(fs.existsSync(path.join(changeDirectory, 'manifest.json'))).toBe(true);
+    expect(fs.existsSync(path.join(changeDirectory, 'record-head.json'))).toBe(true);
+    expect(fs.existsSync(path.join(changeDirectory, 'transaction.json'))).toBe(false);
+    expect(fs.existsSync(path.join(changeDirectory, 'working-files.json'))).toBe(false);
     const begunB = runCli(['change', 'begin', '--project', projectB, '--json'], env);
     expect(begunB.status).toBe(0);
     const idB = body(begunB).changeId as string;
@@ -111,7 +119,8 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
     // （目录名任意——openByChangeId 按目录扫描 record.changeId，不校验目录名与项目 hash 的对应）。
     const seed = body(runCli(['change', 'begin', '--project', projectA, '--json'], env));
     const seedDir = path.join(data, projectDirName(projectA), seed.changeId);
-    const seedRecord = JSON.parse(fs.readFileSync(path.join(seedDir, 'transaction.json'), 'utf8')) as Record<string, unknown>;
+    const seedHead = JSON.parse(fs.readFileSync(path.join(seedDir, 'record-head.json'), 'utf8')) as { recordVersion: number };
+    const seedRecord = JSON.parse(fs.readFileSync(path.join(seedDir, 'records', `${String(seedHead.recordVersion).padStart(10, '0')}.json`), 'utf8')) as Record<string, unknown>;
     fs.rmSync(seedDir, { recursive: true, force: true });
     for (const slot of ['leg-slot-a', 'leg-slot-b']) {
       const dir = path.join(data, slot, 'chg_legacy');
@@ -142,7 +151,7 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
     }
   });
 
-  it('RED C / G5：唯一 legacy ID 继续正常打开（防止过度修复一刀切拒绝旧格式）', { timeout: 30000 }, () => {
+  it('V1：唯一 legacy ID fail-loud 且旧 bytes 保持不变', { timeout: 30000 }, async () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-r5-uni-'));
     const data = path.join(parent, 'agent-data');
     fs.mkdirSync(data, { recursive: true });
@@ -151,15 +160,26 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
 
     const seed = body(runCli(['change', 'begin', '--project', projectA, '--json'], env));
     const seedDir = path.join(data, projectDirName(projectA), seed.changeId);
-    const seedRecord = JSON.parse(fs.readFileSync(path.join(seedDir, 'transaction.json'), 'utf8')) as Record<string, unknown>;
+    const seedHead = JSON.parse(fs.readFileSync(path.join(seedDir, 'record-head.json'), 'utf8')) as { recordVersion: number };
+    const seedRecord = JSON.parse(fs.readFileSync(path.join(seedDir, 'records', `${String(seedHead.recordVersion).padStart(10, '0')}.json`), 'utf8')) as Record<string, unknown>;
     fs.rmSync(seedDir, { recursive: true, force: true });
     const legacyDir = path.join(data, projectDirName(projectA), 'chg_0001');
     fs.mkdirSync(legacyDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyDir, 'transaction.json'), JSON.stringify({ ...seedRecord, changeId: 'chg_0001' }, null, 2), 'utf8');
+    const legacyTransaction = path.join(legacyDir, 'transaction.json');
+    fs.writeFileSync(legacyTransaction, JSON.stringify({ ...seedRecord, changeId: 'chg_0001' }, null, 2), 'utf8');
+    const beforeBytes = fs.readFileSync(legacyTransaction);
+
+    const previousDataDir = process.env['SURDET_AGENT_DATA_DIR'];
+    process.env['SURDET_AGENT_DATA_DIR'] = data;
+    await expect(NodeChangeStore.openByChangeId('chg_0001'))
+      .rejects.toMatchObject({ code: 'CHANGE_STORE_FORMAT_UNSUPPORTED' });
+    if (previousDataDir === undefined) delete process.env['SURDET_AGENT_DATA_DIR'];
+    else process.env['SURDET_AGENT_DATA_DIR'] = previousDataDir;
 
     const validate = runCli(['project', 'validate', '--change', 'chg_0001', '--json'], env);
-    expect(validate.status).toBe(0);
-    expect(body(validate).result.issues[0].text).toContain('PROJECT_A_MARKER');
+    expect(validate.status).toBe(1);
+    expect(body(validate).error.message).toContain('V1 store');
+    expect(fs.readFileSync(legacyTransaction)).toEqual(beforeBytes);
   });
 
   it('G4：同一项目两个独立进程 begin → IDs 不同且都可打开', { timeout: 30000 }, () => {

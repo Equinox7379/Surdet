@@ -4,6 +4,7 @@ import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import {
   InMemoryChangeRepository,
   beginChange,
+  recordValidation,
   recordRuntimeTrace,
   recordSimulationEvidence,
 } from '../src/change-session.js';
@@ -78,5 +79,39 @@ describe('change session operation identity', () => {
     expect(change.record.runtimeTraces).toEqual([
       { traceId: 'trace-1', status: 'passed', workingRevision: revision },
     ]);
+  });
+
+  it('increments recordVersion for content and evidence writes while workingRevision only tracks content', async () => {
+    const repo = new InMemoryChangeRepository();
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const change = await beginChange(snapshot, repo);
+    expect(change.record).toMatchObject({ formatVersion: 2, recordVersion: 0, workingRevision: 0 });
+    await applySceneCreate(change, { operationId: 'op-v2', sceneId: 'v2' });
+    expect(change.record).toMatchObject({ recordVersion: 1, workingRevision: 1 });
+    await recordValidation(change, { evidenceId: 'validation-v2', errors: 0 });
+    expect(change.record).toMatchObject({ recordVersion: 2, workingRevision: 1 });
+  });
+
+  it('rejects a stale record precondition without changing repository content', async () => {
+    const repo = new InMemoryChangeRepository();
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const change = await beginChange(snapshot, repo);
+    const first = JSON.parse(JSON.stringify(change.record)) as typeof change.record;
+    const current = {
+      ...first,
+      recordVersion: 1,
+      workingRevision: 1,
+      workingFiles: { ...first.workingFiles, 'content/scenario/v2.gal': '@scene v2\n@end\n' },
+      operations: { ...first.operations, 'op-first': { requestHash: 'first', result: true } },
+    };
+    await repo.write(current, { expectedRecordVersion: 0, expectedStatus: 'OPEN' });
+    const beforeConflict = await repo.read(change.record.changeId);
+    await expect(repo.write({
+      ...current,
+      recordVersion: 1,
+      workingFiles: { ...current.workingFiles, 'content/scenario/stale.gal': '@scene stale\n@end\n' },
+    }, { expectedRecordVersion: 0, expectedStatus: 'OPEN' }))
+      .rejects.toMatchObject({ code: 'CHANGE_RECORD_CONFLICT' });
+    expect(await repo.read(change.record.changeId)).toEqual(beforeConflict);
   });
 });

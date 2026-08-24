@@ -2,14 +2,33 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { AuthoringOperationError, type ChangeRecord, type ChangeRepository } from '@surdet/authoring';
+import {
+  AuthoringOperationError,
+  type ChangeRecord,
+  type ChangeRepository,
+  type ChangeWritePrecondition,
+} from '@surdet/authoring';
 import type { InvocationRecord } from '../agent-port/invocation-ledger.js';
 import { projectIdentityFromRoot } from './project-identity.js';
+import { createJsonRecord, readJsonRecord, replaceJsonRecord } from './node-json-record.js';
 
 export interface ArtifactIdentity {
   path: string;
   bytes: number;
   sha256: string;
+}
+
+interface ChangeManifest {
+  formatVersion: 2;
+  changeId: string;
+  projectRootIdentity: string;
+  createdAt: string;
+}
+
+interface RecordHead {
+  formatVersion: 2;
+  recordVersion: number;
+  recordSha256: string;
 }
 
 function clone<T>(value: T): T {
@@ -27,23 +46,35 @@ function dataRoot(): string {
   return path.join(localAppData ?? path.join(os.homedir(), 'AppData', 'Local'), 'Surdet', 'agent-changes');
 }
 
-async function readJson<T>(file: string): Promise<T | null> {
+async function exists(file: string): Promise<boolean> {
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as T;
+    await fs.access(file);
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
 }
 
-async function writeJson(file: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+async function isDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await fs.stat(directory)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
-export interface OpenChangeResult {
-  store: NodeChangeStore;
-  record: ChangeRecord;
+function corrupt(message: string, details: Record<string, unknown> = {}): AuthoringOperationError {
+  return new AuthoringOperationError('CHANGE_STORE_CORRUPT', message, details);
+}
+
+function unsupported(changeId: string, file: string): AuthoringOperationError {
+  return new AuthoringOperationError(
+    'CHANGE_STORE_FORMAT_UNSUPPORTED',
+    `变更事务 '${changeId}' 使用不受支持的 V1 store；不会迁移或删除旧文件`,
+    { changeId, path: file, formatVersion: 1, repairAction: '保留原始记录，另行人工迁移或归档' },
+  );
 }
 
 function sameRootIdentity(left: string, right: string): boolean {
@@ -54,10 +85,75 @@ function sameRootIdentity(left: string, right: string): boolean {
     : normalizedLeft === normalizedRight;
 }
 
+function versionFile(version: number): string {
+  return `${String(version).padStart(10, '0')}.json`;
+}
+
+function validateManifest(value: unknown, changeId: string, file: string): ChangeManifest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw corrupt(`manifest 不是对象：${file}`, { path: file });
+  const manifest = value as Partial<ChangeManifest>;
+  if (manifest.formatVersion !== 2) throw unsupported(changeId, file);
+  if (manifest.changeId !== changeId || typeof manifest.projectRootIdentity !== 'string' || typeof manifest.createdAt !== 'string') {
+    throw corrupt(`manifest 身份不匹配：${file}`, { path: file, changeId, actualChangeId: manifest.changeId });
+  }
+  return manifest as ChangeManifest;
+}
+
+function validateHead(value: unknown, changeId: string, file: string): RecordHead {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw corrupt(`record head 不是对象：${file}`, { path: file, changeId });
+  const head = value as Partial<RecordHead>;
+  const recordVersion = head.recordVersion;
+  if (head.formatVersion !== 2 || typeof recordVersion !== 'number' || !Number.isInteger(recordVersion) || recordVersion < 0
+    || typeof head.recordSha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(head.recordSha256)) {
+    throw corrupt(`record head 格式无效：${file}`, { path: file, changeId });
+  }
+  return head as RecordHead;
+}
+
+function validateRecord(record: ChangeRecord, changeId: string, rootIdentity: string, file: string, head: RecordHead): void {
+  if (record.formatVersion !== 2 || !Number.isInteger(record.recordVersion) || record.recordVersion < 0) {
+    throw corrupt(`record 格式无效：${file}`, { path: file, changeId });
+  }
+  if (record.changeId !== changeId || record.recordVersion !== head.recordVersion
+    || !sameRootIdentity(record.projectRootIdentity, rootIdentity)) {
+    throw corrupt(`record 身份或版本不匹配：${file}`, {
+      path: file,
+      changeId,
+      actualChangeId: record.changeId,
+      recordVersion: record.recordVersion,
+      headRecordVersion: head.recordVersion,
+    });
+  }
+}
+
+function conflict(
+  changeId: string,
+  precondition: ChangeWritePrecondition,
+  actual: ChangeRecord,
+): AuthoringOperationError {
+  return new AuthoringOperationError(
+    'CHANGE_RECORD_CONFLICT',
+    `变更事务 '${changeId}' 的记录版本或状态已变化：期望 v${precondition.expectedRecordVersion}，实际 v${actual.recordVersion}`,
+    {
+      changeId,
+      expectedRecordVersion: precondition.expectedRecordVersion,
+      actualRecordVersion: actual.recordVersion,
+      expectedStatus: precondition.expectedStatus,
+      actualStatus: actual.status,
+      retryDisposition: 'after-refresh',
+      repairAction: '重新 session.describe、change.diff 或重新打开 change 后，使用同一 operationId 重试',
+    },
+  );
+}
+
+export interface OpenChangeResult {
+  store: NodeChangeStore;
+  record: ChangeRecord;
+}
+
 /**
- * 文件系统变更仓库：事务和证据在项目目录之外持久化，允许每个 CLI 进程
- * 通过 changeId 重新打开同一事务。证据和 trace 均使用独立文件名，失败
- * 记录不会被后一次操作覆盖。
+ * V2 文件系统变更仓库。manifest/head/record 共同定义可读的 commit point；
+ * V1 transaction.json/working-files.json 只保留为历史证据，不参与新写入。
  */
 export class NodeChangeStore implements ChangeRepository {
   private constructor(
@@ -73,33 +169,54 @@ export class NodeChangeStore implements ChangeRepository {
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
   }
 
-  /** R5：changeId 全局解析。legacy 进程级序号（chg_0001）可能在多个项目目录下存在同名
-   *  journal——必须收集全部匹配后裁决：0 → not-found；1 → 打开；>1 → fail-loud
-   *  （CHANGE_ID_AMBIGUOUS），禁止 first-match 静默选择错误项目的 context。 */
   static async openByChangeId(changeId: string): Promise<OpenChangeResult | null> {
     const root = dataRoot();
     const projects = await fs.readdir(root, { withFileTypes: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     });
-    const matches: { projectDirectory: string; record: ChangeRecord }[] = [];
+    const matches: OpenChangeResult[] = [];
+    const legacyPaths: string[] = [];
+    const directoryName = safeId(changeId);
     for (const project of projects) {
       if (!project.isDirectory()) continue;
-      const transaction = path.join(root, project.name, safeId(changeId), 'transaction.json');
-      const record = await readJson<ChangeRecord>(transaction);
-      if (record === null || record.changeId !== changeId) continue;
-      matches.push({ projectDirectory: path.join(root, project.name), record });
+      const projectDirectory = path.join(root, project.name);
+      const changeDirectory = path.join(projectDirectory, directoryName);
+      if (!(await isDirectory(changeDirectory))) continue;
+      const legacyTransaction = path.join(changeDirectory, 'transaction.json');
+      const manifestFile = path.join(changeDirectory, 'manifest.json');
+      if (!(await exists(manifestFile))) {
+        if (await exists(legacyTransaction)) {
+          legacyPaths.push(legacyTransaction);
+          continue;
+        }
+        throw corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId });
+      }
+      const manifest = await readJsonRecord<ChangeManifest>(manifestFile);
+      if (manifest === null) throw corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId });
+      const validated = validateManifest(manifest.value, changeId, manifestFile);
+      const store = new NodeChangeStore(root, validated.projectRootIdentity, projectDirectory);
+      const record = await store.read(changeId);
+      if (record === null) throw corrupt(`V2 record 不存在：${changeDirectory}`, { path: changeDirectory, changeId });
+      matches.push({ store, record });
     }
+    if (legacyPaths.length + matches.length > 1) {
+      throw new AuthoringOperationError(
+        'CHANGE_ID_AMBIGUOUS',
+        `变更事务 '${changeId}' 在 ${legacyPaths.length + matches.length} 个项目中存在同名记录——请为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档冲突的旧事务后重试`,
+        { changeId, matchCount: legacyPaths.length + matches.length, legacyPaths },
+      );
+    }
+    if (legacyPaths.length === 1) throw unsupported(changeId, legacyPaths[0]!);
     if (matches.length === 0) return null;
     if (matches.length > 1) {
       throw new AuthoringOperationError(
         'CHANGE_ID_AMBIGUOUS',
-        `变更事务 '${changeId}' 在 ${matches.length} 个项目中存在同名记录（${matches.map((m) => m.record.projectRootIdentity).join(' | ')}）——请为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档冲突的旧事务后重试`,
-        { changeId, matchCount: matches.length, projectRootIdentities: matches.map((m) => m.record.projectRootIdentity) },
+        `变更事务 '${changeId}' 在 ${matches.length} 个项目中存在同名记录——请为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档冲突的旧事务后重试`,
+        { changeId, matchCount: matches.length, projectRootIdentities: matches.map((match) => match.record.projectRootIdentity) },
       );
     }
-    const first = matches[0]!;
-    return { store: new NodeChangeStore(root, first.record.projectRootIdentity, first.projectDirectory), record: first.record };
+    return matches[0]!;
   }
 
   static async openOwnedChange(changeId: string, projectRootIdentity: string): Promise<OpenChangeResult | null> {
@@ -122,14 +239,59 @@ export class NodeChangeStore implements ChangeRepository {
     return path.join(this.projectDirectory, safeId(changeId));
   }
 
-  private transactionFile(changeId: string): string {
-    return path.join(this.changeDirectory(changeId), 'transaction.json');
+  private manifestFile(changeId: string): string {
+    return path.join(this.changeDirectory(changeId), 'manifest.json');
+  }
+
+  private headFile(changeId: string): string {
+    return path.join(this.changeDirectory(changeId), 'record-head.json');
+  }
+
+  private recordFile(changeId: string, recordVersion: number): string {
+    return path.join(this.changeDirectory(changeId), 'records', versionFile(recordVersion));
+  }
+
+  private async readV2(changeId: string): Promise<ChangeRecord | null> {
+    const directory = this.changeDirectory(changeId);
+    if (!(await isDirectory(directory))) return null;
+    const legacyTransaction = path.join(directory, 'transaction.json');
+    const manifestPath = this.manifestFile(changeId);
+    if (!(await exists(manifestPath))) {
+      if (await exists(legacyTransaction)) throw unsupported(changeId, legacyTransaction);
+      throw corrupt(`V2 manifest 缺失：${manifestPath}`, { path: manifestPath, changeId });
+    }
+    const manifestRead = await readJsonRecord<ChangeManifest>(manifestPath);
+    if (manifestRead === null) throw corrupt(`V2 manifest 缺失：${manifestPath}`, { path: manifestPath, changeId });
+    const manifest = validateManifest(manifestRead.value, changeId, manifestPath);
+    if (!sameRootIdentity(manifest.projectRootIdentity, this.rootIdentity)) {
+      throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', `变更事务 '${changeId}' 不属于当前项目`, {
+        changeId,
+        expected: this.rootIdentity,
+        actual: manifest.projectRootIdentity,
+      });
+    }
+    const headPath = this.headFile(changeId);
+    const headRead = await readJsonRecord<RecordHead>(headPath);
+    if (headRead === null) throw corrupt(`record head 缺失：${headPath}`, { path: headPath, changeId });
+    const head = validateHead(headRead.value, changeId, headPath);
+    const recordPath = this.recordFile(changeId, head.recordVersion);
+    const recordRead = await readJsonRecord<ChangeRecord>(recordPath);
+    if (recordRead === null) throw corrupt(`head 指向的 record 缺失：${recordPath}`, { path: recordPath, changeId });
+    validateRecord(recordRead.value, changeId, manifest.projectRootIdentity, recordPath, head);
+    if (recordRead.identity.sha256.toLowerCase() !== head.recordSha256.toLowerCase()) {
+      throw corrupt(`record SHA-256 与 head 不匹配：${recordPath}`, {
+        path: recordPath,
+        changeId,
+        expectedSha256: head.recordSha256,
+        actualSha256: recordRead.identity.sha256,
+      });
+    }
+    return clone(recordRead.value);
   }
 
   async create(record: ChangeRecord): Promise<void> {
-    if (record.projectRootIdentity !== this.rootIdentity) {
-      throw new Error('change project identity mismatch');
-    }
+    if (record.projectRootIdentity !== this.rootIdentity) throw new Error('change project identity mismatch');
+    if (record.formatVersion !== 2 || record.recordVersion !== 0) throw new AuthoringOperationError('CHANGE_STORE_FORMAT_UNSUPPORTED', '新 change 必须使用 V2 record');
     const requested = record.changeId;
     let candidate = requested;
     for (;;) {
@@ -137,12 +299,24 @@ export class NodeChangeStore implements ChangeRepository {
       try {
         await fs.mkdir(directory, { recursive: false });
         record.changeId = candidate;
-        await writeJson(path.join(directory, 'transaction.json'), record);
-        await writeJson(path.join(directory, 'working-files.json'), {
-          changeId: record.changeId,
-          workingRevision: record.workingRevision,
-          files: record.workingFiles,
-        });
+        await fs.mkdir(path.join(directory, 'records'), { recursive: true });
+        await fs.mkdir(path.join(directory, 'journals'), { recursive: true });
+        await fs.mkdir(path.join(directory, 'evidence'), { recursive: true });
+        await fs.mkdir(path.join(directory, 'traces'), { recursive: true });
+        await fs.mkdir(path.join(directory, 'invocations'), { recursive: true });
+        await fs.mkdir(path.join(directory, 'capsules'), { recursive: true });
+        await createJsonRecord(path.join(directory, 'manifest.json'), {
+          formatVersion: 2,
+          changeId: candidate,
+          projectRootIdentity: record.projectRootIdentity,
+          createdAt: new Date().toISOString(),
+        } satisfies ChangeManifest);
+        const recordIdentity = await createJsonRecord(this.recordFile(candidate, record.recordVersion), record);
+        await createJsonRecord(path.join(directory, 'record-head.json'), {
+          formatVersion: 2,
+          recordVersion: record.recordVersion,
+          recordSha256: recordIdentity.sha256,
+        } satisfies RecordHead);
         return;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -152,43 +326,77 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async read(changeId: string): Promise<ChangeRecord | null> {
-    const record = await readJson<ChangeRecord>(this.transactionFile(changeId));
+    const record = await this.readV2(changeId);
     return record === null ? null : clone(record);
   }
 
-  async write(record: ChangeRecord): Promise<void> {
+  async write(record: ChangeRecord): Promise<void>;
+  async write(record: ChangeRecord, precondition: ChangeWritePrecondition): Promise<void>;
+  async write(record: ChangeRecord, precondition?: ChangeWritePrecondition): Promise<void> {
     if (record.projectRootIdentity !== this.rootIdentity) throw new Error('change project identity mismatch');
-    await writeJson(this.transactionFile(record.changeId), record);
-    await writeJson(path.join(this.changeDirectory(record.changeId), 'working-files.json'), {
-      changeId: record.changeId,
-      workingRevision: record.workingRevision,
-      files: record.workingFiles,
-    });
+    if (precondition === undefined) {
+      throw new AuthoringOperationError('CHANGE_RECORD_CONFLICT', 'V2 record write 必须声明 expectedRecordVersion 与 expectedStatus');
+    }
+    const current = await this.read(record.changeId);
+    if (current === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${record.changeId}`);
+    if (current.recordVersion !== precondition.expectedRecordVersion
+      || (precondition.expectedStatus !== undefined && current.status !== precondition.expectedStatus)
+      || record.recordVersion !== current.recordVersion + 1) {
+      throw conflict(record.changeId, precondition, current);
+    }
+    const recordPath = this.recordFile(record.changeId, record.recordVersion);
+    let recordIdentity;
+    try {
+      recordIdentity = await createJsonRecord(recordPath, record);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw conflict(record.changeId, precondition, current);
+      throw error;
+    }
+    await replaceJsonRecord(this.headFile(record.changeId), {
+      formatVersion: 2,
+      recordVersion: record.recordVersion,
+      recordSha256: recordIdentity.sha256,
+    } satisfies RecordHead);
   }
 
   async writeEvidence(changeId: string, evidenceId: string, value: unknown): Promise<void> {
-    await writeJson(path.join(this.changeDirectory(changeId), 'evidence', `${safeId(evidenceId)}.json`), value);
+    await createJsonRecord(path.join(this.changeDirectory(changeId), 'evidence', `${safeId(evidenceId)}.json`), value);
   }
 
   async readEvidence(changeId: string, evidenceId: string): Promise<unknown | null> {
-    return readJson(path.join(this.changeDirectory(changeId), 'evidence', `${safeId(evidenceId)}.json`));
+    const value = await readJsonRecord<unknown>(path.join(this.changeDirectory(changeId), 'evidence', `${safeId(evidenceId)}.json`));
+    return value?.value ?? null;
   }
 
   async writeJournal(changeId: string, value: unknown): Promise<void> {
     const journalId = `${Date.now()}-${crypto.randomUUID()}`;
-    await writeJson(path.join(this.changeDirectory(changeId), 'journals', `${journalId}.json`), value);
+    await createJsonRecord(path.join(this.changeDirectory(changeId), 'journals', `${journalId}.json`), value);
+  }
+
+  async readLatestJournal(changeId: string): Promise<unknown | null> {
+    const directory = path.join(this.changeDirectory(changeId), 'journals');
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
+    const latest = files.at(-1);
+    if (latest === undefined) return null;
+    const value = await readJsonRecord<unknown>(path.join(directory, latest.name));
+    return value?.value ?? null;
   }
 
   async writeDiff(changeId: string, value: unknown): Promise<void> {
-    await writeJson(path.join(this.changeDirectory(changeId), 'diff.json'), value);
+    await replaceJsonRecord(path.join(this.changeDirectory(changeId), 'diff.json'), value);
   }
 
   async writeTrace(changeId: string, traceId: string, value: unknown): Promise<void> {
-    await writeJson(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`), value);
+    await createJsonRecord(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`), value);
   }
 
   async readTrace(changeId: string, traceId: string): Promise<unknown | null> {
-    return readJson(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`));
+    const value = await readJsonRecord<unknown>(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`));
+    return value?.value ?? null;
   }
 
   async writeInvocation(changeId: string, record: InvocationRecord): Promise<string> {
@@ -201,8 +409,8 @@ export class NodeChangeStore implements ChangeRepository {
       const match = /^(\d+)-[^/]+\.json$/.exec(entry.name);
       if (match !== null) nextSequence = Math.max(nextSequence, Number(match[1]));
     }
-    const file = path.join(directory, `${String(nextSequence + 1).padStart(8, '0')}-${record.invocationId}.json`);
-    await writeJson(file, record);
+    const file = path.join(directory, `${String(nextSequence + 1).padStart(8, '0')}-${record.invocationId}-${crypto.randomUUID()}.json`);
+    await createJsonRecord(file, record);
     return record.invocationId;
   }
 
@@ -212,13 +420,11 @@ export class NodeChangeStore implements ChangeRepository {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     });
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
     const records: InvocationRecord[] = [];
     for (const file of files) {
-      const record = await readJson<InvocationRecord>(path.join(directory, file.name));
-      if (record !== null) records.push(record);
+      const value = await readJsonRecord<InvocationRecord>(path.join(directory, file.name));
+      if (value !== null) records.push(value.value);
     }
     return records;
   }
@@ -229,32 +435,18 @@ export class NodeChangeStore implements ChangeRepository {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     });
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
     const values: unknown[] = [];
     for (const file of files) {
-      const value = await readJson<unknown>(path.join(directory, file.name));
-      if (value !== null) values.push(value);
+      const value = await readJsonRecord<unknown>(path.join(directory, file.name));
+      if (value !== null) values.push(value.value);
     }
     return values;
   }
 
   async readDiff(changeId: string): Promise<unknown | null> {
-    return readJson(path.join(this.changeDirectory(changeId), 'diff.json'));
-  }
-
-  async readLatestJournal(changeId: string): Promise<unknown | null> {
-    const directory = path.join(this.changeDirectory(changeId), 'journals');
-    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    });
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-      .sort((left, right) => left.name.localeCompare(right.name));
-    const latest = files.at(-1);
-    return latest === undefined ? null : readJson(path.join(directory, latest.name));
+    const value = await readJsonRecord<unknown>(path.join(this.changeDirectory(changeId), 'diff.json'));
+    return value?.value ?? null;
   }
 
   async writeCapsulePayload(changeId: string, capsuleId: string, payload: unknown): Promise<ArtifactIdentity> {
@@ -263,32 +455,9 @@ export class NodeChangeStore implements ChangeRepository {
       throw new AuthoringOperationError('INVALID_REQUEST', 'delivery capsule payload 不得包含 artifactIdentity');
     }
     const capsuleDirectory = path.join(this.changeDirectory(changeId), 'capsules', safeId(capsuleId));
-    await fs.mkdir(capsuleDirectory, { recursive: true });
     const payloadPath = path.join(capsuleDirectory, 'payload.json');
-    const payloadText = `${JSON.stringify(payload, null, 2)}\n`;
-    const temporaryPayload = path.join(capsuleDirectory, `.payload-${crypto.randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(temporaryPayload, payloadText, 'utf8');
-      await fs.rename(temporaryPayload, payloadPath);
-    } catch (error) {
-      await fs.rm(temporaryPayload, { force: true });
-      throw error;
-    }
-    const bytes = await fs.readFile(payloadPath);
-    const identity: ArtifactIdentity = {
-      path: payloadPath,
-      bytes: bytes.byteLength,
-      sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-    };
-    const identityPath = path.join(capsuleDirectory, 'identity.json');
-    const temporaryIdentity = path.join(capsuleDirectory, `.identity-${crypto.randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(temporaryIdentity, `${JSON.stringify(identity, null, 2)}\n`, 'utf8');
-      await fs.rename(temporaryIdentity, identityPath);
-    } catch (error) {
-      await fs.rm(temporaryIdentity, { force: true });
-      throw error;
-    }
-    return identity;
+    const artifactIdentity = await replaceJsonRecord(payloadPath, payload);
+    await replaceJsonRecord(path.join(capsuleDirectory, 'identity.json'), artifactIdentity);
+    return artifactIdentity;
   }
 }

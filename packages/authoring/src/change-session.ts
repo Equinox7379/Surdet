@@ -2,6 +2,7 @@ import type {
   ChangeRecord,
   ChangeRepository,
   ChangeStatus,
+  ChangeWritePrecondition,
   ChangeIntentMetadata,
   EvidenceFreshness,
   ProjectWriteStorage,
@@ -46,7 +47,22 @@ export class InMemoryChangeRepository implements ChangeRepository {
     return record === undefined ? null : clone(record);
   }
 
-  async write(record: ChangeRecord): Promise<void> {
+  async write(record: ChangeRecord): Promise<void>;
+  async write(record: ChangeRecord, precondition: ChangeWritePrecondition): Promise<void>;
+  async write(record: ChangeRecord, precondition?: ChangeWritePrecondition): Promise<void> {
+    const current = this.records.get(record.changeId);
+    if (current === undefined) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${record.changeId}`);
+    const expected = precondition ?? { expectedRecordVersion: current.recordVersion, expectedStatus: current.status };
+    if (current.recordVersion !== expected.expectedRecordVersion
+      || (expected.expectedStatus !== undefined && current.status !== expected.expectedStatus)) {
+      throw recordConflict(record.changeId, expected, current);
+    }
+    if (record.recordVersion !== current.recordVersion + 1) {
+      throw recordConflict(record.changeId, {
+        expectedRecordVersion: current.recordVersion + 1,
+        expectedStatus: current.status,
+      }, current);
+    }
     this.records.set(record.changeId, clone(record));
   }
 
@@ -61,6 +77,11 @@ export class InMemoryChangeRepository implements ChangeRepository {
 
   async writeJournal(changeId: string, value: unknown): Promise<void> {
     this.journals.set(changeId, clone(value));
+  }
+
+  async readLatestJournal(changeId: string): Promise<unknown | null> {
+    const value = this.journals.get(changeId);
+    return value === undefined ? null : clone(value);
   }
 }
 
@@ -98,6 +119,8 @@ export async function beginChange(
   // 跨 project / process / restart 全局可解析，杜绝共享 data dir 下的 chg_0001 撞号。
   const record: ChangeRecord = {
     changeId: `chg_${String(changeSequence).padStart(4, '0')}_${changeIdentityRandom()}`,
+    formatVersion: 2,
+    recordVersion: 0,
     projectRootIdentity: snapshot.rootIdentity,
     baseRevision: snapshot.revision,
     workingRevision: 0,
@@ -147,6 +170,36 @@ function assertOpen(change: ChangeSession): void {
   }
 }
 
+function recordConflict(
+  changeId: string,
+  precondition: ChangeWritePrecondition,
+  actual: ChangeRecord,
+): AuthoringOperationError {
+  return new AuthoringOperationError(
+    'CHANGE_RECORD_CONFLICT',
+    `变更事务 '${changeId}' 的记录版本已变化：期望 ${precondition.expectedRecordVersion}，实际 ${actual.recordVersion}`,
+    {
+      changeId,
+      expectedRecordVersion: precondition.expectedRecordVersion,
+      actualRecordVersion: actual.recordVersion,
+      expectedStatus: precondition.expectedStatus,
+      actualStatus: actual.status,
+      retryDisposition: 'after-refresh',
+      repairAction: '重新 session.describe、change.diff 或重新打开 change 后，使用同一 operationId 重试',
+    },
+  );
+}
+
+async function persistRecord(change: ChangeSession, next: ChangeRecord): Promise<void> {
+  const current = change.record;
+  next.recordVersion = current.recordVersion + 1;
+  await change.repository.write(next, {
+    expectedRecordVersion: current.recordVersion,
+    expectedStatus: current.status,
+  });
+  Object.assign(current, next);
+}
+
 export interface OperationOutcome<T> {
   result: T;
   workingFiles?: Record<string, string>;
@@ -175,8 +228,7 @@ export async function runOperation<T>(
   if (outcome.changed !== false) next.workingRevision += 1;
   next.operations[input.operationId] = { requestHash, result: outcome.result };
   next.latestValidation = undefined;
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
   return outcome.result;
 }
 
@@ -191,8 +243,7 @@ export async function recordSimulationEvidence(
     status: input.status,
     workingRevision: change.record.workingRevision,
   };
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 }
 
 export async function recordRuntimeTrace(
@@ -205,8 +256,7 @@ export async function recordRuntimeTrace(
     ...(next.runtimeTraces ?? []).filter((trace) => trace.traceId !== input.traceId),
     { traceId: input.traceId, status: input.status, workingRevision: change.record.workingRevision },
   ];
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 }
 
 export async function recordDiffEvidence(
@@ -219,8 +269,7 @@ export async function recordDiffEvidence(
     evidenceId: input.evidenceId,
     workingRevision: change.record.workingRevision,
   };
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 }
 
 export function evidenceFreshness(
@@ -252,8 +301,7 @@ export async function recordValidation(
     errors: input.errors,
     workingRevision: change.record.workingRevision,
   };
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 }
 
 export async function rollbackChange(change: ChangeSession): Promise<ChangeRecord> {
@@ -261,8 +309,7 @@ export async function rollbackChange(change: ChangeSession): Promise<ChangeRecor
   const next = clone(change.record);
   next.status = 'ROLLED_BACK';
   next.workingFiles = { ...next.baseContents };
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
   return change.record;
 }
 
@@ -284,8 +331,7 @@ interface CommitJournal {
 async function markStale(change: ChangeSession): Promise<void> {
   const next = clone(change.record);
   next.status = 'STALE';
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 }
 
 function changedPaths(record: ChangeRecord): string[] {
@@ -394,8 +440,7 @@ export async function commitChange(
   await change.repository.writeJournal(change.record.changeId, journal);
   const next = clone(change.record);
   next.status = 'COMMITTED';
-  await change.repository.write(next);
-  Object.assign(change.record, next);
+  await persistRecord(change, next);
 
   for (const entry of journal.files) {
     try {
@@ -413,5 +458,6 @@ export type {
   ChangeRecord,
   ChangeRepository,
   ChangeStatus,
+  ChangeWritePrecondition,
   EvidenceFreshness,
 } from './contracts.js';
