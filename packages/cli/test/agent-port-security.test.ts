@@ -5,7 +5,9 @@ import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
+import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
 const temporaryRoots: string[] = [];
@@ -200,13 +202,19 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     expect(opened).not.toBeNull();
     const poisoned = {
       ...opened!.record,
+      recordVersion: opened!.record.recordVersion + 1,
       workingRevision: 1,
       workingFiles: {
         ...opened!.record.workingFiles,
         'content/scenario/start.gal': '@scene start\n@choice\n  继续 @set affinity 2 -> @goto start\n@end\n',
       },
     };
-    await opened!.store.write(poisoned);
+    await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+      await leasedStore.write(poisoned, {
+        expectedRecordVersion: opened!.record.recordVersion,
+        expectedStatus: 'OPEN',
+      });
+    });
     const beforeProject = projectBytes(root);
     const unavailableRoot = `${root}-unavailable`;
     fs.renameSync(root, unavailableRoot);
@@ -304,6 +312,55 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     expectFailure(result, 'PROJECT_CHANGED_SINCE_BEGIN');
     expect(fs.readFileSync(externalPath, 'utf8')).toBe('@scene external\n@end\n# external change\n');
     expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
+    await session.close();
+  });
+
+  it('returns PROJECT_BUSY without commit side effects when a live project lease is held', async () => {
+    const root = makeProject('project-busy');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    const changeId = await beginWithScene(session, 'project-busy');
+    await freshEvidence(session);
+    const storage = await NodeProjectStorage.open(root);
+    const leaseManager = new NodeLocalLeaseManager(data);
+    const beforeProject = projectBytes(root);
+    const beforeOpened = await NodeChangeStore.openByChangeId(changeId);
+    expect(beforeOpened).not.toBeNull();
+    const beforeRecord = beforeOpened!.record;
+    const beforeJournal = await beforeOpened!.store.readLatestJournal(changeId);
+    const service = new AuthoringService();
+    const startedAt = Date.now();
+
+    await leaseManager.withProjectLease(storage.rootIdentity, async () => {
+      let busyError: unknown;
+      try {
+        await service.commit(changeId);
+      } catch (error) {
+        busyError = error;
+      }
+      expect(busyError).toMatchObject({
+        code: 'PROJECT_BUSY',
+        details: {
+          scope: 'project',
+          holder: {
+            pid: process.pid,
+            hostname: expect.any(String),
+            acquiredAt: expect.any(String),
+            heartbeatAt: expect.any(String),
+          },
+          retryAfterMs: expect.any(Number),
+        },
+      });
+      expect((busyError as { details?: Record<string, unknown> }).details).not.toHaveProperty('ownerToken');
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    const afterOpened = await NodeChangeStore.openByChangeId(changeId);
+    expect(afterOpened).not.toBeNull();
+    expect(afterOpened!.record).toEqual(beforeRecord);
+    expect(await afterOpened!.store.readLatestJournal(changeId)).toEqual(beforeJournal);
+    expect(projectBytes(root)).toEqual(beforeProject);
     await session.close();
   });
 
