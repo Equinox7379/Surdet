@@ -207,6 +207,21 @@ interface PreviewFont {
   version: string;
 }
 
+export function clonePreviewFontsForTransfer(
+  fonts: Partial<Record<FontRole, PreviewFont>>,
+): Partial<Record<FontRole, PreviewFont>> {
+  const cloned: Partial<Record<FontRole, PreviewFont>> = {};
+  for (const role of ['body', 'title', 'ui'] as FontRole[]) {
+    const font = fonts[role];
+    if (font === undefined) continue;
+    cloned[role] = {
+      ...font,
+      buffer: font.buffer.slice(0),
+    };
+  }
+  return cloned;
+}
+
 interface PreviewImage {
   buffer: ArrayBuffer;
   mime: string;
@@ -501,7 +516,8 @@ export function renderPreviewPanel(container: HTMLElement): void {
       return;
     }
     // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
-    const fonts = await readProjectFonts();
+    const cachedFonts = await readProjectFonts();
+    const fonts = clonePreviewFontsForTransfer(cachedFonts);
     const assets = await readProjectImages();
     const timelines = await readProjectTimelines();
     if (revision !== sendRevision) return;
