@@ -897,3 +897,60 @@ STAGING_AREA = EMPTY
 ```
 
 已更新 `docs/known-limitations.md`，仅把 DSL/evidence 路径的已验证事实写入限制项，并保留无 seed 普通解释器与未覆盖随机路径不等于全链路确定性的边界。交付报告与本任务书将在同一 docs-only 提交中落盘；该提交的最终 HEAD 不在本条记录写入，避免预填未来身份。
+
+### 2026-08-24T16:38:48+08:00 — Independent review return / post-review closure
+
+独立经理复审原结论：
+
+```text
+INDEPENDENT_MANAGER_REVIEW_PRE_REVIEW = NEEDS_FIX
+PRODUCTION_IMPLEMENTATION_MAINLINE = ACCEPTED
+REVIEW_SCOPE = test contract only
+```
+
+本轮严格限制为 CLI 非 JSON seed 可见性、CLI evidence seed 固定结果、Core 旧 random 快照兼容与不可恢复随机源的 fail-loud 原子性。没有修改 RNG 算法、Authoring simulation、Scene ID、choice、duplicate validation 或其它生产层。
+
+```text
+POST_REVIEW_CODE_EVIDENCE_HEAD = cd19ae125ed923bdd346b939799a3b46a2d1add2
+POST_REVIEW_CODE_EVIDENCE_PARENT = 52767e357ef3dd4cd1da06378eda6ac0a7e2788c
+POST_REVIEW_CODE_COMMIT = fix(engine): close Wave 3 seed contracts
+POST_REVIEW_CODE_SCOPE = packages/cli/src/simulate.ts; packages/cli/test/evidence-seed-contract.test.ts; packages/core/test/interpreter-save.test.ts
+```
+
+聚焦验证实际命令与结果：
+
+```text
+npm run test -w @surdet/core -- test/interpreter-save.test.ts = exit 0; 1 file / 21 tests
+npm run test -w @surdet/cli -- test/evidence-seed-contract.test.ts test/simulate.test.ts = exit 0; 2 files / 15 tests
+npm run typecheck -w @surdet/core = exit 0
+npm run build -w @surdet/core = exit 0
+npm run typecheck -w @surdet/cli = exit 0
+npm run build -w @surdet/cli = exit 0
+npm run test -w @surdet/cli = exit 0; 22 files / 179 tests
+```
+
+post-review 唯一授权的第二次、也是本 Wave 最后一次聚合门禁：
+
+```text
+PRE_REVIEW_VERIFY_ALL = HISTORICAL_GREEN
+PRE_REVIEW_VERIFY_ALL_ARTIFACT = <local-path>
+PRE_REVIEW_VERIFY_ALL_BYTES = 58476
+PRE_REVIEW_VERIFY_ALL_SHA256 = B1CA024C929CEB93BE9230C9858D506C8417E5D5E32DA13C718C6606441B5409
+
+POST_REVIEW_VERIFY_ALL = PASS
+POST_REVIEW_VERIFY_ALL_ARTIFACT = <local-path>
+POST_REVIEW_VERIFY_ALL_BYTES = 58652
+POST_REVIEW_VERIFY_ALL_SHA256 = 2C5B459E78B99D862672E9C663B4CBDE0479BA201C7D53967BEEE6D393B5018A
+TOTAL_VERIFY_ALL_RUNS = 2
+RECOVERY_VERIFY_ALL = NOT_RUN
+```
+
+post-review 门禁运行前真实身份为 `HEAD=cd19ae125ed923bdd346b939799a3b46a2d1add2`、`surdet/main=e636ac72b20ec8483c3131c4d18a14f43b81794e`、`AHEAD_BEHIND=6/0`、tracked worktree clean、staging area empty。此条记录完成时尚未创建本次文档提交，不能预填未来 docs-only HEAD。
+
+```text
+POST_REVIEW_TEST_CONTRACT = PASS
+POST_REVIEW_VERIFY_ALL = PASS
+NEXT_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+PUSH = NOT_PERFORMED
+WAVE_5 = NOT_STARTED
+```
