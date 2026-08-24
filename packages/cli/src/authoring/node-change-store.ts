@@ -685,8 +685,60 @@ export class NodeChangeStore implements ChangeRepository {
     }
     const capsuleDirectory = path.join(this.changeDirectory(changeId), 'capsules', safeId(capsuleId));
     const payloadPath = path.join(capsuleDirectory, 'payload.json');
-    const artifactIdentity = await replaceJsonRecord(payloadPath, payload);
+    // create-only：随机 capsuleId 理论碰撞时 fail-loud，绝不覆盖已封存 artifact。
+    const artifactIdentity = await createJsonRecord(payloadPath, payload);
     await replaceJsonRecord(path.join(capsuleDirectory, 'identity.json'), artifactIdentity);
     return artifactIdentity;
+  }
+
+  async readCapsulePayload(
+    changeId: string,
+    capsuleId: string,
+    expectedSha256: string,
+  ): Promise<{ payload: unknown; identity: ArtifactIdentity }> {
+    assertCanonicalArtifactId(changeId, 'changeId');
+    assertCanonicalArtifactId(capsuleId, 'capsuleId');
+    if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+      throw new AuthoringOperationError('INVALID_REQUEST', `artifactSha256 必须是 64 位小写十六进制：${changeId}/${capsuleId}`);
+    }
+    // 派生路径必须落在当前 project namespace 内；非法 ID 已在上方拒绝，不做静默替换。
+    const capsuleDirectory = path.join(this.changeDirectory(changeId), 'capsules', safeId(capsuleId));
+    const payloadPath = path.join(capsuleDirectory, 'payload.json');
+    const loaded = await readJsonRecord<unknown>(payloadPath);
+    if (loaded === null) {
+      throw new AuthoringOperationError('OBJECT_NOT_FOUND', `delivery capsule 不存在：${changeId}/${capsuleId}`, {
+        changeId,
+        capsuleId,
+      });
+    }
+    const sidecar = await readJsonRecord<ArtifactIdentity>(path.join(capsuleDirectory, 'identity.json'));
+    if (sidecar === null) {
+      throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', `delivery capsule 缺少 identity sidecar：${changeId}/${capsuleId}`);
+    }
+    const sameWindowsPath = (left: string, right: string): boolean => (
+      process.platform === 'win32'
+        ? path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase()
+        : path.normalize(left) === path.normalize(right)
+    );
+    if (!sameWindowsPath(sidecar.value.path, payloadPath)
+      || sidecar.value.bytes !== loaded.identity.bytes
+      || sidecar.value.sha256 !== loaded.identity.sha256
+      || loaded.identity.sha256 !== expectedSha256) {
+      throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', `delivery capsule 身份不成立：${changeId}/${capsuleId}`, {
+        changeId,
+        capsuleId,
+        expectedSha256,
+        actualSha256: loaded.identity.sha256,
+        identityPath: sidecar.value.path,
+      });
+    }
+    return { payload: loaded.value, identity: sidecar.value };
+  }
+}
+
+/** capsule/plan 外部引用的规范 artifact ID：只允许安全字符，先校验后拼路径，杜绝别名碰撞。 */
+export function assertCanonicalArtifactId(value: string, field: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', `${field} 含有非法字符：${value}`);
   }
 }

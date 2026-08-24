@@ -1,4 +1,5 @@
 import type { CompiledScene } from '@surdet/core';
+import type { RecordedOperation } from './composition-contracts.js';
 
 export type SceneEol = '\r\n' | '\n' | '\r' | '';
 
@@ -129,7 +130,7 @@ export interface ChangeRecord {
   baseFiles: Record<string, { sha256: string }>;
   baseContents: Record<string, string>;
   workingFiles: Record<string, string>;
-  operations: Record<string, { requestHash: string; result: unknown }>;
+  operations: Record<string, RecordedOperation>;
   latestValidation?: { workingRevision: number; evidenceId: string; errors: number };
   intent?: ChangeIntentMetadata;
   latestSimulation?: {

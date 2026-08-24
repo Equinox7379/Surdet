@@ -4,27 +4,33 @@ import {
   AUTHORING_CONTRACT_VERSION,
   DELIVERY_CAPSULE_VERSION,
   AuthoringOperationError,
+  buildCompositionManifest,
+  buildObjectIndex,
   evidenceFreshness,
   inspectTransactionRecovery,
   loadProjectSnapshot,
   type AutonomyPolicy,
   type ChangeRecord,
   type EvidenceFreshness,
+  type ManifestObjectFact,
+  type ManifestObjectFacts,
+  type OperationInvocationFact,
   type RecoveryInspection,
 } from '@surdet/authoring';
 import { NodeChangeStore, type ArtifactIdentity } from '../authoring/node-change-store.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
+import { ChangeRecordProjectStorage } from '../authoring/working-project-storage.js';
 import type { AgentPortSession } from './session.js';
 import type { InvocationRecord } from './invocation-ledger.js';
 
 export interface DeliveryCapsulePayload {
-  capsuleVersion: '1.0.0';
+  capsuleVersion: '2.0.0';
   capsuleId: string;
   generatedAt: string;
   sessionId: string;
   policy: AutonomyPolicy;
-  contractVersion: '1.0.0';
+  contractVersion: typeof AUTHORING_CONTRACT_VERSION;
   projectIdentity: string;
   baseProjectRevision: string;
   currentProjectRevision: string;
@@ -53,6 +59,11 @@ export interface DeliveryCapsulePayload {
     expectedByPolicy: boolean;
     beforeRevision: string;
     afterRevision: string;
+  };
+  composition: {
+    eligibility: 'ready' | 'unavailable';
+    reasons: Array<{ code: string; operationId?: string; message: string }>;
+    manifest?: unknown;
   };
 }
 
@@ -186,6 +197,47 @@ function objectDiffWithFreshness(diff: unknown, freshness: EvidenceFreshness): u
   return isRecord(diff) ? { ...diff, freshness } : { freshness };
 }
 
+function semanticEntries(diff: unknown): unknown[] {
+  return isRecord(diff) && Array.isArray(diff['semantic']) ? diff['semantic'] : [];
+}
+
+type SemanticDiffEntry = import('@surdet/authoring').ChangeDiff['semantic'][number];
+
+function isSemanticEntry(value: unknown): value is SemanticDiffEntry {
+  return isRecord(value) && typeof value['kind'] === 'string' && typeof value['operationId'] === 'string';
+}
+
+/** 从对象索引投影最小 manifest facts；asset refs 单列，供依赖闭包判定。 */
+function projectObjectFacts(baseSnapshot: Awaited<ReturnType<typeof loadProjectSnapshot>>, workingSnapshot: Awaited<ReturnType<typeof loadProjectSnapshot>>): ManifestObjectFacts {
+  const toFact = (object: { objectRef: string; references: string[]; fingerprint?: string }): ManifestObjectFact => ({
+    objectRef: object.objectRef,
+    references: [...object.references],
+    ...(object.fingerprint === undefined ? {} : { fingerprint: object.fingerprint }),
+  });
+  const baseIndex = buildObjectIndex(baseSnapshot);
+  const workingIndex = buildObjectIndex(workingSnapshot);
+  const assetRefs = (index: ReturnType<typeof buildObjectIndex>): string[] =>
+    index.objects.filter((object) => object.objectRef.startsWith('asset:')).map((object) => object.objectRef);
+  return {
+    baseObjects: baseIndex.objects.map(toFact),
+    workingObjects: workingIndex.objects.map(toFact),
+    baseAssetRefs: assetRefs(baseIndex),
+    workingAssetRefs: assetRefs(workingIndex),
+  };
+}
+
+/** invocation ledger → 最小成功 invocation fact 投影（只保留带 operationId 的成功记录）。 */
+function successInvocationFacts(records: readonly InvocationRecord[]): OperationInvocationFact[] {
+  return records
+    .filter((record) => record.ok && record.operationId !== undefined)
+    .map((record) => ({
+      capabilityId: record.capability,
+      operationId: record.operationId!,
+      inputSha256: record.inputSha256,
+      ok: true,
+    }));
+}
+
 export async function generateDeliveryCapsule(
   session: AgentPortSession,
   label?: string,
@@ -248,6 +300,17 @@ export async function generateDeliveryCapsule(
 
       const capsuleId = crypto.randomUUID();
       const beforeRevision = record.status === 'COMMITTED' ? record.baseRevision : snapshot.revision;
+      // v2：working/base 双快照 → 对象事实 → 确定性 manifest；unavailable 仍封存审计 capsule。
+      const hasher = { sha256: async (text: string) => hashText(text) };
+      const workingSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'working'), hasher);
+      const baseSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'base'), hasher);
+      const composition = await buildCompositionManifest({
+        record,
+        projectIdentity: session.projectIdentity,
+        invocationFacts: successInvocationFacts(invocations),
+        semanticDiff: semanticEntries(diff).filter(isSemanticEntry),
+        objectFacts: projectObjectFacts(baseSnapshot, workingSnapshot),
+      }, hasher);
       const payload: DeliveryCapsulePayload = {
         capsuleVersion: DELIVERY_CAPSULE_VERSION,
         capsuleId,
@@ -287,6 +350,16 @@ export async function generateDeliveryCapsule(
           expectedByPolicy: session.policy === 'apply' && isCommittedMutation,
           beforeRevision,
           afterRevision: snapshot.revision,
+        },
+        // integrationProvenance 的接口位置在 Task 6 从 sealed plan + record.integration 补全。
+        composition: {
+          eligibility: composition.eligibility,
+          reasons: composition.reasons.map((reason) => ({
+            code: reason.code,
+            ...(reason.operationId === undefined ? {} : { operationId: reason.operationId }),
+            message: reason.message,
+          })),
+          ...(composition.eligibility === 'ready' ? { manifest: composition.manifest } : {}),
         },
       };
       const artifactIdentity = await leasedStore.writeCapsulePayload(changeId, capsuleId, payload);

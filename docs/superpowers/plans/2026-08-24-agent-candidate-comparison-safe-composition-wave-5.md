@@ -2463,3 +2463,37 @@ TESTS=verify:docs / verify:hygiene / git diff checks are required before taskboo
 PUSH=NOT_AUTHORIZED
 STOP=READY_FOR_EXECUTION_HANDOFF
 ~~~
+
+### 2026-08-24T16:22Z — Task 0 baseline and real red
+
+~~~text
+TASK=0_BASELINE_AND_REAL_RED
+START_HEAD=31ed8f2d0e4aa2d0f3d272d1f31c32a4757ebcd0
+END_HEAD=31ed8f2d0e4aa2d0f3d272d1f31c32a4757ebcd0 (Task 0 RED 不提交)
+BASELINE=branch=main; HEAD=31ed8f2(taskbook commit); spec db49f53 ancestor=yes; surdet/main=31b9376; ahead/behind=2/0; tracked=CLEAN; staging=EMPTY; tracked .log=0; known untracked only; node=v24.15.0 npm=11.12.1
+WAVE5_ROOT=C:\Users\Equinox\AppData\Local\Temp\surdet-wave5-xKb3UzfX
+FILES_CHANGED=packages/authoring/test/change-session.test.ts(+Wave5 operation capture describe, 4 tests); packages/authoring/test/composition-manifest.test.ts(new, 5 tests); packages/cli/test/agent-port-capsule.test.ts(+capsule v2/composition assertions in stale-evidence test)
+RED_AUTHORING=exit 1; total=9 passed=8 failed=1; FAIL=persists the exact normalizedInput for a successful mutation(expected normalizedInput field missing); composition-manifest.test.ts collection failure(Cannot find module ../src/composition-manifest.js)=manifest gap
+RED_CLI=exit 1; total=5 passed=4 failed=1; FAIL=marks all prior evidence stale after a later mutation(expected '1.0.0' to be '2.0.0')=capsule v2 gap
+BUILD=npm run build -w @surdet/authoring exit 0(测试不在 build 范围，不算 GREEN)
+ARTIFACTS=task0-red-authoring.json bytes=4612 sha256=2273d0b7b00ec55ebdfddea5ac42a62e376a0dfdb20464c7d783dd97bf958f96; task0-red-cli.json bytes=2643 sha256=1f22b1fd28bcc58f230db6b6098651835ffc8596451580fa9b000f2916570461
+HARNESS_INVALID=NO
+GIT=NO_COMMIT(Task 0 RED 按任务书不单独提交；仅修改三个白名单测试文件，留待 Task 1 一并提交)
+STOP=TASK_1_IMPLEMENT_NORMALIZED_INPUT_AND_CAPSULE_V2
+~~~
+
+### 2026-08-24T17:05Z — Task 1 normalizeJsonValue, CompositionManifest and Capsule v2
+
+~~~text
+TASK=1_NORMALIZED_INPUT_MANIFEST_AND_CAPSULE_V2
+START_HEAD=31ed8f2d0e4aa2d0f3d272d1f31c32a4757ebcd0
+FILES_CREATED=packages/authoring/src/composition-contracts.ts; packages/authoring/src/composition-manifest.ts; packages/cli/src/authoring/working-project-storage.ts(ChangeRecordProjectStorage working|base 双视图)
+FILES_CHANGED=packages/authoring/src/{contracts.ts(RecordedOperation),change-session.ts(normalizeJsonValue+runOperation),capability-contract.ts(2.0.0),index.ts}; packages/cli/src/authoring/{authoring-service.ts(复用抽取类),node-change-store.ts(writeCapsulePayload create-only, readCapsulePayload sidecar 三方核对, assertCanonicalArtifactId)}; packages/cli/src/agent-port/{delivery-capsule.ts(v2 composition 投影),server.ts(capsuleOutputSchema)};
+RED=Task 0 三条真实红灯转 GREEN(authoring normalizedInput 断言、composition-manifest 模块缺失、cli capsuleVersion 1.0.0!=2.0.0)
+GREEN=npm run test -w @surdet/authoring -- change-session.test.ts composition-manifest.test.ts exit0 (14 passed); authoring typecheck/build exit0; npm run test -w @surdet/cli -- agent-port-capsule.test.ts agent-port-output-contract.test.ts exit0 (7 passed 含新增 dual-view adapter 测试); cli typecheck/build exit0
+INVOCATION_CHAIN=MCP inputSha256 == SHA(stableStringify(runOperation normalizedInput)) 在真实 stage capsule 上验证成立
+KNOWN_RED=packages/cli/test/authoring-contract.test.ts 期望 contractVersion '1.0.0'/22 capabilities——按任务书编排属 Task 5 白名单，Task 5 更新为 2.0.0/26
+ARTIFACTS=$wave5Root/t1-g1.log t1-g2.log t1-tc2.log t1-b2.log
+GIT=PENDING_STEP8_PRECISE_STAGING
+STOP=TASK_2_CANDIDATE_COMPARISON
+~~~

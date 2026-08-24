@@ -3,6 +3,7 @@ import {
   AUTHORING_CONTRACT_VERSION,
   AUTHORING_ENVELOPE_SCHEMA_VERSION,
   AUTHORING_CAPABILITY_REGISTRY,
+  DELIVERY_CAPSULE_VERSION,
   createEnvelopeJsonSchema,
   createFailureEnvelope,
   createSuccessEnvelope,
@@ -87,10 +88,33 @@ const recoverySummarySchema: JsonSchema = {
   additionalProperties: false,
 };
 
+const capsuleCompositionSchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    eligibility: { enum: ['ready', 'unavailable'] },
+    reasons: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          code: { type: 'string' },
+          operationId: { type: 'string' },
+          message: { type: 'string' },
+        },
+        required: ['code', 'message'],
+        additionalProperties: false,
+      },
+    },
+    manifest: { type: 'object' },
+  },
+  required: ['eligibility', 'reasons'],
+  additionalProperties: false,
+};
+
 const capsuleOutputSchema: JsonSchema = {
   type: 'object',
   properties: {
-    capsuleVersion: { const: '1.0.0' },
+    capsuleVersion: { const: DELIVERY_CAPSULE_VERSION },
     capsuleId: { type: 'string' },
     generatedAt: { type: 'string' },
     sessionId: { type: 'string' },
@@ -131,13 +155,14 @@ const capsuleOutputSchema: JsonSchema = {
       required: ['path', 'bytes', 'sha256'],
       additionalProperties: false,
     },
+    composition: capsuleCompositionSchema,
   },
   required: [
     'capsuleVersion', 'capsuleId', 'generatedAt', 'sessionId', 'policy', 'contractVersion',
     'projectIdentity', 'baseProjectRevision', 'currentProjectRevision', 'changeId', 'changeStatus',
     'acceptanceCriteria', 'operations', 'invocationSummary', 'objectDiff', 'causalImpact',
     'validation', 'simulation', 'runtime', 'recovery', 'warnings', 'manualReviewRequired', 'projectMutation',
-    'artifactIdentity',
+    'artifactIdentity', 'composition',
   ],
   additionalProperties: false,
 };
