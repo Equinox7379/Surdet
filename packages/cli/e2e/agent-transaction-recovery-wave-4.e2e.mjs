@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
-const MODES = new Set(['preflight', 'diagnostic', 'formal']);
+const MODES = new Set(['preflight', 'recovery-preflight', 'diagnostic', 'formal']);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDirectory, '../../..');
 const portEntry = path.join(repoRoot, 'packages/cli/dist/agent-port/main.js');
@@ -48,7 +48,7 @@ function sha256(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
-function hashTree(root, { skipBuild = true } = {}) {
+function hashTree(root, { skipBuild = true, excludePaths = [] } = {}) {
   const files = [];
   if (!fs.existsSync(root)) {
     return { path: root, fileCount: 0, bytes: 0, sha256: sha256(Buffer.alloc(0)), files };
@@ -59,10 +59,12 @@ function hashTree(root, { skipBuild = true } = {}) {
       if (entry.name === '.vite' || entry.name.startsWith('.surdet-')) continue;
       const absolute = path.join(directory, entry.name);
       const relative = relativeDirectory.length === 0 ? entry.name : path.join(relativeDirectory, entry.name);
+      const normalizedRelative = relative.split(path.sep).join('/');
+      if (excludePaths.some((prefix) => normalizedRelative === prefix || normalizedRelative.startsWith(`${prefix}/`))) continue;
       if (entry.isDirectory()) walk(absolute, relative);
       else if (entry.isFile()) {
         const bytes = fs.readFileSync(absolute);
-        files.push({ path: relative.split(path.sep).join('/'), bytes: bytes.byteLength, sha256: sha256(bytes) });
+        files.push({ path: normalizedRelative, bytes: bytes.byteLength, sha256: sha256(bytes) });
       }
     }
   }
@@ -412,13 +414,13 @@ async function recoverFixture(label, modeName, runDirectory) {
   assert(interrupted.rootIdentity === prepared.rootIdentity, `${label} recovery fixture project identity changed during preparation`);
   const changeDir = changeDirectory(dataDir, await loadModules(), prepared.rootIdentity, prepared.changeId);
   let unexpectedBeforeProject;
-  let unexpectedBeforeChange;
+  let unexpectedBeforeRecoveryState;
   if (modeName === 'unexpected') {
     const firstPath = interrupted.changedPaths[0];
     assert(typeof firstPath === 'string', 'unexpected recovery fixture has no first path');
     fs.writeFileSync(path.join(projectRoot, firstPath), Buffer.from('unexpected bytes from aggregate runner\n', 'utf8'));
     unexpectedBeforeProject = hashTree(projectRoot);
-    unexpectedBeforeChange = hashTree(changeDir, { skipBuild: false });
+    unexpectedBeforeRecoveryState = hashTree(changeDir, { skipBuild: false, excludePaths: ['invocations'] });
   }
   const port = await connectPort({ projectRoot, policy: 'apply', dataDir, resumeChangeId: prepared.changeId });
   let inspected;
@@ -454,9 +456,20 @@ async function recoverFixture(label, modeName, runDirectory) {
   ));
   assert(record !== undefined, `${label} recovery record disappeared`);
   const projectAfter = hashTree(projectRoot);
+  let manualInvocationFacts;
   if (modeName === 'unexpected') {
     assert(JSON.stringify(projectAfter) === JSON.stringify(unexpectedBeforeProject), `${label} project bytes changed during manual recovery`);
-    assert(JSON.stringify(hashTree(changeDir, { skipBuild: false })) === JSON.stringify(unexpectedBeforeChange), `${label} change bytes changed during manual recovery`);
+    const recoveryStateAfter = hashTree(changeDir, { skipBuild: false, excludePaths: ['invocations'] });
+    assert(JSON.stringify(recoveryStateAfter) === JSON.stringify(unexpectedBeforeRecoveryState), `${label} recovery record or journal bytes changed during manual recovery`);
+    assert(record.status === 'OPEN', `${label} manual recovery changed record status to ${record.status}`);
+    const invocationDirectory = path.join(changeDir, 'invocations');
+    manualInvocationFacts = fs.readdirSync(invocationDirectory)
+      .filter((file) => file.endsWith('.json'))
+      .sort((left, right) => left.localeCompare(right))
+      .map((file) => JSON.parse(fs.readFileSync(path.join(invocationDirectory, file), 'utf8')));
+    assert(manualInvocationFacts.length === 2, `${label} manual recovery recorded ${manualInvocationFacts.length} invocation facts`);
+    assert(manualInvocationFacts[0].capability === 'change.recovery.inspect' && manualInvocationFacts[0].ok === true, `${label} inspect invocation fact is not truthful`);
+    assert(manualInvocationFacts[1].capability === 'change.recovery.execute' && manualInvocationFacts[1].ok === false && manualInvocationFacts[1].errorCode === 'RECOVERY_AMBIGUOUS', `${label} execute invocation fact is not truthful`);
   }
   return {
     label,
@@ -464,6 +477,8 @@ async function recoverFixture(label, modeName, runDirectory) {
     execute: executed.ok === true ? { ok: true, status: resultOf(executed, `${label} recovery.execute`).status } : { ok: false, code: executed.error.code },
     finalStatus: record.status,
     projectUnchangedForManual: modeName === 'unexpected',
+    recoveryStateUnchangedForManual: modeName === 'unexpected',
+    manualInvocationFacts,
     projectTreeAfter: projectAfter,
   };
 }
@@ -822,6 +837,36 @@ async function runRecoveryMatrix(directory) {
   return results;
 }
 
+async function runRecoveryPreflight() {
+  const directory = path.join(runRoot, 'recovery-preflight');
+  fs.mkdirSync(directory, { recursive: true });
+  const originalStarterBefore = hashTree(starterRoot);
+  const recovery = await evidenceNode('recovery-matrix', () => runRecoveryMatrix(path.join(directory, 'recovery')));
+  const originalStarterAfter = hashTree(starterRoot);
+  assert(JSON.stringify(originalStarterBefore) === JSON.stringify(originalStarterAfter), 'recovery preflight modified original Starter');
+  assert(harness.protocol.length === 0, `recovery preflight MCP protocol errors: ${harness.protocol.join('; ')}`);
+  assert(harness.stderrUnexpected.length === 0, `recovery preflight unexpected child stderr: ${harness.stderrUnexpected.join('; ')}`);
+  assert(harness.childCleanupFailures.length === 0, `recovery preflight child cleanup failures: ${harness.childCleanupFailures.join('; ')}`);
+  const activeLeases = scanActiveLeaseDirectories();
+  assert(activeLeases.length === 0, `recovery preflight left active lease directories: ${JSON.stringify(activeLeases)}`);
+  return {
+    schemaVersion: '1.0.0',
+    status: 'RECOVERY_PREFLIGHT_PASSED',
+    evidenceClass: 'PREFLIGHT',
+    runHead,
+    recovery,
+    errors: [],
+    childProcesses,
+    cleanup: {
+      timersStopped: true,
+      childrenExited: childProcesses.every((child) => child.exited),
+      locksReleased: true,
+      activeLeaseDirectories: activeLeases,
+    },
+    originalStarter: { before: originalStarterBefore, after: originalStarterAfter, unchanged: true },
+  };
+}
+
 async function runPolicyChecks(projectRoot, dataDir, changeId, recoveryEvidence) {
   const port = await connectPort({ projectRoot, policy: 'stage', dataDir, resumeChangeId: changeId });
   try {
@@ -910,10 +955,11 @@ async function runEvidence(evidenceClass) {
 }
 
 async function main() {
-  if (!MODES.has(mode)) fail(`usage: node ${path.basename(import.meta.url)} --mode preflight|diagnostic|formal`);
+  if (!MODES.has(mode)) fail(`usage: node ${path.basename(import.meta.url)} --mode preflight|recovery-preflight|diagnostic|formal`);
   let evidence;
   try {
     if (mode === 'preflight') evidence = await runPreflight();
+    else if (mode === 'recovery-preflight') evidence = await runRecoveryPreflight();
     else evidence = await runEvidence(mode === 'formal' ? 'FORMAL' : 'DIAGNOSTIC');
     const artifact = writeArtifact(evidence);
     console.log(JSON.stringify({ ...evidence, artifact }));
