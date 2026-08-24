@@ -119,11 +119,12 @@ STARTER_GIT_TREE_CURRENT = 3333db468f50c848b8c5b7bd6869ae91c2e376a7
 唯一一次主聚合门禁：
 
 ```text
-VERIFY_ALL_RUNS = 1
-VERIFY_ALL_EXIT = 0
-VERIFY_ALL_LOG = C:\Users\Equinox\AppData\Local\Temp\surdet-evidence-trust-wave3-2804d615639a47628b45fcab5ae6e4f9\task5-verify-all.log
-VERIFY_ALL_BYTES = 58476
-VERIFY_ALL_SHA256 = B1CA024C929CEB93BE9230C9858D506C8417E5D5E32DA13C718C6606441B5409
+PRE_REVIEW_VERIFY_ALL_RUNS = 1
+PRE_REVIEW_VERIFY_ALL_EXIT = 0
+PRE_REVIEW_VERIFY_ALL_LOG = C:\Users\Equinox\AppData\Local\Temp\surdet-evidence-trust-wave3-2804d615639a47628b45fcab5ae6e4f9\task5-verify-all.log
+PRE_REVIEW_VERIFY_ALL_BYTES = 58476
+PRE_REVIEW_VERIFY_ALL_SHA256 = B1CA024C929CEB93BE9230C9858D506C8417E5D5E32DA13C718C6606441B5409
+PRE_REVIEW_VERIFY_ALL_STATUS = HISTORICAL_GREEN
 RECOVERY_VERIFY_ALL = NOT_RUN
 ```
 
@@ -145,6 +146,55 @@ task5-cli-direct-b.json  bytes=328    sha256=433EF4E48034DD7E58787E845AA45B7EA81
 task5-starter-simulate.log bytes=372 sha256=C74FB65D2F89D49B5D664A0DE6798AD274FADBBD54EA07079433FE99068CAC9C
 task5-verify-all.log    bytes=58476  sha256=B1CA024C929CEB93BE9230C9858D506C8417E5D5E32DA13C718C6606441B5409
 ```
+
+## POST_REVIEW_TEST_CONTRACT_CLOSURE
+
+独立经理复审原结论为 `NEEDS_FIX`，但阻断仅限测试合同：非 JSON CLI 文本报告没有显示实际 seed，既有测试没有把 project.simulate/run-from 的固定随机结果与不可恢复随机源的读档原子性钉死。生产 RNG、Authoring simulation、Scene ID、choice 和 duplicate validation 语义没有被本轮复审否定。
+
+### 代码/测试修正
+
+```text
+POST_REVIEW_CODE_EVIDENCE_HEAD = cd19ae125ed923bdd346b939799a3b46a2d1add2
+POST_REVIEW_CODE_EVIDENCE_PARENT = 52767e357ef3dd4cd1da06378eda6ac0a7e2788c
+POST_REVIEW_CODE_COMMIT = fix(engine): close Wave 3 seed contracts
+POST_REVIEW_CODE_SCOPE =
+  packages/cli/src/simulate.ts
+  packages/cli/test/evidence-seed-contract.test.ts
+  packages/core/test/interpreter-save.test.ts
+```
+
+生产改动只有一行：非 JSON `cmdSimulate` 报告现在输出 `实际生效 seed：<number>`。CLI evidence contract 新增了 project.simulate seed 0 的 `[26,0]`、run-from 的同一结果、seed 1 的 `[63,0]` 变化和 read-trace 持久化 seed；同时增加了文本报告断言。Core 存档 contract 新增旧快照缺失 `random` 仍可加载，以及带合法 `random` 的快照遇到没有 `restore()` 的随机源时 fail-loud，并证明 variables、position、status、readSet、gallery、clears 不变。
+
+### Post-review 聚焦验证
+
+```text
+npm run test -w @surdet/core -- test/interpreter-save.test.ts
+  exit=0; 1 file / 21 tests
+
+npm run test -w @surdet/cli -- test/evidence-seed-contract.test.ts test/simulate.test.ts
+  exit=0; 2 files / 15 tests
+
+npm run typecheck -w @surdet/core       = exit 0
+npm run build -w @surdet/core           = exit 0
+npm run typecheck -w @surdet/cli        = exit 0
+npm run build -w @surdet/cli            = exit 0
+npm run test -w @surdet/cli             = exit 0; 22 files / 179 tests
+```
+
+### Post-review 最终聚合门禁
+
+```text
+POST_REVIEW_VERIFY_ALL_RUNS = 1
+POST_REVIEW_VERIFY_ALL_EXIT = 0
+POST_REVIEW_VERIFY_ALL_STATUS = FINAL_GREEN
+POST_REVIEW_VERIFY_ALL_LOG = C:\Users\Equinox\AppData\Local\Temp\surdet-evidence-trust-wave3-2804d615639a47628b45fcab5ae6e4f9\task6-post-review-verify-all.log
+POST_REVIEW_VERIFY_ALL_BYTES = 58652
+POST_REVIEW_VERIFY_ALL_SHA256 = 2C5B459E78B99D862672E9C663B4CBDE0479BA201C7D53967BEEE6D393B5018A
+TOTAL_VERIFY_ALL_RUNS = 2
+RECOVERY_VERIFY_ALL = NOT_RUN
+```
+
+post-review 日志中实际记录：Authoring 22 files / 138 tests、CLI 22 files / 179 tests、Core 26 files / 329 tests，以及其余 workspace test/build、Starter lint/simulate、既有 formal 节点和 diff-check 均通过。第二次运行是在 `POST_REVIEW_CODE_EVIDENCE_HEAD` 上完成的；没有 DIAGNOSTIC、独立 FORMAL、Electron、外部 Agent、Owner 验收或 Wave 5。
 
 ## REASONABLE_INFERENCES
 
@@ -170,6 +220,10 @@ DSL_RANDOM_SEEDED_EVIDENCE_VERIFIED = YES
 SCENE_ID_ADDRESSING_FAIL_LOUD = YES
 CHOICE_INLINE_ACTION_FAIL_LOUD = YES
 DUPLICATE_SCENE_VALIDATION_FAIL_LOUD = YES
+INDEPENDENT_MANAGER_REVIEW_PRE_REVIEW = NEEDS_FIX
+POST_REVIEW_TEST_CONTRACT = PASS
+POST_REVIEW_VERIFY_ALL = PASS
+TOTAL_VERIFY_ALL_RUNS = 2
 READY_FOR_INDEPENDENT_MANAGER_REVIEW = YES
 PUSH = NOT_PERFORMED
 AGENT_TRANSACTION_RECOVERY_WAVE_4 = NOT_STARTED
