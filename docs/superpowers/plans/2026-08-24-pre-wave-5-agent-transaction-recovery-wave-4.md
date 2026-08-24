@@ -1196,7 +1196,7 @@ preflight 必须确认：
 
 1. 同一 change 两进程并发 typed mutation，成功结果全保留；
 2. 不同 change 并行 stage，证明不被 project lease 串行；
-3. 两个 commit 同时开始，replacement overlap=0，唯一 winner，loser STALE；
+3. 两个 commit 请求窗口同时开始并真实重叠，唯一 winner，loser STALE；replacement 最大并发为 1 的内部事件由 `packages/cli/test/multi-process-change-concurrency.test.ts` 提供；
 4. 活 change lock 阻断；child 退出后短测试时钟下 orphan lock 接管；
 5. 人工构造 STAGING crash fixture，fresh process inspect+execute 后 OPEN；
 6. 人工构造 REPLACING mixed-known，恢复到 base；
@@ -1205,6 +1205,8 @@ preflight 必须确认：
 9. MCP observe inspect 可见、stage/apply policy 正确、text/structured 一致；
 10. 最终项目树仅含被明确成功 commit 的 winner，原始 Starter 不变；
 11. child、timer、lock 全部释放。
+
+聚合 runner 只记录它能真实观察的外部结果：commit 请求窗口重叠、唯一 winner、loser=`STALE`、最终项目树只含 winner。replacement overlap 不在聚合 artifact 中硬编码；本 Task 的证据是“聚合外部可观察结果 + 聚焦测试内部 replacement 事件”的组合证据。
 
 - [ ] **Step 4: node check 与 preflight**
 
@@ -1656,4 +1658,88 @@ FINAL_REVALIDATION_AT=2026-08-24T20:32:24+08:00
 RED_ARTIFACT=<local-path> BYTES=7464 SHA256=5CDB89082BF6A04A09B60573BC30F2C5566EACA45418B111878B9FD42DDA2D2B PRESERVED=YES
 SCOPE=tracked Task 8 diff is exactly the 13 paths listed by the Task 8 commit command; protected files and existing untracked governance/CLI artifacts remain untouched
 NEXT_STOP=COMMIT_TASK_8_THEN_TASK_9_AGGREGATE_RUNNER_RED
+```
+
+### 2026-08-24T21:08:00+08:00 — Task 9 aggregate runner stopped at diagnostic budget
+
+```text
+RED_RUN=missing packages/cli/e2e/agent-transaction-recovery-wave-4.e2e.mjs; preflight entry returned MODULE_NOT_FOUND; HARNESS_INVALID=YES; no formal evidence was produced
+RUNNER=created only the Task 9 runner path; old agent-port-wave-4.e2e.mjs was not reused or modified; all fixtures/data/artifacts were below unique system Temp roots and outside E:\surdet
+EVIDENCE_BOUNDARY=the aggregate runner observes stage/commit request windows, winner/STALE outcome, final winner-only project tree and recovery/MCP/cleanup facts; replacement critical-section max concurrency remains evidenced by packages/cli/test/multi-process-change-concurrency.test.ts, not by an unobserved aggregate field
+PREFLIGHT=node --check EXIT=0; runner preflight EXIT=0 twice after the two runner corrections; both builds EXIT=0; observe policy/tool filtering, text=structured, empty data, child exit, stderr and original Starter hash checks passed
+DIAGNOSTIC_1=EXIT=1 at change.begin because runner used disallowed initiator; raw MCP response was input validation only; failure artifact=<local-path> BYTES=2394 SHA256=f795cfa8144a8acaa9a27067969d5dab4db8d65ef23910ed2c92ced3f47c9cae PRESERVED=YES
+DIAGNOSTIC_2=EXIT=1 after both same-change mutations succeeded; runner counted begin's invocation, actual mutation invocation count was 2; failure artifact=<local-path> BYTES=2163 SHA256=e1ee8617084aa1c7ee95cf6b3f1344f47891a314a87573146e4fda4e6fa099ac PRESERVED=YES
+DIAGNOSTIC_3=EXIT=1 at different-change runtime evidence; Starter ch01_01 contains a choice and runner passed choices=[]; engine returned structured RUNTIME_FAILED, not a transaction loss; failure artifact=<local-path> BYTES=3455 SHA256=509f452ecda519e8dd726ce43b1783c16fd88034dddda95b33c34965dd278c1f PRESERVED=YES
+FIX_COMMITS=bacc0d5 fix(cli): correct transaction runner fixture input; 4a21d0e fix(cli): account for begin invocation in runner; each fix passed node --check and focused preflight before rerun
+DIAGNOSTIC_BUDGET=EXHAUSTED_AFTER_THREE_RUNS; FORMAL=NOT_RUN; VERIFY_ALL=NOT_RUN; TASK_10=NOT_STARTED; PUSH/DEPLOY/RELEASE/WAVE_5=NOT_AUTHORIZED_AND_NOT_RUN
+STOP=DO_NOT_FIX_OR_RERUN; WAITING_FOR_OWNER_OR_INDEPENDENT_MANAGER_REVIEW
+```
+
+### 2026-08-24T21:07:00+08:00 — W4-RUNNER-METHOD-RECOVERY-1 stopped at recovery diagnostic
+
+```text
+AUTHORIZATION=RECOVERY_DIAGNOSTIC_BUDGET=1; OLD_DIAGNOSTIC_BUDGET=3/3_USED remains historical and was not rewritten; FORMAL=NOT_STARTED; VERIFY_ALL=NOT_RUN
+TASK0=AGENTS.md/spec/plan/runner and all three historical failure artifacts reread; HEAD=4a21d0e9a3fa9c466f5bde8f60527cd233af7df6 before repair; tracking=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=13/0; known untracked governance/protected/history artifacts preserved
+METHOD_FIX=runner changed ch01_01 runtime choices to [0], diagnostic/formal success status to PASSED, fail-loud same-change mutation and commit request overlap assertions, removed replacementOverlap, and scanned every registered data dir's active changes/projects lock directories while excluding .locks/stale
+PRECHECK=the four authorized checks all EXIT=0: node --check; multi-process-change-concurrency.test.ts 3/3; preflight with builds/protocol/child/stderr/original-Starter/active-lock checks; git diff --check
+RUNNER_COMMIT=c894127d9c177b3f27a4ad004a575fdc8db199e0; COMMIT_MESSAGE=fix(cli): stabilize transaction evidence runner; COMMIT_SCOPE=runner only; current taskbook ledger was not staged
+RECOVERY_DIAGNOSTIC=one and only one run; EXIT=1; runHead=c894127d9c177b3f27a4ad004a575fdc8db199e0; status=FAILED; evidenceClass=DIAGNOSTIC; artifact=<local-path> BYTES=4428 SHA256=5f358ae6f4bb09fa758ee3a88cf9a2271c42fe998e00a271cf066748aedcd1a9 PRESERVED=YES
+PROGRESS=last passed node same-change; first failed node different-changes; failure at ch01_01 choices [0] reaching ch02.gal:14 @exp, engine returned structured RUNTIME_FAILED because GrowthSystem host injection is unavailable; no concurrency/recovery GREEN claim
+CLEANUP=childProcesses exited; protocol=[]; unexpected stderr=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; locksReleased=true; original Starter not reached by a passing full run, no mutation was made to repository Starter
+STOP=RECOVERY_DIAGNOSTIC_FAILED; do not repair/rerun; do not run verify:all, FORMAL, Task 10, push, deploy, release or Wave 5; wait for new owner authorization
+```
+
+### 2026-08-24T22:21:18+08:00 — W4 recovery fixture method closure and passing DIAGNOSTIC
+
+```text
+TAKEOVER=project owner authorized the independent manager to continue the Wave 4 closure directly; no push, deployment, release or Wave 5 authorization was inferred
+BASELINE=HEAD=5387c28dd30cd1ed931dad885a39cefd56cafa74; REMOTE=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=18/0; tracked diff was this taskbook Ledger only; staging empty; protected and existing untracked files preserved
+ROOT_CAUSE_1=recoverFixture discarded prepareInterruptedJournal()'s changedPaths result and later read the non-existent prepared.changedPaths; no production recovery defect was observed
+FIX_1=runner now retains interrupted journal preparation facts, asserts project identity continuity, and uses interrupted.changedPaths for the unexpected-bytes fixture; dead placeholder module/storage reads were removed
+FIX_1_GREEN=node --check EXIT=0; CLI agent-transaction-recovery + multi-process-change-concurrency + agent-port-security EXIT=0 (3 files; 25/25); authoring capability/error catalog EXIT=0 (2 files; 11/11); authoring/CLI typecheck and build EXIT=0; regular preflight EXIT=0
+FIX_1_COMMIT=fa0a31cd58bacf4748eb347e1d0693816292c601; MESSAGE=fix(cli): preserve recovery fixture paths; SCOPE=runner only
+RECOVERY_DIAGNOSTIC_1=EXIT=1; runHead=fa0a31cd58bacf4748eb347e1d0693816292c601; status=FAILED; evidenceClass=DIAGNOSTIC; artifact=<local-path> BYTES=14111 SHA256=BF3A947AEB79D72AB3376F907D216DD1604926ACD312B3359396523E1CC6C52E PRESERVED=YES
+RECOVERY_DIAGNOSTIC_1_PROGRESS=last passed lease-matrix; first failed recovery-matrix; failure=unexpected change bytes changed during manual recovery; project bytes were unchanged and all child/timer/lease cleanup passed
+ROOT_CAUSE_2=the aggregate compared the entire change directory even though MCP recovery.inspect and the failed recovery.execute must append truthful invocation facts; retained fixture inspection showed only invocations/ changed while manifest, head, records and journals remained byte-identical
+FIX_2=hashTree gained an explicit relative-path exclusion; the manual branch now compares all recovery state excluding invocations, asserts record remains OPEN, and requires exactly two truthful invocation facts for successful inspect and RECOVERY_AMBIGUOUS execute
+METHOD_IMPROVEMENT=added recovery-preflight mode so the four-state recovery matrix can be validated without spending a full aggregate DIAGNOSTIC; this mode still checks protocol/stderr/child/lease cleanup and original Starter identity
+RECOVERY_PREFLIGHT=EXIT=0; status=RECOVERY_PREFLIGHT_PASSED; artifact=<local-path> BYTES=48027 SHA256=AE977BAB307C5EB44B5579DFD8AE1D28FBEC6A89E89DAB9FC7DBB614F68AB2BE; PRE_COMMIT_METHOD_EVIDENCE=YES; artifact.runHead=fa0a31cd58bacf4748eb347e1d0693816292c601 therefore it is not the final frozen code identity
+FIX_2_GREEN=node --check EXIT=0; recovery-preflight EXIT=0; regular preflight EXIT=0; git diff --check EXIT=0
+FIX_2_COMMIT=6c22115645df537e42722088e5e897cb07398ef8; MESSAGE=test(cli): focus transaction recovery preflight; SCOPE=runner only
+PASSING_DIAGNOSTIC=EXIT=0; status=PASSED; evidenceClass=DIAGNOSTIC; runHead=6c22115645df537e42722088e5e897cb07398ef8; artifact=<local-path> BYTES=101956 SHA256=859B1E50B7BDEE0A7B79E417622E5FE3CF2531946D476F1CC251338AC9F4A476
+PASSING_NODES=same-change PASSED; different-changes PASSED with PROJECT_BUSY -> session.describe -> PROJECT_CHANGED_SINCE_BEGIN and COMMITTED/STALE; lease-matrix PASSED; recovery-matrix PASSED; mcp-policy-and-envelope PASSED
+PASSING_CLEANUP=errors=[]; protocol=[]; stderrUnexpected=[]; childCleanupFailures=[]; all children exited; activeLeaseDirectories=[]; locksReleased=true; original Starter SHA256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6 unchanged
+NEXT_STOP=freeze Task 9 evidence identity, then continue Task 10 focused aggregate gate, unique verify:all and unique FORMAL; any new gate failure stops without an unauthorized recovery run
+```
+
+### 2026-08-24T21:22:05+08:00 — W4-RUNTIME-PARITY-AND-FIXTURE-RECOVERY stopped at focused CLI gate
+
+```text
+AUTHORIZATION=CONTRACT_RECOVERY_DIAGNOSTIC_BUDGET=1; OLD_DIAGNOSTIC_BUDGET=3/3_USED remains historical and was not rewritten; FORMAL=NOT_STARTED; VERIFY_ALL=NOT_RUN
+TASK0=AGENTS/spec/plan/runner/historical artifacts and current Git reread; baseline HEAD=c894127d9c177b3f27a4ad004a575fdc8db199e0; tracking=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=14/0
+RED_TASK1=authoring-runtime-parity.test.ts run against the pre-fix CLI runtime; EXIT=1 because growth fixture runtime.run-from returned RUNTIME_FAILED with missing GrowthSystem; output=<local-path> BYTES=2198 SHA256=20B74F4997588EDE5DCD6F33EAFCEA1E2FB2BEF88CF6D58F671927C9D580A735 PRESERVED=YES
+IMPLEMENTATION=shared runExplicitPath now returns normalized runtime events on success/failure; CLI runtime.run-from uses it and removes duplicate Interpreter/registry/store wiring; different-changes uses the deterministic transaction_runtime_probe fixture; Task 9 evidence text records aggregate external results plus focused replacement events
+GREEN_AUTHORING=simulation.test.ts 12/12; authoring typecheck EXIT=0; authoring build EXIT=0
+CLI_FOCUSED=after correcting the fixture to canonical content/config/growth.json and building CLI, authoring-runtime-parity.test.ts 2/2 and evidence-seed-contract.test.ts 2/2 passed; agent-port-security.test.ts 11/15 passed and 4 failed
+FIRST_FAILED_NODE=agent-port-security.test.ts; failures were unchanged Agent Port session-boundary expectations for resume of COMMITTED/ROLLED_BACK/STALE changes and recovery-failed retry status (expected CHANGE_NOT_OPEN, received SESSION_STATE_INVALID); no files in the security/session path were modified by this authorization
+GIT=tracked diff paths remain limited to the six authorized files; protected and existing untracked governance/history artifacts preserved; HEAD=c894127d9c177b3f27a4ad004a575fdc8db199e0; no commit or staging performed
+NOT_RUN=node --check; runner preflight; recovery diagnostic; verify:all; FORMAL; Task 10; push/deploy/release/Wave 5
+STOP=FOCUSED_CLI_GATE_FAILED; preserve current evidence and wait for a new owner authorization; do not continue to runner commit or any diagnostic
+```
+
+### 2026-08-24T22:14:24+08:00 — W4-PROJECT-BUSY-TO-STALE-RECOVERY-1 stopped at recovery diagnostic
+
+```text
+AUTHORIZATION=PROJECT_BUSY_TO_STALE_RECOVERY_DIAGNOSTIC_BUDGET=1_CONSUMED; OLD_DIAGNOSTIC_BUDGET=3/3_USED remains historical and was not rewritten; FORMAL=NOT_STARTED; VERIFY_ALL=NOT_RUN
+BASELINE=HEAD=c42c048d49cf3fbcdb08dc5a44f683cb3ac9711a; REMOTE=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=17/0; PRE_COMMIT_TRACKED_DIFF=taskbook Ledger only; STAGING=EMPTY
+IMPLEMENTED=change.commit possibleErrors now truthfully include CHANGE_BUSY and PROJECT_BUSY; capability-registry focused contract assertion added; aggregate runner records initial loser error/retry disposition, validates session.describe repair, keeps loser port open, performs at most one after-refresh commit, and requires PROJECT_CHANGED_SINCE_BEGIN
+GREEN_FOCUS=npm run test -w @surdet/authoring -- capability-registry.test.ts error-catalog.test.ts EXIT=0 (2 files; 11/11); npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts agent-port-security.test.ts EXIT=0 (2 files; 18/18); authoring/CLI typecheck and build EXIT=0; node --check EXIT=0; preflight EXIT=0; git diff --check EXIT=0
+CODE_EVIDENCE_HEAD=5387c28dd30cd1ed931dad885a39cefd56cafa74; CODE_COMMIT=fix(authoring): expose commit conflict recovery; COMMIT_SCOPE=runner, capability registry, capability registry test only; TASKBOOK_LEDGER_NOT_MIXED=YES
+RECOVERY_DIAGNOSTIC=one and only one run; EXIT=1; runHead=5387c28dd30cd1ed931dad885a39cefd56cafa74; status=FAILED; evidenceClass=DIAGNOSTIC; artifact=<local-path> BYTES=13963 SHA256=C5B6C44B29E2F4CD2E560F10B3D1215A7EE0D6C2CA89C0A24344A791AEBC5B0A PRESERVED=YES
+PROGRESS=last passed node lease-matrix; first failed node recovery-matrix; failure=unexpected recovery fixture has no first path; this is an existing runner recovery-fixture failure after same-change/different-changes/lease-matrix passed
+DIFFERENT_CHANGES=initialLoserError=PROJECT_BUSY; initialLoserRetryDisposition=after-refresh; afterRefreshUsed=YES via same loser session session.describe; finalLoserError=PROJECT_CHANGED_SINCE_BEGIN; finalLoserStatus=STALE; winner=COMMITTED; commit request windows overlapped; no final winner-only tree assertion was reached after recovery-matrix stopped the run
+PREVIOUS_CIRME_FAILURE=artifact=<local-path> BYTES=3435 SHA256=3D9814F98EB746353588766C63FC726018F5848EC7623708CB16F0A00E3FDE5C PRESERVED=YES; runHead=c42c048d49cf3fbcdb08dc5a44f683cb3ac9711a; lastPassed=same-change; firstFailed=different-changes; failure=loser commit error was PROJECT_BUSY
+CLEANUP=current artifact childProcesses exited; protocol=[]; unexpected stderr=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; locksReleased=true
+GIT_AFTER=HEAD=5387c28dd30cd1ed931dad885a39cefd56cafa74; REMOTE=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=18/0; tracked diff remains taskbook Ledger only; staging empty; existing governance/protected/history artifacts preserved; PUSH=NOT_PERFORMED
+STOP=RECOVERY_DIAGNOSTIC_FAILED; do not repair/rerun; do not run verify:all, FORMAL, Task 10, push, deploy, release or Wave 5; wait for new owner authorization
 ```
