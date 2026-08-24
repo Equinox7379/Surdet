@@ -4,13 +4,14 @@
 
 ```ini
 WAVE = PRE-WAVE-5 EDITOR FOUNDATION POLISH WAVE 1
-EDITOR_FOUNDATION_POLISH_WAVE_1_VERIFIED = YES
+EDITOR_FOUNDATION_POLISH_WAVE_1_VERIFIED = REOPENED_FOR_TRACE_LAYOUT_FIX
 AUTOMATED_EDITOR_GATES_PASSED = YES
-OWNER_ACCEPTANCE = PASS
-PREVIEW_STAGE_CENTERING_PASSED_BY_OWNER = YES
-REPEATED_PREVIEW_FONT_PATH_PASSED_BY_OWNER = YES
-READY_FOR_INDEPENDENT_MANAGER_REVIEW = YES
-WAITING_FOR_INDEPENDENT_MANAGER_REVIEW = YES
+OWNER_ACCEPTANCE = PREVIOUS_PASS_RETAINED; TRACE_RETEST_REQUIRED
+PREVIEW_STAGE_CENTERING_PASSED_BY_OWNER = PREVIOUS_PASS_RETAINED; TRACE_RETEST_REQUIRED
+REPEATED_PREVIEW_FONT_PATH_PASSED_BY_OWNER = PREVIOUS_PASS_RETAINED
+OWNER_OBSERVED_PREVIEW_TRACE_LAYOUT_SHIFT = YES
+READY_FOR_INDEPENDENT_MANAGER_REVIEW = NO
+WAITING_FOR_OWNER_TRACE_LAYOUT_RETEST = YES
 PUSH = NOT_PERFORMED
 DEFAULT_PLAYER_UI_POLISH = NOT_STARTED
 WAVE_5 = NOT_STARTED
@@ -138,7 +139,7 @@ OWNER_ACCEPTANCE_SCOPE = 任务书规定的 12 步浏览器路径
 - 未修改 Core、Renderer、Host、Shell、Authoring、CLI、Starter、Zero 或长期路线台账。
 - 未执行默认玩家 UI polish、Core seeded RNG、CLI 事务可靠性或 Wave 5。
 
-## Git and closure
+## HISTORICAL_TASK_5_CLOSURE_GIT_FACTS
 
 ```ini
 DOCUMENT_PLACEHOLDER_SCAN = PASS_WITH_EXPLICIT_HISTORICAL_AND_OUT_OF_SCOPE_STATES
@@ -155,3 +156,60 @@ NEXT_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ```
 
 本报告不自指记录其最终 bytes、SHA-256 或尚未产生的提交 hash。文档闭合提交完成后的真实 HEAD、tracking ref、ahead/behind、工作树、暂存区和本报告身份由最终交接回读给出。
+
+## Current owner-observed trace-layout reopening
+
+项目所有者在原 Task 5 的人工验收通过后补充了新的真实画面反馈：因果轨迹随事件增加逐步变高，并挤压上方 Gal 预览舞台。总经理复核确认，现有 `max-height: 180px` 并不能阻止达到上限前的持续增长；问题属于本 Wave 的预览布局稳定性缺口。
+
+```ini
+REOPEN_REASON = OWNER_OBSERVED_PREVIEW_TRACE_LAYOUT_SHIFT
+PREVIOUS_TASK_5_CLOSURE = REOPENED
+PREVIOUS_OWNER_ACCEPTANCE = PASS_RETAINED
+PREVIOUS_FONT_RESOURCE_CENTERING_AND_PLOT_CONCLUSIONS = RETAINED
+TRACE_DATA_PRESERVED = YES
+TRACE_EVENTS_TRUNCATED = NO
+TRACE_RETEST_REQUIRED = YES
+```
+
+### Trace layout red-green evidence
+
+```ini
+TRACE_RED_COMMAND = npm run test -w surdet-editor -- test/preview-stage-layout.test.ts
+TRACE_RED_EXIT = 1
+TRACE_RED_RESULT = 1 failed / 1 passed; missing stable preview-view/frame bounds and fixed trace height contract
+
+TRACE_GREEN_COMMAND = npm run test -w surdet-editor -- test/preview-stage-layout.test.ts test/preview-runtime-contract.test.ts test/preview-runtime-lifecycle.test.ts
+TRACE_GREEN_EXIT = 0
+TRACE_GREEN_RESULT = 3 files / 4 tests passed
+
+TRACE_CODE_EVIDENCE_HEAD = a3e59f081e559b3f9b15889edea104e91b810c07
+TRACE_CODE_EVIDENCE_SCOPE = packages/editor/src/styles.css; packages/editor/test/preview-stage-layout.test.ts
+TRACE_PRODUCTION_TRACE_DATA_CHANGED = NO
+TRACE_EVENT_RENDERING_CHANGED = NO
+```
+
+修复只增加了预览布局边界：`#preview-view` 和 `.preview-frame` 允许在纵向 flex 中收缩；`.preview-trace` 从首次渲染起使用 `flex: 0 0 clamp(96px, 14vh, 136px)` 与同值 `height`，保留 `overflow-y: auto` 和完整事件内容。事件增加后，滚动发生在轨迹区内部，不截断因果证据。
+
+### Trace repair automated gates
+
+```ini
+TRACE_EDITOR_FULL_TEST = PASS; 28 files / 176 tests
+TRACE_EDITOR_TYPECHECK = PASS; exit=0
+TRACE_EDITOR_BUILD = PASS; exit=0
+TRACE_EDITOR_BUILD_WARNING = existing Vite chunk >500 kB warning only
+TRACE_DIFF_CHECK = PASS; exit=0
+TRACE_CACHED_DIFF_CHECK = PASS; exit=0
+TRACE_VERIFY_DOCS = PASS; npm run verify:docs; exit=0
+TRACE_VERIFY_HYGIENE = PASS; npm run verify:hygiene; exit=0; 698 tracked paths
+TRACE_FORBIDDEN_WORKSPACES_MODIFIED = NO
+```
+
+### Current stop state
+
+```ini
+OWNER_TRACE_LAYOUT_RETEST = NOT_YET_PERFORMED
+FINAL_OWNER_TRACE_CONCLUSION = NOT_CLAIMED
+WAITING_FOR_OWNER_TRACE_LAYOUT_RETEST = YES
+PUSH_NOT_AUTHORIZED = YES
+WAVE_5_NOT_STARTED = YES
+```
