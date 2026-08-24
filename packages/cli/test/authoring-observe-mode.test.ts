@@ -21,7 +21,10 @@ describe('authoring observe mode', () => {
       const after = fs.readdirSync(agentDataDir, { recursive: true });
       expect(validation.result.view).toBe('project');
       expect(simulation.result.view).toBe('project');
-      expect(after).toEqual(before);
+      const nonLeaseEntries = after.filter((entry) => !String(entry).replaceAll('\\', '/').startsWith('.locks'));
+      expect(nonLeaseEntries).toEqual(before);
+      expect(fs.readdirSync(path.join(agentDataDir, '.locks', 'projects'))).toEqual([]);
+      expect(fs.existsSync(path.join(agentDataDir, '.locks', 'changes'))).toBe(false);
 
       const begun = await service.begin(projectRoot);
       const baseRevision = begun.projectRevision;

@@ -22,7 +22,7 @@ function writeJson(file: string, value: unknown): void {
 }
 
 describe('agent authoring CLI JSON contract', () => {
-  it('describes exactly the registered 20 capabilities with one JSON stdout document', () => {
+  it('describes exactly the registered capabilities with one JSON stdout document', () => {
     const result = runCli(['capabilities', 'describe', '--json']);
 
     expect(result.status).toBe(0);
@@ -32,7 +32,7 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stderr).toBe('');
     const body = JSON.parse(result.stdout);
     expect(body.contractVersion).toBe('1.0.0');
-    expect(body.result.capabilities).toHaveLength(20);
+    expect(body.result.capabilities).toHaveLength(22);
     expect(body.result.capabilities[0]).toEqual(expect.objectContaining({
       id: 'capabilities.describe',
       mcpTool: 'surdet_capabilities_describe',

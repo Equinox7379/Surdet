@@ -75,6 +75,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
       'timeline.create', 'timeline.patch', 'project.entry-scene.set',
       'project.validate', 'project.simulate', 'runtime.run-from', 'runtime.read-trace',
       'change.diff', 'change.commit', 'change.rollback',
+      'change.recovery.inspect', 'change.recovery.execute',
     ]);
 
     // project.assets 与 project.inspect.assets 共享同一 catalog 解析。
