@@ -3,6 +3,7 @@ import type {
   ChangeRepository,
   ChangeStatus,
   ChangeWritePrecondition,
+  CommitJournal,
   ChangeIntentMetadata,
   EvidenceFreshness,
   ProjectWriteStorage,
@@ -313,21 +314,6 @@ export async function rollbackChange(change: ChangeSession): Promise<ChangeRecor
   return change.record;
 }
 
-interface CommitJournalEntry {
-  path: string;
-  originalSha256?: string;
-  targetSha256: string;
-  stagedIdentity: string;
-  replaced: boolean;
-  restored: boolean;
-}
-
-interface CommitJournal {
-  changeId: string;
-  status: 'STAGING' | 'REPLACING' | 'RECOVERED' | 'RECOVERY_FAILED' | 'COMMITTED';
-  files: CommitJournalEntry[];
-}
-
 async function markStale(change: ChangeSession): Promise<void> {
   const next = clone(change.record);
   next.status = 'STALE';
@@ -390,7 +376,24 @@ export async function commitChange(
     }
   }
 
-  const journal: CommitJournal = { changeId: change.record.changeId, status: 'STAGING', files: [] };
+  let journal: CommitJournal = {
+    formatVersion: 2,
+    journalVersion: 0,
+    changeId: change.record.changeId,
+    recordVersionAtCommitStart: change.record.recordVersion,
+    projectRevisionAtCommitStart: change.record.baseRevision,
+    status: 'STAGING',
+    files: [],
+  };
+  const writeJournal = async (status: CommitJournal['status']): Promise<void> => {
+    journal = {
+      ...clone(journal),
+      journalVersion: journal.journalVersion + 1,
+      status,
+      files: clone(journal.files),
+    };
+    await change.repository.writeJournal(change.record.changeId, journal);
+  };
   try {
     for (const path of paths) {
       const staged = await storage.stageText(path, change.record.workingFiles[path]!, change.record.changeId);
@@ -403,19 +406,18 @@ export async function commitChange(
         restored: false,
       });
     }
-    await change.repository.writeJournal(change.record.changeId, journal);
+    await writeJournal('STAGING');
   } catch (error) {
     for (const entry of journal.files) await storage.removeStage(entry.stagedIdentity);
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交前 staging 失败：${String(error)}`);
   }
 
-  journal.status = 'REPLACING';
-  await change.repository.writeJournal(change.record.changeId, journal);
+  await writeJournal('REPLACING');
   try {
     for (const entry of journal.files) {
       await storage.replaceFromStage(entry.path, entry.stagedIdentity);
       entry.replaced = true;
-      await change.repository.writeJournal(change.record.changeId, journal);
+      await writeJournal('REPLACING');
       const finalFile = await storage.readText(entry.path);
       if (finalFile.sha256 !== entry.targetSha256) throw new Error(`最终文件身份不匹配：${entry.path}`);
     }
@@ -432,7 +434,7 @@ export async function commitChange(
           await storage.restoreText(entry.path, original);
         }
         entry.restored = true;
-        await change.repository.writeJournal(change.record.changeId, journal);
+        await writeJournal('REPLACING');
       } catch (restoreError) {
         recoveryError = restoreError;
       }
@@ -441,18 +443,15 @@ export async function commitChange(
       try { await storage.removeStage(entry.stagedIdentity); } catch { /* 失败证据由 journal 保留 */ }
     }
     if (recoveryError !== undefined) {
-      journal.status = 'RECOVERY_FAILED';
-      await change.repository.writeJournal(change.record.changeId, journal);
+      await writeJournal('RECOVERY_FAILED');
       await markStale(change);
       throw new AuthoringOperationError('COMMIT_RECOVERY_FAILED', `提交失败且恢复失败：${String(recoveryError)}`, { cause: String(error) });
     }
-    journal.status = 'RECOVERED';
-    await change.repository.writeJournal(change.record.changeId, journal);
+    await writeJournal('RECOVERED');
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交失败但已恢复：${String(error)}`);
   }
 
-  journal.status = 'COMMITTED';
-  await change.repository.writeJournal(change.record.changeId, journal);
+  await writeJournal('COMMITTED');
   const next = clone(change.record);
   next.status = 'COMMITTED';
   await persistRecord(change, next);

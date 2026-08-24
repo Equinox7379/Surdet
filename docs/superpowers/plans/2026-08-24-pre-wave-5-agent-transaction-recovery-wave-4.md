@@ -1588,3 +1588,17 @@ COUNTERTEST=live project lease returns PROJECT_BUSY with holder summary/retryAft
 SCOPE=Task 5 tracked changes are limited to authoring-service.ts, change-session.ts, commit-recovery.test.ts, agent-port-security.test.ts, transaction-worker.mjs, multi-process-change-concurrency.test.ts and this plan; node-local-lease.ts remains unchanged
 NEXT_STOP=COMMIT_TASK_5_THEN_TASK_6_JOURNAL_RECOVERY_RED
 ```
+
+### 2026-08-24T18:25:11+08:00 — Task 6 shared Journal V2 and explicit recovery
+
+```text
+RED_RUN=npm run test -w @surdet/authoring -- transaction-recovery.test.ts --reporter=json --outputFile="$WAVE4_ROOT\task6-red.json" EXIT=1
+RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task6-red.json BYTES=5419 SHA256=8CF50F2F3D6376DB977BFFA1DCD898ED68D921AA28EDC71421AFEEA9E2E180F4
+RED_FACTS=7 recovery assertions ran through the valid runner; all 7 failed only at the intentional inspect/execute NOT_IMPLEMENTED boundary; HARNESS_INVALID=NO
+IMPLEMENTED=public CommitJournal/RecoveryInspection contracts; Journal V2 versioned snapshots from shared commitChange; pure file-state inspection with normalized recovery token; explicit REOPEN/ROLLBACK/FINALIZE actions with record CAS, journal evidence, stale-token and operationId protections
+MATRIX=STAGING base, REPLACING targets, RECOVERY_FAILED mixed, COMMITTED targets, RECOVERED base and unexpected sha; unexpected execute performs zero storage/repository writes
+GREEN=npm run test -w @surdet/authoring -- transaction-recovery.test.ts commit-recovery.test.ts change-session.test.ts EXIT=0 (3 files; 18/18); npm run test -w @surdet/authoring EXIT=0 (23 files; 150/150); npm run typecheck -w @surdet/authoring EXIT=0; npm run build -w @surdet/authoring EXIT=0
+JOURNAL=commit recovery versions verified as contiguous [1,2,3,4,5] for the two-file success path; shared commit no longer owns a private journal type
+SCOPE=Task 6 tracked changes are limited to contracts.ts, change-session.ts, transaction-recovery.ts, index.ts, transaction-recovery.test.ts, commit-recovery.test.ts and this plan; Node adapter journal filename/recovery service remain Task 7 scope
+NEXT_STOP=COMMIT_TASK_6_THEN_TASK_7_NODE_RECOVERY_RED
+```
