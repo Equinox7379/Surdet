@@ -1551,3 +1551,14 @@ LEGACY=direct NodeChangeStore V1 unique-ID open returns CHANGE_STORE_FORMAT_UNSU
 RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task1-red.json PRESERVED=YES
 NEXT_STOP=COMMIT_TASK_2_THEN_TASK_3_LEASE_RED
 ```
+
+### 2026-08-24T17:53:23+08:00 — Task 3 local lease and bound store
+
+```text
+RED_RUN=npm run test -w @surdet/cli -- node-local-lease.test.ts EXIT=1; 4 tests ran and failed on the intentional NOT_IMPLEMENTED/stub behavior; runner and child-free harness valid
+IMPLEMENTED=NodeLocalLeaseManager change/project namespaces; mkdir ownership; injected clock/hostname/PID/scheduler; 2s heartbeat; 15s stale predicate; same-host dead-PID quarantine rename; owner-token release; corrupt/foreign/alive/fresh fail-loud
+BOUND_STORE=NodeChangeStore.withChangeLease() binds one ownerToken; bound record/evidence/journal/diff/trace/invocation/capsule writes verify that lease without reacquiring; unbound mutation rejects while reads remain available
+GREEN=npm run test -w @surdet/cli -- node-local-lease.test.ts node-json-record.test.ts EXIT=0 (2 files; 8/8); npm run typecheck -w @surdet/cli EXIT=0; npm run build -w @surdet/cli EXIT=0
+NO_WAIT=lease tests use injected time/scheduler; no real 15-second sleep; project lock namespace and stale quarantine evidence are asserted
+NEXT_STOP=COMMIT_TASK_3_THEN_TASK_4_SERVICE_BOUNDARY_RED
+```

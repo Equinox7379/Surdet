@@ -9,6 +9,7 @@ import {
   type ChangeWritePrecondition,
 } from '@surdet/authoring';
 import type { InvocationRecord } from '../agent-port/invocation-ledger.js';
+import { NodeLocalLeaseManager, type LeaseHandle } from './node-local-lease.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from './node-json-record.js';
 
@@ -29,6 +30,11 @@ interface RecordHead {
   formatVersion: 2;
   recordVersion: number;
   recordSha256: string;
+}
+
+interface LeaseBinding {
+  manager: NodeLocalLeaseManager;
+  handle: LeaseHandle;
 }
 
 function clone<T>(value: T): T {
@@ -160,6 +166,7 @@ export class NodeChangeStore implements ChangeRepository {
     readonly rootDirectory: string,
     readonly rootIdentity: string,
     readonly projectDirectory: string,
+    private readonly leaseBinding?: LeaseBinding,
   ) {}
 
   static async forProject(rootIdentity: string): Promise<NodeChangeStore> {
@@ -233,6 +240,19 @@ export class NodeChangeStore implements ChangeRepository {
       throw new AuthoringOperationError('CHANGE_NOT_OPEN', `变更事务不是 OPEN：${opened.record.status}`);
     }
     return opened;
+  }
+
+  static async withChangeLease<T>(changeId: string, callback: (leased: NodeChangeStore) => Promise<T>): Promise<T> {
+    const manager = new NodeLocalLeaseManager();
+    return manager.withLease({ scope: 'change', resourceId: changeId }, async (handle) => {
+      const opened = await NodeChangeStore.openByChangeId(changeId);
+      if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      const leased = new NodeChangeStore(opened.store.rootDirectory, opened.store.rootIdentity, opened.store.projectDirectory, {
+        manager,
+        handle,
+      });
+      return callback(leased);
+    });
   }
 
   private changeDirectory(changeId: string): string {
@@ -330,9 +350,21 @@ export class NodeChangeStore implements ChangeRepository {
     return record === null ? null : clone(record);
   }
 
+  private async assertMutationLease(): Promise<void> {
+    if (this.leaseBinding === undefined) {
+      throw new AuthoringOperationError('CHANGE_BUSY', '变更事务写入必须通过 NodeChangeStore.withChangeLease() 持有本地 lease', {
+        manualRecoveryRequired: false,
+        retryDisposition: 'after-refresh',
+        repairAction: '通过 change lease 重新打开事务后重试',
+      });
+    }
+    await this.leaseBinding.manager.assertOwned(this.leaseBinding.handle);
+  }
+
   async write(record: ChangeRecord): Promise<void>;
   async write(record: ChangeRecord, precondition: ChangeWritePrecondition): Promise<void>;
   async write(record: ChangeRecord, precondition?: ChangeWritePrecondition): Promise<void> {
+    await this.assertMutationLease();
     if (record.projectRootIdentity !== this.rootIdentity) throw new Error('change project identity mismatch');
     if (precondition === undefined) {
       throw new AuthoringOperationError('CHANGE_RECORD_CONFLICT', 'V2 record write 必须声明 expectedRecordVersion 与 expectedStatus');
@@ -360,6 +392,7 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async writeEvidence(changeId: string, evidenceId: string, value: unknown): Promise<void> {
+    await this.assertMutationLease();
     await createJsonRecord(path.join(this.changeDirectory(changeId), 'evidence', `${safeId(evidenceId)}.json`), value);
   }
 
@@ -369,6 +402,7 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async writeJournal(changeId: string, value: unknown): Promise<void> {
+    await this.assertMutationLease();
     const journalId = `${Date.now()}-${crypto.randomUUID()}`;
     await createJsonRecord(path.join(this.changeDirectory(changeId), 'journals', `${journalId}.json`), value);
   }
@@ -387,10 +421,12 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async writeDiff(changeId: string, value: unknown): Promise<void> {
+    await this.assertMutationLease();
     await replaceJsonRecord(path.join(this.changeDirectory(changeId), 'diff.json'), value);
   }
 
   async writeTrace(changeId: string, traceId: string, value: unknown): Promise<void> {
+    await this.assertMutationLease();
     await createJsonRecord(path.join(this.changeDirectory(changeId), 'traces', `${safeId(traceId)}.json`), value);
   }
 
@@ -400,6 +436,7 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async writeInvocation(changeId: string, record: InvocationRecord): Promise<string> {
+    await this.assertMutationLease();
     const directory = path.join(this.changeDirectory(changeId), 'invocations');
     await fs.mkdir(directory, { recursive: true });
     const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -450,6 +487,7 @@ export class NodeChangeStore implements ChangeRepository {
   }
 
   async writeCapsulePayload(changeId: string, capsuleId: string, payload: unknown): Promise<ArtifactIdentity> {
+    await this.assertMutationLease();
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)
       || Object.prototype.hasOwnProperty.call(payload, 'artifactIdentity')) {
       throw new AuthoringOperationError('INVALID_REQUEST', 'delivery capsule payload 不得包含 artifactIdentity');
