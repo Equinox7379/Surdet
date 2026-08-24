@@ -531,9 +531,10 @@ async function runSameChange(directory) {
     return { record: opened.record, invocations: await opened.store.readInvocations(changeId) };
   });
   const operations = Object.keys(facts.record.operations).sort();
+  const mutationInvocations = facts.invocations.filter((item) => typeof item.operationId === 'string');
   assert(operations.includes('runner-same-a') && operations.includes('runner-same-b'), 'same-change lost one operation');
   assert(facts.record.workingRevision === 2, `same-change workingRevision was ${facts.record.workingRevision}`);
-  assert(facts.invocations.length === 2, `same-change invocation count was ${facts.invocations.length}`);
+  assert(mutationInvocations.length === 2, `same-change mutation invocation count was ${mutationInvocations.length}`);
   assert(JSON.stringify(before) === JSON.stringify(hashTree(projectRoot)), 'same-change stage mutated project tree');
   return {
     projectRoot,
@@ -542,7 +543,7 @@ async function runSameChange(directory) {
     operations,
     recordVersions: [0, 1, facts.record.recordVersion],
     workingRevision: facts.record.workingRevision,
-    invocations: facts.invocations.map((item) => ({ operationId: item.operationId, ok: item.ok })).sort((a, b) => String(a.operationId).localeCompare(String(b.operationId))),
+    invocations: facts.invocations.map((item) => ({ capability: item.capability, operationId: item.operationId, ok: item.ok })).sort((a, b) => String(a.operationId ?? '').localeCompare(String(b.operationId ?? ''))),
     mutationWindowsOverlap: windowsOverlap(left, right),
   };
 }
