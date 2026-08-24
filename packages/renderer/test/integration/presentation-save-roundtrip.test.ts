@@ -11,10 +11,16 @@ import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
-import type { AdvStage } from '../../src/types.js';
+
+interface IntegrationStage extends Record<string, unknown> {
+  readonly text: { speaker: string | null; value: string }[];
+  setNvlMode(on: boolean): void;
+  appendNvlText(speaker: string | null, text: string): void;
+  setBackground(key: string | null): void;
+}
 
 interface Harness {
-  readonly stage: AdvStage & Record<string, unknown>;
+  readonly stage: IntegrationStage;
   readonly dialogue: DialogueLayer;
   readonly controller: PresentationController;
   readonly bus: EventBus<CoreEventMap>;
@@ -86,8 +92,8 @@ function makeHarness(): Harness {
     clearPresentation: () => { state.background = null; },
     validatePresentation: () => undefined,
     needsUpdate: () => false,
-  } as unknown as AdvStage & Record<string, unknown>;
-  const ports = createPresentationPorts(stage, { dialogueLayer: dialogue });
+  } as IntegrationStage;
+  const ports = createPresentationPorts(stage as never, { dialogueLayer: dialogue });
   const controller = new PresentationController(ports.commands, ports.queries, undefined, {
     commands: ports.commands,
     queries: ports.queries,
