@@ -2529,3 +2529,19 @@ ARTIFACTS=$wave5Root/task3-red-authoring.json t3-green-a.log t3-green-b.log
 GIT=PENDING_STEP7
 STOP=TASK_4_INTEGRATION_EXECUTE_CAS_RESUME_COMMIT_GATE
 ~~~
+
+### 2026-08-24T20:10Z — Task 4 integration execute, CAS progress, exact resume and commit gate
+
+~~~text
+TASK=4_INTEGRATION_EXECUTE_CAS_RESUME_COMMIT_GATE
+START_HEAD=b830e27 feat(authoring): seal integration plans
+END_HEAD=(本提交)
+FILES_CHANGED=contracts.ts(ChangeRecord.integration?: IntegrationMetadata,type-only 引用零运行时环); change-session.ts(BeginChangeOptions 第五参;assertIntegrationReadyForCommit 导出+commitChange 首位 gate;updateIntegrationMetadata CAS); integration-execution.ts(executeIntegrationReplay:planId/planFingerprint 匹配→从 nextOperationIndex 续跑,runOperation 幂等回放不重复 mutation,receipt CAS 补写,瞬态 CHANGE_RECORD_CONFLICT/CHANGE_BUSY/PROJECT_BUSY/LEASE_CORRUPT 原样抛,领域失败 FAILED 持久化+COMPOSITION_REPLAY_FAILED envelope,final fingerprint 逐项核对才 READY); composition-service.ts(executePlan:readPlan→dryRun passed 才可执行→PLAN_STALE 核对→扫描发现该计划 OPEN integration change 精确恢复(普通 OPEN 跳过,接管拒绝属 Task5 session 层)→create 免租+withChangeLease 内 replay)
+FILES_CREATED=test/integration-execution.test.ts(7 用例:REPLAYING 创建/receipt 中断不双写/精确 resume+fingerprint 拒绝/integration 元数据固化/typed 失败 FAILED+原始码/字节稳定/COMPOSITION_INCOMPLETE gate); composition-service.test.ts(+2:进程重开精确 resume(双阶段中断形态断言)/READY 完成)
+RED=task4-red-authoring.json(beginChange 第五参不存在 exit1)
+GREEN=authoring integration-execution+commit-recovery+change-session 20 passed;cli composition-service+node-composition-store 9 passed;双包 typecheck/build exit0
+NOTES=record-head.json 只含 recordVersion/SHA 不含本体,扫描经 store.read;多会话并行普通 OPEN 合法,CHANGE_BUSY 的 session 不变量在 Task 5;CLI 测试 variable type=number
+ARTIFACTS=$wave5Root/task4-red-authoring.json t4-green-a.log t4-green-b.log
+GIT=PENDING_STEP7
+STOP=TASK_5_CAPABILITY_REGISTRY_AND_MCP_PROJECTION
+~~~

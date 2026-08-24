@@ -22,6 +22,7 @@ import { NodeCompositionStore, type CompositionArtifactIdentity } from './node-c
 import {
   InMemoryChangeRepository,
   beginChange,
+  executeIntegrationReplay,
   replayCompositionOperation,
   timelinePathFor,
 } from '@surdet/authoring';
@@ -186,6 +187,95 @@ export class CompositionService {
       errors,
     };
   }
+
+  /**
+   * composition.execute：创建或精确恢复 OPEN integration change 并推进 replay。
+   * - 无 changeId：扫描项目 change heads；发现该计划的 REPLAYING/FAILED change 即恢复；
+   *   发现普通 OPEN change → CHANGE_BUSY（拒绝接管）。
+   * - revision 已离开计划基线 → COMPOSITION_PLAN_STALE。
+   */
+  async executePlan(input: {
+    planId: string;
+    artifactSha256: string;
+    executeOperationId: string;
+    changeId?: string;
+  }): Promise<CompositionExecuteResult> {
+    const { plan } = await this.store.readPlan(input.planId, input.artifactSha256);
+    if (plan.dryRun.status !== 'passed') {
+      throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'dry-run 未通过的计划不可执行', { planId: plan.planId });
+    }
+    const snapshot = await this.currentSnapshot();
+    if (snapshot.revision !== plan.expectedProjectRevision) {
+      throw new AuthoringOperationError('COMPOSITION_PLAN_STALE',
+        `project revision 已离开计划基线：${plan.expectedProjectRevision}`,
+        { expectedProjectRevision: plan.expectedProjectRevision, currentRevision: snapshot.revision });
+    }
+    const storage = await NodeProjectStorage.open(this.projectRoot);
+    const store = await NodeChangeStore.forProject(snapshot.rootIdentity);
+
+    // 扫描阶段不需要 change lease；真正写入的 replay 阶段在 withChangeLease 内进行。
+    let existingTarget: { changeId: string; metadata: IntegrationMetadata } | undefined;
+    if (input.changeId === undefined) {
+      for (const directoryName of await listChangeDirectories(store.projectDirectory)) {
+        const head = await store.read(directoryName);
+        if (head === null || head.status !== 'OPEN') continue;
+        // 多会话并行的普通 OPEN change 合法存在；只有该计划的 integration change 可被精确恢复。
+        // 「session 已持普通 active change 时拒绝执行」是 MCP session 层不变量（Wave 5 Task 5）。
+        if (head.integration === undefined || head.integration.planId !== plan.planId) continue;
+        if (head.integration.executeOperationId !== input.executeOperationId) {
+          throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID',
+            'executeOperationId 与既有 integration change 不一致', { changeId: head.changeId });
+        }
+        existingTarget = { changeId: head.changeId, metadata: head.integration };
+        break;
+      }
+    } else {
+      const opened = await store.read(input.changeId);
+      if (opened === null || opened.status !== 'OPEN') {
+        throw new AuthoringOperationError('CHANGE_NOT_FOUND', `integration change 不存在或未开启：${input.changeId}`);
+      }
+      if (opened.integration?.planId !== plan.planId
+        || opened.integration.executeOperationId !== input.executeOperationId) {
+        throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'change 不是该计划的 integration change');
+      }
+      existingTarget = { changeId: opened.changeId, metadata: opened.integration };
+    }
+
+    let target: { changeId: string; metadata: IntegrationMetadata } | undefined = existingTarget;
+    const initialMetadata: IntegrationMetadata = target?.metadata ?? {
+      planId: plan.planId,
+      planFingerprint: plan.planFingerprint,
+      executeOperationId: input.executeOperationId,
+      sourceCapsules: plan.sourceCapsules,
+      includedUnitIds: plan.selectedUnitIds,
+      deduplicatedUnits: plan.deduplicatedUnits,
+      conflictResolutions: plan.conflictResolutions,
+      status: 'REPLAYING',
+      nextOperationIndex: 0,
+      replayedOperations: [],
+    };
+    // create 免租（AuthoringService.begin 同款）；后续 CAS 更新必须持 change lease。
+    if (target === undefined) {
+      const seeded = await beginChange(snapshot, store, storage, undefined, { integration: initialMetadata });
+      target = { changeId: seeded.record.changeId, metadata: initialMetadata };
+    }
+    return NodeChangeStore.withChangeLease(target.changeId, async (leased) => {
+      const reopened = await leased.read(target.changeId);
+      if (reopened === null || reopened.integration === undefined) {
+        throw new AuthoringOperationError('CHANGE_NOT_FOUND', `integration change 不存在：${target.changeId}`);
+      }
+      const session = new ChangeSession(reopened, leased, storage);
+      const metadata = await executeIntegrationReplay(session, plan, this.hasher);
+      return {
+        changeId: session.record.changeId,
+        status: metadata.status,
+        workingRevision: session.record.workingRevision,
+        nextOperationIndex: metadata.nextOperationIndex,
+        replayedOperations: metadata.replayedOperations,
+      };
+    });
+  }
+
 }
 
 function requiresFingerprint(objectRef: string): boolean {
@@ -209,4 +299,25 @@ async function objectFingerprintFromWorking(
   }
   const text = workingFiles[filePath];
   return text === undefined ? undefined : hasher.sha256(text);
+}
+
+import * as fs from 'node:fs';
+import { NodeChangeStore } from './node-change-store.js';
+import { ChangeSession } from '@surdet/authoring';
+import type { IntegrationMetadata } from '@surdet/authoring';
+
+export interface CompositionExecuteResult {
+  changeId: string;
+  status: IntegrationMetadata['status'];
+  workingRevision: number;
+  nextOperationIndex: number;
+  replayedOperations: IntegrationMetadata['replayedOperations'];
+}
+
+async function listChangeDirectories(projectDirectory: string): Promise<string[]> {
+  const entries = await fs.promises.readdir(projectDirectory, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  });
+  return entries.filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_-]+$/.test(entry.name)).map((entry) => entry.name);
 }

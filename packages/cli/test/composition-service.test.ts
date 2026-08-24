@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { TextHasher } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { CompositionService } from '../src/authoring/composition-service.js';
+import { NodeChangeStore as NodeChangeStoreStatic } from '../src/authoring/node-change-store.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
@@ -177,3 +178,85 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(readBack.plan.replayOperations.length).toBeGreaterThan(0);
   });
 });
+
+  it('resumes an interrupted integration exactly with a second service instance', async () => {
+    const fixture = await setup('resume');
+    const first = await sealCandidate(fixture.projectRoot, 'res-a', async (session) => {
+      expect((await session.invoke('scene.create', { operationId: 'op-res-alpha', sceneId: 'alpha' })).ok).toBe(true);
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'res-b', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'op-res-flag', name: 'flag.res', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const planned = await fixture.service.plan({ candidateRefs: [first.ref, second.ref], now: '2026-08-24T14:00:00.000Z' });
+    expect(planned.plan.dryRun.status).toBe('passed');
+
+    // —— 进程 A：创建 integration change 并只推进第一项后“崩溃”——
+    {
+      const { InMemoryChangeRepository } = await import('@surdet/authoring');
+      const snapshot = await fixture.service.currentSnapshot();
+      const repository = new InMemoryChangeRepository();
+      const probeSession = await import('@surdet/authoring').then((m) => m.beginChange(snapshot, repository, undefined, undefined, {
+        integration: {
+          planId: planned.plan.planId,
+          planFingerprint: planned.plan.planFingerprint,
+          executeOperationId: 'exec-1',
+          sourceCapsules: planned.plan.sourceCapsules,
+          includedUnitIds: planned.plan.selectedUnitIds,
+          deduplicatedUnits: planned.plan.deduplicatedUnits,
+          conflictResolutions: [],
+          status: 'REPLAYING',
+          nextOperationIndex: 0,
+          replayedOperations: [],
+        },
+      }));
+      void probeSession;
+    }
+    // 上面的 probe 使用内存 repo，不会留下磁盘 change；改为真实磁盘半成品：
+    // 直接以 NodeChangeStore 为 repository 重建同样的 REPLAYING change 并只 replay 第一项。
+    const authoring = await import('@surdet/authoring');
+    const storage = await (await import('../src/authoring/node-project-storage.js')).NodeProjectStorage.open(fixture.projectRoot);
+    const nodeStore = await (await import('../src/authoring/node-change-store.js')).NodeChangeStore.forProject(storage.rootIdentity);
+    const snapshot2 = await fixture.service.currentSnapshot();
+    // create 免租；随后持 change lease 只推进第一项（模拟崩溃点：receipt 已落盘、后续未跑）。
+    const seeded = await authoring.beginChange(snapshot2, nodeStore, storage, undefined, {
+      integration: {
+        planId: planned.plan.planId,
+        planFingerprint: planned.plan.planFingerprint,
+        executeOperationId: 'exec-1',
+        sourceCapsules: planned.plan.sourceCapsules,
+        includedUnitIds: planned.plan.selectedUnitIds,
+        deduplicatedUnits: planned.plan.deduplicatedUnits,
+        conflictResolutions: [],
+        status: 'REPLAYING',
+        nextOperationIndex: 0,
+        replayedOperations: [],
+      },
+    });
+    const crashed = seeded;
+    await NodeChangeStoreStatic.withChangeLease(seeded.record.changeId, async (leased) => {
+      const reopened = await leased.read(seeded.record.changeId);
+      const crashedSession = new authoring.ChangeSession(reopened!, leased, storage);
+      await authoring.replayCompositionOperation(crashedSession, planned.plan.replayOperations[0]!, realHasher);
+    });
+    const headAfterCrash = await nodeStore.read(seeded.record.changeId);
+    // 双阶段中断形态：领域结果已持久化，receipt 未写 → nextOperationIndex 仍为 0。
+    expect(headAfterCrash?.integration?.nextOperationIndex).toBe(0);
+    expect(Object.keys(headAfterCrash?.operations ?? {})).toContain(planned.plan.replayOperations[0]!.integrationOperationId);
+
+    // —— 进程 B：全新 service instance，无 changeId，精确发现并完成剩余项 ——
+    const serviceB = new CompositionService(
+      new NodeCompositionStore(path.join(fixture.dataDir, fixture.identity), fixture.identity),
+      fixture.identity,
+      fixture.projectRoot,
+      realHasher,
+    );
+    const result = await serviceB.executePlan({
+      planId: planned.plan.planId,
+      artifactSha256: planned.identity.sha256,
+      executeOperationId: 'exec-1',
+    });
+    expect(result.status).toBe('READY');
+    expect(result.nextOperationIndex).toBe(planned.plan.replayOperations.length);
+    expect(result.workingRevision).toBe(planned.plan.replayOperations.length);
+    expect(result.changeId).toBe(crashed.record.changeId);
+  });
