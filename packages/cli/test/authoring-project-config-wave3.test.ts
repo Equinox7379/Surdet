@@ -68,6 +68,7 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
       'timeline.create', 'timeline.patch', 'project.entry-scene.set',
       'project.validate', 'project.simulate', 'runtime.run-from', 'runtime.read-trace',
       'change.diff', 'change.commit', 'change.rollback',
+      'change.recovery.inspect', 'change.recovery.execute',
     ]);
 
     // project.assets avatars 与 project.inspect characters/entryScene/title。
