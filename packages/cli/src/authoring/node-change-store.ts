@@ -713,7 +713,7 @@ export class NodeChangeStore implements ChangeRepository {
     }
     const sidecar = await readJsonRecord<ArtifactIdentity>(path.join(capsuleDirectory, 'identity.json'));
     if (sidecar === null) {
-      throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', `delivery capsule 缺少 identity sidecar：${changeId}/${capsuleId}`);
+      throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `delivery capsule 缺少 identity sidecar：${changeId}/${capsuleId}`);
     }
     const sameWindowsPath = (left: string, right: string): boolean => (
       process.platform === 'win32'
@@ -724,7 +724,7 @@ export class NodeChangeStore implements ChangeRepository {
       || sidecar.value.bytes !== loaded.identity.bytes
       || sidecar.value.sha256 !== loaded.identity.sha256
       || loaded.identity.sha256 !== expectedSha256) {
-      throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', `delivery capsule 身份不成立：${changeId}/${capsuleId}`, {
+      throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `delivery capsule 身份不成立：${changeId}/${capsuleId}`, {
         changeId,
         capsuleId,
         expectedSha256,

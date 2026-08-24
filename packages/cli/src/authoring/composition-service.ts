@@ -1,0 +1,212 @@
+import * as path from 'node:path';
+import {
+  AuthoringOperationError,
+  buildIntegrationPlan,
+  compareCandidates,
+  loadProjectSnapshot,
+  sealDryRunResult,
+  type ConflictResolutionInput,
+  type CandidateCapsuleRef,
+  type CompositionComparison,
+  type CompositionManifest,
+  type IntegrationPlan,
+  type IntegrationPlanDraft,
+  type ProjectSnapshot,
+  type TextHasher,
+  type VerifiedCompositionCandidate,
+} from '@surdet/authoring';
+import { NodeProjectStorage } from './node-project-storage.js';
+import { NodeLocalLeaseManager } from './node-local-lease.js';
+import { ChangeRecordProjectStorage } from './working-project-storage.js';
+import { NodeCompositionStore, type CompositionArtifactIdentity } from './node-composition-store.js';
+import {
+  InMemoryChangeRepository,
+  beginChange,
+  replayCompositionOperation,
+  timelinePathFor,
+} from '@surdet/authoring';
+
+export interface CompositionDryRunReport {
+  status: 'passed' | 'failed';
+  finalObjectFingerprints: Record<string, string>;
+  errors: Array<{ code: string; message: string; operationIndex?: number }>;
+}
+
+export interface CompositionCompareResult {
+  comparison: CompositionComparison & { candidateManifests?: Record<string, CompositionManifest> };
+  candidates: VerifiedCompositionCandidate[];
+  currentProjectRevision: string;
+}
+
+export interface CompositionPlanResult {
+  plan: IntegrationPlan;
+  identity: CompositionArtifactIdentity;
+  comparison: CompositionCompareResult['comparison'];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 组合比较与计划编排：读取真实 sealed capsules → 重新比较（拒绝旧 JSON）→
+ * build plan → 内存 dry-run replay → 封存不可变 plan artifact。
+ * dry-run 不写 change store、不写 source capsule、不写 project。
+ */
+export class CompositionService {
+  private readonly leases: NodeLocalLeaseManager;
+
+  constructor(
+    readonly store: NodeCompositionStore,
+    readonly projectIdentity: string,
+    readonly projectRoot: string,
+    private readonly hasher: TextHasher,
+    leases?: NodeLocalLeaseManager,
+  ) {
+    this.leases = leases ?? new NodeLocalLeaseManager();
+  }
+
+  /** 当前 project revision；短 project lease 内读取，保证 snapshot/revision 一致。 */
+  async currentSnapshot(): Promise<ProjectSnapshot> {
+    return this.leases.withProjectLease(this.projectIdentity, async () => {
+      const storage = await NodeProjectStorage.open(this.projectRoot);
+      return loadProjectSnapshot(storage, this.hasher);
+    });
+  }
+
+  async compare(candidateRefs: CandidateCapsuleRef[]): Promise<CompositionCompareResult> {
+    const snapshot = await this.currentSnapshot();
+    const candidates: VerifiedCompositionCandidate[] = [];
+    for (const ref of candidateRefs) {
+      candidates.push(await this.store.readCandidate(ref));
+    }
+    if (candidates.length < 2) {
+      throw new AuthoringOperationError('INVALID_REQUEST', 'composition.compare 至少需要两个候选胶囊');
+    }
+    for (const candidate of candidates) {
+      if (candidate.projectIdentity !== this.projectIdentity) {
+        throw new AuthoringOperationError('CANDIDATE_PROJECT_MISMATCH',
+          `候选 ${candidate.candidateId} 属于其他项目`);
+      }
+    }
+    const comparison = await compareCandidates({
+      projectIdentity: this.projectIdentity,
+      currentProjectRevision: snapshot.revision,
+      candidates,
+    }, this.hasher);
+    const manifests: Record<string, CompositionManifest> = {};
+    for (const candidate of candidates) {
+      if (candidate.composition.manifest !== undefined) {
+        manifests[candidate.candidateId] = candidate.composition.manifest;
+      }
+    }
+    return {
+      comparison: { ...comparison, candidateManifests: manifests } as CompositionCompareResult['comparison'],
+      candidates,
+      currentProjectRevision: snapshot.revision,
+    };
+  }
+
+  /**
+   * 完整 plan 流程：compare → buildIntegrationPlan → dry-run → seal → writePlan。
+   * comparison 每次现场重算，绝不接受调用方传入的旧 comparison JSON。
+   */
+  async plan(input: {
+    candidateRefs: CandidateCapsuleRef[];
+    selectedUnitIds?: string[];
+    conflictResolutions?: ConflictResolutionInput[];
+    now?: string;
+  }): Promise<CompositionPlanResult> {
+    const { comparison } = await this.compare(input.candidateRefs);
+    const selected = input.selectedUnitIds ?? comparison.units.map((unit) => unit.unitId);
+    const draft: IntegrationPlanDraft = await buildIntegrationPlan({
+      comparison,
+      selectedUnitIds: selected,
+      conflictResolutions: input.conflictResolutions ?? [],
+      now: input.now ?? new Date().toISOString(),
+    }, this.hasher);
+    const dryRun = await this.dryRun(draft);
+    const sealedPlan = await sealDryRunResult(draft, dryRun, this.hasher);
+    const identity = await this.store.writePlan(sealedPlan);
+    return { plan: sealedPlan, identity, comparison };
+  }
+
+  /**
+   * 共享 dry-run：临时 InMemoryChangeRepository + 当前 snapshot；
+   * 逐条 replayCompositionOperation；回读 produced object fingerprint；丢弃 session。
+   */
+  async dryRun(draft: IntegrationPlanDraft): Promise<CompositionDryRunReport> {
+    const errors: CompositionDryRunReport['errors'] = [];
+    const snapshot = await this.currentSnapshot();
+    if (snapshot.revision !== draft.expectedProjectRevision) {
+      return {
+        status: 'failed',
+        finalObjectFingerprints: {},
+        errors: [{ code: 'COMPOSITION_PLAN_STALE', message: `project revision 已离开计划基线：${draft.expectedProjectRevision}` }],
+      };
+    }
+    const repository = new InMemoryChangeRepository();
+    let session: Awaited<ReturnType<typeof beginChange>> | undefined;
+    try {
+      session = await beginChange(snapshot, repository);
+      for (let index = 0; index < draft.replayOperations.length; index += 1) {
+        const operation = draft.replayOperations[index]!;
+        try {
+          await replayCompositionOperation(session, operation, this.hasher);
+        } catch (error) {
+          const code = error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED';
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push({ code, message, operationIndex: index });
+          break;
+        }
+      }
+    } finally {
+      // 内存 session 直接丢弃：不写 NodeChangeStore change、不写 source capsule、不写 project。
+      void session;
+    }
+
+    // 回读 produced object fingerprints：与封存 manifest 同源——scene/timeline 取工作区文本 SHA。
+    const finalObjectFingerprints: Record<string, string> = {};
+    if (session !== undefined && errors.length === 0) {
+      for (const entry of draft.provenance) {
+        const fingerprint = await objectFingerprintFromWorking(session.record.workingFiles, entry.targetObject, this.hasher);
+        if (fingerprint !== undefined) finalObjectFingerprints[entry.targetObject] = fingerprint;
+        else if (requiresFingerprint(entry.targetObject)) {
+          errors.push({
+            code: 'COMPOSITION_REPLAY_FAILED',
+            message: `replay 后缺少对象指纹：${entry.targetObject}`,
+          });
+          break;
+        }
+      }
+    }
+    return {
+      status: errors.length === 0 ? 'passed' : 'failed',
+      finalObjectFingerprints,
+      errors,
+    };
+  }
+}
+
+function requiresFingerprint(objectRef: string): boolean {
+  return objectRef.startsWith('scene:') || objectRef.startsWith('timeline:');
+}
+
+/** 与 composition-manifest 封存语义同源的指纹回读：scene/timeline 为工作区文本 SHA-256。 */
+async function objectFingerprintFromWorking(
+  workingFiles: Record<string, string>,
+  objectRef: string,
+  hasher: TextHasher,
+): Promise<string | undefined> {
+  let filePath: string | undefined;
+  if (objectRef.startsWith('scene:')) {
+    const sceneId = objectRef.slice('scene:'.length);
+    filePath = `content/scenario/${sceneId}.gal`;
+  } else if (objectRef.startsWith('timeline:')) {
+    filePath = timelinePathFor(objectRef.slice('timeline:'.length));
+  } else {
+    return undefined;
+  }
+  const text = workingFiles[filePath];
+  return text === undefined ? undefined : hasher.sha256(text);
+}
