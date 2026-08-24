@@ -70,6 +70,7 @@ import { NodeChangeStore } from './node-change-store.js';
 import { NodeLocalLeaseManager } from './node-local-lease.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
+import { ChangeRecordProjectStorage } from './working-project-storage.js';
 
 export interface ServiceMetadata {
   projectIdentity: string;
@@ -81,34 +82,6 @@ export interface ServiceMetadata {
 
 export interface ServiceResult<T> extends ServiceMetadata {
   result: T;
-}
-
-class WorkingProjectStorage implements ProjectStorage {
-  readonly rootIdentity: string;
-
-  constructor(private readonly record: ChangeSession['record']) {
-    this.rootIdentity = record.projectRootIdentity;
-  }
-
-  async listFiles(): Promise<string[]> {
-    return Object.keys(this.record.workingFiles).sort((a, b) => a.localeCompare(b));
-  }
-
-  async readText(filePath: string): Promise<ProjectFile> {
-    const text = this.record.workingFiles[filePath];
-    if (text === undefined) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `事务文件不存在：${filePath}`);
-    const bytes = Buffer.byteLength(text, 'utf8');
-    return {
-      path: filePath,
-      text,
-      bytes,
-      sha256: crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
-    };
-  }
-
-  async exists(filePath: string): Promise<boolean> {
-    return Object.prototype.hasOwnProperty.call(this.record.workingFiles, filePath);
-  }
 }
 
 function hashText(text: string): string {
@@ -198,7 +171,7 @@ async function openChangeContext(changeId: string): Promise<{
 }> {
   const identity = await openChangeIdentityContext(changeId);
   const { session } = identity;
-  const snapshot = await loadSnapshot(new WorkingProjectStorage(session.record));
+  const snapshot = await loadSnapshot(new ChangeRecordProjectStorage(session.record));
   return { ...identity, snapshot };
 }
 
@@ -243,7 +216,7 @@ async function openChangeFromStore<T>(
       throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
     }
     const session = openChange(record, leasedStore, storage);
-    const snapshot = await loadSnapshot(new WorkingProjectStorage(session.record));
+    const snapshot = await loadSnapshot(new ChangeRecordProjectStorage(session.record));
     return callback({ store: leasedStore, session, storage, snapshot });
 }
 

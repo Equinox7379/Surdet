@@ -8,6 +8,7 @@ import type {
   EvidenceFreshness,
   ProjectWriteStorage,
 } from './contracts.js';
+import type { JsonValue } from './composition-contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 
 export class AuthoringOperationError extends Error {
@@ -23,6 +24,30 @@ export class AuthoringOperationError extends Error {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
+ * operation 输入的唯一 JSON 规范化：对象键按 code point 排序、数组保序；
+ * undefined、函数、symbol、非有限 number 与非普通 object 一律 fail-loud，
+ * 不静默丢弃或转换。严格 schema 进入的 payload 不含 undefined；
+ * optional 字段应由调用者省略，而不是显式传 undefined。
+ */
+export function normalizeJsonValue(value: unknown): JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new AuthoringOperationError('INVALID_REQUEST', 'operation input 包含非有限数字');
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => normalizeJsonValue(item));
+  if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol'
+    || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new AuthoringOperationError('INVALID_REQUEST', 'operation input 不是 JSON value');
+  }
+  return Object.fromEntries(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => [key, normalizeJsonValue((value as Record<string, unknown>)[key])]),
+  );
 }
 
 export function stableStringify(value: unknown): string {
@@ -214,12 +239,14 @@ export async function runOperation<T>(
 ): Promise<T> {
   assertOpen(change);
   if (input.operationId.length === 0) throw new AuthoringOperationError('INVALID_REQUEST', 'operationId 不能为空');
-  const requestHash = stableStringify(input);
+  const normalizedInput = normalizeJsonValue(input);
+  const requestHash = stableStringify(normalizedInput);
   const previous = change.record.operations[input.operationId];
   if (previous !== undefined) {
     if (previous.requestHash !== requestHash) {
       throw new AuthoringOperationError('OPERATION_ID_CONFLICT', `operationId 已用于不同负载：${input.operationId}`);
     }
+    // 幂等回放：旧记录即使缺 normalizedInput 也只按 requestHash 返回，不重写历史。
     return previous.result as T;
   }
 
@@ -227,7 +254,7 @@ export async function runOperation<T>(
   const next = clone(change.record);
   next.workingFiles = outcome.workingFiles === undefined ? { ...next.workingFiles } : { ...outcome.workingFiles };
   if (outcome.changed !== false) next.workingRevision += 1;
-  next.operations[input.operationId] = { requestHash, result: outcome.result };
+  next.operations[input.operationId] = { requestHash, normalizedInput, result: outcome.result };
   next.latestValidation = undefined;
   await persistRecord(change, next);
   return outcome.result;

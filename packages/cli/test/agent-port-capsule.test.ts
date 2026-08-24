@@ -3,7 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { loadProjectSnapshot } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import { ChangeRecordProjectStorage } from '../src/authoring/working-project-storage.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
@@ -117,6 +119,11 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(capsule.simulation.status).toBe('stale');
     expect(capsule.runtime.status).toBe('stale');
     expect((capsule.objectDiff as any).freshness?.status ?? capsule.warnings).toBeDefined();
+    expect(capsule.capsuleVersion).toBe('2.0.0');
+    expect(capsule.contractVersion).toBe('2.0.0');
+    expect(capsule.composition.eligibility).toBe('ready');
+    const manifest = capsule.composition.manifest as { operations: unknown[] } | undefined;
+    expect(manifest?.operations.length).toBeGreaterThan(0);
     await session.close();
   });
 
@@ -137,6 +144,28 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(identity.path).toBe(first.artifactIdentity.path);
     expect(identity.bytes).toBe(first.artifactIdentity.bytes);
     expect(identity.sha256).toBe(first.artifactIdentity.sha256);
+    await session.close();
+  });
+
+  it('builds base and working snapshots from the same record adapter without disk writes', async () => {
+    const session = await openSession('dual-view');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    expect((await session.invoke('scene.create', { operationId: 'op-dual-view', sceneId: 'dual_view' })).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    expect(opened).not.toBeNull();
+    const record = opened!.record;
+    const dataDir = process.env['SURDET_AGENT_DATA_DIR']!;
+    const listDataFiles = (): string[] => fs.readdirSync(dataDir, { recursive: true }).map((entry) => String(entry)).sort();
+    const before = listDataFiles();
+    const hasher = {
+      sha256: async (text: string) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
+    };
+    const working = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'working'), hasher);
+    const base = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'base'), hasher);
+    expect(working.scenes.some((scene) => scene.id === 'dual_view')).toBe(true);
+    expect(base.scenes.some((scene) => scene.id === 'dual_view')).toBe(false);
+    expect(listDataFiles()).toEqual(before);
     await session.close();
   });
 });
