@@ -20,6 +20,7 @@ const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-transaction-
 const artifactDirectory = path.join(runRoot, mode ?? 'invalid');
 const activePorts = new Set();
 const childProcesses = [];
+const dataDirectories = new Set();
 const harness = {
   protocol: [],
   stderrUnexpected: [],
@@ -27,6 +28,12 @@ const harness = {
   textChecks: 0,
 };
 let modulesPromise;
+const progress = {
+  currentNode: 'initialization',
+  lastPassedNode: 'none',
+  firstFailedNode: null,
+  milestones: [],
+};
 
 function fail(message) {
   throw new Error(message);
@@ -144,6 +151,7 @@ function compareTextAndStructured(response, label) {
 
 async function connectPort({ projectRoot, policy, dataDir, resumeChangeId }) {
   assert(fs.existsSync(portEntry), `Agent Port launcher missing: ${portEntry}`);
+  dataDirectories.add(path.resolve(dataDir));
   const args = [portEntry, '--project', projectRoot, '--policy', policy];
   if (resumeChangeId !== undefined) args.push('--resume-change', resumeChangeId);
   const env = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined));
@@ -198,6 +206,36 @@ async function closeAllPorts() {
   for (const port of [...activePorts]) await closePort(port);
 }
 
+function scanActiveLeaseDirectories() {
+  const active = [];
+  for (const dataDir of [...dataDirectories].sort((a, b) => a.localeCompare(b))) {
+    for (const scope of ['changes', 'projects']) {
+      const scopeDirectory = path.join(dataDir, '.locks', scope);
+      if (!fs.existsSync(scopeDirectory)) continue;
+      for (const entry of fs.readdirSync(scopeDirectory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (entry.isDirectory() && entry.name.endsWith('.lock')) {
+          active.push({ dataDir, scope, path: path.join(scopeDirectory, entry.name) });
+        }
+      }
+    }
+  }
+  return active;
+}
+
+async function evidenceNode(name, action) {
+  progress.currentNode = name;
+  try {
+    const value = await action();
+    progress.lastPassedNode = name;
+    progress.milestones.push({ node: name, status: 'PASSED' });
+    return value;
+  } catch (error) {
+    if (progress.firstFailedNode === null) progress.firstFailedNode = name;
+    progress.milestones.push({ node: name, status: 'FAILED', error: String(error) });
+    throw error;
+  }
+}
+
 async function listTools(port) {
   const response = await port.client.listTools();
   return response.tools.map((tool) => tool.name);
@@ -224,6 +262,7 @@ function windowsOverlap(left, right) {
 }
 
 async function withDataDir(dataDir, callback) {
+  dataDirectories.add(path.resolve(dataDir));
   const previous = process.env.SURDET_AGENT_DATA_DIR;
   process.env.SURDET_AGENT_DATA_DIR = dataDir;
   try {
@@ -477,6 +516,8 @@ async function runPreflight() {
   assert(harness.protocol.length === 0, `preflight MCP protocol errors: ${harness.protocol.join('; ')}`);
   assert(harness.stderrUnexpected.length === 0, `preflight unexpected stderr: ${harness.stderrUnexpected.join('; ')}`);
   assert(harness.childCleanupFailures.length === 0, `preflight child cleanup failures: ${harness.childCleanupFailures.join('; ')}`);
+  const activeLeases = scanActiveLeaseDirectories();
+  assert(activeLeases.length === 0, `preflight left active lease directories: ${JSON.stringify(activeLeases)}`);
   const evidence = {
     schemaVersion: '1.0.0',
     status: 'PREFLIGHT_PASSED',
@@ -493,7 +534,7 @@ async function runPreflight() {
     mcp: { inspectVisible: true, executePolicyBlocked: true, executeApplyPassed: false, textEqualsStructured: harness.textChecks > 0 },
     errors: [],
     childProcesses,
-    cleanup: { timersStopped: true, childrenExited: childProcesses.every((child) => child.exited), locksReleased: true },
+    cleanup: { timersStopped: true, childrenExited: childProcesses.every((child) => child.exited), locksReleased: activeLeases.length === 0, activeLeaseDirectories: activeLeases },
     builds,
     dataBefore,
     dataAfter,
@@ -523,6 +564,7 @@ async function runSameChange(directory) {
   }
   resultOf(left.envelope, 'same-change mutation A');
   resultOf(right.envelope, 'same-change mutation B');
+  assert(windowsOverlap(left, right), 'same-change mutation call windows did not overlap');
   const { NodeChangeStore, NodeProjectStorage } = await loadModules();
   const facts = await withDataDir(dataDir, async () => {
     const storage = await NodeProjectStorage.open(projectRoot);
@@ -572,14 +614,15 @@ async function runDifferentChanges(directory) {
       assert(validation.ok === true, 'different change validation failed');
       const simulation = await callOk(port, 'surdet_project_simulate', { sceneId: 'ch01_01', seed });
       assert(simulation.status === 'passed', 'different change simulation failed');
-      const runtime = await callOk(port, 'surdet_runtime_run_from', { sceneId: 'ch01_01', choices: [], seed });
+      const runtime = await callOk(port, 'surdet_runtime_run_from', { sceneId: 'ch01_01', choices: [0], seed });
       assert(runtime.status === 'passed', 'different change runtime failed');
       await callOk(port, 'surdet_change_diff');
     }
   } finally {
     await Promise.all([closePort(alphaStage), closePort(betaStage)]);
   }
-  assert(windowsOverlap(alphaMutation, betaMutation), 'different change stage mutation windows did not overlap');
+  const stageOverlapObserved = windowsOverlap(alphaMutation, betaMutation);
+  assert(stageOverlapObserved, 'different change stage mutation windows did not overlap');
   const alphaApply = await connectPort({ projectRoot, policy: 'apply', dataDir, resumeChangeId: alpha });
   const betaApply = await connectPort({ projectRoot, policy: 'apply', dataDir, resumeChangeId: beta });
   let alphaCommit;
@@ -592,6 +635,8 @@ async function runDifferentChanges(directory) {
   } finally {
     await Promise.all([closePort(alphaApply), closePort(betaApply)]);
   }
+  const commitOverlapObserved = windowsOverlap(alphaCommit, betaCommit);
+  assert(commitOverlapObserved, 'different change commit request windows did not overlap');
   const alphaWon = alphaCommit.envelope.ok === true;
   const betaWon = betaCommit.envelope.ok === true;
   assert(alphaWon !== betaWon, `different changes commit outcomes were ${alphaWon}/${betaWon}`);
@@ -623,11 +668,10 @@ async function runDifferentChanges(directory) {
   return {
     projectRoot,
     dataDir,
-    stageOverlapObserved: true,
+    stageOverlapObserved,
     stageWindows: { alpha: alphaMutation, beta: betaMutation },
-    commitOverlapObserved: windowsOverlap(alphaCommit, betaCommit),
+    commitOverlapObserved,
     commitWindows: { alpha: alphaCommit, beta: betaCommit },
-    replacementOverlap: 0,
     winner,
     staleLoser,
     statuses,
@@ -641,6 +685,7 @@ async function runDifferentChanges(directory) {
 async function runLeaseMatrix(directory) {
   const { NodeLocalLeaseManager } = await loadModules();
   const dataRoot = path.join(directory, 'data');
+  dataDirectories.add(path.resolve(dataRoot));
   fs.mkdirSync(dataRoot, { recursive: true });
   const noTimer = () => () => undefined;
   let now = 1_000;
@@ -750,7 +795,7 @@ function emptyEvidence(evidenceClass) {
     mcp: { inspectVisible: false, executePolicyBlocked: false, executeApplyPassed: false, textEqualsStructured: false },
     errors: [],
     childProcesses,
-    cleanup: { timersStopped: true, childrenExited: false, locksReleased: false },
+    cleanup: { timersStopped: true, childrenExited: false, locksReleased: false, activeLeaseDirectories: [] },
   };
 }
 
@@ -762,21 +807,23 @@ async function runEvidence(evidenceClass) {
   const directory = path.join(runRoot, 'formal-or-diagnostic');
   fs.mkdirSync(directory, { recursive: true });
   const originalStarterBefore = hashTree(starterRoot);
-  const same = await runSameChange(path.join(directory, 'same'));
-  const different = await runDifferentChanges(path.join(directory, 'different'));
-  const lease = await runLeaseMatrix(path.join(directory, 'leases'));
-  const recovery = await runRecoveryMatrix(path.join(directory, 'recovery'));
-  const mcp = await runPolicyChecks(same.projectRoot, same.dataDir, same.changeId, recovery);
+  const same = await evidenceNode('same-change', () => runSameChange(path.join(directory, 'same')));
+  const different = await evidenceNode('different-changes', () => runDifferentChanges(path.join(directory, 'different')));
+  const lease = await evidenceNode('lease-matrix', () => runLeaseMatrix(path.join(directory, 'leases')));
+  const recovery = await evidenceNode('recovery-matrix', () => runRecoveryMatrix(path.join(directory, 'recovery')));
+  const mcp = await evidenceNode('mcp-policy-and-envelope', () => runPolicyChecks(same.projectRoot, same.dataDir, same.changeId, recovery));
   const originalStarterAfter = hashTree(starterRoot);
   assert(JSON.stringify(originalStarterBefore) === JSON.stringify(originalStarterAfter), 'original Starter changed during evidence run');
   assert(harness.protocol.length === 0, `MCP protocol errors: ${harness.protocol.join('; ')}`);
   assert(harness.stderrUnexpected.length === 0, `unexpected child stderr: ${harness.stderrUnexpected.join('; ')}`);
   assert(harness.childCleanupFailures.length === 0, `child cleanup failures: ${harness.childCleanupFailures.join('; ')}`);
+  const activeLeases = scanActiveLeaseDirectories();
+  assert(activeLeases.length === 0, `evidence run left active lease directories: ${JSON.stringify(activeLeases)}`);
   const projectTreeBefore = different.projectTreeBefore;
   const projectTreeAfter = different.projectTreeAfter;
   return {
     schemaVersion: '1.0.0',
-    status: evidenceClass === 'FORMAL' ? 'FORMAL_PASSED' : 'DIAGNOSTIC_PASSED',
+    status: 'PASSED',
     evidenceClass,
     runHead,
     projectRoot: different.projectRoot,
@@ -790,7 +837,7 @@ async function runEvidence(evidenceClass) {
     mcp,
     errors: [],
     childProcesses,
-    cleanup: { timersStopped: true, childrenExited: childProcesses.every((child) => child.exited), locksReleased: lease.released },
+    cleanup: { timersStopped: true, childrenExited: childProcesses.every((child) => child.exited), locksReleased: activeLeases.length === 0, activeLeaseDirectories: activeLeases },
     originalStarter: { before: originalStarterBefore, after: originalStarterAfter, unchanged: true },
   };
 }
@@ -813,7 +860,11 @@ async function main() {
       childCleanupFailures: harness.childCleanupFailures,
       textChecks: harness.textChecks,
     };
+    failed.progress = { ...progress, milestones: [...progress.milestones] };
     failed.cleanup.childrenExited = childProcesses.every((child) => child.exited);
+    const activeLeases = scanActiveLeaseDirectories();
+    failed.cleanup.activeLeaseDirectories = activeLeases;
+    failed.cleanup.locksReleased = activeLeases.length === 0;
     try {
       const artifact = writeArtifact(failed);
       console.error(JSON.stringify({ ...failed, artifact }));
