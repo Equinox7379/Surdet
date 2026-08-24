@@ -1,4 +1,4 @@
-import { compileScene } from '@surdet/core';
+import { compileScene, isValidSceneId } from '@surdet/core';
 import { insertLinesAfter, parseSceneDocument, parseSceneLine, rebuildTextRaw, serializeSceneDocument, splitInstruction } from './scene-document.js';
 import type {
   SceneBlockInput,
@@ -12,12 +12,8 @@ import type {
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
 import { normalizeProjectPath } from './project-storage.js';
 
-function validSceneId(sceneId: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(sceneId);
-}
-
 function scenePath(sceneId: string): string {
-  if (!validSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
+  if (!isValidSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
   return normalizeProjectPath(`content/scenario/${sceneId}.gal`);
 }
 

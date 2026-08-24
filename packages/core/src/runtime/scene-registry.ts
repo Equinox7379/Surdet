@@ -1,4 +1,5 @@
 import type { CompiledScene } from '../dsl/ast.js';
+import { assertValidSceneId } from './scene-id.js';
 
 /**
  * 场景注册表：管理编译产物的注册、查找与跳转目标寻址。
@@ -9,6 +10,7 @@ export class SceneRegistry {
 
   /** 注册场景（重复注册抛错） */
   register(scene: CompiledScene): void {
+    assertValidSceneId(scene.sceneId);
     if (this.#scenes.has(scene.sceneId)) {
       throw new Error(`Scene '${scene.sceneId}' already registered`);
     }
@@ -17,6 +19,8 @@ export class SceneRegistry {
 
   /** 原子替换已注册场景；未注册 ID 视为热重载目标不匹配。 */
   replace(scene: CompiledScene, expectedSceneId = scene.sceneId): void {
+    assertValidSceneId(scene.sceneId);
+    assertValidSceneId(expectedSceneId);
     if (scene.sceneId !== expectedSceneId) {
       throw new Error(`Cannot replace scene '${expectedSceneId}' with '${scene.sceneId}'`);
     }
