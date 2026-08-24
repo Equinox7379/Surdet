@@ -21,6 +21,11 @@ describe('authoring capability registry', () => {
     expect(() => assertCapabilityRegistry(AUTHORING_CAPABILITY_REGISTRY)).not.toThrow();
   });
 
+  it('advertises change and project lease conflicts for change.commit', () => {
+    const commit = AUTHORING_CAPABILITY_REGISTRY.find((definition) => definition.id === 'change.commit');
+    expect(commit?.possibleErrors).toEqual(expect.arrayContaining(['CHANGE_BUSY', 'PROJECT_BUSY']));
+  });
+
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
     expect(new Set(names).size).toBe(22);

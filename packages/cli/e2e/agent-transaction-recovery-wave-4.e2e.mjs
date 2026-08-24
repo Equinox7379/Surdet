@@ -34,6 +34,7 @@ const progress = {
   firstFailedNode: null,
   milestones: [],
 };
+let partialDifferentChanges = null;
 
 function fail(message) {
   throw new Error(message);
@@ -634,59 +635,115 @@ async function runDifferentChanges(directory) {
   const betaApply = await connectPort({ projectRoot, policy: 'apply', dataDir, resumeChangeId: beta });
   let alphaCommit;
   let betaCommit;
+  let finalLoserCommit;
+  let afterRefreshUsed = false;
+  let afterRefreshSession = null;
   try {
     [alphaCommit, betaCommit] = await Promise.all([
       timedCall(alphaApply, 'surdet_change_commit'),
       timedCall(betaApply, 'surdet_change_commit'),
     ]);
+    const commitOverlapObserved = windowsOverlap(alphaCommit, betaCommit);
+    assert(commitOverlapObserved, 'different change commit request windows did not overlap');
+    const alphaWon = alphaCommit.envelope.ok === true;
+    const betaWon = betaCommit.envelope.ok === true;
+    assert(alphaWon !== betaWon, `different changes commit outcomes were ${alphaWon}/${betaWon}`);
+    const winner = alphaWon ? alpha : beta;
+    const staleLoser = alphaWon ? beta : alpha;
+    const winnerCommit = alphaWon ? alphaCommit : betaCommit;
+    const loserCommit = alphaWon ? betaCommit : alphaCommit;
+    const initialLoserError = loserCommit.envelope.error;
+    const initialLoserCode = initialLoserError?.code;
+    const initialLoserRetryDisposition = initialLoserError?.retryDisposition;
+    assert(
+      initialLoserCode === 'PROJECT_CHANGED_SINCE_BEGIN' || initialLoserCode === 'PROJECT_BUSY',
+      `initial loser commit error was ${initialLoserCode}`,
+    );
+    partialDifferentChanges = {
+      initialLoserError,
+      initialLoserRetryDisposition,
+      afterRefreshUsed: false,
+      afterRefreshSession: null,
+      finalLoserError: initialLoserError,
+      finalLoserStatus: null,
+      winner,
+      winnerStatus: null,
+      staleLoser,
+      commitRequestWindows: { alpha: alphaCommit, beta: betaCommit },
+    };
+    finalLoserCommit = loserCommit;
+    if (initialLoserCode === 'PROJECT_BUSY') {
+      assert(initialLoserRetryDisposition === 'after-refresh', 'initial PROJECT_BUSY did not advertise retryDisposition=after-refresh');
+      const repairActions = initialLoserError?.repairActions;
+      assert(
+        Array.isArray(repairActions) && repairActions.some((action) => action?.capability === 'session.describe'),
+        'initial PROJECT_BUSY did not advertise session.describe repair action',
+      );
+      const loserPort = alphaWon ? betaApply : alphaApply;
+      afterRefreshSession = resultOf(
+        await callTool(loserPort, 'surdet_session_describe'),
+        'loser session.describe after PROJECT_BUSY',
+      );
+      afterRefreshUsed = true;
+      partialDifferentChanges.afterRefreshUsed = true;
+      partialDifferentChanges.afterRefreshSession = afterRefreshSession;
+      finalLoserCommit = await timedCall(loserPort, 'surdet_change_commit');
+      partialDifferentChanges.finalLoserError = finalLoserCommit.envelope.error;
+      assert(finalLoserCommit.envelope.ok === false, 'loser recovery commit unexpectedly succeeded');
+      assert(
+        finalLoserCommit.envelope.error?.code === 'PROJECT_CHANGED_SINCE_BEGIN',
+        `recovery loser commit error was ${finalLoserCommit.envelope.error?.code}`,
+      );
+    }
+    const { NodeChangeStore, NodeProjectStorage } = await loadModules();
+    const statuses = await withDataDir(dataDir, async () => {
+      const storage = await NodeProjectStorage.open(projectRoot);
+      const winnerRecord = (await NodeChangeStore.openForProject(winner, storage.rootIdentity, { allowTerminal: true, allowStale: true }))?.record;
+      const loserRecord = (await NodeChangeStore.openForProject(staleLoser, storage.rootIdentity, { allowTerminal: true, allowStale: true }))?.record;
+      assert(winnerRecord?.status === 'COMMITTED', `winner status was ${winnerRecord?.status}`);
+      assert(loserRecord?.status === 'STALE', `loser status was ${loserRecord?.status}`);
+      return { winner: winnerRecord.status, staleLoser: loserRecord.status };
+    });
+    partialDifferentChanges.finalLoserStatus = statuses.staleLoser;
+    partialDifferentChanges.winnerStatus = statuses.winner;
+    const projectAfter = hashTree(projectRoot);
+    const config = JSON.parse(fs.readFileSync(path.join(projectRoot, 'game.config.json'), 'utf8'));
+    const winnerName = alphaWon ? 'runner_different_alpha' : 'runner_different_beta';
+    const loserName = alphaWon ? 'runner_different_beta' : 'runner_different_alpha';
+    assert(config.variables?.[winnerName] !== undefined, 'winner variable is absent from committed project');
+    assert(config.variables?.[loserName] === undefined, 'stale loser variable reached committed project');
+    const changedPaths = projectAfter.files.filter((file) => {
+      const old = before.files.find((candidate) => candidate.path === file.path);
+      return old === undefined || old.sha256 !== file.sha256 || old.bytes !== file.bytes;
+    }).map((file) => file.path);
+    assert(changedPaths.length === 1 && changedPaths[0] === 'game.config.json', `unexpected final project paths: ${changedPaths.join(', ')}`);
+    return {
+      projectRoot,
+      dataDir,
+      stageOverlapObserved,
+      stageWindows: { alpha: alphaMutation, beta: betaMutation },
+      commitOverlapObserved,
+      commitWindows: { alpha: alphaCommit, beta: betaCommit },
+      commitRequestWindows: { alpha: alphaCommit, beta: betaCommit },
+      initialLoserError,
+      initialLoserRetryDisposition,
+      afterRefreshUsed,
+      afterRefreshSession,
+      finalLoserError: finalLoserCommit.envelope.error,
+      finalLoserStatus: statuses.staleLoser,
+      winner,
+      winnerStatus: statuses.winner,
+      staleLoser,
+      statuses,
+      winnerCommit: winnerCommit.envelope.result,
+      loserError: finalLoserCommit.envelope.error,
+      projectTreeBefore: before,
+      projectTreeAfter: projectAfter,
+      finalProjectTree: projectAfter,
+    };
   } finally {
     await Promise.all([closePort(alphaApply), closePort(betaApply)]);
   }
-  const commitOverlapObserved = windowsOverlap(alphaCommit, betaCommit);
-  assert(commitOverlapObserved, 'different change commit request windows did not overlap');
-  const alphaWon = alphaCommit.envelope.ok === true;
-  const betaWon = betaCommit.envelope.ok === true;
-  assert(alphaWon !== betaWon, `different changes commit outcomes were ${alphaWon}/${betaWon}`);
-  const winner = alphaWon ? alpha : beta;
-  const staleLoser = alphaWon ? beta : alpha;
-  const winnerCommit = alphaWon ? alphaCommit : betaCommit;
-  const loserCommit = alphaWon ? betaCommit : alphaCommit;
-  assert(loserCommit.envelope.error?.code === 'PROJECT_CHANGED_SINCE_BEGIN', `loser commit error was ${loserCommit.envelope.error?.code}`);
-  const { NodeChangeStore, NodeProjectStorage } = await loadModules();
-  const statuses = await withDataDir(dataDir, async () => {
-    const storage = await NodeProjectStorage.open(projectRoot);
-    const winnerRecord = (await NodeChangeStore.openForProject(winner, storage.rootIdentity, { allowTerminal: true, allowStale: true }))?.record;
-    const loserRecord = (await NodeChangeStore.openForProject(staleLoser, storage.rootIdentity, { allowTerminal: true, allowStale: true }))?.record;
-    assert(winnerRecord?.status === 'COMMITTED', `winner status was ${winnerRecord?.status}`);
-    assert(loserRecord?.status === 'STALE', `loser status was ${loserRecord?.status}`);
-    return { winner: winnerRecord.status, staleLoser: loserRecord.status };
-  });
-  const projectAfter = hashTree(projectRoot);
-  const config = JSON.parse(fs.readFileSync(path.join(projectRoot, 'game.config.json'), 'utf8'));
-  const winnerName = alphaWon ? 'runner_different_alpha' : 'runner_different_beta';
-  const loserName = alphaWon ? 'runner_different_beta' : 'runner_different_alpha';
-  assert(config.variables?.[winnerName] !== undefined, 'winner variable is absent from committed project');
-  assert(config.variables?.[loserName] === undefined, 'stale loser variable reached committed project');
-  const changedPaths = projectAfter.files.filter((file) => {
-    const old = before.files.find((candidate) => candidate.path === file.path);
-    return old === undefined || old.sha256 !== file.sha256 || old.bytes !== file.bytes;
-  }).map((file) => file.path);
-  assert(changedPaths.length === 1 && changedPaths[0] === 'game.config.json', `unexpected final project paths: ${changedPaths.join(', ')}`);
-  return {
-    projectRoot,
-    dataDir,
-    stageOverlapObserved,
-    stageWindows: { alpha: alphaMutation, beta: betaMutation },
-    commitOverlapObserved,
-    commitWindows: { alpha: alphaCommit, beta: betaCommit },
-    winner,
-    staleLoser,
-    statuses,
-    winnerCommit: winnerCommit.envelope.result,
-    loserError: loserCommit.envelope.error,
-    projectTreeBefore: before,
-    projectTreeAfter: projectAfter,
-  };
 }
 
 async function runLeaseMatrix(directory) {
@@ -796,7 +853,7 @@ function emptyEvidence(evidenceClass) {
     projectTreeBefore: null,
     projectTreeAfter: null,
     sameChange: { operations: [], recordVersions: [], workingRevision: null, invocations: [] },
-    differentChanges: { stageOverlapObserved: false, commitOverlapObserved: false, winner: null, staleLoser: null },
+    differentChanges: partialDifferentChanges ?? { stageOverlapObserved: false, commitOverlapObserved: false, winner: null, staleLoser: null },
     lease: { liveBlocked: false, orphanTakenOver: false, foreignHostBlocked: false, corruptBlocked: false, released: false },
     recovery: {},
     mcp: { inspectVisible: false, executePolicyBlocked: false, executeApplyPassed: false, textEqualsStructured: false },
@@ -807,6 +864,7 @@ function emptyEvidence(evidenceClass) {
 }
 
 async function runEvidence(evidenceClass) {
+  partialDifferentChanges = null;
   if (evidenceClass === 'FORMAL') {
     const formalLock = path.join(os.tmpdir(), 'surdet-agent-transaction-wave4-FORMAL-RUN.lock');
     fs.writeFileSync(formalLock, `${runHead}\n`, { encoding: 'utf8', flag: 'wx' });
