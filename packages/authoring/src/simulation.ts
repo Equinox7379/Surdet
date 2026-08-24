@@ -13,6 +13,7 @@ import {
   type VarValue,
 } from '@surdet/core';
 import type { ProjectSnapshot } from './project-snapshot.js';
+import { normalizeTrace, type RuntimeTraceEvent } from './runtime-trace.js';
 import { timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
 export const DEFAULT_AUTHORING_EVIDENCE_SEED = 0x5eedc0de;
@@ -71,6 +72,7 @@ export interface ExplicitPathReport {
   sceneId: string;
   choices: number[];
   finalVariables: Record<string, VarValue>;
+  events: RuntimeTraceEvent[];
   error?: string;
   seed: number;
 }
@@ -148,6 +150,17 @@ function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue>
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeExplicitPathTrace(events: readonly RuntimeTraceEvent[], snapshot: ProjectSnapshot): RuntimeTraceEvent[] {
+  return normalizeTrace(events).map((event) => {
+    if (event.source.op !== 'instr') return event;
+    const scene = snapshot.scenes.find((candidate) => candidate.id === event.source.sceneId);
+    const instruction = scene?.compiled.instructions[event.source.index];
+    return instruction?.op === 'instr'
+      ? { ...event, source: { ...event.source, op: instruction.name } }
+      : event;
+  });
 }
 
 export function simulateSnapshot(
@@ -319,6 +332,8 @@ export async function runExplicitPath(
   const seed = options.seed ?? DEFAULT_AUTHORING_EVIDENCE_SEED;
   assertValidRandomSeed(seed);
   const { store, bus, interpreter } = runtimeFor(snapshot, options.variables, seed);
+  const events: RuntimeTraceEvent[] = [];
+  bus.on('runtimeTrace', (event) => events.push(event));
   let latestChoices: { index: number; label: string }[] = [];
   let cursor = 0;
   bus.on('choice', (payload) => { latestChoices = payload.options; });
@@ -346,6 +361,7 @@ export async function runExplicitPath(
       sceneId: options.sceneId,
       choices: options.choices.slice(0, cursor),
       finalVariables: store.snapshot(),
+      events: normalizeExplicitPathTrace(events, snapshot),
       seed,
     };
   } catch (error) {
@@ -354,6 +370,7 @@ export async function runExplicitPath(
       sceneId: options.sceneId,
       choices: options.choices.slice(0, cursor),
       finalVariables: store.snapshot(),
+      events: normalizeExplicitPathTrace(events, snapshot),
       error: errorText(error),
       seed,
     };

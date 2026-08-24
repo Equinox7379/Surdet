@@ -259,6 +259,12 @@ describe('simulateSnapshot', () => {
     expect(explicit.status).toBe('passed');
     expect(explicit.finalVariables['lynn.atk']).toBe(7);
     expect(explicit.finalVariables['lynn.hp']).toBe(30);
+    expect(explicit.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'instruction',
+        source: expect.objectContaining({ sceneId: 'prologue', op: 'exp' }),
+      }),
+    ]));
   });
 
   it('keeps @exp strict when the snapshot has no growth config', async () => {
@@ -268,6 +274,16 @@ describe('simulateSnapshot', () => {
     expect(report.status).toBe('failed');
     expect(report.runtimeErrors).toHaveLength(1);
     expect(report.runtimeErrors[0]?.message).toMatch(/GrowthSystem/);
+
+    const explicit = await runExplicitPath(snapshot, { sceneId: 'prologue', choices: [] });
+    expect(explicit.status).toBe('failed');
+    expect(explicit.error).toMatch(/GrowthSystem/);
+    expect(explicit.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'instruction',
+        source: expect.objectContaining({ sceneId: 'prologue', op: 'exp' }),
+      }),
+    ]));
   });
 });
 
