@@ -594,6 +594,13 @@ async function runDifferentChanges(directory) {
   const projectRoot = path.join(directory, 'project');
   const dataDir = path.join(directory, 'data');
   copyStarter(projectRoot);
+  const probePath = path.join(projectRoot, 'content', 'scenario', 'transaction_runtime_probe.gal');
+  const probeContent = '@scene transaction_runtime_probe\n事务运行证据。\n@end\n';
+  for (const forbidden of ['@choice', '@jump', '@call', '@exp']) {
+    assert(!probeContent.includes(forbidden), `transaction runtime probe contains forbidden token: ${forbidden}`);
+  }
+  fs.mkdirSync(path.dirname(probePath), { recursive: true });
+  fs.writeFileSync(probePath, probeContent, 'utf8');
   fs.mkdirSync(dataDir, { recursive: true });
   const before = hashTree(projectRoot);
   const alpha = await beginChangeViaPort(projectRoot, dataDir, 'different-alpha');
@@ -612,9 +619,9 @@ async function runDifferentChanges(directory) {
     for (const [port, seed] of [[alphaStage, 901], [betaStage, 902]]) {
       const validation = await callOk(port, 'surdet_project_validate');
       assert(validation.ok === true, 'different change validation failed');
-      const simulation = await callOk(port, 'surdet_project_simulate', { sceneId: 'ch01_01', seed });
+      const simulation = await callOk(port, 'surdet_project_simulate', { sceneId: 'transaction_runtime_probe', seed });
       assert(simulation.status === 'passed', 'different change simulation failed');
-      const runtime = await callOk(port, 'surdet_runtime_run_from', { sceneId: 'ch01_01', choices: [0], seed });
+      const runtime = await callOk(port, 'surdet_runtime_run_from', { sceneId: 'transaction_runtime_probe', choices: [], seed });
       assert(runtime.status === 'passed', 'different change runtime failed');
       await callOk(port, 'surdet_change_diff');
     }
