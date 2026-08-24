@@ -188,6 +188,7 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
       process.stdout.write(s + '\n');
     };
     w(`—— Surdet 无头模拟报告（入口：${report.entryScene}，${report.sceneCount} 场景）——`);
+    w(`实际生效 seed：${report.seed}`);
     w(`路径：探索 ${report.pathsExplored} 条（预算 ${report.pathBudget}${report.budgetExhausted ? '，已耗尽' : ''}）；状态签名剪枝 ${report.cyclesPruned} 次循环`);
     const cb = report.choiceBranches;
     w(`choice 分支覆盖：${cb.visited}/${cb.total}${cb.total > 0 && cb.visited === cb.total ? '（全覆盖 ✓）' : ''}`);

@@ -54,6 +54,22 @@ describe('Interpreter 存档', () => {
     expect(interp.readTracker.has('s1#1')).toBe(true);
   });
 
+  it('旧快照缺少 random 时仍可加载', () => {
+    const { store, registry, interp } = makeInterp();
+    registry.register(compileScene('凛：旧档正文。', 'legacy.gal', 'legacy-save'));
+
+    interp.start('legacy-save');
+    const legacy = interp.saveSnapshot()!;
+    expect(legacy.random).toBeUndefined();
+
+    store.set('trust', 99);
+    interp.loadSnapshot(legacy);
+
+    expect(store.getNumber('trust')).toBe(0);
+    expect(interp.status).toBe('awaiting-advance');
+    expect(interp.savePosition()).toMatchObject({ sceneId: 'legacy-save', pc: 0 });
+  });
+
   it('保存并恢复 seeded random state 后，下一次 @random 值保持连续', () => {
     const { registry, interp } = makeInterp([...decls, { name: 'roll', type: 'number', initial: 0 }]);
     const source = createSeededRandomSource(7);
@@ -68,6 +84,39 @@ describe('Interpreter 存档', () => {
 
     interp.loadSnapshot(snap);
     expect(source.next()).toBe(expectedNext);
+  });
+
+  it('含 random 的快照遇到不可恢复随机源时 fail-loud 且不改变现有运行状态', () => {
+    const { store, registry, interp } = makeInterp([
+      ...decls,
+      { name: 'roll', type: 'number', initial: 0 },
+    ]);
+    const seeded = createSeededRandomSource(7);
+    interp.setRandomSource(seeded);
+    registry.register(compileScene('@random roll 0 100\n凛：当前。\n@end', 'seeded.gal', 'seeded-state'));
+
+    interp.start('seeded-state');
+    const incoming = interp.saveSnapshot()!;
+    expect(incoming.random).toMatchObject({ algorithm: 'mulberry32-v1' });
+
+    interp.advance();
+    interp.setRandomSource({ next: () => 0.5 });
+    const before = {
+      variables: store.snapshot(),
+      position: interp.savePosition(),
+      status: interp.status,
+      readSet: interp.readTracker.snapshot(),
+      gallery: interp.gallery.snapshot(),
+      clears: interp.clearTracker.snapshot(),
+    };
+
+    expect(() => interp.loadSnapshot(incoming)).toThrow(/没有可恢复的随机源/);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(interp.savePosition()).toEqual(before.position);
+    expect(interp.status).toBe(before.status);
+    expect(interp.readTracker.snapshot()).toEqual(before.readSet);
+    expect(interp.gallery.snapshot()).toEqual(before.gallery);
+    expect(interp.clearTracker.snapshot()).toEqual(before.clears);
   });
 
   it('@unlock_cg/@unlock_music 更新解锁状态并广播事件', () => {
