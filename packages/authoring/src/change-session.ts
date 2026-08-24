@@ -9,6 +9,7 @@ import type {
   ProjectWriteStorage,
 } from './contracts.js';
 import type { JsonValue } from './composition-contracts.js';
+import type { IntegrationMetadata } from './integration-execution.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 
 export class AuthoringOperationError extends Error {
@@ -131,11 +132,17 @@ function changeIdentityRandom(): string {
   return cryptoApi.randomUUID();
 }
 
+/** Wave 5：integration change 创建选项；普通调用不传即维持原行为。 */
+export interface BeginChangeOptions {
+  integration?: IntegrationMetadata;
+}
+
 export async function beginChange(
   snapshot: ProjectSnapshot,
   repository: ChangeRepository,
   storage?: ProjectWriteStorage,
   intent?: ChangeIntentMetadata,
+  options?: BeginChangeOptions,
 ): Promise<ChangeSession> {
   const boundedIntent = validateIntentMetadata(intent);
   changeSequence += 1;
@@ -156,6 +163,7 @@ export async function beginChange(
     workingFiles: { ...baseContents },
     operations: {},
     ...(boundedIntent === undefined ? {} : { intent: boundedIntent }),
+    ...(options?.integration === undefined ? {} : { integration: options.integration }),
   };
   await repository.create(record);
   return new ChangeSession(record, repository, storage);
@@ -341,6 +349,34 @@ export async function rollbackChange(change: ChangeSession): Promise<ChangeRecor
   return change.record;
 }
 
+/**
+ * Wave 5 commit gate：integration change 必须 READY 才可 commit；普通 change（undefined）不受影响。
+ */
+export function assertIntegrationReadyForCommit(record: ChangeRecord): void {
+  if (record.integration !== undefined && record.integration.status !== 'READY') {
+    throw new AuthoringOperationError('COMPOSITION_INCOMPLETE', 'integration change 尚未 READY', {
+      planId: record.integration.planId,
+      status: record.integration.status,
+      nextOperationIndex: record.integration.nextOperationIndex,
+    });
+  }
+}
+
+/** 以当前 recordVersion CAS 更新 integration metadata（receipt / nextOperationIndex / 状态迁移）。 */
+export async function updateIntegrationMetadata(
+  change: ChangeSession,
+  mutate: (metadata: IntegrationMetadata) => IntegrationMetadata,
+): Promise<IntegrationMetadata> {
+  if (change.record.integration === undefined) {
+    throw new AuthoringOperationError('CHANGE_NOT_OPEN', 'record 缺少 integration metadata');
+  }
+  const metadata = mutate(change.record.integration);
+  const next = clone(change.record);
+  next.integration = metadata;
+  await persistRecord(change, next);
+  return metadata;
+}
+
 async function markStale(change: ChangeSession): Promise<void> {
   const next = clone(change.record);
   next.status = 'STALE';
@@ -371,6 +407,7 @@ export async function commitChange(
   change: ChangeSession,
   storage: ProjectWriteStorage = change.storage as ProjectWriteStorage,
 ): Promise<{ changeId: string; status: 'COMMITTED'; files: string[] }> {
+  assertIntegrationReadyForCommit(change.record);
   assertOpen(change);
   if (storage === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'change.commit 缺少 ProjectWriteStorage');
   const validation = change.record.latestValidation;

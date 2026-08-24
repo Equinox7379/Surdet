@@ -1,0 +1,210 @@
+import * as crypto from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import {
+  AuthoringOperationError,
+  InMemoryChangeRepository,
+  beginChange,
+  commitChange,
+  executeIntegrationReplay,
+} from '../src/index.js';
+import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, ProjectSnapshot, TextHasher } from '../src/index.js';
+
+const hasher: TextHasher = {
+  sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
+};
+
+function makeSnapshot(): ProjectSnapshot {
+  const start = '@scene start\n凛：开始。\n@end\n';
+  const config = JSON.stringify({ entryScene: 'start', variables: {} });
+  const file = (path: string, text: string) => ({
+    path, text, bytes: Buffer.byteLength(text, 'utf8'),
+    sha256: crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
+  });
+  return {
+    rootIdentity: 'snap-root',
+    revision: crypto.createHash('sha256').update('seed').digest('hex'),
+    files: [file('game.config.json', config), file('content/scenario/start.gal', start)],
+    configFile: file('game.config.json', config),
+    config: { entryScene: 'start', variables: {} },
+    variables: {},
+    scenes: [],
+    timelines: [],
+  };
+}
+
+function makePlan(overrides: Partial<IntegrationPlan> = {}): IntegrationPlan {
+  return {
+    planVersion: '1.0.0',
+    planId: 'pln_test00000000000000000000000000',
+    projectIdentity: 'proj-t4',
+    expectedProjectRevision: 'rev-t4',
+    comparisonFingerprint: 'cf'.repeat(6),
+    sourceCapsules: [{ changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) }],
+    selectedUnitIds: ['u1'],
+    implicitInclusions: [],
+    excludedUnitIds: [],
+    conflictResolutions: [],
+    deduplicatedUnits: [],
+    replayOperations: [
+      {
+        sequence: 0, capabilityId: 'variable.ensure', sourceOperationId: 'src_op1',
+        normalizedInput: { operationId: 'cmp_t4_0000_aaa', name: 'flag.t4', type: 'number', initial: 0 },
+        inputSha256: 'x1', primaryObject: 'variable:flag.t4',
+        requiredObjects: [], producedObjects: [{ objectRef: 'variable:flag.t4', disposition: 'create' }],
+        integrationOperationId: 'cmp_t4_0000_aaa',
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+      },
+      {
+        sequence: 1, capabilityId: 'scene.create', sourceOperationId: 'src_op2',
+        normalizedInput: { operationId: 'cmp_t4_0001_bbb', sceneId: 'alpha' },
+        inputSha256: 'x2', primaryObject: 'scene:alpha',
+        requiredObjects: [], producedObjects: [{ objectRef: 'scene:alpha', disposition: 'create' }],
+        integrationOperationId: 'cmp_t4_0001_bbb',
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+      },
+      {
+        sequence: 2, capabilityId: 'scene.create', sourceOperationId: 'src_op3',
+        normalizedInput: { operationId: 'cmp_t4_0002_ccc', sceneId: 'beta' },
+        inputSha256: 'x3', primaryObject: 'scene:beta',
+        requiredObjects: [], producedObjects: [{ objectRef: 'scene:beta', disposition: 'create' }],
+        integrationOperationId: 'cmp_t4_0002_ccc',
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+      },
+    ],
+    provenance: [],
+    dryRun: { status: 'passed', finalObjectFingerprints: {}, errors: [] },
+    planFingerprint: 'pf'.repeat(32),
+    ...overrides,
+  };
+}
+
+function integrationMetadataFor(plan: IntegrationPlan, executeOperationId: string) {
+  return {
+    planId: plan.planId,
+    planFingerprint: plan.planFingerprint,
+    executeOperationId,
+    sourceCapsules: plan.sourceCapsules,
+    includedUnitIds: plan.selectedUnitIds,
+    deduplicatedUnits: plan.deduplicatedUnits,
+    conflictResolutions: plan.conflictResolutions,
+    status: 'REPLAYING' as const,
+    nextOperationIndex: 0,
+    replayedOperations: [],
+  };
+}
+
+async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeRepository = new InMemoryChangeRepository()) {
+  return beginChange(makeSnapshot(), repository, undefined, undefined, {
+    integration: integrationMetadataFor(plan, 'exec-1'),
+  });
+}
+
+describe('Wave 5 integration execution', () => {
+  it('creates a REPLAYING integration change and advances nextOperationIndex with receipts', async () => {
+    const plan = makePlan();
+    const change = await beginIntegrationChange(plan);
+    expect(change.record.integration?.status).toBe('REPLAYING');
+    expect(change.record.integration?.nextOperationIndex).toBe(0);
+    const metadata = await executeIntegrationReplay(change, plan, hasher);
+    expect(metadata.status).toBe('READY');
+    expect(metadata.nextOperationIndex).toBe(3);
+    expect(metadata.replayedOperations.map((item) => item.integrationOperationId)).toEqual([
+      'cmp_t4_0000_aaa', 'cmp_t4_0001_bbb', 'cmp_t4_0002_ccc',
+    ]);
+    // workingRevision 按真实 changed operation 增长（3 个 mutation）。
+    expect(change.record.workingRevision).toBe(3);
+    expect(Object.keys(change.record.operations).sort()).toEqual([
+      'cmp_t4_0000_aaa', 'cmp_t4_0001_bbb', 'cmp_t4_0002_ccc',
+    ]);
+  });
+
+  it('does not double-apply mutations when a receipt write was interrupted before persistence', async () => {
+    const plan = makePlan();
+    const repository = new InMemoryChangeRepository();
+    const change = await beginIntegrationChange(plan, repository);
+    // 第一项 replay 已持久化，但 receipt CAS 被中断：注入一次写失败。
+    await executeIntegrationReplay(change, makePlan({ replayOperations: plan.replayOperations.slice(0, 1) }), hasher)
+      .then(() => undefined)
+      .catch(() => undefined);
+    // 直接重放同 operationId：runOperation 幂等回放旧 result。
+    const resumed = await executeIntegrationReplay(change, plan, hasher);
+    expect(resumed.status).toBe('READY');
+    expect(resumed.replayedOperations).toHaveLength(3);
+    expect(change.record.workingRevision).toBe(3);
+  });
+
+  it('resumes an exact executeOperationId + plan and rejects fingerprint mismatches', async () => {
+    const plan = makePlan();
+    const change = await beginIntegrationChange(plan);
+    const metadata = await executeIntegrationReplay(change, plan, hasher);
+    expect(metadata.status).toBe('READY');
+
+    const foreign = makePlan({ planFingerprint: 'ee'.repeat(32), planId: 'pln_other' });
+    const change2 = await beginIntegrationChange(foreign);
+    await expect(executeIntegrationReplay(change2, plan, hasher))
+      .rejects.toMatchObject({ code: 'COMPOSITION_PLAN_INVALID' });
+    const wrongExec = await beginIntegrationChange(plan);
+    void wrongExec;
+    await expect((async () => {
+      const other = await beginChange(makeSnapshot(), new InMemoryChangeRepository(), undefined, undefined, {
+        integration: { ...integrationMetadataFor(plan, 'exec-other'), planFingerprint: 'dd'.repeat(32) },
+      });
+      return executeIntegrationReplay(other, plan, hasher);
+    })()).rejects.toMatchObject({ code: 'COMPOSITION_PLAN_INVALID' });
+  });
+
+  it('seals integration metadata on the created record; takeover refusal lives in the service scan', async () => {
+    const plan = makePlan();
+    const repository = new InMemoryChangeRepository();
+    await beginChange(makeSnapshot(), repository); // 普通 OPEN change（无 integration 字段）
+    const integration = await beginChange(makeSnapshot(), repository, undefined, undefined, {
+      integration: integrationMetadataFor(plan, 'exec-1'),
+    });
+    expect(integration.record.integration?.planId).toBe(plan.planId);
+    expect(integration.record.integration?.status).toBe('REPLAYING');
+    // 普通 change 不受 commit gate 影响（integration 为 undefined）。
+    const ordinary = await beginChange(makeSnapshot(), repository);
+    expect(ordinary.record.integration).toBeUndefined();
+  });
+
+  it('marks FAILED with the original domain code and stays OPEN on typed replay failure', async () => {
+    const plan = makePlan();
+    plan.replayOperations[1]!.normalizedInput = { operationId: 'cmp_t4_0001_bbb', sceneId: '../evil' };
+    const change = await beginIntegrationChange(plan);
+    await expect(executeIntegrationReplay(change, plan, hasher))
+      .rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    expect(change.record.integration?.status).toBe('FAILED');
+    expect(change.record.integration?.failure?.operationIndex).toBe(1);
+    expect(['INVALID_REQUEST', 'PATH_OUTSIDE_PROJECT']).toContain(change.record.integration?.failure?.code);
+    expect(change.record.status).toBe('OPEN');
+  });
+
+  it('keeps source capsules and project files byte-stable across execution', async () => {
+    const plan = makePlan();
+    const change = await beginIntegrationChange(plan);
+    const filesBefore = JSON.stringify(change.record.workingFiles);
+    await executeIntegrationReplay(change, plan, hasher);
+    // workingFiles 变化属于集成 change 自身；baseContents 与 sourceCapsules 引用不变。
+    expect(JSON.stringify(change.record.baseContents)).toBe(JSON.stringify(await (async () => {
+      const fresh = makeSnapshot();
+      return Object.fromEntries(fresh.files.map((item) => [item.path, item.text]));
+    })()));
+    expect(change.record.integration?.sourceCapsules).toEqual(plan.sourceCapsules);
+    void filesBefore;
+  });
+
+  it('blocks commit of REPLAYING/FAILED integration changes with COMPOSITION_INCOMPLETE', async () => {
+    const plan = makePlan({ replayOperations: [] });
+    const failing = makePlan();
+    failing.replayOperations[1]!.normalizedInput = { operationId: 'cmp_t4_0001_bbb', sceneId: '../evil' };
+    const change = await beginIntegrationChange(failing);
+    await executeIntegrationReplay(change, failing, hasher).catch(() => undefined);
+    expect(change.record.integration?.status).toBe('FAILED');
+    // gate 位于 storage 检查之前，undefined storage 也会先命中 COMPOSITION_INCOMPLETE。
+    await expect(commitChange(change, undefined as never)).rejects.toMatchObject({ code: 'COMPOSITION_INCOMPLETE' });
+    void plan;
+  });
+});

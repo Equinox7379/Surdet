@@ -1,5 +1,6 @@
 import type { CompiledScene } from '@surdet/core';
 import type { RecordedOperation } from './composition-contracts.js';
+import type { IntegrationMetadata } from './integration-execution.js';
 
 export type SceneEol = '\r\n' | '\n' | '\r' | '';
 
@@ -131,6 +132,8 @@ export interface ChangeRecord {
   baseContents: Record<string, string>;
   workingFiles: Record<string, string>;
   operations: Record<string, RecordedOperation>;
+  /** Wave 5：integration change 的执行元数据；普通 change 为 undefined，旧记录不迁移。 */
+  integration?: IntegrationMetadata;
   latestValidation?: { workingRevision: number; evidenceId: string; errors: number };
   intent?: ChangeIntentMetadata;
   latestSimulation?: {
