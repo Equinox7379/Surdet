@@ -1,9 +1,13 @@
 # Pre-Wave 5 Agent Transaction Recovery Wave 4 设计规格
 
-> 日期：2026-08-24  
-> 状态：方案 3A 已获项目所有者批准，等待书面规格复核  
-> 阶段：Pre-Wave 5 Foundation Polish / Wave 4  
-> 主题：桌面本地多 Agent 事务管理器  
+> 日期：2026-08-24
+>
+> 状态：方案 3A 已获项目所有者批准，等待书面规格复核
+>
+> 阶段：Pre-Wave 5 Foundation Polish / Wave 4
+>
+> 主题：桌面本地多 Agent 事务管理器
+>
 > 当前授权：设计与任务书；尚未授权实现、push、Wave 5、部署或发行
 
 ## 一、执行摘要
