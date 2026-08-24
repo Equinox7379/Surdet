@@ -19,7 +19,7 @@
 
 ## 当前阶段
 
-Stage 6 Wave 4 正在完成外部 Agent Port 的最后人工门。FORMAL、真实外部 Agent、自修复与语义引导 smoke 已有证据；项目所有者批准的 apply-resume 已写入桌面隔离 fixture。当前仍等待项目所有者在 Editor/预览中确认可编辑对象和真实演出，因此尚未宣称 Wave 4 最终关闭，也尚未 push。
+Stage 6 Wave 4 的 Agent Port 已在本地完成验证。FORMAL、真实外部 Agent、自修复、并发可靠性与语义引导 smoke 均已有证据；项目所有者批准的 apply-resume 只写入桌面隔离 fixture，并于 2026-08-24 明确确认 Editor/预览人工路径全部通过。当前停在项目所有者 push 授权门；尚未部署、发行或进入 Wave 5。
 
 - [Wave 4 设计规格](superpowers/specs/2026-08-20-surdet-agent-port-stage-6-wave-4-design.md)
 - [Wave 4 总任务书与 Execution Ledger](superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md)

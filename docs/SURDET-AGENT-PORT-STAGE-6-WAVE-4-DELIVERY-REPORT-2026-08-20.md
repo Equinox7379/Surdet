@@ -1,24 +1,31 @@
 # Surdet Agent Port — Stage 6 / Wave 4 Delivery Report
 
 ```ini
-RESULT = FAILED
-EVIDENCE_CLASS = DIAGNOSTIC
-RUN_HEAD = ba22c488f045621909432114d68b4a0ea121aff3
-CODE_EVIDENCE_HEAD = ba22c488f045621909432114d68b4a0ea121aff3
-REMOTE_MAIN = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
-AHEAD_BEHIND = 16/0
+RESULT = PASSED
+EVIDENCE_CLASS = FORMAL + EXTERNAL_AGENT + OWNER_ACCEPTANCE
+FORMAL_RUN_HEAD = ee5f11d3ef6f6750e2bd8f9bce4b79a7e9fad0db
+FINAL_SHARED_CONTRACT_CODE_HEAD = e132a80c6df22b59641694d8839cd6f18c4b6dcd
+OWNER_APPLY_RUN_HEAD = 126c3a59f7a5eafdcb8c55b3124cdb0a0f91b9d2
+PRE_ACCEPTANCE_CLOSURE_HEAD = e9ffeb739e0e42634d364d742586cfc018d379dc
+REMOTE_MAIN_LOCAL_TRACKING_REF = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+PRE_ACCEPTANCE_AHEAD_BEHIND = 43/0
 PUSH = NOT_PERFORMED
-FORMAL = NOT_STARTED
-NEXT_STOP = WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+FORMAL = PASSED
+REAL_EXTERNAL_AGENT_LOW_CONTEXT_ACCEPTANCE = PASSED
+OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE = PASSED
+WAVE_4_AGENT_PORT = VERIFIED_LOCALLY
+NEXT_STOP = WAITING_FOR_OWNER_PUSH_AUTHORIZATION
 ```
+
+> 本报告保留了失败恢复过程的历史章节；其局部 `FAILED`、`NOT_STARTED` 与旧 HEAD 字段是当时快照，不代表当前结论。当前权威状态以本页头部和末尾“项目所有者人工验收与最终闭合”章节为准。
 
 ## 1. 交付边界
 
-本轮按 `docs/superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md` 串行执行 Task 0–10。已实施的 Wave 4 范围是：外部桌面 Agent 使用官方 MCP v2 stdio client 连接真实 `packages/cli/dist/agent-port/main.js`；Authoring registry 是领域语义来源；MCP 只做 typed projection、session/policy 绑定、证据和 delivery capsule 适配。
+本轮按 `docs/superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md` 完成 Task 0–12。已实施的 Wave 4 范围是：外部桌面 Agent 使用官方 MCP v2 stdio client 连接真实 `packages/cli/dist/agent-port/main.js`；Authoring registry 是领域语义来源；MCP 只做 typed projection、session/policy 绑定、证据和 delivery capsule 适配。
 
 没有修改 Core、Renderer、Host、Shell、Editor、Starter、Zero 生产逻辑；没有内置 AI、HTTP server、Git 自动化、音频、性能、扩展市场、发行、部署或 Wave 5；没有 push。
 
-Task 1–8 的实现、测试与普通本地提交已完成。Task 9 runner 已提交；Task 10 的历史唯一 `verify:all` 通过，但原有三次 DIAGNOSTIC 均未通过。经本轮独立授权，只对 `object.inspect.details` 的 string/object 输出合同进行了最小修复；新的代码证据提交后 preflight 通过，但恢复预算中的第 1 次 DIAGNOSTIC 在 `stage-connect-and-discover` 首节点失败，因此本报告仍停止在失败状态，未运行 recovery `verify:all` 或 FORMAL，也没有宣布 Wave 4 ready 或 CLOSED。
+Task 1–10 的实现、恢复、聚焦验证、唯一 FORMAL 与普通本地提交已完成。随后真实外部 Agent 低上下文创作、自修复、并发可靠性与语义引导 smoke 均取得证据；项目所有者授权的 apply-resume 只写入桌面隔离 fixture。2026-08-24，项目所有者对该 fixture 的 Editor/预览路径明确回复“全部通过”。因此 Wave 4 Agent Port 已在本地完成验证；push、部署、发行与 Wave 5 仍是独立授权门。
 
 ## 2. 已验证事实
 
@@ -809,3 +816,53 @@ PUSH = NOT_PERFORMED
 WAVE_5 = NOT_STARTED
 NEXT_STOP = OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE
 ```
+
+
+## 18. 项目所有者人工验收与最终本地闭合（2026-08-24）
+
+项目所有者使用现有 Editor 打开 `C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-XuYFfo\project`，完成此前给出的最终 Editor/预览人工路径，并明确回复“全部通过”。这是项目所有者的一手视觉与交互证据，不由自动化代填。
+
+已确认的人工事实：
+
+- `agent_semantic_guidance_probe` 及其 `@timeline agent_semantic_guidance_timeline` 能作为普通创作对象读取，打开后没有异常脏标记；
+- 从该场景开头进入真实预览后，实际画面出现 `castle_hall` 背景与 `lynn:uniform`、`normal`、居中立绘；
+- 剧情可继续到结束文本，没有黑屏或项目所有者观察到的可见错误；
+- 刷新并重新打开同一隔离 fixture 后，上述对象仍存在。
+
+低上下文外部 Agent 对双场景、变量、A/B 路径、validation/simulation/runtime trace、对象差异与胶囊的证据已经在前述章节保留；本节不把机器证据写成人工视觉结论。两者合并后，Wave 4 的 Agent Port 纵向闭环已在本地成立。
+
+本轮磁盘回读结果：
+
+```ini
+OWNER_ACCEPTANCE_FIXTURE = C:\Users\Equinox\Desktop\surdet-agent-port-acceptance-XuYFfo\project
+OWNER_ACCEPTANCE_FIXTURE_FILES = 39
+OWNER_ACCEPTANCE_FIXTURE_BYTES = 6706602
+OWNER_ACCEPTANCE_STARTER_FILES = 37
+OWNER_ACCEPTANCE_STARTER_BYTES = 6705750
+OWNER_ACCEPTANCE_SHARED_FILE_DIFFS = 0
+OWNER_ACCEPTANCE_ADDED_FILES = 2
+OWNER_ACCEPTANCE_SCENE_BYTES = 234
+OWNER_ACCEPTANCE_SCENE_SHA256 = DC55DFD60EF8980A3FBFFD04AE0BCDAE4EFE4D5D09F39A06BD5F289DEBD641FA
+OWNER_ACCEPTANCE_TIMELINE_BYTES = 618
+OWNER_ACCEPTANCE_TIMELINE_SHA256 = BE15AE3BF7AD6360046587706D0B2B74707097087BE3AF58AD4E891B8AC46806
+OWNER_ACCEPTANCE_APPLY_EVIDENCE_BYTES = 81389
+OWNER_ACCEPTANCE_APPLY_EVIDENCE_SHA256 = DC91E618E09B40D8C50C784C6D44D85E0955CBB828322692C56D600F7EF3CE1C
+OWNER_ACCEPTANCE_APPLY_IDENTITY_BYTES = 200
+OWNER_ACCEPTANCE_APPLY_IDENTITY_SHA256 = 043290D434E424F9C9C6090A8E2D10B141D77702A076AAD6C026F7723E556646
+```
+
+Git 闭合前 HEAD 为 `e9ffeb739e0e42634d364d742586cfc018d379dc`，tracked 工作树与暂存区均干净；受保护/治理类未跟踪文件保持未触碰。本轮尝试刷新 GitHub 远端时，本机代理 `127.0.0.1` 无法连接 `github.com:443`，因此 `f7ab58d67a362fcad7c2d64f5889f95f737ab5dd` 与 `43/0` 只作为本地 `surdet/main` tracking ref 快照，不声称是 2026-08-24 的实时公网远端状态。
+
+```ini
+REAL_EXTERNAL_AGENT_LOW_CONTEXT_ACCEPTANCE_PASSED
+OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE_PASSED
+WAVE_4_AGENT_PORT_VERIFIED
+READY_FOR_OWNER_PUSH_DECISION
+WAITING_FOR_OWNER_PUSH_AUTHORIZATION
+PUSH = NOT_PERFORMED
+DEPLOYMENT = NOT_PERFORMED
+RELEASE = NOT_PERFORMED
+WAVE_5 = NOT_STARTED
+```
+
+本次最终闭合只修改本任务书、交付报告和 `docs/README.md` 的当前阶段说明；没有重跑代码测试、FORMAL、DIAGNOSTIC 或人工路径，没有修改生产代码、原 Starter、长期路线台账或受保护文件。
