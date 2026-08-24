@@ -8,6 +8,7 @@ export * from './state/variable-store.js';
 export * from './runtime/event-bus.js';
 export * from './runtime/scene-registry.js';
 export * from './runtime/scene-id.js';
+export * from './runtime/random-source.js';
 export * from './runtime/interpreter.js';
 export * from './runtime/expr-eval.js';
 export * from './runtime/read-tracker.js';
