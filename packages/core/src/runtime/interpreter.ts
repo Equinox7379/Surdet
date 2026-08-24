@@ -18,6 +18,7 @@ import { GalleryState } from '../systems/gallery-state.js';
 import type { SavePosition, SaveSnapshot, SystemSnapshots } from '../save/save-manager.js';
 import { isJsonSafeValue, SAVE_SCHEMA_VERSION, assertValidSnapshot } from '../save/save-manager.js';
 import { migrateSnapshot } from '../save/migrate.js';
+import { assertValidRandomState, type RandomSource } from './random-source.js';
 import { ClearTracker } from '../systems/clear-tracker.js';
 import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
 import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
@@ -178,6 +179,7 @@ export class Interpreter {
   #systemHooks: SystemHooks;
   #timelineCatalog: TimelineCatalog | null;
   #presentationHooks: PresentationSnapshotHooks | null;
+  #randomSource: RandomSource = { next: () => Math.random() };
 
   constructor(
     store: VariableStore,
@@ -216,6 +218,17 @@ export class Interpreter {
   /** 宿主可在 renderer 创建后注入演出快照钩子，兼容旧项目初始化顺序。 */
   setPresentationHooks(hooks: PresentationSnapshotHooks | null): void {
     this.#presentationHooks = hooks;
+  }
+
+  /** 注入有状态随机源；只能在一轮运行开始前或结束后切换，避免静默重置运行中序列。 */
+  setRandomSource(source: RandomSource): void {
+    if (this.#status !== 'idle' && this.#status !== 'ended') {
+      throw new RuntimeError('运行中的解释器不能替换随机源');
+    }
+    if (typeof source.next !== 'function') {
+      throw new RuntimeError('随机源必须提供 next()');
+    }
+    this.#randomSource = source;
   }
 
   /** 成长系统只读访问（宿主展示等级/经验条用） */
@@ -280,6 +293,14 @@ export class Interpreter {
     if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
     const presentationPayload = this.#presentationHooks?.snapshot();
+    const random = this.#randomSource.snapshot?.();
+    if (random !== undefined) {
+      try {
+        assertValidRandomState(random);
+      } catch (err) {
+        throw new RuntimeError(err instanceof Error ? err.message : String(err));
+      }
+    }
     if (presentationPayload !== undefined && !isJsonSafeValue(presentationPayload)) {
       throw new RuntimeError('宿主演出快照必须是 JSON 安全值');
     }
@@ -304,6 +325,7 @@ export class Interpreter {
       ...(this.#growth ? { growth: this.#growth.snapshot() } : {}),
       ...(systems ? { systems } : {}),
       ...(presentationPayload !== undefined ? { presentation: { version: 1 as const, payload: presentationPayload } } : {}),
+      ...(random !== undefined ? { random } : {}),
     };
   }
 
@@ -340,6 +362,16 @@ export class Interpreter {
     snap = candidate;
     if (snap.systems) this.#systemHooks.validate?.(snap.systems);
     this.#presentationHooks?.validate?.(snap.presentation?.payload ?? null);
+    if (snap.random !== undefined) {
+      if (this.#randomSource.restore === undefined) {
+        throw new RuntimeError('该存档包含 seeded 随机状态，但当前解释器没有可恢复的随机源');
+      }
+      try {
+        this.#randomSource.restore(snap.random);
+      } catch (err) {
+        throw new RuntimeError(err instanceof Error ? err.message : String(err));
+      }
+    }
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
     }
@@ -908,7 +940,11 @@ export class Interpreter {
         if (varName === undefined || !Number.isInteger(min) || !Number.isInteger(max) || min > max) {
           throw new RuntimeError('@random 用法：@random 变量 min max（整数且 min ≤ max）', instr);
         }
-        this.#store.set(varName, min + Math.floor(Math.random() * (max - min + 1)));
+        const sample = this.#randomSource.next();
+        if (!Number.isFinite(sample) || sample < 0 || sample >= 1) {
+          throw new RuntimeError('随机源必须返回 [0, 1) 范围内的有限 number', instr);
+        }
+        this.#store.set(varName, min + Math.floor(sample * (max - min + 1)));
         return;
       }
       case 'add_item': {

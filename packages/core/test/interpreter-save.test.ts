@@ -8,13 +8,14 @@ import { SaveManager } from '../src/save/save-manager.js';
 import type { SystemSnapshots } from '../src/save/save-manager.js';
 import type { VarDeclaration } from '../src/state/types.js';
 import type { CoreEventMap } from '../src/runtime/interpreter.js';
+import { createSeededRandomSource } from '../src/runtime/random-source.js';
 
 const decls: VarDeclaration[] = [
   { name: 'trust', type: 'number', initial: 0 },
 ];
 
-function makeInterp() {
-  const store = new VariableStore(decls);
+function makeInterp(variableDecls: VarDeclaration[] = decls) {
+  const store = new VariableStore(variableDecls);
   const bus = new EventBus<CoreEventMap>();
   const registry = new SceneRegistry();
   const interp = new Interpreter(store, bus, registry);
@@ -51,6 +52,22 @@ describe('Interpreter 存档', () => {
     expect(interp.status).toBe('awaiting-advance');
     expect(texts).toEqual(['甲。']);
     expect(interp.readTracker.has('s1#1')).toBe(true);
+  });
+
+  it('保存并恢复 seeded random state 后，下一次 @random 值保持连续', () => {
+    const { registry, interp } = makeInterp([...decls, { name: 'roll', type: 'number', initial: 0 }]);
+    const source = createSeededRandomSource(7);
+    interp.setRandomSource(source);
+    registry.register(compileScene('@random roll 0 100\n凛：暂停。', 's.gal', 'seeded-save'));
+
+    interp.start('seeded-save');
+    const snap = interp.saveSnapshot()!;
+    expect(snap.random).toMatchObject({ algorithm: 'mulberry32-v1' });
+    const expectedNext = source.next();
+    source.next();
+
+    interp.loadSnapshot(snap);
+    expect(source.next()).toBe(expectedNext);
   });
 
   it('@unlock_cg/@unlock_music 更新解锁状态并广播事件', () => {
