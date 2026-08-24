@@ -2,8 +2,8 @@ PRE_WAVE_5_AGENT_TRANSACTION_RECOVERY_WAVE_4_VERIFIED — CROSS_PROCESS_CAS_PASS
 
 # Pre-Wave 5 Agent Transaction Recovery Wave 4 交付报告
 
-日期：2026-08-24  
-项目：Surdet  
+日期：2026-08-24
+项目：Surdet
 范围：本地多 Agent 事务、跨进程并发、lease、提交串行化、显式恢复与 Agent Port 公开合同
 
 ## 1. 结论与未声明边界
