@@ -1,4 +1,6 @@
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import {
   EventBus,
   Interpreter,
@@ -32,6 +34,7 @@ import {
   createChangeDiff,
   createEvidenceEnvelope,
   DEFAULT_AUTHORING_EVIDENCE_SEED,
+  executeTransactionRecovery,
   evidenceFreshness,
   ensureVariable,
   inspectObject,
@@ -48,6 +51,7 @@ import {
   recordSimulationEvidence,
   rollbackChange,
   simulateSnapshot,
+  inspectTransactionRecovery,
   timelineFingerprint,
   validateSnapshot,
   loadProjectSnapshot,
@@ -61,6 +65,8 @@ import {
   type ProjectSnapshot,
   type ProjectStorage,
   type ProjectWriteStorage,
+  type CommitJournal,
+  type RecoveryInspection,
   type RuntimeTraceEvent,
   type SceneCreateInput,
   type ScenePatchInput,
@@ -429,6 +435,115 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
     finalVariables: store.snapshot(),
     events: normalizeTrace(events),
     seed,
+  };
+}
+
+function recoveryLockState(state: Awaited<ReturnType<NodeLocalLeaseManager['inspect']>>['state']): RecoveryInspection['lockState'] {
+  return state;
+}
+
+function insidePath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+async function safeStagedIdentity(root: string, stagedIdentity: string): Promise<boolean> {
+  if (stagedIdentity.length === 0 || stagedIdentity.includes('\0')) return false;
+  const candidate = path.resolve(stagedIdentity);
+  if (!insidePath(root, candidate) || !path.basename(candidate).startsWith('.surdet-')) return false;
+  const parentRelative = path.relative(root, path.dirname(candidate));
+  let current = root;
+  for (const segment of parentRelative.length === 0 ? [] : parentRelative.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+      const real = await fs.realpath(current);
+      if (!insidePath(root, real) || !sameResolvedPath(real, current)) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      return false;
+    }
+  }
+  try {
+    const stat = await fs.lstat(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    const real = await fs.realpath(candidate);
+    return insidePath(root, real) && sameResolvedPath(real, candidate);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
+async function assertRecoveryStageIdentities(storage: NodeProjectStorage, journal: CommitJournal): Promise<void> {
+  for (const entry of journal.files) {
+    if (!await safeStagedIdentity(storage.rootIdentity, entry.stagedIdentity)) {
+      throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', `stagedIdentity 不在合法项目范围内：${entry.stagedIdentity}`, {
+        path: entry.stagedIdentity,
+        manualRecoveryRequired: true,
+        repairAction: '保留项目与 journal，由人工检查 staged 文件路径、symlink 或 junction',
+      });
+    }
+  }
+}
+
+async function assertRecoveryBaseRevision(
+  storage: NodeProjectStorage,
+  journal: CommitJournal,
+  inspection: RecoveryInspection,
+): Promise<void> {
+  if (inspection.projectState !== 'base' || (journal.status !== 'STAGING' && journal.status !== 'RECOVERED')) return;
+  let currentRevision: string;
+  try {
+    currentRevision = (await loadSnapshot(storage)).revision;
+  } catch (error) {
+    throw new AuthoringOperationError('RECOVERY_PLAN_STALE', '项目无法重新读取为原始 base，恢复计划已失效', {
+      cause: error instanceof Error ? error.message : String(error),
+      manualRecoveryRequired: true,
+    });
+  }
+  if (currentRevision !== journal.projectRevisionAtCommitStart) {
+    throw new AuthoringOperationError('RECOVERY_PLAN_STALE', '项目 base revision 已变化，恢复计划已失效', {
+      expectedProjectRevision: journal.projectRevisionAtCommitStart,
+      actualProjectRevision: currentRevision,
+    });
+  }
+}
+
+async function inspectRecoveryFromStore(
+  changeId: string,
+  store: NodeChangeStore,
+  lockState: RecoveryInspection['lockState'],
+): Promise<ServiceResult<RecoveryInspection>> {
+  const record = await store.read(changeId);
+  if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+  const journal = await store.readLatestJournal(changeId);
+  const storage = await NodeProjectStorage.open(record.projectRootIdentity);
+  if (storage.rootIdentity !== record.projectRootIdentity) {
+    throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化', {
+      expected: record.projectRootIdentity,
+      actual: storage.rootIdentity,
+    });
+  }
+  const inspection = await inspectTransactionRecovery({
+    record,
+    journal,
+    storage,
+    leaseState: lockState,
+    sha256: async (value) => hashText(value),
+  });
+  const session = openChange(record, store, storage);
+  return {
+    ...metadataForChange(session, journal?.projectRevisionAtCommitStart ?? record.baseRevision),
+    result: inspection,
   };
 }
 
@@ -834,5 +949,109 @@ export class AuthoringService {
     return this.leasedStore === undefined
       ? withChangeLeaseRetry(changeId, rollbackWithStore)
       : rollbackWithStore(this.leasedStore);
+  }
+
+  async inspectRecovery(changeId: string): Promise<ServiceResult<RecoveryInspection>> {
+    const discovered = await NodeChangeStore.openByChangeId(changeId);
+    if (discovered === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+    const projectRootIdentity = discovered.record.projectRootIdentity;
+    const changeLease = await this.leaseManager.inspect('change', changeId);
+    const projectLease = await this.leaseManager.inspect('project', projectRootIdentity);
+    const observedLock = changeLease.state !== 'free' ? changeLease : projectLease;
+    if (observedLock.state !== 'free') {
+      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+      if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      return inspectRecoveryFromStore(changeId, opened.store, recoveryLockState(observedLock.state));
+    }
+
+    try {
+      return await NodeChangeStore.withChangeLeaseForProject(
+        changeId,
+        projectRootIdentity,
+        async (leasedStore) => withProjectLeaseRetry(this.leaseManager, projectRootIdentity, async () => (
+          inspectRecoveryFromStore(changeId, leasedStore, 'free')
+        )),
+        { allowTerminal: true, allowStale: true, leaseManager: this.leaseManager },
+      );
+    } catch (error) {
+      if (error instanceof AuthoringOperationError
+        && (error.code === 'CHANGE_BUSY' || error.code === 'PROJECT_BUSY' || error.code === 'LEASE_CORRUPT')) {
+        const latestChangeLease = await this.leaseManager.inspect('change', changeId);
+        const latestProjectLease = await this.leaseManager.inspect('project', projectRootIdentity);
+        const latest = latestChangeLease.state !== 'free' ? latestChangeLease : latestProjectLease;
+        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+        if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        return inspectRecoveryFromStore(changeId, opened.store, recoveryLockState(latest.state));
+      }
+      throw error;
+    }
+  }
+
+  async executeRecovery(
+    changeId: string,
+    input: { operationId: string; recoveryToken: string },
+  ): Promise<ServiceResult<{ changeId: string; status: 'OPEN' | 'COMMITTED'; disposition: string }>> {
+    const discovered = await NodeChangeStore.openByChangeId(changeId);
+    if (discovered === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+    const projectRootIdentity = discovered.record.projectRootIdentity;
+    return NodeChangeStore.withChangeLeaseForProject(
+      changeId,
+      projectRootIdentity,
+      async (leasedStore) => withProjectLeaseRetry(this.leaseManager, projectRootIdentity, async () => {
+        // Recovery never reuses inspect's object graph: both record and journal
+        // are read after the change -> project locks are held.
+        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+        if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        const record = await leasedStore.read(changeId);
+        if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        const journal = await leasedStore.readLatestJournal(changeId);
+        const storage = await NodeProjectStorage.open(record.projectRootIdentity);
+        if (storage.rootIdentity !== record.projectRootIdentity) {
+          throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化', {
+            expected: record.projectRootIdentity,
+            actual: storage.rootIdentity,
+          });
+        }
+        const inspection = await inspectTransactionRecovery({
+          record,
+          journal,
+          storage,
+          leaseState: 'free',
+          sha256: async (value) => hashText(value),
+        });
+        if (journal === null) {
+          if (inspection.disposition === 'NO_ACTION') {
+            throw new AuthoringOperationError('RECOVERY_NOT_REQUIRED', `变更事务 '${changeId}' 不需要恢复`);
+          }
+          throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', `变更事务 '${changeId}' 没有可验证的 journal`);
+        }
+        if (record.operations[input.operationId] === undefined && inspection.recoveryToken !== input.recoveryToken) {
+          throw new AuthoringOperationError('RECOVERY_PLAN_STALE', '恢复计划 token 与当前 record/journal/project 事实不匹配', {
+            changeId,
+            recoveryToken: input.recoveryToken,
+          });
+        }
+        if (record.operations[input.operationId] === undefined) await assertRecoveryBaseRevision(storage, journal, inspection);
+        if (record.operations[input.operationId] === undefined) await assertRecoveryStageIdentities(storage, journal);
+        const session = openChange(record, leasedStore, storage);
+        const result = await executeTransactionRecovery({
+          change: session,
+          journal,
+          storage,
+          inspection,
+          recoveryToken: input.recoveryToken,
+          operationId: input.operationId,
+        });
+        if (result.disposition === 'ROLL_BACK_TO_BASE') {
+          for (const entry of journal.files) await storage.removeStage(entry.stagedIdentity).catch(() => undefined);
+        }
+        const projectSnapshot = await loadSnapshot(storage);
+        return {
+          ...metadataForChange(session, projectSnapshot.revision),
+          result,
+        };
+      }),
+      { allowTerminal: true, allowStale: true, leaseManager: this.leaseManager },
+    );
   }
 }

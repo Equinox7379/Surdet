@@ -198,6 +198,28 @@ describe('NodeProjectStorage safe parent creation', () => {
     }
   });
 
+  it('recovery cleanup refuses outside and symlink staged identities without deleting bytes', async () => {
+    const root = createProjectRoot('surdet-node-storage-recovery-paths-');
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-node-storage-recovery-paths-outside-'));
+    const outsideStage = path.join(outside, '.surdet-outside.tmp');
+    const link = path.join(root, '.surdet-link');
+    fs.writeFileSync(outsideStage, 'outside-stage', 'utf8');
+
+    try {
+      const storage = await NodeProjectStorage.open(root);
+      await expect(storage.removeStage(outsideStage)).rejects.toMatchObject({ code: 'PATH_OUTSIDE_PROJECT' });
+      expect(fs.readFileSync(outsideStage, 'utf8')).toBe('outside-stage');
+
+      fs.symlinkSync(outside, link, 'junction');
+      await expect(storage.removeStage(link)).rejects.toMatchObject({ code: 'PATH_OUTSIDE_PROJECT' });
+      expect(fs.existsSync(outsideStage)).toBe(true);
+    } finally {
+      if (fs.existsSync(link)) fs.unlinkSync(link);
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it('cleans newly created empty parents after a later replacement failure', async () => {
     const root = createProjectRoot('surdet-node-storage-recovery-');
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-node-storage-recovery-outside-'));

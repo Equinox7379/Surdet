@@ -1602,3 +1602,28 @@ JOURNAL=commit recovery versions verified as contiguous [1,2,3,4,5] for the two-
 SCOPE=Task 6 tracked changes are limited to contracts.ts, change-session.ts, transaction-recovery.ts, index.ts, transaction-recovery.test.ts, commit-recovery.test.ts and this plan; Node adapter journal filename/recovery service remain Task 7 scope
 NEXT_STOP=COMMIT_TASK_6_THEN_TASK_7_NODE_RECOVERY_RED
 ```
+
+### 2026-08-24T19:01:09+08:00 — Task 7 RED
+
+```text
+RED_RUN=npm run test -w @surdet/cli -- agent-transaction-recovery.test.ts --reporter=json --outputFile="$WAVE4_ROOT\task7-red.json" EXIT=1
+RED_ARTIFACT=<local-path> BYTES=1405 SHA256=3E9B432AB2580F5B5DFEBDBCF3CEDCFB519C049B36D0CC0A003A675785AF2B23
+RED_FACTS=direct NodeChangeStore.openForProject() located the real V2 change; a fresh AuthoringService instance reached the intentional inspectRecovery NOT_IMPLEMENTED boundary; no type or runner failure
+RED_STATUS=RED_REPRODUCED; HARNESS_INVALID=NO; RED_NOT_REPRODUCED=NO; FAILED_ARTIFACT_PRESERVED=YES
+NEXT_STOP=TASK_7_IMPLEMENT_NODE_RECOVERY_SERVICE_AND_RESTART_MATRIX
+```
+
+### 2026-08-24T19:13:43+08:00 — Task 7 Node recovery service and project identity protection
+
+```text
+IMPLEMENTED=NodeChangeStore.openForProject() direct project-hash open with terminal/stale options; openByChangeId() skips unrelated corrupt V2 candidates but reports corruption when no valid candidate remains; journal files are contiguous 10-digit V2 snapshots with identity/content validation and V1/corrupt fail-loud
+SERVICE=AuthoringService.inspectRecovery()/executeRecovery() acquire change then project locks, reread record/journal/project under lock, delegate classification and actions to shared transaction-recovery state machine, enforce base revision freshness and stagedIdentity root/symlink/junction/.surdet safety
+MATRIX=7 fresh-process tests cover STAGING reopen OPEN, REPLACING mixed-known rollback, COMMITTED finalization, unexpected manual zero-write, stale-token zero-write, operationId idempotency, and V1/corrupt manifest/head/record/journal preservation
+COUNTERTESTS=change-isolation direct project open and unrelated corrupt candidate; NodeProjectStorage outside/symlink staged cleanup refusal
+RED_RUN=npm run test -w @surdet/cli -- agent-transaction-recovery.test.ts --reporter=json --outputFile="$WAVE4_ROOT\task7-red.json" EXIT=1
+RED_ARTIFACT=<local-path> BYTES=1405 SHA256=3E9B432AB2580F5B5DFEBDBCF3CEDCFB519C049B36D0CC0A003A675785AF2B23
+RED_FACTS=direct project open passed; fresh AuthoringService reached only the intentional NOT_IMPLEMENTED inspect boundary; HARNESS_INVALID=NO
+GREEN=npm run build -w @surdet/authoring EXIT=0; npm run test -w @surdet/cli -- agent-transaction-recovery.test.ts node-project-storage.test.ts change-isolation.test.ts EXIT=0 (3 files; 21/21); npm run typecheck -w @surdet/cli EXIT=0; npm run build -w @surdet/cli EXIT=0
+SCOPE=Task 7 tracked changes are limited to node-change-store.ts, authoring-service.ts, agent-transaction-recovery.test.ts, node-project-storage.test.ts, change-isolation.test.ts and this plan; node-local-lease.ts, session.ts, protected files and existing untracked governance files remain untouched
+NEXT_STOP=COMMIT_TASK_7_THEN_TASK_8_CAPABILITY_AND_ERROR_CATALOG_RED
+```

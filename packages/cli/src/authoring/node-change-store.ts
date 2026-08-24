@@ -7,6 +7,7 @@ import {
   type ChangeRecord,
   type ChangeRepository,
   type ChangeWritePrecondition,
+  type CommitJournal,
 } from '@surdet/authoring';
 import type { InvocationRecord } from '../agent-port/invocation-ledger.js';
 import { NodeLocalLeaseManager, type LeaseHandle } from './node-local-lease.js';
@@ -132,6 +133,68 @@ function validateRecord(record: ChangeRecord, changeId: string, rootIdentity: st
   }
 }
 
+const JOURNAL_STATUSES = ['STAGING', 'REPLACING', 'RECOVERED', 'RECOVERY_FAILED', 'COMMITTED'] as const;
+
+function unsupportedJournal(changeId: string, file: string): AuthoringOperationError {
+  return new AuthoringOperationError(
+    'CHANGE_STORE_FORMAT_UNSUPPORTED',
+    `变更事务 '${changeId}' 的 commit journal 使用不受支持的 V1 格式；不会迁移或删除旧文件`,
+    { changeId, path: file, formatVersion: 1, component: 'commit-journal', repairAction: '保留原始 journal，另行人工迁移或归档' },
+  );
+}
+
+function journalCorrupt(message: string, details: Record<string, unknown> = {}): AuthoringOperationError {
+  return new AuthoringOperationError('JOURNAL_CORRUPT', message, {
+    ...details,
+    manualRecoveryRequired: true,
+    repairAction: '保留 journal 原始文件，人工检查后再恢复；工具不会猜测或删除 journal',
+  });
+}
+
+function validateJournal(value: unknown, changeId: string, file: string): CommitJournal {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw journalCorrupt(`commit journal 不是对象：${file}`, { path: file, changeId });
+  }
+  const journal = value as Partial<CommitJournal>;
+  if ((journal as { formatVersion?: unknown }).formatVersion === 1) throw unsupportedJournal(changeId, file);
+  if (journal.formatVersion !== 2
+    || journal.changeId !== changeId
+    || typeof journal.journalVersion !== 'number'
+    || !Number.isInteger(journal.journalVersion)
+    || journal.journalVersion < 1
+    || typeof journal.recordVersionAtCommitStart !== 'number'
+    || !Number.isInteger(journal.recordVersionAtCommitStart)
+    || journal.recordVersionAtCommitStart < 0
+    || typeof journal.projectRevisionAtCommitStart !== 'string'
+    || !JOURNAL_STATUSES.includes(journal.status as typeof JOURNAL_STATUSES[number])
+    || !Array.isArray(journal.files)) {
+    throw journalCorrupt(`commit journal 格式或身份无效：${file}`, { path: file, changeId });
+  }
+  const paths = new Set<string>();
+  for (const [index, rawEntry] of journal.files.entries()) {
+    if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) {
+      throw journalCorrupt(`commit journal 文件条目无效：${file}`, { path: file, changeId, index });
+    }
+    const entry = rawEntry as Partial<CommitJournal['files'][number]>;
+    if (typeof entry.path === 'string' && paths.has(entry.path)) {
+      throw journalCorrupt(`commit journal 存在重复文件路径：${file}`, { path: file, changeId, index });
+    }
+    if (typeof entry.path === 'string') paths.add(entry.path);
+    if (typeof entry.path !== 'string'
+      || entry.path.length === 0
+      || (entry.originalSha256 !== undefined && (typeof entry.originalSha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(entry.originalSha256)))
+      || typeof entry.targetSha256 !== 'string'
+      || !/^[0-9a-f]{64}$/i.test(entry.targetSha256)
+      || typeof entry.stagedIdentity !== 'string'
+      || entry.stagedIdentity.length === 0
+      || typeof entry.replaced !== 'boolean'
+      || typeof entry.restored !== 'boolean') {
+      throw journalCorrupt(`commit journal 文件条目字段无效：${file}`, { path: file, changeId, index });
+    }
+  }
+  return journal as CommitJournal;
+}
+
 function conflict(
   changeId: string,
   precondition: ChangeWritePrecondition,
@@ -184,6 +247,7 @@ export class NodeChangeStore implements ChangeRepository {
     });
     const matches: OpenChangeResult[] = [];
     const legacyPaths: string[] = [];
+    const corruptCandidates: AuthoringOperationError[] = [];
     const directoryName = safeId(changeId);
     for (const project of projects) {
       if (!project.isDirectory()) continue;
@@ -197,15 +261,25 @@ export class NodeChangeStore implements ChangeRepository {
           legacyPaths.push(legacyTransaction);
           continue;
         }
-        throw corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId });
+        corruptCandidates.push(corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId }));
+        continue;
       }
-      const manifest = await readJsonRecord<ChangeManifest>(manifestFile);
-      if (manifest === null) throw corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId });
-      const validated = validateManifest(manifest.value, changeId, manifestFile);
-      const store = new NodeChangeStore(root, validated.projectRootIdentity, projectDirectory);
-      const record = await store.read(changeId);
-      if (record === null) throw corrupt(`V2 record 不存在：${changeDirectory}`, { path: changeDirectory, changeId });
-      matches.push({ store, record });
+      try {
+        const manifest = await readJsonRecord<ChangeManifest>(manifestFile);
+        if (manifest === null) throw corrupt(`V2 manifest 缺失：${manifestFile}`, { path: manifestFile, changeId });
+        const validated = validateManifest(manifest.value, changeId, manifestFile);
+        const store = new NodeChangeStore(root, validated.projectRootIdentity, projectDirectory);
+        const record = await store.read(changeId);
+        if (record === null) throw corrupt(`V2 record 不存在：${changeDirectory}`, { path: changeDirectory, changeId });
+        matches.push({ store, record });
+      } catch (error) {
+        if (error instanceof AuthoringOperationError
+          && (error.code === 'CHANGE_STORE_CORRUPT' || error.code === 'JOURNAL_CORRUPT')) {
+          corruptCandidates.push(error);
+          continue;
+        }
+        throw error;
+      }
     }
     if (legacyPaths.length + matches.length > 1) {
       throw new AuthoringOperationError(
@@ -223,23 +297,76 @@ export class NodeChangeStore implements ChangeRepository {
         { changeId, matchCount: matches.length, projectRootIdentities: matches.map((match) => match.record.projectRootIdentity) },
       );
     }
+    if (matches.length === 0 && legacyPaths.length === 0 && corruptCandidates.length > 0) {
+      throw corruptCandidates[0]!;
+    }
     return matches[0]!;
   }
 
-  static async openOwnedChange(changeId: string, projectRootIdentity: string): Promise<OpenChangeResult | null> {
-    const opened = await NodeChangeStore.openByChangeId(changeId);
-    if (opened === null) return null;
-    if (!sameRootIdentity(opened.record.projectRootIdentity, projectRootIdentity)) {
+  static async openForProject(
+    changeId: string,
+    projectRootIdentity: string,
+    options: { allowTerminal?: boolean; allowStale?: boolean } = {},
+  ): Promise<OpenChangeResult | null> {
+    const root = dataRoot();
+    const projectDirectory = path.join(root, projectIdentityFromRoot(projectRootIdentity));
+    const changeDirectory = path.join(projectDirectory, safeId(changeId));
+    if (!(await isDirectory(changeDirectory))) return null;
+
+    const manifestPath = path.join(changeDirectory, 'manifest.json');
+    const legacyTransaction = path.join(changeDirectory, 'transaction.json');
+    if (!(await exists(manifestPath))) {
+      if (await exists(legacyTransaction)) throw unsupported(changeId, legacyTransaction);
+      throw corrupt(`V2 manifest 缺失：${manifestPath}`, { path: manifestPath, changeId, projectRootIdentity });
+    }
+    const manifestRead = await readJsonRecord<ChangeManifest>(manifestPath);
+    if (manifestRead === null) throw corrupt(`V2 manifest 缺失：${manifestPath}`, { path: manifestPath, changeId });
+    const manifest = validateManifest(manifestRead.value, changeId, manifestPath);
+    if (!sameRootIdentity(manifest.projectRootIdentity, projectRootIdentity)) {
       throw new AuthoringOperationError(
         'PROJECT_IDENTITY_MISMATCH',
-        `变更事务 '${changeId}' 不属于当前项目`,
-        { changeId, expected: projectRootIdentity, actual: opened.record.projectRootIdentity },
+        `变更事务 '${changeId}' 的 manifest 不属于当前项目`,
+        { changeId, expected: projectRootIdentity, actual: manifest.projectRootIdentity },
       );
     }
-    if (opened.record.status !== 'OPEN') {
-      throw new AuthoringOperationError('CHANGE_NOT_OPEN', `变更事务不是 OPEN：${opened.record.status}`);
+    const store = new NodeChangeStore(root, projectRootIdentity, projectDirectory);
+    const record = await store.read(changeId);
+    if (record === null) throw corrupt(`V2 record 不存在：${changeDirectory}`, { path: changeDirectory, changeId });
+    if (record.status === 'STALE' && !options.allowStale) {
+      throw new AuthoringOperationError('CHANGE_NOT_OPEN', `变更事务不是 OPEN：${record.status}`, { changeId, status: record.status });
     }
+    if ((record.status === 'COMMITTED' || record.status === 'ROLLED_BACK') && !options.allowTerminal) {
+      throw new AuthoringOperationError('CHANGE_NOT_OPEN', `变更事务不是 OPEN：${record.status}`, { changeId, status: record.status });
+    }
+    return { store, record };
+  }
+
+  static async openOwnedChange(changeId: string, projectRootIdentity: string): Promise<OpenChangeResult | null> {
+    const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity);
+    if (opened === null) return null;
     return opened;
+  }
+
+  static async withChangeLeaseForProject<T>(
+    changeId: string,
+    projectRootIdentity: string,
+    callback: (leased: NodeChangeStore) => Promise<T>,
+    options: {
+      allowTerminal?: boolean;
+      allowStale?: boolean;
+      leaseManager?: NodeLocalLeaseManager;
+    } = {},
+  ): Promise<T> {
+    const manager = options.leaseManager ?? new NodeLocalLeaseManager();
+    return manager.withLease({ scope: 'change', resourceId: changeId }, async (handle) => {
+      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, options);
+      if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      const leased = new NodeChangeStore(opened.store.rootDirectory, opened.store.rootIdentity, opened.store.projectDirectory, {
+        manager,
+        handle,
+      });
+      return callback(leased);
+    });
   }
 
   static async withChangeLease<T>(changeId: string, callback: (leased: NodeChangeStore) => Promise<T>): Promise<T> {
@@ -403,21 +530,85 @@ export class NodeChangeStore implements ChangeRepository {
 
   async writeJournal(changeId: string, value: unknown): Promise<void> {
     await this.assertMutationLease();
-    const journalId = `${Date.now()}-${crypto.randomUUID()}`;
-    await createJsonRecord(path.join(this.changeDirectory(changeId), 'journals', `${journalId}.json`), value);
+    const journalDirectory = path.join(this.changeDirectory(changeId), 'journals');
+    const journalPath = path.join(journalDirectory, 'pending-validation.json');
+    const journal = validateJournal(value, changeId, journalPath);
+    const latest = await this.readLatestJournal(changeId);
+    const expectedVersion = latest === null ? 1 : latest.journalVersion + 1;
+    if (journal.journalVersion !== expectedVersion) {
+      throw journalCorrupt(`commit journal 版本不连续：期望 ${expectedVersion}，实际 ${journal.journalVersion}`, {
+        path: journalDirectory,
+        changeId,
+        expectedVersion,
+        actualVersion: journal.journalVersion,
+      });
+    }
+    await createJsonRecord(path.join(journalDirectory, versionFile(journal.journalVersion)), journal);
   }
 
-  async readLatestJournal(changeId: string): Promise<unknown | null> {
+  async readLatestJournal(changeId: string): Promise<CommitJournal | null> {
     const directory = path.join(this.changeDirectory(changeId), 'journals');
     const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     });
-    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
-    const latest = files.at(-1);
-    if (latest === undefined) return null;
-    const value = await readJsonRecord<unknown>(path.join(directory, latest.name));
-    return value?.value ?? null;
+    const candidates = entries.filter((entry) => entry.name.endsWith('.json'));
+    if (candidates.length === 0) return null;
+    const files = candidates.sort((left, right) => left.name.localeCompare(right.name));
+    const journals: CommitJournal[] = [];
+    for (const [index, entry] of files.entries()) {
+      if (!entry.isFile() || !/^\d{10}\.json$/.test(entry.name)) {
+        throw journalCorrupt(`commit journal 文件名无效：${entry.name}`, { path: path.join(directory, entry.name), changeId });
+      }
+      const expectedName = versionFile(index + 1);
+      if (entry.name !== expectedName) {
+        throw journalCorrupt(`commit journal 版本缺失或不连续：${entry.name}`, { path: path.join(directory, entry.name), changeId, expectedName });
+      }
+      const file = path.join(directory, entry.name);
+      let value;
+      try {
+        value = await readJsonRecord<unknown>(file);
+      } catch (error) {
+        if (error instanceof AuthoringOperationError && error.code === 'CHANGE_STORE_CORRUPT') {
+          throw journalCorrupt(`commit journal JSON 无法解析：${file}`, {
+            path: file,
+            changeId,
+            cause: error.message,
+          });
+        }
+        throw error;
+      }
+      if (value === null) throw journalCorrupt(`commit journal 文件缺失：${file}`, { path: file, changeId });
+      const journal = validateJournal(value.value, changeId, file);
+      if (journal.journalVersion !== index + 1) {
+        throw journalCorrupt(`commit journal 文件名与内容版本不匹配：${file}`, {
+          path: file,
+          changeId,
+          expectedVersion: index + 1,
+          actualVersion: journal.journalVersion,
+        });
+      }
+      if (journals.length > 0) {
+        const previous = journals[0]!;
+        if (journal.recordVersionAtCommitStart !== previous.recordVersionAtCommitStart
+          || journal.projectRevisionAtCommitStart !== previous.projectRevisionAtCommitStart) {
+          throw journalCorrupt(`commit journal 起始身份前后矛盾：${file}`, { path: file, changeId });
+        }
+        const previousFiles = new Map(previous.files.map((entry) => [entry.path, entry]));
+        if (journal.files.length !== previous.files.length
+          || journal.files.some((entry) => {
+            const baseline = previousFiles.get(entry.path);
+            return baseline === undefined
+              || baseline.originalSha256 !== entry.originalSha256
+              || baseline.targetSha256 !== entry.targetSha256
+              || baseline.stagedIdentity !== entry.stagedIdentity;
+          })) {
+          throw journalCorrupt(`commit journal 文件身份前后矛盾：${file}`, { path: file, changeId });
+        }
+      }
+      journals.push(journal);
+    }
+    return clone(journals.at(-1)!);
   }
 
   async writeDiff(changeId: string, value: unknown): Promise<void> {

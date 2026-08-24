@@ -221,4 +221,36 @@ describe('R5：跨项目 change identity 隔离（真实 CLI 子进程）', () =
     expect(validateA.status).toBe(0);
     expect(body(validateA).result.issues[0].text).toContain('PROJECT_A_MARKER');
   });
+
+  it('Task 7：绑定项目直接定位，且未知项目扫描不会被无关损坏候选阻断', { timeout: 30000 }, async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-r5-direct-open-'));
+    const data = path.join(parent, 'agent-data');
+    fs.mkdirSync(data, { recursive: true });
+    const env = { SURDET_AGENT_DATA_DIR: data };
+    const projectA = makeProject(parent, 'project-a', 'PROJECT_A_MARKER');
+    const projectB = makeProject(parent, 'project-b', 'PROJECT_B_MARKER');
+
+    const begun = runCli(['change', 'begin', '--project', projectA, '--json'], env);
+    expect(begun.status).toBe(0);
+    const changeId = body(begun).changeId as string;
+    const corruptCandidate = path.join(data, 'unrelated-corrupt-project', changeId);
+    fs.mkdirSync(corruptCandidate, { recursive: true });
+    fs.writeFileSync(path.join(corruptCandidate, 'manifest.json'), '{not-json\n', 'utf8');
+
+    const previousDataRoot = process.env['SURDET_AGENT_DATA_DIR'];
+    process.env['SURDET_AGENT_DATA_DIR'] = data;
+    try {
+      const scanned = await NodeChangeStore.openByChangeId(changeId);
+      expect(scanned).not.toBeNull();
+      expect(scanned!.record.projectRootIdentity).toBe(fs.realpathSync(projectA));
+
+      const direct = await NodeChangeStore.openForProject(changeId, fs.realpathSync(projectA));
+      expect(direct).not.toBeNull();
+      expect(direct!.record.projectRootIdentity).toBe(fs.realpathSync(projectA));
+      await expect(NodeChangeStore.openForProject(changeId, fs.realpathSync(projectB))).resolves.toBeNull();
+    } finally {
+      if (previousDataRoot === undefined) delete process.env['SURDET_AGENT_DATA_DIR'];
+      else process.env['SURDET_AGENT_DATA_DIR'] = previousDataRoot;
+    }
+  });
 });
