@@ -21,7 +21,11 @@ export const AUTHORING_ERROR_CODES = [
   'RUNTIME_EVIDENCE_REQUIRED', 'RUNTIME_FAILED', 'RUNTIME_TIMED_OUT',
   'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED',
   'SESSION_STATE_INVALID', 'POLICY_BLOCKED', 'PROJECT_IDENTITY_MISMATCH',
-  'CONTRACT_VERSION_UNSUPPORTED',
+  'CONTRACT_VERSION_UNSUPPORTED', 'CHANGE_RECORD_CONFLICT', 'CHANGE_BUSY',
+  'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT',
+  'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED',
+  'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED',
+  'INVOCATION_LEDGER_WRITE_FAILED',
 ] as const;
 
 export type AuthoringErrorCode = (typeof AUTHORING_ERROR_CODES)[number];
@@ -95,6 +99,18 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   POLICY_BLOCKED: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('当前启动 policy 不允许该动作；由项目所有者重启 Port 并显式选择 policy。')] },
   PROJECT_IDENTITY_MISMATCH: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('项目身份不匹配；不得跨项目猜测或继续写入。')] },
   CONTRACT_VERSION_UNSUPPORTED: { category: 'request', retryDisposition: 'never', repairActions: [terminalAction('调用方必须升级到双方支持的 authoring contract version。')] },
+  CHANGE_RECORD_CONFLICT: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('session.describe', '重新读取当前 change recordVersion、status 和 lease。'), action('change.diff', '刷新当前 change 事实后，以同一 operationId 安全重试。')] },
+  CHANGE_BUSY: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('session.describe', '读取 change lease holder、heartbeat 与 retryAfterMs 后再重试。')] },
+  PROJECT_BUSY: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('session.describe', '读取 project lease holder 与 retryAfterMs 后再重试。')] },
+  LEASE_CORRUPT: { category: 'conflict', retryDisposition: 'manual-recovery', repairActions: [terminalAction('租约文件损坏或身份不明；保留 lock 证据，由人工检查后再恢复。')] },
+  CHANGE_STORE_CORRUPT: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('change store 的 manifest、head 或 record 损坏；保留原始文件，人工恢复。')] },
+  CHANGE_STORE_FORMAT_UNSUPPORTED: { category: 'commit', retryDisposition: 'never', repairActions: [terminalAction('change store 使用不受支持的历史格式；不得自动迁移或删除，需人工处理。')] },
+  JOURNAL_CORRUPT: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('commit journal 损坏、缺号或身份矛盾；保留全部 journal 文件，人工恢复。')] },
+  RECOVERY_NOT_REQUIRED: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('当前 change 没有可执行的恢复动作；继续使用 session 当前状态。')] },
+  RECOVERY_PLAN_STALE: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('change.recovery.inspect', '重新读取 record、journal、lease 与项目文件身份，再使用新 recoveryToken。')] },
+  RECOVERY_AMBIGUOUS: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('项目存在 unexpected、路径逃逸或锁歧义；不得继续自动写入，需人工恢复。')] },
+  RECOVERY_EXECUTION_FAILED: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('恢复执行失败；保留 RECOVERY_FAILED journal 与项目文件，人工检查后处理。')] },
+  INVOCATION_LEDGER_WRITE_FAILED: { category: 'commit', retryDisposition: 'after-inspect', repairActions: [action('session.describe', '确认领域 operation 是否已经成功及其 operationId。'), action('change.diff', '读取当前 change 事实并使用同一 operationId 安全重试。')] },
 };
 
 export const AUTHORING_ERROR_CATALOG: Readonly<Record<AuthoringErrorCode, AuthoringErrorDefinition>> = Object.fromEntries(
@@ -192,7 +208,7 @@ export function createEnvelopeJsonSchema(resultSchema: JsonSchema): JsonSchema {
       category: { enum: ['request', 'not-found', 'conflict', 'validation', 'runtime', 'commit'] },
       message: { type: 'string' },
       details: { type: 'object', patternProperties: { '^.*$': jsonObjectValueSchema }, additionalProperties: false },
-      retryDisposition: { enum: ['same-request', 'after-inspect', 'after-repair', 'new-change', 'manual-recovery', 'never'] },
+      retryDisposition: { enum: ['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'new-change', 'manual-recovery', 'never'] },
       repairActions: {
         type: 'array',
         items: {

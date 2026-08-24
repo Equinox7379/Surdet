@@ -38,6 +38,14 @@ function operationIdFrom(input: Record<string, unknown>): string | undefined {
   return typeof input['operationId'] === 'string' ? input['operationId'] : undefined;
 }
 
+function requireString(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new AuthoringOperationError('INVALID_REQUEST', `${key} 必须是非空字符串`);
+  }
+  return value;
+}
+
 export async function dispatchAuthoringCapability(
   context: InvocationContext,
   capability: AuthoringCapabilityId,
@@ -113,5 +121,17 @@ export async function dispatchAuthoringCapability(
       return { value: await service.commit(requireChange(context)) };
     case 'change.rollback':
       return { value: await service.rollback(requireChange(context)) };
+    case 'change.recovery.inspect':
+      return { value: await service.inspectRecovery(requireChange(context)) };
+    case 'change.recovery.execute': {
+      const operationId = requireString(payload, 'operationId');
+      return {
+        value: await service.executeRecovery(requireChange(context), {
+          operationId,
+          recoveryToken: requireString(payload, 'recoveryToken'),
+        }),
+        operationId,
+      };
+    }
   }
 }

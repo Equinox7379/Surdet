@@ -31,4 +31,23 @@ describe('authoring error catalog and envelopes', () => {
     expect(JSON.stringify(envelope)).not.toContain('"retriable"');
     expect(JSON.stringify(envelope)).not.toContain('"action"');
   });
+
+  it('publishes every Wave 4 transaction and recovery error with a repair contract', () => {
+    const codes = [
+      'CHANGE_RECORD_CONFLICT', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT',
+      'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT',
+      'RECOVERY_NOT_REQUIRED', 'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS',
+      'RECOVERY_EXECUTION_FAILED', 'INVOCATION_LEDGER_WRITE_FAILED',
+    ] as const;
+    for (const code of codes) {
+      const definition = errorDefinition(code as any);
+      expect(definition, code).toBeDefined();
+      expect(definition.repairActions, code).toEqual(expect.arrayContaining([expect.any(Object)]));
+      expect(['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'new-change', 'manual-recovery', 'never']).toContain(definition.retryDisposition);
+    }
+    expect(errorDefinition('CHANGE_RECORD_CONFLICT' as any).retryDisposition).toBe('after-refresh');
+    expect(errorDefinition('RECOVERY_PLAN_STALE' as any).repairActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ capability: 'change.recovery.inspect' }),
+    ]));
+  });
 });

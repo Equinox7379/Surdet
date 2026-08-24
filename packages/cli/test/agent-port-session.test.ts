@@ -62,6 +62,24 @@ async function open(root: string, data: string, policy: 'observe' | 'stage' | 'a
   return openAgentPortSession({ projectRoot: root, policy, ...(resumeChangeId === undefined ? {} : { resumeChangeId }) });
 }
 
+async function setTerminalOrStaleStatus(
+  changeId: string,
+  status: 'STALE' | 'COMMITTED' | 'ROLLED_BACK',
+): Promise<void> {
+  await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+    const record = await leasedStore.read(changeId);
+    if (record === null) throw new Error(`missing change ${changeId}`);
+    await leasedStore.write({
+      ...record,
+      status,
+      recordVersion: record.recordVersion + 1,
+    }, {
+      expectedRecordVersion: record.recordVersion,
+      expectedStatus: record.status,
+    });
+  });
+}
+
 describe('Surdet Agent Port session and policy contract', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
@@ -265,6 +283,71 @@ describe('Surdet Agent Port session and policy contract', () => {
     expect(description.activeChange?.status).toBe('OPEN');
     expect(description.activeChange?.workingRevision).toBe(1);
     expect(projectBytes(root)).toEqual(beforeProject);
+    await resumed.close();
+  });
+
+  it('resumes STALE as recovery-only and exposes apply recovery policy', async () => {
+    const root = makeProject('stale-resume');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const stage = await open(root, data, 'stage');
+    expect((await stage.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = stage.activeChangeId!;
+    await stage.close();
+    await setTerminalOrStaleStatus(changeId, 'STALE');
+
+    const resumedStage = await open(root, data, 'stage', changeId);
+    const stageDescription = await resumedStage.describe();
+    expect(stageDescription.activeChange).toMatchObject({ changeId, status: 'STALE', recordVersion: 1 });
+    expect(stageDescription.manualRecoveryRequired).toBe(true);
+    expect(stageDescription.recoveryDisposition).toBe('MANUAL_RECOVERY_REQUIRED');
+    expect(stageDescription.nextActions).toEqual(['change.recovery.inspect']);
+    expect(stageDescription.capabilities.find((item) => item.id === 'change.recovery.inspect')).toMatchObject({ availability: 'available' });
+    expect(stageDescription.capabilities.find((item) => item.id === 'change.recovery.execute')).toMatchObject({ availability: 'policy-blocked' });
+    expect(stageDescription.capabilities.find((item) => item.id === 'scene.create')).toMatchObject({ availability: 'state-blocked' });
+
+    const inspectedStage = await resumedStage.invoke('change.recovery.inspect', {});
+    expect(inspectedStage.ok).toBe(true);
+    if (inspectedStage.ok) expect(inspectedStage.result).toMatchObject({ changeId, disposition: 'MANUAL_RECOVERY_REQUIRED', manualRecoveryRequired: true });
+    expectFailure(await resumedStage.invoke('change.recovery.execute', { operationId: 'op-stage-recovery', recoveryToken: 'unused' }), 'POLICY_BLOCKED');
+    await resumedStage.close();
+
+    const resumedApply = await open(root, data, 'apply', changeId);
+    const applyDescription = await resumedApply.describe();
+    expect(applyDescription.capabilities.find((item) => item.id === 'change.recovery.execute')).toMatchObject({ availability: 'available' });
+    const inspectedApply = await resumedApply.invoke('change.recovery.inspect', {});
+    expect(inspectedApply.ok).toBe(true);
+    if (!inspectedApply.ok) throw new Error('expected recovery inspection');
+    const recoveryToken = (inspectedApply.result as { recoveryToken?: unknown }).recoveryToken;
+    expect(typeof recoveryToken).toBe('string');
+    expectFailure(await resumedApply.invoke('change.recovery.execute', {
+      operationId: 'op-apply-recovery',
+      recoveryToken,
+    }), 'RECOVERY_AMBIGUOUS');
+    await resumedApply.close();
+  });
+
+  it('resumes terminal changes read-only without reopening mutation capabilities', async () => {
+    const root = makeProject('terminal-resume');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    await session.close();
+    await setTerminalOrStaleStatus(changeId, 'COMMITTED');
+
+    const resumed = await open(root, data, 'stage', changeId);
+    const description = await resumed.describe();
+    expect(description.activeChange).toMatchObject({ changeId, status: 'COMMITTED', recordVersion: 1 });
+    expect(description.manualRecoveryRequired).toBe(false);
+    expect(description.nextActions).toEqual(['change.recovery.inspect']);
+    expect(description.capabilities.find((item) => item.id === 'change.recovery.inspect')).toMatchObject({ availability: 'available' });
+    expect(description.capabilities.find((item) => item.id === 'scene.create')).toMatchObject({ availability: 'state-blocked' });
+    expect(description.capabilities.find((item) => item.id === 'project.inspect')).toMatchObject({ availability: 'available' });
+    const inspected = await resumed.invoke('change.recovery.inspect', {});
+    expect(inspected.ok).toBe(true);
+    if (inspected.ok) expect(inspected.result).toMatchObject({ changeId, disposition: 'NO_ACTION', manualRecoveryRequired: false });
     await resumed.close();
   });
 });

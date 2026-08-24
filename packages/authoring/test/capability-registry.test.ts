@@ -7,23 +7,23 @@ import {
 } from '../src/index.js';
 
 describe('authoring capability registry', () => {
-  it('is the single complete 20-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(20);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(20);
+  it('is the single complete 22-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(22);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(22);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect',
       'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
       'character.ensure', 'character.remove', 'timeline.create', 'timeline.patch',
       'project.entry-scene.set', 'project.validate', 'project.simulate',
       'runtime.run-from', 'runtime.read-trace', 'change.diff', 'change.commit',
-      'change.rollback',
+      'change.rollback', 'change.recovery.inspect', 'change.recovery.execute',
     ]);
     expect(() => assertCapabilityRegistry(AUTHORING_CAPABILITY_REGISTRY)).not.toThrow();
   });
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(20);
+    expect(new Set(names).size).toBe(22);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -72,5 +72,18 @@ describe('authoring capability registry', () => {
     expect(label.description).toContain('in-scene @label');
     expect(label.description).toContain('omit');
     expect(runFrom.repairRecipes.join(' ')).toContain('omit label');
+  });
+
+  it('publishes strict recovery inspect/execute schemas and apply policy', () => {
+    const registry = AUTHORING_CAPABILITY_REGISTRY as unknown as ReadonlyArray<Record<string, any>>;
+    const inspect = registry.find((definition) => definition.id === 'change.recovery.inspect');
+    const execute = registry.find((definition) => definition.id === 'change.recovery.execute');
+    expect(inspect).toBeDefined();
+    expect(execute).toBeDefined();
+    expect(inspect).toMatchObject({ minimumPolicy: 'observe', idempotency: 'pure-read', sideEffects: ['change-store-read', 'project-read'] });
+    expect(inspect!.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, properties: {} });
+    expect((inspect!.outputSchema.properties as Record<string, unknown>).disposition).toMatchObject({ enum: ['NO_ACTION', 'REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED', 'MANUAL_RECOVERY_REQUIRED'] });
+    expect(execute).toMatchObject({ minimumPolicy: 'apply', idempotency: 'operation-id', sideEffects: ['project-read', 'project-write', 'change-store-write'] });
+    expect(execute!.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['operationId', 'recoveryToken'] });
   });
 });

@@ -1627,3 +1627,33 @@ GREEN=npm run build -w @surdet/authoring EXIT=0; npm run test -w @surdet/cli -- 
 SCOPE=Task 7 tracked changes are limited to node-change-store.ts, authoring-service.ts, agent-transaction-recovery.test.ts, node-project-storage.test.ts, change-isolation.test.ts and this plan; node-local-lease.ts, session.ts, protected files and existing untracked governance files remain untouched
 NEXT_STOP=COMMIT_TASK_7_THEN_TASK_8_CAPABILITY_AND_ERROR_CATALOG_RED
 ```
+
+### 2026-08-24T19:17:06+08:00 — Task 8 RED
+
+```text
+RED_RUN=npm run test -w @surdet/authoring -- capability-registry.test.ts error-catalog.test.ts --reporter=json --outputFile="$WAVE4_ROOT\task8-red.json" EXIT=1
+RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task8-red.json BYTES=7464 SHA256=5CDB89082BF6A04A09B60573BC30F2C5566EACA45418B111878B9FD42DDA2D2B
+RED_FACTS=registry contract assertions observed 20 instead of 22 and missing recovery definitions; error catalog assertion observed missing CHANGE_RECORD_CONFLICT; existing unrelated assertions passed; HARNESS_INVALID=NO
+RED_STATUS=RED_REPRODUCED; RED_NOT_REPRODUCED=NO; FAILED_ARTIFACT_PRESERVED=YES
+NEXT_STOP=TASK_8_IMPLEMENT_ERROR_REGISTRY_CAPABILITY_SCHEMA_AND_STALE_SESSION
+```
+
+### 2026-08-24T19:30:28+08:00 — Task 8 Capability registry, error catalog and Agent Port recovery session
+
+```text
+IMPLEMENTED=RetryDisposition after-refresh; 12 stable transaction/lease/store/journal/recovery/invocation errors with non-empty repair contracts; 22 registry capabilities including strict recovery inspect/execute schemas and dispatcher thin calls
+SESSION=resume accepts same-project V2 OPEN/STALE/COMMITTED/ROLLED_BACK; STALE exposes recovery-only nextActions and manualRecoveryRequired; terminal changes are read-only; describe now includes recordVersion, change/project lease summaries, journal state and recoveryDisposition
+MCP=all projected capability schemas remain registry-derived; session/capsule schemas include recovery fields; structuredContent equals the full envelope and text content serializes that same envelope
+CAPSULE=record/journal/invocations/diff and capsule payload write run under one short bound change lease; no project lease or project mutation; recovery summary plus STALE/RECOVERY_FAILED/manual-review warnings are included
+CHECKPOINTS=an initial authoring assertion omitted after-refresh from the edited test allow-list; an initial CLI run exposed cross-project resume as CHANGE_NOT_FOUND; both were corrected, and the final required commands below were rerun successfully
+GREEN_AUTH_TEST=npm run test -w @surdet/authoring -- capability-registry.test.ts error-catalog.test.ts EXIT=0 (2 files; 10/10)
+GREEN_AUTH_BUILD=npm run build -w @surdet/authoring EXIT=0
+GREEN_CLI_TEST=npm run test -w @surdet/cli -- agent-port-session.test.ts agent-port-tools.test.ts agent-port-output-contract.test.ts agent-port-capsule.test.ts EXIT=0 (4 files; 25/25)
+GREEN_AUTH_TYPECHECK=npm run typecheck -w @surdet/authoring EXIT=0
+GREEN_CLI_TYPECHECK=npm run typecheck -w @surdet/cli EXIT=0
+GREEN_CLI_BUILD=npm run build -w @surdet/cli EXIT=0
+FINAL_REVALIDATION_AT=2026-08-24T20:32:24+08:00
+RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task8-red.json BYTES=7464 SHA256=5CDB89082BF6A04A09B60573BC30F2C5566EACA45418B111878B9FD42DDA2D2B PRESERVED=YES
+SCOPE=tracked Task 8 diff is exactly the 13 paths listed by the Task 8 commit command; protected files and existing untracked governance/CLI artifacts remain untouched
+NEXT_STOP=COMMIT_TASK_8_THEN_TASK_9_AGGREGATE_RUNNER_RED
+```

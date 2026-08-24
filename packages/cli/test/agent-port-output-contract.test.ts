@@ -103,6 +103,8 @@ describe('Agent Port output-schema conformance', () => {
     if (changeId === undefined) mismatches.push('change.begin [working-setup]: result.changeId was not a string');
     const working = context(root, 'stage', changeId);
 
+    await scan('change.recovery.inspect', 'working-no-journal', working, {});
+
     await scan('variable.ensure', 'working-setup', working, {
       operationId: 'op-contract-route',
       name: 'agent.route',
@@ -172,6 +174,7 @@ describe('Agent Port output-schema conformance', () => {
       'runtime.run-from [working]',
       'runtime.read-trace [working-nested-events]',
       'change.diff [working]',
+      'change.recovery.inspect [working-no-journal]',
       'object.inspect [string-details]',
       'object.inspect [nested-object-details]',
       'object.inspect [omitted-details]',
