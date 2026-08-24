@@ -37,6 +37,7 @@ describe('presentation asset catalog', () => {
       role: 'lynn',
       outfit: 'uniform',
       expression: 'night',
+      timelineTarget: 'lynn:uniform',
       sourcePath: 'content/assets/portrait/lynn_uniform_night.svg',
       format: 'svg',
       resolved: true,
