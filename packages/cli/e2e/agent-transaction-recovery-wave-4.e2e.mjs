@@ -403,16 +403,18 @@ async function recoverFixture(label, modeName, runDirectory) {
   copyStarter(projectRoot);
   fs.mkdirSync(dataDir, { recursive: true });
   const prepared = await prepareRecoveryChange(projectRoot, dataDir);
-  await prepareInterruptedJournal(projectRoot, dataDir, prepared.changeId, modeName === 'replacing' ? 'replacing' : modeName);
-  const { projectIdentityFromRoot } = await loadModules();
+  const interrupted = await prepareInterruptedJournal(
+    projectRoot,
+    dataDir,
+    prepared.changeId,
+    modeName === 'replacing' ? 'replacing' : modeName,
+  );
+  assert(interrupted.rootIdentity === prepared.rootIdentity, `${label} recovery fixture project identity changed during preparation`);
   const changeDir = changeDirectory(dataDir, await loadModules(), prepared.rootIdentity, prepared.changeId);
   let unexpectedBeforeProject;
   let unexpectedBeforeChange;
   if (modeName === 'unexpected') {
-    const first = prepared.rootIdentity === undefined ? undefined : (await loadModules()).NodeProjectStorage;
-    void first;
-    const projectStorage = await (await loadModules()).NodeProjectStorage.open(projectRoot);
-    const firstPath = prepared.changedPaths?.[0];
+    const firstPath = interrupted.changedPaths[0];
     assert(typeof firstPath === 'string', 'unexpected recovery fixture has no first path');
     fs.writeFileSync(path.join(projectRoot, firstPath), Buffer.from('unexpected bytes from aggregate runner\n', 'utf8'));
     unexpectedBeforeProject = hashTree(projectRoot);
