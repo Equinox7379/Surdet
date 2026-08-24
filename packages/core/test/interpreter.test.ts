@@ -4,6 +4,7 @@ import { Interpreter, RuntimeError, interpolate } from '../src/runtime/interpret
 import { SceneRegistry } from '../src/runtime/scene-registry.js';
 import { EventBus } from '../src/runtime/event-bus.js';
 import { VariableStore } from '../src/state/variable-store.js';
+import { createSeededRandomSource } from '../src/runtime/random-source.js';
 import type { VarDeclaration } from '../src/state/types.js';
 import type { ChoiceEventPayload, TextEventPayload, InstrEventPayload, CoreEventMap } from '../src/runtime/interpreter.js';
 
@@ -163,6 +164,22 @@ describe('Interpreter', () => {
     expect(v).toBeGreaterThanOrEqual(3);
     expect(v).toBeLessThanOrEqual(6);
     expect(Number.isInteger(v)).toBe(true);
+  });
+
+  it('seeded Interpreter uses the same @random sequence for the same seed', () => {
+    const run = (): number[] => {
+      const { store, registry, interp } = makeRuntime([
+        { name: 'first', type: 'number', initial: 0 },
+        { name: 'second', type: 'number', initial: 0 },
+      ]);
+      interp.setRandomSource(createSeededRandomSource(0));
+      registry.register(compileScene('@random first 0 100\n@random second 0 100', 's.gal', 'seeded'));
+      interp.start('seeded');
+      return [store.getNumber('first'), store.getNumber('second')];
+    };
+
+    expect(run()).toEqual([26, 0]);
+    expect(run()).toEqual([26, 0]);
   });
 
   it('R3 @loop：回跳标签成循环，条件出口终止', () => {

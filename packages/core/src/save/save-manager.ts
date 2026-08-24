@@ -5,6 +5,7 @@ import type { AffectionSnapshot } from '../systems/affection.js';
 import type { EventSchedulerSnapshot } from '../systems/event-scheduler.js';
 import type { GrowthSnapshot } from '../systems/growth.js';
 import type { AchievementSnapshot } from '../systems/achievement.js';
+import { assertValidRandomState, type RandomState } from '../runtime/random-source.js';
 
 /**
  * 全家桶系统快照（可选，由宿主经 Interpreter 的 SystemHooks 提供）。
@@ -74,6 +75,8 @@ export interface SaveSnapshot {
   systems?: SystemSnapshots;
   /** 可选的宿主演出状态；core 只验证 JSON 形状，不依赖具体渲染器。 */
   presentation?: { version: 1; payload: unknown };
+  /** 可选的 seeded DSL @random 状态；旧档缺失时保持向后兼容。 */
+  random?: RandomState;
 }
 
 /**
@@ -151,6 +154,13 @@ export function assertValidSnapshot(
   }
   if (!isJsonObject(s.variables)) fail('variables 必须是普通对象');
   if (!isJsonSafeValue(s.variables)) fail('variables 含非 JSON 安全值（undefined/函数/Infinity 等）');
+  if (s.random !== undefined) {
+    try {
+      assertValidRandomState(s.random);
+    } catch (error) {
+      fail(`random ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   if (typeof s.kind !== 'string' || !(['manual', 'quick', 'auto'] as const).includes(s.kind as SaveSnapshot['kind'])) {
     fail('kind 只能是 manual、quick 或 auto');
