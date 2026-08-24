@@ -16,11 +16,14 @@ import {
   type AutonomyPolicy,
   type CapabilityAvailability,
   type ChangeRecord,
+  type CommitJournalStatus,
   type EvidenceFreshness,
+  type RecoveryDisposition,
 } from '@surdet/authoring';
 import { dispatchAuthoringCapability } from '../authoring/authoring-dispatcher.js';
 import { AuthoringService } from '../authoring/authoring-service.js';
 import { NodeChangeStore } from '../authoring/node-change-store.js';
+import { NodeLocalLeaseManager, type LeaseInspection } from '../authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
 import { recordInvocation } from './invocation-ledger.js';
@@ -33,6 +36,21 @@ export interface SessionCapability {
   mcpTool: string;
   availability: CapabilityAvailability;
   reason?: string;
+}
+
+interface SessionLeaseSummary {
+  state: LeaseInspection['state'];
+  holder?: LeaseInspection['holder'];
+  retryAfterMs?: number;
+  manualRecoveryRequired: boolean;
+}
+
+interface SessionJournalSummary {
+  recordState: 'missing' | 'readable' | 'corrupt' | 'unsupported';
+  status?: CommitJournalStatus;
+  journalVersion?: number;
+  errorCode?: string;
+  manualRecoveryRequired: boolean;
 }
 
 export interface SessionDescription {
@@ -49,6 +67,7 @@ export interface SessionDescription {
     status: ChangeRecord['status'];
     baseRevision: string;
     workingRevision: number;
+    recordVersion: number;
   };
   resumed: boolean;
   capabilities: SessionCapability[];
@@ -57,6 +76,12 @@ export interface SessionDescription {
     simulation?: EvidenceFreshness;
     runtime?: EvidenceFreshness;
   };
+  lease: {
+    change: SessionLeaseSummary;
+    project: SessionLeaseSummary;
+  };
+  journal: SessionJournalSummary;
+  recoveryDisposition: RecoveryDisposition;
   manualRecoveryRequired: boolean;
   nextActions: string[];
 }
@@ -75,6 +100,14 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'change.diff',
   'change.commit',
   'change.rollback',
+  'change.recovery.inspect',
+  'change.recovery.execute',
+]);
+
+const CHANGE_STATUS_SENSITIVE_CAPABILITIES = new Set<AuthoringCapabilityId>([
+  ...ACTIVE_CHANGE_CAPABILITIES,
+  'project.validate',
+  'project.simulate',
 ]);
 
 function hashText(text: string): string {
@@ -94,7 +127,7 @@ function policyBlocked(capability: AuthoringCapabilityId, policy: AutonomyPolicy
 }
 
 function stateBlocked(capability: AuthoringCapabilityId): AuthoringOperationError {
-  return new AuthoringOperationError('SESSION_STATE_INVALID', `capability '${capability}' 需要 active OPEN change`);
+  return new AuthoringOperationError('SESSION_STATE_INVALID', `capability '${capability}' 当前 change 状态不允许该动作`);
 }
 
 async function withChangeLeaseRetry<T>(
@@ -129,6 +162,7 @@ function evidenceFor(record: ChangeRecord | undefined): SessionDescription['evid
 function capabilityAvailability(
   policy: AutonomyPolicy,
   activeChangeId: string | undefined,
+  activeRecord: ChangeRecord | undefined,
   capability: (typeof AUTHORING_CAPABILITY_REGISTRY)[number],
 ): SessionCapability {
   let availability: CapabilityAvailability;
@@ -139,9 +173,18 @@ function capabilityAvailability(
   } else if (capability.id === 'change.begin' && activeChangeId !== undefined) {
     availability = 'state-blocked';
     reason = '当前 session 已有 active change';
-  } else if (changeRequired(capability.id) && activeChangeId === undefined) {
+  } else if (activeChangeId === undefined && changeRequired(capability.id)) {
     availability = 'state-blocked';
-    reason = '需要 active OPEN change';
+    reason = '需要 active change context';
+  } else if (capability.id === 'change.recovery.inspect' && activeRecord !== undefined) {
+    availability = 'available';
+  } else if (capability.id === 'change.recovery.execute' && activeRecord?.status === 'STALE') {
+    availability = 'available';
+  } else if (activeRecord !== undefined
+    && activeRecord.status !== 'OPEN'
+    && CHANGE_STATUS_SENSITIVE_CAPABILITIES.has(capability.id)) {
+    availability = 'state-blocked';
+    reason = `当前 change 状态 '${activeRecord.status}' 不允许普通 mutation；先使用 recovery capability`;
   } else {
     availability = 'available';
   }
@@ -171,10 +214,20 @@ function evidenceIdsFromRecord(record: ChangeRecord | undefined): string[] {
   ].filter((value): value is string => value !== undefined);
 }
 
+function leaseSummary(inspection: LeaseInspection): SessionLeaseSummary {
+  return {
+    state: inspection.state,
+    ...(inspection.holder === undefined ? {} : { holder: inspection.holder }),
+    ...(inspection.retryAfterMs === undefined ? {} : { retryAfterMs: inspection.retryAfterMs }),
+    manualRecoveryRequired: inspection.manualRecoveryRequired,
+  };
+}
+
 export class AgentPortSession {
   private activeChangeIdValue?: string;
   private lastChangeIdValue?: string;
   private invocationTail: Promise<void> = Promise.resolve();
+  private readonly leaseManager = new NodeLocalLeaseManager();
 
   constructor(
     readonly sessionId: string,
@@ -205,11 +258,15 @@ export class AgentPortSession {
     return this.lastChangeIdValue !== undefined;
   }
 
-  private async activeRecord(): Promise<ChangeRecord | undefined> {
+  private async activeOpenedChange(): Promise<NonNullable<Awaited<ReturnType<typeof NodeChangeStore.openForProject>>> | undefined> {
     if (this.activeChangeIdValue === undefined) return undefined;
-    const opened = await NodeChangeStore.openOwnedChange(this.activeChangeIdValue, this.projectRoot);
+    const opened = await NodeChangeStore.openForProject(this.activeChangeIdValue, this.projectRoot, { allowStale: true, allowTerminal: true });
     if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${this.activeChangeIdValue}`);
-    return opened.record;
+    return opened;
+  }
+
+  private async activeRecord(): Promise<ChangeRecord | undefined> {
+    return (await this.activeOpenedChange())?.record;
   }
 
   private async commitEvidenceGate(): Promise<void> {
@@ -287,6 +344,13 @@ export class AgentPortSession {
         throw new AuthoringOperationError('SESSION_STATE_INVALID', '当前 session 已有 active change');
       }
       if (changeRequired(capability) && this.activeChangeIdValue === undefined) throw stateBlocked(capability);
+      const currentRecord = this.activeChangeIdValue === undefined ? undefined : await this.activeRecord();
+      if (currentRecord !== undefined
+        && currentRecord.status !== 'OPEN'
+        && capability !== 'change.recovery.inspect'
+        && !(capability === 'change.recovery.execute' && currentRecord.status === 'STALE')) {
+        throw stateBlocked(capability);
+      }
       if (capability === 'change.commit') await this.commitEvidenceGate();
 
       const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, service);
@@ -339,9 +403,12 @@ export class AgentPortSession {
     };
 
     try {
-      const beforeOpened = beforeChangeId === undefined ? undefined : await NodeChangeStore.openByChangeId(beforeChangeId);
+      const beforeOpened = beforeChangeId === undefined
+        ? undefined
+        : await NodeChangeStore.openForProject(beforeChangeId, this.projectRoot, { allowStale: true, allowTerminal: true });
       beforeRecord = beforeOpened?.record;
-      if (beforeChangeId !== undefined && changeRequired(capability)) {
+      const recoveryCapability = capability === 'change.recovery.inspect' || capability === 'change.recovery.execute';
+      if (beforeChangeId !== undefined && changeRequired(capability) && !recoveryCapability) {
         await withChangeLeaseRetry(beforeChangeId, async (leasedStore) => {
           const leaseBeforeRecord = await leasedStore.read(beforeChangeId);
           if (leaseBeforeRecord === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${beforeChangeId}`);
@@ -409,8 +476,56 @@ export class AgentPortSession {
   }
 
   async describe(): Promise<SessionDescription> {
-    const record = await this.activeRecord();
-    const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, definition));
+    const opened = await this.activeOpenedChange();
+    const record = opened?.record;
+    const changeLease = this.activeChangeIdValue === undefined
+      ? { state: 'free' as const, manualRecoveryRequired: false }
+      : leaseSummary(await this.leaseManager.inspect('change', this.activeChangeIdValue));
+    const projectLease = leaseSummary(await this.leaseManager.inspect('project', this.projectRoot));
+    let journal: SessionJournalSummary = { recordState: 'missing', manualRecoveryRequired: false };
+    let recoveryDisposition: RecoveryDisposition = 'NO_ACTION';
+    if (opened !== undefined && record !== undefined) {
+      try {
+        const latest = await opened.store.readLatestJournal(record.changeId);
+        if (latest !== null) {
+          journal = {
+            recordState: 'readable',
+            status: latest.status,
+            journalVersion: latest.journalVersion,
+            manualRecoveryRequired: latest.status === 'RECOVERY_FAILED',
+          };
+        }
+      } catch (error) {
+        const normalized = normalizeAuthoringError(error);
+        journal = {
+          recordState: normalized.code === 'CHANGE_STORE_FORMAT_UNSUPPORTED' ? 'unsupported' : 'corrupt',
+          errorCode: normalized.code,
+          manualRecoveryRequired: true,
+        };
+        recoveryDisposition = 'MANUAL_RECOVERY_REQUIRED';
+      }
+      try {
+        const recovery = await this.service.inspectRecovery(record.changeId);
+        recoveryDisposition = recovery.result.disposition;
+        if (journal.recordState === 'missing' && recovery.result.journalStatus !== undefined) {
+          journal = {
+            recordState: 'readable',
+            status: recovery.result.journalStatus,
+            manualRecoveryRequired: recovery.result.manualRecoveryRequired,
+          };
+        }
+      } catch (error) {
+        const normalized = normalizeAuthoringError(error);
+        journal = {
+          ...journal,
+          recordState: normalized.code === 'CHANGE_STORE_FORMAT_UNSUPPORTED' ? 'unsupported' : 'corrupt',
+          errorCode: normalized.code,
+          manualRecoveryRequired: true,
+        };
+        recoveryDisposition = 'MANUAL_RECOVERY_REQUIRED';
+      }
+    }
+    const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition));
     const activeChange = record === undefined
       ? undefined
       : {
@@ -418,10 +533,15 @@ export class AgentPortSession {
           status: record.status,
           baseRevision: record.baseRevision,
           workingRevision: record.workingRevision,
+          recordVersion: record.recordVersion,
         };
     const nextActions = this.activeChangeIdValue === undefined
       ? this.policy === 'observe' ? ['project.inspect', 'project.validate', 'project.simulate'] : ['change.begin']
-      : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
+      : record?.status === 'STALE'
+        ? ['change.recovery.inspect', ...(this.policy === 'apply' ? ['change.recovery.execute'] : [])]
+        : record?.status === 'COMMITTED' || record?.status === 'ROLLED_BACK'
+          ? ['change.recovery.inspect']
+          : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
     return {
       sessionId: this.sessionId,
       startedAt: this.startedAt,
@@ -435,7 +555,14 @@ export class AgentPortSession {
       resumed: this.wasResumed,
       capabilities,
       evidence: evidenceFor(record),
-      manualRecoveryRequired: record?.status === 'STALE',
+      lease: { change: changeLease, project: projectLease },
+      journal,
+      recoveryDisposition,
+      manualRecoveryRequired: record?.status === 'STALE'
+        || journal.manualRecoveryRequired
+        || changeLease.manualRecoveryRequired
+        || projectLease.manualRecoveryRequired
+        || recoveryDisposition === 'MANUAL_RECOVERY_REQUIRED',
       nextActions,
     };
   }
@@ -454,7 +581,12 @@ export async function openAgentPortSession(options: AgentPortOptions): Promise<A
   const snapshot = await loadProjectSnapshot(storage, { sha256: async (text) => hashText(text) });
   let resumedChangeId: string | undefined;
   if (options.resumeChangeId !== undefined) {
-    const opened = await NodeChangeStore.openOwnedChange(options.resumeChangeId, storage.rootIdentity);
+    const discovered = await NodeChangeStore.openByChangeId(options.resumeChangeId);
+    if (discovered !== null
+      && projectIdentityFromRoot(discovered.record.projectRootIdentity) !== projectIdentityFromRoot(storage.rootIdentity)) {
+      throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', `变更事务 '${options.resumeChangeId}' 不属于当前项目`);
+    }
+    const opened = await NodeChangeStore.openForProject(options.resumeChangeId, storage.rootIdentity, { allowStale: true, allowTerminal: true });
     if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${options.resumeChangeId}`);
     resumedChangeId = opened.record.changeId;
   }

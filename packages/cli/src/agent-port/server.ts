@@ -40,6 +40,53 @@ const freshnessSchema: JsonSchema = {
   additionalProperties: false,
 };
 
+const leaseSummarySchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    state: { enum: ['free', 'owned', 'stale-candidate', 'corrupt', 'foreign-host'] },
+    holder: {
+      type: 'object',
+      properties: {
+        pid: { type: 'integer' },
+        hostname: { type: 'string' },
+        acquiredAt: { type: 'string' },
+        heartbeatAt: { type: 'string' },
+      },
+      required: ['pid', 'hostname', 'acquiredAt', 'heartbeatAt'],
+      additionalProperties: false,
+    },
+    retryAfterMs: { type: 'integer' },
+    manualRecoveryRequired: { type: 'boolean' },
+  },
+  required: ['state', 'manualRecoveryRequired'],
+  additionalProperties: false,
+};
+
+const journalSummarySchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    recordState: { enum: ['missing', 'readable', 'corrupt', 'unsupported'] },
+    status: { enum: ['STAGING', 'REPLACING', 'RECOVERED', 'RECOVERY_FAILED', 'COMMITTED'] },
+    journalVersion: { type: 'integer' },
+    errorCode: { type: 'string' },
+    manualRecoveryRequired: { type: 'boolean' },
+  },
+  required: ['recordState', 'manualRecoveryRequired'],
+  additionalProperties: false,
+};
+
+const recoverySummarySchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    disposition: { enum: ['NO_ACTION', 'REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED', 'MANUAL_RECOVERY_REQUIRED'] },
+    journalStatus: { enum: ['STAGING', 'REPLACING', 'RECOVERED', 'RECOVERY_FAILED', 'COMMITTED'] },
+    manualRecoveryRequired: { type: 'boolean' },
+    reasons: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['disposition', 'manualRecoveryRequired', 'reasons'],
+  additionalProperties: false,
+};
+
 const capsuleOutputSchema: JsonSchema = {
   type: 'object',
   properties: {
@@ -64,6 +111,7 @@ const capsuleOutputSchema: JsonSchema = {
     validation: freshnessSchema,
     simulation: freshnessSchema,
     runtime: freshnessSchema,
+    recovery: recoverySummarySchema,
     warnings: { type: 'array', items: {} },
     manualReviewRequired: { type: 'array', items: {} },
     projectMutation: {
@@ -88,7 +136,7 @@ const capsuleOutputSchema: JsonSchema = {
     'capsuleVersion', 'capsuleId', 'generatedAt', 'sessionId', 'policy', 'contractVersion',
     'projectIdentity', 'baseProjectRevision', 'currentProjectRevision', 'changeId', 'changeStatus',
     'acceptanceCriteria', 'operations', 'invocationSummary', 'objectDiff', 'causalImpact',
-    'validation', 'simulation', 'runtime', 'warnings', 'manualReviewRequired', 'projectMutation',
+    'validation', 'simulation', 'runtime', 'recovery', 'warnings', 'manualReviewRequired', 'projectMutation',
     'artifactIdentity',
   ],
   additionalProperties: false,
@@ -112,8 +160,9 @@ const sessionDescriptionSchema: JsonSchema = {
         status: { enum: ['OPEN', 'COMMITTED', 'ROLLED_BACK', 'STALE'] },
         baseRevision: { type: 'string' },
         workingRevision: { type: 'integer' },
+        recordVersion: { type: 'integer' },
       },
-      required: ['changeId', 'status', 'baseRevision', 'workingRevision'],
+      required: ['changeId', 'status', 'baseRevision', 'workingRevision', 'recordVersion'],
       additionalProperties: false,
     },
     resumed: { type: 'boolean' },
@@ -140,13 +189,24 @@ const sessionDescriptionSchema: JsonSchema = {
       },
       additionalProperties: false,
     },
+    lease: {
+      type: 'object',
+      properties: {
+        change: leaseSummarySchema,
+        project: leaseSummarySchema,
+      },
+      required: ['change', 'project'],
+      additionalProperties: false,
+    },
+    journal: journalSummarySchema,
+    recoveryDisposition: { enum: ['NO_ACTION', 'REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED', 'MANUAL_RECOVERY_REQUIRED'] },
     manualRecoveryRequired: { type: 'boolean' },
     nextActions: { type: 'array', items: { type: 'string' } },
   },
   required: [
     'sessionId', 'startedAt', 'engineVersion', 'contractVersion', 'projectIdentity',
     'projectName', 'projectRevision', 'policy', 'resumed', 'capabilities', 'evidence',
-    'manualRecoveryRequired', 'nextActions',
+    'lease', 'journal', 'recoveryDisposition', 'manualRecoveryRequired', 'nextActions',
   ],
   additionalProperties: false,
 };

@@ -422,6 +422,32 @@ const changeDiffResultSchema = strictObject({
   freshness: evidenceFreshnessSchema,
 }, ['summary', 'semantic', 'files', 'view', 'evidenceId', 'freshness']);
 
+const recoveryFileStateSchema = strictObject({
+  path: stringSchema,
+  state: { enum: ['original', 'target', 'absent-expected', 'unexpected'] },
+  actualSha256: stringSchema,
+}, ['path', 'state']);
+
+const recoveryInspectionSchema = strictObject({
+  changeId: stringSchema,
+  recordState: { enum: ['readable', 'corrupt', 'unsupported'] },
+  changeStatus: { enum: ['OPEN', 'COMMITTED', 'ROLLED_BACK', 'STALE'] },
+  journalStatus: { enum: ['STAGING', 'REPLACING', 'RECOVERED', 'RECOVERY_FAILED', 'COMMITTED'] },
+  lockState: { enum: ['free', 'owned', 'stale-candidate', 'corrupt', 'foreign-host'] },
+  projectState: { enum: ['base', 'target', 'mixed-known', 'ambiguous'] },
+  fileStates: arrayOf(recoveryFileStateSchema),
+  disposition: { enum: ['NO_ACTION', 'REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED', 'MANUAL_RECOVERY_REQUIRED'] },
+  recoveryToken: stringSchema,
+  manualRecoveryRequired: booleanSchema,
+  reasons: stringArraySchema,
+}, ['changeId', 'recordState', 'lockState', 'projectState', 'fileStates', 'disposition', 'manualRecoveryRequired', 'reasons']);
+
+const recoveryExecuteResultSchema = strictObject({
+  changeId: stringSchema,
+  status: { enum: ['OPEN', 'COMMITTED'] },
+  disposition: { enum: ['REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED'] },
+}, ['changeId', 'status', 'disposition']);
+
 const runtimeRunFromResultSchema = strictObject({
   view: { const: 'working' },
   traceId: stringSchema,
@@ -565,6 +591,16 @@ const definitions = {
     outputSchema: strictObject({ changeId: stringSchema, status: { const: 'ROLLED_BACK' } }, ['changeId', 'status']),
     example: { input: {}, expectedResultShape: { changeId: 'chg_...', status: 'ROLLED_BACK' } },
   },
+  recoveryInspect: {
+    inputSchema: emptyInputSchema,
+    outputSchema: recoveryInspectionSchema,
+    example: { input: {}, expectedResultShape: { changeId: 'chg_...', recordState: 'readable', lockState: 'free', projectState: 'base', fileStates: [], disposition: 'NO_ACTION', manualRecoveryRequired: false, reasons: [] } },
+  },
+  recoveryExecute: {
+    inputSchema: strictObject({ operationId: stringSchema, recoveryToken: stringSchema }, ['operationId', 'recoveryToken']),
+    outputSchema: recoveryExecuteResultSchema,
+    example: { input: { operationId: 'op_recovery', recoveryToken: '...' }, expectedResultShape: { changeId: 'chg_...', status: 'OPEN', disposition: 'REOPEN_OPEN' } },
+  },
 } as const;
 
 export const AUTHORING_CAPABILITY_IDS = [
@@ -588,6 +624,8 @@ export const AUTHORING_CAPABILITY_IDS = [
   'change.diff',
   'change.commit',
   'change.rollback',
+  'change.recovery.inspect',
+  'change.recovery.execute',
 ] as const;
 
 export type AuthoringCapabilityId = (typeof AUTHORING_CAPABILITY_IDS)[number];
@@ -629,6 +667,8 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
   'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
   'change.rollback': { title: 'Rollback change', purpose: 'Mark one open change rolled back without touching the project.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'idempotent', preconditions: ['active change is OPEN'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
+  'change.recovery.inspect': { title: 'Inspect change recovery', purpose: 'Read the current transaction journal, locks, project file identities, and the one safe recovery disposition.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'project-read'], idempotency: 'pure-read', preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['read the recovery inspection and use its disposition; manual states must not be guessed through'] },
+  'change.recovery.execute': { title: 'Execute change recovery', purpose: 'Apply only the recovery action returned by a fresh recovery inspection.', minimumPolicy: 'apply', sideEffects: ['project-read', 'project-write', 'change-store-write'], idempotency: 'operation-id', preconditions: ['active change is readable', 'policy is apply', 'recoveryToken is fresh', 'disposition is not manual'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED', 'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED', 'PROJECT_IDENTITY_MISMATCH', 'OPERATION_ID_CONFLICT'], repairRecipes: ['run change.recovery.inspect again after any stale or lock error; never reuse a stale token'] },
 };
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
@@ -671,7 +711,11 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
                                       ? 'diff'
                                       : id === 'change.commit'
                                         ? 'commit'
-                                        : 'rollback'];
+                                        : id === 'change.rollback'
+                                          ? 'rollback'
+                                          : id === 'change.recovery.inspect'
+                                            ? 'recoveryInspect'
+                                            : 'recoveryExecute'];
   return {
     id,
     title: item.title,

@@ -110,18 +110,23 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_rollback');
       expect(names).not.toContain('surdet_change_commit');
     }
+    expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.inspect'));
     if (policy === 'stage') {
       expect(names).not.toContain('surdet_change_commit');
-      expect(names).toHaveLength(21);
+      expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
+      expect(names).toHaveLength(22);
     }
-    if (policy === 'apply') expect(names).toHaveLength(22);
+    if (policy === 'apply') {
+      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
+      expect(names).toHaveLength(24);
+    }
     const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
     expect((described.structuredContent as any).ok).toBe(true);
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(20);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(22);
     if (policy === 'stage') {
       const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
       expect(begun.isError).not.toBe(true);
@@ -169,6 +174,10 @@ describe('Surdet Agent Port MCP tool projection', () => {
       if (typeof begunEnvelope.changeId !== 'string' || begunEnvelope.changeId.length === 0) {
         mismatches.push('change.begin success: text envelope did not expose a real changeId');
       }
+
+      const recovery = await client.callTool({ name: 'surdet_change_recovery_inspect', arguments: {} });
+      compareTextEnvelope('change.recovery.inspect success', recovery);
+      if (textEnvelope(recovery).ok !== true) mismatches.push('change.recovery.inspect success: text envelope was not a success envelope');
 
       const failed = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'scene:missing' } });
       compareTextEnvelope('object.inspect failure', failed);

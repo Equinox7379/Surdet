@@ -5,13 +5,16 @@ import {
   DELIVERY_CAPSULE_VERSION,
   AuthoringOperationError,
   evidenceFreshness,
+  inspectTransactionRecovery,
   loadProjectSnapshot,
   type AutonomyPolicy,
   type ChangeRecord,
   type EvidenceFreshness,
+  type RecoveryInspection,
 } from '@surdet/authoring';
 import { NodeChangeStore, type ArtifactIdentity } from '../authoring/node-change-store.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
+import { projectIdentityFromRoot } from '../authoring/project-identity.js';
 import type { AgentPortSession } from './session.js';
 import type { InvocationRecord } from './invocation-ledger.js';
 
@@ -37,6 +40,12 @@ export interface DeliveryCapsulePayload {
   validation: EvidenceFreshness;
   simulation: EvidenceFreshness;
   runtime: EvidenceFreshness;
+  recovery: {
+    disposition: RecoveryInspection['disposition'];
+    journalStatus?: RecoveryInspection['journalStatus'];
+    manualRecoveryRequired: boolean;
+    reasons: string[];
+  };
   warnings: unknown[];
   manualReviewRequired: unknown[];
   projectMutation: {
@@ -186,74 +195,103 @@ export async function generateDeliveryCapsule(
   }
   const changeId = session.lastChangeId;
   if (changeId === undefined) throw new AuthoringOperationError('CHANGE_NOT_FOUND', 'delivery capsule 需要 active 或 resumed change');
-  const opened = await NodeChangeStore.openByChangeId(changeId);
-  if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
-  if (!sameRootIdentity(opened.record.projectRootIdentity, session.projectRoot)) {
-    throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', `变更事务 '${changeId}' 不属于当前项目`);
+  const storage = await NodeProjectStorage.open(session.projectRoot);
+  if (projectIdentityFromRoot(storage.rootIdentity) !== session.projectIdentity) {
+    throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '当前项目根目录身份与 session 绑定不一致');
   }
 
-  const storage = await NodeProjectStorage.open(session.projectRoot);
-  const snapshot = await loadProjectSnapshot(storage, { sha256: async (text) => hashText(text) });
-  const record = opened.record;
-  const evidence = await opened.store.readAllEvidence(changeId);
-  const diff = await opened.store.readDiff(changeId);
-  const journal = await opened.store.readLatestJournal(changeId);
-  const invocations = await opened.store.readInvocations(changeId);
-  const validation = validationFreshness(record, evidence);
-  const simulation = simulationFreshness(record, evidence);
-  const runtime = runtimeFreshness(record);
-  const diffFreshnessValue = diffFreshness(record);
-  const paths = changedPaths(record);
-  const emptyChange = paths.length === 0;
-  const isCommittedMutation = record.status === 'COMMITTED' && !emptyChange;
-  const warnings: unknown[] = [];
-  const validationWarnings = freshValidationWarnings(record, evidence);
-  warnings.push(...validationWarnings);
-  if (emptyChange) warnings.push('EMPTY_CHANGE');
-  if (record.status === 'STALE') warnings.push('STALE_CHANGE');
-  if (isRecord(journal) && journal['status'] === 'RECOVERY_FAILED') warnings.push('RECOVERY_FAILED');
-  const manualReviewRequired: unknown[] = [];
-  if (validationWarnings.length > 0) manualReviewRequired.push('VALIDATION_WARNINGS');
-  if (record.status === 'STALE') manualReviewRequired.push('STALE_CHANGE');
-  if (isRecord(journal) && journal['status'] === 'RECOVERY_FAILED') manualReviewRequired.push('RECOVERY_FAILED');
-
-  const capsuleId = crypto.randomUUID();
-  const beforeRevision = record.status === 'COMMITTED' ? record.baseRevision : snapshot.revision;
-  const payload: DeliveryCapsulePayload = {
-    capsuleVersion: DELIVERY_CAPSULE_VERSION,
-    capsuleId,
-    generatedAt: new Date().toISOString(),
-    sessionId: session.sessionId,
-    policy: session.policy,
-    contractVersion: AUTHORING_CONTRACT_VERSION,
-    projectIdentity: session.projectIdentity,
-    baseProjectRevision: record.baseRevision,
-    currentProjectRevision: snapshot.revision,
+  return NodeChangeStore.withChangeLeaseForProject(
     changeId,
-    changeStatus: record.status,
-    workingRevision: record.workingRevision,
-    ...(record.intent?.intent === undefined ? {} : { intent: record.intent.intent }),
-    acceptanceCriteria: record.intent?.acceptanceCriteria ?? [],
-    operations: Object.entries(record.operations).map(([operationId, operation]) => ({
-      operationId,
-      requestHash: operation.requestHash,
-      result: operation.result,
-    })),
-    invocationSummary: safeInvocationSummary(invocations, journal),
-    objectDiff: objectDiffWithFreshness(diff, diffFreshnessValue),
-    causalImpact: semanticImpacts(diff),
-    validation,
-    simulation,
-    runtime,
-    warnings,
-    manualReviewRequired,
-    projectMutation: {
-      occurred: isCommittedMutation,
-      expectedByPolicy: session.policy === 'apply' && isCommittedMutation,
-      beforeRevision,
-      afterRevision: snapshot.revision,
+    storage.rootIdentity,
+    async (leasedStore) => {
+      const record = await leasedStore.read(changeId);
+      if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      if (!sameRootIdentity(record.projectRootIdentity, storage.rootIdentity)) {
+        throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', `变更事务 '${changeId}' 不属于当前项目`);
+      }
+
+      const snapshot = await loadProjectSnapshot(storage, { sha256: async (text) => hashText(text) });
+      const evidence = await leasedStore.readAllEvidence(changeId);
+      const diff = await leasedStore.readDiff(changeId);
+      const journal = await leasedStore.readLatestJournal(changeId);
+      const invocations = await leasedStore.readInvocations(changeId);
+      const recovery = await inspectTransactionRecovery({
+        record,
+        journal,
+        storage,
+        leaseState: 'free',
+        sha256: async (text) => hashText(text),
+      });
+      const validation = validationFreshness(record, evidence);
+      const simulation = simulationFreshness(record, evidence);
+      const runtime = runtimeFreshness(record);
+      const diffFreshnessValue = diffFreshness(record);
+      const paths = changedPaths(record);
+      const emptyChange = paths.length === 0;
+      const isCommittedMutation = record.status === 'COMMITTED' && !emptyChange;
+      const warnings: unknown[] = [];
+      const validationWarnings = freshValidationWarnings(record, evidence);
+      warnings.push(...validationWarnings);
+      if (emptyChange) warnings.push('EMPTY_CHANGE');
+      if (record.status === 'STALE') warnings.push('STALE_CHANGE');
+      if (journal?.status === 'RECOVERY_FAILED') warnings.push('RECOVERY_FAILED');
+      if (recovery.manualRecoveryRequired || recovery.disposition === 'MANUAL_RECOVERY_REQUIRED') {
+        warnings.push('RECOVERY_MANUAL_REQUIRED');
+      }
+      const manualReviewRequired: unknown[] = [];
+      if (validationWarnings.length > 0) manualReviewRequired.push('VALIDATION_WARNINGS');
+      if (record.status === 'STALE') manualReviewRequired.push('STALE_CHANGE');
+      if (journal?.status === 'RECOVERY_FAILED') manualReviewRequired.push('RECOVERY_FAILED');
+      if (recovery.manualRecoveryRequired || recovery.disposition === 'MANUAL_RECOVERY_REQUIRED') {
+        manualReviewRequired.push('RECOVERY_MANUAL_REQUIRED');
+      }
+
+      const capsuleId = crypto.randomUUID();
+      const beforeRevision = record.status === 'COMMITTED' ? record.baseRevision : snapshot.revision;
+      const payload: DeliveryCapsulePayload = {
+        capsuleVersion: DELIVERY_CAPSULE_VERSION,
+        capsuleId,
+        generatedAt: new Date().toISOString(),
+        sessionId: session.sessionId,
+        policy: session.policy,
+        contractVersion: AUTHORING_CONTRACT_VERSION,
+        projectIdentity: session.projectIdentity,
+        baseProjectRevision: record.baseRevision,
+        currentProjectRevision: snapshot.revision,
+        changeId,
+        changeStatus: record.status,
+        workingRevision: record.workingRevision,
+        ...(record.intent?.intent === undefined ? {} : { intent: record.intent.intent }),
+        acceptanceCriteria: record.intent?.acceptanceCriteria ?? [],
+        operations: Object.entries(record.operations).map(([operationId, operation]) => ({
+          operationId,
+          requestHash: operation.requestHash,
+          result: operation.result,
+        })),
+        invocationSummary: safeInvocationSummary(invocations, journal),
+        objectDiff: objectDiffWithFreshness(diff, diffFreshnessValue),
+        causalImpact: semanticImpacts(diff),
+        validation,
+        simulation,
+        runtime,
+        recovery: {
+          disposition: recovery.disposition,
+          ...(recovery.journalStatus === undefined ? {} : { journalStatus: recovery.journalStatus }),
+          manualRecoveryRequired: recovery.manualRecoveryRequired,
+          reasons: recovery.reasons,
+        },
+        warnings,
+        manualReviewRequired,
+        projectMutation: {
+          occurred: isCommittedMutation,
+          expectedByPolicy: session.policy === 'apply' && isCommittedMutation,
+          beforeRevision,
+          afterRevision: snapshot.revision,
+        },
+      };
+      const artifactIdentity = await leasedStore.writeCapsulePayload(changeId, capsuleId, payload);
+      return { ...payload, artifactIdentity };
     },
-  };
-  const artifactIdentity = await opened.store.writeCapsulePayload(changeId, capsuleId, payload);
-  return { ...payload, artifactIdentity };
+    { allowTerminal: true, allowStale: true },
+  );
 }

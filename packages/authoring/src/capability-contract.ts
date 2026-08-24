@@ -16,6 +16,7 @@ export type IdempotencyClass = 'pure-read' | 'idempotent' | 'operation-id' | 'no
 export type RetryDisposition =
   | 'same-request'
   | 'after-inspect'
+  | 'after-refresh'
   | 'after-repair'
   | 'new-change'
   | 'manual-recovery'
