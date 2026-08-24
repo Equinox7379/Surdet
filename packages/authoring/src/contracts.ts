@@ -54,6 +54,52 @@ export interface AuthoringObject {
 
 export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
 
+export type CommitJournalStatus = 'STAGING' | 'REPLACING' | 'RECOVERED' | 'RECOVERY_FAILED' | 'COMMITTED';
+
+export interface CommitJournalEntry {
+  path: string;
+  originalSha256?: string;
+  targetSha256: string;
+  stagedIdentity: string;
+  replaced: boolean;
+  restored: boolean;
+}
+
+export interface CommitJournal {
+  formatVersion: 2;
+  journalVersion: number;
+  changeId: string;
+  recordVersionAtCommitStart: number;
+  projectRevisionAtCommitStart: string;
+  status: CommitJournalStatus;
+  files: CommitJournalEntry[];
+}
+
+export type RecoveryDisposition =
+  | 'NO_ACTION'
+  | 'REOPEN_OPEN'
+  | 'ROLL_BACK_TO_BASE'
+  | 'FINALIZE_COMMITTED'
+  | 'MANUAL_RECOVERY_REQUIRED';
+
+export interface RecoveryInspection {
+  changeId: string;
+  recordState: 'readable' | 'corrupt' | 'unsupported';
+  changeStatus?: ChangeStatus;
+  journalStatus?: CommitJournalStatus;
+  lockState: 'free' | 'owned' | 'stale-candidate' | 'corrupt' | 'foreign-host';
+  projectState: 'base' | 'target' | 'mixed-known' | 'ambiguous';
+  fileStates: Array<{
+    path: string;
+    state: 'original' | 'target' | 'absent-expected' | 'unexpected';
+    actualSha256?: string;
+  }>;
+  disposition: RecoveryDisposition;
+  recoveryToken?: string;
+  manualRecoveryRequired: boolean;
+  reasons: string[];
+}
+
 export interface ChangeIntentMetadata {
   intent?: string;
   acceptanceCriteria?: string[];

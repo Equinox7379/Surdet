@@ -23,12 +23,17 @@ function isCommittedJournal(value: unknown): boolean {
 }
 
 class PersistedCommitEventRepository extends InMemoryChangeRepository {
+  readonly journalVersions: number[] = [];
+
   constructor(private readonly events: string[]) {
     super();
   }
 
   override async writeJournal(changeId: string, value: unknown): Promise<void> {
     await super.writeJournal(changeId, value);
+    if (typeof value === 'object' && value !== null && typeof (value as { journalVersion?: unknown }).journalVersion === 'number') {
+      this.journalVersions.push((value as { journalVersion: number }).journalVersion);
+    }
     if (isCommittedJournal(value)) this.events.push('journal-persisted:COMMITTED');
   }
 
@@ -148,6 +153,8 @@ describe('atomic commit recovery', () => {
     events.length = 0;
     expect(events).toEqual([]);
     const committed = await commitChange(change, storage);
+
+    expect(repository.journalVersions).toEqual([1, 2, 3, 4, 5]);
 
     expect(committed).toEqual({
       changeId: change.record.changeId,
