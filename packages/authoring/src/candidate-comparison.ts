@@ -135,8 +135,9 @@ export async function compareCandidates(
   input: CompareCandidatesInput,
   hasher: TextHasher,
 ): Promise<CompositionComparison> {
-  if (input.candidates.length === 0 || input.candidates.length > MAX_CANDIDATES) {
-    throw invalidRequest(`候选数量必须在 1..${MAX_CANDIDATES} 之间：${input.candidates.length}`);
+  // 规格 5.4：比较输入限制为 2..8 个候选。
+  if (input.candidates.length < 2 || input.candidates.length > MAX_CANDIDATES) {
+    throw invalidRequest(`候选数量必须在 2..${MAX_CANDIDATES} 之间：${input.candidates.length}`);
   }
   const sha256Text = async (text: string) => hasher.sha256(text);
 

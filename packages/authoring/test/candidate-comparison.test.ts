@@ -118,6 +118,14 @@ async function compare(candidates: VerifiedCompositionCandidate[], currentRevisi
   }, hasher);
 }
 
+
+/** 规格 5.4 要求至少两个候选；无关候选用于单侧场景。 */
+function bystander(): VerifiedCompositionCandidate {
+  return readyCandidate('zz-bystander', [
+    operation(0, 'op_zz', 'variable.ensure', 'variable:zz', [production('variable:zz', 'create', 'fp-zz')]),
+  ]);
+}
+
 describe('Wave 5 candidate comparison', () => {
   it('treats disjoint closures as composable with no structural conflicts', async () => {
     const result = await compare([
@@ -138,11 +146,13 @@ describe('Wave 5 candidate comparison', () => {
         operation(0, 'op_create_t', 'timeline.create', 'timeline:beta', [production('timeline:beta', 'create', 'fp-t1')]),
         operation(1, 'op_patch_t', 'timeline.patch', 'timeline:beta', [production('timeline:beta', 'update', 'fp-t2')]),
       ]),
+      bystander(),
     ]);
-    expect(result.units).toHaveLength(1);
-    expect(result.units[0]!.operationSequences).toEqual([0, 1]);
-    expect(result.units[0]!.finalFingerprint).toBe('fp-t2');
-    expect(result.units[0]!.producedObjects).toHaveLength(2);
+    expect(result.units).toHaveLength(2); // timeline 单元 + 无关 bystander 单元
+    const timelineUnit = result.units.find((unit) => unit.primaryObject === 'timeline:beta')!;
+    expect(timelineUnit.operationSequences).toEqual([0, 1]);
+    expect(timelineUnit.finalFingerprint).toBe('fp-t2');
+    expect(timelineUnit.producedObjects).toHaveLength(2);
     expect(result.status).toBe('composable');
   });
 
@@ -199,7 +209,7 @@ describe('Wave 5 candidate comparison', () => {
       operation(0, 'op_tl', 'timeline.create', 'timeline:dep', [production('timeline:dep', 'create', 'fp-dep')]),
       operation(1, 'op_sc', 'scene.create', 'scene:uses', [production('scene:uses', 'create', 'fp-uses')], [requirement('timeline:dep', 'candidate', 0)]),
     ];
-    const result = await compare([readyCandidate('chain', timelineOps)]);
+    const result = await compare([readyCandidate('chain', timelineOps), bystander()]);
     expect(result.dependencyEdges).toHaveLength(1);
     const edge = result.dependencyEdges[0]!;
     const sceneUnit = result.units.find((unit) => unit.primaryObject === 'scene:uses')!;
@@ -216,7 +226,7 @@ describe('Wave 5 candidate comparison', () => {
       operation(0, 'op_broken_scene', 'scene.create', 'scene:orphan', [production('scene:orphan', 'create', 'fp-orphan')],
         [requirement('timeline:ghost', 'candidate', 0)]),
     ];
-    const result = await compare([readyCandidate('broken', broken)]);
+    const result = await compare([readyCandidate('broken', broken), bystander()]);
     expect(result.status).toBe('blocked');
     const conflict = result.conflicts.find((item) => item.severity === 'blocking');
     expect(conflict).toBeDefined();
@@ -251,7 +261,7 @@ describe('Wave 5 candidate comparison', () => {
     const identityResult = await compareCandidates({
       projectIdentity: PROJECT,
       currentProjectRevision: BASE,
-      candidates: [foreignProject],
+      candidates: [foreignProject, bystander()],
     }, hasher);
     expect(identityResult.status).toBe('blocked');
     expect(identityResult.conflicts.some((item) => item.severity === 'blocking')).toBe(true);
@@ -260,6 +270,7 @@ describe('Wave 5 candidate comparison', () => {
   it('allows review-only comparison when the project has left the common base but blocks plans later', async () => {
     const result = await compare([
       readyCandidate('a', [operation(0, 'op_a2', 'scene.create', 'scene:moved', [production('scene:moved', 'create', 'fp-moved')])]),
+      bystander(),
     ], 'moved-on-revision');
     expect(result.status).toBe('review-only');
     expect(result.expectedProjectRevision).toBe('moved-on-revision');
@@ -291,10 +302,12 @@ describe('Wave 5 candidate comparison', () => {
       operation(0, `op_n${index}`, 'variable.ensure', `variable:n${index}`, [production(`variable:n${index}`, 'create', `fp-n${index}`)]),
     ]));
     await expect(compare(nine)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(compare([nine[0]!])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(compare([])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
 
     const manyOps: CompositionOperation[] = Array.from({ length: 257 }, (_, index) =>
       operation(index, `op_many_${index}`, 'variable.ensure', `variable:m${index}`, [production(`variable:m${index}`, 'create', `fp-m${index}`)]));
-    await expect(compare([readyCandidate('many', manyOps)])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(compare([readyCandidate('many', manyOps), bystander()])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
 
     // 256 ops × 5 required each = 1280 potential edges > 1024：在建图前拒绝。
     const heavyRequired: CompositionOperation[] = Array.from({ length: 256 }, (_, index) =>
@@ -305,7 +318,7 @@ describe('Wave 5 candidate comparison', () => {
         requirement(`asset:bg:${index}_3`, 'base'),
         requirement(`asset:bg:${index}_4`, 'base'),
       ]));
-    await expect(compare([readyCandidate('edges', heavyRequired)])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(compare([readyCandidate('edges', heavyRequired), bystander()])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   });
 
   it('produces a byte-stable fingerprint regardless of candidate input order', async () => {
