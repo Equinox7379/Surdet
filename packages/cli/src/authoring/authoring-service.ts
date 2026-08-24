@@ -4,6 +4,8 @@ import {
   Interpreter,
   SceneRegistry,
   VariableStore,
+  assertValidRandomSeed,
+  createSeededRandomSource,
   type CoreEventMap,
   type VarDeclaration,
   type VarValue,
@@ -28,6 +30,7 @@ import {
   commitChange,
   createChangeDiff,
   createEvidenceEnvelope,
+  DEFAULT_AUTHORING_EVIDENCE_SEED,
   evidenceFreshness,
   ensureVariable,
   inspectObject,
@@ -288,10 +291,16 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
   choices: number[];
   finalVariables: Record<string, VarValue>;
   events: RuntimeTraceEvent[];
-  seed?: number;
+  seed: number;
 }> {
   const sceneId = input.sceneId ?? snapshot.entryScene ?? snapshot.scenes[0]?.id ?? '';
   if (sceneId.length === 0) throw new AuthoringOperationError('RUNTIME_FAILED', 'runtime.run-from 缺少 sceneId 且项目没有 entryScene');
+  const seed = input.seed ?? DEFAULT_AUTHORING_EVIDENCE_SEED;
+  try {
+    assertValidRandomSeed(seed);
+  } catch (error) {
+    throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
+  }
   const choices = input.choices ?? [];
   const store = new VariableStore(declarations(snapshot));
   for (const [name, value] of Object.entries(input.variables ?? {})) store.set(name, value);
@@ -309,6 +318,7 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
     throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
   }
   const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, timelines);
+  interpreter.setRandomSource(createSeededRandomSource(seed));
   let choiceCursor = 0;
   let latestChoices: { index: number; label: string }[] = [];
   bus.on('choice', (event) => { latestChoices = event.options; });
@@ -336,7 +346,7 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
     choices: choices.slice(0, choiceCursor),
     finalVariables: store.snapshot(),
     events: normalizeTrace(events),
-    ...(input.seed === undefined ? {} : { seed: input.seed }),
+    seed,
   };
 }
 
@@ -394,7 +404,7 @@ export class AuthoringService {
     };
   }
 
-  async simulateProject(projectRoot: string, input?: { sceneId?: string }): Promise<ServiceResult<{
+  async simulateProject(projectRoot: string, input?: { sceneId?: string; seed?: number }): Promise<ServiceResult<{
     view: 'project';
     status: 'passed';
     report: ReturnType<typeof simulateSnapshot>;
@@ -410,7 +420,7 @@ export class AuthoringService {
     }
     let report: ReturnType<typeof simulateSnapshot>;
     try {
-      report = simulateSnapshot(snapshot);
+      report = simulateSnapshot(snapshot, { seed: input?.seed });
     } catch (error) {
       if (error instanceof AuthoringOperationError) throw error;
       throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
@@ -537,7 +547,7 @@ export class AuthoringService {
     };
   }
 
-  async simulate(changeId: string, input?: { sceneId?: string }): Promise<ServiceResult<ReturnType<typeof simulateSnapshot> & {
+  async simulate(changeId: string, input?: { sceneId?: string; seed?: number }): Promise<ServiceResult<ReturnType<typeof simulateSnapshot> & {
     view: 'working';
     report: ReturnType<typeof simulateSnapshot>;
     evidenceId: string;
@@ -558,7 +568,7 @@ export class AuthoringService {
     // 不依赖 CLI 层对 message 的启发式归类（runTrace 同一模式）。
     let simulation: ReturnType<typeof simulateSnapshot>;
     try {
-      simulation = simulateSnapshot(snapshot);
+      simulation = simulateSnapshot(snapshot, { seed: input?.seed });
     } catch (error) {
       if (error instanceof AuthoringOperationError) throw error;
       throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
@@ -592,6 +602,7 @@ export class AuthoringService {
     choices: number[];
     finalVariables: Record<string, VarValue>;
     eventCount: number;
+    seed: number;
     freshness: ReturnType<typeof evidenceFreshness>;
   }>> {
     const context = await openChangeContext(changeId);
@@ -612,6 +623,7 @@ export class AuthoringService {
       changeId,
       projectRevision: context.session.record.baseRevision,
       createdAt: new Date().toISOString(),
+      seed: result.seed,
       events: result.events,
     });
     await recordRuntimeTrace(context.session, { traceId, status: result.status });
@@ -625,6 +637,7 @@ export class AuthoringService {
         choices: result.choices,
         finalVariables: result.finalVariables,
         eventCount: result.events.length,
+        seed: result.seed,
         freshness: evidenceFreshness(
           context.session.record.runtimeTraces?.find((trace) => trace.traceId === traceId),
           context.session.record.workingRevision,
@@ -633,10 +646,16 @@ export class AuthoringService {
     };
   }
 
-  async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; events: unknown[]; count: number; freshness: ReturnType<typeof evidenceFreshness> }>> {
+  async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; events: unknown[]; count: number; seed: number; freshness: ReturnType<typeof evidenceFreshness> }>> {
     const context = await openChangeContext(changeId);
-    const value = await context.store.readTrace(changeId, traceId) as { events?: Parameters<typeof normalizeTrace>[0] } | null;
+    const value = await context.store.readTrace(changeId, traceId) as { events?: Parameters<typeof normalizeTrace>[0]; seed?: unknown } | null;
     if (value === null || !Array.isArray(value.events)) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹不存在：${traceId}`);
+    if (typeof value.seed !== 'number') throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹缺少实际 seed：${traceId}`);
+    try {
+      assertValidRandomSeed(value.seed);
+    } catch (error) {
+      throw new AuthoringOperationError('PROJECT_INVALID', error instanceof Error ? error.message : String(error));
+    }
     const events = queryTrace(normalizeTrace(value.events), query);
     return {
       ...metadataForChange(context.session),
@@ -645,6 +664,7 @@ export class AuthoringService {
         traceId,
         events,
         count: events.length,
+        seed: value.seed,
         freshness: evidenceFreshness(
           context.session.record.runtimeTraces?.find((trace) => trace.traceId === traceId),
           context.session.record.workingRevision,

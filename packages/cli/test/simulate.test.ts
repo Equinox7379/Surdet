@@ -76,6 +76,8 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(cliReport.cyclesPruned).toBeGreaterThan(0);
     expect(cliReport.endings).toEqual([{ ending: 'done', times: 1 }]);
     expect(cliReport.runtimeErrors).toEqual([]);
+    expect(cliReport.seed).toBe(sharedReport.seed);
+    expect(simulateProject(dir, { seed: 0 }).seed).toBe(0);
   });
 
   it('无挂起点死循环：单路径步数上限兜底并如实报告', () => {

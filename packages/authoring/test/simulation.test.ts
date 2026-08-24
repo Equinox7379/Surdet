@@ -42,6 +42,26 @@ function fixtureStorage(): ProjectStorage {
   };
 }
 
+function seededFixtureStorage(): ProjectStorage {
+  const contents: Record<string, string> = {
+    'game.config.json': JSON.stringify({ entryScene: 'seeded', variables: {
+      first: { type: 'number', initial: 0 },
+      second: { type: 'number', initial: 0 },
+    } }),
+    'content/scenario/seeded.gal': '@scene seeded\n@random first 0 100\n@random second 0 100\n@clear seeded_done\n@end\n',
+  };
+  return {
+    rootIdentity: 'seeded-fixture',
+    listFiles: async () => Object.keys(contents),
+    readText: async (path): Promise<ProjectFile> => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+      return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
 function growthFixtureStorage(withGrowth: boolean): ProjectStorage {
   const contents: Record<string, string> = {
     'game.config.json': JSON.stringify({
@@ -150,6 +170,23 @@ function callStackIdentityFixtureStorage(): ProjectStorage {
 }
 
 describe('simulateSnapshot', () => {
+  it('同一个 seed 驱动固定 @random 序列，并在报告中保留实际 seed', async () => {
+    const snapshot = await loadProjectSnapshot(seededFixtureStorage(), hasher);
+    const first = await simulateSnapshot(snapshot, { seed: 0 });
+    const second = await simulateSnapshot(snapshot, { seed: 0 });
+
+    expect(first.seed).toBe(0);
+    expect(first.paths[0]?.finalVariables).toMatchObject({ first: 26, second: 0 });
+    expect(second.paths[0]?.finalVariables).toEqual(first.paths[0]?.finalVariables);
+
+    const different = await simulateSnapshot(snapshot, { seed: 1 });
+    expect(different.seed).toBe(1);
+    expect(different.paths[0]?.finalVariables).toMatchObject({ first: 63, second: 0 });
+
+    const defaultSeed = await simulateSnapshot(snapshot);
+    expect(defaultSeed.seed).toBe(1592639710);
+  });
+
   it('enumerates both choices and preserves their final variables', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const report = await simulateSnapshot(snapshot, { maxPaths: 10 });

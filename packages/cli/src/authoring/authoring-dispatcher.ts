@@ -91,9 +91,11 @@ export async function dispatchAuthoringCapability(
         : { value: await service.validate(context.activeChangeId) };
     case 'project.simulate': {
       const sceneId = typeof payload['sceneId'] === 'string' ? payload['sceneId'] : undefined;
+      const seed = typeof payload['seed'] === 'number' ? payload['seed'] : undefined;
+      const input = { ...(sceneId === undefined ? {} : { sceneId }), ...(seed === undefined ? {} : { seed }) };
       return context.activeChangeId === undefined
-        ? { value: await service.simulateProject(requireProject(context), sceneId === undefined ? undefined : { sceneId }) }
-        : { value: await service.simulate(context.activeChangeId, sceneId === undefined ? undefined : { sceneId }) };
+        ? { value: await service.simulateProject(requireProject(context), Object.keys(input).length === 0 ? undefined : input) }
+        : { value: await service.simulate(context.activeChangeId, Object.keys(input).length === 0 ? undefined : input) };
     }
     case 'runtime.run-from':
       return { value: await service.runFrom(requireChange(context), payload) };
