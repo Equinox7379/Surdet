@@ -8,7 +8,7 @@
 
 ## 随机数确定性
 
-部分模拟和证据接口已经接受并记录 `seed`，但 DSL `@random` 当前仍使用 `Math.random()`。在独立可靠性任务修复并验证这条链之前，不宣称 Surdet 具备全链路 seeded determinism。
+部分模拟和证据接口已经接受并记录 `seed`；本 Wave 已为 DSL `@random` 建立可快照的 `mulberry32-v1` seeded source，并验证了 save/load 后的序列连续性。无 seed 的普通玩家解释器仍保留 `Math.random()` fallback，其他未纳入本 Wave evidence contract 的随机路径也未被覆盖，因此仍不宣称 Surdet 具备全链路 seeded determinism。
 
 ## 性能证据范围
 
