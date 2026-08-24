@@ -247,7 +247,7 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     await owner.close();
   });
 
-  it.each(['committed', 'rolled-back', 'stale'] as const)('rejects resuming a %s change', async (kind) => {
+  it.each(['committed', 'rolled-back', 'stale'] as const)('resumes a %s change under the terminal/recovery-only contract', async (kind) => {
     const root = makeProject(`resume-${kind}`);
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-security-data-'));
     temporaryRoots.push(data);
@@ -264,8 +264,34 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
       expectFailure(await session.invoke('change.commit', {}), 'PROJECT_CHANGED_SINCE_BEGIN');
       expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
     }
+    const beforeResumeRecord = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    const beforeResumeProject = projectBytes(root);
     await session.close();
-    await expect(open(root, data, 'apply', changeId)).rejects.toMatchObject({ code: 'CHANGE_NOT_OPEN' });
+
+    const resumed = await open(root, data, 'apply', changeId);
+    const description = await resumed.describe();
+    expect(description.activeChange?.status).toBe(kind === 'rolled-back' ? 'ROLLED_BACK' : kind === 'committed' ? 'COMMITTED' : 'STALE');
+    expect(description.nextActions).not.toEqual(expect.arrayContaining([
+      'project.validate', 'project.simulate', 'runtime.run-from', 'change.diff', 'change.commit', 'change.rollback',
+    ]));
+    expect(description.capabilities.find((item) => item.id === 'change.recovery.inspect')).toMatchObject({ availability: 'available' });
+    expect(description.capabilities.find((item) => item.id === 'scene.create')).toMatchObject({ availability: 'state-blocked' });
+
+    const inspected = await resumed.invoke('change.recovery.inspect', {});
+    expect(inspected.ok).toBe(true);
+    expectFailure(await resumed.invoke('scene.create', {
+      operationId: `op-resume-${kind}-blocked`,
+      sceneId: `resume-${kind}-blocked`,
+    }), 'SESSION_STATE_INVALID');
+
+    const afterBlockedRecord = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(afterBlockedRecord).toEqual(beforeResumeRecord);
+    expect(afterBlockedRecord.workingFiles).toEqual(beforeResumeRecord.workingFiles);
+    expect(projectBytes(root)).toEqual(beforeResumeProject);
+    await resumed.close();
+
+    const afterCloseRecord = (await NodeChangeStore.openByChangeId(changeId))!.record;
+    expect(afterCloseRecord.status).toBe(beforeResumeRecord.status);
   });
 
   it('rejects a second begin and preserves the first active change', async () => {
@@ -383,12 +409,20 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     try {
       expectFailure(await session.invoke('change.commit', {}), 'COMMIT_RECOVERY_FAILED');
       const afterFailure = projectBytes(root);
-      const journal = await (await NodeChangeStore.openByChangeId(changeId))!.store.readLatestJournal(changeId) as any;
+      const afterFailureOpened = await NodeChangeStore.openByChangeId(changeId);
+      if (afterFailureOpened === null) throw new Error('recovery-failed change disappeared');
+      const beforeRetryRecord = afterFailureOpened.record;
+      const beforeRetryJournal = await afterFailureOpened.store.readLatestJournal(changeId);
+      const journal = beforeRetryJournal as any;
       expect(journal.status).toBe('RECOVERY_FAILED');
-      expect((await NodeChangeStore.openByChangeId(changeId))!.record.status).toBe('STALE');
-      expectFailure(await session.invoke('change.commit', {}), 'CHANGE_NOT_OPEN');
+      expect(beforeRetryRecord.status).toBe('STALE');
+      expectFailure(await session.invoke('change.commit', {}), 'SESSION_STATE_INVALID');
       expect(replaceCalls).toBe(2);
       expect(projectBytes(root)).toEqual(afterFailure);
+      const afterRetryOpened = await NodeChangeStore.openByChangeId(changeId);
+      if (afterRetryOpened === null) throw new Error('recovery-failed change disappeared after retry');
+      expect(afterRetryOpened.record).toEqual(beforeRetryRecord);
+      expect(await afterRetryOpened.store.readLatestJournal(changeId)).toEqual(beforeRetryJournal);
     } finally {
       replaceSpy.mockRestore();
       removePathSpy.mockRestore();
