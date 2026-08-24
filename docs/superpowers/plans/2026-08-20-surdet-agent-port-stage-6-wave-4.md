@@ -2011,7 +2011,7 @@ surdet-agent-port --project <acceptance-fixture> --policy apply --resume-change 
 
 启动新进程。外部 Agent 先 session.describe，再取得新鲜 validate/simulate/runtime 门，最后 commit；不得让 stage 进程提升权限。
 
-- [ ] **Step 5: 主动邀请项目所有者人工路径**
+- [x] **Step 5: 主动邀请项目所有者人工路径**
 
 必须把以下十步作为强制提醒点发给项目所有者：
 
@@ -2028,7 +2028,7 @@ surdet-agent-port --project <acceptance-fixture> --policy apply --resume-change 
 
 只接受项目所有者的一手反馈；自动化不得代填视觉与手感结论。
 
-- [ ] **Step 6: 停止等待验收裁决**
+- [x] **Step 6: 停止等待验收裁决**
 
 出现异常只记录第一个异常、触发动作、实际现象与必要截图；不要立即猜测修代码。全部通过后更新 Ledger/报告，但仍不 push。
 
@@ -2039,12 +2039,13 @@ surdet-agent-port --project <acceptance-fixture> --policy apply --resume-change 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md`
 - Modify: `docs/SURDET-AGENT-PORT-STAGE-6-WAVE-4-DELIVERY-REPORT-2026-08-20.md`
+- Modify: `docs/README.md`（只同步当前阶段入口）
 
 **Interfaces:**
 - Consumes: 真实外部 Agent 结果、项目所有者人工反馈、磁盘 fixture 身份。
 - Produces: Wave 4 最终本地文档闭合；push 仍由项目所有者单独决定。
 
-- [ ] **Step 1: 只读回读最终证据**
+- [x] **Step 1: 只读回读最终证据**
 
 ```powershell
 git status --short --branch
@@ -2058,7 +2059,7 @@ git ls-files '*.log'
 
 重新读取 acceptance fixture 的关键场景、timeline、config bytes/SHA-256 与原 Starter 对应身份。
 
-- [ ] **Step 2: 写入真实验收结论**
+- [x] **Step 2: 写入真实验收结论**
 
 只有项目所有者明确全部通过时才能写：
 
@@ -2071,7 +2072,7 @@ READY_FOR_OWNER_PUSH_DECISION
 
 若失败，写实际阻断，不得使用上述通过状态。
 
-- [ ] **Step 3: 创建普通文档闭合提交**
+- [x] **Step 3: 创建普通文档闭合提交**
 
 ```powershell
 git add -- docs/superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md docs/SURDET-AGENT-PORT-STAGE-6-WAVE-4-DELIVERY-REPORT-2026-08-20.md
@@ -2080,7 +2081,7 @@ git diff --cached --name-status
 git commit -m "docs(authoring): close wave 4 acceptance"
 ```
 
-- [ ] **Step 4: 停在 push 门**
+- [x] **Step 4: 停在 push 门**
 
 ```text
 WAITING_FOR_OWNER_PUSH_AUTHORIZATION
@@ -3221,3 +3222,45 @@ W4_OWNER_APPLY_PUSH = NOT_PERFORMED
 W4_OWNER_APPLY_WAVE_5 = NOT_STARTED
 W4_OWNER_APPLY_NEXT = OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE
 ```
+
+
+### 2026-08-24 项目所有者 Editor/预览人工验收与 Wave 4 本地闭合
+
+项目所有者使用既有 Editor 打开 `<local-path>`，对最终 apply 后的语义引导对象完成了人工路径，并明确回复“全部通过”。该一手反馈覆盖：场景和 `@timeline agent_semantic_guidance_timeline` 作为普通对象可读取且无异常脏标记；从场景开头进入真实预览；画面中实际出现 `castle_hall` 背景和 `lynn:uniform` / `normal` 居中立绘；剧情可继续至结束文本且没有黑屏或可见错误；刷新并重开同一 fixture 后对象仍存在。
+
+Task 11 最初的双场景、变量、A/B 路径和对象差异要求，已经由低上下文外部 Agent 的 stage 创作、validation、simulation、双 runtime trace、change.diff 与 delivery capsule 证据覆盖；本次项目所有者人工门不把这些自动化/Agent 证据伪装成视觉判断，而只确认最终 apply 对象在 Editor 与真实预览中的可见、可读和持久化结果。
+
+2026-08-24 的只读磁盘复核确认：fixture 为 39 files / 6,706,602 bytes，原 Starter 为 37 files / 6,705,750 bytes；37 个共有文件逐路径、bytes、SHA-256 差异数为 0，fixture 只增加以下两项：
+
+```ini
+W4_OWNER_ACCEPTANCE_SCENE = content/scenario/agent_semantic_guidance_probe.gal
+W4_OWNER_ACCEPTANCE_SCENE_BYTES = 234
+W4_OWNER_ACCEPTANCE_SCENE_SHA256 = DC55DFD60EF8980A3FBFFD04AE0BCDAE4EFE4D5D09F39A06BD5F289DEBD641FA
+W4_OWNER_ACCEPTANCE_TIMELINE = content/timelines/agent_semantic_guidance_timeline.json
+W4_OWNER_ACCEPTANCE_TIMELINE_BYTES = 618
+W4_OWNER_ACCEPTANCE_TIMELINE_SHA256 = BE15AE3BF7AD6360046587706D0B2B74707097087BE3AF58AD4E891B8AC46806
+W4_OWNER_ACCEPTANCE_APPLY_EVIDENCE_BYTES = 81389
+W4_OWNER_ACCEPTANCE_APPLY_EVIDENCE_SHA256 = DC91E618E09B40D8C50C784C6D44D85E0955CBB828322692C56D600F7EF3CE1C
+W4_OWNER_ACCEPTANCE_APPLY_IDENTITY_BYTES = 200
+W4_OWNER_ACCEPTANCE_APPLY_IDENTITY_SHA256 = 043290D434E424F9C9C6090A8E2D10B141D77702A076AAD6C026F7723E556646
+```
+
+GitHub fetch 在本轮因本机 `127.0.0.1` 代理无法连接 `github.com:443` 而失败，因此下列远端身份明确是本地 tracking ref，不冒充实时公网回读：
+
+```ini
+W4_OWNER_ACCEPTANCE_DATE = 2026-08-24
+W4_OWNER_ACCEPTANCE_PRE_CLOSURE_HEAD = e9ffeb739e0e42634d364d742586cfc018d379dc
+W4_OWNER_ACCEPTANCE_REMOTE_MAIN_LOCAL_TRACKING_REF = f7ab58d67a362fcad7c2d64f5889f95f737ab5dd
+W4_OWNER_ACCEPTANCE_PRE_CLOSURE_AHEAD_BEHIND = 43/0
+W4_OWNER_ACCEPTANCE_FETCH = FAILED; proxy 127.0.0.1 unavailable
+REAL_EXTERNAL_AGENT_LOW_CONTEXT_ACCEPTANCE_PASSED
+OWNER_EDITOR_AND_PREVIEW_ACCEPTANCE_PASSED
+WAVE_4_AGENT_PORT_VERIFIED
+READY_FOR_OWNER_PUSH_DECISION
+WAITING_FOR_OWNER_PUSH_AUTHORIZATION
+NOT_DEPLOYED
+NOT_RELEASED
+WAVE_5_NOT_STARTED
+```
+
+本节只记录已经发生的一手人工反馈和新鲜磁盘/Git 读回。历史失败、失败 artifact 与旧状态快照仍保留；没有重跑 FORMAL、DIAGNOSTIC、`verify:all` 或人工路径，没有修改生产代码、原 Starter、长期路线台账或受保护文件，也没有 push。
