@@ -67,8 +67,15 @@ export interface EvidenceFreshness {
   currentWorkingRevision?: number;
 }
 
+export interface ChangeWritePrecondition {
+  expectedRecordVersion: number;
+  expectedStatus?: ChangeStatus;
+}
+
 export interface ChangeRecord {
   changeId: string;
+  formatVersion: 2;
+  recordVersion: number;
   projectRootIdentity: string;
   baseRevision: string;
   workingRevision: number;
@@ -98,10 +105,11 @@ export interface ChangeRecord {
 export interface ChangeRepository {
   create(record: ChangeRecord): Promise<void>;
   read(changeId: string): Promise<ChangeRecord | null>;
-  write(record: ChangeRecord): Promise<void>;
+  write(record: ChangeRecord, precondition: ChangeWritePrecondition): Promise<void>;
   writeEvidence(changeId: string, evidenceId: string, value: unknown): Promise<void>;
   readEvidence(changeId: string, evidenceId: string): Promise<unknown | null>;
   writeJournal(changeId: string, value: unknown): Promise<void>;
+  readLatestJournal(changeId: string): Promise<unknown | null>;
 }
 
 export interface ProjectWriteStorage extends ProjectStorage {

@@ -1537,3 +1537,17 @@ FINAL_RECORD_FACT=operations contained only ['op-b']; workingFiles/workingRevisi
 RED_STATUS=RED_REPRODUCED; HARNESS_INVALID=NO; RED_NOT_REPRODUCED=NO; FAILED_ARTIFACT_PRESERVED=YES
 NEXT_STOP=COMMIT_TASK_1_RED_HARNESS_THEN_TASK_2
 ```
+
+### 2026-08-24T17:46:19+08:00 — Task 2 V2 store, JSON identity and CAS
+
+```text
+TASK2_SHARED_RED=authoring change-session.test.ts EXIT=1; 5 tests with 2 expected contract failures (missing V2 version fields and stale write accepted)
+IMPLEMENTED=ChangeRecord formatVersion/recordVersion; repository precondition/CAS; V2 manifest/head/immutable records; exclusive non-torn JSON create/replace/read; V1 fail-loud handling
+GREEN=npm run test -w @surdet/authoring -- change-session.test.ts EXIT=0 (5/5); npm run build -w @surdet/authoring EXIT=0
+GREEN_CLI=npm run test -w @surdet/cli -- node-json-record.test.ts change-isolation.test.ts multi-process-change-concurrency.test.ts EXIT=0 (3 files; 10/10); npm run typecheck -w @surdet/authoring EXIT=0; npm run typecheck -w @surdet/cli EXIT=0; npm run build -w @surdet/cli EXIT=0
+CONCURRENCY=one child succeeds and one deterministic CHANGE_RECORD_CONFLICT; refresh/retry with same operationId retains both operations, markers and workingRevision=2
+JSON_FIX=immutable record creation uses same-directory wx + fs.link exclusive target publication after fs.rename could overwrite an existing record on Windows; replacement still uses replaceFileByRename
+LEGACY=direct NodeChangeStore V1 unique-ID open returns CHANGE_STORE_FORMAT_UNSUPPORTED and preserves old bytes; CLI envelope registry remains Task 8 scope
+RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task1-red.json PRESERVED=YES
+NEXT_STOP=COMMIT_TASK_2_THEN_TASK_3_LEASE_RED
+```

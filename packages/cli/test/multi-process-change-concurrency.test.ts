@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { openChange, runOperation } from '@surdet/authoring';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 
@@ -77,7 +78,7 @@ describe('cross-process change concurrency', () => {
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('reproduces cross-process last-write-wins when both workers read one old record', { timeout: 90000 }, async () => {
+  it('retains cross-process mutations with one deterministic CAS conflict and refresh retry', { timeout: 90000 }, async () => {
     const projectRoot = makeProject();
     const dataRoot = makeDirectory('surdet-agent-transaction-red-data-');
     const barrierRoot = makeDirectory('surdet-agent-transaction-red-barrier-');
@@ -124,9 +125,21 @@ describe('cross-process change concurrency', () => {
         const resultFile = path.join(barrierRoot, `${item.operationId}.result.json`);
         return JSON.parse(await fsp.readFile(resultFile, 'utf8')) as { ok: boolean; result?: unknown; code?: string; message?: string };
       }));
+      const observed = cases.map((item, index) => ({ ...item, result: results[index]! }));
+      expect(observed.filter((item) => item.result.ok)).toHaveLength(1);
+      const loser = observed.find((item) => !item.result.ok);
+      expect(loser?.result.code).toBe('CHANGE_RECORD_CONFLICT');
+
+      const beforeRetry = await NodeChangeStore.openByChangeId(changeId);
+      expect(beforeRetry).not.toBeNull();
+      const retried = openChange(beforeRetry!.record, beforeRetry!.store);
+      await runOperation(retried, { operationId: loser!.operationId }, (record) => ({
+        result: { marker: loser!.marker },
+        workingFiles: { ...record.workingFiles, [loser!.relativePath]: loser!.marker },
+      }));
+
       const final = await NodeChangeStore.openByChangeId(changeId);
       expect(final).not.toBeNull();
-      expect(results.filter((item) => item.ok)).toHaveLength(2);
       expect(Object.keys(final!.record.operations)).toEqual(expect.arrayContaining(['op-a', 'op-b']));
       expect(final!.record.workingFiles['content/scenario/worker-a.gal']).toBe('A');
       expect(final!.record.workingFiles['content/scenario/worker-b.gal']).toBe('B');
