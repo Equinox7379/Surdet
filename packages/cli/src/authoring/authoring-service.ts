@@ -2,14 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
-  EventBus,
-  Interpreter,
-  SceneRegistry,
-  VariableStore,
   assertValidRandomSeed,
-  createSeededRandomSource,
-  type CoreEventMap,
-  type VarDeclaration,
   type VarValue,
 } from '@surdet/core';
 import {
@@ -29,11 +22,9 @@ import {
   buildAssetCatalog,
   buildObjectIndex,
   buildOperationLedgerDiff,
-  buildTimelineRegistry,
   commitChange,
   createChangeDiff,
   createEvidenceEnvelope,
-  DEFAULT_AUTHORING_EVIDENCE_SEED,
   executeTransactionRecovery,
   evidenceFreshness,
   ensureVariable,
@@ -50,6 +41,7 @@ import {
   recordRuntimeTrace,
   recordSimulationEvidence,
   rollbackChange,
+  runExplicitPath,
   simulateSnapshot,
   inspectTransactionRecovery,
   timelineFingerprint,
@@ -67,7 +59,6 @@ import {
   type ProjectWriteStorage,
   type CommitJournal,
   type RecoveryInspection,
-  type RuntimeTraceEvent,
   type SceneCreateInput,
   type ScenePatchInput,
   type TimelineCreateInput,
@@ -133,22 +124,6 @@ function engineIdentity(): { version: string; gitHead: string } {
 
 function newEvidenceId(kind: string): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID()}`;
-}
-
-function declarations(snapshot: ProjectSnapshot): VarDeclaration[] {
-  const result: VarDeclaration[] = [];
-  for (const [name, value] of Object.entries(snapshot.variables)) {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
-    const raw = value as Record<string, unknown>;
-    if (typeof raw['type'] !== 'string' || !('initial' in raw)) continue;
-    result.push({
-      ...raw,
-      name,
-      type: raw['type'] as VarDeclaration['type'],
-      initial: raw['initial'] as VarValue,
-    });
-  }
-  return result;
 }
 
 function loadSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot> {
@@ -363,78 +338,6 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
     // 文件级 JSON diff 保留；timeline/track/cue 的对象级 diff 只来自已执行的类型化 operation ledger。
     semantic: [...files.flatMap((file) => file.semantic), ...buildOperationLedgerDiff(session.record)],
     files: files.flatMap((file) => file.files),
-  };
-}
-
-async function runTrace(snapshot: ProjectSnapshot, input: {
-  sceneId?: string;
-  label?: string;
-  variables?: Record<string, VarValue>;
-  choices?: number[];
-  maxSteps?: number;
-  seed?: number;
-}): Promise<{
-  status: 'passed';
-  sceneId: string;
-  choices: number[];
-  finalVariables: Record<string, VarValue>;
-  events: RuntimeTraceEvent[];
-  seed: number;
-}> {
-  const sceneId = input.sceneId ?? snapshot.entryScene ?? snapshot.scenes[0]?.id ?? '';
-  if (sceneId.length === 0) throw new AuthoringOperationError('RUNTIME_FAILED', 'runtime.run-from 缺少 sceneId 且项目没有 entryScene');
-  const seed = input.seed ?? DEFAULT_AUTHORING_EVIDENCE_SEED;
-  try {
-    assertValidRandomSeed(seed);
-  } catch (error) {
-    throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
-  }
-  const choices = input.choices ?? [];
-  const store = new VariableStore(declarations(snapshot));
-  for (const [name, value] of Object.entries(input.variables ?? {})) store.set(name, value);
-  const registry = new SceneRegistry();
-  for (const scene of snapshot.scenes) registry.register(scene.compiled);
-  const events: RuntimeTraceEvent[] = [];
-  const bus = new EventBus<CoreEventMap>();
-  bus.on('runtimeTrace', (event) => events.push(event));
-  // 与共享 simulateSnapshot / Editor Preview 同一 timeline runtime truth：注入项目真实
-  // TimelineRegistry（非法 timeline 在验证通道 fail-loud，映射为 RUNTIME_FAILED 结构化错误）。
-  let timelines: ReturnType<typeof buildTimelineRegistry>;
-  try {
-    timelines = buildTimelineRegistry(snapshot);
-  } catch (error) {
-    throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
-  }
-  const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, timelines);
-  interpreter.setRandomSource(createSeededRandomSource(seed));
-  let choiceCursor = 0;
-  let latestChoices: { index: number; label: string }[] = [];
-  bus.on('choice', (event) => { latestChoices = event.options; });
-  const maxSteps = input.maxSteps ?? 20_000;
-  try {
-    interpreter.start(sceneId, input.label);
-    let steps = 0;
-    while (interpreter.status !== 'ended' && interpreter.status !== 'idle') {
-      if (++steps > maxSteps) throw new Error(`单路径步数超过 ${maxSteps}，疑似死循环`);
-      if (interpreter.status === 'awaiting-advance') interpreter.advance();
-      else if (interpreter.status === 'awaiting-timer') interpreter.finishWait();
-      else if (interpreter.status === 'awaiting-choice') {
-        const index = choices[choiceCursor++];
-        if (index === undefined) throw new Error('显式路径在 choice 处缺少选择，不得猜测选项');
-        if (!latestChoices.some((option) => option.index === index)) throw new Error(`显式路径选择 ${index} 当前不可用`);
-        interpreter.choose(index);
-      } else throw new Error(`意外运行状态：${interpreter.status}`);
-    }
-  } catch (error) {
-    throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
-  }
-  return {
-    status: 'passed',
-    sceneId,
-    choices: choices.slice(0, choiceCursor),
-    finalVariables: store.snapshot(),
-    events: normalizeTrace(events),
-    seed,
   };
 }
 
@@ -830,16 +733,28 @@ export class AuthoringService {
     freshness: ReturnType<typeof evidenceFreshness>;
   }>> {
     return this.withOpenChange(changeId, async (context) => {
-      const result = await runTrace(context.snapshot, {
-        sceneId: typeof input['sceneId'] === 'string' ? input['sceneId'] : undefined,
-        label: typeof input['label'] === 'string' ? input['label'] : undefined,
-        variables: typeof input['variables'] === 'object' && input['variables'] !== null && !Array.isArray(input['variables'])
-          ? input['variables'] as Record<string, VarValue>
-          : undefined,
-        choices: Array.isArray(input['choices']) ? input['choices'].filter((value): value is number => typeof value === 'number') : [],
-        maxSteps: typeof input['maxSteps'] === 'number' ? input['maxSteps'] : undefined,
-        seed: typeof input['seed'] === 'number' ? input['seed'] : undefined,
-      });
+      const sceneId = typeof input['sceneId'] === 'string'
+        ? input['sceneId']
+        : context.snapshot.entryScene ?? context.snapshot.scenes[0]?.id ?? '';
+      if (sceneId.length === 0) throw new AuthoringOperationError('RUNTIME_FAILED', 'runtime.run-from 缺少 sceneId 且项目没有 entryScene');
+      let result: Awaited<ReturnType<typeof runExplicitPath>>;
+      try {
+        result = await runExplicitPath(context.snapshot, {
+          sceneId,
+          label: typeof input['label'] === 'string' ? input['label'] : undefined,
+          variables: typeof input['variables'] === 'object' && input['variables'] !== null && !Array.isArray(input['variables'])
+            ? input['variables'] as Record<string, VarValue>
+            : undefined,
+          choices: Array.isArray(input['choices']) ? input['choices'].filter((value): value is number => typeof value === 'number') : [],
+          maxSteps: typeof input['maxSteps'] === 'number' ? input['maxSteps'] : undefined,
+          seed: typeof input['seed'] === 'number' ? input['seed'] : undefined,
+        });
+      } catch (error) {
+        throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
+      }
+      if (result.status === 'failed') {
+        throw new AuthoringOperationError('RUNTIME_FAILED', result.error ?? 'runtime.run-from 包含运行时失败');
+      }
       const traceId = newEvidenceId('trace');
       await context.store.writeTrace(changeId, traceId, {
         schemaVersion: 1,
