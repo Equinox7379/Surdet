@@ -235,4 +235,103 @@ describe('cross-process change concurrency', () => {
       }));
     }
   });
+
+  it('serializes different change commits at the project boundary', { timeout: 90000 }, async () => {
+    const projectRoot = makeProject();
+    const dataRoot = makeDirectory('surdet-agent-transaction-project-commit-data-');
+    const barrierRoot = makeDirectory('surdet-agent-transaction-project-commit-barrier-');
+    process.env['SURDET_AGENT_DATA_DIR'] = dataRoot;
+
+    const service = new AuthoringService();
+    const begunA = await service.begin(projectRoot);
+    const begunB = await service.begin(projectRoot);
+    expect(begunA.result.baseRevision).toBe(begunB.result.baseRevision);
+    const eventsFile = path.join(barrierRoot, 'replacement-events.jsonl');
+    const releaseFile = path.join(barrierRoot, 'release');
+    const cases = [
+      { operationId: 'op-commit-a', sceneId: 'commit-a' },
+      { operationId: 'op-commit-b', sceneId: 'commit-b' },
+    ] as const;
+    const changeIds = [begunA.result.changeId, begunB.result.changeId] as const;
+    const children: ChildProcess[] = [];
+    const outputs = cases.map((item) => ({ ...item, output: undefined as { stdout: string; stderr: string } | undefined }));
+
+    try {
+      for (const [index, item] of cases.entries()) {
+        const child = spawn(process.execPath, [workerPath, JSON.stringify({
+          cliDist,
+          authoringDist,
+          mode: 'service-commit',
+          projectRoot,
+          changeId: changeIds[index],
+          operationId: item.operationId,
+          relativePath: `content/scenario/${item.sceneId}.gal`,
+          marker: item.sceneId,
+          readyFile: path.join(barrierRoot, `${item.operationId}.ready`),
+          releaseFile,
+          resultFile: path.join(barrierRoot, `${item.operationId}.result.json`),
+          replaceEventsFile: eventsFile,
+          replaceDelayMs: 75,
+        })], {
+          cwd: repoRoot,
+          env: { ...process.env, SURDET_AGENT_DATA_DIR: dataRoot },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        outputs[index]!.output = collectOutput(child);
+        children.push(child);
+      }
+
+      await Promise.all(cases.map((item) => waitForFile(path.join(barrierRoot, `${item.operationId}.ready`), children)));
+      await fsp.writeFile(releaseFile, 'release\n', { flag: 'wx' });
+      const exitCodes = await Promise.all(children.map((child) => waitForExit(child)));
+      if (exitCodes.some((code) => code !== 0)) {
+        throw new Error(`HARNESS_INVALID: child exit codes=${JSON.stringify(exitCodes)} outputs=${JSON.stringify(outputs)}`);
+      }
+
+      const results = await Promise.all(cases.map(async (item) => {
+        const resultFile = path.join(barrierRoot, `${item.operationId}.result.json`);
+        return JSON.parse(await fsp.readFile(resultFile, 'utf8')) as { ok: boolean; result?: unknown; code?: string; message?: string };
+      }));
+      expect(results.filter((item) => item.ok), JSON.stringify(results)).toHaveLength(1);
+      const loserIndex = results.findIndex((item) => !item.ok);
+      expect(loserIndex).toBeGreaterThanOrEqual(0);
+      expect(results[loserIndex]!.code, JSON.stringify(results)).toBe('PROJECT_CHANGED_SINCE_BEGIN');
+
+      const records = await Promise.all(changeIds.map(async (changeId) => {
+        const opened = await NodeChangeStore.openByChangeId(changeId);
+        if (opened === null) throw new Error(`missing change record: ${changeId}`);
+        return opened.record;
+      }));
+      expect(records.map((record) => record.status).sort()).toEqual(['COMMITTED', 'STALE']);
+
+      const events = (await fsp.readFile(eventsFile, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { event: 'replace-start' | 'replace-end'; operationId: string });
+      let active = 0;
+      let maxConcurrentReplacement = 0;
+      for (const event of events) {
+        active += event.event === 'replace-start' ? 1 : -1;
+        maxConcurrentReplacement = Math.max(maxConcurrentReplacement, active);
+      }
+      expect(maxConcurrentReplacement).toBe(1);
+
+      const winnerIndex = results.findIndex((item) => item.ok);
+      expect(winnerIndex).toBeGreaterThanOrEqual(0);
+      const winnerScene = cases[winnerIndex]!.sceneId;
+      const loserScene = cases[loserIndex]!.sceneId;
+      expect(fs.existsSync(path.join(projectRoot, 'content', 'scenario', `${winnerScene}.gal`))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content', 'scenario', `${loserScene}.gal`))).toBe(false);
+    } finally {
+      if (!(await fileExists(releaseFile))) await fsp.writeFile(releaseFile, 'cleanup\n', { flag: 'wx' }).catch(() => undefined);
+      await Promise.all(children.map(async (child) => {
+        try {
+          await waitForExit(child, 5000);
+        } catch {
+          child.kill();
+        }
+      }));
+    }
+  });
 });

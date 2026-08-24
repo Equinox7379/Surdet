@@ -20,6 +20,7 @@ import {
   applyTimelinePatch,
   assetPathsFromFiles,
   AuthoringOperationError,
+  assertBaseStillMatches,
   AUTHORING_CAPABILITY_REGISTRY,
   AUTHORING_CONTRACT_VERSION,
   beginChange,
@@ -69,6 +70,7 @@ import {
   type VariableEnsureInput,
 } from '@surdet/authoring';
 import { NodeChangeStore } from './node-change-store.js';
+import { NodeLocalLeaseManager } from './node-local-lease.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 
@@ -147,6 +149,41 @@ function loadSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot> {
   return loadProjectSnapshot(storage, {
     sha256: async (text) => hashText(text),
   });
+}
+
+interface ProjectSnapshotContext {
+  snapshot: ProjectSnapshot;
+  assetPaths: string[];
+}
+
+async function loadProjectContext(
+  leaseManager: NodeLocalLeaseManager,
+  storage: NodeProjectStorage,
+): Promise<ProjectSnapshotContext> {
+  return withProjectLeaseRetry(leaseManager, storage.rootIdentity, async () => {
+    const snapshot = await loadSnapshot(storage);
+    const assetPaths = assetPathsFromFiles(await storage.listFiles());
+    return { snapshot, assetPaths };
+  });
+}
+
+async function withProjectLeaseRetry<T>(
+  leaseManager: NodeLocalLeaseManager,
+  projectRootIdentity: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      return await leaseManager.withProjectLease(projectRootIdentity, async () => callback());
+    } catch (error) {
+      const transientMissingLease = error instanceof AuthoringOperationError
+        && error.code === 'LEASE_CORRUPT'
+        && error.message.includes('lease.json 缺失');
+      if (!transientMissingLease || attempt === 39) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new AuthoringOperationError('PROJECT_BUSY', `项目 '${projectRootIdentity}' 在有界重试后仍被占用`);
 }
 
 async function openChangeRecordContext(changeId: string): Promise<{
@@ -396,10 +433,17 @@ async function runTrace(snapshot: ProjectSnapshot, input: {
 }
 
 export class AuthoringService {
-  constructor(private readonly leasedStore?: NodeChangeStore) {}
+  constructor(
+    private readonly leasedStore?: NodeChangeStore,
+    private readonly leaseManager = new NodeLocalLeaseManager(),
+  ) {}
 
   withLeasedStore(leasedStore: NodeChangeStore): AuthoringService {
-    return new AuthoringService(leasedStore);
+    return new AuthoringService(leasedStore, this.leaseManager);
+  }
+
+  private loadProjectContext(storage: NodeProjectStorage): Promise<ProjectSnapshotContext> {
+    return loadProjectContext(this.leaseManager, storage);
   }
 
   private withOpenChange<T>(changeId: string, callback: (context: OpenChangeContext) => Promise<T>): Promise<T> {
@@ -427,16 +471,14 @@ export class AuthoringService {
 
   async inspectProject(projectRoot: string): Promise<ServiceResult<ReturnType<typeof inspectProject>>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const snapshot = await loadSnapshot(storage);
+    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
     const index = buildObjectIndex(snapshot);
-    const assetPaths = assetPathsFromFiles(await storage.listFiles());
     return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: inspectProject(snapshot, index, assetPaths) };
   }
 
   async projectAssets(projectRoot: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog>>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const snapshot = await loadSnapshot(storage);
-    const assetPaths = assetPathsFromFiles(await storage.listFiles());
+    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
     return {
       projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity),
       projectRevision: snapshot.revision,
@@ -450,9 +492,9 @@ export class AuthoringService {
     issues: unknown[];
   }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const snapshot = await loadSnapshot(storage);
+    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
     const index = buildObjectIndex(snapshot);
-    const assetCatalog = buildAssetCatalog(assetPathsFromFiles(await storage.listFiles()));
+    const assetCatalog = buildAssetCatalog(assetPaths);
     const validation = validateSnapshot(snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
     return {
       projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity),
@@ -467,7 +509,7 @@ export class AuthoringService {
     report: ReturnType<typeof simulateSnapshot>;
   }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const sourceSnapshot = await loadSnapshot(storage);
+    const { snapshot: sourceSnapshot } = await this.loadProjectContext(storage);
     let snapshot = sourceSnapshot;
     if (input?.sceneId !== undefined) {
       if (!snapshot.scenes.some((scene) => scene.id === input.sceneId)) {
@@ -497,7 +539,7 @@ export class AuthoringService {
   async inspectObject(projectRoot: string, objectRef: string, changeId?: string): Promise<ServiceResult<AuthoringObject>> {
     // 带 --change 时读取事务 workingFiles 的对象（patch 指纹以事务内当前状态为准）。
     const context = changeId === undefined ? undefined : await openChangeContext(changeId);
-    const snapshot = context?.snapshot ?? await loadSnapshot(await NodeProjectStorage.open(projectRoot));
+    const snapshot = context?.snapshot ?? (await this.loadProjectContext(await NodeProjectStorage.open(projectRoot))).snapshot;
     const object = inspectObject(buildObjectIndex(snapshot), objectRef);
     // timeline/track/cue 附当前 SHA-256 指纹，供后续类型化 patch 的 expectedFingerprint 使用。
     if ((object.kind === 'timeline' || object.kind === 'track' || object.kind === 'cue') && object.details !== undefined) {
@@ -551,7 +593,7 @@ export class AuthoringService {
 
   async begin(projectRoot: string, intent?: ChangeIntentMetadata): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const snapshot = await loadSnapshot(storage);
+    const { snapshot } = await this.loadProjectContext(storage);
     const store = await NodeChangeStore.forProject(snapshot.rootIdentity);
     const session = await beginChange(snapshot, store, storage, intent);
     return {
@@ -768,9 +810,13 @@ export class AuthoringService {
 
   async commit(changeId: string): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[] }>> {
     return this.withOpenChange(changeId, async (context) => {
-      const result = await commitChange(context.session, context.storage);
-      const snapshot = await loadSnapshot(context.storage);
-      return { ...metadataForChange(context.session, snapshot.revision), result };
+      return withProjectLeaseRetry(this.leaseManager, context.session.record.projectRootIdentity, async () => {
+        const freshProject = await loadSnapshot(context.storage);
+        await assertBaseStillMatches(context.session, freshProject);
+        const result = await commitChange(context.session, context.storage);
+        const snapshot = await loadSnapshot(context.storage);
+        return { ...metadataForChange(context.session, snapshot.revision), result };
+      });
     });
   }
 
@@ -778,9 +824,15 @@ export class AuthoringService {
     // Rollback is the recovery escape hatch for an OPEN change. It must not
     // parse workingFiles: a poisoned snapshot is precisely what rollback must
     // be able to clear without evaluating.
-    return this.withOpenChange(changeId, async (context) => {
-      const record = await rollbackChange(context.session);
-      return { ...metadataForChange(context.session), result: { changeId: record.changeId, status: 'ROLLED_BACK' } };
-    });
+    const rollbackWithStore = async (store: NodeChangeStore): Promise<ServiceResult<{ changeId: string; status: 'ROLLED_BACK' }>> => {
+      const record = await store.read(changeId);
+      if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      const session = openChange(record, store);
+      const rolledBack = await rollbackChange(session);
+      return { ...metadataForChange(session), result: { changeId: rolledBack.changeId, status: 'ROLLED_BACK' } };
+    };
+    return this.leasedStore === undefined
+      ? withChangeLeaseRetry(changeId, rollbackWithStore)
+      : rollbackWithStore(this.leasedStore);
   }
 }

@@ -334,6 +334,21 @@ async function markStale(change: ChangeSession): Promise<void> {
   await persistRecord(change, next);
 }
 
+export async function assertBaseStillMatches(change: ChangeSession, snapshot: ProjectSnapshot): Promise<void> {
+  assertOpen(change);
+  if (snapshot.rootIdentity === change.record.projectRootIdentity && snapshot.revision === change.record.baseRevision) return;
+  await markStale(change);
+  throw new AuthoringOperationError(
+    'PROJECT_CHANGED_SINCE_BEGIN',
+    `项目 revision 已变化：基线 ${change.record.baseRevision}，当前 ${snapshot.revision}`,
+    {
+      changeId: change.record.changeId,
+      baseRevision: change.record.baseRevision,
+      currentRevision: snapshot.revision,
+    },
+  );
+}
+
 function changedPaths(record: ChangeRecord): string[] {
   const paths = new Set([...Object.keys(record.baseContents), ...Object.keys(record.workingFiles)]);
   return [...paths].filter((path) => record.baseContents[path] !== record.workingFiles[path]).sort();

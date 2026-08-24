@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChangeRecord } from '../src/contracts.js';
 import type { ProjectFile, ProjectStorage, ProjectWriteStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
-import { InMemoryChangeRepository, beginChange, commitChange, recordValidation } from '../src/change-session.js';
+import { InMemoryChangeRepository, assertBaseStillMatches, beginChange, commitChange, recordValidation } from '../src/change-session.js';
 import { applySceneCreate, ensureVariable } from '../src/operations.js';
 
 function digest(text: string): string {
@@ -191,5 +191,19 @@ describe('atomic commit recovery', () => {
     expect(recordPersistedIndex).toBeGreaterThan(journalPersistedIndex);
     expect(firstCleanupIndex).toBeGreaterThan(recordPersistedIndex);
     expect(cleanupEvents).toHaveLength(2);
+  });
+
+  it('marks a change stale before replacement when the project revision changed', async () => {
+    const storage = new FaultyWriteStorage({
+      'game.config.json': '{"entryScene":"prologue","variables":{}}',
+      'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
+    });
+    const change = await beginFixture(storage);
+    storage.files['content/scenario/prologue.gal'] += '# external change\n';
+    const freshProject = await loadProjectSnapshot(storage, hasher);
+
+    await expect(assertBaseStillMatches(change, freshProject)).rejects.toMatchObject({ code: 'PROJECT_CHANGED_SINCE_BEGIN' });
+    expect(change.record.status).toBe('STALE');
+    expect(storage.replaceCount).toBe(0);
   });
 });

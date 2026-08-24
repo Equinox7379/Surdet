@@ -1574,3 +1574,17 @@ GREEN=npm run build -w @surdet/authoring EXIT=0; npm run build -w @surdet/cli EX
 SCOPE=Task 4 tracked changes are limited to authoring-service.ts, session.ts, invocation/test worker, multi-process test, agent-port-session test and this plan; node-local-lease.ts remains at Task 3 commit
 NEXT_STOP=COMMIT_TASK_4_THEN_TASK_5_PROJECT_LEASE_RED
 ```
+
+### 2026-08-24T18:15:51+08:00 — Task 5 project lease and commit serialization
+
+```text
+RED_RUN=npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts -t "serializes different change commits at the project boundary" --reporter=json --outputFile="$WAVE4_ROOT\task5-red.json" EXIT=1
+RED_ARTIFACT=C:\Users\Equinox\AppData\Local\Temp\surdet-agent-transaction-wave4-14691285e1fd4ac584f3d8c38fa63652\task5-red.json BYTES=2462 SHA256=AF00BDB1823E2F933503D4390EF1021BFB1A6DF47A275917E526A513609D8CB4
+RED_FACTS=two real child service preparations reached the barrier and both change.commit calls returned ok; project-boundary one-success/one-stale assertion failed; HARNESS_INVALID=NO
+IMPLEMENTED=project lease around Node adapter snapshot/asset reads and change.begin; fixed change-then-project commit lock order; lock-held base revision recheck marks loser STALE before staging/replacement; rollback retains change-lease-only recovery without opening the project
+RACE_HANDLING=service retries only transient missing lease.json from Task 3 unlink/rmdir window; active PROJECT_BUSY and malformed/foreign lease errors remain fail-loud; test worker uses bounded PROJECT_BUSY retry to observe post-release PROJECT_CHANGED_SINCE_BEGIN
+GREEN=npm run test -w @surdet/authoring -- commit-recovery.test.ts EXIT=0 (4/4); npm run build -w @surdet/authoring EXIT=0; npm run build -w @surdet/cli EXIT=0; npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts agent-port-security.test.ts EXIT=0 (2 files; 18/18); npm run typecheck -w @surdet/authoring EXIT=0; npm run typecheck -w @surdet/cli EXIT=0
+COUNTERTEST=live project lease returns PROJECT_BUSY with holder summary/retryAfterMs and no ownerToken; record/journal/project bytes unchanged; replacement max concurrency=1; records sort to COMMITTED/STALE; loser scene is absent
+SCOPE=Task 5 tracked changes are limited to authoring-service.ts, change-session.ts, commit-recovery.test.ts, agent-port-security.test.ts, transaction-worker.mjs, multi-process-change-concurrency.test.ts and this plan; node-local-lease.ts remains unchanged
+NEXT_STOP=COMMIT_TASK_5_THEN_TASK_6_JOURNAL_RECOVERY_RED
+```

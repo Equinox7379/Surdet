@@ -22,6 +22,10 @@ async function exists(file) {
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+async function appendEvent(file, event) {
+  await fs.appendFile(file, `${JSON.stringify(event)}\n`, 'utf8');
+}
+
 async function main() {
   const cliDist = requiredString('cliDist');
   const authoringDist = requiredString('authoringDist');
@@ -34,14 +38,47 @@ async function main() {
   const releaseFile = requiredString('releaseFile');
   const resultFile = requiredString('resultFile');
   const { NodeChangeStore } = await import(pathToFileURL(path.join(cliDist, 'authoring', 'node-change-store.js')).href);
+  if (typeof args.replaceEventsFile === 'string') {
+    const { NodeProjectStorage } = await import(pathToFileURL(path.join(cliDist, 'authoring', 'node-project-storage.js')).href);
+    const originalReplaceFromStage = NodeProjectStorage.prototype.replaceFromStage;
+    NodeProjectStorage.prototype.replaceFromStage = async function(relativePath, stagedIdentity) {
+      await appendEvent(args.replaceEventsFile, { event: 'replace-start', operationId, relativePath });
+      await delay(typeof args.replaceDelayMs === 'number' ? args.replaceDelayMs : 50);
+      try {
+        return await originalReplaceFromStage.call(this, relativePath, stagedIdentity);
+      } finally {
+        await appendEvent(args.replaceEventsFile, { event: 'replace-end', operationId, relativePath });
+      }
+    };
+  }
 
   const opened = await NodeChangeStore.openByChangeId(changeId);
   if (opened === null) throw new Error(`missing change ${changeId}`);
   let serviceSession;
-  if (mode === 'service-mutation') {
+  let directService;
+  if (mode === 'service-mutation' || mode === 'service-commit') {
     const projectRoot = requiredString('projectRoot');
     const { openAgentPortSession } = await import(pathToFileURL(path.join(cliDist, 'agent-port', 'session.js')).href);
-    serviceSession = await openAgentPortSession({ projectRoot, policy: 'stage', resumeChangeId: changeId });
+    serviceSession = await openAgentPortSession({ projectRoot, policy: mode === 'service-commit' ? 'apply' : 'stage', resumeChangeId: changeId });
+    if (mode === 'service-commit') {
+      const mutation = await serviceSession.invoke('scene.create', {
+        operationId,
+        sceneId: marker,
+        blocks: [],
+      });
+      if (!mutation.ok) throw new Error(`mutation failed: ${mutation.error.code}: ${mutation.error.message}`);
+      for (const [capability, input] of [
+        ['project.validate', {}],
+        ['project.simulate', {}],
+        ['runtime.run-from', { sceneId: 'start', choices: [] }],
+        ['change.diff', {}],
+      ]) {
+        const evidence = await serviceSession.invoke(capability, input);
+        if (!evidence.ok) throw new Error(`evidence failed: ${evidence.error.code}: ${evidence.error.message}`);
+      }
+      const { AuthoringService } = await import(pathToFileURL(path.join(cliDist, 'authoring', 'authoring-service.js')).href);
+      directService = new AuthoringService();
+    }
   }
   await fs.writeFile(readyFile, `${opened.record.workingRevision}\n`, { flag: 'wx' });
   while (!(await exists(releaseFile))) await delay(10);
@@ -56,6 +93,28 @@ async function main() {
       await fs.writeFile(resultFile, JSON.stringify({
         ok: envelope.ok,
         ...(envelope.ok ? { result: envelope.result } : { code: envelope.error.code, message: envelope.error.message }),
+      }), { flag: 'wx' });
+    } else if (mode === 'service-commit') {
+      await serviceSession.close();
+      let envelope;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        try {
+          envelope = { ok: true, result: await directService.commit(changeId) };
+          break;
+        } catch (error) {
+          envelope = {
+            ok: false,
+            code: error?.code ?? error?.name ?? 'UNKNOWN',
+            message: String(error?.message ?? error),
+            details: error?.details,
+          };
+          if (envelope.code !== 'PROJECT_BUSY' || attempt === 39) break;
+        }
+        await delay(10);
+      }
+      await fs.writeFile(resultFile, JSON.stringify({
+        ok: envelope.ok,
+        ...(envelope.ok ? { result: envelope.result } : { code: envelope.code, message: envelope.message, details: envelope.details }),
       }), { flag: 'wx' });
     } else {
       const { openChange, runOperation } = await import(pathToFileURL(path.join(authoringDist, 'change-session.js')).href);
