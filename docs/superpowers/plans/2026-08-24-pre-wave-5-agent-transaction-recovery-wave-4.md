@@ -1499,3 +1499,41 @@ WAVE_5 = NOT_STARTED
 ```
 
 执行 AI 从 Task 0 开始，在本节后追加紧凑 Ledger；不得改写本条创建事实，不得复制整段测试日志。
+
+## Execution Ledger
+
+### 2026-08-24T17:28:44+08:00 — Task 0 baseline and source preflight
+
+```text
+HEAD=526a0fcb68870ec8dc881a7d5a9d133a9615d3ae; REMOTE=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=3/0
+BRANCH=main; TRACKED_WORKTREE=CLEAN; STAGING_AREA=EMPTY; TRACKED_LOG_FILES=0; KNOWN_UNTRACKED_ONLY=YES
+WAVE4_ROOT=<local-path> INITIAL_CONTENTS=EMPTY
+READ E:\surdet\AGENTS.md bytes=7808 sha256=4184285B9BD47B6AD61C34A181CA99BFEEDD7257896815461BE4B46E8137AEEB
+READ docs/superpowers/specs/2026-08-24-pre-wave-5-agent-transaction-recovery-wave-4-design.md bytes=31368 sha256=F81003510C836C3F14B5FBAAB016B1071A498EB142A7F57560FFE25E7047EB7C
+READ docs/superpowers/plans/2026-08-24-pre-wave-5-agent-transaction-recovery-wave-4.md bytes=63775 sha256=4CC99638CF8EB6310AC84D8EE3A835F50614C686CD0579C6A3239A91282B8691
+READ docs/superpowers/plans/2026-08-24-pre-wave-5-evidence-trustworthiness-wave-3.md bytes=42516 sha256=A9D8DD827968418224E8C746AD80DCF9406D65D5DBDE2F76C739BA3425E37E58
+READ docs/EVIDENCE-TRUSTWORTHINESS-WAVE-3-DELIVERY-REPORT-2026-08-24.md bytes=13073 sha256=54C2DBCD018B48FDCA1D30D0B7A2FF2C3D2FD1239B4BFF311D8F6E851B7B9A8D
+READ packages/authoring/src/contracts.ts bytes=8354 sha256=85DC09F47EC545BA8B1447EF443CE6CECC9DEB9282795C42BAE75C6177278179
+READ packages/authoring/src/change-session.ts bytes=15869 sha256=63380D9D40F1532834756EA4D5A5231F1E3749388472B51BEE3D2907972D828C
+READ packages/cli/src/authoring/node-change-store.ts bytes=12906 sha256=9C6E84BB01979612D502DC9EDDCCFFC60E491CC85BDD224F3E5F3B1D96912FDC
+READ packages/cli/src/authoring/node-project-storage.ts bytes=13572 sha256=AD1021B6B3B3B52DB07C80BA55B2836AF5FB44179C3CAA9F56D6043EE5867EBA
+READ packages/cli/src/authoring/node-file-replacement.ts bytes=1555 sha256=BB206DEB5C8C82AD35AB0B37C6C0595DADE2688BE50341D72785EB938E40A616
+READ packages/cli/src/authoring/authoring-service.ts bytes=30750 sha256=3D1FB62B145B5A1532AD2E21A282292DFEB3339AC8AB92712E4862CE65D9D666
+READ packages/cli/src/agent-port/session.ts bytes=16803 sha256=E1C012B6A3FA74ADF096D4328D1512BD6C8408B662F1EE46414D265C6A9D3465
+STATIC_GAP=direct JSON overwrite; V1 transaction+working-files double write; no CAS; Node-only readLatestJournal; OPEN-only resume; process-local invocationTail
+COMMANDS=git baseline/diff checks/ls-files/log, rg static gap, Temp root readback; all produced expected results and no source writes
+BUILD=npm run build -w @surdet/authoring EXIT=0; npm run build -w @surdet/cli EXIT=0; ignored dist only
+NEXT_STOP=TASK_1_WRITE_AND_RUN_SINGLE_REAL_TWO_PROCESS_RED
+```
+
+### 2026-08-24T17:31:27+08:00 — Task 1 RED
+
+```text
+FILES_CREATED=packages/cli/test/fixtures/transaction-worker.mjs; packages/cli/test/multi-process-change-concurrency.test.ts
+RED_RUNS=1; COMMAND=npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts -t "reproduces cross-process last-write-wins" --reporter=json --outputFile="$WAVE4_ROOT\task1-red.json"; EXIT=1
+ARTIFACT=<local-path> BYTES=1278; SHA256=A1FDD5FA21CFA50AC86161FEDB2A5EA85FECA67830810FA576FDEA1605750EF8
+ARTIFACT_FACTS=1 test; 1 failed; business assertion at multi-process-change-concurrency.test.ts:130; child success/result assertion passed for 2 results; child exits reached 0/0 before final record assertion
+FINAL_RECORD_FACT=operations contained only ['op-b']; workingFiles/workingRevision assertions were not reached after the first business failure
+RED_STATUS=RED_REPRODUCED; HARNESS_INVALID=NO; RED_NOT_REPRODUCED=NO; FAILED_ARTIFACT_PRESERVED=YES
+NEXT_STOP=COMMIT_TASK_1_RED_HARNESS_THEN_TASK_2
+```
