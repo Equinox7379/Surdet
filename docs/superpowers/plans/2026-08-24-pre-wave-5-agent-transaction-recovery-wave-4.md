@@ -1562,3 +1562,15 @@ GREEN=npm run test -w @surdet/cli -- node-local-lease.test.ts node-json-record.t
 NO_WAIT=lease tests use injected time/scheduler; no real 15-second sleep; project lock namespace and stale quarantine evidence are asserted
 NEXT_STOP=COMMIT_TASK_3_THEN_TASK_4_SERVICE_BOUNDARY_RED
 ```
+
+### 2026-08-24T18:06:58+08:00 — Task 4 service boundary and invocation truthfulness
+
+```text
+RED_RUN=npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts -t "real service mutations" EXIT=1; two real service children reached result files/exit 0 but both returned ok=false under the unbound mutation path; HARNESS_INVALID=NO
+LOW_LEVEL=worker now reads stale record before barrier, then uses bounded test-only lease retry so the existing cross-process path still yields one success plus CHANGE_RECORD_CONFLICT; loser refresh/retry is lease-bound
+SERVICE=AuthoringService mutation/evidence/diff/trace/rollback/commit paths reopen latest record inside one change lease; AgentPort active-change dispatch uses the bound service and writes its invocation fact before releasing that same lease
+TRUTHFUL_FAILURE=invocation before-read is inside try; ledger failure returns internal INVOCATION_LEDGER_WRITE_FAILED details operationMayHaveSucceeded/operationId/changeId; same operationId retry is idempotent and creates one readable fact without incrementing workingRevision
+GREEN=npm run build -w @surdet/authoring EXIT=0; npm run build -w @surdet/cli EXIT=0; npm run typecheck -w @surdet/cli EXIT=0; npm run test -w @surdet/cli -- multi-process-change-concurrency.test.ts agent-port-session.test.ts EXIT=0 (2 files; 12/12); node --check worker EXIT=0
+SCOPE=Task 4 tracked changes are limited to authoring-service.ts, session.ts, invocation/test worker, multi-process test, agent-port-session test and this plan; node-local-lease.ts remains at Task 3 commit
+NEXT_STOP=COMMIT_TASK_4_THEN_TASK_5_PROJECT_LEASE_RED
+```

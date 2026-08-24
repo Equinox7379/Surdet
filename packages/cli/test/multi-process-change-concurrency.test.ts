@@ -128,15 +128,19 @@ describe('cross-process change concurrency', () => {
       const observed = cases.map((item, index) => ({ ...item, result: results[index]! }));
       expect(observed.filter((item) => item.result.ok)).toHaveLength(1);
       const loser = observed.find((item) => !item.result.ok);
-      expect(loser?.result.code).toBe('CHANGE_RECORD_CONFLICT');
+      expect(loser?.result.code, JSON.stringify(observed)).toBe('CHANGE_RECORD_CONFLICT');
 
       const beforeRetry = await NodeChangeStore.openByChangeId(changeId);
       expect(beforeRetry).not.toBeNull();
-      const retried = openChange(beforeRetry!.record, beforeRetry!.store);
-      await runOperation(retried, { operationId: loser!.operationId }, (record) => ({
-        result: { marker: loser!.marker },
-        workingFiles: { ...record.workingFiles, [loser!.relativePath]: loser!.marker },
-      }));
+      await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+        const latest = await leasedStore.read(changeId);
+        expect(latest).not.toBeNull();
+        const retried = openChange(latest!, leasedStore);
+        await runOperation(retried, { operationId: loser!.operationId }, (record) => ({
+          result: { marker: loser!.marker },
+          workingFiles: { ...record.workingFiles, [loser!.relativePath]: loser!.marker },
+        }));
+      });
 
       const final = await NodeChangeStore.openByChangeId(changeId);
       expect(final).not.toBeNull();
@@ -144,6 +148,82 @@ describe('cross-process change concurrency', () => {
       expect(final!.record.workingFiles['content/scenario/worker-a.gal']).toBe('A');
       expect(final!.record.workingFiles['content/scenario/worker-b.gal']).toBe('B');
       expect(final!.record.workingRevision).toBe(2);
+    } finally {
+      if (!(await fileExists(releaseFile))) await fsp.writeFile(releaseFile, 'cleanup\n', { flag: 'wx' }).catch(() => undefined);
+      await Promise.all(children.map(async (child) => {
+        try {
+          await waitForExit(child, 5000);
+        } catch {
+          child.kill();
+        }
+      }));
+    }
+  });
+
+  it('retains two real service mutations and invocation order across processes', { timeout: 90000 }, async () => {
+    const projectRoot = makeProject();
+    const dataRoot = makeDirectory('surdet-agent-transaction-service-data-');
+    const barrierRoot = makeDirectory('surdet-agent-transaction-service-barrier-');
+    process.env['SURDET_AGENT_DATA_DIR'] = dataRoot;
+
+    const service = new AuthoringService();
+    const begun = await service.begin(projectRoot);
+    const changeId = begun.result.changeId;
+    const releaseFile = path.join(barrierRoot, 'release');
+    const cases = [
+      { operationId: 'op-service-a', relativePath: 'content/scenario/service-a.gal', marker: 'service-a' },
+      { operationId: 'op-service-b', relativePath: 'content/scenario/service-b.gal', marker: 'service-b' },
+    ] as const;
+    const children: ChildProcess[] = [];
+    const outputs = cases.map((item) => ({ ...item, output: undefined as { stdout: string; stderr: string } | undefined }));
+
+    try {
+      for (const [index, item] of cases.entries()) {
+        const child = spawn(process.execPath, [workerPath, JSON.stringify({
+          cliDist,
+          authoringDist,
+          mode: 'service-mutation',
+          projectRoot,
+          changeId,
+          ...item,
+          readyFile: path.join(barrierRoot, `${item.operationId}.ready`),
+          releaseFile,
+          resultFile: path.join(barrierRoot, `${item.operationId}.result.json`),
+        })], {
+          cwd: repoRoot,
+          env: { ...process.env, SURDET_AGENT_DATA_DIR: dataRoot },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        outputs[index]!.output = collectOutput(child);
+        children.push(child);
+      }
+
+      await Promise.all(cases.map((item) => waitForFile(path.join(barrierRoot, `${item.operationId}.ready`), children)));
+      await fsp.writeFile(releaseFile, 'release\n', { flag: 'wx' });
+      const exitCodes = await Promise.all(children.map((child) => waitForExit(child)));
+      if (exitCodes.some((code) => code !== 0)) {
+        throw new Error(`HARNESS_INVALID: service child exit codes=${JSON.stringify(exitCodes)} outputs=${JSON.stringify(outputs)}`);
+      }
+
+      const results = await Promise.all(cases.map(async (item) => {
+        const resultFile = path.join(barrierRoot, `${item.operationId}.result.json`);
+        return JSON.parse(await fsp.readFile(resultFile, 'utf8')) as { ok: boolean; result?: unknown; code?: string; message?: string };
+      }));
+      expect(results, JSON.stringify(results)).toMatchObject([{ ok: true }, { ok: true }]);
+
+      const final = await NodeChangeStore.openByChangeId(changeId);
+      expect(final).not.toBeNull();
+      expect(final!.record.workingRevision).toBe(2);
+      expect(final!.record.recordVersion).toBeGreaterThanOrEqual(2);
+      expect(Object.keys(final!.record.operations).sort()).toEqual(['op-service-a', 'op-service-b']);
+      expect(final!.record.workingFiles['content/scenario/service-a.gal']).toContain('service-a');
+      expect(final!.record.workingFiles['content/scenario/service-b.gal']).toContain('service-b');
+      const invocations = (await final!.store.readInvocations(changeId))
+        .filter((invocation) => invocation.operationId?.startsWith('op-service-'));
+      expect(invocations).toHaveLength(2);
+      const ordered = [...invocations].sort((left, right) => left.workingRevisionAfter! - right.workingRevisionAfter!);
+      expect(ordered.map((item) => [item.workingRevisionBefore, item.workingRevisionAfter])).toEqual([[0, 1], [1, 2]]);
+      expect(ordered.map((item) => item.operationId).sort()).toEqual(['op-service-a', 'op-service-b']);
     } finally {
       if (!(await fileExists(releaseFile))) await fsp.writeFile(releaseFile, 'cleanup\n', { flag: 'wx' }).catch(() => undefined);
       await Promise.all(children.map(async (child) => {
