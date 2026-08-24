@@ -14,9 +14,15 @@ export interface WorldQueries {
   captureThumbnail(): string | null;
 }
 
+export interface NvlPresentationEntry {
+  readonly speaker: string | null;
+  readonly text: string;
+}
+
 export interface DialogueQueries {
   backlogEntries(): readonly BacklogEntry[];
   backlogSearchQuery(): string;
+  nvlPresentationEntries(): readonly NvlPresentationEntry[];
 }
 
 /** Menu overlay state is locked now; other overlay families are added by later milestones. */

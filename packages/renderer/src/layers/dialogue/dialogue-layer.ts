@@ -16,6 +16,7 @@ import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import type { DialogueProjectionPort } from '../../api/renderer-commands.js';
+import type { NvlPresentationEntry } from '../../api/renderer-queries.js';
 import type {
   ChoiceOptionView,
   CommandRailItem,
@@ -180,6 +181,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #nvlBackground: Graphics;
   #nvlLines: PText[] = [];
   #nvlLineCounts: number[] = [];
+  #nvlEntries: NvlPresentationEntry[] = [];
   #nvlActive = false;
   #nvlCharsPerLine = 50;
 
@@ -322,6 +324,10 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   get nvlLines(): readonly PText[] {
     return this.#nvlLines;
+  }
+
+  get nvlPresentationEntries(): readonly NvlPresentationEntry[] {
+    return this.#nvlEntries.map((entry) => ({ ...entry }));
   }
 
   get activeSpeakerId(): string | null {
@@ -819,7 +825,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   appendNvlText(speaker: string | null, text: string): void {
-    const raw = speaker !== null && speaker.length > 0 ? `${speaker}：${text}` : text;
+    const normalizedSpeaker = speaker !== null && speaker.length > 0 ? speaker : null;
+    const raw = normalizedSpeaker !== null ? `${normalizedSpeaker}：${text}` : text;
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const textNode = bindThemeTextProjection(new PText({
       text: wrapped.join('\n'),
@@ -828,10 +835,12 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
     this.#nvlLineCounts.push(Math.max(1, wrapped.length));
+    this.#nvlEntries.push({ speaker: normalizedSpeaker, text });
     const budget = this.#h - 120;
     while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
       const old = this.#nvlLines.shift()!;
       this.#nvlLineCounts.shift();
+      this.#nvlEntries.shift();
       this.#nvlLayer.removeChild(old);
       old.destroy();
     }
@@ -852,6 +861,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
+    this.#nvlEntries = [];
     this.#requestFrame();
   }
 
@@ -909,6 +919,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
+    this.#nvlEntries = [];
     this.#destroyRubyPools();
     try {
       this.#lifecycle.releaseOwner('dialogue');
