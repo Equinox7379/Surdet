@@ -21,7 +21,7 @@ import type { RendererPluginHost } from '../plugin-host.js';
 import type { ShakeDirection } from '../world-effects-controller.js';
 import { BacklogSearchController } from '../backlog-search-controller.js';
 import type { RendererCommands } from '../api/renderer-commands.js';
-import type { RendererQueries } from '../api/renderer-queries.js';
+import type { NvlPresentationEntry, RendererQueries } from '../api/renderer-queries.js';
 import type { RendererInputAction } from '../api/renderer-input.js';
 import type { ResetSessionOptions } from '../api/renderer-runtime.js';
 import type { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
@@ -52,6 +52,52 @@ function invalidPresentation(message: string, cause?: unknown): RendererCommandE
   });
 }
 
+function prepareDialogueRestore(payload: unknown): {
+  readonly nvlActive: boolean;
+  readonly nvlEntries: readonly NvlPresentationEntry[];
+} {
+  if (payload === undefined) return { nvlActive: false, nvlEntries: [] };
+  if (!isRecord(payload)) throw invalidPresentation('Presentation dialogue is invalid');
+  if (typeof payload.nvlActive !== 'boolean') {
+    throw invalidPresentation('Presentation dialogue nvlActive must be boolean');
+  }
+  if (!Array.isArray(payload.nvlEntries)) {
+    throw invalidPresentation('Presentation dialogue nvlEntries must be an array');
+  }
+  const entries: NvlPresentationEntry[] = [];
+  for (const entry of payload.nvlEntries) {
+    if (!isRecord(entry)) throw invalidPresentation('Presentation dialogue entry is invalid');
+    const speaker = entry.speaker;
+    if (speaker !== null && typeof speaker !== 'string') {
+      throw invalidPresentation('Presentation dialogue entry speaker must be string or null');
+    }
+    if (typeof entry.text !== 'string') {
+      throw invalidPresentation('Presentation dialogue entry text must be string');
+    }
+    entries.push({
+      speaker: speaker === '' ? null : speaker,
+      text: entry.text,
+    });
+  }
+  if (!payload.nvlActive && entries.length > 0) {
+    throw invalidPresentation('Presentation dialogue entries require nvlActive=true');
+  }
+  return { nvlActive: payload.nvlActive, nvlEntries: entries };
+}
+
+function withoutReplayedCurrentNvlLine(
+  entries: readonly NvlPresentationEntry[],
+  current: { readonly speaker: string | null; readonly value: string } | null,
+  nvlActive: boolean,
+): readonly NvlPresentationEntry[] {
+  if (!nvlActive || !current || entries.length === 0) return entries;
+  const expectedSpeaker = current.speaker !== null && current.speaker.length > 0 ? current.speaker : null;
+  const last = entries.at(-1)!;
+  return last.speaker === expectedSpeaker && last.text === stripRuby(current.value)
+    ? entries.slice(0, -1)
+    : entries;
+}
+
 export interface PreparedTimelineRestore {
   readonly id: number;
   readonly blocking: boolean;
@@ -63,6 +109,10 @@ export interface PreparedPresentationRestore {
   readonly stage: unknown;
   readonly timelines: readonly PreparedTimelineRestore[];
   readonly timelineSequence: number;
+  readonly dialogue: {
+    readonly nvlActive: boolean;
+    readonly nvlEntries: readonly NvlPresentationEntry[];
+  };
 }
 
 /**
@@ -75,6 +125,15 @@ export function preparePresentationRestore(
   validateStagePresentation: ((snapshot: unknown) => void) | undefined,
   currentTimelineSequence = 0,
 ): PreparedPresentationRestore {
+  if (payload === null || payload === undefined) {
+    validateStagePresentation?.(null);
+    return {
+      stage: null,
+      timelines: [],
+      timelineSequence: currentTimelineSequence + 1,
+      dialogue: { nvlActive: false, nvlEntries: [] },
+    };
+  }
   if (!isRecord(payload) || payload.version !== 1) {
     throw invalidPresentation('Presentation snapshot must be a version 1 object');
   }
@@ -84,6 +143,7 @@ export function preparePresentationRestore(
   } else if (stage !== null) {
     throw invalidPresentation('Presentation stage validator is not configured');
   }
+  const dialogue = prepareDialogueRestore(payload.dialogue);
   const timelines: PreparedTimelineRestore[] = [];
   let timelineSequence = currentTimelineSequence + 1;
   const ids = new Set<number>();
@@ -116,7 +176,12 @@ export function preparePresentationRestore(
       events: player.eventsAtCursor(),
     });
   }
-  return { stage, timelines, timelineSequence };
+  return {
+    stage,
+    timelines,
+    timelineSequence,
+    dialogue,
+  };
 }
 
 export interface AdvRendererOptions {
@@ -745,6 +810,9 @@ export class PresentationController {
     this.#videoActive = false;
     this.#clearTimelines();
     this.#commands.presentation.clear();
+    this.#nvl = false;
+    this.#commands.dialogue.setNvlMode(false);
+    this.#commands.dialogue.clearNvlText();
     this.#pendingVoice = null; // 旧场景的语音关联不跨读档延续
     this.#commands.system.hideVideo(); // 停止残留视频本体（回调已由会话令牌作废；审计复核）
   }
@@ -832,6 +900,7 @@ export class PresentationController {
 
   /** 供 Interpreter 的 presentation snapshot hook 使用。 */
   snapshotPresentation(): unknown {
+    const dialogueEntries = this.#queries.dialogue.nvlPresentationEntries();
     return {
       version: 1,
       stage: this.#queries.presentation.snapshot(),
@@ -841,6 +910,10 @@ export class PresentationController {
         definition: run.player.definition,
         snapshot: run.player.snapshot(),
       })),
+      dialogue: {
+        nvlActive: this.#nvl,
+        nvlEntries: withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
+      },
     };
   }
 
@@ -864,7 +937,14 @@ export class PresentationController {
     const prepared = this.#preparePresentationRestore(payload);
     this.#clearTimelines();
     this.#timelineSeq = prepared.timelineSequence;
-    this.#commands.presentation.restore(prepared.stage);
+    if (prepared.stage === null) this.#commands.presentation.clear();
+    else this.#commands.presentation.restore(prepared.stage);
+    this.#nvl = prepared.dialogue.nvlActive;
+    this.#commands.dialogue.setNvlMode(this.#nvl);
+    this.#commands.dialogue.clearNvlText();
+    for (const entry of prepared.dialogue.nvlEntries) {
+      this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
+    }
     for (const timeline of prepared.timelines) {
       this.#timelineRuns.set(timeline.id, { player: timeline.player, blocking: timeline.blocking });
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;

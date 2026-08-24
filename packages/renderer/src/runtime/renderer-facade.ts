@@ -778,6 +778,10 @@ export class RendererFacade {
         this.#ensureQueryActive('dialogue', 'backlogSearchQuery');
         return this.#controller.backlogSearchQuery?.() ?? '';
       },
+      nvlPresentationEntries: () => {
+        this.#ensureQueryActive('dialogue', 'nvlPresentationEntries');
+        return (this.#dialoguePort?.nvlPresentationEntries ?? []).map((entry) => ({ ...entry }));
+      },
     };
     const overlayQueries: OverlayQueries = {
       menu: () => {
@@ -1066,6 +1070,14 @@ export class RendererFacade {
     this.#ensureActive('presentation', 'validate');
     if (this.#controller.validatePresentation) {
       this.#controller.validatePresentation.call(this.#controller, cloneOpaque(snapshot));
+      return;
+    }
+    if (snapshot === null || snapshot === undefined) {
+      if (this.#worldPort?.validatePresentation) {
+        this.#worldPort.validatePresentation.call(this.#worldPort, null);
+      } else if (this.#stage.validatePresentation) {
+        this.#stage.validatePresentation.call(this.#stage, null);
+      }
       return;
     }
     if (!isRecord(snapshot)) {

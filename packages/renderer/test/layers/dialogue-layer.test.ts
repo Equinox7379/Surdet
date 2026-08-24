@@ -39,7 +39,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function makeRuntime(): DialogueRuntime {
+function makeRuntime(height = 720): DialogueRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
@@ -47,7 +47,7 @@ function makeRuntime(): DialogueRuntime {
   const layer = new DialogueLayer({
     uiLayer: root,
     width: 1280,
-    height: 720,
+    height,
     assets,
     lifecycle,
     requestFrame,
@@ -374,6 +374,46 @@ describe('DialogueLayer command rail stability', () => {
       const layer = backlogRoot(runtime.root);
       expect(layer.children.some((child) => child instanceof PText && child.text === '搜索：雨')).toBe(true);
       expect(layer.children.some((child) => child instanceof PText && child.text === 'Ctrl+F 搜索')).toBe(false);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('retains clone-safe raw NVL entries and evicts them with visible lines', () => {
+    const runtime = makeRuntime(220);
+    const nvlEntries = (): { speaker: string | null; text: string }[] => (
+      (runtime.layer as unknown as { nvlPresentationEntries: readonly { speaker: string | null; text: string }[] })
+        .nvlPresentationEntries.map((entry) => ({ ...entry }))
+    );
+    try {
+      runtime.layer.setNvlMode(true);
+      runtime.layer.appendNvlText('凛', '第一页');
+      runtime.layer.appendNvlText(null, '第二页');
+      const returned = nvlEntries();
+      expect(returned).toEqual([
+        { speaker: '凛', text: '第一页' },
+        { speaker: null, text: '第二页' },
+      ]);
+
+      returned[0]!.text = '外部修改';
+      returned.push({ speaker: '伪造', text: '不应进入内部' });
+      expect(nvlEntries()).toEqual([
+        { speaker: '凛', text: '第一页' },
+        { speaker: null, text: '第二页' },
+      ]);
+
+      runtime.layer.appendNvlText('凛', '第三页');
+      expect(nvlEntries()).toEqual([
+        { speaker: null, text: '第二页' },
+        { speaker: '凛', text: '第三页' },
+      ]);
+      expect(runtime.layer.debugSnapshot().nvlLines).toHaveLength(2);
+
+      runtime.layer.clearNvlText();
+      expect(nvlEntries()).toEqual([]);
+      runtime.layer.appendNvlText(null, '旧页');
+      runtime.layer.setNvlMode(true);
+      expect(nvlEntries()).toEqual([]);
     } finally {
       disposeRuntime(runtime);
     }

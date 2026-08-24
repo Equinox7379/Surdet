@@ -242,6 +242,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       assetRegistry,
       resourceSnapshot: () => lifecycle.snapshot(),
       worldLayer: stage.worldLayer,
+      dialogueLayer: stage.dialogueLayer,
       projectionSnapshot: () => stage!.projectionSnapshot,
     });
     const controllerOptions = createControllerOptions(stage, ports, lifecycle, options);

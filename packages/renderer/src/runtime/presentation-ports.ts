@@ -85,6 +85,8 @@ export interface PresentationPortOptions {
   readonly worldLayer?: WorldProjectionPort;
   /** Composition-root read model; returns plain semantic data, never a Layer. */
   readonly projectionSnapshot?: () => RendererProjectionSnapshot;
+  /** Narrow read-only source for the current visible NVL page. */
+  readonly dialogueLayer?: Pick<import('../api/renderer-commands.js').DialogueProjectionPort, 'nvlPresentationEntries'>;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT: RendererResourceSnapshot = {
@@ -277,6 +279,7 @@ export function createPresentationPorts(
     dialogue: {
       backlogEntries: (): readonly BacklogEntry[] => [],
       backlogSearchQuery: () => '',
+      nvlPresentationEntries: () => (options.dialogueLayer?.nvlPresentationEntries ?? []).map((entry) => ({ ...entry })),
     },
     overlay: {
       menu: () => ({ type: 'none' }),

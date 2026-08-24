@@ -23,6 +23,10 @@ function stageHarness(): AdvStage & {
   hidden: boolean[];
   scrolls: number[];
   backlogShown: number;
+  nvlActive: boolean;
+  nvlEntries: { speaker: string | null; text: string }[];
+  worldBackground: string | null;
+  presentationClears: number;
 } {
   const stage = {
     texts: [] as string[],
@@ -34,7 +38,10 @@ function stageHarness(): AdvStage & {
     hidden: [] as boolean[],
     scrolls: [] as number[],
     backlogShown: 0,
-    setBackground: () => undefined,
+    nvlActive: false,
+    nvlEntries: [] as { speaker: string | null; text: string }[],
+    worldBackground: null as string | null,
+    presentationClears: 0,
     setPortrait: () => undefined,
     removePortrait: () => undefined,
     showText: (_speaker: string | null, value: string) => { stage.texts.push(value); },
@@ -49,6 +56,26 @@ function stageHarness(): AdvStage & {
     hideBacklog: () => undefined,
     scrollBacklog: (delta: number) => { stage.scrolls.push(delta); },
     setAwaiting: () => undefined,
+    setNvlMode: (on: boolean) => {
+      stage.nvlActive = on;
+      if (on) stage.nvlEntries = [];
+    },
+    appendNvlText: (speaker: string | null, text: string) => {
+      stage.nvlEntries.push({ speaker, text });
+    },
+    clearNvlText: () => { stage.nvlEntries = []; },
+    setBackground: (key: string | null) => { stage.worldBackground = key; },
+    snapshotPresentation: () => ({ background: stage.worldBackground }),
+    restorePresentation: (snapshot: unknown) => {
+      stage.worldBackground = (snapshot as { background?: string | null } | null)?.background ?? null;
+    },
+    clearPresentation: () => {
+      stage.presentationClears += 1;
+      stage.worldBackground = null;
+    },
+    validatePresentation: (snapshot: unknown) => {
+      if (snapshot !== null && typeof snapshot !== 'object') throw new Error('invalid stage');
+    },
     updateEffects: () => undefined,
     needsUpdate: () => true,
   } as unknown as AdvStage & {
@@ -61,6 +88,10 @@ function stageHarness(): AdvStage & {
     hidden: boolean[];
     scrolls: number[];
     backlogShown: number;
+    nvlActive: boolean;
+    nvlEntries: { speaker: string | null; text: string }[];
+    worldBackground: string | null;
+    presentationClears: number;
   };
   return stage;
 }
@@ -183,6 +214,102 @@ describe('PresentationController', () => {
       expect(controller.selectChoiceAt(1)).toBe(true);
       expect(selected).toEqual([20]);
       expect(stage.choices).toEqual([]);
+    } finally {
+      off();
+      controller.dispose();
+    }
+  });
+
+  it('accepts a missing presentation payload as neutral state', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage);
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    const timeline = {
+      version: 1 as const,
+      id: 'neutral-state',
+      durationMs: 100,
+      tracks: [],
+    };
+
+    try {
+      stage.setNvlMode?.(true);
+      stage.appendNvlText?.('凛', '旧页面');
+      stage.setBackground('before-load');
+      bus.emit('timeline', { id: 'neutral-state', blocking: false, definition: timeline });
+      expect(stage.nvlActive).toBe(true);
+      expect(stage.nvlEntries).toEqual([{ speaker: '凛', text: '旧页面' }]);
+      expect(stage.worldBackground).toBe('before-load');
+
+      expect(() => controller.validatePresentation(null)).not.toThrow();
+      controller.restorePresentation(null);
+
+      expect(stage.nvlActive).toBe(false);
+      expect(stage.nvlEntries).toEqual([]);
+      expect(stage.worldBackground).toBeNull();
+      expect(controller.snapshotPresentation()).toMatchObject({ timelines: [] });
+    } finally {
+      off();
+      controller.dispose();
+    }
+  });
+
+  it('accepts missing presentation in the facade fallback without a controller validator', () => {
+    const stage = stageHarness() as unknown as Record<string, unknown>;
+    const validateStage = vi.fn(stage.validatePresentation as (snapshot: unknown) => void);
+    stage.validatePresentation = validateStage;
+    stage.destroy = () => undefined;
+    const controller = {
+      status: 'idle',
+      needsUpdate: false,
+      presentationOwnsStage: true,
+      dispose: () => undefined,
+    };
+    const facade = new RendererFacade({
+      stage: stage as never,
+      controller: controller as never,
+      monitor: new RenderPerformanceMonitor(),
+    });
+
+    expect(() => facade.commands.presentation.validate(null)).not.toThrow();
+    expect(validateStage).toHaveBeenCalledWith(null);
+  });
+
+  it('rejects invalid dialogue before changing world, timelines, or the current NVL page', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage);
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    const timeline = {
+      version: 1 as const,
+      id: 'atomic-dialogue',
+      durationMs: 100,
+      tracks: [],
+    };
+
+    try {
+      stage.setNvlMode?.(true);
+      stage.appendNvlText?.('凛', '保留页面');
+      stage.setBackground('keep-world');
+      bus.emit('timeline', { id: 'atomic-dialogue', blocking: false, definition: timeline });
+      const before = controller.snapshotPresentation();
+      const invalid = {
+        version: 1,
+        stage: (before as { stage: unknown }).stage,
+        timelines: [],
+        dialogue: { nvlActive: true, nvlEntries: [{ speaker: 42, text: 'bad' }] },
+      };
+
+      expect(() => controller.validatePresentation(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }),
+      );
+      expect(() => controller.restorePresentation(invalid)).toThrowError(
+        expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }),
+      );
+      expect(stage.worldBackground).toBe('keep-world');
+      expect(stage.nvlActive).toBe(true);
+      expect(stage.nvlEntries).toEqual([{ speaker: '凛', text: '保留页面' }]);
+      expect(controller.snapshotPresentation()).toEqual(before);
     } finally {
       off();
       controller.dispose();

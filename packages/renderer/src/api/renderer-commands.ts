@@ -23,7 +23,7 @@ import type {
   SystemMenuItemView,
   TitleView,
 } from '../ui-views.js';
-import type { GalleryOverlayState, MenuOverlayState, SystemPanelOverlayState } from './renderer-queries.js';
+import type { GalleryOverlayState, MenuOverlayState, NvlPresentationEntry, SystemPanelOverlayState } from './renderer-queries.js';
 
 /** M1 intentionally accepts URL/path strings; Pixi objects remain an internal legacy detail. */
 export type RendererAssetSource = string;
@@ -121,6 +121,8 @@ export interface DialogueProjectionPort extends DialogueCommands {
   readonly activeSpeakerId: string | null;
   /** Increments only when a non-idempotent text projection is accepted. */
   readonly projectionVersion: number;
+  /** Current visible NVL page as clone-safe semantic data for presentation snapshots. */
+  readonly nvlPresentationEntries: readonly NvlPresentationEntry[];
 }
 
 export type SaveLoadSelectionResult = void | boolean | Promise<void | boolean>;
