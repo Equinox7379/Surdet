@@ -113,3 +113,88 @@ export interface CapsuleCompositionProjection {
   reasons: CompositionIneligibility[];
   manifest?: CompositionManifest;
 }
+
+/** 5.4 候选引用与比较 */
+export interface CandidateCapsuleRef {
+  changeId: string;
+  capsuleId: string;
+  artifactSha256: string;
+}
+
+export interface CandidateEvidenceSummary {
+  validation: 'fresh' | 'missing' | 'stale' | 'failed';
+  simulation: 'fresh' | 'missing' | 'stale' | 'failed' | 'incomplete';
+  runtime: 'fresh' | 'missing' | 'stale' | 'failed';
+  warnings: number;
+  manualReviewRequired: string[];
+}
+
+export interface ObjectChangeUnit {
+  unitId: string;
+  candidateId: string;
+  primaryObject: string;
+  operationSequences: number[];
+  finalFingerprint?: string;
+  requiredUnitIds: string[];
+  requiredBaseObjects: ObjectRequirement[];
+  producedObjects: ObjectProduction[];
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+  evidenceSummary: CandidateEvidenceSummary;
+}
+
+export interface CompositionConflict {
+  conflictId: string;
+  severity: 'blocking' | 'selection-required' | 'advisory';
+  code: string;
+  candidateIds: string[];
+  unitIds: string[];
+  objectRefs: string[];
+  allowedResolutions: Array<'choose-unit' | 'exclude-all' | 'regenerate-candidate'>;
+  details: Record<string, JsonValue>;
+  repairActions: string[];
+}
+
+export interface IdenticalUnitGroup {
+  groupId: string;
+  unitIds: string[];
+  primaryObject: string;
+  finalFingerprint: string;
+}
+
+export interface CompositionComparison {
+  comparisonVersion: '1.0.0';
+  projectIdentity: string;
+  expectedProjectRevision: string;
+  status: 'composable' | 'review-only' | 'blocked';
+  candidates: CandidateCapsuleRef[];
+  units: ObjectChangeUnit[];
+  dependencyEdges: Array<{ fromUnitId: string; toUnitId: string; objectRef: string }>;
+  conflicts: CompositionConflict[];
+  identicalGroups: IdenticalUnitGroup[];
+  evidenceMatrix: Array<{ candidateId: string; summary: CandidateEvidenceSummary }>;
+  comparisonFingerprint: string;
+}
+
+export interface CompositionSemanticDiffEntry {
+  kind: string;
+  operationId: string;
+  objectBefore?: string;
+  objectAfter?: string;
+  fingerprintBefore?: string;
+  fingerprintAfter?: string;
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+}
+
+export interface VerifiedCompositionCandidate {
+  candidateId: string;
+  ref: CandidateCapsuleRef;
+  capsuleVersion: '1.0.0' | '2.0.0';
+  projectIdentity: string;
+  baseProjectRevision: string;
+  sourceWorkingRevision: number;
+  composition: CapsuleCompositionProjection;
+  evidenceSummary: CandidateEvidenceSummary;
+  semanticDiff: CompositionSemanticDiffEntry[];
+}

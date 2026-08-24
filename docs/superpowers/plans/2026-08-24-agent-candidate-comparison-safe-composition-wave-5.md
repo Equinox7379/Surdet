@@ -2497,3 +2497,19 @@ ARTIFACTS=$wave5Root/t1-g1.log t1-g2.log t1-tc2.log t1-b2.log
 GIT=PENDING_STEP8_PRECISE_STAGING
 STOP=TASK_2_CANDIDATE_COMPARISON
 ~~~
+
+### 2026-08-24T17:40Z — Task 2 candidate comparison engine
+
+~~~text
+TASK=2_CANDIDATE_COMPARISON_AND_SAFE_CONFLICTS
+START_HEAD=08ca65a feat(authoring): seal composable capsule manifests
+END_HEAD=(本提交)
+FILES_CREATED=packages/authoring/src/candidate-comparison.ts(compareCandidates 纯函数:身份层→不可拆单元层(建图前边上限1024/ops上限256)→identical/selection-required/remove-vs-required→evidence advisory;unitId/conflictId/groupId/comparisonFingerprint 全部规范种子哈希;候选按 artifactSha256/changeId/capsuleId 排序,输出全序稳定); packages/authoring/test/candidate-comparison.test.ts(13 类 fixture 全覆盖:不相交 composable/create+patch 单元/identical group 保 provenance/diverge selection-required/remove 被 required/candidate 依赖边/broken dependency blocking/v1+unavailable CANDIDATE_NOT_COMPOSABLE review-only/project+base mismatch blocked/base 移动 review-only/evidence advisory 不伪装结构冲突/9 候选+257ops+1280 边各自 INVALID_REQUEST/乱序十次指纹字节稳定/conflict id 稳定)
+FILES_CHANGED=composition-contracts.ts(+5.4 类型:CandidateCapsuleRef/CandidateEvidenceSummary/ObjectChangeUnit/CompositionConflict/IdenticalUnitGroup/CompositionComparison/CompositionSemanticDiffEntry/VerifiedCompositionCandidate); index.ts(+export candidate-comparison.js); 本任务书 Ledger
+RED=test/candidate-comparison.test.ts 首跑 exit1 模块未实现(task2-red.json)
+GREEN=npm run test -w @surdet/authoring -- candidate-comparison.test.ts composition-manifest.test.ts change-session.test.ts exit0 (28 passed); typecheck exit0; build exit0
+NOTES=单候选比较合法(仅设 >8 上限);candidate 依赖解析用全 manifest producedBySequence(producer 常在另一对象组);unit.producedObjects 为链上全部产物并集,finalFingerprint 取 primary 对象最终值;v1/unavailable 候选不建 unit;status: 身份/依赖结构损坏=blocked, NOT_COMPOSABLE 或 selection-required 或 base 已移动=review-only, 其余 composable
+ARTIFACTS=$wave5Root/task2-red.json t2-green.log t2-build.log
+GIT=PENDING_STEP6
+STOP=TASK_3_IMMUTABLE_INTEGRATION_PLAN_AND_STORE
+~~~
