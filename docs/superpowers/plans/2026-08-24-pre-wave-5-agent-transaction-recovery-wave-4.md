@@ -1689,13 +1689,36 @@ CLEANUP=childProcesses exited; protocol=[]; unexpected stderr=[]; childCleanupFa
 STOP=RECOVERY_DIAGNOSTIC_FAILED; do not repair/rerun; do not run verify:all, FORMAL, Task 10, push, deploy, release or Wave 5; wait for new owner authorization
 ```
 
+### 2026-08-24T22:30:24+08:00 — Task 10 focused gate recovery, unique verify:all and unique FORMAL
+
+```text
+FROZEN_HEAD_1=6f61493f0ef0237721f222bff9ed9913e0ed7058; Task 9 Ledger committed without production/test/runner changes
+FOCUSED_AUTHORING=5 files/29 tests PASS; full authoring=23 files/153 tests PASS; typecheck/build PASS
+FOCUSED_CLI_INITIAL=8 files/45 tests PASS; full CLI gate FAILED at 4 stale contract assertions: three lists still expected 20 capabilities instead of the registry's 22, and observe mode rejected the empty .locks/projects lease infrastructure
+FAILURE_CLASSIFICATION=direct Task 8/lease contract drift in permanent tests; no production transaction, lease, commit or recovery defect was observed
+TEST_RECOVERY=updated only four CLI test files; capability assertions now include change.recovery.inspect/execute, and observe mode requires no change data while explicitly verifying the empty project-lease directory and absence of a change-lease directory
+TEST_RECOVERY_GREEN=affected 4 files/14 tests PASS; full CLI=27 files/205 tests PASS; CLI typecheck/build PASS; node --check PASS; git diff --check PASS
+FROZEN_CODE_EVIDENCE_HEAD=6c3a10230968d6abd8b0da7ca30308b7c95f6c4d; MESSAGE=test(cli): align transaction recovery contracts; SCOPE=four CLI tests only
+POST_FIX_PREFLIGHT=EXIT=0; status=PREFLIGHT_PASSED; runHead=6c3a10230968d6abd8b0da7ca30308b7c95f6c4d; project/data unchanged; children/locks released
+VERIFY_ALL=one and only Task 10 run; EXIT=0; reached verify:diff-check; log=<local-path> BYTES=64224 SHA256=166FF47DFCF252BFC31C6C016B096F47157D4B06D48EC7CF9DD7B16C87482C73
+FORMAL=one and only run; EXIT=0; status=PASSED; evidenceClass=FORMAL; runHead=6c3a10230968d6abd8b0da7ca30308b7c95f6c4d
+FORMAL_EVIDENCE=<local-path> BYTES=101963 SHA256=29503F3C718633840ED40CB2DF987F2C19C0D92BB9551F62B4746A847EFDB2D3
+FORMAL_IDENTITY=<local-path> BYTES=218 SHA256=7B4E4ADDB6BC7A8D7A9DF584CC34360D81645AB7CA920CD2781CA4B21E07BCC1
+FORMAL_CONCURRENCY=same change retained both operations with recordVersions 0,1,2 and workingRevision 2; different changes overlapped stage/commit request windows, winner COMMITTED, initial loser PROJECT_BUSY/after-refresh, refreshed loser PROJECT_CHANGED_SINCE_BEGIN and STALE
+FORMAL_LEASE=live blocked; orphan takeover passed; foreign-host blocked; corrupt blocked; released=true
+FORMAL_RECOVERY=STAGING -> REOPEN_OPEN/OPEN; REPLACING -> ROLL_BACK_TO_BASE/OPEN; COMMITTED journal -> FINALIZE_COMMITTED/COMMITTED; unexpected bytes -> MANUAL_RECOVERY_REQUIRED + RECOVERY_AMBIGUOUS with project/recovery state unchanged
+FORMAL_MCP=inspect visible; stage execute policy-blocked; apply execute passed; text envelope equals structured envelope
+FORMAL_CLEANUP=errors=[]; 14/14 children exited; timersStopped=true; locksReleased=true; activeLeaseDirectories=[]; original Starter SHA256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6 unchanged
+CURRENT_STOP=PRE_WAVE_5_AGENT_TRANSACTION_RECOVERY_WAVE_4_VERIFIED; WAITING_FOR_INDEPENDENT_MANAGER_REVIEW; OWNER_ACCEPTANCE_NOT_APPLICABLE_TO_AUTOMATED_TRANSACTION_GATE; NOT_PUSHED; WAVE_5_NOT_STARTED
+```
+
 ### 2026-08-24T22:21:18+08:00 — W4 recovery fixture method closure and passing DIAGNOSTIC
 
 ```text
 TAKEOVER=project owner authorized the independent manager to continue the Wave 4 closure directly; no push, deployment, release or Wave 5 authorization was inferred
 BASELINE=HEAD=5387c28dd30cd1ed931dad885a39cefd56cafa74; REMOTE=00255f64916d412f20b57ba0954eea8c7b63b26e; AHEAD_BEHIND=18/0; tracked diff was this taskbook Ledger only; staging empty; protected and existing untracked files preserved
 ROOT_CAUSE_1=recoverFixture discarded prepareInterruptedJournal()'s changedPaths result and later read the non-existent prepared.changedPaths; no production recovery defect was observed
-FIX_1=runner now retains interrupted journal preparation facts, asserts project identity continuity, and uses interrupted.changedPaths for the unexpected-bytes fixture; dead placeholder module/storage reads were removed
+FIX_1=runner now retains interrupted journal preparation facts, asserts project identity continuity, and uses interrupted.changedPaths for the unexpected-bytes fixture; unused module/storage reads were removed
 FIX_1_GREEN=node --check EXIT=0; CLI agent-transaction-recovery + multi-process-change-concurrency + agent-port-security EXIT=0 (3 files; 25/25); authoring capability/error catalog EXIT=0 (2 files; 11/11); authoring/CLI typecheck and build EXIT=0; regular preflight EXIT=0
 FIX_1_COMMIT=fa0a31cd58bacf4748eb347e1d0693816292c601; MESSAGE=fix(cli): preserve recovery fixture paths; SCOPE=runner only
 RECOVERY_DIAGNOSTIC_1=EXIT=1; runHead=fa0a31cd58bacf4748eb347e1d0693816292c601; status=FAILED; evidenceClass=DIAGNOSTIC; artifact=<local-path> BYTES=14111 SHA256=BF3A947AEB79D72AB3376F907D216DD1604926ACD312B3359396523E1CC6C52E PRESERVED=YES
