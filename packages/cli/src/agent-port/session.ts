@@ -97,6 +97,26 @@ function stateBlocked(capability: AuthoringCapabilityId): AuthoringOperationErro
   return new AuthoringOperationError('SESSION_STATE_INVALID', `capability '${capability}' 需要 active OPEN change`);
 }
 
+async function withChangeLeaseRetry<T>(
+  changeId: string,
+  callback: (leasedStore: NodeChangeStore) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      return await NodeChangeStore.withChangeLease(changeId, callback);
+    } catch (error) {
+      const transientMissingLease = error instanceof AuthoringOperationError
+        && error.code === 'LEASE_CORRUPT'
+        && error.message.includes('lease.json 缺失');
+      if (!(error instanceof AuthoringOperationError)
+        || (error.code !== 'CHANGE_BUSY' && !transientMissingLease)
+        || attempt === 39) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new AuthoringOperationError('CHANGE_BUSY', `变更事务 '${changeId}' 在有界重试后仍被占用`);
+}
+
 function evidenceFor(record: ChangeRecord | undefined): SessionDescription['evidence'] {
   if (record === undefined) return {};
   return {
@@ -255,11 +275,12 @@ export class AgentPortSession {
 
   private async invokeSerial(capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<AuthoringEnvelope<unknown>> {
     const beforeChangeId = this.activeChangeIdValue;
-    const beforeOpened = beforeChangeId === undefined ? undefined : await NodeChangeStore.openByChangeId(beforeChangeId);
-    const beforeRecord = beforeOpened?.record;
-    let envelope: AuthoringEnvelope<unknown>;
+    let beforeRecord: ChangeRecord | undefined;
+    let envelope: AuthoringEnvelope<unknown> | undefined;
     let operationId: string | undefined;
-    try {
+    let invocationRecorded = false;
+
+    const dispatchOnce = async (service: AuthoringService): Promise<AuthoringEnvelope<unknown>> => {
       const definition = getCapabilityDefinition(capability);
       if (!isCapabilityAllowed(this.policy, definition)) throw policyBlocked(capability, this.policy);
       if (capability === 'change.begin' && this.activeChangeIdValue !== undefined) {
@@ -268,7 +289,7 @@ export class AgentPortSession {
       if (changeRequired(capability) && this.activeChangeIdValue === undefined) throw stateBlocked(capability);
       if (capability === 'change.commit') await this.commitEvidenceGate();
 
-      const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, this.service);
+      const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, service);
       operationId = dispatched.operationId ?? (typeof input['operationId'] === 'string' ? input['operationId'] : undefined);
       const value = dispatched.value;
       if (capability === 'change.begin') {
@@ -280,7 +301,7 @@ export class AgentPortSession {
         this.lastChangeIdValue = this.activeChangeIdValue;
         this.activeChangeIdValue = undefined;
       }
-      envelope = createSuccessEnvelope({
+      return createSuccessEnvelope({
         sessionId: this.sessionId,
         capability,
         projectIdentity: value.projectIdentity,
@@ -289,37 +310,91 @@ export class AgentPortSession {
         ...(value.workingRevision === undefined ? {} : { workingRevision: value.workingRevision }),
         ...(dispatched.operationId === undefined ? {} : { operationId: dispatched.operationId }),
       }, value.result);
+    };
+
+    const writeInvocationFact = async (
+      store: NodeChangeStore,
+      changeId: string,
+      currentEnvelope: AuthoringEnvelope<unknown>,
+      factBeforeRecord = beforeRecord,
+    ): Promise<void> => {
+      const afterRecord = await store.read(changeId);
+      if (afterRecord === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+      await recordInvocation(store, changeId, {
+        sessionId: this.sessionId,
+        capability,
+        ...(operationId === undefined ? {} : { operationId }),
+        ok: currentEnvelope.ok,
+        ...(currentEnvelope.ok ? {} : { errorCode: currentEnvelope.error.code }),
+        ...(factBeforeRecord?.baseRevision === undefined ? {} : { projectRevisionBefore: factBeforeRecord.baseRevision }),
+        ...(currentEnvelope.projectRevision === undefined ? {} : { projectRevisionAfter: currentEnvelope.projectRevision }),
+        ...(factBeforeRecord?.workingRevision === undefined ? {} : { workingRevisionBefore: factBeforeRecord.workingRevision }),
+        workingRevisionAfter: afterRecord.workingRevision,
+        input,
+        evidenceIds: [
+          ...evidenceIdsFromValue(currentEnvelope.ok ? currentEnvelope.result : undefined),
+          ...evidenceIdsFromRecord(afterRecord),
+        ],
+      });
+    };
+
+    try {
+      const beforeOpened = beforeChangeId === undefined ? undefined : await NodeChangeStore.openByChangeId(beforeChangeId);
+      beforeRecord = beforeOpened?.record;
+      if (beforeChangeId !== undefined && changeRequired(capability)) {
+        await withChangeLeaseRetry(beforeChangeId, async (leasedStore) => {
+          const leaseBeforeRecord = await leasedStore.read(beforeChangeId);
+          if (leaseBeforeRecord === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${beforeChangeId}`);
+          try {
+            envelope = await dispatchOnce(this.service.withLeasedStore(leasedStore));
+          } catch (error) {
+            envelope = this.failure(capability, error);
+          }
+          try {
+            await writeInvocationFact(leasedStore, beforeChangeId, envelope!, leaseBeforeRecord);
+            invocationRecorded = true;
+          } catch (error) {
+            envelope = this.failure(capability, new AuthoringOperationError(
+              'INVOCATION_LEDGER_WRITE_FAILED',
+              `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
+              {
+                operationMayHaveSucceeded: envelope!.ok,
+                ...(operationId === undefined ? {} : { operationId }),
+                changeId: beforeChangeId,
+              },
+            ));
+            invocationRecorded = true;
+          }
+        });
+      } else {
+        try {
+          envelope = await dispatchOnce(this.service);
+        } catch (error) {
+          envelope = this.failure(capability, error);
+        }
+      }
     } catch (error) {
       envelope = this.failure(capability, error);
     }
 
+    if (envelope === undefined) {
+      envelope = this.failure(capability, new AuthoringOperationError('SESSION_STATE_INVALID', 'capability 未产生结果 envelope'));
+    }
     const changeId = envelope.changeId ?? beforeChangeId;
-    if (changeId !== undefined) {
+    if (changeId !== undefined && !invocationRecorded) {
       try {
-        const afterOpened = await NodeChangeStore.openByChangeId(changeId);
-        const afterRecord = afterOpened?.record;
-        const invocationStore = afterOpened?.store ?? beforeOpened?.store;
-        if (invocationStore === undefined) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
-        await recordInvocation(invocationStore, changeId, {
-          sessionId: this.sessionId,
-          capability,
-          ...(operationId === undefined ? {} : { operationId }),
-          ok: envelope.ok,
-          ...(envelope.ok ? {} : { errorCode: envelope.error.code }),
-          ...(beforeRecord?.baseRevision === undefined ? {} : { projectRevisionBefore: beforeRecord.baseRevision }),
-          ...(envelope.projectRevision === undefined ? {} : { projectRevisionAfter: envelope.projectRevision }),
-          ...(beforeRecord?.workingRevision === undefined ? {} : { workingRevisionBefore: beforeRecord.workingRevision }),
-          ...(afterRecord?.workingRevision === undefined ? {} : { workingRevisionAfter: afterRecord.workingRevision }),
-          input,
-          evidenceIds: [
-            ...evidenceIdsFromValue(envelope.ok ? envelope.result : undefined),
-            ...evidenceIdsFromRecord(afterRecord),
-          ],
+        await withChangeLeaseRetry(changeId, async (invocationStore) => {
+          await writeInvocationFact(invocationStore, changeId, envelope!);
         });
       } catch (error) {
         return this.failure(capability, new AuthoringOperationError(
           'INVOCATION_LEDGER_WRITE_FAILED',
           `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
+          {
+            operationMayHaveSucceeded: envelope.ok,
+            ...(operationId === undefined ? {} : { operationId }),
+            changeId,
+          },
         ));
       }
     }

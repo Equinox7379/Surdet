@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { parseAgentPortArgs } from '../src/agent-port/args.js';
 import { allowedCapabilitiesForPolicy } from '../src/agent-port/policy.js';
@@ -216,6 +216,38 @@ describe('Surdet Agent Port session and policy contract', () => {
     ]);
     expect(projectBytes(root)).toEqual(beforeProject);
     await session.close();
+  });
+
+  it('reports invocation-ledger failure truthfully and retries an idempotent operation without a second mutation', async () => {
+    const root = makeProject('invocation-ledger-failure');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    const writeInvocation = vi.spyOn(NodeChangeStore.prototype, 'writeInvocation')
+      .mockImplementationOnce(async () => { throw new Error('simulated invocation ledger failure'); });
+    try {
+      const first = await session.invoke('scene.create', { operationId: 'op-ledger-retry', sceneId: 'ledger-retry' });
+      expect(first.ok).toBe(false);
+      if (first.ok) throw new Error('expected invocation-ledger failure');
+      expect(first.error.message).toContain('调用事实记录写入失败');
+      expect(first.error.details).toMatchObject({ operationMayHaveSucceeded: true, operationId: 'op-ledger-retry', changeId });
+
+      const second = await session.invoke('scene.create', { operationId: 'op-ledger-retry', sceneId: 'ledger-retry' });
+      expect(second.ok).toBe(true);
+      const opened = await NodeChangeStore.openByChangeId(changeId);
+      expect(opened).not.toBeNull();
+      expect(opened!.record.workingRevision).toBe(1);
+      expect(Object.keys(opened!.record.operations)).toEqual(['op-ledger-retry']);
+      const facts = (await opened!.store.readInvocations(changeId))
+        .filter((invocation) => invocation.operationId === 'op-ledger-retry');
+      expect(facts).toHaveLength(1);
+      expect(facts[0]).toMatchObject({ workingRevisionBefore: 1, workingRevisionAfter: 1, ok: true });
+    } finally {
+      writeInvocation.mockRestore();
+      await session.close();
+    }
   });
 
   it('close preserves an OPEN transaction and working files', async () => {
