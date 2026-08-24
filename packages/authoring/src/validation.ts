@@ -8,6 +8,7 @@ import {
   validateSceneVariables,
   validateSwitchTargets,
   validateTransitionInstructions,
+  isValidSceneId,
   type CallInstr,
   type CompiledScene,
   type JumpInstr,
@@ -53,6 +54,7 @@ function isRecordLike(value: unknown): Record<string, unknown> | null {
 
 function actionFor(code: string): string {
   switch (code) {
+    case 'LINT_DUP': return '为冲突场景文件分配唯一的 scene ID，再重新校验项目';
     case 'J002': return '创建或修正标签，再重新校验该跳转';
     case 'J001': return '创建目标场景或修正跳转目标';
     case 'J003': return '先修复目标场景的语法或结构错误';
@@ -92,13 +94,41 @@ export function validateSnapshot(
   options: ValidationOptions = {},
 ): ValidationResult {
   const rawIssues: LintIssue[] = [];
-  const scenes = new Map(snapshot.scenes.map((scene) => [scene.id, scene.compiled]));
+  const firstSceneById = new Map<string, typeof snapshot.scenes[number]>();
+  const scenes = new Map<string, CompiledScene>();
+  for (const physicalScene of snapshot.scenes) {
+    if (!isValidSceneId(physicalScene.id)) {
+      rawIssues.push({
+        severity: 'error',
+        code: 'SCENE_ID',
+        text: `${physicalScene.path}:1:1: 场景 ID '${physicalScene.id}' 非法；sceneId.label 寻址不允许 scene ID 含点号`,
+        file: physicalScene.path,
+        line: 1,
+        col: 1,
+      });
+    }
+    const first = firstSceneById.get(physicalScene.id);
+    if (first !== undefined) {
+      rawIssues.push({
+        severity: 'error',
+        code: 'LINT_DUP',
+        text: `${physicalScene.path}:1:1: 场景 ID '${physicalScene.id}' 与 ${first.path} 重复；两个物理文件必须使用唯一 ID`,
+        file: physicalScene.path,
+        line: 1,
+        col: 1,
+      });
+      continue;
+    }
+    firstSceneById.set(physicalScene.id, physicalScene);
+    scenes.set(physicalScene.id, physicalScene.compiled);
+  }
   const labels = new Map([...scenes.entries()].map(([id, scene]) => [id, new Set(scene.labels.keys())]));
   const failedScenes = new Set(options.failedScenes ?? []);
   const configPath = snapshot.configFile?.path ?? 'game.config.json';
   const parsed = parseVariableConfig(snapshot.config, configPath, rawIssues);
 
-  for (const scene of scenes.values()) {
+  for (const physicalScene of snapshot.scenes) {
+    const scene = physicalScene.compiled;
     for (const diagnostic of scene.diagnostics) {
       rawIssues.push({
         severity: 'warning',
@@ -139,7 +169,9 @@ export function validateSnapshot(
     }
   }
 
-  for (const [sceneId, scene] of scenes) {
+  for (const physicalScene of snapshot.scenes) {
+    const sceneId = physicalScene.id;
+    const scene = physicalScene.compiled;
     for (const instr of scene.instructions) {
       if (instr.op === 'jump' && instr.kind === 'jump') {
         validateJumpTarget(sceneId, instr as JumpInstr, labels, failedScenes, rawIssues);

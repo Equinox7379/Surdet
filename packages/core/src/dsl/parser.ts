@@ -188,9 +188,11 @@ export class Parser {
 
   #parseChoiceOption(textTok: TextToken): AstChoiceOption {
     const raw = textTok.raw.trimStart();
-    const arrowIdx = raw.indexOf(' -> ');
+    const arrowMatch = /\s->(?:\s|$)/.exec(raw);
+    const arrowIdx = arrowMatch?.index ?? -1;
+    const arrowEnd = arrowMatch === null ? -1 : arrowMatch.index + arrowMatch[0].length;
     const labelPart = arrowIdx >= 0 ? raw.slice(0, arrowIdx) : raw;
-    const inlinePart = arrowIdx >= 0 ? raw.slice(arrowIdx + 4).trim() : '';
+    const inlinePart = arrowEnd >= 0 ? raw.slice(arrowEnd).trim() : '';
     const pos0 = pos(textTok.file, textTok.line, textTok.col);
 
     let when: string | null = null;
@@ -211,6 +213,15 @@ export class Parser {
 
     if (labelText.length === 0) {
       throw new DslError('S005', '选项文本为空', textTok);
+    }
+
+    if (arrowIdx >= 0 && (inlinePart.length === 0 || !inlinePart.startsWith('@'))) {
+      throw new DslError(
+        'S009',
+        'choice 行内动作必须以 @ 开头',
+        textTok,
+        '箭头后应写成 -> @goto target 或其他以 @ 开头的行内动作',
+      );
     }
 
     const inlineTokens = inlinePart.length > 0

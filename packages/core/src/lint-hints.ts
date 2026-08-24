@@ -20,6 +20,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   S006: '@goto/@jump/@call 缺目标：补上目标标签（@goto 标签）或场景（@jump 场景[.标签]）。',
   S007: 'choice 选项内不允许块指令：选项 -> 之后只允许内联单行指令（@set/@mod/@goto/@jump 等），不能嵌 @if/@choice。',
   S008: '@if 嵌套过深（>200 层）：拆分条件结构，通常是 @endif 漏写导致解析吞并。',
+  S009: 'choice 行内动作必须以 @ 开头：箭头后写成 "-> @goto target" 等形式，不要省略 @。',
 
   /* ---- 编译（C） ---- */
   C001: '标签重复定义：同一场景内 @label 名必须唯一，给重复的标签改名。',

@@ -255,6 +255,16 @@ describe('SceneCompiler', () => {
     expect(ends.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('choice 箭头后缺少 @ 时编译期抛 S009', () => {
+    expect(() => compile('@choice\n  A ->\n')).toThrow(/S009/);
+    expect(() => compile('@choice\n  A -> goto target\n')).toThrow(/S009/);
+    expect(() => compile('@choice\n  A -> text @goto target\n')).toThrow(/S009/);
+  });
+
+  it('choice 箭头后以 @ 开头的内联动作继续合法', () => {
+    expect(() => compile('@choice\n  A -> @goto target\n@label target\n')).not.toThrow();
+  });
+
   it('自动追加的 end 指令定位到文件末尾行', () => {
     const scene = compile('凛：x\n凛：y');
     const end = scene.instructions[scene.instructions.length - 1]!;
