@@ -2561,3 +2561,19 @@ ARTIFACTS=$wave5Root/task5-red-authoring.json t5-green-a.log t5-green-b2.log
 GIT=PENDING_STEP7
 STOP=TASK_6_EVIDENCE_FRESHNESS_AND_PROVENANCE
 ~~~
+
+### 2026-08-24T22:40Z - Task 6 integration provenance, freshness and failure audit
+
+~~~text
+TASK=6_EVIDENCE_FRESHNESS_AND_PROVENANCE
+START_HEAD=07dfeab fix(cli): trim trailing blank line at eof in authoring service
+END_HEAD=(this commit)
+FILES_CHANGED=delivery-capsule.ts(DeliveryCapsulePayload.integrationProvenance?;record.integration exists -> build from loadIntegrationProvenance + record.integration: planId/fingerprint/executeOperationId/integrationChangeId/status/nextOperationIndex/operationCount/sourceCapsules/includedUnits/dedup/resolutions/replayReceipts/failure/planAvailable;plan broken -> composition.unavailable + COMPOSITION_PLAN_INVALID + INTEGRATION_PLAN_UNAVAILABLE manual review;FAILED -> warnings+manualReviewRequired INTEGRATION_REPLAY_FAILED); composition-service.ts(loadIntegrationProvenance: read identity.json sha -> store.readPlan bytes check -> planFingerprint must equal record.integration.planFingerprint else COMPOSITION_PLAN_INVALID); registry(composition.plan input field renamed unitChoices->conflictResolutions with ConflictResolutionInput shape conflictId/resolution/chosenUnitId/actor)
+FILES_MODIFIED_TESTS=agent-port-composition.test.ts(+3: A/B/C/D provenance e2e with selection-required choose-unit resolution and identical dedupe A/D; broken-plan FAILED capsule audit; ordinary v2 capsule has no integrationProvenance); agent-port-output-contract.test.ts(wave5 real dispatcher results schema scan for all four composition capabilities + annotations assertions)
+RED=task6-red.json(2 failed: provenance missing / update on ordinary record)
+GREEN=authoring integration-execution exit0;cli capsule+composition+output-contract 14 passed;cli full 222 passed;both packages typecheck/build exit0
+NOTES=timeline background cue requires asset:bg:* in base object index -> baseline opening timeline in makeProject fixture;sourceCapsules keeps ALL candidates for audit while C excluded from included units via choose-unit resolution;beware bash heredoc mojibake: chinese chars in heredoc python got cp936-mangled once, use ascii-only patch patterns or unicode escapes;registry input rename required updating task5 e2e inline payloads too
+ARTIFACTS=$wave5Root/task6-red.json t6-green.log t6-full.log
+GIT=PENDING_STEP7
+STOP=TASK_7_FOCUS_GATES_AND_VERIFY_ALL
+~~~

@@ -505,11 +505,12 @@ const definitions = {
         capsuleId: stringSchema,
         artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
       }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
-      unitChoices: arrayOf(strictObject({
+      conflictResolutions: arrayOf(strictObject({
         conflictId: stringSchema,
-        mode: { enum: ['choose', 'regenerate'] },
-        unitId: stringSchema,
-      }, ['conflictId', 'mode'])),
+        resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
+        chosenUnitId: stringSchema,
+        actor: { enum: ['human', 'review-agent'] },
+      }, ['conflictId', 'resolution', 'actor'])),
       reason: { type: 'string', maxLength: 500 },
     }, ['candidateRefs']),
     outputSchema: strictObject({

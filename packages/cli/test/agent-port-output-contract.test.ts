@@ -241,7 +241,7 @@ describe('Wave 5 composition output-schema conformance', () => {
     };
 
     await scan('composition.compare', { candidateRefs });
-    const planned = await scan('composition.plan', { candidateRefs, unitChoices: [], reason: 'contract scan' }) as {
+    const planned = await scan('composition.plan', { candidateRefs, conflictResolutions: [], reason: 'contract scan' }) as {
       planId: string; artifactSha256: string; dryRunStatus: string;
     };
     expect(planned.dryRunStatus).toBe('passed');
