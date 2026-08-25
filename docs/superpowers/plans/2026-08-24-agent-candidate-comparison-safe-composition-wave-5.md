@@ -2620,3 +2620,44 @@ multi-process-change-concurrency.test.ts 3 passed (first run); typecheck+build e
 GIT=PENDING_STEP4_COMMIT
 STOP=TASK_5_RECOVERY_VERIFY_ALL_AUTHORIZED_ONCE
 ~~~
+
+### W5-GATE-LEASE-WAIT-LIVENESS-2 - publication wait liveness fix (manager authorized)
+
+~~~text
+RUN_COUNTS =
+VERIFY_ALL_FORMAL_RUN_COUNT=1 (task7-verify-all.log, FAILED, LEASE_CORRUPT lease.json unreadable)
+VERIFY_ALL_RECOVERY_RUN_COUNT=1 (task7-verify-all-recovery.log, FAILED, 3x ENOENT op-*.result.json)
+VERIFY_ALL_MANAGER_EXCEPTION_RUN_COUNT=1 (pending this round)
+VERIFY_ALL_TOTAL_RUN_COUNT=3
+
+CONFIRMED_FACTS =
+recovery failure was caused by the NEW publication timer added in c76f1c7: the default
+publicationDelay implementation called unref() on a timer whose completion promise is
+awaited by acquire(). An unfinished promise keeps no process alive; when that unref'd
+timer was the last active handle, worker children exited early with code 13
+(Unfinished Top-Level Await) and never wrote their result.json. This is recorded as a
+genuine defect of the previous fix commit, NOT as environment flakiness.
+
+VERIFIED_BY_NEW_RED =
+node-local-lease.test.ts now spawns a real child that acquires a published-directory
+lock through the DEFAULT publicationDelay (no injected stand-in). On c76f1c7 the child
+exited 13 before writing its verdict marker; after the fix it exits 0 with
+marker=LEASE_CORRUPT. Artifact: gate2-red.log. RED artifact for the window contract
+from the previous round: gate1-red.log.
+
+IMPLEMENTATION =
+node-local-lease.ts only: default publicationDelay now uses a plain ref'd
+setTimeout(resolve, delayMs); no unref(). scheduleHeartbeat's existing unref() is kept
+(background heartbeats must not block normal exit). The just-added public
+publicationPollDelayMs override is removed; production delay is the fixed constant
+DEFAULT_PUBLICATION_POLL_DELAY_MS=10ms; PUBLICATION_POLL_LIMIT stays 10 (total <=100ms);
+the publicationDelay injection seam remains for deterministic tests only.
+Malformed/invalid/identity-mismatch LEASE_CORRUPT semantics unchanged.
+
+GATES =
+liveness RED exit13 -> GREEN; node-local-lease.test.ts 9 passed;
+multi-process-change-concurrency.test.ts 3 passed first run;
+cli full suite 226 passed first run; typecheck+build exit0.
+GIT=PENDING_STEP4_COMMIT
+STOP=TASK_5_MANAGER_EXCEPTION_VERIFY_ALL_AUTHORIZED_ONCE
+~~~
