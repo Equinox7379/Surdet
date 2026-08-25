@@ -2766,3 +2766,17 @@ GREEN=authoring capability-registry.test.ts 11 passed; cli focus 26 passed; cli 
 GIT=PENDING_TASK_D_COMMIT
 STOP=TASK_E_POST_CONTRACT_VERIFY_ALL_NEXT
 ~~~
+
+### TASK E - post-contract aggregate gate PASSED
+
+~~~text
+TASK7_FORMAL_VERIFY_ALL=1
+TASK7_RECOVERY_VERIFY_ALL=1
+TASK7_MANAGER_EXCEPTION_VERIFY_ALL=1
+TASK8_POST_CONTRACT_VERIFY_ALL=1
+CUMULATIVE_VERIFY_ALL_RUN_COUNT=4
+ARTIFACT=task8-post-contract-verify-all.log bytes=90429 sha256=a523b567c13fb089fc80540037cf96e57312883428b2f9396d008f18c48f6f6e
+HEAD_AT_GATE=ccd167f fix(cli): expose composition selection contract
+RESULT=exit0; multi-process-change-concurrency 3 passed; all verify:* subgates green
+~~~
+
