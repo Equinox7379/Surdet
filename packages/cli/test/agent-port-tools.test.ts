@@ -14,6 +14,7 @@ import { allowedCapabilitiesForPolicy } from '../src/agent-port/policy.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 import { createAgentPortServer } from '../src/agent-port/server.js';
 import { projectCapabilityTool } from '../src/agent-port/tool-projection.js';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 
 const temporaryRoots: string[] = [];
 
@@ -161,6 +162,65 @@ describe('Surdet Agent Port MCP tool projection', () => {
     await client.close();
     await server.close();
     await session.close();
+  });
+
+  it('keeps an active integration summary visible through the MCP session schema', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
+      expect(begun.isError).not.toBe(true);
+      const changeId = session.activeChangeId!;
+      await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+        const record = await leasedStore.read(changeId);
+        if (record === null) throw new Error(`missing change ${changeId}`);
+        await leasedStore.write({
+          ...record,
+          recordVersion: record.recordVersion + 1,
+          integration: {
+            planId: 'pln_schema_probe',
+            planFingerprint: 'a'.repeat(64),
+            executeOperationId: 'exec-schema-probe',
+            sourceCapsules: [],
+            includedUnitIds: [],
+            deduplicatedUnits: [],
+            conflictResolutions: [],
+            status: 'REPLAYING',
+            nextOperationIndex: 1,
+            replayedOperations: [],
+          },
+        }, {
+          expectedRecordVersion: record.recordVersion,
+          expectedStatus: record.status,
+        });
+      });
+
+      const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
+      expect(described.isError).not.toBe(true);
+      expect((described.structuredContent as any).ok).toBe(true);
+      expect((described.structuredContent as any).result.activeChange.integration).toEqual({
+        planId: 'pln_schema_probe',
+        status: 'REPLAYING',
+        nextOperationIndex: 1,
+        operationCount: 0,
+      });
+
+      const capsule = await client.callTool({
+        name: 'surdet_delivery_capsule',
+        arguments: { label: 'integration schema probe' },
+      });
+      expect(capsule.isError).not.toBe(true);
+      expect((capsule.structuredContent as any).ok).toBe(true);
+      expect((capsule.structuredContent as any).result.integrationProvenance).toEqual(expect.objectContaining({
+        planId: 'pln_schema_probe',
+        integrationChangeId: changeId,
+        status: 'REPLAYING',
+        planAvailable: false,
+      }));
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
   });
 
   it('keeps the complete success and failure envelope visible to text-only MCP hosts', async () => {

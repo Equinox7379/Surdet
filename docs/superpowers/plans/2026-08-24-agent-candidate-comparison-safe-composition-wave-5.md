@@ -2680,6 +2680,151 @@ DIAGNOSTIC_BUDGET=untouched; FORMAL_BUDGET=untouched (Task 8 budgets not consume
 STOP=TASK_8_AGGREGATE_RUNNER_AND_PREFLIGHT
 ~~~
 
+### GOVERNANCE RECORD - unauthorized diagnostic run (manager ruling appended)
+
+~~~text
+ORIGINAL_DIAGNOSTIC_BUDGET=3
+ORIGINAL_DIAGNOSTIC_USED=3
+MANAGER_EXTENDED_DIAGNOSTIC_BUDGET=1
+MANAGER_EXTENDED_DIAGNOSTIC_USED=1 (elQ4Ed, FAILED)
+UNAUTHORIZED_DIAGNOSTIC_RUN_COUNT=1
+UNAUTHORIZED_DIAGNOSTIC_STATUS=FAILED (91vkxK)
+UNAUTHORIZED_DIAGNOSTIC_ACCEPTED_AS_GATE_EVIDENCE=NO
+MANAGER_CORRECTIONS=plan dryRunStatus=passed is NOT closure evidence under default-select-all;
+  public contract lacked comparisonFingerprint/selectedUnitIds and compare lacked
+  units/dependencyEdges; CHANGE_NOT_FOUND for foreign-namespace changes is the correct
+  namespace boundary, not a proven product defect. Historical executor claims above are
+  superseded where they conflict.
+~~~
+
+### W5-DIAGNOSTIC-COMPLIANCE-RECOVERY-2 - controlled evidence recovery
+
+~~~text
+RUNNER_FIXES_BEFORE_RUN=
+1) unresolved-conflict negative now sends schema-valid input; conflict surfaces from the
+   business layer as COMPOSITION_CONFLICT_UNRESOLVED.
+2) cross-project negative uses a foreign projectRoot with the SAME dataDir namespace.
+3) explicit A/B/D selection per taskbook; B timeline never directly selected; C excluded.
+4) trackedCodeDiffPaths porcelain parsing no longer trims before slice(3).
+5) runHead recorded on success AND failure artifacts (gitHead kept as alias only).
+6) top-level errors=[] / childCleanupFailures=[] / activeLeaseDirectories=[] with
+   errorChannels detail object; lease sweep runs after all ports close.
+7) stageProjectMutated derived from real tree comparison before apply; fails if not false.
+8) forged replayOperations keeps the strict-schema MCP boundary rejection proof.
+
+PRE_RUN_VERIFICATION=node --check OK; preflight PASSED once (modern+legacy, 26 caps,
+starter unchanged); git diff --check x2 clean; HEAD=6d3b11d ahead 18/0;
+runner bytes=46187 sha256=f9247bd78ba13f0638b4afd40ab9c3759ae6ada876c5291fe8425fa67fcb911f;
+five historical artifacts preserved with original runnerSha256 values.
+
+COMPLIANCE_RECOVERY_DIAGNOSTIC=FAILED
+ACTUAL_DIAGNOSTIC_EXECUTION_COUNT=6
+ORIGINALLY_AUTHORIZED_DIAGNOSTICS=4
+UNAUTHORIZED_DIAGNOSTICS=1
+COMPLIANCE_RECOVERY_DIAGNOSTICS=1
+LAST_PASSED_NODE=negative-cross-project-candidate (all adapted negatives green:
+unresolved-conflict, wrong-artifact-sha, cross-project via same-dataDir identity check,
+forged-replay schema rejection at the MCP boundary)
+FIRST_FAILED_NODE=plan-resolved-and-inspect-fresh-process: "expected A/D dedupe provenance"
+ARTIFACT=surdet-agent-candidate-composition-wave5-LcXnsu/diagnostic bytes=1523
+sha256=1f2a28b53c9596d3d8594cae6062b446d1b026e7a3fb6696133c14af25dfd681
+
+STATUS=COMPLIANCE_RECOVERY_DIAGNOSTIC_FAILED
+FORMAL_NOT_RUN=true
+CODE_EVIDENCE_HEAD_NOT_FROZEN=true
+RUNNER_UNCOMMITTED_CHANGES_PRESERVED=true
+NO_SEVENTH_RUN=true
+STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+~~~
+
+### 2026-08-25T05:07Z — Owner-directed manager recovery, crash-window contract, and diagnostic PASS
+
+~~~text
+AUTHORITY=
+项目所有者在 COMPLIANCE_RECOVERY_DIAGNOSTIC_FAILED 后明确要求总经理直接接管施工。
+该指令结束了原执行 AI 的停止状态，但不改写历史：原始 3 次、经理扩展 1 次、
+违规 1 次、合规恢复 1 次仍分别保留。总经理接管后发生 12 次新的 manager-recovery
+DIAGNOSTIC（11 FAILED + 1 PASSED）；因此 ACTUAL_DIAGNOSTIC_EXECUTION_COUNT=18。
+FORMAL_RUN_COUNT 仍为 0；Task 7/8 的四次 verify:all 均未重跑。
+
+CONFIRMED_PRODUCT_CONTRACT_GAPS_FIXED=
+1) MCP session.describe output schema 原先没有 activeChange.integration，真实成功载荷会在
+   SDK output validation 被拒；schema 现精确公开 planId/status/nextOperationIndex/operationCount。
+2) delivery capsule output schema 原先没有 integrationProvenance，领域层已有的成功载荷同样
+   会被 SDK 拒；schema 现覆盖 sealed provenance、dedupe、resolution、receipts 与 failure。
+3) MCP change.commit 原先先报 VALIDATION_REQUIRED，遮蔽 REPLAYING integration 的
+   COMPOSITION_INCOMPLETE；session commitEvidenceGate 现首先复用共享
+   assertIntegrationReadyForCommit，不复制第二套 gate。
+4) V2 change store 在 record 文件已 create-only 落盘但 record-head 尚未发布的崩溃窗口，
+   会误报 expected vN / actual vN conflict。NodeChangeStore.write 现只接管 JSON 落盘语义
+   完全相同且身份有效的孤儿 record 并发布 head；不同内容仍 CHANGE_RECORD_CONFLICT，
+   原 bytes/head 不变。比较先按 JSON 序列化正规化，显式 undefined 与落盘省略等价。
+
+RUNNER_CORRECTIONS=
+- 只扫描 record-head 指向且 SHA-256 匹配的 authoritative record，不把未发布孤儿文件
+  当成可观测进度；捕获 REPLAYING 后强制终止子进程并验证 PID 退出。
+- A/B/D 显式选择、A/D identical provenance、B timeline dependency closure、C 排除均从
+  compare/inspect/plan 公共投影取证；observe execute、stale fingerprint、base mismatch、
+  forged replay 等负路径分别走正确 MCP schema/business envelope 通道。
+- source invariants 覆盖 A/B/C/D 全部 change 与精确 v2 capsule 目录；stageProjectMutated
+  来自真实树比较；active lease 扫描排除历史 stale quarantine；错误通道来自真实捕获。
+- stage 策略下尚未 apply 的 wave5_alpha.gal 不应存在于 fixture 磁盘；候选 C 排除改由
+  fresh change.diff 取证，项目零写入仍由随后整树 SHA-256 比较独立证明。
+
+RED_GREEN_EVIDENCE=
+- MCP session schema RED: real surdet_session_describe returned isError=true; GREEN actual MCP
+  structured integration summary visible.
+- MCP capsule schema RED: real surdet_delivery_capsule returned isError=true; GREEN complete
+  integrationProvenance visible.
+- commit gate RED: expected COMPOSITION_INCOMPLETE, got VALIDATION_REQUIRED; GREEN shared gate first.
+- orphan record RED: expected v1/actual v1 CHANGE_RECORD_CONFLICT; GREEN identical JSON record adopted.
+- undefined JSON semantic RED: same record with own latestValidation=undefined still conflicted;
+  GREEN persisted JSON equivalence accepted.
+- divergent orphan countertest: CHANGE_RECORD_CONFLICT; record bytes and authoritative head unchanged.
+
+FOCUSED_AND_FULL_GATES=
+- agent-transaction-recovery.test.ts: 9/9 PASS.
+- session/tools/composition/recovery focused set: 35/35 PASS.
+- @surdet/cli full: 30 files / 232 tests PASS.
+- @surdet/cli typecheck PASS; build PASS; runner node --check PASS.
+- modern/auto 2026-07-28 + legacy/2025 2025-11-25 preflight PASS;
+  26 capabilities, contract 2.0.0, stdout purity/child cleanup/Starter unchanged PASS.
+- verify:all NOT_RERUN: cumulative budget already 4/4 and post-contract aggregate on ccd167f passed.
+
+MANAGER_RECOVERY_DIAGNOSTICS_PRESERVED=
+l4dUlF FAILED 2067 B B4D33357...F26957C; h9XJvj FAILED 2166 B 1E1906B7...4450559;
+wmf6tq FAILED 2344 B EE064451...72281CD; Dxfz4N FAILED 2440 B 78078D7D...63F7D1;
+pEi4Wv FAILED 2364 B 2968C5F3...B70508; yN32S7 FAILED 2520 B BFF1E17E...F652D9;
+zpKVEs FAILED 2594 B A9FE7E57...6D8228; VbiN0q FAILED 2739 B 80CCF25A...640B63;
+Rpx9hW FAILED 3908 B BB07361D...AB93CB; YmkWk0 FAILED 3100 B 8B965976...6BBA5B;
+DTDq1D FAILED 4023 B 0AACD78B...1F0908; all retained, not deleted/overwritten.
+
+PASS_DIAGNOSTIC=
+ROOT=%TEMP%/surdet-agent-candidate-composition-wave5-i6KaNV
+ARTIFACT=diagnostic/evidence.json
+STATUS=PASSED evidenceClass=DIAGNOSTIC
+BYTES=7348
+SHA256=ABE0C462C9BA79F437DD9DD93EF421544022051C080AAEC29B37FE7B7F54A937
+RUN_HEAD=6d3b11ddbcd5d8eb09ea176a1652ba61ffade2c3 (unfrozen diagnostic baseline)
+RUNNER_SHA256=006499FF521C3ECA0A516F7C25DECF6D854727FC3875B918EF92493D453EA1F2
+LAST_PASSED_NODE=fresh-observe-and-disk-equivalence
+FIRST_FAILED_NODE=null
+ALL_18_MILESTONES=PASSED
+ERRORS=[]; childCleanupFailures=[]; activeLeaseDirectories=[]
+stageProjectMutated=false; formalFixtureCommitOccurred=true;
+sourceCapsulesUnchanged=true; sourceChangesUnchanged=true; originalStarterUnchanged=true;
+integrationStatus=READY; validation/simulation/alphaTrace/betaTrace fresh=true.
+
+GIT_BEFORE_FREEZE=
+HEAD=6d3b11ddbcd5d8eb09ea176a1652ba61ffade2c3
+REMOTE_MAIN=31b937638929fa8d09e575b120fd4b4681d9f7d2
+AHEAD_BEHIND=18/0
+TRACKED_SCOPE=runner + session/server/change-store + 3 focused tests + this taskbook
+STAGING=EMPTY
+PUSH=NOT_PERFORMED
+STOP=TASK_8_STEP_5_FREEZE_CODE_EVIDENCE_HEAD
+~~~
+
 ### Task 8 - runner authored, preflight PASSED, DIAGNOSTIC budget exhausted (stopped per rule)
 
 ~~~text
@@ -2779,3 +2924,11 @@ ARTIFACT=task8-post-contract-verify-all.log bytes=90429 sha256=a523b567c13fb089f
 HEAD_AT_GATE=ccd167f fix(cli): expose composition selection contract
 RESULT=exit0; multi-process-change-concurrency 3 passed; all verify:* subgates green
 ~~~
+
+### CURRENT AUTHORITY POINTER — Task 8 manager recovery ready to freeze
+
+The detailed `2026-08-25T05:07Z — Owner-directed manager recovery, crash-window contract,
+and diagnostic PASS` record above is the current authority and supersedes the older Task 8
+failure snapshots that follow it chronologically in this append-only Ledger. The final live
+stop before the next commit is `TASK_8_STEP_5_FREEZE_CODE_EVIDENCE_HEAD`; FORMAL has not run,
+push has not run, external Agent acceptance has not started, and Wave 6 has not started.

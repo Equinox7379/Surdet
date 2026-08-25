@@ -37,7 +37,9 @@ function sha256(bytes) {
 
 function trackedCodeDiffPaths() {
   const raw = execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
-  return raw.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0 && !line.startsWith('??'))
+  // porcelain rows are `XY <path>`; never trim before slicing or the leading path
+  // character is lost (the ackages/... bug). Untracked governance files stay excluded.
+  return raw.split(/\r?\n/).filter((line) => line.trim().length > 0 && !line.startsWith('??'))
     .map((line) => line.slice(3).trim()).sort();
 }
 
@@ -177,6 +179,18 @@ async function callTool(port, name, args = {}) {
   return envelope;
 }
 
+/** Schema-layer rejections never reach the dispatcher: they arrive as plain MCP errors. */
+async function callToolRaw(port, name, args = {}) {
+  return port.client.callTool({ name, arguments: args });
+}
+
+function assertSchemaRejection(response, label) {
+  assert(response?.isError === true, `${label} was not rejected at the tool boundary`);
+  assert(response.structuredContent === undefined, `${label} unexpectedly carried structured content`);
+  const text = response.content?.[0]?.text ?? '';
+  assert(text.includes('Input validation error'), `${label} rejection text missing: ${text.slice(0, 200)}`);
+}
+
 const alphaBlocksA = [
   { kind: 'label', name: 'start' },
   { kind: 'text', speaker: 'lynn', value: 'Alpha route A.' },
@@ -225,6 +239,47 @@ async function sealCandidate(fixture, dataDir, label, ops) {
   }
   assert(errors.protocol.length === 0, `${label} protocol errors: ${errors.protocol.join('; ')}`);
   return { ref: { changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 }, capsule };
+}
+
+async function commitFixtureRevisionBump(fixture, dataDir, label) {
+  const errors = { protocol: [], stderrUnexpected: [], childCleanupFailures: [] };
+  const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'apply', dataDir }));
+  let changeId;
+  try {
+    const begun = resultOf(await callTool(port, 'surdet_change_begin', {
+      intent: `Wave5 isolated revision bump ${label}.`,
+      acceptanceCriteria: ['Commit one valid isolated fixture scene.'],
+      initiator: 'automation',
+    }), `${label} change.begin`);
+    changeId = begun.changeId;
+    resultOf(await callTool(port, 'surdet_scene_create', {
+      operationId: `${label}-scene`,
+      sceneId: `wave5_revision_bump_${label}`,
+      blocks: [
+        { kind: 'label', name: 'start' },
+        { kind: 'text', value: `Revision bump ${label}.` },
+      ],
+    }), `${label} scene.create`);
+    const validation = resultOf(await callTool(port, 'surdet_project_validate'), `${label} validate`);
+    const simulation = resultOf(await callTool(port, 'surdet_project_simulate', {
+      sceneId: `wave5_revision_bump_${label}`,
+    }), `${label} simulate`);
+    const runtime = resultOf(await callTool(port, 'surdet_runtime_run_from', {
+      sceneId: `wave5_revision_bump_${label}`,
+      choices: [],
+      seed: 905,
+    }), `${label} runtime`);
+    resultOf(await callTool(port, 'surdet_change_diff'), `${label} change.diff`);
+    assert(validation.ok === true && simulation.status === 'passed' && runtime.status === 'passed',
+      `${label} fresh evidence did not pass`);
+    const committed = resultOf(await callTool(port, 'surdet_change_commit'), `${label} commit`);
+    assert(committed.status === 'COMMITTED', `${label} did not commit`);
+  } finally {
+    await closePort(port, errors);
+  }
+  assert(errors.protocol.length === 0 && errors.stderrUnexpected.length === 0
+    && errors.childCleanupFailures.length === 0, `${label} port errors: ${JSON.stringify(errors)}`);
+  return { changeId, committed: true };
 }
 
 async function runPreflightLeg({ label, fixture, dataDir, versionNegotiation }) {
@@ -276,8 +331,8 @@ async function runPreflight() {
     const legacyData = path.join(directory, 'legacy-data');
     fs.mkdirSync(modernData, { recursive: true });
     fs.mkdirSync(legacyData, { recursive: true });
-    const modern = await runPreflightLeg({ label: 'modern/auto', fixture: modernFixture, data: modernData, versionNegotiation: { mode: 'auto' } });
-    const legacy = await runPreflightLeg({ label: 'legacy/2025', fixture: legacyFixture, data: legacyData, versionNegotiation: { mode: 'legacy' } });
+    const modern = await runPreflightLeg({ label: 'modern/auto', fixture: modernFixture, dataDir: modernData, versionNegotiation: { mode: 'auto' } });
+    const legacy = await runPreflightLeg({ label: 'legacy/2025', fixture: legacyFixture, dataDir: legacyData, versionNegotiation: { mode: 'legacy' } });
     const starterAfter = hashTree(starterRoot);
     assert(starterBefore.sha256 === starterAfter.sha256, 'original Starter changed during preflight');
     console.log(JSON.stringify({
@@ -337,6 +392,30 @@ function findChangeDirectory(dataDir, changeId) {
   return null;
 }
 
+function hashCandidateSources(dataDir, candidates) {
+  const entries = candidates.map((candidate) => {
+    const changeDirectory = findChangeDirectory(dataDir, candidate.ref.changeId);
+    assert(changeDirectory !== null, `cannot locate source change: ${candidate.ref.changeId}`);
+    const capsuleDirectory = path.join(changeDirectory, 'capsules', candidate.ref.capsuleId);
+    assert(fs.existsSync(capsuleDirectory), `cannot locate source capsule: ${candidate.ref.capsuleId}`);
+    return {
+      changeId: candidate.ref.changeId,
+      capsuleId: candidate.ref.capsuleId,
+      change: hashTree(changeDirectory),
+      capsule: hashTree(capsuleDirectory),
+    };
+  }).sort((left, right) => left.changeId.localeCompare(right.changeId));
+  const changesIdentity = entries.map((entry) =>
+    `${entry.changeId}\0${entry.change.fileCount}\0${entry.change.bytes}\0${entry.change.sha256}`).join('\n');
+  const capsulesIdentity = entries.map((entry) =>
+    `${entry.changeId}\0${entry.capsuleId}\0${entry.capsule.fileCount}\0${entry.capsule.bytes}\0${entry.capsule.sha256}`).join('\n');
+  return {
+    changesSha256: sha256(Buffer.from(changesIdentity, 'utf8')),
+    capsulesSha256: sha256(Buffer.from(capsulesIdentity, 'utf8')),
+    entries,
+  };
+}
+
 /** Hand-write a recognizable v1 (pre-composition) capsule under an existing change. */
 function writeLegacyV1Capsule(dataDir, changeId) {
   const changeDirectory = findChangeDirectory(dataDir, changeId);
@@ -357,7 +436,7 @@ function writeLegacyV1Capsule(dataDir, changeId) {
   return { changeId, capsuleId: 'caps_v1_legacy_audit', artifactSha256: identity.sha256 };
 }
 
-/** Scan every persisted record for an integration mid-replay state. */
+/** Scan authoritative record-head snapshots for an integration mid-replay state. */
 function scanForReplayingRecord(dataDir, planId) {
   const stack = [dataDir];
   while (stack.length > 0) {
@@ -371,29 +450,90 @@ function scanForReplayingRecord(dataDir, planId) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const full = path.join(current, entry.name);
-      const recordPath = path.join(full, 'record.json');
-      if (!fs.existsSync(recordPath)) {
-        stack.push(full);
-        continue;
+      const headPath = path.join(full, 'record-head.json');
+      if (fs.existsSync(headPath)) {
+        try {
+          const head = JSON.parse(fs.readFileSync(headPath, 'utf8'));
+          assert(head?.formatVersion === 2 && Number.isInteger(head.recordVersion) && head.recordVersion >= 0,
+            `invalid record head while scanning replay: ${headPath}`);
+          assert(typeof head.recordSha256 === 'string' && /^[0-9a-f]{64}$/i.test(head.recordSha256),
+            `invalid record head identity while scanning replay: ${headPath}`);
+          const recordPath = path.join(full, 'records', `${String(head.recordVersion).padStart(10, '0')}.json`);
+          const identity = readFileIdentity(recordPath);
+          assert(identity.sha256 === head.recordSha256,
+            `record head identity mismatch while scanning replay: ${recordPath}`);
+          const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+          assert(record.recordVersion === head.recordVersion,
+            `record version mismatch while scanning replay: ${recordPath}`);
+          const integration = record.integration;
+          if (integration?.planId === planId) {
+            return {
+              changeId: entry.name,
+              directory: full,
+              recordVersion: record.recordVersion,
+              status: integration.status,
+              progressIndex: integration.nextOperationIndex ?? 0,
+              summary: { status: integration.status, index: integration.nextOperationIndex },
+            };
+          }
+        } catch {
+          // The head is replaced atomically, but a concurrent read can still observe
+          // a transient sharing violation on Windows. Polling will retry this snapshot.
+        }
       }
-      try {
-        const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
-        const integration = record.integration;
-        if (!integration || integration.planId !== planId) continue;
-        return {
-          changeId: entry.name,
-          directory: full,
-          status: integration.status,
-          progressIndex: integration.nextOperationIndex ?? 0,
-          operationCount: integration.operationCount ?? 0,
-          summary: { status: integration.status, index: integration.nextOperationIndex, count: integration.operationCount },
-        };
-      } catch {
-        continue;
-      }
+      stack.push(full);
     }
   }
   return null;
+}
+
+/** Collect every residual directory under any .locks root inside dataDir. */
+function findActiveLeaseDirectories(dataDir) {
+  const active = [];
+  const stack = [dataDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(current, entry.name);
+      if (entry.name === '.locks') {
+        collectLockResidues(full, active);
+        continue;
+      }
+      stack.push(full);
+    }
+  }
+  return active.sort();
+}
+
+function collectLockResidues(locksRoot, out) {
+  const stack = [locksRoot];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(current, entry.name);
+      if (entry.name === 'changes' || entry.name === 'projects' || entry.name === 'stale') {
+        // stale/ is a quarantine archive proving safe orphan takeover; it is not
+        // an active lease and must never fail the activeLeaseDirectories gate.
+        if (entry.name !== 'stale') stack.push(full);
+        continue;
+      }
+      out.push(full);
+    }
+  }
 }
 
 function differenceFiles(before, after) {
@@ -460,9 +600,16 @@ async function runEvidence(modeName) {
   let candidateA, candidateB, candidateC, candidateD, foreignCandidate;
   let candidatesBefore, candidatesAfter, candidatesFinal;
   let selectionConflict, comparisonStatus, planResult, inspectedPlan;
+  let comparedFingerprint = '';
+  let sceneUnitA, sceneUnitB, sceneUnitC, sceneUnitD, timelineUnitB;
+  let variableUnitA, variableUnitD, identicalGroupAD;
+  let selectedCandidateUnitIds = [];
+  let closureEvidence = null;
+  let negativeEvidence = null;
   let integrationChangeId, interruptedProgressIndex, integrationResume;
   let diffAfterReady, validationAfterReady, simulationAfterReady, runtimeAlpha, runtimeBeta, traceAlpha, traceBeta;
   let stageCapsule, applyCommitted, fixtureAfterApply;
+  let stageProjectMutated = true; // proven by comparison below; starts unknown-true
 
   try {
     await node('seal-four-candidates', async () => {
@@ -479,7 +626,6 @@ async function runEvidence(modeName) {
       candidateB = await sealCandidate(fixture, dataDir, 'beta-b', betaOps);
       candidateC = await sealCandidate(fixture, dataDir, 'alpha-c', alphaOpsC);
       candidateD = await sealCandidate(fixture, dataDir, 'alpha-d', alphaOpsA);
-      candidatesBefore = hashTree(findChangeDirectory(dataDir, candidateA.ref.changeId));
     });
 
     await node('v1-capsule-audit-only-not-migrated', async () => {
@@ -493,6 +639,9 @@ async function runEvidence(modeName) {
       } finally {
         await closePort(port, errors);
       }
+      // Baseline only after the deliberate legacy capsule fixture has been written.
+      // Every A/B/C/D source change and v2 capsule is covered, not only candidate A.
+      candidatesBefore = hashCandidateSources(dataDir, [candidateA, candidateB, candidateC, candidateD]);
     });
 
     await node('compare-abcd-conflicts-and-identical', async () => {
@@ -502,16 +651,46 @@ async function runEvidence(modeName) {
           candidateRefs: [candidateA.ref, candidateB.ref, candidateC.ref, candidateD.ref],
         }), 'composition.compare abcd');
         comparisonStatus = compared.status;
+        comparedFingerprint = compared.comparisonFingerprint;
+        assert(typeof comparedFingerprint === 'string' && comparedFingerprint.length > 0, 'missing comparisonFingerprint');
         const conflicts = compared.conflicts ?? [];
         selectionConflict = conflicts.find((conflict) => conflict.severity === 'selection-required');
         assert(selectionConflict !== undefined, 'expected selection-required conflict between A and C');
         assert((selectionConflict.unitIds ?? []).length >= 2, 'selection conflict should cover both alpha units');
         const identical = compared.identicalGroups ?? [];
         assert(identical.length >= 1, 'expected an identical group covering A and D');
-        const manifests = (compared.candidates ?? []).map((candidate) => candidate?.composition?.manifest).filter(Boolean);
-        const timelineEdge = manifests.some((manifest) => (manifest.operations ?? []).some((operation) =>
-          (operation.requiredObjects ?? []).some((required) => String(required.objectRef ?? '').startsWith('timeline:'))));
-        assert(timelineEdge, 'expected B scene to require the beta_opening timeline object');
+
+        // Explicit public-closure evidence via compared.units + compared.dependencyEdges.
+        const units = compared.units ?? [];
+        sceneUnitB = units.find((unit) => unit.primaryObject === 'scene:wave5_beta'
+          && unit.candidateId === `cand-${candidateB.ref.changeId}`);
+        timelineUnitB = units.find((unit) => unit.primaryObject === 'timeline:beta_opening'
+          && unit.candidateId === `cand-${candidateB.ref.changeId}`);
+        sceneUnitA = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
+          && unit.candidateId === `cand-${candidateA.ref.changeId}`);
+        sceneUnitC = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
+          && unit.candidateId === `cand-${candidateC.ref.changeId}`);
+        sceneUnitD = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
+          && unit.candidateId === `cand-${candidateD.ref.changeId}`);
+        variableUnitA = units.find((unit) => unit.primaryObject === 'variable:flag.alpha'
+          && unit.candidateId === `cand-${candidateA.ref.changeId}`);
+        variableUnitD = units.find((unit) => unit.primaryObject === 'variable:flag.alpha'
+          && unit.candidateId === `cand-${candidateD.ref.changeId}`);
+        assert(sceneUnitB && timelineUnitB && sceneUnitA && sceneUnitC && sceneUnitD
+          && variableUnitA && variableUnitD, 'expected per-candidate units in compare result');
+        identicalGroupAD = identical.find((group) =>
+          (group.unitIds ?? []).includes(variableUnitA.unitId)
+          && (group.unitIds ?? []).includes(variableUnitD.unitId));
+        assert(identicalGroupAD !== undefined, 'expected A/D variable identical group');
+        selectedCandidateUnitIds = units
+          .filter((unit) => unit.candidateId === `cand-${candidateA.ref.changeId}`
+            || unit.candidateId === `cand-${candidateD.ref.changeId}`
+            || (unit.candidateId === `cand-${candidateB.ref.changeId}` && unit.unitId !== timelineUnitB.unitId))
+          .map((unit) => unit.unitId)
+          .sort();
+        const edges = compared.dependencyEdges ?? [];
+        assert(edges.some((edge) => edge.fromUnitId === sceneUnitB.unitId && edge.toUnitId === timelineUnitB.unitId),
+          'expected dependencyEdge B-scene -> B-timeline');
       } finally {
         await closePort(port, errors);
       }
@@ -522,6 +701,8 @@ async function runEvidence(modeName) {
       try {
         expectedFailure(await callTool(port, 'surdet_composition_plan', {
           candidateRefs: [candidateA.ref, candidateB.ref, candidateC.ref, candidateD.ref],
+          comparisonFingerprint: comparedFingerprint,
+          selectedUnitIds: [sceneUnitA.unitId, sceneUnitB.unitId, sceneUnitC.unitId],
           reason: 'unresolved conflict attempt',
         }), ['COMPOSITION_CONFLICT_UNRESOLVED'], 'plan without resolutions');
       } finally {
@@ -542,11 +723,11 @@ async function runEvidence(modeName) {
     });
 
     await node('negative-cross-project-candidate', async () => {
+      // Foreign projectRoot but the SAME dataDir namespace: the source change stays
+      // visible to the store while its project identity differs.
       const foreignFixture = path.join(runDirectory, 'fixture-foreign');
-      const foreignData = path.join(runDirectory, 'agent-data-foreign');
       copyStarter(foreignFixture);
-      fs.mkdirSync(foreignData, { recursive: true });
-      foreignCandidate = await sealCandidate(foreignFixture, foreignData, 'foreign-x', [
+      foreignCandidate = await sealCandidate(foreignFixture, dataDir, 'foreign-x', [
         { tool: 'surdet_scene_create', args: { sceneId: 'wave5_foreign', blocks: [{ kind: 'label', name: 'start' }] } },
       ]);
       const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', dataDir }));
@@ -559,16 +740,82 @@ async function runEvidence(modeName) {
       }
     });
 
+    await node('negative-observe-policy-execute-blocked', async () => {
+      const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'observe', dataDir }));
+      try {
+        const names = await listTools(port);
+        assert(!names.includes('surdet_composition_execute'), 'observe policy exposed composition.execute');
+      } finally {
+        await closePort(port, errors);
+      }
+    });
+
+    await node('negative-stale-fingerprint-and-base-revision-mismatch', async () => {
+      // A stale reviewed fingerprint is rejected before a plan can be created.
+      const mainPort = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', dataDir }));
+      try {
+        expectedFailure(await callTool(mainPort, 'surdet_composition_plan', {
+          candidateRefs: [candidateA.ref, candidateB.ref, candidateC.ref, candidateD.ref],
+          comparisonFingerprint: '0'.repeat(64),
+          selectedUnitIds: [sceneUnitA.unitId],
+          reason: 'stale reviewed comparison attempt',
+        }), ['COMPOSITION_PLAN_STALE'], 'stale comparison fingerprint');
+      } finally {
+        await closePort(mainPort, errors);
+      }
+
+      // Base-revision evidence uses a separate disposable project. Produce one
+      // candidate, commit an unrelated valid revision bump through public MCP, then
+      // seal another candidate and compare the two generations.
+      const baseFixture = path.join(runDirectory, 'fixture-base-mismatch');
+      copyStarter(baseFixture);
+      const oldCandidate = await sealCandidate(baseFixture, dataDir, 'base-old', [
+        { tool: 'surdet_scene_create', args: {
+          sceneId: 'wave5_base_old',
+          blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', value: 'Old base candidate.' }],
+        } },
+      ]);
+      await commitFixtureRevisionBump(baseFixture, dataDir, 'base_mismatch');
+      const newCandidate = await sealCandidate(baseFixture, dataDir, 'base-new', [
+        { tool: 'surdet_scene_create', args: {
+          sceneId: 'wave5_base_new',
+          blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', value: 'New base candidate.' }],
+        } },
+      ]);
+      const basePort = await awaitPort(connectPort({ projectRoot: baseFixture, policy: 'observe', dataDir }));
+      try {
+        const compared = resultOf(await callTool(basePort, 'surdet_composition_compare', {
+          candidateRefs: [oldCandidate.ref, newCandidate.ref],
+        }), 'base revision mismatch compare');
+        const mismatch = (compared.conflicts ?? []).find((conflict) => conflict.code === 'CANDIDATE_BASE_MISMATCH');
+        assert(compared.status === 'blocked' && mismatch !== undefined,
+          `base mismatch did not block comparison: ${JSON.stringify(compared.conflicts ?? [])}`);
+        negativeEvidence = {
+          stalePlanCode: 'COMPOSITION_PLAN_STALE',
+          baseRevisionMismatchCode: mismatch.code,
+          observeExecuteExposed: false,
+        };
+      } finally {
+        await closePort(basePort, errors);
+      }
+    });
+
     await node('plan-resolved-and-inspect-fresh-process', async () => {
-      const chosenUnitId = (selectionConflict.unitIds ?? [])[0];
+      // Explicit selection contract per the taskbook: select every A/D unit and the B
+      // scene, but deliberately omit the B timeline. Closure must add that timeline;
+      // conflict resolution must exclude C/D's conflicting scene while the identical
+      // A/D variable group is deduplicated with both provenance identities retained.
+      const selectedUnitIds = selectedCandidateUnitIds;
       const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', dataDir }));
       try {
         const planned = resultOf(await callTool(port, 'surdet_composition_plan', {
           candidateRefs: [candidateA.ref, candidateB.ref, candidateC.ref, candidateD.ref],
+          comparisonFingerprint: comparedFingerprint,
+          selectedUnitIds,
           conflictResolutions: [{
             conflictId: selectionConflict.conflictId,
             resolution: 'choose-unit',
-            chosenUnitId,
+            chosenUnitId: sceneUnitA.unitId,
             actor: 'human',
           }],
           reason: 'wave5 aggregate evidence',
@@ -586,6 +833,39 @@ async function runEvidence(modeName) {
         }), 'composition.inspect fresh process');
         assert(inspected.plan?.planId === planResult.planId, 'inspected plan id mismatch');
         inspectedPlan = inspected.plan;
+        const selected = inspectedPlan.selectedUnitIds ?? [];
+        const implicit = inspectedPlan.implicitInclusions ?? [];
+        assert(selected.includes(sceneUnitB.unitId), 'B scene unit must be explicitly selected');
+        assert(!selected.includes(timelineUnitB.unitId), 'B timeline must NOT be directly selected');
+        assert(implicit.includes(timelineUnitB.unitId), 'B timeline must be implicitly included by closure');
+        const replays = inspectedPlan.replayOperations ?? [];
+        const timelineIndex = replays.findIndex((operation) => operation.sourceUnitId === timelineUnitB.unitId);
+        const sceneIndex = replays.findIndex((operation) => operation.sourceUnitId === sceneUnitB.unitId);
+        assert(timelineIndex >= 0 && sceneIndex >= 0, 'both B replay operations missing');
+        assert(timelineIndex < sceneIndex, 'timeline must replay before the dependent scene');
+        assert(selectedCandidateUnitIds.every((unitId) => selected.includes(unitId)), 'A/B/D explicit selections were not preserved');
+        assert(selected.includes(sceneUnitA.unitId) && selected.includes(sceneUnitD.unitId), 'A and D scene units must be explicitly selected');
+        assert(selected.includes(variableUnitA.unitId) && selected.includes(variableUnitD.unitId), 'A and D variable units must be explicitly selected');
+        const dedupeGroup = (inspectedPlan.deduplicatedUnits ?? [])
+          .find((group) => group.groupId === identicalGroupAD.groupId);
+        assert(dedupeGroup !== undefined, 'expected A/D variable dedupe provenance');
+        assert(dedupeGroup.provenanceUnitIds?.includes(variableUnitA.unitId)
+          && dedupeGroup.provenanceUnitIds?.includes(variableUnitD.unitId),
+        'dedupe provenance must retain both A and D variable units');
+        assert([variableUnitA.unitId, variableUnitD.unitId].includes(dedupeGroup.retainedUnitId),
+          'dedupe retained unit must come from A or D');
+        assert(replays.filter((operation) =>
+          operation.sourceUnitId === variableUnitA.unitId || operation.sourceUnitId === variableUnitD.unitId).length === 1,
+        'A/D identical variable must replay exactly once');
+        assert(replays.every((operation) => operation.sourceUnitId !== sceneUnitC.unitId
+          && operation.sourceUnitId !== sceneUnitD.unitId), 'conflict-rejected C/D scene leaked into replays');
+        closureEvidence = {
+          selectedUnitIds: selected,
+          implicitInclusions: implicit,
+          timelineReplayIndex: timelineIndex,
+          sceneReplayIndex: sceneIndex,
+          deduplicatedUnits: [dedupeGroup],
+        };
       } finally {
         await closePort(freshPort, errors);
       }
@@ -594,12 +874,13 @@ async function runEvidence(modeName) {
     await node('negative-forged-replay-schema-rejected', async () => {
       const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', dataDir }));
       try {
-        expectedFailure(await callTool(port, 'surdet_composition_execute', {
+        const response = await callToolRaw(port, 'surdet_composition_execute', {
           planId: planResult.planId,
           artifactSha256: planResult.artifactSha256,
           executeOperationId: 'exec-wave5-1',
           replayOperations: [{ forge: true }],
-        }), ['INVALID_REQUEST'], 'forged replayOperations input');
+        });
+        assertSchemaRejection(response, 'forged replayOperations input');
       } finally {
         await closePort(port, errors);
       }
@@ -621,27 +902,59 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       assert(found !== null && found.status === 'REPLAYING', 'no REPLAYING integration record appeared before timeout');
       integrationChangeId = found.changeId;
       interruptedProgressIndex = found.progressIndex;
+      const childPid = port.transport.pid;
+      assert(typeof childPid === 'number', 'integration child pid unavailable for deterministic interrupt');
+      try {
+        process.kill(childPid, 'SIGTERM');
+      } catch {
+        // If execution raced to process exit, the persisted state check below will
+        // reject READY and keep this from becoming false interruption evidence.
+      }
+      await pending;
       try {
         await port.transport.close();
       } catch {
-        // child already gone is fine here
+        // A force-terminated transport may already be closed.
       }
       try {
         await port.client.close();
       } catch {
-        // best effort on a killed child
+        // A force-terminated client may already be closed.
       }
-      await pending;
+      let childAlive = true;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch {
+          childAlive = false;
+          break;
+        }
+      }
+      assert(childAlive === false, `integration child pid remained alive: ${childPid}`);
       const afterKill = scanForReplayingRecord(dataDir, planResult.planId);
       assert(afterKill !== null, 'integration record missing after interrupt');
       integrationChangeId = afterKill.changeId;
-      assert(afterKill.status === 'REPLAYING' && afterKill.progressIndex >= 1 && afterKill.progressIndex < afterKill.operationCount,
+      const operationCount = inspectedPlan.replayOperations?.length ?? 0;
+      assert(afterKill.status === 'REPLAYING' && afterKill.progressIndex >= 1 && afterKill.progressIndex < operationCount,
         `interrupt landed outside the persisted boundary: ${JSON.stringify(afterKill.summary)}`);
     });
 
     await node('negative-commit-gate-replaying', async () => {
-      const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', resumeChangeId: integrationChangeId, dataDir }));
+      const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'apply', resumeChangeId: integrationChangeId, dataDir }));
       try {
+        const beforeRecovery = resultOf(await callTool(port, 'surdet_session_describe'), 'describe interrupted lease');
+        const retryAfterMs = beforeRecovery.lease?.change?.retryAfterMs ?? 0;
+        assert(beforeRecovery.activeChange?.integration?.status === 'REPLAYING',
+          'interrupted change was not REPLAYING before lease recovery');
+        assert(beforeRecovery.lease?.change?.manualRecoveryRequired === false,
+          'interrupted change lease unexpectedly requires manual recovery');
+        if (retryAfterMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryAfterMs + 100));
+        }
+        const recoverable = resultOf(await callTool(port, 'surdet_session_describe'), 'describe recoverable lease');
+        assert(recoverable.lease?.change?.state === 'stale-candidate' || recoverable.lease?.change?.state === 'free',
+          `interrupted lease did not become recoverable: ${JSON.stringify(recoverable.lease?.change)}`);
         expectedFailure(await callTool(port, 'surdet_change_commit'), ['COMPOSITION_INCOMPLETE'], 'commit during REPLAYING');
       } finally {
         await closePort(port, errors);
@@ -655,7 +968,7 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
           planId: planResult.planId,
           artifactSha256: planResult.artifactSha256,
           executeOperationId: 'exec-wave5-wrong',
-        }), ['INVALID_REQUEST', 'OPERATION_IDENTITY_MISMATCH'], 'resume with wrong operation id');
+        }), ['COMPOSITION_PLAN_INVALID'], 'resume with wrong operation id');
       } finally {
         await closePort(port, errors);
       }
@@ -701,15 +1014,22 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
         assert(provenance.planId === planResult.planId, 'provenance planId mismatch');
         assert(provenance.status === 'READY', 'provenance status not READY');
         assert(stageCapsule.projectMutation.occurred === false, 'stage capsule reported mutation');
-        const alphaPath = path.join(fixture, 'content', 'scenario', 'wave5_alpha.gal');
-        assert(!fs.readFileSync(alphaPath, 'utf8').includes('Alpha route C.'), 'rejected candidate C text leaked into fixture');
-        candidatesAfter = hashTree(findChangeDirectory(dataDir, candidateA.ref.changeId));
+        const stagedDiffText = JSON.stringify(diffAfterReady);
+        assert(stagedDiffText.includes('Alpha route A.'), 'selected candidate A text missing from staged diff');
+        assert(!stagedDiffText.includes('Alpha route C.'), 'rejected candidate C text leaked into staged diff');
+        candidatesAfter = hashCandidateSources(dataDir, [candidateA, candidateB, candidateC, candidateD]);
       } finally {
         await closePort(port, errors);
       }
     });
 
     await node('apply-policy-resume-and-explicit-commit', async () => {
+      // stageProjectMutated must come from a real comparison, never a hard-coded false:
+      // the integration replay lives inside the change store, so the fixture tree must
+      // still equal the sealed snapshot before apply commits it to disk.
+      const treeBeforeApply = hashTree(fixture);
+      stageProjectMutated = treeBeforeApply.sha256 !== fixtureSealed.sha256;
+      assert(stageProjectMutated === false, `stage policy mutated the project before apply: ${treeBeforeApply.sha256}`);
       const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'apply', resumeChangeId: integrationChangeId, dataDir }));
       try {
         const validation = resultOf(await callTool(port, 'surdet_project_validate'), 'apply validate');
@@ -742,24 +1062,47 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       const changedInDiff = new Set(diffAfterReady.files.map((file) => file.path));
       assert(setsEqual(changedOnDisk, changedInDiff),
         `disk mutation != integration diff: disk=[${[...changedOnDisk]}] diff=[${[...changedInDiff]}]`);
-      candidatesFinal = hashTree(findChangeDirectory(dataDir, candidateA.ref.changeId));
+      candidatesFinal = hashCandidateSources(dataDir, [candidateA, candidateB, candidateC, candidateD]);
       const starterAfter = hashTree(starterRoot);
       assert(starterBefore.sha256 === starterAfter.sha256, 'original Starter changed');
     });
+
+    // Every port is closed by now: sweep the namespace for residual lease directories.
+    const activeLeaseDirectories = findActiveLeaseDirectories(dataDir);
+    assert(activeLeaseDirectories.length === 0, `residual lease directories: ${JSON.stringify(activeLeaseDirectories)}`);
+    assert(errors.protocol.length === 0, `protocol errors: ${JSON.stringify(errors.protocol)}`);
+    assert(errors.stderrUnexpected.length === 0, `unexpected stderr: ${JSON.stringify(errors.stderrUnexpected)}`);
+    assert(errors.childCleanupFailures.length === 0, `child cleanup failures: ${JSON.stringify(errors.childCleanupFailures)}`);
+    assert(candidatesBefore.capsulesSha256 === candidatesAfter.capsulesSha256
+      && candidatesBefore.capsulesSha256 === candidatesFinal.capsulesSha256,
+    'source capsule identities changed during composition');
+    assert(candidatesBefore.changesSha256 === candidatesAfter.changesSha256
+      && candidatesBefore.changesSha256 === candidatesFinal.changesSha256,
+    'source change identities changed during composition');
 
     const payload = {
       schemaVersion: '1.0.0',
       evidenceClass,
       status: 'PASSED',
       mode: modeName,
+      runHead,
       gitHead: runHead,
       runnerSha256,
       trackedCodeDiffPaths: trackedDiff,
-      stageProjectMutated: false,
+      errors: [],
+      errorChannels: errors,
+      childCleanupFailures: [],
+      activeLeaseDirectories,
+      stageProjectMutated,
       formalFixtureCommitOccurred: applyCommitted?.status === 'COMMITTED',
       formalFixtureMutationMatchesIntegrationDiff: true,
-      sourceCapsulesUnchanged: candidatesBefore.sha256 === candidatesFinal.sha256,
-      sourceChangesUnchanged: candidatesBefore.fileCount === candidatesFinal.fileCount,
+      sourceCapsulesUnchanged: candidatesBefore.capsulesSha256 === candidatesFinal.capsulesSha256,
+      sourceChangesUnchanged: candidatesBefore.changesSha256 === candidatesFinal.changesSha256,
+      sourceIdentity: {
+        before: { capsulesSha256: candidatesBefore.capsulesSha256, changesSha256: candidatesBefore.changesSha256 },
+        afterStage: { capsulesSha256: candidatesAfter.capsulesSha256, changesSha256: candidatesAfter.changesSha256 },
+        final: { capsulesSha256: candidatesFinal.capsulesSha256, changesSha256: candidatesFinal.changesSha256 },
+      },
       originalStarterUnchanged: true,
       integrationStatus: integrationResume?.status ?? 'UNKNOWN',
       integrationChangeId,
@@ -770,6 +1113,8 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       comparisonStatus,
       planId: planResult.planId,
       interruptedAtProgressIndex: interruptedProgressIndex,
+      closureEvidence,
+      negativeEvidence,
       resumed: integrationResume,
       candidates: {
         a: candidateA.ref, b: candidateB.ref, c: candidateC.ref, d: candidateD.ref,
@@ -785,7 +1130,6 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       diffFiles: diffAfterReady.files.map((file) => file.path),
       fixtures: { sealedTree: fixtureSealed.sha256, appliedTree: fixtureAfterApply.sha256 },
       starterTree: { sha256: starterBefore.sha256 },
-      errors,
       milestones,
       lastPassedNode,
       firstFailedNode,
@@ -799,14 +1143,16 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       evidenceClass,
       status: 'FAILED',
       mode: modeName,
+      runHead,
       gitHead: runHead,
       runnerSha256,
+      activeLeaseDirectories: findActiveLeaseDirectories(dataDir),
       trackedCodeDiffPaths: trackedCodeDiffPaths(),
       lastPassedNode,
       firstFailedNode: firstFailedNode ?? currentNode,
       failure: String(error).slice(0, 2000),
       integrationChangeId: integrationChangeId ?? null,
-      errors,
+      errorChannels: errors,
       milestones,
       nextAllowedAction: evidenceClass === 'FORMAL' ? 'STOP_NO_RERUN' : 'FIX_AND_USE_NEXT_DIAGNOSTIC',
       notRerun: true,

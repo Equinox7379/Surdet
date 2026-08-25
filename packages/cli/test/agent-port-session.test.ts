@@ -162,6 +162,41 @@ describe('Surdet Agent Port session and policy contract', () => {
     await session.close();
   });
 
+  it('reports the integration commit gate before freshness gates', async () => {
+    const root = makeProject('integration-commit-gate');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+      const record = await leasedStore.read(changeId);
+      if (record === null) throw new Error(`missing change ${changeId}`);
+      await leasedStore.write({
+        ...record,
+        recordVersion: record.recordVersion + 1,
+        integration: {
+          planId: 'pln_commit_gate_probe',
+          planFingerprint: 'b'.repeat(64),
+          executeOperationId: 'exec-commit-gate-probe',
+          sourceCapsules: [],
+          includedUnitIds: [],
+          deduplicatedUnits: [],
+          conflictResolutions: [],
+          status: 'REPLAYING',
+          nextOperationIndex: 1,
+          replayedOperations: [],
+        },
+      }, {
+        expectedRecordVersion: record.recordVersion,
+        expectedStatus: record.status,
+      });
+    });
+
+    expectFailure(await session.invoke('change.commit', {}), 'COMPOSITION_INCOMPLETE');
+    await session.close();
+  });
+
   it('rejects resume from another project identity', async () => {
     const rootA = makeProject('owner-a');
     const rootB = makeProject('owner-b');

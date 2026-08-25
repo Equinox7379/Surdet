@@ -4,6 +4,7 @@ import {
   AUTHORING_CAPABILITY_REGISTRY,
   AUTHORING_CONTRACT_VERSION,
   AuthoringOperationError,
+  assertIntegrationReadyForCommit,
   createFailureEnvelope,
   createSuccessEnvelope,
   evidenceFreshness,
@@ -282,6 +283,7 @@ export class AgentPortSession {
   private async commitEvidenceGate(): Promise<void> {
     const record = await this.activeRecord();
     if (record === undefined) throw stateBlocked('change.commit');
+    assertIntegrationReadyForCommit(record);
     if (record.latestValidation === undefined) throw new AuthoringOperationError('VALIDATION_REQUIRED', '提交前缺少校验证据');
     if (record.latestValidation.workingRevision !== record.workingRevision) {
       throw new AuthoringOperationError('VALIDATION_STALE', '提交前校验证据不是当前 workingRevision');
