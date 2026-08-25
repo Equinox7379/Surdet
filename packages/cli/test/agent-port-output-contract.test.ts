@@ -182,3 +182,96 @@ describe('Agent Port output-schema conformance', () => {
     expect(mismatches).toEqual([]);
   }, 30000);
 });
+
+describe('Wave 5 composition output-schema conformance', () => {
+  afterEach(() => {
+    delete process.env['SURDET_AGENT_DATA_DIR'];
+    for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('validates real dispatcher results for all four composition capabilities', async () => {
+    const root = makeProject();
+    const service = new AuthoringService();
+
+    // 封存两个真实 capsule（复用 stage 会话全证据链）。
+    const seal = async (name: string, run: (changeId: string) => Promise<void>): Promise<{ changeId: string; capsuleId: string; artifactSha256: string }> => {
+      const begun = await dispatchAuthoringCapability(context(root, 'stage'), 'change.begin', {
+        intent: `wave5 contract ${name}`, initiator: 'external-agent',
+      }, service);
+      const changeId = (begun.value.result as { changeId: string }).changeId;
+      await run(changeId);
+      const working = context(root, 'stage', changeId);
+      await dispatchAuthoringCapability(working, 'project.validate', {}, service);
+      await dispatchAuthoringCapability(working, 'project.simulate', {}, service);
+      await dispatchAuthoringCapability(working, 'runtime.run-from', { sceneId: 'start', choices: [] }, service);
+      await dispatchAuthoringCapability(working, 'change.diff', {}, service);
+      const { generateDeliveryCapsule } = await import('../src/agent-port/delivery-capsule.js');
+      const { openAgentPortSession } = await import('../src/agent-port/session.js');
+      const resumed = await openAgentPortSession({ projectRoot: root, policy: 'stage', resumeChangeId: changeId });
+      try {
+        const capsule = await generateDeliveryCapsule(resumed);
+        return { changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
+      } finally {
+        await resumed.close();
+      }
+    };
+
+    const first = await seal('a', async (changeId) => {
+      await dispatchAuthoringCapability(context(root, 'stage', changeId), 'scene.create',
+        { operationId: 'op-contract-cmp-alpha', sceneId: 'alpha' }, service);
+    });
+    void first;
+    const second = await seal('b', async (changeId) => {
+      await dispatchAuthoringCapability(context(root, 'stage', changeId), 'variable.ensure',
+        { operationId: 'op-contract-cmp-flag', name: 'flag.contract', type: 'number', initial: 0 }, service);
+    });
+    const candidateRefs = [first, second].map((ref) => ({
+      changeId: ref.changeId, capsuleId: ref.capsuleId, artifactSha256: ref.artifactSha256,
+    }));
+
+    const mismatches: string[] = [];
+    const scan = async (capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<unknown> => {
+      const dispatched = await dispatchAuthoringCapability(context(root, 'observe'), capability, input, service);
+      const result = dispatched.value.result;
+      const checked = await standardSchemaFromJson(getCapabilityDefinition(capability).outputSchema)['~standard'].validate(result);
+      if (checked.issues !== undefined) {
+        mismatches.push(`${capability}: ${JSON.stringify(checked.issues)}`);
+      }
+      return result;
+    };
+
+    await scan('composition.compare', { candidateRefs });
+    const planned = await scan('composition.plan', { candidateRefs, unitChoices: [], reason: 'contract scan' }) as {
+      planId: string; artifactSha256: string; dryRunStatus: string;
+    };
+    expect(planned.dryRunStatus).toBe('passed');
+    await scan('composition.inspect', { planId: planned.planId, artifactSha256: planned.artifactSha256 });
+    const executed = await scan('composition.execute', {
+      planId: planned.planId,
+      artifactSha256: planned.artifactSha256,
+      executeOperationId: 'exec-contract-1',
+    }) as { integrationChangeId: string; status: string };
+    expect(executed.status).toBe('READY');
+
+    // annotations 公式断言。
+    const { projectCapabilityTool } = await import('../src/agent-port/tool-projection.js');
+    const { AUTHORING_CAPABILITY_REGISTRY, nativeCapabilityToMcpTool } = await import('@surdet/authoring');
+    for (const id of ['composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute'] as const) {
+      const definition = AUTHORING_CAPABILITY_REGISTRY.find((item) => item.id === id)!;
+      const tool = projectCapabilityTool(definition);
+      expect(tool.name).toBe(nativeCapabilityToMcpTool(id));
+      const readOnly = tool.annotations.readOnlyHint;
+      if (id === 'composition.plan' || id === 'composition.execute') {
+        expect(readOnly, id).toBe(false);
+        expect(tool.annotations.destructiveHint, id).toBe(false);
+      } else {
+        expect(readOnly, id).toBe(true);
+      }
+      if (id === 'composition.execute') {
+        expect(tool.annotations.idempotentHint, id).toBe(true);
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  }, 30000);
+});

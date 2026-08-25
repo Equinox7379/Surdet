@@ -466,6 +466,7 @@ const capabilitySummarySchema = strictObject({
   title: stringSchema,
   purpose: stringSchema,
   minimumPolicy: { enum: ['observe', 'stage', 'apply'] },
+  composable: { type: 'boolean' },
   inputSchema: jsonObjectSchema,
   outputSchema: jsonObjectSchema,
   sideEffects: stringArraySchema,
@@ -476,10 +477,73 @@ const capabilitySummarySchema = strictObject({
   minimalExample: strictObject({ input: jsonObjectSchema, expectedResultShape: jsonObjectSchema }, ['input', 'expectedResultShape']),
 }, [
   'id', 'mcpTool', 'title', 'purpose', 'minimumPolicy', 'inputSchema', 'outputSchema', 'sideEffects',
-  'idempotency', 'preconditions', 'possibleErrors', 'repairRecipes', 'minimalExample',
+  'idempotency', 'composable', 'preconditions', 'possibleErrors', 'repairRecipes', 'minimalExample',
 ]);
 
 const definitions = {
+  compositionCompare: {
+    inputSchema: strictObject({
+      candidateRefs: { ...arrayOf(strictObject({
+        changeId: stringSchema,
+        capsuleId: stringSchema,
+        artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
+    }, ['candidateRefs']),
+    outputSchema: strictObject({
+      comparisonFingerprint: stringSchema,
+      status: { enum: ['composable', 'review-only', 'blocked'] },
+      candidates: arrayOf(jsonObjectSchema),
+      identicalGroups: arrayOf(jsonObjectSchema),
+      conflicts: arrayOf(jsonObjectSchema),
+    }, ['comparisonFingerprint', 'status', 'candidates', 'identicalGroups', 'conflicts']),
+    example: { input: {}, expectedResultShape: { comparisonFingerprint: 'cmp_...', status: 'composable', candidates: [], identicalGroups: [], conflicts: [] } },
+  },
+  compositionPlan: {
+    inputSchema: strictObject({
+      candidateRefs: { ...arrayOf(strictObject({
+        changeId: stringSchema,
+        capsuleId: stringSchema,
+        artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
+      unitChoices: arrayOf(strictObject({
+        conflictId: stringSchema,
+        mode: { enum: ['choose', 'regenerate'] },
+        unitId: stringSchema,
+      }, ['conflictId', 'mode'])),
+      reason: { type: 'string', maxLength: 500 },
+    }, ['candidateRefs']),
+    outputSchema: strictObject({
+      planId: stringSchema,
+      planFingerprint: stringSchema,
+      artifactSha256: stringSchema,
+      dryRunStatus: { enum: ['passed', 'failed'] },
+    }, ['planId', 'planFingerprint', 'artifactSha256', 'dryRunStatus']),
+    example: { input: {}, expectedResultShape: { planId: 'pln_...', planFingerprint: '...', artifactSha256: '...', dryRunStatus: 'passed' } },
+  },
+  compositionInspect: {
+    inputSchema: strictObject({
+      planId: stringSchema,
+      artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    }, ['planId', 'artifactSha256']),
+    outputSchema: strictObject({
+      plan: jsonObjectSchema,
+    }, ['plan']),
+    example: { input: {}, expectedResultShape: { plan: {} } },
+  },
+  compositionExecute: {
+    inputSchema: strictObject({
+      planId: stringSchema,
+      artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      executeOperationId: stringSchema,
+    }, ['planId', 'artifactSha256', 'executeOperationId']),
+    outputSchema: strictObject({
+      integrationChangeId: stringSchema,
+      status: { enum: ['REPLAYING', 'READY', 'FAILED'] },
+      nextOperationIndex: integerSchema,
+      operationCount: integerSchema,
+    }, ['integrationChangeId', 'status', 'nextOperationIndex', 'operationCount']),
+    example: { input: {}, expectedResultShape: { integrationChangeId: 'chg_...', status: 'READY', nextOperationIndex: 3, operationCount: 3 } },
+  },
   describe: {
     inputSchema: emptyInputSchema,
     outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf(capabilitySummarySchema) }, ['contractVersion', 'capabilities']),
@@ -626,6 +690,10 @@ export const AUTHORING_CAPABILITY_IDS = [
   'change.rollback',
   'change.recovery.inspect',
   'change.recovery.execute',
+  'composition.compare',
+  'composition.plan',
+  'composition.inspect',
+  'composition.execute',
 ] as const;
 
 export type AuthoringCapabilityId = (typeof AUTHORING_CAPABILITY_IDS)[number];
@@ -637,38 +705,50 @@ type DefinitionMetadata = {
   readonly minimumPolicy: AutonomyPolicy;
   readonly sideEffects: readonly SideEffectClass[];
   readonly idempotency: IdempotencyClass;
+  /** Wave 5：true 仅限八项内容 mutation；其余（含 composition.*）必须 false。 */
+  readonly composable: boolean;
   readonly preconditions: readonly string[];
   readonly possibleErrors: readonly string[];
   readonly repairRecipes: readonly string[];
 };
+
+/** 八项内容 mutation 白名单：composable=true 的唯一合法集合。 */
+export const CONTENT_MUTATION_CAPABILITY_IDS = new Set<string>([
+  'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
+  'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
+]);
 
 const commonErrors = ['INVALID_REQUEST', 'PROJECT_INVALID', 'PROJECT_NOT_FOUND', 'POLICY_BLOCKED'] as const;
 const readRepair = ['inspect the returned object or project facts before retrying'] as const;
 const mutateRepair = ['inspect current object fingerprints, repair the request, then retry'] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
-  'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
-  'project.inspect': { title: 'Inspect project', purpose: 'Read the canonical project object and revision view.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
-  'project.assets': { title: 'Inspect project assets', purpose: 'Read the shared background, portrait, and avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
-  'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
-  'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
-  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
-  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
-  'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'character.remove': { title: 'Remove character', purpose: 'Remove one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'timeline.create': { title: 'Create timeline', purpose: 'Create one validated Wave 2 presentation timeline.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'definition passes the shared timeline whitelist'], possibleErrors: [...commonErrors, 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one timeline track or cue using its current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['object.inspect the timeline and copy an exact trackRef from childRefs; inspect that track and copy an exact cueRef from childRefs', 'copy portrait target from project.assets.portraits[].timelineTarget', ...mutateRepair] },
-  'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
-  'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
-  'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
-  'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
-  'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
-  'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
-  'change.rollback': { title: 'Rollback change', purpose: 'Mark one open change rolled back without touching the project.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'idempotent', preconditions: ['active change is OPEN'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
-  'change.recovery.inspect': { title: 'Inspect change recovery', purpose: 'Read the current transaction journal, locks, project file identities, and the one safe recovery disposition.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'project-read'], idempotency: 'pure-read', preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['read the recovery inspection and use its disposition; manual states must not be guessed through'] },
-  'change.recovery.execute': { title: 'Execute change recovery', purpose: 'Apply only the recovery action returned by a fresh recovery inspection.', minimumPolicy: 'apply', sideEffects: ['project-read', 'project-write', 'change-store-write'], idempotency: 'operation-id', preconditions: ['active change is readable', 'policy is apply', 'recoveryToken is fresh', 'disposition is not manual'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED', 'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED', 'PROJECT_IDENTITY_MISMATCH', 'OPERATION_ID_CONFLICT'], repairRecipes: ['run change.recovery.inspect again after any stale or lock error; never reuse a stale token'] },
+  'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', composable: false, preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
+  'project.inspect': { title: 'Inspect project', purpose: 'Read the canonical project object and revision view.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
+  'project.assets': { title: 'Inspect project assets', purpose: 'Read the shared background, portrait, and avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
+  'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
+  'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
+  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
+  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
+  'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'character.remove': { title: 'Remove character', purpose: 'Remove one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'timeline.create': { title: 'Create timeline', purpose: 'Create one validated Wave 2 presentation timeline.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'definition passes the shared timeline whitelist'], possibleErrors: [...commonErrors, 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one timeline track or cue using its current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['object.inspect the timeline and copy an exact trackRef from childRefs; inspect that track and copy an exact cueRef from childRefs', 'copy portrait target from project.assets.portraits[].timelineTarget', ...mutateRepair] },
+  'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
+  'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
+  'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
+  'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
+  'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
+  'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
+  'change.rollback': { title: 'Rollback change', purpose: 'Mark one open change rolled back without touching the project.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change is OPEN'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
+  'change.recovery.inspect': { title: 'Inspect change recovery', purpose: 'Read the current transaction journal, locks, project file identities, and the one safe recovery disposition.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'project-read'], idempotency: 'pure-read', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['read the recovery inspection and use its disposition; manual states must not be guessed through'] },
+  'change.recovery.execute': { title: 'Execute change recovery', purpose: 'Apply only the recovery action returned by a fresh recovery inspection.', minimumPolicy: 'apply', sideEffects: ['project-read', 'project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is readable', 'policy is apply', 'recoveryToken is fresh', 'disposition is not manual'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED', 'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED', 'PROJECT_IDENTITY_MISMATCH', 'OPERATION_ID_CONFLICT'], repairRecipes: ['run change.recovery.inspect again after any stale or lock error; never reuse a stale token'] },
+  'composition.compare': { title: 'Compare candidates', purpose: 'Compare two to eight sealed delivery capsules into a deterministic conflict report without touching the project.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['two to eight sealed capsule refs on one project identity and base revision'], possibleErrors: [...commonErrors, 'CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE'], repairRecipes: ['re-seal the rejected capsules from a fresh project.inspect baseline', ...readRepair] },
+  'composition.plan': { title: 'Plan integration', purpose: 'Resolve conflicts with explicit choices and seal a dry-run verified integration plan artifact.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['candidateRefs match a fresh comparison', 'every selection-required conflict has an explicit unit choice'], possibleErrors: [...commonErrors, 'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED', 'COMPOSITION_PLAN_STALE'], repairRecipes: ['re-run composition.compare after any project movement, then re-plan'] },
+  'composition.inspect': { title: 'Inspect composition plan', purpose: 'Read back one sealed plan artifact with its fingerprint and dry-run evidence.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['planId and artifactSha256 identify a stored plan'], possibleErrors: ['INVALID_REQUEST', 'CHANGE_NOT_FOUND', 'PROJECT_IDENTITY_MISMATCH', 'CAPSULE_IDENTITY_MISMATCH'], repairRecipes: readRepair },
+  'composition.execute': { title: 'Execute integration replay', purpose: 'Replay one sealed plan into an OPEN integration change with CAS progress, exact resume and a READY commit gate.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['sealed plan is dry-run passed', 'project revision still matches the plan baseline'], possibleErrors: [...commonErrors, 'COMPOSITION_PLAN_STALE', 'COMPOSITION_PLAN_INVALID', 'COMPOSITION_REPLAY_FAILED', 'COMPOSITION_INCOMPLETE', 'CHANGE_NOT_OPEN'], repairRecipes: ['resume with the same executeOperationId; FAILED integrations only allow inspect/diff/rollback', ...mutateRepair] },
 };
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
@@ -715,7 +795,15 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
                                           ? 'rollback'
                                           : id === 'change.recovery.inspect'
                                             ? 'recoveryInspect'
-                                            : 'recoveryExecute'];
+                                            : id === 'composition.compare'
+                                              ? 'compositionCompare'
+                                              : id === 'composition.plan'
+                                                ? 'compositionPlan'
+                                                : id === 'composition.inspect'
+                                                  ? 'compositionInspect'
+                                                  : id === 'change.recovery.execute'
+                                                    ? 'recoveryExecute'
+                                                    : 'compositionExecute'];
   return {
     id,
     title: item.title,
@@ -725,6 +813,7 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
     outputSchema: schema.outputSchema,
     sideEffects: item.sideEffects,
     idempotency: item.idempotency,
+    composable: item.composable,
     preconditions: item.preconditions,
     possibleErrors: item.possibleErrors,
     repairRecipes: item.repairRecipes,
@@ -784,6 +873,17 @@ export function assertCapabilityRegistry(definitions: readonly CapabilityDefinit
     }
     if (definition.minimalExample.input === undefined || definition.minimalExample.expectedResultShape === undefined) {
       throw new Error(`${definition.id} 必须声明最小示例`);
+    }
+    // Wave 5：composable 白名单纪律。
+    if (typeof definition.composable !== 'boolean') {
+      throw new Error(`${definition.id} composable 必须是显式 boolean`);
+    }
+    const isContentMutation = CONTENT_MUTATION_CAPABILITY_IDS.has(definition.id);
+    if (definition.composable !== isContentMutation) {
+      throw new Error(`${definition.id} composable=${String(definition.composable)} 与白名单不符`);
+    }
+    if (definition.id.startsWith('composition.') && definition.composable) {
+      throw new Error(`composition capability 不允许 composable=true：${definition.id}`);
     }
   }
   if (ids.size !== expectedIds.size) throw new Error('authoring registry 缺少 capability id');

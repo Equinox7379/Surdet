@@ -133,5 +133,21 @@ export async function dispatchAuthoringCapability(
         operationId,
       };
     }
+    // Wave 5：composition.* 薄投影——依赖、冲突、plan、replay 一律在 CompositionService 内计算。
+    case 'composition.compare':
+      return { value: await service.compareComposition(requireProject(context), payload) };
+    case 'composition.plan':
+      return { value: await service.planComposition(requireProject(context), payload) };
+    case 'composition.inspect':
+      return { value: await service.inspectComposition(requireProject(context), payload) };
+    case 'composition.execute':
+      return {
+        value: await service.executeComposition(
+          requireProject(context),
+          context.activeChangeId,
+          payload,
+        ),
+        operationId: operationIdFrom(payload),
+      };
   }
 }

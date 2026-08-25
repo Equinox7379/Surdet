@@ -25,7 +25,11 @@ export const AUTHORING_ERROR_CODES = [
   'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT',
   'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED',
   'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED',
-  'INVOCATION_LEDGER_WRITE_FAILED',
+  'INVOCATION_LEDGER_WRITE_FAILED', 'CAPSULE_IDENTITY_MISMATCH',
+  'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE',
+  'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED',
+  'COMPOSITION_PLAN_STALE', 'COMPOSITION_PLAN_INVALID', 'COMPOSITION_REPLAY_FAILED',
+  'COMPOSITION_INCOMPLETE',
 ] as const;
 
 export type AuthoringErrorCode = (typeof AUTHORING_ERROR_CODES)[number];
@@ -111,6 +115,16 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   RECOVERY_AMBIGUOUS: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('项目存在 unexpected、路径逃逸或锁歧义；不得继续自动写入，需人工恢复。')] },
   RECOVERY_EXECUTION_FAILED: { category: 'commit', retryDisposition: 'manual-recovery', repairActions: [terminalAction('恢复执行失败；保留 RECOVERY_FAILED journal 与项目文件，人工检查后处理。')] },
   INVOCATION_LEDGER_WRITE_FAILED: { category: 'commit', retryDisposition: 'after-inspect', repairActions: [action('session.describe', '确认领域 operation 是否已经成功及其 operationId。'), action('change.diff', '读取当前 change 事实并使用同一 operationId 安全重试。')] },
+  CAPSULE_IDENTITY_MISMATCH: { category: 'conflict', retryDisposition: 'never', repairActions: [action('composition.compare', 'capsule artifact 已损坏或不一致；从同一基线重新封存候选，不得重试同一 artifact。')] },
+  CANDIDATE_PROJECT_MISMATCH: { category: 'conflict', retryDisposition: 'new-change', repairActions: [action('project.inspect', '确认目标项目身份；为不同项目分别产生候选。')] },
+  CANDIDATE_BASE_MISMATCH: { category: 'conflict', retryDisposition: 'new-change', repairActions: [action('project.inspect', '回到统一 base revision 后重新产生全部候选。')] },
+  CANDIDATE_NOT_COMPOSABLE: { category: 'request', retryDisposition: 'new-change', repairActions: [action('project.inspect', '确认当前项目与基线后，用 v2 capsule manifest（2.0.0）重新封存该候选。')] },
+  COMPOSITION_DEPENDENCY_MISSING: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('composition.plan', '把缺失依赖单元纳入选择或其生产者候选，重新生成计划。')] },
+  COMPOSITION_CONFLICT_UNRESOLVED: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('composition.plan', '为每个 selection-required 冲突给出显式 unitId 裁决后重新计划。')] },
+  COMPOSITION_PLAN_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('project.inspect', '刷新项目 revision 与 comparison identity。'), action('composition.inspect', '核对计划基线。'), action('composition.compare', '基线已移动时重新比较并重排计划。')] },
+  COMPOSITION_PLAN_INVALID: { category: 'request', retryDisposition: 'never', repairActions: [] },
+  COMPOSITION_REPLAY_FAILED: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('change.diff', '读取失败 operationIndex 的领域差异。'), action('object.inspect', '核对相关对象当前指纹。'), action('change.rollback', '放弃失败集成；创建新候选或新计划，不能原地换 replay payload。')] },
+  COMPOSITION_INCOMPLETE: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('composition.execute', '以同一 executeOperationId 精确恢复 REPLAYING 集成。'), action('change.diff', 'FAILED 时只能 inspect/diff/rollback。')] },
 };
 
 export const AUTHORING_ERROR_CATALOG: Readonly<Record<AuthoringErrorCode, AuthoringErrorDefinition>> = Object.fromEntries(

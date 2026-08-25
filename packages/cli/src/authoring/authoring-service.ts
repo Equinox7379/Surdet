@@ -67,6 +67,7 @@ import {
   type VariableEnsureInput,
 } from '@surdet/authoring';
 import { NodeChangeStore } from './node-change-store.js';
+import { CompositionService, compositionServiceForProject } from './composition-service.js';
 import { NodeLocalLeaseManager } from './node-local-lease.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
@@ -582,6 +583,97 @@ export class AuthoringService {
     });
   }
 
+  // —— Wave 5 composition.*：薄投影；依赖/冲突/plan/replay 计算全部在 CompositionService。 ——
+
+  async compareComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
+    const service = await compositionServiceForProject(projectRoot);
+    const refs = (input as { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }> }).candidateRefs;
+    const raw = await service.compare(refs);
+    const comparison = raw.comparison as {
+      comparisonFingerprint?: string;
+      status?: string;
+      identicalGroups?: unknown[];
+      conflicts?: unknown[];
+      baseProjectRevision?: string;
+    };
+    // registry output schema 形状：{ comparisonFingerprint, status, candidates, identicalGroups, conflicts }
+    return {
+      projectIdentity: service.projectIdentity,
+      projectRevision: comparison.baseProjectRevision ?? raw.currentProjectRevision ?? 'unknown',
+      result: {
+        comparisonFingerprint: comparison.comparisonFingerprint ?? '',
+        status: comparison.status ?? 'blocked',
+        candidates: raw.candidates.map((candidate) => ({
+          candidateId: candidate.candidateId,
+          eligibility: candidate.composition.eligibility,
+        })),
+        identicalGroups: comparison.identicalGroups ?? [],
+        conflicts: comparison.conflicts ?? [],
+      },
+    };
+  }
+
+  async planComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
+    const service = await compositionServiceForProject(projectRoot);
+    const raw = await service.plan(input as never);
+    const sealedPlan = raw.plan as {
+      planId: string;
+      planFingerprint: string;
+      expectedProjectRevision?: string;
+      dryRun?: { status?: string };
+    };
+    // registry output schema 形状：{ planId, planFingerprint, artifactSha256, dryRunStatus }
+    return {
+      projectIdentity: service.projectIdentity,
+      projectRevision: sealedPlan.expectedProjectRevision ?? 'unknown',
+      result: {
+        planId: sealedPlan.planId,
+        planFingerprint: sealedPlan.planFingerprint,
+        artifactSha256: raw.identity.sha256,
+        dryRunStatus: sealedPlan.dryRun?.status ?? 'failed',
+      },
+    };
+  }
+
+  async inspectComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
+    const service = await compositionServiceForProject(projectRoot);
+    const outcome = await service.inspect(input as { planId: string; artifactSha256: string });
+    return {
+      projectIdentity: service.projectIdentity,
+      projectRevision: 'unknown',
+      result: outcome,
+    };
+  }
+
+  async executeComposition(projectRoot: string, activeChangeId: string | undefined, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
+    const service = await compositionServiceForProject(projectRoot);
+    // session 状态机不变量：已有普通 active change 时拒绝执行（integration resume 由 service 核对）。
+    if (activeChangeId !== undefined) {
+      const record = await NodeChangeStore.openByChangeId(activeChangeId).then((opened) => opened?.record ?? null);
+      if (record !== null && record.integration === undefined) {
+        throw new AuthoringOperationError('CHANGE_BUSY', '当前 session 已有普通 active change，不能执行 composition.execute', {
+          changeId: activeChangeId,
+          retryDisposition: 'after-refresh',
+        });
+      }
+    }
+    const outcome = await service.executePlan({
+      planId: String(input['planId']),
+      artifactSha256: String(input['artifactSha256']),
+      executeOperationId: String(input['executeOperationId']),
+    });
+    return {
+      projectIdentity: service.projectIdentity,
+      projectRevision: 'unknown',
+      result: {
+        integrationChangeId: outcome.changeId,
+        status: outcome.status,
+        nextOperationIndex: outcome.nextOperationIndex,
+        operationCount: outcome.replayedOperations.length,
+      },
+    };
+  }
+
   async begin(projectRoot: string, intent?: ChangeIntentMetadata): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
     const { snapshot } = await this.loadProjectContext(storage);
@@ -943,3 +1035,4 @@ export class AuthoringService {
     );
   }
 }
+

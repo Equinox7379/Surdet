@@ -68,6 +68,12 @@ export interface SessionDescription {
     baseRevision: string;
     workingRevision: number;
     recordVersion: number;
+    integration?: {
+      planId: string;
+      status: 'REPLAYING' | 'READY' | 'FAILED';
+      nextOperationIndex: number;
+      operationCount: number;
+    };
   };
   resumed: boolean;
   capabilities: SessionCapability[];
@@ -173,6 +179,10 @@ function capabilityAvailability(
   } else if (capability.id === 'change.begin' && activeChangeId !== undefined) {
     availability = 'state-blocked';
     reason = '当前 session 已有 active change';
+  } else if (capability.id === 'composition.execute' && activeRecord !== undefined && activeRecord.integration === undefined) {
+    // Wave 5：普通 active change 占用 session 时拒绝执行；无 active 或 integration resume 均 available。
+    availability = 'state-blocked';
+    reason = '当前 session 已有普通 active change，不能执行集成；先提交或回滚该 change';
   } else if (activeChangeId === undefined && changeRequired(capability.id)) {
     availability = 'state-blocked';
     reason = '需要 active change context';
@@ -353,10 +363,22 @@ export class AgentPortSession {
       }
       if (capability === 'change.commit') await this.commitEvidenceGate();
 
+      if (capability === 'composition.execute' && this.activeChangeIdValue !== undefined) {
+        const executing = await this.activeRecord();
+        if (executing?.integration === undefined) throw stateBlocked(capability);
+      }
       const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, service);
       operationId = dispatched.operationId ?? (typeof input['operationId'] === 'string' ? input['operationId'] : undefined);
       const value = dispatched.value;
-      if (capability === 'change.begin') {
+      if (capability === 'composition.execute') {
+        const result = (value.result ?? {}) as { integrationChangeId?: unknown };
+        const integrationChangeId = result.integrationChangeId;
+        if (typeof integrationChangeId !== 'string' || integrationChangeId.length === 0) {
+          throw new AuthoringOperationError('SESSION_STATE_INVALID', 'composition.execute 未返回有效 integrationChangeId');
+        }
+        this.activeChangeIdValue = integrationChangeId;
+        this.lastChangeIdValue = integrationChangeId;
+      } else if (capability === 'change.begin') {
         const changeId = (value.result as { changeId?: unknown }).changeId;
         if (typeof changeId !== 'string' || changeId.length === 0) throw new AuthoringOperationError('SESSION_STATE_INVALID', 'change.begin 未返回有效 changeId');
         this.activeChangeIdValue = changeId;
@@ -526,6 +548,7 @@ export class AgentPortSession {
       }
     }
     const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition));
+    const activeIntegration = record?.integration;
     const activeChange = record === undefined
       ? undefined
       : {
@@ -534,14 +557,31 @@ export class AgentPortSession {
           baseRevision: record.baseRevision,
           workingRevision: record.workingRevision,
           recordVersion: record.recordVersion,
+          ...(activeIntegration === undefined ? {} : {
+            integration: {
+              planId: activeIntegration.planId,
+              status: activeIntegration.status,
+              nextOperationIndex: activeIntegration.nextOperationIndex,
+              operationCount: activeIntegration.replayedOperations.length,
+            },
+          }),
         };
     const nextActions = this.activeChangeIdValue === undefined
-      ? this.policy === 'observe' ? ['project.inspect', 'project.validate', 'project.simulate'] : ['change.begin']
-      : record?.status === 'STALE'
-        ? ['change.recovery.inspect', ...(this.policy === 'apply' ? ['change.recovery.execute'] : [])]
-        : record?.status === 'COMMITTED' || record?.status === 'ROLLED_BACK'
-          ? ['change.recovery.inspect']
-          : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
+      ? this.policy === 'observe'
+        ? ['project.inspect', 'project.validate', 'project.simulate']
+        : activeIntegration !== undefined ? [] : ['change.begin']
+      : record?.integration?.status === 'FAILED'
+        ? ['change.diff', 'change.rollback']
+        : record?.integration?.status === 'REPLAYING'
+          ? ['composition.execute', 'change.diff']
+          : record?.integration?.status === 'READY'
+            ? ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff',
+               ...(this.policy === 'apply' ? ['change.commit'] as string[] : [])]
+            : record?.status === 'STALE'
+              ? ['change.recovery.inspect', ...(this.policy === 'apply' ? ['change.recovery.execute'] : [])]
+              : record?.status === 'COMMITTED' || record?.status === 'ROLLED_BACK'
+                ? ['change.recovery.inspect']
+                : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
     return {
       sessionId: this.sessionId,
       startedAt: this.startedAt,

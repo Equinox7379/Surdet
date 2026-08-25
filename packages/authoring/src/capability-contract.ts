@@ -73,6 +73,8 @@ export interface CapabilityDefinition<TId extends string = string> {
   outputSchema: JsonSchema;
   sideEffects: readonly SideEffectClass[];
   idempotency: IdempotencyClass;
+  /** Wave 5：true 仅限八项内容 mutation capability；composition.* 编排能力必须为 false。 */
+  composable: boolean;
   preconditions: readonly string[];
   possibleErrors: readonly string[];
   repairRecipes: readonly string[];
