@@ -4,12 +4,12 @@ import {
   AUTHORING_CAPABILITY_REGISTRY,
   assertCapabilityRegistry,
   nativeCapabilityToMcpTool,
+  getCapabilityDefinition,
 } from '../src/index.js';
-
 describe('authoring capability registry', () => {
-  it('is the single complete 22-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(22);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(22);
+  it('is the single complete 26-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(26);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(26);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect',
       'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
@@ -17,6 +17,7 @@ describe('authoring capability registry', () => {
       'project.entry-scene.set', 'project.validate', 'project.simulate',
       'runtime.run-from', 'runtime.read-trace', 'change.diff', 'change.commit',
       'change.rollback', 'change.recovery.inspect', 'change.recovery.execute',
+      'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
     ]);
     expect(() => assertCapabilityRegistry(AUTHORING_CAPABILITY_REGISTRY)).not.toThrow();
   });
@@ -28,7 +29,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(22);
+    expect(new Set(names).size).toBe(26);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -90,5 +91,87 @@ describe('authoring capability registry', () => {
     expect((inspect!.outputSchema.properties as Record<string, unknown>).disposition).toMatchObject({ enum: ['NO_ACTION', 'REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED', 'MANUAL_RECOVERY_REQUIRED'] });
     expect(execute).toMatchObject({ minimumPolicy: 'apply', idempotency: 'operation-id', sideEffects: ['project-read', 'project-write', 'change-store-write'] });
     expect(execute!.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['operationId', 'recoveryToken'] });
+  });
+});
+
+describe('wave 5 composition capabilities', () => {
+  it('extends the registry to exactly 26 capabilities with four composition entries', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(26);
+    expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
+    expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
+    expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');
+    expect(getCapabilityDefinition('composition.inspect').minimumPolicy).toBe('observe');
+  });
+
+  it('marks only the eight content mutations composable; composition.* must be false', () => {
+    const composableWhitelist = new Set([
+      'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
+      'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
+    ]);
+    for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
+      expect(typeof definition.composable).toBe('boolean');
+      if (composableWhitelist.has(definition.id)) {
+        expect(definition.composable, definition.id).toBe(true);
+      } else {
+        expect(definition.composable, definition.id).toBe(false);
+      }
+    }
+    for (const id of ['composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute'] as const) {
+      expect(getCapabilityDefinition(id).composable).toBe(false);
+    }
+  });
+
+  it('keeps definitions metadata-only: no handler, prompt, workflow or model keys', () => {
+    const forbidden = ['handler', 'prompt', 'workflow', 'model', 'examplesLibrary'];
+    for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
+      for (const key of Object.keys(definition)) {
+        expect(forbidden.includes(key), `${definition.id}.${key}`).toBe(false);
+      }
+    }
+  });
+
+  it('publishes strict schemas for the four composition capabilities', () => {
+    const cases: Array<{ id: Parameters<typeof getCapabilityDefinition>[0]; inputKeys: string[]; forbiddenInputKeys: string[] }> = [
+      {
+        id: 'composition.compare',
+        inputKeys: ['candidateRefs'],
+        forbiddenInputKeys: [],
+      },
+      {
+        id: 'composition.plan',
+        inputKeys: ['candidateRefs', 'unitChoices', 'reason'],
+        forbiddenInputKeys: ['replayOperations', 'normalizedInput'],
+      },
+      {
+        id: 'composition.execute',
+        inputKeys: ['planId', 'artifactSha256', 'executeOperationId'],
+        forbiddenInputKeys: ['changeId', 'projectRoot'],
+      },
+      {
+        id: 'composition.inspect',
+        inputKeys: ['planId', 'artifactSha256'],
+        forbiddenInputKeys: [],
+      },
+    ];
+    for (const { id, inputKeys, forbiddenInputKeys } of cases) {
+      const definition = getCapabilityDefinition(id);
+      expect(definition.inputSchema['additionalProperties']).toBe(false);
+      const properties = definition.inputSchema['properties'] as Record<string, unknown>;
+      for (const key of inputKeys) {
+        expect(properties[key], `${id}.input.${key}`).toBeDefined();
+      }
+      for (const key of forbiddenInputKeys) {
+        expect(properties[key], `${id} must not expose ${key}`).toBeUndefined();
+      }
+      expect(definition.outputSchema['additionalProperties']).toBe(false);
+    }
+    // candidates 数组上下界与 artifact SHA 形状
+    const compare = getCapabilityDefinition('composition.compare');
+    const candidateRefs = ((compare.inputSchema['properties'] as Record<string, unknown>)['candidateRefs'] ?? {}) as Record<string, unknown>;
+    expect(candidateRefs['minItems']).toBe(2);
+    expect(candidateRefs['maxItems']).toBe(8);
+    const execute = getCapabilityDefinition('composition.execute');
+    const sha = ((execute.inputSchema['properties'] as Record<string, unknown>)['artifactSha256'] ?? {}) as Record<string, unknown>;
+    expect(String(sha['pattern'])).toContain('{64}');
   });
 });

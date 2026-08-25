@@ -2545,3 +2545,19 @@ ARTIFACTS=$wave5Root/task4-red-authoring.json t4-green-a.log t4-green-b.log
 GIT=PENDING_STEP7
 STOP=TASK_5_CAPABILITY_REGISTRY_AND_MCP_PROJECTION
 ~~~
+
+### 2026-08-24T21:30Z — Task 5 capability registry, dispatcher, session and MCP projection
+
+~~~text
+TASK=5_CAPABILITY_REGISTRY_AND_MCP_PROJECTION
+START_HEAD=2c25c2b feat(authoring): replay integration plans safely
+END_HEAD=(本提交)
+FILES_CHANGED=capability-contract.ts(CapabilityDefinition.composable: boolean); capability-registry.ts(AUTHORING_CAPABILITY_IDS 26 项;composition.* 四条 metadata+schema(compare observe/plan observe/inspect observe/execute stage);CONTENT_MUTATION_CAPABILITY_IDS 八项白名单导出;assertCapabilityRegistry composable 纪律+composition.* 强制 false;capabilitySummarySchema 加 composable); error-catalog.ts(+10 码入册含 category/retryDisposition/repairActions,CAPSULE_IDENTITY_MISMATCH 与 COMPOSITION_PLAN_INVALID terminal); authoring-service.ts(compareComposition/planComposition/inspectComposition/executeComposition 薄投影到 registry schema 形状,execute 前置普通 active change 拒绝 CHANGE_BUSY); authoring-dispatcher.ts(四 case 纯委托,execute 带 operationIdFrom); session.ts(execute 不在 ACTIVE_CHANGE_CAPABILITIES;普通 active change→state-blocked;成功后 activeChangeId=integrationChangeId;describe.activeChange.integration{planId,status,nextOperationIndex,operationCount};nextActions REPLAYING/FAILED/READY 分支)
+FILES_CREATED=test/agent-port-composition.test.ts(observe 挡 execute/stage e2e compare→plan→execute→READY+幂等重放同 changeId/普通 active change state-blocked)
+RED=task5-red-authoring.json(26 项断言+10 码断言 exit1)
+GREEN=authoring 17 passed(registry+catalog)+authoring 全量 exit0;cli 全量 219 passed;双包 typecheck/build exit0
+NOTES=record-head 只存版本+SHA 的教训延续:扫描经 store.read 且过滤 composition-plans 保留目录;envelope schemaVersion 保持 1.0.0 独立于 contractVersion 2.0.0;plan minimumPolicy=observe 因任务书 Step5.2 要求 observe 可用 plan;server.ts 零改动(registry 循环+hints 公式自动满足 readOnly/destructive/idempotent);wave2/wave3 vertical slice 工具清单同步 +4
+ARTIFACTS=$wave5Root/task5-red-authoring.json t5-green-a.log t5-green-b2.log
+GIT=PENDING_STEP7
+STOP=TASK_6_EVIDENCE_FRESHNESS_AND_PROVENANCE
+~~~

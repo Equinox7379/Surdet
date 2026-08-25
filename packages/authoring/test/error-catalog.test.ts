@@ -51,3 +51,40 @@ describe('authoring error catalog and envelopes', () => {
     ]));
   });
 });
+
+describe('wave 5 composition error catalog', () => {
+  it('publishes all ten wave-5 composition errors with repair contracts', async () => {
+    const { AUTHORING_ERROR_CODES, errorDefinition } = await import('../src/error-catalog.js');
+    const expected = [
+      ['CAPSULE_IDENTITY_MISMATCH', 'never'],
+      ['CANDIDATE_PROJECT_MISMATCH', 'new-change'],
+      ['CANDIDATE_BASE_MISMATCH', 'new-change'],
+      ['CANDIDATE_NOT_COMPOSABLE', 'new-change'],
+      ['COMPOSITION_DEPENDENCY_MISSING', 'after-repair'],
+      ['COMPOSITION_CONFLICT_UNRESOLVED', 'after-repair'],
+      ['COMPOSITION_PLAN_STALE', 'after-refresh'],
+      ['COMPOSITION_PLAN_INVALID', 'never'],
+      ['COMPOSITION_REPLAY_FAILED', 'after-repair'],
+      ['COMPOSITION_INCOMPLETE', 'after-inspect'],
+    ] as const;
+    for (const [code, disposition] of expected) {
+      expect(AUTHORING_ERROR_CODES).toContain(code);
+      const definition = errorDefinition(code);
+      expect(definition.category, code).toBeTruthy();
+      expect(definition.retryDisposition, code).toBe(disposition);
+      expect(Array.isArray(definition.repairActions), `${code}.repairActions`).toBe(true);
+    }
+  });
+
+  it('keeps terminal identity/invalid composition errors non-retryable in envelopes', async () => {
+    const { createFailureEnvelope, AuthoringOperationError } = await import('../src/index.js');
+    for (const code of ['CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_PROJECT_MISMATCH', 'COMPOSITION_PLAN_INVALID'] as const) {
+      const envelope = createFailureEnvelope(
+        { sessionId: 's1', capability: 'composition.compare', projectIdentity: 'p1' },
+        new AuthoringOperationError(code, 'wave 5 terminal'),
+      );
+      if (envelope.ok) throw new Error(`expected failure for ${code}`);
+      expect(envelope.error.retryDisposition, code).toBe(code === 'CANDIDATE_PROJECT_MISMATCH' ? 'new-change' : 'never');
+    }
+  });
+});

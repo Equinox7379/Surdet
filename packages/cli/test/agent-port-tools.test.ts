@@ -110,15 +110,26 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_rollback');
       expect(names).not.toContain('surdet_change_commit');
     }
+    // Wave 5：observe 只暴露 compare/plan/inspect，不暴露 execute；stage/apply 全部四项。
+    if (policy === 'observe') {
+      expect(names).toContain('surdet_composition_compare');
+      expect(names).toContain('surdet_composition_plan');
+      expect(names).toContain('surdet_composition_inspect');
+      expect(names).not.toContain('surdet_composition_execute');
+    } else {
+      for (const tool of ['surdet_composition_compare', 'surdet_composition_plan', 'surdet_composition_inspect', 'surdet_composition_execute']) {
+        expect(names).toContain(tool);
+      }
+    }
     expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.inspect'));
     if (policy === 'stage') {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(22);
+      expect(names).toHaveLength(26);
     }
     if (policy === 'apply') {
       expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(24);
+      expect(names).toHaveLength(28);
     }
     const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -126,7 +137,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(22);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(26);
     if (policy === 'stage') {
       const begun = await client.callTool({ name: 'surdet_change_begin', arguments: {} });
       expect(begun.isError).not.toBe(true);
