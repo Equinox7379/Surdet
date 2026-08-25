@@ -174,6 +174,123 @@ describe('NodeLocalLeaseManager', () => {
     await expect(fsp.readdir(path.join(corruptRoot, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('waits through the lock-publication window and then reports the real owner as busy', async () => {
+    // W5-GATE-LEASE-PUBLISH-1: the holder publishes the final .lock directory before
+    // lease.json lands. A contender hitting that window must wait bounded, not fail loud.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-publish-'));
+    temporaryRoots.push(root);
+    const lockDirectory = path.join(root, '.locks', 'changes', 'chg-pub.lock');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+    const leasePath = path.join(lockDirectory, 'lease.json');
+
+    const state = makeState();
+    const pollCalls: number[] = [];
+    const manager = makeManager(root, state, {
+      pid: () => 1002,
+      publicationPollDelayMs: 5,
+      publicationDelay: async () => {
+        pollCalls.push(pollCalls.length + 1);
+        if (pollCalls.length === 1) {
+          // Holder completes publication right after the contender's first read.
+          const nowIso = new Date(state.clock.nowMs).toISOString();
+          await fsp.writeFile(leasePath, JSON.stringify({
+            formatVersion: 1,
+            scope: 'change',
+            resourceId: 'chg-pub',
+            ownerToken: 'owner-token-1',
+            pid: 1001,
+            hostname: 'surdet-test-host',
+            acquiredAt: nowIso,
+            heartbeatAt: nowIso,
+          } satisfies Record<string, unknown>), 'utf8');
+        }
+      },
+    } satisfies NodeLocalLeaseManagerOptions);
+
+    const failure = await manager.acquire({ scope: 'change', resourceId: 'chg-pub' }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; details?: Record<string, unknown> },
+    );
+    expect(failure?.code).toBe('CHANGE_BUSY');
+    expect(pollCalls.length).toBeGreaterThanOrEqual(1);
+    // The published lease and its directory must survive untouched: no takeover, no quarantine.
+    expect(await fsp.stat(lockDirectory)).toBeDefined();
+    const published = JSON.parse(await fsp.readFile(leasePath, 'utf8')) as { ownerToken?: string };
+    expect(published['ownerToken']).toBe('owner-token-1');
+    await expect(fsp.readdir(path.join(root, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps fail-loud semantics once the bounded publication budget is exhausted', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-missing-'));
+    temporaryRoots.push(root);
+    const lockDirectory = path.join(root, '.locks', 'changes', 'chg-missing.lock');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+
+    const state = makeState();
+    let polls = 0;
+    const manager = makeManager(root, state, {
+      pid: () => 1002,
+      publicationPollDelayMs: 5,
+      publicationDelay: async () => {
+        polls += 1;
+      },
+    } satisfies NodeLocalLeaseManagerOptions);
+
+    const failure = await manager.acquire({ scope: 'change', resourceId: 'chg-missing' }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; details?: Record<string, unknown> },
+    );
+    expect(failure?.code).toBe('LEASE_CORRUPT');
+    expect(failure?.details?.['manualRecoveryRequired']).toBe(true);
+    // Bounded waiting actually happened before giving up.
+    expect(polls).toBeGreaterThanOrEqual(1);
+    // Directory evidence is preserved for manual inspection.
+    expect(await fsp.stat(lockDirectory)).toBeDefined();
+  });
+
+  it('does not retry parse failures or invalid lease fields behind the publication wait', async () => {
+    const cases = [
+      { suffix: 'malformed', body: '{broken\n' },
+      { suffix: 'bad-fields', body: JSON.stringify({ formatVersion: 99, scope: 'change', resourceId: 'chg-shape' }) },
+      {
+        suffix: 'identity-mismatch',
+        body: JSON.stringify({
+          formatVersion: 1, scope: 'project', resourceId: 'some-project',
+          ownerToken: 'tok', pid: 1001, hostname: 'surdet-test-host',
+          acquiredAt: new Date(makeClock().nowMs).toISOString(),
+          heartbeatAt: new Date(makeClock().nowMs).toISOString(),
+        }),
+      },
+    ] as const;
+
+    for (const item of cases) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `surdet-local-lease-shape-${item.suffix}-`));
+      temporaryRoots.push(root);
+      const lockDirectory = path.join(root, '.locks', 'changes', `chg-shape-${item.suffix}.lock`);
+      await fsp.mkdir(lockDirectory, { recursive: true });
+      const leasePath = path.join(lockDirectory, 'lease.json');
+      await fsp.writeFile(leasePath, item.body, 'utf8');
+
+      const state = makeState();
+      let polls = 0;
+      const manager = makeManager(root, state, {
+        pid: () => 1002,
+        publicationPollDelayMs: 5,
+        publicationDelay: async () => {
+          polls += 1;
+        },
+      } satisfies NodeLocalLeaseManagerOptions);
+
+      const failure = await manager.acquire({ scope: 'change', resourceId: `chg-shape-${item.suffix}` }).then(
+        () => null,
+        (error: unknown) => error as { code?: string },
+      );
+      expect(failure?.code, item.suffix).toBe('LEASE_CORRUPT');
+      expect(polls, `${item.suffix} must not enter the publication wait`).toBe(0);
+      expect(await fsp.readFile(leasePath, 'utf8'), item.suffix).toBe(item.body);
+    }
+  });
+
   it('uses the project scope lock namespace and releases it through withProjectLease', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-project-'));
     temporaryRoots.push(root);

@@ -2577,3 +2577,46 @@ ARTIFACTS=$wave5Root/task6-red.json t6-green.log t6-full.log
 GIT=PENDING_STEP7
 STOP=TASK_7_FOCUS_GATES_AND_VERIFY_ALL
 ~~~
+
+### W5-GATE-LEASE-PUBLISH-1 - minimal lease publication-read hardening (manager authorized)
+
+~~~text
+CONFIRMED_FACTS =
+formal verify:all failed with LEASE_CORRUPT "lease.json unreadable" in
+multi-process-change-concurrency.test.ts > retains two real service mutations and
+invocation order across processes. NodeLocalLeaseManager.acquire publishes the final
+.lock directory via fs.mkdir BEFORE createJsonRecord writes lease.json; a contender
+whose first read lands inside that window received LEASE_CORRUPT instead of the real
+ownership verdict. Evidence log preserved: task7-verify-all.log, bytes=56348,
+sha256=800A970FE51A9F037A4DD5458AB5738F0946AD8DB8C90DA407C526DDDCE0B8EB.
+
+REASONABLE_INFERENCE =
+the failure most likely hit this publication window or Windows transient read noise
+(ENOENT/EBUSY/EPERM during concurrent replace). The original artifact did not persist
+the underlying cause errno, so no specific errno may be stated as confirmed.
+
+VERIFIED_BY_NEW_RED =
+node-local-lease.test.ts now proves deterministically: (1) an existing final .lock
+directory with lease.json still unpublished is tolerated via bounded polls, not
+LEASE_CORRUPT; (2) once the record appears within the budget the contender receives
+CHANGE_BUSY from the true owner and never deletes/quarantines/takes over the lease;
+(3) permanent absence beyond the bounded budget still yields LEASE_CORRUPT with
+manualRecoveryRequired=true and preserved directory evidence; (4) malformed JSON,
+invalid fields, and identity mismatch fail loud immediately without entering the
+publication wait and keep original bytes untouched. RED artifact: gate1-red.log
+(window case: expected CHANGE_BUSY, got LEASE_CORRUPT on pre-fix code).
+
+IMPLEMENTATION =
+node-local-lease.ts only: structured details.publicationPhase markers ('read' for
+missing-record/ENOENT/EBUSY/EPERM raw reads; parse/validate failures unmarked),
+private loadLeaseAwaitingPublication retries ONLY phase='read' errors with at most
+10 polls x publicationPollDelayMs(default 10ms, total <=100ms), injected via new
+NodeLocalLeaseManagerOptions.publicationPollDelayMs/publicationDelay test seams.
+No stale-takeover/heartbeat/release/recovery contract changed.
+
+GATES =
+RED gate1-red.log 2 failed | GREEN node-local-lease.test.ts 8 passed;
+multi-process-change-concurrency.test.ts 3 passed (first run); typecheck+build exit0.
+GIT=PENDING_STEP4_COMMIT
+STOP=TASK_5_RECOVERY_VERIFY_ALL_AUTHORIZED_ONCE
+~~~
