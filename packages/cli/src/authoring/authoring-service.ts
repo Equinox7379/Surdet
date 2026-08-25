@@ -589,26 +589,27 @@ export class AuthoringService {
     const service = await compositionServiceForProject(projectRoot);
     const refs = (input as { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }> }).candidateRefs;
     const raw = await service.compare(refs);
-    const comparison = raw.comparison as {
-      comparisonFingerprint?: string;
-      status?: string;
-      identicalGroups?: unknown[];
-      conflicts?: unknown[];
-      baseProjectRevision?: string;
-    };
-    // registry output schema 形状：{ comparisonFingerprint, status, candidates, identicalGroups, conflicts }
+    const comparison = raw.comparison as import('@surdet/authoring').CompositionComparison;
+    // 批准任务书的公开安全投影：完整 CompositionComparison 字段集；
+    // candidates 仅保留 {candidateId, eligibility}，绝不外泄 manifest / normalizedInput / 路径。
     return {
       projectIdentity: service.projectIdentity,
-      projectRevision: comparison.baseProjectRevision ?? raw.currentProjectRevision ?? 'unknown',
+      projectRevision: comparison.expectedProjectRevision ?? raw.currentProjectRevision ?? 'unknown',
       result: {
-        comparisonFingerprint: comparison.comparisonFingerprint ?? '',
-        status: comparison.status ?? 'blocked',
+        comparisonVersion: comparison.comparisonVersion,
+        projectIdentity: comparison.projectIdentity,
+        expectedProjectRevision: comparison.expectedProjectRevision,
+        status: comparison.status,
         candidates: raw.candidates.map((candidate) => ({
           candidateId: candidate.candidateId,
           eligibility: candidate.composition.eligibility,
         })),
-        identicalGroups: comparison.identicalGroups ?? [],
-        conflicts: comparison.conflicts ?? [],
+        units: comparison.units,
+        dependencyEdges: comparison.dependencyEdges,
+        conflicts: comparison.conflicts,
+        identicalGroups: comparison.identicalGroups,
+        evidenceMatrix: comparison.evidenceMatrix,
+        comparisonFingerprint: comparison.comparisonFingerprint,
       },
     };
   }

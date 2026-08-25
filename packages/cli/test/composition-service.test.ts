@@ -78,6 +78,28 @@ function treeSnapshot(root: string): Map<string, string> {
   return entries;
 }
 
+
+/** New selection contract: every plan must bind a fresh fingerprint and explicit units. */
+async function planFromComparison(
+  fixture: { service: {
+    compare(refs: unknown[]): Promise<{ comparison: { comparisonFingerprint: string; units: Array<{ unitId: string }> } }>;
+    plan(input: { candidateRefs: unknown[]; comparisonFingerprint: string; selectedUnitIds: string[]; now?: string }): Promise<{
+      plan: import('@surdet/authoring').IntegrationPlan;
+      identity: { sha256: string };
+    }>;
+  } },
+  refs: unknown[],
+  options: { selectedUnitIds?: string[]; now?: string } = {},
+) {
+  const compared = await fixture.service.compare(refs);
+  return fixture.service.plan({
+    candidateRefs: refs,
+    comparisonFingerprint: compared.comparison.comparisonFingerprint,
+    selectedUnitIds: options.selectedUnitIds ?? compared.comparison.units.map((unit) => unit.unitId),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+}
+
 describe('CompositionService compare/plan/dry-run', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
@@ -97,12 +119,12 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(comparisonResult.candidates).toHaveLength(2);
     expect(comparisonResult.comparison.candidateManifests?.['cand-' + first.ref.changeId]?.operations.length).toBeGreaterThan(0);
 
-    const planResult = await fixture.service.plan({ candidateRefs: [first.ref, second.ref], now: '2026-08-24T12:00:00.000Z' });
+    const planResult = await planFromComparison(fixture, [first.ref, second.ref], { now: '2026-08-24T12:00:00.000Z' });
     expect(planResult.plan.planVersion).toBe('1.0.0');
     expect(planResult.plan.dryRun.status).toBe('passed');
     expect(Object.keys(planResult.plan.dryRun.finalObjectFingerprints)).toContain('scene:alpha');
     // 同语义再 plan：同 planId 幂等回读首次封存。
-    const again = await fixture.service.plan({ candidateRefs: [first.ref, second.ref], now: '2026-08-24T13:00:00.000Z' });
+    const again = await planFromComparison(fixture, [first.ref, second.ref], { now: '2026-08-24T13:00:00.000Z' });
     expect(again.plan.planId).toBe(planResult.plan.planId);
   });
 
@@ -116,7 +138,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     });
     const beforeProject = treeSnapshot(fixture.projectRoot);
     const beforeData = treeSnapshot(fixture.dataDir);
-    const result = await fixture.service.plan({ candidateRefs: [first.ref, second.ref] });
+    const result = await planFromComparison(fixture, [first.ref, second.ref]);
     expect(result.plan.dryRun.status).toBe('passed');
     const afterProject = treeSnapshot(fixture.projectRoot);
     expect([...afterProject.entries()].filter(([file]) => !file.includes(`${path.sep}composition-plans${path.sep}`)))
@@ -138,7 +160,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     const second = await sealCandidate(fixture.projectRoot, 'fp-b', async (session) => {
       expect((await session.invoke('variable.ensure', { operationId: 'op-fp-var', name: 'flag.fp', type: 'number', initial: 0 })).ok).toBe(true);
     });
-    const result = await fixture.service.plan({ candidateRefs: [first.ref, second.ref] });
+    const result = await planFromComparison(fixture, [first.ref, second.ref]);
     expect(result.plan.dryRun.status).toBe('passed');
     // plan 内每个 provenance 目标都能在 dry-run 指纹表中找到，且与单元封存值一致。
     expect(Object.keys(result.plan.dryRun.finalObjectFingerprints)).toContain('scene:fp_scene');
@@ -169,7 +191,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(committed.ok).toBe(true);
     await mover.close();
 
-    const planResult = await fixture.service.plan({ candidateRefs: [first.ref, second.ref] });
+    const planResult = await planFromComparison(fixture, [first.ref, second.ref]);
     // plan 可审计：已封存落盘、含失败详情；dry-run 失败即不可执行。
     expect(planResult.plan.dryRun.status).toBe('failed');
     expect(planResult.plan.dryRun.errors[0]!.code).toBe('OBJECT_PRECONDITION_FAILED');
@@ -187,7 +209,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     const second = await sealCandidate(fixture.projectRoot, 'res-b', async (session) => {
       expect((await session.invoke('variable.ensure', { operationId: 'op-res-flag', name: 'flag.res', type: 'number', initial: 0 })).ok).toBe(true);
     });
-    const planned = await fixture.service.plan({ candidateRefs: [first.ref, second.ref], now: '2026-08-24T14:00:00.000Z' });
+    const planned = await planFromComparison(fixture, [first.ref, second.ref], { now: '2026-08-24T14:00:00.000Z' });
     expect(planned.plan.dryRun.status).toBe('passed');
 
     // —— 进程 A：创建 integration change 并只推进第一项后“崩溃”——
