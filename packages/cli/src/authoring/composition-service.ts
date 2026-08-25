@@ -16,6 +16,7 @@ import {
   type VerifiedCompositionCandidate,
 } from '@surdet/authoring';
 import { NodeProjectStorage } from './node-project-storage.js';
+import { projectIdentityFromRoot } from './project-identity.js';
 import { NodeLocalLeaseManager } from './node-local-lease.js';
 import { ChangeRecordProjectStorage } from './working-project-storage.js';
 import { NodeCompositionStore, type CompositionArtifactIdentity } from './node-composition-store.js';
@@ -54,6 +55,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * build plan → 内存 dry-run replay → 封存不可变 plan artifact。
  * dry-run 不写 change store、不写 source capsule、不写 project。
  */
+const sha256TextHasher: TextHasher = {
+  sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
+};
+
+function agentDataRoot(): string {
+  const configured = process.env['SURDET_AGENT_DATA_DIR'];
+  if (configured !== undefined && configured.trim().length > 0) return path.resolve(configured);
+  const localAppData = process.env['LOCALAPPDATA'];
+  return path.join(localAppData ?? path.join(os.homedir(), 'AppData', 'Local'), 'Surdet', 'agent-changes');
+}
+
+/** 从项目根组装服务（与 NodeChangeStore 同一 dataRoot 约定），供 MCP/CLI 薄投影复用。 */
+export async function compositionServiceForProject(projectRoot: string): Promise<CompositionService> {
+  const resolved = path.resolve(projectRoot);
+  const storage = await NodeProjectStorage.open(resolved);
+  const identity = projectIdentityFromRoot(storage.rootIdentity);
+  const store = new NodeCompositionStore(path.join(agentDataRoot(), identity), identity);
+  return new CompositionService(store, identity, resolved, sha256TextHasher);
+}
+
+export interface IntegrationProvenanceSource {
+  planId: string;
+  planFingerprint: string;
+  status: 'REPLAYING' | 'READY' | 'FAILED';
+  executeOperationId: string;
+}
+
+/**
+ * Task 6：从封存 plan artifact 构造 provenance 数据源。
+ * plan 缺失、字节校验失败或 planFingerprint 与 record.integration 不符 → available=false（COMPOSITION_PLAN_INVALID）。
+ */
+export async function loadIntegrationProvenance(
+  projectRoot: string,
+  integration: IntegrationProvenanceSource,
+): Promise<{ available: true; plan: Record<string, unknown> } | { available: false; reason: 'COMPOSITION_PLAN_INVALID' }> {
+  try {
+    const storage = await NodeProjectStorage.open(path.resolve(projectRoot));
+    const identity = projectIdentityFromRoot(storage.rootIdentity);
+    const directory = path.join(agentDataRoot(), identity, 'composition-plans', integration.planId);
+    let identityRecord: { sha256?: unknown } = {};
+    try {
+      identityRecord = JSON.parse(await fs.promises.readFile(path.join(directory, 'identity.json'), 'utf8')) as { sha256?: unknown };
+    } catch {
+      return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
+    }
+    if (typeof identityRecord.sha256 !== 'string') return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
+    const { store } = await (async () => ({ store: new NodeCompositionStore(path.join(agentDataRoot(), identity), identity) }))();
+    await store.readPlan(integration.planId, identityRecord.sha256);
+    const payload = JSON.parse(await fs.promises.readFile(path.join(directory, 'payload.json'), 'utf8')) as Record<string, unknown>;
+    const planFingerprint = typeof payload['planFingerprint'] === 'string' ? payload['planFingerprint'] : undefined;
+    if (planFingerprint !== integration.planFingerprint) return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
+    return { available: true, plan: payload };
+  } catch {
+    return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
+  }
+}
+
 export class CompositionService {
   private readonly leases: NodeLocalLeaseManager;
 
@@ -188,6 +246,12 @@ export class CompositionService {
     };
   }
 
+  /** composition.inspect：按 ID+SHA 读回封存 plan artifact（不重算比较）。 */
+  async inspect(input: { planId: string; artifactSha256: string }): Promise<{ plan: unknown }> {
+    const { plan } = await this.store.readPlan(input.planId, input.artifactSha256);
+    return { plan };
+  }
+
   /**
    * composition.execute：创建或精确恢复 OPEN integration change 并推进 replay。
    * - 无 changeId：扫描项目 change heads；发现该计划的 REPLAYING/FAILED change 即恢复；
@@ -301,7 +365,9 @@ async function objectFingerprintFromWorking(
   return text === undefined ? undefined : hasher.sha256(text);
 }
 
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { NodeChangeStore } from './node-change-store.js';
 import { ChangeSession } from '@surdet/authoring';
 import type { IntegrationMetadata } from '@surdet/authoring';
@@ -319,5 +385,9 @@ async function listChangeDirectories(projectDirectory: string): Promise<string[]
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   });
-  return entries.filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_-]+$/.test(entry.name)).map((entry) => entry.name);
+  return entries
+    .filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_-]+$/.test(entry.name))
+    // composition-plans 是计划 artifact 存储保留目录，不是 change。
+    .filter((entry) => entry.name !== 'composition-plans')
+    .map((entry) => entry.name);
 }

@@ -21,6 +21,7 @@ import { NodeChangeStore, type ArtifactIdentity } from '../authoring/node-change
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
 import { ChangeRecordProjectStorage } from '../authoring/working-project-storage.js';
+import { loadIntegrationProvenance } from '../authoring/composition-service.js';
 import type { AgentPortSession } from './session.js';
 import type { InvocationRecord } from './invocation-ledger.js';
 
@@ -64,6 +65,23 @@ export interface DeliveryCapsulePayload {
     eligibility: 'ready' | 'unavailable';
     reasons: Array<{ code: string; operationId?: string; message: string }>;
     manifest?: unknown;
+  };
+  /** Wave 5：仅 integration change 的 capsule 携带；从 sealed plan + record.integration 构造，不从 diff 猜。 */
+  integrationProvenance?: {
+    planId: string;
+    planFingerprint: string;
+    executeOperationId: string;
+    integrationChangeId: string;
+    status: 'REPLAYING' | 'READY' | 'FAILED';
+    nextOperationIndex: number;
+    operationCount: number;
+    sourceCapsules: unknown[];
+    includedUnits: string[];
+    deduplicatedUnits: unknown[];
+    conflictResolutions: unknown[];
+    replayReceipts: unknown[];
+    failure?: { code: string; message: string; operationIndex: number; integrationOperationId: string };
+    planAvailable: boolean;
   };
 }
 
@@ -311,6 +329,43 @@ export async function generateDeliveryCapsule(
         semanticDiff: semanticEntries(diff).filter(isSemanticEntry),
         objectFacts: projectObjectFacts(baseSnapshot, workingSnapshot),
       }, hasher);
+      // Wave 5：integration change 的 provenance 与失败审计（在 composition manifest 之后构造）。
+      let integrationProvenance: DeliveryCapsulePayload['integrationProvenance'];
+      if (record.integration !== undefined) {
+        const integrationMeta = record.integration;
+        const planSource = await loadIntegrationProvenance(session.projectRoot, {
+          planId: integrationMeta.planId,
+          planFingerprint: integrationMeta.planFingerprint,
+          status: integrationMeta.status,
+          executeOperationId: integrationMeta.executeOperationId,
+        });
+        integrationProvenance = {
+          planId: integrationMeta.planId,
+          planFingerprint: integrationMeta.planFingerprint,
+          executeOperationId: integrationMeta.executeOperationId,
+          integrationChangeId: changeId,
+          status: integrationMeta.status,
+          nextOperationIndex: integrationMeta.nextOperationIndex,
+          operationCount: integrationMeta.replayedOperations.length,
+          sourceCapsules: integrationMeta.sourceCapsules,
+          includedUnits: [...integrationMeta.includedUnitIds],
+          deduplicatedUnits: integrationMeta.deduplicatedUnits,
+          conflictResolutions: integrationMeta.conflictResolutions,
+          replayReceipts: integrationMeta.replayedOperations,
+          ...(integrationMeta.failure === undefined ? {} : { failure: integrationMeta.failure }),
+          planAvailable: planSource.available,
+        };
+        if (!planSource.available) {
+          composition.eligibility = 'unavailable';
+          (composition.reasons as Array<{ code: string; message: string; operationId?: string }>).push({ code: 'COMPOSITION_PLAN_INVALID', message: 'sealed plan artifact 缺失、损坏或指纹不符' });
+          manualReviewRequired.push('INTEGRATION_PLAN_UNAVAILABLE');
+        }
+        if (integrationMeta.status === 'FAILED') {
+          warnings.push('INTEGRATION_REPLAY_FAILED');
+          manualReviewRequired.push('INTEGRATION_REPLAY_FAILED');
+        }
+      }
+
       const payload: DeliveryCapsulePayload = {
         capsuleVersion: DELIVERY_CAPSULE_VERSION,
         capsuleId,
@@ -352,6 +407,7 @@ export async function generateDeliveryCapsule(
           afterRevision: snapshot.revision,
         },
         // integrationProvenance 的接口位置在 Task 6 从 sealed plan + record.integration 补全。
+        ...(integrationProvenance === undefined ? {} : { integrationProvenance }),
         composition: {
           eligibility: composition.eligibility,
           reasons: composition.reasons.map((reason) => ({
