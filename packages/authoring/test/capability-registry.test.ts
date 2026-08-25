@@ -139,7 +139,7 @@ describe('wave 5 composition capabilities', () => {
       },
       {
         id: 'composition.plan',
-        inputKeys: ['candidateRefs', 'unitChoices', 'reason'],
+        inputKeys: ['candidateRefs', 'conflictResolutions', 'reason'],
         forbiddenInputKeys: ['replayOperations', 'normalizedInput'],
       },
       {
