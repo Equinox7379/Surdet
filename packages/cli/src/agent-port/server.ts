@@ -111,6 +111,94 @@ const capsuleCompositionSchema: JsonSchema = {
   additionalProperties: false,
 };
 
+const candidateCapsuleRefSchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    changeId: { type: 'string' },
+    capsuleId: { type: 'string' },
+    artifactSha256: { type: 'string' },
+  },
+  required: ['changeId', 'capsuleId', 'artifactSha256'],
+  additionalProperties: false,
+};
+
+const integrationProvenanceSchema: JsonSchema = {
+  type: 'object',
+  properties: {
+    planId: { type: 'string' },
+    planFingerprint: { type: 'string' },
+    executeOperationId: { type: 'string' },
+    integrationChangeId: { type: 'string' },
+    status: { enum: ['REPLAYING', 'READY', 'FAILED'] },
+    nextOperationIndex: { type: 'integer' },
+    operationCount: { type: 'integer' },
+    sourceCapsules: { type: 'array', items: candidateCapsuleRefSchema },
+    includedUnits: { type: 'array', items: { type: 'string' } },
+    deduplicatedUnits: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          groupId: { type: 'string' },
+          retainedUnitId: { type: 'string' },
+          provenanceUnitIds: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['groupId', 'retainedUnitId', 'provenanceUnitIds'],
+        additionalProperties: false,
+      },
+    },
+    conflictResolutions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          conflictId: { type: 'string' },
+          resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
+          chosenUnitId: { type: 'string' },
+          actor: { enum: ['human', 'review-agent'] },
+          reason: { type: 'string' },
+          decidedAt: { type: 'string' },
+        },
+        required: ['conflictId', 'resolution', 'actor', 'decidedAt'],
+        additionalProperties: false,
+      },
+    },
+    replayReceipts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          operationIndex: { type: 'integer' },
+          integrationOperationId: { type: 'string' },
+          sourceCapsule: candidateCapsuleRefSchema,
+          sourceOperationId: { type: 'string' },
+          resultFingerprint: { type: 'string' },
+        },
+        required: ['operationIndex', 'integrationOperationId', 'sourceCapsule', 'sourceOperationId'],
+        additionalProperties: false,
+      },
+    },
+    failure: {
+      type: 'object',
+      properties: {
+        code: { type: 'string' },
+        message: { type: 'string' },
+        operationIndex: { type: 'integer' },
+        integrationOperationId: { type: 'string' },
+      },
+      required: ['code', 'message', 'operationIndex', 'integrationOperationId'],
+      additionalProperties: false,
+    },
+    planAvailable: { type: 'boolean' },
+  },
+  required: [
+    'planId', 'planFingerprint', 'executeOperationId', 'integrationChangeId', 'status',
+    'nextOperationIndex', 'operationCount', 'sourceCapsules', 'includedUnits',
+    'deduplicatedUnits', 'conflictResolutions', 'replayReceipts', 'planAvailable',
+  ],
+  additionalProperties: false,
+};
+
 const capsuleOutputSchema: JsonSchema = {
   type: 'object',
   properties: {
@@ -156,6 +244,7 @@ const capsuleOutputSchema: JsonSchema = {
       additionalProperties: false,
     },
     composition: capsuleCompositionSchema,
+    integrationProvenance: integrationProvenanceSchema,
   },
   required: [
     'capsuleVersion', 'capsuleId', 'generatedAt', 'sessionId', 'policy', 'contractVersion',
@@ -186,6 +275,17 @@ const sessionDescriptionSchema: JsonSchema = {
         baseRevision: { type: 'string' },
         workingRevision: { type: 'integer' },
         recordVersion: { type: 'integer' },
+        integration: {
+          type: 'object',
+          properties: {
+            planId: { type: 'string' },
+            status: { enum: ['REPLAYING', 'READY', 'FAILED'] },
+            nextOperationIndex: { type: 'integer' },
+            operationCount: { type: 'integer' },
+          },
+          required: ['planId', 'status', 'nextOperationIndex', 'operationCount'],
+          additionalProperties: false,
+        },
       },
       required: ['changeId', 'status', 'baseRevision', 'workingRevision', 'recordVersion'],
       additionalProperties: false,

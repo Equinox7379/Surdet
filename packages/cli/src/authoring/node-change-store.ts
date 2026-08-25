@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   AuthoringOperationError,
+  stableStringify,
   type ChangeRecord,
   type ChangeRepository,
   type ChangeWritePrecondition,
@@ -508,8 +509,26 @@ export class NodeChangeStore implements ChangeRepository {
     try {
       recordIdentity = await createJsonRecord(recordPath, record);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw conflict(record.changeId, precondition, current);
-      throw error;
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        // create-only record 已经落盘而 head 尚未发布，是进程在两个 commit-point
+        // 步骤之间退出时的合法恢复窗口。只接管语义完全相同且身份有效的孤儿
+        // record；任何不同内容仍 fail-loud，绝不覆盖既有 bytes。
+        const existing = await readJsonRecord<ChangeRecord>(recordPath);
+        // Compare the JSON value that createJsonRecord actually persists. Optional
+        // properties explicitly set to undefined are omitted by JSON.stringify and
+        // must not turn an otherwise identical crash-recovery record into a conflict.
+        if (existing === null || stableStringify(existing.value) !== stableStringify(clone(record))) {
+          throw conflict(record.changeId, precondition, current);
+        }
+        validateRecord(existing.value, record.changeId, this.rootIdentity, recordPath, {
+          formatVersion: 2,
+          recordVersion: record.recordVersion,
+          recordSha256: existing.identity.sha256,
+        });
+        recordIdentity = existing.identity;
+      } else {
+        throw error;
+      }
     }
     await replaceJsonRecord(this.headFile(record.changeId), {
       formatVersion: 2,

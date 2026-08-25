@@ -3,7 +3,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { type CommitJournal } from '@surdet/authoring';
+import { type ChangeRecord, type CommitJournal } from '@surdet/authoring';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
@@ -143,6 +143,67 @@ async function readRecordAndJournalBytes(fixture: Fixture, rootIdentity: string,
 }
 
 describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
+  it('record 已创建但 head 未发布：同内容恢复写入接管孤儿 record，不误报冲突', async () => {
+    await withFixture('surdet-task7-orphan-record-', async (fixture) => {
+      const changeId = await beginRecoveryChange(fixture.projectRoot);
+      const storage = await NodeProjectStorage.open(fixture.projectRoot);
+      const opened = await NodeChangeStore.openForProject(changeId, storage.rootIdentity, { allowStale: true });
+      if (opened === null) throw new Error(`missing record ${changeId}`);
+      const current = opened.record;
+      const next = JSON.parse(JSON.stringify(current)) as ChangeRecord;
+      next.recordVersion = current.recordVersion + 1;
+      // runOperation 在持久化前会显式清空证据字段；JSON writer 会省略 undefined，
+      // 因此恢复比较必须按落盘 JSON 语义，而不是按对象 own-property 形态。
+      next.latestValidation = undefined;
+
+      const directory = changeDirectory(fixture.dataRoot, storage.rootIdentity, changeId);
+      const orphan = path.join(directory, 'records', `${String(next.recordVersion).padStart(10, '0')}.json`);
+      fs.writeFileSync(orphan, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      const orphanBytes = fs.readFileSync(orphan);
+
+      await expect(NodeChangeStore.withChangeLeaseForProject(changeId, storage.rootIdentity, async (store) => {
+        await store.write(next, {
+          expectedRecordVersion: current.recordVersion,
+          expectedStatus: current.status,
+        });
+      })).resolves.toBeUndefined();
+
+      const recovered = await NodeChangeStore.openForProject(changeId, storage.rootIdentity, { allowStale: true });
+      expect(recovered?.record).toEqual(next);
+      expect(fs.readFileSync(orphan)).toEqual(orphanBytes);
+    });
+  });
+
+  it('同版本孤儿 record 内容不同：保持原 bytes 并 fail-loud', async () => {
+    await withFixture('surdet-task7-orphan-conflict-', async (fixture) => {
+      const changeId = await beginRecoveryChange(fixture.projectRoot);
+      const storage = await NodeProjectStorage.open(fixture.projectRoot);
+      const opened = await NodeChangeStore.openForProject(changeId, storage.rootIdentity, { allowStale: true });
+      if (opened === null) throw new Error(`missing record ${changeId}`);
+      const current = opened.record;
+      const next = JSON.parse(JSON.stringify(current)) as ChangeRecord;
+      next.recordVersion = current.recordVersion + 1;
+      const conflicting = JSON.parse(JSON.stringify(next)) as ChangeRecord;
+      conflicting.workingRevision += 1;
+
+      const directory = changeDirectory(fixture.dataRoot, storage.rootIdentity, changeId);
+      const orphan = path.join(directory, 'records', `${String(next.recordVersion).padStart(10, '0')}.json`);
+      fs.writeFileSync(orphan, `${JSON.stringify(conflicting, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      const orphanBytes = fs.readFileSync(orphan);
+
+      await expect(NodeChangeStore.withChangeLeaseForProject(changeId, storage.rootIdentity, async (store) => {
+        await store.write(next, {
+          expectedRecordVersion: current.recordVersion,
+          expectedStatus: current.status,
+        });
+      })).rejects.toMatchObject({ code: 'CHANGE_RECORD_CONFLICT' });
+
+      const unchanged = await NodeChangeStore.openForProject(changeId, storage.rootIdentity, { allowStale: true });
+      expect(unchanged?.record).toEqual(current);
+      expect(fs.readFileSync(orphan)).toEqual(orphanBytes);
+    });
+  });
+
   it('STAGING + base：新 Service inspect 后可恢复为 OPEN', async () => {
     await withFixture('surdet-task7-staging-', async (fixture) => {
       const changeId = await beginRecoveryChange(fixture.projectRoot);
