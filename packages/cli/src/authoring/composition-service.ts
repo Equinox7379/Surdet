@@ -172,15 +172,36 @@ export class CompositionService {
    */
   async plan(input: {
     candidateRefs: CandidateCapsuleRef[];
-    selectedUnitIds?: string[];
+    comparisonFingerprint: string;
+    selectedUnitIds: string[];
     conflictResolutions?: ConflictResolutionInput[];
     now?: string;
   }): Promise<CompositionPlanResult> {
+    // Re-compare live on every request; the caller's fingerprint must match the fresh
+    // result, otherwise the reviewed decision is stale and we fail loud instead of
+    // silently accepting outdated selections.
     const { comparison } = await this.compare(input.candidateRefs);
-    const selected = input.selectedUnitIds ?? comparison.units.map((unit) => unit.unitId);
+    if (comparison.comparisonFingerprint !== input.comparisonFingerprint) {
+      throw new AuthoringOperationError('COMPOSITION_PLAN_STALE',
+        'caller comparisonFingerprint does not match a fresh comparison; re-compare and resubmit the reviewed decision',
+        { retryDisposition: 'after-refresh', repairActions: [{ capability: 'composition.compare', detail: 're-compare and resubmit with the fresh fingerprint' }] });
+    }
+    const seen = new Set<string>();
+    for (const unitId of input.selectedUnitIds) {
+      if (seen.has(unitId)) {
+        throw new AuthoringOperationError('INVALID_REQUEST', `selectedUnitIds duplicates unit: ${unitId}`);
+      }
+      seen.add(unitId);
+    }
+    const known = new Set(comparison.units.map((unit) => unit.unitId));
+    for (const unitId of input.selectedUnitIds) {
+      if (!known.has(unitId)) {
+        throw new AuthoringOperationError('INVALID_REQUEST', `selectedUnitIds references unknown unit: ${unitId}`);
+      }
+    }
     const draft: IntegrationPlanDraft = await buildIntegrationPlan({
       comparison,
-      selectedUnitIds: selected,
+      selectedUnitIds: [...input.selectedUnitIds],
       conflictResolutions: input.conflictResolutions ?? [],
       now: input.now ?? new Date().toISOString(),
     }, this.hasher);

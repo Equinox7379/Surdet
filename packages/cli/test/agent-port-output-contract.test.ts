@@ -7,6 +7,7 @@ import {
   type AuthoringCapabilityId,
 } from '@surdet/authoring';
 import { dispatchAuthoringCapability, type InvocationContext } from '../src/authoring/authoring-dispatcher.js';
+import { openAgentPortSession } from '../src/agent-port/session.js';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { standardSchemaFromJson } from '../src/authoring/schema-validator.js';
 
@@ -193,37 +194,39 @@ describe('Wave 5 composition output-schema conformance', () => {
     const root = makeProject();
     const service = new AuthoringService();
 
-    // 封存两个真实 capsule（复用 stage 会话全证据链）。
-    const seal = async (name: string, run: (changeId: string) => Promise<void>): Promise<{ changeId: string; capsuleId: string; artifactSha256: string }> => {
-      const begun = await dispatchAuthoringCapability(context(root, 'stage'), 'change.begin', {
-        intent: `wave5 contract ${name}`, initiator: 'external-agent',
-      }, service);
-      const changeId = (begun.value.result as { changeId: string }).changeId;
-      await run(changeId);
-      const working = context(root, 'stage', changeId);
-      await dispatchAuthoringCapability(working, 'project.validate', {}, service);
-      await dispatchAuthoringCapability(working, 'project.simulate', {}, service);
-      await dispatchAuthoringCapability(working, 'runtime.run-from', { sceneId: 'start', choices: [] }, service);
-      await dispatchAuthoringCapability(working, 'change.diff', {}, service);
-      const { generateDeliveryCapsule } = await import('../src/agent-port/delivery-capsule.js');
-      const { openAgentPortSession } = await import('../src/agent-port/session.js');
-      const resumed = await openAgentPortSession({ projectRoot: root, policy: 'stage', resumeChangeId: changeId });
+    // 封存两个真实 capsule（复用 stage 会话全证据链；必须经 session.invoke 以产生
+    // invocation ledger，否则 manifest 因 INVOCATION_FACT_MISSING 而 unavailable）。
+    const seal = async (name: string, run: (session: Awaited<ReturnType<typeof openAgentPortSession>>) => Promise<void>): Promise<{ changeId: string; capsuleId: string; artifactSha256: string }> => {
+      const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
       try {
-        const capsule = await generateDeliveryCapsule(resumed);
-        return { changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
+        expect((await session.invoke('change.begin', {
+          intent: `wave5 contract ${name}`, initiator: 'external-agent',
+        })).ok).toBe(true);
+        await run(session);
+        expect((await session.invoke('project.validate', {})).ok).toBe(true);
+        expect((await session.invoke('project.simulate', {})).ok).toBe(true);
+        expect((await session.invoke('runtime.run-from', { sceneId: 'start', choices: [] })).ok).toBe(true);
+        expect((await session.invoke('change.diff', {})).ok).toBe(true);
+        const { generateDeliveryCapsule } = await import('../src/agent-port/delivery-capsule.js');
+        const capsule = await generateDeliveryCapsule(session);
+
+        return { changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
       } finally {
-        await resumed.close();
+        await session.close();
       }
     };
 
-    const first = await seal('a', async (changeId) => {
-      await dispatchAuthoringCapability(context(root, 'stage', changeId), 'scene.create',
-        { operationId: 'op-contract-cmp-alpha', sceneId: 'alpha' }, service);
+    const first = await seal('a', async (working) => {
+      expect((await working.invoke('scene.create',
+        {
+          operationId: 'op-contract-cmp-alpha', sceneId: 'alpha',
+          blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', speaker: 'lynn', value: 'Contract alpha.' }],
+        })).ok).toBe(true);
     });
     void first;
-    const second = await seal('b', async (changeId) => {
-      await dispatchAuthoringCapability(context(root, 'stage', changeId), 'variable.ensure',
-        { operationId: 'op-contract-cmp-flag', name: 'flag.contract', type: 'number', initial: 0 }, service);
+    const second = await seal('b', async (working) => {
+      expect((await working.invoke('variable.ensure',
+        { operationId: 'op-contract-cmp-flag', name: 'flag.contract', type: 'number', initial: 0 })).ok).toBe(true);
     });
     const candidateRefs = [first, second].map((ref) => ({
       changeId: ref.changeId, capsuleId: ref.capsuleId, artifactSha256: ref.artifactSha256,
@@ -240,8 +243,16 @@ describe('Wave 5 composition output-schema conformance', () => {
       return result;
     };
 
-    await scan('composition.compare', { candidateRefs });
-    const planned = await scan('composition.plan', { candidateRefs, conflictResolutions: [], reason: 'contract scan' }) as {
+    const comparedScan = await scan('composition.compare', { candidateRefs }) as {
+      comparisonFingerprint: string; units: Array<{ unitId: string }>;
+    };
+    const planned = await scan('composition.plan', {
+      candidateRefs,
+      comparisonFingerprint: comparedScan.comparisonFingerprint,
+      selectedUnitIds: comparedScan.units.map((unit) => unit.unitId),
+      conflictResolutions: [],
+      reason: 'contract scan',
+    }) as {
       planId: string; artifactSha256: string; dryRunStatus: string;
     };
     expect(planned.dryRunStatus).toBe('passed');

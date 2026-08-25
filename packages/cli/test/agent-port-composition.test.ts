@@ -41,6 +41,143 @@ async function sealCandidate(projectRoot: string, name: string, run: (session: A
   return { changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
 }
 
+describe('public selection contract (W5-PUBLIC-SELECTION-CONTRACT-1)', () => {
+  afterEach(() => {
+    delete process.env['SURDET_AGENT_DATA_DIR'];
+  });
+
+  it('exposes the full safe comparison projection through the dispatcher', async () => {
+    const projectRoot = makeProject('selcmp');
+    const a = await sealCandidate(projectRoot, 'sa', async (session) => {
+      expect((await session.invoke('scene.create', {
+        operationId: 's1', sceneId: 'wave5_alpha',
+        blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', speaker: 'lynn', value: 'Alpha route A.' }],
+      })).ok).toBe(true);
+      expect((await session.invoke('variable.ensure', { operationId: 's2', name: 'flag.alpha', type: 'string', initial: '' })).ok).toBe(true);
+    });
+    const b = await sealCandidate(projectRoot, 'sb', async (session) => {
+      expect((await session.invoke('timeline.create', {
+        operationId: 't1', timelineId: 'beta_opening',
+        definition: { version: 1, id: 'beta_opening', durationMs: 100,
+          tracks: [{ kind: 'background', target: '', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'set', key: 'night_field' }] }] },
+      })).ok).toBe(true);
+      expect((await session.invoke('scene.create', {
+        operationId: 't2', sceneId: 'wave5_beta',
+        blocks: [
+          { kind: 'label', name: 'start' },
+          { kind: 'instruction', name: 'timeline', args: ['beta_opening'], modifiers: { blocking: '' } },
+          { kind: 'text', speaker: 'lynn', value: 'Beta route.' },
+        ],
+      })).ok).toBe(true);
+    });
+    const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
+    const compared = await session.invoke('composition.compare', { candidateRefs: [a, b] });
+    expect(compared.ok).toBe(true);
+    const result = (compared as { ok: true; result: Record<string, unknown> }).result;
+    for (const field of ['comparisonVersion', 'projectIdentity', 'expectedProjectRevision', 'units', 'dependencyEdges', 'evidenceMatrix', 'conflicts', 'identicalGroups', 'comparisonFingerprint'] as const) {
+      expect(result[field], `compare projection missing ${field}`).toBeDefined();
+    }
+    const units = result['units'] as Array<Record<string, unknown>>;
+    const sceneUnitB = units.find((unit) => unit['primaryObject'] === 'scene:wave5_beta');
+    const timelineUnitB = units.find((unit) => unit['primaryObject'] === 'timeline:beta_opening');
+    expect(sceneUnitB).toBeDefined();
+    expect(timelineUnitB).toBeDefined();
+    expect(result['dependencyEdges'] as unknown[]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fromUnitId: sceneUnitB?.['unitId'], toUnitId: timelineUnitB?.['unitId'], objectRef: 'timeline:beta_opening' }),
+    ]));
+    for (const candidate of result['candidates'] as Array<Record<string, unknown>>) {
+      expect(Object.keys(candidate).sort()).toEqual(['candidateId', 'eligibility']);
+    }
+    expect(JSON.stringify(result)).not.toContain('candidateManifests');
+    expect(JSON.stringify(result)).not.toContain('normalizedInput');
+    expect(JSON.stringify(result)).not.toContain(projectRoot);
+    await session.close();
+  });
+
+  it('plans only with reviewed fingerprint plus explicit selection and fails loud on staleness', async () => {
+    const projectRoot = makeProject('selplan');
+    const a = await sealCandidate(projectRoot, 'pa', async (session) => {
+      expect((await session.invoke('scene.create', {
+        operationId: 'p1', sceneId: 'wave5_alpha',
+        blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', speaker: 'lynn', value: 'Alpha route A.' }],
+      })).ok).toBe(true);
+    });
+    const b = await sealCandidate(projectRoot, 'pb', async (session) => {
+      expect((await session.invoke('timeline.create', {
+        operationId: 'q1', timelineId: 'beta_opening',
+        definition: { version: 1, id: 'beta_opening', durationMs: 100,
+          tracks: [{ kind: 'background', target: '', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'set', key: 'night_field' }] }] },
+      })).ok).toBe(true);
+      expect((await session.invoke('scene.create', {
+        operationId: 'q2', sceneId: 'wave5_beta',
+        blocks: [
+          { kind: 'label', name: 'start' },
+          { kind: 'instruction', name: 'timeline', args: ['beta_opening'], modifiers: { blocking: '' } },
+          { kind: 'text', speaker: 'lynn', value: 'Beta route.' },
+        ],
+      })).ok).toBe(true);
+    });
+    const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
+    const compared = (await session.invoke('composition.compare', { candidateRefs: [a, b] })) as {
+      ok: true; result: { comparisonFingerprint: string; units: Array<Record<string, unknown>> };
+    };
+    expect(compared.ok).toBe(true);
+    const sceneUnitB = compared.result.units.find((unit) => unit['primaryObject'] === 'scene:wave5_beta');
+    const timelineUnitB = compared.result.units.find((unit) => unit['primaryObject'] === 'timeline:beta_opening');
+
+    // Stale or forged fingerprints must fail loud without silent re-comparison.
+    const stale = await session.invoke('composition.plan', {
+      candidateRefs: [a, b],
+      comparisonFingerprint: 'f'.repeat(64),
+      selectedUnitIds: [String(sceneUnitB?.['unitId'])],
+      conflictResolutions: [],
+      reason: 'stale attempt',
+    });
+    expect((stale as { ok: false; error?: { code?: string } }).error?.code).toBe('COMPOSITION_PLAN_STALE');
+
+    const planned = await session.invoke('composition.plan', {
+      candidateRefs: [a, b],
+      comparisonFingerprint: compared.result.comparisonFingerprint,
+      selectedUnitIds: [String(sceneUnitB?.['unitId'])],
+      conflictResolutions: [],
+      reason: 'explicit selection contract',
+    });
+    expect(planned.ok).toBe(true);
+    const planResult = (planned as { ok: true; result: { planId: string; artifactSha256: string } }).result;
+    const inspected = await session.invoke('composition.inspect', {
+      planId: planResult.planId, artifactSha256: planResult.artifactSha256,
+    });
+    expect(inspected.ok).toBe(true);
+    const plan = (inspected as { ok: true; result: { plan: Record<string, unknown> } }).result.plan;
+    expect(plan['selectedUnitIds']).toEqual([sceneUnitB?.['unitId']]);
+    expect(plan['implicitInclusions']).toContain(timelineUnitB?.['unitId']);
+    const replays = plan['replayOperations'] as Array<Record<string, unknown>>;
+    const timelineIndex = replays.findIndex((operation) => operation['sourceUnitId'] === timelineUnitB?.['unitId']);
+    const sceneIndex = replays.findIndex((operation) => operation['sourceUnitId'] === sceneUnitB?.['unitId']);
+    expect(timelineIndex).toBeGreaterThanOrEqual(0);
+    expect(sceneIndex).toBeGreaterThanOrEqual(0);
+    expect(timelineIndex).toBeLessThan(sceneIndex);
+
+    // Duplicate or unknown selections are invalid requests.
+    for (const badSelection of [[String(sceneUnitB?.['unitId']), String(sceneUnitB?.['unitId'])] as string[], ['no-such-unit']]) {
+      if (badSelection.length === 1 && badSelection[0] === 'no-such-unit') continue;
+      const duplicate = await session.invoke('composition.plan', {
+        candidateRefs: [a, b],
+        comparisonFingerprint: compared.result.comparisonFingerprint,
+        selectedUnitIds: badSelection,
+      });
+      expect(duplicate.ok).toBe(false);
+    }
+    const unknown = await session.invoke('composition.plan', {
+      candidateRefs: [a, b],
+      comparisonFingerprint: compared.result.comparisonFingerprint,
+      selectedUnitIds: ['no-such-unit'],
+    });
+    expect(unknown.ok).toBe(false);
+    await session.close();
+  });
+});
+
 describe('composition capabilities through the agent port', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
@@ -87,23 +224,21 @@ describe('composition capabilities through the agent port', () => {
 
     const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
     try {
-      const compared = await session.invoke('composition.compare', {
-        candidateRefs: [
-          { changeId: first.changeId, capsuleId: first.capsuleId, artifactSha256: first.artifactSha256 },
-          { changeId: second.changeId, capsuleId: second.capsuleId, artifactSha256: second.artifactSha256 },
-        ],
-      });
+      const refs = [
+        { changeId: first.changeId, capsuleId: first.capsuleId, artifactSha256: first.artifactSha256 },
+        { changeId: second.changeId, capsuleId: second.capsuleId, artifactSha256: second.artifactSha256 },
+      ];
+      const compared = await session.invoke('composition.compare', { candidateRefs: refs });
       expect(compared.ok).toBe(true);
+      const comparisonView = (compared as { ok: true; result: { comparisonFingerprint: string; units: Array<{ unitId: string }> } }).result;
 
       const planned = await session.invoke('composition.plan', {
-        candidateRefs: [
-          { changeId: first.changeId, capsuleId: first.capsuleId, artifactSha256: first.artifactSha256 },
-          { changeId: second.changeId, capsuleId: second.capsuleId, artifactSha256: second.artifactSha256 },
-        ],
+        candidateRefs: refs,
+        comparisonFingerprint: comparisonView.comparisonFingerprint,
+        selectedUnitIds: comparisonView.units.map((unit) => unit.unitId),
         conflictResolutions: [],
         reason: 'wave 5 e2e',
       });
-      if (!planned.ok) console.log('DIAG-P5', JSON.stringify((planned as { error: { message: string; details?: unknown } }).error));
       expect(planned.ok).toBe(true);
       const planResult = (planned as { ok: true; result: { planId: string; artifactSha256: string; dryRunStatus: string } }).result;
       expect(planResult.dryRunStatus).toBe('passed');
@@ -228,8 +363,8 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
       // 先比较拿到 selection-required 冲突，再以 choose A 裁决后计划。
       const compared = await session.invoke('composition.compare', { candidateRefs });
       expect(compared.ok).toBe(true);
-      const conflicts = (((compared as { ok: boolean; result?: { conflicts?: Array<Record<string, unknown>> } }).result?.conflicts) ?? []);
-      const selectionRequired = conflicts.find((conflict) => conflict.severity === 'selection-required');
+      const comparisonView = (compared as { ok: true; result: { comparisonFingerprint: string; units: Array<{ unitId: string }>; conflicts?: Array<Record<string, unknown>> } }).result;
+      const selectionRequired = (comparisonView.conflicts ?? []).find((conflict) => conflict.severity === 'selection-required');
       const firstUnitId = selectionRequired === undefined ? '' : ((selectionRequired['unitIds'] as string[] | undefined) ?? [])[0] ?? '';
       const conflictResolutions = selectionRequired === undefined ? [] : [{
         conflictId: selectionRequired['conflictId'] as string,
@@ -239,6 +374,8 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
       }];
       const planned = await session.invoke('composition.plan', {
         candidateRefs,
+        comparisonFingerprint: comparisonView.comparisonFingerprint,
+        selectedUnitIds: comparisonView.units.map((unit) => unit.unitId),
         conflictResolutions,
         reason: 'task6 provenance',
       });

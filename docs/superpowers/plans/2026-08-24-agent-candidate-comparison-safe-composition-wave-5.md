@@ -2716,3 +2716,53 @@ NEXT_ALLOWED_ACTION=await manager ruling on a diagnostic budget extension before
   closure evidence or drop of the redundant edge check).
 STOP=TASK_8_DIAGNOSTIC_BUDGET_EXHAUSTED_AWAITING_MANAGER
 ~~~
+
+### MANAGER CORRECTION (independent review) - appended to the record above
+
+~~~text
+The earlier claims "DIAG3 is a pure runner defect" and "PRODUCTION_DEFECTS_FOUND=false"
+are CORRECTED by independent manager review as follows:
+- plan dryRunStatus=passed is NOT dependency-closure evidence: without selectedUnitIds
+  the old contract silently selected ALL units, so the timeline would be included even
+  if it were not required by the scene.
+- The public MCP contract had real gaps: composition.plan strict input schema lacked
+  comparisonFingerprint/selectedUnitIds; composition.compare output lacked
+  units/dependencyEdges/evidenceMatrix. External agents could not express reviewed
+  selections at all. DIAG3 therefore exposed a genuine product contract gap.
+Historical text above is preserved unmodified; this correction supersedes it.
+
+### W5-PUBLIC-SELECTION-CONTRACT-1 - public selection contract fix
+
+~~~text
+BASELINE=HEAD e318d0b10f44e14d42628a8adc114226868f625f ahead15/0 tracked clean; three
+historical diagnostic artifacts preserved byte-identical.
+
+RED=selection-contract-red.log on e318d0b: compare projection missing comparisonVersion
+(+units/dependencyEdges/evidenceMatrix); plan rejected comparisonFingerprint/
+selectedUnitIds as additional properties. 2/2 new tests failed as required.
+
+FIX=
+- authoring-service.compareComposition projects the full safe CompositionComparison
+  (comparisonVersion/projectIdentity/expectedProjectRevision/status/safe candidates/
+  units/dependencyEdges/conflicts/identicalGroups/evidenceMatrix/comparisonFingerprint);
+  candidates stay {candidateId,eligibility}; no manifests, no normalizedInput, no paths.
+- registry compositionCompare.outputSchema extended accordingly; compositionPlan.inputSchema
+  now REQUIRES comparisonFingerprint + selectedUnitIds(minItems 1), keeps optional
+  conflictResolutions/reason, additionalProperties=false.
+- CompositionService.plan re-compares live, fails COMPOSITION_PLAN_STALE on fingerprint
+  mismatch (retryDisposition after-refresh), rejects duplicate/unknown selectedUnitIds,
+  and the default-select-all path is REMOVED; closure still via existing
+  buildIntegrationPlan only.
+- contract stays 2.0.0; no compat layer.
+
+TESTS_SYNCED=composition-service.test.ts(planFromComparison helper), agent-port-output-
+contract.test.ts(seal now goes through the public session so invocation facts exist; the
+old fixture silently planned an EMPTY unit set to READY under the default-all path -
+now impossible), agent-port-composition.test.ts(task5 e2e + task6 provenance bind fresh
+fingerprint + explicit selection).
+
+GREEN=authoring capability-registry.test.ts 11 passed; cli focus 26 passed; cli full
+228 passed first run; both typecheck+build exit0.
+GIT=PENDING_TASK_D_COMMIT
+STOP=TASK_E_POST_CONTRACT_VERIFY_ALL_NEXT
+~~~

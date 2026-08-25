@@ -490,13 +490,22 @@ const definitions = {
       }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
     }, ['candidateRefs']),
     outputSchema: strictObject({
-      comparisonFingerprint: stringSchema,
+      comparisonVersion: { enum: ['1.0.0'] },
+      projectIdentity: stringSchema,
+      expectedProjectRevision: stringSchema,
       status: { enum: ['composable', 'review-only', 'blocked'] },
-      candidates: arrayOf(jsonObjectSchema),
-      identicalGroups: arrayOf(jsonObjectSchema),
+      candidates: arrayOf(strictObject({
+        candidateId: stringSchema,
+        eligibility: { enum: ['ready', 'unavailable'] },
+      }, ['candidateId', 'eligibility'])),
+      units: arrayOf(jsonObjectSchema),
+      dependencyEdges: arrayOf(jsonObjectSchema),
       conflicts: arrayOf(jsonObjectSchema),
-    }, ['comparisonFingerprint', 'status', 'candidates', 'identicalGroups', 'conflicts']),
-    example: { input: {}, expectedResultShape: { comparisonFingerprint: 'cmp_...', status: 'composable', candidates: [], identicalGroups: [], conflicts: [] } },
+      identicalGroups: arrayOf(jsonObjectSchema),
+      evidenceMatrix: arrayOf(jsonObjectSchema),
+      comparisonFingerprint: stringSchema,
+    }, ['comparisonVersion', 'projectIdentity', 'expectedProjectRevision', 'status', 'candidates', 'units', 'dependencyEdges', 'conflicts', 'identicalGroups', 'evidenceMatrix', 'comparisonFingerprint']),
+    example: { input: {}, expectedResultShape: { comparisonVersion: '1.0.0', projectIdentity: '...', expectedProjectRevision: 'rev_...', status: 'composable', candidates: [], units: [], dependencyEdges: [], conflicts: [], identicalGroups: [], evidenceMatrix: [], comparisonFingerprint: '...' } },
   },
   compositionPlan: {
     inputSchema: strictObject({
@@ -505,6 +514,8 @@ const definitions = {
         capsuleId: stringSchema,
         artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
       }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
+      comparisonFingerprint: stringSchema,
+      selectedUnitIds: { ...arrayOf(stringSchema), minItems: 1 },
       conflictResolutions: arrayOf(strictObject({
         conflictId: stringSchema,
         resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
@@ -512,7 +523,7 @@ const definitions = {
         actor: { enum: ['human', 'review-agent'] },
       }, ['conflictId', 'resolution', 'actor'])),
       reason: { type: 'string', maxLength: 500 },
-    }, ['candidateRefs']),
+    }, ['candidateRefs', 'comparisonFingerprint', 'selectedUnitIds']),
     outputSchema: strictObject({
       planId: stringSchema,
       planFingerprint: stringSchema,
