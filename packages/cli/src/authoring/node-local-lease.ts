@@ -36,9 +36,10 @@ export interface NodeLocalLeaseManagerOptions {
   pid?: () => number;
   isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
   scheduleHeartbeat?: (callback: () => Promise<void>, intervalMs: number) => () => void;
-  /** Delay between bounded publication-window polls; total wait stays under 100ms. */
-  publicationPollDelayMs?: number;
-  /** Injection seam for tests; defaults to a real timer sleep of delayMs. */
+  /**
+   * Injection seam for deterministic tests only; production always sleeps the fixed
+   * DEFAULT_PUBLICATION_POLL_DELAY_MS between bounded publication-window polls.
+   */
   publicationDelay?: (delayMs: number) => Promise<void>;
 }
 
@@ -133,7 +134,6 @@ export class NodeLocalLeaseManager {
   private readonly pid: () => number;
   private readonly isProcessAlive: (pid: number) => boolean | Promise<boolean>;
   private readonly scheduleHeartbeat: (callback: () => Promise<void>, intervalMs: number) => () => void;
-  private readonly publicationPollDelayMs: number;
   private readonly publicationDelay: (delayMs: number) => Promise<void>;
   private readonly cancellations = new Map<string, () => void>();
 
@@ -160,10 +160,10 @@ export class NodeLocalLeaseManager {
       timer.unref?.();
       return () => clearInterval(timer);
     });
-    this.publicationPollDelayMs = options.publicationPollDelayMs ?? DEFAULT_PUBLICATION_POLL_DELAY_MS;
+    // No unref(): this timer is awaited by acquire(); releasing it from the event loop
+    // would let a worker exit before the awaited lease verdict is produced.
     this.publicationDelay = options.publicationDelay ?? ((delayMs) => new Promise((resolve) => {
-      const timer = setTimeout(resolve, delayMs);
-      timer.unref?.();
+      setTimeout(resolve, delayMs);
     }));
   }
 
@@ -281,7 +281,7 @@ export class NodeLocalLeaseManager {
           && error.code === 'LEASE_CORRUPT'
           && details?.['publicationPhase'] === 'read';
         if (!inWindow || poll >= PUBLICATION_POLL_LIMIT) throw error;
-        await this.publicationDelay(this.publicationPollDelayMs);
+        await this.publicationDelay(DEFAULT_PUBLICATION_POLL_DELAY_MS);
       }
     }
   }

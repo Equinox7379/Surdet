@@ -1,7 +1,9 @@
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChangeRecord } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -187,7 +189,6 @@ describe('NodeLocalLeaseManager', () => {
     const pollCalls: number[] = [];
     const manager = makeManager(root, state, {
       pid: () => 1002,
-      publicationPollDelayMs: 5,
       publicationDelay: async () => {
         pollCalls.push(pollCalls.length + 1);
         if (pollCalls.length === 1) {
@@ -230,7 +231,6 @@ describe('NodeLocalLeaseManager', () => {
     let polls = 0;
     const manager = makeManager(root, state, {
       pid: () => 1002,
-      publicationPollDelayMs: 5,
       publicationDelay: async () => {
         polls += 1;
       },
@@ -275,8 +275,7 @@ describe('NodeLocalLeaseManager', () => {
       let polls = 0;
       const manager = makeManager(root, state, {
         pid: () => 1002,
-        publicationPollDelayMs: 5,
-        publicationDelay: async () => {
+          publicationDelay: async () => {
           polls += 1;
         },
       } satisfies NodeLocalLeaseManagerOptions);
@@ -289,6 +288,52 @@ describe('NodeLocalLeaseManager', () => {
       expect(polls, `${item.suffix} must not enter the publication wait`).toBe(0);
       expect(await fsp.readFile(leasePath, 'utf8'), item.suffix).toBe(item.body);
     }
+  });
+
+  it('keeps the process alive while the default publication delay timer is awaited', async () => {
+    // W5-GATE-LEASE-WAIT-LIVENESS-2: an unref'd publication-wait timer lets the event
+    // loop drain while acquire() is still awaited, so a worker can exit early. The
+    // contract is that awaiting the DEFAULT delay must keep the task resumable.
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-liveness-'));
+    temporaryRoots.push(scratch);
+    const projectRoot = path.join(scratch, 'project');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const markerPath = path.join(scratch, 'marker.txt');
+    const managerModule = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../dist/authoring/node-local-lease.js',
+    );
+    const probePath = path.join(scratch, 'probe.mjs');
+    fs.writeFileSync(probePath, [
+      "import * as fs from 'node:fs';",
+      "import * as path from 'node:path';",
+      "const [projectRoot, markerPath, managerUrl] = process.argv.slice(2);",
+      "fs.mkdirSync(path.join(projectRoot, '.locks', 'changes', 'chg-live.lock'), { recursive: true });",
+      "const { NodeLocalLeaseManager } = await import(managerUrl);",
+      'const manager = new NodeLocalLeaseManager(projectRoot);',
+      'try {',
+      "  await manager.acquire({ scope: 'change', resourceId: 'chg-live' });",
+      "  fs.writeFileSync(markerPath, 'ACQUIRED');",
+      '} catch (error) {',
+      "  fs.writeFileSync(markerPath, String(error && error.code ? error.code : 'UNKNOWN'));",
+      '}',
+      'process.exit(0);',
+      '',
+    ].join('\n'), 'utf8');
+
+    const child = spawn(process.execPath, [probePath, projectRoot, markerPath, `file://${managerModule.split(path.sep).join('/')}`], {
+      stdio: 'ignore',
+    });
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('exit', (code) => resolve(code ?? -1));
+    });
+
+    // The child must run to completion and report the lease verdict itself; an
+    // unref'd wait timer would let it exit before the marker is ever written.
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(markerPath), 'child exited before the awaited publication delay resolved').toBe(true);
+    expect(fs.readFileSync(markerPath, 'utf8')).toBe('LEASE_CORRUPT');
   });
 
   it('uses the project scope lock namespace and releases it through withProjectLease', async () => {
