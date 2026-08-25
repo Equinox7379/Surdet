@@ -2661,3 +2661,21 @@ cli full suite 226 passed first run; typecheck+build exit0.
 GIT=PENDING_STEP4_COMMIT
 STOP=TASK_5_MANAGER_EXCEPTION_VERIFY_ALL_AUTHORIZED_ONCE
 ~~~
+
+### Task 7 CLOSED - manager exception aggregate gate passed
+
+~~~text
+VERIFY_ALL_FORMAL_RUN_COUNT=1
+VERIFY_ALL_RECOVERY_RUN_COUNT=1
+VERIFY_ALL_MANAGER_EXCEPTION_RUN_COUNT=1
+VERIFY_ALL_TOTAL_RUN_COUNT=3
+
+MANAGER_EXCEPTION_VERIFY_ALL=PASS
+ARTIFACT=task7-verify-all-manager-exception.log bytes=89625 sha256=d30cef397803a052a17f11aa34a322ca384e8c4b62b6f6b84196a0baf4ada46b
+LAST_NODE=verify:diff-check (git diff --check) after renderer/formal builds; all verify:* subgates green
+MULTI_PROCESS_AFTER_FIX=multi-process-change-concurrency.test.ts 3 passed (4286ms)
+HEAD_AT_GATE=f9d8fee fix(cli): keep lease publication wait alive
+TRACKED_TREE_CLEAN=true
+DIAGNOSTIC_BUDGET=untouched; FORMAL_BUDGET=untouched (Task 8 budgets not consumed by this round)
+STOP=TASK_8_AGGREGATE_RUNNER_AND_PREFLIGHT
+~~~
