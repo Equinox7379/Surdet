@@ -36,6 +36,10 @@ export interface NodeLocalLeaseManagerOptions {
   pid?: () => number;
   isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
   scheduleHeartbeat?: (callback: () => Promise<void>, intervalMs: number) => () => void;
+  /** Delay between bounded publication-window polls; total wait stays under 100ms. */
+  publicationPollDelayMs?: number;
+  /** Injection seam for tests; defaults to a real timer sleep of delayMs. */
+  publicationDelay?: (delayMs: number) => Promise<void>;
 }
 
 interface LocalLease {
@@ -53,6 +57,9 @@ type LeaseReleaseInput = Pick<LeaseHandle, 'scope' | 'resourceId' | 'ownerToken'
 
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const STALE_AFTER_MS = 15_000;
+/** Publication-window budget: the holder creates the final lock directory before lease.json lands. */
+const PUBLICATION_POLL_LIMIT = 10;
+const DEFAULT_PUBLICATION_POLL_DELAY_MS = 10;
 
 function defaultDataRoot(): string {
   const configured = process.env['SURDET_AGENT_DATA_DIR'];
@@ -126,6 +133,8 @@ export class NodeLocalLeaseManager {
   private readonly pid: () => number;
   private readonly isProcessAlive: (pid: number) => boolean | Promise<boolean>;
   private readonly scheduleHeartbeat: (callback: () => Promise<void>, intervalMs: number) => () => void;
+  private readonly publicationPollDelayMs: number;
+  private readonly publicationDelay: (delayMs: number) => Promise<void>;
   private readonly cancellations = new Map<string, () => void>();
 
   constructor(
@@ -151,6 +160,11 @@ export class NodeLocalLeaseManager {
       timer.unref?.();
       return () => clearInterval(timer);
     });
+    this.publicationPollDelayMs = options.publicationPollDelayMs ?? DEFAULT_PUBLICATION_POLL_DELAY_MS;
+    this.publicationDelay = options.publicationDelay ?? ((delayMs) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, delayMs);
+      timer.unref?.();
+    }));
   }
 
   private scopeDirectory(scope: LeaseScope): string {
@@ -214,10 +228,14 @@ export class NodeLocalLeaseManager {
     const file = this.leaseFile(scope, resourceId);
     try {
       const loaded = await readJsonRecord<unknown>(file);
-      if (loaded === null) throw leaseCorrupt(`lease.json 缺失：${file}`, { path: file, scope, resourceId });
+      if (loaded === null) {
+        // Missing record right after the lock directory exists is the publication window,
+        // not corruption; acquire() may retry this case within its bounded budget.
+        throw leaseCorrupt(`lease.json 缺失：${file}`, { path: file, scope, resourceId, publicationPhase: 'read', readErrorCode: 'ENOENT' });
+      }
       const value = loaded.value;
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw leaseCorrupt(`lease.json 不是对象：${file}`, { path: file, scope, resourceId });
+        throw leaseCorrupt(`lease.json 不是对象：${file}`, { path: file, scope, resourceId, publicationPhase: 'parse' });
       }
       const lease = value as Partial<LocalLease>;
       if (lease.formatVersion !== 1 || lease.scope !== scope || lease.resourceId !== resourceId
@@ -232,13 +250,39 @@ export class NodeLocalLeaseManager {
     } catch (error) {
       if (error instanceof AuthoringOperationError && error.code === 'LEASE_CORRUPT') throw error;
       const details = error instanceof AuthoringOperationError ? error.details : undefined;
+      const rawCode = errorCode(error);
+      const transientRead = rawCode === 'ENOENT' || rawCode === 'EBUSY' || rawCode === 'EPERM';
       throw leaseCorrupt(`lease.json 无法读取：${file}`, {
         path: file,
         scope,
         resourceId,
         ...(details ?? {}),
+        ...(transientRead ? { publicationPhase: 'read', readErrorCode: rawCode } : {}),
         cause: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /**
+   * First read of an existing lock inside acquire(): tolerate the brief publication
+   * window between mkdir(final lock directory) and the completed lease.json write.
+   * Only structured publication-window reads are retried, within a bounded budget;
+   * genuine corruption keeps failing loud with manualRecoveryRequired semantics.
+   */
+  private async loadLeaseAwaitingPublication(scope: LeaseScope, resourceId: string): Promise<LocalLease> {
+    for (let poll = 0; ; poll += 1) {
+      try {
+        return await this.loadLease(scope, resourceId);
+      } catch (error) {
+        const details = error instanceof AuthoringOperationError
+          ? error.details as Record<string, unknown> | undefined
+          : undefined;
+        const inWindow = error instanceof AuthoringOperationError
+          && error.code === 'LEASE_CORRUPT'
+          && details?.['publicationPhase'] === 'read';
+        if (!inWindow || poll >= PUBLICATION_POLL_LIMIT) throw error;
+        await this.publicationDelay(this.publicationPollDelayMs);
+      }
     }
   }
 
@@ -298,7 +342,7 @@ export class NodeLocalLeaseManager {
 
       let lease: LocalLease;
       try {
-        lease = await this.loadLease(scope, resourceId);
+        lease = await this.loadLeaseAwaitingPublication(scope, resourceId);
       } catch (error) {
         if (error instanceof AuthoringOperationError && error.code === 'LEASE_CORRUPT') throw error;
         throw error;
