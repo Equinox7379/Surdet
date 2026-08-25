@@ -2679,3 +2679,40 @@ TRACKED_TREE_CLEAN=true
 DIAGNOSTIC_BUDGET=untouched; FORMAL_BUDGET=untouched (Task 8 budgets not consumed by this round)
 STOP=TASK_8_AGGREGATE_RUNNER_AND_PREFLIGHT
 ~~~
+
+### Task 8 - runner authored, preflight PASSED, DIAGNOSTIC budget exhausted (stopped per rule)
+
+~~~text
+RUNNER=packages/cli/e2e/agent-candidate-composition-wave-5.e2e.mjs (835 lines, 4 modes,
+artifactRoot=%TEMP%/surdet-agent-candidate-composition-wave5-*; exclusive-create artifacts;
+gitHead+runnerSha256+trackedCodeDiffPaths in every artifact; FORMAL requires clean tree +
+runHead==SURDET_CODE_EVIDENCE_HEAD; child stderr captured to <mode>/child-stderr.log)
+
+PREFLIGHT=PASS (after build authoring+cli): modern/auto + legacy/2025 negotiation, 26
+native capabilities, contractVersion 2.0.0, policy filter, stdout purity, child cleanup,
+original Starter unchanged.
+
+DIAGNOSTIC_RUN_COUNT=3 (budget exhausted)
+DIAG1=FAILED seal-four-candidates: beta timeline cue referenced asset:bg:night_field but the
+  Starter baseline object index has no such asset object (@bg directives do not mint index
+  assets; only timeline cues do). RUNNER FIXTURE DEFECT: switched B cue to baseline-present
+  castle_hall. artifact ...wave5-xYn6OF/diagnostic bytes=1087 sha256=936a5eaa1bfc8eda2459c6beabe4336bc5ae7c650e6b38406d6ad5a756418fbd
+DIAG2=FAILED compare-abcd-conflicts-and-identical: runner read compared.comparison.status but
+  the dispatcher projects {comparisonFingerprint,status,candidates,identicalGroups,conflicts}
+  at top level. RUNNER PROJECTION FIX. artifact ...wave5-sJTBpk/diagnostic bytes=1051 sha256=f917d128e01fbfd96109b7fe324d02dc8f8d1096561529ee7e102bdc8d0b51d2
+DIAG3=FAILED same node: timeline-edge assertion scanned candidates[].composition.manifest but
+  the compare projection exposes candidates as {candidateId,eligibility} only. READ-ONLY
+  post-mortem confirms this is a runner assertion defect, NOT a product gap: dependency
+  closure for B scene->timeline is already proven by plan dryRunStatus=passed (manifest
+  resolveRequirements would mark unavailable otherwise), and explicit units remain visible
+  via composition.inspect plan payload. artifact ...wave5-kyt4IW/diagnostic bytes=1055 sha256=6e955e4cd17b4044b7137d99b9bb50d094d2cf3814821046fc32962113f320a2
+
+STATUS=DIAGNOSTIC_BUDGET_EXHAUSTED
+FORMAL_NOT_RUN=true
+CODE_EVIDENCE_HEAD_NOT_FROZEN=true (Step 5 commit not reached)
+PRODUCTION_DEFECTS_FOUND=false (all three failures were runner-side; no product code touched)
+NEXT_ALLOWED_ACTION=await manager ruling on a diagnostic budget extension before any rerun;
+  the pending fix is confined to the runner file (assertion rewrite to inspect-plan based
+  closure evidence or drop of the redundant edge check).
+STOP=TASK_8_DIAGNOSTIC_BUDGET_EXHAUSTED_AWAITING_MANAGER
+~~~
