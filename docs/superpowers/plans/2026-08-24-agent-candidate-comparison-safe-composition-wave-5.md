@@ -2779,4 +2779,3 @@ ARTIFACT=task8-post-contract-verify-all.log bytes=90429 sha256=a523b567c13fb089f
 HEAD_AT_GATE=ccd167f fix(cli): expose composition selection contract
 RESULT=exit0; multi-process-change-concurrency 3 passed; all verify:* subgates green
 ~~~
-
