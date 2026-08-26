@@ -167,6 +167,14 @@ export async function buildIntegrationPlan(
       throw invalid(`裁决指向非 selection-required 冲突：${conflictId}`);
     }
   }
+  const identicalPeersByUnit = new Map<string, Set<string>>();
+  for (const group of comparison.identicalGroups) {
+    for (const unitId of group.unitIds) {
+      const peers = identicalPeersByUnit.get(unitId) ?? new Set<string>();
+      for (const peerId of group.unitIds) peers.add(peerId);
+      identicalPeersByUnit.set(unitId, peers);
+    }
+  }
   const excluded = new Set<string>();
   for (const conflict of selectionConflicts) {
     const resolution = resolutionsByConflict.get(conflict.conflictId);
@@ -177,8 +185,9 @@ export async function buildIntegrationPlan(
       if (resolution.chosenUnitId === undefined || !conflict.unitIds.includes(resolution.chosenUnitId)) {
         throw invalid(`choose-unit 的 chosenUnitId 不在该冲突允许列表中：${conflict.conflictId}`);
       }
+      const equivalentUnits = identicalPeersByUnit.get(resolution.chosenUnitId) ?? new Set([resolution.chosenUnitId]);
       for (const unitId of conflict.unitIds) {
-        if (unitId !== resolution.chosenUnitId) excluded.add(unitId);
+        if (!equivalentUnits.has(unitId)) excluded.add(unitId);
       }
     } else if (resolution.resolution === 'exclude-all') {
       for (const unitId of conflict.unitIds) excluded.add(unitId);

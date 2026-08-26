@@ -363,13 +363,31 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
       // 先比较拿到 selection-required 冲突，再以 choose A 裁决后计划。
       const compared = await session.invoke('composition.compare', { candidateRefs });
       expect(compared.ok).toBe(true);
-      const comparisonView = (compared as { ok: true; result: { comparisonFingerprint: string; units: Array<{ unitId: string }>; conflicts?: Array<Record<string, unknown>> } }).result;
+      const comparisonView = (compared as { ok: true; result: {
+        comparisonFingerprint: string;
+        units: Array<{ unitId: string; candidateId: string; primaryObject: string }>;
+        conflicts?: Array<Record<string, unknown>>;
+        identicalGroups?: Array<{ groupId: string; unitIds: string[]; primaryObject: string }>;
+      } }).result;
       const selectionRequired = (comparisonView.conflicts ?? []).find((conflict) => conflict.severity === 'selection-required');
-      const firstUnitId = selectionRequired === undefined ? '' : ((selectionRequired['unitIds'] as string[] | undefined) ?? [])[0] ?? '';
+      const sceneUnitA = comparisonView.units.find((unit) =>
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${a.changeId}`);
+      const sceneUnitC = comparisonView.units.find((unit) =>
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${c.changeId}`);
+      const sceneUnitD = comparisonView.units.find((unit) =>
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${d.changeId}`);
+      expect(sceneUnitA).toBeDefined();
+      expect(sceneUnitC).toBeDefined();
+      expect(sceneUnitD).toBeDefined();
+      const sceneIdenticalGroup = (comparisonView.identicalGroups ?? []).find((group) =>
+        group.primaryObject === 'scene:wave5_alpha'
+        && group.unitIds.includes(sceneUnitA!.unitId)
+        && group.unitIds.includes(sceneUnitD!.unitId));
+      expect(sceneIdenticalGroup).toBeDefined();
       const conflictResolutions = selectionRequired === undefined ? [] : [{
         conflictId: selectionRequired['conflictId'] as string,
         resolution: 'choose-unit',
-        chosenUnitId: firstUnitId,
+        chosenUnitId: sceneUnitA!.unitId,
         actor: 'human',
       }];
       const planned = await session.invoke('composition.plan', {
@@ -419,10 +437,15 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
       // 冲突裁决记录在案（choose-unit）。
       const resolutions = provenance?.['conflictResolutions'] as Array<Record<string, unknown>>;
       expect(resolutions.some((r) => r['resolution'] === 'choose-unit')).toBe(true);
-      // dedupe：A/D 的 identical 组去重后仍有 provenance 记录。
+      // dedupe：A/D 的 scene identical 子组即使与 C 冲突，也必须保留两边 provenance。
       const dedup = provenance?.['deduplicatedUnits'] as Array<Record<string, unknown>>;
       expect(Array.isArray(dedup)).toBe(true);
-      expect(dedup.length).toBeGreaterThan(0);
+      const sceneDedupe = dedup.find((item) => item['groupId'] === sceneIdenticalGroup!.groupId);
+      expect(sceneDedupe).toBeDefined();
+      expect(new Set(sceneDedupe!['provenanceUnitIds'] as string[])).toEqual(
+        new Set([sceneUnitA!.unitId, sceneUnitD!.unitId]),
+      );
+      expect((sceneDedupe!['provenanceUnitIds'] as string[])).not.toContain(sceneUnitC!.unitId);
       // freshness 与无 mutation。
       expect(capsule.validation.status).toBeDefined();
       expect(capsule.runtime.status).toBeDefined();

@@ -266,26 +266,34 @@ export async function compareCandidates(
   };
   for (const [objectRef, bucket] of byObject) {
     if (bucket.length < 2) continue;
-    const firstSignature = signatureOf(bucket[0]!, objectRef);
-    const hasExplicitFingerprint = bucket[0]!.producedObjects
-      .find((item) => item.objectRef === objectRef)?.finalFingerprint !== undefined;
-    const allIdentical = hasExplicitFingerprint && bucket.every((unit) => signatureOf(unit, objectRef) === firstSignature);
-    if (allIdentical) {
-      // identical group 保留全部 provenance，不删除任何候选。
-      const orderedUnits = [...bucket].sort((left, right) => left.unitId.localeCompare(right.unitId));
+    const bySignature = new Map<string, ObjectChangeUnit[]>();
+    for (const unit of bucket) {
+      const signature = signatureOf(unit, objectRef);
+      const signatureBucket = bySignature.get(signature) ?? [];
+      signatureBucket.push(unit);
+      bySignature.set(signature, signatureBucket);
+    }
+    let wholeBucketIdentical = false;
+    for (const [, signatureBucket] of [...bySignature.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      const production = signatureBucket[0]!.producedObjects.find((item) => item.objectRef === objectRef);
+      if (signatureBucket.length < 2 || production?.finalFingerprint === undefined) continue;
+      // 相同对象桶内也要按精确结果签名形成子组。A/D 相同而 C 不同时，
+      // A/D 的 provenance 仍必须保留，C 则继续参与 selection-required 冲突。
+      const orderedUnits = [...signatureBucket].sort((left, right) => left.unitId.localeCompare(right.unitId));
       const groupId = (await sha256Text(stableStringify({
         primaryObject: objectRef,
-        finalFingerprint: orderedUnits[0]!.finalFingerprint,
+        finalFingerprint: production.finalFingerprint,
         unitIds: orderedUnits.map((unit) => unit.unitId),
       }))).slice(0, 32);
       identicalGroups.push({
         groupId,
         unitIds: orderedUnits.map((unit) => unit.unitId),
         primaryObject: objectRef,
-        finalFingerprint: orderedUnits[0]!.finalFingerprint!,
+        finalFingerprint: production.finalFingerprint,
       });
-      continue;
+      wholeBucketIdentical = bySignature.size === 1 && signatureBucket.length === bucket.length;
     }
+    if (wholeBucketIdentical) continue;
     softReviewOnly = true;
     conflicts.push(await makeConflict(hasher, {
       severity: 'selection-required',
@@ -295,7 +303,9 @@ export async function compareCandidates(
       objectRefs: [objectRef],
       allowedResolutions: ['choose-unit', 'exclude-all'],
       details: {
-        signatures: bucket.map((unit) => ({ unitId: unit.unitId, signature: signatureOf(unit, objectRef) })),
+        signatures: [...bucket]
+          .sort((left, right) => left.unitId.localeCompare(right.unitId))
+          .map((unit) => ({ unitId: unit.unitId, signature: signatureOf(unit, objectRef) })),
       },
       repairActions: ['选择一个单元并排除其余', '全部排除后重新规划'],
     }));
