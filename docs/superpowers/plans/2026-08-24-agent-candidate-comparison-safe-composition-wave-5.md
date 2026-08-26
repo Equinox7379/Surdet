@@ -3001,3 +3001,56 @@ ACCEPTANCE_PREP=NOT_RUN
 PUSH=NOT_PERFORMED
 WAVE_6=NOT_STARTED
 ~~~
+
+### 2026-08-26 — Owner-authorized single replacement FORMAL
+
+~~~text
+AUTHORITY=project owner explicitly authorized exactly one replacement FORMAL after the
+  independent-review repair was frozen at 400f78d5201a6da3bd04e729588ec2e4860eed6d.
+CODE_EVIDENCE_HEAD=400f78d5201a6da3bd04e729588ec2e4860eed6d
+REPLACEMENT_FORMAL_RUN_COUNT=1/1 USED
+FORMAL_ACTUAL_EXECUTION_COUNT=2 (the first run was invalidated by independent review;
+  this second run is the only owner-authorized replacement and the current evidence).
+
+PRE_FORMAL_GATES=
+- tracked worktree clean; staging empty; HEAD...surdet/main=20/0.
+- runner node --check PASS.
+- formal launcher preflight PASS: modern 2026-07-28 + legacy 2025-11-25,
+  26 capabilities, contract 2.0.0, stdout purity, child cleanup, Starter unchanged.
+
+REPLACEMENT_FORMAL=PASSED
+ROOT=%TEMP%/surdet-agent-candidate-composition-wave5-GXeXXh
+ARTIFACT=formal/evidence.json
+BYTES=7400
+SHA256=5713E5B8ECC5AD31232537EF73D3937CA8BC0C4B7B5E1DFF14F496F553426E5B
+IDENTITY=formal/identity.json
+IDENTITY_BYTES=226
+IDENTITY_SHA256=6053CAF3628256D717C6895D9DDB25B27555F26498C85B7302B06CB10D482322
+STATUS=PASSED
+EVIDENCE_CLASS=FORMAL
+RUN_HEAD=400f78d5201a6da3bd04e729588ec2e4860eed6d
+RUNNER_SHA256=09C1CE80ED7A3ADB7743C382DA4E9B3BAF5ADB972DBDF3A9A388B46F0FCA692F
+TRACKED_CODE_DIFF_PATHS=[]
+MILESTONES=18/18 PASSED
+LAST_PASSED_NODE=fresh-observe-and-disk-equivalence
+FIRST_FAILED_NODE=null
+ERRORS=[]; protocol=[]; stderrUnexpected=[]; childCleanupFailures=[];
+  activeLeaseDirectories=[].
+
+CONTRACT_PROOF=
+- closureEvidence contains two distinct identical groups: A/D variable and A/D scene.
+- both groups retain both provenanceUnitIds and each replays exactly once.
+- conflicting C scene is excluded while D scene provenance is not conflict-excluded.
+- integrationStatus=READY; validation/simulation/alphaTrace/betaTrace fresh=true.
+- stageProjectMutated=false; source capsules/changes unchanged; original Starter unchanged.
+- formal fixture apply mutation exactly matches the integration diff.
+
+VERIFY_ALL=NOT_RERUN; cumulative budget remains 4/4. This is recorded as the remaining
+  MEDIUM evidence boundary and is not hidden by the FORMAL result.
+ACCEPTANCE_PREP=NOT_RUN
+EXTERNAL_AGENT_ACCEPTANCE=NOT_STARTED
+OWNER_ACCEPTANCE=NOT_STARTED
+PUSH=NOT_PERFORMED
+WAVE_6=NOT_STARTED
+STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+~~~
