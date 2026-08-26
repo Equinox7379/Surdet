@@ -2737,6 +2737,154 @@ NO_SEVENTH_RUN=true
 STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
 ~~~
 
+### 2026-08-26 — Acceptance preparation, external Agent, isolated apply, and Owner acceptance
+
+~~~text
+AUTHORITY=
+- project owner authorized one acceptance-prep;
+- after the historical empty-data false-positive was identified, project owner authorized
+  W5-ACCEPTANCE-PREP-RECOVERY-1, limited to the acceptance-prep runner and a permanent test,
+  followed by exactly one replacement acceptance-prep;
+- after external Agent stage acceptance passed, project owner authorized isolated apply/resume;
+- after the apply evidence passed, project owner started and personally completed the short
+  Editor/preview acceptance path.
+
+ACCEPTANCE_PREP_REPAIR=
+HEAD=aa6b2ca926c218df620c220c7bd8d585f37f82ee
+PARENT=017d6686c94ac2c5cff43df633f579b96ea27506
+COMMIT=fix(cli): prepare candidate composition acceptance
+SCOPE=
+- packages/cli/e2e/agent-candidate-composition-wave-5.e2e.mjs
+- packages/cli/test/agent-candidate-composition-acceptance-prep.test.mjs
+CONTRACT=
+- reject the historical empty-data PREPARED false-positive;
+- require exactly four sealed OPEN non-integration source changes A/B/C/D;
+- require non-empty agent-data, complete handoff files, exact candidate refs, matching project
+  identity, no active leases, original Starter unchanged, and no integration/apply/external Agent.
+PERMANENT_TEST=2 tests PASS
+NODE_CHECK=PASS
+PREFLIGHT=PASS
+
+REPLACEMENT_ACCEPTANCE_PREP=
+STATUS=PREPARED
+ROOT=C:\Users\Equinox\Desktop\surdet-agent-composition-acceptance-TMaHUV
+PROJECT_ROOT=C:\Users\Equinox\Desktop\surdet-agent-composition-acceptance-TMaHUV\project
+DATA_DIR=C:\Users\Equinox\Desktop\surdet-agent-composition-acceptance-TMaHUV\agent-data
+RUN_HEAD=aa6b2ca926c218df620c220c7bd8d585f37f82ee
+RUNNER_SHA256=6A63D4FE415B9190DB8E0CCA9BA06378AA6E7C4B9CA36F00A6041E4E1523E216
+EVIDENCE_BYTES=25966
+EVIDENCE_SHA256=2878848E31420AE3E63577A2B70520E2AAACC7E63222C9E99F28893A2DE7DF5A
+IDENTITY_BYTES=201
+IDENTITY_SHA256=1FA784E42B8C970C4FE3E49EF9869CA463EA384834C5E6010ED02C720B4D5E6E
+SOURCE_CANDIDATES=4 sealed OPEN non-integration changes, A/B/C/D
+DATA_DIR_FILE_COUNT=38
+PROJECT_TREE_AT_PREP=37 files / 6705750 bytes /
+  8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6
+PROJECT_FIXTURE_EQUALS_STARTER_AT_PREP=true
+ORIGINAL_STARTER_UNCHANGED=true
+INTEGRATION_CHANGE_CREATED=false
+EXTERNAL_AGENT_STARTED=false
+APPLY_AUTHORIZED=false
+ERRORS=[]; childCleanupFailures=[]; activeLeaseDirectories=[]
+
+EXTERNAL_AGENT_STAGE_ACCEPTANCE=
+RESULT=PASSED
+SERVICE=the designated Surdet Agent Port only
+COMPARISON_FINGERPRINT=c1335f8c57424d246ab027f44ee8c8978d128520a8c984a8ed95aa43826fbce9
+PLAN_ID=pln_2fa96183597f4a60c6dba289c3c3590e
+PLAN_FINGERPRINT=2fa96183597f4a60c6dba289c3c3590ecacb06aa0567693af5a371a4105860f2
+EXECUTE_OPERATION_ID=ext_agent_wave5_acceptance_exec_op_001
+INTEGRATION_CHANGE=chg_0002_2e446b47-b382-434e-a70f-2a21bc4a067f
+WORKING_REVISION=4
+INTEGRATION_STATUS=READY
+CHANGE_STATUS=OPEN
+PROOF=
+- A/D variable identical subgroup retained both provenance unit ids;
+- A/D scene identical subgroup retained both provenance unit ids;
+- C scene unit was conflict-excluded and absent from replay/diff;
+- B timeline dependency replayed before the Beta scene;
+- replay receipts were 4/4; diff/validation/simulation/Alpha/Beta traces were fresh and passed.
+CAPSULE_BYTES=22311
+CAPSULE_SHA256=5BBAEE9D37FB410CD7763B4D2615DB02C3E1ADBCA74FFF5249A62672F6FE1DEB
+PROJECT_MUTATION=false
+APPLY=NOT_PERFORMED_AT_STAGE_ACCEPTANCE
+EVIDENCE_BOUNDARY=the external report states 14 successful calls, while its enumerated call
+  list totals 15; the count discrepancy is retained as non-blocking and is not used as a pass
+  criterion because the capsule, change record, fresh evidence, and project identity are
+  independently readable from disk.
+
+OWNER_AUTHORIZED_ISOLATED_APPLY=
+STATUS=PASSED
+RUNNER=C:\Users\Equinox\Desktop\surdet-agent-composition-acceptance-TMaHUV\apply-resume-runner.mjs
+RUNNER_BYTES=12543
+RUNNER_SHA256=17961568C7841F1B0F9A5B2BC6A70306B52BE48C0AC96CAD72C543E3F28CE018
+EVIDENCE=C:\Users\Equinox\Desktop\surdet-agent-composition-acceptance-TMaHUV\apply-evidence.json
+EVIDENCE_BYTES=29132
+EVIDENCE_SHA256=86A4B0FE19B5B03E141CE6EA2F6EC7D8E31233F2EF2E7F592C979E787149731F
+IDENTITY_BYTES=207
+IDENTITY_SHA256=F8E25A9E2A21169E5C1DC2F325B80FDBD13DDDB009B91424152C7A386CC36768
+PROJECT_REVISION_BEFORE=d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f
+PROJECT_REVISION_AFTER=9273867ae00b2277644be5c80a76750ec054c47f03e644897956273b46499927
+CHANGE_STATUS_AFTER=COMMITTED
+WORKING_REVISION=4
+FRESH_DIFF=diff_1787743743576_93beeffb-d0eb-498c-b95c-de9c50fea32c
+FRESH_VALIDATION=validation_1787743743666_c3d7e59d-df74-4864-b6d8-3d101952143f; ok=true
+FRESH_SIMULATION=simulation_1787743743800_d9ef1363-f10e-499e-95e4-e8f2dcd7e92f; passed
+ALPHA_TRACE=trace_1787743744002_48fabe09-20e9-41af-9a11-fab7acbcb82a; 5 events
+BETA_TRACE=trace_1787743744095_c35d2503-2290-4f2e-a9d9-f2f7de931917; 6 events
+ACTUAL_CHANGED_FILES=
+- content/scenario/wave5_alpha.gal
+- content/scenario/wave5_beta.gal
+- content/timelines/beta_opening.json
+- game.config.json
+REPOSITORY_TOUCHED=false
+ORIGINAL_STARTER_UNCHANGED=true
+ERRORS=[]; childCleanupFailures=[]; activeLeaseDirectories=[]
+KNOWN_FORMAT_BOUNDARY=the integration capsule marks game.config.json
+  unexpectedFormatChange=true because the semantic variable addition also normalized line
+  endings. This was visible before apply, remained limited to the disposable Desktop fixture,
+  and is not hidden as a clean-format result.
+
+OWNER_REPORTED_ACCEPTANCE=
+"Owner 人工验收通过：Alpha A 可见，C 不存在，Beta timeline 可见，打开、预览、保存正常。"
+OWNER_ACCEPTANCE_RESULT=PASSED
+OWNER_VISIBLE_FACTS=
+- Alpha adopted content was visible;
+- C replacement text was absent;
+- Beta scene and existing-resource timeline presentation were visible;
+- project open, preview, and save were normal.
+POST_OWNER_DISK_READBACK=
+- project remains exactly equal to the apply evidence projectTreeAfter: 40 files,
+  ProjectMismatchCount=0;
+- original Starter remains exactly equal to apply evidence starterTreeAfter: 37 files,
+  StarterMismatchCount=0;
+- wave5_alpha contains "Alpha route A." and does not contain "Alpha route C.";
+- wave5_beta contains "Beta route." and "@timeline beta_opening".
+EDITOR_SERVICE=stopped after Owner acceptance; port 4174 has no listener.
+
+FINAL_EVIDENCE_BOUNDARY=
+- replacement FORMAL passed at FORMAL_CODE_EVIDENCE_HEAD
+  400f78d5201a6da3bd04e729588ec2e4860eed6d;
+- verify:all was not rerun after the final A/D provenance repair; cumulative budget remains
+  4/4. Package suites, runner checks, preflight, replacement FORMAL, external Agent, isolated
+  apply, and Owner acceptance do not get rewritten as a fresh repository-wide aggregate gate;
+- no candidate-comparison product UI was implemented or accepted in this Wave;
+- no push, deployment, release, or Wave 6 work was performed.
+
+CURRENT_GIT_BEFORE_DOCUMENT_CLOSURE=
+BRANCH=main
+HEAD=aa6b2ca926c218df620c220c7bd8d585f37f82ee
+REMOTE_MAIN=31b937638929fa8d09e575b120fd4b4681d9f7d2
+HEAD_REMOTE_AHEAD_BEHIND=22/0
+TRACKED_CODE_WORKTREE=clean
+STAGING=empty
+DOCUMENT_CLOSURE_COMMIT=NOT_CREATED
+DELIVERY_REPORT=docs/AGENT-CANDIDATE-COMPARISON-SAFE-COMPOSITION-WAVE-5-DELIVERY-REPORT-2026-08-24.md
+PUSH=NOT_PERFORMED
+WAVE_6=NOT_STARTED
+STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+~~~
+
 ### 2026-08-25T05:07Z — Owner-directed manager recovery, crash-window contract, and diagnostic PASS
 
 ~~~text
@@ -3050,6 +3198,27 @@ VERIFY_ALL=NOT_RERUN; cumulative budget remains 4/4. This is recorded as the rem
 ACCEPTANCE_PREP=NOT_RUN
 EXTERNAL_AGENT_ACCEPTANCE=NOT_STARTED
 OWNER_ACCEPTANCE=NOT_STARTED
+PUSH=NOT_PERFORMED
+WAVE_6=NOT_STARTED
+STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+~~~
+
+### CURRENT AUTHORITY POINTER — Wave 5 acceptance complete
+
+The detailed `2026-08-26 — Acceptance preparation, external Agent, isolated apply, and
+Owner acceptance` record above is the current authority and supersedes every older
+`ACCEPTANCE_PREP=NOT_RUN`, `EXTERNAL_AGENT_ACCEPTANCE=NOT_STARTED`,
+`OWNER_ACCEPTANCE=NOT_STARTED`, or pre-acceptance stop snapshot retained for history.
+
+~~~text
+FORMAL_CODE_EVIDENCE_HEAD=400f78d5201a6da3bd04e729588ec2e4860eed6d
+ACCEPTANCE_PREP_CODE_HEAD=aa6b2ca926c218df620c220c7bd8d585f37f82ee
+FORMAL=PASSED
+EXTERNAL_AGENT_ACCEPTANCE=PASSED
+ISOLATED_APPLY=PASSED
+OWNER_ACCEPTANCE=PASSED
+VERIFY_ALL_AFTER_FINAL_PROVENANCE_REPAIR=NOT_RERUN; cumulative budget remains 4/4
+DOCUMENT_CLOSURE_COMMIT=THIS_DOCS_ONLY_COMMIT; exact hash supplied by post-commit readback
 PUSH=NOT_PERFORMED
 WAVE_6=NOT_STARTED
 STOP=WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
