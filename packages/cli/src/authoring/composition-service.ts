@@ -5,6 +5,7 @@ import {
   compareCandidates,
   loadProjectSnapshot,
   sealDryRunResult,
+  fingerprintWorkingObject,
   type ConflictResolutionInput,
   type CandidateCapsuleRef,
   type CompositionComparison,
@@ -25,7 +26,6 @@ import {
   beginChange,
   executeIntegrationReplay,
   replayCompositionOperation,
-  timelinePathFor,
 } from '@surdet/authoring';
 
 export interface CompositionDryRunReport {
@@ -245,16 +245,21 @@ export class CompositionService {
       void session;
     }
 
-    // 回读 produced object fingerprints：与封存 manifest 同源——scene/timeline 取工作区文本 SHA。
+    // 回读所有 produced object fingerprints：六类 composable object 共用唯一 resolver。
     const finalObjectFingerprints: Record<string, string> = {};
     if (session !== undefined && errors.length === 0) {
       for (const entry of draft.provenance) {
-        const fingerprint = await objectFingerprintFromWorking(session.record.workingFiles, entry.targetObject, this.hasher);
-        if (fingerprint !== undefined) finalObjectFingerprints[entry.targetObject] = fingerprint;
-        else if (requiresFingerprint(entry.targetObject)) {
+        try {
+          const fingerprint = await fingerprintWorkingObject(
+            session.record.workingFiles,
+            entry.targetObject,
+            this.hasher,
+          );
+          finalObjectFingerprints[entry.targetObject] = fingerprint.fingerprint;
+        } catch (error) {
           errors.push({
-            code: 'COMPOSITION_REPLAY_FAILED',
-            message: `replay 后缺少对象指纹：${entry.targetObject}`,
+            code: error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED',
+            message: error instanceof Error ? error.message : String(error),
           });
           break;
         }
@@ -361,29 +366,6 @@ export class CompositionService {
     });
   }
 
-}
-
-function requiresFingerprint(objectRef: string): boolean {
-  return objectRef.startsWith('scene:') || objectRef.startsWith('timeline:');
-}
-
-/** 与 composition-manifest 封存语义同源的指纹回读：scene/timeline 为工作区文本 SHA-256。 */
-async function objectFingerprintFromWorking(
-  workingFiles: Record<string, string>,
-  objectRef: string,
-  hasher: TextHasher,
-): Promise<string | undefined> {
-  let filePath: string | undefined;
-  if (objectRef.startsWith('scene:')) {
-    const sceneId = objectRef.slice('scene:'.length);
-    filePath = `content/scenario/${sceneId}.gal`;
-  } else if (objectRef.startsWith('timeline:')) {
-    filePath = timelinePathFor(objectRef.slice('timeline:'.length));
-  } else {
-    return undefined;
-  }
-  const text = workingFiles[filePath];
-  return text === undefined ? undefined : hasher.sha256(text);
 }
 
 import * as crypto from 'node:crypto';
