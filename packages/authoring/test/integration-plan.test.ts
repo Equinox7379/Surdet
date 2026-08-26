@@ -133,6 +133,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [sceneUnit.unitId],
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     expect(draft.implicitInclusions).toHaveLength(1);
@@ -161,6 +162,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [consumerUnit.unitId],
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     expect(draft.implicitInclusions).toEqual([]);
@@ -175,6 +177,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [],
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_CONFLICT_UNRESOLVED' });
   });
@@ -190,6 +193,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [outsider],
       conflictResolutions: [{ conflictId: conflict.conflictId, resolution: 'choose-unit', chosenUnitId: outsider, actor: 'human' }],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_PLAN_INVALID' });
   });
@@ -205,6 +209,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [keepUnit.unitId],
       conflictResolutions: [{ conflictId: conflict.conflictId, resolution: 'exclude-all', actor: 'human' }],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     expect(new Set(draft.excludedUnitIds)).toEqual(new Set(conflict.unitIds));
@@ -221,6 +226,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [],
       conflictResolutions: [{ conflictId: conflict.conflictId, resolution: 'regenerate-candidate', actor: 'human' }],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     expect(new Set(draft.excludedUnitIds)).toEqual(new Set(conflict.unitIds));
@@ -244,6 +250,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: [chosen],
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     const chainsForGroup = new Set(
@@ -286,6 +293,7 @@ describe('Wave 5 integration plans', () => {
         chosenUnitId: chosen.unitId,
         actor: 'human',
       }],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
 
@@ -305,6 +313,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: comparison.units.map((unit) => unit.unitId),
       conflictResolutions: [] as ConflictResolutionInput[],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
       callerReplayOperations: [{
         sequence: 99, capabilityId: 'scene.create' as const, sourceOperationId: 'op_evil',
@@ -333,6 +342,7 @@ describe('Wave 5 integration plans', () => {
       comparison,
       selectedUnitIds: comparison.units.map((unit) => unit.unitId),
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
     const ids = draft.replayOperations.map((item) => `${item.primaryObject}:${item.sourceOperationId}`);
@@ -356,20 +366,61 @@ describe('Wave 5 integration plans', () => {
       errors: [],
     };
     const first = await sealDryRunResult(await buildIntegrationPlan({
-      comparison, selectedUnitIds: selected, conflictResolutions: [], now: NOW_A,
+      comparison, selectedUnitIds: selected, conflictResolutions: [], review: { reviewState: 'unreviewed' }, now: NOW_A,
     }, hasher), dryRun, hasher);
     const second = await sealDryRunResult(await buildIntegrationPlan({
       comparison,
       selectedUnitIds: selected,
       conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
       now: NOW_B,
     }, hasher), dryRun, hasher);
     expect(second.planFingerprint).toBe(first.planFingerprint);
     expect(second.planId).toBe(first.planId);
     expect(second.planId.startsWith('pln_')).toBe(true);
     const tampered = await sealDryRunResult(await buildIntegrationPlan({
-      comparison, selectedUnitIds: selected, conflictResolutions: [], now: NOW_A,
+      comparison, selectedUnitIds: selected, conflictResolutions: [], review: { reviewState: 'unreviewed' }, now: NOW_A,
     }, hasher), { ...dryRun, status: 'failed' as const }, hasher);
     expect(tampered.planFingerprint).not.toBe(first.planFingerprint);
+  });
+
+  it('binds direct plans as unreviewed and preserves a human review binding', async () => {
+    const a = readyCandidate('review-a', [
+      operation(0, 'op_review_a', 'scene.create', 'scene:review-a', [production('scene:review-a', 'create', 'fp-review-a')]),
+    ]);
+    const b = readyCandidate('review-b', [
+      operation(0, 'op_review_b', 'variable.ensure', 'variable:review-b', [production('variable:review-b', 'create', 'fp-review-b')]),
+    ]);
+    const { comparison } = await compareWithManifests([a, b]);
+    const selectedUnitIds = comparison.units.map((item) => item.unitId);
+    const dryRun = { status: 'passed' as const, finalObjectFingerprints: {}, errors: [] };
+    const direct = await sealDryRunResult(await buildIntegrationPlan({
+      comparison,
+      selectedUnitIds,
+      conflictResolutions: [],
+      review: { reviewState: 'unreviewed' },
+      now: NOW_A,
+    }, hasher), dryRun, hasher);
+    const reviewed = await sealDryRunResult(await buildIntegrationPlan({
+      comparison,
+      selectedUnitIds,
+      conflictResolutions: [],
+      review: {
+        reviewState: 'human-reviewed',
+        reviewId: 'review-1',
+        decisionId: 'decision-1',
+        decisionFingerprint: 'decision-fingerprint',
+      },
+      now: NOW_A,
+    }, hasher), dryRun, hasher);
+
+    expect(direct.review).toEqual({ reviewState: 'unreviewed' });
+    expect(reviewed.review).toEqual({
+      reviewState: 'human-reviewed',
+      reviewId: 'review-1',
+      decisionId: 'decision-1',
+      decisionFingerprint: 'decision-fingerprint',
+    });
+    expect(reviewed.planFingerprint).not.toBe(direct.planFingerprint);
   });
 });

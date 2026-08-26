@@ -12,6 +12,7 @@ import {
   type CompositionManifest,
   type IntegrationPlan,
   type IntegrationPlanDraft,
+  type IntegrationReviewBinding,
   type ProjectSnapshot,
   type TextHasher,
   type VerifiedCompositionCandidate,
@@ -175,6 +176,7 @@ export class CompositionService {
     comparisonFingerprint: string;
     selectedUnitIds: string[];
     conflictResolutions?: ConflictResolutionInput[];
+    review?: IntegrationReviewBinding;
     now?: string;
   }): Promise<CompositionPlanResult> {
     // Re-compare live on every request; the caller's fingerprint must match the fresh
@@ -203,6 +205,7 @@ export class CompositionService {
       comparison,
       selectedUnitIds: [...input.selectedUnitIds],
       conflictResolutions: input.conflictResolutions ?? [],
+      review: input.review ?? { reviewState: 'unreviewed' },
       now: input.now ?? new Date().toISOString(),
     }, this.hasher);
     const dryRun = await this.dryRun(draft);

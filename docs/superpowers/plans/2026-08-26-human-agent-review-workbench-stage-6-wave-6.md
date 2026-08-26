@@ -2669,7 +2669,7 @@ push = NOT_PERFORMED
 timestamp = 2026-08-27
 task = 2_COMPARISON_REVIEW_PROJECTION
 initialHead = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
-finalHead = (本提交)
+finalHead = 23656e7dc47e0945c56d22dc1432463bf1dc8940
 parent = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
 filesCreated = packages/authoring/src/review-contracts.ts; packages/authoring/src/review-projection.ts; packages/authoring/test/review-projection.test.ts
 filesChanged = packages/authoring/src/index.ts; this taskbook Execution Ledger
@@ -2795,5 +2795,47 @@ healthArtifacts = authoring.log bytes=536 sha256=24BFFB1B2ED8174AE528B1B052F5185
 commit = NONE (Task 0 no code commit; Ledger remains for Task 1 precise staging)
 unresolved = NONE
 nextStop = TASK_1
+push = NOT_PERFORMED
+~~~
+
+### 2026-08-27 — Task 3 human decision receipts and reviewed plan binding
+
+~~~text
+timestamp = 2026-08-27
+task = 3_HUMAN_DECISION_RECEIPTS_AND_REVIEWED_PLAN
+initialHead = 23656e7dc47e0945c56d22dc1432463bf1dc8940
+finalHead = (本提交)
+parent = 23656e7dc47e0945c56d22dc1432463bf1dc8940
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehind = 4/0
+trackedWorktree = TASK_3_FILES_ONLY; pre-commit known untracked preserved
+stagingArea = EMPTY before precise staging
+filesCreated = packages/authoring/src/review-receipts.ts; packages/authoring/test/review-receipts.test.ts
+filesChanged = packages/authoring/src/integration-plan.ts; packages/authoring/test/integration-plan.test.ts; packages/authoring/src/index.ts; packages/cli/src/authoring/composition-service.ts; packages/cli/test/composition-service.test.ts; this taskbook Execution Ledger
+redCommands =
+  npm run test -w @surdet/authoring -- review-receipts.test.ts integration-plan.test.ts
+  npm run build -w @surdet/authoring
+  npm run test -w @surdet/cli -- composition-service.test.ts
+redResults = Authoring 2 files / 19 tests: 8 failed, 11 passed, exit 1; authoring build exit 0; CLI 1 file / 7 tests: 1 failed, 6 passed, exit 1
+redArtifacts = C:/Users/Equinox/AppData/Local/Temp/surdet-human-review-wave6-58c34f917bbf46059984cff0df0d37d9/task3-red-authoring.log bytes=6570 sha256=4251EA62F57B18D206D98AAF0B0F367A821B6EB78E3716AEBA92ACB2F241FC5; C:/Users/Equinox/AppData/Local/Temp/surdet-human-review-wave6-58c34f917bbf46059984cff0df0d37d9/task3-red-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9; C:/Users/Equinox/AppData/Local/Temp/surdet-human-review-wave6-58c34f917bbf46059984cff0df0d37d9/task3-red-cli.log bytes=2427 sha256=679A78F65FC839F6DCE1D70C8E158587C932E23299BF5F12327B78779DF487D2
+greenAttempt1 = authoring focus exit 1 (1 failed, 33 passed); authoring typecheck exit 2; authoring build exit 2; CLI focus exit 0 (1 file / 7 tests); CLI typecheck exit 0
+greenAttempt1Artifacts = task3-green-authoring-focus.log bytes=2660 sha256=730CC831E4F9F2140308C1D2E7062CDCB72B2D76F0F7755C83BA28F4A0512B1F; task3-green-authoring-typecheck.log bytes=1206 sha256=6BAB674FFAAE98273A26360A558600490E64E479FF6EB11AB30FA801EB5817; task3-green-authoring-build.log bytes=635 sha256=E1586C8352180DF4BD1F76602B529FB5E643E695964AE800A36CD5457B9D717F; task3-green-cli-focus.log bytes=1076 sha256=D8FAAC5A38E7F4787224A60BEE480891CC0CFF550D26E1673A4327DB13334501; task3-green-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917
+greenAttempt2 = authoring focus/typecheck/build exit 0 (2 files / 19 tests); CLI focus exit 0 (1 file / 7 tests); CLI typecheck exit 2 (reviewed.plan.review possibly undefined)
+greenAttempt2Artifacts = task3-green2-authoring-focus.log bytes=452 sha256=39E800CF56BF3792D86C7B9FDB85E7A4F4CC6A8CDCEDDAEA6F5A75C7F3092ACA; task3-green2-authoring-typecheck.log bytes=87 sha256=87F97BB34D837FE621E8D4B58288E79B410E7E6E02DFB2C34D489153504D74F5; task3-green2-authoring-build.log bytes=80 sha256=DF88C986327AB338DE3AEE050E8FA71E69E99D5A9B673EAD681769BEDE0FB89E; task3-green2-cli-focus.log bytes=1090 sha256=F7CAB8FDE5347DF00E1EED887996F0F9AF478270C0019F6916E158A314FDD553; task3-green2-cli-typecheck.log bytes=497 sha256=545D89367B4DFA85FBE9B50AC0031BAB115D01A7354AECA3DD63CB2CA777D784
+greenAttempt3 = CLI focus/typecheck exit 0 (1 file / 7 tests; typecheck PASS) after explicit test narrowing
+greenAttempt3Artifacts = task3-green3-cli-focus.log bytes=1091 sha256=1E0F94F7FD5446869752CE8631F523771FC5895F2AFDFD2A995E81CE42DFF337; task3-green3-cli-typecheck.log bytes=81 sha256=6A849C709D2C8C86168E19FE68FC2AAC390A501DA4E2928C24930050967E5F31
+greenCommands =
+  npm run test -w @surdet/authoring -- review-receipts.test.ts integration-plan.test.ts candidate-comparison.test.ts
+  npm run typecheck -w @surdet/authoring
+  npm run build -w @surdet/authoring
+  npm run test -w @surdet/cli -- composition-service.test.ts
+  npm run typecheck -w @surdet/cli
+greenResults = Authoring 3 files / 34 tests PASS exit 0; authoring typecheck PASS exit 0; authoring build PASS exit 0; CLI 1 file / 7 tests PASS exit 0; CLI typecheck PASS exit 0
+greenArtifacts = task3-green4-authoring-focus.log bytes=537 sha256=61C65CF8299D4295B147D6CFE7DA6A0BA92471458546F9FB64E79184F52EC35F; task3-green4-authoring-typecheck.log bytes=87 sha256=87F97BB34D837FE621E8D4B58288E79B410E7E6E02DFB2C34D489153504D74F5; task3-green4-authoring-build.log bytes=80 sha256=DF88C986327AB338DE3AEE050E8FA71E69E99D5A9B673EAD681769BEDE0FB89E; task3-green4-cli-focus.log bytes=1089 sha256=B262071773F91261254EA0B258B49850092B1B85DA311FAE90B09FCED6464D6C; task3-green4-cli-typecheck.log bytes=81 sha256=6A849C709D2C8C86168E19FE68FC2AAC390A501DA4E2928C24930050967E5F31
+runHead = 23656e7dc47e0945c56d22dc1432463bf1dc8940
+contract = decisionFingerprintOf uses exactly the approved semantic fields and excludes decidedAt/local notes; validation enforces fresh identity, one legal resolution per selection-required conflict, human actor, blocking rejection, and REVIEW_RETURNED for regeneration; buildIntegrationPlan requires review and direct CLI plans bind unreviewed; sealDryRunResult includes review in plan fingerprint
+compatibilityNote = IntegrationPlan.review remains optional only for existing Wave 5 literal fixtures; builder and CLI outputs always emit the binding
+unresolved = NONE
+nextStop = TASK_4
 push = NOT_PERFORMED
 ~~~
