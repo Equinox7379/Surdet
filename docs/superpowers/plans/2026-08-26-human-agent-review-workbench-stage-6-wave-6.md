@@ -2637,7 +2637,7 @@ push = NOT_PERFORMED
 timestamp = 2026-08-27
 task = 1_WORKING_OBJECT_FINGERPRINT
 initialHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
-finalHead = (本提交)
+finalHead = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
 parent = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
 filesCreated = packages/authoring/src/working-object-fingerprint.ts; packages/authoring/test/working-object-fingerprint.test.ts
 filesChanged = packages/authoring/src/index.ts; packages/authoring/src/integration-execution.ts; packages/authoring/test/integration-execution.test.ts; packages/cli/src/authoring/composition-service.ts; packages/cli/test/composition-service.test.ts; this taskbook Execution Ledger
@@ -2660,6 +2660,32 @@ runHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
 resolverContract = scene/timeline/variable/character/config:characters/config:entryScene all use one working-file resolver; present and absent states are hashed distinctly; unknown declared products fail COMPOSITION_REPLAY_FAILED; private scene/timeline resolvers removed
 unresolved = NONE
 nextStop = TASK_2
+push = NOT_PERFORMED
+~~~
+
+### 2026-08-27 — Task 2 comparison review projection
+
+~~~text
+timestamp = 2026-08-27
+task = 2_COMPARISON_REVIEW_PROJECTION
+initialHead = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
+finalHead = (本提交)
+parent = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
+filesCreated = packages/authoring/src/review-contracts.ts; packages/authoring/src/review-projection.ts; packages/authoring/test/review-projection.test.ts
+filesChanged = packages/authoring/src/index.ts; this taskbook Execution Ledger
+redCommand = npm run test -w @surdet/authoring -- review-projection.test.ts
+redResult = 1 file / 4 tests failed, exit 1; buildComparisonReviewProjection was not implemented
+redArtifact = task2-red-authoring.log bytes=4055 sha256=CDEAFB930ECC9B0BD3BB24EE1C1EE6382A818988CE078AD3F7036C892E30A731
+greenCommands =
+  npm run test -w @surdet/authoring -- review-projection.test.ts candidate-comparison.test.ts
+  npm run typecheck -w @surdet/authoring
+  npm run build -w @surdet/authoring
+greenResults = Authoring 2 files / 19 tests PASS exit 0; authoring typecheck PASS exit 0; authoring build PASS exit 0
+greenArtifacts = task2-green-authoring-focus.log bytes=451 sha256=6E2A3F4EFCF0A67CA01041320BBCBFDE023F70DFE4F40A9E89B9B157A31A1D11; task2-green-authoring-typecheck.log bytes=74 sha256=9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78; task2-green-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9
+runHead = 05784d387e5da1d01a3e1cd7eb80c1e5780ef048
+projectionContract = typed comparison projection preserves candidate/unit/conflict/group/object identities, canonical candidate ordinals, identical groups, conflict severities/actions, dependencies, evidence states and source identity; reviewFingerprint excludes reviewId/display source fields and uses stable semantic fields
+unresolved = NONE
+nextStop = TASK_3
 push = NOT_PERFORMED
 ~~~
 
