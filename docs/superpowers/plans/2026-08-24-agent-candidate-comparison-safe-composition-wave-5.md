@@ -2932,3 +2932,72 @@ and diagnostic PASS` record above is the current authority and supersedes the ol
 failure snapshots that follow it chronologically in this append-only Ledger. The final live
 stop before the next commit is `TASK_8_STEP_5_FREEZE_CODE_EVIDENCE_HEAD`; FORMAL has not run,
 push has not run, external Agent acceptance has not started, and Wave 6 has not started.
+
+### 2026-08-26 — Independent review invalidation and A/D scene provenance repair
+
+~~~text
+INDEPENDENT_FINAL_REVIEW=NEEDS_FIX
+PRIOR_FORMAL_STATUS=INVALIDATED_BY_INDEPENDENT_REVIEW
+PRIOR_FORMAL_ROOT=%TEMP%/surdet-agent-candidate-composition-wave5-86II5U
+PRIOR_FORMAL_ARTIFACT=formal/evidence.json
+PRIOR_FORMAL_BYTES=6868
+PRIOR_FORMAL_SHA256=B6D7A5338CB673A0E48C9ABBF488B076659567B67FFF9A101E72BB176D98D689
+PRIOR_FORMAL_RUN_HEAD=9d05029021d8dae5fc8aa3f4bf5791386df1c627
+INVALIDATION_REASON=the FORMAL only proved A/D variable dedupe. A and D also produced
+  byte-identical scene:wave5_alpha results, but candidate comparison required the entire
+  object bucket (A/C/D) to share one signature. Divergent C therefore prevented the A/D scene
+  subgroup from being recorded; choose-unit then excluded D and lost D scene provenance.
+
+RED_COMMAND=npm run test -w @surdet/authoring -- candidate-comparison.test.ts integration-plan.test.ts
+RED_RESULT=exit1; 2 files; 24 passed / 2 failed
+RED_FIRST_FAILURE=candidate comparison did not create the A/D identical signature subgroup
+RED_SECOND_FAILURE=integration plan had no subgroup with which to retain D provenance
+
+SHARED_FIX=
+- candidate-comparison partitions each same-object bucket by exact disposition/fingerprint;
+  every explicit-fingerprint subset of at least two units becomes an identical group, while
+  divergent signatures still produce one selection-required conflict for the whole object.
+- integration-plan choose-unit preserves conflict peers equivalent to the chosen unit;
+  normal identical-group suppression then emits one replay and retains all provenance.
+- no fallback, compatibility layer, second comparison engine, or runner-only production bypass.
+
+PERMANENT_CONTRACTS=
+- candidate-comparison: A/D same + C different => A/D identical subgroup plus A/C/D conflict.
+- integration-plan: choose A excludes C, does not exclude D, records A/D provenance, replays once.
+- Agent Port: READY capsule exposes the exact A/D scene dedupe group and excludes C provenance.
+- aggregate runner: independently asserts variable and scene dedupe groups, C exclusion,
+  D non-exclusion, both provenance pairs, and exactly one replay per identical group.
+
+VERIFICATION=
+- authoring focused: 2 files / 26 tests PASS.
+- authoring full: 27 files / 201 tests PASS.
+- authoring typecheck/build: PASS.
+- Agent Port composition focused: 1 file / 8 tests PASS.
+- CLI full: 30 files / 232 tests PASS.
+- CLI typecheck/build: PASS.
+- runner node --check: PASS.
+- preflight: PASS; modern 2026-07-28 + legacy 2025-11-25; 26 capabilities;
+  contract 2.0.0; stdout purity, child cleanup, and Starter unchanged.
+- verify:all NOT_RERUN: the recorded cumulative budget remains 4/4; package-level evidence
+  is not represented as a fresh repository-wide aggregate gate.
+
+INDEPENDENT_REVIEW_REPAIR_DIAGNOSTIC=PASSED
+ACTUAL_DIAGNOSTIC_EXECUTION_COUNT=19
+ROOT=%TEMP%/surdet-agent-candidate-composition-wave5-lZN7qN
+ARTIFACT=diagnostic/evidence.json
+BYTES=7753
+SHA256=A8F9CE23C4CCAB3C2327860BBE74272B4CE2ED8B65B8706C3DA1BB61928DA9C7
+RUN_HEAD=9d05029021d8dae5fc8aa3f4bf5791386df1c627
+RUNNER_SHA256=09C1CE80ED7A3ADB7743C382DA4E9B3BAF5ADB972DBDF3A9A388B46F0FCA692F
+TRACKED_CODE_DIFF_PATHS=6 repair files; diagnostic was intentionally run before freeze.
+MILESTONES=18/18 PASSED; errors=[]; childCleanupFailures=[]; activeLeaseDirectories=[];
+  stageProjectMutated=false; source capsules/changes unchanged; original Starter unchanged.
+SCENE_DEDUPE_PROOF=closureEvidence and capsule provenance contain a second A/D group with
+  provenanceUnitIds for both scene units; conflicting C is excluded; one A/D scene replay.
+
+CURRENT_STATUS=READY_TO_FREEZE_REVIEW_REPAIR_CODE_EVIDENCE_HEAD
+REPLACEMENT_FORMAL=NOT_AUTHORIZED_AND_NOT_RUN
+ACCEPTANCE_PREP=NOT_RUN
+PUSH=NOT_PERFORMED
+WAVE_6=NOT_STARTED
+~~~

@@ -256,6 +256,47 @@ describe('Wave 5 integration plans', () => {
     expect(new Set(draft.deduplicatedUnits[0]!.provenanceUnitIds)).toEqual(new Set(group.unitIds));
   });
 
+  it('keeps an identical peer when a conflict chooses its equivalent unit', async () => {
+    const a = readyCandidate('subset-a', [
+      operation(0, 'op_subset_a', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-same')]),
+    ]);
+    const c = readyCandidate('subset-c', [
+      operation(0, 'op_subset_c', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-different')]),
+    ]);
+    const d = readyCandidate('subset-d', [
+      operation(0, 'op_subset_d', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-same')]),
+    ]);
+    const { comparison } = await compareWithManifests([a, c, d]);
+    const sameUnits = comparison.units.filter((unit) => unit.finalFingerprint === 'fp-same');
+    const divergent = comparison.units.find((unit) => unit.finalFingerprint === 'fp-different')!;
+    const group = comparison.identicalGroups.find((item) => item.primaryObject === 'scene:subset');
+    const conflict = comparison.conflicts.find((item) =>
+      item.severity === 'selection-required' && item.objectRefs.includes('scene:subset'))!;
+
+    expect(sameUnits).toHaveLength(2);
+    expect(group).toBeDefined();
+    const chosen = sameUnits[0]!;
+    const peer = sameUnits[1]!;
+    const draft = await buildIntegrationPlan({
+      comparison,
+      selectedUnitIds: [chosen.unitId, peer.unitId],
+      conflictResolutions: [{
+        conflictId: conflict.conflictId,
+        resolution: 'choose-unit',
+        chosenUnitId: chosen.unitId,
+        actor: 'human',
+      }],
+      now: NOW_A,
+    }, hasher);
+
+    expect(draft.excludedUnitIds).toContain(divergent.unitId);
+    expect(draft.excludedUnitIds).not.toContain(peer.unitId);
+    const dedupe = draft.deduplicatedUnits.find((item) => item.groupId === group!.groupId);
+    expect(dedupe).toBeDefined();
+    expect(new Set(dedupe!.provenanceUnitIds)).toEqual(new Set([chosen.unitId, peer.unitId]));
+    expect(draft.replayOperations.filter((item) => group!.unitIds.includes(item.sourceUnitId))).toHaveLength(1);
+  });
+
   it('has no caller-supplied replay payload entry point', async () => {
     const a = readyCandidate('na', [operation(0, 'op_n_a', 'scene.create', 'scene:n', [production('scene:n', 'create', 'fp-n-a')])]);
     const b = readyCandidate('nb', [operation(0, 'op_n_b', 'variable.ensure', 'variable:n', [production('variable:n', 'create', 'fp-n-b')])]);

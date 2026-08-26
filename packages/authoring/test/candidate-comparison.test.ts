@@ -171,6 +171,27 @@ describe('Wave 5 candidate comparison', () => {
     expect(result.units.every((unit) => unit.primaryObject === 'scene:same')).toBe(true);
   });
 
+  it('groups an identical signature subset while keeping a divergent peer reviewable', async () => {
+    const result = await compare([
+      readyCandidate('a', [operation(0, 'op_subset_a', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-same')])]),
+      readyCandidate('c', [operation(0, 'op_subset_c', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-different')])]),
+      readyCandidate('d', [operation(0, 'op_subset_d', 'scene.create', 'scene:subset', [production('scene:subset', 'create', 'fp-same')])]),
+    ]);
+
+    expect(result.status).toBe('review-only');
+    const sameUnits = result.units.filter((unit) => unit.finalFingerprint === 'fp-same');
+    expect(sameUnits).toHaveLength(2);
+    const identical = result.identicalGroups.find((group) => group.primaryObject === 'scene:subset');
+    expect(identical).toBeDefined();
+    expect(identical!.finalFingerprint).toBe('fp-same');
+    expect(new Set(identical!.unitIds)).toEqual(new Set(sameUnits.map((unit) => unit.unitId)));
+
+    const conflict = result.conflicts.find((item) =>
+      item.severity === 'selection-required' && item.objectRefs.includes('scene:subset'));
+    expect(conflict).toBeDefined();
+    expect(new Set(conflict!.unitIds)).toEqual(new Set(result.units.map((unit) => unit.unitId)));
+  });
+
   it('requires explicit selection when the same scene has different fingerprints', async () => {
     const result = await compare([
       readyCandidate('a', [operation(0, 'op_x_a', 'scene.create', 'scene:x', [production('scene:x', 'create', 'fp-a')])]),

@@ -602,7 +602,7 @@ async function runEvidence(modeName) {
   let selectionConflict, comparisonStatus, planResult, inspectedPlan;
   let comparedFingerprint = '';
   let sceneUnitA, sceneUnitB, sceneUnitC, sceneUnitD, timelineUnitB;
-  let variableUnitA, variableUnitD, identicalGroupAD;
+  let variableUnitA, variableUnitD, identicalVariableGroupAD, identicalSceneGroupAD;
   let selectedCandidateUnitIds = [];
   let closureEvidence = null;
   let negativeEvidence = null;
@@ -678,10 +678,14 @@ async function runEvidence(modeName) {
           && unit.candidateId === `cand-${candidateD.ref.changeId}`);
         assert(sceneUnitB && timelineUnitB && sceneUnitA && sceneUnitC && sceneUnitD
           && variableUnitA && variableUnitD, 'expected per-candidate units in compare result');
-        identicalGroupAD = identical.find((group) =>
+        identicalVariableGroupAD = identical.find((group) =>
           (group.unitIds ?? []).includes(variableUnitA.unitId)
           && (group.unitIds ?? []).includes(variableUnitD.unitId));
-        assert(identicalGroupAD !== undefined, 'expected A/D variable identical group');
+        identicalSceneGroupAD = identical.find((group) =>
+          (group.unitIds ?? []).includes(sceneUnitA.unitId)
+          && (group.unitIds ?? []).includes(sceneUnitD.unitId));
+        assert(identicalVariableGroupAD !== undefined, 'expected A/D variable identical group');
+        assert(identicalSceneGroupAD !== undefined, 'expected A/D scene identical subgroup despite divergent C');
         selectedCandidateUnitIds = units
           .filter((unit) => unit.candidateId === `cand-${candidateA.ref.changeId}`
             || unit.candidateId === `cand-${candidateD.ref.changeId}`
@@ -835,6 +839,7 @@ async function runEvidence(modeName) {
         inspectedPlan = inspected.plan;
         const selected = inspectedPlan.selectedUnitIds ?? [];
         const implicit = inspectedPlan.implicitInclusions ?? [];
+        const excluded = inspectedPlan.excludedUnitIds ?? [];
         assert(selected.includes(sceneUnitB.unitId), 'B scene unit must be explicitly selected');
         assert(!selected.includes(timelineUnitB.unitId), 'B timeline must NOT be directly selected');
         assert(implicit.includes(timelineUnitB.unitId), 'B timeline must be implicitly included by closure');
@@ -846,25 +851,38 @@ async function runEvidence(modeName) {
         assert(selectedCandidateUnitIds.every((unitId) => selected.includes(unitId)), 'A/B/D explicit selections were not preserved');
         assert(selected.includes(sceneUnitA.unitId) && selected.includes(sceneUnitD.unitId), 'A and D scene units must be explicitly selected');
         assert(selected.includes(variableUnitA.unitId) && selected.includes(variableUnitD.unitId), 'A and D variable units must be explicitly selected');
-        const dedupeGroup = (inspectedPlan.deduplicatedUnits ?? [])
-          .find((group) => group.groupId === identicalGroupAD.groupId);
-        assert(dedupeGroup !== undefined, 'expected A/D variable dedupe provenance');
-        assert(dedupeGroup.provenanceUnitIds?.includes(variableUnitA.unitId)
-          && dedupeGroup.provenanceUnitIds?.includes(variableUnitD.unitId),
+        assert(excluded.includes(sceneUnitC.unitId), 'conflicting C scene must be excluded');
+        assert(!excluded.includes(sceneUnitD.unitId), 'identical D scene provenance must not be conflict-excluded');
+        const variableDedupeGroup = (inspectedPlan.deduplicatedUnits ?? [])
+          .find((group) => group.groupId === identicalVariableGroupAD.groupId);
+        const sceneDedupeGroup = (inspectedPlan.deduplicatedUnits ?? [])
+          .find((group) => group.groupId === identicalSceneGroupAD.groupId);
+        assert(variableDedupeGroup !== undefined, 'expected A/D variable dedupe provenance');
+        assert(sceneDedupeGroup !== undefined, 'expected A/D scene dedupe provenance');
+        assert(variableDedupeGroup.provenanceUnitIds?.includes(variableUnitA.unitId)
+          && variableDedupeGroup.provenanceUnitIds?.includes(variableUnitD.unitId),
         'dedupe provenance must retain both A and D variable units');
-        assert([variableUnitA.unitId, variableUnitD.unitId].includes(dedupeGroup.retainedUnitId),
+        assert(sceneDedupeGroup.provenanceUnitIds?.includes(sceneUnitA.unitId)
+          && sceneDedupeGroup.provenanceUnitIds?.includes(sceneUnitD.unitId),
+        'dedupe provenance must retain both A and D scene units');
+        assert([variableUnitA.unitId, variableUnitD.unitId].includes(variableDedupeGroup.retainedUnitId),
           'dedupe retained unit must come from A or D');
+        assert([sceneUnitA.unitId, sceneUnitD.unitId].includes(sceneDedupeGroup.retainedUnitId),
+          'scene dedupe retained unit must come from A or D');
         assert(replays.filter((operation) =>
           operation.sourceUnitId === variableUnitA.unitId || operation.sourceUnitId === variableUnitD.unitId).length === 1,
         'A/D identical variable must replay exactly once');
-        assert(replays.every((operation) => operation.sourceUnitId !== sceneUnitC.unitId
-          && operation.sourceUnitId !== sceneUnitD.unitId), 'conflict-rejected C/D scene leaked into replays');
+        assert(replays.filter((operation) =>
+          operation.sourceUnitId === sceneUnitA.unitId || operation.sourceUnitId === sceneUnitD.unitId).length === 1,
+        'A/D identical scene must replay exactly once');
+        assert(replays.every((operation) => operation.sourceUnitId !== sceneUnitC.unitId),
+          'conflict-rejected C scene leaked into replays');
         closureEvidence = {
           selectedUnitIds: selected,
           implicitInclusions: implicit,
           timelineReplayIndex: timelineIndex,
           sceneReplayIndex: sceneIndex,
-          deduplicatedUnits: [dedupeGroup],
+          deduplicatedUnits: [variableDedupeGroup, sceneDedupeGroup],
         };
       } finally {
         await closePort(freshPort, errors);
