@@ -103,6 +103,56 @@ function writeArtifact(directory, value) {
   return { identity, identityPath };
 }
 
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function countFiles(root) {
+  let count = 0;
+  const stack = [root];
+  while (stack.length > 0) {
+    const directory = stack.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) stack.push(absolute);
+      else if (entry.isFile()) count += 1;
+    }
+  }
+  return count;
+}
+
+function currentChangeRecords(dataDir) {
+  const headFiles = [];
+  const stack = [dataDir];
+  while (stack.length > 0) {
+    const directory = stack.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) stack.push(absolute);
+      else if (entry.isFile() && entry.name === 'record-head.json') headFiles.push(absolute);
+    }
+  }
+  return headFiles.map((headFile) => {
+    const changeDirectory = path.dirname(headFile);
+    const changeId = path.basename(changeDirectory);
+    const head = readJson(headFile);
+    assert(head.formatVersion === 2 && Number.isInteger(head.recordVersion), `invalid record head: ${headFile}`);
+    assert(typeof head.recordSha256 === 'string' && /^[0-9a-f]{64}$/i.test(head.recordSha256), `invalid record sha: ${headFile}`);
+    const recordFile = path.join(changeDirectory, 'records', `${String(head.recordVersion).padStart(10, '0')}.json`);
+    const recordIdentity = readFileIdentity(recordFile);
+    assert(recordIdentity.sha256.toLowerCase() === head.recordSha256.toLowerCase(), `record/head SHA mismatch: ${changeId}`);
+    const record = readJson(recordFile);
+    assert(record.changeId === changeId && record.recordVersion === head.recordVersion, `record/head identity mismatch: ${changeId}`);
+    return {
+      changeId,
+      status: record.status,
+      recordVersion: record.recordVersion,
+      recordSha256: recordIdentity.sha256,
+      integration: record.integration !== undefined,
+    };
+  }).sort((left, right) => left.changeId.localeCompare(right.changeId));
+}
+
 function resultOf(envelope, label) {
   assert(envelope && envelope.ok === true, `${label} failed: ${JSON.stringify(envelope?.error ?? envelope)}`);
   return envelope.result;
@@ -237,7 +287,10 @@ async function sealCandidate(fixture, dataDir, label, ops) {
   } finally {
     await closePort(port, errors);
   }
-  assert(errors.protocol.length === 0, `${label} protocol errors: ${errors.protocol.join('; ')}`);
+  assert(errors.protocol.length === 0 && errors.stderrUnexpected.length === 0
+    && errors.childCleanupFailures.length === 0, `${label} port errors: ${JSON.stringify(errors)}`);
+  assert(capsule.changeStatus === 'OPEN', `${label} source change was not OPEN`);
+  assert(capsule.projectMutation?.occurred === false, `${label} source capsule reported project mutation`);
   return { ref: { changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 }, capsule };
 }
 
@@ -345,31 +398,286 @@ async function runPreflight() {
   }
 }
 
-async function runAcceptancePrep() {
-  const desktop = path.join(os.homedir(), 'Desktop');
-  assert(fs.existsSync(desktop), `Desktop directory missing: ${desktop}`);
-  const root = fs.mkdtempSync(path.join(desktop, 'surdet-wave5-acceptance-'));
-  const fixture = path.join(root, 'fixture');
+function acceptanceInstructions(candidateRefs) {
+  const lines = [
+    '# Surdet Wave 5 外部 Agent Stage 验收',
+    '',
+    '这是隔离项目，只允许使用 mcp-stage.json 中指定的 Surdet Agent Port。',
+    '禁止使用 Shell、Git、文件系统工具，禁止调用 commit、apply 或 rollback。',
+    '',
+    '## 稳定候选引用',
+    '',
+  ];
+  for (const label of ['A', 'B', 'C', 'D']) {
+    lines.push(label + ': ' + JSON.stringify(candidateRefs.candidates[label]));
+  }
+  lines.push(
+    '',
+    '## 固定任务',
+    '',
+    '1. 调用 capabilities.describe、session.describe、project.inspect。',
+    '2. 使用上面的 A/B/C/D 四个稳定引用执行 composition.compare。',
+    '3. 检查 units、dependencyEdges、conflicts、identicalGroups 与 evidenceMatrix。',
+    '4. 选择 A、B、D；A/C 的 scene:wave5_alpha 冲突选择 A；不得选择 C。',
+    '5. 创建并检查 composition plan；确认 B 的 timeline 依赖被自动纳入，A/D 等价来源都保留 provenance。',
+    '6. 执行 plan。若中断，只按 repairActions 使用同一 operationId 恢复。',
+    '7. 对 integration change 运行 diff、validate、simulate。',
+    '8. 分别运行 Alpha 与 Beta runtime trace。',
+    '9. 创建 delivery capsule，并保持 integration change 为 OPEN。',
+    '10. 汇报 changeId、planId、validation/simulation/两条 trace、capsule 路径/bytes/SHA-256、projectMutation。',
+    '',
+    '最终必须满足：PROJECT_MUTATION=NO，APPLY=NOT_PERFORMED，FINAL_CHANGE=OPEN。',
+    '',
+  );
+  return lines.join('\n');
+}
+
+export function validateAcceptancePrepDirectory(root, evidence) {
+  const projectRoot = path.join(root, 'project');
   const dataDir = path.join(root, 'agent-data');
-  copyStarter(fixture);
+  for (const directory of [projectRoot, dataDir]) {
+    assert(fs.statSync(directory).isDirectory(), 'acceptance-prep directory missing: ' + directory);
+  }
+  for (const name of [
+    'mcp-stage.json',
+    'apply-resume-template.json',
+    'candidate-refs.json',
+    'acceptance-instructions.md',
+    'evidence.json',
+    'identity.json',
+  ]) {
+    assert(fs.existsSync(path.join(root, name)), 'acceptance-prep file missing: ' + name);
+  }
+
+  assert(evidence?.status === 'PREPARED', 'acceptance-prep status was not PREPARED');
+  assert(Array.isArray(evidence.sourceCandidates) && evidence.sourceCandidates.length === 4,
+    'acceptance-prep must contain four sealed source candidates');
+  assert(Array.isArray(evidence.sourceChangeRecords) && evidence.sourceChangeRecords.length === 4,
+    'acceptance-prep must contain four source change records');
+  assert(evidence.integrationChangeCreated === false, 'acceptance-prep created an integration change');
+  assert(evidence.externalAgentStarted === false, 'acceptance-prep started an external Agent');
+  assert(evidence.applyAuthorized === false, 'acceptance-prep authorized apply');
+  assert(evidence.projectFixtureEqualsStarterAtPrep === true, 'acceptance project did not equal Starter at prep');
+  assert(evidence.originalStarterUnchanged === true, 'original Starter changed during acceptance-prep');
+  assert(Array.isArray(evidence.errors) && evidence.errors.length === 0, 'acceptance-prep errors were not empty');
+  assert(Array.isArray(evidence.childCleanupFailures) && evidence.childCleanupFailures.length === 0,
+    'acceptance-prep child cleanup failures were not empty');
+  assert(Array.isArray(evidence.activeLeaseDirectories) && evidence.activeLeaseDirectories.length === 0,
+    'acceptance-prep left active lease directories');
+
+  const refs = readJson(path.join(root, 'candidate-refs.json'));
+  const labels = ['A', 'B', 'C', 'D'];
+  assert(Object.keys(refs.candidates ?? {}).sort().join(',') === labels.join(','), 'candidate-refs.json must contain exactly A/B/C/D');
+  const evidenceByLabel = new Map(evidence.sourceCandidates.map((candidate) => [candidate.label, candidate]));
+  for (const label of labels) {
+    const ref = refs.candidates[label];
+    const candidate = evidenceByLabel.get(label);
+    assert(candidate !== undefined, 'candidate evidence missing: ' + label);
+    assert(candidate.sealed === true && candidate.changeStatus === 'OPEN', 'candidate was not sealed OPEN: ' + label);
+    assert(typeof ref?.changeId === 'string' && /^chg_/.test(ref.changeId), 'invalid candidate changeId: ' + label);
+    assert(typeof ref?.capsuleId === 'string' && ref.capsuleId.length > 0, 'invalid candidate capsuleId: ' + label);
+    assert(typeof ref?.artifactSha256 === 'string' && /^[0-9a-f]{64}$/.test(ref.artifactSha256),
+      'invalid candidate artifact SHA-256: ' + label);
+    for (const key of ['changeId', 'capsuleId', 'artifactSha256']) {
+      assert(candidate[key] === ref[key], 'candidate ref/evidence mismatch: ' + label + '/' + key);
+    }
+    const capsuleIdentity = readFileIdentity(candidate.artifact.path);
+    assert(capsuleIdentity.bytes === candidate.artifact.bytes
+      && capsuleIdentity.sha256 === candidate.artifact.sha256
+      && capsuleIdentity.sha256 === ref.artifactSha256, 'candidate capsule disk identity mismatch: ' + label);
+  }
+
+  const sourceIds = new Set(evidence.sourceCandidates.map((candidate) => candidate.changeId));
+  const records = currentChangeRecords(dataDir);
+  assert(records.length === 4, 'agent-data must contain exactly four source change records');
+  assert(records.every((record) => record.status === 'OPEN' && record.integration === false),
+    'source changes must remain OPEN and non-integration');
+  assert(records.every((record) => sourceIds.has(record.changeId)), 'agent-data contains an unexpected change record');
+  assert(JSON.stringify(records) === JSON.stringify(evidence.sourceChangeRecords), 'source record disk evidence mismatch');
+
+  const dataDirFileCount = countFiles(dataDir);
+  assert(dataDirFileCount > 0, 'agent-data must not be empty');
+  assert(dataDirFileCount === evidence.dataDirFileCount, 'agent-data file count mismatch');
+  assert(findActiveLeaseDirectories(dataDir).length === 0, 'active lease directories remained on disk');
+
+  const config = readJson(path.join(root, 'mcp-stage.json'));
+  const server = config.mcpServers?.['Surdet Agent Port'];
+  assert(server?.command === process.execPath, 'MCP stage command mismatch');
+  assert(Array.isArray(server.args) && server.args[0] === portEntry, 'MCP stage launcher mismatch');
+  assert(server.args.includes('--project') && server.args.includes(projectRoot), 'MCP stage project mismatch');
+  assert(server.args.includes('--policy') && server.args.includes('stage'), 'MCP stage policy mismatch');
+  assert(server.env?.SURDET_AGENT_DATA_DIR === dataDir, 'MCP stage data dir mismatch');
+
+  const apply = readJson(path.join(root, 'apply-resume-template.json'));
+  assert(apply.status === 'NOT_AUTHORIZED' && apply.policy === 'apply', 'apply template was not NOT_AUTHORIZED');
+  assert(apply.project === projectRoot && apply.SURDET_AGENT_DATA_DIR === dataDir, 'apply template identity mismatch');
+  assert(typeof apply.resumeChange === 'string' && apply.resumeChange.includes('CHANGE_ID_REQUIRED'),
+    'apply template resume placeholder missing');
+
+  const instructions = fs.readFileSync(path.join(root, 'acceptance-instructions.md'), 'utf8');
+  for (const label of labels) {
+    const ref = refs.candidates[label];
+    assert(instructions.includes(ref.changeId) && instructions.includes(ref.capsuleId)
+      && instructions.includes(ref.artifactSha256), 'acceptance instructions omitted candidate ' + label);
+  }
+
+  const projectTree = hashTree(projectRoot);
+  const starterTree = hashTree(starterRoot);
+  assert(projectTree.sha256 === evidence.projectTree.sha256, 'acceptance project tree evidence mismatch');
+  assert(starterTree.sha256 === evidence.starterTreeAfter.sha256, 'Starter tree evidence mismatch');
+  assert(projectTree.sha256 === starterTree.sha256, 'acceptance project no longer equals Starter');
+  assert(evidence.starterTreeBefore.sha256 === evidence.starterTreeAfter.sha256, 'original Starter changed');
+
+  const evidenceIdentity = readFileIdentity(path.join(root, 'evidence.json'));
+  const identity = readJson(path.join(root, 'identity.json'));
+  assert(identity.path === evidenceIdentity.path && identity.bytes === evidenceIdentity.bytes
+    && identity.sha256 === evidenceIdentity.sha256, 'acceptance evidence identity sidecar mismatch');
+  return true;
+}
+
+export async function prepareAcceptance({
+  baseDirectory,
+  prefix = 'surdet-agent-composition-acceptance-',
+}) {
+  assert(fs.existsSync(baseDirectory), 'acceptance-prep base directory missing: ' + baseDirectory);
+  const root = fs.mkdtempSync(path.join(baseDirectory, prefix));
+  const projectRoot = path.join(root, 'project');
+  const dataDir = path.join(root, 'agent-data');
+  const starterTreeBefore = hashTree(starterRoot);
+  copyStarter(projectRoot);
   fs.mkdirSync(dataDir, { recursive: true });
-  writeJson(path.join(root, 'mcp-stage.json'), {
+  const projectTree = hashTree(projectRoot);
+  assert(projectTree.sha256 === starterTreeBefore.sha256, 'acceptance project copy differs from Starter');
+
+  const alphaOpsA = [
+    { tool: 'surdet_scene_create', args: { sceneId: 'wave5_alpha', blocks: alphaBlocksA } },
+    { tool: 'surdet_variable_ensure', args: { name: 'flag.alpha', type: 'string', initial: '' } },
+  ];
+  const betaOps = [
+    { tool: 'surdet_timeline_create', args: { timelineId: 'beta_opening', definition: betaTimeline } },
+    { tool: 'surdet_scene_create', args: { sceneId: 'wave5_beta', blocks: betaBlocks } },
+  ];
+  const alphaOpsC = [{ tool: 'surdet_scene_create', args: { sceneId: 'wave5_alpha', blocks: alphaBlocksC } }];
+  const sealed = {
+    A: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-a', alphaOpsA),
+    B: await sealCandidate(projectRoot, dataDir, 'acceptance-beta-b', betaOps),
+    C: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-c', alphaOpsC),
+    D: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-d', alphaOpsA),
+  };
+
+  const projectIdentities = new Set(Object.values(sealed).map((candidate) => candidate.capsule.projectIdentity));
+  const baseRevisions = new Set(Object.values(sealed).map((candidate) => candidate.capsule.baseProjectRevision));
+  assert(projectIdentities.size === 1 && baseRevisions.size === 1, 'source candidate project identities diverged');
+  const sourceChangeRecords = currentChangeRecords(dataDir);
+  assert(sourceChangeRecords.length === 4
+    && sourceChangeRecords.every((record) => record.status === 'OPEN' && record.integration === false),
+  'source candidates were not four sealed OPEN non-integration changes');
+  const sourceIds = new Set(Object.values(sealed).map((candidate) => candidate.ref.changeId));
+  assert(sourceChangeRecords.every((record) => sourceIds.has(record.changeId)), 'unexpected change was created during prep');
+
+  const candidateRefs = {
+    schemaVersion: '1.0.0',
+    projectRoot,
+    dataDir,
+    projectIdentity: [...projectIdentities][0],
+    baseProjectRevision: [...baseRevisions][0],
+    candidates: Object.fromEntries(Object.entries(sealed).map(([label, candidate]) => [label, candidate.ref])),
+    selectionIntent: {
+      selectedCandidates: ['A', 'B', 'D'],
+      sceneConflictResolution: { objectRef: 'scene:wave5_alpha', chooseCandidate: 'A', excludeCandidate: 'C' },
+      retainEquivalentProvenanceFrom: ['A', 'D'],
+    },
+  };
+  const candidateRefsPath = path.join(root, 'candidate-refs.json');
+  const instructionsPath = path.join(root, 'acceptance-instructions.md');
+  const mcpConfigPath = path.join(root, 'mcp-stage.json');
+  const applyTemplatePath = path.join(root, 'apply-resume-template.json');
+  writeJson(candidateRefsPath, candidateRefs);
+  fs.writeFileSync(instructionsPath, acceptanceInstructions(candidateRefs), 'utf8');
+  writeJson(mcpConfigPath, {
     mcpServers: { 'Surdet Agent Port': {
       command: process.execPath,
-      args: [portEntry, '--project', fixture, '--policy', 'stage'],
+      args: [portEntry, '--project', projectRoot, '--policy', 'stage'],
       env: { SURDET_AGENT_DATA_DIR: dataDir },
     } },
   });
-  writeJson(path.join(root, 'apply-resume-template.json'), {
+  writeJson(applyTemplatePath, {
     schemaVersion: '1.0.0',
-    project: fixture,
+    project: projectRoot,
     SURDET_AGENT_DATA_DIR: dataDir,
     policy: 'apply',
     resumeChange: '<CHANGE_ID_REQUIRED_AFTER_OWNER_APPROVAL>',
     status: 'NOT_AUTHORIZED',
   });
-  writeJson(path.join(root, 'identity.json'), { gitHead: runHead, runnerSha256, createdAt: new Date().toISOString() });
-  console.log(JSON.stringify({ status: 'PASSED', mode: 'acceptance-prep', root }));
+
+  const starterTreeAfter = hashTree(starterRoot);
+  assert(starterTreeAfter.sha256 === starterTreeBefore.sha256, 'original Starter changed during acceptance-prep');
+  const sourceCandidates = Object.entries(sealed).map(([label, candidate]) => {
+    const artifact = readFileIdentity(candidate.capsule.artifactIdentity.path);
+    assert(artifact.sha256 === candidate.ref.artifactSha256
+      && artifact.bytes === candidate.capsule.artifactIdentity.bytes, 'sealed candidate artifact readback mismatch: ' + label);
+    return {
+      label,
+      ...candidate.ref,
+      sealed: true,
+      changeStatus: candidate.capsule.changeStatus,
+      compositionEligibility: candidate.capsule.composition.eligibility,
+      projectMutationOccurred: candidate.capsule.projectMutation.occurred,
+      artifact,
+    };
+  });
+  const relativeToRepo = path.relative(repoRoot, root);
+  const activeLeaseDirectories = findActiveLeaseDirectories(dataDir);
+  assert(activeLeaseDirectories.length === 0, 'acceptance-prep left active lease directories');
+  const evidence = {
+    schemaVersion: '1.0.0',
+    evidenceClass: 'ACCEPTANCE_PREP',
+    status: 'PREPARED',
+    mode: 'acceptance-prep',
+    runHead,
+    gitHead: runHead,
+    runnerSha256,
+    createdAt: new Date().toISOString(),
+    root,
+    projectRoot,
+    dataDir,
+    preparationRootOutsideRepository: relativeToRepo.startsWith('..') || path.isAbsolute(relativeToRepo),
+    sourceCandidates,
+    sourceChangeRecords,
+    dataDirFileCount: countFiles(dataDir),
+    integrationChangeCreated: false,
+    externalAgentStarted: false,
+    externalAgentToolsCalled: [],
+    applyAuthorized: false,
+    projectFixtureEqualsStarterAtPrep: projectTree.sha256 === starterTreeBefore.sha256,
+    originalStarterUnchanged: starterTreeAfter.sha256 === starterTreeBefore.sha256,
+    projectTree,
+    starterTreeBefore,
+    starterTreeAfter,
+    mcpStageConfig: readFileIdentity(mcpConfigPath),
+    applyResumeTemplate: { ...readFileIdentity(applyTemplatePath), status: 'NOT_AUTHORIZED' },
+    candidateRefsFile: readFileIdentity(candidateRefsPath),
+    acceptanceInstructionsFile: readFileIdentity(instructionsPath),
+    errors: [],
+    childCleanupFailures: [],
+    activeLeaseDirectories,
+  };
+  const artifact = writeArtifact(root, evidence);
+  validateAcceptancePrepDirectory(root, evidence);
+  return { status: 'PREPARED', root, evidence, artifactIdentity: artifact.identity, identityPath: artifact.identityPath };
+}
+
+async function runAcceptancePrep() {
+  const desktop = path.join(os.homedir(), 'Desktop');
+  assert(fs.existsSync(desktop), 'Desktop directory missing: ' + desktop);
+  const result = await prepareAcceptance({ baseDirectory: desktop });
+  console.log(JSON.stringify({
+    status: result.status,
+    mode: 'acceptance-prep',
+    root: result.root,
+    evidence: result.artifactIdentity,
+    identityPath: result.identityPath,
+  }));
 }
 
 function findChangeDirectory(dataDir, changeId) {
@@ -1194,7 +1502,10 @@ async function main() {
   return runEvidence(mode);
 }
 
-void main().catch((error) => {
-  console.error(`Agent Port Wave 5 runner failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+const invokedPath = process.argv[1] === undefined ? '' : path.resolve(process.argv[1]);
+if (invokedPath === path.resolve(runnerPath)) {
+  void main().catch((error) => {
+    console.error(`Agent Port Wave 5 runner failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}
