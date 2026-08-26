@@ -328,3 +328,44 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(result.workingRevision).toBe(planned.plan.replayOperations.length);
     expect(result.changeId).toBe(crashed.record.changeId);
   });
+
+  it('keeps direct plans unreviewed and binds reviewed plan selections', async () => {
+    const fixture = await setup('review-binding');
+    const first = await sealCandidate(fixture.projectRoot, 'review-a', async (session) => {
+      expect((await session.invoke('scene.create', { operationId: 'op-review-scene', sceneId: 'review_scene' })).ok).toBe(true);
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'review-b', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'op-review-variable', name: 'flag.review', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const compared = await fixture.service.compare([first.ref, second.ref]);
+    const selectedUnitIds = compared.comparison.units.map((item) => item.unitId);
+    const direct = await fixture.service.plan({
+      candidateRefs: [first.ref, second.ref],
+      comparisonFingerprint: compared.comparison.comparisonFingerprint,
+      selectedUnitIds,
+    });
+    const reviewed = await fixture.service.plan({
+      candidateRefs: [first.ref, second.ref],
+      comparisonFingerprint: compared.comparison.comparisonFingerprint,
+      selectedUnitIds,
+      review: {
+        reviewState: 'human-reviewed',
+        reviewId: 'review-binding',
+        decisionId: 'decision-binding',
+        decisionFingerprint: 'decision-binding-fingerprint',
+      },
+    });
+
+    expect(direct.plan.review).toEqual({ reviewState: 'unreviewed' });
+    const reviewedReview = reviewed.plan.review;
+    expect(reviewedReview).toBeDefined();
+    if (!reviewedReview || reviewedReview.reviewState !== 'human-reviewed') {
+      throw new Error('reviewed plan did not retain its human review binding');
+    }
+    expect(reviewedReview).toMatchObject({
+      reviewId: 'review-binding',
+      decisionId: 'decision-binding',
+      decisionFingerprint: 'decision-binding-fingerprint',
+    });
+    expect(reviewed.plan.planFingerprint).not.toBe(direct.plan.planFingerprint);
+  });

@@ -7,6 +7,7 @@ import type {
   CompositionOperation,
   ObjectChangeUnit,
 } from './composition-contracts.js';
+import type { IntegrationReviewBinding } from './review-receipts.js';
 
 /** 5.5 计划、dry-run 与裁决 */
 export interface ConflictResolutionInput {
@@ -39,6 +40,7 @@ export interface IntegrationPlan {
   projectIdentity: string;
   expectedProjectRevision: string;
   comparisonFingerprint: string;
+  review?: IntegrationReviewBinding;
   sourceCapsules: CandidateCapsuleRef[];
   selectedUnitIds: string[];
   implicitInclusions: string[];
@@ -105,6 +107,7 @@ export interface BuildIntegrationPlanInput {
   comparison: CompositionComparison;
   selectedUnitIds: string[];
   conflictResolutions: ConflictResolutionInput[];
+  review: IntegrationReviewBinding;
   now: string;
 }
 
@@ -117,6 +120,11 @@ export async function buildIntegrationPlan(
   hasher: { sha256(text: string): Promise<string> },
 ): Promise<IntegrationPlanDraft> {
   const { comparison } = input;
+  const review: IntegrationReviewBinding = input.review;
+  if (review.reviewState === 'human-reviewed'
+    && input.conflictResolutions.some((resolution) => resolution.actor !== 'human')) {
+    throw invalid('human-reviewed plan 的 conflict resolution actor 必须为 human');
+  }
   await verifyComparisonFingerprint(comparison, hasher);
 
   // Step 2.2：selectedUnitIds 唯一且存在。
@@ -340,6 +348,7 @@ export async function buildIntegrationPlan(
     projectIdentity: comparison.projectIdentity,
     expectedProjectRevision: comparison.expectedProjectRevision,
     comparisonFingerprint: comparison.comparisonFingerprint,
+    review,
     sourceCapsules: comparison.candidates,
     selectedUnitIds: [...selectedSet].sort(),
     implicitInclusions,
@@ -366,6 +375,7 @@ export async function sealDryRunResult(
     projectIdentity: draft.projectIdentity,
     expectedProjectRevision: draft.expectedProjectRevision,
     comparisonFingerprint: draft.comparisonFingerprint,
+    review: draft.review,
     sourceCapsules: draft.sourceCapsules,
     selectedUnitIds: draft.selectedUnitIds,
     implicitInclusions: draft.implicitInclusions,
