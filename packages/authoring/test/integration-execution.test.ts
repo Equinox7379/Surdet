@@ -6,6 +6,7 @@ import {
   beginChange,
   commitChange,
   executeIntegrationReplay,
+  fingerprintWorkingObject,
 } from '../src/index.js';
 import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, ProjectSnapshot, TextHasher } from '../src/index.js';
 
@@ -29,6 +30,39 @@ function makeSnapshot(): ProjectSnapshot {
     variables: {},
     scenes: [],
     timelines: [],
+  };
+}
+
+function makeSixObjectSnapshot(): ProjectSnapshot {
+  const configText = JSON.stringify({
+    entryScene: 'intro',
+    variables: { 'flag.alpha': { type: 'string', initial: '' } },
+    characters: { lynn: { name: '凛', avatar: 'lynn' } },
+  });
+  const introText = '@scene intro\n凛：开始。\n@end\n';
+  const timelineText = JSON.stringify({
+    version: 1,
+    id: 'intro_opening',
+    durationMs: 1000,
+    tracks: [],
+  });
+  const file = (path: string, text: string) => ({
+    path, text, bytes: Buffer.byteLength(text, 'utf8'),
+    sha256: crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
+  });
+  return {
+    ...makeSnapshot(),
+    files: [
+      file('game.config.json', configText),
+      file('content/scenario/intro.gal', introText),
+      file('content/timelines/intro_opening.json', timelineText),
+    ],
+    configFile: file('game.config.json', configText),
+    config: JSON.parse(configText) as Record<string, unknown>,
+    entryScene: 'intro',
+    variables: { 'flag.alpha': { type: 'string', initial: '' } },
+    scenes: [],
+    timelines: [file('content/timelines/intro_opening.json', timelineText)],
   };
 }
 
@@ -206,5 +240,61 @@ describe('Wave 5 integration execution', () => {
     // gate 位于 storage 检查之前，undefined storage 也会先命中 COMPOSITION_INCOMPLETE。
     await expect(commitChange(change, undefined as never)).rejects.toMatchObject({ code: 'COMPOSITION_INCOMPLETE' });
     void plan;
+  });
+
+  it('checks six working object fingerprints before READY and rejects unknown products', async () => {
+    const refs = [
+      'scene:intro',
+      'timeline:intro_opening',
+      'variable:flag.alpha',
+      'character:lynn',
+      'config:characters',
+      'config:entryScene',
+    ];
+    const finalObjectFingerprints = Object.fromEntries(
+      await Promise.all(refs.map(async (objectRef) => [
+        objectRef,
+        (await fingerprintWorkingObject(makeSixObjectSnapshot().files.reduce<Record<string, string>>(
+          (files, file) => ({ ...files, [file.path]: file.text }), {}), objectRef, hasher)).fingerprint,
+      ])),
+    );
+    const plan = makePlan({
+      replayOperations: [],
+      provenance: refs.map((targetObject) => ({
+        targetObject,
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+        sourceOperationIds: [],
+      })),
+      dryRun: { status: 'passed', finalObjectFingerprints, errors: [] },
+    });
+    const change = await beginChange(
+      makeSixObjectSnapshot(),
+      new InMemoryChangeRepository(),
+      undefined,
+      undefined,
+      { integration: integrationMetadataFor(plan, 'exec-six') },
+    );
+    const metadata = await executeIntegrationReplay(change, plan, hasher);
+    expect(metadata.status).toBe('READY');
+    expect(Object.keys(plan.dryRun.finalObjectFingerprints).sort()).toEqual(refs.sort());
+
+    const unknownPlan = makePlan({
+      replayOperations: [],
+      provenance: [{
+        targetObject: 'asset:bg/night',
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+        sourceOperationIds: [],
+      }],
+      dryRun: {
+        status: 'passed',
+        finalObjectFingerprints: { 'asset:bg/night': 'x' },
+        errors: [],
+      },
+    });
+    const unknownChange = await beginIntegrationChange(unknownPlan);
+    await expect(executeIntegrationReplay(unknownChange, unknownPlan, hasher))
+      .rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
   });
 });

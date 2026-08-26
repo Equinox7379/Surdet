@@ -171,6 +171,52 @@ describe('CompositionService compare/plan/dry-run', () => {
     }
   });
 
+  it('resolves all six working object fingerprint kinds and rejects unknown products', async () => {
+    const fixture = await setup('six-object-fingerprints');
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content', 'timelines'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content', 'scenario', 'intro.gal'), '@scene intro\n凛：开始。\n@end\n', 'utf8');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content', 'timelines', 'intro_opening.json'), JSON.stringify({
+      version: 1,
+      id: 'intro_opening',
+      durationMs: 1000,
+      tracks: [],
+    }), 'utf8');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({
+      entryScene: 'intro',
+      variables: { 'flag.alpha': { type: 'string', initial: '' } },
+      characters: { lynn: { name: '凛', avatar: 'lynn' } },
+    }), 'utf8');
+    const snapshot = await fixture.service.currentSnapshot();
+    const objectRefs = [
+      'scene:intro',
+      'timeline:intro_opening',
+      'variable:flag.alpha',
+      'character:lynn',
+      'config:characters',
+      'config:entryScene',
+    ];
+    const draft = {
+      expectedProjectRevision: snapshot.revision,
+      replayOperations: [],
+      provenance: objectRefs.map((targetObject) => ({
+        targetObject,
+        sourceCapsule: { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) },
+        sourceUnitId: 'u1',
+        sourceOperationIds: [],
+      })),
+    };
+    const result = await fixture.service.dryRun(draft as never);
+    expect(result.status).toBe('passed');
+    expect(Object.keys(result.finalObjectFingerprints).sort()).toEqual(objectRefs.sort());
+
+    const unknown = await fixture.service.dryRun({
+      ...draft,
+      provenance: [{ ...draft.provenance[0], targetObject: 'asset:bg/night' }],
+    } as never);
+    expect(unknown.status).toBe('failed');
+    expect(unknown.errors[0]?.code).toBe('COMPOSITION_REPLAY_FAILED');
+  });
+
   it('seals an auditable failed plan when the project has moved past the capsules', async () => {
     const fixture = await setup('stale-clash');
     const first = await sealCandidate(fixture.projectRoot, 'clash-a', async (session) => {

@@ -2631,6 +2631,46 @@ nextStop =
 push = NOT_PERFORMED
 ~~~
 
+### 2026-08-27 — Task 1 unified working object fingerprints
+
+~~~text
+timestamp = 2026-08-27
+task = 1_WORKING_OBJECT_FINGERPRINT
+initialHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
+finalHead = (本提交)
+parent = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
+filesCreated = packages/authoring/src/working-object-fingerprint.ts; packages/authoring/test/working-object-fingerprint.test.ts
+filesChanged = packages/authoring/src/index.ts; packages/authoring/src/integration-execution.ts; packages/authoring/test/integration-execution.test.ts; packages/cli/src/authoring/composition-service.ts; packages/cli/test/composition-service.test.ts; this taskbook Execution Ledger
+redCommands =
+  npm run test -w @surdet/authoring -- working-object-fingerprint.test.ts integration-execution.test.ts
+  npm run test -w @surdet/cli -- composition-service.test.ts
+redResults = Authoring 2 files / 16 tests: 9 failed, 7 passed, exit 1; CLI 1 file / 6 tests: 1 failed, 5 passed, exit 1
+redArtifacts = task1-red-authoring.log bytes=6560 sha256=A72541AF076B1C9F727B0BC80C71E84827CC589010C5E5EE039E8E47A7161EB2; task1-red-cli.log bytes=2614 sha256=20F26B74ACDB674FF30C1C969B5CDEC54F31A17F04BA7B86ACC85C70C74041EB
+greenAttempt1 = authoring focus exit 1 (6 integration-execution regressions from stale workingFingerprint reference); authoring typecheck exit 2; authoring build exit 2; CLI focus exit 1 (resume regression from same reference); CLI typecheck exit 0
+greenAttempt1Artifacts = task1-green-authoring-focus.log bytes=7172 sha256=BB2FDFCB270C789EC880A111AB2122C63950F0012D02749253633DCE3A358AAE; task1-green-authoring-typecheck.log bytes=494 sha256=91E08BEE1FC79A0035E126EC993E2FE04DC17AE6C7727D099ECC62AB91BECA88; task1-green-authoring-build.log bytes=480 sha256=954E8CF6C7E18BFD878E87F7F04C28254AF1E9D3E3AFB7E67832B12226A60B2A; task1-green-cli-focus.log bytes=2423 sha256=FE92F37A2905C980BADCEC8E65DB7BB9AEE6F1C4298627CA1C30E72165223DC8; task1-green-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917
+greenCommands =
+  npm run test -w @surdet/authoring -- working-object-fingerprint.test.ts integration-execution.test.ts integration-plan.test.ts
+  npm run typecheck -w @surdet/authoring
+  npm run build -w @surdet/authoring
+  npm run test -w @surdet/cli -- composition-service.test.ts
+  npm run typecheck -w @surdet/cli
+greenResults = Authoring 3 files / 27 tests PASS exit 0; authoring typecheck PASS exit 0; authoring build PASS exit 0; CLI 1 file / 6 tests PASS exit 0; CLI typecheck PASS exit 0
+greenArtifacts = task1-green2-authoring-focus.log bytes=546 sha256=7E779E5F852C4C603336F672E19078821CD9C40E3FE41292117E256E9FE5CBE8; task1-green2-authoring-typecheck.log bytes=74 sha256=9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78; task1-green2-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9; task1-green2-cli-focus.log bytes=994 sha256=1998F5EA775D7BC9837F4CD33857FF867443A1D27AC4AC98998D071D510256E5; task1-green2-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917
+runHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
+resolverContract = scene/timeline/variable/character/config:characters/config:entryScene all use one working-file resolver; present and absent states are hashed distinctly; unknown declared products fail COMPOSITION_REPLAY_FAILED; private scene/timeline resolvers removed
+unresolved = NONE
+nextStop = TASK_2
+push = NOT_PERFORMED
+~~~
+
+### Task 0 artifact path readback correction
+
+~~~text
+CORRECTION = the preceding Windows path line was rendered with patch-string escape loss; no filesystem path changed
+baselineArtifactPathActual = <local-path>
+healthArtifactRootActual = <local-path>
+~~~
+
 不得复制整段终端输出、重复背景、写未执行命令或把后来的结果覆盖前一次失败记录。
 
 ---
@@ -2699,3 +2739,35 @@ PUSH = NOT_AUTHORIZED
 ## Execution Ledger
 
 本节由执行 AI 只追加真实事实。任务书创建阶段不预填施工结果。
+
+### 2026-08-26 — Task 0 baseline and health
+
+~~~text
+timestamp = 2026-08-26
+task = 0_BASELINE_AND_HEALTH
+initialHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
+finalHead = b6532739c6a80adb2d9bfd3b4865e76e3c38d8d4
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehind = 2/0
+trackedWorktree = CLEAN
+stagingArea = EMPTY
+filesChanged = this taskbook Execution Ledger append only; uncommitted
+redCommand = NONE (Task 0 baseline health expected green)
+redExit = NOT_RUN
+redFirstFailure = NONE
+redArtifactPath = NONE
+redBytes = NONE
+redSha256 = NONE
+greenCommands =
+  npm run test -w @surdet/authoring -- candidate-comparison.test.ts integration-plan.test.ts integration-execution.test.ts
+  npm run test -w @surdet/cli -- composition-service.test.ts agent-port-composition.test.ts
+  npm run test -w surdet-editor -- causal-selection.test.ts preview-stage-layout.test.ts project-io.test.ts
+greenResults = Authoring 3 files / 33 tests PASS exit 0; CLI 2 files / 13 tests PASS exit 0; Editor 3 files / 13 tests PASS exit 0
+baselineArtifactPath = C:UsersEquinoxAppDataLocalTempsurdet-human-review-wave6-58c34f917bbf46059984cff0df0d37d9	ask0-baseline.txt
+baselineArtifactIdentity = bytes=2835; sha256=68F23198D7016A372C20970B11D53811C5F4AA65D2BCCC39B926E3FBD997D5A4
+healthArtifacts = authoring.log bytes=536 sha256=24BFFB1B2ED8174AE528B1B052F5185408B5038C47B6BD8EDB2690FE6A0DD037; cli.log bytes=1835 sha256=C8E815CD8333589340EC49B62B046E9F714262F70C2A1406CC1E1D066B9774E6; editor.log bytes=520 sha256=289FDA6DEF8DBA70D4953EC60197B7B875586584204F01176DDD760E5D88174E
+commit = NONE (Task 0 no code commit; Ledger remains for Task 1 precise staging)
+unresolved = NONE
+nextStop = TASK_1
+push = NOT_PERFORMED
+~~~

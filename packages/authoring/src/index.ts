@@ -21,6 +21,7 @@ export * from './composition-manifest.js';
 export * from './candidate-comparison.js';
 export * from './integration-plan.js';
 export * from './integration-execution.js';
+export * from './working-object-fingerprint.js';
 export * from './capability-contract.js';
 export * from './capability-registry.js';
 export * from './error-catalog.js';

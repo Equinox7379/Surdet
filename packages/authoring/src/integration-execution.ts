@@ -11,7 +11,8 @@ import {
   applyCharacterRemove,
   applyEntrySceneSet,
 } from './config-operations.js';
-import { applyTimelineCreate, applyTimelinePatch, timelinePathFor } from './timeline-operations.js';
+import { applyTimelineCreate, applyTimelinePatch } from './timeline-operations.js';
+import { fingerprintWorkingObject } from './working-object-fingerprint.js';
 
 export interface IntegrationReplayReceipt {
   operationIndex: number;
@@ -104,26 +105,6 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 与封存 manifest 同源：scene/timeline 指纹 = 工作区文本 SHA-256。 */
-async function workingFingerprint(
-  workingFiles: Record<string, string>,
-  objectRef: string,
-  hasher: TextHasher,
-): Promise<string | undefined> {
-  let filePath: string | undefined;
-  if (objectRef.startsWith('scene:')) {
-    const sceneId = objectRef.slice('scene:'.length);
-    if (!/^[A-Za-z0-9_-]+$/.test(sceneId)) return undefined;
-    filePath = `content/scenario/${sceneId}.gal`;
-  } else if (objectRef.startsWith('timeline:')) {
-    filePath = timelinePathFor(objectRef.slice('timeline:'.length));
-  } else {
-    return undefined;
-  }
-  const text = workingFiles[filePath];
-  return text === undefined ? undefined : hasher.sha256(text);
-}
-
 /**
  * 执行/恢复一个 OPEN integration change：
  * - 从 metadata.nextOperationIndex 续跑；同 integrationOperationId 由 runOperation 幂等回放，不重复 mutation；
@@ -175,7 +156,7 @@ export async function executeIntegrationReplay(
     const result = change.record.operations[operation.integrationOperationId]?.result;
     const resultFingerprint = isRecord(result) && typeof result['fingerprint'] === 'string'
       ? result['fingerprint']
-      : await workingFingerprint(change.record.workingFiles, operation.primaryObject, hasher);
+      : (await fingerprintWorkingObject(change.record.workingFiles, operation.primaryObject, hasher)).fingerprint;
     const receipt: IntegrationReplayReceipt = {
       operationIndex: index,
       integrationOperationId: operation.integrationOperationId,
@@ -194,12 +175,14 @@ export async function executeIntegrationReplay(
   if (metadata.status !== 'READY') {
     // Step 5：逐项核对 final fingerprints，全部匹配才 CAS READY。
     for (const [objectRef, expected] of Object.entries(plan.dryRun.finalObjectFingerprints)) {
-      if (!objectRef.startsWith('scene:') && !objectRef.startsWith('timeline:')) continue;
-      const actual = await workingFingerprint(change.record.workingFiles, objectRef, hasher);
-      if (actual !== expected) {
+      try {
+        const actual = await fingerprintWorkingObject(change.record.workingFiles, objectRef, hasher);
+        if (actual.fingerprint === expected) continue;
+        throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `final fingerprint mismatch：${objectRef}`);
+      } catch (error) {
         const failure = {
-          code: 'COMPOSITION_REPLAY_FAILED',
-          message: `final fingerprint mismatch：${objectRef}`,
+          code: errorCodeOf(error),
+          message: messageOf(error),
           operationIndex: Math.max(0, metadata.nextOperationIndex - 1),
           integrationOperationId: metadata.replayedOperations.at(-1)?.integrationOperationId ?? '',
         };
