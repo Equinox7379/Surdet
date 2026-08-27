@@ -331,7 +331,6 @@ export async function bindVerifiedApproval(
     || receipt.planFingerprint !== integration.planFingerprint
     || receipt.integrationChangeId !== change.record.changeId
     || receipt.workingRevision !== resultReview.workingRevision
-    || receipt.projectIdentity !== change.record.projectRootIdentity
     || receipt.expectedProjectRevision !== change.record.baseRevision
     || receipt.diffFingerprint !== resultReview.diffFingerprint
     || receipt.resultTreeSha256 !== resultReview.resultTreeSha256

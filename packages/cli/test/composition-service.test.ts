@@ -357,6 +357,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     });
 
     expect(direct.plan.review).toEqual({ reviewState: 'unreviewed' });
+    expect(direct.plan.planFingerprint).not.toBe(reviewed.plan.planFingerprint);
     const reviewedReview = reviewed.plan.review;
     expect(reviewedReview).toBeDefined();
     if (!reviewedReview || reviewedReview.reviewState !== 'human-reviewed') {

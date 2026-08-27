@@ -2631,6 +2631,62 @@ nextStop =
 push = NOT_PERFORMED
 ~~~
 
+### 2026-08-27 — Task 5 Node review store、ReviewService 与 exact working-tree fixture
+
+~~~text
+timestamp = 2026-08-27
+task = 5_NODE_REVIEW_STORE_AND_REVIEW_SERVICE
+initialHead = 1223d7d2e0fbd553abd03e5eac21b5403985183b
+finalHead = TO_BE_FILLED_AFTER_TASK_5_COMMIT
+parent = 1223d7d2e0fbd553abd03e5eac21b5403985183b
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehindBeforeCommit = 6/0
+trackedWorktree = TASK_5_FILES_ONLY; pre-commit known untracked preserved
+stagingArea = EMPTY before precise staging
+filesCreated = packages/cli/src/authoring/node-review-store.ts; packages/cli/src/authoring/review-service.ts; packages/cli/test/node-review-store.test.ts; packages/cli/test/review-service.test.ts
+filesChanged = packages/cli/src/authoring/composition-service.ts; packages/cli/test/composition-service.test.ts; packages/authoring/src/review-projection.ts; packages/authoring/src/review-receipts.ts; this taskbook Execution Ledger
+redCommands =
+  npm run build -w @surdet/authoring
+  npm run test -w @surdet/cli -- node-review-store.test.ts review-service.test.ts composition-service.test.ts
+redResults = authoring build exit 0; CLI 3 files: 2 suites failed during module loading because the new NodeReviewStore module was absent, composition-service 7 tests passed, total 7 passed, exit 1
+artifactRoot = <local-path>
+redArtifacts = task5-red-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-red-cli-focus.log bytes=3431 sha256=4B69C7AF886A5686EAC4A5E4F86DE94C8CEEEA3EB732EAAB148EBBCE9550A209 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt1 = CLI focus exit 1; 1 failed, 19 passed, exit 1; subsequent CLI typecheck and build exit 0
+greenAttempt1Artifacts = task5-green1-cli-focus.log bytes=2970 sha256=9AA72C9FA0820A1DC2367F7C49BEBDC65410DB5870D4830C9C3FDA249941B8C0 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green1-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green1-cli-build.log bytes=61 sha256=898D2AD82D33C86E701D8865F20A428CA48DB35240DD429FD8E62F480C2EA93E runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt2 = CLI focus exit 0; 3 files / 20 tests PASS
+greenAttempt2Artifact = task5-green2-cli-focus.log bytes=1228 sha256=A4D8406D81FA670B8525B7973430D8919C15C4873C6F0EF08286908984D19AA8 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt3 = review-service-only exit 1; 1 passed, 1 failed, exit 1; stale authoring dist still enforced old root identity guard
+greenAttempt3Artifact = task5-green3-review-service.log bytes=2205 sha256=FA4A6F52BD22EA1D8194D1EB5D8B2E99246E939C037C3B38A67AF506DD3AFD49 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt3Fix = authoring identity mapping was corrected in the shared result projection and receipt verification, then the authoring package was rebuilt
+greenAttempt3FixArtifact = task5-green3-authoring-build-after-identity-fix.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt4 = review-service-only exit 0; 1 file / 2 tests PASS
+greenAttempt4Artifact = task5-green4-review-service.log bytes=532 sha256=A7761E62569135442C0F104F976B8289468424F89168E98C37C0521E187E97F6 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt5 = authoring rebuild exit 0; review-service-only exit 0; 1 file / 2 tests PASS after crypto-compatible result-tree hashing and read-only approval inspection
+greenAttempt5Artifacts = task5-green5-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green5-review-service.log bytes=532 sha256=253EBE65D3B18997F82464EAFB61936807140FDA4BD28F289352A6612B74DDB0 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt6 = CLI typecheck exit 2; test union narrowing missing approvalId
+greenAttempt6Artifact = task5-green6-cli-typecheck.log bytes=594 sha256=B8D1D6553877561A50D6945F9301906066608FE6CA001D322B027F75FD8A8F70 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt7 = CLI typecheck exit 2; second union narrowing use remained
+greenAttempt7Artifact = task5-green7-cli-typecheck.log bytes=810 sha256=B5D8E02A638D3CD66F662123C9671EBD11F2A0A9FC3FED25B93A7CD41B42F041 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt8 = CLI typecheck exit 0
+greenAttempt8Artifact = task5-green8-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenAttempt9 = NodeReviewStore + ReviewService focus exit 0; 2 files / 17 tests PASS, including 15 store safety tests and 2 service tests
+greenAttempt9Artifact = task5-green9-review-store.log bytes=614 sha256=924923F9726402BAE48C7264822474374D4DA2738385A5B334B99396D7000129 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+greenCommands =
+  npm run build -w @surdet/authoring
+  npm run test -w @surdet/cli -- node-review-store.test.ts review-service.test.ts composition-service.test.ts node-json-record.test.ts
+  npm run typecheck -w @surdet/cli
+  npm run build -w @surdet/cli
+greenResults = authoring build PASS exit 0; CLI 4 files / 27 tests PASS exit 0; CLI typecheck PASS exit 0; CLI build PASS exit 0
+greenArtifacts = task5-green-final-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green-final-cli-focus.log bytes=1570 sha256=4FEF11E1F1F487821FDFCD49573C95D98F1EC7175DA11AF45FA0982CE5C333F1 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green-final-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917 runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b; task5-green-final-cli-build.log bytes=61 sha256=898D2AD82D33C86E701D8865F20A428CA48DB35240DD429FD8E62F480C2EA93E runHead=1223d7d2e0fbd553abd03e5eac21b5403985183b
+contract = create-only review workspaces use project namespace plus safe review IDs; sidecar payload bytes/SHA are revalidated; comparison/decision/result/approval/return records are kind-gated; result fixture copies only safe base files, deletes base files absent from workingFiles, overlays exact workingFiles, hashes the sorted tree without mtime/ACL/absolute paths, and leaves the original project unchanged; ReviewService rereads live comparison/change/approval state and returns stale or missing receipt failures
+crossLayerCorrection = Task 5 real result flow exposed that CLI project identity is a hash of the real project root while authoring records retain the real root path; shared result projection and receipt verification now leave root-to-hash mapping to the CLI boundary instead of comparing unlike representations
+unresolved = NONE
+formal = NOT_RUN; diagnostic = NOT_RUN
+commit = PENDING_PRECISE_COMMIT; message = feat(cli): persist human review workspaces
+nextStop = TASK_6
+push = NOT_PERFORMED
+~~~
+
 ### 2026-08-27 — Task 1 unified working object fingerprints
 
 ~~~text
@@ -2846,7 +2902,7 @@ push = NOT_PERFORMED
 timestamp = 2026-08-27
 task = 4_RESULT_REVIEW_FINAL_APPROVAL_AND_COMMIT_GATE
 initialHead = c98e4eadb5c681ec531b5f2e7c66ac5f9f219dc5
-finalHead = (本提交)
+finalHead = 1223d7d2e0fbd553abd03e5eac21b5403985183b
 parent = c98e4eadb5c681ec531b5f2e7c66ac5f9f219dc5
 remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
 aheadBehindBeforeCommit = 5/0
