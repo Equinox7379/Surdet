@@ -43,7 +43,7 @@ describe('authoring error catalog and envelopes', () => {
       const definition = errorDefinition(code as any);
       expect(definition, code).toBeDefined();
       expect(definition.repairActions, code).toEqual(expect.arrayContaining([expect.any(Object)]));
-      expect(['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'new-change', 'manual-recovery', 'never']).toContain(definition.retryDisposition);
+      expect(['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'after-human-review', 'new-change', 'manual-recovery', 'never']).toContain(definition.retryDisposition);
     }
     expect(errorDefinition('CHANGE_RECORD_CONFLICT' as any).retryDisposition).toBe('after-refresh');
     expect(errorDefinition('RECOVERY_PLAN_STALE' as any).repairActions).toEqual(expect.arrayContaining([
@@ -85,6 +85,32 @@ describe('wave 5 composition error catalog', () => {
       );
       if (envelope.ok) throw new Error(`expected failure for ${code}`);
       expect(envelope.error.retryDisposition, code).toBe(code === 'CANDIDATE_PROJECT_MISMATCH' ? 'new-change' : 'never');
+    }
+  });
+});
+
+describe('wave 6 human review error catalog', () => {
+  it('publishes all review errors with exact retry dispositions and repair contracts', async () => {
+    const { AUTHORING_ERROR_CODES, errorDefinition } = await import('../src/error-catalog.js');
+    const expected = [
+      ['REVIEW_NOT_FOUND', 'after-inspect'],
+      ['REVIEW_IDENTITY_MISMATCH', 'never'],
+      ['REVIEW_FORMAT_UNSUPPORTED', 'never'],
+      ['REVIEW_DECISION_REQUIRED', 'after-human-review'],
+      ['REVIEW_DECISION_INVALID', 'after-human-review'],
+      ['REVIEW_DECISION_STALE', 'after-refresh'],
+      ['REVIEW_RESULT_NOT_READY', 'after-inspect'],
+      ['REVIEW_APPROVAL_REQUIRED', 'after-human-review'],
+      ['REVIEW_APPROVAL_STALE', 'after-refresh'],
+      ['REVIEW_RETURNED', 'never'],
+      ['REVIEW_FIXTURE_CHANGED', 'after-refresh'],
+    ] as const;
+    for (const [code, disposition] of expected) {
+      expect(AUTHORING_ERROR_CODES).toContain(code);
+      const definition = errorDefinition(code);
+      expect(definition.category, code).toBeTruthy();
+      expect(definition.retryDisposition, code).toBe(disposition);
+      expect(definition.repairActions, code).toEqual(expect.arrayContaining([expect.any(Object)]));
     }
   });
 });

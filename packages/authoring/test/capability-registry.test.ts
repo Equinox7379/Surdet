@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTHORING_CAPABILITY_IDS,
   AUTHORING_CAPABILITY_REGISTRY,
-  assertCapabilityRegistry,
-  nativeCapabilityToMcpTool,
-  getCapabilityDefinition,
+ assertCapabilityRegistry,
+ nativeCapabilityToMcpTool,
+ getCapabilityDefinition,
+  type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
-  it('is the single complete 26-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(26);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(26);
+  it('is the single complete 30-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(30);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(30);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect',
       'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
@@ -18,6 +19,7 @@ describe('authoring capability registry', () => {
       'runtime.run-from', 'runtime.read-trace', 'change.diff', 'change.commit',
       'change.rollback', 'change.recovery.inspect', 'change.recovery.execute',
       'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
+      'review.prepare-comparison', 'review.inspect-decision', 'review.prepare-result', 'review.inspect-approval',
     ]);
     expect(() => assertCapabilityRegistry(AUTHORING_CAPABILITY_REGISTRY)).not.toThrow();
   });
@@ -29,7 +31,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(26);
+    expect(new Set(names).size).toBe(30);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -38,8 +40,13 @@ describe('authoring capability registry', () => {
 
   it('requires strict schemas, side effects, errors, repairs and examples', () => {
     for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
-      expect(definition.inputSchema.type).toBe('object');
-      expect(definition.inputSchema.additionalProperties).toBe(false);
+      const inputSchemas = definition.id === 'composition.plan'
+        ? (definition.inputSchema.oneOf as Array<Record<string, unknown>>)
+        : [definition.inputSchema];
+      for (const inputSchema of inputSchemas) {
+        expect(inputSchema.type).toBe('object');
+        expect(inputSchema.additionalProperties).toBe(false);
+      }
       expect(definition.outputSchema).toBeTruthy();
       expect(definition.sideEffects.length).toBeGreaterThan(0);
       expect(definition.possibleErrors.length).toBeGreaterThan(0);
@@ -95,8 +102,8 @@ describe('authoring capability registry', () => {
 });
 
 describe('wave 5 composition capabilities', () => {
-  it('extends the registry to exactly 26 capabilities with four composition entries', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(26);
+  it('extends the registry to exactly 30 capabilities with four composition entries', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(30);
     expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
     expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
     expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');
@@ -152,18 +159,27 @@ describe('wave 5 composition capabilities', () => {
         inputKeys: ['planId', 'artifactSha256'],
         forbiddenInputKeys: [],
       },
-    ];
-    for (const { id, inputKeys, forbiddenInputKeys } of cases) {
-      const definition = getCapabilityDefinition(id);
-      expect(definition.inputSchema['additionalProperties']).toBe(false);
-      const properties = definition.inputSchema['properties'] as Record<string, unknown>;
-      for (const key of inputKeys) {
-        expect(properties[key], `${id}.input.${key}`).toBeDefined();
-      }
-      for (const key of forbiddenInputKeys) {
-        expect(properties[key], `${id} must not expose ${key}`).toBeUndefined();
-      }
-      expect(definition.outputSchema['additionalProperties']).toBe(false);
+   ];
+   for (const { id, inputKeys, forbiddenInputKeys } of cases) {
+     const definition = getCapabilityDefinition(id);
+      const schemas = id === 'composition.plan'
+        ? (definition.inputSchema['oneOf'] as Array<Record<string, any>>)
+        : [definition.inputSchema as Record<string, any>];
+      expect(schemas.length).toBeGreaterThan(0);
+     for (const key of inputKeys) {
+        expect(
+          schemas.some((schema) => (schema.properties as Record<string, unknown> | undefined)?.[key] !== undefined),
+          id + '.input.' + key,
+        ).toBe(true);
+     }
+     for (const key of forbiddenInputKeys) {
+        expect(
+          schemas.every((schema) => (schema.properties as Record<string, unknown> | undefined)?.[key] === undefined),
+          id + ' must not expose ' + key,
+        ).toBe(true);
+     }
+      for (const schema of schemas) expect(schema.additionalProperties).toBe(false);
+     expect(definition.outputSchema['additionalProperties']).toBe(false);
     }
     // candidates 数组上下界与 artifact SHA 形状
     const compare = getCapabilityDefinition('composition.compare');
@@ -173,5 +189,57 @@ describe('wave 5 composition capabilities', () => {
     const execute = getCapabilityDefinition('composition.execute');
     const sha = ((execute.inputSchema['properties'] as Record<string, unknown>)['artifactSha256'] ?? {}) as Record<string, unknown>;
     expect(String(sha['pattern'])).toContain('{64}');
+  });
+});
+
+describe('wave 6 human review capabilities', () => {
+  it('publishes exactly the four human-review capabilities without agent receipt inputs', () => {
+    const expected = [
+      ['review.prepare-comparison', ['candidateRefs']],
+      ['review.inspect-decision', ['reviewId', 'decisionId']],
+      ['review.prepare-result', ['planId', 'artifactSha256', 'changeId']],
+      ['review.inspect-approval', ['resultReviewId', 'approvalId']],
+    ] as const;
+    expect(AUTHORING_CAPABILITY_IDS.slice(-4)).toEqual(expected.map(([id]) => id));
+
+    for (const [id, keys] of expected) {
+      const definition = getCapabilityDefinition(id as AuthoringCapabilityId);
+      const inputProperties = definition.inputSchema.properties as Record<string, unknown>;
+      expect(Object.keys(inputProperties).sort(), id + '.input.keys').toEqual([...keys].sort());
+      expect(definition.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+      const outputSchemas = Array.isArray(definition.outputSchema.oneOf)
+        ? definition.outputSchema.oneOf as Array<Record<string, unknown>>
+        : [definition.outputSchema];
+      for (const outputSchema of outputSchemas) {
+        expect(outputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+      }
+      for (const forbidden of ['receipt', 'actor', 'path', 'absolutePath', 'files', 'content']) {
+        expect(inputProperties[forbidden], id + '.forbidden.' + forbidden).toBeUndefined();
+      }
+      expect(definition.composable, id).toBe(false);
+    }
+  });
+
+  it('uses a strict direct-or-reviewed composition plan union', () => {
+    const plan = getCapabilityDefinition('composition.plan').inputSchema;
+    const branches = plan.oneOf as Array<Record<string, any>>;
+    expect(branches).toHaveLength(2);
+    for (const branch of branches) {
+      expect(branch).toMatchObject({ type: 'object', additionalProperties: false });
+    }
+    expect(branches[0]?.properties).toEqual(expect.objectContaining({
+      candidateRefs: expect.any(Object),
+      comparisonFingerprint: expect.any(Object),
+      selectedUnitIds: expect.any(Object),
+      conflictResolutions: expect.any(Object),
+    }));
+    expect(branches[1]?.properties).toEqual(expect.objectContaining({
+      candidateRefs: expect.any(Object),
+      comparisonFingerprint: expect.any(Object),
+      reviewDecision: expect.any(Object),
+    }));
+    expect((branches[1]?.properties as Record<string, unknown>)['selectedUnitIds']).toBeUndefined();
+    expect((branches[1]?.properties as Record<string, unknown>)['actor']).toBeUndefined();
+    expect((branches[1]?.properties as Record<string, unknown>)['replayOperations']).toBeUndefined();
   });
 });

@@ -480,6 +480,85 @@ const capabilitySummarySchema = strictObject({
   'idempotency', 'composable', 'preconditions', 'possibleErrors', 'repairRecipes', 'minimalExample',
 ]);
 
+const candidateRefSchema = strictObject({
+  changeId: stringSchema,
+  capsuleId: stringSchema,
+  artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+}, ['changeId', 'capsuleId', 'artifactSha256']);
+
+const candidateRefsSchema: JsonSchema = {
+  ...arrayOf(candidateRefSchema),
+  minItems: 2,
+  maxItems: 8,
+};
+
+const conflictResolutionSchema = strictObject({
+  conflictId: stringSchema,
+  resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
+  chosenUnitId: stringSchema,
+  actor: { enum: ['human', 'review-agent'] },
+  reason: { type: 'string', maxLength: 500 },
+}, ['conflictId', 'resolution', 'actor']);
+
+const reviewDecisionInputSchema = strictObject({
+  reviewId: stringSchema,
+  decisionId: stringSchema,
+  decisionFingerprint: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+}, ['reviewId', 'decisionId', 'decisionFingerprint']);
+
+const approvalRefSchema = strictObject({
+  resultReviewId: stringSchema,
+  approvalId: stringSchema,
+  approvalFingerprint: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+}, ['resultReviewId', 'approvalId', 'approvalFingerprint']);
+
+const reviewWorkspaceIdentitySchema = strictObject({
+  reviewVersion: { const: '1.0.0' },
+  reviewId: stringSchema,
+  kind: { enum: ['comparison', 'integration-result'] },
+  projectIdentity: stringSchema,
+  expectedProjectRevision: stringSchema,
+  comparisonFingerprint: stringSchema,
+  planFingerprint: stringSchema,
+  integrationChangeId: stringSchema,
+  workingRevision: integerSchema,
+  payload: strictObject({
+    relativePath: stringSchema,
+    bytes: integerSchema,
+    sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+  }, ['relativePath', 'bytes', 'sha256']),
+}, ['reviewVersion', 'reviewId', 'kind', 'projectIdentity', 'expectedProjectRevision', 'comparisonFingerprint', 'payload']);
+
+const preparedReviewResultSchema = strictObject({
+  reviewId: stringSchema,
+  projection: jsonObjectSchema,
+  identity: reviewWorkspaceIdentitySchema,
+  projectDirectory: stringSchema,
+}, ['reviewId', 'projection', 'identity']);
+
+const reviewBindingSchema = strictObject({
+  reviewState: { const: 'human-reviewed' },
+  reviewId: stringSchema,
+  decisionId: stringSchema,
+  decisionFingerprint: stringSchema,
+}, ['reviewState', 'reviewId', 'decisionId', 'decisionFingerprint']);
+
+const verifiedDecisionSchema = strictObject({
+  receipt: jsonObjectSchema,
+  selectedUnitIds: stringArraySchema,
+  conflictResolutions: arrayOf(conflictResolutionSchema),
+  review: reviewBindingSchema,
+}, ['receipt', 'selectedUnitIds', 'conflictResolutions', 'review']);
+
+const verifiedApprovalSchema = strictObject({
+  receipt: jsonObjectSchema,
+  bindingFingerprint: stringSchema,
+}, ['receipt', 'bindingFingerprint']);
+
+const verifiedReturnSchema = strictObject({
+  receipt: jsonObjectSchema,
+}, ['receipt']);
+
 const definitions = {
   compositionCompare: {
     inputSchema: strictObject({
@@ -508,22 +587,23 @@ const definitions = {
     example: { input: {}, expectedResultShape: { comparisonVersion: '1.0.0', projectIdentity: '...', expectedProjectRevision: 'rev_...', status: 'composable', candidates: [], units: [], dependencyEdges: [], conflicts: [], identicalGroups: [], evidenceMatrix: [], comparisonFingerprint: '...' } },
   },
   compositionPlan: {
-    inputSchema: strictObject({
-      candidateRefs: { ...arrayOf(strictObject({
-        changeId: stringSchema,
-        capsuleId: stringSchema,
-        artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
-      }, ['changeId', 'capsuleId', 'artifactSha256'])), minItems: 2, maxItems: 8 },
-      comparisonFingerprint: stringSchema,
-      selectedUnitIds: { ...arrayOf(stringSchema), minItems: 1 },
-      conflictResolutions: arrayOf(strictObject({
-        conflictId: stringSchema,
-        resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
-        chosenUnitId: stringSchema,
-        actor: { enum: ['human', 'review-agent'] },
-      }, ['conflictId', 'resolution', 'actor'])),
-      reason: { type: 'string', maxLength: 500 },
-    }, ['candidateRefs', 'comparisonFingerprint', 'selectedUnitIds']),
+    inputSchema: {
+      $schema: JSON_SCHEMA_DRAFT,
+      oneOf: [
+        strictObject({
+          candidateRefs: candidateRefsSchema,
+          comparisonFingerprint: stringSchema,
+          selectedUnitIds: { ...arrayOf(stringSchema), minItems: 1 },
+          conflictResolutions: arrayOf(conflictResolutionSchema),
+          reason: { type: 'string', maxLength: 500 },
+        }, ['candidateRefs', 'comparisonFingerprint', 'selectedUnitIds']),
+        strictObject({
+          candidateRefs: candidateRefsSchema,
+          comparisonFingerprint: stringSchema,
+          reviewDecision: reviewDecisionInputSchema,
+        }, ['candidateRefs', 'comparisonFingerprint', 'reviewDecision']),
+      ],
+    },
     outputSchema: strictObject({
       planId: stringSchema,
       planFingerprint: stringSchema,
@@ -658,7 +738,7 @@ const definitions = {
     example: { input: {}, expectedResultShape: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [], view: 'working', evidenceId: 'diff_...', freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   commit: {
-    inputSchema: emptyInputSchema,
+    inputSchema: strictObject({ approvalRef: approvalRefSchema }),
     outputSchema: strictObject({ changeId: stringSchema, status: { const: 'COMMITTED' }, files: stringArraySchema }, ['changeId', 'status', 'files']),
     example: { input: {}, expectedResultShape: { changeId: 'chg_...', status: 'COMMITTED', files: [] } },
   },
@@ -676,6 +756,30 @@ const definitions = {
     inputSchema: strictObject({ operationId: stringSchema, recoveryToken: stringSchema }, ['operationId', 'recoveryToken']),
     outputSchema: recoveryExecuteResultSchema,
     example: { input: { operationId: 'op_recovery', recoveryToken: '...' }, expectedResultShape: { changeId: 'chg_...', status: 'OPEN', disposition: 'REOPEN_OPEN' } },
+  },
+  reviewPrepareComparison: {
+    inputSchema: strictObject({ candidateRefs: candidateRefsSchema }, ['candidateRefs']),
+    outputSchema: preparedReviewResultSchema,
+    example: { input: { candidateRefs: [] }, expectedResultShape: { reviewId: 'review_comparison_...', projection: {}, identity: {} } },
+  },
+  reviewInspectDecision: {
+    inputSchema: strictObject({ reviewId: stringSchema, decisionId: stringSchema }, ['reviewId']),
+    outputSchema: verifiedDecisionSchema,
+    example: { input: { reviewId: 'review_comparison_...' }, expectedResultShape: { receipt: {}, selectedUnitIds: [], conflictResolutions: [], review: { reviewState: 'human-reviewed' } } },
+  },
+  reviewPrepareResult: {
+    inputSchema: strictObject({
+      planId: stringSchema,
+      artifactSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      changeId: stringSchema,
+    }, ['planId', 'artifactSha256', 'changeId']),
+    outputSchema: preparedReviewResultSchema,
+    example: { input: { planId: 'pln_...', artifactSha256: '...', changeId: 'chg_...' }, expectedResultShape: { reviewId: 'review_result_...', projection: {}, identity: {} } },
+  },
+  reviewInspectApproval: {
+    inputSchema: strictObject({ resultReviewId: stringSchema, approvalId: stringSchema }, ['resultReviewId']),
+    outputSchema: { oneOf: [verifiedApprovalSchema, verifiedReturnSchema] },
+    example: { input: { resultReviewId: 'review_result_...' }, expectedResultShape: { receipt: {} } },
   },
 } as const;
 
@@ -706,6 +810,10 @@ export const AUTHORING_CAPABILITY_IDS = [
   'composition.plan',
   'composition.inspect',
   'composition.execute',
+  'review.prepare-comparison',
+  'review.inspect-decision',
+  'review.prepare-result',
+  'review.inspect-approval',
 ] as const;
 
 export type AuthoringCapabilityId = (typeof AUTHORING_CAPABILITY_IDS)[number];
@@ -753,14 +861,18 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
   'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
   'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
-  'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
+  'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'fresh validation, simulation, and runtime evidence satisfy the commit contract', 'integration changes require a fresh owner approval reference'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'PROJECT_CHANGED_SINCE_BEGIN', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'REVIEW_APPROVAL_REQUIRED', 'REVIEW_APPROVAL_STALE', 'REVIEW_RETURNED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
   'change.rollback': { title: 'Rollback change', purpose: 'Mark one open change rolled back without touching the project.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change is OPEN'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
   'change.recovery.inspect': { title: 'Inspect change recovery', purpose: 'Read the current transaction journal, locks, project file identities, and the one safe recovery disposition.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'project-read'], idempotency: 'pure-read', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['read the recovery inspection and use its disposition; manual states must not be guessed through'] },
   'change.recovery.execute': { title: 'Execute change recovery', purpose: 'Apply only the recovery action returned by a fresh recovery inspection.', minimumPolicy: 'apply', sideEffects: ['project-read', 'project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is readable', 'policy is apply', 'recoveryToken is fresh', 'disposition is not manual'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_BUSY', 'PROJECT_BUSY', 'LEASE_CORRUPT', 'CHANGE_STORE_CORRUPT', 'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_NOT_REQUIRED', 'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED', 'PROJECT_IDENTITY_MISMATCH', 'OPERATION_ID_CONFLICT'], repairRecipes: ['run change.recovery.inspect again after any stale or lock error; never reuse a stale token'] },
   'composition.compare': { title: 'Compare candidates', purpose: 'Compare two to eight sealed delivery capsules into a deterministic conflict report without touching the project.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['two to eight sealed capsule refs on one project identity and base revision'], possibleErrors: [...commonErrors, 'CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE'], repairRecipes: ['re-seal the rejected capsules from a fresh project.inspect baseline', ...readRepair] },
-  'composition.plan': { title: 'Plan integration', purpose: 'Resolve conflicts with explicit choices and seal a dry-run verified integration plan artifact.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['candidateRefs match a fresh comparison', 'every selection-required conflict has an explicit unit choice'], possibleErrors: [...commonErrors, 'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED', 'COMPOSITION_PLAN_STALE'], repairRecipes: ['re-run composition.compare after any project movement, then re-plan'] },
+  'composition.plan': { title: 'Plan integration', purpose: 'Resolve conflicts with explicit choices and seal a dry-run verified integration plan artifact.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['candidateRefs match a fresh comparison', 'every selection-required conflict has an explicit unit choice or a verified human decision'], possibleErrors: [...commonErrors, 'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED', 'COMPOSITION_PLAN_STALE', 'REVIEW_NOT_FOUND', 'REVIEW_DECISION_REQUIRED', 'REVIEW_DECISION_INVALID', 'REVIEW_DECISION_STALE', 'REVIEW_RETURNED'], repairRecipes: ['re-run composition.compare after any project movement, then re-plan'] },
   'composition.inspect': { title: 'Inspect composition plan', purpose: 'Read back one sealed plan artifact with its fingerprint and dry-run evidence.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['planId and artifactSha256 identify a stored plan'], possibleErrors: ['INVALID_REQUEST', 'CHANGE_NOT_FOUND', 'PROJECT_IDENTITY_MISMATCH', 'CAPSULE_IDENTITY_MISMATCH'], repairRecipes: readRepair },
   'composition.execute': { title: 'Execute integration replay', purpose: 'Replay one sealed plan into an OPEN integration change with CAS progress, exact resume and a READY commit gate.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['sealed plan is dry-run passed', 'project revision still matches the plan baseline'], possibleErrors: [...commonErrors, 'COMPOSITION_PLAN_STALE', 'COMPOSITION_PLAN_INVALID', 'COMPOSITION_REPLAY_FAILED', 'COMPOSITION_INCOMPLETE', 'CHANGE_NOT_OPEN'], repairRecipes: ['resume with the same executeOperationId; FAILED integrations only allow inspect/diff/rollback', ...mutateRepair] },
+  'review.prepare-comparison': { title: 'Prepare comparison review', purpose: 'Create an immutable human-review workspace from a fresh comparison.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['candidateRefs identify two to eight capsules on one fresh project baseline'], possibleErrors: [...commonErrors, 'CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'REVIEW_IDENTITY_MISMATCH'], repairRecipes: ['inspect the current project and candidate identities before preparing another review'] },
+  'review.inspect-decision': { title: 'Inspect review decision', purpose: 'Read and verify an Editor comparison decision without creating human receipts.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['reviewId identifies a comparison workspace'], possibleErrors: ['REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH', 'REVIEW_FORMAT_UNSUPPORTED', 'REVIEW_DECISION_REQUIRED', 'REVIEW_DECISION_INVALID', 'REVIEW_DECISION_STALE', 'REVIEW_RETURNED'], repairRecipes: ['wait for the owner decision in Editor; do not synthesize a decision in Agent Port'] },
+  'review.prepare-result': { title: 'Prepare result review', purpose: 'Create an immutable result review and preview fixture from a READY integration change.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['plan and integration change are READY with fresh evidence'], possibleErrors: ['REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH', 'REVIEW_FORMAT_UNSUPPORTED', 'REVIEW_RESULT_NOT_READY', 'REVIEW_APPROVAL_STALE', 'REVIEW_FIXTURE_CHANGED'], repairRecipes: ['inspect the integration and fresh evidence before preparing the result review'] },
+  'review.inspect-approval': { title: 'Inspect review approval', purpose: 'Read and verify the owner approval or return receipt for an integration result review.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['resultReviewId identifies an integration-result workspace'], possibleErrors: ['REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH', 'REVIEW_FORMAT_UNSUPPORTED', 'REVIEW_RESULT_NOT_READY', 'REVIEW_APPROVAL_REQUIRED', 'REVIEW_APPROVAL_STALE', 'REVIEW_RETURNED'], repairRecipes: ['wait for the owner approval or return decision in Editor; do not synthesize a receipt'] },
 };
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
@@ -813,9 +925,19 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
                                                 ? 'compositionPlan'
                                                 : id === 'composition.inspect'
                                                   ? 'compositionInspect'
-                                                  : id === 'change.recovery.execute'
-                                                    ? 'recoveryExecute'
-                                                    : 'compositionExecute'];
+                                                  : id === 'composition.execute'
+                                                    ? 'compositionExecute'
+                                                    : id === 'review.prepare-comparison'
+                                                      ? 'reviewPrepareComparison'
+                                                      : id === 'review.inspect-decision'
+                                                        ? 'reviewInspectDecision'
+                                                        : id === 'review.prepare-result'
+                                                          ? 'reviewPrepareResult'
+                                                          : id === 'review.inspect-approval'
+                                                            ? 'reviewInspectApproval'
+                                                            : id === 'change.recovery.execute'
+                                                              ? 'recoveryExecute'
+                                                              : 'compositionExecute'];
   return {
     id,
     title: item.title,
@@ -874,8 +996,8 @@ export function assertCapabilityRegistry(definitions: readonly CapabilityDefinit
     const tool = nativeCapabilityToMcpTool(definition.id as AuthoringCapabilityId);
     if (tools.has(tool)) throw new Error(`MCP tool name 碰撞：${tool}`);
     tools.add(tool);
-    if (definition.inputSchema['type'] !== 'object' || definition.inputSchema['additionalProperties'] !== false) {
-      throw new Error(`${definition.id} inputSchema 必须是严格 object schema`);
+    if (!isStrictObjectOrUnionSchema(definition.inputSchema)) {
+      throw new Error(`${definition.id} inputSchema 必须是严格 object 或严格 object oneOf schema`);
     }
     if (!isStrictObjectOrUnionSchema(definition.outputSchema)) {
       throw new Error(`${definition.id} outputSchema 必须是严格 object 或严格 object oneOf schema`);

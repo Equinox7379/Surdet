@@ -118,7 +118,12 @@ export async function dispatchAuthoringCapability(
     case 'change.diff':
       return { value: await service.diff(requireChange(context)) };
     case 'change.commit':
-      return { value: await service.commit(requireChange(context)) };
+      return {
+        value: await service.commit(
+          requireChange(context),
+          payload['approvalRef'] as Parameters<AuthoringService['commit']>[1],
+        ),
+      };
     case 'change.rollback':
       return { value: await service.rollback(requireChange(context)) };
     case 'change.recovery.inspect':
@@ -148,6 +153,34 @@ export async function dispatchAuthoringCapability(
           payload,
         ),
         operationId: operationIdFrom(payload),
+      };
+    case 'review.prepare-comparison':
+      return {
+        value: await service.prepareComparisonReview(
+          requireProject(context),
+          payload as Parameters<AuthoringService['prepareComparisonReview']>[1],
+        ),
+      };
+    case 'review.inspect-decision':
+      return {
+        value: await service.inspectReviewDecision(
+          requireProject(context),
+          payload as Parameters<AuthoringService['inspectReviewDecision']>[1],
+        ),
+      };
+    case 'review.prepare-result':
+      return {
+        value: await service.prepareResultReview(
+          requireProject(context),
+          payload as Parameters<AuthoringService['prepareResultReview']>[1],
+        ),
+      };
+    case 'review.inspect-approval':
+      return {
+        value: await service.inspectApprovalReview(
+          requireProject(context),
+          payload as Parameters<AuthoringService['inspectApprovalReview']>[1],
+        ),
       };
   }
 }

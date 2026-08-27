@@ -267,6 +267,17 @@ const sessionDescriptionSchema: JsonSchema = {
     projectName: { type: 'string' },
     projectRevision: { type: 'string' },
     policy: { enum: ['observe', 'stage', 'apply'] },
+    review: {
+      type: 'object',
+      properties: {
+        reviewState: { enum: ['unreviewed', 'awaiting-decision', 'human-reviewed', 'awaiting-approval', 'owner-approved', 'returned', 'stale'] },
+        reviewId: { type: 'string' },
+        resultReviewId: { type: 'string' },
+        waitingFor: { enum: ['human-decision', 'human-approval'] },
+      },
+      required: ['reviewState'],
+      additionalProperties: false,
+    },
     activeChange: {
       type: 'object',
       properties: {

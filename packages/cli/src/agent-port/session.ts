@@ -63,6 +63,12 @@ export interface SessionDescription {
   projectName: string;
   projectRevision: string;
   policy: AutonomyPolicy;
+  review?: {
+    reviewState: 'unreviewed' | 'awaiting-decision' | 'human-reviewed' | 'awaiting-approval' | 'owner-approved' | 'returned' | 'stale';
+    reviewId?: string;
+    resultReviewId?: string;
+    waitingFor?: 'human-decision' | 'human-approval';
+  };
   activeChange?: {
     changeId: string;
     status: ChangeRecord['status'];
@@ -163,6 +169,35 @@ function evidenceFor(record: ChangeRecord | undefined): SessionDescription['evid
     validation: evidenceFreshness(record.latestValidation, record.workingRevision),
     simulation: evidenceFreshness(record.latestSimulation, record.workingRevision),
     runtime: evidenceFreshness(record.runtimeTraces?.at(-1), record.workingRevision),
+  };
+}
+
+function reviewFor(record: ChangeRecord | undefined): NonNullable<SessionDescription['review']> {
+  const integration = record?.integration;
+  const review = integration?.review;
+  const binding = review?.binding;
+  if (review === undefined || binding === undefined || binding.reviewState === 'unreviewed') {
+    return { reviewState: 'unreviewed' };
+  }
+  const resultReview = review.resultReview;
+  if (resultReview === undefined) {
+    return {
+      reviewState: 'human-reviewed',
+      reviewId: binding.reviewId,
+    };
+  }
+  if (review.approval === undefined) {
+    return {
+      reviewState: 'awaiting-approval',
+      reviewId: binding.reviewId,
+      resultReviewId: resultReview.reviewId,
+      waitingFor: 'human-approval',
+    };
+  }
+  return {
+    reviewState: 'owner-approved',
+    reviewId: binding.reviewId,
+    resultReviewId: resultReview.reviewId,
   };
 }
 
@@ -432,7 +467,7 @@ export class AgentPortSession {
         : await NodeChangeStore.openForProject(beforeChangeId, this.projectRoot, { allowStale: true, allowTerminal: true });
       beforeRecord = beforeOpened?.record;
       const recoveryCapability = capability === 'change.recovery.inspect' || capability === 'change.recovery.execute';
-      if (beforeChangeId !== undefined && changeRequired(capability) && !recoveryCapability) {
+      if (beforeChangeId !== undefined && changeRequired(capability) && !recoveryCapability && capability !== 'change.commit') {
         await withChangeLeaseRetry(beforeChangeId, async (leasedStore) => {
           const leaseBeforeRecord = await leasedStore.read(beforeChangeId);
           if (leaseBeforeRecord === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${beforeChangeId}`);
@@ -551,6 +586,7 @@ export class AgentPortSession {
     }
     const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition));
     const activeIntegration = record?.integration;
+    const review = reviewFor(record);
     const activeChange = record === undefined
       ? undefined
       : {
@@ -578,7 +614,10 @@ export class AgentPortSession {
           ? ['composition.execute', 'change.diff']
           : record?.integration?.status === 'READY'
             ? ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff',
-               ...(this.policy === 'apply' ? ['change.commit'] as string[] : [])]
+               ...(review.reviewState === 'human-reviewed' ? ['review.prepare-result'] : []),
+               ...(review.reviewState === 'awaiting-approval' ? ['review.inspect-approval'] : []),
+               ...(activeIntegration === undefined && this.policy === 'apply' ? ['change.commit'] as string[] : []),
+               ...(review.reviewState === 'owner-approved' && this.policy === 'apply' ? ['change.commit'] as string[] : [])]
             : record?.status === 'STALE'
               ? ['change.recovery.inspect', ...(this.policy === 'apply' ? ['change.recovery.execute'] : [])]
               : record?.status === 'COMMITTED' || record?.status === 'ROLLED_BACK'
@@ -593,6 +632,7 @@ export class AgentPortSession {
       projectName: this.projectName,
       projectRevision: this.openedProjectRevision,
       policy: this.policy,
+      review,
       ...(activeChange === undefined ? {} : { activeChange }),
       resumed: this.wasResumed,
       capabilities,

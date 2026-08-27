@@ -286,3 +286,31 @@ describe('Wave 5 composition output-schema conformance', () => {
     expect(mismatches).toEqual([]);
   }, 30000);
 });
+
+describe('Wave 6 human review output contracts', () => {
+  it('publishes strict review tool shapes and no agent-side human receipt writers', () => {
+    const reviewCases = [
+      ['review.prepare-comparison', ['candidateRefs']],
+      ['review.inspect-decision', ['reviewId', 'decisionId']],
+      ['review.prepare-result', ['planId', 'artifactSha256', 'changeId']],
+      ['review.inspect-approval', ['resultReviewId', 'approvalId']],
+    ] as const;
+    for (const [id, keys] of reviewCases) {
+      const definition = getCapabilityDefinition(id);
+      expect(definition.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+      expect(Object.keys(definition.inputSchema.properties as Record<string, unknown>).sort()).toEqual([...keys].sort());
+      const outputSchemas = Array.isArray(definition.outputSchema.oneOf)
+        ? definition.outputSchema.oneOf as Array<Record<string, unknown>>
+        : [definition.outputSchema];
+      for (const outputSchema of outputSchemas) {
+        expect(outputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+      }
+      expect(JSON.stringify(definition.inputSchema)).not.toMatch(/absolutePath|receipt|actor|content/);
+    }
+    const plan = getCapabilityDefinition('composition.plan').inputSchema;
+    expect(plan.oneOf).toHaveLength(2);
+    expect((plan.oneOf as any[])[1].properties).toHaveProperty('reviewDecision');
+    expect((plan.oneOf as any[])[1].properties).not.toHaveProperty('selectedUnitIds');
+    expect((plan.oneOf as any[])[1].properties).not.toHaveProperty('actor');
+  });
+});
