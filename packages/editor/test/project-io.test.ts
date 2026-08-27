@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bindProjectIoHooks, saveAll } from '../src/project-io.js';
+import { bindProjectIoHooks, openProjectFromHandle, saveAll } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
 
@@ -36,6 +36,34 @@ function scene(id: string, handle: FileSystemFileHandle, dirty = true): SceneEnt
 
 function timeline(id: string, handle: FileSystemFileHandle, dirty = true): TimelineEntry {
   return { id, file: `${id}.json`, text: `{ "id": "${id}" }`, dirty, handle };
+}
+
+function directoryHandle(
+  name: string,
+  directories: Record<string, FileSystemDirectoryHandle> = {},
+  files: Record<string, FileSystemFileHandle> = {},
+): FileSystemDirectoryHandle {
+  return {
+    kind: 'directory',
+    name,
+    isSameEntry: async () => false,
+    queryPermission: async () => 'granted',
+    requestPermission: async () => 'granted',
+    getDirectoryHandle: async (child: string) => {
+      const value = directories[child];
+      if (!value) throw new Error(`missing directory ${child}`);
+      return value;
+    },
+    getFileHandle: async (child: string) => {
+      const value = files[child];
+      if (!value) throw new Error(`missing file ${child}`);
+      return value;
+    },
+    values: async function* () {
+      yield* Object.values(directories);
+      yield* Object.values(files);
+    },
+  } as unknown as FileSystemDirectoryHandle;
 }
 
 describe('project-io saveAll 失败隔离与恢复备份语义', () => {
@@ -139,5 +167,23 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
     expect(state.scenes.get('demo')!.dirty).toBe(true);
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('从显式目录句柄打开普通项目时清理旧 review 状态并回到块编辑', async () => {
+    const sceneHandle = fileHandle(null, log, 'start.gal');
+    const gameConfigHandle = fileHandle(null, log, 'game.config.json');
+    const scenarioDir = directoryHandle('scenario', {}, { 'start.gal': sceneHandle });
+    const contentDir = directoryHandle('content', { scenario: scenarioDir });
+    const root = directoryHandle('review-reset-project', { content: contentDir }, { 'game.config.json': gameConfigHandle });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.mainTab = 'review' as never;
+    (state as any).reviewWorkspace = { reviewId: 'old-review' };
+
+    await openProjectFromHandle(root);
+
+    expect(state.dirName).toBe('review-reset-project');
+    expect(state.current).toBe('start');
+    expect(state.mainTab).toBe('editor');
+    expect((state as any).reviewWorkspace).toBeNull();
   });
 });

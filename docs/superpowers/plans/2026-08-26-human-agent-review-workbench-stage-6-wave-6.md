@@ -2949,7 +2949,7 @@ push = NOT_PERFORMED
 timestamp = 2026-08-27
 task = 6_CAPABILITY_REGISTRY_AGENT_PORT_REVIEW_WIRING
 initialHead = 0a9084b0dfc39d8c9f6e1c0269c156672dddf146
-finalHead = (本提交；精确 hash 在后续现场提交核对中记录)
+finalHead = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
 parent = 0a9084b0dfc39d8c9f6e1c0269c156672dddf146
 remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
 aheadBehindBeforeCommit = 7/0
@@ -2980,7 +2980,43 @@ finalGreenArtifacts = task6-green-final-authoring-focus.log exit=0 bytes=592 sha
 contract = AUTHORING_CONTRACT_VERSION 2.1.0; envelope and delivery capsule versions unchanged; RetryDisposition includes after-human-review; registry reaches 30 capabilities with exactly the four review entries; direct/reviewed composition.plan is strict oneOf; review inputs exclude agent receipt/actor/absolute-path/arbitrary-content fields; dispatcher is a thin facade to ReviewService; reviewed plan mechanically verifies decision and fixes conflict actors to human through shared receipt validation; integration commit accepts approvalRef, rejects missing/returned/stale approval before commit journal, CAS-binds verified approval; session reports review state using stable IDs only; added structured after-human-review envelope and no-receipt-writer/MCP countertests
 unresolved = NONE
 formal = NOT_RUN; diagnostic = NOT_RUN
-commit = (本提交); message = feat(cli): expose human review capabilities
-nextStop = TASK_7
-push = NOT_PERFORMED
+commit = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028; message = feat(cli): expose human review capabilities
+ nextStop = TASK_7
+ push = NOT_PERFORMED
+ ~~~
+
+### 2026-08-27 — Task 7 Editor 审阅工作区、模型与普通项目隔离
+
+~~~text
+timestamp = 2026-08-27
+task = 7_EDITOR_REVIEW_WORKSPACE_MODEL_AND_PROJECT_ISOLATION
+initialHead = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
+finalHead = (本提交；精确 hash 在后续现场提交核对中记录)
+parent = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehindBeforeCommit = 8/0
+trackedWorktree = TASK_7_FILES_ONLY; Task 6 Ledger hash correction carried in this taskbook change; known untracked preserved
+stagingArea = EMPTY before precise staging
+filesCreated = packages/editor/src/review-workspace.ts; packages/editor/src/review-model.ts; packages/editor/test/review-workspace.test.ts; packages/editor/test/review-model.test.ts
+filesChanged = packages/editor/src/state.ts; packages/editor/src/main.ts; packages/editor/src/project-io.ts; packages/editor/test/project-io.test.ts; this taskbook Execution Ledger
+redCommands =
+  npm run build -w @surdet/authoring
+  npm run test -w surdet-editor -- review-workspace.test.ts review-model.test.ts project-io.test.ts
+redResults = authoring build exit 0; Editor requested 3 files failed during module loading for absent review modules, project-io had 7 passed and 1 failed, exit 1
+artifactRoot = C:/Users/Equinox/AppData/Local/Temp/surdet-human-review-wave6-58c34f917bbf46059984cff0df0d37d9/
+redArtifacts = task7-red-authoring-build.log exit=0 bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9 runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028; task7-red-editor-tests.log exit=1 bytes=4242 sha256=F96D16BC33E2EB568D72FDA8F7901C991E2670FF52F6F480FDC2FCAF7F5F8BCF runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
+ greenCheck = required focus without model-roundtrip exit 0; 3 files / 13 tests PASS
+ greenCheckArtifact = task7-green-editor-focus-check.log exit=0 bytes=578 sha256=9D567C467EB2163D632C15BD86E206424D3A5CF9DB6D423AAB3C2847D5661099 runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
+ greenCommands =
+   npm run test -w surdet-editor -- review-workspace.test.ts review-model.test.ts project-io.test.ts model-roundtrip.test.ts
+   npm run typecheck -w surdet-editor
+   npm run build -w surdet-editor
+ greenResults = Editor 4 files / 19 tests PASS exit 0; editor typecheck PASS exit 0; editor build PASS exit 0
+ greenArtifacts = task7-green-final-editor-focus.log exit=0 bytes=578 sha256=9D567C467EB2163D632C15BD86E206424D3A5CF9DB6D423AAB3C2847D5661099 runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028; task7-green-final-editor-typecheck.log exit=0 bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3 runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028; task7-green-final-editor-build.log exit=0 bytes=1998 sha256=DC2BDF3BAFE54E8AC0EB76289BDCDA85E891CE926A94FF88B21B55C50BAA01D8 runHead=2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
+ contract = review workspace reads identity before fixed payload, revalidates bytes/SHA/project identity/version and rejects approval-return coexistence; receipts are create-only and reread-verified without actor or absolute paths; ReviewWorkspaceState carries the exact taskbook fields; normal project open clears stale review while review fixture opens under the project subhandle; review model exposes fixed Chinese labels and blocks sealing until evidence and all selection-required conflicts are resolved
+ unresolved = NONE
+ formal = NOT_RUN; diagnostic = NOT_RUN
+ commit = (本提交); message = feat(editor): open human review workspaces
+ nextStop = TASK_8
+ push = NOT_PERFORMED
 ~~~
