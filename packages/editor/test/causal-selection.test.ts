@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildReviewCausalSelection,
   describeAuthoringObject,
   describeAuthoringReference,
   dispatchPreviewTraceSelection,
@@ -8,6 +9,7 @@ import {
   locateObjectForTraceEvent,
   parseTimelineObjectRef,
 } from '../src/causal-selection.js';
+import type { HumanReviewProjection } from '@surdet/authoring';
 
 describe('causal selection bridge', () => {
   it('filters trace by selected object and locates source from a trace event', () => {
@@ -76,5 +78,27 @@ describe('causal selection bridge', () => {
       references: [],
       referencedBy: [],
     }).title).toBe('变量 trust');
+  });
+
+  it('uses the shared review projection for current object, causal links, and observed facts', () => {
+    const projection: HumanReviewProjection = {
+      reviewVersion: '1.0.0', reviewId: 'review-1', kind: 'comparison', state: 'COMPARISON_PREPARED',
+      projectIdentity: 'project-1', expectedProjectRevision: 'revision-1',
+      task: { title: 'review', acceptanceCriteria: [], candidateCount: 1, objectCount: 1, conflictCount: 0, statementSource: 'generated-fallback' },
+      candidates: [], safeGroups: [], conflicts: [], dependencies: [],
+      evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: true },
+      objects: [{ objectRef: 'scene:wave6_alpha', kind: 'scene', references: ['timeline:wave6_intro'], referencedBy: ['scene:root'], potentialImpact: ['possible'], observedImpact: ['trace-1'] }],
+      sourceIdentity: { projectIdentity: 'project-1', expectedProjectRevision: 'revision-1', comparisonFingerprint: 'comparison-fp' },
+      reviewFingerprint: 'review-fp',
+    };
+    expect(buildReviewCausalSelection(projection, 'scene:wave6_alpha')).toEqual({
+      selectedObjectRef: 'scene:wave6_alpha',
+      currentObject: projection.objects[0],
+      directReferences: ['timeline:wave6_intro'],
+      directReferencedBy: ['scene:root'],
+      potentialImpact: ['possible'],
+      observedImpact: ['trace-1'],
+    });
+    expect(buildReviewCausalSelection(projection, null).currentObject).toBeNull();
   });
 });

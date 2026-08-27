@@ -28,4 +28,15 @@ describe('preview stage layout contract', () => {
     expect(editorStyles).toMatch(/\.preview-trace\s*\{[^}]*flex:\s*0\s+0\s+clamp\(96px,\s*14vh,\s*136px\)[^}]*height:\s*clamp\(96px,\s*14vh,\s*136px\)[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
     expect(editorStyles).not.toMatch(/\.preview-trace\s*\{[^}]*flex:\s*0\s+0\s+auto/s);
   });
+
+  it('keeps review task, main, and detail columns independently scrollable', () => {
+    expect(editorStyles).toMatch(/#review-view\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
+    expect(editorStyles).toMatch(/\.review-workbench\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(210px,\s*260px\)\s+minmax\(460px,\s*1fr\)\s+minmax\(260px,\s*340px\)[^}]*height:\s*100%[^}]*min-height:\s*0/s);
+    for (const selector of ['review-task-list', 'review-main', 'review-details']) {
+      expect(editorStyles).toMatch(new RegExp(`\\.${selector}\\s*\\{[^}]*min-height:\\s*0[^}]*overflow-y:\\s*auto`, 's'));
+    }
+    expect(editorStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*review-workbench/);
+    expect(editorStyles).toMatch(/@media\s*\(max-width:\s*900px\)[\s\S]*review-workbench/);
+    expect(editorStyles).toMatch(/\.review-preview-shell\s*\{[^}]*min-height:\s*360px/s);
+  });
 });

@@ -5,12 +5,64 @@ import { state, h, setStatus } from '../state.js';
 import { renderSidebar } from './sidebar.js';
 import { renderEditor } from './editor.js';
 import {
+  buildReviewCausalSelection,
   describeAuthoringObject,
   describeAuthoringReference,
   filterTraceByObject,
   selectAuthoringObject,
   type CausalTraceEvent,
 } from '../causal-selection.js';
+import type { HumanReviewProjection } from '@surdet/authoring';
+import { labelForObjectKind } from '../review-model.js';
+
+/**
+ * 审阅模式右栏：数据只来自 shared review projection，不回读 Editor 私有索引推断关系。
+ */
+export function renderReviewCausalPanel(
+  container: HTMLElement,
+  projection: HumanReviewProjection,
+  selectedObjectRef: string | null,
+  onSelect: (objectRef: string) => void,
+): void {
+  container.innerHTML = '';
+  container.appendChild(h('h3', undefined, '对象与因果'));
+  const objectList = h('div', 'review-object-list');
+  for (const object of projection.objects) {
+    const button = h('button', object.objectRef === selectedObjectRef ? 'review-object selected' : 'review-object', `【${labelForObjectKind(object.kind)}】 ${object.semanticId ?? object.objectRef}`);
+    button.setAttribute('data-review-object', object.objectRef);
+    button.title = object.objectRef;
+    button.onclick = () => onSelect(object.objectRef);
+    objectList.appendChild(button);
+  }
+  container.appendChild(objectList);
+
+  const selection = buildReviewCausalSelection(projection, selectedObjectRef);
+  if (selection.currentObject === null) {
+    container.appendChild(h('div', 'empty', '请选择一个审阅对象')); 
+    return;
+  }
+  const current = h('div', 'causal-current');
+  current.appendChild(h('div', 'causal-current-title', `当前对象：${selection.currentObject.semanticId ?? selection.currentObject.objectRef}`));
+  current.appendChild(h('div', 'causal-current-ref', selection.currentObject.objectRef));
+  container.appendChild(current);
+
+  const appendRefs = (label: string, refs: readonly string[]): void => {
+    container.appendChild(h('div', 'causal-label', label));
+    if (refs.length === 0) {
+      container.appendChild(h('div', 'empty', '无'));
+      return;
+    }
+    const list = h('div', 'causal-refs');
+    for (const ref of refs) list.appendChild(h('div', 'causal-ref', describeAuthoringReference(ref)));
+    container.appendChild(list);
+  };
+  appendRefs('直接引用', selection.directReferences);
+  appendRefs('直接被引用', selection.directReferencedBy);
+  container.appendChild(h('div', 'causal-label', '可能影响'));
+  container.appendChild(h('div', 'causal-impact', selection.potentialImpact.length > 0 ? selection.potentialImpact.map(String).join('、') : '暂无静态影响事实'));
+  container.appendChild(h('div', 'causal-label', '实际观察'));
+  container.appendChild(h('div', 'causal-impact', selection.observedImpact.length > 0 ? selection.observedImpact.map(String).join('、') : '尚未观察'));
+}
 
 export function renderRightExtras(): void {
   const right = document.getElementById('right');
