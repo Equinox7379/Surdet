@@ -33,6 +33,19 @@ export function bindProjectIoHooks(opts: {
 export async function openProject(): Promise<void> {
   const picker = (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
   const dir = await picker({ mode: 'readwrite' });
+  await openProjectFromHandle(dir);
+}
+
+export async function openProjectFromHandle(
+  dir: FileSystemDirectoryHandle,
+  options: { source?: 'normal' | 'review-fixture' } = {},
+): Promise<void> {
+  if ((options.source ?? 'normal') === 'normal') {
+    state.reviewWorkspace = null;
+    state.mainTab = 'editor';
+  } else {
+    state.mainTab = 'review';
+  }
   state.dirName = dir.name;
   state.dirHandle = dir;
   state.scenes.clear();
@@ -348,6 +361,8 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
+  state.reviewWorkspace = null;
+  state.mainTab = 'editor';
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
   state.scenes.clear();

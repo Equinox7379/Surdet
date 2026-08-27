@@ -5,6 +5,7 @@
 import type { ValidateResult } from './validate.js';
 import type { DirAsset } from './assets.js';
 import type { ObjectIndex, RuntimeTraceEvent } from '@surdet/authoring';
+import type { ReviewWorkspaceState } from './review-workspace.js';
 
 export interface SceneEntry {
   /** 场景 ID（basename；引擎运行时语义） */
@@ -65,8 +66,10 @@ export const state = {
   dirAssets: [] as DirAsset[],
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
-  /** 主区标签页：块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计 */
-  mainTab: 'editor' as 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit',
+  /** 当前已打开的 human review workspace；普通项目打开时必须清空。 */
+  reviewWorkspace: null as ReviewWorkspaceState | null,
+  /** 主区标签页：块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计 / 审阅 */
+  mainTab: 'editor' as 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit' | 'review',
   fsSupported: typeof window !== 'undefined' && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function',
 };
 

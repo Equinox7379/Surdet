@@ -251,7 +251,7 @@ function renderMainArea(): void {
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit' | 'review'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
     { id: 'timeline', label: '时间轴' },
@@ -259,6 +259,7 @@ function renderMainArea(): void {
     { id: 'preview', label: '预览' },
     { id: 'stats', label: '统计' },
     { id: 'audit', label: '审计' },
+    { id: 'review', label: '审阅' },
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
@@ -322,6 +323,14 @@ function renderMainArea(): void {
     col.appendChild(auEl);
     main.appendChild(col);
     renderAuditPanel(auEl);
+  } else if (state.mainTab === 'review') {
+    const reviewEl = h('section');
+    reviewEl.id = 'review-view';
+    reviewEl.textContent = state.reviewWorkspace === null
+      ? '暂无审阅任务'
+      : `审阅任务：${state.reviewWorkspace.projection.task.title}`;
+    col.appendChild(reviewEl);
+    main.appendChild(col);
   } else {
     const cfgEl = h('section');
     cfgEl.id = 'config-view';
