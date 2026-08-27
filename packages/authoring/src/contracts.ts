@@ -144,7 +144,7 @@ export interface ChangeRecord {
   runtimeTraces?: {
     traceId: string;
     workingRevision: number;
-    status: 'passed';
+    status: 'passed' | 'failed';
   }[];
   latestDiff?: {
     workingRevision: number;
@@ -167,6 +167,8 @@ export interface ProjectWriteStorage extends ProjectStorage {
   replaceFromStage(path: string, stagedIdentity: string): Promise<void>;
   restoreText(path: string, originalText: string): Promise<void>;
   removeStage(stagedIdentity: string): Promise<void>;
+  /** Optional audit hook used to prove approval was checked before staging. */
+  onCommitEvent?(event: 'approval-checked'): void | Promise<void>;
   /** 新文件恢复时的可选删除能力；旧文件恢复仍只使用 restoreText。 */
   removePath?(path: string): Promise<void>;
 }

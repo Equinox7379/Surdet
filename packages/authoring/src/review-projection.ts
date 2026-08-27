@@ -1,19 +1,22 @@
-import { AuthoringOperationError, stableStringify } from './change-session.js';
+import { AuthoringOperationError, evidenceFreshness, stableStringify } from './change-session.js';
 import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
   CompositionComparison,
   VerifiedCompositionCandidate,
 } from './composition-contracts.js';
-import type { AuthoringObject, TextHasher } from './contracts.js';
+import type { AuthoringObject, ChangeRecord, TextHasher } from './contracts.js';
+import type { IntegrationPlan } from './integration-plan.js';
 import type {
   HumanReviewProjection,
   ReviewCandidate,
   ReviewConflict,
   ReviewDependency,
   ReviewEvidenceSummary,
+  ReviewFinalResult,
   ReviewObjectSummary,
   ReviewSafeGroup,
+  ReviewWarning,
 } from './review-contracts.js';
 
 export interface BuildComparisonReviewProjectionInput {
@@ -300,5 +303,162 @@ export async function buildComparisonReviewProjection(
     reviewFingerprint: '',
   };
   projection.reviewFingerprint = await hasher.sha256(stableStringify(reviewFingerprintPayload(projection)));
+  return projection;
+}
+
+export interface BuildResultReviewProjectionInput {
+  reviewId: string;
+  plan: IntegrationPlan;
+  change: ChangeRecord;
+  diffFingerprint: string;
+  resultTreeSha256: string;
+  changedObjects?: ReviewObjectSummary[];
+  warnings?: ReviewWarning[];
+}
+
+function resultNotReady(message: string): AuthoringOperationError {
+  return new AuthoringOperationError('REVIEW_RESULT_NOT_READY', message);
+}
+
+function resultReviewFingerprintPayload(projection: HumanReviewProjection): Record<string, unknown> {
+  return {
+    reviewVersion: projection.reviewVersion,
+    kind: projection.kind,
+    projectIdentity: projection.projectIdentity,
+    expectedProjectRevision: projection.expectedProjectRevision,
+    task: projection.task,
+    objects: projection.objects,
+    evidence: projection.finalResult?.evidence,
+    finalResult: projection.finalResult,
+    sourceIdentity: projection.sourceIdentity,
+  };
+}
+
+function resultEvidenceOf(change: ChangeRecord): {
+  evidence: ReviewFinalResult['evidence'];
+  runtimeWorkingRevision: number;
+} {
+  const workingRevision = change.workingRevision;
+  const diff = evidenceFreshness(change.latestDiff, workingRevision);
+  const validation = evidenceFreshness(change.latestValidation, workingRevision);
+  const simulation = evidenceFreshness(change.latestSimulation, workingRevision);
+  const runtime = change.runtimeTraces ?? [];
+  if (diff.status !== 'fresh' || validation.status !== 'fresh' || simulation.status !== 'fresh') {
+    throw resultNotReady('diff、validation 或 simulation evidence 不是当前 workingRevision 的 fresh/passed 事实');
+  }
+  if (change.latestValidation?.errors !== 0) {
+    throw resultNotReady('validation evidence 仍有 error');
+  }
+  if (change.latestSimulation?.status !== 'passed') {
+    throw resultNotReady('simulation evidence 未通过');
+  }
+  if (runtime.length === 0 || runtime.some((trace) =>
+    trace.status !== 'passed' || trace.workingRevision !== workingRevision)) {
+    throw resultNotReady('runtime trace 缺失、失败或不是当前 workingRevision 的 fresh 事实');
+  }
+  const diffEvidenceId = change.latestDiff?.evidenceId;
+  const validationEvidenceId = change.latestValidation?.evidenceId;
+  const simulationEvidenceId = change.latestSimulation?.evidenceId;
+  if (diffEvidenceId === undefined || validationEvidenceId === undefined || simulationEvidenceId === undefined
+    || diffEvidenceId.length === 0 || validationEvidenceId.length === 0 || simulationEvidenceId.length === 0) {
+    throw resultNotReady('result evidence 缺少稳定 evidenceId');
+  }
+  return {
+    evidence: {
+      diffEvidenceId,
+      validationEvidenceId,
+      simulationEvidenceId,
+      runtimeTraceIds: runtime.map((trace) => trace.traceId).sort((left, right) => left.localeCompare(right)),
+    },
+    runtimeWorkingRevision: workingRevision,
+  };
+}
+
+export async function buildResultReviewProjection(
+  input: BuildResultReviewProjectionInput,
+  hasher: TextHasher,
+): Promise<HumanReviewProjection> {
+  const { plan, change } = input;
+  const review = plan.review;
+  if (review?.reviewState !== 'human-reviewed') {
+    throw resultNotReady('只有 human-reviewed integration plan 才能生成结果审阅包');
+  }
+  const integration = change.integration;
+  if (integration === undefined
+    || integration.planId !== plan.planId
+    || integration.planFingerprint !== plan.planFingerprint) {
+    throw resultNotReady('integration change 与 reviewed plan identity 不匹配');
+  }
+  if (integration.status !== 'READY') {
+    throw resultNotReady('integration change 尚未 READY');
+  }
+  if (change.projectRootIdentity !== plan.projectIdentity || change.baseRevision !== plan.expectedProjectRevision) {
+    throw resultNotReady('integration change 的项目 identity 或基线 revision 已变化');
+  }
+  if (integration.review?.binding === undefined
+    || stableStringify(integration.review.binding) !== stableStringify(review)) {
+    throw resultNotReady('integration change 缺少匹配的 human review binding');
+  }
+  if (input.diffFingerprint.length === 0 || input.resultTreeSha256.length === 0) {
+    throw resultNotReady('result diff 或 preview tree 缺少稳定 identity');
+  }
+
+  const resultEvidence = resultEvidenceOf(change);
+  const changedObjects = [...(input.changedObjects ?? [])]
+    .sort((left, right) => left.objectRef.localeCompare(right.objectRef));
+  const warnings = [...(input.warnings ?? [])];
+  const finalResult: ReviewFinalResult = {
+    planId: plan.planId,
+    planFingerprint: plan.planFingerprint,
+    integrationChangeId: change.changeId,
+    workingRevision: resultEvidence.runtimeWorkingRevision,
+    diffFingerprint: input.diffFingerprint,
+    changedObjects,
+    evidence: resultEvidence.evidence,
+    resultTreeSha256: input.resultTreeSha256,
+    warnings,
+  };
+  const projection: HumanReviewProjection = {
+    reviewVersion: '1.0.0',
+    reviewId: input.reviewId,
+    kind: 'integration-result',
+    state: 'STAGE_READY',
+    projectIdentity: plan.projectIdentity,
+    expectedProjectRevision: plan.expectedProjectRevision,
+    task: {
+      title: 'Integration result review',
+      acceptanceCriteria: [],
+      candidateCount: 0,
+      objectCount: changedObjects.length,
+      conflictCount: 0,
+      statementSource: 'generated-fallback',
+    },
+    candidates: [],
+    safeGroups: [],
+    conflicts: [],
+    dependencies: [],
+    evidence: {
+      candidateMatrix: [],
+      blockingCount: 0,
+      selectionRequiredCount: 0,
+      advisoryCount: warnings.length,
+      canCreateDecision: false,
+    },
+    objects: changedObjects,
+    finalResult,
+    sourceIdentity: {
+      projectIdentity: plan.projectIdentity,
+      expectedProjectRevision: plan.expectedProjectRevision,
+      comparisonFingerprint: plan.comparisonFingerprint,
+      planFingerprint: plan.planFingerprint,
+      integrationChangeId: change.changeId,
+      workingRevision: change.workingRevision,
+      decisionReviewId: review.reviewId,
+      decisionId: review.decisionId,
+      decisionFingerprint: review.decisionFingerprint,
+    },
+    reviewFingerprint: '',
+  };
+  projection.reviewFingerprint = await hasher.sha256(stableStringify(resultReviewFingerprintPayload(projection)));
   return projection;
 }

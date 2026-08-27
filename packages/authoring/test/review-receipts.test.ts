@@ -3,14 +3,19 @@ import { describe, expect, it } from 'vitest';
 import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
+  FinalApprovalReceipt,
   HumanReviewProjection,
   ReviewCandidate,
   ReviewConflict,
+  ReviewEvidenceBinding,
+  ResultReviewCurrentFacts,
   TextHasher,
 } from '../src/index.js';
 import {
+  approvalFingerprintOf,
   decisionFingerprintOf,
   decisionToPlanSelection,
+  validateFinalApproval,
   validateComparisonDecision,
   type ComparisonDecisionReceipt,
 } from '../src/index.js';
@@ -138,6 +143,98 @@ async function receipt(
   };
 }
 
+function resultProjection(): HumanReviewProjection {
+  return projection({
+    reviewId: 'result-review',
+    kind: 'integration-result',
+    state: 'STAGE_READY',
+    finalResult: {
+      planId: 'plan-1',
+      planFingerprint: 'plan-fingerprint',
+      integrationChangeId: 'change-1',
+      workingRevision: 4,
+      diffFingerprint: 'diff-fingerprint',
+      changedObjects: [],
+      evidence: {
+        diffEvidenceId: 'diff-1',
+        validationEvidenceId: 'validation-1',
+        simulationEvidenceId: 'simulation-1',
+        runtimeTraceIds: ['trace-1'],
+      },
+      resultTreeSha256: 'tree-1',
+      warnings: [],
+    },
+    sourceIdentity: {
+      projectIdentity: 'project-wave6',
+      expectedProjectRevision: 'revision-1',
+      comparisonFingerprint: 'comparison-fingerprint',
+      planFingerprint: 'plan-fingerprint',
+      integrationChangeId: 'change-1',
+      workingRevision: 4,
+      decisionFingerprint: 'decision-fingerprint',
+    },
+  });
+}
+
+function currentResultFacts(overrides: Partial<ResultReviewCurrentFacts> = {}): ResultReviewCurrentFacts {
+  return {
+    projectIdentity: 'project-wave6',
+    projectRevision: 'revision-1',
+    planId: 'plan-1',
+    planFingerprint: 'plan-fingerprint',
+    integrationChangeId: 'change-1',
+    workingRevision: 4,
+    diffFingerprint: 'diff-fingerprint',
+    evidence: {
+      diffEvidenceId: 'diff-1',
+      validationEvidenceId: 'validation-1',
+      simulationEvidenceId: 'simulation-1',
+      runtimeTraceIds: ['trace-1'],
+    },
+    resultTreeSha256: 'tree-1',
+    ...overrides,
+  };
+}
+
+async function approval(
+  overrides: Omit<Partial<Omit<FinalApprovalReceipt, 'approvalFingerprint'>>, 'evidence'> & {
+    evidence?: Omit<Partial<ReviewEvidenceBinding>, 'runtimeTraceIds'> & {
+      runtimeTraceIds?: readonly string[];
+    };
+  } = {},
+): Promise<FinalApprovalReceipt> {
+  const { evidence: evidenceOverrides, ...otherOverrides } = overrides;
+  const { runtimeTraceIds: evidenceRuntimeTraceIds, ...otherEvidenceOverrides } = evidenceOverrides ?? {};
+  const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
+    receiptVersion: '1.0.0',
+    approvalId: 'approval-1',
+    resultReviewId: 'result-review',
+    decisionFingerprint: 'decision-fingerprint',
+    planId: 'plan-1',
+    planFingerprint: 'plan-fingerprint',
+    integrationChangeId: 'change-1',
+    workingRevision: 4,
+    projectIdentity: 'project-wave6',
+    expectedProjectRevision: 'revision-1',
+    diffFingerprint: 'diff-fingerprint',
+    evidence: {
+      diffEvidenceId: 'diff-1',
+      validationEvidenceId: 'validation-1',
+      simulationEvidenceId: 'simulation-1',
+      ...otherEvidenceOverrides,
+      runtimeTraceIds: [...(evidenceRuntimeTraceIds ?? ['trace-1'])],
+    },
+    resultTreeSha256: 'tree-1',
+    reviewerChannel: 'surdet-editor-local',
+    approvedAt: '2026-08-27T00:00:00.000Z',
+    ...otherOverrides,
+  };
+  return {
+    ...unsigned,
+    approvalFingerprint: await approvalFingerprintOf(unsigned, hasher),
+  };
+}
+
 describe('human comparison decision receipts', () => {
   it('mechanically turns a valid receipt into human resolutions', async () => {
     const current = projection();
@@ -226,5 +323,38 @@ describe('human comparison decision receipts', () => {
         conflictResolutions: [{ conflictId: 'conflict-alpha', resolution: 'regenerate-candidate' }],
       }),
     }, hasher)).rejects.toMatchObject({ code: 'REVIEW_RETURNED' });
+  });
+
+  it('accepts only an approval bound to the exact result facts', async () => {
+    const current = currentResultFacts();
+    const currentApproval = await approval();
+    const verified = await validateFinalApproval({
+      projection: resultProjection(),
+      receipt: currentApproval,
+      current,
+    }, hasher);
+    expect(verified.receipt.approvalFingerprint).toBe(currentApproval.approvalFingerprint);
+    expect(verified.bindingFingerprint).toBeTruthy();
+  });
+
+  it.each([
+    ['planFingerprint', { planFingerprint: 'other-plan' }, {}],
+    ['integrationChangeId', { integrationChangeId: 'other-change' }, {}],
+    ['workingRevision', { workingRevision: 5 }, {}],
+    ['diffFingerprint', { diffFingerprint: 'other-diff' }, {}],
+    ['diffEvidenceId', { evidence: { diffEvidenceId: 'other-diff-evidence' } }, {}],
+    ['validationEvidenceId', { evidence: { validationEvidenceId: 'other-validation' } }, {}],
+    ['simulationEvidenceId', { evidence: { simulationEvidenceId: 'other-simulation' } }, {}],
+    ['runtimeTraceIds', { evidence: { runtimeTraceIds: ['trace-2'] } }, {}],
+    ['project revision', {}, { projectRevision: 'revision-2' }],
+    ['resultTreeSha256', { resultTreeSha256: 'other-tree' }, {}],
+  ] as const)('rejects stale approval when %s changes', async (_field, receiptChanges, currentChanges) => {
+    const staleApproval = await approval(receiptChanges);
+    const current = currentResultFacts(currentChanges);
+    await expect(validateFinalApproval({
+      projection: resultProjection(),
+      receipt: staleApproval,
+      current,
+    }, hasher)).rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
   });
 });

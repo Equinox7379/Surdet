@@ -1,10 +1,23 @@
-import { AuthoringOperationError, stableStringify } from './change-session.js';
+import {
+  approvalBindingFingerprintOf,
+  AuthoringOperationError,
+  stableStringify,
+  updateIntegrationMetadata,
+  type ChangeSession,
+} from './change-session.js';
 import type {
   CandidateCapsuleRef,
 } from './composition-contracts.js';
 import type { ConflictResolutionInput } from './integration-plan.js';
 import type { TextHasher } from './contracts.js';
-import type { HumanReviewProjection, ReviewConflict } from './review-contracts.js';
+import type {
+  FinalApprovalReceipt,
+  HumanReviewProjection,
+  ResultReviewCurrentFacts,
+  ReviewConflict,
+  VerifiedReviewApproval,
+} from './review-contracts.js';
+import type { IntegrationMetadata } from './integration-execution.js';
 
 export interface ComparisonDecisionReceipt {
   receiptVersion: '1.0.0';
@@ -102,6 +115,245 @@ export async function decisionFingerprintOf(
     selectedUnitIds: [...receipt.selectedUnitIds].sort(),
     conflictResolutions: normalizeReceiptResolutions(receipt.conflictResolutions),
     reviewerChannel: receipt.reviewerChannel,
+  }));
+}
+
+function normalizeRuntimeTraceIds(ids: readonly string[]): string[] {
+  return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
+export async function approvalFingerprintOf(
+  receipt: Omit<FinalApprovalReceipt, 'approvalFingerprint'>,
+  hasher: TextHasher,
+): Promise<string> {
+  return hasher.sha256(stableStringify({
+    receiptVersion: receipt.receiptVersion,
+    approvalId: receipt.approvalId,
+    resultReviewId: receipt.resultReviewId,
+    decisionFingerprint: receipt.decisionFingerprint,
+    planId: receipt.planId,
+    planFingerprint: receipt.planFingerprint,
+    integrationChangeId: receipt.integrationChangeId,
+    workingRevision: receipt.workingRevision,
+    projectIdentity: receipt.projectIdentity,
+    expectedProjectRevision: receipt.expectedProjectRevision,
+    evidence: {
+      diffEvidenceId: receipt.evidence.diffEvidenceId,
+      validationEvidenceId: receipt.evidence.validationEvidenceId,
+      simulationEvidenceId: receipt.evidence.simulationEvidenceId,
+      runtimeTraceIds: normalizeRuntimeTraceIds(receipt.evidence.runtimeTraceIds),
+    },
+    diffFingerprint: receipt.diffFingerprint,
+    resultTreeSha256: receipt.resultTreeSha256,
+    reviewerChannel: receipt.reviewerChannel,
+  }));
+}
+
+function resultEvidenceFromFinal(finalResult: NonNullable<HumanReviewProjection['finalResult']>): {
+  diffEvidenceId: string;
+  validationEvidenceId: string;
+  simulationEvidenceId: string;
+  runtimeTraceIds: string[];
+} {
+  return {
+    diffEvidenceId: finalResult.evidence.diffEvidenceId,
+    validationEvidenceId: finalResult.evidence.validationEvidenceId,
+    simulationEvidenceId: finalResult.evidence.simulationEvidenceId,
+    runtimeTraceIds: normalizeRuntimeTraceIds(finalResult.evidence.runtimeTraceIds),
+  };
+}
+
+function resultReviewFromFinal(finalResult: NonNullable<HumanReviewProjection['finalResult']>) {
+  return {
+    reviewId: '',
+    resultTreeSha256: finalResult.resultTreeSha256,
+    diffFingerprint: finalResult.diffFingerprint,
+    evidence: resultEvidenceFromFinal(finalResult),
+    workingRevision: finalResult.workingRevision,
+  };
+}
+
+function approvalStale(message: string): AuthoringOperationError {
+  return new AuthoringOperationError('REVIEW_APPROVAL_STALE', message);
+}
+
+export async function validateFinalApproval(input: {
+  projection: HumanReviewProjection;
+  receipt: FinalApprovalReceipt;
+  current: ResultReviewCurrentFacts;
+}, hasher: TextHasher): Promise<VerifiedReviewApproval> {
+  const { projection, receipt, current } = input;
+  const finalResult = projection.finalResult;
+  if (projection.kind !== 'integration-result' || projection.state !== 'STAGE_READY' || finalResult === undefined) {
+    throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', 'result projection 不是可批准的 STAGE_READY 结果');
+  }
+  const expectedEvidence = resultEvidenceFromFinal(finalResult);
+  const actualReceiptEvidence = {
+    diffEvidenceId: receipt.evidence.diffEvidenceId,
+    validationEvidenceId: receipt.evidence.validationEvidenceId,
+    simulationEvidenceId: receipt.evidence.simulationEvidenceId,
+    runtimeTraceIds: normalizeRuntimeTraceIds(receipt.evidence.runtimeTraceIds),
+  };
+  const currentEvidence = {
+    diffEvidenceId: current.evidence.diffEvidenceId,
+    validationEvidenceId: current.evidence.validationEvidenceId,
+    simulationEvidenceId: current.evidence.simulationEvidenceId,
+    runtimeTraceIds: normalizeRuntimeTraceIds(current.evidence.runtimeTraceIds),
+  };
+  if (receipt.resultReviewId !== projection.reviewId
+    || receipt.decisionFingerprint !== projection.sourceIdentity.decisionFingerprint
+    || receipt.planId !== finalResult.planId
+    || receipt.planFingerprint !== finalResult.planFingerprint
+    || receipt.integrationChangeId !== finalResult.integrationChangeId
+    || receipt.workingRevision !== finalResult.workingRevision
+    || receipt.projectIdentity !== projection.projectIdentity
+    || receipt.expectedProjectRevision !== projection.expectedProjectRevision
+    || receipt.diffFingerprint !== current.diffFingerprint
+    || stableStringify(actualReceiptEvidence) !== stableStringify(expectedEvidence)
+    || receipt.resultTreeSha256 !== finalResult.resultTreeSha256
+    || current.projectIdentity !== projection.sourceIdentity.projectIdentity
+    || current.projectRevision !== projection.expectedProjectRevision
+    || current.planId !== finalResult.planId
+    || current.planFingerprint !== finalResult.planFingerprint
+    || current.integrationChangeId !== finalResult.integrationChangeId
+    || current.workingRevision !== finalResult.workingRevision
+    || current.diffFingerprint !== finalResult.diffFingerprint
+    || stableStringify(currentEvidence) !== stableStringify(expectedEvidence)
+    || current.resultTreeSha256 !== finalResult.resultTreeSha256) {
+    throw approvalStale('批准回执与 result review 的 plan/change/revision/evidence/tree identity 不一致');
+  }
+  if (receipt.receiptVersion !== '1.0.0' || receipt.reviewerChannel !== 'surdet-editor-local') {
+    throw invalid('批准回执版本或 reviewerChannel 非法');
+  }
+  if (receipt.approvalId.length === 0 || receipt.approvedAt.length === 0) {
+    throw invalid('批准回执缺少 approvalId 或 approvedAt');
+  }
+  if (new Set(receipt.evidence.runtimeTraceIds).size !== receipt.evidence.runtimeTraceIds.length) {
+    throw invalid('批准回执 runtimeTraceIds 含重复项');
+  }
+  const expectedFingerprint = await approvalFingerprintOf(receipt, hasher);
+  if (receipt.approvalFingerprint !== expectedFingerprint) {
+    throw invalid('approvalFingerprint 与批准内容不符');
+  }
+  const binding = {
+    reviewState: 'human-reviewed' as const,
+    reviewId: projection.sourceIdentity.decisionReviewId ?? projection.reviewId,
+    decisionId: projection.sourceIdentity.decisionId ?? receipt.approvalId,
+    decisionFingerprint: receipt.decisionFingerprint,
+  };
+  const resultReview = {
+    ...resultReviewFromFinal(finalResult),
+    reviewId: projection.reviewId,
+  };
+  return {
+    receipt,
+    bindingFingerprint: approvalBindingFingerprintOf({
+      binding,
+      planId: finalResult.planId,
+      planFingerprint: finalResult.planFingerprint,
+      integrationChangeId: finalResult.integrationChangeId,
+      resultReview,
+    }),
+  };
+}
+
+function sameEvidence(
+  left: { diffEvidenceId: string; validationEvidenceId: string; simulationEvidenceId: string; runtimeTraceIds: string[] },
+  right: { diffEvidenceId: string; validationEvidenceId: string; simulationEvidenceId: string; runtimeTraceIds: string[] },
+): boolean {
+  return stableStringify({
+    ...left,
+    runtimeTraceIds: normalizeRuntimeTraceIds(left.runtimeTraceIds),
+  }) === stableStringify({
+    ...right,
+    runtimeTraceIds: normalizeRuntimeTraceIds(right.runtimeTraceIds),
+  });
+}
+
+export async function bindResultReview(
+  change: ChangeSession,
+  projection: HumanReviewProjection,
+): Promise<IntegrationMetadata> {
+  const finalResult = projection.finalResult;
+  const integration = change.record.integration;
+  if (integration === undefined || finalResult === undefined || projection.kind !== 'integration-result'
+    || projection.state !== 'STAGE_READY') {
+    throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', '无法绑定不完整的 result review');
+  }
+  if (integration.status !== 'READY'
+    || integration.planId !== finalResult.planId
+    || integration.planFingerprint !== finalResult.planFingerprint
+    || finalResult.integrationChangeId !== change.record.changeId
+    || finalResult.workingRevision !== change.record.workingRevision
+    || integration.review?.binding.reviewState !== 'human-reviewed') {
+    throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', 'result review 与 READY reviewed integration 不匹配');
+  }
+  const resultReview = {
+    reviewId: projection.reviewId,
+    resultTreeSha256: finalResult.resultTreeSha256,
+    diffFingerprint: finalResult.diffFingerprint,
+    evidence: resultEvidenceFromFinal(finalResult),
+    workingRevision: finalResult.workingRevision,
+  };
+  return updateIntegrationMetadata(change, (metadata) => ({
+    ...metadata,
+    review: {
+      binding: metadata.review!.binding,
+      resultReview,
+    },
+  }));
+}
+
+export async function bindVerifiedApproval(
+  change: ChangeSession,
+  verified: VerifiedReviewApproval,
+): Promise<IntegrationMetadata> {
+  const integration = change.record.integration;
+  const review = integration?.review;
+  const resultReview = review?.resultReview;
+  if (integration === undefined || review === undefined || resultReview === undefined) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', '缺少可批准的 result review');
+  }
+  if (review.binding.reviewState !== 'human-reviewed') {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', 'integration plan 尚未完成人类决定');
+  }
+  const receipt = verified.receipt;
+  const expectedBindingFingerprint = approvalBindingFingerprintOf({
+    binding: review.binding,
+    planId: integration.planId,
+    planFingerprint: integration.planFingerprint,
+    integrationChangeId: change.record.changeId,
+    resultReview,
+  });
+  if (verified.bindingFingerprint !== expectedBindingFingerprint
+    || receipt.resultReviewId !== resultReview.reviewId
+    || receipt.planId !== integration.planId
+    || receipt.planFingerprint !== integration.planFingerprint
+    || receipt.integrationChangeId !== change.record.changeId
+    || receipt.workingRevision !== resultReview.workingRevision
+    || receipt.projectIdentity !== change.record.projectRootIdentity
+    || receipt.expectedProjectRevision !== change.record.baseRevision
+    || receipt.diffFingerprint !== resultReview.diffFingerprint
+    || receipt.resultTreeSha256 !== resultReview.resultTreeSha256
+    || !sameEvidence({
+      diffEvidenceId: receipt.evidence.diffEvidenceId,
+      validationEvidenceId: receipt.evidence.validationEvidenceId,
+      simulationEvidenceId: receipt.evidence.simulationEvidenceId,
+      runtimeTraceIds: receipt.evidence.runtimeTraceIds,
+    }, resultReview.evidence)) {
+    throw approvalStale('批准回执不能绑定当前 result review');
+  }
+  return updateIntegrationMetadata(change, (metadata) => ({
+    ...metadata,
+    review: {
+      binding: metadata.review!.binding,
+      resultReview: metadata.review!.resultReview,
+      approval: {
+        approvalId: receipt.approvalId,
+        approvalFingerprint: receipt.approvalFingerprint,
+        bindingFingerprint: expectedBindingFingerprint,
+      },
+    },
   }));
 }
 
