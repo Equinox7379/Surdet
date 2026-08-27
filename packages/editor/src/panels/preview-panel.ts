@@ -390,6 +390,7 @@ async function readProjectTimelines(): Promise<unknown[]> {
 
 export function renderPreviewPanel(container: HTMLElement): void {
   container.innerHTML = '';
+  if (state.reviewWorkspace === null) state.previewChoices = null;
   currentPreviewTrace = [];
   const sc = state.current ? state.scenes.get(state.current) : undefined;
 
@@ -542,6 +543,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
         assets,
         timelines: timelines.length > 0 ? timelines : undefined,
         timelinePreviewId: state.previewTimelineId ?? undefined,
+        choices: state.previewChoices ?? undefined,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
       },

@@ -41,6 +41,8 @@ export const state = {
   currentTimeline: null as string | null,
   /** 从时间轴面板发起的独立直演目标；普通剧情预览时为空。 */
   previewTimelineId: null as string | null,
+  /** 结果审阅的显式 choices；普通项目预览不携带 review 选择。 */
+  previewChoices: null as Record<string, string> | null,
   lastValidation: null as ValidateResult | null,
   /** 当前 authoring 内存快照的共享对象索引；不生成 editor 私有对象 ID。 */
   selectedObjectRef: null as string | null,

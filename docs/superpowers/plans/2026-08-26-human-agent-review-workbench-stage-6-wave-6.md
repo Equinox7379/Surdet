@@ -2991,7 +2991,7 @@ commit = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028; message = feat(cli): expose h
 timestamp = 2026-08-27
 task = 7_EDITOR_REVIEW_WORKSPACE_MODEL_AND_PROJECT_ISOLATION
 initialHead = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
-finalHead = (本提交；精确 hash 在后续现场提交核对中记录)
+finalHead = d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
 parent = 2e6fd6bc1ff38dc49fb07b973f764097aa9f7028
 remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
 aheadBehindBeforeCommit = 8/0
@@ -3016,7 +3016,49 @@ redArtifacts = task7-red-authoring-build.log exit=0 bytes=67 sha256=D55466B76CB8
  contract = review workspace reads identity before fixed payload, revalidates bytes/SHA/project identity/version and rejects approval-return coexistence; receipts are create-only and reread-verified without actor or absolute paths; ReviewWorkspaceState carries the exact taskbook fields; normal project open clears stale review while review fixture opens under the project subhandle; review model exposes fixed Chinese labels and blocks sealing until evidence and all selection-required conflicts are resolved
  unresolved = NONE
  formal = NOT_RUN; diagnostic = NOT_RUN
- commit = (本提交); message = feat(editor): open human review workspaces
+commit = d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; message = feat(editor): open human review workspaces
  nextStop = TASK_8
+ push = NOT_PERFORMED
+ ~~~
+
+### 2026-08-27 — Task 8 Editor 审阅 UI、因果下钻与实际 Stage 预览
+
+~~~text
+timestamp = 2026-08-27
+task = 8_EDITOR_REVIEW_UI_CAUSAL_DRILLDOWN_AND_RESULT_PREVIEW
+initialHead = d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+finalHead = (本提交；精确 hash 在后续现场提交核对中记录)
+parent = d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehindBeforeCommit = 9/0
+trackedWorktree = TASK_8_FILES_ONLY; Task 7 Ledger correction carried in this taskbook change; known untracked preserved
+stagingArea = EMPTY before precise staging
+filesCreated = packages/editor/src/panels/review-panel.ts; packages/editor/src/review-preview.ts; packages/editor/test/review-panel.test.ts; packages/editor/test/review-preview.test.ts
+filesChanged = packages/editor/src/main.ts; packages/editor/src/state.ts; packages/editor/src/causal-selection.ts; packages/editor/src/panels/right.ts; packages/editor/src/panels/preview-panel.ts; packages/editor/src/styles.css; packages/editor/test/causal-selection.test.ts; packages/editor/test/preview-stage-layout.test.ts; this taskbook Execution Ledger
+redCommand = npm run test -w surdet-editor -- review-panel.test.ts review-preview.test.ts causal-selection.test.ts preview-stage-layout.test.ts
+redResult = 4 requested files / 8 tests: 2 failed, 6 passed, exit 1; new panel/preview modules were absent and causal/layout contracts were red
+artifactRoot = <local-path>
+redArtifact = task8-red-editor-tests.log exit=1 bytes=33433 sha256=30417393BC640B3EAC59F9657346965F6528DEC5373134F3BE2B3F5EBD55A0DD runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+greenAttempt1 = required focus exit 1; 8 files / 29 tests: 27 passed, 2 failed; required full Editor exit 0 with 32 files / 190 tests; typecheck exit 2 on browser SHA input and test evidence fixture types
+greenAttempt1Artifacts = task8-green-attempt1-editor-focus.log exit=1 bytes=36023 sha256=2F63731761C6421DA9462065A3F4569F339EF099BAD189D2563C6FD4FDB7B06A runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt1-editor-full.log exit=0 bytes=1852 sha256=CB11F6307FA9E28EC52386E0232A2C9484AF28FBE4A71943450B702BE7FDFCB2 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt1-editor-typecheck.log exit=2 bytes=2024 sha256=7DDEEB7C5E1813E6CAFCDE075CAD9CF16CBEAD6E9A3BF110646DBC13EA78CEEC runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+ greenAttempt2 = required focus exit 0; 8 files / 29 tests PASS; typecheck/build exit 0
+ greenAttempt2Artifacts = task8-green-attempt2-editor-focus.log exit=0 bytes=884 sha256=E05CB570FACF08E39E91997FE7B34BDDA51BAE3B12CB099F8690D780356F4FB1 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt2-editor-typecheck.log exit=0 bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt2-editor-build.log exit=0 bytes=1998 sha256=CAD7DBFDB67EE1E8F91E2D09B74E90262A57F7946B2287BF9152F4F368D36B2D runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+ greenAttempt3 = focus exit 0; 8 files / 29 tests PASS; typecheck exit 2 on File System write chunk type
+ greenAttempt3Artifacts = task8-green-attempt3-editor-focus.log exit=0 bytes=885 sha256=1C750A4B2872E92E31B55551E46799C896F79114DF8C8B9E073709A6F80EACE6 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt3-editor-typecheck.log exit=2 bytes=993 sha256=C697987D192EA9E8D09955A47592DC5D0EBA469DFB8A8640B44F8E01E9E1661D runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+ greenAttempt4 = typecheck/build exit 0
+ greenAttempt4Artifacts = task8-green-attempt4-editor-typecheck.log exit=0 bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-attempt4-editor-build.log exit=0 bytes=1998 sha256=D75348C960DB12EB23537C909AE86C62D8BC3410AA81B96E0356F57A9799F7D7 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+ finalGreenCommands =
+   npm run test -w surdet-editor -- review-panel.test.ts review-preview.test.ts review-workspace.test.ts review-model.test.ts causal-selection.test.ts preview-stage-layout.test.ts preview-causal-trace.test.ts project-io.test.ts
+   npm run test -w surdet-editor
+   npm run typecheck -w surdet-editor
+   npm run build -w surdet-editor
+ finalGreenResults = Editor 8 files / 29 tests PASS exit 0; Editor 32 files / 190 tests PASS exit 0; editor typecheck PASS exit 0; editor build PASS exit 0
+finalGreenArtifacts = task8-green-final3-editor-focus.log exit=0 bytes=884 sha256=32C8BD073628C5B37A78F8130DBE6F71FE18D719B6D6B34F3C4302D0F73A1B77 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final3-editor-full.log exit=0 bytes=1852 sha256=A210444D1E48B129BFA5B72722949FB192605EF947EAF407C6BCC9C76DF6DC4D runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final3-editor-typecheck.log exit=0 bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final3-editor-build.log exit=0 bytes=1998 sha256=5D1183C5DC862D833A945A0A0F325712B9FEEFD54BE93F4EE8383D4C7D0C3904 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+supersededFinalGreenArtifacts = task8-green-final2-editor-focus.log exit=0 bytes=884 sha256=1704073149A3EC0029E8297EAEB502244A099E5B86E16D7E5B718B7F7B41E689 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final2-editor-full.log exit=0 bytes=1851 sha256=C280AA913BECA46CCF1312DD5D7C859E10B01B3F6658AF209794FAB77C2CBA2B runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final2-editor-typecheck.log exit=0 bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3 runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1; task8-green-final2-editor-build.log exit=0 bytes=1998 sha256=9B01B906256459D9CE58DF4F93328DF44ADFB721D5AB439BDD1527659654855C runHead=d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1
+ contract = comparison/result review use human-first Chinese labels with folded technical IDs; safe groups are included by default; only allowed conflict actions are clickable; unresolved or blocking conflicts disable decision sealing; shared review projection alone supplies causal references, potential impact and observed impact; result preview opens result/project through review-fixture mode, preserves explicit scene/choices/timeline request state, hashes sorted relative fixture identities, snapshots official fixture for discard, and disables approval on changed tree; preview/causal/layout contracts keep the center preview usable and independently scrollable
+ unresolved = NONE
+ formal = NOT_RUN; diagnostic = NOT_RUN
+ commit = (本提交); message = feat(editor): render human review workflow
+ nextStop = TASK_9
  push = NOT_PERFORMED
 ~~~

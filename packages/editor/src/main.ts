@@ -10,7 +10,7 @@
  *   history.ts      撤销/重做（200 条上限 + 600ms 打字合并）
  *   panels/sidebar  场景列表　panels/editor 块编辑区　panels/issues 校验编排+结果　panels/right 变量/拓扑/引用
  */
-import { state, h } from './state.js';
+import { state, h, setStatus } from './state.js';
 import { buildObjectIndex } from '@surdet/authoring';
 import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
 import {
@@ -32,6 +32,7 @@ import { renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './pan
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
+import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
 import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
 } from './autosave.js';
@@ -207,6 +208,9 @@ function renderAll(): void {
     const openBtn = h('button', undefined, '打开游戏目录');
     openBtn.onclick = () => { void openProject(); };
     header.appendChild(openBtn);
+    const reviewBtn = h('button', undefined, '打开审阅任务');
+    reviewBtn.onclick = () => { void openReviewPanelWorkspace().then(renderAll).catch((error) => setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000)); };
+    header.appendChild(reviewBtn);
   } else {
     const demoBtn = h('button', undefined, '加载演示项目');
     demoBtn.onclick = loadDemoProject;
@@ -251,15 +255,15 @@ function renderMainArea(): void {
   main.innerHTML = '';
   const col = h('div', 'main-col');
   const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit' | 'review'; label: string }[] = [
+  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'review' | 'stats' | 'audit'; label: string }[] = [
     { id: 'editor', label: '块编辑' },
     { id: 'flow', label: '流程图' },
     { id: 'timeline', label: '时间轴' },
     { id: 'config', label: '配置' },
     { id: 'preview', label: '预览' },
+    { id: 'review', label: '审阅' },
     { id: 'stats', label: '统计' },
     { id: 'audit', label: '审计' },
-    { id: 'review', label: '审阅' },
   ];
   for (const d of defs) {
     const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
@@ -326,11 +330,9 @@ function renderMainArea(): void {
   } else if (state.mainTab === 'review') {
     const reviewEl = h('section');
     reviewEl.id = 'review-view';
-    reviewEl.textContent = state.reviewWorkspace === null
-      ? '暂无审阅任务'
-      : `审阅任务：${state.reviewWorkspace.projection.task.title}`;
     col.appendChild(reviewEl);
     main.appendChild(col);
+    renderReviewPanel(reviewEl);
   } else {
     const cfgEl = h('section');
     cfgEl.id = 'config-view';

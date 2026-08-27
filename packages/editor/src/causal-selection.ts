@@ -1,4 +1,10 @@
-import type { ObjectIndex, AuthoringObject, RuntimeTraceEvent } from '@surdet/authoring';
+import type {
+  AuthoringObject,
+  HumanReviewProjection,
+  ObjectIndex,
+  ReviewObjectSummary,
+  RuntimeTraceEvent,
+} from '@surdet/authoring';
 
 export interface CausalTraceEvent {
   step?: number;
@@ -19,6 +25,35 @@ export interface AuthoringObjectDisplay {
   title: string;
   location?: string;
   objectRef: string;
+}
+
+export interface ReviewCausalSelection {
+  selectedObjectRef: string | null;
+  currentObject: ReviewObjectSummary | null;
+  directReferences: string[];
+  directReferencedBy: string[];
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+}
+
+/**
+ * 审阅模式只读取 shared projection 携带的事实；不从 Editor 索引重新推断关系。
+ */
+export function buildReviewCausalSelection(
+  projection: HumanReviewProjection,
+  selectedObjectRef: string | null,
+): ReviewCausalSelection {
+  const currentObject = selectedObjectRef === null
+    ? null
+    : projection.objects.find((object) => object.objectRef === selectedObjectRef) ?? null;
+  return {
+    selectedObjectRef,
+    currentObject,
+    directReferences: currentObject ? [...currentObject.references] : [],
+    directReferencedBy: currentObject ? [...currentObject.referencedBy] : [],
+    potentialImpact: currentObject ? [...currentObject.potentialImpact] : [],
+    observedImpact: currentObject ? [...currentObject.observedImpact] : [],
+  };
 }
 
 const PREVIEW_TRACE_SELECTION_EVENT = 'surdet-preview-trace-select';
