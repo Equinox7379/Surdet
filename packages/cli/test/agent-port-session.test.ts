@@ -116,6 +116,17 @@ describe('Surdet Agent Port session and policy contract', () => {
     await same.close();
   });
 
+  it('exposes stable human-review state without review filesystem paths', async () => {
+    const root = makeProject('review-summary');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    const description = await session.describe();
+    expect((description as any).review).toEqual({ reviewState: 'unreviewed' });
+    expect(JSON.stringify(description)).not.toContain(root);
+    await session.close();
+  });
+
   it('observe cannot begin or mutate', async () => {
     const root = makeProject('observe');
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
@@ -194,6 +205,48 @@ describe('Surdet Agent Port session and policy contract', () => {
     });
 
     expectFailure(await session.invoke('change.commit', {}), 'COMPOSITION_INCOMPLETE');
+    await session.close();
+  });
+
+  it('rejects a READY integration without approval before creating a commit journal', async () => {
+    const root = makeProject('integration-approval-gate');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'apply');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const changeId = session.activeChangeId!;
+    await NodeChangeStore.withChangeLease(changeId, async (leasedStore) => {
+      const record = await leasedStore.read(changeId);
+      if (record === null) throw new Error(`missing change ${changeId}`);
+      await leasedStore.write({
+        ...record,
+        recordVersion: record.recordVersion + 1,
+        latestValidation: { workingRevision: record.workingRevision, evidenceId: 'validation-gate', errors: 0 },
+        latestSimulation: { workingRevision: record.workingRevision, evidenceId: 'simulation-gate', status: 'passed' },
+        runtimeTraces: [{ traceId: 'runtime-gate', workingRevision: record.workingRevision, status: 'passed' }],
+        integration: {
+          planId: 'pln_approval_gate_probe',
+          planFingerprint: 'b'.repeat(64),
+          executeOperationId: 'exec-approval-gate-probe',
+          sourceCapsules: [],
+          includedUnitIds: [],
+          deduplicatedUnits: [],
+          conflictResolutions: [],
+          status: 'READY',
+          nextOperationIndex: 0,
+          replayedOperations: [],
+          review: { binding: { reviewState: 'unreviewed' } },
+        },
+      }, {
+        expectedRecordVersion: record.recordVersion,
+        expectedStatus: record.status,
+      });
+    });
+
+    expectFailure(await session.invoke('change.commit', {}), 'REVIEW_APPROVAL_REQUIRED');
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    expect(opened).not.toBeNull();
+    expect(await opened!.store.readLatestJournal(changeId)).toBeNull();
     await session.close();
   });
 

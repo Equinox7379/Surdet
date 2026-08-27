@@ -29,7 +29,10 @@ export const AUTHORING_ERROR_CODES = [
   'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE',
   'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED',
   'COMPOSITION_PLAN_STALE', 'COMPOSITION_PLAN_INVALID', 'COMPOSITION_REPLAY_FAILED',
-  'COMPOSITION_INCOMPLETE',
+  'COMPOSITION_INCOMPLETE', 'REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH',
+  'REVIEW_FORMAT_UNSUPPORTED', 'REVIEW_DECISION_REQUIRED', 'REVIEW_DECISION_INVALID',
+  'REVIEW_DECISION_STALE', 'REVIEW_RESULT_NOT_READY', 'REVIEW_APPROVAL_REQUIRED',
+  'REVIEW_APPROVAL_STALE', 'REVIEW_RETURNED', 'REVIEW_FIXTURE_CHANGED',
 ] as const;
 
 export type AuthoringErrorCode = (typeof AUTHORING_ERROR_CODES)[number];
@@ -125,6 +128,17 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   COMPOSITION_PLAN_INVALID: { category: 'request', retryDisposition: 'never', repairActions: [] },
   COMPOSITION_REPLAY_FAILED: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('change.diff', '读取失败 operationIndex 的领域差异。'), action('object.inspect', '核对相关对象当前指纹。'), action('change.rollback', '放弃失败集成；创建新候选或新计划，不能原地换 replay payload。')] },
   COMPOSITION_INCOMPLETE: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('composition.execute', '以同一 executeOperationId 精确恢复 REPLAYING 集成。'), action('change.diff', 'FAILED 时只能 inspect/diff/rollback。')] },
+  REVIEW_NOT_FOUND: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('review.prepare-comparison', '重新读取 reviewId 与相对审阅路径。')] },
+  REVIEW_IDENTITY_MISMATCH: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('保留原始审阅包，重新 prepare；不得改写原包。')] },
+  REVIEW_FORMAT_UNSUPPORTED: { category: 'request', retryDisposition: 'never', repairActions: [terminalAction('使用当前支持的 reviewVersion；不得自动转换未知格式。')] },
+  REVIEW_DECISION_REQUIRED: { category: 'conflict', retryDisposition: 'after-human-review', repairActions: [terminalAction('在 Editor 完成人类裁决后再继续；Agent 不得伪造决定回执。')] },
+  REVIEW_DECISION_INVALID: { category: 'request', retryDisposition: 'after-human-review', repairActions: [terminalAction('在 Editor 修正非法选择并生成新的 decisionId；Agent 不得代填回执。')] },
+  REVIEW_DECISION_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('review.prepare-comparison', 'comparison 或项目基线已变化，重新生成审阅包。')] },
+  REVIEW_RESULT_NOT_READY: { category: 'conflict', retryDisposition: 'after-inspect', repairActions: [action('composition.inspect', '确认 integration plan 与 READY 状态后再准备结果审阅。')] },
+  REVIEW_APPROVAL_REQUIRED: { category: 'conflict', retryDisposition: 'after-human-review', repairActions: [terminalAction('在 Editor 预览并由项目所有者批准后再继续；Agent 不得伪造批准。')] },
+  REVIEW_APPROVAL_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('review.prepare-result', '重新生成 result review 并取得当前 fresh approval。')] },
+  REVIEW_RETURNED: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('用户已退回该计划；必须创建新的候选、comparison 和 plan。')] },
+  REVIEW_FIXTURE_CHANGED: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('review.prepare-result', '丢弃探索性 fixture 修改并重新加载正式 result。')] },
 };
 
 export const AUTHORING_ERROR_CATALOG: Readonly<Record<AuthoringErrorCode, AuthoringErrorDefinition>> = Object.fromEntries(
@@ -222,7 +236,7 @@ export function createEnvelopeJsonSchema(resultSchema: JsonSchema): JsonSchema {
       category: { enum: ['request', 'not-found', 'conflict', 'validation', 'runtime', 'commit'] },
       message: { type: 'string' },
       details: { type: 'object', patternProperties: { '^.*$': jsonObjectValueSchema }, additionalProperties: false },
-      retryDisposition: { enum: ['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'new-change', 'manual-recovery', 'never'] },
+      retryDisposition: { enum: ['same-request', 'after-inspect', 'after-refresh', 'after-repair', 'after-human-review', 'new-change', 'manual-recovery', 'never'] },
       repairActions: {
         type: 'array',
         items: {

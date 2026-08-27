@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthoringOperationError } from '@surdet/authoring';
+import { AUTHORING_CAPABILITY_IDS, AuthoringOperationError } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
@@ -462,5 +462,13 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
     expect(stdout).toBe('');
     expect(stderr).toContain('Surdet Agent Port ready:');
     expect(child.exitCode ?? child.signalCode).not.toBeNull();
+  });
+});
+
+describe('Wave 6 review security boundary', () => {
+  it('does not expose agent-side human receipt writers', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(30);
+    expect(AUTHORING_CAPABILITY_IDS).not.toContain('review.write-decision');
+    expect(AUTHORING_CAPABILITY_IDS).not.toContain('review.approve');
   });
 });

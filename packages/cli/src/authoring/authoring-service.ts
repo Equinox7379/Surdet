@@ -6,6 +6,7 @@ import {
   type VarValue,
 } from '@surdet/core';
 import {
+  bindVerifiedApproval,
   applyCharacterEnsure,
   applyCharacterRemove,
   applyEntrySceneSet,
@@ -57,6 +58,8 @@ import {
   type ProjectSnapshot,
   type ProjectStorage,
   type ProjectWriteStorage,
+  type ReviewApprovalRef,
+  type VerifiedReviewApproval,
   type CommitJournal,
   type RecoveryInspection,
   type SceneCreateInput,
@@ -68,6 +71,7 @@ import {
 } from '@surdet/authoring';
 import { NodeChangeStore } from './node-change-store.js';
 import { CompositionService, compositionServiceForProject } from './composition-service.js';
+import { reviewServiceForProject } from './review-service.js';
 import { NodeLocalLeaseManager } from './node-local-lease.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
@@ -614,9 +618,104 @@ export class AuthoringService {
     };
   }
 
+  async prepareComparisonReview(
+    projectRoot: string,
+    input: { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }> },
+  ): Promise<ServiceResult<unknown>> {
+    const service = await reviewServiceForProject(projectRoot);
+    const prepared = await service.prepareComparison(input);
+    return {
+      projectIdentity: prepared.identity.projectIdentity,
+      projectRevision: prepared.identity.expectedProjectRevision,
+      result: prepared,
+    };
+  }
+
+  async inspectReviewDecision(
+    projectRoot: string,
+    input: { reviewId: string; decisionId?: string },
+  ): Promise<ServiceResult<unknown>> {
+    const service = await reviewServiceForProject(projectRoot);
+    const verified = await service.inspectDecision(input);
+    return {
+      projectIdentity: verified.receipt.projectIdentity,
+      projectRevision: verified.receipt.expectedProjectRevision,
+      result: verified,
+    };
+  }
+
+  async prepareResultReview(
+    projectRoot: string,
+    input: { planId: string; artifactSha256: string; changeId: string },
+  ): Promise<ServiceResult<unknown>> {
+    const service = await reviewServiceForProject(projectRoot);
+    const prepared = await service.prepareResult(input);
+    return {
+      projectIdentity: prepared.identity.projectIdentity,
+      projectRevision: prepared.identity.expectedProjectRevision,
+      result: prepared,
+    };
+  }
+
+  async inspectApprovalReview(
+    projectRoot: string,
+    input: { resultReviewId: string; approvalId?: string },
+  ): Promise<ServiceResult<unknown>> {
+    const service = await reviewServiceForProject(projectRoot);
+    const inspected = await service.inspectApproval(input);
+    const receipt = inspected.receipt as unknown as Record<string, unknown>;
+    return {
+      projectIdentity: service.composition.projectIdentity,
+      projectRevision: typeof receipt['expectedProjectRevision'] === 'string'
+        ? receipt['expectedProjectRevision']
+        : 'unknown',
+      result: inspected,
+    };
+  }
+
   async planComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
     const service = await compositionServiceForProject(projectRoot);
-    const raw = await service.plan(input as never);
+    const hasReviewedDecision = Object.prototype.hasOwnProperty.call(input, 'reviewDecision');
+    const hasDirectSelection = Object.prototype.hasOwnProperty.call(input, 'selectedUnitIds');
+    if (hasReviewedDecision === hasDirectSelection) {
+      throw new AuthoringOperationError('INVALID_REQUEST', 'composition.plan 必须且只能选择 direct 或 reviewed 输入');
+    }
+    const candidateRefs = input['candidateRefs'] as Parameters<CompositionService['plan']>[0]['candidateRefs'];
+    const comparisonFingerprint = input['comparisonFingerprint'] as string;
+    const planInput = hasReviewedDecision
+      ? await (async () => {
+        const decision = input['reviewDecision'] as {
+          reviewId: string;
+          decisionId: string;
+          decisionFingerprint: string;
+        };
+        const reviewService = await reviewServiceForProject(projectRoot);
+        const verified = await reviewService.inspectDecision({
+          reviewId: decision.reviewId,
+          decisionId: decision.decisionId,
+        });
+        if (verified.review.decisionFingerprint !== decision.decisionFingerprint) {
+          throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', 'reviewDecision fingerprint 与已验证决定不一致', {
+            reviewId: decision.reviewId,
+            decisionId: decision.decisionId,
+          });
+        }
+        return {
+          candidateRefs,
+          comparisonFingerprint,
+          selectedUnitIds: verified.selectedUnitIds,
+          conflictResolutions: verified.conflictResolutions,
+          review: verified.review,
+        };
+      })()
+      : {
+        candidateRefs,
+        comparisonFingerprint,
+        selectedUnitIds: input['selectedUnitIds'] as string[],
+        conflictResolutions: input['conflictResolutions'] as Parameters<CompositionService['plan']>[0]['conflictResolutions'],
+        review: { reviewState: 'unreviewed' as const },
+      };
+    const raw = await service.plan(planInput);
     const sealedPlan = raw.plan as {
       planId: string;
       planFingerprint: string;
@@ -904,14 +1003,37 @@ export class AuthoringService {
     });
   }
 
-  async commit(changeId: string): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[] }>> {
+  async commit(
+    changeId: string,
+    approvalRef?: ReviewApprovalRef,
+  ): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[] }>> {
+    const opened = await NodeChangeStore.openByChangeId(changeId);
+    if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+    let verifiedApproval: VerifiedReviewApproval | undefined;
+    if (opened.record.integration !== undefined) {
+      if (approvalRef === undefined) {
+        throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', 'integration change 必须显式提供 approvalRef');
+      }
+      const reviewService = await reviewServiceForProject(opened.record.projectRootIdentity);
+      const inspected = await reviewService.inspectApproval(approvalRef);
+      if (!('bindingFingerprint' in inspected)) {
+        throw new AuthoringOperationError('REVIEW_RETURNED', 'result review 已被项目所有者退回，不能继续 commit');
+      }
+      verifiedApproval = inspected;
+    }
     return this.withOpenChange(changeId, async (context) => {
       return withProjectLeaseRetry(this.leaseManager, context.session.record.projectRootIdentity, async () => {
         const freshProject = await loadSnapshot(context.storage);
         await assertBaseStillMatches(context.session, freshProject);
-        const result = await commitChange(context.session, context.storage);
+        if (verifiedApproval !== undefined) {
+          await bindVerifiedApproval(context.session, verifiedApproval);
+        }
+        const rebound = await context.store.read(changeId);
+        if (rebound === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        const reboundSession = openChange(rebound, context.store, context.storage);
+        const result = await commitChange(reboundSession, context.storage);
         const snapshot = await loadSnapshot(context.storage);
-        return { ...metadataForChange(context.session, snapshot.revision), result };
+        return { ...metadataForChange(reboundSession, snapshot.revision), result };
       });
     });
   }
