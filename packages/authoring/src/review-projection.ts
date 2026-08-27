@@ -392,8 +392,11 @@ export async function buildResultReviewProjection(
   if (integration.status !== 'READY') {
     throw resultNotReady('integration change 尚未 READY');
   }
-  if (change.projectRootIdentity !== plan.projectIdentity || change.baseRevision !== plan.expectedProjectRevision) {
-    throw resultNotReady('integration change 的项目 identity 或基线 revision 已变化');
+  // projectIdentity 是上层对真实 root identity 的稳定投影；authoring core 不知道
+  // Node 的映射规则，CLI 在进入本函数前负责核对两者。这里仅校验 core 能看见的
+  // change base revision，避免把两个不同层次的 identity 误作同一字符串。
+  if (change.baseRevision !== plan.expectedProjectRevision) {
+    throw resultNotReady('integration change 的基线 revision 已变化');
   }
   if (integration.review?.binding === undefined
     || stableStringify(integration.review.binding) !== stableStringify(review)) {

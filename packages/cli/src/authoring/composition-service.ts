@@ -120,7 +120,7 @@ export class CompositionService {
     readonly store: NodeCompositionStore,
     readonly projectIdentity: string,
     readonly projectRoot: string,
-    private readonly hasher: TextHasher,
+    readonly hasher: TextHasher,
     leases?: NodeLocalLeaseManager,
   ) {
     this.leases = leases ?? new NodeLocalLeaseManager();
