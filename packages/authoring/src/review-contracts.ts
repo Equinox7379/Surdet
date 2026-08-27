@@ -33,6 +33,9 @@ export interface ReviewSourceIdentity {
   planFingerprint?: string;
   integrationChangeId?: string;
   workingRevision?: number;
+  decisionReviewId?: string;
+  decisionId?: string;
+  decisionFingerprint?: string;
 }
 
 export interface ReviewTaskSummary {
@@ -123,6 +126,62 @@ export interface ReviewFinalResult {
   evidence: ReviewEvidenceBinding;
   resultTreeSha256: string;
   warnings: ReviewWarning[];
+}
+
+export interface ResultReviewCurrentFacts {
+  projectIdentity: string;
+  projectRevision: string;
+  planId: string;
+  planFingerprint: string;
+  integrationChangeId: string;
+  workingRevision: number;
+  diffFingerprint: string;
+  evidence: ReviewEvidenceBinding;
+  resultTreeSha256: string;
+}
+
+export interface FinalApprovalReceipt {
+  receiptVersion: '1.0.0';
+  approvalId: string;
+  resultReviewId: string;
+  decisionFingerprint: string;
+  planId: string;
+  planFingerprint: string;
+  integrationChangeId: string;
+  workingRevision: number;
+  projectIdentity: string;
+  expectedProjectRevision: string;
+  diffFingerprint: string;
+  evidence: ReviewEvidenceBinding;
+  resultTreeSha256: string;
+  reviewerChannel: 'surdet-editor-local';
+  approvedAt: string;
+  approvalFingerprint: string;
+}
+
+export interface ReviewApprovalRef {
+  resultReviewId: string;
+  approvalId: string;
+  approvalFingerprint: string;
+}
+
+export interface ReturnRequestReceipt {
+  receiptVersion: '1.0.0';
+  returnId: string;
+  resultReviewId: string;
+  planId: string;
+  planFingerprint: string;
+  integrationChangeId: string;
+  workingRevision: number;
+  reasonCategory: 'content' | 'presentation' | 'causal-impact' | 'validation-warning' | 'other';
+  reviewerChannel: 'surdet-editor-local';
+  returnedAt: string;
+  returnFingerprint: string;
+}
+
+export interface VerifiedReviewApproval {
+  receipt: FinalApprovalReceipt;
+  bindingFingerprint: string;
 }
 
 export interface HumanReviewProjection {

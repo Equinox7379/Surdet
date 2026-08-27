@@ -2804,7 +2804,7 @@ push = NOT_PERFORMED
 timestamp = 2026-08-27
 task = 3_HUMAN_DECISION_RECEIPTS_AND_REVIEWED_PLAN
 initialHead = 23656e7dc47e0945c56d22dc1432463bf1dc8940
-finalHead = (本提交)
+finalHead = c98e4eadb5c681ec531b5f2e7c66ac5f9f219dc5
 parent = 23656e7dc47e0945c56d22dc1432463bf1dc8940
 remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
 aheadBehind = 4/0
@@ -2838,4 +2838,51 @@ compatibilityNote = IntegrationPlan.review remains optional only for existing Wa
 unresolved = NONE
 nextStop = TASK_4
 push = NOT_PERFORMED
+~~~
+
+### 2026-08-27 — Task 4 result review、最终批准与 integration commit gate
+
+~~~text
+timestamp = 2026-08-27
+task = 4_RESULT_REVIEW_FINAL_APPROVAL_AND_COMMIT_GATE
+initialHead = c98e4eadb5c681ec531b5f2e7c66ac5f9f219dc5
+finalHead = (本提交)
+parent = c98e4eadb5c681ec531b5f2e7c66ac5f9f219dc5
+remoteMain = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehindBeforeCommit = 5/0
+trackedWorktree = TASK_4_FILES_ONLY; pre-commit known untracked preserved
+stagingArea = EMPTY before precise staging
+filesCreated = NONE
+filesChanged = packages/authoring/src/review-contracts.ts; packages/authoring/src/review-projection.ts; packages/authoring/src/review-receipts.ts; packages/authoring/src/integration-execution.ts; packages/authoring/src/change-session.ts; packages/authoring/src/contracts.ts; packages/authoring/test/review-projection.test.ts; packages/authoring/test/review-receipts.test.ts; packages/authoring/test/commit-recovery.test.ts; this taskbook Execution Ledger
+filesAllowedButNotModified = packages/authoring/test/integration-execution.test.ts
+redCommand = npm run test -w @surdet/authoring -- review-projection.test.ts review-receipts.test.ts integration-execution.test.ts commit-recovery.test.ts
+redResult = 4 files / 37 tests: 14 failed, 23 passed, exit 1; 3 test files failed and 1 passed
+redArtifact = <local-path> bytes=10122 sha256=233AC35F4D8C1221DEEE69CBDAADE2D6F46E65D0DF2F893B3B37BD1679EB70D2
+greenAttempt1 = same 4-file focus command, exit 1; 1 failed, 36 passed
+greenAttempt1Artifact = <local-path> bytes=3004 sha256=AB46F2AA691DA0B611B188E3700E4388022198CCA4B9E8A3FE2A8B40F8A8D002
+greenAttempt2 = same 4-file focus command, exit 0; 4 files / 37 tests PASS
+greenAttempt2Artifact = <local-path> bytes=601 sha256=CFD74DD0B5642BE304A8B115D7C6C4E1B0DF746BDFE92BBB6CD8697BC4D2AC1D
+greenAttempt3 = required 5-file focus command, exit 0; 5 files / 46 tests PASS
+greenAttempt3Artifact = <local-path> bytes=673 sha256=06890889B6743978643960150BDBDA0EDDE47817A611A9CFFF4665714C312807
+greenAttempt3Typecheck = npm run typecheck -w @surdet/authoring, exit 2; test helper readonly tuple type error
+greenAttempt3TypecheckArtifact = <local-path> bytes=1130 sha256=5799BBECA65167C588B09B68EAB0CE3596BA551011C9C6BD7DA36816A1FC8E97
+greenAttempt4 = required 5-file focus/typecheck/build, all exit 0; focus 46 tests
+greenAttempt4Artifacts = task4-green4-authoring-focus.log bytes=673 sha256=7A952676902C5CE29094DFA85322CE88AB399D1D868C06F635B0FE458D769650; task4-green4-authoring-typecheck.log bytes=74 sha256=9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78; task4-green4-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9
+contractAlignmentAttempt = after the first green sequence, FinalApprovalReceipt was aligned to the Taskbook exact resultReviewId/project identity/evidence structure; prior successful artifacts remain historical and were not overwritten
+greenAttempt5 = required 5-file focus exit 0; 5 files / 47 tests PASS
+ greenAttempt5Artifact = task4-green5-authoring-focus.log bytes=673 sha256=3F5E9A424BFED579AB890544E0622973DE3483995D9C270C8C6D503CBFA557AC
+greenAttempt5Typecheck = npm run typecheck -w @surdet/authoring, exit 2; nested evidence readonly tuple type error in test helper
+greenAttempt5TypecheckArtifact = task4-green5-authoring-typecheck.log bytes=552 sha256=CCA8A9C965DB45A3F14CE518F30844234279D87A22027A4C338B7DE064CD228E
+ greenCommands =
+   npm run test -w @surdet/authoring -- review-projection.test.ts review-receipts.test.ts integration-execution.test.ts commit-recovery.test.ts change-session.test.ts
+   npm run typecheck -w @surdet/authoring
+   npm run build -w @surdet/authoring
+greenResults = Authoring 5 files / 47 tests PASS exit 0; authoring typecheck PASS exit 0; authoring build PASS exit 0
+greenArtifacts = task4-green6-authoring-focus.log bytes=673 sha256=10C5A4BF790A71E13F4B77EAC138C456B6871C5881052F1E8BFB9BD1A95C1415; task4-green6-authoring-typecheck.log bytes=74 sha256=9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78; task4-green6-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9
+ contract = result readiness rejects unreviewed/non-READY/stale or failed evidence; result projection carries exact plan/change/revision/result tree facts; final approval freshness binds plan/change/revision/project identity/diff/evidence/tree; approval and return receipt contracts use taskbook resultReviewId/evidence shape; metadata CAS stores resultReview then approval; commit gate fails before storage activity and checks binding fingerprint; ordinary change remains unaffected
+ priorLedgerCorrection = live pre-Task4 rev-list check is ahead/behind 5/0; the earlier Task 3 ledger line recorded 4/0 and is retained as historical text rather than rewritten
+ unresolved = NONE
+ commit = (本提交); message = feat(authoring): gate reviewed integrations
+ nextStop = TASK_5
+ push = NOT_PERFORMED
 ~~~

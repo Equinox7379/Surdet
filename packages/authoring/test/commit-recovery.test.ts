@@ -2,7 +2,19 @@ import { describe, expect, it } from 'vitest';
 import type { ChangeRecord } from '../src/contracts.js';
 import type { ProjectFile, ProjectStorage, ProjectWriteStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
-import { InMemoryChangeRepository, assertBaseStillMatches, beginChange, commitChange, recordValidation } from '../src/change-session.js';
+import {
+  InMemoryChangeRepository,
+  assertBaseStillMatches,
+  approvalBindingFingerprintOf,
+  beginChange,
+  commitChange,
+  recordDiffEvidence,
+  recordRuntimeTrace,
+  recordSimulationEvidence,
+  recordValidation,
+  updateIntegrationMetadata,
+} from '../src/change-session.js';
+import type { IntegrationMetadata } from '../src/integration-execution.js';
 import { applySceneCreate, ensureVariable } from '../src/operations.js';
 
 function digest(text: string): string {
@@ -98,6 +110,133 @@ class PostReplaceCleanupFaultStorage extends FaultyWriteStorage {
     }
     await super.removeStage(stagedIdentity);
   }
+}
+
+class OrderingCommitStorage extends FaultyWriteStorage {
+  constructor(
+    files: Record<string, string>,
+    private readonly events: string[],
+  ) {
+    super(files, Number.POSITIVE_INFINITY, false);
+  }
+
+  async onCommitEvent(event: string): Promise<void> {
+    this.events.push(event);
+  }
+
+  override async stageText(path: string, text: string, changeId: string): Promise<{ stagedIdentity: string; sha256: string }> {
+    this.events.push('stage:' + path);
+    return super.stageText(path, text, changeId);
+  }
+
+  override async replaceFromStage(path: string, stagedIdentity: string): Promise<void> {
+    this.events.push('replace:' + path);
+    return super.replaceFromStage(path, stagedIdentity);
+  }
+}
+
+class OrderingJournalRepository extends InMemoryChangeRepository {
+  constructor(private readonly events: string[]) {
+    super();
+  }
+
+  override async writeJournal(changeId: string, value: unknown): Promise<void> {
+    await super.writeJournal(changeId, value);
+    if (typeof value === 'object' && value !== null && typeof (value as { status?: unknown }).status === 'string') {
+      this.events.push('journal:' + (value as { status: string }).status);
+    }
+  }
+}
+
+const humanGateBinding = {
+  reviewState: 'human-reviewed' as const,
+  reviewId: 'result-review',
+  decisionId: 'decision-gate',
+  decisionFingerprint: 'decision-gate-fingerprint',
+};
+
+function gateMetadata(binding: typeof humanGateBinding | { reviewState: 'unreviewed' }): IntegrationMetadata {
+  return {
+    planId: 'plan-gate',
+    planFingerprint: 'plan-gate-fingerprint',
+    executeOperationId: 'execute-gate',
+    sourceCapsules: [],
+    includedUnitIds: [],
+    deduplicatedUnits: [],
+    conflictResolutions: [],
+    status: 'READY',
+    nextOperationIndex: 0,
+    replayedOperations: [],
+    review: { binding },
+  } as unknown as IntegrationMetadata;
+}
+
+function gateResultReview(workingRevision: number) {
+  return {
+    reviewId: 'result-review',
+    resultTreeSha256: 'result-tree-gate',
+    diffFingerprint: 'diff-gate',
+    evidence: {
+      diffEvidenceId: 'diff-gate-evidence',
+      validationEvidenceId: 'validation-gate-evidence',
+      simulationEvidenceId: 'simulation-gate-evidence',
+      runtimeTraceIds: ['runtime-gate-evidence'],
+    },
+    workingRevision,
+  };
+}
+
+class GateChangeFixture {
+  constructor(
+    readonly change: Awaited<ReturnType<typeof beginChange>>,
+    readonly repository: OrderingJournalRepository,
+    readonly storage: OrderingCommitStorage,
+    readonly events: string[],
+  ) {}
+
+  async approve(): Promise<void> {
+    const resultReview = gateResultReview(this.change.record.workingRevision);
+    const bindingFingerprint = approvalBindingFingerprintOf({
+      binding: humanGateBinding,
+      planId: this.change.record.integration!.planId,
+      planFingerprint: this.change.record.integration!.planFingerprint,
+      integrationChangeId: this.change.record.changeId,
+      resultReview,
+    });
+    await updateIntegrationMetadata(this.change, (metadata) => ({
+      ...metadata,
+      review: {
+        binding: humanGateBinding,
+        resultReview,
+        approval: {
+          approvalId: 'approval-gate',
+          approvalFingerprint: 'approval-gate-fingerprint',
+          bindingFingerprint,
+        },
+      },
+    } as unknown as IntegrationMetadata));
+  }
+}
+
+async function beginGateFixture(
+  binding: typeof humanGateBinding | { reviewState: 'unreviewed' },
+): Promise<GateChangeFixture> {
+  const events: string[] = [];
+  const storage = new OrderingCommitStorage({
+    'game.config.json': '{"entryScene":"prologue","variables":{}}',
+    'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
+  }, events);
+  const repository = new OrderingJournalRepository(events);
+  const snapshot = await loadProjectSnapshot(storage, hasher);
+  const change = await beginChange(snapshot, repository, storage, undefined, {
+    integration: gateMetadata(binding),
+  });
+  await applySceneCreate(change, { operationId: 'gate-scene', sceneId: 'gate_scene' });
+  await recordValidation(change, { evidenceId: 'validation-gate-evidence', errors: 0 });
+  await recordDiffEvidence(change, { evidenceId: 'diff-gate-evidence' });
+  await recordSimulationEvidence(change, { evidenceId: 'simulation-gate-evidence', status: 'passed' });
+  await recordRuntimeTrace(change, { traceId: 'runtime-gate-evidence', status: 'passed' });
+  return new GateChangeFixture(change, repository, storage, events);
 }
 
 async function beginFixture(
@@ -212,5 +351,65 @@ describe('atomic commit recovery', () => {
     await expect(assertBaseStillMatches(change, freshProject)).rejects.toMatchObject({ code: 'PROJECT_CHANGED_SINCE_BEGIN' });
     expect(change.record.status).toBe('STALE');
     expect(storage.replaceCount).toBe(0);
+  });
+
+  it('rejects an unapproved integration before storage or journal activity', async () => {
+    const fixture = await beginGateFixture({ reviewState: 'unreviewed' });
+    await expect(commitChange(fixture.change, fixture.storage))
+      .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_REQUIRED' });
+    expect(fixture.events).toEqual([]);
+    expect(await fixture.repository.readLatestJournal(fixture.change.record.changeId)).toBeNull();
+  });
+
+  it('rejects stale approval before storage or journal activity', async () => {
+    const fixture = await beginGateFixture(humanGateBinding);
+    const resultReview = gateResultReview(fixture.change.record.workingRevision - 1);
+    const bindingFingerprint = approvalBindingFingerprintOf({
+      binding: humanGateBinding,
+      planId: fixture.change.record.integration!.planId,
+      planFingerprint: fixture.change.record.integration!.planFingerprint,
+      integrationChangeId: fixture.change.record.changeId,
+      resultReview,
+    });
+    await updateIntegrationMetadata(fixture.change, (metadata) => ({
+      ...metadata,
+      review: {
+        binding: humanGateBinding,
+        resultReview,
+        approval: {
+          approvalId: 'approval-stale',
+          approvalFingerprint: 'approval-stale-fingerprint',
+          bindingFingerprint,
+        },
+      },
+    } as unknown as IntegrationMetadata));
+
+    await expect(commitChange(fixture.change, fixture.storage))
+      .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
+    expect(fixture.events).toEqual([]);
+    expect(await fixture.repository.readLatestJournal(fixture.change.record.changeId)).toBeNull();
+  });
+
+  it('checks approval before staging an approved integration and leaves ordinary commits unaffected', async () => {
+    const fixture = await beginGateFixture(humanGateBinding);
+    await fixture.approve();
+    const committed = await commitChange(fixture.change, fixture.storage);
+    expect(committed.status).toBe('COMMITTED');
+    const events = fixture.events;
+    const approvalIndex = events.indexOf('approval-checked');
+    const firstStageIndex = events.findIndex((event) => event.startsWith('stage:'));
+    const stagingJournalIndex = events.indexOf('journal:STAGING');
+    const firstReplaceIndex = events.findIndex((event) => event.startsWith('replace:'));
+    expect(approvalIndex).toBe(0);
+    expect(firstStageIndex).toBeGreaterThan(approvalIndex);
+    expect(stagingJournalIndex).toBeGreaterThan(firstStageIndex);
+    expect(firstReplaceIndex).toBeGreaterThan(stagingJournalIndex);
+
+    const ordinaryStorage = new FaultyWriteStorage({
+      'game.config.json': '{"entryScene":"prologue","variables":{}}',
+      'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
+    }, Number.POSITIVE_INFINITY);
+    const ordinary = await beginFixture(ordinaryStorage);
+    await expect(commitChange(ordinary, ordinaryStorage)).resolves.toMatchObject({ status: 'COMMITTED' });
   });
 });

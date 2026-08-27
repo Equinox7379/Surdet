@@ -59,6 +59,55 @@ export function stableStringify(value: unknown): string {
   return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
 }
 
+export interface ApprovalBindingFingerprintInput {
+  binding: {
+    reviewState: 'human-reviewed';
+    reviewId: string;
+    decisionId: string;
+    decisionFingerprint: string;
+  };
+  planId: string;
+  planFingerprint: string;
+  integrationChangeId: string;
+  resultReview: {
+    reviewId: string;
+    resultTreeSha256: string;
+    diffFingerprint: string;
+    evidence: {
+      diffEvidenceId: string;
+      validationEvidenceId: string;
+      simulationEvidenceId: string;
+      runtimeTraceIds: string[];
+    };
+    workingRevision: number;
+  };
+}
+
+/**
+ * Commit gate 可同步重算的批准绑定语义。它故意只包含稳定身份与结果证据，
+ * 不包含 approvedAt 或人类自由文本；验证器在绑定时先确认 receipt 本身的 SHA。
+ */
+export function approvalBindingFingerprintOf(input: ApprovalBindingFingerprintInput): string {
+  return stableStringify({
+    binding: input.binding,
+    planId: input.planId,
+    planFingerprint: input.planFingerprint,
+    integrationChangeId: input.integrationChangeId,
+    resultReview: {
+      reviewId: input.resultReview.reviewId,
+      resultTreeSha256: input.resultReview.resultTreeSha256,
+      diffFingerprint: input.resultReview.diffFingerprint,
+      evidence: {
+        diffEvidenceId: input.resultReview.evidence.diffEvidenceId,
+        validationEvidenceId: input.resultReview.evidence.validationEvidenceId,
+        simulationEvidenceId: input.resultReview.evidence.simulationEvidenceId,
+        runtimeTraceIds: [...input.resultReview.evidence.runtimeTraceIds].sort(),
+      },
+      workingRevision: input.resultReview.workingRevision,
+    },
+  });
+}
+
 export class InMemoryChangeRepository implements ChangeRepository {
   readonly records = new Map<string, ChangeRecord>();
   readonly evidence = new Map<string, unknown>();
@@ -284,7 +333,7 @@ export async function recordSimulationEvidence(
 
 export async function recordRuntimeTrace(
   change: ChangeSession,
-  input: { traceId: string; status: 'passed' },
+  input: { traceId: string; status: 'passed' | 'failed' },
 ): Promise<void> {
   assertOpen(change);
   const next = clone(change.record);
@@ -362,6 +411,77 @@ export function assertIntegrationReadyForCommit(record: ChangeRecord): void {
   }
 }
 
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return stableStringify([...left].sort((a, b) => a.localeCompare(b)))
+    === stableStringify([...right].sort((a, b) => a.localeCompare(b)));
+}
+
+function assertFreshIntegrationResult(record: ChangeRecord, result: NonNullable<NonNullable<IntegrationMetadata['review']>['resultReview']>): void {
+  if (result.reviewId.length === 0
+    || result.resultTreeSha256.length === 0
+    || result.diffFingerprint.length === 0
+    || result.evidence.diffEvidenceId.length === 0
+    || result.evidence.validationEvidenceId.length === 0
+    || result.evidence.simulationEvidenceId.length === 0
+    || result.evidence.runtimeTraceIds.length === 0) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 result review 证据不完整');
+  }
+  if (result.workingRevision !== record.workingRevision) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 workingRevision 已变化');
+  }
+
+  const diff = record.latestDiff;
+  if (diff === undefined || diff.workingRevision !== record.workingRevision
+    || diff.evidenceId !== result.evidence.diffEvidenceId) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 diff evidence 已变化');
+  }
+  const validation = record.latestValidation;
+  if (validation === undefined || validation.workingRevision !== record.workingRevision
+    || validation.errors !== 0 || validation.evidenceId !== result.evidence.validationEvidenceId) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 validation evidence 已变化');
+  }
+  const simulation = record.latestSimulation;
+  if (simulation === undefined || simulation.workingRevision !== record.workingRevision
+    || simulation.status !== 'passed' || simulation.evidenceId !== result.evidence.simulationEvidenceId) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 simulation evidence 已变化');
+  }
+  const runtimeTraces = record.runtimeTraces ?? [];
+  if (runtimeTraces.length === 0
+    || runtimeTraces.some((trace) => trace.workingRevision !== record.workingRevision || trace.status !== 'passed')
+    || new Set(result.evidence.runtimeTraceIds).size !== result.evidence.runtimeTraceIds.length
+    || !sameStringList(result.evidence.runtimeTraceIds, runtimeTraces.map((trace) => trace.traceId))) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准对应的 runtime evidence 已变化');
+  }
+}
+
+/** integration commit 的最终人类批准门；普通 change 不进入该门。 */
+export function assertIntegrationOwnerApprovalForCommit(record: ChangeRecord): void {
+  const integration = record.integration;
+  if (integration === undefined) return;
+  const review = integration.review;
+  if (review === undefined || review.binding.reviewState !== 'human-reviewed') {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', '未审阅 integration plan 不可提交');
+  }
+  const result = review.resultReview;
+  const approval = review.approval;
+  if (result === undefined || approval === undefined) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', '缺少项目所有者最终批准');
+  }
+  assertFreshIntegrationResult(record, result);
+  const expectedBindingFingerprint = approvalBindingFingerprintOf({
+    binding: review.binding,
+    planId: integration.planId,
+    planFingerprint: integration.planFingerprint,
+    integrationChangeId: record.changeId,
+    resultReview: result,
+  });
+  if (approval.approvalId.length === 0
+    || approval.approvalFingerprint.length === 0
+    || approval.bindingFingerprint !== expectedBindingFingerprint) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '批准 binding fingerprint 与当前 result review 不一致');
+  }
+}
+
 /** 以当前 recordVersion CAS 更新 integration metadata（receipt / nextOperationIndex / 状态迁移）。 */
 export async function updateIntegrationMetadata(
   change: ChangeSession,
@@ -408,8 +528,10 @@ export async function commitChange(
   storage: ProjectWriteStorage = change.storage as ProjectWriteStorage,
 ): Promise<{ changeId: string; status: 'COMMITTED'; files: string[] }> {
   assertIntegrationReadyForCommit(change.record);
+  assertIntegrationOwnerApprovalForCommit(change.record);
   assertOpen(change);
   if (storage === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'change.commit 缺少 ProjectWriteStorage');
+  await storage.onCommitEvent?.('approval-checked');
   const validation = change.record.latestValidation;
   if (validation === undefined || validation.workingRevision !== change.record.workingRevision) {
     throw new AuthoringOperationError('VALIDATION_REQUIRED', '提交前必须有当前 workingRevision 的新鲜校验');

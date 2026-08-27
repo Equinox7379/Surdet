@@ -1,6 +1,8 @@
-import { AuthoringOperationError, type ChangeSession, type ChangeRecord } from './change-session.js';
+import { AuthoringOperationError, stableStringify, type ChangeSession, type ChangeRecord } from './change-session.js';
 import type { PlannedReplayOperation } from './integration-plan.js';
 import type { TextHasher } from './contracts.js';
+import type { IntegrationReviewBinding } from './review-receipts.js';
+import type { ReviewEvidenceBinding } from './review-contracts.js';
 import {
   applySceneCreate,
   applyScenePatch,
@@ -22,6 +24,22 @@ export interface IntegrationReplayReceipt {
   resultFingerprint?: string;
 }
 
+export interface IntegrationReviewMetadata {
+  binding: IntegrationReviewBinding;
+  resultReview?: {
+    reviewId: string;
+    resultTreeSha256: string;
+    diffFingerprint: string;
+    evidence: ReviewEvidenceBinding;
+    workingRevision: number;
+  };
+  approval?: {
+    approvalId: string;
+    approvalFingerprint: string;
+    bindingFingerprint: string;
+  };
+}
+
 export interface IntegrationMetadata {
   planId: string;
   planFingerprint: string;
@@ -33,6 +51,8 @@ export interface IntegrationMetadata {
   status: 'REPLAYING' | 'READY' | 'FAILED';
   nextOperationIndex: number;
   replayedOperations: IntegrationReplayReceipt[];
+  /** 旧 Wave 5 metadata 可读；execute/prepare-result 后一定补齐。 */
+  review?: IntegrationReviewMetadata;
   failure?: {
     code: string;
     message: string;
@@ -131,7 +151,16 @@ export async function executeIntegrationReplay(
     throw new AuthoringOperationError('CHANGE_NOT_OPEN', `integration change 状态为 ${change.record.status}`);
   }
 
+  const planReview = plan.review ?? { reviewState: 'unreviewed' as const };
   let metadata: IntegrationMetadata = current;
+  if (metadata.review === undefined) {
+    metadata = await updateIntegrationMetadata(change, (item) => ({
+      ...item,
+      review: { binding: planReview },
+    }));
+  } else if (stableStringify(metadata.review.binding) !== stableStringify(planReview)) {
+    throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'plan 与 integration review binding 不匹配');
+  }
   for (let index = metadata.nextOperationIndex; index < plan.replayOperations.length; index += 1) {
     const operation = plan.replayOperations[index]!;
     try {

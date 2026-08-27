@@ -5,11 +5,13 @@ import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
   CompositionComparison,
+  ChangeRecord,
+  IntegrationPlan,
   ObjectChangeUnit,
   TextHasher,
   VerifiedCompositionCandidate,
 } from '../src/index.js';
-import { buildComparisonReviewProjection } from '../src/index.js';
+import { buildComparisonReviewProjection, buildResultReviewProjection } from '../src/index.js';
 
 const hasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
@@ -175,6 +177,73 @@ const candidates = [
   candidate('C', evidence({ warnings: 1, manualReviewRequired: ['validation warning'] })),
 ];
 
+function reviewedPlan(overrides: Partial<IntegrationPlan> = {}): IntegrationPlan {
+  return {
+    planVersion: '1.0.0',
+    planId: 'plan-result',
+    projectIdentity: 'project-wave6',
+    expectedProjectRevision: 'rev-base',
+    comparisonFingerprint: 'comparison-fingerprint',
+    review: {
+      reviewState: 'human-reviewed',
+      reviewId: 'decision-review',
+      decisionId: 'decision-result',
+      decisionFingerprint: 'decision-fingerprint',
+    },
+    sourceCapsules: [],
+    selectedUnitIds: [],
+    implicitInclusions: [],
+    excludedUnitIds: [],
+    conflictResolutions: [],
+    deduplicatedUnits: [],
+    replayOperations: [],
+    provenance: [],
+    dryRun: { status: 'passed', finalObjectFingerprints: {}, errors: [] },
+    planFingerprint: 'plan-fingerprint',
+    ...overrides,
+  };
+}
+
+function readyResultChange(): ChangeRecord {
+  return {
+    changeId: 'change-result',
+    formatVersion: 2,
+    recordVersion: 8,
+    projectRootIdentity: 'project-wave6',
+    baseRevision: 'rev-base',
+    workingRevision: 3,
+    status: 'OPEN',
+    baseFiles: {},
+    baseContents: {},
+    workingFiles: {},
+    operations: {},
+    integration: {
+      planId: 'plan-result',
+      planFingerprint: 'plan-fingerprint',
+      executeOperationId: 'execute-result',
+      sourceCapsules: [],
+      includedUnitIds: [],
+      deduplicatedUnits: [],
+      conflictResolutions: [],
+      status: 'READY',
+      nextOperationIndex: 0,
+      replayedOperations: [],
+      review: {
+        binding: {
+          reviewState: 'human-reviewed',
+          reviewId: 'decision-review',
+          decisionId: 'decision-result',
+          decisionFingerprint: 'decision-fingerprint',
+        },
+      },
+    },
+    latestDiff: { workingRevision: 3, evidenceId: 'diff-evidence' },
+    latestValidation: { workingRevision: 3, evidenceId: 'validation-evidence', errors: 0 },
+    latestSimulation: { workingRevision: 3, evidenceId: 'simulation-evidence', status: 'passed' },
+    runtimeTraces: [{ traceId: 'runtime-trace', workingRevision: 3, status: 'passed' }],
+  } as unknown as ChangeRecord;
+}
+
 describe('comparison review projection', () => {
   it('projects A/D identical results, C conflict, B dependency, and candidate ordinals', async () => {
     const projection = await buildComparisonReviewProjection({
@@ -284,5 +353,141 @@ describe('comparison review projection', () => {
     expect(projection.task.statementSource).toBe('generated-fallback');
     expect(projection.task.goal).toBeUndefined();
     expect(projection.task.acceptanceCriteria).toEqual([]);
+  });
+
+  it('rejects every incomplete result-evidence state and projects READY results', async () => {
+    const cases: Array<{ name: string; build: () => { plan: IntegrationPlan; change: ChangeRecord } }> = [
+      {
+        name: 'unreviewed plan',
+        build: () => ({
+          plan: reviewedPlan({ review: { reviewState: 'unreviewed' } }),
+          change: readyResultChange(),
+        }),
+      },
+      ...(['REPLAYING', 'FAILED'] as const).map((status) => ({
+        name: 'integration ' + status,
+        build: () => {
+          const change = readyResultChange();
+          change.integration!.status = status;
+          return { plan: reviewedPlan(), change };
+        },
+      })),
+      {
+        name: 'diff missing',
+        build: () => {
+          const change = readyResultChange();
+          delete change.latestDiff;
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'diff stale',
+        build: () => {
+          const change = readyResultChange();
+          change.latestDiff = { workingRevision: 2, evidenceId: 'diff-evidence' };
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'validation missing',
+        build: () => {
+          const change = readyResultChange();
+          delete change.latestValidation;
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'validation stale',
+        build: () => {
+          const change = readyResultChange();
+          change.latestValidation = { workingRevision: 2, evidenceId: 'validation-evidence', errors: 0 };
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'validation failed',
+        build: () => {
+          const change = readyResultChange();
+          change.latestValidation = { workingRevision: 3, evidenceId: 'validation-evidence', errors: 1 };
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'simulation missing',
+        build: () => {
+          const change = readyResultChange();
+          delete change.latestSimulation;
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'simulation stale',
+        build: () => {
+          const change = readyResultChange();
+          change.latestSimulation = { workingRevision: 2, evidenceId: 'simulation-evidence', status: 'passed' };
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      ...(['incomplete', 'failed'] as const).map((status) => ({
+        name: 'simulation ' + status,
+        build: () => {
+          const change = readyResultChange();
+          change.latestSimulation = { workingRevision: 3, evidenceId: 'simulation-evidence', status };
+          return { plan: reviewedPlan(), change };
+        },
+      })),
+      {
+        name: 'runtime missing',
+        build: () => {
+          const change = readyResultChange();
+          delete change.runtimeTraces;
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'runtime stale',
+        build: () => {
+          const change = readyResultChange();
+          change.runtimeTraces = [{ traceId: 'runtime-trace', workingRevision: 2, status: 'passed' }];
+          return { plan: reviewedPlan(), change };
+        },
+      },
+      {
+        name: 'runtime failed',
+        build: () => {
+          const change = readyResultChange();
+          change.runtimeTraces = [{ traceId: 'runtime-trace', workingRevision: 3, status: 'failed' as never }];
+          return { plan: reviewedPlan(), change };
+        },
+      },
+    ];
+
+    for (const item of cases) {
+      const built = item.build();
+      await expect(buildResultReviewProjection({
+        reviewId: 'result-review',
+        plan: built.plan,
+        change: built.change,
+        diffFingerprint: 'diff-fingerprint',
+        resultTreeSha256: 'result-tree-sha',
+      }, hasher), item.name).rejects.toMatchObject({ code: 'REVIEW_RESULT_NOT_READY' });
+    }
+
+    const change = readyResultChange();
+    const resultProjection = await buildResultReviewProjection({
+      reviewId: 'result-review',
+      plan: reviewedPlan(),
+      change,
+      diffFingerprint: 'diff-fingerprint',
+      resultTreeSha256: 'result-tree-sha',
+    }, hasher);
+    expect(resultProjection.finalResult).toMatchObject({
+      planId: 'plan-result',
+      planFingerprint: 'plan-fingerprint',
+      integrationChangeId: 'change-result',
+      workingRevision: 3,
+      resultTreeSha256: 'result-tree-sha',
+    });
+    expect(resultProjection.state).toBe('STAGE_READY');
   });
 });
