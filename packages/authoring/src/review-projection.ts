@@ -3,9 +3,11 @@ import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
   CompositionComparison,
+  ObjectChangeUnit,
   VerifiedCompositionCandidate,
 } from './composition-contracts.js';
 import type { AuthoringObject, ChangeRecord, TextHasher } from './contracts.js';
+import type { ChangeDiff } from './diff.js';
 import type { IntegrationPlan } from './integration-plan.js';
 import type {
   HumanReviewProjection,
@@ -15,7 +17,10 @@ import type {
   ReviewEvidenceSummary,
   ReviewFinalResult,
   ReviewObjectSummary,
+  ReviewResultFreshness,
+  ReviewRuntimeTraceObservation,
   ReviewSafeGroup,
+  ReviewUnitOutcome,
   ReviewWarning,
 } from './review-contracts.js';
 
@@ -51,6 +56,49 @@ function normalizedEvidence(summary: CandidateEvidenceSummary): CandidateEvidenc
     runtime: summary.runtime,
     warnings: summary.warnings,
     manualReviewRequired: sortedStrings(summary.manualReviewRequired),
+  };
+}
+
+function sortedFacts(values: readonly unknown[]): unknown[] {
+  const byIdentity = new Map<string, unknown>();
+  for (const value of values) byIdentity.set(stableStringify(value), value);
+  return [...byIdentity.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, value]) => value);
+}
+
+function projectUnitOutcome(unit: ObjectChangeUnit): ReviewUnitOutcome {
+  return {
+    unitId: unit.unitId,
+    candidateId: unit.candidateId,
+    primaryObject: unit.primaryObject,
+    ...(unit.finalFingerprint === undefined ? {} : { finalFingerprint: unit.finalFingerprint }),
+    outcomes: [...unit.producedObjects]
+      .sort((left, right) => left.objectRef.localeCompare(right.objectRef)
+        || left.disposition.localeCompare(right.disposition)
+        || (left.finalFingerprint ?? '').localeCompare(right.finalFingerprint ?? ''))
+      .map((outcome) => ({ ...outcome })),
+    potentialImpact: sortedFacts(unit.potentialImpact),
+    observedImpact: sortedFacts(unit.observedImpact),
+    evidence: normalizedEvidence(unit.evidenceSummary),
+  };
+}
+
+function summarizeSafeGroupEvidence(sources: readonly ReviewUnitOutcome[]): ReviewSafeGroup['evidence'] {
+  const evidence = sources.map((source) => source.evidence);
+  return {
+    warningCount: evidence.reduce((total, item) => total + item.warnings, 0),
+    missing: evidence.some((item) => item.validation === 'missing'
+      || item.simulation === 'missing'
+      || item.runtime === 'missing'),
+    stale: evidence.some((item) => item.validation === 'stale'
+      || item.simulation === 'stale'
+      || item.runtime === 'stale'),
+    failed: evidence.some((item) => item.validation === 'failed'
+      || item.simulation === 'failed'
+      || item.runtime === 'failed'),
+    incomplete: evidence.some((item) => item.simulation === 'incomplete'),
+    manualReviewRequired: sortedStrings(evidence.flatMap((item) => item.manualReviewRequired)),
   };
 }
 
@@ -105,21 +153,35 @@ function projectObjects(
     current.observedImpact.push(...unit.observedImpact);
     impacts.set(unit.primaryObject, current);
   }
-  return [...objects]
-    .sort((left, right) => left.objectRef.localeCompare(right.objectRef))
-    .map((object) => {
-      const impact = impacts.get(object.objectRef) ?? { potentialImpact: [], observedImpact: [] };
+  const objectsByRef = new Map<string, AuthoringObject | undefined>(
+    objects.map((object) => [object.objectRef, object]),
+  );
+  for (const unit of units) {
+    for (const produced of unit.producedObjects) {
+      if (!objectsByRef.has(produced.objectRef)) objectsByRef.set(produced.objectRef, undefined);
+    }
+  }
+  return [...objectsByRef.keys()]
+    .sort((left, right) => left.localeCompare(right))
+    .map((objectRef) => {
+      const object = objectsByRef.get(objectRef);
+      const separator = objectRef.indexOf(':');
+      const impact = impacts.get(objectRef) ?? { potentialImpact: [], observedImpact: [] };
       return {
-        objectRef: object.objectRef,
-        kind: object.kind,
-        ...(object.semanticId === undefined ? {} : { semanticId: object.semanticId }),
-        ...(object.source === undefined ? {} : {
+        objectRef,
+        kind: object?.kind ?? (separator > 0 ? objectRef.slice(0, separator) : 'unknown'),
+        ...(object?.semanticId !== undefined
+          ? { semanticId: object.semanticId }
+          : separator > 0 && separator < objectRef.length - 1
+            ? { semanticId: objectRef.slice(separator + 1) }
+            : {}),
+        ...(object?.source === undefined ? {} : {
           source: { path: object.source.path, line: object.source.line, col: object.source.col },
         }),
-        references: sortedStrings(object.references),
-        referencedBy: sortedStrings(object.referencedBy),
-        potentialImpact: impact.potentialImpact,
-        observedImpact: impact.observedImpact,
+        references: sortedStrings(object?.references ?? []),
+        referencedBy: sortedStrings(object?.referencedBy ?? []),
+        potentialImpact: sortedFacts(impact.potentialImpact),
+        observedImpact: sortedFacts(impact.observedImpact),
       };
     });
 }
@@ -133,10 +195,24 @@ function projectSafeGroups(
     .sort((left, right) => left.primaryObject.localeCompare(right.primaryObject) || left.groupId.localeCompare(right.groupId))
     .map((group) => {
       const unitIds = sortedStrings(group.unitIds);
-      const candidateIds = [...new Set(unitIds
-        .map((unitId) => unitsById.get(unitId)?.candidateId)
-        .filter((candidateId): candidateId is string => candidateId !== undefined))]
+      const groupUnits = unitIds
+        .map((unitId) => unitsById.get(unitId))
+        .filter((unit): unit is ObjectChangeUnit => unit !== undefined)
+        .sort((left, right) => compareCandidateIds(ranks, left.candidateId, right.candidateId)
+          || left.unitId.localeCompare(right.unitId));
+      const sources = groupUnits.map(projectUnitOutcome);
+      const candidateIds = [...new Set(groupUnits.map((unit) => unit.candidateId))]
         .sort((left, right) => compareCandidateIds(ranks, left, right));
+      const groupUnitIds = new Set(unitIds);
+      const dependencyObjectRefs = sortedStrings([
+        ...groupUnits.flatMap((unit) => unit.requiredBaseObjects.map((required) => required.objectRef)),
+        ...groupUnits.flatMap((unit) => unit.requiredUnitIds
+          .map((requiredUnitId) => unitsById.get(requiredUnitId)?.primaryObject)
+          .filter((objectRef): objectRef is string => objectRef !== undefined)),
+        ...comparison.dependencyEdges
+          .filter((edge) => groupUnitIds.has(edge.fromUnitId))
+          .map((edge) => edge.objectRef),
+      ]);
       return {
         groupId: group.groupId,
         primaryObject: group.primaryObject,
@@ -145,6 +221,12 @@ function projectSafeGroups(
         candidateIds,
         sourceCount: candidateIds.length,
         includedByDefault: true,
+        collapsedByDefault: true,
+        sources,
+        dependencyObjectRefs,
+        potentialImpact: sortedFacts(groupUnits.flatMap((unit) => unit.potentialImpact)),
+        observedImpact: sortedFacts(groupUnits.flatMap((unit) => unit.observedImpact)),
+        evidence: summarizeSafeGroupEvidence(sources),
       };
     });
 }
@@ -153,34 +235,69 @@ function projectConflicts(
   comparison: CompositionComparison,
   ranks: Map<string, number>,
 ): ReviewConflict[] {
+  const unitsById = new Map(comparison.units.map((unit) => [unit.unitId, unit]));
   return [...comparison.conflicts]
     .sort((left, right) => left.conflictId.localeCompare(right.conflictId))
-    .map((conflict) => ({
-      conflictId: conflict.conflictId,
-      severity: conflict.severity,
-      code: conflict.code,
-      unitIds: sortedStrings(conflict.unitIds),
-      candidateIds: sortedStrings(conflict.candidateIds)
-        .sort((left, right) => compareCandidateIds(ranks, left, right)),
-      objectRefs: sortedStrings(conflict.objectRefs),
-      allowedResolutions: [...new Set(conflict.allowedResolutions)]
-        .sort((left, right) => resolutionOrder(left) - resolutionOrder(right)),
-      repairActions: [...conflict.repairActions],
-    }));
+    .map((conflict) => {
+      const unitIds = sortedStrings(conflict.unitIds);
+      const options = unitIds
+        .map((unitId) => unitsById.get(unitId))
+        .filter((unit): unit is ObjectChangeUnit => unit !== undefined)
+        .sort((left, right) => compareCandidateIds(ranks, left.candidateId, right.candidateId)
+          || left.unitId.localeCompare(right.unitId))
+        .map(projectUnitOutcome);
+      return {
+        conflictId: conflict.conflictId,
+        severity: conflict.severity,
+        code: conflict.code,
+        unitIds,
+        candidateIds: sortedStrings(conflict.candidateIds)
+          .sort((left, right) => compareCandidateIds(ranks, left, right)),
+        objectRefs: sortedStrings(conflict.objectRefs),
+        allowedResolutions: [...new Set(conflict.allowedResolutions)]
+          .sort((left, right) => resolutionOrder(left) - resolutionOrder(right)),
+        repairActions: [...conflict.repairActions],
+        options,
+      };
+    });
 }
 
 function projectDependencies(comparison: CompositionComparison): ReviewDependency[] {
+  const unitsById = new Map(comparison.units.map((unit) => [unit.unitId, unit]));
   return [...comparison.dependencyEdges]
     .sort((left, right) =>
       left.fromUnitId.localeCompare(right.fromUnitId)
       || left.toUnitId.localeCompare(right.toUnitId)
       || left.objectRef.localeCompare(right.objectRef))
-    .map((edge) => ({
-      fromUnitId: edge.fromUnitId,
-      toUnitId: edge.toUnitId,
-      objectRef: edge.objectRef,
-      inclusion: 'implicit',
-    }));
+    .map((edge) => {
+      const fromUnit = unitsById.get(edge.fromUnitId);
+      if (fromUnit === undefined) {
+        throw invalid(`dependency edge 引用了不存在的 fromUnitId：${edge.fromUnitId}`);
+      }
+      return {
+        fromUnitId: edge.fromUnitId,
+        fromObjectRef: fromUnit.primaryObject,
+        toUnitId: edge.toUnitId,
+        objectRef: edge.objectRef,
+        inclusion: 'implicit',
+      };
+    });
+}
+
+/**
+ * 比较审查的唯一默认选择规则。相同结果组是已确认安全事实，优先保留其全部来源；
+ * 其余只直接选择没有 blocking/selection 冲突且不是依赖目标的根单元。
+ */
+function comparisonDefaultSelectedUnitIds(comparison: CompositionComparison): string[] {
+  const identicalUnitIds = new Set(comparison.identicalGroups.flatMap((group) => group.unitIds));
+  const dependencyTargetUnitIds = new Set(comparison.dependencyEdges.map((edge) => edge.toUnitId));
+  const unresolvedUnitIds = new Set(comparison.conflicts
+    .filter((conflict) => conflict.severity === 'blocking' || conflict.severity === 'selection-required')
+    .flatMap((conflict) => conflict.unitIds));
+  return sortedStrings(comparison.units
+    .filter((unit) => identicalUnitIds.has(unit.unitId)
+      || (!dependencyTargetUnitIds.has(unit.unitId) && !unresolvedUnitIds.has(unit.unitId)))
+    .map((unit) => unit.unitId));
 }
 
 function projectEvidence(
@@ -220,6 +337,7 @@ function reviewFingerprintPayload(projection: HumanReviewProjection): Record<str
       candidateIds,
       objectRefs,
       allowedResolutions,
+      options,
     }) => ({
       conflictId,
       severity,
@@ -228,8 +346,10 @@ function reviewFingerprintPayload(projection: HumanReviewProjection): Record<str
       candidateIds,
       objectRefs,
       allowedResolutions,
+      options,
     })),
     dependencies: projection.dependencies,
+    defaultSelectedUnitIds: projection.defaultSelectedUnitIds,
     evidence: projection.evidence,
     objects: projection.objects.map(({ source, ...object }) => {
       void source;
@@ -255,6 +375,7 @@ export async function buildComparisonReviewProjection(
   const safeGroups = projectSafeGroups(input.comparison, ranks);
   const conflicts = projectConflicts(input.comparison, ranks);
   const dependencies = projectDependencies(input.comparison);
+  const defaultSelectedUnitIds = comparisonDefaultSelectedUnitIds(input.comparison);
   const evidence = projectEvidence(input.comparison, ranks, conflicts);
   const objects = projectObjects(input.objects, input.comparison);
   const objectCount = new Set([
@@ -293,6 +414,7 @@ export async function buildComparisonReviewProjection(
     safeGroups,
     conflicts,
     dependencies,
+    defaultSelectedUnitIds,
     evidence,
     objects,
     sourceIdentity: {
@@ -311,9 +433,39 @@ export interface BuildResultReviewProjectionInput {
   plan: IntegrationPlan;
   change: ChangeRecord;
   diffFingerprint: string;
+  diff: ChangeDiff;
+  freshness?: ReviewResultFreshness;
+  runtimeTraceObservations: ReviewRuntimeTraceObservation[];
   resultTreeSha256: string;
   changedObjects?: ReviewObjectSummary[];
   warnings?: ReviewWarning[];
+}
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/** Formal trace 与浏览器观察共用的可比较事件身份，不使用一次性 traceId。 */
+export function reviewTraceObservationKey(value: unknown): string | undefined {
+  const event = recordOf(value);
+  const source = recordOf(event?.['source']);
+  const kind = event?.['kind'];
+  const sceneId = source?.['sceneId'];
+  const index = source?.['index'];
+  const op = source?.['op'];
+  const file = source?.['file'];
+  const line = source?.['line'];
+  const col = source?.['col'];
+  if (typeof kind !== 'string' || kind.length === 0
+    || typeof sceneId !== 'string' || sceneId.length === 0
+    || typeof index !== 'number' || !Number.isInteger(index)
+    || typeof op !== 'string' || op.length === 0
+    || typeof file !== 'string' || file.length === 0
+    || typeof line !== 'number' || !Number.isInteger(line)
+    || typeof col !== 'number' || !Number.isInteger(col)) return undefined;
+  return [kind, sceneId, index, op, file.replace(/\\/g, '/'), line, col].join('|');
 }
 
 function resultNotReady(message: string): AuthoringOperationError {
@@ -328,6 +480,7 @@ function resultReviewFingerprintPayload(projection: HumanReviewProjection): Reco
     expectedProjectRevision: projection.expectedProjectRevision,
     task: projection.task,
     objects: projection.objects,
+    defaultSelectedUnitIds: projection.defaultSelectedUnitIds,
     evidence: projection.finalResult?.evidence,
     finalResult: projection.finalResult,
     sourceIdentity: projection.sourceIdentity,
@@ -336,6 +489,7 @@ function resultReviewFingerprintPayload(projection: HumanReviewProjection): Reco
 
 function resultEvidenceOf(change: ChangeRecord): {
   evidence: ReviewFinalResult['evidence'];
+  freshness: ReviewResultFreshness;
   runtimeWorkingRevision: number;
 } {
   const workingRevision = change.workingRevision;
@@ -356,6 +510,11 @@ function resultEvidenceOf(change: ChangeRecord): {
     trace.status !== 'passed' || trace.workingRevision !== workingRevision)) {
     throw resultNotReady('runtime trace 缺失、失败或不是当前 workingRevision 的 fresh 事实');
   }
+  const runtimeTraceIds = runtime.map((trace) => trace.traceId).sort((left, right) => left.localeCompare(right));
+  if (runtimeTraceIds.some((traceId) => traceId.length === 0)
+    || new Set(runtimeTraceIds).size !== runtimeTraceIds.length) {
+    throw resultNotReady('runtime trace identity 缺失或重复');
+  }
   const diffEvidenceId = change.latestDiff?.evidenceId;
   const validationEvidenceId = change.latestValidation?.evidenceId;
   const simulationEvidenceId = change.latestSimulation?.evidenceId;
@@ -368,10 +527,36 @@ function resultEvidenceOf(change: ChangeRecord): {
       diffEvidenceId,
       validationEvidenceId,
       simulationEvidenceId,
-      runtimeTraceIds: runtime.map((trace) => trace.traceId).sort((left, right) => left.localeCompare(right)),
+      runtimeTraceIds,
     },
+    freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
     runtimeWorkingRevision: workingRevision,
   };
+}
+
+function normalizedRuntimeTraceObservations(
+  observations: readonly ReviewRuntimeTraceObservation[],
+  expectedTraceIds: readonly string[],
+): ReviewRuntimeTraceObservation[] {
+  if (!Array.isArray(observations)) throw resultNotReady('runtime trace observations 缺失');
+  const byTraceId = new Map<string, ReviewRuntimeTraceObservation>();
+  for (const observation of observations) {
+    if (typeof observation?.traceId !== 'string' || observation.traceId.length === 0
+      || !Array.isArray(observation.observationKeys)
+      || observation.observationKeys.some((key: unknown) => typeof key !== 'string' || key.length === 0)
+      || byTraceId.has(observation.traceId)) {
+      throw resultNotReady('runtime trace observations identity 无效或重复');
+    }
+    byTraceId.set(observation.traceId, {
+      traceId: observation.traceId,
+      observationKeys: sortedStrings(observation.observationKeys),
+    });
+  }
+  const actualTraceIds = [...byTraceId.keys()].sort((left, right) => left.localeCompare(right));
+  if (stableStringify(actualTraceIds) !== stableStringify(expectedTraceIds)) {
+    throw resultNotReady('runtime trace observations 与 fresh runtime evidence 不匹配');
+  }
+  return actualTraceIds.map((traceId) => byTraceId.get(traceId)!);
 }
 
 export async function buildResultReviewProjection(
@@ -402,11 +587,23 @@ export async function buildResultReviewProjection(
     || stableStringify(integration.review.binding) !== stableStringify(review)) {
     throw resultNotReady('integration change 缺少匹配的 human review binding');
   }
-  if (input.diffFingerprint.length === 0 || input.resultTreeSha256.length === 0) {
+  if (input.diffFingerprint.length === 0 || input.diff === undefined || input.resultTreeSha256.length === 0) {
     throw resultNotReady('result diff 或 preview tree 缺少稳定 identity');
   }
 
   const resultEvidence = resultEvidenceOf(change);
+  if (input.freshness !== undefined
+    && stableStringify(input.freshness) !== stableStringify(resultEvidence.freshness)) {
+    throw resultNotReady('caller freshness 与 Authoring fresh evidence 不匹配');
+  }
+  const runtimeTraceObservations = normalizedRuntimeTraceObservations(
+    input.runtimeTraceObservations,
+    resultEvidence.evidence.runtimeTraceIds,
+  );
+  const orderedSourceCapsules = [...plan.sourceCapsules].sort(compareRefs);
+  if (new Set(orderedSourceCapsules.map(candidateRefKey)).size !== orderedSourceCapsules.length) {
+    throw resultNotReady('reviewed plan 含重复 source capsule identity');
+  }
   const changedObjects = [...(input.changedObjects ?? [])]
     .sort((left, right) => left.objectRef.localeCompare(right.objectRef));
   const warnings = [...(input.warnings ?? [])];
@@ -418,6 +615,26 @@ export async function buildResultReviewProjection(
     diffFingerprint: input.diffFingerprint,
     changedObjects,
     evidence: resultEvidence.evidence,
+    plan: {
+      review,
+      sourceCapsules: [...plan.sourceCapsules],
+      sourceCandidates: orderedSourceCapsules.map((ref, index) => ({
+        ref: { ...ref },
+        displayOrdinal: String.fromCharCode('A'.charCodeAt(0) + index),
+      })),
+      selectedUnitIds: [...plan.selectedUnitIds],
+      includedUnitIds: [...integration.includedUnitIds],
+      implicitInclusions: [...plan.implicitInclusions],
+      excludedUnitIds: [...plan.excludedUnitIds],
+      conflictResolutions: [...plan.conflictResolutions],
+      deduplicatedUnits: [...plan.deduplicatedUnits],
+      replayOperations: [...plan.replayOperations],
+      provenance: [...plan.provenance],
+      finalObjectFingerprints: { ...plan.dryRun.finalObjectFingerprints },
+    },
+    diff: input.diff,
+    freshness: resultEvidence.freshness,
+    runtimeTraceObservations,
     resultTreeSha256: input.resultTreeSha256,
     warnings,
   };
@@ -440,6 +657,7 @@ export async function buildResultReviewProjection(
     safeGroups: [],
     conflicts: [],
     dependencies: [],
+    defaultSelectedUnitIds: [],
     evidence: {
       candidateMatrix: [],
       blockingCount: 0,

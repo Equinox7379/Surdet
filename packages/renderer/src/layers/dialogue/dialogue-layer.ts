@@ -502,7 +502,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#projectionVersion += 1;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
-    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${speaker}」` : '';
+    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${profile?.name ?? speaker}」` : '';
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
     this.#renderDialogText(value);
@@ -726,9 +726,20 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setSpeakerProfiles(profiles: SpeakerProfile[]): void {
     this.#speakerProfiles.clear();
+    const profilesByName = new Map<string, SpeakerProfile[]>();
     for (const profile of profiles) {
-      if (profile.name.trim().length > 0 && profile.id.trim().length > 0) {
-        this.#speakerProfiles.set(profile.name.trim(), { ...profile });
+      const id = profile.id.trim();
+      const name = profile.name.trim();
+      if (name.length === 0 || id.length === 0) continue;
+      const stored = { ...profile };
+      this.#speakerProfiles.set(id, stored);
+      const named = profilesByName.get(name) ?? [];
+      named.push(stored);
+      profilesByName.set(name, named);
+    }
+    for (const [name, named] of profilesByName) {
+      if (named.length === 1 && !this.#speakerProfiles.has(name)) {
+        this.#speakerProfiles.set(name, named[0]!);
       }
     }
     this.#updateSpeakerAvatar();

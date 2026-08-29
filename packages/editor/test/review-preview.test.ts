@@ -58,7 +58,7 @@ function projection(): HumanReviewProjection {
     reviewVersion: '1.0.0', reviewId: 'review-result', kind: 'integration-result', state: 'STAGE_READY',
     projectIdentity: 'project-1', expectedProjectRevision: 'revision-1',
     task: { title: 'result', acceptanceCriteria: [], candidateCount: 1, objectCount: 1, conflictCount: 0, statementSource: 'generated-fallback' },
-    candidates: [], safeGroups: [], conflicts: [], dependencies: [],
+    candidates: [], safeGroups: [], defaultSelectedUnitIds: [], conflicts: [], dependencies: [],
     evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: true },
     objects: [{ objectRef: 'scene:wave6_alpha', kind: 'scene', references: [], referencedBy: [], potentialImpact: [], observedImpact: [] }],
     sourceIdentity: { projectIdentity: 'project-1', expectedProjectRevision: 'revision-1', comparisonFingerprint: 'comparison-fp' },
@@ -67,6 +67,17 @@ function projection(): HumanReviewProjection {
       planId: 'plan-1', planFingerprint: 'plan-fp', integrationChangeId: 'change-1', workingRevision: 2,
       diffFingerprint: 'diff-fp', changedObjects: [],
       evidence: { diffEvidenceId: 'diff-1', validationEvidenceId: 'validation-1', simulationEvidenceId: 'simulation-1', runtimeTraceIds: ['trace-1', 'trace-2'] },
+      plan: {
+        review: { reviewState: 'human-reviewed', reviewId: 'review-comparison', decisionId: 'decision-1', decisionFingerprint: 'decision-fp' },
+        sourceCapsules: [], sourceCandidates: [], selectedUnitIds: [], includedUnitIds: [], implicitInclusions: [], excludedUnitIds: [],
+        conflictResolutions: [], deduplicatedUnits: [], replayOperations: [], provenance: [], finalObjectFingerprints: {},
+      },
+      diff: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [] },
+      freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+      runtimeTraceObservations: [
+        { traceId: 'trace-1', observationKeys: ['text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'] },
+        { traceId: 'trace-2', observationKeys: ['timeline|wave6_beta|1|timeline|content/scenario/wave6_beta.gal|3|1'] },
+      ],
       resultTreeSha256: 'tree-fp', warnings: [],
     },
   };
@@ -89,8 +100,16 @@ describe('review result preview', () => {
     expect(await hashReviewFixtureTree(first.handle(), bytesHasher)).not.toBe(await hashReviewFixtureTree(second.handle(), bytesHasher));
   });
 
-  it('matches observed runtime trace IDs against result evidence without inventing observations', () => {
-    expect(reconcileReviewTraceEvidence(projection(), ['trace-2', 'trace-3'])).toEqual({ matched: ['trace-2'], missing: ['trace-1'], unexpected: ['trace-3'] });
+  it('compares formal and browser observations by stable event identity instead of unrelated trace IDs', () => {
+    const observed = [{
+      kind: 'text',
+      source: { sceneId: 'wave6_alpha', index: 0, op: 'text', file: 'content/scenario/wave6_alpha.gal', line: 2, col: 1 },
+    }];
+    expect(reconcileReviewTraceEvidence(projection(), observed)).toEqual({
+      matched: ['trace-1'],
+      missing: ['trace-2'],
+      unexpected: [],
+    });
     expect(reconcileReviewTraceEvidence(projection(), [])).toEqual({ matched: [], missing: ['trace-1', 'trace-2'], unexpected: [] });
   });
 });

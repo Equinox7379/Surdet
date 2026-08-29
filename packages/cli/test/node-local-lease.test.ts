@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
@@ -10,6 +11,7 @@ import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import {
   NodeLocalLeaseManager,
   type LeaseHandle,
+  type LeaseScope,
   type NodeLocalLeaseManagerOptions,
 } from '../src/authoring/node-local-lease.js';
 
@@ -27,6 +29,42 @@ interface TestLeaseState {
   clock: TestClock;
   heartbeatIntervals: number[];
   heartbeatCallbacks: Array<() => Promise<void>>;
+}
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve(): void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function sha256(value: Buffer): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function activeLockDirectories(root: string): Promise<string[]> {
+  const locksRoot = path.join(root, '.locks');
+  const found: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await fsp.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const child = path.join(directory, entry.name);
+      if (entry.name.endsWith('.lock')) found.push(child);
+      else await visit(child);
+    }
+  };
+  await visit(locksRoot);
+  return found.sort((left, right) => left.localeCompare(right));
 }
 
 function makeClock(): TestClock {
@@ -93,6 +131,121 @@ afterEach(async () => {
 });
 
 describe('NodeLocalLeaseManager', () => {
+  it.each([
+    ['project', 'C:/canonical/project/root'],
+    ['change', 'chg_heartbeat_drain'],
+  ] satisfies Array<[LeaseScope, string]>)('serializes and drains an in-flight %s heartbeat before release', async (scope, resourceId) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `surdet-local-lease-drain-${scope}-`));
+    temporaryRoots.push(root);
+    const state = makeState();
+    let scheduledHeartbeat: (() => Promise<void>) | undefined;
+    const cancelStarted = deferred();
+    const cancelMayFinish = deferred();
+    const cancelFinished = deferred();
+    const manager = makeManager(root, state, {
+      scheduleHeartbeat: (callback, intervalMs) => {
+        state.heartbeatIntervals.push(intervalMs);
+        scheduledHeartbeat = callback;
+        return async () => {
+          cancelStarted.resolve();
+          await cancelMayFinish.promise;
+          cancelFinished.resolve();
+        };
+      },
+    });
+    const handle = await manager.acquire({ scope, resourceId });
+    const heartbeatEntered = deferred();
+    const heartbeatMayFinish = deferred();
+    const originalAssertOwned = manager.assertOwned.bind(manager);
+    let heartbeatStarts = 0;
+    let activeHeartbeats = 0;
+    let maxActiveHeartbeats = 0;
+    manager.assertOwned = async (candidate): Promise<void> => {
+      heartbeatStarts += 1;
+      activeHeartbeats += 1;
+      maxActiveHeartbeats = Math.max(maxActiveHeartbeats, activeHeartbeats);
+      heartbeatEntered.resolve();
+      await heartbeatMayFinish.promise;
+      try {
+        await originalAssertOwned(candidate);
+      } finally {
+        activeHeartbeats -= 1;
+      }
+    };
+
+    const heartbeat = scheduledHeartbeat;
+    if (heartbeat === undefined) throw new Error('heartbeat callback was not scheduled');
+    const firstHeartbeat = heartbeat();
+    await heartbeatEntered.promise;
+    const secondHeartbeat = heartbeat();
+    let releasePromise: Promise<void> | undefined;
+    try {
+      expect(heartbeatStarts, '同一 lease 启动了重叠 heartbeat callback').toBe(1);
+      let releaseSettled = false;
+      releasePromise = handle.release().then(() => {
+        releaseSettled = true;
+      });
+      await cancelStarted.promise;
+      expect(releaseSettled, 'release 在 async cancellation 完成前提前返回').toBe(false);
+      cancelMayFinish.resolve();
+      await cancelFinished.promise;
+      expect(releaseSettled, 'release 在已开始 heartbeat drain 前提前返回').toBe(false);
+      heartbeatMayFinish.resolve();
+      await Promise.all([firstHeartbeat, secondHeartbeat, releasePromise]);
+
+      expect(maxActiveHeartbeats).toBe(1);
+      expect(heartbeatStarts).toBe(1);
+      expect(activeHeartbeats).toBe(0);
+      expect(await manager.inspect(scope, resourceId)).toMatchObject({ state: 'free' });
+      await expect(fsp.access(handle.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await activeLockDirectories(root)).toEqual([]);
+
+      await heartbeat();
+      expect(await manager.inspect(scope, resourceId)).toMatchObject({ state: 'free' });
+      await expect(fsp.access(handle.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await activeLockDirectories(root)).toEqual([]);
+    } finally {
+      cancelMayFinish.resolve();
+      heartbeatMayFinish.resolve();
+      await Promise.allSettled([firstHeartbeat, secondHeartbeat]);
+      if (releasePromise !== undefined) await Promise.allSettled([releasePromise]);
+      else await handle.release().catch(() => undefined);
+    }
+  });
+
+  it('preserves an unexpected lock occupant and reports release cleanup as manual recovery', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-release-evidence-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const manager = makeManager(root, state);
+    const handle = await manager.acquire({ scope: 'project', resourceId: 'C:/canonical/project/root' });
+    const leaseFile = path.join(handle.directory, 'lease.json');
+    const leaseBefore = await fsp.readFile(leaseFile);
+    const leaseSha256Before = sha256(leaseBefore);
+    const sentinel = path.join(handle.directory, 'unexpected-release-evidence.txt');
+    const sentinelBefore = Buffer.from('preserve-release-evidence\n', 'utf8');
+    const sentinelSha256Before = sha256(sentinelBefore);
+    await fsp.writeFile(sentinel, sentinelBefore);
+
+    await expect(handle.release()).rejects.toMatchObject({
+      code: 'LEASE_CORRUPT',
+      details: {
+        manualRecoveryRequired: true,
+        path: handle.directory,
+      },
+    });
+
+    const leaseAfter = await fsp.readFile(leaseFile);
+    expect(leaseAfter).toEqual(leaseBefore);
+    expect(sha256(leaseAfter)).toBe(leaseSha256Before);
+    expect(JSON.parse(leaseAfter.toString('utf8'))).toMatchObject({ ownerToken: handle.ownerToken });
+    await expect(fsp.readFile(sentinel)).resolves.toEqual(sentinelBefore);
+    expect(sha256(await fsp.readFile(sentinel))).toBe(sentinelSha256Before);
+    await expect(fsp.access(handle.directory)).resolves.toBeUndefined();
+    expect((await fsp.readdir(handle.directory)).sort()).toEqual(['lease.json', 'unexpected-release-evidence.txt']);
+    expect((await manager.inspect('project', 'C:/canonical/project/root')).state).toBe('owned');
+  });
+
   it('enforces exclusive ownership, owner-token release, and injected heartbeat scheduling', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-owned-'));
     temporaryRoots.push(root);
@@ -102,7 +255,11 @@ describe('NodeLocalLeaseManager', () => {
     const first = await manager.acquire({ scope: 'change', resourceId: 'chg-1' });
     expect(state.heartbeatIntervals).toEqual([2000]);
     await expect(manager.acquire({ scope: 'change', resourceId: 'chg-1' })).rejects.toMatchObject({ code: 'CHANGE_BUSY' });
+    const leaseFile = path.join(first.directory, 'lease.json');
+    const ownerLeaseBefore = await fsp.readFile(leaseFile);
     await expect(manager.release({ ...first, ownerToken: 'wrong' })).rejects.toMatchObject({ code: 'CHANGE_BUSY' });
+    await expect(fsp.readFile(leaseFile)).resolves.toEqual(ownerLeaseBefore);
+    expect(JSON.parse((await fsp.readFile(leaseFile)).toString('utf8'))).toMatchObject({ ownerToken: first.ownerToken });
     expect(await manager.inspect('change', 'chg-1')).toMatchObject({ state: 'owned', manualRecoveryRequired: false });
 
     const beforeHeartbeat = (await manager.inspect('change', 'chg-1')).holder?.heartbeatAt;

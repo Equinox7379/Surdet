@@ -33,6 +33,11 @@ import {
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
 import { PreviewRuntimeLifecycle } from './preview-runtime-lifecycle.js';
+import {
+  createPreviewTraceEvidenceSnapshot,
+  previewTraceEvidenceChanged,
+  type PreviewTraceEvidenceSnapshot,
+} from './preview-trace-evidence.js';
 
 interface SceneSrc { id: string; text: string }
 
@@ -131,22 +136,6 @@ function createPreviewTraceId(): string {
   return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
 }
 
-function clonePresentation<T>(value: T): T {
-  try {
-    return JSON.parse(JSON.stringify(value)) as T;
-  } catch {
-    return value;
-  }
-}
-
-function presentationChanged(before: unknown, after: unknown): boolean {
-  try {
-    return JSON.stringify(before) !== JSON.stringify(after);
-  } catch {
-    return before !== after;
-  }
-}
-
 function startPreviewTrace(generation: number, payload: LoadPayload): ActivePreviewTrace {
   const trace: ActivePreviewTrace = {
     traceId: createPreviewTraceId(),
@@ -170,16 +159,16 @@ function startPreviewTrace(generation: number, payload: LoadPayload): ActivePrev
   return trace;
 }
 
-function captureRuntimeTrace(event: RuntimeTraceEvent, presentationSnapshot: () => unknown): void {
+function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => PreviewTraceEvidenceSnapshot): void {
   const trace = activePreviewTrace;
   if (!trace || trace.completed) return;
   const sequence = trace.sequence++;
-  const presentationBefore = clonePresentation(presentationSnapshot());
+  const presentationBefore = evidenceSnapshot();
   // Core runtimeTrace is emitted before the corresponding text/choice/instruction
   // event. A microtask observes the Renderer after all synchronous handlers for
   // that Core step have completed, without inventing a second state machine.
   queueMicrotask(() => {
-    const presentationAfter = clonePresentation(presentationSnapshot());
+    const presentationAfter = evidenceSnapshot();
     trace.events.push(event);
     window.parent.postMessage({
       type: 'surdet-preview-trace-event',
@@ -187,7 +176,7 @@ function captureRuntimeTrace(event: RuntimeTraceEvent, presentationSnapshot: () 
       generation: trace.generation,
       sequence,
       coreEmitted: true,
-      presentationApplied: presentationChanged(presentationBefore, presentationAfter),
+      presentationApplied: previewTraceEvidenceChanged(presentationBefore, presentationAfter),
       presentationBefore,
       presentationAfter,
       event,
@@ -411,7 +400,10 @@ async function boot(): Promise<void> {
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
   controller.connect(bus);
-  bus.on('runtimeTrace', (event) => captureRuntimeTrace(event, () => queries.presentation.snapshot()));
+  bus.on('runtimeTrace', (event) => captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(
+    queries.presentation.snapshot(),
+    queries.diagnostics.projectionSnapshot(),
+  )));
   const saves = new SaveManager(makePreviewSaveStorage(() => previewProjectKey));
 
   function enrichSnapshot(snap: SaveSnapshot): SaveSnapshot {

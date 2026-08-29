@@ -68,6 +68,20 @@ const conflict: ReviewConflict = {
   objectRefs: ['scene:alpha'],
   allowedResolutions: ['choose-unit', 'exclude-all'],
   repairActions: ['choose a result'],
+  options: ['unit-a', 'unit-b'].map((unitId, index) => ({
+    unitId,
+    candidateId: index === 0 ? 'cand-a' : 'cand-b',
+    primaryObject: 'scene:alpha',
+    finalFingerprint: index === 0 ? 'alpha-a' : 'alpha-b',
+    outcomes: [{
+      objectRef: 'scene:alpha',
+      disposition: 'create',
+      finalFingerprint: index === 0 ? 'alpha-a' : 'alpha-b',
+    }],
+    potentialImpact: [],
+    observedImpact: [],
+    evidence: freshEvidence,
+  })),
 };
 
 function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReviewProjection {
@@ -90,6 +104,7 @@ function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReview
     safeGroups: [],
     conflicts: [conflict],
     dependencies: [],
+    defaultSelectedUnitIds: [],
     evidence: {
       candidateMatrix: candidates.map((item) => ({ candidateId: item.candidateId, summary: item.evidence })),
       blockingCount: 0,
@@ -161,6 +176,32 @@ function resultProjection(): HumanReviewProjection {
         simulationEvidenceId: 'simulation-1',
         runtimeTraceIds: ['trace-1'],
       },
+      plan: {
+        review: {
+          reviewState: 'human-reviewed',
+          reviewId: 'review-wave6',
+          decisionId: 'decision-1',
+          decisionFingerprint: 'decision-fingerprint',
+        },
+        sourceCapsules: [],
+        sourceCandidates: [],
+        selectedUnitIds: [],
+        includedUnitIds: [],
+        implicitInclusions: [],
+        excludedUnitIds: [],
+        conflictResolutions: [],
+        deduplicatedUnits: [],
+        replayOperations: [],
+        provenance: [],
+        finalObjectFingerprints: {},
+      },
+      diff: {
+        summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] },
+        semantic: [],
+        files: [],
+      },
+      freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+      runtimeTraceObservations: [{ traceId: 'trace-1', observationKeys: [] }],
       resultTreeSha256: 'tree-1',
       warnings: [],
     },

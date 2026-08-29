@@ -209,7 +209,17 @@ function renderAll(): void {
     openBtn.onclick = () => { void openProject(); };
     header.appendChild(openBtn);
     const reviewBtn = h('button', undefined, '打开审阅任务');
-    reviewBtn.onclick = () => { void openReviewPanelWorkspace().then(renderAll).catch((error) => setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000)); };
+    reviewBtn.onclick = () => {
+      void (async () => {
+        try {
+          await openReviewPanelWorkspace();
+          renderAll();
+          setStatus('已打开审阅任务', true, 4000);
+        } catch (error) {
+          setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+        }
+      })();
+    };
     header.appendChild(reviewBtn);
   } else {
     const demoBtn = h('button', undefined, '加载演示项目');

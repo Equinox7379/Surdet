@@ -19,6 +19,7 @@ type MemoryNode = MemoryDirectory | MemoryFile;
 
 class MemoryFile {
   readonly kind = 'file' as const;
+  readFailure: Error | null = null;
   constructor(readonly name: string, public text: string) {}
 
   handle(): FileSystemFileHandle {
@@ -28,12 +29,15 @@ class MemoryFile {
       isSameEntry: async () => false,
       queryPermission: async () => 'granted',
       requestPermission: async () => 'granted',
-      getFile: async () => ({
-        name: this.name,
-        size: Buffer.byteLength(this.text, 'utf8'),
-        text: async () => this.text,
-        arrayBuffer: async () => Uint8Array.from(Buffer.from(this.text, 'utf8')).buffer,
-      }) as unknown as File,
+      getFile: async () => {
+        if (this.readFailure !== null) throw this.readFailure;
+        return {
+          name: this.name,
+          size: Buffer.byteLength(this.text, 'utf8'),
+          text: async () => this.text,
+          arrayBuffer: async () => Uint8Array.from(Buffer.from(this.text, 'utf8')).buffer,
+        } as unknown as File;
+      },
       createWritable: async () => ({
         write: async (value: string) => { this.text = value; },
         close: async () => {},
@@ -71,13 +75,17 @@ class MemoryDirectory {
         const existing = this.entries.get(name);
         if (existing?.kind === 'directory') return existing.handle();
         if (options?.create) return this.directory(name).handle();
-        throw new Error(`missing directory ${name}`);
+        const error = new Error(`missing directory ${name}`);
+        error.name = 'NotFoundError';
+        throw error;
       },
       getFileHandle: async (name: string, options?: { create?: boolean }) => {
         const existing = this.entries.get(name);
         if (existing?.kind === 'file') return existing.handle();
         if (options?.create) return this.file(name, '').handle();
-        throw new Error(`missing file ${name}`);
+        const error = new Error(`missing file ${name}`);
+        error.name = 'NotFoundError';
+        throw error;
       },
       removeEntry: async (name: string) => { this.entries.delete(name); },
       values: async function* (this: MemoryDirectory) {
@@ -102,6 +110,7 @@ function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReview
     task: { title: '比较候选', acceptanceCriteria: [], candidateCount: 0, objectCount: 0, conflictCount: 0, statementSource: 'generated-fallback' },
     candidates: [],
     safeGroups: [],
+    defaultSelectedUnitIds: ['unit-root'],
     conflicts: [],
     dependencies: [],
     evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: true },
@@ -154,6 +163,32 @@ function resultProjection(): HumanReviewProjection {
     diffFingerprint: 'diff-fp',
     changedObjects: [],
     evidence,
+    plan: {
+      review: {
+        reviewState: 'human-reviewed',
+        reviewId: 'rev_comparison_1',
+        decisionId: 'decision-1',
+        decisionFingerprint: 'decision-fp',
+      },
+      sourceCapsules: [],
+      sourceCandidates: [],
+      selectedUnitIds: [],
+      includedUnitIds: [],
+      implicitInclusions: [],
+      excludedUnitIds: [],
+      conflictResolutions: [],
+      deduplicatedUnits: [],
+      replayOperations: [],
+      provenance: [],
+      finalObjectFingerprints: {},
+    },
+    diff: {
+      summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] },
+      semantic: [],
+      files: [],
+    },
+    freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+    runtimeTraceObservations: [{ traceId: 'trace-1', observationKeys: ['scene|alpha|0|text|alpha.gal|1|1'] }],
     resultTreeSha256: 'tree-fp',
     warnings: [],
   };
@@ -192,6 +227,11 @@ describe('Editor review workspace', () => {
     const loaded = await openReviewWorkspace(root.handle(), hasher);
     expect(loaded.projection.reviewId).toBe('rev_comparison_1');
     expect(loaded.identity.payload.sha256).toBe(identityFor(value).payload.sha256);
+    expect(loaded.decisionDraft).toEqual({
+      decisionId: '',
+      selectedUnitIds: ['unit-root'],
+      conflictResolutions: [],
+    });
 
     const draft: ReviewDecisionDraft = { decisionId: 'decision-1', selectedUnitIds: [], conflictResolutions: [] };
     const first = await writeDecisionReceipt(loaded, draft, '2026-08-27T00:00:00.000Z');
@@ -199,9 +239,141 @@ describe('Editor review workspace', () => {
     expect((first as unknown as Record<string, unknown>)['actor']).toBeUndefined();
     expect(await writeDecisionReceipt(loaded, draft, '2026-08-27T00:00:00.000Z')).toEqual(first);
     const reopened = await openReviewWorkspace(root.handle(), hasher);
-    expect(reopened.decisionDraft.decisionId).toBe('decision-1');
+    expect(reopened.receiptStatus).toBe('decision-written');
+    expect(reopened.decisionReceipt).toEqual(first);
+    expect(reopened.decisionDraft).toEqual({
+      decisionId: first.decisionId,
+      selectedUnitIds: first.selectedUnitIds,
+      conflictResolutions: first.conflictResolutions,
+    });
+    expect(reopened.decisionReceipt?.decisionFingerprint).toBe(first.decisionFingerprint);
     await expect(writeDecisionReceipt(loaded, { ...draft, decisionId: 'decision-2' }, '2026-08-27T00:00:00.000Z'))
       .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+  });
+
+  it('treats only an explicit missing receipt as absent and fails loud on corrupt or unreadable receipts', async () => {
+    const absentRoot = new MemoryDirectory('absent-receipt-root');
+    roots.push(absentRoot);
+    installWorkspace(absentRoot, projection());
+    const absent = await openReviewWorkspace(absentRoot.handle(), hasher);
+    expect(absent.receiptStatus).toBe('none');
+    expect(absent.decisionReceipt).toBeNull();
+
+    const corruptRoot = new MemoryDirectory('corrupt-receipt-root');
+    roots.push(corruptRoot);
+    installWorkspace(corruptRoot, projection());
+    corruptRoot.file('decision.json', '{not-json');
+    await expect(openReviewWorkspace(corruptRoot.handle(), hasher))
+      .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+
+    const unreadableRoot = new MemoryDirectory('unreadable-receipt-root');
+    roots.push(unreadableRoot);
+    installWorkspace(unreadableRoot, projection());
+    const unreadable = unreadableRoot.file('decision.json', '{}');
+    unreadable.readFailure = new Error('forced receipt read failure');
+    await expect(openReviewWorkspace(unreadableRoot.handle(), hasher))
+      .rejects.toThrow('forced receipt read failure');
+  });
+
+  it.each([
+    ['project identity', (receipt: Record<string, unknown>) => { receipt['projectIdentity'] = 'other-project'; }, 'REVIEW_DECISION_STALE'],
+    ['decision fingerprint', (receipt: Record<string, unknown>) => { receipt['decisionFingerprint'] = '0'.repeat(64); }, 'REVIEW_DECISION_INVALID'],
+  ])('validates a persisted comparison receipt through the shared truth and rejects changed %s', async (_label, mutate, code) => {
+    const root = new MemoryDirectory(`changed-${String(_label).replaceAll(' ', '-')}`);
+    roots.push(root);
+    installWorkspace(root, projection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+    await writeDecisionReceipt(loaded, {
+      decisionId: 'decision-1',
+      selectedUnitIds: [],
+      conflictResolutions: [],
+    }, '2026-08-27T00:00:00.000Z');
+    const file = root.entries.get('decision.json') as MemoryFile;
+    const receipt = JSON.parse(file.text) as Record<string, unknown>;
+    mutate(receipt);
+    file.text = `${JSON.stringify(receipt)}\n`;
+
+    await expect(openReviewWorkspace(root.handle(), hasher)).rejects.toMatchObject({ code });
+  });
+
+  it('rejects a direct empty decision id without creating decision.json', async () => {
+    const root = new MemoryDirectory('empty-decision-root');
+    roots.push(root);
+    installWorkspace(root, projection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+
+    await expect(writeDecisionReceipt(loaded, {
+      decisionId: '',
+      selectedUnitIds: ['unit-root'],
+      conflictResolutions: [],
+    }, '2026-08-27T00:00:00.000Z')).rejects.toMatchObject({ code: 'REVIEW_DECISION_INVALID' });
+    expect(root.entries.has('decision.json')).toBe(false);
+  });
+
+  it.each([
+    ['missing options', undefined],
+    ['wrong options type', 'not-an-array'],
+  ])('fails closed when a comparison conflict has %s', async (_label, options) => {
+    const root = new MemoryDirectory(`invalid-comparison-${String(_label).replaceAll(' ', '-')}`);
+    roots.push(root);
+    const value = projection({
+      conflicts: [{
+        conflictId: 'conflict-1',
+        severity: 'selection-required',
+        code: 'OBJECT_RESULTS_DIVERGE',
+        unitIds: ['unit-a'],
+        candidateIds: ['candidate-a'],
+        objectRefs: ['scene:alpha'],
+        allowedResolutions: ['choose-unit'],
+        repairActions: [],
+        options: [],
+      }],
+    });
+    const conflict = value.conflicts[0] as unknown as Record<string, unknown>;
+    if (options === undefined) delete conflict['options'];
+    else conflict['options'] = options;
+    installWorkspace(root, value);
+
+    await expect(openReviewWorkspace(root.handle(), hasher)).rejects.toMatchObject({ code: 'REVIEW_FORMAT_UNSUPPORTED' });
+  });
+
+  it('fails closed when a dependency has no human-readable source object', async () => {
+    const root = new MemoryDirectory('invalid-dependency-root');
+    roots.push(root);
+    const value = projection({
+      dependencies: [{
+        fromUnitId: 'unit-b-scene',
+        fromObjectRef: 'scene:wave6_beta',
+        toUnitId: 'unit-b-timeline',
+        objectRef: 'timeline:wave6_beta_opening',
+        inclusion: 'implicit',
+      }],
+    });
+    delete (value.dependencies[0] as unknown as Record<string, unknown>)['fromObjectRef'];
+    installWorkspace(root, value);
+
+    await expect(openReviewWorkspace(root.handle(), hasher)).rejects.toMatchObject({ code: 'REVIEW_FORMAT_UNSUPPORTED' });
+  });
+
+  it.each([
+    ['plan', undefined],
+    ['plan', 'not-an-object'],
+    ['diff', undefined],
+    ['diff', 'not-an-object'],
+    ['freshness', undefined],
+    ['freshness', 'not-an-object'],
+    ['runtimeTraceObservations', undefined],
+    ['runtimeTraceObservations', 'not-an-array'],
+  ] as const)('fails closed when an integration result has invalid %s', async (field, replacement) => {
+    const root = new MemoryDirectory(`invalid-result-${field}-${replacement === undefined ? 'missing' : 'wrong'}`);
+    roots.push(root);
+    const value = resultProjection();
+    const finalResult = value.finalResult as unknown as Record<string, unknown>;
+    if (replacement === undefined) delete finalResult[field];
+    else finalResult[field] = replacement;
+    installWorkspace(root, value);
+
+    await expect(openReviewWorkspace(root.handle(), hasher)).rejects.toMatchObject({ code: 'REVIEW_FORMAT_UNSUPPORTED' });
   });
 
   it('creates an approval or return receipt, but never both', async () => {

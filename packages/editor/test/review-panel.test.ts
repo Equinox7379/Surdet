@@ -51,6 +51,10 @@ class FakeElement {
     return this.ownText + this.children.map((child) => child.textContent).join('');
   }
 
+  get directTextContent(): string {
+    return this.ownText;
+  }
+
   appendChild(child: FakeElement): FakeElement {
     this.children.push(child);
     return child;
@@ -99,10 +103,12 @@ function textOf(element: FakeElement): string {
     if (current.tagName === 'DETAILS' && !current.open) {
       return current.children.slice(0, 1).map(visible).join('');
     }
-    return current.textContent;
+    return current.directTextContent + current.children.map(visible).join('');
   };
   return visible(element);
 }
+
+const statusElement = new FakeElement('div');
 
 const documentStub = {
   createElement: (tag: string) => new FakeElement(tag),
@@ -111,6 +117,7 @@ const documentStub = {
     node.textContent = text;
     return node;
   },
+  getElementById: (id: string) => id === 'status' ? statusElement : null,
 };
 
 function object(objectRef: string): ReviewObjectSummary {
@@ -139,9 +146,34 @@ function comparisonWorkspace(): ReviewWorkspaceState {
       { candidateId: 'candidate-a', displayOrdinal: 'A', ref: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
       { candidateId: 'candidate-d', displayOrdinal: 'D', ref: { changeId: 'change-d', capsuleId: 'capsule-d', artifactSha256: 'd'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
     ],
-    safeGroups: [{ groupId: 'group-1', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], sourceCount: 2, includedByDefault: true }],
-    conflicts: [{ conflictId: 'conflict-1', severity: 'selection-required', code: 'OBJECT_RESULTS_DIVERGE', unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], objectRefs: ['scene:wave6_alpha'], allowedResolutions: ['choose-unit', 'exclude-all', 'regenerate-candidate'], repairActions: ['检查对象'] }],
-    dependencies: [],
+    safeGroups: [{
+      groupId: 'group-1', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result',
+      unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], sourceCount: 2, includedByDefault: true, collapsedByDefault: true,
+      sources: [
+        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: ['trace-1'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
+        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: [], evidence: { validation: 'missing', simulation: 'fresh', runtime: 'fresh', warnings: 1, manualReviewRequired: ['需要补证据'] } },
+      ],
+      dependencyObjectRefs: ['timeline:wave6_intro'],
+      potentialImpact: ['候选影响'], observedImpact: ['trace-1'],
+      evidence: { warningCount: 1, missing: true, stale: false, failed: false, incomplete: false, manualReviewRequired: ['需要补证据'] },
+    }],
+    defaultSelectedUnitIds: ['unit-a', 'unit-d', 'unit-b-scene'],
+    conflicts: [{
+      conflictId: 'conflict-1', severity: 'selection-required', code: 'OBJECT_RESULTS_DIVERGE',
+      unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], objectRefs: ['scene:wave6_alpha'],
+      allowedResolutions: ['choose-unit', 'exclude-all', 'regenerate-candidate'], repairActions: ['检查对象'],
+      options: [
+        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['可能改变 Alpha'], observedImpact: ['已观察 Alpha'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
+        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'different-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'update', finalFingerprint: 'different-result' }], potentialImpact: ['可能改写 Alpha'], observedImpact: ['已观察 D'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
+      ],
+    }],
+    dependencies: [{
+      fromUnitId: 'unit-b-scene',
+      toUnitId: 'unit-b-timeline',
+      fromObjectRef: 'scene:wave6_beta',
+      objectRef: 'timeline:wave6_beta_opening',
+      inclusion: 'implicit',
+    }],
     evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 1, advisoryCount: 0, canCreateDecision: true },
     objects: [object('scene:wave6_alpha')],
     sourceIdentity: { projectIdentity: 'project-1', expectedProjectRevision: 'revision-1', comparisonFingerprint: 'comparison-fp' },
@@ -157,11 +189,36 @@ function resultWorkspace(): ReviewWorkspaceState {
     reviewId: 'review_result_wave6',
     kind: 'integration-result',
     state: 'STAGE_READY',
+    candidates: [],
+    defaultSelectedUnitIds: [],
     sourceIdentity: { ...projection.sourceIdentity, planFingerprint: 'plan-fp', integrationChangeId: 'change-1', workingRevision: 2, decisionReviewId: 'review_comparison_wave6', decisionId: 'decision-1', decisionFingerprint: 'decision-fp' },
     finalResult: {
       planId: 'plan-1', planFingerprint: 'plan-fp', integrationChangeId: 'change-1', workingRevision: 2, diffFingerprint: 'diff-fp',
       changedObjects: [object('scene:wave6_alpha')],
       evidence: { diffEvidenceId: 'diff-1', validationEvidenceId: 'validation-1', simulationEvidenceId: 'simulation-1', runtimeTraceIds: ['trace-1'] },
+      plan: {
+        review: { reviewState: 'human-reviewed', reviewId: 'review_comparison_wave6', decisionId: 'decision-1', decisionFingerprint: 'decision-fp' },
+        sourceCapsules: [
+          { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) },
+          { changeId: 'change-d', capsuleId: 'capsule-d', artifactSha256: 'd'.repeat(64) },
+        ],
+        sourceCandidates: [
+          { ref: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) }, displayOrdinal: 'A' },
+          { ref: { changeId: 'change-d', capsuleId: 'capsule-d', artifactSha256: 'd'.repeat(64) }, displayOrdinal: 'D' },
+        ],
+        selectedUnitIds: ['unit-a'], includedUnitIds: ['unit-a', 'unit-b-timeline'], implicitInclusions: ['unit-b-timeline'],
+        excludedUnitIds: ['unit-c'], deduplicatedUnits: [{ groupId: 'group-1', retainedUnitId: 'unit-a', provenanceUnitIds: ['unit-a', 'unit-d'] }],
+        conflictResolutions: [],
+        replayOperations: [],
+        provenance: [
+          { targetObject: 'scene:wave6_alpha', sourceCapsule: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) }, sourceUnitId: 'unit-a', sourceOperationIds: ['source-a'] },
+          { targetObject: 'scene:wave6_alpha', sourceCapsule: { changeId: 'change-d', capsuleId: 'capsule-d', artifactSha256: 'd'.repeat(64) }, sourceUnitId: 'unit-d', sourceOperationIds: ['source-d'] },
+        ],
+        finalObjectFingerprints: { 'scene:wave6_alpha': 'same-result', 'timeline:wave6_intro': 'timeline-fp' },
+      },
+      diff: { summary: { createdScenes: 1, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [{ path: 'content/scenario/wave6_alpha.gal', unifiedDiff: '+Alpha A', unexpectedFormatChange: false }] },
+      freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+      runtimeTraceObservations: [{ traceId: 'trace-1', observationKeys: ['text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'] }],
       resultTreeSha256: 'tree-fp', warnings: [],
     },
   };
@@ -182,18 +239,20 @@ function workspaceFor(projection: HumanReviewProjection): ReviewWorkspaceState {
       payload: { relativePath: projection.kind === 'comparison' ? 'comparison/review.json' : 'result/review.json', bytes: 1, sha256: '0'.repeat(64) },
     },
     projection,
-    decisionDraft: { decisionId: 'decision-1', selectedUnitIds: ['unit-a', 'unit-d'], conflictResolutions: [] },
+    decisionDraft: { decisionId: '', selectedUnitIds: [...projection.defaultSelectedUnitIds], conflictResolutions: [] },
     selectedReviewObjectRef: null,
     projectHandle: projection.kind === 'integration-result' ? {} as FileSystemDirectoryHandle : null,
     officialResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     currentResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     fixtureChanged: false,
     receiptStatus: 'none',
+    decisionReceipt: null,
   };
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  statusElement.textContent = '';
 });
 
 describe('Editor review panel', () => {
@@ -206,8 +265,26 @@ describe('Editor review panel', () => {
     expect(textOf(container)).toContain('审阅任务');
     expect(textOf(container)).toContain('方案 A');
     expect(textOf(container)).toContain('2 个方案得到相同结果');
+    expect(textOf(container)).toContain('场景 wave6_alpha');
+    expect(textOf(container)).toContain('默认纳入');
+    expect(textOf(container)).toContain('证据缺失');
     expect(textOf(container)).toContain('需要你决定');
     expect(textOf(container)).not.toContain('OBJECT_RESULTS_DIVERGE');
+
+    const safeGroup = container.querySelector('[data-safe-group="group-1"]');
+    expect(safeGroup?.tagName).toBe('DETAILS');
+    expect(safeGroup?.open).toBe(false);
+    expect(textOf(safeGroup!)).not.toContain('candidate-a');
+    safeGroup!.open = true;
+    expect(textOf(safeGroup!)).toContain('方案 A');
+    expect(textOf(safeGroup!)).toContain('方案 D');
+    expect(textOf(safeGroup!)).toContain('依赖对象：时间轴 wave6_intro');
+    expect(textOf(safeGroup!)).toContain('可能影响');
+    expect(textOf(safeGroup!)).toContain('实际观察');
+    expect(textOf(safeGroup!)).toContain('group-1');
+    expect(textOf(safeGroup!)).toContain('changeId: change-a');
+    expect(textOf(safeGroup!)).toContain('capsuleId: capsule-a');
+    expect(textOf(safeGroup!)).toContain(`artifactSha256: ${'a'.repeat(64)}`);
 
     const details = container.querySelector('[data-tech-details]');
     expect(details).not.toBeNull();
@@ -220,11 +297,188 @@ describe('Editor review panel', () => {
     expect(decisionButton?.disabled).toBe(true);
     const choiceForUnit = container.querySelector('[data-choice-unit="unit-a"]');
     expect(choiceForUnit).not.toBeNull();
+    expect(choiceForUnit!.textContent).toContain('方案 A');
+    expect(choiceForUnit!.textContent).toContain('场景 wave6_alpha');
+    expect(container.querySelector('[data-choice-unit="unit-d"]')!.textContent).toContain('方案 D');
+    expect(container.querySelector('[data-choice-unit="unit-d"]')!.textContent).not.toBe(choiceForUnit!.textContent);
     choiceForUnit!.click();
     expect(decisionButton?.disabled).toBe(false);
     expect(workspace.decisionDraft.conflictResolutions).toEqual([
       { conflictId: 'conflict-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' },
     ]);
+  });
+
+  it('shows every selection option as human-readable evidence with a folded fingerprint', () => {
+    vi.stubGlobal('document', documentStub);
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, comparisonWorkspace());
+
+    const optionA = container.querySelector('[data-choice-option-unit="unit-a"]');
+    const optionD = container.querySelector('[data-choice-option-unit="unit-d"]');
+    expect(optionA).not.toBeNull();
+    expect(optionD).not.toBeNull();
+    expect(textOf(optionA!)).toContain('方案 A');
+    expect(textOf(optionA!)).toContain('场景 wave6_alpha');
+    expect(textOf(optionA!)).toContain('创建');
+    expect(textOf(optionA!)).toContain('可能影响：可能改变 Alpha');
+    expect(textOf(optionA!)).toContain('实际观察：已观察 Alpha');
+    expect(textOf(optionA!)).toContain('校验 新鲜');
+    expect(textOf(optionA!)).not.toContain('same-result');
+    expect(textOf(optionD!)).toContain('方案 D');
+    expect(textOf(optionD!)).toContain('更新');
+    expect(textOf(optionD!)).toContain('可能影响：可能改写 Alpha');
+    const fingerprint = optionA!.querySelector('[data-choice-fingerprint]');
+    expect(fingerprint?.tagName).toBe('DETAILS');
+    fingerprint!.open = true;
+    expect(textOf(fingerprint!)).toContain('same-result');
+  });
+
+  it('shows an implicit dependency as a human-readable scene to timeline relation', () => {
+    vi.stubGlobal('document', documentStub);
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, comparisonWorkspace());
+
+    expect(textOf(container)).toContain('依赖自动纳入：场景 wave6_beta → 时间轴 wave6_beta_opening');
+  });
+
+  it('renders a persisted decision receipt, restores the choice, and freezes every decision control', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    workspace.receiptStatus = 'decision-written';
+    workspace.decisionDraft = {
+      decisionId: 'decision-saved-1',
+      selectedUnitIds: ['unit-a', 'unit-b-scene'],
+      conflictResolutions: [{ conflictId: 'conflict-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' }],
+    };
+    workspace.decisionReceipt = {
+      receiptVersion: '1.0.0',
+      decisionId: 'decision-saved-1',
+      reviewId: workspace.projection.reviewId,
+      comparisonFingerprint: workspace.projection.sourceIdentity.comparisonFingerprint,
+      projectIdentity: workspace.projection.projectIdentity,
+      expectedProjectRevision: workspace.projection.expectedProjectRevision,
+      candidateRefs: workspace.projection.candidates.map((candidate) => candidate.ref),
+      selectedUnitIds: [...workspace.decisionDraft.selectedUnitIds],
+      conflictResolutions: workspace.decisionDraft.conflictResolutions.map((resolution) => ({ ...resolution })),
+      reviewerChannel: 'surdet-editor-local',
+      decidedAt: '2026-08-29T00:00:00.000Z',
+      decisionFingerprint: 'f'.repeat(64),
+    };
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    const marker = container.querySelector('[data-decision-receipt]');
+    expect(marker).not.toBeNull();
+    expect(textOf(marker!)).toContain('已读取已保存的决定');
+    expect(marker!.getAttribute('data-decision-id')).toBe('decision-saved-1');
+    expect(marker!.getAttribute('data-decision-fingerprint')).toBe('f'.repeat(64));
+    const selected = container.querySelector('[data-choice-unit="unit-a"]');
+    expect(selected?.getAttribute('data-choice-selected')).toBe('true');
+    expect(textOf(selected!)).toContain('已选择');
+    for (const control of container.querySelectorAll('button').filter((button) => (
+      button.getAttribute('data-choice-unit') !== null
+      || button.getAttribute('data-choice-exclude') !== null
+      || button.getAttribute('data-choice-regenerate') !== null
+      || button.getAttribute('data-action') === 'save-decision'
+    ))) {
+      expect(control.disabled).toBe(true);
+    }
+    const save = container.querySelector('[data-action="save-decision"]');
+    expect(save?.textContent).toContain('决定已保存');
+    save?.click();
+    expect(workspace.decisionReceipt?.decisionId).toBe('decision-saved-1');
+  });
+
+  it('generates a decision id on a real save click, preserves it on failure, and clears it after a changed choice', async () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    workspace.rootHandle = {
+      getFileHandle: async () => { throw new Error('forced decision write failure'); },
+    } as unknown as FileSystemDirectoryHandle;
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { now: () => '2026-08-29T00:00:00.000Z' });
+
+    container.querySelector('[data-choice-unit="unit-a"]')!.click();
+    const save = container.querySelector('[data-action="save-decision"]')!;
+    save.click();
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+    const firstDecisionId = workspace.decisionDraft.decisionId;
+    expect(firstDecisionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+
+    statusElement.textContent = '';
+    save.click();
+    expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+    container.querySelector('[data-choice-unit="unit-d"]')!.click();
+    expect(workspace.decisionDraft.decisionId).toBe('');
+    statusElement.textContent = '';
+    save.click();
+    expect(workspace.decisionDraft.decisionId).not.toBe(firstDecisionId);
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+  });
+
+  it('freezes every decision control while a receipt write is pending', async () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    let rejectWrite: ((error: Error) => void) | null = null;
+    const getFileHandle = vi.fn(() => new Promise<FileSystemFileHandle>((_resolve, reject) => {
+      rejectWrite = reject;
+    }));
+    workspace.rootHandle = { getFileHandle } as unknown as FileSystemDirectoryHandle;
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { now: () => '2026-08-29T00:00:00.000Z' });
+
+    const choiceA = container.querySelector('[data-choice-unit="unit-a"]')!;
+    const choiceD = container.querySelector('[data-choice-unit="unit-d"]')!;
+    choiceA.click();
+    const selectedBeforeSave = [...workspace.decisionDraft.selectedUnitIds];
+    const resolutionsBeforeSave = workspace.decisionDraft.conflictResolutions.map((resolution) => ({ ...resolution }));
+    const save = container.querySelector('[data-action="save-decision"]')!;
+    save.click();
+    save.click();
+    const sealedDecisionId = workspace.decisionDraft.decisionId;
+
+    const decisionControls = container.querySelectorAll('button').filter((button) => (
+      button.getAttribute('data-choice-unit') !== null
+      || button.getAttribute('data-choice-exclude') !== null
+      || button.getAttribute('data-choice-regenerate') !== null
+      || button.getAttribute('data-action') === 'save-decision'
+    ));
+    for (const control of decisionControls) expect(control.disabled).toBe(true);
+    choiceD.click();
+    expect(workspace.decisionDraft).toEqual({
+      decisionId: sealedDecisionId,
+      selectedUnitIds: selectedBeforeSave,
+      conflictResolutions: resolutionsBeforeSave,
+    });
+    await vi.waitFor(() => expect(getFileHandle).toHaveBeenCalledTimes(1));
+
+    rejectWrite!(new Error('release pending receipt write'));
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+    for (const control of decisionControls) expect(control.disabled).toBe(false);
+  });
+
+  it('keeps a healthy collapsed group explicit and names an empty dependency set', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    const group = workspace.projection.safeGroups[0]!;
+    group.dependencyObjectRefs = [];
+    group.evidence = {
+      warningCount: 0,
+      missing: false,
+      stale: false,
+      failed: false,
+      incomplete: false,
+      manualReviewRequired: [],
+    };
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const safeGroup = container.querySelector('[data-safe-group="group-1"]');
+    expect(textOf(safeGroup!)).toContain('证据正常');
+    safeGroup!.open = true;
+    expect(textOf(safeGroup!)).toContain('无依赖对象');
   });
 
   it('gates result approval when exploration changes the fixture and can reload the official result', () => {
@@ -233,6 +487,17 @@ describe('Editor review panel', () => {
     const container = new FakeElement('div');
 
     renderReviewPanel(container as unknown as HTMLElement, workspace);
+    expect(textOf(container)).toContain('明确选择：unit-a');
+    expect(textOf(container)).toContain('实际纳入：unit-a、unit-b-timeline');
+    expect(textOf(container)).toContain('自动纳入：unit-b-timeline');
+    expect(textOf(container)).toContain('明确排除：unit-c');
+    expect(textOf(container)).toContain('去重保留：unit-a；来源 unit-a、unit-d');
+    expect(textOf(container)).toContain('方案 A');
+    expect(textOf(container)).toContain('方案 D');
+    expect(textOf(container)).toContain('最终对象指纹');
+    expect(textOf(container)).toContain('content/scenario/wave6_alpha.gal');
+    expect(textOf(container)).toContain('证据新鲜度：diff 新鲜；校验 新鲜；模拟 新鲜；运行 新鲜');
+    expect(textOf(container)).toContain('项目树身份：tree-fp');
     expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
     markReviewFixtureChanged(workspace, 'changed-tree');
     renderReviewPanel(container as unknown as HTMLElement, workspace);

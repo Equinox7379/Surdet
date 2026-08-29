@@ -3,7 +3,10 @@ import type {
   CandidateEvidenceSummary,
   CompositionComparison,
   CompositionConflict,
+  ObjectChangeUnit,
 } from './composition-contracts.js';
+import type { ChangeDiff } from './diff.js';
+import type { IntegrationPlan } from './integration-plan.js';
 
 export type ReviewKind = 'comparison' | 'integration-result';
 
@@ -76,6 +79,32 @@ export interface ReviewSafeGroup {
   candidateIds: string[];
   sourceCount: number;
   includedByDefault: true;
+  collapsedByDefault: true;
+  sources: ReviewUnitOutcome[];
+  dependencyObjectRefs: string[];
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+  evidence: ReviewSafeGroupEvidence;
+}
+
+export interface ReviewUnitOutcome {
+  unitId: string;
+  candidateId: string;
+  primaryObject: string;
+  finalFingerprint?: string;
+  outcomes: ObjectChangeUnit['producedObjects'];
+  potentialImpact: unknown[];
+  observedImpact: unknown[];
+  evidence: CandidateEvidenceSummary;
+}
+
+export interface ReviewSafeGroupEvidence {
+  warningCount: number;
+  missing: boolean;
+  stale: boolean;
+  failed: boolean;
+  incomplete: boolean;
+  manualReviewRequired: string[];
 }
 
 export interface ReviewConflict {
@@ -87,10 +116,12 @@ export interface ReviewConflict {
   objectRefs: string[];
   allowedResolutions: CompositionConflict['allowedResolutions'];
   repairActions: string[];
+  options: ReviewUnitOutcome[];
 }
 
 export interface ReviewDependency {
   fromUnitId: string;
+  fromObjectRef: string;
   toUnitId: string;
   objectRef: string;
   inclusion: 'explicit' | 'implicit';
@@ -116,6 +147,33 @@ export interface ReviewWarning {
   message: string;
 }
 
+export type ReviewResultPlan = Pick<IntegrationPlan,
+  | 'sourceCapsules'
+  | 'selectedUnitIds'
+  | 'implicitInclusions'
+  | 'excludedUnitIds'
+  | 'conflictResolutions'
+  | 'deduplicatedUnits'
+  | 'replayOperations'
+  | 'provenance'> & {
+    review: Extract<NonNullable<IntegrationPlan['review']>, { reviewState: 'human-reviewed' }>;
+    sourceCandidates: Array<{ ref: CandidateCapsuleRef; displayOrdinal: string }>;
+    includedUnitIds: string[];
+    finalObjectFingerprints: Record<string, string>;
+  };
+
+export interface ReviewResultFreshness {
+  diff: 'fresh';
+  validation: 'fresh';
+  simulation: 'fresh';
+  runtime: 'fresh';
+}
+
+export interface ReviewRuntimeTraceObservation {
+  traceId: string;
+  observationKeys: string[];
+}
+
 export interface ReviewFinalResult {
   planId: string;
   planFingerprint: string;
@@ -124,6 +182,10 @@ export interface ReviewFinalResult {
   diffFingerprint: string;
   changedObjects: ReviewObjectSummary[];
   evidence: ReviewEvidenceBinding;
+  plan: ReviewResultPlan;
+  diff: ChangeDiff;
+  freshness: ReviewResultFreshness;
+  runtimeTraceObservations: ReviewRuntimeTraceObservation[];
   resultTreeSha256: string;
   warnings: ReviewWarning[];
 }
@@ -196,6 +258,7 @@ export interface HumanReviewProjection {
   safeGroups: ReviewSafeGroup[];
   conflicts: ReviewConflict[];
   dependencies: ReviewDependency[];
+  defaultSelectedUnitIds: string[];
   evidence: ReviewEvidenceSummary;
   objects: ReviewObjectSummary[];
   finalResult?: ReviewFinalResult;

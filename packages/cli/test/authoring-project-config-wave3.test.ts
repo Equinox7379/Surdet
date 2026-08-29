@@ -59,7 +59,7 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 
-    // 能力面 17 → 20。
+    // 能力面 30 项（含 Wave 6 human review readers）。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
     expect(body(capabilities).result.capabilities.map((definition: any) => definition.id)).toEqual([
@@ -70,6 +70,7 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
       'change.diff', 'change.commit', 'change.rollback',
       'change.recovery.inspect', 'change.recovery.execute',
       'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
+      'review.prepare-comparison', 'review.inspect-decision', 'review.prepare-result', 'review.inspect-approval',
     ]);
 
     // project.assets avatars 与 project.inspect characters/entryScene/title。

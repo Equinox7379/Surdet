@@ -19,6 +19,7 @@ function baseProjection(overrides: Partial<HumanReviewProjection> = {}): HumanRe
     task: { title: '任务', acceptanceCriteria: [], candidateCount: 2, objectCount: 1, conflictCount: 0, statementSource: 'generated-fallback' },
     candidates: [],
     safeGroups: [],
+    defaultSelectedUnitIds: [],
     conflicts: [],
     dependencies: [],
     evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: true },
@@ -40,13 +41,13 @@ describe('Editor review Chinese model', () => {
 
   it('blocks decision sealing on blocking conflicts and accepts all resolved selections', () => {
     const blocking = baseProjection({
-      conflicts: [{ conflictId: 'block-1', severity: 'blocking', code: 'BLOCK', unitIds: [], candidateIds: [], objectRefs: [], allowedResolutions: [], repairActions: [] }],
+      conflicts: [{ conflictId: 'block-1', severity: 'blocking', code: 'BLOCK', unitIds: [], candidateIds: [], objectRefs: [], allowedResolutions: [], repairActions: [], options: [] }],
       evidence: { candidateMatrix: [], blockingCount: 1, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: false },
     });
     expect(canSealDecision(blocking, { selectedUnitIds: [], conflictResolutions: [] })).toBe(false);
 
     const selectable = baseProjection({
-      conflicts: [{ conflictId: 'choose-1', severity: 'selection-required', code: 'DIVERGE', unitIds: ['unit-a'], candidateIds: ['candidate-a'], objectRefs: ['scene:start'], allowedResolutions: ['choose-unit'], repairActions: [] }],
+      conflicts: [{ conflictId: 'choose-1', severity: 'selection-required', code: 'DIVERGE', unitIds: ['unit-a'], candidateIds: ['candidate-a'], objectRefs: ['scene:start'], allowedResolutions: ['choose-unit'], repairActions: [], options: [] }],
       evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 1, advisoryCount: 0, canCreateDecision: true },
     });
     expect(canSealDecision(selectable, {

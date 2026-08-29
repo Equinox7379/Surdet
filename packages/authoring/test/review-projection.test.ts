@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type {
   AuthoringObject,
+  BuildResultReviewProjectionInput,
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
   CompositionComparison,
@@ -11,7 +12,11 @@ import type {
   TextHasher,
   VerifiedCompositionCandidate,
 } from '../src/index.js';
-import { buildComparisonReviewProjection, buildResultReviewProjection } from '../src/index.js';
+import {
+  buildComparisonReviewProjection,
+  buildResultReviewProjection,
+  reviewTraceObservationKey,
+} from '../src/index.js';
 
 const hasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
@@ -244,7 +249,91 @@ function readyResultChange(): ChangeRecord {
   } as unknown as ChangeRecord;
 }
 
+function resultReviewEvidence(): Pick<BuildResultReviewProjectionInput,
+  'diff' | 'freshness' | 'runtimeTraceObservations'> {
+  return {
+    diff: {
+      summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] },
+      semantic: [],
+      files: [],
+    },
+    freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+    runtimeTraceObservations: [{ traceId: 'runtime-trace', observationKeys: [] }],
+  };
+}
+
 describe('comparison review projection', () => {
+  it('projects comparison-created objects and their declared impacts even when the base object index does not contain them', async () => {
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-created-objects',
+      comparison: comparison(),
+      candidates,
+      objects: [],
+    }, hasher);
+
+    expect(projection.objects).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        objectRef: 'scene:wave6_alpha',
+        kind: 'scene',
+        semanticId: 'wave6_alpha',
+        potentialImpact: expect.arrayContaining(['potential:scene:wave6_alpha']),
+        observedImpact: expect.arrayContaining(['observed:scene:wave6_alpha']),
+      }),
+      expect.objectContaining({
+        objectRef: 'variable:flag.alpha',
+        kind: 'variable',
+        semanticId: 'flag.alpha',
+      }),
+    ]));
+  });
+
+  it('keeps each safe-group source, dependency, evidence alert, and impact as reviewable facts', async () => {
+    const compared = comparison();
+    for (const item of compared.units.filter((entry) => entry.primaryObject === 'scene:wave6_alpha')) {
+      item.requiredBaseObjects = [{ objectRef: 'config:entryScene', source: 'base' }];
+    }
+    const source = compared.units.find((item) => item.unitId === 'unit-d-alpha')!;
+    source.evidenceSummary = evidence({ validation: 'missing', warnings: 2, manualReviewRequired: ['source warning'] });
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-safe-source-map',
+      comparison: compared,
+      candidates,
+      objects,
+    }, hasher);
+
+    const safe = projection.safeGroups.find((item) => item.primaryObject === 'scene:wave6_alpha');
+    expect(safe).toBeDefined();
+    if (safe === undefined) throw new Error('safe group missing');
+    expect(safe.sources).toEqual([
+      expect.objectContaining({ unitId: 'unit-a-alpha', candidateId: 'cand-A', finalFingerprint: 'fp-alpha' }),
+      expect.objectContaining({ unitId: 'unit-d-alpha', candidateId: 'cand-D', finalFingerprint: 'fp-alpha' }),
+    ]);
+    expect(safe.dependencyObjectRefs).toEqual(['config:entryScene']);
+    expect(safe).toMatchObject({ includedByDefault: true, collapsedByDefault: true });
+    expect(safe.potentialImpact).toContain('potential:scene:wave6_alpha');
+    expect(safe.observedImpact).toContain('observed:scene:wave6_alpha');
+    expect(safe.evidence).toMatchObject({ warningCount: 2, missing: true, manualReviewRequired: ['source warning'] });
+  });
+
+  it('binds every conflict option to its exact unit, candidate, fingerprint, and outcome', async () => {
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-conflict-options',
+      comparison: comparison(),
+      candidates,
+      objects,
+    }, hasher);
+
+    const conflict = projection.conflicts.find((item) => item.conflictId === 'conflict-alpha');
+    expect(conflict).toBeDefined();
+    if (conflict === undefined) throw new Error('conflict missing');
+    expect(conflict.options).toEqual([
+      expect.objectContaining({ unitId: 'unit-a-alpha', candidateId: 'cand-A', finalFingerprint: 'fp-alpha' }),
+      expect.objectContaining({ unitId: 'unit-c-alpha', candidateId: 'cand-C', finalFingerprint: 'fp-alpha-c' }),
+      expect.objectContaining({ unitId: 'unit-d-alpha', candidateId: 'cand-D', finalFingerprint: 'fp-alpha' }),
+    ]);
+    expect(conflict.options[0]?.outcomes).toContainEqual(expect.objectContaining({ objectRef: 'scene:wave6_alpha', disposition: 'create' }));
+  });
+
   it('projects A/D identical results, C conflict, B dependency, and candidate ordinals', async () => {
     const projection = await buildComparisonReviewProjection({
       reviewId: 'review-wave6',
@@ -266,9 +355,17 @@ describe('comparison review projection', () => {
       allowedResolutions: ['choose-unit', 'exclude-all'],
     }));
     expect(projection.dependencies).toContainEqual(expect.objectContaining({
+      fromObjectRef: 'scene:wave6_beta',
       objectRef: 'timeline:wave6_beta_opening',
       inclusion: 'implicit',
     }));
+    expect(projection.defaultSelectedUnitIds).toEqual([
+      'unit-a-alpha',
+      'unit-a-variable',
+      'unit-b-beta',
+      'unit-d-alpha',
+      'unit-d-variable',
+    ]);
     expect(projection.candidates.map((item) => item.displayOrdinal)).toEqual(['A', 'B', 'C', 'D']);
     expect(projection.task.statementSource).toBe('candidate-intent');
     expect(projection.sourceIdentity).toEqual({
@@ -469,6 +566,7 @@ describe('comparison review projection', () => {
         plan: built.plan,
         change: built.change,
         diffFingerprint: 'diff-fingerprint',
+        ...resultReviewEvidence(),
         resultTreeSha256: 'result-tree-sha',
       }, hasher), item.name).rejects.toMatchObject({ code: 'REVIEW_RESULT_NOT_READY' });
     }
@@ -479,6 +577,7 @@ describe('comparison review projection', () => {
       plan: reviewedPlan(),
       change,
       diffFingerprint: 'diff-fingerprint',
+      ...resultReviewEvidence(),
       resultTreeSha256: 'result-tree-sha',
     }, hasher);
     expect(resultProjection.finalResult).toMatchObject({
@@ -489,5 +588,94 @@ describe('comparison review projection', () => {
       resultTreeSha256: 'result-tree-sha',
     });
     expect(resultProjection.state).toBe('STAGE_READY');
+  });
+
+  it('projects the complete reviewed plan, decision, diff, provenance, fingerprints, and comparable runtime observations', async () => {
+    const plan = reviewedPlan({
+      sourceCapsules: [ref('D'), ref('A'), ref('C')],
+      selectedUnitIds: ['unit-a-alpha', 'unit-b-beta'],
+      implicitInclusions: ['unit-b-timeline'],
+      excludedUnitIds: ['unit-c-alpha'],
+      conflictResolutions: [{
+        conflictId: 'conflict-alpha',
+        resolution: 'choose-unit',
+        chosenUnitId: 'unit-a-alpha',
+        actor: 'human',
+        decidedAt: '2026-08-27T00:00:00.000Z',
+      }],
+      deduplicatedUnits: [{ groupId: 'group-alpha', retainedUnitId: 'unit-a-alpha', provenanceUnitIds: ['unit-a-alpha', 'unit-d-alpha'] }],
+      replayOperations: [{
+        sequence: 1,
+        capabilityId: 'scene.create',
+        sourceOperationId: 'source-op-a',
+        normalizedInput: {},
+        inputSha256: 'a'.repeat(64),
+        primaryObject: 'scene:wave6_alpha',
+        objectFingerprintAfter: 'fp-alpha',
+        requiredObjects: [],
+        producedObjects: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'fp-alpha' }],
+        integrationOperationId: 'integration-op-a',
+        sourceCapsule: ref('A'),
+        sourceUnitId: 'unit-a-alpha',
+      }],
+      provenance: [{ targetObject: 'scene:wave6_alpha', sourceCapsule: ref('A'), sourceUnitId: 'unit-a-alpha', sourceOperationIds: ['source-op-a'] },
+        { targetObject: 'scene:wave6_alpha', sourceCapsule: ref('D'), sourceUnitId: 'unit-d-alpha', sourceOperationIds: ['source-op-d'] }],
+      dryRun: { status: 'passed', finalObjectFingerprints: { 'scene:wave6_alpha': 'fp-alpha', 'timeline:wave6_beta_opening': 'fp-timeline' }, errors: [] },
+    });
+    const change = readyResultChange();
+    change.integration!.includedUnitIds = ['unit-a-alpha', 'unit-b-beta', 'unit-b-timeline'];
+    const runtimeEvent = {
+      kind: 'text',
+      source: { sceneId: 'wave6_alpha', index: 0, op: 'text', file: 'content/scenario/wave6_alpha.gal', line: 2, col: 1 },
+    };
+    const projection = await buildResultReviewProjection({
+      reviewId: 'result-complete-contract',
+      plan,
+      change,
+      diffFingerprint: 'diff-fingerprint',
+      diff: {
+        summary: { createdScenes: 1, modifiedScenes: 0, changedVariables: 0, warnings: [] },
+        semantic: [],
+        files: [{
+          path: 'content/scenario/wave6_alpha.gal',
+          unifiedDiff: '--- wave6_alpha.gal\n+++ wave6_alpha.gal',
+          unexpectedFormatChange: false,
+        }],
+      },
+      resultTreeSha256: 'result-tree-sha',
+      runtimeTraceObservations: [{ traceId: 'runtime-trace', observationKeys: ['text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'] }],
+    }, hasher);
+
+    const result = projection.finalResult;
+    expect(result).toBeDefined();
+    if (result === undefined) throw new Error('final result missing');
+    expect(result.plan).toMatchObject({
+      selectedUnitIds: ['unit-a-alpha', 'unit-b-beta'],
+      includedUnitIds: ['unit-a-alpha', 'unit-b-beta', 'unit-b-timeline'],
+      implicitInclusions: ['unit-b-timeline'],
+      excludedUnitIds: ['unit-c-alpha'],
+      finalObjectFingerprints: { 'scene:wave6_alpha': 'fp-alpha', 'timeline:wave6_beta_opening': 'fp-timeline' },
+    });
+    expect(result.plan.deduplicatedUnits[0]?.provenanceUnitIds).toEqual(['unit-a-alpha', 'unit-d-alpha']);
+    expect(result.plan.provenance).toHaveLength(2);
+    expect(result.plan.replayOperations).toHaveLength(1);
+    expect(result.plan.conflictResolutions).toEqual([
+      expect.objectContaining({ conflictId: 'conflict-alpha', resolution: 'choose-unit', chosenUnitId: 'unit-a-alpha' }),
+    ]);
+    expect(result.plan.sourceCandidates).toEqual([
+      { ref: ref('A'), displayOrdinal: 'A' },
+      { ref: ref('C'), displayOrdinal: 'B' },
+      { ref: ref('D'), displayOrdinal: 'C' },
+    ]);
+    expect(result.diff).toMatchObject({ files: [{ path: 'content/scenario/wave6_alpha.gal' }] });
+    expect(result.freshness).toEqual({ diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' });
+    expect(result.runtimeTraceObservations).toEqual([
+      { traceId: 'runtime-trace', observationKeys: ['text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'] },
+    ]);
+    expect(projection.sourceIdentity).toMatchObject({ decisionId: 'decision-result', decisionFingerprint: 'decision-fingerprint' });
+    expect(reviewTraceObservationKey(runtimeEvent)).toBe(
+      'text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1',
+    );
+    expect(reviewTraceObservationKey({ kind: 'text', source: { sceneId: 'wave6_alpha' } })).toBeUndefined();
   });
 });

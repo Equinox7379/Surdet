@@ -128,8 +128,16 @@ export class CompositionService {
 
   /** 当前 project revision；短 project lease 内读取，保证 snapshot/revision 一致。 */
   async currentSnapshot(): Promise<ProjectSnapshot> {
-    return this.leases.withProjectLease(this.projectIdentity, async () => {
-      const storage = await NodeProjectStorage.open(this.projectRoot);
+    const storage = await NodeProjectStorage.open(this.projectRoot);
+    const actualProjectIdentity = projectIdentityFromRoot(storage.rootIdentity);
+    if (actualProjectIdentity !== this.projectIdentity) {
+      throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '当前项目 identity 与 composition service 不一致', {
+        expected: this.projectIdentity,
+        actual: actualProjectIdentity,
+        projectRootIdentity: storage.rootIdentity,
+      });
+    }
+    return this.leases.withProjectLease(storage.rootIdentity, async () => {
       return loadProjectSnapshot(storage, this.hasher);
     });
   }
@@ -392,8 +400,10 @@ async function listChangeDirectories(projectDirectory: string): Promise<string[]
     throw error;
   });
   return entries
-    .filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_-]+$/.test(entry.name))
-    // composition-plans 是计划 artifact 存储保留目录，不是 change。
-    .filter((entry) => entry.name !== 'composition-plans')
+    .filter((entry) => entry.isDirectory() && isChangeDirectoryName(entry.name))
     .map((entry) => entry.name);
+}
+
+function isChangeDirectoryName(name: string): boolean {
+  return name.startsWith('chg_') && /^[A-Za-z0-9_-]+$/.test(name);
 }

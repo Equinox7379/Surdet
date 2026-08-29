@@ -60,13 +60,12 @@ const agentBlackout = {
 };
 
 describe('agent authoring presentation wave 2 CLI vertical slice', () => {
-  // 主链串行 spawn 20+ 个 CLI 子进程，历史耗时 ~4.2-4.5s；同文件测试增多后并行负载会挤爆
-  // 默认 5s 预算——显式放宽为纯时间预算修正（非生产回归）。
-  it('runs the full timeline authoring chain with explicit scene selection', { timeout: 15000 }, () => {
+  // 主链串行 spawn 20+ 个 CLI 子进程；Wave 6 全量并行负载下需要 30s 纯时间预算修正（非生产回归）。
+  it('runs the full timeline authoring chain with explicit scene selection', { timeout: 30000 }, () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 
-    // capabilities.describe 当前能力面 20 项（Wave 3 扩展 character.ensure/remove + project.entry-scene.set）。
+    // capabilities.describe 当前能力面 30 项（含 Wave 6 human review readers）。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
     expect(body(capabilities).result.capabilities.map((definition: any) => definition.id)).toEqual([
@@ -77,6 +76,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
       'change.diff', 'change.commit', 'change.rollback',
       'change.recovery.inspect', 'change.recovery.execute',
       'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
+      'review.prepare-comparison', 'review.inspect-decision', 'review.prepare-result', 'review.inspect-approval',
     ]);
 
     // project.assets 与 project.inspect.assets 共享同一 catalog 解析。
