@@ -42,6 +42,22 @@ const CONFLICT_SEVERITY_LABELS: Record<string, string> = {
   identical: '多个方案结果相同',
 };
 
+const FRESHNESS_LABELS: Record<string, string> = {
+  fresh: '新鲜',
+  stale: '过期',
+  missing: '缺失',
+  failed: '失败',
+  incomplete: '不完整',
+};
+
+const DISPOSITION_LABELS: Record<string, string> = {
+  create: '创建',
+  update: '更新',
+  delete: '删除',
+  remove: '删除',
+  unchanged: '不变',
+};
+
 export function labelForObjectKind(kind: string): string {
   return OBJECT_KIND_LABELS[kind] ?? '对象';
 }
@@ -56,6 +72,33 @@ export function labelForConflictSeverity(severity: string): string {
 
 export function labelForUnknownCode(code: string): string {
   return code.length === 0 ? '未识别的问题（查看技术详情）' : '未识别的问题（查看技术详情）';
+}
+
+/** 把稳定 objectRef 转成面向人的短标签；原始 ref 仍可放在技术详情中。 */
+export function labelForObjectRef(objectRef: string): string {
+  const separator = objectRef.indexOf(':');
+  if (separator < 0) return `对象 ${objectRef}`;
+  const kind = objectRef.slice(0, separator);
+  const semanticId = objectRef.slice(separator + 1);
+  return `${labelForObjectKind(kind)} ${semanticId}`;
+}
+
+/** displayOrdinal 是审阅包给出的动态映射，不能从 candidateId 猜方案字母。 */
+export function labelForCandidate(
+  projection: HumanReviewProjection,
+  candidateId: string | undefined,
+): string {
+  if (candidateId === undefined) return '未知方案';
+  const candidate = projection.candidates.find((item) => item.candidateId === candidateId);
+  return candidate === undefined ? '未知方案' : `方案 ${candidate.displayOrdinal}`;
+}
+
+export function labelForFreshness(value: string): string {
+  return FRESHNESS_LABELS[value] ?? '未知';
+}
+
+export function labelForDisposition(value: string): string {
+  return DISPOSITION_LABELS[value] ?? '变更';
 }
 
 function resolutionIsAllowed(conflict: ReviewConflict, draft: ReviewDecisionDraftModel): boolean {

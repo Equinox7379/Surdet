@@ -3,6 +3,7 @@ import {
   AuthoringOperationError,
   decisionFingerprintOf,
   stableStringify,
+  validateComparisonDecision,
   type ComparisonDecisionReceipt,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
@@ -49,6 +50,7 @@ export interface ReviewWorkspaceState {
   currentResultTreeSha256: string | null;
   fixtureChanged: boolean;
   receiptStatus: 'none' | 'decision-written' | 'approval-written' | 'returned';
+  decisionReceipt: ComparisonDecisionReceipt | null;
 }
 
 export interface ApprovalDraft {
@@ -72,6 +74,161 @@ function identityError(message: string): AuthoringOperationError {
 
 function formatError(message: string): AuthoringOperationError {
   return new AuthoringOperationError('REVIEW_FORMAT_UNSUPPORTED', message);
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function validCapsuleRef(value: unknown): boolean {
+  return record(value)
+    && nonEmptyString(value['changeId'])
+    && nonEmptyString(value['capsuleId'])
+    && nonEmptyString(value['artifactSha256']);
+}
+
+function validReviewUnitOutcome(value: unknown): boolean {
+  if (!record(value)
+    || !nonEmptyString(value['unitId'])
+    || !nonEmptyString(value['candidateId'])
+    || !nonEmptyString(value['primaryObject'])
+    || (value['finalFingerprint'] !== undefined && typeof value['finalFingerprint'] !== 'string')
+    || !Array.isArray(value['outcomes'])
+    || !Array.isArray(value['potentialImpact'])
+    || !Array.isArray(value['observedImpact'])
+    || !record(value['evidence'])) return false;
+  const evidence = value['evidence'];
+  return typeof evidence['validation'] === 'string'
+    && typeof evidence['simulation'] === 'string'
+    && typeof evidence['runtime'] === 'string'
+    && typeof evidence['warnings'] === 'number'
+    && stringArray(evidence['manualReviewRequired'])
+    && value['outcomes'].every((outcome) => record(outcome)
+      && nonEmptyString(outcome['objectRef'])
+      && nonEmptyString(outcome['disposition'])
+      && (outcome['finalFingerprint'] === undefined || typeof outcome['finalFingerprint'] === 'string'));
+}
+
+function validateConflictContracts(value: Record<string, unknown>, identity: ReviewWorkspaceIdentity): void {
+  const conflicts = value['conflicts'];
+  if (!Array.isArray(conflicts)) throw formatError(`review payload conflicts 无效：${identity.reviewId}`);
+  for (const conflict of conflicts) {
+    if (!record(conflict)
+      || !Array.isArray(conflict['options'])
+      || !conflict['options'].every(validReviewUnitOutcome)) {
+      throw formatError(`review payload conflict options 无效：${identity.reviewId}`);
+    }
+  }
+}
+
+function validateDependencyContracts(value: Record<string, unknown>, identity: ReviewWorkspaceIdentity): void {
+  const dependencies = value['dependencies'];
+  if (!Array.isArray(dependencies)
+    || !dependencies.every((dependency) => record(dependency)
+      && nonEmptyString(dependency['fromUnitId'])
+      && nonEmptyString(dependency['fromObjectRef'])
+      && nonEmptyString(dependency['toUnitId'])
+      && nonEmptyString(dependency['objectRef'])
+      && (dependency['inclusion'] === 'explicit' || dependency['inclusion'] === 'implicit'))) {
+    throw formatError(`review payload dependencies 无效：${identity.reviewId}`);
+  }
+}
+
+function validateResultPlan(value: unknown, identity: ReviewWorkspaceIdentity): void {
+  if (!record(value)) throw formatError(`result review plan 无效：${identity.reviewId}`);
+  const arrayKeys = [
+    'sourceCapsules',
+    'sourceCandidates',
+    'selectedUnitIds',
+    'includedUnitIds',
+    'implicitInclusions',
+    'excludedUnitIds',
+    'conflictResolutions',
+    'deduplicatedUnits',
+    'replayOperations',
+    'provenance',
+  ] as const;
+  if (arrayKeys.some((key) => !Array.isArray(value[key]))) {
+    throw formatError(`result review plan 字段缺失或类型错误：${identity.reviewId}`);
+  }
+  const sourceCapsules = value['sourceCapsules'];
+  const sourceCandidates = value['sourceCandidates'];
+  if (!Array.isArray(sourceCapsules)
+    || !Array.isArray(sourceCandidates)
+    || !stringArray(value['selectedUnitIds'])
+    || !stringArray(value['includedUnitIds'])
+    || !stringArray(value['implicitInclusions'])
+    || !stringArray(value['excludedUnitIds'])
+    || !sourceCapsules.every(validCapsuleRef)
+    || !sourceCandidates.every((candidate: unknown) => record(candidate)
+      && validCapsuleRef(candidate['ref'])
+      && nonEmptyString(candidate['displayOrdinal']))) {
+    throw formatError(`result review plan 选择或来源字段无效：${identity.reviewId}`);
+  }
+  const review = value['review'];
+  if (!record(review)
+    || review['reviewState'] !== 'human-reviewed'
+    || !nonEmptyString(review['reviewId'])
+    || !nonEmptyString(review['decisionId'])
+    || !nonEmptyString(review['decisionFingerprint'])) {
+    throw formatError(`result review plan 审阅绑定无效：${identity.reviewId}`);
+  }
+  const fingerprints = value['finalObjectFingerprints'];
+  if (!record(fingerprints) || Object.values(fingerprints).some((fingerprint) => typeof fingerprint !== 'string')) {
+    throw formatError(`result review plan 对象指纹无效：${identity.reviewId}`);
+  }
+}
+
+function validateResultDiff(value: unknown, identity: ReviewWorkspaceIdentity): void {
+  if (!record(value) || !record(value['summary']) || !Array.isArray(value['semantic']) || !Array.isArray(value['files'])) {
+    throw formatError(`result review diff 无效：${identity.reviewId}`);
+  }
+  const summary = value['summary'];
+  if (typeof summary['createdScenes'] !== 'number'
+    || typeof summary['modifiedScenes'] !== 'number'
+    || typeof summary['changedVariables'] !== 'number'
+    || !stringArray(summary['warnings'])
+    || !value['files'].every((file) => record(file)
+      && nonEmptyString(file['path'])
+      && typeof file['unifiedDiff'] === 'string'
+      && typeof file['unexpectedFormatChange'] === 'boolean')) {
+    throw formatError(`result review diff 字段无效：${identity.reviewId}`);
+  }
+}
+
+function validateResultContracts(value: Record<string, unknown>, identity: ReviewWorkspaceIdentity): void {
+  const finalResult = value['finalResult'];
+  if (!record(finalResult)) throw formatError(`result review 缺少 finalResult：${identity.reviewId}`);
+  validateResultPlan(finalResult['plan'], identity);
+  validateResultDiff(finalResult['diff'], identity);
+  const freshness = finalResult['freshness'];
+  if (!record(freshness)
+    || freshness['diff'] !== 'fresh'
+    || freshness['validation'] !== 'fresh'
+    || freshness['simulation'] !== 'fresh'
+    || freshness['runtime'] !== 'fresh') {
+    throw formatError(`result review freshness 无效：${identity.reviewId}`);
+  }
+  const observations = finalResult['runtimeTraceObservations'];
+  if (!Array.isArray(observations)
+    || !observations.every((observation) => record(observation)
+      && nonEmptyString(observation['traceId'])
+      && stringArray(observation['observationKeys']))) {
+    throw formatError(`result review runtimeTraceObservations 无效：${identity.reviewId}`);
+  }
+  if (!nonEmptyString(finalResult['planId'])
+    || !nonEmptyString(finalResult['planFingerprint'])
+    || !nonEmptyString(finalResult['integrationChangeId'])
+    || typeof finalResult['workingRevision'] !== 'number'
+    || finalResult['planFingerprint'] !== identity.planFingerprint
+    || finalResult['integrationChangeId'] !== identity.integrationChangeId
+    || finalResult['workingRevision'] !== identity.workingRevision) {
+    throw identityError(`result review identity 与 finalResult 不一致：${identity.reviewId}`);
+  }
 }
 
 function invalidReview(message: string): AuthoringOperationError {
@@ -186,16 +343,34 @@ function validateProjection(value: unknown, identity: ReviewWorkspaceIdentity): 
     || (identity.planFingerprint !== undefined && sourceIdentity['planFingerprint'] !== identity.planFingerprint)) {
     throw identityError(`review payload 与 identity sidecar 不一致：${identity.reviewId}`);
   }
+  if (!stringArray(value['defaultSelectedUnitIds'])) {
+    throw formatError(`review payload defaultSelectedUnitIds 无效：${identity.reviewId}`);
+  }
+  validateConflictContracts(value, identity);
+  validateDependencyContracts(value, identity);
+  if (identity.kind === 'integration-result') {
+    if (sourceIdentity['integrationChangeId'] !== identity.integrationChangeId
+      || sourceIdentity['workingRevision'] !== identity.workingRevision) {
+      throw identityError(`result review source identity 与 identity sidecar 不一致：${identity.reviewId}`);
+    }
+    validateResultContracts(value, identity);
+  }
   return value as unknown as HumanReviewProjection;
 }
 
 async function optionalJson(rootHandle: FileSystemDirectoryHandle, name: string): Promise<unknown | null> {
+  let handle: FileSystemFileHandle;
   try {
-    const handle = await rootHandle.getFileHandle(name);
-    return (await readJson<unknown>(handle, name)).value;
-  } catch {
-    return null;
+    handle = await rootHandle.getFileHandle(name);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
+  return (await readJson<unknown>(handle, name)).value;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return record(error) && error['name'] === 'NotFoundError';
 }
 
 async function writeCreateOnly<T>(
@@ -207,8 +382,8 @@ async function writeCreateOnly<T>(
   let target: FileSystemFileHandle | null = null;
   try {
     target = await rootHandle.getFileHandle(name);
-  } catch {
-    target = null;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
   }
   if (target !== null) {
     const existing = await readText(target);
@@ -236,38 +411,35 @@ async function writeCreateOnly<T>(
 function reviewDirectoryState(projection: HumanReviewProjection): ReviewDecisionDraft {
   return {
     decisionId: '',
-    selectedUnitIds: projection.safeGroups.flatMap((group) => group.unitIds),
+    selectedUnitIds: [...projection.defaultSelectedUnitIds],
     conflictResolutions: [],
   };
 }
 
-function decisionDraftFromReceipt(
+function decisionDraftFromReceipt(value: ComparisonDecisionReceipt): ReviewDecisionDraft {
+  return {
+    decisionId: value.decisionId,
+    selectedUnitIds: [...value.selectedUnitIds],
+    conflictResolutions: value.conflictResolutions.map((item) => ({ ...item })),
+  };
+}
+
+async function verifiedDecisionReceipt(
   projection: HumanReviewProjection,
   value: unknown,
-): ReviewDecisionDraft {
-  if (!record(value)
-    || typeof value['decisionId'] !== 'string'
-    || !Array.isArray(value['selectedUnitIds'])
-    || !value['selectedUnitIds'].every((item) => typeof item === 'string')
-    || !Array.isArray(value['conflictResolutions'])) {
-    return reviewDirectoryState(projection);
+  hasher: TextHasher,
+): Promise<ComparisonDecisionReceipt> {
+  if (!record(value)) throw formatError(`comparison decision receipt 不是对象：${projection.reviewId}`);
+  try {
+    const verified = await validateComparisonDecision({
+      projection,
+      receipt: value as unknown as ComparisonDecisionReceipt,
+    }, hasher);
+    return verified.receipt;
+  } catch (error) {
+    if (error instanceof AuthoringOperationError) throw error;
+    throw formatError(`comparison decision receipt 结构无效：${projection.reviewId}`);
   }
-  return {
-    decisionId: value['decisionId'],
-    selectedUnitIds: [...value['selectedUnitIds']] as string[],
-    conflictResolutions: value['conflictResolutions'].flatMap((item) => {
-      if (!record(item)
-        || typeof item['conflictId'] !== 'string'
-        || (item['resolution'] !== 'choose-unit'
-          && item['resolution'] !== 'exclude-all'
-          && item['resolution'] !== 'regenerate-candidate')) return [];
-      return [{
-        conflictId: item['conflictId'],
-        resolution: item['resolution'],
-        ...(typeof item['chosenUnitId'] === 'string' ? { chosenUnitId: item['chosenUnitId'] } : {}),
-      }];
-    }),
-  };
 }
 
 export async function openReviewWorkspace(
@@ -304,6 +476,9 @@ export async function openReviewWorkspace(
   if (identity.kind === 'integration-result' && decision !== null) {
     throw identityError(`result review 不能包含 comparison decision：${identity.reviewId}`);
   }
+  const decisionReceipt = identity.kind === 'comparison' && decision !== null
+    ? await verifiedDecisionReceipt(projection, decision, hasher)
+    : null;
   let projectHandle: FileSystemDirectoryHandle | null = null;
   if (identity.kind === 'integration-result') {
     try {
@@ -317,15 +492,16 @@ export async function openReviewWorkspace(
     rootHandle,
     identity,
     projection,
-    decisionDraft: decisionDraftFromReceipt(projection, decision),
+    decisionDraft: decisionReceipt === null ? reviewDirectoryState(projection) : decisionDraftFromReceipt(decisionReceipt),
     selectedReviewObjectRef: null,
     projectHandle,
     officialResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     currentResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     fixtureChanged: false,
     receiptStatus: identity.kind === 'comparison'
-      ? decision !== null ? 'decision-written' : 'none'
+      ? decisionReceipt !== null ? 'decision-written' : 'none'
       : approval !== null ? 'approval-written' : returned !== null ? 'returned' : 'none',
+    decisionReceipt,
   };
   workspaceHashers.set(workspace, hasher);
   return workspace;
@@ -360,6 +536,7 @@ export async function writeDecisionReceipt(
   const written = await writeCreateOnly(workspace.rootHandle, 'decision.json', receipt);
   workspace.decisionDraft = { ...draft, selectedUnitIds: [...draft.selectedUnitIds], conflictResolutions: draft.conflictResolutions.map((item) => ({ ...item })) };
   workspace.receiptStatus = 'decision-written';
+  workspace.decisionReceipt = written;
   return written;
 }
 

@@ -85,7 +85,7 @@ describe('causal selection bridge', () => {
       reviewVersion: '1.0.0', reviewId: 'review-1', kind: 'comparison', state: 'COMPARISON_PREPARED',
       projectIdentity: 'project-1', expectedProjectRevision: 'revision-1',
       task: { title: 'review', acceptanceCriteria: [], candidateCount: 1, objectCount: 1, conflictCount: 0, statementSource: 'generated-fallback' },
-      candidates: [], safeGroups: [], conflicts: [], dependencies: [],
+      candidates: [], safeGroups: [], defaultSelectedUnitIds: [], conflicts: [], dependencies: [],
       evidence: { candidateMatrix: [], blockingCount: 0, selectionRequiredCount: 0, advisoryCount: 0, canCreateDecision: true },
       objects: [{ objectRef: 'scene:wave6_alpha', kind: 'scene', references: ['timeline:wave6_intro'], referencedBy: ['scene:root'], potentialImpact: ['possible'], observedImpact: ['trace-1'] }],
       sourceIdentity: { projectIdentity: 'project-1', expectedProjectRevision: 'revision-1', comparisonFingerprint: 'comparison-fp' },

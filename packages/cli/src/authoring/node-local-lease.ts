@@ -35,7 +35,7 @@ export interface NodeLocalLeaseManagerOptions {
   hostname?: () => string;
   pid?: () => number;
   isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
-  scheduleHeartbeat?: (callback: () => Promise<void>, intervalMs: number) => () => void;
+  scheduleHeartbeat?: (callback: () => Promise<void>, intervalMs: number) => () => void | Promise<void>;
   /**
    * Injection seam for deterministic tests only; production always sleeps the fixed
    * DEFAULT_PUBLICATION_POLL_DELAY_MS between bounded publication-window polls.
@@ -55,6 +55,12 @@ interface LocalLease {
 }
 
 type LeaseReleaseInput = Pick<LeaseHandle, 'scope' | 'resourceId' | 'ownerToken' | 'directory'>;
+
+interface HeartbeatController {
+  closing: boolean;
+  cancel: () => void | Promise<void>;
+  inFlight?: Promise<void>;
+}
 
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const STALE_AFTER_MS = 15_000;
@@ -133,9 +139,9 @@ export class NodeLocalLeaseManager {
   private readonly hostname: () => string;
   private readonly pid: () => number;
   private readonly isProcessAlive: (pid: number) => boolean | Promise<boolean>;
-  private readonly scheduleHeartbeat: (callback: () => Promise<void>, intervalMs: number) => () => void;
+  private readonly scheduleHeartbeat: (callback: () => Promise<void>, intervalMs: number) => () => void | Promise<void>;
   private readonly publicationDelay: (delayMs: number) => Promise<void>;
-  private readonly cancellations = new Map<string, () => void>();
+  private readonly heartbeatControllers = new Map<string, HeartbeatController>();
 
   constructor(
     readonly dataRoot: string = defaultDataRoot(),
@@ -388,15 +394,29 @@ export class NodeLocalLeaseManager {
       ...input,
       release: async (): Promise<void> => this.release(handle),
     };
-    const cancel = this.scheduleHeartbeat(async () => {
-      await this.assertOwned(handle);
-      const current = await this.loadLease(handle.scope, handle.resourceId);
-      await replaceJsonRecord(this.leaseFile(handle.scope, handle.resourceId), {
-        ...current,
-        heartbeatAt: this.timestamp(),
-      } satisfies LocalLease);
-    }, HEARTBEAT_INTERVAL_MS);
-    this.cancellations.set(handle.ownerToken, cancel);
+    const controller: HeartbeatController = {
+      closing: false,
+      cancel: () => undefined,
+    };
+    const heartbeat = (): Promise<void> => {
+      if (controller.closing) return Promise.resolve();
+      if (controller.inFlight !== undefined) return controller.inFlight;
+      let tracked!: Promise<void>;
+      tracked = (async () => {
+        await this.assertOwned(handle);
+        const current = await this.loadLease(handle.scope, handle.resourceId);
+        await replaceJsonRecord(this.leaseFile(handle.scope, handle.resourceId), {
+          ...current,
+          heartbeatAt: this.timestamp(),
+        } satisfies LocalLease);
+      })().finally(() => {
+        if (controller.inFlight === tracked) delete controller.inFlight;
+      });
+      controller.inFlight = tracked;
+      return tracked;
+    };
+    controller.cancel = this.scheduleHeartbeat(heartbeat, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatControllers.set(handle.ownerToken, controller);
     return handle;
   }
 
@@ -411,20 +431,85 @@ export class NodeLocalLeaseManager {
 
   async release(handle: LeaseReleaseInput): Promise<void> {
     this.validateHandle(handle);
-    const current = await this.loadLease(handle.scope, handle.resourceId);
-    if (current.ownerToken !== handle.ownerToken) {
-      const inspection = this.inspectionFor(handle.scope, handle.resourceId, current);
+    const beforeClosing = await this.loadLease(handle.scope, handle.resourceId);
+    if (beforeClosing.ownerToken !== handle.ownerToken) {
+      const inspection = this.inspectionFor(handle.scope, handle.resourceId, beforeClosing);
       throw busyError(handle.scope, handle.resourceId, inspection, `资源 '${handle.resourceId}' 的 lease ownerToken 不匹配`);
     }
-    this.cancellations.get(handle.ownerToken)?.();
-    this.cancellations.delete(handle.ownerToken);
+    const controller = this.heartbeatControllers.get(handle.ownerToken);
+    if (controller === undefined) {
+      throw leaseCorrupt(`lease heartbeat controller 缺失：${handle.directory}`, {
+        path: handle.directory,
+        scope: handle.scope,
+        resourceId: handle.resourceId,
+        ownerToken: handle.ownerToken,
+        operation: 'release',
+      });
+    }
+    controller.closing = true;
+    try {
+      await controller.cancel();
+      if (controller.inFlight !== undefined) await controller.inFlight;
+    } catch (error) {
+      throw leaseCorrupt(`lease heartbeat 无法完成停止与 drain：${handle.directory}`, {
+        path: handle.directory,
+        scope: handle.scope,
+        resourceId: handle.resourceId,
+        ownerToken: handle.ownerToken,
+        operation: 'heartbeat-drain',
+        cause: error instanceof Error ? error.message : String(error),
+        errorCode: errorCode(error),
+      });
+    }
+
+    const afterDrain = await this.loadLease(handle.scope, handle.resourceId);
+    if (afterDrain.ownerToken !== handle.ownerToken) {
+      const inspection = this.inspectionFor(handle.scope, handle.resourceId, afterDrain);
+      throw busyError(handle.scope, handle.resourceId, inspection, `资源 '${handle.resourceId}' 的 lease ownerToken 在 heartbeat drain 后已变化`);
+    }
     const leaseFile = this.leaseFile(handle.scope, handle.resourceId);
-    await fs.unlink(leaseFile).catch((error: unknown) => {
-      if (errorCode(error) !== 'ENOENT') throw error;
+    const directoryEntries = await fs.readdir(handle.directory, { withFileTypes: true }).catch((error: unknown) => {
+      throw leaseCorrupt(`lease 释放前无法读取锁目录，保留现场等待人工恢复：${handle.directory}`, {
+        path: handle.directory,
+        leaseFile,
+        scope: handle.scope,
+        resourceId: handle.resourceId,
+        ownerToken: handle.ownerToken,
+        operation: 'release-preflight',
+        cause: error instanceof Error ? error.message : String(error),
+        errorCode: errorCode(error),
+      });
     });
-    await fs.rmdir(handle.directory).catch((error: unknown) => {
-      if (errorCode(error) !== 'ENOENT') throw error;
-    });
+    const hasOnlyLeaseFile = directoryEntries.length === 1
+      && directoryEntries[0]!.name === 'lease.json'
+      && directoryEntries[0]!.isFile();
+    if (!hasOnlyLeaseFile) {
+      throw leaseCorrupt(`lease 锁目录包含非预期内容，未删除任何现场证据：${handle.directory}`, {
+        path: handle.directory,
+        leaseFile,
+        scope: handle.scope,
+        resourceId: handle.resourceId,
+        ownerToken: handle.ownerToken,
+        operation: 'release-preflight',
+        directoryEntries: directoryEntries.map((entry) => entry.name).sort(),
+      });
+    }
+    try {
+      await fs.unlink(leaseFile);
+      await fs.rmdir(handle.directory);
+    } catch (error) {
+      throw leaseCorrupt(`lease 释放清理失败，保留现场等待人工恢复：${handle.directory}`, {
+        path: handle.directory,
+        leaseFile,
+        scope: handle.scope,
+        resourceId: handle.resourceId,
+        ownerToken: handle.ownerToken,
+        operation: 'release-cleanup',
+        cause: error instanceof Error ? error.message : String(error),
+        errorCode: errorCode(error),
+      });
+    }
+    this.heartbeatControllers.delete(handle.ownerToken);
   }
 
   async withLease<T>(
@@ -439,7 +524,7 @@ export class NodeLocalLeaseManager {
     }
   }
 
-  async withProjectLease<T>(projectIdentity: string, callback: (lease: LeaseHandle) => Promise<T>): Promise<T> {
-    return this.withLease({ scope: 'project', resourceId: projectIdentity }, callback);
+  async withProjectLease<T>(projectRootIdentity: string, callback: (lease: LeaseHandle) => Promise<T>): Promise<T> {
+    return this.withLease({ scope: 'project', resourceId: projectRootIdentity }, callback);
   }
 }

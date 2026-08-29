@@ -9,11 +9,13 @@ import {
   buildResultReviewProjection,
   loadProjectSnapshot,
   openChange,
+  reviewTraceObservationKey,
   stableStringify,
   validateComparisonDecision,
   validateFinalApproval,
   type AuthoringObject,
   type CandidateCapsuleRef,
+  type ChangeDiff,
   type ChangeRecord,
   type ComparisonDecisionReceipt,
   type CompositionComparison,
@@ -72,6 +74,33 @@ const GENERATED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', 'dist']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isChangeDiff(value: unknown): value is ChangeDiff {
+  if (!isRecord(value) || !isRecord(value['summary'])
+    || !Array.isArray(value['semantic']) || !Array.isArray(value['files'])) return false;
+  const summary = value['summary'];
+  if (typeof summary['createdScenes'] !== 'number' || !Number.isInteger(summary['createdScenes'])
+    || typeof summary['modifiedScenes'] !== 'number' || !Number.isInteger(summary['modifiedScenes'])
+    || typeof summary['changedVariables'] !== 'number' || !Number.isInteger(summary['changedVariables'])
+    || !Array.isArray(summary['warnings'])
+    || summary['warnings'].some((warning) => typeof warning !== 'string')) return false;
+  if (value['semantic'].some((entry) => !isRecord(entry)
+    || typeof entry['kind'] !== 'string'
+    || typeof entry['operationId'] !== 'string'
+    || !Object.prototype.hasOwnProperty.call(entry, 'directChange')
+    || !Array.isArray(entry['potentialImpact'])
+    || !Array.isArray(entry['observedImpact'])
+    || (entry['objectBefore'] !== undefined && typeof entry['objectBefore'] !== 'string')
+    || (entry['objectAfter'] !== undefined && typeof entry['objectAfter'] !== 'string')
+    || (entry['fingerprintBefore'] !== undefined && typeof entry['fingerprintBefore'] !== 'string')
+    || (entry['fingerprintAfter'] !== undefined && typeof entry['fingerprintAfter'] !== 'string'))) return false;
+  return value['files'].every((file) => isRecord(file)
+    && typeof file['path'] === 'string'
+    && typeof file['unifiedDiff'] === 'string'
+    && typeof file['unexpectedFormatChange'] === 'boolean'
+    && (file['beforeSha256'] === undefined || typeof file['beforeSha256'] === 'string')
+    && (file['afterSha256'] === undefined || typeof file['afterSha256'] === 'string'));
 }
 
 function codeOf(error: unknown): string | undefined {
@@ -271,15 +300,30 @@ function returnReceipt(value: unknown, resultReviewId: string): value is ReturnR
     && typeof value['returnFingerprint'] === 'string';
 }
 
-function objectSummary(ref: string, object: AuthoringObject | undefined) {
+function diffImpactsForRef(diff: unknown, ref: string): { potentialImpact: unknown[]; observedImpact: unknown[] } {
+  if (!isRecord(diff) || !Array.isArray(diff['semantic'])) {
+    return { potentialImpact: [], observedImpact: [] };
+  }
+  const potentialImpact: unknown[] = [];
+  const observedImpact: unknown[] = [];
+  for (const entry of diff['semantic']) {
+    if (!isRecord(entry) || (entry['objectBefore'] !== ref && entry['objectAfter'] !== ref)) continue;
+    if (Array.isArray(entry['potentialImpact'])) potentialImpact.push(...entry['potentialImpact']);
+    if (Array.isArray(entry['observedImpact'])) observedImpact.push(...entry['observedImpact']);
+  }
+  return { potentialImpact, observedImpact };
+}
+
+function objectSummary(ref: string, object: AuthoringObject | undefined, diff: unknown) {
+  const impacts = diffImpactsForRef(diff, ref);
   if (object === undefined) {
     return {
       objectRef: ref,
       kind: ref.split(':', 1)[0] ?? 'object',
       references: [],
       referencedBy: [],
-      potentialImpact: [],
-      observedImpact: [],
+      potentialImpact: impacts.potentialImpact,
+      observedImpact: impacts.observedImpact,
     };
   }
   return {
@@ -289,9 +333,34 @@ function objectSummary(ref: string, object: AuthoringObject | undefined) {
     ...(object.source === undefined ? {} : { source: { path: object.source.path, line: object.source.line, col: object.source.col } }),
     references: [...object.references],
     referencedBy: [...object.referencedBy],
-    potentialImpact: [],
-    observedImpact: [],
+    potentialImpact: impacts.potentialImpact,
+    observedImpact: impacts.observedImpact,
   };
+}
+
+async function runtimeTraceObservationsOf(store: NodeChangeStore, record: ChangeRecord) {
+  const summaries = [...(record.runtimeTraces ?? [])]
+    .sort((left, right) => left.traceId.localeCompare(right.traceId));
+  return Promise.all(summaries.map(async (summary) => {
+    const trace = await store.readTrace(record.changeId, summary.traceId);
+    if (!isRecord(trace) || trace['traceId'] !== summary.traceId || !Array.isArray(trace['events'])) {
+      throw reviewError('REVIEW_RESULT_NOT_READY', `runtime trace 记录缺失或结构无效：${summary.traceId}`, {
+        changeId: record.changeId,
+        traceId: summary.traceId,
+      });
+    }
+    const observationKeys = trace['events'].map((event) => reviewTraceObservationKey(event));
+    if (observationKeys.some((key) => key === undefined)) {
+      throw reviewError('REVIEW_RESULT_NOT_READY', `runtime trace 含不可比较事件：${summary.traceId}`, {
+        changeId: record.changeId,
+        traceId: summary.traceId,
+      });
+    }
+    return {
+      traceId: summary.traceId,
+      observationKeys: [...new Set(observationKeys as string[])].sort((left, right) => left.localeCompare(right)),
+    };
+  }));
 }
 
 function evidenceOf(record: ChangeRecord): ResultReviewCurrentFacts['evidence'] {
@@ -396,22 +465,31 @@ export class ReviewService {
     return validateComparisonDecision({ projection, receipt: decision.value }, this.hasher);
   }
 
-  private async projectObjects(record: ChangeRecord, plan: IntegrationPlan): Promise<ReturnType<typeof objectSummary>[]> {
+  private async projectObjects(record: ChangeRecord, plan: IntegrationPlan, diff: unknown): Promise<ReturnType<typeof objectSummary>[]> {
+    const semanticRefs = isRecord(diff) && Array.isArray(diff['semantic'])
+      ? diff['semantic'].flatMap((entry) => (
+        isRecord(entry)
+          ? [entry['objectBefore'], entry['objectAfter']].filter((ref): ref is string => typeof ref === 'string')
+          : []
+      ))
+      : [];
     try {
       const working = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'working'), this.hasher);
       const index = buildObjectIndex(working);
       const refs = [...new Set([
         ...plan.provenance.map((entry) => entry.targetObject),
         ...Object.keys(plan.dryRun.finalObjectFingerprints),
+        ...semanticRefs,
       ])].sort((left, right) => left.localeCompare(right));
-      return refs.map((ref) => objectSummary(ref, index.byRef.get(ref)));
+      return refs.map((ref) => objectSummary(ref, index.byRef.get(ref), diff));
     } catch {
       return [...new Set([
         ...plan.provenance.map((entry) => entry.targetObject),
         ...Object.keys(plan.dryRun.finalObjectFingerprints),
+        ...semanticRefs,
       ])]
         .sort((left, right) => left.localeCompare(right))
-        .map((ref) => objectSummary(ref, undefined));
+        .map((ref) => objectSummary(ref, undefined, diff));
     }
   }
 
@@ -439,13 +517,13 @@ export class ReviewService {
     if (projectIdentityFromRoot(storage.rootIdentity) !== this.composition.projectIdentity) {
       throw reviewError('PROJECT_IDENTITY_MISMATCH', '当前项目 identity 与 composition service 不一致');
     }
-    return this.leases.withProjectLease(this.composition.projectIdentity, async () => (
-      NodeChangeStore.withChangeLeaseForProject(changeId, storage.rootIdentity, async (store) => {
+    return NodeChangeStore.withChangeLeaseForProject(changeId, storage.rootIdentity, async (store) => (
+      this.leases.withProjectLease(storage.rootIdentity, async () => {
         const record = await store.read(changeId);
         if (record === null) throw reviewError('REVIEW_RESULT_NOT_READY', `integration change 不存在：${changeId}`, { changeId });
         return callback(storage, store, record);
-      }, { leaseManager: this.leases })
-    ));
+      })
+    ), { leaseManager: this.leases });
   }
 
   async prepareResult(input: { planId: string; artifactSha256: string; changeId: string }): Promise<PreparedReviewResult> {
@@ -469,8 +547,9 @@ export class ReviewService {
         throw reviewError('REVIEW_RESULT_NOT_READY', 'integration change 缺少匹配的 human review binding', { planId: plan.planId, changeId: record.changeId });
       }
       const diff = await store.readDiff(record.changeId);
-      if (diff === null) throw reviewError('REVIEW_RESULT_NOT_READY', 'integration change 缺少 diff evidence', { changeId: record.changeId });
+      if (!isChangeDiff(diff)) throw reviewError('REVIEW_RESULT_NOT_READY', 'integration change 缺少或包含无效 diff evidence', { changeId: record.changeId });
       const diffFingerprint = await this.hasher.sha256(stableStringify(diff));
+      const runtimeTraceObservations = await runtimeTraceObservationsOf(store, record);
       const files = await this.fixtureFiles(storage, record);
       const resultTreeSha256 = treeIdentityOf(files);
       const reviewId = newReviewId('result');
@@ -479,8 +558,11 @@ export class ReviewService {
         plan,
         change: record,
         diffFingerprint,
+        diff,
+        freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
+        runtimeTraceObservations,
         resultTreeSha256,
-        changedObjects: await this.projectObjects(record, plan),
+        changedObjects: await this.projectObjects(record, plan, diff),
       }, this.hasher);
       const identity = await this.reviews.createReview(reviewId, projection);
       const projectDirectory = await this.reviews.createResultProject(reviewId, files);

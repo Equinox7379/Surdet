@@ -7,6 +7,9 @@ import type { TextHasher } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { CompositionService } from '../src/authoring/composition-service.js';
 import { NodeChangeStore as NodeChangeStoreStatic } from '../src/authoring/node-change-store.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
+import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
+import { NodeReviewStore } from '../src/authoring/node-review-store.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
@@ -104,6 +107,45 @@ describe('CompositionService compare/plan/dry-run', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('uses the canonical project root for the snapshot lease and contends with Authoring on one physical lock', async () => {
+    const fixture = await setup('canonical-project-lease');
+    const storage = await NodeProjectStorage.open(fixture.projectRoot);
+    const leases = new NodeLocalLeaseManager(fixture.dataDir);
+    const observed: Array<{ scope: string; resourceId: string }> = [];
+    const originalAcquire = leases.acquire.bind(leases);
+    leases.acquire = async (input) => {
+      const handle = await originalAcquire(input);
+      observed.push({ ...input });
+      return handle;
+    };
+    const service = new CompositionService(
+      fixture.store,
+      fixture.identity,
+      fixture.projectRoot,
+      realHasher,
+      leases,
+    );
+
+    await service.currentSnapshot();
+    expect(observed, 'Composition snapshot did not acquire the canonical project-root lease').toEqual([
+      { scope: 'project', resourceId: storage.rootIdentity },
+    ]);
+    expect(observed.some((entry) => entry.scope === 'change')).toBe(false);
+
+    const expectedLockName = `${fixture.identity}.lock`;
+    await leases.withProjectLease(storage.rootIdentity, async (authoringLease) => {
+      expect(path.basename(authoringLease.directory)).toBe(expectedLockName);
+      const projectBefore = treeSnapshot(fixture.projectRoot);
+      await expect(service.currentSnapshot()).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+      expect(treeSnapshot(fixture.projectRoot)).toEqual(projectBefore);
+      const physicalLocks = fs.readdirSync(path.join(fixture.dataDir, '.locks', 'projects'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.endsWith('.lock'))
+        .map((entry) => entry.name)
+        .sort((left, right) => left.localeCompare(right));
+      expect(physicalLocks).toEqual([expectedLockName]);
+    });
   });
 
   it('compares and plans two real sealed capsules end to end', async () => {
@@ -244,6 +286,86 @@ describe('CompositionService compare/plan/dry-run', () => {
     const readBack = await fixture.store.readPlan(planResult.plan.planId, planResult.identity.sha256);
     expect(readBack.plan.dryRun.status).toBe('failed');
     expect(readBack.plan.replayOperations.length).toBeGreaterThan(0);
+  });
+
+  it('executes a passed plan without scanning the legal review namespace as a change', async () => {
+    const fixture = await setup('review-namespace');
+    const first = await sealCandidate(fixture.projectRoot, 'review-ns-a', async (session) => {
+      expect((await session.invoke('scene.create', { operationId: 'op-review-ns-scene', sceneId: 'review_ns_scene' })).ok).toBe(true);
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'review-ns-b', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'op-review-ns-variable', name: 'flag.review_ns', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const planned = await planFromComparison(fixture, [first.ref, second.ref]);
+    expect(planned.plan.dryRun.status).toBe('passed');
+
+    const reviewId = 'review_namespace_fixture';
+    const snapshot = await fixture.service.currentSnapshot();
+    const reviews = new NodeReviewStore(fixture.store.projectDirectory, fixture.identity);
+    await reviews.createReview(reviewId, {
+      reviewVersion: '1.0.0',
+      reviewId,
+      kind: 'comparison',
+      projectIdentity: fixture.identity,
+      expectedProjectRevision: snapshot.revision,
+      comparisonFingerprint: planned.plan.comparisonFingerprint,
+    });
+    const reviewManifestPath = path.join(fixture.store.projectDirectory, 'reviews', 'manifest.json');
+    expect(fs.existsSync(path.join(fixture.store.projectDirectory, 'reviews', reviewId, 'identity.json'))).toBe(true);
+    expect(fs.existsSync(reviewManifestPath)).toBe(false);
+
+    let result: Awaited<ReturnType<CompositionService['executePlan']>> | undefined;
+    let failure: unknown;
+    try {
+      result = await fixture.service.executePlan({
+        planId: planned.plan.planId,
+        artifactSha256: planned.identity.sha256,
+        executeOperationId: 'exec-review-namespace',
+      });
+    } catch (error) {
+      failure = error;
+    }
+    if (failure !== undefined) {
+      expect(failure).toMatchObject({
+        code: 'CHANGE_STORE_CORRUPT',
+        details: { changeId: 'reviews', path: reviewManifestPath },
+      });
+    }
+    expect(failure).toBeUndefined();
+    expect(result?.status).toBe('READY');
+    expect(fs.existsSync(path.join(fixture.store.projectDirectory, 'reviews', reviewId, 'identity.json'))).toBe(true);
+    expect(fs.existsSync(reviewManifestPath)).toBe(false);
+  });
+
+  it('keeps a corrupt chg namespace fail-loud without deleting or repairing it', async () => {
+    const fixture = await setup('corrupt-change-namespace');
+    const first = await sealCandidate(fixture.projectRoot, 'broken-ns-a', async (session) => {
+      expect((await session.invoke('scene.create', { operationId: 'op-broken-ns-scene', sceneId: 'broken_ns_scene' })).ok).toBe(true);
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'broken-ns-b', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'op-broken-ns-variable', name: 'flag.broken_ns', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const planned = await planFromComparison(fixture, [first.ref, second.ref]);
+    expect(planned.plan.dryRun.status).toBe('passed');
+
+    const brokenChangeId = 'chg_broken_namespace';
+    const brokenDirectory = path.join(fixture.store.projectDirectory, brokenChangeId);
+    const manifestPath = path.join(brokenDirectory, 'manifest.json');
+    const sentinelPath = path.join(brokenDirectory, 'preserve.txt');
+    fs.mkdirSync(brokenDirectory, { recursive: true });
+    fs.writeFileSync(sentinelPath, 'preserve-corrupt-change', 'utf8');
+
+    await expect(fixture.service.executePlan({
+      planId: planned.plan.planId,
+      artifactSha256: planned.identity.sha256,
+      executeOperationId: 'exec-corrupt-change-namespace',
+    })).rejects.toMatchObject({
+      code: 'CHANGE_STORE_CORRUPT',
+      details: { changeId: brokenChangeId, path: manifestPath },
+    });
+    expect(fs.existsSync(brokenDirectory)).toBe(true);
+    expect(fs.existsSync(manifestPath)).toBe(false);
+    expect(fs.readFileSync(sentinelPath, 'utf8')).toBe('preserve-corrupt-change');
   });
 });
 

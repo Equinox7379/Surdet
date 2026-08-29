@@ -5,8 +5,12 @@ import type {
 import { state, h, setStatus } from '../state.js';
 import {
   canSealDecision,
+  labelForCandidate,
   labelForConflictSeverity,
+  labelForDisposition,
+  labelForFreshness,
   labelForObjectKind,
+  labelForObjectRef,
   labelForReviewState,
   labelForUnknownCode,
 } from '../review-model.js';
@@ -42,6 +46,72 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+type ReviewEvidenceView = HumanReviewProjection['candidates'][number]['evidence'];
+type ReviewUnitView = NonNullable<ReviewConflict['options']>[number];
+type ReviewSafeGroupView = HumanReviewProjection['safeGroups'][number];
+type ReviewResult = NonNullable<HumanReviewProjection['finalResult']>;
+type ResultPlanView = NonNullable<ReviewResult['plan']>;
+type ResultDiffView = NonNullable<ReviewResult['diff']>;
+
+function listText(values: readonly string[]): string {
+  return values.length === 0 ? '无' : values.join('、');
+}
+
+function impactText(values: readonly unknown[]): string {
+  if (values.length === 0) return '无';
+  return values.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join('、');
+}
+
+function candidateIdForCapsule(
+  projection: HumanReviewProjection,
+  ref: { changeId: string; capsuleId: string; artifactSha256: string },
+): string | undefined {
+  return projection.candidates.find((candidate) =>
+    candidate.ref.changeId === ref.changeId
+    && candidate.ref.capsuleId === ref.capsuleId
+    && candidate.ref.artifactSha256 === ref.artifactSha256)?.candidateId;
+}
+
+function labelForSourceCapsule(
+  projection: HumanReviewProjection,
+  plan: ResultPlanView,
+  ref: { changeId: string; capsuleId: string; artifactSha256: string },
+): string {
+  const sourceCandidate = plan.sourceCandidates.find((candidate) =>
+    candidate.ref.changeId === ref.changeId
+    && candidate.ref.capsuleId === ref.capsuleId
+    && candidate.ref.artifactSha256 === ref.artifactSha256);
+  if (sourceCandidate !== undefined) return `方案 ${sourceCandidate.displayOrdinal}`;
+  return labelForCandidate(projection, candidateIdForCapsule(projection, ref));
+}
+
+function candidateEvidenceSummary(evidence: ReviewEvidenceView): string {
+  const statuses = [
+    `校验 ${labelForFreshness(evidence.validation)}`,
+    `模拟 ${labelForFreshness(evidence.simulation)}`,
+    `运行 ${labelForFreshness(evidence.runtime)}`,
+  ];
+  if (evidence.warnings > 0) statuses.push(`${evidence.warnings} 项警告`);
+  if (evidence.manualReviewRequired.length > 0) statuses.push(`人工检查：${evidence.manualReviewRequired.join('、')}`);
+  return statuses.join('；');
+}
+
+function safeGroupEvidenceBadges(group: ReviewSafeGroupView): string[] {
+  const evidence = group.evidence;
+  const badges: string[] = [];
+  if (evidence.missing) badges.push('证据缺失');
+  if (evidence.stale) badges.push('证据过期');
+  if (evidence.failed) badges.push('证据失败');
+  if (evidence.incomplete) badges.push('证据不完整');
+  if (evidence.warningCount > 0) badges.push(`${evidence.warningCount} 项警告`);
+  if (evidence.manualReviewRequired.length > 0) badges.push('需要人工检查');
+  return badges.length === 0 ? ['证据正常'] : badges;
+}
+
+function appendFact(container: HTMLElement, label: string, value: string): void {
+  container.appendChild(h('div', 'review-result-fact', `${label}：${value}`));
+}
+
 function appendTechDetails(container: HTMLElement, projection: HumanReviewProjection): void {
   const details = h('details') as HTMLDetailsElement;
   details.setAttribute('data-tech-details', '');
@@ -67,6 +137,7 @@ function setResolution(
   resolution: ReviewDecisionDraft['conflictResolutions'][number]['resolution'],
   chosenUnitId?: string,
 ): void {
+  const previous = decisionContentIdentity(workspace.decisionDraft);
   const next = workspace.decisionDraft.conflictResolutions.filter((item) => item.conflictId !== conflict.conflictId);
   next.push({
     conflictId: conflict.conflictId,
@@ -82,6 +153,39 @@ function setResolution(
     selected.add(chosenUnitId);
     workspace.decisionDraft.selectedUnitIds = [...selected];
   }
+  if (decisionContentIdentity(workspace.decisionDraft) !== previous) {
+    workspace.decisionDraft.decisionId = '';
+    decisionSealStates.delete(workspace);
+  }
+}
+
+interface DecisionSealState {
+  decisionId: string;
+  decidedAt: string;
+}
+
+const decisionSealStates = new WeakMap<ReviewWorkspaceState, DecisionSealState>();
+const decisionWrites = new WeakSet<ReviewWorkspaceState>();
+
+function decisionContentIdentity(draft: ReviewDecisionDraft): string {
+  return JSON.stringify({
+    selectedUnitIds: [...draft.selectedUnitIds].sort((left, right) => left.localeCompare(right)),
+    conflictResolutions: [...draft.conflictResolutions]
+      .map((resolution) => ({ ...resolution }))
+      .sort((left, right) => left.conflictId.localeCompare(right.conflictId)),
+  });
+}
+
+function sealDecisionState(workspace: ReviewWorkspaceState, options: ReviewPanelOptions): DecisionSealState {
+  const existing = decisionSealStates.get(workspace);
+  if (workspace.decisionDraft.decisionId.length === 0) {
+    if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('当前浏览器不能生成决定 ID');
+    workspace.decisionDraft.decisionId = globalThis.crypto.randomUUID();
+  }
+  if (existing !== undefined && existing.decisionId === workspace.decisionDraft.decisionId) return existing;
+  const sealed = { decisionId: workspace.decisionDraft.decisionId, decidedAt: nowOf(options) };
+  decisionSealStates.set(workspace, sealed);
+  return sealed;
 }
 
 function appendDecisionButton(
@@ -127,6 +231,8 @@ function renderComparisonReview(
   options: ReviewPanelOptions,
 ): void {
   const projection = workspace.projection;
+  const decisionSaved = workspace.receiptStatus === 'decision-written';
+  const decisionLockedAtRender = decisionSaved || decisionWrites.has(workspace);
   const shell = h('div', 'review-workbench');
   const taskList = h('aside', 'review-task-list');
   taskList.appendChild(h('h2', undefined, '审阅任务'));
@@ -149,60 +255,173 @@ function renderComparisonReview(
   const main = h('section', 'review-main');
   main.appendChild(h('h2', undefined, '比较结果'));
   main.appendChild(h('div', 'review-evidence-summary', `共 ${projection.task.candidateCount} 个方案，${projection.task.objectCount} 个对象`));
+  if (workspace.decisionReceipt !== null) {
+    const marker = h('div', 'review-receipt-status', '已读取已保存的决定');
+    marker.setAttribute('data-decision-receipt', 'written');
+    marker.setAttribute('data-review-receipt-status', workspace.receiptStatus);
+    marker.setAttribute('data-decision-id', workspace.decisionReceipt.decisionId);
+    marker.setAttribute('data-decision-fingerprint', workspace.decisionReceipt.decisionFingerprint);
+    main.appendChild(marker);
+  }
   if (projection.safeGroups.length > 0) {
     main.appendChild(h('h3', undefined, '安全结果'));
     for (const group of projection.safeGroups) {
-      const text = `${group.sourceCount} 个方案得到相同结果`;
-      const item = h('div', 'review-safe-group', text);
+      const view = group;
+      const badges = safeGroupEvidenceBadges(group);
+      const item = h('details', 'review-safe-group') as HTMLDetailsElement;
       item.setAttribute('data-safe-group', group.groupId);
-      item.appendChild(h('div', 'mono', group.primaryObject));
+      const summary = h('summary', 'review-safe-summary');
+      summary.appendChild(h('strong', undefined, `${group.sourceCount} 个方案得到相同结果`));
+      summary.appendChild(h('span', 'review-safe-object', labelForObjectRef(group.primaryObject)));
+      summary.appendChild(h('span', 'review-safe-default', '默认纳入'));
+      for (const badge of badges) summary.appendChild(h('span', badge === '证据正常' ? 'review-safe-badge ok' : 'review-safe-badge', badge));
+      item.appendChild(summary);
+
+      const body = h('div', 'review-safe-body');
+      const sources = view.sources;
+      const sourceList = h('div', 'review-safe-sources');
+      for (const source of sources) {
+        const sourceItem = h('article', 'review-safe-source');
+        sourceItem.appendChild(h('strong', undefined, labelForCandidate(projection, source.candidateId)));
+        sourceItem.appendChild(h('span', 'review-unit-object', labelForObjectRef(source.primaryObject)));
+        if (source.outcomes.length > 0) {
+          for (const outcome of source.outcomes) {
+            sourceItem.appendChild(h('div', 'review-outcome', `${labelForDisposition(outcome.disposition)} ${labelForObjectRef(outcome.objectRef)}`));
+          }
+        } else {
+          sourceItem.appendChild(h('div', 'review-outcome', `结果 ${labelForObjectRef(source.primaryObject)}`));
+        }
+        sourceItem.appendChild(h('div', 'review-source-evidence', candidateEvidenceSummary(source.evidence)));
+        const candidate = projection.candidates.find((item) => item.candidateId === source.candidateId);
+        if (candidate !== undefined) {
+          sourceItem.appendChild(h('pre', 'review-source-capsule mono', [
+            `candidateId: ${candidate.candidateId}`,
+            `changeId: ${candidate.ref.changeId}`,
+            `capsuleId: ${candidate.ref.capsuleId}`,
+            `artifactSha256: ${candidate.ref.artifactSha256}`,
+          ].join('\n')));
+        } else {
+          sourceItem.appendChild(h('div', 'review-warning', '该来源缺少可核对的 capsule 技术身份'));
+        }
+        sourceList.appendChild(sourceItem);
+      }
+      body.appendChild(sourceList);
+      const dependencyRefs = view.dependencyObjectRefs;
+      body.appendChild(h('div', 'review-impact-row', dependencyRefs.length === 0
+        ? '无依赖对象'
+        : `依赖对象：${[...new Set(dependencyRefs)].map(labelForObjectRef).join('、')}`));
+      body.appendChild(h('div', 'review-impact-row', `可能影响：${impactText(view.potentialImpact)}`));
+      body.appendChild(h('div', 'review-impact-row', `实际观察：${impactText(view.observedImpact)}`));
+      if (view.evidence.manualReviewRequired.length) {
+        body.appendChild(h('div', 'review-warning', `人工检查：${view.evidence.manualReviewRequired.join('、')}`));
+      }
+      const identity = h('details', 'review-safe-identity');
+      identity.appendChild(h('summary', undefined, `技术身份：${group.groupId}`));
+      identity.appendChild(h('pre', 'mono', [
+        `groupId: ${group.groupId}`,
+        `unitIds: ${group.unitIds.join(', ')}`,
+        `candidateIds: ${group.candidateIds.join(', ')}`,
+        `finalFingerprint: ${group.finalFingerprint}`,
+      ].join('\n')));
+      body.appendChild(identity);
+      item.appendChild(body);
       main.appendChild(item);
     }
   }
 
+  const implicitDependencies = projection.dependencies.filter((dependency) => dependency.inclusion === 'implicit');
+  if (implicitDependencies.length > 0) {
+    const dependencySection = h('section', 'review-dependencies');
+    dependencySection.appendChild(h('h3', undefined, '自动依赖'));
+    for (const dependency of implicitDependencies) {
+      dependencySection.appendChild(h(
+        'div',
+        'review-dependency',
+        `依赖自动纳入：${labelForObjectRef(dependency.fromObjectRef)} → ${labelForObjectRef(dependency.objectRef)}`,
+      ));
+    }
+    main.appendChild(dependencySection);
+  }
+
   const conflicts = projection.conflicts;
   let decisionButton: HTMLButtonElement | null = null;
+  const decisionControls: HTMLButtonElement[] = [];
   if (conflicts.length > 0) {
     main.appendChild(h('h3', undefined, '需要处理的冲突'));
     for (const conflict of conflicts) {
+      const savedResolution = workspace.decisionDraft.conflictResolutions.find((resolution) => (
+        resolution.conflictId === conflict.conflictId
+      ));
       const item = h('article', `review-conflict ${conflict.severity}`);
       item.setAttribute('data-conflict-id', conflict.conflictId);
       item.appendChild(h('strong', undefined, labelForConflictSeverity(conflict.severity)));
       item.appendChild(h('div', undefined, conflict.severity === 'blocking' ? '该冲突阻止封存决定' : '请根据证据选择处理方式'));
       if (conflict.code !== 'OBJECT_RESULTS_DIVERGE') item.appendChild(h('div', 'review-unknown-code', labelForUnknownCode(conflict.code)));
       const choices = h('div', 'review-conflict-choices');
-      for (const unitId of conflict.unitIds) {
+      const conflictOptions = conflict.options;
+      for (const option of conflictOptions) {
         if (!conflict.allowedResolutions.includes('choose-unit')) continue;
-        const choice = h('button', undefined, '选择这个结果') as HTMLButtonElement;
-        choice.setAttribute('data-choice-unit', unitId);
-        choice.title = unitId;
+        const outcome = option.outcomes[0];
+        const objectLabel = labelForObjectRef(outcome?.objectRef ?? option.primaryObject);
+        const disposition = outcome === undefined ? '结果' : labelForDisposition(outcome.disposition);
+        const candidateLabel = labelForCandidate(projection, option.candidateId);
+        const optionItem = h('article', 'review-conflict-option');
+        optionItem.setAttribute('data-choice-option-unit', option.unitId);
+        const selected = savedResolution?.resolution === 'choose-unit' && savedResolution.chosenUnitId === option.unitId;
+        const choice = h('button', 'review-conflict-choice', `选择${candidateLabel} · ${objectLabel}（${disposition}）${selected ? ' · 已选择' : ''}`) as HTMLButtonElement;
+        choice.setAttribute('data-choice-unit', option.unitId);
+        choice.setAttribute('data-choice-selected', selected ? 'true' : 'false');
+        choice.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        choice.title = `${candidateLabel} / ${objectLabel}`;
+        choice.disabled = decisionLockedAtRender;
         choice.onclick = () => {
-          if (projection.state === 'RETURNED') return;
-          setResolution(workspace, conflict, 'choose-unit', unitId);
+          if (decisionSaved || decisionWrites.has(workspace) || projection.state === 'RETURNED') return;
+          setResolution(workspace, conflict, 'choose-unit', option.unitId);
           if (decisionButton) decisionButton.disabled = !canSealDecision(projection, workspace.decisionDraft);
         };
-        choices.appendChild(choice);
+        decisionControls.push(choice);
+        optionItem.appendChild(choice);
+        optionItem.appendChild(h('div', 'review-impact-row', `可能影响：${impactText(option.potentialImpact)}`));
+        optionItem.appendChild(h('div', 'review-impact-row', `实际观察：${impactText(option.observedImpact)}`));
+        optionItem.appendChild(h('div', 'review-source-evidence', candidateEvidenceSummary(option.evidence)));
+        const fingerprint = h('details', 'review-choice-fingerprint') as HTMLDetailsElement;
+        fingerprint.setAttribute('data-choice-fingerprint', '');
+        fingerprint.appendChild(h('summary', undefined, '查看技术指纹'));
+        fingerprint.appendChild(h('pre', 'mono', `finalFingerprint: ${option.finalFingerprint ?? '无'}`));
+        optionItem.appendChild(fingerprint);
+        choices.appendChild(optionItem);
       }
       if (conflict.allowedResolutions.includes('exclude-all')) {
-        const exclude = h('button', undefined, '全部不要') as HTMLButtonElement;
+        const selected = savedResolution?.resolution === 'exclude-all';
+        const exclude = h('button', undefined, `全部不要${selected ? ' · 已选择' : ''}`) as HTMLButtonElement;
         exclude.setAttribute('data-choice-exclude', conflict.conflictId);
+        exclude.setAttribute('data-choice-selected', selected ? 'true' : 'false');
+        exclude.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        exclude.disabled = decisionLockedAtRender;
         exclude.onclick = () => {
-          if (projection.state === 'RETURNED') return;
+          if (decisionSaved || decisionWrites.has(workspace) || projection.state === 'RETURNED') return;
           setResolution(workspace, conflict, 'exclude-all');
           if (decisionButton) decisionButton.disabled = !canSealDecision(projection, workspace.decisionDraft);
         };
+        decisionControls.push(exclude);
         choices.appendChild(exclude);
       }
       if (conflict.allowedResolutions.includes('regenerate-candidate')) {
-        const regenerate = h('button', 'danger', '让 Agent 重做') as HTMLButtonElement;
+        const selected = savedResolution?.resolution === 'regenerate-candidate';
+        const regenerate = h('button', 'danger', `让 Agent 重做${selected ? ' · 已选择' : ''}`) as HTMLButtonElement;
         regenerate.setAttribute('data-choice-regenerate', conflict.conflictId);
+        regenerate.setAttribute('data-choice-selected', selected ? 'true' : 'false');
+        regenerate.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        regenerate.disabled = decisionLockedAtRender;
         regenerate.onclick = () => {
+          if (decisionSaved || decisionWrites.has(workspace)) return;
           setResolution(workspace, conflict, 'regenerate-candidate');
           projection.state = 'RETURNED';
           stateLabel.textContent = labelForReviewState(projection.state);
           if (decisionButton) decisionButton.disabled = true;
           setStatus('已记录让 Agent 重做；不会生成 plan-ready decision', true, 5000);
         };
+        decisionControls.push(regenerate);
         choices.appendChild(regenerate);
       }
       item.appendChild(choices);
@@ -213,13 +432,41 @@ function renderComparisonReview(
   decisionButton = appendDecisionButton(
     operations,
     workspace,
-    '保存我的决定',
+    decisionSaved ? '决定已保存' : decisionLockedAtRender ? '正在保存决定' : '保存我的决定',
     'save-decision',
-    !canSealDecision(projection, workspace.decisionDraft),
+    decisionLockedAtRender || !canSealDecision(projection, workspace.decisionDraft),
     () => {
-      void writeDecisionReceipt(workspace, workspace.decisionDraft, nowOf(options))
-        .then(() => setStatus('已保存我的决定', true, 5000))
-        .catch((error) => setStatus(`保存决定失败：${errorMessage(error)}`, false, 6000));
+      if (decisionSaved || decisionWrites.has(workspace) || decisionButton === null || decisionButton.disabled) return;
+      let seal: DecisionSealState;
+      try {
+        seal = sealDecisionState(workspace, options);
+      } catch (error) {
+        setStatus(`保存决定失败：${errorMessage(error)}`, false, 6000);
+        return;
+      }
+      const sealedDraft: ReviewDecisionDraft = {
+        decisionId: workspace.decisionDraft.decisionId,
+        selectedUnitIds: [...workspace.decisionDraft.selectedUnitIds],
+        conflictResolutions: workspace.decisionDraft.conflictResolutions.map((resolution) => ({ ...resolution })),
+      };
+      decisionWrites.add(workspace);
+      for (const control of decisionControls) control.disabled = true;
+      decisionButton.disabled = true;
+      void writeDecisionReceipt(workspace, sealedDraft, seal.decidedAt)
+        .then(() => {
+          decisionWrites.delete(workspace);
+          try {
+            renderReviewPanel(container, workspace, options);
+            setStatus('已保存我的决定', true, 5000);
+          } catch (error) {
+            setStatus(`决定已经保存，但界面刷新失败：${errorMessage(error)}`, false, 6000);
+          }
+        }, (error) => {
+          decisionWrites.delete(workspace);
+          for (const control of decisionControls) control.disabled = projection.state === 'RETURNED';
+          decisionButton!.disabled = !canSealDecision(projection, workspace.decisionDraft);
+          setStatus(`保存决定失败：${errorMessage(error)}`, false, 6000);
+        });
     },
   );
   main.appendChild(operations);
@@ -229,6 +476,101 @@ function renderComparisonReview(
   container.appendChild(shell);
 }
 
+function appendResultPlan(
+  container: HTMLElement,
+  projection: HumanReviewProjection,
+  plan: ResultPlanView,
+): void {
+  const section = h('section', 'review-result-section');
+  section.appendChild(h('h3', undefined, '实际执行计划'));
+  appendFact(section, '明确选择', listText(plan.selectedUnitIds));
+  appendFact(section, '实际纳入', listText(plan.includedUnitIds));
+  appendFact(section, '自动纳入', listText(plan.implicitInclusions));
+  appendFact(section, '明确排除', listText(plan.excludedUnitIds));
+  const sources = plan.sourceCapsules.map((ref) => labelForSourceCapsule(projection, plan, ref));
+  appendFact(section, '来源方案', listText([...new Set(sources)]));
+  section.appendChild(h('h4', undefined, '冲突裁决'));
+  if (plan.conflictResolutions.length === 0) section.appendChild(h('div', 'review-result-fact', '无冲突裁决'));
+  for (const resolution of plan.conflictResolutions) {
+    const choice = resolution.resolution === 'choose-unit'
+      ? `选择 ${resolution.chosenUnitId ?? '未知结果'}`
+      : resolution.resolution === 'exclude-all' ? '全部排除' : '要求重新生成';
+    section.appendChild(h('div', 'review-plan-resolution', `${resolution.conflictId}：${choice}`));
+  }
+  appendFact(section, '审阅绑定', `${plan.review.reviewId} / ${plan.review.decisionId}`);
+  if (plan.deduplicatedUnits.length === 0) appendFact(section, '去重结果', '无');
+  else {
+    for (const item of plan.deduplicatedUnits) {
+      appendFact(section, '去重保留', `${item.retainedUnitId}；来源 ${listText(item.provenanceUnitIds)}`);
+    }
+  }
+
+  section.appendChild(h('h4', undefined, '重放操作'));
+  if (plan.replayOperations.length === 0) section.appendChild(h('div', 'review-result-fact', '无重放操作'));
+  for (const operation of plan.replayOperations) {
+    const targetObjects = operation.producedObjects?.map((produced) => produced.objectRef) ?? [];
+    section.appendChild(h('div', 'review-plan-operation', [
+      labelForSourceCapsule(projection, plan, operation.sourceCapsule),
+      operation.sourceUnitId,
+      '→',
+      targetObjects.map(labelForObjectRef).join('、') || '无目标对象',
+    ].join(' ')));
+  }
+
+  section.appendChild(h('h4', undefined, '来源沿袭'));
+  if (plan.provenance.length === 0) section.appendChild(h('div', 'review-result-fact', '无来源记录'));
+  const provenanceByObject = new Map<string, string[]>();
+  for (const entry of plan.provenance) {
+    const source = `${labelForSourceCapsule(projection, plan, entry.sourceCapsule)}（${entry.sourceUnitId}）`;
+    const values = provenanceByObject.get(entry.targetObject) ?? [];
+    values.push(source);
+    provenanceByObject.set(entry.targetObject, values);
+  }
+  for (const [objectRef, sources] of provenanceByObject) {
+    section.appendChild(h('div', 'review-provenance', `${labelForObjectRef(objectRef)}：${[...new Set(sources)].join('、')}`));
+  }
+
+  section.appendChild(h('h4', undefined, '最终对象指纹'));
+  const fingerprints = Object.entries(plan.finalObjectFingerprints);
+  if (fingerprints.length === 0) section.appendChild(h('div', 'review-result-fact', '无对象指纹'));
+  for (const [objectRef, fingerprint] of fingerprints) {
+    section.appendChild(h('div', 'review-fingerprint-row', `${labelForObjectRef(objectRef)}：${fingerprint}`));
+  }
+  container.appendChild(section);
+}
+
+function appendResultDiff(container: HTMLElement, diff: ResultDiffView): void {
+  const section = h('section', 'review-result-section');
+  section.appendChild(h('h3', undefined, '变更内容'));
+  section.appendChild(h('div', 'review-diff-summary', [
+    `新增场景 ${diff.summary.createdScenes}`,
+    `修改场景 ${diff.summary.modifiedScenes}`,
+    `变量变更 ${diff.summary.changedVariables}`,
+  ].join('；')));
+  for (const warning of diff.summary.warnings) section.appendChild(h('div', 'review-warning', warning));
+  if (diff.semantic.length === 0) section.appendChild(h('div', 'review-result-fact', '语义变更：无额外条目'));
+  else {
+    section.appendChild(h('h4', undefined, '语义变更'));
+    for (const item of diff.semantic) section.appendChild(h('pre', 'review-semantic-diff mono', JSON.stringify(item, null, 2)));
+  }
+  section.appendChild(h('h4', undefined, '文件差异'));
+  if (diff.files.length === 0) section.appendChild(h('div', 'review-result-fact', '无文件差异'));
+  for (const file of diff.files) {
+    const fileItem = h('article', 'review-file-diff');
+    fileItem.appendChild(h('strong', undefined, file.path));
+    if (file.unexpectedFormatChange) fileItem.appendChild(h('div', 'review-warning', '包含非预期格式变化'));
+    fileItem.appendChild(h('pre', 'mono', file.unifiedDiff));
+    section.appendChild(fileItem);
+  }
+  container.appendChild(section);
+}
+
+function resultEvidenceIsFresh(details: ReviewResult): boolean {
+  const freshness = details.freshness;
+  return [freshness.diff, freshness.validation, freshness.simulation, freshness.runtime]
+      .every((value) => value === 'fresh');
+}
+
 function renderResultReview(
   container: HTMLElement,
   workspace: ReviewWorkspaceState,
@@ -236,19 +578,31 @@ function renderResultReview(
 ): void {
   const projection = workspace.projection;
   const result = projection.finalResult;
+  if (result === undefined) throw new Error('integration-result 审阅缺少 finalResult');
   const shell = h('div', 'review-workbench');
   const taskList = h('aside', 'review-task-list');
   taskList.appendChild(h('h2', undefined, '审阅任务'));
   taskList.appendChild(h('div', 'review-task-title', projection.task.title));
   taskList.appendChild(h('div', 'review-state', labelForReviewState(projection.state)));
-  taskList.appendChild(h('div', 'review-result-fact', `计划：${result?.planId ?? '未知'}`));
-  taskList.appendChild(h('div', 'review-result-fact', `工作修订：${result?.workingRevision ?? '未知'}`));
+  taskList.appendChild(h('div', 'review-result-fact', `计划：${result.planId}`));
+  taskList.appendChild(h('div', 'review-result-fact', `工作修订：${result.workingRevision}`));
+  taskList.appendChild(h('div', 'review-result-fact', `项目树身份：${result.resultTreeSha256}`));
   shell.appendChild(taskList);
 
   const main = h('section', 'review-main');
   main.appendChild(h('h2', undefined, '结果检查'));
-  main.appendChild(h('div', 'review-result-fact', `变更指纹：${result?.diffFingerprint ?? '未知'}`));
-  if (result && result.warnings.length > 0) {
+  appendFact(main, '计划指纹', result.planFingerprint);
+  appendFact(main, '变更指纹', result.diffFingerprint);
+  appendResultPlan(main, projection, result.plan);
+  appendResultDiff(main, result.diff);
+  const freshness = result.freshness;
+  appendFact(main, '证据新鲜度', [
+    `diff ${labelForFreshness(freshness.diff)}`,
+    `校验 ${labelForFreshness(freshness.validation)}`,
+    `模拟 ${labelForFreshness(freshness.simulation)}`,
+    `运行 ${labelForFreshness(freshness.runtime)}`,
+  ].join('；'));
+  if (result.warnings.length > 0) {
     main.appendChild(h('h3', undefined, '警告'));
     for (const warning of result.warnings) main.appendChild(h('div', 'review-warning', warning.message));
   }
@@ -275,22 +629,23 @@ function renderResultReview(
 
   const evidence = h('section', 'review-evidence');
   evidence.appendChild(h('h3', undefined, '证据'));
-  if (result) {
-    evidence.appendChild(h('div', undefined, `diff：${result.evidence.diffEvidenceId}`));
-    evidence.appendChild(h('div', undefined, `校验：${result.evidence.validationEvidenceId}`));
-    evidence.appendChild(h('div', undefined, `模拟：${result.evidence.simulationEvidenceId}`));
-    const observedIds = state.previewTrace.map((event) => `trace:${event.source.sceneId}:${event.source.line}`);
-    const traceEvidence = reconcileReviewTraceEvidence(projection, observedIds);
-    evidence.appendChild(h('div', undefined, `实际观察：${state.previewTrace.length > 0 ? `${state.previewTrace.length} 个事件` : '尚未观察'}`));
-    if (traceEvidence.missing.length > 0) evidence.appendChild(h('div', 'review-warning', `待对照运行证据：${traceEvidence.missing.join('、')}`));
-  }
+  evidence.appendChild(h('div', undefined, `diff：${result.evidence.diffEvidenceId}`));
+  evidence.appendChild(h('div', undefined, `校验：${result.evidence.validationEvidenceId}`));
+  evidence.appendChild(h('div', undefined, `模拟：${result.evidence.simulationEvidenceId}`));
+  const traceEvidence = reconcileReviewTraceEvidence(projection, state.previewTrace);
+  evidence.appendChild(h('div', undefined, `实际观察：${state.previewTrace.length > 0 ? `${state.previewTrace.length} 个事件` : '尚未观察'}`));
+  if (traceEvidence.matched.length > 0) evidence.appendChild(h('div', undefined, `已对照运行证据：${traceEvidence.matched.join('、')}`));
+  if (traceEvidence.missing.length > 0) evidence.appendChild(h('div', 'review-warning', `待对照运行证据：${traceEvidence.missing.join('、')}`));
+  if (traceEvidence.unexpected.length > 0) evidence.appendChild(h('div', 'review-warning', `正式证据外观察：${traceEvidence.unexpected.length} 个事件`));
+  evidence.appendChild(h('div', 'review-result-fact', `项目树身份：${result.resultTreeSha256}`));
   main.appendChild(evidence);
   const operations = h('div', 'review-operations');
   const approve = h('button', 'primary', '批准这个计划') as HTMLButtonElement;
   approve.setAttribute('data-action', 'approve-result');
-  approve.disabled = workspace.fixtureChanged || workspace.receiptStatus === 'returned';
+  approve.disabled = workspace.fixtureChanged
+    || workspace.receiptStatus === 'returned'
+    || !resultEvidenceIsFresh(result);
   approve.onclick = () => {
-    if (result === undefined) return;
     void writeApprovalReceipt(workspace, { approvalId: `approval_${Date.now()}` }, nowOf(options))
       .then(() => setStatus('已批准这个计划', true, 5000))
       .catch((error) => setStatus(`批准失败：${errorMessage(error)}`, false, 6000));
@@ -318,6 +673,7 @@ function renderResultReview(
   operations.appendChild(reload);
   main.appendChild(operations);
   if (workspace.fixtureChanged) main.appendChild(h('div', 'review-warning', '你正在查看探索性修改，批准已禁用。'));
+  if (!resultEvidenceIsFresh(result)) main.appendChild(h('div', 'review-warning', '证据不是全部新鲜状态，批准已禁用。'));
   const refresh = h('button', undefined, '检查探索修改') as HTMLButtonElement;
   refresh.setAttribute('data-action', 'refresh-result-tree');
   refresh.onclick = () => {
@@ -355,7 +711,6 @@ export async function openReviewPanelWorkspace(): Promise<void> {
   state.selectedObjectRef = null;
   state.previewChoices = null;
   state.dirName = `审阅：${state.reviewWorkspace.projection.task.title}`;
-  setStatus('已打开审阅任务', true, 4000);
 }
 
 /** 仅供预览状态探针调用，保持变化只在当前 review workspace 内。 */

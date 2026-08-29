@@ -569,6 +569,81 @@ describe('DialogueLayer v2 projection contract', () => {
     }
   });
 
+  it('resolves dialogue speakers by stable ID first or by an unambiguous display name', () => {
+    const stage = new DialogueStageHarness();
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const layer = new DialogueLayer({
+      uiLayer: new Container(),
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+    });
+    const ports = createPresentationPorts(stage);
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, {
+      commands: ports.commands,
+      queries: ports.queries,
+    });
+    const facade = new RendererFacade({
+      stage,
+      controller,
+      monitor: new RenderPerformanceMonitor(),
+      dialogueLayer: layer,
+    });
+    const worldFocus = vi.spyOn(stage, 'setPortraitFocus');
+
+    try {
+      facade.commands.dialogue.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+      facade.commands.dialogue.showText('lynn', '稳定 ID 台词');
+      expect(layer.debugSnapshot()).toMatchObject({
+        activeSpeakerId: 'lynn',
+        speakerText: '「凛」',
+      });
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+
+      facade.commands.dialogue.showText('凛', '唯一显示名台词');
+      expect(layer.debugSnapshot()).toMatchObject({
+        activeSpeakerId: 'lynn',
+        speakerText: '「凛」',
+      });
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+
+      facade.commands.dialogue.showText('未知说话人', '未知映射');
+      expect(layer.debugSnapshot()).toMatchObject({
+        activeSpeakerId: null,
+        speakerText: '「未知说话人」',
+      });
+      expect(worldFocus).toHaveBeenLastCalledWith(null);
+
+      facade.commands.dialogue.setSpeakerProfiles([
+        { id: 'first', name: '同名' },
+        { id: 'second', name: '同名' },
+      ]);
+      facade.commands.dialogue.showText('同名', '同名不得猜测');
+      expect(layer.debugSnapshot()).toMatchObject({
+        activeSpeakerId: null,
+        speakerText: '「同名」',
+      });
+      expect(worldFocus).toHaveBeenLastCalledWith(null);
+
+      facade.commands.dialogue.setSpeakerProfiles([
+        { id: 'lynn', name: '凛' },
+        { id: 'other', name: 'lynn' },
+      ]);
+      facade.commands.dialogue.showText('lynn', 'ID 与显示名冲突时 ID 优先');
+      expect(layer.debugSnapshot()).toMatchObject({
+        activeSpeakerId: 'lynn',
+        speakerText: '「凛」',
+      });
+      expect(worldFocus).toHaveBeenLastCalledWith('lynn');
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
   it('keeps text, narration, and repeated text observable through dialogue commands', () => {
     const runtime = makeRuntime();
     runtime.facade.commands.dialogue.showText('凛', '同一句');

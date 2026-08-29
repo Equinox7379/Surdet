@@ -46,7 +46,8 @@ describe('public selection contract (W5-PUBLIC-SELECTION-CONTRACT-1)', () => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
   });
 
-  it('exposes the full safe comparison projection through the dispatcher', async () => {
+  // 该垂直切片在进程内串行使用多个 AgentPortSession；这里的时间预算只属于测试 harness，不是产品性能资格线。
+  it('exposes the full safe comparison projection through the dispatcher', { timeout: 30000 }, async () => {
     const projectRoot = makeProject('selcmp');
     const a = await sealCandidate(projectRoot, 'sa', async (session) => {
       expect((await session.invoke('scene.create', {
@@ -326,7 +327,9 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
     return { changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
   };
 
-  it('preserves full provenance for a READY integration capsule across A/B/C/D candidates', async () => {
+  // 该纵向集成测试通过进程内 AgentPortSession 串行封存四个候选，并执行多轮验证、模拟、运行时、diff 与胶囊磁盘证据；
+  // 15 秒是纵向集成测试的 harness 预算，不是产品性能资格线。
+  it('preserves full provenance for a READY integration capsule across A/B/C/D candidates', { timeout: 15_000 }, async () => {
     const projectRoot = makeProject('prov');
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-prov-data-'));
     temporaryRoots.push(data);

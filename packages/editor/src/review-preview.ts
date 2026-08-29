@@ -1,4 +1,8 @@
-import { stableStringify, type HumanReviewProjection } from '@surdet/authoring';
+import {
+  reviewTraceObservationKey as sharedReviewTraceObservationKey,
+  stableStringify,
+  type HumanReviewProjection,
+} from '@surdet/authoring';
 import { state } from './state.js';
 import { openProjectFromHandle } from './project-io.js';
 import type { ReviewWorkspaceState } from './review-workspace.js';
@@ -15,6 +19,23 @@ export interface ReviewPreviewResult {
   timelineId: string | null;
   treeSha256: string;
   fixtureChanged: boolean;
+}
+
+export interface ReviewTraceObservation {
+  kind: string;
+  source: {
+    sceneId: string;
+    index: number;
+    op: string;
+    file: string;
+    line: number;
+    col: number;
+  };
+}
+
+interface FormalTraceObservation {
+  traceId: string;
+  observationKeys: string[];
 }
 
 export type ReviewBytesHasher = (bytes: Uint8Array) => Promise<string>;
@@ -144,18 +165,44 @@ export function buildReviewPreviewRequest(
   };
 }
 
+/**
+ * 浏览器事件没有 formal traceId；使用事件种类与稳定源码位置组成可复算身份。
+ * 该格式与 authoring result review 中的 runtimeTraceObservations 一致。
+ */
+export function reviewTraceObservationKey(event: ReviewTraceObservation): string {
+  const key = sharedReviewTraceObservationKey(event);
+  if (key === undefined) throw new Error('浏览器观察事件缺少稳定身份字段');
+  return key;
+}
+
 export function reconcileReviewTraceEvidence(
   projection: HumanReviewProjection,
-  observedTraceIds: readonly string[],
+  observedEvents: readonly ReviewTraceObservation[],
 ): { matched: string[]; missing: string[]; unexpected: string[] } {
   const expected = projection.finalResult?.evidence.runtimeTraceIds ?? [];
-  const observed = [...new Set(observedTraceIds)];
+  const formal: readonly FormalTraceObservation[] = projection.finalResult?.runtimeTraceObservations ?? [];
+  const observedKeys = [...new Set(observedEvents.map(reviewTraceObservationKey))];
   const expectedSet = new Set(expected);
-  const observedSet = new Set(observed);
+  const traceIdsByKey = new Map<string, Set<string>>();
+  for (const binding of formal) {
+    if (!expectedSet.has(binding.traceId)) continue;
+    for (const key of binding.observationKeys) {
+      const traceIds = traceIdsByKey.get(key) ?? new Set<string>();
+      traceIds.add(binding.traceId);
+      traceIdsByKey.set(key, traceIds);
+    }
+  }
+  const matchedSet = new Set<string>();
+  const unexpected: string[] = [];
+  for (const key of observedKeys) {
+    const traceIds = traceIdsByKey.get(key);
+    if (traceIds === undefined || traceIds.size === 0) unexpected.push(key);
+    else for (const traceId of traceIds) matchedSet.add(traceId);
+  }
   return {
-    matched: expected.filter((id) => observedSet.has(id)),
-    missing: expected.filter((id) => !observedSet.has(id)),
-    unexpected: observed.filter((id) => !expectedSet.has(id)),
+    matched: expected.filter((id) => matchedSet.has(id)),
+    missing: expected.filter((id) => !matchedSet.has(id)),
+    unexpected,
   };
 }
 
