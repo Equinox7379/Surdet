@@ -21,6 +21,7 @@ import {
   selectAuthoringObject,
 } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
+import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
 import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject } from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
@@ -101,6 +102,12 @@ function refreshProjectBarProjection(): void {
 function markProjectEdited(): void {
   saveAttemptLeftDirty = false;
   refreshProjectBarProjection();
+}
+
+function handleTimelineEdited(): void {
+  markProjectEdited();
+  scheduleValidate();
+  scheduleAuthoringIndexRebuild();
 }
 
 async function saveProject(): Promise<void> {
@@ -223,7 +230,7 @@ bindTimelineHooks({
     state.mainTab = 'preview';
     renderMainArea();
   },
-  onEdited: markProjectEdited,
+  onEdited: handleTimelineEdited,
   onSelectionChanged: refreshProjectBarProjection,
 });
 
@@ -404,13 +411,31 @@ function renderMainArea(): void {
 
 /* ============================ 撤销/重做路由（剧本栈 vs 配置栈） ============================ */
 
-/** 配置标签页走配置快照栈，其余标签页走剧本文本栈 */
+function applyTimelineHistory(direction: 'undo' | 'redo'): void {
+  const timelineId = state.currentTimeline;
+  if (!timelineId) return;
+  const entry = state.timelines.find((candidate) => candidate.id === timelineId);
+  if (!entry) return;
+  const restored = direction === 'undo'
+    ? takeTimelineUndo(timelineId, entry.text)
+    : takeTimelineRedo(timelineId, entry.text);
+  if (restored === null) return;
+  entry.text = restored;
+  entry.dirty = true;
+  state.currentTimelineCue = null;
+  renderTimelinePanel(document.getElementById('timeline-view'));
+  handleTimelineEdited();
+}
+
+/** 配置、时间轴和剧本分别使用独立历史栈。 */
 function doUndo(): void {
   if (state.mainTab === 'config') configUndo();
+  else if (state.mainTab === 'timeline') applyTimelineHistory('undo');
   else undo();
 }
 function doRedo(): void {
   if (state.mainTab === 'config') configRedo();
+  else if (state.mainTab === 'timeline') applyTimelineHistory('redo');
   else redo();
 }
 
@@ -498,7 +523,7 @@ function tryAutosaveRecover(): void {
 
 /** 定时快照：有 dirty 场景就写备份，全部干净则清除旧备份（存储不可用时静默降级） */
 setInterval(() => {
-  const payload = buildAutosave(state.dirName, state.scenes, Date.now());
+  const payload = buildAutosave(state.dirName, state.scenes, state.timelines, Date.now());
   if (payload) writeAutosave(payload);
   else clearAutosave();
 }, AUTOSAVE_INTERVAL_MS);

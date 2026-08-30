@@ -28,6 +28,11 @@ export interface TimelineEntry {
   handle: FileSystemFileHandle | null;
 }
 
+export interface TimelineCueSelection {
+  trackIndex: number;
+  cueIndex: number;
+}
+
 export const state = {
   dirName: '',
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
@@ -41,6 +46,8 @@ export const state = {
   entryScene: '',
   current: null as string | null,
   currentTimeline: null as string | null,
+  /** 当前时间轴中的唯一 cue 选择真相；timeline 切换或结构失效时清空。 */
+  currentTimelineCue: null as TimelineCueSelection | null,
   /** 从时间轴面板发起的独立直演目标；普通剧情预览时为空。 */
   previewTimelineId: null as string | null,
   /** 结果审阅的显式 choices；普通项目预览不携带 review 选择。 */

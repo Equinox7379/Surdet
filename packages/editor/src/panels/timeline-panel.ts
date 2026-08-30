@@ -1,18 +1,13 @@
 import type { TimelineCue, TimelineDefinition, TimelineTrack, TimelineTrackKind } from '@surdet/core';
 import { state, h, setStatus } from '../state.js';
+import type { TimelineCueSelection } from '../state.js';
 import { exportTimeline } from '../project-io.js';
+import { pushTimelineSnapshot } from '../timeline-history.js';
 import {
   cloneTimeline, createCue, createTimeline, createTrack, parseTimelineText,
   stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
 } from '../timeline-model.js';
 
-interface CueSelection {
-  timelineId: string;
-  trackIndex: number;
-  cueIndex: number;
-}
-
-let selectedCue: CueSelection | null = null;
 let rootContainer: HTMLElement | null = null;
 let onPreview: (timelineId: string) => void = () => {};
 let onEdited: () => void = () => {};
@@ -55,7 +50,10 @@ function commit(mutator: (definition: TimelineDefinition) => void): void {
   const next = cloneTimeline(active.definition);
   mutator(next);
   normalizeTiming(next);
-  active.entry.text = stringifyTimeline(next, active.entry.eol);
+  const nextText = stringifyTimeline(next, active.entry.eol);
+  if (nextText === active.entry.text) return;
+  pushTimelineSnapshot(active.entry.id, active.entry.text);
+  active.entry.text = nextText;
   active.entry.dirty = true;
   renderTimelinePanel(rootContainer);
   onEdited();
@@ -96,7 +94,7 @@ function selectInput(options: readonly string[], value: string): HTMLSelectEleme
   return select;
 }
 
-function updateCue(selection: CueSelection, mutator: (cue: TimelineCue, track: TimelineTrack) => void): void {
+function updateCue(selection: TimelineCueSelection, mutator: (cue: TimelineCue, track: TimelineTrack) => void): void {
   commit((definition) => {
     const track = definition.tracks[selection.trackIndex];
     const cue = track?.cues[selection.cueIndex];
@@ -105,7 +103,7 @@ function updateCue(selection: CueSelection, mutator: (cue: TimelineCue, track: T
 }
 
 function renderInspector(parent: HTMLElement, definition: TimelineDefinition): void {
-  const selection = selectedCue;
+  const selection = state.currentTimelineCue;
   const track = selection ? definition.tracks[selection.trackIndex] : undefined;
   const cue = track?.cues[selection!.cueIndex];
   if (!selection || !track || !cue) {
@@ -180,7 +178,7 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const remove = h('button', 'danger', '删除 cue');
   remove.onclick = () => {
     commit((next) => { next.tracks[selection.trackIndex]!.cues.splice(selection.cueIndex, 1); });
-    selectedCue = null;
+    state.currentTimelineCue = null;
   };
   ops.appendChild(remove);
   parent.appendChild(ops);
@@ -197,7 +195,7 @@ function renderTimelineList(parent: HTMLElement): void {
     while (state.timelines.some((entry) => entry.id === id)) id = `timeline_${String(++n).padStart(2, '0')}`;
     state.timelines.push({ id, file: `${id}.json`, text: stringifyTimeline(createTimeline(id)), eol: '\n', dirty: true, handle: null });
     state.currentTimeline = id;
-    selectedCue = null;
+    state.currentTimelineCue = null;
     renderTimelinePanel(rootContainer);
     onEdited();
     setStatus(`已创建时间轴 ${id}`, true, 3500);
@@ -214,7 +212,7 @@ function renderTimelineList(parent: HTMLElement): void {
     if (entry.dirty) button.append(h('span', 'timeline-dirty', '●'));
     button.onclick = () => {
       state.currentTimeline = entry.id;
-      selectedCue = null;
+      state.currentTimelineCue = null;
       renderTimelinePanel(rootContainer);
       onSelectionChanged();
     };
@@ -248,14 +246,15 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
     addCue.onclick = () => {
       const cueIndex = track.cues.length;
       commit((next) => { next.tracks[trackIndex]!.cues.push(createCue(track.kind)); });
-      selectedCue = { timelineId: definition.id, trackIndex, cueIndex };
+      state.currentTimelineCue = { trackIndex, cueIndex };
       renderTimelinePanel(rootContainer);
     };
     head.appendChild(addCue);
     row.appendChild(head);
     const lane = h('div', 'timeline-lane');
     for (const [cueIndex, cue] of track.cues.entries()) {
-      const block = h('button', cueIndex === selectedCue?.cueIndex && trackIndex === selectedCue.trackIndex ? 'timeline-cue selected' : 'timeline-cue');
+      const selection = state.currentTimeline === definition.id ? state.currentTimelineCue : null;
+      const block = h('button', cueIndex === selection?.cueIndex && trackIndex === selection.trackIndex ? 'timeline-cue selected' : 'timeline-cue');
       const updateGeometry = (atMs: number, durationMs: number): void => {
         const left = definition.durationMs > 0 ? Math.max(0, Math.min(100, atMs / definition.durationMs * 100)) : 0;
         const width = definition.durationMs > 0 ? Math.max(2, Math.min(100 - left, Math.max(1, durationMs / definition.durationMs * 100))) : 100;
@@ -296,7 +295,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         const release = () => {
           document.removeEventListener('pointermove', move);
           document.removeEventListener('pointerup', release);
-          updateCue({ timelineId: definition.id, trackIndex, cueIndex }, (next) => { next.durationMs = nextDuration; });
+          updateCue({ trackIndex, cueIndex }, (next) => { next.durationMs = nextDuration; });
         };
         document.addEventListener('pointermove', move);
         document.addEventListener('pointerup', release, { once: true });
@@ -306,7 +305,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       block.title = `${cue.action} · ${cue.atMs}ms + ${cue.durationMs}ms · ${cue.easing}`;
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
-        selectedCue = { timelineId: definition.id, trackIndex, cueIndex };
+        state.currentTimelineCue = { trackIndex, cueIndex };
         const startX = event.clientX;
         const originalAt = cue.atMs;
         const laneWidth = Math.max(1, lane.getBoundingClientRect().width);
@@ -319,14 +318,14 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         const release = () => {
           document.removeEventListener('pointermove', move);
           document.removeEventListener('pointerup', release);
-          updateCue({ timelineId: definition.id, trackIndex, cueIndex }, (next) => { next.atMs = nextAt; });
+          updateCue({ trackIndex, cueIndex }, (next) => { next.atMs = nextAt; });
         };
         document.addEventListener('pointermove', move);
         document.addEventListener('pointerup', release, { once: true });
         event.preventDefault();
       };
       block.onclick = () => {
-        selectedCue = { timelineId: definition.id, trackIndex, cueIndex };
+        state.currentTimelineCue = { trackIndex, cueIndex };
         renderTimelinePanel(rootContainer);
       };
       lane.appendChild(block);
@@ -403,7 +402,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     if (active.entry.handle) state.pendingTimelineDeletes.push({ id: active.entry.id, file: active.entry.file });
     state.timelines = state.timelines.filter((entry) => entry.id !== active.definition.id);
     state.currentTimeline = state.timelines[0]?.id ?? null;
-    selectedCue = null;
+    state.currentTimelineCue = null;
     renderTimelinePanel(rootContainer);
     onEdited();
   };
@@ -418,7 +417,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     reset.onclick = () => {
       active.entry.text = stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
       active.entry.dirty = true;
-      selectedCue = null;
+      state.currentTimelineCue = null;
       renderTimelinePanel(rootContainer);
       onEdited();
     };
@@ -434,8 +433,8 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
 /** 供因果跳转使用：切到指定时间轴并选中对应 cue（trackIndex/cueIndex 可选）。 */
 export function selectTimelineCue(timelineId: string, trackIndex?: number, cueIndex?: number): void {
   state.currentTimeline = timelineId;
-  selectedCue = typeof trackIndex === 'number'
-    ? { timelineId, trackIndex, cueIndex: typeof cueIndex === 'number' ? cueIndex : 0 }
+  state.currentTimelineCue = typeof trackIndex === 'number'
+    ? { trackIndex, cueIndex: typeof cueIndex === 'number' ? cueIndex : 0 }
     : null;
   renderTimelinePanel(rootContainer);
   onSelectionChanged();
