@@ -851,3 +851,29 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 - `PUSH = NOT_PERFORMED`
 - `TIMELINE_3B = NOT_STARTED`
 - Create only the exact three-path docs-only closure commit, then stop.
+
+### 2026-08-30 — Wave 3A.1 owner visual correction initialization
+
+**CONFIRMED_FACTS**
+
+- After reviewing the final Wave 3A screenshot, the owner rejected the Flow page as unintuitive, visually crooked and especially disruptive in its treatment of choices.
+- Direct screenshot inspection confirms the complaint: scene membership is weak, scene and label nodes read as unrelated cards, host-entry identity is duplicated, free Bézier routes cross the reading field, choice text floats between unrelated geometry and the disconnected configured root appears far below without explanation.
+- The current business graph is still valid and contains only real `scene`, `label` and `host-entry` nodes. Choice, condition and switch are real labelled edges, not nodes. The product has no author-declared canonical route, stable option-node identity, return edge or path probability.
+- An Editor-only correction is feasible: preserve `FlowGraph` unchanged, create scene-frame and route presentation data, group real nodes by scene, use deterministic left-to-right editing projection, attach human choice language to the relevant branch/destination, and route real edges orthogonally.
+- Any `main flow` wording must mean a deterministic editor projection from the configured entry scene. It must not be represented as runtime truth or an author-selected canonical path.
+- `docs/superpowers/plans/2026-08-30-surdet-flow-narrative-path-map-wave-3a1.md` is the corrective execution authority. Production scope is limited to the Flow panel, Flow presentation projection and Flow-specific CSS. Authoring, Core, CLI, Host, Shell, Renderer, Starter, dependencies, lockfile, graph builder, serialization and backend contracts remain outside scope.
+- The owner’s feedback is an explicit continuation of the previously authorized frontend redesign. No push is authorized.
+
+**REASONABLE_INFERENCES**
+
+- The previous wave solved visual language and accessibility but stopped one level too low: it styled compiler-shaped objects instead of composing them into a writer-shaped story map.
+- Scene frames plus internal branch rows should remove most visual noise without hiding real graph facts or creating a second edit model.
+
+**UNVERIFIED_ITEMS**
+
+- Permanent RED, final layout, orthogonal route correctness, fresh screenshots and independent review have not yet run.
+- Presentation-only branch labels cannot safely become direct option editors until the Editor model exposes stable source instruction and option identities.
+
+**STOP_BOUNDARY**
+
+- Execute only Wave 3A.1 through proportional Editor and browser gates. Do not begin Timeline 3B, change shared-engine production packages or push.
