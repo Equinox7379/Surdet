@@ -21,8 +21,9 @@ export function cloneTimeline(definition: TimelineDefinition): TimelineDefinitio
   return JSON.parse(JSON.stringify(definition)) as TimelineDefinition;
 }
 
-export function stringifyTimeline(definition: TimelineDefinition): string {
-  return `${JSON.stringify(definition, null, 2)}\n`;
+export function stringifyTimeline(definition: TimelineDefinition, eol: '\r\n' | '\n' = '\n'): string {
+  const lf = `${JSON.stringify(definition, null, 2)}\n`;
+  return eol === '\r\n' ? lf.replace(/\n/g, '\r\n') : lf;
 }
 
 export function parseTimelineText(text: string): { definition: TimelineDefinition | null; issues: string[] } {

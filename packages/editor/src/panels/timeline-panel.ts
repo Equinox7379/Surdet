@@ -55,7 +55,7 @@ function commit(mutator: (definition: TimelineDefinition) => void): void {
   const next = cloneTimeline(active.definition);
   mutator(next);
   normalizeTiming(next);
-  active.entry.text = stringifyTimeline(next);
+  active.entry.text = stringifyTimeline(next, active.entry.eol);
   active.entry.dirty = true;
   renderTimelinePanel(rootContainer);
   onEdited();
@@ -195,7 +195,7 @@ function renderTimelineList(parent: HTMLElement): void {
     let n = state.timelines.length + 1;
     let id = `timeline_${String(n).padStart(2, '0')}`;
     while (state.timelines.some((entry) => entry.id === id)) id = `timeline_${String(++n).padStart(2, '0')}`;
-    state.timelines.push({ id, file: `${id}.json`, text: stringifyTimeline(createTimeline(id)), dirty: true, handle: null });
+    state.timelines.push({ id, file: `${id}.json`, text: stringifyTimeline(createTimeline(id)), eol: '\n', dirty: true, handle: null });
     state.currentTimeline = id;
     selectedCue = null;
     renderTimelinePanel(rootContainer);
@@ -416,7 +416,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     for (const message of active.issues) issue.append(h('div', undefined, message));
     const reset = h('button', undefined, '重置为可编辑模板');
     reset.onclick = () => {
-      active.entry.text = stringifyTimeline(createTimeline(active.entry.id));
+      active.entry.text = stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
       active.entry.dirty = true;
       selectedCue = null;
       renderTimelinePanel(rootContainer);
