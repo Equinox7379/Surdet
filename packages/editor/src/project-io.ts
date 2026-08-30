@@ -5,7 +5,8 @@
  */
 import { state, setStatus } from './state.js';
 import { histories } from './history.js';
-import { clearTimelineHistories } from './timeline-history.js';
+import { clearTimelineHistories, clearTimelineHistory } from './timeline-history.js';
+import type { AutosaveTimelineEntry } from './autosave.js';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind } from './assets.js';
 
@@ -64,6 +65,7 @@ export async function openProjectFromHandle(
   state.scenes.clear();
   state.timelines = [];
   state.pendingTimelineDeletes = [];
+  state.pendingTimelineRestores.clear();
   state.currentTimeline = null;
   state.currentTimelineCue = null;
   state.previewTimelineId = null;
@@ -225,6 +227,30 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
   }
 }
 
+export function restoreTimelineAutosaveEntries(entries: readonly AutosaveTimelineEntry[]): void {
+  for (const recovered of entries) {
+    const existing = state.timelines.find((entry) => entry.id === recovered.id);
+    if (existing) {
+      existing.file = recovered.file;
+      existing.text = recovered.text;
+      existing.eol = recovered.eol;
+      existing.dirty = true;
+      continue;
+    }
+    state.timelines.push({
+      id: recovered.id,
+      file: recovered.file,
+      text: recovered.text,
+      eol: recovered.eol,
+      dirty: true,
+      handle: null,
+    });
+  }
+  if (!state.currentTimeline && state.timelines.length > 0) {
+    state.currentTimeline = state.timelines[0]!.id;
+  }
+}
+
 export async function saveAll(): Promise<void> {
   if (!state.fsSupported) {
     const timeline = state.currentTimeline
@@ -234,7 +260,8 @@ export async function saveAll(): Promise<void> {
     else exportCurrent();
     const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
       || state.timelines.some((entry) => entry.dirty)
-      || state.pendingTimelineDeletes.length > 0;
+      || state.pendingTimelineDeletes.length > 0
+      || state.pendingTimelineRestores.size > 0;
     onSaveSettled({
       hadPendingChanges: remainingDirty,
       saved: 0,
@@ -246,7 +273,8 @@ export async function saveAll(): Promise<void> {
   }
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
-    || state.pendingTimelineDeletes.length > 0;
+    || state.pendingTimelineDeletes.length > 0
+    || state.pendingTimelineRestores.size > 0;
   let saved = 0;
   let removed = 0;
   let failures = 0;
@@ -272,6 +300,8 @@ export async function saveAll(): Promise<void> {
         }
         for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
         await timelineDir.removeEntry(fileName);
+        state.pendingTimelineRestores.delete(pending.id);
+        clearTimelineHistory(pending.id);
         removed++;
       } catch (err) {
         remaining.push(pending);
@@ -279,6 +309,12 @@ export async function saveAll(): Promise<void> {
       }
     }
     state.pendingTimelineDeletes = remaining;
+    for (const [timelineId, restore] of [...state.pendingTimelineRestores]) {
+      if (restore.entry.handle !== null) continue;
+      state.pendingTimelineRestores.delete(timelineId);
+      clearTimelineHistory(timelineId);
+      removed++;
+    }
   }
   for (const [key, sc] of state.scenes) {
     if (!sc.dirty) continue;
@@ -344,7 +380,8 @@ export async function saveAll(): Promise<void> {
   }
   const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
-    || state.pendingTimelineDeletes.length > 0;
+    || state.pendingTimelineDeletes.length > 0
+    || state.pendingTimelineRestores.size > 0;
   const changed = saved + removed;
   if (!hadPendingChanges) {
     setStatus('无待保存改动', true, 4000);
@@ -396,6 +433,7 @@ export function loadDemoProject(): void {
   state.scenes.clear();
   state.timelines = [];
   state.pendingTimelineDeletes = [];
+  state.pendingTimelineRestores.clear();
   state.currentTimeline = null;
   state.currentTimelineCue = null;
   state.previewTimelineId = null;

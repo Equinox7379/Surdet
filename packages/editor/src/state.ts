@@ -33,6 +33,13 @@ export interface TimelineCueSelection {
   cueIndex: number;
 }
 
+export interface PendingTimelineRestore {
+  entry: TimelineEntry;
+  index: number;
+  previousTimelineId: string | null;
+  previousCue: TimelineCueSelection | null;
+}
+
 export const state = {
   dirName: '',
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
@@ -42,6 +49,8 @@ export const state = {
   timelines: [] as TimelineEntry[],
   /** 由时间轴面板删除、待下一次“保存全部”从 content/timelines 移除的文件。 */
   pendingTimelineDeletes: [] as { id: string; file: string }[],
+  /** 保存前仍可逐项恢复的完整时间轴删除墓碑。 */
+  pendingTimelineRestores: new Map<string, PendingTimelineRestore>(),
   gameConfigText: '',
   entryScene: '',
   current: null as string | null,

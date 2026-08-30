@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bindProjectIoHooks, openProjectFromHandle, readTimelineDir, saveAll } from '../src/project-io.js';
+import { bindProjectIoHooks, openProjectFromHandle, readTimelineDir, restoreTimelineAutosaveEntries, saveAll } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
 import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
+import { deleteTimeline, nextTimelineId, restorePendingTimelineDeletion } from '../src/panels/timeline-panel.js';
+import { pushTimelineSnapshot, timelineHistoryDepth } from '../src/timeline-history.js';
 
 type FailurePoint = 'create' | 'write' | 'close';
 
@@ -89,6 +91,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.scenes.clear();
     state.timelines = [];
     state.pendingTimelineDeletes = [];
+    state.pendingTimelineRestores.clear();
     state.current = null;
     state.currentTimeline = null;
     log.length = 0;
@@ -156,6 +159,82 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.pendingTimelineDeletes).toHaveLength(1);
     expect(status.textContent).toMatch(/失败|无待保存/);
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('删除后撤销会取消待删文件，下一次保存不会误删已恢复时间轴', async () => {
+    const removeEntry = vi.fn();
+    state.dirHandle = {
+      getDirectoryHandle: async () => ({
+        getDirectoryHandle: async () => ({ removeEntry }),
+      }),
+    } as unknown as FileSystemDirectoryHandle;
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.timelines.push(timeline('keep', fileHandle(null, log, 'keep'), false));
+    state.currentTimeline = 'keep';
+    state.currentTimelineCue = { trackIndex: 0, cueIndex: 0 };
+
+    expect(deleteTimeline('keep')).toBe(true);
+    expect(state.pendingTimelineDeletes).toHaveLength(1);
+    expect(restorePendingTimelineDeletion('keep')).toBe(true);
+    expect(state.pendingTimelineDeletes).toEqual([]);
+
+    await saveAll();
+
+    expect(removeEntry).not.toHaveBeenCalled();
+    expect(state.timelines.map((entry) => entry.id)).toEqual(['keep']);
+    expect(state.currentTimelineCue).toEqual({ trackIndex: 0, cueIndex: 0 });
+  });
+
+  it('多个删除墓碑互不覆盖，且待删 id 在保存前不能被新建复用', () => {
+    state.timelines.push(
+      timeline('timeline_01', fileHandle(null, log, 'timeline_01'), false),
+      timeline('timeline_02', fileHandle(null, log, 'timeline_02'), false),
+    );
+    state.currentTimeline = 'timeline_01';
+
+    expect(deleteTimeline('timeline_01')).toBe(true);
+    expect(deleteTimeline('timeline_02')).toBe(true);
+
+    expect([...state.pendingTimelineRestores.keys()].sort()).toEqual(['timeline_01', 'timeline_02']);
+    expect(nextTimelineId()).toBe('timeline_03');
+    expect(restorePendingTimelineDeletion('timeline_01')).toBe(true);
+    expect(restorePendingTimelineDeletion('timeline_02')).toBe(true);
+    expect(state.timelines.map((entry) => entry.id).sort()).toEqual(['timeline_01', 'timeline_02']);
+  });
+
+  it('物理删除成功后清除墓碑与该 id 的旧历史', async () => {
+    const removeEntry = vi.fn();
+    state.dirHandle = {
+      getDirectoryHandle: async () => ({
+        getDirectoryHandle: async () => ({ removeEntry }),
+      }),
+    } as unknown as FileSystemDirectoryHandle;
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.timelines.push(timeline('gone', fileHandle(null, log, 'gone'), false));
+    state.currentTimeline = 'gone';
+    pushTimelineSnapshot('gone', 'before');
+    expect(deleteTimeline('gone')).toBe(true);
+
+    await saveAll();
+
+    expect(removeEntry).toHaveBeenCalledWith('gone.json');
+    expect(state.pendingTimelineDeletes).toEqual([]);
+    expect(state.pendingTimelineRestores.has('gone')).toBe(false);
+    expect(timelineHistoryDepth('gone')).toEqual({ undo: 0, redo: 0 });
+  });
+
+  it('恢复崩溃备份时更新已有时间轴并插入未落盘新时间轴', () => {
+    state.timelines.push(timeline('disk', fileHandle(null, log, 'disk'), false));
+
+    restoreTimelineAutosaveEntries([
+      { id: 'disk', file: 'disk.json', text: 'disk recovered\r\n', eol: '\r\n' },
+      { id: 'new', file: 'nested/new.json', text: 'new recovered\n', eol: '\n' },
+    ]);
+
+    const disk = state.timelines.find((entry) => entry.id === 'disk')!;
+    const created = state.timelines.find((entry) => entry.id === 'new')!;
+    expect(disk).toMatchObject({ text: 'disk recovered\r\n', eol: '\r\n', dirty: true });
+    expect(created).toMatchObject({ id: 'new', file: 'nested/new.json', text: 'new recovered\n', eol: '\n', dirty: true, handle: null });
   });
 
   it('全部成功时清除 dirty、报告全部成功并调用 onSaved', async () => {

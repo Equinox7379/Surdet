@@ -27,6 +27,58 @@ function entryFor(id = state.currentTimeline): (typeof state.timelines)[number] 
   return id ? state.timelines.find((entry) => entry.id === id) : undefined;
 }
 
+export function nextTimelineId(): string {
+  const reserved = new Set([
+    ...state.timelines.map((entry) => entry.id),
+    ...state.pendingTimelineDeletes.map((entry) => entry.id),
+    ...state.pendingTimelineRestores.keys(),
+  ]);
+  let n = state.timelines.length + state.pendingTimelineRestores.size + 1;
+  let id = `timeline_${String(n).padStart(2, '0')}`;
+  while (reserved.has(id)) id = `timeline_${String(++n).padStart(2, '0')}`;
+  return id;
+}
+
+export function deleteTimeline(timelineId: string): boolean {
+  const index = state.timelines.findIndex((entry) => entry.id === timelineId);
+  if (index < 0 || state.pendingTimelineRestores.has(timelineId)) return false;
+  const entry = state.timelines[index]!;
+  state.pendingTimelineRestores.set(timelineId, {
+    entry,
+    index,
+    previousTimelineId: state.currentTimeline,
+    previousCue: state.currentTimelineCue ? { ...state.currentTimelineCue } : null,
+  });
+  if (entry.handle && !state.pendingTimelineDeletes.some((pending) => pending.id === timelineId)) {
+    state.pendingTimelineDeletes.push({ id: entry.id, file: entry.file });
+  }
+  state.timelines.splice(index, 1);
+  state.currentTimeline = state.timelines[Math.min(index, state.timelines.length - 1)]?.id ?? null;
+  state.currentTimelineCue = null;
+  renderTimelinePanel(rootContainer);
+  onEdited();
+  setStatus(`已删除时间轴 ${timelineId}，保存前可撤销`, true, 5000);
+  return true;
+}
+
+export function restorePendingTimelineDeletion(timelineId: string): boolean {
+  const restore = state.pendingTimelineRestores.get(timelineId);
+  if (!restore || state.timelines.some((entry) => entry.id === timelineId)) return false;
+  state.pendingTimelineDeletes = state.pendingTimelineDeletes.filter((pending) => pending.id !== timelineId);
+  const index = Math.max(0, Math.min(restore.index, state.timelines.length));
+  state.timelines.splice(index, 0, restore.entry);
+  state.pendingTimelineRestores.delete(timelineId);
+  state.currentTimeline = restore.previousTimelineId === timelineId ? timelineId : restore.previousTimelineId;
+  if (!state.currentTimeline || !state.timelines.some((entry) => entry.id === state.currentTimeline)) {
+    state.currentTimeline = timelineId;
+  }
+  state.currentTimelineCue = restore.previousCue ? { ...restore.previousCue } : null;
+  renderTimelinePanel(rootContainer);
+  onEdited();
+  setStatus(`已恢复时间轴 ${timelineId}`, true, 4000);
+  return true;
+}
+
 function activeDefinition(): { entry: (typeof state.timelines)[number]; definition: TimelineDefinition; issues: string[] } | null {
   const entry = entryFor();
   if (!entry) return null;
@@ -125,11 +177,17 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const actions = TIMELINE_ACTIONS[track.kind];
   const action = selectInput(actions, cue.action);
   action.onchange = () => {
+    if (action.value === cue.action) return;
+    if (!window.confirm('更换动作会重置此演出片段的动作参数，是否继续？')) {
+      action.value = cue.action;
+      return;
+    }
     const nextCue = createCue(track.kind, action.value);
     nextCue.atMs = cue.atMs;
     nextCue.durationMs = cue.durationMs;
     nextCue.easing = cue.easing;
     commit((next) => { next.tracks[selection.trackIndex]!.cues[selection.cueIndex] = nextCue; });
+    setStatus('已更换动作，可撤销', true, 4000);
   };
   common.appendChild(field('动作', action));
   parent.appendChild(common);
@@ -179,6 +237,7 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   remove.onclick = () => {
     commit((next) => { next.tracks[selection.trackIndex]!.cues.splice(selection.cueIndex, 1); });
     state.currentTimelineCue = null;
+    setStatus('已删除演出片段，可撤销', true, 4000);
   };
   ops.appendChild(remove);
   parent.appendChild(ops);
@@ -190,9 +249,7 @@ function renderTimelineList(parent: HTMLElement): void {
   const add = h('button', 'icon-button', '+');
   add.title = '新建时间轴';
   add.onclick = () => {
-    let n = state.timelines.length + 1;
-    let id = `timeline_${String(n).padStart(2, '0')}`;
-    while (state.timelines.some((entry) => entry.id === id)) id = `timeline_${String(++n).padStart(2, '0')}`;
+    const id = nextTimelineId();
     state.timelines.push({ id, file: `${id}.json`, text: stringifyTimeline(createTimeline(id)), eol: '\n', dirty: true, handle: null });
     state.currentTimeline = id;
     state.currentTimelineCue = null;
@@ -202,6 +259,14 @@ function renderTimelineList(parent: HTMLElement): void {
   };
   head.appendChild(add);
   parent.appendChild(head);
+  for (const [timelineId] of state.pendingTimelineRestores) {
+    const recovery = h('div', 'timeline-delete-recovery');
+    recovery.append(h('span', undefined, `已删除 ${timelineId}`));
+    const restore = h('button', undefined, '撤销删除');
+    restore.onclick = () => { restorePendingTimelineDeletion(timelineId); };
+    recovery.appendChild(restore);
+    parent.appendChild(recovery);
+  }
   if (state.timelines.length === 0) {
     parent.append(h('div', 'empty', '暂无时间轴'));
     return;
@@ -239,7 +304,17 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
     const head = h('div', 'timeline-track-head');
     const kind = selectInput(TIMELINE_TRACKS, track.kind);
     kind.title = '轨道类型';
-    kind.onchange = () => commit((next) => { next.tracks[trackIndex] = createTrack(kind.value as TimelineTrackKind); });
+    kind.onchange = () => {
+      const nextKind = kind.value as TimelineTrackKind;
+      if (nextKind === track.kind) return;
+      if (track.cues.length > 0 && !window.confirm(`更换轨道类型会清空本轨道的 ${track.cues.length} 个演出片段，是否继续？`)) {
+        kind.value = track.kind;
+        return;
+      }
+      commit((next) => { next.tracks[trackIndex] = createTrack(nextKind); });
+      state.currentTimelineCue = null;
+      setStatus('已更换轨道类型，可撤销', true, 4000);
+    };
     head.appendChild(kind);
     if (track.target) head.append(h('span', 'timeline-track-target', track.target));
     const addCue = h('button', 'track-add', '+ cue');
@@ -399,12 +474,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
   const remove = h('button', 'danger', '删除');
   remove.onclick = () => {
     if (!window.confirm(`删除时间轴「${active.definition.id}」？`)) return;
-    if (active.entry.handle) state.pendingTimelineDeletes.push({ id: active.entry.id, file: active.entry.file });
-    state.timelines = state.timelines.filter((entry) => entry.id !== active.definition.id);
-    state.currentTimeline = state.timelines[0]?.id ?? null;
-    state.currentTimelineCue = null;
-    renderTimelinePanel(rootContainer);
-    onEdited();
+    deleteTimeline(active.definition.id);
   };
   actions.appendChild(remove);
   header.appendChild(actions);
@@ -415,11 +485,13 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     for (const message of active.issues) issue.append(h('div', undefined, message));
     const reset = h('button', undefined, '重置为可编辑模板');
     reset.onclick = () => {
+      pushTimelineSnapshot(active.entry.id, active.entry.text);
       active.entry.text = stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
       active.entry.dirty = true;
       state.currentTimelineCue = null;
       renderTimelinePanel(rootContainer);
       onEdited();
+      setStatus('已重置时间轴，可撤销', true, 4000);
     };
     issue.appendChild(reset);
     content.appendChild(issue);
