@@ -10,6 +10,7 @@ import type {
   VariableEnsureInput,
 } from './contracts.js';
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
+import { serializeProjectConfigDocument } from './config-document.js';
 import { normalizeProjectPath } from './project-storage.js';
 
 function scenePath(sceneId: string): string {
@@ -212,7 +213,7 @@ export async function ensureVariable(change: ChangeSession, input: VariableEnsur
     config['variables'] = variables;
     return {
       result: { name: input.name, created: true },
-      workingFiles: { ...record.workingFiles, [path]: `${JSON.stringify(config, null, 2)}\n` },
+      workingFiles: { ...record.workingFiles, [path]: serializeProjectConfigDocument(config, currentText) },
     };
   });
 }
