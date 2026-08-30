@@ -1,6 +1,6 @@
 # Surdet Flow Narrative Path Map — Wave 3A.1
 
-**Status:** AUTHORIZED_BY_OWNER_FEEDBACK / IMPLEMENTATION_IN_PROGRESS
+**Status:** CODE_AND_BROWSER_VERIFIED / OWNER_VISUAL_RETEST_PENDING / WAITING_FOR_REVIEW
 **Date:** 2026-08-30
 **Risk:** B — Editor-only visual, layout and accessibility correction
 **Ledger authority:** `docs/superpowers/plans/2026-08-30-surdet-frontend-editorial-workbench-redesign.md`
@@ -256,11 +256,81 @@ export interface NarrativeFocusOverflow {
 
 ### 9.5 Execution tasks
 
-- [ ] **Task A — Permanent scale RED:** add contracts for maximum eight focus frames, stable neighbour selection, compact neighbours, global scene-only overview, choice-line suppression, same-target merge geometry and return-marker preservation.
-- [ ] **Task B — Pure layout GREEN:** implement optional presentation mode/options, focus overflow data, compact scene projection, merge buses and return markers in `flow-narrative-layout.ts` only.
-- [ ] **Task C — Human controls GREEN:** add `聚焦路径` / `全局概览` controls, overflow disclosure, readable return markers and stable focus restoration in `panels/flow.ts`; keep technical disclosure separate.
-- [ ] **Task D — Regression:** run the new contracts, existing Flow graph/edit/label/presentation/interaction contracts, complete Editor tests, typecheck and build.
-- [ ] **Task E — Browser evidence:** replace the current artifact with fresh isolated 1920/1440/1280/1024/800 evidence covering default focus, global overview, technical mode, merge bus, return marker, minimap, keyboard/pointer navigation, link/undo and unchanged Starter.
-- [ ] **Task F — Closure:** independent read-only review, exact code commit, append-only taskbook/master-ledger closure and stop before Timeline 3B.
+- [x] **Task A — Permanent scale RED:** add contracts for maximum eight focus frames, stable neighbour selection, compact neighbours, global scene-only overview, choice-line suppression, same-target merge geometry and return-marker preservation.
+- [x] **Task B — Pure layout GREEN:** implement optional presentation mode/options, focus overflow data, compact scene projection, merge buses and return markers in `flow-narrative-layout.ts` only.
+- [x] **Task C — Human controls GREEN:** add `聚焦路径` / `全局概览` controls, overflow disclosure, readable return markers and stable focus restoration in `panels/flow.ts`; keep technical disclosure separate.
+- [x] **Task D — Regression:** run the new contracts, existing Flow graph/edit/label/presentation/interaction contracts, complete Editor tests, typecheck and build.
+- [x] **Task E — Browser evidence:** replace the current artifact with fresh isolated 1920/1440/1280/1024/800 evidence covering default focus, global overview, technical mode, merge bus, return marker, minimap, keyboard/pointer navigation, link/undo and unchanged Starter.
+- [x] **Task F — Closure:** independent read-only review, exact code commit, append-only taskbook/master-ledger closure and stop before Timeline 3B.
 
 No backend, shared-engine, graph-builder, dependency, file-format, Starter, deployment or push authority is added by this extension.
+
+---
+
+## 10. Execution closure — 2026-08-31
+
+### Confirmed facts
+
+- Planning/numbering correction commit: `c8f41b8e668fdf501997573159e953c44b868a41`, message `docs(editor): scale flow map for long stories`, exact scope = this taskbook plus the master Frontend Execution Ledger.
+- Code evidence commit: `161f8dbe76361a731bf09a1b5dccb88b81140d47`, parent `c8f41b8e668fdf501997573159e953c44b868a41`, message `feat(editor): add scalable narrative path map`, exact scope = four Editor production files, four permanent product contracts, one browser runner and one runner contract.
+- No Authoring, Core, CLI, FlowGraph builder, Renderer, Host, Shell, project format, DSL, dependency, lockfile or Starter production path is in the code commit.
+- `buildNarrativeFlowLayout(graph, entryScene)` remains the complete technical projection. The optional third argument produces bounded focus or compact overview projections without changing `FlowGraph`.
+- Default focus shows at most eight real scene frames. The focus scene exposes its real beats; direct neighbours remain compact; excess predecessor/successor counts are visible and link to global overview.
+- Same-scene choice routes are technical-only because exact option wording is attached to the destination row. Same-source/same-destination jumps retain distinct `FlowEdge` identities while sharing a presentation trunk.
+- Readable overview uses compact scene cards. Same-depth backward, earlier-depth and later-component-to-earlier-scene jumps become `↩ 返回目标` markers; technical mode preserves the full real route.
+- Missing source/target edges are retained in `unprojectableEdges`; the technical explanation publicly reports `另有 2 条连接因端点缺失未显示` for the Starter rather than relying only on runner subtraction.
+- Technical details are in normal document flow and cannot overlay the minimap. Focus, overview and technical modes keep independent pan/zoom state and auto-fit on mode change.
+
+### RED → GREEN
+
+- Initial long-form scale RED: `flow-narrative-map-contract.test.ts` = 20 tests / 15 pass / 5 fail. Failures precisely covered missing focus bounds, return marker, overview projection, attached-choice suppression and shared trunk.
+- Return/unprojectable RED: 22 tests / 20 pass / 2 fail. Failures precisely covered same-depth/cross-component return classification and missing-endpoint reporting.
+- Final permanent Flow contracts: 22/22 PASS.
+- UI contracts: `editor-flow-workspace-contract.test.ts` 9/9 and `editor-flow-interaction-contract.test.ts` 11/11 PASS.
+- Browser runner contract: 10/10 PASS; syntax check PASS.
+
+### Technical gates
+
+- Complete Editor tests: 45 files / 311 tests PASS.
+- Editor typecheck: PASS.
+- Editor production build: PASS; existing Vite `>500 kB` chunk advisory remains informational.
+- Working and staged diff checks: PASS for the authorized scope.
+
+### Browser evidence
+
+```text
+artifactRoot = C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-flow-canvas-wave3a-WnTuWj
+evidence.json = 185146 bytes; sha256 ACB842963F0DD52990BF8CF4DB0813377E0E91A44CA98E045BDCDA49336F1C8A
+identity.json = 613 bytes; sha256 A15042CE7D64AC82E29C8DC8EC715B0E7421E21778003F58716E88C082B84D28
+status = PASSED
+milestones = 27 / 27 PASSED
+originalStarterUnchanged = true
+consoleErrors/pageErrors/requestFailures/stderrLines/cleanupFailures = 0
+isolatedPort = 4211; portReleased = true
+screenshots = 8
+```
+
+Key screenshot identities:
+
+- focus 1440: `flow-1440.png`, 61007 bytes, SHA-256 `1F012E663C106FB3ACCE8222D49F838274BD1F0C88E6C6D16750BBC47A2613F7`;
+- focus 800: `flow-800.png`, 57528 bytes, SHA-256 `868AB8305BAEAF15790DB85769E018930FB6A85D17F94E3937837E69EAE45B30`;
+- global overview: `flow-global-overview.png`, 58829 bytes, SHA-256 `591035672D681628EDC0D42921B8FCD375EDB20C40109EB619C67F2B68F1645C`;
+- technical: `flow-technical-connections.png`, 84316 bytes, SHA-256 `89942A2F066715388340064B6B48F3556C51DBBB9A03FE231821228153254EE4`.
+
+### Independent review and evidence boundary
+
+- First independent review found two HIGH items: same-depth/cross-component returns and UI-visible missing-endpoint reporting. Both received permanent RED, production correction and fresh browser evidence.
+- Replacement independent review: `INDEPENDENT_REVIEW = PASS`; BLOCKER/HIGH/MEDIUM/LOW = none.
+- Automated and independent evidence does not substitute for the Owner's final subjective visual retest. `OWNER_VISUAL_RETEST = NOT_STARTED`.
+
+### Git and stop boundary
+
+```text
+CODE_EVIDENCE_HEAD = 161f8dbe76361a731bf09a1b5dccb88b81140d47
+REMOTE_MAIN = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+PUSH = NOT_PERFORMED
+MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
+NEXT = WAITING_FOR_OWNER_VISUAL_RETEST_AND_REVIEW_DECISION
+```
+
+The long-term project ledger remains untracked and unstaged. No screenshot, browser artifact, protected file or unrelated untracked path entered either commit.
