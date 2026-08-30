@@ -96,12 +96,12 @@ Anything outside this list requires a scope decision appended to the master Ledg
 
 ## Task 0 — Reconfirm capability and baseline
 
-- [ ] Record status, HEAD, parent and local remote relation in the master Ledger.
-- [ ] Confirm tracked worktree / staging are clean and protected untracked paths remain unstaged.
-- [ ] Confirm the real flow input, current scene, navigation, edit, rename, delete, minimap, pan and zoom paths.
-- [ ] Confirm unsupported reference data remains unavailable.
-- [ ] Confirm 4173 / 4175 ownership without stopping either process.
-- [ ] Append the Wave 3A initialization record to the master Ledger.
+- [x] Record status, HEAD, parent and local remote relation in the master Ledger.
+- [x] Confirm tracked worktree / staging are clean and protected untracked paths remain unstaged.
+- [x] Confirm the real flow input, current scene, navigation, edit, rename, delete, minimap, pan and zoom paths.
+- [x] Confirm unsupported reference data remains unavailable.
+- [x] Confirm 4173 / 4175 ownership without stopping either process.
+- [x] Append the Wave 3A initialization record to the master Ledger.
 
 **Gate:** no production edit before the baseline and scope decision are recorded.
 
@@ -109,13 +109,13 @@ Anything outside this list requires a scope decision appended to the master Ledg
 
 ## Task 1 — Commit planning documents
 
-- [ ] Scan the two Wave 3A documents and the edited master section for placeholders and contradictory stop boundaries.
-- [ ] Run `npm run verify:docs`.
-- [ ] Run `git diff --check`.
-- [ ] Stage exactly the three planning paths.
-- [ ] Run cached diff check and verify the exact staged set.
-- [ ] Commit `docs(editor): plan flow canvas wave 3a`.
-- [ ] Append the planning commit identity to the master Ledger after the commit succeeds.
+- [x] Scan the two Wave 3A documents and the edited master section for placeholders and contradictory stop boundaries.
+- [x] Run `npm run verify:docs`.
+- [x] Run `git diff --check`.
+- [x] Stage exactly the three planning paths.
+- [x] Run cached diff check and verify the exact staged set.
+- [x] Commit `docs(editor): plan flow canvas wave 3a`.
+- [x] Append the planning commit identity to the master Ledger after the commit succeeds.
 
 ---
 
@@ -125,19 +125,19 @@ Create the smallest permanent contracts that fail against the old flow page for 
 
 ### Required RED assertions
 
-- [ ] stable `data-editor-region="flow-workbench"`, local status, toolbar, legend, canvas and minimap regions;
-- [ ] status is computed from the real graph and validation data;
-- [ ] Chinese node and edge kind presentation covers every stable kind;
-- [ ] raw DSL / IDs are technical details, not primary labels;
-- [ ] no chapter, duration, status, author, version, collaboration or probability projection;
-- [ ] flow styles are loaded after shared layers;
-- [ ] no inline decorative rainbow palette, gradient, glow or colored left selection rail;
-- [ ] current node uses complete outline / surface and explicit `aria-current` or selected wording;
-- [ ] invalid state includes text or shape in addition to color;
-- [ ] real nodes are keyboard focusable and Enter / Space share navigation behavior;
-- [ ] viewport command IDs are stable and each reaches the existing view state;
-- [ ] tooltip language matches actual single-click navigation;
-- [ ] graph build and scene edit semantics remain imported from their existing paths.
+- [x] stable `data-editor-region="flow-workbench"`, local status, toolbar, legend, canvas and minimap regions;
+- [x] status is computed from the real graph and validation data;
+- [x] Chinese node and edge kind presentation covers every stable kind;
+- [x] raw DSL / IDs are technical details, not primary labels;
+- [x] no chapter, duration, status, author, version, collaboration or probability projection;
+- [x] flow styles are loaded after shared layers;
+- [x] no inline decorative rainbow palette, gradient, glow or colored left selection rail;
+- [x] current node uses complete outline / surface and explicit `aria-current` or selected wording;
+- [x] invalid state includes text or shape in addition to color;
+- [x] real nodes are keyboard focusable and Enter / Space share navigation behavior;
+- [x] viewport command IDs are stable and each reaches the existing view state;
+- [x] tooltip language matches actual single-click navigation;
+- [x] graph build and scene edit semantics remain imported from their existing paths.
 
 Run only the new contracts plus the existing flow model/edit/label files. RED must not arise from syntax, fixture, import or environment failure.
 
@@ -147,28 +147,28 @@ Record command, counts and first expected failure in the master Ledger.
 
 ## Task 3 — Implement the pure presentation contract
 
-- [ ] Add one small mapping for node kinds, edge kinds and validation states when needed by RED.
-- [ ] Preserve serialized values and IDs without translation or mutation.
-- [ ] Put raw technical identity behind `技术信息` or the SVG accessible description.
-- [ ] Distinguish `尚未校验` from a real empty graph.
-- [ ] Keep the presentation module free of DOM, state mutation and graph construction.
-- [ ] Bring presentation tests GREEN before changing the visual shell.
+- [x] Add one small mapping for node kinds, edge kinds and validation states when needed by RED.
+- [x] Preserve serialized values and IDs without translation or mutation.
+- [x] Put raw technical identity behind `技术信息` or the SVG accessible description.
+- [x] Distinguish `尚未校验` from a real empty graph.
+- [x] Keep the presentation module free of DOM, state mutation and graph construction.
+- [x] Bring presentation tests GREEN before changing the visual shell.
 
 ---
 
 ## Task 4 — Rebuild the flow workbench shell
 
-- [ ] Add a local header with `剧情流程`, real current scene and real node / connection / error / warning counts.
-- [ ] Add functioning `缩小`, `放大`, `适应画布` and `回到当前` commands on the existing `view` state.
-- [ ] Wrap the SVG, legend and minimap in named semantic regions.
-- [ ] Replace inline colors with CSS semantic classes and existing design tokens.
-- [ ] Replace the dotted demo-board / rainbow aesthetic with a restrained editorial grid and neutral connection system.
-- [ ] Represent edge kinds with line style, marker or label as well as color.
-- [ ] Represent current, error and warning states with full boundaries, surface and text / shape signals.
-- [ ] Add keyboard node navigation and meaningful Chinese accessible names.
-- [ ] Preserve all pointer pan, zoom, culling, minimap, link, rename and delete callbacks.
-- [ ] Ensure context menu remains within the viewport and has real menu semantics.
-- [ ] Migrate only flow-specific legacy CSS out of `styles.css`.
+- [x] Add a local header with `剧情流程`, real current scene and real node / connection / error / warning counts.
+- [x] Add functioning `缩小`, `放大`, `适应画布` and `回到当前` commands on the existing `view` state.
+- [x] Wrap the SVG, legend and minimap in named semantic regions.
+- [x] Replace inline colors with CSS semantic classes and existing design tokens.
+- [x] Replace the dotted demo-board / rainbow aesthetic with a restrained editorial grid and neutral connection system.
+- [x] Represent edge kinds with line style, marker or label as well as color.
+- [x] Represent current, error and warning states with full boundaries, surface and text / shape signals.
+- [x] Add keyboard node navigation and meaningful Chinese accessible names.
+- [x] Preserve all pointer pan, zoom, culling, minimap, link, rename and delete callbacks.
+- [x] Ensure context menu remains within the viewport and has real menu semantics.
+- [x] Migrate only flow-specific legacy CSS out of `styles.css`.
 
 **Gate:** no graph builder, scene-text or history change.
 
@@ -176,12 +176,12 @@ Record command, counts and first expected failure in the master Ledger.
 
 ## Task 5 — Focused and Editor verification
 
-- [ ] Run the new Wave 3A permanent contracts.
-- [ ] Run existing graph, flow edit and flow label suites.
-- [ ] Run the complete Editor test once the focused suite is GREEN.
-- [ ] Run Editor typecheck.
-- [ ] Run Editor build.
-- [ ] Run `git diff --check`.
+- [x] Run the new Wave 3A permanent contracts.
+- [x] Run existing graph, flow edit and flow label suites.
+- [x] Run the complete Editor test once the focused suite is GREEN.
+- [x] Run Editor typecheck.
+- [x] Run Editor build.
+- [x] Run `git diff --check`.
 
 This B-level frontend wave does not authorize `verify:all`. If evidence points to a shared-engine regression, stop and report instead of expanding scope.
 
@@ -191,17 +191,17 @@ This B-level frontend wave does not authorize `verify:all`. If evidence points t
 
 The self-contained runner must:
 
-- [ ] verify a strict free port that is not 4173 or 4175;
-- [ ] load a disposable copy of the real Starter through the project picker path;
-- [ ] enter flow mode and prove real scene, label, configuration entry, choice and condition content;
-- [ ] prove click navigation and keyboard navigation use real scene identity;
-- [ ] prove pan, zoom, fit, current-scene centering and minimap behavior;
-- [ ] prove drag-to-link changes only the disposable in-memory / fixture scene and the existing undo path restores it;
-- [ ] capture 1920, 1440, 1280, 1024 and 800 widths plus 200% zoom geometry and screenshots;
-- [ ] assert header, toolbar, graph, legend, minimap and context menu do not overlap or become unreachable;
-- [ ] record empty console, page, request, stderr and cleanup channels;
-- [ ] prove original Starter bytes are unchanged;
-- [ ] stop the isolated Vite/browser process and prove its port is free.
+- [x] verify a strict free port that is not 4173 or 4175;
+- [x] load a disposable copy of the real Starter through the project picker path;
+- [x] enter flow mode and prove real scene, label, configuration entry, choice and condition content;
+- [x] prove click navigation and keyboard navigation use real scene identity;
+- [x] prove pan, zoom, fit, current-scene centering and minimap behavior;
+- [x] prove drag-to-link changes only the disposable in-memory / fixture scene and the existing undo path restores it;
+- [x] capture 1920, 1440, 1280, 1024 and 800 widths plus Chromium page-scale `2` geometry/screenshots; prove the halved visual viewport, unchanged DPR and real command activation, and explicitly leave native Chrome browser zoom to the final cross-mode acceptance;
+- [x] assert header, toolbar, graph, legend, minimap and context menu do not overlap or become unreachable;
+- [x] record empty console, page, request, stderr and cleanup channels;
+- [x] prove original Starter bytes are unchanged;
+- [x] stop the isolated Vite/browser process and prove its port is free.
 
 Do not use the empty initial page as visual acceptance evidence.
 
@@ -209,23 +209,23 @@ Do not use the empty initial page as visual acceptance evidence.
 
 ## Task 7 — Independent review and code commit
 
-- [ ] Ask a read-only reviewer to inspect the exact diff, design contract and fresh evidence.
-- [ ] Treat Blocker / High findings as code blockers; fix within scope and rerun only affected proportional gates.
-- [ ] Record Medium / Low findings honestly and resolve Medium findings unless explicitly deferred with evidence.
-- [ ] Verify exact code/test/runner path set; no protected or unrelated path.
-- [ ] Stage exact reviewed paths only.
-- [ ] Run both diff checks and cached name review.
-- [ ] Commit `feat(editor): rebuild flow canvas workspace`.
-- [ ] No push.
+- [x] Ask a read-only reviewer to inspect the exact diff, design contract and fresh evidence.
+- [x] Treat Blocker / High findings as code blockers; fix within scope and rerun only affected proportional gates.
+- [x] Record Medium / Low findings honestly and resolve Medium findings unless explicitly deferred with evidence.
+- [x] Verify exact code/test/runner path set; no protected or unrelated path.
+- [x] Stage exact reviewed paths only.
+- [x] Run both diff checks and cached name review.
+- [x] Commit `feat(editor): rebuild flow canvas workspace`.
+- [x] No push.
 
 ---
 
 ## Task 8 — Ledger closure
 
-- [ ] Append actual RED, GREEN, browser evidence, review, commit and remaining limitations to the master Execution Ledger.
-- [ ] Run `npm run verify:docs` and both diff checks.
-- [ ] Create one exact docs-only closure commit only if the sole tracked change is the master taskbook.
-- [ ] Stop with Timeline 3B, owner visual acceptance, remote review, push and deployment not started.
+- [x] Append actual RED, GREEN, browser evidence, review, commit and remaining limitations to the master Execution Ledger.
+- [x] Run `npm run verify:docs` and both diff checks.
+**Terminal commit gate:** create one exact docs-only closure commit containing only the Wave 3A design correction, Wave 3A taskbook closure and master Execution Ledger. Its resulting identity is reported after the commit and cannot be pre-recorded inside its own tree.
+- [x] Stop with Timeline 3B, owner visual acceptance, remote review, push and deployment not started.
 
 ---
 

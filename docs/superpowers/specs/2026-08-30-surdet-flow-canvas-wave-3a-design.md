@@ -130,11 +130,12 @@ The flow page must not add gradients, glows, glass, rainbow connections, decorat
 - Legend and minimap are compact supporting instruments, not card stacks.
 - Context-menu actions remain near the pointer but are constrained inside the viewport.
 
-### 5.2 Narrow widths and 200% zoom
+### 5.2 Narrow widths and 200% page-scale proxy
 
 - At 1024 pixels, status and toolbar may wrap into two rows; the graph retains reachable height.
 - At 800 pixels, the legend may collapse behind a real disclosure button; the minimap remains reachable and does not cover the toolbar.
-- At 200% browser zoom, no command becomes unreachable and the page itself does not gain an uncontrolled competing scroll surface.
+- Wave 3A headless evidence uses Chromium's real page-scale at `2` with a halved visual viewport and unchanged DPR. Every Flow command must remain visible and operable inside that visual viewport, and the page itself must not gain an uncontrolled competing scroll surface.
+- This page-scale proof must not be reported as native Chrome browser zoom. Native 200% browser zoom, including CSS-viewport reflow across every Editor mode, remains a final cross-wave acceptance item.
 - The flow viewport may scroll or pan internally; header and commands remain stable.
 
 ---
@@ -213,7 +214,7 @@ The script-page Dock remains out of scope until zero / one / multiple scene-time
 - complete Editor test, typecheck and build pass;
 - CSS contract proves no flow-specific gradient, glow, rainbow palette or colored left selection rail;
 - browser runner loads a copied real Starter and proves real graph nodes, configuration entry, choice / condition connection, navigation, pan, zoom, minimap and link editing / undo;
-- browser evidence covers 1920, 1440, 1280, 1024 and 800 widths plus 200% zoom;
+- browser evidence covers 1920, 1440, 1280, 1024 and 800 widths plus the explicitly bounded 200% Chromium page-scale proxy; native browser zoom remains unverified in this wave;
 - browser error, request, stderr, cleanup and port-residue channels are empty;
 - original Starter bytes remain unchanged.
 

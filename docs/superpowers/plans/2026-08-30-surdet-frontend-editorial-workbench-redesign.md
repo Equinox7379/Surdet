@@ -777,3 +777,77 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Execute Flow Canvas 3A through local technical and browser gates, create exact local commits and stop before Timeline 3B. Do not push, deploy or modify backend / shared-engine production packages.
+
+### 2026-08-30 — Wave 3A planning freeze
+
+**CONFIRMED_FACTS**
+
+- Wave 3A design, executable taskbook and master scope correction were committed together as `546d3ff331c9ee17b72e5cb2917457ec33ca34bc`, parent `2fdbd59eaa4f00669dc5b8a22c754bcb57949b45`, message `docs(editor): plan flow canvas wave 3a`.
+- The exact commit contains only the two new Wave 3A documents and this master taskbook. `npm run verify:docs`, working diff check and cached diff check passed before commit.
+- No production, test, Starter, dependency, lockfile, protected or unrelated untracked path entered the planning commit. No push occurred.
+
+**UNVERIFIED_ITEMS**
+
+- Permanent RED and all Wave 3A implementation evidence remain pending.
+
+**STOP_BOUNDARY**
+
+- Continue with the authorized Flow Canvas 3A RED-to-GREEN implementation. Do not begin Timeline 3B or push.
+
+### 2026-08-30 — Wave 3A permanent RED
+
+**CONFIRMED_FACTS**
+
+- Three new permanent contract files were created without changing production code or existing tests: `flow-presentation-contract.test.ts`, `editor-flow-workspace-contract.test.ts` and `editor-flow-interaction-contract.test.ts`.
+- The focused RED command ran 3 files / 15 tests: 13 expected contract failures and 2 preservation passes. Failures respectively proved the absence of the pure Chinese presentation projection, semantic Flow workbench / dedicated style layer, and focusable Enter / Space node navigation. Existing graph, history, scene-text, pointer, minimap, rename and delete import / behavior paths remained visible to the preservation assertions.
+- RED was not caused by syntax, fixture or type failure. Editor typecheck passed and the three new files passed working diff check.
+- Raw RED evidence is `C:\Users\Equinox\AppData\Local\Temp\surdet-wave3a-flow-contract-red.log`, 257209 bytes, SHA-256 `DB83D4C68A40052C023B675E8BBA546855F9A54C62B4967FD71D270ED31FCE28`.
+
+**UNVERIFIED_ITEMS**
+
+- Production GREEN, existing flow regressions, complete Editor suite, build and browser behavior remain pending.
+
+**STOP_BOUNDARY**
+
+- Implement only the authorized Editor Flow presentation and preserve the established graph / edit paths.
+
+### 2026-08-30 — Wave 3A Flow Canvas technical closure
+
+**CONFIRMED_FACTS**
+
+- The planning commit recorded earlier in this Ledger is corrected to `546d3ff356473abea12d85f35507b1a63edf827c`, parent `2fdbd59eaa4f00669dc5b8a22c754bcb57949b45`. The earlier `546d3ff331c9...` value was a transcription error; the commit message and exact three-path planning scope were otherwise correct.
+- Wave 3A code evidence is commit `086d6cf6a65383346baa824345b5f2a126e09487`, parent `546d3ff356473abea12d85f35507b1a63edf827c`, message `feat(editor): rebuild flow canvas workspace`. It contains exactly ten authorized Editor production, test and browser-runner paths: `index.html`, the Flow panel, one pure presentation module, shared-style subtraction, one dedicated Flow style layer, three permanent product contracts, one browser runner and one runner contract.
+- The production implementation remains Editor-only. It does not change Authoring, Core, CLI, Host, Shell, Renderer, Starter, dependencies, lockfile, graph construction, scene serialization, history semantics or backend contracts.
+- The Flow workspace now projects every stable node, edge and validation kind into Chinese-first human labels while retaining raw IDs and DSL only as technical detail. Current, warning and error states use complete surfaces, outlines, labels and shapes rather than a colored left rail or color alone.
+- Existing graph, pan, zoom, culling, minimap, click navigation, drag-to-link, undo, rename and delete behavior remains connected to its original state and callbacks. Added commands operate on that same view state; keyboard Enter / Space navigation shares the pointer path; the context menu has bounded viewport placement, menu semantics and focus return.
+- Permanent RED ran 3 files / 15 tests with 13 intended failures and 2 preservation passes. The raw log is `C:\Users\Equinox\AppData\Local\Temp\surdet-wave3a-flow-contract-red.log`, 257209 bytes, SHA-256 `DB83D4C68A40052C023B675E8BBA546855F9A54C62B4967FD71D270ED31FCE28`.
+- The latest independent focused replay passed 7 files / 46 tests. The complete Editor suite passed 44 files / 279 tests. Editor typecheck and build passed; Vite emitted only the existing large-chunk advisory. The final runner contract passed 7 / 7 and the runner passed syntax checking.
+- Final fresh Chromium evidence passed 24 / 24 at `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-flow-canvas-wave3a-iSqdE4\evidence.json`, 141490 bytes, SHA-256 `D479D96DD5D69E8CE81CF18D152DC61819F6C53D7AD8CBCCD10F146E99140DFE`. The embedded runner identity is 60907 bytes, SHA-256 `802E353279D5FBACA6C71416553A97B4D8CD6D4905DFF92560810C7C00C3DB83`.
+- Browser evidence loaded a disposable copy of the real Starter and proved real scene, label, configuration-entry, choice and condition content; pointer and keyboard navigation; pan, zoom, fit, current-scene centering, minimap navigation, drag-to-link and undo. Five widths rendered all 13 nodes in the fitted viewport: 1920, 1440, 1280, 1024 and 800 pixels.
+- The Chromium page-scale `2` check reduced the visual viewport from 800 x 500 to 400 x 250 while DPR remained 1. All five real Flow commands remained visible; `适应画布` was actually activated and retained all 13 nodes. This is a bounded page-scale proxy and is not native Chrome browser zoom.
+- The minimap check clicked relative point `(0.72, 0.32)` and measured a post-render world-center error of 0.568 pixels. A permanent numeric regression covers unequal rendered and intrinsic SVG dimensions.
+- Final screenshots are outside the repository: 1920 (`13424F0B021001AD581224552941D2102663D835D23A995BD82273A00F4CB42A`), 1440 (`B7321BA77158FDC6E4988D1B031CB9825D1C62116C8EB1E3C287FCBDEEBAA48B`), 1280 (`FCFDD8D1E8BA7F7F031D5AA2A28EC1FB72B4B98EC18D74EBCF97430DC3CE47DE`), 1024 (`3A116D29BB2B0D3D7991E5956C3470F7605F72F8C2CF611A911FE8A0324ED216`) and 800 (`4407DABFDBA04407DE8EF65D792D5361B9ECD4A430C41B3BEDA4531972B5A61A`). The page-scale screenshot SHA-256 is `88FD0966E7F88C233F711EA296180B15308B3383B082BE8FFEAA5E484461C73D`.
+- Original Starter identity remained 37 files / 6705750 bytes / SHA-256 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`. Browser, console, page, request, stderr, cleanup and active-port error channels were empty. Isolated port 4211 was released; ports 4173 and 4175 were not stopped or reused.
+- Three superseded failure artifacts remain preserved: the first found a real stale-dimension fit defect; the second exposed insufficient command-reachability evidence; the third exposed a runner-only toolbar-centering defect. Each was repaired within scope and not rewritten as a pass.
+- Independent review first found nine implementation issues, then identified the page-scale wording and minimap-coordinate evidence boundaries. After proportional product, permanent-test, runner and documentation corrections, the final read-only review returned `PASS` with no Blocker, High, Medium or Low finding.
+
+**REASONABLE_INFERENCES**
+
+- Flow now behaves as a coherent desktop authoring workspace rather than a decorative demo graph. The result is materially closer to the approved reference through information hierarchy, density, direct manipulation and restrained state language, without copying unavailable reference features.
+- Keeping graph truth, edit truth and serialized values unchanged makes this a reliable visual/accessibility foundation for later integration rather than a parallel frontend-only model.
+
+**UNVERIFIED_ITEMS**
+
+- Native Chrome 200% browser zoom, including CSS-viewport reflow across all eight Editor modes, is not proven by the Chromium page-scale artifact and remains a final cross-wave acceptance item.
+- Owner visual acceptance of the final Wave 3A screenshot, remote GitHub review, push, deployment and release have not started.
+- Timeline 3B remains separate. Timeline selection truth, destructive-edit recovery, default asset assumptions, EOL preservation and short-timeline tick behavior were not changed in Wave 3A.
+
+**STOP_BOUNDARY**
+
+- `WAVE_3A_TECHNICAL_VERIFICATION = PASSED`
+- `INDEPENDENT_LOCAL_REVIEW = PASSED`
+- `OWNER_VISUAL_ACCEPTANCE = NOT_STARTED`
+- `REMOTE_REVIEW = NOT_STARTED`
+- `PUSH = NOT_PERFORMED`
+- `TIMELINE_3B = NOT_STARTED`
+- Create only the exact three-path docs-only closure commit, then stop.
