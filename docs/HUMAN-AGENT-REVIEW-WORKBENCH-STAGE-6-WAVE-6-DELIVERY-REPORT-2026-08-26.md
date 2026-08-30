@@ -70,6 +70,11 @@ replacement result review 的最终批准由项目所有者明确委托给经理
 - `packages/cli/src/agent-port/session.ts`：review 等待状态、next actions 与策略过滤。
 - `packages/cli/src/authoring/composition-service.ts`：只枚举合法 `chg_` change namespace，避免把 `reviews/` 当作 change。
 
+### Renderer
+
+- `packages/renderer/src/layers/dialogue/dialogue-layer.ts`：说话人优先按稳定 ID 解析，并只为不歧义的显示名建立别名；画面显示本地化角色名，未知或重名显示名不被猜测绑定。
+- `packages/renderer/test/legacy/dialogue-layer.test.ts`：永久覆盖稳定 ID、唯一显示名、未知显示名、重名以及 ID/显示名冲突时 ID 优先。
+
 ### Editor
 
 - `packages/editor/src/review-workspace.ts`：打开 review workspace、读取持久回执、写入 create-only 决定/批准。
@@ -88,6 +93,9 @@ Wave 6 主任务按 Task 1–10 建立并保留 RED/GREEN、DIAGNOSTIC 与 FORMA
 | Authoring 严格串行全量 | 30 files / 262 tests PASS |
 | Authoring typecheck / build | PASS / PASS |
 | CLI typecheck / build | PASS / PASS |
+| Renderer speaker 聚焦（Recovery-9） | 2 files / 24 tests PASS |
+| Renderer 全量（Recovery-9） | 50 files / 413 tests PASS |
+| Renderer typecheck / build（Recovery-9） | PASS / PASS |
 | Editor review 聚焦 | 4 files / 40 tests PASS |
 | Editor 严格串行全量 | 33 files / 223 tests PASS |
 | Editor typecheck / build | PASS / PASS |
@@ -142,7 +150,7 @@ Wave 6 主提交链：
 | REVIEW_CAPABILITY_HEAD | `2e6fd6bc1ff38dc49fb07b973f764097aa9f7028` |
 | EDITOR_REVIEW_WORKSPACE_HEAD | `d4b26c36dfa9f82a0b6e364ad7cf8ba782747ce1` |
 | EDITOR_REVIEW_UI_HEAD | `deaf74a64024b91e46cc750822295e0f9c2ce739` |
-| ORIGINAL_CODE_EVIDENCE_HEAD | `5f796620736a4264f1d65e5baec56f55f76685f8` |
+| ORIGINAL_CODE_EVIDENCE_HEAD | `5f796620736a4264f1d65e5baec56f55f76685f8`（包含 Renderer 稳定说话人 ID 修复及永久测试） |
 | RECEIPT_INTEGRITY_CODE_EVIDENCE_HEAD | `e6ae69cbadbbae2ac941899a091e9de6bb9e8eda` |
 | OWNER_COMPREHENSIBILITY_HEAD | `faf874c0677f6c6a70b38c325ddf228ee46ee828` |
 | CONFIG_EOL_HEAD | `f771848ccb23984d7810487d67a0c623122fa77b` |

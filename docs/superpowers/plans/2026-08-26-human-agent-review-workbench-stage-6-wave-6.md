@@ -5078,3 +5078,16 @@ trackedLogs = NONE
 correctionBoundary = this single taskbook-only correction records the immutable report identity and first document closure commit; FINAL_HEAD and the corrected taskbook identity are intentionally supplied by post-correction disk readback because a document cannot contain its own final commit/hash without recursion
 stopState = READY_FOR_POST_CORRECTION_DISK_READBACK_AND_MANAGER_FINAL_REVIEW; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
 ~~~
+
+### 2026-08-30 — manager final review scope correction
+
+~~~text
+timestamp = 2026-08-30
+finding = manager review of surdet/main...HEAD found two legitimate Wave 6 Renderer paths: packages/renderer/src/layers/dialogue/dialogue-layer.ts and packages/renderer/test/legacy/dialogue-layer.test.ts; the earlier protectedBoundary sentence that grouped Renderer with untouched Core/Host/Shell was inaccurate
+authoritativeScope = Renderer production/test change is intentional Recovery-9 work inside 5f796620736a4264f1d65e5baec56f55f76685f8; stable speaker ID resolves lynn to activeSpeakerId lynn while displaying localized name 凛; unknown or ambiguous display names do not bind
+rendererEvidence = focused GREEN 2 files / 24 tests PASS; full 50 files / 413 tests PASS; typecheck PASS; build PASS; exact artifact identities remain recorded in the Recovery-9 Ledger entries
+forbiddenIntersectionCorrection = Core, Host, Shell, Starter, Zero, dependency/lockfile, protected files, and unrelated untracked paths remain untouched; Renderer must not be listed among those untouched areas
+deliveryReportCorrection = the delivery report now includes the Renderer architecture landing and Recovery-9 gates; the previously recorded 12880-byte report identity is historical and superseded by the manager-review correction
+governance = this additional docs correction is required by a newly discovered factual scope error during the mandated final review; preserving a known false statement to honor a numeric correction limit would violate the evidence contract
+stopState = DOCUMENT_SCOPE_CORRECTED; READY_FOR_FINAL_DOC_GATES_AND_POST_COMMIT_MANAGER_VERDICT; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
