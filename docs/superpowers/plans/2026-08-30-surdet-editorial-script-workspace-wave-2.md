@@ -63,6 +63,7 @@ If the tracked baseline differs before the first Wave 2 commit, stop and inspect
 
 - `packages/editor/index.html`
 - `packages/editor/src/main.ts`
+- `packages/editor/src/causal-selection.ts` (scope decision: reconcile the existing selection truth after real object-index rebuilds; Editor-only, no new selection state)
 - `packages/editor/src/shell/app-shell.ts`
 - `packages/editor/src/shell/authoring-workbench.ts` (new)
 - `packages/editor/src/panels/editor.ts`
@@ -80,6 +81,7 @@ If the tracked baseline differs before the first Wave 2 commit, stop and inspect
 - `packages/editor/test/editor-script-workspace-contract.test.ts` (new)
 - `packages/editor/test/editor-integrated-authoring-workbench.test.ts` (new)
 - existing adjacent Editor tests only when an assertion must be migrated without weakening behavior
+- `packages/editor/test/causal-selection.test.ts` (permanent selection-reconciliation regression for the approved scope decision)
 
 ### Wave 2 test-only browser evidence
 
@@ -394,3 +396,44 @@ The final report must state:
 - `OWNER_VISUAL_ACCEPTANCE = NOT_STARTED` unless the owner personally evaluates the loaded Wave 2 page;
 - `REMOTE_REVIEW = NOT_STARTED` and `PUSH = NOT_PERFORMED`;
 - `WAVE_3 = NOT_STARTED`.
+
+---
+
+## 7. Execution closure — 2026-08-30
+
+### CONFIRMED_FACTS
+
+- Planning authority was frozen in commit `0caceceb2ae21f2e8b3c7fd21b6fadcabd2d26a9`, parent `27361d9269475350ffea1d1ccdf4eb9bd5069148`, with exactly the design specification, this taskbook and the master taskbook.
+- Permanent RED was established before the implementation: 3 files / 15 tests, 12 passed / 3 failed, exit 1. The three failures were the missing Wave 2 scene/asset whole-surface selection, manuscript selection and responsive bounded-layout CSS contracts.
+- The implementation retains the real `state.scenes`, `state.current`, `state.selectedObjectRef`, authoring index, history, asset insertion, validation, search, issue and causal-selection pathways. It adds a presentation topology and scoped styles; it does not add a second scene, selection, preview, trace, timeline or persistence truth.
+- Independent review first returned `NEEDS_FIX`: narrow layouts made auxiliary panes unreachable; right-topology and new-scene navigation bypassed the centralized route; selection could become stale after a real object-index rebuild; dirty facts and asset insertion did not immediately refresh; row actions overlaid content; and native tabs lacked complete keyboard behavior. Each Blocker / High finding was corrected before code freeze.
+- The explicit scope decision above adds `packages/editor/src/causal-selection.ts` and `packages/editor/test/causal-selection.test.ts` to preserve the one existing selection truth across index rebuilds. No shared-engine or backend package changed.
+- Final code evidence is commit `0531388ccc703ce603f02eb4d34d5594013ffc89`, parent `0caceceb2ae21f2e8b3c7fd21b6fadcabd2d26a9`, message `feat(editor): build narrative continuity workspace`. It contains exactly 17 reviewed Editor production / test / browser-runner paths; staged missing and extra path counts were both zero.
+- Final focused contracts passed: 4 files / 23 tests. The complete Editor suite passed: 40 files / 255 tests. Editor typecheck and production build passed; build output contained only the existing Vite large-chunk advisory.
+- The final browser runner is 27723 bytes with SHA-256 `0206E9E3988A305E9DDBD9A4AE6C73DBF21F444E52EEFBF2814441959B26A145`.
+- A runner-only assertion mistake was preserved rather than erased: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-script-workspace-wave2-r0VnDj\evidence.json`, 41363 bytes, SHA-256 `0E2A65AAB615CD61AF1A24A0F58D9537C12754DBFD0FFF1B3AC6734F764E7EFF`. It incorrectly read an input's `textContent` instead of its value; the product path had already passed the preceding milestones.
+- After correcting only that test assertion and after the final new-scene navigation correction, a fresh real-Starter run passed 16 / 16 milestones without rerun substitution: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-script-workspace-wave2-mwDnEl\evidence.json`, 56931 bytes, SHA-256 `F7B70A09C9CE890196AF0930AE044C09D9F8AB393A527DBAC3BBE83DD533E6BC`.
+- The fresh browser run proved: isolated strict port selection; project opening through the real picker path; no duplicate preview / trace / timeline in script mode; bounded 1440, 1280, 1024 and 800 layouts; outline/context replacement at narrow widths; real scene switch and search selection; edit + undo with selection reconciliation and dirty-fact refresh; real asset insertion + undo; unchanged project bytes; and empty browser error, request and cleanup channels.
+- The browser runner used port 4187 and released it. It did not stop, claim or reuse 4173 or 4175. Original Starter SHA-256 remained `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6` before and after.
+- Independent review returned `PASS` with no Blocker, High or Medium finding. It passed an additional 4 files / 38 regression tests and replayed the final runner after the last source edit: 16 / 16 passed, Starter unchanged, error channels empty and port 4187 released.
+
+### REASONABLE_INFERENCES
+
+- Wave 2 materially closes the gap from a stack of generic forms toward a dense authoring desk because scene/asset discovery, ordered manuscript editing and current-object evidence now share one visible workspace and one semantic selection.
+- The implementation is a credible foundation for later preview/timeline/causal docking, but visual proximity to the full benchmark still depends on future workspaces and real project assets.
+
+### UNVERIFIED_ITEMS
+
+- The approved benchmark's preview, timeline, causal graph, flow, statistics, audit and final visual language are not Wave 2 deliverables. Unsupported chapter hierarchy, durations, production state, collaboration, comments, version and character metrics remain intentionally omitted rather than fabricated.
+- A low-severity existing edge remains deferred: after a brand-new scene receives its first physical save path, the currently rendered manuscript path label may not update until the next full render. Save semantics and stored bytes are unaffected; it is not a Blocker or High for this workspace closure.
+- The browser artifact freezes its runner hash and disk identity but not a complete application-source hash or `runHead`; freshness was established here by two post-edit reruns and exact commit review. A later high-risk wave may strengthen that evidence envelope.
+- Owner visual acceptance of the loaded final Wave 2 page, remote GitHub review, push, deployment and release have not occurred.
+
+### STOP_BOUNDARY
+
+- `WAVE_2_TECHNICAL_VERIFICATION = PASSED`
+- `OWNER_VISUAL_ACCEPTANCE = NOT_STARTED`
+- `REMOTE_REVIEW = NOT_STARTED`
+- `PUSH = NOT_PERFORMED`
+- `WAVE_3 = NOT_STARTED`
+- Close only the master taskbook and this taskbook in the docs-only commit; stop before Wave 3 and wait for the owner's next direction.
