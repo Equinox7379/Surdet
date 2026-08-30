@@ -22,7 +22,7 @@ import {
 } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
 import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
-import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject } from './project-io.js';
+import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject, restoreTimelineAutosaveEntries } from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
 import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
@@ -45,7 +45,7 @@ import {
 } from './shell/app-shell.js';
 import { buildAuthoringWorkbench } from './shell/authoring-workbench.js';
 import {
-  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
+  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, pickRecoverableTimelines, writeAutosave, clearAutosave,
 } from './autosave.js';
 
 /* ============================ authoring 内存索引（单飞 + 防抖） ============================ */
@@ -60,7 +60,8 @@ let saveAttemptLeftDirty = false;
 function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
     || state.timelines.some(({ dirty }) => dirty)
-    || state.pendingTimelineDeletes.length > 0;
+    || state.pendingTimelineDeletes.length > 0
+    || state.pendingTimelineRestores.size > 0;
 }
 
 function currentObjectLabel(): string {
@@ -482,7 +483,9 @@ window.addEventListener('beforeunload', (e) => {
       return;
     }
   }
-  if (state.timelines.some((timeline) => timeline.dirty) || state.pendingTimelineDeletes.length > 0) {
+  if (state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingTimelineDeletes.length > 0
+    || state.pendingTimelineRestores.size > 0) {
     e.preventDefault();
     e.returnValue = '';
   }
@@ -502,10 +505,16 @@ window.addEventListener('beforeunload', (e) => {
 function tryAutosaveRecover(): void {
   const payload = readAutosave();
   const recoverable = pickRecoverable(payload, state.dirName, state.scenes);
-  if (recoverable.length === 0) return;
+  const recoverableTimelines = pickRecoverableTimelines(payload, state.dirName, state.timelines);
+  if (recoverable.length === 0 && recoverableTimelines.length === 0) return;
   const when = new Date(payload!.savedAt).toLocaleString();
   const names = recoverable.map((e) => e.key).join('、');
-  if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}），共 ${recoverable.length} 个场景与磁盘内容不同：\n${names}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
+  const timelineNames = recoverableTimelines.map((entry) => entry.id).join('、');
+  const details = [
+    recoverable.length > 0 ? `${recoverable.length} 个场景：${names}` : '',
+    recoverableTimelines.length > 0 ? `${recoverableTimelines.length} 个演出：${timelineNames}` : '',
+  ].filter(Boolean).join('\n');
+  if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}）：\n${details}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
     return;
   }
   for (const e of recoverable) {
@@ -515,6 +524,7 @@ function tryAutosaveRecover(): void {
       sc.dirty = true;
     }
   }
+  restoreTimelineAutosaveEntries(recoverableTimelines);
   renderAll();
   runValidate();
   scheduleAuthoringIndexRebuild();
