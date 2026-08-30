@@ -1,4 +1,9 @@
-import type { HumanReviewProjection, ReviewConflict } from '@surdet/authoring';
+import type {
+  HumanReviewProjection,
+  ReviewConflict,
+  ReviewUnitOutcome,
+  ReviewUnitPresentation,
+} from '@surdet/authoring';
 
 export interface ReviewDecisionDraftModel {
   selectedUnitIds: string[];
@@ -99,6 +104,23 @@ export function labelForFreshness(value: string): string {
 
 export function labelForDisposition(value: string): string {
   return DISPOSITION_LABELS[value] ?? '变更';
+}
+
+/** 旧 v1 payload 没有 presentation；Editor 只明确降级，不从对象或文件猜内容。 */
+export function presentationForReviewUnit(unit: ReviewUnitOutcome): ReviewUnitPresentation {
+  if (unit.presentation !== undefined) {
+    return {
+      ...unit.presentation,
+      highlights: [...unit.presentation.highlights],
+    };
+  }
+  return {
+    actionLabel: '内容摘要不足',
+    objectLabel: labelForObjectRef(unit.primaryObject),
+    highlights: [],
+    completeness: 'metadata-only',
+    omittedFactCount: 0,
+  };
 }
 
 function resolutionIsAllowed(conflict: ReviewConflict, draft: ReviewDecisionDraftModel): boolean {

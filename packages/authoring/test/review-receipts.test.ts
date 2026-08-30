@@ -294,6 +294,18 @@ describe('human comparison decision receipts', () => {
     });
   });
 
+  it('keeps a legacy v1 projection without presentation valid for its historical decision receipt', async () => {
+    const legacy = projection();
+    const legacyReceipt = await receipt();
+    expect(legacy.conflicts[0]!.options.every((option) => !('presentation' in option))).toBe(true);
+
+    const verified = await validateComparisonDecision({ projection: legacy, receipt: legacyReceipt }, hasher);
+
+    expect(verified.receipt.decisionId).toBe(legacyReceipt.decisionId);
+    expect(verified.receipt.decisionFingerprint).toBe(legacyReceipt.decisionFingerprint);
+    expect(legacy.reviewFingerprint).toBe('review-fingerprint');
+  });
+
   it.each(['comparisonFingerprint', 'projectIdentity', 'expectedProjectRevision', 'candidateRefs'] as const)(
     'rejects stale %s',
     async (field) => {

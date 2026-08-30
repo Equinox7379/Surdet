@@ -2,7 +2,9 @@ import { AuthoringOperationError, evidenceFreshness, stableStringify } from './c
 import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
+  CompositionManifest,
   CompositionComparison,
+  CompositionOperation,
   ObjectChangeUnit,
   VerifiedCompositionCandidate,
 } from './composition-contracts.js';
@@ -23,6 +25,10 @@ import type {
   ReviewUnitOutcome,
   ReviewWarning,
 } from './review-contracts.js';
+import {
+  buildReviewUnitPresentation,
+  metadataOnlyReviewUnitPresentation,
+} from './review-presentation.js';
 
 export interface BuildComparisonReviewProjectionInput {
   reviewId: string;
@@ -31,6 +37,7 @@ export interface BuildComparisonReviewProjectionInput {
     'candidateId' | 'ref' | 'evidenceSummary'> & {
       intent?: string;
       acceptanceCriteria: string[];
+      manifest?: CompositionManifest;
     }>;
   objects: AuthoringObject[];
 }
@@ -67,7 +74,32 @@ function sortedFacts(values: readonly unknown[]): unknown[] {
     .map(([, value]) => value);
 }
 
-function projectUnitOutcome(unit: ObjectChangeUnit): ReviewUnitOutcome {
+function unitPresentation(
+  unit: ObjectChangeUnit,
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+): ReviewUnitOutcome['presentation'] {
+  const manifest = manifests.get(unit.candidateId);
+  if (manifest === undefined) return metadataOnlyReviewUnitPresentation(unit.primaryObject);
+  const bySequence = new Map<number, CompositionOperation>();
+  for (const operation of manifest.operations) {
+    if (bySequence.has(operation.sequence)) return metadataOnlyReviewUnitPresentation(unit.primaryObject);
+    bySequence.set(operation.sequence, operation);
+  }
+  const operations: CompositionOperation[] = [];
+  for (const sequence of [...unit.operationSequences].sort((left, right) => left - right)) {
+    const operation = bySequence.get(sequence);
+    if (operation === undefined || operation.primaryObject !== unit.primaryObject) {
+      return metadataOnlyReviewUnitPresentation(unit.primaryObject);
+    }
+    operations.push(operation);
+  }
+  return buildReviewUnitPresentation(unit.primaryObject, operations);
+}
+
+function projectUnitOutcome(
+  unit: ObjectChangeUnit,
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+): ReviewUnitOutcome {
   return {
     unitId: unit.unitId,
     candidateId: unit.candidateId,
@@ -81,6 +113,7 @@ function projectUnitOutcome(unit: ObjectChangeUnit): ReviewUnitOutcome {
     potentialImpact: sortedFacts(unit.potentialImpact),
     observedImpact: sortedFacts(unit.observedImpact),
     evidence: normalizedEvidence(unit.evidenceSummary),
+    presentation: unitPresentation(unit, manifests),
   };
 }
 
@@ -189,6 +222,7 @@ function projectObjects(
 function projectSafeGroups(
   comparison: CompositionComparison,
   ranks: Map<string, number>,
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
 ): ReviewSafeGroup[] {
   const unitsById = new Map(comparison.units.map((unit) => [unit.unitId, unit]));
   return [...comparison.identicalGroups]
@@ -200,7 +234,7 @@ function projectSafeGroups(
         .filter((unit): unit is ObjectChangeUnit => unit !== undefined)
         .sort((left, right) => compareCandidateIds(ranks, left.candidateId, right.candidateId)
           || left.unitId.localeCompare(right.unitId));
-      const sources = groupUnits.map(projectUnitOutcome);
+      const sources = groupUnits.map((unit) => projectUnitOutcome(unit, manifests));
       const candidateIds = [...new Set(groupUnits.map((unit) => unit.candidateId))]
         .sort((left, right) => compareCandidateIds(ranks, left, right));
       const groupUnitIds = new Set(unitIds);
@@ -234,6 +268,7 @@ function projectSafeGroups(
 function projectConflicts(
   comparison: CompositionComparison,
   ranks: Map<string, number>,
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
 ): ReviewConflict[] {
   const unitsById = new Map(comparison.units.map((unit) => [unit.unitId, unit]));
   return [...comparison.conflicts]
@@ -245,7 +280,7 @@ function projectConflicts(
         .filter((unit): unit is ObjectChangeUnit => unit !== undefined)
         .sort((left, right) => compareCandidateIds(ranks, left.candidateId, right.candidateId)
           || left.unitId.localeCompare(right.unitId))
-        .map(projectUnitOutcome);
+        .map((unit) => projectUnitOutcome(unit, manifests));
       return {
         conflictId: conflict.conflictId,
         severity: conflict.severity,
@@ -358,6 +393,15 @@ function reviewFingerprintPayload(projection: HumanReviewProjection): Record<str
   };
 }
 
+/** comparison review 的唯一 identity 投影；旧 payload 缺少可选 presentation 时字段保持缺席。 */
+export async function comparisonReviewFingerprintOf(
+  projection: HumanReviewProjection,
+  hasher: TextHasher,
+): Promise<string> {
+  if (projection.kind !== 'comparison') throw invalid('comparison review fingerprint 只能用于 comparison projection');
+  return hasher.sha256(stableStringify(reviewFingerprintPayload(projection)));
+}
+
 export async function buildComparisonReviewProjection(
   input: BuildComparisonReviewProjectionInput,
   hasher: TextHasher,
@@ -372,8 +416,9 @@ export async function buildComparisonReviewProjection(
     evidence: normalizedEvidence(item.evidenceSummary),
   }));
   const ranks = candidateRank(candidates);
-  const safeGroups = projectSafeGroups(input.comparison, ranks);
-  const conflicts = projectConflicts(input.comparison, ranks);
+  const manifests = new Map(orderedInputs.map((item) => [item.candidateId, item.manifest]));
+  const safeGroups = projectSafeGroups(input.comparison, ranks, manifests);
+  const conflicts = projectConflicts(input.comparison, ranks, manifests);
   const dependencies = projectDependencies(input.comparison);
   const defaultSelectedUnitIds = comparisonDefaultSelectedUnitIds(input.comparison);
   const evidence = projectEvidence(input.comparison, ranks, conflicts);
@@ -387,7 +432,7 @@ export async function buildComparisonReviewProjection(
   const declared = orderedInputs.find((item) => item.intent !== undefined && item.intent.trim().length > 0);
   const task = declared === undefined
     ? {
-        title: 'Candidate composition review',
+        title: '候选创作方案审阅',
         acceptanceCriteria: [],
         candidateCount: candidates.length,
         objectCount,
@@ -424,7 +469,7 @@ export async function buildComparisonReviewProjection(
     },
     reviewFingerprint: '',
   };
-  projection.reviewFingerprint = await hasher.sha256(stableStringify(reviewFingerprintPayload(projection)));
+  projection.reviewFingerprint = await comparisonReviewFingerprintOf(projection, hasher);
   return projection;
 }
 
