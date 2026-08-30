@@ -23,6 +23,7 @@ export interface TimelineEntry {
   id: string;
   file: string;
   text: string;
+  eol: '\r\n' | '\n';
   dirty: boolean;
   handle: FileSystemFileHandle | null;
 }

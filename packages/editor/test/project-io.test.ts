@@ -1,25 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bindProjectIoHooks, openProjectFromHandle, saveAll } from '../src/project-io.js';
+import { bindProjectIoHooks, openProjectFromHandle, readTimelineDir, saveAll } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
+import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
 
 type FailurePoint = 'create' | 'write' | 'close';
 
-function fileHandle(failure: FailurePoint | null, log: string[], name: string): FileSystemFileHandle {
+function fileHandle(
+  failure: FailurePoint | null,
+  log: string[],
+  name: string,
+  initialText = '',
+  writes: string[] = [],
+): FileSystemFileHandle {
   return {
     kind: 'file',
     name,
     isSameEntry: async () => false,
     queryPermission: async () => 'granted',
     requestPermission: async () => 'granted',
-    getFile: async () => new File([], name),
+    getFile: async () => new File([initialText], name),
     createWritable: async () => {
       log.push(`${name}:createWritable`);
       if (failure === 'create') throw new Error(`${name}:create failed`);
       return {
-        write: async () => {
+        write: async (value: FileSystemWriteChunkType) => {
           log.push(`${name}:write`);
           if (failure === 'write') throw new Error(`${name}:write failed`);
+          writes.push(String(value));
         },
         close: async () => {
           log.push(`${name}:close`);
@@ -35,7 +43,7 @@ function scene(id: string, handle: FileSystemFileHandle, dirty = true): SceneEnt
 }
 
 function timeline(id: string, handle: FileSystemFileHandle, dirty = true): TimelineEntry {
-  return { id, file: `${id}.json`, text: `{ "id": "${id}" }`, dirty, handle };
+  return { id, file: `${id}.json`, text: `{ "id": "${id}" }`, eol: '\n', dirty, handle };
 }
 
 function directoryHandle(
@@ -170,6 +178,36 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
       failures: 0,
       remainingDirty: false,
     });
+  });
+
+  it('读取并编辑时间轴时分别保留 CRLF 与 LF 文档身份', async () => {
+    const crlfWrites: string[] = [];
+    const lfWrites: string[] = [];
+    const crlfText = stringifyTimeline(createTimeline('crlf'), '\r\n');
+    const lfText = stringifyTimeline(createTimeline('lf'), '\n');
+    const timelines = directoryHandle('timelines', {}, {
+      'crlf.json': fileHandle(null, log, 'crlf.json', crlfText, crlfWrites),
+      'lf.json': fileHandle(null, log, 'lf.json', lfText, lfWrites),
+    });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await readTimelineDir(timelines, '');
+
+    const crlfEntry = state.timelines.find((entry) => entry.id === 'crlf')!;
+    const lfEntry = state.timelines.find((entry) => entry.id === 'lf')!;
+    expect(crlfEntry.eol).toBe('\r\n');
+    expect(lfEntry.eol).toBe('\n');
+
+    crlfEntry.text = stringifyTimeline({ ...createTimeline('crlf'), durationMs: 1800 }, crlfEntry.eol);
+    crlfEntry.dirty = true;
+    lfEntry.text = stringifyTimeline({ ...createTimeline('lf'), durationMs: 1800 }, lfEntry.eol);
+    lfEntry.dirty = true;
+    await saveAll();
+
+    expect(crlfWrites.at(-1)).not.toMatch(/(^|[^\r])\n/);
+    expect(crlfWrites.at(-1)?.endsWith('\r\n')).toBe(true);
+    expect(lfWrites.at(-1)).not.toContain('\r\n');
+    expect(lfWrites.at(-1)?.endsWith('\n')).toBe(true);
   });
 
   it('演示项目下载但无法落盘时保留 dirty 且不调用 onSaved', async () => {

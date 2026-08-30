@@ -209,10 +209,12 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
     if (ent.kind === 'directory') {
       await readTimelineDir(ent, prefix + ent.name + '/');
     } else if (ent.kind === 'file' && ent.name.endsWith('.json')) {
+      const text = await (await ent.getFile()).text();
       state.timelines.push({
         id: ent.name.replace(/\.json$/, ''),
         file: prefix + ent.name,
-        text: await (await ent.getFile()).text(),
+        text,
+        eol: text.includes('\r\n') ? '\r\n' : '\n',
         dirty: false,
         handle: ent,
       });
@@ -416,6 +418,7 @@ export function loadDemoProject(): void {
       durationMs: 1200,
       tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'inOutSine', action: 'fade', alpha: 0 }] }],
     }, null, 2) + '\n',
+    eol: '\n',
     dirty: false,
     handle: null,
   });

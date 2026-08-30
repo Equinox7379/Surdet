@@ -26,6 +26,19 @@ describe('时间轴编辑模型', () => {
     expect(result.definition).toEqual(source);
   });
 
+  it('按指定文档换行格式化并保留唯一末尾换行', () => {
+    const source = createTimeline('intro');
+    const crlf = stringifyTimeline(source, '\r\n');
+    const lf = stringifyTimeline(source, '\n');
+
+    expect(crlf).not.toMatch(/(^|[^\r])\n/);
+    expect(crlf.endsWith('\r\n')).toBe(true);
+    expect(lf).not.toContain('\r\n');
+    expect(lf.endsWith('\n')).toBe(true);
+    expect(parseTimelineText(crlf).definition).toEqual(source);
+    expect(parseTimelineText(lf).definition).toEqual(source);
+  });
+
   it('按动作创建 cue 时补齐该动作的必需参数', () => {
     expect(validateTimeline({
       version: 1,
