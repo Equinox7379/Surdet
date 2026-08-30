@@ -22,6 +22,7 @@
 - 全局保存始终位于项目栏并保留 `Ctrl/Cmd+S`；工作区动作位于所属对象或区段正常文档流中，不得争夺相同文案或快捷键。
 - Editor 人工服务只使用 `4175`；`4173` 必须保持空闲。启动前后核验标题、项目路径、端口和进程归属。
 - 截图、浏览器 trace 和视觉 artifact 写到仓库外 `%TEMP%\surdet-frontend-redesign-*`，不得暂存。
+- 项目所有者提供的高密度桌面创作工作台参考图是最终“完成度、层级和协同工作面”基准，不是可照抄字段清单。加载真实项目后的最终页面不得仍停留在空壳骨架；参考图中当前状态没有来源的版本、协作、时长、人物数值等字段必须省略，禁止用假数据或后端扩张补画面。
 - 精确暂存；禁止 `git add .`、`git add -A`、amend、reset、rebase、force-push。未经项目所有者明确授权不得 push。
 - 每波提交可单独回滚；某波失败时停在该波，不扩散到下一波。
 - 每波分别记录：`TECHNICAL_GATES`、`LOCAL_INDEPENDENT_REVIEW`、`OWNER_VISUAL_ACCEPTANCE`、`REMOTE_REVIEW`。施工 AI 不代填 Owner 主观视觉通过。
@@ -92,15 +93,20 @@ Expected staged set: exactly this taskbook.
 - Create: `packages/editor/src/styles/components.css`
 - Create: `packages/editor/src/styles/app-shell.css`
 - Modify: `packages/editor/src/main.ts`
+- Modify: `packages/editor/src/panels/review-panel.ts`
+- Modify: `packages/editor/src/panels/timeline-panel.ts`
+- Modify: `packages/editor/src/project-io.ts`
 - Modify: `packages/editor/src/state.ts`
 - Modify: `packages/editor/src/styles.css`
 - Modify: `packages/editor/index.html`
 - Create: `packages/editor/test/editor-shell-navigation-contract.test.ts`
 - Create: `packages/editor/test/editor-visual-token-contract.test.ts`
 - Create: `packages/editor/test/editor-action-scope-contract.test.ts`
-- Modify: `packages/editor/test/review-operations-layout.test.ts`
+- Modify: `packages/editor/test/project-io.test.ts`
+- Create: `packages/editor/test/timeline-project-bar-projection.test.ts`
+- Read only: `packages/editor/test/review-operations-layout.test.ts`
 
-- [ ] **Step 1: Create a real RED for the eight-mode shell**
+- [x] **Step 1: Create a real RED for the eight-mode shell**
 
 Add a contract test that imports `EDITOR_MODES` and asserts the exact IDs, Chinese labels, unique panel IDs and exact order:
 
@@ -126,7 +132,7 @@ npx vitest run packages/editor/test/editor-shell-navigation-contract.test.ts
 
 Expected: FAIL because the pure contract and semantic navigation do not exist.
 
-- [ ] **Step 2: Create a real RED for visual tokens and banned signatures**
+- [x] **Step 2: Create a real RED for visual tokens and banned signatures**
 
 Add a small comment-stripping CSS test helper inside `editor-visual-token-contract.test.ts`. Assert that new style files provide the approved primitive and semantic `--surdet-*` tokens and forbid:
 
@@ -149,7 +155,7 @@ npx vitest run packages/editor/test/editor-visual-token-contract.test.ts
 
 Expected: FAIL because the new files and token namespace do not exist.
 
-- [ ] **Step 3: Create a RED for action scope**
+- [x] **Step 3: Create a RED for action scope**
 
 The test must require:
 
@@ -173,7 +179,7 @@ npx vitest run packages/editor/test/editor-action-scope-contract.test.ts package
 
 Expected: FAIL on missing global/workspace scope contract while existing review non-floating assertions continue to protect the known fix.
 
-- [ ] **Step 4: Implement the pure mode contract**
+- [x] **Step 4: Implement the pure mode contract**
 
 Create:
 
@@ -208,7 +214,7 @@ export const EDITOR_MODES: readonly EditorModeDefinition[] = [
 
 Update `state.mainTab` to `EditorModeId`. Do not move any business state.
 
-- [ ] **Step 5: Implement a callback-only application shell**
+- [x] **Step 5: Implement a callback-only application shell**
 
 `app-shell.ts` may create DOM and accept projections/callbacks, but must not import project IO, history, preview or panel modules. Required exports:
 
@@ -242,7 +248,7 @@ export function renderModeNavigation(
 
 `main.ts` remains the composition root: it passes existing functions into these callbacks and keeps all current conditional behavior, shortcuts, `beforeunload`, status updates and `previewTimelineId = null` routing side effects.
 
-- [ ] **Step 6: Establish the new visual foundation**
+- [x] **Step 6: Establish the new visual foundation**
 
 Create the exact design-spec primitive and semantic tokens in `tokens.css`, including typography, 8/12/16/24/32/48 spacing, 0/2/4 radius, 2px focus ring and 120–200ms motion. Create semantic button, field, rule, empty, status and focus styles in `components.css`; create project bar, left mode rail, main host and responsive mode selector styles in `app-shell.css`.
 
@@ -257,21 +263,21 @@ Load order in `index.html`:
 
 Legacy mode styles stay first only as a temporary compatibility layer. Remove or neutralize the old body/header/project bar/status/tabs rules from active use; new shell DOM must not use their visual classes.
 
-- [ ] **Step 7: Preserve current mode mounts and stable IDs**
+- [x] **Step 7: Preserve current mode mounts and stable IDs**
 
 Keep `#app`, `#main`, `#status`, `#sidebar`, `#search-panel`, `#editor`, `#right`, `#flow-view`, `#timeline-view`, `#config-view`, `#preview-view`, `#review-view`, `#stats-view` and `#audit-view`. The shell may wrap them with semantic regions but must not rename or duplicate them.
 
-- [ ] **Step 8: Turn the focused contracts GREEN**
+- [x] **Step 8: Turn the focused contracts GREEN**
 
 Run:
 
 ```powershell
-npx vitest run packages/editor/test/editor-shell-navigation-contract.test.ts packages/editor/test/editor-visual-token-contract.test.ts packages/editor/test/editor-action-scope-contract.test.ts packages/editor/test/review-operations-layout.test.ts
+npx vitest run packages/editor/test/editor-shell-navigation-contract.test.ts packages/editor/test/editor-visual-token-contract.test.ts packages/editor/test/editor-action-scope-contract.test.ts packages/editor/test/review-operations-layout.test.ts packages/editor/test/timeline-project-bar-projection.test.ts
 ```
 
 Expected: all pass.
 
-- [ ] **Step 9: Run adjacent Editor gates**
+- [x] **Step 9: Run adjacent Editor gates**
 
 Run:
 
@@ -284,7 +290,7 @@ npm run build -w surdet-editor
 
 Expected: all pass. No Authoring/Core/CLI production changes.
 
-- [ ] **Step 10: Inspect the real application on port 4175**
+- [x] **Step 10: Inspect the real application on port 4175**
 
 Start a disposable Editor process on `4175`, verify `4173` is free, then inspect 1920×1080, 1440×900, 1280×720 and 1024×768. Confirm:
 
@@ -298,12 +304,12 @@ Start a disposable Editor process on `4175`, verify `4173` is free, then inspect
 
 Store screenshots under `%TEMP%\surdet-frontend-redesign-wave1-*`.
 
-- [ ] **Step 11: Independently review and commit Wave 1**
+- [x] **Step 11: Independently review and commit Wave 1**
 
 Review exact diff, selectors adjacent to every edit, test results, screenshot paths, and forbidden production roots. Then:
 
 ```powershell
-git add -- packages/editor/index.html packages/editor/src/main.ts packages/editor/src/state.ts packages/editor/src/styles.css packages/editor/src/shell/editor-modes.ts packages/editor/src/shell/app-shell.ts packages/editor/src/styles/tokens.css packages/editor/src/styles/components.css packages/editor/src/styles/app-shell.css packages/editor/test/editor-shell-navigation-contract.test.ts packages/editor/test/editor-visual-token-contract.test.ts packages/editor/test/editor-action-scope-contract.test.ts packages/editor/test/review-operations-layout.test.ts
+git add -- packages/editor/index.html packages/editor/src/main.ts packages/editor/src/state.ts packages/editor/src/styles.css packages/editor/src/panels/review-panel.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/project-io.ts packages/editor/src/shell/editor-modes.ts packages/editor/src/shell/app-shell.ts packages/editor/src/styles/tokens.css packages/editor/src/styles/components.css packages/editor/src/styles/app-shell.css packages/editor/test/editor-shell-navigation-contract.test.ts packages/editor/test/editor-visual-token-contract.test.ts packages/editor/test/editor-action-scope-contract.test.ts packages/editor/test/project-io.test.ts packages/editor/test/timeline-project-bar-projection.test.ts
 git diff --check
 git diff --cached --check
 git diff --cached --name-only
@@ -314,12 +320,29 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 
 ---
 
+## Cross-Wave Completion Benchmark — Mature Integrated Authoring Desk
+
+The approved reference is a maturity benchmark for the completed redesign. It does not change the frontend-only boundary and does not authorize invented product data. The following conditions are mandatory across Waves 2, 3 and 5:
+
+- At 1440×900 and above, a loaded project must offer a coordinated scene/asset outline, continuous manuscript, contextual Inspector or live preview, and a collapsible time/causal Dock around the same current scene. The manuscript remains the largest readable region.
+- The project bar `objectLabel`, outline `aria-selected`, manuscript object identity, Inspector `objectRef`, preview scene and timeline/causal linkage must consume the same existing selection truth.
+- Preview and timeline peeks may reuse existing runtime/model state only. There must never be two live preview iframes, two trace projections, or two timeline edit states in the DOM or application state.
+- 1920×1080, 1440×900, 1280×720 and 1024×768 must define deterministic pane folding. Narrow layouts keep the main task and provide keyboard-operable reveal/restore instead of overlaying navigation or creating three competing long scrollbars.
+- Screenshots used for full completion must load Starter or another isolated real fixture. Empty-project screenshots prove shell and empty-state behavior only; they cannot prove the final information density.
+- Every visible command, time, chapter, status, version, collaboration signal, character value and causal condition must trace to an existing projection/callback. Missing facts are omitted, never fabricated.
+
+Wave 1 is intentionally the structural foundation and must not be presented as the final visual result.
+
+---
+
 ## Task 2: Wave 2 — Script and Asset Workspace
 
-**Outcome:** 剧本模式成为真正的连续稿件工作面；场景目录与素材目录可达；技术身份下钻；块类型不再依赖左色条。
+**Outcome:** 剧本模式成为真正的连续稿件主工作面；场景/素材目录、中央稿件、上下文 Inspector 与后续可接入的预览/时间 Dock 使用稳定区域协同；技术身份下钻；块类型不再依赖左色条。
 
 **Files:**
 - Create: `packages/editor/src/styles/script-workspace.css`
+- Create: `packages/editor/src/shell/authoring-workbench.ts`
+- Modify: `packages/editor/src/main.ts`
 - Modify: `packages/editor/src/panels/editor.ts`
 - Modify: `packages/editor/src/panels/sidebar.ts`
 - Modify: `packages/editor/src/panels/assets.ts`
@@ -328,17 +351,19 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 - Modify: `packages/editor/src/styles.css`
 - Create: `packages/editor/test/editor-asset-sidebar-contract.test.ts`
 - Create: `packages/editor/test/editor-script-workspace-contract.test.ts`
+- Create: `packages/editor/test/editor-integrated-authoring-workbench.test.ts`
 - Modify: `packages/editor/test/presentation-asset-catalog.test.ts`
 - Modify: `packages/editor/test/assets.test.ts`
 
 - [ ] **Step 1:** RED: require `data-sidebar-mode="scenes|assets"`, `aria-selected`, `data-editor-region="asset-catalog"`, `data-asset-key`, insert/copy actions and both referenced/unreferenced assets.
 - [ ] **Step 2:** RED: require `.block[data-line][data-object-ref]`, continuous manuscript hierarchy, real keyboard focus, current block whole-surface feedback and no `.block.t-*` left border color.
-- [ ] **Step 3:** Refactor only presentation DOM; keep existing scene edit/history/search/asset insertion/copy callbacks unchanged.
-- [ ] **Step 4:** Move ordinary users’ default view to Chinese content/title/type/use location; stable keys and hashes remain under technical disclosure.
-- [ ] **Step 5:** Remove scene/block/asset selected left-line signatures and replace them with complete boundary, surface, “当前/已选” text and ARIA.
-- [ ] **Step 6:** Run focused script/asset/search/history tests, full Editor test, typecheck and build.
-- [ ] **Step 7:** Inspect long Chinese prose, multiple choices, empty assets, missing preview, dirty/save failure and 1024×768 folding.
-- [ ] **Step 8:** Commit exact Wave 2 paths as `feat(editor): rebuild script and asset workspace`; no push.
+- [ ] **Step 3:** RED: require named outline/manuscript/context/dock regions, one current scene identity across all rendered projections, manuscript as the largest region, and deterministic 1280/1024 pane folding; forbid duplicate preview iframe/trace/timeline state.
+- [ ] **Step 4:** Refactor only presentation DOM; keep existing scene edit/history/search/asset insertion/copy callbacks unchanged. Build the integrated region topology without fabricating preview, timeline, chapter, duration or status content that does not yet exist.
+- [ ] **Step 5:** Move ordinary users’ default view to Chinese content/title/type/use location; stable keys and hashes remain under technical disclosure.
+- [ ] **Step 6:** Remove scene/block/asset selected left-line signatures and replace them with complete boundary, surface, “当前/已选” text and ARIA.
+- [ ] **Step 7:** Run focused script/asset/search/history tests, full Editor test, typecheck and build.
+- [ ] **Step 8:** Inspect a loaded isolated fixture with long Chinese prose, multiple choices, assets, missing preview, dirty/save failure and 1024×768 folding; do not use empty-project appearance as the density acceptance.
+- [ ] **Step 9:** Commit exact Wave 2 paths as `feat(editor): rebuild script and asset workspace`; no push.
 
 ---
 
@@ -363,9 +388,10 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 - [ ] **Step 2:** RED: timeline command bar remains local, play controls retain callbacks, ticks/cues preserve runtime geometry, selection/error use full-boundary signals.
 - [ ] **Step 3:** Migrate flow DOM/SVG presentation without changing graph building or edit semantics.
 - [ ] **Step 4:** Migrate timeline chrome/tracks/cues without moving time calculations or drag state.
-- [ ] **Step 5:** Keep functional gradients only where they encode time/progress and document their selector in the permanent test.
-- [ ] **Step 6:** Run flow/timeline focused suites, full Editor test, typecheck/build and real drag/play checks.
-- [ ] **Step 7:** Commit exact Wave 3 paths as `feat(editor): rebuild flow and timeline workspaces`; no push.
+- [ ] **Step 5:** Expose a collapsible timeline Dock projection to the integrated script workbench by reusing the same timeline selection/edit model and callbacks; the full timeline mode and compact Dock must never create two edit truths.
+- [ ] **Step 6:** Keep functional gradients only where they encode time/progress and document their selector in the permanent test.
+- [ ] **Step 7:** Run flow/timeline focused suites, full Editor test, typecheck/build and real drag/play checks.
+- [ ] **Step 8:** Commit exact Wave 3 paths as `feat(editor): rebuild flow and timeline workspaces`; no push.
 
 ---
 
@@ -415,10 +441,11 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 
 - [ ] **Step 1:** RED: `data-editor-panel="preview"`, centered canvas constraints, independent trace scroll, Dock keyboard collapse/restore and workspace action scope.
 - [ ] **Step 2:** Extract only UI-only Dock state; preserve existing preview runtime, iframe, transfer and causal selection state.
-- [ ] **Step 3:** Make stage occupy maximum available center area and prevent trace growth from changing stage geometry.
-- [ ] **Step 4:** Render trace as continuous evidence rows, not colored chips/cards; preserve line/object jump behavior.
-- [ ] **Step 5:** Run all preview tests, full Editor suite, typecheck/build and real 4-size canvas/trace checks.
-- [ ] **Step 6:** Commit exact Wave 5 paths as `feat(editor): rebuild preview stage and causal dock`; no push.
+- [ ] **Step 3:** Allow the integrated script workbench to host a live preview/context peek only through the same preview runtime and state used by full preview mode. Moving between modes may remount the one host, but must not leave a second iframe or trace projection alive.
+- [ ] **Step 4:** Make stage occupy maximum available center area and prevent trace growth from changing stage geometry.
+- [ ] **Step 5:** Render trace as continuous evidence rows, not colored chips/cards; preserve line/object jump behavior.
+- [ ] **Step 6:** Run all preview tests, full Editor suite, typecheck/build and real 4-size canvas/trace checks, including the loaded integrated script workbench.
+- [ ] **Step 7:** Commit exact Wave 5 paths as `feat(editor): rebuild preview stage and causal dock`; no push.
 
 ---
 
@@ -539,7 +566,7 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 - [ ] **Step 2:** Verify all eight modes have distinct semantic root attributes and task-specific layouts while sharing shell/tokens.
 - [ ] **Step 3:** Run Editor full test/typecheck/build and Renderer full test/typecheck/build.
 - [ ] **Step 4:** Run Host/Shell adjacent consumer suites. Run `verify:all` only if the final diff truly crosses aggregate boundaries and the Execution Ledger explicitly authorizes one fresh aggregate run.
-- [ ] **Step 5:** Inspect 1920×1080, 1440×900, 1280×720, 1024×768; Windows 125%/150%; browser 100%/125%/150%/200%; long Chinese, empty, error, dirty, readonly and keyboard focus states.
+- [ ] **Step 5:** Inspect 1920×1080, 1440×900, 1280×720, 1024×768; Windows 125%/150%; browser 100%/125%/150%/200%; long Chinese, empty, error, dirty, readonly and keyboard focus states. Use both an empty project and a loaded isolated real fixture; confirm the loaded authoring desk reaches the approved maturity/density benchmark without fabricated fields.
 - [ ] **Step 6:** Confirm `4173` is free and all artifacts stay outside the repository.
 - [ ] **Step 7:** Run a local independent review of exact commits, unchanged forbidden roots, behavior contracts, visual artifacts and evidence boundaries.
 - [ ] **Step 8:** Write the delivery report with confirmed facts, reasonable inferences, unverified items, tests, exact commit identities and all four review statuses.
@@ -576,3 +603,37 @@ Expected: exact allowlist only. Stop for Wave 1 local review; do not push.
 **STOP_BOUNDARY**
 
 - Begin Task 0, then execute Task 1 only. Do not begin Task 2 until Task 1 technical gates and local independent review are complete.
+
+### 2026-08-30 — Wave 1 application-shell closure
+
+**CONFIRMED_FACTS**
+
+- Wave 1 code evidence is commit `96d1bae6e1afc25b6061500a45e1758fe3dfbf97`, parent `85f6acc7e443c0758040c5d31abe8998552cbd34`, message `feat(editor): establish editorial application shell`.
+- The code commit contains exactly 17 authorized Editor paths: the HTML entry, shell/mode modules, project and timeline observation seams, review action scoping, state projection, four style layers and five permanent contract tests. It contains no Authoring, Core, CLI, Host, Shell, Starter, dependency, lockfile or protected-file changes.
+- The application shell exposes exactly eight Chinese task modes and one global save action. Project-bar content is derived from the existing scene, timeline, selection, dirty and save-result facts; it does not create a second business state or mutation path.
+- Save outcomes distinguish clean, dirty and partial failure. Long status text retains the full accessible `title` while remaining width-bounded in the visible shell. Review actions remain workspace-scoped and the primary decision action is no longer a floating viewport control.
+- Focused Wave 1 contracts passed: 5 files / 22 tests. The complete Editor suite passed: 37 files / 237 tests. Editor typecheck and build passed; Vite emitted only the pre-existing large-chunk advisory.
+- An independent read-only review passed with no Blocker, High, Medium or Low findings. Its focused verification passed 8 files / 50 tests, Editor typecheck and diff checks.
+- Real-browser geometry checks passed without horizontal page overflow at 1920×1080, 1440×900, 1280×720 and 1024×768. At 1024 px, the navigation folds into a row; a 320-character unbroken status remains visually clipped with ellipsis while the complete value remains available through the title attribute.
+- Real-browser interaction checks observed mode-aware object labels, a dirty timeline state and an honest partial-save-failure state. These checks used the existing UI and mutation pathways; no duplicate preview runtime, iframe, project writer or timeline writer was introduced.
+- Visual artifacts were created outside the repository:
+  - `editor-shell-1920x1080.png`: 106331 bytes, SHA-256 `31FE2939FAD56CD3A8919DBF322892DF749C723E6BCEBAF746840605BA2BC1D0`.
+  - `editor-shell-1440x900.png`: 106772 bytes, SHA-256 `FEAA1B1C7EFCADFA649330404EE01E9411197FA68FB11F3F44502F9DC94FA89A`.
+  - `editor-shell-1280x720.png`: 85702 bytes, SHA-256 `4CE1C8DF57F4909F20A231C2FC9BF90F2FE370AE00DFD49EA247F729791A7939`.
+  - `editor-shell-1024x768.png`: 74219 bytes, SHA-256 `4D54FABDC80289C4B172ABA5C76149D5A27F6DCA5DF39EF481A3359AE9292DB6`.
+- The approved reference image is now a final cross-wave maturity benchmark in both the design specification and this taskbook: the completed product must converge on one integrated outline/manuscript/context/preview/timeline/causal authoring desk, deterministic responsive folding and a single semantic selection truth, without fabricating reference-only collaboration, version, duration or character-stat data.
+
+**REASONABLE_INFERENCES**
+
+- Wave 1 establishes a stable, non-AI-styled application frame and the projection seams needed by later workspaces. It is a suitable base for Wave 2, but it is not yet the dense integrated authoring desk shown in the final reference.
+- The responsive shell and callback-only observation seams reduce the risk that later visual composition will fork business state or silently change save/timeline behavior.
+
+**UNVERIFIED_ITEMS**
+
+- Waves 2–10 have not started. The outline, manuscript canvas, flow, timeline, preview, review, statistics, audit and Renderer workspaces have not yet received their final redesign.
+- A loaded isolated real-project fixture has not yet been used to prove the final integrated density benchmark; Wave 1 browser evidence covers the application shell and existing panels only.
+- Owner visual acceptance, remote GitHub review, push, deployment and release have not started.
+
+**STOP_BOUNDARY**
+
+- Wave 1 is technically closed. Stop before Task 2 / Wave 2. Do not push, deploy, modify forbidden roots or begin the manuscript workbench without the next explicit authorization.
