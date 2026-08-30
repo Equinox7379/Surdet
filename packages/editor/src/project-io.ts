@@ -5,6 +5,7 @@
  */
 import { state, setStatus } from './state.js';
 import { histories } from './history.js';
+import { clearTimelineHistories } from './timeline-history.js';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind } from './assets.js';
 
@@ -64,8 +65,10 @@ export async function openProjectFromHandle(
   state.timelines = [];
   state.pendingTimelineDeletes = [];
   state.currentTimeline = null;
+  state.currentTimelineCue = null;
   state.previewTimelineId = null;
   histories.clear(); // 换项目：历史栈失效
+  clearTimelineHistories();
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
   state.dirAssets = [];
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
@@ -394,8 +397,10 @@ export function loadDemoProject(): void {
   state.timelines = [];
   state.pendingTimelineDeletes = [];
   state.currentTimeline = null;
+  state.currentTimelineCue = null;
   state.previewTimelineId = null;
   histories.clear();
+  clearTimelineHistories();
   state.gameConfigText = '';
   state.entryScene = 'demo';
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
