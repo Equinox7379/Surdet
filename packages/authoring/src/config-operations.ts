@@ -4,7 +4,7 @@ import {
   stableStringify,
   type ChangeSession,
 } from './change-session.js';
-import { parseProjectConfigDocument } from './config-document.js';
+import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type {
   CharacterEnsureInput,
   CharacterRemoveInput,
@@ -19,10 +19,6 @@ const CONFIG_PATH = 'game.config.json';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function serializeConfig(config: Record<string, unknown>): string {
-  return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 /** 角色表（characters 字段）规范化 JSON 片段指纹；缺失时按空对象。 */
@@ -231,7 +227,11 @@ export async function applyCharacterEnsure(
           observedImpact: [],
         },
       },
-      workingFiles: { ...record.workingFiles, ...migratedFiles, [CONFIG_PATH]: serializeConfig(config) },
+      workingFiles: {
+        ...record.workingFiles,
+        ...migratedFiles,
+        [CONFIG_PATH]: serializeProjectConfigDocument(config, source),
+      },
     };
   });
 }
@@ -279,7 +279,10 @@ export async function applyCharacterRemove(
           observedImpact: [],
         },
       },
-      workingFiles: { ...record.workingFiles, [CONFIG_PATH]: serializeConfig(config) },
+      workingFiles: {
+        ...record.workingFiles,
+        [CONFIG_PATH]: serializeProjectConfigDocument(config, source),
+      },
     };
   });
 }
@@ -319,7 +322,10 @@ export async function applyEntrySceneSet(
           observedImpact: [],
         },
       },
-      workingFiles: { ...record.workingFiles, [CONFIG_PATH]: serializeConfig(config) },
+      workingFiles: {
+        ...record.workingFiles,
+        [CONFIG_PATH]: serializeProjectConfigDocument(config, source),
+      },
     };
   });
 }

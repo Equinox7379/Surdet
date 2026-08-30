@@ -19,3 +19,8 @@ export function parseProjectConfigDocument(text: string): Record<string, unknown
   }
   return parsed;
 }
+
+export function serializeProjectConfigDocument(config: Record<string, unknown>, sourceText: string): string {
+  const eol = sourceText.match(/\r\n|\n/)?.[0] ?? '\n';
+  return `${JSON.stringify(config, null, 2).replace(/\n/g, eol)}${eol}`;
+}

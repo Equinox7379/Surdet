@@ -15,9 +15,9 @@ function digest(text: string): string {
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
-function fixtureStorage(): ProjectStorage {
+function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}'): ProjectStorage {
   const contents: Record<string, string> = {
-    'game.config.json': '{"entryScene":"prologue","variables":{}}',
+    'game.config.json': configText,
     'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
   };
   return {
@@ -33,6 +33,30 @@ function fixtureStorage(): ProjectStorage {
 }
 
 describe('typed authoring operations', () => {
+  it.each([
+    ['CRLF', '\r\n'],
+    ['LF', '\n'],
+  ] as const)('preserves the original %s style when writing game.config.json', async (_label, eol) => {
+    const source = `${JSON.stringify({ entryScene: 'prologue', variables: {} }, null, 2).replace(/\n/g, eol)}${eol}`;
+    const snapshot = await loadProjectSnapshot(fixtureStorage(source), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+
+    await ensureVariable(change, {
+      operationId: `op-eol-${eol === '\r\n' ? 'crlf' : 'lf'}`,
+      name: 'flag.alpha',
+      type: 'string',
+      initial: '',
+    });
+
+    const written = change.record.workingFiles['game.config.json']!;
+    expect(written.endsWith(eol)).toBe(true);
+    expect(written.replaceAll(eol, '')).not.toContain('\n');
+    if (eol === '\n') expect(written).not.toContain('\r\n');
+    expect(JSON.parse(written)).toMatchObject({
+      variables: { 'flag.alpha': { type: 'string', initial: '' } },
+    });
+  });
+
   it('creates scenes and ensures variables without touching storage', async () => {
     const storage = fixtureStorage();
     const snapshot = await loadProjectSnapshot(storage, hasher);
