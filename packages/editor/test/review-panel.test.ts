@@ -146,17 +146,18 @@ function comparisonWorkspace(): ReviewWorkspaceState {
     state: 'COMPARISON_PREPARED',
     projectIdentity: 'project-1',
     expectedProjectRevision: 'revision-1',
-    task: { title: 'Human review task', acceptanceCriteria: ['看清冲突'], candidateCount: 2, objectCount: 1, conflictCount: 1, statementSource: 'candidate-intent' },
+    task: { title: '候选创作方案审阅', acceptanceCriteria: ['看清冲突'], candidateCount: 3, objectCount: 1, conflictCount: 1, statementSource: 'generated-fallback' },
     candidates: [
       { candidateId: 'candidate-a', displayOrdinal: 'A', ref: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
+      { candidateId: 'candidate-c', displayOrdinal: 'C', ref: { changeId: 'change-c', capsuleId: 'capsule-c', artifactSha256: 'c'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
       { candidateId: 'candidate-d', displayOrdinal: 'D', ref: { changeId: 'change-d', capsuleId: 'capsule-d', artifactSha256: 'd'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
     ],
     safeGroups: [{
       groupId: 'group-1', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result',
       unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], sourceCount: 2, includedByDefault: true, collapsedByDefault: true,
       sources: [
-        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: ['trace-1'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
-        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: [], evidence: { validation: 'missing', simulation: 'fresh', runtime: 'fresh', warnings: 1, manualReviewRequired: ['需要补证据'] } },
+        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: ['trace-1'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] }, presentation: { actionLabel: '新建场景', objectLabel: '场景 wave6_alpha', highlights: ['lynn：Alpha route A.'], completeness: 'content', omittedFactCount: 0 } },
+        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['候选影响'], observedImpact: [], evidence: { validation: 'missing', simulation: 'fresh', runtime: 'fresh', warnings: 1, manualReviewRequired: ['需要补证据'] }, presentation: { actionLabel: '新建场景', objectLabel: '场景 wave6_alpha', highlights: ['lynn：Alpha route A.'], completeness: 'content', omittedFactCount: 0 } },
       ],
       dependencyObjectRefs: ['timeline:wave6_intro'],
       potentialImpact: ['候选影响'], observedImpact: ['trace-1'],
@@ -165,11 +166,12 @@ function comparisonWorkspace(): ReviewWorkspaceState {
     defaultSelectedUnitIds: ['unit-a', 'unit-d', 'unit-b-scene'],
     conflicts: [{
       conflictId: 'conflict-1', severity: 'selection-required', code: 'OBJECT_RESULTS_DIVERGE',
-      unitIds: ['unit-a', 'unit-d'], candidateIds: ['candidate-a', 'candidate-d'], objectRefs: ['scene:wave6_alpha'],
+      unitIds: ['unit-a', 'unit-c', 'unit-d'], candidateIds: ['candidate-a', 'candidate-c', 'candidate-d'], objectRefs: ['scene:wave6_alpha'],
       allowedResolutions: ['choose-unit', 'exclude-all', 'regenerate-candidate'], repairActions: ['检查对象'],
       options: [
-        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['可能改变 Alpha'], observedImpact: ['已观察 Alpha'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
-        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'different-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'update', finalFingerprint: 'different-result' }], potentialImpact: ['可能改写 Alpha'], observedImpact: ['已观察 D'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
+        { unitId: 'unit-a', candidateId: 'candidate-a', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['可能改变 Alpha'], observedImpact: ['已观察 Alpha'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] }, presentation: { actionLabel: '新建场景', objectLabel: '场景 wave6_alpha', highlights: ['lynn：Alpha route A.'], completeness: 'content', omittedFactCount: 0 } },
+        { unitId: 'unit-c', candidateId: 'candidate-c', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'different-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'different-result' }], potentialImpact: ['可能改写 Alpha'], observedImpact: ['已观察 C'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] }, presentation: { actionLabel: '新建场景', objectLabel: '场景 wave6_alpha', highlights: ['lynn：Alpha route C.'], completeness: 'content', omittedFactCount: 0 } },
+        { unitId: 'unit-d', candidateId: 'candidate-d', primaryObject: 'scene:wave6_alpha', finalFingerprint: 'same-result', outcomes: [{ objectRef: 'scene:wave6_alpha', disposition: 'create', finalFingerprint: 'same-result' }], potentialImpact: ['可能改变 Alpha'], observedImpact: ['已观察 D'], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] }, presentation: { actionLabel: '新建场景', objectLabel: '场景 wave6_alpha', highlights: ['lynn：Alpha route A.'], completeness: 'content', omittedFactCount: 0 } },
       ],
     }],
     dependencies: [{
@@ -270,13 +272,20 @@ describe('Editor review panel', () => {
 
     renderReviewPanel(container as unknown as HTMLElement, workspace);
     expect(textOf(container)).toContain('审阅任务');
-    expect(textOf(container)).toContain('方案 A');
+    expect(textOf(container)).toContain('候选创作方案审阅');
+    expect(textOf(container)).toContain('方案 A（本次审阅编号）');
+    expect(textOf(container)).toContain('方案字母只用于本次审阅排序');
     expect(textOf(container)).toContain('2 个方案得到相同结果');
     expect(textOf(container)).toContain('场景 wave6_alpha');
     expect(textOf(container)).toContain('默认纳入');
     expect(textOf(container)).toContain('证据缺失');
     expect(textOf(container)).toContain('需要你决定');
+    expect(textOf(container)).toContain('Alpha route A.');
+    expect(textOf(container)).toContain('Alpha route C.');
     expect(textOf(container)).not.toContain('OBJECT_RESULTS_DIVERGE');
+    expect(textOf(container)).not.toContain('candidate-a');
+    expect(textOf(container)).not.toContain('unit-a');
+    expect(textOf(container)).not.toContain('same-result');
 
     const safeGroup = container.querySelector('[data-safe-group="group-1"]');
     expect(safeGroup?.tagName).toBe('DETAILS');
@@ -285,13 +294,17 @@ describe('Editor review panel', () => {
     safeGroup!.open = true;
     expect(textOf(safeGroup!)).toContain('方案 A');
     expect(textOf(safeGroup!)).toContain('方案 D');
+    expect(textOf(safeGroup!)).toContain('Alpha route A.');
     expect(textOf(safeGroup!)).toContain('依赖对象：时间轴 wave6_intro');
     expect(textOf(safeGroup!)).toContain('可能影响');
     expect(textOf(safeGroup!)).toContain('实际观察');
     expect(textOf(safeGroup!)).toContain('group-1');
-    expect(textOf(safeGroup!)).toContain('changeId: change-a');
-    expect(textOf(safeGroup!)).toContain('capsuleId: capsule-a');
-    expect(textOf(safeGroup!)).toContain(`artifactSha256: ${'a'.repeat(64)}`);
+    expect(textOf(safeGroup!)).not.toContain('changeId: change-a');
+    const sourceTechnical = safeGroup!.querySelector('[data-source-technical="unit-a"]')!;
+    sourceTechnical.open = true;
+    expect(textOf(sourceTechnical)).toContain('changeId: change-a');
+    expect(textOf(sourceTechnical)).toContain('capsuleId: capsule-a');
+    expect(textOf(sourceTechnical)).toContain(`artifactSha256: ${'a'.repeat(64)}`);
 
     const details = container.querySelector('[data-tech-details]');
     expect(details).not.toBeNull();
@@ -326,18 +339,39 @@ describe('Editor review panel', () => {
     expect(optionD).not.toBeNull();
     expect(textOf(optionA!)).toContain('方案 A');
     expect(textOf(optionA!)).toContain('场景 wave6_alpha');
-    expect(textOf(optionA!)).toContain('创建');
+    expect(textOf(optionA!)).toContain('新建场景');
+    expect(textOf(optionA!)).toContain('Alpha route A.');
     expect(textOf(optionA!)).toContain('可能影响：可能改变 Alpha');
     expect(textOf(optionA!)).toContain('实际观察：已观察 Alpha');
     expect(textOf(optionA!)).toContain('校验 新鲜');
     expect(textOf(optionA!)).not.toContain('same-result');
     expect(textOf(optionD!)).toContain('方案 D');
-    expect(textOf(optionD!)).toContain('更新');
-    expect(textOf(optionD!)).toContain('可能影响：可能改写 Alpha');
+    expect(textOf(optionD!)).toContain('Alpha route A.');
+    expect(textOf(optionD!)).toContain('可能影响：可能改变 Alpha');
     const fingerprint = optionA!.querySelector('[data-choice-fingerprint]');
     expect(fingerprint?.tagName).toBe('DETAILS');
     fingerprint!.open = true;
     expect(textOf(fingerprint!)).toContain('same-result');
+    expect(textOf(fingerprint!)).toContain('unitId: unit-a');
+    expect(textOf(fingerprint!)).toContain('candidateId: candidate-a');
+    const optionC = container.querySelector('[data-choice-option-unit="unit-c"]')!;
+    expect(textOf(optionC)).toContain('Alpha route C.');
+    expect(textOf(optionC)).not.toContain('Alpha route A.');
+  });
+
+  it('marks a legacy comparison option as content-summary insufficient without inventing prose', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    for (const option of workspace.projection.conflicts[0]!.options) delete (option as typeof option & { presentation?: unknown }).presentation;
+    for (const source of workspace.projection.safeGroups[0]!.sources) delete (source as typeof source & { presentation?: unknown }).presentation;
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    expect(textOf(container)).toContain('旧审阅包缺少内容摘要');
+    expect(textOf(container)).toContain('内容摘要不足');
+    expect(textOf(container)).not.toContain('Alpha route A.');
+    expect(textOf(container)).not.toContain('Alpha route C.');
   });
 
   it('shows an implicit dependency as a human-readable scene to timeline relation', () => {

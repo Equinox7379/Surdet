@@ -5,7 +5,9 @@ import type {
   BuildResultReviewProjectionInput,
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
+  CompositionManifest,
   CompositionComparison,
+  CompositionOperation,
   ChangeRecord,
   IntegrationPlan,
   ObjectChangeUnit,
@@ -14,7 +16,9 @@ import type {
 } from '../src/index.js';
 import {
   buildComparisonReviewProjection,
+  buildReviewUnitPresentation,
   buildResultReviewProjection,
+  comparisonReviewFingerprintOf,
   reviewTraceObservationKey,
 } from '../src/index.js';
 
@@ -44,7 +48,18 @@ function ref(letter: string): CandidateCapsuleRef {
 function candidate(letter: string, candidateEvidence = evidence()): VerifiedCompositionCandidate & {
   intent?: string;
   acceptanceCriteria: string[];
+  manifest: CompositionManifest;
 } {
+  const operations = candidateOperations(letter);
+  const manifest: CompositionManifest = {
+    manifestVersion: '1.0.0',
+    projectIdentity: 'project-wave6',
+    baseProjectRevision: 'rev-base',
+    sourceChangeId: 'change-' + letter,
+    sourceWorkingRevision: 1,
+    operations,
+    manifestFingerprint: 'manifest-' + letter,
+  };
   return {
     candidateId: 'cand-' + letter,
     ref: ref(letter),
@@ -52,12 +67,72 @@ function candidate(letter: string, candidateEvidence = evidence()): VerifiedComp
     projectIdentity: 'project-wave6',
     baseProjectRevision: 'rev-base',
     sourceWorkingRevision: 1,
-    composition: { eligibility: 'ready', reasons: [] },
+    composition: { eligibility: 'ready', reasons: [], manifest },
     evidenceSummary: candidateEvidence,
     semanticDiff: [],
     intent: 'Review Wave 6 composition',
     acceptanceCriteria: ['preserve authored intent'],
+    manifest,
   };
+}
+
+function operation(
+  sequence: number,
+  capabilityId: CompositionOperation['capabilityId'],
+  normalizedInput: CompositionOperation['normalizedInput'],
+  primaryObject: string,
+  finalFingerprint: string,
+): CompositionOperation {
+  return {
+    sequence,
+    capabilityId,
+    sourceOperationId: `source-${sequence}-${capabilityId}`,
+    normalizedInput,
+    inputSha256: `input-${sequence}-${capabilityId}`,
+    primaryObject,
+    requiredObjects: [],
+    producedObjects: [{ objectRef: primaryObject, disposition: 'create', finalFingerprint }],
+  };
+}
+
+function candidateOperations(letter: string): CompositionOperation[] {
+  if (letter === 'A' || letter === 'D') {
+    return [
+      operation(0, 'scene.create', {
+        operationId: `op-${letter.toLowerCase()}-alpha`,
+        sceneId: 'wave6_alpha',
+        blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', speaker: 'lynn', value: 'Alpha route A.' }],
+      }, 'scene:wave6_alpha', 'fp-alpha'),
+      operation(1, 'variable.ensure', {
+        operationId: `op-${letter.toLowerCase()}-variable`,
+        name: 'flag.alpha',
+        type: 'string',
+        initial: 'A',
+      }, 'variable:flag.alpha', 'fp-flag'),
+    ];
+  }
+  if (letter === 'C') {
+    return [operation(0, 'scene.create', {
+      operationId: 'op-c-alpha',
+      sceneId: 'wave6_alpha',
+      blocks: [{ kind: 'label', name: 'start' }, { kind: 'text', speaker: 'lynn', value: 'Alpha route C.' }],
+    }, 'scene:wave6_alpha', 'fp-alpha-c')];
+  }
+  return [
+    operation(0, 'timeline.create', {
+      operationId: 'op-b-timeline',
+      timelineId: 'wave6_beta_opening',
+      definition: { version: 1, id: 'wave6_beta_opening', durationMs: 900, tracks: [] },
+    }, 'timeline:wave6_beta_opening', 'fp-beta-timeline'),
+    {
+      ...operation(1, 'scene.create', {
+        operationId: 'op-b-scene',
+        sceneId: 'wave6_beta',
+        blocks: [{ kind: 'instruction', name: 'timeline', args: ['wave6_beta_opening'] }],
+      }, 'scene:wave6_beta', 'fp-beta'),
+      requiredObjects: [{ objectRef: 'timeline:wave6_beta_opening', source: 'candidate', candidateOperationSequence: 0 }],
+    },
+  ];
 }
 
 function unit(
@@ -67,12 +142,13 @@ function unit(
   finalFingerprint: string,
   requiredUnitIds: string[] = [],
   candidateEvidence = evidence(),
+  operationSequences: number[] = [0],
 ): ObjectChangeUnit {
   return {
     unitId,
     candidateId,
     primaryObject,
-    operationSequences: [1],
+    operationSequences,
     finalFingerprint,
     requiredUnitIds,
     requiredBaseObjects: [],
@@ -104,13 +180,13 @@ function comparison(overrides: Partial<CompositionComparison> = {}): Composition
   const beta = 'fp-beta';
   const timeline = 'fp-beta-timeline';
   const units = [
-    unit('unit-a-alpha', 'cand-A', 'scene:wave6_alpha', alpha),
-    unit('unit-a-variable', 'cand-A', 'variable:flag.alpha', 'fp-flag'),
-    unit('unit-d-alpha', 'cand-D', 'scene:wave6_alpha', alpha),
-    unit('unit-d-variable', 'cand-D', 'variable:flag.alpha', 'fp-flag'),
+    unit('unit-a-alpha', 'cand-A', 'scene:wave6_alpha', alpha, [], evidence(), [0]),
+    unit('unit-a-variable', 'cand-A', 'variable:flag.alpha', 'fp-flag', [], evidence(), [1]),
+    unit('unit-d-alpha', 'cand-D', 'scene:wave6_alpha', alpha, [], evidence(), [0]),
+    unit('unit-d-variable', 'cand-D', 'variable:flag.alpha', 'fp-flag', [], evidence(), [1]),
     unit('unit-c-alpha', 'cand-C', 'scene:wave6_alpha', alphaOther, [], evidence({ warnings: 1, manualReviewRequired: ['validation warning'] })),
-    unit('unit-b-timeline', 'cand-B', 'timeline:wave6_beta_opening', timeline),
-    unit('unit-b-beta', 'cand-B', 'scene:wave6_beta', beta, ['unit-b-timeline']),
+    unit('unit-b-timeline', 'cand-B', 'timeline:wave6_beta_opening', timeline, [], evidence(), [0]),
+    unit('unit-b-beta', 'cand-B', 'scene:wave6_beta', beta, ['unit-b-timeline'], evidence(), [1]),
   ];
   const conflicts: CompositionComparison['conflicts'] = [{
     conflictId: 'conflict-alpha',
@@ -334,6 +410,164 @@ describe('comparison review projection', () => {
     expect(conflict.options[0]?.outcomes).toContainEqual(expect.objectContaining({ objectRef: 'scene:wave6_alpha', disposition: 'create' }));
   });
 
+  it('projects exact typed A/C scene content while preserving A/D provenance and stable bindings', async () => {
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-human-presentation',
+      comparison: comparison(),
+      candidates,
+      objects,
+    }, hasher);
+    const conflict = projection.conflicts.find((item) => item.conflictId === 'conflict-alpha')!;
+    const optionA = conflict.options.find((item) => item.unitId === 'unit-a-alpha')! as unknown as {
+      unitId: string;
+      presentation?: { actionLabel: string; objectLabel: string; highlights: string[]; completeness: string; omittedFactCount: number };
+    };
+    const optionC = conflict.options.find((item) => item.unitId === 'unit-c-alpha')! as typeof optionA;
+    expect(optionA.presentation).toMatchObject({
+      actionLabel: '新建场景',
+      objectLabel: '场景 wave6_alpha',
+      completeness: 'content',
+      omittedFactCount: 0,
+    });
+    expect(optionA.presentation?.highlights.join('\n')).toContain('Alpha route A.');
+    expect(optionA.presentation?.highlights.join('\n')).not.toContain('Alpha route C.');
+    expect(optionC.presentation?.highlights.join('\n')).toContain('Alpha route C.');
+    expect(optionC.presentation?.highlights.join('\n')).not.toContain('Alpha route A.');
+    const safe = projection.safeGroups.find((item) => item.primaryObject === 'scene:wave6_alpha')!;
+    expect(safe.sources.map((source) => ({ unitId: source.unitId, candidateId: source.candidateId }))).toEqual([
+      { unitId: 'unit-a-alpha', candidateId: 'cand-A' },
+      { unitId: 'unit-d-alpha', candidateId: 'cand-D' },
+    ]);
+    expect(safe.sources.every((source) => (
+      source as typeof source & { presentation?: { highlights: string[] } }
+    ).presentation?.highlights.join('\n').includes('Alpha route A.'))).toBe(true);
+  });
+
+  it('uses a metadata-only presentation instead of inventing content when manifest facts are unavailable', async () => {
+    const withoutManifest = candidates.map(({ manifest, composition, ...item }) => ({
+      ...item,
+      composition: { ...composition, manifest: undefined },
+    }));
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-metadata-only',
+      comparison: comparison(),
+      candidates: withoutManifest,
+      objects,
+    }, hasher);
+    const option = projection.conflicts.find((item) => item.conflictId === 'conflict-alpha')!.options[0]! as unknown as {
+      presentation?: { highlights: string[]; completeness: string };
+    };
+    expect(option.presentation).toMatchObject({ completeness: 'metadata-only', highlights: [] });
+    expect(JSON.stringify(option.presentation)).not.toContain('Alpha route');
+  });
+
+  it('includes typed presentation facts in a new review fingerprint without changing comparison identity', async () => {
+    const first = await buildComparisonReviewProjection({
+      reviewId: 'review-presentation-fingerprint',
+      comparison: comparison(),
+      candidates,
+      objects,
+    }, hasher);
+    const changedCandidates = candidates.map((item) => {
+      if (item.candidateId !== 'cand-C') return item;
+      const changedManifest = {
+        ...item.manifest,
+        operations: item.manifest.operations.map((entry) => entry.sequence === 0 ? {
+          ...entry,
+          normalizedInput: {
+            operationId: 'op-c-alpha',
+            sceneId: 'wave6_alpha',
+            blocks: [{ kind: 'text', speaker: 'lynn', value: 'Alpha route C revised.' }],
+          },
+        } : entry),
+      };
+      return { ...item, manifest: changedManifest, composition: { ...item.composition, manifest: changedManifest } };
+    });
+    const second = await buildComparisonReviewProjection({
+      reviewId: 'review-presentation-fingerprint',
+      comparison: comparison(),
+      candidates: changedCandidates,
+      objects,
+    }, hasher);
+    expect(second.sourceIdentity.comparisonFingerprint).toBe(first.sourceIdentity.comparisonFingerprint);
+    expect(second.reviewFingerprint).not.toBe(first.reviewFingerprint);
+  });
+
+  const presentationCases: Array<[
+    CompositionOperation['capabilityId'],
+    CompositionOperation['normalizedInput'] & { operationId: string },
+    string,
+    string,
+    string,
+  ]> = [
+    ['scene.create', { operationId: 'op-scene-create', sceneId: 'alpha', blocks: [{ kind: 'text', speaker: 'lynn', value: '创建台词' }] }, 'scene:alpha', '新建场景', '创建台词'],
+    ['scene.patch', { operationId: 'op-scene-patch', sceneId: 'alpha', patch: { kind: 'replaceText', target: 'hidden-target', expectedFingerprint: 'hidden-fingerprint', speaker: 'lynn', value: '修改台词' } }, 'scene:alpha', '修改场景', '修改台词'],
+    ['variable.ensure', { operationId: 'op-variable', name: 'route', type: 'string', initial: 'A' }, 'variable:route', '设置变量', '初始值'],
+    ['character.ensure', { operationId: 'op-character', id: 'lynn', name: '凛', expectedFingerprint: 'hidden-fingerprint' }, 'character:lynn', '新建或更新角色', '显示名：凛'],
+    ['character.remove', { operationId: 'op-character-remove', id: 'lynn', expectedFingerprint: 'hidden-fingerprint' }, 'character:lynn', '移除角色', '从项目角色表中移除'],
+    ['timeline.create', { operationId: 'op-timeline-create', timelineId: 'intro', definition: { version: 1, id: 'intro', durationMs: 1200, tracks: [] } }, 'timeline:intro', '新建时间轴', '时长：1200 毫秒'],
+    ['timeline.patch', { operationId: 'op-timeline-patch', timelineId: 'intro', patch: { kind: 'addTrack', expectedFingerprint: 'hidden-fingerprint', trackKind: 'background' } }, 'timeline:intro', '修改时间轴', '新增 背景 轨道'],
+    ['project.entry-scene.set', { operationId: 'op-entry', sceneId: 'alpha', expectedFingerprint: 'hidden-fingerprint' }, 'config:entryScene', '设置入口场景', '入口场景：alpha'],
+  ];
+
+  it.each(presentationCases)(
+    'formats %s from typed normalized input without exposing operation identity',
+    (capabilityId, normalizedInput, primaryObject, actionLabel, highlight) => {
+      const presentation = buildReviewUnitPresentation(primaryObject, [operation(
+        0,
+        capabilityId,
+        normalizedInput,
+        primaryObject,
+        'presentation-fingerprint',
+      )]);
+      expect(presentation).toMatchObject({ actionLabel, completeness: 'content' });
+      expect(presentation.highlights.join('\n')).toContain(highlight);
+      expect(JSON.stringify(presentation)).not.toContain(String(normalizedInput.operationId));
+      expect(JSON.stringify(presentation)).not.toContain('hidden-fingerprint');
+    },
+  );
+
+  it('bounds long typed content and reports every omitted fact', () => {
+    const blocks = Array.from({ length: 12 }, (_, index) => ({
+      kind: 'text' as const,
+      speaker: 'lynn',
+      value: `第 ${index + 1} 条台词`,
+    }));
+    const presentation = buildReviewUnitPresentation('scene:bounded', [operation(
+      0,
+      'scene.create',
+      { operationId: 'op-bounded', sceneId: 'bounded', blocks },
+      'scene:bounded',
+      'bounded-fingerprint',
+    )]);
+
+    expect(presentation.highlights).toHaveLength(8);
+    expect(presentation.omittedFactCount).toBe(4);
+  });
+
+  it('recomputes a legacy projection with presentation absent without injecting new identity fields', async () => {
+    const current = await buildComparisonReviewProjection({
+      reviewId: 'review-legacy-fingerprint',
+      comparison: comparison(),
+      candidates,
+      objects,
+    }, hasher);
+    const legacy = structuredClone(current);
+    for (const group of legacy.safeGroups) {
+      for (const source of group.sources) delete source.presentation;
+    }
+    for (const conflict of legacy.conflicts) {
+      for (const option of conflict.options) delete option.presentation;
+    }
+    legacy.reviewFingerprint = 'historical-stored-value';
+    const first = await comparisonReviewFingerprintOf(legacy, hasher);
+    const second = await comparisonReviewFingerprintOf(structuredClone(legacy), hasher);
+
+    expect(first).toBe(second);
+    expect(first).not.toBe(current.reviewFingerprint);
+    expect(legacy.safeGroups.every((group) => group.sources.every((source) => source.presentation === undefined))).toBe(true);
+  });
+
   it('projects A/D identical results, C conflict, B dependency, and candidate ordinals', async () => {
     const projection = await buildComparisonReviewProjection({
       reviewId: 'review-wave6',
@@ -430,7 +664,10 @@ describe('comparison review projection', () => {
     const second = await buildComparisonReviewProjection({
       reviewId: 'review-stable',
       comparison: shuffled,
-      candidates: [...candidates].reverse(),
+      candidates: [...candidates].reverse().map((item) => {
+        const manifest = { ...item.manifest, operations: [...item.manifest.operations].reverse() };
+        return { ...item, manifest, composition: { ...item.composition, manifest } };
+      }),
       objects: [...objects].reverse(),
     }, hasher);
 
@@ -448,6 +685,8 @@ describe('comparison review projection', () => {
     }, hasher);
 
     expect(projection.task.statementSource).toBe('generated-fallback');
+    expect(projection.task.title).toBe('候选创作方案审阅');
+    expect(projection.task.title).not.toContain('Candidate composition review');
     expect(projection.task.goal).toBeUndefined();
     expect(projection.task.acceptanceCriteria).toEqual([]);
   });

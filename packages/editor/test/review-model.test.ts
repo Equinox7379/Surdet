@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { HumanReviewProjection } from '@surdet/authoring';
+import type { HumanReviewProjection, ReviewUnitOutcome } from '@surdet/authoring';
 import {
   canSealDecision,
   labelForConflictSeverity,
   labelForObjectKind,
   labelForReviewState,
   labelForUnknownCode,
+  presentationForReviewUnit,
 } from '../src/review-model.js';
 
 function baseProjection(overrides: Partial<HumanReviewProjection> = {}): HumanReviewProjection {
@@ -54,5 +55,34 @@ describe('Editor review Chinese model', () => {
       selectedUnitIds: ['unit-a'],
       conflictResolutions: [{ conflictId: 'choose-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' }],
     })).toBe(true);
+  });
+
+  it('renders shared presentation and degrades a legacy unit without guessing content', () => {
+    const unit: ReviewUnitOutcome = {
+      unitId: 'unit-a',
+      candidateId: 'candidate-a',
+      primaryObject: 'scene:alpha',
+      outcomes: [],
+      potentialImpact: [],
+      observedImpact: [],
+      evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] },
+      presentation: {
+        actionLabel: '新建场景',
+        objectLabel: '场景 alpha',
+        highlights: ['lynn：Alpha route A.'],
+        completeness: 'content',
+        omittedFactCount: 0,
+      },
+    };
+
+    expect(presentationForReviewUnit(unit).highlights).toEqual(['lynn：Alpha route A.']);
+    delete unit.presentation;
+    expect(presentationForReviewUnit(unit)).toEqual({
+      actionLabel: '内容摘要不足',
+      objectLabel: '场景 alpha',
+      highlights: [],
+      completeness: 'metadata-only',
+      omittedFactCount: 0,
+    });
   });
 });

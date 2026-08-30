@@ -4349,3 +4349,469 @@ diagnosticSidecarStarter = <local-path> bytes=14084 sha256=4D6A07B1113E6B8F587C5
 diagnosticSidecarCleanup = <local-path> bytes=1324 sha256=C58275F6DF55B7958BACAE42B4BA09A3B555DF88B9B4138AFF33D0191F40FABA
 nextGate = exact 14-path set comparison, exact staging without directory adds, local commit fix(authoring): preserve result review receipts, frozen clean CODE_EVIDENCE_HEAD, then replacement FORMAL 1/1
 ~~~
+
+### 2026-08-30 — W6 result receipt integrity replacement FORMAL pass
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1_GATE_EXCEPTION_1
+status = W6_RESULT_RECEIPT_INTEGRITY_RESTORED; DIAGNOSTIC_PASSED; REPLACEMENT_FORMAL_PASSED; READY_FOR_INDEPENDENT_MANAGER_REVIEW
+recoveryVerifyAll = FAILED_TIMEOUT_ONLY retained; verify:all was not rerun or replaced; PARALLEL_CAPACITY_RISK remains OPEN
+codeEvidenceCommit = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda; parent 5f796620736a4264f1d65e5baec56f55f76685f8; subject fix(authoring): preserve result review receipts
+codeEvidenceScope = exact 14 authorized paths; whitelist missing=0; whitelist extra=0; commit-path count=14; pre-FORMAL tracked worktree clean; pre-FORMAL staging empty; 966 unrelated untracked paths preserved
+codeEvidenceRunner = packages/cli/e2e/human-agent-review-wave-6.e2e.mjs bytes=98051 sha256=105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246
+replacementFormalBudget = 1/1 CONSUMED_AND_PASSED; no rerun performed
+replacementFormalCommand = SURDET_CODE_EVIDENCE_HEAD=e6ae69cbadbbae2ac941899a091e9de6bb9e8eda node packages/cli/e2e/human-agent-review-wave-6.e2e.mjs --mode=formal
+replacementFormalResult = PASSED exit 0; evidenceClass FORMAL; mode formal; 22/22 fixed milestones PASSED; lastPassedNode cleanup-and-identity; firstFailedNode null
+replacementFormalBinding = runHead=e6ae69cbadbbae2ac941899a091e9de6bb9e8eda equals CODE_EVIDENCE_HEAD; runnerSha256=105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; trackedCodeDiffPaths=[]
+replacementFormalReceipt = fresh-approval-inspected PASSED; approvalId=approval_1788067035551; approvalFingerprint=736f4ed63909ffbb9089d9915f80e559c0d6522ca9ab4793e9db8b45e51f61b8; resultReviewId=review_result_033ebd4e0de640ec8ed46755e6f146df; decisionId=3f0c9b6b-e0fd-4541-80d4-8399f05ab059; decisionFingerprint=c541bceecb8be27a139be4ce6bf8599dd5f00cd9af48b9bec79600f8cfc7118d
+replacementFormalSelection = 526f858046f64281e4175fdef2390012, 735e9269f5f32527a5b86e115464f3a3, 94354a1b1bdb9527e46077a111db24d1, c6bb3a5f4cac26abfe85fb9c2cf31dac
+replacementFormalReceiptMarker = present=true; kind=approval; Chinese text contains 已批准, receipt ID/fingerprint, original decision, and all original selected unit IDs; global status after reopen=已打开审阅任务
+replacementFormalReceiptReadonly = approve-result disabled=true; return-result disabled=true
+replacementFormalReceiptDiskIdentity = before bytes=1440 sha256=FBA777901E5EABDA2398FDF3B329C6A931EBC32FD61F0D8B31BBEA29A2760A0A; after bytes=1440 sha256=FBA777901E5EABDA2398FDF3B329C6A931EBC32FD61F0D8B31BBEA29A2760A0A; exact identity equality=true; live disk identity matched evidence
+replacementFormalReceiptExclusivity = review receipt directory contains identity.json and final-approval.json; return-request.json absent; no second terminal receipt generated
+replacementFormalErrorChannels = errors=0; protocolErrors=0; consoleErrors=0; pageErrors=0; requestFailures=0; stderrLines=0; childCleanupFailures=0; activeLeaseDirectories=0; blockingIssueChannels=0
+replacementFormalMutationSemantics = projectMutation.occurred=true; stageProjectMutated=false; isolated applyProjectMutated=true; isolated project before sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; after sha256=99E6AB700084B3BC608AB7BD43BCA0DF545B133AF3E3AF28881580D3A9B5ADCC
+replacementFormalAppliedFiles = isolated project disk contains content/scenario/wave5_alpha.gal with Alpha route A. and without Alpha route C.; contains content/scenario/wave5_beta.gal with Beta route.; contains content/timelines/beta_opening.json id=beta_opening; game.config.json contains flag.alpha type=string initial empty
+replacementFormalStarter = original Starter before/after fileCount=37 bytes=6705750 sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; unchanged=true
+replacementFormalEvidence = <local-path> bytes=308338 sha256=67F73D6CB80AEDA1683DDD2D572C91B04771FDFC92C74B36393CF790A859CFEF
+replacementFormalIdentity = <local-path> bytes=222 sha256=034A7869F9F04F5EE357611C1BF819D7F140B415E015C0C11AAC8D90B95610D5; identity points to the same evidence bytes/SHA
+replacementFormalLog = <local-path> bytes=234287 sha256=3181B67E85738A153629531078DC4DBD7217E889CA5B58E71B2BFB6295BC7D97
+replacementFormalSidecarEditorResult = <local-path> bytes=12130 sha256=0C679106E6CC426D49D0931C808EA5D6D8812EC8F4BC34FE3551A1A82C6AEB39
+replacementFormalSidecarReceiptReopen = <local-path> bytes=4404 sha256=0FD06023E5F0706D69202ACDFAF0079B1181633A45E070BDB55C70EB32E68E60
+replacementFormalSidecarIsolatedApply = <local-path> bytes=14897 sha256=9B341677D7E9F55CFAF04C2999777C8A9EFaf444031062C4738989C013DE6207
+replacementFormalSidecarStarter = <local-path> bytes=14084 sha256=4D6A07B1113E6B8F587C58E60577A3E77FC4CFFBECE7ABB750BD34B4CED7CAB7
+replacementFormalSidecarCleanup = <local-path> bytes=513 sha256=AC2D0D8966B546FB6CFE2517F4848E80CE6239BC9A491EF8116BF7ADFF3F4564
+sidecarDiskIdentityCheck = all five selected sidecars matched their recorded bytes/SHA; mismatch count=0
+historicalFormal = preserved unchanged as identity-valid but result-receipt-reopen coverage-insufficient historical FORMAL; artifact not deleted, overwritten, or reclassified as failed
+postFormalPolicy = this Ledger append is intentionally uncommitted; no docs-only commit; no acceptance-prep; no external Agent; no Owner acceptance; no real-project apply; no push; no Wave 7
+stopState = W6_RESULT_RECEIPT_INTEGRITY_RESTORED; DIAGNOSTIC_PASSED; REPLACEMENT_FORMAL_PASSED; READY_FOR_INDEPENDENT_MANAGER_REVIEW; ACCEPTANCE_PREP_NOT_STARTED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 acceptance-prep authorization pre-run path-contract blocker
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_ACCEPTANCE_PREP_1
+baseline = PASS; HEAD e6ae69cbadbbae2ac941899a091e9de6bb9e8eda; parent 5f796620736a4264f1d65e5baec56f55f76685f8; staging empty; tracked worktree contains only this existing Wave 6 Execution Ledger modification
+runnerFreeze = PASS; packages/cli/e2e/human-agent-review-wave-6.e2e.mjs has no diff from CODE_EVIDENCE_HEAD; bytes=98051; sha256=105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; replacement FORMAL recorded the same runner SHA and runHead
+desktopBaseline = zero existing <local-path> directories before any attempt
+authorizedRootContract = <local-path><new UUID>; Task 11 states the runner uses crypto.randomUUID()
+frozenRunnerCall = human-agent-review-wave-6.e2e.mjs imports prepareAcceptance from agent-candidate-composition-wave-5.e2e.mjs and calls prepareAcceptance({ baseDirectory: desktop, prefix: 'surdet-human-review-acceptance-' })
+frozenSharedImplementation = agent-candidate-composition-wave-5.e2e.mjs prepareAcceptance creates root with fs.mkdtempSync(path.join(baseDirectory, prefix)); neither frozen file uses crypto.randomUUID() for the acceptance root
+blocker = the only authorized command would create an mkdtemp-suffixed root rather than the explicitly required UUID-suffixed root; executing it would knowingly violate the acceptance-root identity contract
+acceptancePrepCommand = NOT_RUN
+acceptancePrepAttempts = 0/1
+acceptancePrepBudget = 1/1 UNCONSUMED
+acceptanceRootCreated = NO
+artifact = NOT_CREATED
+externalAgent = NOT_STARTED
+ownerAcceptance = NOT_STARTED
+apply = NOT_AUTHORIZED_AND_NOT_RUN
+commit = NOT_CREATED
+push = NOT_PERFORMED
+wave7 = NOT_STARTED
+stopState = W6_ACCEPTANCE_PREP_BLOCKED_BEFORE_ATTEMPT; WAITING_FOR_CORRECTED_MANAGER_AUTHORIZATION
+~~~
+
+### 2026-08-30 — W6 acceptance-prep path contract manager correction
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_ACCEPTANCE_PREP_PATH_CONTRACT_CORRECTION_1
+managerDecision = previous pre-run stop was correct and does not count as an acceptance-prep failure
+acceptancePrepAttemptsBeforeRun = 0/1
+acceptancePrepBudgetBeforeRun = 1/1 UNCONSUMED
+taskbookCorrection = Task 11 line 2279 crypto.randomUUID wording is an over-specific implementation description and is superseded for this Wave 6 acceptance-prep execution by this manager record
+authoritativeRootContract = frozen runner must use fs.mkdtempSync for atomic creation under <local-path> basename must start with surdet-human-review-acceptance-; suffix must be nonempty and generated by mkdtempSync; root must not exist before the command; root must be new, outside the repository, and must not reuse FORMAL, DIAGNOSTIC, or historical acceptance directories
+acceptedFrozenCall = prepareAcceptance({ baseDirectory: desktop, prefix: 'surdet-human-review-acceptance-' })
+acceptedFrozenHelper = fs.mkdtempSync(path.join(baseDirectory, prefix))
+runnerChange = NOT_AUTHORIZED_AND_NOT_REQUIRED
+formalRerun = NOT_AUTHORIZED_AND_NOT_REQUIRED
+nextGate = recheck frozen HEAD, runner SHA, staging, exact tracked Ledger-only diff, and zero pre-existing Desktop roots; then run the sole acceptance-prep attempt once
+~~~
+
+### 2026-08-30 — W6 unique acceptance-prep pass
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_ACCEPTANCE_PREP_PATH_CONTRACT_CORRECTION_1
+status = W6_ACCEPTANCE_PREP_PASSED; WAITING_FOR_EXTERNAL_AGENT_COMPARISON_STAGE
+acceptancePrepAttempts = 1/1 CONSUMED_AND_PASSED; no rerun performed
+command = node packages/cli/e2e/human-agent-review-wave-6.e2e.mjs --mode=acceptance-prep
+commandResult = PREPARED exit 0; evidenceClass ACCEPTANCE_PREP; mode acceptance-prep
+acceptanceRoot = <local-path>
+acceptanceRootBasename = surdet-human-review-acceptance-jMSfT5
+acceptanceRootSuffix = jMSfT5
+rootCreationEvidence = pre-run Desktop matching-root count=0 at 2026-08-30T05:33:30.2521287Z; root CreationTimeUtc=2026-08-30T05:33:51.3187554Z; post-run matching-root count=1; new-root set contains exactly this root; ROOT_CREATED_AT_THIS_ATTEMPT=true; ROOT_WAS_ABSENT_BEFORE_RUN=true
+rootContract = prefix match=true; suffix nonempty=true; root parent is <local-path> root outside E:/surdet=true; evidence preparationRootOutsideRepository=true; no FORMAL, DIAGNOSTIC, or historical acceptance root reused
+projectRoot = <local-path>
+dataDir = <local-path>
+projectIdentity = 337a7e2f264530c07ee4679a172b2a2d
+comparisonReviewRoot = <local-path> NOT_CREATED_BEFORE_EXTERNAL_AGENT as expected
+mcpStageConfig = <local-path> bytes=485 sha256=4AF18E88C1CCA944EA187DC38E8926C1BF7C112C8F63F8E4A17717D69003B142; disk identity matches evidence; launcher=E:/surdet/packages/cli/dist/agent-port/main.js; project/dataDir exact; policy=stage
+mcpApplyResumeTemplate = <local-path> bytes=346 sha256=5EE09031445077260DDF6DD7C3610E84235E5DB7777D747B36D03B1500E48D3A; disk identity matches evidence; policy=apply; status=NOT_AUTHORIZED; resumeChange=<CHANGE_ID_REQUIRED_AFTER_OWNER_APPROVAL>
+evidence = <local-path> bytes=25906 sha256=169559DB17DD5D14FE0A193AC39871046717F1ED1D2834505DDFD7AE4B49C79F
+identity = <local-path> bytes=196 sha256=B603CC1E91278DE0CF0392AF558EC10448F0CCCECB3ECEE8A308032D450D33B0; identity path/bytes/SHA exactly match evidence
+acceptancePrepLog = <local-path> bytes=801 sha256=08556DE1B494A11DD03BEEEE1B360DEF9988DE24BD622423F2FD76294196D887
+projectTree = runner hashTree scope fileCount=37 bytes=6705750 sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; fresh disk aggregate matches evidence; missing=0 extra=0 mismatch=0
+starterTree = runner hashTree scope fileCount=37 bytes=6705750 sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; fresh disk aggregate matches evidence; missing=0 extra=0 mismatch=0; before/after evidence SHA equal
+fixtureEquality = PROJECT_FIXTURE_EQUALS_STARTER_AT_PREP=true; fresh project-to-Starter scoped file identity comparison exact=true; ORIGINAL_STARTER_UNCHANGED=true
+dataDirFileCountBeforeAgent = 38 exact prep-owned files; disk count matches evidence
+prepSourceChanges = four sealed/Open source candidates A/B/C/D; all four are prep-owned and integration=false; non-prep change count=0
+toolsCalled = []
+changeCreated = NO external/integration change; integrationChangeCreated=false
+activeChange = NONE for external/integration stage; the four explicitly reported Open records are prep-owned source candidates, not an Agent-created integration change
+comparisonReview = NOT_CREATED_BEFORE_EXTERNAL_AGENT
+externalAgent = NOT_STARTED; externalAgentStarted=false; root-bound Node/MCP process count after prep=0
+projectMutation = NO; applyAuthorized=false; apply/commit/rollback by external Agent not started or performed
+leaseAndErrors = disk lease.json count=0; evidence activeLeaseDirectories=[]; errors=[]; consoleErrors=[]; pageErrors=[]; requestFailures=[]; stderrLines=[]; childCleanupFailures=[]
+formalCodeEvidenceHead = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda; outer acceptance runHead and inner prep runHead both equal this HEAD
+frozenWave6Runner = bytes=98051 sha256=105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; outer acceptance runnerSha256 exact match; no diff from CODE_EVIDENCE_HEAD
+sharedPrepHelperIdentity = packages/cli/e2e/agent-candidate-composition-wave-5.e2e.mjs sha256=6A63D4FE415B9190DB8E0CCA9BA06378AA6E7C4B9CA36F00A6041E4E1523E216; inner evidence runnerSha256 identifies this imported helper and is not a Wave 6 runner mismatch
+prohibitedActions = no tests, build, preflight, DIAGNOSTIC, FORMAL, verify, code/test edit, commit, push, external Agent, Owner acceptance, isolated apply/resume, or Wave 7
+stopState = W6_ACCEPTANCE_PREP_PASSED; ACCEPTANCE_PREP_ATTEMPTS_1_OF_1; WAITING_FOR_EXTERNAL_AGENT_COMPARISON_STAGE; EXTERNAL_AGENT_NOT_STARTED; OWNER_COMPARISON_ACCEPTANCE_NOT_STARTED; OWNER_RESULT_ACCEPTANCE_NOT_STARTED; APPLY_NOT_AUTHORIZED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 external Agent comparison stage pass and manager disk review
+
+~~~text
+timestamp = 2026-08-30
+stage = EXTERNAL_AGENT_COMPARISON_STAGE
+status = PASSED; REVIEW_DECISION_REQUIRED; WAITING_FOR_OWNER_COMPARISON_ACCEPTANCE
+serviceReported = Surdet Agent Port (mcp-stage); projectRoot <local-path> policy stage; sessionId agent_00b3125a-cc4a-486e-a6c9-2c8e0bd1a033
+agentReportedInitialState = no active change; project and change leases free; manualRecoveryRequired=false
+comparisonFingerprint = 1181b28330c67383b1fcdc98d7c180d4726a21a1a7b0d79d876ac7d5a3c7d861
+comparisonReviewId = review_comparison_a5eb0885acd3419280ce8807645c8fa9
+comparisonReviewRoot = <local-path>
+comparisonReviewIdentity = identity.json bytes=539 sha256=FEF67DC901ADA8643EE217E8E486D8F0E5605C224E937555A46E0F459DDA1AD0; identity binds projectIdentity 337a7e2f264530c07ee4679a172b2a2d, expected project revision d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f, comparison fingerprint, and payload identity
+comparisonReviewPayload = comparison/review.json bytes=69778 sha256=10B2109BEC4946A935A3ECE5BAE5A793FE95C18A034966DD8D83D09336DD4F8C; reviewFingerprint=4ea79d7ef070a611a0838bc5edeef3b508d7d6b84a1637a54a7f886458b2c6ff; state=COMPARISON_PREPARED
+sceneIdenticalGroup = groupId 62c7b4112e5efb8cfbe5787e7307110a; object scene:wave5_alpha; finalFingerprint a1b1eea22100625de7e2a8294da4fa4e87a4dced45e32ae5b310a411efe057c9; sourceCount=2; logical A unit 15ed52e1b271a3a90de5ea72fc9f7744 and logical D unit ea4ba4ce0b5502e21f8c50a8e9362052 both retained; includedByDefault=true; collapsedByDefault=true
+variableIdenticalGroup = groupId 4a7ebd17a902c58025ca85ec59572ded; object variable:flag.alpha; finalFingerprint c4b8e39708c1350181514172e201d316e6e47e15ef90787022356812cd5afdd1; sourceCount=2; logical A and D sources both retained; includedByDefault=true; collapsedByDefault=true
+selectionRequiredConflict = conflictId 7ae0a1c9728b96dd4c8c77a4c6405cfe; code OBJECT_RESULTS_DIVERGE; object scene:wave5_alpha; logical A unit 15ed52e1b271a3a90de5ea72fc9f7744; logical C unit 9cfb1e97c99879c18f09ed943124683e; logical D unit ea4ba4ce0b5502e21f8c50a8e9362052; allowedResolutions choose-unit or exclude-all; canCreateDecision=true
+timelineDependency = scene:wave5_beta unit 81d4276321ea05190666bf285c00378c implicitly includes timeline:beta_opening unit fdea2e12ec4dfa301527959cac9c22c4
+evidenceBoundary = blockingCount=0; selectionRequiredCount=1; advisoryCount=4; all four source candidates report validation/simulation/runtime missing; this is visible advisory evidence and is not rewritten as fully fresh candidate evidence
+displayOrdinalWarning = review workspace canonical display order differs from logical candidate labels: display A=logical B change 32dc8c15; display B=logical C change ae08a4c4; display C=logical D change 96a640a4; display D=logical A change 044dc9a7; Owner decision must anchor on candidateId/unitId, not display letter alone
+ownerRecommendedSelectionAnchor = choose logical A scene result by candidateId cand-chg_0001_044dc9a7-da02-4fed-b97e-09c3929d9f9f and unitId 15ed52e1b271a3a90de5ea72fc9f7744; this retains the identical logical D provenance and excludes logical C through an explicit human receipt
+managerDiskReview = review payload bytes/SHA and identity binding matched; expected two new review files were present; no decision, approval, return, or receipt file existed; disk lease scan found no active lease directory content
+freshMutationReview = isolated project scoped tree remains 37 files / 6705750 bytes with missing=0 extra=0 mismatch=0 against acceptance-prep identity; original examples/starter scoped tree independently remains the same 37 files / 6705750 bytes with missing=0 extra=0 mismatch=0
+agentReportedCalls = five MCP calls in order capabilities.describe, session.describe, project.inspect, composition.compare, review.prepare-comparison; final error REVIEW_DECISION_REQUIRED with retryDisposition after-human-review; no composition.plan, composition.execute, integration change, decision, or apply
+capabilityReadBoundary = external Agent reported only a visible 2000-character prefix of the large capabilities response; this prevents claiming a full manual reread of that response but does not invalidate the persisted review workspace and downstream semantic evidence used for this stage
+gitAfterReview = branch main; HEAD e6ae69cbadbbae2ac941899a091e9de6bb9e8eda; parent 5f796620736a4264f1d65e5baec56f55f76685f8; surdet/main f8943c293c4537b3867cc8eeea316b19bb4a0b40; ahead 12 / behind 0; staging empty; only this append-only Wave 6 Execution Ledger is a tracked worktree modification
+prohibitedActions = no decision written by Agent; no plan; no execute; no integration change; no isolated apply/resume; no real-project mutation; no commit; no push; no Wave 7
+nextGate = start the Editor entry without changing evidence, then the project owner opens this exact comparison review root, verifies the human-readable comparison, selects logical A by stable candidateId/unitId, saves and reopens the immutable decision receipt, and reports the visual/interaction result
+stopState = EXTERNAL_AGENT_COMPARISON_STAGE_PASSED; WAITING_FOR_OWNER_COMPARISON_ACCEPTANCE; OWNER_RESULT_ACCEPTANCE_NOT_STARTED; APPLY_NOT_AUTHORIZED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 Owner Comparison screenshot review: semantic receipt pass, human-readability needs fix
+
+~~~text
+timestamp = 2026-08-30
+gate = OWNER_COMPARISON_ACCEPTANCE
+ownerEvidenceClass = OWNER_REPORTED_REAL_CHROME_OR_EDGE_SCREENSHOTS plus manager disk readback; screenshots are accepted for visible layout and interaction facts but do not replace disk receipt identity checks
+screenshotInitial = <local-path> bytes=145534 sha256=FAA04436F05CE027088B767B1E88C1F419F47E05E9C936BC00DAC1215C0D294C
+screenshotTechnical = <local-path> bytes=194538 sha256=0930BA68F21262507C4F8292D31D9AA74D006F01FC8A75C486D07B911C72D13F
+screenshotReopened = <local-path> bytes=179522 sha256=0CD0D86E8F07CEAF232BCDF0F99AA346BF2CC9FD3519DE67743D6062265C7240
+visibleFactsPassed = Editor review tab opened the exact comparison workspace; four candidate buttons are present; scene and variable each show 2 candidates with identical results; scene wave5_beta -> timeline beta_opening appears as an automatic dependency; selection-required conflict presents three choose-unit options plus exclude-all; technical details expose reviewId/codes/fingerprint/source capsule identities; reopened screenshot shows 已读取已保存的决定 and 决定已保存; safe-group expansion preserves two source cards
+decisionReceipt = <local-path> bytes=1909 sha256=6FCB288CE32777EC3E01288B4BDFF05B1F1B3321B47D25C48D241FE26907085D
+decisionIdentity = decisionId 906870cc-9827-4960-8157-c4eca7a90a96; decisionFingerprint 956d0404ac3411122ed008db19ef5b97b7f8d230f0b898ae034f56483fa32b19; review/comparison/project/revision identities match the frozen comparison workspace
+decisionSelection = conflict 7ae0a1c9728b96dd4c8c77a4c6405cfe resolved choose-unit with chosenUnitId ea4ba4ce0b5502e21f8c50a8e9362052, the logical D / display C scene source; logical C divergent unit 9cfb1e97c99879c18f09ed943124683e is not selected
+equivalentResultJudgment = chosen logical D has the same scene finalFingerprint a1b1eea22100625de7e2a8294da4fa4e87a4dced45e32ae5b310a411efe057c9 as logical A; the persisted safe group continues to retain both logical A and D provenance, so this does not damage the intended semantic result and does not require deleting or rewriting the immutable receipt
+freshDiskSafety = isolated project source tree mismatch count=0; original examples/starter source tree mismatch count=0; only four prep source change directories exist; lease.json count=0; no integration plan/execute/apply evidence exists
+ownerVisibleIssue1 = default task title remains English Candidate composition review in the header and task panel, failing Task 11.3 step 4 requirement that the default task goal be presented in Chinese
+ownerVisibleIssue2 = canonical display ordinals are remapped relative to the taskbook logical A/B/C/D labels and the default UI does not explain that mapping; a project owner can select an equivalent but differently sourced unit without knowing it, as the persisted choice of display C/logical D demonstrates
+ownerVisibleIssue3 = conflict option cards show only ordinal, object ref, disposition, missing evidence, and empty impacts; they do not provide a human-readable content difference between Alpha route A and Alpha route C, so a nontechnical reviewer cannot make an informed creative choice without external instructions or raw technical IDs
+managerVerdict = SEMANTIC_DECISION_RECEIPT_AND_REOPEN_PASS; OWNER_COMPARISON_HUMAN_READABILITY_NEEDS_FIX; do not claim full OWNER_COMPARISON_ACCEPTANCE_PASSED
+nextGate = bounded Editor/shared-review presentation correction for localized meaningful task wording and stable, human-readable candidate/result identity; preserve the immutable decision and historical screenshots; establish proportional RED/GREEN and rerun only the owner comparison UI path before allowing the external Agent second stage
+prohibitedActions = no composition.plan; no composition.execute; no result review; no isolated apply/resume; no push; no Wave 7
+stopState = OWNER_COMPARISON_FUNCTIONAL_PATH_PASSED; OWNER_COMPARISON_HUMAN_READABILITY_NEEDS_FIX; EXTERNAL_AGENT_SECOND_STAGE_NOT_AUTHORIZED; OWNER_RESULT_ACCEPTANCE_NOT_STARTED; APPLY_NOT_AUTHORIZED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 manual Editor port isolation correction
+
+~~~text
+timestamp = 2026-08-30
+trigger = another local project independently proved that TCP 4173 was occupied by E:/surdet Editor Vite after its own process cleanup; the Surdet listener was no longer needed on that shared port
+ownershipVerification = TCP 127.0.0.1:4173 PID 84660; command line was E:/surdet/packages/editor/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173
+stopAction = stopped only the known Surdet Editor unified execution session; no Jiuan or unrelated process was terminated
+postStop = TCP 4173 listener count 0
+replacementPort = 4175
+replacementCommand = npm run dev -w surdet-editor -- --host 127.0.0.1 --port 4175
+replacementVerification = HTTP 200; title Surdet 剧本编辑器; TCP 4175 listener count 1; PID 73132; command line binds E:/surdet/packages/editor Vite to 127.0.0.1:4175
+operationalConvention = for the remainder of this Wave 6 manual review, use http://127.0.0.1:4175/; do not assume or reclaim 4173; automated runners retain their own launcher-managed ports and this operational change does not alter production code or frozen evidence
+gitAndScope = no production/test/package configuration changed; only this existing append-only Execution Ledger remains modified and unstaged; no commit or push
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility repair taskbook issued
+
+~~~text
+timestamp = 2026-08-30
+managerDecision = the comparison semantic path, immutable decision save/reopen, A/D provenance, C explicit conflict, B implicit dependency, project non-mutation, and original Starter non-mutation remain accepted historical facts; full Owner comparison acceptance remains blocked only on human comprehensibility
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+taskbook = docs/superpowers/plans/2026-08-30-wave-6-owner-review-comprehensibility-repair.md
+taskbookPurpose = mechanically project typed candidate manifest content into a shared human-readable review presentation; localize the generated fallback title; explain that display ordinals are review-local; show A/C content differences without requiring technical IDs; preserve technical detail drill-down and exact receipt binding
+architectureDecision = @surdet/authoring owns deterministic typed presentation summaries; CLI only passes verified manifest facts; Editor only renders the shared projection; no second parser, raw JSON dump, model-generated prose, or comparison/plan duplication
+compatibilityDecision = existing jMSfT5 review workspace, three Owner screenshots, and decision receipt remain immutable historical evidence; new presentation fields are additive; old v1 payloads must stay readable without migration or rewrite
+evidenceDecision = use focused Authoring/CLI/Editor RED-GREEN, affected workspace gates, one small dedicated E2E runner, up to two focused DIAGNOSTIC executions, and one frozen-head focused FORMAL; verify:all and default parallel CLI full are not authorized for this bounded repair
+acceptanceDecision = after focused FORMAL, a new acceptance-prep and new external Agent comparison stage each require explicit Owner authorization; Owner retest uses http://127.0.0.1:4175/ and Surdet must not reclaim 4173
+ledgerDecision = this existing Wave 6 Execution Ledger remains the only rolling ledger; the new repair taskbook must not create a second execution ledger; long-term roadmap remains untouched until reviewed Wave 6 closure
+implementationStatus = NOT_STARTED; taskbook is READY_FOR_OWNER_DISPATCH; generating the taskbook is not automatic code authorization
+prohibitedActions = no composition.plan, composition.execute, result review, isolated apply/resume, push, Wave 7, receipt rewrite, old acceptance reuse, or protected-file changes
+stopState = OWNER_COMPARISON_FUNCTIONAL_PATH_PASSED; OWNER_COMPARISON_HUMAN_READABILITY_NEEDS_FIX; W6_OWNER_REVIEW_COMPREHENSIBILITY_TASKBOOK_READY; EXTERNAL_AGENT_SECOND_STAGE_NOT_AUTHORIZED; APPLY_NOT_AUTHORIZED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility repair Task 0 baseline
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+ownerDispatch = APPROVED by direct handoff of docs/superpowers/plans/2026-08-30-wave-6-owner-review-comprehensibility-repair.md and instruction 开工吧
+taskbookIdentityBeforeWork = bytes 32022; sha256 67A6E836C12193EF3887E4B4D5D4D8813B08002839A977133DC4406247A4A76C
+branch = main
+HEAD = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda
+HEADParent = 5f796620736a4264f1d65e5baec56f55f76685f8
+surdet/main = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehind = ahead 12 / behind 0
+trackedBaseline = only docs/superpowers/plans/2026-08-26-human-agent-review-workbench-stage-6-wave-6.md; no tracked code diff
+stagingBaseline = empty
+untrackedBaseline = 967 files; the new repair taskbook accounts for one file beyond the previously recorded 966-file historical untracked set; all unrelated and protected untracked paths preserved
+historicalScreenshots = initial bytes 145534 sha256 FAA04436F05CE027088B767B1E88C1F419F47E05E9C936BC00DAC1215C0D294C; technical bytes 194538 sha256 0930BA68F21262507C4F8292D31D9AA74D006F01FC8A75C486D07B911C72D13F; reopened bytes 179522 sha256 0CD0D86E8F07CEAF232BCDF0F99AA346BF2CC9FD3519DE67743D6062265C7240; all exact Ledger identities preserved
+historicalReviewRoot = <local-path>
+historicalReviewPayload = comparison/review.json bytes 69778 sha256 10B2109BEC4946A935A3ECE5BAE5A793FE95C18A034966DD8D83D09336DD4F8C; reviewFingerprint 4ea79d7ef070a611a0838bc5edeef3b508d7d6b84a1637a54a7f886458b2c6ff; comparisonFingerprint 1181b28330c67383b1fcdc98d7c180d4726a21a1a7b0d79d876ac7d5a3c7d861
+historicalReviewIdentity = identity.json bytes 539 sha256 FEF67DC901ADA8643EE217E8E486D8F0E5605C224E937555A46E0F459DDA1AD0
+historicalDecisionReceipt = decision.json bytes 1909 sha256 6FCB288CE32777EC3E01288B4BDFF05B1F1B3321B47D25C48D241FE26907085D; decisionId 906870cc-9827-4960-8157-c4eca7a90a96; decisionFingerprint 956d0404ac3411122ed008db19ef5b97b7f8d230f0b898ae034f56483fa32b19; chosenUnitId ea4ba4ce0b5502e21f8c50a8e9362052
+historicalEvidencePolicy = screenshots, review payload, identity, and decision are immutable; no delete, move, rewrite, migration, or acceptance-root reuse
+sourceTrace = ReviewService.prepareComparison -> composition.compare returns verified candidates/manifests -> candidateIntent projects only intent/criteria -> buildComparisonReviewProjection -> projectUnitOutcome currently drops manifest normalizedInput -> reviewFingerprintPayload -> NodeReviewStore create-only payload -> Editor openReviewWorkspace -> renderComparisonReview; confirmed human presentation gap is in the authorized shared projection and Editor rendering layers
+port4173 = FREE; Surdet listener count 0
+port4175 = HTTP 200 title Surdet 剧本编辑器; PID 73132; command line E:/surdet/packages/editor/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4175; left running unchanged
+task0StopConditions = none observed; remote not behind; staging empty; no unauthorized tracked code; historical evidence identities unchanged; no decision overwrite required
+authorizedNext = Task 1 permanent RED only; first code edits must be tests
+prohibitedStill = no composition.plan; no composition.execute; no result review; no isolated apply/resume; no acceptance-prep; no external Agent; no Owner retest; no push; no Wave 7
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility permanent RED
+
+~~~text
+timestamp = 2026-08-30
+task = Task 1 permanent RED; tests edited before production source
+evidenceRoot = <local-path>
+authoringRedCommand = npm run test -w @surdet/authoring -- review-projection.test.ts review-receipts.test.ts
+authoringRed = exit 1; 33 tests collected; 29 passed / 4 failed; path 02-authoring-red.log; bytes 6094; sha256 69EBF56835BB88C480CC13F1DAEEF0FC51B9DF3ECAA91669DA72CA8A9B7A742C
+authoringRedNodes = missing typed A/C presentation; missing metadata-only fallback; presentation changes do not change reviewFingerprint; generated fallback remains Candidate composition review
+cliRedCommand = npm run test -w @surdet/cli -- review-service.test.ts
+cliRed = exit 1; 8 tests collected; 7 passed / 1 failed; path 04-cli-red.log; bytes 2478; sha256 D2F63E13D466FC26649B8531B30BB9C63C8E2E2B392E7D63F6357B38D91B2B5F
+cliRedNode = ReviewService prepared comparison contains no shared A content summary; expected Alpha route A., received empty presentation
+editorRedCommand = npm run test -w surdet-editor -- review-model.test.ts review-panel.test.ts review-workspace.test.ts
+editorRed = exit 1; 38 tests collected; 35 passed / 3 failed; path 05-editor-red.log; bytes 7852; sha256 83FF627E2711B1B37D385D7ACABE6732066DC8D920F7700F6C434AD72444FD69
+editorRedNodes = review-local ordinal explanation absent; conflict option ignores shared action/highlights; legacy payload has no explicit content-summary-insufficient marker
+redHarness = VALID; all three workspaces collected the intended files and failed product assertions; no module/import/build/dist/fixture timeout failure
+nonAuthoritativeSetupLogs = 01-authoring-red.log and 03-cli-red.log preserved in the same evidence root; each exposed a test-selection/assertion-reporting issue and was corrected before the authoritative RED logs; neither is represented as product RED evidence
+unchangedContractsObserved = legacy authoring receipt tests 21/21 passed; Editor review-workspace tests 24/24 passed; exact decision write/reopen and terminal receipt paths remained green during RED
+productionSourceStatus = NOT_MODIFIED before RED capture
+authorizedNext = minimal shared presentation implementation, CLI manifest pass-through, and Editor rendering within the repair whitelist
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility minimal GREEN and Task 6 gates
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+implementation = @surdet/authoring now derives bounded deterministic Chinese ReviewUnitPresentation from the eight typed CompositionOperation normalizedInput contracts; buildComparisonReviewProjection binds that presentation into safe-group sources, conflict options, and reviewFingerprint; CLI only passes each verified manifest; Editor renders shared action/object/highlights, review-local ordinal guidance, lazy technical identity, and an explicit metadata-only legacy marker
+architectureBoundary = no second CLI/Editor summary parser; no raw normalizedInput or output-file parsing; no model prose; no comparison/plan/state-machine duplication; no receipt write/reopen behavior change; no migration or rewrite of v1 review payloads
+focusedGreen1 = 06-authoring-focused-green.log exit 0; 33/33 tests passed; bytes 442; sha256 F8285EA65EB4D163DCE4053200CD6B075413DB93E9AF8562C99A360C795B4169
+focusedCliStaleDistEvidence = 07-cli-focused-green.log exit 1; bytes 2477; sha256 28538882D20FC0F429525992C39F7BEA07C5746186844EDBC06AFCD7DA9AE68E; CLI resolved the pre-build Authoring dist and therefore observed no new presentation; preserved as sequencing evidence, not represented as a production-contract failure
+focusedGreen2 = after the required Authoring build, 08-cli-focused-green.log exit 0; 8/8 tests passed; bytes 981; sha256 9FA9BAC626334186F611289E7B00460440FE7E3B2FBEE3A545722C77FF3560F7
+focusedEditorFixtureEvidence = 09-editor-focused-green.log exit 1; bytes 3627; sha256 9872F124DE31E95F3E84F9719E6D178712890C0E1FB7295EDE955DD9949CDFBC; one authorized test expected the former D impact text after D was intentionally made A-equivalent; corrected only that stale expectation
+focusedGreen3 = 10-editor-focused-green.log exit 0; 38/38 tests passed; bytes 514; sha256 C26F0BEB945D8793526663F11682EE6050A47E345210633F15FD03E981F58CA7
+presentationMatrixGreen = 11-authoring-presentation-matrix-green.log exit 0; 43/43 tests passed; bytes 442; sha256 56C99BD3C1F7EF652CBF92ACE4F004BDA6160421CBD17E9AD3B9FB2165840C10; covers all eight capabilities, deterministic ordering, bounded facts with explicit omission count, metadata-only fallback, and legacy fingerprint recomputation
+task6AuthoringFocused = 12-task6-authoring-focused.log exit 0; 43/43 tests passed; bytes 442; sha256 98052687A58A61C55E2BE15EA30C59A550F5E4A38DE9B5314022BC013035678F
+task6AuthoringTypecheckFirst = 13-task6-authoring-typecheck.log exit 2; bytes 1736; sha256 DF63F5A28ECFE385BD046B516417F1BB920CC91EB8CDDE29B25CEBE0D8F0A818; only failure was a readonly tuple inference in the newly authorized parameterized test, with no production diagnostic
+task6AuthoringTypecheckReplacement = 14-task6-authoring-typecheck-green.log exit 0; bytes 74; sha256 9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78; fixed by an explicit mutable CompositionOperation normalizedInput case type without public-contract change
+task6AuthoringBuild = 15-task6-authoring-build.log exit 0; bytes 67; sha256 D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9
+task6AuthoringFull = 16-task6-authoring-full.log exit 0; 30/30 files and 260/260 tests passed; bytes 1834; sha256 366B7B7F10F799EFC4EA4404F53FDA8653473ADFF839FAF0C2AB63083809D3A9; full-test budget consumed once and passed
+task6CliFocused = 17-task6-cli-focused.log exit 0; 8/8 tests passed; bytes 1099; sha256 341C35F93C8FB501B509435143F06D88922894CA99E62C8551FF30DBDB817F08
+task6CliTypecheck = 18-task6-cli-typecheck.log exit 0; bytes 68; sha256 AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917
+task6CliBuild = 19-task6-cli-build.log exit 0; bytes 61; sha256 898D2AD82D33C86E701D8865F20A428CA48DB35240DD429FD8E62F480C2EA93E
+task6EditorFocused = 20-task6-editor-focused.log exit 0; 39/39 tests passed; bytes 514; sha256 E2F34D89C2D9CEA8499350B2699C6C939EA5A711361A2769908D043B57920C9E
+task6EditorTypecheck = 21-task6-editor-typecheck.log exit 0; bytes 70; sha256 6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3
+task6EditorBuild = 22-task6-editor-build.log exit 0; bytes 1998; sha256 3EFB11EA08363CB3491D044F1BE95568CE4190D50784D03D039D80BA944713CC
+task6EditorFull = 23-task6-editor-full.log exit 0; 32/32 files and 222/222 tests passed; bytes 1860; sha256 526469453875A8963A064F0ECD4B9CE5C8C051FC94B8633218E497B012CB81C1; full-test budget consumed once and passed
+task6DiffCheck = 24-task6-git-diff-check.log exit 0; bytes 1787; sha256 F5ED52711FB3E951505058455F1511B57235639CDEA608D09FC0FFA4912F77E5; only Git line-ending warnings, no whitespace error
+task6CachedDiffCheck = 25-task6-git-diff-cached-check.log exit 0; bytes 48; sha256 918DCA930CFB8B1843D71E1F5D2FFA7DB2A7E833EE467DF85B3AB3F27AFB6E7A; staging remained empty
+historicalEvidenceRecheck = jMSfT5 comparison/review.json bytes 69778 sha256 10B2109BEC4946A935A3ECE5BAE5A793FE95C18A034966DD8D83D09336DD4F8C; identity.json bytes 539 sha256 FEF67DC901ADA8643EE217E8E486D8F0E5605C224E937555A46E0F459DDA1AD0; decision.json bytes 1909 sha256 6FCB288CE32777EC3E01288B4BDFF05B1F1B3321B47D25C48D241FE26907085D; all unchanged after implementation
+unauthorizedGates = verify:all NOT RUN; default-parallel CLI full NOT RUN; CLI full NOT RUN; acceptance-prep NOT RUN; external Agent NOT STARTED; Owner retest NOT STARTED
+authorizedNext = Task 7 dedicated focused runner contract RED, runner implementation, one preflight, then at most two focused DIAGNOSTIC runs under the taskbook budget
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility focused runner and preflight
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+runner = packages/cli/e2e/owner-review-comprehensibility-wave-6.e2e.mjs
+runnerTest = packages/cli/test/owner-review-comprehensibility-wave-6-runner.test.mjs
+runnerScope = dedicated 11-node comparison-only evidence runner; formal CLI dist plus Editor build; fresh system-temp A/B/C/D fixtures; no modification or reuse of the historical 22-node runner/artifacts
+runnerContractRed = 26-focused-runner-contract-red.log exit 1; 5 tests collected / 0 passed / 5 failed at fixed modes and budgets, complete evidence predicate, blocking channel classification, formal product path, and frozen-head assertions; bytes 9056; sha256 4C74AFAE7D4559D1B69BCAEDB2DEEDD982433D75ACD4E1A5A398712FDD76143D
+runnerRedQuality = import and syntax were valid; failures were explicit not-implemented evidence contracts rather than missing module, fixture, build artifact, spelling, or timeout
+runnerContractGreen = 27-focused-runner-contract-green.log exit 0; 5/5 tests passed; bytes 695; sha256 750CCF2C48B4F356D84ABFD8DC78DF8F4003EDA660E6F228A6F7F6A25C55BF54
+runnerNodeCheck = 28-focused-runner-node-check.log exit 0; bytes 98; sha256 FFACEDBF4987A9B673418648D96DA2C85BFF12F423ECA14D85BBCEEE02E7F38E
+runnerForbiddenCallAudit = no focused-runner callTool site for composition.plan, composition.execute, or change.commit; only composition.compare and review.prepare-comparison are allowed in the diagnostic/formal workflow
+preflightBudget = 1/1 CONSUMED_AND_PASSED; no rerun authorized or performed
+preflightCommand = node packages/cli/e2e/owner-review-comprehensibility-wave-6.e2e.mjs --mode=preflight
+preflightLog = 29-focused-preflight.log exit 0; bytes 22169; sha256 8CD109B26AD24F1DC1E74BDA212C6C521505F5646A1FE5C002F08FDE200BEAD6
+preflightArtifact = <local-path> bytes 30039 sha256 03E01EB12ED32E2C997C5D610F47143D21A8E76C257D200CAD01D591589F1C51
+preflightIdentity = <local-path> bytes 236 sha256 093667721CAE592CB524B1A053822E4ABF23E58F1D52DA063EC7160ADFD0814B
+preflightRunHead = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda
+preflightRunnerSha256 = AF932BB8C5061A12CAED0CC935EFB25C20DFAF53F9CE9F06F8271717AF1ADE1F
+preflightProductPaths = E:/surdet/packages/cli/dist/agent-port/main.js; E:/surdet/packages/editor/dist/index.html; E:/surdet/packages/editor/dist/preview.html
+preflightLauncher = MCP SDK listed 16 observe-policy tools; contractVersion 2.1.0; comparison and comparison-review tools present; capabilities.describe, session.describe, and project.inspect succeeded through the formal dist launcher
+preflightEditor = Vite preview served the built Editor entry with HTTP 200 and the expected Surdet editor title; child stdout 37 bytes was captured and not forwarded into runner stdout
+preflightPurityAndCleanup = protocolErrors=[]; consoleErrors=[]; pageErrors=[]; requestFailures=[]; stderrLines=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; blockingIssueChannels=[]
+preflightTrees = fixture before/after and original Starter before/after each fileCount 37 bytes 6705750 sha256 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; fixture unchanged=true; original Starter unchanged=true
+preflightGit = staging empty; 13 tracked whitelist paths reported dirty as expected before code-evidence freeze; focused runner/test and repair taskbook remained authorized untracked inputs
+diagnosticBudget = 0/2 consumed; up to two focused runs remain, and a second run is permitted only after a first-run failure is statically understood and fixed within the whitelist
+prohibitedStill = no verify:all; no CLI full; no acceptance-prep; no external Agent; no Owner retest; no plan; no execute; no apply; no push; no Wave 7
+authorizedNext = focused DIAGNOSTIC attempt 1/2
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility focused DIAGNOSTIC attempt 1
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+diagnosticBudget = attempt 1/2 CONSUMED_AND_FAILED; at most one attempt remains after a corresponding runner RED/GREEN
+command = node packages/cli/e2e/owner-review-comprehensibility-wave-6.e2e.mjs --mode=diagnostic
+log = <local-path> exit 1 bytes 20932 sha256 EB0CF1576CCD8C3566271497A62A8CC723DA8F987BACDD6EADB8284CE6091DEB
+artifact = <local-path> bytes 22361 sha256 B9822A8B3EA57AF448B18103F54B4B00B3EF709CD72129E119252ABCF8E9FB9A
+identity = <local-path> bytes 237 sha256 49B16EBB00BC937667B4DE5B0C7D178EBCD3AC8DF30CB46CA0CAD80A0FA52C1D
+runHead = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda
+runnerSha256 = AF932BB8C5061A12CAED0CC935EFB25C20DFAF53F9CE9F06F8271717AF1ADE1F
+status = FAILED; lastPassedNode review-ordinal-explained; firstFailedNode identical-provenance-visible; milestones 4 PASSED / 1 FAILED / remaining not run
+firstFailure = runner expected the safe-group source card exact text 方案 A（本次审阅编号）, while the product correctly renders the candidate-list label with that suffix and the expanded provenance source card with the concise stable display label 方案 A
+failureClassification = RUNNER_LOCATOR_PROJECTION_ERROR; not a product presentation, provenance, identity, receipt, lease, timeout, launcher, or cleanup failure
+productEvidenceVisibleAtFailure = localized title 候选创作方案审阅 visible; review-local ordinal explanation visible; candidate list contains all four 本次审阅编号 labels; expanded A/D group says 内容结果相同，保留 2 个来源 and visibly contains two source cards with Alpha route A.; A/C conflict options visibly contain distinct Alpha route A. and Alpha route C. text
+channels = errors=[single runner assertion]; protocolErrors=[]; consoleErrors=[]; pageErrors=[]; requestFailures=[]; stderrLines=[]; childCleanupFailures=[]; activeLeaseDirectories=[]
+toolsCalled = surdet_composition_compare, surdet_review_prepare_comparison only; prohibitedToolCalls=[]
+decisionAndMutationBoundary = failure occurred before decision write; no decision/final approval/return receipt in the fresh comparison root; project/Starter unchanged milestones were not reached and therefore are not represented as passed by this artifact
+authorizedCorrection = add a permanent pure runner contract for concise provenance source labels, then change only the focused runner locator from candidate-list exact text to the actual source-card label; rerun runner contract and node check before deciding whether attempt 2 is permitted
+prohibitedStill = no immediate diagnostic rerun; no FORMAL; no acceptance-prep; no external Agent; no plan; no execute; no apply; no push; no Wave 7
+~~~
+
+### 2026-08-30 — W6 focused runner provenance-label correction after DIAGNOSTIC 1
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+correctionClass = RUNNER_ONLY; no production, shared contract, receipt, fixture, timeout, dependency, or build change
+rootCause = candidate-list labels intentionally include （本次审阅编号）, while expanded provenance cards use the concise review-local source label 方案 <displayOrdinal>; DIAGNOSTIC 1 used the candidate-list exact label in the source-card locator
+permanentRed = 31-runner-source-label-red.log exit 1; 6 tests collected / 4 passed / 2 failed at missing exported reviewSourceLabel and missing runner use; bytes 25920; sha256 E80B606ECA44FE88CF67CD4E35EAD2027823B52982EF6A8EBBDC93A6CD86127F
+minimalFix = export pure reviewSourceLabel(displayOrdinal) => 方案 <displayOrdinal> and use that exact label only inside identical-provenance-visible; candidate-list and ordinal explanation assertions remain unchanged
+replacementGreen = 32-runner-source-label-green.log exit 0; 6/6 tests passed; bytes 783; sha256 BAF269519BA44C0BAAE1831273120495A2756BC5D711C21C6EF24534A762FB72
+nodeCheck = 33-runner-source-label-node-check.log exit 0; bytes 98; sha256 FFACEDBF4987A9B673418648D96DA2C85BFF12F423ECA14D85BBCEEE02E7F38E
+correctedRunnerIdentity = bytes 54721 sha256 7DE80DA41458C0EB985FB1CA9F7921D926C6F2585ADFA707461703CC8A27143B
+staticRecheck = git diff --check exit 0; only line-ending warnings; no whitespace failure
+preflight = NOT_RERUN; unique 1/1 preflight remains consumed and passed under the prior runner identity, and the correction does not alter launcher/preflight code paths
+diagnosticBudget = attempt 1 failed and preserved; attempt 2/2 now authorized by the taskbook because the runner defect has a corresponding permanent RED and GREEN
+prohibitedStill = no tests/full gates rerun beyond the runner contract; no FORMAL before attempt 2 passes; no acceptance-prep; no external Agent; no plan; no execute; no apply; no push; no Wave 7
+~~~
+
+### 2026-08-30 — W6 Owner review comprehensibility focused DIAGNOSTIC attempt 2 and stop
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-1
+diagnosticBudget = attempt 2/2 CONSUMED_AND_FAILED; BUDGET_EXHAUSTED; no third run authorized
+command = node packages/cli/e2e/owner-review-comprehensibility-wave-6.e2e.mjs --mode=diagnostic
+log = <local-path> exit 1 bytes 22314 sha256 8270893E88B9F6B1A463F017187E9654BC1F97946E94272D9FF5FD8DC4585C87
+artifact = <local-path> bytes 24075 sha256 558943584B3AE9A25020B1B9B9FE7A31AAF6F30E092F35722CDDBFA4F322702E
+identity = <local-path> bytes 237 sha256 E70FD16A5FA8D33258E799A07F9009D77B7C44B7E729D9B8EE3B659500BAE4CE
+runHead = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda
+runnerSha256 = 7DE80DA41458C0EB985FB1CA9F7921D926C6F2585ADFA707461703CC8A27143B
+status = FAILED; lastPassedNode identical-provenance-visible; firstFailedNode conflict-content-distinguishable; milestones 5 PASSED / 1 FAILED / remaining not run
+passedEvidence = formal CLI dist created a fresh comparison workspace; localized task title visible; review-local ordinal explanation visible; A/D identical scene group visibly preserved exactly two sources and Alpha route A. content
+firstFailure = runner read only the conflict choice button innerText and required Alpha route A./C. there; the button intentionally uses the first bounded highlight 段落标记：start, while the same default-visible option card immediately below contains lynn：Alpha route A. or lynn：Alpha route C.
+failureClassification = RUNNER_EVIDENCE_SCOPE_TOO_NARROW is strongly supported by the captured DOM text; the artifact itself shows distinct A/C content in the default-visible option cards, but no further runner correction or execution is authorized after attempt 2
+channels = errors=[single runner assertion]; protocolErrors=[]; consoleErrors=[]; pageErrors=[]; requestFailures=[]; stderrLines=[]; childCleanupFailures=[]; activeLeaseDirectories=[]
+toolsCalled = surdet_composition_compare, surdet_review_prepare_comparison only; prohibitedToolCalls=[]
+receiptBoundary = failure occurred before decision write; browser receipt snapshot count 0; no decision, final approval, or return receipt was generated in this fresh workspace
+unverifiedByAttempt2 = technical-details-lazy, exact-unit decision save, decision reopen readonly, project-and-starter-unchanged, and cleanup-and-identity fixed milestones did not execute and cannot be represented as passed by this artifact
+gitStop = HEAD e6ae69cbadbbae2ac941899a091e9de6bb9e8eda; parent 5f796620736a4264f1d65e5baec56f55f76685f8; staging empty; no commit created; authorized tracked work remains unstaged; unrelated historical untracked paths preserved
+formal = NOT_RUN; formal budget remains unconsumed but is blocked because focused DIAGNOSTIC did not pass
+prohibitedActionsObserved = no diagnostic rerun beyond 2/2; no FORMAL; no commit; no acceptance-prep; no external Agent; no Owner retest; no plan; no execute; no apply; no push; no Wave 7
+stopState = W6_OWNER_REVIEW_COMPREHENSIBILITY_DIAGNOSTIC_BUDGET_EXHAUSTED; FORMAL_NOT_RUN; WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+~~~
+
+### 2026-08-30 — W6 owner-review runner evidence-scope recovery and DIAGNOSTIC pass
+
+~~~text
+timestamp = 2026-08-30
+authorizationId = W6-OWNER-REVIEW-COMPREHENSIBILITY-RUNNER-SCOPE-RECOVERY-1
+authorizationClass = NEW_INDEPENDENT_RECOVERY; not a reset or rewrite of the original focused DIAGNOSTIC budget
+historicalDiagnostics = ORIGINAL_FOCUSED_DIAGNOSTICS 2/2 CONSUMED_AND_FAILED; attempt 1 firstFailedNode identical-provenance-visible; attempt 2 firstFailedNode conflict-content-distinguishable; both artifacts remain immutable and are not reclassified as PASS
+historicalArtifactRecheck = diagnostic-zudvms evidence bytes 22361 sha256 B9822A8B3EA57AF448B18103F54B4B00B3EF709CD72129E119252ABCF8E9FB9A and identity bytes 237 sha256 49B16EBB00BC937667B4DE5B0C7D178EBCD3AC8DF30CB46CA0CAD80A0FA52C1D unchanged; diagnostic-jsZX5u evidence bytes 24075 sha256 558943584B3AE9A25020B1B9B9FE7A31AAF6F30E092F35722CDDBFA4F322702E and identity bytes 237 sha256 E70FD16A5FA8D33258E799A07F9009D77B7C44B7E729D9B8EE3B659500BAE4CE unchanged
+scope = runner and permanent runner-contract test only; no Authoring, CLI, Editor, fixture, DOM, copy, receipt, fingerprint, timeout, dependency, build, product-test, or other milestone modification
+rootCause = conflict-content-distinguishable read only [data-choice-unit] button innerText as full conflict content; the authoritative default-visible dialogue belongs to the exact-unit [data-choice-option-unit] card
+nonAuthoritativeCaptureSetup = 35-runner-card-scope-red.log bytes 109 sha256 2611A2F011A5349D41876CD4852AEEEFF14330DCE296391FEDBD9BD26B06F7C6; PowerShell Tee-Object parameter binding failed before any TAP or native exit code was produced; preserved as a logging setup error and not represented as a RED or a test invocation
+permanentRed = 36-runner-card-scope-red.log exit 1; 7 tests collected / 5 passed / 2 failed; failures were the old aText/cText evidence predicate and absence of exact-unit card plus nested-button locators; bytes 5340 sha256 C5873056AF9A18E9C847D986A2E963D09F380BB7682FA71B2550645F2E3534CA
+redQuality = valid contract RED; module import, syntax, environment, fixture, build output, spelling, and timeout were not failure causes
+minimalFix = conflict-content-distinguishable now reads A/C full card text from exact [data-choice-option-unit="<unitId>"] locators, reads nested [data-choice-unit="<unitId>"] button text separately, verifies both buttons visible and enabled with meaningful action copy, and serializes aCardText/cCardText/aButtonText/cButtonText plus stable A/C unitIds and distinguishable=true
+runnerContractGreen = 37-runner-card-scope-green.log exit 0; 7/7 tests passed; bytes 903 sha256 31398EC92B2C5DAA4307A34EDBD69DE0AAD924205DAF4D87D29DA415433AE5C8
+nodeCheck = 38-runner-card-scope-node-check.log exit 0; bytes 102 sha256 D5B2B2263323AC0974B80864099A454AB7E68E70D2187B3458055FD0C0F6B8A6
+diffCheck = 39-runner-card-scope-diff-check.log exit 0; bytes 1830 sha256 27B8BD7DA45E7695B43F42E1B4B6208B7F1F06A64F1176DB438A056680FFFF1D; only Git line-ending warnings
+cachedDiffCheck = 40-runner-card-scope-cached-check.log exit 0; bytes 52 sha256 BE65DCF1DB451102289BA4CFA02C556E30B8B87726CA06C4521175022A6E8653; staging remained empty
+productAndLauncherGates = NOT_RERUN; no Authoring/CLI/Editor full test, typecheck, build, verify:all, historical Wave 6 runner, or launcher preflight was rerun
+recoveryDiagnosticBudget = 1/1 CONSUMED_AND_PASSED; no second recovery diagnostic authorized or performed
+diagnosticCommand = node packages/cli/e2e/owner-review-comprehensibility-wave-6.e2e.mjs --mode=diagnostic
+diagnosticLog = <local-path> exit 0 bytes 41632 sha256 81919B083405EA6C67EADDE64B80947297BA987F42690C4BDB3B389657C33B98
+diagnosticArtifact = <local-path> bytes 57127 sha256 79102E0AB8070C9E185998AC8B9406D968334E508CB7859FC98B48A93D12D5D4
+diagnosticIdentity = <local-path> bytes 237 sha256 5688D099584B986135DC76CB263FB1E3D1AA7BF0BB46ADE625E3D0F75B4A69BF
+diagnosticRunHead = e6ae69cbadbbae2ac941899a091e9de6bb9e8eda
+diagnosticRunnerSha256 = B797D224928B24833781D9EC295023834674F522886679B406C22FB4CD62FE34
+diagnosticStatus = PASSED; evidenceClass DIAGNOSTIC; milestones 11/11 PASSED; lastPassedNode cleanup-and-identity; firstFailedNode null
+conflictEvidence = A unit d668d09f31efcac33a8f2b9693de43c1 card contains exact lynn：Alpha route A. and excludes Alpha route C.; C unit 16ef1f66b47199d6f5b29a8a124f6ff5 card contains exact lynn：Alpha route C. and excludes Alpha route A.; both nested buttons were visible, enabled, and retained 选择方案 / 新建场景 / 场景 wave5_alpha action copy; distinguishable=true
+decisionEvidence = decisionId 648e1bc6-1180-4c49-b047-dd6623f7029f; fingerprint ba98ff163a25cbdff712f567749129cddac76c28a9bda71ed8cb527f5a800260; decision.json before/after bytes 1909 sha256 6A347B0A364D6218509E7D976B2DC55528C679FA5A37C1E2FFA0AAF7BF113785; persistent marker 已读取已保存的决定; exact A selected and C excluded; 5 decision controls readonly; decision receipt count 1
+diagnosticChannels = errors=[]; protocolErrors=[]; consoleErrors=[]; pageErrors=[]; requestFailures=[]; stderrLines=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; blockingIssueChannels=[]
+diagnosticBoundaries = toolsCalled exactly surdet_composition_compare and surdet_review_prepare_comparison; prohibitedToolCalls=[]; no plan, execute, apply, approval, or return; projectMutation.occurred=false; projectFixtureUnchanged=true; originalStarterUnchanged=true
+authorizedNext = compare the exact 17-path Wave 6 code-evidence set, stage only those explicit paths, create fix(editor): make owner review choices understandable, establish CODE_EVIDENCE_HEAD, then run the single focused FORMAL only if tracked worktree is clean and staging is empty
+formal = NOT_RUN at this ledger point
+prohibitedStill = no acceptance-prep; no external Agent; no Owner retest; no docs-only closure commit; no apply; no push; no Wave 7
+~~~
+
+### 2026-08-30 — W6 owner-review code-evidence freeze blocked by staged whitespace check
+
+~~~text
+timestamp = 2026-08-30
+authorizationId = W6-OWNER-REVIEW-COMPREHENSIBILITY-RUNNER-SCOPE-RECOVERY-1
+diagnosticStatus = PASSED 11/11; the single recovery DIAGNOSTIC remains consumed and was not rerun
+preStageSetCheck = expected 17; tracked diff 13; authorized untracked 4; actual authorized change set 17; missing=[]; extra=[]; unknownTracked=[]; staging=[]
+stagingAction = each of the 17 authorized code-evidence paths was passed explicitly to git add; no git add ., git add -A, directory wildcard, reset, clean, or unrelated-path staging
+stagedSetCheck = 17 paths exactly; missing=[]; extra=[]; tracked worktree diff count 0 before this failure-ledger append
+freezeDiffCheck = 42-freeze-git-diff-check.log exit 0; bytes 43 sha256 4A3822F9B7C246E43E66BC3E54069CDEAF7A8BE2C8FE9F4755B27006C665425D
+freezeCachedDiffCheck = 43-freeze-git-diff-cached-check.log exit 2; bytes 1072 sha256 084CD7DEFD5CA87ED59B75E9F5D9A116247385808329F1C27A882A3C45A469A2
+firstFailedNode = staged-diff-check
+firstFailure = docs/superpowers/plans/2026-08-30-wave-6-owner-review-comprehensibility-repair.md lines 3-7 each contain pre-existing Markdown trailing whitespace; git diff --cached --check reported five blank-at-eol findings
+scopeDecision = that repair taskbook is required in the 17-path commit set but is not in this recovery's three-file modification whitelist; no whitespace edit, ignore configuration, check bypass, or commit was performed
+commit = NOT_CREATED
+codeEvidenceHead = NOT_ESTABLISHED
+formal = NOT_RUN; focused FORMAL 1/1 remains unconsumed and blocked on a manager-authorized path-contract correction plus a passing fresh staged diff check
+stagingStop = the exact 17-path index snapshot is preserved; this append-only failure entry is the only new unstaged tracked difference
+historicalEvidence = both original failed DIAGNOSTIC artifacts and the passing recovery DIAGNOSTIC artifact remain unchanged
+stopState = W6_OWNER_REVIEW_COMPREHENSIBILITY_CODE_EVIDENCE_FREEZE_BLOCKED; WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+prohibitedActionsObserved = no product/source/test edit after the failed check; no commit; no FORMAL; no acceptance-prep; no external Agent; no Owner retest; no apply; no push; no Wave 7
+~~~
+
+### 2026-08-30 — W6 owner-review code-evidence freeze-only recovery authorization
+
+~~~text
+timestamp = 2026-08-30
+authorizationId = W6-OWNER-REVIEW-COMPREHENSIBILITY-CODE-EVIDENCE-FREEZE-RECOVERY-1
+authorizationClass = FREEZE_ONLY; does not add, reset, replace, or permit rerun of any DIAGNOSTIC budget
+acceptedBaseline = recovery DIAGNOSTIC 1/1 CONSUMED_AND_PASSED with 11/11 milestones; focused FORMAL 0/1 unconsumed; staged set exactly 17 paths; only freeze blocker is two trailing spaces on each of repair-taskbook lines 3-7
+authorizedEdit = docs/superpowers/plans/2026-08-30-wave-6-owner-review-comprehensibility-repair.md lines 3-7 only; remove trailing spaces without changing text, punctuation, title, status, boundaries, or any other line
+authorizedIndexUpdate = restage only the repair taskbook and this append-only Wave 6 Execution Ledger; preserve the other 15 staged paths unchanged; no git add ., git add -A, or wildcard staging
+requiredFreezeGates = staged set exactly 17; missing=[]; extra=[]; unstaged tracked=[]; git diff --check exit 0; git diff --cached --check exit 0; protected files, historical artifacts, packages/cli/e2e/artifacts, and unrelated untracked paths excluded
+forbiddenReruns = runner contract, Authoring/CLI/Editor tests, typecheck, build, preflight, DIAGNOSTIC, and verify:all
+authorizedCommit = only after every freeze gate passes, create ordinary local commit fix(editor): make owner review choices understandable with parent e6ae69cbadbbae2ac941899a091e9de6bb9e8eda and the exact 17-path scope
+authorizedFormal = only after the commit establishes a clean CODE_EVIDENCE_HEAD, consume the existing focused FORMAL 1/1 using the frozen focused runner
+prohibitedStill = no acceptance-prep; no external Agent; no Owner retest; no apply; no push; no Wave 7
+~~~

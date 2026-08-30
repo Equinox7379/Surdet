@@ -96,6 +96,16 @@ export interface ReviewUnitOutcome {
   potentialImpact: unknown[];
   observedImpact: unknown[];
   evidence: CandidateEvidenceSummary;
+  /** 新 review 由 typed manifest 生成；旧 v1 payload 可省略并保持历史身份。 */
+  presentation?: ReviewUnitPresentation;
+}
+
+export interface ReviewUnitPresentation {
+  actionLabel: string;
+  objectLabel: string;
+  highlights: string[];
+  completeness: 'content' | 'metadata-only';
+  omittedFactCount: number;
 }
 
 export interface ReviewSafeGroupEvidence {

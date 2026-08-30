@@ -400,6 +400,7 @@ export class ReviewService {
       candidateId: candidate.candidateId,
       ref: candidate.ref,
       evidenceSummary: candidate.evidenceSummary,
+      manifest: candidate.composition.manifest,
       ...candidateIntent(candidate),
     }));
     const reviewId = newReviewId('comparison');

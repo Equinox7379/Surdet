@@ -7,13 +7,16 @@ import * as path from 'node:path';
 import {
   approvalFingerprintOf,
   stableStringify,
+  type CandidateCapsuleRef,
   type ChangeRecord,
   type CompositionComparison,
+  type CompositionManifest,
   type FinalApprovalReceipt,
   type IntegrationPlan,
   type ReturnRequestReceipt,
   type ReviewApprovalRef,
   type TextHasher,
+  type VerifiedCompositionCandidate,
 } from '@surdet/authoring';
 import { compositionServiceForProject } from '../src/authoring/composition-service.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -85,6 +88,99 @@ function comparison(projectIdentity: string, revision: string): CompositionCompa
     evidenceMatrix: [],
     comparisonFingerprint: 'comparison-fingerprint',
   };
+}
+
+function reviewCandidate(
+  letter: 'A' | 'C',
+  text: string,
+  finalFingerprint: string,
+): VerifiedCompositionCandidate & { manifest: CompositionManifest; acceptanceCriteria: string[] } {
+  const ref: CandidateCapsuleRef = {
+    changeId: `change-${letter}`,
+    capsuleId: `capsule-${letter}`,
+    artifactSha256: letter.toLowerCase().repeat(64),
+  };
+  const manifest: CompositionManifest = {
+    manifestVersion: '1.0.0',
+    projectIdentity: 'project-identity',
+    baseProjectRevision: 'revision-1',
+    sourceChangeId: ref.changeId,
+    sourceWorkingRevision: 1,
+    operations: [{
+      sequence: 0,
+      capabilityId: 'scene.create',
+      sourceOperationId: `op-${letter.toLowerCase()}-alpha`,
+      normalizedInput: {
+        operationId: `op-${letter.toLowerCase()}-alpha`,
+        sceneId: 'wave5_alpha',
+        blocks: [{ kind: 'text', speaker: 'lynn', value: text }],
+      },
+      inputSha256: `input-${letter}`,
+      primaryObject: 'scene:wave5_alpha',
+      requiredObjects: [],
+      producedObjects: [{ objectRef: 'scene:wave5_alpha', disposition: 'create', finalFingerprint }],
+    }],
+    manifestFingerprint: `manifest-${letter}`,
+  };
+  return {
+    candidateId: `candidate-${letter}`,
+    ref,
+    capsuleVersion: '2.0.0',
+    projectIdentity: 'project-identity',
+    baseProjectRevision: 'revision-1',
+    sourceWorkingRevision: 1,
+    composition: { eligibility: 'ready', reasons: [], manifest },
+    evidenceSummary: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] },
+    semanticDiff: [],
+    manifest,
+    acceptanceCriteria: [],
+  };
+}
+
+function humanReadableCompareResult() {
+  const candidateA = reviewCandidate('A', 'Alpha route A.', 'fingerprint-a');
+  const candidateC = reviewCandidate('C', 'Alpha route C.', 'fingerprint-c');
+  const unit = (candidate: typeof candidateA, finalFingerprint: string) => ({
+    unitId: `unit-${candidate.candidateId}`,
+    candidateId: candidate.candidateId,
+    primaryObject: 'scene:wave5_alpha',
+    operationSequences: [0],
+    finalFingerprint,
+    requiredUnitIds: [],
+    requiredBaseObjects: [],
+    producedObjects: [{ objectRef: 'scene:wave5_alpha', disposition: 'create' as const, finalFingerprint }],
+    potentialImpact: [],
+    observedImpact: [],
+    evidenceSummary: candidate.evidenceSummary,
+  });
+  const units = [unit(candidateA, 'fingerprint-a'), unit(candidateC, 'fingerprint-c')];
+  const comparison: CompositionComparison = {
+    comparisonVersion: '1.0.0',
+    projectIdentity: 'project-identity',
+    expectedProjectRevision: 'revision-1',
+    status: 'review-only',
+    candidates: [candidateC.ref, candidateA.ref],
+    units: [...units].reverse(),
+    dependencyEdges: [],
+    conflicts: [{
+      conflictId: 'conflict-alpha',
+      severity: 'selection-required',
+      code: 'OBJECT_RESULTS_DIVERGE',
+      candidateIds: [candidateC.candidateId, candidateA.candidateId],
+      unitIds: units.map((entry) => entry.unitId),
+      objectRefs: ['scene:wave5_alpha'],
+      allowedResolutions: ['choose-unit', 'exclude-all'],
+      details: {},
+      repairActions: ['choose one result'],
+    }],
+    identicalGroups: [],
+    evidenceMatrix: [candidateC, candidateA].map((candidate) => ({
+      candidateId: candidate.candidateId,
+      summary: candidate.evidenceSummary,
+    })),
+    comparisonFingerprint: 'comparison-fingerprint-human-readable',
+  };
+  return { comparison, candidates: [candidateC, candidateA], currentProjectRevision: 'revision-1' };
 }
 
 async function setup(): Promise<{ root: string; projectRoot: string; projectDirectory: string; service: ReviewService }> {
@@ -309,6 +405,43 @@ describe('ReviewService', () => {
       .toContain('comparison-fingerprint');
     await expect(fixture.service.inspectDecision({ reviewId: prepared.reviewId }))
       .rejects.toMatchObject({ code: 'REVIEW_DECISION_REQUIRED' });
+  });
+
+  it('persists shared typed A/C content summaries without dumping normalized inputs', async () => {
+    const fixture = await setup();
+    const reviews = new NodeReviewStore(fixture.projectDirectory, 'project-identity');
+    const composition = {
+      projectRoot: fixture.projectRoot,
+      projectIdentity: 'project-identity',
+      compare: async () => humanReadableCompareResult(),
+    } as never;
+    const service = new ReviewService(reviews, composition, realHasher);
+
+    const prepared = await service.prepareComparison({
+      candidateRefs: humanReadableCompareResult().candidates.map((candidate) => candidate.ref),
+    });
+    const raw = await fsp.readFile(path.join(
+      fixture.projectDirectory,
+      'reviews',
+      prepared.reviewId,
+      'comparison',
+      'review.json',
+    ), 'utf8');
+    const options = prepared.projection.conflicts[0]!.options as unknown as Array<{
+      candidateId: string;
+      presentation?: { highlights: string[]; completeness: string };
+    }>;
+    expect(options.find((option) => option.candidateId === 'candidate-A')?.presentation?.highlights.join('\n') ?? '')
+      .toContain('Alpha route A.');
+    expect(options.find((option) => option.candidateId === 'candidate-C')?.presentation?.highlights.join('\n') ?? '')
+      .toContain('Alpha route C.');
+    expect(prepared.projection.sourceIdentity.comparisonFingerprint).toBe('comparison-fingerprint-human-readable');
+    expect(raw).toContain('Alpha route A.');
+    expect(raw).toContain('Alpha route C.');
+    expect(raw).not.toContain('normalizedInput');
+    expect(raw).not.toContain('op-a-alpha');
+    expect(raw).not.toContain(fixture.projectRoot);
+    expect(prepared.identity.payload.sha256).toBe(crypto.createHash('sha256').update(Buffer.from(raw, 'utf8')).digest('hex'));
   });
 
   it('contends with the canonical Authoring project lease before result-review side effects', async () => {

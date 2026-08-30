@@ -13,6 +13,7 @@ import {
   labelForObjectRef,
   labelForReviewState,
   labelForUnknownCode,
+  presentationForReviewUnit,
 } from '../review-model.js';
 import {
   markReviewFixtureChanged,
@@ -59,7 +60,7 @@ function listText(values: readonly string[]): string {
 
 function impactText(values: readonly unknown[]): string {
   if (values.length === 0) return '无';
-  return values.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join('、');
+  return values.map((value) => typeof value === 'string' ? value : '结构化影响').join('、');
 }
 
 function candidateIdForCapsule(
@@ -94,6 +95,28 @@ function candidateEvidenceSummary(evidence: ReviewEvidenceView): string {
   if (evidence.warnings > 0) statuses.push(`${evidence.warnings} 项警告`);
   if (evidence.manualReviewRequired.length > 0) statuses.push(`人工检查：${evidence.manualReviewRequired.join('、')}`);
   return statuses.join('；');
+}
+
+function appendUnitPresentation(container: HTMLElement, unit: ReviewUnitView): void {
+  const presentation = presentationForReviewUnit(unit);
+  const heading = h('div', 'review-presentation-heading');
+  heading.appendChild(h('strong', undefined, presentation.actionLabel));
+  heading.appendChild(h('span', 'review-presentation-object', presentation.objectLabel));
+  container.appendChild(heading);
+  if (presentation.completeness === 'metadata-only') {
+    container.appendChild(h('div', 'review-presentation-incomplete', '内容摘要不足：当前审阅包只提供可核对的对象元数据。'));
+  }
+  for (const highlight of presentation.highlights) {
+    container.appendChild(h('div', 'review-presentation-highlight', highlight));
+  }
+  if (presentation.omittedFactCount > 0) {
+    container.appendChild(h('div', 'review-presentation-omitted', `另有 ${presentation.omittedFactCount} 项内容未完整展示`));
+  }
+}
+
+function projectionHasLegacyUnitPresentation(projection: HumanReviewProjection): boolean {
+  return projection.safeGroups.some((group) => group.sources.some((source) => source.presentation === undefined))
+    || projection.conflicts.some((conflict) => conflict.options.some((option) => option.presentation === undefined));
 }
 
 function safeGroupEvidenceBadges(group: ReviewSafeGroupView): string[] {
@@ -244,10 +267,15 @@ function renderComparisonReview(
     for (const criterion of projection.task.acceptanceCriteria) taskList.appendChild(h('div', 'review-criterion', criterion));
   }
   taskList.appendChild(h('h3', undefined, '候选方案'));
+  taskList.appendChild(h(
+    'div',
+    'review-ordinal-note',
+    '方案字母只用于本次审阅排序；请根据内容摘要选择，系统会用稳定来源身份保存决定。',
+  ));
   for (const candidate of projection.candidates) {
     const item = h('div', 'review-candidate');
-    item.appendChild(h('strong', undefined, `方案 ${candidate.displayOrdinal}`));
-    if (candidate.declaredIntent) item.appendChild(h('div', undefined, candidate.declaredIntent));
+    item.appendChild(h('strong', undefined, `方案 ${candidate.displayOrdinal}（本次审阅编号）`));
+    if (candidate.declaredIntent) item.appendChild(h('div', undefined, `候选声明目标：${candidate.declaredIntent}`));
     taskList.appendChild(item);
   }
   shell.appendChild(taskList);
@@ -263,6 +291,13 @@ function renderComparisonReview(
     marker.setAttribute('data-decision-fingerprint', workspace.decisionReceipt.decisionFingerprint);
     main.appendChild(marker);
   }
+  if (projectionHasLegacyUnitPresentation(projection)) {
+    main.appendChild(h(
+      'div',
+      'review-warning review-legacy-presentation',
+      '旧审阅包缺少内容摘要；已有决定仍可读取，未提供的内容不会被臆测。',
+    ));
+  }
   if (projection.safeGroups.length > 0) {
     main.appendChild(h('h3', undefined, '安全结果'));
     for (const group of projection.safeGroups) {
@@ -271,7 +306,8 @@ function renderComparisonReview(
       const item = h('details', 'review-safe-group') as HTMLDetailsElement;
       item.setAttribute('data-safe-group', group.groupId);
       const summary = h('summary', 'review-safe-summary');
-      summary.appendChild(h('strong', undefined, `${group.sourceCount} 个方案得到相同结果`));
+      summary.appendChild(h('strong', undefined, `内容结果相同，保留 ${group.sourceCount} 个来源`));
+      summary.appendChild(h('span', 'review-safe-equivalence', `${group.sourceCount} 个方案得到相同结果`));
       summary.appendChild(h('span', 'review-safe-object', labelForObjectRef(group.primaryObject)));
       summary.appendChild(h('span', 'review-safe-default', '默认纳入'));
       for (const badge of badges) summary.appendChild(h('span', badge === '证据正常' ? 'review-safe-badge ok' : 'review-safe-badge', badge));
@@ -283,7 +319,7 @@ function renderComparisonReview(
       for (const source of sources) {
         const sourceItem = h('article', 'review-safe-source');
         sourceItem.appendChild(h('strong', undefined, labelForCandidate(projection, source.candidateId)));
-        sourceItem.appendChild(h('span', 'review-unit-object', labelForObjectRef(source.primaryObject)));
+        appendUnitPresentation(sourceItem, source);
         if (source.outcomes.length > 0) {
           for (const outcome of source.outcomes) {
             sourceItem.appendChild(h('div', 'review-outcome', `${labelForDisposition(outcome.disposition)} ${labelForObjectRef(outcome.objectRef)}`));
@@ -294,12 +330,17 @@ function renderComparisonReview(
         sourceItem.appendChild(h('div', 'review-source-evidence', candidateEvidenceSummary(source.evidence)));
         const candidate = projection.candidates.find((item) => item.candidateId === source.candidateId);
         if (candidate !== undefined) {
-          sourceItem.appendChild(h('pre', 'review-source-capsule mono', [
+          const sourceIdentity = h('details', 'review-source-identity') as HTMLDetailsElement;
+          sourceIdentity.setAttribute('data-source-technical', source.unitId);
+          sourceIdentity.appendChild(h('summary', undefined, '查看来源技术身份'));
+          sourceIdentity.appendChild(h('pre', 'review-source-capsule mono', [
+            `unitId: ${source.unitId}`,
             `candidateId: ${candidate.candidateId}`,
             `changeId: ${candidate.ref.changeId}`,
             `capsuleId: ${candidate.ref.capsuleId}`,
             `artifactSha256: ${candidate.ref.artifactSha256}`,
           ].join('\n')));
+          sourceItem.appendChild(sourceIdentity);
         } else {
           sourceItem.appendChild(h('div', 'review-warning', '该来源缺少可核对的 capsule 技术身份'));
         }
@@ -361,18 +402,23 @@ function renderComparisonReview(
       const conflictOptions = conflict.options;
       for (const option of conflictOptions) {
         if (!conflict.allowedResolutions.includes('choose-unit')) continue;
-        const outcome = option.outcomes[0];
-        const objectLabel = labelForObjectRef(outcome?.objectRef ?? option.primaryObject);
-        const disposition = outcome === undefined ? '结果' : labelForDisposition(outcome.disposition);
         const candidateLabel = labelForCandidate(projection, option.candidateId);
+        const presentation = presentationForReviewUnit(option);
+        const highlight = presentation.highlights[0];
         const optionItem = h('article', 'review-conflict-option');
         optionItem.setAttribute('data-choice-option-unit', option.unitId);
         const selected = savedResolution?.resolution === 'choose-unit' && savedResolution.chosenUnitId === option.unitId;
-        const choice = h('button', 'review-conflict-choice', `选择${candidateLabel} · ${objectLabel}（${disposition}）${selected ? ' · 已选择' : ''}`) as HTMLButtonElement;
+        const choiceText = [
+          `选择${candidateLabel}`,
+          presentation.actionLabel,
+          presentation.objectLabel,
+          ...(highlight === undefined ? [] : [highlight]),
+        ].join(' · ');
+        const choice = h('button', 'review-conflict-choice', `${choiceText}${selected ? ' · 已选择' : ''}`) as HTMLButtonElement;
         choice.setAttribute('data-choice-unit', option.unitId);
         choice.setAttribute('data-choice-selected', selected ? 'true' : 'false');
         choice.setAttribute('aria-pressed', selected ? 'true' : 'false');
-        choice.title = `${candidateLabel} / ${objectLabel}`;
+        choice.title = choiceText;
         choice.disabled = decisionLockedAtRender;
         choice.onclick = () => {
           if (decisionSaved || decisionWrites.has(workspace) || projection.state === 'RETURNED') return;
@@ -381,13 +427,18 @@ function renderComparisonReview(
         };
         decisionControls.push(choice);
         optionItem.appendChild(choice);
+        appendUnitPresentation(optionItem, option);
         optionItem.appendChild(h('div', 'review-impact-row', `可能影响：${impactText(option.potentialImpact)}`));
         optionItem.appendChild(h('div', 'review-impact-row', `实际观察：${impactText(option.observedImpact)}`));
         optionItem.appendChild(h('div', 'review-source-evidence', candidateEvidenceSummary(option.evidence)));
         const fingerprint = h('details', 'review-choice-fingerprint') as HTMLDetailsElement;
         fingerprint.setAttribute('data-choice-fingerprint', '');
-        fingerprint.appendChild(h('summary', undefined, '查看技术指纹'));
-        fingerprint.appendChild(h('pre', 'mono', `finalFingerprint: ${option.finalFingerprint ?? '无'}`));
+        fingerprint.appendChild(h('summary', undefined, '查看技术详情'));
+        fingerprint.appendChild(h('pre', 'mono', [
+          `unitId: ${option.unitId}`,
+          `candidateId: ${option.candidateId}`,
+          `finalFingerprint: ${option.finalFingerprint ?? '无'}`,
+        ].join('\n')));
         optionItem.appendChild(fingerprint);
         choices.appendChild(optionItem);
       }
