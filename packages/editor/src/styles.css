@@ -438,7 +438,7 @@ main { display: flex; flex: 1; min-height: 0; }
 .review-choice-fingerprint { margin-top: 7px; }
 .review-dependencies { margin: 14px 0; }
 .review-dependency { padding: 9px 11px; border-left: 3px solid var(--accent); background: var(--panel); }
-.review-operations { position: sticky; bottom: 0; padding: 10px 0 2px; background: linear-gradient(transparent, var(--bg) 16%); }
+.review-operations { position: static; margin: 14px 0 2px; }
 .review-object-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .review-object { width: 100%; padding: 7px 8px; text-align: left; font-size: 11px; overflow-wrap: anywhere; }
 .review-object.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
@@ -471,7 +471,6 @@ main { display: flex; flex: 1; min-height: 0; }
   .review-task-list { max-height: 24vh; border-right: 0; border-bottom: 1px solid var(--line); }
   .review-main { flex: 1 1 auto; min-height: 300px; }
   .review-details { max-height: 30vh; border-top: 1px solid var(--line); border-left: 0; }
-  .review-operations { position: sticky; bottom: 0; z-index: 2; }
 }
 
 /* ============================ 时间轴标签页 ============================ */
