@@ -4,9 +4,11 @@ import type { TimelineCueSelection } from '../state.js';
 import { exportTimeline } from '../project-io.js';
 import { pushTimelineSnapshot } from '../timeline-history.js';
 import {
-  cloneTimeline, createCue, createTimeline, createTrack, parseTimelineText,
+  cloneTimeline, createNeutralCue, createResourceCue, createTimeline, createTrack, parseTimelineText,
   stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
 } from '../timeline-model.js';
+import { timelineAssetChoices } from '../timeline-presentation.js';
+import type { TimelineAssetChoice } from '../timeline-presentation.js';
 
 let rootContainer: HTMLElement | null = null;
 let onPreview: (timelineId: string) => void = () => {};
@@ -146,6 +148,39 @@ function selectInput(options: readonly string[], value: string): HTMLSelectEleme
   return select;
 }
 
+type ResourceTrackKind = 'background' | 'portrait' | 'audio';
+
+function isResourceTrackKind(kind: TimelineTrackKind): kind is ResourceTrackKind {
+  return kind === 'background' || kind === 'portrait' || kind === 'audio';
+}
+
+function resourceChoicesFor(kind: ResourceTrackKind, action: string): TimelineAssetChoice[] {
+  return timelineAssetChoices(state.dirAssets).filter((choice) => {
+    if (choice.kind !== kind) return false;
+    if (kind !== 'audio') return true;
+    return choice.sourceKind === action;
+  });
+}
+
+function fillResourceSelect(select: HTMLSelectElement, choices: readonly TimelineAssetChoice[], currentKey?: string): void {
+  select.innerHTML = '';
+  if (choices.length === 0) {
+    const option = h('option', undefined, '当前项目没有可用素材');
+    option.value = '';
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  choices.forEach((choice, index) => {
+    const suffix = choice.expression ? ` · ${choice.expression}` : '';
+    const option = h('option', undefined, `${choice.key}${suffix}`);
+    option.value = String(index);
+    option.selected = choice.key === currentKey;
+    select.appendChild(option);
+  });
+}
+
 function updateCue(selection: TimelineCueSelection, mutator: (cue: TimelineCue, track: TimelineTrack) => void): void {
   commit((definition) => {
     const track = definition.tracks[selection.trackIndex];
@@ -176,20 +211,49 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   common.appendChild(field('缓动', easing));
   const actions = TIMELINE_ACTIONS[track.kind];
   const action = selectInput(actions, cue.action);
-  action.onchange = () => {
-    if (action.value === cue.action) return;
-    if (!window.confirm('更换动作会重置此演出片段的动作参数，是否继续？')) {
-      action.value = cue.action;
+  common.appendChild(field('动作', action));
+  const replacementResource = isResourceTrackKind(track.kind)
+    ? h('select', 'timeline-resource-select') as HTMLSelectElement
+    : null;
+  let replacementChoices: TimelineAssetChoice[] = [];
+  const currentResourceKey = track.kind === 'portrait'
+    ? track.target
+    : typeof cue.key === 'string' ? cue.key : undefined;
+  const refreshReplacementChoices = () => {
+    if (!replacementResource || !isResourceTrackKind(track.kind)) return;
+    replacementChoices = resourceChoicesFor(track.kind, action.value);
+    fillResourceSelect(replacementResource, replacementChoices, currentResourceKey);
+  };
+  if (replacementResource) {
+    refreshReplacementChoices();
+    action.onchange = refreshReplacementChoices;
+    common.appendChild(field('项目素材', replacementResource));
+  }
+  const applyAction = h('button', undefined, '应用动作');
+  applyAction.onclick = () => {
+    if (action.value === cue.action && (!replacementResource || replacementResource.value === '')) return;
+    const selectedChoice = replacementResource && replacementResource.value !== ''
+      ? replacementChoices[Number(replacementResource.value)]
+      : undefined;
+    const draft = isResourceTrackKind(track.kind)
+      ? selectedChoice ? createResourceCue(track.kind, action.value, selectedChoice) : null
+      : createNeutralCue(track.kind, action.value);
+    if (!draft) {
+      setStatus('请选择与动作匹配的项目素材', false, 5000);
       return;
     }
-    const nextCue = createCue(track.kind, action.value);
-    nextCue.atMs = cue.atMs;
-    nextCue.durationMs = cue.durationMs;
-    nextCue.easing = cue.easing;
-    commit((next) => { next.tracks[selection.trackIndex]!.cues[selection.cueIndex] = nextCue; });
-    setStatus('已更换动作，可撤销', true, 4000);
+    if (!window.confirm('应用动作会重置此演出片段的动作参数，是否继续？')) return;
+    draft.cue.atMs = cue.atMs;
+    draft.cue.durationMs = cue.durationMs;
+    draft.cue.easing = cue.easing;
+    commit((next) => {
+      const nextTrack = next.tracks[selection.trackIndex]!;
+      if (draft.trackPatch) nextTrack.target = draft.trackPatch.target;
+      nextTrack.cues[selection.cueIndex] = draft.cue;
+    });
+    setStatus('已应用动作，可撤销', true, 4000);
   };
-  common.appendChild(field('动作', action));
+  common.appendChild(applyAction);
   parent.appendChild(common);
 
   const payload = h('div', 'timeline-payload-fields');
@@ -205,12 +269,7 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     payload.appendChild(field(label, input));
   };
 
-  if (track.kind === 'background') setString('背景 key', 'key', 'castle_hall');
   if (track.kind === 'portrait') {
-    const target = textInput(track.target ?? 'lynn:uniform');
-    target.onchange = () => commit((next) => { next.tracks[selection.trackIndex]!.target = target.value; });
-    payload.appendChild(field('角色目标', target));
-    if (cue.action === 'show' || cue.action === 'expression') setString('表情', 'expression', 'normal');
     if (cue.action === 'show' || cue.action === 'move') setString('位置', 'position', 'left / center / right');
   }
   if (track.kind === 'camera') {
@@ -226,7 +285,6 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     if (cue.action === 'tint') setNumber('颜色值', 'color', 0, 0xffffff, '1');
   }
   if (track.kind === 'particle' && cue.action === 'start') setString('粒子预设', 'kind', 'sparkle');
-  if (track.kind === 'audio') setString('音频 key', 'key', 'tense_01');
   if (payload.childElementCount > 0) {
     parent.append(h('h4', undefined, '动作参数'));
     parent.appendChild(payload);
@@ -317,10 +375,39 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
     };
     head.appendChild(kind);
     if (track.target) head.append(h('span', 'timeline-track-target', track.target));
-    const addCue = h('button', 'track-add', '+ cue');
+    const addAction = selectInput(TIMELINE_ACTIONS[track.kind], TIMELINE_ACTIONS[track.kind][0]!);
+    addAction.title = '新增片段动作';
+    head.appendChild(addAction);
+    const addResource = isResourceTrackKind(track.kind) ? h('select', 'timeline-resource-select') as HTMLSelectElement : null;
+    let addChoices: TimelineAssetChoice[] = [];
+    const refreshAddChoices = () => {
+      if (!addResource || !isResourceTrackKind(track.kind)) return;
+      addChoices = resourceChoicesFor(track.kind, addAction.value);
+      fillResourceSelect(addResource, addChoices);
+    };
+    if (addResource) {
+      refreshAddChoices();
+      addAction.onchange = refreshAddChoices;
+      head.appendChild(addResource);
+    }
+    const addCue = h('button', 'track-add', '+ 演出片段');
     addCue.onclick = () => {
+      const selectedChoice = addResource && addResource.value !== ''
+        ? addChoices[Number(addResource.value)]
+        : undefined;
+      const draft = isResourceTrackKind(track.kind)
+        ? selectedChoice ? createResourceCue(track.kind, addAction.value, selectedChoice) : null
+        : createNeutralCue(track.kind, addAction.value);
+      if (!draft) {
+        setStatus('请先选择与动作匹配的项目素材', false, 5000);
+        return;
+      }
       const cueIndex = track.cues.length;
-      commit((next) => { next.tracks[trackIndex]!.cues.push(createCue(track.kind)); });
+      commit((next) => {
+        const nextTrack = next.tracks[trackIndex]!;
+        if (draft.trackPatch) nextTrack.target = draft.trackPatch.target;
+        nextTrack.cues.push(draft.cue);
+      });
       state.currentTimelineCue = { trackIndex, cueIndex };
       renderTimelinePanel(rootContainer);
     };
