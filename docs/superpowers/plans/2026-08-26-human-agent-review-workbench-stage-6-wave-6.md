@@ -5059,3 +5059,22 @@ protectedBoundary = no protected file, historical artifact, dependency, lockfile
 deliveryReport = docs/HUMAN-AGENT-REVIEW-WORKBENCH-STAGE-6-WAVE-6-DELIVERY-REPORT-2026-08-26.md created for Task 12; its post-commit disk identity will be recorded by readback rather than recursively prewritten
 stopState = READY_FOR_DOCUMENT_GATES_AND_PRECISE_DOCS_COMMIT; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
 ~~~
+
+### 2026-08-30 — Task 12 document closure post-commit readback
+
+~~~text
+timestamp = 2026-08-30
+documentClosureHead = 8fb9fea8ce66cea583de4220f6ca448777c93b25
+documentClosureParent = b2a795e18a3ed97d724acec8c211bb2dc35eb686
+documentClosureMessage = docs(authoring): report wave 6 review workbench
+documentClosureScope = exactly this Wave 6 taskbook plus docs/HUMAN-AGENT-REVIEW-WORKBENCH-STAGE-6-WAVE-6-DELIVERY-REPORT-2026-08-26.md
+deliveryReportIdentity = 12880 bytes; sha256 1C4756F9B9E5146735FA57258CD5DDECF269EE27CFE845C0ECD7F802F1A69AD0
+taskbookPreCorrectionIdentity = 387102 bytes; sha256 4D5C158B929FEC1F14D8074E6917A447DE6214F9190952FF8CC48D0442AF77E5
+remoteMainAtReadback = f8943c293c4537b3867cc8eeea316b19bb4a0b40
+aheadBehindAfterDocumentClosure = 16/0
+trackedWorktreeAfterDocumentClosure = CLEAN
+stagingAfterDocumentClosure = EMPTY
+trackedLogs = NONE
+correctionBoundary = this single taskbook-only correction records the immutable report identity and first document closure commit; FINAL_HEAD and the corrected taskbook identity are intentionally supplied by post-correction disk readback because a document cannot contain its own final commit/hash without recursion
+stopState = READY_FOR_POST_CORRECTION_DISK_READBACK_AND_MANAGER_FINAL_REVIEW; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
