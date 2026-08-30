@@ -1,4 +1,5 @@
 import { validateTimeline, type TimelineCue, type TimelineDefinition, type TimelineEasing, type TimelineTrack, type TimelineTrackKind, type TimelineValue } from '@surdet/core';
+import type { TimelineAssetChoice } from './timeline-presentation.js';
 
 export const TIMELINE_TRACKS: readonly TimelineTrackKind[] = [
   'background', 'portrait', 'camera', 'screen', 'particle', 'audio',
@@ -60,27 +61,49 @@ export function createTimeline(id: string): TimelineDefinition {
 }
 
 export function createTrack(kind: TimelineTrackKind): TimelineTrack {
-  const defaults: Record<TimelineTrackKind, TimelineTrack> = {
-    background: { kind, cues: [cue('set', { key: 'castle_hall' })] },
-    portrait: { kind, target: 'lynn:uniform', cues: [cue('show', { expression: 'normal', position: 'center' })] },
-    camera: { kind, cues: [cue('zoom', { scale: 1.03 })] },
-    screen: { kind, cues: [cue('fade', { alpha: 0 })] },
-    particle: { kind, cues: [cue('start', { kind: 'sparkle' })] },
-    audio: { kind, cues: [cue('bgm', { key: 'tense_01' })] },
-  };
-  return JSON.parse(JSON.stringify(defaults[kind])) as TimelineTrack;
+  return { kind, cues: [] };
 }
 
-export function createCue(kind: TimelineTrackKind, action = TIMELINE_ACTIONS[kind][0]!): TimelineCue {
-  const defaults: Record<TimelineTrackKind, Record<string, TimelineValue>> = {
-    background: { key: 'castle_hall' },
-    portrait: { expression: 'normal', position: 'center' },
-    camera: action === 'pan' ? { x: 0, y: 0 } : action === 'shake' ? { strength: 12 } : { scale: 1.03 },
-    screen: action === 'tint' ? { color: 0x102038, alpha: 0.18 } : action === 'fade' ? { alpha: 0 } : {},
-    particle: action === 'start' ? { kind: 'sparkle' } : {},
-    audio: { key: 'tense_01' },
-  };
-  return cue(action, defaults[kind]);
+export interface TimelineCueDraft {
+  cue: TimelineCue;
+  trackPatch?: { target: string };
+}
+
+export function createNeutralCue(
+  kind: 'camera' | 'screen' | 'particle',
+  action: string,
+): TimelineCueDraft | null {
+  if (!TIMELINE_ACTIONS[kind].includes(action)) return null;
+  const values: Record<string, TimelineValue> = kind === 'camera'
+    ? action === 'pan' ? { x: 0, y: 0 } : action === 'shake' ? { strength: 12 } : { scale: 1.03 }
+    : kind === 'screen'
+      ? action === 'tint' ? { color: 0x102038, alpha: 0.18 } : action === 'fade' ? { alpha: 0 } : {}
+      : action === 'start' ? { kind: 'sparkle' } : {};
+  return { cue: cue(action, values) };
+}
+
+export function createResourceCue(
+  kind: 'background' | 'portrait' | 'audio',
+  action: string,
+  choice: TimelineAssetChoice,
+): TimelineCueDraft | null {
+  if (choice.kind !== kind || !TIMELINE_ACTIONS[kind].includes(action)) return null;
+  if (kind === 'background') {
+    return choice.sourceKind === 'bg' && action === 'set'
+      ? { cue: cue(action, { key: choice.key }) }
+      : null;
+  }
+  if (kind === 'audio') {
+    return choice.sourceKind === action
+      ? { cue: cue(action, { key: choice.key }) }
+      : null;
+  }
+  if (choice.sourceKind !== 'portrait') return null;
+  if ((action === 'show' || action === 'expression') && !choice.expression) return null;
+  const values: Record<string, TimelineValue> = {};
+  if (action === 'show' || action === 'expression') values.expression = choice.expression!;
+  if (action === 'show' || action === 'move') values.position = 'center';
+  return { cue: cue(action, values), trackPatch: { target: choice.key } };
 }
 
 /** 与运行时缓动保持同一口径，供时间轴编辑器绘制轻量曲线预览。 */

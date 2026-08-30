@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateTimeline } from '@surdet/core';
-import { createCue, createTimeline, createTrack, easingPath, easingValue, parseTimelineText, stringifyTimeline } from '../src/timeline-model.js';
+import { createNeutralCue, createResourceCue, createTimeline, createTrack, easingPath, easingValue, parseTimelineText, stringifyTimeline } from '../src/timeline-model.js';
 
 describe('时间轴编辑模型', () => {
   it('新建模板可直接通过 core 校验', () => {
@@ -15,7 +15,7 @@ describe('时间轴编辑模型', () => {
       version: 1,
       id: 'intro',
       durationMs: 600,
-      tracks: [{ kind: 'camera', cues: [createCue('camera')] }],
+      tracks: [{ kind: 'camera', cues: [createNeutralCue('camera', 'zoom')!.cue] }],
     })).toEqual([]);
   });
 
@@ -39,25 +39,45 @@ describe('时间轴编辑模型', () => {
     expect(parseTimelineText(lf).definition).toEqual(source);
   });
 
-  it('按动作创建 cue 时补齐该动作的必需参数', () => {
+  it('新轨道保持空白，不注入 Starter 专属资源', () => {
+    for (const kind of ['background', 'portrait', 'camera', 'screen', 'particle', 'audio'] as const) {
+      expect(createTrack(kind)).toEqual({ kind, cues: [] });
+    }
+    expect(JSON.stringify((['background', 'portrait', 'audio'] as const).map((kind) => createTrack(kind))))
+      .not.toMatch(/castle_hall|lynn:uniform|tense_01/);
+  });
+
+  it('中性动作只创建完整非资源 cue，资源动作必须显式提供项目选择', () => {
     expect(validateTimeline({
       version: 1,
       id: 'screen_tint',
       durationMs: 600,
-      tracks: [{ kind: 'screen', cues: [createCue('screen', 'tint')] }],
+      tracks: [{ kind: 'screen', cues: [createNeutralCue('screen', 'tint')!.cue] }],
     })).toEqual([]);
     expect(validateTimeline({
       version: 1,
       id: 'portrait_hide',
       durationMs: 600,
-      tracks: [{ kind: 'portrait', target: 'lynn:uniform', cues: [createCue('portrait', 'hide')] }],
+      tracks: [{ kind: 'portrait', target: 'lynn:uniform', cues: [createResourceCue('portrait', 'hide', { kind: 'portrait', key: 'lynn:uniform', expression: 'normal', sourceKind: 'portrait' })!.cue] }],
     })).toEqual([]);
     expect(validateTimeline({
       version: 1,
       id: 'camera_beats',
       durationMs: 600,
-      tracks: [{ kind: 'camera', cues: [createCue('camera', 'pan'), createCue('camera', 'shake')] }],
+      tracks: [{ kind: 'camera', cues: [createNeutralCue('camera', 'pan')!.cue, createNeutralCue('camera', 'shake')!.cue] }],
     })).toEqual([]);
+    expect(createNeutralCue('camera', 'future-action')).toBeNull();
+  });
+
+  it('资源 cue 校验轨道/动作并为立绘返回同次提交的 target patch', () => {
+    expect(createResourceCue('background', 'set', { kind: 'background', key: 'rain_station', sourceKind: 'bg' }))
+      .toMatchObject({ cue: { action: 'set', key: 'rain_station' } });
+    expect(createResourceCue('audio', 'se', { kind: 'audio', key: 'door_close', sourceKind: 'se' }))
+      .toMatchObject({ cue: { action: 'se', key: 'door_close' } });
+    expect(createResourceCue('portrait', 'show', { kind: 'portrait', key: 'lynn:uniform', expression: 'normal', sourceKind: 'portrait' }))
+      .toMatchObject({ cue: { action: 'show', expression: 'normal', position: 'center' }, trackPatch: { target: 'lynn:uniform' } });
+    expect(createResourceCue('audio', 'voice', { kind: 'background', key: 'castle_hall', sourceKind: 'bg' })).toBeNull();
+    expect(createResourceCue('audio', 'bgm', { kind: 'audio', key: 'door_close', sourceKind: 'se' })).toBeNull();
   });
 
   it('曲线预览使用与运行时一致的端点和可用路径', () => {
