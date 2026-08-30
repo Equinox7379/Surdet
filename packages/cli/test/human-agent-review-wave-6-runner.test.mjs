@@ -543,6 +543,52 @@ test('Wave 6 runner waits for a newly rendered persisted receipt and proves exac
   assert.match(source, /fakeRootReceiptSnapshot/);
 });
 
+test('Wave 6 runner proves the persisted result approval after closing and reopening the same workspace', () => {
+  assert.equal(typeof runner.isResultReceiptReopenEvidenceSatisfied, 'function');
+  const receiptIdentity = { bytes: 1024, sha256: 'a'.repeat(64) };
+  const valid = {
+    expected: {
+      approvalId: 'approval-reopened',
+      approvalFingerprint: 'b'.repeat(64),
+      decisionId: 'decision-1',
+      selectedUnitIds: ['unit-a'],
+    },
+    diskBefore: receiptIdentity,
+    diskAfter: { ...receiptIdentity },
+    receiptMarker: {
+      present: true,
+      kind: 'approval',
+      text: `已批准 回执 ID：approval-reopened 回执 fingerprint：${'b'.repeat(64)} 原决定：decision-1 原选择：unit-a`,
+      approvalId: 'approval-reopened',
+      approvalFingerprint: 'b'.repeat(64),
+    },
+    readonlyControls: [
+      { action: 'approve-result', disabled: true },
+      { action: 'return-result', disabled: true },
+    ],
+    fakeRootReceipts: {
+      finalApproval: { approvalId: 'approval-reopened', approvalFingerprint: 'b'.repeat(64) },
+      returnRequest: null,
+    },
+  };
+  assert.equal(runner.isResultReceiptReopenEvidenceSatisfied(valid), true);
+  for (const mutate of [
+    (value) => { value.diskAfter.sha256 = 'c'.repeat(64); },
+    (value) => { value.receiptMarker.approvalId = 'approval-other'; },
+    (value) => { value.receiptMarker.approvalFingerprint = 'd'.repeat(64); },
+    (value) => { value.receiptMarker.text = '已批准'; },
+    (value) => { value.readonlyControls[0].disabled = false; },
+    (value) => { value.fakeRootReceipts.returnRequest = { returnId: 'return-forbidden' }; },
+  ]) {
+    const invalid = structuredClone(valid);
+    mutate(invalid);
+    assert.equal(runner.isResultReceiptReopenEvidenceSatisfied(invalid), false);
+  }
+  const source = fs.readFileSync(runnerPath, 'utf8');
+  assert.match(source, /waitForNewResultReceiptMarker/);
+  assert.match(source, /isResultReceiptReopenEvidenceSatisfied\(reopenEvidence\)/);
+});
+
 test('Wave 6 runner proves the B scene decision, implicit timeline closure and visible dependency explanation', () => {
   const source = fs.readFileSync(runnerPath, 'utf8');
   const comparisonStart = source.indexOf('async function runEditorComparison');

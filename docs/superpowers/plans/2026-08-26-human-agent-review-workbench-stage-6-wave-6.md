@@ -4144,3 +4144,208 @@ taskbookPreCorrectionAppend = bytes=256205 sha256=76813FEE8333A3EE017550D6E013E6
 formalBudget = 1/1 available only after exact staging, code evidence commit, and clean frozen state
 nextGate = exact 33-path staging, code evidence commit, then unique FORMAL 1/1
 ~~~
+
+### 2026-08-30 — W6 code evidence freeze and unique FORMAL pass
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_R11_POST_DIAGNOSTIC_FREEZE_AND_FORMAL_1
+status = W6_FORMAL_PASSED; READY_FOR_INDEPENDENT_MANAGER_REVIEW; WAITING_FOR_INDEPENDENT_MANAGER_REVIEW
+preCommitScope = diagnostic trackedCodeDiffPaths 30 exactly equaled the current tracked diff set; three authorized untracked Wave 6 files added; final expected/staged/committed set exactly 33 paths with zero set difference
+preCommitNameStatus = 30 modified; 3 added; no deleted, renamed, copied, or other status; no unstaged tracked path
+preCommitChecks = git diff --check exit 0; git diff --cached --check exit 0; staged path count 33
+preStageDiffCheckArtifact = <local-path> bytes=4160 sha256=2CE70B9DD7E23006D3FFE2D2E03BBB99AD3657F0B1D6663A3D75E77E8DB1F52A
+postStageDiffCheckArtifact = <local-path> bytes=0 sha256=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
+cachedDiffCheckArtifact = <local-path> bytes=0 sha256=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
+stagedNameStatusArtifact = <local-path> bytes=1626 sha256=377EBD35D7C45918827FE7C68A2CEAEDC667212811450B11C920BDCA16D6635E
+commit = 5f796620736a4264f1d65e5baec56f55f76685f8 test(authoring): verify human review workflow
+commitParent = deaf74a64024b91e46cc750822295e0f9c2ce739
+commitScope = exact 33 paths; 6392 insertions; 286 deletions; runner, runner contract test, and preview-trace-evidence helper are tracked additions
+commitArtifact = <local-path> bytes=339 sha256=1C6B3F615578AADDE2B3497C2E20F613B5FDD8984F8EFB53B7ED354D346A8F21
+codeEvidenceHead = 5f796620736a4264f1d65e5baec56f55f76685f8
+freezeState = before FORMAL, tracked worktree clean; staging empty; 966 unrelated untracked files preserved; frozen runner bytes=93298 sha256=5213D43D988E30EA4C230F42381DD3079F53899AC519F4E7CCE9A0AFA275666A
+formalCommand = SURDET_CODE_EVIDENCE_HEAD=5f796620736a4264f1d65e5baec56f55f76685f8 node packages/cli/e2e/human-agent-review-wave-6.e2e.mjs --mode=formal
+formalRunCount = 1/1 consumed; no rerun performed or authorized
+formalResult = PASSED exit 0; evidenceClass FORMAL; mode formal; 22/22 milestones PASSED; lastPassedNode cleanup-and-identity; firstFailedNode null
+formalBinding = runHead=5f796620736a4264f1d65e5baec56f55f76685f8 equals CODE_EVIDENCE_HEAD and current HEAD; runnerSha256=5213D43D988E30EA4C230F42381DD3079F53899AC519F4E7CCE9A0AFA275666A; trackedCodeDiffPaths=[]
+formalMutationSemantics = projectMutation.occurred=true; stageProjectMutated=false; isolated fixture applyProjectMutated=true
+formalErrorChannels = errors=0; protocolErrors=0; consoleErrors=0; pageErrors=0; requestFailures=0; stderrLines=0; childCleanupFailures=0; activeLeaseDirectories=0; blockingIssueChannels=0
+formalPreviewEvidence = editor-result-rendered PASSED; projection versions 1 < 2 < 4; final Alpha route A.; activeSpeakerId=lynn; speakerText=「凛」
+formalEvidence = <local-path> bytes=304038 sha256=FAA2E2126F7074581965CFD2BE9224937BA381CAA508BBC9430AF142A8E1549F
+formalIdentity = <local-path> bytes=222 sha256=FD53FFBDC7294EB4AEBEFDE40727FF80F574224B52058329F024C8F9BD4BFC18
+formalCommandLog = <local-path> bytes=231318 sha256=3AC923101610D4440B28CA5CCED9C113C0CCE5D3C686DE7E2CB0D05CC88413CA
+keySidecarCleanBaseline = <local-path> bytes=244 sha256=C77D340907B32632B80B8040B2B81C9488FB85F236E32C77A859BF5E398B5015
+keySidecarEditorResult = <local-path> bytes=12130 sha256=2E8CF26BB56BEB0705DD8FB0AD20EEA18921977E6A816C60F2AAFE9BEA8B900F
+keySidecarIsolatedApply = <local-path> bytes=14897 sha256=0F70BE5D9B8B2206FAEAC0A9F32C4B6D2BC9FE655BEA9497C08155D051F2174C
+keySidecarStarter = <local-path> bytes=14084 sha256=4D6A07B1113E6B8F587C58E60577A3E77FC4CFFBECE7ABB750BD34B4CED7CAB7
+keySidecarCleanup = <local-path> bytes=513 sha256=1AB676B6FB990C3C78A031252AD901A0CF29F7EA6D26FE131B3D31B20174DC84
+isolatedProject = <local-path> changed from Starter baseline sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6 to reviewed result sha256=99E6AB700084B3BC608AB7BD43BCA0DF545B133AF3E3AF28881580D3A9B5ADCC
+isolatedAlpha = content/scenario/wave5_alpha.gal bytes=59 sha256=A1B1EEA22100625DE7E2A8294DA4FA4E87A4DCED45E32AE5B310A411EFE057C9; contains Alpha route A.; does not contain Alpha route C.
+isolatedBeta = content/scenario/wave5_beta.gal bytes=88 sha256=74E64A7219BF8C9A2A19B8215FB109BA11124DAAA145CE05A8DD5E3F8C1C57C2; contains wave5_beta and blocking beta_opening timeline
+isolatedTimeline = content/timelines/beta_opening.json bytes=303 sha256=857D65E2FC34C6825910768E037E309FBFD1B76243C97ABD67B0ECA24FFD39BF; id=beta_opening; durationMs=400; one track
+isolatedConfig = game.config.json bytes=1625 sha256=FAE3B8D312925E1B01C6744178C394CD1A598E298D47C8340164EEA738D123CD; flag.alpha type=string initial=""
+originalStarter = E:/surdet/examples/starter before/after sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; unchanged=true
+taskbookPreFormalAppend = bytes=258849 sha256=5BF9388B54380766A2BDF167D6DB53A1561447543A65509E5452B7BDE9171EE4
+postFormalLedger = append-only after FORMAL completion; deliberately not committed; no docs-only commit
+prohibitedActions = no diagnostic/preflight/test rerun; no verify:all; no acceptance-prep; no external Agent; no Owner acceptance; no real-project apply; no push; no Wave 7
+stopState = W6_FORMAL_PASSED; READY_FOR_INDEPENDENT_MANAGER_REVIEW; WAITING_FOR_INDEPENDENT_MANAGER_REVIEW; EXTERNAL_AGENT_NOT_STARTED; OWNER_ACCEPTANCE_NOT_STARTED; APPLY_NOT_PERFORMED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 result receipt integrity recovery 1 baseline
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1
+theme = result review receipt persistence, mutual exclusion, identity validation, and readonly reopen; no acceptance-prep, external Agent, Owner acceptance, push, or Wave 7
+gitBaseline = branch main; HEAD 5f796620736a4264f1d65e5baec56f55f76685f8; parent deaf74a64024b91e46cc750822295e0f9c2ce739; surdet/main f8943c293c4537b3867cc8eeea316b19bb4a0b40; ahead/behind 11/0
+workingTreeBaseline = one tracked unstaged path, this Wave 6 taskbook carrying the post-FORMAL append; staging EMPTY; 966 pre-existing unrelated untracked paths preserved; protected-path intersection empty
+historicalFormalClassification = IDENTITY_VALID_BUT_RESULT_RECEIPT_REOPEN_COVERAGE_INSUFFICIENT; historical status remains PASSED and is not rewritten as failure
+historicalFormalEvidence = <local-path> bytes=304038 sha256=FAA2E2126F7074581965CFD2BE9224937BA381CAA508BBC9430AF142A8E1549F
+historicalFormalIdentity = <local-path> bytes=222 sha256=FD53FFBDC7294EB4AEBEFDE40727FF80F574224B52058329F024C8F9BD4BFC18
+historicalFormalBinding = status PASSED; evidenceClass FORMAL; 22/22 fixed milestones; runHead 5f796620736a4264f1d65e5baec56f55f76685f8; runnerSha256 5213D43D988E30EA4C230F42381DD3079F53899AC519F4E7CCE9A0AFA275666A; trackedCodeDiffPaths empty; errors and cleanup channels empty; active lease directories empty; stageProjectMutated=false; isolated applyProjectMutated=true; original Starter unchanged
+coverageGap = historical fresh-approval-inspected wrote and immediately inspected final-approval.json but did not close and reopen the same result review, did not prove persisted terminal marker/identity/selection/readonly controls, and commit did not compare approvalRef.approvalFingerprint with the verified disk receipt
+staticContractGaps = Editor reopen used receipt file presence without shared semantic validation or retained receipt identity; approval and return writers had no shared single-flight; CLI return validation accepted any string reasonCategory and did not recompute returnFingerprint; Node terminal receipt opposite-file checks were not one shared critical section
+evidenceRoot = <local-path>
+resultFixtureLimitFollowup = file count and size caps remain a non-blocking future reliability candidate and are outside this repair
+implementation = NOT_STARTED; permanent RED not yet run
+verifyAllRecoveryBudget = 1/1 unconsumed
+diagnosticBudget = 1/1 unconsumed
+replacementFormalBudget = 1/1 unconsumed
+push = NOT_PERFORMED
+~~~
+
+### 2026-08-30 — W6 result receipt integrity recovery 1 permanent RED
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1
+phase = PERMANENT_RED_CONFIRMED; production implementation unchanged
+authoringRedCommand = npm run test -w @surdet/authoring -- review-receipts.test.ts
+authoringRedResult = EXPECTED RED exit 1; 1 file / 20 tests: 1 failed, 19 passed; missing shared returnFingerprintOf and validateReturnRequest truth; the existing wrong approvalFingerprint rejection contract passed
+authoringRedArtifact = <local-path> bytes=3665 sha256=B55419E82AA711C9BD90E72374D547180381DDC129F356BF629E46E5F6F0D3B5
+cliRedCommand = npm run test -w @surdet/cli -- node-review-store.test.ts review-service.test.ts
+cliRedResult = EXPECTED RED exit 1; 2 files / 23 tests: 4 failed, 19 passed
+cliRedFailures = concurrent createFinalApproval/createReturnRequest both fulfilled and both terminal files reached disk; wrong approvalRef.approvalFingerprint resolved; tampered returnFingerprint resolved; unknown reasonCategory with matching bytes fingerprint resolved
+cliRedArtifact = <local-path> bytes=9648 sha256=2FD1BE7F63D44EADF9E24FA10906B2E58FDF62D548BC0631FA2930567669CAD1
+editorRedCommand = npm run test -w surdet-editor -- review-workspace.test.ts review-panel.test.ts
+editorRedResult = EXPECTED RED exit 1; 2 files / 35 tests: 8 failed, 27 passed
+editorRedFailures = concurrent approval/return both fulfilled; approved and returned reopen state retained no receipt object; tampered approval fingerprint, return fingerprint, and return reason category were accepted; approved and returned persistent Chinese readonly markers were absent
+editorExistingBoundary = corrupt JSON/read failure remained fail-loud; dual approval plus return directory remained REVIEW_IDENTITY_MISMATCH
+editorRedArtifact = <local-path> bytes=15330 sha256=92A1A7F57209BA8B6C312674FE84B6CD0EE06CDE30FA1A43A347D72001ABD923
+runnerRedCommand = node --test packages/cli/test/human-agent-review-wave-6-runner.test.mjs
+runnerRedResult = EXPECTED RED exit 1; 21 tests: 1 failed, 20 passed; exported result receipt reopen predicate and its live call site were absent
+runnerRedArtifact = <local-path> bytes=3315 sha256=9B3B2E95B7CBAAA1D975FECD1927EA70F564042B71658C6821EA29763BA390D9
+redValidity = assertion failures only; no fixture, import, TypeScript compile, spelling, timeout, old dist, preflight, diagnostic, FORMAL, or historical artifact mutation failure
+verifyAllRecoveryBudget = 1/1 unconsumed
+diagnosticBudget = 1/1 unconsumed
+replacementFormalBudget = 1/1 unconsumed
+~~~
+
+### 2026-08-30 — W6 result receipt integrity recovery 1 restart-safe checkpoint
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1
+pauseReason = user requested a restart-safe stop before usage reset; no verification or one-shot budget was consumed after the request
+status = W6_RESULT_RECEIPT_INTEGRITY_1_SAFE_PAUSE_FOR_RESTART; IMPLEMENTATION_IN_PROGRESS; NO_COMMIT; NO_STAGING
+gitCheckpoint = branch main; HEAD 5f796620736a4264f1d65e5baec56f55f76685f8; parent deaf74a64024b91e46cc750822295e0f9c2ce739; surdet/main f8943c293c4537b3867cc8eeea316b19bb4a0b40; ahead 11 / behind 0
+trackedCheckpoint = 14 unstaged tracked paths; staging empty; existing unrelated untracked paths preserved; no reset, checkout, clean, delete, push, apply, acceptance-prep, external Agent, Owner acceptance, or Wave 7
+trackedPaths = docs/superpowers/plans/2026-08-26-human-agent-review-workbench-stage-6-wave-6.md; packages/authoring/src/review-receipts.ts; packages/authoring/test/review-receipts.test.ts; packages/cli/e2e/human-agent-review-wave-6.e2e.mjs; packages/cli/src/authoring/node-review-store.ts; packages/cli/src/authoring/review-service.ts; packages/cli/test/human-agent-review-wave-6-runner.test.mjs; packages/cli/test/node-review-store.test.ts; packages/cli/test/review-service.test.ts; packages/editor/src/panels/review-panel.ts; packages/editor/src/review-workspace.ts; packages/editor/test/preview-causal-trace.test.ts; packages/editor/test/review-panel.test.ts; packages/editor/test/review-workspace.test.ts
+implementationFacts = shared Authoring return fingerprint and validator added; CLI approvalRef fingerprint checked against verified disk approval; CLI return uses shared validator; NodeReviewStore approval/return share one per-review critical section; Editor approval/return share one single-flight, reopen validates and retains exact receipt, terminal UI shows Chinese identity/decision/selection marker and disables both actions; runner fixed node now closes and reopens the same result workspace and records disk/fake-root/readonly evidence without adding a milestone
+focusedGreenAuthoring = 20/20 PASS; <local-path> bytes=363 sha256=0A225B4613EFA3AD87CC6D4B6EA779C00CF4FEF03492A612743CC54B976AF57A
+authoringTypecheck = PASS; 06-authoring-typecheck.log bytes=74 sha256=9865692A8DB8F158B7672D8DCD9C5085FB930EAF5DF9D3082718C79EC5320F78
+authoringBuild = PASS; 07-authoring-build.log bytes=67 sha256=D55466B76CB83A94BA909BD75B379DA45DBA67DF34F3B422EBB1C7C1B7591CD9
+focusedGreenCli = 23/23 PASS; 08-cli-green.log bytes=1181 sha256=B016F5FFD3898ECD7EFC27AF256E5D8313526AFDCC7610FC65996B05BC166289
+focusedGreenEditor = 35/35 PASS; 09-editor-green.log bytes=447 sha256=4143DAAD5264F07CBA0067F576AF931E22886600E4C102BD852E7CAE4EE95975
+authoringFull = 246/246 PASS; 10-authoring-full-test.log bytes=1832 sha256=AED6608AA4226E5B840641549E5A330DACA42D7BAC7B34760D9A00CB895F71B8
+defaultParallelCliFull = FAILED exit 1; 266/273 passed, 7 failed; 11-cli-full-test.log bytes=29619 sha256=624A2C0E964B4BF311596DF7DAFB9F7253638732C910C3C5E715D7DD633CD418
+defaultParallelCliFullFailureClasses = runner contract was still RED at the time and is now fixed; five parallel-load timeouts; one concurrent loser returned CHANGE_BUSY instead of the test projection CHANGE_RECORD_CONFLICT; this run remains failed and must not be rewritten as full PASS
+runnerContractAfterImplementation = 21/21 PASS; 12-runner-green.log bytes=2274 sha256=C1EC7540D0CC892840E1E22A3FDD64CB84CA8069D466809C53D3EEDA3396DD6C
+cliTypecheck = PASS; 13-cli-typecheck.log bytes=68 sha256=AA9B845F5332715E037B76437B27F1A8980E8E2521A4F14A0C3494F7222AB917
+cliBuild = PASS; 14-cli-build.log bytes=61 sha256=898D2AD82D33C86E701D8865F20A428CA48DB35240DD429FD8E62F480C2EA93E
+editorFull = 220/220 PASS before the later type-only PreviewTraceProjectionFixture correction; 15-editor-full-test.log bytes=1857 sha256=0C9255B0D4A0E1D555A5C393D46A3BE6D44D3038F2FD58178FBA1CE2541E1A94
+editorTypecheckFailuresPreserved = 16-editor-typecheck.log exit 2 bytes=847 sha256=69A4357095C3584E32CF99ECFA6EFCF1A3908275FA9213ABDCD517B056CF1A41; 18-editor-typecheck-green.log exit 2 bytes=694 sha256=8823D959BB91D1E2FE4E99A9D4FB811525D3DF793E31420698815876F5649111
+editorTypeFixtureCorrection = preview-causal-trace.test.ts now applies NonNullable to nullable Renderer projection branches and locally types runtime-only panelVisible; no Renderer or Editor runtime production code changed for this correction
+editorTypecheckFinal = PASS; 20-editor-typecheck-green.log bytes=70 sha256=6C063F98A510A39EA4D645FDB790D9576ACDBEEA0A0B16E9335C0C373A538AD3
+editorBuildFinal = PASS; 21-editor-build.log bytes=1998 sha256=065FFE504494C8F194A7796945229FC1F457B4D196A7FB2066F3214D3EC4D295
+evidenceRoot = <local-path>
+resumeFirstReadOnlyChecks = reread AGENTS.md and this checkpoint; confirm HEAD remains 5f796620736a4264f1d65e5baec56f55f76685f8, the same 14 tracked paths remain unstaged, staging is empty, and evidenceRoot logs retain their recorded identities
+resumeNextCommands = first run the focused preview-causal-trace test for the type-only fixture change; then run one strictly serial CLI full workspace test to distinguish current product truth from the retained default-parallel failure; only after green continue node --check, diff checks, launcher preflight, and the still-unconsumed one-shot gates
+verifyAllRecoveryBudget = 1/1 UNCONSUMED
+preflight = NOT_RUN_FOR_THIS_RECOVERY
+diagnosticBudget = 1/1 UNCONSUMED
+replacementFormalBudget = 1/1 UNCONSUMED
+codeEvidenceHead = NOT_ESTABLISHED
+diagnostic = NOT_RUN
+replacementFormal = NOT_RUN
+historicalFormal = preserved as identity-valid but result-receipt-reopen coverage-insufficient historical FORMAL; artifact unchanged
+safeStop = no process or test left running; restart may resume entirely from Git worktree, this Ledger checkpoint, and evidenceRoot
+~~~
+
+### 2026-08-30 — W6 result receipt integrity recovery 1 resumed gates and verify-all stop
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1
+status = W6_RESULT_RECEIPT_INTEGRITY_1_VERIFY_ALL_FAILED; IMMEDIATE_STOP_BEFORE_DIAGNOSTIC
+resumeBaseline = exact restart-safe checkpoint restored; branch main; HEAD 5f796620736a4264f1d65e5baec56f55f76685f8; 14 expected unstaged tracked paths; staging empty; protected tracked intersection zero; 15 checkpoint evidence hashes matched with zero mismatch
+previewFixtureFocused = PASS 3/3; <local-path> bytes=379 sha256=3E733822DE60C2FEB4F424675B97371512C6E2DDBDDB224B5B6A32FDCF0E7A24
+cliSerialFull = PASS 35/35 files and 273/273 tests; <local-path> bytes=14156 sha256=3349B25B46318A7B3AE822CF0B5640CADD7ECD29845845EF5C1FBB71A2EAD56E
+defaultParallelCliTruth = the earlier default-parallel full gate remains FAILED and is not rewritten by the serial pass
+runnerContractFinal = PASS 21/21; 24-runner-contract-final.log bytes=2278 sha256=2A3BE2EF1F16C6A3D99E43289FEAA5490D0D23A91433082E944A956D7E5AF01B
+runnerNodeCheck = PASS exit 0; 25-runner-node-check.log bytes=86 sha256=12D721A4F0364B0A818EDC40EF1668D392EA54D3841B09A918BDCB6EFE39070C
+diffChecksBeforePreflight = git diff --check exit 0; 26-git-diff-check.log bytes=1983 sha256=99C6A538DF16CB2710126186B9D2A5D3B7811BFD8A60C2B5DBCA1F80A57EEF25; git diff --cached --check exit 0; 27-git-cached-diff-check.log bytes=48 sha256=918DCA930CFB8B1843D71E1F5D2FFA7DB2A7E833EE467DF85B3AB3F27AFB6E7A
+preflight = PASSED exit 0; evidenceClass PRE_FLIGHT; launcher-preflight PASSED; runHead 5f796620736a4264f1d65e5baec56f55f76685f8; runnerSha256 105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; 14 expected trackedCodeDiffPaths; errors/console/page/request/stderr/cleanup/lease channels empty; original Starter unchanged
+preflightLog = <local-path> bytes=2239 sha256=16C59845672FADE21AB3D198BCA5B4F57D0E7E307F181AC0E93AD99FB5392DB5
+preflightEvidence = <local-path> bytes=2118 sha256=3C741FBC10C5DF556A9A82C563D5B01C2A77FA21D5BF4FCA9FB617F0D957E142
+preflightIdentity = <local-path> bytes=223 sha256=717283C6C6AD3BD435C979B75F6A4691CDAA2DCFF5D9AF14F3C04DD8F9B1785B
+verifyAllRecoveryBudget = 1/1 CONSUMED_AND_FAILED; no rerun performed or authorized
+verifyAllCommand = npm run verify:all
+verifyAllResult = FAILED exit 1 at verify:tests because the default-parallel @surdet/cli workspace test returned 5 timeout failures; all completed tool/boundary/hygiene/typecheck and non-CLI workspace test stages shown in the log passed
+verifyAllFirstFailedNode = verify:tests / @surdet/cli / authoring-vertical-slice.test.ts timed out at 15000ms
+verifyAllTimeouts = authoring-vertical-slice.test.ts 15000ms; authoring-project-config-wave3.test.ts 15000ms; agent-port-composition.test.ts reviewed selection contract 5000ms; composition-service.test.ts compare-and-plan 5000ms; composition-service.test.ts no-mutation dry-run 5000ms
+verifyAllFailureClass = TIMEOUT_ONLY; no functional assertion, receipt contract, typecheck, build, fixture, import, syntax, or cleanup failure was observed in the five failed tests
+parallelCapacityInference = STRONGLY_SUPPORTED by the immediately preceding strict serial CLI full 273/273 PASS, but the recovery verify:all gate remains objectively FAILED
+verifyAllLog = <local-path> bytes=49433 sha256=4D610AA792722BD1952B8EBDB4379C0BA1BCFE1434899117374D9A1F0414D680
+postFailureGit = HEAD unchanged at 5f796620736a4264f1d65e5baec56f55f76685f8; exact same 14 tracked paths; staging empty; unexpected tracked paths zero; missing expected paths zero
+diagnosticBudget = 1/1 UNCONSUMED_BUT_BLOCKED_BY_FAILED_VERIFY_ALL
+diagnostic = NOT_RUN
+codeEvidenceHead = NOT_ESTABLISHED
+commit = NOT_CREATED
+replacementFormalBudget = 1/1 UNCONSUMED
+replacementFormal = NOT_RUN
+historicalFormal = preserved unchanged as identity-valid but result-receipt-reopen coverage-insufficient historical evidence
+prohibitedActions = no verify:all rerun; no DIAGNOSTIC; no commit; no FORMAL; no acceptance-prep; no external Agent; no Owner acceptance; no apply; no push; no Wave 7
+stopState = W6_RESULT_RECEIPT_INTEGRITY_1_VERIFY_ALL_FAILED; WAITING_FOR_NEW_MANAGER_AUTHORIZATION
+~~~
+
+### 2026-08-30 — W6 result receipt integrity gate exception 1 diagnostic pass
+
+~~~text
+timestamp = 2026-08-30
+authorization = W6_RESULT_RECEIPT_INTEGRITY_1_GATE_EXCEPTION_1
+managerException = recovery verify:all remains FAILED_TIMEOUT_ONLY; PARALLEL_CAPACITY_RISK_REMAINS_OPEN; no verify:all rerun or replacement performed; manager authorized the existing DIAGNOSTIC 1/1 despite that retained failure
+preDiagnosticBaseline = branch main; HEAD 5f796620736a4264f1d65e5baec56f55f76685f8; parent deaf74a64024b91e46cc750822295e0f9c2ce739; exact 14/14 tracked paths with set difference zero; staging empty; 8 recorded failure logs matched bytes/SHA with zero mismatch
+diagnosticBudget = 1/1 CONSUMED_AND_PASSED; no rerun performed
+diagnosticCommand = node packages/cli/e2e/human-agent-review-wave-6.e2e.mjs --mode=diagnostic
+diagnosticResult = PASSED exit 0; evidenceClass DIAGNOSTIC; mode diagnostic; 22/22 fixed milestones PASSED; lastPassedNode cleanup-and-identity; firstFailedNode null
+diagnosticBinding = runHead 5f796620736a4264f1d65e5baec56f55f76685f8; runnerSha256 105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; trackedCodeDiffPaths exact 14-path whitelist
+resultReceiptReopen = fresh-approval-inspected PASSED; approvalId approval_1788066764662; approvalFingerprint ec434c215d9e2662c37e1584c67088eaf33f96228f21b7652bcbea6c8de8699d; decisionId 542de008-48ee-47a8-8d89-f61bcb315705
+resultReceiptSelection = 31ee31dc386b0df22420683774bb9edd, 6368cf4defd14473e8e884433eb0e5c4, 7dd69031e1927439306d1ef40554a333, c1c861c2f52bffd98254272f95f56513
+resultReceiptMarker = present=true; kind=approval; Chinese text contains 已批准, receipt ID/fingerprint, original decision, and all original selected unit IDs; global status after reopen=已打开审阅任务
+resultReceiptReadonly = approve-result disabled=true; return-result disabled=true
+resultReceiptDiskIdentity = before bytes=1440 sha256=1DABEFD77E0D1E20A3BF516CB7217F1CE33DE6ABCA6364036CFCD747023BBB35; after bytes=1440 sha256=1DABEFD77E0D1E20A3BF516CB7217F1CE33DE6ABCA6364036CFCD747023BBB35; exact identity equality=true
+resultReceiptExclusivity = fake-root final-approval.json exists with exact approvalId/fingerprint; decision.json absent; return-request.json absent; second terminal receipt not generated
+diagnosticErrorChannels = errors=0; protocolErrors=0; consoleErrors=0; pageErrors=0; requestFailures=0; stderrLines=0; childCleanupFailures=0; activeLeaseDirectories=0; blockingIssueChannels=0
+diagnosticMutationSemantics = projectMutation.occurred=true; stageProjectMutated=false; isolated applyProjectMutated=true
+diagnosticStarter = original Starter before/after fileCount=37 bytes=6705750 sha256=8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; unchanged=true
+diagnosticEvidence = <local-path> bytes=310951 sha256=A85A4717DEB2DE37B73D9FE1C550DD9D5EB4D62C9416558A61B12F293D4C4473
+diagnosticIdentity = <local-path> bytes=226 sha256=B32544D6595B0312F1525EA41A6473F53394A77AF1A2C19EB61334AF2693F4AE
+diagnosticLog = <local-path> bytes=236513 sha256=A89BE077D412E1B88FCCCF9F9646D680FF48C3A41682CBD67BE59E36396B8C58
+diagnosticSidecarEditorResult = <local-path> bytes=12138 sha256=795AFDAAA2EF7F206AF94830F5ACA7C615A4D0238301EEE19B48AA96AF274F8F
+diagnosticSidecarReceiptReopen = <local-path> bytes=4416 sha256=C33B6EA2E6D62EA6FD3034FDC1F87A8BD34B4B09E21B59ADDDF6B7F114DF4C57
+diagnosticSidecarIsolatedApply = <local-path> bytes=14905 sha256=E76DF8F7327DC08070C5C306DA1432DA6F8359533B0D3785D97CFAD679799A47
+diagnosticSidecarStarter = <local-path> bytes=14084 sha256=4D6A07B1113E6B8F587C58E60577A3E77FC4CFFBECE7ABB750BD34B4CED7CAB7
+diagnosticSidecarCleanup = <local-path> bytes=1324 sha256=C58275F6DF55B7958BACAE42B4BA09A3B555DF88B9B4138AFF33D0191F40FABA
+nextGate = exact 14-path set comparison, exact staging without directory adds, local commit fix(authoring): preserve result review receipts, frozen clean CODE_EVIDENCE_HEAD, then replacement FORMAL 1/1
+~~~

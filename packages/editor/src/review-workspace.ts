@@ -2,8 +2,10 @@ import {
   approvalFingerprintOf,
   AuthoringOperationError,
   decisionFingerprintOf,
-  stableStringify,
+  returnFingerprintOf,
   validateComparisonDecision,
+  validateFinalApprovalReceipt,
+  validateReturnRequest,
   type ComparisonDecisionReceipt,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
@@ -51,6 +53,8 @@ export interface ReviewWorkspaceState {
   fixtureChanged: boolean;
   receiptStatus: 'none' | 'decision-written' | 'approval-written' | 'returned';
   decisionReceipt: ComparisonDecisionReceipt | null;
+  approvalReceipt: FinalApprovalReceipt | null;
+  returnReceipt: ReturnRequestReceipt | null;
 }
 
 export interface ApprovalDraft {
@@ -63,6 +67,18 @@ export interface ReturnDraft {
 }
 
 const workspaceHashers = new WeakMap<ReviewWorkspaceState, TextHasher>();
+const resultReceiptWrites = new WeakMap<ReviewWorkspaceState, Promise<unknown>>();
+
+async function withResultReceiptWrite<T>(workspace: ReviewWorkspaceState, write: () => Promise<T>): Promise<T> {
+  const previous = resultReceiptWrites.get(workspace) ?? Promise.resolve();
+  const operation = previous.catch(() => undefined).then(write);
+  resultReceiptWrites.set(workspace, operation);
+  try {
+    return await operation;
+  } finally {
+    if (resultReceiptWrites.get(workspace) === operation) resultReceiptWrites.delete(workspace);
+  }
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -479,6 +495,12 @@ export async function openReviewWorkspace(
   const decisionReceipt = identity.kind === 'comparison' && decision !== null
     ? await verifiedDecisionReceipt(projection, decision, hasher)
     : null;
+  const approvalReceipt = identity.kind === 'integration-result' && approval !== null
+    ? await validateFinalApprovalReceipt({ projection, receipt: approval }, hasher)
+    : null;
+  const returnReceipt = identity.kind === 'integration-result' && returned !== null
+    ? await validateReturnRequest({ projection, receipt: returned }, hasher)
+    : null;
   let projectHandle: FileSystemDirectoryHandle | null = null;
   if (identity.kind === 'integration-result') {
     try {
@@ -500,8 +522,10 @@ export async function openReviewWorkspace(
     fixtureChanged: false,
     receiptStatus: identity.kind === 'comparison'
       ? decisionReceipt !== null ? 'decision-written' : 'none'
-      : approval !== null ? 'approval-written' : returned !== null ? 'returned' : 'none',
+      : approvalReceipt !== null ? 'approval-written' : returnReceipt !== null ? 'returned' : 'none',
     decisionReceipt,
+    approvalReceipt,
+    returnReceipt,
   };
   workspaceHashers.set(workspace, hasher);
   return workspace;
@@ -557,35 +581,44 @@ export async function writeApprovalReceipt(
   draft: ApprovalDraft,
   now: string,
 ): Promise<FinalApprovalReceipt> {
-  const { finalResult, decisionFingerprint } = resultFacts(workspace);
-  if (draft.approvalId.length === 0) throw invalidReview('approvalId 不能为空');
-  if ((await optionalJson(workspace.rootHandle, 'return-request.json')) !== null) {
-    throw identityError('result review 已存在 return request');
-  }
-  const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
-    receiptVersion: '1.0.0',
-    approvalId: draft.approvalId,
-    resultReviewId: workspace.projection.reviewId,
-    decisionFingerprint,
-    planId: finalResult.planId,
-    planFingerprint: finalResult.planFingerprint,
-    integrationChangeId: finalResult.integrationChangeId,
-    workingRevision: finalResult.workingRevision,
-    projectIdentity: workspace.projection.projectIdentity,
-    expectedProjectRevision: workspace.projection.expectedProjectRevision,
-    diffFingerprint: finalResult.diffFingerprint,
-    evidence: { ...finalResult.evidence, runtimeTraceIds: [...finalResult.evidence.runtimeTraceIds] },
-    resultTreeSha256: finalResult.resultTreeSha256,
-    reviewerChannel: 'surdet-editor-local',
-    approvedAt: now,
-  };
-  const receipt: FinalApprovalReceipt = {
-    ...unsigned,
-    approvalFingerprint: await approvalFingerprintOf(unsigned, hasherFor(workspace)),
-  };
-  const written = await writeCreateOnly(workspace.rootHandle, 'final-approval.json', receipt);
-  workspace.receiptStatus = 'approval-written';
-  return written;
+  return withResultReceiptWrite(workspace, async () => {
+    const { finalResult, decisionFingerprint } = resultFacts(workspace);
+    if (draft.approvalId.length === 0) throw invalidReview('approvalId 不能为空');
+    const [approval, returned] = await Promise.all([
+      optionalJson(workspace.rootHandle, 'final-approval.json'),
+      optionalJson(workspace.rootHandle, 'return-request.json'),
+    ]);
+    if (approval !== null && returned !== null) throw identityError('result review 同时存在 final approval 与 return request');
+    if (approval !== null || returned !== null || workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned') {
+      throw identityError('result review 已有终态回执，不能再次批准或退回');
+    }
+    const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
+      receiptVersion: '1.0.0',
+      approvalId: draft.approvalId,
+      resultReviewId: workspace.projection.reviewId,
+      decisionFingerprint,
+      planId: finalResult.planId,
+      planFingerprint: finalResult.planFingerprint,
+      integrationChangeId: finalResult.integrationChangeId,
+      workingRevision: finalResult.workingRevision,
+      projectIdentity: workspace.projection.projectIdentity,
+      expectedProjectRevision: workspace.projection.expectedProjectRevision,
+      diffFingerprint: finalResult.diffFingerprint,
+      evidence: { ...finalResult.evidence, runtimeTraceIds: [...finalResult.evidence.runtimeTraceIds] },
+      resultTreeSha256: finalResult.resultTreeSha256,
+      reviewerChannel: 'surdet-editor-local',
+      approvedAt: now,
+    };
+    const receipt: FinalApprovalReceipt = {
+      ...unsigned,
+      approvalFingerprint: await approvalFingerprintOf(unsigned, hasherFor(workspace)),
+    };
+    const written = await writeCreateOnly(workspace.rootHandle, 'final-approval.json', receipt);
+    workspace.receiptStatus = 'approval-written';
+    workspace.approvalReceipt = written;
+    workspace.returnReceipt = null;
+    return written;
+  });
 }
 
 export async function writeReturnReceipt(
@@ -593,28 +626,37 @@ export async function writeReturnReceipt(
   draft: ReturnDraft,
   now: string,
 ): Promise<ReturnRequestReceipt> {
-  const { finalResult } = resultFacts(workspace);
-  if (draft.returnId.length === 0) throw invalidReview('returnId 不能为空');
-  if ((await optionalJson(workspace.rootHandle, 'final-approval.json')) !== null) {
-    throw identityError('result review 已存在 final approval');
-  }
-  const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
-    receiptVersion: '1.0.0',
-    returnId: draft.returnId,
-    resultReviewId: workspace.projection.reviewId,
-    planId: finalResult.planId,
-    planFingerprint: finalResult.planFingerprint,
-    integrationChangeId: finalResult.integrationChangeId,
-    workingRevision: finalResult.workingRevision,
-    reasonCategory: draft.reasonCategory,
-    reviewerChannel: 'surdet-editor-local',
-    returnedAt: now,
-  };
-  const receipt: ReturnRequestReceipt = {
-    ...unsigned,
-    returnFingerprint: await hasherFor(workspace).sha256(stableStringify(unsigned)),
-  };
-  const written = await writeCreateOnly(workspace.rootHandle, 'return-request.json', receipt);
-  workspace.receiptStatus = 'returned';
-  return written;
+  return withResultReceiptWrite(workspace, async () => {
+    const { finalResult } = resultFacts(workspace);
+    if (draft.returnId.length === 0) throw invalidReview('returnId 不能为空');
+    const [approval, returned] = await Promise.all([
+      optionalJson(workspace.rootHandle, 'final-approval.json'),
+      optionalJson(workspace.rootHandle, 'return-request.json'),
+    ]);
+    if (approval !== null && returned !== null) throw identityError('result review 同时存在 final approval 与 return request');
+    if (approval !== null || returned !== null || workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned') {
+      throw identityError('result review 已有终态回执，不能再次批准或退回');
+    }
+    const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
+      receiptVersion: '1.0.0',
+      returnId: draft.returnId,
+      resultReviewId: workspace.projection.reviewId,
+      planId: finalResult.planId,
+      planFingerprint: finalResult.planFingerprint,
+      integrationChangeId: finalResult.integrationChangeId,
+      workingRevision: finalResult.workingRevision,
+      reasonCategory: draft.reasonCategory,
+      reviewerChannel: 'surdet-editor-local',
+      returnedAt: now,
+    };
+    const receipt: ReturnRequestReceipt = {
+      ...unsigned,
+      returnFingerprint: await returnFingerprintOf(unsigned, hasherFor(workspace)),
+    };
+    const written = await writeCreateOnly(workspace.rootHandle, 'return-request.json', receipt);
+    workspace.receiptStatus = 'returned';
+    workspace.approvalReceipt = null;
+    workspace.returnReceipt = written;
+    return written;
+  });
 }

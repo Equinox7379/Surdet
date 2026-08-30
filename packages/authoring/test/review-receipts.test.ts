@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import * as sharedReviewReceipts from '../src/review-receipts.js';
 import type {
   CandidateCapsuleRef,
   CandidateEvidenceSummary,
@@ -9,6 +10,7 @@ import type {
   ReviewConflict,
   ReviewEvidenceBinding,
   ResultReviewCurrentFacts,
+  ReturnRequestReceipt,
   TextHasher,
 } from '../src/index.js';
 import {
@@ -376,6 +378,53 @@ describe('human comparison decision receipts', () => {
     }, hasher);
     expect(verified.receipt.approvalFingerprint).toBe(currentApproval.approvalFingerprint);
     expect(verified.bindingFingerprint).toBeTruthy();
+  });
+
+  it('rejects an approval whose fingerprint is not the fingerprint of its disk content', async () => {
+    const tampered = await approval();
+    tampered.approvalFingerprint = '0'.repeat(64);
+
+    await expect(validateFinalApproval({
+      projection: resultProjection(),
+      receipt: tampered,
+      current: currentResultFacts(),
+    }, hasher)).rejects.toMatchObject({ code: 'REVIEW_DECISION_INVALID' });
+  });
+
+  it('exports one shared return receipt fingerprint and validation truth', async () => {
+    type ReturnFingerprint = (
+      receipt: Omit<ReturnRequestReceipt, 'returnFingerprint'>,
+      receiptHasher: TextHasher,
+    ) => Promise<string>;
+    type ValidateReturn = (
+      input: { projection: HumanReviewProjection; receipt: unknown },
+      receiptHasher: TextHasher,
+    ) => Promise<ReturnRequestReceipt>;
+    const moduleShape = sharedReviewReceipts as unknown as Record<string, unknown>;
+    const returnFingerprintOf = moduleShape['returnFingerprintOf'] as ReturnFingerprint | undefined;
+    const validateReturnRequest = moduleShape['validateReturnRequest'] as ValidateReturn | undefined;
+    expect(returnFingerprintOf).toBeTypeOf('function');
+    expect(validateReturnRequest).toBeTypeOf('function');
+    if (returnFingerprintOf === undefined || validateReturnRequest === undefined) return;
+
+    const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
+      receiptVersion: '1.0.0',
+      returnId: 'return-1',
+      resultReviewId: 'result-review',
+      planId: 'plan-1',
+      planFingerprint: 'plan-fingerprint',
+      integrationChangeId: 'change-1',
+      workingRevision: 4,
+      reasonCategory: 'content',
+      reviewerChannel: 'surdet-editor-local',
+      returnedAt: '2026-08-27T00:00:00.000Z',
+    };
+    const receipt: ReturnRequestReceipt = {
+      ...unsigned,
+      returnFingerprint: await returnFingerprintOf(unsigned, hasher),
+    };
+    await expect(validateReturnRequest({ projection: resultProjection(), receipt }, hasher))
+      .resolves.toEqual(receipt);
   });
 
   it.each([

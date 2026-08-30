@@ -1,9 +1,11 @@
 import * as crypto from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
+  FinalApprovalReceipt,
   HumanReviewProjection,
   ReviewEvidenceBinding,
   ReviewFinalResult,
+  ReturnRequestReceipt,
   TextHasher,
 } from '@surdet/authoring';
 import {
@@ -13,6 +15,7 @@ import {
   writeReturnReceipt,
   type ReviewDecisionDraft,
   type ReviewWorkspaceIdentity,
+  type ReviewWorkspaceState,
 } from '../src/review-workspace.js';
 
 type MemoryNode = MemoryDirectory | MemoryFile;
@@ -389,6 +392,86 @@ describe('Editor review workspace', () => {
       .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
     root.file('return-request.json', JSON.stringify({ returnId: 'return-1' }));
     await expect(openReviewWorkspace(root.handle(), hasher)).rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+  });
+
+  it('allows only one concurrent approval-or-return outcome and persists exactly one terminal receipt', async () => {
+    const root = new MemoryDirectory('result-race-root');
+    roots.push(root);
+    installWorkspace(root, resultProjection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+
+    const settled = await Promise.allSettled([
+      writeApprovalReceipt(loaded, { approvalId: 'approval-race' }, '2026-08-30T00:00:00.000Z'),
+      writeReturnReceipt(loaded, { returnId: 'return-race', reasonCategory: 'other' }, '2026-08-30T00:00:00.000Z'),
+    ]);
+    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+    expect(Number(root.entries.has('final-approval.json')) + Number(root.entries.has('return-request.json'))).toBe(1);
+  });
+
+  it('reopens and verifies a persisted approval identity without rewriting its bytes', async () => {
+    const root = new MemoryDirectory('approved-reopen-root');
+    roots.push(root);
+    installWorkspace(root, resultProjection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+    const approval = await writeApprovalReceipt(loaded, { approvalId: 'approval-reopen' }, '2026-08-30T00:00:00.000Z');
+    const approvalFile = root.entries.get('final-approval.json') as MemoryFile;
+    const bytesBefore = approvalFile.text;
+
+    const reopened = await openReviewWorkspace(root.handle(), hasher) as ReviewWorkspaceState & {
+      approvalReceipt: FinalApprovalReceipt | null;
+      returnReceipt: ReturnRequestReceipt | null;
+    };
+    expect(reopened.receiptStatus).toBe('approval-written');
+    expect(reopened.approvalReceipt).toEqual(approval);
+    expect(reopened.returnReceipt).toBeNull();
+    expect(approvalFile.text).toBe(bytesBefore);
+  });
+
+  it('reopens and verifies a persisted return identity without rewriting its bytes', async () => {
+    const root = new MemoryDirectory('returned-reopen-root');
+    roots.push(root);
+    installWorkspace(root, resultProjection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+    const returned = await writeReturnReceipt(loaded, { returnId: 'return-reopen', reasonCategory: 'content' }, '2026-08-30T00:00:00.000Z');
+    const returnFile = root.entries.get('return-request.json') as MemoryFile;
+    const bytesBefore = returnFile.text;
+
+    const reopened = await openReviewWorkspace(root.handle(), hasher) as ReviewWorkspaceState & {
+      approvalReceipt: FinalApprovalReceipt | null;
+      returnReceipt: ReturnRequestReceipt | null;
+    };
+    expect(reopened.receiptStatus).toBe('returned');
+    expect(reopened.approvalReceipt).toBeNull();
+    expect(reopened.returnReceipt).toEqual(returned);
+    expect(returnFile.text).toBe(bytesBefore);
+  });
+
+  it.each([
+    ['approval fingerprint', 'final-approval.json', 'REVIEW_DECISION_INVALID', async (loaded: ReviewWorkspaceState) => {
+      const receipt = await writeApprovalReceipt(loaded, { approvalId: 'approval-corrupt' }, '2026-08-30T00:00:00.000Z');
+      return { ...receipt, approvalFingerprint: '0'.repeat(64) };
+    }],
+    ['return fingerprint', 'return-request.json', 'REVIEW_IDENTITY_MISMATCH', async (loaded: ReviewWorkspaceState) => {
+      const receipt = await writeReturnReceipt(loaded, { returnId: 'return-corrupt', reasonCategory: 'content' }, '2026-08-30T00:00:00.000Z');
+      return { ...receipt, returnFingerprint: '0'.repeat(64) };
+    }],
+    ['return reason category', 'return-request.json', 'REVIEW_IDENTITY_MISMATCH', async (loaded: ReviewWorkspaceState) => {
+      const receipt = await writeReturnReceipt(loaded, { returnId: 'return-category', reasonCategory: 'content' }, '2026-08-30T00:00:00.000Z');
+      return { ...receipt, reasonCategory: 'unknown-category' };
+    }],
+  ] as const)('fails loud when a persisted result receipt has a corrupt %s', async (_label, fileName, expectedCode, corrupt) => {
+    const root = new MemoryDirectory(`corrupt-result-${_label.replaceAll(' ', '-')}`);
+    roots.push(root);
+    installWorkspace(root, resultProjection());
+    const loaded = await openReviewWorkspace(root.handle(), hasher);
+    const invalid = await corrupt(loaded);
+    (root.entries.get(fileName) as MemoryFile).text = `${JSON.stringify(invalid)}\n`;
+
+    await expect(openReviewWorkspace(root.handle(), hasher))
+      .rejects.toMatchObject({ code: expectedCode });
   });
 
   it('fails closed on payload identity, missing project identity and unsupported version changes', async () => {

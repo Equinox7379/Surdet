@@ -15,9 +15,9 @@ const previewSourcePath = path.resolve(
 );
 
 type PreviewTraceProjectionFixture = {
-  dialogue: Pick<RendererProjectionSnapshot['dialogue'],
-    'projectionVersion' | 'activeSpeakerId' | 'speakerText' | 'dialogText' | 'panelVisible'>;
-  world: Pick<RendererProjectionSnapshot['world'], 'activeSpeakerId' | 'backgroundKey'>;
+  dialogue: Pick<NonNullable<RendererProjectionSnapshot['dialogue']>,
+    'projectionVersion' | 'activeSpeakerId' | 'speakerText' | 'dialogText'> & { panelVisible: boolean };
+  world: Pick<NonNullable<RendererProjectionSnapshot['world']>, 'activeSpeakerId' | 'backgroundKey'>;
 };
 
 describe('preview causal trace contract', () => {

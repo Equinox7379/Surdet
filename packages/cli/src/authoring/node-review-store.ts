@@ -8,6 +8,7 @@ import {
 import { createJsonRecord, readJsonRecord, type JsonRecordIdentity } from './node-json-record.js';
 
 const GENERATED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', 'dist']);
+const resultReceiptWrites = new Map<string, Promise<unknown>>();
 
 export interface ReviewArtifactIdentity {
   relativePath: string;
@@ -131,6 +132,19 @@ async function createOnlyJson(file: string, root: string, value: unknown): Promi
     const raced = await readBytes(file, root);
     if (raced !== null && Buffer.compare(raced, expected) === 0) return fileIdentity(file, raced);
     throw identityMismatch(`review record 并发创建后身份不一致：${displayPath(file)}`);
+  }
+}
+
+async function withResultReceiptWrite<T>(reviewDirectory: string, write: () => Promise<T>): Promise<T> {
+  const resolved = path.resolve(reviewDirectory);
+  const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const previous = resultReceiptWrites.get(key) ?? Promise.resolve();
+  const operation = previous.catch(() => undefined).then(write);
+  resultReceiptWrites.set(key, operation);
+  try {
+    return await operation;
+  } finally {
+    if (resultReceiptWrites.get(key) === operation) resultReceiptWrites.delete(key);
   }
 }
 
@@ -403,9 +417,17 @@ export class NodeReviewStore {
     if (review.identity.kind !== 'integration-result') {
       throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 final approval：${reviewId}`);
     }
-    const returned = await readBytes(path.join(review.reviewDirectory, 'return-request.json'), this.projectDirectory);
-    if (returned !== null) throw identityMismatch(`同一 result review 已存在 return request：${reviewId}`);
-    return createOnlyJson(path.join(review.reviewDirectory, 'final-approval.json'), this.projectDirectory, value);
+    return withResultReceiptWrite(review.reviewDirectory, async () => {
+      const approvalFile = path.join(review.reviewDirectory, 'final-approval.json');
+      const returnFile = path.join(review.reviewDirectory, 'return-request.json');
+      const [approval, returned] = await Promise.all([
+        readBytes(approvalFile, this.projectDirectory),
+        readBytes(returnFile, this.projectDirectory),
+      ]);
+      if (approval !== null && returned !== null) throw identityMismatch(`同一 result review 同时存在 final approval 与 return request：${reviewId}`);
+      if (returned !== null) throw identityMismatch(`同一 result review 已存在 return request：${reviewId}`);
+      return createOnlyJson(approvalFile, this.projectDirectory, value);
+    });
   }
 
   async readFinalApproval<T = unknown>(reviewId: string): Promise<{ value: T; identity: JsonRecordIdentity } | null> {
@@ -425,9 +447,17 @@ export class NodeReviewStore {
     if (review.identity.kind !== 'integration-result') {
       throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 return request：${reviewId}`);
     }
-    const approval = await readBytes(path.join(review.reviewDirectory, 'final-approval.json'), this.projectDirectory);
-    if (approval !== null) throw identityMismatch(`同一 result review 已存在 final approval：${reviewId}`);
-    return createOnlyJson(path.join(review.reviewDirectory, 'return-request.json'), this.projectDirectory, value);
+    return withResultReceiptWrite(review.reviewDirectory, async () => {
+      const approvalFile = path.join(review.reviewDirectory, 'final-approval.json');
+      const returnFile = path.join(review.reviewDirectory, 'return-request.json');
+      const [approval, returned] = await Promise.all([
+        readBytes(approvalFile, this.projectDirectory),
+        readBytes(returnFile, this.projectDirectory),
+      ]);
+      if (approval !== null && returned !== null) throw identityMismatch(`同一 result review 同时存在 final approval 与 return request：${reviewId}`);
+      if (approval !== null) throw identityMismatch(`同一 result review 已存在 final approval：${reviewId}`);
+      return createOnlyJson(returnFile, this.projectDirectory, value);
+    });
   }
 
   async readReturnRequest<T = unknown>(reviewId: string): Promise<{ value: T; identity: JsonRecordIdentity } | null> {

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HumanReviewProjection, ReviewObjectSummary } from '@surdet/authoring';
+import type {
+  FinalApprovalReceipt,
+  HumanReviewProjection,
+  ReturnRequestReceipt,
+  ReviewObjectSummary,
+} from '@surdet/authoring';
 import {
   labelForConflictSeverity,
   labelForObjectKind,
@@ -247,6 +252,8 @@ function workspaceFor(projection: HumanReviewProjection): ReviewWorkspaceState {
     fixtureChanged: false,
     receiptStatus: 'none',
     decisionReceipt: null,
+    approvalReceipt: null,
+    returnReceipt: null,
   };
 }
 
@@ -506,6 +513,81 @@ describe('Editor review panel', () => {
     reloadOfficialResult(workspace);
     renderReviewPanel(container as unknown as HTMLElement, workspace);
     expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
+  });
+
+  it('renders a reopened approval as a persistent Chinese readonly terminal state', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    const result = workspace.projection.finalResult!;
+    const approval: FinalApprovalReceipt = {
+      receiptVersion: '1.0.0',
+      approvalId: 'approval-reopened',
+      resultReviewId: workspace.projection.reviewId,
+      decisionFingerprint: workspace.projection.sourceIdentity.decisionFingerprint!,
+      planId: result.planId,
+      planFingerprint: result.planFingerprint,
+      integrationChangeId: result.integrationChangeId,
+      workingRevision: result.workingRevision,
+      projectIdentity: workspace.projection.projectIdentity,
+      expectedProjectRevision: workspace.projection.expectedProjectRevision,
+      diffFingerprint: result.diffFingerprint,
+      evidence: result.evidence,
+      resultTreeSha256: result.resultTreeSha256,
+      reviewerChannel: 'surdet-editor-local',
+      approvedAt: '2026-08-30T00:00:00.000Z',
+      approvalFingerprint: 'a'.repeat(64),
+    };
+    Object.assign(workspace, { receiptStatus: 'approval-written', approvalReceipt: approval, returnReceipt: null });
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    const marker = container.querySelector('[data-result-receipt]');
+    expect(marker).not.toBeNull();
+    expect(textOf(marker!)).toContain('已批准');
+    expect(textOf(marker!)).toContain('回执 ID：approval-reopened');
+    expect(textOf(marker!)).toContain(`回执 fingerprint：${'a'.repeat(64)}`);
+    expect(textOf(marker!)).toContain('原决定：decision-1');
+    expect(textOf(marker!)).toContain('原选择：unit-a');
+    expect(marker!.getAttribute('data-approval-id')).toBe('approval-reopened');
+    expect(marker!.getAttribute('data-approval-fingerprint')).toBe('a'.repeat(64));
+    expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="return-result"]')?.disabled).toBe(true);
+  });
+
+  it('renders a reopened return as a persistent Chinese readonly terminal state', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    const result = workspace.projection.finalResult!;
+    const returned: ReturnRequestReceipt = {
+      receiptVersion: '1.0.0',
+      returnId: 'return-reopened',
+      resultReviewId: workspace.projection.reviewId,
+      planId: result.planId,
+      planFingerprint: result.planFingerprint,
+      integrationChangeId: result.integrationChangeId,
+      workingRevision: result.workingRevision,
+      reasonCategory: 'presentation',
+      reviewerChannel: 'surdet-editor-local',
+      returnedAt: '2026-08-30T00:00:00.000Z',
+      returnFingerprint: 'b'.repeat(64),
+    };
+    Object.assign(workspace, { receiptStatus: 'returned', approvalReceipt: null, returnReceipt: returned });
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    const marker = container.querySelector('[data-result-receipt]');
+    expect(marker).not.toBeNull();
+    expect(textOf(marker!)).toContain('已退回');
+    expect(textOf(marker!)).toContain('回执 ID：return-reopened');
+    expect(textOf(marker!)).toContain(`回执 fingerprint：${'b'.repeat(64)}`);
+    expect(textOf(marker!)).toContain('原决定：decision-1');
+    expect(textOf(marker!)).toContain('原选择：unit-a');
+    expect(marker!.getAttribute('data-return-id')).toBe('return-reopened');
+    expect(marker!.getAttribute('data-return-fingerprint')).toBe('b'.repeat(64));
+    expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="return-result"]')?.disabled).toBe(true);
   });
 
   it('keeps the fixed human labels visible for the review workbench', () => {

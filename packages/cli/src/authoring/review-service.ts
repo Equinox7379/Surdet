@@ -13,6 +13,7 @@ import {
   stableStringify,
   validateComparisonDecision,
   validateFinalApproval,
+  validateReturnRequest,
   type AuthoringObject,
   type CandidateCapsuleRef,
   type ChangeDiff,
@@ -281,23 +282,6 @@ function approvalReceipt(value: unknown, resultReviewId: string): value is Final
     && typeof evidence['simulationEvidenceId'] === 'string'
     && Array.isArray(evidence['runtimeTraceIds'])
     && evidence['runtimeTraceIds'].every((item) => typeof item === 'string');
-}
-
-function returnReceipt(value: unknown, resultReviewId: string): value is ReturnRequestReceipt {
-  return isRecord(value)
-    && value['receiptVersion'] === '1.0.0'
-    && typeof value['returnId'] === 'string'
-    && typeof value['resultReviewId'] === 'string'
-    && value['resultReviewId'] === resultReviewId
-    && typeof value['planId'] === 'string'
-    && typeof value['planFingerprint'] === 'string'
-    && typeof value['integrationChangeId'] === 'string'
-    && typeof value['workingRevision'] === 'number'
-    && Number.isInteger(value['workingRevision'])
-    && typeof value['reasonCategory'] === 'string'
-    && value['reviewerChannel'] === 'surdet-editor-local'
-    && typeof value['returnedAt'] === 'string'
-    && typeof value['returnFingerprint'] === 'string';
 }
 
 function diffImpactsForRef(diff: unknown, ref: string): { potentialImpact: unknown[]; observedImpact: unknown[] } {
@@ -579,25 +563,18 @@ export class ReviewService {
   private async validateReturn(
     projection: HumanReviewProjection,
     record: ChangeRecord,
-    receipt: ReturnRequestReceipt,
+    value: unknown,
   ): Promise<VerifiedReturnRequest> {
+    const receipt = await validateReturnRequest({ projection, receipt: value }, this.hasher);
     const finalResult = projection.finalResult;
-    if (finalResult === undefined
-      || receipt.planId !== finalResult.planId
-      || receipt.planFingerprint !== finalResult.planFingerprint
-      || receipt.integrationChangeId !== finalResult.integrationChangeId
-      || receipt.workingRevision !== finalResult.workingRevision
-      || receipt.returnId.length === 0
-      || receipt.returnedAt.length === 0) {
-      throw reviewError('REVIEW_IDENTITY_MISMATCH', `return request 与 result review 不匹配：${projection.reviewId}`, { reviewId: projection.reviewId });
-    }
+    if (finalResult === undefined) throw reviewError('REVIEW_RESULT_NOT_READY', `result review 缺少最终结果：${projection.reviewId}`, { reviewId: projection.reviewId });
     if (record.integration?.planId !== receipt.planId || record.integration.planFingerprint !== receipt.planFingerprint) {
       throw reviewError('REVIEW_APPROVAL_STALE', `return request 对应的 integration 已变化：${projection.reviewId}`, { reviewId: projection.reviewId });
     }
     return { receipt };
   }
 
-  async inspectApproval(input: { resultReviewId: string; approvalId?: string }): Promise<ReviewInspectionResult> {
+  async inspectApproval(input: { resultReviewId: string; approvalId?: string; approvalFingerprint?: string }): Promise<ReviewInspectionResult> {
     const loaded = await this.readReview<HumanReviewProjection>(input.resultReviewId);
     const projection = reviewProjection(loaded.value, input.resultReviewId);
     if (projection.kind !== 'integration-result' || projection.finalResult === undefined) {
@@ -633,9 +610,6 @@ export class ReviewService {
         throw reviewError('REVIEW_IDENTITY_MISMATCH', `result review 同时存在 approval 与 return request：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       }
       if (returned !== null) {
-        if (!returnReceipt(returned.value, input.resultReviewId)) {
-          throw reviewError('REVIEW_IDENTITY_MISMATCH', `return request 结构无效：${input.resultReviewId}`, { reviewId: input.resultReviewId });
-        }
         return this.validateReturn(projection, record, returned.value);
       }
       if (approval === null) throw reviewError('REVIEW_APPROVAL_REQUIRED', `result review 尚未收到项目所有者批准：${input.resultReviewId}`, { reviewId: input.resultReviewId });
@@ -645,7 +619,12 @@ export class ReviewService {
       if (input.approvalId !== undefined && input.approvalId !== approval.value.approvalId) {
         throw reviewError('REVIEW_IDENTITY_MISMATCH', `approvalId 与 result review 不匹配：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       }
-      return validateFinalApproval({ projection, receipt: approval.value, current }, this.hasher);
+      const verified = await validateFinalApproval({ projection, receipt: approval.value, current }, this.hasher);
+      if (input.approvalFingerprint !== undefined
+        && input.approvalFingerprint !== verified.receipt.approvalFingerprint) {
+        throw reviewError('REVIEW_IDENTITY_MISMATCH', `approvalFingerprint 与磁盘批准回执不匹配：${input.resultReviewId}`, { reviewId: input.resultReviewId });
+      }
+      return verified;
     });
   }
 }

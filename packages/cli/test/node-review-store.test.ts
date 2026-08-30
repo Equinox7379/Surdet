@@ -54,6 +54,29 @@ describe('NodeReviewStore', () => {
       .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
   });
 
+  it('serializes competing approval and return writes so only one terminal receipt reaches disk', async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_result_race';
+    await fixture.store.createReview(reviewId, {
+      ...payload(reviewId),
+      kind: 'integration-result',
+    });
+
+    const settled = await Promise.allSettled([
+      fixture.store.createFinalApproval(reviewId, { approvalId: 'approval-race' }),
+      fixture.store.createReturnRequest(reviewId, { returnId: 'return-race' }),
+    ]);
+    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+
+    const reviewDirectory = path.join(fixture.projectDirectory, 'reviews', reviewId);
+    const terminalReceipts = (await fsp.readdir(reviewDirectory))
+      .filter((name) => name === 'final-approval.json' || name === 'return-request.json');
+    expect(terminalReceipts).toHaveLength(1);
+  });
+
   it('revalidates the sidecar and payload bytes on read', async () => {
     const fixture = await setup();
     await fixture.store.createReview('rev_safe', payload());

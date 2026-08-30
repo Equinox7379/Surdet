@@ -134,6 +134,47 @@ export function isReviewedPreviewEvidenceSatisfied(rawEvidence) {
     && textEvent?.attribution === 'sync-batch-correlation-not-event-exclusive';
 }
 
+export function isResultReceiptReopenEvidenceSatisfied(evidence) {
+  const expected = evidence?.expected;
+  const marker = evidence?.receiptMarker;
+  const before = evidence?.diskBefore;
+  const after = evidence?.diskAfter;
+  const controls = evidence?.readonlyControls;
+  const receipts = evidence?.fakeRootReceipts;
+  const selectedUnitIds = expected?.selectedUnitIds;
+  const markerText = marker?.text;
+  const exactReadonlyAction = (action) => Array.isArray(controls)
+    && controls.filter((control) => control?.action === action && control?.disabled === true).length === 1;
+  return typeof expected?.approvalId === 'string' && expected.approvalId.length > 0
+    && typeof expected?.approvalFingerprint === 'string' && expected.approvalFingerprint.length === 64
+    && typeof expected?.decisionId === 'string' && expected.decisionId.length > 0
+    && Array.isArray(selectedUnitIds) && selectedUnitIds.length > 0
+    && selectedUnitIds.every((unitId) => typeof unitId === 'string' && unitId.length > 0)
+    && Number.isInteger(before?.bytes) && before.bytes > 0
+    && typeof before?.sha256 === 'string' && before.sha256.length === 64
+    && after?.bytes === before.bytes
+    && after?.sha256 === before.sha256
+    && marker?.present === true
+    && marker?.kind === 'approval'
+    && marker?.approvalId === expected.approvalId
+    && marker?.approvalFingerprint === expected.approvalFingerprint
+    && typeof markerText === 'string'
+    && markerText.includes('已批准')
+    && markerText.includes('回执 ID')
+    && markerText.includes(expected.approvalId)
+    && markerText.includes('回执 fingerprint')
+    && markerText.includes(expected.approvalFingerprint)
+    && markerText.includes('原决定')
+    && markerText.includes(expected.decisionId)
+    && markerText.includes('原选择')
+    && selectedUnitIds.every((unitId) => markerText.includes(unitId))
+    && exactReadonlyAction('approve-result')
+    && exactReadonlyAction('return-result')
+    && receipts?.finalApproval?.approvalId === expected.approvalId
+    && receipts?.finalApproval?.approvalFingerprint === expected.approvalFingerprint
+    && receipts?.returnRequest === null;
+}
+
 function sameCandidateRef(left, right) {
   return left?.changeId === right?.changeId
     && left?.capsuleId === right?.capsuleId
@@ -788,6 +829,22 @@ function fakeRootReceiptEvidence(rootKey, fakeRootSnapshot) {
   };
 }
 
+function resultReceiptIdentitiesFromSnapshot(fakeRootSnapshot) {
+  const parsedIdentity = (filePath) => {
+    const file = fakeRootSnapshot.find((entry) => entry.path === filePath);
+    if (file === undefined) return null;
+    try {
+      return receiptIdentity(JSON.parse(Buffer.from(file.bytes, 'base64').toString('utf8')));
+    } catch {
+      return null;
+    }
+  };
+  return {
+    finalApproval: parsedIdentity('final-approval.json'),
+    returnRequest: parsedIdentity('return-request.json'),
+  };
+}
+
 async function readGlobalStatus(page) {
   const locator = page.locator('#status');
   if (await locator.count() === 0) return { present: false, text: null, className: null };
@@ -817,7 +874,9 @@ async function readReceiptMarker(page) {
     decisionId: node.getAttribute('data-decision-id'),
     decisionFingerprint: node.getAttribute('data-decision-fingerprint'),
     approvalId: node.getAttribute('data-approval-id'),
+    approvalFingerprint: node.getAttribute('data-approval-fingerprint'),
     returnId: node.getAttribute('data-return-id'),
+    returnFingerprint: node.getAttribute('data-return-fingerprint'),
   }));
 }
 
@@ -954,6 +1013,20 @@ async function waitForNewDecisionReceiptMarker(page, previousWorkbench) {
   const receiptMarker = await readReceiptMarker(page);
   const readonlyControls = await readReadonlyControls(page);
   return { receiptMarker, readonlyControls };
+}
+
+async function waitForNewResultReceiptMarker(page, previousWorkbench) {
+  if (previousWorkbench !== null) {
+    await page.waitForFunction((node) => !node.isConnected, previousWorkbench);
+  }
+  const marker = page.locator('[data-approval-receipt]').first();
+  await marker.waitFor({ state: 'visible' });
+  const [receiptMarker, readonlyControls, globalStatus] = await Promise.all([
+    readReceiptMarker(page),
+    readReadonlyControls(page),
+    readGlobalStatus(page),
+  ]);
+  return { receiptMarker, readonlyControls, globalStatus };
 }
 
 async function captureDecisionWriteEvidence(page, statusText = null) {
@@ -1621,12 +1694,35 @@ async function runWorkflow(modeName) {
       assert(fs.existsSync(approvalPath), 'Editor did not create final approval receipt');
       approval = readJson(approvalPath);
       assert(approval.reviewerChannel === 'surdet-editor-local' && approval.approvalFingerprint.length === 64, 'approval identity is incomplete');
+      const diskBefore = readFileIdentity(approvalPath);
+      const approvedWorkbench = await page.locator('.review-workbench').elementHandle();
+      await page.getByRole('button', { name: '打开审阅任务' }).click();
+      const { receiptMarker, readonlyControls, globalStatus } = await waitForNewResultReceiptMarker(page, approvedWorkbench);
+      await page.waitForFunction(() => document.querySelector('#status')?.textContent === '已打开审阅任务');
+      const fakeRootSnapshot = await page.evaluate(() => window.__surdetDumpFakeRoot('result'));
+      const fakeRootReceiptSnapshot = fakeRootReceiptEvidence('result', fakeRootSnapshot);
+      const reopenEvidence = {
+        expected: {
+          approvalId: approval.approvalId,
+          approvalFingerprint: approval.approvalFingerprint,
+          decisionId: resultReview.projection.finalResult.plan.review.decisionId,
+          selectedUnitIds: resultReview.projection.finalResult.plan.selectedUnitIds,
+        },
+        diskBefore,
+        diskAfter: readFileIdentity(approvalPath),
+        receiptMarker,
+        readonlyControls,
+        globalStatus,
+        fakeRootReceiptSnapshot,
+        fakeRootReceipts: resultReceiptIdentitiesFromSnapshot(fakeRootSnapshot),
+      };
+      assert(isResultReceiptReopenEvidenceSatisfied(reopenEvidence), 'reopened result approval did not preserve receipt identity, selection and readonly state');
       const inspected = await withPort(harness, { projectRoot: projectRoot(), policy: 'observe', dataDir: dataDir(), resumeChangeId: integrationChangeId }, (port) => (
         callTool(port, 'surdet_review_inspect_approval', { resultReviewId: resultReview.reviewId, approvalId: approval.approvalId })
       ));
       const verified = resultOf(inspected, 'review.inspect-approval fresh');
       assert(verified.receipt.approvalId === approval.approvalId, 'MCP approval read-back identity mismatch');
-      return { identity: readFileIdentity(approvalPath), approvalId: approval.approvalId, approvalFingerprint: approval.approvalFingerprint };
+      return { identity: diskBefore, approvalId: approval.approvalId, approvalFingerprint: approval.approvalFingerprint, reopenEvidence };
     });
 
     await milestone('isolated-commit-applies-reviewed-result', async () => {
