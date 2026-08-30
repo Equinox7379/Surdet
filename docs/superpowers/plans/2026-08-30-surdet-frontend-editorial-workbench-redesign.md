@@ -914,3 +914,28 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Continue only the extended Wave 3A.1 Editor presentation and proportional gates. Do not start Timeline 3B, touch shared-engine/backend production, push, deploy or release.
+
+### 2026-08-31 — Frontend Pass 3A.1 scalable narrative map closure
+
+**CONFIRMED_FACTS**
+
+- Planning/numbering correction commit is `c8f41b8e668fdf501997573159e953c44b868a41`; code evidence commit is `161f8dbe76361a731bf09a1b5dccb88b81140d47` with exact ten-file Editor scope.
+- Default `聚焦路径` is a bounded projection rather than a shrunken full graph: current scene expanded, neighbours compact, at most eight frames and honest overflow counts. `全局概览` is scene-only; `技术连接` is the complete compatible projection.
+- The Owner-rejected parallel choice ladder is replaced by attached option rows plus a shared same-destination trunk. `ch02 → ch01_01` appears as `↩ 返回 ch01_01` in readable overview while its real edge remains technical.
+- Same-depth backward and later-component-to-earlier-scene routes also fold into return markers; same-depth forward routes do not. Missing endpoints are publicly reported instead of silently skipped.
+- Editor 45 files / 311 tests, typecheck and build passed. Fresh isolated Chromium evidence `WnTuWj` passed 27/27 with eight screenshots, unchanged Starter, empty error channels and released port 4211.
+- Replacement independent review is PASS with no BLOCKER/HIGH/MEDIUM/LOW after two HIGH findings were repaired.
+
+**EVIDENCE_BOUNDARY**
+
+- Owner approved the focus/overview/technical design direction and the merge-bus concept. Owner has not yet performed the final visual retest against the real rendered screenshots; no automated actor fills that gate.
+- Earlier failed diagnostics and runner-contract corrections remain historical FAILED evidence and are not rewritten. The authoritative fresh browser result is `WnTuWj`.
+
+**GIT_STATE**
+
+- `CODE_EVIDENCE_HEAD=161f8dbe76361a731bf09a1b5dccb88b81140d47`; `surdet/main=f8943c293c4537b3867cc8eeea316b19bb4a0b40`; push not performed.
+- The existing long-term project ledger remains untracked/unstaged and records mainline Wave 6 local closure plus Pre-Wave-7 Frontend Polish. Mainline Wave 7 remains undesigned, unauthorized and unstarted.
+
+**STOP_BOUNDARY**
+
+- Stop at `WAITING_FOR_OWNER_VISUAL_RETEST_AND_REVIEW_DECISION`. Do not begin Frontend Pass 3B, mainline Wave 7, remote review, push, deployment or release.
