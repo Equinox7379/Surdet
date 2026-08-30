@@ -4815,3 +4815,247 @@ authorizedCommit = only after every freeze gate passes, create ordinary local co
 authorizedFormal = only after the commit establishes a clean CODE_EVIDENCE_HEAD, consume the existing focused FORMAL 1/1 using the frozen focused runner
 prohibitedStill = no acceptance-prep; no external Agent; no Owner retest; no apply; no push; no Wave 7
 ~~~
+
+### 2026-08-30 — W6 owner-review comprehensibility focused FORMAL pass
+
+~~~text
+timestamp = 2026-08-30
+authorizationId = W6-OWNER-REVIEW-COMPREHENSIBILITY-CODE-EVIDENCE-FREEZE-RECOVERY-1
+formalStatus = PASSED; evidenceClass FORMAL; focused FORMAL 1/1 CONSUMED; milestones 11/11 PASSED; lastPassedNode cleanup-and-identity; firstFailedNode null
+formalArtifact = C:/Users/Equinox/AppData/Local/Temp/surdet-owner-review-comprehensibility-formal-zoT4jx/artifact/evidence.json bytes 54888 sha256 7B78F7C0654C0251AC2FB5DAC40A109A2B71C5946B6CE93797D44111866A82D4
+formalIdentity = C:/Users/Equinox/AppData/Local/Temp/surdet-owner-review-comprehensibility-formal-zoT4jx/artifact/identity.json bytes 233 sha256 E4715581AB06210CEC610342D1ED0D7BC5660AAE467D3E6F58468E64358CAC47
+formalRunHead = faf874c0677f6c6a70b38c325ddf228ee46ee828
+codeEvidenceHead = faf874c0677f6c6a70b38c325ddf228ee46ee828
+formalRunnerSha256 = B797D224928B24833781D9EC295023834674F522886679B406C22FB4CD62FE34
+stopState = W6_OWNER_REVIEW_COMPREHENSIBILITY_FORMAL_PASSED; READY_FOR_INDEPENDENT_MANAGER_REVIEW; ACCEPTANCE_PREP_NOT_STARTED; EXTERNAL_AGENT_NOT_STARTED; OWNER_RETEST_NOT_STARTED; APPLY_NOT_PERFORMED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — W6 owner-review comprehensibility acceptance-prep authorization and baseline
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-ACCEPTANCE-PREP-1
+authorizationClass = one acceptance-prep invocation only; no external Agent, Owner retest, decision write, plan, execute, apply, commit, push, or Wave 7
+acceptancePrepBudgetBeforeRun = 0/1 consumed; the budget becomes consumed when the runner creates a new acceptance root; no rerun after command failure or readback-helper failure
+baselineHead = faf874c0677f6c6a70b38c325ddf228ee46ee828
+baselineRemote = surdet/main f8943c293c4537b3867cc8eeea316b19bb4a0b40; ahead 13; behind 0
+baselineGit = staging empty; only tracked diff is this append-only Wave 6 Execution Ledger; unrelated untracked paths preserved
+historicalAcceptanceRoots = exactly C:/Users/Equinox/Desktop/surdet-human-review-acceptance-jMSfT5; immutable and excluded from reuse
+humanReviewRunnerIdentity = packages/cli/e2e/human-agent-review-wave-6.e2e.mjs bytes 98051 sha256 105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246
+wave5PrepRunnerIdentity = packages/cli/e2e/agent-candidate-composition-wave-5.e2e.mjs bytes 76459 sha256 6A63D4FE415B9190DB8E0CCA9BA06378AA6E7C4B9CA36F00A6041E4E1523E216
+baselineStatus = MATCHED; unique acceptance-prep invocation authorized next
+forbiddenReruns = tests, typecheck, build, preflight, DIAGNOSTIC, FORMAL, and verify:all
+~~~
+
+### 2026-08-30 — W6 owner-review comprehensibility acceptance-prep pass
+
+~~~text
+timestamp = 2026-08-30
+taskId = W6-OWNER-REVIEW-COMPREHENSIBILITY-ACCEPTANCE-PREP-1
+acceptancePrepBudget = 1/1 CONSUMED_AND_PASSED; command invoked once; no rerun performed
+command = node packages/cli/e2e/human-agent-review-wave-6.e2e.mjs --mode=acceptance-prep
+log = C:/Users/Equinox/AppData/Local/Temp/surdet-w6-owner-review-comprehensibility-997eab8cb6a946f7a00f2717b9285619/47-owner-review-acceptance-prep.log exit 0 bytes 906 sha256 8E277BAD4D9F6A4E8DD06479333D9DBBA4F8541231C1DC74FDE99E812B1BC10F
+acceptanceRoot = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa; basename surdet-human-review-acceptance-OPrfDa; mkdtemp suffix OPrfDa non-empty; on Desktop=true; outside repository=true; absent before this invocation=true; distinct from immutable historical root jMSfT5=true
+projectRoot = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/project
+dataDir = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/agent-data; projectIdentity 3317f3d18461997337eb823fc21b1df7; dataDirFileCountBeforeAgent 38
+candidateRefs = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/candidate-refs.json bytes 1636 sha256 5C9CBADF3297FD5FC233F7F9D58ACF17635130A12CCF2D94B64CB66EE9728A8F
+acceptanceInstructions = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/acceptance-instructions.md bytes 1970 sha256 66B2C7EEEE012405AC92E1828926D25394101966B334EFBDF223478E877A116D
+mcpStageConfig = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/mcp-stage.json bytes 485 sha256 78E949049B8DA027052A3DB4C2C6A09652113783251C4387FF4673E2650AB41F; launcher E:/surdet/packages/cli/dist/agent-port/main.js; project and SURDET_AGENT_DATA_DIR point only to OPrfDa; policy stage
+applyResumeTemplate = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/apply-resume-template.json bytes 346 sha256 22DC3D5C90A4BD16A297C4CCA9F1CE30F548EE3D51A6AA9230EC6D12F5B5EC2D; status NOT_AUTHORIZED; project/dataDir point only to OPrfDa
+evidence = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/evidence.json bytes 25906 sha256 FD5A174E897457CEC03C46B101C8F723D34E111993A5A63539BBAC6CC938BC29
+identity = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/identity.json bytes 196 sha256 B43532A1B0C07E8E3B8EC79D92BC1823FDCEA630DEC8E162445BEF580439002E
+outerHumanReviewRunner = bytes 98051 sha256 105244D354FD9ACABA2EC4FEBD01CCFB67907F8295562CBC6A64499709CE3246; command result runHead faf874c0677f6c6a70b38c325ddf228ee46ee828
+prepHelperRunner = evidence runnerSha256 6A63D4FE415B9190DB8E0CCA9BA06378AA6E7C4B9CA36F00A6041E4E1523E216; frozen agent-candidate-composition-wave-5.e2e.mjs bytes 76459
+candidateA = change chg_0001_9d11f895-34c5-4cbe-bfa3-5710041d0f3d; capsule 0e486632-ae4b-4c8a-ab06-9d000eb54e98; payload bytes 6545 sha256 8FFF2A96B7EA19A5404961D1D280ED7505AEB1A3E9388C89E6D4E2E9AEB5D407; identity.json bytes 335 sha256 32BFC56C2275EF556BC5E8739EB804FED6F4547241990EE4D54FFE0F8B2EA430; sealed OPEN ready non-integration; projectMutation=false
+candidateB = change chg_0001_de78826f-bcb8-4ca0-882a-df221480cbbd; capsule c1f9c98a-467b-4341-9307-f3eba1ad73ac; payload bytes 8590 sha256 19199EB8DDFD35C25D3A1559F8C08E16844FF1111DC1C74541C10679DB4A07AE; identity.json bytes 335 sha256 96AED363C2938EF373E3435AB379669610386B21550B2E48E7BDD0A6D77E2B9E; sealed OPEN ready non-integration; projectMutation=false
+candidateC = change chg_0001_96043a28-209b-4ad0-bfbf-8d5d1b7d656d; capsule 331e0b30-095c-4141-9731-40108627e59e; payload bytes 4868 sha256 C856C76C4D11F9542A9F58F1C9240DC6169FB0B2188D8853C95F9D02C79306D1; identity.json bytes 335 sha256 E040D7C8832E4E890E2DCA23EE263678471F4D0D0704F20CB5FA12AC8C702D77; sealed OPEN ready non-integration; projectMutation=false
+candidateD = change chg_0001_f3032a91-6c0d-4d55-ad8b-5ab67b0671dc; capsule 162db5ec-e5ad-4fd2-9b06-452e74245841; payload bytes 6545 sha256 12448C146FFAFD045D001EB425E40CBA02E4D690634ED03D1F29B373EF3115E3; identity.json bytes 335 sha256 72C95532129CFDEDBC5324609AF766AC772A9A9D074A308547A6AC24D9114A2A; sealed OPEN ready non-integration; projectMutation=false
+sourceChangeBoundary = exactly four chg_* directories matching A/B/C/D; all evidence source records OPEN and integration=false; no external or integration active change; integrationChangeCreated=false
+projectAndStarterTrees = project, Starter before, and Starter after each fileCount 37 bytes 6705750 sha256 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6; runner-scope independent disk comparison diff count 0; projectFixtureEqualsStarterAtPrep=true; originalStarterUnchanged=true
+purityAndSafety = externalAgentStarted=false; externalAgentToolsCalled=[]; applyAuthorized=false; projectMutation.occurred=false; stageProjectMutated=false; errors=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; .locks contains only empty changes/projects namespace directories and no lease.json
+readbackNotes = two post-success helper commands produced no mutation: one used an invalid PowerShell Split-Path parameter set and one initially included runner-excluded node_modules/dist paths; both were corrected with short read-only commands against the same OPrfDa root; acceptance-prep was not rerun
+gitAfterPrep = HEAD faf874c0677f6c6a70b38c325ddf228ee46ee828; surdet/main f8943c293c4537b3867cc8eeea316b19bb4a0b40; ahead 13; behind 0; staging empty; only tracked diff is this Execution Ledger; no commit or push
+toolsCalled = []
+stopState = W6_OWNER_REVIEW_COMPREHENSIBILITY_ACCEPTANCE_PREP PASSED; ACCEPTANCE_PREP_ATTEMPTS 1/1; WAITING_FOR_EXTERNAL_AGENT_COMPARISON_STAGE_AUTHORIZATION; EXTERNAL_AGENT_NOT_STARTED; OWNER_RETEST_NOT_STARTED; APPLY_NOT_AUTHORIZED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — OPrfDa comparison stage, Owner decision, and save-action layout repair
+
+~~~text
+timestamp = 2026-08-30
+comparisonStage = PASSED; external Agent used the OPrfDa Surdet Agent Port session and stopped at the human decision gate without plan, execute, apply, or project mutation
+comparisonReview = review_comparison_60ced6b251ba43e6bffa41fc23e76525; state COMPARISON_PREPARED; comparisonFingerprint 507e001233c5806fae37d30c61fb72b91ddc2bee983620edfcb281a6c92eb71e; reviewFingerprint bd89be98a7ce904395d6ea8291517c7328b5eb7454d9e63c3f1b5a6172fd5e74
+comparisonPayload = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/agent-data/3317f3d18461997337eb823fc21b1df7/reviews/review_comparison_60ced6b251ba43e6bffa41fc23e76525/comparison/review.json bytes 72031 sha256 A65C749AA8038525E4BE1B04B04F87929EBBF38F9B643B542369A8D580E1772F
+independentReadback = two A/D identical groups each retain sourceCount=2; C remains OBJECT_RESULTS_DIVERGE selection-required; B scene-to-timeline dependency remains implicit; decision/plan/approval/return receipts were absent before Owner action; fixture and Starter each 37 files / 6705750 bytes with mismatchCount=0; lock namespaces empty
+ownerVisualFacts = supplied screenshots show Chinese comparison cards, A/D same-result source cards, C Alpha route C distinction, B automatic dependency, expanded technical identity, a selected Alpha route A result, and the saved-decision terminal marker
+ownerDeferredFinding = overall visual language remains strongly machine-generated; explicitly deferred to a later design pass and not mixed into this repair
+decisionReceipt = decision.json bytes 1909 sha256 DD0BAC07068F6F7F6E38B6419EA87299FBDCED55CB7C2F6697907EE88D1E5763; decisionId 01706b19-f1a8-410e-8157-f51ad261007e; conflict 802316b444e2a42fcb783d92fae135a9 resolved choose-unit d1ad842bbf9e8494cb43363333e01dc5
+decisionMapping = selected display ordinal A maps to original candidate D; its scene finalFingerprint is identical to original candidate A, so the chosen visible Alpha route A result is semantically equivalent; reviewed-plan acceptance must still prove both A/D provenance sources are retained
+ownerAcceptanceBoundary = save succeeded and project/Starter mismatchCount remains 0; close-and-reopen receipt persistence is not yet Owner-confirmed, so full Owner comparison acceptance remains OPEN
+uiFinding = Owner reported and screenshots confirm that 保存我的决定 stays floated over scrolling review content because .review-operations used position sticky and bottom 0 in both base and narrow-layout CSS
+uiRepair = packages/editor/src/styles.css now keeps .review-operations in normal document flow with position static and removes the narrow-layout sticky override; no review semantics, receipt logic, content cards, or broader visual styling changed
+permanentRegression = packages/editor/test/review-operations-layout.test.ts rejects sticky/fixed positioning and bottom anchoring for every .review-operations rule
+red = npm test -- --run test/review-operations-layout.test.ts exit 1; expected sticky positioning was reproduced
+green = npm test -- --run test/review-operations-layout.test.ts test/review-panel.test.ts exit 0; 2 files / 13 tests
+editorTypecheck = npm run typecheck exit 0
+editorBuild = npm run build exit 0; existing chunk-size advisory only
+gitBoundary = no staging, commit, push, apply, external Agent continuation, or Wave 7 action performed; existing unrelated untracked paths preserved
+nextStop = OWNER_REOPEN_RECEIPT_RETEST_AND_UI_LAYOUT_RETEST; then reviewed-plan stage may be separately authorized
+~~~
+
+### 2026-08-30 — OPrfDa Owner comparison acceptance pass
+
+~~~text
+timestamp = 2026-08-30
+ownerOriginalFeedback = Owner comparison 验收通过：决定重开可读、原选择保持、控件只读、按钮位置正常。
+ownerComparisonAcceptance = PASS
+decisionReceiptReopen = PASS; receipt remained readable, original choice remained selected, decision controls remained readonly, and no replacement decision was requested
+decisionIdentityReadback = decision.json bytes 1909 sha256 DD0BAC07068F6F7F6E38B6419EA87299FBDCED55CB7C2F6697907EE88D1E5763; decisionId 01706b19-f1a8-410e-8157-f51ad261007e; decisionFingerprint d8fd4c08fa24ca0e0b704727b6bfdb8fc1490ea02359eca4ade6aa48b9803481
+decisionBinding = reviewId review_comparison_60ced6b251ba43e6bffa41fc23e76525; comparisonFingerprint 507e001233c5806fae37d30c61fb72b91ddc2bee983620edfcb281a6c92eb71e; projectIdentity 3317f3d18461997337eb823fc21b1df7; expectedProjectRevision d63c0e5c32cc9d8d7940a541a2f17d41e1cec7d5c1419e8ab44dce8e9d35ab6f
+decisionResolution = conflict 802316b444e2a42fcb783d92fae135a9 choose-unit d1ad842bbf9e8494cb43363333e01dc5; this display-A unit originates from candidate D but has the same Alpha route A final fingerprint as candidate A
+nextStageHardRequirement = reviewed plan and replay must retain provenance for both A/D identical scene sources c047ff34d00b1197769e1e07bb4420bf and d1ad842bbf9e8494cb43363333e01dc5 while excluding C unit 9ed9dffb7dcd01b222819f172662489f and implicitly including B timeline unit 40635853041b79501c5675479f27a12b
+uiLayoutRetest = PASS; 保存我的决定 / 决定已保存 remains in its document location and no longer floats with the viewport
+projectMutation = NO; no reviewed plan, integration execute, result review, approval, apply, commit, push, or Wave 7 action performed by this Owner gate
+nextStop = READY_FOR_EXTERNAL_AGENT_REVIEWED_PLAN_STAGE_AUTHORIZATION
+~~~
+
+### 2026-08-30 — OPrfDa reviewed stage and result-review independent manager verdict
+
+~~~text
+timestamp = 2026-08-30
+externalAgentReviewedStage = PASSED; the bounded second-stage call sequence reached the expected human approval gate without approval, return, commit, apply, rollback, or project mutation
+plan = pln_c172eb603f9f593ab48542da850b4be5; planFingerprint c172eb603f9f593ab48542da850b4be55993e4c3006a5e1b3af5aaef3e70ff14; payload.json bytes 10919 sha256 E7DB1A52F7BBB806EEBA090CCF06BCF93EF7AEC0E6309EBC8C805A82F5EE3E57; identity.json bytes 298 sha256 87780C6FBDB58D0C0283BA954583990050F3AFF4C6DCF6058231A936311AD870
+reviewBinding = human-reviewed reviewId review_comparison_60ced6b251ba43e6bffa41fc23e76525; decisionId 01706b19-f1a8-410e-8157-f51ad261007e; decisionFingerprint d8fd4c08fa24ca0e0b704727b6bfdb8fc1490ea02359eca4ade6aa48b9803481
+compositionContract = scene A/D deduplicated provenance retains c047ff34d00b1197769e1e07bb4420bf and d1ad842bbf9e8494cb43363333e01dc5; variable A/D provenance retains abcf4da450c0f394a76f1d342f29df85 and ea5c999de9c29b9e066e47968e128b8d; C unit 9ed9dffb7dcd01b222819f172662489f excluded; B timeline unit 40635853041b79501c5675479f27a12b implicitly included
+integrationChange = chg_0002_a69b23db-55f2-428d-930d-94ad04bb2c26; top-level change status OPEN; integration.status READY; workingRevision 4; nextOperationIndex 4; four replayed operations retained; this corrects the report's shorthand that called the whole change READY and operationCount 4
+freshEvidence = diff diff_1788082704237_cced8ceb-82b7-4710-a242-a99fa5319d83; validation validation_1788082709303_acce0535-5239-49d5-bfb2-1d55e5c38086 ok with three known base speaker warnings; simulation simulation_1788082724874_cdb3802f-0c85-4238-a50d-653579e2d2a1 passed 13 paths; Alpha trace trace_1788082731095_ae9edd7b-202b-48e1-8fbd-125f508a6eeb; Beta trace trace_1788082744959_e46ca1b0-40c3-4a7f-9fa6-5086fc6558c9
+resultReview = review_result_f1dce4ad9c3a4e0ba1a97e5b9cc3d59a; state STAGE_READY; reviewFingerprint 33903c230559932aef3ff176572267d3a0e397edf01e3c32eeb58d2338dc2eb7; result/review.json bytes 25863 sha256 AC2BE34B84636E0417DC7A0060EE335DFB80F23AE1F56E8076AA03C2CEFC5F70; identity.json bytes 726 sha256 65A0034A38FA0C48003DAF3DE07B08DBCB9D7007A5D21331758EBDFB616BE975
+pathCorrection = authoritative result review root is the review_result_f1dce4ad9c3a4e0ba1a97e5b9cc3d59a directory; result/project is its isolated preview project child, not the review root
+approvalGate = REVIEW_APPROVAL_REQUIRED with retryDisposition after-human-review; no final-approval.json, return-request.json, or approval receipt exists
+projectSafety = OPrfDa fixture project and original Starter remain 37 files each with mismatchCount 0; lock namespaces contain no lease file; stage project is isolated under agent-data
+confirmedFinding = diff and result review mark game.config.json unexpectedFormatChange=true; disk readback proves base file bytes 1623 with CRLF=69 and bareLF=0, while isolated stage result bytes 1625 with CRLF=0 and bareLF=73; semantics add only flag.alpha but the entire file's line-ending convention is normalized
+managerVerdict = EXTERNAL_AGENT_REVIEWED_STAGE PASS; RESULT_REVIEW PREPARED; INDEPENDENT_RESULT_REVIEW NEEDS_FIX; whole-file line-ending churn is not accepted for final Owner approval or isolated apply
+ownerGate = DO_NOT_APPROVE_YET; Owner result acceptance and approval receipt remain NOT_STARTED
+nextStop = WAITING_FOR_W6_CONFIG_EOL_PRESERVATION_REPAIR_AUTHORIZATION; no apply, commit, push, or Wave 7
+~~~
+
+### 2026-08-30 — W6-CONFIG-EOL-PRESERVATION-1 implementation and replacement result review
+
+~~~text
+timestamp = 2026-08-30
+authorizationId = W6-CONFIG-EOL-PRESERVATION-1
+authorizationBoundary = fix game.config.json original EOL preservation; add permanent CRLF/LF regression; generate fresh stage evidence and a fresh result review; preserve existing evidence; no approval, apply, push, or Wave 7
+implementation = packages/authoring/src/config-document.ts now serializes with the first newline convention present in the source document, defaulting to LF only when the source has no newline; variable.ensure, character.ensure, character.remove, and project.entry-scene.set share this serializer
+permanentRegression = packages/authoring/test/operations.test.ts exercises the real variable.ensure path with both CRLF and LF source documents, verifies the original style and final newline remain intact, and verifies flag.alpha semantic content
+red = npm run test --workspace @surdet/authoring -- operations.test.ts exit 1; CRLF case failed while LF passed; aggregate result 1 failed / 47 passed across 3 files
+focusedGreen = npm run test --workspace @surdet/authoring -- operations.test.ts config-operations.test.ts exit 0; 3 files / 48 tests passed
+parallelFullBoundary = npm run test --workspace @surdet/authoring exit 1 after 85 passed because Windows returned 19 unhandled spawn UNKNOWN errors while starting Vitest workers; no functional assertion failure observed; this run is not claimed as PASS
+serialFullGreen = npm run test --workspace @surdet/authoring -- --maxWorkers=1 --minWorkers=1 exit 0; 30 files / 262 tests passed
+authoringTypecheckBuild = PASS / PASS
+cliTypecheckBuild = PASS / PASS; rebuilt Agent Port uses the repaired Authoring output
+diffChecksBeforeLedger = git diff --check PASS; no staging used
+firstFreshAttempt = C:/Users/Equinox/AppData/Local/Temp/surdet-w6-config-eol-preservation-1-uoNrDh/evidence.json bytes 6636 sha256 05EBCD50BADE605857A689434C77A3572D7A48DCAA6CA1F40604098C12DCF005; identity.json bytes 265 sha256 3E428EAA771C9BF875AF4F92D8B79DE8320642EFD8B8E37FD3D87325F4FE2307; stopped at composition.execute because the existing OPEN integration change is idempotently bound to its original executeOperationId; no new change or review created
+relocatedStoreAttempt = C:/Users/Equinox/AppData/Local/Temp/surdet-w6-config-eol-preservation-1-fresh-JWVHYt/evidence.json bytes 9943 sha256 E89C1C18B02679BCCFDBD9C27EF5898B261B92DA6527A40944EE7E0C347A144F; identity.json bytes 271 sha256 2FFE3D40E2B7876E944EA49AF56D37E45DF8C289F839B24392F1B63E87DBE9CC; stopped at composition.inspect because copied plan sidecars bind their absolute artifact paths; classified harness-invalid, not product failure; original evidence remained untouched
+retirementAudit = defective stage chg_0002_a69b23db-55f2-428d-930d-94ad04bb2c26 was resumed through the public stage-policy port and transitioned OPEN/READY to ROLLED_BACK by change.rollback; the old result review was not deleted, moved, rewritten, or reused
+oldResultReviewPreserved = review_result_f1dce4ad9c3a4e0ba1a97e5b9cc3d59a identity.json, result/review.json, and result/project/game.config.json retained their exact pre-retirement bytes and SHA-256 identities
+replacementChange = chg_0001_e2f5fd21-7564-4c2b-bdfd-6e3efd741532; OPEN integration; status READY; workingRevision 4; four replay operations; executeOperationId w6-config-eol-preservation-1-replacement-001
+replacementFreshEvidence = diff diff_1788084080622_3920908f-3c54-40c7-8ff4-7609bb572456; validation validation_1788084080674_87512698-0d61-4ea9-a0a4-4975938f908f ok; simulation simulation_1788084080730_f537f82a-bff1-4d55-a15c-9c427ff088c2 passed; Alpha trace trace_1788084080800_5c4a4fe2-1db6-428c-8fda-2e26330f2477 passed with 5 events; Beta trace trace_1788084080842_69266c16-63eb-4e19-80e8-459cec2a9936 passed with 6 events
+replacementCapsule = capsule 32ecb915-a039-46bb-b3e4-6fe011aaac77; payload.json bytes 22237 sha256 1D718990028AD38950C75F3AE0784CA455614F678648DAF395C47434D038B129; projectMutation.occurred=false; integration provenance retains both A/D identical groups, excludes C, and includes the B timeline closure
+replacementResultReview = review_result_d42f4f17afde4678acd741a962acb9e1; result/review.json bytes 25773 sha256 22943FABB6C226095FADDDA3146AA49DB28DC076EBD270BE6B53D4E771393CF6; identity.json bytes 726 sha256 28B6F4389568DB422B371BEEA265B31E7D38D0A1ACF3A5D1CC45C1A14719959D
+replacementConfig = result/project/game.config.json bytes 1698 sha256 65A13CE8B563514E3D89F4C75DBD0A48DC2E616A206A2BD4EDB1C5E2037F7BCC; CRLF count 73; bare LF count 0; endsWithCRLF=true; flag.alpha remains string with initial empty string; unexpectedFormatChange=false in fresh diff, returned projection, and disk review
+replacementArtifact = C:/Users/Equinox/AppData/Local/Temp/surdet-w6-config-eol-preservation-1-replacement-CLh5us/evidence.json bytes 127606 sha256 B8024903483CC632D4112AA3CB4D58B9D48527B37FF20862E80AB74C4C37C752; identity.json bytes 279 sha256 A1D28D475E17B4385E1E6F69A92AB15843BE1CB16AFA8A25D900C91BE78FFE83; eight milestones passed; firstFailedNode null; errors=[]; stderrLines=[]
+approvalBoundary = review.inspect-approval returns REVIEW_APPROVAL_REQUIRED; no final-approval.json or return-request.json exists in the replacement review
+projectSafety = OPrfDa fixture tree and base game.config.json remain byte-identical before and after replacement stage; projectMutation=false; no apply or commit
+gitState = HEAD remains faf874c0677f6c6a70b38c325ddf228ee46ee828; no staging, local commit, or push; pre-existing Editor CSS/test and unrelated untracked paths preserved
+stopState = W6_CONFIG_EOL_PRESERVATION_RESTORED; REPLACEMENT_STAGE_READY; REPLACEMENT_RESULT_REVIEW_PREPARED; WAITING_FOR_OWNER_RESULT_REVIEW; APPROVAL_NOT_PERFORMED; APPLY_NOT_PERFORMED; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — Surdet Editor local redeployment on the reserved port
+
+~~~text
+timestamp = 2026-08-30 18:39 Asia/Shanghai
+trigger = Owner reported connection refused while reopening the local Editor
+precheck = no process was listening on 127.0.0.1:4175; 4173 also had zero listeners
+deploymentCommand = npm run dev -w surdet-editor -- --host 127.0.0.1 --port 4175
+launcherPid = 41964
+listenerPid = 28772; process node.exe; command line resolves to E:/surdet/packages/editor/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4175
+runtimeVerification = http://127.0.0.1:4175/ returned HTTP 200; title was Surdet 剧本编辑器; /@vite/client returned HTTP 200
+portBoundary = 4173 remained free with zero listeners; no neighboring-project process was stopped or modified
+stdoutLog = C:/Users/Equinox/AppData/Local/Temp/surdet-editor-4175-20260830-183952.out.log; startup readback 172 bytes; Vite 6.4.3 ready in 696 ms
+stderrLog = C:/Users/Equinox/AppData/Local/Temp/surdet-editor-4175-20260830-183952.err.log; startup readback 0 bytes
+scope = local Editor process start only; no source edit beyond this append-only Ledger entry; existing Authoring and Editor worktree changes preserved
+gitBoundary = no staging, commit, push, approval, apply, external Agent continuation, or Wave 7 action performed
+stopState = LOCAL_EDITOR_REDEPLOYED_ON_4175; WAITING_FOR_OWNER_RESULT_REVIEW
+~~~
+
+### 2026-08-30 — delegated replacement result acceptance and approval receipt
+
+~~~text
+timestamp = 2026-08-30 18:53 Asia/Shanghai
+authorization = project Owner explicitly delegated the pending result-review gate to the manager and requested no further Owner-operated acceptance steps
+ownerManualVisualAcceptance = NOT_PERFORMED for replacement review; this is not represented as an Owner visual PASS
+managerTechnicalAcceptance = PASS for review_result_d42f4f17afde4678acd741a962acb9e1
+reviewStateBeforeApproval = STAGE_READY; no final-approval.json, return-request.json, or decision.json existed in the replacement result review
+freshness = diff fresh; validation fresh; simulation fresh; runtime fresh; warnings empty
+semanticReadback = Alpha result contains Alpha route A and excludes Alpha route C; Beta scene calls beta_opening and contains Beta route; beta_opening duration 400 ms with one track
+compositionReadback = A/D scene provenance retains c047ff34d00b1197769e1e07bb4420bf and d1ad842bbf9e8494cb43363333e01dc5; C unit 9ed9dffb7dcd01b222819f172662489f excluded; B timeline unit 40635853041b79501c5675479f27a12b implicitly included
+formatReadback = all four diff files unexpectedFormatChange=false; result game.config.json bytes 1698 sha256 65A13CE8B563514E3D89F4C75DBD0A48DC2E616A206A2BD4EDB1C5E2037F7BCC; CRLF 73; bare LF 0; endsWithCRLF=true
+editorFocusedVerification = npm test --workspace surdet-editor -- --run test/review-workspace.test.ts test/review-panel.test.ts test/review-preview.test.ts test/review-operations-layout.test.ts exit 0; 4 files / 40 tests passed
+browserBoundary = local Editor returned HTTP 200 on 4175; the in-app automation surface aborted the native showDirectoryPicker request, so no browser-click visual claim is made and the Owner was not asked to intervene
+approvalWriter = canonical Editor openReviewWorkspace and writeApprovalReceipt code path, backed by a create-only local FileSystemDirectoryHandle adapter; temporary harness removed after success
+approvalId = approval_manager_83b1e787-4dbc-428a-bf39-bd65203150bd
+approvalFingerprint = aa59a29139fee3971279b05cab738a58b4cb13a0174057bf50a4749596613418
+approvalReceipt = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/agent-data/3317f3d18461997337eb823fc21b1df7/reviews/review_result_d42f4f17afde4678acd741a962acb9e1/final-approval.json bytes 1471 sha256 322AA3E179C0B5F9B9C7E922480E7AA3C0B8A6BF2D645A052D6573A01E06EB83
+reopenVerification = canonical Editor openReviewWorkspace returned receiptStatus approval-written with the same approvalId and approvalFingerprint; receipt bytes/SHA remained unchanged; return-request.json remained absent
+acceptanceEvidence = C:/Users/Equinox/AppData/Local/Temp/surdet-owner-result-technical-acceptance-1788087226611.json bytes 4271 sha256 08F08AB31313987190CF299B61624D38F9E416C45B7859E3936BBF698E13B29F
+projectSafety = OPrfDa fixture project and original Starter each remained 37 files / 6705750 bytes / sha256 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6 before and after approval
+mutationBoundary = approval receipt only; projectMutation=false; apply=false; no commit, push, external Agent continuation, or Wave 7 action
+stopState = W6_REPLACEMENT_RESULT_MANAGER_ACCEPTANCE_PASS; APPROVAL_RECEIPT_VERIFIED; READY_FOR_SEPARATE_ISOLATED_APPLY_DECISION
+~~~
+
+### 2026-08-30 — delegated isolated apply pass and evidence-refresh correction
+
+~~~text
+timestamp = 2026-08-30
+authorization = project Owner explicitly delegated the remaining machine-verifiable acceptance and isolated apply work to the manager, requested no further Owner-operated steps, and did not authorize repository push or Wave 7
+targetBoundary = only C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/project may mutate; E:/surdet/examples/starter and the repository worktree must not be used as the apply target
+guardAttempt1 = FAILED before MCP startup because the temporary verifier treated a cross-drive path.relative result as if the Desktop project were inside E:/surdet; no service call or project mutation occurred
+guardAttempt1Artifact = C:/Users/Equinox/AppData/Local/Temp/surdet-wave6-isolated-apply-uUpYnB/evidence.json bytes 1696 sha256 69AD0248EAE7C4614468CB223EFEABC6B3A10006ACB752C6D6A8C675CFB59B9F; identity.json bytes 205 sha256 DD5783A2AFBBBBC284E90522C071DD52DEC73B2BC60B18029274E56D15E2E1E1
+guardAttempt2 = FAILED fail-closed before commit; the verifier called change.diff before approval inspection, which correctly created fresh diff evidence diff_1788087710504_caf6505c-d8ac-4626-a2bf-a95916ff277b and made the earlier approval stale; fixture project still unchanged
+guardAttempt2Artifact = C:/Users/Equinox/AppData/Local/Temp/surdet-wave6-isolated-apply-1JMxZd/evidence.json bytes 19278 sha256 2BC8850E7035152EC295365F802C44565A710C103608D8EEDBDF0FBB3C15339A; identity.json bytes 206 sha256 4815C9031E97B00618DBD56CBDD93581AA6BC8E01ED29DDE47B1836221A6DD9E
+refreshAttempt = created a new create-only result review and approval bound to the refreshed diff evidence, then stopped before commit because the verifier passed an unsupported approvalFingerprint property to review.inspect-approval and the MCP schema rejected it before dispatcher execution; no project mutation occurred
+refreshAttemptArtifact = C:/Users/Equinox/AppData/Local/Temp/surdet-wave6-review-refresh-apply-pSKnpu/evidence.json bytes 33916 sha256 424C042821E425965A1B8997B28FF93D437C6A6575978BC4E6DAE371A57DFA06; identity.json bytes 212 sha256 C34CD5BF6623E5496C5987F6DCD42F875A368790ED1557043D8E45E16A2AFC92
+freshResultReview = review_result_c3899202a53a4a2baaec01fc1fe421cc; STAGE_READY; workingRevision 4; result/review.json bytes 25773 sha256 2BBE16D27592552C8ED254B93F2A0184C1B4256AA0D9D63E2FF9EC30A272B7DA; identity.json bytes 726 sha256 764F3E560839DD47CBC8137C53D377F087E303025DFC0108B17C465EEFBF1BA4
+freshResultEvidence = diff diff_1788087710504_caf6505c-d8ac-4626-a2bf-a95916ff277b; validation validation_1788084080674_87512698-0d61-4ea9-a0a4-4975938f908f; simulation simulation_1788084080730_f537f82a-bff1-4d55-a15c-9c427ff088c2; runtime traces trace_1788084080800_5c4a4fe2-1db6-428c-8fda-2e26330f2477 and trace_1788084080842_69266c16-63eb-4e19-80e8-459cec2a9936; resultTreeSha256 f5b359516a36baa2a924ec1e5ac3012070b0e9fc8f5057acf7b51e89fdfd8b0a
+delegatedApprovalRefresh = approval_manager_refresh_ac9187a0-7ae9-43f3-90d2-3b974d2260a5; approvalFingerprint 161ae5cdd20d9d1ed4b9565588b93eeeba732fefddf865a045ad470821934e11; canonical authoring approval fingerprint plus NodeReviewStore create-only persistence; the public review.inspect-approval service verified the receipt before commit
+freshApprovalReceipt = C:/Users/Equinox/Desktop/surdet-human-review-acceptance-OPrfDa/agent-data/3317f3d18461997337eb823fc21b1df7/reviews/review_result_c3899202a53a4a2baaec01fc1fe421cc/final-approval.json bytes 1479 sha256 31C9476A8C9C27255EF5E109AD29383C24C5CDF91901070CB6890A1540DDDE07; bytes and SHA unchanged after commit
+isolatedApply = PASS; change chg_0001_e2f5fd21-7564-4c2b-bdfd-6e3efd741532 transitioned to COMMITTED through the public apply-policy Agent Port with the verified approvalRef
+committedFiles = content/scenario/wave5_alpha.gal; content/scenario/wave5_beta.gal; content/timelines/beta_opening.json; game.config.json
+semanticReadback = wave5_alpha contains Alpha route A and excludes Alpha route C; wave5_beta references beta_opening; beta_opening durationMs 400 with one track; flag.alpha is string with initial empty string
+formatReadback = committed game.config.json bytes 1698 sha256 65A13CE8B563514E3D89F4C75DBD0A48DC2E616A206A2BD4EDB1C5E2037F7BCC; CRLF 73; bare LF 0; endsWithCRLF=true
+fixtureAfterApply = 40 files; 6706275 bytes; tree sha256 33887C529073460E4185938573059E77761BC621236B7BFCE8C50599DBD3A17E
+starterSafety = E:/surdet/examples/starter remains 37 files; 6705750 bytes; tree sha256 8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6
+cleanup = protocolErrors=[]; stderrLines=[]; childCleanupFailures=[]; activeLeaseDirectories=[]; all three temporary repository-root verifier scripts removed after execution
+applyEvidence = C:/Users/Equinox/AppData/Local/Temp/surdet-wave6-isolated-apply-final-gHcBhX/evidence.json bytes 8660 sha256 5E9C1CE81F799266A4F842B4146AC89EAA040F003637542041CD14B14DA42690; identity.json bytes 211 sha256 441555409C817F7037C4E65EB8771CCEE9DA90A8378DC5C255B639DCCB3F986F
+repositoryBoundary = isolated apply did not modify the repository source set; pre-existing Authoring EOL repair, Editor save-action layout repair, this append-only Ledger, and unrelated protected/untracked paths remain separate; no staging, repository commit, push, deployment, or Wave 7 action occurred
+stopState = W6_ISOLATED_APPLY_PASS; ORIGINAL_STARTER_UNCHANGED; READY_FOR_LOCAL_CODE_AND_DOCUMENT_CLOSURE; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
+
+### 2026-08-30 — local code closure verification and precise commits
+
+~~~text
+timestamp = 2026-08-30
+scope = close the already-authorized game.config.json EOL repair and review save-action layout repair after the delegated isolated apply pass; no new product scope, no verify:all, no push, and no Wave 7
+authoringFocused = npm run test --workspace @surdet/authoring -- operations.test.ts config-operations.test.ts exit 0; 3 files / 48 tests passed
+authoringSerialFull = npm run test --workspace @surdet/authoring -- --maxWorkers=1 --minWorkers=1 exit 0; 30 files / 262 tests passed
+authoringTypecheckBuild = PASS / PASS
+cliTypecheckBuild = PASS / PASS
+editorFocused = npm test --workspace surdet-editor -- --run test/review-workspace.test.ts test/review-panel.test.ts test/review-preview.test.ts test/review-operations-layout.test.ts exit 0; 4 files / 40 tests passed
+editorSerialFull = npm test --workspace surdet-editor -- --run --maxWorkers=1 --minWorkers=1 exit 0; 33 files / 223 tests passed
+editorTypecheckBuild = PASS / PASS; Vite large-chunk warning remains informational and is not introduced by the two-line layout change
+configEolCommit = f771848ccb23984d7810487d67a0c623122fa77b; message fix(authoring): preserve config line endings; exact scope four Authoring files; staged diff check passed
+reviewLayoutCommit = b2a795e18a3ed97d724acec8c211bb2dc35eb686; message fix(editor): anchor review save action; exact scope styles.css plus permanent layout test; staged diff check passed
+protectedBoundary = no protected file, historical artifact, dependency, lockfile, Starter, game content, Core, Renderer, Host, Shell, or unrelated untracked path staged or committed
+deliveryReport = docs/HUMAN-AGENT-REVIEW-WORKBENCH-STAGE-6-WAVE-6-DELIVERY-REPORT-2026-08-26.md created for Task 12; its post-commit disk identity will be recorded by readback rather than recursively prewritten
+stopState = READY_FOR_DOCUMENT_GATES_AND_PRECISE_DOCS_COMMIT; PUSH_NOT_PERFORMED; WAVE_7_NOT_STARTED
+~~~
