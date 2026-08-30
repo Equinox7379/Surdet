@@ -371,31 +371,56 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 
 ---
 
-## Task 3: Wave 3 — Flow Canvas and Timeline Desk
+## Task 3A: Wave 3A — Flow Canvas
 
-**Outcome:** 流程画布与时间轴分别使用任务匹配结构，不退化为卡片页；内联 SVG 色值进入主题 hooks；编辑、播放、拖动和定位保持。
+**Outcome:** 流程页成为中文优先、以真实图为主的专业剧情流程工作台；保留现有图构建、导航、平移、缩放、小地图、建链、重命名、删除、dirty/history/undo 路径，不制造章节、时长、状态或运行概率。
+
+**Design authority:** `docs/superpowers/specs/2026-08-30-surdet-flow-canvas-wave-3a-design.md`
+
+**Implementation taskbook:** `docs/superpowers/plans/2026-08-30-surdet-flow-canvas-wave-3a.md`
 
 **Files:**
 - Create: `packages/editor/src/styles/flow-workspace.css`
-- Create: `packages/editor/src/styles/timeline-workspace.css`
+- Create if justified by RED: `packages/editor/src/flow-presentation.ts`
+- Modify: `packages/editor/index.html`
 - Modify: `packages/editor/src/panels/flow.ts`
-- Modify: `packages/editor/src/panels/timeline-panel.ts`
-- Modify: `packages/editor/src/timeline-model.ts`
-- Modify: `packages/editor/src/styles.css`
-- Create: `packages/editor/test/editor-flow-visual-contract.test.ts`
-- Create: `packages/editor/test/editor-timeline-visual-contract.test.ts`
-- Modify: `packages/editor/test/flow-edit.test.ts`
-- Modify: `packages/editor/test/flow-labels.test.ts`
-- Modify: `packages/editor/test/timeline-model.test.ts`
+- Modify: `packages/editor/src/styles.css` only to remove migrated flow rules
+- Create: focused presentation / workspace / interaction tests
+- Create: isolated real-Starter browser runner
 
-- [ ] **Step 1:** RED: semantic SVG classes/CSS variables, no hardcoded decorative accent colors, selected nodes via surface/outline/text.
-- [ ] **Step 2:** RED: timeline command bar remains local, play controls retain callbacks, ticks/cues preserve runtime geometry, selection/error use full-boundary signals.
-- [ ] **Step 3:** Migrate flow DOM/SVG presentation without changing graph building or edit semantics.
-- [ ] **Step 4:** Migrate timeline chrome/tracks/cues without moving time calculations or drag state.
-- [ ] **Step 5:** Expose a collapsible timeline Dock projection to the integrated script workbench by reusing the same timeline selection/edit model and callbacks; the full timeline mode and compact Dock must never create two edit truths.
-- [ ] **Step 6:** Keep functional gradients only where they encode time/progress and document their selector in the permanent test.
-- [ ] **Step 7:** Run flow/timeline focused suites, full Editor test, typecheck/build and real drag/play checks.
-- [ ] **Step 8:** Commit exact Wave 3 paths as `feat(editor): rebuild flow and timeline workspaces`; no push.
+- [ ] **Step 1:** RED for semantic workbench regions, Chinese display projection, accessible node interaction, complete selected / invalid boundaries and no decorative rainbow / colored selection rail.
+- [ ] **Step 2:** Add the smallest pure display projection without changing graph, scene text or serialized values.
+- [ ] **Step 3:** Rebuild the flow shell and SVG presentation around the existing graph and view state; every command must be functional.
+- [ ] **Step 4:** Preserve click, keyboard open, pan, zoom, minimap, drag-link, rename, delete, dirty and undo behavior.
+- [ ] **Step 5:** Run focused tests, full Editor test, typecheck/build and isolated real-Starter browser evidence at desktop, narrow and 200% zoom.
+- [ ] **Step 6:** Independent review, exact code commit, Ledger closure; no push.
+
+---
+
+## Task 3B: Wave 3B — Timeline Desk
+
+**Outcome:** 在独立代码证据中重构完整时间轴页；中文显示继续投影稳定英文枚举，先解决真实编辑正确性，再迁移视觉。剧本页 Timeline Dock 暂缓。
+
+**Required correctness before visual closure:**
+- timeline-specific undo must not undo scene text;
+- destructive track-type replacement / cue deletion must have an explicit recovery contract;
+- new tracks and cues must not hardcode Starter-only assets;
+- CRLF / LF must be preserved;
+- tick overlap and narrow-layout reachability must be corrected;
+- serialized `background/portrait/camera/screen/particle/audio` and action enums must remain unchanged.
+
+**Dock deferral contract:**
+- define zero / one / multiple timelines referenced by the current scene;
+- define the sole timeline and cue selection truth;
+- keep compact and full mounts mutually exclusive;
+- show an honest empty state when no association exists;
+- never display the first timeline as if it were current-scene truth.
+
+- [ ] **Step 1:** Write and review a separate 3B design / taskbook after 3A closes.
+- [ ] **Step 2:** Establish correctness RED before visual RED.
+- [ ] **Step 3:** Implement the minimum Editor-only correction and full-page Timeline Desk.
+- [ ] **Step 4:** Run proportional timeline, Editor and real-browser gates in a separate code-evidence commit.
+- [ ] **Step 5:** Revisit the script Dock only after its truth contract exists.
 
 ---
 
@@ -724,3 +749,31 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 - `PUSH = NOT_PERFORMED`
 - `WAVE_3 = NOT_STARTED`
 - Create only the exact docs-only closure commit, then stop. Do not push or begin Wave 3.
+
+### 2026-08-30 — Wave 3 scope correction and Flow Canvas 3A initialization
+
+**CONFIRMED_FACTS**
+
+- The owner explicitly authorized continued implementation toward the mature desktop-authoring reference, with human-friendly Chinese-first language and actual capability taking priority over visual imitation.
+- Wave 3A baseline HEAD is `2fdbd59eaa4f00669dc5b8a22c754bcb57949b45`; local `surdet/main...HEAD` is behind 0 / ahead 26. Tracked worktree and staging were empty before the Wave 3A documents were created. Existing protected and unrelated untracked paths remain preserved and unstaged.
+- The original combined Task 3 mixed two independent high-interaction surfaces and proposed a script-page Timeline Dock without an authoritative scene-to-timeline selection contract. The current scene may reference zero, one or multiple timelines, while `state.currentTimeline` is only the globally opened timeline. Showing it in the script page would risk presenting the wrong timeline as current-scene truth.
+- Flow already has real scene / label / configuration-entry nodes, real flow / goto / jump / call / switch / loop / choice / condition / host connections, in-memory layout, pan, zoom, culling, minimap, click navigation, drag-to-link through scene dirty/history/undo, and rename / delete helpers. Wave 3A can therefore be a presentation and accessibility reconstruction without graph or file-format changes.
+- The current product has no authoritative chapter hierarchy, duration, production state, version, collaboration, comments, branch probability or path-coverage facts. Wave 3A will omit them rather than imitate the reference with static data.
+- Timeline read-only audit identified separate correctness work: global undo can affect scene history while timeline mode is active, destructive edits lack a recovery contract, default cues hardcode Starter assets, timeline writes normalize EOL to LF, and short timelines can produce overlapping ticks. These findings justify an independent Wave 3B before visual closure.
+- Port `4173` remains reserved for the neighbouring Jiuan workspace. Port `4175` remains the existing Surdet Editor manual preview and will not be stopped; automated Wave 3A evidence will use a separate strictly free port.
+- Wave 3A design authority is `docs/superpowers/specs/2026-08-30-surdet-flow-canvas-wave-3a-design.md`; its executable taskbook is `docs/superpowers/plans/2026-08-30-surdet-flow-canvas-wave-3a.md`. This master taskbook remains the single Execution Ledger.
+
+**REASONABLE_INFERENCES**
+
+- Splitting Flow 3A from Timeline 3B is the fastest reliable route to the reference-level experience because each surface keeps a small, attributable verification boundary.
+- A restrained paper / ink / steel-blue flow canvas with real counts, Chinese labels, real tools and non-color-only states can materially improve the product without inventing backend facts.
+
+**UNVERIFIED_ITEMS**
+
+- Wave 3A permanent RED, production implementation, Editor regression, browser evidence and final independent review have not yet run.
+- Final visual proximity, 800 / 1024 / 1440 geometry and 200% zoom behavior remain unverified until the implementation exists.
+- Timeline 3B design, correctness fixes and the future scene-associated Dock contract have not started.
+
+**STOP_BOUNDARY**
+
+- Execute Flow Canvas 3A through local technical and browser gates, create exact local commits and stop before Timeline 3B. Do not push, deploy or modify backend / shared-engine production packages.
