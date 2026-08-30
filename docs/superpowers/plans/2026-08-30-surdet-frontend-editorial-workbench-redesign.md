@@ -939,3 +939,40 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Stop at `WAITING_FOR_OWNER_VISUAL_RETEST_AND_REVIEW_DECISION`. Do not begin Frontend Pass 3B, mainline Wave 7, remote review, push, deployment or release.
+
+### 2026-08-31 — Verified history push and Frontend Pass 3B taskbook initialization
+
+**CONFIRMED_FACTS**
+
+- The Owner accepted the improved scalable narrative map and explicitly authorized an ordinary push plus creation of the Frontend Pass 3B taskbook.
+- Live GitHub `main` was `f8943c293c4537b3867cc8eeea316b19bb4a0b40`, a verified ancestor of local `42be0fcd2f614f032b8a539475c039c7f4ebd66f`. Ordinary `git push surdet main:main` advanced the remote without rebase, amend, force or history rewrite.
+- Post-push disk/network readback: local HEAD, live remote and `surdet/main` all equal `42be0fcd2f614f032b8a539475c039c7f4ebd66f`; ahead/behind `0/0`; tracked worktree and staging empty; existing untracked/protected paths preserved.
+- Frontend Pass 3B design authority is `docs/superpowers/specs/2026-08-31-surdet-timeline-desk-frontend-pass-3b-design.md`; executable taskbook is `docs/superpowers/plans/2026-08-31-surdet-timeline-desk-frontend-pass-3b.md`.
+- Three read-only audits confirmed Timeline correctness defects before visual migration: wrong undo routing, EOL normalization, unrecoverable destructive edits, absent timeline autosave, Starter-specific asset defaults, stale validation/index facts and deterministic short-ruler overlap.
+- The full Timeline page may be corrected entirely in Editor. Core timeline schema/enums, runtime playback, Renderer, Authoring, CLI, Host, Shell and Starter remain out of production scope.
+
+**DECISIONS**
+
+- Frontend Pass 3B is split into a correctness foundation and a full-page Timeline Desk migration. Correctness failure stops visual work.
+- The screenplay Timeline Dock remains deferred. This pass records zero/single/multiple compiled-scene association as a future prerequisite but does not create an unused production projection or mount a second Timeline surface.
+- No `verify:all`; proportional complete Editor and isolated real-browser evidence are required.
+
+**UNVERIFIED_ITEMS**
+
+- Design/taskbook review, production implementation, RED/GREEN, browser evidence, Owner visual acceptance and any further push have not started.
+
+**STOP_BOUNDARY**
+
+- Documentation only. Wait for Owner review and explicit Frontend Pass 3B implementation authorization. Mainline Wave 7 remains undesigned, unauthorized and unstarted.
+
+### 2026-08-31 — Frontend Pass 3B planning review closure
+
+**CONFIRMED_FACTS**
+
+- The Timeline Desk design specification and executable taskbook passed a final independent read-only review after three correction rounds; no BLOCKER, HIGH, MEDIUM or LOW finding remains.
+- The review corrected the final evidence-freeze order, made history/panel dependencies acyclic, made deletion recovery multi-item and disk-safe, excluded unsupported Timeline `ambience`, defined atomic portrait target/cue creation, covered unsaved-timeline crash recovery and removed the unused scene-association production module.
+- Documentation gates and both tracked/cached whitespace checks pass. No production or test path was edited and no implementation validation was claimed.
+
+**STOP_BOUNDARY**
+
+- Frontend Pass 3B is ready for Owner implementation authorization. No implementation, second push, deployment, Frontend Pass 4 or mainline Wave 7 has started.
