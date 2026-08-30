@@ -15,9 +15,17 @@ interface CueSelection {
 let selectedCue: CueSelection | null = null;
 let rootContainer: HTMLElement | null = null;
 let onPreview: (timelineId: string) => void = () => {};
+let onEdited: () => void = () => {};
+let onSelectionChanged: () => void = () => {};
 
-export function bindTimelineHooks(opts: { onPreview: (timelineId: string) => void }): void {
+export function bindTimelineHooks(opts: {
+  onPreview: (timelineId: string) => void;
+  onEdited?: () => void;
+  onSelectionChanged?: () => void;
+}): void {
   onPreview = opts.onPreview;
+  onEdited = opts.onEdited ?? (() => {});
+  onSelectionChanged = opts.onSelectionChanged ?? (() => {});
 }
 
 function entryFor(id = state.currentTimeline): (typeof state.timelines)[number] | undefined {
@@ -50,6 +58,7 @@ function commit(mutator: (definition: TimelineDefinition) => void): void {
   active.entry.text = stringifyTimeline(next);
   active.entry.dirty = true;
   renderTimelinePanel(rootContainer);
+  onEdited();
 }
 
 function field(label: string, control: HTMLElement): HTMLElement {
@@ -190,6 +199,7 @@ function renderTimelineList(parent: HTMLElement): void {
     state.currentTimeline = id;
     selectedCue = null;
     renderTimelinePanel(rootContainer);
+    onEdited();
     setStatus(`已创建时间轴 ${id}`, true, 3500);
   };
   head.appendChild(add);
@@ -206,6 +216,7 @@ function renderTimelineList(parent: HTMLElement): void {
       state.currentTimeline = entry.id;
       selectedCue = null;
       renderTimelinePanel(rootContainer);
+      onSelectionChanged();
     };
     parent.appendChild(button);
   }
@@ -394,6 +405,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     state.currentTimeline = state.timelines[0]?.id ?? null;
     selectedCue = null;
     renderTimelinePanel(rootContainer);
+    onEdited();
   };
   actions.appendChild(remove);
   header.appendChild(actions);
@@ -408,6 +420,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
       active.entry.dirty = true;
       selectedCue = null;
       renderTimelinePanel(rootContainer);
+      onEdited();
     };
     issue.appendChild(reset);
     content.appendChild(issue);
@@ -425,4 +438,5 @@ export function selectTimelineCue(timelineId: string, trackIndex?: number, cueIn
     ? { timelineId, trackIndex, cueIndex: typeof cueIndex === 'number' ? cueIndex : 0 }
     : null;
   renderTimelinePanel(rootContainer);
+  onSelectionChanged();
 }

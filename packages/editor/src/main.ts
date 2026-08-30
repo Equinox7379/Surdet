@@ -34,6 +34,13 @@ import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/s
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
 import {
+  renderModeNavigation,
+  renderProjectBar,
+  updateProjectBarProjection,
+  type ProjectBarProjection,
+  type ProjectSaveState,
+} from './shell/app-shell.js';
+import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
 } from './autosave.js';
 
@@ -43,6 +50,60 @@ let authoringRevision = 0;
 let authoringTimer: ReturnType<typeof setTimeout> | null = null;
 let authoringRunning = false;
 let authoringQueued = false;
+/** 最近一次磁盘保存尝试仍有失败项；只服务于顶栏回执，不复制编辑器业务状态。 */
+let saveAttemptLeftDirty = false;
+
+function hasDirtyProjectFiles(): boolean {
+  return [...state.scenes.values()].some(({ dirty }) => dirty)
+    || state.timelines.some(({ dirty }) => dirty)
+    || state.pendingTimelineDeletes.length > 0;
+}
+
+function currentObjectLabel(): string {
+  if (state.reviewWorkspace !== null) return '审阅任务';
+  if (state.mainTab === 'config') return '项目配置';
+  if (state.mainTab === 'stats') return '项目统计';
+  if (state.mainTab === 'audit') return '项目审计';
+  if (state.mainTab === 'timeline' && state.currentTimeline !== null) {
+    return `时间轴 ${state.currentTimeline}`;
+  }
+  if (state.mainTab === 'preview' && state.previewTimelineId !== null) {
+    return `时间轴 ${state.previewTimelineId}`;
+  }
+  if (state.current !== null) return `场景 ${state.current}`;
+  if (state.currentTimeline !== null) return `时间轴 ${state.currentTimeline}`;
+  return '未选择工作对象';
+}
+
+function projectBarProjection(): ProjectBarProjection {
+  const hasDirtyFiles = hasDirtyProjectFiles();
+  const saveState: ProjectSaveState = hasDirtyFiles
+    ? saveAttemptLeftDirty ? 'partial-failure' : 'dirty'
+    : 'saved';
+  return {
+    projectName: state.dirName || '未打开项目',
+    objectLabel: currentObjectLabel(),
+    saveState,
+    canUndo: true,
+    canRedo: true,
+    fsSupported: state.fsSupported,
+    hasScenes: state.scenes.size > 0,
+  };
+}
+
+function refreshProjectBarProjection(): void {
+  updateProjectBarProjection(projectBarProjection());
+}
+
+function markProjectEdited(): void {
+  saveAttemptLeftDirty = false;
+  refreshProjectBarProjection();
+}
+
+async function saveProject(): Promise<void> {
+  await saveAll();
+  refreshProjectBarProjection();
+}
 
 function scheduleAuthoringIndexRebuild(): void {
   authoringRevision += 1;
@@ -101,25 +162,44 @@ function resetAuthoringState(): void {
 
 bindHistoryHooks({
   onEdited: () => {
+    markProjectEdited();
     scheduleValidate();
     scheduleAuthoringIndexRebuild();
   },
-  onHistoryNav: () => { renderEditor(); renderSidebar(); },
+  onHistoryNav: () => { renderEditor(); renderSidebar(); refreshProjectBarProjection(); },
 });
 bindProjectIoHooks({
   renderAll,
   runValidate: () => { runValidate(); scheduleAuthoringIndexRebuild(); },
   renderSidebar,
-  onProjectLoaded: () => { resetAuthoringState(); tryAutosaveRecover(); },
+  onProjectLoaded: () => {
+    saveAttemptLeftDirty = false;
+    resetAuthoringState();
+    refreshProjectBarProjection();
+    tryAutosaveRecover();
+  },
   onSaved: clearAutosave,
+  onSaveSettled: ({ failures, remainingDirty }) => {
+    saveAttemptLeftDirty = failures > 0 && remainingDirty;
+    refreshProjectBarProjection();
+  },
 });
-bindSidebarHooks({ renderEditor });
+bindSidebarHooks({
+  renderEditor: () => {
+    renderEditor();
+    refreshProjectBarProjection();
+  },
+});
 bindSidebarRenderAll(renderAll);
 bindFlowHooks({
   // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到该 @label 行
   openScene: (sceneKey, line) => jumpToScene(sceneKey, line !== undefined ? Math.max(0, line - 1) : undefined),
   // 流程图结构变更（重命名/删除）后重新调度校验
-  requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
+  requestValidate: () => {
+    markProjectEdited();
+    scheduleValidate();
+    scheduleAuthoringIndexRebuild();
+  },
 });
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
@@ -131,6 +211,8 @@ bindTimelineHooks({
     state.mainTab = 'preview';
     renderMainArea();
   },
+  onEdited: markProjectEdited,
+  onSelectionChanged: refreshProjectBarProjection,
 });
 
 /** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
@@ -185,7 +267,10 @@ listenForPreviewTraceSelection((detail) => {
 });
 bindSearchHooks({
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
-  onEdited: scheduleValidate,
+  onEdited: () => {
+    markProjectEdited();
+    scheduleValidate();
+  },
 });
 bindAuditHooks({
   // 审计条目点击 → 跳转定位（与搜索/流程图导航同一入口）
@@ -200,16 +285,9 @@ const appEl = document.getElementById('app')!;
 
 function renderAll(): void {
   appEl.innerHTML = '';
-  const header = h('header');
-  header.appendChild(h('h1', undefined, 'Surdet 剧本编辑器'));
-  header.appendChild(h('span', 'proj', state.dirName ? `项目：${state.dirName}` : '未打开项目'));
-  header.appendChild(h('span', 'spacer'));
-  if (state.fsSupported) {
-    const openBtn = h('button', undefined, '打开游戏目录');
-    openBtn.onclick = () => { void openProject(); };
-    header.appendChild(openBtn);
-    const reviewBtn = h('button', undefined, '打开审阅任务');
-    reviewBtn.onclick = () => {
+  const header = renderProjectBar(projectBarProjection(), {
+    onOpenProject: () => { void openProject(); },
+    onOpenReview: () => {
       void (async () => {
         try {
           await openReviewPanelWorkspace();
@@ -219,31 +297,13 @@ function renderAll(): void {
           setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
         }
       })();
-    };
-    header.appendChild(reviewBtn);
-  } else {
-    const demoBtn = h('button', undefined, '加载演示项目');
-    demoBtn.onclick = loadDemoProject;
-    header.appendChild(demoBtn);
-  }
-  if (!state.fsSupported && state.scenes.size > 0) {
-    const expBtn = h('button', undefined, '导出当前场景 .gal');
-    expBtn.onclick = exportCurrent;
-    header.appendChild(expBtn);
-  }
-  const undoBtn = h('button', undefined, '↩ 撤销 (Ctrl+Z)');
-  undoBtn.onclick = doUndo;
-  const redoBtn = h('button', undefined, '↪ 重做 (Ctrl+Y)');
-  redoBtn.onclick = doRedo;
-  header.appendChild(undoBtn);
-  header.appendChild(redoBtn);
-  const saveBtn = h('button', 'primary', '保存全部 (Ctrl+S)');
-  saveBtn.onclick = () => { void saveAll(); };
-  header.appendChild(saveBtn);
-  header.appendChild(h('span', undefined, ''));
-  const status = h('span', undefined, '');
-  status.id = 'status';
-  header.appendChild(status);
+    },
+    onUndo: doUndo,
+    onRedo: doRedo,
+    onSaveProject: () => { void saveProject(); },
+    onLoadDemo: loadDemoProject,
+    onExportCurrent: exportCurrent,
+  });
   appEl.appendChild(header);
 
   if (!state.fsSupported && state.scenes.size === 0) {
@@ -254,6 +314,7 @@ function renderAll(): void {
 
   const main = h('main');
   main.id = 'main';
+  main.className = 'editor-application-frame';
   appEl.appendChild(main);
   renderMainArea();
 }
@@ -263,28 +324,15 @@ function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
   main.innerHTML = '';
-  const col = h('div', 'main-col');
-  const tabs = h('div', 'tabs');
-  const defs: { id: 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'review' | 'stats' | 'audit'; label: string }[] = [
-    { id: 'editor', label: '块编辑' },
-    { id: 'flow', label: '流程图' },
-    { id: 'timeline', label: '时间轴' },
-    { id: 'config', label: '配置' },
-    { id: 'preview', label: '预览' },
-    { id: 'review', label: '审阅' },
-    { id: 'stats', label: '统计' },
-    { id: 'audit', label: '审计' },
-  ];
-  for (const d of defs) {
-    const btn = h('button', d.id === state.mainTab ? 'tab active' : 'tab', d.label);
-    btn.onclick = () => {
+  const navigation = renderModeNavigation(state.mainTab, (mode) => {
       state.previewTimelineId = null;
-      state.mainTab = d.id;
+      state.mainTab = mode;
       renderMainArea();
-    };
-    tabs.appendChild(btn);
-  }
-  col.appendChild(tabs);
+  });
+  const col = h('div', 'main-col editor-mode-surface');
+  col.setAttribute('data-editor-mode-surface', state.mainTab);
+  if (state.mainTab === 'editor') col.id = 'editor-workspace';
+  main.append(navigation, col);
 
   if (state.mainTab === 'editor') {
     const body = h('div', 'main-body');
@@ -301,7 +349,6 @@ function renderMainArea(): void {
     right.id = 'right';
     body.append(sidebar, editorCol, right);
     col.appendChild(body);
-    main.appendChild(col);
     renderSidebar();
     renderSearchPanel(searchPanel);
     renderEditor();
@@ -311,45 +358,39 @@ function renderMainArea(): void {
     const flowEl = h('section');
     flowEl.id = 'flow-view';
     col.appendChild(flowEl);
-    main.appendChild(col);
     renderFlow(flowEl);
   } else if (state.mainTab === 'timeline') {
     const timelineEl = h('section');
     timelineEl.id = 'timeline-view';
     col.appendChild(timelineEl);
-    main.appendChild(col);
     renderTimelinePanel(timelineEl);
   } else if (state.mainTab === 'preview') {
     const pvEl = h('section');
     pvEl.id = 'preview-view';
     col.appendChild(pvEl);
-    main.appendChild(col);
     renderPreviewPanel(pvEl);
   } else if (state.mainTab === 'stats') {
     const stEl = h('section');
     stEl.id = 'stats-view';
     col.appendChild(stEl);
-    main.appendChild(col);
     renderStatsPanel(stEl);
   } else if (state.mainTab === 'audit') {
     const auEl = h('section');
     auEl.id = 'audit-view';
     col.appendChild(auEl);
-    main.appendChild(col);
     renderAuditPanel(auEl);
   } else if (state.mainTab === 'review') {
     const reviewEl = h('section');
     reviewEl.id = 'review-view';
     col.appendChild(reviewEl);
-    main.appendChild(col);
     renderReviewPanel(reviewEl);
   } else {
     const cfgEl = h('section');
     cfgEl.id = 'config-view';
     col.appendChild(cfgEl);
-    main.appendChild(col);
     renderConfig(cfgEl);
   }
+  refreshProjectBarProjection();
 }
 
 /* ============================ 撤销/重做路由（剧本栈 vs 配置栈） ============================ */
@@ -369,7 +410,7 @@ function doRedo(): void {
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
-    void saveAll();
+    void saveProject();
     return;
   }
   // 撤销/重做（自我迭代①a）：Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z；配置页走配置栈

@@ -15,6 +15,16 @@ let renderSidebar: () => void = () => {};
 let onProjectLoaded: () => void = () => {};
 /** 保存全部完成（清除崩溃备份挂点；A1） */
 let onSaved: () => void = () => {};
+/** 保存尝试完成后的 UI 事实投影；不改变任何写盘或恢复语义。 */
+let onSaveSettled: (outcome: ProjectSaveOutcome) => void = () => {};
+
+export interface ProjectSaveOutcome {
+  hadPendingChanges: boolean;
+  saved: number;
+  removed: number;
+  failures: number;
+  remainingDirty: boolean;
+}
 
 export function bindProjectIoHooks(opts: {
   renderAll: () => void;
@@ -22,12 +32,14 @@ export function bindProjectIoHooks(opts: {
   renderSidebar: () => void;
   onProjectLoaded?: () => void;
   onSaved?: () => void;
+  onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
 }): void {
   renderAll = opts.renderAll;
   runValidate = opts.runValidate;
   renderSidebar = opts.renderSidebar;
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
+  onSaveSettled = opts.onSaveSettled ?? (() => {});
 }
 
 export async function openProject(): Promise<void> {
@@ -215,6 +227,16 @@ export async function saveAll(): Promise<void> {
       : undefined;
     if (timeline) exportTimeline(timeline.id, timeline.text);
     else exportCurrent();
+    const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
+      || state.timelines.some((entry) => entry.dirty)
+      || state.pendingTimelineDeletes.length > 0;
+    onSaveSettled({
+      hadPendingChanges: remainingDirty,
+      saved: 0,
+      removed: 0,
+      failures: 0,
+      remainingDirty,
+    });
     return;
   }
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
@@ -333,6 +355,7 @@ export async function saveAll(): Promise<void> {
   if (failures === 0 && !remainingDirty) {
     onSaved(); // 崩溃保险：仅在磁盘已最新时清除备份
   }
+  onSaveSettled({ hadPendingChanges, saved, removed, failures, remainingDirty });
 }
 
 export function exportScene(id: string, text: string): void {
