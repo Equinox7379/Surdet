@@ -1,4 +1,4 @@
-import type { TimelineCue, TimelineDefinition, TimelineTrack, TimelineTrackKind } from '@surdet/core';
+import type { TimelineCue, TimelineDefinition, TimelineEasing, TimelineTrack, TimelineTrackKind } from '@surdet/core';
 import { state, h, setStatus } from '../state.js';
 import type { TimelineCueSelection } from '../state.js';
 import { exportTimeline } from '../project-io.js';
@@ -7,7 +7,13 @@ import {
   cloneTimeline, createNeutralCue, createResourceCue, createTimeline, createTrack, parseTimelineText,
   stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
 } from '../timeline-model.js';
-import { timelineAssetChoices } from '../timeline-presentation.js';
+import {
+  buildTimelineTicks,
+  timelineActionLabel,
+  timelineAssetChoices,
+  timelineEasingLabel,
+  timelineTrackLabel,
+} from '../timeline-presentation.js';
 import type { TimelineAssetChoice } from '../timeline-presentation.js';
 
 let rootContainer: HTMLElement | null = null;
@@ -137,10 +143,14 @@ function textInput(value: string, placeholder = ''): HTMLInputElement {
   return input;
 }
 
-function selectInput(options: readonly string[], value: string): HTMLSelectElement {
+function selectInput(
+  options: readonly string[],
+  value: string,
+  labelFor: (option: string) => string = (option) => option,
+): HTMLSelectElement {
   const select = h('select');
   for (const option of options) {
-    const item = h('option', undefined, option);
+    const item = h('option', undefined, labelFor(option));
     item.value = option;
     item.selected = option === value;
     select.appendChild(item);
@@ -194,11 +204,11 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const track = selection ? definition.tracks[selection.trackIndex] : undefined;
   const cue = track?.cues[selection!.cueIndex];
   if (!selection || !track || !cue) {
-    parent.append(h('div', 'timeline-inspector-empty', '选择一个 cue 查看参数'));
+    parent.append(h('div', 'timeline-inspector-empty', '选择一个演出片段查看设置'));
     return;
   }
 
-  parent.append(h('div', 'timeline-inspector-kicker', `轨道 ${selection.trackIndex + 1} · cue ${selection.cueIndex + 1}`));
+  parent.append(h('div', 'timeline-inspector-kicker', `轨道 ${selection.trackIndex + 1} · 片段 ${selection.cueIndex + 1}`));
   const common = h('div', 'timeline-inspector-grid');
   const at = numberInput(cue.atMs, 0, definition.durationMs);
   at.onchange = () => updateCue(selection, (next) => { next.atMs = Math.max(0, Math.round(Number(at.value) || 0)); });
@@ -206,11 +216,11 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const duration = numberInput(cue.durationMs, 0, definition.durationMs);
   duration.onchange = () => updateCue(selection, (next) => { next.durationMs = Math.max(0, Math.round(Number(duration.value) || 0)); });
   common.appendChild(field('时长（毫秒）', duration));
-  const easing = selectInput(TIMELINE_EASINGS, cue.easing);
+  const easing = selectInput(TIMELINE_EASINGS, cue.easing, (option) => timelineEasingLabel(option as TimelineEasing));
   easing.onchange = () => updateCue(selection, (next) => { next.easing = easing.value as TimelineCue['easing']; });
   common.appendChild(field('缓动', easing));
   const actions = TIMELINE_ACTIONS[track.kind];
-  const action = selectInput(actions, cue.action);
+  const action = selectInput(actions, cue.action, (option) => timelineActionLabel(track.kind, option));
   common.appendChild(field('动作', action));
   const replacementResource = isResourceTrackKind(track.kind)
     ? h('select', 'timeline-resource-select') as HTMLSelectElement
@@ -291,7 +301,7 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   }
 
   const ops = h('div', 'timeline-inspector-ops');
-  const remove = h('button', 'danger', '删除 cue');
+  const remove = h('button', 'danger', '删除演出片段');
   remove.onclick = () => {
     commit((next) => { next.tracks[selection.trackIndex]!.cues.splice(selection.cueIndex, 1); });
     state.currentTimelineCue = null;
@@ -345,11 +355,11 @@ function renderTimelineList(parent: HTMLElement): void {
 
 function renderRuler(parent: HTMLElement, durationMs: number): void {
   const ruler = h('div', 'timeline-ruler');
-  const ticks = Math.max(4, Math.ceil(durationMs / 500));
-  for (let i = 0; i <= ticks; i++) {
-    const tick = h('span', 'timeline-tick', `${(Math.min(durationMs, i * 500) / 1000).toFixed(1)}s`);
-    const left = durationMs > 0 ? Math.min(100, (i * 500 / durationMs) * 100) : 0;
-    tick.style.left = `${left}%`;
+  const availableWidth = Math.max(320, parent.getBoundingClientRect().width || 640);
+  for (const projected of buildTimelineTicks(durationMs, availableWidth)) {
+    const tick = h('span', 'timeline-tick', projected.label);
+    tick.style.left = `${projected.leftPercent}%`;
+    tick.dataset.valueMs = String(projected.valueMs);
     ruler.appendChild(tick);
   }
   parent.appendChild(ruler);
@@ -360,7 +370,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
   definition.tracks.forEach((track, trackIndex) => {
     const row = h('div', 'timeline-track-row');
     const head = h('div', 'timeline-track-head');
-    const kind = selectInput(TIMELINE_TRACKS, track.kind);
+    const kind = selectInput(TIMELINE_TRACKS, track.kind, (option) => timelineTrackLabel(option as TimelineTrackKind));
     kind.title = '轨道类型';
     kind.onchange = () => {
       const nextKind = kind.value as TimelineTrackKind;
@@ -375,7 +385,11 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
     };
     head.appendChild(kind);
     if (track.target) head.append(h('span', 'timeline-track-target', track.target));
-    const addAction = selectInput(TIMELINE_ACTIONS[track.kind], TIMELINE_ACTIONS[track.kind][0]!);
+    const addAction = selectInput(
+      TIMELINE_ACTIONS[track.kind],
+      TIMELINE_ACTIONS[track.kind][0]!,
+      (option) => timelineActionLabel(track.kind, option),
+    );
     addAction.title = '新增片段动作';
     head.appendChild(addAction);
     const addResource = isResourceTrackKind(track.kind) ? h('select', 'timeline-resource-select') as HTMLSelectElement : null;
@@ -422,12 +436,12 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         const width = definition.durationMs > 0 ? Math.max(2, Math.min(100 - left, Math.max(1, durationMs / definition.durationMs * 100))) : 100;
         block.style.left = `${left}%`;
         block.style.width = `${width}%`;
-        block.title = `${cue.action} · ${Math.round(atMs)}ms + ${Math.round(durationMs)}ms · ${cue.easing}`;
+        block.title = `${timelineActionLabel(track.kind, cue.action)} · ${Math.round(atMs)}ms + ${Math.round(durationMs)}ms · ${timelineEasingLabel(cue.easing)}`;
       };
       updateGeometry(cue.atMs, cue.durationMs);
       const label = document.createElement('span');
       label.className = 'timeline-cue-label';
-      label.textContent = cue.action;
+      label.textContent = timelineActionLabel(track.kind, cue.action);
       block.appendChild(label);
       const curve = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       curve.classList.add('timeline-curve');
@@ -464,7 +478,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         event.preventDefault();
       };
       block.appendChild(resize);
-      block.title = `${cue.action} · ${cue.atMs}ms + ${cue.durationMs}ms · ${cue.easing}`;
+      block.title = `${timelineActionLabel(track.kind, cue.action)} · ${cue.atMs}ms + ${cue.durationMs}ms · ${timelineEasingLabel(cue.easing)}`;
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
         state.currentTimelineCue = { trackIndex, cueIndex };
@@ -504,12 +518,12 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   const canvasHead = h('div', 'timeline-canvas-head');
   const canvasTitle = h('div');
   canvasTitle.append(h('div', 'timeline-section-kicker', '演出轨道'));
-  canvasTitle.append(h('div', 'timeline-canvas-hint', '拖动 cue 中段调整开始 · 拖动右端调整时长'));
+  canvasTitle.append(h('div', 'timeline-canvas-hint', '拖动片段调整开始时间 · 拖动右端调整时长'));
   canvasHead.appendChild(canvasTitle);
   const addTrack = h('button', undefined, '+ 添加轨道');
   addTrack.onclick = () => {
     commit((next) => next.tracks.push(createTrack('screen')));
-    setStatus('已添加 screen 轨道', true, 2500);
+    setStatus('已添加画面效果轨道', true, 2500);
   };
   canvasHead.appendChild(addTrack);
   main.appendChild(canvasHead);
@@ -518,7 +532,7 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   workbench.appendChild(main);
 
   const inspector = h('aside', 'timeline-inspector');
-  inspector.append(h('div', 'timeline-section-kicker', 'Cue 检查器'));
+  inspector.append(h('div', 'timeline-section-kicker', '片段设置'));
   renderInspector(inspector, definition);
   workbench.appendChild(inspector);
   parent.appendChild(workbench);

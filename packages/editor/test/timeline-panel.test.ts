@@ -21,4 +21,12 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(mainSource).toMatch(/function handleTimelineEdited\(\)[\s\S]*markProjectEdited\(\);[\s\S]*scheduleValidate\(\);[\s\S]*scheduleAuthoringIndexRebuild\(\);/);
     expect(mainSource).toContain('onEdited: handleTimelineEdited');
   });
+
+  it('renders the real panel through natural ticks and Chinese label projections', () => {
+    expect(panelSource).toContain('buildTimelineTicks');
+    expect(panelSource).toContain('timelineTrackLabel');
+    expect(panelSource).toContain('timelineActionLabel');
+    expect(panelSource).toContain('timelineEasingLabel');
+    expect(panelSource).not.toContain('Math.max(4, Math.ceil(durationMs / 500))');
+  });
 });
