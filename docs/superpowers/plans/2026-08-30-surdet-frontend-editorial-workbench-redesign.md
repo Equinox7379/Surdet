@@ -10,6 +10,7 @@
 
 ## Global Constraints
 
+- **编号命名空间：** 本文件历史标题中的 `Wave 1–10` 仅是 Wave 6 之后、Wave 7 之前的前端重构内部批次；它们不是 Surdet 主线 Wave。自 2026-08-31 起，对用户和台账统一称为 `Frontend Pass 1–10`。主线 `Stage 6 Wave 6` 已在本地闭合，主线 Wave 7 尚未设计、授权或启动。
 - 设计权威：`docs/superpowers/specs/2026-08-30-surdet-frontend-editorial-workbench-redesign-design.md`。
 - 只改前端：允许 `packages/editor`、`packages/renderer` 及其测试；`packages/host`、`packages/shell` 默认只跑消费回归。只有当前代码中已经存在、能证明为纯显示的 seam，才允许另开白名单修改。
 - 禁止修改 `packages/authoring`、`packages/core`、`packages/cli` 生产代码、公共 schema、项目/存档/脚本/时间轴格式、文件写入/EOL/备份/恢复/lease/apply/commit 语义、Starter 内容、依赖与 lockfile。
@@ -877,3 +878,39 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Execute only Wave 3A.1 through proportional Editor and browser gates. Do not begin Timeline 3B, change shared-engine production packages or push.
+
+### 2026-08-30 — Wave 3A.1 pure-layout module scope decision
+
+**CONFIRMED_FACTS**
+
+- `packages/editor/src/panels/flow.ts` already owns rendering, interaction, menus and viewport behavior and exceeds one thousand lines. Adding scene grouping, deterministic component ordering, orthogonal routing and complete visual bounds directly to that file would mix pure layout policy into DOM behavior.
+- `packages/editor/src/flow-narrative-layout.ts` is added to the authorized Editor-only path set before production implementation. It may contain only pure graph-to-presentation layout data and must not import state, DOM, history, persistence or scene mutation modules.
+- `FlowGraph` remains unchanged and remains the sole business graph. The new module may create presentation frames, routes and branch annotations only.
+
+**STOP_BOUNDARY**
+
+- The extra module does not authorize graph-builder, backend, shared-engine, dependency or file-format changes.
+
+### 2026-08-31 — Wave 3A.1 long-form readability decision
+
+**CONFIRMED_FACTS**
+
+- The first narrative-map replacement passed its proportional Editor and isolated-browser gates, but Owner screenshot review found that three attached choices plus three same-destination jumps still produced a ladder of parallel routes. The automated pass did not supersede that first-party visual evidence.
+- The Starter's `ch02 → ch01_01.start` route is a real demo-loop jump. Rendering it as a canvas-wide route is technically truthful but visually overstates a secondary return relationship.
+- A full graph cannot be guaranteed simple at arbitrary story length. The owner approved a bounded three-level presentation: default `聚焦路径`, on-demand `全局概览`, and on-demand `技术连接`.
+- The current product still has no authoritative chapter metadata. Focus neighbourhoods and overview aggregation must derive only from the existing `FlowGraph`; no chapter names or canonical route may be invented.
+
+**DECISIONS**
+
+- Default focus shows the current/entry scene, at most 3 forward predecessors and 4 forward successors; overflow is counted and disclosed rather than silently omitted.
+- Same-scene choice edges become technical-only because exact choice text is attached to the destination row. Same-destination cross-scene outcomes share a presentation bus. Backward edges become compact return markers in readable modes.
+- `FlowGraph` remains the only business truth. Focus summaries, merge buses and return markers are presentation data and never real nodes.
+
+**UNVERIFIED_ITEMS**
+
+- The approved long-form modes, bus geometry and return markers have not yet been implemented or browser-verified.
+- The previously passed browser artifact remains valid evidence for the pre-extension implementation only and will be replaced, not rewritten.
+
+**STOP_BOUNDARY**
+
+- Continue only the extended Wave 3A.1 Editor presentation and proportional gates. Do not start Timeline 3B, touch shared-engine/backend production, push, deploy or release.

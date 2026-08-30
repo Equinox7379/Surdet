@@ -1,9 +1,10 @@
 # Surdet Flow Narrative Path Map — Wave 3A.1
 
-**Status:** AUTHORIZED_BY_OWNER_FEEDBACK / IMPLEMENTATION_IN_PROGRESS  
-**Date:** 2026-08-30  
-**Risk:** B — Editor-only visual, layout and accessibility correction  
+**Status:** AUTHORIZED_BY_OWNER_FEEDBACK / IMPLEMENTATION_IN_PROGRESS
+**Date:** 2026-08-30
+**Risk:** B — Editor-only visual, layout and accessibility correction
 **Ledger authority:** `docs/superpowers/plans/2026-08-30-surdet-frontend-editorial-workbench-redesign.md`
+**Project phase:** POST_WAVE_6 / PRE_WAVE_7_EDITOR_POLISH; historical local alias `Frontend Pass 3A.1`, not mainline Wave 3
 
 ---
 
@@ -116,6 +117,7 @@ Must preserve:
 
 - `packages/editor/src/panels/flow.ts`
 - `packages/editor/src/flow-presentation.ts`
+- `packages/editor/src/flow-narrative-layout.ts`
 - `packages/editor/src/styles/flow-workspace.css`
 
 ### Permanent tests
@@ -182,3 +184,83 @@ No `verify:all` is authorized for this Editor-only correction.
 - Do not push.
 - Stop before Timeline 3B, remote review, deployment or release.
 
+---
+
+## 9. Owner-approved long-form scaling extension
+
+### 9.1 Confirmed design correction
+
+- A single infinite canvas cannot remain readable for arbitrarily long stories. Wave 3A.1 must bound the default visible complexity instead of promising that the full technical graph will always look simple.
+- The current Starter screenshot duplicates three attached choice relationships and three jumps to one destination in the same corridor. The owner approved replacing this ladder with attached option rows plus one shared merge bus.
+- `ch02.gal` contains the real `@jump ch01_01.start` return. The business edge stays intact, while the readable default must express it as a compact `↩ 返回 ch01_01` marker instead of a canvas-wide return route.
+- The product has no authoritative chapter hierarchy. This correction must not invent chapters, production states, probabilities or route importance.
+
+### 9.2 Three presentation levels
+
+#### 聚焦路径 — default
+
+- Focus scene = current Editor scene when available, otherwise configured entry scene.
+- Expand the focus scene with its real scene/label nodes and attached option wording.
+- Show only forward one-hop neighbours: at most 3 direct predecessors and 4 direct successors in stable source order. Together with the focus scene, the default shows at most 8 real scene frames.
+- Backward/return edges do not pull distant scenes into the focus neighbourhood.
+- If a side exceeds its cap, show an honest count and a `在全局概览中查看` action; never silently imply that all neighbours are visible.
+- Neighbour scenes are compact; only the focus scene exposes internal beats.
+
+#### 全局概览 — on demand
+
+- Show every real scene as a compact scene card without internal label rows.
+- Aggregate cross-scene routes by source scene and destination scene. Same-destination outcomes share a single corridor bus.
+- Keep search, current-scene centring and minimap navigation. Do not claim that global overview is a canonical play order.
+
+#### 技术连接 — on demand
+
+- Preserve the complete projectable node/edge projection for debugging and Agent inspection.
+- Raw stable IDs, attached choice edges, source-order edges, duplicate edges and full return routes appear only here.
+- Two raw edges whose endpoints are absent from the current projection remain reported as unprojectable; the UI must not fabricate endpoints.
+
+### 9.3 Readable route rules
+
+- Same-scene choice edges are presentation-hidden by default because the destination row already contains the exact option text.
+- Two or more readable cross-scene routes from one scene to one destination share one merge corridor: short source stubs, one vertical bus and one outgoing trunk. Every underlying `FlowEdge` remains inspectable.
+- A cross-scene edge whose destination is at the same or an earlier layout depth becomes a compact return marker in readable modes. Its full route remains available in technical mode.
+- Hidden technical routes must not consume readable corridor lanes, change readable geometry or expand default fit bounds.
+- No presentation-only bus, overflow summary or return marker may be counted as a real graph node.
+
+### 9.4 Interfaces
+
+```ts
+export type FlowMapMode = 'focus' | 'overview';
+
+export interface NarrativeLayoutOptions {
+  mode: FlowMapMode;
+  focusSceneId?: string;
+  technical: boolean;
+  maxPredecessors?: number;
+  maxSuccessors?: number;
+}
+
+export interface NarrativeReturnMarker {
+  edge: FlowEdge;
+  sourceSceneId: string;
+  targetSceneId: string;
+  label: string;
+}
+
+export interface NarrativeFocusOverflow {
+  predecessorCount: number;
+  successorCount: number;
+}
+```
+
+`buildNarrativeFlowLayout(graph, entryScene, options?)` keeps the existing two-argument call valid. `FlowGraph` remains the only business graph.
+
+### 9.5 Execution tasks
+
+- [ ] **Task A — Permanent scale RED:** add contracts for maximum eight focus frames, stable neighbour selection, compact neighbours, global scene-only overview, choice-line suppression, same-target merge geometry and return-marker preservation.
+- [ ] **Task B — Pure layout GREEN:** implement optional presentation mode/options, focus overflow data, compact scene projection, merge buses and return markers in `flow-narrative-layout.ts` only.
+- [ ] **Task C — Human controls GREEN:** add `聚焦路径` / `全局概览` controls, overflow disclosure, readable return markers and stable focus restoration in `panels/flow.ts`; keep technical disclosure separate.
+- [ ] **Task D — Regression:** run the new contracts, existing Flow graph/edit/label/presentation/interaction contracts, complete Editor tests, typecheck and build.
+- [ ] **Task E — Browser evidence:** replace the current artifact with fresh isolated 1920/1440/1280/1024/800 evidence covering default focus, global overview, technical mode, merge bus, return marker, minimap, keyboard/pointer navigation, link/undo and unchanged Starter.
+- [ ] **Task F — Closure:** independent read-only review, exact code commit, append-only taskbook/master-ledger closure and stop before Timeline 3B.
+
+No backend, shared-engine, graph-builder, dependency, file-format, Starter, deployment or push authority is added by this extension.
