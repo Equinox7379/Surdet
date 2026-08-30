@@ -342,11 +342,15 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **Files:**
 - Create: `packages/editor/src/styles/script-workspace.css`
 - Create: `packages/editor/src/shell/authoring-workbench.ts`
+- Create: `packages/editor/e2e/editorial-script-workspace-wave-2.e2e.mjs`
+- Create: `packages/editor/e2e/support/fake-file-system.mjs`
 - Modify: `packages/editor/src/main.ts`
+- Modify: `packages/editor/src/shell/app-shell.ts`
 - Modify: `packages/editor/src/panels/editor.ts`
 - Modify: `packages/editor/src/panels/sidebar.ts`
 - Modify: `packages/editor/src/panels/assets.ts`
 - Modify: `packages/editor/src/panels/search-panel.ts`
+- Modify: `packages/editor/src/panels/issues.ts`
 - Modify: `packages/editor/src/panels/right.ts`
 - Modify: `packages/editor/src/styles.css`
 - Create: `packages/editor/test/editor-asset-sidebar-contract.test.ts`
@@ -637,3 +641,33 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Wave 1 is technically closed. Stop before Task 2 / Wave 2. Do not push, deploy, modify forbidden roots or begin the manuscript workbench without the next explicit authorization.
+
+### 2026-08-30 — Wave 2 narrative-continuity workspace initialization
+
+**CONFIRMED_FACTS**
+
+- The project owner reviewed the Wave 1 page, judged it more modern but still materially short of the mature desktop-authoring benchmark, and explicitly authorized Wave 2 specification, planning and implementation without another intermediate approval pause.
+- Wave 2 baseline HEAD is `27361d9269475350ffea1d1ccdf4eb9bd5069148`, parent `96d1bae6e1afc25b6061500a45e1758fe3dfbf97`; local `surdet/main...HEAD` is behind 0 / ahead 23. Tracked worktree and staging were empty before the Wave 2 documents were created.
+- Existing untracked governance, handoff, protected art-direction, `design/`, long-term ledger and CLI artifact paths remain preserved and unstaged. No push is authorized.
+- The Wave 2 capability audit confirmed that `state.scenes` / `state.current` are the only scene truth, `state.selectedObjectRef` / `state.authoringIndex` are the only authoring-selection truth, and `buildAssetInventory()` is the existing asset projection. Editing, history, search, issue navigation, asset insertion, validation and causal selection already have production callback paths that must be retained.
+- The current product does not expose reliable chapter names, chapter hierarchy, scene or chapter durations, production status, version, collaboration, comments, notifications or character-state metrics. Wave 2 will omit these reference-only facts instead of fabricating them.
+- The selected desktop architecture is a narrative-continuity desk: real scene / asset outline, one ordered manuscript and real current-object / validation / causal context. A three-column narrative / dialogue / interaction editor was rejected because `.gal` is one ordered editable stream and the split would create ordering, move, selection and undo ambiguity.
+- The eight existing task modes will move from the permanent left rail to a horizontal strip below the project bar. Mode IDs, callbacks, focus semantics and application state remain unchanged; this is a frontend layout correction that releases width for outline + manuscript + context.
+- Wave 2 production scope is Editor-only. Authoring, Core, CLI, Host, Shell, Renderer, Starter, dependencies and the lockfile remain outside scope. No second preview iframe, trace projection, timeline model, causal model or authoring truth is authorized.
+- Read-only port inspection found `4173` owned by an `E:\jiuan\jiuan-frontend` test harness and `4175` owned by the Surdet Editor Vite process. Wave 2 must not stop, claim or reuse `4173`; manual Surdet preview remains on `4175` and automated browser evidence must use its own verified-free strict port.
+- Wave 2 design authority is `docs/superpowers/specs/2026-08-30-surdet-editorial-script-workspace-wave-2-design.md`; executable detail is `docs/superpowers/plans/2026-08-30-surdet-editorial-script-workspace-wave-2.md`. This master taskbook remains the single Execution Ledger.
+
+**REASONABLE_INFERENCES**
+
+- A pure DOM workbench topology plus a composition-root scene / object navigation coordinator is the smallest architecture that can align all current projections without moving business logic into presentation modules.
+- A loaded isolated Starter fixture is necessary to judge density, hierarchy and responsive folding; an empty project is insufficient evidence for Wave 2 completion.
+
+**UNVERIFIED_ITEMS**
+
+- Wave 2 permanent RED, implementation, regression tests, typecheck, build and real-fixture browser evidence have not yet run.
+- The final 1440 / 1280 / 1024 geometry, interaction behavior and visual proximity to the approved benchmark remain unverified until the implementation exists.
+- Owner visual acceptance, remote GitHub review, push, deployment and Wave 3 have not started.
+
+**STOP_BOUNDARY**
+
+- Execute Wave 2 through its local technical and visual gates, create exact local commits and stop before Wave 3. Do not push, deploy or modify any backend / shared-engine production package.
