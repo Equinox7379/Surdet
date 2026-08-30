@@ -147,7 +147,8 @@ describe('Flow Canvas Chinese presentation contract', () => {
 
     expect(presentation.presentFlowEdge(choice)).toMatchObject({
       kindLabel: '选项',
-      displayText: '选项：保持沉默',
+      displayText: '保持沉默',
+      choiceText: '保持沉默',
     });
     expect(presentation.presentFlowEdge(condition)).toMatchObject({
       kindLabel: '条件',

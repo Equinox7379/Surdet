@@ -87,6 +87,52 @@
   gap: var(--surdet-space-8);
 }
 
+.flow-view-switch {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+  border: 1px solid var(--surdet-border-strong);
+  background: var(--surdet-border-default);
+}
+
+.flow-view-switch-button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.flow-view-switch-button[aria-pressed="true"] {
+  background: var(--surdet-text-primary);
+  color: var(--surdet-surface-panel);
+}
+
+.flow-view-switch-button:focus-visible {
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: 2px;
+}
+
+.flow-scope-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--surdet-space-8);
+  min-width: 0;
+  padding-block-start: var(--surdet-space-8);
+  border-top: 1px solid var(--surdet-border-default);
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+}
+
+.flow-scope-note-action {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+}
+
 .flow-tool {
   min-height: 30px;
   padding: 5px 9px;
@@ -112,7 +158,9 @@
 }
 
 .flow-grid-mark {
-  fill: var(--surdet-border-default);
+  fill: none;
+  stroke: color-mix(in srgb, var(--surdet-border-default) 44%, transparent);
+  stroke-width: 0.55;
 }
 
 .flow-edge,
@@ -123,40 +171,36 @@
 
 .flow-edge {
   fill: none;
-  stroke: var(--surdet-border-strong);
-  stroke-width: 1.2;
+  stroke: color-mix(in srgb, var(--surdet-text-secondary) 58%, var(--surdet-border-default));
+  stroke-width: 1.15;
+  stroke-linecap: square;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 
-.flow-edge--goto,
-.flow-edge--call,
-.flow-edge--host {
-  stroke-dasharray: 6 4;
-}
-
 .flow-edge--jump,
-.flow-edge--call,
-.flow-edge--host {
-  stroke: var(--surdet-action-primary);
-  stroke-width: 1.6;
+.flow-edge--call {
+  stroke: color-mix(in srgb, var(--surdet-action-primary) 68%, var(--surdet-text-secondary));
+  stroke-width: 1.35;
 }
 
 .flow-edge--choice,
 .flow-edge--if,
 .flow-edge--switch,
 .flow-edge--loop {
-  stroke: var(--surdet-state-provenance);
-  stroke-width: 1.5;
+  stroke: color-mix(in srgb, var(--surdet-state-provenance) 58%, var(--surdet-text-secondary));
+  stroke-width: 1.35;
 }
 
-.flow-edge--choice,
-.flow-edge--if,
-.flow-edge--switch {
-  stroke-dasharray: 3 2;
+.flow-edge.is-technical {
+  stroke: var(--surdet-border-default);
+  stroke-width: 0.9;
+  stroke-dasharray: 3 4;
+  opacity: 0.72;
 }
 
 .flow-edge--loop {
-  stroke-dasharray: 8 3 2 3;
+  stroke-dasharray: 5 3;
 }
 
 .flow-arrow-shape {
@@ -176,18 +220,76 @@
   fill: var(--surdet-state-provenance);
 }
 
-.flow-edge-label-surface {
+.flow-route-chip-surface {
   fill: var(--surdet-surface-panel);
   stroke: var(--surdet-border-default);
-  stroke-width: 0.6;
+  stroke-width: 0.8;
   pointer-events: none;
 }
 
-.flow-edge-label {
+.flow-route-chip-text {
   fill: var(--surdet-text-secondary);
   font-family: var(--surdet-font-ui);
   font-size: 10px;
   pointer-events: none;
+}
+
+.flow-component-heading {
+  fill: var(--surdet-text-primary);
+  font-family: var(--surdet-font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.flow-component-heading--secondary {
+  fill: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.flow-scene-frame-surface {
+  fill: var(--surdet-surface-panel);
+  stroke: color-mix(in srgb, var(--surdet-border-strong) 72%, var(--surdet-border-default));
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.flow-scene-frame--secondary .flow-scene-frame-surface {
+  fill: color-mix(in srgb, var(--surdet-surface-panel) 82%, var(--surdet-surface-subtle));
+  stroke: var(--surdet-border-default);
+}
+
+.flow-scene-frame.is-current .flow-scene-frame-surface {
+  fill: color-mix(in srgb, var(--surdet-surface-selected) 42%, var(--surdet-surface-panel));
+  stroke: var(--surdet-text-primary);
+  stroke-width: 1.5;
+}
+
+.flow-scene-frame-title,
+.flow-scene-frame-status {
+  font-family: var(--surdet-font-ui);
+  pointer-events: none;
+}
+
+.flow-scene-frame-title {
+  fill: var(--surdet-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flow-scene-frame-status {
+  fill: var(--surdet-text-secondary);
+  font-size: 9px;
+}
+
+.flow-scene-frame.has-warning .flow-scene-frame-status {
+  fill: var(--surdet-state-warning);
+}
+
+.flow-scene-frame.has-error .flow-scene-frame-status {
+  fill: var(--surdet-state-danger);
 }
 
 .flow-node {
@@ -196,22 +298,30 @@
 }
 
 .flow-node-surface {
-  fill: var(--surdet-surface-panel);
+  fill: color-mix(in srgb, var(--surdet-surface-panel) 94%, var(--surdet-surface-subtle));
   stroke: var(--surdet-border-default);
-  stroke-width: 1.2;
+  stroke-width: 0.8;
   transition:
     fill var(--surdet-motion-fast) ease,
     stroke var(--surdet-motion-fast) ease;
 }
 
-.flow-node--label .flow-node-surface {
-  fill: var(--surdet-surface-subtle);
+.flow-node-role--beat .flow-node-surface {
+  fill: color-mix(in srgb, var(--surdet-surface-subtle) 56%, var(--surdet-surface-panel));
+}
+
+.flow-node-role--scene-summary .flow-node-surface {
+  fill: var(--surdet-surface-panel);
+  stroke: var(--surdet-border-strong);
+}
+
+.flow-node-role--scene-summary .flow-node-primary {
+  font-weight: 700;
 }
 
 .flow-node--host-entry .flow-node-surface {
-  fill: var(--surdet-surface-panel);
-  stroke: var(--surdet-action-primary);
-  stroke-dasharray: 5 3;
+  fill: var(--surdet-text-primary);
+  stroke: var(--surdet-text-primary);
 }
 
 .flow-node:hover .flow-node-surface {
@@ -221,33 +331,7 @@
 .flow-node[aria-current="true"] .flow-node-surface {
   fill: var(--surdet-surface-selected);
   stroke: var(--surdet-border-strong);
-  stroke-width: 2.2;
-}
-
-.flow-node.has-error .flow-node-meta {
-  fill: var(--surdet-state-danger);
-}
-
-.flow-node.has-error .flow-node-surface {
-  fill: color-mix(in srgb, var(--surdet-state-danger) 8%, var(--surdet-surface-panel));
-  stroke: var(--surdet-state-danger);
-  stroke-width: 2;
-}
-
-.flow-node.has-warning .flow-node-meta {
-  fill: var(--surdet-state-warning);
-}
-
-.flow-node.has-warning .flow-node-surface {
-  fill: color-mix(in srgb, var(--surdet-state-warning) 8%, var(--surdet-surface-panel));
-  stroke: var(--surdet-state-warning);
-  stroke-width: 2;
-  stroke-dasharray: 4 2;
-}
-
-.flow-node[aria-current="true"].has-error .flow-node-surface,
-.flow-node[aria-current="true"].has-warning .flow-node-surface {
-  stroke-width: 3;
+  stroke-width: 1.2;
 }
 
 .flow-node:focus-visible .flow-node-surface {
@@ -264,12 +348,46 @@
 .flow-node-primary {
   fill: var(--surdet-text-primary);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .flow-node-meta {
   fill: var(--surdet-text-secondary);
   font-size: 9px;
+}
+
+.flow-node-role--entry .flow-node-primary {
+  fill: var(--surdet-surface-panel);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.flow-return-marker {
+  cursor: pointer;
+  outline: none;
+}
+
+.flow-return-marker-surface {
+  fill: var(--surdet-surface-subtle);
+  stroke: var(--surdet-border-default);
+  stroke-width: 0.8;
+}
+
+.flow-return-marker-text {
+  fill: var(--surdet-text-secondary);
+  font-family: var(--surdet-font-ui);
+  font-size: 10px;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.flow-return-marker:hover .flow-return-marker-surface {
+  stroke: var(--surdet-border-strong);
+}
+
+.flow-return-marker:focus-visible .flow-return-marker-surface {
+  stroke: var(--surdet-focus-ring);
+  stroke-width: 2;
 }
 
 .flow-link-preview {
@@ -383,17 +501,25 @@
   color: var(--surdet-action-primary);
 }
 
-.flow-technical p {
-  position: absolute;
-  right: var(--surdet-space-16);
-  bottom: 48px;
-  z-index: 3;
-  width: min(420px, calc(100% - var(--surdet-space-32)));
-  margin: 0;
+.flow-technical-panel {
+  position: static;
+  width: min(420px, 100%);
+  margin-block-start: var(--surdet-space-8);
   padding: var(--surdet-space-12);
   border: 1px solid var(--surdet-border-strong);
   background-color: var(--surdet-surface-panel);
   color: var(--surdet-text-secondary);
+}
+
+.flow-technical-panel p {
+  margin: 0 0 var(--surdet-space-8);
+  line-height: 1.55;
+}
+
+.flow-technical-toggle {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 0.72rem;
 }
 
 .flow-menu {

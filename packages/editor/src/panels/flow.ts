@@ -2,16 +2,17 @@
  * 流程图视图（E1a 只读导航 + E1b 交互编辑）：
  *  - 数据源：buildFlowGraph（lastValidation.scenes 编译产物 + collectConfigSceneRoots 宿主入口，
  *    与 CLI 同源；不重新解析源码）
- *  - 布局：场景维 BFS 分层为列，每场景一条泳道（入口节点 + 标签节点纵向排布）；自实现 SVG
+ *  - 布局：以真实 FlowGraph 为唯一事实，投影为“场景分镜 + 剧情段落 + 正交连接”的写作者路径地图；
+ *    只隐藏重复/源码顺序等技术连接的默认展示，不删除真实节点和边
  *  - 交互（E1a）：拖拽平移 / 滚轮缩放（以光标为中心）；单击场景节点 → 切到块编辑视图；
  *    单击标签节点 → 切到该场景并滚动到 @label 行；当前场景与校验状态均有文字和边界反馈
  *  - 交互（E1b）：从节点拖到另一节点 → 在源场景末尾插入 @jump/@goto（走 history 可 undo）；
  *    右键场景节点 → 重命名（引用同步改写）/ 删除（引用检查警告）
- *  - 渲染：视口裁剪（视口外节点不建 DOM；规模目标 100 场景 / 800 标签）
+ *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
 import { state, h, setStatus } from '../state.js';
 import { collectConfigSceneRoots } from '@surdet/core';
-import { buildFlowGraph, sceneNodeId } from '../graph/build.js';
+import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { setSceneText } from '../history.js';
 import { renderSidebar } from './sidebar.js';
@@ -19,8 +20,20 @@ import {
   flowEdgeKindLabel,
   flowValidationStateLabel,
   presentFlowEdge,
-  presentFlowNode,
 } from '../flow-presentation.js';
+import {
+  buildNarrativeFlowLayout,
+} from '../flow-narrative-layout.js';
+import type {
+  FlowMapMode,
+  NarrativeFlowLayout,
+  NarrativeLayoutOptions,
+  NarrativeNodeBox,
+  NarrativeNodePresentation,
+  NarrativeRoute,
+  NarrativeReturnMarker,
+  NarrativeSceneFrame,
+} from '../flow-narrative-layout.js';
 
 /** 导航钩子（main.ts 注入）：切回块编辑标签页并可滚动到指定行；requestValidate 触发重校验 */
 let openSceneHook: (sceneKey: string, line?: number) => void = () => {};
@@ -65,21 +78,8 @@ export { appendLineToScene };
 
 /* ============================ 布局（纯计算） ============================ */
 
-export interface NodeBox { node: FlowNode; x: number; y: number; w: number; h: number }
-interface FlowLayout { boxes: Map<string, NodeBox>; width: number; height: number }
-
-const NODE_H = 44;
-const LANE_PAD = 10;
-const LANE_GAP = 36;
-const COL_GAP = 90;
-const NODE_PAD_X = 14;
-
-/** 节点宽度随文本自适应（CJK 按全角估宽） */
-function nodeWidth(text: string): number {
-  let w = NODE_PAD_X * 2;
-  for (const ch of text) w += ch.charCodeAt(0) > 0x2e7f ? 13 : 7.5;
-  return Math.max(84, Math.min(280, Math.ceil(w)));
-}
+export type NodeBox = NarrativeNodeBox;
+type FlowLayout = NarrativeFlowLayout;
 
 function visualTextWidth(text: string, fontSize: number): number {
   let units = 0;
@@ -97,112 +97,13 @@ function truncateTextToWidth(text: string, maxWidth: number, fontSize: number): 
   return `${result}…`;
 }
 
-function nodeText(node: FlowNode): string {
-  return presentFlowNode(node).primaryText;
-}
-
-/** 场景维 BFS 深度：entryScene 为根；宿主入口场景与不可达场景另行归列 */
-function sceneDepths(graph: FlowGraph, entryScene: string): Map<string, number> {
-  const sceneIds = graph.nodes.filter((n) => n.kind === 'scene').map((n) => n.sceneId);
-  const adj = new Map<string, Set<string>>();
-  for (const id of sceneIds) adj.set(id, new Set());
-  for (const e of graph.edges) {
-    if (e.kind !== 'jump' && e.kind !== 'call') continue;
-    const from = graph.nodes.find((n) => n.id === e.from);
-    const to = graph.nodes.find((n) => n.id === e.to);
-    if (!from || !to) continue;
-    if (from.sceneId === to.sceneId) continue;
-    if (!adj.has(from.sceneId)) adj.set(from.sceneId, new Set());
-    adj.get(from.sceneId)!.add(to.sceneId);
-  }
-  const depth = new Map<string, number>();
-  const entry = sceneIds.includes(entryScene) ? entryScene : sceneIds[0];
-  if (entry) {
-    depth.set(entry, 0);
-    const queue = [entry];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      for (const nx of adj.get(cur) ?? []) {
-        if (!depth.has(nx)) { depth.set(nx, depth.get(cur)! + 1); queue.push(nx); }
-      }
-    }
-  }
-  const hostScenes = new Set(graph.nodes.filter((n) => n.kind === 'host-entry').map((n) => n.sceneId));
-  let maxDepth = 0;
-  for (const d of depth.values()) maxDepth = Math.max(maxDepth, d);
-  for (const id of sceneIds) {
-    if (!depth.has(id)) depth.set(id, hostScenes.has(id) ? 0 : maxDepth + 1);
-  }
-  return depth;
-}
-
-/** 分层泳道布局：列 = BFS 深度；列内每场景一条泳道（入口 + 标签纵向） */
-export function layoutFlowGraph(graph: FlowGraph, entryScene: string): FlowLayout {
-  const boxes = new Map<string, NodeBox>();
-  if (graph.nodes.length === 0) return { boxes, width: 0, height: 0 };
-
-  const depth = sceneDepths(graph, entryScene);
-  const sceneOrder = graph.nodes.filter((n) => n.kind === 'scene').map((n) => n.sceneId);
-  const byDepth = new Map<number, string[]>();
-  for (const id of sceneOrder) {
-    const d = depth.get(id) ?? 0;
-    if (!byDepth.has(d)) byDepth.set(d, []);
-    byDepth.get(d)!.push(id);
-  }
-  const depths = [...byDepth.keys()].sort((a, b) => a - b);
-
-  // 场景 → 场景内节点（入口 + 标签按行号）
-  const laneNodes = new Map<string, FlowNode[]>();
-  const scenesWithHostEntry = new Set(
-    graph.nodes.filter((node) => node.kind === 'host-entry').map((node) => node.sceneId),
-  );
-  for (const sid of sceneOrder) {
-    const ns = graph.nodes.filter((n) => n.sceneId === sid && (n.kind === 'scene' || n.kind === 'label'));
-    ns.sort((a, b) => (a.kind === 'scene' ? -1 : b.kind === 'scene' ? 1 : (a.line ?? 0) - (b.line ?? 0)));
-    laneNodes.set(sid, ns);
-  }
-
-  let x = LANE_PAD;
-  let totalHeight = 0;
-  for (const d of depths) {
-    const scenes = byDepth.get(d)!;
-    // 泳道宽度 = 列内最宽节点
-    let colW = 0;
-    for (const sid of scenes) for (const n of laneNodes.get(sid)!) colW = Math.max(colW, nodeWidth(nodeText(n)));
-    let y = LANE_PAD;
-    for (const sid of scenes) {
-      // 宿主入口画在目标场景上方。先在当前泳道内为它保留完整高度，
-      // 避免入口节点向上侵入同列的上一条场景泳道。
-      if (scenesWithHostEntry.has(sid)) y += NODE_H + 14;
-      for (const n of laneNodes.get(sid)!) {
-        const w = nodeWidth(nodeText(n));
-        boxes.set(n.id, { node: n, x: x + (colW - w) / 2, y, w, h: NODE_H });
-        y += NODE_H + 8;
-      }
-      y += LANE_GAP; // 泳道间距
-    }
-    // 宿主入口节点：置于目标场景泳道上方
-    for (const n of graph.nodes.filter((nn) => nn.kind === 'host-entry' && depth.get(nn.sceneId) === d)) {
-      const target = boxes.get(sceneNodeId(n.sceneId));
-      if (target) {
-        const w = nodeWidth(nodeText(n));
-        boxes.set(n.id, { node: n, x: target.x, y: target.y - NODE_H - 14, w, h: NODE_H });
-      }
-    }
-    totalHeight = Math.max(totalHeight, y);
-    x += colW + COL_GAP;
-  }
-
-  // 顶部越界保护（验收轮 Minor3）：宿主入口节点画在目标场景上方，列首行场景的 host 节点
-  // 可能落在负坐标（默认视口下贴边/出画）；整体下移保证全部节点可见，相对布局不变
-  let minY = Infinity;
-  for (const b of boxes.values()) minY = Math.min(minY, b.y);
-  if (Number.isFinite(minY) && minY < LANE_PAD) {
-    const dy = LANE_PAD - minY;
-    for (const b of boxes.values()) b.y += dy;
-    totalHeight += dy;
-  }
-  return { boxes, width: x, height: totalHeight + LANE_PAD };
+/** 人类可读的剧情路径投影；FlowGraph 本身仍是唯一图事实。 */
+export function layoutFlowGraph(
+  graph: FlowGraph,
+  entryScene: string,
+  options?: NarrativeLayoutOptions,
+): FlowLayout {
+  return buildNarrativeFlowLayout(graph, entryScene, options);
 }
 
 /* ============================ 校验状态映射 ============================ */
@@ -317,51 +218,33 @@ export async function deleteScene(sceneId: string): Promise<void> {
 
 const NS = 'http://www.w3.org/2000/svg';
 /** 视图变换（平移/缩放）：跨重渲染保持 */
-const view = { k: 1, tx: 30, ty: 30 };
-let legendExpanded = true;
+type FlowViewKey = FlowMapMode | 'technical';
+const flowViews: Record<FlowViewKey, { k: number; tx: number; ty: number }> = {
+  focus: { k: 1, tx: 30, ty: 30 },
+  overview: { k: 1, tx: 30, ty: 30 },
+  technical: { k: 1, tx: 30, ty: 30 },
+};
+let flowViewMode: FlowMapMode = 'focus';
+let view = flowViews.focus;
+let pendingAutoFit = false;
+let legendExpanded = false;
+let technicalEdgesVisible = false;
+let technicalDetailsExpanded = false;
 
 function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] {
   return document.createElementNS(NS, tag);
 }
 
-/** 边几何：路径 + 标签位置。
- *  sameLane 由调用方按“同一场景”判定（不能比 x：同泳道节点宽度不同居中后 x 不同，
- *  验收反馈三轮的错位根因即误判为跨列回边） */
-const BULGE = 30;
+/** 旧公开测试入口保留为正交几何，不再生成贝塞尔曲线。 */
 export function edgeGeometry(a: NodeBox, b: NodeBox, kind: FlowEdge['kind'], sameLane: boolean, dy = 0): { d: string; lx: number; ly: number } {
-  if (sameLane) {
-    if (kind === 'flow' || kind === 'host') {
-      // 同泳道相邻单元的顺序流 / 宿主入口：近直线（节点宽度不同居中 x 略差，端点取各自中点）
-      const down = b.y >= a.y;
-      const x1 = a.x + a.w / 2, y1 = down ? a.y + a.h : a.y;
-      const x2 = b.x + b.w / 2, y2 = down ? b.y : b.y + b.h;
-      return { d: `M ${x1} ${y1} L ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
-    }
-    // 同泳道跨单元（choice/goto/loop/if）：向右鼓出弧线，与顺序流细线分离；标签在弧线顶点
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2;
-    const y2 = b.y + b.h / 2;
-    const cx = x1 + BULGE;
-    return {
-      d: `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${b.x + b.w} ${y2}`,
-      lx: x1 + BULGE * 0.75,
-      ly: (y1 + y2) / 2,
-    };
-  }
-  if (b.x >= a.x + a.w - 1) {
-    // 向右跨列：右缘中点 → 左缘中点（贝塞尔），标签在列间空隙；dy 为汇聚落点分散偏移
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2 + dy;
-    const dx = Math.max(30, (x2 - x1) / 2);
-    return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 };
-  }
-  // 跨列回边（向左）：绕下方
-  const x1 = a.x + a.w / 2, y1 = a.y + a.h;
-  const x2 = b.x + b.w / 2, y2 = b.y + b.h;
-  const dipY = Math.max(y1, y2) + 34;
-  return { d: `M ${x1} ${y1} C ${x1} ${dipY}, ${x2} ${dipY}, ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: dipY - 8 };
+  const y1 = a.y + a.h / 2;
+  const y2 = b.y + b.h / 2 + dy;
+  const x1 = a.x + a.w;
+  const x2 = sameLane ? b.x + b.w : b.x;
+  const channelX = sameLane ? Math.max(x1, x2) + 28 : (x1 + x2) / 2;
+  const d = `M ${x1} ${y1} L ${channelX} ${y1} L ${channelX} ${y2} L ${x2} ${y2}`;
+  return { d, lx: channelX, ly: (y1 + y2) / 2 };
 }
-
-/** 待绘制的边标签（收集后在节点之上统一绘制，保证不被节点遮挡） */
-export interface EdgeLabelDraw { lx: number; ly: number; text: string; full: string; kind: FlowEdge['kind'] }
 
 const EDGE_KINDS: FlowEdge['kind'][] = ['flow', 'goto', 'jump', 'call', 'switch', 'loop', 'choice', 'if', 'host'];
 
@@ -389,12 +272,10 @@ function buildFlowDefs(): SVGDefsElement {
   grid.setAttribute('width', '26');
   grid.setAttribute('height', '26');
   grid.setAttribute('patternUnits', 'userSpaceOnUse');
-  const dot = el('circle');
-  dot.setAttribute('cx', '1.3');
-  dot.setAttribute('cy', '1.3');
-  dot.setAttribute('r', '1.3');
-  dot.classList.add('flow-grid-mark');
-  grid.appendChild(dot);
+  const rule = el('path');
+  rule.setAttribute('d', 'M 26 0 L 0 0 L 0 26');
+  rule.classList.add('flow-grid-mark');
+  grid.appendChild(rule);
   defs.appendChild(grid);
   return defs;
 }
@@ -415,6 +296,8 @@ export interface MinimapClientMapping {
   intrinsicHeight: number;
   worldScale: number;
   worldPadding: number;
+  worldMinX?: number;
+  worldMinY?: number;
 }
 
 /**
@@ -431,8 +314,8 @@ export function minimapClientToWorld(
   const intrinsicX = ((clientX - mapping.left) / renderedWidth) * mapping.intrinsicWidth;
   const intrinsicY = ((clientY - mapping.top) / renderedHeight) * mapping.intrinsicHeight;
   return {
-    x: intrinsicX / mapping.worldScale - mapping.worldPadding,
-    y: intrinsicY / mapping.worldScale - mapping.worldPadding,
+    x: intrinsicX / mapping.worldScale + (mapping.worldMinX ?? 0) - mapping.worldPadding,
+    y: intrinsicY / mapping.worldScale + (mapping.worldMinY ?? 0) - mapping.worldPadding,
   };
 }
 
@@ -440,8 +323,9 @@ export function minimapClientToWorld(
 function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTMLElement): SVGElement | null {
   if (layout.boxes.size === 0) return null;
   const pad = 40;
-  const worldW = layout.width + pad * 2;
-  const worldH = layout.height + pad * 2;
+  const activeBounds = technicalEdgesVisible ? layout.bounds : layout.visibleBounds;
+  const worldW = activeBounds.maxX - activeBounds.minX + pad * 2;
+  const worldH = activeBounds.maxY - activeBounds.minY + pad * 2;
   const s = Math.min(180 / worldW, 140 / worldH);
   const w = Math.max(60, worldW * s);
   const hgt = Math.max(44, worldH * s);
@@ -455,7 +339,10 @@ function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTM
   mm.setAttribute('role', 'button');
   mm.setAttribute('tabindex', '0');
   mm.setAttribute('aria-label', '流程缩略图，点击可把对应位置移到画布中央');
-  const toMm = (x: number, y: number): { x: number; y: number } => ({ x: (x + pad) * s, y: (y + pad) * s });
+  const toMm = (x: number, y: number): { x: number; y: number } => ({
+    x: (x - activeBounds.minX + pad) * s,
+    y: (y - activeBounds.minY + pad) * s,
+  });
   // 节点概览仅表达当前位置；具体颜色由语义样式提供。
   for (const b of layout.boxes.values()) {
     const r = el('rect');
@@ -489,12 +376,14 @@ function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTM
       intrinsicHeight: hgt,
       worldScale: s,
       worldPadding: pad,
+      worldMinX: activeBounds.minX,
+      worldMinY: activeBounds.minY,
     });
     view.tx = cw / 2 - worldPoint.x * view.k;
     view.ty = ch / 2 - worldPoint.y * view.k;
     rerenderFlow(container, restoreKeyboardFocus ? '[data-editor-region="flow-minimap"]' : undefined);
   };
-  mm.addEventListener('pointerdown', (e) => {
+  mm.addEventListener('click', (e) => {
     e.stopPropagation();
     focusPoint(e.clientX, e.clientY);
   });
@@ -507,58 +396,60 @@ function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTM
   return mm;
 }
 
-function drawEdge(world: SVGElement, edge: FlowEdge, boxes: Map<string, NodeBox>, labelsOut: EdgeLabelDraw[], dy = 0): void {
-  const a = boxes.get(edge.from);
-  const b = boxes.get(edge.to);
-  if (!a || !b) return; // 悬空目标（未编译场景）不画，lint 会报
-  // 同泳道 = 同一场景（节点宽度不同居中后 x 不同，不能用 x 判断）
-  const sameLane = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
-  const geo = edgeGeometry(a, b, edge.kind, sameLane, dy);
+function drawRoute(world: SVGElement, route: NarrativeRoute): void {
   const path = el('path');
-  path.setAttribute('d', geo.d);
-  path.classList.add('flow-edge', `flow-edge--${edge.kind}`);
-  path.setAttribute('data-flow-edge-kind', edge.kind);
-  path.setAttribute('marker-end', `url(#flow-arrow-${edge.kind})`);
-  const edgePresentation = presentFlowEdge(edge);
-  path.setAttribute('aria-label', `${edgePresentation.kindLabel}，${edgePresentation.technicalText}`);
+  path.setAttribute('d', route.d);
+  path.classList.add('flow-edge', 'flow-route', `flow-edge--${route.edge.kind}`);
+  if (route.hiddenByDefault) path.classList.add('is-technical');
+  path.setAttribute('data-flow-edge-kind', route.edge.kind);
+  path.setAttribute('data-flow-route', 'orthogonal');
+  path.setAttribute('data-flow-from', route.edge.from);
+  path.setAttribute('data-flow-to', route.edge.to);
+  if (route.label) path.setAttribute('data-flow-label', route.label);
+  if (route.conditionText) path.setAttribute('data-flow-condition', route.conditionText);
+  path.setAttribute('marker-end', `url(#flow-arrow-${route.edge.kind})`);
+  const edgePresentation = presentFlowEdge(route.edge);
+  if (technicalEdgesVisible) {
+    path.setAttribute('role', 'img');
+    path.setAttribute('aria-label', `技术连接：${edgePresentation.technicalText}`);
+  } else {
+    path.setAttribute('aria-hidden', 'true');
+  }
   const title = el('title');
   title.textContent = `技术信息：${edgePresentation.technicalText}`;
   path.appendChild(title);
   world.appendChild(path);
-  if (edge.label) {
-    const text = edgePresentation.displayText;
-    labelsOut.push({
-      lx: geo.lx,
-      ly: geo.ly,
-      text,
-      full: edgePresentation.technicalText,
-      kind: edge.kind,
-    });
-  }
 }
 
-/** 边标签顶层绘制（在全部节点之后调用，保证内容可读）。 */
-function drawEdgeLabels(world: SVGElement, labels: EdgeLabelDraw[]): void {
-  for (const L of labels) {
-    const visibleText = truncateTextToWidth(L.text, 220, 10);
-    const labelW = Math.min(232, visualTextWidth(visibleText, 10) + 12);
+/** 仅跨场景分支保留附着式说明；同场景选项已经写入目标段落行。 */
+function drawRouteLabels(world: SVGElement, routes: readonly NarrativeRoute[]): void {
+  for (const route of routes) {
+    if (!route.label || route.labelX === undefined || route.labelY === undefined) continue;
+    const routeText = route.conditionText ? `${route.label} · ${route.conditionText}` : route.label;
+    const visibleText = truncateTextToWidth(routeText, 180, 10);
+    const labelW = Math.min(192, visualTextWidth(visibleText, 10) + 18);
+    const group = el('g');
+    group.classList.add('flow-route-chip', `flow-route-chip--${route.edge.kind}`);
+    group.setAttribute('data-flow-route-label', route.edge.kind);
+    group.setAttribute('role', 'note');
+    group.setAttribute('aria-label', `${flowEdgeKindLabel(route.edge.kind)}：${routeText}`);
     const bg = el('rect');
-    bg.setAttribute('x', String(L.lx - labelW / 2));
-    bg.setAttribute('y', String(L.ly - 8));
+    bg.setAttribute('x', String(route.labelX - labelW / 2));
+    bg.setAttribute('y', String(route.labelY - 10));
     bg.setAttribute('width', String(labelW));
-    bg.setAttribute('height', '14');
-    bg.setAttribute('rx', '4');
-    bg.classList.add('flow-edge-label-surface', `flow-edge-label-surface--${L.kind}`);
+    bg.setAttribute('height', '20');
+    bg.setAttribute('rx', '2');
+    bg.classList.add('flow-route-chip-surface');
     const mid = el('text');
-    mid.setAttribute('x', String(L.lx));
-    mid.setAttribute('y', String(L.ly + 3));
+    mid.setAttribute('x', String(route.labelX));
+    mid.setAttribute('y', String(route.labelY + 3.5));
     mid.setAttribute('text-anchor', 'middle');
-    mid.classList.add('flow-edge-label', `flow-edge-label--${L.kind}`);
+    mid.classList.add('flow-route-chip-text');
     mid.textContent = visibleText;
     const title = el('title');
-    title.textContent = `技术信息：${L.full}`;
-    mid.appendChild(title);
-    world.append(bg, mid);
+    title.textContent = `技术信息：${presentFlowEdge(route.edge).technicalText}`;
+    group.append(bg, mid, title);
+    world.appendChild(group);
   }
 }
 
@@ -661,11 +552,130 @@ function openFlowNode(node: FlowNode): void {
   openSceneHook(key, node.kind === 'label' ? node.line : undefined);
 }
 
-function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: number; warnings: number }>, startNodeDrag: (nodeId: string, e: PointerEvent) => void): void {
+function drawSceneFrame(
+  world: SVGElement,
+  frame: NarrativeSceneFrame,
+  currentSceneId: string | null,
+  stats: Map<string, { errors: number; warnings: number }>,
+): void {
+  const group = el('g');
+  group.classList.add('flow-scene-frame', `flow-scene-frame--${frame.component}`);
+  group.setAttribute('data-flow-scene-frame', frame.sceneId);
+  group.setAttribute('data-scene-id', frame.sceneId);
+  group.setAttribute('data-flow-component', frame.component);
+  const issue = stats.get(frame.sceneId);
+  if ((issue?.errors ?? 0) > 0) group.classList.add('has-error');
+  else if ((issue?.warnings ?? 0) > 0) group.classList.add('has-warning');
+  if (currentSceneId === frame.sceneId) group.classList.add('is-current');
+
+  const surface = el('rect');
+  surface.classList.add('flow-scene-frame-surface');
+  surface.setAttribute('x', String(frame.x));
+  surface.setAttribute('y', String(frame.y));
+  surface.setAttribute('width', String(frame.w));
+  surface.setAttribute('height', String(frame.h));
+  surface.setAttribute('rx', '2');
+
+  const title = el('text');
+  title.classList.add('flow-scene-frame-title');
+  title.setAttribute('x', String(frame.x + 16));
+  title.setAttribute('y', String(frame.y + 25));
+  title.textContent = `场景 ${frame.sceneId}`;
+
+  const statusParts: string[] = [];
+  if (currentSceneId === frame.sceneId) statusParts.push('当前');
+  if ((issue?.errors ?? 0) > 0) statusParts.push(`错误 ${issue!.errors}`);
+  else if ((issue?.warnings ?? 0) > 0) statusParts.push(`警告 ${issue!.warnings}`);
+  if (statusParts.length > 0) {
+    const status = el('text');
+    status.classList.add('flow-scene-frame-status');
+    status.setAttribute('x', String(frame.x + frame.w - 16));
+    status.setAttribute('y', String(frame.y + 25));
+    status.setAttribute('text-anchor', 'end');
+    status.textContent = statusParts.join(' · ');
+    group.append(surface, title, status);
+  } else {
+    group.append(surface, title);
+  }
+  world.appendChild(group);
+}
+
+function drawComponentHeading(world: SVGElement, x: number, y: number, text: string, kind: 'main' | 'secondary'): void {
+  const heading = el('text');
+  heading.classList.add('flow-component-heading', `flow-component-heading--${kind}`);
+  heading.setAttribute('x', String(x));
+  heading.setAttribute('y', String(y));
+  heading.setAttribute('data-flow-component-heading', kind);
+  heading.textContent = text;
+  world.appendChild(heading);
+}
+
+function drawReturnMarkers(
+  world: SVGElement,
+  layout: FlowLayout,
+  markers: readonly NarrativeReturnMarker[],
+): void {
+  const bySource = new Map<string, NarrativeReturnMarker[]>();
+  for (const marker of markers) {
+    const group = bySource.get(marker.sourceSceneId) ?? [];
+    group.push(marker);
+    bySource.set(marker.sourceSceneId, group);
+  }
+  for (const [sourceSceneId, sourceMarkers] of bySource) {
+    const frame = layout.frames.get(sourceSceneId);
+    if (!frame) continue;
+    sourceMarkers.forEach((marker, index) => {
+      const group = el('g');
+      group.classList.add('flow-return-marker');
+      group.setAttribute('data-flow-return-target', marker.targetSceneId);
+      group.setAttribute('role', 'link');
+      group.setAttribute('tabindex', '0');
+      group.setAttribute('aria-label', marker.label);
+      const y = frame.y + frame.h - 14 - (sourceMarkers.length - index) * 28;
+      const surface = el('rect');
+      surface.classList.add('flow-return-marker-surface');
+      surface.setAttribute('x', String(frame.x + 16));
+      surface.setAttribute('y', String(y));
+      surface.setAttribute('width', String(frame.w - 32));
+      surface.setAttribute('height', '22');
+      surface.setAttribute('rx', '2');
+      const text = el('text');
+      text.classList.add('flow-return-marker-text');
+      text.setAttribute('x', String(frame.x + 26));
+      text.setAttribute('y', String(y + 15));
+      text.textContent = marker.label;
+      const openTarget = (): void => {
+        const key = sceneKeyById(marker.targetSceneId);
+        if (key) openSceneHook(key);
+        else setStatus(`无法定位返回场景“${marker.targetSceneId}”`, false, 4000);
+      };
+      group.addEventListener('click', openTarget);
+      group.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openTarget();
+      });
+      group.append(surface, text);
+      world.appendChild(group);
+    });
+  }
+}
+
+function drawNode(
+  world: SVGElement,
+  box: NodeBox,
+  narrative: NarrativeNodePresentation | undefined,
+  stats: Map<string, { errors: number; warnings: number }>,
+  startNodeDrag: (nodeId: string, e: PointerEvent) => void,
+): void {
   const { node } = box;
-  const presentation = presentFlowNode(node);
+  const presentation = narrative ?? {
+    primaryText: node.kind === 'scene' ? `场景 ${node.sceneId}` : node.label ?? node.sceneId,
+    supportingText: node.kind === 'host-entry' ? '项目入口' : '剧情段落',
+    technicalText: `${node.kind} · ${node.id}`,
+  };
   const g = el('g');
-  g.classList.add('flow-node', `flow-node--${node.kind}`);
+  g.classList.add('flow-node', `flow-node--${node.kind}`, `flow-node-role--${box.role}`);
   g.dataset.nodeId = node.id;
   g.dataset.flowNodeKind = node.kind;
   g.dataset.sceneId = node.sceneId;
@@ -677,46 +687,51 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
   rect.setAttribute('y', String(box.y));
   rect.setAttribute('width', String(box.w));
   rect.setAttribute('height', String(box.h));
-  rect.setAttribute('rx', '2');
+  rect.setAttribute('rx', box.role === 'entry' ? '12' : '2');
   const isCurrent = state.current !== null && node.kind === 'scene' && state.scenes.get(state.current)?.id === node.sceneId;
   const issue = stats.get(node.sceneId);
   const validationState = issue && issue.errors > 0 ? 'error' : issue && issue.warnings > 0 ? 'warning' : 'ok';
   const validationLabel = flowValidationStateLabel(validationState);
   if (isCurrent) g.classList.add('is-current');
-  if (validationState !== 'ok') g.classList.add(`has-${validationState}`);
   g.setAttribute('aria-current', isCurrent ? 'true' : 'false');
   g.setAttribute('data-flow-validation', validationState);
-  g.setAttribute('aria-description', `${validationLabel}；技术信息：${presentation.technicalText}`);
+  g.setAttribute(
+    'aria-description',
+    technicalEdgesVisible ? `${validationLabel}；技术信息：${presentation.technicalText}` : validationLabel,
+  );
   const issueText = validationState === 'error'
     ? `错误 ${issue?.errors ?? 0}`
     : validationState === 'warning'
       ? `警告 ${issue?.warnings ?? 0}`
       : '';
-  const ariaParts = [presentation.ariaLabel, isCurrent ? '当前场景' : '', issueText].filter(Boolean);
+  const ariaParts = [presentation.primaryText, presentation.supportingText, isCurrent ? '当前场景' : '', issueText].filter(Boolean);
   g.setAttribute('aria-label', ariaParts.join('，'));
 
   const primary = el('text');
   primary.classList.add('flow-node-primary');
-  primary.setAttribute('x', String(box.x + 10));
-  primary.setAttribute('y', String(box.y + 17));
-  const label = presentation.primaryText;
-  primary.textContent = truncateTextToWidth(label, box.w - 20, 11);
+  primary.setAttribute('x', String(box.x + (box.role === 'entry' ? box.w / 2 : 12)));
+  primary.setAttribute('y', String(box.y + (box.role === 'entry' ? 16 : 19)));
+  if (box.role === 'entry') primary.setAttribute('text-anchor', 'middle');
+  const label = box.role === 'scene'
+    ? '场景入口'
+    : box.role === 'scene-summary'
+      ? '打开场景'
+      : presentation.primaryText;
+  primary.textContent = truncateTextToWidth(label, box.w - 24, 11);
 
   const meta = el('text');
   meta.classList.add('flow-node-meta');
-  meta.setAttribute('x', String(box.x + 10));
-  meta.setAttribute('y', String(box.y + 34));
-  const metaParts = [presentation.kindLabel];
-  if (isCurrent) metaParts.push('当前场景');
-  else if (node.kind === 'label') metaParts.push(`位于 ${node.sceneId}`);
-  else metaParts.push('点击打开');
-  if (issueText) metaParts.push(issueText);
+  meta.setAttribute('x', String(box.x + 12));
+  meta.setAttribute('y', String(box.y + 38));
+  const metaParts = [presentation.supportingText];
+  if (presentation.conditionText) metaParts.push(presentation.conditionText);
   const metaText = metaParts.join(' · ');
-  meta.textContent = truncateTextToWidth(metaText, box.w - 20, 9);
+  meta.textContent = truncateTextToWidth(metaText, box.w - 24, 9);
 
   const title = el('title');
   title.textContent = `${presentation.primaryText}（点击打开；拖到其他节点可新增跳转）｜技术信息：${presentation.technicalText}`;
-  g.append(rect, primary, meta, title);
+  if (box.role === 'entry') g.append(rect, primary, title);
+  else g.append(rect, primary, meta, title);
 
   // E1b：节点按下可能是拖拽建链（超过阈值）或点击导航（未移动）；
   // 注意：pointerdown 已把指针捕获到 svg，节点的 click 事件不会触发，
@@ -753,12 +768,20 @@ function drawNode(world: SVGElement, box: NodeBox, stats: Map<string, { errors: 
 /** 拖拽状态由 svg pointerup 统一判定，无需 click 抑制 */
 const DRAG_THRESHOLD = 6;
 
-/** 渲染流程图到容器（视口裁剪：只为可见范围内的节点/边建 DOM） */
+/** 渲染路径地图到容器。真实节点全量留在 DOM，确保平移后无需重建也不会出现空框。 */
 export function renderFlow(container: HTMLElement): void {
   container.innerHTML = '';
   closeSceneMenu();
+  if (!technicalEdgesVisible) technicalDetailsExpanded = false;
   const graph = currentGraph();
-  const layout = layoutFlowGraph(graph, state.entryScene);
+  const currentSceneId = state.current === null ? null : state.scenes.get(state.current)?.id ?? null;
+  const layout = layoutFlowGraph(graph, state.entryScene, {
+    mode: flowViewMode,
+    focusSceneId: currentSceneId ?? state.entryScene,
+    technical: technicalEdgesVisible,
+    maxPredecessors: 3,
+    maxSuccessors: 4,
+  });
   const stats = sceneIssueStats();
 
   let errorCount = 0;
@@ -774,7 +797,6 @@ export function renderFlow(container: HTMLElement): void {
       : warningCount > 0
         ? 'warning'
         : 'ok';
-  const currentSceneId = state.current === null ? null : state.scenes.get(state.current)?.id ?? null;
 
   const workbench = h('section', 'flow-workbench');
   workbench.setAttribute('data-editor-region', 'flow-workbench');
@@ -782,18 +804,24 @@ export function renderFlow(container: HTMLElement): void {
 
   const header = h('header', 'flow-workbench-header');
   const headingGroup = h('div', 'flow-heading-group');
-  const heading = h('h2', 'flow-heading', '剧情流程');
-  const current = h('p', 'flow-current-scene', currentSceneId ? `当前场景：${currentSceneId}` : '当前没有打开场景');
+  const heading = h('h2', 'flow-heading', '剧情路径地图');
+  const current = h(
+    'p',
+    'flow-current-scene',
+    `${currentSceneId ? `当前场景：${currentSceneId}` : '当前没有打开场景'} · 编辑视图，不代表唯一游玩路线`,
+  );
   headingGroup.append(heading, current);
 
   const status = h('div', 'flow-status');
   status.setAttribute('data-editor-region', 'flow-status');
   status.setAttribute('data-flow-validation', validationState);
   status.setAttribute('aria-label', `流程状态：${flowValidationStateLabel(validationState)}`);
-  const nodeCount = h('span', 'flow-stat', `节点 ${graph.nodes.length}`);
+  const nodeCount = h('span', 'flow-stat', `场景 ${layout.frames.size}`);
   nodeCount.setAttribute('data-flow-stat', 'nodes');
-  const edgeCount = h('span', 'flow-stat', `连接 ${graph.edges.length}`);
+  nodeCount.title = `技术信息：真实节点 ${graph.nodes.length}`;
+  const edgeCount = h('span', 'flow-stat', `项目选择 ${graph.edges.filter((edge) => edge.kind === 'choice').length}`);
   edgeCount.setAttribute('data-flow-stat', 'edges');
+  edgeCount.title = `技术信息：真实连接 ${graph.edges.length}；可投影 ${layout.routes.length}；未投影 ${layout.unprojectableEdges.length}`;
   const validation = h('span', 'flow-stat flow-stat-validation', flowValidationStateLabel(validationState));
   validation.setAttribute('data-flow-stat', 'validation');
   if (errorCount > 0) validation.textContent = `错误 ${errorCount}`;
@@ -811,11 +839,23 @@ export function renderFlow(container: HTMLElement): void {
     button.title = title;
     return button;
   };
+  const viewSwitch = h('div', 'flow-view-switch');
+  viewSwitch.setAttribute('role', 'group');
+  viewSwitch.setAttribute('aria-label', '剧情地图显示范围');
+  const focusView = h('button', 'flow-view-switch-button', '聚焦路径') as HTMLButtonElement;
+  focusView.type = 'button';
+  focusView.setAttribute('data-flow-action', 'view-focus');
+  focusView.setAttribute('aria-pressed', String(flowViewMode === 'focus' && !technicalEdgesVisible));
+  const overviewView = h('button', 'flow-view-switch-button', '全局概览') as HTMLButtonElement;
+  overviewView.type = 'button';
+  overviewView.setAttribute('data-flow-action', 'view-overview');
+  overviewView.setAttribute('aria-pressed', String(flowViewMode === 'overview' && !technicalEdgesVisible));
+  viewSwitch.append(focusView, overviewView);
   const zoomOut = makeTool('缩小', '缩小流程画布');
   zoomOut.setAttribute('data-flow-action', 'zoom-out');
   const zoomIn = makeTool('放大', '放大流程画布');
   zoomIn.setAttribute('data-flow-action', 'zoom-in');
-  const fitCanvas = makeTool('适应画布', '显示全部真实节点');
+  const fitCanvas = makeTool('查看全图', '显示全部场景分镜与连接');
   fitCanvas.setAttribute('data-flow-action', 'fit-canvas');
   const focusCurrent = makeTool('回到当前', '把当前场景移到画布中央');
   focusCurrent.setAttribute('data-flow-action', 'focus-current');
@@ -823,8 +863,29 @@ export function renderFlow(container: HTMLElement): void {
   const toggleLegend = makeTool(legendExpanded ? '收起图例' : '展开图例', '显示或隐藏连接图例');
   toggleLegend.setAttribute('data-flow-action', 'toggle-legend');
   toggleLegend.setAttribute('aria-expanded', String(legendExpanded));
-  toolbar.append(zoomOut, zoomIn, fitCanvas, focusCurrent, toggleLegend);
+  toolbar.append(viewSwitch, zoomOut, zoomIn, fitCanvas, focusCurrent, toggleLegend);
   header.append(headingGroup, status, toolbar);
+
+  const scopeNote = h('div', 'flow-scope-note');
+  scopeNote.setAttribute('data-editor-region', 'flow-scope-note');
+  if (layout.mode === 'focus') {
+    const hiddenPredecessors = layout.focusOverflow?.predecessorCount ?? 0;
+    const hiddenSuccessors = layout.focusOverflow?.successorCount ?? 0;
+    const note = h('span', 'flow-scope-note-text', '当前仅显示聚焦场景和直接前后场景。');
+    scopeNote.appendChild(note);
+    if (hiddenPredecessors > 0 || hiddenSuccessors > 0) {
+      note.textContent = `已收起 ${hiddenPredecessors} 个前置场景、${hiddenSuccessors} 个后续场景。`;
+      const showAll = h('button', 'flow-scope-note-action', '在全局概览中查看') as HTMLButtonElement;
+      showAll.type = 'button';
+      showAll.setAttribute('data-flow-action', 'view-overview-overflow');
+      scopeNote.appendChild(showAll);
+    }
+  } else if (layout.mode === 'overview') {
+    scopeNote.appendChild(h('span', 'flow-scope-note-text', '全局概览只显示场景层；选择和段落在聚焦路径中展开。'));
+  } else {
+    scopeNote.appendChild(h('span', 'flow-scope-note-text', '技术连接显示完整可投影节点与真实连接。'));
+  }
+  header.appendChild(scopeNote);
 
   const canvas = h('div', 'flow-canvas');
   canvas.setAttribute('data-editor-region', 'flow-canvas');
@@ -834,12 +895,12 @@ export function renderFlow(container: HTMLElement): void {
   legend.setAttribute('data-editor-region', 'flow-legend');
   legend.setAttribute('aria-label', '流程图例');
   legend.hidden = !legendExpanded;
-  const legendHeading = h('h3', 'flow-legend-heading', '图例');
+  const legendHeading = h('h3', 'flow-legend-heading', '阅读说明');
   const nodeLegend = h('div', 'flow-legend-group');
   nodeLegend.append(
-    h('span', 'flow-legend-title', '节点'),
-    h('span', 'flow-legend-item flow-legend-scene', '场景'),
-    h('span', 'flow-legend-item flow-legend-label', '段落标记'),
+    h('span', 'flow-legend-title', '内容'),
+    h('span', 'flow-legend-item flow-legend-scene', '场景分镜'),
+    h('span', 'flow-legend-item flow-legend-label', '剧情段落'),
     h('span', 'flow-legend-item flow-legend-entry', '项目入口'),
   );
   const edgeLegend = h('div', 'flow-legend-group');
@@ -851,10 +912,29 @@ export function renderFlow(container: HTMLElement): void {
   }
   const technical = document.createElement('details');
   technical.className = 'flow-technical';
+  technical.open = technicalDetailsExpanded;
+  technical.addEventListener('toggle', () => {
+    if (!technical.isConnected) return;
+    technicalDetailsExpanded = technical.open;
+  });
   const technicalSummary = document.createElement('summary');
   technicalSummary.textContent = '技术信息';
-  const technicalText = h('p', 'surdet-technical-text', '节点和连接来自当前项目的校验编译结果；稳定场景 ID、段落指令与连接类型可在节点或连线提示中查看。');
-  technical.append(technicalSummary, technicalText);
+  const technicalPanel = h('div', 'flow-technical-panel');
+  const technicalText = h(
+    'p',
+    'surdet-technical-text',
+    `本页把编译结果整理成写作者可读的场景地图；稳定 ID、源码顺序与重复连接仍被保留，但默认不干扰阅读。${layout.unprojectableEdges.length > 0 ? `另有 ${layout.unprojectableEdges.length} 条连接因端点缺失未显示，请先修复校验问题。` : ''}`,
+  );
+  const toggleTechnical = h(
+    'button',
+    'flow-technical-toggle',
+    technicalEdgesVisible ? '隐藏技术连接' : '显示技术连接',
+  ) as HTMLButtonElement;
+  toggleTechnical.type = 'button';
+  toggleTechnical.setAttribute('data-flow-action', 'toggle-technical-edges');
+  toggleTechnical.setAttribute('aria-pressed', String(technicalEdgesVisible));
+  technicalPanel.append(technicalText, toggleTechnical);
+  technical.append(technicalSummary, technicalPanel);
   legend.append(legendHeading, nodeLegend, edgeLegend, technical);
   workbench.append(header, canvas, legend);
   container.appendChild(workbench);
@@ -868,12 +948,27 @@ export function renderFlow(container: HTMLElement): void {
   const initialViewport = currentViewportSize();
   const cw = initialViewport.width;
   const ch = initialViewport.height;
+  const fitLayoutToViewport = (viewport: { width: number; height: number }): void => {
+    const { minX, minY, maxX, maxY } = technicalEdgesVisible ? layout.bounds : layout.visibleBounds;
+    const contentWidth = Math.max(1, maxX - minX);
+    const contentHeight = Math.max(1, maxY - minY);
+    const padding = 56;
+    const availableWidth = Math.max(1, viewport.width - padding * 2);
+    const availableHeight = Math.max(1, viewport.height - padding * 2);
+    view.k = Math.min(2, availableWidth / contentWidth, availableHeight / contentHeight);
+    view.tx = (viewport.width - contentWidth * view.k) / 2 - minX * view.k;
+    view.ty = (viewport.height - contentHeight * view.k) / 2 - minY * view.k;
+  };
+  if (pendingAutoFit) {
+    pendingAutoFit = false;
+    fitLayoutToViewport(initialViewport);
+  }
   const svg = el('svg');
   svg.setAttribute('width', String(cw));
   svg.setAttribute('height', String(ch));
   svg.classList.add('flow-canvas-svg');
-  svg.setAttribute('role', 'application');
-  svg.setAttribute('aria-label', `剧情流程，${graph.nodes.length} 个节点，${graph.edges.length} 条连接`);
+  svg.setAttribute('role', 'region');
+  svg.setAttribute('aria-label', `剧情路径地图，${layout.frames.size} 个场景，${graph.edges.filter((edge) => edge.kind === 'choice').length} 个选择`);
   svg.appendChild(buildFlowDefs());
   const world = el('g');
   world.setAttribute('data-flow-world', '');
@@ -889,38 +984,35 @@ export function renderFlow(container: HTMLElement): void {
   gridRect.setAttribute('fill', 'url(#flow-grid)');
   world.appendChild(gridRect);
 
-  // 视口对应的世界坐标矩形（裁剪用）
-  const vx0 = -view.tx / view.k, vy0 = -view.ty / view.k;
-  const vx1 = vx0 + cw / view.k, vy1 = vy0 + ch / view.k;
-  const visible = (b: NodeBox): boolean => b.x + b.w >= vx0 && b.x <= vx1 && b.y + b.h >= vy0 && b.y <= vy1;
+  const mainFrames = [...layout.frames.values()].filter((frame) => frame.component === 'main');
+  const secondaryFrames = [...layout.frames.values()].filter((frame) => frame.component === 'secondary');
+  if (mainFrames.length > 0) {
+    drawComponentHeading(
+      world,
+      Math.min(...mainFrames.map((frame) => frame.x)),
+      Math.min(...mainFrames.map((frame) => frame.y)) - 20,
+      layout.mode === 'focus'
+        ? '当前聚焦路径'
+        : layout.mode === 'overview'
+          ? '全局场景概览'
+          : '完整技术连接',
+      'main',
+    );
+  }
+  if (secondaryFrames.length > 0) {
+    drawComponentHeading(
+      world,
+      Math.min(...secondaryFrames.map((frame) => frame.x)),
+      Math.min(...secondaryFrames.map((frame) => frame.y)) - 24,
+      '其他入口',
+      'secondary',
+    );
+  }
+  for (const frame of layout.frames.values()) drawSceneFrame(world, frame, currentSceneId, stats);
 
-  // 先边后节点（节点盖住线头）；边标签收集后在最顶层绘制（不被节点遮）
-  // 汇聚分散：多条跨列边落在同一目标节点时，落点沿目标左缘错开，避免曲线重叠（验收反馈：连线交叉太乱）
-  const toCount = new Map<string, number>();
-  for (const edge of graph.edges) {
-    const a = layout.boxes.get(edge.from);
-    const b = layout.boxes.get(edge.to);
-    if (!a || !b) continue;
-    const sl = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
-    if (!sl) toCount.set(edge.to, (toCount.get(edge.to) ?? 0) + 1);
-  }
-  const toSeen = new Map<string, number>();
-  const fanDy = (toId: string): number => {
-    const total = toCount.get(toId) ?? 0;
-    if (total <= 1) return 0;
-    const seen = toSeen.get(toId) ?? 0;
-    toSeen.set(toId, seen + 1);
-    const step = Math.min(10, 4 + 16 / total);
-    return (seen - (total - 1) / 2) * step;
-  };
-  const edgeLabels: EdgeLabelDraw[] = [];
-  for (const edge of graph.edges) {
-    const a = layout.boxes.get(edge.from);
-    const b = layout.boxes.get(edge.to);
-    if (!a || !b) continue;
-    const sl = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
-    drawEdge(world, edge, layout.boxes, edgeLabels, sl ? 0 : fanDy(edge.to));
-  }
+  // 技术连接仍属于同一份真实图，只在用户主动展开时显示。
+  const renderedRoutes = layout.routes.filter((route) => technicalEdgesVisible || !route.hiddenByDefault);
+  for (const route of renderedRoutes) drawRoute(world, route);
 
   /* ---- 节点拖拽建链状态 ---- */
   let nodeDrag: { fromId: string; startX: number; startY: number; dragging: boolean } | null = null;
@@ -936,11 +1028,10 @@ export function renderFlow(container: HTMLElement): void {
   };
 
   for (const box of layout.boxes.values()) {
-    if (!visible(box)) continue;
-    drawNode(world, box, stats, startNodeDrag);
+    drawNode(world, box, layout.nodePresentation.get(box.node.id), stats, startNodeDrag);
   }
-  // 边标签最后绘制，避免被节点覆盖。
-  drawEdgeLabels(world, edgeLabels);
+  drawReturnMarkers(world, layout, layout.returnMarkers);
+  drawRouteLabels(world, renderedRoutes);
 
   canvas.appendChild(svg);
   const minimap = buildMinimap(layout, cw, ch, container);
@@ -966,6 +1057,20 @@ export function renderFlow(container: HTMLElement): void {
     view.k = k2;
     rerenderFlow(container, focusSelector);
   };
+  const switchViewMode = (nextMode: FlowMapMode, focusSelector: string): void => {
+    flowViewMode = nextMode;
+    technicalEdgesVisible = false;
+    technicalDetailsExpanded = false;
+    view = flowViews[nextMode];
+    pendingAutoFit = true;
+    rerenderFlow(container, focusSelector);
+  };
+  focusView.onclick = () => switchViewMode('focus', '[data-flow-action="view-focus"]');
+  overviewView.onclick = () => switchViewMode('overview', '[data-flow-action="view-overview"]');
+  const overflowOverview = scopeNote.querySelector<HTMLButtonElement>('[data-flow-action="view-overview-overflow"]');
+  if (overflowOverview) {
+    overflowOverview.onclick = () => switchViewMode('overview', '[data-flow-action="view-overview"]');
+  }
   zoomOut.onclick = () => zoomAround(view.k / 1.2, undefined, undefined, '[data-flow-action="zoom-out"]');
   zoomIn.onclick = () => zoomAround(view.k * 1.2, undefined, undefined, '[data-flow-action="zoom-in"]');
   fitCanvas.onclick = () => {
@@ -973,22 +1078,8 @@ export function renderFlow(container: HTMLElement): void {
       setStatus('当前没有可适应的流程节点', false, 3000);
       return;
     }
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const box of layout.boxes.values()) {
-      minX = Math.min(minX, box.x);
-      minY = Math.min(minY, box.y);
-      maxX = Math.max(maxX, box.x + box.w);
-      maxY = Math.max(maxY, box.y + box.h);
-    }
-    const contentWidth = Math.max(1, maxX - minX);
-    const contentHeight = Math.max(1, maxY - minY);
-    const padding = 56;
     const viewport = currentViewportSize();
-    const availableWidth = Math.max(1, viewport.width - padding * 2);
-    const availableHeight = Math.max(1, viewport.height - padding * 2);
-    view.k = Math.min(2, availableWidth / contentWidth, availableHeight / contentHeight);
-    view.tx = (viewport.width - contentWidth * view.k) / 2 - minX * view.k;
-    view.ty = (viewport.height - contentHeight * view.k) / 2 - minY * view.k;
+    fitLayoutToViewport(viewport);
     rerenderFlow(container, '[data-flow-action="fit-canvas"]');
   };
   focusCurrent.onclick = () => {
@@ -1006,6 +1097,14 @@ export function renderFlow(container: HTMLElement): void {
   toggleLegend.onclick = () => {
     legendExpanded = !legendExpanded;
     rerenderFlow(container, '[data-flow-action="toggle-legend"]');
+  };
+  toggleTechnical.onclick = () => {
+    technicalEdgesVisible = !technicalEdgesVisible;
+    legendExpanded = true;
+    technicalDetailsExpanded = technicalEdgesVisible;
+    view = technicalEdgesVisible ? flowViews.technical : flowViews[flowViewMode];
+    pendingAutoFit = true;
+    rerenderFlow(container, '[data-flow-action="toggle-technical-edges"]');
   };
 
   // 滚轮缩放（以光标为中心）
