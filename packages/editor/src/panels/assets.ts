@@ -17,6 +17,11 @@ const KIND_ORDER: AssetKind[] = ['bg', 'portrait', 'bgm', 'se', 'voice', 'video'
 /** 预览缩略图浮层（单例；hover 目录图片素材时显示） */
 let previewEl: HTMLDivElement | null = null;
 let previewUrl: string | null = null;
+let onInsertedHook: () => void = () => {};
+
+export function bindAssetsPanelHooks(opts: { onInserted: () => void }): void {
+  onInsertedHook = opts.onInserted;
+}
 
 function hidePreview(): void {
   previewEl?.remove();
@@ -67,6 +72,7 @@ function insertAssetLine(entry: AssetEntry): void {
   const sc = state.scenes.get(state.current);
   if (!sc) return;
   setSceneText(state.current, appendLineToScene(sc.text, sc.eol, line));
+  onInsertedHook();
   setStatus(`已在 '${state.current}' 末尾插入 ${line}（可撤销）`, true, 4000);
 }
 
@@ -79,8 +85,15 @@ export function renderAssetsPanel(container: HTMLElement): void {
     scenes,
   });
 
+  const catalog = h('div', 'asset-catalog');
+  catalog.id = 'asset-catalog';
+  catalog.setAttribute('role', 'tabpanel');
+  catalog.setAttribute('data-editor-region', 'asset-catalog');
+  catalog.setAttribute('aria-label', '项目素材目录');
+  container.appendChild(catalog);
+
   if (entries.length === 0) {
-    container.appendChild(h('div', 'empty', '未发现已知素材：扫描来源为 content/assets 目录、gallery.json 与剧本指令参数'));
+    catalog.appendChild(h('div', 'empty', '未发现项目素材。这里会汇总 content/assets、gallery.json 与剧本中的真实引用。'));
     return;
   }
 
@@ -93,9 +106,13 @@ export function renderAssetsPanel(container: HTMLElement): void {
   for (const kind of KIND_ORDER) {
     const list = byKind.get(kind);
     if (!list || list.length === 0) continue;
-    container.appendChild(h('h3', undefined, `${KIND_LABELS[kind]}（${list.length}）`));
+    const group = h('section', 'asset-group');
+    group.dataset.assetKind = kind;
+    group.appendChild(h('h3', 'asset-group-heading', `${KIND_LABELS[kind]}（${list.length}）`));
     for (const entry of list) {
       const row = h('div', 'asset-item' + (entry.usedBy.length === 0 ? ' unused' : ''));
+      row.dataset.assetKey = entry.key;
+      row.dataset.assetKind = entry.kind;
       const keySpan = h('span', 'asset-key', entry.key);
       keySpan.title = entry.assetSrc ? `资源引用：${entry.assetSrc}` : entry.key;
       row.appendChild(keySpan);
@@ -108,9 +125,13 @@ export function renderAssetsPanel(container: HTMLElement): void {
       row.appendChild(usage);
       const ops = h('span', 'asset-ops');
       const insBtn = h('button', undefined, '插入');
+      insBtn.type = 'button';
+      insBtn.setAttribute('data-action', 'insert-asset');
       insBtn.title = `在当前场景末尾插入 ${insertLineForAsset(entry) ?? ''}`;
       insBtn.onclick = () => insertAssetLine(entry);
       const cpBtn = h('button', undefined, '复制');
+      cpBtn.type = 'button';
+      cpBtn.setAttribute('data-action', 'copy-asset-key');
       cpBtn.title = '复制素材 key';
       cpBtn.onclick = () => {
         void navigator.clipboard?.writeText(entry.key);
@@ -124,10 +145,11 @@ export function renderAssetsPanel(container: HTMLElement): void {
         row.addEventListener('mouseenter', (e) => showPreview(entry, e.clientX, e.clientY));
         row.addEventListener('mouseleave', hidePreview);
       }
-      container.appendChild(row);
+      group.appendChild(row);
     }
+    catalog.appendChild(group);
   }
   const foot = h('div', 'dim', `共 ${entries.length} 项（目录扫描 + gallery.json + 剧本用法）`);
   foot.style.padding = '8px 0';
-  container.appendChild(foot);
+  catalog.appendChild(foot);
 }

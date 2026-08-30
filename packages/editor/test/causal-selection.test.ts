@@ -8,10 +8,36 @@ import {
   listenForPreviewTraceSelection,
   locateObjectForTraceEvent,
   parseTimelineObjectRef,
+  reconcileAuthoringSelection,
 } from '../src/causal-selection.js';
 import type { HumanReviewProjection } from '@surdet/authoring';
 
 describe('causal selection bridge', () => {
+  it('reconciles content-only object-ref changes and clears ambiguous or structural changes', () => {
+    const previousObject = {
+      kind: 'text' as const,
+      objectRef: 'scene:alpha/text:2@old-aaaa',
+      source: { path: 'content/scenario/alpha.gal', line: 2, col: 1, raw: 'lynn：旧台词' },
+      references: [],
+      referencedBy: [],
+    };
+    const replacement = {
+      ...previousObject,
+      objectRef: 'scene:alpha/text:2@new-bbbb',
+      source: { ...previousObject.source, raw: 'lynn：新台词' },
+    };
+    const previousIndex = { revision: 'old', objects: [previousObject], byRef: new Map([[previousObject.objectRef, previousObject]]) };
+    const nextIndex = { revision: 'new', objects: [replacement], byRef: new Map([[replacement.objectRef, replacement]]) };
+
+    expect(reconcileAuthoringSelection(previousObject.objectRef, previousIndex, nextIndex)).toBe(replacement.objectRef);
+    expect(reconcileAuthoringSelection(replacement.objectRef, nextIndex, nextIndex)).toBe(replacement.objectRef);
+    expect(reconcileAuthoringSelection(previousObject.objectRef, previousIndex, {
+      ...nextIndex,
+      objects: [replacement, { ...replacement, objectRef: 'scene:alpha/text:2@new-cccc' }],
+    })).toBeNull();
+    expect(reconcileAuthoringSelection('missing', previousIndex, nextIndex)).toBeNull();
+  });
+
   it('filters trace by selected object and locates source from a trace event', () => {
     const selected = 'scene:prologue/text:2@abcd';
     const trace = [

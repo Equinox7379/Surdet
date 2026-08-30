@@ -2,8 +2,6 @@
  * 右侧面板：变量 chips + 场景拓扑图 + 引用边列表（E0 拆分：原 main.ts 纯搬移）。
  */
 import { state, h, setStatus } from '../state.js';
-import { renderSidebar } from './sidebar.js';
-import { renderEditor } from './editor.js';
 import {
   buildReviewCausalSelection,
   describeAuthoringObject,
@@ -14,6 +12,13 @@ import {
 } from '../causal-selection.js';
 import type { HumanReviewProjection } from '@surdet/authoring';
 import { labelForObjectKind } from '../review-model.js';
+
+let onSceneJumpHook: (sceneKey: string) => void = () => {};
+
+/** Scene navigation stays owned by the composition root so every surface clears stale selection alike. */
+export function bindRightNavigation(opts: { onJumpScene: (sceneKey: string) => void }): void {
+  onSceneJumpHook = opts.onJumpScene;
+}
 
 /**
  * 审阅模式右栏：数据只来自 shared review projection，不回读 Editor 私有索引推断关系。
@@ -64,10 +69,44 @@ export function renderReviewCausalPanel(
   container.appendChild(h('div', 'causal-impact', selection.observedImpact.length > 0 ? selection.observedImpact.map(String).join('、') : '尚未观察'));
 }
 
+function buildCurrentSceneContext(): HTMLElement {
+  const scene = state.current ? state.scenes.get(state.current) : undefined;
+  const summary = h('section', 'context-section current-scene-context');
+  summary.setAttribute('data-editor-region', 'current-scene-context');
+  summary.appendChild(h('div', 'context-kicker', '当前工作对象'));
+  summary.appendChild(h('h2', undefined, scene ? `场景 ${scene.id || state.current}` : '尚未选择场景'));
+  if (scene) {
+    const path = h('div', 'context-path', scene.file);
+    path.title = scene.file;
+    summary.appendChild(path);
+    const facts = h('dl', 'context-facts');
+    const appendFact = (label: string, value: string): void => {
+      facts.appendChild(h('dt', undefined, label));
+      facts.appendChild(h('dd', undefined, value));
+    };
+    appendFact('字数', String(scene.text.replace(/\s+/g, '').length));
+    appendFact('保存状态', scene.dirty ? '未保存' : '已保存');
+    summary.appendChild(facts);
+  } else {
+    summary.appendChild(h('div', 'empty', '从左侧目录选择一个真实场景。'));
+  }
+  return summary;
+}
+
+/** Refreshes only the current-scene facts, preserving the rest of the context scroll state. */
+export function refreshCurrentSceneContext(): void {
+  document.querySelector<HTMLElement>('[data-editor-region="current-scene-context"]')
+    ?.replaceWith(buildCurrentSceneContext());
+}
+
 export function renderRightExtras(): void {
   const right = document.getElementById('right');
   if (!right) return;
-  right.appendChild(h('h3', undefined, '变量（game.config.json）'));
+  right.appendChild(buildCurrentSceneContext());
+
+  const variables = h('section', 'context-section project-context');
+  variables.setAttribute('data-editor-region', 'project-variables');
+  variables.appendChild(h('h2', undefined, '项目变量'));
   const chips = h('div');
   try {
     if (state.gameConfigText) {
@@ -86,21 +125,30 @@ export function renderRightExtras(): void {
   } catch {
     chips.appendChild(h('span', 'empty', 'game.config.json 解析失败'));
   }
-  right.appendChild(chips);
+  variables.appendChild(chips);
+  right.appendChild(variables);
 
-  right.appendChild(h('h3', undefined, '场景拓扑'));
+  const topology = h('section', 'context-section project-context');
+  topology.setAttribute('data-editor-region', 'scene-topology');
+  topology.appendChild(h('h2', undefined, '场景拓扑'));
   const graphBox = h('div');
   graphBox.id = 'graph-box';
-  right.appendChild(graphBox);
+  topology.appendChild(graphBox);
+  right.appendChild(topology);
 
-  right.appendChild(h('h3', undefined, '场景引用'));
+  const references = h('section', 'context-section project-context');
+  references.setAttribute('data-editor-region', 'scene-references');
+  references.appendChild(h('h2', undefined, '场景引用'));
   const edgesBox = h('div');
   edgesBox.id = 'edges-box';
-  right.appendChild(edgesBox);
+  references.appendChild(edgesBox);
+  right.appendChild(references);
   updateEdges();
   updateGraph();
   const causal = h('div');
   causal.id = 'causal-box';
+  causal.className = 'context-section causal-context';
+  causal.setAttribute('data-editor-region', 'causal-context');
   right.appendChild(causal);
   updateCausalPanel();
 }
@@ -281,12 +329,7 @@ export function updateGraph(): void {
     g.appendChild(title);
     g.addEventListener('click', () => {
       const key = [...state.scenes.keys()].find((k) => state.scenes.get(k)!.id === id);
-      if (key) {
-        state.current = key;
-        renderSidebar();
-        renderEditor();
-        updateGraph();
-      }
+      if (key) onSceneJumpHook(key);
     });
     svg.appendChild(g);
   }

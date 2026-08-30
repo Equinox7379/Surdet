@@ -6,6 +6,31 @@ import type {
   RuntimeTraceEvent,
 } from '@surdet/authoring';
 
+/**
+ * Reconciles the one selected-object truth after a content-only index rebuild.
+ * Stable refs win; anonymous refs may move only to the unique object with the
+ * same source location and kind. Ambiguous or structural changes clear it.
+ */
+export function reconcileAuthoringSelection(
+  selectedObjectRef: string | null,
+  previousIndex: ObjectIndex | null,
+  nextIndex: ObjectIndex,
+): string | null {
+  if (selectedObjectRef === null) return null;
+  if (nextIndex.byRef.has(selectedObjectRef)) return selectedObjectRef;
+  const previous = previousIndex?.byRef.get(selectedObjectRef)
+    ?? previousIndex?.objects.find((object) => object.objectRef === selectedObjectRef);
+  if (!previous?.source) return null;
+  const previousSource = previous.source;
+  const replacements = nextIndex.objects.filter((object) => {
+    const source = object.source;
+    return object.kind === previous.kind
+      && source?.path === previousSource.path
+      && source.line === previousSource.line;
+  });
+  return replacements.length === 1 ? replacements[0]!.objectRef : null;
+}
+
 export interface CausalTraceEvent {
   step?: number;
   sequence?: number;
