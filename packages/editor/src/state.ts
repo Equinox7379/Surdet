@@ -6,6 +6,7 @@ import type { ValidateResult } from './validate.js';
 import type { DirAsset } from './assets.js';
 import type { ObjectIndex, RuntimeTraceEvent } from '@surdet/authoring';
 import type { ReviewWorkspaceState } from './review-workspace.js';
+import type { EditorModeId } from './shell/editor-modes.js';
 
 export interface SceneEntry {
   /** 场景 ID（basename；引擎运行时语义） */
@@ -70,8 +71,8 @@ export const state = {
   sidebarTab: 'scenes' as 'scenes' | 'assets',
   /** 当前已打开的 human review workspace；普通项目打开时必须清空。 */
   reviewWorkspace: null as ReviewWorkspaceState | null,
-  /** 主区标签页：块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计 / 审阅 */
-  mainTab: 'editor' as 'editor' | 'flow' | 'timeline' | 'config' | 'preview' | 'stats' | 'audit' | 'review',
+  /** 主工作区：剧本 / 流程 / 时间轴 / 配置 / 预览 / 审阅 / 统计 / 审计 */
+  mainTab: 'editor' as EditorModeId,
   fsSupported: typeof window !== 'undefined' && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function',
 };
 
@@ -102,12 +103,15 @@ export function setStatus(text: string, ok: boolean, holdMs = 0): void {
       const issues = state.lastValidation.issues;
       const errors = issues.filter((i) => i.severity === 'error').length;
       const warnings = issues.length - errors;
-      sel.textContent = errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`;
+      const summary = errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`;
+      sel.textContent = summary;
+      sel.title = summary;
       sel.className = errors === 0 ? 'ok' : 'err';
     }, holdMs);
   } else if (ok && now < statusHoldUntil) {
     return; // 驻留期内常规状态不覆盖操作提示
   }
   el.textContent = text;
+  el.title = text;
   el.className = ok ? 'ok' : 'err';
 }

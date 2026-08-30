@@ -67,7 +67,7 @@ function directoryHandle(
 }
 
 describe('project-io saveAll 失败隔离与恢复备份语义', () => {
-  const status = { textContent: '', className: '' };
+  const status = { textContent: '', className: '', title: '' };
   const log: string[] = [];
   const documentStub = {
     getElementById: () => status,
@@ -86,6 +86,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     log.length = 0;
     status.textContent = '';
     status.className = '';
+    status.title = '';
   });
 
   afterEach(() => {
@@ -94,7 +95,8 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
   it('第一个已有场景失败时继续保存第二个场景和时间轴，并保留失败 dirty', async () => {
     const onSaved = vi.fn();
-    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaved });
+    const onSaveSettled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaved, onSaveSettled });
     state.scenes.set('first', scene('first', fileHandle('write', log, 'first')));
     state.scenes.set('second', scene('second', fileHandle(null, log, 'second')));
     state.timelines.push(timeline('intro', fileHandle(null, log, 'intro')));
@@ -107,7 +109,15 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.scenes.get('second')!.dirty).toBe(false);
     expect(state.timelines[0]!.dirty).toBe(false);
     expect(status.textContent).toMatch(/部分成功/);
+    expect(status.title).toBe(status.textContent);
     expect(onSaved).not.toHaveBeenCalled();
+    expect(onSaveSettled).toHaveBeenCalledWith({
+      hadPendingChanges: true,
+      saved: 2,
+      removed: 0,
+      failures: 1,
+      remainingDirty: true,
+    });
   });
 
   it.each<FailurePoint>(['create', 'write', 'close'])('%s 失败时只保留该场景 dirty，不中断其他场景', async (failure) => {
@@ -142,7 +152,8 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
   it('全部成功时清除 dirty、报告全部成功并调用 onSaved', async () => {
     const onSaved = vi.fn();
-    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaved });
+    const onSaveSettled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaved, onSaveSettled });
     state.scenes.set('scene', scene('scene', fileHandle(null, log, 'scene')));
     state.timelines.push(timeline('timeline', fileHandle(null, log, 'timeline')));
 
@@ -152,6 +163,13 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.timelines[0]!.dirty).toBe(false);
     expect(status.textContent).toMatch(/全部成功/);
     expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onSaveSettled).toHaveBeenCalledWith({
+      hadPendingChanges: true,
+      saved: 2,
+      removed: 0,
+      failures: 0,
+      remainingDirty: false,
+    });
   });
 
   it('演示项目下载但无法落盘时保留 dirty 且不调用 onSaved', async () => {

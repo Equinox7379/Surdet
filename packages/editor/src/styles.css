@@ -1,9 +1,8 @@
-/* ============================================================================
-   Surdet 剧本编辑器 —— 视觉翻新第一阶段：主题与控件体系
-   风格：Mirror's Edge（镜之边缘）风 —— 干净白底 + 冷冽蔚蓝主色 + 一抹跑者红点缀；
-   锐利小圆角、细边线、大留白。全 CSS 变量化，二/三阶段复用同一套 token。
-   纪律：所有类名与旧版一致（纯 CSS 改造，不动 TS 结构）；不出现棕色/暖金色要素。
-   ========================================================================== */
+/*
+ * 尚未迁移工作区的临时兼容样式。
+ * 新视觉基础、共享控件与应用壳分别位于 styles/tokens.css、components.css、app-shell.css。
+ * 每个工作区迁移完成后，应删除这里对应的旧规则，不建立长期双主题。
+ */
 
 :root {
   color-scheme: light;
@@ -47,10 +46,7 @@
 
 body {
   margin: 0;
-  background:
-    radial-gradient(1100px 520px at 85% -10%, rgba(15, 143, 243, 0.06), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(15, 143, 243, 0.04), transparent 60%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   font-size: 14px;
@@ -111,32 +107,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: auto; min-width: 0;
 textarea { resize: vertical; }
 .mono { font-family: Consolas, "Courier New", monospace; }
 
-/* ============================ 顶栏 ============================ */
-
 #app { display: flex; flex-direction: column; height: 100vh; }
-header {
-  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  box-shadow: var(--shadow-1);
-  position: relative; z-index: 5;
-}
-header h1 {
-  font-size: 16px; margin: 0; font-weight: 800; letter-spacing: 2px;
-  color: var(--text);
-}
-header h1::after {
-  content: ""; display: block; height: 3px; width: 100%; margin-top: 2px; border-radius: 2px;
-  background: linear-gradient(90deg, var(--gold), transparent 75%); /* 深蓝拖尾点缀 */
-}
-header .proj { color: var(--dim); font-size: 13px; padding: 3px 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; }
-header .spacer { flex: 1; }
-#status {
-  font-size: 12px; padding: 4px 12px; border-radius: 999px;
-  background: var(--panel2); border: 1px solid var(--line); color: var(--dim);
-}
-#status.ok { color: var(--ok); border-color: rgba(47, 158, 68, 0.45); background: var(--ok-soft); }
-#status.err { color: var(--err); border-color: rgba(229, 72, 77, 0.45); background: var(--err-soft); }
 
 /* ============================ 布局骨架 ============================ */
 
@@ -251,21 +222,7 @@ main { display: flex; flex: 1; min-height: 0; }
 }
 .empty { color: var(--dim); font-size: 13px; padding: 14px; }
 
-/* ============================ 主区标签页 ============================ */
-
 .main-col { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.tabs { display: flex; gap: 4px; padding: 10px 14px 8px; }
-.tabs button.tab {
-  padding: 6px 18px; font-size: 13px; border-radius: var(--r-sm) var(--r-sm) 0 0;
-  border: 1px solid transparent; border-bottom: none; background: transparent; color: var(--dim);
-  font-weight: 600; letter-spacing: 1px;
-}
-.tabs button.tab:hover { color: var(--text); background: var(--panel2); border-color: transparent; }
-.tabs button.tab.active {
-  background: var(--panel); color: var(--accent-strong);
-  border-color: var(--line);
-  box-shadow: inset 0 3px 0 var(--accent), var(--shadow-1);
-}
 .main-body { display: flex; flex: 1; min-height: 0; }
 #flow-view { flex: 1; position: relative; overflow: hidden; min-height: 0; border-top: 1px solid var(--line); user-select: none; } /* 拖拽平移不选中节点文字（验收反馈） */
 

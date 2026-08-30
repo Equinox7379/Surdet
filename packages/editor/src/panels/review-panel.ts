@@ -221,6 +221,7 @@ function appendDecisionButton(
 ): HTMLButtonElement {
   const button = h('button', disabled ? 'primary disabled' : 'primary', label) as HTMLButtonElement;
   button.setAttribute('data-action', action);
+  button.setAttribute('data-action-scope', 'workspace');
   button.disabled = disabled;
   button.onclick = onClick;
   container.appendChild(button);
@@ -480,6 +481,7 @@ function renderComparisonReview(
     }
   }
   const operations = h('div', 'review-operations');
+  operations.setAttribute('data-editor-region', 'workspace-actions');
   decisionButton = appendDecisionButton(
     operations,
     workspace,
@@ -691,6 +693,7 @@ function renderResultReview(
   const previewShell = h('div', 'review-preview-shell');
   const previewButton = h('button', 'primary', '预览这个结果') as HTMLButtonElement;
   previewButton.setAttribute('data-action', 'preview-result');
+  previewButton.setAttribute('data-action-scope', 'workspace');
   previewButton.onclick = () => {
     const request: ReviewPreviewRequest = {};
     const operation = options.onPreview ? options.onPreview(workspace, request) : openReviewPreview(workspace, request);
@@ -722,9 +725,11 @@ function renderResultReview(
   evidence.appendChild(h('div', 'review-result-fact', `项目树身份：${result.resultTreeSha256}`));
   main.appendChild(evidence);
   const operations = h('div', 'review-operations');
+  operations.setAttribute('data-editor-region', 'workspace-actions');
   const terminalReceipt = workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned';
   const approve = h('button', 'primary', '批准这个计划') as HTMLButtonElement;
   approve.setAttribute('data-action', 'approve-result');
+  approve.setAttribute('data-action-scope', 'workspace');
   approve.disabled = terminalReceipt
     || workspace.fixtureChanged
     || !resultEvidenceIsFresh(result);
@@ -739,6 +744,7 @@ function renderResultReview(
   operations.appendChild(approve);
   const returned = h('button', 'danger', '退回修改') as HTMLButtonElement;
   returned.setAttribute('data-action', 'return-result');
+  returned.setAttribute('data-action-scope', 'workspace');
   returned.disabled = terminalReceipt;
   returned.onclick = () => {
     void writeReturnReceipt(workspace, { returnId: `return_${Date.now()}`, reasonCategory: 'other' }, nowOf(options))
@@ -751,6 +757,7 @@ function renderResultReview(
   operations.appendChild(returned);
   const reload = h('button', undefined, '重新加载正式结果') as HTMLButtonElement;
   reload.setAttribute('data-action', 'reload-official-result');
+  reload.setAttribute('data-action-scope', 'workspace');
   reload.onclick = () => {
     void restoreOfficialResult(workspace)
       .then(() => {
@@ -765,6 +772,7 @@ function renderResultReview(
   if (!resultEvidenceIsFresh(result)) main.appendChild(h('div', 'review-warning', '证据不是全部新鲜状态，批准已禁用。'));
   const refresh = h('button', undefined, '检查探索修改') as HTMLButtonElement;
   refresh.setAttribute('data-action', 'refresh-result-tree');
+  refresh.setAttribute('data-action-scope', 'workspace');
   refresh.onclick = () => {
     void refreshReviewFixtureIdentity(workspace)
       .then(() => renderReviewPanel(container, workspace, options))
