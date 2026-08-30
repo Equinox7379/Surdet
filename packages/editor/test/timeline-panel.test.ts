@@ -29,4 +29,12 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(panelSource).toContain('timelineEasingLabel');
     expect(panelSource).not.toContain('Math.max(4, Math.ceil(durationMs / 500))');
   });
+
+  it('provides pointer cancellation/capture and human-facing Timeline copy', () => {
+    expect(panelSource).toContain('setPointerCapture');
+    expect(panelSource).toContain('pointercancel');
+    expect(panelSource).not.toMatch(/['"`]\+ cue|Cue 检查器|选择一个 cue|删除 cue/);
+    expect(panelSource).toContain('适应窗口');
+    expect(panelSource).toContain('片段设置');
+  });
 });
