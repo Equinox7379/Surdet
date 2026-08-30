@@ -359,15 +359,15 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 - Modify: `packages/editor/test/presentation-asset-catalog.test.ts`
 - Modify: `packages/editor/test/assets.test.ts`
 
-- [ ] **Step 1:** RED: require `data-sidebar-mode="scenes|assets"`, `aria-selected`, `data-editor-region="asset-catalog"`, `data-asset-key`, insert/copy actions and both referenced/unreferenced assets.
-- [ ] **Step 2:** RED: require `.block[data-line][data-object-ref]`, continuous manuscript hierarchy, real keyboard focus, current block whole-surface feedback and no `.block.t-*` left border color.
-- [ ] **Step 3:** RED: require named outline/manuscript/context/dock regions, one current scene identity across all rendered projections, manuscript as the largest region, and deterministic 1280/1024 pane folding; forbid duplicate preview iframe/trace/timeline state.
-- [ ] **Step 4:** Refactor only presentation DOM; keep existing scene edit/history/search/asset insertion/copy callbacks unchanged. Build the integrated region topology without fabricating preview, timeline, chapter, duration or status content that does not yet exist.
-- [ ] **Step 5:** Move ordinary users’ default view to Chinese content/title/type/use location; stable keys and hashes remain under technical disclosure.
-- [ ] **Step 6:** Remove scene/block/asset selected left-line signatures and replace them with complete boundary, surface, “当前/已选” text and ARIA.
-- [ ] **Step 7:** Run focused script/asset/search/history tests, full Editor test, typecheck and build.
-- [ ] **Step 8:** Inspect a loaded isolated fixture with long Chinese prose, multiple choices, assets, missing preview, dirty/save failure and 1024×768 folding; do not use empty-project appearance as the density acceptance.
-- [ ] **Step 9:** Commit exact Wave 2 paths as `feat(editor): rebuild script and asset workspace`; no push.
+- [x] **Step 1:** RED: require `data-sidebar-mode="scenes|assets"`, `aria-selected`, `data-editor-region="asset-catalog"`, `data-asset-key`, insert/copy actions and both referenced/unreferenced assets.
+- [x] **Step 2:** RED: require `.block[data-line][data-object-ref]`, continuous manuscript hierarchy, real keyboard focus, current block whole-surface feedback and no `.block.t-*` left border color.
+- [x] **Step 3:** RED: require named outline/manuscript/context/dock regions, one current scene identity across all rendered projections, manuscript as the largest region, and deterministic 1280/1024 pane folding; forbid duplicate preview iframe/trace/timeline state.
+- [x] **Step 4:** Refactor only presentation DOM; keep existing scene edit/history/search/asset insertion/copy callbacks unchanged. Build the integrated region topology without fabricating preview, timeline, chapter, duration or status content that does not yet exist.
+- [x] **Step 5:** Move ordinary users’ default view to Chinese content/title/type/use location; stable keys and hashes remain under technical disclosure.
+- [x] **Step 6:** Remove scene/block/asset selected left-line signatures and replace them with complete boundary, surface, “当前/已选” text and ARIA.
+- [x] **Step 7:** Run focused script/asset/search/history tests, full Editor test, typecheck and build.
+- [x] **Step 8:** Inspect a loaded isolated fixture with long Chinese prose, multiple choices, assets, missing preview, dirty/save failure and 1024×768 folding; do not use empty-project appearance as the density acceptance.
+- [x] **Step 9:** Commit exact Wave 2 paths as `feat(editor): rebuild script and asset workspace`; no push.
 
 ---
 
@@ -671,3 +671,56 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Execute Wave 2 through its local technical and visual gates, create exact local commits and stop before Wave 3. Do not push, deploy or modify any backend / shared-engine production package.
+
+### 2026-08-30 — Wave 2 selection-reconciliation scope decision
+
+**CONFIRMED_FACTS**
+
+- Independent review found that real authoring-index rebuilds could leave `state.selectedObjectRef` pointing at an obsolete object identity after an edit, search jump or scene transition. The workbench must keep the existing single selection truth rather than introduce a second UI-only selection.
+- Wave 2 therefore explicitly adds `packages/editor/src/causal-selection.ts` and its existing adjacent regression file `packages/editor/test/causal-selection.test.ts` to the authorized Editor-only path set. The implementation may retain a stable indexed ref, remap a uniquely identifiable content-only ref by source line and kind, or clear an ambiguous / missing ref; it may not invent another index, selection store or backend contract.
+- This is an explicit scope decision recorded before the code-evidence commit. Authoring, Core, CLI, Host, Shell, Renderer, Starter, dependencies and lockfiles remain unchanged and outside Wave 2 production scope.
+
+**REASONABLE_INFERENCES**
+
+- Centralized reconciliation is the smallest safe correction because every outline, manuscript, search, issue and causal projection already consumes the same `state.selectedObjectRef`.
+
+**UNVERIFIED_ITEMS**
+
+- The final exact code commit and docs-only closure commit have not yet been created at this ledger point.
+
+**STOP_BOUNDARY**
+
+- Complete the fresh browser rerun and final independent review, then create the exact Wave 2 code commit only if no Blocker or High finding remains. Do not push or begin Wave 3.
+
+### 2026-08-30 — Wave 2 narrative-continuity workspace closure
+
+**CONFIRMED_FACTS**
+
+- Wave 2 planning is commit `0caceceb2ae21f2e8b3c7fd21b6fadcabd2d26a9`. Code evidence is commit `0531388ccc703ce603f02eb4d34d5594013ffc89`, parent `0caceceb2ae21f2e8b3c7fd21b6fadcabd2d26a9`, message `feat(editor): build narrative continuity workspace`, with exactly 17 reviewed Editor production, test and browser-runner paths and no staged-set difference.
+- Initial RED was 3 files / 15 tests with 12 passing and 3 expected failures for the absent Wave 2 visual/layout contracts. Final focused coverage passed 4 files / 23 tests; the complete Editor suite passed 40 files / 255 tests; Editor typecheck and build passed with only the existing Vite large-chunk advisory.
+- The final script workspace uses the real scene / asset outline, one ordered manuscript and real current-object / validation / causal context. Existing scene editing, history, search, issue navigation, asset insertion, validation and selection behavior remain on their original callbacks and state. No backend/shared-engine production package, Starter, dependency or lockfile changed.
+- Independent review's first pass found narrow-layout reachability, navigation consistency, selection reconciliation, dirty/asset refresh, row-action placement and tab-keyboard problems. All Blocker / High findings were corrected. The final review returned `PASS` with no Blocker, High or Medium finding, passed an additional 4 files / 38 tests and independently replayed the final runner successfully.
+- A runner assertion failure was retained at `<local-path>`, 41363 bytes, SHA-256 `0E2A65AAB615CD61AF1A24A0F58D9537C12754DBFD0FFF1B3AC6734F764E7EFF`; it read input `textContent` instead of value and did not identify a product failure.
+- Final fresh browser evidence passed 16 / 16 at `<local-path>`, 56931 bytes, SHA-256 `F7B70A09C9CE890196AF0930AE044C09D9F8AB393A527DBAC3BBE83DD533E6BC`. It loaded the real Starter through the picker path, proved 1440 / 1280 / 1024 / 800 responsive composition, exercised scene/search/edit/undo/asset insertion paths, found no duplicate preview/trace/timeline state and recorded empty browser error / request / cleanup channels.
+- Original Starter remained byte-identical with SHA-256 `8218643BB2224C652EF86D896CCF2B09D7D0B1C72E8D5D47FF968A5CFEB74EE6`. The runner used and released isolated port 4187; it did not touch 4173 or 4175.
+
+**REASONABLE_INFERENCES**
+
+- The workbench now behaves like a coherent narrative-authoring surface rather than a set of generic cards, while retaining a simple data flow that later preview, timeline and causal workspaces can consume without duplicating truth.
+- This materially advances the approved direction but does not make the current Editor pixel-equivalent to the final reference; the missing work is visible and intentionally assigned to later waves.
+
+**UNVERIFIED_ITEMS**
+
+- Preview, timeline, causal graph, flow, statistics, audit, final cross-mode styling and replacement production art remain future waves. Chapter hierarchy, duration, collaboration, comments, version, production state and character metrics remain omitted because the current product has no authoritative facts for them.
+- A low-severity existing new-scene edge is deferred: the manuscript's displayed file path may wait for the next full render after the first physical save assigns its final path; save behavior and stored bytes are unaffected.
+- The browser artifact records runner hash and disk identity but not a complete application-source hash or `runHead`; two post-edit reruns and exact commit review establish freshness for this B-level UI wave, while a later high-risk wave may strengthen the envelope.
+- Owner visual acceptance of the final loaded Wave 2 view, remote GitHub review, push, deployment and release have not occurred.
+
+**STOP_BOUNDARY**
+
+- `WAVE_2_TECHNICAL_VERIFICATION = PASSED`
+- `OWNER_VISUAL_ACCEPTANCE = NOT_STARTED`
+- `REMOTE_REVIEW = NOT_STARTED`
+- `PUSH = NOT_PERFORMED`
+- `WAVE_3 = NOT_STARTED`
+- Create only the exact docs-only closure commit, then stop. Do not push or begin Wave 3.
