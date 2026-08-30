@@ -40,13 +40,34 @@ describe('Flow Canvas semantic workspace contract', () => {
       expectsRegion(region);
     }
 
-    expect(flowSource).toMatch(/剧情流程/);
+    expect(flowSource).toMatch(/剧情路径地图/);
     expect(flowSource).toMatch(/graph\.nodes\.length/);
     expect(flowSource).toMatch(/graph\.edges\.length/);
     expect(flowSource).toMatch(/sceneIssueStats\(\)/);
     expect(flowSource).toMatch(/(?:errors|errorCount)[\s\S]*?(?:warnings|warningCount)/);
     expect(flowSource).toMatch(/尚未校验/);
     expect(flowSource).toMatch(/当前项目没有可显示的剧情连接/);
+  });
+
+  it('offers Chinese-first focus and overview modes with an explicit pressed-state contract', () => {
+    expect(flowSource).toMatch(/let\s+flowViewMode\s*:\s*FlowMapMode\s*=\s*['"]focus['"]/);
+    expect(flowSource).toMatch(/h\(\s*['"]button['"]\s*,\s*['"]flow-view-switch-button['"]\s*,\s*['"]聚焦路径['"]\s*\)/);
+    expect(flowSource).toMatch(/setAttribute\(\s*['"]data-flow-action['"]\s*,\s*['"]view-focus['"]\s*\)/);
+    expect(flowSource).toMatch(/h\(\s*['"]button['"]\s*,\s*['"]flow-view-switch-button['"]\s*,\s*['"]全局概览['"]\s*\)/);
+    expect(flowSource).toMatch(/setAttribute\(\s*['"]data-flow-action['"]\s*,\s*['"]view-overview['"]\s*\)/);
+    expect(flowSource).toMatch(/focusView\.setAttribute\(\s*['"]aria-pressed['"]\s*,\s*String\(flowViewMode\s*===\s*['"]focus['"]/);
+    expect(flowSource).toMatch(/overviewView\.setAttribute\(\s*['"]aria-pressed['"]\s*,\s*String\(flowViewMode\s*===\s*['"]overview['"]/);
+  });
+
+  it('keeps the scope explanation in normal document flow and exposes overflow through a real action', () => {
+    expectsRegion('flow-scope-note');
+    expect(flowSource).toMatch(/当前仅显示聚焦场景和直接前后场景/);
+    expect(flowSource).toMatch(/在全局概览中查看/);
+    expect(flowSource).toMatch(/setAttribute\(\s*['"]data-flow-action['"]\s*,\s*['"]view-overview-overflow['"]\s*\)/);
+
+    const scopeRules = ruleBodiesMatching(flowCss, /^\s*\.flow-scope-note\s*$/i).join('\n');
+    expect(scopeRules).not.toMatch(/position\s*:\s*(?:absolute|fixed)\b/i);
+    expect(scopeRules).toMatch(/grid-column\s*:\s*1\s*\/\s*-1/i);
   });
 
   it('loads the dedicated flow layer after every shared and script workspace layer', () => {
@@ -100,18 +121,34 @@ describe('Flow Canvas semantic workspace contract', () => {
     expect(flowSource).toMatch(/(?:stroke-dasharray|data-flow-edge-kind|dataset\.flowEdgeKind)/);
     expect(flowSource).toMatch(/技术信息/);
 
-    const errorSurfaceRules = ruleBodiesMatching(flowCss, /\.flow-node\.has-error\s+\.flow-node-surface/i);
-    const warningSurfaceRules = ruleBodiesMatching(flowCss, /\.flow-node\.has-warning\s+\.flow-node-surface/i);
-    expect(errorSurfaceRules.join('\n')).toMatch(/fill\s*:/i);
-    expect(errorSurfaceRules.join('\n')).toMatch(/stroke\s*:\s*var\(--surdet-state-danger\)/i);
-    expect(warningSurfaceRules.join('\n')).toMatch(/fill\s*:/i);
-    expect(warningSurfaceRules.join('\n')).toMatch(/stroke\s*:\s*var\(--surdet-state-warning\)/i);
-    expect(warningSurfaceRules.join('\n')).toMatch(/stroke-dasharray\s*:/i);
+    const errorStatusRules = ruleBodiesMatching(flowCss, /\.flow-scene-frame\.has-error\s+\.flow-scene-frame-status/i);
+    const warningStatusRules = ruleBodiesMatching(flowCss, /\.flow-scene-frame\.has-warning\s+\.flow-scene-frame-status/i);
+    expect(errorStatusRules.join('\n')).toMatch(/fill\s*:\s*var\(--surdet-state-danger\)/i);
+    expect(warningStatusRules.join('\n')).toMatch(/fill\s*:\s*var\(--surdet-state-warning\)/i);
+    expect(flowSource).toMatch(/statusParts\.push\(`警告/);
 
-    const edgeLabelRules = ruleBodiesMatching(flowCss, /\.flow-edge-label(?:-surface)?\b/i);
+    const edgeLabelRules = ruleBodiesMatching(flowCss, /\.flow-route-chip-(?:surface|text)\b/i);
     expect(edgeLabelRules.join('\n')).toMatch(/pointer-events\s*:\s*none/i);
     const legendRules = ruleBodiesMatching(flowCss, /^\s*\.flow-legend\s*$/i);
     expect(legendRules.join('\n')).toMatch(/position\s*:\s*relative/i);
+  });
+
+  it('closes the technical overlay when technical routes return to the readable default', () => {
+    expect(flowSource).toMatch(
+      /technicalEdgesVisible\s*=\s*!technicalEdgesVisible[\s\S]{0,240}?technicalDetailsExpanded\s*=\s*technicalEdgesVisible/,
+    );
+    expect(flowSource).not.toMatch(
+      /technicalEdgesVisible\s*=\s*!technicalEdgesVisible[\s\S]{0,240}?technicalDetailsExpanded\s*=\s*true/,
+    );
+    expect(flowSource).toMatch(
+      /technical\.addEventListener\(\s*['"]toggle['"][\s\S]{0,180}?if\s*\(\s*!technical\.isConnected\s*\)\s*return/,
+    );
+    expect(flowSource).toMatch(
+      /renderFlow\([\s\S]{0,220}?if\s*\(\s*!technicalEdgesVisible\s*\)\s*technicalDetailsExpanded\s*=\s*false/,
+    );
+    const technicalPanelRules = ruleBodiesMatching(flowCss, /\.flow-technical-panel\b/i);
+    expect(technicalPanelRules.join('\n')).toMatch(/position\s*:\s*static/i);
+    expect(technicalPanelRules.join('\n')).not.toMatch(/position\s*:\s*(?:absolute|fixed|sticky)/i);
   });
 
   it('removes the inline rainbow palette and presentation colors from the SVG renderer', () => {

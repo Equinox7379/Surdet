@@ -18,6 +18,8 @@ export interface FlowEdgePresentation {
   kindLabel: string;
   displayText: string;
   technicalText: string;
+  choiceText?: string;
+  conditionText?: string;
 }
 
 const NODE_KIND_LABELS: Record<FlowNodeKind, string> = {
@@ -87,6 +89,17 @@ export function presentFlowNode(node: FlowNode): FlowNodePresentation {
 export function presentFlowEdge(edge: FlowEdge): FlowEdgePresentation {
   const kindLabel = flowEdgeKindLabel(edge.kind);
   const content = edge.label?.trim();
+  if (edge.kind === 'choice') {
+    const match = content?.match(/^(.*?)\s*\[if:(.+)]\s*$/);
+    const choiceText = (match?.[1] ?? content ?? '').trim() || '未命名选择';
+    return {
+      kindLabel,
+      displayText: choiceText,
+      choiceText,
+      ...(match?.[2]?.trim() ? { conditionText: '有条件' } : {}),
+      technicalText: `${edge.kind} · ${edge.from} → ${edge.to}${content ? ` · ${content}` : ''}`,
+    };
+  }
   return {
     kindLabel,
     displayText: content ? `${kindLabel}：${content}` : kindLabel,

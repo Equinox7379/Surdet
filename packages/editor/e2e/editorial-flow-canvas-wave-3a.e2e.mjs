@@ -35,8 +35,11 @@ export const MILESTONE_IDS = Object.freeze([
   'real-starter-opened-through-picker',
   'flow-workbench-single-truth',
   'semantic-regions-and-real-facts',
-  'real-node-edge-content',
-  'text-label-geometry-safe',
+  'focus-projection-bounded',
+  'focus-route-bundle-readable',
+  'overview-scene-map-readable',
+  'technical-connections-on-demand',
+  'mode-switch-focus-stable',
   'layout-1920',
   'layout-1440',
   'layout-1280',
@@ -208,7 +211,7 @@ async function openRealStarter(page) {
 async function enterFlowMode(page) {
   await page.locator('[data-editor-mode="flow"]').click();
   await page.locator('[data-editor-region="flow-workbench"]').waitFor({ state: 'visible' });
-  await page.locator('[data-node-id="s:ch01_01"]').waitFor({ state: 'visible' });
+  await page.locator('[data-flow-node-kind][data-node-id]').first().waitFor({ state: 'visible' });
 }
 
 async function ensureLegendReachable(page) {
@@ -219,6 +222,59 @@ async function ensureLegendReachable(page) {
   await toggle.click();
   await legend.waitFor({ state: 'visible' });
   return 'opened-through-disclosure';
+}
+
+async function setLegendExpanded(page, expanded) {
+  const legend = page.locator('[data-editor-region="flow-legend"]');
+  const currentlyExpanded = await legend.evaluate((element) => !element.hasAttribute('hidden'));
+  if (currentlyExpanded !== expanded) {
+    await scrollFlowCommandIntoVisualViewport(page, 'toggle-legend');
+    const toggle = page.locator('[data-flow-action="toggle-legend"]');
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(
+      (shouldExpand) => document.querySelector('[data-editor-region="flow-legend"]')?.hasAttribute('hidden') === !shouldExpand,
+      expanded,
+    );
+    await page.waitForFunction(
+      () => document.activeElement?.getAttribute('data-flow-action') === 'toggle-legend',
+    );
+  }
+  return expanded ? 'expanded' : 'default-collapsed';
+}
+
+async function switchFlowView(page, action) {
+  const selector = `[data-flow-action="${action}"]`;
+  const button = page.locator(selector);
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    (expectedAction) => document.querySelector(`[data-flow-action="${expectedAction}"]`)?.getAttribute('aria-pressed') === 'true',
+    action,
+  );
+  await page.waitForFunction(
+    (expectedAction) => document.activeElement?.getAttribute('data-flow-action') === expectedAction,
+    action,
+  );
+  return {
+    action,
+    activeAction: await page.evaluate(() => document.activeElement?.getAttribute('data-flow-action') ?? null),
+    transform: await worldTransform(page),
+  };
+}
+
+async function enableTechnicalConnections(page) {
+  await ensureLegendReachable(page);
+  const toggle = page.locator('[data-flow-action="toggle-technical-edges"]');
+  if (!(await toggle.isVisible())) {
+    await page.locator('details.flow-technical > summary').click();
+    await toggle.waitFor({ state: 'visible' });
+  }
+  if (await toggle.getAttribute('aria-pressed') !== 'true') {
+    await toggle.click();
+    await page.waitForFunction(() => document.querySelector('[data-flow-action="toggle-technical-edges"]')?.getAttribute('aria-pressed') === 'true');
+  }
+  return inspectNarrativeMap(page);
 }
 
 async function inspectFlowLayout(page) {
@@ -259,7 +315,7 @@ async function inspectFlowLayout(page) {
         height: rect.height,
       };
     });
-    const commandRects = [...document.querySelectorAll('[data-flow-action]')].map((button) => {
+    const commandRects = [...document.querySelectorAll('[data-editor-region="flow-toolbar"] [data-flow-action]')].map((button) => {
       const rect = button.getBoundingClientRect();
       return {
         action: button.getAttribute('data-flow-action'),
@@ -294,12 +350,18 @@ async function inspectFlowLayout(page) {
       svg: inspect('[data-editor-region="flow-canvas"] .flow-canvas-svg'),
       menu: inspect('[role="menu"]'),
       nodeRects,
+      frameCount: document.querySelectorAll('[data-flow-scene-frame][data-scene-id]').length,
+      frameSceneIds: [...document.querySelectorAll('[data-flow-scene-frame][data-scene-id]')]
+        .map((frame) => frame.getAttribute('data-scene-id')),
+      routeCount: document.querySelectorAll('[data-flow-route="orthogonal"]').length,
+      activeViewAction: [...document.querySelectorAll('[data-flow-action="view-focus"], [data-flow-action="view-overview"]')]
+        .find((button) => button.getAttribute('aria-pressed') === 'true')?.getAttribute('data-flow-action') ?? null,
       commandRects,
     };
   });
 }
 
-function assertFlowLayout(layout, expectedWidth, expectedNodeCount) {
+function assertFlowLayout(layout, expectedWidth, expectation) {
   assert(layout.viewport.width === expectedWidth, `viewport width ${layout.viewport.width} != ${expectedWidth}`);
   assert(layout.pageWidth.client === layout.pageWidth.scroll, `${expectedWidth}: horizontal page overflow`);
   for (const [name, region] of Object.entries({
@@ -307,18 +369,20 @@ function assertFlowLayout(layout, expectedWidth, expectedNodeCount) {
     status: layout.status,
     toolbar: layout.toolbar,
     canvas: layout.canvas,
-    legend: layout.legend,
     minimap: layout.minimap,
     svg: layout.svg,
   })) {
     assert(region?.visible, `${expectedWidth}: ${name} region is not visible`);
     assert(region.left >= -0.5 && region.right <= expectedWidth + 0.5, `${expectedWidth}: ${name} escapes horizontally`);
   }
+  assert(layout.legend && layout.legend.visible === false, `${expectedWidth}: default legend is not collapsed`);
   assert(layout.canvas.height >= 260, `${expectedWidth}: flow canvas height ${layout.canvas.height} is not usable`);
   assert(layout.svg.width >= 360, `${expectedWidth}: flow svg width ${layout.svg.width} is not usable`);
+  assert(layout.frameCount === expectation.frameCount, `${expectedWidth}: narrative map rendered ${layout.frameCount}/${expectation.frameCount} scene frames`);
+  assert(layout.activeViewAction === expectation.activeViewAction, `${expectedWidth}: active view ${layout.activeViewAction} != ${expectation.activeViewAction}`);
+  assert(layout.routeCount > 0, `${expectedWidth}: narrative map rendered no orthogonal routes`);
   assert(!rectanglesOverlap(layout.status, layout.canvas), `${expectedWidth}: status overlaps graph canvas`);
   assert(!rectanglesOverlap(layout.toolbar, layout.canvas), `${expectedWidth}: toolbar overlaps graph canvas`);
-  assert(!rectanglesOverlap(layout.legend, layout.minimap), `${expectedWidth}: legend overlaps minimap`);
   const requiredCommands = ['zoom-out', 'zoom-in', 'fit-canvas', 'focus-current'];
   for (const action of requiredCommands) {
     const command = layout.commandRects.find((item) => item.action === action);
@@ -326,7 +390,7 @@ function assertFlowLayout(layout, expectedWidth, expectedNodeCount) {
     assert(command.width > 0 && command.height > 0, `${expectedWidth}: ${action} command is unreachable`);
     assert(command.left >= -0.5 && command.right <= expectedWidth + 0.5, `${expectedWidth}: ${action} command escapes horizontally`);
   }
-  assert(layout.nodeRects.length === expectedNodeCount, `${expectedWidth}: fit rendered ${layout.nodeRects.length}/${expectedNodeCount} nodes`);
+  assert(layout.nodeRects.length === expectation.nodeCount, `${expectedWidth}: fit rendered ${layout.nodeRects.length}/${expectation.nodeCount} nodes`);
   for (let index = 0; index < layout.nodeRects.length; index += 1) {
     const left = layout.nodeRects[index];
     if (left.width <= 0 || left.height <= 0) continue;
@@ -352,6 +416,10 @@ async function inspectTextGeometry(page) {
       && text.right <= surface.right + 1.5
       && text.top >= surface.top - 1.5
       && text.bottom <= surface.bottom + 1.5;
+    const overlaps = (left, right, tolerance = 0.5) => left.left < right.right - tolerance
+      && left.right > right.left + tolerance
+      && left.top < right.bottom - tolerance
+      && left.bottom > right.top + tolerance;
     const nodes = [...document.querySelectorAll('[data-flow-node-kind]')].map((node) => {
       const surfaceElement = node.querySelector('.flow-node-surface');
       const surface = surfaceElement ? rect(surfaceElement) : null;
@@ -367,9 +435,9 @@ async function inspectTextGeometry(page) {
       });
       return { nodeId: node.getAttribute('data-node-id'), surface, labels };
     });
-    const edgeLabels = [...document.querySelectorAll('[data-flow-world] .flow-edge-label')].map((label) => {
+    const routeChips = [...document.querySelectorAll('[data-flow-world] .flow-route-chip-text')].map((label) => {
       const surfaceElement = label.previousElementSibling;
-      const surface = surfaceElement?.classList.contains('flow-edge-label-surface') ? rect(surfaceElement) : null;
+      const surface = surfaceElement?.classList.contains('flow-route-chip-surface') ? rect(surfaceElement) : null;
       const geometry = rect(label);
       return {
         text: label.textContent?.trim() ?? '',
@@ -383,20 +451,35 @@ async function inspectTextGeometry(page) {
     const cjk = /[\u3400-\u9fff]/u;
     const nodeLabels = nodes.flatMap((node) => node.labels.map((label) => ({ ...label, nodeId: node.nodeId })));
     const longestChineseNode = nodeLabels.filter((label) => cjk.test(label.text)).sort((a, b) => b.text.length - a.text.length)[0] ?? null;
-    const longestChineseEdge = edgeLabels.filter((label) => cjk.test(label.text)).sort((a, b) => b.text.length - a.text.length)[0] ?? null;
-    return { nodes, edgeLabels, longestChineseNode, longestChineseEdge };
+    const longestChineseRouteChip = routeChips.filter((label) => cjk.test(label.text)).sort((a, b) => b.text.length - a.text.length)[0] ?? null;
+    const labeledVisibleRouteCount = [...document.querySelectorAll('[data-flow-route="orthogonal"][data-flow-label]')]
+      .filter((route) => {
+        const style = getComputedStyle(route);
+        return style.display !== 'none' && style.visibility !== 'hidden' && (route.getTotalLength?.() ?? 0) > 0;
+      }).length;
+    const routeChipOverlaps = [];
+    for (let left = 0; left < routeChips.length; left += 1) {
+      for (let right = left + 1; right < routeChips.length; right += 1) {
+        if (overlaps(routeChips[left].surface ?? routeChips[left].rect, routeChips[right].surface ?? routeChips[right].rect)) {
+          routeChipOverlaps.push([routeChips[left].text, routeChips[right].text]);
+        }
+      }
+    }
+    return { nodes, routeChips, labeledVisibleRouteCount, routeChipOverlaps, longestChineseNode, longestChineseRouteChip };
   });
 }
 
 function assertTextGeometry(evidence) {
   const nodeLabels = evidence.nodes.flatMap((node) => node.labels);
   assert(nodeLabels.length > 0, 'flow nodes expose no visible label geometry');
-  assert(evidence.edgeLabels.length > 0, 'flow edges expose no visible label geometry');
   assert(evidence.longestChineseNode, 'no Chinese node label was measured');
-  assert(evidence.longestChineseEdge, 'no Chinese edge label was measured');
   assert(nodeLabels.every((label) => label.contained), 'a node label escapes its node surface');
-  assert(evidence.edgeLabels.every((label) => label.contained), 'an edge label escapes its label surface');
-  assert(evidence.edgeLabels.every((label) => label.textPointerEvents === 'none' && label.surfacePointerEvents === 'none'), 'edge labels intercept pointer input');
+  assert(evidence.routeChips.length === evidence.labeledVisibleRouteCount, `route chip count ${evidence.routeChips.length} does not match ${evidence.labeledVisibleRouteCount} visible labeled routes`);
+  if (evidence.routeChips.length === 0) return;
+  assert(evidence.longestChineseRouteChip, 'no Chinese route chip was measured');
+  assert(evidence.routeChips.every((label) => label.contained), 'a route chip escapes its attached surface');
+  assert(evidence.routeChipOverlaps.length === 0, `route chips overlap: ${JSON.stringify(evidence.routeChipOverlaps)}`);
+  assert(evidence.routeChips.every((label) => label.textPointerEvents === 'none' && label.surfacePointerEvents === 'none'), 'route chips intercept pointer input');
 }
 
 async function flowGeometrySnapshot(page) {
@@ -408,6 +491,15 @@ async function flowGeometrySnapshot(page) {
     };
     const minimap = document.querySelector('[data-editor-region="flow-minimap"]');
     const viewport = minimap?.querySelector('.flow-minimap-viewport');
+    const commands = [...document.querySelectorAll('[data-editor-region="flow-toolbar"] [data-flow-action]')].map((command) => {
+      const bounds = command.getBoundingClientRect();
+      return {
+        action: command.getAttribute('data-flow-action'),
+        disabled: command.hasAttribute('disabled'),
+        width: bounds.width,
+        height: bounds.height,
+      };
+    });
     return {
       canvas: geometry(document.querySelector('[data-editor-region="flow-canvas"]')),
       minimap: geometry(minimap),
@@ -420,17 +512,28 @@ async function flowGeometrySnapshot(page) {
       } : null,
       legendHidden: document.querySelector('[data-editor-region="flow-legend"]')?.hasAttribute('hidden') ?? null,
       activeAction: document.activeElement?.getAttribute?.('data-flow-action') ?? null,
+      commands,
     };
   });
 }
 
-async function scrollFlowCommandsIntoVisualViewport(page) {
-  await page.locator('[data-flow-action="zoom-out"]').evaluate((firstCommand) => new Promise((resolve) => {
-    firstCommand.scrollIntoView({ block: 'center', inline: 'start', behavior: 'instant' });
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  }));
-  await page.locator('[data-flow-action="toggle-legend"]').evaluate((lastCommand) => new Promise((resolve) => {
-    lastCommand.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+function assertLegendGeometrySnapshot(snapshot, expectedHidden, phase) {
+  assert(snapshot.legendHidden === expectedHidden, `${phase}: unexpected legend state`);
+  assert(snapshot.canvas?.width > 0 && snapshot.canvas?.height > 0, `${phase}: current canvas geometry is unusable`);
+  assert(snapshot.minimap?.width > 0 && snapshot.minimap?.height > 0, `${phase}: current minimap geometry is unusable`);
+  assert(typeof snapshot.minimapViewBox === 'string' && snapshot.minimapViewBox.trim().length > 0, `${phase}: minimap viewBox is missing`);
+  assert(snapshot.minimapViewport && Number(snapshot.minimapViewport.width) > 0 && Number(snapshot.minimapViewport.height) > 0, `${phase}: minimap viewport is unusable`);
+  assert(snapshot.activeAction === 'toggle-legend', `${phase}: legend command did not retain focus`);
+  const requiredActions = ['zoom-out', 'zoom-in', 'fit-canvas', 'focus-current', 'toggle-legend'];
+  for (const action of requiredActions) {
+    const command = snapshot.commands.find((candidate) => candidate.action === action);
+    assert(command && !command.disabled && command.width > 0 && command.height > 0, `${phase}: command ${action} is unavailable`);
+  }
+}
+
+async function scrollFlowCommandIntoVisualViewport(page, action) {
+  await page.locator(`[data-flow-action="${action}"]`).evaluate((command) => new Promise((resolve) => {
+    command.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
 }
@@ -451,7 +554,7 @@ async function inspectPageScaleCommandGeometry(page) {
       width: rect.width,
       height: rect.height,
     });
-    const commandBoxes = [...document.querySelectorAll('[data-flow-action]')].map((command) => {
+    const commandBoxes = [...document.querySelectorAll('[data-editor-region="flow-toolbar"] [data-flow-action]')].map((command) => {
       const layout = rawRect(command);
       const visualRect = inVisualViewport(layout);
       return {
@@ -485,11 +588,238 @@ async function inspectPageScaleCommandGeometry(page) {
 }
 
 function assertPageScaleCommandGeometry(evidence) {
-  assert(evidence, 'page-scale visual viewport is unavailable');
-  assert(evidence.toolbarVisual, 'Flow toolbar has no page-scale geometry');
-  assert(evidence.commandBoxes.length === 5, `page-scale Flow command count ${evidence.commandBoxes.length}`);
-  assert(evidence.commandBoxes.every((command) => command.horizontallyVisible), 'a Flow command is horizontally outside the page-scale visual viewport');
-  assert(evidence.commandBoxes.every((command) => command.verticallyVisible), 'a Flow command is vertically outside the page-scale visual viewport');
+  const requiredActions = new Set(['view-focus', 'view-overview', 'zoom-out', 'zoom-in', 'fit-canvas', 'focus-current', 'toggle-legend']);
+  assert([...requiredActions].every((action) => evidence.some((command) => command.action === action)), 'page-scale Flow toolbar omits a required command');
+  for (const command of evidence) {
+    const { action } = command;
+    assert(command.before.horizontallyVisible && command.before.verticallyVisible, `${action} could not enter the page-scale visual viewport`);
+    assert(command.focusedAction === action, `${action} could not receive page-scale keyboard focus`);
+    assert(command.activatedAction === action, `${action} could not retain focus after page-scale activation`);
+  }
+}
+
+async function verifyPageScaleCommandsIndividually(page) {
+  const requiredActions = new Set(['view-focus', 'view-overview', 'zoom-out', 'zoom-in', 'fit-canvas', 'focus-current', 'toggle-legend']);
+  const activationOrder = ['view-overview', 'view-focus', 'zoom-out', 'zoom-in', 'fit-canvas', 'focus-current', 'toggle-legend'];
+  const evidence = [];
+  for (const action of activationOrder) {
+    await scrollFlowCommandIntoVisualViewport(page, action);
+    const beforeSnapshot = await inspectPageScaleCommandGeometry(page);
+    assert(beforeSnapshot, 'page-scale visual viewport is unavailable');
+    assert(beforeSnapshot.toolbarVisual, 'Flow toolbar has no page-scale geometry');
+    const before = beforeSnapshot.commandBoxes.find((command) => command.action === action);
+    assert(before, `page-scale Flow toolbar omits ${action}`);
+    const command = page.locator(`[data-flow-action="${action}"]`);
+    await command.focus();
+    const focusedAction = await page.evaluate(() => document.activeElement?.getAttribute('data-flow-action') ?? null);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(
+      (expectedAction) => document.activeElement?.getAttribute('data-flow-action') === expectedAction,
+      action,
+    );
+    const afterSnapshot = await inspectPageScaleCommandGeometry(page);
+    const activatedAction = afterSnapshot?.activeAction ?? null;
+    evidence.push({ action, before, focusedAction, activatedAction });
+  }
+  assert([...requiredActions].every((action) => evidence.some((command) => command.action === action)), 'page-scale command evidence is incomplete');
+  assertPageScaleCommandGeometry(evidence);
+  return evidence;
+}
+
+async function inspectNarrativeMap(page) {
+  return page.evaluate(() => {
+    const rect = (element) => {
+      const value = element.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const contains = (outer, inner, tolerance = 1.5) => inner.left >= outer.left - tolerance
+      && inner.right <= outer.right + tolerance
+      && inner.top >= outer.top - tolerance
+      && inner.bottom <= outer.bottom + tolerance;
+    const overlaps = (left, right, tolerance = 1) => left.left < right.right - tolerance
+      && left.right > right.left + tolerance
+      && left.top < right.bottom - tolerance
+      && left.bottom > right.top + tolerance;
+    const frames = [...document.querySelectorAll('[data-flow-scene-frame][data-scene-id][data-flow-component]')].map((frame) => {
+      const sceneId = frame.getAttribute('data-scene-id');
+      const surface = frame.querySelector('.flow-scene-frame-surface');
+      const frameRect = surface ? rect(surface) : rect(frame);
+      const members = [...document.querySelectorAll(`[data-flow-node-kind][data-scene-id="${sceneId}"]`)].map((node) => ({
+        id: node.getAttribute('data-node-id'),
+        rect: rect(node),
+      }));
+      return {
+        sceneId,
+        component: frame.getAttribute('data-flow-component'),
+        rect: frameRect,
+        memberIds: members.map((member) => member.id),
+        membersContained: members.every((member) => contains(frameRect, member.rect)),
+      };
+    });
+    const frameOverlaps = [];
+    for (let left = 0; left < frames.length; left += 1) {
+      for (let right = left + 1; right < frames.length; right += 1) {
+        if (overlaps(frames[left].rect, frames[right].rect)) {
+          frameOverlaps.push([frames[left].sceneId, frames[right].sceneId]);
+        }
+      }
+    }
+    const nodeRects = new Map(
+      [...document.querySelectorAll('[data-flow-node-kind][data-node-id]')]
+        .map((node) => [node.getAttribute('data-node-id'), rect(node)]),
+    );
+    const routes = [...document.querySelectorAll('[data-flow-route="orthogonal"]')].map((route) => {
+      const path = route.getAttribute('d') ?? '';
+      const from = route.getAttribute('data-flow-from');
+      const to = route.getAttribute('data-flow-to');
+      const crossedNodeIds = [];
+      const matrix = route.getScreenCTM?.();
+      const total = route.getTotalLength?.() ?? 0;
+      if (matrix && total > 0 && typeof DOMPoint === 'function') {
+        for (let distance = 2; distance < total - 2; distance += 3) {
+          const local = route.getPointAtLength(distance);
+          const point = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+          for (const [nodeId, bounds] of nodeRects.entries()) {
+            if (nodeId === from || nodeId === to || crossedNodeIds.includes(nodeId)) continue;
+            if (point.x > bounds.left + 1 && point.x < bounds.right - 1
+              && point.y > bounds.top + 1 && point.y < bounds.bottom - 1) {
+              crossedNodeIds.push(nodeId);
+            }
+          }
+        }
+      }
+      return {
+        kind: route.getAttribute('data-flow-edge-kind'),
+        from,
+        to,
+        path,
+        terminalSegment: [...path.matchAll(/[ML]\s*(-?[\d.]+)[ ,](-?[\d.]+)/g)]
+          .map((match) => `${Number(match[1])},${Number(match[2])}`)
+          .slice(-2)
+          .join(' -> '),
+        // Orthogonal routes use only M/L commands; this explicitly rejects cubic Bezier C segments.
+        orthogonal: path.includes('C') === false && /^[ML\s\d.,-]+$/.test(path),
+        technical: route.classList.contains('is-technical'),
+        crossedNodeIds,
+      };
+    });
+    const primaryTextSelectors = [
+      '.flow-component-heading',
+      '.flow-scene-frame-title',
+      '.flow-scene-frame-status',
+      '.flow-node-primary',
+      '.flow-node-meta',
+      '.flow-route-chip-text',
+    ];
+    const primaryTexts = [...document.querySelectorAll(primaryTextSelectors.join(','))]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0;
+      })
+      .map((element) => element.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+      .filter(Boolean);
+    const routeChips = [...document.querySelectorAll('[data-flow-route-label]')].map((chip) => ({
+      kind: chip.getAttribute('data-flow-route-label'),
+      text: chip.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      rect: rect(chip),
+    }));
+    const returnMarkers = [...document.querySelectorAll('[data-flow-return-target]')].map((marker) => ({
+      targetSceneId: marker.getAttribute('data-flow-return-target'),
+      text: marker.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+    }));
+    const activeViewAction = [...document.querySelectorAll('[data-flow-action="view-focus"], [data-flow-action="view-overview"]')]
+      .find((button) => button.getAttribute('aria-pressed') === 'true')?.getAttribute('data-flow-action') ?? null;
+    const unprojectableExplanationElement = document.querySelector('.flow-technical-panel .surdet-technical-text');
+    const unprojectableExplanationBounds = unprojectableExplanationElement?.getBoundingClientRect();
+    const unprojectableExplanationStyle = unprojectableExplanationElement
+      ? getComputedStyle(unprojectableExplanationElement)
+      : null;
+    return {
+      frames,
+      frameOverlaps,
+      routes,
+      routeChips,
+      mainHeading: document.querySelector('[data-flow-component-heading="main"]')?.textContent?.trim() ?? null,
+      secondaryHeading: document.querySelector('[data-flow-component-heading="secondary"]')?.textContent?.trim() ?? null,
+      mainSceneIds: frames.filter((frame) => frame.component === 'main').sort((a, b) => a.rect.left - b.rect.left).map((frame) => frame.sceneId),
+      secondarySceneIds: frames.filter((frame) => frame.component === 'secondary').map((frame) => frame.sceneId),
+      primaryTexts,
+      primaryText: primaryTexts.join(' | '),
+      choiceDestinationTexts: primaryTexts.filter((text) => text.startsWith('选择“') && text.endsWith('”后')),
+      hasHumanCondition: primaryTexts.includes('有条件') || primaryTexts.some((text) => text.includes('有条件')),
+      activeViewAction,
+      technicalPressed: document.querySelector('[data-flow-action="toggle-technical-edges"]')?.getAttribute('aria-pressed') ?? null,
+      unprojectableExplanation: unprojectableExplanationElement?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      unprojectableExplanationVisible: Boolean(unprojectableExplanationBounds
+        && unprojectableExplanationBounds.width > 0
+        && unprojectableExplanationBounds.height > 0
+        && unprojectableExplanationStyle?.display !== 'none'
+        && unprojectableExplanationStyle?.visibility !== 'hidden'),
+      returnMarkers,
+      currentSceneId: window.surdetEditorDebug?.state?.current ?? null,
+      realNodeCount: document.querySelectorAll('[data-flow-node-kind][data-node-id]').length,
+      presentationBranchNodeCount: document.querySelectorAll('[data-flow-node-kind="choice"], [data-node-id^="choice:"]').length,
+    };
+  });
+}
+
+function assertCommonNarrativeGeometry(evidence) {
+  assert(evidence.frames.every((frame) => frame.membersContained), 'scene frame does not contain every real scene member');
+  assert(evidence.frameOverlaps.length === 0, `scene frames overlap: ${JSON.stringify(evidence.frameOverlaps)}`);
+  assert(evidence.routes.length > 0, 'default narrative map renders no routes');
+  assert(evidence.routes.every((route) => route.orthogonal), 'a narrative route is not orthogonal');
+  assert(evidence.routes.every((route) => route.crossedNodeIds.length === 0), 'an orthogonal route crosses a real node interior');
+  assert(evidence.presentationBranchNodeCount === 0, 'presentation-only choice card leaked into real node identity');
+}
+
+function assertFocusProjection(evidence) {
+  assertCommonNarrativeGeometry(evidence);
+  assert(evidence.activeViewAction === 'view-focus', `focus projection pressed ${evidence.activeViewAction}`);
+  assert(evidence.mainHeading === '当前聚焦路径', `unexpected focus heading: ${evidence.mainHeading}`);
+  assert(evidence.secondaryHeading === null, `focus projection unexpectedly rendered ${evidence.secondaryHeading}`);
+  assert(JSON.stringify(evidence.mainSceneIds) === JSON.stringify(['ch01_01', 'ch01_02']), `focus scene projection is not ch01_01 + ch01_02: ${evidence.mainSceneIds.join(', ')}`);
+  assert(evidence.secondarySceneIds.length === 0, 'focus projection leaked disconnected scenes');
+  const focused = evidence.frames.find((frame) => frame.sceneId === 'ch01_01');
+  const neighbour = evidence.frames.find((frame) => frame.sceneId === 'ch01_02');
+  assert(focused && neighbour && focused.memberIds.length > 2 && neighbour.memberIds.length === 1, 'focused scene is not expanded while its neighbour stays compact');
+  assert(evidence.routes.every((route) => route.kind !== 'choice'), 'default focus projection rendered a choice route');
+  const requiredChoiceTexts = ['选择“沉默”后', '选择“拔出剑”后', '选择“转身离开”后'];
+  for (const choiceText of requiredChoiceTexts) {
+    assert(evidence.choiceDestinationTexts.includes(choiceText), `missing attached choice destination text: ${choiceText}`);
+  }
+  assert(evidence.hasHumanCondition, 'conditional choice does not expose the human 有条件 marker');
+  for (const forbidden of ['@label', '[if:', 'host-entry', 'answer_']) {
+    assert(!evidence.primaryText.includes(forbidden), `primary narrative text exposes technical token ${forbidden}`);
+  }
+}
+
+function assertFocusRouteBundle(evidence) {
+  const jumps = evidence.routes.filter((route) => route.kind === 'jump' && route.to === 'l:ch01_02.start');
+  assert(jumps.length === 3, `focus projection rendered ${jumps.length}/3 jumps into ch01_02`);
+  const terminalSegments = new Set(jumps.map((route) => route.terminalSegment));
+  assert(terminalSegments.size === 1 && !terminalSegments.has(''), `three jumps do not share one terminal trunk: ${JSON.stringify([...terminalSegments])}`);
+}
+
+function assertOverviewProjection(evidence) {
+  assertCommonNarrativeGeometry(evidence);
+  assert(evidence.activeViewAction === 'view-overview', `overview projection pressed ${evidence.activeViewAction}`);
+  assert(evidence.mainHeading === '全局场景概览', `unexpected overview heading: ${evidence.mainHeading}`);
+  assert(evidence.secondaryHeading === '其他入口', `unexpected secondary heading: ${evidence.secondaryHeading}`);
+  assert(JSON.stringify([...evidence.frames.map((frame) => frame.sceneId)].sort()) === JSON.stringify(['ch01_01', 'ch01_02', 'ch02', 'ch03_turn_event']), `overview is not a four-scene projection: ${evidence.frames.map((frame) => frame.sceneId).join(', ')}`);
+  assert(evidence.frames.every((frame) => frame.memberIds.length === 1), 'overview expanded internal story beats');
+  assert(evidence.returnMarkers.some((marker) => marker.targetSceneId === 'ch01_01' && marker.text === '↩ 返回 ch01_01'), `overview return marker is not ↩ 返回 ch01_01: ${JSON.stringify(evidence.returnMarkers)}`);
+  assert(!evidence.routes.some((route) => (
+    (route.from === 's:ch02' || route.from?.startsWith('l:ch02.'))
+      && (route.to === 's:ch01_01' || route.to?.startsWith('l:ch01_01.'))
+  )), 'overview rendered the long ch02 → ch01_01 return route');
 }
 
 async function inspectRealFlowFacts(page) {
@@ -498,7 +828,7 @@ async function inspectRealFlowFacts(page) {
     const status = document.querySelector('[data-editor-region="flow-status"]');
     const legend = document.querySelector('[data-editor-region="flow-legend"]');
     const nodes = [...document.querySelectorAll('[data-flow-node-kind]')];
-    const edges = [...document.querySelectorAll('[data-flow-world] .flow-edge[data-flow-edge-kind]')];
+    const edges = [...document.querySelectorAll('[data-flow-world] .flow-route[data-flow-edge-kind]')];
     const nodeKinds = Object.fromEntries(['scene', 'label', 'host-entry'].map((kind) => [
       kind,
       nodes.filter((node) => node.getAttribute('data-flow-node-kind') === kind).length,
@@ -506,8 +836,12 @@ async function inspectRealFlowFacts(page) {
     const edgeKinds = [...new Set(edges.map((edge) => edge.getAttribute('data-flow-edge-kind')).filter(Boolean))].sort();
     const currentNodes = nodes.filter((node) => node.getAttribute('aria-current') === 'true');
     const statusText = status?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-    const statusNodeCount = Number(/节点\s*(\d+)/.exec(statusText)?.[1] ?? Number.NaN);
-    const statusEdgeCount = Number(/连接\s*(\d+)/.exec(statusText)?.[1] ?? Number.NaN);
+    const nodeStat = status?.querySelector('[data-flow-stat="nodes"]');
+    const edgeStat = status?.querySelector('[data-flow-stat="edges"]');
+    const statusSceneCount = Number(/场景\s*(\d+)/.exec(nodeStat?.textContent ?? '')?.[1] ?? Number.NaN);
+    const statusChoiceCount = Number(/选择\s*(\d+)/.exec(edgeStat?.textContent ?? '')?.[1] ?? Number.NaN);
+    const statusNodeCount = Number(/真实节点\s*(\d+)/.exec(nodeStat?.getAttribute('title') ?? '')?.[1] ?? Number.NaN);
+    const statusEdgeCount = Number(/真实连接\s*(\d+)/.exec(edgeStat?.getAttribute('title') ?? '')?.[1] ?? Number.NaN);
     return {
       mainTab: window.surdetEditorDebug?.state?.mainTab ?? null,
       current: window.surdetEditorDebug?.state?.current ?? null,
@@ -518,6 +852,8 @@ async function inspectRealFlowFacts(page) {
       timelineCount: document.querySelectorAll('#timeline-view').length,
       nodeCount: nodes.length,
       renderedEdgeCount: edges.length,
+      statusSceneCount,
+      statusChoiceCount,
       statusNodeCount,
       statusEdgeCount,
       nodeKinds,
@@ -530,8 +866,8 @@ async function inspectRealFlowFacts(page) {
       legendText: legend?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
       labelStartText: document.querySelector('[data-node-id="l:ch01_01.start"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
       hostText: document.querySelector('[data-flow-node-kind="host-entry"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-      conditionalChoicePresent: [...workbench?.querySelectorAll('text, title, [aria-label]') ?? []]
-        .some((element) => `${element.textContent ?? ''} ${element.getAttribute?.('aria-label') ?? ''}`.includes('hasSword')),
+      humanConditionPresent: [...workbench?.querySelectorAll('.flow-node-meta, .flow-route-chip-text, [aria-label]') ?? []]
+        .some((element) => `${element.textContent ?? ''} ${element.getAttribute?.('aria-label') ?? ''}`.includes('有条件')),
     };
   });
 }
@@ -544,19 +880,21 @@ function assertRealFlowFacts(facts) {
   assert(facts.minimapCount === 1, `flow minimap count ${facts.minimapCount}`);
   assert(facts.previewCount === 0, 'flow mode duplicated preview content');
   assert(facts.timelineCount === 0, 'flow mode duplicated timeline content');
-  assert(facts.nodeKinds.scene === 4, `expected four real Starter scenes, got ${facts.nodeKinds.scene}`);
-  assert(facts.nodeKinds.label === 6, `expected six real Starter labels, got ${facts.nodeKinds.label}`);
-  assert(facts.nodeKinds['host-entry'] >= 2, `expected real configuration entry nodes, got ${facts.nodeKinds['host-entry']}`);
-  assert(facts.choiceCount === 3, `expected three real choice edges, got ${facts.choiceCount}`);
+  assert(facts.nodeKinds.scene === 2, `expected two focused Starter scenes, got ${facts.nodeKinds.scene}`);
+  assert(facts.nodeKinds.label > 0, 'focused scene did not expose its story beats');
+  assert(facts.nodeKinds['host-entry'] === 1, `expected one focused project entry badge, got ${facts.nodeKinds['host-entry']}`);
+  assert(facts.choiceCount === 0, `default focus projection rendered ${facts.choiceCount} choice routes`);
   assert(facts.focusableNodeCount === facts.nodeCount, 'not every real flow node is keyboard focusable');
   assert(facts.currentNodeIds.length === 1 && facts.currentNodeIds[0] === 's:ch01_01', 'current scene node is not explicit');
-  assert(facts.statusNodeCount === facts.nodeCount, `status node count ${facts.statusNodeCount} != rendered real nodes ${facts.nodeCount}`);
+  assert(facts.statusSceneCount === 2, `status scene count ${facts.statusSceneCount}`);
+  assert(facts.statusChoiceCount === 3, `status choice count ${facts.statusChoiceCount}`);
+  assert(facts.statusNodeCount > facts.nodeCount, `bounded focus projection did not hide any raw nodes: ${facts.statusNodeCount}/${facts.nodeCount}`);
   assert(facts.statusEdgeCount === 22, `expected 22 real Starter graph connections, got ${facts.statusEdgeCount}`);
-  assert(facts.renderedEdgeCount >= 20 && facts.renderedEdgeCount <= facts.statusEdgeCount, `rendered connection paths ${facts.renderedEdgeCount} are inconsistent with graph count ${facts.statusEdgeCount}`);
-  assert(/段落\s*start/.test(facts.labelStartText), `label node is not Chinese-first: ${facts.labelStartText}`);
-  assert(/项目入口|由项目配置触发/.test(facts.hostText), `host node is not Chinese-first: ${facts.hostText}`);
-  assert(facts.conditionalChoicePresent, 'real hasSword choice condition is not visible or accessible');
-  for (const term of ['场景', '段落标记', '项目入口', '选项', '条件']) {
+  assert(facts.renderedEdgeCount > 0 && facts.renderedEdgeCount < facts.statusEdgeCount, `default narrative routes ${facts.renderedEdgeCount} did not suppress technical connections`);
+  assert(/开场/.test(facts.labelStartText), `label node is not writer-facing: ${facts.labelStartText}`);
+  assert(/项目入口/.test(facts.hostText), `host node is not Chinese-first: ${facts.hostText}`);
+  assert(facts.humanConditionPresent, 'real conditional choice has no visible human marker');
+  for (const term of ['场景分镜', '剧情段落', '项目入口', '顺序', '选项', '条件']) {
     assert(facts.legendText.includes(term), `legend omits ${term}`);
   }
   for (const forbidden of ['章节时长', '协作者', '版本 12', '完成率', '路径覆盖率', '分支概率']) {
@@ -603,6 +941,7 @@ async function assertCurrentNodeCentered(page, nodeId) {
 async function run() {
   const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-editorial-flow-canvas-wave3a-'));
   const evidencePath = path.join(artifactDirectory, 'evidence.json');
+  const identityPath = path.join(artifactDirectory, 'identity.json');
   const milestones = [];
   const screenshots = [];
   const consoleErrors = [];
@@ -623,6 +962,7 @@ async function run() {
   let portReleased = false;
   let opened = null;
   let flowFacts = null;
+  let narrativeMapEvidence = null;
   let layoutEvidence = null;
   let controlEvidence = null;
   let navigationEvidence = null;
@@ -694,35 +1034,121 @@ async function run() {
       renderedEdgeCount: flowFacts.renderedEdgeCount,
       focusableNodeCount: flowFacts.focusableNodeCount,
     });
-    pass('real-node-edge-content', {
+    const focusMap = await inspectNarrativeMap(page);
+    assertFocusProjection(focusMap);
+    pass('focus-projection-bounded', {
       nodeKinds: flowFacts.nodeKinds,
       edgeKinds: flowFacts.edgeKinds,
       choiceCount: flowFacts.choiceCount,
       currentNodeIds: flowFacts.currentNodeIds,
       labelStartText: flowFacts.labelStartText,
       hostText: flowFacts.hostText,
-      conditionalChoicePresent: flowFacts.conditionalChoicePresent,
+      humanConditionPresent: flowFacts.humanConditionPresent,
+      mainHeading: focusMap.mainHeading,
+      mainSceneIds: focusMap.mainSceneIds,
+      focusFrames: focusMap.frames,
+      choiceDestinationTexts: focusMap.choiceDestinationTexts,
+      primaryTexts: focusMap.primaryTexts,
     });
-
+    assertFocusRouteBundle(focusMap);
     const textGeometry = await inspectTextGeometry(page);
     assertTextGeometry(textGeometry);
-    pass('text-label-geometry-safe', {
+    pass('focus-route-bundle-readable', {
+      frameCount: focusMap.frames.length,
+      frameOverlaps: focusMap.frameOverlaps,
+      routeCount: focusMap.routes.length,
+      routes: focusMap.routes,
+      jumpTerminalSegments: focusMap.routes.filter((route) => route.kind === 'jump' && route.to === 'l:ch01_02.start').map((route) => route.terminalSegment),
       nodeLabelCount: textGeometry.nodes.reduce((count, node) => count + node.labels.length, 0),
-      edgeLabelCount: textGeometry.edgeLabels.length,
+      routeChipCount: textGeometry.routeChips.length,
+      labeledVisibleRouteCount: textGeometry.labeledVisibleRouteCount,
+      routeChipOverlaps: textGeometry.routeChipOverlaps,
       longestChineseNode: textGeometry.longestChineseNode,
-      longestChineseEdge: textGeometry.longestChineseEdge,
-      edgeLabelsIgnorePointerInput: textGeometry.edgeLabels.every((label) => label.textPointerEvents === 'none' && label.surfacePointerEvents === 'none'),
+      longestChineseRouteChip: textGeometry.longestChineseRouteChip,
+      routeChipsIgnorePointerInput: textGeometry.routeChips.every((label) => label.textPointerEvents === 'none' && label.surfacePointerEvents === 'none'),
     });
+
+    const overviewSwitch = await switchFlowView(page, 'view-overview');
+    const overviewMap = await inspectNarrativeMap(page);
+    assertOverviewProjection(overviewMap);
+    await takeScreenshot(page, artifactDirectory, 'flow-global-overview', screenshots);
+    pass('overview-scene-map-readable', {
+      switch: overviewSwitch,
+      frames: overviewMap.frames,
+      mainSceneIds: overviewMap.mainSceneIds,
+      secondarySceneIds: overviewMap.secondarySceneIds,
+      returnMarkers: overviewMap.returnMarkers,
+      routes: overviewMap.routes,
+    });
+
+    const focusSwitch = await switchFlowView(page, 'view-focus');
+    const restoredFocusMap = await inspectNarrativeMap(page);
+    assertFocusProjection(restoredFocusMap);
+    assert(focusSwitch.activeAction === 'view-focus', `mode switch did not retain keyboard focus on view-focus: ${focusSwitch.activeAction}`);
+    assert(restoredFocusMap.currentSceneId === 'ch01_01', `mode switch changed the current scene to ${restoredFocusMap.currentSceneId}`);
+    const autoFitLayout = await inspectFlowLayout(page);
+    assertFlowLayout(autoFitLayout, 1440, {
+      nodeCount: restoredFocusMap.realNodeCount,
+      frameCount: 2,
+      activeViewAction: 'view-focus',
+    });
+    pass('mode-switch-focus-stable', {
+      overviewSwitch,
+      focusSwitch,
+      currentSceneId: restoredFocusMap.currentSceneId,
+      autoFitLayout,
+    });
+
+    const defaultRouteCount = restoredFocusMap.routes.length;
+    const technicalMap = await enableTechnicalConnections(page);
+    const legendModeForTechnicalRoutes = 'opened-through-disclosure';
+    const revealedRouteCount = technicalMap.routes.length;
+    assert(technicalMap.technicalPressed === 'true', 'technical route toggle did not expose its pressed state');
+    assert(revealedRouteCount > defaultRouteCount, 'technical route toggle did not reveal more real routes');
+    assert(technicalMap.unprojectableExplanationVisible, 'technical explanation for unprojectable connections is not visible');
+    assert(technicalMap.unprojectableExplanation.includes('另有 2 条连接因端点缺失未显示'), `unexpected unprojectable explanation: ${technicalMap.unprojectableExplanation}`);
+    const unprojectableMatch = /另有\s+(\d+)\s+条连接因端点缺失未显示/.exec(technicalMap.unprojectableExplanation);
+    assert(unprojectableMatch, `visible technical explanation has no unprojectable count: ${technicalMap.unprojectableExplanation}`);
+    const unprojectableRawEdgeCount = Number(unprojectableMatch[1]);
+    assert(unprojectableRawEdgeCount === 2, `expected 2 raw Starter connections with missing endpoints, got ${unprojectableRawEdgeCount}`);
+    const projectableNarrativeRouteCount = flowFacts.statusEdgeCount - unprojectableRawEdgeCount;
+    assert(revealedRouteCount === projectableNarrativeRouteCount, `technical route toggle revealed ${revealedRouteCount}/${projectableNarrativeRouteCount} projectable narrative routes`);
+    assert(technicalMap.frames.length === 4, `technical view rendered ${technicalMap.frames.length}/4 scene frames`);
+    assert(technicalMap.realNodeCount === flowFacts.statusNodeCount, `technical view rendered ${technicalMap.realNodeCount}/${flowFacts.statusNodeCount} projectable nodes`);
+    await takeScreenshot(page, artifactDirectory, 'flow-technical-connections', screenshots);
+    await page.locator('[data-flow-action="toggle-technical-edges"]').click();
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-flow-route="orthogonal"]').length === expected, defaultRouteCount);
+    assert(await page.locator('[data-flow-action="toggle-technical-edges"]').getAttribute('aria-pressed') === 'false', 'technical route toggle did not return to the readable default');
+    pass('technical-connections-on-demand', {
+      legendMode: legendModeForTechnicalRoutes,
+      defaultRouteCount,
+      revealedRouteCount,
+      projectableNarrativeRouteCount,
+      unprojectableRawEdgeCount,
+      unprojectableExplanation: technicalMap.unprojectableExplanation,
+      unprojectableExplanationVisible: technicalMap.unprojectableExplanationVisible,
+      rawGraphEdgeCount: flowFacts.statusEdgeCount,
+      frameCount: technicalMap.frames.length,
+      nodeCount: technicalMap.realNodeCount,
+    });
+    await setLegendExpanded(page, false);
+    narrativeMapEvidence = { focus: focusMap, overview: overviewMap, technical: technicalMap };
 
     layoutEvidence = {};
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await switchFlowView(page, 'view-focus');
+      await setLegendExpanded(page, false);
       await page.locator('[data-flow-action="fit-canvas"]').click();
-      const legendMode = await ensureLegendReachable(page);
+      const legendMode = 'default-collapsed';
       const layout = await inspectFlowLayout(page);
       layoutEvidence[viewport.id] = { ...layout, legendMode };
       await takeScreenshot(page, artifactDirectory, `flow-${viewport.id}`, screenshots);
-      assertFlowLayout(layout, viewport.width, flowFacts.nodeCount);
+      assertFlowLayout(layout, viewport.width, {
+        nodeCount: restoredFocusMap.realNodeCount,
+        frameCount: 2,
+        activeViewAction: 'view-focus',
+      });
       pass(`layout-${viewport.id}`, {
         viewport: layout.viewport,
         pageWidth: layout.pageWidth,
@@ -737,37 +1163,40 @@ async function run() {
     }
 
     await page.setViewportSize({ width: 800, height: 500 });
+    await setLegendExpanded(page, false);
     await page.locator('[data-flow-action="fit-canvas"]').click();
-    const pageScaleLegendMode = await ensureLegendReachable(page);
+    const pageScaleLegendMode = 'default-collapsed';
     const pageScaleBaseline = await inspectFlowLayout(page);
     cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
     await page.waitForFunction(() => Math.abs((window.visualViewport?.scale ?? 1) - 2) < 0.05);
-    await scrollFlowCommandsIntoVisualViewport(page);
-    const scaledZoom = page.locator('[data-flow-action="zoom-in"]');
-    await scaledZoom.focus();
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.activeElement?.getAttribute('data-flow-action') === 'zoom-in');
+    const perCommandReachability = await verifyPageScaleCommandsIndividually(page);
+    await setLegendExpanded(page, false);
     const beforeScaledFit = await worldTransform(page);
-    await scrollFlowCommandsIntoVisualViewport(page);
+    await scrollFlowCommandIntoVisualViewport(page, 'fit-canvas');
     const scaledFit = page.locator('[data-flow-action="fit-canvas"]');
     await scaledFit.focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.activeElement?.getAttribute('data-flow-action') === 'fit-canvas');
     const afterScaledFit = await worldTransform(page);
     assert(transformChanged(beforeScaledFit, afterScaledFit), 'fit-canvas was not actually activated at page scale 2');
-    await scrollFlowCommandsIntoVisualViewport(page);
     const pageScaleCommandGeometry = await inspectPageScaleCommandGeometry(page);
-    assertPageScaleCommandGeometry(pageScaleCommandGeometry);
+    const fitCommandGeometry = pageScaleCommandGeometry?.commandBoxes.find((command) => command.action === 'fit-canvas');
+    assert(fitCommandGeometry?.horizontallyVisible && fitCommandGeometry.verticallyVisible, 'active fit command is outside the page-scale visual viewport');
     assert(pageScaleCommandGeometry.activeAction === 'fit-canvas', 'page-scale fit action lost keyboard focus');
     const pageScaleLayout = await inspectFlowLayout(page);
     layoutEvidence.pageScaleCommandReachability = {
       baseline: pageScaleBaseline,
       scaled: pageScaleLayout,
       commandGeometry: pageScaleCommandGeometry,
+      perCommandReachability,
       legendMode: pageScaleLegendMode,
     };
-    assertFlowLayout(pageScaleLayout, 800, flowFacts.nodeCount);
+    assertFlowLayout(pageScaleLayout, 800, {
+      nodeCount: restoredFocusMap.realNodeCount,
+      frameCount: 2,
+      activeViewAction: 'view-focus',
+    });
     assert(Math.abs(pageScaleBaseline.viewport.visualScale - 1) < 0.05, `unexpected baseline page scale ${pageScaleBaseline.viewport.visualScale}`);
     assert(Math.abs(pageScaleLayout.viewport.visualScale - 2) < 0.05, `expected 200% page scale, got ${pageScaleLayout.viewport.visualScale}`);
     assert(pageScaleLayout.viewport.visualWidth <= pageScaleLayout.viewport.width / 1.9, `200% page scale did not narrow effective CSS geometry: ${pageScaleLayout.viewport.visualWidth}/${pageScaleLayout.viewport.width}`);
@@ -793,6 +1222,7 @@ async function run() {
       devicePixelRatioAfter: pageScaleLayout.viewport.devicePixelRatio,
       pageWidth: pageScaleLayout.pageWidth,
       commandGeometry: pageScaleCommandGeometry,
+      perCommandReachability,
       fitActivation: {
         before: beforeScaledFit,
         after: afterScaledFit,
@@ -825,7 +1255,8 @@ async function run() {
       const canvas = document.querySelector('[data-editor-region="flow-canvas"]')?.getBoundingClientRect();
       return canvas && rect.left >= canvas.left - 1 && rect.right <= canvas.right + 1 && rect.top >= canvas.top - 1 && rect.bottom <= canvas.bottom + 1;
     }).length);
-    assert(visibleAfterFit === flowFacts.nodeCount, `fit-canvas kept only ${visibleAfterFit}/${flowFacts.nodeCount} nodes in reach`);
+    const visibleNodeCountBeforeFit = await page.locator('[data-flow-node-kind]').count();
+    assert(visibleAfterFit === visibleNodeCountBeforeFit, `fit-canvas kept only ${visibleAfterFit}/${visibleNodeCountBeforeFit} visible nodes in reach`);
     await page.locator('[data-flow-action="focus-current"]').click();
     const currentCentered = await assertCurrentNodeCentered(page, 's:ch01_01');
     controlEvidence = { beforeZoom, afterZoomIn, afterZoomOut, beforeFit, afterFit, visibleAfterFit, currentCentered };
@@ -853,53 +1284,23 @@ async function run() {
     });
 
     await page.locator('[data-flow-action="fit-canvas"]').click();
+    await setLegendExpanded(page, true);
     const legendToggle = page.locator('[data-flow-action="toggle-legend"]');
     await legendToggle.focus();
     const legendBefore = await flowGeometrySnapshot(page);
-    await page.evaluate(() => {
-      window.__wave3aLegendGeometryRefs = {
-        canvas: document.querySelector('[data-editor-region="flow-canvas"]'),
-        minimap: document.querySelector('[data-editor-region="flow-minimap"]'),
-      };
-    });
+    assertLegendGeometrySnapshot(legendBefore, false, 'initial expanded legend');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-editor-region="flow-legend"]')?.hasAttribute('hidden') === true);
     const legendCollapsed = await flowGeometrySnapshot(page);
-    const collapsedRecomputed = await page.evaluate(() => ({
-      oldCanvasConnected: window.__wave3aLegendGeometryRefs.canvas?.isConnected ?? null,
-      oldMinimapConnected: window.__wave3aLegendGeometryRefs.minimap?.isConnected ?? null,
-    }));
-    assert(collapsedRecomputed.oldCanvasConnected === false && collapsedRecomputed.oldMinimapConnected === false, 'legend collapse did not rebuild canvas and minimap geometry');
-    assert(legendCollapsed.legendHidden === true, 'legend did not collapse');
-    assert(legendCollapsed.canvas?.width > 0 && legendCollapsed.canvas?.height > 0, 'collapsed canvas geometry is unusable');
-    assert(legendCollapsed.minimap?.width > 0 && legendCollapsed.minimap?.height > 0 && legendCollapsed.minimapViewport, 'collapsed minimap geometry is unusable');
-    assert(legendCollapsed.activeAction === 'toggle-legend', 'legend collapse did not restore toolbar focus');
-    await page.evaluate(() => {
-      window.__wave3aLegendGeometryRefs = {
-        canvas: document.querySelector('[data-editor-region="flow-canvas"]'),
-        minimap: document.querySelector('[data-editor-region="flow-minimap"]'),
-      };
-    });
+    assertLegendGeometrySnapshot(legendCollapsed, true, 'collapsed legend');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-editor-region="flow-legend"]')?.hasAttribute('hidden') === false);
     const legendExpandedGeometry = await flowGeometrySnapshot(page);
-    const expandedRecomputed = await page.evaluate(() => {
-      const result = {
-        oldCanvasConnected: window.__wave3aLegendGeometryRefs.canvas?.isConnected ?? null,
-        oldMinimapConnected: window.__wave3aLegendGeometryRefs.minimap?.isConnected ?? null,
-      };
-      delete window.__wave3aLegendGeometryRefs;
-      return result;
-    });
-    assert(expandedRecomputed.oldCanvasConnected === false && expandedRecomputed.oldMinimapConnected === false, 'legend expansion did not rebuild canvas and minimap geometry');
-    assert(legendExpandedGeometry.legendHidden === false, 'legend did not expand');
-    assert(legendExpandedGeometry.canvas?.width > 0 && legendExpandedGeometry.canvas?.height > 0, 'expanded canvas geometry is unusable');
-    assert(legendExpandedGeometry.minimap?.width > 0 && legendExpandedGeometry.minimap?.height > 0 && legendExpandedGeometry.minimapViewport, 'expanded minimap geometry is unusable');
-    assert(legendExpandedGeometry.activeAction === 'toggle-legend', 'legend expansion did not restore toolbar focus');
+    assertLegendGeometrySnapshot(legendExpandedGeometry, false, 're-expanded legend');
     pass('legend-geometry-recomputed', {
       before: legendBefore,
-      collapsed: { ...legendCollapsed, ...collapsedRecomputed },
-      expanded: { ...legendExpandedGeometry, ...expandedRecomputed },
+      collapsed: legendCollapsed,
+      expanded: legendExpandedGeometry,
     });
 
     await clickFlowNode(page, 's:ch01_02');
@@ -913,6 +1314,7 @@ async function run() {
     assert(pointerNavigation.manuscriptScene === 'ch01_02', 'pointer navigation manuscript did not follow real scene identity');
 
     await enterFlowMode(page);
+    await enableTechnicalConnections(page);
     await page.locator('[data-flow-action="fit-canvas"]').click();
     await keyboardOpenFlowNode(page, 'l:ch01_01.answer_silence', 'Enter');
     await page.locator('.manuscript-sheet[data-scene-id="ch01_01"]').waitFor({ state: 'visible' });
@@ -926,6 +1328,7 @@ async function run() {
     assert(enterNavigation.selectedLine === '29', `Enter navigation selected zero-based line ${enterNavigation.selectedLine}`);
 
     await enterFlowMode(page);
+    await enableTechnicalConnections(page);
     await page.locator('[data-flow-action="fit-canvas"]').click();
     await keyboardOpenFlowNode(page, 'l:ch01_02.start', 'Space');
     await page.locator('.manuscript-sheet[data-scene-id="ch01_02"]').waitFor({ state: 'visible' });
@@ -955,14 +1358,46 @@ async function run() {
     const beforeMinimap = afterPan;
     const minimapBox = await page.locator('[data-editor-region="flow-minimap"]').boundingBox();
     assert(minimapBox, 'minimap has no pointer geometry');
-    const minimapClickRelative = { x: 0.72, y: 0.32 };
+    const beforeMinimapViewportBox = await page.locator('[data-editor-region="flow-minimap"] .flow-minimap-viewport').boundingBox();
+    assert(beforeMinimapViewportBox, 'minimap viewport has no pre-click geometry');
+    const beforeViewportCenterRelative = {
+      x: (beforeMinimapViewportBox.x + beforeMinimapViewportBox.width / 2 - minimapBox.x) / minimapBox.width,
+      y: (beforeMinimapViewportBox.y + beforeMinimapViewportBox.height / 2 - minimapBox.y) / minimapBox.height,
+    };
+    const minimapClickCandidates = [
+      { x: 0.18, y: 0.22 },
+      { x: 0.82, y: 0.22 },
+      { x: 0.18, y: 0.78 },
+      { x: 0.82, y: 0.78 },
+    ].map((target) => ({
+      ...target,
+      distance: Math.hypot(target.x - beforeViewportCenterRelative.x, target.y - beforeViewportCenterRelative.y),
+    }));
+    const chosenMinimapTarget = minimapClickCandidates.reduce((farthest, target) => (
+      target.distance > farthest.distance ? target : farthest
+    ));
+    const minimapClickRelative = { x: chosenMinimapTarget.x, y: chosenMinimapTarget.y };
+    const minimapTargetDistance = chosenMinimapTarget.distance;
+    assert(minimapTargetDistance >= 0.4, `minimap target is only ${minimapTargetDistance} relative units from the current viewport center`);
     const minimapClick = {
       x: minimapBox.x + minimapBox.width * minimapClickRelative.x,
       y: minimapBox.y + minimapBox.height * minimapClickRelative.y,
     };
+    const minimapHitTarget = await page.evaluate(({ x, y }) => {
+      const target = document.elementFromPoint(x, y);
+      return {
+        tagName: target?.tagName ?? null,
+        className: target?.getAttribute?.('class') ?? null,
+        insideMinimap: Boolean(target?.closest?.('[data-editor-region="flow-minimap"]')),
+      };
+    }, minimapClick);
+    assert(minimapHitTarget.insideMinimap, `minimap click target is obscured: ${JSON.stringify(minimapHitTarget)}`);
     await page.mouse.click(minimapClick.x, minimapClick.y);
     const afterMinimap = await worldTransform(page);
-    assert(transformChanged(beforeMinimap, afterMinimap), 'minimap navigation did not update existing flow view');
+    assert(
+      transformChanged(beforeMinimap, afterMinimap),
+      `minimap navigation did not update existing flow view: ${JSON.stringify({ beforeMinimap, afterMinimap, beforeViewportCenterRelative, minimapClickRelative, minimapTargetDistance, minimapHitTarget })}`,
+    );
     const minimapViewportBox = await page.locator('[data-editor-region="flow-minimap"] .flow-minimap-viewport').boundingBox();
     assert(minimapViewportBox, 're-rendered minimap viewport has no pointer geometry');
     const minimapViewportCenter = {
@@ -981,7 +1416,9 @@ async function run() {
       afterPan,
       beforeMinimap,
       afterMinimap,
+      beforeViewportCenterRelative,
       minimapClickRelative,
+      minimapTargetDistance,
       minimapClick,
       minimapViewportCenter,
       minimapViewportCenterDistance,
@@ -1052,9 +1489,11 @@ async function run() {
     const targetNodeId = 'l:ch01_01.start';
     // 撤销栈按当前场景路由。先通过真实节点导航把源场景设为当前，再返回流程画布建链，
     // 验证用户可理解的“打开源场景 → 建链 → 撤销”路径，而不是跨场景隐式撤销。
+    await enableTechnicalConnections(page);
     await page.locator(`[data-node-id="s:${sourceSceneId}"]`).click();
     await page.waitForFunction((sceneId) => window.surdetEditorDebug.state.current === sceneId, sourceSceneId);
     await enterFlowMode(page);
+    await enableTechnicalConnections(page);
     await page.locator('[data-flow-action="fit-canvas"]').click();
     const beforeLink = await page.evaluate((sceneId) => window.surdetEditorDebug.state.scenes.get(sceneId).text, sourceSceneId);
     const sourceBox = await page.locator(`[data-node-id="s:${sourceSceneId}"]`).boundingBox();
@@ -1163,6 +1602,7 @@ async function run() {
     injectedAfter,
     opened,
     flowFacts,
+    narrativeMapEvidence,
     layoutEvidence,
     controlEvidence,
     navigationEvidence,
@@ -1178,10 +1618,20 @@ async function run() {
     serverStdout: serverStdout.join('').split(/\r?\n/).filter(Boolean),
   };
   const evidenceIdentity = writeExclusiveJson(evidencePath, evidence);
+  const identity = writeExclusiveJson(identityPath, {
+    schemaVersion: 1,
+    evidenceClass: evidence.evidenceClass,
+    status: evidence.status,
+    evidence: evidenceIdentity,
+    runner: evidence.runner,
+    originalStarterUnchanged: evidence.originalStarterUnchanged,
+    portReleased,
+  });
   process.stdout.write(`${JSON.stringify({
     status: evidence.status,
     artifactDirectory,
     evidence: evidenceIdentity,
+    identity,
     port,
     portReleased,
     milestones: milestones.map(({ name, status }) => ({ name, status })),
