@@ -31,6 +31,7 @@ export function updateLine(index: number, next: LineModel): void {
 export function deleteLine(index: number): void {
   const lines = parseScript(currentText());
   lines.splice(index, 1);
+  state.selectedObjectRef = null;
   setCurrentText(serializeScript(lines, currentEol()));
   renderEditor();
 }
@@ -45,6 +46,7 @@ export function insertLine(index: number): void {
     raw: '新台词',
     eol: index + 1 >= lines.length ? '' : currentEol(),
   });
+  state.selectedObjectRef = null;
   setCurrentText(serializeScript(lines, currentEol()));
   renderEditor();
 }
@@ -56,6 +58,7 @@ export function moveLine(index: number, dir: -1 | 1): void {
   const tmp = lines[index]!;
   lines[index] = lines[target]!;
   lines[target] = tmp;
+  state.selectedObjectRef = null;
   setCurrentText(serializeScript(lines, currentEol()));
   renderEditor();
 }
@@ -110,29 +113,13 @@ function kindBadge(l: LineModel): string {
   }
 }
 
-/* UI 第二阶段：块类型色带 —— 左侧色条 + 徽章分色，行类型一眼可辨 */
 const FLOW_CMDS = new Set(['goto', 'jump', 'call', 'if', 'elif', 'loop', 'choice', 'switch']);
 const STAGE_CMDS = new Set([
   'bg', 'show', 'hide', 'bgm', 'ambience', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'transition', 'wait',
   'fadein', 'fadeout', 'particle', 'mov', 'tint', 'video', 'nvl', 'tip', 'note', 'title', 'chapter', 'center',
 ]);
 
-/** 块色带类（CSS 的 .block.t-* 左色条） */
-function blockTone(l: LineModel): string {
-  if (l.kind === 'instr') {
-    if (FLOW_CMDS.has(l.name)) return 't-flow';
-    if (STAGE_CMDS.has(l.name)) return 't-stage';
-    return 't-vars';
-  }
-  switch (l.kind) {
-    case 'text': return 't-text';
-    case 'label': return 't-label';
-    case 'choice-option': return 't-choice';
-    default: return 't-dim';
-  }
-}
-
-/** 徽章分色类（CSS 的 .badge.*；与块色带同语义） */
+/** Visible type names remain semantic; selection is never encoded as a colored rail. */
 function badgeTone(l: LineModel): string {
   if (l.kind === 'instr') {
     if (FLOW_CMDS.has(l.name)) return 'flow';
@@ -162,10 +149,32 @@ export function refreshEditorObjectRefs(): void {
   document.querySelectorAll<HTMLElement>('#editor .block').forEach((block) => {
     const line = Number(block.dataset.line);
     const ref = Number.isInteger(line) ? objectRefForLine(line) : null;
-    if (ref) block.dataset.objectRef = ref;
-    else delete block.dataset.objectRef;
-    block.classList.toggle('selected', ref !== null && ref === state.selectedObjectRef);
+    block.dataset.objectRef = ref ?? '';
+    const selected = ref !== null && ref === state.selectedObjectRef;
+    block.classList.toggle('selected', selected);
+    block.setAttribute('aria-selected', String(selected));
+    const marker = block.querySelector<HTMLElement>('.current-segment');
+    if (marker) marker.hidden = !selected;
+    const refValue = block.querySelector<HTMLElement>('.object-ref-value');
+    if (refValue) refValue.textContent = ref ?? '当前行尚无对象索引';
   });
+}
+
+/** Refreshes changing scene facts without replacing focused authoring inputs. */
+export function refreshManuscriptFacts(): void {
+  if (!state.current) return;
+  const scene = state.scenes.get(state.current);
+  const article = document.querySelector<HTMLElement>(`.manuscript-sheet[data-scene-id="${CSS.escape(state.current)}"]`);
+  if (!scene || !article) return;
+  const characters = article.querySelector<HTMLElement>('[data-manuscript-fact="characters"]');
+  const lines = article.querySelector<HTMLElement>('[data-manuscript-fact="lines"]');
+  const saveState = article.querySelector<HTMLElement>('[data-manuscript-fact="save-state"]');
+  if (characters) characters.textContent = `${scene.text.replace(/\s+/g, '').length} 字`;
+  if (lines) lines.textContent = `${parseScript(scene.text).length} 行`;
+  if (saveState) {
+    saveState.textContent = scene.dirty ? '未保存' : '已保存';
+    saveState.className = scene.dirty ? 'manuscript-dirty' : 'manuscript-saved';
+  }
 }
 
 export function renderEditor(): void {
@@ -176,36 +185,105 @@ export function renderEditor(): void {
     editorEl.appendChild(h('div', 'empty', '打开项目并选择一个场景开始编辑'));
     return;
   }
+  const scene = state.scenes.get(state.current);
+  if (!scene) {
+    editorEl.appendChild(h('div', 'empty', '当前场景已不存在，请从目录重新选择'));
+    return;
+  }
   const lines = parseScript(currentText());
+  const article = h('article', 'manuscript-sheet');
+  article.dataset.editorRegion = 'manuscript';
+  article.dataset.sceneId = state.current;
+  article.setAttribute('aria-label', `场景 ${scene.id || state.current} 的连续剧本`);
+
+  const heading = h('header', 'manuscript-heading');
+  const headingIdentity = h('div', 'manuscript-heading-identity');
+  headingIdentity.appendChild(h('div', 'manuscript-kicker', '当前场景'));
+  headingIdentity.appendChild(h('h1', undefined, scene.id || state.current));
+  const path = h('div', 'manuscript-path', scene.file);
+  path.title = scene.file;
+  headingIdentity.appendChild(path);
+  const facts = h('div', 'manuscript-facts');
+  const characterFact = h('span', undefined, `${scene.text.replace(/\s+/g, '').length} 字`);
+  characterFact.dataset.manuscriptFact = 'characters';
+  const lineFact = h('span', undefined, `${lines.length} 行`);
+  lineFact.dataset.manuscriptFact = 'lines';
+  const saveFact = h('span', scene.dirty ? 'manuscript-dirty' : 'manuscript-saved', scene.dirty ? '未保存' : '已保存');
+  saveFact.dataset.manuscriptFact = 'save-state';
+  facts.append(characterFact, lineFact, saveFact);
+  heading.append(headingIdentity, facts);
+  article.appendChild(heading);
+
+  const lineList = h('div', 'manuscript-lines');
+  lineList.setAttribute('role', 'listbox');
+  lineList.setAttribute('aria-label', '场景行');
   lines.forEach((line, index) => {
-    editorEl.appendChild(renderBlock(line, index));
+    lineList.appendChild(renderBlock(line, index));
   });
-  const addBtn = h('button', undefined, '＋ 在末尾追加台词');
+  article.appendChild(lineList);
+  const footer = h('footer', 'manuscript-footer');
+  const addBtn = h('button', 'manuscript-add-line', '＋ 在末尾追加台词');
+  addBtn.type = 'button';
+  addBtn.setAttribute('data-action', 'append-dialogue-line');
   addBtn.onclick = () => insertLine(lines.length - 1);
-  editorEl.appendChild(addBtn);
+  footer.appendChild(addBtn);
+  article.appendChild(footer);
+  editorEl.appendChild(article);
 }
 
 function renderBlock(line: LineModel, index: number): HTMLElement {
   const objectRef = objectRefForLine(index);
-  const block = h('div', `block ${blockTone(line)}${objectRef === state.selectedObjectRef ? ' selected' : ''}`);
+  const selected = objectRef !== null && objectRef === state.selectedObjectRef;
+  const block = h('section', `block block-${line.kind}${selected ? ' selected' : ''}`);
   block.dataset.line = String(index);
   block.dataset.objectRef = objectRef ?? '';
-  block.addEventListener('click', () => {
+  block.tabIndex = 0;
+  block.setAttribute('role', 'option');
+  block.setAttribute('aria-selected', String(selected));
+  block.setAttribute('aria-label', `第 ${index + 1} 行，${kindBadge(line)}`);
+
+  const selectBlock = (): void => {
     state.selectedObjectRef = selectAuthoringObject(block.dataset.objectRef ?? null);
     document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
+  };
+  block.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button, summary')) return;
+    selectBlock();
+  });
+  block.addEventListener('keydown', (event) => {
+    if (event.target !== block || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    selectBlock();
   });
 
   const bar = h('div', 'bar');
+  bar.appendChild(h('span', 'continuity-line-number', String(index + 1).padStart(2, '0')));
   bar.appendChild(h('span', 'badge ' + badgeTone(line), kindBadge(line)));
+  const current = h('span', 'current-segment', '当前段');
+  current.hidden = !selected;
+  bar.appendChild(current);
   const ops = h('span', 'ops');
   const upBtn = h('button', undefined, '↑');
-  upBtn.onclick = () => moveLine(index, -1);
+  upBtn.type = 'button';
+  upBtn.title = '上移这一行';
+  upBtn.setAttribute('aria-label', `上移第 ${index + 1} 行`);
+  upBtn.onclick = (event) => { event.stopPropagation(); moveLine(index, -1); };
   const downBtn = h('button', undefined, '↓');
-  downBtn.onclick = () => moveLine(index, 1);
+  downBtn.type = 'button';
+  downBtn.title = '下移这一行';
+  downBtn.setAttribute('aria-label', `下移第 ${index + 1} 行`);
+  downBtn.onclick = (event) => { event.stopPropagation(); moveLine(index, 1); };
   const insBtn = h('button', undefined, '＋');
-  insBtn.onclick = () => insertLine(index);
+  insBtn.type = 'button';
+  insBtn.title = '在下方插入台词';
+  insBtn.setAttribute('aria-label', `在第 ${index + 1} 行后插入台词`);
+  insBtn.onclick = (event) => { event.stopPropagation(); insertLine(index); };
   const delBtn = h('button', undefined, '✕');
-  delBtn.onclick = () => deleteLine(index);
+  delBtn.type = 'button';
+  delBtn.title = '删除这一行';
+  delBtn.setAttribute('aria-label', `删除第 ${index + 1} 行`);
+  delBtn.onclick = (event) => { event.stopPropagation(); deleteLine(index); };
   ops.append(upBtn, downBtn, insBtn, delBtn);
   bar.appendChild(ops);
   block.appendChild(bar);
@@ -251,8 +329,12 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
     fields.appendChild(ta);
   }
 
-  // raw 行（事实来源，可直接编辑任意内容）
-  const rawWrap = h('div', 'raw');
+  const technical = h('details', 'technical-details');
+  const summary = h('summary', undefined, '技术信息');
+  technical.appendChild(summary);
+  const technicalBody = h('div', 'technical-body');
+  const rawWrap = h('label', 'raw');
+  rawWrap.appendChild(h('span', undefined, '原始行'));
   const rawInput = h('input', 'mono');
   rawInput.value = line.raw;
   rawInput.title = '原始行（直接编辑将重新分类该行）';
@@ -262,7 +344,13 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
     updateLine(index, parseLine(rawInput.value, prevKind, line.eol));
   };
   rawWrap.appendChild(rawInput);
-  block.appendChild(rawWrap);
+  technicalBody.appendChild(rawWrap);
+  const objectIdentity = h('div', 'object-identity');
+  objectIdentity.appendChild(h('span', undefined, '对象引用'));
+  objectIdentity.appendChild(h('code', 'object-ref-value', objectRef ?? '当前行尚无对象索引'));
+  technicalBody.appendChild(objectIdentity);
+  technical.appendChild(technicalBody);
+  block.appendChild(technical);
 
   return block;
 }

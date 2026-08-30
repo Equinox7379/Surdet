@@ -7,11 +7,15 @@ import { validateProject } from '../validate.js';
 import type { Issue } from '../validate.js';
 import type { CompiledScene } from '@surdet/core';
 import { renderSidebar } from './sidebar.js';
-import { renderEditor } from './editor.js';
 import { updateEdges, updateGraph } from './right.js';
 import { refreshFlowIfVisible } from './flow.js';
 
 let validateTimer: ReturnType<typeof setTimeout> | null = null;
+let onIssueJumpHook: (sceneKey: string, line: number) => void = () => {};
+
+export function bindIssueNavigation(opts: { onJump: (sceneKey: string, line: number) => void }): void {
+  onIssueJumpHook = opts.onJump;
+}
 
 export function scheduleValidate(): void {
   if (validateTimer) clearTimeout(validateTimer);
@@ -82,9 +86,10 @@ export function renderIssues(): void {
   if (!right) return;
   const old = document.getElementById('issues-box');
   if (old) old.remove();
-  const box = h('div');
+  const box = h('section', 'context-section validation-section');
   box.id = 'issues-box';
-  box.appendChild(h('h3', undefined, '校验结果'));
+  box.setAttribute('data-editor-region', 'validation-context');
+  box.appendChild(h('h2', undefined, '校验结果'));
   const issues = state.lastValidation?.issues ?? [];
   if (issues.length === 0) {
     box.appendChild(h('div', 'empty', state.lastValidation ? '全部通过 ✓' : '等待校验…'));
@@ -112,12 +117,7 @@ function renderIssue(issue: Issue): HTMLElement {
       key = [...state.scenes.keys()].find((k) => k === base || k.endsWith('/' + base)) ?? base;
     }
     if (state.scenes.has(key)) {
-      state.current = key;
-      renderSidebar();
-      renderEditor();
-      const target = document.querySelector(`.block[data-line="${Math.max(0, issue.line - 1)}"]`);
-      target?.scrollIntoView({ block: 'center' });
-      target?.classList.add('selected');
+      onIssueJumpHook(key, Math.max(0, issue.line - 1));
     }
   };
   return el;

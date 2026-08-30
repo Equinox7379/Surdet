@@ -163,7 +163,8 @@ body {
 .editor-application-frame {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 184px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -173,32 +174,35 @@ body {
   display: flex;
   min-width: 0;
   min-height: 0;
-  flex-direction: column;
-  gap: var(--surdet-space-8);
-  padding: var(--surdet-space-24) var(--surdet-space-16);
-  overflow-y: auto;
+  flex-direction: row;
+  gap: 0;
+  padding: 0 var(--surdet-space-24);
+  overflow-x: auto;
+  overflow-y: hidden;
   background-color: var(--surdet-shell-chrome-bg);
   border-top: 1px solid var(--surdet-border-strong);
 }
 
 .editor-mode-navigation-title {
-  margin: 0 0 var(--surdet-space-8);
-  color: var(--surdet-shell-chrome-muted);
-  font-size: 0.75rem;
-  font-weight: 650;
-  letter-spacing: 0.08em;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .editor-mode-button {
-  width: 100%;
-  min-height: 38px;
+  width: auto;
+  min-height: 46px;
+  flex: 0 0 auto;
   border: 1px solid transparent;
-  border-radius: var(--surdet-radius-tight);
-  padding: var(--surdet-space-8) var(--surdet-space-12);
+  border-radius: 0;
+  padding: var(--surdet-space-8) var(--surdet-space-24);
   background-color: transparent;
   color: var(--surdet-shell-chrome-text);
   font-weight: 600;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition:
     background-color var(--surdet-motion-fast) ease,
@@ -214,6 +218,7 @@ body {
 .editor-mode-button[aria-current="page"] {
   background-color: var(--surdet-editor-nav-active-bg);
   border-color: var(--surdet-editor-selection-outline);
+  border-bottom-color: var(--surdet-editor-selection-outline);
   color: var(--surdet-text-primary);
 }
 

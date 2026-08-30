@@ -17,14 +17,16 @@ import {
   listenForPreviewTraceSelection,
   locateObjectForTraceEvent,
   parseTimelineObjectRef,
+  reconcileAuthoringSelection,
   selectAuthoringObject,
 } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
 import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject } from './project-io.js';
-import { renderSidebar, bindSidebarHooks, bindSidebarRenderAll } from './panels/sidebar.js';
-import { refreshEditorObjectRefs, renderEditor } from './panels/editor.js';
-import { scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
-import { renderRightExtras, updateCausalPanel } from './panels/right.js';
+import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
+import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
+import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
+import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
+import { bindAssetsPanelHooks } from './panels/assets.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
@@ -40,6 +42,7 @@ import {
   type ProjectBarProjection,
   type ProjectSaveState,
 } from './shell/app-shell.js';
+import { buildAuthoringWorkbench } from './shell/authoring-workbench.js';
 import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, writeAutosave, clearAutosave,
 } from './autosave.js';
@@ -129,6 +132,8 @@ async function rebuildAuthoringIndex(): Promise<void> {
     const snapshot = await loadEditorProjectSnapshot();
     const index = buildObjectIndex(snapshot);
     if (revision === authoringRevision) {
+      const previousIndex = state.authoringIndex;
+      state.selectedObjectRef = reconcileAuthoringSelection(state.selectedObjectRef, previousIndex, index);
       state.authoringIndex = index;
       refreshEditorObjectRefs();
       updateCausalPanel();
@@ -163,6 +168,9 @@ function resetAuthoringState(): void {
 bindHistoryHooks({
   onEdited: () => {
     markProjectEdited();
+    renderSidebar();
+    refreshManuscriptFacts();
+    refreshCurrentSceneContext();
     scheduleValidate();
     scheduleAuthoringIndexRebuild();
   },
@@ -182,15 +190,19 @@ bindProjectIoHooks({
   onSaveSettled: ({ failures, remainingDirty }) => {
     saveAttemptLeftDirty = failures > 0 && remainingDirty;
     refreshProjectBarProjection();
+    refreshManuscriptFacts();
+    refreshCurrentSceneContext();
   },
 });
 bindSidebarHooks({
-  renderEditor: () => {
-    renderEditor();
-    refreshProjectBarProjection();
-  },
+  onSelectScene: (sceneKey) => jumpToScene(sceneKey),
 });
-bindSidebarRenderAll(renderAll);
+bindAssetsPanelHooks({
+  onInserted: () => renderEditor(),
+});
+bindRightNavigation({
+  onJumpScene: (sceneKey) => jumpToScene(sceneKey),
+});
 bindFlowHooks({
   // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到该 @label 行
   openScene: (sceneKey, line) => jumpToScene(sceneKey, line !== undefined ? Math.max(0, line - 1) : undefined),
@@ -217,13 +229,19 @@ bindTimelineHooks({
 
 /** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
 function jumpToScene(sceneKey: string, line?: number): void {
+  if (!state.scenes.has(sceneKey)) return;
+  const changedScene = state.current !== sceneKey;
   state.mainTab = 'editor';
   state.current = sceneKey;
+  if (changedScene) state.selectedObjectRef = null;
   renderMainArea();
   if (line !== undefined) {
-    const target = document.querySelector(`.block[data-line="${Math.max(0, line)}"]`);
+    const target = document.querySelector<HTMLElement>(`.block[data-line="${Math.max(0, line)}"]`);
+    const objectRef = target?.dataset.objectRef || null;
+    state.selectedObjectRef = selectAuthoringObject(objectRef);
+    document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
     target?.scrollIntoView({ block: 'center' });
-    target?.classList.add('selected');
+    target?.focus({ preventScroll: true });
   }
 }
 
@@ -271,6 +289,9 @@ bindSearchHooks({
     markProjectEdited();
     scheduleValidate();
   },
+});
+bindIssueNavigation({
+  onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
 });
 bindAuditHooks({
   // 审计条目点击 → 跳转定位（与搜索/流程图导航同一入口）
@@ -335,22 +356,10 @@ function renderMainArea(): void {
   main.append(navigation, col);
 
   if (state.mainTab === 'editor') {
-    const body = h('div', 'main-body');
-    const sidebar = h('aside');
-    sidebar.id = 'sidebar';
-    const editorCol = h('div', 'editor-col');
-    const searchPanel = h('div');
-    searchPanel.id = 'search-panel';
-    editorCol.appendChild(searchPanel);
-    const editor = h('section');
-    editor.id = 'editor';
-    editorCol.appendChild(editor);
-    const right = h('aside');
-    right.id = 'right';
-    body.append(sidebar, editorCol, right);
-    col.appendChild(body);
+    const workbench = buildAuthoringWorkbench();
+    col.appendChild(workbench.root);
     renderSidebar();
-    renderSearchPanel(searchPanel);
+    renderSearchPanel(workbench.search);
     renderEditor();
     renderIssues();
     renderRightExtras();

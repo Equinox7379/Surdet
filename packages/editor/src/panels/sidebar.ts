@@ -1,22 +1,49 @@
 /**
  * 侧栏（E0 拆分；E2 增加场景/素材标签页）。
  */
-import { state, h, setStatus } from '../state.js';
+import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { renderAssetsPanel } from './assets.js';
 
 export function renderSidebar(): void {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
   sidebar.innerHTML = '';
-  // 侧栏标签页：场景 | 素材（E2）
+  const heading = h('div', 'outline-heading');
+  heading.appendChild(h('h2', undefined, '项目内容'));
+  heading.appendChild(h('p', undefined, '按真实场景路径与素材引用整理'));
+  sidebar.appendChild(heading);
+
   const tabs = h('div', 'side-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', '目录类型');
   const defs: { id: 'scenes' | 'assets'; label: string }[] = [
     { id: 'scenes', label: `场景（${state.scenes.size}）` },
     { id: 'assets', label: '素材' },
   ];
-  for (const d of defs) {
+  const activateTab = (id: 'scenes' | 'assets', focus = false): void => {
+    state.sidebarTab = id;
+    renderSidebar();
+    if (focus) document.querySelector<HTMLElement>(`[data-sidebar-mode="${id}"]`)?.focus();
+  };
+  for (const [index, d] of defs.entries()) {
     const btn = h('button', d.id === state.sidebarTab ? 'tab active' : 'tab', d.label);
-    btn.onclick = () => { state.sidebarTab = d.id; renderSidebar(); };
+    btn.type = 'button';
+    btn.tabIndex = d.id === state.sidebarTab ? 0 : -1;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('data-sidebar-mode', d.id);
+    btn.setAttribute('aria-selected', String(d.id === state.sidebarTab));
+    btn.setAttribute('aria-controls', d.id === 'scenes' ? 'scene-outline-list' : 'asset-catalog');
+    btn.onclick = () => activateTab(d.id);
+    btn.onkeydown = (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? defs.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + defs.length) % defs.length;
+      activateTab(defs[nextIndex]!.id, true);
+    };
     tabs.appendChild(btn);
   }
   sidebar.appendChild(tabs);
@@ -25,25 +52,54 @@ export function renderSidebar(): void {
     return;
   }
   const newBtn = h('button', undefined, '＋ 新建场景');
+  newBtn.type = 'button';
+  newBtn.className = 'outline-new-scene';
+  newBtn.setAttribute('data-action', 'create-scene');
   newBtn.onclick = newScene;
   sidebar.appendChild(newBtn);
   const list = h('div', 'scene-list');
-  for (const [id, sc] of state.scenes) {
-    // UI 第二阶段：场景卡片化（卡底 + 未保存点 + 字数徽章）
-    const item = h('div', 'scene-item' + (id === state.current ? ' active' : ''));
-    item.appendChild(h('span', 'scene-name', id));
-    if (sc.dirty) item.appendChild(h('span', 'dirty', '●'));
-    item.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
-    item.onclick = () => { state.current = id; renderSidebar(); renderEditorHook(); };
-    list.appendChild(item);
+  list.id = 'scene-outline-list';
+  list.setAttribute('role', 'tabpanel');
+  const groups = new Map<string, [string, SceneEntry][]>();
+  for (const entry of state.scenes) {
+    const directory = entry[0].split('/').slice(0, -1).join('/') || '项目场景';
+    const group = groups.get(directory) ?? [];
+    group.push(entry);
+    groups.set(directory, group);
+  }
+  for (const [directory, scenes] of groups) {
+    const group = h('section', 'scene-group');
+    const groupHeading = h('h3', 'scene-group-heading', directory);
+    groupHeading.title = directory;
+    group.appendChild(groupHeading);
+    for (const [id, sc] of scenes) {
+      const selected = id === state.current;
+      const item = h('button', 'scene-item' + (selected ? ' active' : ''));
+      item.type = 'button';
+      item.dataset.sceneId = id;
+      item.setAttribute('aria-selected', String(selected));
+      item.title = sc.file;
+      const identity = h('span', 'scene-identity');
+      identity.appendChild(h('span', 'scene-name', sc.id || id.split('/').pop() || id));
+      identity.appendChild(h('span', 'scene-path', sc.file));
+      item.appendChild(identity);
+      const facts = h('span', 'scene-facts');
+      if (selected) facts.appendChild(h('span', 'scene-current', '当前'));
+      if (sc.dirty) facts.appendChild(h('span', 'dirty', '未保存'));
+      facts.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
+      item.appendChild(facts);
+      item.onclick = () => onSelectSceneHook(id);
+      group.appendChild(item);
+    }
+    list.appendChild(group);
   }
   sidebar.appendChild(list);
 }
 
-/** 编辑器刷新钩子（main.ts 注入，避免 panels 互相成环） */
-let renderEditorHook: () => void = () => {};
-export function bindSidebarHooks(opts: { renderEditor: () => void }): void {
-  renderEditorHook = opts.renderEditor;
+/** 场景导航钩子（main.ts 注入，确保所有跳转共享同一选择协调器）。 */
+let onSelectSceneHook: (sceneKey: string) => void = () => {};
+export function bindSidebarHooks(opts: { onSelectScene: (sceneKey: string) => void }): void {
+  onSelectSceneHook = opts.onSelectScene;
 }
 
 /** 新建场景模板（M6 E5-4）：带注释的 .gal 片段，{id} 占位替换为场景 ID */
@@ -86,12 +142,5 @@ export function newScene(): void {
     dirty: true,
     handle: null,
   });
-  state.current = id;
-  renderAllHook();
-}
-
-/** 全量重渲染钩子（main.ts 注入） */
-let renderAllHook: () => void = () => {};
-export function bindSidebarRenderAll(fn: () => void): void {
-  renderAllHook = fn;
+  onSelectSceneHook(id);
 }
