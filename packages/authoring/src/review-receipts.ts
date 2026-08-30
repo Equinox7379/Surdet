@@ -14,6 +14,7 @@ import type {
   FinalApprovalReceipt,
   HumanReviewProjection,
   ResultReviewCurrentFacts,
+  ReturnRequestReceipt,
   ReviewConflict,
   VerifiedReviewApproval,
 } from './review-contracts.js';
@@ -70,6 +71,67 @@ function stale(message: string): AuthoringOperationError {
 
 function returned(message: string): AuthoringOperationError {
   return new AuthoringOperationError('REVIEW_RETURNED', message);
+}
+
+function receiptIdentityMismatch(message: string): AuthoringOperationError {
+  return new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function finalApprovalReceipt(value: unknown): value is FinalApprovalReceipt {
+  if (!isRecord(value) || !isRecord(value['evidence'])) return false;
+  const evidence = value['evidence'];
+  return value['receiptVersion'] === '1.0.0'
+    && typeof value['approvalId'] === 'string'
+    && typeof value['resultReviewId'] === 'string'
+    && typeof value['decisionFingerprint'] === 'string'
+    && typeof value['planId'] === 'string'
+    && typeof value['planFingerprint'] === 'string'
+    && typeof value['integrationChangeId'] === 'string'
+    && typeof value['workingRevision'] === 'number'
+    && Number.isInteger(value['workingRevision'])
+    && typeof value['projectIdentity'] === 'string'
+    && typeof value['expectedProjectRevision'] === 'string'
+    && typeof value['diffFingerprint'] === 'string'
+    && typeof evidence['diffEvidenceId'] === 'string'
+    && typeof evidence['validationEvidenceId'] === 'string'
+    && typeof evidence['simulationEvidenceId'] === 'string'
+    && isStringArray(evidence['runtimeTraceIds'])
+    && typeof value['resultTreeSha256'] === 'string'
+    && value['reviewerChannel'] === 'surdet-editor-local'
+    && typeof value['approvedAt'] === 'string'
+    && typeof value['approvalFingerprint'] === 'string';
+}
+
+export const RETURN_REASON_CATEGORIES = [
+  'content',
+  'presentation',
+  'causal-impact',
+  'validation-warning',
+  'other',
+] as const satisfies readonly ReturnRequestReceipt['reasonCategory'][];
+
+function returnRequestReceipt(value: unknown): value is ReturnRequestReceipt {
+  return isRecord(value)
+    && value['receiptVersion'] === '1.0.0'
+    && typeof value['returnId'] === 'string'
+    && typeof value['resultReviewId'] === 'string'
+    && typeof value['planId'] === 'string'
+    && typeof value['planFingerprint'] === 'string'
+    && typeof value['integrationChangeId'] === 'string'
+    && typeof value['workingRevision'] === 'number'
+    && Number.isInteger(value['workingRevision'])
+    && RETURN_REASON_CATEGORIES.includes(value['reasonCategory'] as ReturnRequestReceipt['reasonCategory'])
+    && value['reviewerChannel'] === 'surdet-editor-local'
+    && typeof value['returnedAt'] === 'string'
+    && typeof value['returnFingerprint'] === 'string';
 }
 
 function candidateRefKey(ref: CandidateCapsuleRef): string {
@@ -149,6 +211,24 @@ export async function approvalFingerprintOf(
   }));
 }
 
+export async function returnFingerprintOf(
+  receipt: Omit<ReturnRequestReceipt, 'returnFingerprint'>,
+  hasher: TextHasher,
+): Promise<string> {
+  return hasher.sha256(stableStringify({
+    receiptVersion: receipt.receiptVersion,
+    returnId: receipt.returnId,
+    resultReviewId: receipt.resultReviewId,
+    planId: receipt.planId,
+    planFingerprint: receipt.planFingerprint,
+    integrationChangeId: receipt.integrationChangeId,
+    workingRevision: receipt.workingRevision,
+    reasonCategory: receipt.reasonCategory,
+    reviewerChannel: receipt.reviewerChannel,
+    returnedAt: receipt.returnedAt,
+  }));
+}
+
 function resultEvidenceFromFinal(finalResult: NonNullable<HumanReviewProjection['finalResult']>): {
   diffEvidenceId: string;
   validationEvidenceId: string;
@@ -175,6 +255,61 @@ function resultReviewFromFinal(finalResult: NonNullable<HumanReviewProjection['f
 
 function approvalStale(message: string): AuthoringOperationError {
   return new AuthoringOperationError('REVIEW_APPROVAL_STALE', message);
+}
+
+export async function validateFinalApprovalReceipt(input: {
+  projection: HumanReviewProjection;
+  receipt: unknown;
+}, hasher: TextHasher): Promise<FinalApprovalReceipt> {
+  const { projection } = input;
+  const finalResult = projection.finalResult;
+  if (projection.kind !== 'integration-result' || projection.state !== 'STAGE_READY' || finalResult === undefined) {
+    throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', 'result projection 不是可批准的 STAGE_READY 结果');
+  }
+  if (!finalApprovalReceipt(input.receipt)) throw invalid('批准回执结构无效');
+  const verified = await validateFinalApproval({
+    projection,
+    receipt: input.receipt,
+    current: {
+      projectIdentity: projection.sourceIdentity.projectIdentity,
+      projectRevision: projection.expectedProjectRevision,
+      planId: finalResult.planId,
+      planFingerprint: finalResult.planFingerprint,
+      integrationChangeId: finalResult.integrationChangeId,
+      workingRevision: finalResult.workingRevision,
+      diffFingerprint: finalResult.diffFingerprint,
+      evidence: resultEvidenceFromFinal(finalResult),
+      resultTreeSha256: finalResult.resultTreeSha256,
+    },
+  }, hasher);
+  return verified.receipt;
+}
+
+export async function validateReturnRequest(input: {
+  projection: HumanReviewProjection;
+  receipt: unknown;
+}, hasher: TextHasher): Promise<ReturnRequestReceipt> {
+  const { projection } = input;
+  const finalResult = projection.finalResult;
+  if (projection.kind !== 'integration-result' || projection.state !== 'STAGE_READY' || finalResult === undefined) {
+    throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', 'result projection 不是可退回的 STAGE_READY 结果');
+  }
+  if (!returnRequestReceipt(input.receipt)) throw receiptIdentityMismatch('退回回执结构或 reasonCategory 无效');
+  const receipt = input.receipt;
+  if (receipt.returnId.length === 0
+    || receipt.returnedAt.length === 0
+    || receipt.resultReviewId !== projection.reviewId
+    || receipt.planId !== finalResult.planId
+    || receipt.planFingerprint !== finalResult.planFingerprint
+    || receipt.integrationChangeId !== finalResult.integrationChangeId
+    || receipt.workingRevision !== finalResult.workingRevision) {
+    throw receiptIdentityMismatch('退回回执与 result review identity 不一致');
+  }
+  const expectedFingerprint = await returnFingerprintOf(receipt, hasher);
+  if (receipt.returnFingerprint !== expectedFingerprint) {
+    throw receiptIdentityMismatch('returnFingerprint 与退回回执内容不符');
+  }
+  return receipt;
 }
 
 export async function validateFinalApproval(input: {

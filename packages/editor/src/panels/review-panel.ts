@@ -565,6 +565,36 @@ function appendResultDiff(container: HTMLElement, diff: ResultDiffView): void {
   container.appendChild(section);
 }
 
+function appendResultReceipt(
+  container: HTMLElement,
+  workspace: ReviewWorkspaceState,
+  result: ReviewResult,
+): void {
+  const approval = workspace.approvalReceipt;
+  const returned = workspace.returnReceipt;
+  if (approval === null && returned === null) return;
+  const marker = h('section', 'review-result-receipt');
+  marker.setAttribute('data-result-receipt', approval === null ? 'return' : 'approval');
+  if (approval !== null) {
+    marker.setAttribute('data-approval-receipt', 'true');
+    marker.setAttribute('data-approval-id', approval.approvalId);
+    marker.setAttribute('data-approval-fingerprint', approval.approvalFingerprint);
+    marker.appendChild(h('h3', undefined, '已批准'));
+    marker.appendChild(h('div', undefined, `回执 ID：${approval.approvalId}`));
+    marker.appendChild(h('div', undefined, `回执 fingerprint：${approval.approvalFingerprint}`));
+  } else if (returned !== null) {
+    marker.setAttribute('data-return-receipt', 'true');
+    marker.setAttribute('data-return-id', returned.returnId);
+    marker.setAttribute('data-return-fingerprint', returned.returnFingerprint);
+    marker.appendChild(h('h3', undefined, '已退回'));
+    marker.appendChild(h('div', undefined, `回执 ID：${returned.returnId}`));
+    marker.appendChild(h('div', undefined, `回执 fingerprint：${returned.returnFingerprint}`));
+  }
+  marker.appendChild(h('div', undefined, `原决定：${result.plan.review.decisionId}`));
+  marker.appendChild(h('div', undefined, `原选择：${listText(result.plan.selectedUnitIds)}`));
+  container.appendChild(marker);
+}
+
 function resultEvidenceIsFresh(details: ReviewResult): boolean {
   const freshness = details.freshness;
   return [freshness.diff, freshness.validation, freshness.simulation, freshness.runtime]
@@ -594,6 +624,7 @@ function renderResultReview(
   appendFact(main, '计划指纹', result.planFingerprint);
   appendFact(main, '变更指纹', result.diffFingerprint);
   appendResultPlan(main, projection, result.plan);
+  appendResultReceipt(main, workspace, result);
   appendResultDiff(main, result.diff);
   const freshness = result.freshness;
   appendFact(main, '证据新鲜度', [
@@ -640,23 +671,30 @@ function renderResultReview(
   evidence.appendChild(h('div', 'review-result-fact', `项目树身份：${result.resultTreeSha256}`));
   main.appendChild(evidence);
   const operations = h('div', 'review-operations');
+  const terminalReceipt = workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned';
   const approve = h('button', 'primary', '批准这个计划') as HTMLButtonElement;
   approve.setAttribute('data-action', 'approve-result');
-  approve.disabled = workspace.fixtureChanged
-    || workspace.receiptStatus === 'returned'
+  approve.disabled = terminalReceipt
+    || workspace.fixtureChanged
     || !resultEvidenceIsFresh(result);
   approve.onclick = () => {
     void writeApprovalReceipt(workspace, { approvalId: `approval_${Date.now()}` }, nowOf(options))
-      .then(() => setStatus('已批准这个计划', true, 5000))
+      .then(() => {
+        renderReviewPanel(container, workspace, options);
+        setStatus('已批准这个计划', true, 5000);
+      })
       .catch((error) => setStatus(`批准失败：${errorMessage(error)}`, false, 6000));
   };
   operations.appendChild(approve);
   const returned = h('button', 'danger', '退回修改') as HTMLButtonElement;
   returned.setAttribute('data-action', 'return-result');
-  returned.disabled = workspace.receiptStatus === 'approval-written';
+  returned.disabled = terminalReceipt;
   returned.onclick = () => {
     void writeReturnReceipt(workspace, { returnId: `return_${Date.now()}`, reasonCategory: 'other' }, nowOf(options))
-      .then(() => setStatus('已退回修改', true, 5000))
+      .then(() => {
+        renderReviewPanel(container, workspace, options);
+        setStatus('已退回修改', true, 5000);
+      })
       .catch((error) => setStatus(`退回失败：${errorMessage(error)}`, false, 6000));
   };
   operations.appendChild(returned);

@@ -6,10 +6,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   approvalFingerprintOf,
+  stableStringify,
   type ChangeRecord,
   type CompositionComparison,
   type FinalApprovalReceipt,
   type IntegrationPlan,
+  type ReturnRequestReceipt,
+  type ReviewApprovalRef,
   type TextHasher,
 } from '@surdet/authoring';
 import { compositionServiceForProject } from '../src/authoring/composition-service.js';
@@ -230,6 +233,67 @@ async function setupResultFixture(options: {
   };
 }
 
+async function prepareResultReview() {
+  const fixture = await setupResultFixture();
+  const prepared = await fixture.service.prepareResult({
+    planId: fixture.plan.planId,
+    artifactSha256: fixture.planIdentity.sha256,
+    changeId: fixture.changeId,
+  });
+  return { ...fixture, prepared };
+}
+
+async function approvalForPreparedResult(
+  prepared: Awaited<ReturnType<typeof prepareResultReview>>['prepared'],
+  approvalId: string,
+): Promise<FinalApprovalReceipt> {
+  const finalResult = prepared.projection.finalResult!;
+  const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
+    receiptVersion: '1.0.0',
+    approvalId,
+    resultReviewId: prepared.reviewId,
+    decisionFingerprint: prepared.projection.sourceIdentity.decisionFingerprint!,
+    planId: finalResult.planId,
+    planFingerprint: finalResult.planFingerprint,
+    integrationChangeId: finalResult.integrationChangeId,
+    workingRevision: finalResult.workingRevision,
+    projectIdentity: prepared.projection.projectIdentity,
+    expectedProjectRevision: prepared.projection.expectedProjectRevision,
+    diffFingerprint: finalResult.diffFingerprint,
+    evidence: finalResult.evidence,
+    resultTreeSha256: finalResult.resultTreeSha256,
+    reviewerChannel: 'surdet-editor-local',
+    approvedAt: '2026-08-30T00:00:00.000Z',
+  };
+  return {
+    ...unsigned,
+    approvalFingerprint: await approvalFingerprintOf(unsigned, realHasher),
+  };
+}
+
+async function returnForPreparedResult(
+  prepared: Awaited<ReturnType<typeof prepareResultReview>>['prepared'],
+  reasonCategory: ReturnRequestReceipt['reasonCategory'],
+): Promise<ReturnRequestReceipt> {
+  const finalResult = prepared.projection.finalResult!;
+  const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
+    receiptVersion: '1.0.0',
+    returnId: 'return-result',
+    resultReviewId: prepared.reviewId,
+    planId: finalResult.planId,
+    planFingerprint: finalResult.planFingerprint,
+    integrationChangeId: finalResult.integrationChangeId,
+    workingRevision: finalResult.workingRevision,
+    reasonCategory,
+    reviewerChannel: 'surdet-editor-local',
+    returnedAt: '2026-08-30T00:00:00.000Z',
+  };
+  return {
+    ...unsigned,
+    returnFingerprint: await realHasher.sha256(stableStringify(unsigned)),
+  };
+}
+
 afterEach(() => {
   delete process.env['SURDET_AGENT_DATA_DIR'];
   for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -392,6 +456,48 @@ describe('ReviewService', () => {
       if (heartbeatPromise !== undefined) await Promise.allSettled([heartbeatPromise]);
       await Promise.allSettled([preparePromise]);
     }
+  });
+
+  it('rejects an approvalRef fingerprint that differs from the verified disk approval', async () => {
+    const fixture = await prepareResultReview();
+    const approval = await approvalForPreparedResult(fixture.prepared, 'approval-ref-check');
+    await fixture.reviews.createFinalApproval(fixture.prepared.reviewId, approval);
+    const wrongRef: ReviewApprovalRef = {
+      resultReviewId: fixture.prepared.reviewId,
+      approvalId: approval.approvalId,
+      approvalFingerprint: '0'.repeat(64),
+    };
+
+    await expect(fixture.service.inspectApproval(wrongRef))
+      .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+  });
+
+  it('rejects a return receipt whose fingerprint was tampered on disk', async () => {
+    const fixture = await prepareResultReview();
+    const receipt = await returnForPreparedResult(fixture.prepared, 'content');
+    receipt.returnFingerprint = '0'.repeat(64);
+    await fixture.reviews.createReturnRequest(fixture.prepared.reviewId, receipt);
+
+    await expect(fixture.service.inspectApproval({ resultReviewId: fixture.prepared.reviewId }))
+      .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+  });
+
+  it('rejects an unknown return reasonCategory even when its fingerprint matches those bytes', async () => {
+    const fixture = await prepareResultReview();
+    const valid = await returnForPreparedResult(fixture.prepared, 'other');
+    const { returnFingerprint: _validFingerprint, ...validUnsigned } = valid;
+    const invalidUnsigned = {
+      ...validUnsigned,
+      reasonCategory: 'unknown-category',
+    } as unknown as Omit<ReturnRequestReceipt, 'returnFingerprint'>;
+    const invalid = {
+      ...invalidUnsigned,
+      returnFingerprint: await realHasher.sha256(stableStringify(invalidUnsigned)),
+    } as ReturnRequestReceipt;
+    await fixture.reviews.createReturnRequest(fixture.prepared.reviewId, invalid);
+
+    await expect(fixture.service.inspectApproval({ resultReviewId: fixture.prepared.reviewId }))
+      .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
   });
 
   it('materializes the READY working tree without mutating the original project and rechecks approval freshness', async () => {
