@@ -6,9 +6,9 @@ import {
   type ReviewKind,
 } from '@surdet/authoring';
 import { createJsonRecord, readJsonRecord, type JsonRecordIdentity } from './node-json-record.js';
+import { NodeLocalLeaseManager } from './node-local-lease.js';
 
 const GENERATED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', 'dist']);
-const resultReceiptWrites = new Map<string, Promise<unknown>>();
 
 export interface ReviewArtifactIdentity {
   relativePath: string;
@@ -62,6 +62,22 @@ function pathError(value: string): AuthoringOperationError {
 
 function identityMismatch(message: string): AuthoringOperationError {
   return new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', message);
+}
+
+function terminalAlreadySet(
+  message: string,
+  existingFile?: string,
+  existingBytes?: Uint8Array,
+): AuthoringOperationError {
+  return new AuthoringOperationError('REVIEW_TERMINAL_ALREADY_SET', message, {
+    ...(existingFile === undefined || existingBytes === undefined ? {} : {
+      existingTerminal: {
+        file: displayPath(existingFile),
+        bytes: existingBytes.byteLength,
+        sha256: sha256(existingBytes),
+      },
+    }),
+  });
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -135,16 +151,28 @@ async function createOnlyJson(file: string, root: string, value: unknown): Promi
   }
 }
 
-async function withResultReceiptWrite<T>(reviewDirectory: string, write: () => Promise<T>): Promise<T> {
-  const resolved = path.resolve(reviewDirectory);
-  const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  const previous = resultReceiptWrites.get(key) ?? Promise.resolve();
-  const operation = previous.catch(() => undefined).then(write);
-  resultReceiptWrites.set(key, operation);
+async function createOnlyTerminalJson(file: string, root: string, value: unknown): Promise<JsonRecordIdentity> {
+  const expected = serialized(value);
+  const existing = await readBytes(file, root);
+  if (existing !== null) {
+    if (Buffer.compare(existing, expected) !== 0) {
+      throw terminalAlreadySet(`该审阅已存在不同的 ${displayPath(file)}。`, file, existing);
+    }
+    return fileIdentity(file, existing);
+  }
   try {
-    return await operation;
-  } finally {
-    if (resultReceiptWrites.get(key) === operation) resultReceiptWrites.delete(key);
+    const identity = await createJsonRecord(file, value);
+    await assertSafeFile(file, root, false);
+    return identity;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const raced = await readBytes(file, root);
+    if (raced !== null && Buffer.compare(raced, expected) === 0) return fileIdentity(file, raced);
+    throw terminalAlreadySet(
+      `该审阅的 ${displayPath(file)} 已被另一写入占用。`,
+      file,
+      raced ?? undefined,
+    );
   }
 }
 
@@ -277,14 +305,28 @@ function assertRelativeProjectFile(relativePath: string): void {
 
 export class NodeReviewStore {
   readonly projectDirectory: string;
+  private readonly leases: NodeLocalLeaseManager;
 
-  constructor(projectDirectory: string, private readonly expectedProjectIdentity: string) {
+  constructor(
+    projectDirectory: string,
+    private readonly expectedProjectIdentity: string,
+    leases?: NodeLocalLeaseManager,
+  ) {
     const normalized = path.resolve(projectDirectory);
     if (path.basename(normalized) !== expectedProjectIdentity) {
       throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH',
         `review projectDirectory 与期望 projectIdentity 不符：${expectedProjectIdentity}`);
     }
     this.projectDirectory = normalized;
+    this.leases = leases ?? new NodeLocalLeaseManager(path.dirname(this.projectDirectory));
+  }
+
+  private async withReviewLease<T>(reviewId: string, callback: () => Promise<T>): Promise<T> {
+    assertReviewId(reviewId);
+    return this.leases.withLease({
+      scope: 'review',
+      resourceId: `${this.expectedProjectIdentity}\u0000${reviewId}`,
+    }, callback);
   }
 
   reviewDirectoryPath(reviewId: string): string {
@@ -384,14 +426,6 @@ export class NodeReviewStore {
     return { value: payloadRead.value, identity, reviewDirectory };
   }
 
-  private async createRecord(reviewId: string, relativePath: string, value: unknown): Promise<JsonRecordIdentity> {
-    assertReviewId(reviewId);
-    const review = await this.readReview(reviewId);
-    const file = path.join(review.reviewDirectory, relativePath);
-    if (!isInside(review.reviewDirectory, file)) throw pathError(file);
-    return createOnlyJson(file, this.projectDirectory, value);
-  }
-
   private async readRecord<T>(reviewId: string, relativePath: string): Promise<{ value: T; identity: JsonRecordIdentity } | null> {
     assertReviewId(reviewId);
     const review = await this.readReview(reviewId);
@@ -401,11 +435,26 @@ export class NodeReviewStore {
   }
 
   async createDecision(reviewId: string, value: unknown): Promise<JsonRecordIdentity> {
-    const review = await this.readReview(reviewId);
-    if (review.identity.kind !== 'comparison') {
-      throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `integration result 不能写入 comparison decision：${reviewId}`);
-    }
-    return this.createRecord(reviewId, 'decision.json', value);
+    return this.withReviewLease(reviewId, async () => {
+      const review = await this.readReview(reviewId);
+      if (review.identity.kind !== 'comparison') {
+        throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `integration result 不能写入 comparison decision：${reviewId}`);
+      }
+      const approvalFile = path.join(review.reviewDirectory, 'final-approval.json');
+      const returnFile = path.join(review.reviewDirectory, 'return-request.json');
+      const [approval, returned] = await Promise.all([
+        readBytes(approvalFile, this.projectDirectory),
+        readBytes(returnFile, this.projectDirectory),
+      ]);
+      if (approval !== null || returned !== null) {
+        throw identityMismatch(`comparison review 含有非法的 result 终态回执：${reviewId}`);
+      }
+      return createOnlyTerminalJson(
+        path.join(review.reviewDirectory, 'decision.json'),
+        this.projectDirectory,
+        value,
+      );
+    });
   }
 
   async readDecision<T = unknown>(reviewId: string): Promise<{ value: T; identity: JsonRecordIdentity } | null> {
@@ -413,20 +462,25 @@ export class NodeReviewStore {
   }
 
   async createFinalApproval(reviewId: string, value: unknown): Promise<JsonRecordIdentity> {
-    const review = await this.readReview(reviewId);
-    if (review.identity.kind !== 'integration-result') {
-      throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 final approval：${reviewId}`);
-    }
-    return withResultReceiptWrite(review.reviewDirectory, async () => {
+    return this.withReviewLease(reviewId, async () => {
+      const review = await this.readReview(reviewId);
+      if (review.identity.kind !== 'integration-result') {
+        throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 final approval：${reviewId}`);
+      }
+      const decisionFile = path.join(review.reviewDirectory, 'decision.json');
       const approvalFile = path.join(review.reviewDirectory, 'final-approval.json');
       const returnFile = path.join(review.reviewDirectory, 'return-request.json');
-      const [approval, returned] = await Promise.all([
+      const [decision, approval, returned] = await Promise.all([
+        readBytes(decisionFile, this.projectDirectory),
         readBytes(approvalFile, this.projectDirectory),
         readBytes(returnFile, this.projectDirectory),
       ]);
+      if (decision !== null) throw identityMismatch(`integration result 含有非法的 comparison decision：${reviewId}`);
       if (approval !== null && returned !== null) throw identityMismatch(`同一 result review 同时存在 final approval 与 return request：${reviewId}`);
-      if (returned !== null) throw identityMismatch(`同一 result review 已存在 return request：${reviewId}`);
-      return createOnlyJson(approvalFile, this.projectDirectory, value);
+      if (returned !== null) {
+        throw terminalAlreadySet(`同一 result review 已存在 return request：${reviewId}`, returnFile, returned);
+      }
+      return createOnlyTerminalJson(approvalFile, this.projectDirectory, value);
     });
   }
 
@@ -443,20 +497,25 @@ export class NodeReviewStore {
   }
 
   async createReturnRequest(reviewId: string, value: unknown): Promise<JsonRecordIdentity> {
-    const review = await this.readReview(reviewId);
-    if (review.identity.kind !== 'integration-result') {
-      throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 return request：${reviewId}`);
-    }
-    return withResultReceiptWrite(review.reviewDirectory, async () => {
+    return this.withReviewLease(reviewId, async () => {
+      const review = await this.readReview(reviewId);
+      if (review.identity.kind !== 'integration-result') {
+        throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', `comparison review 不能写入 return request：${reviewId}`);
+      }
+      const decisionFile = path.join(review.reviewDirectory, 'decision.json');
       const approvalFile = path.join(review.reviewDirectory, 'final-approval.json');
       const returnFile = path.join(review.reviewDirectory, 'return-request.json');
-      const [approval, returned] = await Promise.all([
+      const [decision, approval, returned] = await Promise.all([
+        readBytes(decisionFile, this.projectDirectory),
         readBytes(approvalFile, this.projectDirectory),
         readBytes(returnFile, this.projectDirectory),
       ]);
+      if (decision !== null) throw identityMismatch(`integration result 含有非法的 comparison decision：${reviewId}`);
       if (approval !== null && returned !== null) throw identityMismatch(`同一 result review 同时存在 final approval 与 return request：${reviewId}`);
-      if (approval !== null) throw identityMismatch(`同一 result review 已存在 final approval：${reviewId}`);
-      return createOnlyJson(returnFile, this.projectDirectory, value);
+      if (approval !== null) {
+        throw terminalAlreadySet(`同一 result review 已存在 final approval：${reviewId}`, approvalFile, approval);
+      }
+      return createOnlyTerminalJson(returnFile, this.projectDirectory, value);
     });
   }
 
