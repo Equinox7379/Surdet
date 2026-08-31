@@ -20,6 +20,11 @@ describe('Editor review authority boundary', () => {
       .join('\n');
     expect(browserSources).not.toMatch(/from\s+['"]node:/);
     expect(browserSources).not.toMatch(/node-review-store|node-local-lease|@surdet\/cli/);
+    const workspaceSource = fs.readFileSync(path.join(editorRoot, 'src', 'review-workspace.ts'), 'utf8');
+    expect(workspaceSource).not.toMatch(/writeCreateOnly[\s\S]{0,500}(?:decision\.json|final-approval\.json|return-request\.json)/);
+    expect(workspaceSource).not.toMatch(/createWritable\s*\(/);
+    expect(workspaceSource).not.toMatch(/getFileHandle\s*\(\s*['"](?:decision\.json|final-approval\.json|return-request\.json)['"]\s*,\s*\{\s*create:\s*true/);
+    expect(workspaceSource).toMatch(/terminalClientFor\(workspace, terminalClient\)\.write\(command\)/);
   });
 
   it('mounts the Node authority only through Vite tooling', () => {
