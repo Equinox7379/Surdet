@@ -46,6 +46,7 @@ Gate 2 must reuse that rule. It must not create an Editor-only alias, fallback, 
 - Safe insertion of a new unpersisted timeline only when its triple identity is canonical and unique.
 - Structured conflict records with machine reasons and Chinese explanations.
 - Persistent conflict retention across autosave ticks and successful saves.
+- One optional backward-compatible `timelineConflicts` evidence bucket so unresolved recovered bytes and newer same-identity dirty bytes never overwrite each other.
 - A compact human repair panel with explicit actions:
   - replace the uniquely identified current timeline with normalized backup content;
   - save normalized backup content as a new timeline ID;
@@ -149,9 +150,19 @@ No conflict branch may change a current entry, current selection, dirty bit, han
 
 The current module-level pending list remains the temporary UI owner, but its element type becomes `TimelineAutosaveRestoreConflict`.
 
+`AutosavePayload` gains one optional field:
+
+```ts
+timelineConflicts?: AutosaveTimelineEntry[];
+```
+
+Existing `timelines` keeps its current meaning: the newest dirty working entries. `timelineConflicts` contains only recovered bytes that were explicitly classified as unresolved. Old scenes-only and timelines-only snapshots remain readable; the new field is never required.
+
 An unresolved conflict is cleared automatically only when current state contains a canonical entry whose `id`, `file`, `text`, and `eol` exactly equal the recovered entry. Matching `id + file` alone is insufficient.
 
-`preserveAutosaveTimelineConflicts()` continues persisting the recovered `AutosaveTimelineEntry` payload, not DOM state or `FileSystemFileHandle`. If a newer dirty snapshot has the same canonical identity, it may replace the older snapshot only after the conflict is explicitly resolved. An unresolved conflict must not disappear merely because a fresh dirty entry shares its outer ID and file.
+`preserveAutosaveTimelineConflicts()` writes recovered `AutosaveTimelineEntry` payloads to `timelineConflicts`, never to the ordinary `timelines` array and never with DOM state or `FileSystemFileHandle`. A newer dirty snapshot with the same outer ID/file stays independently in `timelines`; neither byte stream overwrites the other.
+
+On startup, `timelineConflicts` entries are reconstructed as conflicts and shown to the user. They are not passed through the automatic exact-match restore path. This prevents a previously quarantined backup from overwriting a newer working snapshot after restart.
 
 Conflict repair/discard updates localStorage immediately rather than waiting for the 30-second timer.
 
@@ -252,7 +263,7 @@ No colored left selection bars, decorative gradients, generic dashboard cards, o
 - unresolved internal-ID conflict survives autosave tick/save-success filtering;
 - `id + file` equality alone cannot clear it;
 - exact canonical text/EOL clears it;
-- a fresh dirty snapshot cannot overwrite unresolved recovered bytes.
+- a fresh dirty snapshot and unresolved recovered bytes coexist in `timelines` and `timelineConflicts`.
 
 ### Repair tests
 
@@ -303,12 +314,13 @@ Expected tests:
 2. Every mismatch leaves current ID, file, text, EOL, dirty bit, and handle unchanged.
 3. No mismatch can reach Save All through an old handle without explicit repair.
 4. Conflict bytes survive later autosave activity until repaired or explicitly discarded.
-5. The user can safely Replace Current or Save As New when normalization is possible.
-6. Invalid JSON remains downloadable and recoverable manually, never silently discarded.
-7. Visible conflict UI is Chinese-first and explains current versus backup identity.
-8. Core, Authoring public contracts, Agent Port, project timeline path semantics, and save-game format remain unchanged.
-9. Existing successful timeline autosave recovery and CRLF/LF preservation continue to pass.
-10. No push or next repair gate begins under this design.
+5. Same-identity fresh dirty bytes and conflict bytes are both preserved in separate optional autosave arrays.
+6. The user can safely Replace Current or Save As New when normalization is possible.
+7. Invalid JSON remains downloadable and recoverable manually, never silently discarded.
+8. Visible conflict UI is Chinese-first and explains current versus backup identity.
+9. Core, Authoring public contracts, Agent Port, project timeline path semantics, and save-game format remain unchanged.
+10. Existing successful timeline autosave recovery and CRLF/LF preservation continue to pass.
+11. No push or next repair gate begins under this design.
 
 ## 14. Design decision record
 

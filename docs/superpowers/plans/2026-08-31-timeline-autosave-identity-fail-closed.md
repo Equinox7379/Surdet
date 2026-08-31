@@ -18,6 +18,7 @@
 - Do not change Core schema, Authoring/CLI/Agent Port public contracts, project path semantics, save-game format, test timeouts, or package dependencies.
 - Do not add aliases, fallback lookup, migration tables, a second timeline index, automatic scene-reference rewrites, or a general JSON merge editor.
 - Preserve scenes-only autosave compatibility and existing `AutosaveTimelineEntry` fields.
+- Add only an optional `AutosavePayload.timelineConflicts` evidence bucket; ordinary dirty entries remain in `timelines`, and old payloads require no migration.
 - Visible UI is Chinese-first; English reason enums live only in `data-*`/technical projections.
 - Preserve all unrelated and protected untracked files. Never use `git add .` or `git add -A`.
 - No push, Review Terminal Atomicity, Asset Center, Frontend Pass 5, or Wave 7 work.
@@ -51,11 +52,11 @@
 - Consumes: `timelineIdFromPath(path)` and `timelinePathFor(timelineId)` from `@surdet/authoring`.
 - Produces: a baseline record proving current HEAD, clean tracked/staging state, current defect location, and unchanged protected files.
 
-- [ ] **Step 1: Record baseline**
+- [x] **Step 1: Record baseline**
 
 Run read-only Git identity/status commands. Expected baseline HEAD is the taskbook commit parent; tracked worktree and staging must be clean before RED tests. Existing long-term ledger and protected untracked paths remain untouched.
 
-- [ ] **Step 2: Reconfirm the defect without editing production**
+- [x] **Step 2: Reconfirm the defect without editing production**
 
 Read the bodies of `restoreTimelineAutosaveEntries()`, `saveAll()`, `pickRecoverableTimelines()`, and `unresolvedAutosaveTimelineConflicts()`. Record that current recovery matches file before outer ID and never parses `definition.id`.
 
@@ -230,7 +231,7 @@ Run the same focused project-IO test. Expected: all tests pass and wrong-handle 
 
 **Interfaces:**
 - Consumes: `inspectTimelineAutosaveIdentity()`.
-- Produces: conflict retention that resolves only on canonical exact ID/file/text/EOL.
+- Produces: optional `timelineConflicts` parsing/persistence and conflict retention that resolves only on canonical exact ID/file/text/EOL.
 
 - [ ] **Step 1: Write persistence RED tests**
 
@@ -246,7 +247,7 @@ expect(unresolvedAutosaveTimelineConflicts([conflict], [{
 }])).toEqual([]);
 ```
 
-The first case uses the same outer tuple but different recovered bytes/internal ID. Also prove `preserveAutosaveTimelineConflicts()` retains unresolved recovered bytes even when a fresh dirty entry has the same outer tuple.
+The first case uses the same outer tuple but different recovered bytes/internal ID. Also prove `preserveAutosaveTimelineConflicts()` keeps the fresh working entry in `timelines` and the unresolved recovered bytes in optional `timelineConflicts`, and that `parseAutosave()` reads both arrays without making the new field mandatory.
 
 - [ ] **Step 2: Run persistence RED once**
 
@@ -256,7 +257,7 @@ npm run test -w surdet-editor -- --run test/autosave.test.ts
 
 - [ ] **Step 3: Implement canonical exact resolution**
 
-Update `unresolvedAutosaveTimelineConflicts()` input projection to include `text/eol`. A conflict resolves only if a current entry is canonical and exactly matches the recovered ID, file, text, and EOL. Preserve unresolved conflict bytes ahead of same-tuple fresh entries; after explicit resolution, fresh entries may own the tuple.
+Update `unresolvedAutosaveTimelineConflicts()` input projection to include `text/eol`. A conflict resolves only if a current entry is canonical and exactly matches the recovered ID, file, text, and EOL. Write unresolved entries to `payload.timelineConflicts`; never merge them into or overwrite `payload.timelines`. On startup, conflict-bucket entries bypass automatic restore and are rebuilt as pending structured conflicts.
 
 - [ ] **Step 4: Run persistence GREEN once**
 
@@ -464,3 +465,6 @@ Append-only. Record actual commands, exits, counts, failures, commits, recovery 
 - 2026-08-31 design baseline: approved spec and implementation baseline `22f70addc0696ed5c81e335930dd6748d9da1980`. Gate 1 is closed locally at `0adcc019`; remote Ubuntu CI and push remain unverified/unauthorized. Gate 3 and Asset Center have not started.
 - Owner design choice: fail-closed preservation plus explicit guided repair. Automatic filename-only guessing and permanent preserve-only quarantine were rejected.
 - Delegation boundary: Luna workers may own RED tests or the pure panel module with exact file ownership. The manager owns identity architecture, stateful restore/repair, main integration, final verification, commits, and completion claims.
+- Task 0 baseline after taskbook freeze: `HEAD=7d30380d1d4701801284b64c0882f19f60419331`, `surdet/main=bca72247d0dc76983330367be0f38043036a0fca`, ahead/behind `8/0`, tracked worktree clean, staging empty. Only the pre-existing untracked/protected paths and the intentionally untracked long-term roadmap ledger remain outside Git.
+- Manager source reconfirmation: `restoreTimelineAutosaveEntries()` still matches `file` before outer ID, overwrites text/EOL while retaining the old handle, and never inspects JSON `definition.id`; `unresolvedAutosaveTimelineConflicts()` still considers only outer `id + file`. No production edit had occurred when this baseline was recorded.
+- Design self-review amendment before production: unresolved conflict bytes and newer same-identity dirty bytes require separate storage. The approved backward-compatible representation is optional `AutosavePayload.timelineConflicts`; it is not a save-game or public protocol change. Tests must prove ordinary `timelines` and quarantined conflict bytes coexist and that the conflict bucket never auto-applies after restart.
