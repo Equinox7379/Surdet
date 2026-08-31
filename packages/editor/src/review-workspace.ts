@@ -20,6 +20,7 @@ import {
   ReviewAuthorityClientError,
   type ReviewTerminalClient,
 } from './review-terminal-client.js';
+import { refreshReviewFixtureIdentity } from './review-preview.js';
 
 export interface ReviewWorkspaceIdentity {
   reviewVersion: '1.0.0';
@@ -835,6 +836,13 @@ export async function writeApprovalReceipt(
     ...unsigned,
     approvalFingerprint: await approvalFingerprintOf(unsigned, hasherFor(workspace)),
   };
+  if (workspace.projectHandle !== null && workspace.officialResultTreeSha256 !== null) {
+    try {
+      await refreshReviewFixtureIdentity(workspace);
+    } catch {
+      throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '无法重新核对正式结果，请恢复后重新审阅。');
+    }
+  }
   if (workspace.fixtureChanged || workspace.currentResultTreeSha256 !== resultIdentityBefore) {
     throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '正式结果在批准过程中发生变化，请恢复后重新审阅。');
   }

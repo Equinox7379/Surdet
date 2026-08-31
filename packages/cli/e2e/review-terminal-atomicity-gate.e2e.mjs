@@ -116,6 +116,11 @@ export function validateEvidenceContract(evidence) {
     assert(evidence.milestones.length === MILESTONE_IDS.length, 'FORMAL milestone count mismatch');
     assert(JSON.stringify(evidence.milestones.map((entry) => entry.id)) === JSON.stringify(MILESTONE_IDS), 'FORMAL milestone order mismatch');
     assert(evidence.milestones.every((entry) => entry.status === 'PASSED'), 'FORMAL has an incomplete milestone');
+    assert(evidence?.formal?.processRaceBoundary === 'ReviewTerminalAuthority', 'process races must use ReviewTerminalAuthority');
+    assert(evidence?.formal?.idempotentRetryBoundary === 'ReviewTerminalAuthority', 'idempotent retry must use ReviewTerminalAuthority');
+    assert(Number.isInteger(evidence?.formal?.sourceStateBefore?.files) && evidence.formal.sourceStateBefore.files >= 3, 'source change evidence baseline is missing');
+    assert(JSON.stringify(evidence.formal.sourceStateBefore) === JSON.stringify(evidence?.formal?.sourceStateAfter), 'source change evidence was mutated');
+    assert(Array.isArray(evidence?.formal?.unexpectedTerminalFiles) && evidence.formal.unexpectedTerminalFiles.length === 0, 'FORMAL contains unexpected terminal files');
   }
   return true;
 }
@@ -195,6 +200,14 @@ function fileIdentityOrNull(file) {
 
 function terminalFilesForReview(reviewRoot) {
   return Object.fromEntries(TERMINAL_FILES.map((name) => [name, fileIdentityOrNull(path.join(reviewRoot, name))]));
+}
+
+export function unexpectedTerminalFiles(reviewRoot) {
+  const allowed = new Set(['identity.json', ...TERMINAL_FILES]);
+  return fs.readdirSync(reviewRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json') && !allowed.has(entry.name))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 function activeReviewLeaseDirectories(dataRoot) {
@@ -490,7 +503,7 @@ function resultProjection(projectIdentity, reviewId) {
   };
 }
 
-async function prepareFixtures(root) {
+export async function prepareFixtures(root) {
   const dataRoot = path.join(root, 'agent-data');
   const projectRoot = path.join(root, 'project');
   fs.mkdirSync(dataRoot, { recursive: true });
@@ -501,6 +514,56 @@ async function prepareFixtures(root) {
   const projectIdentity = projectIdentityFromRoot(rootIdentity);
   const { NodeReviewStore } = await import('../dist/authoring/node-review-store.js');
   const store = new NodeReviewStore(path.join(dataRoot, projectIdentity), projectIdentity);
+  const previousDataRoot = process.env.SURDET_AGENT_DATA_DIR;
+  process.env.SURDET_AGENT_DATA_DIR = dataRoot;
+  let sourceStateRoot;
+  try {
+    const { NodeChangeStore } = await import('../dist/authoring/node-change-store.js');
+    const { beginChange } = await import('@surdet/authoring');
+    const sourceStore = await NodeChangeStore.forProject(rootIdentity);
+    const sourceSession = await beginChange({
+      rootIdentity,
+      revision: sha256(Buffer.from('review-terminal-source-baseline', 'utf8')),
+      files: [],
+      configFile: null,
+      config: {},
+      variables: {},
+      scenes: [],
+      timelines: [],
+    }, sourceStore, undefined, undefined, {
+      integration: {
+        planId: 'plan-source-canary',
+        planFingerprint: 'a'.repeat(64),
+        executeOperationId: 'execute-source-canary',
+        sourceCapsules: [],
+        includedUnitIds: [],
+        deduplicatedUnits: [],
+        conflictResolutions: [],
+        status: 'READY',
+        nextOperationIndex: 0,
+        replayedOperations: [],
+      },
+    });
+    await NodeChangeStore.withChangeLease(sourceSession.record.changeId, async (leasedStore) => {
+      await leasedStore.writeCapsulePayload(sourceSession.record.changeId, 'cap_source_canary', {
+        capsuleVersion: '1.0.0',
+        capsuleId: 'cap_source_canary',
+        changeId: sourceSession.record.changeId,
+        sealed: true,
+        source: 'immutable-canary',
+      });
+    });
+    sourceStateRoot = path.join(sourceStore.projectDirectory, sourceSession.record.changeId);
+    for (const required of [
+      'manifest.json',
+      'record-head.json',
+      'capsules/cap_source_canary/payload.json',
+      'capsules/cap_source_canary/identity.json',
+    ]) assert(fs.existsSync(path.join(sourceStateRoot, ...required.split('/'))), `valid source canary is missing ${required}`);
+  } finally {
+    if (previousDataRoot === undefined) delete process.env.SURDET_AGENT_DATA_DIR;
+    else process.env.SURDET_AGENT_DATA_DIR = previousDataRoot;
+  }
   const specifications = {
     comparisonRace: comparisonProjection(projectIdentity, 'review_comparison_process_race'),
     resultRace: resultProjection(projectIdentity, 'review_result_process_race'),
@@ -528,7 +591,7 @@ async function prepareFixtures(root) {
       reviewIdentity: readFileIdentity(identityFile),
     };
   }
-  return { root, dataRoot, projectRoot, rootIdentity, projectIdentity, store, reviews };
+  return { root, dataRoot, projectRoot, rootIdentity, projectIdentity, sourceStateRoot, store, reviews };
 }
 
 async function makeDecision(authoring, projectIdentity, reviewId, decisionId) {
@@ -619,8 +682,18 @@ async function runTwoWorkers(harness, fixtures, fixture, actions) {
     dataRoot: fixtures.dataRoot,
     projectIdentity: fixtures.projectIdentity,
     reviewId: fixture.projection.reviewId,
-    action,
-    receipt,
+    action: 'authority',
+    terminalCommand: {
+      protocolVersion: '1.0.0',
+      requestId: `review_process_${crypto.randomUUID()}`,
+      projectIdentity: fixtures.projectIdentity,
+      reviewId: fixture.projection.reviewId,
+      reviewPayload: { ...fixture.identity.reviewPayload },
+      action: action === 'decision'
+        ? 'comparison-decision'
+        : action === 'approval' ? 'result-approval' : 'result-return',
+      receipt,
+    },
   }));
   const rawResults = await Promise.all(commands.map((command) => runWorker(harness, command)));
   const results = rawResults.map((result, index) => ({ ...result, submitted: actions[index] }));
@@ -630,6 +703,7 @@ async function runTwoWorkers(harness, fixtures, fixture, actions) {
   const rejected = results.filter((entry) => entry.status === 'rejected');
   assert(written.length === 1 && rejected.length === 1, `race must have one winner and one loser: ${JSON.stringify(results)}`);
   assert(['REVIEW_BUSY', 'REVIEW_TERMINAL_ALREADY_SET'].includes(rejected[0].code), `unexpected race loser: ${rejected[0].code}`);
+  assert(written[0].boundary === 'ReviewTerminalAuthority', 'process race bypassed ReviewTerminalAuthority');
   return { results, written: written[0], rejected: rejected[0], pids: results.map((entry) => entry.pid) };
 }
 
@@ -834,11 +908,13 @@ async function runPreflight(state, harness, fixtures, authoring) {
 async function runFormal(state, harness, fixtures, authoring) {
   const projectTreeBefore = hashTree(fixtures.projectRoot);
   const starterBefore = hashTree(starterRoot);
+  const sourceStateBefore = hashTree(fixtures.sourceStateRoot);
   const payloadBefore = Object.fromEntries(Object.entries(fixtures.reviews).map(([name, review]) => [name, {
     payload: readFileIdentity(review.payloadFile),
     identity: readFileIdentity(review.identityFile),
   }]));
   const changePathsBefore = unexpectedChangePaths(fixtures.dataRoot);
+  const unexpectedTerminalFilesBefore = Object.fromEntries(Object.entries(fixtures.reviews).map(([name, review]) => [name, unexpectedTerminalFiles(review.reviewRoot)]));
   let processDecisionReceipt;
   let browserDecisionReceipt;
   let comparisonRace;
@@ -909,11 +985,22 @@ async function runFormal(state, harness, fixtures, authoring) {
   await milestone(state, 'comparison-idempotent-retry', async () => {
     const file = path.join(fixtures.reviews.comparisonRace.reviewRoot, 'decision.json');
     const before = readFileIdentity(file);
-    const retry = await fixtures.store.createDecision(fixtures.reviews.comparisonRace.projection.reviewId, processDecisionReceipt);
+    const { ReviewTerminalAuthority } = await import('../dist/authoring/review-terminal-authority.js');
+    const authority = new ReviewTerminalAuthority(fixtures.dataRoot);
+    const retrySnapshot = await authority.write({
+      protocolVersion: '1.0.0',
+      requestId: `review_retry_${crypto.randomUUID()}`,
+      projectIdentity: fixtures.projectIdentity,
+      reviewId: fixtures.reviews.comparisonRace.projection.reviewId,
+      reviewPayload: { ...fixtures.reviews.comparisonRace.identity.reviewPayload },
+      action: 'comparison-decision',
+      receipt: processDecisionReceipt,
+    });
+    const retry = retrySnapshot.record;
     const after = readFileIdentity(file);
     assert(before.bytes === after.bytes && before.sha256 === after.sha256, 'idempotent retry changed decision bytes');
-    assert(retry.bytes === before.bytes && retry.sha256 === before.sha256, 'idempotent retry identity differs');
-    return { before, after, retry: { bytes: retry.bytes, sha256: retry.sha256 } };
+    assert(retry?.action === 'comparison-decision' && retry.bytes === before.bytes && retry.sha256 === before.sha256, 'idempotent retry identity differs');
+    return { boundary: 'ReviewTerminalAuthority', before, after, retry: { bytes: retry.bytes, sha256: retry.sha256 } };
   });
 
   await milestone(state, 'result-approval-return-two-process-race', async () => {
@@ -1033,16 +1120,21 @@ async function runFormal(state, harness, fixtures, authoring) {
   await milestone(state, 'project-change-review-payload-unchanged', async () => {
     const projectTreeAfter = hashTree(fixtures.projectRoot);
     const starterAfter = hashTree(starterRoot);
+    const sourceStateAfter = hashTree(fixtures.sourceStateRoot);
     const payloadAfter = Object.fromEntries(Object.entries(fixtures.reviews).map(([name, review]) => [name, {
       payload: readFileIdentity(review.payloadFile),
       identity: readFileIdentity(review.identityFile),
     }]));
     const changePathsAfter = unexpectedChangePaths(fixtures.dataRoot);
+    const unexpectedTerminalFilesAfter = Object.fromEntries(Object.entries(fixtures.reviews).map(([name, review]) => [name, unexpectedTerminalFiles(review.reviewRoot)]));
     assert(JSON.stringify(projectTreeBefore) === JSON.stringify(projectTreeAfter), 'isolated project tree changed');
     assert(JSON.stringify(starterBefore) === JSON.stringify(starterAfter), 'original Starter changed');
+    assert(JSON.stringify(sourceStateBefore) === JSON.stringify(sourceStateAfter), 'source change/integration/capsule evidence changed');
     assert(JSON.stringify(payloadBefore) === JSON.stringify(payloadAfter), 'immutable review payload changed');
-    assert(JSON.stringify(changePathsBefore) === JSON.stringify(changePathsAfter) && changePathsAfter.length === 0, 'unexpected change data was created');
-    return { projectTreeBefore, projectTreeAfter, starterBefore, starterAfter, payloadBefore, payloadAfter, changePathsBefore, changePathsAfter };
+    assert(JSON.stringify(changePathsBefore) === JSON.stringify(changePathsAfter), 'unexpected change data was created');
+    assert(JSON.stringify(unexpectedTerminalFilesBefore) === JSON.stringify(unexpectedTerminalFilesAfter)
+      && Object.values(unexpectedTerminalFilesAfter).every((files) => files.length === 0), 'unexpected terminal files were created');
+    return { projectTreeBefore, projectTreeAfter, starterBefore, starterAfter, sourceStateBefore, sourceStateAfter, payloadBefore, payloadAfter, changePathsBefore, changePathsAfter, unexpectedTerminalFilesBefore, unexpectedTerminalFilesAfter };
   });
 
   await milestone(state, 'process-and-lease-cleanup', async () => {
@@ -1065,10 +1157,15 @@ async function runFormal(state, harness, fixtures, authoring) {
   });
 
   return {
+    processRaceBoundary: 'ReviewTerminalAuthority',
+    idempotentRetryBoundary: 'ReviewTerminalAuthority',
     projectTreeBefore,
     projectTreeAfter: hashTree(fixtures.projectRoot),
     starterBefore,
     starterAfter: hashTree(starterRoot),
+    sourceStateBefore,
+    sourceStateAfter: hashTree(fixtures.sourceStateRoot),
+    unexpectedTerminalFiles: Object.values(fixtures.reviews).flatMap((review) => unexpectedTerminalFiles(review.reviewRoot)),
     payloadIdentity: payloadBefore,
     comparisonRace,
     resultRace,

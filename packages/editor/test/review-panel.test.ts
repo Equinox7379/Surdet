@@ -249,7 +249,7 @@ function workspaceFor(projection: HumanReviewProjection): ReviewWorkspaceState {
     projection,
     decisionDraft: { decisionId: '', selectedUnitIds: [...projection.defaultSelectedUnitIds], conflictResolutions: [] },
     selectedReviewObjectRef: null,
-    projectHandle: projection.kind === 'integration-result' ? {} as FileSystemDirectoryHandle : null,
+    projectHandle: null,
     officialResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     currentResultTreeSha256: projection.finalResult?.resultTreeSha256 ?? null,
     fixtureChanged: false,
@@ -641,6 +641,47 @@ describe('Editor review panel', () => {
     approve.click();
     returned.click();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['重新加载正式结果', 'reload-official-result', 'onReloadOfficialResult'],
+    ['检查探索修改', 'refresh-result-tree', 'onRefreshFixtureIdentity'],
+  ] as const)('locks every competing result action while %s is running', async (_label, action, callback) => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    let finishOperation: (() => void) | null = null;
+    const pendingOperation = new Promise<void>((resolve) => { finishOperation = resolve; });
+    const write = vi.fn(async (_command: ReviewTerminalCommand) => { throw new Error('must not write'); });
+    const onPreview = vi.fn(async () => { throw new Error('must not preview'); });
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write,
+    };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, {
+      reviewTerminalClient: terminalClient,
+      onPreview,
+      [callback]: () => pendingOperation,
+    });
+
+    container.querySelector(`[data-action="${action}"]`)!.click();
+    const competingActions = [
+      'approve-result',
+      'return-result',
+      'preview-result',
+      'reload-official-result',
+      'refresh-result-tree',
+    ];
+    for (const competingAction of competingActions) {
+      expect(container.querySelector(`[data-action="${competingAction}"]`)?.disabled).toBe(true);
+      container.querySelector(`[data-action="${competingAction}"]`)?.click();
+    }
+    expect(write).not.toHaveBeenCalled();
+    expect(onPreview).not.toHaveBeenCalled();
+
+    finishOperation!();
+    await vi.waitFor(() => expect(container.querySelector(`[data-action="${action}"]`)?.disabled).toBe(false));
   });
 
   it('keeps a healthy collapsed group explicit and names an empty dependency set', () => {
