@@ -1,0 +1,466 @@
+# Timeline Autosave Identity Fail-Closed Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make timeline crash recovery prove `stable ID === file stem === definition.id` before automatic mutation, preserve every ambiguous backup, and provide explicit Chinese repair actions without writing through the wrong file handle.
+
+**Architecture:** A new pure identity module reuses Authoring's canonical path rule and owns parse/normalize/classification facts. `project-io.ts` remains the only stateful recovery/repair adapter and `saveAll()` remains the only filesystem writer. A small handle-free conflict panel projects structured conflicts from `main.ts`; every action revalidates current state before one atomic in-memory mutation and immediately persists remaining autosave evidence.
+
+**Tech Stack:** TypeScript, DOM APIs, File System Access handles, localStorage autosave adapter, `@surdet/authoring` timeline identity helpers, Vitest, Vite.
+
+## Global Constraints
+
+- Approved design: `docs/superpowers/specs/2026-08-31-timeline-autosave-identity-fail-closed-design.md` at commit `22f70ad`.
+- The canonical invariant is exactly `TimelineEntry.id === timelineIdFromPath(TimelineEntry.file) === JSON definition.id`.
+- Exact canonical identity may auto-restore; every missing, invalid, ambiguous, or mismatched identity is fail-closed.
+- No conflict branch may change current text, ID, file, EOL, dirty state, handle, selection, history, filesystem, or autosave bytes.
+- Save All remains the only filesystem writer. Guided repair prepares dirty in-memory entries only.
+- Do not change Core schema, Authoring/CLI/Agent Port public contracts, project path semantics, save-game format, test timeouts, or package dependencies.
+- Do not add aliases, fallback lookup, migration tables, a second timeline index, automatic scene-reference rewrites, or a general JSON merge editor.
+- Preserve scenes-only autosave compatibility and existing `AutosaveTimelineEntry` fields.
+- Visible UI is Chinese-first; English reason enums live only in `data-*`/technical projections.
+- Preserve all unrelated and protected untracked files. Never use `git add .` or `git add -A`.
+- No push, Review Terminal Atomicity, Asset Center, Frontend Pass 5, or Wave 7 work.
+
+---
+
+## File map
+
+- Create `packages/editor/src/timeline-autosave-identity.ts`: pure identity inspection, normalization, conflict key/reason projection.
+- Modify `packages/editor/src/autosave.ts`: share the document type and retain unresolved conflicts using canonical identity plus exact text/EOL.
+- Modify `packages/editor/src/project-io.ts`: fail-closed restore classification and explicit repair adapters; preserve handles unless the user explicitly targets the current entry.
+- Create `packages/editor/src/panels/timeline-autosave-conflicts.ts`: compact Chinese conflict surface and action callbacks.
+- Modify `packages/editor/src/main.ts`: own pending conflicts, render the panel, dispatch repairs, immediately persist autosave evidence.
+- Modify `packages/editor/src/styles/timeline-workspace.css`: minimal conflict surface styles using existing tokens and no colored selection bar.
+- Create `packages/editor/test/timeline-autosave-identity.test.ts`: pure identity and normalization contract.
+- Modify `packages/editor/test/autosave.test.ts`: unresolved/preserved conflict contract.
+- Modify `packages/editor/test/project-io.test.ts`: restore and repair atomicity/handle contract.
+- Create `packages/editor/test/timeline-autosave-conflicts.test.ts`: Chinese DOM/action availability contract.
+- Create `packages/editor/test/timeline-autosave-conflict-integration.test.ts`: narrow main wiring and immediate-persistence contract.
+- Append this taskbook with exact RED/GREEN, commits, test counts, failure boundaries, and final stop state.
+
+### Task 0: Freeze baseline and exact invariants
+
+**Files:**
+- Read: `packages/editor/src/autosave.ts`
+- Read: `packages/editor/src/project-io.ts`
+- Read: `packages/authoring/src/timeline-identity.ts`
+- Modify: `docs/superpowers/plans/2026-08-31-timeline-autosave-identity-fail-closed.md`
+
+**Interfaces:**
+- Consumes: `timelineIdFromPath(path)` and `timelinePathFor(timelineId)` from `@surdet/authoring`.
+- Produces: a baseline record proving current HEAD, clean tracked/staging state, current defect location, and unchanged protected files.
+
+- [ ] **Step 1: Record baseline**
+
+Run read-only Git identity/status commands. Expected baseline HEAD is the taskbook commit parent; tracked worktree and staging must be clean before RED tests. Existing long-term ledger and protected untracked paths remain untouched.
+
+- [ ] **Step 2: Reconfirm the defect without editing production**
+
+Read the bodies of `restoreTimelineAutosaveEntries()`, `saveAll()`, `pickRecoverableTimelines()`, and `unresolvedAutosaveTimelineConflicts()`. Record that current recovery matches file before outer ID and never parses `definition.id`.
+
+### Task 1: Pure triple-identity projection and normalization
+
+**Files:**
+- Create: `packages/editor/src/timeline-autosave-identity.ts`
+- Create: `packages/editor/test/timeline-autosave-identity.test.ts`
+
+**Interfaces:**
+- Consumes: `timelineIdFromPath()` and `timelinePathFor()` from `@surdet/authoring`.
+- Produces:
+
+```ts
+export interface TimelineAutosaveDocument {
+  id: string;
+  file: string;
+  text: string;
+  eol: '\r\n' | '\n';
+}
+
+export interface TimelineAutosaveIdentity {
+  stableId: string;
+  file: string;
+  fileId: string;
+  definitionId: string | null;
+  parseError: string | null;
+  canonical: boolean;
+}
+
+export function inspectTimelineAutosaveIdentity(entry: TimelineAutosaveDocument): TimelineAutosaveIdentity;
+
+export type TimelineAutosaveNormalizeResult =
+  | { ok: true; entry: TimelineAutosaveDocument }
+  | { ok: false; error: string };
+
+export function normalizeTimelineAutosaveDocument(
+  source: TimelineAutosaveDocument,
+  targetId: string,
+  targetFile?: string,
+): TimelineAutosaveNormalizeResult;
+```
+
+- [ ] **Step 1: Write pure RED tests**
+
+Cover exact canonical nested path, outer/file mismatch, internal mismatch, invalid JSON, missing/non-string ID, BOM, CRLF/LF normalization, valid new ID, invalid new ID, and preservation of every non-ID JSON field.
+
+Representative assertions:
+
+```ts
+expect(inspectTimelineAutosaveIdentity({
+  id: 'intro', file: 'nested/intro.json',
+  text: '{"version":1,"id":"intro","durationMs":100,"tracks":[]}', eol: '\n',
+})).toMatchObject({ fileId: 'intro', definitionId: 'intro', canonical: true });
+
+expect(inspectTimelineAutosaveIdentity({
+  id: 'intro', file: 'intro.json', text: '{"id":"other"}', eol: '\n',
+}).canonical).toBe(false);
+
+expect(normalizeTimelineAutosaveDocument(source, 'new_id')).toMatchObject({
+  ok: true,
+  entry: { id: 'new_id', file: 'new_id.json', eol: source.eol },
+});
+```
+
+- [ ] **Step 2: Run RED once**
+
+```powershell
+npm run test -w surdet-editor -- --run test/timeline-autosave-identity.test.ts
+```
+
+Expected: module/import or missing-export failures only.
+
+- [ ] **Step 3: Implement the pure helper**
+
+Implementation requirements:
+
+- remove at most one BOM before `JSON.parse`;
+- require a non-array object and a non-empty string `id`;
+- derive `fileId` only through `timelineIdFromPath`;
+- set `canonical` from exact equality of all three IDs;
+- validate `targetId` by calling `timelinePathFor(targetId)` rather than copying the regex;
+- for default Save As New, strip the `content/timelines/` prefix from `timelinePathFor(targetId)`;
+- parse and fully prepare normalized JSON before returning success;
+- serialize with two-space indentation, one trailing newline, and the requested EOL;
+- never mutate the source object or parsed source record.
+
+- [ ] **Step 4: Run GREEN once**
+
+Run the same focused command. Expected: all pure identity tests pass.
+
+### Task 2: Fail-closed restore and handle preservation
+
+**Files:**
+- Modify: `packages/editor/src/project-io.ts`
+- Modify: `packages/editor/test/project-io.test.ts`
+
+**Interfaces:**
+- Consumes: `inspectTimelineAutosaveIdentity()` and `TimelineAutosaveDocument`.
+- Produces:
+
+```ts
+export type TimelineAutosaveConflictReason =
+  | 'recovered-json-invalid'
+  | 'recovered-id-mismatch'
+  | 'current-json-invalid'
+  | 'current-id-mismatch'
+  | 'same-file-different-id'
+  | 'same-id-different-file'
+  | 'definition-id-collision';
+
+export interface TimelineAutosaveRestoreConflict {
+  key: string;
+  reason: TimelineAutosaveConflictReason;
+  recovered: AutosaveTimelineEntry;
+  recoveredIdentity: TimelineAutosaveIdentity;
+  current: TimelineAutosaveDocument | null;
+  currentIdentity: TimelineAutosaveIdentity | null;
+}
+
+export interface TimelineAutosaveRestoreResult {
+  restored: number;
+  conflicts: TimelineAutosaveRestoreConflict[];
+}
+```
+
+- [ ] **Step 1: Write restore RED tests**
+
+Use valid timeline JSON fixtures rather than plain placeholder text. Freeze:
+
+- exact canonical triple updates only text/EOL/dirty and retains the exact handle;
+- same file/different outer ID conflicts with zero entry mutation and zero writes after `saveAll()`;
+- same outer ID/different file remains conflict;
+- same outer/file with different internal ID conflicts;
+- invalid recovered JSON conflicts;
+- invalid current JSON conflicts on an exact target;
+- canonical new timeline inserts `handle:null`;
+- non-canonical new timeline does not insert;
+- internal-ID collision against another current entry conflicts.
+
+- [ ] **Step 2: Run restore RED once**
+
+```powershell
+npm run test -w surdet-editor -- --run test/project-io.test.ts
+```
+
+Expected: new identity/atomicity cases fail on current file-first behavior while existing save isolation remains green.
+
+- [ ] **Step 3: Implement classification before mutation**
+
+For every recovered entry, compute all recovered/current projections and collision candidates before changing `state.timelines`. Build immutable handle-free conflict snapshots. Only exact canonical target or unique canonical insertion reaches mutation.
+
+For exact restore:
+
+```ts
+existing.text = recovered.text;
+existing.eol = recovered.eol;
+existing.dirty = true;
+```
+
+Do not assign `existing.id`, `existing.file`, or `existing.handle`.
+
+- [ ] **Step 4: Run restore GREEN once**
+
+Run the same focused project-IO test. Expected: all tests pass and wrong-handle writes remain zero.
+
+### Task 3: Preserve unresolved identity evidence
+
+**Files:**
+- Modify: `packages/editor/src/autosave.ts`
+- Modify: `packages/editor/test/autosave.test.ts`
+
+**Interfaces:**
+- Consumes: `inspectTimelineAutosaveIdentity()`.
+- Produces: conflict retention that resolves only on canonical exact ID/file/text/EOL.
+
+- [ ] **Step 1: Write persistence RED tests**
+
+Freeze these cases:
+
+```ts
+expect(unresolvedAutosaveTimelineConflicts([conflict], [{
+  id: 'same', file: 'same.json', text: currentCanonicalText, eol: '\n',
+}])).toEqual([conflict]);
+
+expect(unresolvedAutosaveTimelineConflicts([conflict], [{
+  id: conflict.id, file: conflict.file, text: conflict.text, eol: conflict.eol,
+}])).toEqual([]);
+```
+
+The first case uses the same outer tuple but different recovered bytes/internal ID. Also prove `preserveAutosaveTimelineConflicts()` retains unresolved recovered bytes even when a fresh dirty entry has the same outer tuple.
+
+- [ ] **Step 2: Run persistence RED once**
+
+```powershell
+npm run test -w surdet-editor -- --run test/autosave.test.ts
+```
+
+- [ ] **Step 3: Implement canonical exact resolution**
+
+Update `unresolvedAutosaveTimelineConflicts()` input projection to include `text/eol`. A conflict resolves only if a current entry is canonical and exactly matches the recovered ID, file, text, and EOL. Preserve unresolved conflict bytes ahead of same-tuple fresh entries; after explicit resolution, fresh entries may own the tuple.
+
+- [ ] **Step 4: Run persistence GREEN once**
+
+Run the same focused autosave test. Expected: all tests pass, including scenes-only legacy parsing.
+
+- [ ] **Step 5: Commit the correctness core**
+
+Stage only the pure helper, its test, autosave source/test, project-IO source/test, and this taskbook. Verify the exact set and commit:
+
+```text
+fix(editor): fail closed timeline autosave identity
+```
+
+### Task 4: Explicit repair operations
+
+**Files:**
+- Modify: `packages/editor/src/project-io.ts`
+- Modify: `packages/editor/test/project-io.test.ts`
+
+**Interfaces:**
+- Consumes: structured conflict records, `normalizeTimelineAutosaveDocument()`, `pushTimelineSnapshot()`, current `state.timelines`, pending delete/restore state.
+- Produces:
+
+```ts
+export type TimelineAutosaveRepairAction =
+  | { kind: 'replace-current' }
+  | { kind: 'save-as-new'; newId: string };
+
+export type TimelineAutosaveRepairResult =
+  | { ok: true; timelineId: string }
+  | { ok: false; error: string };
+
+export function repairTimelineAutosaveConflict(
+  conflict: TimelineAutosaveRestoreConflict,
+  action: TimelineAutosaveRepairAction,
+): TimelineAutosaveRepairResult;
+```
+
+- [ ] **Step 1: Write repair RED tests**
+
+Freeze Replace Current success, Save As New success, invalid new ID, ID/file/internal collision, pending delete/restore collision, invalid JSON, stale current target, undo snapshot, retained handle/path, and zero mutation for every failure.
+
+- [ ] **Step 2: Run repair RED once**
+
+Run the focused project-IO test. Expected: missing repair export/cases fail.
+
+- [ ] **Step 3: Implement prepare-then-apply repair**
+
+Replace Current re-finds a unique target by the recorded current ID/file, normalizes recovered text to that target, verifies canonical output, pushes one undo snapshot, then assigns text/EOL/dirty only.
+
+Save As New validates via `timelinePathFor`, rejects all current/pending collisions, constructs the full null-handle entry, verifies canonical output, and pushes exactly once.
+
+- [ ] **Step 4: Run repair GREEN once**
+
+Run the focused project-IO test. Expected: all restore and repair cases pass.
+
+### Task 5: Chinese conflict panel
+
+**Files:**
+- Create: `packages/editor/src/panels/timeline-autosave-conflicts.ts`
+- Create: `packages/editor/test/timeline-autosave-conflicts.test.ts`
+- Modify: `packages/editor/src/styles/timeline-workspace.css`
+
+**Interfaces:**
+- Consumes: readonly structured conflicts and callback options.
+- Produces:
+
+```ts
+export interface TimelineAutosaveConflictPanelActions {
+  onReplaceCurrent: (key: string) => void;
+  onSaveAsNew: (key: string, newId: string) => void;
+  onDiscard: (key: string) => void;
+  onDownload: (key: string) => void;
+}
+
+export function renderTimelineAutosaveConflictPanel(
+  container: HTMLElement,
+  conflicts: readonly TimelineAutosaveRestoreConflict[],
+  actions: TimelineAutosaveConflictPanelActions,
+): void;
+```
+
+- [ ] **Step 1: Write panel RED tests**
+
+Test no-conflict emptiness; heading `演出备份需要处理`; current/backup file and IDs; Chinese reason map; stable `data-conflict-key`/`data-conflict-reason`; collapsed technical text; Replace availability only with a current target and parseable backup; Save As New disabled for invalid JSON; discard/replace confirmation callbacks; download availability for invalid JSON.
+
+- [ ] **Step 2: Run panel RED once**
+
+```powershell
+npm run test -w surdet-editor -- --run test/timeline-autosave-conflicts.test.ts
+```
+
+- [ ] **Step 3: Implement semantic DOM and minimal styles**
+
+Use `<section>`, `<details>`, `<button>`, `<label>`, and `<input>`; do not inject raw HTML. Buttons use `type=button`. Destructive discard is visually secondary. CSS uses existing variables, 14px-or-larger body copy, clear spacing, keyboard focus, no gradient, no shadow stack, and no colored left selection bar.
+
+- [ ] **Step 4: Run panel GREEN once**
+
+Run the same focused panel test. Expected: all DOM/action contracts pass.
+
+### Task 6: Main integration and immediate persistence
+
+**Files:**
+- Modify: `packages/editor/src/main.ts`
+- Create: `packages/editor/test/timeline-autosave-conflict-integration.test.ts`
+
+**Interfaces:**
+- Consumes: `TimelineAutosaveRestoreConflict[]`, panel renderer, repair adapter, autosave build/preserve/write/clear functions.
+- Produces: one source of pending conflict state and immediate persistence after action.
+
+- [ ] **Step 1: Write integration RED tests**
+
+Prove:
+
+- restore stores structured conflicts directly instead of reverse-looking up by old ID/file fields;
+- `renderMainArea()` mounts the panel above the active mode surface whenever conflicts exist;
+- Replace/Save As New remove a conflict only after repair success;
+- discard requires confirmation and removes only its key;
+- every successful repair/discard immediately rebuilds/preserves/writes or clears autosave;
+- a failed/stale repair keeps the conflict and backup;
+- invalid JSON download does not remove the conflict;
+- status copy is Chinese and reports exact failure without claiming a save.
+
+- [ ] **Step 2: Run integration RED once**
+
+Run the narrow integration test. Expected: wiring exports/hooks are absent.
+
+- [ ] **Step 3: Implement shared persistence helper and callbacks**
+
+Extract one main-local `persistCurrentAutosave(now)` used by interval tick and conflict actions. Keep `pendingAutosaveTimelineConflicts` as structured records. For persistence, pass `conflict.recovered` entries to the autosave evidence functions.
+
+Render the panel before the active mode content. Download uses a Blob/temporary anchor and never mutates project/autosave state.
+
+- [ ] **Step 4: Run integration GREEN once**
+
+Run the integration test, then the four focused test files together. Expected: all pass.
+
+- [ ] **Step 5: Commit guided repair UI**
+
+Stage only Task 4–6 files plus this taskbook and commit:
+
+```text
+feat(editor): guide timeline backup conflict repair
+```
+
+### Task 7: Proportional final verification and evidence freeze
+
+**Files:**
+- Modify: `docs/superpowers/plans/2026-08-31-timeline-autosave-identity-fail-closed.md`
+
+**Interfaces:**
+- Consumes: Tasks 1–6 commits.
+- Produces: one reviewed local evidence head, with no push and no third repair gate.
+
+- [ ] **Step 1: Run focused combined tests**
+
+```powershell
+npm run test -w surdet-editor -- --run test/timeline-autosave-identity.test.ts test/autosave.test.ts test/project-io.test.ts test/timeline-autosave-conflicts.test.ts test/timeline-autosave-conflict-integration.test.ts
+```
+
+- [ ] **Step 2: Run Editor full gates**
+
+```powershell
+npm run test -w surdet-editor
+npm run typecheck -w surdet-editor
+npm run build -w surdet-editor
+```
+
+- [ ] **Step 3: Run one aggregate verification**
+
+Because this gate changes crash recovery, state mutation, shared Authoring identity consumption, and browser UI wiring, run exactly one:
+
+```powershell
+npm run verify:all
+```
+
+If it fails, record the first failure and stop without rerun or timeout changes.
+
+- [ ] **Step 4: Verify scope and commit identities**
+
+Run both diff checks, inspect every commit scope, confirm no production path outside the approved Editor files, and confirm the long-term ledger/protected files remain unstaged.
+
+- [ ] **Step 5: Independent manager review**
+
+Use one bounded read-only secondary reviewer for the final commit range; the manager independently checks every finding, actual diff, and fresh outputs. Subagent review does not replace remote CI or owner acceptance.
+
+- [ ] **Step 6: Append final stop state**
+
+Record exact HEAD/parents, counts, aggregate result, tracked/staging status, known evidence gaps, and:
+
+```text
+TIMELINE_AUTOSAVE_IDENTITY_FAIL_CLOSED_LOCAL_VERIFIED
+READY_FOR_INDEPENDENT_MANAGER_REVIEW
+PUSH_NOT_PERFORMED
+REVIEW_TERMINAL_ATOMICITY_NOT_STARTED
+ASSET_CENTER_NOT_STARTED
+FRONTEND_PASS_5_NOT_STARTED
+WAVE_7_NOT_STARTED
+```
+
+## Execution Ledger
+
+Append-only. Record actual commands, exits, counts, failures, commits, recovery decisions, reviewer findings, and stop states. Never rewrite a failed run as green.
+
+- 2026-08-31 design baseline: approved spec and implementation baseline `22f70addc0696ed5c81e335930dd6748d9da1980`. Gate 1 is closed locally at `0adcc019`; remote Ubuntu CI and push remain unverified/unauthorized. Gate 3 and Asset Center have not started.
+- Owner design choice: fail-closed preservation plus explicit guided repair. Automatic filename-only guessing and permanent preserve-only quarantine were rejected.
+- Delegation boundary: Luna workers may own RED tests or the pure panel module with exact file ownership. The manager owns identity architecture, stateful restore/repair, main integration, final verification, commits, and completion claims.
