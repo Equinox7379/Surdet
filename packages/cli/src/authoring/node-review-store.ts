@@ -441,6 +441,9 @@ export class NodeReviewStore {
     value: unknown,
     validate?: (review: ReviewWorkspaceRead<T>) => void | Promise<void>,
   ): Promise<JsonRecordIdentity> {
+    if (action !== 'comparison-decision' && action !== 'result-approval' && action !== 'result-return') {
+      throw new AuthoringOperationError('INVALID_REQUEST', '未知的审阅终态动作。');
+    }
     return this.withReviewLease(reviewId, async () => {
       const review = await this.readReview<T>(reviewId);
       const decisionFile = path.join(review.reviewDirectory, 'decision.json');

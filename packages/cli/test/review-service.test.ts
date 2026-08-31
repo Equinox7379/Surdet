@@ -401,12 +401,27 @@ describe('ReviewService', () => {
       reviewVersion: '1.0.0',
       reviewId: 'review-parser',
       kind: 'comparison',
+      state: 'COMPARISON_PREPARED',
       projectIdentity: 'project-identity',
       expectedProjectRevision: 'revision-1',
-      sourceIdentity: {},
+      sourceIdentity: {
+        projectIdentity: 'project-identity',
+        expectedProjectRevision: 'revision-1',
+        comparisonFingerprint: 'comparison-fingerprint',
+      },
+      task: {},
+      candidates: [],
+      safeGroups: [],
+      conflicts: [],
+      dependencies: [],
+      defaultSelectedUnitIds: [],
+      evidence: { canCreateDecision: true },
+      objects: [],
     };
     expect(parseReviewProjection(value, 'review-parser')).toBe(value);
     expect(() => parseReviewProjection({ ...value, reviewId: 'other' }, 'review-parser'))
+      .toThrowError(/身份无效/);
+    expect(() => parseReviewProjection({ ...value, candidates: undefined }, 'review-parser'))
       .toThrowError(/身份无效/);
   });
   it('creates a comparison workspace from a fresh comparison and keeps decision writes human-gated', async () => {

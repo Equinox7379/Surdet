@@ -16,6 +16,7 @@ import {
   type TextHasher,
 } from '@surdet/authoring';
 import { NodeReviewStore } from '../src/authoring/node-review-store.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { ReviewTerminalAuthority } from '../src/authoring/review-terminal-authority.js';
 
 const temporaryRoots: string[] = [];
@@ -313,5 +314,52 @@ describe('ReviewTerminalAuthority', () => {
       'utf8',
     );
     await expect(fixture.authority.describe(resultIdentity)).resolves.toMatchObject({ state: 'corrupt' });
+  });
+
+  it('rejects a lease manager bound to another data root', async () => {
+    const fixture = await setup();
+    const otherRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'surdet-review-authority-other-root-'));
+    temporaryRoots.push(otherRoot);
+    expect(() => new ReviewTerminalAuthority(fixture.root, new NodeLocalLeaseManager(otherRoot), hasher))
+      .toThrowError(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('rejects malformed projections with a structured identity error', async () => {
+    const fixture = await setup();
+    const malformed = {
+      ...comparisonProjection('review-malformed-projection'),
+      candidates: undefined,
+    } as unknown as HumanReviewProjection;
+    const identity = await createFixture(fixture, malformed);
+    await expect(fixture.authority.describe(identity))
+      .rejects.toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+  });
+
+  it('classifies malformed or business-invalid single terminal files as corrupt', async () => {
+    const fixture = await setup();
+    const malformedIdentity = await createFixture(fixture, comparisonProjection('review-malformed-terminal'));
+    const malformedFile = path.join(
+      fixture.projectDirectory,
+      'reviews',
+      malformedIdentity.reviewId,
+      'decision.json',
+    );
+    await fsp.writeFile(malformedFile, '{broken\n', 'utf8');
+    await expect(fixture.authority.describe(malformedIdentity)).resolves.toMatchObject({ state: 'corrupt' });
+
+    const invalidIdentity = await createFixture(fixture, comparisonProjection('review-invalid-terminal'));
+    const invalidFile = path.join(
+      fixture.projectDirectory,
+      'reviews',
+      invalidIdentity.reviewId,
+      'decision.json',
+    );
+    await fsp.writeFile(invalidFile, `${JSON.stringify({
+      receiptVersion: '1.0.0',
+      decisionId: 'decision-invalid',
+      reviewId: invalidIdentity.reviewId,
+      decisionFingerprint: '0'.repeat(64),
+    }, null, 2)}\n`, 'utf8');
+    await expect(fixture.authority.describe(invalidIdentity)).resolves.toMatchObject({ state: 'corrupt' });
   });
 });

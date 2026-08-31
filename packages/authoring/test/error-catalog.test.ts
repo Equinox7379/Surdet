@@ -114,5 +114,6 @@ describe('wave 6 human review error catalog', () => {
       expect(definition.retryDisposition, code).toBe(disposition);
       expect(definition.repairActions, code).toEqual(expect.arrayContaining([expect.any(Object)]));
     }
+    expect(errorDefinition('REVIEW_BUSY').repairActions.every((item) => item.terminal !== true)).toBe(true);
   });
 });

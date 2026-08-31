@@ -98,6 +98,20 @@ function identityMismatch(message: string): never {
   throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', message);
 }
 
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function codeOf(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
 function recordOf(
   action: ReviewTerminalAction,
   file: ReviewTerminalRecord['file'],
@@ -142,6 +156,9 @@ export class ReviewTerminalAuthority {
   ) {
     this.dataRoot = path.resolve(dataRoot);
     this.leases = leases ?? new NodeLocalLeaseManager(this.dataRoot);
+    if (!samePath(this.leases.dataRoot, this.dataRoot)) {
+      invalid('审阅权威服务与租约管理器必须绑定同一个 Agent data root。');
+    }
     this.hasher = hasher;
   }
 
@@ -176,17 +193,27 @@ export class ReviewTerminalAuthority {
     const store = this.storeFor(input.projectIdentity);
     const loaded = await store.readReview<HumanReviewProjection>(input.reviewId);
     const projection = this.verifyLoadedReview(input, loaded);
-    const [decision, approval, returned] = await Promise.all([
-      store.readDecision<unknown>(input.reviewId),
-      store.readFinalApproval<unknown>(input.reviewId),
-      store.readReturnRequest<unknown>(input.reviewId),
-    ]);
-    const present = [decision, approval, returned].filter((item) => item !== null).length;
     const base = {
       protocolVersion: '1.0.0' as const,
       reviewId: input.reviewId,
       projectIdentity: input.projectIdentity,
     };
+    let decision: Awaited<ReturnType<NodeReviewStore['readDecision']>>;
+    let approval: Awaited<ReturnType<NodeReviewStore['readFinalApproval']>>;
+    let returned: Awaited<ReturnType<NodeReviewStore['readReturnRequest']>>;
+    try {
+      [decision, approval, returned] = await Promise.all([
+        store.readDecision<unknown>(input.reviewId),
+        store.readFinalApproval<unknown>(input.reviewId),
+        store.readReturnRequest<unknown>(input.reviewId),
+      ]);
+    } catch (error) {
+      if (['CHANGE_STORE_CORRUPT', 'PATH_OUTSIDE_PROJECT', 'REVIEW_IDENTITY_MISMATCH'].includes(codeOf(error) ?? '')) {
+        return { ...base, state: 'corrupt' };
+      }
+      throw error;
+    }
+    const present = [decision, approval, returned].filter((item) => item !== null).length;
     if (present === 0) return { ...base, state: 'open' };
     if (present !== 1
       || (projection.kind === 'comparison' && decision === null)
@@ -199,9 +226,18 @@ export class ReviewTerminalAuthority {
         ? { ...base, state: 'approval-written', record: recordOf('result-approval', 'final-approval.json', approval) }
         : { ...base, state: 'returned', record: recordOf('result-return', 'return-request.json', returned!) };
     try {
+      if (decision !== null) {
+        if (!isComparisonDecisionReceipt(decision.value, input.reviewId)) return { ...base, state: 'corrupt' };
+        await validateComparisonDecision({ projection, receipt: decision.value }, this.hasher);
+      } else if (approval !== null) {
+        if (!isFinalApprovalReceipt(approval.value, input.reviewId)) return { ...base, state: 'corrupt' };
+        await validateFinalApproval({ projection, receipt: approval.value, current: currentFacts(projection) }, this.hasher);
+      } else {
+        await validateReturnRequest({ projection, receipt: returned!.value }, this.hasher);
+      }
       return parseReviewTerminalSnapshot(candidate);
     } catch (error) {
-      if (error instanceof AuthoringOperationError && error.code === 'INVALID_REQUEST') {
+      if (error instanceof AuthoringOperationError) {
         return { ...base, state: 'corrupt' };
       }
       throw error;
