@@ -1466,3 +1466,65 @@ FINAL_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
 PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
 FRONTEND_PASS_4 = NOT_STARTED
 ```
+
+### 2026-08-31 — Direct-Timeline recovery FORMAL failure
+
+**FROZEN IDENTITY**
+
+- `CODE_EVIDENCE_HEAD`: `ea7a78ddaf8791bf39df95717a2ec533cfd48770`; parent `2c2bb327aa3e2573eb7d13ab3330b6ac03e0fc2c`; commit message `fix(editor): restore direct timeline preview`.
+- Exact commit scope is the six predeclared paths. Tracked worktree and staging were empty before FORMAL.
+- Runner HEAD identity: 86693 bytes / SHA-256 `90719676C2B181271EAD928CBB3BB22909C1D7FFE5B2DB247243C2CF12CCBB60`.
+
+**FINAL FORMAL — FAILED, NOT RERUN**
+
+- FORMAL budget 1/1 consumed; exit 1; `runHead === codeEvidenceHead`; `trackedCodeDiffPaths=[]`.
+- Seventeen milestones passed. Last passed: `layout-1024`. First failed: `layout-800`.
+- Direct-Timeline Preview and replay both passed before the layout failure. The artifact contains generation 1 and generation 2 `source.op=timeline` events, the same `previewTimelineId`, child interpreter/runtime instances, one canvas and no visible Preview error.
+- Compact evidence narrowed the remaining race: after responsive settle both disclosures were open; after explicit user close both were closed; after the immediate duration edit and rerender the library remained closed but the inspector reopened. The model value correctly became 1400ms.
+- This shows that the resize-settle correction alone is insufficient. A likely explanation is that the native `toggle` event persists the inspector state asynchronously, allowing the immediate edit rerender to read the previous state; this is a bounded inference, not yet a confirmed production root cause.
+- Evidence: `<local-path>`, 63281 bytes, SHA-256 `E3BF71329246CC5E9C6E01D545BF084F27B13F19C035F9615391128AB8BB7D3E`.
+- Identity sidecar: 570 bytes, SHA-256 `A0474DA222DD40EE531A81BCE3AFC94B86DA6B1B9F86FF0ADED01EB3ABDCF94A`.
+- Console, page, request, HTTP response, Vite stderr and cleanup channels were empty. Port 4251 released; original Starter unchanged.
+
+**HARD STOP**
+
+- The FORMAL failure blocks the authorized ordinary push. No retry, fix, follow-on commit or Frontend Pass 4 action was performed.
+- This Ledger entry is the only tracked modification after FORMAL and remains uncommitted.
+
+```text
+W3B_DIRECT_TIMELINE_CODE_EVIDENCE_HEAD = ea7a78ddaf8791bf39df95717a2ec533cfd48770
+FINAL_FORMAL = FAILED_1_OF_1
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+WAITING_FOR_NEW_MANAGER_RECOVERY_AUTHORIZATION = YES
+```
+
+### 2026-08-31 — W3B-COMPACT-DISCLOSURE-STATE-RECOVERY-1 pre-freeze
+
+**AUTHORIZATION / OBSERVED FAILURE CONTRACT**
+
+- The Owner explicitly authorized `W3B-COMPACT-DISCLOSURE-STATE-RECOVERY-1`: permanent RED -> GREEN coverage, a minimal Editor repair, one replacement FORMAL, and an ordinary push only after FORMAL PASS. Frontend Pass 4 remains prohibited.
+- The preserved failed FORMAL had already proved the exact sequence: both compact disclosures were explicitly closed, then the immediate duration edit rerender reopened only the inspector. No Preview, request, console, cleanup or Starter mutation failure accompanied it.
+- Permanent RED: `timeline-panel.test.ts` ran 8 tests with 7 PASS / 1 expected failure. The missing contract was synchronous persistence of the summary activation intent before the browser's deferred native `toggle` event.
+
+**MINIMAL PRODUCT REPAIR / GREEN**
+
+- The existing native `toggle` listeners remain authoritative for ordinary state read-back. Two summary `click` handlers now synchronously persist the post-activation preference (`!details.open`) before the native toggle and before any immediate edit rerender can reconstruct the panel.
+- No layout threshold, timeout, runner, backend, Renderer, protocol, public contract or compatibility layer changed.
+- Focused GREEN: Timeline panel 8/8 PASS. Runner contract 11/11 PASS. Runner syntax and both diff checks PASS.
+- Fresh Editor full test: 51 files / 372 tests PASS. Editor typecheck PASS. Editor build PASS with 907 modules; only the existing chunk-size warning remains. `verify:docs` PASS.
+
+**PRE-FREEZE BOUNDARY**
+
+- Base HEAD: `ea7a78ddaf8791bf39df95717a2ec533cfd48770`; remote `surdet/main`: `42be0fcd2f614f032b8a539475c039c7f4ebd66f`; ahead/behind 12/0 before this recovery freeze.
+- Intended exact commit scope is three paths: this taskbook, `timeline-panel.ts`, and `timeline-panel.test.ts`. Staging is empty before the exact freeze; unrelated and protected untracked paths remain untouched.
+- The browser runner is unchanged at 86693 bytes / SHA-256 `90719676C2B181271EAD928CBB3BB22909C1D7FFE5B2DB247243C2CF12CCBB60`.
+- No DIAGNOSTIC was run or substituted for the authorized replacement FORMAL.
+
+```text
+W3B_COMPACT_DISCLOSURE_STATE_RECOVERY = READY_TO_FREEZE
+AUTHORIZED_PATH_COUNT = 3
+REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
+PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
+FRONTEND_PASS_4 = NOT_STARTED
+```

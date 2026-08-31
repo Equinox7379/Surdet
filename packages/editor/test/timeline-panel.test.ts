@@ -54,6 +54,11 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(panelSource).toContain("block.classList.toggle('instant', cue.durationMs === 0)");
   });
 
+  it('persists an explicit disclosure click before the deferred native toggle event', () => {
+    expect(panelSource).toContain("summary.addEventListener('click', () => {\n    view.inspectorOpen = !inspector.open;\n  });");
+    expect(panelSource).toContain("librarySummary.addEventListener('click', () => {\n    if (view) view.libraryOpen = !library.open;\n  });");
+  });
+
   it('implements real search and keeps zero valid for signed numeric inputs', () => {
     expect(panelSource).toContain('search.oninput');
     expect(panelSource).toContain('item.hidden =');
