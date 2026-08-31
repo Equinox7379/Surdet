@@ -20,6 +20,7 @@ import {
   validateEvidenceContract,
   verifyFileIdentity,
 } from '../e2e/review-terminal-atomicity-gate.e2e.mjs';
+import * as runnerModule from '../e2e/review-terminal-atomicity-gate.e2e.mjs';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDirectory, '../../..');
@@ -120,6 +121,178 @@ test('review terminal runner treats every required error and cleanup channel as 
   assert.deepEqual(blockingRunIssues(missing), ['protocolErrors']);
 });
 
+test('review terminal runner exempts only explicitly proven browser-native 409 rejections', () => {
+  assert.equal(typeof runnerModule.classifyBrowserConsoleErrors, 'function');
+  const classify = runnerModule.classifyBrowserConsoleErrors;
+  const native409 = 'Failed to load resource: the server responded with a status of 409 (Conflict)';
+  const writeUrl = 'http://127.0.0.1:4260/__surdet/review-authority/v1/write';
+  const describeUrl = 'http://127.0.0.1:4260/__surdet/review-authority/v1/describe';
+  const validExpected = [
+    { label: 'losing-context', route: 'write', url: writeUrl, method: 'POST', status: 409, code: 'REVIEW_BUSY' },
+    { label: 'identity-control', route: 'describe', url: describeUrl, method: 'POST', status: 409, code: 'REVIEW_IDENTITY_MISMATCH' },
+  ];
+  const accepted = classify([
+    { label: 'losing-context', text: native409, url: writeUrl },
+    { label: 'identity-control', text: native409, url: describeUrl },
+  ], validExpected);
+  assert.equal(accepted.expected.length, 2);
+  assert.deepEqual(accepted.blocking, []);
+
+  const negatives = [
+    {
+      name: 'wrong status',
+      event: { label: 'losing-context', text: native409, url: writeUrl },
+      expected: [{ label: 'losing-context', route: 'write', status: 500, code: 'REVIEW_BUSY' }],
+    },
+    {
+      name: 'wrong error code',
+      event: { label: 'losing-context', text: native409, url: writeUrl },
+      expected: [{ label: 'losing-context', route: 'write', status: 409, code: 'REVIEW_DECISION_INVALID' }],
+    },
+    {
+      name: 'wrong route',
+      event: { label: 'losing-context', text: native409, url: 'http://127.0.0.1:4260/unrelated' },
+      expected: [validExpected[0]],
+    },
+    {
+      name: 'no proven rejection',
+      event: { label: 'losing-context', text: native409, url: writeUrl },
+      expected: [],
+    },
+    {
+      name: 'script console error',
+      event: { label: 'losing-context', text: native409, url: 'http://127.0.0.1:4260/assets/main.js' },
+      expected: [validExpected[0]],
+    },
+    {
+      name: 'different console text',
+      event: { label: 'losing-context', text: `${native409} unexpected`, url: writeUrl },
+      expected: [validExpected[0]],
+    },
+    {
+      name: 'wrong label',
+      event: { label: 'other-context', text: native409, url: writeUrl },
+      expected: [validExpected[0]],
+    },
+    {
+      name: 'missing URL',
+      event: { label: 'losing-context', text: native409, url: '' },
+      expected: [validExpected[0]],
+    },
+    {
+      name: 'query-bearing Authority URL',
+      event: { label: 'losing-context', text: native409, url: `${writeUrl}?unexpected=1` },
+      expected: [{ ...validExpected[0], url: `${writeUrl}?unexpected=1` }],
+    },
+    {
+      name: 'wrong Authority port',
+      event: { label: 'losing-context', text: native409, url: writeUrl.replace(':4260', ':4173') },
+      expected: [{ ...validExpected[0], url: writeUrl.replace(':4260', ':4173') }],
+    },
+    {
+      name: 'different HTTP error text',
+      event: { label: 'losing-context', text: 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)', url: writeUrl },
+      expected: [validExpected[0]],
+    },
+  ];
+  for (const negative of negatives) {
+    const result = classify([negative.event], negative.expected);
+    assert.equal(result.expected.length, 0, `${negative.name} was incorrectly exempted`);
+    assert.equal(result.blocking.length, 1, `${negative.name} was not kept blocking`);
+  }
+
+  const duplicate = classify([
+    { label: 'losing-context', text: native409, url: writeUrl },
+    { label: 'losing-context', text: native409, url: writeUrl },
+  ], [validExpected[0]]);
+  assert.equal(duplicate.expected.length, 1);
+  assert.equal(duplicate.blocking.length, 1);
+});
+
+test('review terminal runner proves the exact Authority rejection envelope and request identity', () => {
+  assert.equal(typeof runnerModule.proveExpectedAuthorityRejection, 'function');
+  const prove = runnerModule.proveExpectedAuthorityRejection;
+  const reviewPayload = { bytes: 321, sha256: 'a'.repeat(64) };
+  const writeObservation = {
+    label: 'losing-context',
+    route: 'write',
+    url: 'http://127.0.0.1:4260/__surdet/review-authority/v1/write',
+    method: 'POST',
+    status: 409,
+    body: { ok: false, error: { code: 'REVIEW_BUSY', message: '本机审阅服务暂时无法完成这项请求。' } },
+    request: {
+      protocolVersion: '1.0.0',
+      requestId: 'review_request_contract',
+      projectIdentity: 'project-contract',
+      reviewId: 'review-contract',
+      reviewPayload,
+      action: 'comparison-decision',
+      receipt: { decisionId: 'decision-contract' },
+    },
+  };
+  const writeExpected = {
+    label: 'losing-context',
+    route: 'write',
+    projectIdentity: 'project-contract',
+    reviewId: 'review-contract',
+    reviewPayload,
+    action: 'comparison-decision',
+  };
+  assert.deepEqual(prove(writeObservation, writeExpected), {
+    label: 'losing-context',
+    route: 'write',
+    url: writeObservation.url,
+    method: 'POST',
+    status: 409,
+    code: 'REVIEW_BUSY',
+    message: '本机审阅服务暂时无法完成这项请求。',
+    projectIdentity: 'project-contract',
+    reviewId: 'review-contract',
+    reviewPayload,
+    action: 'comparison-decision',
+    requestId: 'review_request_contract',
+  });
+
+  const describeObservation = {
+    label: 'identity-control',
+    route: 'describe',
+    url: 'http://127.0.0.1:4261/__surdet/review-authority/v1/describe',
+    method: 'POST',
+    status: 409,
+    body: { ok: false, error: { code: 'REVIEW_IDENTITY_MISMATCH', message: '本机审阅服务暂时无法完成这项请求。' } },
+    request: { projectIdentity: 'project-contract', reviewId: 'review-contract', reviewPayload },
+  };
+  const describeExpected = {
+    label: 'identity-control',
+    route: 'describe',
+    projectIdentity: 'project-contract',
+    reviewId: 'review-contract',
+    reviewPayload,
+  };
+  assert.equal(prove(describeObservation, describeExpected).code, 'REVIEW_IDENTITY_MISMATCH');
+
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const negatives = [
+    ['extra envelope key', (value) => { value.body.extra = true; }],
+    ['missing message', (value) => { delete value.body.error.message; }],
+    ['extra error key', (value) => { value.body.error.detail = 'raw'; }],
+    ['control character', (value) => { value.body.error.message = 'bad\nmessage'; }],
+    ['oversized message', (value) => { value.body.error.message = 'x'.repeat(257); }],
+    ['wrong method', (value) => { value.method = 'GET'; }],
+    ['wrong project identity', (value) => { value.request.projectIdentity = 'other-project'; }],
+    ['wrong review identity', (value) => { value.request.reviewId = 'other-review'; }],
+    ['wrong payload identity', (value) => { value.request.reviewPayload.sha256 = 'b'.repeat(64); }],
+    ['wrong action', (value) => { value.request.action = 'result-return'; }],
+    ['extra request key', (value) => { value.request.extra = true; }],
+    ['wrong error code', (value) => { value.body.error.code = 'REVIEW_DECISION_INVALID'; }],
+  ];
+  for (const [name, mutate] of negatives) {
+    const candidate = clone(writeObservation);
+    mutate(candidate);
+    assert.throws(() => prove(candidate, writeExpected), undefined, name);
+  }
+});
+
 test('review terminal runner validates structured FORMAL evidence instead of source keywords', () => {
   const evidence = {
     mode: 'formal',
@@ -168,6 +341,7 @@ test('review terminal runner exercises the canonical Authority and preserves see
   assert.match(source, /terminalCommand:/);
   assert.match(source, /processRaceBoundary:\s*'ReviewTerminalAuthority'/);
   assert.match(source, /idempotentRetryBoundary:\s*'ReviewTerminalAuthority'/);
+  assert.equal((source.match(/expectedAuthorityRejections\.push\(proveExpectedAuthorityRejection/g) ?? []).length, 2);
   for (const phrase of [
     'NodeChangeStore.forProject',
     'beginChange',

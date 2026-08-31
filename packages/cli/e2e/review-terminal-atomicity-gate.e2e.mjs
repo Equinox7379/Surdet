@@ -93,6 +93,126 @@ export function blockingRunIssues(channels) {
   return ISSUE_CHANNELS.filter((name) => !Array.isArray(channels?.[name]) || channels[name].length !== 0);
 }
 
+const NATIVE_HTTP_409_CONSOLE = 'Failed to load resource: the server responded with a status of 409 (Conflict)';
+
+function recordValue(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function hasExactKeys(value, expectedKeys) {
+  const record = recordValue(value);
+  return record !== null
+    && JSON.stringify(Object.keys(record).sort()) === JSON.stringify([...expectedKeys].sort());
+}
+
+function validBoundedMessage(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 256
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function samePayloadIdentity(actual, expected) {
+  return hasExactKeys(actual, ['bytes', 'sha256'])
+    && Number.isInteger(actual.bytes)
+    && actual.bytes >= 0
+    && typeof actual.sha256 === 'string'
+    && /^[0-9a-f]{64}$/i.test(actual.sha256)
+    && actual.bytes === expected?.bytes
+    && actual.sha256.toLowerCase() === expected?.sha256?.toLowerCase();
+}
+
+function classifiableAuthorityRejection(rejection) {
+  if (rejection?.method !== 'POST' || rejection?.status !== 409 || typeof rejection.url !== 'string') return false;
+  let endpoint;
+  try {
+    endpoint = new URL(rejection.url);
+  } catch {
+    return false;
+  }
+  const port = Number(endpoint.port);
+  if (endpoint.protocol !== 'http:'
+    || endpoint.hostname !== '127.0.0.1'
+    || !Number.isInteger(port)
+    || port < SEARCH_RANGE.from
+    || port > SEARCH_RANGE.to
+    || endpoint.search !== ''
+    || endpoint.hash !== ''
+    || endpoint.pathname !== `/__surdet/review-authority/v1/${rejection.route}`) return false;
+  if (rejection.route === 'write') {
+    return rejection.code === 'REVIEW_BUSY' || rejection.code === 'REVIEW_TERMINAL_ALREADY_SET';
+  }
+  return rejection.route === 'describe' && rejection.code === 'REVIEW_IDENTITY_MISMATCH';
+}
+
+export function proveExpectedAuthorityRejection(observation, expected) {
+  assert(recordValue(observation) !== null && recordValue(expected) !== null, 'Authority rejection proof requires records');
+  assert(observation.label === expected.label && observation.route === expected.route, 'Authority rejection label/route mismatch');
+  assert(observation.method === 'POST' && observation.status === 409, 'Authority rejection method/status mismatch');
+  assert(hasExactKeys(observation.body, ['ok', 'error']) && observation.body.ok === false, 'Authority rejection envelope is not exact');
+  assert(hasExactKeys(observation.body.error, ['code', 'message']), 'Authority rejection error envelope is not exact');
+  assert(validBoundedMessage(observation.body.error.message), 'Authority rejection message is invalid');
+  assert(recordValue(observation.request) !== null, 'Authority rejection request is missing');
+  const normalized = {
+    label: observation.label,
+    route: observation.route,
+    url: observation.url,
+    method: observation.method,
+    status: observation.status,
+    code: observation.body.error.code,
+    message: observation.body.error.message,
+    projectIdentity: observation.request.projectIdentity,
+    reviewId: observation.request.reviewId,
+    reviewPayload: { ...observation.request.reviewPayload },
+    ...(expected.action === undefined ? {} : {
+      action: observation.request.action,
+      requestId: observation.request.requestId,
+    }),
+  };
+  assert(classifiableAuthorityRejection(normalized), 'Authority rejection route/code/URL is not classifiable');
+  assert(observation.request.projectIdentity === expected.projectIdentity
+    && observation.request.reviewId === expected.reviewId
+    && samePayloadIdentity(observation.request.reviewPayload, expected.reviewPayload), 'Authority rejection request identity mismatch');
+  if (expected.route === 'write') {
+    assert(hasExactKeys(observation.request, ['protocolVersion', 'requestId', 'projectIdentity', 'reviewId', 'reviewPayload', 'action', 'receipt']), 'Authority write request keys are not exact');
+    assert(observation.request.protocolVersion === '1.0.0'
+      && validBoundedMessage(observation.request.requestId)
+      && observation.request.action === expected.action
+      && recordValue(observation.request.receipt) !== null, 'Authority write request contract mismatch');
+  } else {
+    assert(expected.route === 'describe'
+      && hasExactKeys(observation.request, ['projectIdentity', 'reviewId', 'reviewPayload']), 'Authority describe request keys are not exact');
+  }
+  return normalized;
+}
+
+function consoleEventMatchesRejection(event, rejection) {
+  if (!classifiableAuthorityRejection(rejection)
+    || event?.label !== rejection.label
+    || event?.text !== NATIVE_HTTP_409_CONSOLE
+    || event?.url !== rejection.url) return false;
+  return true;
+}
+
+export function classifyBrowserConsoleErrors(events, expectedRejections) {
+  assert(Array.isArray(events) && Array.isArray(expectedRejections), 'console classification requires arrays');
+  const consumed = new Set();
+  const expected = [];
+  const blocking = [];
+  for (const event of events) {
+    const match = expectedRejections.findIndex((rejection, index) => (
+      !consumed.has(index) && consoleEventMatchesRejection(event, rejection)
+    ));
+    if (match < 0) {
+      blocking.push(event);
+      continue;
+    }
+    consumed.add(match);
+    expected.push({ ...event, rejection: { ...expectedRejections[match] } });
+  }
+  return { expected, blocking };
+}
+
 export function assertFormalPreconditions({ trackedCodeDiffPaths, stagingPaths, runHead: actualHead, codeEvidenceHead }) {
   assert(Array.isArray(trackedCodeDiffPaths) && trackedCodeDiffPaths.length === 0, 'FORMAL requires a clean tracked worktree');
   assert(Array.isArray(stagingPaths) && stagingPaths.length === 0, 'FORMAL requires an empty staging area');
@@ -422,6 +542,8 @@ function createHarness() {
     contexts: [],
     children: new Set(),
     authorityWriteResponses: [],
+    browserConsoleErrors: [],
+    expectedAuthorityRejections: [],
     channels: createChannels(),
   };
 }
@@ -781,17 +903,36 @@ const fakeFileSystemInit = ({ files }) => {
 };
 
 function observePage(harness, page, label) {
-  page.on('console', (message) => { if (message.type() === 'error') harness.channels.consoleErrors.push(`${label}: ${message.text()}`); });
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    harness.browserConsoleErrors.push({
+      label,
+      text: message.text(),
+      url: message.location().url ?? '',
+    });
+  });
   page.on('pageerror', (error) => harness.channels.pageErrors.push(`${label}: ${errorText(error)}`));
   page.on('requestfailed', (request) => harness.channels.requestFailures.push(`${label}: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`));
   page.on('response', (response) => {
     if (!response.url().endsWith('/__surdet/review-authority/v1/write')) return;
+    const request = response.request();
+    let requestBody = null;
+    try { requestBody = request.postDataJSON(); }
+    catch (error) { harness.channels.protocolErrors.push(`${label}: authority write request JSON failed: ${errorText(error)}`); }
     void response.json().then((body) => {
       const validEnvelope = response.ok()
         ? body?.ok === true && body?.result !== undefined
         : body?.ok === false && typeof body?.error?.code === 'string';
       if (!validEnvelope) harness.channels.protocolErrors.push(`${label}: invalid authority write envelope (${response.status()})`);
-      harness.authorityWriteResponses.push({ label, status: response.status(), body });
+      harness.authorityWriteResponses.push({
+        label,
+        route: 'write',
+        url: response.url(),
+        method: request.method(),
+        status: response.status(),
+        body,
+        request: requestBody,
+      });
     }, (error) => {
       harness.channels.protocolErrors.push(`${label}: authority write response JSON failed: ${errorText(error)}`);
     });
@@ -825,7 +966,7 @@ async function postAuthority(page, suffix, body) {
       cache: 'no-store',
       credentials: 'same-origin',
     });
-    return { status: response.status, body: await response.json() };
+    return { url: response.url, method: 'POST', route, status: response.status, body: await response.json(), request: payload };
   }, { suffix, body });
 }
 
@@ -1072,6 +1213,14 @@ async function runFormal(state, harness, fixtures, authoring) {
       && entry.body?.ok === false
       && ['REVIEW_BUSY', 'REVIEW_TERMINAL_ALREADY_SET'].includes(entry.body?.error?.code));
     assert(successes.length === 1 && losers.length === 1, `browser race response split is invalid: ${JSON.stringify(responses)}`);
+    harness.expectedAuthorityRejections.push(proveExpectedAuthorityRejection(losers[0], {
+      label: losers[0].label,
+      route: 'write',
+      projectIdentity: fixtures.projectIdentity,
+      reviewId: fixtures.reviews.browserRace.projection.reviewId,
+      reviewPayload: fixtures.reviews.browserRace.identity.reviewPayload,
+      action: 'comparison-decision',
+    }));
     browserDecisionReceipt = JSON.parse(fs.readFileSync(decisionFile, 'utf8'));
     const diskIdentity = readFileIdentity(decisionFile);
     const winnerRecord = successes[0].body.result?.record;
@@ -1107,11 +1256,22 @@ async function runFormal(state, harness, fixtures, authoring) {
   });
 
   await milestone(state, 'payload-identity-mismatch', async () => {
-    const response = await postAuthority(firstContext.page, 'describe', {
+    const mismatchInput = {
       ...fixtures.reviews.payloadMismatch.identity,
       reviewPayload: { ...fixtures.reviews.payloadMismatch.identity.reviewPayload, sha256: '0'.repeat(64) },
-    });
+    };
+    const response = await postAuthority(firstContext.page, 'describe', mismatchInput);
     assert(response.status === 409 && response.body?.error?.code === 'REVIEW_IDENTITY_MISMATCH', `payload mismatch was not rejected: ${JSON.stringify(response)}`);
+    harness.expectedAuthorityRejections.push(proveExpectedAuthorityRejection({
+      label: 'first-context',
+      ...response,
+    }, {
+      label: 'first-context',
+      route: 'describe',
+      projectIdentity: fixtures.projectIdentity,
+      reviewId: fixtures.reviews.payloadMismatch.projection.reviewId,
+      reviewPayload: mismatchInput.reviewPayload,
+    }));
     const terminal = terminalFilesForReview(fixtures.reviews.payloadMismatch.reviewRoot);
     assert(Object.values(terminal).every((value) => value === null), 'payload mismatch created a terminal receipt');
     return { status: response.status, code: response.body.error.code, terminal };
@@ -1225,6 +1385,13 @@ async function main() {
     catch (error) { harness.channels.childCleanupFailures.push(`harness close: ${errorText(error)}`); }
     harness.channels.activeReviewLeaseDirectories = fixtures === null ? [] : activeReviewLeaseDirectories(fixtures.dataRoot);
   }
+  const browserConsoleClassification = classifyBrowserConsoleErrors(
+    harness.browserConsoleErrors,
+    harness.expectedAuthorityRejections,
+  );
+  harness.channels.consoleErrors = browserConsoleClassification.blocking.map((event) => (
+    `${event.label}: ${event.text}${event.url === '' ? '' : ` (${event.url})`}`
+  ));
   const projectAfter = fixtures === null ? null : hashTree(fixtures.projectRoot);
   const starterAfter = starterBefore === null ? null : hashTree(starterRoot);
   const agentWriterCapabilities = authoring === null
@@ -1250,6 +1417,7 @@ async function main() {
     formal: mode === 'formal' ? result : null,
     agentWriterCapabilities,
     channels: harness.channels,
+    browserConsoleClassification,
     projectTreeBefore: projectBefore,
     projectTreeAfter: projectAfter,
     starterBefore,
