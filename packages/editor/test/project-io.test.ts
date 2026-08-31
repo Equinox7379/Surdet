@@ -474,6 +474,23 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.timelines).toEqual([]);
   });
 
+  it.each(['../unsafe.json', '/unsafe.json', 'content/timelines/unsafe.json'])(
+    '不安全的自动备份 file %j 不得自动插入或进入 Save All',
+    (file) => {
+      const result = restoreTimelineAutosaveEntries([{
+        id: 'unsafe',
+        file,
+        text: timelineText('unsafe'),
+        eol: '\n',
+      }]);
+
+      expect(result.restored).toBe(0);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0]).toMatchObject({ reason: 'recovered-id-mismatch' });
+      expect(state.timelines).toEqual([]);
+    },
+  );
+
   it('另一个当前条目声明恢复正文内部 ID 时返回 definition-id-collision 且不插入', () => {
     const handle = fileHandle(null, log, 'other.json');
     const existing = timeline('other', handle, false, 'other.json', 'claimed');

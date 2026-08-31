@@ -286,6 +286,37 @@ describe('timeline autosave conflict panel', () => {
     expect(textOf(container)).toContain('自动备份 JSON 无法解析');
   });
 
+  it('disables Replace Current when the recorded target path cannot be normalized safely', () => {
+    vi.stubGlobal('document', documentStub);
+    const container = new FakeElement('div');
+    const item = conflict({
+      current: {
+        id: 'current',
+        file: 'shared.json',
+        text: '{"id":"current","tracks":[]}',
+        eol: '\n',
+      },
+      currentIdentity: identity('current', 'shared.json', 'current', null, false),
+      recovered: {
+        id: 'shared',
+        file: 'shared.json',
+        text: '{"id":"shared","tracks":[]}',
+        eol: '\n',
+      },
+      recoveredIdentity: identity('shared', 'shared.json', 'shared'),
+    });
+
+    renderTimelineAutosaveConflictPanel(container as unknown as HTMLElement, [item], {
+      onReplaceCurrent: vi.fn(),
+      onSaveAsNew: vi.fn(),
+      onDiscard: vi.fn(),
+      onDownload: vi.fn(),
+    });
+
+    expect(container.querySelector('[data-conflict-action="replace-current"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-conflict-action="save-as-new"]')?.disabled).toBe(false);
+  });
+
   it('labels a quarantined backup without exposing the machine reason', () => {
     vi.stubGlobal('document', documentStub);
     const container = new FakeElement('div');

@@ -50,6 +50,15 @@ export function inspectTimelineAutosaveIdentity(
   entry: TimelineAutosaveDocument,
 ): TimelineAutosaveIdentity {
   const fileId = timelineIdFromPath(entry.file);
+  const normalizedFile = normalizedRelativeFile(entry.file);
+  let stableIdValid = true;
+  try {
+    timelinePathFor(entry.id);
+  } catch {
+    stableIdValid = false;
+  }
+  const fileValid = normalizedFile === entry.file
+    && !normalizedFile.toLowerCase().startsWith('content/timelines/');
   const parsed = parseTimelineRecord(entry.text);
   const rawDefinitionId = parsed.record?.['id'];
   const definitionId = typeof rawDefinitionId === 'string' && rawDefinitionId.length > 0
@@ -62,6 +71,8 @@ export function inspectTimelineAutosaveIdentity(
     definitionId,
     parseError: parsed.error,
     canonical: parsed.error === null
+      && stableIdValid
+      && fileValid
       && definitionId !== null
       && entry.id === fileId
       && entry.id === definitionId,
