@@ -810,7 +810,7 @@ node packages/cli/e2e/review-terminal-atomicity-gate.e2e.mjs --formal
 
 Expected: all 15 milestones pass, artifact `runHead` equals the environment/HEAD, tracked code diff paths are empty, one terminal winner exists in each race, and all error/cleanup/lease channels are empty. Do not rerun a failed FORMAL without a new explicit recovery authorization.
 
-- [ ] **Step 5: Run workspace full gates**
+- [x] **Step 5: Run workspace full gates**
 
 ```powershell
 npm run test -w @surdet/authoring
@@ -826,7 +826,7 @@ npm run build -w surdet-editor
 
 Run serially to avoid manufacturing capacity timeouts while still preserving default command behavior.
 
-- [ ] **Step 6: Run exactly one aggregate verification**
+- [x] **Step 6: Run exactly one aggregate verification**
 
 ```powershell
 npm run verify:all
@@ -834,7 +834,7 @@ npm run verify:all
 
 If it fails, record the exact first failing node and stop. Do not rerun, change timeouts, or relabel the failure based on focused gates.
 
-- [ ] **Step 7: Verify final scope and documentation**
+- [x] **Step 7: Verify final scope and documentation**
 
 ```powershell
 npm run verify:docs
@@ -847,7 +847,7 @@ git log --oneline --decorate -12
 
 Record final commit identities, test counts, artifact path/bytes/SHA, ahead/behind, tracked/staging state, known gaps, and whether aggregate HEAD matches final code HEAD.
 
-- [ ] **Step 8: Create docs-only closeout**
+- [x] **Step 8: Create docs-only closeout**
 
 Commit only this taskbook after final evidence:
 
@@ -1047,3 +1047,30 @@ PUSH = AUTHORIZED_NOT_PERFORMED
 ```
 
 - Recovery-2 final bounded Luna reviews were read-only and found no HIGH or BLOCKER. They confirmed that file-level serialization does not remove the suite's explicit `Promise.all`, child-process, and lease concurrency contracts; the three-path tracked scope and all recorded evidence identities are exact. The remaining boundary is explicit: the default CLI suite is now a correctness gate, not an ambient machine-pressure benchmark.
+
+### Final reviewed local closure — 2026-09-01
+
+- Final code evidence HEAD is `1fe0abda714fd5f3888ddcc0cd4628a15dbbc90c`, parent `31042cb61f77dcdb20eed96a9f6ece9e9207aaf0`, commit `test(cli): bound workspace file parallelism`. Its exact three-path scope is this taskbook, `packages/cli/package.json`, and `scripts/test/verify-all.test.mjs`; no production source or timeout changed.
+- The fresh single FORMAL at that HEAD passed 15/15 without rerun. Evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-review-terminal-atomicity-u9S0Ug\formal\evidence.json`, 55845 bytes, SHA-256 `44610BA5C67B47164AD5139A31DCCF960490562AE3E70702D0DF4E772126B8D4`; identity sidecar 101 bytes, SHA-256 `1B7A86273A1D04D3FD5F59BCB093F828E9E695A258C59295941C31AEAC99F365`. `runHead===CODE_EVIDENCE_HEAD`, Runner SHA-256 is `6B9568D045BFEA51EC714D57BEF28E7AAD81B24936B6221BEF8D0295A7D23097`, all 15 milestones passed, the two expected native 409 messages had exact proofs, every blocking/error/cleanup/lease channel was empty, and project/Starter mutation were false.
+- Frozen-HEAD workspace full gates passed: Authoring 31/31 files and 266/266 tests; CLI 39/39 files and 319/319 tests; Editor 57/57 files and 469/469 tests. Authoring, CLI, and Editor typechecks and builds passed. Editor build emitted only the existing chunk-size advisory.
+- The single aggregate `npm run verify:all` ran once and passed. Preserved log: `C:\Users\Equinox\AppData\Local\Temp\surdet-review-terminal-atomicity-verify-all-f9be448a753742da945d8b07e8002e7c\verify-all.log`, 72524 bytes, SHA-256 `353C14A84C22A3F48BB9151D16B72DD189D6C7346C25564A31732F249C1B729B`. Starter simulation explored 259 paths, covered 23/23 choice branches, performed 367 save/load round trips, reached all three endings, and reported zero runtime errors. Existing content warnings and bundle-size advisories remain non-blocking and are not relabelled as fixes.
+- Final documentation and hygiene gates passed: `verify:docs` exit `0`; tracked hygiene passed for 845 paths; both diff checks exited `0`. Before this docs-only closeout, the tracked worktree and staging were empty; pre-existing protected and unrelated untracked paths, the long-term ledger, and historical CLI artifacts remained unstaged.
+- The original failed FORMAL and original default-parallel CLI failure remain preserved as failed historical facts. The later strict response proof, serialized CLI correctness gate, two fresh passing FORMAL artifacts, replacement/full workspace gates, and aggregate verification are additive recovery evidence; they do not overwrite the failures.
+- Final bounded Luna reviews found no HIGH or BLOCKER in the response-proof recovery or CLI capacity policy. Remote Ubuntu CI, deployment, owner manual real-concurrency acceptance, Asset Center, Frontend Pass 5, and Wave 7 were not run in this gate.
+
+```text
+REVIEW_TERMINAL_ATOMICITY_LOCAL_REVIEWED_CLOSURE = PASS
+CODE_EVIDENCE_HEAD = 1fe0abda714fd5f3888ddcc0cd4628a15dbbc90c
+FINAL_FORMAL = 15/15 PASSED
+AUTHORING_FULL = 31/31 FILES; 266/266 TESTS PASSED
+CLI_FULL = 39/39 FILES; 319/319 TESTS PASSED
+EDITOR_FULL = 57/57 FILES; 469/469 TESTS PASSED
+VERIFY_ALL = 1/1 PASSED
+VERIFY_DOCS = PASSED
+VERIFY_HYGIENE = PASSED
+PUSH = AUTHORIZED_PENDING_DOCS_CLOSEOUT
+DEPLOYMENT = NOT_PERFORMED
+ASSET_CENTER = NOT_STARTED
+FRONTEND_PASS_5 = NOT_STARTED
+WAVE_7 = NOT_STARTED
+```
