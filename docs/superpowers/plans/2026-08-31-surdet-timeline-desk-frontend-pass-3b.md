@@ -1528,3 +1528,30 @@ REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
 PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
 FRONTEND_PASS_4 = NOT_STARTED
 ```
+
+### 2026-08-31 — Compact-disclosure recovery FORMAL and release closeout
+
+**FROZEN IDENTITY / FORMAL**
+
+- `CODE_EVIDENCE_HEAD`: `d9c0ecdba87bcc70316de2ab998907038191fa57`; parent `ea7a78ddaf8791bf39df95717a2ec533cfd48770`; commit message `fix(editor): persist compact disclosure state`.
+- Exact commit scope: this taskbook, `timeline-panel.ts`, and `timeline-panel.test.ts`. Tracked worktree and staging were empty before FORMAL.
+- The authorized replacement FORMAL was consumed once; exit 0; 29/29 milestones PASS; `runHead === codeEvidenceHead`; `trackedCodeDiffPaths=[]`; no failed node.
+- FORMAL evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-formal-djkQUv\evidence.json`, 158891 bytes, SHA-256 `76FDCAEAB2009EE3EA77DF51E58122225E52BAE6F4239D3C3EDA3D8A8C79C7A0`.
+- Identity sidecar: 571 bytes, SHA-256 `966E6C6EF1FC41C2808C186BBE64CA057747B631B3EC09A17E0DCCBD3017C2E2`.
+- Compact evidence: responsive settle `open/open`; explicit close `closed/closed`; immediate duration edit to 1400ms remained `closed/closed` and model value was 1400ms.
+- Direct-Timeline initial play and replay each emitted a distinct trace generation with `source.op=timeline`. Child interpreter/runtime, one canvas and Preview identity remained intact.
+- All browser error channels were empty; port 4254 released; original Starter unchanged; save and cold reopen passed.
+
+**RELEASE BOUNDARY**
+
+- This post-FORMAL Ledger entry is the only tracked modification before the docs-only closeout commit.
+- The Owner authorized an ordinary push after FORMAL PASS. Before push, fetch and fail closed if remote `surdet/main` has advanced; no merge, rebase, reset, force push or Pass 4 action is authorized.
+
+```text
+W3B_COMPACT_DISCLOSURE_STATE_RECOVERY = PASSED
+CODE_EVIDENCE_HEAD = d9c0ecdba87bcc70316de2ab998907038191fa57
+REPLACEMENT_FORMAL = PASSED_1_OF_1
+FORMAL_MILESTONES = 29_OF_29
+PUSH = AUTHORIZED_PENDING_REMOTE_CHECK
+FRONTEND_PASS_4 = NOT_STARTED
+```
