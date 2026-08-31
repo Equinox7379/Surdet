@@ -231,6 +231,7 @@ Verify `git show --name-only --format='' HEAD` equals the six paths.
 **Files:**
 
 - Create: `packages/editor/src/timeline-history.ts`
+- Modify: `packages/editor/src/state.ts`
 - Modify: `packages/editor/src/panels/timeline-panel.ts`
 - Modify: `packages/editor/src/main.ts`
 - Modify: `packages/editor/src/project-io.ts`
@@ -307,7 +308,7 @@ npm run typecheck -w surdet-editor
 - [ ] **Step 6: Commit Task 2 exactly**
 
 ```powershell
-git add -- packages/editor/src/timeline-history.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/main.ts packages/editor/src/project-io.ts packages/editor/test/timeline-history.test.ts packages/editor/test/timeline-project-bar-projection.test.ts
+git add -- packages/editor/src/timeline-history.ts packages/editor/src/state.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/main.ts packages/editor/src/project-io.ts packages/editor/test/timeline-history.test.ts packages/editor/test/timeline-project-bar-projection.test.ts
 git diff --cached --check
 git commit -m "fix(editor): isolate timeline edit history"
 ```
@@ -319,12 +320,12 @@ git commit -m "fix(editor): isolate timeline edit history"
 **Files:**
 
 - Modify: `packages/editor/src/state.ts`
-- Modify: `packages/editor/src/timeline-history.ts`
+- Read only: `packages/editor/src/timeline-history.ts` (Task 2 already provides single-ID clear)
 - Modify: `packages/editor/src/panels/timeline-panel.ts`
 - Modify: `packages/editor/src/project-io.ts`
 - Modify: `packages/editor/src/autosave.ts`
 - Modify: `packages/editor/src/main.ts`
-- Modify: `packages/editor/test/timeline-history.test.ts`
+- Read only: `packages/editor/test/timeline-history.test.ts` (Task 2 already covers single-ID clear)
 - Modify: `packages/editor/test/project-io.test.ts`
 - Modify: `packages/editor/test/autosave.test.ts`
 
@@ -387,7 +388,7 @@ Run the RED command plus `test/history.test.ts`; expect all PASS.
 - [ ] **Step 7: Commit Task 3 exactly**
 
 ```powershell
-git add -- packages/editor/src/state.ts packages/editor/src/timeline-history.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/project-io.ts packages/editor/src/autosave.ts packages/editor/src/main.ts packages/editor/test/timeline-history.test.ts packages/editor/test/project-io.test.ts packages/editor/test/autosave.test.ts
+git add -- packages/editor/src/state.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/project-io.ts packages/editor/src/autosave.ts packages/editor/src/main.ts packages/editor/test/project-io.test.ts packages/editor/test/autosave.test.ts
 git diff --cached --check
 git commit -m "fix(editor): recover destructive timeline edits"
 ```
@@ -401,7 +402,7 @@ git commit -m "fix(editor): recover destructive timeline edits"
 - Modify: `packages/editor/src/timeline-model.ts`
 - Create: `packages/editor/src/timeline-presentation.ts`
 - Modify: `packages/editor/src/panels/timeline-panel.ts`
-- Modify: `packages/editor/src/main.ts`
+- Read only: `packages/editor/src/main.ts` (Task 2 already connected the shared freshness hook)
 - Modify: `packages/editor/test/timeline-model.test.ts`
 - Create: `packages/editor/test/timeline-presentation.test.ts`
 - Create: `packages/editor/test/timeline-panel.test.ts`
@@ -418,11 +419,11 @@ export interface TimelineAssetChoice {
 
 export function timelineAssetChoices(dirAssets: readonly DirAsset[]): TimelineAssetChoice[];
 export function createTrack(kind: TimelineTrackKind): TimelineTrack; // cues: []
-export function createNeutralCue(kind: 'camera' | 'screen' | 'particle', action: string): TimelineCue | null;
 export interface TimelineCueDraft {
   cue: TimelineCue;
   trackPatch?: { target: string };
 }
+export function createNeutralCue(kind: 'camera' | 'screen' | 'particle', action: string): TimelineCueDraft | null;
 export function createResourceCue(
   kind: 'background' | 'portrait' | 'audio',
   action: string,
@@ -475,7 +476,7 @@ scheduleAuthoringIndexRebuild();
 Run the RED command and Editor typecheck, then:
 
 ```powershell
-git add -- packages/editor/src/timeline-model.ts packages/editor/src/timeline-presentation.ts packages/editor/src/panels/timeline-panel.ts packages/editor/src/main.ts packages/editor/test/timeline-model.test.ts packages/editor/test/timeline-presentation.test.ts packages/editor/test/timeline-panel.test.ts
+git add -- packages/editor/src/timeline-model.ts packages/editor/src/timeline-presentation.ts packages/editor/src/panels/timeline-panel.ts packages/editor/test/timeline-model.test.ts packages/editor/test/timeline-presentation.test.ts packages/editor/test/timeline-panel.test.ts
 git diff --cached --check
 git commit -m "fix(editor): use project assets in timeline edits"
 ```
@@ -769,10 +770,10 @@ node packages/editor/e2e/editorial-timeline-desk-wave-3b.e2e.mjs --mode diagnost
 
 - [ ] **Step 8: Freeze the final code evidence exactly**
 
-After DIAGNOSTIC PASS, append all pre-FORMAL facts to this taskbook, then stage exactly the runner, runner contract and this taskbook. No other tracked path may remain modified.
+After DIAGNOSTIC PASS, append all pre-FORMAL facts to this taskbook, then stage exactly the runner, runner contract, this taskbook and the already-reviewed design-spec interface correction. No other tracked path may remain modified.
 
 ```powershell
-git add -- packages/editor/e2e/editorial-timeline-desk-wave-3b.e2e.mjs packages/editor/test/editorial-timeline-desk-wave-3b-runner.test.mjs docs/superpowers/plans/2026-08-31-surdet-timeline-desk-frontend-pass-3b.md
+git add -- packages/editor/e2e/editorial-timeline-desk-wave-3b.e2e.mjs packages/editor/test/editorial-timeline-desk-wave-3b-runner.test.mjs docs/superpowers/plans/2026-08-31-surdet-timeline-desk-frontend-pass-3b.md docs/superpowers/specs/2026-08-31-surdet-timeline-desk-frontend-pass-3b-design.md
 git diff --cached --check
 git commit -m "test(editor): verify timeline desk workflow"
 git status --short
@@ -846,6 +847,108 @@ FRONTEND_PASS_4 = NOT_STARTED
 MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
 ```
 
+### 2026-08-31 — Authoritative continuation closeout: DIAGNOSTIC budget exhausted
+
+This append-only entry is the chronological successor to the pre-existing safe-restart checkpoint above. The earlier continuation and DIAGNOSTIC #1 sections were inserted before that checkpoint during editing; their facts remain valid, while this entry is the authoritative current stop state.
+
+**CONFIRMED_FACTS**
+
+- Production correction HEAD remains `b6299894d3f991107152014d2bd4ff9af6b0991b`. No production code changed after that exact commit.
+- DIAGNOSTIC attempt 2/2 ran once with runner SHA-256 `C400282F2A7F75C23610967446CC65723D4B0C1F9D091DC2D7AD404234C2FA42` and `trackedCodeDiffPaths=[]`. It failed and was not rerun.
+- Artifact: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-diagnostic-As6aOX\evidence.json`, 150908 bytes, SHA-256 `2FD4403A1B6E40AB8B8D1B791BBB17E9FFB176526B1058118B6C746810B6A9C7`. Identity sidecar: 583 bytes, SHA-256 `B770509FE56690497204D3778D80B23A22B259E8BD1DAB6472ED4F79D71FEE85`.
+- Twenty-eight of twenty-nine required milestones passed. Last passed node in sequence: `original-starter-unchanged`. First failed node: `browser-error-channels-empty`.
+- Freshly passed real-browser facts include: project picker open; one Timeline Desk truth; Chinese/stable enum projection; shared selection; timeline-only dirty state; isolated history; destructive cancel/restore; preview handoff; layouts at 1440/1280/1024/800/720; 200% page-scale command reachability; exact single-timeline save; CRLF preservation; fake-tree dump; real first-context close; fresh second-context injection; cold-reopen value survival; reopened project clean; original Starter unchanged; isolated process cleanup.
+- The sole failure is six request-failure records, all `net::ERR_ABORTED`, for Preview/Vite/Core/Renderer module URLs. Console errors, page errors, Vite stderr, child cleanup failures and active port residue are empty. The evidence does not prove whether these are expected navigation/iframe cancellation or a product request failure, so they are not waived.
+- Saved fake tree changed exactly `content/timelines/intro_arrival.json`. Cold reopen preserved `durationMs=1375`, `eol=CRLF` and timeline SHA-256 `55A2C77D83A25A7E35833A7F927E61E678E35C137CB9574D032DB4ADDEE6C5AC`.
+- Strict port 4251 is no longer listening; `portReleased=true`; original Starter remains unchanged.
+- Staging remains empty. Runner, runner contract, taskbook and design spec are not frozen. No FORMAL was run, no push occurred and no later frontend/mainline wave started.
+
+**STOP / REQUIRED DECISION**
+
+```text
+FRONTEND_PASS_3B = NOT_CLOSED
+PREFLIGHT = PASSED_1_OF_1 / NOT_RERUN
+DIAGNOSTIC_ATTEMPT_1 = FAILED / ARTIFACT_PRESERVED
+DIAGNOSTIC_ATTEMPT_2 = FAILED / ARTIFACT_PRESERVED
+DIAGNOSTIC_BUDGET = EXHAUSTED_2_OF_2
+FIRST_FAILED_NODE = browser-error-channels-empty
+CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+FORMAL = NOT_RUN
+STAGING = EMPTY
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
+WAITING_FOR_NEW_MANAGER_AUTHORIZATION = YES
+```
+
+- A new authorization must define whether to prove and narrowly classify intentional navigation/iframe `ERR_ABORTED` requests or to treat them as product failures. It must grant a new diagnostic budget; the consumed 2/2 budget cannot be reused.
+
+### 2026-08-31 — Restart continuation, independent-review closure and correction commit
+
+**CONFIRMED_FACTS**
+
+- The restart checkpoint was resumed without rerunning the already-consumed preflight. Staging was empty and the recorded HEAD/status matched the checkpoint before edits continued.
+- The stale position assertion was corrected. A pure `projectTimelineCueGeometry()` contract now keeps a 0ms cue at the exact timeline end right-anchored inside the lane, including a zero-duration timeline case.
+- The runner now reads custom portrait position as three separate facts: stable mode `custom`, Chinese label `自定义横坐标`, and numeric value `3000`; it no longer expects the mode select itself to contain `3000`.
+- Independent review first returned FAIL with actionable autosave, disclosure, custom-position, focus, history-selection and FORMAL-runner-identity findings. Every finding was corrected and re-reviewed rather than waived.
+- Autosave now uses a persistent `FileSystemDirectoryHandle` registry plus `isSameEntry()` as its only physical project-identity authority. If IndexedDB, handle cloning or identity comparison cannot prove that identity, project autosave fails closed, displays a Chinese warning and performs no recovery/write/delete. It never guesses by directory name or project content, and the legacy unscoped slot is neither read nor deleted.
+- Timeline history snapshots now carry the one shared cue selection. Cue creation/deletion, track replacement/deletion, Undo and Redo restore the exact valid selection and keyboard focus expected by the design contract.
+- Responsive disclosure preferences record only user toggles, not wide-layout forced visibility. Custom position `0` commits immediately; deleting the last removable track restores focus to the surviving track command.
+- FORMAL is now fail-closed on runner identity: the runner must be Git-tracked, `git show HEAD:<runner>` must exist, and its raw blob SHA-256 must equal the executing runner SHA-256. `runnerHeadIdentity` is written into evidence.
+- Updated browser evidence additionally covers cue-delete Undo selection/focus, last-track deletion focus and compact disclosure preference after a wide-layout round trip.
+- Final focused gate on the correction commit: 6 files / 64 tests PASS. Final complete Editor gate: 50 files / 367 tests PASS. Editor typecheck PASS. Editor build PASS with 906 modules; the existing Preview chunk-size warning remains non-blocking and unchanged in kind.
+- Two independent read-only reviews returned PASS after the final fixes: production/state persistence PASS; runner and FORMAL identity PASS.
+- Exact correction commit: `b6299894d3f991107152014d2bd4ff9af6b0991b` (`fix(editor): preserve timeline workspace state`), parent `9c5f699c116ae34a456f2351632052f4860d0d58`. Its 13 paths are exactly the reviewed Editor production/test correction set; no taskbook, design spec, runner or unrelated path entered it.
+- Current runner identity: 76600 bytes / SHA-256 `8AA489D60B0E42BA40000B143D9FF45E036FD15973FAA0CBC36FAC7B7CCC9746`. Runner contract: 7688 bytes / SHA-256 `F884F852FA3CFB7C6A5C46E149D3A7A1AD20E7E99AA6DAC40DC6FDE517C8E9F9`. Static runner contract 9/9 PASS and `node --check` PASS.
+
+**EVIDENCE BOUNDARY**
+
+- The earlier preflight remains a valid launcher/port/fixture preflight for this task but predates the final runner bytes. It is not represented as a browser workflow PASS. Per the taskbook budget, it was not rerun.
+- No DIAGNOSTIC or FORMAL has run. The design spec, taskbook and both runner files remain outside the correction commit for the exact final evidence freeze sequence.
+
+**NEXT**
+
+1. Run at most the first remaining DIAGNOSTIC against committed production code and the updated untracked runner.
+2. If DIAGNOSTIC passes, append its artifact identity, freeze runner + contract + taskbook + design spec in one exact commit, establish `CODE_EVIDENCE_HEAD`, and run the sole FORMAL.
+3. If the first DIAGNOSTIC fails, preserve the artifact and use at most the second authorized DIAGNOSTIC only after a bounded in-scope repair.
+
+```text
+REVIEW_CORRECTION_COMMIT = b6299894d3f991107152014d2bd4ff9af6b0991b
+INDEPENDENT_PRODUCTION_REVIEW = PASS
+INDEPENDENT_RUNNER_REVIEW = PASS
+PREFLIGHT = PASSED_1_OF_1 / NOT_RERUN
+DIAGNOSTIC = NOT_RUN_0_OF_2
+CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+FORMAL = NOT_RUN
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
+```
+
+### 2026-08-31 — DIAGNOSTIC #1 failed on runner selector scope
+
+**CONFIRMED_FACTS**
+
+- DIAGNOSTIC attempt 1/2 ran once from production HEAD `b6299894d3f991107152014d2bd4ff9af6b0991b` and failed; it was not rerun. Runner SHA-256 at execution was `8AA489D60B0E42BA40000B143D9FF45E036FD15973FAA0CBC36FAC7B7CCC9746` and `trackedCodeDiffPaths=[]`.
+- Artifact: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-diagnostic-G1mt8D\evidence.json`, 70362 bytes, SHA-256 `D9D3E5774D3E2551340246858F4135FAE5C5FBD34B1D2D8DE25AE79DE7FB4238`. Identity sidecar: 582 bytes, SHA-256 `ED6AD87BFEB96E3520D5974E2CD5BD8943C1D63D0A77AE5939E3DF1B5A4C4A20`.
+- Last passed node: `layout-720`. First failed node: `page-scale-command-reachability`. Nineteen of twenty-nine milestones passed before failure.
+- Direct failure: `inspectPageScaleControl()` referenced outer `selector` inside `locator.evaluate()` without passing it into the browser callback, producing `ReferenceError: selector is not defined`.
+- The five `ERR_ABORTED` request-failure observations were emitted during failure cleanup after the primary runner exception; they are retained in the artifact and are not rewritten as independent product failures.
+- Strict port 4251 was released, child cleanup failures were empty, and the original Starter tree remained unchanged.
+- Permanent runner contract RED added one exact outer-selector binding assertion: 9 PASS / 1 expected FAIL. Minimal runner fix passes `selector` as the second `locator.evaluate()` argument and records it as `evaluatedSelector`.
+- Replacement static GREEN: runner contract 10/10 PASS; `node --check` PASS; both diff checks PASS. Updated runner identity: 76648 bytes / SHA-256 `C400282F2A7F75C23610967446CC65723D4B0C1F9D091DC2D7AD404234C2FA42`. Updated contract identity: 7935 bytes / SHA-256 `05314053271B6CC48805E8C1AA6C77287E6F7B5CA2FEE20E79813C4B9B5F61F3`.
+
+**BUDGET / NEXT**
+
+```text
+PREFLIGHT = PASSED_1_OF_1 / NOT_RERUN
+DIAGNOSTIC_ATTEMPT_1 = FAILED / ARTIFACT_PRESERVED
+DIAGNOSTIC_REMAINING = 1
+FORMAL = NOT_RUN
+```
+
+- The bounded repair is runner/test-only and does not alter production code or invalidate the fresh Editor gates. Use the one remaining DIAGNOSTIC once. Any failure stops before freeze/FORMAL.
+
 Do not begin Configuration Ledger, mainline Wave 7, push, deploy, package or release.
 
 ---
@@ -913,3 +1016,236 @@ Focused unit tests may run as needed for RED→GREEN. Complete Editor tests/type
 **STOP_BOUNDARY**
 
 - Planning is complete. Wait for explicit Owner authorization before Task 0 or any production edit. Push of this planning commit is not authorized. Mainline Wave 7 remains undesigned, unauthorized and unstarted.
+
+### 2026-08-31 — Task 0 implementation baseline
+
+**CONFIRMED_FACTS**
+
+- Owner explicitly authorized Frontend Pass 3B implementation with `开工`.
+- `PLANNING_HEAD=ca11a09df96a1daceae8c6847273499571943555`; first parent and current `surdet/main` are `42be0fcd2f614f032b8a539475c039c7f4ebd66f`; ahead/behind=`1/0`.
+- Branch is `main`. Before this Ledger append, tracked worktree and staging were clean; `git diff --check` and `git diff --cached --check` exited 0.
+- Existing protected/untracked files remain present and out of scope, including the long-term roadmap ledger, handoffs, protected art-direction documents and historical CLI artifacts.
+- Serena TypeScript indexing is active. The approved design/taskbook and exact current Timeline/state/IO/autosave symbols were re-read before production edits.
+
+**DECISIONS**
+
+- Execute correctness before visual migration. Pure history, presentation and autosave modules may be implemented in parallel with disjoint file ownership; the primary agent owns state, IO, panel, main integration and final verification.
+- No push, mainline Wave 7, Frontend Pass 4, backend/runtime/schema change or forbidden-port action is authorized.
+
+**NEXT**
+
+- Begin Task 1 EOL-aware Timeline document identity and its permanent RED→GREEN evidence.
+
+### 2026-08-31 — Task 1 EOL-aware Timeline identity
+
+**CONFIRMED_FACTS**
+
+- Permanent RED ran once: `timeline-model.test.ts` and `project-io.test.ts` reported 2 expected failures because the serializer ignored CRLF and loaded entries had no EOL identity; 13 existing tests passed.
+- Minimum GREEN adds required `TimelineEntry.eol`, detects loaded timeline CRLF/LF, defaults new/demo timelines to LF and serializes panel edits/resets with the entry's original convention.
+- Fresh focused GREEN: 2 files / 15 tests PASS. Fresh Editor typecheck PASS after the disjoint autosave module exposed and the primary agent connected its new build signature.
+- Exact six-path commit: `b6c04b8` — `fix(editor): preserve timeline document identity`. Commit scope equals the Task 1 whitelist; no taskbook, subagent-owned module or unrelated file entered it.
+
+**NEXT**
+
+- Begin Task 2 independent Timeline history, shared cue selection and Timeline-specific undo/redo routing.
+
+### 2026-08-31 — Task 2 independent Timeline history
+
+**CONFIRMED_FACTS**
+
+- Pure history-module RED failed because the module did not exist; GREEN covers per-ID isolation, exact text, redo, redo-branch clearing, single-ID clear and full clear: 5/5 PASS. Adjacent generic history total: 20/20 PASS.
+- Integration RED then produced 2 precise failures: cue selection remained module-local and `main.ts` had no Timeline-specific undo/redo branch.
+- GREEN moves cue selection to `state.currentTimelineCue`, records one previous-text snapshot per completed edit, keeps the history module free of panel/main imports, routes Timeline undo/redo separately and clears histories/selection on project switch.
+- Timeline edit routing now schedules shared validation and Authoring-index refresh once. The parallel autosave module's required four-argument `buildAutosave` call was connected in `main.ts` during this task solely to keep every intermediate commit type-correct; actual timeline recovery remains Task 3.
+- Fresh focused GREEN: 4 files / 53 tests PASS. Fresh Editor typecheck PASS.
+- Exact seven-path commit: `ab2adb8` — `fix(editor): isolate timeline edit history`.
+
+**NEXT**
+
+- Begin Task 3 multi-item deletion recovery and additive Timeline crash backup integration.
+
+### 2026-08-31 — Task 3 deletion and crash recovery
+
+**CONFIRMED_FACTS**
+
+- Autosave permanent RED produced 6 expected failures before Timeline payload support; its pure GREEN is 10/10 PASS and keeps legacy scenes-only payloads readable.
+- Integration RED retained 26 existing passes and exposed exactly two missing seams: successful physical deletion did not clear the tombstone/history, and the state integration for Timeline autosave recovery did not exist.
+- GREEN adds independent multi-item tombstones, cancels pending physical deletion on restore, reserves pending IDs, clears only the successfully deleted ID's history, commits unsaved deletions at Save All, and restores both disk-backed and never-saved Timeline entries with exact EOL.
+- Track type/action replacement now asks before clearing payload, cue/reset/delete actions publish an undo receipt, and every confirmed mutation remains history-backed.
+- Fresh focused GREEN: 4 files / 43 tests PASS. Fresh Editor typecheck PASS. The Task 2 history module already supplied single-ID clear, so Task 3 required no duplicate modification to that module/test.
+- Exact seven-path commit: `c5acbf3` — `fix(editor): recover destructive timeline edits`.
+
+**NEXT**
+
+- Begin Task 4 neutral project-asset cue creation and evidence-freshness integration.
+
+### 2026-08-31 — Task 4 neutral project assets
+
+**CONFIRMED_FACTS**
+
+- Pure presentation RED failed because the module did not exist; its GREEN covers 6 track labels, all 17 current Core actions, 4 easing labels, natural ticks and real-project bg/portrait/bgm/se/voice choices: 13/13 PASS.
+- Model RED produced 4 expected failures because tracks still injected Starter assets and neutral/resource constructors did not exist.
+- GREEN makes every new track empty, removes `castle_hall`, `lynn:uniform` and `tense_01` from production Timeline creation, rejects unsupported/mismatched choices and atomically applies portrait `track.target` with cue expression.
+- The panel stages action plus actual project asset before writing a resource cue. Empty inventories write nothing and show a specific direction. Resource replacement uses the same constructor; no arbitrary background/portrait/audio key field remains.
+- Fresh focused GREEN: 3 files / 24 tests PASS. Fresh Editor typecheck PASS. Shared validation/index freshness had already been connected by Task 2 and was not duplicated.
+- Exact six-path commit: `f26204c` — `fix(editor): use project assets in timeline edits`.
+
+**NEXT**
+
+- Preserve the single full-page Timeline surface boundary, then complete natural ruler/Chinese projection integration and the full Timeline Desk migration.
+
+### 2026-08-31 — Task 5 Dock deferral boundary
+
+**CONFIRMED_FACTS**
+
+- Existing permanent contracts already prove screenplay mode does not mount `.timeline-shell` or call `renderTimelinePanel`, while Timeline mode retains the one full-page surface and Project Bar timeline identity.
+- Fresh boundary run: 2 files / 10 tests PASS.
+- No assertion gap was found, so Task 5 is `NO_CHANGE_REQUIRED`; no speculative scene-association module and no empty commit were created.
+
+**NEXT**
+
+- Begin Task 6 integration of the natural ruler and Chinese presentation values into the real panel.
+
+### 2026-08-31 — Task 6 natural ruler and Chinese projection
+
+**CONFIRMED_FACTS**
+
+- Panel-integration RED kept 16 projection tests green and failed the one required contract because the real panel still used the fixed 500ms ruler and raw enum copy.
+- GREEN now renders the `1/2/5 × 10ⁿ` projection, preserves raw option values, shows Chinese track/action/easing names and removes visible `cue`/`screen` wording from the primary Timeline controls.
+- Fresh focused GREEN: 2 files / 17 tests PASS. Fresh Editor typecheck PASS.
+- Presentation logic/tests were already committed in Task 4; the exact Task 6 delta is two paths. Commit: `0baae78` — `feat(editor): project timeline language and scale`.
+
+**NEXT**
+
+- Begin Task 7 full-page Timeline Desk DOM/CSS and responsive interaction migration.
+
+### 2026-08-31 — Task 7 full Timeline Desk migration
+
+**CONFIRMED_FACTS**
+
+- Workspace RED produced 5 expected failures: missing dedicated stylesheet/semantic regions/responsive contracts and missing pointer capture/cancel.
+- GREEN replaces the legacy Timeline block with one dedicated stylesheet and a single full-page production desk: collapsible演出片段库, current-performance header, normal-flow toolbar, natural ruler/tracks, and collapsible片段设置.
+- Selection is a complete neutral surface; no colored left rail, gradients, rainbow tracks or floating primary action remains. Raw file/enum facts are collapsed under 技术信息.
+- Pointer move/resize uses capture plus `pointercancel` cleanup; Inspector numeric fields remain keyboard alternatives and focus identities survive synchronous rerender.
+- Fresh focused GREEN: 4 files / 18 tests PASS. Fresh Editor typecheck and production build PASS (906 modules); the existing preview chunk-size advisory remains unchanged in status.
+- Live browser self-review on the local Surdet 4175 service confirmed the wide desk, selected-cue Inspector and an 800px responsive layout. At 800px the library/Inspector become native disclosures and the timeline remains horizontally reachable. This is implementation self-review, not Owner visual acceptance.
+- Exact six-path commit: `9c5f699` — `feat(editor): rebuild timeline desk`. `preview-scenes.test.ts` required no edit and therefore did not enter the commit.
+
+**NEXT**
+
+- Run Task 8 complete Editor preliminary gates, then build the isolated 3B browser evidence runner.
+
+### 2026-08-31 — Task 8 complete Editor preliminary gate
+
+**CONFIRMED_FACTS**
+
+- Complete Editor tests: 49 files / 353 tests PASS.
+- Editor typecheck PASS; production build PASS with 906 transformed modules. The existing `preview` chunk advisory remains informational and no performance threshold changed.
+- `git diff --check` and `git diff --cached --check` PASS.
+- Provisional implementation HEAD is `9c5f699c116ae34a456f2351632052f4860d0d58`. All production/test commits since `PLANNING_HEAD` are within the approved Editor-only path set.
+- Remaining tracked changes are documentation only: this append-only taskbook and the reviewed `createNeutralCue` return-type correction in the design spec. Existing unrelated/protected untracked paths remain untouched.
+
+**STOP/CONTINUE DECISION**
+
+- This is a preliminary implementation gate, not `CODE_EVIDENCE_HEAD`. Continue only to the isolated runner contract, bounded DIAGNOSTIC, exact final freeze and one FORMAL.
+
+### 2026-08-31 — Safe restart checkpoint during independent-review correction
+
+**CONFIRMED_FACTS**
+
+- Owner requested an immediate restart-safe stop before the remaining context budget was exhausted. Work stopped without running DIAGNOSTIC or FORMAL and without staging, committing or pushing the in-flight review corrections.
+- Current committed HEAD remains `9c5f699c116ae34a456f2351632052f4860d0d58` (`feat(editor): rebuild timeline desk`). Staging is empty; `git diff --check` passes; existing protected/unrelated untracked paths remain untouched.
+- Independent code/visual review identified and the working tree already fixes: destructive selection ordering, resize/pointercancel selection, exact portrait expression matching, zero-preserving numeric edits, long-canvas/library/Inspector view state, resize-aware ruler, narrow disclosure state, custom portrait X, track deletion/undo, asset-workspace route, 0ms marker, autosave rejection clearing, same-id/file conflict detection and persistent conflict preservation.
+- Fresh focused run after most corrections had 61 PASS / 1 FAIL. The only failure was a stale source-string assertion in `timeline-panel.test.ts` after the position label map gained `custom`; Editor typecheck and build both passed. This is not a final GREEN because later small corrections still require one new focused run.
+- Runner contract RED was preserved; current runner contract is 9/9 PASS and `node --check` PASS. The one preflight already passed on strict port 4251 and released it. No DIAGNOSTIC was consumed.
+- Runner identity at stop: `editorial-timeline-desk-wave-3b.e2e.mjs` = 72411 bytes / SHA-256 `8ECD1FEFE79AD8627661BD7EDB96AD69319AD413524DD6450BAABA70857567AA`; runner contract = 7195 bytes / SHA-256 `58B7F3C0AEE5EC45CEE99B94646497848EE9D8ABE2DA8C55B20760BA38941165`.
+
+**OPEN ITEMS — RESUME HERE**
+
+1. Correct the stale position-map source assertion.
+2. Clamp an instant cue anchored at the exact timeline end so its point marker remains visible inside the lane; add the exact-end permanent case.
+3. Correct the runner's custom-position evidence shape: `inspector-position` must prove mode=`custom` / label=`自定义横坐标`; numeric `3000` comes from `inspector-position-custom` and the serialized cue. The current runner contract is green but DIAGNOSTIC would fail this stale assertion.
+4. Fresh-run focused tests/typecheck/build, then complete final independent review of these corrections.
+5. Create one exact local commit for the review-correction production/test paths; leave taskbook/spec for final evidence freeze.
+6. Tell the runner worker the production DOM is stable, rerun its updated contract and syntax gate, then consume at most the remaining two DIAGNOSTIC attempts. Do not rerun preflight.
+7. Only after DIAGNOSTIC PASS, stage runner + contract + taskbook + spec, establish `CODE_EVIDENCE_HEAD`, and run the sole FORMAL.
+
+**STOP STATE**
+
+```text
+FRONTEND_PASS_3B_RESTART_CHECKPOINT = SAFE
+STAGING = EMPTY
+REVIEW_CORRECTIONS = IN_FLIGHT_UNCOMMITTED
+RUNNER_FILES = UNTRACKED_AND_PRESERVED
+PREFLIGHT = PASSED_1_OF_1
+DIAGNOSTIC = NOT_RUN_0_OF_2
+CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+FORMAL = NOT_RUN
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
+```
+
+### 2026-08-31 — Execution Ledger chronology correction
+
+- The three entries titled `Authoritative continuation closeout`, `Restart continuation` and `DIAGNOSTIC #1 failed` above were written after this safe-restart checkpoint but inserted before it by a patch anchor. This append-only correction restores the reading order without rewriting their facts.
+- The authoritative current state is the `Authoritative continuation closeout`: production HEAD `b6299894d3f991107152014d2bd4ff9af6b0991b`; DIAGNOSTIC budget exhausted 2/2; second artifact SHA-256 `2FD4403A1B6E40AB8B8D1B791BBB17E9FFB176526B1058118B6C746810B6A9C7`; first failed node `browser-error-channels-empty`; no `CODE_EVIDENCE_HEAD`, FORMAL or push.
+
+### 2026-08-31 — W3B request-abort classification recovery 1
+
+**AUTHORIZATION**
+
+- Owner approved only: classify the six `ERR_ABORTED` requests, establish permanent RED→GREEN, apply a minimal runner repair if they were confirmed as controlled Preview navigation/iframe teardown, and run one replacement DIAGNOSTIC. FORMAL, push and Frontend Pass 4 remained prohibited.
+
+**CONFIRMED ROOT CAUSE / CONTRACT**
+
+- The six failed URLs are exactly the dynamically-created Preview iframe module graph: Vite env, Preview diagnostics/lifecycle/trace helpers, Core and Renderer.
+- The original runner clicked `▶ 预览演出`, waited only for parent `mainTab/previewTimelineId`, then immediately returned to Timeline. `renderMainArea()` synchronously removed the iframe while its module graph was still loading.
+- Permanent RED proved the runner lacked a settle-before-teardown contract: 10 PASS / 1 expected FAIL.
+- Minimal repair installs a source-matched `surdet-preview-ready` listener before clicking Preview; requires the exact `#preview-view iframe.preview-frame[title="剧情预览"]`; waits for pathname `/preview.html`, the ready signal and `networkidle`, all with explicit timeouts; verifies one runtime and one canvas; only then returns to Timeline.
+- No `ERR_ABORTED` filter, allow-list or ignore path exists. `requestfailed` remains fatal. A new HTTP response channel also makes every status `>=400` fatal because Playwright does not report HTTP 404/503 as `requestfailed`.
+- Permanent GREEN: runner contract 11/11 PASS; runner syntax PASS; both diff checks PASS. Two independent read-only reviews accepted the lifecycle classification and repair.
+
+**UNIQUE REPLACEMENT DIAGNOSTIC**
+
+- Status: PASSED. Evidence class: `EDITOR_TIMELINE_DESK_BROWSER_DIAGNOSTIC`. `runHead=b6299894d3f991107152014d2bd4ff9af6b0991b`; `trackedCodeDiffPaths=[]`; 29/29 milestones PASS; `firstFailedNode=null`.
+- Evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-diagnostic-uDeiQx\evidence.json`, 151404 bytes, SHA-256 `69419B5A606F610BF5C7A80AEFE1CD7617A33FED15904A1DDD49A435622DB4E3`.
+- Identity sidecar: 583 bytes, SHA-256 `E6AA3DE593A68A103AE30AFE1699792D9B7F824346AB8E4A32E4A0829D9CF645`.
+- Runner: 79369 bytes, SHA-256 `66C57F051F858659D463F93F0DEC6BFAD384CE69648228CC60D5A79E13FCBF21`. Contract: 9333 bytes, SHA-256 `BA00DDB3518D32429118CC7587B2D012F0FA0BE7BAB375B8A9776E6DBD539D0A`.
+- Preview evidence: URL `/preview.html`; `readyState=complete`; `runtimeReady=true`; `canvasCount=1`; `readySignal=true`.
+- `errors=[]`, `consoleErrors=[]`, `pageErrors=[]`, `requestFailures=[]`, `responseFailures=[]`, `stderrLines=[]`, `childCleanupFailures=[]`.
+- Strict port 4251 was released and is not listening. Original Starter unchanged. Saved/cold-reopened CRLF Timeline evidence remains intact.
+
+**AUTHORIZED STOP**
+
+```text
+W3B_REQUEST_ABORT_CLASSIFICATION_RECOVERY_1 = PASSED
+REPLACEMENT_DIAGNOSTIC = PASSED_1_OF_1
+DIAGNOSTIC_MILESTONES = 29_OF_29
+RUNNER_CONTRACT = PASSED_11_OF_11
+CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+FORMAL = NOT_RUN
+STAGING = EMPTY
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+WAITING_FOR_FREEZE_AND_FORMAL_AUTHORIZATION = YES
+```
+
+### 2026-08-31 — W3B evidence freeze and FORMAL authorization
+
+- Owner authorized exactly one freeze commit containing this taskbook, the reviewed design spec, the browser runner and its permanent contract, followed by one FORMAL. Push and Frontend Pass 4 remain prohibited.
+- Pre-freeze HEAD: `b6299894d3f991107152014d2bd4ff9af6b0991b`.
+- Exact freeze set:
+  - `packages/editor/e2e/editorial-timeline-desk-wave-3b.e2e.mjs`
+  - `packages/editor/test/editorial-timeline-desk-wave-3b-runner.test.mjs`
+  - `docs/superpowers/plans/2026-08-31-surdet-timeline-desk-frontend-pass-3b.md`
+  - `docs/superpowers/specs/2026-08-31-surdet-timeline-desk-frontend-pass-3b-design.md`
+- Fresh pre-freeze gates: runner contract 11/11 PASS; runner syntax PASS; `verify:docs` PASS; worktree diff check PASS; staged diff check PASS.
+
+```text
+FREEZE_COMMIT = PENDING
+CODE_EVIDENCE_HEAD = PENDING
+FORMAL_BUDGET = 1_OF_1 UNCONSUMED
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+```
