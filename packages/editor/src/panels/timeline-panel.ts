@@ -887,6 +887,9 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   });
   const summary = document.createElement('summary');
   summary.textContent = '片段设置';
+  summary.addEventListener('click', () => {
+    view.inspectorOpen = !inspector.open;
+  });
   inspector.appendChild(summary);
   const inspectorBody = h('div', 'timeline-inspector-body');
   inspectorBody.append(h('div', 'timeline-section-kicker', '片段设置'));
@@ -919,6 +922,9 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
   });
   const librarySummary = document.createElement('summary');
   librarySummary.textContent = '演出片段库';
+  librarySummary.addEventListener('click', () => {
+    if (view) view.libraryOpen = !library.open;
+  });
   library.appendChild(librarySummary);
   const libraryBody = h('div', 'timeline-library-body');
   renderTimelineList(libraryBody);
