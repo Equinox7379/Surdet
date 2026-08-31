@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run --passWithNoTests --exclude \"e2e/artifacts/**\"",
+    "test": "vitest run --passWithNoTests --exclude \"e2e/artifacts/**\" --no-file-parallelism --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
