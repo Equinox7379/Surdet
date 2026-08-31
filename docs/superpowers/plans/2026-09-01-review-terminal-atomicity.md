@@ -995,3 +995,55 @@ ASSET_CENTER = NOT_STARTED
 FRONTEND_PASS_5 = NOT_STARTED
 WAVE_7 = NOT_STARTED
 ```
+
+### REVIEW-TERMINAL-ATOMICITY-CLI-FULL-CAPACITY-RECOVERY-2
+
+- Replacement FORMAL ran exactly once at `CODE_EVIDENCE_HEAD=31042cb61f77dcdb20eed96a9f6ece9e9207aaf0` and passed 15/15. Evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-review-terminal-atomicity-1liM5V\formal\evidence.json`, 55857 bytes, SHA-256 `10978C4F66F946E443E02800E992E10D94B1BE698CBCB164B826AD039088FB69`; identity sidecar 101 bytes, SHA-256 `A1C73688D7C0E9B66E745CEFDA6B72DC41FDA01E34F10A534B030360D78E56D7`. `runHead===CODE_EVIDENCE_HEAD`, Runner SHA-256 is `6B9568D045BFEA51EC714D57BEF28E7AAD81B24936B6221BEF8D0295A7D23097`, all issue/cleanup/lease channels are empty, two expected native 409 console events are classified with zero blocking console events, and project/Starter mutation are false.
+- Post-FORMAL Authoring full gate passed 31/31 files and 266/266 tests. The default CLI full gate then failed: 25/39 files and 303/319 tests passed; 14 files and 16 tests failed. Thirteen failures were the existing 5-second or 15-second per-test timeout under default file parallelism. The three remaining observations were `LEASE_CORRUPT` during an in-process review lease race, one missing orphan record, and one missing change lookup; because they occurred alongside timeouts and timed-out async work, their independence from timeout cleanup is not yet proved.
+- Failure discipline: the CLI result remains failed. Editor full tests, workspace typechecks/builds, the single `verify:all`, closeout, and push did not run after this failure. The default CLI command did not persist a standalone log artifact, so its full console summary and counts are recorded here without inventing a path or hash.
+- Owner continuation authority permits a bounded recovery rather than a routine approval stop. Recovery-2 first allows one read-only, strictly serial CLI diagnostic (`--no-file-parallelism --maxWorkers=1`) with a fresh preserved log. It must not relax timeouts. If the three non-timeout signatures persist, establish a focused deterministic RED before production repair. If the serial diagnostic is fully green, separately review whether the CLI workspace's I/O-heavy suite needs a bounded default worker policy; do not silently rewrite the failed default-parallel fact.
+
+```text
+REPLACEMENT_FORMAL = 15/15 PASSED
+AUTHORING_FULL = 31/31 FILES; 266/266 TESTS PASSED
+CLI_FULL_DEFAULT = FAILED; 25/39 FILES; 303/319 TESTS PASSED
+CLI_FULL_SERIAL_DIAGNOSTIC = AUTHORIZED 1/1; NOT_RUN
+EDITOR_FULL = NOT_RUN
+WORKSPACE_TYPECHECK_BUILD = NOT_RUN
+VERIFY_ALL = NOT_RUN
+PUSH = AUTHORIZED_NOT_PERFORMED
+ASSET_CENTER = NOT_STARTED
+FRONTEND_PASS_5 = NOT_STARTED
+WAVE_7 = NOT_STARTED
+```
+
+- Recovery-2 serial diagnostic ran exactly once and passed 39/39 files and 319/319 tests without changing any timeout. Preserved log: `C:\Users\Equinox\AppData\Local\Temp\surdet-review-terminal-atomicity-recovery2-8f51777b1aae494e8ed220de8d34150a\cli-full-serial-diagnostic.log`, 15404 bytes, SHA-256 `6ADF6BF0548509E9F252F32493E396F17A07DA6026863DB047039BFAD1EAB051`. The three non-timeout signatures from the default-parallel run did not recur. This supports a capacity/timeout-cleanup classification but does not erase the failed default-parallel result or prove one unique causal mechanism.
+- Manager decision for the separate test-capacity boundary: the CLI suite already contains explicit in-process and cross-process concurrency tests; file-level parallelism adds machine contention but is not the product concurrency oracle. Do not increase timeouts and do not change production code. Freeze the default CLI test command to one file worker using Vitest's supported `--no-file-parallelism --maxWorkers=1` flags.
+- Recovery-2 scope extension is exact: this taskbook, `packages/cli/package.json`, and `scripts/test/verify-all.test.mjs`. First add a permanent policy contract and observe it RED against the current package script; then make the one-line package-script change, run the policy GREEN, and run the default CLI full command exactly once as the replacement full gate. Because the frozen HEAD changes, a later FORMAL must use a fresh HEAD and a newly authorized single run; the prior PASSED FORMAL remains valid only for `31042cb`.
+
+```text
+CLI_FULL_SERIAL_DIAGNOSTIC = 39/39 FILES; 319/319 TESTS PASSED
+CLI_TEST_CAPACITY_CONTRACT = RED_NOT_RUN
+CLI_DEFAULT_CAPACITY_FIX = NOT_IMPLEMENTED
+REPLACEMENT_CLI_FULL = NOT_RUN
+NEW_CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+NEW_FORMAL = NOT_RUN
+VERIFY_ALL = NOT_RUN
+PUSH = AUTHORIZED_NOT_PERFORMED
+```
+
+- CLI capacity contract RED passed 2/3 and failed exactly because the current `@surdet/cli` test script lacked `--no-file-parallelism`; it did not execute the CLI suite or modify product code. The one-line script change added `--no-file-parallelism --maxWorkers=1` without changing any test timeout. The same permanent policy contract then passed 3/3.
+- The replacement default command `npm run test -w @surdet/cli` ran exactly once after the script change and passed 39/39 files and 319/319 tests. Preserved log: `C:\Users\Equinox\AppData\Local\Temp\surdet-review-terminal-atomicity-cli-green-51856ae7b2c64aa5bf514df355b26eeb\cli-full-default-replacement.log`, 15515 bytes, SHA-256 `0052C8D904781BC88B789FF82F7D0C894119E301BA559B767C1FDFC59629E1EE`. The previously observed timeout, missing-record/change, and lease-corrupt signatures did not recur.
+- Recovery-2 changed no production source and preserved the original default-parallel failure as a separate failed fact. Before aggregate verification, freeze the exact three-path recovery (`packages/cli/package.json`, `scripts/test/verify-all.test.mjs`, this taskbook), establish a new code evidence HEAD, and run one fresh FORMAL at that HEAD. Do not reuse the FORMAL from `31042cb` as proof for the changed test policy.
+
+```text
+CLI_TEST_CAPACITY_CONTRACT = RED 2/3; GREEN 3/3
+CLI_DEFAULT_CAPACITY_FIX = ONE_FILE_WORKER; NO_TIMEOUT_CHANGE
+REPLACEMENT_CLI_FULL = 39/39 FILES; 319/319 TESTS PASSED
+NEW_CODE_EVIDENCE_HEAD = NOT_ESTABLISHED
+NEW_FORMAL = AUTHORIZED 1/1; NOT_RUN
+VERIFY_ALL = NOT_RUN
+PUSH = AUTHORIZED_NOT_PERFORMED
+```
+
+- Recovery-2 final bounded Luna reviews were read-only and found no HIGH or BLOCKER. They confirmed that file-level serialization does not remove the suite's explicit `Promise.all`, child-process, and lease concurrency contracts; the three-path tracked scope and all recorded evidence identities are exact. The remaining boundary is explicit: the default CLI suite is now a correctness gate, not an ambient machine-pressure benchmark.

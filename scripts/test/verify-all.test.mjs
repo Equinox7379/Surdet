@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { runVerification, verificationSteps } from '../verify-all.mjs';
+
+const cliPackage = JSON.parse(fs.readFileSync(new URL('../../packages/cli/package.json', import.meta.url), 'utf8'));
 
 test('verify-all has unique step ids and command signatures', () => {
   assert.equal(new Set(verificationSteps.map((step) => step.id)).size, verificationSteps.length);
@@ -23,4 +26,9 @@ test('verify-all always spawns commands with shell false', () => {
   );
   assert.equal(status, 0);
   assert.equal(receivedOptions.shell, false);
+});
+
+test('the I/O-heavy CLI suite uses one file worker', () => {
+  assert.match(cliPackage.scripts.test, /(?:^|\s)--no-file-parallelism(?:\s|$)/);
+  assert.match(cliPackage.scripts.test, /(?:^|\s)--maxWorkers=1(?:\s|$)/);
 });
