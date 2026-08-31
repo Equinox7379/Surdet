@@ -579,12 +579,13 @@ feat(editor): mount local review authority
 - Create: `packages/editor/test/review-terminal-client.test.ts`
 - Modify: `packages/editor/test/review-workspace.test.ts`
 - Modify: `packages/editor/test/review-panel.test.ts`
+- Modify: `packages/editor/test/review-authority-boundary.test.ts`
 
 **Interfaces:**
 - Consumes: injected authority token/endpoint, shared command/snapshot types, existing receipt builders/fingerprints, and review workspace identity.
 - Produces: bounded `ReviewTerminalClient`, authority status in workspace state, read-only fallback, and authority-backed decision/approval/return functions.
 
-- [ ] **Step 1: Write client RED tests**
+- [x] **Step 1: Write client RED tests**
 
 Test exact status/describe/write requests, token header, bounded timeout, strict response parsing, and uncertain-response resolution:
 
@@ -597,7 +598,7 @@ expect(fetchCalls).toHaveLength(1);
 
 For a timeout after server commit, `describe()` returns the persisted exact receipt and the client does not mint a new request ID or receipt.
 
-- [ ] **Step 2: Write workspace and panel RED tests**
+- [x] **Step 2: Write workspace and panel RED tests**
 
 Freeze:
 
@@ -609,7 +610,7 @@ Freeze:
 - no `writeCreateOnly(...decision/final-approval/return-request...)` remains;
 - visible status copy is the approved Chinese text.
 
-- [ ] **Step 3: Run Task 6 RED once**
+- [x] **Step 3: Run Task 6 RED once**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/review-terminal-client.test.ts test/review-workspace.test.ts test/review-panel.test.ts
@@ -617,11 +618,11 @@ npm run test -w surdet-editor -- --run test/review-terminal-client.test.ts test/
 
 Expected: client/status hooks absent and old direct writes violate assertions.
 
-- [ ] **Step 4: Implement strict browser client**
+- [x] **Step 4: Implement strict browser client**
 
 The client reads one injected configuration, sends same-origin relative requests, applies an `AbortController` timeout, and parses only shared snapshots/errors. It exposes no data-root or path option.
 
-- [ ] **Step 5: Replace direct workspace writes**
+- [x] **Step 5: Replace direct workspace writes**
 
 Receipt-building functions keep the existing schema and fingerprint logic, then submit:
 
@@ -642,11 +643,11 @@ const command: ReviewTerminalCommand = {
 
 Delete browser terminal file creation. Update state from returned canonical snapshot only.
 
-- [ ] **Step 6: Implement Chinese authority states in the panel**
+- [x] **Step 6: Implement Chinese authority states in the panel**
 
 Disable actions during checking/submitting or when state is unavailable/mismatch/corrupt/terminal. Do not hide review evidence. Existing technical details may display structured codes only after expansion.
 
-- [ ] **Step 7: Run Task 6 GREEN and full Editor adjacency**
+- [x] **Step 7: Run Task 6 GREEN and full Editor adjacency**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/review-terminal-client.test.ts test/review-workspace.test.ts test/review-panel.test.ts test/review-authority-boundary.test.ts
@@ -656,7 +657,7 @@ npm run build -w surdet-editor
 
 - [ ] **Step 8: Commit Task 6 exactly**
 
-Stage six Task 6 paths plus taskbook and commit:
+Stage seven Task 6 paths plus taskbook and commit:
 
 ```text
 feat(editor): connect local review authority
@@ -910,6 +911,14 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 5 RED: CLI HTTP test could not load the absent handler; Editor boundary had 1/2 pass and failed because Vite had no authority plugin. Browser sources were already free of Node/CLI imports.
 - Task 5 independent audits were read-only. HTTP findings accepted: trusted loopback Origin list derived from the socket rather than request Host, fixed body cap, chunked overflow/timeout, close-on-reject, listener cleanup, safe error-code whitelist, and serialization fallback. Vite findings accepted: preview needs a pre-static `dist/index.html` interceptor because it does not call `transformIndexHtml`; build transform has an explicit no-server guard; Node imports remain tooling-only.
 - Task 5 GREEN: HTTP 13/13, Editor boundary 2/2, CLI and Editor typechecks/builds exited `0`. A real `vite preview` on `127.0.0.1:4185` produced exactly one main-page marker, zero preview-page markers, a fresh 43-character token, and status `{ protocolVersion: '1.0.0', status: 'available' }`; the service was stopped afterward. Fresh static build output contained no authority marker, global config name, or test token.
+- Task 6 RED: the focused Editor command exited `1`. The browser client module was absent, the source boundary still found `writeCreateOnly` beside terminal filenames, and workspace/panel tests proved that authority-unavailable read-only state and disabled controls did not exist. The other collected tests remained green; this RED was not treated as a product-complete result.
+- Task 6 implementation: the browser client accepts only the injected relative endpoint/token contract, applies a bounded abort timeout, parses exact envelopes and shared terminal snapshots, and resolves an uncertain write only through `describe()` of the same immutable review identity. `review-workspace.ts` retains local evidence reading but contains no terminal-file creation path; it reconciles local and canonical receipt identities, treats mismatch/corrupt as readable locked states, and updates success state only from the authority snapshot. Comparison and result actions both use immediate in-flight guards.
+- Task 6 bounded Luna work was disjoint: one worker owned only the new browser client; one worker owned only the workspace fake-authority test migration. The manager integrated and reread both, added canonical-corrupt and result repeated-click coverage, and retained final verification responsibility.
+- Task 6 GREEN: the focused client/workspace/panel/boundary group passed 51/51; the complete Editor suite passed 460/460; Editor typecheck and build exited `0`. The production build emitted only the existing chunk-size advisory. Static source search found terminal filenames only in read paths, with no `writeCreateOnly` or terminal `createWritable()` path.
+- Task 6 pre-commit independent audit was read-only and found three real closure gaps: result retry could mint a new command after an uncertain response, result preview could start while approval was in flight, and the Editor did not verify canonical record bytes/SHA. The permanent recovery RED passed 42/46 and failed exactly those four assertions (three workspace contracts plus preview locking); no unrelated test failed.
+- Task 6 audit GREEN: pending terminal commands now retain the exact request ID, receipt ID, timestamp, fingerprint, and payload until the outcome is known; an opposite terminal action is blocked while that command is unresolved. Result preview/reload/exploration checks are disabled during in-flight or uncertain approval, and approval rechecks fixture identity before submission. Canonical records are serialized using the Node record contract (`JSON.stringify(..., null, 2)` plus LF) and their bytes/SHA are verified before use. The fake authority now uses the same serialization.
+- Task 6 final gates: focused client/workspace/panel/boundary passed 55/55; complete Editor passed 465/465; typecheck and build exited `0`. User-facing terminal errors use fixed Chinese messages and do not surface raw transport text. The boundary test now rejects any browser `createWritable()`, terminal `{ create: true }`, or missing authority write path.
+- Task 6 final manager hardening: an unresolved command is also retained for malformed/unknown transport responses classified unavailable; result preview and terminal writes are mutually exclusive in both directions, including reload and fixture-refresh controls. The final focused set passed 56/56, the final complete Editor suite passed 466/466, and fresh typecheck/build exited `0`; the build retained only the pre-existing chunk-size advisory.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

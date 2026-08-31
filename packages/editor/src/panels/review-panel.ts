@@ -25,6 +25,7 @@ import {
 } from '../review-preview.js';
 import {
   openReviewWorkspace,
+  pendingTerminalActionOf,
   writeApprovalReceipt,
   writeDecisionReceipt,
   writeReturnReceipt,
@@ -33,10 +34,12 @@ import {
 } from '../review-workspace.js';
 import { renderReviewCausalPanel } from './right.js';
 import { renderPreviewPanel } from './preview-panel.js';
+import type { ReviewTerminalClient } from '../review-terminal-client.js';
 
 export interface ReviewPanelOptions {
   now?: () => string;
   onPreview?: (workspace: ReviewWorkspaceState, request: ReviewPreviewRequest) => Promise<void> | void;
+  reviewTerminalClient?: ReviewTerminalClient;
 }
 
 function nowOf(options: ReviewPanelOptions): string {
@@ -189,6 +192,33 @@ interface DecisionSealState {
 
 const decisionSealStates = new WeakMap<ReviewWorkspaceState, DecisionSealState>();
 const decisionWrites = new WeakSet<ReviewWorkspaceState>();
+const resultWrites = new WeakSet<ReviewWorkspaceState>();
+const resultPreviews = new WeakSet<ReviewWorkspaceState>();
+
+function appendAuthorityStatus(container: HTMLElement, workspace: ReviewWorkspaceState): void {
+  if (workspace.authority.state === 'available') return;
+  const status = h('div', `review-authority-status ${workspace.authority.state}`, workspace.authority.message);
+  status.setAttribute('data-review-authority-state', workspace.authority.state);
+  container.appendChild(status);
+}
+
+function terminalErrorMessage(error: unknown): string {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
+  if (code === 'REVIEW_BUSY') return '另一个窗口正在保存这项决定，请稍候刷新。';
+  if (code === 'REVIEW_AUTHORITY_UNAVAILABLE') return '本机审阅服务未连接。请从 Surdet 正常入口重新打开。';
+  if (code === 'REVIEW_TERMINAL_ALREADY_SET') return '其他窗口已经保存了正式回执，界面已按正式结果锁定。';
+  if (code === 'REVIEW_IDENTITY_MISMATCH') return '本机审阅服务与当前审阅任务不一致，请重新打开审阅任务。';
+  if (code === 'REVIEW_DECISION_INVALID' || code === 'INVALID_REQUEST') return '当前决定内容不完整或格式无效，请检查后再保存。';
+  if (code === 'REVIEW_DECISION_STALE' || code === 'REVIEW_APPROVAL_STALE') return '审阅依据已经变化，请重新打开并核对最新结果。';
+  if (code === 'REVIEW_NOT_FOUND') return '本机审阅服务找不到这项任务，请从 Surdet 正常入口重新打开。';
+  if (code === 'REVIEW_FORMAT_UNSUPPORTED' || code === 'CHANGE_STORE_CORRUPT' || code === 'LEASE_CORRUPT') {
+    return '本机审阅数据不完整或已损坏，终态操作已停止。';
+  }
+  if (code === 'REVIEW_RETURNED') return '这项结果已经退回修改，不能再次批准。';
+  return '操作未完成。内容仍可查看，请重新打开审阅任务后再试。';
+}
 
 function decisionContentIdentity(draft: ReviewDecisionDraft): string {
   return JSON.stringify({
@@ -256,7 +286,13 @@ function renderComparisonReview(
 ): void {
   const projection = workspace.projection;
   const decisionSaved = workspace.receiptStatus === 'decision-written';
-  const decisionLockedAtRender = decisionSaved || decisionWrites.has(workspace);
+  const authorityWritable = workspace.authority.state === 'available';
+  const pendingTerminalAction = pendingTerminalActionOf(workspace);
+  const decisionChoiceLocked = decisionSaved
+    || decisionWrites.has(workspace)
+    || pendingTerminalAction !== null
+    || !authorityWritable;
+  const decisionSubmitLocked = decisionSaved || decisionWrites.has(workspace) || !authorityWritable;
   const shell = h('div', 'review-workbench');
   const taskList = h('aside', 'review-task-list');
   taskList.appendChild(h('h2', undefined, '审阅任务'));
@@ -283,6 +319,7 @@ function renderComparisonReview(
 
   const main = h('section', 'review-main');
   main.appendChild(h('h2', undefined, '比较结果'));
+  appendAuthorityStatus(main, workspace);
   main.appendChild(h('div', 'review-evidence-summary', `共 ${projection.task.candidateCount} 个方案，${projection.task.objectCount} 个对象`));
   if (workspace.decisionReceipt !== null) {
     const marker = h('div', 'review-receipt-status', '已读取已保存的决定');
@@ -420,9 +457,9 @@ function renderComparisonReview(
         choice.setAttribute('data-choice-selected', selected ? 'true' : 'false');
         choice.setAttribute('aria-pressed', selected ? 'true' : 'false');
         choice.title = choiceText;
-        choice.disabled = decisionLockedAtRender;
+        choice.disabled = decisionChoiceLocked;
         choice.onclick = () => {
-          if (decisionSaved || decisionWrites.has(workspace) || projection.state === 'RETURNED') return;
+          if (!authorityWritable || decisionSaved || decisionWrites.has(workspace) || pendingTerminalAction !== null || projection.state === 'RETURNED') return;
           setResolution(workspace, conflict, 'choose-unit', option.unitId);
           if (decisionButton) decisionButton.disabled = !canSealDecision(projection, workspace.decisionDraft);
         };
@@ -449,9 +486,9 @@ function renderComparisonReview(
         exclude.setAttribute('data-choice-exclude', conflict.conflictId);
         exclude.setAttribute('data-choice-selected', selected ? 'true' : 'false');
         exclude.setAttribute('aria-pressed', selected ? 'true' : 'false');
-        exclude.disabled = decisionLockedAtRender;
+        exclude.disabled = decisionChoiceLocked;
         exclude.onclick = () => {
-          if (decisionSaved || decisionWrites.has(workspace) || projection.state === 'RETURNED') return;
+          if (!authorityWritable || decisionSaved || decisionWrites.has(workspace) || pendingTerminalAction !== null || projection.state === 'RETURNED') return;
           setResolution(workspace, conflict, 'exclude-all');
           if (decisionButton) decisionButton.disabled = !canSealDecision(projection, workspace.decisionDraft);
         };
@@ -464,9 +501,9 @@ function renderComparisonReview(
         regenerate.setAttribute('data-choice-regenerate', conflict.conflictId);
         regenerate.setAttribute('data-choice-selected', selected ? 'true' : 'false');
         regenerate.setAttribute('aria-pressed', selected ? 'true' : 'false');
-        regenerate.disabled = decisionLockedAtRender;
+        regenerate.disabled = decisionChoiceLocked;
         regenerate.onclick = () => {
-          if (decisionSaved || decisionWrites.has(workspace)) return;
+          if (!authorityWritable || decisionSaved || decisionWrites.has(workspace) || pendingTerminalAction !== null) return;
           setResolution(workspace, conflict, 'regenerate-candidate');
           projection.state = 'RETURNED';
           stateLabel.textContent = labelForReviewState(projection.state);
@@ -485,11 +522,13 @@ function renderComparisonReview(
   decisionButton = appendDecisionButton(
     operations,
     workspace,
-    decisionSaved ? '决定已保存' : decisionLockedAtRender ? '正在保存决定' : '保存我的决定',
+    decisionSaved ? '决定已保存' : decisionWrites.has(workspace)
+      ? '正在保存决定'
+      : pendingTerminalAction === 'comparison-decision' ? '再次确认保存状态' : '保存我的决定',
     'save-decision',
-    decisionLockedAtRender || !canSealDecision(projection, workspace.decisionDraft),
+    decisionSubmitLocked || !canSealDecision(projection, workspace.decisionDraft),
     () => {
-      if (decisionSaved || decisionWrites.has(workspace) || decisionButton === null || decisionButton.disabled) return;
+      if (!authorityWritable || decisionSaved || decisionWrites.has(workspace) || decisionButton === null || decisionButton.disabled) return;
       let seal: DecisionSealState;
       try {
         seal = sealDecisionState(workspace, options);
@@ -505,7 +544,7 @@ function renderComparisonReview(
       decisionWrites.add(workspace);
       for (const control of decisionControls) control.disabled = true;
       decisionButton.disabled = true;
-      void writeDecisionReceipt(workspace, sealedDraft, seal.decidedAt)
+      void writeDecisionReceipt(workspace, sealedDraft, seal.decidedAt, options.reviewTerminalClient)
         .then(() => {
           decisionWrites.delete(workspace);
           try {
@@ -516,9 +555,8 @@ function renderComparisonReview(
           }
         }, (error) => {
           decisionWrites.delete(workspace);
-          for (const control of decisionControls) control.disabled = projection.state === 'RETURNED';
-          decisionButton!.disabled = !canSealDecision(projection, workspace.decisionDraft);
-          setStatus(`保存决定失败：${errorMessage(error)}`, false, 6000);
+          renderReviewPanel(container, workspace, options);
+          setStatus(`保存决定失败：${terminalErrorMessage(error)}`, false, 6000);
         });
     },
   );
@@ -662,6 +700,9 @@ function renderResultReview(
   const projection = workspace.projection;
   const result = projection.finalResult;
   if (result === undefined) throw new Error('integration-result 审阅缺少 finalResult');
+  const pendingTerminalAction = pendingTerminalActionOf(workspace);
+  const resultWriteLocked = resultWrites.has(workspace);
+  const resultPreviewLocked = resultPreviews.has(workspace);
   const shell = h('div', 'review-workbench');
   const taskList = h('aside', 'review-task-list');
   taskList.appendChild(h('h2', undefined, '审阅任务'));
@@ -674,6 +715,7 @@ function renderResultReview(
 
   const main = h('section', 'review-main');
   main.appendChild(h('h2', undefined, '结果检查'));
+  appendAuthorityStatus(main, workspace);
   appendFact(main, '计划指纹', result.planFingerprint);
   appendFact(main, '变更指纹', result.diffFingerprint);
   appendResultPlan(main, projection, result.plan);
@@ -694,17 +736,38 @@ function renderResultReview(
   const previewButton = h('button', 'primary', '预览这个结果') as HTMLButtonElement;
   previewButton.setAttribute('data-action', 'preview-result');
   previewButton.setAttribute('data-action-scope', 'workspace');
+  previewButton.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
   previewButton.onclick = () => {
+    if (resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
+    resultPreviews.add(workspace);
+    previewButton.disabled = true;
+    approve.disabled = true;
+    returned.disabled = true;
+    reload.disabled = true;
+    refresh.disabled = true;
     const request: ReviewPreviewRequest = {};
-    const operation = options.onPreview ? options.onPreview(workspace, request) : openReviewPreview(workspace, request);
+    let operation: Promise<unknown> | void;
+    try {
+      operation = options.onPreview ? options.onPreview(workspace, request) : openReviewPreview(workspace, request);
+    } catch (error) {
+      resultPreviews.delete(workspace);
+      renderReviewPanel(container, workspace, options);
+      setStatus(`预览结果失败：${errorMessage(error)}`, false, 6000);
+      return;
+    }
     void Promise.resolve(operation)
       .then(() => {
+        resultPreviews.delete(workspace);
         const target = document.getElementById('review-view') ?? container;
         renderReviewPanel(target, workspace, options);
         const host = target.querySelector('#review-preview-host');
         if (host) renderPreviewPanel(host as HTMLElement);
       })
-      .catch((error) => setStatus(`预览结果失败：${errorMessage(error)}`, false, 6000));
+      .catch((error) => {
+        resultPreviews.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+        setStatus(`预览结果失败：${errorMessage(error)}`, false, 6000);
+      });
   };
   previewShell.appendChild(previewButton);
   const host = h('div');
@@ -727,37 +790,67 @@ function renderResultReview(
   const operations = h('div', 'review-operations');
   operations.setAttribute('data-editor-region', 'workspace-actions');
   const terminalReceipt = workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned';
+  const authorityWritable = workspace.authority.state === 'available';
   const approve = h('button', 'primary', '批准这个计划') as HTMLButtonElement;
   approve.setAttribute('data-action', 'approve-result');
   approve.setAttribute('data-action-scope', 'workspace');
   approve.disabled = terminalReceipt
+    || !authorityWritable
+    || resultWriteLocked
+    || resultPreviewLocked
+    || pendingTerminalAction === 'result-return'
     || workspace.fixtureChanged
     || !resultEvidenceIsFresh(result);
   approve.onclick = () => {
-    void writeApprovalReceipt(workspace, { approvalId: `approval_${Date.now()}` }, nowOf(options))
+    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalAction === 'result-return' || approve.disabled) return;
+    resultWrites.add(workspace);
+    approve.disabled = true;
+    returned.disabled = true;
+    previewButton.disabled = true;
+    reload.disabled = true;
+    refresh.disabled = true;
+    void writeApprovalReceipt(workspace, { approvalId: `approval_${Date.now()}` }, nowOf(options), options.reviewTerminalClient)
       .then(() => {
+        resultWrites.delete(workspace);
         renderReviewPanel(container, workspace, options);
         setStatus('已批准这个计划', true, 5000);
       })
-      .catch((error) => setStatus(`批准失败：${errorMessage(error)}`, false, 6000));
+      .catch((error) => {
+        resultWrites.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+        setStatus(`批准失败：${terminalErrorMessage(error)}`, false, 6000);
+      });
   };
   operations.appendChild(approve);
   const returned = h('button', 'danger', '退回修改') as HTMLButtonElement;
   returned.setAttribute('data-action', 'return-result');
   returned.setAttribute('data-action-scope', 'workspace');
-  returned.disabled = terminalReceipt;
+  returned.disabled = terminalReceipt || !authorityWritable || resultWriteLocked || resultPreviewLocked || pendingTerminalAction === 'result-approval';
   returned.onclick = () => {
-    void writeReturnReceipt(workspace, { returnId: `return_${Date.now()}`, reasonCategory: 'other' }, nowOf(options))
+    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalAction === 'result-approval' || returned.disabled) return;
+    resultWrites.add(workspace);
+    approve.disabled = true;
+    returned.disabled = true;
+    previewButton.disabled = true;
+    reload.disabled = true;
+    refresh.disabled = true;
+    void writeReturnReceipt(workspace, { returnId: `return_${Date.now()}`, reasonCategory: 'other' }, nowOf(options), options.reviewTerminalClient)
       .then(() => {
+        resultWrites.delete(workspace);
         renderReviewPanel(container, workspace, options);
         setStatus('已退回修改', true, 5000);
       })
-      .catch((error) => setStatus(`退回失败：${errorMessage(error)}`, false, 6000));
+      .catch((error) => {
+        resultWrites.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+        setStatus(`退回失败：${terminalErrorMessage(error)}`, false, 6000);
+      });
   };
   operations.appendChild(returned);
   const reload = h('button', undefined, '重新加载正式结果') as HTMLButtonElement;
   reload.setAttribute('data-action', 'reload-official-result');
   reload.setAttribute('data-action-scope', 'workspace');
+  reload.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
   reload.onclick = () => {
     void restoreOfficialResult(workspace)
       .then(() => {
@@ -773,6 +866,7 @@ function renderResultReview(
   const refresh = h('button', undefined, '检查探索修改') as HTMLButtonElement;
   refresh.setAttribute('data-action', 'refresh-result-tree');
   refresh.setAttribute('data-action-scope', 'workspace');
+  refresh.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
   refresh.onclick = () => {
     void refreshReviewFixtureIdentity(workspace)
       .then(() => renderReviewPanel(container, workspace, options))

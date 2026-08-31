@@ -9,10 +9,17 @@ import {
   type ComparisonDecisionReceipt,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
+  type ReviewTerminalCommand,
+  type ReviewTerminalSnapshot,
   type ReturnRequestReceipt,
   type TextHasher,
 } from '@surdet/authoring';
 import { canSealDecision } from './review-model.js';
+import {
+  createReviewTerminalClient,
+  ReviewAuthorityClientError,
+  type ReviewTerminalClient,
+} from './review-terminal-client.js';
 
 export interface ReviewWorkspaceIdentity {
   reviewVersion: '1.0.0';
@@ -55,6 +62,10 @@ export interface ReviewWorkspaceState {
   decisionReceipt: ComparisonDecisionReceipt | null;
   approvalReceipt: FinalApprovalReceipt | null;
   returnReceipt: ReturnRequestReceipt | null;
+  authority: {
+    state: 'checking' | 'available' | 'submitting' | 'unavailable' | 'mismatch' | 'corrupt' | 'terminal';
+    message: string;
+  };
 }
 
 export interface ApprovalDraft {
@@ -67,18 +78,15 @@ export interface ReturnDraft {
 }
 
 const workspaceHashers = new WeakMap<ReviewWorkspaceState, TextHasher>();
-const resultReceiptWrites = new WeakMap<ReviewWorkspaceState, Promise<unknown>>();
+const workspaceTerminalClients = new WeakMap<ReviewWorkspaceState, ReviewTerminalClient>();
+const terminalWrites = new WeakSet<ReviewWorkspaceState>();
+const pendingTerminalCommands = new WeakMap<ReviewWorkspaceState, ReviewTerminalCommand>();
 
-async function withResultReceiptWrite<T>(workspace: ReviewWorkspaceState, write: () => Promise<T>): Promise<T> {
-  const previous = resultReceiptWrites.get(workspace) ?? Promise.resolve();
-  const operation = previous.catch(() => undefined).then(write);
-  resultReceiptWrites.set(workspace, operation);
-  try {
-    return await operation;
-  } finally {
-    if (resultReceiptWrites.get(workspace) === operation) resultReceiptWrites.delete(workspace);
-  }
-}
+const AUTHORITY_AVAILABLE = '本机审阅服务已连接。';
+const AUTHORITY_UNAVAILABLE = '本机审阅服务未连接。内容仍可查看，但暂时不能批准或退回。请从 Surdet 正常入口重新打开。';
+const AUTHORITY_MISMATCH = '本机审阅服务与当前审阅任务不一致。内容仍可查看，但终态操作已锁定。请从 Surdet 正常入口重新打开。';
+const AUTHORITY_CORRUPT = '本机审阅服务检测到审阅回执损坏。内容仍可查看，但终态操作已锁定。';
+const AUTHORITY_TERMINAL = '本项审阅已有正式回执，内容可查看，终态操作已锁定。';
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -389,41 +397,6 @@ function isNotFoundError(error: unknown): boolean {
   return record(error) && error['name'] === 'NotFoundError';
 }
 
-async function writeCreateOnly<T>(
-  rootHandle: FileSystemDirectoryHandle,
-  name: string,
-  value: T,
-): Promise<T> {
-  const text = `${JSON.stringify(value, null, 2)}\n`;
-  let target: FileSystemFileHandle | null = null;
-  try {
-    target = await rootHandle.getFileHandle(name);
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
-  }
-  if (target !== null) {
-    const existing = await readText(target);
-    if (existing.text !== text) throw identityError(`${name} 已存在不同内容`);
-    try {
-      return JSON.parse(existing.text) as T;
-    } catch {
-      throw identityError(`${name} 不是合法 JSON`);
-    }
-  }
-  target = await rootHandle.getFileHandle(name, { create: true });
-  const raced = await readText(target);
-  if (raced.bytes > 0) {
-    if (raced.text !== text) throw identityError(`${name} 并发创建后内容不一致`);
-    return JSON.parse(raced.text) as T;
-  }
-  const writable = await target.createWritable();
-  await writable.write(text);
-  await writable.close();
-  const written = await readText(target);
-  if (written.text !== text) throw identityError(`${name} 写入回读不一致`);
-  return JSON.parse(written.text) as T;
-}
-
 function reviewDirectoryState(projection: HumanReviewProjection): ReviewDecisionDraft {
   return {
     decisionId: '',
@@ -458,9 +431,242 @@ async function verifiedDecisionReceipt(
   }
 }
 
+function authorityError(code: string, message: string): ReviewAuthorityClientError {
+  return new ReviewAuthorityClientError(code, message);
+}
+
+function describeInput(workspace: ReviewWorkspaceState) {
+  return {
+    projectIdentity: workspace.identity.projectIdentity,
+    reviewId: workspace.identity.reviewId,
+    reviewPayload: {
+      bytes: workspace.identity.payload.bytes,
+      sha256: workspace.identity.payload.sha256,
+    },
+  };
+}
+
+function terminalClientFor(
+  workspace: ReviewWorkspaceState,
+  override?: ReviewTerminalClient,
+): ReviewTerminalClient {
+  const client = override ?? workspaceTerminalClients.get(workspace);
+  if (client === undefined) throw authorityError('REVIEW_AUTHORITY_UNAVAILABLE', AUTHORITY_UNAVAILABLE);
+  return client;
+}
+
+function receiptIdentity(workspace: ReviewWorkspaceState): { action: ReviewTerminalCommand['action']; fingerprint: string } | null {
+  if (workspace.decisionReceipt !== null) {
+    return { action: 'comparison-decision', fingerprint: workspace.decisionReceipt.decisionFingerprint };
+  }
+  if (workspace.approvalReceipt !== null) {
+    return { action: 'result-approval', fingerprint: workspace.approvalReceipt.approvalFingerprint };
+  }
+  if (workspace.returnReceipt !== null) {
+    return { action: 'result-return', fingerprint: workspace.returnReceipt.returnFingerprint };
+  }
+  return null;
+}
+
+function receiptFingerprint(action: ReviewTerminalCommand['action'], receipt: unknown): string | null {
+  if (!record(receipt)) return null;
+  const field = action === 'comparison-decision'
+    ? 'decisionFingerprint'
+    : action === 'result-approval' ? 'approvalFingerprint' : 'returnFingerprint';
+  return typeof receipt[field] === 'string' ? receipt[field] : null;
+}
+
+async function terminalRecordIdentity(
+  workspace: ReviewWorkspaceState,
+  receipt: unknown,
+): Promise<{ bytes: number; sha256: string }> {
+  const json = JSON.stringify(receipt, null, 2);
+  if (json === undefined) throw authorityError('REVIEW_FORMAT_UNSUPPORTED', AUTHORITY_CORRUPT);
+  const text = `${json}\n`;
+  return {
+    bytes: new TextEncoder().encode(text).byteLength,
+    sha256: await hasherFor(workspace).sha256(text),
+  };
+}
+
+export function pendingTerminalActionOf(workspace: ReviewWorkspaceState): ReviewTerminalCommand['action'] | null {
+  return pendingTerminalCommands.get(workspace)?.action ?? null;
+}
+
+async function reconcileAuthoritySnapshot(
+  workspace: ReviewWorkspaceState,
+  snapshot: ReviewTerminalSnapshot,
+): Promise<void> {
+  if (snapshot.reviewId !== workspace.identity.reviewId
+    || snapshot.projectIdentity !== workspace.identity.projectIdentity) {
+    workspace.authority = { state: 'mismatch', message: AUTHORITY_MISMATCH };
+    throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_MISMATCH);
+  }
+  const local = receiptIdentity(workspace);
+  if (snapshot.state === 'corrupt') {
+    workspace.authority = { state: 'corrupt', message: AUTHORITY_CORRUPT };
+    throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_CORRUPT);
+  }
+  if (snapshot.state === 'open') {
+    if (local !== null) {
+      workspace.authority = { state: 'mismatch', message: AUTHORITY_MISMATCH };
+      throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_MISMATCH);
+    }
+    workspace.authority = { state: 'available', message: AUTHORITY_AVAILABLE };
+    return;
+  }
+  const recordValue = snapshot.record;
+  if (recordValue === undefined) {
+    workspace.authority = { state: 'corrupt', message: AUTHORITY_CORRUPT };
+    throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_CORRUPT);
+  }
+  const recordIdentity = await terminalRecordIdentity(workspace, recordValue.receipt);
+  if (recordValue.bytes !== recordIdentity.bytes || recordValue.sha256 !== recordIdentity.sha256) {
+    workspace.authority = { state: 'corrupt', message: AUTHORITY_CORRUPT };
+    throw authorityError('REVIEW_FORMAT_UNSUPPORTED', AUTHORITY_CORRUPT);
+  }
+  const canonicalFingerprint = receiptFingerprint(recordValue.action, recordValue.receipt);
+  if (canonicalFingerprint === null || (local !== null && (
+    local.action !== recordValue.action || local.fingerprint !== canonicalFingerprint
+  ))) {
+    workspace.authority = { state: 'mismatch', message: AUTHORITY_MISMATCH };
+    throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_MISMATCH);
+  }
+
+  try {
+    if (snapshot.state === 'decision-written' && recordValue.action === 'comparison-decision'
+      && workspace.identity.kind === 'comparison') {
+      const receipt = await verifiedDecisionReceipt(workspace.projection, recordValue.receipt, hasherFor(workspace));
+      workspace.decisionReceipt = receipt;
+      workspace.approvalReceipt = null;
+      workspace.returnReceipt = null;
+      workspace.decisionDraft = decisionDraftFromReceipt(receipt);
+      workspace.receiptStatus = 'decision-written';
+    } else if (snapshot.state === 'approval-written' && recordValue.action === 'result-approval'
+      && workspace.identity.kind === 'integration-result') {
+      const receipt = await validateFinalApprovalReceipt({ projection: workspace.projection, receipt: recordValue.receipt as FinalApprovalReceipt }, hasherFor(workspace));
+      workspace.decisionReceipt = null;
+      workspace.approvalReceipt = receipt;
+      workspace.returnReceipt = null;
+      workspace.receiptStatus = 'approval-written';
+    } else if (snapshot.state === 'returned' && recordValue.action === 'result-return'
+      && workspace.identity.kind === 'integration-result') {
+      const receipt = await validateReturnRequest({ projection: workspace.projection, receipt: recordValue.receipt as ReturnRequestReceipt }, hasherFor(workspace));
+      workspace.decisionReceipt = null;
+      workspace.approvalReceipt = null;
+      workspace.returnReceipt = receipt;
+      workspace.receiptStatus = 'returned';
+    } else {
+      workspace.authority = { state: 'mismatch', message: AUTHORITY_MISMATCH };
+      throw authorityError('REVIEW_IDENTITY_MISMATCH', AUTHORITY_MISMATCH);
+    }
+  } catch (error) {
+    if (workspace.authority.state === 'mismatch') throw error;
+    workspace.authority = { state: 'corrupt', message: AUTHORITY_CORRUPT };
+    throw authorityError('REVIEW_FORMAT_UNSUPPORTED', AUTHORITY_CORRUPT);
+  }
+  workspace.authority = { state: 'terminal', message: AUTHORITY_TERMINAL };
+}
+
+function classifyAuthorityFailure(workspace: ReviewWorkspaceState, error: unknown): void {
+  if (workspace.authority.state === 'mismatch' || workspace.authority.state === 'corrupt') return;
+  const code = record(error) && typeof error['code'] === 'string' ? error['code'] : '';
+  if (code === 'REVIEW_IDENTITY_MISMATCH'
+    || code === 'REVIEW_NOT_FOUND'
+    || code === 'REVIEW_TERMINAL_ALREADY_SET'
+    || code === 'REVIEW_RETURNED') {
+    workspace.authority = { state: 'mismatch', message: AUTHORITY_MISMATCH };
+  } else if (code === 'REVIEW_FORMAT_UNSUPPORTED' || code === 'CHANGE_STORE_CORRUPT' || code === 'LEASE_CORRUPT') {
+    workspace.authority = { state: 'corrupt', message: AUTHORITY_CORRUPT };
+  } else if (code === 'REVIEW_BUSY'
+    || code === 'INVALID_REQUEST'
+    || code === 'REVIEW_DECISION_INVALID'
+    || code === 'REVIEW_DECISION_STALE'
+    || code === 'REVIEW_RESULT_NOT_READY'
+    || code === 'REVIEW_APPROVAL_STALE') {
+    workspace.authority = { state: 'available', message: AUTHORITY_AVAILABLE };
+  } else {
+    workspace.authority = { state: 'unavailable', message: AUTHORITY_UNAVAILABLE };
+  }
+}
+
+function newRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw authorityError('REVIEW_AUTHORITY_UNAVAILABLE', '当前浏览器不能生成安全的审阅请求 ID。');
+  }
+  return `review_request_${globalThis.crypto.randomUUID()}`;
+}
+
+async function submitTerminalCommand(
+  workspace: ReviewWorkspaceState,
+  action: ReviewTerminalCommand['action'],
+  receipt: unknown,
+  terminalClient?: ReviewTerminalClient,
+): Promise<{ snapshot: ReviewTerminalSnapshot; command: ReviewTerminalCommand }> {
+  if (workspace.authority.state !== 'available') {
+    const code = workspace.authority.state === 'unavailable' || workspace.authority.state === 'checking'
+      ? 'REVIEW_AUTHORITY_UNAVAILABLE'
+      : workspace.authority.state === 'submitting' ? 'REVIEW_BUSY' : 'REVIEW_TERMINAL_ALREADY_SET';
+    throw authorityError(code, workspace.authority.message);
+  }
+  if (terminalWrites.has(workspace)) throw authorityError('REVIEW_BUSY', '另一个保存操作仍在进行，请稍候刷新。');
+  const pending = pendingTerminalCommands.get(workspace);
+  if (pending !== undefined && pending.action !== action) {
+    throw authorityError('REVIEW_BUSY', '上一项正式审阅操作的结果仍未确认，不能改为另一种结果。');
+  }
+  const command: ReviewTerminalCommand = pending ?? {
+    protocolVersion: '1.0.0',
+    requestId: newRequestId(),
+    projectIdentity: workspace.identity.projectIdentity,
+    reviewId: workspace.identity.reviewId,
+    reviewPayload: {
+      bytes: workspace.identity.payload.bytes,
+      sha256: workspace.identity.payload.sha256,
+    },
+    action,
+    receipt,
+  };
+  pendingTerminalCommands.set(workspace, command);
+  terminalWrites.add(workspace);
+  workspace.authority = { state: 'submitting', message: '正在保存正式审阅回执…' };
+  try {
+    const snapshot = await terminalClientFor(workspace, terminalClient).write(command);
+    await reconcileAuthoritySnapshot(workspace, snapshot);
+    pendingTerminalCommands.delete(workspace);
+    return { snapshot, command };
+  } catch (error) {
+    classifyAuthorityFailure(workspace, error);
+    const code = record(error) && typeof error['code'] === 'string' ? error['code'] : '';
+    const outcomeIsUncertain = workspace.authority.state === 'unavailable'
+      || code === 'REVIEW_BUSY'
+      || code === 'REVIEW_AUTHORITY_UNAVAILABLE'
+      || code === 'REQUEST_TIMEOUT';
+    if (!outcomeIsUncertain) {
+      pendingTerminalCommands.delete(workspace);
+    }
+    throw error;
+  } finally {
+    terminalWrites.delete(workspace);
+    if (workspace.authority.state === 'submitting') {
+      workspace.authority = { state: 'available', message: AUTHORITY_AVAILABLE };
+    }
+  }
+}
+
+async function snapshotMatchesCommand(
+  workspace: ReviewWorkspaceState,
+  snapshot: ReviewTerminalSnapshot,
+  command: ReviewTerminalCommand,
+): Promise<boolean> {
+  if (snapshot.record === undefined || snapshot.record.action !== command.action) return false;
+  const expected = await terminalRecordIdentity(workspace, command.receipt);
+  return snapshot.record.bytes === expected.bytes && snapshot.record.sha256 === expected.sha256;
+}
+
 export async function openReviewWorkspace(
   rootHandle: FileSystemDirectoryHandle,
   hasher: TextHasher = { sha256: defaultHasher },
+  terminalClient: ReviewTerminalClient = createReviewTerminalClient(),
 ): Promise<ReviewWorkspaceState> {
   let identityFile: FileSystemFileHandle;
   try {
@@ -526,8 +732,21 @@ export async function openReviewWorkspace(
     decisionReceipt,
     approvalReceipt,
     returnReceipt,
+    authority: { state: 'checking', message: '正在连接本机审阅服务…' },
   };
   workspaceHashers.set(workspace, hasher);
+  workspaceTerminalClients.set(workspace, terminalClient);
+  try {
+    const status = await terminalClient.status();
+    if (status !== 'available') {
+      workspace.authority = { state: 'unavailable', message: AUTHORITY_UNAVAILABLE };
+      return workspace;
+    }
+    const snapshot = await terminalClient.describe(describeInput(workspace));
+    await reconcileAuthoritySnapshot(workspace, snapshot);
+  } catch (error) {
+    classifyAuthorityFailure(workspace, error);
+  }
   return workspace;
 }
 
@@ -535,6 +754,7 @@ export async function writeDecisionReceipt(
   workspace: ReviewWorkspaceState,
   draft: ReviewDecisionDraft,
   now: string,
+  terminalClient?: ReviewTerminalClient,
 ): Promise<ComparisonDecisionReceipt> {
   if (workspace.identity.kind !== 'comparison') throw invalidReview('只有 comparison review 可以写入决定');
   if (draft.decisionId.length === 0 || !canSealDecision(workspace.projection, draft)) {
@@ -557,11 +777,17 @@ export async function writeDecisionReceipt(
     ...unsigned,
     decisionFingerprint: await decisionFingerprintOf(unsigned, hasherFor(workspace)),
   };
-  const written = await writeCreateOnly(workspace.rootHandle, 'decision.json', receipt);
-  workspace.decisionDraft = { ...draft, selectedUnitIds: [...draft.selectedUnitIds], conflictResolutions: draft.conflictResolutions.map((item) => ({ ...item })) };
-  workspace.receiptStatus = 'decision-written';
-  workspace.decisionReceipt = written;
-  return written;
+  if (workspace.authority.state === 'terminal'
+    && workspace.decisionReceipt?.decisionFingerprint === receipt.decisionFingerprint) {
+    return workspace.decisionReceipt;
+  }
+  const { snapshot, command } = await submitTerminalCommand(workspace, 'comparison-decision', receipt, terminalClient);
+  if (snapshot.state !== 'decision-written'
+    || workspace.decisionReceipt?.decisionFingerprint !== receiptFingerprint(command.action, command.receipt)
+    || !await snapshotMatchesCommand(workspace, snapshot, command)) {
+    throw authorityError('REVIEW_TERMINAL_ALREADY_SET', '该审阅已由另一个窗口保存了不同决定，现已显示正式回执。');
+  }
+  return workspace.decisionReceipt;
 }
 
 function resultFacts(workspace: ReviewWorkspaceState): {
@@ -580,83 +806,84 @@ export async function writeApprovalReceipt(
   workspace: ReviewWorkspaceState,
   draft: ApprovalDraft,
   now: string,
+  terminalClient?: ReviewTerminalClient,
 ): Promise<FinalApprovalReceipt> {
-  return withResultReceiptWrite(workspace, async () => {
-    const { finalResult, decisionFingerprint } = resultFacts(workspace);
-    if (draft.approvalId.length === 0) throw invalidReview('approvalId 不能为空');
-    const [approval, returned] = await Promise.all([
-      optionalJson(workspace.rootHandle, 'final-approval.json'),
-      optionalJson(workspace.rootHandle, 'return-request.json'),
-    ]);
-    if (approval !== null && returned !== null) throw identityError('result review 同时存在 final approval 与 return request');
-    if (approval !== null || returned !== null || workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned') {
-      throw identityError('result review 已有终态回执，不能再次批准或退回');
-    }
-    const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
-      receiptVersion: '1.0.0',
-      approvalId: draft.approvalId,
-      resultReviewId: workspace.projection.reviewId,
-      decisionFingerprint,
-      planId: finalResult.planId,
-      planFingerprint: finalResult.planFingerprint,
-      integrationChangeId: finalResult.integrationChangeId,
-      workingRevision: finalResult.workingRevision,
-      projectIdentity: workspace.projection.projectIdentity,
-      expectedProjectRevision: workspace.projection.expectedProjectRevision,
-      diffFingerprint: finalResult.diffFingerprint,
-      evidence: { ...finalResult.evidence, runtimeTraceIds: [...finalResult.evidence.runtimeTraceIds] },
-      resultTreeSha256: finalResult.resultTreeSha256,
-      reviewerChannel: 'surdet-editor-local',
-      approvedAt: now,
-    };
-    const receipt: FinalApprovalReceipt = {
-      ...unsigned,
-      approvalFingerprint: await approvalFingerprintOf(unsigned, hasherFor(workspace)),
-    };
-    const written = await writeCreateOnly(workspace.rootHandle, 'final-approval.json', receipt);
-    workspace.receiptStatus = 'approval-written';
-    workspace.approvalReceipt = written;
-    workspace.returnReceipt = null;
-    return written;
-  });
+  const { finalResult, decisionFingerprint } = resultFacts(workspace);
+  if (workspace.fixtureChanged) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '探索性修改尚未恢复，不能批准正式结果。');
+  }
+  const resultIdentityBefore = workspace.currentResultTreeSha256;
+  if (draft.approvalId.length === 0) throw invalidReview('approvalId 不能为空');
+  const unsigned: Omit<FinalApprovalReceipt, 'approvalFingerprint'> = {
+    receiptVersion: '1.0.0',
+    approvalId: draft.approvalId,
+    resultReviewId: workspace.projection.reviewId,
+    decisionFingerprint,
+    planId: finalResult.planId,
+    planFingerprint: finalResult.planFingerprint,
+    integrationChangeId: finalResult.integrationChangeId,
+    workingRevision: finalResult.workingRevision,
+    projectIdentity: workspace.projection.projectIdentity,
+    expectedProjectRevision: workspace.projection.expectedProjectRevision,
+    diffFingerprint: finalResult.diffFingerprint,
+    evidence: { ...finalResult.evidence, runtimeTraceIds: [...finalResult.evidence.runtimeTraceIds] },
+    resultTreeSha256: finalResult.resultTreeSha256,
+    reviewerChannel: 'surdet-editor-local',
+    approvedAt: now,
+  };
+  const receipt: FinalApprovalReceipt = {
+    ...unsigned,
+    approvalFingerprint: await approvalFingerprintOf(unsigned, hasherFor(workspace)),
+  };
+  if (workspace.fixtureChanged || workspace.currentResultTreeSha256 !== resultIdentityBefore) {
+    throw new AuthoringOperationError('REVIEW_APPROVAL_STALE', '正式结果在批准过程中发生变化，请恢复后重新审阅。');
+  }
+  if (workspace.authority.state === 'terminal'
+    && workspace.approvalReceipt?.approvalFingerprint === receipt.approvalFingerprint) {
+    return workspace.approvalReceipt;
+  }
+  const { snapshot, command } = await submitTerminalCommand(workspace, 'result-approval', receipt, terminalClient);
+  if (snapshot.state !== 'approval-written'
+    || workspace.approvalReceipt?.approvalFingerprint !== receiptFingerprint(command.action, command.receipt)
+    || !await snapshotMatchesCommand(workspace, snapshot, command)) {
+    throw authorityError('REVIEW_TERMINAL_ALREADY_SET', '该审阅已由另一个窗口形成其他正式结果，现已显示正式回执。');
+  }
+  return workspace.approvalReceipt;
 }
 
 export async function writeReturnReceipt(
   workspace: ReviewWorkspaceState,
   draft: ReturnDraft,
   now: string,
+  terminalClient?: ReviewTerminalClient,
 ): Promise<ReturnRequestReceipt> {
-  return withResultReceiptWrite(workspace, async () => {
-    const { finalResult } = resultFacts(workspace);
-    if (draft.returnId.length === 0) throw invalidReview('returnId 不能为空');
-    const [approval, returned] = await Promise.all([
-      optionalJson(workspace.rootHandle, 'final-approval.json'),
-      optionalJson(workspace.rootHandle, 'return-request.json'),
-    ]);
-    if (approval !== null && returned !== null) throw identityError('result review 同时存在 final approval 与 return request');
-    if (approval !== null || returned !== null || workspace.receiptStatus === 'approval-written' || workspace.receiptStatus === 'returned') {
-      throw identityError('result review 已有终态回执，不能再次批准或退回');
-    }
-    const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
-      receiptVersion: '1.0.0',
-      returnId: draft.returnId,
-      resultReviewId: workspace.projection.reviewId,
-      planId: finalResult.planId,
-      planFingerprint: finalResult.planFingerprint,
-      integrationChangeId: finalResult.integrationChangeId,
-      workingRevision: finalResult.workingRevision,
-      reasonCategory: draft.reasonCategory,
-      reviewerChannel: 'surdet-editor-local',
-      returnedAt: now,
-    };
-    const receipt: ReturnRequestReceipt = {
-      ...unsigned,
-      returnFingerprint: await returnFingerprintOf(unsigned, hasherFor(workspace)),
-    };
-    const written = await writeCreateOnly(workspace.rootHandle, 'return-request.json', receipt);
-    workspace.receiptStatus = 'returned';
-    workspace.approvalReceipt = null;
-    workspace.returnReceipt = written;
-    return written;
-  });
+  const { finalResult } = resultFacts(workspace);
+  if (draft.returnId.length === 0) throw invalidReview('returnId 不能为空');
+  const unsigned: Omit<ReturnRequestReceipt, 'returnFingerprint'> = {
+    receiptVersion: '1.0.0',
+    returnId: draft.returnId,
+    resultReviewId: workspace.projection.reviewId,
+    planId: finalResult.planId,
+    planFingerprint: finalResult.planFingerprint,
+    integrationChangeId: finalResult.integrationChangeId,
+    workingRevision: finalResult.workingRevision,
+    reasonCategory: draft.reasonCategory,
+    reviewerChannel: 'surdet-editor-local',
+    returnedAt: now,
+  };
+  const receipt: ReturnRequestReceipt = {
+    ...unsigned,
+    returnFingerprint: await returnFingerprintOf(unsigned, hasherFor(workspace)),
+  };
+  if (workspace.authority.state === 'terminal'
+    && workspace.returnReceipt?.returnFingerprint === receipt.returnFingerprint) {
+    return workspace.returnReceipt;
+  }
+  const { snapshot, command } = await submitTerminalCommand(workspace, 'result-return', receipt, terminalClient);
+  if (snapshot.state !== 'returned'
+    || workspace.returnReceipt?.returnFingerprint !== receiptFingerprint(command.action, command.receipt)
+    || !await snapshotMatchesCommand(workspace, snapshot, command)) {
+    throw authorityError('REVIEW_TERMINAL_ALREADY_SET', '该审阅已由另一个窗口形成其他正式结果，现已显示正式回执。');
+  }
+  return workspace.returnReceipt;
 }

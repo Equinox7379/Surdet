@@ -4,6 +4,7 @@ import type {
   HumanReviewProjection,
   ReturnRequestReceipt,
   ReviewObjectSummary,
+  ReviewTerminalCommand,
 } from '@surdet/authoring';
 import {
   labelForConflictSeverity,
@@ -256,6 +257,7 @@ function workspaceFor(projection: HumanReviewProjection): ReviewWorkspaceState {
     decisionReceipt: null,
     approvalReceipt: null,
     returnReceipt: null,
+    authority: { state: 'available', message: '本机审阅服务已连接。' },
   };
 }
 
@@ -265,6 +267,45 @@ afterEach(() => {
 });
 
 describe('Editor review panel', () => {
+  it('keeps review content visible but disables terminal controls when the local authority is unavailable', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    Object.assign(workspace, {
+      authority: {
+        state: 'unavailable',
+        message: '本机审阅服务未连接。内容仍可查看，但暂时不能批准或退回。请从 Surdet 正常入口重新打开。',
+      },
+    });
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+    expect(textOf(container)).toContain('本机审阅服务未连接');
+    expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(true);
+    for (const choice of container.querySelectorAll('button').filter((button) => (
+      button.getAttribute('data-choice-unit') !== null
+      || button.getAttribute('data-choice-exclude') !== null
+      || button.getAttribute('data-choice-regenerate') !== null
+    ))) expect(choice.disabled).toBe(true);
+  });
+
+  it.each([
+    ['mismatch', '本机审阅服务与当前审阅任务不一致。'],
+    ['corrupt', '本机审阅服务检测到审阅回执损坏。'],
+  ] as const)('keeps evidence readable and terminal controls disabled for authority %s', (authorityState, message) => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    workspace.authority = { state: authorityState, message };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+    expect(textOf(container)).toContain('比较结果');
+    expect(textOf(container)).toContain(message);
+    for (const control of container.querySelectorAll('button').filter((button) => (
+      button.getAttribute('data-choice-unit') !== null
+      || button.getAttribute('data-choice-exclude') !== null
+      || button.getAttribute('data-choice-regenerate') !== null
+      || button.getAttribute('data-action') === 'save-decision'
+    ))) expect(control.disabled).toBe(true);
+  });
+
   it('renders human-first comparison text, technical details, and a resolved choice', () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
@@ -431,14 +472,19 @@ describe('Editor review panel', () => {
     expect(workspace.decisionReceipt?.decisionId).toBe('decision-saved-1');
   });
 
-  it('generates a decision id on a real save click, preserves it on failure, and clears it after a changed choice', async () => {
+  it('generates one decision identity and reuses it after an uncertain save response', async () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
-    workspace.rootHandle = {
-      getFileHandle: async () => { throw new Error('forced decision write failure'); },
-    } as unknown as FileSystemDirectoryHandle;
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write: vi.fn(async (_command: ReviewTerminalCommand) => {
+        throw Object.assign(new Error('forced authority write failure'), { code: 'REVIEW_BUSY' });
+      }),
+    };
     const container = new FakeElement('div');
-    renderReviewPanel(container as unknown as HTMLElement, workspace, { now: () => '2026-08-29T00:00:00.000Z' });
+    const options = { now: () => '2026-08-29T00:00:00.000Z', reviewTerminalClient: terminalClient };
+    renderReviewPanel(container as unknown as HTMLElement, workspace, options);
 
     container.querySelector('[data-choice-unit="unit-a"]')!.click();
     const save = container.querySelector('[data-action="save-decision"]')!;
@@ -448,27 +494,57 @@ describe('Editor review panel', () => {
     expect(firstDecisionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 
     statusElement.textContent = '';
-    save.click();
+    container.querySelector('[data-action="save-decision"]')!.click();
     expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
-    container.querySelector('[data-choice-unit="unit-d"]')!.click();
-    expect(workspace.decisionDraft.decisionId).toBe('');
+    const lockedChoice = container.querySelector('[data-choice-unit="unit-d"]')!;
+    expect(lockedChoice.disabled).toBe(true);
+    lockedChoice.click();
+    expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
     statusElement.textContent = '';
-    save.click();
-    expect(workspace.decisionDraft.decisionId).not.toBe(firstDecisionId);
+    container.querySelector('[data-action="save-decision"]')!.click();
+    expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+    const commands = terminalClient.write.mock.calls.map(([command]) => command);
+    expect(commands).toHaveLength(3);
+    expect(new Set(commands.map((command) => command.requestId)).size).toBe(1);
+    expect(commands[2]?.receipt).toEqual(commands[0]?.receipt);
+  });
+
+  it('does not expose raw transport errors in the user-facing save message', async () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write: async () => { throw new Error('ENGLISH_SECRET_DETAIL'); },
+    };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: terminalClient });
+    container.querySelector('[data-choice-unit="unit-a"]')!.click();
+    container.querySelector('[data-action="save-decision"]')!.click();
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
+    expect(statusElement.textContent).not.toContain('ENGLISH_SECRET_DETAIL');
+    expect(statusElement.textContent).toContain('操作未完成');
   });
 
   it('freezes every decision control while a receipt write is pending', async () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
     let rejectWrite: ((error: Error) => void) | null = null;
-    const getFileHandle = vi.fn(() => new Promise<FileSystemFileHandle>((_resolve, reject) => {
+    const write = vi.fn(() => new Promise<never>((_resolve, reject) => {
       rejectWrite = reject;
     }));
-    workspace.rootHandle = { getFileHandle } as unknown as FileSystemDirectoryHandle;
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write,
+    };
     const container = new FakeElement('div');
-    renderReviewPanel(container as unknown as HTMLElement, workspace, { now: () => '2026-08-29T00:00:00.000Z' });
+    renderReviewPanel(container as unknown as HTMLElement, workspace, {
+      now: () => '2026-08-29T00:00:00.000Z',
+      reviewTerminalClient: terminalClient,
+    });
 
     const choiceA = container.querySelector('[data-choice-unit="unit-a"]')!;
     const choiceD = container.querySelector('[data-choice-unit="unit-d"]')!;
@@ -493,11 +569,78 @@ describe('Editor review panel', () => {
       selectedUnitIds: selectedBeforeSave,
       conflictResolutions: resolutionsBeforeSave,
     });
-    await vi.waitFor(() => expect(getFileHandle).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
 
-    rejectWrite!(new Error('release pending receipt write'));
+    rejectWrite!(Object.assign(new Error('release pending receipt write'), { code: 'REVIEW_BUSY' }));
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
-    for (const control of decisionControls) expect(control.disabled).toBe(false);
+    for (const control of container.querySelectorAll('button').filter((button) => (
+      button.getAttribute('data-choice-unit') !== null
+      || button.getAttribute('data-choice-exclude') !== null
+      || button.getAttribute('data-choice-regenerate') !== null
+    ))) expect(control.disabled).toBe(true);
+    expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(false);
+    expect(container.querySelector('[data-action="save-decision"]')?.textContent).toContain('再次确认');
+  });
+
+  it('submits only one result terminal command while approval is pending', async () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    let rejectWrite: ((error: Error) => void) | null = null;
+    const write = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    }));
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write,
+    };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: terminalClient });
+
+    const approve = container.querySelector('[data-action="approve-result"]')!;
+    const returned = container.querySelector('[data-action="return-result"]')!;
+    approve.click();
+    approve.click();
+    returned.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    expect(approve.disabled).toBe(true);
+    expect(returned.disabled).toBe(true);
+    expect(container.querySelector('[data-action="preview-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="reload-official-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="refresh-result-tree"]')?.disabled).toBe(true);
+
+    rejectWrite!(Object.assign(new Error('release pending approval'), { code: 'REVIEW_BUSY' }));
+    await vi.waitFor(() => expect(statusElement.textContent).toContain('批准失败'));
+    expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
+    expect(container.querySelector('[data-action="return-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="preview-result"]')?.disabled).toBe(true);
+  });
+
+  it('keeps preview and terminal result writes mutually exclusive', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    const write = vi.fn(async (_command: ReviewTerminalCommand) => { throw new Error('must not write'); });
+    const terminalClient = {
+      status: async () => 'available' as const,
+      describe: async () => { throw new Error('not used'); },
+      write,
+    };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, {
+      reviewTerminalClient: terminalClient,
+      onPreview: () => new Promise<void>(() => {}),
+    });
+
+    container.querySelector('[data-action="preview-result"]')!.click();
+    const approve = container.querySelector('[data-action="approve-result"]')!;
+    const returned = container.querySelector('[data-action="return-result"]')!;
+    expect(approve.disabled).toBe(true);
+    expect(returned.disabled).toBe(true);
+    expect(container.querySelector('[data-action="reload-official-result"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-action="refresh-result-tree"]')?.disabled).toBe(true);
+    approve.click();
+    returned.click();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it('keeps a healthy collapsed group explicit and names an empty dependency set', () => {
