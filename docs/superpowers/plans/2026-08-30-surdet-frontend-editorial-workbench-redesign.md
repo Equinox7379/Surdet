@@ -976,3 +976,21 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP_BOUNDARY**
 
 - Frontend Pass 3B is ready for Owner implementation authorization. No implementation, second push, deployment, Frontend Pass 4 or mainline Wave 7 has started.
+
+### 2026-08-31 — Frontend Pass 3B remote closeout and Pass 4 initialization
+
+**CONFIRMED_FACTS**
+
+- Frontend Pass 3B completed and was ordinarily pushed. Local `main`, live GitHub `main` and `surdet/main` all equal `bca72247d0dc76983330367be0f38043036a0fca`; ahead/behind `0/0` immediately after push.
+- The final Pass 3B code evidence is `d9c0ecdba87bcc70316de2ab998907038191fa57`; the replacement browser FORMAL passed 29/29 and the docs closeout is `bca72247d0dc76983330367be0f38043036a0fca`.
+- The Owner instructed local work to continue without waiting for the remote reviewer. Frontend Pass 4 now follows the already-approved Configuration Ledger outcome in this plan and the canonical full-frontend design.
+- Dedicated executable taskbook: `docs/superpowers/plans/2026-08-31-surdet-configuration-ledger-frontend-pass-4.md`.
+
+**SCOPE DECISION**
+
+- Pass 4 migrates configuration information architecture, DOM semantics, Chinese presentation, technical-key disclosure, tables, map theme hooks and real-browser layout only.
+- Read-only audit found pre-existing configuration persistence gaps: tab-switch loss of unsaved row models, absent external-modification protection, fixed LF writes and top-level save not covering all config sections. These are recorded, not silently represented as fixed by visual work. Any repair of those semantics requires a separate bounded reliability authorization.
+
+**STOP BOUNDARY**
+
+- Continue only Frontend Pass 4 local planning and implementation. Push, Frontend Pass 5 and mainline Wave 7 remain unauthorized and unstarted.
