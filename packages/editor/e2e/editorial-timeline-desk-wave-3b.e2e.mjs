@@ -782,6 +782,9 @@ async function run() {
   let injectedAfterSave = null;
   let layoutEvidence = null;
   let historyEvidence = null;
+  let timelineEditScrollProbeEvidence = null;
+  let previewReceiptProbeEvidence = null;
+  let compactLayoutProbeEvidence = null;
   let saveEvidence = null;
   let coldReopenEvidence = null;
   let failure = null;
@@ -948,13 +951,17 @@ async function run() {
       assert(afterEdit.scenes.every((scene) => scene.dirty === false), 'Timeline edit marked a screenplay scene dirty');
       assert(afterEdit.timelines.filter((entry) => entry.id !== editedTimelineId).every((entry) => entry.dirty === false), 'Timeline edit marked another Timeline dirty');
       assert(afterEdit.timeline?.eol === '\r\n', 'Timeline edit normalized CRLF');
-      await firstPage.waitForFunction((expected) => document.querySelector('.timeline-scroll')?.scrollLeft === expected, scrollBeforeEdit.scrollLeft);
-      const longScrollEvidence = await firstPage.locator('.timeline-scroll').evaluate((scroll) => ({
-        scrollLeft: scroll.scrollLeft,
-        maxScrollLeft: Math.max(0, scroll.scrollWidth - scroll.clientWidth),
-        scrollWidth: scroll.scrollWidth,
-        clientWidth: scroll.clientWidth,
-      }));
+      const longScrollEvidence = await firstPage.locator('.timeline-scroll').evaluate(async (scroll, expectedScrollLeft) => {
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return {
+          expectedScrollLeft,
+          scrollLeft: scroll.scrollLeft,
+          maxScrollLeft: Math.max(0, scroll.scrollWidth - scroll.clientWidth),
+          scrollWidth: scroll.scrollWidth,
+          clientWidth: scroll.clientWidth,
+        };
+      }, scrollBeforeEdit.scrollLeft);
+      timelineEditScrollProbeEvidence = longScrollEvidence;
       assert(longScrollEvidence.scrollLeft === scrollBeforeEdit.scrollLeft, 'long Timeline edit did not preserve scrollLeft');
       const dirtyProjection = await firstPage.evaluate(() => ({
         header: document.querySelector('.timeline-title-meta')?.textContent ?? '',
@@ -1114,6 +1121,25 @@ async function run() {
       await selectTimeline(firstPage, editedTimelineId);
       await firstPage.evaluate(() => {
         window.__surdetTimelineDeskPreviewReady = false;
+        window.__surdetTimelineDeskPreviewMessages = [];
+        const collector = (event) => {
+          const frame = document.querySelector('#preview-view iframe.preview-frame[title="剧情预览"]');
+          const data = event.data;
+          if (event.source !== frame?.contentWindow || !data || typeof data.type !== 'string' || !data.type.startsWith('surdet-preview-')) return;
+          window.__surdetTimelineDeskPreviewMessages.push({
+            type: data.type,
+            traceId: typeof data.traceId === 'string' ? data.traceId : null,
+            generation: Number.isInteger(data.generation) ? data.generation : Number.isInteger(data.diagnostic?.generation) ? data.diagnostic.generation : null,
+            sequence: Number.isInteger(data.sequence) ? data.sequence : null,
+            eventKind: typeof data.event?.kind === 'string' ? data.event.kind : null,
+            sourceOp: typeof data.event?.source?.op === 'string' ? data.event.source.op : null,
+            phase: typeof data.diagnostic?.phase === 'string' ? data.diagnostic.phase : null,
+            level: typeof data.diagnostic?.level === 'string' ? data.diagnostic.level : null,
+            message: typeof data.diagnostic?.message === 'string' ? data.diagnostic.message : null,
+          });
+        };
+        window.__surdetTimelineDeskPreviewCollector = collector;
+        window.addEventListener('message', collector);
         const listener = (event) => {
           const frame = document.querySelector('#preview-view iframe.preview-frame[title="剧情预览"]');
           if (event.data?.type !== 'surdet-preview-ready' || event.source !== frame?.contentWindow) return;
@@ -1151,20 +1177,54 @@ async function run() {
           && previewFrameEvidence.readySignal,
         'preview iframe module graph/runtime did not settle',
       );
-      await firstPage.waitForFunction((id) => (
-        window.surdetEditorDebug?.state?.previewTimelineId === id
-          && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
-      ), editedTimelineId, { timeout: 10_000 });
+      const capturePreviewReceiptProbe = async (stage) => ({
+        stage,
+        parent: await firstPage.evaluate(() => ({
+          previewTimelineId: window.surdetEditorDebug?.state?.previewTimelineId ?? null,
+          previewTrace: (window.surdetEditorDebug?.state?.previewTrace ?? []).map((event) => ({
+            kind: event.kind,
+            sourceOp: event.source?.op ?? null,
+            sourceSceneId: event.source?.sceneId ?? null,
+            sourceLine: event.source?.line ?? null,
+          })),
+          diagnosticsText: document.querySelector('.preview-diagnostics')?.textContent ?? null,
+          traceText: document.querySelector('.preview-trace-list')?.textContent ?? null,
+          messages: [...(window.__surdetTimelineDeskPreviewMessages ?? [])],
+        })),
+        child: await previewFrame.evaluate(() => ({
+          url: location.href,
+          interpreterPresent: Boolean(window.surdetPreviewDebug?.interp),
+          runtimePresent: Boolean(window.surdetPreviewDebug?.runtime),
+          rendererStatus: window.surdetPreviewDebug?.rendererStatus ?? null,
+          canvasCount: document.querySelectorAll('#preview-root canvas').length,
+          errorText: document.querySelector('#preview-error')?.textContent ?? null,
+        })),
+      });
+      try {
+        await firstPage.waitForFunction((id) => (
+          window.surdetEditorDebug?.state?.previewTimelineId === id
+            && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
+        ), editedTimelineId, { timeout: 10_000 });
+      } catch (error) {
+        previewReceiptProbeEvidence = await capturePreviewReceiptProbe('initial-timeline-trace-timeout');
+        throw new Error(`initial direct-Timeline receipt missing: ${JSON.stringify(previewReceiptProbeEvidence)}`, { cause: error });
+      }
       const initialTimelineTraceEvidence = await firstPage.evaluate(() => ({
         eventCount: window.surdetEditorDebug.state.previewTrace.length,
         timelineInstructionCount: window.surdetEditorDebug.state.previewTrace.filter((event) => event.source?.op === 'timeline').length,
       }));
       await firstPage.getByRole('button', { name: '▶ 播放 / 重载', exact: true }).click();
-      await firstPage.waitForFunction((id) => (
-        window.surdetEditorDebug?.state?.mainTab === 'preview'
-          && window.surdetEditorDebug?.state?.previewTimelineId === id
-          && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
-      ), editedTimelineId, { timeout: 10_000 });
+      try {
+        await firstPage.waitForFunction((id) => (
+          window.surdetEditorDebug?.state?.mainTab === 'preview'
+            && window.surdetEditorDebug?.state?.previewTimelineId === id
+            && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
+        ), editedTimelineId, { timeout: 10_000 });
+      } catch (error) {
+        previewReceiptProbeEvidence = await capturePreviewReceiptProbe('replay-timeline-trace-timeout');
+        throw new Error(`replayed direct-Timeline receipt missing: ${JSON.stringify(previewReceiptProbeEvidence)}`, { cause: error });
+      }
+      previewReceiptProbeEvidence = await capturePreviewReceiptProbe('replay-timeline-trace-received');
       const previewHandoff = await firstPage.evaluate(() => ({
         mainTab: window.surdetEditorDebug.state.mainTab,
         previewTimelineId: window.surdetEditorDebug.state.previewTimelineId,
@@ -1183,6 +1243,12 @@ async function run() {
       assert(previewHandoff.replayTraceEventCount > 0, 'Preview replay did not reach a fresh runtime trace event');
       assert(previewHandoff.replayTimelineInstructionCount > 0, 'Preview replay did not execute the direct Timeline instruction');
       pass('selected-timeline-preview-handoff', previewHandoff);
+      await firstPage.evaluate(() => {
+        if (window.__surdetTimelineDeskPreviewCollector) {
+          window.removeEventListener('message', window.__surdetTimelineDeskPreviewCollector);
+          window.__surdetTimelineDeskPreviewCollector = null;
+        }
+      });
       await firstPage.locator('[data-editor-mode="timeline"]').click();
       await firstPage.locator('#timeline-view .timeline-shell').waitFor({ state: 'visible' });
       await selectTimeline(firstPage, editedTimelineId);
@@ -1194,23 +1260,39 @@ async function run() {
         if (viewport.id === '800') {
           const libraryDetails = firstPage.locator('details.timeline-library');
           const inspectorDetails = firstPage.locator('details.timeline-inspector');
+          const afterResize = await firstPage.evaluate(async () => {
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return {
+              libraryOpen: document.querySelector('details.timeline-library')?.open ?? null,
+              inspectorOpen: document.querySelector('details.timeline-inspector')?.open ?? null,
+            };
+          });
           if (await libraryDetails.getAttribute('open') !== null) await libraryDetails.locator(':scope > summary').click();
           if (await inspectorDetails.getAttribute('open') !== null) await inspectorDetails.locator(':scope > summary').click();
+          await firstPage.waitForFunction(() => (
+            document.querySelector('details.timeline-library')?.open === false
+              && document.querySelector('details.timeline-inspector')?.open === false
+          ));
+          const afterExplicitClose = await firstPage.evaluate(() => ({
+            libraryOpen: document.querySelector('details.timeline-library')?.open ?? null,
+            inspectorOpen: document.querySelector('details.timeline-inspector')?.open ?? null,
+          }));
           const compactDuration = firstPage.locator('[data-timeline-focus="timeline-duration"]');
           await compactDuration.fill(String(editedDurationMs + 25));
           await compactDuration.press('Tab');
-          await firstPage.waitForFunction(({ expected, id }) => {
-            const library = document.querySelector('details.timeline-library');
-            const inspector = document.querySelector('details.timeline-inspector');
-            const entry = window.surdetEditorDebug.state.timelines.find((candidate) => candidate.id === id);
-            return JSON.parse(entry.text).durationMs === expected && !library.open && !inspector.open;
-          }, { expected: editedDurationMs + 25, id: editedTimelineId });
-          compactDisclosureEvidence = await firstPage.evaluate((id) => ({
-            libraryOpen: document.querySelector('details.timeline-library')?.open ?? null,
-            inspectorOpen: document.querySelector('details.timeline-inspector')?.open ?? null,
-            durationMs: JSON.parse(window.surdetEditorDebug.state.timelines.find((candidate) => candidate.id === id).text).durationMs,
-          }), editedTimelineId);
-          assert(!compactDisclosureEvidence.libraryOpen && !compactDisclosureEvidence.inspectorOpen, 'compact Timeline disclosures reopened after edit');
+          const afterEdit = await firstPage.evaluate(async ({ id, expectedDurationMs }) => {
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return {
+              expectedDurationMs,
+              libraryOpen: document.querySelector('details.timeline-library')?.open ?? null,
+              inspectorOpen: document.querySelector('details.timeline-inspector')?.open ?? null,
+              durationMs: JSON.parse(window.surdetEditorDebug.state.timelines.find((candidate) => candidate.id === id).text).durationMs,
+            };
+          }, { id: editedTimelineId, expectedDurationMs: editedDurationMs + 25 });
+          compactDisclosureEvidence = { afterResize, afterExplicitClose, afterEdit };
+          compactLayoutProbeEvidence = compactDisclosureEvidence;
+          assert(afterEdit.durationMs === editedDurationMs + 25, 'compact Timeline duration edit did not commit');
+          assert(!afterEdit.libraryOpen && !afterEdit.inspectorOpen, 'compact Timeline disclosures reopened after edit');
           await firstPage.locator('[data-action="undo"]').click();
           await firstPage.waitForFunction(({ expected, id }) => {
             const entry = window.surdetEditorDebug.state.timelines.find((candidate) => candidate.id === id);
@@ -1476,6 +1558,9 @@ async function run() {
     opened,
     layoutEvidence,
     historyEvidence,
+    timelineEditScrollProbeEvidence,
+    previewReceiptProbeEvidence,
+    compactLayoutProbeEvidence,
     saveEvidence,
     coldReopenEvidence,
     screenshots,
