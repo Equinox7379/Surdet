@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const root = path.resolve('E:/surdet');
+const testPath = fileURLToPath(import.meta.url);
+const root = path.resolve(path.dirname(testPath), '..', '..');
 const planPath = path.join(root, 'docs/superpowers/plans/2026-08-10-renderer-performance-measurement-qualification.md');
 const specPath = path.join(root, 'docs/superpowers/specs/2026-08-10-renderer-performance-measurement-v4-protocol.md');
 const files = [
@@ -17,6 +19,12 @@ const files = [
   'packages/shell/e2e/renderer-v4-qualification-runner.mjs',
   'packages/shell/e2e/renderer-v4-qualification-summary.mjs',
 ];
+
+test('qualification tooling resolves the repository from its module location', () => {
+  assert.equal(fs.existsSync(path.join(root, 'package.json')), true);
+  const source = fs.readFileSync(testPath, 'utf8');
+  assert.doesNotMatch(source, /path\.resolve\(['"]E:\/surdet['"]\)/i);
+});
 
 test('qualification plan and v4 protocol freeze the fixed Q matrix and outputs', () => {
   const plan = fs.readFileSync(planPath, 'utf8');

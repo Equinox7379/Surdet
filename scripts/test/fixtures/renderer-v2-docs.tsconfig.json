@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "baseUrl": "../../..",
+    "paths": {
+      "@surdet/core": ["packages/core/src/index.ts"],
+      "@surdet/renderer": ["packages/renderer/src/index.ts"]
+    }
+  },
+  "files": ["../../../packages/renderer/src/pixi-unsafe-eval.d.ts"],
+  "include": ["../../../docs/examples/renderer-v2-migration.ts"]
+}

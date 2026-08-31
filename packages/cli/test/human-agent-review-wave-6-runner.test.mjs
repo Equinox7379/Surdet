@@ -512,8 +512,9 @@ test('Wave 6 runner observes both decision save outcomes and preserves failure-s
 test('Editor writes the open success status only after the rebuilt DOM exists', () => {
   const mainSource = fs.readFileSync(editorMainPath, 'utf8');
   const panelSource = fs.readFileSync(reviewPanelPath, 'utf8');
-  const handlerStart = mainSource.indexOf("const reviewBtn = h('button', undefined, '打开审阅任务')");
-  const handlerEnd = mainSource.indexOf('header.appendChild(reviewBtn)', handlerStart);
+  const handlerStart = mainSource.indexOf('onOpenReview: () => {');
+  const handlerEnd = mainSource.indexOf('onUndo: doUndo', handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'review-open callback source was not found');
   const handler = mainSource.slice(handlerStart, handlerEnd);
   assert.match(handler, /await\s+openReviewPanelWorkspace\(\)/);
   assert.ok(handler.indexOf('renderAll()') > handler.indexOf('await openReviewPanelWorkspace()'));
