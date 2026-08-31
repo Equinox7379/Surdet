@@ -296,7 +296,7 @@ feat(cli): lease review terminal writes
 - Consumes: review-scoped `NodeLocalLeaseManager` and existing create-only JSON record storage.
 - Produces: lease-bound `createDecision`, `createFinalApproval/createApproval`, and `createReturnRequest` with idempotent existing-byte semantics.
 
-- [ ] **Step 1: Write independent-process RED fixtures**
+- [x] **Step 1: Write independent-process RED fixtures**
 
 The worker accepts only a JSON stdin command containing data root, project identity, review ID, action, and receipt fixture. It constructs `NodeReviewStore` and performs one create. It emits one JSON stdout result and no logs.
 
@@ -312,17 +312,18 @@ expect([approval.status, returned.status].sort()).toEqual(['rejected', 'written'
 expect(receiptNames(reviewDirectory)).toHaveLength(1);
 ```
 
-Also race two different decisions and two identical retries. Assert exact disk bytes/SHA, unchanged identity/payload, and zero active review lock directories.
+Also race two different decisions and two identical requests. The concurrent loser receives `REVIEW_BUSY`; after the winner releases, retry the exact losing command. Different content must then receive `REVIEW_TERMINAL_ALREADY_SET`, while identical content must return the existing byte identity. Assert exact disk bytes/SHA, unchanged identity/payload, and zero active review lock directories.
 
-- [ ] **Step 2: Run Task 3 RED once**
+- [x] **Step 2: Run Task 3 RED once**
 
 ```powershell
+npm run build -w @surdet/cli
 npm run test -w @surdet/cli -- --run test/node-review-store.test.ts
 ```
 
-Expected: the real approval/return multi-process race can create both files or the tests fail on missing lease injection.
+The build refreshes the plain-Node worker's `dist` import before the test; it is not a verification substitute. Expected: the real approval/return multi-process race can create both files or the tests fail on missing lease injection/terminal mapping.
 
-- [ ] **Step 3: Inject the shared lease manager**
+- [x] **Step 3: Inject the shared lease manager**
 
 Use one constructor field:
 
@@ -341,7 +342,7 @@ constructor(
 
 Add a private `withReviewLease(reviewId, callback)` using resource ID `${expectedProjectIdentity}\0${reviewId}`. Move review re-read, kind check, terminal pre-check, and create-only write inside it.
 
-- [ ] **Step 4: Define exact existing-terminal mapping**
+- [x] **Step 4: Define exact existing-terminal mapping**
 
 Inside the lease:
 
@@ -355,17 +356,17 @@ no target -> createOnlyJson
 
 Remove the process-local `resultReceiptWrites` map only after all tests use the lease.
 
-- [ ] **Step 5: Run Task 3 GREEN and adjacent tests**
+- [x] **Step 5: Run Task 3 GREEN and adjacent tests**
 
 ```powershell
+npm run build -w @surdet/cli
 npm run test -w @surdet/cli -- --run test/node-review-store.test.ts test/review-service.test.ts test/node-local-lease.test.ts
 npm run typecheck -w @surdet/cli
-npm run build -w @surdet/cli
 ```
 
 Expected: all exit `0`, real worker races leave one receipt, and lock cleanup is empty.
 
-- [ ] **Step 6: Commit Task 3 exactly**
+- [x] **Step 6: Commit Task 3 exactly**
 
 Stage the three Task 3 paths plus taskbook and commit:
 
@@ -845,6 +846,11 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 1 exact commit: `2098836` (`feat(authoring): define review terminal contract`), six-path staged set, both diff checks exit `0`.
 - Task 2 RED: the existing lease suite ran 16 tests with 14 passing and 2 expected failures. Review scope incorrectly landed in `.locks/projects`, and the simulated review publication window therefore did not contend with the real review path.
 - Task 2 GREEN: the same suite passed 16/16 and CLI typecheck exited `0`. Review scope now shares the proven heartbeat/drain, stale takeover, sentinel-preserving release, publication wait, corruption, inspection, and busy-envelope state machine while mapping contention to `REVIEW_BUSY`; change/project mappings remain unchanged.
+- Task 2 exact commit: `22259d4` (`feat(cli): lease review terminal writes`), three-path staged set, both diff checks exit `0`.
+- Task 3 worker prerequisite: CLI `dist` was refreshed before each plain-Node worker phase so the child processes exercised the current source. The taskbook command order was corrected accordingly; build output was not treated as proof by itself.
+- Task 3 RED: the initial 19-test store run had 3 failures (old `REVIEW_IDENTITY_MISMATCH` terminal mapping); the strengthened 20-test run had 4 failures and deterministically proved independent workers ignored a separately held review lease. Existing identical cross-process file creation happened to be idempotent, but there was no shared lease authority.
+- Task 3 first GREEN attempt correctly produced `REVIEW_BUSY` for concurrent losers, exposing an over-constrained test assumption that the lease would silently queue. The approved error contract is fail-fast: refresh and retry the same command. Tests were corrected without adding a hidden queue.
+- Task 3 final GREEN: NodeReviewStore 20/20, adjacent ReviewService + lease suite 24/24, combined 44/44, CLI typecheck and build all exited `0`. Concurrent approval/return leaves exactly one receipt; different decisions preserve one winner; an identical retry after refresh returns the existing byte identity; review identity/payload bytes remain unchanged; active review locks drain to zero.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

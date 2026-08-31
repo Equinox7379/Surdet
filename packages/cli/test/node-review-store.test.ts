@@ -1,11 +1,72 @@
+import { spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { NodeReviewStore } from '../src/authoring/node-review-store.js';
 
 const temporaryRoots: string[] = [];
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const workerPath = path.join(repoRoot, 'packages/cli/test/fixtures/review-terminal-worker.mjs');
+
+interface WorkerResult {
+  status: 'written' | 'rejected';
+  identity?: { bytes: number; sha256: string; relativePath: string };
+  code?: string;
+  message?: string;
+}
+
+interface WorkerCommand {
+  dataRoot: string;
+  projectIdentity: string;
+  reviewId: string;
+  action: 'decision' | 'approval' | 'return';
+  receipt: Record<string, unknown>;
+}
+
+function sha256(bytes: Buffer): string {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+async function runWorker(command: WorkerCommand): Promise<WorkerResult> {
+  const child = spawn(process.execPath, [workerPath], {
+    cwd: repoRoot,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  child.stdin.end(JSON.stringify(command));
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('review terminal worker timed out'));
+    }, 30_000);
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+  if (exitCode !== 0) throw new Error(`worker exit=${exitCode} stdout=${stdout} stderr=${stderr}`);
+  if (stderr.length > 0) throw new Error(`worker wrote stderr: ${stderr}`);
+  return JSON.parse(stdout) as WorkerResult;
+}
+
+async function activeReviewLocks(dataRoot: string): Promise<string[]> {
+  const directory = path.join(dataRoot, '.locks', 'reviews');
+  const entries = await fsp.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  });
+  return entries.filter((entry) => entry.isDirectory() && entry.name.endsWith('.lock')).map((entry) => entry.name);
+}
 
 function payload(reviewId = 'rev_safe') {
   return {
@@ -69,12 +130,132 @@ describe('NodeReviewStore', () => {
     expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const rejected = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.reason).toMatchObject({ code: 'REVIEW_IDENTITY_MISMATCH' });
+    expect(rejected[0]?.reason).toMatchObject({ code: 'REVIEW_BUSY' });
 
     const reviewDirectory = path.join(fixture.projectDirectory, 'reviews', reviewId);
     const terminalReceipts = (await fsp.readdir(reviewDirectory))
       .filter((name) => name === 'final-approval.json' || name === 'return-request.json');
     expect(terminalReceipts).toHaveLength(1);
+  });
+
+  it('serializes approval versus return across independent Node processes', { timeout: 60_000 }, async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_result_process_race';
+    await fixture.store.createReview(reviewId, { ...payload(reviewId), kind: 'integration-result' });
+    const reviewDirectory = path.join(fixture.projectDirectory, 'reviews', reviewId);
+    const identityBefore = await fsp.readFile(path.join(reviewDirectory, 'identity.json'));
+    const payloadBefore = await fsp.readFile(path.join(reviewDirectory, 'result', 'review.json'));
+    const base = { dataRoot: fixture.root, projectIdentity: 'project-identity', reviewId };
+
+    const commands: WorkerCommand[] = [
+      { ...base, action: 'approval', receipt: { approvalId: 'approval-process-race' } },
+      { ...base, action: 'return', receipt: { returnId: 'return-process-race' } },
+    ];
+    const results = await Promise.all(commands.map(runWorker));
+    expect(results.map((result) => result.status).sort()).toEqual(['rejected', 'written']);
+    const loserIndex = results.findIndex((result) => result.status === 'rejected');
+    expect(results[loserIndex]?.code).toBe('REVIEW_BUSY');
+    await expect(runWorker(commands[loserIndex]!)).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'REVIEW_TERMINAL_ALREADY_SET',
+    });
+    const receiptNames = (await fsp.readdir(reviewDirectory))
+      .filter((name) => name === 'final-approval.json' || name === 'return-request.json');
+    expect(receiptNames).toHaveLength(1);
+    await expect(fsp.readFile(path.join(reviewDirectory, 'identity.json'))).resolves.toEqual(identityBefore);
+    await expect(fsp.readFile(path.join(reviewDirectory, 'result', 'review.json'))).resolves.toEqual(payloadBefore);
+    expect(await activeReviewLocks(fixture.root)).toEqual([]);
+  });
+
+  it('keeps one of two different decisions and returns the exact winning bytes', { timeout: 60_000 }, async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_decision_process_race';
+    await fixture.store.createReview(reviewId, payload(reviewId));
+    const base = { dataRoot: fixture.root, projectIdentity: 'project-identity', reviewId };
+    const receipts = [
+      { decisionId: 'decision-a', chosenUnitId: 'unit-a' },
+      { decisionId: 'decision-b', chosenUnitId: 'unit-b' },
+    ];
+
+    const commands: WorkerCommand[] = receipts.map((receipt) => ({
+      ...base,
+      action: 'decision',
+      receipt,
+    }));
+    const results = await Promise.all(commands.map(runWorker));
+    expect(results.map((result) => result.status).sort()).toEqual(['rejected', 'written']);
+    const loserIndex = results.findIndex((result) => result.status === 'rejected');
+    expect(results[loserIndex]?.code).toBe('REVIEW_BUSY');
+    await expect(runWorker(commands[loserIndex]!)).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'REVIEW_TERMINAL_ALREADY_SET',
+    });
+    const bytes = await fsp.readFile(path.join(fixture.projectDirectory, 'reviews', reviewId, 'decision.json'));
+    const written = results.find((result) => result.status === 'written');
+    expect(written?.identity).toMatchObject({ bytes: bytes.byteLength, sha256: sha256(bytes) });
+    expect(receipts).toContainEqual(JSON.parse(bytes.toString('utf8')));
+    expect(await activeReviewLocks(fixture.root)).toEqual([]);
+  });
+
+  it('makes identical cross-process retries idempotent with one byte identity', { timeout: 60_000 }, async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_approval_process_retry';
+    await fixture.store.createReview(reviewId, { ...payload(reviewId), kind: 'integration-result' });
+    const command: WorkerCommand = {
+      dataRoot: fixture.root,
+      projectIdentity: 'project-identity',
+      reviewId,
+      action: 'approval',
+      receipt: { approvalId: 'approval-idempotent' },
+    };
+
+    const results = await Promise.all([runWorker(command), runWorker(command)]);
+    expect(results.map((result) => result.status).sort()).toEqual(['rejected', 'written']);
+    const loser = results.find((result) => result.status === 'rejected');
+    const winner = results.find((result) => result.status === 'written');
+    expect(loser?.code).toBe('REVIEW_BUSY');
+    const retry = await runWorker(command);
+    expect(retry.status).toBe('written');
+    expect(retry.identity).toEqual(winner?.identity);
+    const bytes = await fsp.readFile(path.join(fixture.projectDirectory, 'reviews', reviewId, 'final-approval.json'));
+    expect(retry.identity).toMatchObject({ bytes: bytes.byteLength, sha256: sha256(bytes) });
+    expect(bytes.toString('utf8')).toBe(`${JSON.stringify(command.receipt, null, 2)}\n`);
+    expect(await activeReviewLocks(fixture.root)).toEqual([]);
+  });
+
+  it('routes terminal writes through the shared review lease across processes', { timeout: 60_000 }, async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_existing_process_lease';
+    await fixture.store.createReview(reviewId, { ...payload(reviewId), kind: 'integration-result' });
+    const leases = new NodeLocalLeaseManager(fixture.root);
+    const held = await leases.acquire({
+      scope: 'review',
+      resourceId: `project-identity\u0000${reviewId}`,
+    });
+    const command: WorkerCommand = {
+      dataRoot: fixture.root,
+      projectIdentity: 'project-identity',
+      reviewId,
+      action: 'approval',
+      receipt: { approvalId: 'approval-blocked-by-lease' },
+    };
+
+    try {
+      const results = await Promise.all([runWorker(command), runWorker(command)]);
+      expect(results).toEqual([
+        expect.objectContaining({ status: 'rejected', code: 'REVIEW_BUSY' }),
+        expect.objectContaining({ status: 'rejected', code: 'REVIEW_BUSY' }),
+      ]);
+      await expect(fsp.access(path.join(
+        fixture.projectDirectory,
+        'reviews',
+        reviewId,
+        'final-approval.json',
+      ))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await held.release();
+    }
+    expect(await activeReviewLocks(fixture.root)).toEqual([]);
   });
 
   it('revalidates the sidecar and payload bytes on read', async () => {
