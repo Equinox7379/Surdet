@@ -100,7 +100,7 @@ export function normalizeTimelineAutosaveDocument(
 ): TimelineAutosaveNormalizeResult;
 ```
 
-- [ ] **Step 1: Write pure RED tests**
+- [x] **Step 1: Write pure RED tests**
 
 Cover exact canonical nested path, outer/file mismatch, internal mismatch, invalid JSON, missing/non-string ID, BOM, CRLF/LF normalization, valid new ID, invalid new ID, and preservation of every non-ID JSON field.
 
@@ -122,7 +122,7 @@ expect(normalizeTimelineAutosaveDocument(source, 'new_id')).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: Run RED once**
+- [x] **Step 2: Run RED once**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/timeline-autosave-identity.test.ts
@@ -130,7 +130,7 @@ npm run test -w surdet-editor -- --run test/timeline-autosave-identity.test.ts
 
 Expected: module/import or missing-export failures only.
 
-- [ ] **Step 3: Implement the pure helper**
+- [x] **Step 3: Implement the pure helper**
 
 Implementation requirements:
 
@@ -144,7 +144,7 @@ Implementation requirements:
 - serialize with two-space indentation, one trailing newline, and the requested EOL;
 - never mutate the source object or parsed source record.
 
-- [ ] **Step 4: Run GREEN once**
+- [x] **Step 4: Run GREEN once**
 
 Run the same focused command. Expected: all pure identity tests pass.
 
@@ -183,7 +183,7 @@ export interface TimelineAutosaveRestoreResult {
 }
 ```
 
-- [ ] **Step 1: Write restore RED tests**
+- [x] **Step 1: Write restore RED tests**
 
 Use valid timeline JSON fixtures rather than plain placeholder text. Freeze:
 
@@ -197,7 +197,7 @@ Use valid timeline JSON fixtures rather than plain placeholder text. Freeze:
 - non-canonical new timeline does not insert;
 - internal-ID collision against another current entry conflicts.
 
-- [ ] **Step 2: Run restore RED once**
+- [x] **Step 2: Run restore RED once**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/project-io.test.ts
@@ -205,7 +205,7 @@ npm run test -w surdet-editor -- --run test/project-io.test.ts
 
 Expected: new identity/atomicity cases fail on current file-first behavior while existing save isolation remains green.
 
-- [ ] **Step 3: Implement classification before mutation**
+- [x] **Step 3: Implement classification before mutation**
 
 For every recovered entry, compute all recovered/current projections and collision candidates before changing `state.timelines`. Build immutable handle-free conflict snapshots. Only exact canonical target or unique canonical insertion reaches mutation.
 
@@ -219,7 +219,7 @@ existing.dirty = true;
 
 Do not assign `existing.id`, `existing.file`, or `existing.handle`.
 
-- [ ] **Step 4: Run restore GREEN once**
+- [x] **Step 4: Run restore GREEN once**
 
 Run the same focused project-IO test. Expected: all tests pass and wrong-handle writes remain zero.
 
@@ -233,7 +233,7 @@ Run the same focused project-IO test. Expected: all tests pass and wrong-handle 
 - Consumes: `inspectTimelineAutosaveIdentity()`.
 - Produces: optional `timelineConflicts` parsing/persistence and conflict retention that resolves only on canonical exact ID/file/text/EOL.
 
-- [ ] **Step 1: Write persistence RED tests**
+- [x] **Step 1: Write persistence RED tests**
 
 Freeze these cases:
 
@@ -249,23 +249,23 @@ expect(unresolvedAutosaveTimelineConflicts([conflict], [{
 
 The first case uses the same outer tuple but different recovered bytes/internal ID. Also prove `preserveAutosaveTimelineConflicts()` keeps the fresh working entry in `timelines` and the unresolved recovered bytes in optional `timelineConflicts`, and that `parseAutosave()` reads both arrays without making the new field mandatory.
 
-- [ ] **Step 2: Run persistence RED once**
+- [x] **Step 2: Run persistence RED once**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/autosave.test.ts
 ```
 
-- [ ] **Step 3: Implement canonical exact resolution**
+- [x] **Step 3: Implement canonical exact resolution**
 
 Update `unresolvedAutosaveTimelineConflicts()` input projection to include `text/eol`. A conflict resolves only if a current entry is canonical and exactly matches the recovered ID, file, text, and EOL. Write unresolved entries to `payload.timelineConflicts`; never merge them into or overwrite `payload.timelines`. On startup, conflict-bucket entries bypass automatic restore and are rebuilt as pending structured conflicts.
 
-- [ ] **Step 4: Run persistence GREEN once**
+- [x] **Step 4: Run persistence GREEN once**
 
 Run the same focused autosave test. Expected: all tests pass, including scenes-only legacy parsing.
 
 - [ ] **Step 5: Commit the correctness core**
 
-Stage only the pure helper, its test, autosave source/test, project-IO source/test, and this taskbook. Verify the exact set and commit:
+Stage only the pure helper/test, autosave source/test, project-IO source/test, the minimal `main.ts` structured-conflict projection adaptation, and this taskbook. Verify the exact set and commit:
 
 ```text
 fix(editor): fail closed timeline autosave identity
@@ -468,3 +468,10 @@ Append-only. Record actual commands, exits, counts, failures, commits, recovery 
 - Task 0 baseline after taskbook freeze: `HEAD=7d30380d1d4701801284b64c0882f19f60419331`, `surdet/main=bca72247d0dc76983330367be0f38043036a0fca`, ahead/behind `8/0`, tracked worktree clean, staging empty. Only the pre-existing untracked/protected paths and the intentionally untracked long-term roadmap ledger remain outside Git.
 - Manager source reconfirmation: `restoreTimelineAutosaveEntries()` still matches `file` before outer ID, overwrites text/EOL while retaining the old handle, and never inspects JSON `definition.id`; `unresolvedAutosaveTimelineConflicts()` still considers only outer `id + file`. No production edit had occurred when this baseline was recorded.
 - Design self-review amendment before production: unresolved conflict bytes and newer same-identity dirty bytes require separate storage. The approved backward-compatible representation is optional `AutosavePayload.timelineConflicts`; it is not a save-game or public protocol change. Tests must prove ordinary `timelines` and quarantined conflict bytes coexist and that the conflict bucket never auto-applies after restart.
+- Task 1 RED was delegated to one bounded Luna worker owning only `packages/editor/test/timeline-autosave-identity.test.ts`. The one focused run exited `1` at the expected missing `../src/timeline-autosave-identity.js` module; no production file existed. Manager review corrected one over-restrictive worker assumption: a parseable JSON object with missing/non-string/empty `id` can be explicitly normalized because the user has chosen a target ID; only invalid JSON or a non-object root is unrepairable.
+- Task 1 GREEN: the manager implemented `packages/editor/src/timeline-autosave-identity.ts` using Authoring `timelineIdFromPath/timelinePathFor`, BOM-safe object parsing, path traversal rejection, exact triple projection, source-immutable normalization, EOL preservation, and no output on failure. The sole focused GREEN exited `0`: `1/1` file, `24/24` tests.
+- Task 2/3 RED was delegated to one bounded Luna worker owning only `project-io.test.ts` and `autosave.test.ts`. The one Project IO RED exited `1` with `15/23` passed and `8` identity/atomicity failures; the one Autosave RED exited `1` with `15/20` passed and `5` missing conflict-bucket/exact-resolution failures. The worker changed no production or Git state.
+- Task 2 first GREEN exited `0`: `project-io.test.ts` passed `23/23`. The first Task 3 implementation run exited `1` with `19/20` passed because one worker-authored oracle treated byte-identical but non-canonical recovered JSON as automatically resolved, contradicting its own canonical-exact test name and the approved fail-closed design. The manager corrected the oracle: non-canonical evidence remains unresolved until explicit repair; a separately canonical exact conflict proves the automatic-clear branch. Production strictness was not weakened.
+- Task 3 replacement GREEN exited `0`: `autosave.test.ts` passed `20/20`. Ordinary dirty `timelines` and quarantined `timelineConflicts` now coexist, parse independently, and only canonical exact current bytes resolve evidence automatically.
+- Combined Task 1–3 focused run passed `67/67`. The first Editor typecheck then exited `2` because `main.ts` still read removed flat conflict fields (`id/recoveredFile`). The approved fix is a minimal projection adaptation to consume `conflict.recovered` directly; no compatibility fields or duplicate truth were added.
+- Replacement Editor typecheck after the minimal projection adaptation exited `0`.

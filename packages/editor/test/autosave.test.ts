@@ -18,6 +18,13 @@ import {
   unresolvedAutosaveTimelineConflicts,
   writeAutosave,
 } from '../src/autosave.js';
+import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
+
+type Eol = '\r\n' | '\n';
+
+function timelineText(definitionId: string, eol: Eol = '\n', durationMs = 1200): string {
+  return stringifyTimeline({ ...createTimeline(definitionId), durationMs }, eol);
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -92,8 +99,13 @@ describe('parseAutosave（存储内容形状校验）', () => {
       savedAt: 5,
       scenes: [],
       timelines: [
-        { id: 'lf', file: 'lf.json', text: '{}\n', eol: '\n' },
-        { id: 'crlf', file: 'crlf.json', text: '{}\r\n', eol: '\r\n' },
+        { id: 'lf', file: 'lf.json', text: timelineText('lf'), eol: '\n' },
+        { id: 'crlf', file: 'crlf.json', text: timelineText('crlf', '\r\n'), eol: '\r\n' },
+        { id: 'bad-eol', file: 'bad.json', text: '{}', eol: '\r' },
+        { id: 7, file: 'bad.json', text: '{}', eol: '\n' },
+      ],
+      timelineConflicts: [
+        { id: 'recovered', file: 'recovered.json', text: timelineText('recovered'), eol: '\n' },
         { id: 'bad-eol', file: 'bad.json', text: '{}', eol: '\r' },
         { id: 7, file: 'bad.json', text: '{}', eol: '\n' },
       ],
@@ -102,8 +114,11 @@ describe('parseAutosave（存储内容形状校验）', () => {
       savedAt: 5,
       scenes: [],
       timelines: [
-        { id: 'lf', file: 'lf.json', text: '{}\n', eol: '\n' },
-        { id: 'crlf', file: 'crlf.json', text: '{}\r\n', eol: '\r\n' },
+        { id: 'lf', file: 'lf.json', text: timelineText('lf'), eol: '\n' },
+        { id: 'crlf', file: 'crlf.json', text: timelineText('crlf', '\r\n'), eol: '\r\n' },
+      ],
+      timelineConflicts: [
+        { id: 'recovered', file: 'recovered.json', text: timelineText('recovered'), eol: '\n' },
       ],
     });
   });
@@ -116,6 +131,7 @@ describe('parseAutosave（存储内容形状校验）', () => {
     expect(parseAutosave('[]')).toBeNull();
     expect(parseAutosave('{"dirName":1,"savedAt":2,"scenes":[]}')).toBeNull();
     expect(parseAutosave('{"dirName":"p","savedAt":"x","scenes":[]}')).toBeNull();
+    expect(parseAutosave('{"dirName":"p","savedAt":1,"scenes":[],"timelineConflicts":{}}')).toBeNull();
     // 条目级容错：坏条目跳过、好条目保留
     expect(parseAutosave('{"dirName":"p","savedAt":1,"scenes":[{"key":"a","text":"t"},42,{"key":7}]}'))
       .toEqual({ dirName: 'p', savedAt: 1, scenes: [{ key: 'a', text: 't' }] });
@@ -170,30 +186,70 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
 });
 
 describe('preserveAutosaveTimelineConflicts（冲突证据保全）', () => {
+  const conflict = {
+    id: 'same',
+    file: 'same.json',
+    text: timelineText('recovered', '\n', 1800),
+    eol: '\n' as const,
+  };
+  const fresh = {
+    id: 'same',
+    file: 'same.json',
+    text: timelineText('same', '\n', 2200),
+    eol: '\n' as const,
+  };
+
   it('即使当前没有其他 dirty 内容也跨定时 tick 保留冲突正文', () => {
-    const conflict = { id: 'same', file: 'nested/same.json', text: 'recovered\n', eol: '\n' as const };
     const next = preserveAutosaveTimelineConflicts(null, 'proj', [conflict], 20);
 
-    expect(next).toEqual({ dirName: 'proj', savedAt: 20, scenes: [], timelines: [conflict] });
+    expect(next).toMatchObject({
+      dirName: 'proj',
+      savedAt: 20,
+      scenes: [],
+      timelineConflicts: [conflict],
+    });
     expect(parseAutosave(JSON.stringify(next))).toEqual(next);
   });
 
-  it('与新的 dirty payload 合并且不重复同一 id/file 身份', () => {
-    const conflict = { id: 'same', file: 'nested/same.json', text: 'recovered\n', eol: '\n' as const };
-    const payload = { dirName: 'proj', savedAt: 10, scenes: [{ key: 'scene', text: 'dirty' }], timelines: [conflict] };
-    expect(preserveAutosaveTimelineConflicts(payload, 'proj', [conflict], 21)).toEqual({
+  it('fresh dirty 与冲突使用同一 outer tuple 时仍分别保留，不互相覆盖', () => {
+    const payload = { dirName: 'proj', savedAt: 10, scenes: [{ key: 'scene', text: 'dirty' }], timelines: [fresh] };
+    const next = preserveAutosaveTimelineConflicts(payload, 'proj', [conflict], 21);
+
+    expect(next).toMatchObject({
       ...payload,
       savedAt: 21,
+      timelines: [fresh],
+      timelineConflicts: [conflict],
     });
   });
 
-  it('同 identity 已有较新 dirty 正文时不让旧冲突覆盖新编辑', () => {
-    const conflict = { id: 'same', file: 'nested/same.json', text: 'old recovered\n', eol: '\n' as const };
-    const fresh = { id: 'same', file: 'nested/same.json', text: 'new dirty\n', eol: '\n' as const };
-    const payload = { dirName: 'proj', savedAt: 10, scenes: [], timelines: [fresh] };
+  it('只有 canonical exact id/file/text/eol 才能清除冲突；bytes 或内部 ID 不同仍 unresolved', () => {
+    expect(unresolvedAutosaveTimelineConflicts([conflict], [{
+      id: 'same',
+      file: 'same.json',
+      text: fresh.text,
+      eol: fresh.eol,
+    }])).toEqual([conflict]);
+    expect(unresolvedAutosaveTimelineConflicts([conflict], [{
+      id: 'same',
+      file: 'same.json',
+      text: timelineText('other-definition'),
+      eol: '\n',
+    }])).toEqual([conflict]);
+    expect(unresolvedAutosaveTimelineConflicts([conflict], [{
+      id: conflict.id,
+      file: conflict.file,
+      text: conflict.text,
+      eol: conflict.eol,
+    }])).toEqual([conflict]);
 
-    expect(preserveAutosaveTimelineConflicts(payload, 'proj', [conflict], 21)?.timelines).toEqual([fresh]);
-    expect(unresolvedAutosaveTimelineConflicts([conflict], [{ id: 'same', file: 'nested/same.json' }])).toEqual([]);
+    const canonicalConflict = { ...conflict, text: timelineText('same', '\n', 1800) };
+    expect(unresolvedAutosaveTimelineConflicts([canonicalConflict], [{
+      id: canonicalConflict.id,
+      file: canonicalConflict.file,
+      text: canonicalConflict.text,
+      eol: canonicalConflict.eol,
+    }])).toEqual([]);
   });
 });
 
