@@ -494,7 +494,7 @@ fix(cli): harden review authority boundary
 - Consumes: `ReviewTerminalAuthority` and strict shared command/snapshot parsers.
 - Produces: status/describe/write HTTP endpoints and Vite dev/preview plugin mounting.
 
-- [ ] **Step 1: Write HTTP security RED tests**
+- [x] **Step 1: Write HTTP security RED tests**
 
 Use minimal fake request/response objects or a loopback ephemeral server. Require:
 
@@ -508,7 +508,7 @@ business error: structured bounded JSON, no stack/token/dataRoot
 
 Freeze a spy proving rejected requests never call authority methods.
 
-- [ ] **Step 2: Write Editor boundary RED test**
+- [x] **Step 2: Write Editor boundary RED test**
 
 Read the Editor browser source and Vite config separately:
 
@@ -519,14 +519,14 @@ expect(viteConfigSource).toMatch(/reviewAuthorityVitePlugin/);
 
 Expected RED: plugin/middleware absent.
 
-- [ ] **Step 3: Run Task 5 RED once**
+- [x] **Step 3: Run Task 5 RED once**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/review-authority-http.test.ts
 npm run test -w surdet-editor -- --run test/review-authority-boundary.test.ts
 ```
 
-- [ ] **Step 4: Implement the bounded HTTP handler**
+- [x] **Step 4: Implement the bounded HTTP handler**
 
 The handler accepts constructor dependencies rather than reading globals in tests:
 
@@ -541,13 +541,15 @@ export function createReviewAuthorityHttpHandler(options: {
 
 Use exact routes, methods, token, origin, content type, body limit, JSON parsing, and one response envelope. Do not log command receipts.
 
-- [ ] **Step 5: Implement the Vite plugin**
+- [x] **Step 5: Implement the Vite plugin**
 
 `reviewAuthorityVitePlugin()` creates one random token and one authority bound to `SURDET_AGENT_DATA_DIR`/existing default. It mounts the same handler in `configureServer` and `configurePreviewServer`, then injects only the token and protocol endpoint into `index.html`. It does not alter `preview.html`.
 
+Vite 6 preview does not run `transformIndexHtml`; the plugin therefore uses a preview-only pre-static middleware to read the built `index.html`, inject that server's token in memory, and return it. Static build output remains token-free, while `/preview.html` always falls through byte-for-byte.
+
 `packages/editor/vite.config.ts` adds the plugin without changing port/build inputs.
 
-- [ ] **Step 6: Run Task 5 GREEN, typechecks, and build**
+- [x] **Step 6: Run Task 5 GREEN, typechecks, and build**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/review-authority-http.test.ts
@@ -558,7 +560,7 @@ npm run typecheck -w surdet-editor
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 7: Commit Task 5 exactly**
+- [x] **Step 7: Commit Task 5 exactly**
 
 Stage the five Task 5 paths plus taskbook and commit:
 
@@ -904,6 +906,10 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Local-adversary finding is bounded honestly: arbitrary same-account filesystem writers are outside this authority's enforceable threat model and can directly alter receipts regardless of API checks. Static symlink/path escape remains rejected; the project will not claim that repeated path checks provide native handle-level isolation.
 - Task 4A RED: Authoring catalog 6/7 and CLI 34/39 passed. Exact failures proved the `REVIEW_BUSY` terminal-flag contradiction, lease-root mismatch acceptance, unknown-action-to-return fallthrough, incomplete projection acceptance, and malformed single-receipt exception leakage.
 - Task 4A GREEN: Authoring error catalog 7/7; CLI authority/store/service/lease 56/56; Authoring and CLI typechecks/builds all exited `0`. Root binding is exact (case-folded on Windows), store actions use an exhaustive runtime guard, projection collections/final-result identity are checked before validators, malformed single terminals become `corrupt`, and timed-out child workers are killed and reaped before rejection.
+- Task 4A exact commit: `be1500e` (`fix(cli): harden review authority boundary`), nine-path staged set, both diff checks exit `0`.
+- Task 5 RED: CLI HTTP test could not load the absent handler; Editor boundary had 1/2 pass and failed because Vite had no authority plugin. Browser sources were already free of Node/CLI imports.
+- Task 5 independent audits were read-only. HTTP findings accepted: trusted loopback Origin list derived from the socket rather than request Host, fixed body cap, chunked overflow/timeout, close-on-reject, listener cleanup, safe error-code whitelist, and serialization fallback. Vite findings accepted: preview needs a pre-static `dist/index.html` interceptor because it does not call `transformIndexHtml`; build transform has an explicit no-server guard; Node imports remain tooling-only.
+- Task 5 GREEN: HTTP 13/13, Editor boundary 2/2, CLI and Editor typechecks/builds exited `0`. A real `vite preview` on `127.0.0.1:4185` produced exactly one main-page marker, zero preview-page markers, a fresh 43-character token, and status `{ protocolVersion: '1.0.0', status: 'available' }`; the service was stopped afterward. Fresh static build output contained no authority marker, global config name, or test token.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED
