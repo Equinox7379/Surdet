@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { reviewAuthorityVitePlugin } from '../cli/src/review-authority/vite-plugin.js';
 
 export default defineConfig({
+  plugins: [reviewAuthorityVitePlugin()],
   server: { port: 5174 },
   build: {
     rollupOptions: {
