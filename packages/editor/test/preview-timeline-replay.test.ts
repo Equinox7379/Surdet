@@ -13,7 +13,7 @@ class FakeElement {
   value = '';
   onclick: (() => void) | null = null;
   onchange: (() => void) | null = null;
-  contentWindow: { postMessage: () => void } | null = null;
+  contentWindow: { postMessage: (message: unknown, ...rest: unknown[]) => void } | null = null;
   private ownText = '';
 
   constructor(tagName: string) {
@@ -73,8 +73,17 @@ class FakeElement {
   }
 }
 
+const postedPreviewMessages: unknown[] = [];
+let previewMessageListener: ((event: MessageEvent) => void) | null = null;
+
 const documentStub = {
-  createElement: (tag: string) => new FakeElement(tag),
+  createElement: (tag: string) => {
+    const element = new FakeElement(tag);
+    if (tag.toLowerCase() === 'iframe') {
+      element.contentWindow = { postMessage: (message: unknown) => { postedPreviewMessages.push(message); } };
+    }
+    return element;
+  },
   createTextNode: (text: string) => {
     const node = new FakeElement('#text');
     node.textContent = text;
@@ -92,6 +101,8 @@ const originalState = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  postedPreviewMessages.splice(0);
+  previewMessageListener = null;
   state.current = originalState.current;
   state.previewTimelineId = originalState.previewTimelineId;
   state.reviewWorkspace = originalState.reviewWorkspace;
@@ -99,9 +110,13 @@ afterEach(() => {
 });
 
 describe('timeline preview replay', () => {
-  it('keeps direct timeline identity on reload and clears it only after choosing a normal scene entry', () => {
+  it('keeps direct timeline identity in both initial and replay payloads, then clears it on normal entry selection', async () => {
     vi.stubGlobal('document', documentStub);
-    vi.stubGlobal('window', { addEventListener: vi.fn() });
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+        if (type === 'message') previewMessageListener = listener;
+      }),
+    });
     state.current = 'intro.gal';
     state.scenes = new Map([
       ['intro.gal', {
@@ -118,10 +133,19 @@ describe('timeline preview replay', () => {
     const container = new FakeElement('div');
 
     renderPreviewPanel(container as unknown as HTMLElement);
+    const frame = container.querySelector('iframe');
+    expect(frame?.contentWindow).not.toBeNull();
+    expect(previewMessageListener).not.toBeNull();
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame!.contentWindow } as unknown as MessageEvent);
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
     const reload = container.findButton('▶ 播放 / 重载');
     expect(reload).not.toBeNull();
     reload!.onclick?.();
     expect(state.previewTimelineId).toBe('opening');
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(2));
+    expect(postedPreviewMessages.map((message) => (
+      message as { payload?: { timelinePreviewId?: string } }
+    ).payload?.timelinePreviewId)).toEqual(['opening', 'opening']);
 
     const entrySelector = container.querySelector('select');
     expect(entrySelector).not.toBeNull();

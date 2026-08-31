@@ -1332,3 +1332,59 @@ REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
 PUSH = AUTHORIZED_AFTER_REPLACEMENT_FORMAL_PASS
 FRONTEND_PASS_4 = NOT_STARTED
 ```
+
+### 2026-08-31 — Independent-manager replacement FORMAL failure
+
+**FROZEN IDENTITY**
+
+- Correction `CODE_EVIDENCE_HEAD`: `0632b9688effe5763a5512687214f8119b0a3171`; parent `f70a8edce90e0572d4718c88b75717a028e54447`; commit message `fix(editor): preserve recovery and preview identity`.
+- Commit scope is exactly the eight predeclared paths. Tracked worktree and staging were empty before FORMAL. Runner HEAD identity was 80842 bytes / SHA-256 `05D72C7149D9F0FF2014BE02CE300D124778DE55B77074CDA266C5E0896ADA27`.
+
+**REPLACEMENT FORMAL — FAILED, NOT RERUN**
+
+- FORMAL budget 1/1 consumed once; exit 1; evidence class `EDITOR_TIMELINE_DESK_BROWSER_FORMAL`; `runHead === codeEvidenceHead`; `trackedCodeDiffPaths=[]`.
+- Thirteen milestones passed. Last passed node: `destructive-confirm-undo-restore`. First failed node: `selected-timeline-preview-handoff`.
+- Failure: after the real `▶ 播放 / 重载` click, the parent Editor did not receive a new runtime trace event within the fixed 10000ms bound. The run stopped before layout/save/cold-reopen milestones.
+- Identity retention itself was not serialized because the combined wait timed out first. This artifact therefore does not prove whether the failure lies in async project reads, load dispatch, child runtime replay or parent trace receipt; no root cause is claimed.
+- All independent browser error channels remained empty: console, page, request, HTTP response, Vite stderr and cleanup. Strict port 4251 was released; original Starter remained unchanged.
+- The earlier scroll-sampling correction was independently proven by this FORMAL before the new failure: pre-round-trip expected/actual were both 1337, and post-round-trip `scrollLeft` remained 1337 at 300% zoom.
+- Evidence: `<local-path>`, 34849 bytes, SHA-256 `DE1A3B5B5B59A5B918D250161037A5778E87ED557A72AD61527520EF66D5CB08`.
+- Identity sidecar: 570 bytes, SHA-256 `2E6E0023D61F3478CFF008181E5DF7EC735F95828D0F7A3AB90119F8B9F956F1`.
+
+**HARD STOP**
+
+```text
+W3B_INDEPENDENT_MANAGER_CORRECTION_COMMIT = 0632b9688effe5763a5512687214f8119b0a3171
+REPLACEMENT_FORMAL = FAILED_1_OF_1
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+WAITING_FOR_NEW_MANAGER_RECOVERY_AUTHORIZATION = YES
+```
+
+### 2026-08-31 — W3B replay-receipt recovery authorization
+
+**READ-ONLY ROOT CAUSE REVIEW**
+
+- Three bounded Luna audits and the manager's source review agreed that commit `0632b9688effe5763a5512687214f8119b0a3171` already preserves `previewTimelineId` and sends it in both initial/replay payloads. No additional backend, Renderer or public protocol change is justified.
+- The failed FORMAL runner waited only for iframe boot/runtime construction before clicking replay. The initial parent `send()` and child `loadQueue` had not yet reached the direct `@timeline` instruction, so the second load correctly queued behind the first and no second runtime event could arrive within the bound.
+- A legal direct Timeline run always emits a Core runtime event whose `event.source.op === 'timeline'` when the synthetic `@timeline` instruction executes. This is the minimum authoritative replay-start receipt; `surdet-preview-ready`, trace-start, interpreter construction and generic diagnostics are weaker.
+
+**MINIMAL EVIDENCE REPAIR**
+
+- Before replay, the runner now requires the first run's `source.op=timeline` event. Only then does it click the real `▶ 播放 / 重载` control.
+- Because parent `send()` clears the previous trace synchronously, the runner then requires a second `source.op=timeline` event and the same `previewTimelineId`. Initial and replay event counts are serialized into `selected-timeline-preview-handoff`.
+- The permanent panel test now records both real `surdet-preview-load` messages and proves `timelinePreviewId=opening` in both payloads; selecting the ordinary scene-start/label entry remains the only action in this test that clears direct-Timeline identity.
+- No request allow-list, timeout relaxation, load cancellation, requestId protocol or speculative queue rewrite was added.
+
+**RECOVERY BOUNDARY**
+
+- Focused replay test: 1/1 PASS. Runner contract: 11/11 PASS. Runner syntax, Editor typecheck and diff check: PASS.
+- Manager authorizes one new clean freeze commit containing exactly the taskbook, runner, runner contract and replay panel test, followed by one replacement FORMAL. Any failure stops before push; no DIAGNOSTIC rerun is authorized.
+
+```text
+W3B_REPLAY_RECEIPT_RECOVERY = READY_TO_FREEZE
+AUTHORIZED_PATH_COUNT = 4
+REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
+PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
+FRONTEND_PASS_4 = NOT_STARTED
+```
