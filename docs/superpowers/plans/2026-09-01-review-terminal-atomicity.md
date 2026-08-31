@@ -655,7 +655,7 @@ npm run typecheck -w surdet-editor
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 8: Commit Task 6 exactly**
+- [x] **Step 8: Commit Task 6 exactly**
 
 Stage seven Task 6 paths plus taskbook and commit:
 
@@ -675,7 +675,7 @@ feat(editor): connect local review authority
 - Consumes: built Authoring, CLI authority, Editor dist/plugin, isolated review fixtures, two Node workers, and two browser contexts.
 - Produces: one fixed preflight/formal runner and exclusive evidence artifact.
 
-- [ ] **Step 1: Write runner contract RED tests**
+- [x] **Step 1: Write runner contract RED tests**
 
 Freeze these runner requirements:
 
@@ -691,7 +691,7 @@ all error/console/page/request/stderr/cleanup/active-review-lease channels empty
 
 Require runner source to check disk bytes/SHA, both receipt filenames, project tree identity, payload identity, process cleanup, and no Agent writer capability.
 
-- [ ] **Step 2: Run runner RED once**
+- [x] **Step 2: Run runner RED once**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/review-terminal-atomicity-runner.test.mjs
@@ -699,7 +699,7 @@ npm run test -w @surdet/cli -- --run test/review-terminal-atomicity-runner.test.
 
 Expected: missing runner/import failures.
 
-- [ ] **Step 3: Implement fixed milestones**
+- [x] **Step 3: Implement fixed milestones**
 
 Use this order:
 
@@ -723,14 +723,14 @@ Use this order:
 
 No milestone may mutate the original Starter or repository project.
 
-- [ ] **Step 4: Run runner contract GREEN**
+- [x] **Step 4: Run runner contract GREEN**
 
 ```powershell
 node --check packages/cli/e2e/review-terminal-atomicity-gate.e2e.mjs
 npm run test -w @surdet/cli -- --run test/review-terminal-atomicity-runner.test.mjs
 ```
 
-- [ ] **Step 5: Run one preflight**
+- [x] **Step 5: Run one preflight**
 
 Build Authoring, CLI, and Editor first, then:
 
@@ -740,7 +740,7 @@ node packages/cli/e2e/review-terminal-atomicity-gate.e2e.mjs --preflight
 
 Expected: endpoint identity, token rejection controls, fixture identity, two process workers, browser availability, and cleanup all pass without terminal mutation.
 
-- [ ] **Step 6: Commit runner and contract**
+- [x] **Step 6: Commit runner and contract**
 
 Stage the two Task 7 files plus taskbook and commit:
 
@@ -919,6 +919,13 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 6 audit GREEN: pending terminal commands now retain the exact request ID, receipt ID, timestamp, fingerprint, and payload until the outcome is known; an opposite terminal action is blocked while that command is unresolved. Result preview/reload/exploration checks are disabled during in-flight or uncertain approval, and approval rechecks fixture identity before submission. Canonical records are serialized using the Node record contract (`JSON.stringify(..., null, 2)` plus LF) and their bytes/SHA are verified before use. The fake authority now uses the same serialization.
 - Task 6 final gates: focused client/workspace/panel/boundary passed 55/55; complete Editor passed 465/465; typecheck and build exited `0`. User-facing terminal errors use fixed Chinese messages and do not surface raw transport text. The boundary test now rejects any browser `createWritable()`, terminal `{ create: true }`, or missing authority write path.
 - Task 6 final manager hardening: an unresolved command is also retained for malformed/unknown transport responses classified unavailable; result preview and terminal writes are mutually exclusive in both directions, including reload and fixture-refresh controls. The final focused set passed 56/56, the final complete Editor suite passed 466/466, and fresh typecheck/build exited `0`; the build retained only the pre-existing chunk-size advisory.
+- Task 6 exact commit: `18c564e` (`feat(editor): connect local review authority`), eight-path staged set, both diff checks exited `0`; no unrelated untracked path was staged.
+- Task 7 RED handoff record: the delegated runner worker had already consumed the single missing-runner/import RED before the manager resumed the task. The resumed context did not retain a standalone raw RED log, so the manager did not rerun or replace that failure.
+- Task 7 contract hardening: the first contract draft froze the correct mode and milestone names but relied too heavily on source keywords. Two bounded read-only Luna audits identified fake-green gaps around FORMAL identity, bytes/SHA, error channels, process/context counts, Agent writer absence, mutation evidence, Vite lifecycle, and winner-to-disk binding. The manager replaced those with executable pure-contract checks and real runtime evidence assertions before consuming preflight.
+- Task 7 GREEN correction: the first post-runner command exposed that `node:test` failures were printed but ignored by the Vitest workspace command. The contract was migrated to Vitest, the expected failure assertion was corrected, and the final runner contract passed 8/8 with `node --check` exit `0`. This correction occurred before preflight and did not weaken any product assertion.
+- Task 7 runner implementation: the fixed runner supports only `--preflight` and `--formal`; scans strict `127.0.0.1` ports 4260–4269 while forbidding 4173/4175; creates an exclusive temp artifact; binds the Vite authority to the isolated data root; uses real Node workers and independent browser contexts; compares winner receipt bytes/SHA/content to disk; verifies immutable review payload and identity sidecars, project tree, complete Starter tree, process/lease cleanup, static read-only behavior, token/origin/payload rejection, and an empty Agent writer capability set. Setup, milestone, validation, stderr, protocol, and child-exit failures all remain artifact-producing failure paths.
+- Task 7 prerequisite builds: Authoring build, CLI build, and Editor build exited `0`. Editor emitted only the existing chunk-size advisory.
+- Task 7 unique preflight: exactly one `--preflight` run exited `0` with `status=PASSED`. It used ports `4260,4261`, two real probe workers, two browser contexts, zero terminal files, `agentWriterCapabilities=[]`, `projectMutation=false`, `starterMutation=false`, and eight empty error/cleanup/lease channels. Evidence: `<local-path>`, 2487 bytes, SHA-256 `4471016EDCCF47856CC3B2D8445227C45F3A3603EEE606AE0FAB5E77AE2143E8`; identity sidecar 100 bytes, SHA-256 `3DD6C3C4E344883A0C328E3EC6A167DA678F615EE1E6DC5961997DB9B527081E`. The runner SHA recorded by the artifact is `1DA79F0CAAFCC07DC35A1CC36C03B769699BAD834503C1CC28A81850B89C677F` at `runHead=18c564e3a75e1fe8fd696d201791404e02ae257e`.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED
