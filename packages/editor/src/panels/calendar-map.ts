@@ -126,7 +126,7 @@ export function renderCalendarMap(
   marker.setAttribute('orient', 'auto-start-reverse');
   const arrowPath = el('path');
   arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-  arrowPath.setAttribute('fill', '#0f8ff3'); // 蔚蓝箭头（ME 白蓝主题）
+  arrowPath.classList.add('config-map-arrow');
   marker.appendChild(arrowPath);
   defs.appendChild(marker);
   svg.appendChild(defs);
@@ -146,6 +146,8 @@ export function renderCalendarMap(
   const geoms: MapNodeGeom[] = [...posOf.entries()].map(([id, p]) => ({ id, x: p.x, y: p.y, w: widthOf.get(id) ?? 70 }));
   const overlaps = findOverlaps(geoms);
   const overlapped = new Set<string>(overlaps.flat());
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `日历地图，共 ${rows.length} 个节点，${overlaps.length} 对节点重叠`);
 
   // 连线端点计算（两端修剪到节点矩形边界，箭头不被节点遮盖）
   const edgeOf = (fromId: string, toId: string): { x1: number; y1: number; x2: number; y2: number } | null => {
@@ -170,7 +172,7 @@ export function renderCalendarMap(
       line.setAttribute('y1', String(pts.y1));
       line.setAttribute('x2', String(pts.x2));
       line.setAttribute('y2', String(pts.y2));
-      line.setAttribute('stroke', '#8fa5bd'); // 冷灰蓝连线（ME 白蓝主题）
+      line.classList.add('config-map-edge');
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '6 4');
       line.setAttribute('marker-end', 'url(#map-arrow)');
@@ -181,8 +183,8 @@ export function renderCalendarMap(
       hit.setAttribute('y1', String(pts.y1));
       hit.setAttribute('x2', String(pts.x2));
       hit.setAttribute('y2', String(pts.y2));
-      hit.setAttribute('stroke', '#000');
-      hit.setAttribute('stroke-opacity', '0');
+      hit.classList.add('config-map-edge-hit');
+      hit.setAttribute('stroke', 'transparent');
       hit.setAttribute('stroke-width', '12');
       hit.setAttribute('pointer-events', 'stroke');
       hit.style.cursor = 'pointer';
@@ -229,6 +231,13 @@ export function renderCalendarMap(
 
     const g = el('g');
     g.setAttribute('transform', `translate(${x}, ${y})`);
+    g.classList.add('config-map-node');
+    if (isBase) g.classList.add('config-map-node-base');
+    if (overlapped.has(id)) g.classList.add('config-map-node-overlap');
+    g.setAttribute(
+      'aria-label',
+      `地图节点：${name}（标识：${id || '未设置'}），坐标 ${Math.round(x)}、${Math.round(y)}${isBase ? '，据点' : '，普通节点'}`,
+    );
     g.style.cursor = 'grab';
 
     const rect = el('rect');
@@ -236,43 +245,39 @@ export function renderCalendarMap(
     rect.setAttribute('y', String(-NODE_H / 2));
     rect.setAttribute('width', String(w));
     rect.setAttribute('height', String(NODE_H));
-    rect.setAttribute('rx', '8');
-    rect.setAttribute('fill', isBase ? '#dbeafe' : '#ffffff');
-    // 重叠节点红框提示（拖拽错开后自动消失）
-    rect.setAttribute('stroke', overlapped.has(id) ? '#e5484d' : (isBase ? '#0f8ff3' : '#9fb3c8'));
+    rect.setAttribute('rx', '2');
     rect.setAttribute('stroke-width', '2');
     g.appendChild(rect);
 
     const label = el('text');
+    label.classList.add('config-map-node-label');
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('y', '-2');
-    label.setAttribute('fill', '#1f2d3d');
     label.setAttribute('font-size', '14');
     label.textContent = name;
     g.appendChild(label);
 
     const sub = el('text');
+    sub.classList.add('config-map-node-meta');
     sub.setAttribute('text-anchor', 'middle');
     sub.setAttribute('y', '14');
-    sub.setAttribute('fill', '#6e7f92');
     sub.setAttribute('font-size', '10');
     sub.textContent = `${id}${isBase ? '（据点）' : ''} · (${Math.round(x)}, ${Math.round(y)})`;
     g.appendChild(sub);
 
     // 连接点（右侧圆点）：拖到另一节点添加 requires（前置 = 本节点）
     const port = el('circle');
+    port.classList.add('config-map-node-port');
     port.setAttribute('cx', String(w / 2));
     port.setAttribute('cy', '0');
     port.setAttribute('r', '6');
-    port.setAttribute('fill', '#0f8ff3');
-    port.setAttribute('stroke', '#ffffff');
     port.style.cursor = 'crosshair';
     port.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation(); // 不走节点拖拽分支
       port.setPointerCapture(e.pointerId);
       const temp = el('line');
-      temp.setAttribute('stroke', '#00b4d8');
+      temp.classList.add('config-map-edge-preview');
       temp.setAttribute('stroke-width', '2');
       temp.setAttribute('stroke-dasharray', '4 4');
       temp.setAttribute('pointer-events', 'none');
@@ -326,6 +331,10 @@ export function renderCalendarMap(
         row.y = String(ny);
         posOf.set(id, { x: nx, y: ny });
         g.setAttribute('transform', `translate(${nx}, ${ny})`);
+        g.setAttribute(
+          'aria-label',
+          `地图节点：${name}（标识：${id || '未设置'}），坐标 ${nx}、${ny}${isBase ? '，据点' : '，普通节点'}`,
+        );
         sub.textContent = `${id}${isBase ? '（据点）' : ''} · (${nx}, ${ny})`;
         refreshLines(id);
       };

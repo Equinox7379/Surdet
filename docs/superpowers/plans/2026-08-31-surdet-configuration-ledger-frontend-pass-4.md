@@ -74,7 +74,7 @@ npm run typecheck -w surdet-editor
 
 Expected: current focused config contracts and typecheck pass before DOM/CSS changes.
 
-- [ ] **Step 3: Commit the taskbook only**
+- [x] **Step 3: Commit the taskbook only**
 
 Stage exactly the two documentation paths and commit:
 
@@ -97,7 +97,7 @@ git commit -m "docs(editor): plan configuration ledger pass 4"
 - Consumes: existing config DOM source and approved design tokens.
 - Produces: fail-closed static contracts for the new workspace structure and legacy-visual exit.
 
-- [ ] **Step 1: Write source-level RED contracts**
+- [x] **Step 1: Write source-level RED contracts**
 
 The new test must require all of the following:
 
@@ -115,7 +115,7 @@ calendar map semantic classes instead of visible hex attributes
 
 It must also reject configuration DOM use of `.cfg-section`, colored title rules, inline visible map colors, fixed/sticky floating primary actions and config-scoped `box-shadow`.
 
-- [ ] **Step 2: Run the RED**
+- [x] **Step 2: Run the RED**
 
 Run:
 
@@ -137,7 +137,7 @@ Expected: fail only on missing Pass 4 contracts; preserve the exact output in th
 - Consumes: existing eight `render*Section()` functions and module-level row caches.
 - Produces: `ConfigSectionId`, section metadata, stable local selection and one active ledger surface.
 
-- [ ] **Step 1: Add stable section metadata**
+- [x] **Step 1: Add stable section metadata**
 
 Use this exact ordered identity set:
 
@@ -159,7 +159,7 @@ Each descriptor contains Chinese `label`, plain-language `description`, source `
 角色 / 变量 / 成就 / 日历与地图 / 角色成长 / 事件 / 鉴赏 / 名词表
 ```
 
-- [ ] **Step 2: Build the workspace shell without duplicating state**
+- [x] **Step 2: Build the workspace shell without duplicating state**
 
 `renderConfig()` still performs the existing source refresh. After refresh it calls a new internal workspace renderer that creates:
 
@@ -172,11 +172,11 @@ Each descriptor contains Chinese `label`, plain-language `description`, source `
 
 The selected `ConfigSectionId` is module-local display state. Clicking the directory changes only the visible section; it must not refresh disk, clear history or reconstruct business row models.
 
-- [ ] **Step 3: Preserve rerender identity**
+- [x] **Step 3: Preserve rerender identity**
 
 `rerenderConfig()` rebuilds the workspace from existing cached rows and retains the selected section. Undo, redo, add row, delete row and map edits must remain in the current section.
 
-- [ ] **Step 4: Run focused GREEN**
+- [x] **Step 4: Run focused GREEN**
 
 Run the workspace contract, config logic and calendar-map tests. Expected: all pass.
 
@@ -193,7 +193,7 @@ Run the workspace contract, config logic and calendar-map tests. Expected: all p
 - Consumes: existing row arrays, `ColDef`, scalar descriptors and save callbacks.
 - Produces: Chinese section headers, readable fields, table scroll regions and optional technical-name projection.
 
-- [ ] **Step 1: Replace the old section shell**
+- [x] **Step 1: Replace the old section shell**
 
 `sectionShell()` receives section metadata and returns a semantic `<section class="config-ledger-section">` with:
 
@@ -204,11 +204,11 @@ Run the workspace contract, config logic and calendar-map tests. Expected: all p
 
 No decorative subtitle, colored rail or card wrapper is permitted.
 
-- [ ] **Step 2: Separate human labels from technical keys**
+- [x] **Step 2: Separate human labels from technical keys**
 
 Extend presentation-only field descriptors with `technicalKey`. Visible labels use Chinese task language. `.config-technical-key` is hidden by default and exposed only by the section-level “显示技术名称” control. Inputs retain exact underlying row keys.
 
-- [ ] **Step 3: Normalize table and empty-state structure**
+- [x] **Step 3: Normalize table and empty-state structure**
 
 Every editable table uses:
 
@@ -220,11 +220,11 @@ Every editable table uses:
 
 Delete buttons use the visible text `删除` with a row-specific accessible label. Add actions name the object (`新增变量`, `新增成就`, `新增节点`) rather than generic `新增行` where the section is known.
 
-- [ ] **Step 4: Preserve all existing callbacks**
+- [x] **Step 4: Preserve all existing callbacks**
 
 Do not change `pushConfigHistory`, rows-to-JSON conversion, `saveCharacters`, `saveVariables`, `saveAchievements`, import/export or per-section save behavior.
 
-- [ ] **Step 5: Run focused GREEN**
+- [x] **Step 5: Run focused GREEN**
 
 Run workspace, config-edit, project-config-display and terminology-import tests. Expected: all pass.
 
@@ -242,7 +242,7 @@ Run workspace, config-edit, project-config-display and terminology-import tests.
 - Consumes: current map geometry, pointer capture, overlap set and history hooks.
 - Produces: semantic SVG classes, accessible map description and a dedicated map stage.
 
-- [ ] **Step 1: Replace visible inline colors with classes**
+- [x] **Step 1: Replace visible inline colors with classes**
 
 Use these class hooks without changing geometry:
 
@@ -260,15 +260,15 @@ config-map-node-port
 
 The invisible hit target remains transparent. Arrow marker and visible paths receive semantic classes.
 
-- [ ] **Step 2: Add accessible map semantics**
+- [x] **Step 2: Add accessible map semantics**
 
 The SVG receives `role="img"` and a Chinese `aria-label`. Each node group receives a readable `aria-label` containing name, ID, coordinates and base status. The editable table remains the keyboard alternative; do not invent keyboard drag behavior in this pass.
 
-- [ ] **Step 3: Promote the map stage**
+- [x] **Step 3: Promote the map stage**
 
 Calendar rendering places the map in `.config-map-stage` before technical node/base-command tables. Node and command tables live in a `<details>` named `节点与指令明细`; it opens automatically when no nodes exist.
 
-- [ ] **Step 4: Run focused GREEN**
+- [x] **Step 4: Run focused GREEN**
 
 Run map and workspace contracts. Existing drag/requires/overlap pure tests must remain green.
 
@@ -286,89 +286,63 @@ Run map and workspace contracts. Existing drag/requires/overlap pure tests must 
 - Consumes: approved `--surdet-*` semantic tokens and new DOM hooks.
 - Produces: configuration-only layout, typography, tables, focus, map and responsive rules.
 
-- [ ] **Step 1: Link the stylesheet**
+- [x] **Step 1: Link the stylesheet**
 
 Add `/src/styles/config-workspace.css` after `timeline-workspace.css` in `index.html`.
 
-- [ ] **Step 2: Implement the desktop ledger**
+- [x] **Step 2: Implement the desktop ledger**
 
 At wide width use a 220–248px directory and a flexible main ledger. The directory is a flat document index separated by rules, not cards. The active item uses a full outline/surface plus `aria-current`, never a colored left rail.
 
-- [ ] **Step 3: Implement fields and tables**
+- [x] **Step 3: Implement fields and tables**
 
 Use 8/12/16/24/32 spacing, 0/2/4px radii, no shadows. Tables have sticky headers only inside their scroll container. Long labels wrap; JSON/ID columns use the mono token only when technical names are shown.
 
-- [ ] **Step 4: Implement the map stage**
+- [x] **Step 4: Implement the map stage**
 
 The calendar canvas uses a minimum 420px desktop height and semantic component tokens derived from approved surface/border/action/state tokens. Overlap uses border shape plus warning text, not color alone.
 
-- [ ] **Step 5: Implement responsive behavior**
+- [x] **Step 5: Implement responsive behavior**
 
 At `max-width: 800px`, the directory becomes a horizontally scrollable tablist above the ledger. Tables retain local horizontal scrolling. At 200% zoom, project navigation, section selection, inputs and save actions remain reachable without page-level horizontal overflow.
 
-- [ ] **Step 6: Remove only migrated legacy rules**
+- [x] **Step 6: Remove only migrated legacy rules**
 
 Delete config-specific `.cfg-section`, `.cfg-ops`, `.cfg-scalars`, `.cfg-scalar` and `.calendar-map-wrap` visual rules from `styles.css`. Do not remove global `.cfg-table` yet because the statistics page still consumes it.
 
-- [ ] **Step 7: Run CSS/DOM GREEN and build**
+- [x] **Step 7: Run CSS/DOM GREEN and build**
 
 Run workspace contract, typecheck and Editor build. Expected: no missing stylesheet or selector contract.
 
 ---
 
-## Task 6: Real Browser Configuration Workflow
+## Task 6: Owner Browser Acceptance
 
 **Files:**
-- Create: `packages/editor/e2e/editorial-config-ledger-pass-4.e2e.mjs`
-- Create: `packages/editor/test/editorial-config-ledger-pass-4-runner.test.mjs`
-- Read only: `packages/editor/e2e/support/fake-file-system.mjs`
+- No repository file is created by this task.
+- Use the dedicated local Editor service on port 4175.
 
 **Interfaces:**
-- Consumes: strict-port Vite launch, fake project picker and Starter file map.
-- Produces: exclusive PRECHECK/DIAGNOSTIC/FORMAL artifacts bound to Git and runner SHA.
+- Consumes: focused automated contracts, typecheck/build and the real Starter opened through the browser picker.
+- Produces: Owner-reported visual and interaction facts only; it does not replace automated source, type or build gates.
 
-- [ ] **Step 1: Freeze a 22-node fail-closed runner**
+The original draft proposed a dedicated 22-node Playwright runner. The Owner explicitly chose to perform the browser acceptance personally. Because this is a B-level frontend presentation change rather than a public-state or persistence-contract change, this plan accepts focused automated contracts plus Owner visual acceptance and removes the unimplemented runner contract instead of leaving a permanent red test or manufacturing a second browser framework.
 
-Required ordered nodes:
+- [ ] **Step 1: Inspect the wide configuration workbench**
 
-```text
-identity-clean
-strict-port-bound
-starter-opened
-config-workbench-visible
-eight-sections-reachable
-single-active-section
-technical-names-default-hidden
-technical-names-toggle
-character-ledger-visible
-variable-ledger-editable
-config-history-independent
-invalid-value-zero-write
-calendar-map-full-stage
-calendar-drag-preserved
-calendar-requires-preserved
-normal-save-flow
-saved-bytes-roundtrip
-layout-1440
-layout-1024
-layout-800
-page-scale-200
-cleanup-and-starter-identity
-```
+Open the real Starter, enter `配置`, and confirm eight Chinese sections, one active section, normal-flow actions, default-hidden technical names and no colored rails, decorative outer rules or legacy stacked cards.
 
-Every failure artifact records `lastPassedNode`, `firstFailedNode`, runner SHA, run HEAD, error channels, screenshots collected before failure and project-tree identity.
+- [ ] **Step 2: Inspect the compact layout**
 
-- [ ] **Step 2: Establish runner-contract RED -> GREEN**
+Narrow the window and confirm the section directory becomes a horizontal local scroller, tables scroll inside their own region, and the page does not gain a global horizontal scrollbar.
 
-The permanent runner test rejects port 4173, non-exclusive artifact writes, missing source-bound error channels, missing cold read-back, missing 200% scale, missing Starter identity or milestone count/order changes.
+- [ ] **Step 3: Inspect the calendar map and reversible interaction**
 
-- [ ] **Step 3: Run PRECHECK once**
+Confirm the map remains readable and use drag plus undo/redo without saving. The Owner must not write to the original Starter during visual acceptance.
 
-PRECHECK verifies launcher, fake FS, strict port availability, title, project identity and cleanup without performing config edits.
+- [ ] **Step 4: Record only the Owner's actual verdict**
 
-- [ ] **Step 4: Run one DIAGNOSTIC**
-
-DIAGNOSTIC must reach 22/22 before code freeze. Preserve every failure artifact and stop for manager review if it fails.
+Do not infer acceptance from screenshots or automated tests. Record `PASS`, `NEEDS_FIX` or the exact observed issue.
 
 ---
 
@@ -380,9 +354,9 @@ DIAGNOSTIC must reach 22/22 before code freeze. Preserve every failure artifact 
 
 **Interfaces:**
 - Consumes: completed Tasks 1–6 and clean exact scope.
-- Produces: one `CODE_EVIDENCE_HEAD`, one FORMAL artifact and a reviewable local stop.
+- Produces: one exact local code-evidence commit and a reviewable local stop.
 
-- [ ] **Step 1: Run fresh technical gates**
+- [x] **Step 1: Run fresh technical gates**
 
 ```powershell
 npm run test -w surdet-editor
@@ -405,18 +379,9 @@ feat(editor): rebuild configuration ledger
 
 Set the exact commit as `CODE_EVIDENCE_HEAD`. Tracked worktree and staging must be clean before FORMAL.
 
-- [ ] **Step 3: Run FORMAL once**
+- [ ] **Step 3: Stop for independent review**
 
-```powershell
-$env:SURDET_CODE_EVIDENCE_HEAD = (git rev-parse HEAD)
-node packages/editor/e2e/editorial-config-ledger-pass-4.e2e.mjs --mode formal
-```
-
-Expected: `runHead === CODE_EVIDENCE_HEAD`, `trackedCodeDiffPaths=[]`, 22/22 milestones, all error channels empty, strict port released and Starter unchanged.
-
-- [ ] **Step 4: Stop for independent review**
-
-Append artifact path/bytes/SHA, exact files, tests, known limitations and Git state. Do not push, start Pass 5 or claim Owner visual acceptance.
+Append exact files, tests, Owner-reported facts, known limitations and Git state. Do not push or start Pass 5.
 
 ---
 
@@ -433,6 +398,33 @@ Append artifact path/bytes/SHA, exact files, tests, known limitations and Git st
 
 ```text
 FRONTEND_PASS_4 = BASELINE_PASSED_READY_FOR_PLAN_COMMIT
+PUSH = NOT_AUTHORIZED
+FRONTEND_PASS_5 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_STARTED
+```
+
+### 2026-08-31 — Configuration Ledger implementation and proportional gates
+
+**CONFIRMED_FACTS**
+
+- Taskbook and overall-plan initialization were committed as `611ec8fb8517eba9e0662356ef7f945892fe9307` (`docs(editor): plan configuration ledger pass 4`).
+- Permanent workspace RED initially failed 5/5 on the missing configuration-workbench topology, Chinese section projection, technical disclosure, semantic calendar-map hooks and scoped responsive CSS. The final focused set passed 5 files / 56 tests.
+- The production implementation remains Editor-only: eight-section local display state, one active ledger, Chinese-first labels, default-hidden technical keys, local table scrolling, normal-flow actions and a full-size calendar map with semantic SVG classes. Existing config row caches, conversion, history, validation and save callbacks remain the only business paths.
+- Owner browser review confirmed that the colored left rail was gone and identified a decorative 2px top rule as the same motif moved to another edge. The rule was removed, the ledger surface made transparent, and the permanent CSS contract now rejects decorative outer borders on `.config-ledger-section`.
+- Owner then chose to perform browser acceptance personally. The unimplemented 22-node runner contract was removed before freeze; it is not represented as passing evidence and no browser artifact was fabricated. A transient contract invocation failed only because its runner file did not exist, before this gate correction.
+- Fresh proportional gates passed: Editor 52 files / 377 tests, Editor typecheck, Editor build (908 modules), `verify:docs`, `git diff --check` and cached diff check. The existing Vite `>500 kB` chunk warning remains a warning, not a new failure.
+- Independent remote review of `bca72247d0dc76983330367be0f38043036a0fca` was received during implementation. Read-only local/network checks confirmed its CI portability failure, review-receipt cross-context race and same-file/different-timeline-ID recovery gap. These are separate review storage, CI and recovery themes; none is silently mixed into this frontend commit.
+
+**OWNER EVIDENCE BOUNDARY**
+
+- Wide-layout first review is `NEEDS_RECHECK_AFTER_TOP_RULE_REMOVAL`, not PASS.
+- Compact layout, calendar drag/undo and final visual hierarchy verdict have not yet been explicitly accepted by the Owner.
+- No save action was requested during Owner visual review; the original Starter was not intentionally written by this pass.
+
+```text
+FRONTEND_PASS_4_TECHNICAL_GATES = PASSED
+OWNER_VISUAL_ACCEPTANCE = NEEDS_RECHECK_AFTER_TOP_RULE_REMOVAL
+REMOTE_AUDIT_REMEDIATION = RECORDED_NOT_STARTED
 PUSH = NOT_AUTHORIZED
 FRONTEND_PASS_5 = NOT_STARTED
 MAINLINE_WAVE_7 = NOT_STARTED
