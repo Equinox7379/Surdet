@@ -23,7 +23,7 @@ import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { NodeReviewStore } from '../src/authoring/node-review-store.js';
-import { hashProjectTree, ReviewService } from '../src/authoring/review-service.js';
+import { hashProjectTree, parseReviewProjection, ReviewService } from '../src/authoring/review-service.js';
 
 const temporaryRoots: string[] = [];
 const hasher: TextHasher = {
@@ -396,6 +396,19 @@ afterEach(() => {
 });
 
 describe('ReviewService', () => {
+  it('exports the canonical review projection parser for the local authority', () => {
+    const value = {
+      reviewVersion: '1.0.0',
+      reviewId: 'review-parser',
+      kind: 'comparison',
+      projectIdentity: 'project-identity',
+      expectedProjectRevision: 'revision-1',
+      sourceIdentity: {},
+    };
+    expect(parseReviewProjection(value, 'review-parser')).toBe(value);
+    expect(() => parseReviewProjection({ ...value, reviewId: 'other' }, 'review-parser'))
+      .toThrowError(/身份无效/);
+  });
   it('creates a comparison workspace from a fresh comparison and keeps decision writes human-gated', async () => {
     const fixture = await setup();
     const prepared = await fixture.service.prepareComparison({ candidateRefs: [] });

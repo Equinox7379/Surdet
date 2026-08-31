@@ -282,7 +282,7 @@ export class NodeLocalLeaseManager {
    * Only structured publication-window reads are retried, within a bounded budget;
    * genuine corruption keeps failing loud with manualRecoveryRequired semantics.
    */
-  private async loadLeaseAwaitingPublication(scope: LeaseScope, resourceId: string): Promise<LocalLease> {
+  private async loadLeaseAwaitingPublication(scope: LeaseScope, resourceId: string): Promise<LocalLease | null> {
     for (let poll = 0; ; poll += 1) {
       try {
         return await this.loadLease(scope, resourceId);
@@ -293,7 +293,15 @@ export class NodeLocalLeaseManager {
         const inWindow = error instanceof AuthoringOperationError
           && error.code === 'LEASE_CORRUPT'
           && details?.['publicationPhase'] === 'read';
-        if (!inWindow || poll >= PUBLICATION_POLL_LIMIT) throw error;
+        if (!inWindow) throw error;
+        const directoryStillExists = await fs.lstat(this.lockDirectory(scope, resourceId))
+          .then((stat) => stat.isDirectory())
+          .catch((statError: unknown) => {
+            if (errorCode(statError) === 'ENOENT') return false;
+            throw statError;
+          });
+        if (!directoryStillExists) return null;
+        if (poll >= PUBLICATION_POLL_LIMIT) throw error;
         await this.publicationDelay(DEFAULT_PUBLICATION_POLL_DELAY_MS);
       }
     }
@@ -355,7 +363,9 @@ export class NodeLocalLeaseManager {
 
       let lease: LocalLease;
       try {
-        lease = await this.loadLeaseAwaitingPublication(scope, resourceId);
+        const published = await this.loadLeaseAwaitingPublication(scope, resourceId);
+        if (published === null) continue;
+        lease = published;
       } catch (error) {
         if (error instanceof AuthoringOperationError && error.code === 'LEASE_CORRUPT') throw error;
         throw error;

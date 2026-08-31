@@ -217,7 +217,7 @@ function candidateIntent(candidate: unknown): { intent?: string; acceptanceCrite
   };
 }
 
-function reviewProjection(value: unknown, reviewId: string): HumanReviewProjection {
+export function parseReviewProjection(value: unknown, reviewId: string): HumanReviewProjection {
   if (!isRecord(value)
     || value['reviewVersion'] !== '1.0.0'
     || value['reviewId'] !== reviewId
@@ -230,7 +230,7 @@ function reviewProjection(value: unknown, reviewId: string): HumanReviewProjecti
   return value as unknown as HumanReviewProjection;
 }
 
-function decisionReceipt(value: unknown, reviewId: string): value is ComparisonDecisionReceipt {
+export function isComparisonDecisionReceipt(value: unknown, reviewId: string): value is ComparisonDecisionReceipt {
   if (!isRecord(value)
     || value['receiptVersion'] !== '1.0.0'
     || typeof value['decisionId'] !== 'string'
@@ -256,7 +256,7 @@ function decisionReceipt(value: unknown, reviewId: string): value is ComparisonD
     || (item['chosenUnitId'] !== undefined && typeof item['chosenUnitId'] !== 'string'));
 }
 
-function approvalReceipt(value: unknown, resultReviewId: string): value is FinalApprovalReceipt {
+export function isFinalApprovalReceipt(value: unknown, resultReviewId: string): value is FinalApprovalReceipt {
   if (!isRecord(value)
     || value['receiptVersion'] !== '1.0.0'
     || typeof value['approvalId'] !== 'string'
@@ -436,12 +436,12 @@ export class ReviewService {
 
   async inspectDecision(input: { reviewId: string; decisionId?: string }): Promise<VerifiedComparisonDecision> {
     const loaded = await this.readReview<HumanReviewProjection>(input.reviewId);
-    const projection = reviewProjection(loaded.value, input.reviewId);
+    const projection = parseReviewProjection(loaded.value, input.reviewId);
     if (projection.kind !== 'comparison') throw reviewError('REVIEW_IDENTITY_MISMATCH', `review 不是 comparison：${input.reviewId}`);
     await this.assertFreshComparison(projection);
     const decision = await this.reviews.readDecision<unknown>(input.reviewId);
     if (decision === null) throw reviewError('REVIEW_DECISION_REQUIRED', `review 尚未收到人类决定：${input.reviewId}`, { reviewId: input.reviewId });
-    if (!decisionReceipt(decision.value, input.reviewId)) {
+    if (!isComparisonDecisionReceipt(decision.value, input.reviewId)) {
       throw reviewError('REVIEW_DECISION_INVALID', `决定回执结构无效：${input.reviewId}`, { reviewId: input.reviewId });
     }
     if (input.decisionId !== undefined && input.decisionId !== decision.value.decisionId) {
@@ -577,7 +577,7 @@ export class ReviewService {
 
   async inspectApproval(input: { resultReviewId: string; approvalId?: string; approvalFingerprint?: string }): Promise<ReviewInspectionResult> {
     const loaded = await this.readReview<HumanReviewProjection>(input.resultReviewId);
-    const projection = reviewProjection(loaded.value, input.resultReviewId);
+    const projection = parseReviewProjection(loaded.value, input.resultReviewId);
     if (projection.kind !== 'integration-result' || projection.finalResult === undefined) {
       throw reviewError('REVIEW_RESULT_NOT_READY', `review 不是 integration result：${input.resultReviewId}`, { reviewId: input.resultReviewId });
     }
@@ -614,7 +614,7 @@ export class ReviewService {
         return this.validateReturn(projection, record, returned.value);
       }
       if (approval === null) throw reviewError('REVIEW_APPROVAL_REQUIRED', `result review 尚未收到项目所有者批准：${input.resultReviewId}`, { reviewId: input.resultReviewId });
-      if (!approvalReceipt(approval.value, input.resultReviewId)) {
+      if (!isFinalApprovalReceipt(approval.value, input.resultReviewId)) {
         throw reviewError('REVIEW_APPROVAL_STALE', `批准回执结构无效：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       }
       if (input.approvalId !== undefined && input.approvalId !== approval.value.approvalId) {
