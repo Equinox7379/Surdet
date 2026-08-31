@@ -20,23 +20,23 @@ describe('timeline history（独立文本快照栈）', () => {
     pushTimelineSnapshot('timeline-a', previousA);
     pushTimelineSnapshot('timeline-b', previousB);
 
-    expect(takeTimelineUndo('timeline-a', '{"id":"timeline-a","duration":8}\r\n')).toBe(previousA);
+    expect(takeTimelineUndo('timeline-a', '{"id":"timeline-a","duration":8}\r\n')?.text).toBe(previousA);
     expect(timelineHistoryDepth('timeline-a')).toEqual({ undo: 0, redo: 1 });
     expect(timelineHistoryDepth('timeline-b')).toEqual({ undo: 1, redo: 0 });
-    expect(takeTimelineUndo('timeline-b', '{"id":"timeline-b","duration":12}\n')).toBe(previousB);
+    expect(takeTimelineUndo('timeline-b', '{"id":"timeline-b","duration":12}\n')?.text).toBe(previousB);
   });
 
   it('undo 后 redo 恢复撤销前的当前文本', () => {
     pushTimelineSnapshot('timeline-a', 'before');
 
-    expect(takeTimelineUndo('timeline-a', 'after')).toBe('before');
-    expect(takeTimelineRedo('timeline-a', 'before')).toBe('after');
+    expect(takeTimelineUndo('timeline-a', 'after')?.text).toBe('before');
+    expect(takeTimelineRedo('timeline-a', 'before')?.text).toBe('after');
     expect(timelineHistoryDepth('timeline-a')).toEqual({ undo: 1, redo: 0 });
   });
 
   it('undo 后的新编辑清空 redo 分支', () => {
     pushTimelineSnapshot('timeline-a', 'before');
-    expect(takeTimelineUndo('timeline-a', 'first edit')).toBe('before');
+    expect(takeTimelineUndo('timeline-a', 'first edit')?.text).toBe('before');
     expect(timelineHistoryDepth('timeline-a')).toEqual({ undo: 0, redo: 1 });
 
     pushTimelineSnapshot('timeline-a', 'before');
@@ -54,7 +54,20 @@ describe('timeline history（独立文本快照栈）', () => {
     expect(timelineHistoryDepth('timeline-a')).toEqual({ undo: 0, redo: 0 });
     expect(timelineHistoryDepth('timeline-b')).toEqual({ undo: 1, redo: 0 });
     expect(takeTimelineUndo('timeline-a', 'a1')).toBeNull();
-    expect(takeTimelineUndo('timeline-b', 'b1')).toBe('b0');
+    expect(takeTimelineUndo('timeline-b', 'b1')?.text).toBe('b0');
+  });
+
+  it('撤销和重做随文本恢复共享 cue 选择', () => {
+    pushTimelineSnapshot('timeline-a', 'before', { trackIndex: 1, cueIndex: 2 });
+
+    expect(takeTimelineUndo('timeline-a', 'after', { trackIndex: 0, cueIndex: 0 })).toEqual({
+      text: 'before',
+      selection: { trackIndex: 1, cueIndex: 2 },
+    });
+    expect(takeTimelineRedo('timeline-a', 'before', { trackIndex: 1, cueIndex: 2 })).toEqual({
+      text: 'after',
+      selection: { trackIndex: 0, cueIndex: 0 },
+    });
   });
 
   it('clearTimelineHistories 清除全部 timeline 历史', () => {

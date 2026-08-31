@@ -37,4 +37,31 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(panelSource).toContain('适应窗口');
     expect(panelSource).toContain('片段设置');
   });
+
+  it('keeps destructive selection, view state and project-resource choices coherent', () => {
+    expect(panelSource).toContain('pendingTimelineRestores');
+    expect(panelSource).toContain('timelineViewStates');
+    expect(panelSource).toContain('canvasScrollLeft');
+    expect(panelSource).toContain('rootContainer.isConnected');
+    expect(panelSource).toContain("scroll.addEventListener('scroll'");
+    expect(panelSource).toContain('ResizeObserver');
+    expect(panelSource).toContain('timelineLayoutObserver');
+    expect(panelSource).toContain('currentExpression');
+    expect(panelSource).toContain('choice.expression === currentExpression');
+    expect(panelSource).toContain('state.currentTimelineCue = { trackIndex, cueIndex };\n      commit(');
+    expect(panelSource).toContain('删除轨道');
+    expect(panelSource).toContain('前往素材工作区');
+    expect(panelSource).toContain("block.classList.toggle('instant', cue.durationMs === 0)");
+  });
+
+  it('implements real search and keeps zero valid for signed numeric inputs', () => {
+    expect(panelSource).toContain('search.oninput');
+    expect(panelSource).toContain('item.hidden =');
+    expect(panelSource).toContain('Number.isFinite(parsed)');
+    expect(panelSource).not.toContain('Number(input.value) || min');
+    expect(panelSource).toContain("{ left: '左侧', center: '中央', right: '右侧', custom: '自定义横坐标' }");
+    expect(panelSource).toContain("custom: '自定义横坐标'");
+    expect(panelSource).toContain("block.classList.toggle('instant-at-end', geometry.anchorAtEnd)");
+    expect(panelSource).not.toContain('Math.max(-2000, Math.min(2000, parsed))');
+  });
 });

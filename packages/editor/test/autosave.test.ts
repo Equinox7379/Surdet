@@ -2,13 +2,24 @@
  * 编辑器崩溃保险（autosave.ts）纯逻辑测试。
  * 失败用例先行：非法存储内容必须静默降级（不抛错），恢复判定必须限定同项目。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AUTOSAVE_KEY,
+  autosaveStorageKey,
   buildAutosave,
+  clearAutosave,
+  matchingAutosaveProjectIdentity,
   parseAutosave,
   pickRecoverable,
   pickRecoverableTimelines,
+  preserveAutosaveTimelineConflicts,
+  readAutosave,
+  resolveAutosaveProjectIdentity,
+  unresolvedAutosaveTimelineConflicts,
+  writeAutosave,
 } from '../src/autosave.js';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('buildAutosave（快照构建）', () => {
   it('仅收 dirty 场景；全干净返回 null', () => {
@@ -141,10 +152,105 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
     expect(pickRecoverableTimelines(exactPayload, 'proj', [diskEntry])).toEqual([]);
   });
 
+  it('同 id 的恢复路径不同仍需恢复 file 身份', () => {
+    const filePayload = {
+      ...payload,
+      timelines: [{ id: 'disk', file: 'nested/disk.json', text: '磁盘\n', eol: '\n' as const }],
+    };
+    expect(pickRecoverableTimelines(filePayload, 'proj', [{ ...diskEntry, file: 'disk.json' }]))
+      .toEqual(filePayload.timelines);
+  });
+
   it('legacy/不同项目/无快照不恢复 timeline', () => {
     expect(pickRecoverableTimelines({ dirName: 'proj', savedAt: 1, scenes: [] }, 'proj', [])).toEqual([]);
     expect(pickRecoverableTimelines(payload, '别的项目', [diskEntry])).toEqual([]);
     expect(pickRecoverableTimelines(null, 'proj', [diskEntry])).toEqual([]);
+  });
+});
+
+describe('preserveAutosaveTimelineConflicts（冲突证据保全）', () => {
+  it('即使当前没有其他 dirty 内容也跨定时 tick 保留冲突正文', () => {
+    const conflict = { id: 'same', file: 'nested/same.json', text: 'recovered\n', eol: '\n' as const };
+    const next = preserveAutosaveTimelineConflicts(null, 'proj', [conflict], 20);
+
+    expect(next).toEqual({ dirName: 'proj', savedAt: 20, scenes: [], timelines: [conflict] });
+    expect(parseAutosave(JSON.stringify(next))).toEqual(next);
+  });
+
+  it('与新的 dirty payload 合并且不重复同一 id/file 身份', () => {
+    const conflict = { id: 'same', file: 'nested/same.json', text: 'recovered\n', eol: '\n' as const };
+    const payload = { dirName: 'proj', savedAt: 10, scenes: [{ key: 'scene', text: 'dirty' }], timelines: [conflict] };
+    expect(preserveAutosaveTimelineConflicts(payload, 'proj', [conflict], 21)).toEqual({
+      ...payload,
+      savedAt: 21,
+    });
+  });
+
+  it('同 identity 已有较新 dirty 正文时不让旧冲突覆盖新编辑', () => {
+    const conflict = { id: 'same', file: 'nested/same.json', text: 'old recovered\n', eol: '\n' as const };
+    const fresh = { id: 'same', file: 'nested/same.json', text: 'new dirty\n', eol: '\n' as const };
+    const payload = { dirName: 'proj', savedAt: 10, scenes: [], timelines: [fresh] };
+
+    expect(preserveAutosaveTimelineConflicts(payload, 'proj', [conflict], 21)?.timelines).toEqual([fresh]);
+    expect(unresolvedAutosaveTimelineConflicts([conflict], [{ id: 'same', file: 'nested/same.json' }])).toEqual([]);
+  });
+});
+
+describe('autosave 项目隔离存储', () => {
+  const installStorage = () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    });
+    return values;
+  };
+
+  it('项目 B 的写入和清理不会删除项目 A 的未保存正文', () => {
+    const values = installStorage();
+    const projectA = { dirName: 'game', projectId: 'project-a', savedAt: 1, scenes: [{ key: 'a', text: 'A dirty' }] };
+    const projectB = { dirName: 'game', projectId: 'project-b', savedAt: 2, scenes: [{ key: 'b', text: 'B dirty' }] };
+
+    writeAutosave(projectA);
+    writeAutosave(projectB);
+    clearAutosave('project-b', 'game');
+
+    expect(readAutosave('project-a', 'game')).toEqual(projectA);
+    expect(readAutosave('project-b', 'game')).toBeNull();
+    expect(values.has(autosaveStorageKey('project-a'))).toBe(true);
+  });
+
+  it('不自动读取或删除无法证明物理项目身份的旧版单槽快照', () => {
+    const values = installStorage();
+    const legacy = { dirName: 'legacy', savedAt: 1, scenes: [{ key: 'a', text: 'dirty' }] };
+    values.set(AUTOSAVE_KEY, JSON.stringify(legacy));
+
+    expect(readAutosave('other-id', 'other')).toBeNull();
+    expect(readAutosave('legacy-id', 'legacy')).toBeNull();
+    clearAutosave('other-id', 'other');
+    expect(values.has(AUTOSAVE_KEY)).toBe(true);
+    clearAutosave('legacy-id', 'legacy');
+    expect(values.has(AUTOSAVE_KEY)).toBe(true);
+  });
+
+  it('无法持久证明物理目录身份时 fail-closed，不按名称或内容猜测', async () => {
+    await expect(resolveAutosaveProjectIdentity(null)).resolves.toBeNull();
+    const payloadWithoutIdentity = { dirName: 'game', savedAt: 1, scenes: [{ key: 'a', text: 'dirty' }] };
+    const values = installStorage();
+    writeAutosave(payloadWithoutIdentity);
+    expect(values.size).toBe(0);
+  });
+
+  it('isSameEntry 比较异常会向 resolver 传播并触发 fail-closed', async () => {
+    const stored = {} as FileSystemDirectoryHandle;
+    const same = { isSameEntry: vi.fn(async () => true) } as unknown as FileSystemDirectoryHandle;
+    const broken = { isSameEntry: vi.fn(async () => { throw new Error('permission lost'); }) } as unknown as FileSystemDirectoryHandle;
+
+    await expect(matchingAutosaveProjectIdentity(same, [{ id: 'physical-project', handle: stored }]))
+      .resolves.toBe('physical-project');
+    await expect(matchingAutosaveProjectIdentity(broken, [{ id: 'physical-project', handle: stored }]))
+      .rejects.toThrow('permission lost');
   });
 });
 

@@ -31,7 +31,7 @@ import { bindAssetsPanelHooks } from './panels/assets.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
-import { renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
+import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
@@ -45,8 +45,10 @@ import {
 } from './shell/app-shell.js';
 import { buildAuthoringWorkbench } from './shell/authoring-workbench.js';
 import {
-  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, pickRecoverableTimelines, writeAutosave, clearAutosave,
+  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, pickRecoverableTimelines,
+  preserveAutosaveTimelineConflicts, unresolvedAutosaveTimelineConflicts, writeAutosave, clearAutosave,
 } from './autosave.js';
+import type { AutosaveTimelineEntry } from './autosave.js';
 
 /* ============================ authoring 内存索引（单飞 + 防抖） ============================ */
 
@@ -56,6 +58,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 /** 最近一次磁盘保存尝试仍有失败项；只服务于顶栏回执，不复制编辑器业务状态。 */
 let saveAttemptLeftDirty = false;
+let pendingAutosaveTimelineConflicts: AutosaveTimelineEntry[] = [];
 
 function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
@@ -190,11 +193,32 @@ bindProjectIoHooks({
   renderSidebar,
   onProjectLoaded: () => {
     saveAttemptLeftDirty = false;
+    pendingAutosaveTimelineConflicts = [];
+    clearTimelineViewStates();
     resetAuthoringState();
     refreshProjectBarProjection();
     tryAutosaveRecover();
   },
-  onSaved: clearAutosave,
+  onSaved: () => {
+    if (!state.autosaveProjectId) return;
+    pendingAutosaveTimelineConflicts = unresolvedAutosaveTimelineConflicts(
+      pendingAutosaveTimelineConflicts,
+      state.timelines,
+    );
+    if (pendingAutosaveTimelineConflicts.length === 0) {
+      clearAutosave(state.autosaveProjectId, state.dirName);
+    } else {
+      const preserved = preserveAutosaveTimelineConflicts(
+        null,
+        state.dirName,
+        pendingAutosaveTimelineConflicts,
+        Date.now(),
+        state.autosaveProjectId,
+      );
+      if (preserved) writeAutosave(preserved);
+    }
+  },
+  onTimelineDeleted: clearTimelineViewState,
   onSaveSettled: ({ failures, remainingDirty }) => {
     saveAttemptLeftDirty = failures > 0 && remainingDirty;
     refreshProjectBarProjection();
@@ -229,6 +253,11 @@ bindTimelineHooks({
   onPreview: (timelineId) => {
     state.previewTimelineId = timelineId;
     state.mainTab = 'preview';
+    renderMainArea();
+  },
+  onOpenAssets: () => {
+    state.mainTab = 'editor';
+    state.sidebarTab = 'assets';
     renderMainArea();
   },
   onEdited: handleTimelineEdited,
@@ -418,13 +447,18 @@ function applyTimelineHistory(direction: 'undo' | 'redo'): void {
   const entry = state.timelines.find((candidate) => candidate.id === timelineId);
   if (!entry) return;
   const restored = direction === 'undo'
-    ? takeTimelineUndo(timelineId, entry.text)
-    : takeTimelineRedo(timelineId, entry.text);
+    ? takeTimelineUndo(timelineId, entry.text, state.currentTimelineCue)
+    : takeTimelineRedo(timelineId, entry.text, state.currentTimelineCue);
   if (restored === null) return;
-  entry.text = restored;
+  entry.text = restored.text;
   entry.dirty = true;
-  state.currentTimelineCue = null;
+  state.currentTimelineCue = restored.selection;
   renderTimelinePanel(document.getElementById('timeline-view'));
+  if (restored.selection) {
+    document.querySelector<HTMLElement>(
+      `[data-timeline-focus="cue-${restored.selection.trackIndex}-${restored.selection.cueIndex}"]`,
+    )?.focus({ preventScroll: true });
+  }
   handleTimelineEdited();
 }
 
@@ -503,7 +537,8 @@ window.addEventListener('beforeunload', (e) => {
 
 /** 项目载入后检查同项目未保存快照：存在且与当前内存不同时询问恢复 */
 function tryAutosaveRecover(): void {
-  const payload = readAutosave();
+  if (!state.autosaveProjectId) return;
+  const payload = readAutosave(state.autosaveProjectId, state.dirName);
   const recoverable = pickRecoverable(payload, state.dirName, state.scenes);
   const recoverableTimelines = pickRecoverableTimelines(payload, state.dirName, state.timelines);
   if (recoverable.length === 0 && recoverableTimelines.length === 0) return;
@@ -515,6 +550,8 @@ function tryAutosaveRecover(): void {
     recoverableTimelines.length > 0 ? `${recoverableTimelines.length} 个演出：${timelineNames}` : '',
   ].filter(Boolean).join('\n');
   if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}）：\n${details}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
+    pendingAutosaveTimelineConflicts = [];
+    clearAutosave(state.autosaveProjectId, state.dirName);
     return;
   }
   for (const e of recoverable) {
@@ -524,7 +561,13 @@ function tryAutosaveRecover(): void {
       sc.dirty = true;
     }
   }
-  restoreTimelineAutosaveEntries(recoverableTimelines);
+  const timelineRecovery = restoreTimelineAutosaveEntries(recoverableTimelines);
+  pendingAutosaveTimelineConflicts = timelineRecovery.conflicts
+    .map((conflict) => recoverableTimelines.find((entry) => entry.id === conflict.id && entry.file === conflict.recoveredFile))
+    .filter((entry): entry is AutosaveTimelineEntry => entry !== undefined);
+  if (timelineRecovery.conflicts.length > 0) {
+    setStatus(`有 ${timelineRecovery.conflicts.length} 个演出备份因文件身份冲突未恢复，请先检查项目文件`, false, 8000);
+  }
   renderAll();
   runValidate();
   scheduleAuthoringIndexRebuild();
@@ -533,9 +576,22 @@ function tryAutosaveRecover(): void {
 
 /** 定时快照：有 dirty 场景就写备份，全部干净则清除旧备份（存储不可用时静默降级） */
 setInterval(() => {
-  const payload = buildAutosave(state.dirName, state.scenes, state.timelines, Date.now());
+  if (state.projectLoading || !state.autosaveProjectId) return;
+  const now = Date.now();
+  pendingAutosaveTimelineConflicts = unresolvedAutosaveTimelineConflicts(
+    pendingAutosaveTimelineConflicts,
+    state.timelines,
+  );
+  const fresh = buildAutosave(state.dirName, state.scenes, state.timelines, now, state.autosaveProjectId);
+  const payload = preserveAutosaveTimelineConflicts(
+    fresh,
+    state.dirName,
+    pendingAutosaveTimelineConflicts,
+    now,
+    state.autosaveProjectId,
+  );
   if (payload) writeAutosave(payload);
-  else clearAutosave();
+  else clearAutosave(state.autosaveProjectId, state.dirName);
 }, AUTOSAVE_INTERVAL_MS);
 
 renderAll();

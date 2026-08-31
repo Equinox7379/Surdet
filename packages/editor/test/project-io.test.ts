@@ -87,6 +87,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   beforeEach(() => {
     vi.stubGlobal('document', documentStub);
     state.fsSupported = true;
+    state.autosaveProjectId = 'test-project';
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.scenes.clear();
     state.timelines = [];
@@ -235,6 +236,27 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     const created = state.timelines.find((entry) => entry.id === 'new')!;
     expect(disk).toMatchObject({ text: 'disk recovered\r\n', eol: '\r\n', dirty: true });
     expect(created).toMatchObject({ id: 'new', file: 'nested/new.json', text: 'new recovered\n', eol: '\n', dirty: true, handle: null });
+  });
+
+  it('同 id 不同 file 的备份显式冲突，绝不沿用旧 handle 静默错写', async () => {
+    const writes: string[] = [];
+    const handle = fileHandle(null, log, 'same.json', 'disk', writes);
+    const existing = timeline('same', handle, false);
+    existing.file = 'same.json';
+    existing.text = 'disk';
+    state.timelines.push(existing);
+
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'same', file: 'nested/same.json', text: 'recovered', eol: '\n' },
+    ]);
+    await saveAll();
+
+    expect(result).toEqual({
+      restored: 0,
+      conflicts: [{ id: 'same', currentFile: 'same.json', recoveredFile: 'nested/same.json' }],
+    });
+    expect(existing).toMatchObject({ file: 'same.json', text: 'disk', dirty: false, handle });
+    expect(writes).toEqual([]);
   });
 
   it('全部成功时清除 dirty、报告全部成功并调用 onSaved', async () => {

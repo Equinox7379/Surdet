@@ -42,6 +42,10 @@ export interface PendingTimelineRestore {
 
 export const state = {
   dirName: '',
+  /** autosave 专用的持久项目身份；真实目录优先来自 FileSystemHandle.isSameEntry 登记表。 */
+  autosaveProjectId: null as string | null,
+  /** 打开目录期间暂停定时快照，避免把上一项目的冲突写进正在装载的新项目。 */
+  projectLoading: false,
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
   dirHandle: null as FileSystemDirectoryHandle | null,
   scenes: new Map<string, SceneEntry>(),

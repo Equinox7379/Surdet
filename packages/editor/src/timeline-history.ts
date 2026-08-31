@@ -5,35 +5,57 @@ import {
   snapshotUndo,
 } from './history.js';
 import type { SnapshotHistory } from './history.js';
+import type { TimelineCueSelection } from './state.js';
 
 export interface TimelineHistoryDepth {
   undo: number;
   redo: number;
 }
 
-const timelineHistories = new Map<string, SnapshotHistory<string>>();
+export interface TimelineHistorySnapshot {
+  text: string;
+  selection: TimelineCueSelection | null;
+}
 
-function getOrCreateTimelineHistory(timelineId: string): SnapshotHistory<string> {
+const timelineHistories = new Map<string, SnapshotHistory<TimelineHistorySnapshot>>();
+
+function getOrCreateTimelineHistory(timelineId: string): SnapshotHistory<TimelineHistorySnapshot> {
   let history = timelineHistories.get(timelineId);
   if (!history) {
-    history = createSnapshotHistory<string>();
+    history = createSnapshotHistory<TimelineHistorySnapshot>();
     timelineHistories.set(timelineId, history);
   }
   return history;
 }
 
-export function pushTimelineSnapshot(timelineId: string, previousText: string): void {
-  snapshotPush(getOrCreateTimelineHistory(timelineId), previousText, Date.now(), false);
+function snapshot(text: string, selection: TimelineCueSelection | null): TimelineHistorySnapshot {
+  return { text, selection: selection ? { ...selection } : null };
 }
 
-export function takeTimelineUndo(timelineId: string, currentText: string): string | null {
-  const history = timelineHistories.get(timelineId);
-  return history ? snapshotUndo(history, currentText) : null;
+export function pushTimelineSnapshot(
+  timelineId: string,
+  previousText: string,
+  previousSelection: TimelineCueSelection | null = null,
+): void {
+  snapshotPush(getOrCreateTimelineHistory(timelineId), snapshot(previousText, previousSelection), Date.now(), false);
 }
 
-export function takeTimelineRedo(timelineId: string, currentText: string): string | null {
+export function takeTimelineUndo(
+  timelineId: string,
+  currentText: string,
+  currentSelection: TimelineCueSelection | null = null,
+): TimelineHistorySnapshot | null {
   const history = timelineHistories.get(timelineId);
-  return history ? snapshotRedo(history, currentText) : null;
+  return history ? snapshotUndo(history, snapshot(currentText, currentSelection)) : null;
+}
+
+export function takeTimelineRedo(
+  timelineId: string,
+  currentText: string,
+  currentSelection: TimelineCueSelection | null = null,
+): TimelineHistorySnapshot | null {
+  const history = timelineHistories.get(timelineId);
+  return history ? snapshotRedo(history, snapshot(currentText, currentSelection)) : null;
 }
 
 export function clearTimelineHistory(timelineId: string): void {
