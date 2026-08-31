@@ -563,8 +563,7 @@ function tryAutosaveRecover(): void {
   }
   const timelineRecovery = restoreTimelineAutosaveEntries(recoverableTimelines);
   pendingAutosaveTimelineConflicts = timelineRecovery.conflicts
-    .map((conflict) => recoverableTimelines.find((entry) => entry.id === conflict.id && entry.file === conflict.recoveredFile))
-    .filter((entry): entry is AutosaveTimelineEntry => entry !== undefined);
+    .map((conflict) => conflict.recovered);
   if (timelineRecovery.conflicts.length > 0) {
     setStatus(`有 ${timelineRecovery.conflicts.length} 个演出备份因文件身份冲突未恢复，请先检查项目文件`, false, 8000);
   }

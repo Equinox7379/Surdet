@@ -6,6 +6,10 @@
  *  - 存储与恢复仅按持久项目身份隔离；目录名只作显示元数据
  * 纯逻辑（build/pick/parse）可单测；存储读写薄封装带 try/catch（隐私模式等场景静默降级）。
  */
+import {
+  inspectTimelineAutosaveIdentity,
+  type TimelineAutosaveDocument,
+} from './timeline-autosave-identity.js';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
 /** 快照周期（30 秒：崩溃最多丢半分钟编辑，写入成本可忽略） */
@@ -17,12 +21,7 @@ export interface AutosaveEntry {
   text: string;
 }
 
-export interface AutosaveTimelineEntry {
-  id: string;
-  file: string;
-  text: string;
-  eol: '\r\n' | '\n';
-}
+export interface AutosaveTimelineEntry extends TimelineAutosaveDocument {}
 
 export interface AutosavePayload {
   dirName: string;
@@ -32,6 +31,8 @@ export interface AutosavePayload {
   scenes: AutosaveEntry[];
   /** 可选以兼容旧版 scenes-only 快照。 */
   timelines?: AutosaveTimelineEntry[];
+  /** 身份冲突的原始恢复正文；与新的 dirty timelines 分桶，避免同 outer tuple 互相覆盖。 */
+  timelineConflicts?: AutosaveTimelineEntry[];
 }
 
 export function autosaveStorageKey(projectId: string): string {
@@ -158,22 +159,35 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
     if (typeof e.key === 'string' && typeof e.text === 'string') scenes.push({ key: e.key, text: e.text });
   }
   const projectId = typeof d.projectId === 'string' && d.projectId.length > 0 ? d.projectId : undefined;
-  if (d.timelines === undefined) return { dirName: d.dirName, ...(projectId ? { projectId } : {}), savedAt: d.savedAt, scenes };
-  if (!Array.isArray(d.timelines)) return null;
-  const timelines: AutosaveTimelineEntry[] = [];
-  for (const timeline of d.timelines) {
-    if (!timeline || typeof timeline !== 'object') continue;
-    const entry = timeline as Record<string, unknown>;
-    if (
-      typeof entry.id === 'string'
-      && typeof entry.file === 'string'
-      && typeof entry.text === 'string'
-      && (entry.eol === '\n' || entry.eol === '\r\n')
-    ) {
-      timelines.push({ id: entry.id, file: entry.file, text: entry.text, eol: entry.eol });
+  const parseTimelineEntries = (value: unknown): AutosaveTimelineEntry[] | null | undefined => {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) return null;
+    const entries: AutosaveTimelineEntry[] = [];
+    for (const timeline of value) {
+      if (!timeline || typeof timeline !== 'object') continue;
+      const entry = timeline as Record<string, unknown>;
+      if (
+        typeof entry.id === 'string'
+        && typeof entry.file === 'string'
+        && typeof entry.text === 'string'
+        && (entry.eol === '\n' || entry.eol === '\r\n')
+      ) {
+        entries.push({ id: entry.id, file: entry.file, text: entry.text, eol: entry.eol });
+      }
     }
-  }
-  return { dirName: d.dirName, ...(projectId ? { projectId } : {}), savedAt: d.savedAt, scenes, timelines };
+    return entries;
+  };
+  const timelines = parseTimelineEntries(d.timelines);
+  const timelineConflicts = parseTimelineEntries(d.timelineConflicts);
+  if (timelines === null || timelineConflicts === null) return null;
+  return {
+    dirName: d.dirName,
+    ...(projectId ? { projectId } : {}),
+    savedAt: d.savedAt,
+    scenes,
+    ...(timelines !== undefined ? { timelines } : {}),
+    ...(timelineConflicts !== undefined ? { timelineConflicts } : {}),
+  };
 }
 
 /** 可恢复条目：同一持久项目 + 快照文本与当前内存不同。 */
@@ -222,23 +236,38 @@ export function preserveAutosaveTimelineConflicts(
 ): AutosavePayload | null {
   if (conflicts.length === 0) return payload;
   const next: AutosavePayload = payload
-    ? { ...payload, savedAt: now, scenes: [...payload.scenes], timelines: [...(payload.timelines ?? [])] }
+    ? {
+      ...payload,
+      savedAt: now,
+      scenes: [...payload.scenes],
+      ...(payload.timelines ? { timelines: [...payload.timelines] } : {}),
+      timelineConflicts: [...(payload.timelineConflicts ?? [])],
+    }
     : { dirName, ...(projectId ? { projectId } : {}), savedAt: now, scenes: [], timelines: [] };
-  const byIdentity = new Map((next.timelines ?? []).map((entry) => [`${entry.id}\0${entry.file}`, entry]));
+  const byEvidence = new Map((next.timelineConflicts ?? []).map((entry) => [
+    `${entry.id}\0${entry.file}\0${entry.eol}\0${entry.text}`,
+    entry,
+  ]));
   for (const conflict of conflicts) {
-    const identity = `${conflict.id}\0${conflict.file}`;
-    if (!byIdentity.has(identity)) byIdentity.set(identity, conflict);
+    const evidence = `${conflict.id}\0${conflict.file}\0${conflict.eol}\0${conflict.text}`;
+    if (!byEvidence.has(evidence)) byEvidence.set(evidence, conflict);
   }
-  next.timelines = [...byIdentity.values()];
+  next.timelineConflicts = [...byEvidence.values()];
   return next;
 }
 
 export function unresolvedAutosaveTimelineConflicts(
   conflicts: readonly AutosaveTimelineEntry[],
-  timelines: Iterable<{ id: string; file: string }>,
+  timelines: Iterable<TimelineAutosaveDocument>,
 ): AutosaveTimelineEntry[] {
-  const currentIdentities = new Set([...timelines].map((entry) => `${entry.id}\0${entry.file}`));
-  return conflicts.filter((entry) => !currentIdentities.has(`${entry.id}\0${entry.file}`));
+  const current = [...timelines];
+  return conflicts.filter((conflict) => !current.some((entry) => (
+    entry.id === conflict.id
+    && entry.file === conflict.file
+    && entry.text === conflict.text
+    && entry.eol === conflict.eol
+    && inspectTimelineAutosaveIdentity(entry).canonical
+  )));
 }
 
 /** 存储薄封装：隐私模式/超限时静默降级（崩溃保险不应阻塞主流程） */

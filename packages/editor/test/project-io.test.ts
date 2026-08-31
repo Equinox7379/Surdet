@@ -7,6 +7,7 @@ import { deleteTimeline, nextTimelineId, restorePendingTimelineDeletion } from '
 import { pushTimelineSnapshot, timelineHistoryDepth } from '../src/timeline-history.js';
 
 type FailurePoint = 'create' | 'write' | 'close';
+type Eol = '\r\n' | '\n';
 
 function fileHandle(
   failure: FailurePoint | null,
@@ -44,8 +45,19 @@ function scene(id: string, handle: FileSystemFileHandle, dirty = true): SceneEnt
   return { id, file: `${id}.gal`, text: `${id} text`, eol: '\n', dirty, handle };
 }
 
-function timeline(id: string, handle: FileSystemFileHandle, dirty = true): TimelineEntry {
-  return { id, file: `${id}.json`, text: `{ "id": "${id}" }`, eol: '\n', dirty, handle };
+function timelineText(definitionId: string, eol: Eol = '\n', durationMs = 1200): string {
+  return stringifyTimeline({ ...createTimeline(definitionId), durationMs }, eol);
+}
+
+function timeline(
+  id: string,
+  handle: FileSystemFileHandle,
+  dirty = true,
+  file = `${id}.json`,
+  definitionId = id,
+  eol: Eol = '\n',
+): TimelineEntry {
+  return { id, file, text: timelineText(definitionId, eol), eol, dirty, handle };
 }
 
 function directoryHandle(
@@ -228,35 +240,197 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.timelines.push(timeline('disk', fileHandle(null, log, 'disk'), false));
 
     restoreTimelineAutosaveEntries([
-      { id: 'disk', file: 'disk.json', text: 'disk recovered\r\n', eol: '\r\n' },
-      { id: 'new', file: 'nested/new.json', text: 'new recovered\n', eol: '\n' },
+      { id: 'disk', file: 'disk.json', text: timelineText('disk', '\r\n', 1800), eol: '\r\n' },
+      { id: 'new', file: 'nested/new.json', text: timelineText('new', '\n', 1800), eol: '\n' },
     ]);
 
     const disk = state.timelines.find((entry) => entry.id === 'disk')!;
     const created = state.timelines.find((entry) => entry.id === 'new')!;
-    expect(disk).toMatchObject({ text: 'disk recovered\r\n', eol: '\r\n', dirty: true });
-    expect(created).toMatchObject({ id: 'new', file: 'nested/new.json', text: 'new recovered\n', eol: '\n', dirty: true, handle: null });
+    expect(disk).toMatchObject({ text: timelineText('disk', '\r\n', 1800), eol: '\r\n', dirty: true });
+    expect(created).toMatchObject({
+      id: 'new',
+      file: 'nested/new.json',
+      text: timelineText('new', '\n', 1800),
+      eol: '\n',
+      dirty: true,
+      handle: null,
+    });
   });
 
-  it('同 id 不同 file 的备份显式冲突，绝不沿用旧 handle 静默错写', async () => {
+  it('精确三元身份恢复后保留原 handle，并通过该 handle 写入恢复正文', async () => {
     const writes: string[] = [];
-    const handle = fileHandle(null, log, 'same.json', 'disk', writes);
-    const existing = timeline('same', handle, false);
-    existing.file = 'same.json';
-    existing.text = 'disk';
+    const handle = fileHandle(null, log, 'intro.json', '', writes);
+    const existing = timeline('intro', handle, false, 'nested/intro.json');
     state.timelines.push(existing);
+    const recovered = {
+      id: 'intro',
+      file: 'nested/intro.json',
+      text: timelineText('intro', '\r\n', 1800),
+      eol: '\r\n' as const,
+    };
+
+    const result = restoreTimelineAutosaveEntries([recovered]);
+
+    expect(result).toMatchObject({ restored: 1, conflicts: [] });
+    expect(existing).toMatchObject({
+      id: 'intro',
+      file: 'nested/intro.json',
+      text: recovered.text,
+      eol: '\r\n',
+      dirty: true,
+      handle,
+    });
+    await saveAll();
+    expect(writes).toEqual([recovered.text]);
+  });
+
+  it('同一文件但外层 ID 不同返回 same-file-different-id，当前条目零 mutation 且零写入', async () => {
+    const writes: string[] = [];
+    const handle = fileHandle(null, log, 'shared.json', '', writes);
+    const existing = timeline('current', handle, false, 'shared.json');
+    const before = { ...existing };
+    state.timelines.push(existing);
+    state.currentTimeline = 'current';
 
     const result = restoreTimelineAutosaveEntries([
-      { id: 'same', file: 'nested/same.json', text: 'recovered', eol: '\n' },
+      { id: 'shared', file: 'shared.json', text: timelineText('shared'), eol: '\n' },
     ]);
     await saveAll();
 
-    expect(result).toEqual({
-      restored: 0,
-      conflicts: [{ id: 'same', currentFile: 'same.json', recoveredFile: 'nested/same.json' }],
-    });
-    expect(existing).toMatchObject({ file: 'same.json', text: 'disk', dirty: false, handle });
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'same-file-different-id' });
+    expect(existing).toEqual(before);
+    expect(state.currentTimeline).toBe('current');
     expect(writes).toEqual([]);
+  });
+
+  it('同一外层 ID 但文件不同返回 same-id-different-file 且不改当前条目', async () => {
+    const writes: string[] = [];
+    const handle = fileHandle(null, log, 'same.json', '', writes);
+    const existing = timeline('same', handle, false, 'same.json');
+    const before = { ...existing };
+    state.timelines.push(existing);
+    state.currentTimeline = 'same';
+
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'same', file: 'nested/same.json', text: timelineText('same', '\r\n', 1800), eol: '\r\n' },
+    ]);
+    await saveAll();
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'same-id-different-file' });
+    expect(existing).toEqual(before);
+    expect(writes).toEqual([]);
+  });
+
+  it('恢复正文内部 ID 不同返回 recovered-id-mismatch，不能插入新条目', () => {
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'mismatch', file: 'mismatch.json', text: timelineText('definition-other'), eol: '\n' },
+    ]);
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'recovered-id-mismatch' });
+    expect(state.timelines).toEqual([]);
+  });
+
+  it('恢复正文不是 JSON 时返回 recovered-json-invalid 且不改变当前状态', () => {
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'broken', file: 'broken.json', text: '{"version":1,"id":', eol: '\n' },
+    ]);
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'recovered-json-invalid' });
+    expect(state.timelines).toEqual([]);
+    expect(state.currentTimeline).toBeNull();
+  });
+
+  it('当前精确 ID/file 的正文不是 JSON 时返回 current-json-invalid 且零 mutation/零写入', async () => {
+    const writes: string[] = [];
+    const handle = fileHandle(null, log, 'broken.json', '', writes);
+    const existing = timeline('broken', handle, false, 'broken.json');
+    existing.text = '{"version":1,"id":';
+    const before = { ...existing };
+    state.timelines.push(existing);
+    state.currentTimeline = 'broken';
+
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'broken', file: 'broken.json', text: timelineText('broken'), eol: '\n' },
+    ]);
+    await saveAll();
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'current-json-invalid' });
+    expect(existing).toEqual(before);
+    expect(writes).toEqual([]);
+  });
+
+  it('当前精确 ID/file 的内部 ID 不一致返回 current-id-mismatch 且不静默覆盖', async () => {
+    const writes: string[] = [];
+    const handle = fileHandle(null, log, 'current.json', '', writes);
+    const existing = timeline('current', handle, false, 'current.json', 'other-definition');
+    const before = { ...existing };
+    state.timelines.push(existing);
+
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'current', file: 'current.json', text: timelineText('current'), eol: '\n' },
+    ]);
+    await saveAll();
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'current-id-mismatch' });
+    expect(existing).toEqual(before);
+    expect(writes).toEqual([]);
+  });
+
+  it('canonical 新时间轴插入时使用 null handle 并标记 dirty', () => {
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'new_timeline', file: 'nested/new_timeline.json', text: timelineText('new_timeline'), eol: '\n' },
+    ]);
+
+    expect(result).toMatchObject({ restored: 1, conflicts: [] });
+    expect(state.timelines).toHaveLength(1);
+    expect(state.timelines[0]).toMatchObject({
+      id: 'new_timeline',
+      file: 'nested/new_timeline.json',
+      text: timelineText('new_timeline'),
+      eol: '\n',
+      dirty: true,
+      handle: null,
+    });
+  });
+
+  it('非 canonical 新时间轴返回 recovered-id-mismatch 且不插入', () => {
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'new_timeline', file: 'nested/other-name.json', text: timelineText('new_timeline'), eol: '\n' },
+    ]);
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'recovered-id-mismatch' });
+    expect(state.timelines).toEqual([]);
+  });
+
+  it('另一个当前条目声明恢复正文内部 ID 时返回 definition-id-collision 且不插入', () => {
+    const handle = fileHandle(null, log, 'other.json');
+    const existing = timeline('other', handle, false, 'other.json', 'claimed');
+    const before = { ...existing };
+    state.timelines.push(existing);
+
+    const result = restoreTimelineAutosaveEntries([
+      { id: 'claimed', file: 'claimed.json', text: timelineText('claimed'), eol: '\n' },
+    ]);
+
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ reason: 'definition-id-collision' });
+    expect(state.timelines).toHaveLength(1);
+    expect(existing).toEqual(before);
   });
 
   it('全部成功时清除 dirty、报告全部成功并调用 onSaved', async () => {
