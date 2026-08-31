@@ -224,7 +224,7 @@ feat(authoring): define review terminal contract
 - Consumes: `REVIEW_BUSY` and existing lease publication/recovery machinery.
 - Produces: `LeaseScope = 'change' | 'project' | 'review'` and review lock directories under `.locks/reviews`.
 
-- [ ] **Step 1: Write review-scope lease RED tests**
+- [x] **Step 1: Write review-scope lease RED tests**
 
 Add the review scope to existing table-driven heartbeat/release tests and add exact assertions:
 
@@ -242,7 +242,7 @@ expect(first.directory).toContain(path.join('.locks', 'reviews'));
 
 Cover distinct review IDs, same review across managers, wrong owner release, heartbeat drain, dead same-host owner recovery, live owner preservation, foreign host, corrupt lease, publication window, sentinel/extra-file fail-loud release, and zero changes to change/project error codes.
 
-- [ ] **Step 2: Run Task 2 RED once**
+- [x] **Step 2: Run Task 2 RED once**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/node-local-lease.test.ts
@@ -250,7 +250,7 @@ npm run test -w @surdet/cli -- --run test/node-local-lease.test.ts
 
 Expected: TypeScript/test failures because review scope and error mapping do not exist.
 
-- [ ] **Step 3: Implement review scope without copying the lease state machine**
+- [x] **Step 3: Implement review scope without copying the lease state machine**
 
 Update the existing branches rather than adding another lock class:
 
@@ -266,7 +266,7 @@ function busyCode(scope: LeaseScope): 'CHANGE_BUSY' | 'PROJECT_BUSY' | 'REVIEW_B
 
 `scopeDirectory('review')` returns `.locks/reviews`. `lockDirectory()` uses `safeId(resourceId)` for change/review and `projectIdentityFromRoot()` only for project. Every other acquire/inspect/release/heartbeat path remains shared.
 
-- [ ] **Step 4: Run Task 2 GREEN**
+- [x] **Step 4: Run Task 2 GREEN**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/node-local-lease.test.ts
@@ -275,7 +275,7 @@ npm run typecheck -w @surdet/cli
 
 Expected: all exit `0`; existing change/project lease counts unchanged except expanded table cases.
 
-- [ ] **Step 5: Commit Task 2 exactly**
+- [x] **Step 5: Commit Task 2 exactly**
 
 Stage the two Task 2 files plus taskbook and commit:
 
@@ -842,6 +842,9 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 1 RED: the focused Authoring run exited `1` with 5 expected failures: both parsers were absent and `REVIEW_BUSY` was missing, while 6 existing error-contract tests remained green.
 - Task 1 GREEN: `review-terminal.test.ts` + `error-catalog.test.ts` passed 11/11; Authoring typecheck and build exited `0`. The shared parser rejects extra/path fields, malformed payload identity, action/receipt mismatches, and inconsistent snapshot state. Capability-registry search returned no terminal human writer entry (expected no-match exit `1`).
 - Task 1 taskbook correction: the illustrative approval command now contains the minimum action-specific receipt identity required by the approved strict parser, and the source/catalog names were corrected to the actual repository symbols. This is a documentation correction, not a contract expansion.
+- Task 1 exact commit: `2098836` (`feat(authoring): define review terminal contract`), six-path staged set, both diff checks exit `0`.
+- Task 2 RED: the existing lease suite ran 16 tests with 14 passing and 2 expected failures. Review scope incorrectly landed in `.locks/projects`, and the simulated review publication window therefore did not contend with the real review path.
+- Task 2 GREEN: the same suite passed 16/16 and CLI typecheck exited `0`. Review scope now shares the proven heartbeat/drain, stale takeover, sentinel-preserving release, publication wait, corruption, inspection, and busy-envelope state machine while mapping contention to `REVIEW_BUSY`; change/project mappings remain unchanged.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

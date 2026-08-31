@@ -6,7 +6,7 @@ import { AuthoringOperationError } from '@surdet/authoring';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from './node-json-record.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 
-export type LeaseScope = 'change' | 'project';
+export type LeaseScope = 'change' | 'project' | 'review';
 
 export interface LeaseHandle {
   scope: LeaseScope;
@@ -85,8 +85,10 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
-function busyCode(scope: LeaseScope): 'CHANGE_BUSY' | 'PROJECT_BUSY' {
-  return scope === 'change' ? 'CHANGE_BUSY' : 'PROJECT_BUSY';
+function busyCode(scope: LeaseScope): 'CHANGE_BUSY' | 'PROJECT_BUSY' | 'REVIEW_BUSY' {
+  if (scope === 'change') return 'CHANGE_BUSY';
+  if (scope === 'project') return 'PROJECT_BUSY';
+  return 'REVIEW_BUSY';
 }
 
 function holderOf(lease: LocalLease): LeaseInspection['holder'] {
@@ -174,11 +176,16 @@ export class NodeLocalLeaseManager {
   }
 
   private scopeDirectory(scope: LeaseScope): string {
-    return path.join(this.dataRoot, '.locks', scope === 'change' ? 'changes' : 'projects');
+    const directory = scope === 'change'
+      ? 'changes'
+      : scope === 'project'
+        ? 'projects'
+        : 'reviews';
+    return path.join(this.dataRoot, '.locks', directory);
   }
 
   private lockDirectory(scope: LeaseScope, resourceId: string): string {
-    const resourceName = scope === 'change' ? safeId(resourceId) : projectIdentityFromRoot(resourceId);
+    const resourceName = scope === 'project' ? projectIdentityFromRoot(resourceId) : safeId(resourceId);
     return path.join(this.scopeDirectory(scope), `${resourceName}.lock`);
   }
 
