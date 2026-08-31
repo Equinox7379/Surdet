@@ -6,6 +6,7 @@
 import { state, setStatus } from './state.js';
 import { histories } from './history.js';
 import { clearTimelineHistories, clearTimelineHistory } from './timeline-history.js';
+import { resolveAutosaveProjectIdentity } from './autosave.js';
 import type { AutosaveTimelineEntry } from './autosave.js';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind } from './assets.js';
@@ -19,6 +20,7 @@ let onProjectLoaded: () => void = () => {};
 let onSaved: () => void = () => {};
 /** 保存尝试完成后的 UI 事实投影；不改变任何写盘或恢复语义。 */
 let onSaveSettled: (outcome: ProjectSaveOutcome) => void = () => {};
+let onTimelineDeleted: (timelineId: string) => void = () => {};
 
 export interface ProjectSaveOutcome {
   hadPendingChanges: boolean;
@@ -35,6 +37,7 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded?: () => void;
   onSaved?: () => void;
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
+  onTimelineDeleted?: (timelineId: string) => void;
 }): void {
   renderAll = opts.renderAll;
   runValidate = opts.runValidate;
@@ -42,6 +45,7 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
   onSaveSettled = opts.onSaveSettled ?? (() => {});
+  onTimelineDeleted = opts.onTimelineDeleted ?? (() => {});
 }
 
 export async function openProject(): Promise<void> {
@@ -54,6 +58,7 @@ export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' } = {},
 ): Promise<void> {
+  state.projectLoading = true;
   if ((options.source ?? 'normal') === 'normal') {
     state.reviewWorkspace = null;
     state.mainTab = 'editor';
@@ -129,8 +134,13 @@ export async function openProjectFromHandle(
   const first = state.scenes.keys().next().value as string | undefined;
   state.current = first ?? null;
   state.currentTimeline = state.timelines[0]?.id ?? null;
+  state.autosaveProjectId = await resolveAutosaveProjectIdentity(dir);
+  state.projectLoading = false;
   renderAll();
   runValidate(); // 打开后立即校验
+  if (!state.autosaveProjectId) {
+    setStatus('当前浏览器无法安全识别项目目录，自动备份未启用', false, 8000);
+  }
   onProjectLoaded(); // 崩溃保险：检查同项目未保存快照（A1）
 }
 
@@ -227,14 +237,26 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
   }
 }
 
-export function restoreTimelineAutosaveEntries(entries: readonly AutosaveTimelineEntry[]): void {
+export interface TimelineAutosaveRestoreResult {
+  restored: number;
+  conflicts: { id: string; currentFile: string; recoveredFile: string }[];
+}
+
+export function restoreTimelineAutosaveEntries(entries: readonly AutosaveTimelineEntry[]): TimelineAutosaveRestoreResult {
+  let restored = 0;
+  const conflicts: TimelineAutosaveRestoreResult['conflicts'] = [];
   for (const recovered of entries) {
-    const existing = state.timelines.find((entry) => entry.id === recovered.id);
+    const existing = state.timelines.find((entry) => entry.file === recovered.file);
     if (existing) {
-      existing.file = recovered.file;
       existing.text = recovered.text;
       existing.eol = recovered.eol;
       existing.dirty = true;
+      restored++;
+      continue;
+    }
+    const sameId = state.timelines.find((entry) => entry.id === recovered.id);
+    if (sameId) {
+      conflicts.push({ id: recovered.id, currentFile: sameId.file, recoveredFile: recovered.file });
       continue;
     }
     state.timelines.push({
@@ -245,10 +267,12 @@ export function restoreTimelineAutosaveEntries(entries: readonly AutosaveTimelin
       dirty: true,
       handle: null,
     });
+    restored++;
   }
   if (!state.currentTimeline && state.timelines.length > 0) {
     state.currentTimeline = state.timelines[0]!.id;
   }
+  return { restored, conflicts };
 }
 
 export async function saveAll(): Promise<void> {
@@ -302,6 +326,7 @@ export async function saveAll(): Promise<void> {
         await timelineDir.removeEntry(fileName);
         state.pendingTimelineRestores.delete(pending.id);
         clearTimelineHistory(pending.id);
+        onTimelineDeleted(pending.id);
         removed++;
       } catch (err) {
         remaining.push(pending);
@@ -313,6 +338,7 @@ export async function saveAll(): Promise<void> {
       if (restore.entry.handle !== null) continue;
       state.pendingTimelineRestores.delete(timelineId);
       clearTimelineHistory(timelineId);
+      onTimelineDeleted(timelineId);
       removed++;
     }
   }
@@ -426,6 +452,7 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
+  state.projectLoading = true;
   state.reviewWorkspace = null;
   state.mainTab = 'editor';
   state.dirName = '（演示项目·未连接目录）';
@@ -467,6 +494,8 @@ export function loadDemoProject(): void {
   });
   state.current = 'demo';
   state.currentTimeline = 'demo_intro';
+  state.autosaveProjectId = 'demo-project';
+  state.projectLoading = false;
   renderAll();
   runValidate();
   onProjectLoaded(); // 崩溃保险：演示项目同样支持恢复（dirName 区分）

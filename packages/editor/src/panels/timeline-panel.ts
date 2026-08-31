@@ -9,6 +9,7 @@ import {
 } from '../timeline-model.js';
 import {
   buildTimelineTicks,
+  projectTimelineCueGeometry,
   timelineActionLabel,
   timelineAssetChoices,
   timelineEasingLabel,
@@ -18,16 +19,99 @@ import type { TimelineAssetChoice } from '../timeline-presentation.js';
 
 let rootContainer: HTMLElement | null = null;
 let timelineZoom = 1;
+let timelineRulerObserver: ResizeObserver | null = null;
+let timelineLayoutObserver: ResizeObserver | null = null;
 let onPreview: (timelineId: string) => void = () => {};
+let onOpenAssets: () => void = () => {};
 let onEdited: () => void = () => {};
 let onSelectionChanged: () => void = () => {};
 
+interface TimelineViewState {
+  zoom: number;
+  libraryOpen: boolean;
+  inspectorOpen: boolean;
+  canvasScrollLeft: number;
+  canvasScrollTop: number;
+  libraryScrollTop: number;
+  inspectorScrollTop: number;
+  searchQuery: string;
+}
+
+const timelineViewStates = new Map<string, TimelineViewState>();
+
+export function clearTimelineViewStates(): void {
+  timelineViewStates.clear();
+  timelineZoom = 1;
+  timelineRulerObserver?.disconnect();
+  timelineRulerObserver = null;
+  timelineLayoutObserver?.disconnect();
+  timelineLayoutObserver = null;
+}
+
+export function clearTimelineViewState(timelineId: string): void {
+  timelineViewStates.delete(timelineId);
+}
+
+function timelineViewState(timelineId: string): TimelineViewState {
+  let view = timelineViewStates.get(timelineId);
+  if (!view) {
+    view = {
+      zoom: 1,
+      libraryOpen: true,
+      inspectorOpen: true,
+      canvasScrollLeft: 0,
+      canvasScrollTop: 0,
+      libraryScrollTop: 0,
+      inspectorScrollTop: 0,
+      searchQuery: '',
+    };
+    timelineViewStates.set(timelineId, view);
+  }
+  return view;
+}
+
+function captureTimelineViewState(): void {
+  if (!rootContainer || !rootContainer.isConnected) return;
+  const timelineId = rootContainer.dataset.renderedTimelineId;
+  if (!timelineId) return;
+  const view = timelineViewState(timelineId);
+  const canvas = rootContainer.querySelector<HTMLElement>('.timeline-scroll');
+  const libraryItems = rootContainer.querySelector<HTMLElement>('.timeline-items');
+  const inspectorBody = rootContainer.querySelector<HTMLElement>('.timeline-inspector-body');
+  view.zoom = timelineZoom;
+  view.canvasScrollLeft = canvas?.scrollLeft ?? view.canvasScrollLeft;
+  view.canvasScrollTop = canvas?.scrollTop ?? view.canvasScrollTop;
+  view.libraryScrollTop = libraryItems?.scrollTop ?? view.libraryScrollTop;
+  view.inspectorScrollTop = inspectorBody?.scrollTop ?? view.inspectorScrollTop;
+  const search = rootContainer.querySelector<HTMLInputElement>('.timeline-search');
+  view.searchQuery = search?.value ?? view.searchQuery;
+}
+
+function restoreTimelineViewState(timelineId: string): void {
+  if (!rootContainer) return;
+  const view = timelineViewState(timelineId);
+  requestAnimationFrame(() => {
+    if (!rootContainer || rootContainer.dataset.renderedTimelineId !== timelineId) return;
+    const canvas = rootContainer.querySelector<HTMLElement>('.timeline-scroll');
+    const libraryItems = rootContainer.querySelector<HTMLElement>('.timeline-items');
+    const inspectorBody = rootContainer.querySelector<HTMLElement>('.timeline-inspector-body');
+    if (canvas) {
+      canvas.scrollLeft = view.canvasScrollLeft;
+      canvas.scrollTop = view.canvasScrollTop;
+    }
+    if (libraryItems) libraryItems.scrollTop = view.libraryScrollTop;
+    if (inspectorBody) inspectorBody.scrollTop = view.inspectorScrollTop;
+  });
+}
+
 export function bindTimelineHooks(opts: {
   onPreview: (timelineId: string) => void;
+  onOpenAssets?: () => void;
   onEdited?: () => void;
   onSelectionChanged?: () => void;
 }): void {
   onPreview = opts.onPreview;
+  onOpenAssets = opts.onOpenAssets ?? (() => {});
   onEdited = opts.onEdited ?? (() => {});
   onSelectionChanged = opts.onSelectionChanged ?? (() => {});
 }
@@ -117,7 +201,10 @@ function normalizeTiming(definition: TimelineDefinition): void {
   }
 }
 
-function commit(mutator: (definition: TimelineDefinition) => void): void {
+function commit(
+  mutator: (definition: TimelineDefinition) => void,
+  historySelection: TimelineCueSelection | null = state.currentTimelineCue,
+): void {
   const active = activeDefinition();
   if (!active || active.issues.length > 0) return;
   const focusKey = activeTimelineFocusKey();
@@ -126,7 +213,7 @@ function commit(mutator: (definition: TimelineDefinition) => void): void {
   normalizeTiming(next);
   const nextText = stringifyTimeline(next, active.entry.eol);
   if (nextText === active.entry.text) return;
-  pushTimelineSnapshot(active.entry.id, active.entry.text);
+  pushTimelineSnapshot(active.entry.id, active.entry.text, historySelection);
   active.entry.text = nextText;
   active.entry.dirty = true;
   renderTimelinePanel(rootContainer);
@@ -187,7 +274,13 @@ function resourceChoicesFor(kind: ResourceTrackKind, action: string): TimelineAs
   });
 }
 
-function fillResourceSelect(select: HTMLSelectElement, choices: readonly TimelineAssetChoice[], currentKey?: string): void {
+function fillResourceSelect(
+  select: HTMLSelectElement,
+  choices: readonly TimelineAssetChoice[],
+  currentKey?: string,
+  currentExpression?: string,
+  requireExpressionMatch = false,
+): void {
   select.innerHTML = '';
   if (choices.length === 0) {
     const option = h('option', undefined, '当前项目没有可用素材');
@@ -197,13 +290,24 @@ function fillResourceSelect(select: HTMLSelectElement, choices: readonly Timelin
     return;
   }
   select.disabled = false;
+  let matchedCurrent = currentKey === undefined;
   choices.forEach((choice, index) => {
     const suffix = choice.expression ? ` · ${choice.expression}` : '';
     const option = h('option', undefined, `${choice.key}${suffix}`);
     option.value = String(index);
-    option.selected = choice.key === currentKey;
+    option.selected = !matchedCurrent
+      && choice.key === currentKey
+      && (!requireExpressionMatch || choice.kind !== 'portrait' || choice.expression === currentExpression);
+    if (option.selected) matchedCurrent = true;
     select.appendChild(option);
   });
+  if (!matchedCurrent) {
+    const missing = h('option', undefined, '原素材不在项目目录，请重新选择');
+    missing.value = '';
+    missing.selected = true;
+    missing.disabled = true;
+    select.insertBefore(missing, select.firstChild);
+  }
 }
 
 function updateCue(selection: TimelineCueSelection, mutator: (cue: TimelineCue, track: TimelineTrack) => void): void {
@@ -212,6 +316,23 @@ function updateCue(selection: TimelineCueSelection, mutator: (cue: TimelineCue, 
     const cue = track?.cues[selection.cueIndex];
     if (track && cue) mutator(cue, track);
   });
+}
+
+function selectCueInMountedPanel(definition: TimelineDefinition, trackIndex: number, cueIndex: number): void {
+  state.currentTimelineCue = { trackIndex, cueIndex };
+  if (!rootContainer) return;
+  for (const candidate of rootContainer.querySelectorAll<HTMLElement>('.timeline-cue')) {
+    candidate.classList.toggle(
+      'selected',
+      Number(candidate.dataset.trackIndex) === trackIndex && Number(candidate.dataset.cueIndex) === cueIndex,
+    );
+  }
+  const inspectorBody = rootContainer.querySelector<HTMLElement>('.timeline-inspector-body');
+  if (inspectorBody) {
+    inspectorBody.innerHTML = '';
+    inspectorBody.append(h('div', 'timeline-section-kicker', '片段设置'));
+    renderInspector(inspectorBody, definition);
+  }
 }
 
 function renderInspector(parent: HTMLElement, definition: TimelineDefinition): void {
@@ -248,16 +369,28 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const currentResourceKey = track.kind === 'portrait'
     ? track.target
     : typeof cue.key === 'string' ? cue.key : undefined;
+  const currentExpression = typeof cue.expression === 'string' ? cue.expression : undefined;
   const refreshReplacementChoices = () => {
     if (!replacementResource || !isResourceTrackKind(track.kind)) return;
     replacementChoices = resourceChoicesFor(track.kind, action.value);
-    fillResourceSelect(replacementResource, replacementChoices, currentResourceKey);
+    const requireExpressionMatch = track.kind === 'portrait'
+      && (action.value === 'show' || action.value === 'expression');
+    fillResourceSelect(
+      replacementResource,
+      replacementChoices,
+      currentResourceKey,
+      currentExpression,
+      requireExpressionMatch,
+    );
   };
   if (replacementResource) {
     replacementResource.dataset.timelineFocus = 'inspector-resource';
     refreshReplacementChoices();
     action.onchange = refreshReplacementChoices;
     common.appendChild(field('项目素材', replacementResource));
+    const openAssets = h('button', 'timeline-open-assets', '前往素材工作区');
+    openAssets.onclick = onOpenAssets;
+    common.appendChild(openAssets);
   }
   const applyAction = h('button', undefined, '应用动作');
   applyAction.dataset.timelineFocus = 'inspector-apply-action';
@@ -298,12 +431,46 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     const input = numberInput(typeof cue[key] === 'number' ? cue[key] as number : min, min, max);
     input.dataset.timelineFocus = `inspector-${key}`;
     input.step = step;
-    input.onchange = () => updateCue(selection, (next) => { next[key] = Number(input.value) || min; });
+    input.onchange = () => updateCue(selection, (next) => {
+      const parsed = input.value.trim() === '' ? min : Number(input.value);
+      const finite = Number.isFinite(parsed) ? parsed : min;
+      next[key] = max === undefined ? Math.max(min, finite) : Math.max(min, Math.min(max, finite));
+    });
     payload.appendChild(field(label, input));
   };
 
   if (track.kind === 'portrait') {
-    if (cue.action === 'show' || cue.action === 'move') setString('位置', 'position', 'left / center / right');
+    if (cue.action === 'show' || cue.action === 'move') {
+      const currentPosition = typeof cue.position === 'string' ? cue.position : 'center';
+      const namedPositions = ['left', 'center', 'right'];
+      const isNamedPosition = namedPositions.includes(currentPosition);
+      const labels: Record<string, string> = { left: '左侧', center: '中央', right: '右侧', custom: '自定义横坐标' };
+      const position = selectInput([...namedPositions, 'custom'], isNamedPosition ? currentPosition : 'custom', (value) => labels[value] ?? value);
+      position.dataset.timelineFocus = 'inspector-position';
+      payload.appendChild(field('画面位置', position));
+      const parsedCustomPosition = Number(currentPosition);
+      const customPosition = h('input') as HTMLInputElement;
+      customPosition.type = 'number';
+      customPosition.step = '1';
+      customPosition.value = String(Number.isFinite(parsedCustomPosition) ? parsedCustomPosition : 0);
+      customPosition.dataset.timelineFocus = 'inspector-position-custom';
+      const customPositionField = field('自定义横坐标', customPosition);
+      customPositionField.hidden = position.value !== 'custom';
+      const applyCustomPosition = () => updateCue(selection, (next) => {
+        const parsed = Number(customPosition.value);
+        next.position = String(Number.isFinite(parsed) ? parsed : 0);
+      });
+      position.onchange = () => {
+        customPositionField.hidden = position.value !== 'custom';
+        if (position.value === 'custom') {
+          applyCustomPosition();
+          customPosition.focus();
+        }
+        else updateCue(selection, (next) => { next.position = position.value; });
+      };
+      customPosition.onchange = applyCustomPosition;
+      payload.appendChild(customPositionField);
+    }
   }
   if (track.kind === 'camera') {
     if (cue.action === 'zoom') setNumber('缩放', 'scale', 0.25, 4, '0.01');
@@ -342,8 +509,16 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   const remove = h('button', 'danger', '删除演出片段');
   remove.dataset.timelineFocus = 'inspector-delete';
   remove.onclick = () => {
-    commit((next) => { next.tracks[selection.trackIndex]!.cues.splice(selection.cueIndex, 1); });
-    state.currentTimelineCue = null;
+    const remaining = track.cues.length - 1;
+    const previousSelection = { ...selection };
+    state.currentTimelineCue = remaining <= 0
+      ? null
+      : { trackIndex: selection.trackIndex, cueIndex: Math.min(selection.cueIndex, remaining - 1) };
+    const nextFocus = remaining <= 0
+      ? `track-${selection.trackIndex}-add`
+      : `cue-${selection.trackIndex}-${state.currentTimelineCue!.cueIndex}`;
+    commit((next) => { next.tracks[selection.trackIndex]!.cues.splice(selection.cueIndex, 1); }, previousSelection);
+    restoreTimelineFocus(nextFocus);
     setStatus('已删除演出片段，可撤销', true, 4000);
   };
   ops.appendChild(remove);
@@ -373,6 +548,8 @@ function renderTimelineList(parent: HTMLElement): void {
   search.type = 'search';
   search.placeholder = '查找演出片段';
   search.setAttribute('aria-label', '查找演出片段');
+  const currentView = state.currentTimeline ? timelineViewState(state.currentTimeline) : null;
+  search.value = currentView?.searchQuery ?? '';
   parent.appendChild(search);
   if (state.pendingTimelineRestores.size > 0) {
     const recoveryList = h('div', 'timeline-recovery');
@@ -392,11 +569,15 @@ function renderTimelineList(parent: HTMLElement): void {
     return;
   }
   const items = h('div', 'timeline-items');
-  search.oninput = () => {
+  const applySearch = () => {
     const query = search.value.trim().toLocaleLowerCase();
     for (const item of items.querySelectorAll<HTMLElement>('[data-timeline-id]')) {
       item.hidden = query.length > 0 && !item.dataset.timelineId!.toLocaleLowerCase().includes(query);
     }
+  };
+  search.oninput = () => {
+    if (state.currentTimeline) timelineViewState(state.currentTimeline).searchQuery = search.value;
+    applySearch();
   };
   for (const entry of state.timelines) {
     const button = h('button', entry.id === state.currentTimeline ? 'timeline-item active' : 'timeline-item');
@@ -416,17 +597,28 @@ function renderTimelineList(parent: HTMLElement): void {
     items.appendChild(button);
   }
   parent.appendChild(items);
+  items.scrollTop = currentView?.libraryScrollTop ?? 0;
+  items.addEventListener('scroll', () => {
+    if (state.currentTimeline) timelineViewState(state.currentTimeline).libraryScrollTop = items.scrollTop;
+  }, { passive: true });
+  applySearch();
 }
 
-function renderRuler(parent: HTMLElement, durationMs: number, availableWidth: number): void {
-  const ruler = h('div', 'timeline-ruler');
+function updateTimelineRuler(ruler: HTMLElement, durationMs: number, availableWidth: number): void {
+  ruler.innerHTML = '';
   for (const projected of buildTimelineTicks(durationMs, availableWidth)) {
     const tick = h('span', 'timeline-tick', projected.label);
     tick.style.left = `${projected.leftPercent}%`;
     tick.dataset.valueMs = String(projected.valueMs);
     ruler.appendChild(tick);
   }
+}
+
+function renderRuler(parent: HTMLElement, durationMs: number, availableWidth: number): HTMLElement {
+  const ruler = h('div', 'timeline-ruler');
+  updateTimelineRuler(ruler, durationMs, availableWidth);
   parent.appendChild(ruler);
+  return ruler;
 }
 
 function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void {
@@ -444,8 +636,9 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         kind.value = track.kind;
         return;
       }
-      commit((next) => { next.tracks[trackIndex] = createTrack(nextKind); });
-      state.currentTimelineCue = null;
+      const previousSelection = state.currentTimelineCue ? { ...state.currentTimelineCue } : null;
+      if (state.currentTimelineCue?.trackIndex === trackIndex) state.currentTimelineCue = null;
+      commit((next) => { next.tracks[trackIndex] = createTrack(nextKind); }, previousSelection);
       setStatus('已更换轨道类型，可撤销', true, 4000);
     };
     head.appendChild(kind);
@@ -470,6 +663,9 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       refreshAddChoices();
       addAction.onchange = refreshAddChoices;
       head.appendChild(addResource);
+      const openAssets = h('button', 'timeline-open-assets', '素材工作区');
+      openAssets.onclick = onOpenAssets;
+      head.appendChild(openAssets);
     }
     const addCue = h('button', 'track-add', '+ 演出片段');
     addCue.dataset.timelineFocus = `track-${trackIndex}-add`;
@@ -485,26 +681,49 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         return;
       }
       const cueIndex = track.cues.length;
+      const previousSelection = state.currentTimelineCue ? { ...state.currentTimelineCue } : null;
+      state.currentTimelineCue = { trackIndex, cueIndex };
       commit((next) => {
         const nextTrack = next.tracks[trackIndex]!;
         if (draft.trackPatch) nextTrack.target = draft.trackPatch.target;
         nextTrack.cues.push(draft.cue);
-      });
-      state.currentTimelineCue = { trackIndex, cueIndex };
-      renderTimelinePanel(rootContainer);
+      }, previousSelection);
     };
     head.appendChild(addCue);
+    const removeTrack = h('button', 'track-remove', '删除轨道');
+    removeTrack.disabled = definition.tracks.length <= 1;
+    removeTrack.dataset.timelineFocus = `track-${trackIndex}-remove`;
+    removeTrack.onclick = () => {
+      if (track.cues.length > 0 && !window.confirm(`删除轨道会同时移除 ${track.cues.length} 个演出片段，是否继续？`)) return;
+      const selection = state.currentTimelineCue;
+      if (selection?.trackIndex === trackIndex) state.currentTimelineCue = null;
+      else if (selection && selection.trackIndex > trackIndex) {
+        state.currentTimelineCue = { trackIndex: selection.trackIndex - 1, cueIndex: selection.cueIndex };
+      }
+      const nextTrackIndex = Math.min(trackIndex, definition.tracks.length - 2);
+      commit((next) => { next.tracks.splice(trackIndex, 1); }, selection ? { ...selection } : null);
+      restoreTimelineFocus(`track-${nextTrackIndex}-add`);
+      setStatus('已删除轨道，可撤销', true, 4000);
+    };
+    head.appendChild(removeTrack);
     row.appendChild(head);
     const lane = h('div', 'timeline-lane');
     for (const [cueIndex, cue] of track.cues.entries()) {
       const selection = state.currentTimeline === definition.id ? state.currentTimelineCue : null;
       const block = h('button', cueIndex === selection?.cueIndex && trackIndex === selection.trackIndex ? 'timeline-cue selected' : 'timeline-cue');
+      block.classList.toggle('instant', cue.durationMs === 0);
+      block.dataset.durationMs = String(cue.durationMs);
+      block.dataset.trackIndex = String(trackIndex);
+      block.dataset.cueIndex = String(cueIndex);
       block.dataset.timelineFocus = `cue-${trackIndex}-${cueIndex}`;
       const updateGeometry = (atMs: number, durationMs: number): void => {
-        const left = definition.durationMs > 0 ? Math.max(0, Math.min(100, atMs / definition.durationMs * 100)) : 0;
-        const width = definition.durationMs > 0 ? Math.max(2, Math.min(100 - left, Math.max(1, durationMs / definition.durationMs * 100))) : 100;
-        block.style.left = `${left}%`;
-        block.style.width = `${width}%`;
+        const geometry = projectTimelineCueGeometry(atMs, durationMs, definition.durationMs);
+        block.classList.toggle('instant', durationMs === 0);
+        block.classList.toggle('instant-at-end', geometry.anchorAtEnd);
+        block.dataset.durationMs = String(durationMs);
+        block.style.left = geometry.anchorAtEnd ? 'auto' : `${geometry.leftPercent}%`;
+        block.style.right = geometry.anchorAtEnd ? '0' : 'auto';
+        block.style.width = `${geometry.widthPercent}%`;
         block.title = `${timelineActionLabel(track.kind, cue.action)} · ${Math.round(atMs)}ms + ${Math.round(durationMs)}ms · ${timelineEasingLabel(cue.easing)}`;
       };
       updateGeometry(cue.atMs, cue.durationMs);
@@ -528,6 +747,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       resize.title = '拖动调整时长';
       resize.onpointerdown = (event) => {
         event.stopPropagation();
+        selectCueInMountedPanel(definition, trackIndex, cueIndex);
         resize.setPointerCapture(event.pointerId);
         const startX = event.clientX;
         const originalDuration = cue.durationMs;
@@ -556,7 +776,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
         block.setPointerCapture(event.pointerId);
-        state.currentTimelineCue = { trackIndex, cueIndex };
+        selectCueInMountedPanel(definition, trackIndex, cueIndex);
         const startX = event.clientX;
         const originalAt = cue.atMs;
         const laneWidth = Math.max(1, lane.getBoundingClientRect().width);
@@ -580,10 +800,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         event.preventDefault();
       };
       block.onclick = () => {
-        const focusKey = block.dataset.timelineFocus ?? null;
-        state.currentTimelineCue = { trackIndex, cueIndex };
-        renderTimelinePanel(rootContainer);
-        restoreTimelineFocus(focusKey);
+        selectCueInMountedPanel(definition, trackIndex, cueIndex);
       };
       lane.appendChild(block);
     }
@@ -594,6 +811,8 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
 }
 
 function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): void {
+  const view = timelineViewState(definition.id);
+  timelineZoom = view.zoom;
   const workbench = h('div', 'timeline-workbench');
   const main = h('section', 'timeline-canvas');
   const toolbar = h('div', 'timeline-toolbar');
@@ -604,16 +823,16 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   const viewControls = h('div', 'timeline-view-controls');
   const fit = h('button', undefined, '适应窗口');
   fit.dataset.timelineFocus = 'view-fit';
-  fit.onclick = () => { timelineZoom = 1; renderTimelinePanel(rootContainer); restoreTimelineFocus('view-fit'); };
+  fit.onclick = () => { view.zoom = 1; timelineZoom = 1; renderTimelinePanel(rootContainer); restoreTimelineFocus('view-fit'); };
   const zoomOut = h('button', undefined, '－');
   zoomOut.dataset.timelineFocus = 'view-zoom-out';
   zoomOut.title = '缩小时间尺';
-  zoomOut.onclick = () => { timelineZoom = Math.max(0.75, timelineZoom - 0.25); renderTimelinePanel(rootContainer); restoreTimelineFocus('view-zoom-out'); };
+  zoomOut.onclick = () => { view.zoom = Math.max(0.75, timelineZoom - 0.25); timelineZoom = view.zoom; renderTimelinePanel(rootContainer); restoreTimelineFocus('view-zoom-out'); };
   const zoomValue = h('output', 'timeline-zoom-value', `${Math.round(timelineZoom * 100)}%`);
   const zoomIn = h('button', undefined, '＋');
   zoomIn.dataset.timelineFocus = 'view-zoom-in';
   zoomIn.title = '放大时间尺';
-  zoomIn.onclick = () => { timelineZoom = Math.min(3, timelineZoom + 0.25); renderTimelinePanel(rootContainer); restoreTimelineFocus('view-zoom-in'); };
+  zoomIn.onclick = () => { view.zoom = Math.min(3, timelineZoom + 0.25); timelineZoom = view.zoom; renderTimelinePanel(rootContainer); restoreTimelineFocus('view-zoom-in'); };
   viewControls.append(fit, zoomOut, zoomValue, zoomIn);
   toolbar.appendChild(viewControls);
   const trackControls = h('div', 'timeline-track-controls');
@@ -640,20 +859,39 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
     '--timeline-lane-min-width',
     timelineZoom === 1 ? 'calc(100% - var(--timeline-track-label-width))' : `${laneWidth}px`,
   );
-  renderRuler(scroll, definition.durationMs, laneWidth);
+  scroll.addEventListener('scroll', () => {
+    view.canvasScrollLeft = scroll.scrollLeft;
+    view.canvasScrollTop = scroll.scrollTop;
+  }, { passive: true });
+  const ruler = renderRuler(scroll, definition.durationMs, laneWidth);
   renderTracks(scroll, definition);
   main.appendChild(scroll);
+  timelineRulerObserver?.disconnect();
+  if (typeof ResizeObserver !== 'undefined') {
+    let lastWidth = 0;
+    timelineRulerObserver = new ResizeObserver(() => {
+      const width = ruler.getBoundingClientRect().width;
+      if (width <= 0 || Math.abs(width - lastWidth) < 4) return;
+      lastWidth = width;
+      updateTimelineRuler(ruler, definition.durationMs, width);
+    });
+    timelineRulerObserver.observe(scroll);
+  }
   workbench.appendChild(main);
 
   const inspector = document.createElement('details');
   inspector.className = 'timeline-inspector';
-  inspector.open = true;
+  inspector.open = rootWidth > 800 ? true : view.inspectorOpen;
+  inspector.addEventListener('toggle', () => {
+    if (inspector.dataset.responsiveSync !== 'true') view.inspectorOpen = inspector.open;
+  });
   const summary = document.createElement('summary');
   summary.textContent = '片段设置';
   inspector.appendChild(summary);
   const inspectorBody = h('div', 'timeline-inspector-body');
   inspectorBody.append(h('div', 'timeline-section-kicker', '片段设置'));
   renderInspector(inspectorBody, definition);
+  inspectorBody.addEventListener('scroll', () => { view.inspectorScrollTop = inspectorBody.scrollTop; }, { passive: true });
   inspector.appendChild(inspectorBody);
   workbench.appendChild(inspector);
   parent.appendChild(workbench);
@@ -661,13 +899,24 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
 
 export function renderTimelinePanel(container: HTMLElement | null): void {
   if (!container) return;
+  captureTimelineViewState();
   rootContainer = container;
+  timelineRulerObserver?.disconnect();
+  timelineRulerObserver = null;
+  timelineLayoutObserver?.disconnect();
+  timelineLayoutObserver = null;
   container.innerHTML = '';
   container.setAttribute('data-editor-panel', 'timeline');
+  const active = activeDefinition();
+  const view = active ? timelineViewState(active.definition.id) : null;
+  if (view) timelineZoom = view.zoom;
   const shell = h('div', 'timeline-shell');
   const library = document.createElement('details');
   library.className = 'timeline-list timeline-library';
-  library.open = true;
+  library.open = container.getBoundingClientRect().width > 800 ? true : view?.libraryOpen ?? true;
+  library.addEventListener('toggle', () => {
+    if (view && library.dataset.responsiveSync !== 'true') view.libraryOpen = library.open;
+  });
   const librarySummary = document.createElement('summary');
   librarySummary.textContent = '演出片段库';
   library.appendChild(librarySummary);
@@ -676,7 +925,6 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
   library.appendChild(libraryBody);
   shell.appendChild(library);
   const content = h('section', 'timeline-content');
-  const active = activeDefinition();
   if (!active) {
     const empty = h('div', 'timeline-empty');
     empty.append(h('strong', undefined, '选择一段演出开始编排'));
@@ -684,6 +932,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     content.append(empty);
     shell.appendChild(content);
     container.appendChild(shell);
+    delete container.dataset.renderedTimelineId;
     return;
   }
   const header = h('div', 'timeline-header');
@@ -726,7 +975,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     for (const message of active.issues) issue.append(h('div', undefined, message));
     const reset = h('button', undefined, '重置为可编辑模板');
     reset.onclick = () => {
-      pushTimelineSnapshot(active.entry.id, active.entry.text);
+      pushTimelineSnapshot(active.entry.id, active.entry.text, state.currentTimelineCue);
       active.entry.text = stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
       active.entry.dirty = true;
       state.currentTimelineCue = null;
@@ -741,6 +990,26 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
   }
   shell.appendChild(content);
   container.appendChild(shell);
+  container.dataset.renderedTimelineId = active.definition.id;
+  const inspector = shell.querySelector<HTMLDetailsElement>('.timeline-inspector');
+  if (typeof ResizeObserver !== 'undefined' && inspector && view) {
+    let wide = container.getBoundingClientRect().width > 800;
+    timelineLayoutObserver = new ResizeObserver(() => {
+      const nextWide = container.getBoundingClientRect().width > 800;
+      if (nextWide === wide) return;
+      wide = nextWide;
+      library.dataset.responsiveSync = 'true';
+      inspector.dataset.responsiveSync = 'true';
+      library.open = nextWide ? true : view.libraryOpen;
+      inspector.open = nextWide ? true : view.inspectorOpen;
+      requestAnimationFrame(() => {
+        delete library.dataset.responsiveSync;
+        delete inspector.dataset.responsiveSync;
+      });
+    });
+    timelineLayoutObserver.observe(container);
+  }
+  restoreTimelineViewState(active.definition.id);
 }
 
 /** 供因果跳转使用：切到指定时间轴并选中对应 cue（trackIndex/cueIndex 可选）。 */

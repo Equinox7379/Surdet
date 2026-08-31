@@ -3,6 +3,7 @@ import type { TimelineEasing, TimelineTrackKind } from '@surdet/core';
 import type { DirAsset } from '../src/assets.js';
 import {
   buildTimelineTicks,
+  projectTimelineCueGeometry,
   timelineActionLabel,
   timelineAssetChoices,
   timelineEasingLabel,
@@ -129,5 +130,28 @@ describe('Timeline 自然刻度', () => {
     const ticks = buildTimelineTicks(100, 128, 64);
     expect(ticks.map((tick) => tick.valueMs)).toEqual([0, 50, 100]);
     expect(ticks.map((tick) => tick.leftPercent)).toEqual([0, 50, 100]);
+  });
+});
+
+describe('Timeline 片段几何', () => {
+  it('把位于时间轴终点的瞬时片段锚定在轨道内部', () => {
+    expect(projectTimelineCueGeometry(1_000, 0, 1_000)).toEqual({
+      leftPercent: 100,
+      widthPercent: 0,
+      anchorAtEnd: true,
+    });
+    expect(projectTimelineCueGeometry(500, 0, 1_000)).toEqual({
+      leftPercent: 50,
+      widthPercent: 0,
+      anchorAtEnd: false,
+    });
+  });
+
+  it('在零时长时间轴上仍保留一个可右锚定的瞬时点', () => {
+    expect(projectTimelineCueGeometry(0, 0, 0)).toEqual({
+      leftPercent: 0,
+      widthPercent: 0,
+      anchorAtEnd: true,
+    });
   });
 });

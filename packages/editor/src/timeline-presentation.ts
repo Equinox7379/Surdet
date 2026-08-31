@@ -7,6 +7,12 @@ export interface TimelineTick {
   leftPercent: number;
 }
 
+export interface TimelineCueGeometry {
+  leftPercent: number;
+  widthPercent: number;
+  anchorAtEnd: boolean;
+}
+
 export interface TimelineAssetChoice {
   kind: 'background' | 'portrait' | 'audio';
   key: string;
@@ -91,6 +97,23 @@ export function timelineAssetChoices(dirAssets: readonly DirAsset[]): TimelineAs
   }
 
   return choices;
+}
+
+export function projectTimelineCueGeometry(
+  atMs: number,
+  durationMs: number,
+  timelineDurationMs: number,
+): TimelineCueGeometry {
+  const timelineDuration = Number.isFinite(timelineDurationMs) ? Math.max(0, timelineDurationMs) : 0;
+  const cueStart = Number.isFinite(atMs) ? Math.max(0, Math.min(timelineDuration, atMs)) : 0;
+  const cueDuration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  const leftPercent = timelineDuration > 0 ? cueStart / timelineDuration * 100 : 0;
+  const anchorAtEnd = cueDuration === 0 && cueStart >= timelineDuration;
+  const widthPercent = timelineDuration > 0 && cueDuration > 0
+    ? Math.max(2, Math.min(100 - leftPercent, Math.max(1, cueDuration / timelineDuration * 100)))
+    : 0;
+
+  return { leftPercent, widthPercent, anchorAtEnd };
 }
 
 function naturalStepAtLeast(value: number): number {
