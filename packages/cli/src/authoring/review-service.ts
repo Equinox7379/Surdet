@@ -218,14 +218,62 @@ function candidateIntent(candidate: unknown): { intent?: string; acceptanceCrite
 }
 
 export function parseReviewProjection(value: unknown, reviewId: string): HumanReviewProjection {
+  const states = new Set([
+    'COMPARISON_PREPARED', 'DECISION_DRAFT', 'DECIDED', 'PLAN_PREPARED', 'STAGE_READY',
+    'OWNER_APPROVED', 'APPLY_PENDING', 'COMMITTED', 'RETURNED', 'STALE', 'INVALID',
+  ]);
+  const stringArray = (candidate: unknown): candidate is string[] =>
+    Array.isArray(candidate) && candidate.every((item) => typeof item === 'string');
   if (!isRecord(value)
     || value['reviewVersion'] !== '1.0.0'
     || value['reviewId'] !== reviewId
     || (value['kind'] !== 'comparison' && value['kind'] !== 'integration-result')
+    || typeof value['state'] !== 'string'
+    || !states.has(value['state'])
     || typeof value['projectIdentity'] !== 'string'
     || typeof value['expectedProjectRevision'] !== 'string'
-    || !isRecord(value['sourceIdentity'])) {
+    || !isRecord(value['sourceIdentity'])
+    || typeof value['sourceIdentity']['projectIdentity'] !== 'string'
+    || typeof value['sourceIdentity']['expectedProjectRevision'] !== 'string'
+    || typeof value['sourceIdentity']['comparisonFingerprint'] !== 'string'
+    || !isRecord(value['task'])
+    || !Array.isArray(value['candidates'])
+    || value['candidates'].some((candidate) => !isRecord(candidate)
+      || !isRecord(candidate['ref'])
+      || typeof candidate['ref']['changeId'] !== 'string'
+      || typeof candidate['ref']['capsuleId'] !== 'string'
+      || typeof candidate['ref']['artifactSha256'] !== 'string')
+    || !Array.isArray(value['safeGroups'])
+    || !Array.isArray(value['conflicts'])
+    || value['conflicts'].some((conflict) => !isRecord(conflict)
+      || typeof conflict['conflictId'] !== 'string'
+      || typeof conflict['severity'] !== 'string'
+      || !stringArray(conflict['unitIds'])
+      || !stringArray(conflict['allowedResolutions']))
+    || !Array.isArray(value['dependencies'])
+    || !stringArray(value['defaultSelectedUnitIds'])
+    || !isRecord(value['evidence'])
+    || typeof value['evidence']['canCreateDecision'] !== 'boolean'
+    || !Array.isArray(value['objects'])) {
     throw reviewError('REVIEW_IDENTITY_MISMATCH', `review projection 身份无效：${reviewId}`);
+  }
+  if (value['finalResult'] !== undefined) {
+    const finalResult = value['finalResult'];
+    if (!isRecord(finalResult)
+      || typeof finalResult['planId'] !== 'string'
+      || typeof finalResult['planFingerprint'] !== 'string'
+      || typeof finalResult['integrationChangeId'] !== 'string'
+      || typeof finalResult['workingRevision'] !== 'number'
+      || !Number.isInteger(finalResult['workingRevision'])
+      || typeof finalResult['diffFingerprint'] !== 'string'
+      || !isRecord(finalResult['evidence'])
+      || typeof finalResult['evidence']['diffEvidenceId'] !== 'string'
+      || typeof finalResult['evidence']['validationEvidenceId'] !== 'string'
+      || typeof finalResult['evidence']['simulationEvidenceId'] !== 'string'
+      || !stringArray(finalResult['evidence']['runtimeTraceIds'])
+      || typeof finalResult['resultTreeSha256'] !== 'string') {
+      throw reviewError('REVIEW_IDENTITY_MISMATCH', `review projection 最终结果身份无效：${reviewId}`);
+    }
   }
   return value as unknown as HumanReviewProjection;
 }

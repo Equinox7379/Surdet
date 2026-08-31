@@ -447,6 +447,40 @@ feat(cli): add local review terminal authority
 
 ---
 
+### Task 4A: Independent audit hardening before transport exposure
+
+**Files:**
+- Modify: `packages/authoring/src/error-catalog.ts`
+- Modify: `packages/authoring/test/error-catalog.test.ts`
+- Modify: `packages/cli/src/authoring/node-review-store.ts`
+- Modify: `packages/cli/src/authoring/review-service.ts`
+- Modify: `packages/cli/src/authoring/review-terminal-authority.ts`
+- Modify: `packages/cli/test/node-review-store.test.ts`
+- Modify: `packages/cli/test/review-service.test.ts`
+- Modify: `packages/cli/test/review-terminal-authority.test.ts`
+
+- [x] **Step 1: Establish audit RED tests**
+
+Freeze mismatched authority/lease roots, runtime-unknown terminal actions, malformed projection arrays, malformed and business-invalid single receipt classification, recoverable `REVIEW_BUSY` metadata, and child cleanup/type accuracy.
+
+- [x] **Step 2: Implement the minimum hardening**
+
+Reject root mismatch in the authority constructor; switch explicitly over all three store actions; strengthen the existing projection parser enough that shared validators cannot receive missing collections; classify a single corrupt receipt as `corrupt`; keep `REVIEW_BUSY` non-terminal and refreshable.
+
+- [x] **Step 3: Record the local filesystem threat boundary**
+
+The authority protects against browser-origin abuse and cooperative Surdet window/process concurrency. It cannot claim integrity against a malicious same-account process with arbitrary filesystem write access, because that actor can directly edit review receipts independent of this API. Static symbolic-link/path escape remains rejected; no repeated `realpath` check is presented as a complete local-adversary defense.
+
+- [x] **Step 4: Run focused GREEN and commit the audit fix**
+
+Run Authoring error contract, CLI authority/store/service/lease suites, both typechecks/builds affected by the shared catalog, then commit exact audited paths plus this taskbook as:
+
+```text
+fix(cli): harden review authority boundary
+```
+
+---
+
 ### Task 5: Secure same-origin HTTP and Vite mounting
 
 **Files:**
@@ -865,6 +899,11 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 4 lease RED/GREEN: the deterministic release-before-read case failed with `LEASE_CORRUPT`, then passed after `loadLeaseAwaitingPublication()` began returning “retry acquisition” only when the lock directory itself is absent. The full lease suite passed 17/17; persistent missing/malformed lease evidence remains fail-loud.
 - Task 4 authority RED: focused execution exited `1` before collection because `review-terminal-authority.js` did not exist. No existing test failed in that run.
 - Task 4 GREEN: authority 5/5, NodeReviewStore 21/21, ReviewService 9/9, lease 17/17 (52/52 total), CLI typecheck and build all exited `0`. The authority rejects path-like namespaces and payload mismatch, recomputes all three receipt fingerprints through shared Authoring validators, runs validation inside the same review lease as create-only persistence, reports malformed/multiple terminal records as corrupt, and leaves immutable review evidence unchanged.
+- Task 4 exact commit: `8c7b1ac` (`feat(cli): add local review terminal authority`), nine-path staged set, both diff checks exit `0`.
+- Independent Luna audit was read-only. Accepted findings for Task 4A: enforce authority/lease-root equality, reject runtime-unknown store actions, strengthen projection runtime shape, classify a single corrupt receipt, correct `REVIEW_BUSY` non-terminal metadata, and tighten worker harness cleanup/types. HTTP detail redaction remains a mandatory Task 5 gate.
+- Local-adversary finding is bounded honestly: arbitrary same-account filesystem writers are outside this authority's enforceable threat model and can directly alter receipts regardless of API checks. Static symlink/path escape remains rejected; the project will not claim that repeated path checks provide native handle-level isolation.
+- Task 4A RED: Authoring catalog 6/7 and CLI 34/39 passed. Exact failures proved the `REVIEW_BUSY` terminal-flag contradiction, lease-root mismatch acceptance, unknown-action-to-return fallthrough, incomplete projection acceptance, and malformed single-receipt exception leakage.
+- Task 4A GREEN: Authoring error catalog 7/7; CLI authority/store/service/lease 56/56; Authoring and CLI typechecks/builds all exited `0`. Root binding is exact (case-folded on Windows), store actions use an exhaustive runtime guard, projection collections/final-result identity are checked before validators, malformed single terminals become `corrupt`, and timed-out child workers are killed and reaped before rejection.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

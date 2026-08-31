@@ -140,7 +140,7 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   REVIEW_APPROVAL_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('review.prepare-result', '重新生成 result review 并取得当前 fresh approval。')] },
   REVIEW_RETURNED: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('用户已退回该计划；必须创建新的候选、comparison 和 plan。')] },
   REVIEW_FIXTURE_CHANGED: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('review.prepare-result', '丢弃探索性 fixture 修改并重新加载正式 result。')] },
-  REVIEW_BUSY: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [terminalAction('另一个本机审阅写入正在进行；重新读取审阅终态后，以相同回执重试。')] },
+  REVIEW_BUSY: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [{ reason: '另一个本机审阅写入正在进行；重新读取审阅终态后，以相同回执重试。' }] },
   REVIEW_TERMINAL_ALREADY_SET: { category: 'conflict', retryDisposition: 'never', repairActions: [terminalAction('该审阅已存在不同的最终结果；重新打开并显示现有的人类回执，不得覆盖。')] },
 };
 

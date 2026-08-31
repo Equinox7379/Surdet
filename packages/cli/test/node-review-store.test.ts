@@ -15,7 +15,7 @@ const workerPath = path.join(repoRoot, 'packages/cli/test/fixtures/review-termin
 
 interface WorkerResult {
   status: 'written' | 'rejected';
-  identity?: { bytes: number; sha256: string; relativePath: string };
+  identity?: { bytes: number; sha256: string; path: string };
   code?: string;
   message?: string;
 }
@@ -45,13 +45,19 @@ async function runWorker(command: WorkerCommand): Promise<WorkerResult> {
   child.stderr.on('data', (chunk: string) => { stderr += chunk; });
   child.stdin.end(JSON.stringify(command));
   const exitCode = await new Promise<number | null>((resolve, reject) => {
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill();
-      reject(new Error('review terminal worker timed out'));
     }, 30_000);
     child.once('close', (code) => {
       clearTimeout(timer);
-      resolve(code);
+      if (timedOut) reject(new Error('review terminal worker timed out and was reaped'));
+      else resolve(code);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
     });
   });
   if (exitCode !== 0) throw new Error(`worker exit=${exitCode} stdout=${stdout} stderr=${stderr}`);
@@ -280,6 +286,20 @@ describe('NodeReviewStore', () => {
       value: { decisionId: 'decision-under-lease' },
     });
     expect(await activeReviewLocks(fixture.root)).toEqual([]);
+  });
+
+  it('rejects a runtime-unknown terminal action instead of treating it as a return', async () => {
+    const fixture = await setup();
+    const reviewId = 'rev_unknown_action';
+    await fixture.store.createReview(reviewId, { ...payload(reviewId), kind: 'integration-result' });
+    await expect(fixture.store.writeTerminal(
+      reviewId,
+      'unexpected-action' as never,
+      { returnId: 'must-not-write' },
+    )).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    const reviewDirectory = path.join(fixture.projectDirectory, 'reviews', reviewId);
+    expect((await fsp.readdir(reviewDirectory)).filter((name) => name.endsWith('.json')).sort())
+      .toEqual(['identity.json']);
   });
 
   it('revalidates the sidecar and payload bytes on read', async () => {
