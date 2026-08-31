@@ -30,7 +30,7 @@ describe('Frontend Pass 4 configuration ledger contract', () => {
   it('separates human labels, technical names, tables and normal-flow actions', () => {
     expect(configSource).toContain('config-ledger-section');
     expect(configSource).toContain('config-technical-key');
-    expect(configSource).toContain('显示技术名称');
+    expect(configSource).toContain('显示字段标识');
     expect(configSource).toContain('config-table-scroll');
     expect(configSource).toContain('config-actions');
     expect(configSource).not.toContain("h('div', 'cfg-section')");
@@ -75,5 +75,21 @@ describe('Frontend Pass 4 configuration ledger contract', () => {
     expect(workspaceCss).toContain('scrollbar-gutter: stable');
     expect(workspaceCss).toContain(':focus-visible');
     expect(workspaceCss).toContain('prefers-reduced-motion');
+  });
+
+  it('keeps the default product layer Chinese-first and uses a mature readable type scale', () => {
+    expect(configSource).toContain('显示字段标识');
+    expect(configSource).toContain('隐藏字段标识');
+    expect(configSource).not.toContain('显示技术名称');
+    expect(configSource).toContain("number: '数字'");
+    expect(configSource).toContain("'string[]': '文本列表'");
+    expect(configSource).toContain("'config-technical-key config-field-key'");
+    expect(configSource).toContain('`字段：${technicalKey}`');
+    expect(workspaceCss).toContain('--surdet-config-index-width: 240px');
+    expect(workspaceCss).toContain('--surdet-config-content-max: 1320px');
+    expect(workspaceCss).toMatch(/#config-view\s*\{[\s\S]*?font-size:\s*0\.875rem/);
+    expect(workspaceCss).toMatch(/\.config-section-heading[\s\S]*?font-size:\s*1\.5rem/);
+    expect(workspaceCss).toMatch(/\.config-field\s*\{[\s\S]*?font-size:\s*0\.8125rem/);
+    expect(workspaceCss).toMatch(/\.config-table\s*\{[\s\S]*?font-size:\s*0\.8125rem/);
   });
 });

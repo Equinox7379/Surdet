@@ -369,7 +369,7 @@ git diff --cached --check
 
 Expected: all pass; the existing Vite chunk warning may remain but no new error is accepted.
 
-- [ ] **Step 2: Exact freeze**
+- [x] **Step 2: Exact freeze**
 
 Stage only declared Pass 4 production/tests/taskbook paths, verify missing/extra sets are zero, and commit with:
 
@@ -398,6 +398,38 @@ Append exact files, tests, Owner-reported facts, known limitations and Git state
 
 ```text
 FRONTEND_PASS_4 = BASELINE_PASSED_READY_FOR_PLAN_COMMIT
+PUSH = NOT_AUTHORIZED
+FRONTEND_PASS_5 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_STARTED
+```
+
+### 2026-08-31 — Owner typography and Chinese-first follow-up
+
+- Owner accepted removal of the decorative rail directionally, then reported that the Configuration Ledger still looked compressed: labels were too small and technical keys were concatenated directly after Chinese text.
+- Read-only inspection of the Owner-provided LetsGal Studio 1.9.7 screenshots and live application confirmed a useful scale reference: approximately 13–15px body text, 32–44px navigation/action rows, clearly unequal region weights and deliberate empty work space. Its dark palette, colored tags and card-heavy settings page are not adopted.
+- Permanent RED added a sixth workspace contract for Chinese-first controls, separated field identifiers, 240px index, 1320px content measure and larger field/table/title scale. RED failed 1/6 on the missing new contract; GREEN passed 6/6 after the focused UI correction.
+- The follow-up changes only `config.ts`, `config-workspace.css`, the existing workspace contract and the two current frontend documents. No font asset, dependency, theme runtime, persistence behavior or backend path was added.
+- Default controls now say `显示字段标识` / `隐藏字段标识`; advanced keys render on a separate line as `字段：…`. Variable type values retain their stable stored enums while projecting Chinese labels. Configuration content, inputs, tables, navigation and help text use a larger readable scale and a wider bounded work area.
+
+```text
+PASS_4_CHINESE_FIRST_FOLLOW_UP = FOCUSED_GREEN
+LETSGAL_REFERENCE = SCALE_AND_HIERARCHY_ONLY
+OWNER_VISUAL_ACCEPTANCE = NEEDS_RECHECK
+PUSH = NOT_AUTHORIZED
+```
+
+### 2026-08-31 — Code evidence freeze
+
+- `CODE_EVIDENCE_HEAD=eddd358fc000af32ae68a319dad87c60f8a03020`.
+- Parent: `611ec8fb8517eba9e0662356ef7f945892fe9307`.
+- Commit: `feat(editor): rebuild configuration ledger`.
+- Exact committed scope: seven declared paths; five modified and two created. Staging and tracked worktree were clean immediately after commit; existing protected and unrelated untracked paths remained untouched.
+- Local branch is two commits ahead of live `surdet/main=bca72247d0dc76983330367be0f38043036a0fca`; no push was attempted.
+
+```text
+FRONTEND_PASS_4_CODE_EVIDENCE = FROZEN
+OWNER_VISUAL_ACCEPTANCE = NEEDS_RECHECK_AFTER_TOP_RULE_REMOVAL
+WAITING_FOR_OWNER_VISUAL_RECHECK = YES
 PUSH = NOT_AUTHORIZED
 FRONTEND_PASS_5 = NOT_STARTED
 MAINLINE_WAVE_7 = NOT_STARTED

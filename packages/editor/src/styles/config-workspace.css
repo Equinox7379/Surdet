@@ -7,8 +7,8 @@
  */
 
 #config-view {
-  --surdet-config-index-width: 232px;
-  --surdet-config-content-max: 1120px;
+  --surdet-config-index-width: 240px;
+  --surdet-config-content-max: 1320px;
   --surdet-config-table-min-width: 720px;
   --surdet-config-map-min-height: 420px;
   --surdet-config-map-edge: var(--surdet-border-strong);
@@ -28,6 +28,8 @@
   background-color: var(--surdet-surface-app);
   color: var(--surdet-text-primary);
   font-family: var(--surdet-font-ui);
+  font-size: 0.875rem;
+  line-height: 1.55;
 }
 
 #config-view .config-workspace {
@@ -67,7 +69,7 @@
 #config-view .config-index h3 {
   margin: 0;
   color: var(--surdet-text-primary);
-  font-size: 0.9375rem;
+  font-size: 1rem;
   font-weight: 720;
   line-height: 1.35;
 }
@@ -76,8 +78,8 @@
 #config-view .config-index-header p {
   margin: 0;
   color: var(--surdet-text-secondary);
-  font-size: 0.75rem;
-  line-height: 1.6;
+  font-size: 0.8125rem;
+  line-height: 1.65;
 }
 
 #config-view .config-index-list {
@@ -98,9 +100,9 @@
   gap: 4px;
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   margin: 0;
-  padding: var(--surdet-space-8) var(--surdet-space-12);
+  padding: var(--surdet-space-12);
   border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
   background-color: transparent;
@@ -129,6 +131,8 @@
 
 #config-view .config-index-label {
   min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -187,7 +191,7 @@
   min-width: 0;
   margin: 0;
   color: var(--surdet-text-primary);
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 720;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -199,8 +203,8 @@
   max-width: 68ch;
   margin: var(--surdet-space-8) 0 0;
   color: var(--surdet-text-secondary);
-  font-size: 0.8125rem;
-  line-height: 1.65;
+  font-size: 0.875rem;
+  line-height: 1.7;
 }
 
 #config-view .config-section-body {
@@ -222,7 +226,7 @@
   min-width: 0;
   margin-top: var(--surdet-space-16);
   color: var(--surdet-text-secondary);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
 #config-view .config-technical > summary,
@@ -263,16 +267,23 @@
 
 #config-view .config-technical-key {
   display: none;
+  margin-top: 4px;
   color: var(--surdet-text-secondary);
   font-family: var(--surdet-font-mono);
   font-size: 0.6875rem;
   overflow-wrap: anywhere;
 }
 
-#config-view .config-technical[open] .config-technical-key,
+#config-view .config-technical[open] .config-source-file,
 #config-view[data-show-technical="true"] .config-technical-key,
 #config-view .config-technical-key[data-visible="true"] {
-  display: inline;
+  display: block;
+}
+
+#config-view .config-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 #config-view .config-technical-value,
@@ -306,8 +317,8 @@
 #config-view .config-field-help {
   margin: 0 0 var(--surdet-space-12);
   color: var(--surdet-text-secondary);
-  font-size: 0.75rem;
-  line-height: 1.6;
+  font-size: 0.8125rem;
+  line-height: 1.65;
 }
 
 #config-view .config-table-block {
@@ -338,7 +349,7 @@
 
 #config-view .config-field-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--surdet-space-16);
   min-width: 0;
 }
@@ -348,7 +359,7 @@
   min-width: 0;
   gap: var(--surdet-space-8);
   color: var(--surdet-text-secondary);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
 #config-view .config-field-label,
@@ -370,6 +381,11 @@
 
 #config-view .config-field textarea {
   min-height: 84px;
+}
+
+#config-view .config-field :is(input, select, textarea) {
+  min-height: 38px;
+  font-size: 0.875rem;
 }
 
 #config-view .config-field-note {
@@ -404,7 +420,7 @@
   border-collapse: separate;
   border-spacing: 0;
   color: var(--surdet-text-primary);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
 #config-view .config-table thead {
@@ -419,7 +435,7 @@
   padding: var(--surdet-space-12);
   border-bottom: 1px solid var(--surdet-border-strong);
   color: var(--surdet-text-secondary);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1.45;
   text-align: left;
@@ -449,6 +465,8 @@
 
 #config-view .config-table :is(input, select, textarea) {
   min-width: 8ch;
+  min-height: 36px;
+  font-size: 0.8125rem;
 }
 
 #config-view .config-table :is(input, select, textarea):focus-visible {
@@ -483,7 +501,8 @@
 }
 
 #config-view .config-actions button {
-  min-height: 34px;
+  min-height: 38px;
+  font-size: 0.8125rem;
   white-space: nowrap;
 }
 
@@ -506,7 +525,7 @@
   margin-bottom: var(--surdet-space-24);
   padding: var(--surdet-space-16) 0;
   color: var(--surdet-text-secondary);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.7;
 }
 
@@ -531,7 +550,7 @@
 #config-view .config-map-stage > .empty {
   margin: 0;
   color: var(--surdet-text-secondary);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   line-height: 1.6;
 }
 
@@ -607,7 +626,7 @@
 #config-view .config-map-node-label {
   fill: var(--surdet-text-primary);
   font-family: var(--surdet-font-ui);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 700;
   pointer-events: none;
 }

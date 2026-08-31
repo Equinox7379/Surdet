@@ -82,7 +82,7 @@ function renderConfigWorkspace(root: HTMLElement): void {
   const indexHeading = h('div', 'config-index-header');
   indexHeading.append(h('h2', undefined, '配置目录'));
   indexHeading.append(h('p', undefined, '按游戏系统查找和编辑项目配置。'));
-  const technicalToggle = h('button', 'config-technical-toggle', showConfigTechnicalNames ? '隐藏技术名称' : '显示技术名称');
+  const technicalToggle = h('button', 'config-technical-toggle', showConfigTechnicalNames ? '隐藏字段标识' : '显示字段标识');
   technicalToggle.type = 'button';
   technicalToggle.setAttribute('aria-pressed', String(showConfigTechnicalNames));
   indexHeading.appendChild(technicalToggle);
@@ -124,7 +124,7 @@ function renderConfigWorkspace(root: HTMLElement): void {
     showConfigTechnicalNames = !showConfigTechnicalNames;
     workspace.dataset.showTechnicalNames = String(showConfigTechnicalNames);
     root.dataset.showTechnical = String(showConfigTechnicalNames);
-    technicalToggle.textContent = showConfigTechnicalNames ? '隐藏技术名称' : '显示技术名称';
+    technicalToggle.textContent = showConfigTechnicalNames ? '隐藏字段标识' : '显示字段标识';
     technicalToggle.setAttribute('aria-pressed', String(showConfigTechnicalNames));
   };
   selectSection(activeConfigSectionId);
@@ -302,7 +302,7 @@ const VARIABLE_TYPE_LABELS: Readonly<Record<string, string>> = {
 function configLabel(label: string, technicalKey: string): HTMLElement {
   const wrap = h('span', 'config-label');
   wrap.append(h('span', undefined, label));
-  wrap.append(h('code', 'config-technical-key', technicalKey));
+  wrap.append(h('code', 'config-technical-key config-field-key', `字段：${technicalKey}`));
   return wrap;
 }
 
@@ -433,10 +433,10 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
   heading.append(h('p', 'config-section-description', descriptor.description));
   header.appendChild(heading);
   const technical = h('details', 'config-technical');
-  technical.append(h('summary', undefined, '技术信息'));
+  technical.append(h('summary', undefined, '高级信息'));
   const technicalBody = h('div', 'config-technical-body');
-  technicalBody.append(h('span', undefined, '来源文件'));
-  technicalBody.append(h('code', 'config-technical-key', descriptor.file));
+  technicalBody.append(h('span', undefined, '配置文件'));
+  technicalBody.append(h('code', 'config-technical-key config-source-file', descriptor.file));
   technical.appendChild(technicalBody);
   header.appendChild(technical);
   sec.appendChild(header);
