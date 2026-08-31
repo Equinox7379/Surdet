@@ -412,13 +412,13 @@ feat(editor): guide timeline backup conflict repair
 - Consumes: Tasks 1–6 commits.
 - Produces: one reviewed local evidence head, with no push and no third repair gate.
 
-- [ ] **Step 1: Run focused combined tests**
+- [x] **Step 1: Run focused combined tests**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/timeline-autosave-identity.test.ts test/autosave.test.ts test/project-io.test.ts test/timeline-autosave-conflicts.test.ts test/timeline-autosave-conflict-integration.test.ts
 ```
 
-- [ ] **Step 2: Run Editor full gates**
+- [x] **Step 2: Run Editor full gates**
 
 ```powershell
 npm run test -w surdet-editor
@@ -426,7 +426,7 @@ npm run typecheck -w surdet-editor
 npm run build -w surdet-editor
 ```
 
-- [ ] **Step 3: Run one aggregate verification**
+- [x] **Step 3: Run one aggregate verification**
 
 Because this gate changes crash recovery, state mutation, shared Authoring identity consumption, and browser UI wiring, run exactly one:
 
@@ -436,15 +436,15 @@ npm run verify:all
 
 If it fails, record the first failure and stop without rerun or timeout changes.
 
-- [ ] **Step 4: Verify scope and commit identities**
+- [x] **Step 4: Verify scope and commit identities**
 
 Run both diff checks, inspect every commit scope, confirm no production path outside the approved Editor files, and confirm the long-term ledger/protected files remain unstaged.
 
-- [ ] **Step 5: Independent manager review**
+- [x] **Step 5: Independent manager review**
 
 Use one bounded read-only secondary reviewer for the final commit range; the manager independently checks every finding, actual diff, and fresh outputs. Subagent review does not replace remote CI or owner acceptance.
 
-- [ ] **Step 6: Append final stop state**
+- [x] **Step 6: Append final stop state**
 
 Record exact HEAD/parents, counts, aggregate result, tracked/staging status, known evidence gaps, and:
 
@@ -485,3 +485,25 @@ Append-only. Record actual commands, exits, counts, failures, commits, recovery 
 - The bounded read-only secondary review then reported two concrete findings, both independently confirmed by the manager: (P1) `inspectTimelineAutosaveIdentity()` accepted unsafe/non-normalized paths because basename equality alone could mark `../id.json`, absolute paths, or a duplicated `content/timelines/` prefix canonical; (P2) the panel enabled Replace Current for a recorded target whose ID/file pair could not be normalized, producing an action that was guaranteed to fail. Scope review otherwise found no unauthorized path.
 - Manager-correction RED ran the three affected suites once and exited `1`: `65/76` passed and `11` failed exactly across unsafe path/invalid stable-ID admission, automatic unsafe insertion, and misleading Replace availability. The minimal correction now validates stable IDs through `timelinePathFor`, requires a normalized safe timeline-root-relative file, rejects duplicated timeline-root prefixes, and derives Replace availability through the same normalization helper used by the repair operation. Replacement GREEN passed `3/3` files and `76/76` tests.
 - Evidence boundary: the taskbook-authorized sole aggregate run was already consumed at `fb56b46` before manager review found P1/P2. It remains a valid pass for that commit but cannot be represented as a final-HEAD aggregate. No second `verify:all` will be run without a separate authorization; the manager correction must instead receive fresh affected Editor full tests, typecheck, build, diff checks, and exact commit review before local closure.
+- Manager correction was frozen as exact commit `26bee5dcb5860196d0ade048d9e71622c7d447a0` (`fix(editor): reject unsafe timeline backup paths`), containing exactly the taskbook plus five affected Editor source/test paths. The manager reviewed the final correction diff and the secondary findings against the actual source; both reported issues are closed and no additional BLOCKER/HIGH/MEDIUM/LOW code finding remains.
+- Fresh final-code verification at `CODE_EVIDENCE_HEAD=26bee5dcb5860196d0ade048d9e71622c7d447a0` passed: focused `5/5` files and `102/102` tests; Editor full `55/55` files and `446/446` tests; Editor typecheck exit `0`; Editor build exit `0`. Both Git diff checks exited `0`; before this final Ledger append, tracked worktree and staging were clean and only the pre-existing untracked/protected paths plus the intentionally untracked long-term ledger remained.
+- Final evidence interpretation: automatic restore is now fail-closed on stable ID, safe timeline-root-relative file, internal definition ID, and exact canonical bytes; mismatches remain in the separate conflict bucket; explicit repair is prepare-before-apply and keeps Save All as the sole filesystem writer; invalid evidence stays downloadable; visible conflict handling is Chinese-first. Browser/Owner interaction acceptance of an actual crash-conflict fixture was not run in this gate, remote Ubuntu CI was not rerun, and no push occurred.
+
+```text
+TIMELINE_AUTOSAVE_IDENTITY_FAIL_CLOSED_LOCAL_VERIFIED
+CODE_EVIDENCE_HEAD = 26bee5dcb5860196d0ade048d9e71622c7d447a0
+AGGREGATE_VERIFIED_HEAD = fb56b460d82f6f72a87f218542edd3a1ddfbebb3
+AGGREGATE_FINAL_HEAD_MATCH = NO
+FINAL_EDITOR_FOCUSED = 5 files / 102 tests PASS
+FINAL_EDITOR_FULL = 55 files / 446 tests PASS
+FINAL_EDITOR_TYPECHECK = PASS
+FINAL_EDITOR_BUILD = PASS
+INDEPENDENT_MANAGER_REVIEW = PASS_AFTER_CORRECTION
+OWNER_CONFLICT_UI_ACCEPTANCE = NOT_RUN
+REMOTE_UBUNTU_CI = NOT_REVERIFIED
+PUSH = NOT_PERFORMED
+REVIEW_TERMINAL_ATOMICITY = NOT_STARTED
+ASSET_CENTER = NOT_STARTED
+FRONTEND_PASS_5 = NOT_STARTED
+WAVE_7 = NOT_STARTED
+```
