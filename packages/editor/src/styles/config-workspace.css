@@ -1,0 +1,732 @@
+/* Frontend Pass 4 — Configuration Ledger
+ *
+ * The configuration page is a working ledger: a quiet directory, one active
+ * document surface, and details that stay available without crowding the
+ * author's primary task. All visible colour comes from the shared Surdet
+ * semantic tokens; the page does not introduce a second theme.
+ */
+
+#config-view {
+  --surdet-config-index-width: 232px;
+  --surdet-config-content-max: 1120px;
+  --surdet-config-table-min-width: 720px;
+  --surdet-config-map-min-height: 420px;
+  --surdet-config-map-edge: var(--surdet-border-strong);
+  --surdet-config-map-edge-preview: var(--surdet-action-primary);
+  --surdet-config-map-node: var(--surdet-surface-panel);
+  --surdet-config-map-node-base: var(--surdet-surface-selected);
+  --surdet-config-map-node-overlap: var(--surdet-surface-subtle);
+  --surdet-config-map-node-border: var(--surdet-border-strong);
+  --surdet-config-map-node-warning: var(--surdet-state-warning);
+  --surdet-config-map-port: var(--surdet-action-primary);
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  background-color: var(--surdet-surface-app);
+  color: var(--surdet-text-primary);
+  font-family: var(--surdet-font-ui);
+}
+
+#config-view .config-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, var(--surdet-config-index-width)) minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--surdet-surface-app);
+}
+
+/* ---- Directory ---- */
+
+#config-view .config-index {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--surdet-space-16);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: var(--surdet-space-24) var(--surdet-space-16);
+  border-right: 1px solid var(--surdet-border-default);
+  background-color: var(--surdet-surface-panel);
+}
+
+#config-view .config-index-header {
+  display: grid;
+  gap: var(--surdet-space-8);
+  padding-bottom: var(--surdet-space-16);
+  border-bottom: 1px solid var(--surdet-border-default);
+}
+
+#config-view .config-index-title,
+#config-view .config-index h2,
+#config-view .config-index h3 {
+  margin: 0;
+  color: var(--surdet-text-primary);
+  font-size: 0.9375rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+#config-view .config-index-description,
+#config-view .config-index-header p {
+  margin: 0;
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+#config-view .config-index-list {
+  display: grid;
+  gap: var(--surdet-space-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#config-view .config-index-item,
+#config-view .config-index button,
+#config-view .config-index [data-config-section] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  margin: 0;
+  padding: var(--surdet-space-8) var(--surdet-space-12);
+  border: 1px solid transparent;
+  border-radius: var(--surdet-radius-tight);
+  background-color: transparent;
+  color: var(--surdet-text-primary);
+  text-align: left;
+  transform: none;
+}
+
+#config-view .config-index-item:hover,
+#config-view .config-index button:hover,
+#config-view .config-index [data-config-section]:hover {
+  border-color: var(--surdet-border-default);
+  background-color: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  transform: none;
+}
+
+#config-view .config-index-item[aria-current="page"],
+#config-view .config-index button[aria-current="page"],
+#config-view .config-index [data-config-section][aria-current="page"] {
+  border-color: var(--surdet-editor-selection-outline);
+  background-color: var(--surdet-editor-nav-active-bg);
+  color: var(--surdet-text-primary);
+  font-weight: 700;
+}
+
+#config-view .config-index-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-index-meta {
+  color: var(--surdet-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* ---- Ledger surface ---- */
+
+#config-view .config-ledger {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: var(--surdet-space-32) var(--surdet-space-32) var(--surdet-space-48);
+  background-color: var(--surdet-surface-app);
+}
+
+#config-view .config-ledger > * {
+  width: min(100%, var(--surdet-config-content-max));
+  margin-inline: auto;
+}
+
+#config-view .config-ledger-section {
+  min-width: 0;
+  margin: 0 auto var(--surdet-space-32);
+  padding: 0 0 var(--surdet-space-24);
+  background-color: transparent;
+}
+
+#config-view .config-ledger-section[hidden] {
+  display: none;
+}
+
+#config-view .config-section-header,
+#config-view .config-ledger-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--surdet-space-24);
+  min-width: 0;
+  padding: var(--surdet-space-24) var(--surdet-space-24) var(--surdet-space-16);
+  border-bottom: 1px solid var(--surdet-border-default);
+}
+
+#config-view .config-section-heading,
+#config-view .config-section-header h1,
+#config-view .config-section-header h2,
+#config-view .config-ledger-section > h1,
+#config-view .config-ledger-section > h2 {
+  min-width: 0;
+  margin: 0;
+  color: var(--surdet-text-primary);
+  font-size: 1.25rem;
+  font-weight: 720;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-section-description,
+#config-view .config-section-header > p,
+#config-view .config-ledger-section > p {
+  max-width: 68ch;
+  margin: var(--surdet-space-8) 0 0;
+  color: var(--surdet-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+#config-view .config-section-body {
+  min-width: 0;
+  padding: var(--surdet-space-24);
+}
+
+#config-view .config-ledger-section > :is(.config-table-block, .config-table-scroll, .config-table-details, .config-field-grid, .config-subsection, .config-map-stage, .config-empty, .empty, .config-actions, .config-technical) {
+  margin-inline: var(--surdet-space-24);
+}
+
+#config-view .config-ledger-section > :is(h4, h5, .config-subsection) {
+  margin-top: var(--surdet-space-24);
+}
+
+/* ---- Technical disclosure ---- */
+
+#config-view .config-technical {
+  min-width: 0;
+  margin-top: var(--surdet-space-16);
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+}
+
+#config-view .config-technical > summary,
+#config-view .config-technical-summary {
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  color: var(--surdet-action-primary);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+#config-view .config-technical-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--surdet-space-8);
+  min-width: 0;
+  padding-top: var(--surdet-space-12);
+}
+
+#config-view .config-technical-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--surdet-space-8) var(--surdet-space-16);
+  min-width: 0;
+  margin: 0;
+}
+
+#config-view .config-technical-grid dt {
+  color: var(--surdet-text-secondary);
+}
+
+#config-view .config-technical-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-technical-key {
+  display: none;
+  color: var(--surdet-text-secondary);
+  font-family: var(--surdet-font-mono);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-technical[open] .config-technical-key,
+#config-view[data-show-technical="true"] .config-technical-key,
+#config-view .config-technical-key[data-visible="true"] {
+  display: inline;
+}
+
+#config-view .config-technical-value,
+#config-view .config-technical-file,
+#config-view .config-technical-id {
+  color: var(--surdet-text-secondary);
+  font-family: var(--surdet-font-mono);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Fields and subsections ---- */
+
+#config-view .config-subsection {
+  min-width: 0;
+  padding-top: var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+#config-view .config-subsection > :is(h2, h3, h4) {
+  margin: 0 0 var(--surdet-space-12);
+  color: var(--surdet-text-primary);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+#config-view .config-subsection > p,
+#config-view .config-help,
+#config-view .config-section-help,
+#config-view .config-field-help {
+  margin: 0 0 var(--surdet-space-12);
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+#config-view .config-table-block {
+  min-width: 0;
+}
+
+#config-view .config-row-add {
+  margin-top: var(--surdet-space-12);
+}
+
+#config-view .config-row-delete {
+  white-space: nowrap;
+}
+
+#config-view .config-table-details {
+  min-width: 0;
+  margin-top: var(--surdet-space-24);
+  padding-top: var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+#config-view .config-table-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--surdet-action-primary);
+  font-weight: 700;
+}
+
+#config-view .config-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: var(--surdet-space-16);
+  min-width: 0;
+}
+
+#config-view .config-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--surdet-space-8);
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+}
+
+#config-view .config-field-label,
+#config-view .config-field > label,
+#config-view .config-field > span:first-child {
+  min-width: 0;
+  color: var(--surdet-text-secondary);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-field input,
+#config-view .config-field select,
+#config-view .config-field textarea,
+#config-view .config-field-value {
+  width: 100%;
+  min-width: 0;
+}
+
+#config-view .config-field textarea {
+  min-height: 84px;
+}
+
+#config-view .config-field-note {
+  color: var(--surdet-text-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+/* ---- Tables ---- */
+
+#config-view .config-table-scroll {
+  min-width: 0;
+  max-width: calc(100% - (2 * var(--surdet-space-24)));
+  margin-top: var(--surdet-space-16);
+  margin-bottom: var(--surdet-space-16);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  border: 1px solid var(--surdet-border-default);
+  background-color: var(--surdet-surface-panel);
+}
+
+#config-view .config-table-scroll:focus-visible {
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: 2px;
+}
+
+#config-view .config-table {
+  width: max-content;
+  min-width: max(100%, var(--surdet-config-table-min-width));
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--surdet-text-primary);
+  font-size: 0.75rem;
+}
+
+#config-view .config-table thead {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background-color: var(--surdet-surface-subtle);
+}
+
+#config-view .config-table th {
+  min-width: 9ch;
+  padding: var(--surdet-space-12);
+  border-bottom: 1px solid var(--surdet-border-strong);
+  color: var(--surdet-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: left;
+  vertical-align: bottom;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-table td {
+  min-width: 9ch;
+  padding: var(--surdet-space-12);
+  border-bottom: 1px solid var(--surdet-border-default);
+  color: var(--surdet-text-primary);
+  line-height: 1.5;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+#config-view .config-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+#config-view .config-table tbody tr:hover td {
+  background-color: var(--surdet-surface-subtle);
+}
+
+#config-view .config-table :is(input, select, textarea) {
+  min-width: 8ch;
+}
+
+#config-view .config-table :is(input, select, textarea):focus-visible {
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: 1px;
+}
+
+#config-view .config-table .config-technical-key,
+#config-view .config-table .config-technical-value,
+#config-view .config-table [data-technical="true"] {
+  font-family: var(--surdet-font-mono);
+  font-size: 0.6875rem;
+}
+
+#config-view .config-table td:last-child,
+#config-view .config-table th:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+/* ---- Actions and empty states ---- */
+
+#config-view .config-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--surdet-space-12);
+  min-width: 0;
+  margin-top: var(--surdet-space-24);
+  padding-top: var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+#config-view .config-actions button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+#config-view .config-actions button.primary {
+  background-color: var(--surdet-action-primary);
+  border-color: var(--surdet-action-primary);
+  color: var(--surdet-surface-panel);
+}
+
+#config-view .config-actions button.primary:hover {
+  background-color: var(--surdet-shell-chrome-bg);
+  border-color: var(--surdet-shell-chrome-bg);
+  color: var(--surdet-surface-panel);
+}
+
+#config-view .config-empty,
+#config-view .empty {
+  max-width: 58ch;
+  margin-top: var(--surdet-space-24);
+  margin-bottom: var(--surdet-space-24);
+  padding: var(--surdet-space-16) 0;
+  color: var(--surdet-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+/* ---- Calendar map ---- */
+
+#config-view .config-map-stage {
+  display: flex;
+  min-width: 0;
+  min-height: var(--surdet-config-map-min-height);
+  flex-direction: column;
+  gap: var(--surdet-space-12);
+  margin-top: var(--surdet-space-16);
+  margin-bottom: var(--surdet-space-24);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: var(--surdet-space-16);
+  border: 1px solid var(--surdet-border-default);
+  background-color: var(--surdet-surface-subtle);
+}
+
+#config-view .config-map-stage > .dim,
+#config-view .config-map-stage > .empty {
+  margin: 0;
+  color: var(--surdet-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+#config-view .config-map-stage svg.calendar-map,
+#config-view .config-map-stage > svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  min-height: var(--surdet-config-map-min-height);
+  aspect-ratio: 800 / 520;
+  overflow: visible;
+  user-select: none;
+  touch-action: none;
+}
+
+#config-view svg.calendar-map g {
+  transition: none;
+}
+
+#config-view .config-map-edge {
+  fill: none;
+  stroke: var(--surdet-config-map-edge);
+  stroke-linecap: square;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+#config-view .config-map-arrow {
+  fill: var(--surdet-config-map-edge);
+}
+
+#config-view .config-map-edge-hit {
+  fill: none;
+  stroke: transparent;
+  pointer-events: stroke;
+  vector-effect: non-scaling-stroke;
+}
+
+#config-view .config-map-edge-preview {
+  fill: none;
+  stroke: var(--surdet-config-map-edge-preview);
+  stroke-dasharray: 4 4;
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+}
+
+#config-view .config-map-node {
+  cursor: grab;
+}
+
+#config-view .config-map-node:active {
+  cursor: grabbing;
+}
+
+#config-view .config-map-node > rect {
+  fill: var(--surdet-config-map-node);
+  stroke: var(--surdet-config-map-node-border);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+#config-view .config-map-node-base > rect {
+  fill: var(--surdet-config-map-node-base);
+}
+
+#config-view .config-map-node-overlap > rect {
+  fill: var(--surdet-config-map-node-overlap);
+  stroke: var(--surdet-config-map-node-warning);
+  stroke-dasharray: 5 3;
+  stroke-width: 2;
+}
+
+#config-view .config-map-node-label {
+  fill: var(--surdet-text-primary);
+  font-family: var(--surdet-font-ui);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+#config-view .config-map-node-meta {
+  fill: var(--surdet-text-secondary);
+  font-family: var(--surdet-font-mono);
+  font-size: 0.625rem;
+  pointer-events: none;
+}
+
+#config-view .config-map-node-port {
+  fill: var(--surdet-config-map-port);
+  stroke: var(--surdet-surface-panel);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+#config-view .config-map-node-overlap .config-map-node-meta {
+  fill: var(--surdet-config-map-node-warning);
+}
+
+/* ---- Keyboard focus and responsive directory ---- */
+
+#config-view :is(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 800px) {
+  #config-view .config-workspace {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #config-view .config-index {
+    display: block;
+    flex: 0 0 auto;
+    max-width: 100%;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-gutter: stable;
+    padding: var(--surdet-space-12);
+    border-right: 0;
+    border-bottom: 1px solid var(--surdet-border-default);
+    white-space: nowrap;
+  }
+
+  #config-view .config-index-header {
+    display: none;
+  }
+
+  #config-view .config-index-list {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+    gap: var(--surdet-space-8);
+  }
+
+  #config-view .config-index-item,
+  #config-view .config-index button,
+  #config-view .config-index [data-config-section] {
+    display: inline-flex;
+    width: auto;
+    min-width: 8rem;
+    min-height: 38px;
+    flex: 0 0 auto;
+    align-items: center;
+  }
+
+  #config-view .config-index-meta {
+    display: none;
+  }
+
+  #config-view .config-ledger {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--surdet-space-24) var(--surdet-space-16) var(--surdet-space-32);
+  }
+
+  #config-view .config-section-header,
+  #config-view .config-ledger-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--surdet-space-16);
+    padding-inline: var(--surdet-space-16);
+  }
+
+  #config-view .config-ledger-section > :is(.config-table-block, .config-table-scroll, .config-table-details, .config-field-grid, .config-subsection, .config-map-stage, .config-empty, .empty, .config-actions, .config-technical) {
+    margin-inline: var(--surdet-space-16);
+  }
+
+  #config-view .config-section-body {
+    padding: var(--surdet-space-16);
+  }
+
+  #config-view .config-table-scroll {
+    max-width: calc(100% - (2 * var(--surdet-space-16)));
+  }
+
+  #config-view .config-map-stage {
+    min-height: 320px;
+  }
+
+  #config-view .config-map-stage svg.calendar-map,
+  #config-view .config-map-stage > svg {
+    min-height: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #config-view *,
+  #config-view *::before,
+  #config-view *::after {
+    scroll-behavior: auto;
+    transition-duration: 0.01ms;
+    animation-duration: 0.01ms;
+  }
+}

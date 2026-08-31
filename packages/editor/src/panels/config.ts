@@ -1,5 +1,5 @@
 /**
- * 配置标签页（E3 完整）：变量表 + 成就 + 日历 + 成长 + 事件 + 鉴赏 + 名词表七大编辑器。
+ * 配置标签页（Frontend Pass 4）：角色、变量、成就、日历与地图、成长、事件、鉴赏、名词表八类配置台账。
  *  - 打开时从盘上重新读取源文件（外部修改即时可见）
  *  - 表格 ⇄ JSON 双向转换与校验全部经 config-edit.ts 纯逻辑（落盘前必过校验）
  *  - 写盘 2 空格缩进、键序稳定、未知字段经原条目合并保留；无目录连接时诚实提示
@@ -33,20 +33,112 @@ export function bindConfigHooks(opts: { requestValidate: () => void }): void {
   requestValidateHook = opts.requestValidate;
 }
 
+type ConfigSectionId =
+  | 'characters'
+  | 'variables'
+  | 'achievements'
+  | 'calendar'
+  | 'growth'
+  | 'events'
+  | 'gallery'
+  | 'terminology';
+
+interface ConfigSectionDescriptor {
+  id: ConfigSectionId;
+  label: string;
+  description: string;
+  file: string;
+  render: () => HTMLElement;
+}
+
+const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
+  { id: 'characters', label: '角色', description: '管理说话人显示名称、头像与稳定角色身份。', file: 'game.config.json', render: renderCharactersSection },
+  { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
+  { id: 'achievements', label: '成就', description: '整理成就文案、触发条件与隐藏状态。', file: 'content/config/achievements.json', render: renderAchievementsSection },
+  { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
+  { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
+  { id: 'events', label: '事件', description: '管理条件事件、日程事件和角色阶段文案。', file: 'content/config/events.json', render: renderEventsSection },
+  { id: 'gallery', label: '鉴赏', description: '维护图片、音乐和剧情回想入口。', file: 'content/config/gallery.json', render: renderGallerySection },
+  { id: 'terminology', label: '名词表', description: '统一规范词与常见变体，供审计检查使用。', file: 'content/config/terminology.json', render: renderTerminologySection },
+];
+
+let activeConfigSectionId: ConfigSectionId = 'characters';
+let showConfigTechnicalNames = false;
+
+function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
+  return CONFIG_SECTIONS.find((descriptor) => descriptor.id === id)!;
+}
+
+function renderConfigWorkspace(root: HTMLElement): void {
+  root.innerHTML = '';
+  root.setAttribute('data-editor-panel', 'config');
+  root.setAttribute('data-editor-region', 'config-workbench');
+
+  const workspace = h('div', 'config-workspace');
+  workspace.dataset.showTechnicalNames = String(showConfigTechnicalNames);
+  root.dataset.showTechnical = String(showConfigTechnicalNames);
+  const index = h('nav', 'config-index');
+  index.setAttribute('aria-label', '配置目录');
+  const indexHeading = h('div', 'config-index-header');
+  indexHeading.append(h('h2', undefined, '配置目录'));
+  indexHeading.append(h('p', undefined, '按游戏系统查找和编辑项目配置。'));
+  const technicalToggle = h('button', 'config-technical-toggle', showConfigTechnicalNames ? '隐藏技术名称' : '显示技术名称');
+  technicalToggle.type = 'button';
+  technicalToggle.setAttribute('aria-pressed', String(showConfigTechnicalNames));
+  indexHeading.appendChild(technicalToggle);
+  index.appendChild(indexHeading);
+  const indexItems = h('div', 'config-index-list');
+  index.setAttribute('aria-orientation', 'vertical');
+  const ledger = h('main', 'config-ledger');
+
+  const buttons = new Map<ConfigSectionId, HTMLButtonElement>();
+  const panels = new Map<ConfigSectionId, HTMLElement>();
+  const selectSection = (sectionId: ConfigSectionId): void => {
+    activeConfigSectionId = sectionId;
+    for (const descriptor of CONFIG_SECTIONS) {
+      const button = buttons.get(descriptor.id)!;
+      const panel = panels.get(descriptor.id)!;
+      if (descriptor.id === activeConfigSectionId) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+      panel.hidden = descriptor.id !== activeConfigSectionId;
+    }
+  };
+
+  for (const descriptor of CONFIG_SECTIONS) {
+    const button = h('button', 'config-index-item');
+    button.type = 'button';
+    button.dataset.configSectionTarget = descriptor.id;
+    button.title = descriptor.description;
+    button.append(h('strong', 'config-index-label', descriptor.label));
+    button.onclick = () => selectSection(descriptor.id);
+    buttons.set(descriptor.id, button);
+    indexItems.appendChild(button);
+
+    const panel = descriptor.render();
+    panel.hidden = descriptor.id !== activeConfigSectionId;
+    panels.set(descriptor.id, panel);
+    ledger.appendChild(panel);
+  }
+
+  technicalToggle.onclick = () => {
+    showConfigTechnicalNames = !showConfigTechnicalNames;
+    workspace.dataset.showTechnicalNames = String(showConfigTechnicalNames);
+    root.dataset.showTechnical = String(showConfigTechnicalNames);
+    technicalToggle.textContent = showConfigTechnicalNames ? '隐藏技术名称' : '显示技术名称';
+    technicalToggle.setAttribute('aria-pressed', String(showConfigTechnicalNames));
+  };
+  selectSection(activeConfigSectionId);
+  index.appendChild(indexItems);
+  workspace.append(index, ledger);
+  root.appendChild(workspace);
+}
+
 /** 本地重建全部区块（保留内存行模型与未保存输入；仅增删行时用）。
  *  从盘重读+置空行缓存只属于 renderConfig（标签页进入入口，M4 审阅轮 Major 1 修复） */
 function rerenderConfig(): void {
   const root = document.getElementById('config-view');
   if (!root) return;
-  root.innerHTML = '';
-  root.appendChild(renderCharactersSection());
-  root.appendChild(renderVariablesSection());
-  root.appendChild(renderAchievementsSection());
-  root.appendChild(renderCalendarSection());
-  root.appendChild(renderGrowthSection());
-  root.appendChild(renderEventsSection());
-  root.appendChild(renderGallerySection());
-  root.appendChild(renderTerminologySection());
+  renderConfigWorkspace(root);
 }
 
 /* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
@@ -187,14 +279,59 @@ interface ColDef {
   type?: 'checkbox' | 'json';
 }
 
+interface ObjectTableOptions {
+  label: string;
+  addLabel: string;
+}
+
+interface ScalarField {
+  key: string;
+  label: string;
+}
+
+const VARIABLE_TYPE_LABELS: Readonly<Record<string, string>> = {
+  number: '数字',
+  string: '文本',
+  boolean: '布尔值',
+  flag: '开关',
+  'string[]': '文本列表',
+  'number[]': '数字列表',
+  object: '对象',
+};
+
+function configLabel(label: string, technicalKey: string): HTMLElement {
+  const wrap = h('span', 'config-label');
+  wrap.append(h('span', undefined, label));
+  wrap.append(h('code', 'config-technical-key', technicalKey));
+  return wrap;
+}
+
+function configSubsection(title: string): HTMLElement {
+  const section = h('section', 'config-subsection');
+  section.appendChild(h('h2', undefined, title));
+  return section;
+}
+
+function wrapConfigTable(table: HTMLTableElement, label: string): HTMLElement {
+  const scroll = h('div', 'config-table-scroll');
+  scroll.tabIndex = 0;
+  scroll.setAttribute('aria-label', label);
+  scroll.appendChild(table);
+  return scroll;
+}
+
 /** 可编辑对象表格（增删行经 rerenderConfig 本地重建；所有变更前拍撤销快照） */
-function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HTMLElement {
-  const wrap = h('div');
-  const table = h('table', 'cfg-table');
+function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap, options: ObjectTableOptions): HTMLElement {
+  const wrap = h('div', 'config-table-block');
+  const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const c of cols) hr.appendChild(h('th', undefined, c.label));
-  hr.appendChild(h('th', undefined, ''));
+  for (const c of cols) {
+    const th = h('th');
+    th.appendChild(configLabel(c.label, c.key));
+    hr.appendChild(th);
+  }
+  hr.appendChild(h('th', undefined, '操作'));
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = h('tbody');
@@ -205,6 +342,7 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HT
       if (c.type === 'checkbox') {
         const chk = h('input');
         chk.type = 'checkbox';
+        chk.setAttribute('aria-label', `${c.label}，第 ${i + 1} 行`);
         chk.checked = row[c.key] === true;
         chk.onchange = () => { pushConfigHistory(false); rows[i]![c.key] = chk.checked; };
         td.appendChild(chk);
@@ -212,32 +350,34 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap): HT
         const inp = h('input', c.type === 'json' ? 'mono' : '');
         inp.value = String(row[c.key] ?? '');
         inp.placeholder = c.label;
+        inp.setAttribute('aria-label', `${c.label}，第 ${i + 1} 行`);
         inp.oninput = () => { pushConfigHistory(true); rows[i]![c.key] = inp.value; };
         td.appendChild(inp);
       }
       tr.appendChild(td);
     }
     const tdDel = h('td');
-    const del = h('button', undefined, '✕');
+    const del = h('button', 'config-row-delete', '删除');
+    del.setAttribute('aria-label', `删除${options.label}第 ${i + 1} 行`);
     del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  wrap.appendChild(table);
-  const addBtn = h('button', undefined, '＋ 新增行');
+  wrap.appendChild(wrapConfigTable(table, `${options.label}数据表`));
+  const addBtn = h('button', 'config-row-add', `＋ ${options.addLabel}`);
   addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow }); rerenderConfig(); };
   wrap.appendChild(addBtn);
   return wrap;
 }
 
 /** 标量字段网格（键值对输入；输入合并进撤销栈） */
-function renderScalarGrid(fields: [string, string][], scalars: Record<string, string>): HTMLElement {
-  const grid = h('div', 'cfg-scalars');
-  for (const [key, label] of fields) {
-    const cell = h('label', 'cfg-scalar');
-    const span = h('span', 'dim', label);
+function renderScalarGrid(fields: ScalarField[], scalars: Record<string, string>): HTMLElement {
+  const grid = h('div', 'config-field-grid');
+  for (const { key, label } of fields) {
+    const cell = h('label', 'config-field');
+    const span = configLabel(label, key);
     const inp = h('input', 'mono');
     inp.value = scalars[key] ?? '';
     inp.placeholder = label;
@@ -283,10 +423,24 @@ async function saveConfigFile(
   setStatus(`${label}已保存`, true, 4000);
 }
 
-function sectionShell(title: string): { sec: HTMLElement; ops: HTMLElement } {
-  const sec = h('div', 'cfg-section');
-  sec.appendChild(h('h3', undefined, title));
-  const ops = h('div', 'cfg-ops');
+function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTMLElement } {
+  const descriptor = configDescriptor(sectionId);
+  const sec = h('section', 'config-ledger-section');
+  sec.dataset.configSection = descriptor.id;
+  const header = h('header', 'config-ledger-header');
+  const heading = h('div', 'config-section-copy');
+  heading.append(h('h1', 'config-section-heading', descriptor.label));
+  heading.append(h('p', 'config-section-description', descriptor.description));
+  header.appendChild(heading);
+  const technical = h('details', 'config-technical');
+  technical.append(h('summary', undefined, '技术信息'));
+  const technicalBody = h('div', 'config-technical-body');
+  technicalBody.append(h('span', undefined, '来源文件'));
+  technicalBody.append(h('code', 'config-technical-key', descriptor.file));
+  technical.appendChild(technicalBody);
+  header.appendChild(technical);
+  sec.appendChild(header);
+  const ops = h('div', 'config-actions');
   return { sec, ops };
 }
 
@@ -339,16 +493,20 @@ async function saveVariables(): Promise<void> {
  *  character.ensure 事务语义写盘（与 CLI / Agent 同一 semantic truth），编辑器不复制第二套写实现。
  *  ID 是语义身份，本轮保持只读（rename 属于更大的引用迁移能力）。 */
 function renderCharactersSection(): HTMLElement {
-  const { sec, ops } = sectionShell('角色表（game.config.json）');
+  const { sec, ops } = sectionShell('characters');
   const rows = ensureCharRows();
   if (rows.length === 0) {
-    sec.appendChild(h('div', 'empty', '暂无角色（外部 Agent 可用 character.ensure 创建）'));
+    sec.appendChild(h('div', 'config-empty', '暂无角色。创建角色后，可在这里维护显示名称与头像。'));
     return sec;
   }
-  const table = h('table', 'cfg-table');
+  const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const label of ['ID（只读）', '显示名', '头像']) hr.appendChild(h('th', undefined, label));
+  for (const [label, key] of [['角色标识', 'id'], ['显示名称', 'name'], ['头像素材', 'avatar']] as const) {
+    const th = h('th');
+    th.appendChild(configLabel(label, key));
+    hr.appendChild(th);
+  }
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = h('tbody');
@@ -360,21 +518,23 @@ function renderCharactersSection(): HTMLElement {
     const tdName = h('td');
     const name = h('input');
     name.value = row.name;
-    name.placeholder = '显示名';
+    name.placeholder = '角色在界面中显示的名称';
+    name.setAttribute('aria-label', `${row.id} 的显示名称`);
     name.oninput = () => { pushConfigHistory(true); rows[i]!.name = name.value; };
     tdName.appendChild(name);
     tr.appendChild(tdName);
     const tdAvatar = h('td');
     const avatar = h('input', 'mono');
     avatar.value = row.avatar;
-    avatar.placeholder = '头像 key（空 = 清除）';
+    avatar.placeholder = '留空可清除头像';
+    avatar.setAttribute('aria-label', `${row.id} 的头像素材`);
     avatar.oninput = () => { pushConfigHistory(true); rows[i]!.avatar = avatar.value; };
     tdAvatar.appendChild(avatar);
     tr.appendChild(tdAvatar);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  sec.appendChild(table);
+  sec.appendChild(wrapConfigTable(table, '角色数据表'));
   const saveBtn = h('button', 'primary', '保存角色表');
   saveBtn.onclick = () => { void saveCharacters(); };
   ops.appendChild(saveBtn);
@@ -414,18 +574,22 @@ async function saveCharacters(): Promise<void> {
 }
 
 function renderVariablesSection(): HTMLElement {
-  const { sec, ops } = sectionShell('变量表（game.config.json）');
+  const { sec, ops } = sectionShell('variables');
   const rows = ensureVarRows();
   const cols: ColDef[] = [
     { key: 'name', label: '名称' }, { key: 'type', label: '类型' }, { key: 'initial', label: '初始值' },
-    { key: 'min', label: 'min' }, { key: 'max', label: 'max' }, { key: 'readonly', label: '只读', type: 'checkbox' },
+    { key: 'min', label: '最小值' }, { key: 'max', label: '最大值' }, { key: 'readonly', label: '只读', type: 'checkbox' },
     { key: 'description', label: '描述' },
   ];
-  const table = h('table', 'cfg-table');
+  const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const c of cols) hr.appendChild(h('th', undefined, c.label));
-  hr.appendChild(h('th', undefined, ''));
+  for (const c of cols) {
+    const th = h('th');
+    th.appendChild(configLabel(c.label, c.key));
+    hr.appendChild(th);
+  }
+  hr.appendChild(h('th', undefined, '操作'));
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = h('tbody');
@@ -435,6 +599,7 @@ function renderVariablesSection(): HTMLElement {
       const inp = h('input', cls);
       inp.value = value;
       inp.placeholder = placeholder;
+      inp.setAttribute('aria-label', `${placeholder}，第 ${i + 1} 行`);
       inp.oninput = () => { pushConfigHistory(true); oninput(inp.value); };
       return inp;
     };
@@ -443,8 +608,9 @@ function renderVariablesSection(): HTMLElement {
     tr.appendChild(tdName);
     const tdType = h('td');
     const sel = h('select');
+    sel.setAttribute('aria-label', `变量类型，第 ${i + 1} 行`);
     for (const t of VAR_TYPES) {
-      const opt = h('option', undefined, t);
+      const opt = h('option', undefined, VARIABLE_TYPE_LABELS[t] ?? t);
       opt.value = t;
       if (row.type === t) opt.selected = true;
       sel.appendChild(opt);
@@ -453,17 +619,18 @@ function renderVariablesSection(): HTMLElement {
     tdType.appendChild(sel);
     tr.appendChild(tdType);
     const tdInit = h('td');
-    tdInit.appendChild(mkInput(row.initial, 'initial', 'mono', (v) => { rows[i]!.initial = v; }));
+    tdInit.appendChild(mkInput(row.initial, '初始值', 'mono', (v) => { rows[i]!.initial = v; }));
     tr.appendChild(tdInit);
     const tdMin = h('td');
-    tdMin.appendChild(mkInput(row.min, 'min', 'mono', (v) => { rows[i]!.min = v; }));
+    tdMin.appendChild(mkInput(row.min, '最小值', 'mono', (v) => { rows[i]!.min = v; }));
     tr.appendChild(tdMin);
     const tdMax = h('td');
-    tdMax.appendChild(mkInput(row.max, 'max', 'mono', (v) => { rows[i]!.max = v; }));
+    tdMax.appendChild(mkInput(row.max, '最大值', 'mono', (v) => { rows[i]!.max = v; }));
     tr.appendChild(tdMax);
     const tdRo = h('td');
     const ro = h('input');
     ro.type = 'checkbox';
+    ro.setAttribute('aria-label', `只读变量，第 ${i + 1} 行`);
     ro.checked = row.readonly;
     ro.onchange = () => { pushConfigHistory(false); rows[i]!.readonly = ro.checked; };
     tdRo.appendChild(ro);
@@ -472,15 +639,16 @@ function renderVariablesSection(): HTMLElement {
     tdDesc.appendChild(mkInput(row.description, '描述', '', (v) => { rows[i]!.description = v; }));
     tr.appendChild(tdDesc);
     const tdDel = h('td');
-    const del = h('button', undefined, '✕');
+    const del = h('button', 'config-row-delete', '删除');
     del.title = '删除该变量（被剧本引用时会要求确认）';
+    del.setAttribute('aria-label', `删除变量第 ${i + 1} 行`);
     del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  sec.appendChild(table);
+  sec.appendChild(wrapConfigTable(table, '变量数据表'));
   const addBtn = h('button', undefined, '＋ 新增变量');
   addBtn.onclick = () => {
     pushConfigHistory(false);
@@ -503,7 +671,7 @@ async function saveAchievements(): Promise<void> {
 }
 
 function renderAchievementsSection(): HTMLElement {
-  const { sec, ops } = sectionShell('成就表（achievements.json）');
+  const { sec, ops } = sectionShell('achievements');
   const rows = ensureAchRows();
 
   // when 表达式的变量名下拉提示（来自变量表）
@@ -514,12 +682,17 @@ function renderAchievementsSection(): HTMLElement {
   }
   sec.appendChild(dl);
 
-  const table = h('table', 'cfg-table');
+  const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const col of ['ID', '名称', '描述', 'when 条件（空 = 仅事件触发）', '隐藏', '']) {
-    hr.appendChild(h('th', undefined, col));
+  for (const [label, key] of [
+    ['成就标识', 'id'], ['名称', 'name'], ['解锁说明', 'description'], ['解锁条件', 'when'], ['隐藏', 'hidden'],
+  ] as const) {
+    const th = h('th');
+    th.appendChild(configLabel(label, key));
+    hr.appendChild(th);
   }
+  hr.appendChild(h('th', undefined, '操作'));
   thead.appendChild(hr);
   table.appendChild(thead);
 
@@ -530,12 +703,13 @@ function renderAchievementsSection(): HTMLElement {
       const inp = h('input', cls);
       inp.value = value;
       inp.placeholder = placeholder;
+      inp.setAttribute('aria-label', `${placeholder}，第 ${i + 1} 行`);
       if (list) inp.setAttribute('list', list);
       inp.oninput = () => { pushConfigHistory(true); oninput(inp.value); };
       return inp;
     };
     const tdId = h('td');
-    tdId.appendChild(mkInput(row.id, 'achievement_id', 'mono', (v) => { rows[i]!.id = v; }));
+    tdId.appendChild(mkInput(row.id, '成就标识', 'mono', (v) => { rows[i]!.id = v; }));
     tr.appendChild(tdId);
     const tdName = h('td');
     tdName.appendChild(mkInput(row.name, '展示名', '', (v) => { rows[i]!.name = v; }));
@@ -549,20 +723,22 @@ function renderAchievementsSection(): HTMLElement {
     const tdHidden = h('td');
     const hid = h('input');
     hid.type = 'checkbox';
+    hid.setAttribute('aria-label', `隐藏成就，第 ${i + 1} 行`);
     hid.checked = row.hidden;
     hid.onchange = () => { pushConfigHistory(false); rows[i]!.hidden = hid.checked; };
     tdHidden.appendChild(hid);
     tr.appendChild(tdHidden);
     const tdDel = h('td');
-    const del = h('button', undefined, '✕');
+    const del = h('button', 'config-row-delete', '删除');
     del.title = '删除该成就';
+    del.setAttribute('aria-label', `删除成就第 ${i + 1} 行`);
     del.onclick = () => { pushConfigHistory(false); rows.splice(i, 1); rerenderConfig(); };
     tdDel.appendChild(del);
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  sec.appendChild(table);
+  sec.appendChild(wrapConfigTable(table, '成就数据表'));
 
   const addBtn = h('button', undefined, '＋ 新增成就');
   addBtn.onclick = () => {
@@ -580,44 +756,56 @@ function renderAchievementsSection(): HTMLElement {
 /* ============================ 日历编辑器 ============================ */
 
 function renderCalendarSection(): HTMLElement {
-  const { sec, ops } = sectionShell('日历/地图日程（calendar.json）');
+  const { sec, ops } = sectionShell('calendar');
   const cal = ensureCalRows();
   sec.appendChild(renderScalarGrid([
-    ['maxAp', '每回合 AP 上限 (maxAp)'],
-    ['maxTurns', '总回合数 (maxTurns)'],
-    ['weeksPerMonth', '每月周数 (weeksPerMonth)'],
-    ['dateTemplate', '日期模板 (dateTemplate)'],
-    ['onTurnStartEventId', '回合开始事件 ID'],
-    ['onTurnEndEventId', '回合结束事件 ID'],
+    { key: 'maxAp', label: '每回合行动点上限' },
+    { key: 'maxTurns', label: '总回合数' },
+    { key: 'weeksPerMonth', label: '每月周数' },
+    { key: 'dateTemplate', label: '日期显示模板' },
+    { key: 'onTurnStartEventId', label: '回合开始事件' },
+    { key: 'onTurnEndEventId', label: '回合结束事件' },
   ], cal.scalars));
 
   // 地图可视化摆放（拖拽节点改 x/y，松手后 rerender 同步表格；拖拽前与连线编辑变更前拍撤销快照）
-  sec.appendChild(h('h4', undefined, '地图可视化（拖拽节点调整坐标 · 右侧圆点拖出前置连线 · 点连线删除）'));
-  const mapWrap = h('div', 'calendar-map-wrap');
-  sec.appendChild(mapWrap);
+  const mapSection = configSubsection('地图编排');
+  mapSection.appendChild(h('p', 'config-section-help', '拖拽节点调整位置；从节点连接点拖向另一节点可建立前置关系，点击连线可删除关系。'));
+  const mapWrap = h('div', 'config-map-stage');
+  mapSection.appendChild(mapWrap);
+  sec.appendChild(mapSection);
   renderCalendarMap(mapWrap, cal.nodes, rerenderConfig, {
     onDragStart: () => pushConfigHistory(false),
     onBeforeEdit: () => pushConfigHistory(false), // 连线增删也可 Ctrl+Z 撤销（审阅轮 Minor 1 修复）
   });
 
-  sec.appendChild(h('h4', undefined, '地图节点（nodes）'));
-  sec.appendChild(renderObjectTable([
-    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' },
-    { key: 'x', label: 'x' }, { key: 'y', label: 'y' },
+  const detailTables = h('details', 'config-table-details');
+  detailTables.open = cal.nodes.length === 0;
+  detailTables.appendChild(h('summary', undefined, '节点与指令明细'));
+  const nodesSection = configSubsection('地图节点');
+  nodesSection.appendChild(renderObjectTable([
+    { key: 'id', label: '节点标识' }, { key: 'name', label: '名称' },
+    { key: 'x', label: '横坐标' }, { key: 'y', label: '纵坐标' },
     { key: 'isBase', label: '据点', type: 'checkbox' },
-    { key: 'apCost', label: 'AP 消耗' },
-    { key: 'requires', label: '前置节点 (JSON 数组)', type: 'json' },
-    { key: 'visibleWhen', label: '开放条件 (visibleWhen)' },
+    { key: 'apCost', label: '行动点消耗' },
+    { key: 'requires', label: '前置节点', type: 'json' },
+    { key: 'visibleWhen', label: '开放条件' },
     { key: 'eventId', label: '关联事件' },
-  ], cal.nodes, { id: '', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' }));
+  ], cal.nodes, { id: '', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' }, {
+    label: '地图节点', addLabel: '新增节点',
+  }));
+  detailTables.appendChild(nodesSection);
 
-  sec.appendChild(h('h4', undefined, '据点指令（baseCommands）'));
-  sec.appendChild(renderObjectTable([
-    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' }, { key: 'apCost', label: 'AP 消耗' },
-    { key: 'when', label: '可用条件 (when)' },
-    { key: 'effects', label: '效果 (JSON 对象)', type: 'json' },
+  const commandsSection = configSubsection('据点指令');
+  commandsSection.appendChild(renderObjectTable([
+    { key: 'id', label: '指令标识' }, { key: 'name', label: '名称' }, { key: 'apCost', label: '行动点消耗' },
+    { key: 'when', label: '可用条件' },
+    { key: 'effects', label: '执行效果', type: 'json' },
     { key: 'perTurn', label: '每回合次数上限' },
-  ], cal.baseCommands, { id: '', name: '', apCost: '', when: '', effects: '', perTurn: '' }));
+  ], cal.baseCommands, { id: '', name: '', apCost: '', when: '', effects: '', perTurn: '' }, {
+    label: '据点指令', addLabel: '新增据点指令',
+  }));
+  detailTables.appendChild(commandsSection);
+  sec.appendChild(detailTables);
 
   const saveBtn = h('button', 'primary', '保存日历配置');
   saveBtn.onclick = () => {
@@ -632,21 +820,24 @@ function renderCalendarSection(): HTMLElement {
 /* ============================ 成长编辑器 ============================ */
 
 function renderGrowthSection(): HTMLElement {
-  const { sec, ops } = sectionShell('角色成长（growth.json）');
+  const { sec, ops } = sectionShell('growth');
   const gr = ensureGrRows();
   sec.appendChild(renderScalarGrid([
-    ['curve.base', '经验曲线基础值 (curve.base)'],
-    ['curve.linear', '经验曲线线性项 (curve.linear)'],
+    { key: 'curve.base', label: '经验曲线基础值' },
+    { key: 'curve.linear', label: '经验曲线线性项' },
   ], gr.scalars));
 
-  sec.appendChild(h('h4', undefined, '成长 profiles'));
-  sec.appendChild(renderObjectTable([
-    { key: 'characterId', label: '角色 ID' },
+  const profilesSection = configSubsection('成长档案');
+  profilesSection.appendChild(renderObjectTable([
+    { key: 'characterId', label: '角色标识' },
     { key: 'initialLevel', label: '初始等级' },
     { key: 'maxLevel', label: '等级上限' },
-    { key: 'statGrowth', label: '每级属性成长 (JSON 对象)', type: 'json' },
-    { key: 'levelEvents', label: '等级事件 (JSON：等级→场景)', type: 'json' },
-  ], gr.profiles, { characterId: '', initialLevel: '1', maxLevel: '', statGrowth: '{}', levelEvents: '{}' }));
+    { key: 'statGrowth', label: '每级属性成长', type: 'json' },
+    { key: 'levelEvents', label: '等级事件', type: 'json' },
+  ], gr.profiles, { characterId: '', initialLevel: '1', maxLevel: '', statGrowth: '{}', levelEvents: '{}' }, {
+    label: '成长档案', addLabel: '新增成长档案',
+  }));
+  sec.appendChild(profilesSection);
 
   const saveBtn = h('button', 'primary', '保存成长配置');
   saveBtn.onclick = () => {
@@ -661,28 +852,34 @@ function renderGrowthSection(): HTMLElement {
 /* ============================ 事件编辑器 ============================ */
 
 function renderEventsSection(): HTMLElement {
-  const { sec, ops } = sectionShell('事件（events.json）');
+  const { sec, ops } = sectionShell('events');
   const ev = ensureEvRows();
 
-  sec.appendChild(h('h4', undefined, '好感 profiles（阶段文案）'));
-  sec.appendChild(renderObjectTable([
-    { key: 'characterId', label: '角色 ID' },
+  const profilesSection = configSubsection('角色阶段文案');
+  profilesSection.appendChild(renderObjectTable([
+    { key: 'characterId', label: '角色标识' },
     { key: 'variable', label: '好感变量' },
-    { key: 'tiers', label: '阶段 (JSON 数组：min/stage)', type: 'json' },
-  ], ev.profiles, { characterId: '', variable: '', tiers: '[]' }));
+    { key: 'tiers', label: '阶段规则', type: 'json' },
+  ], ev.profiles, { characterId: '', variable: '', tiers: '[]' }, {
+    label: '角色阶段', addLabel: '新增角色阶段',
+  }));
+  sec.appendChild(profilesSection);
 
   const eventCols: ColDef[] = [
-    { key: 'id', label: 'ID' }, { key: 'characterId', label: '角色' },
-    { key: 'when', label: '触发条件 (when)' }, { key: 'scene', label: '场景' },
+    { key: 'id', label: '事件标识' }, { key: 'characterId', label: '角色' },
+    { key: 'when', label: '触发条件' }, { key: 'scene', label: '场景' },
     { key: 'once', label: '仅一次', type: 'checkbox' }, { key: 'priority', label: '优先级' },
-    { key: 'effects', label: '效果 (JSON 对象)', type: 'json' },
+    { key: 'effects', label: '执行效果', type: 'json' },
   ];
   const emptyEvent: RowMap = { id: '', characterId: '', when: '', scene: '', once: true, priority: '', effects: '' };
 
-  sec.appendChild(h('h4', undefined, '条件事件（events）'));
-  sec.appendChild(renderObjectTable(eventCols, ev.events, emptyEvent));
-  sec.appendChild(h('h4', undefined, '日程事件（scheduled：回合驱动）'));
-  sec.appendChild(renderObjectTable(eventCols, ev.scheduled, emptyEvent));
+  const eventsSection = configSubsection('条件事件');
+  eventsSection.appendChild(renderObjectTable(eventCols, ev.events, emptyEvent, { label: '条件事件', addLabel: '新增条件事件' }));
+  sec.appendChild(eventsSection);
+  const scheduledSection = configSubsection('日程事件');
+  scheduledSection.appendChild(h('p', 'config-section-help', '由回合进度驱动，使用与条件事件相同的字段。'));
+  scheduledSection.appendChild(renderObjectTable(eventCols, ev.scheduled, emptyEvent, { label: '日程事件', addLabel: '新增日程事件' }));
+  sec.appendChild(scheduledSection);
 
   const saveBtn = h('button', 'primary', '保存事件配置');
   saveBtn.onclick = () => {
@@ -697,20 +894,23 @@ function renderEventsSection(): HTMLElement {
 /* ============================ 鉴赏编辑器 ============================ */
 
 function renderGallerySection(): HTMLElement {
-  const { sec, ops } = sectionShell('鉴赏（gallery.json）');
+  const { sec, ops } = sectionShell('gallery');
   const ga = ensureGaRows();
   const cgCols: ColDef[] = [
-    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' }, { key: 'src', label: '素材/音乐 key (src)' },
+    { key: 'id', label: '条目标识' }, { key: 'name', label: '名称' }, { key: 'src', label: '素材来源' },
   ];
-  sec.appendChild(h('h4', undefined, 'CG（cgs）'));
-  sec.appendChild(renderObjectTable(cgCols, ga.cgs, { id: '', name: '', src: '' }));
-  sec.appendChild(h('h4', undefined, '鉴赏音乐（music）'));
-  sec.appendChild(renderObjectTable(cgCols, ga.music, { id: '', name: '', src: '' }));
-  sec.appendChild(h('h4', undefined, '回想（texts：跳回剧本回看）'));
-  sec.appendChild(renderObjectTable([
-    { key: 'id', label: 'ID' }, { key: 'name', label: '名称' },
+  const cgSection = configSubsection('图片鉴赏');
+  cgSection.appendChild(renderObjectTable(cgCols, ga.cgs, { id: '', name: '', src: '' }, { label: '图片鉴赏', addLabel: '新增图片' }));
+  sec.appendChild(cgSection);
+  const musicSection = configSubsection('音乐鉴赏');
+  musicSection.appendChild(renderObjectTable(cgCols, ga.music, { id: '', name: '', src: '' }, { label: '音乐鉴赏', addLabel: '新增音乐' }));
+  sec.appendChild(musicSection);
+  const textsSection = configSubsection('剧情回想');
+  textsSection.appendChild(renderObjectTable([
+    { key: 'id', label: '回想标识' }, { key: 'name', label: '名称' },
     { key: 'scene', label: '回放场景' }, { key: 'label', label: '回放标签' },
-  ], ga.texts, { id: '', name: '', scene: '', label: '' }));
+  ], ga.texts, { id: '', name: '', scene: '', label: '' }, { label: '剧情回想', addLabel: '新增回想' }));
+  sec.appendChild(textsSection);
 
   const saveBtn = h('button', 'primary', '保存鉴赏配置');
   saveBtn.onclick = () => {
@@ -791,18 +991,18 @@ function importTerminology(file: File): void {
 }
 
 function renderTerminologySection(): HTMLElement {
-  const { sec, ops } = sectionShell('名词表（terminology.json · 供审计标签页 TERM_VARIANT 检查）');
+  const { sec, ops } = sectionShell('terminology');
   const tt = ensureTermRows();
-  sec.appendChild(h('div', 'dim', '剧本/选项中出现 variants 里的词时，审计标签页会提示改用规范词 canonical；保存后即时生效。'));
+  sec.appendChild(h('p', 'config-section-help', '剧本或选项使用变体词时，审计页会提示改用对应的规范词；保存后即时生效。'));
   sec.appendChild(renderObjectTable([
     { key: 'canonical', label: '规范词' },
-    { key: 'variants', label: '变体列表 (JSON 数组，如 ["那把剑","石剑"])', type: 'json' },
-  ], tt.terms, { canonical: '', variants: '[]' }));
+    { key: 'variants', label: '变体列表', type: 'json' },
+  ], tt.terms, { canonical: '', variants: '[]' }, { label: '名词', addLabel: '新增名词' }));
 
-  const exportBtn = h('button', undefined, '⤓ 导出 JSON');
+  const exportBtn = h('button', undefined, '导出名词表');
   exportBtn.title = '把当前名词表（含未保存编辑）下载为 terminology.json';
   exportBtn.onclick = exportTerminology;
-  const importBtn = h('button', undefined, '⤒ 导入 JSON');
+  const importBtn = h('button', undefined, '导入名词表');
   importBtn.title = '从 terminology.json 文件导入（替换当前表格，需另点保存才写盘）';
   const fileInput = h('input');
   fileInput.type = 'file';
@@ -844,14 +1044,6 @@ export function renderConfig(container: HTMLElement): void {
     // 从盘重读 = 基线更新：旧撤销栈失效（防撤销回上一轮的内存态）
     configHist.past = [];
     configHist.future = [];
-    container.innerHTML = '';
-    container.appendChild(renderCharactersSection());
-    container.appendChild(renderVariablesSection());
-    container.appendChild(renderAchievementsSection());
-    container.appendChild(renderCalendarSection());
-    container.appendChild(renderGrowthSection());
-    container.appendChild(renderEventsSection());
-    container.appendChild(renderGallerySection());
-    container.appendChild(renderTerminologySection());
+    renderConfigWorkspace(container);
   });
 }
