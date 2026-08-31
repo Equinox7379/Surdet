@@ -22,7 +22,18 @@ import {
 } from './causal-selection.js';
 import { bindHistoryHooks, undo, redo } from './history.js';
 import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
-import { bindProjectIoHooks, openProject, saveAll, exportCurrent, loadDemoProject, restoreTimelineAutosaveEntries } from './project-io.js';
+import {
+  bindProjectIoHooks,
+  openProject,
+  saveAll,
+  exportCurrent,
+  loadDemoProject,
+  quarantineTimelineAutosaveEntries,
+  repairTimelineAutosaveConflict,
+  restoreTimelineAutosaveEntries,
+  type TimelineAutosaveRepairAction,
+  type TimelineAutosaveRestoreConflict,
+} from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
 import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
@@ -36,6 +47,7 @@ import { renderStatsPanel } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
+import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import {
   renderModeNavigation,
   renderProjectBar,
@@ -48,7 +60,6 @@ import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, pickRecoverableTimelines,
   preserveAutosaveTimelineConflicts, unresolvedAutosaveTimelineConflicts, writeAutosave, clearAutosave,
 } from './autosave.js';
-import type { AutosaveTimelineEntry } from './autosave.js';
 
 /* ============================ authoring 内存索引（单飞 + 防抖） ============================ */
 
@@ -58,7 +69,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 /** 最近一次磁盘保存尝试仍有失败项；只服务于顶栏回执，不复制编辑器业务状态。 */
 let saveAttemptLeftDirty = false;
-let pendingAutosaveTimelineConflicts: AutosaveTimelineEntry[] = [];
+let pendingAutosaveTimelineConflicts: TimelineAutosaveRestoreConflict[] = [];
 
 function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
@@ -200,23 +211,7 @@ bindProjectIoHooks({
     tryAutosaveRecover();
   },
   onSaved: () => {
-    if (!state.autosaveProjectId) return;
-    pendingAutosaveTimelineConflicts = unresolvedAutosaveTimelineConflicts(
-      pendingAutosaveTimelineConflicts,
-      state.timelines,
-    );
-    if (pendingAutosaveTimelineConflicts.length === 0) {
-      clearAutosave(state.autosaveProjectId);
-    } else {
-      const preserved = preserveAutosaveTimelineConflicts(
-        null,
-        state.dirName,
-        pendingAutosaveTimelineConflicts,
-        Date.now(),
-        state.autosaveProjectId,
-      );
-      if (preserved) writeAutosave(preserved);
-    }
+    persistCurrentAutosave(Date.now());
   },
   onTimelineDeleted: clearTimelineViewState,
   onSaveSettled: ({ failures, remainingDirty }) => {
@@ -388,9 +383,16 @@ function renderMainArea(): void {
       renderMainArea();
   });
   const col = h('div', 'main-col editor-mode-surface');
+  const conflictHost = h('div', 'timeline-autosave-conflict-host');
   col.setAttribute('data-editor-mode-surface', state.mainTab);
   if (state.mainTab === 'editor') col.id = 'editor-workspace';
-  main.append(navigation, col);
+  main.append(navigation, conflictHost, col);
+  renderTimelineAutosaveConflictPanel(conflictHost, pendingAutosaveTimelineConflicts, {
+    onReplaceCurrent: (key) => handleTimelineAutosaveRepair(key, { kind: 'replace-current' }),
+    onSaveAsNew: (key, newId) => handleTimelineAutosaveRepair(key, { kind: 'save-as-new', newId }),
+    onDiscard: discardTimelineAutosaveConflict,
+    onDownload: downloadTimelineAutosaveConflict,
+  });
 
   if (state.mainTab === 'editor') {
     const workbench = buildAuthoringWorkbench();
@@ -535,19 +537,114 @@ window.addEventListener('beforeunload', (e) => {
 
 /* ============================ 崩溃保险（A1：定时快照 + 同项目恢复提示） ============================ */
 
+function timelineConflictEvidenceKey(conflict: TimelineAutosaveRestoreConflict): string {
+  const recovered = conflict.recovered;
+  return `${recovered.id}\0${recovered.file}\0${recovered.eol}\0${recovered.text}`;
+}
+
+function mergeTimelineAutosaveConflicts(
+  conflicts: readonly TimelineAutosaveRestoreConflict[],
+): TimelineAutosaveRestoreConflict[] {
+  const byEvidence = new Map<string, TimelineAutosaveRestoreConflict>();
+  for (const conflict of conflicts) byEvidence.set(timelineConflictEvidenceKey(conflict), conflict);
+  return [...byEvidence.values()];
+}
+
+function persistCurrentAutosave(now: number): void {
+  if (!state.autosaveProjectId) return;
+  const unresolvedEntries = unresolvedAutosaveTimelineConflicts(
+    pendingAutosaveTimelineConflicts.map((conflict) => conflict.recovered),
+    state.timelines,
+  );
+  const unresolvedEvidence = new Set(unresolvedEntries.map((entry) => (
+    `${entry.id}\0${entry.file}\0${entry.eol}\0${entry.text}`
+  )));
+  pendingAutosaveTimelineConflicts = pendingAutosaveTimelineConflicts.filter((conflict) => (
+    unresolvedEvidence.has(timelineConflictEvidenceKey(conflict))
+  ));
+  const fresh = buildAutosave(state.dirName, state.scenes, state.timelines, now, state.autosaveProjectId);
+  const payload = preserveAutosaveTimelineConflicts(
+    fresh,
+    state.dirName,
+    pendingAutosaveTimelineConflicts.map((conflict) => conflict.recovered),
+    now,
+    state.autosaveProjectId,
+  );
+  if (payload) writeAutosave(payload);
+  else clearAutosave(state.autosaveProjectId);
+}
+
+function handleTimelineAutosaveRepair(key: string, action: TimelineAutosaveRepairAction): void {
+  const conflict = pendingAutosaveTimelineConflicts.find((candidate) => candidate.key === key);
+  if (!conflict) {
+    setStatus('这份演出备份已不在待处理列表中', false, 5000);
+    return;
+  }
+  const result = repairTimelineAutosaveConflict(conflict, action);
+  if (!result.ok) {
+    setStatus(`演出备份处理失败：${result.error}`, false, 8000);
+    return;
+  }
+  pendingAutosaveTimelineConflicts = pendingAutosaveTimelineConflicts
+    .filter((candidate) => candidate.key !== key);
+  persistCurrentAutosave(Date.now());
+  renderMainArea();
+  renderSidebar();
+  runValidate();
+  scheduleAuthoringIndexRebuild();
+  setStatus(`已恢复演出 ${result.timelineId}，请保存项目`, true, 6000);
+}
+
+function discardTimelineAutosaveConflict(key: string): void {
+  const before = pendingAutosaveTimelineConflicts.length;
+  pendingAutosaveTimelineConflicts = pendingAutosaveTimelineConflicts
+    .filter((candidate) => candidate.key !== key);
+  if (pendingAutosaveTimelineConflicts.length === before) {
+    setStatus('这份演出备份已不在待处理列表中', false, 5000);
+    return;
+  }
+  persistCurrentAutosave(Date.now());
+  renderMainArea();
+  setStatus('已保留当前项目并放弃这份演出备份', true, 5000);
+}
+
+function downloadTimelineAutosaveConflict(key: string): void {
+  const conflict = pendingAutosaveTimelineConflicts.find((candidate) => candidate.key === key);
+  if (!conflict) {
+    setStatus('这份演出备份已不在待处理列表中', false, 5000);
+    return;
+  }
+  const safeId = conflict.recovered.id.replace(/[^A-Za-z0-9_.-]+/g, '_') || 'timeline';
+  const url = URL.createObjectURL(new Blob([conflict.recovered.text], { type: 'application/json;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${safeId}-autosave.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  setStatus('已下载演出自动备份，待处理记录仍保留', true, 5000);
+}
+
 /** 项目载入后检查同项目未保存快照：存在且与当前内存不同时询问恢复 */
 function tryAutosaveRecover(): void {
   if (!state.autosaveProjectId) return;
   const payload = readAutosave(state.autosaveProjectId);
   const recoverable = pickRecoverable(payload, state.autosaveProjectId, state.scenes);
   const recoverableTimelines = pickRecoverableTimelines(payload, state.autosaveProjectId, state.timelines);
-  if (recoverable.length === 0 && recoverableTimelines.length === 0) return;
+  const quarantinedEntries = payload?.projectId === state.autosaveProjectId
+    ? unresolvedAutosaveTimelineConflicts(payload.timelineConflicts ?? [], state.timelines)
+    : [];
+  const quarantinedConflicts = quarantineTimelineAutosaveEntries(quarantinedEntries);
+  if (recoverable.length === 0 && recoverableTimelines.length === 0 && quarantinedConflicts.length === 0) {
+    if ((payload?.timelineConflicts?.length ?? 0) > 0) persistCurrentAutosave(Date.now());
+    return;
+  }
   const when = new Date(payload!.savedAt).toLocaleString();
   const names = recoverable.map((e) => e.key).join('、');
   const timelineNames = recoverableTimelines.map((entry) => entry.id).join('、');
   const details = [
     recoverable.length > 0 ? `${recoverable.length} 个场景：${names}` : '',
     recoverableTimelines.length > 0 ? `${recoverableTimelines.length} 个演出：${timelineNames}` : '',
+    quarantinedConflicts.length > 0 ? `${quarantinedConflicts.length} 个演出身份冲突需要确认` : '',
   ].filter(Boolean).join('\n');
   if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}）：\n${details}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
     pendingAutosaveTimelineConflicts = [];
@@ -562,10 +659,13 @@ function tryAutosaveRecover(): void {
     }
   }
   const timelineRecovery = restoreTimelineAutosaveEntries(recoverableTimelines);
-  pendingAutosaveTimelineConflicts = timelineRecovery.conflicts
-    .map((conflict) => conflict.recovered);
-  if (timelineRecovery.conflicts.length > 0) {
-    setStatus(`有 ${timelineRecovery.conflicts.length} 个演出备份因文件身份冲突未恢复，请先检查项目文件`, false, 8000);
+  pendingAutosaveTimelineConflicts = mergeTimelineAutosaveConflicts([
+    ...quarantinedConflicts,
+    ...timelineRecovery.conflicts,
+  ]);
+  persistCurrentAutosave(Date.now());
+  if (pendingAutosaveTimelineConflicts.length > 0) {
+    setStatus(`有 ${pendingAutosaveTimelineConflicts.length} 个演出备份需要你确认处理`, false, 8000);
   }
   renderAll();
   runValidate();
@@ -576,21 +676,7 @@ function tryAutosaveRecover(): void {
 /** 定时快照：有 dirty 场景就写备份，全部干净则清除旧备份（存储不可用时静默降级） */
 setInterval(() => {
   if (state.projectLoading || !state.autosaveProjectId) return;
-  const now = Date.now();
-  pendingAutosaveTimelineConflicts = unresolvedAutosaveTimelineConflicts(
-    pendingAutosaveTimelineConflicts,
-    state.timelines,
-  );
-  const fresh = buildAutosave(state.dirName, state.scenes, state.timelines, now, state.autosaveProjectId);
-  const payload = preserveAutosaveTimelineConflicts(
-    fresh,
-    state.dirName,
-    pendingAutosaveTimelineConflicts,
-    now,
-    state.autosaveProjectId,
-  );
-  if (payload) writeAutosave(payload);
-  else clearAutosave(state.autosaveProjectId);
+  persistCurrentAutosave(Date.now());
 }, AUTOSAVE_INTERVAL_MS);
 
 renderAll();
