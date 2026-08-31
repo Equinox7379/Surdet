@@ -103,6 +103,34 @@ describe('inspectTimelineAutosaveIdentity（时间轴三元身份投影）', () 
     });
     expect(source.text.startsWith('\uFEFF')).toBe(true);
   });
+
+  it.each([
+    '../intro.json',
+    '/intro.json',
+    'C:/intro.json',
+    'content/timelines/intro.json',
+    'nested//intro.json',
+    './intro.json',
+  ])('拒绝不安全或非规范的备份相对路径 %j', (file) => {
+    expect(inspectTimelineAutosaveIdentity(entry({ file }))).toMatchObject({
+      fileId: 'intro',
+      definitionId: 'intro',
+      canonical: false,
+    });
+  });
+
+  it('即使三处字面相同也拒绝不符合 Authoring 规则的 stable ID', () => {
+    expect(inspectTimelineAutosaveIdentity(entry({
+      id: 'bad:id',
+      file: 'bad:id.json',
+      text: stringifyWithEol({ id: 'bad:id', tracks: [] }, '\n'),
+    }))).toMatchObject({
+      stableId: 'bad:id',
+      fileId: 'bad:id',
+      definitionId: 'bad:id',
+      canonical: false,
+    });
+  });
 });
 
 describe('normalizeTimelineAutosaveDocument（显式身份修复准备）', () => {

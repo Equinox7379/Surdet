@@ -1,5 +1,6 @@
 import { h } from '../state.js';
 import type { TimelineAutosaveRestoreConflict } from '../project-io.js';
+import { normalizeTimelineAutosaveDocument } from '../timeline-autosave-identity.js';
 
 export interface TimelineAutosaveConflictPanelActions {
   onReplaceCurrent: (key: string) => void;
@@ -117,6 +118,10 @@ function appendActions(
 ): void {
   const parseableBackup = conflict.recoveredIdentity.parseError === null;
   const hasCurrentTarget = conflict.current !== null;
+  const replacement = conflict.current
+    ? normalizeTimelineAutosaveDocument(conflict.recovered, conflict.current.id, conflict.current.file)
+    : null;
+  const canReplace = parseableBackup && replacement?.ok === true;
   const actionRow = h('div', 'timeline-autosave-conflict-actions');
   actionRow.setAttribute('role', 'group');
   actionRow.setAttribute('aria-label', '备份处理操作');
@@ -125,9 +130,9 @@ function appendActions(
     '替换当前时间轴',
     'primary',
     'replace-current',
-    !hasCurrentTarget || !parseableBackup,
+    !canReplace,
     () => {
-      if (!hasCurrentTarget || !parseableBackup) return;
+      if (!hasCurrentTarget || !canReplace) return;
       if (!askForConfirmation('确认用自动备份替换当前时间轴内容？')) return;
       actions.onReplaceCurrent(conflict.key);
     },
