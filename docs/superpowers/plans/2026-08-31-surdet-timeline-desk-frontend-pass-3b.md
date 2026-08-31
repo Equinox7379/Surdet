@@ -1249,3 +1249,86 @@ FORMAL_BUDGET = 1_OF_1 UNCONSUMED
 PUSH = NOT_PERFORMED
 FRONTEND_PASS_4 = NOT_STARTED
 ```
+
+### 2026-08-31 — Frontend Pass 3B FORMAL result
+
+**FREEZE IDENTITY**
+
+- Exact freeze commit / `CODE_EVIDENCE_HEAD`: `f70a8edce90e0572d4718c88b75717a028e54447`.
+- Parent: `b6299894d3f991107152014d2bd4ff9af6b0991b`.
+- Commit message: `test(editor): verify timeline desk workflow`.
+- Commit scope is exactly the four authorized paths: runner, runner contract, this taskbook and design spec. Tracked worktree and staging were empty immediately before FORMAL.
+
+**UNIQUE FORMAL**
+
+- FORMAL budget 1/1 consumed once; exit 0; status PASSED; evidence class `EDITOR_TIMELINE_DESK_BROWSER_FORMAL`.
+- `runHead === codeEvidenceHead === f70a8edce90e0572d4718c88b75717a028e54447`.
+- Runner HEAD blob identity equals executing bytes: 79369 bytes, SHA-256 `66C57F051F858659D463F93F0DEC6BFAD384CE69648228CC60D5A79E13FCBF21`.
+- `trackedCodeDiffPaths=[]`; 29/29 milestones PASS; `firstFailedNode=null`.
+- FORMAL evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-formal-SvyESr\evidence.json`, 150249 bytes, SHA-256 `7E1BFDF61C238E1DDA4084627BB0C6085CE3BA443050955CD51A3551BD816DEB`.
+- Identity sidecar: 571 bytes, SHA-256 `0C837F359487FE92A65716A07F5AC0ECEAEE5FCD227507ACBB620896BF8FCC6F`.
+- Preview runtime evidence: URL `/preview.html`; `readyState=complete`; `runtimeReady=true`; one canvas; source-matched ready signal received.
+- `errors=[]`, `consoleErrors=[]`, `pageErrors=[]`, `requestFailures=[]`, `responseFailures=[]`, `stderrLines=[]`, `childCleanupFailures=[]`.
+- Strict port released; original Starter unchanged; single-Timeline save, CRLF identity and cold reopen all passed.
+
+**POST-FORMAL BOUNDARY**
+
+- This Ledger entry is the only tracked modification after FORMAL and remains intentionally uncommitted; no docs-only closure commit was authorized or created.
+- No push, Owner visual acceptance or Frontend Pass 4 action occurred.
+
+```text
+FRONTEND_PASS_3B_FORMAL = PASSED
+CODE_EVIDENCE_HEAD = f70a8edce90e0572d4718c88b75717a028e54447
+FORMAL = PASSED_1_OF_1
+FORMAL_MILESTONES = 29_OF_29
+READY_FOR_INDEPENDENT_MANAGER_REVIEW = YES
+WAITING_FOR_INDEPENDENT_MANAGER_REVIEW = YES
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_DESIGNED / NOT_AUTHORIZED / NOT_STARTED
+```
+
+### 2026-08-31 — Independent-manager correction before push
+
+**AUTHORIZATION / REVIEW RESULT**
+
+- The Owner authorized the independent manager to repair the final-review findings, verify, commit and perform an ordinary push. Frontend Pass 4 and mainline Wave 7 remain out of scope.
+- Independent final review changed the previous recommendation from PASS to `NEEDS_FIX` after finding two uncovered user paths:
+  1. a stable physical `projectId` could be resolved through `isSameEntry()`, but a renamed directory was still rejected by mutable `dirName`; the next clean autosave tick could then remove the only recovery payload;
+  2. `▶ 播放 / 重载` cleared `previewTimelineId`, silently converting a direct Timeline replay into an ordinary scene preview.
+
+**RED -> GREEN / MINIMAL PRODUCT REPAIR**
+
+- Autosave RED: 18/20 passed; the two expected failures proved renamed-project recovery returned `null` and a storage-key / payload `projectId` mismatch was accepted. GREEN: 20/20 PASS.
+- Preview replay RED: 1 failed because expected `previewTimelineId=opening` became `null`. GREEN: 1/1 PASS; adjacent Preview set 9/9 PASS.
+- `projectId` is now the only recovery identity after a physical handle has been proven. `dirName` remains display metadata. A payload whose embedded `projectId` does not match its scoped storage key fails closed.
+- `▶ 播放 / 重载` now keeps the current direct-Timeline identity. The explicit scene-start / label selector still exits direct-Timeline mode.
+- The browser runner now clicks the real replay control, requires the Timeline identity to remain selected and waits for a fresh runtime trace event before leaving Preview.
+
+**FRESH LOCAL GATES**
+
+- Editor full test: 51 files / 370 tests PASS.
+- Editor typecheck: PASS.
+- Editor build: PASS, 906 modules; only the existing Vite chunk-size warning remains.
+- Runner contract: 11/11 PASS; runner syntax PASS; diff check PASS.
+
+**FAILED DIAGNOSTIC EVIDENCE — PRESERVED, NOT REWRITTEN AS PRODUCT FAILURES**
+
+- `N2sdgU`: failed at `layout-800` after 17 milestones because the newly added replay click left its asynchronous Preview load in flight before the runner returned to Timeline. Evidence 56610 bytes / SHA-256 `45677DAE8EC5ED07E4B95DB5F4B3FFA7610DA0A9BE6983D1A4526BB7D9FD803D`; identity 582 bytes / SHA-256 `94CAEF8A35D1960898D09B1704F4E81063C69F8609F6195955748869764748E2`.
+- `RH9L4c`: failed at `timeline-history-scene-isolated`; the runner sampled `scrollLeft` before the redo restoration frame settled. Evidence 29453 bytes / SHA-256 `D979BFA7CD6C3F5C0303ACD76D9F8701E08D444D101CE9A89E25534B27480247`; identity 582 bytes / SHA-256 `7845D0CAE5435D61D69C0E85BC18F9BCD1A1705798B5551401552B9AD7D959AA`.
+- `oEwTd7`: stable evidence proved the product final value was correct (`actualScrollLeft=1337`) while the runner had captured the transient pre-restore value as its expectation (`expectedScrollLeft=0`). Evidence 29628 bytes / SHA-256 `5C72526FC3312247ADD2AA57E67DFD904055FA7FDE45D433776E97FD5DBD99CC`; identity 582 bytes / SHA-256 `8588250D115D712DA4F825B6210D090B950F6ABAA5996C1AF77C3DB1529C47DA`.
+- The permanent runner correction waits across the redo restoration frames before recording the expected scroll position, then samples the post-navigation value after two further animation frames. Exact equality remains required; no tolerance or error allow-list was added.
+
+**PRE-FREEZE IDENTITY**
+
+- Current base HEAD remains `f70a8edce90e0572d4718c88b75717a028e54447`; remote `surdet/main` remains `42be0fcd2f614f032b8a539475c039c7f4ebd66f` (ahead/behind 9/0 from the local perspective).
+- Intended correction freeze contains exactly eight paths: the three product files, two product regression tests, browser runner, runner contract and this taskbook. Protected/unrelated untracked files remain untouched.
+- Current runner: 80842 bytes / SHA-256 `05D72C7149D9F0FF2014BE02CE300D124778DE55B77074CDA266C5E0896ADA27`.
+- Manager authorizes one replacement FORMAL only after an exact clean freeze commit. No more DIAGNOSTIC reruns are authorized. Any FORMAL failure stops before push.
+
+```text
+W3B_INDEPENDENT_MANAGER_CORRECTION = READY_TO_FREEZE
+REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
+PUSH = AUTHORIZED_AFTER_REPLACEMENT_FORMAL_PASS
+FRONTEND_PASS_4 = NOT_STARTED
+```

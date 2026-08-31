@@ -132,7 +132,9 @@ test('Frontend Pass 3B runner settles the Preview iframe before intentional navi
   const previewClick = source.indexOf("getByRole('button', { name: '▶ 预览演出'");
   const returnToTimeline = source.indexOf("await firstPage.locator('[data-editor-mode=\"timeline\"]'", previewClick);
   const settled = source.lastIndexOf("previewFrame.waitForLoadState('networkidle', { timeout: 10_000 })", returnToTimeline);
+  const replayClick = source.indexOf("getByRole('button', { name: '▶ 播放 / 重载', exact: true }).click()", settled);
   assert.ok(previewClick >= 0 && settled > previewClick && settled < returnToTimeline, 'Preview iframe is torn down before its module graph settles');
+  assert.ok(replayClick > settled && replayClick < returnToTimeline, 'Preview replay identity is not exercised before returning to Timeline');
   assert.match(source, /#preview-view iframe\.preview-frame\[title="剧情预览"\]/);
   assert.match(source, /surdet-preview-ready/);
   assert.match(source, /event\.source !== frame\?\.contentWindow/);
@@ -141,6 +143,9 @@ test('Frontend Pass 3B runner settles the Preview iframe before intentional navi
   assert.match(source, /runtimeReady: Boolean\(window\.surdetPreviewDebug\?\.runtime\)/);
   assert.match(source, /canvasCount: document\.querySelectorAll\('#preview-root canvas'\)\.length/);
   assert.match(source, /previewFrameEvidence\.readySignal/);
+  assert.match(source, /replayPreservedTimelineId/);
+  assert.match(source, /previewTrace\?\.length > 0/);
+  assert.match(source, /replayTraceEventCount/);
   assert.doesNotMatch(source, /requestFailures\s*=\s*requestFailures\.filter|ERR_ABORTED.*(?:ignore|allow|whitelist)/i);
 });
 
@@ -187,6 +192,10 @@ test('Frontend Pass 3B runner closes the independent interaction-review seams', 
   assert.match(source, /0ms cue incorrectly occupies the full Timeline lane/);
   assert.match(source, /pointercancel/);
   assert.match(source, /scrollLeft/);
+  assert.match(source, /preModeRoundTripScrollEvidence/);
+  assert.match(source, /Timeline redo did not restore scrollLeft before mode round-trip/);
+  assert.match(source, /expectedModeRoundTripScrollLeft/);
+  assert.match(source, /requestAnimationFrame\(\(\) => requestAnimationFrame\(resolve\)\)/);
   assert.match(source, /timeline search did not filter/);
   assert.match(source, /compact Timeline disclosures reopened after edit/);
 });

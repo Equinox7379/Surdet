@@ -126,6 +126,7 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
   const diskEntry = { id: 'disk', text: '磁盘\n', eol: '\n' as const };
   const payload = {
     dirName: 'proj',
+    projectId: 'project',
     savedAt: 1,
     scenes: [],
     timelines: [
@@ -135,7 +136,7 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
   };
 
   it('选择磁盘内容不同与新建未落盘两类，且返回精确 EOL', () => {
-    expect(pickRecoverableTimelines(payload, 'proj', [diskEntry])).toEqual(payload.timelines);
+    expect(pickRecoverableTimelines(payload, 'project', [diskEntry])).toEqual(payload.timelines);
   });
 
   it('文本相同但 EOL 不同仍恢复；文本/EOL 都相同才不打扰', () => {
@@ -143,13 +144,13 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
       ...payload,
       timelines: [{ id: 'disk', file: 'disk.json', text: '磁盘\n', eol: '\r\n' as const }],
     };
-    expect(pickRecoverableTimelines(eolOnlyPayload, 'proj', [diskEntry])).toEqual(eolOnlyPayload.timelines);
+    expect(pickRecoverableTimelines(eolOnlyPayload, 'project', [diskEntry])).toEqual(eolOnlyPayload.timelines);
 
     const exactPayload = {
       ...payload,
       timelines: [{ id: 'disk', file: 'disk.json', text: '磁盘\n', eol: '\n' as const }],
     };
-    expect(pickRecoverableTimelines(exactPayload, 'proj', [diskEntry])).toEqual([]);
+    expect(pickRecoverableTimelines(exactPayload, 'project', [diskEntry])).toEqual([]);
   });
 
   it('同 id 的恢复路径不同仍需恢复 file 身份', () => {
@@ -157,14 +158,14 @@ describe('pickRecoverableTimelines（时间轴恢复判定）', () => {
       ...payload,
       timelines: [{ id: 'disk', file: 'nested/disk.json', text: '磁盘\n', eol: '\n' as const }],
     };
-    expect(pickRecoverableTimelines(filePayload, 'proj', [{ ...diskEntry, file: 'disk.json' }]))
+    expect(pickRecoverableTimelines(filePayload, 'project', [{ ...diskEntry, file: 'disk.json' }]))
       .toEqual(filePayload.timelines);
   });
 
   it('legacy/不同项目/无快照不恢复 timeline', () => {
-    expect(pickRecoverableTimelines({ dirName: 'proj', savedAt: 1, scenes: [] }, 'proj', [])).toEqual([]);
-    expect(pickRecoverableTimelines(payload, '别的项目', [diskEntry])).toEqual([]);
-    expect(pickRecoverableTimelines(null, 'proj', [diskEntry])).toEqual([]);
+    expect(pickRecoverableTimelines({ dirName: 'proj', savedAt: 1, scenes: [] }, 'project', [])).toEqual([]);
+    expect(pickRecoverableTimelines(payload, 'another-project', [diskEntry])).toEqual([]);
+    expect(pickRecoverableTimelines(null, 'project', [diskEntry])).toEqual([]);
   });
 });
 
@@ -214,11 +215,56 @@ describe('autosave 项目隔离存储', () => {
 
     writeAutosave(projectA);
     writeAutosave(projectB);
-    clearAutosave('project-b', 'game');
+    clearAutosave('project-b');
 
-    expect(readAutosave('project-a', 'game')).toEqual(projectA);
-    expect(readAutosave('project-b', 'game')).toBeNull();
+    expect(readAutosave('project-a')).toEqual(projectA);
+    expect(readAutosave('project-b')).toBeNull();
     expect(values.has(autosaveStorageKey('project-a'))).toBe(true);
+  });
+
+  it('同一物理项目改名后仍通过 isSameEntry 取回 projectId 并恢复备份', async () => {
+    const values = installStorage();
+    const originalHandle = { name: 'old-name' } as unknown as FileSystemDirectoryHandle;
+    const renamedHandle = {
+      name: 'new-name',
+      isSameEntry: vi.fn(async (other: FileSystemHandle) => other === originalHandle),
+    } as unknown as FileSystemDirectoryHandle;
+    const payload = {
+      dirName: 'old-name',
+      projectId: 'physical-project',
+      savedAt: 3,
+      scenes: [{ key: 'scene', text: '改名前未保存正文' }],
+      timelines: [{ id: 'timeline', file: 'timeline.json', text: '{}\n', eol: '\n' as const }],
+    };
+    writeAutosave(payload);
+
+    const resolvedProjectId = await matchingAutosaveProjectIdentity(renamedHandle, [{
+      id: 'physical-project',
+      handle: originalHandle,
+    }]);
+    expect(resolvedProjectId).toBe('physical-project');
+    expect(renamedHandle.isSameEntry).toHaveBeenCalledWith(originalHandle);
+    const stored = readAutosave(resolvedProjectId!);
+    expect(stored).toEqual(payload);
+    expect(pickRecoverable(stored, resolvedProjectId!, new Map([
+      ['scene', { text: '磁盘正文' }],
+    ]))).toEqual(payload.scenes);
+    expect(pickRecoverableTimelines(stored, resolvedProjectId!, [
+      { id: 'timeline', file: 'timeline.json', text: '{"disk":true}\n', eol: '\n' as const },
+    ])).toEqual(payload.timelines);
+    expect(values.has(autosaveStorageKey('physical-project'))).toBe(true);
+  });
+
+  it('存储键与 payload.projectId 不一致时 fail-closed', () => {
+    const values = installStorage();
+    values.set(autosaveStorageKey('project-a'), JSON.stringify({
+      dirName: 'game',
+      projectId: 'project-b',
+      savedAt: 4,
+      scenes: [{ key: 'scene', text: '不可读' }],
+    }));
+
+    expect(readAutosave('project-a')).toBeNull();
   });
 
   it('不自动读取或删除无法证明物理项目身份的旧版单槽快照', () => {
@@ -226,11 +272,11 @@ describe('autosave 项目隔离存储', () => {
     const legacy = { dirName: 'legacy', savedAt: 1, scenes: [{ key: 'a', text: 'dirty' }] };
     values.set(AUTOSAVE_KEY, JSON.stringify(legacy));
 
-    expect(readAutosave('other-id', 'other')).toBeNull();
-    expect(readAutosave('legacy-id', 'legacy')).toBeNull();
-    clearAutosave('other-id', 'other');
+    expect(readAutosave('other-id')).toBeNull();
+    expect(readAutosave('legacy-id')).toBeNull();
+    clearAutosave('other-id');
     expect(values.has(AUTOSAVE_KEY)).toBe(true);
-    clearAutosave('legacy-id', 'legacy');
+    clearAutosave('legacy-id');
     expect(values.has(AUTOSAVE_KEY)).toBe(true);
   });
 
@@ -255,17 +301,17 @@ describe('autosave 项目隔离存储', () => {
 });
 
 describe('pickRecoverable（恢复判定）', () => {
-  const payload = { dirName: 'proj', savedAt: 1, scenes: [{ key: 'a', text: '备份文本' }, { key: 'gone', text: 'x' }] };
+  const payload = { dirName: 'proj', projectId: 'project', savedAt: 1, scenes: [{ key: 'a', text: '备份文本' }, { key: 'gone', text: 'x' }] };
   const scenesOf = (text: string): Map<string, { text: string }> => new Map([['a', { text }]]);
 
   it('同项目且文本不同 → 可恢复；文本相同 → 不打扰', () => {
-    expect(pickRecoverable(payload, 'proj', scenesOf('磁盘文本'))).toEqual([{ key: 'a', text: '备份文本' }]);
-    expect(pickRecoverable(payload, 'proj', scenesOf('备份文本'))).toEqual([]);
+    expect(pickRecoverable(payload, 'project', scenesOf('磁盘文本'))).toEqual([{ key: 'a', text: '备份文本' }]);
+    expect(pickRecoverable(payload, 'project', scenesOf('备份文本'))).toEqual([]);
   });
 
   it('不同项目/无快照/场景已不存在 → 不恢复', () => {
-    expect(pickRecoverable(payload, '别的项目', scenesOf('磁盘文本'))).toEqual([]);
-    expect(pickRecoverable(null, 'proj', scenesOf('磁盘文本'))).toEqual([]);
-    expect(pickRecoverable(payload, 'proj', new Map())).toEqual([]); // gone/a 都不在内存
+    expect(pickRecoverable(payload, 'another-project', scenesOf('磁盘文本'))).toEqual([]);
+    expect(pickRecoverable(null, 'project', scenesOf('磁盘文本'))).toEqual([]);
+    expect(pickRecoverable(payload, 'project', new Map())).toEqual([]); // gone/a 都不在内存
   });
 });

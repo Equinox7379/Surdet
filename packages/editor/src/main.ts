@@ -206,7 +206,7 @@ bindProjectIoHooks({
       state.timelines,
     );
     if (pendingAutosaveTimelineConflicts.length === 0) {
-      clearAutosave(state.autosaveProjectId, state.dirName);
+      clearAutosave(state.autosaveProjectId);
     } else {
       const preserved = preserveAutosaveTimelineConflicts(
         null,
@@ -538,9 +538,9 @@ window.addEventListener('beforeunload', (e) => {
 /** 项目载入后检查同项目未保存快照：存在且与当前内存不同时询问恢复 */
 function tryAutosaveRecover(): void {
   if (!state.autosaveProjectId) return;
-  const payload = readAutosave(state.autosaveProjectId, state.dirName);
-  const recoverable = pickRecoverable(payload, state.dirName, state.scenes);
-  const recoverableTimelines = pickRecoverableTimelines(payload, state.dirName, state.timelines);
+  const payload = readAutosave(state.autosaveProjectId);
+  const recoverable = pickRecoverable(payload, state.autosaveProjectId, state.scenes);
+  const recoverableTimelines = pickRecoverableTimelines(payload, state.autosaveProjectId, state.timelines);
   if (recoverable.length === 0 && recoverableTimelines.length === 0) return;
   const when = new Date(payload!.savedAt).toLocaleString();
   const names = recoverable.map((e) => e.key).join('、');
@@ -551,7 +551,7 @@ function tryAutosaveRecover(): void {
   ].filter(Boolean).join('\n');
   if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}）：\n${details}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
     pendingAutosaveTimelineConflicts = [];
-    clearAutosave(state.autosaveProjectId, state.dirName);
+    clearAutosave(state.autosaveProjectId);
     return;
   }
   for (const e of recoverable) {
@@ -591,7 +591,7 @@ setInterval(() => {
     state.autosaveProjectId,
   );
   if (payload) writeAutosave(payload);
-  else clearAutosave(state.autosaveProjectId, state.dirName);
+  else clearAutosave(state.autosaveProjectId);
 }, AUTOSAVE_INTERVAL_MS);
 
 renderAll();
