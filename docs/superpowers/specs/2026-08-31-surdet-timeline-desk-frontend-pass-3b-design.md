@@ -195,7 +195,7 @@ Camera, screen and built-in particle cues can still use safe model defaults when
 export function createNeutralCue(
   kind: 'camera' | 'screen' | 'particle',
   action: string,
-): TimelineCue | null;
+): TimelineCueDraft | null;
 
 export interface TimelineCueDraft {
   cue: TimelineCue;
