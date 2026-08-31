@@ -328,7 +328,7 @@ Run workspace contract, typecheck and Editor build. Expected: no missing stylesh
 
 The original draft proposed a dedicated 22-node Playwright runner. The Owner explicitly chose to perform the browser acceptance personally. Because this is a B-level frontend presentation change rather than a public-state or persistence-contract change, this plan accepts focused automated contracts plus Owner visual acceptance and removes the unimplemented runner contract instead of leaving a permanent red test or manufacturing a second browser framework.
 
-- [ ] **Step 1: Inspect the wide configuration workbench**
+- [x] **Step 1: Inspect the wide configuration workbench**
 
 Open the real Starter, enter `配置`, and confirm eight Chinese sections, one active section, normal-flow actions, default-hidden technical names and no colored rails, decorative outer rules or legacy stacked cards.
 
@@ -340,7 +340,7 @@ Narrow the window and confirm the section directory becomes a horizontal local s
 
 Confirm the map remains readable and use drag plus undo/redo without saving. The Owner must not write to the original Starter during visual acceptance.
 
-- [ ] **Step 4: Record only the Owner's actual verdict**
+- [x] **Step 4: Record only the Owner's actual verdict**
 
 Do not infer acceptance from screenshots or automated tests. Record `PASS`, `NEEDS_FIX` or the exact observed issue.
 
@@ -379,7 +379,7 @@ feat(editor): rebuild configuration ledger
 
 Set the exact commit as `CODE_EVIDENCE_HEAD`. Tracked worktree and staging must be clean before FORMAL.
 
-- [ ] **Step 3: Stop for independent review**
+- [x] **Step 3: Stop for independent review**
 
 Append exact files, tests, Owner-reported facts, known limitations and Git state. Do not push or start Pass 5.
 
@@ -403,6 +403,33 @@ FRONTEND_PASS_5 = NOT_STARTED
 MAINLINE_WAVE_7 = NOT_STARTED
 ```
 
+### 2026-08-31 — Owner visual acceptance and Pass 4 closure
+
+**OWNER-REPORTED FACTS**
+
+- The Owner explicitly reported: `人工审阅修改后的页面，通过` after the decorative top rule, Chinese-first projection and typography follow-up were visible.
+- This is authoritative visual acceptance of the wide Configuration Ledger at latest code evidence `6ab44b419cc51f2e46f04b21f0ccedf25a5f491f`.
+- The Owner did not separately report a compact-width run or calendar drag/undo interaction in this acceptance message. Those unchecked interaction steps are not silently converted into automated or Owner evidence.
+
+**NEXT AUTHORIZED ORDER**
+
+1. Independent repair gate `CI_PORTABILITY_RESTORE`: repair clean Ubuntu checkout tool-test portability and restore the remote CI signal; push remains separately gated.
+2. Independent repair gate `TIMELINE_AUTOSAVE_IDENTITY_FAIL_CLOSED`: reject same-file/different-ID and mismatched internal timeline identity during restore.
+3. Independent repair gate `REVIEW_TERMINAL_ATOMICITY`: design and implement one cross-context/cross-process terminal receipt authority; a browser-local lock alone is insufficient.
+4. After the three gates reach reviewed closure, the first new product-capability target is `ASSET_CENTER`. It begins with design/specification, not implementation by analogy.
+
+```text
+FRONTEND_PASS_4 = OWNER_VISUAL_ACCEPTANCE_PASS
+LATEST_CODE_EVIDENCE_HEAD = 6ab44b419cc51f2e46f04b21f0ccedf25a5f491f
+COMPACT_OWNER_CHECK = NOT_SEPARATELY_REPORTED
+CALENDAR_INTERACTION_OWNER_CHECK = NOT_SEPARATELY_REPORTED
+THREE_REMOTE_AUDIT_REPAIR_GATES = AUTHORIZED_SEQUENTIALLY
+FIRST_NEW_CAPABILITY_TARGET = ASSET_CENTER
+PUSH = NOT_AUTHORIZED
+FRONTEND_PASS_5 = NOT_STARTED
+MAINLINE_WAVE_7 = NOT_STARTED
+```
+
 ### 2026-08-31 — Owner typography and Chinese-first follow-up
 
 - Owner accepted removal of the decorative rail directionally, then reported that the Configuration Ledger still looked compressed: labels were too small and technical keys were concatenated directly after Chinese text.
@@ -416,6 +443,21 @@ PASS_4_CHINESE_FIRST_FOLLOW_UP = FOCUSED_GREEN
 LETSGAL_REFERENCE = SCALE_AND_HIERARCHY_ONLY
 OWNER_VISUAL_ACCEPTANCE = NEEDS_RECHECK
 PUSH = NOT_AUTHORIZED
+```
+
+### 2026-08-31 — Chinese-first follow-up freeze
+
+- Follow-up commit: `6ab44b419cc51f2e46f04b21f0ccedf25a5f491f` (`fix(editor): improve configuration readability`).
+- Parent code evidence: `eddd358fc000af32ae68a319dad87c60f8a03020`; no amend or history rewrite was used.
+- Exact follow-up scope: `config.ts`, `config-workspace.css`, the existing workspace contract, this taskbook and the canonical frontend design specification.
+- Fresh gates: Editor 52 files / 378 tests PASS; Editor typecheck PASS; Editor build PASS (908 modules, existing chunk warning only); `verify:docs` and both diff checks PASS.
+- Live local Editor remains available on port 4175; port 4173 remains unused by Surdet.
+
+```text
+FRONTEND_PASS_4_LATEST_CODE_EVIDENCE = 6ab44b419cc51f2e46f04b21f0ccedf25a5f491f
+WAITING_FOR_OWNER_VISUAL_RECHECK = YES
+PUSH = NOT_AUTHORIZED
+REMOTE_AUDIT_REMEDIATION = NOT_STARTED
 ```
 
 ### 2026-08-31 — Code evidence freeze
