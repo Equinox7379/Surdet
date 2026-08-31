@@ -144,8 +144,10 @@ test('Frontend Pass 3B runner settles the Preview iframe before intentional navi
   assert.match(source, /canvasCount: document\.querySelectorAll\('#preview-root canvas'\)\.length/);
   assert.match(source, /previewFrameEvidence\.readySignal/);
   assert.match(source, /replayPreservedTimelineId/);
-  assert.match(source, /previewTrace\?\.length > 0/);
+  assert.match(source, /initialTimelineTraceEvidence/);
+  assert.match(source, /event\.source\?\.op === 'timeline'/);
   assert.match(source, /replayTraceEventCount/);
+  assert.match(source, /replayTimelineInstructionCount/);
   assert.doesNotMatch(source, /requestFailures\s*=\s*requestFailures\.filter|ERR_ABORTED.*(?:ignore|allow|whitelist)/i);
 });
 

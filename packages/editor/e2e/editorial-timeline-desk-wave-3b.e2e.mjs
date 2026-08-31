@@ -1151,26 +1151,37 @@ async function run() {
           && previewFrameEvidence.readySignal,
         'preview iframe module graph/runtime did not settle',
       );
+      await firstPage.waitForFunction((id) => (
+        window.surdetEditorDebug?.state?.previewTimelineId === id
+          && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
+      ), editedTimelineId, { timeout: 10_000 });
+      const initialTimelineTraceEvidence = await firstPage.evaluate(() => ({
+        eventCount: window.surdetEditorDebug.state.previewTrace.length,
+        timelineInstructionCount: window.surdetEditorDebug.state.previewTrace.filter((event) => event.source?.op === 'timeline').length,
+      }));
       await firstPage.getByRole('button', { name: '▶ 播放 / 重载', exact: true }).click();
       await firstPage.waitForFunction((id) => (
         window.surdetEditorDebug?.state?.mainTab === 'preview'
           && window.surdetEditorDebug?.state?.previewTimelineId === id
-          && window.surdetEditorDebug?.state?.previewTrace?.length > 0
+          && window.surdetEditorDebug?.state?.previewTrace?.some((event) => event.source?.op === 'timeline')
       ), editedTimelineId, { timeout: 10_000 });
       const previewHandoff = await firstPage.evaluate(() => ({
         mainTab: window.surdetEditorDebug.state.mainTab,
         previewTimelineId: window.surdetEditorDebug.state.previewTimelineId,
         replayTraceEventCount: window.surdetEditorDebug.state.previewTrace.length,
+        replayTimelineInstructionCount: window.surdetEditorDebug.state.previewTrace.filter((event) => event.source?.op === 'timeline').length,
         previewViewCount: document.querySelectorAll('#preview-view').length,
         timelineViewCount: document.querySelectorAll('#timeline-view').length,
         projectBar: document.querySelector('.editor-current-object')?.textContent ?? null,
       }));
       previewHandoff.previewFrame = previewFrameEvidence;
+      previewHandoff.initialTimelineTrace = initialTimelineTraceEvidence;
       previewHandoff.replayPreservedTimelineId = previewHandoff.previewTimelineId === editedTimelineId;
       assert(previewHandoff.previewViewCount === 1 && previewHandoff.timelineViewCount === 0, 'preview handoff duplicated Timeline/Preview surfaces');
       assert(previewHandoff.projectBar === `时间轴 ${editedTimelineId}`, 'Preview project bar lost selected Timeline identity');
       assert(previewHandoff.replayPreservedTimelineId, 'Preview replay lost selected Timeline identity');
       assert(previewHandoff.replayTraceEventCount > 0, 'Preview replay did not reach a fresh runtime trace event');
+      assert(previewHandoff.replayTimelineInstructionCount > 0, 'Preview replay did not execute the direct Timeline instruction');
       pass('selected-timeline-preview-handoff', previewHandoff);
       await firstPage.locator('[data-editor-mode="timeline"]').click();
       await firstPage.locator('#timeline-view .timeline-shell').waitFor({ state: 'visible' });
