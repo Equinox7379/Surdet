@@ -1,8 +1,8 @@
 # Review Terminal Atomicity Design
 
-**Date:** 2026-09-01  
-**Gate:** `REVIEW_TERMINAL_ATOMICITY`  
-**Status:** Owner-approved design; implementation not started  
+**Date:** 2026-09-01
+**Gate:** `REVIEW_TERMINAL_ATOMICITY`
+**Status:** Owner-approved design; implementation not started
 **Predecessor:** `TIMELINE_AUTOSAVE_IDENTITY_FAIL_CLOSED_LOCAL_REVIEWED_CLOSURE`
 
 ## 1. Decision summary
@@ -426,11 +426,13 @@ Node authority and storage:
 
 - Modify `packages/cli/src/authoring/node-local-lease.ts`.
 - Modify `packages/cli/src/authoring/node-review-store.ts`.
+- Modify `packages/cli/src/authoring/review-service.ts` to export the existing projection parser for authority reuse.
 - Create `packages/cli/src/authoring/review-terminal-authority.ts`.
 - Create `packages/cli/src/review-authority/http-handler.ts`.
 - Create `packages/cli/src/review-authority/vite-plugin.ts`.
 - Modify `packages/cli/test/node-local-lease.test.ts`.
 - Modify `packages/cli/test/node-review-store.test.ts`.
+- Modify `packages/cli/test/review-service.test.ts`.
 - Create `packages/cli/test/review-terminal-authority.test.ts`.
 - Create `packages/cli/test/review-authority-http.test.ts`.
 - Create `packages/cli/test/fixtures/review-terminal-worker.mjs`.
