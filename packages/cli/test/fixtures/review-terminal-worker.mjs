@@ -41,12 +41,26 @@ async function main() {
   const projectIdentity = requiredString(command, 'projectIdentity');
   const reviewId = requiredString(command, 'reviewId');
   const action = requiredString(command, 'action');
-  if (!isRecord(command.receipt)) throw new Error('missing receipt');
-  const { NodeReviewStore } = await import(new URL('../../dist/authoring/node-review-store.js', import.meta.url));
-  const store = new NodeReviewStore(path.join(dataRoot, projectIdentity), projectIdentity);
   await waitForPeer(path.join(dataRoot, '.review-terminal-worker', reviewId));
 
   try {
+    if (action === 'authority') {
+      if (!isRecord(command.terminalCommand)) throw new Error('missing terminalCommand');
+      const { ReviewTerminalAuthority } = await import(new URL('../../dist/authoring/review-terminal-authority.js', import.meta.url));
+      const authority = new ReviewTerminalAuthority(dataRoot);
+      const snapshot = await authority.write(command.terminalCommand);
+      if (!isRecord(snapshot.record)) throw new Error('authority response is missing canonical record');
+      process.stdout.write(JSON.stringify({
+        status: 'written',
+        boundary: 'ReviewTerminalAuthority',
+        snapshot,
+        identity: { bytes: snapshot.record.bytes, sha256: snapshot.record.sha256 },
+      }));
+      return;
+    }
+    if (!isRecord(command.receipt)) throw new Error('missing receipt');
+    const { NodeReviewStore } = await import(new URL('../../dist/authoring/node-review-store.js', import.meta.url));
+    const store = new NodeReviewStore(path.join(dataRoot, projectIdentity), projectIdentity);
     const identity = action === 'decision'
       ? await store.createDecision(reviewId, command.receipt)
       : action === 'approval'

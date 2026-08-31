@@ -25,6 +25,7 @@ import {
   type ReviewWorkspaceIdentity,
   type ReviewWorkspaceState,
 } from '../src/review-workspace.js';
+import { refreshReviewFixtureIdentity } from '../src/review-preview.js';
 import {
   ReviewAuthorityClientError,
   type ReviewTerminalClient,
@@ -644,6 +645,25 @@ describe('Editor review workspace', () => {
     loaded.fixtureChanged = true;
 
     await expect(writeApprovalReceipt(loaded, { approvalId: 'approval-stale' }, '2026-09-01T00:00:00.000Z'))
+      .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
+    expect(authority.commands).toHaveLength(0);
+  });
+
+  it('re-reads the result fixture from disk immediately before approval', async () => {
+    const root = new MemoryDirectory('authority-live-result-root');
+    roots.push(root);
+    installWorkspace(root, resultProjection());
+    const result = root.entries.get('result') as MemoryDirectory;
+    const project = result.directory('project');
+    const scene = project.file('scene.json', '{"line":"official"}\n');
+    const authority = authorityFor(root);
+    const loaded = await openWorkspace(root, authority);
+    await refreshReviewFixtureIdentity(loaded);
+    loaded.officialResultTreeSha256 = loaded.currentResultTreeSha256;
+    loaded.fixtureChanged = false;
+    scene.text = '{"line":"changed-outside-this-window"}\n';
+
+    await expect(writeApprovalReceipt(loaded, { approvalId: 'approval-live-stale' }, '2026-09-01T00:00:00.000Z'))
       .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
     expect(authority.commands).toHaveLength(0);
   });

@@ -14,7 +14,9 @@ import {
   assertFormalPreconditions,
   blockingRunIssues,
   parseMode,
+  prepareFixtures,
   readFileIdentity,
+  unexpectedTerminalFiles,
   validateEvidenceContract,
   verifyFileIdentity,
 } from '../e2e/review-terminal-atomicity-gate.e2e.mjs';
@@ -22,7 +24,9 @@ import {
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDirectory, '../../..');
 const runnerPath = path.resolve(testDirectory, '../e2e/review-terminal-atomicity-gate.e2e.mjs');
+const workerPath = path.resolve(testDirectory, 'fixtures/review-terminal-worker.mjs');
 const source = fs.readFileSync(runnerPath, 'utf8');
+const workerSource = fs.readFileSync(workerPath, 'utf8');
 const runHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 const runnerSha256 = crypto.createHash('sha256').update(fs.readFileSync(runnerPath)).digest('hex');
 
@@ -129,6 +133,13 @@ test('review terminal runner validates structured FORMAL evidence instead of sou
     starterMutation: false,
     channels: emptyChannels(),
     milestones: MILESTONE_IDS.map((id, index) => ({ ordinal: index + 1, id, status: 'PASSED' })),
+    formal: {
+      processRaceBoundary: 'ReviewTerminalAuthority',
+      idempotentRetryBoundary: 'ReviewTerminalAuthority',
+      sourceStateBefore: { files: 3, bytes: 42, sha256: '1'.repeat(64) },
+      sourceStateAfter: { files: 3, bytes: 42, sha256: '1'.repeat(64) },
+      unexpectedTerminalFiles: [],
+    },
   };
   assert.equal(validateEvidenceContract(evidence), true);
   assert.throws(() => validateEvidenceContract({ ...evidence, agentWriterCapabilities: ['review.write-decision'] }), /Agent writer capability/);
@@ -137,6 +148,55 @@ test('review terminal runner validates structured FORMAL evidence instead of sou
     ...evidence, channels: { ...emptyChannels(), protocolErrors: ['bad envelope'] },
   }), /blocking issue channels/);
   assert.throws(() => validateEvidenceContract({ ...evidence, milestones: evidence.milestones.slice(0, -1) }), /milestone count mismatch/);
+  assert.throws(() => validateEvidenceContract({
+    ...evidence,
+    formal: { ...evidence.formal, processRaceBoundary: 'NodeReviewStore' },
+  }), /process races must use ReviewTerminalAuthority/);
+  assert.throws(() => validateEvidenceContract({
+    ...evidence,
+    formal: { ...evidence.formal, sourceStateAfter: { ...evidence.formal.sourceStateAfter, sha256: '2'.repeat(64) } },
+  }), /source change evidence was mutated/);
+  assert.throws(() => validateEvidenceContract({
+    ...evidence,
+    formal: { ...evidence.formal, unexpectedTerminalFiles: ['terminal.json'] },
+  }), /unexpected terminal files/);
+});
+
+test('review terminal runner exercises the canonical Authority and preserves seeded source evidence', () => {
+  assert.match(workerSource, /ReviewTerminalAuthority/);
+  assert.match(workerSource, /authority\.write\(command\.terminalCommand\)/);
+  assert.match(source, /terminalCommand:/);
+  assert.match(source, /processRaceBoundary:\s*'ReviewTerminalAuthority'/);
+  assert.match(source, /idempotentRetryBoundary:\s*'ReviewTerminalAuthority'/);
+  for (const phrase of [
+    'NodeChangeStore.forProject',
+    'beginChange',
+    'writeCapsulePayload',
+    'manifest.json',
+    'record-head.json',
+    'unexpectedTerminalFiles',
+    'sourceStateBefore',
+    'sourceStateAfter',
+  ]) assert.ok(source.includes(phrase), `missing seeded source evidence contract: ${phrase}`);
+});
+
+test('review terminal runner creates a valid V2 change and rejects extra terminal files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-runner-source-contract-'));
+  try {
+    const fixtures = await prepareFixtures(root);
+    for (const relativePath of [
+      'manifest.json',
+      'record-head.json',
+      'capsules/cap_source_canary/payload.json',
+      'capsules/cap_source_canary/identity.json',
+    ]) assert.equal(fs.existsSync(path.join(fixtures.sourceStateRoot, ...relativePath.split('/'))), true);
+    const reviewRoot = fixtures.reviews.comparisonRace.reviewRoot;
+    assert.deepEqual(unexpectedTerminalFiles(reviewRoot), []);
+    fs.writeFileSync(path.join(reviewRoot, 'terminal.json'), '{"forbidden":true}\n', 'utf8');
+    assert.deepEqual(unexpectedTerminalFiles(reviewRoot), ['terminal.json']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('review terminal runner uses exclusive artifacts and real receipt/payload identities', () => {

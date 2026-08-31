@@ -39,6 +39,8 @@ import type { ReviewTerminalClient } from '../review-terminal-client.js';
 export interface ReviewPanelOptions {
   now?: () => string;
   onPreview?: (workspace: ReviewWorkspaceState, request: ReviewPreviewRequest) => Promise<void> | void;
+  onReloadOfficialResult?: (workspace: ReviewWorkspaceState) => Promise<void> | void;
+  onRefreshFixtureIdentity?: (workspace: ReviewWorkspaceState) => Promise<unknown> | unknown;
   reviewTerminalClient?: ReviewTerminalClient;
 }
 
@@ -194,6 +196,7 @@ const decisionSealStates = new WeakMap<ReviewWorkspaceState, DecisionSealState>(
 const decisionWrites = new WeakSet<ReviewWorkspaceState>();
 const resultWrites = new WeakSet<ReviewWorkspaceState>();
 const resultPreviews = new WeakSet<ReviewWorkspaceState>();
+const resultFixtureOperations = new WeakSet<ReviewWorkspaceState>();
 
 function appendAuthorityStatus(container: HTMLElement, workspace: ReviewWorkspaceState): void {
   if (workspace.authority.state === 'available') return;
@@ -703,6 +706,7 @@ function renderResultReview(
   const pendingTerminalAction = pendingTerminalActionOf(workspace);
   const resultWriteLocked = resultWrites.has(workspace);
   const resultPreviewLocked = resultPreviews.has(workspace);
+  const resultFixtureLocked = resultFixtureOperations.has(workspace);
   const shell = h('div', 'review-workbench');
   const taskList = h('aside', 'review-task-list');
   taskList.appendChild(h('h2', undefined, '审阅任务'));
@@ -736,9 +740,9 @@ function renderResultReview(
   const previewButton = h('button', 'primary', '预览这个结果') as HTMLButtonElement;
   previewButton.setAttribute('data-action', 'preview-result');
   previewButton.setAttribute('data-action-scope', 'workspace');
-  previewButton.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
+  previewButton.disabled = resultWriteLocked || resultPreviewLocked || resultFixtureLocked || pendingTerminalAction !== null;
   previewButton.onclick = () => {
-    if (resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
+    if (resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
     resultPreviews.add(workspace);
     previewButton.disabled = true;
     approve.disabled = true;
@@ -798,11 +802,12 @@ function renderResultReview(
     || !authorityWritable
     || resultWriteLocked
     || resultPreviewLocked
+    || resultFixtureLocked
     || pendingTerminalAction === 'result-return'
     || workspace.fixtureChanged
     || !resultEvidenceIsFresh(result);
   approve.onclick = () => {
-    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalAction === 'result-return' || approve.disabled) return;
+    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalAction === 'result-return' || approve.disabled) return;
     resultWrites.add(workspace);
     approve.disabled = true;
     returned.disabled = true;
@@ -825,9 +830,9 @@ function renderResultReview(
   const returned = h('button', 'danger', '退回修改') as HTMLButtonElement;
   returned.setAttribute('data-action', 'return-result');
   returned.setAttribute('data-action-scope', 'workspace');
-  returned.disabled = terminalReceipt || !authorityWritable || resultWriteLocked || resultPreviewLocked || pendingTerminalAction === 'result-approval';
+  returned.disabled = terminalReceipt || !authorityWritable || resultWriteLocked || resultPreviewLocked || resultFixtureLocked || pendingTerminalAction === 'result-approval';
   returned.onclick = () => {
-    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || pendingTerminalAction === 'result-approval' || returned.disabled) return;
+    if (!authorityWritable || terminalReceipt || resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalAction === 'result-approval' || returned.disabled) return;
     resultWrites.add(workspace);
     approve.disabled = true;
     returned.disabled = true;
@@ -850,14 +855,37 @@ function renderResultReview(
   const reload = h('button', undefined, '重新加载正式结果') as HTMLButtonElement;
   reload.setAttribute('data-action', 'reload-official-result');
   reload.setAttribute('data-action-scope', 'workspace');
-  reload.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
+  reload.disabled = resultWriteLocked || resultPreviewLocked || resultFixtureLocked || pendingTerminalAction !== null;
   reload.onclick = () => {
-    void restoreOfficialResult(workspace)
+    if (resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
+    resultFixtureOperations.add(workspace);
+    approve.disabled = true;
+    returned.disabled = true;
+    previewButton.disabled = true;
+    reload.disabled = true;
+    refresh.disabled = true;
+    let operation: Promise<unknown> | unknown;
+    try {
+      operation = options.onReloadOfficialResult
+        ? options.onReloadOfficialResult(workspace)
+        : restoreOfficialResult(workspace);
+    } catch (error) {
+      resultFixtureOperations.delete(workspace);
+      renderReviewPanel(container, workspace, options);
+      setStatus(`重新加载正式结果失败：${errorMessage(error)}`, false, 6000);
+      return;
+    }
+    void Promise.resolve(operation)
       .then(() => {
+        resultFixtureOperations.delete(workspace);
         setStatus('已重新加载正式结果', true, 4000);
         renderReviewPanel(container, workspace, options);
       })
-      .catch((error) => setStatus(`重新加载正式结果失败：${errorMessage(error)}`, false, 6000));
+      .catch((error) => {
+        resultFixtureOperations.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+        setStatus(`重新加载正式结果失败：${errorMessage(error)}`, false, 6000);
+      });
   };
   operations.appendChild(reload);
   main.appendChild(operations);
@@ -866,11 +894,36 @@ function renderResultReview(
   const refresh = h('button', undefined, '检查探索修改') as HTMLButtonElement;
   refresh.setAttribute('data-action', 'refresh-result-tree');
   refresh.setAttribute('data-action-scope', 'workspace');
-  refresh.disabled = resultWriteLocked || resultPreviewLocked || pendingTerminalAction !== null;
+  refresh.disabled = resultWriteLocked || resultPreviewLocked || resultFixtureLocked || pendingTerminalAction !== null;
   refresh.onclick = () => {
-    void refreshReviewFixtureIdentity(workspace)
-      .then(() => renderReviewPanel(container, workspace, options))
-      .catch((error) => setStatus(`检查预览文件失败：${errorMessage(error)}`, false, 6000));
+    if (resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
+    resultFixtureOperations.add(workspace);
+    approve.disabled = true;
+    returned.disabled = true;
+    previewButton.disabled = true;
+    reload.disabled = true;
+    refresh.disabled = true;
+    let operation: Promise<unknown> | unknown;
+    try {
+      operation = options.onRefreshFixtureIdentity
+        ? options.onRefreshFixtureIdentity(workspace)
+        : refreshReviewFixtureIdentity(workspace);
+    } catch (error) {
+      resultFixtureOperations.delete(workspace);
+      renderReviewPanel(container, workspace, options);
+      setStatus(`检查预览文件失败：${errorMessage(error)}`, false, 6000);
+      return;
+    }
+    void Promise.resolve(operation)
+      .then(() => {
+        resultFixtureOperations.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+      })
+      .catch((error) => {
+        resultFixtureOperations.delete(workspace);
+        renderReviewPanel(container, workspace, options);
+        setStatus(`检查预览文件失败：${errorMessage(error)}`, false, 6000);
+      });
   };
   main.appendChild(refresh);
   appendTechDetails(main, projection);

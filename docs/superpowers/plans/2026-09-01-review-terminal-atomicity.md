@@ -762,7 +762,7 @@ Do not run FORMAL until Task 8 freezes the reviewed code evidence head.
 - Consumes: Tasks 1–7 commits.
 - Produces: reviewed `CODE_EVIDENCE_HEAD`, one FORMAL artifact, proportionate full gates, one aggregate result, docs-only closeout, and no push.
 
-- [ ] **Step 1: Run all focused suites before secondary review**
+- [x] **Step 1: Run all focused suites before secondary review**
 
 ```powershell
 npm run test -w @surdet/authoring -- --run test/review-terminal.test.ts test/error-catalog.test.ts test/review-receipts.test.ts
@@ -770,7 +770,7 @@ npm run test -w @surdet/cli -- --run test/node-local-lease.test.ts test/node-rev
 npm run test -w surdet-editor -- --run test/review-terminal-client.test.ts test/review-workspace.test.ts test/review-panel.test.ts test/review-authority-boundary.test.ts
 ```
 
-- [ ] **Step 2: Perform pre-aggregate manager and bounded secondary review**
+- [x] **Step 2: Perform pre-aggregate manager and bounded secondary review**
 
 Review the complete design-to-HEAD range for:
 
@@ -926,6 +926,13 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 7 runner implementation: the fixed runner supports only `--preflight` and `--formal`; scans strict `127.0.0.1` ports 4260–4269 while forbidding 4173/4175; creates an exclusive temp artifact; binds the Vite authority to the isolated data root; uses real Node workers and independent browser contexts; compares winner receipt bytes/SHA/content to disk; verifies immutable review payload and identity sidecars, project tree, complete Starter tree, process/lease cleanup, static read-only behavior, token/origin/payload rejection, and an empty Agent writer capability set. Setup, milestone, validation, stderr, protocol, and child-exit failures all remain artifact-producing failure paths.
 - Task 7 prerequisite builds: Authoring build, CLI build, and Editor build exited `0`. Editor emitted only the existing chunk-size advisory.
 - Task 7 unique preflight: exactly one `--preflight` run exited `0` with `status=PASSED`. It used ports `4260,4261`, two real probe workers, two browser contexts, zero terminal files, `agentWriterCapabilities=[]`, `projectMutation=false`, `starterMutation=false`, and eight empty error/cleanup/lease channels. Evidence: `<local-path>`, 2487 bytes, SHA-256 `4471016EDCCF47856CC3B2D8445227C45F3A3603EEE606AE0FAB5E77AE2143E8`; identity sidecar 100 bytes, SHA-256 `3DD6C3C4E344883A0C328E3EC6A167DA678F615EE1E6DC5961997DB9B527081E`. The runner SHA recorded by the artifact is `1DA79F0CAAFCC07DC35A1CC36C03B769699BAD834503C1CC28A81850B89C677F` at `runHead=18c564e3a75e1fe8fd696d201791404e02ae257e`.
+- Task 8 initial focused suites passed: Authoring 32/32, CLI 77/77, and Editor 56/56. Three bounded read-only Luna reviews then examined backend/security, Editor/browser behavior, and Runner/evidence coverage; the manager retained implementation and final gate ownership.
+- Task 8 independent-review correction: the earlier Task 6 Ledger statement that reload and fixture-refresh were already mutually exclusive in both directions was too strong. Source review proved those handlers disabled competing operations only when another operation started first; starting reload/refresh first left approval, return, and preview reachable. The corrected permanent Editor RED passed 48/51 and failed exactly the two reverse-operation cases plus one live-disk approval freshness case.
+- Task 8 Editor finding GREEN: one workspace-scoped fixture-operation lock now guards preview, approval, return, restore, and refresh in both handler guards and disabled state. Sync throws and async rejections release the lock before rerender. Approval with a real project handle re-reads the result tree immediately before authority submission and rejects unreadable or changed evidence with `REVIEW_APPROVAL_STALE`. The focused Editor pair passed 51/51; the final four-file Editor gate passed 59/59; typecheck and build exited `0`, with only the existing chunk-size advisory.
+- Task 8 Runner finding RED: the first strengthened contract passed 7/9 and failed because independent workers and idempotent retry still bypassed `ReviewTerminalAuthority`, and because no real source evidence baseline existed. A second exact RED also passed 7/9 and proved that a synthetic three-file canary and canonical-file-only checks could not establish a valid V2 change/capsule or reject an extra `terminal.json`.
+- Task 8 Runner finding GREEN: both Node races now submit full immutable commands through independent `ReviewTerminalAuthority` instances; identical retry also traverses Authority and binds the returned canonical record to disk bytes/SHA. Fixture setup uses `NodeChangeStore.forProject()` plus `beginChange()` to create a valid V2 integration change, then `writeCapsulePayload()` under the real change lease to create payload and identity sidecar. Its complete tree identity is equal before/after. Review-root top-level JSON uses an explicit allowlist, so `terminal.json` or any other extra JSON is blocking. The executable contract passed 10/10 and the final six-file CLI gate passed 79/79; CLI typecheck/build and both Runner/worker syntax checks exited `0`.
+- Task 8 final focused rerun passed Authoring 32/32, CLI 79/79, and Editor 59/59. All three post-fix Luna reviews reported no remaining concrete `HIGH` or `BLOCKER`. The known non-blocking boundary is explicit: Editor fixture-operation locks are scoped to one workspace object, while approval freshness is re-read from disk; this gate does not claim a cross-browser project-file transaction lock.
+- Task 8 evidence identity boundary: the Task 7 preflight artifact remains preserved and valid for its recorded old Runner SHA only. It is not evidence for the reviewed Runner now at 63114 bytes / SHA-256 `D8128A09491C2D7E3B79C5CEA4AFC37F85BB062EACE2F22BC4AA9679A87C956E`. No replacement preflight was run. The current Runner must be proved by the single frozen-HEAD FORMAL; FORMAL remains unconsumed at this point.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED
