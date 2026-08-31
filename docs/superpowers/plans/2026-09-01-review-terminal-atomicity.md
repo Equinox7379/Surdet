@@ -786,7 +786,7 @@ Review the complete design-to-HEAD range for:
 
 Any concrete finding is corrected now with its own focused RED→GREEN and exact commit. Do not defer a confirmed finding until after aggregate verification.
 
-- [ ] **Step 3: Freeze CODE_EVIDENCE_HEAD**
+- [x] **Step 3: Freeze CODE_EVIDENCE_HEAD**
 
 Require:
 
@@ -801,7 +801,7 @@ long-term ledger and protected files remain unstaged
 
 Record `CODE_EVIDENCE_HEAD=$(git rev-parse HEAD)` in the Execution Ledger.
 
-- [ ] **Step 4: Run one FORMAL runner at frozen HEAD**
+- [x] **Step 4: Run one FORMAL runner at frozen HEAD**
 
 ```powershell
 $env:SURDET_CODE_EVIDENCE_HEAD = (git rev-parse HEAD)
@@ -871,6 +871,39 @@ FRONTEND_PASS_5 = NOT_STARTED
 WAVE_7 = NOT_STARTED
 ```
 
+### Task 8 FORMAL failure stop — 2026-09-01
+
+- Task 8 exact finding commit: `6a7a868882e1fa123df989304424a725692d50f1` (`fix(authoring): harden review terminal closure`), parent `1410f72a616fc9eb7685f131069e1f7600d0d12f`, exact eight-path staged set, both diff checks exit `0`. This commit is the frozen `CODE_EVIDENCE_HEAD`; tracked worktree and staging were empty before FORMAL.
+- The single FORMAL allowance was consumed exactly once and exited `1`. All 15 ordered milestones reported `PASSED`, including both Authority process races, idempotent retry, two-browser race, canonical reopen, valid V2 source change/capsule preservation, no extra terminal JSON, complete project/Starter preservation, and process/lease cleanup.
+- FORMAL nevertheless failed at the post-milestone `evidence-contract` validation. The browser's two expected losing writes each returned the required `409 Conflict`, but Chromium also emitted one `Failed to load resource: the server responded with a status of 409 (Conflict)` console message per context. The Runner recorded both in `consoleErrors`; the global contract correctly refused to relabel a non-empty issue channel as success. This is confirmed as an evidence-classification failure after the intended 409 behavior, not a product-success claim and not evidence that the 409 itself was unexpected.
+- Failure channels: `errors=1` (`evidence contains blocking issue channels`), `consoleErrors=2`; protocol, page, request, stderr, child cleanup, and active review lease channels were all `0`. `projectMutation=false`, `starterMutation=false`, `trackedCodeDiffPaths=[]`, `stagingPaths=[]`, and `runHead===CODE_EVIDENCE_HEAD`.
+- Failure evidence: `<local-path>`, 51367 bytes, SHA-256 `8FABA77D134A8CAD4D77F6535E2CA8C755B13D8C536A264B0734DB121E5C74D7`; identity sidecar 101 bytes, SHA-256 `47EA2D1D8EA8A55B14275F400D854B21287669D5FDAFCC706A4B651B4D89E873`. Artifact Runner SHA-256 is `D8128A09491C2D7E3B79C5CEA4AFC37F85BB062EACE2F22BC4AA9679A87C956E`.
+- Per the one-run rule, no source/test repair, replacement FORMAL, workspace full gate, `verify:all`, closeout commit, push, deployment, Asset Center, Frontend Pass 5, or Wave 7 was started after this failure.
+
+```text
+REVIEW_TERMINAL_ATOMICITY_FORMAL = FAILED_AT_EVIDENCE_CONTRACT
+FORMAL_MILESTONES = 15/15 PASSED
+FORMAL_BUDGET = 1/1 CONSUMED
+FIRST_FAILED_NODE = evidence-contract
+FULL_GATES = NOT_RUN
+VERIFY_ALL = NOT_RUN
+PUSH = NOT_PERFORMED
+ASSET_CENTER = NOT_STARTED
+FRONTEND_PASS_5 = NOT_STARTED
+WAVE_7 = NOT_STARTED
+WAITING_FOR_NEW_MANAGER_AUTHORIZATION = YES
+```
+
+### REVIEW-TERMINAL-ATOMICITY-FORMAL-CONSOLE-409-RECOVERY-1
+
+- Owner continuation authorization: on 2026-09-01 the owner explicitly authorized the General Manager to continue design, taskbook work, implementation, bounded Luna review, ledger closure, and ordinary push without further pauses except for a genuinely severe or destructive incident. This newer instruction authorizes this recovery, one replacement FORMAL, the already-planned serial full gates and single `verify:all` if FORMAL passes, docs/ledger closeout, and ordinary push after final review. It does not authorize force-push, history rewriting, destructive cleanup, deployment, Asset Center, Frontend Pass 5, or Wave 7.
+- Recovery scope is exact: modify only this taskbook, `packages/cli/e2e/review-terminal-atomicity-gate.e2e.mjs`, and `packages/cli/test/review-terminal-atomicity-runner.test.mjs`. The original FORMAL remains `1/1 CONSUMED_AND_FAILED`; this recovery adds one replacement FORMAL and does not rewrite or replace the old artifact.
+- Classification invariant: a browser console error may move out of the blocking channel only when it is the exact Chromium-native `409 (Conflict)` resource message and is bound one-to-one to a separately proved Authority rejection with the same page label, exact full strict-loopback URL, `POST`, status `409`, allowed route and allowed business code. The proof also requires an exact `{ ok, error }` failure envelope, bounded non-control-character message, exact write/describe request keys, and matching project/review/payload identity. Wrong status/code/route/label/text/origin/port/query, missing URL, script-generated messages, unproved responses, malformed request/envelope evidence, and duplicate events remain blocking. Request failures, protocol errors, page errors, stderr, cleanup failures, and lease failures are untouched.
+- First recovery RED/GREEN: the focused Runner contract passed 10/11 and failed exactly because `classifyBrowserConsoleErrors` did not exist, then passed 11/11 after the strict one-to-one classifier and its negative controls were added. No production test or previous milestone regressed.
+- Independent Luna finding and second RED: a read-only contract audit identified that the first implementation accepted a manually registered status/code tuple without proving the returned envelope and originating request identity. The strengthened contract passed 11/12 and failed exactly because `proveExpectedAuthorityRejection` did not exist.
+- Final recovery implementation and GREEN: console events are retained structurally until the harness is closed. Expected rejection evidence is registered only through `proveExpectedAuthorityRejection()` after the real browser race or payload-identity negative control has returned its response. The pure classifier consumes each proven rejection at most once; all unmatched events populate the original blocking `consoleErrors` channel. Raw classification evidence is serialized in the final artifact. The Runner contract passed 12/12, including two positive controls and negative controls for malformed envelopes/messages/requests and for wrong status, code, route, response proof, script URL, console text, label, URL, query, port, HTTP error, and duplicate events. A real isolated Playwright probe on `127.0.0.1:4269` confirmed Chromium reports the native 409 console event with the exact rejected resource URL. The final read-only Luna audit found no concrete HIGH or BLOCKER.
+- Post-recovery Runner identity before freeze: 70221 bytes, SHA-256 `6B9568D045BFEA51EC714D57BEF28E7AAD81B24936B6221BEF8D0295A7D23097`. No replacement FORMAL has run at this ledger point.
+
 ---
 
 ## Execution Ledger
@@ -939,6 +972,25 @@ REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED
 REVIEW_TERMINAL_ATOMICITY_TASKBOOK = IN_PROGRESS
 PRODUCTION = NOT_STARTED
 PUSH = NOT_AUTHORIZED
+ASSET_CENTER = NOT_STARTED
+FRONTEND_PASS_5 = NOT_STARTED
+WAVE_7 = NOT_STARTED
+```
+
+- Task 8 first FORMAL ran exactly once at `CODE_EVIDENCE_HEAD=6a7a868882e1fa123df989304424a725692d50f1`. All 15/15 milestones passed, but the aggregate evidence contract failed because Chromium emitted two native resource-console messages for two intentionally exercised Authority `409` responses. The old FORMAL remains `1/1 CONSUMED_AND_FAILED`; its evidence and identity sidecar are preserved at the identities recorded above. No full gate or `verify:all` followed that failure.
+- Owner continuation authorization superseding the earlier no-push stop: the owner authorized continued design, implementation, bounded Luna review, ledger closure, ordinary push, and completion without another routine approval pause. This does not authorize force-push, history rewriting, destructive cleanup, deployment, Asset Center, Frontend Pass 5, or Wave 7.
+- Recovery-1 first RED/GREEN: the Runner contract moved from 10/11 (missing strict console classifier) to 11/11. A real isolated Playwright probe confirmed that Chromium locates the native 409 console event at the exact rejected Authority resource URL.
+- Recovery-1 independent audit correction: a bounded read-only Luna audit found that status/code registration alone did not prove the returned envelope and originating request. The second RED passed 11/12 and failed on the missing proof helper; the final implementation accepts only an exact, identity-bound Authority request/response proof and then passed 12/12.
+- Recovery-1 final read-only Luna audit found no concrete HIGH or BLOCKER. The pre-freeze Runner is 70221 bytes with SHA-256 `6B9568D045BFEA51EC714D57BEF28E7AAD81B24936B6221BEF8D0295A7D23097`. The original FORMAL artifact is not reused or rewritten; one replacement FORMAL remains authorized but unconsumed at this ledger point.
+
+```text
+REVIEW_TERMINAL_ATOMICITY_FORMAL = 1/1 CONSUMED_AND_FAILED
+RECOVERY_1_RUNNER_CONTRACT = 12/12 PASSED
+RECOVERY_1_LUNA_FINAL_AUDIT = NO_HIGH_OR_BLOCKER
+REPLACEMENT_FORMAL = AUTHORIZED_NOT_RUN
+FULL_GATES = NOT_RUN
+VERIFY_ALL = NOT_RUN
+PUSH = AUTHORIZED_NOT_PERFORMED
 ASSET_CENTER = NOT_STARTED
 FRONTEND_PASS_5 = NOT_STARTED
 WAVE_7 = NOT_STARTED
