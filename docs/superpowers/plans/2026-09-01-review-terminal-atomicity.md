@@ -290,6 +290,8 @@ feat(cli): lease review terminal writes
 **Files:**
 - Modify: `packages/cli/src/authoring/node-review-store.ts`
 - Modify: `packages/cli/test/node-review-store.test.ts`
+- Modify: `packages/cli/src/authoring/node-local-lease.ts`
+- Modify: `packages/cli/test/node-local-lease.test.ts`
 - Create: `packages/cli/test/fixtures/review-terminal-worker.mjs`
 
 **Interfaces:**
@@ -381,14 +383,20 @@ fix(cli): serialize review terminal receipts
 **Files:**
 - Create: `packages/cli/src/authoring/review-terminal-authority.ts`
 - Create: `packages/cli/test/review-terminal-authority.test.ts`
+- Modify: `packages/cli/src/authoring/node-review-store.ts`
+- Modify: `packages/cli/test/node-review-store.test.ts`
 - Modify: `packages/cli/src/authoring/review-service.ts`
 - Modify: `packages/cli/test/review-service.test.ts`
 
 **Interfaces:**
-- Consumes: `ReviewTerminalCommand`, `ReviewTerminalSnapshot`, `NodeReviewStore`, `validateComparisonDecision`, `validateFinalApprovalReceipt`, `validateReturnRequest`, and `TextHasher`.
+- Consumes: `ReviewTerminalCommand`, `ReviewTerminalSnapshot`, `NodeReviewStore`, `validateComparisonDecision`, `validateFinalApproval`, `validateReturnRequest`, and `TextHasher`.
 - Produces: exported `parseReviewProjection()`, `ReviewTerminalAuthority.describe()`, and `.write()`.
 
-- [ ] **Step 1: Write authority RED tests**
+**Approved implementation correction:** authority validation and terminal creation must occur inside one review lease. `NodeReviewStore` therefore exposes one lease-bound terminal write entry accepting an optional validation callback over the freshly re-read immutable workspace. Existing `createDecision/createFinalApproval/createApproval/createReturnRequest` remain wrappers. This avoids both a validate-then-lock TOCTOU window and a nested acquisition deadlock; it does not expand the public Agent capability surface.
+
+**Observed lease correction:** the Task 4 combined run exposed a real release/read race: after `mkdir` reports an existing lock, the holder may validly release the directory before the contender reads `lease.json`. That exact disappearance must restart acquisition, not exhaust the publication window as `LEASE_CORRUPT`. Task 4 therefore adds one deterministic RED→GREEN case to the existing lease manager; persistent missing `lease.json`, malformed records, sentinels, and other true corruption remain fail-loud.
+
+- [x] **Step 1: Write authority RED tests**
 
 Create immutable comparison and result fixtures through the existing review preparation helpers. Test:
 
@@ -403,7 +411,7 @@ expect(after).toMatchObject({ state: 'approval-written' });
 
 Cover all three actions, wrong project/review/payload identity, malformed receipt, invalid fingerprint, invalid reason category, result not ready, already terminal, both-file corrupt, identical retry, unknown path-like request field, and project/change/payload tree hashes before/after.
 
-- [ ] **Step 2: Run Task 4 RED once**
+- [x] **Step 2: Run Task 4 RED once**
 
 ```powershell
 npm run test -w @surdet/cli -- --run test/review-terminal-authority.test.ts
@@ -411,25 +419,25 @@ npm run test -w @surdet/cli -- --run test/review-terminal-authority.test.ts
 
 Expected: missing authority module/methods fail.
 
-- [ ] **Step 3: Implement describe as a pure canonical read**
+- [x] **Step 3: Implement describe as a pure canonical read**
 
 Rename/export the existing private `reviewProjection()` validator as `parseReviewProjection()` and keep its current callers on that one function. `describe()` validates IDs and payload identity, resolves `path.join(dataRoot, projectIdentity)` through `NodeReviewStore`, rechecks payload identity, parses the payload through `parseReviewProjection()`, reads legal receipt files, and returns exactly one state. It does not acquire a write lease because it cannot authorize mutation.
 
-- [ ] **Step 4: Implement write through shared validators and store lease**
+- [x] **Step 4: Implement write through shared validators and store lease**
 
 `write()` parses the command, reloads canonical review, verifies payload identity, dispatches the exact Authoring validator for the action, then calls the corresponding lease-bound store create method. It returns a fresh `describe()` snapshot after the create.
 
 No action may accept a raw path or skip fingerprint recomputation.
 
-- [ ] **Step 5: Run Task 4 GREEN and service adjacency**
+- [x] **Step 5: Run Task 4 GREEN and service adjacency**
 
 ```powershell
-npm run test -w @surdet/cli -- --run test/review-terminal-authority.test.ts test/node-review-store.test.ts test/review-service.test.ts
+npm run test -w @surdet/cli -- --run test/review-terminal-authority.test.ts test/node-review-store.test.ts test/review-service.test.ts test/node-local-lease.test.ts
 npm run typecheck -w @surdet/cli
 npm run build -w @surdet/cli
 ```
 
-- [ ] **Step 6: Commit Task 4 exactly**
+- [x] **Step 6: Commit Task 4 exactly**
 
 Stage Task 4 files plus taskbook and commit:
 
@@ -851,6 +859,12 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Task 3 RED: the initial 19-test store run had 3 failures (old `REVIEW_IDENTITY_MISMATCH` terminal mapping); the strengthened 20-test run had 4 failures and deterministically proved independent workers ignored a separately held review lease. Existing identical cross-process file creation happened to be idempotent, but there was no shared lease authority.
 - Task 3 first GREEN attempt correctly produced `REVIEW_BUSY` for concurrent losers, exposing an over-constrained test assumption that the lease would silently queue. The approved error contract is fail-fast: refresh and retry the same command. Tests were corrected without adding a hidden queue.
 - Task 3 final GREEN: NodeReviewStore 20/20, adjacent ReviewService + lease suite 24/24, combined 44/44, CLI typecheck and build all exited `0`. Concurrent approval/return leaves exactly one receipt; different decisions preserve one winner; an identical retry after refresh returns the existing byte identity; review identity/payload bytes remain unchanged; active review locks drain to zero.
+- Task 3 exact commit: `423b5d1` (`fix(cli): serialize review terminal receipts`), four-path staged set, both diff checks exit `0`.
+- Task 4 pre-implementation correction: authority business validation and create-only persistence need the same review lease. Task 4 now includes `NodeReviewStore` source/test so one lease-bound `writeTerminal()` can run the validator against the freshly re-read workspace before the existing exact terminal mapping. This prevents TOCTOU without nesting the same lease or creating a second mutex.
+- Task 4 combined-gate observation: 33/34 tests passed; one independent approval/return race returned `LEASE_CORRUPT` instead of `REVIEW_BUSY`. A focused rerun passed, but source inspection confirmed a real race: `loadLeaseAwaitingPublication()` keeps polling after the lock directory has been normally removed. The scope is amended before editing the lease files; no timeout or corruption rule is relaxed.
+- Task 4 lease RED/GREEN: the deterministic release-before-read case failed with `LEASE_CORRUPT`, then passed after `loadLeaseAwaitingPublication()` began returning “retry acquisition” only when the lock directory itself is absent. The full lease suite passed 17/17; persistent missing/malformed lease evidence remains fail-loud.
+- Task 4 authority RED: focused execution exited `1` before collection because `review-terminal-authority.js` did not exist. No existing test failed in that run.
+- Task 4 GREEN: authority 5/5, NodeReviewStore 21/21, ReviewService 9/9, lease 17/17 (52/52 total), CLI typecheck and build all exited `0`. The authority rejects path-like namespaces and payload mismatch, recomputes all three receipt fingerprints through shared Authoring validators, runs validation inside the same review lease as create-only persistence, reports malformed/multiple terminal records as corrupt, and leaves immutable review evidence unchanged.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

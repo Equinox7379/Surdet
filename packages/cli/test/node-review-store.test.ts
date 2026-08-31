@@ -154,7 +154,7 @@ describe('NodeReviewStore', () => {
     const results = await Promise.all(commands.map(runWorker));
     expect(results.map((result) => result.status).sort()).toEqual(['rejected', 'written']);
     const loserIndex = results.findIndex((result) => result.status === 'rejected');
-    expect(results[loserIndex]?.code).toBe('REVIEW_BUSY');
+    expect(results[loserIndex]?.code, JSON.stringify(results)).toBe('REVIEW_BUSY');
     await expect(runWorker(commands[loserIndex]!)).resolves.toMatchObject({
       status: 'rejected',
       code: 'REVIEW_TERMINAL_ALREADY_SET',
@@ -255,6 +255,30 @@ describe('NodeReviewStore', () => {
     } finally {
       await held.release();
     }
+    expect(await activeReviewLocks(fixture.root)).toEqual([]);
+  });
+
+  it('runs authority validation inside the same review lease used for terminal creation', async () => {
+    const fixture = await setup();
+    const leases = new NodeLocalLeaseManager(fixture.root);
+    const store = new NodeReviewStore(fixture.projectDirectory, 'project-identity', leases);
+    const reviewId = 'rev_validator_under_lease';
+    await store.createReview(reviewId, payload(reviewId));
+    let observedBusy = false;
+
+    await store.writeTerminal(reviewId, 'comparison-decision', { decisionId: 'decision-under-lease' }, async (loaded) => {
+      expect(loaded.identity.reviewId).toBe(reviewId);
+      await expect(leases.acquire({
+        scope: 'review',
+        resourceId: `project-identity\u0000${reviewId}`,
+      })).rejects.toMatchObject({ code: 'REVIEW_BUSY' });
+      observedBusy = true;
+    });
+
+    expect(observedBusy).toBe(true);
+    await expect(store.readDecision(reviewId)).resolves.toMatchObject({
+      value: { decisionId: 'decision-under-lease' },
+    });
     expect(await activeReviewLocks(fixture.root)).toEqual([]);
   });
 

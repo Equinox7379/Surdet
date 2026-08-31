@@ -310,6 +310,29 @@ describe('NodeLocalLeaseManager', () => {
     await expect(fsp.readdir(path.join(root, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('retries acquisition when an observed review lock is normally released before lease publication is read', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-review-release-race-'));
+    temporaryRoots.push(root);
+    const resourceId = 'project-1\u0000review-release-race';
+    const lockDirectory = path.join(root, '.locks', 'reviews', 'project-1_review-release-race.lock');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+    const state = makeState();
+    let polls = 0;
+    const manager = makeManager(root, state, {
+      publicationDelay: async () => {
+        polls += 1;
+        if (polls === 1) await fsp.rmdir(lockDirectory);
+      },
+    });
+
+    const acquired = await manager.acquire({ scope: 'review', resourceId });
+    expect(acquired.directory).toBe(lockDirectory);
+    expect(polls).toBeGreaterThanOrEqual(1);
+    expect(await manager.inspect('review', resourceId)).toMatchObject({ state: 'owned' });
+    await acquired.release();
+    expect(await manager.inspect('review', resourceId)).toMatchObject({ state: 'free' });
+  });
+
   it('preserves an unexpected lock occupant and reports release cleanup as manual recovery', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-release-evidence-'));
     temporaryRoots.push(root);
