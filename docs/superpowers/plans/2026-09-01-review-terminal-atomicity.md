@@ -69,7 +69,7 @@ The General Manager owns Tasks 1–5 architecture, public contracts, leases, aut
 - Consumes: design commit and current Git state.
 - Produces: exact baseline, approved-path inventory, and proof that old serializers are process-local.
 
-- [ ] **Step 1: Record exact Git and workspace baseline**
+- [x] **Step 1: Record exact Git and workspace baseline**
 
 Run:
 
@@ -83,7 +83,7 @@ git diff --cached --check
 
 Expected: only the taskbook/spec correction is tracked; staging is empty; existing untracked/protected files remain untouched.
 
-- [ ] **Step 2: Freeze the old serializer proof**
+- [x] **Step 2: Freeze the old serializer proof**
 
 Record the exact symbols and current behavior:
 
@@ -96,7 +96,7 @@ Node createFinalApproval/createReturnRequest -> pre-check two different files
 
 No source change occurs in this step.
 
-- [ ] **Step 3: Freeze the authorized production and test file list**
+- [x] **Step 3: Freeze the authorized production and test file list**
 
 The allowed list is exactly the files named in Tasks 1–7 plus this taskbook and approved design correction. Any new production file requires a taskbook amendment before edit. Protected files, long-term ledger, historical artifacts, package outputs, and screenshots stay unstaged.
 
@@ -112,10 +112,10 @@ The allowed list is exactly the files named in Tasks 1–7 plus this taskbook an
 - Modify: `packages/authoring/test/error-catalog.test.ts`
 
 **Interfaces:**
-- Consumes: existing receipt types from `review-model.ts` and error envelope conventions.
+- Consumes: existing receipt types from `review-receipts.ts` / `review-contracts.ts` and error envelope conventions.
 - Produces: `ReviewTerminalAction`, `ReviewTerminalCommand`, `ReviewTerminalRecord`, `ReviewTerminalSnapshot`, exact runtime parsers, `REVIEW_BUSY`, and `REVIEW_TERMINAL_ALREADY_SET`.
 
-- [ ] **Step 1: Write shared contract RED tests**
+- [x] **Step 1: Write shared contract RED tests**
 
 Add tests that require:
 
@@ -127,7 +127,12 @@ const command: ReviewTerminalCommand = {
   reviewId: 'review_result_01',
   reviewPayload: { bytes: 123, sha256: 'b'.repeat(64) },
   action: 'result-approval',
-  receipt: { receiptVersion: '1.0.0' },
+  receipt: {
+    receiptVersion: '1.0.0',
+    approvalId: 'approval_01',
+    resultReviewId: 'review_result_01',
+    approvalFingerprint: 'c'.repeat(64),
+  },
 };
 
 expect(parseReviewTerminalCommand(command)).toEqual(command);
@@ -148,7 +153,7 @@ expect(errorContract('REVIEW_TERMINAL_ALREADY_SET')).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: Run Task 1 RED once**
+- [x] **Step 2: Run Task 1 RED once**
 
 ```powershell
 npm run test -w @surdet/authoring -- --run test/review-terminal.test.ts test/error-catalog.test.ts
@@ -156,7 +161,7 @@ npm run test -w @surdet/authoring -- --run test/review-terminal.test.ts test/err
 
 Expected: missing module/exports/error codes fail while existing error tests remain green.
 
-- [ ] **Step 3: Implement strict shared types and parsers**
+- [x] **Step 3: Implement strict shared types and parsers**
 
 `review-terminal.ts` must export:
 
@@ -179,9 +184,9 @@ export function parseReviewTerminalSnapshot(value: unknown): ReviewTerminalSnaps
 
 Use strict record key comparison, `Number.isSafeInteger(bytes) && bytes >= 0`, exact lowercase 64-hex SHA, non-empty bounded IDs, and no path field. Parser failures use `AuthoringOperationError('INVALID_REQUEST', ...)`.
 
-Add the two error codes to `ERROR_CODES` and catalog. Do not add a capability registry entry.
+Add the two error codes to `AUTHORING_ERROR_CODES` and catalog. Do not add a capability registry entry.
 
-- [ ] **Step 4: Run Task 1 GREEN and workspace checks**
+- [x] **Step 4: Run Task 1 GREEN and workspace checks**
 
 ```powershell
 npm run test -w @surdet/authoring -- --run test/review-terminal.test.ts test/error-catalog.test.ts
@@ -191,7 +196,7 @@ npm run build -w @surdet/authoring
 
 Expected: all exit `0`.
 
-- [ ] **Step 5: Verify capability surface did not gain a writer**
+- [x] **Step 5: Verify capability surface did not gain a writer**
 
 ```powershell
 rg -n "review\.(approve|return|decide)|terminal.*minimumPolicy" packages/authoring/src/capability-registry.ts
@@ -199,7 +204,7 @@ rg -n "review\.(approve|return|decide)|terminal.*minimumPolicy" packages/authori
 
 Expected: no new terminal writer capability.
 
-- [ ] **Step 6: Commit Task 1 exactly**
+- [x] **Step 6: Commit Task 1 exactly**
 
 Stage the five Task 1 paths plus this taskbook only, run both diff checks, inspect `git diff --cached --name-only`, then commit:
 
@@ -831,6 +836,12 @@ Append-only. Record commands, exit codes, test counts, artifacts, failures, corr
 - Selected design: one local Node Review Authority, review-scoped cross-process lease, same-origin tokenized Editor transport, existing receipt files retained, static/no-authority Editor terminal actions read-only, and no Agent Port human-decision writer.
 - Design document was initially committed as `4720e42` (`docs(authoring): specify review terminal atomicity`). Its first cached diff check reported trailing whitespace in the three metadata lines, but the PowerShell command sequence continued and committed. The correction is intentionally preserved as a follow-up taskbook/spec commit rather than amending history.
 - Production implementation has not started at the time this taskbook is created.
+- Task 0 implementation baseline: branch `main`, `HEAD=844a0ef431bf736d2a5993ff41c095088e47b0ca`, parent `4720e42d160ac60b0a32fd49a5fdd8cd91da2e64`, `surdet/main=bca72247d0dc76983330367be0f38043036a0fca`, ahead/behind `15/0`. Tracked worktree and staging were clean; only pre-existing untracked/protected paths, CLI historical artifacts, and the intentionally untracked long-term ledger remained. Both diff checks exited `0`.
+- Task 0 source proof: Editor `withResultReceiptWrite()` is a `WeakMap` queue scoped to one `ReviewWorkspaceState`; Editor `writeCreateOnly()` performs get/create/write without exclusive creation. NodeReviewStore `withResultReceiptWrite()` is a process-local `Map`; result approval and return pre-check then create two distinct target files. No cross-window/cross-process authority existed at baseline.
+- Task 0 approved path inventory is frozen to Tasks 1–7. Any scope change requires an append-only taskbook amendment before edit. No Core/Renderer/Host/Shell/Starter/Zero/protected/long-term-ledger path is authorized for production staging.
+- Task 1 RED: the focused Authoring run exited `1` with 5 expected failures: both parsers were absent and `REVIEW_BUSY` was missing, while 6 existing error-contract tests remained green.
+- Task 1 GREEN: `review-terminal.test.ts` + `error-catalog.test.ts` passed 11/11; Authoring typecheck and build exited `0`. The shared parser rejects extra/path fields, malformed payload identity, action/receipt mismatches, and inconsistent snapshot state. Capability-registry search returned no terminal human writer entry (expected no-match exit `1`).
+- Task 1 taskbook correction: the illustrative approval command now contains the minimum action-specific receipt identity required by the approved strict parser, and the source/catalog names were corrected to the actual repository symbols. This is a documentation correction, not a contract expansion.
 
 ```text
 REVIEW_TERMINAL_ATOMICITY_DESIGN = APPROVED

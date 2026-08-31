@@ -104,6 +104,8 @@ describe('wave 6 human review error catalog', () => {
       ['REVIEW_APPROVAL_STALE', 'after-refresh'],
       ['REVIEW_RETURNED', 'never'],
       ['REVIEW_FIXTURE_CHANGED', 'after-refresh'],
+      ['REVIEW_BUSY', 'after-refresh'],
+      ['REVIEW_TERMINAL_ALREADY_SET', 'never'],
     ] as const;
     for (const [code, disposition] of expected) {
       expect(AUTHORING_ERROR_CODES).toContain(code);
