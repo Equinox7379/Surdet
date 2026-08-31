@@ -364,7 +364,7 @@ npm run verify:all
 
 Expected: exit zero under the repository's unchanged default commands. If it fails, append the first failure and stop without a second replacement.
 
-- [ ] **Step 2: Freeze exact scope only after all recovery gates pass**
+- [x] **Step 2: Freeze exact scope only after all recovery gates pass**
 
 Run both diff checks, stage only the five implementation/test/config/taskbook paths, verify the exact staged set, and create one commit:
 
@@ -383,3 +383,32 @@ Expected staged set: exactly five paths. If the taskbook receives a post-commit 
 - Recovery Task 2 serial full gate: the one authorized complete CLI run exited `0` with `36/36` files and `274/274` Vitest tests passed under `--no-file-parallelism --maxWorkers=1 --minWorkers=1`, without changing repository configuration or per-test timeouts. Its embedded Node contract output also passed all `21/21` Wave 6 runner subtests, including the corrected review-open ordering contract. The serial evidence isolates the first aggregate failure from product assertions; the unchanged replacement aggregate remains required.
 - Recovery Task 3 replacement aggregate: the sole authorized replacement `npm run verify:all` exited `0` under the unchanged repository commands. It passed tools `12/12`, Renderer boundaries `3/3`, Renderer legacy `4/4`, docs, tracked hygiene, every workspace typecheck, CLI default-parallel `36/36` files and `274/274` tests, Core `329/329`, Editor `378/378`, Host `87/87`, Renderer `413/413`, Shell `195/195`, Starter `7/7`, Zero After Midnight `29/29`, Starter lint/simulation, formal game lint/simulation/assets, Editor/Starter/formal builds, and final diff-check. Existing content and chunk-size warnings remained warnings; runtime errors were `0`. The original failed aggregate remains recorded above and was not overwritten.
 - Evidence boundary: the recovery establishes a fresh Windows local aggregate green and confirms the two CI portability targets inside the root tool gate. It does not prove the remote Ubuntu checkout until a later authorized push and real CI run.
+- Evidence freeze: exact staging contained `5` paths with `missing=0` and `extra=0`; `git diff --cached --check=0`. Commit `d32c9cf939b17b874ff9c934d3c5cf82e7aaeb7a` (`fix(ci): restore cross-platform verification`) has parent `e238b23a782cad7e8b342879ae60f34a2c2968d4` and contains only this taskbook, the review-open test projection correction, the v2 test project, and the two root-tooling tests. No production source, timeout, package manifest, lockfile, protected file, or historical artifact entered the commit.
+- Post-commit state: staging is empty. This final identity append is the only tracked post-commit modification; the long-term roadmap ledger and all pre-existing untracked/protected paths remain unstaged. Push remains unauthorized.
+
+```text
+CI_PORTABILITY_RESTORE_CODE_EVIDENCE_HEAD = d32c9cf939b17b874ff9c934d3c5cf82e7aaeb7a
+CI_PORTABILITY_RESTORE_LOCAL_VERIFIED = YES
+ORIGINAL_VERIFY_ALL_FAILURE_PRESERVED = YES
+RECOVERY_VERIFY_ALL = PASS
+REMOTE_UBUNTU_CI_NOT_REVERIFIED = TRUE
+READY_FOR_MANAGER_REVIEW = YES
+TIMELINE_AUTOSAVE_IDENTITY_FAIL_CLOSED_NOT_STARTED = TRUE
+REVIEW_TERMINAL_ATOMICITY_NOT_STARTED = TRUE
+ASSET_CENTER_NOT_STARTED = TRUE
+PUSH_NOT_PERFORMED = TRUE
+```
+
+- Secondary read-only review: a different bounded `luna_worker` inspected commit `d32c9cf939b17b874ff9c934d3c5cf82e7aaeb7a` against its parent and the post-commit taskbook append without modifying files or rerunning tests. It reported no BLOCKER/HIGH/MEDIUM/LOW: exact five-file scope, correct module-relative v4 root, correct source-mapped strict/no-emit v2 project, preserved review-open ordering/negative assertions, truthful first-failure and recovery history, and explicit Ubuntu boundary.
+- Manager final review: PASS. The manager independently reviewed the staged and committed code, the worker-owned `3` insertion / `2` deletion test delta, the exact scope comparison, fresh serial and aggregate outputs, and the post-commit status. The secondary worker is treated as a second set of eyes, not as external independence. Gate 1 is eligible for docs-only reviewed closure; Gate 2 has not started at this point.
+
+```text
+CI_PORTABILITY_RESTORE_INDEPENDENT_MANAGER_REVIEW = PASS
+BLOCKER = NONE
+HIGH = NONE
+MEDIUM = NONE
+LOW = NONE
+READY_FOR_DOCS_ONLY_CLOSEOUT = YES
+REMOTE_UBUNTU_CI_NOT_REVERIFIED = TRUE
+PUSH_NOT_PERFORMED = TRUE
+```
