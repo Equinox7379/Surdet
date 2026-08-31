@@ -5,14 +5,16 @@
  */
 import { state, setStatus } from './state.js';
 import { histories } from './history.js';
-import { clearTimelineHistories, clearTimelineHistory } from './timeline-history.js';
+import { clearTimelineHistories, clearTimelineHistory, pushTimelineSnapshot } from './timeline-history.js';
 import { resolveAutosaveProjectIdentity } from './autosave.js';
 import type { AutosaveTimelineEntry } from './autosave.js';
 import {
   inspectTimelineAutosaveIdentity,
+  normalizeTimelineAutosaveDocument,
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
+import { timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind } from './assets.js';
 
@@ -254,7 +256,8 @@ export type TimelineAutosaveConflictReason =
   | 'current-id-mismatch'
   | 'same-file-different-id'
   | 'same-id-different-file'
-  | 'definition-id-collision';
+  | 'definition-id-collision'
+  | 'quarantined-backup';
 
 export interface TimelineAutosaveRestoreConflict {
   key: string;
@@ -264,6 +267,14 @@ export interface TimelineAutosaveRestoreConflict {
   current: TimelineAutosaveDocument | null;
   currentIdentity: TimelineAutosaveIdentity | null;
 }
+
+export type TimelineAutosaveRepairAction =
+  | { kind: 'replace-current' }
+  | { kind: 'save-as-new'; newId: string };
+
+export type TimelineAutosaveRepairResult =
+  | { ok: true; timelineId: string }
+  | { ok: false; error: string };
 
 function timelineDocument(entry: TimelineAutosaveDocument): TimelineAutosaveDocument {
   return { id: entry.id, file: entry.file, text: entry.text, eol: entry.eol };
@@ -287,81 +298,215 @@ function timelineRestoreConflict(
   };
 }
 
+type TimelineAutosaveRestoreDecision =
+  | { kind: 'conflict'; conflict: TimelineAutosaveRestoreConflict }
+  | { kind: 'replace'; target: (typeof state.timelines)[number] }
+  | { kind: 'insert' };
+
+function classifyTimelineAutosaveEntry(
+  recovered: AutosaveTimelineEntry,
+  index: number,
+): TimelineAutosaveRestoreDecision {
+  const recoveredIdentity = inspectTimelineAutosaveIdentity(recovered);
+  if (recoveredIdentity.parseError !== null) {
+    return {
+      kind: 'conflict',
+      conflict: timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-json-invalid', index),
+    };
+  }
+  if (!recoveredIdentity.canonical) {
+    return {
+      kind: 'conflict',
+      conflict: timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-id-mismatch', index),
+    };
+  }
+
+  const sameFile = state.timelines.find((entry) => entry.file === recovered.file);
+  if (sameFile && sameFile.id !== recovered.id) {
+    return {
+      kind: 'conflict',
+      conflict: timelineRestoreConflict(
+        recovered, recoveredIdentity, 'same-file-different-id', index, sameFile,
+      ),
+    };
+  }
+  const sameId = state.timelines.find((entry) => entry.id === recovered.id);
+  if (sameId && sameId.file !== recovered.file) {
+    return {
+      kind: 'conflict',
+      conflict: timelineRestoreConflict(
+        recovered, recoveredIdentity, 'same-id-different-file', index, sameId,
+      ),
+    };
+  }
+
+  const exact = state.timelines.find((entry) => entry.id === recovered.id && entry.file === recovered.file);
+  if (exact) {
+    const currentIdentity = inspectTimelineAutosaveIdentity(exact);
+    if (currentIdentity.parseError !== null) {
+      return {
+        kind: 'conflict',
+        conflict: timelineRestoreConflict(
+          recovered, recoveredIdentity, 'current-json-invalid', index, exact,
+        ),
+      };
+    }
+    if (!currentIdentity.canonical) {
+      return {
+        kind: 'conflict',
+        conflict: timelineRestoreConflict(
+          recovered, recoveredIdentity, 'current-id-mismatch', index, exact,
+        ),
+      };
+    }
+    return { kind: 'replace', target: exact };
+  }
+
+  const definitionCollision = state.timelines.find((entry) => (
+    inspectTimelineAutosaveIdentity(entry).definitionId === recoveredIdentity.definitionId
+  ));
+  if (definitionCollision) {
+    return {
+      kind: 'conflict',
+      conflict: timelineRestoreConflict(
+        recovered, recoveredIdentity, 'definition-id-collision', index, definitionCollision,
+      ),
+    };
+  }
+  return { kind: 'insert' };
+}
+
 export function restoreTimelineAutosaveEntries(entries: readonly AutosaveTimelineEntry[]): TimelineAutosaveRestoreResult {
   let restored = 0;
   const conflicts: TimelineAutosaveRestoreResult['conflicts'] = [];
   for (const [index, recovered] of entries.entries()) {
-    const recoveredIdentity = inspectTimelineAutosaveIdentity(recovered);
-    if (recoveredIdentity.parseError !== null) {
-      conflicts.push(timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-json-invalid', index));
+    const decision = classifyTimelineAutosaveEntry(recovered, index);
+    if (decision.kind === 'conflict') {
+      conflicts.push(decision.conflict);
       continue;
     }
-    if (!recoveredIdentity.canonical) {
-      conflicts.push(timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-id-mismatch', index));
-      continue;
+    if (decision.kind === 'replace') {
+      decision.target.text = recovered.text;
+      decision.target.eol = recovered.eol;
+      decision.target.dirty = true;
+    } else {
+      state.timelines.push({
+        id: recovered.id,
+        file: recovered.file,
+        text: recovered.text,
+        eol: recovered.eol,
+        dirty: true,
+        handle: null,
+      });
     }
-
-    const sameFile = state.timelines.find((entry) => entry.file === recovered.file);
-    if (sameFile && sameFile.id !== recovered.id) {
-      conflicts.push(timelineRestoreConflict(
-        recovered, recoveredIdentity, 'same-file-different-id', index, sameFile,
-      ));
-      continue;
-    }
-    const sameId = state.timelines.find((entry) => entry.id === recovered.id);
-    if (sameId && sameId.file !== recovered.file) {
-      conflicts.push(timelineRestoreConflict(
-        recovered, recoveredIdentity, 'same-id-different-file', index, sameId,
-      ));
-      continue;
-    }
-
-    const exact = state.timelines.find((entry) => entry.id === recovered.id && entry.file === recovered.file);
-    if (exact) {
-      const currentIdentity = inspectTimelineAutosaveIdentity(exact);
-      if (currentIdentity.parseError !== null) {
-        conflicts.push(timelineRestoreConflict(
-          recovered, recoveredIdentity, 'current-json-invalid', index, exact,
-        ));
-        continue;
-      }
-      if (!currentIdentity.canonical) {
-        conflicts.push(timelineRestoreConflict(
-          recovered, recoveredIdentity, 'current-id-mismatch', index, exact,
-        ));
-        continue;
-      }
-      exact.text = recovered.text;
-      exact.eol = recovered.eol;
-      exact.dirty = true;
-      restored++;
-      continue;
-    }
-
-    const definitionCollision = state.timelines.find((entry) => (
-      inspectTimelineAutosaveIdentity(entry).definitionId === recoveredIdentity.definitionId
-    ));
-    if (definitionCollision) {
-      conflicts.push(timelineRestoreConflict(
-        recovered, recoveredIdentity, 'definition-id-collision', index, definitionCollision,
-      ));
-      continue;
-    }
-
-    state.timelines.push({
-      id: recovered.id,
-      file: recovered.file,
-      text: recovered.text,
-      eol: recovered.eol,
-      dirty: true,
-      handle: null,
-    });
     restored++;
   }
   if (!state.currentTimeline && state.timelines.length > 0) {
     state.currentTimeline = state.timelines[0]!.id;
   }
   return { restored, conflicts };
+}
+
+export function quarantineTimelineAutosaveEntries(
+  entries: readonly AutosaveTimelineEntry[],
+): TimelineAutosaveRestoreConflict[] {
+  return entries.map((recovered, index) => {
+    const decision = classifyTimelineAutosaveEntry(recovered, index);
+    const conflict = decision.kind === 'conflict'
+      ? decision.conflict
+      : timelineRestoreConflict(
+        recovered,
+        inspectTimelineAutosaveIdentity(recovered),
+        'quarantined-backup',
+        index,
+        decision.kind === 'replace' ? decision.target : null,
+      );
+    return { ...conflict, key: `quarantine:${conflict.key}` };
+  });
+}
+
+function repairFailure(error: string): TimelineAutosaveRepairResult {
+  return { ok: false, error };
+}
+
+function timelineDefinitionId(entry: TimelineAutosaveDocument): string | null {
+  return inspectTimelineAutosaveIdentity(entry).definitionId;
+}
+
+export function repairTimelineAutosaveConflict(
+  conflict: TimelineAutosaveRestoreConflict,
+  action: TimelineAutosaveRepairAction,
+): TimelineAutosaveRepairResult {
+  if (action.kind === 'replace-current') {
+    const current = conflict.current;
+    if (current === null) return repairFailure('当前项目中没有可替换的演出');
+
+    const targets = state.timelines.filter((entry) => entry.id === current.id && entry.file === current.file);
+    if (targets.length !== 1) return repairFailure('当前演出已变化或不唯一，请重新打开项目后再处理');
+    const target = targets[0]!;
+    if (target.text !== current.text || target.eol !== current.eol) {
+      return repairFailure('当前演出已在冲突出现后发生变化，未执行替换');
+    }
+
+    const normalized = normalizeTimelineAutosaveDocument(conflict.recovered, target.id, target.file);
+    if (!normalized.ok) return repairFailure(normalized.error);
+    if (!inspectTimelineAutosaveIdentity(normalized.entry).canonical) {
+      return repairFailure('自动备份规范化后身份仍不一致');
+    }
+
+    pushTimelineSnapshot(
+      target.id,
+      target.text,
+      state.currentTimeline === target.id && state.currentTimelineCue
+        ? { ...state.currentTimelineCue }
+        : null,
+    );
+    target.text = normalized.entry.text;
+    target.eol = normalized.entry.eol;
+    target.dirty = true;
+    return { ok: true, timelineId: target.id };
+  }
+
+  const newId = action.newId.trim();
+  let projectPath: string;
+  try {
+    projectPath = timelinePathFor(newId);
+  } catch (error) {
+    return repairFailure(error instanceof Error ? error.message : String(error));
+  }
+  const newFile = projectPath.slice('content/timelines/'.length);
+  const currentCollision = state.timelines.some((entry) => (
+    entry.id === newId
+    || entry.file === newFile
+    || timelineDefinitionId(entry) === newId
+  ));
+  if (currentCollision) return repairFailure(`演出 ID 或文件已存在：${newId}`);
+
+  const deletedCollision = state.pendingTimelineDeletes.some((entry) => (
+    entry.id === newId || entry.file === newFile
+  ));
+  if (deletedCollision) return repairFailure(`演出仍在待删除列表中：${newId}`);
+
+  const restoreCollision = [...state.pendingTimelineRestores.entries()].some(([id, restore]) => (
+    id === newId
+    || restore.entry.id === newId
+    || restore.entry.file === newFile
+    || timelineDefinitionId(restore.entry) === newId
+  ));
+  if (restoreCollision) return repairFailure(`演出仍在可恢复列表中：${newId}`);
+
+  const normalized = normalizeTimelineAutosaveDocument(conflict.recovered, newId, newFile);
+  if (!normalized.ok) return repairFailure(normalized.error);
+  if (!inspectTimelineAutosaveIdentity(normalized.entry).canonical) {
+    return repairFailure('另存后的演出身份仍不一致');
+  }
+
+  state.timelines.push({
+    ...normalized.entry,
+    dirty: true,
+    handle: null,
+  });
+  return { ok: true, timelineId: newId };
 }
 
 export async function saveAll(): Promise<void> {

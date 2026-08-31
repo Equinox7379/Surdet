@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bindProjectIoHooks, openProjectFromHandle, readTimelineDir, restoreTimelineAutosaveEntries, saveAll } from '../src/project-io.js';
+import {
+  bindProjectIoHooks,
+  openProjectFromHandle,
+  quarantineTimelineAutosaveEntries,
+  readTimelineDir,
+  repairTimelineAutosaveConflict,
+  restoreTimelineAutosaveEntries,
+  saveAll,
+} from '../src/project-io.js';
 import { state } from '../src/state.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
 import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
 import { deleteTimeline, nextTimelineId, restorePendingTimelineDeletion } from '../src/panels/timeline-panel.js';
-import { pushTimelineSnapshot, timelineHistoryDepth } from '../src/timeline-history.js';
+import { pushTimelineSnapshot, takeTimelineUndo, timelineHistoryDepth } from '../src/timeline-history.js';
 
 type FailurePoint = 'create' | 'write' | 'close';
 type Eol = '\r\n' | '\n';
@@ -58,6 +66,56 @@ function timeline(
   eol: Eol = '\n',
 ): TimelineEntry {
   return { id, file, text: timelineText(definitionId, eol), eol, dirty, handle };
+}
+
+function definitionCollisionConflict(): {
+  target: TimelineEntry;
+  conflict: ReturnType<typeof restoreTimelineAutosaveEntries>['conflicts'][number];
+} {
+  const helperLog: string[] = [];
+  const target = timeline('claimed', fileHandle(null, helperLog, 'claimed.json'), false, 'claimed.json', 'recovered');
+  state.timelines.push(target);
+  const result = restoreTimelineAutosaveEntries([{
+    id: 'recovered',
+    file: 'recovered.json',
+    text: timelineText('recovered', '\r\n', 1800),
+    eol: '\r\n',
+  }]);
+  expect(result.conflicts).toHaveLength(1);
+  expect(result.conflicts[0]).toMatchObject({ reason: 'definition-id-collision' });
+  return { target, conflict: result.conflicts[0]! };
+}
+
+function timelineMutationSnapshot() {
+  return {
+    timelines: state.timelines.map((entry) => ({ ...entry })),
+    pendingTimelineDeletes: state.pendingTimelineDeletes.map((entry) => ({ ...entry })),
+    pendingTimelineRestores: [...state.pendingTimelineRestores.entries()].map(([id, restore]) => [
+      id,
+      {
+        ...restore,
+        entry: { ...restore.entry },
+        previousCue: restore.previousCue ? { ...restore.previousCue } : null,
+      },
+    ]),
+    currentTimeline: state.currentTimeline,
+    currentTimelineCue: state.currentTimelineCue ? { ...state.currentTimelineCue } : null,
+    history: timelineHistoryDepth(),
+  };
+}
+
+function expectTimelineMutationUnchanged(before: ReturnType<typeof timelineMutationSnapshot>): void {
+  expect(timelineMutationSnapshot()).toEqual(before);
+}
+
+function expectSaveAsNewRejected(
+  conflict: ReturnType<typeof definitionCollisionConflict>['conflict'],
+  newId: string,
+): void {
+  const before = timelineMutationSnapshot();
+  const result = repairTimelineAutosaveConflict(conflict, { kind: 'save-as-new', newId });
+  expect(result.ok).toBe(false);
+  expectTimelineMutationUnchanged(before);
 }
 
 function directoryHandle(
@@ -431,6 +489,177 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(result.conflicts[0]).toMatchObject({ reason: 'definition-id-collision' });
     expect(state.timelines).toHaveLength(1);
     expect(existing).toEqual(before);
+  });
+
+  it('已隔离的 canonical 备份只重建待确认记录，不会自动覆盖当前时间轴', () => {
+    const existing = timeline('opening', fileHandle(null, log, 'opening.json'), false);
+    state.timelines.push(existing);
+    const before = timelineMutationSnapshot();
+    const conflicts = quarantineTimelineAutosaveEntries([{
+      id: 'opening',
+      file: 'opening.json',
+      text: timelineText('opening', '\n', 1800),
+      eol: '\n',
+    }]);
+
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]).toMatchObject({
+      reason: 'quarantined-backup',
+      current: { id: 'opening', file: 'opening.json' },
+    });
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('已隔离备份仍显示可证明的具体身份冲突且零 mutation', () => {
+    state.timelines.push(timeline('opening', fileHandle(null, log, 'opening.json'), false));
+    const before = timelineMutationSnapshot();
+    const conflicts = quarantineTimelineAutosaveEntries([{
+      id: 'opening',
+      file: 'nested/opening.json',
+      text: timelineText('opening'),
+      eol: '\n',
+    }]);
+
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]).toMatchObject({ reason: 'same-id-different-file' });
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('Replace Current 会重找唯一 target、规范化 recovered id，并保留 target 身份与 handle', () => {
+    const { target, conflict } = definitionCollisionConflict();
+    const replacement = { ...target };
+    state.timelines[0] = replacement;
+    const previousText = replacement.text;
+    const undoBefore = timelineHistoryDepth('claimed').undo;
+
+    const result = repairTimelineAutosaveConflict(conflict, { kind: 'replace-current' });
+
+    expect(result).toEqual({ ok: true, timelineId: 'claimed' });
+    expect(state.timelines).toHaveLength(1);
+    expect(state.timelines[0]).toBe(replacement);
+    expect(replacement).toMatchObject({
+      id: 'claimed',
+      file: 'claimed.json',
+      eol: '\r\n',
+      dirty: true,
+      handle: target.handle,
+    });
+    expect(replacement.handle).toBe(target.handle);
+    expect(JSON.parse(replacement.text)).toMatchObject({ id: 'claimed' });
+    expect(replacement.text).not.toBe(conflict.recovered.text);
+    expect(timelineHistoryDepth('claimed').undo).toBe(undoBefore + 1);
+    expect(takeTimelineUndo('claimed', replacement.text)?.text).toBe(previousText);
+  });
+
+  it('Replace Current 遇到 stale target 时零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    const current = state.timelines[0]!;
+    current.id = 'moved';
+    current.file = 'moved.json';
+    const before = timelineMutationSnapshot();
+
+    const result = repairTimelineAutosaveConflict(conflict, { kind: 'replace-current' });
+
+    expect(result.ok).toBe(false);
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('Replace Current 遇到 ambiguous target 时零 mutation', () => {
+    const { target, conflict } = definitionCollisionConflict();
+    state.timelines.push({ ...target, handle: fileHandle(null, log, 'claimed-copy.json') });
+    const before = timelineMutationSnapshot();
+
+    const result = repairTimelineAutosaveConflict(conflict, { kind: 'replace-current' });
+
+    expect(result.ok).toBe(false);
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('Replace Current 遇到 invalid JSON 时零 mutation', () => {
+    state.timelines.push(timeline('safe', fileHandle(null, log, 'safe.json'), false));
+    const restore = restoreTimelineAutosaveEntries([{
+      id: 'broken',
+      file: 'broken.json',
+      text: '{"version":1,"id":',
+      eol: '\n',
+    }]);
+    expect(restore.conflicts).toHaveLength(1);
+    expect(restore.conflicts[0]).toMatchObject({ reason: 'recovered-json-invalid' });
+    const conflict = restore.conflicts[0]!;
+    const before = timelineMutationSnapshot();
+
+    expect(repairTimelineAutosaveConflict(conflict, { kind: 'replace-current' }).ok).toBe(false);
+    expect(repairTimelineAutosaveConflict(conflict, { kind: 'save-as-new', newId: 'broken-copy' }).ok).toBe(false);
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('Save As New 合法成功时插入 canonical dirty null-handle entry', () => {
+    const { target, conflict } = definitionCollisionConflict();
+    const targetBefore = { ...target };
+
+    const result = repairTimelineAutosaveConflict(conflict, {
+      kind: 'save-as-new',
+      newId: 'recovered-copy',
+    });
+
+    expect(result).toEqual({ ok: true, timelineId: 'recovered-copy' });
+    expect(target).toEqual(targetBefore);
+    expect(state.timelines.filter((entry) => entry.id === 'recovered-copy')).toHaveLength(1);
+    const created = state.timelines.find((entry) => entry.id === 'recovered-copy')!;
+    expect(created).toMatchObject({
+      id: 'recovered-copy',
+      file: 'recovered-copy.json',
+      eol: '\r\n',
+      dirty: true,
+      handle: null,
+    });
+    expect(JSON.parse(created.text)).toMatchObject({ id: 'recovered-copy' });
+  });
+
+  it('Save As New 拒绝非法 ID 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    expectSaveAsNewRejected(conflict, 'bad/id');
+  });
+
+  it('Save As New 拒绝当前 ID collision 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    state.timelines.push(timeline('taken', fileHandle(null, log, 'taken.json'), false));
+    expectSaveAsNewRejected(conflict, 'taken');
+  });
+
+  it('Save As New 拒绝当前 file collision 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    state.timelines.push(timeline('other-file', fileHandle(null, log, 'taken.json'), false, 'taken.json', 'other-file'));
+    expectSaveAsNewRejected(conflict, 'taken');
+  });
+
+  it('Save As New 拒绝当前 internal ID collision 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    state.timelines.push(timeline(
+      'other-definition',
+      fileHandle(null, log, 'other-definition.json'),
+      false,
+      'other-definition.json',
+      'taken',
+    ));
+    expectSaveAsNewRejected(conflict, 'taken');
+  });
+
+  it('Save As New 拒绝 pendingTimelineDeletes collision 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    state.pendingTimelineDeletes = [{ id: 'taken', file: 'taken.json' }];
+    expectSaveAsNewRejected(conflict, 'taken');
+  });
+
+  it('Save As New 拒绝 pendingTimelineRestores collision 且零 mutation', () => {
+    const { conflict } = definitionCollisionConflict();
+    state.pendingTimelineRestores.set('taken', {
+      entry: timeline('taken', fileHandle(null, log, 'taken.json'), false),
+      index: 0,
+      previousTimelineId: null,
+      previousCue: null,
+    });
+    expectSaveAsNewRejected(conflict, 'taken');
   });
 
   it('全部成功时清除 dirty、报告全部成功并调用 onSaved', async () => {

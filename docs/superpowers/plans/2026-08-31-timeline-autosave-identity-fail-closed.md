@@ -263,7 +263,7 @@ Update `unresolvedAutosaveTimelineConflicts()` input projection to include `text
 
 Run the same focused autosave test. Expected: all tests pass, including scenes-only legacy parsing.
 
-- [ ] **Step 5: Commit the correctness core**
+- [x] **Step 5: Commit the correctness core**
 
 Stage only the pure helper/test, autosave source/test, project-IO source/test, the minimal `main.ts` structured-conflict projection adaptation, and this taskbook. Verify the exact set and commit:
 
@@ -296,21 +296,21 @@ export function repairTimelineAutosaveConflict(
 ): TimelineAutosaveRepairResult;
 ```
 
-- [ ] **Step 1: Write repair RED tests**
+- [x] **Step 1: Write repair RED tests**
 
 Freeze Replace Current success, Save As New success, invalid new ID, ID/file/internal collision, pending delete/restore collision, invalid JSON, stale current target, undo snapshot, retained handle/path, and zero mutation for every failure.
 
-- [ ] **Step 2: Run repair RED once**
+- [x] **Step 2: Run repair RED once**
 
 Run the focused project-IO test. Expected: missing repair export/cases fail.
 
-- [ ] **Step 3: Implement prepare-then-apply repair**
+- [x] **Step 3: Implement prepare-then-apply repair**
 
 Replace Current re-finds a unique target by the recorded current ID/file, normalizes recovered text to that target, verifies canonical output, pushes one undo snapshot, then assigns text/EOL/dirty only.
 
 Save As New validates via `timelinePathFor`, rejects all current/pending collisions, constructs the full null-handle entry, verifies canonical output, and pushes exactly once.
 
-- [ ] **Step 4: Run repair GREEN once**
+- [x] **Step 4: Run repair GREEN once**
 
 Run the focused project-IO test. Expected: all restore and repair cases pass.
 
@@ -340,21 +340,21 @@ export function renderTimelineAutosaveConflictPanel(
 ): void;
 ```
 
-- [ ] **Step 1: Write panel RED tests**
+- [x] **Step 1: Write panel RED tests**
 
 Test no-conflict emptiness; heading `演出备份需要处理`; current/backup file and IDs; Chinese reason map; stable `data-conflict-key`/`data-conflict-reason`; collapsed technical text; Replace availability only with a current target and parseable backup; Save As New disabled for invalid JSON; discard/replace confirmation callbacks; download availability for invalid JSON.
 
-- [ ] **Step 2: Run panel RED once**
+- [x] **Step 2: Run panel RED once**
 
 ```powershell
 npm run test -w surdet-editor -- --run test/timeline-autosave-conflicts.test.ts
 ```
 
-- [ ] **Step 3: Implement semantic DOM and minimal styles**
+- [x] **Step 3: Implement semantic DOM and minimal styles**
 
 Use `<section>`, `<details>`, `<button>`, `<label>`, and `<input>`; do not inject raw HTML. Buttons use `type=button`. Destructive discard is visually secondary. CSS uses existing variables, 14px-or-larger body copy, clear spacing, keyboard focus, no gradient, no shadow stack, and no colored left selection bar.
 
-- [ ] **Step 4: Run panel GREEN once**
+- [x] **Step 4: Run panel GREEN once**
 
 Run the same focused panel test. Expected: all DOM/action contracts pass.
 
@@ -368,7 +368,7 @@ Run the same focused panel test. Expected: all DOM/action contracts pass.
 - Consumes: `TimelineAutosaveRestoreConflict[]`, panel renderer, repair adapter, autosave build/preserve/write/clear functions.
 - Produces: one source of pending conflict state and immediate persistence after action.
 
-- [ ] **Step 1: Write integration RED tests**
+- [x] **Step 1: Write integration tests**
 
 Prove:
 
@@ -385,17 +385,17 @@ Prove:
 
 Run the narrow integration test. Expected: wiring exports/hooks are absent.
 
-- [ ] **Step 3: Implement shared persistence helper and callbacks**
+- [x] **Step 3: Implement shared persistence helper and callbacks**
 
 Extract one main-local `persistCurrentAutosave(now)` used by interval tick and conflict actions. Keep `pendingAutosaveTimelineConflicts` as structured records. For persistence, pass `conflict.recovered` entries to the autosave evidence functions.
 
 Render the panel before the active mode content. Download uses a Blob/temporary anchor and never mutates project/autosave state.
 
-- [ ] **Step 4: Run integration GREEN once**
+- [x] **Step 4: Run integration GREEN once**
 
 Run the integration test, then the four focused test files together. Expected: all pass.
 
-- [ ] **Step 5: Commit guided repair UI**
+- [x] **Step 5: Commit guided repair UI**
 
 Stage only Task 4–6 files plus this taskbook and commit:
 
@@ -475,3 +475,8 @@ Append-only. Record actual commands, exits, counts, failures, commits, recovery 
 - Task 3 replacement GREEN exited `0`: `autosave.test.ts` passed `20/20`. Ordinary dirty `timelines` and quarantined `timelineConflicts` now coexist, parse independently, and only canonical exact current bytes resolve evidence automatically.
 - Combined Task 1–3 focused run passed `67/67`. The first Editor typecheck then exited `2` because `main.ts` still read removed flat conflict fields (`id/recoveredFile`). The approved fix is a minimal projection adaptation to consume `conflict.recovered` directly; no compatibility fields or duplicate truth were added.
 - Replacement Editor typecheck after the minimal projection adaptation exited `0`.
+- Task 1–3 correctness core was staged as exactly `8` paths with no scope delta and committed as `c551283` (`fix(editor): fail closed timeline autosave identity`). The commit contains the pure helper/test, autosave source/test, project-IO source/test, minimal main projection adaptation, and this taskbook; no UI, timeout, dependency, public protocol, protected file, or long-term ledger entered the commit.
+- Task 4 delegated RED run exited `1` with `23/34` passing and `11` failures. Its first failure exposed a test-helper scope mistake, while later failures also proved the planned repair export was absent. The worker corrected only the helper without a second run. The manager then implemented prepare-before-apply repair, exact target revalidation, canonical normalization, collision rejection, one undo snapshot, and zero-mutation failures. The focused repair GREEN passed `34/34`; after adding conflict-bucket quarantine coverage, the combined run passed the expanded `36/36` Project IO suite.
+- Task 5 delegated RED did not establish a valid product RED: an old-style NUL escape caused esbuild collection failure before any test ran. This invalid evidence remains recorded rather than being relabelled. After correcting only the test key and implementing the pure panel, the single panel GREEN passed `5/5`. The panel uses Chinese semantic DOM, collapsed technical details, explicit replace/save-as-new/download/discard actions, confirmations for destructive choices, and no colored selection bar.
+- Task 6 sequencing deviation: the manager completed the narrow main wiring before creating the source-level integration contract, so no separately executed Task 6 RED exists. The new integration contract then passed `6/6` on its first run. It freezes structured pending conflict state, conflict-bucket quarantine, panel-before-workspace mounting, success-only removal, immediate persistence, failure retention, and non-mutating download.
+- Task 4–6 combined focused verification passed `5/5` files and `91/91` tests. The first Editor typecheck then exited `2` because the delegated panel test helper typed `fileId` as `string | null`; production code was not implicated. The manager narrowed the test helper to the actual `string` contract, and the replacement Editor typecheck exited `0`.
