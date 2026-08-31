@@ -134,6 +134,7 @@ describe('NodeLocalLeaseManager', () => {
   it.each([
     ['project', 'C:/canonical/project/root'],
     ['change', 'chg_heartbeat_drain'],
+    ['review', 'project-1\u0000review-heartbeat-drain'],
   ] satisfies Array<[LeaseScope, string]>)('serializes and drains an in-flight %s heartbeat before release', async (scope, resourceId) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `surdet-local-lease-drain-${scope}-`));
     temporaryRoots.push(root);
@@ -211,6 +212,102 @@ describe('NodeLocalLeaseManager', () => {
       if (releasePromise !== undefined) await Promise.allSettled([releasePromise]);
       else await handle.release().catch(() => undefined);
     }
+  });
+
+  it('uses one review namespace across managers while keeping distinct reviews independent', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-review-lease-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const owner = makeManager(root, state);
+    const contender = makeManager(root, { ...state, pid: 1002 });
+    const resourceId = 'project-1\u0000review-1';
+    const first = await owner.acquire({ scope: 'review', resourceId });
+
+    expect(first.directory).toContain(path.join('.locks', 'reviews'));
+    await expect(contender.acquire({ scope: 'review', resourceId })).rejects.toMatchObject({
+      code: 'REVIEW_BUSY',
+      details: { scope: 'review', resourceId },
+    });
+    await expect(contender.release({ ...first, ownerToken: 'wrong-owner' })).rejects.toMatchObject({
+      code: 'REVIEW_BUSY',
+    });
+    expect(await contender.inspect('review', resourceId)).toMatchObject({
+      state: 'owned',
+      scope: 'review',
+      resourceId,
+      manualRecoveryRequired: false,
+    });
+
+    const distinct = await contender.acquire({
+      scope: 'review',
+      resourceId: 'project-1\u0000review-2',
+    });
+    expect(distinct.directory).not.toBe(first.directory);
+    await distinct.release();
+    await first.release();
+    expect(await owner.inspect('review', resourceId)).toMatchObject({ state: 'free' });
+  });
+
+  it('recovers only a dead same-host review lease and preserves unexpected release evidence', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-review-recovery-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const resourceId = 'project-1\u0000review-stale';
+    const owner = makeManager(root, state);
+    const first = await owner.acquire({ scope: 'review', resourceId });
+    state.clock.advance(15_001);
+    state.alive.set(1001, false);
+
+    const replacementManager = makeManager(root, { ...state, pid: 1002 });
+    const replacement = await replacementManager.acquire({ scope: 'review', resourceId });
+    expect(replacement.ownerToken).not.toBe(first.ownerToken);
+    const staleRoot = path.join(root, '.locks', 'stale');
+    const quarantined = await fsp.readdir(staleRoot, { withFileTypes: true });
+    expect(quarantined.filter((entry) => entry.isDirectory())).toHaveLength(1);
+
+    const sentinel = path.join(replacement.directory, 'keep-review-evidence.txt');
+    await fsp.writeFile(sentinel, 'keep\n', 'utf8');
+    await expect(replacement.release()).rejects.toMatchObject({
+      code: 'LEASE_CORRUPT',
+      details: { scope: 'review', resourceId, manualRecoveryRequired: true },
+    });
+    await expect(fsp.readFile(sentinel, 'utf8')).resolves.toBe('keep\n');
+    expect(await replacementManager.inspect('review', resourceId)).toMatchObject({ state: 'owned' });
+  });
+
+  it('waits through a review publication window and then reports REVIEW_BUSY', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-review-publish-'));
+    temporaryRoots.push(root);
+    const resourceId = 'project-1\u0000review-publish';
+    const lockDirectory = path.join(root, '.locks', 'reviews', 'project-1_review-publish.lock');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+    const leasePath = path.join(lockDirectory, 'lease.json');
+    const state = makeState();
+    let polls = 0;
+    const contender = makeManager(root, { ...state, pid: 1002 }, {
+      publicationDelay: async () => {
+        polls += 1;
+        if (polls !== 1) return;
+        const nowIso = new Date(state.clock.nowMs).toISOString();
+        await fsp.writeFile(leasePath, JSON.stringify({
+          formatVersion: 1,
+          scope: 'review',
+          resourceId,
+          ownerToken: 'review-owner-token',
+          pid: 1001,
+          hostname: 'surdet-test-host',
+          acquiredAt: nowIso,
+          heartbeatAt: nowIso,
+        }), 'utf8');
+      },
+    });
+
+    await expect(contender.acquire({ scope: 'review', resourceId })).rejects.toMatchObject({
+      code: 'REVIEW_BUSY',
+    });
+    expect(polls).toBeGreaterThanOrEqual(1);
+    await expect(fsp.access(leasePath)).resolves.toBeUndefined();
+    await expect(fsp.readdir(path.join(root, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('preserves an unexpected lock occupant and reports release cleanup as manual recovery', async () => {
