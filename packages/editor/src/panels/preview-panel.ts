@@ -573,7 +573,8 @@ export function renderPreviewPanel(container: HTMLElement): void {
   bindPreviewReadyListenerOnce();
 
   playBtn.onclick = () => {
-    state.previewTimelineId = null;
+    // “播放 / 重载”只重启当前预览入口。时间轴直演由 Timeline Desk 显式建立，
+    // 重载不得悄悄降级成普通场景；只有上方入口选择器等明确导航动作才退出直演。
     void send();
   };
   fastChk.onchange = () => {

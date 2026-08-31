@@ -3,7 +3,7 @@
  * 浏览器崩溃/误关后重新打开同一项目时提示恢复。
  *  - 只快照 dirty 场景/时间轴（干净内容磁盘已有，无需备份）
  *  - 保存全部成功后清除快照（磁盘已是最新）
- *  - 存储按持久项目身份隔离；恢复时再核对项目显示名与当前内存差异
+ *  - 存储与恢复仅按持久项目身份隔离；目录名只作显示元数据
  * 纯逻辑（build/pick/parse）可单测；存储读写薄封装带 try/catch（隐私模式等场景静默降级）。
  */
 
@@ -176,9 +176,13 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
   return { dirName: d.dirName, ...(projectId ? { projectId } : {}), savedAt: d.savedAt, scenes, timelines };
 }
 
-/** 可恢复条目：同项目 + 快照文本与当前内存不同（相同说明改动已在内存/已还原，无需打扰） */
-export function pickRecoverable(payload: AutosavePayload | null, dirName: string, scenes: Map<string, { text: string }>): AutosaveEntry[] {
-  if (!payload || payload.dirName !== dirName) return [];
+/** 可恢复条目：同一持久项目 + 快照文本与当前内存不同。 */
+export function pickRecoverable(
+  payload: AutosavePayload | null,
+  projectId: string,
+  scenes: Map<string, { text: string }>,
+): AutosaveEntry[] {
+  if (!payload || payload.projectId !== projectId) return [];
   const out: AutosaveEntry[] = [];
   for (const e of payload.scenes) {
     const cur = scenes.get(e.key);
@@ -188,15 +192,15 @@ export function pickRecoverable(payload: AutosavePayload | null, dirName: string
 }
 
 /**
- * 可恢复时间轴：同项目，且磁盘载入内容与快照不同；内存中不存在的条目视为新建未落盘。
+ * 可恢复时间轴：同一持久项目，且磁盘载入内容与快照不同；内存中不存在的条目视为新建未落盘。
  * 调用方负责把返回条目更新或插入 state。
  */
 export function pickRecoverableTimelines(
   payload: AutosavePayload | null,
-  dirName: string,
+  projectId: string,
   timelines: Iterable<{ id: string; file?: string; text: string; eol: '\r\n' | '\n' }>,
 ): AutosaveTimelineEntry[] {
-  if (!payload || payload.dirName !== dirName || !payload.timelines) return [];
+  if (!payload || payload.projectId !== projectId || !payload.timelines) return [];
   const current = new Map<string, { file?: string; text: string; eol: '\r\n' | '\n' }>();
   for (const timeline of timelines) current.set(timeline.id, timeline);
   return payload.timelines.filter((entry) => {
@@ -245,16 +249,16 @@ export function writeAutosave(payload: AutosavePayload): void {
   } catch { /* 存储不可用：放弃备份，不影响编辑 */ }
 }
 
-export function readAutosave(projectId: string, dirName: string): AutosavePayload | null {
+export function readAutosave(projectId: string): AutosavePayload | null {
   try {
     const scoped = parseAutosave(localStorage.getItem(autosaveStorageKey(projectId)));
-    return scoped?.dirName === dirName ? scoped : null;
+    return scoped?.projectId === projectId ? scoped : null;
   } catch {
     return null;
   }
 }
 
-export function clearAutosave(projectId: string, dirName: string): void {
+export function clearAutosave(projectId: string): void {
   try {
     localStorage.removeItem(autosaveStorageKey(projectId));
   } catch { /* 同上 */ }
