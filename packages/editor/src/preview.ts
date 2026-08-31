@@ -32,6 +32,7 @@ import {
 } from '@surdet/renderer';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
+import { createDirectTimelinePreviewScene } from './preview-direct-timeline.js';
 import { PreviewRuntimeLifecycle } from './preview-runtime-lifecycle.js';
 import {
   createPreviewTraceEvidenceSnapshot,
@@ -1014,11 +1015,12 @@ async function load(p: LoadPayload): Promise<void> {
         console.warn('[preview] 时间轴定义无效，已跳过：', err instanceof Error ? err.message : String(err));
       }
     }
-    const timelinePreviewSceneId = '__surdet_timeline_preview__';
+    const directTimelineScene = createDirectTimelinePreviewScene(p.timelinePreviewId?.trim() ?? '');
+    const timelinePreviewSceneId = directTimelineScene.id;
     const directTimelineId = p.timelinePreviewId?.trim();
     if (directTimelineId) {
       if (!timelines.has(directTimelineId)) throw new Error(`时间轴 '${directTimelineId}' 未加载或校验失败`);
-      reg.register(compileScene(`@scene ${timelinePreviewSceneId}\n@timeline ${directTimelineId} @ blocking\n@end`, 'timeline-preview.gal', timelinePreviewSceneId));
+      reg.register(compileScene(directTimelineScene.text, 'timeline-preview.gal', timelinePreviewSceneId));
     }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);

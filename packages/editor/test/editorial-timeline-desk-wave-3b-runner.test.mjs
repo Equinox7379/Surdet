@@ -148,6 +148,9 @@ test('Frontend Pass 3B runner settles the Preview iframe before intentional navi
   assert.match(source, /event\.source\?\.op === 'timeline'/);
   assert.match(source, /replayTraceEventCount/);
   assert.match(source, /replayTimelineInstructionCount/);
+  assert.match(source, /__surdetTimelineDeskPreviewMessages/);
+  assert.match(source, /previewReceiptProbeEvidence/);
+  assert.match(source, /initial direct-Timeline receipt missing/);
   assert.doesNotMatch(source, /requestFailures\s*=\s*requestFailures\.filter|ERR_ABORTED.*(?:ignore|allow|whitelist)/i);
 });
 
@@ -195,11 +198,16 @@ test('Frontend Pass 3B runner closes the independent interaction-review seams', 
   assert.match(source, /pointercancel/);
   assert.match(source, /scrollLeft/);
   assert.match(source, /preModeRoundTripScrollEvidence/);
+  assert.match(source, /timelineEditScrollProbeEvidence/);
   assert.match(source, /Timeline redo did not restore scrollLeft before mode round-trip/);
   assert.match(source, /expectedModeRoundTripScrollLeft/);
   assert.match(source, /requestAnimationFrame\(\(\) => requestAnimationFrame\(resolve\)\)/);
   assert.match(source, /timeline search did not filter/);
   assert.match(source, /compact Timeline disclosures reopened after edit/);
+  assert.match(source, /compactLayoutProbeEvidence/);
+  assert.match(source, /afterExplicitClose/);
+  assert.match(source, /details\.timeline-library'\)\?\.open === false/);
+  assert.match(source, /compact Timeline duration edit did not commit/);
 });
 
 test('Frontend Pass 3B runner captures screenshots, error channels and process cleanup', () => {

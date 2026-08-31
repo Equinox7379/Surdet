@@ -2,7 +2,9 @@
  * 预览多场景：collectPreviewScenes（全量场景收集，跨场景 @jump 的预览数据源）纯逻辑测试。
  */
 import { describe, expect, it } from 'vitest';
+import { compileScene } from '@surdet/core';
 import { collectPreviewScenes, listLabels, parsePreviewTimelines, parsePreviewVariables } from '../src/panels/preview-panel.js';
+import { createDirectTimelinePreviewScene } from '../src/preview-direct-timeline.js';
 
 describe('collectPreviewScenes（预览全量场景收集）', () => {
   it('按插入序输出 {id,text}（内存文本含未保存编辑）', () => {
@@ -42,6 +44,15 @@ describe('parsePreviewTimelines（预览时间轴传输）', () => {
     ]);
     expect(result.definitions).toEqual([{ version: 1, id: 'intro', durationMs: 100, tracks: [] }]);
     expect(result.issues).toHaveLength(2);
+  });
+});
+
+describe('createDirectTimelinePreviewScene（时间轴直演内部场景）', () => {
+  it('生成 Core 可编译的稳定内部场景 ID 与 @timeline 指令', () => {
+    const direct = createDirectTimelinePreviewScene('intro_arrival');
+    expect(direct.id).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+    expect(() => compileScene(direct.text, 'timeline-preview.gal', direct.id)).not.toThrow();
+    expect(direct.text).toContain('@timeline intro_arrival @ blocking');
   });
 });
 

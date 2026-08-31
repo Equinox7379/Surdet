@@ -1388,3 +1388,81 @@ REPLACEMENT_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
 PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
 FRONTEND_PASS_4 = NOT_STARTED
 ```
+
+### 2026-08-31 — Replay-receipt replacement FORMAL failure
+
+**FROZEN IDENTITY**
+
+- `CODE_EVIDENCE_HEAD`: `2c2bb327aa3e2573eb7d13ab3330b6ac03e0fc2c`; parent `0632b9688effe5763a5512687214f8119b0a3171`; commit message `test(editor): correlate timeline replay evidence`.
+- Exact scope: taskbook, browser runner, runner contract and replay panel regression test. Tracked worktree and staging were empty before FORMAL.
+- Runner HEAD identity: 81797 bytes / SHA-256 `BCDA8C85C71E05D35742B9F487CF218D2BE5CDA109A73169EF8A81DA7D047086`.
+
+**FORMAL — FAILED, NOT RERUN**
+
+- FORMAL budget 1/1 consumed; exit 1; `runHead === codeEvidenceHead`; `trackedCodeDiffPaths=[]`.
+- Thirteen milestones passed. Last passed: `destructive-confirm-undo-restore`. First failed: `selected-timeline-preview-handoff`.
+- The fixed 10000ms wait failed before the replay click: the initial direct-Timeline preview never appeared in parent `state.previewTrace` as an event with `source.op=timeline`.
+- This falsifies the recovery review's assumption that the existing parent trace projection necessarily exposes the synthetic direct-Timeline instruction. No second replay request was made in this FORMAL, so it provides no evidence about the replay payload or replay result.
+- Console, page, request, HTTP response, Vite stderr and cleanup channels were all empty. Port 4251 released; original Starter unchanged.
+- Evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-formal-lgJivX\evidence.json`, 34849 bytes, SHA-256 `A5B4A5910CF77A6261B3473AA83FA9FCAA0B2394CD90DC5EFB6F5519758B59C6`.
+- Identity sidecar: 570 bytes, SHA-256 `B10ECE7431625A9097162AA30785BD83BABBA21B6325ED3CFA1A8394044A4160`.
+
+**STOP / NEXT EVIDENCE QUESTION**
+
+- Do not change timeout values or infer that a missing parent Core trace means the Timeline did not run. The next recovery must first inspect the real direct-Timeline child/parent receipt shape and establish a focused RED from that observed shape.
+- The two local commits remain unpushed. No further FORMAL, push or Frontend Pass 4 action is authorized from this failed run.
+
+```text
+W3B_REPLAY_RECEIPT_FORMAL = FAILED_1_OF_1
+HEAD = 2c2bb327aa3e2573eb7d13ab3330b6ac03e0fc2c
+REMOTE_MAIN = 42be0fcd2f614f032b8a539475c039c7f4ebd66f
+AHEAD_BEHIND = 11/0
+PUSH = NOT_PERFORMED
+FRONTEND_PASS_4 = NOT_STARTED
+WAITING_FOR_NEW_MANAGER_RECOVERY_AUTHORIZATION = YES
+```
+
+### 2026-08-31 — Direct-Timeline compile and compact-layout evidence recovery
+
+**AUTHORIZATION / SCOPE**
+
+- The Owner instructed the manager to resume from the hard stop. The existing ordinary-push authorization remains conditional on a fresh clean freeze and one successful final FORMAL. Frontend Pass 4 remains out of scope.
+- Recovery was limited to the direct-Timeline Preview path, the browser runner's observed receipt and responsive-layout timing, permanent focused contracts, and this append-only Ledger.
+
+**OBSERVED PRODUCT DEFECT — RED -> GREEN**
+
+- A source-matched parent-window collector captured the actual Preview message stream instead of inferring execution from iframe construction. Diagnostic `knz5ZH` then exposed the first real product defect: the synthetic scene id `__surdet_timeline_preview__` was rejected by the Core scene-id grammar before the direct `@timeline` instruction could compile.
+- `knz5ZH` evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-diagnostic-knz5ZH\evidence.json`, 40008 bytes, SHA-256 `2EE47AC40A9B54909A89970AEEEF3F37592D42A3CC8280735F342934223C769E`; identity 582 bytes, SHA-256 `7C9D9EBB2578EA90BDFABECE8B01827A32E16A258B65DDC09C4B521B5636D691`.
+- A focused permanent test compiled the same generated scene through Core. RED was 6 PASS / 1 expected failure with the invalid identifier. The smallest product repair moved the generator into `preview-direct-timeline.ts` and changed only the synthetic id to `surdet_timeline_preview`; focused GREEN was 8/8 PASS across generated-scene compilation and Timeline replay.
+- No Renderer, backend, MCP, public protocol, timeout or request allow-list was changed.
+
+**RUNNER EVIDENCE CORRECTIONS — FAILED ARTIFACTS PRESERVED**
+
+- `rwfzKy` reached the repaired Preview path but failed at the old exact scroll wait before the browser's restoration frame settled. Evidence 27961 bytes / SHA-256 `EA5D84E56BAABF5BE30EC5ADF871AC09A34F156B0E87F4B2E0F771DDFEDDCD85`; identity 582 bytes / SHA-256 `F6EC39B32E43310BFA6CB177D1F37C385B26960D1E0704CC292CF62B7D0C2436`. The runner now samples after two animation frames and still requires exact equality.
+- `98SGGW` proved both Preview generations executed `instr` and `timeline`, then failed at compact-layout persistence. Evidence 62857 bytes / SHA-256 `29F54BE15A9D0F1DA173185EA60F2E4DB99F84501B296EB323B24EE1526F36FA`; identity 582 bytes / SHA-256 `F6CF2749A214FBDA58CAE55B154EA65917AB5DA0866C5049419105F630A3F235`.
+- `Xa79YC` and `SMoStb` repeated the compact failure while testing an event-handler hypothesis. `Xa79YC`: evidence 63219 bytes / SHA-256 `50F743EEF4979B1FDE02BD257531DEF3A7A8267FE70D850B93573F29D059FB99`, identity SHA-256 `FDD76C459B8B8602BE6F41533B6FE6605838997DA9C8BD59003FDF6D1102ECC9`. `SMoStb`: evidence 63219 bytes / SHA-256 `5FC56DE2D8B8071AE0210CAF97D29BCCF7C4994C335FF75373B91342BBCDFC3E`, identity SHA-256 `C7A541A2AB4B5CB2F670CC34AFE29628BD4A8674E4E86F14596A8669D58D4BB7`.
+- Read-back showed the runner was clicking immediately after `setViewportSize()`, before the responsive `ResizeObserver` had settled. The temporary product-event changes did not solve the real ordering problem and were fully removed. The permanent runner correction waits two frames after resize, proves both disclosures are explicitly closed, edits the header duration field, and then proves both remain closed.
+
+**FINAL DIAGNOSTIC / FRESH LOCAL GATES**
+
+- Diagnostic `tAa3hB`: 29/29 PASS, no failed node, port 4251 released and original Starter unchanged.
+- Evidence: `C:\Users\Equinox\AppData\Local\Temp\surdet-editorial-timeline-desk-3b-diagnostic-tAa3hB\evidence.json`, 158954 bytes, SHA-256 `7B2746BF9BD0F5EABC8F6CB797C88BEFE8593D60B45F2371ED30025BEF0315FC`; identity 583 bytes, SHA-256 `EC3C97954BC2E6E4375ACB52251DF00209116BE4CF7745BA5B84F7CD59AD95B4`.
+- Preview receipt evidence contains generation 1 and generation 2 trace-start messages; both generations emitted `source.op=instr` and `source.op=timeline`. The child had interpreter/runtime instances, one canvas, `rendererStatus=idle` and no visible error.
+- Compact evidence: after responsive settle `open/open`; after explicit user close `closed/closed`; after changing duration to 1400ms `closed/closed`, with the model value also 1400ms.
+- Editor full test: 51 files / 371 tests PASS. Editor typecheck PASS. Editor build PASS with 907 modules; only the existing chunk-size warning remains.
+- Runner contract 11/11 PASS; runner syntax PASS; `verify:docs` PASS; both diff checks PASS.
+
+**PRE-FREEZE IDENTITY**
+
+- Base HEAD remains `2c2bb327aa3e2573eb7d13ab3330b6ac03e0fc2c`; remote `surdet/main` remains `42be0fcd2f614f032b8a539475c039c7f4ebd66f` (ahead/behind 11/0 before the recovery freeze).
+- Intended exact freeze contains six paths: this taskbook, browser runner, runner contract, `preview.ts`, the generated-scene regression, and new `preview-direct-timeline.ts`.
+- Current runner: 86693 bytes / SHA-256 `90719676C2B181271EAD928CBB3BB22909C1D7FFE5B2DB247243C2CF12CCBB60`. New helper: 335 bytes / SHA-256 `877C3002F77A92534EA602C1CFC456D63B2E79900D5BD01D2DF30C2C7714FAD8`.
+- One final FORMAL is authorized only after an exact clean freeze. Any FORMAL failure stops before push.
+
+```text
+W3B_DIRECT_TIMELINE_RECOVERY = READY_TO_FREEZE
+AUTHORIZED_PATH_COUNT = 6
+FINAL_FORMAL_BUDGET = 1_OF_1 UNCONSUMED
+PUSH = AUTHORIZED_ONLY_AFTER_FORMAL_PASS
+FRONTEND_PASS_4 = NOT_STARTED
+```
