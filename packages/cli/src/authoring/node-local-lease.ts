@@ -65,7 +65,11 @@ interface HeartbeatController {
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const STALE_AFTER_MS = 15_000;
 /** Publication-window budget: the holder creates the final lock directory before lease.json lands. */
-const PUBLICATION_POLL_LIMIT = 10;
+// Durable publication now fsyncs both the record and its parent directory. On a
+// shared CI disk that legitimate window can exceed the old 100 ms allowance.
+// Keep the wait bounded, but long enough to observe the owner instead of
+// misclassifying a slow publication as corruption.
+const PUBLICATION_POLL_LIMIT = 100;
 const DEFAULT_PUBLICATION_POLL_DELAY_MS = 10;
 
 function defaultDataRoot(): string {
