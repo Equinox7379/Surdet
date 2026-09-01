@@ -1,5 +1,9 @@
 import type { ProjectAssetItem, ProjectAssetKind, ProjectAssetReference } from '@surdet/authoring';
 import { state, h } from '../state.js';
+import {
+  renderAssetImportWorkbench,
+  type AssetImportWorkbenchHooks,
+} from './asset-import-workbench.js';
 
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
@@ -34,6 +38,9 @@ type AssetStatus = Exclude<(typeof STATUS_FILTERS)[number]['value'], 'all'>;
 export interface AssetCenterHooks {
   onOpenProject: () => void;
   onOpenReference: (reference: ProjectAssetReference) => void;
+  assetImportOpen: boolean;
+  onToggleImport: () => void;
+  assetImport: AssetImportWorkbenchHooks;
 }
 
 let previewObjectUrl: string | null = null;
@@ -334,6 +341,11 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     h('p', undefined, '查看真实文件、引用位置与健康提示；本页不会改动任何素材。'),
   );
   const tools = h('div', 'asset-center-tools');
+  const importButton = h('button', 'asset-import-entry', '导入素材') as HTMLButtonElement;
+  importButton.type = 'button';
+  importButton.setAttribute('aria-controls', 'asset-import-workbench');
+  importButton.setAttribute('aria-expanded', String(hooks.assetImportOpen));
+  importButton.onclick = hooks.onToggleImport;
   const searchLabel = document.createElement('label');
   searchLabel.className = 'asset-center-search';
   searchLabel.appendChild(h('span', undefined, '搜索素材'));
@@ -357,7 +369,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     button.onclick = () => { state.assetCenterView = value; renderAssetCenter(container, hooks); };
     viewSwitch.appendChild(button);
   }
-  tools.append(searchLabel, viewSwitch);
+  tools.append(importButton, searchLabel, viewSwitch);
   header.append(title, tools);
 
   const problems = intelligence.summary.missingCount
@@ -471,6 +483,10 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   const inspector = h('aside', 'asset-center-inspector');
   renderInspector(inspector, selected, hooks);
   shell.append(rail, library, inspector);
-  container.append(header, overview, shell);
+  const importHost = h('section');
+  importHost.id = 'asset-import-workbench';
+  importHost.hidden = !hooks.assetImportOpen;
+  if (hooks.assetImportOpen) renderAssetImportWorkbench(importHost, state.assetImportWorkspace, hooks.assetImport);
+  container.append(header, importHost, overview, shell);
 
 }
