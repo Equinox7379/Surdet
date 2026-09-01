@@ -498,6 +498,40 @@ describe('NodeLocalLeaseManager', () => {
     await expect(fsp.readdir(path.join(root, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('allows a durable publication to exceed the former 100 ms window', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-slow-publish-'));
+    temporaryRoots.push(root);
+    const resourceId = 'project-1\u0000review-slow-publish';
+    const lockDirectory = path.join(root, '.locks', 'reviews', 'project-1_review-slow-publish.lock');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+    const leasePath = path.join(lockDirectory, 'lease.json');
+    const state = makeState();
+    let polls = 0;
+    const manager = makeManager(root, { ...state, pid: 1002 }, {
+      publicationDelay: async () => {
+        polls += 1;
+        if (polls !== 12) return;
+        const nowIso = new Date(state.clock.nowMs).toISOString();
+        await fsp.writeFile(leasePath, JSON.stringify({
+          formatVersion: 1,
+          scope: 'review',
+          resourceId,
+          ownerToken: 'review-owner-token',
+          pid: 1001,
+          hostname: 'surdet-test-host',
+          acquiredAt: nowIso,
+          heartbeatAt: nowIso,
+        }), 'utf8');
+      },
+    });
+
+    await expect(manager.acquire({ scope: 'review', resourceId })).rejects.toMatchObject({
+      code: 'REVIEW_BUSY',
+    });
+    expect(polls).toBe(12);
+    await expect(fsp.access(leasePath)).resolves.toBeUndefined();
+  });
+
   it('keeps fail-loud semantics once the bounded publication budget is exhausted', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-missing-'));
     temporaryRoots.push(root);
