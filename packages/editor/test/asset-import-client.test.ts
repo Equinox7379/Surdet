@@ -49,7 +49,7 @@ function failure(
   });
 }
 
-function operationSummary(status: 'UPLOADING' | 'STAGED' | 'READY' | 'COMMITTED' = 'STAGED') {
+function operationSummary(status: 'UPLOADING' | 'STAGED' | 'READY' | 'COMMITTED' | 'UNDONE' = 'STAGED') {
   return {
     operationId: OPERATION_ID,
     status,
@@ -59,7 +59,7 @@ function operationSummary(status: 'UPLOADING' | 'STAGED' | 'READY' | 'COMMITTED'
   };
 }
 
-function operationDetail(status: 'STAGED' | 'READY' | 'COMMITTED' = 'STAGED') {
+function operationDetail(status: 'STAGED' | 'READY' | 'COMMITTED' | 'UNDONE' = 'STAGED') {
   return {
     operation: operationSummary(status),
     plan: null,
@@ -498,6 +498,53 @@ describe('Editor 素材导入 authority client', () => {
       recentReceipts: [],
       activeOperation: null,
     });
+    workspace.dispose();
+  });
+
+  it('keeps the recent receipt projection aligned after commit and undo', () => {
+    const workspace = createAssetImportWorkspace();
+    workspace.applyBinding({
+      projectIdentity: PROJECT_IDENTITY,
+      projectName: '当前项目',
+      bindingExpiresAt: '2026-09-01T00:30:00.000Z',
+      recoveryBarrier: 'clear',
+      pendingOperations: [],
+      recentReceipts: [],
+    });
+    const receipt = { ...committedReceipt(), files: [] };
+    workspace.setOperation({
+      ...operationDetail('COMMITTED'),
+      receipt,
+      allowedActions: ['resume', 'undo'],
+    });
+    expect(workspace.snapshot().recentReceipts).toMatchObject([{
+      operationId: OPERATION_ID,
+      status: 'COMMITTED',
+      fileCount: 0,
+    }]);
+
+    workspace.setOperation({
+      ...operationDetail('UNDONE'),
+      receipt,
+      undoReceipt: {
+        schemaVersion: 1,
+        undoReceiptId: '55555555-5555-4555-8555-555555555555',
+        undoReceiptSha256: 'b'.repeat(64),
+        operationId: OPERATION_ID,
+        projectIdentity: PROJECT_IDENTITY,
+        status: 'UNDONE',
+        journalVersion: 5,
+        removedPaths: [],
+        quarantinePaths: [],
+        undoneAt: '2026-09-01T00:03:00.000Z',
+      },
+      allowedActions: [],
+    });
+    expect(workspace.snapshot().recentReceipts).toMatchObject([{
+      operationId: OPERATION_ID,
+      status: 'UNDONE',
+      fileCount: 0,
+    }]);
     workspace.dispose();
   });
 

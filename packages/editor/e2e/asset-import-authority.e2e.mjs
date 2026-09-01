@@ -1,0 +1,944 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { chromium } from 'playwright';
+import { hashProjectTree } from './support/fake-file-system.mjs';
+
+const runnerPath = fileURLToPath(import.meta.url);
+const editorRoot = path.resolve(path.dirname(runnerPath), '..');
+const repoRoot = path.resolve(editorRoot, '..', '..');
+const STARTER_RELATIVE_PATH = 'examples/starter';
+const starterRoot = path.join(repoRoot, ...STARTER_RELATIVE_PATH.split('/'));
+const forbiddenPorts = new Set([4173, 4175]);
+const EXPECTED_UNDO_CONSOLE_ERROR = 'Failed to load resource: the server responded with a status of 409 (Conflict)';
+
+export const SEARCH_RANGE = Object.freeze({ from: 4381, to: 4420 });
+export const MILESTONE_IDS = Object.freeze([
+  'strict-isolated-port-selected',
+  'wrong-directory-rejected',
+  'project-bound-cleanly',
+  'multi-file-selected',
+  'collision-blocked-without-overwrite',
+  'multi-file-import-committed',
+  'asset-facts-refreshed',
+  'receipt-reopened-after-reload',
+  'modified-file-undo-blocked',
+  'unchanged-file-undo-succeeded',
+  'undo-quarantine-retained',
+  'repository-and-starter-unchanged',
+  'browser-error-channels-empty',
+  'isolated-process-cleanup',
+]);
+
+function sha256(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function errorText(error) {
+  return error instanceof Error ? error.stack ?? error.message : String(error);
+}
+
+function readFileIdentity(file) {
+  const bytes = fs.readFileSync(file);
+  return { path: path.resolve(file), bytes: bytes.byteLength, sha256: sha256(bytes) };
+}
+
+function writeExclusiveJson(file, value) {
+  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const handle = fs.openSync(file, 'wx');
+  try {
+    fs.writeSync(handle, bytes, 0, bytes.byteLength, 0);
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  return readFileIdentity(file);
+}
+
+function gitOutput(args, encoding = 'utf8') {
+  const result = spawnSync('git', args, { cwd: repoRoot, encoding, windowsHide: true });
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${String(result.stderr).trim()}`);
+  return typeof result.stdout === 'string' ? result.stdout : Buffer.from(result.stdout);
+}
+
+function repositoryTreeIdentity() {
+  const head = gitOutput(['rev-parse', 'HEAD']).trim();
+  const status = gitOutput(['status', '--porcelain=v1', '-uall']);
+  const diff = gitOutput(['diff', '--binary', '--']);
+  const cached = gitOutput(['diff', '--cached', '--binary', '--']);
+  const bytes = Buffer.from(`${head}\0${status}\0${diff}\0${cached}`, 'utf8');
+  return {
+    head,
+    statusSha256: sha256(Buffer.from(status, 'utf8')),
+    diffSha256: sha256(Buffer.from(diff, 'utf8')),
+    cachedDiffSha256: sha256(Buffer.from(cached, 'utf8')),
+    sha256: sha256(bytes),
+  };
+}
+
+function copyStarter(destination) {
+  fs.cpSync(starterRoot, destination, {
+    recursive: true,
+    filter(source) {
+      const name = path.basename(source);
+      return !['.git', 'node_modules', 'dist', '.vite'].includes(name);
+    },
+  });
+}
+
+function hashCanonicalProjectTree(root) {
+  const files = [];
+  const visit = (directory, relativeDirectory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(directory, entry.name);
+      const relative = relativeDirectory.length === 0 ? entry.name : path.join(relativeDirectory, entry.name);
+      const portableRelative = relative.split(path.sep).join('/');
+      if (['.git', 'node_modules', 'dist', '.vite'].includes(entry.name)
+        || entry.name.startsWith('.surdet-bind-')
+        || portableRelative === '.surdet/asset-import') continue;
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) {
+        const bytes = fs.readFileSync(absolute);
+        files.push({
+          path: relative.split(path.sep).join('/'),
+          bytes: bytes.byteLength,
+          sha256: sha256(bytes),
+        });
+      }
+    }
+  };
+  visit(root, '');
+  const serialized = files.map((file) => `${file.path}\0${file.bytes}\0${file.sha256}`).join('\n');
+  return {
+    path: path.resolve(root),
+    fileCount: files.length,
+    bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+    sha256: sha256(Buffer.from(serialized, 'utf8')),
+    files,
+  };
+}
+
+function svgBytes(label) {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="#314b60"/><text x="24" y="98" fill="#fff" font-size="24">${label}</text></svg>`,
+    'utf8',
+  );
+}
+
+function wavBytes(durationMs = 160, sampleRate = 8_000) {
+  const sampleCount = Math.max(1, Math.floor(sampleRate * durationMs / 1_000));
+  const dataBytes = sampleCount * 2;
+  const bytes = Buffer.alloc(44 + dataBytes);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(36 + dataBytes, 4);
+  bytes.write('WAVE', 8, 'ascii');
+  bytes.write('fmt ', 12, 'ascii');
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(sampleRate, 24);
+  bytes.writeUInt32LE(sampleRate * 2, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write('data', 36, 'ascii');
+  bytes.writeUInt32LE(dataBytes, 40);
+  return bytes;
+}
+
+async function portIsAvailable(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once('error', () => resolve(false));
+    probe.listen({ host: '127.0.0.1', port, exclusive: true }, () => probe.close(() => resolve(true)));
+  });
+}
+
+async function chooseStrictPort() {
+  for (let port = SEARCH_RANGE.from; port <= SEARCH_RANGE.to; port += 1) {
+    if (!forbiddenPorts.has(port) && await portIsAvailable(port)) return port;
+  }
+  throw new Error(`no strict isolated port available in ${SEARCH_RANGE.from}..${SEARCH_RANGE.to}`);
+}
+
+async function waitForHttp(child, url) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`dev-project exited before readiness (${child.exitCode})`);
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      // Listener is not ready yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`dev-project readiness timeout: ${url}`);
+}
+
+async function waitForExit(child, timeoutMs = 5_000) {
+  if (child === null || child.exitCode !== null) return true;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+async function stopServer(child, childCleanupFailures) {
+  if (child === null) return;
+  const pid = child.pid;
+  if (child.connected) {
+    try { child.send({ type: 'shutdown' }); } catch (error) { childCleanupFailures.push(`IPC shutdown ${pid}: ${errorText(error)}`); }
+    if (await waitForExit(child, 10_000)) return;
+  }
+  if (child.exitCode === null) {
+    try { child.kill('SIGTERM'); } catch (error) { childCleanupFailures.push(`SIGTERM ${pid}: ${errorText(error)}`); }
+  }
+  if (await waitForExit(child)) return;
+  if (process.platform === 'win32' && Number.isInteger(pid)) {
+    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    await waitForExit(killer, 5_000);
+  } else if (child.exitCode === null) {
+    try { child.kill('SIGKILL'); } catch (error) { childCleanupFailures.push(`SIGKILL ${pid}: ${errorText(error)}`); }
+  }
+  if (!(await waitForExit(child))) childCleanupFailures.push(`dev-project child remained alive: ${pid}`);
+}
+
+function resolveRootPath(root, relativePath = '') {
+  assert(typeof relativePath === 'string' && !relativePath.includes('\0'), 'invalid bridge path');
+  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+  const segments = normalized.length === 0 ? [] : normalized.split('/');
+  assert(segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'), 'unsafe bridge path');
+  const absolute = path.resolve(root, ...segments);
+  const resolvedRoot = path.resolve(root);
+  assert(absolute === resolvedRoot || absolute.startsWith(`${resolvedRoot}${path.sep}`), 'bridge path escaped root');
+  return absolute;
+}
+
+function createNodeFsBridge(roots) {
+  return async (request) => {
+    assert(request && typeof request === 'object', 'invalid node filesystem bridge request');
+    const root = roots[request.rootKey];
+    assert(typeof root === 'string', `unknown node filesystem root: ${String(request.rootKey)}`);
+    const target = resolveRootPath(root, request.path ?? '');
+    if (request.op === 'root-name') return { name: path.basename(root) };
+    if (request.op === 'stat') {
+      try {
+        const stat = fs.lstatSync(target);
+        return {
+          kind: stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other',
+          size: stat.size,
+          lastModified: stat.mtimeMs,
+          symbolicLink: stat.isSymbolicLink(),
+        };
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      }
+    }
+    if (request.op === 'read') return { bytes: fs.readFileSync(target).toString('base64') };
+    if (request.op === 'list') {
+      return fs.readdirSync(target, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .map((entry) => ({ name: entry.name, kind: entry.isDirectory() ? 'directory' : 'file' }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    }
+    if (request.op === 'mkdir') {
+      fs.mkdirSync(target, { recursive: request.recursive === true });
+      return { ok: true };
+    }
+    if (request.op === 'write') {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, Buffer.from(request.bytes, 'base64'));
+      return { ok: true };
+    }
+    if (request.op === 'remove') {
+      fs.rmSync(target, { recursive: request.recursive === true, force: false });
+      return { ok: true };
+    }
+    throw new Error(`unsupported node filesystem bridge operation: ${String(request.op)}`);
+  };
+}
+
+// Browser-init-only File System Access bridge. Every read reaches the isolated
+// physical fixture, so binding probes and newly committed assets stay fresh.
+const nodeBackedFileSystemInit = ({ initialRootKey }) => {
+  let selectedRootKey = initialRootKey;
+  const call = (request) => window.__surdetNodeFs(request);
+  const fail = (message) => { throw new DOMException(message, 'NotFoundError'); };
+  const normalize = (value) => String(value).replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+  const join = (parent, name) => normalize(parent.length === 0 ? name : `${parent}/${name}`);
+  const mimeFor = (name) => {
+    if (name.endsWith('.json')) return 'application/json';
+    if (name.endsWith('.gal')) return 'text/plain';
+    if (name.endsWith('.svg')) return 'image/svg+xml';
+    if (name.endsWith('.wav')) return 'audio/wav';
+    return 'application/octet-stream';
+  };
+  const bytesFromValue = async (value) => {
+    if (value?.type === 'write') return bytesFromValue(value.data);
+    if (typeof value === 'string') return new TextEncoder().encode(value);
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (value?.arrayBuffer) return new Uint8Array(await value.arrayBuffer());
+    return new Uint8Array();
+  };
+  const toBase64 = (bytes) => {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  };
+  const makeFile = (rootKey, filePath) => ({
+    kind: 'file',
+    name: filePath.split('/').pop(),
+    __surdetRootKey: rootKey,
+    __surdetRelativePath: filePath,
+    async getFile() {
+      const stat = await call({ op: 'stat', rootKey, path: filePath });
+      if (stat?.kind !== 'file' || stat.symbolicLink) fail(`missing or unsafe file ${filePath}`);
+      const result = await call({ op: 'read', rootKey, path: filePath });
+      const binary = Uint8Array.from(atob(result.bytes), (character) => character.charCodeAt(0));
+      return new File([binary], filePath.split('/').pop(), {
+        type: mimeFor(filePath), lastModified: Number(stat.lastModified) || 0,
+      });
+    },
+    async createWritable() {
+      return {
+        async write(value) {
+          const bytes = await bytesFromValue(value);
+          await call({ op: 'write', rootKey, path: filePath, bytes: toBase64(bytes) });
+        },
+        async close() {},
+      };
+    },
+    async isSameEntry(other) {
+      return other?.kind === 'file'
+        && other?.__surdetRootKey === rootKey
+        && other?.__surdetRelativePath === filePath;
+    },
+  });
+  const makeDirectory = (rootKey, directoryPath) => ({
+    kind: 'directory',
+    name: directoryPath.length === 0 ? rootKey : directoryPath.split('/').pop(),
+    __surdetRootKey: rootKey,
+    __surdetRelativePath: directoryPath,
+    async getFileHandle(name, options = {}) {
+      const child = join(directoryPath, name);
+      let stat = await call({ op: 'stat', rootKey, path: child });
+      if (stat === null && options.create) {
+        await call({ op: 'write', rootKey, path: child, bytes: '' });
+        stat = await call({ op: 'stat', rootKey, path: child });
+      }
+      if (stat?.kind !== 'file' || stat.symbolicLink) fail(`missing or unsafe file ${child}`);
+      return makeFile(rootKey, child);
+    },
+    async getDirectoryHandle(name, options = {}) {
+      const child = join(directoryPath, name);
+      let stat = await call({ op: 'stat', rootKey, path: child });
+      if (stat === null && options.create) {
+        await call({ op: 'mkdir', rootKey, path: child, recursive: true });
+        stat = await call({ op: 'stat', rootKey, path: child });
+      }
+      if (stat?.kind !== 'directory' || stat.symbolicLink) fail(`missing or unsafe directory ${child}`);
+      return makeDirectory(rootKey, child);
+    },
+    values() {
+      const iterator = async function* valuesIterator() {
+        const entries = await call({ op: 'list', rootKey, path: directoryPath });
+        for (const entry of entries) {
+          const child = join(directoryPath, entry.name);
+          yield entry.kind === 'directory' ? makeDirectory(rootKey, child) : makeFile(rootKey, child);
+        }
+      };
+      return iterator();
+    },
+    async removeEntry(name, options = {}) {
+      await call({ op: 'remove', rootKey, path: join(directoryPath, name), recursive: options.recursive === true });
+    },
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+    async isSameEntry(other) {
+      return other?.kind === 'directory'
+        && other?.__surdetRootKey === rootKey
+        && other?.__surdetRelativePath === directoryPath;
+    },
+  });
+  window.__surdetE2eSetPickerRoot = (rootKey) => { selectedRootKey = rootKey; };
+  window.showDirectoryPicker = async () => makeDirectory(selectedRootKey, '');
+};
+
+function observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads) {
+  page.on('console', (message) => {
+    if (message.type() === 'error') channels.consoleErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => channels.pageErrors.push(errorText(error)));
+  page.on('requestfailed', (request) => channels.requestFailures.push(
+    `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`,
+  ));
+  page.on('request', (request) => {
+    const promise = request.allHeaders().then((headers) => {
+      const phase = phaseRef.value;
+      const binding = headers['x-surdet-project-binding'];
+      const operation = headers['x-surdet-import-operation'];
+      if (binding) tokenEvidence.bindingTokenHashes[phase].add(sha256(binding));
+      if (operation) tokenEvidence.operationTokenHashes[phase].add(sha256(operation));
+    }).catch((error) => channels.errors.push(`header capture: ${errorText(error)}`));
+    pendingHeaderReads.push(promise);
+  });
+  page.on('response', (response) => {
+    if (response.status() < 400) return;
+    const pathname = new URL(response.url()).pathname;
+    const record = `${response.status()} ${response.request().method()} ${pathname}`;
+    if (response.status() === 409 && pathname.endsWith('/undo')) {
+      channels.expectedBusinessResponses.push({ status: 409, method: response.request().method(), pathname, code: null, record });
+    }
+    else channels.responseFailures.push(record);
+  });
+}
+
+async function openProject(page, rootKey, expectedEntryState) {
+  await page.evaluate((key) => window.__surdetE2eSetPickerRoot(key), rootKey);
+  await page.locator('[data-action="open-project"]').click();
+  await page.waitForFunction(() => (
+    window.surdetEditorDebug?.state?.assetIntelligenceState === 'ready'
+      && window.surdetEditorDebug?.state?.authoringIndex !== null
+  ));
+  await page.waitForFunction((expected) => (
+    window.surdetEditorDebug?.state?.assetImportWorkspace?.entryState === expected
+  ), expectedEntryState);
+}
+
+async function openImportWorkbench(page) {
+  await page.locator('[data-editor-mode="assets"]').click();
+  await page.locator('#asset-center-view.asset-center').waitFor({ state: 'visible' });
+  const entry = page.locator('.asset-import-entry');
+  await entry.waitFor({ state: 'visible' });
+  if (await entry.getAttribute('aria-expanded') !== 'true') await entry.click();
+  await page.locator('#asset-import-workbench.asset-import-workbench').waitFor({ state: 'visible' });
+}
+
+async function workspaceSnapshot(page) {
+  return page.evaluate(() => {
+    const value = window.surdetEditorDebug.state.assetImportWorkspace;
+    return {
+      entryState: value?.entryState ?? null,
+      projectIdentity: value?.projectIdentity ?? null,
+      projectName: value?.projectName ?? null,
+      message: value?.message ?? null,
+      draftItems: (value?.draftItems ?? []).map((item) => ({
+        itemId: item.itemId,
+        sourceName: item.sourceName,
+        fileName: item.fileName,
+        bytes: item.bytes,
+        kind: item.kind,
+      })),
+      recentReceipts: value?.recentReceipts ?? [],
+      operation: value?.activeOperation === null || value?.activeOperation === undefined ? null : {
+        operationId: value.activeOperation.operation.operationId,
+        status: value.activeOperation.operation.status,
+        plan: value.activeOperation.plan,
+        receipt: value.activeOperation.receipt,
+        undoReceipt: value.activeOperation.undoReceipt,
+      },
+    };
+  });
+}
+
+async function setCategory(page, index, category) {
+  await page.locator('.asset-import-category').nth(index).selectOption(category);
+  await page.waitForFunction(({ itemIndex, expected }) => (
+    window.surdetEditorDebug.state.assetImportWorkspace?.draftItems[itemIndex]?.kind === expected
+  ), { itemIndex: index, expected: category });
+}
+
+async function setFinalName(page, index, fileName) {
+  const input = page.locator('.asset-import-file-name').nth(index);
+  await input.fill(fileName);
+  await input.blur();
+  await page.waitForFunction(({ itemIndex, expected }) => (
+    window.surdetEditorDebug.state.assetImportWorkspace?.draftItems[itemIndex]?.fileName === expected
+  ), { itemIndex: index, expected: fileName });
+}
+
+function findActiveLeaseDirectories(dataRoot) {
+  const active = [];
+  if (!fs.existsSync(dataRoot)) return active;
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.name.endsWith('.lock') && fs.readdirSync(absolute).length > 0) active.push(absolute);
+      visit(absolute);
+    }
+  };
+  visit(dataRoot);
+  return active.sort();
+}
+
+async function run() {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-asset-import-e2e-'));
+  const projectRoot = path.join(fixtureRoot, 'project');
+  const wrongProjectRoot = path.join(fixtureRoot, 'wrong-project');
+  const dataRoot = path.join(fixtureRoot, 'agent-data');
+  const sourceRoot = path.join(fixtureRoot, 'sources');
+  const artifactRoot = path.join(fixtureRoot, 'artifact');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(artifactRoot, { recursive: true });
+  copyStarter(projectRoot);
+  copyStarter(wrongProjectRoot);
+
+  const sourceImage = path.join(sourceRoot, 'castle_hall.svg');
+  const sourceSound = path.join(sourceRoot, 'asset-import-click.wav');
+  fs.writeFileSync(sourceImage, svgBytes('asset import scene'));
+  fs.writeFileSync(sourceSound, wavBytes());
+  const sourceIdentities = [readFileIdentity(sourceImage), readFileIdentity(sourceSound)];
+
+  const evidencePath = path.join(artifactRoot, 'evidence.json');
+  const identityPath = path.join(artifactRoot, 'identity.json');
+  const runnerSha256 = sha256(fs.readFileSync(runnerPath));
+  const runHead = gitOutput(['rev-parse', 'HEAD']).trim();
+  const repositoryTreeBefore = repositoryTreeIdentity();
+  const originalStarterBefore = hashProjectTree(starterRoot);
+  const projectBefore = hashCanonicalProjectTree(projectRoot);
+  const milestones = [];
+  const completedMilestoneNames = [];
+  const channels = {
+    errors: [], consoleErrors: [], pageErrors: [], requestFailures: [], responseFailures: [],
+    expectedBusinessResponses: [], expectedConsoleErrors: [], stderrLines: [], childCleanupFailures: [], activeLeaseDirectories: [],
+  };
+  const tokenEvidence = {
+    bindingTokenHashes: { 'before-reload': new Set(), 'after-reload': new Set() },
+    operationTokenHashes: { 'before-reload': new Set(), 'after-reload': new Set() },
+  };
+  const phaseRef = { value: 'before-reload' };
+  const pendingHeaderReads = [];
+  const serverStdout = [];
+  let server = null;
+  let browser = null;
+  let page = null;
+  let port = null;
+  let portReleased = false;
+  let browserClosed = false;
+  let failure = null;
+  let committedProject = null;
+  let projectAfter = null;
+  let originalStarterAfter = null;
+  let repositoryTreeAfter = null;
+  let operationEvidence = null;
+  let receiptReloadEvidence = null;
+  let undoEvidence = null;
+
+  const pass = (name, evidence = {}) => {
+    const expected = MILESTONE_IDS[completedMilestoneNames.length];
+    assert(name === expected, `milestone sequence mismatch: expected ${expected}, got ${name}`);
+    completedMilestoneNames.push(name);
+    milestones.push({ name, status: 'PASSED', evidence });
+  };
+
+  try {
+    port = await chooseStrictPort();
+    assert(port !== 4173 && port !== 4175, `reserved port selected: ${port}`);
+    pass('strict-isolated-port-selected', {
+      loopback: '127.0.0.1', port, range: SEARCH_RANGE, forbiddenPorts: [4173, 4175],
+    });
+
+    const launcher = path.join(editorRoot, 'scripts', 'dev-project.mjs');
+    const launcherBootstrap = `
+      const { startDevProject } = await import(${JSON.stringify(pathToFileURL(launcher).href)});
+      const server = await startDevProject(process.argv.slice(1), {
+        registerSignals: false,
+        disableDependencyDiscovery: true,
+      });
+      process.send?.({ type: 'ready' });
+      let closing = false;
+      process.on('message', (message) => {
+        if (message?.type !== 'shutdown' || closing) return;
+        closing = true;
+        void server.close().then(() => process.exit(0), (error) => {
+          process.stderr.write(String(error instanceof Error ? error.stack ?? error.message : error) + '\\n');
+          process.exit(1);
+        });
+      });
+    `;
+    server = spawn(process.execPath, [
+      '--input-type=module', '--eval', launcherBootstrap,
+      '--',
+      '--project', projectRoot,
+      '--data-root', dataRoot,
+      '--port', String(port),
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', NO_UPDATE_NOTIFIER: '1' },
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      windowsHide: true,
+    });
+    server.stdout.setEncoding('utf8');
+    server.stderr.setEncoding('utf8');
+    server.stdout.on('data', (chunk) => serverStdout.push(chunk));
+    server.stderr.on('data', (chunk) => channels.stderrLines.push(...chunk.split(/\r?\n/).filter(Boolean)));
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForHttp(server, `${baseUrl}/index.html`);
+
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads);
+    await page.exposeFunction('__surdetNodeFs', createNodeFsBridge({
+      project: projectRoot,
+      wrong: wrongProjectRoot,
+    }));
+    await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
+    await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
+
+    await openProject(page, 'wrong', 'mismatch');
+    const mismatch = await workspaceSnapshot(page);
+    assert(mismatch.entryState === 'mismatch', `wrong directory was not rejected: ${JSON.stringify(mismatch)}`);
+    pass('wrong-directory-rejected', {
+      entryState: mismatch.entryState,
+      message: mismatch.message,
+      wrongProjectRoot: path.resolve(wrongProjectRoot),
+    });
+
+    await openProject(page, 'project', 'ready');
+    const bound = await workspaceSnapshot(page);
+    assert(bound.entryState === 'ready', `project did not bind: ${JSON.stringify(bound)}`);
+    assert(bound.projectName === path.basename(projectRoot), `bound project name drifted: ${bound.projectName}`);
+    const successfulProbePaths = fs.readdirSync(projectRoot).filter((name) => name.startsWith('.surdet-bind-'));
+    assert(successfulProbePaths.length === 1, `expected only the rejected challenge probe to remain, got ${successfulProbePaths}`);
+    pass('project-bound-cleanly', {
+      entryState: bound.entryState,
+      projectIdentity: bound.projectIdentity,
+      projectName: bound.projectName,
+      successfulChallengeRemoved: true,
+      rejectedChallengeProbeRetainedFailClosed: successfulProbePaths,
+    });
+
+    await openImportWorkbench(page);
+    await page.locator('input[type="file"][aria-label="选择素材文件"]').setInputFiles([sourceImage, sourceSound]);
+    await page.waitForFunction(() => window.surdetEditorDebug.state.assetImportWorkspace?.draftItems.length === 2);
+    assert(await page.getByText('素材分类', { exact: true }).count() === 2, '素材分类 fields were not rendered for both files');
+    assert(await page.getByText('最终名称', { exact: true }).count() === 2, '最终名称 fields were not rendered for both files');
+    await setCategory(page, 0, 'background');
+    await setCategory(page, 1, 'sound-effect');
+    const selected = await workspaceSnapshot(page);
+    assert(selected.draftItems[0]?.sourceName === 'castle_hall.svg', 'first selected source drifted');
+    assert(selected.draftItems[1]?.sourceName === 'asset-import-click.wav', 'second selected source drifted');
+    pass('multi-file-selected', { items: selected.draftItems, sourceIdentities });
+
+    const existingTarget = path.join(projectRoot, 'content', 'assets', 'bg', 'castle_hall.svg');
+    const existingTargetBefore = readFileIdentity(existingTarget);
+    await page.locator('.asset-import-primary', { hasText: '准备导入' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.plan?.status === 'blocked'
+    ));
+    const blocked = await workspaceSnapshot(page);
+    assert(blocked.operation.plan.issues.includes('IMPORT_TARGET_EXISTS'), 'collision did not report IMPORT_TARGET_EXISTS');
+    assert(readFileIdentity(existingTarget).sha256 === existingTargetBefore.sha256, 'collision overwrote existing target');
+    assert((await page.locator('.asset-import-primary').textContent())?.includes('重新检查'), 'blocked plan did not expose recheck action');
+    pass('collision-blocked-without-overwrite', {
+      code: 'IMPORT_TARGET_EXISTS',
+      issues: blocked.operation.plan.issues,
+      existingTargetBefore,
+      existingTargetAfter: readFileIdentity(existingTarget),
+      overwritePerformed: false,
+    });
+
+    await setFinalName(page, 0, 'asset-import-scene.svg');
+    await page.locator('.asset-import-primary', { hasText: '准备导入' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.plan?.status === 'ready'
+        && ['STAGED', 'READY'].includes(window.surdetEditorDebug.state.assetImportWorkspace.activeOperation.operation.status)
+    ));
+    await page.locator('.asset-import-primary', { hasText: '确认导入' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.operation?.status === 'COMMITTED'
+        && window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.receipt !== null
+        && window.surdetEditorDebug.state.assetImportWorkspace?.message === '导入完成'
+    ));
+    const committed = await workspaceSnapshot(page);
+    const receipt = committed.operation.receipt;
+    assert(receipt.files.length === 2, `expected two receipt files, got ${receipt.files.length}`);
+    const targetByName = new Map(receipt.files.map((file) => [path.basename(file.targetPath), file]));
+    const importedImage = path.join(projectRoot, ...(targetByName.get('asset-import-scene.svg').targetPath.split('/')));
+    const importedSound = path.join(projectRoot, ...(targetByName.get('asset-import-click.wav').targetPath.split('/')));
+    assert(readFileIdentity(importedImage).sha256 === sourceIdentities[0].sha256, 'imported image bytes drifted');
+    assert(readFileIdentity(importedSound).sha256 === sourceIdentities[1].sha256, 'imported sound bytes drifted');
+    committedProject = hashCanonicalProjectTree(projectRoot);
+    assert(committedProject.sha256 !== projectBefore.sha256, 'commit did not change isolated project content');
+    operationEvidence = {
+      operationId: committed.operation.operationId,
+      receiptId: receipt.receiptId,
+      receiptSha256: receipt.receiptSha256,
+      files: receipt.files,
+      importedImage: readFileIdentity(importedImage),
+      importedSound: readFileIdentity(importedSound),
+    };
+    pass('multi-file-import-committed', operationEvidence);
+
+    await page.waitForFunction(() => {
+      const ids = (window.surdetEditorDebug.state.assetIntelligence?.items ?? []).map((item) => item.assetId);
+      return ids.includes('file:content/assets/bg/asset-import-scene.svg')
+        && ids.includes('file:content/assets/se/asset-import-click.wav');
+    });
+    const importedAssetIds = await page.evaluate(() => (
+      window.surdetEditorDebug.state.assetIntelligence.items
+        .map((item) => item.assetId)
+        .filter((id) => id.includes('asset-import-'))
+        .sort()
+    ));
+    pass('asset-facts-refreshed', { importedAssetIds });
+
+    phaseRef.value = 'after-reload';
+    await page.reload({ waitUntil: 'networkidle' });
+    await openProject(page, 'project', 'ready');
+    await openImportWorkbench(page);
+    await page.locator('.asset-import-receipt-row', { hasText: '2 个文件' }).getByRole('button', { name: '查看导入回执' }).click();
+    await page.waitForFunction((operationId) => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.operation?.operationId === operationId
+        && window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.receipt !== null
+        && window.surdetEditorDebug.state.assetImportWorkspace?.message === '已读取导入回执。'
+    ), operationEvidence.operationId);
+    const reopened = await workspaceSnapshot(page);
+    assert(reopened.operation.receipt.receiptSha256 === operationEvidence.receiptSha256, 'reopened receipt identity drifted');
+    await Promise.all(pendingHeaderReads);
+    const beforeBindings = tokenEvidence.bindingTokenHashes['before-reload'];
+    const afterBindings = tokenEvidence.bindingTokenHashes['after-reload'];
+    assert(beforeBindings.size > 0 && afterBindings.size > 0, 'binding token hashes were not observed on both sides of reload');
+    assert([...afterBindings].every((hash) => !beforeBindings.has(hash)), 'old tokens were reused after reload');
+    receiptReloadEvidence = {
+      operationId: reopened.operation.operationId,
+      receiptSha256: reopened.operation.receipt.receiptSha256,
+      oldTokensAbsent: true,
+      tokenRotated: true,
+      bindingTokenHashes: {
+        beforeReload: [...beforeBindings].sort(),
+        afterReload: [...afterBindings].sort(),
+      },
+    };
+    pass('receipt-reopened-after-reload', receiptReloadEvidence);
+
+    const originalImportedImage = fs.readFileSync(importedImage);
+    fs.appendFileSync(importedImage, '\n<!-- changed after import -->\n', 'utf8');
+    const expectedUndoResponse = page.waitForResponse((response) => (
+      response.status() === 409 && new URL(response.url()).pathname.endsWith('/undo')
+    ));
+    await page.getByRole('button', { name: '撤销本次导入' }).click();
+    const undoResponse = await expectedUndoResponse;
+    const undoEnvelope = await undoResponse.json();
+    assert(undoEnvelope?.ok === false
+      && undoEnvelope?.error?.code === 'IMPORT_UNDO_BLOCKED_CHANGED',
+    `unexpected undo rejection envelope: ${JSON.stringify(undoEnvelope)}`);
+    assert(channels.expectedBusinessResponses.length === 1, `unexpected 409 count: ${channels.expectedBusinessResponses.length}`);
+    channels.expectedBusinessResponses[0].code = undoEnvelope.error.code;
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.message === '导入后的文件已被修改，不能自动撤销。'
+    ));
+    assert(fs.existsSync(importedImage) && fs.existsSync(importedSound), 'blocked undo changed the batch');
+    pass('modified-file-undo-blocked', {
+      code: 'IMPORT_UNDO_BLOCKED_CHANGED',
+      message: (await workspaceSnapshot(page)).message,
+      batchPreserved: true,
+      expectedBusinessResponses: [...channels.expectedBusinessResponses],
+    });
+
+    fs.writeFileSync(importedImage, originalImportedImage);
+    await page.getByRole('button', { name: '撤销本次导入' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.operation?.status === 'UNDONE'
+        && window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.undoReceipt !== null
+        && window.surdetEditorDebug.state.assetImportWorkspace?.message === '已撤销，恢复副本仍由 Surdet 保留。'
+    ));
+    await page.waitForFunction(() => {
+      const ids = (window.surdetEditorDebug.state.assetIntelligence?.items ?? []).map((item) => item.assetId);
+      return !ids.includes('file:content/assets/bg/asset-import-scene.svg')
+        && !ids.includes('file:content/assets/se/asset-import-click.wav');
+    });
+    assert(!fs.existsSync(importedImage) && !fs.existsSync(importedSound), 'successful undo left imported targets visible');
+    const undone = await workspaceSnapshot(page);
+    projectAfter = hashCanonicalProjectTree(projectRoot);
+    assert(projectAfter.sha256 === projectBefore.sha256, 'isolated project content did not return to baseline after undo');
+    undoEvidence = {
+      operationId: undone.operation.operationId,
+      undoReceipt: undone.operation.undoReceipt,
+      targetsRemoved: true,
+      assetFactsRestored: true,
+      projectBefore: projectBefore.sha256,
+      projectAfter: projectAfter.sha256,
+    };
+    pass('unchanged-file-undo-succeeded', undoEvidence);
+
+    const quarantine = undone.operation.undoReceipt.quarantinePaths.map((relativePath) => {
+      const absolute = path.join(projectRoot, ...relativePath.split('/'));
+      assert(fs.existsSync(absolute), `undo quarantine missing: ${relativePath}`);
+      return readFileIdentity(absolute);
+    });
+    const quarantineHashes = quarantine.map((entry) => entry.sha256).sort();
+    assert(quarantine.length === 2, `expected two retained quarantine files, got ${quarantine.length}`);
+    assert(quarantineHashes.includes(sourceIdentities[0].sha256) && quarantineHashes.includes(sourceIdentities[1].sha256), 'quarantine bytes do not match imported sources');
+    pass('undo-quarantine-retained', { paths: undone.operation.undoReceipt.quarantinePaths, files: quarantine });
+
+    originalStarterAfter = hashProjectTree(starterRoot);
+    repositoryTreeAfter = repositoryTreeIdentity();
+    assert(originalStarterAfter.sha256 === originalStarterBefore.sha256, 'original Starter changed');
+    assert(repositoryTreeAfter.sha256 === repositoryTreeBefore.sha256, 'repository changed during isolated runner');
+    pass('repository-and-starter-unchanged', {
+      originalStarterBefore,
+      originalStarterAfter,
+      repositoryTreeBefore,
+      repositoryTreeAfter,
+      projectMutation: { occurred: true, committed: true, finalCanonicalMutation: false },
+    });
+
+    await Promise.all(pendingHeaderReads);
+    const beforeOperations = tokenEvidence.operationTokenHashes['before-reload'];
+    const afterOperations = tokenEvidence.operationTokenHashes['after-reload'];
+    assert(beforeOperations.size > 0 && afterOperations.size > 0, 'operation token hashes were not observed on both sides of reload');
+    assert([...afterOperations].every((hash) => !beforeOperations.has(hash)), 'old operation token was reused after reload');
+    if (channels.expectedBusinessResponses.length === 1
+      && channels.expectedBusinessResponses[0]?.code === 'IMPORT_UNDO_BLOCKED_CHANGED'
+      && channels.consoleErrors.length === 1
+      && channels.consoleErrors[0] === EXPECTED_UNDO_CONSOLE_ERROR) {
+      channels.expectedConsoleErrors.push(channels.consoleErrors.shift());
+    }
+    assert(channels.errors.length === 0, `runner errors: ${channels.errors.join(' | ')}`);
+    assert(channels.consoleErrors.length === 0, `console errors: ${channels.consoleErrors.join(' | ')}`);
+    assert(channels.pageErrors.length === 0, `page errors: ${channels.pageErrors.join(' | ')}`);
+    assert(channels.requestFailures.length === 0, `request failures: ${channels.requestFailures.join(' | ')}`);
+    assert(channels.responseFailures.length === 0, `response failures: ${channels.responseFailures.join(' | ')}`);
+    assert(channels.expectedBusinessResponses.length === 1, `unexpected 409 count: ${channels.expectedBusinessResponses.length}`);
+    pass('browser-error-channels-empty', {
+      ...channels,
+      bindingTokenHashes: {
+        beforeReload: [...tokenEvidence.bindingTokenHashes['before-reload']].sort(),
+        afterReload: [...tokenEvidence.bindingTokenHashes['after-reload']].sort(),
+      },
+      operationTokenHashes: {
+        beforeReload: [...beforeOperations].sort(),
+        afterReload: [...afterOperations].sort(),
+      },
+      tokenRotated: true,
+    });
+  } catch (error) {
+    failure = error;
+    channels.errors.push(errorText(error));
+  } finally {
+    if (page !== null) await page.close().catch((error) => channels.childCleanupFailures.push(`page close: ${errorText(error)}`));
+    if (browser !== null) {
+      await browser.close().then(() => { browserClosed = true; })
+        .catch((error) => channels.childCleanupFailures.push(`browser close: ${errorText(error)}`));
+    }
+    await stopServer(server, channels.childCleanupFailures);
+    if (port !== null) portReleased = await portIsAvailable(port);
+    channels.activeLeaseDirectories = findActiveLeaseDirectories(dataRoot);
+    await Promise.allSettled(pendingHeaderReads);
+    await new Promise((resolve) => setImmediate(resolve));
+    originalStarterAfter = hashProjectTree(starterRoot);
+    repositoryTreeAfter = repositoryTreeIdentity();
+
+    if (failure === null) {
+      try {
+        assert(originalStarterAfter.sha256 === originalStarterBefore.sha256, 'original Starter changed after process cleanup');
+        assert(repositoryTreeAfter.sha256 === repositoryTreeBefore.sha256, 'repository changed after process cleanup');
+        assert(browserClosed, 'browser did not close');
+        assert(server?.exitCode !== null, 'dev-project child did not exit');
+        assert(portReleased, `port ${port} was not released`);
+        assert(channels.childCleanupFailures.length === 0, `cleanup failures: ${channels.childCleanupFailures.join(' | ')}`);
+        assert(channels.activeLeaseDirectories.length === 0, `active leases remain: ${channels.activeLeaseDirectories.join(', ')}`);
+        pass('isolated-process-cleanup', {
+          browserClosed,
+          serverExitCode: server?.exitCode ?? null,
+          portReleased,
+          activeLeaseDirectories: channels.activeLeaseDirectories,
+          childCleanupFailures: channels.childCleanupFailures,
+        });
+      } catch (error) {
+        failure = error;
+        channels.errors.push(errorText(error));
+      }
+    }
+
+    if (projectAfter === null) projectAfter = hashCanonicalProjectTree(projectRoot);
+    const bindingTokenHashes = Object.fromEntries(Object.entries(tokenEvidence.bindingTokenHashes)
+      .map(([phase, hashes]) => [phase, [...hashes].sort()]));
+    const operationTokenHashes = Object.fromEntries(Object.entries(tokenEvidence.operationTokenHashes)
+      .map(([phase, hashes]) => [phase, [...hashes].sort()]));
+    const firstFailedNode = failure === null ? null : MILESTONE_IDS[completedMilestoneNames.length] ?? 'post-milestone-cleanup';
+    const evidence = {
+      schemaVersion: 1,
+      evidenceClass: 'EDITOR_ASSET_IMPORT_AUTHORITY_BROWSER',
+      status: failure === null ? 'PASSED' : 'FAILED',
+      createdAt: new Date().toISOString(),
+      runHead,
+      runnerSha256,
+      fixtureRoot,
+      projectRoot,
+      dataRoot,
+      sourceRoot,
+      port,
+      milestones,
+      completedMilestoneNames,
+      lastPassedNode: completedMilestoneNames.at(-1) ?? null,
+      firstFailedNode,
+      failure: failure === null ? null : errorText(failure),
+      operationEvidence,
+      receiptReloadEvidence,
+      undoEvidence,
+      bindingTokenHashes,
+      operationTokenHashes,
+      tokenRotated: failure === null,
+      channels,
+      originalStarterBefore,
+      originalStarterAfter,
+      repositoryTreeBefore,
+      repositoryTreeAfter,
+      projectBefore,
+      committedProject,
+      projectAfter,
+      projectMutation: {
+        occurred: committedProject !== null && committedProject.sha256 !== projectBefore.sha256,
+        finalCanonicalMutation: projectAfter.sha256 !== projectBefore.sha256,
+      },
+      browserClosed,
+      stopServer: { attempted: server !== null, exitCode: server?.exitCode ?? null },
+      portReleased,
+      serverStdout,
+      activeLeaseDirectories: channels.activeLeaseDirectories,
+    };
+    const evidenceIdentity = writeExclusiveJson(evidencePath, evidence);
+    const identity = writeExclusiveJson(identityPath, {
+      schemaVersion: 1,
+      runHead,
+      runnerSha256,
+      evidence: evidenceIdentity,
+    });
+    process.stdout.write(`${JSON.stringify({
+      status: evidence.status,
+      completed: `${completedMilestoneNames.length}/${MILESTONE_IDS.length}`,
+      lastPassedNode: evidence.lastPassedNode,
+      firstFailedNode,
+      evidence: evidenceIdentity,
+      identity,
+    }, null, 2)}\n`);
+    if (failure !== null) process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === runnerPath) {
+  run().catch((error) => {
+    process.stderr.write(`${errorText(error)}\n`);
+    process.exitCode = 1;
+  });
+}

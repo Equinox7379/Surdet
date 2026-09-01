@@ -519,6 +519,22 @@
   border-block-start: 1px solid var(--surdet-border-default);
 }
 
+.asset-import-receipt-list {
+  display: grid;
+  gap: 8px;
+  margin-block-start: 10px;
+}
+
+.asset-import-receipt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 8px;
+  border-block-start: 1px solid var(--surdet-border-default);
+  font-size: 13px;
+}
+
 .asset-import-result h3,
 .asset-import-recovery h3 {
   width: 100%;
