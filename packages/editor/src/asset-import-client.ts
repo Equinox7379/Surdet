@@ -2,6 +2,7 @@ import type {
   ProjectAssetImportPlan,
   ProjectAssetImportStagedItem,
   ProjectAssetImportTargetRequest,
+  ProjectAssetRelocationPlan,
 } from '@surdet/authoring';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
@@ -13,6 +14,7 @@ const UPLOAD_IDLE_TIMEOUT_MS = 35_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+type OperationKind = 'import' | 'relocation';
 
 export type AssetImportOperationStatus =
   | 'UPLOADING' | 'STAGED' | 'READY' | 'PUBLISHING' | 'ROLLING_BACK'
@@ -56,11 +58,124 @@ export interface AssetImportOperationDiscovery {
   recentReceipts: AssetImportReceiptSummary[];
 }
 
+export type AssetRelocationOperationStatus =
+  | 'PLANNED' | 'PUBLISHING' | 'ROLLING_BACK' | 'ROLLED_BACK'
+  | 'RECOVERY_REQUIRED' | 'COMMITTED' | 'UNDOING' | 'UNDONE' | 'CANCELLED';
+
+export interface AssetRelocationFileEvidence {
+  device: string;
+  inode: string;
+  birthtimeNs: string;
+  size: number;
+  mtimeNs: string;
+  sha256: string;
+}
+
+export interface AssetRelocationOperationSummary {
+  operationId: string;
+  status: AssetRelocationOperationStatus;
+  sourcePath: string;
+  targetPath: string;
+  updatedAt: string;
+  manualRecoveryRequired: boolean;
+}
+
+export type AssetRelocationOperation = AssetRelocationOperationSummary;
+
+export type AssetRelocationPlanDescriptor = NonNullable<ProjectAssetRelocationPlan['source']>;
+export type AssetRelocationReferenceChange = ProjectAssetRelocationPlan['referenceChanges'][number];
+export type AssetRelocationBlocker = ProjectAssetRelocationPlan['blockers'][number];
+
+export interface AssetRelocationPublicPlan {
+  schemaVersion: 1;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  status: 'ready' | 'blocked';
+  source: AssetRelocationPlanDescriptor | null;
+  target: AssetRelocationPlanDescriptor | null;
+  affectedReferenceCount: number;
+  affectedFileCount: number;
+  referenceChanges: AssetRelocationReferenceChange[];
+  blockers: AssetRelocationBlocker[];
+}
+
+export interface AssetRelocationRequest {
+  operationId: string;
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface AssetRelocationReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  receiptFingerprint: string;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  projectIdentity: string;
+  sourcePath: string;
+  targetPath: string;
+  targetIdentity: AssetRelocationFileEvidence;
+  textFiles: Array<{
+    path: string;
+    sha256: string;
+    identity: AssetRelocationFileEvidence;
+  }>;
+  committedAt: string;
+}
+
+export interface AssetRelocationUndoReceipt {
+  schemaVersion: 1;
+  undoReceiptId: string;
+  undoReceiptFingerprint: string;
+  operationId: string;
+  receiptId: string;
+  sourcePath: string;
+  targetPath: string;
+  sourceIdentity: AssetRelocationFileEvidence;
+  restoredTextFiles: Array<{
+    path: string;
+    sha256: string;
+    identity: AssetRelocationFileEvidence;
+  }>;
+  undoneAt: string;
+}
+
+export interface AssetRelocationDetail {
+  request: AssetRelocationRequest;
+  operation: AssetRelocationOperation;
+  plan: AssetRelocationPublicPlan;
+  receipt: AssetRelocationReceipt | null;
+  undoReceipt: AssetRelocationUndoReceipt | null;
+  allowedActions: string[];
+}
+
+export interface AssetRelocationDiscovery {
+  operations: AssetRelocationOperationSummary[];
+  recentReceipts: AssetRelocationReceipt[];
+}
+
+export interface AssetRelocationPlanInput {
+  operationId: string;
+  sourcePath: string;
+  targetDirectory: string;
+  fileName: string;
+}
+
+export interface AssetRelocationTokenResult {
+  operationToken: string;
+  expiresAt: string;
+  detail: AssetRelocationDetail;
+}
+
 export interface AssetImportBindingSnapshot extends AssetImportOperationDiscovery {
   projectIdentity: string;
   projectName: string;
   bindingExpiresAt: string;
   recoveryBarrier: 'clear' | 'recoverable' | 'manual-recovery';
+  pendingRelocations: AssetRelocationOperationSummary[];
+  recentRelocationReceipts: AssetRelocationReceipt[];
 }
 
 export interface AssetImportReceipt {
@@ -153,6 +268,14 @@ export interface AssetImportAuthorityClient {
   resume(operationId: string): Promise<AssetImportOperationDetail>;
   recover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetImportOperationDetail>;
   undo(operationId: string, input: { receiptId: string; receiptSha256: string }): Promise<{ operation: AssetImportOperationSummary; undoReceipt: AssetImportUndoReceipt }>;
+  relocationPlan(input: AssetRelocationPlanInput): Promise<AssetRelocationTokenResult>;
+  relocationList(): Promise<AssetRelocationDiscovery>;
+  relocationQuery(operationId: string): Promise<AssetRelocationDetail>;
+  relocationResume(operationId: string): Promise<AssetRelocationTokenResult>;
+  relocationCommit(operationId: string, planFingerprint: string): Promise<AssetRelocationDetail>;
+  relocationCancel(operationId: string): Promise<AssetRelocationDetail>;
+  relocationRecover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetRelocationDetail>;
+  relocationUndo(operationId: string, input: { receiptId: string; receiptFingerprint: string }): Promise<AssetRelocationDetail>;
   revokeBinding(): Promise<void>;
   dispose(): void;
 }
@@ -206,9 +329,35 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   AUTHORITY_INVALID_RESPONSE: '本机素材导入服务返回了无法识别的结果。',
 });
 
+const RELOCATION_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  INVALID_REQUEST: '素材整理请求格式不正确，请重新检查。',
+  PROJECT_BUSY: '项目正在被另一项写入操作占用，请稍后重试。',
+  IMPORT_OPERATION_NOT_FOUND: '没有找到这次素材整理记录。',
+  IMPORT_OPERATION_CONFLICT: '这次素材整理的状态已经变化，请刷新后继续。',
+  IMPORT_PLAN_BLOCKED: '素材整理计划存在阻断项，请先处理标出的内容。',
+  IMPORT_PLAN_STALE: '项目内容已变化，请重新检查整理影响。',
+  IMPORT_TARGET_EXISTS: '目标位置已有同名文件，Surdet 不会覆盖它。',
+  IMPORT_TARGET_UNSAFE: '目标文件名或位置不安全。',
+  IMPORT_RECOVERY_REQUIRED: '上一次素材整理未完整结束，需要人工恢复。',
+  IMPORT_UNDO_BLOCKED_CHANGED: '素材整理后的文件已被修改，不能自动撤销。',
+  IMPORT_OPERATION_NOT_AUTHORIZED: '这次素材整理需要重新恢复授权后才能继续。',
+  ASSET_RELOCATION_SOURCE_NOT_FOUND: '没有找到要整理的源素材。',
+  ASSET_RELOCATION_SOURCE_AMBIGUOUS: '源素材身份不唯一，不能自动整理。',
+  ASSET_RELOCATION_TARGET_EXISTS: '目标位置已有同名文件，Surdet 不会覆盖它。',
+  ASSET_RELOCATION_TARGET_UNSAFE: '目标文件名或位置不安全。',
+  ASSET_RELOCATION_SCAN_INCOMPLETE: '项目内容扫描不完整，请重新检查整理影响。',
+  ASSET_RELOCATION_OPAQUE_REFERENCE: '项目中存在无法安全改写的素材引用。',
+  ASSET_RELOCATION_RECOVERY_REQUIRED: '上一次素材整理未完整结束，需要人工恢复。',
+  ASSET_RELOCATION_UNDO_BLOCKED_CHANGED: '素材整理后的文件已被修改，不能自动撤销。',
+});
+
 const OPERATION_STATUSES = new Set<AssetImportOperationStatus>([
   'UPLOADING', 'STAGED', 'READY', 'PUBLISHING', 'ROLLING_BACK', 'ROLLED_BACK',
   'RECOVERY_REQUIRED', 'COMMITTED', 'UNDOING', 'UNDONE', 'CANCELLED',
+]);
+const RELOCATION_OPERATION_STATUSES = new Set<AssetRelocationOperationStatus>([
+  'PLANNED', 'PUBLISHING', 'ROLLING_BACK', 'ROLLED_BACK', 'RECOVERY_REQUIRED',
+  'COMMITTED', 'UNDOING', 'UNDONE', 'CANCELLED',
 ]);
 const ASSET_KINDS = new Set([
   'background', 'portrait', 'avatar', 'music', 'ambience',
@@ -219,8 +368,28 @@ const PLAN_ISSUES = new Set([
   'IMPORT_TARGET_DUPLICATE_IN_BATCH', 'IMPORT_TARGET_EXISTS', 'IMPORT_TARGET_UNSAFE',
 ]);
 const ALLOWED_ACTIONS = new Set(['upload', 'plan', 'seal', 'commit', 'cancel', 'resume', 'recover', 'undo']);
+const RELOCATION_ALLOWED_ACTIONS = new Set(['commit', 'cancel', 'resume', 'recover', 'undo']);
 const RETRY_DISPOSITIONS = new Set<AssetImportRetryDisposition>([
   'same-request', 'after-refresh', 'after-human-action', 'manual-recovery', 'never',
+]);
+const RELOCATION_REFERENCE_SOURCES = new Set(['scene', 'timeline', 'character', 'gallery']);
+const RELOCATION_BLOCKERS = new Set([
+  'ASSET_RELOCATION_SOURCE_NOT_FOUND',
+  'ASSET_RELOCATION_SOURCE_AMBIGUOUS',
+  'ASSET_RELOCATION_UNSUPPORTED_KIND',
+  'ASSET_RELOCATION_TARGET_UNSAFE',
+  'ASSET_RELOCATION_SCAN_INCOMPLETE',
+  'ASSET_RELOCATION_TARGET_NAME_INVALID',
+  'ASSET_RELOCATION_TARGET_DIRECTORY_MISSING',
+  'ASSET_RELOCATION_TARGET_KIND_MISMATCH',
+  'ASSET_RELOCATION_EXTENSION_CHANGED',
+  'ASSET_RELOCATION_TARGET_EXISTS',
+  'ASSET_RELOCATION_TARGET_KEY_DUPLICATE',
+  'ASSET_RELOCATION_PORTRAIT_NAME_INVALID',
+  'ASSET_RELOCATION_RESERVED_KEY',
+  'ASSET_RELOCATION_OPAQUE_REFERENCE',
+  'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+  'ASSET_RELOCATION_NO_CHANGE',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -247,6 +416,38 @@ function isSecretToken(value: unknown): value is string {
 
 function isUuid(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
 function isSha256(value: unknown): value is string { return typeof value === 'string' && SHA256.test(value); }
+
+function hasRequiredKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    && Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isProjectRelativePath(value: unknown, max = 1_024): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= max
+    && !value.includes('\\')
+    && !value.startsWith('/')
+    && !/^[A-Za-z]:/u.test(value)
+    && !CONTROL_CHARACTER.test(value)
+    && value.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function isRelocationFileName(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 255
+    && !CONTROL_CHARACTER.test(value)
+    && !/[\\/]/u.test(value)
+    && value !== '.'
+    && value !== '..'
+    && !/[ .]$/u.test(value);
+}
 
 function invalidResponse(message = ERROR_MESSAGES.AUTHORITY_INVALID_RESPONSE): AssetImportClientError {
   return new AssetImportClientError('AUTHORITY_INVALID_RESPONSE', message!, 'never');
@@ -314,6 +515,243 @@ function parseDiscovery(value: unknown): AssetImportOperationDiscovery {
   return {
     pendingOperations: value.pendingOperations.map(parseOperationSummary),
     recentReceipts: value.recentReceipts.map(parseReceiptSummary),
+  };
+}
+
+function parseRelocationFileEvidence(value: unknown): AssetRelocationFileEvidence {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['birthtimeNs', 'device', 'inode', 'mtimeNs', 'sha256', 'size'])
+    || !isSafeText(value.device, 128)
+    || !isSafeText(value.inode, 128)
+    || !isSafeText(value.birthtimeNs, 128)
+    || !isSafeText(value.mtimeNs, 128)
+    || !isSha256(value.sha256)
+    || !Number.isSafeInteger(value.size)
+    || (value.size as number) < 0) throw invalidResponse();
+  return value as unknown as AssetRelocationFileEvidence;
+}
+
+function parseRelocationDescriptor(value: unknown): NonNullable<ProjectAssetRelocationPlan['source']> {
+  if (!isRecord(value)
+    || !hasRequiredKeys(value, ['directory', 'fileName', 'format', 'invalidName', 'key', 'kind', 'path'], ['variant'])
+    || !isProjectRelativePath(value.path)
+    || !isProjectRelativePath(value.directory)
+    || !isRelocationFileName(value.fileName)
+    || !isSafeText(value.format, 32)
+    || !isSafeText(value.key, 256)
+    || typeof value.kind !== 'string'
+    || !ASSET_KINDS.has(value.kind)
+    || typeof value.invalidName !== 'boolean'
+    || (value.variant !== undefined && !isSafeText(value.variant, 256))) throw invalidResponse();
+  return value as unknown as NonNullable<ProjectAssetRelocationPlan['source']>;
+}
+
+function parseRelocationReferenceChange(value: unknown): ProjectAssetRelocationPlan['referenceChanges'][number] {
+  if (!isRecord(value)
+    || !hasRequiredKeys(value, ['after', 'before', 'field', 'referenceId', 'sourceKind', 'sourceLabel', 'sourcePath'], ['line'])
+    || !isSafeText(value.referenceId, 256)
+    || typeof value.sourceKind !== 'string'
+    || !RELOCATION_REFERENCE_SOURCES.has(value.sourceKind)
+    || !isSafeText(value.sourceLabel, 512)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isSafeText(value.field, 256)
+    || !isSafeText(value.before, 2_048)
+    || !isSafeText(value.after, 2_048)
+    || (value.line !== undefined && (!Number.isSafeInteger(value.line) || (value.line as number) < 1))) throw invalidResponse();
+  return value as unknown as ProjectAssetRelocationPlan['referenceChanges'][number];
+}
+
+function parseRelocationBlocker(value: unknown): ProjectAssetRelocationPlan['blockers'][number] {
+  if (!isRecord(value)
+    || !hasRequiredKeys(value, ['code', 'message'], ['line', 'sourcePath'])
+    || typeof value.code !== 'string'
+    || !RELOCATION_BLOCKERS.has(value.code)
+    || !isSafeText(value.message, 1_024)
+    || (value.sourcePath !== undefined && !isProjectRelativePath(value.sourcePath))
+    || (value.line !== undefined && (!Number.isSafeInteger(value.line) || (value.line as number) < 1))) throw invalidResponse();
+  return value as unknown as ProjectAssetRelocationPlan['blockers'][number];
+}
+
+function parseRelocationPublicPlan(value: unknown): AssetRelocationPublicPlan {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'affectedFileCount', 'affectedReferenceCount', 'blockers', 'operationId', 'planFingerprint',
+      'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
+    ])
+    || value.schemaVersion !== 1
+    || !isUuid(value.operationId)
+    || !isSafeText(value.planId, 256)
+    || !isSha256(value.planFingerprint)
+    || (value.status !== 'ready' && value.status !== 'blocked')
+    || (value.source !== null && !isRecord(value.source))
+    || (value.target !== null && !isRecord(value.target))
+    || !Number.isSafeInteger(value.affectedReferenceCount)
+    || (value.affectedReferenceCount as number) < 0
+    || !Number.isSafeInteger(value.affectedFileCount)
+    || (value.affectedFileCount as number) < 0
+    || !Array.isArray(value.referenceChanges)
+    || !Array.isArray(value.blockers)) throw invalidResponse();
+  const source = value.source === null ? null : parseRelocationDescriptor(value.source);
+  const target = value.target === null ? null : parseRelocationDescriptor(value.target);
+  const referenceChanges = value.referenceChanges.map(parseRelocationReferenceChange);
+  const blockers = value.blockers.map(parseRelocationBlocker);
+  if (value.affectedReferenceCount !== referenceChanges.length
+    || (value.status === 'ready' && blockers.length > 0)
+    || (value.status === 'blocked' && (referenceChanges.length > 0 || value.affectedReferenceCount !== 0))) throw invalidResponse();
+  return { ...value, source, target, referenceChanges, blockers } as unknown as AssetRelocationPublicPlan;
+}
+
+function parseRelocationOperationSummary(value: unknown): AssetRelocationOperationSummary {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['manualRecoveryRequired', 'operationId', 'sourcePath', 'status', 'targetPath', 'updatedAt'])
+    || !isUuid(value.operationId)
+    || typeof value.status !== 'string'
+    || !RELOCATION_OPERATION_STATUSES.has(value.status as AssetRelocationOperationStatus)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isProjectRelativePath(value.targetPath)
+    || !isTimestamp(value.updatedAt)
+    || typeof value.manualRecoveryRequired !== 'boolean') throw invalidResponse();
+  return value as unknown as AssetRelocationOperationSummary;
+}
+
+function parseRelocationOperation(value: unknown): AssetRelocationOperation {
+  return parseRelocationOperationSummary(value);
+}
+
+function parseRelocationRequest(value: unknown): AssetRelocationRequest {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['operationId', 'sourcePath', 'targetPath'])
+    || !isUuid(value.operationId)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isProjectRelativePath(value.targetPath)) throw invalidResponse();
+  return value as unknown as AssetRelocationRequest;
+}
+
+function parseRelocationReceipt(value: unknown): AssetRelocationReceipt {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'committedAt', 'operationId', 'planFingerprint', 'planId', 'projectIdentity', 'receiptFingerprint',
+      'receiptId', 'schemaVersion', 'sourcePath', 'targetIdentity', 'targetPath', 'textFiles',
+    ])
+    || value.schemaVersion !== 1
+    || !isUuid(value.receiptId)
+    || !isSha256(value.receiptFingerprint)
+    || !isUuid(value.operationId)
+    || !isSafeText(value.planId, 256)
+    || !isSha256(value.planFingerprint)
+    || !isSha256(value.projectIdentity)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isProjectRelativePath(value.targetPath)
+    || !isRecord(value.targetIdentity)
+    || !Array.isArray(value.textFiles)
+    || !isTimestamp(value.committedAt)) throw invalidResponse();
+  const textPaths = new Set<string>();
+  const textFiles = value.textFiles.map((entry) => {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ['identity', 'path', 'sha256'])
+      || !isProjectRelativePath(entry.path)
+      || textPaths.has(entry.path as string)
+      || !isSha256(entry.sha256)
+      || !isRecord(entry.identity)) throw invalidResponse();
+    textPaths.add(entry.path as string);
+    return {
+      path: entry.path as string,
+      sha256: entry.sha256 as string,
+      identity: parseRelocationFileEvidence(entry.identity),
+    };
+  });
+  return {
+    ...value,
+    targetIdentity: parseRelocationFileEvidence(value.targetIdentity),
+    textFiles,
+  } as unknown as AssetRelocationReceipt;
+}
+
+function parseRelocationUndoReceipt(value: unknown): AssetRelocationUndoReceipt {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'operationId', 'receiptId', 'restoredTextFiles', 'schemaVersion', 'sourceIdentity',
+      'sourcePath', 'targetPath', 'undoReceiptFingerprint', 'undoReceiptId', 'undoneAt',
+    ])
+    || value.schemaVersion !== 1
+    || !isUuid(value.undoReceiptId)
+    || !isSha256(value.undoReceiptFingerprint)
+    || !isUuid(value.operationId)
+    || !isUuid(value.receiptId)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isProjectRelativePath(value.targetPath)
+    || !isRecord(value.sourceIdentity)
+    || !Array.isArray(value.restoredTextFiles)
+    || !isTimestamp(value.undoneAt)) throw invalidResponse();
+  const restoredPaths = new Set<string>();
+  const restoredTextFiles = value.restoredTextFiles.map((entry) => {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ['identity', 'path', 'sha256'])
+      || !isProjectRelativePath(entry.path)
+      || restoredPaths.has(entry.path as string)
+      || !isSha256(entry.sha256)
+      || !isRecord(entry.identity)) throw invalidResponse();
+    restoredPaths.add(entry.path as string);
+    return {
+      path: entry.path as string,
+      sha256: entry.sha256 as string,
+      identity: parseRelocationFileEvidence(entry.identity),
+    };
+  });
+  return {
+    ...value,
+    sourceIdentity: parseRelocationFileEvidence(value.sourceIdentity),
+    restoredTextFiles,
+  } as unknown as AssetRelocationUndoReceipt;
+}
+
+function parseRelocationDetail(value: unknown): AssetRelocationDetail {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['allowedActions', 'operation', 'plan', 'receipt', 'request', 'undoReceipt'])
+    || !Array.isArray(value.allowedActions)
+    || !value.allowedActions.every((entry) => typeof entry === 'string' && RELOCATION_ALLOWED_ACTIONS.has(entry))) throw invalidResponse();
+  const request = parseRelocationRequest(value.request);
+  const operation = parseRelocationOperation(value.operation);
+  const plan = parseRelocationPublicPlan(value.plan);
+  const receipt = value.receipt === null ? null : parseRelocationReceipt(value.receipt);
+  const undoReceipt = value.undoReceipt === null ? null : parseRelocationUndoReceipt(value.undoReceipt);
+  if (operation.operationId !== request.operationId
+    || plan.operationId !== request.operationId
+    || (plan.source !== null && plan.source.path !== request.sourcePath)
+    || (plan.target !== null && plan.target.path !== request.targetPath)
+    || (receipt !== null && (receipt.operationId !== request.operationId
+      || receipt.planId !== plan.planId
+      || receipt.planFingerprint !== plan.planFingerprint
+      || receipt.sourcePath !== request.sourcePath
+      || receipt.targetPath !== request.targetPath))
+    || (undoReceipt !== null && (receipt === null
+      || undoReceipt.operationId !== request.operationId
+      || undoReceipt.receiptId !== receipt.receiptId
+      || undoReceipt.sourcePath !== request.sourcePath
+      || undoReceipt.targetPath !== request.targetPath))) throw invalidResponse();
+  return { request, operation, plan, receipt, undoReceipt, allowedActions: [...value.allowedActions] };
+}
+
+function parseRelocationDiscovery(value: unknown): AssetRelocationDiscovery {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['operations', 'recentReceipts'])
+    || !Array.isArray(value.operations)
+    || !Array.isArray(value.recentReceipts)) throw invalidResponse();
+  return {
+    operations: value.operations.map(parseRelocationOperationSummary),
+    recentReceipts: value.recentReceipts.map(parseRelocationReceipt),
+  };
+}
+
+function parseRelocationTokenResult(value: unknown): AssetRelocationTokenResult {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['detail', 'expiresAt', 'operationToken'])
+    || !isSecretToken(value.operationToken)
+    || !isTimestamp(value.expiresAt)) throw invalidResponse();
+  return {
+    operationToken: value.operationToken,
+    expiresAt: value.expiresAt,
+    detail: parseRelocationDetail(value.detail),
   };
 }
 
@@ -415,7 +853,7 @@ function parseOperationDetail(value: unknown): AssetImportOperationDetail {
   };
 }
 
-function parseErrorEnvelope(value: unknown): AssetImportClientError {
+function parseErrorEnvelope(value: unknown, operationKind: OperationKind = 'import'): AssetImportClientError {
   if (!isRecord(value)
     || value.ok !== false
     || !hasExactKeys(value, ['error', 'ok'])
@@ -437,9 +875,10 @@ function parseErrorEnvelope(value: unknown): AssetImportClientError {
       || (error.details.field !== undefined && !isSafeText(error.details.field, 64))) return invalidResponse();
     details = error.details as { operationId?: string; itemId?: string; field?: string };
   }
+  const messages = operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES : ERROR_MESSAGES;
   return new AssetImportClientError(
     code,
-    ERROR_MESSAGES[code] ?? '素材导入未完成，请查看技术详情。',
+    messages[code] ?? (operationKind === 'relocation' ? '素材整理未完成，请查看技术详情。' : '素材导入未完成，请查看技术详情。'),
     error.retryDisposition as AssetImportRetryDisposition,
     details,
   );
@@ -464,6 +903,45 @@ function requireOperationId(value: string): void {
 
 function requireFingerprint(value: string): void {
   if (!SHA256.test(value)) throw new AssetImportClientError('INVALID_REQUEST', ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+}
+
+function requireRelocationPlanInput(value: unknown): AssetRelocationPlanInput {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['fileName', 'operationId', 'sourcePath', 'targetDirectory'])
+    || !isUuid(value.operationId)
+    || !isProjectRelativePath(value.sourcePath)
+    || !isProjectRelativePath(value.targetDirectory)
+    || !isRelocationFileName(value.fileName)) {
+    throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+  }
+  return {
+    operationId: value.operationId,
+    sourcePath: value.sourcePath.normalize('NFC'),
+    targetDirectory: value.targetDirectory.normalize('NFC'),
+    fileName: value.fileName.normalize('NFC'),
+  };
+}
+
+function requireRelocationOperationId(value: string): void {
+  if (!isUuid(value)) {
+    throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+  }
+}
+
+function requireRelocationFingerprint(value: string): void {
+  if (!isSha256(value)) {
+    throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+  }
+}
+
+function requireRelocationDetailOperation(detail: AssetRelocationDetail, operationId: string): AssetRelocationDetail {
+  if (detail.request.operationId !== operationId || detail.operation.operationId !== operationId
+    || detail.plan.operationId !== operationId) throw invalidResponse();
+  return detail;
+}
+
+function operationTokenKey(operationKind: OperationKind, operationId: string): string {
+  return `${operationKind}:${operationId}`;
 }
 
 export function createAssetImportAuthorityClient(
@@ -491,7 +969,7 @@ export function createAssetImportAuthorityClient(
     return configuration;
   };
 
-  const headersFor = (operationId?: string): Record<string, string> => {
+  const headersFor = (operationId?: string, operationKind: OperationKind = 'import'): Record<string, string> => {
     const config = requireConfiguration();
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -500,9 +978,14 @@ export function createAssetImportAuthorityClient(
     };
     if (bindingToken !== null) headers[BINDING_HEADER] = bindingToken;
     if (operationId !== undefined) {
-      const token = operationTokens.get(operationId);
+      const token = operationTokens.get(operationTokenKey(operationKind, operationId));
       if (token === undefined) {
-        throw new AssetImportClientError('IMPORT_OPERATION_NOT_AUTHORIZED', ERROR_MESSAGES.IMPORT_OPERATION_NOT_AUTHORIZED!, 'after-refresh');
+        const messages = operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES : ERROR_MESSAGES;
+        throw new AssetImportClientError(
+          'IMPORT_OPERATION_NOT_AUTHORIZED',
+          messages.IMPORT_OPERATION_NOT_AUTHORIZED!,
+          'after-refresh',
+        );
       }
       headers[OPERATION_HEADER] = token;
     }
@@ -513,7 +996,7 @@ export function createAssetImportAuthorityClient(
     suffix: string,
     body: unknown,
     parser: (value: unknown) => T,
-    auth: { binding?: boolean; operationId?: string } = {},
+    auth: { binding?: boolean; operationId?: string; operationKind?: OperationKind } = {},
   ): Promise<T> => {
     const config = requireConfiguration();
     if (auth.binding === true && bindingToken === null) {
@@ -524,7 +1007,7 @@ export function createAssetImportAuthorityClient(
     try {
       const response = await fetcher!(`${config.endpoint}${suffix}`, {
         method: 'POST',
-        headers: headersFor(auth.operationId),
+        headers: headersFor(auth.operationId, auth.operationKind),
         body: JSON.stringify(body),
         cache: 'no-store',
         credentials: 'same-origin',
@@ -532,7 +1015,7 @@ export function createAssetImportAuthorityClient(
       });
       const envelope = parseJson(await response.text());
       if (!response.ok) {
-        const error = parseErrorEnvelope(envelope);
+        const error = parseErrorEnvelope(envelope, auth.operationKind);
         if (error.code === 'AUTHORITY_TOKEN_REJECTED' || error.code === 'PROJECT_IDENTITY_MISMATCH') clearAuthorization();
         throw error;
       }
@@ -589,13 +1072,20 @@ export function createAssetImportAuthorityClient(
       { browserSessionId, nonce: probe.nonce },
       (value) => {
         if (!isRecord(value)
-          || !hasExactKeys(value, ['bindingExpiresAt', 'bindingToken', 'pendingOperations', 'projectIdentity', 'projectName', 'recentReceipts', 'recoveryBarrier'])
+          || !hasExactKeys(value, [
+            'bindingExpiresAt', 'bindingToken', 'pendingOperations', 'pendingRelocations',
+            'projectIdentity', 'projectName', 'recentReceipts', 'recentRelocationReceipts', 'recoveryBarrier',
+          ])
           || !isSha256(value.projectIdentity)
           || !isSafeText(value.projectName)
           || !isSecretToken(value.bindingToken)
           || !isTimestamp(value.bindingExpiresAt)
           || !['clear', 'recoverable', 'manual-recovery'].includes(String(value.recoveryBarrier))) throw invalidResponse();
         const discovery = parseDiscovery({ pendingOperations: value.pendingOperations, recentReceipts: value.recentReceipts });
+        const relocationDiscovery = parseRelocationDiscovery({
+          operations: value.pendingRelocations,
+          recentReceipts: value.recentRelocationReceipts,
+        });
         return {
           bindingToken: value.bindingToken as string,
           snapshot: {
@@ -604,6 +1094,8 @@ export function createAssetImportAuthorityClient(
             bindingExpiresAt: value.bindingExpiresAt as string,
             recoveryBarrier: value.recoveryBarrier as AssetImportBindingSnapshot['recoveryBarrier'],
             ...discovery,
+            pendingRelocations: relocationDiscovery.operations,
+            recentRelocationReceipts: relocationDiscovery.recentReceipts,
           },
         };
       },
@@ -636,7 +1128,7 @@ export function createAssetImportAuthorityClient(
         || !isTimestamp(value.expiresAt)) throw invalidResponse();
       return value as unknown as AssetImportCreateResult & { operationToken: string };
     }, { binding: true });
-    operationTokens.set(created.operationId, created.operationToken);
+    operationTokens.set(operationTokenKey('import', created.operationId), created.operationToken);
     return { operationId: created.operationId, status: created.status, expiresAt: created.expiresAt };
   };
 
@@ -650,7 +1142,7 @@ export function createAssetImportAuthorityClient(
     requireOperationId(itemId);
     const config = requireConfiguration();
     if (bindingToken === null) throw new AssetImportClientError('AUTHORITY_TOKEN_REJECTED', ERROR_MESSAGES.AUTHORITY_TOKEN_REJECTED!, 'after-refresh');
-    const operationToken = operationTokens.get(operationId);
+    const operationToken = operationTokens.get(operationTokenKey('import', operationId));
     if (operationToken === undefined) {
       throw new AssetImportClientError('IMPORT_OPERATION_NOT_AUTHORIZED', ERROR_MESSAGES.IMPORT_OPERATION_NOT_AUTHORIZED!, 'after-refresh');
     }
@@ -707,7 +1199,7 @@ export function createAssetImportAuthorityClient(
         try {
           const envelope = parseJson(xhr.responseText);
           if (xhr.status < 200 || xhr.status >= 300) {
-            const error = parseErrorEnvelope(envelope);
+            const error = parseErrorEnvelope(envelope, 'import');
             if (error.code === 'AUTHORITY_TOKEN_REJECTED' || error.code === 'PROJECT_IDENTITY_MISMATCH') clearAuthorization();
             reject(xhr.status === 408
               ? new AssetImportClientError('IMPORT_UPLOAD_TIMEOUT', ERROR_MESSAGES.IMPORT_UPLOAD_TIMEOUT!, 'same-request')
@@ -773,7 +1265,7 @@ export function createAssetImportAuthorityClient(
         if (!isRecord(value) || !hasExactKeys(value, ['operation', 'receipt'])) throw invalidResponse();
         return { operation: parseOperationSummary(value.operation), receipt: parseReceipt(value.receipt) };
       }, { binding: true, operationId });
-      operationTokens.delete(operationId);
+      operationTokens.delete(operationTokenKey('import', operationId));
       const persisted = await queryOperation(operationId);
       if (persisted.operation.status !== 'COMMITTED' || persisted.receipt === null
         || persisted.receipt.receiptSha256 !== committed.receipt.receiptSha256) throw invalidResponse();
@@ -782,7 +1274,7 @@ export function createAssetImportAuthorityClient(
       if (error instanceof AssetImportClientError && error.code === 'AUTHORITY_UNAVAILABLE' && bindingToken !== null) {
         const persisted = await queryOperation(operationId);
         if (persisted.operation.status === 'COMMITTED' && persisted.receipt !== null) {
-          operationTokens.delete(operationId);
+          operationTokens.delete(operationTokenKey('import', operationId));
           return { operation: persisted.operation, receipt: persisted.receipt };
         }
       }
@@ -796,7 +1288,7 @@ export function createAssetImportAuthorityClient(
       if (!isRecord(value) || !hasExactKeys(value, ['operation'])) throw invalidResponse();
       return parseOperationSummary(value.operation);
     }, { binding: true, operationId });
-    operationTokens.delete(operationId);
+    operationTokens.delete(operationTokenKey('import', operationId));
     return result;
   };
 
@@ -809,7 +1301,7 @@ export function createAssetImportAuthorityClient(
         || !isTimestamp(value.expiresAt)) throw invalidResponse();
       return { token: value.operationToken as string, detail: parseOperationDetail(value.detail) };
     }, { binding: true });
-    operationTokens.set(operationId, result.token);
+    operationTokens.set(operationTokenKey('import', operationId), result.token);
     return result.detail;
   };
 
@@ -819,7 +1311,9 @@ export function createAssetImportAuthorityClient(
       if (!isRecord(value) || !hasExactKeys(value, ['detail'])) throw invalidResponse();
       return parseOperationDetail(value.detail);
     }, { binding: true, operationId });
-    if (['COMMITTED', 'ROLLED_BACK', 'UNDONE'].includes(result.operation.status)) operationTokens.delete(operationId);
+    if (['COMMITTED', 'ROLLED_BACK', 'UNDONE'].includes(result.operation.status)) {
+      operationTokens.delete(operationTokenKey('import', operationId));
+    }
     return result;
   };
 
@@ -831,8 +1325,119 @@ export function createAssetImportAuthorityClient(
       if (!isRecord(value) || !hasExactKeys(value, ['operation', 'undoReceipt'])) throw invalidResponse();
       return { operation: parseOperationSummary(value.operation), undoReceipt: parseUndoReceipt(value.undoReceipt) };
     }, { binding: true, operationId });
-    operationTokens.delete(operationId);
+    operationTokens.delete(operationTokenKey('import', operationId));
     return result;
+  };
+
+  const relocationPlan = async (input: AssetRelocationPlanInput): Promise<AssetRelocationTokenResult> => {
+    const normalized = requireRelocationPlanInput(input);
+    const result = await request(
+      '/relocations/plan',
+      normalized,
+      parseRelocationTokenResult,
+      { binding: true, operationKind: 'relocation' },
+    );
+    const detail = requireRelocationDetailOperation(result.detail, normalized.operationId);
+    if (detail.request.sourcePath !== normalized.sourcePath
+      || detail.request.targetPath !== `${normalized.targetDirectory}/${normalized.fileName}`) throw invalidResponse();
+    operationTokens.set(operationTokenKey('relocation', normalized.operationId), result.operationToken);
+    return { ...result, detail };
+  };
+
+  const relocationList = (): Promise<AssetRelocationDiscovery> => request(
+    '/relocations/query', {}, parseRelocationDiscovery, { binding: true, operationKind: 'relocation' },
+  );
+
+  const relocationQuery = async (operationId: string): Promise<AssetRelocationDetail> => {
+    requireRelocationOperationId(operationId);
+    const detail = await request(
+      `/relocations/${operationId}/query`,
+      {},
+      parseRelocationDetail,
+      { binding: true, operationKind: 'relocation' },
+    );
+    return requireRelocationDetailOperation(detail, operationId);
+  };
+
+  const relocationResume = async (operationId: string): Promise<AssetRelocationTokenResult> => {
+    requireRelocationOperationId(operationId);
+    const result = await request(
+      `/relocations/${operationId}/resume`,
+      {},
+      parseRelocationTokenResult,
+      { binding: true, operationKind: 'relocation' },
+    );
+    const detail = requireRelocationDetailOperation(result.detail, operationId);
+    operationTokens.set(operationTokenKey('relocation', operationId), result.operationToken);
+    return { ...result, detail };
+  };
+
+  const relocationCommit = async (operationId: string, planFingerprint: string): Promise<AssetRelocationDetail> => {
+    requireRelocationOperationId(operationId);
+    requireRelocationFingerprint(planFingerprint);
+    const detail = await request(
+      `/relocations/${operationId}/commit`,
+      { planFingerprint },
+      parseRelocationDetail,
+      { binding: true, operationId, operationKind: 'relocation' },
+    );
+    operationTokens.delete(operationTokenKey('relocation', operationId));
+    return requireRelocationDetailOperation(detail, operationId);
+  };
+
+  const relocationCancel = async (operationId: string): Promise<AssetRelocationDetail> => {
+    requireRelocationOperationId(operationId);
+    const detail = await request(
+      `/relocations/${operationId}/cancel`,
+      {},
+      parseRelocationDetail,
+      { binding: true, operationId, operationKind: 'relocation' },
+    );
+    operationTokens.delete(operationTokenKey('relocation', operationId));
+    return requireRelocationDetailOperation(detail, operationId);
+  };
+
+  const relocationRecover = async (
+    operationId: string,
+    input: { action: 'resume' | 'rollback' },
+  ): Promise<AssetRelocationDetail> => {
+    requireRelocationOperationId(operationId);
+    if (!isRecord(input) || !hasExactKeys(input, ['action'])
+      || (input.action !== 'resume' && input.action !== 'rollback')) {
+      throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+    }
+    const detail = await request(
+      `/relocations/${operationId}/recover`,
+      { action: input.action },
+      parseRelocationDetail,
+      { binding: true, operationId, operationKind: 'relocation' },
+    );
+    const checked = requireRelocationDetailOperation(detail, operationId);
+    if (['COMMITTED', 'ROLLED_BACK', 'UNDONE', 'CANCELLED'].includes(checked.operation.status)) {
+      operationTokens.delete(operationTokenKey('relocation', operationId));
+    }
+    return checked;
+  };
+
+  const relocationUndo = async (
+    operationId: string,
+    input: { receiptId: string; receiptFingerprint: string },
+  ): Promise<AssetRelocationDetail> => {
+    requireRelocationOperationId(operationId);
+    if (!isRecord(input)
+      || !hasExactKeys(input, ['receiptFingerprint', 'receiptId'])
+      || !isUuid(input.receiptId)
+      || !isSha256(input.receiptFingerprint)) {
+      throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+    }
+    const detail = await request(
+      `/relocations/${operationId}/undo`,
+      { receiptId: input.receiptId, receiptFingerprint: input.receiptFingerprint },
+      parseRelocationDetail,
+      { binding: true, operationId, operationKind: 'relocation' },
+    );
+    operationTokens.delete(operationTokenKey('relocation', operationId));
+    return requireRelocationDetailOperation(detail, operationId);
   };
 
   const revokeBinding = async (): Promise<void> => {
@@ -860,6 +1465,14 @@ export function createAssetImportAuthorityClient(
     resume,
     recover,
     undo,
+    relocationPlan,
+    relocationList,
+    relocationQuery,
+    relocationResume,
+    relocationCommit,
+    relocationCancel,
+    relocationRecover,
+    relocationUndo,
     revokeBinding,
     dispose() { disposed = true; clearAuthorization(); },
   };

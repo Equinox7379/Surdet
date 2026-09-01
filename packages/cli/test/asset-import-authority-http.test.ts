@@ -17,6 +17,11 @@ import {
   injectAssetImportAuthorityConfig,
 } from '../src/asset-import-authority/vite-plugin.js';
 import { AssetImportAuthorityError } from '../src/asset-import-authority/types.js';
+import type {
+  AssetRelocationDetailResponse,
+  AssetRelocationOperationSummary,
+  AssetRelocationReceipt,
+} from '../src/asset-import-authority/types.js';
 import { AssetImportBindingService } from '../src/asset-import-authority/binding.js';
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
@@ -29,6 +34,83 @@ const operationToken = 'c'.repeat(64);
 const otherBindingToken = 'd'.repeat(64);
 const operationId = '11111111-1111-4111-8111-111111111111';
 const itemId = '22222222-2222-4222-8222-222222222222';
+const relocationReceiptId = '33333333-3333-4333-8333-333333333333';
+const relocationPlanId = '44444444-4444-4444-8444-444444444444';
+
+const relocationSourcePath = 'content/assets/background/old.png';
+const relocationTargetPath = 'content/assets/background/new.png';
+
+function relocationReceipt(): AssetRelocationReceipt {
+  return {
+    schemaVersion: 1,
+    receiptId: relocationReceiptId,
+    receiptFingerprint: '4'.repeat(64),
+    operationId,
+    planId: relocationPlanId,
+    planFingerprint: '5'.repeat(64),
+    projectIdentity: '1'.repeat(64),
+    sourcePath: relocationSourcePath,
+    targetPath: relocationTargetPath,
+    targetIdentity: {
+      device: '1',
+      inode: '2',
+      birthtimeNs: '3',
+      size: 5,
+      mtimeNs: '4',
+      sha256: '6'.repeat(64),
+    },
+    textFiles: [],
+    committedAt: '2026-09-01T00:00:00.000Z',
+  };
+}
+
+function relocationDetail(status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLLED_BACK' | 'UNDONE' = 'PLANNED'): AssetRelocationDetailResponse {
+  return {
+    request: { operationId, sourcePath: relocationSourcePath, targetPath: relocationTargetPath },
+    operation: {
+      schemaVersion: 1,
+      operationId,
+      journalVersion: 1,
+      status,
+      recoveryPhase: null,
+      binaryState: status === 'PLANNED' ? 'SOURCE' : status === 'UNDONE' ? 'UNDONE' : 'TARGET',
+      binaryBackupRelativePath: `.surdet/asset-relocation/${operationId}/backup/source.bin`,
+      binaryBackupIdentity: null,
+      binaryTargetIdentity: null,
+      textStates: [],
+      textResultIdentities: [],
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    },
+    plan: {
+      schemaVersion: 1,
+      operationId,
+      planId: relocationPlanId,
+      planFingerprint: '5'.repeat(64),
+      // Deliberately hostile-looking data exercises the HTTP projection boundary.
+      projectRevision: 'C:\\private\\project',
+      status: 'ready',
+      source: null,
+      target: null,
+      affectedReferenceCount: 0,
+      affectedFileCount: 0,
+      referenceChanges: [],
+      blockers: [],
+    },
+    receipt: status === 'COMMITTED' || status === 'UNDONE' ? relocationReceipt() : null,
+    undoReceipt: null,
+  };
+}
+
+function relocationSummary(status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLLED_BACK' | 'UNDONE' = 'PLANNED'): AssetRelocationOperationSummary {
+  return {
+    operationId,
+    status,
+    sourcePath: relocationSourcePath,
+    targetPath: relocationTargetPath,
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    manualRecoveryRequired: false,
+  };
+}
 
 function target(): AssetImportAuthorityHttpTarget & {
   calls: Array<[string, unknown?]>;
@@ -154,6 +236,44 @@ function target(): AssetImportAuthorityHttpTarget & {
   };
 }
 
+function installRelocationTarget(service: ReturnType<typeof target>): ReturnType<typeof target> {
+  let status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLLED_BACK' | 'UNDONE' = 'PLANNED';
+  service.relocationPlan = async (request) => {
+    service.calls.push(['relocation-plan', request]);
+    status = 'PLANNED';
+    return relocationDetail(status);
+  };
+  service.relocationList = async () => {
+    service.calls.push(['relocation-list']);
+    return { operations: [relocationSummary(status)], recentReceipts: [relocationReceipt()] };
+  };
+  service.relocationQuery = async (requestOperationId) => {
+    service.calls.push(['relocation-query', requestOperationId]);
+    return relocationDetail(status);
+  };
+  service.relocationCommit = async (requestOperationId, request) => {
+    service.calls.push(['relocation-commit', { operationId: requestOperationId, request }]);
+    status = 'COMMITTED';
+    return relocationDetail(status);
+  };
+  service.relocationCancel = async (requestOperationId) => {
+    service.calls.push(['relocation-cancel', requestOperationId]);
+    status = 'CANCELLED';
+    return relocationDetail(status);
+  };
+  service.relocationRecover = async (requestOperationId, request) => {
+    service.calls.push(['relocation-recover', { operationId: requestOperationId, request }]);
+    status = 'ROLLED_BACK';
+    return relocationDetail(status);
+  };
+  service.relocationUndo = async (requestOperationId, request) => {
+    service.calls.push(['relocation-undo', { operationId: requestOperationId, request }]);
+    status = 'UNDONE';
+    return relocationDetail(status);
+  };
+  return service;
+}
+
 async function harness(service: ReturnType<typeof target> = target()): Promise<{ origin: string; target: ReturnType<typeof target> }> {
   let expectedOrigin = '';
   const server = http.createServer(createAssetImportAuthorityHttpHandler({
@@ -191,10 +311,10 @@ async function bindingHarness(): Promise<{
   return { ...(await harness(service)), projectRoot };
 }
 
-async function bindProject(
+async function bindProjectConfirmation(
   fixture: Awaited<ReturnType<typeof bindingHarness>>,
   browserSessionId: string,
-): Promise<string> {
+): Promise<any> {
   const challenge = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`, {
     method: 'POST',
     headers: headers(fixture.origin),
@@ -215,7 +335,15 @@ async function bindProject(
     },
   );
   expect(confirmed.response.status).toBe(200);
-  return confirmed.body.data.bindingToken as string;
+  return confirmed.body.data;
+}
+
+async function bindProject(
+  fixture: Awaited<ReturnType<typeof bindingHarness>>,
+  browserSessionId: string,
+): Promise<string> {
+  const confirmed = await bindProjectConfirmation(fixture, browserSessionId);
+  return confirmed.bindingToken as string;
 }
 
 function headers(origin: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -528,5 +656,166 @@ describe('project asset import authority HTTP boundary', () => {
     for (const secret of ['C:\\secret', authorityToken, operationToken, 'hidden-cause', 'stack']) {
       expect(failed.text.toLowerCase()).not.toContain(secret.toLowerCase());
     }
+  });
+
+  it('strictly validates relocation plan fields and rejects absolute paths', async () => {
+    const fixture = await harness(installRelocationTarget(target()));
+    const valid = {
+      operationId,
+      sourcePath: relocationSourcePath,
+      targetDirectory: 'content/assets/background',
+      fileName: 'new.png',
+    };
+    const invalidRequests = [
+      { ...valid, unexpected: true },
+      { ...valid, sourcePath: '/outside/old.png' },
+      { ...valid, sourcePath: 'C:/outside/old.png' },
+      { ...valid, targetDirectory: 'D:/outside' },
+    ];
+
+    for (const body of invalidRequests) {
+      const rejected = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+        method: 'POST',
+        headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+        body: JSON.stringify(body),
+      });
+      expect(rejected.response.status).toBe(400);
+      expect(rejected.body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    }
+    expect(fixture.target.calls.filter(([name]) => name === 'relocation-plan')).toHaveLength(0);
+
+    const accepted = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify(valid),
+    });
+    expect(accepted.response.status).toBe(200);
+    expect(accepted.body.data.operationToken).toEqual(expect.any(String));
+    expect(fixture.target.calls).toContainEqual(['relocation-plan', {
+      operationId,
+      sourcePath: relocationSourcePath,
+      targetPath: relocationTargetPath,
+    }]);
+  });
+
+  it('routes relocation plan/query/resume/commit/cancel/recover/undo through the relocation target', async () => {
+    const fixture = await harness(installRelocationTarget(target()));
+    const bindingHeaders = { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken };
+    const planned = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, bindingHeaders),
+      body: JSON.stringify({
+        operationId,
+        sourcePath: relocationSourcePath,
+        targetDirectory: 'content/assets/background',
+        fileName: 'new.png',
+      }),
+    });
+    expect(planned.response.status).toBe(200);
+    const plannedToken = planned.body.data.operationToken as string;
+    const plannedHeaders = {
+      ...bindingHeaders,
+      [ASSET_IMPORT_AUTHORITY_OPERATION_HEADER]: plannedToken,
+    };
+
+    const queried = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/query`, {
+      method: 'POST', headers: headers(fixture.origin, plannedHeaders), body: '{}',
+    });
+    expect(queried.response.status).toBe(200);
+
+    const resumed = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/resume`, {
+      method: 'POST', headers: headers(fixture.origin, plannedHeaders), body: '{}',
+    });
+    expect(resumed.response.status).toBe(200);
+    const resumedToken = resumed.body.data.operationToken as string;
+    const actionHeaders = {
+      ...bindingHeaders,
+      [ASSET_IMPORT_AUTHORITY_OPERATION_HEADER]: resumedToken,
+    };
+
+    const committed = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/commit`, {
+      method: 'POST', headers: headers(fixture.origin, actionHeaders), body: JSON.stringify({ planFingerprint: '5'.repeat(64) }),
+    });
+    const cancelled = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/cancel`, {
+      method: 'POST', headers: headers(fixture.origin, actionHeaders), body: '{}',
+    });
+    const recovered = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/recover`, {
+      method: 'POST', headers: headers(fixture.origin, actionHeaders), body: JSON.stringify({ action: 'rollback' }),
+    });
+    const undone = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/undo`, {
+      method: 'POST',
+      headers: headers(fixture.origin, actionHeaders),
+      body: JSON.stringify({ receiptId: relocationReceiptId, receiptFingerprint: '4'.repeat(64) }),
+    });
+    expect([committed, cancelled, recovered, undone].map((result) => result.response.status)).toEqual([200, 200, 200, 200]);
+    expect(fixture.target.calls.filter(([name]) => name.startsWith('relocation-')).map(([name]) => name)).toEqual([
+      'relocation-plan',
+      'relocation-query',
+      'relocation-query',
+      'relocation-commit',
+      'relocation-cancel',
+      'relocation-recover',
+      'relocation-undo',
+    ]);
+  });
+
+  it('does not accept an import operation token on a relocation route', async () => {
+    const fixture = await harness(installRelocationTarget(target()));
+    const created = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify({ operationId, items: [{ itemId, sourceName: 'safe.png', declaredBytes: 5 }] }),
+    });
+    expect(created.response.status).toBe(200);
+    const rejected = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/commit`, {
+      method: 'POST',
+      headers: headers(fixture.origin, {
+        [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken,
+        [ASSET_IMPORT_AUTHORITY_OPERATION_HEADER]: created.body.data.operationToken,
+      }),
+      body: JSON.stringify({ planFingerprint: '5'.repeat(64) }),
+    });
+    expect(rejected.response.status).toBe(403);
+    expect(rejected.body).toMatchObject({ ok: false, error: { code: 'AUTHORITY_TOKEN_REJECTED' } });
+    expect(fixture.target.calls.filter(([name]) => name === 'relocation-commit')).toHaveLength(0);
+  });
+
+  it('keeps relocation public responses free of absolute paths and internal workspace paths', async () => {
+    const fixture = await harness(installRelocationTarget(target()));
+    const planned = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify({
+        operationId,
+        sourcePath: relocationSourcePath,
+        targetDirectory: 'content/assets/background',
+        fileName: 'new.png',
+      }),
+    });
+    expect(planned.response.status).toBe(200);
+    for (const hidden of ['C:\\\\private\\\\project', '.surdet/asset-relocation', 'record.json']) {
+      expect(planned.text).not.toContain(hidden);
+    }
+
+    const queried = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/${operationId}/query`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: '{}',
+    });
+    expect(queried.response.status).toBe(200);
+    expect(queried.text).not.toContain('.surdet/asset-relocation');
+  });
+
+  it('returns import and relocation discovery in separate arrays on binding confirmation', async () => {
+    const fixture = await bindingHarness();
+    installRelocationTarget(fixture.target);
+    const confirmed = await bindProjectConfirmation(fixture, 'browser-relocation-discovery');
+    expect(confirmed.pendingOperations).toEqual(expect.any(Array));
+    expect(confirmed.recentReceipts).toEqual(expect.any(Array));
+    expect(confirmed.pendingRelocations).toEqual([relocationSummary('PLANNED')]);
+    expect(confirmed.recentRelocationReceipts).toEqual([expect.objectContaining({
+      operationId,
+      receiptId: relocationReceiptId,
+    })]);
   });
 });
