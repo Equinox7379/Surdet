@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import {
   AuthoringOperationError,
   normalizeProjectPath,
+  type ProjectAssetFileFact,
   type ProjectFile,
   type ProjectWriteStorage,
 } from '@surdet/authoring';
@@ -165,6 +166,17 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     };
     await walk(this.rootRealPath, '');
     return result.sort((a, b) => a.localeCompare(b));
+  }
+
+  /** 只读文件元数据；不返回内容，且复用项目根/符号链接安全检查。 */
+  async inspectFileFacts(relativePaths: readonly string[]): Promise<ProjectAssetFileFact[]> {
+    const paths = [...new Set(relativePaths)].sort((left, right) => left.localeCompare(right));
+    return Promise.all(paths.map(async (relativePath) => {
+      const absolute = await this.assertSafeTarget(relativePath);
+      const stat = await fs.stat(absolute);
+      if (!stat.isFile()) throw pathError(relativePath);
+      return { path: normalizeProjectPath(relativePath), bytes: stat.size };
+    }));
   }
 
   async readText(relativePath: string): Promise<ProjectFile> {

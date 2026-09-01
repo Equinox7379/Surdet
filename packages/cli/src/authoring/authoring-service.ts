@@ -56,6 +56,7 @@ import {
   type EntrySceneSetInput,
   type ProjectFile,
   type ProjectSnapshot,
+  type ProjectAssetFileFact,
   type ProjectStorage,
   type ProjectWriteStorage,
   type ReviewApprovalRef,
@@ -112,7 +113,8 @@ function loadSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot> {
 
 interface ProjectSnapshotContext {
   snapshot: ProjectSnapshot;
-  assetPaths: string[];
+  assetFiles: ProjectAssetFileFact[];
+  gallery?: unknown;
 }
 
 async function loadProjectContext(
@@ -122,7 +124,16 @@ async function loadProjectContext(
   return withProjectLeaseRetry(leaseManager, storage.rootIdentity, async () => {
     const snapshot = await loadSnapshot(storage);
     const assetPaths = assetPathsFromFiles(await storage.listFiles());
-    return { snapshot, assetPaths };
+    const assetFiles = await storage.inspectFileFacts(assetPaths);
+    let gallery: unknown;
+    if (await storage.exists('content/config/gallery.json')) {
+      try {
+        gallery = JSON.parse((await storage.readText('content/config/gallery.json')).text.replace(/^\uFEFF/, '')) as unknown;
+      } catch {
+        gallery = undefined;
+      }
+    }
+    return { snapshot, assetFiles, ...(gallery === undefined ? {} : { gallery }) };
   });
 }
 
@@ -467,18 +478,18 @@ export class AuthoringService {
 
   async inspectProject(projectRoot: string): Promise<ServiceResult<ReturnType<typeof inspectProject>>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
+    const { snapshot, assetFiles, gallery } = await this.loadProjectContext(storage);
     const index = buildObjectIndex(snapshot);
-    return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: inspectProject(snapshot, index, assetPaths) };
+    return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: inspectProject(snapshot, index, assetFiles, gallery) };
   }
 
   async projectAssets(projectRoot: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog>>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
+    const { snapshot, assetFiles, gallery } = await this.loadProjectContext(storage);
     return {
       projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity),
       projectRevision: snapshot.revision,
-      result: buildAssetCatalog(assetPaths),
+      result: buildAssetCatalog(assetFiles, snapshot, { gallery }),
     };
   }
 
@@ -488,9 +499,9 @@ export class AuthoringService {
     issues: unknown[];
   }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot, assetPaths } = await this.loadProjectContext(storage);
+    const { snapshot, assetFiles, gallery } = await this.loadProjectContext(storage);
     const index = buildObjectIndex(snapshot);
-    const assetCatalog = buildAssetCatalog(assetPaths);
+    const assetCatalog = buildAssetCatalog(assetFiles, snapshot, { gallery });
     const validation = validateSnapshot(snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
     return {
       projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity),
