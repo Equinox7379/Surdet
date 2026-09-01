@@ -86,18 +86,11 @@ function storageFor(contents: Record<string, string>): ProjectStorage {
 }
 
 async function fixtureSnapshot(): Promise<ProjectSnapshot> {
-  const snapshot = await loadProjectSnapshot(storageFor(fixtureContents), hasher);
-  // gallery.json is deliberately kept out of the text revision contract. The
-  // intelligence projection still consumes the already-read project file when
-  // an adapter supplies it alongside the snapshot files.
-  if (snapshot.files.some((file) => file.path === 'content/config/gallery.json')) return snapshot;
-  const gallery: ProjectFile = {
-    path: 'content/config/gallery.json',
-    text: galleryText,
-    bytes: galleryText.length,
-    sha256: await hasher.sha256(galleryText),
-  };
-  return { ...snapshot, files: [...snapshot.files, gallery] };
+  return loadProjectSnapshot(storageFor(fixtureContents), hasher);
+}
+
+function build(snapshot: ProjectSnapshot, facts: readonly ProjectAssetFileFact[]) {
+  return buildProjectAssetIntelligence(snapshot, facts, { gallery: JSON.parse(galleryText) as unknown });
 }
 
 function asset(result: ReturnType<typeof buildProjectAssetIntelligence>, sourcePath: string) {
@@ -108,7 +101,7 @@ function asset(result: ReturnType<typeof buildProjectAssetIntelligence>, sourceP
 
 describe('shared asset intelligence projection', () => {
   it('retains every physical kind, strict portrait identity, optional bytes, and stable file identities', async () => {
-    const result = buildProjectAssetIntelligence(await fixtureSnapshot(), fixtureFacts);
+    const result = build(await fixtureSnapshot(), fixtureFacts);
     const physical = result.items.filter((item) => item.physical);
 
     expect(physical).toHaveLength(fixtureFacts.length);
@@ -144,7 +137,7 @@ describe('shared asset intelligence projection', () => {
   });
 
   it('extracts direct scene, timeline, character, and gallery references with source locations', async () => {
-    const result = buildProjectAssetIntelligence(await fixtureSnapshot(), fixtureFacts);
+    const result = build(await fixtureSnapshot(), fixtureFacts);
     const references = result.items.flatMap((item) => item.references);
     const sourceKinds = new Set(references.map((reference) => reference.sourceKind));
     expect(sourceKinds).toEqual(new Set(['scene', 'timeline', 'character', 'gallery']));
@@ -187,7 +180,7 @@ describe('shared asset intelligence projection', () => {
   });
 
   it('keeps missing references synthetic and keeps same-key physical files visible', async () => {
-    const result = buildProjectAssetIntelligence(await fixtureSnapshot(), fixtureFacts);
+    const result = build(await fixtureSnapshot(), fixtureFacts);
     const castleItems = result.items.filter((item) => item.physical && item.kind === 'background' && item.key === 'castle_hall');
     expect(castleItems).toHaveLength(2);
     expect(new Set(castleItems.map((item) => item.sourcePath))).toEqual(new Set([
@@ -211,7 +204,7 @@ describe('shared asset intelligence projection', () => {
   });
 
   it('reports distinct health issues and totals from physical facts only', async () => {
-    const result = buildProjectAssetIntelligence(await fixtureSnapshot(), fixtureFacts);
+    const result = build(await fixtureSnapshot(), fixtureFacts);
     const issueCodes = result.issues.map((issue) => issue.code);
     expect(issueCodes).toContain('ASSET_REFERENCE_MISSING');
     expect(issueCodes).toContain('ASSET_KEY_DUPLICATE');
@@ -240,8 +233,8 @@ describe('shared asset intelligence projection', () => {
 
   it('is byte-stable when physical facts arrive in reverse enumeration order', async () => {
     const snapshot = await fixtureSnapshot();
-    const forward = buildProjectAssetIntelligence(snapshot, fixtureFacts);
-    const reverse = buildProjectAssetIntelligence(snapshot, [...fixtureFacts].reverse());
+    const forward = build(snapshot, fixtureFacts);
+    const reverse = build(snapshot, [...fixtureFacts].reverse());
     expect(reverse).toEqual(forward);
   });
 });

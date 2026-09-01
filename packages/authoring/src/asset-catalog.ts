@@ -46,6 +46,7 @@ function stemOf(sourcePath: string): string {
 export function buildAssetCatalog(
   inputs: readonly (string | ProjectAssetFileFact)[],
   snapshot?: ProjectSnapshot,
+  options: { gallery?: unknown } = {},
 ): ProjectAssetCatalog {
   const facts = inputs.map((input) => typeof input === 'string' ? { path: input } : input);
   const paths = facts.map((fact) => fact.path);
@@ -114,7 +115,7 @@ export function buildAssetCatalog(
     backgrounds,
     portraits,
     avatars,
-    intelligence: buildProjectAssetIntelligence(emptySnapshot, facts),
+    intelligence: buildProjectAssetIntelligence(emptySnapshot, facts, options),
   };
 }
 
