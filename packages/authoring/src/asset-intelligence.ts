@@ -123,6 +123,15 @@ function targetKey(kind: ProjectAssetKind, key: string, variant?: string): strin
   return `${kind}\0${key}\0${variant ?? ''}`;
 }
 
+/** 与 Core/Renderer 的指令参数消费语义一致；只去除完整包裹的一对引号。 */
+function dequoteAssetToken(value: string): string {
+  if (value.length < 2) return value;
+  const first = value[0];
+  const last = value[value.length - 1];
+  if ((first !== '"' && first !== "'") || first !== last) return value;
+  return value.slice(1, -1).replace(/\\(.)/g, '$1');
+}
+
 function safeIdPart(value: string): string {
   return encodeURIComponent(value).replace(/%/g, '~');
 }
@@ -170,21 +179,25 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
     reference: ProjectAssetReference,
     variant?: string,
   ): void => {
-    const normalized = key?.trim();
+    const normalized = key === undefined ? undefined : dequoteAssetToken(key).trim();
     if (!normalized) return;
-    targets.push({ kind, key: normalized, ...(variant?.trim() ? { variant: variant.trim() } : {}), reference });
+    const normalizedVariant = variant === undefined ? undefined : dequoteAssetToken(variant).trim();
+    targets.push({ kind, key: normalized, ...(normalizedVariant ? { variant: normalizedVariant } : {}), reference });
   };
 
   const gallery = galleryConfig(snapshot, galleryInput);
-  const gallerySources = new Map<string, { kind: ProjectAssetKind; key: string }>();
+  const gallerySources = new Map<string, { kind: ProjectAssetKind; key: string }[]>();
   for (const [field, kind] of [['cgs', 'background'], ['music', 'music']] as const) {
-    for (const entry of galleryEntries(gallery, field)) {
+    for (const [entryIndex, entry] of galleryEntries(gallery, field).entries()) {
       const id = typeof entry.id === 'string' ? entry.id.trim() : '';
       const source = typeof entry.src === 'string' ? entry.src.trim() : '';
       if (!id || !source) continue;
-      gallerySources.set(`${field}:${id}`, { kind, key: source });
+      const sourceKey = `${field}:${id}`;
+      const current = gallerySources.get(sourceKey) ?? [];
+      if (!current.some((candidate) => candidate.kind === kind && candidate.key === source)) current.push({ kind, key: source });
+      gallerySources.set(sourceKey, current);
       add(kind, source, {
-        referenceId: `gallery:${field}:${safeIdPart(id)}`,
+        referenceId: `gallery:${field}:${safeIdPart(id)}:${entryIndex}`,
         sourceKind: 'gallery',
         sourceLabel: `鉴赏条目 ${typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : id}`,
         sourcePath: 'content/config/gallery.json',
@@ -202,7 +215,6 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       sourceKind: 'character',
       sourceLabel: `角色 ${typeof record?.name === 'string' && record.name.trim() ? record.name.trim() : id}`,
       sourcePath: 'game.config.json',
-      line: 1,
       objectRef: `character:${id}`,
     });
   }
@@ -229,20 +241,22 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       });
       switch (generic.name) {
         case 'bg': add('background', first, ref('bg')); break;
-        case 'show': add('portrait', first, ref('show'), generic.args[1]); break;
+        case 'show': add('portrait', first, ref('show'), generic.args[1] ?? 'normal'); break;
         case 'bgm': add('music', first, ref('bgm')); break;
-        case 'ambience': if (first !== 'off') add('ambience', first, ref('ambience')); break;
+        case 'ambience':
+          if (first !== undefined && dequoteAssetToken(first).trim() !== 'off') add('ambience', first, ref('ambience'));
+          break;
         case 'se': add('sound-effect', first, ref('se')); break;
         case 'voice': add('voice', first, ref('voice')); break;
         case 'video': add('video', first, ref('video')); break;
         case 'unlock_cg': {
-          const source = first ? gallerySources.get(`cgs:${first}`) : undefined;
-          if (source) add(source.kind, source.key, ref('unlock_cg'));
+          const id = first ? dequoteAssetToken(first) : undefined;
+          for (const source of id ? gallerySources.get(`cgs:${id}`) ?? [] : []) add(source.kind, source.key, ref('unlock_cg'));
           break;
         }
         case 'unlock_music': {
-          const source = first ? gallerySources.get(`music:${first}`) : undefined;
-          if (source) add(source.kind, source.key, ref('unlock_music'));
+          const id = first ? dequoteAssetToken(first) : undefined;
+          for (const source of id ? gallerySources.get(`music:${id}`) ?? [] : []) add(source.kind, source.key, ref('unlock_music'));
           break;
         }
         default: break;
@@ -272,7 +286,6 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
           sourceKind: 'timeline',
           sourceLabel: `时间轴 ${timelineId} · 轨道 ${trackIndex + 1} · 片段 ${cueIndex + 1}`,
           sourcePath: timeline.path,
-          line: 1,
           objectRef: `timeline:${timelineId}/track:${trackIndex}/cue:${cueIndex}`,
         };
         if (track.kind === 'background' && cue.action === 'set') {
@@ -321,7 +334,18 @@ export function buildProjectAssetIntelligence(
   files: readonly ProjectAssetFileFact[],
   options: { gallery?: unknown } = {},
 ): ProjectAssetIntelligence {
-  const classified = files
+  const groupedFacts = new Map<string, { path: string; measuredBytes: Set<number> }>();
+  for (const fact of files) {
+    const path = normalizeProjectPath(fact.path);
+    const group = groupedFacts.get(path) ?? { path, measuredBytes: new Set<number>() };
+    if (fact.bytes !== undefined) group.measuredBytes.add(fact.bytes);
+    groupedFacts.set(path, group);
+  }
+  const uniqueFacts: ProjectAssetFileFact[] = [...groupedFacts.values()].map((group) => ({
+    path: group.path,
+    ...(group.measuredBytes.size === 1 ? { bytes: [...group.measuredBytes][0]! } : {}),
+  }));
+  const classified = uniqueFacts
     .map(classifyFile)
     .filter((entry): entry is ClassifiedFile => entry !== null)
     .sort((left, right) => left.fact.path.localeCompare(right.fact.path));
@@ -444,25 +468,29 @@ export function buildProjectAssetIntelligence(
   issues.sort((left, right) => left.issueId.localeCompare(right.issueId));
 
   const physical = items.filter((item) => item.physical);
+  const measuredFileCount = physical.filter((item) => item.bytes !== undefined).length;
+  const measuredBytes = physical.reduce((total, item) => total + (item.bytes ?? 0), 0);
+  const byKind = Object.fromEntries(KIND_ORDER.map((kind) => {
+    const kindItems = physical.filter((item) => item.kind === kind);
+    const measured = kindItems.filter((item) => item.bytes !== undefined);
+    return [kind, {
+      files: kindItems.length,
+      measuredFiles: measured.length,
+      ...(measured.length > 0 ? { bytes: measured.reduce((total, item) => total + item.bytes!, 0) } : {}),
+    }];
+  })) as ProjectAssetSummary['byKind'];
   const summary: ProjectAssetSummary = {
     fileCount: physical.length,
-    measuredFileCount: physical.filter((item) => item.bytes !== undefined).length,
-    measuredBytes: physical.reduce((total, item) => total + (item.bytes ?? 0), 0),
+    measuredFileCount,
+    measuredBytes,
+    ...(measuredFileCount > 0 ? { totalBytes: measuredBytes } : {}),
     referencedCount: physical.filter((item) => item.references.length > 0).length,
     unusedCount: physical.filter((item) => item.issues.includes('ASSET_UNUSED')).length,
     missingCount: items.filter((item) => !item.physical).length,
     duplicateCount: issues.filter((issue) => issue.code === 'ASSET_KEY_DUPLICATE').length,
     unsupportedCount: physical.filter((item) => item.issues.includes('ASSET_FORMAT_UNSUPPORTED')).length,
     invalidNameCount: physical.filter((item) => item.issues.includes('ASSET_NAME_INVALID')).length,
-    byKind: KIND_ORDER.map((kind) => {
-      const kindItems = physical.filter((item) => item.kind === kind);
-      return {
-        kind,
-        fileCount: kindItems.length,
-        measuredFileCount: kindItems.filter((item) => item.bytes !== undefined).length,
-        measuredBytes: kindItems.reduce((total, item) => total + (item.bytes ?? 0), 0),
-      };
-    }),
+    byKind,
   };
 
   return { items, summary, issues };

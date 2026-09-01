@@ -319,23 +319,25 @@ export interface ProjectAssetItem {
 }
 
 export interface ProjectAssetKindSummary {
-  kind: ProjectAssetKind;
-  fileCount: number;
-  measuredFileCount: number;
-  measuredBytes: number;
+  files: number;
+  measuredFiles: number;
+  /** 至少有一个文件提供字节事实时存在；未知不等于 0。 */
+  bytes?: number;
 }
 
 export interface ProjectAssetSummary {
   fileCount: number;
   measuredFileCount: number;
   measuredBytes: number;
+  /** 与设计合同兼容的已测量字节总数；无任何测量事实时省略。 */
+  totalBytes?: number;
   referencedCount: number;
   unusedCount: number;
   missingCount: number;
   duplicateCount: number;
   unsupportedCount: number;
   invalidNameCount: number;
-  byKind: ProjectAssetKindSummary[];
+  byKind: Record<ProjectAssetKind, ProjectAssetKindSummary>;
 }
 
 export interface ProjectAssetIntelligence {
