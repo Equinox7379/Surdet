@@ -8,7 +8,7 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { assertProjectWriteUnlocked, writeFileHandle } from '../project-io.js';
+import { assertProjectWriteUnlocked, runProjectWriteOperation, writeFileHandle } from '../project-io.js';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
@@ -389,7 +389,7 @@ function renderScalarGrid(fields: ScalarField[], scalars: Record<string, string>
 }
 
 /** content/config/*.json 写盘共用（句柄缺失时尝试创建；演示项目诚实拒绝） */
-async function saveConfigFile(
+async function saveConfigFileUnlocked(
   name: 'achievements' | 'calendar' | 'events' | 'growth' | 'gallery' | 'terminology',
   json: Record<string, unknown>,
   errors: string[],
@@ -424,6 +424,15 @@ async function saveConfigFile(
   setStatus(`${label}已保存`, true, 4000);
 }
 
+async function saveConfigFile(
+  name: 'achievements' | 'calendar' | 'events' | 'growth' | 'gallery' | 'terminology',
+  json: Record<string, unknown>,
+  errors: string[],
+  label: string,
+): Promise<void> {
+  await runProjectWriteOperation(() => saveConfigFileUnlocked(name, json, errors, label));
+}
+
 function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTMLElement } {
   const descriptor = configDescriptor(sectionId);
   const sec = h('section', 'config-ledger-section');
@@ -447,7 +456,7 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 
 /* ============================ 变量表编辑器 ============================ */
 
-async function saveVariables(): Promise<void> {
+async function saveVariablesUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
   const rows = ensureVarRows();
   const { variables, errors } = rowsToVariables(rows);
@@ -489,6 +498,10 @@ async function saveVariables(): Promise<void> {
   state.gameConfigText = text;
   requestValidateHook();
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
+}
+
+async function saveVariables(): Promise<void> {
+  await runProjectWriteOperation(saveVariablesUnlocked);
 }
 
 /** 角色表（Wave 3 closure）：显示名/头像可编辑；保存经 @surdet/authoring 的共享
@@ -545,7 +558,7 @@ function renderCharactersSection(): HTMLElement {
 }
 
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
-async function saveCharacters(): Promise<void> {
+async function saveCharactersUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
   const rows = ensureCharRows();
   let handle = state.handles.gameConfig;
@@ -574,6 +587,10 @@ async function saveCharacters(): Promise<void> {
     const code = err instanceof AuthoringOperationError ? `${err.code}：` : '';
     setStatus(`角色表未保存：${code}${err instanceof Error ? err.message : String(err)}`, false, 8000);
   }
+}
+
+async function saveCharacters(): Promise<void> {
+  await runProjectWriteOperation(saveCharactersUnlocked);
 }
 
 function renderVariablesSection(): HTMLElement {

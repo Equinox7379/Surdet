@@ -1061,6 +1061,7 @@ export class ProjectAssetRelocationAuthority {
       if (record === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '素材整理操作不存在');
       if (record.journal.status === 'COMMITTED') {
         await this.verifyTerminalResolution(operationId);
+        await this.barrierStore.resolveRelocationBarriers(operationId);
         return this.detail(record);
       }
       if (record.journal.status !== 'PLANNED') throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '当前状态不能提交素材整理');
@@ -1216,6 +1217,7 @@ export class ProjectAssetRelocationAuthority {
       if (record === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '素材整理操作不存在');
       if (record.journal.status === 'UNDONE') {
         await this.verifyTerminalResolution(operationId);
+        await this.barrierStore.resolveRelocationBarriers(operationId);
         return this.detail(record);
       }
       if (record.journal.status !== 'COMMITTED' || record.receipt === null) {
@@ -1288,7 +1290,11 @@ export class ProjectAssetRelocationAuthority {
     return this.serialize(operationId, () => this.mutationCoordinator.run('asset-relocation', async () => {
       let record = await this.store.read(operationId);
       if (record === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '素材整理操作不存在');
-      if (record.journal.status === 'CANCELLED') return this.detail(record);
+      if (record.journal.status === 'CANCELLED') {
+        await this.verifyTerminalResolution(operationId);
+        await this.barrierStore.resolveRelocationBarriers(operationId);
+        return this.detail(record);
+      }
       if (record.journal.status !== 'PLANNED') {
         throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '只有未提交的整理计划可以取消');
       }
@@ -1312,7 +1318,10 @@ export class ProjectAssetRelocationAuthority {
         `journal-${record.journal.journalVersion}`,
       );
     }
-    if (TERMINAL.has(record.journal.status)) await this.verifyTerminalResolution(operationId);
+    if (TERMINAL.has(record.journal.status)) {
+      await this.verifyTerminalResolution(operationId);
+      await this.barrierStore.resolveRelocationBarriers(operationId);
+    }
     return this.detail(record);
   }
 
@@ -1327,7 +1336,10 @@ export class ProjectAssetRelocationAuthority {
           `journal-${record.journal.journalVersion}`,
         );
       }
-      if (TERMINAL.has(record.journal.status)) await this.verifyTerminalResolution(record.request.operationId);
+      if (TERMINAL.has(record.journal.status)) {
+        await this.verifyTerminalResolution(record.request.operationId);
+        await this.barrierStore.resolveRelocationBarriers(record.request.operationId);
+      }
     }
     return {
       operations: records.map((record) => ({

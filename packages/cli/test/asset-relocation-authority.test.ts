@@ -55,6 +55,7 @@ interface Fixture {
   paths: Awaited<ReturnType<typeof openAssetImportAuthorityPaths>>;
   authority: ProjectAssetRelocationAuthority;
   store: AssetRelocationStore;
+  barrierStore: AssetImportRecordStore;
   sourceFile: string;
   targetPath: string;
 }
@@ -63,9 +64,9 @@ function makeAuthority(
   paths: Fixture['paths'],
   faultPoint?: AssetRelocationFaultPoint,
   coordinator?: AssetProjectMutationCoordinator,
+  barrierStore = new AssetImportRecordStore(paths),
 ): ProjectAssetRelocationAuthority {
   const store = new AssetRelocationStore(paths);
-  const barrierStore = new AssetImportRecordStore(paths);
   return new ProjectAssetRelocationAuthority(paths, store, barrierStore, {
     textHasher,
     assertLeaseHeld: () => undefined,
@@ -99,12 +100,14 @@ async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
 
   const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot });
   const store = new AssetRelocationStore(paths);
-  const authority = makeAuthority(paths, options.faultPoint);
+  const barrierStore = new AssetImportRecordStore(paths);
+  const authority = makeAuthority(paths, options.faultPoint, undefined, barrierStore);
   return {
     projectRoot,
     paths,
     authority,
     store,
+    barrierStore,
     sourceFile: absolute(projectRoot, sourcePath),
     targetPath: target,
   };
@@ -225,6 +228,34 @@ describe('project asset relocation authority', () => {
     const afterUndo = await fixtureValue.store.read(operationId);
     expect(afterUndo?.journal.status).toBe('COMMITTED');
     expect(afterUndo?.journal.journalVersion).toBe(beforeUndo?.journal.journalVersion);
+  });
+
+  it('clears a recovery barrier when an idempotent terminal request verifies committed or undone state', async () => {
+    const fixtureValue = await fixture();
+    const barrierStore = fixtureValue.barrierStore;
+    const planned = await plan(fixtureValue);
+    const committed = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    });
+    await barrierStore.ensureRelocationRecoveryBarrier(operationId, new Date().toISOString(), 'terminal-commit-window');
+    expect(await barrierStore.hasUnresolvedBarrier('asset-relocation')).toBe(true);
+
+    await fixtureValue.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    expect(await barrierStore.hasUnresolvedBarrier('asset-relocation')).toBe(false);
+
+    const undone = await fixtureValue.authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    });
+    await barrierStore.ensureRelocationRecoveryBarrier(operationId, new Date().toISOString(), 'terminal-undo-window');
+    expect(await barrierStore.hasUnresolvedBarrier('asset-relocation')).toBe(true);
+
+    await fixtureValue.authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    });
+    expect(undone.operation.status).toBe('UNDONE');
+    expect(await barrierStore.hasUnresolvedBarrier('asset-relocation')).toBe(false);
   });
 
   it.each([

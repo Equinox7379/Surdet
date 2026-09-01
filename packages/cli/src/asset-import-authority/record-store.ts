@@ -1290,11 +1290,7 @@ export class AssetImportRecordStore {
       if (incident === null || incident.value.operationId !== operationId
         || incident.value.operationKind !== 'asset-relocation') continue;
       const resolutionFile = path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name);
-      if (await fs.stat(resolutionFile).then(() => true).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-        throw error;
-      })) continue;
-      await createJsonRecord(resolutionFile, {
+      const resolution = {
         barrierId: incident.value.barrierId,
         incidentSha256: incident.identity.sha256,
         operationId,
@@ -1305,7 +1301,17 @@ export class AssetImportRecordStore {
         quarantinedPaths: [],
         terminalFingerprint,
         resolvedAt: new Date().toISOString(),
-      } satisfies RecoveryBarrierResolution);
+      } satisfies RecoveryBarrierResolution;
+      const existing = await readJsonRecord<RecoveryBarrierResolution>(resolutionFile);
+      if (existing !== null
+        && existing.value.barrierId === resolution.barrierId
+        && existing.value.incidentSha256 === resolution.incidentSha256
+        && existing.value.operationId === operationId
+        && existing.value.operationKind === 'asset-relocation'
+        && existing.value.journalVersion === journalVersion
+        && existing.value.terminalFingerprint === terminalFingerprint) continue;
+      if (existing === null) await createJsonRecord(resolutionFile, resolution);
+      else await replaceJsonRecord(resolutionFile, resolution);
     }
     this.localRecoveryBlocked = false;
     this.localRecoveryBlocked = await this.hasUnresolvedBarrier();
