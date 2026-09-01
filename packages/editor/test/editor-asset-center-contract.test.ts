@@ -193,6 +193,7 @@ describe('editor Asset Center contract', () => {
     expect(stateSource).toMatch(/projectWriteLock[\s\S]*asset-relocation/);
     expect(projectIoSource).toMatch(/assertProjectWriteUnlocked[\s\S]*writeFileHandle/);
     expect(projectIoSource).toMatch(/reloadCurrentProjectFromHandle/);
+    expect(projectIoSource).toMatch(/reloadCurrentProjectFromHandle[\s\S]*notifyProjectLoaded:\s*false/);
     expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-relocation-actions/i);
     expect(centerCss).not.toMatch(/asset-relocation[^{}]*\{[^}]*border-(?:left|inline-start)\s*:/i);
   });

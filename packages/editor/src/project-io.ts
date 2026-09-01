@@ -157,7 +157,7 @@ export async function reloadCurrentProjectFromHandle(options: {
   assetRefreshRevision += 1;
   let succeeded = false;
   try {
-    await loadProjectFromHandle(dir, { source: 'normal' });
+    await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false });
     if (options.mainTab !== undefined) state.mainTab = options.mainTab;
     if (options.selectedAssetId !== undefined) state.assetCenterSelectedId = options.selectedAssetId;
     renderAll();
@@ -174,7 +174,7 @@ export async function reloadCurrentProjectFromHandle(options: {
 
 async function loadProjectFromHandle(
   dir: FileSystemDirectoryHandle,
-  options: { source?: 'normal' | 'review-fixture' },
+  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean },
 ): Promise<void> {
   state.projectLoading = true;
   if ((options.source ?? 'normal') === 'normal') {
@@ -258,7 +258,9 @@ async function loadProjectFromHandle(
   if (!state.autosaveProjectId) {
     setStatus('当前浏览器无法安全识别项目目录，自动备份未启用', false, 8000);
   }
-  onProjectLoaded(); // 崩溃保险：检查同项目未保存快照（A1）
+  if (options.notifyProjectLoaded !== false) {
+    onProjectLoaded(); // 崩溃保险：只在真正打开项目时检查同项目未保存快照（A1）
+  }
 }
 
 /** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/avatar/bgm/se/voice/video），子目录继承类型；
