@@ -3,6 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import {
+  absoluteAssetImportProjectPath,
+  assetImportFileIdentity,
   assertAssetImportDataNamespace,
   assertAssetImportOperationWorkspace,
   createAssetImportOperationWorkspace,
@@ -12,6 +14,7 @@ import {
   normalizeAssetImportSourceName,
   type AssetImportOperationManifest,
   type AssetImportOperationPlanRecord,
+  type AssetImportPublicationRecord,
   type AssetImportUploadIntent,
   type AssetImportAuthorityPaths,
   type AssetImportChallengeJournal,
@@ -19,8 +22,9 @@ import {
   type OperationRegistration,
   type RecoveryBarrierIncident,
   type RecoveryBarrierResolution,
+  type ProjectAssetImportReceipt,
 } from './types.js';
-import type { ProjectAssetImportStagedItem } from '@surdet/authoring';
+import { stableStringify, type ProjectAssetImportStagedItem } from '@surdet/authoring';
 
 function equalJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -52,6 +56,59 @@ const OPERATION_STATUSES = new Set([
   'UNDONE',
   'CANCELLED',
 ]);
+
+const PUBLICATION_FILE_STATES = new Set([
+  'UPLOADED',
+  'PREPARE_INTENT',
+  'PREPARED',
+  'LINK_INTENT',
+  'LINKED',
+  'VERIFIED',
+  'ROLLBACK_RENAME_INTENT',
+  'ROLLBACK_QUARANTINED',
+]);
+
+function validFileIdentity(value: unknown): boolean {
+  const identity = value as Record<string, unknown> | undefined;
+  return identity !== undefined
+    && typeof identity.device === 'string'
+    && typeof identity.inode === 'string'
+    && typeof identity.birthtimeNs === 'string'
+    && Number.isSafeInteger(identity.size)
+    && (identity.size as number) >= 0
+    && typeof identity.mtimeNs === 'string';
+}
+
+function validReceiptFileIdentity(value: unknown): boolean {
+  const identity = value as Record<string, unknown> | undefined;
+  return identity !== undefined
+    && typeof identity.device === 'string'
+    && typeof identity.inode === 'string'
+    && typeof identity.birthtimeNs === 'string';
+}
+
+function sameNodeIdentity(
+  left: { device: string; inode: string; birthtimeNs: string },
+  right: { device: string; inode: string; birthtimeNs: string },
+): boolean {
+  return left.device === right.device && left.inode === right.inode && left.birthtimeNs === right.birthtimeNs;
+}
+
+function validProjectRelativePath(value: unknown): value is string {
+  if (typeof value !== 'string' || value.includes('\\') || path.isAbsolute(value)) return false;
+  const segments = value.split('/');
+  return segments.length > 0 && segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function publicationSha256(record: Omit<AssetImportPublicationRecord, 'publicationSha256'>): string {
+  return crypto.createHash('sha256').update(stableStringify(record), 'utf8').digest('hex');
+}
+
+function withPublicationSha256(
+  record: Omit<AssetImportPublicationRecord, 'publicationSha256'>,
+): AssetImportPublicationRecord {
+  return { ...record, publicationSha256: publicationSha256(record) };
+}
 
 export class AssetImportRecordStore {
   constructor(readonly paths: AssetImportAuthorityPaths) {}
@@ -124,6 +181,14 @@ export class AssetImportRecordStore {
 
   private planFile(operationId: string): string {
     return path.join(this.operationDirectory(operationId), 'plan.json');
+  }
+
+  private publicationFile(operationId: string): string {
+    return path.join(this.operationDirectory(operationId), 'publication.json');
+  }
+
+  private receiptFile(operationId: string): string {
+    return path.join(this.operationDirectory(operationId), 'receipt.json');
   }
 
   private uploadIntentFile(operationId: string, nonce: string): string {
@@ -409,6 +474,185 @@ export class AssetImportRecordStore {
     return value;
   }
 
+  async createPublication(
+    record: Omit<AssetImportPublicationRecord, 'publicationSha256'>,
+  ): Promise<AssetImportPublicationRecord> {
+    await this.assertOperationWorkspaceOrBarrier(record.operationId);
+    const normalized = withPublicationSha256(record);
+    const file = this.publicationFile(record.operationId);
+    const existing = await this.readOperationJson<AssetImportPublicationRecord>(file, record.operationId, '发布 journal');
+    if (existing !== null) {
+      if (equalJson(existing.value, normalized)) return existing.value;
+      await this.ensureOperationRecoveryBarrier(record.operationId, undefined, 'publication-conflict');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '发布 journal 与既有记录冲突');
+    }
+    await createJsonRecord(file, normalized);
+    return normalized;
+  }
+
+  async readPublication(operationId: string): Promise<AssetImportPublicationRecord | null> {
+    await this.assertOperationWorkspaceOrBarrier(operationId);
+    const loaded = await this.readOperationJson<AssetImportPublicationRecord>(
+      this.publicationFile(operationId),
+      operationId,
+      '发布 journal',
+    );
+    if (loaded === null) return null;
+    const value = loaded.value;
+    if (value?.schemaVersion !== 1 || value.operationId !== operationId
+      || !Number.isSafeInteger(value.publicationVersion) || value.publicationVersion < 1
+      || (value.previousGenerationSha256 !== null && !validSha256(value.previousGenerationSha256))
+      || !validSha256(value.publicationSha256)
+      || !validSha256(value.planFingerprint) || typeof value.planId !== 'string'
+      || !Array.isArray(value.files) || !Array.isArray(value.parents)
+      || typeof value.updatedAt !== 'string') {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'publication-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '发布 journal 语义损坏');
+    }
+    const { publicationSha256: storedPublicationSha256, ...publicationSemantic } = value;
+    if (publicationSha256(publicationSemantic) !== storedPublicationSha256) {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'publication-hash-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '发布 journal 指纹不匹配');
+    }
+    const manifest = await this.readOperationManifest(operationId);
+    const plan = await this.readPlan(operationId);
+    const planItems = new Map(plan?.plan.items.map((item) => [item.itemId, item]) ?? []);
+    const allowedParents = new Set<string>([
+      '.surdet',
+      '.surdet/asset-import',
+      `.surdet/asset-import/${operationId}`,
+      `.surdet/asset-import/${operationId}/prepared`,
+      `.surdet/asset-import/${operationId}/rollback`,
+      `.surdet/asset-import/${operationId}/undo`,
+    ]);
+    for (const item of plan?.plan.items ?? []) {
+      const segments = path.posix.dirname(item.targetPath).split('/');
+      let relative = '';
+      for (const segment of segments) {
+        relative = relative.length === 0 ? segment : `${relative}/${segment}`;
+        allowedParents.add(relative);
+      }
+    }
+    const manifestIds = new Set(manifest.items.map((item) => item.itemId));
+    const seenFiles = new Set<string>();
+    const filesValid = plan !== null
+      && value.planId === plan.plan.planId
+      && value.planFingerprint === plan.plan.planFingerprint
+      && value.files.length === manifest.items.length
+      && value.files.every((file) => {
+        const planned = planItems.get(file?.itemId);
+        if (planned === undefined || !manifestIds.has(file.itemId) || seenFiles.has(file.itemId)) return false;
+        seenFiles.add(file.itemId);
+        const prepared = `.surdet/asset-import/${operationId}/prepared/${file.itemId}.bin`;
+        const rollback = `.surdet/asset-import/${operationId}/rollback/${file.itemId}.bin`;
+        if (file.targetPath !== planned.targetPath || file.preparedRelativePath !== prepared
+          || file.rollbackRelativePath !== rollback || file.bytes !== planned.bytes || file.sha256 !== planned.sha256
+          || !validSha256(file.sha256) || !PUBLICATION_FILE_STATES.has(file.state)) return false;
+        const preparedRequired = !['UPLOADED', 'PREPARE_INTENT'].includes(file.state);
+        const finalRequired = ['LINKED', 'VERIFIED', 'ROLLBACK_RENAME_INTENT', 'ROLLBACK_QUARANTINED'].includes(file.state);
+        const quarantineRequired = file.state === 'ROLLBACK_QUARANTINED';
+        return (!preparedRequired || validFileIdentity(file.preparedIdentity))
+          && (!finalRequired || validFileIdentity(file.finalIdentity))
+          && (!quarantineRequired || validFileIdentity(file.quarantineIdentity));
+      });
+    const seenParents = new Set<string>();
+    const parentsValid = value.parents.every((parent) => {
+      if (!validProjectRelativePath(parent?.relativePath) || !allowedParents.has(parent.relativePath)
+        || seenParents.has(parent.relativePath)
+        || ![
+          'CREATE_INTENT',
+          'PREEXISTING',
+          'CREATED',
+          'ROLLBACK_REMOVE_INTENT',
+          'ROLLBACK_REMOVED',
+          'ROLLBACK_PRESERVED',
+        ].includes(parent.state)) return false;
+      seenParents.add(parent.relativePath);
+      return ['CREATE_INTENT', 'ROLLBACK_REMOVED'].includes(parent.state)
+        ? parent.identity === undefined || validFileIdentity(parent.identity)
+        : validFileIdentity(parent.identity);
+    });
+    if (!filesValid || !parentsValid) {
+      await this.ensureOperationRecoveryBarrier(operationId, manifest.createdAt, 'publication-semantic-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '发布 journal 文件或目录证据损坏');
+    }
+    return value;
+  }
+
+  async writePublication(
+    previous: AssetImportPublicationRecord,
+    next: AssetImportPublicationRecord,
+  ): Promise<AssetImportPublicationRecord> {
+    const loaded = await this.readOperationJson<AssetImportPublicationRecord>(
+      this.publicationFile(previous.operationId),
+      previous.operationId,
+      '发布 journal',
+    );
+    if (loaded === null || !equalJson(loaded.value, previous)) {
+      await this.ensureOperationRecoveryBarrier(previous.operationId, undefined, 'publication-race');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '发布 journal 已被另一状态更新');
+    }
+    const semantic: Omit<AssetImportPublicationRecord, 'publicationSha256'> = {
+      ...next,
+      schemaVersion: 1,
+      operationId: previous.operationId,
+      publicationVersion: previous.publicationVersion + 1,
+      previousGenerationSha256: loaded.identity.sha256,
+    };
+    delete (semantic as Partial<AssetImportPublicationRecord>).publicationSha256;
+    const record = withPublicationSha256(semantic);
+    await replaceJsonRecord(this.publicationFile(previous.operationId), record);
+    return record;
+  }
+
+  async writeReceipt(receipt: ProjectAssetImportReceipt): Promise<ProjectAssetImportReceipt> {
+    await this.assertOperationWorkspaceOrBarrier(receipt.operationId);
+    const file = this.receiptFile(receipt.operationId);
+    const existing = await this.readOperationJson<ProjectAssetImportReceipt>(file, receipt.operationId, '导入回执');
+    if (existing !== null) {
+      if (equalJson(existing.value, receipt)) return existing.value;
+      await this.ensureOperationRecoveryBarrier(receipt.operationId, undefined, 'receipt-conflict');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入回执与既有记录冲突');
+    }
+    await createJsonRecord(file, receipt);
+    return receipt;
+  }
+
+  async readReceipt(operationId: string): Promise<ProjectAssetImportReceipt | null> {
+    await this.assertOperationWorkspaceOrBarrier(operationId);
+    const loaded = await this.readOperationJson<ProjectAssetImportReceipt>(
+      this.receiptFile(operationId),
+      operationId,
+      '导入回执',
+    );
+    if (loaded === null) return null;
+    const value = loaded.value;
+    if (value?.schemaVersion !== 1 || value.operationId !== operationId || value.status !== 'COMMITTED'
+      || !validSha256(value.receiptSha256) || !validSha256(value.planFingerprint)
+      || !validUuid(value.receiptId) || value.projectIdentity !== this.paths.projectIdentity
+      || value.authorityContractVersion !== 1 || !Number.isSafeInteger(value.journalVersion) || value.journalVersion < 1
+      || typeof value.committedAt !== 'string' || !Array.isArray(value.files)) {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'receipt-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入回执语义损坏');
+    }
+    const plan = await this.readPlan(operationId);
+    const planItems = new Map(plan?.plan.items.map((item) => [item.itemId, item]) ?? []);
+    const seen = new Set<string>();
+    if (plan === null || value.planId !== plan.plan.planId || value.planFingerprint !== plan.plan.planFingerprint
+      || value.files.length !== plan.plan.items.length
+      || value.files.some((file) => {
+        const planned = planItems.get(file?.itemId);
+        if (planned === undefined || seen.has(file.itemId)) return true;
+        seen.add(file.itemId);
+        return file.targetPath !== planned.targetPath || file.bytes !== planned.bytes || file.sha256 !== planned.sha256
+          || !validSha256(file.sha256) || !validReceiptFileIdentity(file.fileIdentity);
+      })) {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'receipt-semantic-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入回执文件证据损坏');
+    }
+    return value;
+  }
+
   async removePrePublicationArtifacts(manifest: AssetImportOperationManifest): Promise<void> {
     await this.assertOperationWorkspaceOrBarrier(manifest.operationId);
     const allowedItemIds = new Set(manifest.items.map((item) => item.itemId));
@@ -562,22 +806,59 @@ export class AssetImportRecordStore {
     }
   }
 
-  async resolveBarrier(resolution: RecoveryBarrierResolution): Promise<void> {
-    if (!validId(resolution.barrierId)) throw new AssetImportAuthorityError('INVALID_REQUEST', 'barrierId 格式无效');
+  async resolveBarrier(input: Pick<RecoveryBarrierResolution, 'barrierId' | 'resolvedAt'>): Promise<void> {
+    if (!validId(input.barrierId)) throw new AssetImportAuthorityError('INVALID_REQUEST', 'barrierId 格式无效');
     await assertAssetImportDataNamespace(this.paths);
     const incident = await readJsonRecord<RecoveryBarrierIncident>(
-      path.join(this.paths.projectNamespace, 'recovery-barriers', `${resolution.barrierId}.json`),
+      path.join(this.paths.projectNamespace, 'recovery-barriers', `${input.barrierId}.json`),
     );
     if (incident === null) throw new AssetImportAuthorityError('INVALID_REQUEST', '恢复屏障不存在');
     const journal = await this.readOperation(incident.value.operationId);
     if (!['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入操作尚未达到可解除恢复屏障的终态');
     }
+    const publication = await this.readPublication(incident.value.operationId);
+    const quarantined = publication?.files
+      .filter((file) => file.state === 'ROLLBACK_QUARANTINED')
+      .sort((left, right) => left.itemId.localeCompare(right.itemId)) ?? [];
+    for (const file of quarantined) {
+      const current = await assetImportFileIdentity(absoluteAssetImportProjectPath(this.paths, file.rollbackRelativePath));
+      if (file.quarantineIdentity === undefined || !sameNodeIdentity(current, file.quarantineIdentity)) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '回滚隔离证据身份不匹配');
+      }
+    }
+    const resolution: RecoveryBarrierResolution = {
+      barrierId: input.barrierId,
+      incidentSha256: incident.identity.sha256,
+      operationId: incident.value.operationId,
+      journalVersion: journal.journal.journalVersion,
+      publicationVersion: publication?.publicationVersion ?? null,
+      publicationSha256: publication?.publicationSha256 ?? null,
+      quarantinedPaths: quarantined.map((file) => file.rollbackRelativePath),
+      resolvedAt: input.resolvedAt,
+    };
     await createJsonRecord(
-      path.join(this.paths.projectNamespace, 'recovery-resolutions', `${resolution.barrierId}.json`),
+      path.join(this.paths.projectNamespace, 'recovery-resolutions', `${input.barrierId}.json`),
       resolution,
     );
+  }
+
+  async resolveOperationBarriers(operationId: string): Promise<void> {
+    const directory = path.join(this.paths.projectNamespace, 'recovery-barriers');
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(directory, entry.name));
+      if (incident === null || incident.value.operationId !== operationId) continue;
+      const resolutionFile = path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name);
+      if (await fs.stat(resolutionFile).then(() => true).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      })) continue;
+      await this.resolveBarrier({ barrierId: incident.value.barrierId, resolvedAt: new Date().toISOString() });
+    }
     this.localRecoveryBlocked = false;
+    this.localRecoveryBlocked = await this.hasUnresolvedBarrier();
   }
 
   async hasUnresolvedBarrier(): Promise<boolean> {
@@ -595,10 +876,21 @@ export class AssetImportRecordStore {
       const resolution = await readJsonRecord<RecoveryBarrierResolution>(
         path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name),
       );
-      if (resolution === null || resolution.value.barrierId !== incident.value.barrierId) return true;
+      if (resolution === null || resolution.value.barrierId !== incident.value.barrierId
+        || resolution.value.incidentSha256 !== incident.identity.sha256
+        || resolution.value.operationId !== incident.value.operationId) return true;
       const journal = await this.readOperation(incident.value.operationId).catch(() => null);
-      if (journal === null || !['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) return true;
+      if (journal === null || journal.journal.journalVersion !== resolution.value.journalVersion
+        || !['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) return true;
+      const publication = await this.readPublication(incident.value.operationId).catch(() => null);
+      if ((publication?.publicationVersion ?? null) !== resolution.value.publicationVersion) return true;
+      if ((publication?.publicationSha256 ?? null) !== resolution.value.publicationSha256) return true;
+      const quarantinedPaths = publication?.files
+        .filter((file) => file.state === 'ROLLBACK_QUARANTINED')
+        .sort((left, right) => left.itemId.localeCompare(right.itemId))
+        .map((file) => file.rollbackRelativePath) ?? [];
+      if (!equalJson(quarantinedPaths, resolution.value.quarantinedPaths)) return true;
     }
-    return false;
+    return this.localRecoveryBlocked;
   }
 }

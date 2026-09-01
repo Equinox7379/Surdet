@@ -4,7 +4,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ProjectAssetImportAuthority } from '../src/asset-import-authority/authority.js';
+import {
+  AssetImportInjectedTermination,
+  ProjectAssetImportAuthority,
+  type AssetImportFaultPoint,
+} from '../src/asset-import-authority/authority.js';
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 
@@ -31,6 +35,17 @@ async function fixture(): Promise<{
       assertLeaseHeld: () => undefined,
     }),
   };
+}
+
+function reopenedAuthority(
+  paths: Awaited<ReturnType<typeof openAssetImportAuthorityPaths>>,
+  faultInjector?: (point: AssetImportFaultPoint) => void | Promise<void>,
+): ProjectAssetImportAuthority {
+  return new ProjectAssetImportAuthority(paths, new AssetImportRecordStore(paths), {
+    textHasher,
+    assertLeaseHeld: () => undefined,
+    faultInjector,
+  });
 }
 
 afterEach(async () => {
@@ -231,5 +246,299 @@ describe('project asset import authority operations', () => {
     await expect(stat(unknown)).resolves.toMatchObject({ size: 4 });
     await expect(stat(store.stagedItemBinaryFile(operationId, itemId))).resolves.toMatchObject({ size: 3 });
     expect(await store.hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('publishes only a new hard-linked target and returns one immutable receipt', async () => {
+    const { authority, projectRoot } = await fixture();
+    const operationId = 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1';
+    const itemId = 'b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'publish.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'publish.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    expect(committed.operation.status).toBe('COMMITTED');
+    expect(committed.receipt).toMatchObject({ operationId, status: 'COMMITTED', projectIdentity: expect.any(String) });
+    expect(committed.receipt.receiptSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(committed.receipt.files).toHaveLength(1);
+    await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'publish.png'), 'utf8')).resolves.toBe('hello');
+    await expect(authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint })).resolves.toEqual(committed);
+  });
+
+  it('keeps an externally created target byte-identical when commit revalidation becomes stale', async () => {
+    const { authority, projectRoot } = await fixture();
+    const operationId = 'c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3';
+    const itemId = 'd4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'race.png', declaredBytes: 3 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('new')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'commit-race.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const target = path.join(projectRoot, 'content', 'assets', 'bg', 'commit-race.png');
+    await writeFile(target, 'external');
+
+    await expect(authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toMatchObject({ code: 'IMPORT_PLAN_STALE' });
+    await expect(readFile(target, 'utf8')).resolves.toBe('external');
+    expect((await authority.query(operationId)).operation.status).toBe('READY');
+  });
+
+  it('preserves an existing prepared path instead of deleting unowned recovery evidence', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = 'e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5';
+    const itemId = 'f6f6f6f6-f6f6-46f6-86f6-f6f6f6f6f6f6';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'owned.png', declaredBytes: 3 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('new')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'prepared-evidence.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const prepared = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'prepared', `${itemId}.bin`);
+    const faulted = reopenedAuthority(paths, async (point) => {
+      if (point === 'after_prepare_intent_before_file') await writeFile(prepared, 'external-evidence');
+    });
+
+    await expect(faulted.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(prepared, 'utf8')).resolves.toBe('external-evidence');
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'prepared-evidence.png')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('does not claim or delete a canonical parent created by an external writer in the mkdir window', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '17171717-1717-4717-8717-171717171717';
+    const itemId = '28282828-2828-4828-8828-282828282828';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'theme.mp3', declaredBytes: 3 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('mp3')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'music', fileName: 'theme.mp3' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const externalParent = path.join(projectRoot, 'content', 'assets', 'bgm');
+    const sentinel = path.join(externalParent, 'external.keep');
+    await mkdir(path.join(projectRoot, '.surdet', 'asset-import', operationId, 'prepared'), { recursive: true });
+    await mkdir(path.join(projectRoot, '.surdet', 'asset-import', operationId, 'rollback'));
+    await mkdir(path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo'));
+    const faulted = reopenedAuthority(paths, async (point) => {
+      if (point === 'after_parent_intent_before_mkdir') {
+        await mkdir(externalParent);
+        await writeFile(sentinel, 'keep');
+      }
+    });
+
+    await expect(faulted.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('keep');
+    await expect(stat(path.join(externalParent, 'theme.mp3'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('classifies a linked-but-unjournaled target after restart and rolls it into retained quarantine', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '39393939-3939-4939-8939-393939393939';
+    const itemId = '4a4a4a4a-4a4a-4a4a-8a4a-4a4a4a4a4a4a';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'crash.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'crash.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_final_link_before_linked_journal') throw new Error('simulated process termination');
+    });
+
+    await expect(faulted.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const target = path.join(projectRoot, 'content', 'assets', 'bg', 'crash.png');
+    await expect(readFile(target, 'utf8')).resolves.toBe('hello');
+    expect((await new AssetImportRecordStore(paths).readOperation(operationId)).journal.status).toBe('PUBLISHING');
+
+    const recovered = reopenedAuthority(paths);
+    const result = await recovered.recover(operationId, { action: 'rollback' });
+    expect(result.detail.operation.status).toBe('ROLLED_BACK');
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'rollback', `${itemId}.bin`);
+    await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    await expect(recovered.recover(operationId, { action: 'rollback' }))
+      .resolves.toMatchObject({ detail: { operation: { status: 'ROLLED_BACK' } } });
+  });
+
+  it.each([
+    {
+      point: 'after_rollback_rename_intent_before_rename' as const,
+      operationId: '7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d',
+      itemId: '8e8e8e8e-8e8e-4e8e-8e8e-8e8e8e8e8e8e',
+    },
+    {
+      point: 'after_rollback_final_rename_before_quarantined_journal' as const,
+      operationId: '9f9f9f9f-9f9f-4f9f-8f9f-9f9f9f9f9f9f',
+      itemId: 'abababab-abab-4bab-8bab-abababababab',
+    },
+  ])('resumes rollback after restart at $point', async ({ point, operationId, itemId }) => {
+    const { authority, paths, projectRoot } = await fixture();
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'rollback.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: `${itemId.slice(0, 4)}-rollback.png` }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const commitCrash = reopenedAuthority(paths, (faultPoint) => {
+      if (faultPoint === 'after_final_link_before_linked_journal') throw new Error('stop after link');
+    });
+    await expect(commitCrash.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+
+    const rollbackCrash = reopenedAuthority(paths, (faultPoint) => {
+      if (faultPoint === point) throw new Error('stop during rollback');
+    });
+    await expect(rollbackCrash.recover(operationId, { action: 'rollback' }))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+
+    const recovered = reopenedAuthority(paths);
+    const result = await recovered.recover(operationId, { action: 'rollback' });
+    expect(result.detail.operation.status).toBe('ROLLED_BACK');
+    const target = path.join(projectRoot, 'content', 'assets', 'bg', `${itemId.slice(0, 4)}-rollback.png`);
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'rollback', `${itemId}.bin`);
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+  });
+
+  it('rejects a publication journal that names a parent outside the exact target and workspace allowlist', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '12131415-1617-4819-8a1b-1c1d1e1f2021';
+    const itemId = '22232425-2627-4829-8a2b-2c2d2e2f3031';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'parent.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'parent.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_final_link_before_linked_journal') throw new Error('stop after link');
+    });
+    await expect(faulted.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const unrelated = path.join(projectRoot, 'user-empty-directory');
+    await mkdir(unrelated);
+    const publicationFile = path.join(paths.projectNamespace, 'operations', operationId, 'publication.json');
+    const publication = JSON.parse(await readFile(publicationFile, 'utf8'));
+    publication.parents.push({
+      ...publication.parents[0],
+      relativePath: 'user-empty-directory',
+      state: 'CREATED',
+    });
+    await writeFile(publicationFile, `${JSON.stringify(publication, null, 2)}\n`);
+
+    await expect(reopenedAuthority(paths).recover(operationId, { action: 'rollback' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect((await stat(unrelated)).isDirectory()).toBe(true);
+  });
+
+  it('finishes the same immutable receipt after restart when commit crashed after receipt creation', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '5b5b5b5b-5b5b-4b5b-8b5b-5b5b5b5b5b5b';
+    const itemId = '6c6c6c6c-6c6c-4c6c-8c6c-6c6c6c6c6c6c';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'receipt.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'receipt.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_receipt_create_before_committed_journal') throw new Error('simulated process termination');
+    });
+
+    await expect(faulted.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const storedBefore = await new AssetImportRecordStore(paths).readReceipt(operationId);
+    expect(storedBefore?.receiptSha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const recovered = reopenedAuthority(paths);
+    await expect(recovered.recover(operationId, { action: 'rollback' }))
+      .rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+    expect((await new AssetImportRecordStore(paths).readOperation(operationId)).journal.status).toBe('PUBLISHING');
+    await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'receipt.png'), 'utf8'))
+      .resolves.toBe('hello');
+    const result = await recovered.recover(operationId, { action: 'resume' });
+    expect(result.detail.operation.status).toBe('COMMITTED');
+    expect(result.detail.receipt).toEqual(storedBefore);
+    await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'receipt.png'), 'utf8'))
+      .resolves.toBe('hello');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    await expect(recovered.recover(operationId, { action: 'resume' }))
+      .resolves.toMatchObject({ detail: { operation: { status: 'COMMITTED' } } });
+  });
+
+  it('fails closed when an immutable receipt is changed on disk', async () => {
+    const { authority, paths } = await fixture();
+    const operationId = 'efefefef-efef-4fef-8fef-efefefefefef';
+    const itemId = '10101010-1010-4010-8010-101010101010';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'receipt-check.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'receipt-check.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const receiptFile = path.join(paths.projectNamespace, 'operations', operationId, 'receipt.json');
+    const receipt = JSON.parse(await readFile(receiptFile, 'utf8'));
+    receipt.committedAt = 'changed-after-commit';
+    await writeFile(receiptFile, `${JSON.stringify(receipt, null, 2)}\n`);
+
+    await expect(authority.query(operationId)).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('preserves externally changed bytes when the final full-batch rescan detects a late mutation', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = 'bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc';
+    const firstId = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    const secondId = 'dededede-dede-4ede-8ede-dededededede';
+    await authority.createOperation({
+      operationId,
+      items: [
+        { itemId: firstId, sourceName: 'first.png', declaredBytes: 5 },
+        { itemId: secondId, sourceName: 'second.png', declaredBytes: 5 },
+      ],
+    });
+    await authority.uploadItem(operationId, firstId, Readable.from(Buffer.from('first')));
+    await authority.uploadItem(operationId, secondId, Readable.from(Buffer.from('other')));
+    const planned = await authority.plan(operationId, {
+      targets: [
+        { itemId: firstId, kind: 'background', fileName: 'batch-first.png' },
+        { itemId: secondId, kind: 'background', fileName: 'batch-second.png' },
+      ],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const firstTarget = path.join(projectRoot, 'content', 'assets', 'bg', 'batch-first.png');
+    let verifiedCount = 0;
+    const mutating = reopenedAuthority(paths, async (point) => {
+      if (point === 'after_verify_before_verified_journal' && ++verifiedCount === 2) {
+        await writeFile(firstTarget, 'external-change');
+      }
+    });
+
+    await expect(mutating.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(firstTarget, 'utf8')).resolves.toBe('external-change');
+    const firstQuarantine = path.join(
+      projectRoot,
+      '.surdet',
+      'asset-import',
+      operationId,
+      'rollback',
+      `${firstId}.bin`,
+    );
+    await expect(readFile(firstQuarantine, 'utf8')).resolves.toBe('external-change');
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'batch-second.png')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
   });
 });
