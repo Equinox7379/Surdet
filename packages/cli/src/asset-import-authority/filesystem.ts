@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createJsonRecord, readJsonRecord } from '../authoring/node-json-record.js';
 import { AssetImportAuthorityError, type AssetImportAuthorityPaths, type ProjectRootBindingIdentity } from './types.js';
+import type { ProjectAssetImportTargetFact } from '@surdet/authoring';
 
 interface StoredRootIdentity {
   schemaVersion: 1;
@@ -18,6 +19,45 @@ interface StoredRootIdentity {
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | undefined)?.code;
 }
+
+async function ensurePlainChildDirectory(parent: string, name: string): Promise<string> {
+  const target = path.join(parent, name);
+  try {
+    await fs.mkdir(target, { mode: 0o700 });
+  } catch (error) {
+    if (errorCode(error) !== 'EEXIST') throw error;
+  }
+  const stat = await fs.lstat(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', '素材导入持久目录身份不安全', { field: name });
+  }
+  const real = await fs.realpath(target);
+  if (real !== target) {
+    throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', '素材导入持久目录发生了重定向', { field: name });
+  }
+  return target;
+}
+
+async function assertPlainDirectory(directory: string, field: string): Promise<void> {
+  const stat = await fs.lstat(directory).catch((error: unknown) => {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材导入持久目录缺失', {
+      field,
+      cause: errorCode(error),
+    });
+  });
+  if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(directory) !== directory) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材导入持久目录身份不安全', { field });
+  }
+}
+
+const AUTHORITY_NAMESPACE_DIRECTORIES = [
+  'operation-index',
+  'operations',
+  'challenge-index',
+  'challenges',
+  'recovery-barriers',
+  'recovery-resolutions',
+] as const;
 
 function defaultDataRoot(): string {
   if (process.platform === 'win32') {
@@ -62,6 +102,101 @@ function sameStoredIdentity(left: StoredRootIdentity, right: StoredRootIdentity)
     && left.device === right.device
     && left.inode === right.inode
     && left.birthtimeNs === right.birthtimeNs;
+}
+
+function portableFold(value: string): string {
+  return value.normalize('NFC').toUpperCase().toLowerCase();
+}
+
+export async function assertAssetImportProjectRootIdentity(paths: AssetImportAuthorityPaths): Promise<void> {
+  const current = await openRealDirectory(paths.projectRoot, 'projectRoot');
+  const expected = paths.rootIdentity;
+  if (current.realPath !== expected.canonicalRootRealPath
+    || current.identity.device !== expected.device
+    || current.identity.inode !== expected.inode
+    || current.identity.birthtimeNs !== expected.birthtimeNs) {
+    throw new AssetImportAuthorityError('IMPORT_PROJECT_STALE', '项目目录身份已变化');
+  }
+}
+
+export async function assertAssetImportDataNamespace(paths: AssetImportAuthorityPaths): Promise<void> {
+  await assertPlainDirectory(paths.dataRoot, 'dataRoot');
+  const projects = path.join(paths.dataRoot, 'projects');
+  await assertPlainDirectory(projects, 'projects');
+  await assertPlainDirectory(paths.projectNamespace, 'projectNamespace');
+  for (const directory of AUTHORITY_NAMESPACE_DIRECTORIES) {
+    await assertPlainDirectory(path.join(paths.projectNamespace, directory), directory);
+  }
+}
+
+export async function createAssetImportOperationWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<void> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationId)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'operationId 格式无效');
+  }
+  await assertAssetImportDataNamespace(paths);
+  const operation = await ensurePlainChildDirectory(path.join(paths.projectNamespace, 'operations'), operationId);
+  await ensurePlainChildDirectory(operation, 'items');
+  await ensurePlainChildDirectory(operation, 'staging');
+  await ensurePlainChildDirectory(operation, 'upload-intents');
+}
+
+export async function assertAssetImportOperationWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<void> {
+  await assertAssetImportDataNamespace(paths);
+  const operation = path.join(paths.projectNamespace, 'operations', operationId);
+  await assertPlainDirectory(operation, 'operation');
+  await assertPlainDirectory(path.join(operation, 'items'), 'items');
+  await assertPlainDirectory(path.join(operation, 'staging'), 'staging');
+  await assertPlainDirectory(path.join(operation, 'upload-intents'), 'upload-intents');
+}
+
+export async function inspectAssetImportTarget(
+  paths: AssetImportAuthorityPaths,
+  relativePath: string,
+): Promise<ProjectAssetImportTargetFact> {
+  const normalized = relativePath.normalize('NFC');
+  const segments = normalized.split('/');
+  const unsafe = (): ProjectAssetImportTargetFact => ({ path: normalized, state: 'unsafe' });
+  if (segments.length !== 4 || segments[0] !== 'content' || segments[1] !== 'assets'
+    || segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) return unsafe();
+
+  await assertAssetImportProjectRootIdentity(paths);
+  let current = paths.projectRoot;
+  for (const segment of segments.slice(0, -1)) {
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch((error: unknown) => {
+      if (errorCode(error) === 'ENOENT') return null;
+      throw error;
+    });
+    if (entries === null) return { path: normalized, state: 'absent' };
+    const matches = entries.filter((entry) => portableFold(entry.name) === portableFold(segment));
+    if (matches.length === 0) return { path: normalized, state: 'absent' };
+    if (matches.length !== 1 || matches[0]!.name !== segment) return unsafe();
+    const next = path.join(current, matches[0]!.name);
+    const stat = await fs.lstat(next);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return unsafe();
+    current = next;
+  }
+
+  const finalName = segments.at(-1)!;
+  const entries = await fs.readdir(current, { withFileTypes: true }).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  });
+  if (entries === null) return { path: normalized, state: 'absent' };
+  const matches = entries.filter((entry) => portableFold(entry.name) === portableFold(finalName));
+  if (matches.length === 0) return { path: normalized, state: 'absent' };
+  if (matches.length !== 1) return unsafe();
+  const target = path.join(current, matches[0]!.name);
+  const stat = await fs.lstat(target);
+  if (stat.isSymbolicLink()) return unsafe();
+  if (stat.isFile()) return { path: normalized, state: 'exists-file' };
+  if (stat.isDirectory()) return { path: normalized, state: 'exists-directory' };
+  return unsafe();
 }
 
 async function ensureStoredIdentity(file: string, expected: StoredRootIdentity): Promise<void> {
@@ -120,8 +255,8 @@ export async function openAssetImportAuthorityPaths(options: {
     ...project.identity,
     publicProjectIdentity,
   };
-  const projectNamespace = path.join(data.realPath, 'projects', publicProjectIdentity);
-  await fs.mkdir(projectNamespace, { recursive: true, mode: 0o700 });
+  const projectsDirectory = await ensurePlainChildDirectory(data.realPath, 'projects');
+  const projectNamespace = await ensurePlainChildDirectory(projectsDirectory, publicProjectIdentity);
   await ensureStoredIdentity(path.join(projectNamespace, 'project-identity.json'), {
     schemaVersion: 1,
     authority: 'asset-import-authority',
@@ -129,6 +264,9 @@ export async function openAssetImportAuthorityPaths(options: {
     canonicalRealPath: project.realPath,
     ...project.identity,
   });
+  for (const directory of AUTHORITY_NAMESPACE_DIRECTORIES) {
+    await ensurePlainChildDirectory(projectNamespace, directory);
+  }
 
   return {
     dataRoot: data.realPath,

@@ -1,3 +1,26 @@
+import type {
+  ProjectAssetImportPlan,
+  ProjectAssetImportStagedItem,
+  ProjectAssetImportTargetFact,
+  ProjectAssetImportTargetRequest,
+} from '@surdet/authoring';
+
+export function normalizeAssetImportSourceName(value: unknown): string {
+  if (typeof value !== 'string') throw new AssetImportAuthorityError('INVALID_REQUEST', '源文件名格式无效');
+  const normalized = value.normalize('NFC');
+  const points = Array.from(normalized);
+  if (points.length < 1 || points.length > 240 || normalized.trim() !== normalized
+    || normalized === '.' || normalized === '..'
+    || /[\\/:*?"<>|]/u.test(normalized)
+    || points.some((character) => {
+      const code = character.codePointAt(0)!;
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+    })) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '源文件名必须是安全的单个文件名');
+  }
+  return normalized;
+}
+
 export type AssetImportOperationStatus =
   | 'UPLOADING'
   | 'STAGED'
@@ -44,6 +67,81 @@ export interface OperationRegistration {
   operationId: string;
   itemCount: number;
   createdAt: string;
+}
+
+export interface AssetImportOperationManifestItem {
+  itemId: string;
+  sourceName: string;
+  declaredBytes: number;
+}
+
+export interface AssetImportOperationManifest {
+  schemaVersion: 1;
+  operationId: string;
+  createdAt: string;
+  manifestFingerprint: string;
+  items: AssetImportOperationManifestItem[];
+}
+
+export interface AssetImportOperationPlanRecord {
+  schemaVersion: 1;
+  operationId: string;
+  targets: ProjectAssetImportTargetRequest[];
+  targetFacts: ProjectAssetImportTargetFact[];
+  plan: ProjectAssetImportPlan;
+}
+
+export interface AssetImportUploadIntent {
+  schemaVersion: 1;
+  operationId: string;
+  itemId: string;
+  nonce: string;
+  partialFileName: string;
+  createdAt: string;
+}
+
+export interface CreateImportOperationRequest {
+  operationId: string;
+  items: AssetImportOperationManifestItem[];
+}
+
+export interface CreateImportOperationResponse {
+  operationId: string;
+  status: 'UPLOADING';
+  operationToken: string;
+  itemCount: number;
+}
+
+export interface PlanOperationRequest {
+  targets: ProjectAssetImportTargetRequest[];
+}
+
+export interface PlanOperationResponse {
+  operationId: string;
+  status: 'STAGED' | 'READY';
+  plan: ProjectAssetImportPlan;
+}
+
+export interface SealOperationRequest {
+  planFingerprint: string;
+}
+
+export interface SealOperationResponse {
+  operationId: string;
+  status: 'READY';
+  planId: string;
+  planFingerprint: string;
+}
+
+export interface OperationDetailResponse {
+  operation: AssetImportJournal;
+  manifest: AssetImportOperationManifest;
+  stagedItems: ProjectAssetImportStagedItem[];
+  plan: ProjectAssetImportPlan | null;
+}
+
+export interface ListOperationsResponse {
+  operations: AssetImportJournal[];
 }
 
 export interface AssetImportJournal {

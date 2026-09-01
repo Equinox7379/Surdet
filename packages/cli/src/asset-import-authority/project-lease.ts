@@ -5,6 +5,7 @@ import { AssetImportAuthorityError } from './types.js';
 
 export interface AssetImportProjectLease {
   ownerToken: string;
+  assertHeld(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -24,5 +25,17 @@ export async function acquireAssetImportProjectLease(options: {
     if ((error as { code?: string }).code === 'PROJECT_BUSY') throw error;
     throw error;
   }
-  return { ownerToken: handle.ownerToken, release: () => handle.release() };
+  let held = true;
+  return {
+    ownerToken: handle.ownerToken,
+    assertHeld: async () => {
+      if (!held) throw new AssetImportAuthorityError('IMPORT_AUTHORITY_NOT_READY', '素材导入项目租约已释放');
+      await manager.assertOwned(handle);
+    },
+    release: async () => {
+      if (!held) return;
+      await handle.release();
+      held = false;
+    },
+  };
 }
