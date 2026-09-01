@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bindProjectIoHooks,
+  loadDemoProject,
   openProjectFromHandle,
   quarantineTimelineAutosaveEntries,
   readTimelineDir,
@@ -756,6 +757,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
     state.mainTab = 'review' as never;
     (state as any).reviewWorkspace = { reviewId: 'old-review' };
+    state.assetCenterFolder = 'content/assets/bg';
 
     await openProjectFromHandle(root);
 
@@ -763,6 +765,16 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.current).toBe('start');
     expect(state.mainTab).toBe('editor');
     expect((state as any).reviewWorkspace).toBeNull();
+    expect(state.assetCenterFolder).toBe('all');
+  });
+
+  it('切换到演示项目时清除上一项目的素材目录筛选', () => {
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.assetCenterFolder = 'content/assets/portrait';
+
+    loadDemoProject();
+
+    expect(state.assetCenterFolder).toBe('all');
   });
 
   it('项目载入回调失败时仍收束 projectLoading 与切换生命周期', async () => {

@@ -96,6 +96,7 @@
 }
 
 .asset-center-search input:focus-visible,
+.asset-center-folder-controls select:focus-visible,
 .asset-center-sort select:focus-visible,
 .asset-center button:focus-visible,
 .asset-center summary:focus-visible {
@@ -389,6 +390,13 @@
   gap: 4px;
 }
 
+.asset-center-library-controls {
+  display: flex;
+  align-items: end;
+  gap: var(--surdet-space-12);
+}
+
+.asset-center-folder-controls,
 .asset-center-sort {
   display: grid;
   gap: 4px;
@@ -397,6 +405,7 @@
   font-weight: 650;
 }
 
+.asset-center-folder-controls select,
 .asset-center-sort select {
   min-height: 34px;
   padding: 0 30px 0 10px;
@@ -407,6 +416,48 @@
   font: inherit;
   font-size: 13px;
   font-weight: 400;
+}
+
+.asset-center-folder-controls select {
+  width: min(26vw, 260px);
+}
+
+.asset-center-folder-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  margin-block: -4px var(--surdet-space-16);
+  overflow-x: auto;
+  color: var(--surdet-text-secondary);
+  scrollbar-width: thin;
+}
+
+.asset-center-folder-crumb {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--surdet-radius-control);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.asset-center-folder-crumb:hover {
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+}
+
+.asset-center-folder-crumb[aria-current="location"] {
+  color: var(--surdet-text-primary);
+  font-weight: 700;
+}
+
+.asset-center-folder-separator {
+  flex: 0 0 auto;
+  color: var(--surdet-border-strong);
+  font-size: 12px;
 }
 
 .asset-center-library-header h2,
@@ -724,6 +775,21 @@
   .asset-center-tools {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .asset-center-library-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .asset-center-library-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .asset-center-folder-controls select,
+  .asset-center-sort select {
+    width: 100%;
   }
 
   .asset-center-overview {

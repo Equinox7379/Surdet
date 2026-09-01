@@ -97,6 +97,8 @@ export const state = {
   assetCenterKind: 'all' as 'all' | ProjectAssetKind,
   assetCenterStatus: 'all' as 'all' | 'referenced' | 'unused' | 'missing' | 'duplicate' | 'invalid-name' | 'unsupported',
   assetCenterView: 'list' as 'list' | 'grid',
+  /** 只读目录筛选；值为规范化的 content/assets 相对目录。 */
+  assetCenterFolder: 'all' as 'all' | string,
   /** 纯显示偏好，和列表/网格视图一样在本次编辑器会话内跨项目保留。 */
   assetCenterSort: 'path' as 'path' | 'name' | 'size-desc' | 'references-desc' | 'attention',
   /** 仅含可展示投影与本页 File；授权令牌和浏览器会话永不进入全局 state。 */
