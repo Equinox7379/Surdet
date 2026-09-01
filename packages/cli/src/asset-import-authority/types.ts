@@ -116,19 +116,24 @@ export type AssetImportPublicationFileState =
   | 'LINKED'
   | 'VERIFIED'
   | 'ROLLBACK_RENAME_INTENT'
-  | 'ROLLBACK_QUARANTINED';
+  | 'ROLLBACK_QUARANTINED'
+  | 'UNDO_RENAME_INTENT'
+  | 'UNDO_QUARANTINED'
+  | 'UNDO_VERIFIED';
 
 export interface AssetImportPublicationFile {
   itemId: string;
   targetPath: string;
   preparedRelativePath: string;
   rollbackRelativePath: string;
+  undoRelativePath: string;
   bytes: number;
   sha256: string;
   state: AssetImportPublicationFileState;
   preparedIdentity?: AssetImportFileIdentity;
   finalIdentity?: AssetImportFileIdentity;
   quarantineIdentity?: AssetImportFileIdentity;
+  undoIdentity?: AssetImportFileIdentity;
 }
 
 export interface AssetImportPublicationParent {
@@ -181,6 +186,19 @@ export interface ProjectAssetImportReceipt {
   committedAt: string;
 }
 
+export interface ProjectAssetImportUndoReceipt {
+  schemaVersion: 1;
+  undoReceiptId: string;
+  undoReceiptSha256: string;
+  operationId: string;
+  projectIdentity: string;
+  status: 'UNDONE';
+  journalVersion: number;
+  removedPaths: string[];
+  quarantinePaths: string[];
+  undoneAt: string;
+}
+
 export interface CommitOperationRequest {
   planFingerprint: string;
 }
@@ -196,6 +214,16 @@ export interface RecoverOperationRequest {
 
 export interface RecoverOperationResponse {
   detail: OperationDetailResponse;
+}
+
+export interface UndoOperationRequest {
+  receiptId: string;
+  receiptSha256: string;
+}
+
+export interface UndoOperationResponse {
+  operation: AssetImportJournal;
+  undoReceipt: ProjectAssetImportUndoReceipt;
 }
 
 export interface CreateImportOperationRequest {
@@ -237,6 +265,7 @@ export interface OperationDetailResponse {
   stagedItems: ProjectAssetImportStagedItem[];
   plan: ProjectAssetImportPlan | null;
   receipt: ProjectAssetImportReceipt | null;
+  undoReceipt: ProjectAssetImportUndoReceipt | null;
 }
 
 export interface ListOperationsResponse {

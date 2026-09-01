@@ -1,5 +1,5 @@
 import * as crypto from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
@@ -539,6 +539,304 @@ describe('project asset import authority operations', () => {
     await expect(readFile(firstQuarantine, 'utf8')).resolves.toBe('external-change');
     await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'batch-second.png')))
       .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('undoes only an unchanged committed receipt and returns one immutable undo receipt', async () => {
+    const { authority, projectRoot } = await fixture();
+    const operationId = '32333435-3637-4839-8a3b-3c3d3e3f4041';
+    const itemId = '42434445-4647-4849-8a4b-4c4d4e4f5051';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'undo.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'undo.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+
+    const undone = await authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    });
+    expect(undone.operation.status).toBe('UNDONE');
+    expect(undone.undoReceipt.undoReceiptSha256).toMatch(/^[0-9a-f]{64}$/);
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'undo.png')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
+    await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
+    await expect(authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).resolves.toEqual(undone);
+    await expect(authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: 'f'.repeat(64),
+    })).rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+  });
+
+  it.each([
+    { mode: 'changed' as const, operationId: '52535455-5657-4859-8a5b-5c5d5e5f6061' },
+    { mode: 'missing' as const, operationId: '62636465-6667-4869-8a6b-6c6d6e6f7071' },
+    { mode: 'replaced' as const, operationId: '72737475-7677-4879-8a7b-7c7d7e7f8081' },
+  ])('blocks the entire undo before mutation when one receipt target is $mode', async ({ mode, operationId }) => {
+    const { authority, projectRoot } = await fixture();
+    const firstId = `${operationId.slice(0, 8)}-1111-4111-8111-111111111111`;
+    const secondId = `${operationId.slice(0, 8)}-2222-4222-8222-222222222222`;
+    await authority.createOperation({
+      operationId,
+      items: [
+        { itemId: firstId, sourceName: 'undo-first.png', declaredBytes: 5 },
+        { itemId: secondId, sourceName: 'undo-second.png', declaredBytes: 5 },
+      ],
+    });
+    await authority.uploadItem(operationId, firstId, Readable.from(Buffer.from('first')));
+    await authority.uploadItem(operationId, secondId, Readable.from(Buffer.from('other')));
+    const planned = await authority.plan(operationId, {
+      targets: [
+        { itemId: firstId, kind: 'background', fileName: `${mode}-first.png` },
+        { itemId: secondId, kind: 'background', fileName: `${mode}-second.png` },
+      ],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const first = path.join(projectRoot, 'content', 'assets', 'bg', `${mode}-first.png`);
+    const second = path.join(projectRoot, 'content', 'assets', 'bg', `${mode}-second.png`);
+    if (mode === 'changed') await writeFile(first, 'changed-after-commit');
+    if (mode === 'missing') await rm(first);
+    if (mode === 'replaced') {
+      await rm(first);
+      await writeFile(first, 'first');
+    }
+
+    await expect(authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).rejects.toMatchObject({ code: 'IMPORT_UNDO_BLOCKED_CHANGED' });
+    expect((await authority.query(operationId)).operation.status).toBe('COMMITTED');
+    await expect(readFile(second, 'utf8')).resolves.toBe('other');
+    if (mode !== 'missing') await expect(stat(first)).resolves.toMatchObject({ size: expect.any(Number) });
+    const undoRoot = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo');
+    await expect(readdir(undoRoot)).resolves.toEqual([]);
+  });
+
+  it.each([
+    {
+      point: 'after_undo_rename_intent_before_rename' as const,
+      operationId: '82838485-8687-4889-8a8b-8c8d8e8f9091',
+      itemId: '92939495-9697-4899-8a9b-9c9d9e9fa0a1',
+    },
+    {
+      point: 'after_undo_final_rename_before_quarantined_journal' as const,
+      operationId: 'a2a3a4a5-a6a7-48a9-8aab-acadaeafb0b1',
+      itemId: 'b2b3b4b5-b6b7-48b9-8abb-bcbdbebfc0c1',
+    },
+    {
+      point: 'after_undo_quarantine_verify_before_undo_receipt' as const,
+      operationId: 'c2c3c4c5-c6c7-48c9-8acb-cccdcecfd0d1',
+      itemId: 'd2d3d4d5-d6d7-48d9-8adb-dcdddedfe0e1',
+    },
+  ])('recovers an interrupted undo at $point', async ({ point, operationId, itemId }) => {
+    const { authority, paths, projectRoot } = await fixture();
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'undo-crash.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: `${itemId.slice(0, 4)}-undo-crash.png` }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (faultPoint) => {
+      if (faultPoint === point) throw new Error('stop during undo');
+    });
+    await expect(faulted.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).rejects.toBeInstanceOf(AssetImportInjectedTermination);
+
+    const recovered = reopenedAuthority(paths);
+    const result = await recovered.recover(operationId, { action: 'resume' });
+    expect(result.detail.operation.status).toBe('UNDONE');
+    expect(result.detail.undoReceipt?.undoReceiptSha256).toMatch(/^[0-9a-f]{64}$/);
+    const target = path.join(projectRoot, 'content', 'assets', 'bg', `${itemId.slice(0, 4)}-undo-crash.png`);
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
+    await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
+  });
+
+  it('revalidates target parent identity before resuming an interrupted undo', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '11223344-5566-4788-8abc-def012345678';
+    const itemId = '22334455-6677-4899-8abc-def012345679';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'parent.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'parent-recovery.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_undo_rename_intent_before_rename') throw new Error('stop before undo rename');
+    });
+    await expect(faulted.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).rejects.toBeInstanceOf(AssetImportInjectedTermination);
+
+    const targetParent = path.join(projectRoot, 'content', 'assets', 'bg');
+    const displacedParent = path.join(projectRoot, 'content', 'assets', 'bg-before-replacement');
+    await rename(targetParent, displacedParent);
+    await mkdir(targetParent);
+    await expect(reopenedAuthority(paths).recover(operationId, { action: 'resume' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(path.join(displacedParent, 'parent-recovery.png'), 'utf8')).resolves.toBe('hello');
+    await expect(readdir(targetParent)).resolves.toEqual([]);
+  });
+
+  it('preflights every remaining target before continuing a partial multi-file undo', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '99aabbcc-ddee-4f01-8abc-456789abcdef';
+    const firstId = 'aabbccdd-eeff-4012-8bcd-56789abcdef0';
+    const secondId = 'bbccddee-ff00-4123-8cde-6789abcdef01';
+    await authority.createOperation({
+      operationId,
+      items: [
+        { itemId: firstId, sourceName: 'first.png', declaredBytes: 5 },
+        { itemId: secondId, sourceName: 'second.png', declaredBytes: 6 },
+      ],
+    });
+    await authority.uploadItem(operationId, firstId, Readable.from(Buffer.from('first')));
+    await authority.uploadItem(operationId, secondId, Readable.from(Buffer.from('second')));
+    const planned = await authority.plan(operationId, {
+      targets: [
+        { itemId: firstId, kind: 'background', fileName: 'partial-first.png' },
+        { itemId: secondId, kind: 'background', fileName: 'partial-second.png' },
+      ],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    let renameCount = 0;
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_undo_final_rename_before_quarantined_journal' && ++renameCount === 1) {
+        throw new Error('stop after first undo rename');
+      }
+    });
+    await expect(faulted.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const secondTarget = path.join(projectRoot, 'content', 'assets', 'bg', 'partial-second.png');
+    await writeFile(secondTarget, 'changed-after-partial-undo');
+
+    await expect(reopenedAuthority(paths).recover(operationId, { action: 'resume' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(secondTarget, 'utf8')).resolves.toBe('changed-after-partial-undo');
+    const secondQuarantine = path.join(
+      projectRoot,
+      '.surdet',
+      'asset-import',
+      operationId,
+      'undo',
+      `${secondId}.bin`,
+    );
+    await expect(stat(secondQuarantine)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('restores unexpected undo bytes only to an absent final path and enters recovery', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '33445566-7788-49aa-8bcd-ef0123456789';
+    const itemId = '44556677-8899-4abb-8cde-f0123456789a';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'race.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'undo-race.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const faulted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_undo_final_rename_before_quarantined_journal') throw new Error('stop after undo rename');
+    });
+    await expect(faulted.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    })).rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const target = path.join(projectRoot, 'content', 'assets', 'bg', 'undo-race.png');
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
+    await writeFile(quarantine, 'changed-after-rename');
+
+    await expect(reopenedAuthority(paths).recover(operationId, { action: 'resume' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(target, 'utf8')).resolves.toBe('changed-after-rename');
+    await expect(stat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await new AssetImportRecordStore(paths).readOperation(operationId)).journal.status)
+      .toBe('RECOVERY_REQUIRED');
+  });
+
+  it('fails closed when an UNDONE operation loses its immutable undo receipt', async () => {
+    const { authority, paths } = await fixture();
+    const operationId = '55667788-99aa-4bbc-8def-0123456789ab';
+    const itemId = '66778899-aabb-4ccd-8efa-123456789abc';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'missing.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'missing-undo-receipt.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    await authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    });
+    await rm(path.join(paths.projectNamespace, 'operations', operationId, 'undo-receipt.json'));
+
+    await expect(authority.query(operationId)).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('keeps a recovery barrier unresolved when retained undo quarantine bytes change', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = '778899aa-bbcc-4dde-8fab-23456789abcd';
+    const itemId = '8899aabb-ccdd-4eef-8abc-3456789abcde';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'barrier.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'barrier-undo.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    await authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    });
+    const store = new AssetImportRecordStore(paths);
+    await store.ensureOperationRecoveryBarrier(operationId, undefined, 'test-undo-quarantine-change');
+    const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
+    await writeFile(quarantine, 'changed-after-undo');
+
+    await expect(reopenedAuthority(paths).recover(operationId, { action: 'resume' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+  });
+
+  it('fails closed when the immutable undo receipt is changed on disk', async () => {
+    const { authority, paths } = await fixture();
+    const operationId = 'e2e3e4e5-e6e7-48e9-8aeb-ecedeeeff0f1';
+    const itemId = 'f2f3f4f5-f6f7-48f9-8afb-fcfdfeff0011';
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'undo-receipt.png', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, {
+      targets: [{ itemId, kind: 'background', fileName: 'undo-receipt.png' }],
+    });
+    await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+    const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    await authority.undo(operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    });
+    const undoReceiptFile = path.join(paths.projectNamespace, 'operations', operationId, 'undo-receipt.json');
+    const undoReceipt = JSON.parse(await readFile(undoReceiptFile, 'utf8'));
+    undoReceipt.undoneAt = 'changed-after-undo';
+    await writeFile(undoReceiptFile, `${JSON.stringify(undoReceipt, null, 2)}\n`);
+
+    await expect(authority.query(operationId)).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
     expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
   });
 });

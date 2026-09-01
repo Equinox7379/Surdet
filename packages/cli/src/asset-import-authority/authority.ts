@@ -42,10 +42,13 @@ import {
   type PlanOperationRequest,
   type PlanOperationResponse,
   type ProjectAssetImportReceipt,
+  type ProjectAssetImportUndoReceipt,
   type RecoverOperationRequest,
   type RecoverOperationResponse,
   type SealOperationRequest,
   type SealOperationResponse,
+  type UndoOperationRequest,
+  type UndoOperationResponse,
 } from './types.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -76,7 +79,10 @@ export type AssetImportFaultPoint =
   | 'after_verify_before_verified_journal'
   | 'after_receipt_create_before_committed_journal'
   | 'after_rollback_rename_intent_before_rename'
-  | 'after_rollback_final_rename_before_quarantined_journal';
+  | 'after_rollback_final_rename_before_quarantined_journal'
+  | 'after_undo_rename_intent_before_rename'
+  | 'after_undo_final_rename_before_quarantined_journal'
+  | 'after_undo_quarantine_verify_before_undo_receipt';
 
 export class AssetImportInjectedTermination extends Error {
   constructor(readonly point: AssetImportFaultPoint, options?: ErrorOptions) {
@@ -100,10 +106,10 @@ const LEGAL_TRANSITIONS: Readonly<Record<AssetImportOperationStatus, readonly As
   PUBLISHING: ['COMMITTED', 'ROLLING_BACK', 'RECOVERY_REQUIRED'],
   ROLLING_BACK: ['ROLLED_BACK', 'RECOVERY_REQUIRED'],
   ROLLED_BACK: [],
-  RECOVERY_REQUIRED: ['PUBLISHING', 'ROLLING_BACK'],
+  RECOVERY_REQUIRED: ['PUBLISHING', 'ROLLING_BACK', 'UNDOING'],
   COMMITTED: ['UNDOING', 'RECOVERY_REQUIRED'],
   UNDOING: ['UNDONE', 'RECOVERY_REQUIRED'],
-  UNDONE: [],
+  UNDONE: ['RECOVERY_REQUIRED'],
   CANCELLED: [],
 };
 
@@ -132,8 +138,8 @@ function sameFileIdentity(
 }
 
 function sameNodeIdentity(
-  left: Awaited<ReturnType<typeof assetImportFileIdentity>>,
-  right: Awaited<ReturnType<typeof assetImportFileIdentity>>,
+  left: { device: string; inode: string; birthtimeNs: string },
+  right: { device: string; inode: string; birthtimeNs: string },
 ): boolean {
   return left.device === right.device
     && left.inode === right.inode
@@ -251,7 +257,16 @@ export class ProjectAssetImportAuthority {
     await this.assertLeaseHeld();
     const operations = await this.store.listOperations();
     for (const operation of operations) {
-      if (['PUBLISHING', 'ROLLING_BACK', 'RECOVERY_REQUIRED'].includes(operation.status)) {
+      if (operation.status === 'UNDONE') {
+        const undoReceipt = await this.store.readUndoReceipt(operation.operationId);
+        if (undoReceipt === null) {
+          await this.enterRecovery(operation.operationId, 'UNDONE 操作缺少撤销回执');
+          this.projectRecoveryBlocked = true;
+          continue;
+        }
+        await this.verifyUndoReceipt(undoReceipt);
+      }
+      if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.status)) {
         this.projectRecoveryBlocked = true;
         await this.store.ensureOperationRecoveryBarrier(
           operation.operationId,
@@ -906,6 +921,7 @@ export class ProjectAssetImportAuthority {
         targetPath: item.targetPath,
         preparedRelativePath: `.surdet/asset-import/${operationId}/prepared/${item.itemId}.bin`,
         rollbackRelativePath: `.surdet/asset-import/${operationId}/rollback/${item.itemId}.bin`,
+        undoRelativePath: `.surdet/asset-import/${operationId}/undo/${item.itemId}.bin`,
         bytes: item.bytes,
         sha256: item.sha256,
         state: 'UPLOADED' as const,
@@ -1406,6 +1422,310 @@ export class ProjectAssetImportAuthority {
     return { operation: journal, receipt };
   }
 
+  private async verifyUndoReceipt(receipt: ProjectAssetImportUndoReceipt): Promise<void> {
+    const { undoReceiptSha256, ...semantic } = receipt;
+    const actual = await this.textHasher.sha256(stableStringify(semantic));
+    if (actual !== undoReceiptSha256) {
+      return this.enterRecovery(receipt.operationId, '撤销回执内容与回执指纹不一致');
+    }
+  }
+
+  private async assertUndoTargetMatchesReceipt(
+    operationId: string,
+    targetPath: string,
+    expected: ProjectAssetImportReceipt['files'][number],
+    changedIsBlocked: boolean,
+  ): Promise<Awaited<ReturnType<ProjectAssetImportAuthority['readFileEvidence']>>> {
+    const target = absoluteAssetImportProjectPath(this.paths, targetPath);
+    let evidence: Awaited<ReturnType<ProjectAssetImportAuthority['readFileEvidence']>>;
+    try {
+      evidence = await this.readFileEvidence(target);
+    } catch {
+      if (changedIsBlocked) {
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '至少一个已导入素材缺失或无法稳定读取');
+      }
+      return this.enterRecovery(operationId, '撤销窗口中的目标素材缺失或无法稳定读取');
+    }
+    if (!sameNodeIdentity(evidence.identity, expected.fileIdentity)
+      || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+      if (changedIsBlocked) {
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '至少一个已导入素材已被修改或替换');
+      }
+      return this.enterRecovery(operationId, '撤销预检后目标素材发生变化');
+    }
+    return evidence;
+  }
+
+  private async preflightUndo(
+    publication: AssetImportPublicationRecord,
+    receipt: ProjectAssetImportReceipt,
+  ): Promise<void> {
+    await assertAssetImportProjectOperationWorkspace(this.paths, publication.operationId).catch(() => this.enterRecovery(
+      publication.operationId,
+      '撤销工作区缺失或身份不安全',
+    ));
+    await this.verifyPublicationParents(publication);
+    const receiptByItemId = new Map(receipt.files.map((file) => [file.itemId, file]));
+    for (const file of publication.files) {
+      if (file.state !== 'VERIFIED') {
+        return this.enterRecovery(publication.operationId, 'COMMITTED 发布 journal 不是可撤销的 VERIFIED 状态');
+      }
+      const expected = receiptByItemId.get(file.itemId);
+      if (expected === undefined || expected.targetPath !== file.targetPath) {
+        return this.enterRecovery(publication.operationId, '成功回执与发布 journal 不一致');
+      }
+      await this.assertUndoTargetMatchesReceipt(publication.operationId, file.targetPath, expected, true);
+      const undo = absoluteAssetImportProjectPath(this.paths, file.undoRelativePath);
+      const undoIdentity = await this.fileIdentityOrNull(undo).catch(() => this.enterRecovery(
+        publication.operationId,
+        '撤销隔离路径身份不安全',
+      ));
+      if (undoIdentity !== null) return this.enterRecovery(publication.operationId, '撤销隔离路径已被占用');
+    }
+    await this.verifyPublicationParents(publication);
+  }
+
+  private async createUndoReceipt(
+    publication: AssetImportPublicationRecord,
+    journal: AssetImportJournal,
+  ): Promise<ProjectAssetImportUndoReceipt> {
+    const existing = await this.store.readUndoReceipt(publication.operationId);
+    if (existing !== null) {
+      await this.verifyUndoReceipt(existing);
+      return existing;
+    }
+    const semantic = {
+      schemaVersion: 1 as const,
+      undoReceiptId: crypto.randomUUID(),
+      operationId: publication.operationId,
+      projectIdentity: this.paths.projectIdentity,
+      status: 'UNDONE' as const,
+      journalVersion: journal.journalVersion,
+      removedPaths: publication.files.map((file) => file.targetPath).sort(),
+      quarantinePaths: publication.files.map((file) => file.undoRelativePath).sort(),
+      undoneAt: now(),
+    };
+    const receipt: ProjectAssetImportUndoReceipt = {
+      ...semantic,
+      undoReceiptSha256: await this.textHasher.sha256(stableStringify(semantic)),
+    };
+    const written = await this.store.writeUndoReceipt(receipt);
+    await this.verifyUndoReceipt(written);
+    return written;
+  }
+
+  private async assertUndoMutationBoundary(publication: AssetImportPublicationRecord): Promise<void> {
+    try {
+      await assertAssetImportProjectOperationWorkspace(this.paths, publication.operationId);
+      await this.verifyPublicationParents(publication);
+    } catch (error) {
+      if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_RECOVERY_REQUIRED') throw error;
+      return this.enterRecovery(publication.operationId, '撤销前项目根、工作区或目标父目录身份不安全');
+    }
+  }
+
+  private async preflightUndoContinuation(
+    publication: AssetImportPublicationRecord,
+    receipt: ProjectAssetImportReceipt,
+  ): Promise<void> {
+    await this.assertUndoMutationBoundary(publication);
+    const receiptByItemId = new Map(receipt.files.map((file) => [file.itemId, file]));
+    for (const file of publication.files) {
+      const expected = receiptByItemId.get(file.itemId);
+      if (expected === undefined || expected.targetPath !== file.targetPath) {
+        return this.enterRecovery(publication.operationId, '撤销恢复时成功回执与发布 journal 不一致');
+      }
+      const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
+      const undo = absoluteAssetImportProjectPath(this.paths, file.undoRelativePath);
+      const finalIdentity = await this.fileIdentityOrNull(target).catch(() => this.enterRecovery(
+        publication.operationId,
+        '撤销恢复整批预检时目标路径不安全',
+      ));
+      const undoIdentity = await this.fileIdentityOrNull(undo).catch(() => this.enterRecovery(
+        publication.operationId,
+        '撤销恢复整批预检时隔离路径不安全',
+      ));
+      if (file.state === 'VERIFIED') {
+        if (undoIdentity !== null) return this.enterRecovery(publication.operationId, '撤销隔离路径已被占用');
+        await this.assertUndoTargetMatchesReceipt(publication.operationId, file.targetPath, expected, false);
+        continue;
+      }
+      if (file.state === 'UNDO_RENAME_INTENT') {
+        if ((finalIdentity === null) === (undoIdentity === null)) {
+          return this.enterRecovery(publication.operationId, '撤销恢复整批预检发现路径状态歧义');
+        }
+        if (finalIdentity !== null) {
+          await this.assertUndoTargetMatchesReceipt(publication.operationId, file.targetPath, expected, false);
+        } else {
+          const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
+            publication.operationId,
+            '撤销恢复整批预检无法读取待确认隔离证据',
+          ));
+          if (!sameNodeIdentity(evidence.identity, expected.fileIdentity)
+            || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+            await this.restoreUndoQuarantineIfFinalAbsent(publication, target, undo);
+            return this.enterRecovery(publication.operationId, '撤销恢复整批预检发现待确认隔离内容变化');
+          }
+        }
+        continue;
+      }
+      if (file.state === 'UNDO_QUARANTINED' || file.state === 'UNDO_VERIFIED') {
+        if (finalIdentity !== null || undoIdentity === null || file.undoIdentity === undefined) {
+          return this.enterRecovery(publication.operationId, '撤销恢复整批预检发现隔离状态不一致');
+        }
+        const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
+          publication.operationId,
+          '撤销恢复整批预检无法读取隔离证据',
+        ));
+        if (!sameFileIdentity(evidence.identity, file.undoIdentity)
+          || !sameNodeIdentity(evidence.identity, expected.fileIdentity)
+          || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+          return this.enterRecovery(publication.operationId, '撤销恢复整批预检发现隔离证据变化');
+        }
+        continue;
+      }
+      return this.enterRecovery(publication.operationId, '撤销恢复整批预检发现非法文件状态');
+    }
+    await this.assertUndoMutationBoundary(publication);
+  }
+
+  private async restoreUndoQuarantineIfFinalAbsent(
+    publication: AssetImportPublicationRecord,
+    target: string,
+    undo: string,
+  ): Promise<void> {
+    await this.assertUndoMutationBoundary(publication);
+    if (await this.fileIdentityOrNull(target).catch(() => null) !== null) return;
+    try {
+      await this.assertUndoMutationBoundary(publication);
+      await fs.link(undo, target);
+      await this.assertUndoMutationBoundary(publication);
+      const targetIdentity = await assetImportFileIdentity(target);
+      const undoIdentity = await assetImportFileIdentity(undo);
+      if (sameNodeIdentity(targetIdentity, undoIdentity)) await fs.unlink(undo);
+    } catch {
+      // A concurrent writer or interrupted restore leaves every extant path intact for manual recovery.
+    }
+  }
+
+  private async continueUndo(
+    operationId: string,
+    previous: AssetImportPublicationRecord,
+    receipt: ProjectAssetImportReceipt,
+  ): Promise<UndoOperationResponse> {
+    await this.preflightUndoContinuation(previous, receipt);
+    let journal = (await this.store.readOperation(operationId)).journal;
+    if (journal.status === 'RECOVERY_REQUIRED') journal = await this.transition(journal, 'UNDOING');
+    if (journal.status !== 'UNDOING') {
+      throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '当前状态不能继续撤销');
+    }
+    const receiptByItemId = new Map(receipt.files.map((file) => [file.itemId, file]));
+    let current = previous;
+    for (const itemId of current.files.map((file) => file.itemId)) {
+      await this.assertUndoMutationBoundary(current);
+      let file = current.files.find((entry) => entry.itemId === itemId)!;
+      const expected = receiptByItemId.get(itemId);
+      if (expected === undefined || expected.targetPath !== file.targetPath) {
+        return this.enterRecovery(operationId, '撤销时成功回执与发布 journal 不一致');
+      }
+      const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
+      const undo = absoluteAssetImportProjectPath(this.paths, file.undoRelativePath);
+      if (file.state === 'VERIFIED') {
+        await this.assertUndoTargetMatchesReceipt(operationId, file.targetPath, expected, false);
+        if (await this.fileIdentityOrNull(undo).catch(() => this.enterRecovery(
+          operationId,
+          '撤销隔离路径身份不安全',
+        )) !== null) return this.enterRecovery(operationId, '撤销隔离路径已被占用');
+        current = await this.updatePublicationFile(current, itemId, (entry) => {
+          entry.state = 'UNDO_RENAME_INTENT';
+        });
+        file = current.files.find((entry) => entry.itemId === itemId)!;
+        await this.fault('after_undo_rename_intent_before_rename');
+      }
+      if (file.state === 'UNDO_RENAME_INTENT') {
+        const finalIdentity = await this.fileIdentityOrNull(target).catch(() => this.enterRecovery(
+          operationId,
+          '撤销重启分类时目标路径不安全',
+        ));
+        const undoIdentity = await this.fileIdentityOrNull(undo).catch(() => this.enterRecovery(
+          operationId,
+          '撤销重启分类时隔离路径不安全',
+        ));
+        if ((finalIdentity === null) === (undoIdentity === null)) {
+          return this.enterRecovery(operationId, '撤销重启时目标与隔离路径状态存在歧义');
+        }
+        if (finalIdentity !== null) {
+          await this.assertUndoMutationBoundary(current);
+          await this.assertUndoTargetMatchesReceipt(operationId, file.targetPath, expected, false);
+          await fs.rename(target, undo).catch(() => this.enterRecovery(
+            operationId,
+            '目标文件无法原子移入撤销隔离区',
+          ));
+          await this.fault('after_undo_final_rename_before_quarantined_journal');
+        }
+        const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
+          operationId,
+          '撤销隔离证据无法稳定读取',
+        ));
+        if (!sameNodeIdentity(evidence.identity, expected.fileIdentity)
+          || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+          await this.restoreUndoQuarantineIfFinalAbsent(current, target, undo);
+          return this.enterRecovery(operationId, '撤销隔离内容与成功回执不一致');
+        }
+        current = await this.updatePublicationFile(current, itemId, (entry) => {
+          entry.state = 'UNDO_QUARANTINED';
+          entry.undoIdentity = evidence.identity;
+        });
+        file = current.files.find((entry) => entry.itemId === itemId)!;
+      }
+      if (file.state === 'UNDO_QUARANTINED') {
+        if (await this.fileIdentityOrNull(target) !== null) {
+          return this.enterRecovery(operationId, '已撤销目标路径再次被占用');
+        }
+        const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
+          operationId,
+          '撤销隔离证据缺失或无法稳定读取',
+        ));
+        if (file.undoIdentity === undefined || !sameFileIdentity(evidence.identity, file.undoIdentity)
+          || !sameNodeIdentity(evidence.identity, expected.fileIdentity)
+          || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+          return this.enterRecovery(operationId, '撤销隔离证据发生变化');
+        }
+        current = await this.updatePublicationFile(current, itemId, (entry) => {
+          entry.state = 'UNDO_VERIFIED';
+          entry.undoIdentity = evidence.identity;
+        });
+        file = current.files.find((entry) => entry.itemId === itemId)!;
+      }
+      if (file.state === 'UNDO_VERIFIED') {
+        if (await this.fileIdentityOrNull(target) !== null) {
+          return this.enterRecovery(operationId, '撤销完成前目标路径被重新占用');
+        }
+        const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
+          operationId,
+          '撤销完成前隔离证据无法读取',
+        ));
+        if (file.undoIdentity === undefined || !sameFileIdentity(evidence.identity, file.undoIdentity)
+          || !sameNodeIdentity(evidence.identity, expected.fileIdentity)
+          || evidence.bytes !== expected.bytes || evidence.sha256 !== expected.sha256) {
+          return this.enterRecovery(operationId, '撤销完成前隔离证据发生变化');
+        }
+      } else if (!['VERIFIED', 'UNDO_RENAME_INTENT', 'UNDO_QUARANTINED'].includes(file.state)) {
+        return this.enterRecovery(operationId, '发布 journal 处于不能继续撤销的文件状态');
+      }
+    }
+    await this.fault('after_undo_quarantine_verify_before_undo_receipt');
+    journal = (await this.store.readOperation(operationId)).journal;
+    const undoReceipt = await this.createUndoReceipt(current, journal);
+    journal = (await this.store.readOperation(operationId)).journal;
+    if (journal.status === 'RECOVERY_REQUIRED') journal = await this.transition(journal, 'UNDOING');
+    if (journal.status === 'UNDOING') journal = await this.transition(journal, 'UNDONE');
+    if (journal.status !== 'UNDONE') {
+      return this.enterRecovery(operationId, '撤销回执已存在，但 UNDONE 状态无法落盘');
+    }
+    return { operation: journal, undoReceipt };
+  }
+
   async plan(operationIdInput: string, request: PlanOperationRequest): Promise<PlanOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
     return this.serialize(operationId, async () => {
@@ -1520,17 +1840,69 @@ export class ProjectAssetImportAuthority {
     });
   }
 
+  async undo(operationIdInput: string, request: UndoOperationRequest): Promise<UndoOperationResponse> {
+    const operationId = requireUuid(operationIdInput, 'operationId');
+    const receiptId = requireUuid(request.receiptId, 'receiptId');
+    if (!/^[0-9a-f]{64}$/.test(request.receiptSha256)) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', 'receiptSha256 格式无效');
+    }
+    return this.serialize(operationId, async () => {
+      await this.requireNoRecoveryBarrier();
+      let journal = (await this.store.readOperation(operationId)).journal;
+      const receipt = await this.store.readReceipt(operationId);
+      if (receipt === null) return this.enterRecovery(operationId, '撤销操作缺少成功回执');
+      await this.verifyReceipt(receipt);
+      if (receipt.receiptId !== receiptId || receipt.receiptSha256 !== request.receiptSha256) {
+        throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '撤销请求与成功回执身份不匹配');
+      }
+      if (journal.status === 'UNDONE') {
+        const undoReceipt = await this.store.readUndoReceipt(operationId);
+        if (undoReceipt === null) return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
+        await this.verifyUndoReceipt(undoReceipt);
+        return { operation: journal, undoReceipt };
+      }
+      if (journal.status !== 'COMMITTED') {
+        throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '当前状态不能撤销素材导入');
+      }
+      if (await this.store.readUndoReceipt(operationId) !== null) {
+        return this.enterRecovery(operationId, 'COMMITTED 操作意外存在撤销回执');
+      }
+      const publication = await this.store.readPublication(operationId);
+      if (publication === null) return this.enterRecovery(operationId, '撤销操作缺少发布 journal');
+      await this.preflightUndo(publication, receipt);
+      journal = await this.transition(journal, 'UNDOING');
+      try {
+        return await this.continueUndo(operationId, publication, receipt);
+      } catch (error) {
+        if (error instanceof AssetImportInjectedTermination) throw error;
+        if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_RECOVERY_REQUIRED') {
+          const status = (await this.store.readOperation(operationId).catch(() => null))?.journal.status;
+          if (status === 'RECOVERY_REQUIRED') throw error;
+        }
+        return this.enterRecovery(operationId, error instanceof Error ? error.message : '撤销中断');
+      }
+    });
+  }
+
   async recover(operationIdInput: string, request: RecoverOperationRequest): Promise<RecoverOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
     return this.serialize(operationId, async () => {
       await this.assertLeaseHeld();
       let journal = (await this.store.readOperation(operationId)).journal;
+      if (journal.status === 'UNDONE') {
+        const undoReceipt = await this.store.readUndoReceipt(operationId);
+        if (undoReceipt === null) return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
+        await this.verifyUndoReceipt(undoReceipt);
+        await this.store.resolveOperationBarriers(operationId);
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        return { detail: await this.query(operationId) };
+      }
       if (journal.status === 'COMMITTED' || journal.status === 'ROLLED_BACK') {
         await this.store.resolveOperationBarriers(operationId);
         this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
         return { detail: await this.query(operationId) };
       }
-      if (!['PUBLISHING', 'ROLLING_BACK', 'RECOVERY_REQUIRED'].includes(journal.status)) {
+      if (!['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(journal.status)) {
         throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '当前状态不需要发布恢复');
       }
       await this.store.ensureOperationRecoveryBarrier(
@@ -1541,6 +1913,28 @@ export class ProjectAssetImportAuthority {
       this.projectRecoveryBlocked = true;
       let publication = await this.store.readPublication(operationId);
       const receipt = await this.store.readReceipt(operationId);
+      const undoReceipt = await this.store.readUndoReceipt(operationId);
+      const hasUndoState = publication?.files.some((file) => [
+        'UNDO_RENAME_INTENT',
+        'UNDO_QUARANTINED',
+        'UNDO_VERIFIED',
+      ].includes(file.state)) ?? false;
+      if (journal.status === 'UNDOING' || undoReceipt !== null || hasUndoState) {
+        if (request.action === 'rollback') {
+          throw new AssetImportAuthorityError(
+            'IMPORT_OPERATION_CONFLICT',
+            '撤销已经开始，只能恢复完成，不能切换为发布回滚',
+          );
+        }
+        if (publication === null || receipt === null) {
+          return this.enterRecovery(operationId, '撤销恢复缺少成功回执或发布 journal');
+        }
+        await this.verifyReceipt(receipt);
+        await this.continueUndo(operationId, publication, receipt);
+        await this.store.resolveOperationBarriers(operationId);
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        return { detail: await this.query(operationId) };
+      }
       if (receipt !== null) {
         await this.verifyReceipt(receipt);
         if (request.action === 'rollback') {
@@ -1620,7 +2014,7 @@ export class ProjectAssetImportAuthority {
     await this.assertLeaseHeld();
     const operationId = requireUuid(operationIdInput, 'operationId');
     const operation = await this.store.readOperation(operationId);
-    if (['PUBLISHING', 'ROLLING_BACK', 'RECOVERY_REQUIRED'].includes(operation.journal.status)) {
+    if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.journal.status)) {
       this.projectRecoveryBlocked = true;
       await this.store.ensureOperationRecoveryBarrier(
         operationId,
@@ -1631,9 +2025,14 @@ export class ProjectAssetImportAuthority {
     const manifest = await this.readVerifiedManifest(operationId);
     const plan = await this.store.readPlan(operationId);
     if (plan !== null) await this.verifyStoredPlan(manifest, plan);
-    const requireComplete = ['STAGED', 'READY', 'PUBLISHING', 'COMMITTED'].includes(operation.journal.status);
+    const requireComplete = ['STAGED', 'READY', 'PUBLISHING', 'COMMITTED', 'UNDOING', 'UNDONE'].includes(operation.journal.status);
     const receipt = await this.store.readReceipt(operationId);
     if (receipt !== null) await this.verifyReceipt(receipt);
+    const undoReceipt = await this.store.readUndoReceipt(operationId);
+    if (operation.journal.status === 'UNDONE' && undoReceipt === null) {
+      return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
+    }
+    if (undoReceipt !== null) await this.verifyUndoReceipt(undoReceipt);
     return {
       operation: operation.journal,
       manifest,
@@ -1642,6 +2041,7 @@ export class ProjectAssetImportAuthority {
         : await this.verifiedStagedItems(manifest, requireComplete),
       plan: plan?.plan ?? null,
       receipt,
+      undoReceipt,
     };
   }
 
@@ -1649,7 +2049,7 @@ export class ProjectAssetImportAuthority {
     await this.assertLeaseHeld();
     const operations = await this.store.listOperations();
     for (const operation of operations) {
-      if (['PUBLISHING', 'ROLLING_BACK', 'RECOVERY_REQUIRED'].includes(operation.status)) {
+      if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.status)) {
         this.projectRecoveryBlocked = true;
         await this.store.ensureOperationRecoveryBarrier(
           operation.operationId,
