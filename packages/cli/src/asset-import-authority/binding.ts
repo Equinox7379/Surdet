@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { syncParentDirectories } from '../authoring/node-durable-file.js';
 import type { AssetImportAuthorityPaths } from './types.js';
 import { assertAssetImportProjectRootIdentity } from './filesystem.js';
 import {
@@ -14,6 +15,7 @@ import { AssetImportRecordStore } from './record-store.js';
 
 interface BindingServiceOptions {
   now?: () => number;
+  challengeCleanupIntervalMs?: number;
 }
 
 interface ProbeRecord {
@@ -40,7 +42,11 @@ function validBrowserSession(value: string): boolean {
 
 export class AssetImportBindingService {
   private readonly now: () => number;
+  private readonly challengeCleanupIntervalMs: number;
   private readonly bindings = new Map<string, BindingTokenRecord>();
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
+  private cleanupFailure: unknown;
+  private cleanupTail: Promise<void> = Promise.resolve();
 
   constructor(
     readonly paths: AssetImportAuthorityPaths,
@@ -48,10 +54,34 @@ export class AssetImportBindingService {
     options: BindingServiceOptions = {},
   ) {
     this.now = options.now ?? (() => Date.now());
+    this.challengeCleanupIntervalMs = options.challengeCleanupIntervalMs ?? 30_000;
+  }
+
+  private assertChallengeCleanupHealthy(): void {
+    if (this.cleanupFailure !== undefined) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '过期绑定探针清理失败，项目写入已阻断', {
+        cause: this.cleanupFailure instanceof Error ? this.cleanupFailure.message : String(this.cleanupFailure),
+      });
+    }
+  }
+
+  startExpiredChallengeCleanup(): () => void {
+    if (this.cleanupTimer === undefined) {
+      this.cleanupTimer = setInterval(() => {
+        void this.recoverExpiredChallenges().catch((error) => { this.cleanupFailure = error; });
+      }, this.challengeCleanupIntervalMs);
+      this.cleanupTimer.unref?.();
+    }
+    return () => {
+      if (this.cleanupTimer !== undefined) clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    };
   }
 
   async createChallenge(browserSessionId: string): Promise<CreateBindingChallengeResponse> {
+    this.assertChallengeCleanupHealthy();
     await assertAssetImportProjectRootIdentity(this.paths);
+    await this.recoverExpiredChallenges();
     if (!validBrowserSession(browserSessionId)) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', 'browserSessionId 格式无效');
     }
@@ -85,6 +115,7 @@ export class AssetImportBindingService {
     } finally {
       await handle.close();
     }
+    await syncParentDirectories(this.paths.projectRoot);
     journal = await this.store.writeChallengeJournal(journal, 'PROBE_CREATED');
     return { challengeId: journal.challengeId, relativeProbePath, expiresAt };
   }
@@ -93,7 +124,9 @@ export class AssetImportBindingService {
     challengeId: string,
     request: ConfirmBindingChallengeRequest,
   ): Promise<ConfirmBindingChallengeResponse> {
+    this.assertChallengeCleanupHealthy();
     await assertAssetImportProjectRootIdentity(this.paths);
+    await this.recoverExpiredChallenges();
     const loaded = await this.store.readChallenge(challengeId);
     let journal = loaded.journal;
     if (journal.status !== 'PROBE_CREATED'
@@ -115,12 +148,23 @@ export class AssetImportBindingService {
       throw new AssetImportAuthorityError('PROJECT_IDENTITY_MISMATCH', '项目绑定探针内容不匹配');
     }
     await fs.unlink(probeFile);
+    await syncParentDirectories(this.paths.projectRoot);
     journal = await this.store.writeChallengeJournal(journal, 'PROBE_REMOVED');
     const token = crypto.randomBytes(32).toString('hex');
     const idleExpiresAt = this.now() + 30 * 60_000;
     const maximumExpiresAt = this.now() + 8 * 60 * 60_000;
+    // A project authority has one current browser binding generation. A fresh
+    // physical directory proof revokes every older page, including pages that
+    // used a different browserSessionId before a reload.
+    this.bindings.clear();
     this.bindings.set(token, { browserSessionId: request.browserSessionId, idleExpiresAt, maximumExpiresAt });
-    const pendingOperations = (await this.store.listOperations()).filter((operation) => ![
+    const discoveredOperations = await this.store.listOperations();
+    for (const operation of discoveredOperations) {
+      if (operation.status !== 'UPLOADING') continue;
+      const manifest = await this.store.readOperationManifest(operation.operationId);
+      await this.store.inspectStagedItemsForDiscovery(manifest);
+    }
+    const pendingOperations = discoveredOperations.filter((operation) => ![
       'COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK',
     ].includes(operation.status));
     return {
@@ -135,6 +179,7 @@ export class AssetImportBindingService {
   }
 
   async validateBinding(token: string, browserSessionId: string): Promise<boolean> {
+    if (this.cleanupFailure !== undefined) return false;
     const binding = this.bindings.get(token);
     if (binding === undefined || binding.browserSessionId !== browserSessionId) return false;
     const now = this.now();
@@ -148,11 +193,17 @@ export class AssetImportBindingService {
       this.bindings.delete(token);
       return false;
     }
-    binding.idleExpiresAt = Math.min(now + 30 * 60_000, binding.maximumExpiresAt);
+    const validatedAt = this.now();
+    if (validatedAt > binding.idleExpiresAt || validatedAt > binding.maximumExpiresAt) {
+      this.bindings.delete(token);
+      return false;
+    }
+    binding.idleExpiresAt = Math.min(validatedAt + 30 * 60_000, binding.maximumExpiresAt);
     return true;
   }
 
   async validateBindingToken(token: string): Promise<boolean> {
+    if (this.cleanupFailure !== undefined) return false;
     const binding = this.bindings.get(token);
     if (binding === undefined) return false;
     const now = this.now();
@@ -166,7 +217,12 @@ export class AssetImportBindingService {
       this.bindings.delete(token);
       return false;
     }
-    binding.idleExpiresAt = Math.min(now + 30 * 60_000, binding.maximumExpiresAt);
+    const validatedAt = this.now();
+    if (validatedAt > binding.idleExpiresAt || validatedAt > binding.maximumExpiresAt) {
+      this.bindings.delete(token);
+      return false;
+    }
+    binding.idleExpiresAt = Math.min(validatedAt + 30 * 60_000, binding.maximumExpiresAt);
     return true;
   }
 
@@ -177,6 +233,12 @@ export class AssetImportBindingService {
   }
 
   async recoverExpiredChallenges(): Promise<void> {
+    const run = this.cleanupTail.then(() => this.recoverExpiredChallengesNow());
+    this.cleanupTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async recoverExpiredChallengesNow(): Promise<void> {
     await assertAssetImportProjectRootIdentity(this.paths);
     for (const current of await this.store.listChallenges()) {
       if (current.status === 'PROBE_REMOVED' || this.now() <= Date.parse(current.expiresAt)) continue;
@@ -200,6 +262,7 @@ export class AssetImportBindingService {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '过期绑定探针身份不匹配');
       }
       await fs.unlink(probeFile);
+      await syncParentDirectories(this.paths.projectRoot);
       await this.store.writeChallengeJournal(current, 'PROBE_REMOVED');
     }
   }

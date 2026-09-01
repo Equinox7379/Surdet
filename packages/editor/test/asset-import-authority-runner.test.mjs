@@ -7,6 +7,13 @@ import { fileURLToPath } from 'node:url';
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const runnerPath = path.resolve(testDirectory, '../e2e/asset-import-authority.e2e.mjs');
 const source = fs.existsSync(runnerPath) ? fs.readFileSync(runnerPath, 'utf8') : '';
+const repositoryRoot = path.resolve(testDirectory, '../../..');
+const rootPackagePath = path.join(repositoryRoot, 'package.json');
+const ciWorkflowPath = path.join(repositoryRoot, '.github', 'workflows', 'ci.yml');
+const verifyAllPath = path.join(repositoryRoot, 'scripts', 'verify-all.mjs');
+const rootPackageSource = fs.existsSync(rootPackagePath) ? fs.readFileSync(rootPackagePath, 'utf8') : '';
+const ciWorkflowSource = fs.existsSync(ciWorkflowPath) ? fs.readFileSync(ciWorkflowPath, 'utf8') : '';
+const verifyAllSource = fs.existsSync(verifyAllPath) ? fs.readFileSync(verifyAllPath, 'utf8') : '';
 
 test('asset import runner owns one isolated loopback fixture and strict non-reserved port', () => {
   assert.ok(source.length > 0, 'asset import authority runner must exist');
@@ -45,6 +52,7 @@ test('asset import runner drives the real Chinese workbench through a node-backe
 
 test('asset import runner freezes collision, receipt reload, changed undo block and unchanged undo success', () => {
   for (const milestone of [
+    'unsafe-project-tree-node-rejected',
     'wrong-directory-rejected',
     'project-bound-cleanly',
     'multi-file-selected',
@@ -89,6 +97,10 @@ test('asset import runner proves no repository or Starter mutation and retains e
   assert.match(source, /expectedConsoleErrors/);
   assert.match(source, /Failed to load resource: the server responded with a status of 409 \(Conflict\)/);
   assert.match(source, /expectedBusinessResponses\.length === 1/);
+  const expected409Classification = source.indexOf('if (channels.expectedBusinessResponses.length === 1');
+  const emptyConsoleGate = source.indexOf('assert(channels.consoleErrors.length === 0');
+  assert.ok(expected409Classification >= 0 && emptyConsoleGate > expected409Classification,
+    'the expected 409 console line must be classified before the empty-console gate');
 });
 
 test('asset import runner records an exact ordered completion contract', () => {
@@ -99,4 +111,50 @@ test('asset import runner records an exact ordered completion contract', () => {
   assert.match(source, /milestone sequence mismatch/);
   assert.match(source, /runnerSha256/);
   assert.match(source, /runHead/);
+});
+
+test('asset import runner hashes project trees with narrow registered exclusions and fails closed on unsafe nodes', () => {
+  const walkerStart = source.indexOf('function hashCanonicalProjectTree');
+  const walkerEnd = source.indexOf('\nfunction svgBytes', walkerStart);
+  assert.ok(walkerStart >= 0 && walkerEnd > walkerStart, 'canonical project-tree walker must be present');
+  const walker = source.slice(walkerStart, walkerEnd);
+  assert.match(walker, /(?:registered|root)[A-Za-z]*(?:Challenge|Probe|Exclusion|Paths?)/i);
+  assert.match(walker, /relativeDirectory\.length\s*===\s*0/);
+  assert.match(walker, /portableRelative\s*===\s*['"]\.surdet\/asset-import['"]/);
+  assert.doesNotMatch(walker, /entry\.name\.startsWith\(\s*['"]\.surdet-bind-/);
+  assert.match(walker, /entry\.isSymbolicLink\(\)/);
+  assert.match(walker, /(?:entry\.isDirectory\(\)|entry\.isFile\(\))[\s\S]{0,300}(?:throw|Error|fail|unsupported|other)/i);
+  assert.match(source, /nested[\\/][^'"\n]*\.surdet-bind-|\.surdet-bind-[^'"\n]*nested/i);
+  assert.match(source, /rejectedChallengeProbePaths[\s\S]{0,500}registeredRootChallengeNames\.add/);
+  assert.match(source, /newProbePathsAfterBinding\.length\s*===\s*0/);
+  assert.match(source, /fs\.symlinkSync\([\s\S]{0,500}unsafe-project-tree-node-rejected/);
+});
+
+test('asset import runner fails on any unexpected server stderr and drains the stream after child shutdown', () => {
+  assert.match(source, /channels\.stderrLines\.length\s*===\s*0/);
+  assert.match(
+    source,
+    /(?:server\.stderr|stream)\.(?:once|on)\(\s*['"]close['"]\s*[\s,)]/,
+  );
+  assert.match(source, /drainServerStderr[\s\S]{0,300}child\.stderr/);
+  assert.match(source, /await[\s\S]{0,300}(?:stderr|child.*stream|stream.*close)/i);
+});
+
+test('asset import runner proves a ready plan is invalidated by editing its target and must be replanned', () => {
+  assert.match(source, /ready-plan-invalidated-after-target-edit/);
+  assert.match(source, /activeOperation\?\.plan\s*===\s*null/);
+  assert.match(source, /asset-import-primary[^\n]{0,240}重新检查/);
+  assert.match(source, /setFinalName\(|setCategory\(/);
+  assert.match(source, /pass\(\s*['"]ready-plan-invalidated-after-target-edit['"]/);
+  assert.match(source, /plan[\s\S]{0,500}status[\s\S]{0,500}ready/);
+});
+
+test('CI or verify-all executes the real asset import Playwright runner', () => {
+  const executionSources = `${rootPackageSource}\n${ciWorkflowSource}\n${verifyAllSource}`;
+  assert.match(rootPackageSource, /"verify:asset-import"\s*:\s*"node\s+packages\/editor\/e2e\/asset-import-authority\.e2e\.mjs"/);
+  assert.match(executionSources, /npm run verify:asset-import/);
+  assert.match(
+    executionSources,
+    /(?:node|command|args|run:)[^\n]{0,240}(?:verify:asset-import|asset-import-authority\.e2e\.mjs)/,
+  );
 });

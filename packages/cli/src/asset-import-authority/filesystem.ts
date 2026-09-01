@@ -195,6 +195,7 @@ export async function createAssetImportOperationWorkspace(
   await ensurePlainChildDirectory(operation, 'items');
   await ensurePlainChildDirectory(operation, 'staging');
   await ensurePlainChildDirectory(operation, 'upload-intents');
+  await ensurePlainChildDirectory(operation, 'journal-generations');
 }
 
 export async function assertAssetImportOperationWorkspace(
@@ -207,6 +208,7 @@ export async function assertAssetImportOperationWorkspace(
   await assertPlainDirectory(path.join(operation, 'items'), 'items');
   await assertPlainDirectory(path.join(operation, 'staging'), 'staging');
   await assertPlainDirectory(path.join(operation, 'upload-intents'), 'upload-intents');
+  await assertPlainDirectory(path.join(operation, 'journal-generations'), 'journal-generations');
 }
 
 export interface AssetImportProjectOperationWorkspace {

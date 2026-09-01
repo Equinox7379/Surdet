@@ -102,6 +102,7 @@ export interface AssetImportAuthorityHttpHandlerOptions {
   expectedOrigin(request: IncomingMessage): string | undefined;
   maxJsonBytes?: number;
   jsonTimeoutMs?: number;
+  now?: () => number;
 }
 
 type Route = {
@@ -360,11 +361,18 @@ async function publicList(authority: AssetImportAuthorityHttpTarget): Promise<{
   const listed = await authority.list();
   const pendingOperations: OperationSummary[] = [];
   const recentReceipts: ReceiptSummary[] = [];
+  const terminalOperations: typeof listed.operations = [];
   for (const operation of listed.operations) {
     if (!['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.status)) {
       pendingOperations.push(summary(operation));
       continue;
     }
+    if (operation.status !== 'COMMITTED' && operation.status !== 'UNDONE') continue;
+    terminalOperations.push(operation);
+  }
+  for (const operation of terminalOperations
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 20)) {
     if (operation.status !== 'COMMITTED' && operation.status !== 'UNDONE') continue;
     const detail = await authority.query(operation.operationId);
     if (detail.receipt !== null) {
@@ -481,6 +489,7 @@ export function createAssetImportAuthorityHttpHandler(
 ): (request: IncomingMessage, response: ServerResponse) => void {
   const maxJsonBytes = options.maxJsonBytes ?? ASSET_IMPORT_AUTHORITY_MAX_JSON_BYTES;
   const jsonTimeoutMs = options.jsonTimeoutMs ?? 5_000;
+  const now = options.now ?? (() => Date.now());
   if (options.token.length < 32) throw new Error('asset import authority token is too short');
   if (!Number.isSafeInteger(maxJsonBytes) || maxJsonBytes < 1 || maxJsonBytes > ASSET_IMPORT_AUTHORITY_MAX_JSON_BYTES) {
     throw new Error('maxJsonBytes is outside the authority limit');
@@ -491,8 +500,10 @@ export function createAssetImportAuthorityHttpHandler(
   const operationBindings = new Map<string, {
     bindingToken: string;
     operationId: string;
+    expiresAt: number;
     terminalReplayKind?: Route['kind'];
     terminalReplayFingerprint?: string;
+    terminalReplayExpiresAt?: number;
   }>();
 
   return (request, response) => {
@@ -555,6 +566,15 @@ export function createAssetImportAuthorityHttpHandler(
           || requestBindingToken === undefined || !secureEqual(scope.bindingToken, requestBindingToken)) {
           return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED');
         }
+        const unexpiredTerminalReplay = scope.terminalReplayKind === route.kind
+          && scope.terminalReplayFingerprint !== undefined
+          && scope.terminalReplayExpiresAt !== undefined
+          && now() < scope.terminalReplayExpiresAt
+          && secureEqual(currentRequestFingerprint, scope.terminalReplayFingerprint);
+        if (now() >= scope.expiresAt && !unexpiredTerminalReplay) {
+          operationBindings.delete(requestOperationToken);
+          return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED');
+        }
         try {
           options.authority.verifyOperationToken(route.operationId!, requestOperationToken);
         } catch (error) {
@@ -579,12 +599,15 @@ export function createAssetImportAuthorityHttpHandler(
           const requestBody = parseChallengeConfirm(body);
           const confirmed = await options.authority.confirmChallenge(route.challengeId!, requestBody);
           const discovery = await publicList(options.authority);
+          const discoveryRequiresRecovery = discovery.pendingOperations.some(
+            (operation) => operation.manualRecoveryRequired,
+          );
           data = {
             projectIdentity: confirmed.projectIdentity,
             projectName: confirmed.projectName,
             bindingToken: confirmed.bindingToken,
             bindingExpiresAt: confirmed.bindingExpiresAt,
-            recoveryBarrier: confirmed.recoveryBarrier,
+            recoveryBarrier: discoveryRequiresRecovery ? 'manual-recovery' : confirmed.recoveryBarrier,
             pendingOperations: discovery.pendingOperations,
             recentReceipts: discovery.recentReceipts,
           };
@@ -601,12 +624,15 @@ export function createAssetImportAuthorityHttpHandler(
           break;
         case 'operation-create': {
           const created = await options.authority.createOperation(parseCreate(body));
-          operationBindings.set(created.operationToken, { bindingToken: requestBindingToken!, operationId: created.operationId });
+          const expiresAt = now() + 30 * 60_000;
+          operationBindings.set(created.operationToken, {
+            bindingToken: requestBindingToken!, operationId: created.operationId, expiresAt,
+          });
           data = {
             operationId: created.operationId,
             operationToken: created.operationToken,
             status: created.status,
-            expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+            expiresAt: new Date(expiresAt).toISOString(),
           };
           break;
         }
@@ -654,10 +680,13 @@ export function createAssetImportAuthorityHttpHandler(
         case 'resume': {
           parseEmpty(body);
           const resumedToken = await options.authority.issueOperationToken(route.operationId!);
-          operationBindings.set(resumedToken, { bindingToken: requestBindingToken!, operationId: route.operationId! });
+          const expiresAt = now() + 30 * 60_000;
+          operationBindings.set(resumedToken, {
+            bindingToken: requestBindingToken!, operationId: route.operationId!, expiresAt,
+          });
           data = {
             operationToken: resumedToken,
-            expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+            expiresAt: new Date(expiresAt).toISOString(),
             detail: publicDetail(await options.authority.query(route.operationId!)),
           };
           break;
@@ -678,6 +707,7 @@ export function createAssetImportAuthorityHttpHandler(
         if (scope !== undefined && currentRequestFingerprint !== undefined) {
           scope.terminalReplayKind = route.kind;
           scope.terminalReplayFingerprint = currentRequestFingerprint;
+          scope.terminalReplayExpiresAt = now() + 5 * 60_000;
         }
       }
       sendJson(response, 200, { ok: true, data });

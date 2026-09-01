@@ -1,8 +1,10 @@
 import * as crypto from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, type Dirent } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
+import { syncParentDirectories } from '../authoring/node-durable-file.js';
 import {
   absoluteAssetImportProjectPath,
   assetImportFileIdentity,
@@ -58,6 +60,43 @@ const OPERATION_STATUSES = new Set([
   'UNDONE',
   'CANCELLED',
 ]);
+
+const JOURNAL_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
+  UPLOADING: ['STAGED', 'CANCELLED', 'RECOVERY_REQUIRED'],
+  STAGED: ['READY', 'CANCELLED', 'RECOVERY_REQUIRED'],
+  READY: ['PUBLISHING', 'CANCELLED', 'RECOVERY_REQUIRED'],
+  PUBLISHING: ['COMMITTED', 'ROLLING_BACK', 'RECOVERY_REQUIRED'],
+  ROLLING_BACK: ['ROLLED_BACK', 'RECOVERY_REQUIRED'],
+  ROLLED_BACK: [],
+  RECOVERY_REQUIRED: ['PUBLISHING', 'ROLLING_BACK', 'UNDOING'],
+  COMMITTED: ['UNDOING', 'RECOVERY_REQUIRED'],
+  UNDOING: ['UNDONE', 'RECOVERY_REQUIRED'],
+  UNDONE: ['RECOVERY_REQUIRED'],
+  CANCELLED: [],
+};
+
+function validJournalGeneration(
+  value: AssetImportJournal,
+  operationId: string,
+  itemCount: number,
+): boolean {
+  return value?.schemaVersion === 1
+    && value.operationId === operationId
+    && validUuid(value.operationId)
+    && Number.isSafeInteger(value.journalVersion)
+    && value.journalVersion >= 1
+    && (value.previousGenerationSha256 === null || validSha256(value.previousGenerationSha256))
+    && OPERATION_STATUSES.has(value.status)
+    && value.itemCount === itemCount
+    && typeof value.updatedAt === 'string';
+}
+
+interface AssetImportJournalHead {
+  schemaVersion: 1;
+  operationId: string;
+  journalVersion: number;
+  journalSha256: string;
+}
 
 const PUBLICATION_FILE_STATES = new Set([
   'UPLOADED',
@@ -117,6 +156,10 @@ function publicationSha256(record: Omit<AssetImportPublicationRecord, 'publicati
 }
 
 function undoReceiptSha256(receipt: Omit<ProjectAssetImportUndoReceipt, 'undoReceiptSha256'>): string {
+  return crypto.createHash('sha256').update(stableStringify(receipt), 'utf8').digest('hex');
+}
+
+function receiptSha256(receipt: Omit<ProjectAssetImportReceipt, 'receiptSha256'>): string {
   return crypto.createHash('sha256').update(stableStringify(receipt), 'utf8').digest('hex');
 }
 
@@ -183,6 +226,38 @@ export class AssetImportRecordStore {
 
   private localRecoveryBlocked = false;
 
+  private async closedJsonEntries(
+    directory: string,
+    label: string,
+    validBasename: (value: string) => boolean = validId,
+  ): Promise<Dirent[]> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      });
+      const names = new Set<string>();
+      let transientWriterRecord = false;
+      for (const entry of entries) {
+        if (/^\..+\.[0-9a-f]{8}-[0-9a-f-]{27}\.tmp$/.test(entry.name)) {
+          transientWriterRecord = true;
+          continue;
+        }
+        const basename = entry.name.endsWith('.json') ? entry.name.slice(0, -5) : '';
+        const folded = entry.name.normalize('NFC').toUpperCase().toLowerCase();
+        if (!entry.isFile() || entry.isSymbolicLink() || !validBasename(basename) || names.has(folded)) {
+          this.localRecoveryBlocked = true;
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${label} 包含未知、重复或非普通记录`);
+        }
+        names.add(folded);
+      }
+      if (!transientWriterRecord) return entries.sort((left, right) => left.name.localeCompare(right.name));
+      if (attempt < 4) await wait(10);
+    }
+    this.localRecoveryBlocked = true;
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${label} 存在未完成的临时记录`);
+  }
+
   private async readOperationJson<T>(file: string, operationId: string, label: string) {
     try {
       return await readJsonRecord<T>(file);
@@ -210,6 +285,7 @@ export class AssetImportRecordStore {
   private async removeOperationFile(operationId: string, file: string): Promise<void> {
     await this.assertOperationWorkspaceOrBarrier(operationId);
     await fs.rm(file, { force: true });
+    await syncParentDirectories(path.dirname(file));
     await this.assertOperationWorkspaceOrBarrier(operationId);
   }
 
@@ -225,6 +301,21 @@ export class AssetImportRecordStore {
 
   private journalFile(operationId: string): string {
     return path.join(this.operationDirectory(operationId), 'journal.json');
+  }
+
+  private journalHeadFile(operationId: string): string {
+    return path.join(this.operationDirectory(operationId), 'journal-head.json');
+  }
+
+  private journalGenerationDirectory(operationId: string): string {
+    return path.join(this.operationDirectory(operationId), 'journal-generations');
+  }
+
+  private journalGenerationFile(operationId: string, journalVersion: number): string {
+    if (!Number.isSafeInteger(journalVersion) || journalVersion < 1) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', 'journalVersion 格式无效');
+    }
+    return path.join(this.journalGenerationDirectory(operationId), `${String(journalVersion).padStart(12, '0')}.json`);
   }
 
   private manifestFile(operationId: string): string {
@@ -350,7 +441,14 @@ export class AssetImportRecordStore {
       previousGenerationSha256: null,
       ...input,
     };
+    const generation = await createJsonRecord(this.journalGenerationFile(operationId, 1), journal);
     await createJsonRecord(this.journalFile(operationId), journal);
+    await createJsonRecord(this.journalHeadFile(operationId), {
+      schemaVersion: 1,
+      operationId,
+      journalVersion: 1,
+      journalSha256: generation.sha256,
+    } satisfies AssetImportJournalHead);
     return journal;
   }
 
@@ -508,6 +606,48 @@ export class AssetImportRecordStore {
       if (staged !== null) result.push(staged);
     }
     return result;
+  }
+
+  async inspectStagedItemsForDiscovery(manifest: AssetImportOperationManifest): Promise<{
+    items: ProjectAssetImportStagedItem[];
+    complete: boolean;
+    recoveryRequired: boolean;
+  }> {
+    if ((await this.assertStagingEntriesKnown(manifest)).length > 0) {
+      await this.ensureOperationRecoveryBarrier(manifest.operationId, manifest.createdAt, 'upload-restart-incomplete');
+      return { items: [], complete: false, recoveryRequired: true };
+    }
+    const items: ProjectAssetImportStagedItem[] = [];
+    for (const declared of manifest.items) {
+      const fact = await this.readStagedItem(manifest.operationId, declared.itemId);
+      const binary = this.stagedItemBinaryFile(manifest.operationId, declared.itemId);
+      const stat = await fs.lstat(binary).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      if (fact === null) {
+        if (stat !== null) {
+          await this.ensureOperationRecoveryBarrier(manifest.operationId, manifest.createdAt, 'staged-binary-orphaned');
+          return { items, complete: false, recoveryRequired: true };
+        }
+        continue;
+      }
+      if (fact.sourceName !== declared.sourceName
+        || fact.bytes !== declared.declaredBytes
+        || stat === null
+        || !stat.isFile()
+        || stat.isSymbolicLink()
+        || stat.size !== fact.bytes) {
+        await this.ensureOperationRecoveryBarrier(manifest.operationId, manifest.createdAt, 'staged-discovery-mismatch');
+        return { items, complete: false, recoveryRequired: true };
+      }
+      items.push(fact);
+    }
+    return {
+      items,
+      complete: items.length === manifest.items.length,
+      recoveryRequired: false,
+    };
   }
 
   async writePlan(record: AssetImportOperationPlanRecord): Promise<void> {
@@ -816,17 +956,66 @@ export class AssetImportRecordStore {
       await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-missing');
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '已登记导入缺少 journal');
     }
+    const head = await this.readOperationJson<AssetImportJournalHead>(
+      this.journalHeadFile(operationId),
+      operationId,
+      'journal head',
+    );
+    const generationEntries = await this.closedJsonEntries(
+      this.journalGenerationDirectory(operationId),
+      'journal generation',
+      (value) => /^\d{12}$/.test(value) && Number(value) >= 1,
+    );
+    if (head === null || generationEntries.length === 0) {
+      await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-anchor-missing');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal 缺少可验证 generation anchor');
+    }
+    let previousJournal: AssetImportJournal | null = null;
+    let previousSha256: string | null = null;
+    let latestJournal: AssetImportJournal | null = null;
+    let latestSha256: string | null = null;
+    for (const [index, entry] of generationEntries.entries()) {
+      const expectedVersion = index + 1;
+      if (entry.name !== `${String(expectedVersion).padStart(12, '0')}.json`) {
+        await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-generation-gap');
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal generation 不连续');
+      }
+      const generation = await this.readOperationJson<AssetImportJournal>(
+        path.join(this.journalGenerationDirectory(operationId), entry.name),
+        operationId,
+        `journal generation ${expectedVersion}`,
+      );
+      if (generation === null
+        || !validJournalGeneration(generation.value, operationId, registration.itemCount)
+        || generation.value.operationId !== operationId
+        || generation.value.journalVersion !== expectedVersion
+        || generation.value.previousGenerationSha256 !== previousSha256
+        || (expectedVersion === 1 && generation.value.status !== 'UPLOADING')
+        || (previousJournal !== null
+          && !(JOURNAL_TRANSITIONS[previousJournal.status] ?? []).includes(generation.value.status))) {
+        await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-generation-invalid');
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal generation 链损坏');
+      }
+      previousJournal = generation.value;
+      previousSha256 = generation.identity.sha256;
+      latestJournal = generation.value;
+      latestSha256 = generation.identity.sha256;
+    }
+    if (head.value?.schemaVersion !== 1
+      || head.value.operationId !== operationId
+      || head.value.journalVersion !== latestJournal!.journalVersion
+      || head.value.journalSha256 !== latestSha256
+      || !equalJson(loaded.value, latestJournal)
+      || loaded.identity.sha256 !== latestSha256) {
+      await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-head-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal 当前记录与 generation head 不一致');
+    }
     const value = loaded.value;
-    if (value?.schemaVersion !== 1 || value.operationId !== operationId || !validUuid(value.operationId)
-      || !Number.isSafeInteger(value.journalVersion) || value.journalVersion < 1
-      || (value.previousGenerationSha256 !== null && !validSha256(value.previousGenerationSha256))
-      || !OPERATION_STATUSES.has(value.status)
-      || value.itemCount !== registration.itemCount
-      || typeof value.updatedAt !== 'string') {
+    if (!validJournalGeneration(value, operationId, registration.itemCount)) {
       await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-invalid');
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal 语义损坏');
     }
-    return { journal: value, sha256: loaded.identity.sha256 };
+    return { journal: value, sha256: latestSha256! };
   }
 
   async writeJournal(previous: AssetImportJournal, next: AssetImportJournal): Promise<AssetImportJournal> {
@@ -841,20 +1030,26 @@ export class AssetImportRecordStore {
       journalVersion: previous.journalVersion + 1,
       previousGenerationSha256: current.sha256,
     };
+    const generation = await createJsonRecord(
+      this.journalGenerationFile(previous.operationId, journal.journalVersion),
+      journal,
+    );
     await replaceJsonRecord(this.journalFile(previous.operationId), journal);
+    await replaceJsonRecord(this.journalHeadFile(previous.operationId), {
+      schemaVersion: 1,
+      operationId: previous.operationId,
+      journalVersion: journal.journalVersion,
+      journalSha256: generation.sha256,
+    } satisfies AssetImportJournalHead);
     return journal;
   }
 
   async listOperations(): Promise<AssetImportJournal[]> {
     await assertAssetImportDataNamespace(this.paths);
     const directory = path.join(this.paths.projectNamespace, 'operation-index');
-    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    });
+    const entries = await this.closedJsonEntries(directory, '导入登记索引');
     const operations: AssetImportJournal[] = [];
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    for (const entry of entries) {
       const operationId = entry.name.slice(0, -5);
       const loaded = await this.readOperation(operationId);
       await this.readOperationManifest(operationId);
@@ -864,6 +1059,7 @@ export class AssetImportRecordStore {
   }
 
   async registerChallenge(journal: AssetImportChallengeJournal): Promise<void> {
+    await assertAssetImportDataNamespace(this.paths);
     const registration = { challengeId: journal.challengeId, relativeProbePath: journal.relativeProbePath };
     const indexFile = this.challengeIndexFile(journal.challengeId);
     const existing = await readJsonRecord<typeof registration>(indexFile);
@@ -877,6 +1073,7 @@ export class AssetImportRecordStore {
   }
 
   async readChallenge(challengeId: string): Promise<{ journal: AssetImportChallengeJournal; sha256: string }> {
+    await assertAssetImportDataNamespace(this.paths);
     const loaded = await readJsonRecord<AssetImportChallengeJournal>(this.challengeJournalFile(challengeId));
     if (loaded === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '绑定 challenge 不存在');
     return { journal: loaded.value, sha256: loaded.identity.sha256 };
@@ -901,14 +1098,11 @@ export class AssetImportRecordStore {
   }
 
   async listChallenges(): Promise<AssetImportChallengeJournal[]> {
+    await assertAssetImportDataNamespace(this.paths);
     const directory = path.join(this.paths.projectNamespace, 'challenge-index');
-    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    });
+    const entries = await this.closedJsonEntries(directory, '绑定 challenge 索引');
     const result: AssetImportChallengeJournal[] = [];
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    for (const entry of entries) {
       const challengeId = entry.name.slice(0, -5);
       const challenge = await this.readChallenge(challengeId);
       result.push(challenge.journal);
@@ -934,6 +1128,51 @@ export class AssetImportRecordStore {
     }
   }
 
+  private async terminalBarrierPublication(
+    operationId: string,
+    status: AssetImportJournal['status'],
+  ): Promise<AssetImportPublicationRecord | null> {
+    const publication = await this.readPublication(operationId);
+    if (status !== 'COMMITTED' && status !== 'UNDONE') return publication;
+    const receipt = await this.readReceipt(operationId);
+    if (publication === null || receipt === null) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${status} 操作缺少发布 journal 或成功回执`);
+    }
+    const { receiptSha256: recordedReceiptSha256, ...receiptSemantic } = receipt;
+    if (receiptSha256(receiptSemantic) !== recordedReceiptSha256
+      || publication.planId !== receipt.planId
+      || publication.planFingerprint !== receipt.planFingerprint
+      || publication.files.length !== receipt.files.length) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${status} 操作的发布证据与成功回执不一致`);
+    }
+    const receiptFiles = new Map(receipt.files.map((file) => [file.itemId, file]));
+    for (const file of publication.files) {
+      const expected = receiptFiles.get(file.itemId);
+      if (expected === undefined
+        || expected.targetPath !== file.targetPath
+        || expected.bytes !== file.bytes
+        || expected.sha256 !== file.sha256
+        || (status === 'COMMITTED' && file.state !== 'VERIFIED')
+        || (status === 'UNDONE' && file.state !== 'UNDO_VERIFIED')) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${status} 操作的发布文件证据不完整`);
+      }
+      if (status === 'UNDONE') {
+        const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
+        const targetExists = await fs.lstat(target).then(() => true).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+          throw error;
+        });
+        if (targetExists) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作的目标路径重新出现');
+        }
+      }
+    }
+    if (status === 'UNDONE' && await this.readUndoReceipt(operationId) === null) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作缺少撤销回执');
+    }
+    return publication;
+  }
+
   async resolveBarrier(input: Pick<RecoveryBarrierResolution, 'barrierId' | 'resolvedAt'>): Promise<void> {
     if (!validId(input.barrierId)) throw new AssetImportAuthorityError('INVALID_REQUEST', 'barrierId 格式无效');
     await assertAssetImportDataNamespace(this.paths);
@@ -945,11 +1184,7 @@ export class AssetImportRecordStore {
     if (!['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入操作尚未达到可解除恢复屏障的终态');
     }
-    if (journal.journal.status === 'UNDONE'
-      && await this.readUndoReceipt(incident.value.operationId) === null) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作缺少撤销回执');
-    }
-    const publication = await this.readPublication(incident.value.operationId);
+    const publication = await this.terminalBarrierPublication(incident.value.operationId, journal.journal.status);
     const quarantined = publicationQuarantines(publication);
     for (const file of quarantined) {
       const current = await stableFileEvidence(absoluteAssetImportProjectPath(this.paths, file.path));
@@ -976,9 +1211,12 @@ export class AssetImportRecordStore {
 
   async resolveOperationBarriers(operationId: string): Promise<void> {
     const directory = path.join(this.paths.projectNamespace, 'recovery-barriers');
-    const entries = await fs.readdir(directory, { withFileTypes: true });
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const entries = await this.closedJsonEntries(directory, '恢复屏障索引');
+    await this.closedJsonEntries(
+      path.join(this.paths.projectNamespace, 'recovery-resolutions'),
+      '恢复决议索引',
+    );
+    for (const entry of entries) {
       const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(directory, entry.name));
       if (incident === null || incident.value.operationId !== operationId) continue;
       const resolutionFile = path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name);
@@ -996,12 +1234,21 @@ export class AssetImportRecordStore {
     if (this.localRecoveryBlocked) return true;
     await assertAssetImportDataNamespace(this.paths);
     const barrierDirectory = path.join(this.paths.projectNamespace, 'recovery-barriers');
-    const entries = await fs.readdir(barrierDirectory, { withFileTypes: true }).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    let entries: Dirent[];
+    let resolutions: Dirent[];
+    try {
+      entries = await this.closedJsonEntries(barrierDirectory, '恢复屏障索引');
+      resolutions = await this.closedJsonEntries(
+        path.join(this.paths.projectNamespace, 'recovery-resolutions'),
+        '恢复决议索引',
+      );
+    } catch (error) {
+      if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_RECOVERY_REQUIRED') return true;
       throw error;
-    });
+    }
+    const barrierNames = new Set(entries.map((entry) => entry.name));
+    if (resolutions.some((entry) => !barrierNames.has(entry.name))) return true;
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
       const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(barrierDirectory, entry.name));
       if (incident === null || incident.value.barrierId !== entry.name.slice(0, -5)) return true;
       const resolution = await readJsonRecord<RecoveryBarrierResolution>(
@@ -1013,9 +1260,12 @@ export class AssetImportRecordStore {
       const journal = await this.readOperation(incident.value.operationId).catch(() => null);
       if (journal === null || journal.journal.journalVersion !== resolution.value.journalVersion
         || !['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) return true;
-      if (journal.journal.status === 'UNDONE'
-        && await this.readUndoReceipt(incident.value.operationId).catch(() => null) === null) return true;
-      const publication = await this.readPublication(incident.value.operationId).catch(() => null);
+      const publication = await this.terminalBarrierPublication(
+        incident.value.operationId,
+        journal.journal.status,
+      ).catch(() => null);
+      if ((journal.journal.status === 'COMMITTED' || journal.journal.status === 'UNDONE')
+        && publication === null) return true;
       if ((publication?.publicationVersion ?? null) !== resolution.value.publicationVersion) return true;
       if ((publication?.publicationSha256 ?? null) !== resolution.value.publicationSha256) return true;
       const quarantined = publicationQuarantines(publication);

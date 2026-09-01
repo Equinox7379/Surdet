@@ -1,4 +1,7 @@
 import * as http from 'node:http';
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   ASSET_IMPORT_AUTHORITY_BASE_PATH,
@@ -14,8 +17,12 @@ import {
   injectAssetImportAuthorityConfig,
 } from '../src/asset-import-authority/vite-plugin.js';
 import { AssetImportAuthorityError } from '../src/asset-import-authority/types.js';
+import { AssetImportBindingService } from '../src/asset-import-authority/binding.js';
+import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
+import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 
 const servers: http.Server[] = [];
+const roots: string[] = [];
 const authorityToken = 'a'.repeat(64);
 const bindingToken = 'b'.repeat(64);
 const operationToken = 'c'.repeat(64);
@@ -147,8 +154,7 @@ function target(): AssetImportAuthorityHttpTarget & {
   };
 }
 
-async function harness(): Promise<{ origin: string; target: ReturnType<typeof target> }> {
-  const service = target();
+async function harness(service: ReturnType<typeof target> = target()): Promise<{ origin: string; target: ReturnType<typeof target> }> {
   let expectedOrigin = '';
   const server = http.createServer(createAssetImportAuthorityHttpHandler({
     authority: service,
@@ -161,6 +167,55 @@ async function harness(): Promise<{ origin: string; target: ReturnType<typeof ta
   if (address === null || typeof address === 'string') throw new Error('missing address');
   expectedOrigin = `http://127.0.0.1:${address.port}`;
   return { origin: expectedOrigin, target: service };
+}
+
+async function bindingHarness(): Promise<{
+  origin: string;
+  target: ReturnType<typeof target>;
+  projectRoot: string;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'surdet-asset-import-http-binding-'));
+  roots.push(root);
+  const projectRoot = path.join(root, 'project');
+  await mkdir(projectRoot, { recursive: true });
+  const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(root, 'data') });
+  const store = new AssetImportRecordStore(paths);
+  const binding = new AssetImportBindingService(paths, store);
+  const service = target();
+  service.projectIdentity = paths.projectIdentity;
+  service.createChallenge = (browserSessionId) => binding.createChallenge(browserSessionId);
+  service.confirmChallenge = (challengeId, request) => binding.confirmChallenge(challengeId, request);
+  service.validateBinding = (token, browserSessionId) => browserSessionId === undefined
+    ? binding.validateBindingToken(token)
+    : binding.validateBinding(token, browserSessionId);
+  return { ...(await harness(service)), projectRoot };
+}
+
+async function bindProject(
+  fixture: Awaited<ReturnType<typeof bindingHarness>>,
+  browserSessionId: string,
+): Promise<string> {
+  const challenge = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`, {
+    method: 'POST',
+    headers: headers(fixture.origin),
+    body: JSON.stringify({ browserSessionId }),
+  });
+  expect(challenge.response.status).toBe(200);
+  const probe = JSON.parse(await readFile(
+    path.join(fixture.projectRoot, challenge.body.data.relativeProbePath),
+    'utf8',
+  )) as { nonce: string };
+  const confirmed = await request(
+    fixture.origin,
+    `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges/${challenge.body.data.challengeId}/confirm`,
+    {
+      method: 'POST',
+      headers: headers(fixture.origin),
+      body: JSON.stringify({ browserSessionId, nonce: probe.nonce }),
+    },
+  );
+  expect(confirmed.response.status).toBe(200);
+  return confirmed.body.data.bindingToken as string;
 }
 
 function headers(origin: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -180,6 +235,7 @@ async function request(origin: string, route: string, init: RequestInit): Promis
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('project asset import authority HTTP boundary', () => {
@@ -262,6 +318,45 @@ describe('project asset import authority HTTP boundary', () => {
       body: JSON.stringify({ targets: [] }),
     });
     expect(wrongBindingScope.response.status).toBe(403);
+  });
+
+  it('rejects a previous binding token after the same browser session rebinds', async () => {
+    const fixture = await bindingHarness();
+    const browserSessionId = 'browser-binding-rotation';
+    const oldBindingToken = await bindProject(fixture, browserSessionId);
+    const currentBindingToken = await bindProject(fixture, browserSessionId);
+    expect(currentBindingToken).not.toBe(oldBindingToken);
+
+    fixture.target.calls.length = 0;
+    const replay = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: oldBindingToken }),
+      body: JSON.stringify({ operationId, items: [{ itemId, sourceName: 'old-token.png', declaredBytes: 5 }] }),
+    });
+
+    expect(replay.response.status).toBe(403);
+    expect(replay.body).toMatchObject({ ok: false, error: { code: 'AUTHORITY_TOKEN_REJECTED' } });
+    expect(fixture.target.calls.filter(([name]) => name === 'create')).toHaveLength(0);
+    expect(await fixture.target.validateBinding(currentBindingToken)).toBe(true);
+  });
+
+  it('rejects a previous binding token after a different browser session binds', async () => {
+    const fixture = await bindingHarness();
+    const oldBindingToken = await bindProject(fixture, 'browser-binding-old-session');
+    const currentBindingToken = await bindProject(fixture, 'browser-binding-new-session');
+    expect(currentBindingToken).not.toBe(oldBindingToken);
+
+    fixture.target.calls.length = 0;
+    const replay = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: oldBindingToken }),
+      body: JSON.stringify({ operationId, items: [{ itemId, sourceName: 'cross-session-old-token.png', declaredBytes: 5 }] }),
+    });
+
+    expect(replay.response.status).toBe(403);
+    expect(replay.body).toMatchObject({ ok: false, error: { code: 'AUTHORITY_TOKEN_REJECTED' } });
+    expect(fixture.target.calls.filter(([name]) => name === 'create')).toHaveLength(0);
+    expect(await fixture.target.validateBinding(currentBindingToken)).toBe(true);
   });
 
   it.each([
