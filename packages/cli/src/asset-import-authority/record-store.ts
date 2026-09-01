@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
@@ -23,6 +24,7 @@ import {
   type RecoveryBarrierIncident,
   type RecoveryBarrierResolution,
   type ProjectAssetImportReceipt,
+  type ProjectAssetImportUndoReceipt,
 } from './types.js';
 import { stableStringify, type ProjectAssetImportStagedItem } from '@surdet/authoring';
 
@@ -66,6 +68,9 @@ const PUBLICATION_FILE_STATES = new Set([
   'VERIFIED',
   'ROLLBACK_RENAME_INTENT',
   'ROLLBACK_QUARANTINED',
+  'UNDO_RENAME_INTENT',
+  'UNDO_QUARANTINED',
+  'UNDO_VERIFIED',
 ]);
 
 function validFileIdentity(value: unknown): boolean {
@@ -94,6 +99,13 @@ function sameNodeIdentity(
   return left.device === right.device && left.inode === right.inode && left.birthtimeNs === right.birthtimeNs;
 }
 
+function sameFileIdentity(
+  left: { device: string; inode: string; birthtimeNs: string; size: number; mtimeNs: string },
+  right: { device: string; inode: string; birthtimeNs: string; size: number; mtimeNs: string },
+): boolean {
+  return sameNodeIdentity(left, right) && left.size === right.size && left.mtimeNs === right.mtimeNs;
+}
+
 function validProjectRelativePath(value: unknown): value is string {
   if (typeof value !== 'string' || value.includes('\\') || path.isAbsolute(value)) return false;
   const segments = value.split('/');
@@ -104,10 +116,66 @@ function publicationSha256(record: Omit<AssetImportPublicationRecord, 'publicati
   return crypto.createHash('sha256').update(stableStringify(record), 'utf8').digest('hex');
 }
 
+function undoReceiptSha256(receipt: Omit<ProjectAssetImportUndoReceipt, 'undoReceiptSha256'>): string {
+  return crypto.createHash('sha256').update(stableStringify(receipt), 'utf8').digest('hex');
+}
+
+async function stableFileEvidence(file: string): Promise<{
+  identity: Awaited<ReturnType<typeof assetImportFileIdentity>>;
+  bytes: number;
+  sha256: string;
+}> {
+  const before = await assetImportFileIdentity(file);
+  const hasher = crypto.createHash('sha256');
+  let bytes = 0;
+  for await (const chunk of createReadStream(file)) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buffer.byteLength;
+    hasher.update(buffer);
+  }
+  const after = await assetImportFileIdentity(file);
+  if (!sameFileIdentity(before, after) || bytes !== after.size) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '隔离证据读取期间发生变化');
+  }
+  return {
+    identity: after,
+    bytes,
+    sha256: hasher.digest('hex'),
+  };
+}
+
 function withPublicationSha256(
   record: Omit<AssetImportPublicationRecord, 'publicationSha256'>,
 ): AssetImportPublicationRecord {
   return { ...record, publicationSha256: publicationSha256(record) };
+}
+
+function publicationQuarantines(publication: AssetImportPublicationRecord | null): Array<{
+  path: string;
+  identity: AssetImportPublicationRecord['files'][number]['quarantineIdentity'];
+  bytes: number;
+  sha256: string;
+}> {
+  if (publication === null) return [];
+  return publication.files.flatMap((file) => {
+    if (file.state === 'ROLLBACK_QUARANTINED') {
+      return [{
+        path: file.rollbackRelativePath,
+        identity: file.quarantineIdentity,
+        bytes: file.bytes,
+        sha256: file.sha256,
+      }];
+    }
+    if (file.state === 'UNDO_QUARANTINED' || file.state === 'UNDO_VERIFIED') {
+      return [{
+        path: file.undoRelativePath,
+        identity: file.undoIdentity,
+        bytes: file.bytes,
+        sha256: file.sha256,
+      }];
+    }
+    return [];
+  }).sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export class AssetImportRecordStore {
@@ -189,6 +257,10 @@ export class AssetImportRecordStore {
 
   private receiptFile(operationId: string): string {
     return path.join(this.operationDirectory(operationId), 'receipt.json');
+  }
+
+  private undoReceiptFile(operationId: string): string {
+    return path.join(this.operationDirectory(operationId), 'undo-receipt.json');
   }
 
   private uploadIntentFile(operationId: string, nonce: string): string {
@@ -545,15 +617,27 @@ export class AssetImportRecordStore {
         seenFiles.add(file.itemId);
         const prepared = `.surdet/asset-import/${operationId}/prepared/${file.itemId}.bin`;
         const rollback = `.surdet/asset-import/${operationId}/rollback/${file.itemId}.bin`;
+        const undo = `.surdet/asset-import/${operationId}/undo/${file.itemId}.bin`;
         if (file.targetPath !== planned.targetPath || file.preparedRelativePath !== prepared
-          || file.rollbackRelativePath !== rollback || file.bytes !== planned.bytes || file.sha256 !== planned.sha256
+          || file.rollbackRelativePath !== rollback || file.undoRelativePath !== undo
+          || file.bytes !== planned.bytes || file.sha256 !== planned.sha256
           || !validSha256(file.sha256) || !PUBLICATION_FILE_STATES.has(file.state)) return false;
         const preparedRequired = !['UPLOADED', 'PREPARE_INTENT'].includes(file.state);
-        const finalRequired = ['LINKED', 'VERIFIED', 'ROLLBACK_RENAME_INTENT', 'ROLLBACK_QUARANTINED'].includes(file.state);
+        const finalRequired = [
+          'LINKED',
+          'VERIFIED',
+          'ROLLBACK_RENAME_INTENT',
+          'ROLLBACK_QUARANTINED',
+          'UNDO_RENAME_INTENT',
+          'UNDO_QUARANTINED',
+          'UNDO_VERIFIED',
+        ].includes(file.state);
         const quarantineRequired = file.state === 'ROLLBACK_QUARANTINED';
+        const undoRequired = file.state === 'UNDO_QUARANTINED' || file.state === 'UNDO_VERIFIED';
         return (!preparedRequired || validFileIdentity(file.preparedIdentity))
           && (!finalRequired || validFileIdentity(file.finalIdentity))
-          && (!quarantineRequired || validFileIdentity(file.quarantineIdentity));
+          && (!quarantineRequired || validFileIdentity(file.quarantineIdentity))
+          && (!undoRequired || validFileIdentity(file.undoIdentity));
       });
     const seenParents = new Set<string>();
     const parentsValid = value.parents.every((parent) => {
@@ -649,6 +733,50 @@ export class AssetImportRecordStore {
       })) {
       await this.ensureOperationRecoveryBarrier(operationId, undefined, 'receipt-semantic-invalid');
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入回执文件证据损坏');
+    }
+    return value;
+  }
+
+  async writeUndoReceipt(receipt: ProjectAssetImportUndoReceipt): Promise<ProjectAssetImportUndoReceipt> {
+    await this.assertOperationWorkspaceOrBarrier(receipt.operationId);
+    const file = this.undoReceiptFile(receipt.operationId);
+    const existing = await this.readOperationJson<ProjectAssetImportUndoReceipt>(file, receipt.operationId, '撤销回执');
+    if (existing !== null) {
+      if (equalJson(existing.value, receipt)) return existing.value;
+      await this.ensureOperationRecoveryBarrier(receipt.operationId, undefined, 'undo-receipt-conflict');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '撤销回执与既有记录冲突');
+    }
+    await createJsonRecord(file, receipt);
+    return receipt;
+  }
+
+  async readUndoReceipt(operationId: string): Promise<ProjectAssetImportUndoReceipt | null> {
+    await this.assertOperationWorkspaceOrBarrier(operationId);
+    const loaded = await this.readOperationJson<ProjectAssetImportUndoReceipt>(
+      this.undoReceiptFile(operationId),
+      operationId,
+      '撤销回执',
+    );
+    if (loaded === null) return null;
+    const value = loaded.value;
+    const publication = await this.readPublication(operationId);
+    const expectedRemoved = publication?.files.map((file) => file.targetPath).sort() ?? [];
+    const expectedQuarantine = publication?.files.map((file) => file.undoRelativePath).sort() ?? [];
+    if (value?.schemaVersion !== 1 || !validUuid(value.undoReceiptId)
+      || !validSha256(value.undoReceiptSha256) || value.operationId !== operationId
+      || value.projectIdentity !== this.paths.projectIdentity || value.status !== 'UNDONE'
+      || !Number.isSafeInteger(value.journalVersion) || value.journalVersion < 1
+      || typeof value.undoneAt !== 'string' || !Array.isArray(value.removedPaths)
+      || !Array.isArray(value.quarantinePaths)
+      || !equalJson([...value.removedPaths].sort(), expectedRemoved)
+      || !equalJson([...value.quarantinePaths].sort(), expectedQuarantine)) {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'undo-receipt-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '撤销回执语义损坏');
+    }
+    const { undoReceiptSha256: recordedSha256, ...semantic } = value;
+    if (undoReceiptSha256(semantic) !== recordedSha256) {
+      await this.ensureOperationRecoveryBarrier(operationId, undefined, 'undo-receipt-hash-invalid');
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '撤销回执内容与回执指纹不一致');
     }
     return value;
   }
@@ -817,13 +945,16 @@ export class AssetImportRecordStore {
     if (!['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入操作尚未达到可解除恢复屏障的终态');
     }
+    if (journal.journal.status === 'UNDONE'
+      && await this.readUndoReceipt(incident.value.operationId) === null) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作缺少撤销回执');
+    }
     const publication = await this.readPublication(incident.value.operationId);
-    const quarantined = publication?.files
-      .filter((file) => file.state === 'ROLLBACK_QUARANTINED')
-      .sort((left, right) => left.itemId.localeCompare(right.itemId)) ?? [];
+    const quarantined = publicationQuarantines(publication);
     for (const file of quarantined) {
-      const current = await assetImportFileIdentity(absoluteAssetImportProjectPath(this.paths, file.rollbackRelativePath));
-      if (file.quarantineIdentity === undefined || !sameNodeIdentity(current, file.quarantineIdentity)) {
+      const current = await stableFileEvidence(absoluteAssetImportProjectPath(this.paths, file.path));
+      if (file.identity === undefined || !sameFileIdentity(current.identity, file.identity)
+        || current.bytes !== file.bytes || current.sha256 !== file.sha256) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '回滚隔离证据身份不匹配');
       }
     }
@@ -834,7 +965,7 @@ export class AssetImportRecordStore {
       journalVersion: journal.journal.journalVersion,
       publicationVersion: publication?.publicationVersion ?? null,
       publicationSha256: publication?.publicationSha256 ?? null,
-      quarantinedPaths: quarantined.map((file) => file.rollbackRelativePath),
+      quarantinedPaths: quarantined.map((file) => file.path),
       resolvedAt: input.resolvedAt,
     };
     await createJsonRecord(
@@ -882,13 +1013,18 @@ export class AssetImportRecordStore {
       const journal = await this.readOperation(incident.value.operationId).catch(() => null);
       if (journal === null || journal.journal.journalVersion !== resolution.value.journalVersion
         || !['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) return true;
+      if (journal.journal.status === 'UNDONE'
+        && await this.readUndoReceipt(incident.value.operationId).catch(() => null) === null) return true;
       const publication = await this.readPublication(incident.value.operationId).catch(() => null);
       if ((publication?.publicationVersion ?? null) !== resolution.value.publicationVersion) return true;
       if ((publication?.publicationSha256 ?? null) !== resolution.value.publicationSha256) return true;
-      const quarantinedPaths = publication?.files
-        .filter((file) => file.state === 'ROLLBACK_QUARANTINED')
-        .sort((left, right) => left.itemId.localeCompare(right.itemId))
-        .map((file) => file.rollbackRelativePath) ?? [];
+      const quarantined = publicationQuarantines(publication);
+      for (const file of quarantined) {
+        const current = await stableFileEvidence(absoluteAssetImportProjectPath(this.paths, file.path)).catch(() => null);
+        if (current === null || file.identity === undefined || !sameFileIdentity(current.identity, file.identity)
+          || current.bytes !== file.bytes || current.sha256 !== file.sha256) return true;
+      }
+      const quarantinedPaths = quarantined.map((file) => file.path);
       if (!equalJson(quarantinedPaths, resolution.value.quarantinedPaths)) return true;
     }
     return this.localRecoveryBlocked;
