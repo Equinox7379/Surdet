@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-export const QUALIFICATION_TEMP_ROOT = 'C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10';
+export const QUALIFICATION_TEMP_ROOT = path.resolve(os.tmpdir(), 'surdet-renderer-v4-qualification-2026-08-10');
 export const QUALIFICATION_GROUP_ORDER = Object.freeze([
   'q1-007-a-b',
   'q2-007-b-a',
@@ -97,7 +98,7 @@ export function parseRendererV4QualificationArgs(argv) {
   const repositoryRoot = path.resolve(values.get('repository-root'));
   const tempRoot = path.resolve(values.get('temp-root'));
   const artifactDir = path.resolve(values.get('artifact-dir'));
-  if (repositoryRoot === tempRoot || repositoryRoot === artifactDir) throw new Error('repository-root、temp-root、artifact-dir 必须是不同路径');
+  if (new Set([repositoryRoot, tempRoot, artifactDir]).size !== 3) throw new Error('repository-root、temp-root、artifact-dir 必须是不同路径');
   return { repositoryRoot, tempRoot, artifactDir };
 }
 

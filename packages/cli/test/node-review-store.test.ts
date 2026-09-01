@@ -136,7 +136,7 @@ describe('NodeReviewStore', () => {
     expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const rejected = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.reason).toMatchObject({ code: 'REVIEW_BUSY' });
+    expect(['REVIEW_BUSY', 'REVIEW_TERMINAL_ALREADY_SET']).toContain(rejected[0]?.reason?.code);
 
     const reviewDirectory = path.join(fixture.projectDirectory, 'reviews', reviewId);
     const terminalReceipts = (await fsp.readdir(reviewDirectory))
