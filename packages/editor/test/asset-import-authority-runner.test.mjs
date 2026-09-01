@@ -22,6 +22,7 @@ test('asset import runner owns one isolated loopback fixture and strict non-rese
   assert.match(source, /4175/);
   assert.match(source, /strict-isolated-port-selected/);
   assert.match(source, /cacheDir:/);
+  assert.match(source, /SURDET_E2E_TEMP_ROOT/);
   assert.match(source, /dev-project\.mjs/);
   assert.match(source, /--project/);
   assert.match(source, /--data-root/);
@@ -86,6 +87,7 @@ test('asset import runner proves no repository or Starter mutation and retains e
     'pageErrors',
     'requestFailures',
     'responseFailures',
+    'unhandledErrors',
     'stderrLines',
     'childCleanupFailures',
     'activeLeaseDirectories',
@@ -104,6 +106,7 @@ test('asset import runner proves no repository or Starter mutation and retains e
   assert.match(source, /expectedConsoleErrors/);
   assert.match(source, /Failed to load resource: the server responded with a status of 409 \(Conflict\)/);
   assert.match(source, /expectedBusinessResponses\.length === 1/);
+  assert.match(source, /channels\.unhandledErrors\.length\s*===\s*0/);
   const expected409Classification = source.indexOf('if (channels.expectedBusinessResponses.length === 1');
   const emptyConsoleGate = source.indexOf('assert(channels.consoleErrors.length === 0');
   assert.ok(expected409Classification >= 0 && emptyConsoleGate > expected409Classification,
