@@ -72,6 +72,30 @@ export interface AssetImportWorkbenchHooks {
   refreshProjectAssetIntelligence?: () => void | Promise<void>;
 }
 
+type AssetDropTransfer = Pick<DataTransfer, 'items' | 'files' | 'types'>;
+
+type EntryAwareDropItem = DataTransferItem & {
+  webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+};
+
+export function assetDropHasFiles(dataTransfer: AssetDropTransfer): boolean {
+  return Array.from(dataTransfer.items).some((item) => item.kind === 'file')
+    || Array.from(dataTransfer.files).length > 0
+    || Array.from(dataTransfer.types).includes('Files');
+}
+
+export function assetDropFiles(dataTransfer: AssetDropTransfer): File[] {
+  const items = Array.from(dataTransfer.items);
+  if (items.length === 0) return Array.from(dataTransfer.files);
+  return items.flatMap((item) => {
+    if (item.kind !== 'file') return [];
+    const entry = (item as EntryAwareDropItem).webkitGetAsEntry?.();
+    if (entry?.isDirectory) return [];
+    const file = item.getAsFile();
+    return file === null ? [] : [file];
+  });
+}
+
 function entryStateCopy(state: AssetImportWorkspaceProjection['entryState']): string {
   if (state === 'unavailable') return '本机素材导入服务未连接；素材浏览仍可使用。';
   if (state === 'unbound') return '先确认当前项目目录，确认后才能导入素材。';

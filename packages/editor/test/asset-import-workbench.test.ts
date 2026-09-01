@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  assetDropFiles,
+  assetDropHasFiles,
+} from '../src/panels/asset-import-workbench.js';
 
 const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,7 +30,48 @@ const indexSource = readEditorFile('index.html');
 
 const categoryLabels = ['背景', '立绘', '头像', '音乐', '环境音', '音效', '语音', '视频', '字体', '其他'];
 
+interface FakeDropItem {
+  kind: 'file' | 'string';
+  getAsFile(): File | null;
+  webkitGetAsEntry?: () => { isDirectory: boolean } | null;
+}
+
+function fakeTransfer(
+  items: FakeDropItem[],
+  files: File[] = [],
+  types: string[] = items.some((item) => item.kind === 'file') ? ['Files'] : ['text/plain'],
+): Pick<DataTransfer, 'items' | 'files' | 'types'> {
+  return {
+    items: items as unknown as DataTransferItemList,
+    files: files as unknown as FileList,
+    types,
+  };
+}
+
 describe('Editor 中文素材导入工作台合同', () => {
+  it('extracts only ordinary files from a drop payload', () => {
+    const image = new File(['image'], 'harbor.png', { type: 'image/png' });
+    const fileItem: FakeDropItem = { kind: 'file', getAsFile: () => image };
+    const textItem: FakeDropItem = { kind: 'string', getAsFile: () => null };
+    const directoryItem: FakeDropItem = {
+      kind: 'file',
+      getAsFile: () => image,
+      webkitGetAsEntry: () => ({ isDirectory: true }),
+    };
+
+    expect(assetDropHasFiles(fakeTransfer([fileItem]))).toBe(true);
+    expect(assetDropFiles(fakeTransfer([textItem, fileItem, directoryItem]))).toEqual([image]);
+    expect(assetDropHasFiles(fakeTransfer([textItem]))).toBe(false);
+    expect(assetDropFiles(fakeTransfer([textItem]))).toEqual([]);
+  });
+
+  it('falls back to the FileList when a browser exposes no DataTransfer items', () => {
+    const sound = new File(['sound'], 'rain.wav', { type: 'audio/wav' });
+
+    expect(assetDropHasFiles(fakeTransfer([], [sound], ['Files']))).toBe(true);
+    expect(assetDropFiles(fakeTransfer([], [sound], ['Files']))).toEqual([sound]);
+  });
+
   it('mounts a stable in-place 导入素材 entry inside the existing Asset Center', () => {
     expect(centerSource, 'Asset Center panel must exist').toContain('asset-center');
     expect(centerSource).toContain('导入素材');
