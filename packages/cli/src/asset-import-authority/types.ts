@@ -100,6 +100,104 @@ export interface AssetImportUploadIntent {
   createdAt: string;
 }
 
+export interface AssetImportFileIdentity {
+  device: string;
+  inode: string;
+  birthtimeNs: string;
+  size: number;
+  mtimeNs: string;
+}
+
+export type AssetImportPublicationFileState =
+  | 'UPLOADED'
+  | 'PREPARE_INTENT'
+  | 'PREPARED'
+  | 'LINK_INTENT'
+  | 'LINKED'
+  | 'VERIFIED'
+  | 'ROLLBACK_RENAME_INTENT'
+  | 'ROLLBACK_QUARANTINED';
+
+export interface AssetImportPublicationFile {
+  itemId: string;
+  targetPath: string;
+  preparedRelativePath: string;
+  rollbackRelativePath: string;
+  bytes: number;
+  sha256: string;
+  state: AssetImportPublicationFileState;
+  preparedIdentity?: AssetImportFileIdentity;
+  finalIdentity?: AssetImportFileIdentity;
+  quarantineIdentity?: AssetImportFileIdentity;
+}
+
+export interface AssetImportPublicationParent {
+  relativePath: string;
+  state:
+    | 'CREATE_INTENT'
+    | 'PREEXISTING'
+    | 'CREATED'
+    | 'ROLLBACK_REMOVE_INTENT'
+    | 'ROLLBACK_REMOVED'
+    | 'ROLLBACK_PRESERVED';
+  identity?: AssetImportFileIdentity;
+}
+
+export interface AssetImportPublicationRecord {
+  schemaVersion: 1;
+  operationId: string;
+  publicationVersion: number;
+  previousGenerationSha256: string | null;
+  publicationSha256: string;
+  planId: string;
+  planFingerprint: string;
+  files: AssetImportPublicationFile[];
+  parents: AssetImportPublicationParent[];
+  updatedAt: string;
+}
+
+export interface ProjectAssetImportReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  receiptSha256: string;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  projectIdentity: string;
+  status: 'COMMITTED';
+  journalVersion: number;
+  authorityContractVersion: 1;
+  files: Array<{
+    itemId: string;
+    targetPath: string;
+    bytes: number;
+    sha256: string;
+    fileIdentity: {
+      device: string;
+      inode: string;
+      birthtimeNs: string;
+    };
+  }>;
+  committedAt: string;
+}
+
+export interface CommitOperationRequest {
+  planFingerprint: string;
+}
+
+export interface CommitOperationResponse {
+  operation: AssetImportJournal;
+  receipt: ProjectAssetImportReceipt;
+}
+
+export interface RecoverOperationRequest {
+  action: 'resume' | 'rollback';
+}
+
+export interface RecoverOperationResponse {
+  detail: OperationDetailResponse;
+}
+
 export interface CreateImportOperationRequest {
   operationId: string;
   items: AssetImportOperationManifestItem[];
@@ -138,6 +236,7 @@ export interface OperationDetailResponse {
   manifest: AssetImportOperationManifest;
   stagedItems: ProjectAssetImportStagedItem[];
   plan: ProjectAssetImportPlan | null;
+  receipt: ProjectAssetImportReceipt | null;
 }
 
 export interface ListOperationsResponse {
@@ -163,6 +262,12 @@ export interface RecoveryBarrierIncident {
 
 export interface RecoveryBarrierResolution {
   barrierId: string;
+  incidentSha256: string;
+  operationId: string;
+  journalVersion: number;
+  publicationVersion: number | null;
+  publicationSha256: string | null;
+  quarantinedPaths: string[];
   resolvedAt: string;
 }
 

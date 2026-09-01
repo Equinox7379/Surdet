@@ -3,7 +3,12 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createJsonRecord, readJsonRecord } from '../authoring/node-json-record.js';
-import { AssetImportAuthorityError, type AssetImportAuthorityPaths, type ProjectRootBindingIdentity } from './types.js';
+import {
+  AssetImportAuthorityError,
+  type AssetImportAuthorityPaths,
+  type AssetImportFileIdentity,
+  type ProjectRootBindingIdentity,
+} from './types.js';
 import type { ProjectAssetImportTargetFact } from '@surdet/authoring';
 
 interface StoredRootIdentity {
@@ -153,6 +158,94 @@ export async function assertAssetImportOperationWorkspace(
   await assertPlainDirectory(path.join(operation, 'items'), 'items');
   await assertPlainDirectory(path.join(operation, 'staging'), 'staging');
   await assertPlainDirectory(path.join(operation, 'upload-intents'), 'upload-intents');
+}
+
+export interface AssetImportProjectOperationWorkspace {
+  root: string;
+  prepared: string;
+  rollback: string;
+  undo: string;
+}
+
+export async function createAssetImportProjectOperationWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<AssetImportProjectOperationWorkspace> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationId)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'operationId 格式无效');
+  }
+  await assertAssetImportProjectRootIdentity(paths);
+  const surdet = await ensurePlainChildDirectory(paths.projectRoot, '.surdet');
+  const importRoot = await ensurePlainChildDirectory(surdet, 'asset-import');
+  const root = await ensurePlainChildDirectory(importRoot, operationId);
+  return {
+    root,
+    prepared: await ensurePlainChildDirectory(root, 'prepared'),
+    rollback: await ensurePlainChildDirectory(root, 'rollback'),
+    undo: await ensurePlainChildDirectory(root, 'undo'),
+  };
+}
+
+export async function assertAssetImportProjectOperationWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<AssetImportProjectOperationWorkspace> {
+  await assertAssetImportProjectRootIdentity(paths);
+  const root = path.join(paths.internalWorkspace, operationId);
+  await assertPlainDirectory(path.join(paths.projectRoot, '.surdet'), '.surdet');
+  await assertPlainDirectory(paths.internalWorkspace, 'asset-import');
+  await assertPlainDirectory(root, 'project-operation');
+  const prepared = path.join(root, 'prepared');
+  const rollback = path.join(root, 'rollback');
+  const undo = path.join(root, 'undo');
+  await assertPlainDirectory(prepared, 'prepared');
+  await assertPlainDirectory(rollback, 'rollback');
+  await assertPlainDirectory(undo, 'undo');
+  return { root, prepared, rollback, undo };
+}
+
+export async function assetImportFileIdentity(file: string): Promise<AssetImportFileIdentity> {
+  const link = await fs.lstat(file, { bigint: true });
+  if (!link.isFile() || link.isSymbolicLink()) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材文件身份不安全');
+  }
+  return {
+    device: String(link.dev),
+    inode: String(link.ino),
+    birthtimeNs: String(link.birthtimeNs),
+    size: Number(link.size),
+    mtimeNs: String(link.mtimeNs),
+  };
+}
+
+export async function assetImportDirectoryIdentity(directory: string): Promise<AssetImportFileIdentity> {
+  const link = await fs.lstat(directory, { bigint: true });
+  const real = await fs.realpath(directory);
+  if (!link.isDirectory() || link.isSymbolicLink() || real !== directory) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材目录身份不安全');
+  }
+  return {
+    device: String(link.dev),
+    inode: String(link.ino),
+    birthtimeNs: String(link.birthtimeNs),
+    size: Number(link.size),
+    mtimeNs: String(link.mtimeNs),
+  };
+}
+
+export function absoluteAssetImportProjectPath(paths: AssetImportAuthorityPaths, relativePath: string): string {
+  const normalized = relativePath.normalize('NFC');
+  const segments = normalized.split('/');
+  if (segments.length < 1 || segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+    || path.isAbsolute(normalized) || normalized.includes('\\')) {
+    throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', '项目相对路径不安全');
+  }
+  const absolute = path.join(paths.projectRoot, ...segments);
+  const relation = path.relative(paths.projectRoot, absolute);
+  if (relation.startsWith('..') || path.isAbsolute(relation)) {
+    throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', '项目相对路径越界');
+  }
+  return absolute;
 }
 
 export async function inspectAssetImportTarget(
