@@ -702,3 +702,38 @@ Append-only execution evidence begins below. Do not rewrite earlier entries to m
 - `84375d4` committed the 15-file Editor Asset Center production/permanent-test scope.
 - `63defe0` committed only the permanent runner, runner contract, and shared fake-file MIME support.
 - FORMAL, aggregate verification, final docs closeout, long-term ledger consolidation, and push had not run at this ledger point.
+
+### 2026-09-01 — Frozen full gates and aggregate verification
+
+- Frozen affected-workspace gates passed without retry: Authoring 32 files / 275 tests, CLI 40 files / 324 tests, and Editor 60 files / 476 tests. Typecheck and build passed for all three workspaces.
+- The unique aggregate `verify:all` run passed with exit code 0. Artifact: `<local-path>`, 74,964 bytes, SHA-256 `778E74B4724B6A4B7E7178153C7EDB86855F300C32652E8C674BEAE7A2557762`.
+- The aggregate run covered workspace tests, types, documentation/hygiene gates, Starter simulation, Zero formal verification, and builds. Existing lint warnings remained warnings; no verification error was suppressed or rerun.
+- `475500def90bac0a3a9b92f8b13e84cbad1bafaf` is the frozen `CODE_EVIDENCE_HEAD`. It contains only the reviewed implementation, permanent tests, runner/support contract, design specification, and pre-FORMAL taskbook evidence.
+
+### 2026-09-01 — Unique FORMAL and closeout boundary
+
+- The unique FORMAL run passed 26/26 without rerun and with `runHead === CODE_EVIDENCE_HEAD`.
+- FORMAL evidence: `<local-path>`, 87,903 bytes, SHA-256 `7CD30F59BA70066F2AC721FCA03246EFFEDEE32F81F862D8FAB868502A5E9B06`.
+- FORMAL identity: 465 bytes, SHA-256 `B64EFC2F0DFA8044928B4F13E18BEF2C1BF6F1F2D726EA3525320664A21825DA`.
+- FORMAL proved `trackedCodeDiffPaths=[]`, committed-blob identity for the runner and six required new paths, exact 26-milestone order, native audio/video readiness, broken-media fallback, responsive 1440/1024/800 surfaces, keyboard focus retention, balanced Object URL lifecycle, zero browser/protocol/request/cleanup errors, released port, no fixture mutation, and original Starter identity preservation.
+- FORMAL screenshots were sealed inside the artifact root: 1440 width, 81,152 bytes, SHA-256 `62F054791204E15B700F586D3DEE4BAF1CC6D88F2161D14116531B1F987F330A`; 1024 width, 47,974 bytes, SHA-256 `DED064CB0193E66329C52F75C654F1DE4F7AAD9B59CB2E8CA7C23BB6DE019AFC`; 800 width, 44,389 bytes, SHA-256 `0416790F782676CFB9BD1366953E07100D3B713808EB2B6155F44F189EFE48E`.
+- This gate establishes read-only asset intelligence only. Asset import/create/rename/move/delete/overwrite/convert, legacy `public/` migration, localized display-name metadata, deployment/release, Frontend Pass 5, and mainline Wave 7 were not started.
+- At this ledger point the next actions are limited to documentation/hygiene checks, the exact docs-only closeout commit, append-only long-term ledger consolidation, and the already authorized ordinary push. No force push or history rewrite is permitted.
+
+```text
+ASSET_CENTER_READ_ONLY_INTELLIGENCE_1 = PASSED
+SHARED_ASSET_TRUTH = ESTABLISHED
+EDITOR_ASSET_CENTER = PASSED
+AGENT_STRUCTURED_ASSET_METADATA = PASSED
+AUTHORING_FULL = 32 files / 275 tests PASS
+CLI_FULL = 40 files / 324 tests PASS
+EDITOR_FULL = 60 files / 476 tests PASS
+VERIFY_ALL = PASS
+FORMAL = 26/26 PASS
+CODE_EVIDENCE_HEAD = 475500def90bac0a3a9b92f8b13e84cbad1bafaf
+PROJECT_MUTATION = NO
+ORIGINAL_STARTER_UNCHANGED = YES
+ASSET_WRITE_OPERATIONS = NOT_STARTED
+PUSH = AUTHORIZED_PENDING_DOCS_CLOSEOUT
+WAVE_7 = NOT_STARTED
+```
