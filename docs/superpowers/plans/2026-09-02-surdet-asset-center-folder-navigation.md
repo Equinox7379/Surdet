@@ -36,7 +36,7 @@
 
 - [ ] **Step 2: 运行聚焦 RED**
 
-Run: `npm --workspace @surdet/editor test -- --run test/asset-center-folder-navigation.test.ts`
+Run: `npm run test -w surdet-editor -- --run test/asset-center-folder-navigation.test.ts`
 
 Expected: FAIL，因为纯目录模块尚不存在。
 
@@ -81,7 +81,7 @@ Expected: 新目录测试全部通过。
 
 - [ ] **Step 2: 运行聚焦 RED**
 
-Run: `npm --workspace @surdet/editor test -- --run test/asset-center-filter.test.ts`
+Run: `npm run test -w surdet-editor -- --run test/asset-center-filter.test.ts`
 
 Expected: FAIL，因为现有筛选不读取目录状态。
 
@@ -110,7 +110,7 @@ Expected: 筛选与目录测试全部通过。
 
 - [ ] **Step 2: 运行聚焦 RED**
 
-Run: `npm --workspace @surdet/editor test -- --run test/editor-asset-center-contract.test.ts`
+Run: `npm run test -w surdet-editor -- --run test/editor-asset-center-contract.test.ts`
 
 Expected: FAIL，因为新控件尚不存在。
 
@@ -132,9 +132,9 @@ Expected: 三个素材中心聚焦文件全部通过。
 Run:
 
 ```text
-npm --workspace @surdet/editor test -- --run test/asset-center-folder-navigation.test.ts test/asset-center-filter.test.ts test/editor-asset-center-contract.test.ts
-npm --workspace @surdet/editor run typecheck
-npm --workspace @surdet/editor run build
+npm run test -w surdet-editor -- --run test/asset-center-folder-navigation.test.ts test/asset-center-filter.test.ts test/editor-asset-center-contract.test.ts
+npm run typecheck -w surdet-editor
+npm run build -w surdet-editor
 ```
 
 - [ ] **Step 2: 实际浏览器检查**
@@ -148,3 +148,11 @@ npm --workspace @surdet/editor run build
 - [ ] **Step 4: 精确提交并普通推送**
 
 只暂存本计划列出的新规格、计划、Editor 生产与测试文件；不暂存长期台账和既有未跟踪路径。提交后 fetch，确认远端没有分叉，再普通 push。
+
+## Execution Closure
+
+- 纯目录合同 RED 为模块缺失；GREEN 为 4/4。
+- 目录组合筛选 RED 准确暴露跨目录结果泄漏；最终三个素材中心聚焦文件 16/16 通过。
+- Luna 只读复核发现项目切换时同名目录筛选可能残留；普通项目与演示项目均建立永久 RED，并通过两处最小状态重置修复为 2/2。
+- Editor 全量 65 个文件、528 项测试通过；typecheck 与生产 build 通过。
+- 隔离浏览器在 1440px 与 800px 验证目录选项、后代筛选、面包屑、焦点恢复和页面无横向溢出；未生成截图或证据包。

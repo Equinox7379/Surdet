@@ -58,6 +58,7 @@ afterEach(() => {
   state.assetCenterQuery = '';
   state.assetCenterKind = 'all';
   state.assetCenterStatus = 'all';
+  state.assetCenterFolder = 'all';
   state.assetCenterSort = 'path';
 });
 
@@ -85,5 +86,32 @@ describe('Asset Center filters', () => {
     state.assetCenterSort = 'attention';
     expect(filterAssetItems(items).map((item) => item.key))
       .toEqual(['opening_voice', 'unused_field', 'castle_hall']);
+  });
+
+  it('combines directory boundaries with search, kind, status, and facet counts', () => {
+    const portrait: ProjectAssetItem = {
+      assetId: 'file:content/assets/portrait/uniform/lynn.png',
+      kind: 'portrait',
+      key: 'lynn_uniform',
+      sourcePath: 'content/assets/portrait/uniform/lynn.png',
+      format: 'png',
+      bytes: 2048,
+      physical: true,
+      references: [],
+      issues: ['ASSET_UNUSED'],
+    };
+    const allItems = [...items, portrait];
+
+    state.assetCenterFolder = 'content/assets/bg';
+    state.assetCenterStatus = 'unused';
+    expect(filterAssetItems(allItems).map((item) => item.key)).toEqual(['unused_field']);
+    expect(assetFacetCount(allItems, { kind: 'all', status: 'all' })).toBe(2);
+    expect(assetFacetCount(allItems, { kind: 'portrait', status: 'all' })).toBe(0);
+
+    state.assetCenterFolder = 'content/assets/portrait';
+    state.assetCenterStatus = 'all';
+    state.assetCenterKind = 'portrait';
+    state.assetCenterQuery = 'uniform';
+    expect(filterAssetItems(allItems).map((item) => item.key)).toEqual(['lynn_uniform']);
   });
 });

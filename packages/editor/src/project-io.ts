@@ -120,6 +120,7 @@ async function loadProjectFromHandle(
   state.assetCenterQuery = '';
   state.assetCenterKind = 'all';
   state.assetCenterStatus = 'all';
+  state.assetCenterFolder = 'all';
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
@@ -843,6 +844,7 @@ export function loadDemoProject(): void {
   state.assetCenterQuery = '';
   state.assetCenterKind = 'all';
   state.assetCenterStatus = 'all';
+  state.assetCenterFolder = 'all';
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
   state.scenes.set('demo', {
     id: 'demo',

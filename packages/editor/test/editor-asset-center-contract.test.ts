@@ -21,6 +21,7 @@ const modeSource = readEditorFile('src/shell/editor-modes.ts');
 const mainSource = readEditorFile('src/main.ts');
 const stateSource = readEditorFile('src/state.ts');
 const centerSource = readEditorFile('src/panels/asset-center.ts');
+const folderSource = readEditorFile('src/panels/asset-center-folders.ts');
 const sidebarAssetSource = readEditorFile('src/panels/assets.ts');
 const centerCss = readEditorFile('src/styles/asset-center.css');
 const indexSource = readEditorFile('index.html');
@@ -42,12 +43,13 @@ describe('editor Asset Center contract', () => {
 
   it('keeps the primary vocabulary Chinese and exposes complete categories and filters', () => {
     expect(centerSource, 'Asset Center panel must exist').toContain('asset-center');
-    const primaryCopy = `${centerSource}\n${centerCss}`;
+    const primaryCopy = `${centerSource}\n${folderSource}\n${centerCss}`;
     for (const label of [
       '背景', '立绘', '头像', '音乐', '环境音', '音效', '语音', '视频', '字体', '其他',
       '已引用', '未引用', '引用缺失', '同名冲突', '命名异常', '格式待确认',
       '空间占用', '大文件', '项目状态', '项目路径', '名称', '文件大小', '引用数量', '需要处理', '需处理素材',
       '未引用单独统计，不计入需处理素材',
+      '位置', '全部位置', '素材根目录',
     ]) {
       expect(primaryCopy, `missing Chinese Asset Center label: ${label}`).toContain(label);
     }
@@ -73,6 +75,7 @@ describe('editor Asset Center contract', () => {
     expect(centerSource).toMatch(/dataset\.assetKindFilter/);
     expect(centerSource).toMatch(/dataset\.assetStatusFilter/);
     expect(centerSource).toMatch(/dataset\.assetSort/);
+    expect(centerSource).toMatch(/dataset\.assetFolder/);
     expect(centerSource).toMatch(/dataset\.assetViewSwitch/);
     expect(centerSource).toMatch(/dataset\.assetInsight(?:Id|Kind|Status)/);
     expect(centerSource).toContain('asset-center-item-path');
@@ -80,6 +83,23 @@ describe('editor Asset Center contract', () => {
     expect(centerSource).toMatch(/aria-pressed/);
     expect(centerSource).toMatch(/dataset\.visibleCount/);
     expect(centerSource).toMatch(/dataset\.fileCount/);
+  });
+
+  it('provides accessible folder navigation without another asset index', () => {
+    expect(folderSource).toMatch(/buildAssetFolderOptions/);
+    expect(folderSource).toMatch(/assetFolderBreadcrumbs/);
+    expect(folderSource).toMatch(/assetMatchesFolder/);
+    expect(folderSource).toMatch(/content\/assets/);
+    expect(centerSource).toMatch(/buildAssetFolderOptions/);
+    expect(centerSource).toMatch(/assetFolderBreadcrumbs/);
+    expect(centerSource).toMatch(/data-asset-folder-control|dataset\.assetFolderControl/);
+    expect(centerSource).toMatch(/data-asset-folder-crumb|dataset\.assetFolderCrumb/);
+    expect(centerSource).toMatch(/aria-current/);
+    expect(centerSource).toMatch(/requestAnimationFrame[\s\S]*asset-folder[\s\S]*\.focus\(\)/);
+    expect(stateSource).toMatch(/assetCenterFolder/);
+    expect(centerCss).toMatch(/asset-center-folder-controls/);
+    expect(centerCss).toMatch(/asset-center-folder-breadcrumbs/);
+    expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-center-folder-controls/i);
   });
 
   it('uses a persistent inspector and a technical disclosure instead of hover-only evidence', () => {
