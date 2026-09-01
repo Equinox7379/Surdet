@@ -269,3 +269,23 @@ Append actual test/browser/review facts to this plan and the existing long-term 
 - [ ] **Step 6: Exact commit and ordinary push**
 
 Stage only this plan plus any post-review correction. Fetch `surdet/main`; if the remote is not ahead, create the final ordinary commit and push. Watch the one triggered CI run and fix ordinary failures within this Goal.
+
+---
+
+## Execution closure — 2026-09-02
+
+Approach A is implemented. Asset Center list mode remains a dense text library and performs no thumbnail file reads. Grid mode displays real background, portrait, and avatar files from the existing `DirAsset.handle`; backgrounds and avatars crop to fill, portraits preserve the complete artwork, and unsupported or missing items use restrained Chinese placeholders. No asset is modified, no second index is created, and no backend contract changes.
+
+The viewport-scoped thumbnail session is the only deliberate engineering addition. Eagerly reading every image in a large project would create avoidable file I/O and memory pressure; a disposable `IntersectionObserver` session is the smallest mechanism that avoids that real risk. Its maintenance boundary is one small module, with no cache, database, manifest, worker, or recovery subsystem.
+
+Verification completed:
+
+- thumbnail, folder, filter, and Editor contract tests: 4 files / 23 tests passed;
+- Editor typecheck and build passed after the production implementation;
+- Editor full suite passed at the frozen production state: 66 files / 534 tests;
+- the two later test-only lifecycle cases passed and did not change production code;
+- one disposable real-browser check confirmed list mode performs no thumbnail reads, grid mode renders real images with the intended fit, missing/audio placeholders remain Chinese, stale rows do not receive another asset's image, created Object URLs are released, and 800px has no page-level horizontal overflow;
+- Luna review found no blocker or high-severity issue. Its lifecycle coverage concern was closed with permanent runtime tests for stale in-flight reads and one-time Object URL release;
+- repository hygiene review found no tracked file that was both unused and safe to delete. Existing runners and asset modules still have live, distinct consumers.
+
+This closes the visual-thumbnail increment only. Asset Center Phase 3 remains in progress; no write behavior, Frontend Pass 5, or Wave 7 work has started here.
