@@ -178,4 +178,14 @@ describe('project asset import planner', () => {
       'IMPORT_TARGET_UNSAFE',
     ]));
   });
+
+  it('requires one and only one target for every staged item', async () => {
+    await expect(buildProjectAssetImportPlan(
+      inputFor(
+        [staged('first'), staged('second')],
+        [target('first', 'background', 'first.png')],
+      ),
+      hasher,
+    )).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  });
 });

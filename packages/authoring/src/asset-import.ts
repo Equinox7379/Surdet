@@ -318,6 +318,10 @@ export async function buildProjectAssetImportPlan(
     const itemId = targets[index]!.itemId;
     targetItemIdCounts.set(itemId, (targetItemIdCounts.get(itemId) ?? 0) + 1);
   }
+  if (targets.length !== stagedItems.length
+    || stagedItems.some((item) => (targetItemIdCounts.get(item.itemId) ?? 0) !== 1)) {
+    throw invalidRequest('每个 staged item 必须且只能指定一个导入目标');
+  }
 
   const normalizedFactGroups = new Map<string, ProjectAssetImportTargetFact[]>();
   for (const fact of targetFacts) {
