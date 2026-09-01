@@ -42,6 +42,14 @@ const ISSUE_LABELS: Readonly<Record<string, string>> = {
   IMPORT_TARGET_UNSAFE: '目标位置不可用，请检查文件名。',
 };
 
+const FILE_NAME_ISSUES = new Set([
+  'IMPORT_NAME_INVALID',
+  'IMPORT_TARGET_UNSAFE',
+  'IMPORT_TARGET_DUPLICATE_IN_BATCH',
+  'IMPORT_TARGET_EXISTS',
+  'IMPORT_PORTRAIT_NAME_INVALID',
+]);
+
 const EMPTY_PROJECTION: AssetImportWorkspaceProjection = {
   entryState: 'unavailable',
   projectIdentity: null,
@@ -79,8 +87,15 @@ type EntryAwareDropItem = DataTransferItem & {
 };
 
 export function assetDropHasFiles(dataTransfer: AssetDropTransfer): boolean {
-  return Array.from(dataTransfer.items).some((item) => item.kind === 'file')
-    || Array.from(dataTransfer.files).length > 0
+  const items = Array.from(dataTransfer.items);
+  if (items.length > 0) {
+    return items.some((item) => {
+      if (item.kind !== 'file') return false;
+      const entry = (item as EntryAwareDropItem).webkitGetAsEntry?.();
+      return entry?.isDirectory !== true;
+    });
+  }
+  return Array.from(dataTransfer.files).length > 0
     || Array.from(dataTransfer.types).includes('Files');
 }
 
@@ -94,6 +109,16 @@ export function assetDropFiles(dataTransfer: AssetDropTransfer): File[] {
     const file = item.getAsFile();
     return file === null ? [] : [file];
   });
+}
+
+export function assetFileTypeLabel(file: File): string {
+  const family = file.type.split('/')[0];
+  if (family === 'image') return '图片';
+  if (family === 'audio') return '音频';
+  if (family === 'video') return '视频';
+  if (family === 'font') return '字体';
+  if (family === 'text') return '文本';
+  return '文件';
 }
 
 function entryStateCopy(state: AssetImportWorkspaceProjection['entryState']): string {
@@ -147,6 +172,11 @@ function operationIsBusy(operation: AssetImportOperationDetail | null): boolean 
     || operation?.operation.status === 'PUBLISHING'
     || operation?.operation.status === 'ROLLING_BACK'
     || operation?.operation.status === 'UNDOING';
+}
+
+function operationIsTerminal(operation: AssetImportOperationDetail | null): boolean {
+  return operation !== null
+    && ['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.operation.status);
 }
 
 function operationIssues(
@@ -300,7 +330,7 @@ function renderFileList(
       image.src = item.previewUrl;
       image.alt = '';
       preview.appendChild(image);
-    } else preview.appendChild(h('span', undefined, item.file.type ? item.file.type.split('/')[0] : '文件'));
+    } else preview.appendChild(h('span', undefined, assetFileTypeLabel(item.file)));
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'asset-import-remove';
@@ -394,7 +424,7 @@ function renderSettings(
     name.autocomplete = 'off';
     name.spellcheck = false;
     name.setAttribute('aria-describedby', errorId);
-    name.setAttribute('aria-invalid', String(issues.includes('IMPORT_NAME_INVALID') || issues.includes('IMPORT_TARGET_UNSAFE')));
+    name.setAttribute('aria-invalid', String(issues.some((issue) => FILE_NAME_ISSUES.has(issue))));
     name.onchange = () => callUpdateFile(workspace, hooks.onUpdateFile, item.itemId, { fileName: name.value });
 
     const target = h('p', 'asset-import-target-preview');
@@ -523,9 +553,10 @@ function renderActions(
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'asset-import-secondary';
-  cancel.textContent = projection.activeOperation?.receipt === null || projection.activeOperation?.receipt === undefined
-    ? '取消导入'
-    : '关闭';
+  cancel.textContent = operationIsTerminal(projection.activeOperation)
+    || projection.activeOperation?.receipt !== null && projection.activeOperation?.receipt !== undefined
+    ? '关闭'
+    : '取消导入';
   cancel.onclick = () => callWorkspaceOrHook(hooks.workspace, hooks.onCancelImport);
   controls.appendChild(cancel);
 
@@ -632,7 +663,7 @@ export function renderAssetImportWorkbench(
   files.append(
     h('p', 'asset-import-eyebrow', '第一步 · 选择文件'),
     h('h3', undefined, '待导入文件'),
-    h('p', 'asset-import-muted', '文件只保留在当前页面，取消后不会写入项目。'),
+    h('p', 'asset-import-muted', '最终确认前不会写入项目素材目录。'),
   );
   const pickerLabel = document.createElement('label');
   pickerLabel.className = 'asset-import-picker';
@@ -641,18 +672,24 @@ export function renderAssetImportWorkbench(
   picker.type = 'file';
   picker.multiple = true;
   picker.accept = '*/*';
-  const filesLocked = hooks.busy === true || (value.activeOperation !== null
-    && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(value.activeOperation.operation.status));
+  const filesLocked = hooks.busy === true || value.activeOperation !== null;
+  const terminalOperationVisible = operationIsTerminal(value.activeOperation);
+  const lockedDropMessage = terminalOperationVisible
+    ? '请先关闭当前结果，再开始下一次导入'
+    : '当前导入已开始，暂时不能加入文件';
+  const acceptedMessage = value.activeOperation === null && value.message?.startsWith('已加入 ')
+    ? value.message
+    : null;
   const idleDropMessage = filesLocked
-    ? '当前导入已开始，暂时不能加入文件'
-    : '支持一次加入多个本机文件';
+    ? lockedDropMessage
+    : acceptedMessage ?? '支持一次加入多个本机文件';
   const dropStatus = h('small', 'asset-import-drop-status', idleDropMessage);
   dropStatus.setAttribute('aria-live', 'polite');
   pickerLabel.dataset.dropState = filesLocked ? 'blocked' : 'idle';
   let dragDepth = 0;
   const setDropState = (state: 'idle' | 'ready' | 'blocked', message: string): void => {
-    pickerLabel.dataset.dropState = state;
-    dropStatus.textContent = message;
+    if (pickerLabel.dataset.dropState !== state) pickerLabel.dataset.dropState = state;
+    if (dropStatus.textContent !== message) dropStatus.textContent = message;
   };
   picker.disabled = filesLocked;
   picker.setAttribute('aria-label', '选择素材文件');
@@ -662,13 +699,13 @@ export function renderAssetImportWorkbench(
     picker.value = '';
   };
   pickerLabel.ondragenter = (event) => {
+    event.preventDefault();
     dragDepth += 1;
     const transfer = event.dataTransfer;
     const hasFiles = transfer !== null && assetDropHasFiles(transfer);
-    if (hasFiles) event.preventDefault();
     if (filesLocked) {
       if (transfer !== null) transfer.dropEffect = 'none';
-      setDropState('blocked', '当前导入已开始，暂时不能加入文件');
+      setDropState('blocked', lockedDropMessage);
       return;
     }
     if (!hasFiles) {
@@ -680,26 +717,29 @@ export function renderAssetImportWorkbench(
     setDropState('ready', '松开即可加入待导入列表');
   };
   pickerLabel.ondragover = (event) => {
+    event.preventDefault();
     const transfer = event.dataTransfer;
     const hasFiles = transfer !== null && assetDropHasFiles(transfer);
     if (!hasFiles || filesLocked) {
       if (transfer !== null) transfer.dropEffect = 'none';
+      setDropState('blocked', filesLocked
+        ? lockedDropMessage
+        : '这里只接受本机文件');
       return;
     }
-    event.preventDefault();
     transfer.dropEffect = 'copy';
+    setDropState('ready', '松开即可加入待导入列表');
   };
   pickerLabel.ondragleave = () => {
     dragDepth = Math.max(0, dragDepth - 1);
     if (dragDepth === 0) setDropState(filesLocked ? 'blocked' : 'idle', idleDropMessage);
   };
   pickerLabel.ondrop = (event) => {
+    event.preventDefault();
     const transfer = event.dataTransfer;
-    const hasFiles = transfer !== null && assetDropHasFiles(transfer);
-    if (hasFiles) event.preventDefault();
     dragDepth = 0;
     if (filesLocked) {
-      setDropState('blocked', '当前导入已开始，暂时不能加入文件');
+      setDropState('blocked', lockedDropMessage);
       return;
     }
     const dropped = transfer === null ? [] : assetDropFiles(transfer);
@@ -713,7 +753,7 @@ export function renderAssetImportWorkbench(
   pickerLabel.append(pickerTitle, dropStatus, picker);
   if (filesLocked) {
     pickerLabel.classList.add('disabled');
-    pickerLabel.title = '导入检查开始后不能增删文件；可以继续修改分类和名称。';
+    pickerLabel.title = lockedDropMessage;
   }
   files.appendChild(pickerLabel);
   const selectedRef = { value: selectedItemId };
@@ -733,7 +773,7 @@ export function renderAssetImportWorkbench(
 
   const settings = h('section');
   const fieldsLocked = hooks.busy === true || (value.activeOperation !== null
-    && !['STAGED', 'COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(value.activeOperation.operation.status));
+    && value.activeOperation.operation.status !== 'STAGED');
   renderSettings(settings, value.draftItems, value.activeOperation, workspace, hooks, fieldsLocked);
   const inspector = h('aside');
   const selected = value.draftItems.find((item) => item.itemId === selectedRef.value) ?? null;

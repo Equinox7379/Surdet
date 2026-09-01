@@ -707,6 +707,21 @@ async function run() {
     });
 
     await openImportWorkbench(page);
+    const rejectedDropProbe = await page.locator('.asset-import-picker').evaluate((element) => {
+      const transfer = new DataTransfer();
+      transfer.setData('text/uri-list', 'https://example.com/not-an-asset');
+      const dragOver = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer });
+      const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer });
+      element.dispatchEvent(dragOver);
+      element.dispatchEvent(drop);
+      return {
+        dragOverDefaultPrevented: dragOver.defaultPrevented,
+        dropDefaultPrevented: drop.defaultPrevented,
+      };
+    });
+    assert(rejectedDropProbe.dragOverDefaultPrevented && rejectedDropProbe.dropDefaultPrevented,
+      `rejected drop was not safely contained: ${JSON.stringify(rejectedDropProbe)}`);
+    assert((await workspaceSnapshot(page)).draftItems.length === 0, 'rejected drop changed the draft');
     const droppedFiles = [
       {
         name: path.basename(sourceImage),
@@ -754,6 +769,21 @@ async function run() {
     ));
     const blocked = await workspaceSnapshot(page);
     assert(blocked.operation.plan.issues.includes('IMPORT_TARGET_EXISTS'), 'collision did not report IMPORT_TARGET_EXISTS');
+    const lockedDropProbe = await page.locator('.asset-import-picker').evaluate((element) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['locked'], 'locked.txt', { type: 'text/plain' }));
+      const dragOver = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer });
+      const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer });
+      element.dispatchEvent(dragOver);
+      element.dispatchEvent(drop);
+      return {
+        dragOverDefaultPrevented: dragOver.defaultPrevented,
+        dropDefaultPrevented: drop.defaultPrevented,
+      };
+    });
+    assert(lockedDropProbe.dragOverDefaultPrevented && lockedDropProbe.dropDefaultPrevented,
+      `locked drop was not safely contained: ${JSON.stringify(lockedDropProbe)}`);
+    assert((await workspaceSnapshot(page)).draftItems.length === 2, 'locked drop changed the draft');
     assert(readFileIdentity(existingTarget).sha256 === existingTargetBefore.sha256, 'collision overwrote existing target');
     assert((await page.locator('.asset-import-primary').textContent())?.includes('重新检查'), 'blocked plan did not expose recheck action');
     pass('collision-blocked-without-overwrite', {
