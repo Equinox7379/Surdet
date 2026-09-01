@@ -1,76 +1,7 @@
-/**
- * E2 素材清单纯逻辑测试：三源汇总（目录/gallery/剧本）、使用统计、插入行构造。
- */
+/** 编辑器素材交互适配器测试：插入行构造与目录命名约定。 */
 import { describe, expect, it } from 'vitest';
-import { compileScene } from '@surdet/core';
-import type { CompiledScene } from '@surdet/core';
-import { buildAssetInventory, insertLineForAsset, parsePortraitFileName, kindOfDir } from '../src/assets.js';
+import { galleryUnlockEntries, insertLineForAsset, parsePortraitFileName, kindOfDir } from '../src/assets.js';
 import type { DirAsset } from '../src/assets.js';
-
-function scenesOf(entries: [string, string][]): Map<string, CompiledScene> {
-  const m = new Map<string, CompiledScene>();
-  for (const [id, src] of entries) m.set(id, compileScene(src, `${id}.gal`, id));
-  return m;
-}
-
-const gallery = {
-  cgs: [{ id: 'cg_hall', name: '大厅', src: 'castle_hall' }],
-  music: [{ id: 'tense_01', name: '紧张', src: 'tense_01' }],
-  texts: [{ id: 't_first', name: '初见', scene: 'ch01_01' }],
-};
-
-describe('buildAssetInventory（三源汇总）', () => {
-  it('剧本指令参数产出素材条目并记录引用场景', () => {
-    const scenes = scenesOf([
-      ['ch1', '@bg castle_hall\n@bgm tense_01\n@show lynn:armor despair\n凛：好。\n'],
-      ['ch2', '@bg night_field\n@voice lynn_01\n'],
-    ]);
-    const inv = buildAssetInventory({ dirAssets: [], gallery: null, scenes });
-    const byKey = new Map(inv.map((e) => [e.key, e]));
-    expect(byKey.get('castle_hall')?.kind).toBe('bg');
-    expect(byKey.get('castle_hall')?.usedBy).toEqual(['ch1']);
-    expect(byKey.get('lynn:armor')?.kind).toBe('portrait');
-    expect(byKey.get('lynn:armor')?.exprs).toEqual(['despair']);
-    expect(byKey.get('night_field')?.usedBy).toEqual(['ch2']);
-    expect(byKey.get('lynn_01')?.kind).toBe('voice');
-  });
-
-  it('gallery.json 产出 cg/music/text 条目；unlock_* 关联 src 资源视为间接使用', () => {
-    const scenes = scenesOf([
-      ['ch1', '@unlock_cg cg_hall\n@unlock_music tense_01\n@unlock_text t_first\n'],
-    ]);
-    const inv = buildAssetInventory({ dirAssets: [], gallery, scenes });
-    const byKey = new Map(inv.map((e) => [e.key, e]));
-    expect(byKey.get('cg_hall')?.kind).toBe('cg');
-    expect(byKey.get('cg_hall')?.assetSrc).toBe('castle_hall');
-    expect(byKey.get('cg_hall')?.usedBy).toEqual(['ch1']);
-    expect(byKey.get('t_first')?.kind).toBe('text');
-    expect(byKey.get('tense_01')?.usedBy).toEqual(['ch1']);
-  });
-
-  it('目录条目打底且来源优先级 dir > gallery > script；同 key 合并 usedBy', () => {
-    const dirAssets: DirAsset[] = [
-      { key: 'castle_hall', kind: 'bg', handle: null, isImage: true },
-      { key: 'lynn:armor', kind: 'portrait', expr: 'normal', handle: null, isImage: true },
-    ];
-    const scenes = scenesOf([
-      ['ch1', '@bg castle_hall\n@show lynn:armor despair\n'],
-      ['ch2', '@bg castle_hall\n'],
-    ]);
-    const inv = buildAssetInventory({ dirAssets, gallery: null, scenes });
-    const byKey = new Map(inv.map((e) => [e.key, e]));
-    expect(byKey.get('castle_hall')?.source).toBe('dir');
-    expect(byKey.get('castle_hall')?.usedBy.sort()).toEqual(['ch1', 'ch2']);
-    expect(byKey.get('lynn:armor')?.exprs?.sort()).toEqual(['despair', 'normal']);
-  });
-
-  it('0 引用条目也列出（usedBy 为空，UI 标灰提示声明未用）', () => {
-    const dirAssets: DirAsset[] = [{ key: 'unused_bg', kind: 'bg', handle: null, isImage: true }];
-    const inv = buildAssetInventory({ dirAssets, gallery: null, scenes: new Map() });
-    expect(inv).toHaveLength(1);
-    expect(inv[0]!.usedBy).toEqual([]);
-  });
-});
 
 describe('insertLineForAsset（插入辅助）', () => {
   const mk = (key: string, kind: DirAsset['kind'], exprs?: string[]) => ({ key, kind, source: 'script' as const, usedBy: [], exprs });
@@ -87,6 +18,22 @@ describe('insertLineForAsset（插入辅助）', () => {
   it('立绘用已知情报表情，缺省 normal', () => {
     expect(insertLineForAsset(mk('lynn:armor', 'portrait', ['despair', 'normal']))).toBe('@show lynn:armor despair');
     expect(insertLineForAsset(mk('lynn:uniform', 'portrait'))).toBe('@show lynn:uniform normal');
+  });
+});
+
+describe('galleryUnlockEntries（鉴赏条目插入能力）', () => {
+  it('保留 CG、鉴赏音乐和回想三类既有指令入口', () => {
+    const entries = galleryUnlockEntries({
+      cgs: [{ id: 'cg_hall', src: 'castle_hall' }],
+      music: [{ id: 'memory_theme', src: 'chapter_theme' }],
+      texts: [{ id: 'first_meeting', scene: 'ch01' }],
+    });
+
+    expect(entries.map((entry) => [entry.kind, entry.key, insertLineForAsset(entry)])).toEqual([
+      ['cg', 'cg_hall', '@unlock_cg cg_hall'],
+      ['music', 'memory_theme', '@unlock_music memory_theme'],
+      ['text', 'first_meeting', '@unlock_text first_meeting'],
+    ]);
   });
 });
 

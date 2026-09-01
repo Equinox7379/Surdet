@@ -73,17 +73,17 @@ afterEach(() => {
 });
 
 describe('editor shell navigation contract', () => {
-  it('defines the exact eight Chinese modes in stable order with unique panel ids', () => {
+  it('defines the exact nine Chinese modes in stable order with unique panel ids', () => {
     expect(EDITOR_MODES.map(({ id }) => id)).toEqual([
-      'editor', 'flow', 'timeline', 'config',
+      'editor', 'assets', 'flow', 'timeline', 'config',
       'preview', 'review', 'stats', 'audit',
     ]);
     expect(EDITOR_MODES.map(({ label }) => label)).toEqual([
-      '剧本', '流程', '时间轴', '配置',
+      '剧本', '素材', '流程', '时间轴', '配置',
       '预览', '审阅', '统计', '审计',
     ]);
     expect(EDITOR_MODES.map(({ panelId }) => panelId)).toEqual([
-      'editor-workspace', 'flow-view', 'timeline-view', 'config-view',
+      'editor-workspace', 'asset-center-view', 'flow-view', 'timeline-view', 'config-view',
       'preview-view', 'review-view', 'stats-view', 'audit-view',
     ]);
     expect(new Set(EDITOR_MODES.map(({ panelId }) => panelId)).size).toBe(EDITOR_MODES.length);

@@ -11,7 +11,7 @@
  *   panels/sidebar  场景列表　panels/editor 块编辑区　panels/issues 校验编排+结果　panels/right 变量/拓扑/引用
  */
 import { state, h, setStatus } from './state.js';
-import { buildObjectIndex } from '@surdet/authoring';
+import { buildObjectIndex, buildProjectAssetIntelligence, type ProjectAssetReference } from '@surdet/authoring';
 import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
 import {
   listenForPreviewTraceSelection,
@@ -39,6 +39,7 @@ import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from '.
 import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { bindAssetsPanelHooks } from './panels/assets.js';
+import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
@@ -80,6 +81,7 @@ function hasDirtyProjectFiles(): boolean {
 
 function currentObjectLabel(): string {
   if (state.reviewWorkspace !== null) return '审阅任务';
+  if (state.mainTab === 'assets') return '素材中心';
   if (state.mainTab === 'config') return '项目配置';
   if (state.mainTab === 'stats') return '项目统计';
   if (state.mainTab === 'audit') return '项目审计';
@@ -132,6 +134,7 @@ async function saveProject(): Promise<void> {
 
 function scheduleAuthoringIndexRebuild(): void {
   authoringRevision += 1;
+  state.assetIntelligenceState = 'loading';
   if (authoringRunning) {
     authoringQueued = true;
     return;
@@ -153,20 +156,35 @@ async function rebuildAuthoringIndex(): Promise<void> {
   try {
     const snapshot = await loadEditorProjectSnapshot();
     const index = buildObjectIndex(snapshot);
+    const assetFiles = state.dirAssets.flatMap((asset) => (
+      asset.sourcePath?.startsWith('content/assets/')
+        ? [{ path: asset.sourcePath, ...(asset.bytes === undefined ? {} : { bytes: asset.bytes }) }]
+        : []
+    ));
+    const assetIntelligence = buildProjectAssetIntelligence(snapshot, assetFiles, { gallery: state.configFiles.gallery });
     if (revision === authoringRevision) {
       const previousIndex = state.authoringIndex;
       state.selectedObjectRef = reconcileAuthoringSelection(state.selectedObjectRef, previousIndex, index);
       state.authoringIndex = index;
+      state.assetIntelligence = assetIntelligence;
+      state.assetIntelligenceState = 'ready';
+      if (state.assetCenterSelectedId && !assetIntelligence.items.some((item) => item.assetId === state.assetCenterSelectedId)) {
+        state.assetCenterSelectedId = null;
+      }
       refreshEditorObjectRefs();
       updateCausalPanel();
+      if (state.mainTab === 'assets') renderMainArea();
     } else {
       authoringQueued = true;
     }
   } catch {
     if (revision === authoringRevision) {
       state.authoringIndex = null;
+      state.assetIntelligence = null;
+      state.assetIntelligenceState = 'error';
       refreshEditorObjectRefs();
       updateCausalPanel();
+      if (state.mainTab === 'assets') renderMainArea();
     }
   } finally {
     authoringRunning = false;
@@ -180,6 +198,9 @@ async function rebuildAuthoringIndex(): Promise<void> {
 function resetAuthoringState(): void {
   state.selectedObjectRef = null;
   state.authoringIndex = null;
+  state.assetIntelligence = null;
+  state.assetIntelligenceState = 'loading';
+  state.assetCenterSelectedId = null;
   state.previewTrace = [];
   state.selectedTraceStep = null;
   scheduleAuthoringIndexRebuild();
@@ -226,6 +247,10 @@ bindSidebarHooks({
 });
 bindAssetsPanelHooks({
   onInserted: () => renderEditor(),
+  onOpenCenter: () => {
+    state.mainTab = 'assets';
+    renderMainArea();
+  },
 });
 bindRightNavigation({
   onJumpScene: (sceneKey) => jumpToScene(sceneKey),
@@ -251,8 +276,7 @@ bindTimelineHooks({
     renderMainArea();
   },
   onOpenAssets: () => {
-    state.mainTab = 'editor';
-    state.sidebarTab = 'assets';
+    state.mainTab = 'assets';
     renderMainArea();
   },
   onEdited: handleTimelineEdited,
@@ -275,6 +299,27 @@ function jumpToScene(sceneKey: string, line?: number): void {
     target?.scrollIntoView({ block: 'center' });
     target?.focus({ preventScroll: true });
   }
+}
+
+function openAssetReference(reference: ProjectAssetReference): void {
+  if (reference.sourceKind === 'scene') {
+    const sceneKey = [...state.scenes.entries()].find(([, scene]) => {
+      const path = scene.file.startsWith('content/scenario/') ? scene.file : `content/scenario/${scene.file}`;
+      return path === reference.sourcePath;
+    })?.[0];
+    if (sceneKey) {
+      jumpToScene(sceneKey, reference.line === undefined ? undefined : Math.max(0, reference.line - 1));
+      return;
+    }
+  }
+  if (reference.sourceKind === 'timeline' && jumpToTimelineObjectIfNeeded(reference.objectRef ?? null)) return;
+  if (reference.sourceKind === 'character' || reference.sourceKind === 'gallery') {
+    state.mainTab = 'config';
+    renderMainArea();
+    setStatus('已打开项目配置；当前版本暂时无法精确定位到该配置行', true, 4500);
+    return;
+  }
+  setStatus('这处引用暂时无法精确定位，素材信息仍可继续查看', false, 4500);
 }
 
 /** 时间轴/轨道/Cue 引用 → 切到时间轴页签并选中对应 cue；返回是否已处理。 */
@@ -376,6 +421,7 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
+  if (state.mainTab !== 'assets') disposeAssetCenterPreview();
   main.innerHTML = '';
   const navigation = renderModeNavigation(state.mainTab, (mode) => {
       state.previewTimelineId = null;
@@ -402,6 +448,14 @@ function renderMainArea(): void {
     renderEditor();
     renderIssues();
     renderRightExtras();
+  } else if (state.mainTab === 'assets') {
+    const assetsEl = h('section');
+    assetsEl.id = 'asset-center-view';
+    col.appendChild(assetsEl);
+    renderAssetCenter(assetsEl, {
+      onOpenProject: () => { void openProject(); },
+      onOpenReference: openAssetReference,
+    });
   } else if (state.mainTab === 'flow') {
     const flowEl = h('section');
     flowEl.id = 'flow-view';

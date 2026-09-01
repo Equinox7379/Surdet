@@ -1,5 +1,6 @@
 export type EditorModeId =
   | 'editor'
+  | 'assets'
   | 'flow'
   | 'timeline'
   | 'config'
@@ -16,6 +17,7 @@ export interface EditorModeDefinition {
 
 export const EDITOR_MODES: readonly EditorModeDefinition[] = [
   { id: 'editor', label: '剧本', panelId: 'editor-workspace' },
+  { id: 'assets', label: '素材', panelId: 'asset-center-view' },
   { id: 'flow', label: '流程', panelId: 'flow-view' },
   { id: 'timeline', label: '时间轴', panelId: 'timeline-view' },
   { id: 'config', label: '配置', panelId: 'config-view' },

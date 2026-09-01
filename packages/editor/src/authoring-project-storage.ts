@@ -63,8 +63,7 @@ export function createEditorProjectStorage(source = state): EditorProjectStorage
   const assetPaths = (): string[] => {
     const paths: string[] = [];
     for (const asset of source.dirAssets) {
-      if (asset.kind !== 'bg' && asset.kind !== 'portrait' && asset.kind !== 'avatar') continue;
-      const relative = asset.handle === null ? undefined : assetPathForHandle(asset.handle);
+      const relative = asset.sourcePath ?? (asset.handle === null ? undefined : assetPathForHandle(asset.handle));
       if (relative === undefined || !relative.startsWith('content/assets/')) continue;
       paths.push(relative);
     }

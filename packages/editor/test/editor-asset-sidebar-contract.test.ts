@@ -55,9 +55,15 @@ describe('editor scene and asset outline contract', () => {
     expect(assetsSource).toMatch(/setAttribute\(\s*['"]data-editor-region['"]\s*,\s*['"]asset-catalog['"]\s*\)/);
     expect(assetsSource).toMatch(/dataset\.assetKey\s*=\s*entry\.key/);
     expect(assetsSource).toMatch(/dataset\.assetKind\s*=\s*entry\.kind/);
-    expect(assetsSource).toMatch(/entry\.usedBy\.length\s*===\s*0\s*\?\s*['"]未引用['"]/);
+    expect(assetsSource).toMatch(/entry\.usedBy\.length\s*===\s*0/);
+    expect(assetsSource).toContain('未发现引用');
+    expect(assetsSource).toContain('鉴赏条目');
     expect(assetsSource).toMatch(/setAttribute\(\s*['"]data-action['"]\s*,\s*['"]insert-asset['"]\s*\)/);
     expect(assetsSource).toMatch(/setAttribute\(\s*['"]data-action['"]\s*,\s*['"]copy-asset-key['"]\s*\)/);
+    expect(assetsSource).toMatch(/galleryUnlockEntries/);
+    expect(assetsSource).toMatch(/kind:\s*'cg'|['"]cg['"]/);
+    expect(assetsSource).toMatch(/kind:\s*'music'|['"]music['"]/);
+    expect(assetsSource).toMatch(/kind:\s*'text'|['"]text['"]/);
   });
 
   it('keeps asset insertion on the existing history, dirty, and undo path', () => {
@@ -66,6 +72,12 @@ describe('editor scene and asset outline contract', () => {
     expect(assetsSource).toMatch(/setSceneText\(state\.current\s*,/);
     expect(assetsSource).toMatch(/onInsertedHook\(\)/);
     expect(assetsSource).toContain('（可撤销）');
+  });
+
+  it('rejects stale asynchronous hover previews before creating or appending preview content', () => {
+    expect((assetsSource.match(/previewEl\s*!==\s*box/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(assetsSource).toMatch(/previewEl\s*!==\s*box\s*\|\|\s*!box\.isConnected/);
+    expect(assetsSource).toMatch(/if\s*\(previewEl\s*!==\s*box[^)]*\)\s*return;[\s\S]*URL\.createObjectURL/);
   });
 
   it('uses whole-surface outline selection without colored or inset left rails', () => {
