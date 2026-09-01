@@ -16,18 +16,25 @@ import {
 } from './timeline-autosave-identity.js';
 import { timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
-import type { AssetKind } from './assets.js';
+import type { AssetKind, DirAsset } from './assets.js';
 
 let renderAll: () => void = () => {};
 let runValidate: () => void = () => {};
 let renderSidebar: () => void = () => {};
 /** 项目载入完成（崩溃保险恢复检查挂点；A1） */
 let onProjectLoaded: () => void = () => {};
+/** 换项目或进入演示项目前清理只属于当前目录的临时授权与预览资源。 */
+let onProjectClosing: () => void = () => {};
+/** 无论项目载入成功或失败都必须收束切换状态。 */
+let onProjectLoadSettled: (succeeded: boolean) => void = () => {};
 /** 保存全部完成（清除崩溃备份挂点；A1） */
 let onSaved: () => void = () => {};
 /** 保存尝试完成后的 UI 事实投影；不改变任何写盘或恢复语义。 */
 let onSaveSettled: (outcome: ProjectSaveOutcome) => void = () => {};
 let onTimelineDeleted: (timelineId: string) => void = () => {};
+/** 素材目录原子替换后，由装配层执行一次可等待的共享索引重建。 */
+let onAssetsRefreshed: (() => Promise<void>) | null = null;
+let assetRefreshRevision = 0;
 
 export interface ProjectSaveOutcome {
   hadPendingChanges: boolean;
@@ -42,17 +49,23 @@ export function bindProjectIoHooks(opts: {
   runValidate: () => void;
   renderSidebar: () => void;
   onProjectLoaded?: () => void;
+  onProjectClosing?: () => void;
+  onProjectLoadSettled?: (succeeded: boolean) => void;
   onSaved?: () => void;
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
   onTimelineDeleted?: (timelineId: string) => void;
+  onAssetsRefreshed?: () => Promise<void>;
 }): void {
   renderAll = opts.renderAll;
   runValidate = opts.runValidate;
   renderSidebar = opts.renderSidebar;
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
+  onProjectClosing = opts.onProjectClosing ?? (() => {});
+  onProjectLoadSettled = opts.onProjectLoadSettled ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
   onSaveSettled = opts.onSaveSettled ?? (() => {});
   onTimelineDeleted = opts.onTimelineDeleted ?? (() => {});
+  onAssetsRefreshed = opts.onAssetsRefreshed ?? null;
 }
 
 export async function openProject(): Promise<void> {
@@ -64,6 +77,22 @@ export async function openProject(): Promise<void> {
 export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' } = {},
+): Promise<void> {
+  onProjectClosing();
+  assetRefreshRevision += 1;
+  let succeeded = false;
+  try {
+    await loadProjectFromHandle(dir, options);
+    succeeded = true;
+  } finally {
+    state.projectLoading = false;
+    onProjectLoadSettled(succeeded);
+  }
+}
+
+async function loadProjectFromHandle(
+  dir: FileSystemDirectoryHandle,
+  options: { source?: 'normal' | 'review-fixture' },
 ): Promise<void> {
   state.projectLoading = true;
   if ((options.source ?? 'normal') === 'normal') {
@@ -120,15 +149,7 @@ export async function openProjectFromHandle(
     state.entryScene = '';
   }
   // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
-  try {
-    const contentDir = await dir.getDirectoryHandle('content');
-    const assetsDir = await contentDir.getDirectoryHandle('assets');
-    await walkAssetDir(assetsDir, 'content/assets');
-  } catch { /* 无素材目录 */ }
-  try {
-    const publicDir = await dir.getDirectoryHandle('public');
-    await walkAssetDir(publicDir, 'public');
-  } catch { /* 无 public 目录 */ }
+  state.dirAssets = await collectProjectAssets(dir, false);
   // 递归读取 content/scenario/**/*.gal
   try {
     const contentDir = await dir.getDirectoryHandle('content');
@@ -172,7 +193,11 @@ export function assetPathForHandle(handle: FileSystemFileHandle): string | undef
   return assetPathByHandle.get(handle);
 }
 
-async function walkAssetDir(root: FileSystemDirectoryHandle, basePath: string): Promise<void> {
+async function walkAssetDir(
+  root: FileSystemDirectoryHandle,
+  basePath: string,
+  target: DirAsset[],
+): Promise<void> {
   const walk = async (dh: FileSystemDirectoryHandle, kind: AssetKind | null, relative: string): Promise<void> => {
     const entries = (dh as unknown as {
       values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
@@ -197,14 +222,14 @@ async function walkAssetDir(root: FileSystemDirectoryHandle, basePath: string): 
         }
         if (assetKind === 'portrait') {
           const { key, expr } = parsePortraitFileName(ent.name);
-          state.dirAssets.push({
+          target.push({
             key, kind: assetKind, expr, handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
             ...(bytes === undefined ? {} : { bytes }),
             ...(lastModified === undefined ? {} : { lastModified }),
           });
         } else {
           const key = ent.name.replace(/\.[^.]+$/, '');
-          state.dirAssets.push({
+          target.push({
             key, kind: assetKind, handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
             ...(bytes === undefined ? {} : { bytes }),
             ...(lastModified === undefined ? {} : { lastModified }),
@@ -214,6 +239,84 @@ async function walkAssetDir(root: FileSystemDirectoryHandle, basePath: string): 
     }
   };
   await walk(root, null, '');
+}
+
+function isMissingDirectoryError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'name' in error
+    && (error as { name?: unknown }).name === 'NotFoundError';
+}
+
+async function optionalDirectory(
+  parent: FileSystemDirectoryHandle,
+  name: string,
+  strict: boolean,
+): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    return await parent.getDirectoryHandle(name);
+  } catch (error) {
+    if (!strict || isMissingDirectoryError(error)) return null;
+    throw error;
+  }
+}
+
+async function collectProjectAssets(
+  root: FileSystemDirectoryHandle,
+  strict: boolean,
+): Promise<DirAsset[]> {
+  const nextAssets: DirAsset[] = [];
+  const contentDir = await optionalDirectory(root, 'content', strict);
+  if (contentDir !== null) {
+    const assetsDir = await optionalDirectory(contentDir, 'assets', strict);
+    if (assetsDir !== null) {
+      try {
+        await walkAssetDir(assetsDir, 'content/assets', nextAssets);
+      } catch (error) {
+        if (strict) throw error;
+      }
+    }
+  }
+  const publicDir = await optionalDirectory(root, 'public', strict);
+  if (publicDir !== null) {
+    try {
+      await walkAssetDir(publicDir, 'public', nextAssets);
+    } catch (error) {
+      if (strict) throw error;
+    }
+  }
+  return nextAssets;
+}
+
+/**
+ * 重新读取素材物理事实并等待共享素材智能完成更新。
+ * 不经过完整项目打开流程；扫描失败或过期结果都不会留下半份清单。
+ */
+export async function refreshProjectAssetIntelligence(): Promise<void> {
+  const root = state.dirHandle;
+  if (root === null) throw new Error('当前项目未连接可写目录');
+  if (onAssetsRefreshed === null) throw new Error('素材智能刷新尚未接入编辑器装配层');
+  const revision = ++assetRefreshRevision;
+  const previousAssets = state.dirAssets;
+  const previousIntelligence = state.assetIntelligence;
+  const previousIntelligenceState = state.assetIntelligenceState;
+  const previousSelectedId = state.assetCenterSelectedId;
+  const nextAssets = await collectProjectAssets(root, true);
+  if (revision !== assetRefreshRevision || state.dirHandle !== root) return;
+  state.dirAssets = nextAssets;
+  state.assetIntelligenceState = 'loading';
+  try {
+    await onAssetsRefreshed();
+    if (revision !== assetRefreshRevision || state.dirHandle !== root) return;
+  } catch (error) {
+    if (revision === assetRefreshRevision && state.dirHandle === root) {
+      state.dirAssets = previousAssets;
+      state.assetIntelligence = previousIntelligence;
+      state.assetIntelligenceState = previousIntelligenceState;
+      state.assetCenterSelectedId = previousSelectedId;
+    }
+    throw error;
+  }
 }
 
 /** 配置文件写盘（E3 共用：创建可写流 → 写入 → 关闭） */
@@ -712,7 +815,11 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
-  state.projectLoading = true;
+  onProjectClosing();
+  assetRefreshRevision += 1;
+  let succeeded = false;
+  try {
+    state.projectLoading = true;
   state.reviewWorkspace = null;
   state.mainTab = 'editor';
   state.dirName = '（演示项目·未连接目录）';
@@ -764,5 +871,10 @@ export function loadDemoProject(): void {
   state.projectLoading = false;
   renderAll();
   runValidate();
-  onProjectLoaded(); // 崩溃保险：演示项目同样支持恢复（dirName 区分）
+    onProjectLoaded(); // 崩溃保险：演示项目同样支持恢复（dirName 区分）
+    succeeded = true;
+  } finally {
+    state.projectLoading = false;
+    onProjectLoadSettled(succeeded);
+  }
 }

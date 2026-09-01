@@ -7,6 +7,7 @@ import type { DirAsset } from './assets.js';
 import type { ObjectIndex, ProjectAssetIntelligence, ProjectAssetKind, RuntimeTraceEvent } from '@surdet/authoring';
 import type { ReviewWorkspaceState } from './review-workspace.js';
 import type { EditorModeId } from './shell/editor-modes.js';
+import type { AssetImportWorkspaceProjection } from './asset-import-workspace.js';
 
 export interface SceneEntry {
   /** 场景 ID（basename；引擎运行时语义） */
@@ -96,6 +97,8 @@ export const state = {
   assetCenterKind: 'all' as 'all' | ProjectAssetKind,
   assetCenterStatus: 'all' as 'all' | 'referenced' | 'unused' | 'missing' | 'duplicate' | 'invalid-name' | 'unsupported',
   assetCenterView: 'list' as 'list' | 'grid',
+  /** 仅含可展示投影与本页 File；授权令牌和浏览器会话永不进入全局 state。 */
+  assetImportWorkspace: null as AssetImportWorkspaceProjection | null,
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
   /** 当前已打开的 human review workspace；普通项目打开时必须清空。 */
