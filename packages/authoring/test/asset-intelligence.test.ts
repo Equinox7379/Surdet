@@ -89,6 +89,10 @@ async function fixtureSnapshot(): Promise<ProjectSnapshot> {
   return loadProjectSnapshot(storageFor(fixtureContents), hasher);
 }
 
+async function snapshotFor(contents: Record<string, string>): Promise<ProjectSnapshot> {
+  return loadProjectSnapshot(storageFor(contents), hasher);
+}
+
 function build(snapshot: ProjectSnapshot, facts: readonly ProjectAssetFileFact[]) {
   return buildProjectAssetIntelligence(snapshot, facts, { gallery: JSON.parse(galleryText) as unknown });
 }
@@ -162,6 +166,10 @@ describe('shared asset intelligence projection', () => {
         objectRef: 'character:lynn',
       }),
     ]);
+    expect(asset(result, 'content/assets/avatar/lynn.png').references[0]?.line).toBeUndefined();
+    expect(
+      asset(result, 'content/assets/bg/castle_hall.webp').references.find((reference) => reference.sourceKind === 'timeline')?.line,
+    ).toBeUndefined();
     expect(asset(result, 'content/assets/bgm/chapter_theme.mp3').references).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ sourceKind: 'scene', sourcePath: 'content/scenario/asset_probe.gal', line: 5 }),
@@ -177,6 +185,44 @@ describe('shared asset intelligence projection', () => {
     expect(asset(result, 'content/assets/video/opening.mp4').references).toEqual(
       expect.arrayContaining([expect.objectContaining({ sourceKind: 'scene', line: 9 })]),
     );
+  });
+
+  it('retains every gallery source when duplicate entry ids fan out from one unlock instruction', async () => {
+    const snapshot = await snapshotFor({
+      'game.config.json': JSON.stringify({ entryScene: 'gallery_probe', characters: {}, variables: {} }),
+      'content/scenario/gallery_probe.gal': [
+        '@scene gallery_probe',
+        '@label start',
+        '@unlock_cg shared_memory',
+        '@end',
+      ].join('\n'),
+    });
+    const gallery = {
+      cgs: [
+        { id: 'shared_memory', name: '回忆一', src: 'memory_one' },
+        { id: 'shared_memory', name: '回忆二', src: 'memory_two' },
+      ],
+      music: [],
+      texts: [],
+    };
+    const result = buildProjectAssetIntelligence(snapshot, [
+      { path: 'content/assets/bg/memory_one.webp', bytes: 11 },
+      { path: 'content/assets/bg/memory_two.webp', bytes: 12 },
+    ], { gallery });
+
+    const first = asset(result, 'content/assets/bg/memory_one.webp');
+    const second = asset(result, 'content/assets/bg/memory_two.webp');
+    for (const item of [first, second]) {
+      expect(item.references).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceKind: 'gallery', objectRef: 'gallery:cgs:shared_memory' }),
+        expect.objectContaining({ sourceKind: 'scene', line: 3 }),
+      ]));
+    }
+    const galleryReferenceIds = [first, second]
+      .flatMap((item) => item.references)
+      .filter((reference) => reference.sourceKind === 'gallery')
+      .map((reference) => reference.referenceId);
+    expect(new Set(galleryReferenceIds).size).toBe(2);
   });
 
   it('keeps missing references synthetic and keeps same-key physical files visible', async () => {
@@ -216,6 +262,7 @@ describe('shared asset intelligence projection', () => {
       fileCount: fixtureFacts.length,
       measuredFileCount: 12,
       measuredBytes: 1278,
+      totalBytes: 1278,
       missingCount: 1,
       duplicateCount: 1,
       unsupportedCount: 1,
@@ -223,12 +270,72 @@ describe('shared asset intelligence projection', () => {
     });
     expect(result.summary.referencedCount).toBeGreaterThan(0);
     expect(result.summary.unusedCount).toBeGreaterThan(0);
-    expect(result.summary.byKind).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'background', fileCount: 4 }),
-      expect.objectContaining({ kind: 'portrait', fileCount: 2 }),
-      expect.objectContaining({ kind: 'font', fileCount: 1 }),
-      expect.objectContaining({ kind: 'other', fileCount: 1 }),
-    ]));
+    expect(result.summary.byKind).toMatchObject({
+      background: { files: 4 },
+      portrait: { files: 2 },
+      font: { files: 1 },
+      other: { files: 1 },
+    });
+  });
+
+  it('normalizes quoted runtime arguments and defaults omitted portrait expressions to normal', async () => {
+    const snapshot = await snapshotFor({
+      'game.config.json': JSON.stringify({ entryScene: 'quoted', characters: {}, variables: {} }),
+      'content/scenario/quoted.gal': [
+        '@scene quoted',
+        '@bg "castle_hall"',
+        '@show "lynn:uniform"',
+        '@bgm "chapter_theme"',
+        '@ambience "rain"',
+        '@se "click"',
+        '@voice "greeting"',
+        '@video "opening"',
+        '@end',
+      ].join('\n'),
+    });
+    const facts: ProjectAssetFileFact[] = [
+      { path: 'content/assets/bg/castle_hall.webp', bytes: 1 },
+      { path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 1 },
+      { path: 'content/assets/bgm/chapter_theme.mp3', bytes: 1 },
+      { path: 'content/assets/ambience/rain.ogg', bytes: 1 },
+      { path: 'content/assets/se/click.wav', bytes: 1 },
+      { path: 'content/assets/voice/greeting.wav', bytes: 1 },
+      { path: 'content/assets/video/opening.mp4', bytes: 1 },
+    ];
+    const result = buildProjectAssetIntelligence(snapshot, facts);
+
+    expect(result.items.filter((item) => !item.physical)).toEqual([]);
+    expect(result.summary.referencedCount).toBe(facts.length);
+    expect(asset(result, 'content/assets/portrait/lynn_uniform_normal.png')).toMatchObject({
+      key: 'lynn:uniform',
+      variant: 'normal',
+    });
+  });
+
+  it('treats quoted ambience off as the runtime stop command instead of a missing asset', async () => {
+    const snapshot = await snapshotFor({
+      'game.config.json': JSON.stringify({ entryScene: 'silence', characters: {}, variables: {} }),
+      'content/scenario/silence.gal': [
+        '@scene silence',
+        '@ambience "off"',
+        '@end',
+      ].join('\n'),
+    });
+    const result = buildProjectAssetIntelligence(snapshot, []);
+
+    expect(result.items).toEqual([]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('deduplicates repeated physical path facts before identities, issues, and byte totals are built', async () => {
+    const snapshot = await fixtureSnapshot();
+    const repeated = { path: 'content/assets/bg/only.webp', bytes: 23 } satisfies ProjectAssetFileFact;
+    const result = buildProjectAssetIntelligence(snapshot, [repeated, repeated]);
+
+    expect(result.items.filter((item) => item.assetId === 'file:content/assets/bg/only.webp')).toHaveLength(1);
+    expect(result.summary.fileCount).toBe(1);
+    expect(result.summary.totalBytes).toBe(23);
+    expect(new Set(result.issues.map((issue) => issue.issueId)).size).toBe(result.issues.length);
   });
 
   it('is byte-stable when physical facts arrive in reverse enumeration order', async () => {

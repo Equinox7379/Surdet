@@ -274,22 +274,34 @@ const projectAssetIssueSchema = strictObject({
   referenceIds: arrayOf(stringSchema),
 }, ['issueId', 'code', 'severity', 'message', 'assetIds', 'referenceIds']);
 const projectAssetKindSummarySchema = strictObject({
-  kind: projectAssetKindSchema,
-  fileCount: integerSchema,
-  measuredFileCount: integerSchema,
-  measuredBytes: integerSchema,
-}, ['kind', 'fileCount', 'measuredFileCount', 'measuredBytes']);
+  files: integerSchema,
+  measuredFiles: integerSchema,
+  bytes: integerSchema,
+}, ['files', 'measuredFiles']);
+const projectAssetByKindSchema = strictObject({
+  background: projectAssetKindSummarySchema,
+  portrait: projectAssetKindSummarySchema,
+  avatar: projectAssetKindSummarySchema,
+  music: projectAssetKindSummarySchema,
+  ambience: projectAssetKindSummarySchema,
+  'sound-effect': projectAssetKindSummarySchema,
+  voice: projectAssetKindSummarySchema,
+  video: projectAssetKindSummarySchema,
+  font: projectAssetKindSummarySchema,
+  other: projectAssetKindSummarySchema,
+}, ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other']);
 const projectAssetSummarySchema = strictObject({
   fileCount: integerSchema,
   measuredFileCount: integerSchema,
   measuredBytes: integerSchema,
+  totalBytes: integerSchema,
   referencedCount: integerSchema,
   unusedCount: integerSchema,
   missingCount: integerSchema,
   duplicateCount: integerSchema,
   unsupportedCount: integerSchema,
   invalidNameCount: integerSchema,
-  byKind: arrayOf(projectAssetKindSummarySchema),
+  byKind: projectAssetByKindSchema,
 }, [
   'fileCount', 'measuredFileCount', 'measuredBytes', 'referencedCount', 'unusedCount', 'missingCount',
   'duplicateCount', 'unsupportedCount', 'invalidNameCount', 'byKind',
@@ -319,9 +331,9 @@ const emptyAssetIntelligenceExample = {
     duplicateCount: 0,
     unsupportedCount: 0,
     invalidNameCount: 0,
-    byKind: [
+    byKind: Object.fromEntries([
       'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other',
-    ].map((kind) => ({ kind, fileCount: 0, measuredFileCount: 0, measuredBytes: 0 })),
+    ].map((kind) => [kind, { files: 0, measuredFiles: 0 }])),
   },
   issues: [],
 };
@@ -926,7 +938,7 @@ const mutateRepair = ['inspect current object fingerprints, repair the request, 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', composable: false, preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
   'project.inspect': { title: 'Inspect project', purpose: 'Read the canonical project object and revision view.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
-  'project.assets': { title: 'Inspect project assets', purpose: 'Read the shared background, portrait, and avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
+  'project.assets': { title: 'Inspect project assets', purpose: 'Read shared physical asset metadata, references, health facts, and the compatible background/portrait/avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
   'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
