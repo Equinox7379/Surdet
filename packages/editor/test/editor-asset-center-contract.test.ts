@@ -180,8 +180,11 @@ describe('editor Asset Center contract', () => {
     ]) expect(relocationSource).toContain(copy);
     expect(centerSource).toMatch(/renderRelocation[\s\S]*asset-center-references/);
     expect(centerSource).toMatch(/background[\s\S]*portrait[\s\S]*avatar/);
-    expect(mainSource).toMatch(/relocationPlan[\s\S]*relocationCommit[\s\S]*reloadCurrentProjectFromHandle/);
-    expect(mainSource).toMatch(/relocationResume[\s\S]*relocationUndo/);
+    for (const marker of ['relocationPlan', 'relocationCommit', 'relocationResume', 'relocationUndo', 'reloadCurrentProjectFromHandle']) {
+      expect(mainSource).toContain(marker);
+    }
+    expect(mainSource).toMatch(/reconcileAssetRelocationMutation[\s\S]*relocationResume/);
+    expect(mainSource).toMatch(/undoAssetRelocation[\s\S]*releaseOnError:\s*false/);
     expect(centerSource).toMatch(/TERMINAL_RELOCATION_STATUSES[\s\S]*ROLLED_BACK[\s\S]*CANCELLED/);
     expect(centerSource).toMatch(/renderRelocationStatus[\s\S]*继续恢复[\s\S]*安全回退/);
     expect(centerSource).toMatch(/renderDetachedRelocation[\s\S]*renderRelocationStatus/);

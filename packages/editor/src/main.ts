@@ -32,6 +32,7 @@ import {
   bindProjectIoHooks,
   openProject,
   reloadCurrentProjectFromHandle,
+  waitForProjectWritesToSettle,
   refreshProjectAssetIntelligence,
   saveAll,
   exportCurrent,
@@ -58,7 +59,11 @@ import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/s
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
-import { AssetImportClientError, createAssetImportAuthorityClient } from './asset-import-client.js';
+import {
+  AssetImportClientError,
+  createAssetImportAuthorityClient,
+  type AssetRelocationDetail,
+} from './asset-import-client.js';
 import { createAssetImportWorkspace } from './asset-import-workspace.js';
 import { createAssetRelocationWorkspace } from './asset-relocation-workspace.js';
 import {
@@ -555,6 +560,14 @@ async function checkAssetRelocationImpact(): Promise<void> {
     renderMainArea();
     return;
   }
+  try {
+    await waitForProjectWritesToSettle();
+  } catch (error) {
+    assetRelocationWorkspace.setMessage(error instanceof Error ? error.message : String(error));
+    renderMainArea();
+    return;
+  }
+  if (assetRelocationWorkspace.snapshot().source?.sourcePath !== snapshot.source.sourcePath) return;
   setAssetRelocationWriteLock(true);
   await runAssetRelocationAction('正在检查引用影响…', async (context) => {
     let planned: Awaited<ReturnType<typeof context.client.relocationPlan>>;
@@ -627,23 +640,62 @@ async function cancelRemoteAssetRelocation(keepEditor: boolean): Promise<void> {
   }, { releaseOnError: false });
 }
 
+async function projectAssetRelocationDetail(
+  context: AssetRelocationActionContext,
+  detail: AssetRelocationDetail,
+): Promise<boolean> {
+  requireCurrentAssetRelocationAction(context);
+  assetRelocationWorkspace.setDetail(detail);
+  const status = detail.operation.status;
+  if (['RECOVERY_REQUIRED', 'PUBLISHING', 'ROLLING_BACK', 'UNDOING'].includes(status)) {
+    setAssetRelocationWriteLock(true);
+    assetRelocationWorkspace.setMessage('素材整理尚未完整结束，请继续恢复或安全回退。');
+    return true;
+  }
+  if (!['COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED'].includes(status)) return false;
+  const selectedPath = status === 'COMMITTED' ? detail.request.targetPath : detail.request.sourcePath;
+  await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${selectedPath}` });
+  requireCurrentAssetRelocationAction(context);
+  setAssetRelocationWriteLock(false);
+  const messages: Record<string, string> = {
+    COMMITTED: '整理完成，项目已经重新载入。',
+    UNDONE: '已撤销本次整理，项目已经重新载入。',
+    ROLLED_BACK: '素材整理已安全回退，项目已经重新载入。',
+    CANCELLED: '本次素材整理已取消。',
+  };
+  assetRelocationWorkspace.setMessage(messages[status] ?? '素材整理状态已更新。');
+  return true;
+}
+
+async function reconcileAssetRelocationMutation(
+  context: AssetRelocationActionContext,
+  operationId: string,
+): Promise<boolean> {
+  try {
+    const refreshed = await context.client.relocationResume(operationId);
+    requireCurrentAssetRelocationAction(context);
+    return await projectAssetRelocationDetail(context, refreshed.detail);
+  } catch {
+    return false;
+  }
+}
+
 async function commitAssetRelocation(): Promise<void> {
   const detail = assetRelocationWorkspace.snapshot().detail;
   if (detail === null || detail.plan.status !== 'ready') return;
   await runAssetRelocationAction('正在移动素材并更新引用…', async (context) => {
     await context.client.relocationResume(detail.operation.operationId);
     requireCurrentAssetRelocationAction(context);
-    const committed = await context.client.relocationCommit(
-      detail.operation.operationId,
-      detail.plan.planFingerprint,
-    );
-    requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setDetail(committed);
-    const targetPath = committed.receipt?.targetPath ?? committed.request.targetPath;
-    await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${targetPath}` });
-    requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setMessage('整理完成，项目已经重新载入。');
-    setAssetRelocationWriteLock(false);
+    try {
+      const committed = await context.client.relocationCommit(
+        detail.operation.operationId,
+        detail.plan.planFingerprint,
+      );
+      await projectAssetRelocationDetail(context, committed);
+    } catch (error) {
+      if (await reconcileAssetRelocationMutation(context, detail.operation.operationId)) return;
+      throw error;
+    }
   });
 }
 
@@ -654,17 +706,17 @@ async function undoAssetRelocation(): Promise<void> {
   await runAssetRelocationAction('正在撤销本次素材整理…', async (context) => {
     await context.client.relocationResume(detail.operation.operationId);
     requireCurrentAssetRelocationAction(context);
-    const undone = await context.client.relocationUndo(detail.operation.operationId, {
-      receiptId: detail.receipt!.receiptId,
-      receiptFingerprint: detail.receipt!.receiptFingerprint,
-    });
-    requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setDetail(undone);
-    await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${undone.request.sourcePath}` });
-    requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setMessage('已撤销本次整理，项目已经重新载入。');
-    setAssetRelocationWriteLock(false);
-  }, { releaseOnError: true });
+    try {
+      const undone = await context.client.relocationUndo(detail.operation.operationId, {
+        receiptId: detail.receipt!.receiptId,
+        receiptFingerprint: detail.receipt!.receiptFingerprint,
+      });
+      await projectAssetRelocationDetail(context, undone);
+    } catch (error) {
+      if (await reconcileAssetRelocationMutation(context, detail.operation.operationId)) return;
+      throw error;
+    }
+  }, { releaseOnError: false });
 }
 
 async function recoverAssetRelocation(action: 'resume' | 'rollback'): Promise<void> {
@@ -675,17 +727,12 @@ async function recoverAssetRelocation(action: 'resume' | 'rollback'): Promise<vo
     const resumed = await context.client.relocationResume(detail.operation.operationId);
     requireCurrentAssetRelocationAction(context);
     assetRelocationWorkspace.setDetail(resumed.detail);
-    const recovered = await context.client.relocationRecover(detail.operation.operationId, { action });
-    requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setDetail(recovered);
-    if (['COMMITTED', 'ROLLED_BACK', 'UNDONE', 'CANCELLED'].includes(recovered.operation.status)) {
-      const selectedPath = recovered.operation.status === 'COMMITTED'
-        ? recovered.request.targetPath
-        : recovered.request.sourcePath;
-      await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${selectedPath}` });
-      requireCurrentAssetRelocationAction(context);
-      setAssetRelocationWriteLock(false);
-      assetRelocationWorkspace.setMessage(action === 'resume' ? '素材整理已经恢复完成。' : '素材整理已经安全回退。');
+    try {
+      const recovered = await context.client.relocationRecover(detail.operation.operationId, { action });
+      await projectAssetRelocationDetail(context, recovered);
+    } catch (error) {
+      if (await reconcileAssetRelocationMutation(context, detail.operation.operationId)) return;
+      throw error;
     }
   });
 }

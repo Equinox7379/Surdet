@@ -8,6 +8,7 @@ import {
   refreshProjectAssetIntelligence,
   repairTimelineAutosaveConflict,
   restoreTimelineAutosaveEntries,
+  runProjectWriteOperation,
   saveAll,
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
@@ -781,6 +782,32 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.mainTab).toBe('editor');
     expect((state as any).reviewWorkspace).toBeNull();
     expect(state.assetCenterFolder).toBe('all');
+  });
+
+  it('项目切换等待已开始的写操作收束后再清理旧项目', async () => {
+    const root = directoryHandle('next-project', {
+      content: directoryHandle('content', { scenario: directoryHandle('scenario') }),
+    }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
+    const onProjectClosing = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectClosing });
+    let releaseWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      void runProjectWriteOperation(async () => {
+        resolve();
+        await new Promise<void>((release) => { releaseWrite = release; });
+      });
+    });
+    await writeStarted;
+
+    const switching = openProjectFromHandle(root);
+    await Promise.resolve();
+    expect(onProjectClosing).not.toHaveBeenCalled();
+    expect(state.dirName).not.toBe('next-project');
+
+    releaseWrite();
+    await switching;
+    expect(onProjectClosing).toHaveBeenCalledTimes(1);
+    expect(state.dirName).toBe('next-project');
   });
 
   it('切换到演示项目时清除上一项目的素材目录筛选', () => {

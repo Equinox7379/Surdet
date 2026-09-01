@@ -35,6 +35,51 @@ let onTimelineDeleted: (timelineId: string) => void = () => {};
 /** 素材目录原子替换后，由装配层执行一次可等待的共享索引重建。 */
 let onAssetsRefreshed: (() => Promise<void>) | null = null;
 let assetRefreshRevision = 0;
+let activeProjectWriteOperations = 0;
+let projectTransitionPending = false;
+const projectWriteIdleWaiters = new Set<() => void>();
+
+function notifyProjectWriteIdle(): void {
+  if (activeProjectWriteOperations !== 0) return;
+  for (const resolve of projectWriteIdleWaiters) resolve();
+  projectWriteIdleWaiters.clear();
+}
+
+/**
+ * 共享项目写侧门：项目切换会等待已开始的保存完整收束；新的保存不能插入切换过程。
+ * 素材整理在取得独占锁前也等待这批写入排空，避免半途拒绝事务回滚。
+ */
+export async function runProjectWriteOperation<T>(operation: () => Promise<T>): Promise<T> {
+  assertProjectWriteUnlocked();
+  if (projectTransitionPending) throw new Error('项目正在切换，请稍后再保存');
+  activeProjectWriteOperations += 1;
+  try {
+    return await operation();
+  } finally {
+    activeProjectWriteOperations -= 1;
+    notifyProjectWriteIdle();
+  }
+}
+
+export async function waitForProjectWritesToSettle(): Promise<void> {
+  if (projectTransitionPending) throw new Error('项目正在切换，请稍后再整理素材');
+  if (activeProjectWriteOperations > 0) {
+    await new Promise<void>((resolve) => { projectWriteIdleWaiters.add(resolve); });
+  }
+  if (projectTransitionPending) throw new Error('项目正在切换，请稍后再整理素材');
+}
+
+async function beginProjectTransition(): Promise<void> {
+  if (projectTransitionPending) throw new Error('项目正在切换');
+  projectTransitionPending = true;
+  if (activeProjectWriteOperations > 0) {
+    await new Promise<void>((resolve) => { projectWriteIdleWaiters.add(resolve); });
+  }
+}
+
+function endProjectTransition(): void {
+  projectTransitionPending = false;
+}
 
 export interface ProjectSaveOutcome {
   hadPendingChanges: boolean;
@@ -78,15 +123,20 @@ export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' } = {},
 ): Promise<void> {
-  onProjectClosing();
-  assetRefreshRevision += 1;
+  await beginProjectTransition();
   let succeeded = false;
   try {
+    onProjectClosing();
+    assetRefreshRevision += 1;
     await loadProjectFromHandle(dir, options);
     succeeded = true;
   } finally {
     state.projectLoading = false;
-    onProjectLoadSettled(succeeded);
+    try {
+      onProjectLoadSettled(succeeded);
+    } finally {
+      endProjectTransition();
+    }
   }
 }
 
@@ -98,8 +148,12 @@ export async function reloadCurrentProjectFromHandle(options: {
   mainTab?: typeof state.mainTab;
   selectedAssetId?: string | null;
 } = {}): Promise<void> {
+  await beginProjectTransition();
   const dir = state.dirHandle;
-  if (dir === null) throw new Error('当前项目未连接可写目录');
+  if (dir === null) {
+    endProjectTransition();
+    throw new Error('当前项目未连接可写目录');
+  }
   assetRefreshRevision += 1;
   let succeeded = false;
   try {
@@ -110,7 +164,11 @@ export async function reloadCurrentProjectFromHandle(options: {
     succeeded = true;
   } finally {
     state.projectLoading = false;
-    onProjectLoadSettled(succeeded);
+    try {
+      onProjectLoadSettled(succeeded);
+    } finally {
+      endProjectTransition();
+    }
   }
 }
 
@@ -670,7 +728,7 @@ export function repairTimelineAutosaveConflict(
   return { ok: true, timelineId: newId };
 }
 
-export async function saveAll(): Promise<void> {
+async function saveAllUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
   if (!state.fsSupported) {
     const timeline = state.currentTimeline
@@ -822,6 +880,10 @@ export async function saveAll(): Promise<void> {
   onSaveSettled({ hadPendingChanges, saved, removed, failures, remainingDirty });
 }
 
+export async function saveAll(): Promise<void> {
+  await runProjectWriteOperation(saveAllUnlocked);
+}
+
 export function exportScene(id: string, text: string): void {
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
@@ -848,10 +910,14 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
-  onProjectClosing();
-  assetRefreshRevision += 1;
+  if (projectTransitionPending || activeProjectWriteOperations > 0) {
+    throw new Error('当前项目仍在保存，请稍后再切换');
+  }
+  projectTransitionPending = true;
   let succeeded = false;
   try {
+    onProjectClosing();
+    assetRefreshRevision += 1;
     state.projectLoading = true;
   state.reviewWorkspace = null;
   state.mainTab = 'editor';
@@ -909,6 +975,10 @@ export function loadDemoProject(): void {
     succeeded = true;
   } finally {
     state.projectLoading = false;
-    onProjectLoadSettled(succeeded);
+    try {
+      onProjectLoadSettled(succeeded);
+    } finally {
+      endProjectTransition();
+    }
   }
 }
