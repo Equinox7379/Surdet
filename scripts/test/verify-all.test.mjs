@@ -5,6 +5,8 @@ import { runVerification, verificationSteps } from '../verify-all.mjs';
 
 const cliPackage = JSON.parse(fs.readFileSync(new URL('../../packages/cli/package.json', import.meta.url), 'utf8'));
 const rootPackage = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+const starterPackage = JSON.parse(fs.readFileSync(new URL('../../examples/starter/package.json', import.meta.url), 'utf8'));
+const formalPackage = JSON.parse(fs.readFileSync(new URL('../../examples/zero-after-midnight/package.json', import.meta.url), 'utf8'));
 const ciWorkflow = fs.readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
 
 test('verify-all has unique step ids and command signatures', () => {
@@ -54,4 +56,12 @@ test('CI provisions the supported Node runtime, repository history, and Chromium
   assert.match(ciWorkflow, /fetch-depth:\s*0/);
   assert.match(ciWorkflow, /node-version:\s*24/);
   assert.match(ciWorkflow, /npx playwright install --with-deps chromium/);
+});
+
+test('example workspace checks invoke the built CLI without relying on a global binary', () => {
+  const cliEntrypoint = 'node ../../packages/cli/dist/index.js';
+  assert.equal(starterPackage.scripts.lint, `${cliEntrypoint} lint`);
+  assert.equal(starterPackage.scripts.simulate, `${cliEntrypoint} simulate --assume battleWon=true`);
+  assert.equal(formalPackage.scripts.lint, `${cliEntrypoint} lint .`);
+  assert.equal(formalPackage.scripts.simulate, `${cliEntrypoint} simulate . --max-paths 500 --max-steps 20000`);
 });

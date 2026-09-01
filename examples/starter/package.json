@@ -9,8 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "lint": "surdet lint",
-    "simulate": "surdet simulate --assume battleWon=true",
+    "lint": "node ../../packages/cli/dist/index.js lint",
+    "simulate": "node ../../packages/cli/dist/index.js simulate --assume battleWon=true",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
