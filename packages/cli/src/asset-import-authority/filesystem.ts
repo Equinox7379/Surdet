@@ -95,6 +95,55 @@ async function openRealDirectory(input: string, field: string): Promise<{ realPa
   return { realPath, identity: statIdentity(realStat) };
 }
 
+async function prospectiveRealDirectoryPath(input: string, field: string): Promise<string> {
+  let current = path.resolve(input);
+  const missingSegments: string[] = [];
+  while (true) {
+    try {
+      const stat = await fs.lstat(current);
+      if (!stat.isDirectory()) {
+        throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', `${field} 的上级路径不是目录`, { field });
+      }
+      return path.join(await fs.realpath(current), ...missingSegments);
+    } catch (error) {
+      if (error instanceof AssetImportAuthorityError) throw error;
+      if (errorCode(error) !== 'ENOENT') {
+        throw new AssetImportAuthorityError('INVALID_REQUEST', `${field} 无法解析`, {
+          field,
+          cause: errorCode(error),
+        });
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw new AssetImportAuthorityError('INVALID_REQUEST', `${field} 无法解析`, { field });
+      }
+      missingSegments.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function comparablePath(input: string): string {
+  const resolved = path.resolve(input);
+  return process.platform === 'win32' ? portableFold(resolved) : resolved;
+}
+
+function containsPath(parent: string, candidate: string): boolean {
+  const relative = path.relative(comparablePath(parent), comparablePath(candidate));
+  return relative === ''
+    || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+}
+
+function assertDisjointRoots(projectRoot: string, dataRoot: string): void {
+  if (containsPath(projectRoot, dataRoot) || containsPath(dataRoot, projectRoot)) {
+    throw new AssetImportAuthorityError(
+      'IMPORT_TARGET_UNSAFE',
+      'dataRoot 必须与 projectRoot 完全分离',
+      { field: 'dataRoot' },
+    );
+  }
+}
+
 function canonicalSha256(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -325,8 +374,10 @@ export async function openAssetImportAuthorityPaths(options: {
   }
 
   const project = await openRealDirectory(options.projectRoot, 'projectRoot');
+  assertDisjointRoots(project.realPath, await prospectiveRealDirectoryPath(requestedDataRoot, 'dataRoot'));
   await fs.mkdir(requestedDataRoot, { recursive: true, mode: 0o700 });
   const data = await openRealDirectory(requestedDataRoot, 'dataRoot');
+  assertDisjointRoots(project.realPath, data.realPath);
   const dataIdentity: StoredRootIdentity = {
     schemaVersion: 1,
     authority: 'asset-import-authority',

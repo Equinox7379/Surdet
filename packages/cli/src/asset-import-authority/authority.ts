@@ -308,11 +308,20 @@ export class ProjectAssetImportAuthority {
   }
 
   private async transition(journal: AssetImportJournal, status: AssetImportOperationStatus): Promise<AssetImportJournal> {
-    if (journal.status === status) return journal;
+    if (journal.status === status) {
+      if (['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE'].includes(status)) {
+        this.operationTokens.delete(journal.operationId);
+      }
+      return journal;
+    }
     if (!LEGAL_TRANSITIONS[journal.status].includes(status)) {
       throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', `导入状态不能从 ${journal.status} 变为 ${status}`);
     }
-    return this.store.writeJournal(journal, { ...journal, status, updatedAt: now() });
+    const written = await this.store.writeJournal(journal, { ...journal, status, updatedAt: now() });
+    if (['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE'].includes(status)) {
+      this.operationTokens.delete(journal.operationId);
+    }
+    return written;
   }
 
   private async enterRecovery(operationId: string, message: string): Promise<never> {
@@ -636,6 +645,16 @@ export class ProjectAssetImportAuthority {
     } finally {
       this.activeUploads -= 1;
     }
+  }
+
+  async expectedUploadBytes(operationIdInput: string, itemIdInput: string): Promise<number> {
+    await this.assertLeaseHeld();
+    const operationId = requireUuid(operationIdInput, 'operationId');
+    const itemId = requireUuid(itemIdInput, 'itemId');
+    const manifest = await this.readVerifiedManifest(operationId);
+    const item = manifest.items.find((entry) => entry.itemId === itemId);
+    if (item === undefined) throw new AssetImportAuthorityError('INVALID_REQUEST', 'itemId 不属于该导入操作');
+    return item.declaredBytes;
   }
 
   private async targetFacts(targets: ProjectAssetImportTargetRequest[]): Promise<ProjectAssetImportTargetFact[]> {
@@ -2092,5 +2111,22 @@ export class ProjectAssetImportAuthority {
     if (actual.length !== expectedBytes.length || !crypto.timingSafeEqual(actual, expectedBytes)) {
       throw new AssetImportAuthorityError('IMPORT_AUTH_REQUIRED', '导入操作授权无效');
     }
+  }
+
+  async issueOperationToken(operationIdInput: string): Promise<string> {
+    await this.assertLeaseHeld();
+    const operationId = requireUuid(operationIdInput, 'operationId');
+    const operation = await this.store.readOperation(operationId);
+    if (['CANCELLED', 'ROLLED_BACK', 'UNDONE'].includes(operation.journal.status)) {
+      throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '该导入操作不再需要操作授权');
+    }
+    if (operation.journal.status === 'COMMITTED') {
+      const receipt = await this.store.readReceipt(operationId);
+      if (receipt === null) return this.enterRecovery(operationId, 'COMMITTED 操作缺少成功回执');
+      await this.verifyReceipt(receipt);
+    }
+    const operationToken = crypto.randomBytes(32).toString('hex');
+    this.operationTokens.set(operationId, operationToken);
+    return operationToken;
   }
 }

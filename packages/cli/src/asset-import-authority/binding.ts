@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { AssetImportAuthorityPaths } from './types.js';
+import { assertAssetImportProjectRootIdentity } from './filesystem.js';
 import {
   AssetImportAuthorityError,
   type AssetImportChallengeJournal,
@@ -50,6 +51,7 @@ export class AssetImportBindingService {
   }
 
   async createChallenge(browserSessionId: string): Promise<CreateBindingChallengeResponse> {
+    await assertAssetImportProjectRootIdentity(this.paths);
     if (!validBrowserSession(browserSessionId)) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', 'browserSessionId 格式无效');
     }
@@ -91,6 +93,7 @@ export class AssetImportBindingService {
     challengeId: string,
     request: ConfirmBindingChallengeRequest,
   ): Promise<ConfirmBindingChallengeResponse> {
+    await assertAssetImportProjectRootIdentity(this.paths);
     const loaded = await this.store.readChallenge(challengeId);
     let journal = loaded.journal;
     if (journal.status !== 'PROBE_CREATED'
@@ -131,11 +134,35 @@ export class AssetImportBindingService {
     };
   }
 
-  validateBinding(token: string, browserSessionId: string): boolean {
+  async validateBinding(token: string, browserSessionId: string): Promise<boolean> {
     const binding = this.bindings.get(token);
     if (binding === undefined || binding.browserSessionId !== browserSessionId) return false;
     const now = this.now();
     if (now > binding.idleExpiresAt || now > binding.maximumExpiresAt) {
+      this.bindings.delete(token);
+      return false;
+    }
+    try {
+      await assertAssetImportProjectRootIdentity(this.paths);
+    } catch {
+      this.bindings.delete(token);
+      return false;
+    }
+    binding.idleExpiresAt = Math.min(now + 30 * 60_000, binding.maximumExpiresAt);
+    return true;
+  }
+
+  async validateBindingToken(token: string): Promise<boolean> {
+    const binding = this.bindings.get(token);
+    if (binding === undefined) return false;
+    const now = this.now();
+    if (now > binding.idleExpiresAt || now > binding.maximumExpiresAt) {
+      this.bindings.delete(token);
+      return false;
+    }
+    try {
+      await assertAssetImportProjectRootIdentity(this.paths);
+    } catch {
       this.bindings.delete(token);
       return false;
     }
@@ -150,6 +177,7 @@ export class AssetImportBindingService {
   }
 
   async recoverExpiredChallenges(): Promise<void> {
+    await assertAssetImportProjectRootIdentity(this.paths);
     for (const current of await this.store.listChallenges()) {
       if (current.status === 'PROBE_REMOVED' || this.now() <= Date.parse(current.expiresAt)) continue;
       const probeFile = path.join(this.paths.projectRoot, current.relativeProbePath);

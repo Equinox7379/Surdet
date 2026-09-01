@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -40,6 +40,21 @@ describe('project asset import authority storage', () => {
     const fixture = await temporaryRoot('surdet-asset-import-relative');
     await expect(openAssetImportAuthorityPaths({ projectRoot: 'relative-project', dataRoot: fixture }))
       .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  });
+
+  it('rejects an authority data root that overlaps the project without creating it', async () => {
+    const fixture = await temporaryRoot('surdet-asset-import-overlap');
+    const projectRoot = path.join(fixture, 'project');
+    const nestedDataRoot = path.join(projectRoot, '.authority-data');
+    await mkdir(projectRoot, { recursive: true });
+
+    await expect(openAssetImportAuthorityPaths({ projectRoot, dataRoot: nestedDataRoot }))
+      .rejects.toMatchObject({ code: 'IMPORT_TARGET_UNSAFE', details: { field: 'dataRoot' } });
+    await expect(readFile(path.join(nestedDataRoot, 'data-root-identity.json'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    await expect(openAssetImportAuthorityPaths({ projectRoot, dataRoot: fixture }))
+      .rejects.toMatchObject({ code: 'IMPORT_TARGET_UNSAFE', details: { field: 'dataRoot' } });
   });
 
   it('registers operations create-only and discovers their latest journal after restart', async () => {
@@ -141,9 +156,29 @@ describe('project asset import authority storage', () => {
     expect(confirmed.projectIdentity).toBe(paths.projectIdentity);
     expect(confirmed.bindingToken).toMatch(/^[0-9a-f]{64}$/);
     await expect(readFile(path.join(projectRoot, challenge.relativeProbePath))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).toBe(true);
+    await expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).resolves.toBe(true);
     service.revoke('browser-session-1');
-    expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).toBe(false);
+    await expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).resolves.toBe(false);
+  });
+
+  it('revokes a binding when the bound project root is replaced', async () => {
+    const fixture = await temporaryRoot('surdet-asset-import-binding-root');
+    const projectRoot = path.join(fixture, 'project');
+    await mkdir(projectRoot, { recursive: true });
+    const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(fixture, 'data') });
+    const service = new AssetImportBindingService(paths, new AssetImportRecordStore(paths));
+    const challenge = await service.createChallenge('browser-session-1');
+    const probe = JSON.parse(await readFile(path.join(projectRoot, challenge.relativeProbePath), 'utf8')) as { nonce: string };
+    const confirmed = await service.confirmChallenge(challenge.challengeId, {
+      browserSessionId: 'browser-session-1',
+      nonce: probe.nonce,
+    });
+
+    await rename(projectRoot, path.join(fixture, 'replaced-project'));
+    await mkdir(projectRoot);
+
+    await expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).resolves.toBe(false);
+    await expect(service.validateBindingToken(confirmed.bindingToken)).resolves.toBe(false);
   });
 
   it('rejects a wrong browser session or nonce without issuing a binding', async () => {
