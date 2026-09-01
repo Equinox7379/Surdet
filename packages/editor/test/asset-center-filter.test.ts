@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectAssetItem } from '@surdet/authoring';
-import { assetFacetCount, filterAssetItems, friendlyAssetName } from '../src/panels/asset-center.js';
+import {
+  assetFacetCount,
+  filterAssetItems,
+  friendlyAssetName,
+  largestAssetItems,
+  sortAssetItems,
+} from '../src/panels/asset-center.js';
 import { state } from '../src/state.js';
 
 const items: ProjectAssetItem[] = [
@@ -27,6 +33,7 @@ const items: ProjectAssetItem[] = [
     key: 'unused_field',
     sourcePath: 'content/assets/bg/unused_field.png',
     format: 'png',
+    bytes: 4096,
     physical: true,
     references: [],
     issues: ['ASSET_UNUSED'],
@@ -51,6 +58,7 @@ afterEach(() => {
   state.assetCenterQuery = '';
   state.assetCenterKind = 'all';
   state.assetCenterStatus = 'all';
+  state.assetCenterSort = 'path';
 });
 
 describe('Asset Center filters', () => {
@@ -66,5 +74,16 @@ describe('Asset Center filters', () => {
   it('renders a friendly display label without exposing the raw stable key syntax', () => {
     expect(friendlyAssetName(items[0]!)).toBe('Castle Hall');
     expect(friendlyAssetName({ ...items[0]!, key: '雨夜_站台' })).toBe('雨夜 站台');
+  });
+
+  it('sorts large libraries predictably and derives the largest measured files from shared facts', () => {
+    expect(sortAssetItems(items, 'size-desc').map((item) => item.key))
+      .toEqual(['unused_field', 'castle_hall', 'opening_voice']);
+    expect(sortAssetItems(items, 'references-desc').at(-1)?.key).toBe('unused_field');
+    expect(largestAssetItems(items).map((item) => item.key)).toEqual(['unused_field', 'castle_hall']);
+
+    state.assetCenterSort = 'attention';
+    expect(filterAssetItems(items).map((item) => item.key))
+      .toEqual(['opening_voice', 'unused_field', 'castle_hall']);
   });
 });

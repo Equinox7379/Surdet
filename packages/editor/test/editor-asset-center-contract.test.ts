@@ -46,6 +46,8 @@ describe('editor Asset Center contract', () => {
     for (const label of [
       '背景', '立绘', '头像', '音乐', '环境音', '音效', '语音', '视频', '字体', '其他',
       '已引用', '未引用', '引用缺失', '同名冲突', '命名异常', '格式待确认',
+      '空间占用', '大文件', '项目状态', '项目路径', '名称', '文件大小', '引用数量', '需要处理', '需处理素材',
+      '未引用单独统计，不计入需处理素材',
     ]) {
       expect(primaryCopy, `missing Chinese Asset Center label: ${label}`).toContain(label);
     }
@@ -70,6 +72,12 @@ describe('editor Asset Center contract', () => {
     expect(centerSource).toMatch(/dataset\.assetQuery/);
     expect(centerSource).toMatch(/dataset\.assetKindFilter/);
     expect(centerSource).toMatch(/dataset\.assetStatusFilter/);
+    expect(centerSource).toMatch(/dataset\.assetSort/);
+    expect(centerSource).toMatch(/dataset\.assetViewSwitch/);
+    expect(centerSource).toMatch(/dataset\.assetInsight(?:Id|Kind|Status)/);
+    expect(centerSource).toContain('asset-center-item-path');
+    expect(centerSource).toMatch(/aria-controls[\s\S]*asset-center-library-items/);
+    expect(centerSource).toMatch(/aria-pressed/);
     expect(centerSource).toMatch(/dataset\.visibleCount/);
     expect(centerSource).toMatch(/dataset\.fileCount/);
   });
@@ -106,6 +114,9 @@ describe('editor Asset Center contract', () => {
 
   it('anchors the wide, 1024, and 800 layouts and loads its stylesheet after shared layers', () => {
     expect(centerCss).toMatch(/asset-center-(?:shell|rail|library|inspector)/);
+    expect(centerCss).toMatch(/asset-center-insights[\s\S]*grid-template-columns/);
+    expect(centerCss).toMatch(/\.asset-center\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(centerCss).not.toContain('--surdet-space-20');
     // The base three-region layout is the 1440px desktop contract.
     expect(centerCss).toMatch(/asset-center-shell[\s\S]*grid-template-columns/);
     expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*1024px\)/i);

@@ -33,7 +33,16 @@ const STATUS_FILTERS = [
   { value: 'unsupported', label: '格式待确认' },
 ] as const;
 
+const SORT_OPTIONS = [
+  { value: 'path', label: '项目路径' },
+  { value: 'name', label: '名称' },
+  { value: 'size-desc', label: '文件大小' },
+  { value: 'references-desc', label: '引用数量' },
+  { value: 'attention', label: '需要处理' },
+] as const;
+
 type AssetStatus = Exclude<(typeof STATUS_FILTERS)[number]['value'], 'all'>;
+type AssetCenterSort = (typeof SORT_OPTIONS)[number]['value'];
 
 export interface AssetCenterHooks {
   onOpenProject: () => void;
@@ -94,11 +103,52 @@ export function assetFacetCount(
 
 export function filterAssetItems(items: readonly ProjectAssetItem[]): ProjectAssetItem[] {
   const query = state.assetCenterQuery.trim().toLocaleLowerCase('zh-CN');
-  return items.filter((item) => matchesAssetFilters(item, {
+  return sortAssetItems(items.filter((item) => matchesAssetFilters(item, {
     query,
     kind: state.assetCenterKind,
     status: state.assetCenterStatus,
-  }));
+  })), state.assetCenterSort);
+}
+
+function stableAssetOrder(left: ProjectAssetItem, right: ProjectAssetItem): number {
+  return (left.sourcePath ?? left.assetId).localeCompare(right.sourcePath ?? right.assetId, 'zh-CN');
+}
+
+function attentionRank(item: ProjectAssetItem): number {
+  if (!item.physical || item.issues.includes('ASSET_REFERENCE_MISSING')) return 5;
+  if (item.issues.includes('ASSET_NAME_INVALID')) return 4;
+  if (item.issues.includes('ASSET_KEY_DUPLICATE')) return 3;
+  if (item.issues.includes('ASSET_FORMAT_UNSUPPORTED')) return 2;
+  if (item.issues.includes('ASSET_UNUSED')) return 1;
+  return 0;
+}
+
+export function sortAssetItems(
+  items: readonly ProjectAssetItem[],
+  sort: AssetCenterSort,
+): ProjectAssetItem[] {
+  return [...items].sort((left, right) => {
+    if (sort === 'name') {
+      return friendlyAssetName(left).localeCompare(friendlyAssetName(right), 'zh-CN') || stableAssetOrder(left, right);
+    }
+    if (sort === 'size-desc') {
+      return (right.bytes ?? -1) - (left.bytes ?? -1) || stableAssetOrder(left, right);
+    }
+    if (sort === 'references-desc') {
+      return right.references.length - left.references.length || stableAssetOrder(left, right);
+    }
+    if (sort === 'attention') {
+      return attentionRank(right) - attentionRank(left) || stableAssetOrder(left, right);
+    }
+    return stableAssetOrder(left, right);
+  });
+}
+
+export function largestAssetItems(items: readonly ProjectAssetItem[], limit = 5): ProjectAssetItem[] {
+  return [...items]
+    .filter((item) => item.physical && item.bytes !== undefined)
+    .sort((left, right) => (right.bytes ?? 0) - (left.bytes ?? 0) || stableAssetOrder(left, right))
+    .slice(0, Math.max(0, limit));
 }
 
 export function formatAssetBytes(bytes: number | undefined): string {
@@ -199,6 +249,15 @@ function metric(label: string, value: string, tone?: string): HTMLElement {
   const block = h('div', `asset-center-metric${tone ? ` ${tone}` : ''}`);
   block.append(h('strong', undefined, value), h('span', undefined, label));
   return block;
+}
+
+function insightPanel(title: string, copy: string): { panel: HTMLElement; body: HTMLElement } {
+  const panel = h('section', 'asset-center-insight');
+  const heading = h('div', 'asset-center-insight-heading');
+  heading.append(h('h2', undefined, title), h('p', undefined, copy));
+  const body = h('div', 'asset-center-insight-body');
+  panel.append(heading, body);
+  return { panel, body };
 }
 
 function filterButton(
@@ -330,8 +389,28 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   container.dataset.assetKindFilter = state.assetCenterKind;
   container.dataset.assetStatusFilter = state.assetCenterStatus;
   container.dataset.assetView = state.assetCenterView;
+  container.dataset.assetSort = state.assetCenterSort;
   container.dataset.visibleCount = String(filtered.length);
   container.dataset.totalCount = String(items.length);
+
+  const revealAsset = (item: ProjectAssetItem, restoreKeyboardFocus = true): void => {
+    state.assetCenterQuery = '';
+    state.assetCenterKind = 'all';
+    state.assetCenterStatus = 'all';
+    state.assetCenterSelectedId = item.assetId;
+    renderAssetCenter(container, hooks);
+    if (restoreKeyboardFocus) {
+      requestAnimationFrame(() => {
+        const selectedRow = [...container.querySelectorAll<HTMLButtonElement>('[role="option"][data-asset-id]')]
+          .find((candidate) => candidate.dataset.assetId === item.assetId);
+        selectedRow?.focus();
+      });
+    }
+  };
+
+  const restoreControlFocus = (selector: string): void => {
+    requestAnimationFrame(() => container.querySelector<HTMLButtonElement>(selector)?.focus());
+  };
 
   const header = h('header', 'asset-center-header');
   const title = h('div', 'asset-center-title');
@@ -365,17 +444,24 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   for (const [value, label] of [['list', '列表'], ['grid', '网格']] as const) {
     const button = h('button', undefined, label) as HTMLButtonElement;
     button.type = 'button';
+    button.dataset.assetViewSwitch = value;
     button.setAttribute('aria-pressed', String(state.assetCenterView === value));
-    button.onclick = () => { state.assetCenterView = value; renderAssetCenter(container, hooks); };
+    button.onclick = () => {
+      state.assetCenterView = value;
+      renderAssetCenter(container, hooks);
+      restoreControlFocus(`[data-asset-view-switch="${value}"]`);
+    };
     viewSwitch.appendChild(button);
   }
   tools.append(importButton, searchLabel, viewSwitch);
   header.append(title, tools);
 
-  const problems = intelligence.summary.missingCount
-    + intelligence.summary.duplicateCount
-    + intelligence.summary.invalidNameCount
-    + intelligence.summary.unsupportedCount;
+  const problems = items.filter((item) => (
+    !item.physical
+    || item.issues.includes('ASSET_KEY_DUPLICATE')
+    || item.issues.includes('ASSET_NAME_INVALID')
+    || item.issues.includes('ASSET_FORMAT_UNSUPPORTED')
+  )).length;
   const overview = h('section', 'asset-center-overview');
   overview.setAttribute('aria-label', '素材概览');
   overview.dataset.fileCount = String(intelligence.summary.fileCount);
@@ -387,16 +473,111 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   const measuredSize = intelligence.summary.measuredFileCount === 0
     ? '大小未测量'
     : formatAssetBytes(intelligence.summary.measuredBytes);
+  const measuredLabel = intelligence.summary.measuredFileCount === 0
+    ? '文件大小'
+    : intelligence.summary.measuredFileCount === intelligence.summary.fileCount
+      ? '已统计大小'
+      : `已统计 ${intelligence.summary.measuredFileCount} 个文件`;
   overview.append(
     metric('文件', String(intelligence.summary.fileCount)),
-    metric(
-      intelligence.summary.measuredFileCount === intelligence.summary.fileCount ? '已统计大小' : `已统计 ${intelligence.summary.measuredFileCount} 个文件`,
-      measuredSize,
-    ),
+    metric(measuredLabel, measuredSize),
     metric('已引用', String(intelligence.summary.referencedCount)),
     metric('未引用', String(intelligence.summary.unusedCount)),
-    metric('需要留意', String(problems), problems > 0 ? 'attention' : undefined),
+    metric('需处理素材', String(problems), problems > 0 ? 'attention' : undefined),
   );
+
+  const insights = h('section', 'asset-center-insights');
+  insights.setAttribute('aria-label', '素材洞察');
+
+  const distribution = insightPanel('空间占用', '按素材类别查看已测量的项目体积。');
+  const measuredKinds = Object.entries(intelligence.summary.byKind)
+    .map(([kind, summary]) => ({ kind: kind as ProjectAssetKind, ...summary }))
+    .filter((entry) => entry.files > 0)
+    .sort((left, right) => (right.bytes ?? 0) - (left.bytes ?? 0) || right.files - left.files);
+  if (measuredKinds.length === 0) {
+    distribution.body.appendChild(h('p', 'asset-center-insight-empty', '当前还没有可统计的素材文件。'));
+  }
+  for (const entry of measuredKinds) {
+    const button = h('button', 'asset-center-distribution-row') as HTMLButtonElement;
+    button.type = 'button';
+    button.dataset.assetInsightKind = entry.kind;
+    button.setAttribute('aria-controls', 'asset-center-library-items');
+    button.setAttribute('aria-pressed', String(
+      state.assetCenterQuery === '' && state.assetCenterKind === entry.kind && state.assetCenterStatus === 'all'
+    ));
+    const amount = entry.measuredFiles > 0 ? formatAssetBytes(entry.bytes) : '大小未测量';
+    const label = h('span', 'asset-center-distribution-label');
+    label.append(h('strong', undefined, KIND_LABELS[entry.kind]), h('small', undefined, `${entry.files} 个文件 · ${amount}`));
+    button.appendChild(label);
+    if (intelligence.summary.measuredBytes > 0 && entry.measuredFiles > 0) {
+      const progress = document.createElement('progress');
+      progress.max = intelligence.summary.measuredBytes;
+      progress.value = entry.bytes ?? 0;
+      progress.setAttribute('aria-label', `${KIND_LABELS[entry.kind]}占用 ${amount}`);
+      button.appendChild(progress);
+    } else {
+      button.classList.add('unmeasured');
+    }
+    button.onclick = () => {
+      state.assetCenterQuery = '';
+      state.assetCenterKind = entry.kind;
+      state.assetCenterStatus = 'all';
+      renderAssetCenter(container, hooks);
+      restoreControlFocus(`[data-asset-insight-kind="${entry.kind}"]`);
+    };
+    distribution.body.appendChild(button);
+  }
+
+  const largest = insightPanel('大文件', '优先找到最占空间的素材。');
+  const largestItems = largestAssetItems(items);
+  if (largestItems.length === 0) {
+    largest.body.appendChild(h('p', 'asset-center-insight-empty', '文件大小尚未测量。'));
+  }
+  for (const [index, item] of largestItems.entries()) {
+    const button = h('button', 'asset-center-largest-row') as HTMLButtonElement;
+    button.type = 'button';
+    button.dataset.assetInsightId = item.assetId;
+    const description = item.sourcePath ? `${KIND_LABELS[item.kind]} · ${item.sourcePath}` : KIND_LABELS[item.kind];
+    const details = h('span', 'asset-center-largest-details');
+    details.append(
+      h('strong', 'asset-center-largest-name', friendlyAssetName(item)),
+      h('small', 'asset-center-largest-path', description),
+    );
+    button.setAttribute('aria-label', `${friendlyAssetName(item)}，${description}，${formatAssetBytes(item.bytes)}`);
+    button.append(
+      h('span', 'asset-center-largest-rank', String(index + 1).padStart(2, '0')),
+      details,
+      h('span', 'asset-center-largest-size', formatAssetBytes(item.bytes)),
+    );
+    button.onclick = () => revealAsset(item);
+    largest.body.appendChild(button);
+  }
+
+  const attention = insightPanel('项目状态', '问题可直接筛选；未引用单独统计，不计入需处理素材。');
+  const attentionStatuses = STATUS_FILTERS.filter((entry): entry is (typeof STATUS_FILTERS)[number] & { value: AssetStatus } => (
+    ['missing', 'duplicate', 'invalid-name', 'unsupported', 'unused'].includes(entry.value)
+  ));
+  for (const entry of attentionStatuses) {
+    const count = items.filter((item) => assetStatusTokens(item).includes(entry.value)).length;
+    const button = h('button', 'asset-center-attention-row') as HTMLButtonElement;
+    button.type = 'button';
+    button.disabled = count === 0;
+    button.dataset.assetInsightStatus = entry.value;
+    button.setAttribute('aria-controls', 'asset-center-library-items');
+    button.setAttribute('aria-pressed', String(
+      state.assetCenterQuery === '' && state.assetCenterKind === 'all' && state.assetCenterStatus === entry.value
+    ));
+    button.append(h('span', undefined, entry.label), h('strong', undefined, String(count)));
+    button.onclick = () => {
+      state.assetCenterQuery = '';
+      state.assetCenterKind = 'all';
+      state.assetCenterStatus = entry.value;
+      renderAssetCenter(container, hooks);
+      restoreControlFocus(`[data-asset-insight-status="${entry.value}"]`);
+    };
+    attention.body.appendChild(button);
+  }
+  insights.append(distribution.panel, largest.panel, attention.panel);
 
   const shell = h('div', 'asset-center-shell');
   const rail = h('aside', 'asset-center-rail');
@@ -407,6 +588,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     const button = filterButton(entry.label, count, state.assetCenterKind === entry.value, () => {
       state.assetCenterKind = entry.value;
       renderAssetCenter(container, hooks);
+      restoreControlFocus(`[data-asset-filter-axis="kind"][data-asset-filter-value="${entry.value}"]`);
     });
     button.dataset.assetFilterAxis = 'kind';
     button.dataset.assetFilterValue = entry.value;
@@ -419,6 +601,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     const button = filterButton(entry.label, count, state.assetCenterStatus === entry.value, () => {
       state.assetCenterStatus = entry.value;
       renderAssetCenter(container, hooks);
+      restoreControlFocus(`[data-asset-filter-axis="status"][data-asset-filter-value="${entry.value}"]`);
     });
     button.dataset.assetFilterAxis = 'status';
     button.dataset.assetFilterValue = entry.value;
@@ -431,12 +614,30 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   library.dataset.visibleCount = String(filtered.length);
   library.dataset.totalCount = String(items.length);
   const libraryHeader = h('div', 'asset-center-library-header');
-  libraryHeader.append(
-    h('h2', undefined, '素材库'),
-    h('p', undefined, `当前显示 ${filtered.length} 项，共 ${items.length} 项`),
-  );
+  const libraryTitle = h('div', 'asset-center-library-title');
+  libraryTitle.append(h('h2', undefined, '素材库'), h('p', undefined, `当前显示 ${filtered.length} 项，共 ${items.length} 项`));
+  const sortLabel = h('label', 'asset-center-sort');
+  sortLabel.appendChild(h('span', undefined, '排序'));
+  const sort = document.createElement('select');
+  sort.dataset.assetSort = 'control';
+  sort.setAttribute('aria-label', '素材排序');
+  for (const option of SORT_OPTIONS) {
+    const element = document.createElement('option');
+    element.value = option.value;
+    element.textContent = option.label;
+    sort.appendChild(element);
+  }
+  sort.value = state.assetCenterSort;
+  sort.onchange = () => {
+    state.assetCenterSort = sort.value as AssetCenterSort;
+    renderAssetCenter(container, hooks);
+    requestAnimationFrame(() => container.querySelector<HTMLSelectElement>('[data-asset-sort="control"]')?.focus());
+  };
+  sortLabel.appendChild(sort);
+  libraryHeader.append(libraryTitle, sortLabel);
   library.appendChild(libraryHeader);
   const list = h('div', 'asset-center-items');
+  list.id = 'asset-center-library-items';
   list.setAttribute('role', 'listbox');
   list.setAttribute('aria-label', '项目素材');
   if (filtered.length === 0) {
@@ -453,7 +654,11 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     const name = h('span', 'asset-center-item-name');
     name.append(h('strong', undefined, friendlyAssetName(item)), h('small', undefined, KIND_LABELS[item.kind]));
     const format = item.format ? `${item.format.toUpperCase()} 文件` : item.physical ? '格式未识别' : '素材文件尚不存在';
-    const context = h('span', 'asset-center-item-context', format);
+    const context = h('span', 'asset-center-item-context');
+    context.append(
+      h('span', undefined, format),
+      h('small', 'asset-center-item-path', item.sourcePath ?? item.assetId),
+    );
     const usage = item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
     const meta = h('span', 'asset-center-item-meta');
     meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
@@ -487,6 +692,6 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   importHost.id = 'asset-import-workbench';
   importHost.hidden = !hooks.assetImportOpen;
   if (hooks.assetImportOpen) renderAssetImportWorkbench(importHost, state.assetImportWorkspace, hooks.assetImport);
-  container.append(header, importHost, overview, shell);
+  container.append(header, importHost, overview, insights, shell);
 
 }
