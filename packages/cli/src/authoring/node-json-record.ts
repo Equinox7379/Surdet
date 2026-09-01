@@ -1,7 +1,9 @@
 import * as crypto from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { AuthoringOperationError } from '@surdet/authoring';
+import { syncFileAndParent, syncParentDirectories } from './node-durable-file.js';
 import { replaceFileByRename } from './node-file-replacement.js';
 
 export interface JsonRecordIdentity {
@@ -56,13 +58,64 @@ async function writeSyncedTemporary(file: string, bytes: Uint8Array): Promise<st
   }
 }
 
+function sameOpenedFile(
+  left: Awaited<ReturnType<fs.FileHandle['stat']>>,
+  right: Awaited<ReturnType<fs.FileHandle['stat']>>,
+): boolean {
+  return left.isFile() && right.isFile()
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+function corruptRecord(file: string, message: string): AuthoringOperationError {
+  return new AuthoringOperationError('CHANGE_STORE_CORRUPT', `${message}：${file}`, { path: file });
+}
+
 async function readBytes(file: string): Promise<{ bytes: Buffer; identity: JsonRecordIdentity } | null> {
+  let pathBefore: Awaited<ReturnType<typeof fs.lstat>>;
   try {
-    const bytes = await fs.readFile(file);
-    return { bytes, identity: identity(file, bytes) };
+    pathBefore = await fs.lstat(file);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
+  }
+  if (!pathBefore.isFile() || pathBefore.isSymbolicLink()) {
+    throw corruptRecord(file, 'JSON record 不是普通文件');
+  }
+
+  const noFollow = process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW;
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(file, fsConstants.O_RDONLY | noFollow);
+    const openedBefore = await handle.stat();
+    if (!openedBefore.isFile()
+      || openedBefore.dev !== pathBefore.dev
+      || openedBefore.ino !== pathBefore.ino) {
+      throw corruptRecord(file, 'JSON record 打开对象与路径身份不一致');
+    }
+    const bytes = await handle.readFile();
+    const openedAfter = await handle.stat();
+    const pathAfter = await fs.lstat(file).catch(() => null);
+    if (!sameOpenedFile(openedBefore, openedAfter)
+      || pathAfter === null
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || pathAfter.dev !== openedAfter.dev
+      || pathAfter.ino !== openedAfter.ino
+      || pathAfter.size !== openedAfter.size
+      || pathAfter.mtimeMs !== openedAfter.mtimeMs
+      || pathAfter.ctimeMs !== openedAfter.ctimeMs) {
+      throw corruptRecord(file, 'JSON record 读取期间发生替换');
+    }
+    return { bytes, identity: identity(file, bytes) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw corruptRecord(file, 'JSON record 拒绝符号链接');
+    throw error;
+  } finally {
+    if (handle !== undefined) await handle.close().catch(() => undefined);
   }
 }
 
@@ -79,8 +132,12 @@ export async function createJsonRecord(file: string, value: unknown): Promise<Js
       throw error;
     }
     await fs.link(temporary, file);
+    await syncFileAndParent(file);
     await fs.rm(temporary, { force: true });
-    return identity(file, await fs.readFile(file));
+    await syncParentDirectories(path.dirname(file));
+    const persisted = await readBytes(file);
+    if (persisted === null) throw corruptRecord(file, 'JSON record 创建后缺失');
+    return persisted.identity;
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;
@@ -92,7 +149,10 @@ export async function replaceJsonRecord(file: string, value: unknown): Promise<J
   const temporary = await writeSyncedTemporary(file, bytes);
   try {
     await replaceFileByRename(temporary, file);
-    return identity(file, await fs.readFile(file));
+    await syncFileAndParent(file);
+    const persisted = await readBytes(file);
+    if (persisted === null) throw corruptRecord(file, 'JSON record 替换后缺失');
+    return persisted.identity;
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;

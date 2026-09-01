@@ -11,6 +11,7 @@ import {
   type ProjectAssetImportTargetRequest,
   type TextHasher,
 } from '@surdet/authoring';
+import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
 import {
   absoluteAssetImportProjectPath,
   assetImportDirectoryIdentity,
@@ -64,6 +65,7 @@ export interface ProjectAssetImportAuthorityLimits {
 export interface ProjectAssetImportAuthorityOptions {
   textHasher: TextHasher;
   assertLeaseHeld: () => void | Promise<void>;
+  now?: () => number;
   limits?: Partial<ProjectAssetImportAuthorityLimits>;
   faultInjector?: (point: AssetImportFaultPoint) => void | Promise<void>;
 }
@@ -206,10 +208,14 @@ export class ProjectAssetImportAuthority {
   private readonly limits: ProjectAssetImportAuthorityLimits;
   private readonly textHasher: TextHasher;
   private readonly assertLeaseHeld: () => void | Promise<void>;
+  private readonly nowMs: () => number;
   private readonly faultInjector?: ProjectAssetImportAuthorityOptions['faultInjector'];
-  private readonly operationTokens = new Map<string, string>();
+  private readonly operationTokens = new Map<string, { token: string; expiresAt: number }>();
   private readonly operationTails = new Map<string, Promise<void>>();
+  private readonly activeUploadOperations = new Map<string, number>();
   private projectRecoveryBlocked = false;
+  private recoveryEpoch = 0;
+  private activeProjectMutationEpoch: number | null = null;
   private activeUploads = 0;
 
   constructor(
@@ -225,6 +231,7 @@ export class ProjectAssetImportAuthority {
       throw new AssetImportAuthorityError('INVALID_REQUEST', '缺少素材导入项目租约守卫');
     }
     this.assertLeaseHeld = options.assertLeaseHeld;
+    this.nowMs = options.now ?? (() => Date.now());
     this.faultInjector = options.faultInjector;
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
   }
@@ -253,18 +260,44 @@ export class ProjectAssetImportAuthority {
     }
   }
 
+  private serializeProjectMutation<T>(work: () => Promise<T>): Promise<T> {
+    return this.serialize('__project-mutation__', async () => {
+      const previousEpoch = this.activeProjectMutationEpoch;
+      this.activeProjectMutationEpoch = this.recoveryEpoch;
+      try {
+        return await work();
+      } finally {
+        this.activeProjectMutationEpoch = previousEpoch;
+      }
+    });
+  }
+
+  private async assertProjectMutationFence(operationId: string): Promise<void> {
+    await this.assertLeaseHeld();
+    await assertAssetImportProjectRootIdentity(this.paths);
+    if (this.activeProjectMutationEpoch === null || this.activeProjectMutationEpoch !== this.recoveryEpoch) {
+      return this.enterRecovery(operationId, '项目在写入期间进入了新的恢复状态');
+    }
+  }
+
+  private createOperationToken(operationId: string): string {
+    const token = crypto.randomBytes(32).toString('hex');
+    this.operationTokens.set(operationId, { token, expiresAt: this.nowMs() + 30 * 60_000 });
+    return token;
+  }
+
   private async requireNoRecoveryBarrier(): Promise<void> {
     await this.assertLeaseHeld();
     const operations = await this.store.listOperations();
     for (const operation of operations) {
-      if (operation.status === 'UNDONE') {
-        const undoReceipt = await this.store.readUndoReceipt(operation.operationId);
-        if (undoReceipt === null) {
-          await this.enterRecovery(operation.operationId, 'UNDONE 操作缺少撤销回执');
-          this.projectRecoveryBlocked = true;
-          continue;
+      await this.verifyTerminalInvariants(operation.operationId, operation.status);
+      if (operation.status === 'UPLOADING' && !this.activeUploadOperations.has(operation.operationId)) {
+        const manifest = await this.readVerifiedManifest(operation.operationId);
+        const discovery = await this.store.inspectStagedItemsForDiscovery(manifest);
+        if (discovery.recoveryRequired) return this.enterRecovery(operation.operationId, '素材上传重启对账需要人工恢复');
+        if (discovery.complete) {
+          await this.transition((await this.store.readOperation(operation.operationId)).journal, 'STAGED');
         }
-        await this.verifyUndoReceipt(undoReceipt);
       }
       if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.status)) {
         this.projectRecoveryBlocked = true;
@@ -325,6 +358,7 @@ export class ProjectAssetImportAuthority {
   }
 
   private async enterRecovery(operationId: string, message: string): Promise<never> {
+    this.recoveryEpoch += 1;
     this.projectRecoveryBlocked = true;
     let createdAt = now();
     let incidentKey = 'journal-state';
@@ -368,6 +402,7 @@ export class ProjectAssetImportAuthority {
   private async removeTemporaryUpload(operationId: string, file: string): Promise<void> {
     await this.assertOperationWorkspace(operationId);
     await fs.rm(file, { force: true });
+    await syncParentDirectories(path.dirname(file));
     await this.assertOperationWorkspace(operationId);
   }
 
@@ -464,8 +499,10 @@ export class ProjectAssetImportAuthority {
         if (operation.journal.status !== 'UPLOADING') {
           throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '导入操作已经进入后续阶段');
         }
-        const operationToken = this.operationTokens.get(operationId) ?? crypto.randomBytes(32).toString('hex');
-        this.operationTokens.set(operationId, operationToken);
+        const existingToken = this.operationTokens.get(operationId);
+        const operationToken = existingToken !== undefined && this.nowMs() < existingToken.expiresAt
+          ? existingToken.token
+          : this.createOperationToken(operationId);
         return { operationId, status: 'UPLOADING', operationToken, itemCount: items.length };
       }
 
@@ -492,8 +529,7 @@ export class ProjectAssetImportAuthority {
       } catch {
         return this.enterRecovery(operationId, '导入操作创建未完整落盘');
       }
-      const operationToken = crypto.randomBytes(32).toString('hex');
-      this.operationTokens.set(operationId, operationToken);
+      const operationToken = this.createOperationToken(operationId);
       return { operationId, status: 'UPLOADING', operationToken, itemCount: items.length };
     });
   }
@@ -509,6 +545,7 @@ export class ProjectAssetImportAuthority {
       throw new AssetImportAuthorityError('IMPORT_UPLOAD_BUSY', '并行上传数量已达上限');
     }
     this.activeUploads += 1;
+    this.activeUploadOperations.set(operationId, (this.activeUploadOperations.get(operationId) ?? 0) + 1);
     try {
       return await this.serialize(operationId, async () => {
         await this.requireNoRecoveryBarrier();
@@ -595,6 +632,7 @@ export class ProjectAssetImportAuthority {
           try {
             await this.assertOperationWorkspace(operationId);
             await fs.link(temporary, this.store.stagedItemBinaryFile(operationId, itemId));
+            await syncFileAndParent(this.store.stagedItemBinaryFile(operationId, itemId));
             linked = true;
             await this.assertOperationWorkspace(operationId);
           } catch (error) {
@@ -644,6 +682,9 @@ export class ProjectAssetImportAuthority {
       });
     } finally {
       this.activeUploads -= 1;
+      const remaining = (this.activeUploadOperations.get(operationId) ?? 1) - 1;
+      if (remaining <= 0) this.activeUploadOperations.delete(operationId);
+      else this.activeUploadOperations.set(operationId, remaining);
     }
   }
 
@@ -695,6 +736,48 @@ export class ProjectAssetImportAuthority {
     const rebuilt = await this.buildPlan(manifest, record.targets, record.targetFacts);
     if (!sameJson(rebuilt.plan, record.plan)) {
       return this.enterRecovery(manifest.operationId, '持久导入计划内容与计划指纹不一致');
+    }
+  }
+
+  private async verifyStoredTerminalPlan(
+    manifest: AssetImportOperationManifest,
+    record: AssetImportOperationPlanRecord,
+  ): Promise<void> {
+    const planItems = new Map(record.plan.items.map((item) => [item.itemId, item]));
+    const stagedItems: ProjectAssetImportStagedItem[] = [];
+    for (const declared of manifest.items) {
+      const planned = planItems.get(declared.itemId);
+      if (planned === undefined
+        || planned.sourceName !== declared.sourceName
+        || planned.bytes !== declared.declaredBytes) {
+        return this.enterRecovery(manifest.operationId, '终态导入计划与创建清单不一致');
+      }
+      const stagedItemFingerprint = await this.textHasher.sha256(stableStringify({
+        schemaVersion: 1,
+        operationId: manifest.operationId,
+        itemId: declared.itemId,
+        sourceName: planned.sourceName,
+        bytes: planned.bytes,
+        sha256: planned.sha256,
+      }));
+      stagedItems.push({
+        operationId: manifest.operationId,
+        itemId: declared.itemId,
+        sourceName: planned.sourceName,
+        bytes: planned.bytes,
+        sha256: planned.sha256,
+        stagedItemFingerprint,
+      });
+    }
+    const rebuilt = await buildProjectAssetImportPlan({
+      projectIdentity: this.paths.projectIdentity,
+      manifestFingerprint: manifest.manifestFingerprint,
+      stagedItems,
+      targets: record.targets,
+      targetFacts: record.targetFacts,
+    }, this.textHasher);
+    if (!sameJson(rebuilt, record.plan)) {
+      return this.enterRecovery(manifest.operationId, '持久终态导入计划内容与计划指纹不一致');
     }
   }
 
@@ -788,8 +871,10 @@ export class ProjectAssetImportAuthority {
       next.parents.push({ relativePath, state: 'CREATE_INTENT' });
     });
     await this.fault('after_parent_intent_before_mkdir');
+    await this.assertProjectMutationFence(previous.operationId);
     try {
       await fs.mkdir(absolute);
+      await syncParentDirectories(parent, absolute);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
         return this.enterRecovery(previous.operationId, '目标父目录在创建窗口被其他写入者占用');
@@ -857,6 +942,7 @@ export class ProjectAssetImportAuthority {
     let output: fs.FileHandle | undefined;
     let created = false;
     try {
+      await this.assertProjectMutationFence(operationId);
       output = await fs.open(prepared, 'wx', 0o600);
       created = true;
       const buffer = Buffer.allocUnsafe(1024 * 1024);
@@ -870,6 +956,7 @@ export class ProjectAssetImportAuthority {
       await output.sync();
       await output.close();
       output = undefined;
+      await syncParentDirectories(path.dirname(prepared));
     } catch (error) {
       if (output !== undefined) await output.close().catch(() => undefined);
       if (created) return this.enterRecovery(operationId, 'prepared 复制未完成，已保留本次创建的部分证据');
@@ -892,6 +979,7 @@ export class ProjectAssetImportAuthority {
     const probe = path.join(workspace.prepared, `.hard-link-probe-${crypto.randomUUID()}`);
     let probeCreated = false;
     try {
+      await this.assertProjectMutationFence(operationId);
       await fs.link(preparedFile, probe);
       probeCreated = true;
       const sourceIdentity = await assetImportFileIdentity(preparedFile);
@@ -903,7 +991,10 @@ export class ProjectAssetImportAuthority {
       if (error instanceof AssetImportAuthorityError) throw error;
       throw new AssetImportAuthorityError('IMPORT_FILESYSTEM_UNSUPPORTED', '项目文件系统不支持安全硬链接');
     } finally {
-      if (probeCreated) await fs.rm(probe, { force: true }).catch(() => undefined);
+      if (probeCreated) {
+        await fs.rm(probe, { force: true }).catch(() => undefined);
+        await syncParentDirectories(path.dirname(probe)).catch(() => undefined);
+      }
     }
   }
 
@@ -911,6 +1002,67 @@ export class ProjectAssetImportAuthority {
     const { receiptSha256, ...semantic } = receipt;
     const actual = await this.textHasher.sha256(stableStringify(semantic));
     if (actual !== receiptSha256) return this.enterRecovery(receipt.operationId, '导入回执内容与回执指纹不一致');
+  }
+
+  private async verifyTerminalInvariants(
+    operationId: string,
+    status: AssetImportOperationStatus,
+  ): Promise<void> {
+    if (status !== 'COMMITTED' && status !== 'UNDONE') return;
+    const manifest = await this.readVerifiedManifest(operationId);
+    const plan = await this.store.readPlan(operationId);
+    if (plan === null) return this.enterRecovery(operationId, `${status} 操作缺少导入计划`);
+    await this.verifyStoredTerminalPlan(manifest, plan);
+    const publication = await this.store.readPublication(operationId);
+    if (publication === null) return this.enterRecovery(operationId, `${status} 操作缺少发布 journal`);
+    const receipt = await this.store.readReceipt(operationId);
+    if (receipt === null) return this.enterRecovery(operationId, `${status} 操作缺少成功回执`);
+    await this.verifyReceipt(receipt);
+    if (publication.planId !== plan.plan.planId
+      || publication.planFingerprint !== plan.plan.planFingerprint
+      || publication.files.length !== receipt.files.length) {
+      return this.enterRecovery(operationId, `${status} 操作的计划、发布 journal 与回执不一致`);
+    }
+    const receiptFiles = new Map(receipt.files.map((file) => [file.itemId, file]));
+    for (const file of publication.files) {
+      const expected = receiptFiles.get(file.itemId);
+      if (expected === undefined
+        || expected.targetPath !== file.targetPath
+        || expected.bytes !== file.bytes
+        || expected.sha256 !== file.sha256
+        || (file.finalIdentity !== undefined && !sameNodeIdentity(file.finalIdentity, expected.fileIdentity))) {
+        return this.enterRecovery(operationId, `${status} 操作的文件证据不一致`);
+      }
+      if (status === 'COMMITTED' && file.state !== 'VERIFIED') {
+        return this.enterRecovery(operationId, 'COMMITTED 操作的发布 journal 未处于 VERIFIED');
+      }
+    }
+    if (status === 'COMMITTED') return;
+
+    const undoReceipt = await this.store.readUndoReceipt(operationId);
+    if (undoReceipt === null) return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
+    await this.verifyUndoReceipt(undoReceipt);
+    for (const file of publication.files) {
+      if (file.state !== 'UNDO_VERIFIED' || file.undoIdentity === undefined) {
+        return this.enterRecovery(operationId, 'UNDONE 操作的撤销证据状态不完整');
+      }
+      const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
+      if (await this.fileIdentityOrNull(target).catch(() => this.enterRecovery(
+        operationId,
+        'UNDONE 操作的目标路径不安全',
+      )) !== null) return this.enterRecovery(operationId, 'UNDONE 操作的目标路径重新出现');
+      const quarantine = absoluteAssetImportProjectPath(this.paths, file.undoRelativePath);
+      const evidence = await this.readFileEvidence(quarantine).catch(() => this.enterRecovery(
+        operationId,
+        'UNDONE 操作的恢复副本缺失或不安全',
+      ));
+      if (!sameFileIdentity(evidence.identity, file.undoIdentity)
+        || !sameNodeIdentity(evidence.identity, receiptFiles.get(file.itemId)!.fileIdentity)
+        || evidence.bytes !== file.bytes
+        || evidence.sha256 !== file.sha256) {
+        return this.enterRecovery(operationId, 'UNDONE 操作的恢复副本发生变化');
+      }
+    }
   }
 
   private async fileIdentityOrNull(
@@ -1085,7 +1237,9 @@ export class ProjectAssetImportAuthority {
         ));
         if (finalIdentity === null) {
           try {
+            await this.assertProjectMutationFence(current.operationId);
             await fs.link(prepared, target);
+            await syncFileAndParent(target);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
               throw new AssetImportAuthorityError('IMPORT_PUBLICATION_FAILED', '素材文件无法发布到项目');
@@ -1227,6 +1381,7 @@ export class ProjectAssetImportAuthority {
       const current = await this.fileIdentityOrNull(prepared).catch(() => null);
       if (current !== null && sameNodeIdentity(current, file.preparedIdentity)) {
         await fs.unlink(prepared).catch(() => undefined);
+        await syncParentDirectories(path.dirname(prepared));
       }
     }
   }
@@ -1281,7 +1436,9 @@ export class ProjectAssetImportAuthority {
         continue;
       }
       try {
+        await this.assertProjectMutationFence(current.operationId);
         await fs.rmdir(absolute);
+        await syncParentDirectories(path.dirname(absolute));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
           const preservedIdentity = await assetImportDirectoryIdentity(absolute);
@@ -1381,10 +1538,13 @@ export class ProjectAssetImportAuthority {
           if (!sameNodeIdentity(finalIdentity, preparedIdentity)) {
             return this.enterRecovery(operationId, '回滚重启时目标已被替换');
           }
+          await this.assertProjectMutationFence(operationId);
           await fs.rename(target, quarantine).catch(() => this.enterRecovery(
             operationId,
             '目标文件无法原子移入回滚隔离区',
           ));
+          await syncFileAndParent(quarantine);
+          await syncParentDirectories(path.dirname(target));
           await this.fault('after_rollback_final_rename_before_quarantined_journal');
         }
         const evidence = await this.readFileEvidence(quarantine).catch(() => this.enterRecovery(
@@ -1394,7 +1554,10 @@ export class ProjectAssetImportAuthority {
         if (!sameNodeIdentity(evidence.identity, preparedIdentity)
           || evidence.bytes !== file.bytes || evidence.sha256 !== file.sha256) {
           const restoredTarget = await this.fileIdentityOrNull(target).catch(() => null);
-          if (restoredTarget === null) await fs.link(quarantine, target).catch(() => undefined);
+          if (restoredTarget === null) {
+            await fs.link(quarantine, target).catch(() => undefined);
+            await syncFileAndParent(target).catch(() => undefined);
+          }
           return this.enterRecovery(operationId, '回滚隔离内容与本次发布证据不一致');
         }
         current = await this.updatePublicationFile(current, itemId, (entry) => {
@@ -1535,6 +1698,7 @@ export class ProjectAssetImportAuthority {
 
   private async assertUndoMutationBoundary(publication: AssetImportPublicationRecord): Promise<void> {
     try {
+      await this.assertProjectMutationFence(publication.operationId);
       await assertAssetImportProjectOperationWorkspace(this.paths, publication.operationId);
       await this.verifyPublicationParents(publication);
     } catch (error) {
@@ -1618,10 +1782,14 @@ export class ProjectAssetImportAuthority {
     try {
       await this.assertUndoMutationBoundary(publication);
       await fs.link(undo, target);
+      await syncFileAndParent(target);
       await this.assertUndoMutationBoundary(publication);
       const targetIdentity = await assetImportFileIdentity(target);
       const undoIdentity = await assetImportFileIdentity(undo);
-      if (sameNodeIdentity(targetIdentity, undoIdentity)) await fs.unlink(undo);
+      if (sameNodeIdentity(targetIdentity, undoIdentity)) {
+        await fs.unlink(undo);
+        await syncParentDirectories(path.dirname(undo));
+      }
     } catch {
       // A concurrent writer or interrupted restore leaves every extant path intact for manual recovery.
     }
@@ -1680,6 +1848,8 @@ export class ProjectAssetImportAuthority {
             operationId,
             '目标文件无法原子移入撤销隔离区',
           ));
+          await syncFileAndParent(undo);
+          await syncParentDirectories(path.dirname(target));
           await this.fault('after_undo_final_rename_before_quarantined_journal');
         }
         const evidence = await this.readFileEvidence(undo).catch(() => this.enterRecovery(
@@ -1805,7 +1975,7 @@ export class ProjectAssetImportAuthority {
 
   async commit(operationIdInput: string, request: CommitOperationRequest): Promise<CommitOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       let current = await this.store.readOperation(operationId);
       if (current.journal.status === 'COMMITTED') {
@@ -1856,7 +2026,7 @@ export class ProjectAssetImportAuthority {
         await this.rollbackPublication(operationId, latestPublication);
         throw error;
       }
-    });
+    }));
   }
 
   async undo(operationIdInput: string, request: UndoOperationRequest): Promise<UndoOperationResponse> {
@@ -1865,7 +2035,7 @@ export class ProjectAssetImportAuthority {
     if (!/^[0-9a-f]{64}$/.test(request.receiptSha256)) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', 'receiptSha256 格式无效');
     }
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       let journal = (await this.store.readOperation(operationId)).journal;
       const receipt = await this.store.readReceipt(operationId);
@@ -1900,23 +2070,27 @@ export class ProjectAssetImportAuthority {
         }
         return this.enterRecovery(operationId, error instanceof Error ? error.message : '撤销中断');
       }
-    });
+    }));
   }
 
   async recover(operationIdInput: string, request: RecoverOperationRequest): Promise<RecoverOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.assertLeaseHeld();
       let journal = (await this.store.readOperation(operationId)).journal;
       if (journal.status === 'UNDONE') {
-        const undoReceipt = await this.store.readUndoReceipt(operationId);
-        if (undoReceipt === null) return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
-        await this.verifyUndoReceipt(undoReceipt);
+        await this.verifyTerminalInvariants(operationId, journal.status);
         await this.store.resolveOperationBarriers(operationId);
         this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
         return { detail: await this.query(operationId) };
       }
-      if (journal.status === 'COMMITTED' || journal.status === 'ROLLED_BACK') {
+      if (journal.status === 'COMMITTED') {
+        await this.verifyTerminalInvariants(operationId, journal.status);
+        await this.store.resolveOperationBarriers(operationId);
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        return { detail: await this.query(operationId) };
+      }
+      if (journal.status === 'ROLLED_BACK') {
         await this.store.resolveOperationBarriers(operationId);
         this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
         return { detail: await this.query(operationId) };
@@ -2026,13 +2200,14 @@ export class ProjectAssetImportAuthority {
       await this.store.resolveOperationBarriers(operationId);
       this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
       return { detail: await this.query(operationId) };
-    });
+    }));
   }
 
   async query(operationIdInput: string): Promise<OperationDetailResponse> {
     await this.assertLeaseHeld();
     const operationId = requireUuid(operationIdInput, 'operationId');
     const operation = await this.store.readOperation(operationId);
+    await this.verifyTerminalInvariants(operationId, operation.journal.status);
     if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.journal.status)) {
       this.projectRecoveryBlocked = true;
       await this.store.ensureOperationRecoveryBarrier(
@@ -2043,8 +2218,10 @@ export class ProjectAssetImportAuthority {
     }
     const manifest = await this.readVerifiedManifest(operationId);
     const plan = await this.store.readPlan(operationId);
-    if (plan !== null) await this.verifyStoredPlan(manifest, plan);
-    const requireComplete = ['STAGED', 'READY', 'PUBLISHING', 'COMMITTED', 'UNDOING', 'UNDONE'].includes(operation.journal.status);
+    if (plan !== null && operation.journal.status !== 'COMMITTED' && operation.journal.status !== 'UNDONE') {
+      await this.verifyStoredPlan(manifest, plan);
+    }
+    const requireComplete = ['STAGED', 'READY', 'PUBLISHING', 'UNDOING'].includes(operation.journal.status);
     const receipt = await this.store.readReceipt(operationId);
     if (receipt !== null) await this.verifyReceipt(receipt);
     const undoReceipt = await this.store.readUndoReceipt(operationId);
@@ -2055,7 +2232,7 @@ export class ProjectAssetImportAuthority {
     return {
       operation: operation.journal,
       manifest,
-      stagedItems: operation.journal.status === 'CANCELLED'
+      stagedItems: ['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.journal.status)
         ? []
         : await this.verifiedStagedItems(manifest, requireComplete),
       plan: plan?.plan ?? null,
@@ -2067,7 +2244,25 @@ export class ProjectAssetImportAuthority {
   async list(): Promise<ListOperationsResponse> {
     await this.assertLeaseHeld();
     const operations = await this.store.listOperations();
-    for (const operation of operations) {
+    const reconciled: AssetImportJournal[] = [];
+    for (const discovered of operations) {
+      let operation = discovered;
+      try {
+        await this.verifyTerminalInvariants(operation.operationId, operation.status);
+        if (operation.status === 'UPLOADING' && !this.activeUploadOperations.has(operation.operationId)) {
+          const manifest = await this.readVerifiedManifest(operation.operationId);
+          const discovery = await this.store.inspectStagedItemsForDiscovery(manifest);
+          if (discovery.recoveryRequired) {
+            await this.enterRecovery(operation.operationId, '素材上传重启对账需要人工恢复');
+          }
+          if (discovery.complete) {
+            operation = await this.transition((await this.store.readOperation(operation.operationId)).journal, 'STAGED');
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof AssetImportAuthorityError) || error.code !== 'IMPORT_RECOVERY_REQUIRED') throw error;
+        operation = (await this.store.readOperation(operation.operationId)).journal;
+      }
       if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.status)) {
         this.projectRecoveryBlocked = true;
         await this.store.ensureOperationRecoveryBarrier(
@@ -2076,8 +2271,9 @@ export class ProjectAssetImportAuthority {
           `journal-${operation.journalVersion}`,
         );
       }
+      reconciled.push(operation);
     }
-    return { operations };
+    return { operations: reconciled };
   }
 
   async cancel(operationIdInput: string): Promise<OperationDetailResponse> {
@@ -2103,11 +2299,12 @@ export class ProjectAssetImportAuthority {
 
   verifyOperationToken(operationId: string, operationToken: string): void {
     const expected = this.operationTokens.get(operationId);
-    if (expected === undefined || !/^[0-9a-f]{64}$/.test(operationToken)) {
+    if (expected === undefined || this.nowMs() >= expected.expiresAt || !/^[0-9a-f]{64}$/.test(operationToken)) {
+      if (expected !== undefined && this.nowMs() >= expected.expiresAt) this.operationTokens.delete(operationId);
       throw new AssetImportAuthorityError('IMPORT_AUTH_REQUIRED', '导入操作授权无效');
     }
     const actual = Buffer.from(operationToken, 'utf8');
-    const expectedBytes = Buffer.from(expected, 'utf8');
+    const expectedBytes = Buffer.from(expected.token, 'utf8');
     if (actual.length !== expectedBytes.length || !crypto.timingSafeEqual(actual, expectedBytes)) {
       throw new AssetImportAuthorityError('IMPORT_AUTH_REQUIRED', '导入操作授权无效');
     }
@@ -2125,8 +2322,7 @@ export class ProjectAssetImportAuthority {
       if (receipt === null) return this.enterRecovery(operationId, 'COMMITTED 操作缺少成功回执');
       await this.verifyReceipt(receipt);
     }
-    const operationToken = crypto.randomBytes(32).toString('hex');
-    this.operationTokens.set(operationId, operationToken);
+    const operationToken = this.createOperationToken(operationId);
     return operationToken;
   }
 }

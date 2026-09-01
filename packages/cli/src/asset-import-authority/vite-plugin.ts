@@ -48,6 +48,7 @@ export interface AssetImportAuthorityVitePlugin {
 interface Runtime {
   authority: AssetImportAuthorityHttpTarget;
   lease: AssetImportProjectLease;
+  close(): void;
 }
 
 const INJECTED_MARKER = 'data-surdet-asset-import-authority';
@@ -80,10 +81,12 @@ function expectedOrigin(request: IncomingMessage): string | undefined {
 async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePluginOptions, 'projectRoot' | 'dataRoot'>>): Promise<Runtime> {
   const paths = await openAssetImportAuthorityPaths({ projectRoot: options.projectRoot, dataRoot: options.dataRoot });
   const lease = await acquireAssetImportProjectLease({ projectRoot: paths.projectRoot, dataRoot: paths.dataRoot });
+  let stopChallengeCleanup: (() => void) | undefined;
   try {
     const store = new AssetImportRecordStore(paths);
     const binding = new AssetImportBindingService(paths, store);
     await binding.recoverExpiredChallenges();
+    stopChallengeCleanup = binding.startExpiredChallengeCleanup();
     const authority = new ProjectAssetImportAuthority(paths, store, {
       textHasher: {
         sha256: async (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
@@ -113,8 +116,9 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
       undo: (operationId, request) => authority.undo(operationId, request),
       verifyOperationToken: (operationId, token) => authority.verifyOperationToken(operationId, token),
     };
-    return { authority: target, lease };
+    return { authority: target, lease, close: () => stopChallengeCleanup?.() };
   } catch (error) {
+    stopChallengeCleanup?.();
     await lease.release().catch(() => undefined);
     throw error;
   }
@@ -134,6 +138,7 @@ export function assetImportAuthorityVitePlugin(
     token,
   };
   let activeLease: AssetImportProjectLease | undefined;
+  let closeActiveRuntime: (() => void) | undefined;
   let releasePromise: Promise<void> | undefined;
   let configuredServer: MiddlewareServer | undefined;
   let configurationError: unknown;
@@ -141,6 +146,8 @@ export function assetImportAuthorityVitePlugin(
   let readyPromise: Promise<void> | undefined;
   const releaseRuntime = (): Promise<void> => {
     if (releasePromise !== undefined) return releasePromise;
+    closeActiveRuntime?.();
+    closeActiveRuntime = undefined;
     releasePromise = activeLease?.release() ?? Promise.resolve();
     return releasePromise.finally(() => { activeLease = undefined; });
   };
@@ -160,6 +167,7 @@ export function assetImportAuthorityVitePlugin(
           }
           const runtime = await openRuntime({ projectRoot: options.projectRoot!, dataRoot: options.dataRoot! });
           activeLease = runtime.lease;
+          closeActiveRuntime = runtime.close;
           try {
             const handler = createAssetImportAuthorityHttpHandler({
               authority: runtime.authority,

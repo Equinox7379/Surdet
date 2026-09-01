@@ -22,5 +22,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Verify all
         run: npm run verify:all
+      - name: Verify asset import authority browser flow
+        run: npm run verify:asset-import
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy

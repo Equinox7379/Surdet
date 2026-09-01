@@ -19,10 +19,12 @@ const EXPECTED_UNDO_CONSOLE_ERROR = 'Failed to load resource: the server respond
 export const SEARCH_RANGE = Object.freeze({ from: 4381, to: 4420 });
 export const MILESTONE_IDS = Object.freeze([
   'strict-isolated-port-selected',
+  'unsafe-project-tree-node-rejected',
   'wrong-directory-rejected',
   'project-bound-cleanly',
   'multi-file-selected',
   'collision-blocked-without-overwrite',
+  'ready-plan-invalidated-after-target-edit',
   'multi-file-import-committed',
   'asset-facts-refreshed',
   'receipt-reopened-after-reload',
@@ -94,7 +96,8 @@ function copyStarter(destination) {
   });
 }
 
-function hashCanonicalProjectTree(root) {
+function hashCanonicalProjectTree(root, registeredRootChallengeNames = []) {
+  const registeredRootChallenges = new Set(registeredRootChallengeNames);
   const files = [];
   const visit = (directory, relativeDirectory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })
@@ -102,11 +105,18 @@ function hashCanonicalProjectTree(root) {
       const absolute = path.join(directory, entry.name);
       const relative = relativeDirectory.length === 0 ? entry.name : path.join(relativeDirectory, entry.name);
       const portableRelative = relative.split(path.sep).join('/');
+      const isDirectory = entry.isDirectory();
+      const isFile = entry.isFile();
+      if (entry.isSymbolicLink() || (!isDirectory && !isFile)) {
+        throw new Error(`unsupported symbolic link, junction, or other project tree node: ${portableRelative}`);
+      }
+      const isRegisteredRootChallenge = relativeDirectory.length === 0
+        && registeredRootChallenges.has(entry.name);
       if (['.git', 'node_modules', 'dist', '.vite'].includes(entry.name)
-        || entry.name.startsWith('.surdet-bind-')
+        || isRegisteredRootChallenge
         || portableRelative === '.surdet/asset-import') continue;
-      if (entry.isDirectory()) visit(absolute, relative);
-      else if (entry.isFile()) {
+      if (isDirectory) visit(absolute, relative);
+      else if (isFile) {
         const bytes = fs.readFileSync(absolute);
         files.push({
           path: relative.split(path.sep).join('/'),
@@ -196,26 +206,58 @@ async function waitForExit(child, timeoutMs = 5_000) {
   });
 }
 
+async function waitForStreamClose(stream, timeoutMs = 5_000) {
+  if (stream === null || stream.destroyed || stream.closed) return true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream.off('close', onClose);
+      stream.off('error', onError);
+      resolve(result);
+    };
+    const onClose = () => finish(true);
+    const onError = () => finish(false);
+    stream.once('close', onClose);
+    stream.once('error', onError);
+    stream.resume();
+  });
+}
+
+async function drainServerStderr(child, childCleanupFailures) {
+  if (child?.stderr === null || child?.stderr === undefined) return;
+  if (!(await waitForStreamClose(child.stderr))) {
+    childCleanupFailures.push(`server stderr stream remained open after child shutdown (${child.pid ?? 'unknown'})`);
+  }
+}
+
 async function stopServer(child, childCleanupFailures) {
   if (child === null) return;
   const pid = child.pid;
+  let exited = child.exitCode !== null;
   if (child.connected) {
     try { child.send({ type: 'shutdown' }); } catch (error) { childCleanupFailures.push(`IPC shutdown ${pid}: ${errorText(error)}`); }
-    if (await waitForExit(child, 10_000)) return;
+    exited = await waitForExit(child, 10_000);
   }
-  if (child.exitCode === null) {
+  if (!exited && child.exitCode === null) {
     try { child.kill('SIGTERM'); } catch (error) { childCleanupFailures.push(`SIGTERM ${pid}: ${errorText(error)}`); }
   }
-  if (await waitForExit(child)) return;
-  if (process.platform === 'win32' && Number.isInteger(pid)) {
+  if (!exited) exited = await waitForExit(child);
+  if (!exited && process.platform === 'win32' && Number.isInteger(pid)) {
     const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
-      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      stdio: 'ignore', windowsHide: true,
     });
     await waitForExit(killer, 5_000);
-  } else if (child.exitCode === null) {
+    exited = await waitForExit(child);
+  } else if (!exited && child.exitCode === null) {
     try { child.kill('SIGKILL'); } catch (error) { childCleanupFailures.push(`SIGKILL ${pid}: ${errorText(error)}`); }
   }
-  if (!(await waitForExit(child))) childCleanupFailures.push(`dev-project child remained alive: ${pid}`);
+  if (!exited) exited = await waitForExit(child);
+  if (!exited) childCleanupFailures.push(`dev-project child remained alive: ${pid}`);
+  await drainServerStderr(child, childCleanupFailures);
 }
 
 function resolveRootPath(root, relativePath = '') {
@@ -500,6 +542,9 @@ async function run() {
   fs.mkdirSync(artifactRoot, { recursive: true });
   copyStarter(projectRoot);
   copyStarter(wrongProjectRoot);
+  const nestedChallengeLikePath = path.join(projectRoot, 'content', '.surdet-bind-nested-sentinel.txt');
+  fs.mkdirSync(path.dirname(nestedChallengeLikePath), { recursive: true });
+  fs.writeFileSync(nestedChallengeLikePath, 'nested challenge-like project file\n', 'utf8');
 
   const sourceImage = path.join(sourceRoot, 'castle_hall.svg');
   const sourceSound = path.join(sourceRoot, 'asset-import-click.wav');
@@ -509,11 +554,12 @@ async function run() {
 
   const evidencePath = path.join(artifactRoot, 'evidence.json');
   const identityPath = path.join(artifactRoot, 'identity.json');
+  const registeredRootChallengeNames = new Set();
   const runnerSha256 = sha256(fs.readFileSync(runnerPath));
   const runHead = gitOutput(['rev-parse', 'HEAD']).trim();
   const repositoryTreeBefore = repositoryTreeIdentity();
   const originalStarterBefore = hashProjectTree(starterRoot);
-  const projectBefore = hashCanonicalProjectTree(projectRoot);
+  const projectBefore = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
   const milestones = [];
   const completedMilestoneNames = [];
   const channels = {
@@ -555,6 +601,28 @@ async function run() {
     pass('strict-isolated-port-selected', {
       loopback: '127.0.0.1', port, range: SEARCH_RANGE, forbiddenPorts: [4173, 4175],
     });
+    const unsafeTreeRoot = path.join(fixtureRoot, 'unsafe-tree-probe');
+    const unsafeTreeTarget = path.join(unsafeTreeRoot, 'target');
+    const unsafeTreeLink = path.join(unsafeTreeRoot, 'linked-node');
+    fs.mkdirSync(unsafeTreeTarget, { recursive: true });
+    fs.writeFileSync(path.join(unsafeTreeTarget, 'sentinel.txt'), 'unsafe tree sentinel\n', 'utf8');
+    fs.symlinkSync(unsafeTreeTarget, unsafeTreeLink, process.platform === 'win32' ? 'junction' : 'dir');
+    let unsafeTreeError = '';
+    try {
+      hashCanonicalProjectTree(unsafeTreeRoot);
+    } catch (error) {
+      unsafeTreeError = errorText(error);
+    }
+    assert(unsafeTreeError.includes('unsupported symbolic link, junction, or other project tree node'),
+      `unsafe project tree node was not rejected: ${unsafeTreeError}`);
+    pass('unsafe-project-tree-node-rejected', {
+      nodeType: process.platform === 'win32' ? 'junction' : 'directory-symlink',
+      relativePath: path.basename(unsafeTreeLink),
+      error: unsafeTreeError,
+    });
+    const nestedChallengeLikeRelativePath = path.relative(projectRoot, nestedChallengeLikePath).split(path.sep).join('/');
+    assert(projectBefore.files.some((file) => file.path === nestedChallengeLikeRelativePath),
+      `nested challenge-like file was omitted from project evidence: ${nestedChallengeLikeRelativePath}`);
 
     const launcher = path.join(editorRoot, 'scripts', 'dev-project.mjs');
     const launcherBootstrap = `
@@ -612,18 +680,30 @@ async function run() {
       wrongProjectRoot: path.resolve(wrongProjectRoot),
     });
 
+    const rejectedChallengeProbePaths = fs.readdirSync(projectRoot)
+      .filter((name) => name.startsWith('.surdet-bind-'));
+    assert(rejectedChallengeProbePaths.length === 1,
+      `expected one rejected challenge probe before binding, got ${rejectedChallengeProbePaths}`);
+    for (const challengeName of rejectedChallengeProbePaths) registeredRootChallengeNames.add(challengeName);
+    const projectRootEntriesBeforeBinding = new Set(fs.readdirSync(projectRoot));
     await openProject(page, 'project', 'ready');
     const bound = await workspaceSnapshot(page);
     assert(bound.entryState === 'ready', `project did not bind: ${JSON.stringify(bound)}`);
     assert(bound.projectName === path.basename(projectRoot), `bound project name drifted: ${bound.projectName}`);
-    const successfulProbePaths = fs.readdirSync(projectRoot).filter((name) => name.startsWith('.surdet-bind-'));
-    assert(successfulProbePaths.length === 1, `expected only the rejected challenge probe to remain, got ${successfulProbePaths}`);
+    const newProbePathsAfterBinding = fs.readdirSync(projectRoot)
+      .filter((name) => name.startsWith('.surdet-bind-') && !projectRootEntriesBeforeBinding.has(name));
+    assert(newProbePathsAfterBinding.length === 0,
+      `successful challenge probe was not removed: ${newProbePathsAfterBinding}`);
+    const retainedRootChallengePaths = fs.readdirSync(projectRoot)
+      .filter((name) => name.startsWith('.surdet-bind-'));
+    assert(JSON.stringify(retainedRootChallengePaths.sort()) === JSON.stringify(rejectedChallengeProbePaths.sort()),
+      `rejected challenge evidence changed during successful binding: ${retainedRootChallengePaths}`);
     pass('project-bound-cleanly', {
       entryState: bound.entryState,
       projectIdentity: bound.projectIdentity,
       projectName: bound.projectName,
       successfulChallengeRemoved: true,
-      rejectedChallengeProbeRetainedFailClosed: successfulProbePaths,
+      rejectedChallengeProbeRetainedFailClosed: retainedRootChallengePaths,
     });
 
     await openImportWorkbench(page);
@@ -656,12 +736,41 @@ async function run() {
       overwritePerformed: false,
     });
 
-    await setFinalName(page, 0, 'asset-import-scene.svg');
+    await setFinalName(page, 0, 'asset-import-scene-staged.svg');
     await page.locator('.asset-import-primary', { hasText: '准备导入' }).click();
     await page.waitForFunction(() => (
       window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.plan?.status === 'ready'
         && ['STAGED', 'READY'].includes(window.surdetEditorDebug.state.assetImportWorkspace.activeOperation.operation.status)
     ));
+    const readyBeforeTargetEdit = await workspaceSnapshot(page);
+    const readyPlanFingerprint = readyBeforeTargetEdit.operation?.plan?.planFingerprint ?? null;
+    assert(readyPlanFingerprint !== null, 'ready import plan fingerprint was not exposed before target edit');
+    await setFinalName(page, 0, 'asset-import-scene.svg');
+    await page.waitForFunction(() => {
+      const workspace = window.surdetEditorDebug.state.assetImportWorkspace;
+      const primary = document.querySelector('.asset-import-primary');
+      return workspace?.activeOperation?.plan === null
+        && !(primary?.textContent ?? '').includes('确认导入');
+    });
+    const invalidated = await workspaceSnapshot(page);
+    assert(invalidated.operation?.plan === null, 'editing the target kept the old import plan');
+    const primaryTextAfterEdit = await page.locator('.asset-import-primary').textContent();
+    assert(!primaryTextAfterEdit?.includes('确认导入'),
+      'editing the target left the old confirmation entry point enabled');
+    pass('ready-plan-invalidated-after-target-edit', {
+      previousPlanFingerprint: readyPlanFingerprint,
+      currentPlan: null,
+      confirmationEntryPoint: 'disabled-until-replanned',
+      editedFileName: invalidated.draftItems[0]?.fileName ?? null,
+    });
+    await page.locator('.asset-import-primary', { hasText: '准备导入' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.plan?.status === 'ready'
+        && ['STAGED', 'READY'].includes(window.surdetEditorDebug.state.assetImportWorkspace.activeOperation.operation.status)
+    ));
+    const replanned = await workspaceSnapshot(page);
+    assert(replanned.operation?.plan?.planFingerprint !== readyPlanFingerprint,
+      'replanning after target edit reused the old plan fingerprint');
     await page.locator('.asset-import-primary', { hasText: '确认导入' }).click();
     await page.waitForFunction(() => (
       window.surdetEditorDebug.state.assetImportWorkspace?.activeOperation?.operation?.status === 'COMMITTED'
@@ -676,7 +785,7 @@ async function run() {
     const importedSound = path.join(projectRoot, ...(targetByName.get('asset-import-click.wav').targetPath.split('/')));
     assert(readFileIdentity(importedImage).sha256 === sourceIdentities[0].sha256, 'imported image bytes drifted');
     assert(readFileIdentity(importedSound).sha256 === sourceIdentities[1].sha256, 'imported sound bytes drifted');
-    committedProject = hashCanonicalProjectTree(projectRoot);
+    committedProject = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
     assert(committedProject.sha256 !== projectBefore.sha256, 'commit did not change isolated project content');
     operationEvidence = {
       operationId: committed.operation.operationId,
@@ -768,7 +877,7 @@ async function run() {
     });
     assert(!fs.existsSync(importedImage) && !fs.existsSync(importedSound), 'successful undo left imported targets visible');
     const undone = await workspaceSnapshot(page);
-    projectAfter = hashCanonicalProjectTree(projectRoot);
+    projectAfter = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
     assert(projectAfter.sha256 === projectBefore.sha256, 'isolated project content did not return to baseline after undo');
     undoEvidence = {
       operationId: undone.operation.operationId,
@@ -802,35 +911,6 @@ async function run() {
       projectMutation: { occurred: true, committed: true, finalCanonicalMutation: false },
     });
 
-    await Promise.all(pendingHeaderReads);
-    const beforeOperations = tokenEvidence.operationTokenHashes['before-reload'];
-    const afterOperations = tokenEvidence.operationTokenHashes['after-reload'];
-    assert(beforeOperations.size > 0 && afterOperations.size > 0, 'operation token hashes were not observed on both sides of reload');
-    assert([...afterOperations].every((hash) => !beforeOperations.has(hash)), 'old operation token was reused after reload');
-    if (channels.expectedBusinessResponses.length === 1
-      && channels.expectedBusinessResponses[0]?.code === 'IMPORT_UNDO_BLOCKED_CHANGED'
-      && channels.consoleErrors.length === 1
-      && channels.consoleErrors[0] === EXPECTED_UNDO_CONSOLE_ERROR) {
-      channels.expectedConsoleErrors.push(channels.consoleErrors.shift());
-    }
-    assert(channels.errors.length === 0, `runner errors: ${channels.errors.join(' | ')}`);
-    assert(channels.consoleErrors.length === 0, `console errors: ${channels.consoleErrors.join(' | ')}`);
-    assert(channels.pageErrors.length === 0, `page errors: ${channels.pageErrors.join(' | ')}`);
-    assert(channels.requestFailures.length === 0, `request failures: ${channels.requestFailures.join(' | ')}`);
-    assert(channels.responseFailures.length === 0, `response failures: ${channels.responseFailures.join(' | ')}`);
-    assert(channels.expectedBusinessResponses.length === 1, `unexpected 409 count: ${channels.expectedBusinessResponses.length}`);
-    pass('browser-error-channels-empty', {
-      ...channels,
-      bindingTokenHashes: {
-        beforeReload: [...tokenEvidence.bindingTokenHashes['before-reload']].sort(),
-        afterReload: [...tokenEvidence.bindingTokenHashes['after-reload']].sort(),
-      },
-      operationTokenHashes: {
-        beforeReload: [...beforeOperations].sort(),
-        afterReload: [...afterOperations].sort(),
-      },
-      tokenRotated: true,
-    });
   } catch (error) {
     failure = error;
     channels.errors.push(errorText(error));
@@ -847,6 +927,45 @@ async function run() {
     await new Promise((resolve) => setImmediate(resolve));
     originalStarterAfter = hashProjectTree(starterRoot);
     repositoryTreeAfter = repositoryTreeIdentity();
+
+    if (failure === null) {
+      try {
+        const beforeOperations = tokenEvidence.operationTokenHashes['before-reload'];
+        const afterOperations = tokenEvidence.operationTokenHashes['after-reload'];
+        assert(beforeOperations.size > 0 && afterOperations.size > 0,
+          'operation token hashes were not observed on both sides of reload');
+        assert([...afterOperations].every((hash) => !beforeOperations.has(hash)),
+          'old operation token was reused after reload');
+        if (channels.expectedBusinessResponses.length === 1
+          && channels.expectedBusinessResponses[0]?.code === 'IMPORT_UNDO_BLOCKED_CHANGED'
+          && channels.consoleErrors.length === 1
+          && channels.consoleErrors[0] === EXPECTED_UNDO_CONSOLE_ERROR) {
+          channels.expectedConsoleErrors.push(channels.consoleErrors.shift());
+        }
+        assert(channels.errors.length === 0, `runner errors: ${channels.errors.join(' | ')}`);
+        assert(channels.consoleErrors.length === 0, `console errors: ${channels.consoleErrors.join(' | ')}`);
+        assert(channels.pageErrors.length === 0, `page errors: ${channels.pageErrors.join(' | ')}`);
+        assert(channels.requestFailures.length === 0, `request failures: ${channels.requestFailures.join(' | ')}`);
+        assert(channels.responseFailures.length === 0, `response failures: ${channels.responseFailures.join(' | ')}`);
+        assert(channels.stderrLines.length === 0, `server stderr: ${channels.stderrLines.join(' | ')}`);
+        assert(channels.expectedBusinessResponses.length === 1, `unexpected 409 count: ${channels.expectedBusinessResponses.length}`);
+        pass('browser-error-channels-empty', {
+          ...channels,
+          bindingTokenHashes: {
+            beforeReload: [...tokenEvidence.bindingTokenHashes['before-reload']].sort(),
+            afterReload: [...tokenEvidence.bindingTokenHashes['after-reload']].sort(),
+          },
+          operationTokenHashes: {
+            beforeReload: [...tokenEvidence.operationTokenHashes['before-reload']].sort(),
+            afterReload: [...tokenEvidence.operationTokenHashes['after-reload']].sort(),
+          },
+          tokenRotated: true,
+        });
+      } catch (error) {
+        failure = error;
+        channels.errors.push(errorText(error));
+      }
+    }
 
     if (failure === null) {
       try {
@@ -870,7 +989,7 @@ async function run() {
       }
     }
 
-    if (projectAfter === null) projectAfter = hashCanonicalProjectTree(projectRoot);
+    if (projectAfter === null) projectAfter = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
     const bindingTokenHashes = Object.fromEntries(Object.entries(tokenEvidence.bindingTokenHashes)
       .map(([phase, hashes]) => [phase, [...hashes].sort()]));
     const operationTokenHashes = Object.fromEntries(Object.entries(tokenEvidence.operationTokenHashes)

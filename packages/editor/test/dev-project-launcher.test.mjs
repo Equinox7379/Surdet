@@ -26,13 +26,24 @@ afterEach(async () => {
 });
 
 describe('bound project Editor launcher', () => {
-  it('parses one absolute project, an optional persistent data root, and strict port 5174 defaults', async () => {
+  it('parses a platform-native temporary absolute project, an optional persistent data root, and strict port 5174 defaults', async () => {
     const launcher = await import(pathToFileURL(launcherFile).href);
-    const parsed = launcher.parseDevProjectArguments(['--project', 'C:\\fixture\\project']);
-    assert.equal(parsed.projectRoot, path.resolve('C:\\fixture\\project'));
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-editor-argument-fixture-'));
+    roots.push(fixtureRoot);
+    const projectRoot = path.join(fixtureRoot, 'project');
+    await fs.mkdir(projectRoot);
+    const parsed = launcher.parseDevProjectArguments(['--project', projectRoot]);
+    assert.equal(parsed.projectRoot, path.resolve(projectRoot));
+    assert.equal(path.isAbsolute(projectRoot), true);
     assert.equal(path.isAbsolute(parsed.dataRoot), true);
     assert.equal(parsed.port, 5174);
     assert.equal(parsed.host, '127.0.0.1');
+  });
+
+  it('rejects a Windows-style project path on POSIX hosts', async () => {
+    if (process.platform === 'win32') return;
+    const launcher = await import(pathToFileURL(launcherFile).href);
+    assert.throws(() => launcher.parseDevProjectArguments(['--project', 'C:\\fixture\\project']));
   });
 
   it('rejects forbidden shared ports, relative paths, duplicates, and unknown arguments', async () => {

@@ -9,6 +9,7 @@ import {
   ProjectAssetImportAuthority,
   type AssetImportFaultPoint,
 } from '../src/asset-import-authority/authority.js';
+import { AssetImportBindingService } from '../src/asset-import-authority/binding.js';
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 
@@ -17,7 +18,11 @@ const textHasher = {
   sha256: async (text: string): Promise<string> => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
-async function fixture(): Promise<{
+async function fixture(options: {
+  createBackgroundDirectory?: boolean;
+  faultInjector?: (point: AssetImportFaultPoint) => void | Promise<void>;
+  now?: () => number;
+} = {}): Promise<{
   projectRoot: string;
   authority: ProjectAssetImportAuthority;
   paths: Awaited<ReturnType<typeof openAssetImportAuthorityPaths>>;
@@ -25,15 +30,22 @@ async function fixture(): Promise<{
   const root = await mkdtemp(path.join(os.tmpdir(), 'surdet-asset-import-authority-'));
   roots.push(root);
   const projectRoot = path.join(root, 'project');
-  await mkdir(path.join(projectRoot, 'content', 'assets', 'bg'), { recursive: true });
+  if (options.createBackgroundDirectory !== false) {
+    await mkdir(path.join(projectRoot, 'content', 'assets', 'bg'), { recursive: true });
+  } else {
+    await mkdir(projectRoot, { recursive: true });
+  }
   const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(root, 'data') });
+  const authorityOptions = {
+    textHasher,
+    assertLeaseHeld: () => undefined,
+    ...(options.faultInjector === undefined ? {} : { faultInjector: options.faultInjector }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  };
   return {
     projectRoot,
     paths,
-    authority: new ProjectAssetImportAuthority(paths, new AssetImportRecordStore(paths), {
-      textHasher,
-      assertLeaseHeld: () => undefined,
-    }),
+    authority: new ProjectAssetImportAuthority(paths, new AssetImportRecordStore(paths), authorityOptions),
   };
 }
 
@@ -46,6 +58,51 @@ function reopenedAuthority(
     assertLeaseHeld: () => undefined,
     faultInjector,
   });
+}
+
+async function seedUploadingDiscovery(
+  authority: ProjectAssetImportAuthority,
+  paths: Awaited<ReturnType<typeof openAssetImportAuthorityPaths>>,
+  options: {
+    operationId: string;
+    itemId: string;
+    sourceName: string;
+    declaredBytes: number;
+    binary?: Buffer;
+    fact?: { sourceName?: string; bytes?: number; sha256?: string };
+    intent?: boolean;
+  },
+): Promise<AssetImportRecordStore> {
+  await authority.createOperation({
+    operationId: options.operationId,
+    items: [{ itemId: options.itemId, sourceName: options.sourceName, declaredBytes: options.declaredBytes }],
+  });
+  const store = new AssetImportRecordStore(paths);
+  if (options.fact !== undefined) {
+    const binary = options.binary ?? Buffer.alloc(options.fact.bytes ?? options.declaredBytes);
+    await writeFile(store.stagedItemBinaryFile(options.operationId, options.itemId), binary);
+    await store.createStagedItem({
+      operationId: options.operationId,
+      itemId: options.itemId,
+      sourceName: options.fact.sourceName ?? options.sourceName,
+      bytes: options.fact.bytes ?? binary.byteLength,
+      sha256: options.fact.sha256 ?? crypto.createHash('sha256').update(binary).digest('hex'),
+      stagedItemFingerprint: 'a'.repeat(64),
+    });
+  }
+  if (options.intent === true) {
+    const nonce = 'abababab-abab-4aba-8aba-abababababab';
+    await store.createUploadIntent({
+      schemaVersion: 1,
+      operationId: options.operationId,
+      itemId: options.itemId,
+      nonce,
+      partialFileName: `.${options.itemId}.${nonce}.partial`,
+      createdAt: new Date().toISOString(),
+    });
+    await writeFile(store.stagedItemTemporaryFile(options.operationId, options.itemId, nonce), 'partial');
+  }
+  return store;
 }
 
 afterEach(async () => {
@@ -79,6 +136,81 @@ describe('project asset import authority operations', () => {
     const sealed = await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
     expect(sealed).toMatchObject({ status: 'READY', planId: planned.plan.planId });
     expect((await authority.query(operationId)).operation.status).toBe('READY');
+  });
+
+  it('keeps ordinary restart discovery metadata-only and defers full staged-byte verification to query', async () => {
+    const { authority, paths } = await fixture();
+    const operationId = '20202020-2020-4020-8020-202020202020';
+    const itemId = '21212121-2121-4121-8121-212121212121';
+    await seedUploadingDiscovery(authority, paths, {
+      operationId,
+      itemId,
+      sourceName: 'metadata-only.png',
+      declaredBytes: 4,
+      binary: Buffer.from('evil'),
+      fact: { bytes: 4, sha256: crypto.createHash('sha256').update('good').digest('hex') },
+    });
+
+    const listed = await reopenedAuthority(paths).list();
+    expect(listed.operations).toContainEqual(expect.objectContaining({ operationId, status: 'STAGED' }));
+    await expect(reopenedAuthority(paths).query(operationId))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+  });
+
+  it('keeps incomplete upload intents and unsafe staged metadata fail-closed during discovery', async () => {
+    const { authority, paths } = await fixture();
+    await seedUploadingDiscovery(authority, paths, {
+      operationId: '24242424-2424-4242-8242-242424242424',
+      itemId: '25252525-2525-4252-8252-252525252525',
+      sourceName: 'partial.png',
+      declaredBytes: 4,
+      intent: true,
+    });
+    const listed = await reopenedAuthority(paths).list();
+    expect(listed.operations).toContainEqual(expect.objectContaining({
+      operationId: '24242424-2424-4242-8242-242424242424',
+      status: 'RECOVERY_REQUIRED',
+    }));
+  });
+
+  it('issues a fresh operation token when an idempotent create follows expiry', async () => {
+    let clock = Date.parse('2026-09-02T00:00:00.000Z');
+    const { authority } = await fixture({ now: () => clock });
+    const request = {
+      operationId: '26262626-2626-4262-8262-262626262626',
+      items: [{ itemId: '27272727-2727-4272-8272-272727272727', sourceName: 'retry.png', declaredBytes: 4 }],
+    };
+    const first = await authority.createOperation(request);
+    clock += 30 * 60_000;
+    expect(() => authority.verifyOperationToken(request.operationId, first.operationToken))
+      .toThrowError('导入操作授权无效');
+    const retried = await authority.createOperation(request);
+    expect(retried.operationToken).not.toBe(first.operationToken);
+    expect(() => authority.verifyOperationToken(request.operationId, retried.operationToken)).not.toThrow();
+  });
+
+  it('periodically removes expired binding probes in a long-lived process', async () => {
+    let clock = Date.parse('2026-09-02T00:00:00.000Z');
+    const { paths, projectRoot } = await fixture();
+    const store = new AssetImportRecordStore(paths);
+    const binding = new AssetImportBindingService(paths, store, {
+      now: () => clock,
+      challengeCleanupIntervalMs: 5,
+    });
+    const challenge = await binding.createChallenge('long-lived-browser');
+    const stop = binding.startExpiredChallengeCleanup();
+    clock += 61_000;
+    try {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if ((await store.readChallenge(challenge.challengeId)).journal.status === 'PROBE_REMOVED') break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect((await store.readChallenge(challenge.challengeId)).journal.status).toBe('PROBE_REMOVED');
+      await expect(stat(path.join(projectRoot, challenge.relativeProbePath)))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      stop();
+    }
   });
 
   it('makes byte-equal upload retry idempotent and rejects different bytes', async () => {
@@ -271,6 +403,160 @@ describe('project asset import authority operations', () => {
     expect(() => authority.verifyOperationToken(operationId, resumedToken)).not.toThrow();
     await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'publish.png'), 'utf8')).resolves.toBe('hello');
     await expect(authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint })).resolves.toEqual(committed);
+  });
+
+  it('expires operation tokens at the absolute server TTL while binding renewal cannot extend them', async () => {
+    const epoch = Date.parse('2026-09-01T00:00:00.000Z');
+    let nowMs = epoch;
+    const { authority, paths, projectRoot } = await fixture({ now: () => nowMs });
+    const operationId = 'b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1';
+    const itemId = 'c2c2c2c2-c2c2-42c2-82c2-c2c2c2c2c2c2';
+    const browserSessionId = 'browser-operation-token-ttl';
+    const created = await authority.createOperation({
+      operationId,
+      items: [{ itemId, sourceName: 'token-ttl.png', declaredBytes: 1 }],
+    });
+
+    const binding = new AssetImportBindingService(paths, new AssetImportRecordStore(paths), { now: () => nowMs });
+    const challenge = await binding.createChallenge(browserSessionId);
+    const probe = JSON.parse(await readFile(path.join(projectRoot, challenge.relativeProbePath), 'utf8')) as { nonce: string };
+    const confirmed = await binding.confirmChallenge(challenge.challengeId, { browserSessionId, nonce: probe.nonce });
+    expect(await binding.validateBinding(confirmed.bindingToken, browserSessionId)).toBe(true);
+
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken)).not.toThrow();
+    nowMs = epoch + (30 * 60_000) - 1;
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken)).not.toThrow();
+    expect(await binding.validateBinding(confirmed.bindingToken, browserSessionId)).toBe(true);
+
+    nowMs = epoch + (30 * 60_000);
+    expect(await binding.validateBinding(confirmed.bindingToken, browserSessionId)).toBe(true);
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken))
+      .toThrowError('导入操作授权无效');
+
+    const resumedToken = await authority.issueOperationToken(operationId);
+    expect(resumedToken).not.toBe(created.operationToken);
+    expect(() => authority.verifyOperationToken(operationId, resumedToken)).not.toThrow();
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken))
+      .toThrowError('导入操作授权无效');
+  });
+
+  it('commits different operations concurrently while creating a shared missing parent', async () => {
+    let firstParentIntent = true;
+    const { authority, paths, projectRoot } = await fixture({
+      createBackgroundDirectory: false,
+      faultInjector: async (point) => {
+        if (point !== 'after_parent_intent_before_mkdir' || !firstParentIntent) return;
+        firstParentIntent = false;
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      },
+    });
+    const operations = [
+      {
+        operationId: 'c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1',
+        itemId: 'd1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1',
+        sourceName: 'parallel-a.png',
+        content: 'A',
+      },
+      {
+        operationId: 'e1e1e1e1-e1e1-41e1-81e1-e1e1e1e1e1e1',
+        itemId: 'f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1',
+        sourceName: 'parallel-b.png',
+        content: 'B',
+      },
+    ] as const;
+    const plans: Array<{ operationId: string; planFingerprint: string }> = [];
+    for (const operation of operations) {
+      await authority.createOperation({
+        operationId: operation.operationId,
+        items: [{ itemId: operation.itemId, sourceName: operation.sourceName, declaredBytes: 1 }],
+      });
+      await authority.uploadItem(operation.operationId, operation.itemId, Readable.from(Buffer.from(operation.content)));
+      const planned = await authority.plan(operation.operationId, {
+        targets: [{ itemId: operation.itemId, kind: 'background', fileName: operation.sourceName }],
+      });
+      expect(planned.plan.status).toBe('ready');
+      await authority.seal(operation.operationId, { planFingerprint: planned.plan.planFingerprint });
+      plans.push({ operationId: operation.operationId, planFingerprint: planned.plan.planFingerprint });
+    }
+
+    const results = await Promise.all(plans.map(async ({ operationId, planFingerprint }) => {
+      try {
+        const committed = await authority.commit(operationId, { planFingerprint });
+        return { operationId, status: committed.operation.status };
+      } catch (error) {
+        return { operationId, errorCode: (error as { code?: string }).code };
+      }
+    }));
+
+    expect(results).toEqual(operations.map(({ operationId }) => ({ operationId, status: 'COMMITTED' })));
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'parallel-a.png'))).resolves.toBeDefined();
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'parallel-b.png'))).resolves.toBeDefined();
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+  });
+
+  it('blocks a queued operation before publication when an earlier mutation enters recovery', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operations = [
+      {
+        operationId: 'a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3',
+        itemId: 'b4b4b4b4-b4b4-44b4-84b4-b4b4b4b4b4b4',
+        sourceName: 'recovery-first.png',
+        content: 'A',
+      },
+      {
+        operationId: 'c5c5c5c5-c5c5-45c5-85c5-c5c5c5c5c5c5',
+        itemId: 'd6d6d6d6-d6d6-46d6-86d6-d6d6d6d6d6d6',
+        sourceName: 'recovery-second.png',
+        content: 'B',
+      },
+    ] as const;
+    const plans: Array<{ operationId: string; planFingerprint: string }> = [];
+    for (const operation of operations) {
+      await authority.createOperation({
+        operationId: operation.operationId,
+        items: [{ itemId: operation.itemId, sourceName: operation.sourceName, declaredBytes: 1 }],
+      });
+      await authority.uploadItem(operation.operationId, operation.itemId, Readable.from(Buffer.from(operation.content)));
+      const planned = await authority.plan(operation.operationId, {
+        targets: [{ itemId: operation.itemId, kind: 'background', fileName: operation.sourceName }],
+      });
+      await authority.seal(operation.operationId, { planFingerprint: planned.plan.planFingerprint });
+      plans.push({ operationId: operation.operationId, planFingerprint: planned.plan.planFingerprint });
+    }
+
+    const firstPrepared = path.join(
+      projectRoot,
+      '.surdet',
+      'asset-import',
+      operations[0].operationId,
+      'prepared',
+      `${operations[0].itemId}.bin`,
+    );
+    const faulted = reopenedAuthority(paths, async (point) => {
+      if (point === 'after_prepare_intent_before_file') await writeFile(firstPrepared, 'external-evidence');
+    });
+    const results = await Promise.all(plans.map(async ({ operationId, planFingerprint }) => {
+      try {
+        const committed = await faulted.commit(operationId, { planFingerprint });
+        return { operationId, status: committed.operation.status };
+      } catch (error) {
+        return { operationId, errorCode: (error as { code?: string }).code };
+      }
+    }));
+
+    expect(results).toEqual(operations.map(({ operationId }) => ({ operationId, errorCode: 'IMPORT_RECOVERY_REQUIRED' })));
+    const store = new AssetImportRecordStore(paths);
+    expect((await store.readOperation(operations[0].operationId)).journal.status).toBe('RECOVERY_REQUIRED');
+    expect((await store.readOperation(operations[1].operationId)).journal.status).toBe('READY');
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', operations[0].sourceName)))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', operations[1].sourceName)))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(path.join(projectRoot, '.surdet', 'asset-import', operations[1].operationId, 'publication.json')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(path.join(projectRoot, '.surdet', 'asset-import', operations[1].operationId, 'receipt.json')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await store.hasUnresolvedBarrier()).toBe(true);
   });
 
   it('keeps an externally created target byte-identical when commit revalidation becomes stale', async () => {
