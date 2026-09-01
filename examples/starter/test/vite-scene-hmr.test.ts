@@ -112,6 +112,15 @@ describe('real Vite .gal HMR', () => {
     await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
     await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'ch01_01', undefined, { timeout: 15000 });
     await waitForStableResources();
+    // The 1050ms blocking intro timeline owns the opening background and portrait.
+    // Capture the HMR baseline only after that authored projection has settled;
+    // otherwise CI speed can make natural timeline progress look like an HMR mutation.
+    await page.waitForFunction(() => {
+      const snapshot = window.__surdetDebug.presentationSnapshot as HmrPresentationSnapshot | undefined;
+      return snapshot?.stage.backgroundKey === 'castle_hall'
+        && snapshot.stage.portraits.some((portrait) => portrait.key === 'lynn:uniform')
+        && snapshot.timelines.every((timeline) => !timeline.blocking);
+    }, undefined, { timeout: 15000 });
 
     const captureState = async () => page.evaluate(() => ({
       sessionId: window.__surdetDebug.sessionId,
