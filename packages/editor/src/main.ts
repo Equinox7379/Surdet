@@ -408,6 +408,15 @@ async function undoAssetImport(): Promise<void> {
   });
 }
 
+async function openAssetImportReceipt(operationId: string): Promise<void> {
+  await runAssetImportAction('正在读取导入回执…', async (context) => {
+    const detail = await context.client.queryOperation(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(detail);
+    assetImportWorkspace.setMessage(detail.receipt === null ? '这次导入还没有完成回执。' : '已读取导入回执。');
+  });
+}
+
 function openImportedAsset(): void {
   const targetPath = assetImportWorkspace.snapshot().activeOperation?.receipt?.files[0]?.targetPath;
   if (targetPath) state.assetCenterSelectedId = `file:${targetPath.replaceAll('\\', '/')}`;
@@ -881,6 +890,7 @@ function renderMainArea(): void {
         onPrepareImport: () => { void prepareAssetImport(); },
         onCommitImport: () => { void commitAssetImport(); },
         onCancelImport: () => { void cancelAssetImport(); },
+        onOpenReceipt: (operationId) => { void openAssetImportReceipt(operationId); },
         onViewImportedAssets: openImportedAsset,
         onUndoImport: () => { void undoAssetImport(); },
         refreshProjectAssetIntelligence,

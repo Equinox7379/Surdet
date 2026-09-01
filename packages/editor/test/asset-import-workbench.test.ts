@@ -89,8 +89,11 @@ describe('Editor 中文素材导入工作台合同', () => {
       '正在上传',
       '正在写入项目',
       '导入完成',
+      '导入已撤销',
       '取消导入',
       '查看已导入素材',
+      '最近导入',
+      '查看导入回执',
       '撤销本次导入',
       '撤销会把这些文件移出素材库，并由 Surdet 保留恢复副本；不会改动后来修改过的文件。',
       '已撤销，恢复副本仍由 Surdet 保留。',
@@ -136,6 +139,12 @@ describe('Editor 中文素材导入工作台合同', () => {
     expect(mainSource).toMatch(/plan\(operationId,\s*\{\s*targets:\s*currentAssetImportTargets\(\)/);
     expect(mainSource).toMatch(/finishRequestedAssetImportCancellation/);
     expect(mainSource).toMatch(/context\.client\.cancel/);
+  });
+
+  it('never lets a historical receipt replace an active draft or operation', () => {
+    expect(workbenchSource).toMatch(
+      /projection\.activeOperation === null\s*&& projection\.draftItems\.length === 0\s*&& projection\.recentReceipts\.length > 0/,
+    );
   });
 
   it('loads the dedicated stylesheet after the existing Asset Center stylesheet', () => {

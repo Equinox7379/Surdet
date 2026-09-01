@@ -66,6 +66,7 @@ export interface AssetImportWorkbenchHooks {
   onPrepareImport?: () => void;
   onCommitImport?: () => void;
   onCancelImport?: () => void;
+  onOpenReceipt?: (operationId: string) => void;
   onViewImportedAssets?: () => void;
   onUndoImport?: (receiptId: string, receiptSha256: string) => void;
   refreshProjectAssetIntelligence?: () => void | Promise<void>;
@@ -387,10 +388,11 @@ function renderSettings(
 
 function renderResult(
   host: HTMLElement,
-  operation: AssetImportOperationDetail | null,
+  projection: AssetImportWorkspaceProjection,
   hooks: AssetImportWorkbenchHooks,
 ): void {
   host.replaceChildren();
+  const operation = projection.activeOperation;
   if (operation !== null && ['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(operation.operation.status)) {
     const recovery = h('section', 'asset-import-recovery');
     recovery.setAttribute('aria-label', '导入恢复');
@@ -420,20 +422,23 @@ function renderResult(
     return;
   }
   if (operation?.receipt !== null && operation?.receipt !== undefined) {
+    const undone = operation.operation.status === 'UNDONE' || operation.undoReceipt !== null;
     const result = h('section', 'asset-import-result');
     result.setAttribute('aria-label', '导入回执');
     const bytes = operation.receipt.files.reduce((sum, file) => sum + file.bytes, 0);
     result.append(
-      h('h3', undefined, '导入完成'),
-      h('p', undefined, `已导入 ${operation.receipt.files.length} 个文件，共 ${formatBytes(bytes)}。`),
+      h('h3', undefined, undone ? '导入已撤销' : '导入完成'),
+      h('p', undefined, undone
+        ? `已从素材库移出 ${operation.receipt.files.length} 个文件，恢复副本仍由 Surdet 保留。`
+        : `已导入 ${operation.receipt.files.length} 个文件，共 ${formatBytes(bytes)}。`),
     );
-    const view = document.createElement('button');
-    view.type = 'button';
-    view.className = 'asset-import-secondary';
-    view.textContent = '查看已导入素材';
-    view.onclick = () => hooks.onViewImportedAssets?.();
-    result.appendChild(view);
-    if (operation.undoReceipt === null) {
+    if (!undone) {
+      const view = document.createElement('button');
+      view.type = 'button';
+      view.className = 'asset-import-secondary';
+      view.textContent = '查看已导入素材';
+      view.onclick = () => hooks.onViewImportedAssets?.();
+      result.appendChild(view);
       const undo = document.createElement('button');
       undo.type = 'button';
       undo.className = 'asset-import-secondary';
@@ -446,6 +451,35 @@ function renderResult(
     }
     host.appendChild(result);
     return;
+  }
+  if (projection.activeOperation === null
+    && projection.draftItems.length === 0
+    && projection.recentReceipts.length > 0) {
+    const recent = h('section', 'asset-import-result asset-import-recent');
+    recent.setAttribute('aria-label', '最近导入回执');
+    recent.append(
+      h('h3', undefined, '最近导入'),
+      h('p', undefined, '可以重新读取已经写入项目的回执，并在文件未变化时安全撤销。'),
+    );
+    const list = h('div', 'asset-import-receipt-list');
+    list.setAttribute('role', 'list');
+    for (const receipt of projection.recentReceipts) {
+      const row = h('div', 'asset-import-receipt-row');
+      row.setAttribute('role', 'listitem');
+      row.dataset.operationId = receipt.operationId;
+      row.append(
+        h('span', undefined, `${receipt.fileCount} 个文件 · ${receipt.status === 'UNDONE' ? '已撤销' : '已导入'}`),
+      );
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'asset-import-secondary';
+      open.textContent = '查看导入回执';
+      open.onclick = () => hooks.onOpenReceipt?.(receipt.operationId);
+      row.appendChild(open);
+      list.appendChild(row);
+    }
+    recent.appendChild(list);
+    host.appendChild(recent);
   }
 }
 
@@ -625,7 +659,7 @@ export function renderAssetImportWorkbench(
   const readyCount = value.draftItems.filter((item) => item.kind !== null && operationIssues(value.activeOperation, item.itemId).length === 0).length;
   const blockedCount = Math.max(0, value.draftItems.length - readyCount);
   const result = h('div');
-  renderResult(result, value.activeOperation, hooks);
+  renderResult(result, value, hooks);
   const actions = h('footer');
   renderActions(actions, value, readyCount, blockedCount, hooks);
   actions.appendChild(result);

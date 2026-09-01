@@ -205,6 +205,18 @@ export function createAssetImportWorkspace(
       ensureActive();
       projection.activeOperation = operation;
       if (operation !== null) {
+        if (operation.receipt !== null
+          && (operation.operation.status === 'COMMITTED' || operation.operation.status === 'UNDONE')) {
+          projection.recentReceipts = [{
+            operationId: operation.operation.operationId,
+            receiptId: operation.receipt.receiptId,
+            status: operation.operation.status,
+            fileCount: operation.receipt.files.length,
+            committedAt: operation.receipt.committedAt,
+          }, ...projection.recentReceipts.filter((entry) => (
+            entry.operationId !== operation.operation.operationId
+          ))];
+        }
         const pending = projection.pendingOperations.filter((entry) => entry.operationId !== operation.operation.operationId);
         if (!['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.operation.status)) {
           pending.push({ ...operation.operation });
