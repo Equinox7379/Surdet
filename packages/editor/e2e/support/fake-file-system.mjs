@@ -113,6 +113,11 @@ export const fakeFileSystemInit = ({ rootName, files }) => {
     if (name.endsWith('.gal')) return 'text/plain';
     if (name.endsWith('.svg')) return 'image/svg+xml';
     if (name.endsWith('.otf')) return 'font/otf';
+    if (name.endsWith('.wav')) return 'audio/wav';
+    if (name.endsWith('.ogg')) return 'audio/ogg';
+    if (name.endsWith('.mp3')) return 'audio/mpeg';
+    if (name.endsWith('.webm')) return 'video/webm';
+    if (name.endsWith('.mp4')) return 'video/mp4';
     return 'application/octet-stream';
   };
   const addParentDirectories = (filePath) => {
