@@ -53,6 +53,17 @@ describe('project asset import authority storage', () => {
     await store.registerOperation({ operationId, itemCount: 1, createdAt: '2026-09-01T00:00:00.000Z' });
     await expect(store.registerOperation({ operationId, itemCount: 2, createdAt: '2026-09-01T00:00:00.000Z' }))
       .rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+    await store.createOperationManifest({
+      schemaVersion: 1,
+      operationId,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      manifestFingerprint: 'a'.repeat(64),
+      items: [{
+        itemId: '22222222-2222-4222-8222-222222222222',
+        sourceName: 'fixture.png',
+        declaredBytes: 1,
+      }],
+    });
     const initial = await store.createInitialJournal(operationId, {
       status: 'UPLOADING',
       itemCount: 1,
@@ -92,8 +103,10 @@ describe('project asset import authority storage', () => {
     const dataRoot = path.join(fixture, 'data');
     await mkdir(projectRoot, { recursive: true });
     const first = await acquireAssetImportProjectLease({ projectRoot, dataRoot });
+    await expect(first.assertHeld()).resolves.toBeUndefined();
     await expect(acquireAssetImportProjectLease({ projectRoot, dataRoot })).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
     await first.release();
+    await expect(first.assertHeld()).rejects.toMatchObject({ code: 'IMPORT_AUTHORITY_NOT_READY' });
     const replacement = await acquireAssetImportProjectLease({ projectRoot, dataRoot });
     await replacement.release();
   });
