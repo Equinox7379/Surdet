@@ -453,6 +453,7 @@ export function inspectProject(
   snapshot: ProjectSnapshot,
   index = buildObjectIndex(snapshot),
   assetFiles: readonly (string | ProjectAssetFileFact)[] = [],
+  gallery?: unknown,
 ): ProjectInspection {
   const charactersValue = snapshot.config['characters'];
   const characters = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
@@ -475,7 +476,7 @@ export function inspectProject(
     scenes: snapshot.scenes.map((scene) => ({ id: scene.id, path: scene.path })),
     variables: Object.entries(snapshot.variables).map(([name, declaration]) => ({ name, declaration })),
     characters,
-    assets: buildAssetCatalog(assetFiles, snapshot),
+    assets: buildAssetCatalog(assetFiles, snapshot, { gallery }),
     objectCount: index.objects.length,
     referenceCount: index.objects.reduce((total, object) => total + object.references.length, 0),
   };

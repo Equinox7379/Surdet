@@ -144,7 +144,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function galleryConfig(snapshot: ProjectSnapshot): Record<string, unknown> {
+function galleryConfig(snapshot: ProjectSnapshot, supplied?: unknown): Record<string, unknown> {
+  const suppliedRecord = asRecord(supplied);
+  if (suppliedRecord) return suppliedRecord;
   const file = snapshot.files.find((candidate) => candidate.path === 'content/config/gallery.json');
   if (!file || file.text.trim().length === 0) return {};
   try {
@@ -160,7 +162,7 @@ function galleryEntries(value: unknown, field: string): Record<string, unknown>[
   return Array.isArray(entries) ? entries.map(asRecord).filter((entry): entry is Record<string, unknown> => entry !== null) : [];
 }
 
-function referenceTargets(snapshot: ProjectSnapshot): ReferenceTarget[] {
+function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): ReferenceTarget[] {
   const targets: ReferenceTarget[] = [];
   const add = (
     kind: ProjectAssetKind,
@@ -173,7 +175,7 @@ function referenceTargets(snapshot: ProjectSnapshot): ReferenceTarget[] {
     targets.push({ kind, key: normalized, ...(variant?.trim() ? { variant: variant.trim() } : {}), reference });
   };
 
-  const gallery = galleryConfig(snapshot);
+  const gallery = galleryConfig(snapshot, galleryInput);
   const gallerySources = new Map<string, { kind: ProjectAssetKind; key: string }>();
   for (const [field, kind] of [['cgs', 'background'], ['music', 'music']] as const) {
     for (const entry of galleryEntries(gallery, field)) {
@@ -317,6 +319,7 @@ function createIssue(
 export function buildProjectAssetIntelligence(
   snapshot: ProjectSnapshot,
   files: readonly ProjectAssetFileFact[],
+  options: { gallery?: unknown } = {},
 ): ProjectAssetIntelligence {
   const classified = files
     .map(classifyFile)
@@ -379,7 +382,7 @@ export function buildProjectAssetIntelligence(
     ));
   }
 
-  const references = referenceTargets(snapshot);
+  const references = referenceTargets(snapshot, options.gallery);
   const missingByTarget = new Map<string, ProjectAssetItem>();
   for (const target of references) {
     const key = targetKey(target.kind, target.key, target.variant);
