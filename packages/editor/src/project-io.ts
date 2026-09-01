@@ -85,6 +85,12 @@ export async function openProjectFromHandle(
   clearTimelineHistories();
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
   state.dirAssets = [];
+  state.assetIntelligence = null;
+  state.assetIntelligenceState = 'loading';
+  state.assetCenterSelectedId = null;
+  state.assetCenterQuery = '';
+  state.assetCenterKind = 'all';
+  state.assetCenterStatus = 'all';
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
@@ -173,16 +179,36 @@ async function walkAssetDir(root: FileSystemDirectoryHandle, basePath: string): 
     }).values();
     for await (const ent of entries) {
       if (ent.kind === 'directory') {
-        await walk(ent, kind ?? kindOfDir(ent.name), relative.length === 0 ? ent.name : `${relative}/${ent.name}`);
-      } else if (ent.kind === 'file' && kind) {
+        const classified = kind ?? kindOfDir(ent.name) ?? (basePath === 'content/assets' ? 'other' : null);
+        await walk(ent, classified, relative.length === 0 ? ent.name : `${relative}/${ent.name}`);
+      } else if (ent.kind === 'file' && (kind !== null || basePath === 'content/assets')) {
+        const assetKind = kind ?? 'other';
         const filePath = relative.length === 0 ? ent.name : `${relative}/${ent.name}`;
-        recordAssetPath(ent, `${basePath}/${filePath}`);
-        if (kind === 'portrait') {
+        const sourcePath = `${basePath}/${filePath}`;
+        recordAssetPath(ent, sourcePath);
+        let bytes: number | undefined;
+        let lastModified: number | undefined;
+        try {
+          const file = await ent.getFile();
+          bytes = file.size;
+          lastModified = file.lastModified;
+        } catch {
+          // 预览句柄仍保留；文件事实缺失由共享投影如实表示为未测量。
+        }
+        if (assetKind === 'portrait') {
           const { key, expr } = parsePortraitFileName(ent.name);
-          state.dirAssets.push({ key, kind, expr, handle: ent, isImage: IMG_RE.test(ent.name) });
+          state.dirAssets.push({
+            key, kind: assetKind, expr, handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
+            ...(bytes === undefined ? {} : { bytes }),
+            ...(lastModified === undefined ? {} : { lastModified }),
+          });
         } else {
           const key = ent.name.replace(/\.[^.]+$/, '');
-          state.dirAssets.push({ key, kind, handle: ent, isImage: IMG_RE.test(ent.name) });
+          state.dirAssets.push({
+            key, kind: assetKind, handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
+            ...(bytes === undefined ? {} : { bytes }),
+            ...(lastModified === undefined ? {} : { lastModified }),
+          });
         }
       }
     }
@@ -704,6 +730,12 @@ export function loadDemoProject(): void {
   state.entryScene = 'demo';
   state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
   state.dirAssets = [];
+  state.assetIntelligence = null;
+  state.assetIntelligenceState = 'loading';
+  state.assetCenterSelectedId = null;
+  state.assetCenterQuery = '';
+  state.assetCenterKind = 'all';
+  state.assetCenterStatus = 'all';
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
   state.scenes.set('demo', {
     id: 'demo',

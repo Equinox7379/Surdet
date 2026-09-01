@@ -1,0 +1,125 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function readEditorFile(relativePath: string): string {
+  const absolutePath = path.resolve(editorRoot, relativePath);
+  return existsSync(absolutePath) ? readFileSync(absolutePath, 'utf8') : '';
+}
+
+function ruleBodiesMatching(css: string, selectorPattern: RegExp): string[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  return [...withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((match) => selectorPattern.test(match[1] ?? ''))
+    .map((match) => match[2] ?? '');
+}
+
+const modeSource = readEditorFile('src/shell/editor-modes.ts');
+const mainSource = readEditorFile('src/main.ts');
+const stateSource = readEditorFile('src/state.ts');
+const centerSource = readEditorFile('src/panels/asset-center.ts');
+const sidebarAssetSource = readEditorFile('src/panels/assets.ts');
+const centerCss = readEditorFile('src/styles/asset-center.css');
+const indexSource = readEditorFile('index.html');
+
+describe('editor Asset Center contract', () => {
+  it('adds a first-class mode between Script and Flow and consumes shared intelligence', () => {
+    expect(modeSource, 'editor modes source must exist').toContain('EditorModeId');
+    const modeList = modeSource.match(/EDITOR_MODES[\s\S]*?as const/)?.[0] ?? '';
+    expect(modeList).toMatch(/id:\s*'editor'[\s\S]*id:\s*'assets'[\s\S]*id:\s*'flow'/);
+    expect(modeList).toMatch(/id:\s*'assets'\s*,\s*label:\s*'素材'\s*,\s*panelId:\s*'asset-center-view'/);
+    expect(mainSource).toMatch(/state\.mainTab\s*===\s*'assets'/);
+    expect(mainSource).toMatch(/renderAssetCenter/);
+    expect(mainSource).toMatch(/asset-center-view/);
+    expect(stateSource).toMatch(/assetIntelligence/);
+    expect(stateSource).toMatch(/ProjectAssetIntelligence/);
+    expect(centerSource).toMatch(/assetIntelligence/);
+    expect(sidebarAssetSource).toMatch(/assetIntelligence/);
+  });
+
+  it('keeps the primary vocabulary Chinese and exposes complete categories and filters', () => {
+    expect(centerSource, 'Asset Center panel must exist').toContain('asset-center');
+    const primaryCopy = `${centerSource}\n${centerCss}`;
+    for (const label of [
+      '背景', '立绘', '头像', '音乐', '环境音', '音效', '语音', '视频', '字体', '其他',
+      '已引用', '未引用', '引用缺失', '同名冲突', '命名异常', '格式待确认',
+    ]) {
+      expect(primaryCopy, `missing Chinese Asset Center label: ${label}`).toContain(label);
+    }
+    expect(centerSource).toMatch(/search|搜索/i);
+    expect(centerSource).toMatch(/status|状态/);
+    expect(centerSource).toMatch(/kind|类别|分类/);
+    expect(centerSource).toMatch(/filter|筛选/);
+  });
+
+  it('freezes Agent-readable asset identity, status, source locations, and keyboard selection', () => {
+    expect(centerSource).toMatch(/data-asset-id|dataset\.assetId/);
+    expect(centerSource).toMatch(/data-asset-kind|dataset\.assetKind/);
+    expect(centerSource).toMatch(/data-asset-status|dataset\.assetStatus/);
+    expect(centerSource).toMatch(/data-source-path|dataset\.sourcePath/);
+    expect(centerSource).toMatch(/data-source-line|dataset\.sourceLine/);
+    expect(centerSource).toMatch(/data-object-ref|dataset\.objectRef/);
+    expect(centerSource).toMatch(/aria-selected/);
+    expect(centerSource).toMatch(/keydown|role['\"]\s*,\s*['\"]option/);
+    expect(centerSource).toMatch(/Enter|Space|button/);
+    expect(centerSource).toMatch(/requestAnimationFrame[\s\S]*assetId[\s\S]*\.focus\(\)/);
+    expect(centerSource).toMatch(/asset-center-(?:rail|library|inspector)/);
+    expect(centerSource).toMatch(/dataset\.assetQuery/);
+    expect(centerSource).toMatch(/dataset\.assetKindFilter/);
+    expect(centerSource).toMatch(/dataset\.assetStatusFilter/);
+    expect(centerSource).toMatch(/dataset\.visibleCount/);
+    expect(centerSource).toMatch(/dataset\.fileCount/);
+  });
+
+  it('uses a persistent inspector and a technical disclosure instead of hover-only evidence', () => {
+    expect(centerSource).toMatch(/asset-center-inspector/);
+    expect(centerSource).toMatch(/selected|selection/);
+    expect(centerSource).toMatch(/details|技术信息/);
+    expect(centerSource).toMatch(/技术信息/);
+    expect(centerSource).toMatch(/preview|预览/);
+    expect(centerSource).toMatch(/reference|引用/);
+    expect(centerSource).not.toMatch(/mouseenter/);
+    expect(centerSource).not.toMatch(/style\.(?:left|top|right|bottom|transform)\s*=/);
+    expect(centerSource).not.toMatch(/assetCenterSelectedId\s*===\s*null\s*&&\s*filtered\.length/);
+    expect(centerSource).toMatch(/image\.onerror/);
+    expect(centerSource).toMatch(/audio\.onerror/);
+    expect(centerSource).toMatch(/video\.onerror/);
+  });
+
+  it('keeps preview object URLs bounded and avoids decorative selection treatments', () => {
+    expect(centerSource).toMatch(/URL\.createObjectURL/);
+    expect(centerSource).toMatch(/URL\.revokeObjectURL/);
+    expect(centerSource).toMatch(/dispose|cleanup|beforeunload|selection|selected/i);
+
+    expect(centerCss, 'Asset Center stylesheet must exist').toContain('asset-center');
+    const selectedRules = ruleBodiesMatching(centerCss, /(?:aria-selected|selected|active|current)/i).join('\n');
+    expect(selectedRules).not.toMatch(/border-(?:left|inline-start|top)\s*:/i);
+    expect(centerCss).not.toMatch(/border-(?:left|inline-start)\s*:/i);
+    expect(centerCss).not.toMatch(/(?:linear|radial)-gradient\s*\(/i);
+    expect(centerCss).not.toMatch(/backdrop-filter\s*:/i);
+    expect(centerCss).not.toMatch(/filter\s*:\s*blur\s*\(/i);
+    expect(centerCss).not.toMatch(/box-shadow\s*:[^;]*\binset\b/i);
+  });
+
+  it('anchors the wide, 1024, and 800 layouts and loads its stylesheet after shared layers', () => {
+    expect(centerCss).toMatch(/asset-center-(?:shell|rail|library|inspector)/);
+    // The base three-region layout is the 1440px desktop contract.
+    expect(centerCss).toMatch(/asset-center-shell[\s\S]*grid-template-columns/);
+    expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*1024px\)/i);
+    expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)/i);
+    expect(indexSource).toMatch(/styles\/asset-center\.css/);
+    expect(indexSource.indexOf('styles/asset-center.css')).toBeGreaterThan(indexSource.indexOf('styles/script-workspace.css'));
+    expect(indexSource.indexOf('styles/asset-center.css')).toBeGreaterThan(indexSource.indexOf('styles/components.css'));
+  });
+
+  it('keeps the compact Script sidebar as a shared-truth insertion surface', () => {
+    expect(sidebarAssetSource).toMatch(/assetIntelligence/);
+    expect(sidebarAssetSource).toMatch(/insert-asset/);
+    expect(sidebarAssetSource).toMatch(/copy-asset-key/);
+    expect(sidebarAssetSource).toMatch(/avatar/);
+    expect(sidebarAssetSource).toMatch(/ambience/);
+  });
+});

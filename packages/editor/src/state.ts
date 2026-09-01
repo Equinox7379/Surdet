@@ -4,7 +4,7 @@
  */
 import type { ValidateResult } from './validate.js';
 import type { DirAsset } from './assets.js';
-import type { ObjectIndex, RuntimeTraceEvent } from '@surdet/authoring';
+import type { ObjectIndex, ProjectAssetIntelligence, ProjectAssetKind, RuntimeTraceEvent } from '@surdet/authoring';
 import type { ReviewWorkspaceState } from './review-workspace.js';
 import type { EditorModeId } from './shell/editor-modes.js';
 
@@ -88,6 +88,14 @@ export const state = {
   },
   /** content/assets（及 public/）扫描出的素材文件条目（E2） */
   dirAssets: [] as DirAsset[],
+  /** 与 Agent/CLI 同源的只读素材事实；FileSystemHandle 仅保留在 dirAssets 视图适配层。 */
+  assetIntelligence: null as ProjectAssetIntelligence | null,
+  assetIntelligenceState: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
+  assetCenterSelectedId: null as string | null,
+  assetCenterQuery: '',
+  assetCenterKind: 'all' as 'all' | ProjectAssetKind,
+  assetCenterStatus: 'all' as 'all' | 'referenced' | 'unused' | 'missing' | 'duplicate' | 'invalid-name' | 'unsupported',
+  assetCenterView: 'list' as 'list' | 'grid',
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
   /** 当前已打开的 human review workspace；普通项目打开时必须清空。 */
