@@ -67,9 +67,12 @@ export async function startDevProject(args = process.argv.slice(2), runtimeOptio
     server = await createServer({
       root: packageRoot,
       configFile: path.join(packageRoot, 'vite.config.ts'),
+      ...(typeof runtimeOptions.cacheDir === 'string' && runtimeOptions.cacheDir.length > 0
+        ? { cacheDir: runtimeOptions.cacheDir }
+        : {}),
       server: { host: '127.0.0.1', port: options.port, strictPort: true },
       ...(runtimeOptions.disableDependencyDiscovery === true
-        ? { optimizeDeps: { noDiscovery: true, include: [] } }
+        ? { optimizeDeps: { noDiscovery: true, include: runtimeOptions.optimizedDependencies ?? [] } }
         : {}),
     });
   } finally {

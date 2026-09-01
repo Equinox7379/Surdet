@@ -21,6 +21,7 @@ test('asset import runner owns one isolated loopback fixture and strict non-rese
   assert.match(source, /4173/);
   assert.match(source, /4175/);
   assert.match(source, /strict-isolated-port-selected/);
+  assert.match(source, /cacheDir:/);
   assert.match(source, /dev-project\.mjs/);
   assert.match(source, /--project/);
   assert.match(source, /--data-root/);
@@ -153,6 +154,27 @@ test('asset import runner proves a ready plan is invalidated by editing its targ
   assert.match(source, /setFinalName\(|setCategory\(/);
   assert.match(source, /pass\(\s*['"]ready-plan-invalidated-after-target-edit['"]/);
   assert.match(source, /plan[\s\S]{0,500}status[\s\S]{0,500}ready/);
+});
+
+test('asset import runner verifies referenced relocation, preview reload, and exact undo', () => {
+  for (const milestone of [
+    'relocation-target-collision-blocked',
+    'relocation-impact-previewed',
+    'referenced-asset-relocated-and-reloaded',
+    'relocated-scene-previewed',
+    'asset-relocation-undo-succeeded',
+  ]) assert.ok(source.includes(milestone), `missing relocation milestone: ${milestone}`);
+  for (const label of ['移动或重命名', '检查影响', '修改目标', '撤销本次整理']) {
+    assert.ok(source.includes(label), `missing relocation browser action: ${label}`);
+  }
+  assert.match(source, /castle_hall_arrival/);
+  assert.match(source, /asset-relocation-blockers/);
+  assert.match(source, /asset-relocation-impact/);
+  assert.match(source, /asset-relocation-result/);
+  assert.match(source, /projectWriteLock\s*===\s*null/);
+  assert.match(source, /presentationSnapshot\?\.stage\?\.backgroundKey\s*===\s*backgroundKey/);
+  assert.match(source, /source\?\.sceneId\s*===\s*['"]ch02['"][\s\S]{0,160}source\?\.op\s*===\s*['"]instr['"]/);
+  assert.match(source, /relocation undo did not restore the isolated project baseline/);
 });
 
 test('CI or verify-all executes the real asset import Playwright runner', () => {

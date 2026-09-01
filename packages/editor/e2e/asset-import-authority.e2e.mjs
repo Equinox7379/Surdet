@@ -31,6 +31,11 @@ export const MILESTONE_IDS = Object.freeze([
   'modified-file-undo-blocked',
   'unchanged-file-undo-succeeded',
   'undo-quarantine-retained',
+  'relocation-target-collision-blocked',
+  'relocation-impact-previewed',
+  'referenced-asset-relocated-and-reloaded',
+  'relocated-scene-previewed',
+  'asset-relocation-undo-succeeded',
   'repository-and-starter-unchanged',
   'browser-error-channels-empty',
   'isolated-process-cleanup',
@@ -45,7 +50,8 @@ function assert(condition, message) {
 }
 
 function errorText(error) {
-  return error instanceof Error ? error.stack ?? error.message : String(error);
+  if (!(error instanceof Error)) return String(error);
+  return error.stack || `${error.name}: ${error.message}`;
 }
 
 function readFileIdentity(file) {
@@ -86,11 +92,13 @@ function repositoryTreeIdentity() {
   };
 }
 
-function copyStarter(destination) {
+function copyStarter(destination, options = {}) {
   fs.cpSync(starterRoot, destination, {
     recursive: true,
     filter(source) {
       const name = path.basename(source);
+      const relative = path.relative(starterRoot, source).split(path.sep).join('/');
+      if (options.includeTests === false && (relative === 'test' || relative.startsWith('test/'))) return false;
       return !['.git', 'node_modules', 'dist', '.vite'].includes(name);
     },
   });
@@ -114,7 +122,8 @@ function hashCanonicalProjectTree(root, registeredRootChallengeNames = []) {
         && registeredRootChallenges.has(entry.name);
       if (['.git', 'node_modules', 'dist', '.vite'].includes(entry.name)
         || isRegisteredRootChallenge
-        || portableRelative === '.surdet/asset-import') continue;
+        || portableRelative === '.surdet/asset-import'
+        || portableRelative === '.surdet/asset-relocation') continue;
       if (isDirectory) visit(absolute, relative);
       else if (isFile) {
         const bytes = fs.readFileSync(absolute);
@@ -540,7 +549,7 @@ async function run() {
   const artifactRoot = path.join(fixtureRoot, 'artifact');
   fs.mkdirSync(sourceRoot, { recursive: true });
   fs.mkdirSync(artifactRoot, { recursive: true });
-  copyStarter(projectRoot);
+  copyStarter(projectRoot, { includeTests: false });
   copyStarter(wrongProjectRoot);
   const nestedChallengeLikePath = path.join(projectRoot, 'content', '.surdet-bind-nested-sentinel.txt');
   fs.mkdirSync(path.dirname(nestedChallengeLikePath), { recursive: true });
@@ -629,7 +638,7 @@ async function run() {
       const { startDevProject } = await import(${JSON.stringify(pathToFileURL(launcher).href)});
       const server = await startDevProject(process.argv.slice(1), {
         registerSignals: false,
-        disableDependencyDiscovery: true,
+        cacheDir: ${JSON.stringify(path.join(fixtureRoot, 'vite-cache'))},
       });
       process.send?.({ type: 'ready' });
       let closing = false;
@@ -664,6 +673,20 @@ async function run() {
     browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads);
+    await page.addInitScript(() => {
+      window.__surdetE2eUnhandled = [];
+      const describe = (value) => ({
+        name: typeof value?.name === 'string' ? value.name : null,
+        message: typeof value?.message === 'string' ? value.message : String(value),
+        stack: typeof value?.stack === 'string' ? value.stack : null,
+      });
+      window.addEventListener('error', (event) => {
+        window.__surdetE2eUnhandled.push({ type: 'error', ...describe(event.error ?? event.message) });
+      });
+      window.addEventListener('unhandledrejection', (event) => {
+        window.__surdetE2eUnhandled.push({ type: 'unhandledrejection', ...describe(event.reason) });
+      });
+    });
     await page.exposeFunction('__surdetNodeFs', createNodeFsBridge({
       project: projectRoot,
       wrong: wrongProjectRoot,
@@ -956,6 +979,135 @@ async function run() {
     assert(quarantine.length === 2, `expected two retained quarantine files, got ${quarantine.length}`);
     assert(quarantineHashes.includes(sourceIdentities[0].sha256) && quarantineHashes.includes(sourceIdentities[1].sha256), 'quarantine bytes do not match imported sources');
     pass('undo-quarantine-retained', { paths: undone.operation.undoReceipt.quarantinePaths, files: quarantine });
+
+    const importEntry = page.locator('.asset-import-entry');
+    if (await importEntry.getAttribute('aria-expanded') === 'true') await importEntry.click();
+    const relocationSource = path.join(projectRoot, 'content', 'assets', 'bg', 'castle_hall.svg');
+    const relocationCollision = path.join(projectRoot, 'content', 'assets', 'bg', 'night_field.svg');
+    const relocationTarget = path.join(projectRoot, 'content', 'assets', 'bg', 'castle_hall_arrival.svg');
+    const relocationSourceBefore = fs.readFileSync(relocationSource);
+    const collisionBefore = fs.readFileSync(relocationCollision);
+    await page.locator('[data-asset-id="file:content/assets/bg/castle_hall.svg"]').click();
+    await page.getByRole('button', { name: '移动或重命名' }).click();
+    const relocationName = page.locator('.asset-relocation-file-control input');
+    await relocationName.fill('night_field');
+    await page.getByRole('button', { name: '检查影响' }).click();
+    await page.locator('.asset-relocation-blockers').waitFor({ state: 'visible' });
+    assert((await page.locator('.asset-relocation-blockers').textContent())?.includes('目标'),
+      'target collision was not explained in the relocation inspector');
+    assert(fs.readFileSync(relocationSource).equals(relocationSourceBefore), 'blocked relocation changed its source');
+    assert(fs.readFileSync(relocationCollision).equals(collisionBefore), 'blocked relocation changed the existing target');
+    pass('relocation-target-collision-blocked', { sourcePreserved: true, targetPreserved: true });
+
+    await page.getByRole('button', { name: '修改目标' }).click();
+    await page.waitForFunction(() => {
+      const input = document.querySelector('.asset-relocation-file-control input');
+      return input instanceof HTMLInputElement && !input.disabled
+        && document.querySelector('.asset-relocation-blockers') === null;
+    });
+    await relocationName.fill('castle_hall_arrival');
+    await page.getByRole('button', { name: '检查影响' }).click();
+    const relocationCommitButton = page.getByRole('button', { name: /移动并更新 \d+ 处引用/ });
+    await relocationCommitButton.waitFor({ state: 'visible' });
+    const impactText = await page.locator('.asset-relocation-impact').textContent();
+    for (const label of ['场景', '时间轴', '鉴赏配置']) {
+      assert(impactText?.includes(label), `relocation impact omitted ${label}`);
+    }
+    pass('relocation-impact-previewed', { groups: ['scene', 'timeline', 'gallery'] });
+
+    await relocationCommitButton.click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.mainTab === 'assets'
+        && window.surdetEditorDebug.state.assetCenterSelectedId === 'file:content/assets/bg/castle_hall_arrival.svg'
+        && window.surdetEditorDebug.state.projectWriteLock === null
+    ));
+    await page.locator('.asset-relocation-result', { hasText: '素材整理完成' }).waitFor({ state: 'visible' });
+    assert(!fs.existsSync(relocationSource), 'relocation source remained after commit');
+    assert(fs.existsSync(relocationTarget), 'relocation target was not created');
+    assert(fs.readFileSync(relocationTarget).equals(relocationSourceBefore), 'relocation changed binary bytes');
+    for (const relativePath of [
+      'content/scenario/ch02.gal',
+      'content/timelines/intro_arrival.json',
+      'content/timelines/intro_cinematic.json',
+      'content/config/gallery.json',
+    ]) {
+      const text = fs.readFileSync(path.join(projectRoot, ...relativePath.split('/')), 'utf8');
+      assert(text.includes('castle_hall_arrival'), `relocation did not update ${relativePath}`);
+      assert(!text.includes('castle_hall"') && !text.includes('castle_hall\n'), `old key remained in ${relativePath}`);
+    }
+    pass('referenced-asset-relocated-and-reloaded', { targetPath: 'content/assets/bg/castle_hall_arrival.svg' });
+
+    await page.locator('.asset-center-reference[data-source-path="content/scenario/ch02.gal"]').click();
+    await page.waitForFunction(() => window.surdetEditorDebug.state.current === 'ch02');
+    await page.locator('[data-editor-mode="preview"]').click();
+    const relocationPreviewElement = await page.locator('#preview-view .preview-frame').elementHandle();
+    const relocationPreviewFrame = await relocationPreviewElement?.contentFrame();
+    assert(relocationPreviewFrame, 'relocated scene preview iframe was not connected');
+    await relocationPreviewFrame.waitForURL((url) => url.pathname.endsWith('/preview.html'));
+    try {
+      await relocationPreviewFrame.waitForFunction((backgroundKey) => (
+        window.surdetPreviewDebug?.presentationSnapshot?.stage?.backgroundKey === backgroundKey
+      ), 'castle_hall_arrival');
+    } catch (error) {
+      const previewProbe = {
+        parent: await page.evaluate(() => ({
+          current: window.surdetEditorDebug?.state?.current ?? null,
+          trace: (window.surdetEditorDebug?.state?.previewTrace ?? []).map((event) => ({
+            kind: event.kind,
+            sceneId: event.source?.sceneId ?? null,
+            op: event.source?.op ?? null,
+            line: event.source?.line ?? null,
+          })),
+          diagnostics: document.querySelector('.preview-diagnostics')?.textContent ?? null,
+        })),
+        child: await relocationPreviewFrame.evaluate(() => ({
+          href: location.href,
+          readyState: document.readyState,
+          debugPresent: Boolean(window.surdetPreviewDebug),
+          rendererStatus: window.surdetPreviewDebug?.rendererStatus ?? null,
+          presentationSnapshot: window.surdetPreviewDebug?.presentationSnapshot ?? null,
+          resourceSnapshot: window.surdetPreviewDebug?.resourceSnapshot ?? null,
+          canvasCount: document.querySelectorAll('#preview-root canvas').length,
+          moduleScripts: [...document.querySelectorAll('script[type="module"]')].map((script) => script.src),
+          unhandled: window.__surdetE2eUnhandled ?? [],
+          errorText: document.querySelector('#preview-error')?.textContent ?? null,
+        })),
+      };
+      throw new Error(`relocated scene presentation missing: ${JSON.stringify(previewProbe)}`, { cause: error });
+    }
+    await page.waitForFunction(() => (
+      (window.surdetEditorDebug.state.previewTrace ?? []).some((event) => (
+        event?.source?.sceneId === 'ch02'
+          && event?.source?.op === 'instr'
+          && event?.source?.line === 3
+      ))
+    ));
+    pass('relocated-scene-previewed', { sceneId: 'ch02', backgroundKey: 'castle_hall_arrival' });
+
+    await page.locator('[data-editor-mode="assets"]').click();
+    await page.locator('.asset-relocation-result', { hasText: '素材整理完成' }).waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: '撤销本次整理' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.mainTab === 'assets'
+        && window.surdetEditorDebug.state.assetCenterSelectedId === 'file:content/assets/bg/castle_hall.svg'
+        && window.surdetEditorDebug.state.projectWriteLock === null
+    ));
+    assert(fs.existsSync(relocationSource), 'relocation undo did not restore source');
+    assert(!fs.existsSync(relocationTarget), 'relocation undo left target behind');
+    assert(fs.readFileSync(relocationSource).equals(relocationSourceBefore), 'relocation undo changed source bytes');
+    for (const relativePath of [
+      'content/scenario/ch02.gal',
+      'content/timelines/intro_arrival.json',
+      'content/timelines/intro_cinematic.json',
+      'content/config/gallery.json',
+    ]) {
+      const text = fs.readFileSync(path.join(projectRoot, ...relativePath.split('/')), 'utf8');
+      assert(text.includes('castle_hall'), `relocation undo did not restore ${relativePath}`);
+      assert(!text.includes('castle_hall_arrival'), `relocation undo left new key in ${relativePath}`);
+    }
+    projectAfter = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
+    assert(projectAfter.sha256 === projectBefore.sha256, 'relocation undo did not restore the isolated project baseline');
+    pass('asset-relocation-undo-succeeded', { sourceRestored: true, targetRemoved: true, referencesRestored: true });
 
     originalStarterAfter = hashProjectTree(starterRoot);
     repositoryTreeAfter = repositoryTreeIdentity();
