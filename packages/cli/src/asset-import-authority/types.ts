@@ -67,3 +67,38 @@ export interface RecoveryBarrierResolution {
   barrierId: string;
   resolvedAt: string;
 }
+
+export type AssetImportChallengeStatus = 'PROBE_CREATE_INTENT' | 'PROBE_CREATED' | 'PROBE_REMOVED';
+
+export interface AssetImportChallengeJournal {
+  schemaVersion: 1;
+  challengeId: string;
+  journalVersion: number;
+  previousGenerationSha256: string | null;
+  browserSessionId: string;
+  relativeProbePath: string;
+  nonceSha256: string;
+  expiresAt: string;
+  status: AssetImportChallengeStatus;
+}
+
+export interface CreateBindingChallengeResponse {
+  challengeId: string;
+  relativeProbePath: string;
+  expiresAt: string;
+}
+
+export interface ConfirmBindingChallengeRequest {
+  browserSessionId: string;
+  nonce: string;
+}
+
+export interface ConfirmBindingChallengeResponse {
+  projectIdentity: string;
+  projectName: string;
+  bindingToken: string;
+  bindingExpiresAt: string;
+  recoveryBarrier: 'clear' | 'recoverable' | 'manual-recovery';
+  pendingOperations: AssetImportJournal[];
+  recentReceipts: [];
+}

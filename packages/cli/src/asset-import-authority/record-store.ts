@@ -4,6 +4,7 @@ import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authorin
 import {
   AssetImportAuthorityError,
   type AssetImportAuthorityPaths,
+  type AssetImportChallengeJournal,
   type AssetImportJournal,
   type OperationRegistration,
   type RecoveryBarrierIncident,
@@ -33,6 +34,16 @@ export class AssetImportRecordStore {
 
   private journalFile(operationId: string): string {
     return path.join(this.operationDirectory(operationId), 'journal.json');
+  }
+
+  private challengeIndexFile(challengeId: string): string {
+    if (!validId(challengeId)) throw new AssetImportAuthorityError('INVALID_REQUEST', 'challengeId 格式无效');
+    return path.join(this.paths.projectNamespace, 'challenge-index', `${challengeId}.json`);
+  }
+
+  private challengeJournalFile(challengeId: string): string {
+    this.challengeIndexFile(challengeId);
+    return path.join(this.paths.projectNamespace, 'challenges', challengeId, 'journal.json');
   }
 
   async registerOperation(record: OperationRegistration): Promise<void> {
@@ -108,6 +119,59 @@ export class AssetImportRecordStore {
       if (loaded !== null) operations.push(loaded.journal);
     }
     return operations;
+  }
+
+  async registerChallenge(journal: AssetImportChallengeJournal): Promise<void> {
+    const registration = { challengeId: journal.challengeId, relativeProbePath: journal.relativeProbePath };
+    const indexFile = this.challengeIndexFile(journal.challengeId);
+    const existing = await readJsonRecord<typeof registration>(indexFile);
+    if (existing !== null && !equalJson(existing.value, registration)) {
+      throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', 'challengeId 已被占用');
+    }
+    if (existing === null) await createJsonRecord(indexFile, registration);
+    const journalFile = this.challengeJournalFile(journal.challengeId);
+    const current = await readJsonRecord<AssetImportChallengeJournal>(journalFile);
+    if (current === null) await createJsonRecord(journalFile, journal);
+  }
+
+  async readChallenge(challengeId: string): Promise<{ journal: AssetImportChallengeJournal; sha256: string }> {
+    const loaded = await readJsonRecord<AssetImportChallengeJournal>(this.challengeJournalFile(challengeId));
+    if (loaded === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '绑定 challenge 不存在');
+    return { journal: loaded.value, sha256: loaded.identity.sha256 };
+  }
+
+  async writeChallengeJournal(
+    previous: AssetImportChallengeJournal,
+    status: AssetImportChallengeJournal['status'],
+  ): Promise<AssetImportChallengeJournal> {
+    const current = await this.readChallenge(previous.challengeId);
+    if (!equalJson(current.journal, previous)) {
+      throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '绑定 challenge 已被更新');
+    }
+    const next: AssetImportChallengeJournal = {
+      ...previous,
+      journalVersion: previous.journalVersion + 1,
+      previousGenerationSha256: current.sha256,
+      status,
+    };
+    await replaceJsonRecord(this.challengeJournalFile(previous.challengeId), next);
+    return next;
+  }
+
+  async listChallenges(): Promise<AssetImportChallengeJournal[]> {
+    const directory = path.join(this.paths.projectNamespace, 'challenge-index');
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    const result: AssetImportChallengeJournal[] = [];
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const challengeId = entry.name.slice(0, -5);
+      const challenge = await this.readChallenge(challengeId);
+      result.push(challenge.journal);
+    }
+    return result;
   }
 
   async writeBarrier(incident: RecoveryBarrierIncident): Promise<void> {
