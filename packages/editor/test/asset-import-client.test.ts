@@ -19,6 +19,10 @@ const OPERATION_ID = '11111111-1111-4111-8111-111111111111';
 const ITEM_ID = '22222222-2222-4222-8222-222222222222';
 const CHALLENGE_ID = '33333333-3333-4333-8333-333333333333';
 const RECEIPT_ID = '44444444-4444-4444-8444-444444444444';
+const RELOCATION_OPERATION_ID = '66666666-6666-4666-8666-666666666666';
+const RELOCATION_RECEIPT_ID = '77777777-7777-4777-8777-777777777777';
+const RELOCATION_OPERATION_TOKEN = 'r'.repeat(64);
+const RELOCATION_RESUMED_TOKEN = 's'.repeat(64);
 
 const configuration = {
   authorityContractVersion: 1 as const,
@@ -66,6 +70,113 @@ function operationDetail(status: 'STAGED' | 'READY' | 'COMMITTED' | 'UNDONE' = '
     receipt: null,
     undoReceipt: null,
     allowedActions: status === 'STAGED' ? ['plan', 'cancel'] : ['commit', 'cancel'],
+  };
+}
+
+function relocationEvidence(sha256 = 'a'.repeat(64)) {
+  return {
+    device: '1',
+    inode: '2',
+    birthtimeNs: '3',
+    size: 5,
+    mtimeNs: '4',
+    sha256,
+  };
+}
+
+function relocationSummary(status: 'PLANNED' | 'COMMITTED' | 'UNDONE' | 'RECOVERY_REQUIRED' = 'PLANNED') {
+  return {
+    operationId: RELOCATION_OPERATION_ID,
+    status,
+    sourcePath: 'content/assets/bg/old.webp',
+    targetPath: 'content/assets/bg/new.webp',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    manualRecoveryRequired: status === 'RECOVERY_REQUIRED',
+  };
+}
+
+function relocationPlan() {
+  return {
+    schemaVersion: 1,
+    operationId: RELOCATION_OPERATION_ID,
+    planId: 'relocation-plan-' + 'f'.repeat(32),
+    planFingerprint: 'f'.repeat(64),
+    status: 'ready',
+    source: {
+      path: 'content/assets/bg/old.webp',
+      directory: 'content/assets/bg',
+      fileName: 'old.webp',
+      kind: 'background',
+      key: 'old',
+      format: 'webp',
+      invalidName: false,
+    },
+    target: {
+      path: 'content/assets/bg/new.webp',
+      directory: 'content/assets/bg',
+      fileName: 'new.webp',
+      kind: 'background',
+      key: 'new',
+      format: 'webp',
+      invalidName: false,
+    },
+    affectedReferenceCount: 0,
+    affectedFileCount: 0,
+    referenceChanges: [],
+    blockers: [],
+  };
+}
+
+function relocationReceipt() {
+  return {
+    schemaVersion: 1,
+    receiptId: RELOCATION_RECEIPT_ID,
+    receiptFingerprint: 'a'.repeat(64),
+    operationId: RELOCATION_OPERATION_ID,
+    planId: 'relocation-plan-' + 'f'.repeat(32),
+    planFingerprint: 'f'.repeat(64),
+    projectIdentity: PROJECT_IDENTITY,
+    sourcePath: 'content/assets/bg/old.webp',
+    targetPath: 'content/assets/bg/new.webp',
+    targetIdentity: relocationEvidence(),
+    textFiles: [],
+    committedAt: '2026-09-01T00:02:00.000Z',
+  };
+}
+
+function relocationUndoReceipt() {
+  return {
+    schemaVersion: 1,
+    undoReceiptId: '88888888-8888-4888-8888-888888888888',
+    undoReceiptFingerprint: 'b'.repeat(64),
+    operationId: RELOCATION_OPERATION_ID,
+    receiptId: RELOCATION_RECEIPT_ID,
+    sourcePath: 'content/assets/bg/old.webp',
+    targetPath: 'content/assets/bg/new.webp',
+    sourceIdentity: relocationEvidence(),
+    restoredTextFiles: [],
+    undoneAt: '2026-09-01T00:03:00.000Z',
+  };
+}
+
+function relocationDetail(status: 'PLANNED' | 'COMMITTED' | 'UNDONE' | 'RECOVERY_REQUIRED' = 'PLANNED') {
+  return {
+    request: {
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: 'content/assets/bg/old.webp',
+      targetPath: 'content/assets/bg/new.webp',
+    },
+    operation: relocationSummary(status),
+    plan: relocationPlan(),
+    receipt: status === 'COMMITTED' || status === 'UNDONE' ? relocationReceipt() : null,
+    undoReceipt: status === 'UNDONE' ? relocationUndoReceipt() : null,
+    allowedActions: status === 'PLANNED'
+      ? ['commit', 'cancel']
+      : status === 'COMMITTED'
+        ? ['resume', 'undo']
+        : status === 'RECOVERY_REQUIRED'
+          ? ['resume', 'recover']
+          : [],
   };
 }
 
@@ -285,7 +396,41 @@ function makeBindingFetcher(
         recoveryBarrier: 'clear',
         pendingOperations: [],
         recentReceipts: [],
+        pendingRelocations: [],
+        recentRelocationReceipts: [],
       });
+    }
+    if (url.endsWith('/relocations/plan')) {
+      return success({
+        operationToken: RELOCATION_OPERATION_TOKEN,
+        expiresAt: '2026-09-01T00:30:00.000Z',
+        detail: relocationDetail(),
+      });
+    }
+    if (url.endsWith('/relocations/query')) {
+      return success({ operations: [relocationSummary()], recentReceipts: [relocationReceipt()] });
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/query`)) {
+      return success(relocationDetail());
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/resume`)) {
+      return success({
+        operationToken: RELOCATION_RESUMED_TOKEN,
+        expiresAt: '2026-09-01T00:30:00.000Z',
+        detail: relocationDetail('COMMITTED'),
+      });
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/commit`)) {
+      return success(relocationDetail('COMMITTED'));
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/cancel`)) {
+      return success(relocationDetail('PLANNED'));
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/recover`)) {
+      return success(relocationDetail('COMMITTED'));
+    }
+    if (url.endsWith(`/relocations/${RELOCATION_OPERATION_ID}/undo`)) {
+      return success(relocationDetail('UNDONE'));
     }
     if (url.endsWith('/operations')) {
       return success({
@@ -418,6 +563,98 @@ describe('Editor 素材导入 authority client', () => {
     expect(header(planRequest.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
   });
 
+  it('strictly parses relocation discovery/detail and reuses the bound operation token map', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    const binding = await client.bindProject(root.handle());
+    expect(binding.pendingRelocations).toEqual([]);
+    expect(binding.recentRelocationReceipts).toEqual([]);
+
+    const planned = await client.relocationPlan({
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: 'content/assets/bg/old.webp',
+      targetDirectory: 'content/assets/bg',
+      fileName: 'new.webp',
+    });
+    expect(planned.detail.request.targetPath).toBe('content/assets/bg/new.webp');
+    expect(planned.operationToken).toBe(RELOCATION_OPERATION_TOKEN);
+
+    const planRequest = requestRecords(fetcher).at(-1)!;
+    expect(planRequest.input).toBe(`${AUTHORITY_PATH}/relocations/plan`);
+    expect(jsonBody(planRequest.init)).toEqual({
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: 'content/assets/bg/old.webp',
+      targetDirectory: 'content/assets/bg',
+      fileName: 'new.webp',
+    });
+    expect(header(planRequest.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(header(planRequest.init, 'x-surdet-import-operation')).toBeNull();
+
+    const listed = await client.relocationList();
+    expect(listed.operations[0]).toMatchObject({
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: 'content/assets/bg/old.webp',
+      targetPath: 'content/assets/bg/new.webp',
+    });
+    expect(listed.recentReceipts[0]?.receiptId).toBe(RELOCATION_RECEIPT_ID);
+
+    const queried = await client.relocationQuery(RELOCATION_OPERATION_ID);
+    expect(queried.request.operationId).toBe(RELOCATION_OPERATION_ID);
+    expect(queried.plan.planFingerprint).toBe('f'.repeat(64));
+
+    const resumed = await client.relocationResume(RELOCATION_OPERATION_ID);
+    expect(resumed.operationToken).toBe(RELOCATION_RESUMED_TOKEN);
+    expect(resumed.detail.operation.status).toBe('COMMITTED');
+    expect(header(requestRecords(fetcher).at(-1)!.init, 'x-surdet-import-operation')).toBeNull();
+
+    const committed = await client.relocationCommit(RELOCATION_OPERATION_ID, 'f'.repeat(64));
+    expect(committed.operation.status).toBe('COMMITTED');
+    const commitRequest = requestRecords(fetcher).at(-1)!;
+    expect(commitRequest.input).toBe(`${AUTHORITY_PATH}/relocations/${RELOCATION_OPERATION_ID}/commit`);
+    expect(jsonBody(commitRequest.init)).toEqual({ planFingerprint: 'f'.repeat(64) });
+    expect(header(commitRequest.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(header(commitRequest.init, 'x-surdet-import-operation')).toBe(RELOCATION_RESUMED_TOKEN);
+
+    await expect(client.relocationUndo(RELOCATION_OPERATION_ID, {
+      receiptId: RELOCATION_RECEIPT_ID,
+      receiptFingerprint: 'a'.repeat(64),
+    })).rejects.toMatchObject({ code: 'IMPORT_OPERATION_NOT_AUTHORIZED' });
+  });
+
+  it('rejects malformed relocation detail and unsafe relocation input before a request', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await client.bindProject(root.handle());
+    fetcher.mockImplementation(async () => success({ ...relocationDetail(), unexpected: true }));
+    await expect(client.relocationQuery(RELOCATION_OPERATION_ID)).rejects.toMatchObject({
+      code: 'AUTHORITY_INVALID_RESPONSE',
+    });
+    fetcher.mockImplementation(async () => success({
+      ...relocationDetail(),
+      plan: { ...relocationPlan(), projectRevision: 'internal-only' },
+    }));
+    await expect(client.relocationQuery(RELOCATION_OPERATION_ID)).rejects.toMatchObject({
+      code: 'AUTHORITY_INVALID_RESPONSE',
+    });
+    fetcher.mockImplementation(async () => success({
+      ...relocationDetail(),
+      operation: { ...relocationSummary(), journalVersion: 1 },
+    }));
+    await expect(client.relocationQuery(RELOCATION_OPERATION_ID)).rejects.toMatchObject({
+      code: 'AUTHORITY_INVALID_RESPONSE',
+    });
+
+    const invalidFetcher = vi.fn<typeof fetch>();
+    const invalidClient = createAssetImportAuthorityClient(clientOptions(invalidFetcher) as never);
+    await expect(invalidClient.relocationPlan({
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: '../outside.webp',
+      targetDirectory: 'content/assets/bg',
+      fileName: 'new.webp',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(invalidFetcher).not.toHaveBeenCalled();
+  });
+
   it('rejects a result-shaped envelope and maps a business error without exposing raw secrets', async () => {
     const malformedFetcher = vi.fn<typeof fetch>().mockResolvedValue(success({ result: true }));
     const malformed = createAssetImportAuthorityClient(clientOptions(malformedFetcher) as never);
@@ -484,6 +721,8 @@ describe('Editor 素材导入 authority client', () => {
       recoveryBarrier: 'clear',
       pendingOperations: [operationSummary()],
       recentReceipts: [],
+      pendingRelocations: [],
+      recentRelocationReceipts: [],
     });
     workspace.setOperation(operationDetail('STAGED'));
 
@@ -510,6 +749,8 @@ describe('Editor 素材导入 authority client', () => {
       recoveryBarrier: 'clear',
       pendingOperations: [],
       recentReceipts: [],
+      pendingRelocations: [],
+      recentRelocationReceipts: [],
     });
     const receipt = { ...committedReceipt(), files: [] };
     workspace.setOperation({

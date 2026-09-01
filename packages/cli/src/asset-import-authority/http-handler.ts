@@ -23,6 +23,12 @@ import {
   type SealOperationResponse,
   type UndoOperationRequest,
   type UndoOperationResponse,
+  type AssetRelocationDetailResponse,
+  type CommitAssetRelocationRequest,
+  type ListAssetRelocationsResponse,
+  type PlanAssetRelocationRequest,
+  type RecoverAssetRelocationRequest,
+  type UndoAssetRelocationRequest,
 } from './types.js';
 
 export const ASSET_IMPORT_AUTHORITY_BASE_PATH = '/__surdet/project-asset-import/v1' as const;
@@ -94,6 +100,13 @@ export interface AssetImportAuthorityHttpTarget {
   recover(operationId: string, request: RecoverOperationRequest): Promise<RecoverOperationResponse>;
   undo(operationId: string, request: UndoOperationRequest): Promise<UndoOperationResponse>;
   verifyOperationToken(operationId: string, operationToken: string): void;
+  relocationPlan?(request: PlanAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
+  relocationList?(): Promise<ListAssetRelocationsResponse>;
+  relocationQuery?(operationId: string): Promise<AssetRelocationDetailResponse>;
+  relocationCommit?(operationId: string, request: CommitAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
+  relocationCancel?(operationId: string): Promise<AssetRelocationDetailResponse>;
+  relocationRecover?(operationId: string, request: RecoverAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
+  relocationUndo?(operationId: string, request: UndoAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
 }
 
 export interface AssetImportAuthorityHttpHandlerOptions {
@@ -108,7 +121,9 @@ export interface AssetImportAuthorityHttpHandlerOptions {
 type Route = {
   kind: 'status' | 'challenge-create' | 'challenge-confirm' | 'binding-revoke'
     | 'operation-create' | 'operation-list' | 'upload' | 'plan' | 'seal'
-    | 'commit' | 'cancel' | 'operation-query' | 'resume' | 'recover' | 'undo';
+    | 'commit' | 'cancel' | 'operation-query' | 'resume' | 'recover' | 'undo'
+    | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
+    | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -323,6 +338,43 @@ function parseUndo(value: unknown): UndoOperationRequest {
   };
 }
 
+function requireProjectRelativePath(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 1_024
+    || value.includes('\\') || value.startsWith('/') || /^[A-Za-z]:/u.test(value)
+    || /[\u0000-\u001f\u007f]/u.test(value)
+    || value.split('/').some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', `${field} 格式无效`, { field });
+  }
+  return value.normalize('NFC');
+}
+
+function parseRelocationPlan(value: unknown): PlanAssetRelocationRequest {
+  const object = exactObject(value, ['fileName', 'operationId', 'sourcePath', 'targetDirectory']);
+  const sourcePath = requireProjectRelativePath(object.sourcePath, 'sourcePath');
+  const targetDirectory = requireProjectRelativePath(object.targetDirectory, 'targetDirectory');
+  if (typeof object.fileName !== 'string') {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'fileName 格式无效', { field: 'fileName' });
+  }
+  const fileName = object.fileName.normalize('NFC');
+  if (fileName.length < 1 || fileName.length > 255 || /[\\/\u0000-\u001f\u007f]/u.test(fileName)
+    || fileName === '.' || fileName === '..' || /[ .]$/u.test(fileName)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'fileName 格式无效', { field: 'fileName' });
+  }
+  return {
+    operationId: requireUuid(object.operationId, 'operationId'),
+    sourcePath,
+    targetPath: `${targetDirectory}/${fileName}`,
+  };
+}
+
+function parseRelocationUndo(value: unknown): UndoAssetRelocationRequest {
+  const object = exactObject(value, ['receiptFingerprint', 'receiptId']);
+  return {
+    receiptId: requireUuid(object.receiptId, 'receiptId'),
+    receiptFingerprint: requireSha256(object.receiptFingerprint, 'receiptFingerprint'),
+  };
+}
+
 function summary(operation: OperationDetailResponse['operation']): OperationSummary {
   return {
     operationId: operation.operationId,
@@ -388,31 +440,89 @@ async function publicList(authority: AssetImportAuthorityHttpTarget): Promise<{
   return { pendingOperations, recentReceipts };
 }
 
+function relocationAllowedActions(status: AssetRelocationDetailResponse['operation']['status']): string[] {
+  if (status === 'PLANNED') return ['commit', 'cancel'];
+  if (status === 'COMMITTED') return ['resume', 'undo'];
+  if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(status)) return ['resume', 'recover'];
+  return [];
+}
+
+function publicRelocationDetail(detail: AssetRelocationDetailResponse): unknown {
+  const { projectRevision: _projectRevision, ...plan } = detail.plan;
+  return {
+    request: detail.request,
+    operation: {
+      operationId: detail.operation.operationId,
+      status: detail.operation.status,
+      sourcePath: detail.request.sourcePath,
+      targetPath: detail.request.targetPath,
+      updatedAt: detail.operation.updatedAt,
+      manualRecoveryRequired: detail.operation.status === 'RECOVERY_REQUIRED',
+    },
+    plan,
+    receipt: detail.receipt,
+    undoReceipt: detail.undoReceipt,
+    allowedActions: relocationAllowedActions(detail.operation.status),
+  };
+}
+
+async function publicRelocationList(authority: AssetImportAuthorityHttpTarget): Promise<ListAssetRelocationsResponse> {
+  return authority.relocationList?.() ?? { operations: [], recentReceipts: [] };
+}
+
 function parseRoute(url: string): Route | null {
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/status`) return { kind: 'status', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`) return { kind: 'challenge-create', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/revoke`) return { kind: 'binding-revoke', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`) return { kind: 'operation-create', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/query`) return { kind: 'operation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
+  if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`) return { kind: 'relocation-plan', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
+  if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/query`) return { kind: 'relocation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   const challenge = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges/(${UUID_SEGMENT})/confirm$`));
   if (challenge) return { kind: 'challenge-confirm', method: 'POST', challengeId: challenge[1], bindingRequired: false, operationTokenRequired: false, binary: false };
   const upload = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/(${UUID_SEGMENT})/items/(${UUID_SEGMENT})$`));
   if (upload) return { kind: 'upload', method: 'PUT', operationId: upload[1], itemId: upload[2], bindingRequired: true, operationTokenRequired: true, binary: true };
   const operation = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/(${UUID_SEGMENT})/(plan|seal|commit|cancel|query|resume|recover|undo)$`));
-  if (!operation) return null;
-  const action = operation[2]! as 'plan' | 'seal' | 'commit' | 'cancel' | 'query' | 'resume' | 'recover' | 'undo';
+  if (operation) {
+    const action = operation[2]! as 'plan' | 'seal' | 'commit' | 'cancel' | 'query' | 'resume' | 'recover' | 'undo';
+    return {
+      kind: action === 'query' ? 'operation-query' : action,
+      method: 'POST',
+      operationId: operation[1],
+      bindingRequired: true,
+      operationTokenRequired: !['query', 'resume'].includes(action),
+      binary: false,
+    };
+  }
+  const relocation = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/(${UUID_SEGMENT})/(commit|cancel|query|resume|recover|undo)$`));
+  if (!relocation) return null;
+  const relocationAction = relocation[2]! as 'commit' | 'cancel' | 'query' | 'resume' | 'recover' | 'undo';
   return {
-    kind: action === 'query' ? 'operation-query' : action,
+    kind: `relocation-${relocationAction}` as Route['kind'],
     method: 'POST',
-    operationId: operation[1],
+    operationId: relocation[1],
     bindingRequired: true,
-    operationTokenRequired: !['query', 'resume'].includes(action),
+    operationTokenRequired: !['query', 'resume'].includes(relocationAction),
     binary: false,
   };
 }
 
 async function isAllowedTerminalReplay(authority: AssetImportAuthorityHttpTarget, route: Route): Promise<boolean> {
   if (route.operationId === undefined) return false;
+  if (route.kind.startsWith('relocation-')) {
+    const allowed = route.kind === 'relocation-commit' ? ['COMMITTED']
+      : route.kind === 'relocation-cancel' ? ['CANCELLED']
+        : route.kind === 'relocation-undo' ? ['UNDONE']
+          : route.kind === 'relocation-recover' ? ['COMMITTED', 'ROLLED_BACK', 'UNDONE']
+            : [];
+    if (allowed.length === 0) return false;
+    try {
+      if (authority.relocationQuery === undefined) return false;
+      return allowed.includes((await authority.relocationQuery(route.operationId)).operation.status);
+    } catch {
+      return false;
+    }
+  }
   const allowed = route.kind === 'commit'
     ? ['COMMITTED']
     : route.kind === 'cancel'
@@ -500,6 +610,7 @@ export function createAssetImportAuthorityHttpHandler(
   const operationBindings = new Map<string, {
     bindingToken: string;
     operationId: string;
+    operationKind: 'asset-import' | 'asset-relocation';
     expiresAt: number;
     terminalReplayKind?: Route['kind'];
     terminalReplayFingerprint?: string;
@@ -562,7 +673,9 @@ export function createAssetImportAuthorityHttpHandler(
       if (route.operationTokenRequired) {
         requestOperationToken = headerValue(request, ASSET_IMPORT_AUTHORITY_OPERATION_HEADER) ?? '';
         const scope = operationBindings.get(requestOperationToken);
+        const expectedOperationKind = route.kind.startsWith('relocation-') ? 'asset-relocation' : 'asset-import';
         if (scope === undefined || scope.operationId !== route.operationId
+          || scope.operationKind !== expectedOperationKind
           || requestBindingToken === undefined || !secureEqual(scope.bindingToken, requestBindingToken)) {
           return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED');
         }
@@ -576,7 +689,9 @@ export function createAssetImportAuthorityHttpHandler(
           return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED');
         }
         try {
-          options.authority.verifyOperationToken(route.operationId!, requestOperationToken);
+          if (scope.operationKind === 'asset-import') {
+            options.authority.verifyOperationToken(route.operationId!, requestOperationToken);
+          }
         } catch (error) {
           if (scope.terminalReplayKind !== route.kind
             || scope.terminalReplayFingerprint === undefined
@@ -599,9 +714,10 @@ export function createAssetImportAuthorityHttpHandler(
           const requestBody = parseChallengeConfirm(body);
           const confirmed = await options.authority.confirmChallenge(route.challengeId!, requestBody);
           const discovery = await publicList(options.authority);
+          const relocationDiscovery = await publicRelocationList(options.authority);
           const discoveryRequiresRecovery = discovery.pendingOperations.some(
             (operation) => operation.manualRecoveryRequired,
-          );
+          ) || relocationDiscovery.operations.some((operation) => operation.manualRecoveryRequired);
           data = {
             projectIdentity: confirmed.projectIdentity,
             projectName: confirmed.projectName,
@@ -610,6 +726,8 @@ export function createAssetImportAuthorityHttpHandler(
             recoveryBarrier: discoveryRequiresRecovery ? 'manual-recovery' : confirmed.recoveryBarrier,
             pendingOperations: discovery.pendingOperations,
             recentReceipts: discovery.recentReceipts,
+            pendingRelocations: relocationDiscovery.operations.filter((operation) => !['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE'].includes(operation.status)),
+            recentRelocationReceipts: relocationDiscovery.recentReceipts,
           };
           break;
         }
@@ -626,7 +744,7 @@ export function createAssetImportAuthorityHttpHandler(
           const created = await options.authority.createOperation(parseCreate(body));
           const expiresAt = now() + 30 * 60_000;
           operationBindings.set(created.operationToken, {
-            bindingToken: requestBindingToken!, operationId: created.operationId, expiresAt,
+            bindingToken: requestBindingToken!, operationId: created.operationId, operationKind: 'asset-import', expiresAt,
           });
           data = {
             operationId: created.operationId,
@@ -682,7 +800,7 @@ export function createAssetImportAuthorityHttpHandler(
           const resumedToken = await options.authority.issueOperationToken(route.operationId!);
           const expiresAt = now() + 30 * 60_000;
           operationBindings.set(resumedToken, {
-            bindingToken: requestBindingToken!, operationId: route.operationId!, expiresAt,
+            bindingToken: requestBindingToken!, operationId: route.operationId!, operationKind: 'asset-import', expiresAt,
           });
           data = {
             operationToken: resumedToken,
@@ -701,8 +819,68 @@ export function createAssetImportAuthorityHttpHandler(
           data = { operation: summary(undone.operation), undoReceipt: undone.undoReceipt };
           break;
         }
+        case 'relocation-plan': {
+          if (options.authority.relocationPlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          const planned = await options.authority.relocationPlan(parseRelocationPlan(body));
+          const operationToken = crypto.randomBytes(32).toString('hex');
+          const expiresAt = now() + 30 * 60_000;
+          operationBindings.set(operationToken, {
+            bindingToken: requestBindingToken!,
+            operationId: planned.operation.operationId,
+            operationKind: 'asset-relocation',
+            expiresAt,
+          });
+          data = {
+            operationToken,
+            expiresAt: new Date(expiresAt).toISOString(),
+            detail: publicRelocationDetail(planned),
+          };
+          break;
+        }
+        case 'relocation-list':
+          parseEmpty(body);
+          data = await publicRelocationList(options.authority);
+          break;
+        case 'relocation-query':
+          parseEmpty(body);
+          if (options.authority.relocationQuery === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          data = publicRelocationDetail(await options.authority.relocationQuery(route.operationId!));
+          break;
+        case 'relocation-resume': {
+          parseEmpty(body);
+          if (options.authority.relocationQuery === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          const detail = await options.authority.relocationQuery(route.operationId!);
+          const operationToken = crypto.randomBytes(32).toString('hex');
+          const expiresAt = now() + 30 * 60_000;
+          operationBindings.set(operationToken, {
+            bindingToken: requestBindingToken!,
+            operationId: route.operationId!,
+            operationKind: 'asset-relocation',
+            expiresAt,
+          });
+          data = { operationToken, expiresAt: new Date(expiresAt).toISOString(), detail: publicRelocationDetail(detail) };
+          break;
+        }
+        case 'relocation-commit':
+          if (options.authority.relocationCommit === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          data = publicRelocationDetail(await options.authority.relocationCommit(route.operationId!, parseFingerprint(body)));
+          break;
+        case 'relocation-cancel':
+          parseEmpty(body);
+          if (options.authority.relocationCancel === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          data = publicRelocationDetail(await options.authority.relocationCancel(route.operationId!));
+          break;
+        case 'relocation-recover':
+          if (options.authority.relocationRecover === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          data = publicRelocationDetail(await options.authority.relocationRecover(route.operationId!, parseRecover(body)));
+          break;
+        case 'relocation-undo':
+          if (options.authority.relocationUndo === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          data = publicRelocationDetail(await options.authority.relocationUndo(route.operationId!, parseRelocationUndo(body)));
+          break;
       }
-      if (requestOperationToken !== undefined && ['commit', 'cancel', 'recover', 'undo'].includes(route.kind)) {
+      if (requestOperationToken !== undefined
+        && ['commit', 'cancel', 'recover', 'undo', 'relocation-commit', 'relocation-cancel', 'relocation-recover', 'relocation-undo'].includes(route.kind)) {
         const scope = operationBindings.get(requestOperationToken);
         if (scope !== undefined && currentRequestFingerprint !== undefined) {
           scope.terminalReplayKind = route.kind;

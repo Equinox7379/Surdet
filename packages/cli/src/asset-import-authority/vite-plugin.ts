@@ -10,6 +10,9 @@ import {
 } from './http-handler.js';
 import { acquireAssetImportProjectLease, type AssetImportProjectLease } from './project-lease.js';
 import { AssetImportRecordStore } from './record-store.js';
+import { AssetProjectMutationCoordinator } from './mutation-coordinator.js';
+import { AssetRelocationStore } from './asset-relocation-store.js';
+import { ProjectAssetRelocationAuthority } from './asset-relocation-authority.js';
 
 export interface AssetImportAuthorityBrowserConfig {
   authorityContractVersion: 1;
@@ -84,6 +87,7 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
   let stopChallengeCleanup: (() => void) | undefined;
   try {
     const store = new AssetImportRecordStore(paths);
+    const mutationCoordinator = new AssetProjectMutationCoordinator();
     const binding = new AssetImportBindingService(paths, store);
     await binding.recoverExpiredChallenges();
     stopChallengeCleanup = binding.startExpiredChallengeCleanup();
@@ -92,8 +96,22 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         sha256: async (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
       },
       assertLeaseHeld: () => lease.assertHeld(),
+      mutationCoordinator,
     });
+    const relocation = new ProjectAssetRelocationAuthority(
+      paths,
+      new AssetRelocationStore(paths),
+      store,
+      {
+        textHasher: {
+          sha256: async (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+        },
+        assertLeaseHeld: () => lease.assertHeld(),
+        mutationCoordinator,
+      },
+    );
     await authority.list();
+    await relocation.list();
     const target: AssetImportAuthorityHttpTarget = {
       projectIdentity: paths.projectIdentity,
       createChallenge: (browserSessionId) => binding.createChallenge(browserSessionId),
@@ -115,6 +133,13 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
       recover: (operationId, request) => authority.recover(operationId, request),
       undo: (operationId, request) => authority.undo(operationId, request),
       verifyOperationToken: (operationId, token) => authority.verifyOperationToken(operationId, token),
+      relocationPlan: (request) => relocation.plan(request),
+      relocationList: () => relocation.list(),
+      relocationQuery: (operationId) => relocation.query(operationId),
+      relocationCommit: (operationId, request) => relocation.commit(operationId, request),
+      relocationCancel: (operationId) => relocation.cancel(operationId),
+      relocationRecover: (operationId, request) => relocation.recover(operationId, request),
+      relocationUndo: (operationId, request) => relocation.undo(operationId, request),
     };
     return { authority: target, lease, close: () => stopChallengeCleanup?.() };
   } catch (error) {
