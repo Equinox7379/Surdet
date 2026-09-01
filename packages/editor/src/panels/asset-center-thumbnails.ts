@@ -8,6 +8,11 @@ export interface AssetThumbnailDescriptor {
   fit: 'cover' | 'contain';
 }
 
+export interface AssetThumbnailSession {
+  mount(host: HTMLElement, item: ProjectAssetItem, dirAsset: DirAsset | undefined): void;
+  dispose(): void;
+}
+
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
   portrait: '立绘',
@@ -57,3 +62,119 @@ export function describeAssetThumbnail(
     fit,
   };
 }
+
+interface PendingThumbnail {
+  host: HTMLElement;
+  item: ProjectAssetItem;
+  dirAsset: DirAsset;
+  descriptor: AssetThumbnailDescriptor;
+}
+
+let thumbnailGeneration = 0;
+let activeSession: AssetThumbnailSession | null = null;
+
+function appendPlaceholder(
+  host: HTMLElement,
+  descriptor: AssetThumbnailDescriptor,
+  state: 'loading' | 'unavailable' | 'error',
+  label = descriptor.label,
+): void {
+  const title = document.createElement('span');
+  title.className = 'asset-center-thumbnail-label';
+  title.textContent = label;
+  const detail = document.createElement('small');
+  detail.className = 'asset-center-thumbnail-detail';
+  detail.textContent = descriptor.detail;
+  host.dataset.assetThumbnailState = state;
+  host.replaceChildren(title, detail);
+}
+
+export function disposeAssetCenterThumbnails(): void {
+  thumbnailGeneration += 1;
+  activeSession?.dispose();
+  activeSession = null;
+}
+
+export function beginAssetThumbnailSession(): AssetThumbnailSession {
+  if (activeSession !== null) disposeAssetCenterThumbnails();
+  const generation = thumbnailGeneration;
+  const pendingUrls = new Set<string>();
+  const pending = new Map<Element, PendingThumbnail>();
+  let disposed = false;
+
+  const releaseUrl = (url: string): void => {
+    if (!pendingUrls.delete(url)) return;
+    URL.revokeObjectURL(url);
+  };
+
+  const load = async ({ host, item, dirAsset, descriptor }: PendingThumbnail): Promise<void> => {
+    try {
+      const file = await dirAsset.handle!.getFile();
+      if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+      const url = URL.createObjectURL(file);
+      pendingUrls.add(url);
+      const image = document.createElement('img');
+      image.alt = '';
+      image.decoding = 'async';
+      image.dataset.assetThumbnailImage = item.assetId;
+      image.onload = () => {
+        releaseUrl(url);
+        if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+        host.dataset.assetThumbnailState = 'ready';
+      };
+      image.onerror = () => {
+        releaseUrl(url);
+        if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+        appendPlaceholder(host, descriptor, 'error', '无法读取缩略图');
+      };
+      image.src = url;
+      host.replaceChildren(image);
+    } catch {
+      if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+      appendPlaceholder(host, descriptor, 'error', '无法读取缩略图');
+    }
+  };
+
+  const observer = typeof IntersectionObserver === 'undefined'
+    ? null
+    : new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting && entry.intersectionRatio <= 0) continue;
+        const request = pending.get(entry.target);
+        if (!request) continue;
+        pending.delete(entry.target);
+        observer?.unobserve(entry.target);
+        void load(request);
+      }
+    }, { rootMargin: '160px 0px' });
+
+  const session: AssetThumbnailSession = {
+    mount(host, item, dirAsset) {
+      const descriptor = describeAssetThumbnail(item, dirAsset);
+      host.dataset.assetThumbnailFit = descriptor.fit;
+      if (!descriptor.loadable || !dirAsset?.handle) {
+        appendPlaceholder(host, descriptor, 'unavailable');
+        return;
+      }
+      appendPlaceholder(host, descriptor, 'loading', '正在读取');
+      const request = { host, item, dirAsset, descriptor };
+      if (observer === null) {
+        void load(request);
+        return;
+      }
+      pending.set(host, request);
+      observer.observe(host);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      observer?.disconnect();
+      pending.clear();
+      for (const url of [...pendingUrls]) releaseUrl(url);
+    },
+  };
+  activeSession = session;
+  return session;
+}
+
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', disposeAssetCenterThumbnails);

@@ -9,6 +9,10 @@ import {
   assetMatchesFolder,
   buildAssetFolderOptions,
 } from './asset-center-folders.js';
+import {
+  beginAssetThumbnailSession,
+  disposeAssetCenterThumbnails,
+} from './asset-center-thumbnails.js';
 
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
@@ -362,6 +366,7 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, hooks
 
 export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHooks): void {
   disposeAssetCenterPreview();
+  disposeAssetCenterThumbnails();
   container.replaceChildren();
   container.className = 'asset-center';
   container.dataset.assetCenterState = state.assetIntelligenceState;
@@ -396,6 +401,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     state.assetCenterFolder = 'all';
   }
   const filtered = filterAssetItems(items);
+  const thumbnailSession = state.assetCenterView === 'grid' ? beginAssetThumbnailSession() : null;
   if (state.assetCenterSelectedId && !items.some((item) => item.assetId === state.assetCenterSelectedId)) {
     state.assetCenterSelectedId = null;
   }
@@ -730,6 +736,8 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     row.dataset.assetId = item.assetId;
     row.dataset.assetKind = item.kind;
     row.dataset.assetStatus = assetStatusTokens(item).join(' ');
+    const thumbnail = h('span', 'asset-center-thumbnail');
+    thumbnail.setAttribute('aria-hidden', 'true');
     const name = h('span', 'asset-center-item-name');
     name.append(h('strong', undefined, friendlyAssetName(item)), h('small', undefined, KIND_LABELS[item.kind]));
     const format = item.format ? `${item.format.toUpperCase()} 文件` : item.physical ? '格式未识别' : '素材文件尚不存在';
@@ -741,7 +749,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     const usage = item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
     const meta = h('span', 'asset-center-item-meta');
     meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
-    row.append(name, context, meta);
+    row.append(thumbnail, name, context, meta);
     const selectItem = (restoreKeyboardFocus: boolean): void => {
       state.assetCenterSelectedId = item.assetId;
       renderAssetCenter(container, hooks);
@@ -761,6 +769,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
       }
     };
     list.appendChild(row);
+    if (thumbnailSession) thumbnailSession.mount(thumbnail, item, dirAssetFor(item));
   }
   library.appendChild(list);
 
