@@ -16,7 +16,7 @@
 - Physical project-relative path is identity. A semantic key never overwrites or collapses another path.
 - Keep `project.assets.backgrounds`, `portraits`, and `avatars` compatible for current Agent/timeline callers.
 - The new intelligence projection is additive and byte-equal between `project.assets` and `project.inspect.assets`.
-- Agent output contains structured metadata only. No binary bytes, browser handles, object URLs, arbitrary read capability, or absolute local path.
+- The additive Agent asset projection contains structured metadata only. It adds no binary bytes, browser handles, object URLs, arbitrary read capability, or absolute asset path; the pre-existing top-level project identity remains unchanged.
 - Editor primary UI is natural Chinese. Stable English enums remain protocol/data attributes and collapsed technical information.
 - No import, move, rename, replace, delete, deduplicate, batch cleanup, automatic repair, package-policy write, cache database, or project-format migration.
 - No hash-all pass. Ordinary inspection reads directory metadata only; preview reads only the selected local file.
@@ -117,7 +117,7 @@ docs(editor): design read-only asset center
 - Modify: `packages/authoring/test/asset-catalog.test.ts`
 - Modify: `packages/authoring/test/capability-registry.test.ts`
 
-**Consumes:** `ProjectSnapshot`, compiled scene instructions, timeline documents, game config, gallery config, normalized physical file facts.
+**Consumes:** `ProjectSnapshot`, compiled scene instructions, timeline documents, game config, optional gallery config adapter, normalized physical file facts.
 
 **Produces:** `ProjectAssetIntelligence`, additive `ProjectAssetCatalog.intelligence`, deterministic issues and totals, unchanged legacy arrays.
 
@@ -491,7 +491,7 @@ node --check packages/editor/e2e/asset-center-read-only.e2e.mjs
 
 - [ ] **Step 4: Run one DIAGNOSTIC browser flow**
 
-Use Microsoft Playwright CLI through the repository-external config and a unique isolated session. Prove:
+Use the permanent repository-local Node Playwright runner with a unique in-memory project, fresh browser context, and unique isolated loopback port. Keep the separate Microsoft Playwright CLI manual-acceptance screenshots as complementary visual evidence. Prove:
 
 1. top-level Asset Center opens;
 2. summary and categories match fixture;
@@ -504,7 +504,7 @@ Use Microsoft Playwright CLI through the repository-external config and a unique
 9. no console, page, request, cleanup, or lease failure;
 10. fixture tree hash is unchanged.
 
-Capture screenshots outside the repository in the Playwright cache. Close the session and confirm no task session remains.
+Capture screenshots outside the repository in the runner's unique temporary artifact directory. Close the context/server and confirm the selected port is released; separately confirm no manual Playwright CLI task session remains.
 
 - [ ] **Step 5: Correct only evidence-backed defects**
 
@@ -659,3 +659,46 @@ Append-only execution evidence begins below. Do not rewrite earlier entries to m
 - Three independent Luna read-only audits were completed: Authoring/CLI truth, Editor asset UI/data flow, and LetsGal 1.9.7 visible asset workflow.
 - Selected architecture: shared pure Authoring projection + dedicated read-only Editor Asset Center + compact existing sidebar.
 - Confirmed boundaries: `content/assets` only; physical path identity; Agent metadata only; no asset writes.
+
+### 2026-09-01 — Tasks 1–4 shared truth and Editor implementation
+
+- `43e397e0ec44a182d181dfb477d6b92cbe40802c` committed the approved design specification and this taskbook.
+- `87f026b94f5a5014c2ca8882848e4a59ce0e0d1c` added the Authoring physical-asset intelligence projection and additive public contracts.
+- `4e87bba35151e13aaec7e03802b037939c722d6d` corrected gallery-source integration while retaining the legacy background/portrait/avatar arrays.
+- `6635f925d609554fac0ee8e8ed080c022ab91a93` added root-confined Node file-size facts and exposed byte-equal `project.assets.intelligence` / `project.inspect.assets.intelligence` through CLI.
+- The Editor now has a first-class Chinese `素材` mode, a three-region read-only Asset Center, persistent inspector, search/facets, list/grid modes, local image/audio/video preview, reference navigation, and 1440/1024/800 responsive layouts.
+- The compact Script sidebar consumes the same physical truth and retains the pre-existing `gallery.json` CG/music/text unlock insertion actions as UI action adapters, not as another physical index.
+- No asset create, rename, move, delete, overwrite, conversion, import, or project save path was added.
+
+### 2026-09-01 — Contract review corrections
+
+- Independent Authoring review found quoted asset arguments, omitted portrait expression, duplicate physical facts, duplicate gallery IDs, fabricated config/timeline line numbers, and summary-schema drift. Permanent tests established the failures before the minimal corrections.
+- A later exact RED proved `@ambience "off"` produced a false missing asset. The implementation now dequotes before comparing the runtime stop token; the focused replacement test is GREEN.
+- Duplicate gallery IDs retain every distinct source and fan one unlock instruction out to all matching sources. Gallery reference IDs remain distinct and deterministic.
+- Summary facts now expose `measuredFileCount`, `measuredBytes`, optional `totalBytes`, and per-kind `{ files, measuredFiles, bytes? }`; unknown bytes are not represented as zero.
+- Independent Editor review found a real asynchronous hover-preview race. A permanent RED required the resolved preview to still own the exact live preview element before creating an Object URL or appending fallback content. The focused replacement test is GREEN.
+- Keyboard activation now restores focus to the newly rendered selected row. The visible `当前显示 N 项，共 M 项` summary is asserted alongside stable DOM counts.
+- Focused final gates before freeze: Authoring 3 files / 27 tests PASS; CLI 2 files / 13 tests PASS; Editor 5 files / 22 tests PASS; Editor typecheck/build PASS; runner contract 6/6 PASS; runner syntax PASS.
+
+### 2026-09-01 — Browser evidence history
+
+- Manual isolated Playwright CLI acceptance used port 4176 and fresh non-persistent sessions. Search, missing filter, keyboard selection, scene-line navigation, image/audio/video preview surfaces, and 1440/1024/800 layouts were observed; console and failed-request channels were empty; all sessions and the development server were closed.
+- DIAGNOSTIC #1 failed on a runner-only hard-coded row count. Artifact `surdet-asset-center-read-only-4m1A9m/evidence.json`: 48,281 bytes, SHA-256 `8C54BFF792FB2A6A380DFC7024C45B5786749B3BAAD39C9BB1245014B21773E3`.
+- The first replacement attempt stopped before browser execution because the runner tried to add a Starter path that already existed. It produced no evidence artifact and made no project change.
+- DIAGNOSTIC #2 failed on a runner-only Chinese-label scope error. Artifact `surdet-asset-center-read-only-bDOdm6/evidence.json`: 49,208 bytes, SHA-256 `BE56146AF97D3B6F48A23D96409F8B5F74C3D2AE221736EE1D827BE5BABCB5F5`.
+- Replacement DIAGNOSTIC then passed 24/24, but independent review correctly rejected it as sufficient formal preparation because invalid media bytes proved only fallback behavior and the FORMAL identity checks ignored untracked runner replacement.
+- Permanent RED→GREEN corrections added valid minimal WAV/WebM fixtures with correct MIME, separate broken-media fallback milestones, exact milestone order, mode-specific evidence class, committed-blob identity for the runner and every new Asset Center path, visible summary assertions, and restored keyboard focus.
+- Final replacement DIAGNOSTIC passed 26/26 without rerun. Evidence: `<local-path>`, 86,707 bytes, SHA-256 `4D9B3FE4EBD157CEC6BC1848036E2D474DC03782FAAD56066892908FD3AA2FE2`. Identity SHA-256: `FE40E7B01269C8D401F8418D08BA70101D6A757CC04B4DC6776636D668FE87F1`.
+- Final diagnostic facts: audio and video each reached native controls with `readyState=4`; broken audio/video independently reached the Chinese safe fallback; keyboard focus remained on the selected row; 26 milestone names exactly matched the frozen sequence; object URLs were 15 created / 15 revoked; fixture mutation was false; original Starter unchanged; every browser/error/cleanup channel empty; port 4331 released.
+- Frozen runner before final code-evidence establishment: 49,577 bytes, SHA-256 `A167C595050D73EECCB89FC63EFAF41ED8DD9AE5C6E2CFFF234BE82209CE0AE7`.
+
+### 2026-09-01 — Independent review disposition and local commits
+
+- Authoring/CLI Luna final disposition: BLOCKER 0, HIGH 0. Quoted `off`, duplicate gallery IDs, physical deduplication, summary schema, line provenance, path confinement, and byte-equal Agent projections were confirmed.
+- Editor Luna final disposition: BLOCKER 0, HIGH 0. Gallery actions, hover-preview race safety, keyboard focus, URL cleanup, responsive rules, no decorative selection rails, and existing insert/copy/undo behavior were confirmed.
+- Browser/runner Luna final disposition: BLOCKER 0, HIGH 0. Valid/failing media separation, exact milestone order, mode identity, committed-blob FORMAL checks, visible summaries, zero final mutation, and cleanup evidence were confirmed.
+- Non-blocking follow-ups remain explicit: legacy `public/` compatibility scanning needs its own migration gate; malformed gallery completeness stays coupled to existing validation evidence; localized display-name metadata is not yet available; direct rendering and instantaneous-write detection can be strengthened only after measured need.
+- `2023243` committed only four Authoring contract-hardening files.
+- `84375d4` committed the 15-file Editor Asset Center production/permanent-test scope.
+- `63defe0` committed only the permanent runner, runner contract, and shared fake-file MIME support.
+- FORMAL, aggregate verification, final docs closeout, long-term ledger consolidation, and push had not run at this ledger point.

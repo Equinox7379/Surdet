@@ -199,6 +199,8 @@ export interface ProjectAssetItem {
 
 export interface ProjectAssetSummary {
   fileCount: number;
+  measuredFileCount: number;
+  measuredBytes: number;
   totalBytes?: number;
   referencedCount: number;
   unusedCount: number;
@@ -206,7 +208,7 @@ export interface ProjectAssetSummary {
   duplicateCount: number;
   unsupportedCount: number;
   invalidNameCount: number;
-  byKind: Record<ProjectAssetKind, { files: number; bytes?: number }>;
+  byKind: Record<ProjectAssetKind, { files: number; measuredFiles: number; bytes?: number }>;
 }
 
 export interface ProjectAssetIntelligence {
@@ -243,13 +245,13 @@ Supported-extension checks are kind-specific and case-insensitive. This check me
 
 ### 7.6 References
 
-The projection extracts references from compiled scene instructions, timeline definitions, character avatar declarations, and gallery source links. Each reference preserves a human label, project-relative source path, source line when available, and stable object reference when the shared object index provides one.
+The projection extracts references from compiled scene instructions, timeline definitions, character avatar declarations, and gallery source links. Each reference preserves a human label, project-relative source path, source line only when the source has a real line coordinate, and stable object reference when the shared object index provides one. Duplicate gallery IDs retain every distinct source instead of silently selecting the last entry.
 
 ## 8. Existing `project.assets` compatibility
 
 `ProjectAssetCatalog` retains `backgrounds`, `portraits`, and `avatars` for existing timeline and Agent callers. It grows an additive `intelligence` member produced by the shared builder. `project.inspect.assets` and `project.assets` remain byte-equal.
 
-Agent Port continues to expose metadata only. It does not receive arbitrary binary reads, browser handles, object URLs, or local absolute paths. Human labels are localized in Editor; structured enum values remain stable English protocol tokens.
+Agent Port continues to expose asset metadata only. The additive asset projection does not contain binary bytes, browser handles, object URLs, or absolute asset paths; its `sourcePath` values remain project-relative. The pre-existing top-level `project.inspect.rootIdentity` remains the host project identity and is not redefined as an asset field. Human labels are localized in Editor; structured enum values remain stable English protocol tokens.
 
 Ordinary projection does not hash binary files. A future explicit integrity action may add bounded hashes without changing the meaning of this read.
 
@@ -373,7 +375,7 @@ An isolated local project must prove:
 9. 1440, 1024, and 800 widths keep all essential regions reachable.
 10. Console, page, request, cleanup, and project-mutation channels stay clean.
 
-Browser validation uses isolated Microsoft Playwright CLI with the repository-external config. It never attaches to a personal browser profile.
+Browser validation has two complementary layers. Manual visual acceptance uses an isolated Microsoft Playwright CLI session with repository-external configuration. The permanent repeatable workflow uses the repository's Node Playwright dependency, an in-memory project picker, a unique loopback port, and a fresh browser context. Neither layer attaches to a personal browser profile.
 
 ## 16. Delivery and stop boundary
 
