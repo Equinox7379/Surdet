@@ -74,6 +74,7 @@ export interface ProjectAssetImportTargetFact {
 
 export interface BuildProjectAssetImportPlanInput {
   projectIdentity: string;
+  manifestFingerprint: string;
   stagedItems: ProjectAssetImportStagedItem[];
   targets: ProjectAssetImportTargetRequest[];
   targetFacts: ProjectAssetImportTargetFact[];
@@ -103,6 +104,7 @@ export interface ProjectAssetImportPlan {
   planId: string;
   planFingerprint: string;
   projectIdentity: string;
+  manifestFingerprint: string;
   status: 'blocked' | 'ready';
   items: ProjectAssetImportPlanItem[];
   issues: ProjectAssetImportIssueCode[];
@@ -290,6 +292,7 @@ export async function buildProjectAssetImportPlan(
   hasher: TextHasher,
 ): Promise<ProjectAssetImportPlan> {
   const projectIdentity = requireText(input.projectIdentity, 'projectIdentity').normalize('NFC');
+  const manifestFingerprint = requireText(input.manifestFingerprint, 'manifestFingerprint');
   if (!hasher || typeof hasher.sha256 !== 'function') throw invalidRequest('缺少素材计划哈希器');
 
   const stagedItems = input.stagedItems.map(normalizeStagedItem);
@@ -384,6 +387,7 @@ export async function buildProjectAssetImportPlan(
   const semantic = {
     schemaVersion: 1 as const,
     projectIdentity,
+    manifestFingerprint,
     stagedItems: sortedStagedItems,
     targets: sortedTargets,
     targetFacts: sortedFacts,
@@ -398,6 +402,7 @@ export async function buildProjectAssetImportPlan(
     planId: `pln_${planFingerprint.slice(0, 32)}`,
     planFingerprint,
     projectIdentity,
+    manifestFingerprint,
     status,
     items,
     issues,

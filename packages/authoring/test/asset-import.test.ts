@@ -21,6 +21,7 @@ const hasher: TextHasher = {
 
 const PROJECT = 'project-import-test';
 const OPERATION = 'op-import-test';
+const MANIFEST = 'manifest-import-test';
 
 const kinds: readonly ProjectAssetKind[] = [
   'background',
@@ -76,7 +77,7 @@ function inputFor(
   targets: ProjectAssetImportTargetRequest[],
   facts: ProjectAssetImportTargetFact[] = absentFacts(targets),
 ): BuildProjectAssetImportPlanInput {
-  return { projectIdentity: PROJECT, stagedItems, targets, targetFacts: facts };
+  return { projectIdentity: PROJECT, manifestFingerprint: MANIFEST, stagedItems, targets, targetFacts: facts };
 }
 
 describe('project asset import planner', () => {
@@ -89,6 +90,7 @@ describe('project asset import planner', () => {
 
     expect(result.status).toBe('ready');
     expect(result.schemaVersion).toBe(1);
+    expect(result.manifestFingerprint).toBe(MANIFEST);
     expect(result.issues).toEqual([]);
     expect(result.items).toHaveLength(kinds.length);
     expect(result.totalBytes).toBeGreaterThan(0);
