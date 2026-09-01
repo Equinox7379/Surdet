@@ -786,3 +786,17 @@ Have a Luna worker perform read-only review for data-loss, overwrite, path escap
 **Boundary**
 
 - Exact final commit and the owner-authorized ordinary push remain pending. Pass 4 and later roadmap work have not started.
+
+### 2026-09-01 — Task 11 local closure
+
+**Confirmed facts**
+
+- Code evidence commit: `d4066556599015f93aea1df839c3ed6b9638776e` (`feat(editor): complete project asset imports`). Its exact staged set contained nine paths: this taskbook, the receipt-reopen production/test changes, and the isolated browser runner plus its permanent contract; missing and extra path sets were both empty.
+- The final independent targeted runner review returned PASS with no new BLOCKER or HIGH. The Editor/data-safety HIGH identified earlier remained closed.
+- After the code evidence commit, tracked worktree and staging were empty. Existing unrelated untracked paths remained untouched.
+- A fresh `git fetch surdet --prune` resolved `surdet/main` to `6a7e6f91e68135d5fea7a3a8ebe5efbfc3dfdb5e`; the local branch had zero remote-only commits and eight local-only commits. No merge, rebase, amend, or history rewrite was required.
+
+**Boundary**
+
+- At the time of this append, the owner-authorized ordinary push was the only remaining delivery action. Its result is verified from the live remote after the docs-only closure commit rather than predicted in this ledger entry.
+- Pass 4 and later roadmap work remain unstarted.
