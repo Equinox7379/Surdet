@@ -11,7 +11,12 @@
  *   panels/sidebar  场景列表　panels/editor 块编辑区　panels/issues 校验编排+结果　panels/right 变量/拓扑/引用
  */
 import { state, h, setStatus } from './state.js';
-import { buildObjectIndex, buildProjectAssetIntelligence, type ProjectAssetReference } from '@surdet/authoring';
+import {
+  buildObjectIndex,
+  buildProjectAssetIntelligence,
+  type ProjectAssetImportTargetRequest,
+  type ProjectAssetReference,
+} from '@surdet/authoring';
 import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
 import {
   listenForPreviewTraceSelection,
@@ -25,6 +30,7 @@ import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
 import {
   bindProjectIoHooks,
   openProject,
+  refreshProjectAssetIntelligence,
   saveAll,
   exportCurrent,
   loadDemoProject,
@@ -81,6 +87,11 @@ let saveAttemptLeftDirty = false;
 let pendingAutosaveTimelineConflicts: TimelineAutosaveRestoreConflict[] = [];
 let assetImportGeneration = 0;
 let assetImportClient = createAssetImportAuthorityClient();
+let assetImportActionRunning = false;
+let assetImportPanelOpen = false;
+let assetImportActionSequence = 0;
+let assetImportCancelRequested = false;
+let assetImportActionCancellable = false;
 const assetImportWorkspace = createAssetImportWorkspace();
 assetImportWorkspace.subscribe((projection) => {
   state.assetImportWorkspace = projection;
@@ -89,6 +100,11 @@ assetImportWorkspace.subscribe((projection) => {
 
 function resetAssetImportRuntime(): void {
   assetImportGeneration += 1;
+  assetImportActionSequence += 1;
+  assetImportActionRunning = false;
+  assetImportCancelRequested = false;
+  assetImportActionCancellable = false;
+  assetImportPanelOpen = false;
   assetImportClient.dispose();
   assetImportClient = createAssetImportAuthorityClient();
   assetImportWorkspace.reset();
@@ -130,6 +146,273 @@ async function bindCurrentProjectAssetImport(): Promise<void> {
       assetImportWorkspace.markUnavailable(error instanceof Error ? error.message : undefined);
     }
   }
+}
+
+function assetImportErrorMessage(error: unknown): string {
+  if (error instanceof AssetImportClientError) return error.message;
+  return error instanceof Error ? error.message : '素材导入未完成，请检查文件后重试。';
+}
+
+interface AssetImportActionContext {
+  actionId: number;
+  generation: number;
+  client: typeof assetImportClient;
+  projectRoot: FileSystemDirectoryHandle | null;
+}
+
+function assetImportActionIsCurrent(context: AssetImportActionContext): boolean {
+  return context.actionId === assetImportActionSequence
+    && context.generation === assetImportGeneration
+    && context.client === assetImportClient
+    && context.projectRoot === state.dirHandle;
+}
+
+function requireCurrentAssetImportAction(context: AssetImportActionContext): void {
+  if (!assetImportActionIsCurrent(context)) throw new Error('项目已经切换，旧导入已停止。');
+}
+
+async function runAssetImportAction(
+  message: string,
+  action: (context: AssetImportActionContext) => Promise<void>,
+  cancellable = false,
+): Promise<void> {
+  if (assetImportActionRunning) return;
+  const context: AssetImportActionContext = {
+    actionId: ++assetImportActionSequence,
+    generation: assetImportGeneration,
+    client: assetImportClient,
+    projectRoot: state.dirHandle,
+  };
+  assetImportActionRunning = true;
+  assetImportActionCancellable = cancellable;
+  assetImportWorkspace.setMessage(message);
+  try {
+    await action(context);
+  } catch (error) {
+    if (assetImportActionIsCurrent(context)) assetImportWorkspace.setMessage(assetImportErrorMessage(error));
+  } finally {
+    if (context.actionId === assetImportActionSequence) {
+      assetImportActionRunning = false;
+      assetImportActionCancellable = false;
+      if (state.mainTab === 'assets') renderMainArea();
+    }
+  }
+}
+
+function currentAssetImportTargets(): ProjectAssetImportTargetRequest[] {
+  const items = assetImportWorkspace.snapshot().draftItems;
+  if (items.length === 0) throw new Error('请先选择要导入的素材文件。');
+  return items.map((item) => {
+    const fileName = item.fileName.trim();
+    if (item.kind === null) throw new Error(`请为“${item.sourceName}”选择素材分类。`);
+    if (fileName.length === 0) throw new Error(`请填写“${item.sourceName}”的最终文件名。`);
+    return { itemId: item.itemId, kind: item.kind, fileName };
+  });
+}
+
+function assetImportFileSetLocked(): boolean {
+  const status = assetImportWorkspace.snapshot().activeOperation?.operation.status;
+  return assetImportActionRunning
+    || (status !== undefined && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(status));
+}
+
+async function finishRequestedAssetImportCancellation(
+  context: AssetImportActionContext,
+  operationId: string,
+): Promise<boolean> {
+  if (!assetImportCancelRequested) return false;
+  await context.client.cancel(operationId);
+  requireCurrentAssetImportAction(context);
+  const cancelled = await context.client.queryOperation(operationId);
+  requireCurrentAssetImportAction(context);
+  assetImportWorkspace.setOperation(cancelled);
+  assetImportWorkspace.clearDraft();
+  assetImportWorkspace.setMessage('导入已取消，项目文件没有变化。');
+  assetImportCancelRequested = false;
+  return true;
+}
+
+async function prepareAssetImport(): Promise<void> {
+  await runAssetImportAction('准备导入', async (context) => {
+    assetImportCancelRequested = false;
+    const snapshot = assetImportWorkspace.snapshot();
+    if (snapshot.entryState !== 'ready' && snapshot.entryState !== 'recoverable') {
+      throw new Error(snapshot.message ?? '当前项目还不能安全导入素材。');
+    }
+    currentAssetImportTargets();
+    let operationId = snapshot.activeOperation?.operation.operationId ?? null;
+    const currentStatus = snapshot.activeOperation?.operation.status ?? null;
+    if (operationId !== null && !['STAGED'].includes(currentStatus ?? '')) {
+      if (['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(currentStatus ?? '')) {
+        assetImportWorkspace.setOperation(null);
+        operationId = null;
+      } else {
+        throw new Error('已有一项导入正在处理中，请先完成、取消或恢复它。');
+      }
+    }
+
+    if (operationId === null) {
+      operationId = crypto.randomUUID();
+      const draftItems = assetImportWorkspace.snapshot().draftItems;
+      await context.client.createOperation({
+        operationId,
+        items: draftItems.map((item) => ({
+          itemId: item.itemId,
+          sourceName: item.sourceName,
+          declaredBytes: item.bytes,
+        })),
+      });
+      requireCurrentAssetImportAction(context);
+      const createdDetail = await context.client.queryOperation(operationId);
+      requireCurrentAssetImportAction(context);
+      assetImportWorkspace.setOperation(createdDetail);
+      if (await finishRequestedAssetImportCancellation(context, operationId)) return;
+      assetImportWorkspace.setMessage('正在上传');
+      for (const item of draftItems) {
+        await context.client.uploadItem(operationId, item.itemId, item.file, (loaded, total) => {
+          if (assetImportActionIsCurrent(context)) assetImportWorkspace.updateProgress(item.itemId, loaded, total);
+        });
+        requireCurrentAssetImportAction(context);
+        if (await finishRequestedAssetImportCancellation(context, operationId)) return;
+      }
+    }
+
+    const planned = await context.client.plan(operationId, { targets: currentAssetImportTargets() });
+    requireCurrentAssetImportAction(context);
+    if (await finishRequestedAssetImportCancellation(context, operationId)) return;
+    const detail = await context.client.queryOperation(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(detail);
+    assetImportWorkspace.setMessage(planned.plan.status === 'ready'
+      ? '检查完成。确认无误后即可写入项目。'
+      : '发现同名或命名冲突。Surdet 不会覆盖现有文件，请修改名称后重新检查。');
+  }, true);
+}
+
+async function commitAssetImport(): Promise<void> {
+  await runAssetImportAction('正在写入项目', async (context) => {
+    const detail = assetImportWorkspace.snapshot().activeOperation;
+    if (detail === null || detail.plan === null || detail.plan.status !== 'ready') {
+      throw new Error('请先完成导入检查并处理所有冲突。');
+    }
+    const operationId = detail.operation.operationId;
+    const planFingerprint = detail.plan.planFingerprint;
+    if (detail.operation.status === 'STAGED') {
+      await context.client.seal(operationId, { planFingerprint });
+      requireCurrentAssetImportAction(context);
+      const sealed = await context.client.queryOperation(operationId);
+      requireCurrentAssetImportAction(context);
+      assetImportWorkspace.setOperation(sealed);
+    }
+    await context.client.commit(operationId, planFingerprint);
+    requireCurrentAssetImportAction(context);
+    const committed = await context.client.queryOperation(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(committed);
+    assetImportWorkspace.clearDraft();
+    try {
+      await refreshProjectAssetIntelligence();
+      requireCurrentAssetImportAction(context);
+    } catch {
+      if (!assetImportActionIsCurrent(context)) return;
+      assetImportWorkspace.setMessage('素材已经写入项目，但列表刷新未完成。请重新打开项目后查看。');
+      return;
+    }
+    const firstImportedPath = committed.receipt?.files[0]?.targetPath ?? null;
+    if (firstImportedPath !== null) state.assetCenterSelectedId = `file:${firstImportedPath.replaceAll('\\', '/')}`;
+    assetImportWorkspace.setMessage('导入完成');
+  });
+}
+
+async function cancelAssetImport(): Promise<void> {
+  const detail = assetImportWorkspace.snapshot().activeOperation;
+  if (assetImportActionRunning) {
+    if (assetImportActionCancellable) {
+      assetImportCancelRequested = true;
+      assetImportWorkspace.setMessage('正在停止当前导入检查；已完成的数据不会写入项目。');
+    } else {
+      assetImportWorkspace.setMessage('正在写入项目，完成前不能中断。');
+    }
+    return;
+  }
+  if (detail === null || ['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(detail.operation.status)) {
+    assetImportPanelOpen = false;
+    assetImportWorkspace.clearDraft();
+    assetImportWorkspace.setOperation(null);
+    assetImportWorkspace.setMessage(null);
+    return;
+  }
+  await runAssetImportAction('正在取消导入…', async (context) => {
+    const operationId = detail.operation.operationId;
+    try {
+      await context.client.cancel(operationId);
+    } catch (error) {
+      if (!(error instanceof AssetImportClientError) || error.code !== 'IMPORT_OPERATION_NOT_AUTHORIZED') throw error;
+      await context.client.resume(operationId);
+      requireCurrentAssetImportAction(context);
+      await context.client.cancel(operationId);
+    }
+    requireCurrentAssetImportAction(context);
+    const cancelled = await context.client.queryOperation(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(cancelled);
+    assetImportWorkspace.clearDraft();
+    assetImportWorkspace.setMessage('导入已取消，项目文件没有变化。');
+  });
+}
+
+async function recoverAssetImport(operationId: string, action: 'resume' | 'rollback'): Promise<void> {
+  await runAssetImportAction(action === 'resume' ? '正在恢复导入…' : '正在安全回退导入…', async (context) => {
+    const resumed = await context.client.resume(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(resumed);
+    if (['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(resumed.operation.status)) {
+      const recoveryAction = resumed.operation.status === 'UNDOING' ? 'resume' : action;
+      const recovered = await context.client.recover(operationId, { action: recoveryAction });
+      requireCurrentAssetImportAction(context);
+      assetImportWorkspace.setOperation(recovered);
+    }
+    if (action === 'rollback') {
+      await refreshProjectAssetIntelligence();
+      requireCurrentAssetImportAction(context);
+    }
+    assetImportWorkspace.setMessage(action === 'resume' ? '导入已恢复，可以继续。' : '导入已回退，项目已重新核对。');
+  });
+}
+
+async function undoAssetImport(): Promise<void> {
+  const detail = assetImportWorkspace.snapshot().activeOperation;
+  const receipt = detail?.receipt ?? null;
+  if (detail === null || receipt === null) return;
+  await runAssetImportAction('正在撤销本次导入…', async (context) => {
+    const operationId = detail.operation.operationId;
+    await context.client.resume(operationId);
+    requireCurrentAssetImportAction(context);
+    await context.client.undo(operationId, {
+      receiptId: receipt.receiptId,
+      receiptSha256: receipt.receiptSha256,
+    });
+    requireCurrentAssetImportAction(context);
+    const undone = await context.client.queryOperation(operationId);
+    requireCurrentAssetImportAction(context);
+    assetImportWorkspace.setOperation(undone);
+    try {
+      await refreshProjectAssetIntelligence();
+      requireCurrentAssetImportAction(context);
+    } catch {
+      if (!assetImportActionIsCurrent(context)) return;
+      assetImportWorkspace.setMessage('素材已撤销，但列表刷新未完成。请重新打开项目后核对。');
+      return;
+    }
+    assetImportWorkspace.setMessage('已撤销，恢复副本仍由 Surdet 保留。');
+  });
+}
+
+function openImportedAsset(): void {
+  const targetPath = assetImportWorkspace.snapshot().activeOperation?.receipt?.files[0]?.targetPath;
+  if (targetPath) state.assetCenterSelectedId = `file:${targetPath.replaceAll('\\', '/')}`;
+  assetImportPanelOpen = false;
+  if (state.mainTab === 'assets') renderMainArea();
 }
 
 function hasDirtyProjectFiles(): boolean {
@@ -568,6 +851,40 @@ function renderMainArea(): void {
     renderAssetCenter(assetsEl, {
       onOpenProject: () => { void openProject(); },
       onOpenReference: openAssetReference,
+      assetImportOpen: assetImportPanelOpen,
+      onToggleImport: () => {
+        assetImportPanelOpen = !assetImportPanelOpen;
+        renderMainArea();
+      },
+      assetImport: {
+        workspace: assetImportWorkspace,
+        busy: assetImportActionRunning,
+        onSelectFiles: (files) => {
+          if (!assetImportFileSetLocked()) assetImportWorkspace.addFiles(files);
+        },
+        onRemoveFile: (itemId) => {
+          if (!assetImportFileSetLocked()) assetImportWorkspace.removeFile(itemId);
+        },
+        onUpdateFile: (itemId, update) => {
+          if (assetImportActionRunning) return;
+          const status = assetImportWorkspace.snapshot().activeOperation?.operation.status;
+          if (status !== undefined && status !== 'STAGED') return;
+          assetImportWorkspace.updateFile(itemId, update);
+          const active = assetImportWorkspace.snapshot().activeOperation;
+          if (active?.operation.status === 'STAGED' && active.plan !== null) {
+            assetImportWorkspace.setOperation({ ...active, plan: null });
+            assetImportWorkspace.setMessage('分类或名称已修改，请重新检查导入位置。');
+          }
+        },
+        onBindProject: () => { void bindCurrentProjectAssetImport(); },
+        onRecoverOperation: (operationId, action) => { void recoverAssetImport(operationId, action); },
+        onPrepareImport: () => { void prepareAssetImport(); },
+        onCommitImport: () => { void commitAssetImport(); },
+        onCancelImport: () => { void cancelAssetImport(); },
+        onViewImportedAssets: openImportedAsset,
+        onUndoImport: () => { void undoAssetImport(); },
+        refreshProjectAssetIntelligence,
+      },
     });
   } else if (state.mainTab === 'flow') {
     const flowEl = h('section');
