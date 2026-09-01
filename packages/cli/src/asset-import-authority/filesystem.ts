@@ -58,6 +58,8 @@ async function assertPlainDirectory(directory: string, field: string): Promise<v
 const AUTHORITY_NAMESPACE_DIRECTORIES = [
   'operation-index',
   'operations',
+  'relocation-index',
+  'relocations',
   'challenge-index',
   'challenges',
   'recovery-barriers',
@@ -216,6 +218,67 @@ export interface AssetImportProjectOperationWorkspace {
   prepared: string;
   rollback: string;
   undo: string;
+}
+
+export interface AssetRelocationOperationWorkspace {
+  root: string;
+  prepared: string;
+  backup: string;
+}
+
+export async function createAssetRelocationDataWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<string> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationId)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'operationId 格式无效');
+  }
+  await assertAssetImportDataNamespace(paths);
+  return ensurePlainChildDirectory(path.join(paths.projectNamespace, 'relocations'), operationId);
+}
+
+export async function assertAssetRelocationDataWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<string> {
+  await assertAssetImportDataNamespace(paths);
+  const root = path.join(paths.projectNamespace, 'relocations', operationId);
+  await assertPlainDirectory(root, 'relocation-operation');
+  return root;
+}
+
+export async function createAssetRelocationProjectWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<AssetRelocationOperationWorkspace> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationId)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', 'operationId 格式无效');
+  }
+  await assertAssetImportProjectRootIdentity(paths);
+  const surdet = await ensurePlainChildDirectory(paths.projectRoot, '.surdet');
+  const relocationRoot = await ensurePlainChildDirectory(surdet, 'asset-relocation');
+  const root = await ensurePlainChildDirectory(relocationRoot, operationId);
+  return {
+    root,
+    prepared: await ensurePlainChildDirectory(root, 'prepared'),
+    backup: await ensurePlainChildDirectory(root, 'backup'),
+  };
+}
+
+export async function assertAssetRelocationProjectWorkspace(
+  paths: AssetImportAuthorityPaths,
+  operationId: string,
+): Promise<AssetRelocationOperationWorkspace> {
+  await assertAssetImportProjectRootIdentity(paths);
+  const root = path.join(paths.relocationWorkspace, operationId);
+  await assertPlainDirectory(path.join(paths.projectRoot, '.surdet'), '.surdet');
+  await assertPlainDirectory(paths.relocationWorkspace, 'asset-relocation');
+  await assertPlainDirectory(root, 'relocation-project-operation');
+  const prepared = path.join(root, 'prepared');
+  const backup = path.join(root, 'backup');
+  await assertPlainDirectory(prepared, 'prepared');
+  await assertPlainDirectory(backup, 'backup');
+  return { root, prepared, backup };
 }
 
 export async function createAssetImportProjectOperationWorkspace(
@@ -420,6 +483,7 @@ export async function openAssetImportAuthorityPaths(options: {
     projectIdentity: publicProjectIdentity,
     projectNamespace,
     internalWorkspace: path.join(project.realPath, '.surdet', 'asset-import'),
+    relocationWorkspace: path.join(project.realPath, '.surdet', 'asset-relocation'),
     rootIdentity,
   };
 }

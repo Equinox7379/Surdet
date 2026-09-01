@@ -427,7 +427,7 @@ export interface ProjectAssetRelocationBinaryBaseline {
     mtimeNs: string;
     sha256: string;
   };
-  target: { path: string; state: 'absent' };
+  target: { path: string; state: 'absent' | 'exists' };
   targetDirectory: {
     path: string;
     device: string;

@@ -22,6 +22,7 @@ import {
   inspectAssetImportTarget,
 } from './filesystem.js';
 import { AssetImportRecordStore } from './record-store.js';
+import { AssetProjectMutationCoordinator } from './mutation-coordinator.js';
 import {
   AssetImportAuthorityError,
   normalizeAssetImportSourceName,
@@ -68,6 +69,7 @@ export interface ProjectAssetImportAuthorityOptions {
   now?: () => number;
   limits?: Partial<ProjectAssetImportAuthorityLimits>;
   faultInjector?: (point: AssetImportFaultPoint) => void | Promise<void>;
+  mutationCoordinator?: AssetProjectMutationCoordinator;
 }
 
 export type AssetImportFaultPoint =
@@ -210,6 +212,7 @@ export class ProjectAssetImportAuthority {
   private readonly assertLeaseHeld: () => void | Promise<void>;
   private readonly nowMs: () => number;
   private readonly faultInjector?: ProjectAssetImportAuthorityOptions['faultInjector'];
+  private readonly mutationCoordinator: AssetProjectMutationCoordinator;
   private readonly operationTokens = new Map<string, { token: string; expiresAt: number }>();
   private readonly operationTails = new Map<string, Promise<void>>();
   private readonly activeUploadOperations = new Map<string, number>();
@@ -234,6 +237,8 @@ export class ProjectAssetImportAuthority {
     this.nowMs = options.now ?? (() => Date.now());
     this.faultInjector = options.faultInjector;
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
+    this.mutationCoordinator = options.mutationCoordinator ?? new AssetProjectMutationCoordinator();
+    this.mutationCoordinator.register('asset-import', () => this.assertImportParticipantAvailable());
   }
 
   private async fault(point: AssetImportFaultPoint): Promise<void> {
@@ -261,7 +266,7 @@ export class ProjectAssetImportAuthority {
   }
 
   private serializeProjectMutation<T>(work: () => Promise<T>): Promise<T> {
-    return this.serialize('__project-mutation__', async () => {
+    return this.mutationCoordinator.run('asset-import', async () => {
       const previousEpoch = this.activeProjectMutationEpoch;
       this.activeProjectMutationEpoch = this.recoveryEpoch;
       try {
@@ -286,7 +291,7 @@ export class ProjectAssetImportAuthority {
     return token;
   }
 
-  private async requireNoRecoveryBarrier(): Promise<void> {
+  private async assertOwnRecoveryClear(): Promise<void> {
     await this.assertLeaseHeld();
     const operations = await this.store.listOperations();
     for (const operation of operations) {
@@ -311,9 +316,22 @@ export class ProjectAssetImportAuthority {
     if (this.projectRecoveryBlocked) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材导入进程已进入恢复阻断状态');
     }
-    if (await this.store.hasUnresolvedBarrier()) {
+    if (await this.store.hasUnresolvedBarrier('asset-import')) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材导入需要先完成恢复');
     }
+  }
+
+  private async assertImportParticipantAvailable(): Promise<void> {
+    await this.assertOwnRecoveryClear();
+    const operations = await this.store.listOperations();
+    if (operations.some((operation) => !['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE'].includes(operation.status))) {
+      throw new AssetImportAuthorityError('PROJECT_BUSY', '已有素材导入尚未结束');
+    }
+  }
+
+  private async requireNoRecoveryBarrier(): Promise<void> {
+    await this.mutationCoordinator.assertOtherReady('asset-import');
+    await this.assertOwnRecoveryClear();
   }
 
   private normalizedItems(items: AssetImportOperationManifestItem[]): AssetImportOperationManifestItem[] {
@@ -485,7 +503,7 @@ export class ProjectAssetImportAuthority {
 
   async createOperation(request: CreateImportOperationRequest): Promise<CreateImportOperationResponse> {
     const operationId = requireUuid(request.operationId, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       await assertAssetImportProjectRootIdentity(this.paths);
       const items = this.normalizedItems(request.items);
@@ -531,7 +549,7 @@ export class ProjectAssetImportAuthority {
       }
       const operationToken = this.createOperationToken(operationId);
       return { operationId, status: 'UPLOADING', operationToken, itemCount: items.length };
-    });
+    }));
   }
 
   async uploadItem(
@@ -547,8 +565,8 @@ export class ProjectAssetImportAuthority {
     this.activeUploads += 1;
     this.activeUploadOperations.set(operationId, (this.activeUploadOperations.get(operationId) ?? 0) + 1);
     try {
+      await this.mutationCoordinator.run('asset-import', () => this.requireNoRecoveryBarrier());
       return await this.serialize(operationId, async () => {
-        await this.requireNoRecoveryBarrier();
         const manifest = await this.readVerifiedManifest(operationId);
         const declared = manifest.items.find((item) => item.itemId === itemId);
         if (declared === undefined) throw new AssetImportAuthorityError('INVALID_REQUEST', 'itemId 不属于该导入操作');
@@ -1917,7 +1935,7 @@ export class ProjectAssetImportAuthority {
 
   async plan(operationIdInput: string, request: PlanOperationRequest): Promise<PlanOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       const current = await this.store.readOperation(operationId);
       if (!['STAGED', 'READY'].includes(current.journal.status)) {
@@ -1940,12 +1958,12 @@ export class ProjectAssetImportAuthority {
       };
       await this.store.writePlan(record);
       return { operationId, status: plan.status === 'ready' ? 'READY' : 'STAGED', plan };
-    });
+    }));
   }
 
   async seal(operationIdInput: string, request: SealOperationRequest): Promise<SealOperationResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       const current = await this.store.readOperation(operationId);
       if (!['STAGED', 'READY'].includes(current.journal.status)) {
@@ -1970,7 +1988,7 @@ export class ProjectAssetImportAuthority {
         planId: record.plan.planId,
         planFingerprint: record.plan.planFingerprint,
       };
-    });
+    }));
   }
 
   async commit(operationIdInput: string, request: CommitOperationRequest): Promise<CommitOperationResponse> {
@@ -2081,18 +2099,18 @@ export class ProjectAssetImportAuthority {
       if (journal.status === 'UNDONE') {
         await this.verifyTerminalInvariants(operationId, journal.status);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (journal.status === 'COMMITTED') {
         await this.verifyTerminalInvariants(operationId, journal.status);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (journal.status === 'ROLLED_BACK') {
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (!['PUBLISHING', 'ROLLING_BACK', 'UNDOING', 'RECOVERY_REQUIRED'].includes(journal.status)) {
@@ -2125,7 +2143,7 @@ export class ProjectAssetImportAuthority {
         await this.verifyReceipt(receipt);
         await this.continueUndo(operationId, publication, receipt);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (receipt !== null) {
@@ -2140,7 +2158,7 @@ export class ProjectAssetImportAuthority {
       if (request.action === 'rollback') {
         await this.rollbackPublication(operationId, publication);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
 
@@ -2148,13 +2166,13 @@ export class ProjectAssetImportAuthority {
         if (publication === null) return this.enterRecovery(operationId, '成功回执存在但发布 journal 缺失');
         await this.finishCommittedPublication(publication);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (publication === null) {
         await this.rollbackPublication(operationId, null);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       const states = publication.files.map((file) => file.state);
@@ -2168,13 +2186,13 @@ export class ProjectAssetImportAuthority {
       if (journal.status === 'ROLLING_BACK' || (partialPublication && !allVerified)) {
         await this.rollbackPublication(operationId, publication);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
       if (allVerified) {
         await this.finishCommittedPublication(publication);
         await this.store.resolveOperationBarriers(operationId);
-        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
 
@@ -2198,7 +2216,7 @@ export class ProjectAssetImportAuthority {
         throw error;
       }
       await this.store.resolveOperationBarriers(operationId);
-      this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier();
+      this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
       return { detail: await this.query(operationId) };
     }));
   }
@@ -2278,7 +2296,7 @@ export class ProjectAssetImportAuthority {
 
   async cancel(operationIdInput: string): Promise<OperationDetailResponse> {
     const operationId = requireUuid(operationIdInput, 'operationId');
-    return this.serialize(operationId, async () => {
+    return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       const current = await this.store.readOperation(operationId);
       if (current.journal.status === 'CANCELLED') return this.query(operationId);
@@ -2294,7 +2312,7 @@ export class ProjectAssetImportAuthority {
       }
       this.operationTokens.delete(operationId);
       return this.query(operationId);
-    });
+    }));
   }
 
   verifyOperationToken(operationId: string, operationToken: string): void {

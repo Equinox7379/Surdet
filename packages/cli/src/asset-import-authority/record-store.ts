@@ -225,6 +225,15 @@ export class AssetImportRecordStore {
   constructor(readonly paths: AssetImportAuthorityPaths) {}
 
   private localRecoveryBlocked = false;
+  private relocationTerminalVerifier?: (
+    operationId: string,
+  ) => Promise<{ journalVersion: number; terminalFingerprint: string }>;
+
+  registerRelocationTerminalVerifier(
+    verifier: (operationId: string) => Promise<{ journalVersion: number; terminalFingerprint: string }>,
+  ): void {
+    this.relocationTerminalVerifier = verifier;
+  }
 
   private async closedJsonEntries(
     directory: string,
@@ -421,6 +430,32 @@ export class AssetImportRecordStore {
     await this.writeBarrier({
       barrierId,
       operationId,
+      operationKind: 'asset-import',
+      reason: 'RECOVERY_REQUIRED',
+      createdAt,
+    });
+  }
+
+  async ensureRelocationRecoveryBarrier(
+    operationId: string,
+    createdAt = new Date().toISOString(),
+    incidentKey = 'journal-state',
+  ): Promise<void> {
+    this.localRecoveryBlocked = true;
+    if (!validUuid(operationId)) throw new AssetImportAuthorityError('INVALID_REQUEST', 'operationId 格式无效');
+    const normalizedKey = incidentKey.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 48) || 'incident';
+    const baseBarrierId = `relocation-${operationId}-${normalizedKey}`;
+    const priorResolution = path.join(this.paths.projectNamespace, 'recovery-resolutions', `${baseBarrierId}.json`);
+    const barrierId = await fs.stat(priorResolution)
+      .then(() => `${baseBarrierId}-${crypto.randomUUID().slice(0, 8)}`)
+      .catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return baseBarrierId;
+        throw error;
+      });
+    await this.writeBarrier({
+      barrierId,
+      operationId,
+      operationKind: 'asset-relocation',
       reason: 'RECOVERY_REQUIRED',
       createdAt,
     });
@@ -1117,7 +1152,9 @@ export class AssetImportRecordStore {
     const file = path.join(this.paths.projectNamespace, 'recovery-barriers', `${incident.barrierId}.json`);
     const existing = await readJsonRecord<RecoveryBarrierIncident>(file);
     if (existing !== null) {
-      if (existing.value.operationId === incident.operationId && existing.value.reason === incident.reason) return;
+      if (existing.value.operationId === incident.operationId
+        && (existing.value.operationKind ?? 'asset-import') === (incident.operationKind ?? 'asset-import')
+        && existing.value.reason === incident.reason) return;
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '恢复屏障身份冲突');
     }
     try {
@@ -1180,6 +1217,9 @@ export class AssetImportRecordStore {
       path.join(this.paths.projectNamespace, 'recovery-barriers', `${input.barrierId}.json`),
     );
     if (incident === null) throw new AssetImportAuthorityError('INVALID_REQUEST', '恢复屏障不存在');
+    if ((incident.value.operationKind ?? 'asset-import') !== 'asset-import') {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', '该恢复屏障不属于素材导入');
+    }
     const journal = await this.readOperation(incident.value.operationId);
     if (!['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入操作尚未达到可解除恢复屏障的终态');
@@ -1197,6 +1237,7 @@ export class AssetImportRecordStore {
       barrierId: input.barrierId,
       incidentSha256: incident.identity.sha256,
       operationId: incident.value.operationId,
+      operationKind: 'asset-import',
       journalVersion: journal.journal.journalVersion,
       publicationVersion: publication?.publicationVersion ?? null,
       publicationSha256: publication?.publicationSha256 ?? null,
@@ -1218,7 +1259,8 @@ export class AssetImportRecordStore {
     );
     for (const entry of entries) {
       const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(directory, entry.name));
-      if (incident === null || incident.value.operationId !== operationId) continue;
+      if (incident === null || incident.value.operationId !== operationId
+        || (incident.value.operationKind ?? 'asset-import') !== 'asset-import') continue;
       const resolutionFile = path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name);
       if (await fs.stat(resolutionFile).then(() => true).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -1230,8 +1272,47 @@ export class AssetImportRecordStore {
     this.localRecoveryBlocked = await this.hasUnresolvedBarrier();
   }
 
-  async hasUnresolvedBarrier(): Promise<boolean> {
-    if (this.localRecoveryBlocked) return true;
+  async resolveRelocationBarriers(
+    operationId: string,
+  ): Promise<void> {
+    if (!validUuid(operationId)) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', '素材整理 operationId 格式无效');
+    }
+    if (this.relocationTerminalVerifier === undefined) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理终态验证器尚未就绪');
+    }
+    const { journalVersion, terminalFingerprint } = await this.relocationTerminalVerifier(operationId);
+    const directory = path.join(this.paths.projectNamespace, 'recovery-barriers');
+    const entries = await this.closedJsonEntries(directory, '恢复屏障索引');
+    await this.closedJsonEntries(path.join(this.paths.projectNamespace, 'recovery-resolutions'), '恢复决议索引');
+    for (const entry of entries) {
+      const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(directory, entry.name));
+      if (incident === null || incident.value.operationId !== operationId
+        || incident.value.operationKind !== 'asset-relocation') continue;
+      const resolutionFile = path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name);
+      if (await fs.stat(resolutionFile).then(() => true).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      })) continue;
+      await createJsonRecord(resolutionFile, {
+        barrierId: incident.value.barrierId,
+        incidentSha256: incident.identity.sha256,
+        operationId,
+        operationKind: 'asset-relocation',
+        journalVersion,
+        publicationVersion: null,
+        publicationSha256: null,
+        quarantinedPaths: [],
+        terminalFingerprint,
+        resolvedAt: new Date().toISOString(),
+      } satisfies RecoveryBarrierResolution);
+    }
+    this.localRecoveryBlocked = false;
+    this.localRecoveryBlocked = await this.hasUnresolvedBarrier();
+  }
+
+  async hasUnresolvedBarrier(operationKind?: 'asset-import' | 'asset-relocation'): Promise<boolean> {
+    if (operationKind === undefined && this.localRecoveryBlocked) return true;
     await assertAssetImportDataNamespace(this.paths);
     const barrierDirectory = path.join(this.paths.projectNamespace, 'recovery-barriers');
     let entries: Dirent[];
@@ -1247,16 +1328,30 @@ export class AssetImportRecordStore {
       throw error;
     }
     const barrierNames = new Set(entries.map((entry) => entry.name));
-    if (resolutions.some((entry) => !barrierNames.has(entry.name))) return true;
+    if (operationKind === undefined && resolutions.some((entry) => !barrierNames.has(entry.name))) return true;
     for (const entry of entries) {
       const incident = await readJsonRecord<RecoveryBarrierIncident>(path.join(barrierDirectory, entry.name));
       if (incident === null || incident.value.barrierId !== entry.name.slice(0, -5)) return true;
+      const incidentKind = incident.value.operationKind ?? 'asset-import';
+      if (operationKind !== undefined && incidentKind !== operationKind) continue;
       const resolution = await readJsonRecord<RecoveryBarrierResolution>(
         path.join(this.paths.projectNamespace, 'recovery-resolutions', entry.name),
       );
       if (resolution === null || resolution.value.barrierId !== incident.value.barrierId
         || resolution.value.incidentSha256 !== incident.identity.sha256
         || resolution.value.operationId !== incident.value.operationId) return true;
+      if (incident.value.operationKind === 'asset-relocation') {
+        if (resolution.value.operationKind !== 'asset-relocation'
+          || !Number.isSafeInteger(resolution.value.journalVersion)
+          || resolution.value.journalVersion < 1
+          || !/^[0-9a-f]{64}$/u.test(resolution.value.terminalFingerprint ?? '')) return true;
+        if (this.relocationTerminalVerifier === undefined) return true;
+        const terminal = await this.relocationTerminalVerifier(incident.value.operationId).catch(() => null);
+        if (terminal === null
+          || terminal.journalVersion !== resolution.value.journalVersion
+          || terminal.terminalFingerprint !== resolution.value.terminalFingerprint) return true;
+        continue;
+      }
       const journal = await this.readOperation(incident.value.operationId).catch(() => null);
       if (journal === null || journal.journal.journalVersion !== resolution.value.journalVersion
         || !['ROLLED_BACK', 'CANCELLED', 'COMMITTED', 'UNDONE'].includes(journal.journal.status)) return true;
@@ -1277,6 +1372,6 @@ export class AssetImportRecordStore {
       const quarantinedPaths = quarantined.map((file) => file.path);
       if (!equalJson(quarantinedPaths, resolution.value.quarantinedPaths)) return true;
     }
-    return this.localRecoveryBlocked;
+    return operationKind === undefined ? this.localRecoveryBlocked : false;
   }
 }

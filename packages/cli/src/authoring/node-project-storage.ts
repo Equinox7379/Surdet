@@ -155,7 +155,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
         if (entry.name.startsWith('.surdet-') || ignored.has(entry.name)) continue;
         const absolute = path.join(directory, entry.name);
         const relative = relativeDirectory.length === 0 ? entry.name : `${relativeDirectory}/${entry.name}`;
-        if (entry.isDirectory() && relative === '.surdet/asset-import') continue;
+        if (entry.isDirectory() && (relative === '.surdet/asset-import' || relative === '.surdet/asset-relocation')) continue;
         if (entry.isSymbolicLink()) {
           const real = await fs.realpath(absolute).catch(() => '');
           if (!real || !isInside(this.rootRealPath, real)) throw pathError(relative);
