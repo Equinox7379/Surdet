@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 import { acquireAssetImportProjectLease } from '../src/asset-import-authority/project-lease.js';
+import { AssetImportBindingService } from '../src/asset-import-authority/binding.js';
 
 const roots: string[] = [];
 
@@ -106,5 +107,62 @@ describe('project asset import authority storage', () => {
     await writeFile(path.join(dataRoot, 'data-root-identity.json'), '{broken', 'utf8');
     await expect(openAssetImportAuthorityPaths({ projectRoot, dataRoot }))
       .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+  });
+
+  it('binds a browser directory through an exact one-time probe and removes it', async () => {
+    const fixture = await temporaryRoot('surdet-asset-import-binding');
+    const projectRoot = path.join(fixture, 'project');
+    await mkdir(projectRoot, { recursive: true });
+    const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(fixture, 'data') });
+    const service = new AssetImportBindingService(paths, new AssetImportRecordStore(paths), {
+      now: () => Date.parse('2026-09-01T00:00:00.000Z'),
+    });
+
+    const challenge = await service.createChallenge('browser-session-1');
+    const probe = JSON.parse(await readFile(path.join(projectRoot, challenge.relativeProbePath), 'utf8')) as { nonce: string };
+    const confirmed = await service.confirmChallenge(challenge.challengeId, {
+      browserSessionId: 'browser-session-1',
+      nonce: probe.nonce,
+    });
+
+    expect(confirmed.projectIdentity).toBe(paths.projectIdentity);
+    expect(confirmed.bindingToken).toMatch(/^[0-9a-f]{64}$/);
+    await expect(readFile(path.join(projectRoot, challenge.relativeProbePath))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).toBe(true);
+    service.revoke('browser-session-1');
+    expect(service.validateBinding(confirmed.bindingToken, 'browser-session-1')).toBe(false);
+  });
+
+  it('rejects a wrong browser session or nonce without issuing a binding', async () => {
+    const fixture = await temporaryRoot('surdet-asset-import-wrong-binding');
+    const projectRoot = path.join(fixture, 'project');
+    await mkdir(projectRoot, { recursive: true });
+    const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(fixture, 'data') });
+    const service = new AssetImportBindingService(paths, new AssetImportRecordStore(paths));
+    const challenge = await service.createChallenge('browser-session-1');
+
+    await expect(service.confirmChallenge(challenge.challengeId, {
+      browserSessionId: 'browser-session-2',
+      nonce: 'wrong',
+    })).rejects.toMatchObject({ code: 'PROJECT_IDENTITY_MISMATCH' });
+  });
+
+  it('recovers only registered expired probe files with the authority marker', async () => {
+    const fixture = await temporaryRoot('surdet-asset-import-probe-recovery');
+    const projectRoot = path.join(fixture, 'project');
+    await mkdir(projectRoot, { recursive: true });
+    const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(fixture, 'data') });
+    const store = new AssetImportRecordStore(paths);
+    let now = Date.parse('2026-09-01T00:00:00.000Z');
+    const service = new AssetImportBindingService(paths, store, { now: () => now });
+    const challenge = await service.createChallenge('browser-session-1');
+    const unrelated = path.join(projectRoot, '.surdet-bind-unrelated.json');
+    await writeFile(unrelated, '{"owner":"user"}\n', 'utf8');
+    now += 61_000;
+
+    await new AssetImportBindingService(paths, new AssetImportRecordStore(paths), { now: () => now }).recoverExpiredChallenges();
+
+    await expect(readFile(path.join(projectRoot, challenge.relativeProbePath))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(unrelated, 'utf8')).toContain('user');
   });
 });
