@@ -212,9 +212,8 @@ function currentAssetImportTargets(): ProjectAssetImportTargetRequest[] {
 }
 
 function assetImportFileSetLocked(): boolean {
-  const status = assetImportWorkspace.snapshot().activeOperation?.operation.status;
   return assetImportActionRunning
-    || (status !== undefined && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(status));
+    || assetImportWorkspace.snapshot().activeOperation !== null;
 }
 
 async function finishRequestedAssetImportCancellation(
@@ -873,7 +872,9 @@ function renderMainArea(): void {
         workspace: assetImportWorkspace,
         busy: assetImportActionRunning,
         onSelectFiles: (files) => {
-          if (!assetImportFileSetLocked()) assetImportWorkspace.addFiles(files);
+          if (assetImportFileSetLocked()) return;
+          const added = assetImportWorkspace.addFiles(files);
+          assetImportWorkspace.setMessage(`已加入 ${added.length} 个文件，请继续检查分类和名称。`);
         },
         onRemoveFile: (itemId) => {
           if (!assetImportFileSetLocked()) assetImportWorkspace.removeFile(itemId);

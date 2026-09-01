@@ -48,6 +48,9 @@ test('asset import runner drives the real Chinese workbench through a node-backe
   assert.match(source, /dispatchEvent\(['"]dragover/);
   assert.match(source, /dispatchEvent\(['"]drop/);
   assert.match(source, /asset-import-picker/);
+  assert.match(source, /text\/uri-list/);
+  assert.match(source, /defaultPrevented/);
+  assert.match(source, /lockedDropProbe/);
   assert.match(source, /page\.reload/);
   assert.match(source, /exposeFunction/);
   assert.doesNotMatch(source, /page\.waitForTimeout\(/);

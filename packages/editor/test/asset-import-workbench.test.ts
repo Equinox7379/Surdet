@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assetDropFiles,
   assetDropHasFiles,
+  assetFileTypeLabel,
 } from '../src/panels/asset-import-workbench.js';
 
 const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,6 +64,8 @@ describe('Editor 中文素材导入工作台合同', () => {
     expect(assetDropFiles(fakeTransfer([textItem, fileItem, directoryItem]))).toEqual([image]);
     expect(assetDropHasFiles(fakeTransfer([textItem]))).toBe(false);
     expect(assetDropFiles(fakeTransfer([textItem]))).toEqual([]);
+    expect(assetDropHasFiles(fakeTransfer([directoryItem]))).toBe(false);
+    expect(assetDropFiles(fakeTransfer([directoryItem]))).toEqual([]);
   });
 
   it('falls back to the FileList when a browser exposes no DataTransfer items', () => {
@@ -70,6 +73,14 @@ describe('Editor 中文素材导入工作台合同', () => {
 
     expect(assetDropHasFiles(fakeTransfer([], [sound], ['Files']))).toBe(true);
     expect(assetDropFiles(fakeTransfer([], [sound], ['Files']))).toEqual([sound]);
+  });
+
+  it('uses Chinese file-family labels in the human-facing draft list', () => {
+    expect(assetFileTypeLabel(new File(['image'], 'harbor.png', { type: 'image/png' }))).toBe('图片');
+    expect(assetFileTypeLabel(new File(['sound'], 'rain.wav', { type: 'audio/wav' }))).toBe('音频');
+    expect(assetFileTypeLabel(new File(['video'], 'opening.webm', { type: 'video/webm' }))).toBe('视频');
+    expect(assetFileTypeLabel(new File(['font'], 'story.woff2', { type: 'font/woff2' }))).toBe('字体');
+    expect(assetFileTypeLabel(new File(['data'], 'story.bin', { type: 'application/octet-stream' }))).toBe('文件');
   });
 
   it('mounts a stable in-place 导入素材 entry inside the existing Asset Center', () => {
@@ -108,6 +119,34 @@ describe('Editor 中文素材导入工作台合同', () => {
     expect(workbenchCss).toMatch(/asset-import-picker\[data-drop-state=['"]ready['"]\]/);
     expect(workbenchCss).toMatch(/asset-import-picker\[data-drop-state=['"]blocked['"]\]/);
     expect(workbenchCss).not.toMatch(/asset-import-picker[^{}]*\{[^}]*(?:linear|radial)-gradient/i);
+  });
+
+  it('blocks browser navigation for rejected and locked drops and keeps the confirmation visible', () => {
+    const dragOverBody = workbenchSource.match(/pickerLabel\.ondragover = \(event\) => \{([\s\S]*?)\n  \};/)?.[1] ?? '';
+    const dropBody = workbenchSource.match(/pickerLabel\.ondrop = \(event\) => \{([\s\S]*?)\n  \};/)?.[1] ?? '';
+    expect(dragOverBody.trimStart().startsWith('event.preventDefault();')).toBe(true);
+    expect(dropBody.trimStart().startsWith('event.preventDefault();')).toBe(true);
+    expect(workbenchSource).toContain('const filesLocked = hooks.busy === true || value.activeOperation !== null;');
+    expect(mainSource).toMatch(/return assetImportActionRunning\s*\|\|\s*assetImportWorkspace\.snapshot\(\)\.activeOperation !== null/);
+    expect(mainSource).toContain('已加入 ${added.length} 个文件，请继续检查分类和名称');
+    expect(workbenchSource).toContain('最终确认前不会写入项目素材目录');
+    expect(workbenchSource).not.toContain('文件只保留在当前页面，取消后不会写入项目。');
+    expect(workbenchSource).toContain('请先关闭当前结果，再开始下一次导入');
+    expect(workbenchSource).toContain('if (pickerLabel.dataset.dropState !== state)');
+    expect(workbenchSource).toContain('if (dropStatus.textContent !== message)');
+  });
+
+  it('marks every file-name correction issue invalid and keeps terminal receipts read-only', () => {
+    for (const code of [
+      'IMPORT_NAME_INVALID',
+      'IMPORT_TARGET_UNSAFE',
+      'IMPORT_TARGET_DUPLICATE_IN_BATCH',
+      'IMPORT_TARGET_EXISTS',
+      'IMPORT_PORTRAIT_NAME_INVALID',
+    ]) expect(workbenchSource).toContain(code);
+    expect(workbenchSource).toMatch(/name\.setAttribute\(['"]aria-invalid['"],\s*String\(issues\.some/);
+    expect(workbenchSource).toMatch(/const fieldsLocked = hooks\.busy === true \|\| \(value\.activeOperation !== null\s*&& value\.activeOperation\.operation\.status !== ['"]STAGED['"]\)/);
+    expect(workbenchSource).toMatch(/operationIsTerminal\(projection\.activeOperation\)[\s\S]{0,160}\? ['"]关闭['"]/);
   });
 
   it('keeps the file region independently scrollable and preserves the same layout at narrow widths', () => {
