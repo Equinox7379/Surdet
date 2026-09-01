@@ -22,6 +22,41 @@ function writeFile(root: string, relativePath: string, contents: string | Uint8A
 }
 
 describe('NodeProjectStorage asset file facts', () => {
+  it('excludes only the asset-import workspace while keeping other .surdet files visible', async () => {
+    const root = makeRoot('surdet-node-asset-import-exclusion-');
+    const dataRoot = makeRoot('surdet-node-asset-import-exclusion-data-');
+    try {
+      writeFile(root, 'game.config.json', JSON.stringify({
+        entryScene: 'asset_probe',
+        characters: { lynn: { name: '凛', avatar: 'lynn' } },
+        variables: {},
+      }));
+      writeFile(root, 'content/scenario/asset_probe.gal', '@scene asset_probe\n凛：你好。\n@end\n');
+      writeFile(root, 'content/assets/bg/kept.png', new Uint8Array([1, 2, 3]));
+      writeFile(root, '.surdet/other.json', '{"keep":true}');
+      writeFile(root, '.surdet/asset-import/op-001/staged/internal-sentinel.bin', new Uint8Array([9, 8, 7]));
+
+      const storage = await NodeProjectStorage.open(root);
+      await expect(storage.listFiles()).resolves.toEqual([
+        '.surdet/other.json',
+        'content/assets/bg/kept.png',
+        'content/scenario/asset_probe.gal',
+        'game.config.json',
+      ]);
+
+      const service = new AuthoringService(undefined, new NodeLocalLeaseManager(dataRoot));
+      const assets = await service.projectAssets(root);
+      expect(assets.result.intelligence.items.map((item) => item.sourcePath)).not.toContain(
+        '.surdet/asset-import/op-001/staged/internal-sentinel.bin',
+      );
+      expect(JSON.stringify(assets.result)).not.toContain('internal-sentinel');
+      expect(assets.result.intelligence.items.find((item) => item.key === 'kept')?.bytes).toBe(3);
+    } finally {
+      removeRoot(root);
+      removeRoot(dataRoot);
+    }
+  });
+
   it('returns sorted, de-duplicated metadata for nested regular files and preserves zero bytes', async () => {
     const root = makeRoot('surdet-node-asset-facts-');
     try {
