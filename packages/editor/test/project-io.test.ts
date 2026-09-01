@@ -4,6 +4,7 @@ import {
   openProjectFromHandle,
   quarantineTimelineAutosaveEntries,
   readTimelineDir,
+  refreshProjectAssetIntelligence,
   repairTimelineAutosaveConflict,
   restoreTimelineAutosaveEntries,
   saveAll,
@@ -762,5 +763,194 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.current).toBe('start');
     expect(state.mainTab).toBe('editor');
     expect((state as any).reviewWorkspace).toBeNull();
+  });
+
+  it('项目载入回调失败时仍收束 projectLoading 与切换生命周期', async () => {
+    const root = directoryHandle('settled-project', {
+      content: directoryHandle('content', { scenario: directoryHandle('scenario') }),
+    }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
+    const onProjectClosing = vi.fn();
+    const onProjectLoadSettled = vi.fn();
+    bindProjectIoHooks({
+      renderAll: vi.fn(),
+      runValidate: vi.fn(),
+      renderSidebar: vi.fn(),
+      onProjectClosing,
+      onProjectLoadSettled,
+      onProjectLoaded: () => { throw new Error('load callback failed'); },
+    });
+
+    await expect(openProjectFromHandle(root)).rejects.toThrow('load callback failed');
+
+    expect(onProjectClosing).toHaveBeenCalledTimes(1);
+    expect(onProjectLoadSettled).toHaveBeenCalledWith(false);
+    expect(state.projectLoading).toBe(false);
+  });
+
+  it('聚焦刷新只替换素材事实并保留当前编辑与审阅现场', async () => {
+    const sceneHandle = fileHandle(null, log, 'kept.gal', '@scene kept\n');
+    const timelineHandle = fileHandle(null, log, 'kept.json', timelineText('kept'));
+    const importedHandle = fileHandle(null, log, 'rain.png', 'binary');
+    const bgDir = directoryHandle('bg', {}, { 'rain.png': importedHandle });
+    const assetsDir = directoryHandle('assets', { bg: bgDir });
+    const contentDir = directoryHandle('content', { assets: assetsDir });
+    const publicDir = directoryHandle('public');
+    const root = directoryHandle('focused-refresh', { content: contentDir, public: publicDir });
+
+    state.dirHandle = root;
+    state.scenes.clear();
+    state.scenes.set('kept', scene('kept', sceneHandle, true));
+    state.timelines = [timeline('kept', timelineHandle, true)];
+    state.current = 'kept';
+    state.currentTimeline = 'kept';
+    state.currentTimelineCue = { trackIndex: 2, cueIndex: 3 };
+    state.mainTab = 'review' as never;
+    const reviewWorkspace = { reviewId: 'review-kept' } as never;
+    state.reviewWorkspace = reviewWorkspace;
+    state.assetCenterQuery = '雨';
+    state.assetCenterKind = 'background';
+    state.assetCenterStatus = 'referenced';
+    state.assetCenterView = 'grid';
+    state.dirAssets = [{ key: 'old', kind: 'bg', handle: null, isImage: true }];
+    const refreshedIntelligence = { items: [], summary: {}, issues: [] } as never;
+    const scenes = state.scenes;
+    const timelines = state.timelines;
+    const sceneEntry = state.scenes.get('kept');
+    const timelineEntry = state.timelines[0];
+
+    bindProjectIoHooks({
+      renderAll: vi.fn(),
+      runValidate: vi.fn(),
+      renderSidebar: vi.fn(),
+      onAssetsRefreshed: vi.fn(async () => {
+        expect(state.dirAssets.map((asset) => asset.sourcePath)).toEqual(['content/assets/bg/rain.png']);
+        state.assetIntelligence = refreshedIntelligence;
+        state.assetIntelligenceState = 'ready';
+      }),
+    });
+
+    await refreshProjectAssetIntelligence();
+
+    expect(state.dirAssets.map((asset) => asset.sourcePath)).toEqual(['content/assets/bg/rain.png']);
+    expect(state.assetIntelligence).toBe(refreshedIntelligence);
+    expect(state.assetIntelligenceState).toBe('ready');
+    expect(state.scenes).toBe(scenes);
+    expect(state.scenes.get('kept')).toBe(sceneEntry);
+    expect(state.scenes.get('kept')?.dirty).toBe(true);
+    expect(state.timelines).toBe(timelines);
+    expect(state.timelines[0]).toBe(timelineEntry);
+    expect(state.timelines[0]?.dirty).toBe(true);
+    expect(state.current).toBe('kept');
+    expect(state.currentTimeline).toBe('kept');
+    expect(state.currentTimelineCue).toEqual({ trackIndex: 2, cueIndex: 3 });
+    expect(state.reviewWorkspace).toBe(reviewWorkspace);
+    expect(state.mainTab).toBe('review');
+    expect(state.assetCenterQuery).toBe('雨');
+    expect(state.assetCenterKind).toBe('background');
+    expect(state.assetCenterStatus).toBe('referenced');
+    expect(state.assetCenterView).toBe('grid');
+  });
+
+  it('聚焦刷新扫描失败时保留上一份完整素材事实', async () => {
+    const partial = fileHandle(null, log, 'partial.png', 'partial');
+    const brokenAssets = {
+      ...directoryHandle('assets'),
+      values: async function* () {
+        yield partial;
+        throw new DOMException('permission lost', 'NotAllowedError');
+      },
+    } as unknown as FileSystemDirectoryHandle;
+    const contentDir = directoryHandle('content', { assets: brokenAssets });
+    const root = directoryHandle('broken-refresh', { content: contentDir, public: directoryHandle('public') });
+    const oldAssets = [{ key: 'old', kind: 'bg' as const, handle: null, isImage: true, sourcePath: 'content/assets/bg/old.png' }];
+    const oldIntelligence = { items: [], summary: {}, issues: [] } as never;
+    state.dirHandle = root;
+    state.dirAssets = oldAssets;
+    state.assetIntelligence = oldIntelligence;
+    state.assetIntelligenceState = 'ready';
+    const onAssetsRefreshed = vi.fn(async () => {});
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onAssetsRefreshed });
+
+    await expect(refreshProjectAssetIntelligence()).rejects.toThrow('permission lost');
+
+    expect(state.dirAssets).toBe(oldAssets);
+    expect(state.assetIntelligence).toBe(oldIntelligence);
+    expect(state.assetIntelligenceState).toBe('ready');
+    expect(onAssetsRefreshed).not.toHaveBeenCalled();
+  });
+
+  it('共享素材智能重建失败时回滚素材清单与选择', async () => {
+    const importedHandle = fileHandle(null, log, 'new.png', 'new');
+    const assetsDir = directoryHandle('assets', {}, { 'new.png': importedHandle });
+    const contentDir = directoryHandle('content', { assets: assetsDir });
+    const root = directoryHandle('rebuild-failure', { content: contentDir, public: directoryHandle('public') });
+    const oldAssets = [{ key: 'old', kind: 'bg' as const, handle: null, isImage: true, sourcePath: 'content/assets/bg/old.png' }];
+    const oldIntelligence = { items: [], summary: {}, issues: [] } as never;
+    state.dirHandle = root;
+    state.dirAssets = oldAssets;
+    state.assetIntelligence = oldIntelligence;
+    state.assetIntelligenceState = 'ready';
+    state.assetCenterSelectedId = 'file:content/assets/bg/old.png';
+    bindProjectIoHooks({
+      renderAll: vi.fn(),
+      runValidate: vi.fn(),
+      renderSidebar: vi.fn(),
+      onAssetsRefreshed: vi.fn(async () => {
+        state.assetIntelligence = null;
+        state.assetIntelligenceState = 'error';
+        state.assetCenterSelectedId = null;
+        throw new Error('index rebuild failed');
+      }),
+    });
+
+    await expect(refreshProjectAssetIntelligence()).rejects.toThrow('index rebuild failed');
+
+    expect(state.dirAssets).toBe(oldAssets);
+    expect(state.assetIntelligence).toBe(oldIntelligence);
+    expect(state.assetIntelligenceState).toBe('ready');
+    expect(state.assetCenterSelectedId).toBe('file:content/assets/bg/old.png');
+  });
+
+  it('并发聚焦刷新只接受最后一次完整扫描结果', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const first = fileHandle(null, log, 'first.png', 'first');
+    const second = fileHandle(null, log, 'second.png', 'second');
+    const firstAssets = {
+      ...directoryHandle('assets'),
+      values: async function* () {
+        await firstGate;
+        yield first;
+      },
+    } as unknown as FileSystemDirectoryHandle;
+    const secondAssets = directoryHandle('assets', {}, { 'second.png': second });
+    let contentReads = 0;
+    const root = {
+      ...directoryHandle('concurrent-refresh'),
+      getDirectoryHandle: async (name: string) => {
+        if (name === 'content') {
+          contentReads += 1;
+          return directoryHandle('content', { assets: contentReads === 1 ? firstAssets : secondAssets });
+        }
+        throw new DOMException('missing', 'NotFoundError');
+      },
+    } as unknown as FileSystemDirectoryHandle;
+    state.dirHandle = root;
+    state.dirAssets = [];
+    const onAssetsRefreshed = vi.fn(async () => {
+      state.assetIntelligence = { items: [], summary: {}, issues: [] } as never;
+      state.assetIntelligenceState = 'ready';
+    });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onAssetsRefreshed });
+
+    const staleRefresh = refreshProjectAssetIntelligence();
+    await Promise.resolve();
+    const latestRefresh = refreshProjectAssetIntelligence();
+    await latestRefresh;
+    releaseFirst!();
+    await staleRefresh;
+
+    expect(state.dirAssets.map((asset) => asset.sourcePath)).toEqual(['content/assets/second.png']);
+    expect(onAssetsRefreshed).toHaveBeenCalledTimes(1);
   });
 });

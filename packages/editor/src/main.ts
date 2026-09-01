@@ -49,6 +49,8 @@ import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/s
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
+import { AssetImportClientError, createAssetImportAuthorityClient } from './asset-import-client.js';
+import { createAssetImportWorkspace } from './asset-import-workspace.js';
 import {
   renderModeNavigation,
   renderProjectBar,
@@ -68,9 +70,67 @@ let authoringRevision = 0;
 let authoringTimer: ReturnType<typeof setTimeout> | null = null;
 let authoringRunning = false;
 let authoringQueued = false;
+let authoringProjectChanging = false;
+const authoringWaiters: Array<{
+  revision: number;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}> = [];
 /** 最近一次磁盘保存尝试仍有失败项；只服务于顶栏回执，不复制编辑器业务状态。 */
 let saveAttemptLeftDirty = false;
 let pendingAutosaveTimelineConflicts: TimelineAutosaveRestoreConflict[] = [];
+let assetImportGeneration = 0;
+let assetImportClient = createAssetImportAuthorityClient();
+const assetImportWorkspace = createAssetImportWorkspace();
+assetImportWorkspace.subscribe((projection) => {
+  state.assetImportWorkspace = projection;
+  if (state.mainTab === 'assets') renderMainArea();
+});
+
+function resetAssetImportRuntime(): void {
+  assetImportGeneration += 1;
+  assetImportClient.dispose();
+  assetImportClient = createAssetImportAuthorityClient();
+  assetImportWorkspace.reset();
+}
+
+function invalidateAuthoringForProjectChange(): void {
+  authoringProjectChanging = true;
+  authoringRevision += 1;
+  if (authoringTimer) clearTimeout(authoringTimer);
+  authoringTimer = null;
+  authoringQueued = false;
+  const error = new Error('项目已经切换，旧素材刷新已取消');
+  for (const waiter of authoringWaiters.splice(0)) waiter.reject(error);
+}
+
+function closeCurrentProjectRuntime(): void {
+  invalidateAuthoringForProjectChange();
+  resetAssetImportRuntime();
+}
+
+async function bindCurrentProjectAssetImport(): Promise<void> {
+  const root = state.dirHandle;
+  const client = assetImportClient;
+  const generation = assetImportGeneration;
+  if (root === null) {
+    assetImportWorkspace.markUnavailable();
+    return;
+  }
+  assetImportWorkspace.beginBinding();
+  try {
+    const binding = await client.bindProject(root);
+    if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
+    assetImportWorkspace.applyBinding(binding);
+  } catch (error) {
+    if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
+    if (error instanceof AssetImportClientError && error.code === 'PROJECT_IDENTITY_MISMATCH') {
+      assetImportWorkspace.markProjectMismatch(error.message);
+    } else {
+      assetImportWorkspace.markUnavailable(error instanceof Error ? error.message : undefined);
+    }
+  }
+}
 
 function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
@@ -146,7 +206,46 @@ function scheduleAuthoringIndexRebuild(): void {
   }, 80);
 }
 
+function waitForAuthoringRevision(revision: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    authoringWaiters.push({ revision, resolve, reject });
+  });
+}
+
+function settleAuthoringWaiters(
+  revision: number,
+  outcome: { ok: true } | { ok: false; error: unknown },
+): void {
+  for (let index = authoringWaiters.length - 1; index >= 0; index -= 1) {
+    const waiter = authoringWaiters[index]!;
+    if (waiter.revision > revision) continue;
+    authoringWaiters.splice(index, 1);
+    if (outcome.ok) waiter.resolve();
+    else waiter.reject(outcome.error);
+  }
+}
+
+/** 导入提交后使用：跳过防抖，但仍服从既有单飞与过期结果丢弃规则。 */
+async function refreshAuthoringIndexImmediately(): Promise<void> {
+  authoringRevision += 1;
+  const revision = authoringRevision;
+  state.assetIntelligenceState = 'loading';
+  const settled = waitForAuthoringRevision(revision);
+  if (authoringRunning) {
+    authoringQueued = true;
+  } else {
+    if (authoringTimer) clearTimeout(authoringTimer);
+    authoringTimer = null;
+    void rebuildAuthoringIndex();
+  }
+  await settled;
+}
+
 async function rebuildAuthoringIndex(): Promise<void> {
+  if (authoringProjectChanging) {
+    authoringQueued = true;
+    return;
+  }
   if (authoringRunning) {
     authoringQueued = true;
     return;
@@ -162,7 +261,7 @@ async function rebuildAuthoringIndex(): Promise<void> {
         : []
     ));
     const assetIntelligence = buildProjectAssetIntelligence(snapshot, assetFiles, { gallery: state.configFiles.gallery });
-    if (revision === authoringRevision) {
+    if (revision === authoringRevision && !authoringProjectChanging) {
       const previousIndex = state.authoringIndex;
       state.selectedObjectRef = reconcileAuthoringSelection(state.selectedObjectRef, previousIndex, index);
       state.authoringIndex = index;
@@ -174,21 +273,23 @@ async function rebuildAuthoringIndex(): Promise<void> {
       refreshEditorObjectRefs();
       updateCausalPanel();
       if (state.mainTab === 'assets') renderMainArea();
+      settleAuthoringWaiters(revision, { ok: true });
     } else {
       authoringQueued = true;
     }
-  } catch {
-    if (revision === authoringRevision) {
+  } catch (error) {
+    if (revision === authoringRevision && !authoringProjectChanging) {
       state.authoringIndex = null;
       state.assetIntelligence = null;
       state.assetIntelligenceState = 'error';
       refreshEditorObjectRefs();
       updateCausalPanel();
       if (state.mainTab === 'assets') renderMainArea();
+      settleAuthoringWaiters(revision, { ok: false, error });
     }
   } finally {
     authoringRunning = false;
-    if (authoringQueued || revision !== authoringRevision) {
+    if (!authoringProjectChanging && (authoringQueued || revision !== authoringRevision)) {
       authoringQueued = false;
       scheduleAuthoringIndexRebuild();
     }
@@ -223,13 +324,25 @@ bindProjectIoHooks({
   renderAll,
   runValidate: () => { runValidate(); scheduleAuthoringIndexRebuild(); },
   renderSidebar,
+  onAssetsRefreshed: refreshAuthoringIndexImmediately,
+  onProjectClosing: closeCurrentProjectRuntime,
+  onProjectLoadSettled: (succeeded) => {
+    authoringProjectChanging = false;
+    authoringQueued = false;
+    if (!succeeded && authoringTimer) {
+      clearTimeout(authoringTimer);
+      authoringTimer = null;
+    }
+  },
   onProjectLoaded: () => {
+    authoringProjectChanging = false;
     saveAttemptLeftDirty = false;
     pendingAutosaveTimelineConflicts = [];
     clearTimelineViewStates();
     resetAuthoringState();
     refreshProjectBarProjection();
     tryAutosaveRecover();
+    void bindCurrentProjectAssetImport();
   },
   onSaved: () => {
     persistCurrentAutosave(Date.now());
@@ -579,6 +692,18 @@ window.addEventListener('beforeunload', (e) => {
     e.preventDefault();
     e.returnValue = '';
   }
+});
+
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) resetAssetImportRuntime();
+  else {
+    assetImportClient.dispose();
+    assetImportWorkspace.dispose();
+  }
+});
+
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) void bindCurrentProjectAssetImport();
 });
 
 // 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪
