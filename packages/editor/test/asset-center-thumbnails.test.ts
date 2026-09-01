@@ -220,7 +220,8 @@ describe('Asset Center thumbnail presentation', () => {
 
     FakeIntersectionObserver.instances.at(-1)!.reveal(...hosts);
     await settleAsyncThumbnail();
-    const [success, error] = hosts.map((host) => host.children[0] as FakeImage);
+    const success = hosts[0]!.children[0] as FakeImage;
+    const error = hosts[1]!.children[0] as FakeImage;
     success.onload?.();
     error.onerror?.();
     session.dispose();
