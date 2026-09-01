@@ -1,7 +1,13 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { ProjectAssetItem, ProjectAssetKind } from '@surdet/authoring';
 import type { DirAsset } from '../src/assets.js';
 import { describeAssetThumbnail } from '../src/panels/asset-center-thumbnails.js';
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+const thumbnailSource = readFileSync(path.resolve(testDirectory, '../src/panels/asset-center-thumbnails.ts'), 'utf8');
 
 function projectItem(kind: ProjectAssetKind, sourcePath: string, physical = true): ProjectAssetItem {
   return {
@@ -77,5 +83,19 @@ describe('Asset Center thumbnail presentation', () => {
       detail: '无物理文件',
       fit: 'contain',
     });
+  });
+
+  it('keeps viewport loading and Object URL ownership inside one disposable session', () => {
+    expect(thumbnailSource).toMatch(/export interface AssetThumbnailSession/);
+    expect(thumbnailSource).toMatch(/beginAssetThumbnailSession/);
+    expect(thumbnailSource).toMatch(/disposeAssetCenterThumbnails/);
+    expect(thumbnailSource).toMatch(/IntersectionObserver/);
+    expect(thumbnailSource).toMatch(/rootMargin\s*:\s*['"]160px 0px['"]/);
+    expect(thumbnailSource).toMatch(/URL\.createObjectURL/);
+    expect(thumbnailSource).toMatch(/URL\.revokeObjectURL/);
+    expect(thumbnailSource).toMatch(/pendingUrls/);
+    expect(thumbnailSource).toMatch(/generation/);
+    expect(thumbnailSource).toMatch(/\.disconnect\(\)/);
+    expect(thumbnailSource).toMatch(/typeof IntersectionObserver/);
   });
 });

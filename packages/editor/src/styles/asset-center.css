@@ -475,7 +475,7 @@
 }
 
 .asset-center-library.grid .asset-center-items {
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--surdet-space-12);
   border: 0;
   background: transparent;
@@ -497,8 +497,77 @@
 .asset-center-library.grid .asset-center-item {
   grid-template-columns: 1fr;
   align-content: start;
-  min-height: 150px;
+  min-height: 230px;
+  padding: 0;
+  overflow: hidden;
   border-color: var(--surdet-border-default);
+}
+
+.asset-center-thumbnail {
+  display: none;
+}
+
+.asset-center-library.grid .asset-center-thumbnail {
+  position: relative;
+  display: grid;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid var(--surdet-border-default);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-secondary);
+}
+
+.asset-center-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.asset-center-thumbnail[data-asset-thumbnail-fit="cover"] img {
+  object-fit: cover;
+}
+
+.asset-center-thumbnail[data-asset-thumbnail-fit="contain"] img {
+  object-fit: contain;
+}
+
+.asset-center-thumbnail-label,
+.asset-center-thumbnail-detail {
+  position: absolute;
+  inset-inline: var(--surdet-space-12);
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-center-thumbnail-label {
+  top: 50%;
+  color: var(--surdet-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  transform: translateY(-70%);
+}
+
+.asset-center-thumbnail-detail {
+  top: calc(50% + 12px);
+  font-size: 11px;
+}
+
+.asset-center-library.grid .asset-center-item-name,
+.asset-center-library.grid .asset-center-item-context,
+.asset-center-library.grid .asset-center-item-meta {
+  padding-inline: var(--surdet-space-12);
+}
+
+.asset-center-library.grid .asset-center-item-name {
+  padding-top: 10px;
+}
+
+.asset-center-library.grid .asset-center-item-meta {
+  padding-bottom: var(--surdet-space-12);
 }
 
 .asset-center-item:hover {

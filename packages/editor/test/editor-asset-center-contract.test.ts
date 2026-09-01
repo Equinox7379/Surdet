@@ -22,6 +22,7 @@ const mainSource = readEditorFile('src/main.ts');
 const stateSource = readEditorFile('src/state.ts');
 const centerSource = readEditorFile('src/panels/asset-center.ts');
 const folderSource = readEditorFile('src/panels/asset-center-folders.ts');
+const thumbnailSource = readEditorFile('src/panels/asset-center-thumbnails.ts');
 const sidebarAssetSource = readEditorFile('src/panels/assets.ts');
 const centerCss = readEditorFile('src/styles/asset-center.css');
 const indexSource = readEditorFile('index.html');
@@ -100,6 +101,21 @@ describe('editor Asset Center contract', () => {
     expect(centerCss).toMatch(/asset-center-folder-controls/);
     expect(centerCss).toMatch(/asset-center-folder-breadcrumbs/);
     expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-center-folder-controls/i);
+  });
+
+  it('turns grid mode into a lifecycle-safe visual library while list mode stays dense', () => {
+    expect(thumbnailSource).toMatch(/beginAssetThumbnailSession/);
+    expect(thumbnailSource).toMatch(/disposeAssetCenterThumbnails/);
+    expect(centerSource).toMatch(/asset-center-thumbnail/);
+    expect(centerSource).toMatch(/aria-hidden/);
+    expect(centerSource).toMatch(/assetCenterView\s*===\s*['"]grid['"]/);
+    expect(centerSource).toMatch(/thumbnailSession\.mount/);
+    expect(mainSource).toMatch(/disposeAssetCenterThumbnails/);
+    expect(centerCss).toMatch(/asset-center-library\.grid[\s\S]*asset-center-thumbnail/);
+    expect(centerCss).toMatch(/aspect-ratio\s*:\s*16\s*\/\s*9/);
+    expect(centerCss).toMatch(/asset-thumbnail-fit=['"]cover['"][\s\S]*object-fit\s*:\s*cover/);
+    expect(centerCss).toMatch(/asset-thumbnail-fit=['"]contain['"][\s\S]*object-fit\s*:\s*contain/);
+    expect(centerCss).not.toMatch(/asset-center-thumbnail[\s\S]{0,300}(?:linear|radial)-gradient\s*\(/i);
   });
 
   it('uses a persistent inspector and a technical disclosure instead of hover-only evidence', () => {

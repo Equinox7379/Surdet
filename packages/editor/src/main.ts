@@ -46,6 +46,7 @@ import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { bindAssetsPanelHooks } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
+import { disposeAssetCenterThumbnails } from './panels/asset-center-thumbnails.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
@@ -826,7 +827,10 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
-  if (state.mainTab !== 'assets') disposeAssetCenterPreview();
+  if (state.mainTab !== 'assets') {
+    disposeAssetCenterPreview();
+    disposeAssetCenterThumbnails();
+  }
   main.innerHTML = '';
   const navigation = renderModeNavigation(state.mainTab, (mode) => {
       state.previewTimelineId = null;
