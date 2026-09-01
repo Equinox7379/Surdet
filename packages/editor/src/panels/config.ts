@@ -8,7 +8,7 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { writeFileHandle } from '../project-io.js';
+import { assertProjectWriteUnlocked, writeFileHandle } from '../project-io.js';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
@@ -395,6 +395,7 @@ async function saveConfigFile(
   errors: string[],
   label: string,
 ): Promise<void> {
+  assertProjectWriteUnlocked();
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return;
@@ -447,6 +448,7 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 /* ============================ 变量表编辑器 ============================ */
 
 async function saveVariables(): Promise<void> {
+  assertProjectWriteUnlocked();
   const rows = ensureVarRows();
   const { variables, errors } = rowsToVariables(rows);
   if (errors.length > 0) {
@@ -544,6 +546,7 @@ function renderCharactersSection(): HTMLElement {
 
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
 async function saveCharacters(): Promise<void> {
+  assertProjectWriteUnlocked();
   const rows = ensureCharRows();
   let handle = state.handles.gameConfig;
   if (!handle && state.dirHandle) {

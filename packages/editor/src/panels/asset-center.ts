@@ -13,6 +13,8 @@ import {
   beginAssetThumbnailSession,
   disposeAssetCenterThumbnails,
 } from './asset-center-thumbnails.js';
+import type { AssetRelocationWorkspaceProjection } from '../asset-relocation-workspace.js';
+import type { AssetRelocationOperationStatus } from '../asset-import-client.js';
 
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
@@ -56,9 +58,23 @@ type AssetCenterSort = (typeof SORT_OPTIONS)[number]['value'];
 export interface AssetCenterHooks {
   onOpenProject: () => void;
   onOpenReference: (reference: ProjectAssetReference) => void;
+  onSelectAsset: (item: ProjectAssetItem, restoreKeyboardFocus: boolean) => void;
   assetImportOpen: boolean;
   onToggleImport: () => void;
   assetImport: AssetImportWorkbenchHooks;
+  assetRelocation: {
+    workspace: AssetRelocationWorkspaceProjection;
+    availabilityMessage: string | null;
+    onBegin: (item: ProjectAssetItem, targetDirectory: string) => void;
+    onUpdateTarget: (update: { targetDirectory?: string; fileName?: string }) => void;
+    onCheckImpact: () => void;
+    onCommit: () => void;
+    onModify: () => void;
+    onCancel: () => void;
+    onUndo: () => void;
+    onRecover: (action: 'resume' | 'rollback') => void;
+    onViewTarget: () => void;
+  };
 }
 
 let previewObjectUrl: string | null = null;
@@ -289,16 +305,287 @@ function filterButton(
   return button;
 }
 
-function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, hooks: AssetCenterHooks): void {
+const RELOCATION_KINDS = new Set<ProjectAssetKind>(['background', 'portrait', 'avatar']);
+const TERMINAL_RELOCATION_STATUSES = new Set<AssetRelocationOperationStatus>([
+  'COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED',
+]);
+const RECOVERABLE_RELOCATION_STATUSES = new Set<AssetRelocationOperationStatus>([
+  'RECOVERY_REQUIRED', 'PUBLISHING', 'ROLLING_BACK', 'UNDOING',
+]);
+
+function assetDirectory(sourcePath: string): string {
+  return sourcePath.split('/').slice(0, -1).join('/');
+}
+
+function relocationDirectories(items: readonly ProjectAssetItem[], item: ProjectAssetItem): string[] {
+  const directories = new Set<string>();
+  for (const candidate of items) {
+    if (candidate.physical && candidate.kind === item.kind && candidate.sourcePath) {
+      directories.add(assetDirectory(candidate.sourcePath));
+    }
+  }
+  if (item.sourcePath) directories.add(assetDirectory(item.sourcePath));
+  return [...directories].sort((left, right) => left.localeCompare(right, 'zh-CN'));
+}
+
+function relocationEntryIssue(item: ProjectAssetItem, hooks: AssetCenterHooks): string | null {
+  if (!item.physical || !item.sourcePath) return '只有项目中真实存在的素材文件可以整理。';
+  if (!RELOCATION_KINDS.has(item.kind)) return '第一版先支持背景、立绘和头像素材。';
+  if (item.issues.includes('ASSET_KEY_DUPLICATE')) return '这个素材键对应多个文件，暂时无法确认要整理哪一个。';
+  return hooks.assetRelocation.availabilityMessage;
+}
+
+function relocationCurrentPath(status: AssetRelocationOperationStatus, sourcePath: string, targetPath: string): string {
+  return status === 'COMMITTED' ? targetPath : sourcePath;
+}
+
+function renderRelocationStatus(
+  projection: AssetRelocationWorkspaceProjection,
+  hooks: AssetCenterHooks,
+): HTMLElement | null {
+  const detail = projection.detail;
+  if (detail === null) return null;
+  const status = detail.operation.status;
+  if (TERMINAL_RELOCATION_STATUSES.has(status)) {
+    const labels: Record<Extract<AssetRelocationOperationStatus, 'COMMITTED' | 'UNDONE' | 'ROLLED_BACK' | 'CANCELLED'>, string> = {
+      COMMITTED: '素材整理完成',
+      UNDONE: '本次整理已撤销',
+      ROLLED_BACK: '素材整理已安全回退',
+      CANCELLED: '本次整理已取消',
+    };
+    const completed = h('div', 'asset-relocation-result');
+    completed.dataset.relocationStatus = status;
+    completed.append(
+      h('strong', undefined, labels[status as keyof typeof labels]),
+      h('p', undefined, `当前位置：${relocationCurrentPath(status, detail.request.sourcePath, detail.request.targetPath)}`),
+    );
+    if (status === 'COMMITTED') {
+      completed.appendChild(h('p', undefined, `已更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件。`));
+    }
+    const actions = h('div', 'asset-relocation-actions');
+    const view = h('button', undefined, '查看当前位置') as HTMLButtonElement;
+    view.type = 'button';
+    view.onclick = hooks.assetRelocation.onViewTarget;
+    actions.appendChild(view);
+    if (status === 'COMMITTED') {
+      const undo = h('button', undefined, '撤销本次整理') as HTMLButtonElement;
+      undo.type = 'button';
+      undo.disabled = projection.busy;
+      undo.onclick = hooks.assetRelocation.onUndo;
+      actions.appendChild(undo);
+    }
+    const close = h('button', undefined, '关闭提示') as HTMLButtonElement;
+    close.type = 'button';
+    close.disabled = projection.busy;
+    close.onclick = hooks.assetRelocation.onCancel;
+    actions.appendChild(close);
+    completed.appendChild(actions);
+    if (projection.message) completed.appendChild(h('p', 'asset-relocation-message', projection.message));
+    return completed;
+  }
+
+  if (RECOVERABLE_RELOCATION_STATUSES.has(status)) {
+    const recovery = h('div', 'asset-relocation-recovery');
+    recovery.appendChild(h('p', 'asset-relocation-warning', '上一次整理没有完整结束。请先恢复或安全回退，期间不会覆盖无法确认的文件。'));
+    const actions = h('div', 'asset-relocation-actions');
+    const resume = h('button', 'asset-relocation-primary', '继续恢复') as HTMLButtonElement;
+    resume.type = 'button';
+    resume.disabled = projection.busy;
+    resume.onclick = () => hooks.assetRelocation.onRecover('resume');
+    const rollback = h('button', undefined, '安全回退') as HTMLButtonElement;
+    rollback.type = 'button';
+    rollback.disabled = projection.busy;
+    rollback.onclick = () => hooks.assetRelocation.onRecover('rollback');
+    actions.append(resume, rollback);
+    recovery.appendChild(actions);
+    if (projection.message) recovery.appendChild(h('p', 'asset-relocation-message', projection.message));
+    return recovery;
+  }
+  return null;
+}
+
+function renderDetachedRelocation(hooks: AssetCenterHooks): HTMLElement | null {
+  const projection = hooks.assetRelocation.workspace;
+  const detail = projection.detail;
+  if (detail === null) return null;
+  const section = h('section', 'asset-relocation asset-relocation-detached');
+  section.dataset.assetRelocation = 'true';
+  const heading = h('div', 'asset-relocation-heading');
+  heading.append(h('h3', undefined, '整理素材'), h('p', undefined, '这项整理仍可在素材未显示时继续恢复或安全结束。'));
+  section.appendChild(heading);
+  const status = renderRelocationStatus(projection, hooks);
+  if (status !== null) {
+    section.appendChild(status);
+    return section;
+  }
+  section.appendChild(h('p', 'asset-relocation-path-summary', `${detail.request.sourcePath} → ${detail.request.targetPath}`));
+  section.appendChild(h('p', 'asset-relocation-note', '源素材当前不在列表中。为避免误操作，请取消这项计划后重新检查项目。'));
+  const actions = h('div', 'asset-relocation-actions');
+  const cancel = h('button', undefined, '取消本次整理') as HTMLButtonElement;
+  cancel.type = 'button';
+  cancel.disabled = projection.busy;
+  cancel.onclick = hooks.assetRelocation.onCancel;
+  actions.appendChild(cancel);
+  section.appendChild(actions);
+  if (projection.message) section.appendChild(h('p', 'asset-relocation-message', projection.message));
+  return section;
+}
+
+function renderRelocation(
+  item: ProjectAssetItem,
+  items: readonly ProjectAssetItem[],
+  hooks: AssetCenterHooks,
+): HTMLElement {
+  const section = h('section', 'asset-relocation');
+  section.dataset.assetRelocation = 'true';
+  const heading = h('div', 'asset-relocation-heading');
+  heading.append(h('h3', undefined, '整理素材'), h('p', undefined, '移动或重命名前会先列出需要同步更新的引用。'));
+  section.appendChild(heading);
+  const issue = relocationEntryIssue(item, hooks);
+  const projection = hooks.assetRelocation.workspace;
+  const active = projection.source?.assetId === item.assetId
+    || projection.detail?.request.targetPath === item.sourcePath;
+  if (!active) {
+    const button = h('button', 'asset-relocation-entry', '移动或重命名') as HTMLButtonElement;
+    button.type = 'button';
+    button.disabled = issue !== null || projection.busy;
+    if (issue) button.title = issue;
+    button.onclick = () => hooks.assetRelocation.onBegin(item, assetDirectory(item.sourcePath!));
+    section.appendChild(button);
+    if (issue) section.appendChild(h('p', 'asset-relocation-note', issue));
+    return section;
+  }
+
+  const detail = projection.detail;
+  const status = renderRelocationStatus(projection, hooks);
+  if (status !== null) {
+    section.appendChild(status);
+    return section;
+  }
+
+  const lockedByPlan = detail !== null;
+  const form = h('div', 'asset-relocation-form');
+  const location = h('p', 'asset-relocation-current', `当前位置：${projection.source!.sourcePath}`);
+  const targetLabel = h('label');
+  targetLabel.appendChild(h('span', undefined, '放到'));
+  const target = document.createElement('select');
+  target.setAttribute('aria-label', '目标素材目录');
+  target.disabled = lockedByPlan || projection.busy;
+  for (const directory of relocationDirectories(items, item)) {
+    const option = document.createElement('option');
+    option.value = directory;
+    option.textContent = directory;
+    target.appendChild(option);
+  }
+  target.value = projection.targetDirectory;
+  target.onchange = () => {
+    hooks.assetRelocation.onUpdateTarget({ targetDirectory: target.value });
+    updateSummary();
+  };
+  targetLabel.appendChild(target);
+  const fileLabel = h('label');
+  fileLabel.appendChild(h('span', undefined, '文件名'));
+  const sourceFileName = projection.source!.fileName;
+  const extensionOffset = sourceFileName.lastIndexOf('.');
+  const fixedExtension = extensionOffset > 0 ? sourceFileName.slice(extensionOffset) : '';
+  const editableFileName = fixedExtension.length > 0 && projection.fileName.endsWith(fixedExtension)
+    ? projection.fileName.slice(0, -fixedExtension.length)
+    : projection.fileName;
+  const fileControl = h('span', 'asset-relocation-file-control');
+  const fileName = document.createElement('input');
+  fileName.value = editableFileName;
+  fileName.disabled = lockedByPlan || projection.busy;
+  fileName.setAttribute('aria-label', '整理后的文件名');
+  fileName.spellcheck = false;
+  fileControl.appendChild(fileName);
+  if (fixedExtension) fileControl.appendChild(h('span', 'asset-relocation-extension', fixedExtension));
+  fileLabel.appendChild(fileControl);
+  const summary = h('p', 'asset-relocation-path-summary');
+  const updateSummary = (): void => {
+    const next = `${target.value}/${fileName.value.trim()}${fixedExtension}`;
+    summary.textContent = `${projection.source!.sourcePath} → ${next}`;
+  };
+  fileName.oninput = () => {
+    hooks.assetRelocation.onUpdateTarget({ fileName: `${fileName.value}${fixedExtension}` });
+    updateSummary();
+  };
+  updateSummary();
+  form.append(location, targetLabel, fileLabel, summary);
+  section.appendChild(form);
+
+  if (detail !== null) {
+    if (detail.plan.status === 'blocked') {
+      const blockers = h('div', 'asset-relocation-blockers');
+      blockers.appendChild(h('strong', undefined, '当前目标不能安全执行'));
+      const list = h('ul');
+      for (const blocker of detail.plan.blockers) list.appendChild(h('li', undefined, blocker.message));
+      blockers.appendChild(list);
+      section.appendChild(blockers);
+    } else {
+      const impact = h('div', 'asset-relocation-impact');
+      impact.appendChild(h('strong', undefined, `将更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件`));
+      const sourceLabels: Record<string, string> = {
+        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置',
+      };
+      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery'] as const) {
+        const changes = detail.plan.referenceChanges.filter((change) => change.sourceKind === sourceKind);
+        if (changes.length === 0) continue;
+        const disclosure = document.createElement('details');
+        disclosure.appendChild(h('summary', undefined, `${sourceLabels[sourceKind]}（${changes.length}）`));
+        const list = h('ul');
+        for (const change of changes) {
+          list.appendChild(h('li', undefined, `${change.sourceLabel}：${change.before} → ${change.after}`));
+        }
+        disclosure.appendChild(list);
+        impact.appendChild(disclosure);
+      }
+      section.appendChild(impact);
+    }
+  }
+
+  const actions = h('div', 'asset-relocation-actions');
+  if (detail === null) {
+    const check = h('button', 'asset-relocation-primary', '检查影响') as HTMLButtonElement;
+    check.type = 'button';
+    check.disabled = projection.busy;
+    check.onclick = hooks.assetRelocation.onCheckImpact;
+    actions.appendChild(check);
+  } else if (detail.plan.status === 'ready') {
+    const commit = h('button', 'asset-relocation-primary', `移动并更新 ${detail.plan.affectedReferenceCount} 处引用`) as HTMLButtonElement;
+    commit.type = 'button';
+    commit.disabled = projection.busy;
+    commit.onclick = hooks.assetRelocation.onCommit;
+    actions.appendChild(commit);
+  }
+  if (detail !== null) {
+    const modify = h('button', undefined, '修改目标') as HTMLButtonElement;
+    modify.type = 'button';
+    modify.disabled = projection.busy;
+    modify.onclick = hooks.assetRelocation.onModify;
+    actions.appendChild(modify);
+  }
+  const cancel = h('button', undefined, '取消') as HTMLButtonElement;
+  cancel.type = 'button';
+  cancel.disabled = projection.busy;
+  cancel.onclick = hooks.assetRelocation.onCancel;
+  actions.appendChild(cancel);
+  section.appendChild(actions);
+  if (projection.message) section.appendChild(h('p', 'asset-relocation-message', projection.message));
+  return section;
+}
+
+function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items: readonly ProjectAssetItem[], hooks: AssetCenterHooks): void {
   host.replaceChildren();
   host.className = 'asset-center-inspector';
   host.setAttribute('aria-label', '素材详情');
   if (item === null) {
+    const detachedRelocation = renderDetachedRelocation(hooks);
     host.append(
       h('p', 'asset-center-eyebrow', '素材详情'),
       h('h2', undefined, '选择一项素材'),
       h('p', 'asset-center-empty-copy', '这里会固定显示预览、文件信息和引用位置，不需要把鼠标停在条目上。'),
     );
+    if (detachedRelocation !== null) host.appendChild(detachedRelocation);
     return;
   }
   host.dataset.assetId = item.assetId;
@@ -360,6 +647,7 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, hooks
     preview,
     facts,
     references,
+    renderRelocation(item, items, hooks),
     technical,
   );
 }
@@ -420,15 +708,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     state.assetCenterKind = 'all';
     state.assetCenterStatus = 'all';
     state.assetCenterFolder = 'all';
-    state.assetCenterSelectedId = item.assetId;
-    renderAssetCenter(container, hooks);
-    if (restoreKeyboardFocus) {
-      requestAnimationFrame(() => {
-        const selectedRow = [...container.querySelectorAll<HTMLButtonElement>('[role="option"][data-asset-id]')]
-          .find((candidate) => candidate.dataset.assetId === item.assetId);
-        selectedRow?.focus();
-      });
-    }
+    hooks.onSelectAsset(item, restoreKeyboardFocus);
   };
 
   const restoreControlFocus = (selector: string): void => {
@@ -440,7 +720,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   title.append(
     h('p', 'asset-center-eyebrow', '项目素材'),
     h('h1', undefined, '素材中心'),
-    h('p', undefined, '查看真实文件、引用位置与健康提示；本页不会改动任何素材。'),
+    h('p', undefined, '查看真实文件与引用位置；整理素材会先显示影响，确认后才执行。'),
   );
   const tools = h('div', 'asset-center-tools');
   const importButton = h('button', 'asset-import-entry', '导入素材') as HTMLButtonElement;
@@ -751,15 +1031,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
     row.append(thumbnail, name, context, meta);
     const selectItem = (restoreKeyboardFocus: boolean): void => {
-      state.assetCenterSelectedId = item.assetId;
-      renderAssetCenter(container, hooks);
-      if (restoreKeyboardFocus) {
-        requestAnimationFrame(() => {
-          const selectedRow = [...container.querySelectorAll<HTMLButtonElement>('[role="option"][data-asset-id]')]
-            .find((candidate) => candidate.dataset.assetId === item.assetId);
-          selectedRow?.focus();
-        });
-      }
+      hooks.onSelectAsset(item, restoreKeyboardFocus);
     };
     row.onclick = () => selectItem(false);
     row.onkeydown = (event) => {
@@ -774,7 +1046,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   library.appendChild(list);
 
   const inspector = h('aside', 'asset-center-inspector');
-  renderInspector(inspector, selected, hooks);
+  renderInspector(inspector, selected, items, hooks);
   shell.append(rail, library, inspector);
   const importHost = h('section');
   importHost.id = 'asset-import-workbench';

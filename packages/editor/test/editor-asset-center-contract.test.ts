@@ -20,7 +20,9 @@ function ruleBodiesMatching(css: string, selectorPattern: RegExp): string[] {
 const modeSource = readEditorFile('src/shell/editor-modes.ts');
 const mainSource = readEditorFile('src/main.ts');
 const stateSource = readEditorFile('src/state.ts');
+const projectIoSource = readEditorFile('src/project-io.ts');
 const centerSource = readEditorFile('src/panels/asset-center.ts');
+const relocationWorkspaceSource = readEditorFile('src/asset-relocation-workspace.ts');
 const folderSource = readEditorFile('src/panels/asset-center-folders.ts');
 const thumbnailSource = readEditorFile('src/panels/asset-center-thumbnails.ts');
 const sidebarAssetSource = readEditorFile('src/panels/assets.ts');
@@ -168,5 +170,27 @@ describe('editor Asset Center contract', () => {
     expect(sidebarAssetSource).toMatch(/copy-asset-key/);
     expect(sidebarAssetSource).toMatch(/avatar/);
     expect(sidebarAssetSource).toMatch(/ambience/);
+  });
+
+  it('keeps reference-aware relocation inside the persistent inspector with a shared write freeze', () => {
+    const relocationSource = `${centerSource}\n${mainSource}\n${projectIoSource}\n${relocationWorkspaceSource}`;
+    for (const copy of [
+      '整理素材', '移动或重命名', '检查影响', '移动并更新', '修改目标', '撤销本次整理',
+      '场景', '时间轴', '角色配置', '鉴赏配置', '素材整理进行中',
+    ]) expect(relocationSource).toContain(copy);
+    expect(centerSource).toMatch(/renderRelocation[\s\S]*asset-center-references/);
+    expect(centerSource).toMatch(/background[\s\S]*portrait[\s\S]*avatar/);
+    expect(mainSource).toMatch(/relocationPlan[\s\S]*relocationCommit[\s\S]*reloadCurrentProjectFromHandle/);
+    expect(mainSource).toMatch(/relocationResume[\s\S]*relocationUndo/);
+    expect(centerSource).toMatch(/TERMINAL_RELOCATION_STATUSES[\s\S]*ROLLED_BACK[\s\S]*CANCELLED/);
+    expect(centerSource).toMatch(/renderRelocationStatus[\s\S]*继续恢复[\s\S]*安全回退/);
+    expect(centerSource).toMatch(/renderDetachedRelocation[\s\S]*renderRelocationStatus/);
+    expect(centerSource).toMatch(/关闭提示/);
+    expect(mainSource).toMatch(/COMMITTED[\s\S]*UNDONE[\s\S]*ROLLED_BACK[\s\S]*CANCELLED/);
+    expect(stateSource).toMatch(/projectWriteLock[\s\S]*asset-relocation/);
+    expect(projectIoSource).toMatch(/assertProjectWriteUnlocked[\s\S]*writeFileHandle/);
+    expect(projectIoSource).toMatch(/reloadCurrentProjectFromHandle/);
+    expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-relocation-actions/i);
+    expect(centerCss).not.toMatch(/asset-relocation[^{}]*\{[^}]*border-(?:left|inline-start)\s*:/i);
   });
 });

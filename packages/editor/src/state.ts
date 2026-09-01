@@ -103,6 +103,8 @@ export const state = {
   assetCenterSort: 'path' as 'path' | 'name' | 'size-desc' | 'references-desc' | 'attention',
   /** 仅含可展示投影与本页 File；授权令牌和浏览器会话永不进入全局 state。 */
   assetImportWorkspace: null as AssetImportWorkspaceProjection | null,
+  /** 本页面的共享写入冻结；本机 authority 整理素材时阻止 File System Access 并发写盘。 */
+  projectWriteLock: null as null | 'asset-relocation',
   /** 侧栏标签页：场景 | 素材（E2） */
   sidebarTab: 'scenes' as 'scenes' | 'assets',
   /** 当前已打开的 human review workspace；普通项目打开时必须清空。 */
