@@ -146,7 +146,7 @@ The exact persistent layout is:
 ```text
 <data-root>/
   data-root-identity.json
-  locks/projects/<project-identity-hash>.lock/lease.json
+  .locks/projects/<project-identity-hash>.lock/lease.json
   projects/<project-identity-hash>/
     project-identity.json
     operation-index/<operation-id>.json
@@ -458,6 +458,18 @@ export interface ProjectAssetImportTargetFact {
   path: string;
   state: 'absent' | 'exists-file' | 'exists-directory' | 'unsafe';
 }
+
+export interface BuildProjectAssetImportPlanInput {
+  projectIdentity: string;
+  stagedItems: ProjectAssetImportStagedItem[];
+  targets: ProjectAssetImportTargetRequest[];
+  targetFacts: ProjectAssetImportTargetFact[];
+}
+
+export function buildProjectAssetImportPlan(
+  input: BuildProjectAssetImportPlanInput,
+  hasher: TextHasher,
+): Promise<ProjectAssetImportPlan>;
 ```
 
 ### 10.2 Planner output
@@ -953,7 +965,7 @@ Completion does not imply codec validation, asset conversion, reference generati
 
 ```text
 PROJECT_ASSET_IMPORT_AUTHORITY_DESIGN = APPROVED
-IMPLEMENTATION_TASKBOOK = NOT_STARTED
+IMPLEMENTATION_TASKBOOK = APPROVED
 PROJECT_BINDING = NOT_IMPLEMENTED
 NEW_FILE_ONLY_IMPORT = NOT_IMPLEMENTED
 RECOVERABLE_IMPORT_TRANSACTION = NOT_IMPLEMENTED
