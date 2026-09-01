@@ -257,10 +257,98 @@ export interface AssetEntry {
   resolved: boolean;
 }
 
+/** 素材中心共享类型；稳定英文值供 Agent/DOM 使用，Editor 负责显示自然中文。 */
+export type ProjectAssetKind =
+  | 'background'
+  | 'portrait'
+  | 'avatar'
+  | 'music'
+  | 'ambience'
+  | 'sound-effect'
+  | 'voice'
+  | 'video'
+  | 'font'
+  | 'other';
+
+/** 适配器提供的只读物理文件事实；不包含文件内容或本机绝对路径。 */
+export interface ProjectAssetFileFact {
+  path: string;
+  bytes?: number;
+}
+
+export type ProjectAssetReferenceSource = 'scene' | 'timeline' | 'character' | 'gallery';
+
+export interface ProjectAssetReference {
+  referenceId: string;
+  sourceKind: ProjectAssetReferenceSource;
+  sourceLabel: string;
+  sourcePath: string;
+  line?: number;
+  objectRef?: string;
+}
+
+export type ProjectAssetIssueCode =
+  | 'ASSET_REFERENCE_MISSING'
+  | 'ASSET_KEY_DUPLICATE'
+  | 'ASSET_NAME_INVALID'
+  | 'ASSET_FORMAT_UNSUPPORTED'
+  | 'ASSET_UNUSED';
+
+export interface ProjectAssetIssue {
+  issueId: string;
+  code: ProjectAssetIssueCode;
+  severity: 'warning' | 'error';
+  message: string;
+  assetIds: string[];
+  referenceIds: string[];
+}
+
+export interface ProjectAssetItem {
+  /** 物理文件使用 `file:<project-relative-path>`；缺失引用使用稳定 `missing:<kind>:<key>`。 */
+  assetId: string;
+  kind: ProjectAssetKind;
+  key: string;
+  sourcePath?: string;
+  format?: string;
+  bytes?: number;
+  /** 立绘表情等同一语义 key 下的物理变体。 */
+  variant?: string;
+  physical: boolean;
+  references: ProjectAssetReference[];
+  issues: ProjectAssetIssueCode[];
+}
+
+export interface ProjectAssetKindSummary {
+  kind: ProjectAssetKind;
+  fileCount: number;
+  measuredFileCount: number;
+  measuredBytes: number;
+}
+
+export interface ProjectAssetSummary {
+  fileCount: number;
+  measuredFileCount: number;
+  measuredBytes: number;
+  referencedCount: number;
+  unusedCount: number;
+  missingCount: number;
+  duplicateCount: number;
+  unsupportedCount: number;
+  invalidNameCount: number;
+  byKind: ProjectAssetKindSummary[];
+}
+
+export interface ProjectAssetIntelligence {
+  items: ProjectAssetItem[];
+  summary: ProjectAssetSummary;
+  issues: ProjectAssetIssue[];
+}
+
 export interface ProjectAssetCatalog {
   backgrounds: AssetEntry[];
   portraits: AssetEntry[];
   avatars: AssetEntry[];
+  intelligence: ProjectAssetIntelligence;
 }
 
 /** Stage 6 Wave 3：项目级创作配置写操作输入。 */

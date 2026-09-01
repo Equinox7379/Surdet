@@ -1,4 +1,6 @@
-import type { AssetEntry, ProjectAssetCatalog } from './contracts.js';
+import { buildProjectAssetIntelligence } from './asset-intelligence.js';
+import type { AssetEntry, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
+import type { ProjectSnapshot } from './project-snapshot.js';
 
 /** 受支持格式集合以仓库现有资源加载器事实为基线（浏览器/编辑器图像格式集合），不发明新规则。 */
 export const SUPPORTED_ASSET_FORMATS: readonly string[] = [
@@ -41,7 +43,12 @@ function stemOf(sourcePath: string): string {
  * 共享只读 asset catalog：输入只是路径/文件名/扩展名元数据（CLI 与 editor 各自枚举后提供），
  * 共享层统一解析命名规则与受支持格式。不读文件内容、不写资源。
  */
-export function buildAssetCatalog(paths: readonly string[]): ProjectAssetCatalog {
+export function buildAssetCatalog(
+  inputs: readonly (string | ProjectAssetFileFact)[],
+  snapshot?: ProjectSnapshot,
+): ProjectAssetCatalog {
+  const facts = inputs.map((input) => typeof input === 'string' ? { path: input } : input);
+  const paths = facts.map((fact) => fact.path);
   const backgrounds: AssetEntry[] = [];
   const portraits: AssetEntry[] = [];
   const avatars: AssetEntry[] = [];
@@ -93,10 +100,25 @@ export function buildAssetCatalog(paths: readonly string[]): ProjectAssetCatalog
     }
     // fonts、public/ 与其它目录不进入三类资源合同。
   }
-  return { backgrounds, portraits, avatars };
+  const emptySnapshot: ProjectSnapshot = snapshot ?? {
+    rootIdentity: 'asset-catalog:path-only',
+    revision: '',
+    files: [],
+    configFile: null,
+    config: {},
+    variables: {},
+    scenes: [],
+    timelines: [],
+  };
+  return {
+    backgrounds,
+    portraits,
+    avatars,
+    intelligence: buildProjectAssetIntelligence(emptySnapshot, facts),
+  };
 }
 
-/** 从任意项目文件路径集合中筛出资产路径元数据（三类合同）。 */
+/** 从任意项目文件路径集合中筛出 content/assets 物理素材路径。 */
 export function assetPathsFromFiles(paths: readonly string[]): string[] {
-  return paths.filter((path) => path.startsWith(BG_PREFIX) || path.startsWith(PORTRAIT_PREFIX) || path.startsWith(AVATAR_PREFIX));
+  return paths.filter((path) => path.startsWith('content/assets/'));
 }
