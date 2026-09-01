@@ -239,11 +239,92 @@ const assetEntrySchema = strictObject({
   resolved: booleanSchema,
 }, ['kind', 'key', 'sourcePath', 'format', 'resolved']);
 
+const projectAssetKindSchema = {
+  enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other'],
+};
+const projectAssetIssueCodeSchema = {
+  enum: ['ASSET_REFERENCE_MISSING', 'ASSET_KEY_DUPLICATE', 'ASSET_NAME_INVALID', 'ASSET_FORMAT_UNSUPPORTED', 'ASSET_UNUSED'],
+};
+const projectAssetReferenceSchema = strictObject({
+  referenceId: stringSchema,
+  sourceKind: { enum: ['scene', 'timeline', 'character', 'gallery'] },
+  sourceLabel: stringSchema,
+  sourcePath: stringSchema,
+  line: integerSchema,
+  objectRef: stringSchema,
+}, ['referenceId', 'sourceKind', 'sourceLabel', 'sourcePath']);
+const projectAssetItemSchema = strictObject({
+  assetId: stringSchema,
+  kind: projectAssetKindSchema,
+  key: stringSchema,
+  sourcePath: stringSchema,
+  format: stringSchema,
+  bytes: integerSchema,
+  variant: stringSchema,
+  physical: booleanSchema,
+  references: arrayOf(projectAssetReferenceSchema),
+  issues: arrayOf(projectAssetIssueCodeSchema),
+}, ['assetId', 'kind', 'key', 'physical', 'references', 'issues']);
+const projectAssetIssueSchema = strictObject({
+  issueId: stringSchema,
+  code: projectAssetIssueCodeSchema,
+  severity: { enum: ['warning', 'error'] },
+  message: stringSchema,
+  assetIds: arrayOf(stringSchema),
+  referenceIds: arrayOf(stringSchema),
+}, ['issueId', 'code', 'severity', 'message', 'assetIds', 'referenceIds']);
+const projectAssetKindSummarySchema = strictObject({
+  kind: projectAssetKindSchema,
+  fileCount: integerSchema,
+  measuredFileCount: integerSchema,
+  measuredBytes: integerSchema,
+}, ['kind', 'fileCount', 'measuredFileCount', 'measuredBytes']);
+const projectAssetSummarySchema = strictObject({
+  fileCount: integerSchema,
+  measuredFileCount: integerSchema,
+  measuredBytes: integerSchema,
+  referencedCount: integerSchema,
+  unusedCount: integerSchema,
+  missingCount: integerSchema,
+  duplicateCount: integerSchema,
+  unsupportedCount: integerSchema,
+  invalidNameCount: integerSchema,
+  byKind: arrayOf(projectAssetKindSummarySchema),
+}, [
+  'fileCount', 'measuredFileCount', 'measuredBytes', 'referencedCount', 'unusedCount', 'missingCount',
+  'duplicateCount', 'unsupportedCount', 'invalidNameCount', 'byKind',
+]);
+const projectAssetIntelligenceSchema = strictObject({
+  items: arrayOf(projectAssetItemSchema),
+  summary: projectAssetSummarySchema,
+  issues: arrayOf(projectAssetIssueSchema),
+}, ['items', 'summary', 'issues']);
+
 const assetCatalogSchema = strictObject({
   backgrounds: arrayOf(assetEntrySchema),
   portraits: arrayOf(assetEntrySchema),
   avatars: arrayOf(assetEntrySchema),
-}, ['backgrounds', 'portraits', 'avatars']);
+  intelligence: projectAssetIntelligenceSchema,
+}, ['backgrounds', 'portraits', 'avatars', 'intelligence']);
+
+const emptyAssetIntelligenceExample = {
+  items: [],
+  summary: {
+    fileCount: 0,
+    measuredFileCount: 0,
+    measuredBytes: 0,
+    referencedCount: 0,
+    unusedCount: 0,
+    missingCount: 0,
+    duplicateCount: 0,
+    unsupportedCount: 0,
+    invalidNameCount: 0,
+    byKind: [
+      'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other',
+    ].map((kind) => ({ kind, fileCount: 0, measuredFileCount: 0, measuredBytes: 0 })),
+  },
+  issues: [],
+};
 
 const projectInspectionSchema = strictObject({
   rootIdentity: stringSchema,
@@ -644,12 +725,12 @@ const definitions = {
   inspect: {
     inputSchema: emptyInputSchema,
     outputSchema: projectInspectionSchema,
-    example: { input: {}, expectedResultShape: { rootIdentity: '...', revision: '...', scenes: [], variables: [], characters: [], assets: { backgrounds: [], portraits: [], avatars: [] }, objectCount: 0, referenceCount: 0 } },
+    example: { input: {}, expectedResultShape: { rootIdentity: '...', revision: '...', scenes: [], variables: [], characters: [], assets: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample }, objectCount: 0, referenceCount: 0 } },
   },
   assets: {
     inputSchema: emptyInputSchema,
     outputSchema: assetCatalogSchema,
-    example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [] } },
+    example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample } },
   },
   objectInspect: {
     inputSchema: strictObject({ objectRef: stringSchema }, ['objectRef']),

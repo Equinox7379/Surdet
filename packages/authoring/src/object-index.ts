@@ -1,7 +1,7 @@
 import { parseInlineInstructions } from '@surdet/core';
 import { splitInstruction } from './scene-document.js';
 import { buildAssetCatalog } from './asset-catalog.js';
-import type { AuthoringObject, ProjectAssetCatalog } from './contracts.js';
+import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
 
 export interface ObjectIndex {
@@ -452,7 +452,7 @@ export interface ProjectInspection {
 export function inspectProject(
   snapshot: ProjectSnapshot,
   index = buildObjectIndex(snapshot),
-  assetPaths: readonly string[] = [],
+  assetFiles: readonly (string | ProjectAssetFileFact)[] = [],
 ): ProjectInspection {
   const charactersValue = snapshot.config['characters'];
   const characters = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
@@ -475,7 +475,7 @@ export function inspectProject(
     scenes: snapshot.scenes.map((scene) => ({ id: scene.id, path: scene.path })),
     variables: Object.entries(snapshot.variables).map(([name, declaration]) => ({ name, declaration })),
     characters,
-    assets: buildAssetCatalog(assetPaths),
+    assets: buildAssetCatalog(assetFiles, snapshot),
     objectCount: index.objects.length,
     referenceCount: index.objects.reduce((total, object) => total + object.references.length, 0),
   };
