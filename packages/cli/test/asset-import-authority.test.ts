@@ -252,7 +252,7 @@ describe('project asset import authority operations', () => {
     const { authority, projectRoot } = await fixture();
     const operationId = 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1';
     const itemId = 'b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2';
-    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'publish.png', declaredBytes: 5 }] });
+    const created = await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'publish.png', declaredBytes: 5 }] });
     await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
     const planned = await authority.plan(operationId, {
       targets: [{ itemId, kind: 'background', fileName: 'publish.png' }],
@@ -264,6 +264,11 @@ describe('project asset import authority operations', () => {
     expect(committed.receipt).toMatchObject({ operationId, status: 'COMMITTED', projectIdentity: expect.any(String) });
     expect(committed.receipt.receiptSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(committed.receipt.files).toHaveLength(1);
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken))
+      .toThrowError('导入操作授权无效');
+    const resumedToken = await authority.issueOperationToken(operationId);
+    expect(resumedToken).not.toBe(created.operationToken);
+    expect(() => authority.verifyOperationToken(operationId, resumedToken)).not.toThrow();
     await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'publish.png'), 'utf8')).resolves.toBe('hello');
     await expect(authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint })).resolves.toEqual(committed);
   });
@@ -546,7 +551,7 @@ describe('project asset import authority operations', () => {
     const { authority, projectRoot } = await fixture();
     const operationId = '32333435-3637-4839-8a3b-3c3d3e3f4041';
     const itemId = '42434445-4647-4849-8a4b-4c4d4e4f5051';
-    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'undo.png', declaredBytes: 5 }] });
+    const created = await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'undo.png', declaredBytes: 5 }] });
     await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
     const planned = await authority.plan(operationId, {
       targets: [{ itemId, kind: 'background', fileName: 'undo.png' }],
@@ -560,6 +565,8 @@ describe('project asset import authority operations', () => {
     });
     expect(undone.operation.status).toBe('UNDONE');
     expect(undone.undoReceipt.undoReceiptSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(() => authority.verifyOperationToken(operationId, created.operationToken))
+      .toThrowError('导入操作授权无效');
     await expect(stat(path.join(projectRoot, 'content', 'assets', 'bg', 'undo.png')))
       .rejects.toMatchObject({ code: 'ENOENT' });
     const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
