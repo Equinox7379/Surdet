@@ -13,6 +13,7 @@ export * from './diff.js';
 export * from './runtime-trace.js';
 export * from './asset-catalog.js';
 export * from './asset-intelligence.js';
+export * from './asset-import.js';
 export * from './timeline-operations.js';
 export * from './timeline-identity.js';
 export * from './config-operations.js';
