@@ -93,6 +93,23 @@ describe('Editor 中文素材导入工作台合同', () => {
     expect(workbenchSource).not.toMatch(/position\s*:\s*(?:fixed|sticky)/i);
   });
 
+  it('reuses the file picker as a clear, non-floating drop surface', () => {
+    expect(workbenchSource).toMatch(/ondragenter|addEventListener\(\s*['"]dragenter/);
+    expect(workbenchSource).toMatch(/ondragover|addEventListener\(\s*['"]dragover/);
+    expect(workbenchSource).toMatch(/ondragleave|addEventListener\(\s*['"]dragleave/);
+    expect(workbenchSource).toMatch(/ondrop|addEventListener\(\s*['"]drop/);
+    expect(workbenchSource).toContain('选择文件，或拖到这里');
+    expect(workbenchSource).toContain('松开即可加入待导入列表');
+    expect(workbenchSource).toContain('当前导入已开始，暂时不能加入文件');
+    expect(workbenchSource).toContain('这里只接受本机文件');
+    expect(workbenchSource).toMatch(/setAttribute\(\s*['"]aria-live['"]\s*,\s*['"]polite['"]\s*\)/);
+    expect(workbenchSource).toMatch(/dataTransfer/);
+    expect(workbenchSource).toMatch(/onSelectFiles/);
+    expect(workbenchCss).toMatch(/asset-import-picker\[data-drop-state=['"]ready['"]\]/);
+    expect(workbenchCss).toMatch(/asset-import-picker\[data-drop-state=['"]blocked['"]\]/);
+    expect(workbenchCss).not.toMatch(/asset-import-picker[^{}]*\{[^}]*(?:linear|radial)-gradient/i);
+  });
+
   it('keeps the file region independently scrollable and preserves the same layout at narrow widths', () => {
     const scrollRules = ruleBodiesMatching(workbenchCss, /asset-import-(?:content|files|file-list)/i).join('\n');
     expect(scrollRules).toMatch(/overflow(?:-y)?\s*:\s*(?:auto|scroll)/i);

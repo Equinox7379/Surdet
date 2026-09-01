@@ -636,13 +636,24 @@ export function renderAssetImportWorkbench(
   );
   const pickerLabel = document.createElement('label');
   pickerLabel.className = 'asset-import-picker';
-  pickerLabel.textContent = '选择素材文件';
+  const pickerTitle = h('span', 'asset-import-picker-title', '选择文件，或拖到这里');
   const picker = document.createElement('input');
   picker.type = 'file';
   picker.multiple = true;
   picker.accept = '*/*';
   const filesLocked = hooks.busy === true || (value.activeOperation !== null
     && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(value.activeOperation.operation.status));
+  const idleDropMessage = filesLocked
+    ? '当前导入已开始，暂时不能加入文件'
+    : '支持一次加入多个本机文件';
+  const dropStatus = h('small', 'asset-import-drop-status', idleDropMessage);
+  dropStatus.setAttribute('aria-live', 'polite');
+  pickerLabel.dataset.dropState = filesLocked ? 'blocked' : 'idle';
+  let dragDepth = 0;
+  const setDropState = (state: 'idle' | 'ready' | 'blocked', message: string): void => {
+    pickerLabel.dataset.dropState = state;
+    dropStatus.textContent = message;
+  };
   picker.disabled = filesLocked;
   picker.setAttribute('aria-label', '选择素材文件');
   picker.onchange = () => {
@@ -650,7 +661,56 @@ export function renderAssetImportWorkbench(
     if (selected.length > 0) hooks.onSelectFiles?.(selected);
     picker.value = '';
   };
-  pickerLabel.appendChild(picker);
+  pickerLabel.ondragenter = (event) => {
+    dragDepth += 1;
+    const transfer = event.dataTransfer;
+    const hasFiles = transfer !== null && assetDropHasFiles(transfer);
+    if (hasFiles) event.preventDefault();
+    if (filesLocked) {
+      if (transfer !== null) transfer.dropEffect = 'none';
+      setDropState('blocked', '当前导入已开始，暂时不能加入文件');
+      return;
+    }
+    if (!hasFiles) {
+      if (transfer !== null) transfer.dropEffect = 'none';
+      setDropState('blocked', '这里只接受本机文件');
+      return;
+    }
+    if (transfer !== null) transfer.dropEffect = 'copy';
+    setDropState('ready', '松开即可加入待导入列表');
+  };
+  pickerLabel.ondragover = (event) => {
+    const transfer = event.dataTransfer;
+    const hasFiles = transfer !== null && assetDropHasFiles(transfer);
+    if (!hasFiles || filesLocked) {
+      if (transfer !== null) transfer.dropEffect = 'none';
+      return;
+    }
+    event.preventDefault();
+    transfer.dropEffect = 'copy';
+  };
+  pickerLabel.ondragleave = () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setDropState(filesLocked ? 'blocked' : 'idle', idleDropMessage);
+  };
+  pickerLabel.ondrop = (event) => {
+    const transfer = event.dataTransfer;
+    const hasFiles = transfer !== null && assetDropHasFiles(transfer);
+    if (hasFiles) event.preventDefault();
+    dragDepth = 0;
+    if (filesLocked) {
+      setDropState('blocked', '当前导入已开始，暂时不能加入文件');
+      return;
+    }
+    const dropped = transfer === null ? [] : assetDropFiles(transfer);
+    if (dropped.length === 0) {
+      setDropState('blocked', '这里只接受本机文件');
+      return;
+    }
+    setDropState('idle', `已加入 ${dropped.length} 个文件，请继续检查分类和名称`);
+    hooks.onSelectFiles?.(dropped);
+  };
+  pickerLabel.append(pickerTitle, dropStatus, picker);
   if (filesLocked) {
     pickerLabel.classList.add('disabled');
     pickerLabel.title = '导入检查开始后不能增删文件；可以继续修改分类和名称。';

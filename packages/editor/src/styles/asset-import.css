@@ -158,10 +158,11 @@
 .asset-import-picker {
   display: grid;
   place-items: center;
+  gap: 3px;
   min-height: 42px;
   margin-block: var(--surdet-space-16) var(--surdet-space-24);
   padding: 8px 12px;
-  border: 1px dashed var(--surdet-border-strong);
+  border: 1px solid var(--surdet-border-strong);
   border-radius: var(--surdet-radius-control);
   background: var(--surdet-surface-panel);
   color: var(--surdet-action-primary);
@@ -170,8 +171,26 @@
 }
 
 .asset-import-picker:hover {
-  border-style: solid;
   background: var(--surdet-surface-subtle);
+}
+
+.asset-import-picker-title {
+  font-weight: 700;
+}
+
+.asset-import-drop-status {
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.asset-import-picker[data-drop-state="ready"] {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-surface-selected);
+}
+
+.asset-import-picker[data-drop-state="blocked"] {
+  color: var(--surdet-text-secondary);
 }
 
 .asset-import-picker.disabled {
