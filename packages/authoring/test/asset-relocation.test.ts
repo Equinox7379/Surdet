@@ -1,0 +1,524 @@
+import { createHash } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import {
+  fingerprintProjectAssetRelocationInventory,
+  fingerprintProjectAssetRelocationOpaqueScan,
+  planProjectAssetRelocation,
+  type ProjectAssetRelocationPlanInput,
+  type ProjectAssetRelocationOpaqueRootScan,
+} from '../src/asset-relocation.js';
+import type { ProjectAssetFileFact, ProjectFile, ProjectStorage, TextHasher } from '../src/contracts.js';
+import { loadProjectSnapshot } from '../src/project-snapshot.js';
+
+const hasher: TextHasher = {
+  sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
+};
+
+function projectFile(path: string, text: string): ProjectFile {
+  return {
+    path,
+    text,
+    bytes: Buffer.byteLength(text),
+    sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
+}
+
+function storageFor(contents: Record<string, string>): ProjectStorage {
+  return {
+    rootIdentity: 'asset-relocation-fixture',
+    listFiles: async () => Object.keys(contents),
+    readText: async (path) => {
+      const text = contents[path];
+      if (text === undefined) throw new Error(`missing fixture ${path}`);
+      return projectFile(path, text);
+    },
+    exists: async (path) => path in contents,
+  };
+}
+
+async function makeInput(options: {
+  files: Record<string, string>;
+  assets: ProjectAssetFileFact[];
+  sourcePath: string;
+  targetPath: string;
+  galleryText?: string;
+  opaqueFiles?: Record<string, string>;
+  assetDirectories?: string[];
+}): Promise<ProjectAssetRelocationPlanInput> {
+  const snapshot = await loadProjectSnapshot(storageFor(options.files), hasher);
+  const sourceBytes = options.assets.find((asset) => asset.path === options.sourcePath)?.bytes ?? 1;
+  const assetFiles = options.assets.map((asset) => asset.path === options.sourcePath
+    ? { ...asset, sha256: 'a'.repeat(64) }
+    : asset);
+  const opaqueFiles = Object.entries(options.opaqueFiles ?? {}).map(([path, text]) => projectFile(path, text));
+  const opaqueRoots: ProjectAssetRelocationOpaqueRootScan[] = (['src', 'scripts', 'test', 'tests'] as const)
+    .map((root) => ({
+      root,
+      state: 'scanned',
+      filePaths: opaqueFiles.filter((file) => file.path.startsWith(`${root}/`)).map((file) => file.path),
+    }));
+  return {
+    operationId: '11111111-1111-4111-8111-111111111111',
+    snapshot,
+    assetFiles,
+    assetDirectories: options.assetDirectories ?? [
+      'content/assets/bg',
+      'content/assets/bg/chapter-one',
+      'content/assets/portrait',
+      'content/assets/portrait/cast',
+      'content/assets/avatar',
+      'content/assets/avatar/cast',
+    ],
+    sourcePath: options.sourcePath,
+    targetPath: options.targetPath,
+    galleryFile: options.galleryText === undefined
+      ? null
+      : projectFile('content/config/gallery.json', options.galleryText),
+    opaqueFiles,
+    scanCoverage: {
+      gallery: options.galleryText === undefined ? 'absent' : 'included',
+      opaqueRoots,
+      opaqueInventoryFingerprint: await fingerprintProjectAssetRelocationOpaqueScan(opaqueRoots, opaqueFiles, hasher),
+    },
+    binaryBaseline: {
+      source: {
+        path: options.sourcePath,
+        device: '1',
+        inode: '2',
+        birthtimeNs: '3',
+        size: sourceBytes,
+        mtimeNs: '4',
+        sha256: 'a'.repeat(64),
+      },
+      target: { path: options.targetPath, state: 'absent' },
+      targetDirectory: {
+        path: options.targetPath.slice(0, options.targetPath.lastIndexOf('/')),
+        device: '1',
+        inode: '5',
+        birthtimeNs: '6',
+        mtimeNs: '7',
+      },
+      assetInventoryFingerprint: await fingerprintProjectAssetRelocationInventory(assetFiles, hasher),
+    },
+  };
+}
+
+function changedText(
+  result: Awaited<ReturnType<typeof planProjectAssetRelocation>>,
+  path: string,
+): string {
+  const change = result.textChanges.find((candidate) => candidate.path === path);
+  expect(change, `missing text change ${path}`).toBeDefined();
+  return change!.afterText;
+}
+
+describe('reference-aware project asset relocation planner', () => {
+  it('renames a background across a quoted CRLF scene, timeline, and explicit gallery source', async () => {
+    const scene = '@scene rain\r\n  @bg "castle_hall"\r\n@unlock_cg memory\r\n@end\r\n';
+    const timeline = '{\r\n  "version": 1,\r\n  "id": "rain",\r\n  "durationMs": 200,\r\n  "tracks": [{ "kind": "background", "cues": [{ "atMs": 0, "durationMs": 0, "easing": "linear", "action": "set", "key": "castle_hall" }] }]\r\n}\r\n';
+    const gallery = '{\r\n  "cgs": [{ "id": "memory", "name": "雨夜", "src": "castle_hall" }],\r\n  "music": []\r\n}\r\n';
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"rain","characters":{},"variables":{}}\r\n',
+        'content/scenario/rain.gal': scene,
+        'content/timelines/rain.json': timeline,
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 10 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain_platform.webp',
+      galleryText: gallery,
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+
+    expect(result.plan).toMatchObject({
+      status: 'ready',
+      affectedReferenceCount: 3,
+      affectedFileCount: 3,
+      source: { kind: 'background', key: 'castle_hall' },
+      target: { kind: 'background', key: 'rain_platform' },
+      blockers: [],
+    });
+    expect(changedText(result, 'content/scenario/rain.gal')).toBe(scene.replace('"castle_hall"', '"rain_platform"'));
+    expect(changedText(result, 'content/timelines/rain.json')).toBe(timeline.replace('"castle_hall"', '"rain_platform"'));
+    expect(changedText(result, 'content/config/gallery.json')).toBe(gallery.replace('"castle_hall"', '"rain_platform"'));
+    expect(result.scannedFiles.map((file) => file.path)).toEqual([
+      'content/config/gallery.json',
+      'content/scenario/rain.gal',
+      'content/timelines/rain.json',
+      'game.config.json',
+    ]);
+  });
+
+  it('normalizes default portrait semantics and rewrites show, full hide/mov, and every portrait timeline target', async () => {
+    const scene = [
+      '@scene portrait_probe',
+      '@show lynn @ left',
+      '@hide lynn:normal',
+      '@mov lynn:normal left 200',
+      '@end',
+      '',
+    ].join('\n');
+    const timeline = JSON.stringify({
+      version: 1,
+      id: 'portrait_probe',
+      durationMs: 500,
+      tracks: [{
+        kind: 'portrait',
+        target: 'lynn:normal',
+        cues: [
+          { atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'left' },
+          { atMs: 100, durationMs: 100, easing: 'linear', action: 'move', position: 'right' },
+          { atMs: 300, durationMs: 0, easing: 'linear', action: 'hide' },
+        ],
+      }],
+    }, null, 2) + '\n';
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"portrait_probe","characters":{"lynn":{"name":"凛"}},"variables":{}}\n',
+        'content/scenario/portrait_probe.gal': scene,
+        'content/timelines/portrait_probe.json': timeline,
+      },
+      assets: [{ path: 'content/assets/portrait/lynn_normal_normal.png', bytes: 10 }],
+      sourcePath: 'content/assets/portrait/lynn_normal_normal.png',
+      targetPath: 'content/assets/portrait/cast/rin_casual_smile.png',
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('ready');
+    expect(result.plan.source).toMatchObject({ kind: 'portrait', key: 'lynn:normal', variant: 'normal' });
+    expect(result.plan.target).toMatchObject({ kind: 'portrait', key: 'rin:casual', variant: 'smile' });
+    expect(changedText(result, 'content/scenario/portrait_probe.gal')).toBe([
+      '@scene portrait_probe',
+      '@show rin:casual smile @ left',
+      '@hide rin:casual',
+      '@mov rin:casual left 200',
+      '@end',
+      '',
+    ].join('\n'));
+    expect(changedText(result, 'content/timelines/portrait_probe.json')).toBe(
+      timeline.replace('"target": "lynn:normal"', '"target": "rin:casual"')
+        .replace('"expression": "normal"', '"expression": "smile"'),
+    );
+  });
+
+  it('blocks a portrait expression rename when a timeline cue has no string expression', async () => {
+    for (const expression of [undefined, null, 1] as const) {
+      const input = await makeInput({
+        files: {
+          'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+          'content/scenario/start.gal': '@scene start\n@end\n',
+          'content/timelines/portrait.json': JSON.stringify({
+            version: 1,
+            id: 'portrait',
+            durationMs: 100,
+            tracks: [{
+              kind: 'portrait',
+              target: 'lynn:normal',
+              cues: [{
+                atMs: 0,
+                durationMs: 0,
+                easing: 'linear',
+                action: 'show',
+                position: 'left',
+                ...(expression === undefined ? {} : { expression }),
+              }],
+            }],
+          }),
+        },
+        assets: [{ path: 'content/assets/portrait/lynn_normal_normal.png', bytes: 10 }],
+        sourcePath: 'content/assets/portrait/lynn_normal_normal.png',
+        targetPath: 'content/assets/portrait/lynn_normal_smile.png',
+      });
+
+      const result = await planProjectAssetRelocation(input, hasher);
+      expect(result.plan.status, String(expression)).toBe('blocked');
+      expect(result.plan.blockers.map((blocker) => blocker.code), String(expression))
+        .toContain('ASSET_RELOCATION_OPAQUE_REFERENCE');
+      expect(result.textChanges, String(expression)).toEqual([]);
+    }
+  });
+
+  it('blocks an old asset token used as an unknown JSON object key', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{},"assetAliases":{"castle_hall":"legacy"}}\n',
+        'content/scenario/start.gal': '@scene start\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain.webp',
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_OPAQUE_REFERENCE');
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('rewrites character avatar references without reformatting game.config.json', async () => {
+    const config = '{\r\n\t"entryScene": "start",\r\n\t"characters": {"lynn": {"name": "凛", "avatar": "lynn"}},\r\n\t"variables": {}\r\n}\r\n';
+    const input = await makeInput({
+      files: {
+        'game.config.json': config,
+        'content/scenario/start.gal': '@scene start\r\n@end\r\n',
+      },
+      assets: [{ path: 'content/assets/avatar/lynn.png', bytes: 10 }],
+      sourcePath: 'content/assets/avatar/lynn.png',
+      targetPath: 'content/assets/avatar/cast/rin.png',
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('ready');
+    expect(changedText(result, 'game.config.json')).toBe(config.replace('"avatar": "lynn"', '"avatar": "rin"'));
+  });
+
+  it('allows a same-key directory move without text changes', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg castle_hall\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 10 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/castle_hall.webp',
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('ready');
+    expect(result.plan.affectedReferenceCount).toBe(0);
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('blocks reserved, fallback, ambiguous group, opaque code, and unsafe target cases', async () => {
+    const baseFiles = {
+      'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+      'content/scenario/start.gal': '@scene start\n@hide lynn\n@end\n',
+    };
+    const cases = [
+      {
+        name: 'reserved title key',
+        sourcePath: 'content/assets/bg/title_bg.png',
+        targetPath: 'content/assets/bg/title_new.png',
+        assets: [{ path: 'content/assets/bg/title_bg.png', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_RESERVED_KEY',
+      },
+      {
+        name: 'ordinary background cannot take the reserved title key',
+        sourcePath: 'content/assets/bg/castle_hall.png',
+        targetPath: 'content/assets/bg/title_bg.png',
+        assets: [{ path: 'content/assets/bg/castle_hall.png', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_RESERVED_KEY',
+      },
+      {
+        name: 'implicit gallery fallback',
+        sourcePath: 'content/assets/bg/memory.png',
+        targetPath: 'content/assets/bg/memory_new.png',
+        assets: [{ path: 'content/assets/bg/memory.png', bytes: 1 }],
+        galleryText: '{"cgs":[{"id":"memory","name":"回忆"}]}\n',
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_OPAQUE_REFERENCE',
+      },
+      {
+        name: 'bare portrait group changes role',
+        sourcePath: 'content/assets/portrait/lynn_uniform_normal.png',
+        targetPath: 'content/assets/portrait/rin_uniform_normal.png',
+        assets: [{ path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+      },
+      {
+        name: 'portrait key change would split sibling expressions',
+        sourcePath: 'content/assets/portrait/lynn_uniform_normal.png',
+        targetPath: 'content/assets/portrait/rin_uniform_normal.png',
+        assets: [
+          { path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 1 },
+          { path: 'content/assets/portrait/lynn_uniform_smile.png', bytes: 1 },
+        ],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+      },
+      {
+        name: 'malformed source portrait identity',
+        sourcePath: 'content/assets/portrait/lynn_uniform.png',
+        targetPath: 'content/assets/portrait/lynn_uniform_normal.png',
+        assets: [{ path: 'content/assets/portrait/lynn_uniform.png', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_PORTRAIT_NAME_INVALID',
+      },
+      {
+        name: 'project script pins the path',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/chapter-one/castle_hall.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: { 'scripts/check-assets.mjs': "const required = ['content/assets/bg/castle_hall.webp'];\n" },
+        code: 'ASSET_RELOCATION_OPAQUE_REFERENCE',
+      },
+      {
+        name: 'project script constructs the runtime key',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/chapter-one/castle_hall.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: { 'src/asset-key.ts': "export const key = 'castle_' + 'hall';\n" },
+        code: 'ASSET_RELOCATION_OPAQUE_REFERENCE',
+      },
+      {
+        name: 'project script escapes the runtime key',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/chapter-one/castle_hall.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: { 'src/escaped-key.ts': 'export const key = "castle\\u005fhall";\n' },
+        code: 'ASSET_RELOCATION_OPAQUE_REFERENCE',
+      },
+      {
+        name: 'extension change',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/castle_hall.png',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_EXTENSION_CHANGED',
+      },
+      {
+        name: 'windows reserved filename',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/CON.foo.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_TARGET_NAME_INVALID',
+      },
+      {
+        name: 'filename without a stem',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_TARGET_NAME_INVALID',
+      },
+      {
+        name: 'extended windows reserved filename',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/COM¹.webp',
+        assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_TARGET_NAME_INVALID',
+      },
+      {
+        name: 'target exists',
+        sourcePath: 'content/assets/bg/castle_hall.webp',
+        targetPath: 'content/assets/bg/chapter-one/rain.webp',
+        assets: [
+          { path: 'content/assets/bg/castle_hall.webp', bytes: 1 },
+          { path: 'content/assets/bg/chapter-one/rain.webp', bytes: 2 },
+        ],
+        galleryText: undefined,
+        opaqueFiles: undefined,
+        code: 'ASSET_RELOCATION_TARGET_EXISTS',
+      },
+    ] as const;
+
+    for (const item of cases) {
+      const input = await makeInput({
+        files: baseFiles,
+        assets: [...item.assets],
+        sourcePath: item.sourcePath,
+        targetPath: item.targetPath,
+        ...(item.galleryText === undefined ? {} : { galleryText: item.galleryText }),
+        ...(item.opaqueFiles === undefined ? {} : { opaqueFiles: item.opaqueFiles }),
+      });
+      const result = await planProjectAssetRelocation(input, hasher);
+      expect(result.plan.status, item.name).toBe('blocked');
+      expect(result.plan.blockers.map((blocker) => blocker.code), item.name).toContain(item.code);
+      expect(result.textChanges, item.name).toEqual([]);
+    }
+  });
+
+  it('fails closed when the adapter does not prove the full gallery and project-code scan scope', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg castle_hall\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain.webp',
+    });
+    input.scanCoverage = { ...input.scanCoverage, gallery: 'included' };
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_SCAN_INCOMPLETE');
+  });
+
+  it('recomputes the asset inventory fingerprint and verifies the source content fact', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain.webp',
+    });
+    input.binaryBaseline.assetInventoryFingerprint = 'f'.repeat(64);
+    input.binaryBaseline.source.sha256 = 'e'.repeat(64);
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_SCAN_INCOMPLETE');
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('rejects an opaque file list that is not covered by the root scan and a gallery payload at the wrong path', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg castle_hall\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain.webp',
+      opaqueFiles: { 'scripts/check-assets.mjs': 'export const ok = true;\n' },
+    });
+    input.scanCoverage = {
+      ...input.scanCoverage,
+      opaqueRoots: input.scanCoverage.opaqueRoots.map((root) => ({ ...root, filePaths: [] })),
+    };
+    input.galleryFile = projectFile('content/config/not-gallery.json', '{"cgs":[]}\n');
+    input.scanCoverage.gallery = 'included';
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_SCAN_INCOMPLETE');
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('blocks duplicate JSON keys and exact old tokens in custom instruction modifiers', async () => {
+    const input = await makeInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@custom @asset="castle_hall"\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 1 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp',
+      targetPath: 'content/assets/bg/chapter-one/rain.webp',
+    });
+
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.filter((blocker) => blocker.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toHaveLength(2);
+  });
+});

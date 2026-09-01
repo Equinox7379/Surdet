@@ -118,7 +118,8 @@ export function rebuildLabelRaw(name: string): string {
 export function splitInstruction(raw: string): { name: string; args: string[] } {
   const trimmed = raw.trimStart();
   const name = INSTR_NAME_RE.exec(trimmed)?.[1] ?? '';
-  const rest = trimmed.slice(1 + name.length).trim();
+  const coreEnd = instructionModifierStart(trimmed);
+  const rest = trimmed.slice(1 + name.length, coreEnd).trim();
   if (rest.length === 0) return { name, args: [] };
   const args: string[] = [];
   let current = '';
@@ -151,4 +152,165 @@ export function splitInstruction(raw: string): { name: string; args: string[] } 
 export function rebuildInstructionRaw(name: string, args: string[]): string {
   const clean = args.filter((arg) => arg.length > 0);
   return clean.length > 0 ? `@${name} ${clean.join(' ')}` : `@${name}`;
+}
+
+interface InstructionArgumentSpan {
+  start: number;
+  end: number;
+  raw: string;
+}
+
+function instructionModifierStart(raw: string): number {
+  const first = raw.search(/\S/);
+  if (first < 0 || raw[first] !== '@') return raw.length;
+  let quote: '"' | "'" | null = null;
+  for (let cursor = first + 1; cursor < raw.length; cursor++) {
+    const character = raw[cursor]!;
+    if (quote !== null) {
+      if (character === '\\') {
+        cursor += 1;
+        continue;
+      }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '@') return cursor;
+  }
+  return raw.length;
+}
+
+export function instructionModifierTokens(raw: string): string[] {
+  const start = instructionModifierStart(raw);
+  if (start >= raw.length) return [];
+  const segments: string[] = [];
+  let segmentStart = start + 1;
+  let quote: '"' | "'" | null = null;
+  for (let cursor = segmentStart; cursor <= raw.length; cursor++) {
+    const character = raw[cursor];
+    if (cursor === raw.length || (character === '@' && quote === null)) {
+      const segment = raw.slice(segmentStart, cursor).trim();
+      if (segment) segments.push(segment);
+      segmentStart = cursor + 1;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === '\\') {
+        cursor += 1;
+        continue;
+      }
+      if (character === quote) quote = null;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    }
+  }
+  const tokens: string[] = [];
+  for (const segment of segments) {
+    const parts = splitInstruction(`@modifier ${segment}`).args.map(decodeInstructionArgument);
+    const first = parts.shift();
+    if (first === undefined) continue;
+    const equals = first.indexOf('=');
+    if (equals >= 0) {
+      tokens.push(
+        decodeInstructionArgument(first.slice(0, equals)),
+        decodeInstructionArgument(first.slice(equals + 1)),
+        ...parts,
+      );
+    } else {
+      tokens.push(first, ...parts);
+    }
+  }
+  return tokens.filter((token) => token.length > 0);
+}
+
+function instructionArgumentSpans(raw: string): InstructionArgumentSpan[] {
+  const first = raw.search(/\S/);
+  if (first < 0 || raw[first] !== '@') return [];
+  let cursor = first + 1;
+  while (cursor < raw.length && !/\s/.test(raw[cursor]!)) cursor += 1;
+  const limit = instructionModifierStart(raw);
+  const spans: InstructionArgumentSpan[] = [];
+  while (cursor < limit) {
+    while (cursor < limit && /\s/.test(raw[cursor]!)) cursor += 1;
+    if (cursor >= limit) break;
+    const start = cursor;
+    const quote = raw[cursor] === '"' || raw[cursor] === "'" ? raw[cursor]! : null;
+    if (quote !== null) {
+      cursor += 1;
+      while (cursor < limit) {
+        if (raw[cursor] === '\\' && cursor + 1 < limit) {
+          cursor += 2;
+          continue;
+        }
+        if (raw[cursor] === quote) {
+          cursor += 1;
+          break;
+        }
+        cursor += 1;
+      }
+    } else {
+      while (cursor < limit && !/\s/.test(raw[cursor]!)) cursor += 1;
+    }
+    spans.push({ start, end: cursor, raw: raw.slice(start, cursor) });
+  }
+  return spans;
+}
+
+export function decodeInstructionArgument(raw: string): string {
+  if (raw.length < 2) return raw;
+  const quote = raw[0];
+  if ((quote !== '"' && quote !== "'") || raw.at(-1) !== quote) return raw;
+  return raw.slice(1, -1).replace(/\\(.)/g, '$1');
+}
+
+function encodeInstructionArgument(value: string, previous?: string): string {
+  const previousQuote = previous?.[0];
+  const quote = previousQuote === '"' || previousQuote === "'"
+    ? previousQuote
+    : /\s|["'\\]/.test(value) ? '"' : null;
+  if (quote === null) return value;
+  const escaped = value.replace(/\\/g, '\\\\').replace(new RegExp(`\\${quote}`, 'g'), `\\${quote}`);
+  return `${quote}${escaped}${quote}`;
+}
+
+/**
+ * 只替换指定指令参数，保留既有缩进、参数间空白、引号风格与行尾。
+ * 缺省参数可在尾部补齐；不会重排无关 modifier。
+ */
+export function rewriteInstructionArgumentsRaw(
+  raw: string,
+  replacements: ReadonlyMap<number, string>,
+): string {
+  if (replacements.size === 0) return raw;
+  const spans = instructionArgumentSpans(raw);
+  let result = raw;
+  const existing = [...replacements.entries()]
+    .filter(([index]) => spans[index] !== undefined)
+    .sort(([left], [right]) => right - left);
+  for (const [index, value] of existing) {
+    const span = spans[index]!;
+    result = result.slice(0, span.start) + encodeInstructionArgument(value, span.raw) + result.slice(span.end);
+  }
+  const missing = [...replacements.entries()]
+    .filter(([index]) => spans[index] === undefined)
+    .sort(([left], [right]) => left - right);
+  const appended: string[] = [];
+  for (const [index, value] of missing) {
+    if (index > spans.length + missing.findIndex(([candidate]) => candidate === index)) {
+      throw new Error(`INSTRUCTION_ARGUMENT_GAP: ${index}`);
+    }
+    appended.push(encodeInstructionArgument(value));
+  }
+  if (appended.length > 0) {
+    const modifierStart = instructionModifierStart(result);
+    const before = result.slice(0, modifierStart);
+    const after = result.slice(modifierStart);
+    const leading = /\s$/.test(before) ? '' : ' ';
+    const trailing = after.length === 0 || /^\s/.test(after) ? '' : ' ';
+    result = `${before}${leading}${appended.join(' ')}${trailing}${after}`;
+  }
+  return result;
 }
