@@ -3,6 +3,10 @@ import type {
   ProjectAssetImportStagedItem,
   ProjectAssetImportTargetFact,
   ProjectAssetImportTargetRequest,
+  ProjectAssetRelocationBinaryBaseline,
+  ProjectAssetRelocationPlan,
+  ProjectAssetRelocationScannedFile,
+  ProjectAssetRelocationTextChange,
 } from '@surdet/authoring';
 
 export function normalizeAssetImportSourceName(value: unknown): string {
@@ -60,6 +64,7 @@ export interface AssetImportAuthorityPaths {
   projectIdentity: string;
   projectNamespace: string;
   internalWorkspace: string;
+  relocationWorkspace: string;
   rootIdentity: ProjectRootBindingIdentity;
 }
 
@@ -272,6 +277,149 @@ export interface ListOperationsResponse {
   operations: AssetImportJournal[];
 }
 
+export type AssetRelocationOperationStatus =
+  | 'PLANNED'
+  | 'PUBLISHING'
+  | 'ROLLING_BACK'
+  | 'ROLLED_BACK'
+  | 'RECOVERY_REQUIRED'
+  | 'COMMITTED'
+  | 'UNDOING'
+  | 'UNDONE'
+  | 'CANCELLED';
+
+export type AssetRelocationBinaryState =
+  | 'SOURCE'
+  | 'BACKUP_INTENT'
+  | 'BACKUP'
+  | 'TARGET_INTENT'
+  | 'TARGET'
+  | 'ROLLBACK_INTENT'
+  | 'ROLLED_BACK'
+  | 'UNDO_INTENT'
+  | 'UNDONE';
+
+export type AssetRelocationTextState =
+  | 'PENDING'
+  | 'REPLACE_INTENT'
+  | 'REPLACED'
+  | 'ROLLBACK_INTENT'
+  | 'ROLLED_BACK'
+  | 'UNDO_INTENT'
+  | 'UNDONE';
+
+export interface AssetRelocationFileEvidence extends AssetImportFileIdentity {
+  sha256: string;
+}
+
+export interface AssetRelocationRequest {
+  operationId: string;
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface AssetRelocationJournal {
+  schemaVersion: 1;
+  operationId: string;
+  journalVersion: number;
+  status: AssetRelocationOperationStatus;
+  recoveryPhase: 'commit' | 'rollback' | 'undo' | null;
+  binaryState: AssetRelocationBinaryState;
+  binaryBackupRelativePath: string;
+  binaryBackupIdentity: AssetRelocationFileEvidence | null;
+  binaryTargetIdentity: AssetRelocationFileEvidence | null;
+  textStates: AssetRelocationTextState[];
+  textResultIdentities: Array<AssetRelocationFileEvidence | null>;
+  updatedAt: string;
+}
+
+export interface AssetRelocationStoredText extends ProjectAssetRelocationTextChange {
+  beforeIdentity: AssetRelocationFileEvidence;
+  preparedRelativePath: string;
+  backupRelativePath: string;
+}
+
+export interface AssetRelocationReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  receiptFingerprint: string;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  projectIdentity: string;
+  sourcePath: string;
+  targetPath: string;
+  targetIdentity: AssetRelocationFileEvidence;
+  textFiles: Array<{ path: string; sha256: string; identity: AssetRelocationFileEvidence }>;
+  committedAt: string;
+}
+
+export interface AssetRelocationUndoReceipt {
+  schemaVersion: 1;
+  undoReceiptId: string;
+  undoReceiptFingerprint: string;
+  operationId: string;
+  receiptId: string;
+  sourcePath: string;
+  targetPath: string;
+  sourceIdentity: AssetRelocationFileEvidence;
+  restoredTextFiles: Array<{ path: string; sha256: string; identity: AssetRelocationFileEvidence }>;
+  undoneAt: string;
+}
+
+export interface AssetRelocationStoredOperation {
+  schemaVersion: 1;
+  request: AssetRelocationRequest;
+  plan: ProjectAssetRelocationPlan;
+  scannedFiles: ProjectAssetRelocationScannedFile[];
+  binaryBaseline: ProjectAssetRelocationBinaryBaseline;
+  textFiles: AssetRelocationStoredText[];
+  journal: AssetRelocationJournal;
+  receipt: AssetRelocationReceipt | null;
+  undoReceipt: AssetRelocationUndoReceipt | null;
+}
+
+export interface PlanAssetRelocationRequest {
+  operationId: string;
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface CommitAssetRelocationRequest {
+  planFingerprint: string;
+}
+
+export interface RecoverAssetRelocationRequest {
+  action: 'resume' | 'rollback';
+}
+
+export interface UndoAssetRelocationRequest {
+  receiptId: string;
+  receiptFingerprint: string;
+}
+
+export interface AssetRelocationDetailResponse {
+  request: AssetRelocationRequest;
+  operation: AssetRelocationJournal;
+  plan: ProjectAssetRelocationPlan;
+  receipt: AssetRelocationReceipt | null;
+  undoReceipt: AssetRelocationUndoReceipt | null;
+}
+
+export interface AssetRelocationOperationSummary {
+  operationId: string;
+  status: AssetRelocationOperationStatus;
+  sourcePath: string;
+  targetPath: string;
+  updatedAt: string;
+  manualRecoveryRequired: boolean;
+}
+
+export interface ListAssetRelocationsResponse {
+  operations: AssetRelocationOperationSummary[];
+  recentReceipts: AssetRelocationReceipt[];
+}
+
 export interface AssetImportJournal {
   schemaVersion: 1;
   operationId: string;
@@ -285,6 +433,8 @@ export interface AssetImportJournal {
 export interface RecoveryBarrierIncident {
   barrierId: string;
   operationId: string;
+  /** 旧记录省略时按 asset-import 解释。 */
+  operationKind?: 'asset-import' | 'asset-relocation';
   reason: 'RECOVERY_REQUIRED';
   createdAt: string;
 }
@@ -293,10 +443,12 @@ export interface RecoveryBarrierResolution {
   barrierId: string;
   incidentSha256: string;
   operationId: string;
+  operationKind?: 'asset-import' | 'asset-relocation';
   journalVersion: number;
   publicationVersion: number | null;
   publicationSha256: string | null;
   quarantinedPaths: string[];
+  terminalFingerprint?: string;
   resolvedAt: string;
 }
 

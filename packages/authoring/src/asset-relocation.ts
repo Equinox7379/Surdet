@@ -780,6 +780,9 @@ export async function planProjectAssetRelocation(
   }
 
   if (source !== null && target !== null) {
+    if (input.binaryBaseline.target.state !== 'absent') {
+      addBlocker(blockers, 'ASSET_RELOCATION_TARGET_EXISTS', '目标位置已经存在，Surdet 不会覆盖它。', target.path);
+    }
     if (!safeAssetFileName(target.fileName)) {
       addBlocker(blockers, 'ASSET_RELOCATION_TARGET_NAME_INVALID', '目标文件名包含当前平台不允许的字符或保留名称。', target.path);
     }
