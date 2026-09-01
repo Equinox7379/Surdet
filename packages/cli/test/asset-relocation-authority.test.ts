@@ -9,6 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AssetRelocationInjectedTermination,
@@ -26,9 +27,10 @@ const sourcePath = 'content/assets/bg/old.webp';
 const targetPath = 'content/assets/bg/new.webp';
 const scenePath = 'content/scenario/start.gal';
 const secondScenePath = 'content/scenario/second.gal';
-const tempRoot = process.env['TEMP'] ?? process.env['TMP'];
-
-if (tempRoot === undefined) throw new Error('asset relocation tests require process.env.TEMP');
+const tempRoot = process.env['SURDET_TEST_TEMP_ROOT']
+  ?? process.env['TEMP']
+  ?? process.env['TMP']
+  ?? os.tmpdir();
 
 const textHasher = {
   sha256: async (text: string): Promise<string> => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
