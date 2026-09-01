@@ -540,8 +540,15 @@ function findActiveLeaseDirectories(dataRoot) {
   return active.sort();
 }
 
+function fixtureBaseRoot() {
+  const configured = process.env.SURDET_E2E_TEMP_ROOT?.trim();
+  const root = configured ? path.resolve(configured) : os.tmpdir();
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
 async function run() {
-  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-asset-import-e2e-'));
+  const fixtureRoot = fs.mkdtempSync(path.join(fixtureBaseRoot(), 'surdet-asset-import-e2e-'));
   const projectRoot = path.join(fixtureRoot, 'project');
   const wrongProjectRoot = path.join(fixtureRoot, 'wrong-project');
   const dataRoot = path.join(fixtureRoot, 'agent-data');
@@ -573,7 +580,8 @@ async function run() {
   const completedMilestoneNames = [];
   const channels = {
     errors: [], consoleErrors: [], pageErrors: [], requestFailures: [], responseFailures: [],
-    expectedBusinessResponses: [], expectedConsoleErrors: [], stderrLines: [], childCleanupFailures: [], activeLeaseDirectories: [],
+    expectedBusinessResponses: [], expectedConsoleErrors: [], unhandledErrors: [], stderrLines: [],
+    childCleanupFailures: [], activeLeaseDirectories: [],
   };
   const tokenEvidence = {
     bindingTokenHashes: { 'before-reload': new Set(), 'after-reload': new Set() },
@@ -1125,7 +1133,24 @@ async function run() {
     failure = error;
     channels.errors.push(errorText(error));
   } finally {
-    if (page !== null) await page.close().catch((error) => channels.childCleanupFailures.push(`page close: ${errorText(error)}`));
+    if (page !== null) {
+      for (const frame of page.frames()) {
+        try {
+          const frameUnhandled = await frame.evaluate(() => window.__surdetE2eUnhandled ?? []);
+          channels.unhandledErrors.push(...frameUnhandled.map((entry) => ({
+            frameUrl: frame.url(),
+            ...entry,
+          })));
+        } catch (error) {
+          channels.unhandledErrors.push({
+            frameUrl: frame.url(),
+            type: 'collection-failed',
+            message: errorText(error),
+          });
+        }
+      }
+      await page.close().catch((error) => channels.childCleanupFailures.push(`page close: ${errorText(error)}`));
+    }
     if (browser !== null) {
       await browser.close().then(() => { browserClosed = true; })
         .catch((error) => channels.childCleanupFailures.push(`browser close: ${errorText(error)}`));
@@ -1157,6 +1182,8 @@ async function run() {
         assert(channels.pageErrors.length === 0, `page errors: ${channels.pageErrors.join(' | ')}`);
         assert(channels.requestFailures.length === 0, `request failures: ${channels.requestFailures.join(' | ')}`);
         assert(channels.responseFailures.length === 0, `response failures: ${channels.responseFailures.join(' | ')}`);
+        assert(channels.unhandledErrors.length === 0,
+          `unhandled browser errors: ${JSON.stringify(channels.unhandledErrors)}`);
         assert(channels.stderrLines.length === 0, `server stderr: ${channels.stderrLines.join(' | ')}`);
         assert(channels.expectedBusinessResponses.length === 1, `unexpected 409 count: ${channels.expectedBusinessResponses.length}`);
         pass('browser-error-channels-empty', {
