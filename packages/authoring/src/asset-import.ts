@@ -177,15 +177,19 @@ function isWindowsReservedStem(stem: string): boolean {
   return WINDOWS_RESERVED_STEMS.has(uppercase) || WINDOWS_RESERVED_STEMS.has(uppercase.split('.')[0]!);
 }
 
-function nameIsInvalid(fileName: string): boolean {
+export function isProjectAssetFileNameSafe(fileName: string): boolean {
   const codePointLength = Array.from(fileName).length;
-  if (codePointLength < 1 || codePointLength > 120) return true;
-  if (fileName.trim() !== fileName) return true;
-  if (fileName === '.' || fileName === '..' || fileName.endsWith('.') || fileName.endsWith(' ')) return true;
-  if (hasControlCharacter(fileName)) return true;
-  if (/[\\/:*?"<>|]/u.test(fileName)) return true;
-  if (isWindowsReservedStem(stemOf(fileName))) return true;
-  return stemOf(fileName).length === 0;
+  if (codePointLength < 1 || codePointLength > 120) return false;
+  if (fileName.trim() !== fileName) return false;
+  if (fileName === '.' || fileName === '..' || fileName.endsWith('.') || fileName.endsWith(' ')) return false;
+  if (hasControlCharacter(fileName)) return false;
+  if (/[\\/:*?"<>|]/u.test(fileName)) return false;
+  if (isWindowsReservedStem(stemOf(fileName))) return false;
+  return stemOf(fileName).length > 0;
+}
+
+function nameIsInvalid(fileName: string): boolean {
+  return !isProjectAssetFileNameSafe(fileName);
 }
 
 function supportedExtension(kind: ProjectAssetKind, extension: string): boolean {

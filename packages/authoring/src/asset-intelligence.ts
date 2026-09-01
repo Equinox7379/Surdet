@@ -6,9 +6,11 @@ import type {
   ProjectAssetIssueCode,
   ProjectAssetItem,
   ProjectAssetKind,
+  ProjectAssetPathDescriptor,
   ProjectAssetReference,
   ProjectAssetSummary,
 } from './contracts.js';
+import { isProjectAssetFileNameSafe } from './asset-import.js';
 import { normalizeProjectPath } from './project-storage.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 
@@ -67,6 +69,8 @@ interface ReferenceTarget {
   kind: ProjectAssetKind;
   key: string;
   variant?: string;
+  allVariants?: boolean;
+  roleGroup?: boolean;
   reference: ProjectAssetReference;
 }
 
@@ -82,10 +86,10 @@ function stemOf(path: string): string {
   return dot <= 0 ? name : name.slice(0, dot);
 }
 
-function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
-  const path = normalizeProjectPath(fact.path);
-  if (!path.startsWith(ASSET_ROOT)) return null;
-  const relative = path.slice(ASSET_ROOT.length);
+export function describeProjectAssetPath(input: string): ProjectAssetPathDescriptor | null {
+  const normalizedPath = normalizeProjectPath(input);
+  if (!normalizedPath.startsWith(ASSET_ROOT)) return null;
+  const relative = normalizedPath.slice(ASSET_ROOT.length);
   const segments = relative.split('/');
   const fileName = segments.at(-1) ?? '';
   const directory = segments.length > 1 ? segments[0]!.toLowerCase() : '';
@@ -93,21 +97,55 @@ function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
   const format = extensionOf(fileName);
   const stem = stemOf(fileName);
   if (kind !== 'portrait') {
-    return { fact: { ...fact, path }, kind, key: stem, format, invalidName: stem.length === 0 };
+    return {
+      path: normalizedPath,
+      directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
+      fileName,
+      kind,
+      key: stem,
+      format,
+      invalidName: !isProjectAssetFileNameSafe(fileName),
+    };
   }
   const portrait = stem.split('_');
-  if (portrait.length !== 3 || portrait.some((segment) => segment.length === 0)) {
-    return { fact: { ...fact, path }, kind, key: stem, format, invalidName: true };
+  if (!isProjectAssetFileNameSafe(fileName)
+    || portrait.length !== 3
+    || portrait.some((segment) => segment.length === 0)) {
+    return {
+      path: normalizedPath,
+      directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
+      fileName,
+      kind,
+      key: stem,
+      format,
+      invalidName: true,
+    };
   }
   const [role, outfit, expression] = portrait as [string, string, string];
   return {
-    fact: { ...fact, path },
+    path: normalizedPath,
+    directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
+    fileName,
     kind,
     key: `${role}:${outfit}`,
     format,
     variant: expression,
     invalidName: false,
   };
+}
+
+function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
+  const descriptor = describeProjectAssetPath(fact.path);
+  return descriptor === null
+    ? null
+    : {
+      fact: { ...fact, path: descriptor.path },
+      kind: descriptor.kind,
+      key: descriptor.key,
+      format: descriptor.format,
+      ...(descriptor.variant === undefined ? {} : { variant: descriptor.variant }),
+      invalidName: descriptor.invalidName,
+    };
 }
 
 function isSupportedFormat(kind: ProjectAssetKind, format: string): boolean {
@@ -178,11 +216,20 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
     key: string | undefined,
     reference: ProjectAssetReference,
     variant?: string,
+    allVariants = false,
+    roleGroup = false,
   ): void => {
     const normalized = key === undefined ? undefined : dequoteAssetToken(key).trim();
     if (!normalized) return;
     const normalizedVariant = variant === undefined ? undefined : dequoteAssetToken(variant).trim();
-    targets.push({ kind, key: normalized, ...(normalizedVariant ? { variant: normalizedVariant } : {}), reference });
+    targets.push({
+      kind,
+      key: normalized,
+      ...(normalizedVariant ? { variant: normalizedVariant } : {}),
+      ...(allVariants ? { allVariants: true } : {}),
+      ...(roleGroup ? { roleGroup: true } : {}),
+      reference,
+    });
   };
 
   const gallery = galleryConfig(snapshot, galleryInput);
@@ -190,8 +237,9 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
   for (const [field, kind] of [['cgs', 'background'], ['music', 'music']] as const) {
     for (const [entryIndex, entry] of galleryEntries(gallery, field).entries()) {
       const id = typeof entry.id === 'string' ? entry.id.trim() : '';
-      const source = typeof entry.src === 'string' ? entry.src.trim() : '';
-      if (!id || !source) continue;
+      const explicitSource = typeof entry.src === 'string' ? entry.src.trim() : '';
+      if (!id) continue;
+      const source = explicitSource || id;
       const sourceKey = `${field}:${id}`;
       const current = gallerySources.get(sourceKey) ?? [];
       if (!current.some((candidate) => candidate.kind === kind && candidate.key === source)) current.push({ kind, key: source });
@@ -241,7 +289,17 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       });
       switch (generic.name) {
         case 'bg': add('background', first, ref('bg')); break;
-        case 'show': add('portrait', first, ref('show'), generic.args[1] ?? 'normal'); break;
+        case 'show': {
+          const decoded = first === undefined ? undefined : dequoteAssetToken(first).trim();
+          add('portrait', decoded && !decoded.includes(':') ? `${decoded}:normal` : decoded, ref('show'), generic.args[1] ?? 'normal');
+          break;
+        }
+        case 'hide':
+        case 'mov': {
+          const decoded = first === undefined ? undefined : dequoteAssetToken(first).trim();
+          if (decoded) add('portrait', decoded, ref(generic.name), undefined, true, !decoded.includes(':'));
+          break;
+        }
         case 'bgm': add('music', first, ref('bgm')); break;
         case 'ambience':
           if (first !== undefined && dequoteAssetToken(first).trim() !== 'off') add('ambience', first, ref('ambience'));
@@ -290,13 +348,19 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
         };
         if (track.kind === 'background' && cue.action === 'set') {
           add('background', typeof cue.key === 'string' ? cue.key : undefined, base);
-        } else if (track.kind === 'portrait' && (cue.action === 'show' || cue.action === 'expression')) {
-          add(
-            'portrait',
-            typeof track.target === 'string' ? track.target : undefined,
-            base,
-            typeof cue.expression === 'string' ? cue.expression : undefined,
-          );
+        } else if (track.kind === 'portrait') {
+          const rawTarget = typeof track.target === 'string' ? track.target : undefined;
+          if (cue.action === 'show' || cue.action === 'expression') {
+            const normalizedTarget = rawTarget && !rawTarget.includes(':') ? `${rawTarget}:normal` : rawTarget;
+            add(
+              'portrait',
+              normalizedTarget,
+              base,
+              typeof cue.expression === 'string' ? cue.expression : 'normal',
+            );
+          } else if ((cue.action === 'move' || cue.action === 'hide') && rawTarget) {
+            add('portrait', rawTarget, base, undefined, true, !rawTarget.includes(':'));
+          }
         }
       });
     });
@@ -410,7 +474,11 @@ export function buildProjectAssetIntelligence(
   const missingByTarget = new Map<string, ProjectAssetItem>();
   for (const target of references) {
     const key = targetKey(target.kind, target.key, target.variant);
-    const matches = byTarget.get(key) ?? [];
+    const matches = target.roleGroup
+      ? items.filter((item) => item.physical && item.kind === 'portrait' && item.key.split(':')[0] === target.key)
+      : target.allVariants
+      ? items.filter((item) => item.physical && item.kind === target.kind && item.key === target.key)
+      : byTarget.get(key) ?? [];
     if (matches.length > 0) {
       for (const item of matches) {
         if (!item.references.some((reference) => reference.referenceId === target.reference.referenceId)) {

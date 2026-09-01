@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { insertLinesAfter, parseSceneDocument, parseSceneLine, serializeSceneDocument } from '../src/scene-document.js';
+import {
+  insertLinesAfter,
+  parseSceneDocument,
+  parseSceneLine,
+  rewriteInstructionArgumentsRaw,
+  serializeSceneDocument,
+  splitInstruction,
+} from '../src/scene-document.js';
 
 describe('scene document EOL identity', () => {
   it('roundtrips mixed LF/CRLF byte-for-byte', () => {
@@ -11,6 +18,20 @@ describe('scene document EOL identity', () => {
     const source = '@scene mixed\r\n凛：第一行\n@end';
     const next = insertLinesAfter(parseSceneDocument(source), 1, [{ kind: 'text', speaker: '凛', value: '新增', raw: '凛：新增' }]);
     expect(serializeSceneDocument(next, '\n')).toBe('@scene mixed\r\n凛：第一行\n凛：新增\n@end');
+  });
+});
+
+describe('instruction argument edits preserve modifiers', () => {
+  it('keeps modifier sections out of positional args and inserts a missing argument before them', () => {
+    expect(splitInstruction('@show lynn @ left')).toEqual({ name: 'show', args: ['lynn'] });
+    expect(rewriteInstructionArgumentsRaw('@show lynn @ left', new Map([
+      [0, 'rin:casual'],
+      [1, 'smile'],
+    ]))).toBe('@show rin:casual smile @ left');
+  });
+
+  it('does not split an at-sign inside a quoted argument', () => {
+    expect(splitInstruction('@custom "x@y.com" @ mode strict')).toEqual({ name: 'custom', args: ['"x@y.com"'] });
   });
 });
 

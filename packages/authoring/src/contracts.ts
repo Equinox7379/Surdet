@@ -274,6 +274,20 @@ export type ProjectAssetKind =
 export interface ProjectAssetFileFact {
   path: string;
   bytes?: number;
+  /** relocation 只要求源文件提供；普通素材清单可以省略。 */
+  sha256?: string;
+}
+
+/** 单个物理素材路径解析出的稳定语义；Authoring 与写入 authority 必须共用。 */
+export interface ProjectAssetPathDescriptor {
+  path: string;
+  directory: string;
+  fileName: string;
+  kind: ProjectAssetKind;
+  key: string;
+  format: string;
+  variant?: string;
+  invalidName: boolean;
 }
 
 export type ProjectAssetReferenceSource = 'scene' | 'timeline' | 'character' | 'gallery';
@@ -344,6 +358,93 @@ export interface ProjectAssetIntelligence {
   items: ProjectAssetItem[];
   summary: ProjectAssetSummary;
   issues: ProjectAssetIssue[];
+}
+
+export type ProjectAssetRelocationBlockerCode =
+  | 'ASSET_RELOCATION_SOURCE_NOT_FOUND'
+  | 'ASSET_RELOCATION_SOURCE_AMBIGUOUS'
+  | 'ASSET_RELOCATION_UNSUPPORTED_KIND'
+  | 'ASSET_RELOCATION_TARGET_UNSAFE'
+  | 'ASSET_RELOCATION_SCAN_INCOMPLETE'
+  | 'ASSET_RELOCATION_TARGET_NAME_INVALID'
+  | 'ASSET_RELOCATION_TARGET_DIRECTORY_MISSING'
+  | 'ASSET_RELOCATION_TARGET_KIND_MISMATCH'
+  | 'ASSET_RELOCATION_EXTENSION_CHANGED'
+  | 'ASSET_RELOCATION_TARGET_EXISTS'
+  | 'ASSET_RELOCATION_TARGET_KEY_DUPLICATE'
+  | 'ASSET_RELOCATION_PORTRAIT_NAME_INVALID'
+  | 'ASSET_RELOCATION_RESERVED_KEY'
+  | 'ASSET_RELOCATION_OPAQUE_REFERENCE'
+  | 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE'
+  | 'ASSET_RELOCATION_NO_CHANGE';
+
+export interface ProjectAssetRelocationBlocker {
+  code: ProjectAssetRelocationBlockerCode;
+  message: string;
+  sourcePath?: string;
+  line?: number;
+}
+
+export interface ProjectAssetRelocationReferenceChange {
+  referenceId: string;
+  sourceKind: ProjectAssetReferenceSource;
+  sourceLabel: string;
+  sourcePath: string;
+  line?: number;
+  field: string;
+  before: string;
+  after: string;
+}
+
+export interface ProjectAssetRelocationPlan {
+  schemaVersion: 1;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  projectRevision: string;
+  status: 'ready' | 'blocked';
+  source: ProjectAssetPathDescriptor | null;
+  target: ProjectAssetPathDescriptor | null;
+  affectedReferenceCount: number;
+  affectedFileCount: number;
+  referenceChanges: ProjectAssetRelocationReferenceChange[];
+  blockers: ProjectAssetRelocationBlocker[];
+}
+
+export interface ProjectAssetRelocationScannedFile {
+  path: string;
+  sha256: string;
+}
+
+/** Adapter 在计划时读取的真实二进制/父目录基线；纳入计划指纹但不投影给 Editor。 */
+export interface ProjectAssetRelocationBinaryBaseline {
+  source: {
+    path: string;
+    device: string;
+    inode: string;
+    birthtimeNs: string;
+    size: number;
+    mtimeNs: string;
+    sha256: string;
+  };
+  target: { path: string; state: 'absent' };
+  targetDirectory: {
+    path: string;
+    device: string;
+    inode: string;
+    birthtimeNs: string;
+    mtimeNs: string;
+  };
+  assetInventoryFingerprint: string;
+}
+
+/** CLI authority 专用的内部文本准备结果；Editor 只接收公开 plan。 */
+export interface ProjectAssetRelocationTextChange {
+  path: string;
+  beforeSha256: string;
+  afterSha256: string;
+  beforeText: string;
+  afterText: string;
 }
 
 export interface ProjectAssetCatalog {

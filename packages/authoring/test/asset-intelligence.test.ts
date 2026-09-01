@@ -225,6 +225,22 @@ describe('shared asset intelligence projection', () => {
     expect(new Set(galleryReferenceIds).size).toBe(2);
   });
 
+  it('uses the gallery id as the runtime source when src is omitted', async () => {
+    const snapshot = await snapshotFor({
+      'game.config.json': JSON.stringify({ entryScene: 'gallery_probe', characters: {}, variables: {} }),
+      'content/scenario/gallery_probe.gal': '@scene gallery_probe\n@end\n',
+    });
+    const facts: ProjectAssetFileFact[] = [{ path: 'content/assets/bg/memory_cg.webp', bytes: 1 }];
+    const result = buildProjectAssetIntelligence(snapshot, facts, {
+      gallery: { cgs: [{ id: 'memory_cg', name: '回忆' }], music: [] },
+    });
+
+    expect(asset(result, facts[0]!.path).references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceKind: 'gallery', objectRef: 'gallery:cgs:memory_cg' }),
+    ]));
+    expect(asset(result, facts[0]!.path).issues).not.toContain('ASSET_UNUSED');
+  });
+
   it('keeps missing references synthetic and keeps same-key physical files visible', async () => {
     const result = build(await fixtureSnapshot(), fixtureFacts);
     const castleItems = result.items.filter((item) => item.physical && item.kind === 'background' && item.key === 'castle_hall');
@@ -310,6 +326,59 @@ describe('shared asset intelligence projection', () => {
       key: 'lynn:uniform',
       variant: 'normal',
     });
+  });
+
+  it('shares runtime portrait defaults and tracks full-key hide, move, and timeline group references', async () => {
+    const snapshot = await snapshotFor({
+      'game.config.json': JSON.stringify({ entryScene: 'portrait_groups', characters: {}, variables: {} }),
+      'content/scenario/portrait_groups.gal': [
+        '@scene portrait_groups',
+        '@show lynn',
+        '@hide lynn:normal',
+        '@mov lynn:normal left 200',
+        '@hide lynn',
+        '@mov lynn right 200',
+        '@end',
+      ].join('\n'),
+      'content/timelines/portrait_groups.json': JSON.stringify({
+        version: 1,
+        id: 'portrait_groups',
+        durationMs: 300,
+        tracks: [{
+          kind: 'portrait',
+          target: 'lynn:normal',
+          cues: [
+            { atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'left' },
+            { atMs: 100, durationMs: 100, easing: 'linear', action: 'move', position: 'right' },
+            { atMs: 250, durationMs: 0, easing: 'linear', action: 'hide' },
+          ],
+        }],
+      }),
+    });
+    const facts: ProjectAssetFileFact[] = [
+      { path: 'content/assets/portrait/lynn_normal_normal.png', bytes: 1 },
+      { path: 'content/assets/portrait/lynn_normal_smile.png', bytes: 1 },
+    ];
+    const result = buildProjectAssetIntelligence(snapshot, facts);
+    const normal = asset(result, facts[0]!.path);
+    const smile = asset(result, facts[1]!.path);
+
+    expect(normal.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceKind: 'scene', line: 2 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 3 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 4 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 5 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 6 }),
+      expect.objectContaining({ sourceKind: 'timeline' }),
+    ]));
+    expect(smile.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceKind: 'scene', line: 3 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 4 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 5 }),
+      expect.objectContaining({ sourceKind: 'scene', line: 6 }),
+      expect.objectContaining({ sourceKind: 'timeline' }),
+    ]));
+    expect(result.items.filter((item) => !item.physical)).toEqual([]);
   });
 
   it('treats quoted ambience off as the runtime stop command instead of a missing asset', async () => {
