@@ -11,6 +11,7 @@
  *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
 import { state, h, setStatus } from '../state.js';
+import { assertProjectWriteUnlocked } from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
@@ -131,6 +132,7 @@ function sceneKeyById(sceneId: string): string | null {
 /** 重命名场景：内存改名 + 全部场景引用同步改写 + 句柄置空（保存时落新名）；
  *  平坦路径（content/scenario 直属）尝试删除旧盘上文件；子目录场景提示手动处理。 */
 export async function renameScene(sceneId: string): Promise<void> {
+  assertProjectWriteUnlocked();
   const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
   if (!input) return;
   const newId = input.trim();
@@ -186,6 +188,7 @@ export async function renameScene(sceneId: string): Promise<void> {
 
 /** 删除场景：引用检查（有入边时确认）→ 移出内存 → 平坦路径删除盘上文件 */
 export async function deleteScene(sceneId: string): Promise<void> {
+  assertProjectWriteUnlocked();
   const key = sceneKeyById(sceneId);
   if (!key) return;
   let refs = 0;

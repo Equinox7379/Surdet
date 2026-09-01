@@ -10,6 +10,7 @@ export interface ProjectBarProjection {
   canRedo: boolean;
   fsSupported?: boolean;
   hasScenes?: boolean;
+  writeLocked?: boolean;
 }
 
 export interface ProjectBarActions {
@@ -59,17 +60,28 @@ function saveStateLabel(state: ProjectSaveState): string {
  * 编辑、选择和保存回调都可以复用这一入口，让顶栏始终反映当前内存事实。
  */
 export function updateProjectBarProjection(
-  projection: Pick<ProjectBarProjection, 'projectName' | 'objectLabel' | 'saveState'>,
+  projection: Pick<ProjectBarProjection, 'projectName' | 'objectLabel' | 'saveState'> & { writeLocked?: boolean },
   root: ParentNode = document,
 ): void {
   const projectName = root.querySelector<HTMLElement>('.editor-project-name');
   const currentObject = root.querySelector<HTMLElement>('.editor-current-object');
   const saveState = root.querySelector<HTMLElement>('.editor-save-state');
+  const saveButton = root.querySelector<HTMLButtonElement>('[data-action="save-project"]');
+  const lockedCommands = root.querySelectorAll<HTMLButtonElement>(
+    '[data-action="open-project"], [data-action="open-review"], [data-action="undo"], [data-action="redo"]',
+  );
   if (projectName) projectName.textContent = projection.projectName;
   if (currentObject) currentObject.textContent = projection.objectLabel;
   if (saveState) {
-    saveState.textContent = saveStateLabel(projection.saveState);
+    saveState.textContent = projection.writeLocked ? '素材整理进行中' : saveStateLabel(projection.saveState);
     saveState.setAttribute('data-save-state', projection.saveState);
+  }
+  if (saveButton) {
+    saveButton.disabled = projection.writeLocked === true;
+    saveButton.title = projection.writeLocked ? '素材整理完成后才能保存其他修改' : '';
+  }
+  for (const button of lockedCommands) {
+    button.disabled = projection.writeLocked === true;
   }
 }
 
@@ -102,8 +114,8 @@ export function renderProjectBar(
   const fsSupported = projection.fsSupported ?? true;
   if (fsSupported) {
     commands.append(
-      actionButton('打开项目', 'open-project', actions.onOpenProject),
-      actionButton('打开审阅任务', 'open-review', actions.onOpenReview),
+      actionButton('打开项目', 'open-project', actions.onOpenProject, projection.writeLocked === true),
+      actionButton('打开审阅任务', 'open-review', actions.onOpenReview, projection.writeLocked === true),
     );
   } else if (actions.onLoadDemo) {
     commands.appendChild(actionButton('加载演示项目', 'load-demo', actions.onLoadDemo));
@@ -112,10 +124,10 @@ export function renderProjectBar(
     commands.appendChild(actionButton('导出当前场景', 'export-current', actions.onExportCurrent));
   }
   commands.append(
-    actionButton('撤销 Ctrl+Z', 'undo', actions.onUndo, !projection.canUndo),
-    actionButton('重做 Ctrl+Y', 'redo', actions.onRedo, !projection.canRedo),
+    actionButton('撤销 Ctrl+Z', 'undo', actions.onUndo, projection.writeLocked === true || !projection.canUndo),
+    actionButton('重做 Ctrl+Y', 'redo', actions.onRedo, projection.writeLocked === true || !projection.canRedo),
   );
-  const save = actionButton('保存全部 Ctrl+S', 'save-project', actions.onSaveProject);
+  const save = actionButton('保存全部 Ctrl+S', 'save-project', actions.onSaveProject, projection.writeLocked === true);
   save.className = 'editor-command editor-global-primary';
   save.setAttribute('aria-keyshortcuts', 'Control+S Meta+S');
   commands.appendChild(save);

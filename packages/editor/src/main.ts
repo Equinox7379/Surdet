@@ -15,6 +15,7 @@ import {
   buildObjectIndex,
   buildProjectAssetIntelligence,
   type ProjectAssetImportTargetRequest,
+  type ProjectAssetItem,
   type ProjectAssetReference,
 } from '@surdet/authoring';
 import { loadEditorProjectSnapshot } from './authoring-project-storage.js';
@@ -30,6 +31,7 @@ import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
 import {
   bindProjectIoHooks,
   openProject,
+  reloadCurrentProjectFromHandle,
   refreshProjectAssetIntelligence,
   saveAll,
   exportCurrent,
@@ -58,6 +60,7 @@ import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-pan
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import { AssetImportClientError, createAssetImportAuthorityClient } from './asset-import-client.js';
 import { createAssetImportWorkspace } from './asset-import-workspace.js';
+import { createAssetRelocationWorkspace } from './asset-relocation-workspace.js';
 import {
   renderModeNavigation,
   renderProjectBar,
@@ -94,6 +97,8 @@ let assetImportActionSequence = 0;
 let assetImportCancelRequested = false;
 let assetImportActionCancellable = false;
 const assetImportWorkspace = createAssetImportWorkspace();
+const assetRelocationWorkspace = createAssetRelocationWorkspace();
+let assetRelocationActionSequence = 0;
 assetImportWorkspace.subscribe((projection) => {
   state.assetImportWorkspace = projection;
   if (state.mainTab === 'assets') renderMainArea();
@@ -109,6 +114,9 @@ function resetAssetImportRuntime(): void {
   assetImportClient.dispose();
   assetImportClient = createAssetImportAuthorityClient();
   assetImportWorkspace.reset();
+  assetRelocationActionSequence += 1;
+  assetRelocationWorkspace.reset();
+  state.projectWriteLock = null;
 }
 
 function invalidateAuthoringForProjectChange(): void {
@@ -139,6 +147,25 @@ async function bindCurrentProjectAssetImport(): Promise<void> {
     const binding = await client.bindProject(root);
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     assetImportWorkspace.applyBinding(binding);
+    const pendingRelocation = binding.pendingRelocations[0];
+    if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().source === null) {
+      const detail = await client.relocationQuery(pendingRelocation.operationId);
+      if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
+      const source = detail.plan.source;
+      if (source !== null && ['background', 'portrait', 'avatar'].includes(source.kind)) {
+        assetRelocationWorkspace.begin({
+          assetId: `file:${source.path}`,
+          sourcePath: source.path,
+          kind: source.kind as 'background' | 'portrait' | 'avatar',
+          targetDirectory: detail.plan.target?.directory ?? source.directory,
+          fileName: detail.plan.target?.fileName ?? source.fileName,
+        });
+        assetRelocationWorkspace.setDetail(detail);
+        assetRelocationWorkspace.setMessage('发现一项尚未结束的素材整理，请先恢复或安全回退。');
+        state.projectWriteLock = 'asset-relocation';
+        refreshProjectBarProjection();
+      }
+    }
   } catch (error) {
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     if (error instanceof AssetImportClientError && error.code === 'PROJECT_IDENTITY_MISMATCH') {
@@ -178,6 +205,10 @@ async function runAssetImportAction(
   cancellable = false,
 ): Promise<void> {
   if (assetImportActionRunning) return;
+  if (state.projectWriteLock === 'asset-relocation') {
+    assetImportWorkspace.setMessage('素材整理进行中，完成后才能开始导入。');
+    return;
+  }
   const context: AssetImportActionContext = {
     actionId: ++assetImportActionSequence,
     generation: assetImportGeneration,
@@ -431,6 +462,271 @@ function hasDirtyProjectFiles(): boolean {
     || state.pendingTimelineRestores.size > 0;
 }
 
+interface AssetRelocationActionContext {
+  actionId: number;
+  generation: number;
+  client: typeof assetImportClient;
+  projectRoot: FileSystemDirectoryHandle | null;
+}
+
+function assetRelocationActionIsCurrent(context: AssetRelocationActionContext): boolean {
+  return context.actionId === assetRelocationActionSequence
+    && context.generation === assetImportGeneration
+    && context.client === assetImportClient
+    && context.projectRoot === state.dirHandle;
+}
+
+function requireCurrentAssetRelocationAction(context: AssetRelocationActionContext): void {
+  if (!assetRelocationActionIsCurrent(context)) throw new Error('项目已经切换，旧素材整理已停止。');
+}
+
+function setAssetRelocationWriteLock(locked: boolean): void {
+  state.projectWriteLock = locked ? 'asset-relocation' : null;
+  refreshProjectBarProjection();
+}
+
+async function runAssetRelocationAction(
+  message: string,
+  action: (context: AssetRelocationActionContext) => Promise<void>,
+  options: { releaseOnError?: boolean } = {},
+): Promise<void> {
+  if (assetRelocationWorkspace.snapshot().busy) return;
+  const context: AssetRelocationActionContext = {
+    actionId: ++assetRelocationActionSequence,
+    generation: assetImportGeneration,
+    client: assetImportClient,
+    projectRoot: state.dirHandle,
+  };
+  assetRelocationWorkspace.setBusy(true);
+  assetRelocationWorkspace.setMessage(message);
+  if (state.mainTab === 'assets') renderMainArea();
+  try {
+    await action(context);
+  } catch (error) {
+    if (assetRelocationActionIsCurrent(context)) {
+      assetRelocationWorkspace.setMessage(assetImportErrorMessage(error));
+      if (options.releaseOnError === true || assetRelocationWorkspace.snapshot().detail === null) {
+        setAssetRelocationWriteLock(false);
+      }
+    }
+  } finally {
+    if (context.actionId === assetRelocationActionSequence) {
+      assetRelocationWorkspace.setBusy(false);
+      if (state.mainTab === 'assets') renderMainArea();
+    }
+  }
+}
+
+function assetRelocationAvailabilityMessage(): string | null {
+  if (state.dirHandle === null) return '请先打开一个本地项目。';
+  if (hasDirtyProjectFiles()) return '请先保存当前场景和时间轴修改，再整理素材。';
+  if (assetImportActionRunning) return '素材导入正在进行，请完成后再整理素材。';
+  const importProjection = assetImportWorkspace.snapshot();
+  if (importProjection.entryState === 'ready') return null;
+  if (importProjection.entryState === 'recoverable' || importProjection.entryState === 'manual-recovery') {
+    return '项目中有尚未结束的素材写入，请先完成恢复。';
+  }
+  return importProjection.message ?? '本机素材权限服务尚未绑定当前项目。';
+}
+
+function beginAssetRelocation(item: ProjectAssetItem, targetDirectory: string): void {
+  if (!item.sourcePath || !['background', 'portrait', 'avatar'].includes(item.kind)) return;
+  const issue = assetRelocationAvailabilityMessage();
+  if (issue !== null) {
+    assetRelocationWorkspace.setMessage(issue);
+    renderMainArea();
+    return;
+  }
+  assetRelocationWorkspace.begin({
+    assetId: item.assetId,
+    sourcePath: item.sourcePath,
+    kind: item.kind as 'background' | 'portrait' | 'avatar',
+    targetDirectory,
+    fileName: item.sourcePath.split('/').at(-1) ?? '',
+  });
+  renderMainArea();
+}
+
+async function checkAssetRelocationImpact(): Promise<void> {
+  const snapshot = assetRelocationWorkspace.snapshot();
+  if (snapshot.source === null) return;
+  if (hasDirtyProjectFiles()) {
+    assetRelocationWorkspace.setMessage('请先保存当前项目修改，再检查整理影响。');
+    renderMainArea();
+    return;
+  }
+  setAssetRelocationWriteLock(true);
+  await runAssetRelocationAction('正在检查引用影响…', async (context) => {
+    let planned: Awaited<ReturnType<typeof context.client.relocationPlan>>;
+    const operationId = crypto.randomUUID();
+    try {
+      planned = await context.client.relocationPlan({
+        operationId,
+        sourcePath: snapshot.source!.sourcePath,
+        targetDirectory: snapshot.targetDirectory,
+        fileName: snapshot.fileName.trim(),
+      });
+    } catch (error) {
+      try {
+        const discovery = await context.client.relocationList();
+        const pending = discovery.operations.find((operation) => (
+          operation.operationId === operationId
+          || (operation.sourcePath === snapshot.source!.sourcePath
+            && operation.targetPath === `${snapshot.targetDirectory}/${snapshot.fileName.trim()}`)
+        ));
+        if (pending === undefined) throw error;
+        planned = await context.client.relocationResume(pending.operationId);
+      } catch {
+        throw error;
+      }
+    }
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(planned.detail);
+    assetRelocationWorkspace.setMessage(planned.detail.plan.status === 'ready'
+      ? '检查完成。确认无误后即可移动素材并更新引用。'
+      : '发现不能自动处理的内容，请查看原因或修改目标。');
+  });
+}
+
+async function cancelRemoteAssetRelocation(keepEditor: boolean): Promise<void> {
+  const snapshot = assetRelocationWorkspace.snapshot();
+  const detail = snapshot.detail;
+  if (detail === null) {
+    setAssetRelocationWriteLock(false);
+    if (!keepEditor) assetRelocationWorkspace.reset();
+    return;
+  }
+  if (['COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED'].includes(detail.operation.status)) {
+    setAssetRelocationWriteLock(false);
+    if (keepEditor) {
+      assetRelocationWorkspace.setDetail(null);
+      assetRelocationWorkspace.setMessage(null);
+    } else {
+      assetRelocationWorkspace.reset();
+    }
+    if (state.mainTab === 'assets') renderMainArea();
+    return;
+  }
+  await runAssetRelocationAction('正在取消素材整理…', async (context) => {
+    try {
+      await context.client.relocationCancel(detail.operation.operationId);
+    } catch (error) {
+      if (!(error instanceof AssetImportClientError) || error.code !== 'IMPORT_OPERATION_NOT_AUTHORIZED') throw error;
+      await context.client.relocationResume(detail.operation.operationId);
+      requireCurrentAssetRelocationAction(context);
+      await context.client.relocationCancel(detail.operation.operationId);
+    }
+    requireCurrentAssetRelocationAction(context);
+    setAssetRelocationWriteLock(false);
+    if (keepEditor) {
+      assetRelocationWorkspace.setDetail(null);
+      assetRelocationWorkspace.setMessage(null);
+    } else {
+      assetRelocationWorkspace.reset();
+    }
+  }, { releaseOnError: false });
+}
+
+async function commitAssetRelocation(): Promise<void> {
+  const detail = assetRelocationWorkspace.snapshot().detail;
+  if (detail === null || detail.plan.status !== 'ready') return;
+  await runAssetRelocationAction('正在移动素材并更新引用…', async (context) => {
+    await context.client.relocationResume(detail.operation.operationId);
+    requireCurrentAssetRelocationAction(context);
+    const committed = await context.client.relocationCommit(
+      detail.operation.operationId,
+      detail.plan.planFingerprint,
+    );
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(committed);
+    const targetPath = committed.receipt?.targetPath ?? committed.request.targetPath;
+    await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${targetPath}` });
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setMessage('整理完成，项目已经重新载入。');
+    setAssetRelocationWriteLock(false);
+  });
+}
+
+async function undoAssetRelocation(): Promise<void> {
+  const detail = assetRelocationWorkspace.snapshot().detail;
+  if (detail?.receipt === null || detail?.receipt === undefined) return;
+  setAssetRelocationWriteLock(true);
+  await runAssetRelocationAction('正在撤销本次素材整理…', async (context) => {
+    await context.client.relocationResume(detail.operation.operationId);
+    requireCurrentAssetRelocationAction(context);
+    const undone = await context.client.relocationUndo(detail.operation.operationId, {
+      receiptId: detail.receipt!.receiptId,
+      receiptFingerprint: detail.receipt!.receiptFingerprint,
+    });
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(undone);
+    await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${undone.request.sourcePath}` });
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setMessage('已撤销本次整理，项目已经重新载入。');
+    setAssetRelocationWriteLock(false);
+  }, { releaseOnError: true });
+}
+
+async function recoverAssetRelocation(action: 'resume' | 'rollback'): Promise<void> {
+  const detail = assetRelocationWorkspace.snapshot().detail;
+  if (detail === null) return;
+  setAssetRelocationWriteLock(true);
+  await runAssetRelocationAction(action === 'resume' ? '正在恢复素材整理…' : '正在安全回退素材整理…', async (context) => {
+    const resumed = await context.client.relocationResume(detail.operation.operationId);
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(resumed.detail);
+    const recovered = await context.client.relocationRecover(detail.operation.operationId, { action });
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(recovered);
+    if (['COMMITTED', 'ROLLED_BACK', 'UNDONE', 'CANCELLED'].includes(recovered.operation.status)) {
+      const selectedPath = recovered.operation.status === 'COMMITTED'
+        ? recovered.request.targetPath
+        : recovered.request.sourcePath;
+      await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${selectedPath}` });
+      requireCurrentAssetRelocationAction(context);
+      setAssetRelocationWriteLock(false);
+      assetRelocationWorkspace.setMessage(action === 'resume' ? '素材整理已经恢复完成。' : '素材整理已经安全回退。');
+    }
+  });
+}
+
+function relocationMatchesItem(item: ProjectAssetItem): boolean {
+  const snapshot = assetRelocationWorkspace.snapshot();
+  if (snapshot.source?.assetId === item.assetId) return true;
+  return snapshot.detail?.request.targetPath === item.sourcePath;
+}
+
+async function selectAssetCenterItem(item: ProjectAssetItem, restoreKeyboardFocus: boolean): Promise<void> {
+  const snapshot = assetRelocationWorkspace.snapshot();
+  if (snapshot.busy) return;
+  if (snapshot.source !== null && !relocationMatchesItem(item)) {
+    if (snapshot.detail !== null && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(snapshot.detail.operation.status)) {
+      await cancelRemoteAssetRelocation(false);
+      if (assetRelocationWorkspace.snapshot().detail !== null) return;
+    } else {
+      assetRelocationWorkspace.reset();
+      setAssetRelocationWriteLock(false);
+    }
+  }
+  state.assetCenterSelectedId = item.assetId;
+  renderMainArea();
+  if (restoreKeyboardFocus) {
+    requestAnimationFrame(() => {
+      [...document.querySelectorAll<HTMLButtonElement>('[role="option"][data-asset-id]')]
+        .find((candidate) => candidate.dataset.assetId === item.assetId)
+        ?.focus();
+    });
+  }
+}
+
+function viewAssetRelocationTarget(): void {
+  const detail = assetRelocationWorkspace.snapshot().detail;
+  if (detail === null) return;
+  const path = detail.operation.status === 'COMMITTED' ? detail.request.targetPath : detail.request.sourcePath;
+  state.assetCenterSelectedId = `file:${path}`;
+  renderMainArea();
+}
+
 function currentObjectLabel(): string {
   if (state.reviewWorkspace !== null) return '审阅任务';
   if (state.mainTab === 'assets') return '素材中心';
@@ -461,6 +757,7 @@ function projectBarProjection(): ProjectBarProjection {
     canRedo: true,
     fsSupported: state.fsSupported,
     hasScenes: state.scenes.size > 0,
+    writeLocked: state.projectWriteLock !== null,
   };
 }
 
@@ -480,7 +777,11 @@ function handleTimelineEdited(): void {
 }
 
 async function saveProject(): Promise<void> {
-  await saveAll();
+  try {
+    await saveAll();
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : '当前不能保存项目', false, 5000);
+  }
   refreshProjectBarProjection();
 }
 
@@ -832,6 +1133,10 @@ function renderMainArea(): void {
   }
   main.innerHTML = '';
   const navigation = renderModeNavigation(state.mainTab, (mode) => {
+      if (state.projectWriteLock === 'asset-relocation' && mode !== 'assets') {
+        setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
+        return;
+      }
       state.previewTimelineId = null;
       state.mainTab = mode;
       renderMainArea();
@@ -862,9 +1167,22 @@ function renderMainArea(): void {
     col.appendChild(assetsEl);
     renderAssetCenter(assetsEl, {
       onOpenProject: () => { void openProject(); },
-      onOpenReference: openAssetReference,
+      onOpenReference: (reference) => {
+        if (state.projectWriteLock === 'asset-relocation') {
+          assetRelocationWorkspace.setMessage('请先完成或取消素材整理，再打开引用位置。');
+          renderMainArea();
+          return;
+        }
+        openAssetReference(reference);
+      },
+      onSelectAsset: (item, restoreKeyboardFocus) => { void selectAssetCenterItem(item, restoreKeyboardFocus); },
       assetImportOpen: assetImportPanelOpen,
       onToggleImport: () => {
+        if (state.projectWriteLock === 'asset-relocation') {
+          assetRelocationWorkspace.setMessage('请先完成或取消素材整理。');
+          renderMainArea();
+          return;
+        }
         assetImportPanelOpen = !assetImportPanelOpen;
         renderMainArea();
       },
@@ -899,6 +1217,19 @@ function renderMainArea(): void {
         onViewImportedAssets: openImportedAsset,
         onUndoImport: () => { void undoAssetImport(); },
         refreshProjectAssetIntelligence,
+      },
+      assetRelocation: {
+        workspace: assetRelocationWorkspace.snapshot(),
+        availabilityMessage: assetRelocationAvailabilityMessage(),
+        onBegin: beginAssetRelocation,
+        onUpdateTarget: (update) => assetRelocationWorkspace.updateTarget(update),
+        onCheckImpact: () => { void checkAssetRelocationImpact(); },
+        onCommit: () => { void commitAssetRelocation(); },
+        onModify: () => { void cancelRemoteAssetRelocation(true); },
+        onCancel: () => { void cancelRemoteAssetRelocation(false); },
+        onUndo: () => { void undoAssetRelocation(); },
+        onRecover: (action) => { void recoverAssetRelocation(action); },
+        onViewTarget: viewAssetRelocationTarget,
       },
     });
   } else if (state.mainTab === 'flow') {
@@ -965,11 +1296,19 @@ function applyTimelineHistory(direction: 'undo' | 'redo'): void {
 
 /** 配置、时间轴和剧本分别使用独立历史栈。 */
 function doUndo(): void {
+  if (state.projectWriteLock === 'asset-relocation') {
+    setStatus('素材整理进行中，完成后才能撤销其他编辑', false, 5000);
+    return;
+  }
   if (state.mainTab === 'config') configUndo();
   else if (state.mainTab === 'timeline') applyTimelineHistory('undo');
   else undo();
 }
 function doRedo(): void {
+  if (state.projectWriteLock === 'asset-relocation') {
+    setStatus('素材整理进行中，完成后才能重做其他编辑', false, 5000);
+    return;
+  }
   if (state.mainTab === 'config') configRedo();
   else if (state.mainTab === 'timeline') applyTimelineHistory('redo');
   else redo();
@@ -996,6 +1335,10 @@ window.addEventListener('keydown', (e) => {
   // Ctrl+F 聚焦搜索（M6 E5）；Ctrl+P 预览标签页
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault();
+    if (state.projectWriteLock === 'asset-relocation') {
+      setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
+      return;
+    }
     if (state.mainTab !== 'editor') {
       state.mainTab = 'editor';
       renderMainArea();
@@ -1004,6 +1347,10 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
+    if (state.projectWriteLock === 'asset-relocation') {
+      setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
+      return;
+    }
     state.mainTab = 'preview';
     renderMainArea();
   }
@@ -1011,6 +1358,11 @@ window.addEventListener('keydown', (e) => {
 
 // 关页保护：存在未保存改动时提示（防误关丢失编辑）
 window.addEventListener('beforeunload', (e) => {
+  if (state.projectWriteLock === 'asset-relocation') {
+    e.preventDefault();
+    e.returnValue = '';
+    return;
+  }
   for (const sc of state.scenes.values()) {
     if (sc.dirty) {
       e.preventDefault();
@@ -1031,6 +1383,7 @@ window.addEventListener('pagehide', (event) => {
   else {
     assetImportClient.dispose();
     assetImportWorkspace.dispose();
+    assetRelocationWorkspace.dispose();
   }
 });
 

@@ -167,6 +167,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.pendingTimelineRestores.clear();
     state.current = null;
     state.currentTimeline = null;
+    state.projectWriteLock = null;
     log.length = 0;
     status.textContent = '';
     status.className = '';
@@ -174,7 +175,21 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   });
 
   afterEach(() => {
+    state.projectWriteLock = null;
     vi.unstubAllGlobals();
+  });
+
+  it('素材整理锁定时在首个写入前拒绝保存全部', async () => {
+    const onSaveSettled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaveSettled });
+    state.scenes.set('locked', scene('locked', fileHandle(null, log, 'locked.gal')));
+    state.projectWriteLock = 'asset-relocation';
+
+    await expect(saveAll()).rejects.toThrow('素材整理进行中');
+
+    expect(log).toEqual([]);
+    expect(state.scenes.get('locked')?.dirty).toBe(true);
+    expect(onSaveSettled).not.toHaveBeenCalled();
   });
 
   it('第一个已有场景失败时继续保存第二个场景和时间轴，并保留失败 dirty', async () => {

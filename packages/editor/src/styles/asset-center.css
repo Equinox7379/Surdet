@@ -768,6 +768,167 @@
   white-space: nowrap;
 }
 
+.asset-relocation {
+  display: grid;
+  gap: var(--surdet-space-12);
+  padding-block-start: var(--surdet-space-16);
+  border-block-start: 1px solid var(--surdet-border-default);
+}
+
+.asset-relocation-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.asset-relocation-heading h3,
+.asset-relocation-heading p,
+.asset-relocation-current,
+.asset-relocation-path-summary,
+.asset-relocation-note,
+.asset-relocation-message,
+.asset-relocation-warning,
+.asset-relocation-result p {
+  margin: 0;
+}
+
+.asset-relocation-heading h3 {
+  font-size: 15px;
+}
+
+.asset-relocation-heading p,
+.asset-relocation-note,
+.asset-relocation-current,
+.asset-relocation-path-summary,
+.asset-relocation-message,
+.asset-relocation-result p {
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.asset-relocation-entry,
+.asset-relocation-actions button {
+  min-height: 36px;
+  padding: 0 var(--surdet-space-12);
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-primary);
+}
+
+.asset-relocation-entry:not(:disabled):hover,
+.asset-relocation-actions button:not(:disabled):hover {
+  border-color: var(--surdet-border-strong);
+  background: var(--surdet-surface-subtle);
+}
+
+.asset-relocation-form {
+  display: grid;
+  gap: 10px;
+}
+
+.asset-relocation-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.asset-relocation-form input,
+.asset-relocation-form select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.asset-relocation-file-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.asset-relocation-file-control input {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.asset-relocation-extension {
+  display: grid;
+  min-height: 36px;
+  padding: 0 10px;
+  place-items: center;
+  border: 1px solid var(--surdet-border-default);
+  margin-inline-start: -1px;
+  border-start-end-radius: var(--surdet-radius-control);
+  border-end-end-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-secondary);
+  font-family: var(--surdet-font-mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.asset-relocation-path-summary {
+  overflow-wrap: anywhere;
+  font-family: var(--surdet-font-mono);
+}
+
+.asset-relocation-impact,
+.asset-relocation-blockers,
+.asset-relocation-result,
+.asset-relocation-warning {
+  display: grid;
+  gap: 8px;
+  padding: var(--surdet-space-12);
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-subtle);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.asset-relocation-blockers,
+.asset-relocation-warning {
+  border-color: var(--surdet-state-warning);
+}
+
+.asset-relocation-impact ul,
+.asset-relocation-blockers ul {
+  margin: 6px 0 0;
+  padding-inline-start: 20px;
+}
+
+.asset-relocation-impact details + details {
+  margin-block-start: 5px;
+}
+
+.asset-relocation-impact summary {
+  cursor: pointer;
+  color: var(--surdet-text-secondary);
+  font-weight: 650;
+}
+
+.asset-relocation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asset-relocation-actions .asset-relocation-primary {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-primary);
+  color: var(--surdet-color-paper-50);
+  font-weight: 650;
+}
+
 .asset-center-technical {
   padding-block-start: var(--surdet-space-16);
   border-block-start: 1px solid var(--surdet-border-default);
@@ -875,6 +1036,15 @@
 
   .asset-center-shell {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-relocation-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .asset-relocation-actions button {
+    width: 100%;
   }
 
   .asset-center-rail {

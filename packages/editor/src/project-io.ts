@@ -90,6 +90,30 @@ export async function openProjectFromHandle(
   }
 }
 
+/**
+ * 不再次弹出目录选择器，完整重读当前项目。
+ * 供本机 authority 完成跨文件写入后刷新全部浏览器句柄与编辑历史。
+ */
+export async function reloadCurrentProjectFromHandle(options: {
+  mainTab?: typeof state.mainTab;
+  selectedAssetId?: string | null;
+} = {}): Promise<void> {
+  const dir = state.dirHandle;
+  if (dir === null) throw new Error('当前项目未连接可写目录');
+  assetRefreshRevision += 1;
+  let succeeded = false;
+  try {
+    await loadProjectFromHandle(dir, { source: 'normal' });
+    if (options.mainTab !== undefined) state.mainTab = options.mainTab;
+    if (options.selectedAssetId !== undefined) state.assetCenterSelectedId = options.selectedAssetId;
+    renderAll();
+    succeeded = true;
+  } finally {
+    state.projectLoading = false;
+    onProjectLoadSettled(succeeded);
+  }
+}
+
 async function loadProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' },
@@ -321,7 +345,14 @@ export async function refreshProjectAssetIntelligence(): Promise<void> {
 }
 
 /** 配置文件写盘（E3 共用：创建可写流 → 写入 → 关闭） */
+export function assertProjectWriteUnlocked(): void {
+  if (state.projectWriteLock === 'asset-relocation') {
+    throw new Error('素材整理进行中，完成后才能保存其他修改');
+  }
+}
+
 export async function writeFileHandle(fh: FileSystemFileHandle, text: string): Promise<void> {
+  assertProjectWriteUnlocked();
   const w = await fh.createWritable();
   await w.write(text);
   await w.close();
@@ -640,6 +671,7 @@ export function repairTimelineAutosaveConflict(
 }
 
 export async function saveAll(): Promise<void> {
+  assertProjectWriteUnlocked();
   if (!state.fsSupported) {
     const timeline = state.currentTimeline
       ? state.timelines.find((entry) => entry.id === state.currentTimeline)
