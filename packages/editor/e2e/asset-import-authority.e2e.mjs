@@ -707,7 +707,35 @@ async function run() {
     });
 
     await openImportWorkbench(page);
-    await page.locator('input[type="file"][aria-label="选择素材文件"]').setInputFiles([sourceImage, sourceSound]);
+    const droppedFiles = [
+      {
+        name: path.basename(sourceImage),
+        type: 'image/svg+xml',
+        base64: fs.readFileSync(sourceImage).toString('base64'),
+      },
+      {
+        name: path.basename(sourceSound),
+        type: 'audio/wav',
+        base64: fs.readFileSync(sourceSound).toString('base64'),
+      },
+    ];
+    const dataTransfer = await page.evaluateHandle((files) => {
+      const transfer = new DataTransfer();
+      for (const file of files) {
+        const binary = atob(file.base64);
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        transfer.items.add(new File([bytes], file.name, { type: file.type }));
+      }
+      return transfer;
+    }, droppedFiles);
+    try {
+      const dropSurface = page.locator('.asset-import-picker');
+      await dropSurface.dispatchEvent('dragenter', { dataTransfer });
+      await dropSurface.dispatchEvent('dragover', { dataTransfer });
+      await dropSurface.dispatchEvent('drop', { dataTransfer });
+    } finally {
+      await dataTransfer.dispose();
+    }
     await page.waitForFunction(() => window.surdetEditorDebug.state.assetImportWorkspace?.draftItems.length === 2);
     assert(await page.getByText('素材分类', { exact: true }).count() === 2, '素材分类 fields were not rendered for both files');
     assert(await page.getByText('最终名称', { exact: true }).count() === 2, '最终名称 fields were not rendered for both files');

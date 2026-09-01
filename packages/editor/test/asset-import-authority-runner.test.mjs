@@ -35,7 +35,6 @@ test('asset import runner drives the real Chinese workbench through a node-backe
     'getFileHandle',
     'getDirectoryHandle',
     'isSameEntry',
-    '选择素材文件',
     '素材分类',
     '最终名称',
     '准备导入',
@@ -44,7 +43,11 @@ test('asset import runner drives the real Chinese workbench through a node-backe
     '查看导入回执',
     '撤销本次导入',
   ]) assert.ok(source.includes(marker), `missing browser contract marker: ${marker}`);
-  assert.match(source, /setInputFiles/);
+  assert.match(source, /new DataTransfer\(\)/);
+  assert.match(source, /dispatchEvent\(['"]dragenter/);
+  assert.match(source, /dispatchEvent\(['"]dragover/);
+  assert.match(source, /dispatchEvent\(['"]drop/);
+  assert.match(source, /asset-import-picker/);
   assert.match(source, /page\.reload/);
   assert.match(source, /exposeFunction/);
   assert.doesNotMatch(source, /page\.waitForTimeout\(/);
