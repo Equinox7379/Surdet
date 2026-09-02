@@ -147,7 +147,7 @@ function comparisonWorkspace(): ReviewWorkspaceState {
     state: 'COMPARISON_PREPARED',
     projectIdentity: 'project-1',
     expectedProjectRevision: 'revision-1',
-    task: { title: '候选创作方案审阅', acceptanceCriteria: ['看清冲突'], candidateCount: 3, objectCount: 1, conflictCount: 1, statementSource: 'generated-fallback' },
+    task: { title: '候选创作方案审阅', goal: '选出正确的 Alpha 剧情结果', acceptanceCriteria: ['看清冲突'], candidateCount: 3, objectCount: 1, conflictCount: 1, statementSource: 'generated-fallback' },
     candidates: [
       { candidateId: 'candidate-a', displayOrdinal: 'A', ref: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'a'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
       { candidateId: 'candidate-c', displayOrdinal: 'C', ref: { changeId: 'change-c', capsuleId: 'capsule-c', artifactSha256: 'c'.repeat(64) }, acceptanceCriteria: [], evidence: { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } },
@@ -312,13 +312,13 @@ describe('Editor review panel', () => {
     const container = new FakeElement('div');
 
     renderReviewPanel(container as unknown as HTMLElement, workspace);
-    expect(textOf(container)).toContain('审阅任务');
+    expect(textOf(container)).toContain('候选方案校对');
     expect(textOf(container)).toContain('候选创作方案审阅');
     expect(textOf(container)).toContain('方案 A（本次审阅编号）');
     expect(textOf(container)).toContain('方案字母只用于本次审阅排序');
     expect(textOf(container)).toContain('2 个方案得到相同结果');
     expect(textOf(container)).toContain('场景 wave6_alpha');
-    expect(textOf(container)).toContain('默认纳入');
+    expect(textOf(container)).toContain('自动纳入');
     expect(textOf(container)).toContain('证据缺失');
     expect(textOf(container)).toContain('需要你决定');
     expect(textOf(container)).toContain('Alpha route A.');
@@ -362,11 +362,87 @@ describe('Editor review panel', () => {
     expect(choiceForUnit!.textContent).toContain('场景 wave6_alpha');
     expect(container.querySelector('[data-choice-unit="unit-d"]')!.textContent).toContain('方案 D');
     expect(container.querySelector('[data-choice-unit="unit-d"]')!.textContent).not.toBe(choiceForUnit!.textContent);
+    const projectionBeforeChoice = JSON.stringify(workspace.projection);
     choiceForUnit!.click();
+    expect(choiceForUnit!.getAttribute('aria-pressed')).toBe('true');
+    expect(choiceForUnit!.getAttribute('data-choice-selected')).toBe('true');
+    expect(choiceForUnit!.textContent).toContain('已选择');
+    expect(container.querySelector('[data-choice-unit="unit-d"]')!.getAttribute('aria-pressed')).toBe('false');
+    const safeToggle = container.querySelector('[data-safe-group-toggle="group-1"]')!;
+    expect(safeToggle.getAttribute('aria-pressed')).toBe('true');
+    expect(safeToggle.textContent).toBe('排除本组');
+    expect(JSON.stringify(workspace.projection)).toBe(projectionBeforeChoice);
     expect(decisionButton?.disabled).toBe(false);
     expect(workspace.decisionDraft.conflictResolutions).toEqual([
       { conflictId: 'conflict-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' },
     ]);
+  });
+
+  it('keeps an identical unit choice scoped to its own conflict', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    const firstConflict = workspace.projection.conflicts[0]!;
+    workspace.projection.conflicts.push({
+      ...firstConflict,
+      conflictId: 'conflict-2',
+      objectRefs: ['scene:wave6_beta'],
+    });
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const first = container.querySelector('[data-conflict-id="conflict-1"]')!;
+    const second = container.querySelector('[data-conflict-id="conflict-2"]')!;
+    const firstChoice = first.querySelector('[data-choice-unit="unit-a"]')!;
+    const secondChoice = second.querySelector('[data-choice-unit="unit-a"]')!;
+
+    firstChoice.click();
+
+    expect(firstChoice.getAttribute('aria-pressed')).toBe('true');
+    expect(secondChoice.getAttribute('aria-pressed')).toBe('false');
+    expect(secondChoice.textContent).not.toContain('已选择');
+  });
+
+  it('orders pending decisions before safe results and keeps the save action in that decision flow', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    const main = container.querySelector('[data-review-main]')!;
+    const decisions = main.querySelector('[data-review-section="decisions"]')!;
+    const actions = main.querySelector('[data-review-section="decision-actions"]')!;
+    const safe = main.querySelector('[data-review-section="safe-results"]')!;
+    const technical = main.querySelector('[data-review-section="technical"]')!;
+    expect(main.children.indexOf(decisions)).toBeLessThan(main.children.indexOf(actions));
+    expect(main.children.indexOf(actions)).toBeLessThan(main.children.indexOf(safe));
+    expect(main.children.indexOf(safe)).toBeLessThan(main.children.indexOf(technical));
+    expect(textOf(container)).toContain('选出正确的 Alpha 剧情结果');
+    expect(textOf(container)).toContain('还需决定 1 项');
+  });
+
+  it('excludes and restores a safe group through the existing decision draft', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = comparisonWorkspace();
+    const projectionBeforeToggle = JSON.stringify(workspace.projection);
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const toggle = container.querySelector('[data-safe-group-toggle="group-1"]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.textContent).toBe('排除本组');
+
+    toggle.click();
+    expect(workspace.decisionDraft.selectedUnitIds).not.toContain('unit-a');
+    expect(workspace.decisionDraft.selectedUnitIds).not.toContain('unit-d');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(toggle.textContent).toBe('保留本组');
+
+    toggle.click();
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual(expect.arrayContaining(['unit-a', 'unit-d']));
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.textContent).toBe('排除本组');
+    expect(JSON.stringify(workspace.projection)).toBe(projectionBeforeToggle);
   });
 
   it('shows every selection option as human-readable evidence with a folded fingerprint', () => {
@@ -612,8 +688,11 @@ describe('Editor review panel', () => {
     rejectWrite!(Object.assign(new Error('release pending approval'), { code: 'REVIEW_BUSY' }));
     await vi.waitFor(() => expect(statusElement.textContent).toContain('批准失败'));
     expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
+    expect(container.querySelector('[data-action="approve-result"]')?.textContent).toContain('再次确认批准状态');
     expect(container.querySelector('[data-action="return-result"]')?.disabled).toBe(true);
     expect(container.querySelector('[data-action="preview-result"]')?.disabled).toBe(true);
+    expect(textOf(container.querySelector('[data-review-section="overview"]')!)).toContain('结果暂不能批准');
+    expect(textOf(container.querySelector('[data-review-section="overview"]')!)).toContain('上一次批准结果尚未确认');
   });
 
   it('keeps preview and terminal result writes mutually exclusive', () => {
@@ -712,6 +791,8 @@ describe('Editor review panel', () => {
     const container = new FakeElement('div');
 
     renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const technical = container.querySelector('[data-review-section="technical"]')!;
+    technical.open = true;
     expect(textOf(container)).toContain('明确选择：unit-a');
     expect(textOf(container)).toContain('实际纳入：unit-a、unit-b-timeline');
     expect(textOf(container)).toContain('自动纳入：unit-b-timeline');
@@ -721,7 +802,7 @@ describe('Editor review panel', () => {
     expect(textOf(container)).toContain('方案 D');
     expect(textOf(container)).toContain('最终对象指纹');
     expect(textOf(container)).toContain('content/scenario/wave6_alpha.gal');
-    expect(textOf(container)).toContain('证据新鲜度：diff 新鲜；校验 新鲜；模拟 新鲜；运行 新鲜');
+    expect(textOf(container)).toContain('证据新鲜度：差异 新鲜；校验 新鲜；模拟 新鲜；运行 新鲜');
     expect(textOf(container)).toContain('项目树身份：tree-fp');
     expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
     markReviewFixtureChanged(workspace, 'changed-tree');
@@ -731,6 +812,33 @@ describe('Editor review panel', () => {
     reloadOfficialResult(workspace);
     renderReviewPanel(container as unknown as HTMLElement, workspace);
     expect(container.querySelector('[data-action="approve-result"]')?.disabled).toBe(false);
+  });
+
+  it('puts result readiness, preview, and terminal actions before folded technical evidence', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    const container = new FakeElement('div');
+
+    renderReviewPanel(container as unknown as HTMLElement, workspace);
+
+    const main = container.querySelector('[data-review-main]')!;
+    const overview = main.querySelector('[data-review-section="overview"]')!;
+    const preview = main.querySelector('[data-review-section="result-preview"]')!;
+    const actions = main.querySelector('[data-review-section="result-actions"]')!;
+    const summary = main.querySelector('[data-review-section="result-summary"]')!;
+    const evidence = main.querySelector('[data-review-section="result-evidence"]')!;
+    const technical = main.querySelector('[data-review-section="technical"]')!;
+    expect(main.children.indexOf(overview)).toBeLessThan(main.children.indexOf(preview));
+    expect(main.children.indexOf(preview)).toBeLessThan(main.children.indexOf(actions));
+    expect(main.children.indexOf(actions)).toBeLessThan(main.children.indexOf(summary));
+    expect(main.children.indexOf(summary)).toBeLessThan(main.children.indexOf(evidence));
+    expect(main.children.indexOf(evidence)).toBeLessThan(main.children.indexOf(technical));
+    expect(textOf(overview)).toContain('结果可以批准');
+    expect(textOf(preview)).toContain('预览正式结果');
+    expect(textOf(technical)).toBe('查看执行与技术详情');
+    technical.open = true;
+    expect(textOf(technical)).toContain('计划指纹：plan-fp');
+    expect(textOf(technical)).toContain('content/scenario/wave6_alpha.gal');
   });
 
   it('renders a reopened approval as a persistent Chinese readonly terminal state', () => {
@@ -763,6 +871,9 @@ describe('Editor review panel', () => {
     const marker = container.querySelector('[data-result-receipt]');
     expect(marker).not.toBeNull();
     expect(textOf(marker!)).toContain('已批准');
+    expect(textOf(marker!)).not.toContain('回执 ID：approval-reopened');
+    const receiptTechnical = marker!.querySelector('[data-result-receipt-technical]')!;
+    receiptTechnical.open = true;
     expect(textOf(marker!)).toContain('回执 ID：approval-reopened');
     expect(textOf(marker!)).toContain(`回执 fingerprint：${'a'.repeat(64)}`);
     expect(textOf(marker!)).toContain('原决定：decision-1');
@@ -798,6 +909,9 @@ describe('Editor review panel', () => {
     const marker = container.querySelector('[data-result-receipt]');
     expect(marker).not.toBeNull();
     expect(textOf(marker!)).toContain('已退回');
+    expect(textOf(marker!)).not.toContain('回执 ID：return-reopened');
+    const receiptTechnical = marker!.querySelector('[data-result-receipt-technical]')!;
+    receiptTechnical.open = true;
     expect(textOf(marker!)).toContain('回执 ID：return-reopened');
     expect(textOf(marker!)).toContain(`回执 fingerprint：${'b'.repeat(64)}`);
     expect(textOf(marker!)).toContain('原决定：decision-1');
