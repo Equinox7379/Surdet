@@ -150,20 +150,29 @@ let evRows: EventsRows | null = null;
 let grRows: GrowthRows | null = null;
 let gaRows: GalleryRows | null = null;
 let termRows: TerminologyTableRows | null = null;
+let configSessionRevision = 0;
 
 /** 打开配置页时从盘上重读源文件（外部改动即时可见；失败沿用内存态） */
-async function refreshConfigSources(): Promise<void> {
+async function refreshConfigSources(revision: number): Promise<boolean> {
+  const gameConfigHandle = state.handles.gameConfig;
+  const handles = { ...state.handles };
+  let gameConfigText = state.gameConfigText;
+  const configFiles = { ...state.configFiles };
   try {
-    if (state.handles.gameConfig) {
-      state.gameConfigText = await (await state.handles.gameConfig.getFile()).text();
+    if (gameConfigHandle) {
+      gameConfigText = await (await gameConfigHandle.getFile()).text();
     }
   } catch { /* 读取失败沿用内存态 */ }
   for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery', 'terminology'] as const) {
     try {
-      const fh = state.handles[name];
-      if (fh) state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
+      const handle = handles[name];
+      if (handle) configFiles[name] = JSON.parse(await (await handle.getFile()).text()) as unknown;
     } catch { /* 同上 */ }
   }
+  if (revision !== configSessionRevision) return false;
+  state.gameConfigText = gameConfigText;
+  state.configFiles = configFiles;
+  return true;
 }
 
 function parseConfigObj(): Record<string, unknown> {
@@ -216,6 +225,25 @@ interface ConfigSnapshot {
 }
 
 const configHist = createSnapshotHistory<ConfigSnapshot>();
+
+function clearConfigRowsAndHistory(): void {
+  charRows = null;
+  varRows = null;
+  achRows = null;
+  calRows = null;
+  evRows = null;
+  grRows = null;
+  gaRows = null;
+  termRows = null;
+  configHist.past = [];
+  configHist.future = [];
+}
+
+/** 项目切换边界：取消旧读取并丢弃只属于上一项目的配置行缓存和撤销历史。 */
+export function resetConfigSession(): void {
+  configSessionRevision += 1;
+  clearConfigRowsAndHistory();
+}
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
@@ -947,28 +975,38 @@ function renderGallerySection(): HTMLElement {
 /** 审计面板一键加变体（main.ts 路由）：把 variant 收进 canonical 的 variants（无条目则新建），
  *  直接校验写盘 terminology.json；与配置页编辑共享行模型缓存与撤销栈 */
 export async function addTerminologyVariant(canonical: string, variant: string): Promise<void> {
-  const rows = ensureTermRows();
-  let row = rows.terms.find((r) => String(r.canonical ?? '').trim() === canonical);
-  let list: string[] = [];
-  if (row) {
-    try {
-      const v: unknown = JSON.parse(String(row.variants ?? '[]'));
-      if (Array.isArray(v)) list = v.filter((s): s is string => typeof s === 'string');
-    } catch { list = []; }
-    if (list.includes(variant)) {
-      setStatus(`变体 '${variant}' 已在规范词 '${canonical}' 的名词条目中`, true, 4000);
-      return;
-    }
+  if (state.projectLoading) {
+    setStatus('项目正在切换，名词表未修改', false, 4000);
+    return;
   }
-  pushConfigHistory(false);
-  if (!row) {
-    row = { canonical, variants: '[]' };
-    rows.terms.push(row);
+  try {
+    await runProjectWriteOperation(async () => {
+      const rows = ensureTermRows();
+      let row = rows.terms.find((r) => String(r.canonical ?? '').trim() === canonical);
+      let list: string[] = [];
+      if (row) {
+        try {
+          const value: unknown = JSON.parse(String(row.variants ?? '[]'));
+          if (Array.isArray(value)) list = value.filter((item): item is string => typeof item === 'string');
+        } catch { list = []; }
+        if (list.includes(variant)) {
+          setStatus(`变体 '${variant}' 已在规范词 '${canonical}' 的名词条目中`, true, 4000);
+          return;
+        }
+      }
+      pushConfigHistory(false);
+      if (!row) {
+        row = { canonical, variants: '[]' };
+        rows.terms.push(row);
+      }
+      list.push(variant);
+      row.variants = JSON.stringify(list);
+      const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
+      await saveConfigFileUnlocked('terminology', json, errors, '名词表');
+    });
+  } catch (error) {
+    setStatus(`名词表未修改：${error instanceof Error ? error.message : String(error)}`, false, 4000);
   }
-  list.push(variant);
-  row.variants = JSON.stringify(list);
-  const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
-  await saveConfigFile('terminology', json, errors, '名词表');
 }
 
 /** 名词表导出（内存行模型 → 校验 → 下载 terminology.json；未保存的编辑一并导出） */
@@ -1052,18 +1090,10 @@ export function renderConfig(container: HTMLElement): void {
   const loading = h('div', 'dim', '正在读取配置文件…');
   loading.style.padding = '12px';
   container.appendChild(loading);
-  void refreshConfigSources().then(() => {
-    charRows = null;
-    varRows = null;
-    achRows = null;
-    calRows = null;
-    evRows = null;
-    grRows = null;
-    gaRows = null;
-    termRows = null;
-    // 从盘重读 = 基线更新：旧撤销栈失效（防撤销回上一轮的内存态）
-    configHist.past = [];
-    configHist.future = [];
+  const revision = ++configSessionRevision;
+  void refreshConfigSources(revision).then((current) => {
+    if (!current) return;
+    clearConfigRowsAndHistory();
     renderConfigWorkspace(container);
   });
 }

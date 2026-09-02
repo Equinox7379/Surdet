@@ -770,10 +770,13 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     const scenarioDir = directoryHandle('scenario', {}, { 'start.gal': sceneHandle });
     const contentDir = directoryHandle('content', { scenario: scenarioDir });
     const root = directoryHandle('review-reset-project', { content: contentDir }, { 'game.config.json': gameConfigHandle });
-    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    const onProjectStateReset = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectStateReset });
     state.mainTab = 'review' as never;
     (state as any).reviewWorkspace = { reviewId: 'old-review' };
     state.assetCenterFolder = 'content/assets/bg';
+    state.lastValidation = { issues: [], scenes: new Map([['old', {} as never]]) };
+    state.lastEdges = [{ from: 'old', to: 'stale', kind: 'jump' }];
 
     await openProjectFromHandle(root);
 
@@ -782,6 +785,9 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.mainTab).toBe('editor');
     expect((state as any).reviewWorkspace).toBeNull();
     expect(state.assetCenterFolder).toBe('all');
+    expect(state.lastValidation).toBeNull();
+    expect(state.lastEdges).toEqual([]);
+    expect(onProjectStateReset).toHaveBeenCalledTimes(1);
   });
 
   it('项目切换等待已开始的写操作收束后再清理旧项目', async () => {
@@ -811,12 +817,18 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   });
 
   it('切换到演示项目时清除上一项目的素材目录筛选', () => {
-    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    const onProjectStateReset = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectStateReset });
     state.assetCenterFolder = 'content/assets/portrait';
+    state.lastValidation = { issues: [], scenes: new Map([['old', {} as never]]) };
+    state.lastEdges = [{ from: 'old', to: 'stale', kind: 'call' }];
 
     loadDemoProject();
 
     expect(state.assetCenterFolder).toBe('all');
+    expect(state.lastValidation).toBeNull();
+    expect(state.lastEdges).toEqual([]);
+    expect(onProjectStateReset).toHaveBeenCalledTimes(1);
   });
 
   it('项目载入回调失败时仍收束 projectLoading 与切换生命周期', async () => {

@@ -25,6 +25,8 @@ let renderSidebar: () => void = () => {};
 let onProjectLoaded: () => void = () => {};
 /** 换项目或进入演示项目前清理只属于当前目录的临时授权与预览资源。 */
 let onProjectClosing: () => void = () => {};
+/** 每次替换内存项目事实前失效上一项目的异步结果与页面缓存。 */
+let onProjectStateReset: () => void = () => {};
 /** 无论项目载入成功或失败都必须收束切换状态。 */
 let onProjectLoadSettled: (succeeded: boolean) => void = () => {};
 /** 保存全部完成（清除崩溃备份挂点；A1） */
@@ -95,6 +97,7 @@ export function bindProjectIoHooks(opts: {
   renderSidebar: () => void;
   onProjectLoaded?: () => void;
   onProjectClosing?: () => void;
+  onProjectStateReset?: () => void;
   onProjectLoadSettled?: (succeeded: boolean) => void;
   onSaved?: () => void;
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
@@ -106,6 +109,7 @@ export function bindProjectIoHooks(opts: {
   renderSidebar = opts.renderSidebar;
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
   onProjectClosing = opts.onProjectClosing ?? (() => {});
+  onProjectStateReset = opts.onProjectStateReset ?? (() => {});
   onProjectLoadSettled = opts.onProjectLoadSettled ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
   onSaveSettled = opts.onSaveSettled ?? (() => {});
@@ -177,6 +181,7 @@ async function loadProjectFromHandle(
   options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean },
 ): Promise<void> {
   state.projectLoading = true;
+  onProjectStateReset();
   if ((options.source ?? 'normal') === 'normal') {
     state.reviewWorkspace = null;
     state.mainTab = 'editor';
@@ -186,6 +191,8 @@ async function loadProjectFromHandle(
   state.dirName = dir.name;
   state.dirHandle = dir;
   state.scenes.clear();
+  state.lastValidation = null;
+  state.lastEdges = [];
   state.timelines = [];
   state.pendingTimelineDeletes = [];
   state.pendingTimelineRestores.clear();
@@ -921,11 +928,14 @@ export function loadDemoProject(): void {
     onProjectClosing();
     assetRefreshRevision += 1;
     state.projectLoading = true;
+  onProjectStateReset();
   state.reviewWorkspace = null;
   state.mainTab = 'editor';
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
   state.scenes.clear();
+  state.lastValidation = null;
+  state.lastEdges = [];
   state.timelines = [];
   state.pendingTimelineDeletes = [];
   state.pendingTimelineRestores.clear();
