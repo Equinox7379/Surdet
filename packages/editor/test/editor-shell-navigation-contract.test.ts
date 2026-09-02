@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EDITOR_MODES } from '../src/shell/editor-modes.js';
-import { renderModeNavigation } from '../src/shell/app-shell.js';
+import { EDITOR_MODE_GROUPS, EDITOR_MODES } from '../src/shell/editor-modes.js';
+import { renderModeNavigation, renderProjectBar } from '../src/shell/app-shell.js';
 
 class FakeElement {
   readonly tagName: string;
@@ -49,7 +49,7 @@ class FakeElement {
   querySelectorAll(selector: string): FakeElement[] {
     const found: FakeElement[] = [];
     const match = (element: FakeElement): boolean => {
-      if (selector === 'button') return element.tagName === 'BUTTON';
+      if (/^[a-z]+$/i.test(selector)) return element.tagName === selector.toUpperCase();
       const data = /^\[data-([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
       if (data === null) return false;
       const value = element.getAttribute(`data-${data[1]}`);
@@ -87,6 +87,15 @@ describe('editor shell navigation contract', () => {
       'preview-view', 'review-view', 'stats-view', 'audit-view',
     ]);
     expect(new Set(EDITOR_MODES.map(({ panelId }) => panelId)).size).toBe(EDITOR_MODES.length);
+    expect(EDITOR_MODE_GROUPS).toEqual([
+      { id: 'create', label: '创作' },
+      { id: 'check', label: '检查' },
+      { id: 'project', label: '项目' },
+    ]);
+    expect(EDITOR_MODES.map(({ group }) => group)).toEqual([
+      'create', 'create', 'create', 'create', 'create',
+      'check', 'check', 'project', 'project',
+    ]);
   });
 
   it('renders semantic controls and dispatches every mode through the single callback', () => {
@@ -94,8 +103,15 @@ describe('editor shell navigation contract', () => {
     const selected: string[] = [];
     const navigation = renderModeNavigation('review', (mode) => selected.push(mode)) as unknown as FakeElement;
     const buttons = navigation.querySelectorAll('button');
+    const groups = navigation.querySelectorAll('[data-mode-group]');
 
     expect(buttons).toHaveLength(EDITOR_MODES.length);
+    expect(groups.map((group) => group.getAttribute('data-mode-group'))).toEqual([
+      'create', 'check', 'project',
+    ]);
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
+      '创作', '检查', '项目',
+    ]);
     for (const [index, mode] of EDITOR_MODES.entries()) {
       const button = buttons[index]!;
       expect(button.textContent).toBe(mode.label);
@@ -107,5 +123,37 @@ describe('editor shell navigation contract', () => {
     }
 
     expect(selected).toEqual(EDITOR_MODES.map(({ id }) => id));
+  });
+
+  it('separates product, context, commands, and feedback without changing action callbacks', () => {
+    vi.stubGlobal('document', documentStub);
+    const callbacks = {
+      onOpenProject: vi.fn(),
+      onOpenReview: vi.fn(),
+      onUndo: vi.fn(),
+      onRedo: vi.fn(),
+      onSaveProject: vi.fn(),
+    };
+    const bar = renderProjectBar({
+      projectName: '长安惊梦',
+      objectLabel: '场景 雨夜抵达',
+      saveState: 'saved',
+      canUndo: true,
+      canRedo: false,
+    }, callbacks) as unknown as FakeElement;
+
+    expect(bar.querySelectorAll('[data-editor-region]').map((node) => node.getAttribute('data-editor-region')))
+      .toEqual([
+        'project-bar',
+        'product-identity',
+        'project-context',
+        'global-commands',
+        'operation-feedback',
+      ]);
+    expect(bar.querySelectorAll('[data-command-group]').map((node) => node.getAttribute('data-command-group')))
+      .toEqual(['project', 'edit', 'save']);
+    expect(bar.querySelectorAll('kbd').map((node) => node.textContent)).toEqual(['Ctrl+Z', 'Ctrl+Y', 'Ctrl+S']);
+    expect(bar.textContent).toContain('剧情创作');
+    expect(bar.textContent).toContain('当前工作');
   });
 });

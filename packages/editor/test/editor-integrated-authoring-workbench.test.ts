@@ -192,11 +192,23 @@ describe('integrated authoring workbench contract', () => {
     const frameRules = ruleBodiesMatching(appShellCss, /\.editor-application-frame\s*$/i);
     expect(frameRules.length).toBeGreaterThan(0);
     expect(frameRules[0]).toMatch(/grid-template-columns\s*:\s*minmax\(0\s*,\s*1fr\)/i);
-    expect(frameRules[0]).toMatch(/grid-template-rows\s*:\s*auto\s+minmax\(0\s*,\s*1fr\)/i);
+    expect(frameRules[0]).toMatch(
+      /grid-template-rows\s*:\s*auto\s+auto\s+minmax\(0\s*,\s*1fr\)/i,
+    );
+
+    const emptyConflictHostRules = ruleBodiesMatching(
+      appShellCss,
+      /\.timeline-autosave-conflict-host:empty\s*$/i,
+    );
+    expect(emptyConflictHostRules.join('\n')).toMatch(/display\s*:\s*none/i);
+
+    const surfaceRules = ruleBodiesMatching(appShellCss, /\.editor-mode-surface\s*$/i);
+    expect(surfaceRules.join('\n')).toMatch(/grid-row\s*:\s*3/i);
 
     const navigationRules = ruleBodiesMatching(appShellCss, /\.editor-mode-navigation\s*$/i);
     expect(navigationRules.length).toBeGreaterThan(0);
     expect(navigationRules[0]).toMatch(/flex-direction\s*:\s*row/i);
     expect(navigationRules[0]).toMatch(/overflow-x\s*:\s*auto/i);
+    expect(navigationRules[0]).toMatch(/grid-row\s*:\s*1/i);
   });
 });

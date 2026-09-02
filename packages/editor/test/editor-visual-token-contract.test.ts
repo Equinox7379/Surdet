@@ -44,19 +44,19 @@ const migratedCss = [tokensCss, componentsCss, appShellCss]
 describe('editor visual token contract', () => {
   it('declares the approved primitive color family exactly', () => {
     const expected = {
-      '--surdet-color-paper-0': '#f6f7f5',
-      '--surdet-color-paper-50': '#ffffff',
-      '--surdet-color-paper-100': '#ecefec',
-      '--surdet-color-ink-900': '#1a1e21',
-      '--surdet-color-ink-600': '#53616a',
-      '--surdet-color-frame-900': '#162832',
-      '--surdet-color-line-300': '#d7dbdc',
-      '--surdet-color-line-600': '#8e9a9f',
-      '--surdet-color-blue-600': '#315b78',
+      '--surdet-color-paper-0': '#f3f1ed',
+      '--surdet-color-paper-50': '#fbfaf8',
+      '--surdet-color-paper-100': '#e9e6e0',
+      '--surdet-color-ink-900': '#242321',
+      '--surdet-color-ink-600': '#66635e',
+      '--surdet-color-frame-900': '#1d2326',
+      '--surdet-color-line-300': '#d2cec6',
+      '--surdet-color-line-600': '#85817a',
+      '--surdet-color-rust-600': '#a34f3b',
       '--surdet-color-provenance-600': '#6f5a45',
-      '--surdet-color-success-600': '#3e6b53',
-      '--surdet-color-warning-600': '#9a6728',
-      '--surdet-color-danger-600': '#a13b35',
+      '--surdet-color-success-600': '#3f6851',
+      '--surdet-color-warning-600': '#946426',
+      '--surdet-color-danger-600': '#9a4039',
     } as const;
 
     for (const [name, value] of Object.entries(expected)) {
@@ -69,13 +69,13 @@ describe('editor visual token contract', () => {
       '--surdet-surface-app': 'var(--surdet-color-paper-0)',
       '--surdet-surface-panel': 'var(--surdet-color-paper-50)',
       '--surdet-surface-subtle': 'var(--surdet-color-paper-100)',
-      '--surdet-surface-selected': '#e1e8e5',
+      '--surdet-surface-selected': '#e6e1da',
       '--surdet-text-primary': 'var(--surdet-color-ink-900)',
       '--surdet-text-secondary': 'var(--surdet-color-ink-600)',
       '--surdet-border-default': 'var(--surdet-color-line-300)',
       '--surdet-border-strong': 'var(--surdet-color-line-600)',
-      '--surdet-action-primary': 'var(--surdet-color-blue-600)',
-      '--surdet-focus-ring': '#1e648e',
+      '--surdet-action-primary': 'var(--surdet-color-rust-600)',
+      '--surdet-focus-ring': '#8f402f',
       '--surdet-state-provenance': 'var(--surdet-color-provenance-600)',
       '--surdet-state-success': 'var(--surdet-color-success-600)',
       '--surdet-state-warning': 'var(--surdet-color-warning-600)',
@@ -103,8 +103,12 @@ describe('editor visual token contract', () => {
       .filter(([name]) => name.startsWith(prefix))
       .map(([, value]) => value);
 
-    expect(scaleValues('--surdet-space-')).toEqual(['8px', '12px', '16px', '24px', '32px', '48px']);
-    expect(scaleValues('--surdet-radius-')).toEqual(['0', '2px', '4px']);
+    expect(scaleValues('--surdet-type-')).toEqual(['13px', '14px', '15px', '17px', '21px', '25px']);
+    expect(scaleValues('--surdet-space-')).toEqual([
+      '4px', '6px', '8px', '12px', '16px', '20px', '24px', '32px', '40px', '48px', '64px',
+    ]);
+    expect(scaleValues('--surdet-radius-')).toEqual(['0', '3px', '6px']);
+    expect(tokenValues.get('--surdet-control-height')).toBe('38px');
     expect(tokenValues.get('--surdet-focus-width')).toBe('2px');
 
     const motionDurations = scaleValues('--surdet-motion-')
@@ -173,6 +177,17 @@ describe('editor visual token contract', () => {
     expect(focusRules.join('\n')).toMatch(/outline-offset\s*:/i);
   });
 
+  it('does not globally resize professional mode controls', () => {
+    const broadControlRules = ruleBodiesMatching(
+      componentsCss,
+      /#app[^{}]*(?:input|select|textarea)/i,
+    );
+    expect(broadControlRules.length).toBeGreaterThan(0);
+    expect(broadControlRules.join('\n')).not.toMatch(
+      /min-height\s*:|border-color\s*:|font-size\s*:/i,
+    );
+  });
+
   it('loads legacy compatibility first and migrated layers in dependency order', () => {
     const hrefs = [...indexHtml.matchAll(/<link\b[^>]*>/gi)]
       .map((match) => match[0])
@@ -199,22 +214,23 @@ describe('editor visual token contract', () => {
     expect(projectBarRules.length).toBeGreaterThan(0);
     expect(projectBarRules[0]).toMatch(/flex\s*:\s*0\s+0\s+auto/i);
 
-    const narrowStart = appShellCss.indexOf('@media (max-width: 1120px)');
-    const phoneStart = appShellCss.indexOf('@media (max-width: 720px)');
+    const narrowStart = appShellCss.indexOf('@media (max-width: 1360px)');
+    const phoneStart = appShellCss.indexOf('@media (max-width: 640px)');
     expect(narrowStart).toBeGreaterThanOrEqual(0);
     expect(phoneStart).toBeGreaterThan(narrowStart);
     const narrowRules = appShellCss.slice(narrowStart, phoneStart);
-    expect(narrowRules).toMatch(
-      /grid-template-columns\s*:\s*minmax\(140px,\s*auto\)\s+minmax\(0,\s*1fr\)\s+minmax\(0,\s*22vw\)/i,
-    );
-    expect(narrowRules).toMatch(
-      /\.editor-project-bar\s+#status\s*\{[^}]*grid-column\s*:\s*3[^}]*grid-row\s*:\s*1/is,
-    );
+    expect(narrowRules).toMatch(/grid-template-areas\s*:\s*["']identity\s+context\s+feedback["']\s*["']commands\s+commands\s+commands["']/i);
+    expect(narrowRules).toMatch(/\.editor-project-commands\s*\{[^}]*grid-area\s*:\s*commands/is);
     const statusRules = ruleBodiesMatching(appShellCss, /\.editor-project-bar\s+#status\s*$/i);
     expect(statusRules.join('\n')).toMatch(/min-width\s*:\s*0/i);
     expect(statusRules.join('\n')).toMatch(/overflow\s*:\s*hidden/i);
     expect(statusRules.join('\n')).toMatch(/text-overflow\s*:\s*ellipsis/i);
     expect(statusRules.join('\n')).toMatch(/white-space\s*:\s*nowrap/i);
-    expect(narrowRules).toMatch(/\.editor-project-bar\s+#status\s*\{[^}]*max-width\s*:\s*22vw/is);
+    expect(narrowRules).toMatch(/\.editor-operation-feedback\s*\{[^}]*grid-area\s*:\s*feedback/is);
+
+    const phoneRules = appShellCss.slice(phoneStart);
+    expect(phoneRules).toMatch(
+      /\.editor-project-commands\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*overflow-x\s*:\s*visible/is,
+    );
   });
 });
