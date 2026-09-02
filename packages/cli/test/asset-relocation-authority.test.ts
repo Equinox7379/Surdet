@@ -356,6 +356,26 @@ describe('project asset relocation authority', () => {
     await expect(stat(absolute(fixtureValue.projectRoot, targetPath))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('preserves a source replaced after the backup link but before source removal', async () => {
+    let replaced = false;
+    const fixtureValue = await fixture({
+      faultAction: async (point, projectRoot) => {
+        if (point !== 'before_source_remove' || replaced) return;
+        replaced = true;
+        const source = absolute(projectRoot, sourcePath);
+        await rename(source, `${source}.owned`);
+        await writeFile(source, 'source-bytes');
+      },
+    });
+    const planned = await plan(fixtureValue);
+
+    await expect(fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(fixtureValue.sourceFile, 'utf8')).resolves.toBe('source-bytes');
+    await expect(stat(absolute(fixtureValue.projectRoot, targetPath))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rechecks text identity immediately before publish and preserves a concurrent external edit', async () => {
     let replaced = false;
     const fixtureValue = await fixture({
@@ -455,6 +475,58 @@ describe('project asset relocation authority', () => {
       .resolves.toContain('new');
   });
 
+  it('resumes rollback after interruption between displacing and publishing a text file', async () => {
+    const fixtureValue = await fixture({ faultPoint: 'after_text_replace_before_journal' });
+    const planned = await plan(fixtureValue);
+    await expect(fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const interruptedRollback = makeAuthority(
+      fixtureValue.paths,
+      'after_text_displaced_before_publish',
+      undefined,
+      fixtureValue.barrierStore,
+    );
+
+    await expect(interruptedRollback.recover(operationId, { action: 'rollback' }))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    await expect(stat(absolute(fixtureValue.projectRoot, scenePath))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const recovered = makeAuthority(fixtureValue.paths, undefined, undefined, fixtureValue.barrierStore);
+    const result = await recovered.recover(operationId, { action: 'rollback' });
+    expect(result.operation.status).toBe('ROLLED_BACK');
+    await expect(readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+    await expect(readFile(fixtureValue.sourceFile, 'utf8')).resolves.toBe('source-bytes');
+  });
+
+  it('resumes undo after interruption between displacing and restoring a text file', async () => {
+    const fixtureValue = await fixture();
+    const planned = await plan(fixtureValue);
+    const committed = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    });
+    const interruptedUndo = makeAuthority(
+      fixtureValue.paths,
+      'after_text_displaced_before_publish',
+      undefined,
+      fixtureValue.barrierStore,
+    );
+
+    await expect(interruptedUndo.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    await expect(stat(absolute(fixtureValue.projectRoot, scenePath))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const recovered = makeAuthority(fixtureValue.paths, undefined, undefined, fixtureValue.barrierStore);
+    const result = await recovered.recover(operationId, { action: 'resume' });
+    expect(result.operation.status).toBe('UNDONE');
+    await expect(readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+    await expect(readFile(fixtureValue.sourceFile, 'utf8')).resolves.toBe('source-bytes');
+  });
+
   it('finishes a durable receipt window instead of rolling committed files back', async () => {
     const fixtureValue = await fixture({ faultPoint: 'after_receipt_before_committed' });
     const planned = await plan(fixtureValue);
@@ -470,6 +542,25 @@ describe('project asset relocation authority', () => {
     expect(result.operation.status).toBe('COMMITTED');
     expect(result.receipt).not.toBeNull();
     await expect(readFile(absolute(fixtureValue.projectRoot, targetPath), 'utf8')).resolves.toBe('source-bytes');
+  });
+
+  it('does not persist a success receipt after a result changes during receipt creation', async () => {
+    let modified = false;
+    const fixtureValue = await fixture({
+      faultAction: async (point, projectRoot) => {
+        if (point !== 'before_receipt_persist' || modified) return;
+        modified = true;
+        await writeFile(absolute(projectRoot, scenePath), 'external receipt-window edit\n');
+      },
+    });
+    const planned = await plan(fixtureValue);
+
+    await expect(fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect((await fixtureValue.store.read(operationId))?.receipt).toBeNull();
+    await expect(readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8'))
+      .resolves.toBe('external receipt-window edit\n');
   });
 
   it('rejects a target parent directory replaced after source backup', async () => {
@@ -492,6 +583,27 @@ describe('project asset relocation authority', () => {
     })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
     await expect(stat(absolute(fixtureValue.projectRoot, archiveTarget))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(fixtureValue.sourceFile, 'utf8')).resolves.toBe('source-bytes');
+  });
+
+  it('rejects a target parent directory replaced immediately before target publication', async () => {
+    const archiveTarget = 'content/assets/bg/archive/new.webp';
+    let replaced = false;
+    const fixtureValue = await fixture({
+      targetPath: archiveTarget,
+      faultAction: async (point, projectRoot) => {
+        if (point !== 'before_target_publish' || replaced) return;
+        replaced = true;
+        const directory = path.dirname(absolute(projectRoot, archiveTarget));
+        await rename(directory, `${directory}-old`);
+        await mkdir(directory);
+      },
+    });
+    const planned = await plan(fixtureValue);
+
+    await expect(fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(stat(absolute(fixtureValue.projectRoot, archiveTarget))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('does not delete a target replaced after rollback intent', async () => {
@@ -549,6 +661,34 @@ describe('project asset relocation authority', () => {
       receiptFingerprint: committed.receipt!.receiptFingerprint,
     })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
     expect((await fixtureValue.store.read(operationId))?.journal.status).toBe('RECOVERY_REQUIRED');
+    await expect(readFile(target, 'utf8')).resolves.toBe('external-target');
+  });
+
+  it('does not delete a target modified in place after undo intent', async () => {
+    const fixtureValue = await fixture();
+    const planned = await plan(fixtureValue);
+    const committed = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    });
+    const target = absolute(fixtureValue.projectRoot, targetPath);
+    let modified = false;
+    const authority = makeAuthority(
+      fixtureValue.paths,
+      undefined,
+      undefined,
+      fixtureValue.barrierStore,
+      1,
+      async (point) => {
+        if (point !== 'after_undo_target_intent' || modified) return;
+        modified = true;
+        await writeFile(target, 'external-target');
+      },
+    );
+
+    await expect(authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
     await expect(readFile(target, 'utf8')).resolves.toBe('external-target');
   });
 

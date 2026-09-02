@@ -53,11 +53,15 @@ export type AssetRelocationFaultPoint =
   | 'after_binary_backup_intent'
   | 'after_binary_backup_before_journal'
   | 'after_binary_backups_before_targets'
+  | 'before_source_remove'
   | 'after_target_link_intent'
+  | 'before_target_publish'
   | 'after_target_link_before_journal'
   | 'after_text_replace_intent'
   | 'before_text_publish'
+  | 'after_text_displaced_before_publish'
   | 'after_text_replace_before_journal'
+  | 'before_receipt_persist'
   | 'after_receipt_before_committed'
   | 'after_rollback_target_intent'
   | 'after_undo_target_intent';
@@ -696,26 +700,10 @@ export class ProjectAssetRelocationAuthority {
     if (durableEvidence.sha256 !== expectedResultSha256) {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `持久文本副本身份不一致：${relativePath}`);
     }
-    const current = await projectFileEvidence(this.paths, relativePath);
-    if (current === null) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本文件缺失：${relativePath}`);
-    }
-    if (current.sha256 === expectedResultSha256) {
-      if (knownResultIdentity !== null && sameFileIdentity(current.identity, knownResultIdentity)) {
-        return relocationEvidence(current);
-      }
-      if (knownResultIdentity === null && sameNodeIdentity(current.identity, durableEvidence.identity)) {
-        return relocationEvidence(current);
-      }
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本结果被同内容外部文件替换：${relativePath}`);
-    }
-    if (current.sha256 !== expectedCurrentSha256
-      || !sameFileIdentity(current.identity, expectedCurrentIdentity)) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本内容已被外部修改：${relativePath}`);
-    }
     const { parent } = await safeProjectParent(this.paths, relativePath);
     const target = absoluteAssetImportProjectPath(this.paths, relativePath);
     const temporary = path.join(parent, `.surdet-relocation-${nonce}.tmp`);
+    const displaced = path.join(parent, `.surdet-relocation-${nonce}.previous`);
     try {
       if (!await fileExists(temporary)) {
         await fs.link(durableSource, temporary);
@@ -728,18 +716,66 @@ export class ProjectAssetRelocationAuthority {
         }
       }
       await this.fault('before_text_publish');
-      const beforePublish = await projectFileEvidence(this.paths, relativePath);
-      if (beforePublish === null || beforePublish.sha256 !== expectedCurrentSha256
-        || !sameFileIdentity(beforePublish.identity, expectedCurrentIdentity)) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布前发生变化：${relativePath}`);
+      let displacedEvidence = await fs.lstat(displaced).then(() => stableBinaryEvidence(displaced)).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      let beforePublish = await projectFileEvidence(this.paths, relativePath);
+      const resultIdentityMatches = beforePublish !== null && (knownResultIdentity === null
+        ? sameNodeIdentity(beforePublish.identity, durableEvidence.identity)
+        : sameFileIdentity(beforePublish.identity, knownResultIdentity));
+      if (beforePublish !== null && beforePublish.sha256 === expectedResultSha256 && resultIdentityMatches) {
+        if (displacedEvidence !== null) {
+          if (displacedEvidence.sha256 !== expectedCurrentSha256
+            || !sameFileIdentity(displacedEvidence.identity, expectedCurrentIdentity)) {
+            throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布保留文件身份不一致：${relativePath}`);
+          }
+          await removeExactFile(displaced);
+        }
+        return relocationEvidence(beforePublish);
       }
-      await fs.rename(temporary, target);
+      if (displacedEvidence === null) {
+        if (beforePublish === null || beforePublish.sha256 !== expectedCurrentSha256
+          || !sameFileIdentity(beforePublish.identity, expectedCurrentIdentity)) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布前发生变化：${relativePath}`);
+        }
+        await fs.rename(target, displaced);
+        await syncParentDirectories(parent);
+        displacedEvidence = await stableBinaryEvidence(displaced);
+        if (displacedEvidence.sha256 !== expectedCurrentSha256
+          || !sameFileIdentity(displacedEvidence.identity, expectedCurrentIdentity)) {
+          if (await projectFileEvidence(this.paths, relativePath) === null) {
+            await fs.link(displaced, target);
+            await syncFileAndParent(target);
+          }
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布时捕获到外部修改：${relativePath}`);
+        }
+        beforePublish = null;
+      } else if (displacedEvidence.sha256 !== expectedCurrentSha256
+        || !sameFileIdentity(displacedEvidence.identity, expectedCurrentIdentity)) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布保留文件身份不一致：${relativePath}`);
+      }
+      if (beforePublish !== null) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布目标被外部占用：${relativePath}`);
+      }
+      await this.fault('after_text_displaced_before_publish');
+      try {
+        await fs.link(temporary, target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
       await syncFileAndParent(target);
       const published = await projectFileEvidence(this.paths, relativePath);
       if (published === null || published.sha256 !== expectedResultSha256
         || !sameNodeIdentity(published.identity, durableEvidence.identity)) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布后身份不一致：${relativePath}`);
       }
+      const beforeDiscard = await stableBinaryEvidence(displaced);
+      if (beforeDiscard.sha256 !== expectedCurrentSha256
+        || !sameFileIdentity(beforeDiscard.identity, expectedCurrentIdentity)) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布保留文件在清理前发生变化：${relativePath}`);
+      }
+      await removeExactFile(displaced);
       return relocationEvidence(published);
     } finally {
       await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -778,9 +814,12 @@ export class ProjectAssetRelocationAuthority {
         await fs.link(source, backup);
         await syncFileAndParent(backup);
         const linked = await stableBinaryEvidence(backup);
+        await this.fault('before_source_remove');
         const sourceBeforeRemove = await projectFileEvidence(this.paths, item.sourcePath);
-        if (sourceBeforeRemove === null || !sameNodeIdentity(sourceBeforeRemove.identity, linked.identity)
-          || sourceBeforeRemove.sha256 !== linked.sha256) {
+        if (!sameFileIdentity(linked.identity, baseline.source) || linked.sha256 !== baseline.source.sha256
+          || sourceBeforeRemove === null || !sameFileIdentity(sourceBeforeRemove.identity, baseline.source)
+          || !sameNodeIdentity(sourceBeforeRemove.identity, linked.identity)
+          || sourceBeforeRemove.sha256 !== baseline.source.sha256) {
           return this.enterRecovery(record.request.operationId, 'commit', `素材备份建立后源文件发生变化：${item.sourcePath}`);
         }
         await removeExactFile(source);
@@ -791,6 +830,16 @@ export class ProjectAssetRelocationAuthority {
           || !sameNodeIdentity(sourceEvidence.identity, backupEvidence.identity)
           || sourceEvidence.sha256 !== baseline.source.sha256 || backupEvidence.sha256 !== baseline.source.sha256) {
           return this.enterRecovery(record.request.operationId, 'commit', `素材备份中间状态身份不一致：${item.sourcePath}`);
+        }
+        await this.fault('before_source_remove');
+        const sourceBeforeRemove = await projectFileEvidence(this.paths, item.sourcePath);
+        const backupBeforeRemove = await stableBinaryEvidence(backup);
+        if (sourceBeforeRemove === null || !sameFileIdentity(sourceBeforeRemove.identity, baseline.source)
+          || !sameFileIdentity(backupBeforeRemove.identity, baseline.source)
+          || !sameNodeIdentity(sourceBeforeRemove.identity, backupBeforeRemove.identity)
+          || sourceBeforeRemove.sha256 !== baseline.source.sha256
+          || backupBeforeRemove.sha256 !== baseline.source.sha256) {
+          return this.enterRecovery(record.request.operationId, 'commit', `素材删除前身份发生变化：${item.sourcePath}`);
         }
         await removeExactFile(source);
         await syncParentDirectories(path.dirname(backup));
@@ -830,8 +879,18 @@ export class ProjectAssetRelocationAuthority {
         return this.enterRecovery(record.request.operationId, 'commit', `目标目录身份发生变化：${item.targetPath}`);
       }
       const backupEvidence = await stableBinaryEvidence(backup);
+      if (!sameFileIdentity(backupEvidence.identity, baseline.source)
+        || backupEvidence.sha256 !== baseline.source.sha256) {
+        return this.enterRecovery(record.request.operationId, 'commit', `目标发布前备份身份发生变化：${item.targetPath}`);
+      }
       let targetEvidence = await projectFileEvidence(this.paths, item.targetPath);
       if (targetEvidence === null) {
+        await this.fault('before_target_publish');
+        const publishParent = await safeProjectParent(this.paths, item.targetPath);
+        const publishDirectory = await assetImportDirectoryIdentity(publishParent.parent);
+        if (!sameDirectoryNodeIdentity(publishDirectory, baseline.targetDirectory)) {
+          return this.enterRecovery(record.request.operationId, 'commit', `目标发布前目录身份发生变化：${item.targetPath}`);
+        }
         try {
           await fs.link(backup, target);
           await syncFileAndParent(target);
@@ -840,7 +899,11 @@ export class ProjectAssetRelocationAuthority {
         }
         targetEvidence = await projectFileEvidence(this.paths, item.targetPath);
       }
-      if (targetEvidence === null || !sameNodeIdentity(targetEvidence.identity, backupEvidence.identity)
+      const targetDirectoryAfter = await safeProjectParent(this.paths, item.targetPath)
+        .then(({ parent }) => assetImportDirectoryIdentity(parent));
+      if (!sameDirectoryNodeIdentity(targetDirectoryAfter, baseline.targetDirectory)
+        || targetEvidence === null || !sameNodeIdentity(targetEvidence.identity, backupEvidence.identity)
+        || !sameFileIdentity(targetEvidence.identity, baseline.source)
         || targetEvidence.sha256 !== baseline.source.sha256) {
         return this.enterRecovery(record.request.operationId, 'commit', `目标素材发布身份不一致：${item.targetPath}`);
       }
@@ -1021,8 +1084,13 @@ export class ProjectAssetRelocationAuthority {
       const moves = [];
       for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
         const item = record.journal.binaryItems[index]!;
+        const baseline = record.binaryBaselines[index]!;
         const target = await projectFileEvidence(this.paths, item.targetPath);
-        if (target === null) return this.enterRecovery(record.request.operationId, 'commit', `完成回执缺少目标素材：${item.targetPath}`);
+        if (target === null || item.targetIdentity === null
+          || target.sha256 !== baseline.source.sha256
+          || !sameFileIdentity(target.identity, item.targetIdentity)) {
+          return this.enterRecovery(record.request.operationId, 'commit', `完成回执缺少可信目标素材：${item.targetPath}`);
+        }
         moves.push({
           moveId: item.moveId,
           sourcePath: item.sourcePath,
@@ -1030,13 +1098,20 @@ export class ProjectAssetRelocationAuthority {
           targetIdentity: relocationEvidence(target),
         });
       }
-      const textFiles = record.textFiles.map((file, index) => {
+      const textFiles = [];
+      for (let index = 0; index < record.textFiles.length; index += 1) {
+        const file = record.textFiles[index]!;
         const identity = record.journal.textResultIdentities[index];
         if (identity === null || identity === undefined) {
           throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `完成回执缺少文本身份：${file.path}`);
         }
-        return { path: file.path, sha256: file.afterSha256, identity };
-      });
+        const current = await projectFileEvidence(this.paths, file.path);
+        if (current === null || current.sha256 !== file.afterSha256
+          || !sameFileIdentity(current.identity, identity)) {
+          return this.enterRecovery(record.request.operationId, 'commit', `完成回执缺少可信文本结果：${file.path}`);
+        }
+        textFiles.push({ path: file.path, sha256: file.afterSha256, identity });
+      }
       const semantic = {
         schemaVersion: 1 as const,
         receiptId: crypto.randomUUID(),
@@ -1055,8 +1130,11 @@ export class ProjectAssetRelocationAuthority {
         ...semantic,
         receiptFingerprint: await this.textHasher.sha256(stableStringify(semantic)),
       };
+      await this.fault('before_receipt_persist');
+      await this.verifyCommittedFiles(record);
       record = await this.update(record, { receipt });
     }
+    await this.verifyCommittedFiles(record);
     await this.fault('after_receipt_before_committed');
     if (record.journal.status !== 'COMMITTED') {
       record = await this.update(record, { journal: { status: 'COMMITTED', recoveryPhase: null } });
@@ -1086,6 +1164,22 @@ export class ProjectAssetRelocationAuthority {
       if (state === 'PENDING' || state === 'ROLLED_BACK') continue;
       const current = await projectFileEvidence(this.paths, file.path);
       if (current === null) {
+        if (state === 'ROLLBACK_INTENT') {
+          const afterIdentity = record.journal.textResultIdentities[index];
+          if (afterIdentity !== null && afterIdentity !== undefined) {
+            const restoredIdentity = await this.replaceTextDurably(
+              file.path,
+              file.backupRelativePath,
+              afterIdentity,
+              file.afterSha256,
+              file.beforeSha256,
+              null,
+              `rollback-${record.request.operationId}-${index}`,
+            );
+            record = await this.updateText(record, index, 'ROLLED_BACK', restoredIdentity);
+            continue;
+          }
+        }
         return this.enterRecovery(record.request.operationId, 'rollback', `回滚文本缺失：${file.path}`);
       }
       if (current.sha256 === file.beforeSha256) {
@@ -1108,7 +1202,9 @@ export class ProjectAssetRelocationAuthority {
         }
         afterIdentity = relocationEvidence(current);
       }
-      if (state !== 'ROLLBACK_INTENT') record = await this.updateText(record, index, 'ROLLBACK_INTENT');
+      if (state !== 'ROLLBACK_INTENT' || record.journal.textResultIdentities[index] === null) {
+        record = await this.updateText(record, index, 'ROLLBACK_INTENT', afterIdentity);
+      }
       const restoredIdentity = await this.replaceTextDurably(
         file.path,
         file.backupRelativePath,
@@ -1122,26 +1218,41 @@ export class ProjectAssetRelocationAuthority {
     }
 
     await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    let binaryRecoveryMessage: string | null = null;
     for (let index = record.journal.binaryItems.length - 1; index >= 0; index -= 1) {
       let item = record.journal.binaryItems[index]!;
       if (item.state === 'SOURCE' || item.state === 'ROLLED_BACK' || item.state === 'BACKUP_INTENT' || item.state === 'BACKUP') continue;
       const baseline = record.binaryBaselines[index]!;
       const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      const targetParent = await safeProjectParent(this.paths, item.targetPath);
+      const targetDirectory = await assetImportDirectoryIdentity(targetParent.parent);
+      if (!sameDirectoryNodeIdentity(targetDirectory, baseline.targetDirectory)) {
+        binaryRecoveryMessage ??= `目标目录在回滚前发生变化：${item.targetPath}`;
+        continue;
+      }
       const target = await projectFileEvidence(this.paths, item.targetPath);
       if (target !== null) {
         const backupEvidence = await stableBinaryEvidence(backup);
-        if (!sameNodeIdentity(target.identity, backupEvidence.identity) || target.sha256 !== baseline.source.sha256) {
-          return this.enterRecovery(record.request.operationId, 'rollback', `外部修改阻止素材目标回滚：${item.targetPath}`);
+        if (!sameNodeIdentity(target.identity, backupEvidence.identity)
+          || !sameFileIdentity(target.identity, baseline.source)
+          || target.sha256 !== baseline.source.sha256) {
+          binaryRecoveryMessage ??= `外部修改阻止素材目标回滚：${item.targetPath}`;
+          continue;
         }
         if (item.state !== 'ROLLBACK_INTENT') {
           record = await this.updateBinaryItem(record, index, 'ROLLBACK_INTENT');
           item = record.journal.binaryItems[index]!;
         }
         await this.fault('after_rollback_target_intent');
+        const targetParentBeforeRemove = await safeProjectParent(this.paths, item.targetPath);
+        const targetDirectoryBeforeRemove = await assetImportDirectoryIdentity(targetParentBeforeRemove.parent);
         const targetBeforeRemove = await projectFileEvidence(this.paths, item.targetPath);
-        if (targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backupEvidence.identity)
+        if (!sameDirectoryNodeIdentity(targetDirectoryBeforeRemove, baseline.targetDirectory)
+          || targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backupEvidence.identity)
+          || !sameFileIdentity(targetBeforeRemove.identity, baseline.source)
           || targetBeforeRemove.sha256 !== baseline.source.sha256) {
-          return this.enterRecovery(record.request.operationId, 'rollback', `目标素材在回滚删除前发生变化：${item.targetPath}`);
+          binaryRecoveryMessage ??= `目标素材在回滚删除前发生变化：${item.targetPath}`;
+          continue;
         }
         await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
       }
@@ -1172,6 +1283,9 @@ export class ProjectAssetRelocationAuthority {
         backupIdentity: backupExists ? relocationEvidence(await stableBinaryEvidence(backup)) : null,
         targetIdentity: null,
       });
+    }
+    if (binaryRecoveryMessage !== null) {
+      return this.enterRecovery(record.request.operationId, 'rollback', binaryRecoveryMessage);
     }
     record = await this.update(record, { journal: { status: 'ROLLED_BACK', recoveryPhase: null } });
     await this.barrierStore.resolveRelocationBarriers(record.request.operationId);
@@ -1223,12 +1337,14 @@ export class ProjectAssetRelocationAuthority {
     const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
     for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
       const item = record.journal.binaryItems[index]!;
+      const baseline = record.binaryBaselines[index]!;
       const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
       const target = await projectFileEvidence(this.paths, item.targetPath);
       const receiptMove = record.receipt.moves[index];
       if (target === null || receiptMove === undefined
         || !sameNodeIdentity(target.identity, backup.identity)
-        || !sameFileIdentity(target.identity, receiptMove.targetIdentity)) {
+        || !sameFileIdentity(target.identity, receiptMove.targetIdentity)
+        || target.sha256 !== baseline.source.sha256) {
         throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `目标素材已经变化，不能撤销：${item.targetPath}`);
       }
       if (!targetPaths.has(portableFold(item.sourcePath))
@@ -1254,6 +1370,22 @@ export class ProjectAssetRelocationAuthority {
       if (state === 'UNDONE') continue;
       const current = await projectFileEvidence(this.paths, file.path);
       if (current === null) {
+        if (state === 'UNDO_INTENT') {
+          const afterIdentity = record.journal.textResultIdentities[index];
+          if (afterIdentity !== null && afterIdentity !== undefined) {
+            const restoredIdentity = await this.replaceTextDurably(
+              file.path,
+              file.backupRelativePath,
+              afterIdentity,
+              file.afterSha256,
+              file.beforeSha256,
+              null,
+              `undo-${record.request.operationId}-${index}`,
+            );
+            record = await this.updateText(record, index, 'UNDONE', restoredIdentity);
+            continue;
+          }
+        }
         return this.enterRecovery(record.request.operationId, 'undo', `撤销文本缺失：${file.path}`);
       }
       if (current.sha256 === file.afterSha256) {
@@ -1287,9 +1419,17 @@ export class ProjectAssetRelocationAuthority {
       await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
       for (let index = record.journal.binaryItems.length - 1; index >= 0; index -= 1) {
         let item = record.journal.binaryItems[index]!;
+        const baseline = record.binaryBaselines[index]!;
         const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+        const targetParent = await safeProjectParent(this.paths, item.targetPath);
+        const targetDirectory = await assetImportDirectoryIdentity(targetParent.parent);
+        if (!sameDirectoryNodeIdentity(targetDirectory, baseline.targetDirectory)) {
+          return this.enterRecovery(record.request.operationId, 'undo', `目标目录在撤销前发生变化：${item.targetPath}`);
+        }
         const target = await projectFileEvidence(this.paths, item.targetPath);
-        if (target !== null && !sameNodeIdentity(target.identity, backup.identity)) {
+        if (target !== null && (!sameNodeIdentity(target.identity, backup.identity)
+          || !sameFileIdentity(target.identity, baseline.source)
+          || target.sha256 !== baseline.source.sha256)) {
           return this.enterRecovery(record.request.operationId, 'undo', `目标素材已被外部修改：${item.targetPath}`);
         }
         if (item.state !== 'UNDO_INTENT' && item.state !== 'UNDONE') {
@@ -1298,8 +1438,13 @@ export class ProjectAssetRelocationAuthority {
         }
         if (target !== null) {
           await this.fault('after_undo_target_intent');
+          const targetParentBeforeRemove = await safeProjectParent(this.paths, item.targetPath);
+          const targetDirectoryBeforeRemove = await assetImportDirectoryIdentity(targetParentBeforeRemove.parent);
           const targetBeforeRemove = await projectFileEvidence(this.paths, item.targetPath);
-          if (targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backup.identity)) {
+          if (!sameDirectoryNodeIdentity(targetDirectoryBeforeRemove, baseline.targetDirectory)
+            || targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backup.identity)
+            || !sameFileIdentity(targetBeforeRemove.identity, baseline.source)
+            || targetBeforeRemove.sha256 !== baseline.source.sha256) {
             return this.enterRecovery(record.request.operationId, 'undo', `目标素材在撤销删除前发生变化：${item.targetPath}`);
           }
           await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
