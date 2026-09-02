@@ -36,6 +36,9 @@ let onSaveSettled: (outcome: ProjectSaveOutcome) => void = () => {};
 let onTimelineDeleted: (timelineId: string) => void = () => {};
 /** 素材目录原子替换后，由装配层执行一次可等待的共享索引重建。 */
 let onAssetsRefreshed: (() => Promise<void>) | null = null;
+let onSceneMutationPlan: ((input: SceneMutationPlanInput) => Promise<SceneMutationPlanReference>) | null = null;
+let onSceneMutationCommit: ((input: SceneMutationCommitInput) => Promise<SceneMutationCommitResult>) | null = null;
+let onSceneCommitStateChanged: () => void = () => {};
 let assetRefreshRevision = 0;
 let activeProjectWriteOperations = 0;
 let projectTransitionPending = false;
@@ -97,6 +100,28 @@ export interface ProjectSaveOutcome {
   remainingDirty: boolean;
 }
 
+export interface SceneMutationPlanInput {
+  kind: 'rename' | 'delete';
+  sourcePath: string;
+  targetPath?: string;
+}
+
+export interface SceneMutationPlanReference {
+  operationId: string;
+  planFingerprint: string;
+}
+
+export interface SceneMutationCommitInput {
+  requestId: string;
+  plans: SceneMutationPlanReference[];
+  writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
+}
+
+export interface SceneMutationCommitResult {
+  writes: Array<{ path: string; sha256: string }>;
+  deletedPaths: string[];
+}
+
 export function bindProjectIoHooks(opts: {
   renderAll: () => void;
   runValidate: () => void;
@@ -109,6 +134,9 @@ export function bindProjectIoHooks(opts: {
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
   onTimelineDeleted?: (timelineId: string) => void;
   onAssetsRefreshed?: () => Promise<void>;
+  onSceneMutationPlan?: (input: SceneMutationPlanInput) => Promise<SceneMutationPlanReference>;
+  onSceneMutationCommit?: (input: SceneMutationCommitInput) => Promise<SceneMutationCommitResult>;
+  onSceneCommitStateChanged?: () => void;
 }): void {
   renderAll = opts.renderAll;
   runValidate = opts.runValidate;
@@ -121,6 +149,14 @@ export function bindProjectIoHooks(opts: {
   onSaveSettled = opts.onSaveSettled ?? (() => {});
   onTimelineDeleted = opts.onTimelineDeleted ?? (() => {});
   onAssetsRefreshed = opts.onAssetsRefreshed ?? null;
+  onSceneMutationPlan = opts.onSceneMutationPlan ?? null;
+  onSceneMutationCommit = opts.onSceneMutationCommit ?? null;
+  onSceneCommitStateChanged = opts.onSceneCommitStateChanged ?? (() => {});
+}
+
+export async function prepareSceneMutation(input: SceneMutationPlanInput): Promise<SceneMutationPlanReference> {
+  if (onSceneMutationPlan === null) throw new Error('场景安全保存服务未连接，未执行改名或删除');
+  return onSceneMutationPlan(input);
 }
 
 export async function openProject(): Promise<void> {
@@ -133,7 +169,7 @@ export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' } = {},
 ): Promise<void> {
-  if (state.pendingSceneDeletes.length > 0) {
+  if (state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null) {
     throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
   }
   await beginProjectTransition();
@@ -201,6 +237,7 @@ async function loadProjectFromHandle(
   state.dirHandle = dir;
   state.scenes.clear();
   state.pendingSceneDeletes = [];
+  state.pendingSceneCommit = null;
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = [];
@@ -435,6 +472,11 @@ export async function writeFileHandle(fh: FileSystemFileHandle, text: string): P
   await w.close();
 }
 
+export async function sceneTextSha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
   // values() 异步迭代器未包含在默认 DOM lib 类型中，显式断言
   const entries = (dir as unknown as {
@@ -455,6 +497,7 @@ export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: st
         eol: text.includes('\r\n') ? '\r\n' : '\n',
         dirty: false,
         handle: ent,
+        persistedSha256: await sceneTextSha256(text),
       });
     }
   }
@@ -502,6 +545,10 @@ export function sceneFileIdentity(file: string): string {
   return scenarioPathParts(file).join('/').toLocaleLowerCase('en-US');
 }
 
+export function sceneProjectPath(file: string): string {
+  return `content/scenario/${scenarioPathParts(file).join('/')}`;
+}
+
 export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
   const identity = sceneFileIdentity(file);
   return [...state.scenes].some(([key, scene]) => (
@@ -520,22 +567,6 @@ async function scenarioParentDirectory(
   let directory = await contentDir.getDirectoryHandle('scenario', { create });
   for (const part of parts) directory = await directory.getDirectoryHandle(part, { create });
   return { directory, fileName, relativeFile: [...parts, fileName].join('/') };
-}
-
-async function createScenarioFileHandle(
-  root: FileSystemDirectoryHandle,
-  file: string,
-): Promise<{ handle: FileSystemFileHandle; relativeFile: string }> {
-  const target = await scenarioParentDirectory(root, file, true);
-  return {
-    handle: await target.directory.getFileHandle(target.fileName, { create: true }),
-    relativeFile: target.relativeFile,
-  };
-}
-
-async function removeScenarioFile(root: FileSystemDirectoryHandle, file: string): Promise<void> {
-  const target = await scenarioParentDirectory(root, file, false);
-  await target.directory.removeEntry(target.fileName);
 }
 
 export interface TimelineAutosaveRestoreResult {
@@ -814,6 +845,7 @@ async function saveAllUnlocked(): Promise<void> {
     const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
       || state.timelines.some((entry) => entry.dirty)
       || state.pendingSceneDeletes.length > 0
+      || state.pendingSceneCommit !== null
       || state.pendingTimelineDeletes.length > 0
       || state.pendingTimelineRestores.size > 0;
     onSaveSettled({
@@ -828,6 +860,7 @@ async function saveAllUnlocked(): Promise<void> {
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
+    || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
   let saved = 0;
@@ -873,21 +906,147 @@ async function saveAllUnlocked(): Promise<void> {
       removed++;
     }
   }
+  const authoritySceneKeys = new Set<string>();
+  const newSceneKeys = [...state.scenes]
+    .filter(([, scene]) => scene.dirty && scene.handle === null && !scene.persistedSha256)
+    .map(([key]) => key);
+  let authoritySceneCommitAttempted = false;
+  if (state.dirHandle && onSceneMutationCommit !== null
+    && (state.pendingSceneDeletes.length > 0 || newSceneKeys.length > 0 || state.pendingSceneCommit !== null)) {
+    authoritySceneCommitAttempted = true;
+    try {
+      let pendingCommit = state.pendingSceneCommit;
+      if (pendingCommit === null) {
+        for (const key of newSceneKeys) authoritySceneKeys.add(key);
+        if (newSceneKeys.length > 0) {
+          for (const [key, scene] of state.scenes) {
+            if (scene.dirty) authoritySceneKeys.add(key);
+          }
+        }
+        for (const pending of state.pendingSceneDeletes) {
+          for (const key of pending.affectedSceneKeys ?? []) authoritySceneKeys.add(key);
+          if (pending.replacementKey) authoritySceneKeys.add(pending.replacementKey);
+        }
+        const plans = state.pendingSceneDeletes.map((pending) => {
+          if (!pending.operationId || !pending.planFingerprint) {
+            throw new Error(`场景“${pending.id}”缺少安全保存计划，请重新打开项目后再试`);
+          }
+          return { operationId: pending.operationId, planFingerprint: pending.planFingerprint };
+        });
+        const writes = await Promise.all([...authoritySceneKeys].map(async (key) => {
+          const scene = state.scenes.get(key);
+          if (!scene) throw new Error(`场景“${key}”不在当前保存集合中`);
+          const renameTarget = state.pendingSceneDeletes.some((pending) => (
+            pending.kind === 'rename' && pending.replacementKey === key
+          ));
+          if (scene.handle !== null && !scene.persistedSha256) {
+            throw new Error(`场景“${scene.id}”缺少磁盘基线，请重新打开项目后再试`);
+          }
+          if (scene.handle === null && scene.persistedSha256 && !renameTarget) {
+            throw new Error(`场景“${scene.id}”磁盘句柄已失效，请重新打开项目后再试`);
+          }
+          return {
+            path: sceneProjectPath(scene.file),
+            text: scene.text,
+            expectedSha256: renameTarget || !scene.persistedSha256 ? null : scene.persistedSha256,
+          };
+        }));
+        const createRequestId = newSceneKeys
+          .map((key) => state.scenes.get(key)?.pendingCreateOperationId)
+          .find((value): value is string => typeof value === 'string');
+        const requestId = plans[0]?.operationId ?? createRequestId;
+        if (!requestId) throw new Error('场景保存缺少可重试的请求身份');
+        pendingCommit = {
+          requestId,
+          plans: plans.map((entry) => ({ ...entry })),
+          writes: writes.map((entry) => ({ ...entry })),
+          deletedPaths: state.pendingSceneDeletes.map((pending) => sceneProjectPath(pending.file)),
+        };
+        state.pendingSceneCommit = pendingCommit;
+        onSceneCommitStateChanged();
+      } else {
+        for (const write of pendingCommit.writes) {
+          const matching = [...state.scenes].find(([, scene]) => (
+            sceneFileIdentity(sceneProjectPath(scene.file)) === sceneFileIdentity(write.path)
+          ));
+          if (!matching) throw new Error(`待收束场景“${write.path}”已不在当前工作集中`);
+          authoritySceneKeys.add(matching[0]);
+        }
+      }
+      const result = await onSceneMutationCommit({
+        requestId: pendingCommit.requestId,
+        plans: pendingCommit.plans,
+        writes: pendingCommit.writes,
+      });
+      const expectedWritePaths = new Set(pendingCommit.writes.map((entry) => sceneFileIdentity(entry.path)));
+      const resultByPath = new Map<string, { path: string; sha256: string }>();
+      for (const entry of result.writes) {
+        const identity = sceneFileIdentity(entry.path);
+        if (!expectedWritePaths.has(identity) || resultByPath.has(identity)) {
+          throw new Error('安全保存回执包含意外或重复的场景路径');
+        }
+        resultByPath.set(identity, entry);
+      }
+      if (resultByPath.size !== expectedWritePaths.size) {
+        throw new Error('安全保存回执缺少场景写入结果');
+      }
+      const expectedDeletedPaths = new Set(pendingCommit.deletedPaths.map(sceneFileIdentity));
+      const actualDeletedPaths = new Set<string>();
+      for (const deletedPath of result.deletedPaths) {
+        const identity = sceneFileIdentity(deletedPath);
+        if (!expectedDeletedPaths.has(identity) || actualDeletedPaths.has(identity)) {
+          throw new Error('安全保存回执包含意外或重复的删除路径');
+        }
+        actualDeletedPaths.add(identity);
+      }
+      if (actualDeletedPaths.size !== expectedDeletedPaths.size) {
+        throw new Error('安全保存回执缺少场景删除结果');
+      }
+      const refreshed = new Map<string, { handle: FileSystemFileHandle; file: string; sha256: string }>();
+      for (const key of authoritySceneKeys) {
+        const scene = state.scenes.get(key);
+        if (!scene) continue;
+        const written = resultByPath.get(sceneFileIdentity(sceneProjectPath(scene.file)));
+        if (!written) throw new Error(`场景“${scene.id}”缺少安全保存回执`);
+        const target = await scenarioParentDirectory(state.dirHandle, scene.file, false);
+        const handle = await target.directory.getFileHandle(target.fileName);
+        const diskText = await (await handle.getFile()).text();
+        if (await sceneTextSha256(diskText) !== written.sha256) {
+          throw new Error(`场景“${scene.id}”写入后回读与服务回执不一致`);
+        }
+        refreshed.set(key, { handle, file: target.relativeFile, sha256: written.sha256 });
+      }
+      for (const key of authoritySceneKeys) {
+        const scene = state.scenes.get(key);
+        const disk = refreshed.get(key);
+        if (!scene || !disk) continue;
+        scene.handle = disk.handle;
+        scene.file = disk.file;
+        scene.persistedSha256 = disk.sha256;
+        scene.dirty = await sceneTextSha256(scene.text) !== disk.sha256;
+        delete scene.pendingCreateOperationId;
+      }
+      saved += result.writes.length;
+      removed += result.deletedPaths.length;
+      state.pendingSceneDeletes = [];
+      state.pendingSceneCommit = null;
+      onSceneCommitStateChanged();
+    } catch (err) {
+      recordFailure('场景改名或删除安全保存', err);
+    }
+  }
   for (const [key, sc] of state.scenes) {
     if (!sc.dirty) continue;
+    if (authoritySceneKeys.has(key)) continue;
     const handle = sc.handle;
     if (!handle) {
-      // 新建或重命名场景：按 SceneEntry.file 的真实相对目录落盘。
+      // 新建和重命名必须由本机 authority 独占创建；浏览器句柄不得退回可覆盖写入。
       if (state.dirHandle) {
         try {
-          const target = await createScenarioFileHandle(state.dirHandle, sc.file || `${sc.id}.gal`);
-          await writeFileHandle(target.handle, sc.text);
-          sc.handle = target.handle;
-          sc.file = target.relativeFile;
-          sc.dirty = false;
-          saved++;
+          sceneProjectPath(sc.file || `${sc.id}.gal`);
+          recordFailure(`场景 '${sc.id}' 保存`, new Error('安全保存服务未连接，请重新打开项目后再保存'));
         } catch (err) {
-          recordFailure(`场景 '${sc.id}' 创建`, err);
+          recordFailure(`场景 '${sc.id}' 保存`, err);
         }
         continue;
       }
@@ -897,44 +1056,29 @@ async function saveAllUnlocked(): Promise<void> {
       continue;
     }
     try {
-      await writeFileHandle(handle, sc.text);
-      sc.dirty = false;
+      const submittedText = sc.text;
+      await writeFileHandle(handle, submittedText);
+      sc.persistedSha256 = await sceneTextSha256(submittedText);
+      sc.dirty = sc.text !== submittedText;
       saved++;
     } catch (err) {
       recordFailure(`场景 '${sc.id}' 保存`, err);
     }
     void key;
   }
-  if (state.dirHandle) {
-    const remainingSceneDeletes: typeof state.pendingSceneDeletes = [];
+  if (state.dirHandle && !authoritySceneCommitAttempted) {
     for (const pending of state.pendingSceneDeletes) {
-      if (pending.kind === 'rename') {
-        const replacement = pending.replacementKey ? state.scenes.get(pending.replacementKey) : undefined;
-        if (!replacement) {
-          remainingSceneDeletes.push(pending);
-          recordFailure(`场景 '${pending.id}' 旧文件清理`, new Error('重命名目标不存在'));
-          continue;
-        }
-        const sceneWritesPending = [...state.scenes.values()].some((scene) => scene.dirty);
-        if (replacement.dirty || replacement.handle === null || sceneWritesPending) {
-          remainingSceneDeletes.push(pending);
-          continue;
-        }
-      }
-      try {
-        const pendingIdentity = sceneFileIdentity(pending.file);
-        const pathReused = [...state.scenes.values()].some((scene) => (
-          sceneFileIdentity(scene.file) === pendingIdentity
-        ));
-        if (pathReused) throw new Error('旧路径已被当前场景重新占用，未执行删除');
-        await removeScenarioFile(state.dirHandle, pending.file);
-        removed++;
-      } catch (err) {
-        remainingSceneDeletes.push(pending);
-        recordFailure(`场景 '${pending.id}' 旧文件清理`, err);
-      }
+      const pendingIdentity = sceneFileIdentity(pending.file);
+      const pathReused = [...state.scenes.values()].some((scene) => (
+        sceneFileIdentity(scene.file) === pendingIdentity
+      ));
+      recordFailure(
+        `场景 '${pending.id}' 旧文件清理`,
+        new Error(pathReused
+          ? '旧路径已被当前场景重新占用，未执行删除'
+          : '安全保存服务未连接，请重新打开项目后再保存'),
+      );
     }
-    state.pendingSceneDeletes = remainingSceneDeletes;
   }
   let timelineSaved = false;
   for (const timeline of state.timelines) {
@@ -955,8 +1099,9 @@ async function saveAllUnlocked(): Promise<void> {
         handle = await timelineDir.getFileHandle(fileName, { create: true });
         timeline.handle = handle;
       }
-      await writeFileHandle(handle, timeline.text);
-      timeline.dirty = false;
+      const submittedText = timeline.text;
+      await writeFileHandle(handle, submittedText);
+      timeline.dirty = timeline.text !== submittedText;
       timelineSaved = true;
       saved++;
     } catch (err) {
@@ -966,6 +1111,7 @@ async function saveAllUnlocked(): Promise<void> {
   const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
+    || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
   const changed = saved + removed;
@@ -1017,7 +1163,7 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
-  if (state.pendingSceneDeletes.length > 0) {
+  if (state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null) {
     throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
   }
   if (projectTransitionPending || activeProjectWriteOperations > 0) {
@@ -1036,6 +1182,7 @@ export function loadDemoProject(): void {
   state.dirHandle = null;
   state.scenes.clear();
   state.pendingSceneDeletes = [];
+  state.pendingSceneCommit = null;
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = [];

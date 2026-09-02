@@ -10,6 +10,7 @@ import {
   restoreTimelineAutosaveEntries,
   runProjectWriteOperation,
   saveAll,
+  sceneTextSha256,
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
@@ -165,6 +166,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.scenes.clear();
     state.timelines = [];
     state.pendingSceneDeletes = [];
+    state.pendingSceneCommit = null;
     state.pendingTimelineDeletes = [];
     state.pendingTimelineRestores.clear();
     state.current = null;
@@ -178,6 +180,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
   afterEach(() => {
     state.projectWriteLock = null;
+    state.pendingSceneCommit = null;
     vi.unstubAllGlobals();
   });
 
@@ -255,27 +258,89 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(status.textContent).toMatch(/部分成功/);
   });
 
+  it('普通句柄写入等待期间继续编辑时不会清除 dirty', async () => {
+    let releaseWrite!: () => void;
+    let signalWrite!: () => void;
+    const writing = new Promise<void>((resolve) => { signalWrite = resolve; });
+    const handle = {
+      kind: 'file', name: 'live.gal',
+      createWritable: async () => ({
+        write: async () => {
+          signalWrite();
+          await new Promise<void>((resolve) => { releaseWrite = resolve; });
+        },
+        close: async () => undefined,
+      }),
+    } as unknown as FileSystemFileHandle;
+    state.scenes.set('live', {
+      id: 'live', file: 'live.gal', text: '提交快照', eol: '\n', dirty: true, handle,
+    });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    const saving = saveAll();
+    await writing;
+    state.scenes.get('live')!.text = '等待期间的新正文';
+    state.scenes.get('live')!.dirty = true;
+    releaseWrite();
+    await saving;
+
+    expect(state.scenes.get('live')).toMatchObject({ text: '等待期间的新正文', dirty: true });
+  });
+
+  it('时间轴写入等待期间继续编辑时不会清除 dirty', async () => {
+    let releaseWrite!: () => void;
+    let signalWrite!: () => void;
+    const writing = new Promise<void>((resolve) => { signalWrite = resolve; });
+    const handle = {
+      kind: 'file', name: 'live.json',
+      createWritable: async () => ({
+        write: async () => {
+          signalWrite();
+          await new Promise<void>((resolve) => { releaseWrite = resolve; });
+        },
+        close: async () => undefined,
+      }),
+    } as unknown as FileSystemFileHandle;
+    state.timelines.push(timeline('live', handle));
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    const saving = saveAll();
+    await writing;
+    state.timelines[0]!.text = timelineText('live', '\n', 2400);
+    state.timelines[0]!.dirty = true;
+    releaseWrite();
+    await saving;
+
+    expect(state.timelines[0]).toMatchObject({
+      text: timelineText('live', '\n', 2400),
+      dirty: true,
+    });
+  });
+
   function nestedScenarioProject(options: {
-    failNewWrite?: boolean;
-    failRemove?: boolean;
+    failOpenExisting?: boolean;
   } = {}): {
     root: FileSystemDirectoryHandle;
     operations: string[];
     nestedFiles: Set<string>;
+    fileTexts: Map<string, string>;
   } {
     const operations: string[] = [];
     const nestedFiles = new Set(['old.gal', 'delete-me.gal']);
+    const fileTexts = new Map<string, string>([
+      ['old.gal', '@scene old\n'],
+      ['delete-me.gal', '@scene delete-me\n'],
+    ]);
     const makeWritableFile = (name: string): FileSystemFileHandle => ({
       kind: 'file',
       name,
       isSameEntry: async () => false,
       queryPermission: async () => 'granted',
       requestPermission: async () => 'granted',
-      getFile: async () => new File([''], name),
+      getFile: async () => new File([fileTexts.get(name) ?? ''], name),
       createWritable: async () => ({
         write: async () => {
           operations.push(`write:${name}`);
-          if (options.failNewWrite) throw new Error('new write failed');
         },
         close: async () => { operations.push(`close:${name}`); },
       } as unknown as FileSystemWritableFileStream),
@@ -287,21 +352,23 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
       getFileHandle: async (name: string, create?: FileSystemGetFileOptions) => {
         operations.push(`open:chapter/${name}`);
         if (!nestedFiles.has(name) && !create?.create) throw new Error(`missing file ${name}`);
+        if (options.failOpenExisting && !create?.create) throw new Error(`cannot refresh ${name}`);
         nestedFiles.add(name);
+        if (!fileTexts.has(name)) fileTexts.set(name, '');
         return makeWritableFile(name);
       },
       removeEntry: async (name: string) => {
         operations.push(`remove:chapter/${name}`);
-        if (options.failRemove) throw new Error('remove failed');
         nestedFiles.delete(name);
+        fileTexts.delete(name);
       },
     } as unknown as FileSystemDirectoryHandle;
     const scenario = directoryHandle('scenario', { chapter: nested });
     const content = directoryHandle('content', { scenario });
-    return { root: directoryHandle('project', { content }), operations, nestedFiles };
+    return { root: directoryHandle('project', { content }), operations, nestedFiles, fileTexts };
   }
 
-  it('嵌套场景重命名保存时先在原目录写新文件，再删除精确旧文件', async () => {
+  it('未连接 authority 时不退回浏览器覆盖式重命名写删', async () => {
     const project = nestedScenarioProject();
     state.dirHandle = project.root;
     state.scenes.set('chapter/new', {
@@ -314,20 +381,16 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
     await saveAll();
 
-    expect(project.operations).toEqual([
-      'open:chapter/new.gal',
-      'write:new.gal',
-      'close:new.gal',
-      'remove:chapter/old.gal',
-    ]);
-    expect(project.nestedFiles.has('new.gal')).toBe(true);
-    expect(project.nestedFiles.has('old.gal')).toBe(false);
-    expect(state.scenes.get('chapter/new')).toMatchObject({ file: 'chapter/new.gal', dirty: false });
-    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(project.operations).toEqual([]);
+    expect(project.nestedFiles.has('new.gal')).toBe(false);
+    expect(project.nestedFiles.has('old.gal')).toBe(true);
+    expect(state.scenes.get('chapter/new')).toMatchObject({ file: 'chapter/new.gal', dirty: true });
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+    expect(status.textContent).toContain('安全保存服务未连接');
   });
 
-  it('嵌套场景的新文件写入失败时保留旧文件与待删除状态', async () => {
-    const project = nestedScenarioProject({ failNewWrite: true });
+  it('未连接 authority 时不尝试新文件写入并保留旧文件与待删除状态', async () => {
+    const project = nestedScenarioProject();
     state.dirHandle = project.root;
     state.scenes.set('chapter/new', {
       id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
@@ -339,10 +402,304 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
     await saveAll();
 
-    expect(project.operations).toEqual(['open:chapter/new.gal', 'write:new.gal']);
+    expect(project.operations).toEqual([]);
     expect(project.nestedFiles.has('old.gal')).toBe(true);
     expect(state.scenes.get('chapter/new')?.dirty).toBe(true);
     expect(state.pendingSceneDeletes).toHaveLength(1);
+  });
+
+  it('有安全计划时把改名目标作为一个 authority 批次提交，不走可覆盖的浏览器写删', async () => {
+    const project = nestedScenarioProject();
+    project.nestedFiles.add('new.gal');
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new',
+      file: 'chapter/new.gal',
+      text: '@scene new\n',
+      eol: '\n',
+      dirty: true,
+      handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename',
+      id: 'old',
+      file: 'chapter/old.gal',
+      replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new'],
+      operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'b'.repeat(64),
+    }];
+    const submittedText = '@scene new\n';
+    const submittedSha256 = await sceneTextSha256(submittedText);
+    const onSceneMutationCommit = vi.fn(async () => {
+      project.fileTexts.set('new.gal', submittedText);
+      return {
+        writes: [{ path: 'content/scenario/chapter/new.gal', sha256: submittedSha256 }],
+        deletedPaths: ['content/scenario/chapter/old.gal'],
+      };
+    });
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationCommit,
+    });
+
+    await saveAll();
+
+    expect(onSceneMutationCommit).toHaveBeenCalledWith({
+      requestId: '11111111-1111-4111-8111-111111111111',
+      plans: [{
+        operationId: '11111111-1111-4111-8111-111111111111',
+        planFingerprint: 'b'.repeat(64),
+      }],
+      writes: [{
+        path: 'content/scenario/chapter/new.gal',
+        text: '@scene new\n',
+        expectedSha256: null,
+      }],
+    });
+    expect(project.operations).toEqual(['open:chapter/new.gal']);
+    expect(state.scenes.get('chapter/new')).toMatchObject({
+      dirty: false,
+      persistedSha256: submittedSha256,
+    });
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('新场景也通过 authority 独占创建，不走可覆盖的浏览器 create 写入', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    const requestId = '22222222-2222-4222-8222-222222222222';
+    const submittedText = '@scene fresh\n';
+    const submittedSha256 = await sceneTextSha256(submittedText);
+    state.scenes.set('chapter/fresh', {
+      id: 'fresh', file: 'chapter/fresh.gal', text: '@scene fresh\n', eol: '\n', dirty: true, handle: null,
+      pendingCreateOperationId: requestId,
+    });
+    const onSceneMutationCommit = vi.fn(async () => {
+      project.nestedFiles.add('fresh.gal');
+      project.fileTexts.set('fresh.gal', submittedText);
+      return {
+        writes: [{ path: 'content/scenario/chapter/fresh.gal', sha256: submittedSha256 }],
+        deletedPaths: [],
+      };
+    });
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationCommit,
+    });
+
+    await saveAll();
+
+    expect(onSceneMutationCommit).toHaveBeenCalledWith({
+      requestId,
+      plans: [],
+      writes: [{
+        path: 'content/scenario/chapter/fresh.gal',
+        text: '@scene fresh\n',
+        expectedSha256: null,
+      }],
+    });
+    expect(project.operations).toEqual(['open:chapter/fresh.gal']);
+    expect(state.scenes.get('chapter/fresh')).toMatchObject({ dirty: false, persistedSha256: submittedSha256 });
+    expect(state.scenes.get('chapter/fresh')?.pendingCreateOperationId).toBeUndefined();
+  });
+
+  it('authority 等待期间继续编辑时保留新正文 dirty，不把旧快照冒充已保存', async () => {
+    const project = nestedScenarioProject();
+    project.nestedFiles.add('new.gal');
+    project.fileTexts.set('new.gal', '提交快照');
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '提交快照', eol: '\n', dirty: true, handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new'], operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'b'.repeat(64),
+    }];
+    let resolveCommit!: (value: { writes: { path: string; sha256: string }[]; deletedPaths: string[] }) => void;
+    const commit = new Promise<{ writes: { path: string; sha256: string }[]; deletedPaths: string[] }>((resolve) => {
+      resolveCommit = resolve;
+    });
+    const onSceneMutationCommit = vi.fn(() => commit);
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onSceneMutationCommit,
+    });
+
+    const saving = saveAll();
+    await vi.waitFor(() => expect(onSceneMutationCommit).toHaveBeenCalledOnce());
+    state.scenes.get('chapter/new')!.text = '等待期间的新正文';
+    state.scenes.get('chapter/new')!.dirty = true;
+    resolveCommit({
+      writes: [{ path: 'content/scenario/chapter/new.gal', sha256: await sceneTextSha256('提交快照') }],
+      deletedPaths: ['content/scenario/chapter/old.gal'],
+    });
+    await saving;
+
+    expect(state.scenes.get('chapter/new')).toMatchObject({
+      text: '等待期间的新正文', dirty: true, persistedSha256: await sceneTextSha256('提交快照'),
+    });
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('authority 已提交但回包丢失时只重放首次冻结请求，并保留随后编辑', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    const submittedText = '@scene new\n首次提交。\n';
+    const submittedSha256 = await sceneTextSha256(submittedText);
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: submittedText, eol: '\n', dirty: true, handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new'], operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'b'.repeat(64),
+    }];
+    const requests: unknown[] = [];
+    let attempts = 0;
+    const onSceneMutationCommit = vi.fn(async (input) => {
+      requests.push(structuredClone(input));
+      attempts += 1;
+      if (attempts === 1) {
+        project.nestedFiles.add('new.gal');
+        project.fileTexts.set('new.gal', submittedText);
+        project.nestedFiles.delete('old.gal');
+        project.fileTexts.delete('old.gal');
+        throw new Error('提交已完成，但连接在回包前中断');
+      }
+      return {
+        writes: [{ path: 'content/scenario/chapter/new.gal', sha256: submittedSha256 }],
+        deletedPaths: ['content/scenario/chapter/old.gal'],
+      };
+    });
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationCommit,
+    });
+
+    await saveAll();
+    expect(state.pendingSceneCommit).not.toBeNull();
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+
+    state.scenes.get('chapter/new')!.text = '@scene new\n首次提交。\n随后编辑。\n';
+    state.scenes.get('chapter/new')!.dirty = true;
+    await saveAll();
+
+    expect(onSceneMutationCommit).toHaveBeenCalledTimes(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(state.scenes.get('chapter/new')).toMatchObject({
+      text: '@scene new\n首次提交。\n随后编辑。\n',
+      dirty: true,
+      persistedSha256: submittedSha256,
+    });
+    expect(state.pendingSceneCommit).toBeNull();
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('authority 已提交但句柄刷新失败时保持未保存提示', async () => {
+    const project = nestedScenarioProject({ failOpenExisting: true });
+    project.nestedFiles.add('new.gal');
+    project.fileTexts.set('new.gal', '@scene new\n');
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new'], operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'b'.repeat(64),
+    }];
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onSceneMutationCommit: vi.fn(async () => ({
+        writes: [{
+          path: 'content/scenario/chapter/new.gal',
+          sha256: await sceneTextSha256('@scene new\n'),
+        }],
+        deletedPaths: ['content/scenario/chapter/old.gal'],
+      })),
+    });
+
+    await saveAll();
+
+    expect(state.scenes.get('chapter/new')).toMatchObject({
+      dirty: true, handle: null, persistedSha256: 'a'.repeat(64),
+    });
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+    expect(state.pendingSceneCommit).not.toBeNull();
+    expect(status.textContent).toContain('全部失败');
+  });
+
+  it('authority 拒绝场景批次时保留整组 dirty 与计划，且不退回不安全的 FSA 写入', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new',
+      file: 'chapter/new.gal',
+      text: '@scene new\n',
+      eol: '\n',
+      dirty: true,
+      handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename',
+      id: 'old',
+      file: 'chapter/old.gal',
+      replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new'],
+      operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'b'.repeat(64),
+    }];
+    bindProjectIoHooks({
+      renderAll: vi.fn(),
+      runValidate: vi.fn(),
+      renderSidebar: vi.fn(),
+      onSceneMutationCommit: vi.fn(async () => { throw new Error('目标已由外部程序创建'); }),
+    });
+
+    await saveAll();
+
+    expect(project.operations).toEqual([]);
+    expect(state.scenes.get('chapter/new')?.dirty).toBe(true);
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+    expect(status.textContent).toContain('全部失败');
+  });
+
+  it('authority 回执缺少批次成员时不部分更新编辑器状态', async () => {
+    const project = nestedScenarioProject();
+    project.nestedFiles.add('new.gal');
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
+      persistedSha256: 'a'.repeat(64),
+    });
+    state.scenes.set('reader', {
+      id: 'reader', file: 'reader.gal', text: '@scene reader\n@jump new\n', eol: '\n', dirty: true,
+      handle: fileHandle(null, log, 'reader.gal'), persistedSha256: 'b'.repeat(64),
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+      affectedSceneKeys: ['chapter/new', 'reader'], operationId: '11111111-1111-4111-8111-111111111111',
+      planFingerprint: 'c'.repeat(64),
+    }];
+    bindProjectIoHooks({
+      renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onSceneMutationCommit: vi.fn(async () => ({
+        writes: [{ path: 'content/scenario/chapter/new.gal', sha256: 'd'.repeat(64) }],
+        deletedPaths: ['content/scenario/chapter/old.gal'],
+      })),
+    });
+
+    await saveAll();
+
+    expect(state.scenes.get('chapter/new')).toMatchObject({ dirty: true, persistedSha256: 'a'.repeat(64) });
+    expect(state.scenes.get('reader')).toMatchObject({ dirty: true, persistedSha256: 'b'.repeat(64) });
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+    expect(project.operations).toEqual([]);
+    expect(status.textContent).toContain('全部失败');
   });
 
   it('任一同步改写的场景仍保存失败时，不清理重命名前的旧文件', async () => {
@@ -361,7 +718,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
     expect(project.operations).not.toContain('remove:chapter/old.gal');
     expect(project.nestedFiles.has('old.gal')).toBe(true);
-    expect(state.scenes.get('chapter/new')?.dirty).toBe(false);
+    expect(state.scenes.get('chapter/new')?.dirty).toBe(true);
     expect(state.scenes.get('reader')?.dirty).toBe(true);
     expect(state.pendingSceneDeletes).toHaveLength(1);
   });
@@ -381,15 +738,15 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(status.textContent).toContain('场景路径无效');
   });
 
-  it('嵌套场景删除通过保存全部移除精确路径，删除失败时保留待处理记录', async () => {
-    const project = nestedScenarioProject({ failRemove: true });
+  it('未连接 authority 时不直接删除嵌套场景并保留待处理记录', async () => {
+    const project = nestedScenarioProject();
     state.dirHandle = project.root;
     state.pendingSceneDeletes = [{ kind: 'delete', id: 'delete-me', file: 'chapter/delete-me.gal' }];
     bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
 
     await saveAll();
 
-    expect(project.operations).toEqual(['remove:chapter/delete-me.gal']);
+    expect(project.operations).toEqual([]);
     expect(project.nestedFiles.has('delete-me.gal')).toBe(true);
     expect(state.pendingSceneDeletes).toHaveLength(1);
   });

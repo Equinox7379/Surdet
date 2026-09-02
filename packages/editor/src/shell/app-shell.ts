@@ -11,6 +11,8 @@ export interface ProjectBarProjection {
   fsSupported?: boolean;
   hasScenes?: boolean;
   writeLocked?: boolean;
+  writeLockLabel?: string;
+  writeLockTitle?: string;
 }
 
 export interface ProjectBarActions {
@@ -80,7 +82,10 @@ function saveStateLabel(state: ProjectSaveState): string {
  * 编辑、选择和保存回调都可以复用这一入口，让顶栏始终反映当前内存事实。
  */
 export function updateProjectBarProjection(
-  projection: Pick<ProjectBarProjection, 'projectName' | 'objectLabel' | 'saveState'> & { writeLocked?: boolean },
+  projection: Pick<
+    ProjectBarProjection,
+    'projectName' | 'objectLabel' | 'saveState' | 'writeLocked' | 'writeLockLabel' | 'writeLockTitle'
+  >,
   root: ParentNode = document,
 ): void {
   const projectName = root.querySelector<HTMLElement>('.editor-project-name');
@@ -93,12 +98,16 @@ export function updateProjectBarProjection(
   if (projectName) projectName.textContent = projection.projectName;
   if (currentObject) currentObject.textContent = projection.objectLabel;
   if (saveState) {
-    saveState.textContent = projection.writeLocked ? '素材整理进行中' : saveStateLabel(projection.saveState);
+    saveState.textContent = projection.writeLocked
+      ? projection.writeLockLabel ?? '素材整理进行中'
+      : saveStateLabel(projection.saveState);
     saveState.setAttribute('data-save-state', projection.saveState);
   }
   if (saveButton) {
     saveButton.disabled = projection.writeLocked === true;
-    saveButton.title = projection.writeLocked ? '素材整理完成后才能保存其他修改' : '';
+    saveButton.title = projection.writeLocked
+      ? projection.writeLockTitle ?? '素材整理完成后才能保存其他修改'
+      : '';
   }
   for (const button of lockedCommands) {
     button.disabled = projection.writeLocked === true;
@@ -133,7 +142,13 @@ export function renderProjectBar(
     contextItem('当前工作', 'editor-current-object', projection.objectLabel),
   );
 
-  const saveState = element('span', 'editor-save-state', saveStateLabel(projection.saveState));
+  const saveState = element(
+    'span',
+    'editor-save-state',
+    projection.writeLocked
+      ? projection.writeLockLabel ?? '素材整理进行中'
+      : saveStateLabel(projection.saveState),
+  );
   saveState.setAttribute('data-save-state', projection.saveState);
 
   const commands = element('div', 'editor-project-commands');
@@ -161,6 +176,12 @@ export function renderProjectBar(
   const save = actionButton('保存全部', 'save-project', actions.onSaveProject, projection.writeLocked === true, 'Ctrl+S');
   save.className = 'editor-command editor-global-primary';
   save.setAttribute('aria-keyshortcuts', 'Control+S Meta+S');
+  save.setAttribute(
+    'title',
+    projection.writeLocked
+      ? projection.writeLockTitle ?? '素材整理完成后才能保存其他修改'
+      : '',
+  );
   saveCommands.appendChild(save);
   commands.append(projectCommands, editCommands, saveCommands);
 

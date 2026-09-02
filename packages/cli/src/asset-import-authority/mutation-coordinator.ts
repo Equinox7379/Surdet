@@ -1,4 +1,4 @@
-export type AssetProjectMutationOwner = 'asset-import' | 'asset-relocation';
+export type AssetProjectMutationOwner = 'asset-import' | 'asset-relocation' | 'scene-lifecycle';
 
 type ReadinessGate = () => void | Promise<void>;
 

@@ -8,6 +8,7 @@ import {
   autosaveStorageKey,
   buildAutosave,
   clearAutosave,
+  inspectSceneAutosaveRecovery,
   matchingAutosaveProjectIdentity,
   parseAutosave,
   pickRecoverable,
@@ -15,6 +16,7 @@ import {
   preserveAutosaveTimelineConflicts,
   readAutosave,
   resolveAutosaveProjectIdentity,
+  settlePendingSceneCommit,
   unresolvedAutosaveTimelineConflicts,
   writeAutosave,
 } from '../src/autosave.js';
@@ -81,6 +83,134 @@ describe('buildAutosave（快照构建）', () => {
       [{ id: 'clean', file: 'clean.json', text: '{}\n', eol: '\n', dirty: false }],
       12,
     )).toBeNull();
+  });
+
+  it('把场景改名、新场景正文与全部引用改写封装为同一恢复组', () => {
+    const fingerprint = 'a'.repeat(64);
+    const scenes = new Map([
+      ['chapter/new', {
+        id: 'new', file: 'chapter/new.gal', text: '@scene new\nNew.\n', eol: '\n',
+        dirty: true, persistedSha256: fingerprint,
+      }],
+      ['chapter/reader', {
+        id: 'reader', file: 'chapter/reader.gal', text: '@jump new\n', eol: '\n',
+        dirty: true, persistedSha256: 'b'.repeat(64),
+      }],
+    ]);
+    const pending = [{
+      kind: 'rename' as const,
+      id: 'old',
+      file: 'chapter/old.gal',
+      replacementKey: 'chapter/new',
+      operationId: '123e4567-e89b-42d3-a456-426614174000',
+      planFingerprint: 'c'.repeat(64),
+      affectedSceneKeys: ['chapter/new', 'chapter/reader'],
+    }];
+
+    const payload = buildAutosave('proj', scenes, [], 12, 'project', pending);
+    expect(payload?.sceneTransaction).toEqual({ pendingDeletes: pending });
+    expect(payload?.scenes.map((entry) => entry.key)).toEqual(['chapter/new', 'chapter/reader']);
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  it('只有待删除计划、没有 dirty 正文时也保留自动备份', () => {
+    const pending = [{
+      kind: 'delete' as const,
+      id: 'old',
+      file: 'chapter/old.gal',
+      operationId: '123e4567-e89b-42d3-a456-426614174000',
+      planFingerprint: 'c'.repeat(64),
+    }];
+    expect(buildAutosave('proj', new Map(), [], 13, 'project', pending)).toEqual({
+      dirName: 'proj',
+      projectId: 'project',
+      savedAt: 13,
+      scenes: [],
+      sceneTransaction: { pendingDeletes: pending },
+    });
+  });
+
+  it('保存回包丢失时冻结首次请求，并在回执到达后保留随后编辑', () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174000';
+    const receiptSha256 = 'd'.repeat(64);
+    const payload = buildAutosave('proj', new Map([['chapter/fresh', {
+      id: 'fresh',
+      file: 'chapter/fresh.gal',
+      text: '@scene fresh\n随后编辑。\n',
+      eol: '\n',
+      dirty: true,
+      pendingCreateOperationId: requestId,
+    }]]), [], 14, 'project', [], {
+      requestId,
+      plans: [],
+      writes: [{
+        path: 'content/scenario/chapter/fresh.gal',
+        text: '@scene fresh\n首次提交。\n',
+        expectedSha256: null,
+      }],
+      deletedPaths: [],
+    });
+
+    expect(payload).not.toBeNull();
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
+    expect(settlePendingSceneCommit(payload!, {
+      requestId,
+      status: 'COMMITTED',
+      writes: [{ path: 'content/scenario/chapter/fresh.gal', sha256: receiptSha256 }],
+      deletedPaths: [],
+    })).toEqual({
+      dirName: 'proj',
+      projectId: 'project',
+      savedAt: 14,
+      scenes: [{
+        key: 'chapter/fresh',
+        id: 'fresh',
+        file: 'chapter/fresh.gal',
+        text: '@scene fresh\n随后编辑。\n',
+        eol: '\n',
+        persistedSha256: receiptSha256,
+      }],
+    });
+    expect(settlePendingSceneCommit(payload!, {
+      requestId,
+      status: 'COMMITTED',
+      writes: [],
+      deletedPaths: [],
+    })).toBeNull();
+  });
+
+  it('改名计划与同批新场景可共享改名请求身份，不误判自动备份损坏', () => {
+    const planId = '123e4567-e89b-42d3-a456-426614174000';
+    const createId = '223e4567-e89b-42d3-a456-426614174000';
+    const pendingDelete = {
+      kind: 'rename' as const,
+      id: 'old',
+      file: 'old.gal',
+      replacementKey: 'new',
+      operationId: planId,
+      planFingerprint: 'a'.repeat(64),
+      affectedSceneKeys: ['new'],
+    };
+    const payload = buildAutosave('proj', new Map([
+      ['new', {
+        id: 'new', file: 'new.gal', text: '@scene new\n', eol: '\n', dirty: true,
+        persistedSha256: 'b'.repeat(64),
+      }],
+      ['fresh', {
+        id: 'fresh', file: 'fresh.gal', text: '@scene fresh\n', eol: '\n', dirty: true,
+        pendingCreateOperationId: createId,
+      }],
+    ]), [], 15, 'project', [pendingDelete], {
+      requestId: planId,
+      plans: [{ operationId: planId, planFingerprint: 'a'.repeat(64) }],
+      writes: [
+        { path: 'content/scenario/new.gal', text: '@scene new\n', expectedSha256: null },
+        { path: 'content/scenario/fresh.gal', text: '@scene fresh\n', expectedSha256: null },
+      ],
+      deletedPaths: ['content/scenario/old.gal'],
+    });
+
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
   });
 });
 
@@ -369,5 +499,115 @@ describe('pickRecoverable（恢复判定）', () => {
     expect(pickRecoverable(payload, 'another-project', scenesOf('磁盘文本'))).toEqual([]);
     expect(pickRecoverable(null, 'project', scenesOf('磁盘文本'))).toEqual([]);
     expect(pickRecoverable(payload, 'project', new Map())).toEqual([]); // gone/a 都不在内存
+  });
+});
+
+describe('inspectSceneAutosaveRecovery（场景路径事务整组恢复）', () => {
+  const sourceSha = 'a'.repeat(64);
+  const readerSha = 'b'.repeat(64);
+  const pending = {
+    kind: 'rename' as const,
+    id: 'old',
+    file: 'chapter/old.gal',
+    replacementKey: 'chapter/new',
+    operationId: '123e4567-e89b-42d3-a456-426614174000',
+    planFingerprint: 'c'.repeat(64),
+    affectedSceneKeys: ['chapter/new', 'chapter/reader'],
+  };
+  const payload = {
+    dirName: 'proj',
+    projectId: 'project',
+    savedAt: 10,
+    scenes: [
+      {
+        key: 'chapter/new', id: 'new', file: 'chapter/new.gal', eol: '\n' as const,
+        text: '@scene new\nNew.\n', persistedSha256: sourceSha,
+      },
+      {
+        key: 'chapter/reader', id: 'reader', file: 'chapter/reader.gal', eol: '\n' as const,
+        text: '@jump new\n', persistedSha256: readerSha,
+      },
+    ],
+    sceneTransaction: { pendingDeletes: [pending] },
+  };
+  const diskScenes = new Map([
+    ['chapter/old', {
+      id: 'old', file: 'chapter/old.gal', text: '@scene old\nOld.\n', persistedSha256: sourceSha,
+    }],
+    ['chapter/reader', {
+      id: 'reader', file: 'chapter/reader.gal', text: '@jump old\n', persistedSha256: readerSha,
+    }],
+  ]);
+
+  it('完整成员齐备时同时恢复新场景、引用与待提交计划', () => {
+    expect(inspectSceneAutosaveRecovery(payload, 'project', diskScenes)).toEqual({
+      status: 'recoverable',
+      scenes: payload.scenes,
+      pendingDeletes: [pending],
+    });
+  });
+
+  it('新场景快照携带稳定请求身份，并只在磁盘目标仍不存在时恢复', () => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([['chapter/fresh', {
+      id: 'fresh', file: 'chapter/fresh.gal', text: '@scene fresh\n', eol: '\n', dirty: true,
+      pendingCreateOperationId: operationId,
+    }]]), [], 12, 'project');
+    expect(built?.sceneTransaction).toEqual({
+      pendingDeletes: [],
+      pendingCreates: [{ key: 'chapter/fresh', operationId }],
+    });
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes)).toMatchObject({
+      status: 'recoverable',
+      scenes: [expect.objectContaining({ key: 'chapter/fresh', pendingCreateOperationId: operationId })],
+    });
+
+    const occupied = new Map(diskScenes);
+    occupied.set('chapter/fresh', {
+      id: 'fresh', file: 'chapter/fresh.gal', text: '外部文件', persistedSha256: 'f'.repeat(64),
+    });
+    expect(inspectSceneAutosaveRecovery(built, 'project', occupied).status).toBe('blocked');
+  });
+
+  it('缺少新场景或任一引用快照时整组拒绝，不返回部分正文', () => {
+    const missingTarget = { ...payload, scenes: payload.scenes.slice(1) };
+    const missingReference = { ...payload, scenes: payload.scenes.slice(0, 1) };
+    expect(inspectSceneAutosaveRecovery(missingTarget, 'project', diskScenes)).toEqual({
+      status: 'blocked', scenes: [], pendingDeletes: [],
+    });
+    expect(inspectSceneAutosaveRecovery(missingReference, 'project', diskScenes)).toEqual({
+      status: 'blocked', scenes: [], pendingDeletes: [],
+    });
+  });
+
+  it('崩溃期间源文件或引用文件已被外部修改时整组保持封存', () => {
+    const changedSource = new Map(diskScenes);
+    changedSource.set('chapter/old', { ...changedSource.get('chapter/old')!, persistedSha256: 'd'.repeat(64) });
+    const changedReader = new Map(diskScenes);
+    changedReader.set('chapter/reader', { ...changedReader.get('chapter/reader')!, persistedSha256: 'e'.repeat(64) });
+    expect(inspectSceneAutosaveRecovery(payload, 'project', changedSource).status).toBe('blocked');
+    expect(inspectSceneAutosaveRecovery(payload, 'project', changedReader).status).toBe('blocked');
+  });
+
+  it('绝对路径和反斜杠路径不能进入场景恢复事务', () => {
+    for (const file of ['C:/outside/old.gal', '/outside/old.gal', 'chapter\\old.gal']) {
+      const unsafe = {
+        ...payload,
+        sceneTransaction: { pendingDeletes: [{ ...pending, file }] },
+      };
+      expect(inspectSceneAutosaveRecovery(unsafe, 'project', diskScenes)).toEqual({
+        status: 'blocked', scenes: [], pendingDeletes: [],
+      });
+    }
+  });
+
+  it('旧快照含磁盘不存在的场景时不部分恢复其他引用', () => {
+    const legacy = {
+      dirName: 'proj', projectId: 'project', savedAt: 11,
+      scenes: [{ key: 'chapter/new', text: 'new' }, { key: 'chapter/reader', text: '@jump new' }],
+    };
+    expect(inspectSceneAutosaveRecovery(legacy, 'project', diskScenes)).toEqual({
+      status: 'blocked', scenes: [], pendingDeletes: [],
+    });
   });
 });

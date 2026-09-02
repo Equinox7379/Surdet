@@ -18,6 +18,10 @@ export interface SceneEntry {
   eol: string;
   dirty: boolean;
   handle: FileSystemFileHandle | null;
+  /** 最近一次从磁盘读取或安全保存的正文指纹；用于本机服务提交前拒绝外部覆盖。 */
+  persistedSha256?: string;
+  /** 新场景首次安全写入的稳定请求身份；响应丢失后可重放同一提交。 */
+  pendingCreateOperationId?: string;
 }
 
 export interface TimelineEntry {
@@ -36,6 +40,20 @@ export interface PendingSceneDelete {
   /** content/scenario 下的安全相对路径。 */
   file: string;
   replacementKey?: string;
+  /** 本机服务在用户作出操作时冻结的源文件身份。 */
+  operationId?: string;
+  planFingerprint?: string;
+  /** 重命名时必须与新场景一起提交的全部场景 key。 */
+  affectedSceneKeys?: string[];
+}
+
+export interface PendingSceneCommit {
+  /** 首次提交前冻结；网络中断后必须原样重放，不能用后续编辑改写。 */
+  requestId: string;
+  plans: Array<{ operationId: string; planFingerprint: string }>;
+  writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
+  /** 只用于 Editor 核验服务回执，不发送给 authority。 */
+  deletedPaths: string[];
 }
 
 export interface TimelineCueSelection {
@@ -61,6 +79,8 @@ export const state = {
   scenes: new Map<string, SceneEntry>(),
   /** 场景删除与重命名旧文件清理统一在“保存全部”边界执行。 */
   pendingSceneDeletes: [] as PendingSceneDelete[],
+  /** 已发出但尚未完成本地回执核验的场景保存批次。 */
+  pendingSceneCommit: null as PendingSceneCommit | null,
   /** content/timelines/*.json（预览运行时与 starter 共用的演出定义） */
   timelines: [] as TimelineEntry[],
   /** 由时间轴面板删除、待下一次“保存全部”从 content/timelines 移除的文件。 */

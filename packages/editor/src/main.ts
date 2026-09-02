@@ -85,8 +85,9 @@ import {
 } from './shell/app-shell.js';
 import { buildAuthoringWorkbench } from './shell/authoring-workbench.js';
 import {
-  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, pickRecoverable, pickRecoverableTimelines,
-  preserveAutosaveTimelineConflicts, unresolvedAutosaveTimelineConflicts, writeAutosave, clearAutosave,
+  AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, inspectSceneAutosaveRecovery, pickRecoverableTimelines,
+  preserveAutosaveTimelineConflicts, settlePendingSceneCommit, unresolvedAutosaveTimelineConflicts, writeAutosave, clearAutosave,
+  type AutosavePayload,
 } from './autosave.js';
 
 /* ============================ authoring 内存索引（单飞 + 防抖） ============================ */
@@ -103,9 +104,22 @@ const authoringWaiters: Array<{
 }> = [];
 /** 最近一次磁盘保存尝试仍有失败项；只服务于顶栏回执，不复制编辑器业务状态。 */
 let saveAttemptLeftDirty = false;
+/** 无法安全部分恢复的场景快照必须原样保留，直到用户显式处理。 */
+let blockedSceneAutosave: AutosavePayload | null = null;
 let pendingAutosaveTimelineConflicts: TimelineAutosaveRestoreConflict[] = [];
 let assetImportGeneration = 0;
 let assetImportClient = createAssetImportAuthorityClient();
+type SceneAutosaveRecoveryPhase = 'idle' | 'running' | 'blocked';
+type SceneAutosaveRecoveryOutcome = 'complete' | 'blocked' | 'stale';
+interface SceneAutosaveRecoveryContext {
+  sequence: number;
+  generation: number;
+  client: typeof assetImportClient;
+  projectRoot: FileSystemDirectoryHandle | null;
+  projectId: string;
+}
+let sceneAutosaveRecoverySequence = 0;
+let sceneAutosaveRecoveryPhase: SceneAutosaveRecoveryPhase = 'idle';
 let assetImportActionRunning = false;
 let assetImportPanelOpen = false;
 let assetImportActionSequence = 0;
@@ -120,6 +134,8 @@ assetImportWorkspace.subscribe((projection) => {
 });
 
 function resetAssetImportRuntime(): void {
+  sceneAutosaveRecoverySequence += 1;
+  setSceneAutosaveRecoveryPhase('idle');
   assetImportGeneration += 1;
   assetImportActionSequence += 1;
   assetImportActionRunning = false;
@@ -132,6 +148,64 @@ function resetAssetImportRuntime(): void {
   assetRelocationActionSequence += 1;
   assetRelocationWorkspace.reset();
   state.projectWriteLock = null;
+}
+
+function sceneAutosaveRecoveryIsCurrent(context: SceneAutosaveRecoveryContext): boolean {
+  return context.sequence === sceneAutosaveRecoverySequence
+    && context.generation === assetImportGeneration
+    && context.client === assetImportClient
+    && context.projectRoot === state.dirHandle
+    && context.projectId === state.autosaveProjectId;
+}
+
+function requireCurrentSceneAutosaveRecovery(context: SceneAutosaveRecoveryContext): void {
+  if (!sceneAutosaveRecoveryIsCurrent(context)) {
+    throw new Error('项目已经切换，旧的自动恢复已停止。');
+  }
+}
+
+function setSceneAutosaveRecoveryPhase(phase: SceneAutosaveRecoveryPhase): void {
+  sceneAutosaveRecoveryPhase = phase;
+  const main = document.getElementById('main');
+  if (main) {
+    const locked = phase !== 'idle';
+    main.toggleAttribute('inert', locked);
+    main.setAttribute('data-autosave-recovery', phase);
+    if (phase === 'running') main.setAttribute('aria-busy', 'true');
+    else main.removeAttribute('aria-busy');
+  }
+  refreshProjectBarProjection();
+}
+
+function startCurrentProjectAutosaveRecovery(bindingReady: Promise<void>): void {
+  const projectId = state.autosaveProjectId;
+  if (!projectId) {
+    setSceneAutosaveRecoveryPhase('idle');
+    return;
+  }
+  const context: SceneAutosaveRecoveryContext = {
+    sequence: sceneAutosaveRecoverySequence + 1,
+    generation: assetImportGeneration,
+    client: assetImportClient,
+    projectRoot: state.dirHandle,
+    projectId,
+  };
+  sceneAutosaveRecoverySequence = context.sequence;
+  setSceneAutosaveRecoveryPhase('running');
+  void tryAutosaveRecover(context, bindingReady).then((outcome) => {
+    if (!sceneAutosaveRecoveryIsCurrent(context)) return;
+    setSceneAutosaveRecoveryPhase(outcome === 'blocked' ? 'blocked' : 'idle');
+    if (outcome === 'complete') persistCurrentAutosave(Date.now());
+  }).catch((error) => {
+    if (!sceneAutosaveRecoveryIsCurrent(context)) return;
+    blockedSceneAutosave = readAutosave(context.projectId);
+    setSceneAutosaveRecoveryPhase('blocked');
+    setStatus(
+      `自动恢复未完成，为保护未保存内容已暂停编辑。请刷新页面重试：${error instanceof Error ? error.message : String(error)}`,
+      false,
+      12000,
+    );
+  });
 }
 
 function invalidateAuthoringForProjectChange(): void {
@@ -492,6 +566,7 @@ function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
     || state.timelines.some(({ dirty }) => dirty)
     || state.pendingSceneDeletes.length > 0
+    || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
 }
@@ -902,6 +977,7 @@ function projectBarProjection(): ProjectBarProjection {
   const saveState: ProjectSaveState = hasDirtyFiles
     ? saveAttemptLeftDirty ? 'partial-failure' : 'dirty'
     : 'saved';
+  const sceneRecoveryLocked = sceneAutosaveRecoveryPhase !== 'idle';
   return {
     projectName: state.dirName || '未打开项目',
     objectLabel: currentObjectLabel(),
@@ -910,7 +986,15 @@ function projectBarProjection(): ProjectBarProjection {
     canRedo: true,
     fsSupported: state.fsSupported,
     hasScenes: state.scenes.size > 0,
-    writeLocked: state.projectWriteLock !== null,
+    writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked,
+    ...(sceneRecoveryLocked ? {
+      writeLockLabel: sceneAutosaveRecoveryPhase === 'running'
+        ? '正在恢复上次未完成的保存'
+        : '自动恢复需要重试',
+      writeLockTitle: sceneAutosaveRecoveryPhase === 'running'
+        ? '恢复完成前暂停编辑和项目切换'
+        : '为保护未保存内容，请刷新页面重试自动恢复',
+    } : {}),
   };
 }
 
@@ -930,6 +1014,10 @@ function handleTimelineEdited(): void {
 }
 
 async function saveProject(): Promise<void> {
+  if (sceneAutosaveRecoveryPhase !== 'idle') {
+    setStatus('自动恢复尚未收束，现在不能保存', false, 5000);
+    return;
+  }
   try {
     await saveAll();
   } catch (error) {
@@ -939,7 +1027,11 @@ async function saveProject(): Promise<void> {
 }
 
 function confirmProjectSwitch(): boolean {
-  if (state.pendingSceneDeletes.length > 0) {
+  if (sceneAutosaveRecoveryPhase !== 'idle') {
+    setStatus('自动恢复尚未收束，现在不能切换项目', false, 5000);
+    return false;
+  }
+  if (state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null) {
     setStatus('当前仍有待保存的场景改名或删除，请先保存全部', false, 5000);
     return false;
   }
@@ -1110,6 +1202,23 @@ bindProjectIoHooks({
   runValidate: () => { runValidate(); scheduleAuthoringIndexRebuild(); },
   renderSidebar,
   onAssetsRefreshed: refreshAuthoringIndexImmediately,
+  onSceneMutationPlan: async (input) => {
+    const planned = await assetImportClient.scenePlan({
+      operationId: crypto.randomUUID(),
+      kind: input.kind,
+      sourcePath: input.sourcePath,
+      ...(input.kind === 'rename' ? { targetPath: input.targetPath } : {}),
+    });
+    return { operationId: planned.operationId, planFingerprint: planned.planFingerprint };
+  },
+  onSceneMutationCommit: async (input) => {
+    return assetImportClient.sceneCommit({
+      requestId: input.requestId,
+      plans: input.plans,
+      writes: input.writes,
+    });
+  },
+  onSceneCommitStateChanged: () => persistCurrentAutosave(Date.now()),
   onProjectClosing: closeCurrentProjectRuntime,
   onProjectStateReset: () => {
     invalidatePendingValidation();
@@ -1126,12 +1235,13 @@ bindProjectIoHooks({
   onProjectLoaded: () => {
     authoringProjectChanging = false;
     saveAttemptLeftDirty = false;
+    blockedSceneAutosave = null;
     pendingAutosaveTimelineConflicts = [];
     clearTimelineViewStates();
     resetAuthoringState();
     refreshProjectBarProjection();
-    tryAutosaveRecover();
-    void bindCurrentProjectAssetImport();
+    const bindingReady = bindCurrentProjectAssetImport();
+    startCurrentProjectAutosaveRecovery(bindingReady);
   },
   onSaved: () => {
     persistCurrentAutosave(Date.now());
@@ -1327,6 +1437,9 @@ function renderAll(): void {
   const main = h('main');
   main.id = 'main';
   main.className = 'editor-application-frame';
+  main.toggleAttribute('inert', sceneAutosaveRecoveryPhase !== 'idle');
+  main.setAttribute('data-autosave-recovery', sceneAutosaveRecoveryPhase);
+  if (sceneAutosaveRecoveryPhase === 'running') main.setAttribute('aria-busy', 'true');
   appEl.appendChild(main);
   renderMainArea();
 }
@@ -1514,6 +1627,10 @@ function applyTimelineHistory(direction: 'undo' | 'redo'): void {
 
 /** 配置、时间轴和剧本分别使用独立历史栈。 */
 function doUndo(): void {
+  if (sceneAutosaveRecoveryPhase !== 'idle') {
+    setStatus('自动恢复尚未收束，现在不能撤销', false, 5000);
+    return;
+  }
   if (state.projectWriteLock === 'asset-relocation') {
     setStatus('素材整理进行中，完成后才能撤销其他编辑', false, 5000);
     return;
@@ -1523,6 +1640,10 @@ function doUndo(): void {
   else undo();
 }
 function doRedo(): void {
+  if (sceneAutosaveRecoveryPhase !== 'idle') {
+    setStatus('自动恢复尚未收束，现在不能重做', false, 5000);
+    return;
+  }
   if (state.projectWriteLock === 'asset-relocation') {
     setStatus('素材整理进行中，完成后才能重做其他编辑', false, 5000);
     return;
@@ -1553,6 +1674,10 @@ window.addEventListener('keydown', (e) => {
   // Ctrl+F 聚焦搜索（M6 E5）；Ctrl+P 预览标签页
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault();
+    if (sceneAutosaveRecoveryPhase !== 'idle') {
+      setStatus('自动恢复尚未收束，现在不能切换工作区', false, 5000);
+      return;
+    }
     if (state.projectWriteLock === 'asset-relocation') {
       setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
       return;
@@ -1565,6 +1690,10 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
+    if (sceneAutosaveRecoveryPhase !== 'idle') {
+      setStatus('自动恢复尚未收束，现在不能切换工作区', false, 5000);
+      return;
+    }
     if (state.projectWriteLock === 'asset-relocation') {
       setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
       return;
@@ -1576,7 +1705,7 @@ window.addEventListener('keydown', (e) => {
 
 // 关页保护：存在未保存改动时提示（防误关丢失编辑）
 window.addEventListener('beforeunload', (e) => {
-  if (state.projectWriteLock === 'asset-relocation') {
+  if (state.projectWriteLock === 'asset-relocation' || sceneAutosaveRecoveryPhase !== 'idle') {
     e.preventDefault();
     e.returnValue = '';
     return;
@@ -1590,6 +1719,7 @@ window.addEventListener('beforeunload', (e) => {
   }
   if (state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
+    || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0) {
     e.preventDefault();
@@ -1607,7 +1737,10 @@ window.addEventListener('pagehide', (event) => {
 });
 
 window.addEventListener('pageshow', (event) => {
-  if (event.persisted) void bindCurrentProjectAssetImport();
+  if (event.persisted) {
+    const bindingReady = bindCurrentProjectAssetImport();
+    startCurrentProjectAutosaveRecovery(bindingReady);
+  }
 });
 
 // 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪
@@ -1635,6 +1768,11 @@ function mergeTimelineAutosaveConflicts(
 
 function persistCurrentAutosave(now: number): void {
   if (!state.autosaveProjectId) return;
+  if (sceneAutosaveRecoveryPhase !== 'idle') return;
+  if (blockedSceneAutosave?.projectId === state.autosaveProjectId) {
+    writeAutosave(blockedSceneAutosave);
+    return;
+  }
   const unresolvedEntries = unresolvedAutosaveTimelineConflicts(
     pendingAutosaveTimelineConflicts.map((conflict) => conflict.recovered),
     state.timelines,
@@ -1645,7 +1783,15 @@ function persistCurrentAutosave(now: number): void {
   pendingAutosaveTimelineConflicts = pendingAutosaveTimelineConflicts.filter((conflict) => (
     unresolvedEvidence.has(timelineConflictEvidenceKey(conflict))
   ));
-  const fresh = buildAutosave(state.dirName, state.scenes, state.timelines, now, state.autosaveProjectId);
+  const fresh = buildAutosave(
+    state.dirName,
+    state.scenes,
+    state.timelines,
+    now,
+    state.autosaveProjectId,
+    state.pendingSceneDeletes,
+    state.pendingSceneCommit,
+  );
   const payload = preserveAutosaveTimelineConflicts(
     fresh,
     state.dirName,
@@ -1708,38 +1854,123 @@ function downloadTimelineAutosaveConflict(key: string): void {
 }
 
 /** 项目载入后检查同项目未保存快照：存在且与当前内存不同时询问恢复 */
-function tryAutosaveRecover(): void {
-  if (!state.autosaveProjectId) return;
-  const payload = readAutosave(state.autosaveProjectId);
-  const recoverable = pickRecoverable(payload, state.autosaveProjectId, state.scenes);
-  const recoverableTimelines = pickRecoverableTimelines(payload, state.autosaveProjectId, state.timelines);
-  const quarantinedEntries = payload?.projectId === state.autosaveProjectId
+async function tryAutosaveRecover(
+  context: SceneAutosaveRecoveryContext,
+  bindingReady: Promise<void>,
+): Promise<SceneAutosaveRecoveryOutcome> {
+  requireCurrentSceneAutosaveRecovery(context);
+  let payload = readAutosave(context.projectId);
+  if (payload?.pendingSceneCommit) {
+    const original = payload;
+    try {
+      await bindingReady;
+      requireCurrentSceneAutosaveRecovery(context);
+      const pending = payload.pendingSceneCommit;
+      const result = await context.client.sceneCommit({
+        requestId: pending.requestId,
+        plans: pending.plans,
+        writes: pending.writes,
+      });
+      requireCurrentSceneAutosaveRecovery(context);
+      const settled = settlePendingSceneCommit(payload, result);
+      if (settled === null) throw new Error('场景保存回执与自动备份不一致');
+      requireCurrentSceneAutosaveRecovery(context);
+      await reloadCurrentProjectFromHandle();
+      requireCurrentSceneAutosaveRecovery(context);
+      payload = settled;
+      writeAutosave(settled);
+      setStatus('已收束上次中断的场景保存，未提交的后续编辑仍可恢复', true, 7000);
+    } catch (error) {
+      if (!sceneAutosaveRecoveryIsCurrent(context)) return 'stale';
+      state.pendingSceneCommit = {
+        requestId: original.pendingSceneCommit!.requestId,
+        plans: original.pendingSceneCommit!.plans.map((entry) => ({ ...entry })),
+        writes: original.pendingSceneCommit!.writes.map((entry) => ({ ...entry })),
+        deletedPaths: [...original.pendingSceneCommit!.deletedPaths],
+      };
+      blockedSceneAutosave = original;
+      setStatus(`上次场景保存尚未收束，自动备份已完整保留且编辑已暂停：${error instanceof Error ? error.message : String(error)}`, false, 12000);
+      return 'blocked';
+    }
+  }
+  requireCurrentSceneAutosaveRecovery(context);
+  const sceneRecovery = inspectSceneAutosaveRecovery(payload, context.projectId, state.scenes);
+  if (sceneRecovery.status === 'blocked') {
+    blockedSceneAutosave = payload;
+    setStatus('场景自动备份包含不完整的改名或删除操作，已保留原备份并暂停编辑', false, 12000);
+    return 'blocked';
+  }
+  const recoverable = sceneRecovery.status === 'recoverable' ? sceneRecovery.scenes : [];
+  const recoverableSceneTransaction = sceneRecovery.status === 'recoverable'
+    ? sceneRecovery.pendingDeletes
+    : [];
+  const recoverableTimelines = pickRecoverableTimelines(payload, context.projectId, state.timelines);
+  const quarantinedEntries = payload?.projectId === context.projectId
     ? unresolvedAutosaveTimelineConflicts(payload.timelineConflicts ?? [], state.timelines)
     : [];
   const quarantinedConflicts = quarantineTimelineAutosaveEntries(quarantinedEntries);
-  if (recoverable.length === 0 && recoverableTimelines.length === 0 && quarantinedConflicts.length === 0) {
+  if (
+    recoverable.length === 0
+    && recoverableSceneTransaction.length === 0
+    && recoverableTimelines.length === 0
+    && quarantinedConflicts.length === 0
+  ) {
     if ((payload?.timelineConflicts?.length ?? 0) > 0) persistCurrentAutosave(Date.now());
-    return;
+    return 'complete';
   }
   const when = new Date(payload!.savedAt).toLocaleString();
   const names = recoverable.map((e) => e.key).join('、');
   const timelineNames = recoverableTimelines.map((entry) => entry.id).join('、');
   const details = [
     recoverable.length > 0 ? `${recoverable.length} 个场景：${names}` : '',
+    recoverableSceneTransaction.length > 0
+      ? `${recoverableSceneTransaction.length} 个未完成的场景改名或删除（将整组恢复）`
+      : '',
     recoverableTimelines.length > 0 ? `${recoverableTimelines.length} 个演出：${timelineNames}` : '',
     quarantinedConflicts.length > 0 ? `${quarantinedConflicts.length} 个演出身份冲突需要确认` : '',
   ].filter(Boolean).join('\n');
   if (!window.confirm(`检测到「${state.dirName}」的未保存自动备份（${when}）：\n${details}\n是否恢复这些未保存的编辑？（取消则丢弃备份内容）`)) {
+    requireCurrentSceneAutosaveRecovery(context);
     pendingAutosaveTimelineConflicts = [];
-    clearAutosave(state.autosaveProjectId);
-    return;
+    blockedSceneAutosave = null;
+    clearAutosave(context.projectId);
+    return 'complete';
+  }
+  requireCurrentSceneAutosaveRecovery(context);
+  for (const pending of recoverableSceneTransaction) {
+    const normalized = pending.file.replaceAll('\\', '/').replace(/^content\/scenario\//, '');
+    const sourceKey = normalized.replace(/\.gal$/i, '');
+    state.scenes.delete(sourceKey);
   }
   for (const e of recoverable) {
     const sc = state.scenes.get(e.key);
     if (sc) {
       sc.text = e.text;
+      sc.eol = e.eol;
+      if (e.persistedSha256) sc.persistedSha256 = e.persistedSha256;
       sc.dirty = true;
+    } else {
+      state.scenes.set(e.key, {
+        id: e.id,
+        file: e.file,
+        text: e.text,
+        eol: e.eol,
+        dirty: true,
+        handle: null,
+        ...(e.persistedSha256 ? { persistedSha256: e.persistedSha256 } : {}),
+        ...(e.pendingCreateOperationId ? { pendingCreateOperationId: e.pendingCreateOperationId } : {}),
+      });
     }
+  }
+  state.pendingSceneDeletes = recoverableSceneTransaction.map((pending) => ({
+    ...pending,
+    ...(pending.affectedSceneKeys ? { affectedSceneKeys: [...pending.affectedSceneKeys] } : {}),
+  }));
+  blockedSceneAutosave = null;
+  if (state.current && !state.scenes.has(state.current)) {
+    state.current = recoverableSceneTransaction.find((pending) => pending.replacementKey)?.replacementKey
+      ?? [...state.scenes.keys()][0]
+      ?? null;
   }
   const timelineRecovery = restoreTimelineAutosaveEntries(recoverableTimelines);
   pendingAutosaveTimelineConflicts = mergeTimelineAutosaveConflicts([
@@ -1754,11 +1985,12 @@ function tryAutosaveRecover(): void {
   runValidate();
   scheduleAuthoringIndexRebuild();
   renderSidebar();
+  return 'complete';
 }
 
 /** 定时快照：有 dirty 场景就写备份，全部干净则清除旧备份（存储不可用时静默降级） */
 setInterval(() => {
-  if (state.projectLoading || !state.autosaveProjectId) return;
+  if (state.projectLoading || !state.autosaveProjectId || sceneAutosaveRecoveryPhase !== 'idle') return;
   persistCurrentAutosave(Date.now());
 }, AUTOSAVE_INTERVAL_MS);
 

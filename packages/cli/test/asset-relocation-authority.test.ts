@@ -6,6 +6,7 @@ import {
   rename,
   rm,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import * as path from 'node:path';
@@ -24,8 +25,10 @@ import { AssetImportRecordStore } from '../src/asset-import-authority/record-sto
 const roots: string[] = [];
 const operationId = '11111111-1111-4111-8111-111111111111';
 const batchOperationId = '22222222-2222-4222-8222-222222222222';
+const chainedOperationId = '33333333-3333-4333-8333-333333333333';
 const sourcePath = 'content/assets/bg/old.webp';
 const targetPath = 'content/assets/bg/new.webp';
+const chainedTargetPath = 'content/assets/bg/final.webp';
 const batchSourceA = 'content/assets/bg/batch-a.webp';
 const batchSourceB = 'content/assets/bg/batch-b.webp';
 const batchTargetA = 'content/assets/bg/batch-a-new.webp';
@@ -423,6 +426,96 @@ describe('project asset relocation authority', () => {
     expect(afterUndo?.journal.journalVersion).toBe(beforeUndo?.journal.journalVersion);
   });
 
+  it('keeps a committed relocation queryable after a legal edit while undo remains blocked', async () => {
+    const fixtureValue = await fixture();
+    const planned = await plan(fixtureValue);
+    const committed = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    });
+    const sceneFile = absolute(fixtureValue.projectRoot, scenePath);
+    await writeFile(sceneFile, '@scene start\n@bg new\n@bg new\n@end\n');
+
+    await expect(fixtureValue.authority.query(operationId)).resolves.toMatchObject({
+      operation: { operationId, status: 'COMMITTED' },
+    });
+    await expect(fixtureValue.authority.list()).resolves.toMatchObject({
+      operations: expect.arrayContaining([
+        expect.objectContaining({ operationId, status: 'COMMITTED' }),
+      ]),
+    });
+    await expect(fixtureValue.authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_UNDO_BLOCKED_CHANGED' });
+    expect((await fixtureValue.store.read(operationId))?.journal.status).toBe('COMMITTED');
+    await expect(readFile(sceneFile, 'utf8')).resolves.toBe('@scene start\n@bg new\n@bg new\n@end\n');
+  });
+
+  it('keeps committed history readable but blocks undo when its owned backup is missing', async () => {
+    const fixtureValue = await fixture();
+    const planned = await plan(fixtureValue);
+    const committed = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    });
+    const backup = path.join(
+      fixtureValue.paths.relocationWorkspace,
+      operationId,
+      'backup',
+      'source-0000.bin',
+    );
+    await unlink(backup);
+
+    await expect(fixtureValue.authority.query(operationId)).resolves.toMatchObject({
+      operation: { operationId, status: 'COMMITTED' },
+    });
+    await expect(fixtureValue.authority.list()).resolves.toMatchObject({
+      operations: expect.arrayContaining([
+        expect.objectContaining({ operationId, status: 'COMMITTED' }),
+      ]),
+    });
+    await expect(fixtureValue.authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId,
+      receiptFingerprint: committed.receipt!.receiptFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_UNDO_BLOCKED_CHANGED' });
+    await expect(readFile(absolute(fixtureValue.projectRoot, targetPath), 'utf8')).resolves.toBe('source-bytes');
+    await expect(stat(fixtureValue.sourceFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('allows a committed target to move again without its old history blocking the next relocation', async () => {
+    const fixtureValue = await fixture();
+    const firstPlan = await plan(fixtureValue);
+    const firstCommit = await fixtureValue.authority.commit(operationId, {
+      planFingerprint: firstPlan.plan.planFingerprint,
+    });
+    expect(firstCommit.operation.status).toBe('COMMITTED');
+
+    const secondPlan = await fixtureValue.authority.plan({
+      operationId: chainedOperationId,
+      sourcePath: targetPath,
+      targetPath: chainedTargetPath,
+    });
+    expect(secondPlan.plan.status).toBe('ready');
+    const secondCommit = await fixtureValue.authority.commit(chainedOperationId, {
+      planFingerprint: secondPlan.plan.planFingerprint,
+    });
+    expect(secondCommit.operation.status).toBe('COMMITTED');
+    await expect(readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8'))
+      .resolves.toBe('@scene start\n@bg final\n@end\n');
+    await expect(readFile(absolute(fixtureValue.projectRoot, chainedTargetPath), 'utf8'))
+      .resolves.toBe('source-bytes');
+    await expect(stat(absolute(fixtureValue.projectRoot, targetPath))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await expect(fixtureValue.authority.query(operationId)).resolves.toMatchObject({
+      operation: { operationId, status: 'COMMITTED' },
+    });
+    await expect(fixtureValue.authority.list()).resolves.toMatchObject({
+      operations: expect.arrayContaining([
+        expect.objectContaining({ operationId, status: 'COMMITTED' }),
+        expect.objectContaining({ operationId: chainedOperationId, status: 'COMMITTED' }),
+      ]),
+    });
+  });
+
   it('clears a recovery barrier when an idempotent terminal request verifies committed or undone state', async () => {
     const fixtureValue = await fixture();
     const barrierStore = fixtureValue.barrierStore;
@@ -449,6 +542,121 @@ describe('project asset relocation authority', () => {
     });
     expect(undone.operation.status).toBe('UNDONE');
     expect(await barrierStore.hasUnresolvedBarrier('asset-relocation')).toBe(false);
+  });
+
+  it('records a plan before workspace materialization and retries the missing workspace after interruption', async () => {
+    const fixtureValue = await fixture({ faultPoint: 'after_plan_record_before_workspace' });
+    const workspace = path.join(fixtureValue.paths.relocationWorkspace, operationId);
+    const request = { operationId, sourcePath, targetPath: fixtureValue.targetPath };
+
+    await expect(fixtureValue.authority.plan(request))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    expect((await fixtureValue.store.read(operationId))?.journal.status).toBe('PLANNED');
+    await expect(stat(workspace)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+
+    const retried = makeAuthority(fixtureValue.paths, undefined, undefined, fixtureValue.barrierStore);
+    const result = await retried.plan(request);
+    expect(result.operation.status).toBe('PLANNED');
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    await expect(readFile(path.join(workspace, 'prepared', 'text-0000.txt'), 'utf8'))
+      .resolves.toBe('@scene start\n@bg new\n@end\n');
+    await expect(readFile(path.join(workspace, 'backup', 'text-0000.txt'), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+  });
+
+  it('refuses to adopt workspace text whose identity was not recorded before interruption', async () => {
+    const fixtureValue = await fixture({ faultPoint: 'after_workspace_text_before_record' });
+    const workspace = path.join(fixtureValue.paths.relocationWorkspace, operationId);
+    const request = { operationId, sourcePath, targetPath: fixtureValue.targetPath };
+
+    await expect(fixtureValue.authority.plan(request))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const interrupted = await fixtureValue.store.read(operationId);
+    expect(interrupted?.journal.status).toBe('PLANNED');
+    expect(interrupted?.textFiles[0]?.preparedIdentity).toBeUndefined();
+    await expect(readFile(path.join(workspace, 'prepared', 'text-0000.txt'), 'utf8'))
+      .resolves.toBe('@scene start\n@bg new\n@end\n');
+    await expect(readFile(path.join(workspace, 'backup', 'text-0000.txt'), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+
+    const prepared = path.join(workspace, 'prepared', 'text-0000.txt');
+    const replacement = `${prepared}.replacement`;
+    await writeFile(replacement, '@scene start\n@bg new\n@end\n');
+    await rename(prepared, `${prepared}.interrupted`);
+    await rename(replacement, prepared);
+
+    const retried = makeAuthority(fixtureValue.paths, undefined, undefined, fixtureValue.barrierStore);
+    await expect(retried.plan(request))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(retried.cancel(operationId)).resolves.toMatchObject({ operation: { status: 'CANCELLED' } });
+    await expect(readFile(prepared, 'utf8')).resolves.toBe('@scene start\n@bg new\n@end\n');
+    await expect(readFile(path.join(workspace, 'backup', 'text-0000.txt'), 'utf8'))
+      .resolves.toBe('@scene start\n@bg old\n@end\n');
+  });
+
+  it('cleans a planned workspace before recording cancellation and retries after interruption', async () => {
+    const fixtureValue = await fixture();
+    await plan(fixtureValue);
+    const workspace = path.join(fixtureValue.paths.relocationWorkspace, operationId);
+    const interrupted = makeAuthority(
+      fixtureValue.paths,
+      'after_cancel_workspace_before_record',
+      undefined,
+      fixtureValue.barrierStore,
+    );
+
+    await expect(interrupted.cancel(operationId))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    expect((await fixtureValue.store.read(operationId))?.journal.status).toBe('PLANNED');
+    await expect(stat(workspace)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const retried = makeAuthority(fixtureValue.paths, undefined, undefined, fixtureValue.barrierStore);
+    await expect(retried.cancel(operationId)).resolves.toMatchObject({
+      operation: { operationId, status: 'CANCELLED' },
+    });
+    await expect(stat(workspace)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(retried.cancel(operationId)).resolves.toMatchObject({
+      operation: { operationId, status: 'CANCELLED' },
+    });
+  });
+
+  it('preserves a same-content workspace replacement whose ownership cannot be proven', async () => {
+    const fixtureValue = await fixture();
+    await plan(fixtureValue);
+    const prepared = path.join(
+      fixtureValue.paths.relocationWorkspace,
+      operationId,
+      'prepared',
+      'text-0000.txt',
+    );
+    const replacement = `${prepared}.replacement`;
+    const content = await readFile(prepared, 'utf8');
+    await writeFile(replacement, content);
+    await rename(prepared, `${prepared}.owned`);
+    await rename(replacement, prepared);
+
+    await expect(fixtureValue.authority.cancel(operationId))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await expect(readFile(prepared, 'utf8')).resolves.toBe(content);
+    expect((await fixtureValue.store.read(operationId))?.journal.status).toBe('PLANNED');
+  });
+
+  it('does not mutate cancelled history during concurrent reads', async () => {
+    const fixtureValue = await fixture();
+    await plan(fixtureValue);
+    await fixtureValue.authority.cancel(operationId);
+    const workspace = path.join(fixtureValue.paths.relocationWorkspace, operationId);
+    await mkdir(path.join(workspace, 'prepared'), { recursive: true });
+    await writeFile(path.join(workspace, 'prepared', 'external.txt'), 'external');
+
+    await expect(Promise.all([
+      fixtureValue.authority.query(operationId),
+      fixtureValue.authority.list(),
+      fixtureValue.authority.query(operationId),
+    ])).resolves.toHaveLength(3);
+    await expect(readFile(path.join(workspace, 'prepared', 'external.txt'), 'utf8')).resolves.toBe('external');
   });
 
   it.each([

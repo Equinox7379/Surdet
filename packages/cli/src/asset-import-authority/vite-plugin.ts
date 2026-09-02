@@ -13,6 +13,7 @@ import { AssetImportRecordStore } from './record-store.js';
 import { AssetProjectMutationCoordinator } from './mutation-coordinator.js';
 import { AssetRelocationStore } from './asset-relocation-store.js';
 import { ProjectAssetRelocationAuthority } from './asset-relocation-authority.js';
+import { ProjectSceneLifecycleAuthority } from './scene-lifecycle-authority.js';
 
 export interface AssetImportAuthorityBrowserConfig {
   authorityContractVersion: 1;
@@ -110,8 +111,13 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         mutationCoordinator,
       },
     );
+    const sceneLifecycle = new ProjectSceneLifecycleAuthority(paths, {
+      assertLeaseHeld: () => lease.assertHeld(),
+      mutationCoordinator,
+    });
     await authority.list();
     await relocation.list();
+    await sceneLifecycle.recoverPending();
     const target: AssetImportAuthorityHttpTarget = {
       projectIdentity: paths.projectIdentity,
       createChallenge: (browserSessionId) => binding.createChallenge(browserSessionId),
@@ -140,6 +146,8 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
       relocationCancel: (operationId) => relocation.cancel(operationId),
       relocationRecover: (operationId, request) => relocation.recover(operationId, request),
       relocationUndo: (operationId, request) => relocation.undo(operationId, request),
+      scenePlan: (request) => sceneLifecycle.plan(request),
+      sceneCommit: (request) => sceneLifecycle.commit(request),
     };
     return { authority: target, lease, close: () => stopChallengeCleanup?.() };
   } catch (error) {

@@ -14,8 +14,10 @@ import { state, h, setStatus } from '../state.js';
 import {
   assertProjectWriteUnlocked,
   isSceneFilePathReserved,
+  prepareSceneMutation,
   runProjectWriteOperation,
   sceneFileIdentity,
+  sceneProjectPath,
 } from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
 import { buildFlowGraph } from '../graph/build.js';
@@ -154,6 +156,15 @@ function pendingRenameFor(sceneKey: string): boolean {
   ));
 }
 
+function remapPendingSceneKey(previousKey: string, nextKey: string | null): void {
+  for (const pending of state.pendingSceneDeletes) {
+    if (!pending.affectedSceneKeys) continue;
+    pending.affectedSceneKeys = [...new Set(pending.affectedSceneKeys.flatMap((key) => (
+      key !== previousKey ? [key] : nextKey === null ? [] : [nextKey]
+    )))];
+  }
+}
+
 function renamedSceneFile(file: string, newId: string): string {
   const parts = file.replaceAll('\\', '/').split('/');
   parts[parts.length - 1] = `${newId}.gal`;
@@ -193,6 +204,10 @@ function blockConfiguredSceneOperation(sceneId: string): boolean {
 /** 只更新内存与引用；旧磁盘文件由“保存全部”在新文件写成后清理。 */
 async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   assertProjectWriteUnlocked();
+  if (state.pendingSceneCommit !== null) {
+    setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
+    return;
+  }
   const current = state.scenes.get(sceneKey);
   if (!current) return;
   if (pendingRenameFor(sceneKey)) {
@@ -227,15 +242,25 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
     return;
   }
 
-  let refCount = 0;
-  for (const scene of state.scenes.values()) {
-    const next = rewriteSceneRefs(scene.text, sceneId, newId);
-    if (next !== scene.text) {
-      scene.text = next;
-      scene.dirty = true;
-      refCount++;
-    }
+  const authorityPlan = current.handle && state.dirHandle
+    ? await prepareSceneMutation({
+      kind: 'rename',
+      sourcePath: sceneProjectPath(current.file),
+      targetPath: sceneProjectPath(targetFile),
+    })
+    : null;
+  // 计划请求期间正文仍可继续输入；必须基于返回时的最新文本重算，不能写回旧快照。
+  const rewrites = new Map<string, string>();
+  for (const [key, candidate] of state.scenes) {
+    const next = rewriteSceneRefs(candidate.text, sceneId, newId);
+    if (next !== candidate.text) rewrites.set(key, next);
   }
+  for (const [key, next] of rewrites) {
+    const candidate = state.scenes.get(key)!;
+    candidate.text = next;
+    candidate.dirty = true;
+  }
+  const refCount = rewrites.size;
   const scene = state.scenes.get(sceneKey)!;
   scene.text = scene.text.replace(
     new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'),
@@ -250,10 +275,22 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   state.scenes = new Map([...state.scenes].map(([key, value]) => (
     key === sceneKey ? [newKey, value] as const : [key, value] as const
   )));
+  remapPendingSceneKey(sceneKey, newKey);
   if (state.current === sceneKey) state.current = newKey;
 
   if (scene.handle && state.dirHandle) {
-    state.pendingSceneDeletes.push({ kind: 'rename', id: sceneId, file: oldFile, replacementKey: newKey });
+    const affectedSceneKeys = [...new Set([
+      newKey,
+      ...[...rewrites.keys()].map((key) => key === sceneKey ? newKey : key),
+    ])];
+    state.pendingSceneDeletes.push({
+      kind: 'rename',
+      id: sceneId,
+      file: oldFile,
+      replacementKey: newKey,
+      affectedSceneKeys,
+      ...(authorityPlan ?? {}),
+    });
     scene.handle = null;
   }
 
@@ -282,6 +319,10 @@ export async function renameScene(sceneId: string): Promise<void> {
 /** 精确路径进入待保存清理；不在点击按钮时直接改磁盘。 */
 async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   assertProjectWriteUnlocked();
+  if (state.pendingSceneCommit !== null) {
+    setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
+    return;
+  }
   const scene = state.scenes.get(sceneKey);
   if (!scene) return;
   if (pendingRenameFor(sceneKey)) {
@@ -301,10 +342,20 @@ async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   const dirtyWarning = scene.dirty ? '\n\n该场景包含未保存内容，继续将放弃这些内容。' : '';
   if (!window.confirm(`${warning}${dirtyWarning}`)) return;
 
+  const authorityPlan = scene.handle && state.dirHandle
+    ? await prepareSceneMutation({ kind: 'delete', sourcePath: sceneProjectPath(scene.file) })
+    : null;
+
   state.scenes.delete(sceneKey);
+  remapPendingSceneKey(sceneKey, null);
   if (state.current === sceneKey) state.current = [...state.scenes.keys()][0] ?? null;
   if (scene.handle && state.dirHandle) {
-    state.pendingSceneDeletes.push({ kind: 'delete', id: sceneId, file: scene.file });
+    state.pendingSceneDeletes.push({
+      kind: 'delete',
+      id: sceneId,
+      file: scene.file,
+      ...(authorityPlan ?? {}),
+    });
   }
   setStatus(
     scene.handle && state.dirHandle

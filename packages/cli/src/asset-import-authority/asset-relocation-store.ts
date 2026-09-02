@@ -176,6 +176,8 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       && SHA256.test(file.beforeSha256)
       && SHA256.test(file.afterSha256)
       && validEvidence(file.beforeIdentity)
+      && (file.preparedIdentity === undefined || validEvidence(file.preparedIdentity))
+      && (file.backupIdentity === undefined || validEvidence(file.backupIdentity))
       && file.preparedRelativePath === `.surdet/asset-relocation/${operationId}/prepared/text-${String(index).padStart(4, '0')}.txt`
       && file.backupRelativePath === `.surdet/asset-relocation/${operationId}/backup/text-${String(index).padStart(4, '0')}.txt`)
     && new Set(textFiles.map((file) => file.path)).size === textFiles.length;

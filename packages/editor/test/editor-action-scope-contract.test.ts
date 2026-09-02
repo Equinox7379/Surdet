@@ -164,6 +164,31 @@ describe('editor action scope contract', () => {
     expect(onSaveProject).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the actual reason when project writing is temporarily locked', () => {
+    vi.stubGlobal('document', documentStub);
+    const bar = renderProjectBar({
+      projectName: '当前项目',
+      objectLabel: '场景 ch01_01',
+      saveState: 'dirty',
+      canUndo: true,
+      canRedo: true,
+      writeLocked: true,
+      writeLockLabel: '正在恢复上次未完成的保存',
+      writeLockTitle: '恢复完成前暂停编辑和项目切换',
+    }, {
+      onOpenProject: vi.fn(),
+      onOpenReview: vi.fn(),
+      onUndo: vi.fn(),
+      onRedo: vi.fn(),
+      onSaveProject: vi.fn(),
+    }) as unknown as FakeElement;
+
+    expect(bar.querySelector('.editor-save-state')!.textContent).toBe('正在恢复上次未完成的保存');
+    expect(bar.querySelector('[data-action="save-project"]')!.getAttribute('title'))
+      .toBe('恢复完成前暂停编辑和项目切换');
+    expect((bar.querySelector('[data-action="save-project"]') as unknown as { disabled: boolean }).disabled).toBe(true);
+  });
+
   it('keeps decision saving workspace-scoped and gives the two scopes distinct style identities', () => {
     const appendStart = reviewPanelSource.indexOf('function appendDecisionButton(');
     const appendEnd = reviewPanelSource.indexOf('\nfunction renderObjectDetails(', appendStart);

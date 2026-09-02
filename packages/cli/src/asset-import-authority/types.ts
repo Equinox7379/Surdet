@@ -356,6 +356,8 @@ export interface AssetRelocationStoredText extends ProjectAssetRelocationTextCha
   beforeIdentity: AssetRelocationFileEvidence;
   preparedRelativePath: string;
   backupRelativePath: string;
+  preparedIdentity?: AssetRelocationFileEvidence;
+  backupIdentity?: AssetRelocationFileEvidence;
 }
 
 export interface AssetRelocationReceipt {
@@ -452,6 +454,35 @@ export interface AssetRelocationOperationSummary {
 export interface ListAssetRelocationsResponse {
   operations: AssetRelocationOperationSummary[];
   recentReceipts: AssetRelocationReceipt[];
+}
+
+export interface SceneLifecyclePlanRequest {
+  operationId: string;
+  kind: 'rename' | 'delete';
+  sourcePath: string;
+  targetPath?: string;
+}
+
+export interface SceneLifecyclePlanResponse {
+  operationId: string;
+  kind: 'rename' | 'delete';
+  sourcePath: string;
+  targetPath: string | null;
+  planFingerprint: string;
+  status: 'PLANNED' | 'COMMITTED' | 'CANCELLED';
+}
+
+export interface SceneLifecycleCommitRequest {
+  requestId: string;
+  plans: Array<{ operationId: string; planFingerprint: string }>;
+  writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
+}
+
+export interface SceneLifecycleCommitResponse {
+  requestId: string;
+  status: 'COMMITTED';
+  writes: Array<{ path: string; sha256: string }>;
+  deletedPaths: string[];
 }
 
 export interface AssetImportJournal {
