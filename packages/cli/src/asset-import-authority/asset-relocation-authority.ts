@@ -5,7 +5,7 @@ import {
   fingerprintProjectAssetRelocationInventory,
   fingerprintProjectAssetRelocationOpaqueScan,
   loadProjectSnapshot,
-  planProjectAssetRelocation,
+  planProjectAssetRelocationBatch,
   stableStringify,
   type ProjectAssetFileFact,
   type ProjectAssetRelocationOpaqueRootScan,
@@ -33,6 +33,7 @@ import {
   type AssetRelocationDetailResponse,
   type AssetRelocationFileEvidence,
   type AssetRelocationReceipt,
+  type AssetRelocationRequest,
   type AssetRelocationStoredOperation,
   type AssetRelocationUndoReceipt,
   type CommitAssetRelocationRequest,
@@ -77,12 +78,35 @@ interface BinaryEvidence {
 }
 
 interface CapturedPlan {
-  prepared: Awaited<ReturnType<typeof planProjectAssetRelocation>>;
+  prepared: Awaited<ReturnType<typeof planProjectAssetRelocationBatch>>;
 }
 
 function requireUuid(value: string, field: string): string {
   if (!UUID.test(value)) throw new AssetImportAuthorityError('INVALID_REQUEST', `${field} 必须是小写 UUID`);
   return value;
+}
+
+function normalizeRelocationRequest(input: PlanAssetRelocationRequest): AssetRelocationRequest {
+  const operationId = requireUuid(input.operationId, 'operationId');
+  const rawMoves = input.moves ?? (typeof input.sourcePath === 'string' && typeof input.targetPath === 'string'
+    ? [{ sourcePath: input.sourcePath, targetPath: input.targetPath }]
+    : []);
+  if (rawMoves.length === 0 || rawMoves.length > 100) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '素材整理数量必须在 1 到 100 之间');
+  }
+  const moves = rawMoves.map((move) => {
+    if (typeof move?.sourcePath !== 'string' || typeof move.targetPath !== 'string') {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', '素材整理路径格式无效');
+    }
+    return { sourcePath: move.sourcePath, targetPath: move.targetPath };
+  }).sort((left, right) => portableFold(left.sourcePath).localeCompare(portableFold(right.sourcePath))
+    || left.sourcePath.localeCompare(right.sourcePath) || left.targetPath.localeCompare(right.targetPath));
+  return {
+    operationId,
+    moves,
+    sourcePath: moves[0]!.sourcePath,
+    targetPath: moves[0]!.targetPath,
+  };
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -335,15 +359,33 @@ export class ProjectAssetRelocationAuthority {
     return this.store.replace(previous, next);
   }
 
-  private async updateBinary(
+  private async updateBinaryItem(
     previous: AssetRelocationStoredOperation,
-    binaryState: AssetRelocationStoredOperation['journal']['binaryState'],
+    index: number,
+    state: AssetRelocationStoredOperation['journal']['binaryItems'][number]['state'],
     evidence: {
-      binaryBackupIdentity?: AssetRelocationFileEvidence | null;
-      binaryTargetIdentity?: AssetRelocationFileEvidence | null;
+      backupIdentity?: AssetRelocationFileEvidence | null;
+      targetIdentity?: AssetRelocationFileEvidence | null;
     } = {},
   ): Promise<AssetRelocationStoredOperation> {
-    return this.update(previous, { journal: { binaryState, ...evidence } });
+    const binaryItems = previous.journal.binaryItems.map((item, itemIndex) => itemIndex === index
+      ? {
+        ...item,
+        state,
+        ...(evidence.backupIdentity === undefined ? {} : { backupIdentity: evidence.backupIdentity }),
+        ...(evidence.targetIdentity === undefined ? {} : { targetIdentity: evidence.targetIdentity }),
+      }
+      : item);
+    const first = binaryItems[0]!;
+    return this.update(previous, {
+      journal: {
+        binaryItems,
+        binaryState: first.state,
+        binaryBackupRelativePath: first.backupRelativePath,
+        binaryBackupIdentity: first.backupIdentity,
+        binaryTargetIdentity: first.targetIdentity,
+      },
+    });
   }
 
   private async updateText(
@@ -433,7 +475,7 @@ export class ProjectAssetRelocationAuthority {
     return { roots, files: files.sort((left, right) => left.path.localeCompare(right.path)) };
   }
 
-  private async capture(request: PlanAssetRelocationRequest): Promise<CapturedPlan> {
+  private async capture(request: AssetRelocationRequest): Promise<CapturedPlan> {
     await this.assertLeaseHeld();
     await assertAssetImportProjectRootIdentity(this.paths);
     const storage = await NodeProjectStorage.open(this.paths.projectRoot);
@@ -441,16 +483,15 @@ export class ProjectAssetRelocationAuthority {
     const listed = await storage.listFiles();
     const assetPaths = listed.filter((file) => file.startsWith('content/assets/'));
     const assetFiles = await storage.inspectFileFacts(assetPaths);
-    const source = await projectFileEvidence(this.paths, request.sourcePath);
-    if (source === null) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '源素材不存在');
-    const sourceFact = assetFiles.find((file) => file.path === request.sourcePath);
-    if (sourceFact === undefined) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '源素材不在项目素材清单中');
-    sourceFact.sha256 = source.sha256;
-
-    const target = await projectFileEvidence(this.paths, request.targetPath);
-    const targetDirectoryPath = request.targetPath.slice(0, request.targetPath.lastIndexOf('/'));
-    const targetParent = await safeProjectParent(this.paths, request.targetPath);
-    const targetDirectory = await assetImportDirectoryIdentity(targetParent.parent);
+    const sourceEvidence = new Map<string, BinaryEvidence>();
+    for (const move of request.moves) {
+      const source = await projectFileEvidence(this.paths, move.sourcePath);
+      if (source === null) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `源素材不存在：${move.sourcePath}`);
+      const sourceFact = assetFiles.find((file) => file.path === move.sourcePath);
+      if (sourceFact === undefined) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `源素材不在项目素材清单中：${move.sourcePath}`);
+      sourceFact.sha256 = source.sha256;
+      sourceEvidence.set(move.sourcePath, source);
+    }
     const galleryFile = await storage.exists('content/config/gallery.json')
       ? await storage.readText('content/config/gallery.json')
       : null;
@@ -461,20 +502,31 @@ export class ProjectAssetRelocationAuthority {
       this.textHasher,
     );
     const assetInventoryFingerprint = await fingerprintProjectAssetRelocationInventory(assetFiles, this.textHasher);
-    const binaryBaseline = {
-      source: { path: request.sourcePath, ...source.identity, sha256: source.sha256 },
-      target: { path: request.targetPath, state: target === null ? 'absent' as const : 'exists' as const },
-      targetDirectory: { path: targetDirectoryPath, ...targetDirectory },
-      assetInventoryFingerprint,
-    };
+    const moves = [];
+    for (const move of request.moves) {
+      const source = sourceEvidence.get(move.sourcePath)!;
+      const target = await projectFileEvidence(this.paths, move.targetPath);
+      const targetDirectoryPath = move.targetPath.slice(0, move.targetPath.lastIndexOf('/'));
+      const targetParent = await safeProjectParent(this.paths, move.targetPath);
+      const targetDirectory = await assetImportDirectoryIdentity(targetParent.parent);
+      moves.push({
+        sourcePath: move.sourcePath,
+        targetPath: move.targetPath,
+        binaryBaseline: {
+          source: { path: move.sourcePath, ...source.identity, sha256: source.sha256 },
+          target: { path: move.targetPath, state: target === null ? 'absent' as const : 'exists' as const },
+          targetDirectory: { path: targetDirectoryPath, ...targetDirectory },
+          assetInventoryFingerprint,
+        },
+      });
+    }
     return {
-      prepared: await planProjectAssetRelocation({
+      prepared: await planProjectAssetRelocationBatch({
         operationId: request.operationId,
         snapshot,
         assetFiles,
         assetDirectories: await this.assetDirectories(this.paths.projectRoot),
-        sourcePath: request.sourcePath,
-        targetPath: request.targetPath,
+        moves,
         galleryFile,
         opaqueFiles: opaque.files,
         scanCoverage: {
@@ -482,13 +534,12 @@ export class ProjectAssetRelocationAuthority {
           opaqueRoots: opaque.roots,
           opaqueInventoryFingerprint,
         },
-        binaryBaseline,
       }, this.textHasher),
     };
   }
 
   private async prepareWorkspace(
-    request: PlanAssetRelocationRequest,
+    request: AssetRelocationRequest,
     captured: CapturedPlan,
   ): Promise<{ workspace: AssetRelocationOperationWorkspace; textFiles: AssetRelocationStoredOperation['textFiles'] }> {
     const workspace = await createAssetRelocationProjectWorkspace(this.paths, request.operationId);
@@ -524,11 +575,7 @@ export class ProjectAssetRelocationAuthority {
   }
 
   async plan(requestInput: PlanAssetRelocationRequest): Promise<AssetRelocationDetailResponse> {
-    const request: PlanAssetRelocationRequest = {
-      operationId: requireUuid(requestInput.operationId, 'operationId'),
-      sourcePath: requestInput.sourcePath,
-      targetPath: requestInput.targetPath,
-    };
+    const request = normalizeRelocationRequest(requestInput);
     return this.serialize(request.operationId, () => this.mutationCoordinator.run('asset-relocation', async () => {
       const existing = await this.store.read(request.operationId);
       if (existing !== null) {
@@ -549,7 +596,8 @@ export class ProjectAssetRelocationAuthority {
         request,
         plan: captured.prepared.plan,
         scannedFiles: captured.prepared.scannedFiles,
-        binaryBaseline: captured.prepared.binaryBaseline,
+        binaryBaseline: captured.prepared.binaryBaselines[0]!,
+        binaryBaselines: captured.prepared.binaryBaselines,
         textFiles: prepared.textFiles,
         journal: {
           schemaVersion: 1,
@@ -558,9 +606,18 @@ export class ProjectAssetRelocationAuthority {
           status: 'PLANNED',
           recoveryPhase: null,
           binaryState: 'SOURCE',
-          binaryBackupRelativePath: relativeWorkspacePath(request.operationId, 'backup', 'source.bin'),
+          binaryBackupRelativePath: relativeWorkspacePath(request.operationId, 'backup', 'source-0000.bin'),
           binaryBackupIdentity: null,
           binaryTargetIdentity: null,
+          binaryItems: captured.prepared.plan.moves.map((move, index) => ({
+            moveId: move.moveId,
+            sourcePath: move.source.path,
+            targetPath: move.target.path,
+            state: 'SOURCE' as const,
+            backupRelativePath: relativeWorkspacePath(request.operationId, 'backup', `source-${String(index).padStart(4, '0')}.bin`),
+            backupIdentity: null,
+            targetIdentity: null,
+          })),
           textStates: prepared.textFiles.map(() => 'PENDING'),
           textResultIdentities: prepared.textFiles.map(() => null),
           updatedAt: timestamp,
@@ -582,7 +639,7 @@ export class ProjectAssetRelocationAuthority {
     if (captured.prepared.plan.status !== 'ready'
       || captured.prepared.plan.planFingerprint !== record.plan.planFingerprint
       || !sameJson(captured.prepared.scannedFiles, record.scannedFiles)
-      || !sameJson(captured.prepared.binaryBaseline, record.binaryBaseline)
+      || !sameJson(captured.prepared.binaryBaselines, record.binaryBaselines)
       || !sameJson(captured.prepared.textChanges, record.textFiles.map((file) => ({
         path: file.path,
         beforeSha256: file.beforeSha256,
@@ -678,64 +735,60 @@ export class ProjectAssetRelocationAuthority {
 
   private async moveSourceToBackup(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
     let record = recordInput;
-    const workspace = await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
-    const backup = path.join(workspace.backup, 'source.bin');
-    const source = absoluteAssetImportProjectPath(this.paths, record.request.sourcePath);
-    if (record.journal.binaryState === 'SOURCE') {
-      const evidence = await projectFileEvidence(this.paths, record.request.sourcePath);
-      if (evidence === null || !sameFileIdentity(evidence.identity, record.binaryBaseline.source)
-        || evidence.sha256 !== record.binaryBaseline.source.sha256
-        || await projectFileEvidence(this.paths, record.request.targetPath) !== null
-        || await fileExists(backup)) {
-        return this.enterRecovery(record.request.operationId, 'commit', '素材移动前身份已经变化');
+    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      let item = record.journal.binaryItems[index]!;
+      const baseline = record.binaryBaselines[index]!;
+      const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      const source = absoluteAssetImportProjectPath(this.paths, item.sourcePath);
+      if (item.state === 'SOURCE') {
+        const evidence = await projectFileEvidence(this.paths, item.sourcePath);
+        if (evidence === null || !sameFileIdentity(evidence.identity, baseline.source)
+          || evidence.sha256 !== baseline.source.sha256 || await fileExists(backup)) {
+          return this.enterRecovery(record.request.operationId, 'commit', `素材移动前身份已经变化：${item.sourcePath}`);
+        }
+        record = await this.updateBinaryItem(record, index, 'BACKUP_INTENT');
+        item = record.journal.binaryItems[index]!;
+        await this.fault('after_binary_backup_intent');
       }
-      record = await this.updateBinary(record, 'BACKUP_INTENT');
-      await this.fault('after_binary_backup_intent');
-    }
-    if (record.journal.binaryState === 'BACKUP_INTENT') {
-      if (await projectFileEvidence(this.paths, record.request.targetPath) !== null) {
-        return this.enterRecovery(record.request.operationId, 'commit', '素材备份期间目标路径被占用');
-      }
-      const sourceEvidence = await projectFileEvidence(this.paths, record.request.sourcePath);
+      if (item.state !== 'BACKUP_INTENT') continue;
+      const sourceEvidence = await projectFileEvidence(this.paths, item.sourcePath);
       const backupEvidence = await fs.lstat(backup).then(() => stableBinaryEvidence(backup)).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
       });
       if (sourceEvidence !== null && backupEvidence === null) {
-        if (!sameFileIdentity(sourceEvidence.identity, record.binaryBaseline.source)
-          || sourceEvidence.sha256 !== record.binaryBaseline.source.sha256) {
-          return this.enterRecovery(record.request.operationId, 'commit', '源素材不再匹配计划基线');
+        if (!sameFileIdentity(sourceEvidence.identity, baseline.source)
+          || sourceEvidence.sha256 !== baseline.source.sha256) {
+          return this.enterRecovery(record.request.operationId, 'commit', `源素材不再匹配计划基线：${item.sourcePath}`);
         }
         await fs.link(source, backup);
         await syncFileAndParent(backup);
         const linked = await stableBinaryEvidence(backup);
-        const sourceBeforeRemove = await projectFileEvidence(this.paths, record.request.sourcePath);
-        if (sourceBeforeRemove === null
-          || !sameNodeIdentity(sourceBeforeRemove.identity, linked.identity)
+        const sourceBeforeRemove = await projectFileEvidence(this.paths, item.sourcePath);
+        if (sourceBeforeRemove === null || !sameNodeIdentity(sourceBeforeRemove.identity, linked.identity)
           || sourceBeforeRemove.sha256 !== linked.sha256) {
-          return this.enterRecovery(record.request.operationId, 'commit', '素材备份建立后源文件发生变化');
+          return this.enterRecovery(record.request.operationId, 'commit', `素材备份建立后源文件发生变化：${item.sourcePath}`);
         }
         await removeExactFile(source);
         await syncParentDirectories(path.dirname(backup));
       } else if (sourceEvidence !== null && backupEvidence !== null) {
-        if (!sameFileIdentity(sourceEvidence.identity, record.binaryBaseline.source)
-          || !sameFileIdentity(backupEvidence.identity, record.binaryBaseline.source)
+        if (!sameFileIdentity(sourceEvidence.identity, baseline.source)
+          || !sameFileIdentity(backupEvidence.identity, baseline.source)
           || !sameNodeIdentity(sourceEvidence.identity, backupEvidence.identity)
-          || sourceEvidence.sha256 !== record.binaryBaseline.source.sha256
-          || backupEvidence.sha256 !== record.binaryBaseline.source.sha256) {
-          return this.enterRecovery(record.request.operationId, 'commit', '素材备份中间状态身份不一致');
+          || sourceEvidence.sha256 !== baseline.source.sha256 || backupEvidence.sha256 !== baseline.source.sha256) {
+          return this.enterRecovery(record.request.operationId, 'commit', `素材备份中间状态身份不一致：${item.sourcePath}`);
         }
         await removeExactFile(source);
         await syncParentDirectories(path.dirname(backup));
-      } else if (backupEvidence === null
-        || !sameFileIdentity(backupEvidence.identity, record.binaryBaseline.source)
-        || backupEvidence.sha256 !== record.binaryBaseline.source.sha256) {
-        return this.enterRecovery(record.request.operationId, 'commit', '素材备份状态无法安全恢复');
+      } else if (backupEvidence === null || !sameFileIdentity(backupEvidence.identity, baseline.source)
+        || backupEvidence.sha256 !== baseline.source.sha256) {
+        return this.enterRecovery(record.request.operationId, 'commit', `素材备份状态无法安全恢复：${item.sourcePath}`);
       }
       await this.fault('after_binary_backup_before_journal');
       const persistedBackup = await stableBinaryEvidence(backup);
-      record = await this.updateBinary(record, 'BACKUP', {
-        binaryBackupIdentity: relocationEvidence(persistedBackup),
+      record = await this.updateBinaryItem(record, index, 'BACKUP', {
+        backupIdentity: relocationEvidence(persistedBackup),
       });
     }
     return record;
@@ -743,23 +796,23 @@ export class ProjectAssetRelocationAuthority {
 
   private async publishTarget(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
     let record = recordInput;
-    const workspace = await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
-    const backup = path.join(workspace.backup, 'source.bin');
-    const target = absoluteAssetImportProjectPath(this.paths, record.request.targetPath);
-    if (record.journal.binaryState === 'BACKUP') {
-      if (await projectFileEvidence(this.paths, record.request.sourcePath) !== null
-        || await projectFileEvidence(this.paths, record.request.targetPath) !== null) {
-        return this.enterRecovery(record.request.operationId, 'commit', '目标发布前项目路径状态不再为空');
+    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      let item = record.journal.binaryItems[index]!;
+      const baseline = record.binaryBaselines[index]!;
+      const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      const target = absoluteAssetImportProjectPath(this.paths, item.targetPath);
+      if (item.state === 'BACKUP') {
+        if (await projectFileEvidence(this.paths, item.targetPath) !== null) {
+          return this.enterRecovery(record.request.operationId, 'commit', `目标发布前项目路径状态不为空：${item.targetPath}`);
+        }
+        record = await this.updateBinaryItem(record, index, 'TARGET_INTENT');
+        item = record.journal.binaryItems[index]!;
+        await this.fault('after_target_link_intent');
       }
-      record = await this.updateBinary(record, 'TARGET_INTENT');
-      await this.fault('after_target_link_intent');
-    }
-    if (record.journal.binaryState === 'TARGET_INTENT') {
-      if (await projectFileEvidence(this.paths, record.request.sourcePath) !== null) {
-        return this.enterRecovery(record.request.operationId, 'commit', '目标发布期间源路径重新出现');
-      }
+      if (item.state !== 'TARGET_INTENT') continue;
       const backupEvidence = await stableBinaryEvidence(backup);
-      let targetEvidence = await projectFileEvidence(this.paths, record.request.targetPath);
+      let targetEvidence = await projectFileEvidence(this.paths, item.targetPath);
       if (targetEvidence === null) {
         try {
           await fs.link(backup, target);
@@ -767,16 +820,16 @@ export class ProjectAssetRelocationAuthority {
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         }
-        targetEvidence = await projectFileEvidence(this.paths, record.request.targetPath);
+        targetEvidence = await projectFileEvidence(this.paths, item.targetPath);
       }
       if (targetEvidence === null || !sameNodeIdentity(targetEvidence.identity, backupEvidence.identity)
-        || targetEvidence.sha256 !== record.binaryBaseline.source.sha256) {
-        return this.enterRecovery(record.request.operationId, 'commit', '目标素材发布身份不一致');
+        || targetEvidence.sha256 !== baseline.source.sha256) {
+        return this.enterRecovery(record.request.operationId, 'commit', `目标素材发布身份不一致：${item.targetPath}`);
       }
       await this.fault('after_target_link_before_journal');
-      record = await this.updateBinary(record, 'TARGET', {
-        binaryBackupIdentity: relocationEvidence(backupEvidence),
-        binaryTargetIdentity: relocationEvidence(targetEvidence),
+      record = await this.updateBinaryItem(record, index, 'TARGET', {
+        backupIdentity: relocationEvidence(backupEvidence),
+        targetIdentity: relocationEvidence(targetEvidence),
       });
     }
     return record;
@@ -815,12 +868,19 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async verifyCommittedFiles(record: AssetRelocationStoredOperation): Promise<void> {
-    const source = await projectFileEvidence(this.paths, record.request.sourcePath);
-    const target = await projectFileEvidence(this.paths, record.request.targetPath);
-    if (source !== null || target === null || target.sha256 !== record.binaryBaseline.source.sha256
-      || (record.journal.binaryTargetIdentity !== null
-        && !sameFileIdentity(target.identity, record.journal.binaryTargetIdentity))) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理后的二进制状态不一致');
+    const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      const item = record.journal.binaryItems[index]!;
+      const baseline = record.binaryBaselines[index]!;
+      const target = await projectFileEvidence(this.paths, item.targetPath);
+      if (target === null || target.sha256 !== baseline.source.sha256
+        || (item.targetIdentity !== null && !sameFileIdentity(target.identity, item.targetIdentity))) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理后的二进制状态不一致：${item.targetPath}`);
+      }
+      if (!targetPaths.has(portableFold(item.sourcePath))
+        && await projectFileEvidence(this.paths, item.sourcePath) !== null) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理后的源路径仍存在：${item.sourcePath}`);
+      }
     }
     for (const [index, file] of record.textFiles.entries()) {
       const current = await projectFileEvidence(this.paths, file.path);
@@ -842,37 +902,45 @@ export class ProjectAssetRelocationAuthority {
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理尚未达到可验证终态');
     }
     if (record.journal.status === 'COMMITTED') {
-      if (record.receipt === null || record.journal.binaryState !== 'TARGET'
-        || record.journal.binaryBackupIdentity === null
-        || record.journal.binaryTargetIdentity === null
+      if (record.receipt === null
+        || record.journal.binaryItems.some((item) => item.state !== 'TARGET'
+          || item.backupIdentity === null || item.targetIdentity === null)
         || record.journal.textStates.some((state) => state !== 'REPLACED')
         || record.journal.textResultIdentities.some((identity) => identity === null)) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理成功终态记录不完整');
       }
       await this.verifyCommittedFiles(record);
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
-      const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(
-        this.paths,
-        record.journal.binaryBackupRelativePath,
-      ));
-      if (target === null
-        || !sameFileIdentity(target.identity, record.receipt.targetIdentity)
-        || !sameFileIdentity(target.identity, record.journal.binaryTargetIdentity!)
-        || !sameFileIdentity(backup.identity, record.journal.binaryBackupIdentity!)) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理成功终态文件身份不一致');
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+        const receiptMove = record.receipt.moves[index];
+        if (target === null || receiptMove === undefined
+          || !sameFileIdentity(target.identity, receiptMove.targetIdentity)
+          || !sameFileIdentity(target.identity, item.targetIdentity!)
+          || !sameFileIdentity(backup.identity, item.backupIdentity!)) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理成功终态文件身份不一致：${item.targetPath}`);
+        }
       }
     } else if (record.journal.status === 'ROLLED_BACK' || record.journal.status === 'CANCELLED') {
       if (record.receipt !== null || record.undoReceipt !== null
-        || (record.journal.status === 'ROLLED_BACK' && record.journal.binaryState !== 'ROLLED_BACK')
-        || (record.journal.status === 'CANCELLED' && record.journal.binaryState !== 'SOURCE')) {
+        || (record.journal.status === 'ROLLED_BACK'
+          && record.journal.binaryItems.some((item) => item.state !== 'ROLLED_BACK'))
+        || (record.journal.status === 'CANCELLED'
+          && record.journal.binaryItems.some((item) => item.state !== 'SOURCE'))) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理回退终态记录不完整');
       }
-      const source = await projectFileEvidence(this.paths, record.request.sourcePath);
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
-      if (source === null || target !== null
-        || !sameFileIdentity(source.identity, record.binaryBaseline.source)
-        || source.sha256 !== record.binaryBaseline.source.sha256) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理回退终态文件身份不一致');
+      const sourcePaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.sourcePath)));
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const baseline = record.binaryBaselines[index]!;
+        const source = await projectFileEvidence(this.paths, item.sourcePath);
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        if (source === null || (!sourcePaths.has(portableFold(item.targetPath)) && target !== null)
+          || !sameFileIdentity(source.identity, baseline.source)
+          || source.sha256 !== baseline.source.sha256) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理回退终态文件身份不一致：${item.sourcePath}`);
+        }
       }
       for (const [index, file] of record.textFiles.entries()) {
         const current = await projectFileEvidence(this.paths, file.path);
@@ -893,16 +961,22 @@ export class ProjectAssetRelocationAuthority {
       }
     } else {
       if (record.receipt === null || record.undoReceipt === null
-        || record.journal.binaryState !== 'UNDONE'
+        || record.journal.binaryItems.some((item) => item.state !== 'UNDONE')
         || record.journal.textStates.some((state) => state !== 'UNDONE')) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理撤销终态记录不完整');
       }
-      const source = await projectFileEvidence(this.paths, record.request.sourcePath);
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
-      if (source === null || target !== null
-        || !sameFileIdentity(source.identity, record.undoReceipt.sourceIdentity)
-        || source.sha256 !== record.binaryBaseline.source.sha256) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理撤销终态文件身份不一致');
+      const sourcePaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.sourcePath)));
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const baseline = record.binaryBaselines[index]!;
+        const undoMove = record.undoReceipt.moves[index];
+        const source = await projectFileEvidence(this.paths, item.sourcePath);
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        if (source === null || (!sourcePaths.has(portableFold(item.targetPath)) && target !== null) || undoMove === undefined
+          || !sameFileIdentity(source.identity, undoMove.sourceIdentity)
+          || source.sha256 !== baseline.source.sha256) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理撤销终态文件身份不一致：${item.sourcePath}`);
+        }
       }
       for (const [index, file] of record.textFiles.entries()) {
         const current = await projectFileEvidence(this.paths, file.path);
@@ -926,8 +1000,18 @@ export class ProjectAssetRelocationAuthority {
     let record = recordInput;
     await this.verifyCommittedFiles(record);
     if (record.receipt === null) {
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
-      if (target === null) return this.enterRecovery(record.request.operationId, 'commit', '完成回执缺少目标素材');
+      const moves = [];
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        if (target === null) return this.enterRecovery(record.request.operationId, 'commit', `完成回执缺少目标素材：${item.targetPath}`);
+        moves.push({
+          moveId: item.moveId,
+          sourcePath: item.sourcePath,
+          targetPath: item.targetPath,
+          targetIdentity: relocationEvidence(target),
+        });
+      }
       const textFiles = record.textFiles.map((file, index) => {
         const identity = record.journal.textResultIdentities[index];
         if (identity === null || identity === undefined) {
@@ -944,7 +1028,8 @@ export class ProjectAssetRelocationAuthority {
         projectIdentity: this.paths.projectIdentity,
         sourcePath: record.request.sourcePath,
         targetPath: record.request.targetPath,
-        targetIdentity: relocationEvidence(target),
+        targetIdentity: moves[0]!.targetIdentity,
+        moves,
         textFiles,
         committedAt: this.timestamp(),
       };
@@ -1016,34 +1101,51 @@ export class ProjectAssetRelocationAuthority {
       record = await this.updateText(record, index, 'ROLLED_BACK', restoredIdentity);
     }
 
-    const workspace = await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
-    const backup = path.join(workspace.backup, 'source.bin');
-    if (!['SOURCE', 'ROLLED_BACK'].includes(record.journal.binaryState)) {
-      if (record.journal.binaryState !== 'ROLLBACK_INTENT') record = await this.updateBinary(record, 'ROLLBACK_INTENT');
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
+    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    for (let index = record.journal.binaryItems.length - 1; index >= 0; index -= 1) {
+      let item = record.journal.binaryItems[index]!;
+      if (item.state === 'SOURCE' || item.state === 'ROLLED_BACK' || item.state === 'BACKUP_INTENT' || item.state === 'BACKUP') continue;
+      const baseline = record.binaryBaselines[index]!;
+      const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      const target = await projectFileEvidence(this.paths, item.targetPath);
       if (target !== null) {
         const backupEvidence = await stableBinaryEvidence(backup);
-        if (!sameNodeIdentity(target.identity, backupEvidence.identity)
-          || target.sha256 !== record.binaryBaseline.source.sha256) {
-          return this.enterRecovery(record.request.operationId, 'rollback', '外部修改阻止素材目标回滚');
+        if (!sameNodeIdentity(target.identity, backupEvidence.identity) || target.sha256 !== baseline.source.sha256) {
+          return this.enterRecovery(record.request.operationId, 'rollback', `外部修改阻止素材目标回滚：${item.targetPath}`);
         }
-        await removeExactFile(absoluteAssetImportProjectPath(this.paths, record.request.targetPath));
+        if (item.state !== 'ROLLBACK_INTENT') {
+          record = await this.updateBinaryItem(record, index, 'ROLLBACK_INTENT');
+          item = record.journal.binaryItems[index]!;
+        }
+        await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
       }
-      const source = await projectFileEvidence(this.paths, record.request.sourcePath);
+    }
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      const item = record.journal.binaryItems[index]!;
+      const baseline = record.binaryBaselines[index]!;
+      const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      let source = await projectFileEvidence(this.paths, item.sourcePath);
       const backupExists = await fileExists(backup);
       if (source === null && backupExists) {
-        await fs.link(backup, absoluteAssetImportProjectPath(this.paths, record.request.sourcePath));
-        await syncFileAndParent(absoluteAssetImportProjectPath(this.paths, record.request.sourcePath));
-      } else if (source === null || !backupExists || source.sha256 !== record.binaryBaseline.source.sha256) {
-        return this.enterRecovery(record.request.operationId, 'rollback', '素材源路径无法安全恢复');
+        await fs.link(backup, absoluteAssetImportProjectPath(this.paths, item.sourcePath));
+        await syncFileAndParent(absoluteAssetImportProjectPath(this.paths, item.sourcePath));
+        source = await projectFileEvidence(this.paths, item.sourcePath);
       }
-      const restored = await projectFileEvidence(this.paths, record.request.sourcePath);
-      const backupEvidence = await stableBinaryEvidence(backup);
-      if (restored === null || !sameNodeIdentity(restored.identity, backupEvidence.identity)
-        || restored.sha256 !== record.binaryBaseline.source.sha256) {
-        return this.enterRecovery(record.request.operationId, 'rollback', '素材源路径恢复后身份不一致');
+      if (source === null || source.sha256 !== baseline.source.sha256) {
+        return this.enterRecovery(record.request.operationId, 'rollback', `素材源路径无法安全恢复：${item.sourcePath}`);
       }
-      record = await this.updateBinary(record, 'ROLLED_BACK');
+      if (backupExists) {
+        const backupEvidence = await stableBinaryEvidence(backup);
+        if (!sameNodeIdentity(source.identity, backupEvidence.identity)) {
+          return this.enterRecovery(record.request.operationId, 'rollback', `素材源路径恢复后身份不一致：${item.sourcePath}`);
+        }
+      } else if (!sameFileIdentity(source.identity, baseline.source)) {
+        return this.enterRecovery(record.request.operationId, 'rollback', `未移动素材身份已经变化：${item.sourcePath}`);
+      }
+      record = await this.updateBinaryItem(record, index, 'ROLLED_BACK', {
+        backupIdentity: backupExists ? relocationEvidence(await stableBinaryEvidence(backup)) : null,
+        targetIdentity: null,
+      });
     }
     record = await this.update(record, { journal: { status: 'ROLLED_BACK', recoveryPhase: null } });
     await this.barrierStore.resolveRelocationBarriers(record.request.operationId);
@@ -1090,14 +1192,23 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async preflightUndo(record: AssetRelocationStoredOperation): Promise<void> {
-    const workspace = await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
-    const backup = await stableBinaryEvidence(path.join(workspace.backup, 'source.bin'));
-    const source = await projectFileEvidence(this.paths, record.request.sourcePath);
-    const target = await projectFileEvidence(this.paths, record.request.targetPath);
-    if (source !== null || target === null || record.receipt === null
-      || !sameNodeIdentity(target.identity, backup.identity)
-      || !sameFileIdentity(target.identity, record.receipt.targetIdentity)) {
-      throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '目标素材已经变化，不能撤销');
+    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    if (record.receipt === null) throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '成功回执缺失，不能撤销');
+    const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      const item = record.journal.binaryItems[index]!;
+      const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+      const target = await projectFileEvidence(this.paths, item.targetPath);
+      const receiptMove = record.receipt.moves[index];
+      if (target === null || receiptMove === undefined
+        || !sameNodeIdentity(target.identity, backup.identity)
+        || !sameFileIdentity(target.identity, receiptMove.targetIdentity)) {
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `目标素材已经变化，不能撤销：${item.targetPath}`);
+      }
+      if (!targetPaths.has(portableFold(item.sourcePath))
+        && await projectFileEvidence(this.paths, item.sourcePath) !== null) {
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `源路径已被占用，不能撤销：${item.sourcePath}`);
+      }
     }
     for (const [index, file] of record.textFiles.entries()) {
       const current = await projectFileEvidence(this.paths, file.path);
@@ -1146,34 +1257,53 @@ export class ProjectAssetRelocationAuthority {
       }
     }
 
-    if (record.journal.binaryState !== 'UNDONE') {
-      if (record.journal.binaryState !== 'UNDO_INTENT') record = await this.updateBinary(record, 'UNDO_INTENT');
-      const workspace = await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
-      const backup = path.join(workspace.backup, 'source.bin');
-      const backupEvidence = await stableBinaryEvidence(backup);
-      let source = await projectFileEvidence(this.paths, record.request.sourcePath);
-      if (source === null) {
-        await fs.link(backup, absoluteAssetImportProjectPath(this.paths, record.request.sourcePath));
-        await syncFileAndParent(absoluteAssetImportProjectPath(this.paths, record.request.sourcePath));
-        source = await projectFileEvidence(this.paths, record.request.sourcePath);
-      }
-      if (source === null || !sameNodeIdentity(source.identity, backupEvidence.identity)) {
-        return this.enterRecovery(record.request.operationId, 'undo', '源素材撤销身份不一致');
-      }
-      const target = await projectFileEvidence(this.paths, record.request.targetPath);
-      if (target !== null) {
-        if (!sameNodeIdentity(target.identity, backupEvidence.identity)) {
-          return this.enterRecovery(record.request.operationId, 'undo', '目标素材已被外部修改');
+    if (record.journal.binaryItems.some((item) => item.state !== 'UNDONE')) {
+      await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+      for (let index = record.journal.binaryItems.length - 1; index >= 0; index -= 1) {
+        let item = record.journal.binaryItems[index]!;
+        const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        if (target !== null && !sameNodeIdentity(target.identity, backup.identity)) {
+          return this.enterRecovery(record.request.operationId, 'undo', `目标素材已被外部修改：${item.targetPath}`);
         }
-        await removeExactFile(absoluteAssetImportProjectPath(this.paths, record.request.targetPath));
+        if (item.state !== 'UNDO_INTENT' && item.state !== 'UNDONE') {
+          record = await this.updateBinaryItem(record, index, 'UNDO_INTENT');
+          item = record.journal.binaryItems[index]!;
+        }
+        if (target !== null) await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
       }
-      record = await this.updateBinary(record, 'UNDONE');
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+        let source = await projectFileEvidence(this.paths, item.sourcePath);
+        if (source === null) {
+          await fs.link(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath), absoluteAssetImportProjectPath(this.paths, item.sourcePath));
+          await syncFileAndParent(absoluteAssetImportProjectPath(this.paths, item.sourcePath));
+          source = await projectFileEvidence(this.paths, item.sourcePath);
+        }
+        if (source === null || !sameNodeIdentity(source.identity, backup.identity)) {
+          return this.enterRecovery(record.request.operationId, 'undo', `源素材撤销身份不一致：${item.sourcePath}`);
+        }
+        record = await this.updateBinaryItem(record, index, 'UNDONE', {
+          backupIdentity: relocationEvidence(backup),
+          targetIdentity: null,
+        });
+      }
     }
 
     if (record.undoReceipt === null) {
-      const restoredSource = await projectFileEvidence(this.paths, record.request.sourcePath);
-      if (restoredSource === null) {
-        return this.enterRecovery(record.request.operationId, 'undo', '撤销回执缺少恢复后的源素材');
+      const moves = [];
+      for (const item of record.journal.binaryItems) {
+        const restoredSource = await projectFileEvidence(this.paths, item.sourcePath);
+        if (restoredSource === null) {
+          return this.enterRecovery(record.request.operationId, 'undo', `撤销回执缺少恢复后的源素材：${item.sourcePath}`);
+        }
+        moves.push({
+          moveId: item.moveId,
+          sourcePath: item.sourcePath,
+          targetPath: item.targetPath,
+          sourceIdentity: relocationEvidence(restoredSource),
+        });
       }
       const restoredTextFiles = record.textFiles.map((file, index) => {
         const identity = record.journal.textResultIdentities[index];
@@ -1189,7 +1319,8 @@ export class ProjectAssetRelocationAuthority {
         receiptId: record.receipt!.receiptId,
         sourcePath: record.request.sourcePath,
         targetPath: record.request.targetPath,
-        sourceIdentity: relocationEvidence(restoredSource),
+        sourceIdentity: moves[0]!.sourceIdentity,
+        moves,
         restoredTextFiles,
         undoneAt: this.timestamp(),
       };
@@ -1347,6 +1478,7 @@ export class ProjectAssetRelocationAuthority {
         status: record.journal.status,
         sourcePath: record.request.sourcePath,
         targetPath: record.request.targetPath,
+        moves: record.request.moves,
         updatedAt: record.journal.updatedAt,
         manualRecoveryRequired: record.journal.status === 'RECOVERY_REQUIRED',
       })),

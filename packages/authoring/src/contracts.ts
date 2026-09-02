@@ -432,6 +432,9 @@ export interface ProjectAssetRelocationBatchPlan {
   projectRevision: string;
   status: 'ready' | 'blocked';
   moves: ProjectAssetRelocationMove[];
+  /** 单素材详情兼容投影；批次超过一项时为 null。 */
+  source: ProjectAssetPathDescriptor | null;
+  target: ProjectAssetPathDescriptor | null;
   affectedAssetCount: number;
   affectedReferenceCount: number;
   affectedFileCount: number;

@@ -59,6 +59,14 @@ function relocationReceipt(): AssetRelocationReceipt {
       mtimeNs: '4',
       sha256: '6'.repeat(64),
     },
+    moves: [{
+      moveId: 'relocation-move-http-fixture',
+      sourcePath: relocationSourcePath,
+      targetPath: relocationTargetPath,
+      targetIdentity: {
+        device: '1', inode: '2', birthtimeNs: '3', size: 5, mtimeNs: '4', sha256: '6'.repeat(64),
+      },
+    }],
     textFiles: [],
     committedAt: '2026-09-01T00:00:00.000Z',
   };
@@ -66,7 +74,12 @@ function relocationReceipt(): AssetRelocationReceipt {
 
 function relocationDetail(status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLLED_BACK' | 'UNDONE' = 'PLANNED'): AssetRelocationDetailResponse {
   return {
-    request: { operationId, sourcePath: relocationSourcePath, targetPath: relocationTargetPath },
+    request: {
+      operationId,
+      moves: [{ sourcePath: relocationSourcePath, targetPath: relocationTargetPath }],
+      sourcePath: relocationSourcePath,
+      targetPath: relocationTargetPath,
+    },
     operation: {
       schemaVersion: 1,
       operationId,
@@ -77,6 +90,15 @@ function relocationDetail(status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLLE
       binaryBackupRelativePath: `.surdet/asset-relocation/${operationId}/backup/source.bin`,
       binaryBackupIdentity: null,
       binaryTargetIdentity: null,
+      binaryItems: [{
+        moveId: 'relocation-move-http-fixture',
+        sourcePath: relocationSourcePath,
+        targetPath: relocationTargetPath,
+        state: status === 'PLANNED' ? 'SOURCE' : status === 'UNDONE' ? 'UNDONE' : 'TARGET',
+        backupRelativePath: `.surdet/asset-relocation/${operationId}/backup/source.bin`,
+        backupIdentity: null,
+        targetIdentity: null,
+      }],
       textStates: [],
       textResultIdentities: [],
       updatedAt: '2026-09-01T00:00:00.000Z',
@@ -107,6 +129,7 @@ function relocationSummary(status: 'PLANNED' | 'COMMITTED' | 'CANCELLED' | 'ROLL
     status,
     sourcePath: relocationSourcePath,
     targetPath: relocationTargetPath,
+    moves: [{ sourcePath: relocationSourcePath, targetPath: relocationTargetPath }],
     updatedAt: '2026-09-01T00:00:00.000Z',
     manualRecoveryRequired: false,
   };
@@ -696,6 +719,25 @@ describe('project asset import authority HTTP boundary', () => {
       sourcePath: relocationSourcePath,
       targetPath: relocationTargetPath,
     }]);
+
+    const batchMoves = [
+      { sourcePath: relocationSourcePath, targetPath: relocationTargetPath },
+      { sourcePath: 'content/assets/background/second.png', targetPath: 'content/assets/background/second-new.png' },
+    ];
+    const batchAccepted = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify({ operationId: itemId, moves: batchMoves }),
+    });
+    expect(batchAccepted.response.status).toBe(200);
+    expect(fixture.target.calls).toContainEqual(['relocation-plan', { operationId: itemId, moves: batchMoves }]);
+
+    const invalidBatch = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify({ operationId: itemId, moves: [{ ...batchMoves[0], extra: true }] }),
+    });
+    expect(invalidBatch.response.status).toBe(400);
   });
 
   it('routes relocation plan/query/resume/commit/cancel/recover/undo through the relocation target', async () => {
