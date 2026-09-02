@@ -361,6 +361,11 @@ export interface ProjectAssetIntelligence {
 }
 
 export type ProjectAssetRelocationBlockerCode =
+  | 'ASSET_RELOCATION_BATCH_EMPTY'
+  | 'ASSET_RELOCATION_BATCH_LIMIT'
+  | 'ASSET_RELOCATION_DUPLICATE_SOURCE'
+  | 'ASSET_RELOCATION_DUPLICATE_TARGET'
+  | 'ASSET_RELOCATION_BATCH_KIND_MISMATCH'
   | 'ASSET_RELOCATION_SOURCE_NOT_FOUND'
   | 'ASSET_RELOCATION_SOURCE_AMBIGUOUS'
   | 'ASSET_RELOCATION_UNSUPPORTED_KIND'
@@ -381,12 +386,14 @@ export type ProjectAssetRelocationBlockerCode =
 export interface ProjectAssetRelocationBlocker {
   code: ProjectAssetRelocationBlockerCode;
   message: string;
+  moveIds?: string[];
   sourcePath?: string;
   line?: number;
 }
 
 export interface ProjectAssetRelocationReferenceChange {
   referenceId: string;
+  moveIds?: string[];
   sourceKind: ProjectAssetReferenceSource;
   sourceLabel: string;
   sourcePath: string;
@@ -405,6 +412,27 @@ export interface ProjectAssetRelocationPlan {
   status: 'ready' | 'blocked';
   source: ProjectAssetPathDescriptor | null;
   target: ProjectAssetPathDescriptor | null;
+  affectedReferenceCount: number;
+  affectedFileCount: number;
+  referenceChanges: ProjectAssetRelocationReferenceChange[];
+  blockers: ProjectAssetRelocationBlocker[];
+}
+
+export interface ProjectAssetRelocationMove {
+  moveId: string;
+  source: ProjectAssetPathDescriptor;
+  target: ProjectAssetPathDescriptor;
+}
+
+export interface ProjectAssetRelocationBatchPlan {
+  schemaVersion: 2;
+  operationId: string;
+  planId: string;
+  planFingerprint: string;
+  projectRevision: string;
+  status: 'ready' | 'blocked';
+  moves: ProjectAssetRelocationMove[];
+  affectedAssetCount: number;
   affectedReferenceCount: number;
   affectedFileCount: number;
   referenceChanges: ProjectAssetRelocationReferenceChange[];

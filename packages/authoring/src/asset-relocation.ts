@@ -3,6 +3,7 @@ import type {
   ProjectAssetKind,
   ProjectAssetPathDescriptor,
   ProjectAssetRelocationBinaryBaseline,
+  ProjectAssetRelocationBatchPlan,
   ProjectAssetRelocationBlocker,
   ProjectAssetRelocationBlockerCode,
   ProjectAssetRelocationPlan,
@@ -64,6 +65,32 @@ export interface PreparedProjectAssetRelocation {
   binaryBaseline: ProjectAssetRelocationBinaryBaseline;
 }
 
+export interface ProjectAssetRelocationBatchMoveInput {
+  sourcePath: string;
+  targetPath: string;
+  binaryBaseline: ProjectAssetRelocationBinaryBaseline;
+}
+
+export interface ProjectAssetRelocationBatchPlanInput {
+  operationId: string;
+  snapshot: ProjectSnapshot;
+  assetFiles: readonly ProjectAssetFileFact[];
+  assetDirectories: readonly string[];
+  moves?: readonly ProjectAssetRelocationBatchMoveInput[];
+  /** Authoring 内部旧测试/适配器名称；公开 HTTP 合同统一使用 moves。 */
+  items?: readonly (ProjectAssetRelocationBatchMoveInput & { itemId?: string })[];
+  galleryFile: ProjectFile | null;
+  opaqueFiles: readonly ProjectFile[];
+  scanCoverage: ProjectAssetRelocationPlanInput['scanCoverage'];
+}
+
+export interface PreparedProjectAssetRelocationBatch {
+  plan: ProjectAssetRelocationBatchPlan;
+  textChanges: ProjectAssetRelocationTextChange[];
+  scannedFiles: ProjectAssetRelocationScannedFile[];
+  binaryBaselines: ProjectAssetRelocationBinaryBaseline[];
+}
+
 type JsonPath = Array<string | number>;
 
 interface JsonStringLocation {
@@ -79,6 +106,11 @@ interface JsonReplacement {
   before: string;
   after: string;
   reference: Omit<ProjectAssetRelocationReferenceChange, 'before' | 'after'>;
+}
+
+interface RelocationRewriteOptions {
+  allowBareRoleChange?: boolean;
+  rewritePortraitTarget?: boolean;
 }
 
 function pathKey(path: JsonPath): string {
@@ -434,6 +466,7 @@ function sceneRewrite(
   source: ProjectAssetPathDescriptor,
   target: ProjectAssetPathDescriptor,
   blockers: ProjectAssetRelocationBlocker[],
+  options: RelocationRewriteOptions = {},
 ): { text: string; references: ProjectAssetRelocationReferenceChange[] } {
   const lines = parseSceneDocument(file.text);
   const references: ProjectAssetRelocationReferenceChange[] = [];
@@ -469,13 +502,17 @@ function sceneRewrite(
       if (rawKey.includes(':') && rawKey === source.key && target.key !== source.key) {
         addChange(0, `${parsed.name}.target`, rawKey, target.key);
       } else if (!rawKey.includes(':') && rawKey === sourcePortrait.role && targetPortrait.role !== sourcePortrait.role) {
-        addBlocker(
-          blockers,
-          'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
-          `第 ${lineNumber} 行按角色分组操作立绘，不能确定是否只应改动当前文件。`,
-          file.path,
-          lineNumber,
-        );
+        if (options.allowBareRoleChange) {
+          addChange(0, `${parsed.name}.target`, rawKey, targetPortrait.role);
+        } else {
+          addBlocker(
+            blockers,
+            'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+            `第 ${lineNumber} 行按角色分组操作立绘，不能确定是否只应改动当前文件。`,
+            file.path,
+            lineNumber,
+          );
+        }
       }
     } else if (!KNOWN_ASSET_INSTRUCTIONS.has(parsed.name)
       && [...args, ...instructionModifierTokens(line.raw)].some((argument) => tokens.includes(argument))) {
@@ -497,6 +534,7 @@ function timelineRewrite(
   source: ProjectAssetPathDescriptor,
   target: ProjectAssetPathDescriptor,
   blockers: ProjectAssetRelocationBlocker[],
+  options: RelocationRewriteOptions = {},
 ): { text: string; references: ProjectAssetRelocationReferenceChange[]; knownPaths: Set<string> } {
   let root: Record<string, unknown>;
   try {
@@ -544,21 +582,32 @@ function timelineRewrite(
     const fullMatch = track.target.includes(':') && normalizedTarget === source.key;
     const bareRoleChanged = !track.target.includes(':') && track.target === sourcePortrait.role
       && targetPortrait.role !== sourcePortrait.role;
-    const defaultMatch = !track.target.includes(':') && normalizedTarget === source.key && directCue && !bareRoleChanged;
-    if (source.kind === 'portrait' && (fullMatch || defaultMatch) && target.key !== source.key) {
+    const defaultMatch = !track.target.includes(':') && normalizedTarget === source.key && directCue
+      && (!bareRoleChanged || options.allowBareRoleChange === true);
+    const rewritePortraitTarget = options.rewritePortraitTarget !== false;
+    if (source.kind === 'portrait' && fullMatch && target.key !== source.key && rewritePortraitTarget) {
       replacements.push({
         path: targetPath,
         before: track.target,
         after: target.key,
         reference: reference('timeline', file.path, `时间轴 · 轨道 ${trackIndex + 1}`, 'portrait.target', `timeline:${file.path}:${trackIndex}:target`),
       });
-    } else if (source.kind === 'portrait' && bareRoleChanged) {
-      addBlocker(
-        blockers,
-        'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
-        `时间轴第 ${trackIndex + 1} 条轨道按角色分组操作立绘，不能确定是否只应改动当前文件。`,
-        file.path,
-      );
+    } else if (source.kind === 'portrait' && bareRoleChanged && rewritePortraitTarget) {
+      if (options.allowBareRoleChange) {
+        replacements.push({
+          path: targetPath,
+          before: track.target,
+          after: targetPortrait.role,
+          reference: reference('timeline', file.path, `时间轴 · 轨道 ${trackIndex + 1}`, 'portrait.target', `timeline:${file.path}:${trackIndex}:target`),
+        });
+      } else {
+        addBlocker(
+          blockers,
+          'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+          `时间轴第 ${trackIndex + 1} 条轨道按角色分组操作立绘，不能确定是否只应改动当前文件。`,
+          file.path,
+        );
+      }
     }
     if (source.kind === 'portrait' && (fullMatch || defaultMatch)) {
       cues.forEach((cueValue, cueIndex) => {
@@ -926,4 +975,466 @@ export async function planProjectAssetRelocation(
     blockers,
   };
   return { plan, textChanges, scannedFiles, binaryBaseline: input.binaryBaseline };
+}
+
+interface NormalizedBatchMove {
+  moveId: string;
+  source: ProjectAssetPathDescriptor;
+  target: ProjectAssetPathDescriptor;
+  binaryBaseline: ProjectAssetRelocationBinaryBaseline;
+  placeholder: ProjectAssetPathDescriptor;
+  keyGroupComplete: boolean;
+  roleGroupComplete: boolean;
+}
+
+function batchBlocker(
+  blockers: ProjectAssetRelocationBlocker[],
+  code: ProjectAssetRelocationBlockerCode,
+  message: string,
+  moveIds: readonly string[] = [],
+  sourcePath?: string,
+): void {
+  const sortedMoveIds = [...new Set(moveIds)].sort();
+  const candidate: ProjectAssetRelocationBlocker = {
+    code,
+    message,
+    ...(sortedMoveIds.length === 0 ? {} : { moveIds: sortedMoveIds }),
+    ...(sourcePath === undefined ? {} : { sourcePath }),
+  };
+  if (!blockers.some((item) => canonicalJson(item) === canonicalJson(candidate))) blockers.push(candidate);
+}
+
+function mergeBatchReferences(
+  destination: Map<string, ProjectAssetRelocationReferenceChange>,
+  references: readonly ProjectAssetRelocationReferenceChange[],
+  moveIds: readonly string[],
+): void {
+  const normalizedMoveIds = [...new Set(moveIds)].sort();
+  for (const item of references) {
+    const current = destination.get(item.referenceId);
+    if (current === undefined) {
+      destination.set(item.referenceId, { ...item, moveIds: normalizedMoveIds });
+      continue;
+    }
+    destination.set(item.referenceId, {
+      ...current,
+      after: item.after,
+      moveIds: [...new Set([...(current.moveIds ?? []), ...normalizedMoveIds])].sort(),
+    });
+  }
+}
+
+function descriptorSemanticEqual(
+  left: ProjectAssetPathDescriptor,
+  right: ProjectAssetPathDescriptor,
+): boolean {
+  return left.kind === right.kind && left.key === right.key && (left.variant ?? '') === (right.variant ?? '');
+}
+
+function batchPlaceholder(
+  source: ProjectAssetPathDescriptor,
+  index: number,
+  operationId: string,
+  portraitRoleIndex: number,
+  portraitKeyIndex: number,
+): ProjectAssetPathDescriptor {
+  const nonce = operationId.replace(/[^a-zA-Z0-9]/gu, '').slice(0, 8).toLowerCase() || 'operation';
+  if (source.kind !== 'portrait') {
+    const key = `surdetbatch${nonce}${index}`;
+    return {
+      ...source,
+      path: `${source.directory}/${key}.${source.format}`,
+      fileName: `${key}.${source.format}`,
+      key,
+      invalidName: false,
+    };
+  }
+  const role = `surdetbatch${nonce}r${portraitRoleIndex}`;
+  const outfit = `o${portraitKeyIndex}`;
+  const variant = `v${index}`;
+  return {
+    ...source,
+    path: `${source.directory}/${role}_${outfit}_${variant}.${source.format}`,
+    fileName: `${role}_${outfit}_${variant}.${source.format}`,
+    key: `${role}:${outfit}`,
+    variant,
+    invalidName: false,
+  };
+}
+
+function batchMoveIdsForKey(moves: readonly NormalizedBatchMove[], move: NormalizedBatchMove): string[] {
+  return moves.filter((candidate) => candidate.source.kind === move.source.kind
+    && candidate.source.key === move.source.key).map((candidate) => candidate.moveId).sort();
+}
+
+function batchMoveIdsForRole(moves: readonly NormalizedBatchMove[], move: NormalizedBatchMove): string[] {
+  if (move.source.kind !== 'portrait') return [move.moveId];
+  const role = roleAndOutfit(move.source.key).role;
+  return moves.filter((candidate) => candidate.source.kind === 'portrait'
+    && roleAndOutfit(candidate.source.key).role === role).map((candidate) => candidate.moveId).sort();
+}
+
+function batchReferenceMoveIds(
+  moves: readonly NormalizedBatchMove[],
+  move: NormalizedBatchMove,
+  item: ProjectAssetRelocationReferenceChange,
+): string[] {
+  if (item.field === 'hide.target' || item.field === 'mov.target' || item.field === 'portrait.target') {
+    return item.before.includes(':')
+      ? batchMoveIdsForKey(moves, move)
+      : batchMoveIdsForRole(moves, move);
+  }
+  return [move.moveId];
+}
+
+function addReferencesForMove(
+  destination: Map<string, ProjectAssetRelocationReferenceChange>,
+  moves: readonly NormalizedBatchMove[],
+  move: NormalizedBatchMove,
+  references: readonly ProjectAssetRelocationReferenceChange[],
+): void {
+  for (const item of references) {
+    mergeBatchReferences(destination, [item], batchReferenceMoveIds(moves, move, item));
+  }
+}
+
+function stableTextFile(file: ProjectFile, text: string): ProjectFile {
+  return { ...file, text };
+}
+
+export async function planProjectAssetRelocationBatch(
+  input: ProjectAssetRelocationBatchPlanInput,
+  hasher: TextHasher,
+): Promise<PreparedProjectAssetRelocationBatch> {
+  const blockers: ProjectAssetRelocationBlocker[] = [];
+  const requestMoves = input.moves ?? input.items ?? [];
+  if (requestMoves.length === 0) {
+    batchBlocker(blockers, 'ASSET_RELOCATION_BATCH_EMPTY', '请至少选择一个要整理的素材。');
+  }
+  if (requestMoves.length > 100) {
+    batchBlocker(blockers, 'ASSET_RELOCATION_BATCH_LIMIT', '一次最多整理 100 个素材，请拆成更小的批次。');
+  }
+
+  const normalizedCandidates: Array<{
+    source: ProjectAssetPathDescriptor;
+    target: ProjectAssetPathDescriptor;
+    binaryBaseline: ProjectAssetRelocationBinaryBaseline;
+  }> = [];
+  for (const item of requestMoves) {
+    const sourcePath = safeNormalizePath(item.sourcePath);
+    const targetPath = safeNormalizePath(item.targetPath);
+    const source = sourcePath === null ? null : describeProjectAssetPath(sourcePath);
+    const target = targetPath === null ? null : describeProjectAssetPath(targetPath);
+    if (source === null) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_SOURCE_NOT_FOUND', '源素材路径不安全或不属于项目素材目录。');
+      continue;
+    }
+    if (target === null) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_TARGET_UNSAFE', '目标位置必须位于项目素材目录。', [], source.path);
+      continue;
+    }
+    normalizedCandidates.push({ source, target, binaryBaseline: item.binaryBaseline });
+  }
+  normalizedCandidates.sort((left, right) => portableFold(left.source.path).localeCompare(portableFold(right.source.path))
+    || left.source.path.localeCompare(right.source.path) || left.target.path.localeCompare(right.target.path));
+
+  const sourceGroups = new Map<string, typeof normalizedCandidates>();
+  const targetGroups = new Map<string, typeof normalizedCandidates>();
+  for (const candidate of normalizedCandidates) {
+    const sourceKey = portableFold(candidate.source.path);
+    const targetKey = portableFold(candidate.target.path);
+    sourceGroups.set(sourceKey, [...(sourceGroups.get(sourceKey) ?? []), candidate]);
+    targetGroups.set(targetKey, [...(targetGroups.get(targetKey) ?? []), candidate]);
+  }
+  for (const group of sourceGroups.values()) {
+    if (group.length > 1) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_DUPLICATE_SOURCE', '同一个源素材不能在一个批次中出现多次。', [], group[0]!.source.path);
+    }
+  }
+  for (const group of targetGroups.values()) {
+    if (group.length > 1) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_DUPLICATE_TARGET', '多个素材不能整理到同一个目标位置。', [], group[0]!.target.path);
+    }
+  }
+  const kinds = new Set(normalizedCandidates.map((candidate) => candidate.source.kind));
+  if (kinds.size > 1 || normalizedCandidates.some((candidate) => candidate.source.kind !== candidate.target.kind)) {
+    batchBlocker(blockers, 'ASSET_RELOCATION_BATCH_KIND_MISMATCH', '一个批次只能整理同一类别的素材。');
+  }
+
+  let inventoryFingerprint: string | null = null;
+  try {
+    inventoryFingerprint = await fingerprintProjectAssetRelocationInventory(input.assetFiles, hasher);
+  } catch {
+    batchBlocker(blockers, 'ASSET_RELOCATION_SCAN_INCOMPLETE', '素材清单包含无效路径，不能安全整理。');
+  }
+  const selectedSourceFolds = new Set(normalizedCandidates.map((candidate) => portableFold(candidate.source.path)));
+  const selectedSourcePaths = new Set(normalizedCandidates.map((candidate) => candidate.source.path));
+  const sourceFacts = input.assetFiles.map((fact) => ({ fact, descriptor: describeProjectAssetPath(fact.path) }))
+    .filter((item): item is { fact: ProjectAssetFileFact; descriptor: ProjectAssetPathDescriptor } => item.descriptor !== null);
+  const portraitRoleIndexes = new Map<string, number>();
+  const portraitKeyIndexes = new Map<string, number>();
+  const sortedRoles = [...new Set(normalizedCandidates.filter((candidate) => candidate.source.kind === 'portrait')
+    .map((candidate) => roleAndOutfit(candidate.source.key).role))].sort();
+  sortedRoles.forEach((role, index) => portraitRoleIndexes.set(role, index));
+  const sortedKeys = [...new Set(normalizedCandidates.filter((candidate) => candidate.source.kind === 'portrait')
+    .map((candidate) => candidate.source.key))].sort();
+  sortedKeys.forEach((key, index) => portraitKeyIndexes.set(key, index));
+
+  const moves: NormalizedBatchMove[] = [];
+  for (let index = 0; index < normalizedCandidates.length; index += 1) {
+    const candidate = normalizedCandidates[index]!;
+    const moveHash = await hasher.sha256(`${candidate.source.path}\0${candidate.target.path}`);
+    const moveId = `relocation-move-${moveHash.slice(0, 24)}`;
+    const sourceRole = candidate.source.kind === 'portrait' ? roleAndOutfit(candidate.source.key).role : '';
+    const keyMembers = sourceFacts.filter((item) => item.descriptor.kind === 'portrait'
+      && item.descriptor.key === candidate.source.key);
+    const roleMembers = sourceFacts.filter((item) => item.descriptor.kind === 'portrait'
+      && roleAndOutfit(item.descriptor.key).role === sourceRole);
+    const keyGroupComplete = candidate.source.kind !== 'portrait'
+      || keyMembers.every((item) => selectedSourcePaths.has(item.descriptor.path));
+    const roleGroupComplete = candidate.source.kind !== 'portrait'
+      || roleMembers.every((item) => selectedSourcePaths.has(item.descriptor.path));
+    const placeholder = batchPlaceholder(
+      candidate.source,
+      index,
+      input.operationId,
+      portraitRoleIndexes.get(sourceRole) ?? index,
+      portraitKeyIndexes.get(candidate.source.key) ?? index,
+    );
+    moves.push({ ...candidate, moveId, placeholder, keyGroupComplete, roleGroupComplete });
+  }
+
+  const moveIdBySource = new Map(moves.map((move) => [portableFold(move.source.path), move.moveId]));
+  for (const group of sourceGroups.values()) {
+    if (group.length > 1) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_DUPLICATE_SOURCE', '同一个源素材不能在一个批次中出现多次。',
+        group.map((item) => moveIdBySource.get(portableFold(item.source.path)) ?? '').filter(Boolean), group[0]!.source.path);
+    }
+  }
+  for (const group of targetGroups.values()) {
+    if (group.length > 1) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_DUPLICATE_TARGET', '多个素材不能整理到同一个目标位置。',
+        group.map((item) => moveIdBySource.get(portableFold(item.source.path)) ?? '').filter(Boolean), group[0]!.target.path);
+    }
+  }
+
+  const finalDescriptors = [
+    ...sourceFacts.filter((item) => !selectedSourceFolds.has(portableFold(item.descriptor.path))).map((item) => item.descriptor),
+    ...moves.map((move) => move.target),
+  ];
+  for (const move of moves) {
+    const duplicates = finalDescriptors.filter((candidate) => candidate.kind === move.target.kind
+      && candidate.key === move.target.key && (candidate.variant ?? '') === (move.target.variant ?? ''));
+    if (duplicates.length > 1) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_TARGET_KEY_DUPLICATE', '整理后的名称会与另一素材使用同一个运行时键。', [move.moveId], move.target.path);
+    }
+    if (move.source.kind === 'portrait' && move.source.key !== move.target.key && !move.keyGroupComplete) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE', '必须选择当前角色服装的全部表情文件，才能统一修改角色或服装。', [move.moveId], move.source.path);
+    }
+  }
+  for (const sourceKey of sortedKeys) {
+    const group = moves.filter((move) => move.source.kind === 'portrait' && move.source.key === sourceKey);
+    if (group.length === 0 || group.every((move) => move.source.key === move.target.key)) continue;
+    const targetKeys = new Set(group.map((move) => move.target.key));
+    const targetVariants = new Set(group.map((move) => `${move.target.key}\0${move.target.variant ?? ''}`));
+    if (targetKeys.size !== 1 || targetVariants.size !== group.length) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE', '同一立绘组必须一致映射到一个新角色服装，并保留唯一表情。', group.map((move) => move.moveId), group[0]!.source.path);
+    }
+  }
+
+  for (const move of moves) {
+    const targetIsSelectedSource = selectedSourceFolds.has(portableFold(move.target.path));
+    if (!targetIsSelectedSource && move.binaryBaseline.target.state === 'exists') {
+      batchBlocker(blockers, 'ASSET_RELOCATION_TARGET_EXISTS', '目标位置已经存在，Surdet 不会覆盖它。', [move.moveId], move.target.path);
+    }
+    if (inventoryFingerprint === null
+      || move.binaryBaseline.assetInventoryFingerprint !== inventoryFingerprint
+      || move.binaryBaseline.source.path !== move.source.path
+      || move.binaryBaseline.target.path !== move.target.path
+      || move.binaryBaseline.targetDirectory.path !== directoryOf(move.target.path)
+      || (targetIsSelectedSource ? move.binaryBaseline.target.state !== 'exists' : move.binaryBaseline.target.state !== 'absent')) {
+      batchBlocker(blockers, 'ASSET_RELOCATION_SCAN_INCOMPLETE', '素材二进制基线与批量整理目标不一致。', [move.moveId], move.source.path);
+      continue;
+    }
+    const plannerInventory = input.assetFiles.filter((fact) => {
+      const path = safeNormalizePath(fact.path);
+      return path === null || !selectedSourceFolds.has(portableFold(path)) || portableFold(path) === portableFold(move.source.path);
+    });
+    const plannerInventoryFingerprint = await fingerprintProjectAssetRelocationInventory(plannerInventory, hasher);
+    const single = await planProjectAssetRelocation({
+      operationId: input.operationId,
+      snapshot: input.snapshot,
+      assetFiles: plannerInventory,
+      assetDirectories: input.assetDirectories,
+      sourcePath: move.source.path,
+      targetPath: move.target.path,
+      galleryFile: input.galleryFile,
+      opaqueFiles: input.opaqueFiles,
+      scanCoverage: input.scanCoverage,
+      binaryBaseline: {
+        ...move.binaryBaseline,
+        target: { path: move.target.path, state: 'absent' },
+        assetInventoryFingerprint: plannerInventoryFingerprint,
+      },
+    }, hasher);
+    for (const blocker of single.plan.blockers) {
+      if (blocker.code === 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE') continue;
+      batchBlocker(blockers, blocker.code, blocker.message, [move.moveId], blocker.sourcePath);
+    }
+  }
+
+  const normalizedOpaqueFiles = uniqueFiles(input.opaqueFiles);
+  const files = uniqueFiles([
+    ...input.snapshot.files,
+    ...(input.galleryFile === null || safeNormalizePath(input.galleryFile.path) !== 'content/config/gallery.json'
+      ? []
+      : [input.galleryFile]),
+    ...normalizedOpaqueFiles,
+  ]);
+  const scannedFiles = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
+  const referenceMap = new Map<string, ProjectAssetRelocationReferenceChange>();
+  const prepared = new Map<string, string>();
+  const knownJsonPaths = new Map<string, Set<string>>();
+
+  const semanticMoves = moves.filter((move) => !descriptorSemanticEqual(move.source, move.target));
+  const lastKeyMove = new Set<string>();
+  for (const move of semanticMoves) {
+    if (move.source.kind !== 'portrait') continue;
+    const keyMoves = semanticMoves.filter((candidate) => candidate.source.kind === 'portrait'
+      && candidate.source.key === move.source.key);
+    if (keyMoves.at(-1)?.moveId === move.moveId) lastKeyMove.add(move.moveId);
+  }
+
+  const rewriteSceneFile = (file: ProjectFile): void => {
+    let text = file.text;
+    for (const move of moves) {
+      const target = descriptorSemanticEqual(move.source, move.target) ? move.source : move.placeholder;
+      const rewritten = sceneRewrite(stableTextFile(file, text), move.source, target, blockers, {
+        allowBareRoleChange: move.roleGroupComplete,
+      });
+      addReferencesForMove(referenceMap, moves, move, rewritten.references);
+      text = rewritten.text;
+    }
+    for (const move of semanticMoves) {
+      const rewritten = sceneRewrite(stableTextFile(file, text), move.placeholder, move.target, blockers, {
+        allowBareRoleChange: move.roleGroupComplete,
+      });
+      addReferencesForMove(referenceMap, moves, move, rewritten.references);
+      text = rewritten.text;
+    }
+    if (text !== file.text) prepared.set(file.path, text);
+  };
+
+  const rewriteJsonFile = (
+    file: ProjectFile,
+    rewriter: typeof timelineRewrite | typeof configRewrite | typeof galleryRewrite,
+  ): void => {
+    let text = file.text;
+    const known = new Set<string>();
+    for (const move of moves) {
+      const target = descriptorSemanticEqual(move.source, move.target) ? move.source : move.placeholder;
+      const rewritten = rewriter === timelineRewrite
+        ? timelineRewrite(stableTextFile(file, text), move.source, target, blockers, {
+          allowBareRoleChange: move.roleGroupComplete,
+          rewritePortraitTarget: move.source.kind !== 'portrait' || lastKeyMove.has(move.moveId),
+        })
+        : rewriter(stableTextFile(file, text), move.source, target, blockers);
+      addReferencesForMove(referenceMap, moves, move, rewritten.references);
+      for (const path of rewritten.knownPaths) known.add(path);
+      text = rewritten.text;
+    }
+    for (const move of semanticMoves) {
+      const rewritten = rewriter === timelineRewrite
+        ? timelineRewrite(stableTextFile(file, text), move.placeholder, move.target, blockers, {
+          allowBareRoleChange: move.roleGroupComplete,
+          rewritePortraitTarget: move.source.kind !== 'portrait' || lastKeyMove.has(move.moveId),
+        })
+        : rewriter(stableTextFile(file, text), move.placeholder, move.target, blockers);
+      addReferencesForMove(referenceMap, moves, move, rewritten.references);
+      for (const path of rewritten.knownPaths) known.add(path);
+      text = rewritten.text;
+    }
+    knownJsonPaths.set(file.path, known);
+    if (text !== file.text) prepared.set(file.path, text);
+  };
+
+  for (const scene of input.snapshot.scenes) rewriteSceneFile(scene.file);
+  for (const timeline of input.snapshot.timelines) rewriteJsonFile(timeline, timelineRewrite);
+  if (input.snapshot.configFile !== null) rewriteJsonFile(input.snapshot.configFile, configRewrite);
+  if (input.galleryFile !== null && safeNormalizePath(input.galleryFile.path) === 'content/config/gallery.json') {
+    rewriteJsonFile(input.galleryFile, galleryRewrite);
+  }
+
+  const allOpaqueTokens = [...new Set(moves.flatMap((move) => opaqueTokens(move.source)))];
+  for (const file of files) {
+    if (file.path.startsWith('content/scenario/')) continue;
+    if (file.path === 'game.config.json' || file.path.startsWith('content/timelines/') || file.path === 'content/config/gallery.json') {
+      try {
+        addJsonOpaqueBlockers(file.text, knownJsonPaths.get(file.path) ?? new Set(), allOpaqueTokens, blockers, file.path);
+      } catch {
+        addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '项目 JSON 无法安全扫描素材引用。', file.path);
+      }
+    } else if (supportedOpaqueCodePath(file.path) && containsOpaqueCodeToken(file.text, allOpaqueTokens)) {
+      addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '项目代码或校验脚本固定引用了批次中的素材，请先人工更新。', file.path);
+    }
+  }
+
+  blockers.sort((left, right) => left.code.localeCompare(right.code)
+    || (left.sourcePath ?? '').localeCompare(right.sourcePath ?? '')
+    || (left.moveIds ?? []).join('\0').localeCompare((right.moveIds ?? []).join('\0'))
+    || (left.line ?? 0) - (right.line ?? 0));
+  const references = [...referenceMap.values()].filter((item) => item.before !== item.after)
+    .sort((left, right) => left.sourcePath.localeCompare(right.sourcePath)
+      || (left.line ?? 0) - (right.line ?? 0) || left.referenceId.localeCompare(right.referenceId));
+  const textChanges: ProjectAssetRelocationTextChange[] = [];
+  if (blockers.length === 0) {
+    for (const [path, afterText] of [...prepared.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      const before = files.find((file) => file.path === path)!;
+      textChanges.push({
+        path,
+        beforeSha256: before.sha256,
+        afterSha256: await hasher.sha256(afterText),
+        beforeText: before.text,
+        afterText,
+      });
+    }
+  }
+  const publicMoves = moves.map((move) => ({ moveId: move.moveId, source: move.source, target: move.target }));
+  const planBase = {
+    schemaVersion: 2 as const,
+    operationId: input.operationId,
+    projectRevision: input.snapshot.revision,
+    status: blockers.length === 0 ? 'ready' as const : 'blocked' as const,
+    moves: publicMoves,
+    affectedAssetCount: blockers.length === 0 ? publicMoves.length : 0,
+    affectedReferenceCount: blockers.length === 0 ? references.length : 0,
+    affectedFileCount: blockers.length === 0 ? textChanges.length : 0,
+    referenceChanges: blockers.length === 0 ? references : [],
+    blockers,
+    scannedFiles,
+    preparedFiles: textChanges.map((change) => ({ path: change.path, beforeSha256: change.beforeSha256, afterSha256: change.afterSha256 })),
+    binaryBaselines: moves.map((move) => move.binaryBaseline),
+    scanCoverage: input.scanCoverage,
+  };
+  const planFingerprint = await hasher.sha256(canonicalJson(planBase));
+  const plan: ProjectAssetRelocationBatchPlan = {
+    schemaVersion: 2,
+    operationId: input.operationId,
+    planId: `relocation-batch-plan-${planFingerprint.slice(0, 32)}`,
+    planFingerprint,
+    projectRevision: input.snapshot.revision,
+    status: planBase.status,
+    moves: publicMoves,
+    affectedAssetCount: planBase.affectedAssetCount,
+    affectedReferenceCount: planBase.affectedReferenceCount,
+    affectedFileCount: planBase.affectedFileCount,
+    referenceChanges: planBase.referenceChanges,
+    blockers,
+  };
+  return {
+    plan,
+    textChanges,
+    scannedFiles,
+    binaryBaselines: moves.map((move) => move.binaryBaseline),
+  };
 }

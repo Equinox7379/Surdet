@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   fingerprintProjectAssetRelocationInventory,
   fingerprintProjectAssetRelocationOpaqueScan,
+  planProjectAssetRelocationBatch,
   planProjectAssetRelocation,
+  type ProjectAssetRelocationBatchPlanInput,
   type ProjectAssetRelocationPlanInput,
   type ProjectAssetRelocationOpaqueRootScan,
 } from '../src/asset-relocation.js';
@@ -103,6 +105,91 @@ async function makeInput(options: {
   };
 }
 
+async function makeBatchInput(options: {
+  files: Record<string, string>;
+  assets: readonly ProjectAssetFileFact[];
+  items: readonly { itemId: string; sourcePath: string; targetPath: string }[];
+  galleryText?: string;
+  opaqueFiles?: Record<string, string>;
+  assetDirectories?: string[];
+}): Promise<ProjectAssetRelocationBatchPlanInput> {
+  const snapshot = await loadProjectSnapshot(storageFor(options.files), hasher);
+  const sourcePaths = new Set(options.items.map((item) => item.sourcePath));
+  const assetFiles = options.assets.map((asset) => sourcePaths.has(asset.path)
+    ? { ...asset, sha256: 'a'.repeat(64) }
+    : asset);
+  const opaqueFiles = Object.entries(options.opaqueFiles ?? {}).map(([path, text]) => projectFile(path, text));
+  const opaqueRoots: ProjectAssetRelocationOpaqueRootScan[] = (['src', 'scripts', 'test', 'tests'] as const)
+    .map((root) => ({
+      root,
+      state: 'scanned',
+      filePaths: opaqueFiles.filter((file) => file.path.startsWith(`${root}/`)).map((file) => file.path),
+    }));
+  const sourceOrder = [...sourcePaths].sort();
+  const directoryOrder = [...new Set(options.items.map((item) => item.targetPath.slice(0, item.targetPath.lastIndexOf('/'))))]
+    .sort();
+  const assetInventoryFingerprint = await fingerprintProjectAssetRelocationInventory(assetFiles, hasher);
+  const items = options.items.map((item) => {
+    const sourceBytes = options.assets.find((asset) => asset.path === item.sourcePath)?.bytes ?? 1;
+    const sourceOrdinal = sourceOrder.indexOf(item.sourcePath) + 2;
+    const targetDirectoryPath = item.targetPath.slice(0, item.targetPath.lastIndexOf('/'));
+    const directoryOrdinal = directoryOrder.indexOf(targetDirectoryPath) + 100;
+    return {
+      itemId: item.itemId,
+      sourcePath: item.sourcePath,
+      targetPath: item.targetPath,
+      binaryBaseline: {
+        source: {
+          path: item.sourcePath,
+          device: '1',
+          inode: String(sourceOrdinal),
+          birthtimeNs: String(sourceOrdinal + 10),
+          size: sourceBytes,
+          mtimeNs: String(sourceOrdinal + 20),
+          sha256: 'a'.repeat(64),
+        },
+        target: {
+          path: item.targetPath,
+          state: options.assets.some((asset) => asset.path === item.targetPath) ? 'exists' as const : 'absent' as const,
+        },
+        targetDirectory: {
+          path: targetDirectoryPath,
+          device: '1',
+          inode: String(directoryOrdinal),
+          birthtimeNs: String(directoryOrdinal + 10),
+          mtimeNs: String(directoryOrdinal + 20),
+        },
+        assetInventoryFingerprint,
+      },
+    };
+  });
+  return {
+    operationId: '11111111-1111-4111-8111-111111111111',
+    snapshot,
+    assetFiles,
+    assetDirectories: options.assetDirectories ?? [
+      'content/assets/bg',
+      'content/assets/bg/chapter-one',
+      'content/assets/bg/one',
+      'content/assets/bg/two',
+      'content/assets/portrait',
+      'content/assets/portrait/cast',
+      'content/assets/avatar',
+      'content/assets/avatar/cast',
+    ],
+    items,
+    galleryFile: options.galleryText === undefined
+      ? null
+      : projectFile('content/config/gallery.json', options.galleryText),
+    opaqueFiles,
+    scanCoverage: {
+      gallery: options.galleryText === undefined ? 'absent' : 'included',
+      opaqueRoots,
+      opaqueInventoryFingerprint: await fingerprintProjectAssetRelocationOpaqueScan(opaqueRoots, opaqueFiles, hasher),
+    },
+  };
+}
+
 function changedText(
   result: Awaited<ReturnType<typeof planProjectAssetRelocation>>,
   path: string,
@@ -110,6 +197,15 @@ function changedText(
   const change = result.textChanges.find((candidate) => candidate.path === path);
   expect(change, `missing text change ${path}`).toBeDefined();
   return change!.afterText;
+}
+
+function changedBatchText(
+  result: { textChanges: Array<{ path: string; afterText: string }> },
+  path: string,
+): string {
+  const changes = result.textChanges.filter((candidate) => candidate.path === path);
+  expect(changes, `missing text change ${path}`).toHaveLength(1);
+  return changes[0]!.afterText;
 }
 
 describe('reference-aware project asset relocation planner', () => {
@@ -520,5 +616,135 @@ describe('reference-aware project asset relocation planner', () => {
     const result = await planProjectAssetRelocation(input, hasher);
     expect(result.plan.status).toBe('blocked');
     expect(result.plan.blockers.filter((blocker) => blocker.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toHaveLength(2);
+  });
+
+  it('plans two backgrounds as one batch, merges one text file, and is stable under input order', async () => {
+    const files = {
+      'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+      'content/scenario/start.gal': '@scene start\n@bg old_a\n@bg old_b\n@end\n',
+    };
+    const assets = [
+      { path: 'content/assets/bg/old_a.webp', bytes: 10 },
+      { path: 'content/assets/bg/old_b.webp', bytes: 20 },
+    ];
+    const items = [
+      { itemId: 'background-a', sourcePath: 'content/assets/bg/old_a.webp', targetPath: 'content/assets/bg/chapter-one/new_a.webp' },
+      { itemId: 'background-b', sourcePath: 'content/assets/bg/old_b.webp', targetPath: 'content/assets/bg/chapter-one/new_b.webp' },
+    ];
+    const first = await planProjectAssetRelocationBatch(await makeBatchInput({ files, assets, items }), hasher);
+    const reversed = await planProjectAssetRelocationBatch(await makeBatchInput({ files, assets, items: [...items].reverse() }), hasher);
+
+    expect(first.plan).toMatchObject({
+      status: 'ready',
+      affectedReferenceCount: 2,
+      affectedFileCount: 1,
+      blockers: [],
+    });
+    expect(first.textChanges.filter((change) => change.path === 'content/scenario/start.gal')).toHaveLength(1);
+    expect(changedBatchText(first, 'content/scenario/start.gal')).toBe(
+      '@scene start\n@bg new_a\n@bg new_b\n@end\n',
+    );
+    expect(reversed.plan).toEqual(first.plan);
+    expect(reversed.textChanges).toEqual(first.textChanges);
+  });
+
+  it('treats a batch source-to-target mapping as simultaneous for swaps without cascading', async () => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg a\n@bg b\n@end\n',
+      },
+      assets: [
+        { path: 'content/assets/bg/a.webp', bytes: 10 },
+        { path: 'content/assets/bg/b.webp', bytes: 20 },
+      ],
+      items: [
+        { itemId: 'a-to-b', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/b.webp' },
+        { itemId: 'b-to-a', sourcePath: 'content/assets/bg/b.webp', targetPath: 'content/assets/bg/a.webp' },
+      ],
+    }), hasher);
+
+    expect(result.plan.status).toBe('ready');
+    expect(changedBatchText(result, 'content/scenario/start.gal')).toBe(
+      '@scene start\n@bg b\n@bg a\n@end\n',
+    );
+  });
+
+  it.each([
+    {
+      name: 'duplicate source',
+      assets: [{ path: 'content/assets/bg/a.webp', bytes: 10 }],
+      items: [
+        { itemId: 'a-to-one', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/one.webp' },
+        { itemId: 'a-to-two', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/two.webp' },
+      ],
+      code: 'ASSET_RELOCATION_DUPLICATE_SOURCE',
+    },
+    {
+      name: 'duplicate target',
+      assets: [
+        { path: 'content/assets/bg/a.webp', bytes: 10 },
+        { path: 'content/assets/bg/b.webp', bytes: 20 },
+      ],
+      items: [
+        { itemId: 'a-to-same', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/one.webp' },
+        { itemId: 'b-to-same', sourcePath: 'content/assets/bg/b.webp', targetPath: 'content/assets/bg/one.webp' },
+      ],
+      code: 'ASSET_RELOCATION_DUPLICATE_TARGET',
+    },
+    {
+      name: 'unselected target exists',
+      assets: [
+        { path: 'content/assets/bg/a.webp', bytes: 10 },
+        { path: 'content/assets/bg/b.webp', bytes: 20 },
+      ],
+      items: [
+        { itemId: 'a-to-b', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/b.webp' },
+      ],
+      code: 'ASSET_RELOCATION_TARGET_EXISTS',
+    },
+  ] as const)('blocks $name in a relocation batch', async ({ assets, items, code }) => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@end\n',
+      },
+      assets,
+      items: [...items],
+    }), hasher);
+
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain(code);
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('requires a complete portrait group when a batch changes its role or outfit key', async () => {
+    const files = {
+      'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+      'content/scenario/start.gal': '@scene start\n@show lynn:uniform normal\n@show lynn:uniform smile\n@end\n',
+    };
+    const assets = [
+      { path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 10 },
+      { path: 'content/assets/portrait/lynn_uniform_smile.png', bytes: 20 },
+    ];
+    const completeItems = [
+      { itemId: 'portrait-normal', sourcePath: 'content/assets/portrait/lynn_uniform_normal.png', targetPath: 'content/assets/portrait/cast/rin_uniform_normal.png' },
+      { itemId: 'portrait-smile', sourcePath: 'content/assets/portrait/lynn_uniform_smile.png', targetPath: 'content/assets/portrait/cast/rin_uniform_smile.png' },
+    ];
+    const complete = await planProjectAssetRelocationBatch(await makeBatchInput({ files, assets, items: completeItems }), hasher);
+    expect(complete.plan.status).toBe('ready');
+    expect(changedBatchText(complete, 'content/scenario/start.gal')).toBe(
+      '@scene start\n@show rin:uniform normal\n@show rin:uniform smile\n@end\n',
+    );
+
+    const incomplete = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files,
+      assets,
+      items: [completeItems[0]!],
+    }), hasher);
+    expect(incomplete.plan.status).toBe('blocked');
+    expect(incomplete.plan.blockers.map((blocker) => blocker.code))
+      .toContain('ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE');
+    expect(incomplete.textChanges).toEqual([]);
   });
 });
