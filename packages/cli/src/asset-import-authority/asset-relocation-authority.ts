@@ -52,10 +52,15 @@ const TERMINAL = new Set(['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE']);
 export type AssetRelocationFaultPoint =
   | 'after_binary_backup_intent'
   | 'after_binary_backup_before_journal'
+  | 'after_binary_backups_before_targets'
   | 'after_target_link_intent'
   | 'after_target_link_before_journal'
   | 'after_text_replace_intent'
-  | 'after_text_replace_before_journal';
+  | 'before_text_publish'
+  | 'after_text_replace_before_journal'
+  | 'after_receipt_before_committed'
+  | 'after_rollback_target_intent'
+  | 'after_undo_target_intent';
 
 export class AssetRelocationInjectedTermination extends Error {
   constructor(readonly point: AssetRelocationFaultPoint, options?: ErrorOptions) {
@@ -119,6 +124,13 @@ function sameNodeIdentity(left: AssetImportFileIdentity, right: AssetImportFileI
 
 function sameFileIdentity(left: AssetImportFileIdentity, right: AssetImportFileIdentity): boolean {
   return sameNodeIdentity(left, right) && left.size === right.size && left.mtimeNs === right.mtimeNs;
+}
+
+function sameDirectoryNodeIdentity(
+  left: { device: string; inode: string; birthtimeNs: string },
+  right: { device: string; inode: string; birthtimeNs: string },
+): boolean {
+  return left.device === right.device && left.inode === right.inode && left.birthtimeNs === right.birthtimeNs;
 }
 
 function portableFold(value: string): string {
@@ -715,6 +727,7 @@ export class ProjectAssetRelocationAuthority {
           throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `文本发布暂存路径被占用：${relativePath}`);
         }
       }
+      await this.fault('before_text_publish');
       const beforePublish = await projectFileEvidence(this.paths, relativePath);
       if (beforePublish === null || beforePublish.sha256 !== expectedCurrentSha256
         || !sameFileIdentity(beforePublish.identity, expectedCurrentIdentity)) {
@@ -811,6 +824,11 @@ export class ProjectAssetRelocationAuthority {
         await this.fault('after_target_link_intent');
       }
       if (item.state !== 'TARGET_INTENT') continue;
+      const targetParent = await safeProjectParent(this.paths, item.targetPath);
+      const currentTargetDirectory = await assetImportDirectoryIdentity(targetParent.parent);
+      if (!sameDirectoryNodeIdentity(currentTargetDirectory, baseline.targetDirectory)) {
+        return this.enterRecovery(record.request.operationId, 'commit', `目标目录身份发生变化：${item.targetPath}`);
+      }
       const backupEvidence = await stableBinaryEvidence(backup);
       let targetEvidence = await projectFileEvidence(this.paths, item.targetPath);
       if (targetEvidence === null) {
@@ -1039,6 +1057,7 @@ export class ProjectAssetRelocationAuthority {
       };
       record = await this.update(record, { receipt });
     }
+    await this.fault('after_receipt_before_committed');
     if (record.journal.status !== 'COMMITTED') {
       record = await this.update(record, { journal: { status: 'COMMITTED', recoveryPhase: null } });
     }
@@ -1050,6 +1069,7 @@ export class ProjectAssetRelocationAuthority {
     let record = recordInput;
     await this.verifyWorkspaceTexts(record);
     record = await this.moveSourceToBackup(record);
+    await this.fault('after_binary_backups_before_targets');
     record = await this.publishTarget(record);
     record = await this.replaceTexts(record);
     return this.finishCommit(record);
@@ -1116,6 +1136,12 @@ export class ProjectAssetRelocationAuthority {
         if (item.state !== 'ROLLBACK_INTENT') {
           record = await this.updateBinaryItem(record, index, 'ROLLBACK_INTENT');
           item = record.journal.binaryItems[index]!;
+        }
+        await this.fault('after_rollback_target_intent');
+        const targetBeforeRemove = await projectFileEvidence(this.paths, item.targetPath);
+        if (targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backupEvidence.identity)
+          || targetBeforeRemove.sha256 !== baseline.source.sha256) {
+          return this.enterRecovery(record.request.operationId, 'rollback', `目标素材在回滚删除前发生变化：${item.targetPath}`);
         }
         await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
       }
@@ -1270,7 +1296,14 @@ export class ProjectAssetRelocationAuthority {
           record = await this.updateBinaryItem(record, index, 'UNDO_INTENT');
           item = record.journal.binaryItems[index]!;
         }
-        if (target !== null) await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
+        if (target !== null) {
+          await this.fault('after_undo_target_intent');
+          const targetBeforeRemove = await projectFileEvidence(this.paths, item.targetPath);
+          if (targetBeforeRemove === null || !sameNodeIdentity(targetBeforeRemove.identity, backup.identity)) {
+            return this.enterRecovery(record.request.operationId, 'undo', `目标素材在撤销删除前发生变化：${item.targetPath}`);
+          }
+          await removeExactFile(absoluteAssetImportProjectPath(this.paths, item.targetPath));
+        }
       }
       for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
         const item = record.journal.binaryItems[index]!;
@@ -1405,10 +1438,10 @@ export class ProjectAssetRelocationAuthority {
         }
         return this.detail(await this.continueUndo(record));
       }
+      if (record.receipt !== null) return this.detail(await this.finishCommit(record));
       if (request.action === 'rollback' || phase === 'rollback') {
         return this.detail(await this.continueRollback(record));
       }
-      if (record.receipt !== null) return this.detail(await this.finishCommit(record));
       if (record.journal.status === 'RECOVERY_REQUIRED') {
         record = await this.update(record, { journal: { status: 'PUBLISHING', recoveryPhase: 'commit' } });
       }

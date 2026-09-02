@@ -206,6 +206,7 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
         && file.sha256 === textFiles[index]!.afterSha256
         && validEvidence(file.identity)
         && (['UNDOING', 'UNDONE'].includes(journal.status)
+          || (journal.status === 'RECOVERY_REQUIRED' && journal.recoveryPhase === 'undo')
           || (journal.textResultIdentities[index] !== null
             && sameJson(file.identity, journal.textResultIdentities[index]))))
       && typeof value.receipt.committedAt === 'string';
