@@ -29,6 +29,15 @@ export interface TimelineEntry {
   handle: FileSystemFileHandle | null;
 }
 
+export interface PendingSceneDelete {
+  /** 用户意图；rename 只有在 replacementKey 已成功落盘后才可删除旧文件。 */
+  kind: 'rename' | 'delete';
+  id: string;
+  /** content/scenario 下的安全相对路径。 */
+  file: string;
+  replacementKey?: string;
+}
+
 export interface TimelineCueSelection {
   trackIndex: number;
   cueIndex: number;
@@ -50,6 +59,8 @@ export const state = {
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
   dirHandle: null as FileSystemDirectoryHandle | null,
   scenes: new Map<string, SceneEntry>(),
+  /** 场景删除与重命名旧文件清理统一在“保存全部”边界执行。 */
+  pendingSceneDeletes: [] as PendingSceneDelete[],
   /** content/timelines/*.json（预览运行时与 starter 共用的演出定义） */
   timelines: [] as TimelineEntry[],
   /** 由时间轴面板删除、待下一次“保存全部”从 content/timelines 移除的文件。 */

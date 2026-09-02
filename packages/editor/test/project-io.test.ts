@@ -164,6 +164,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.scenes.clear();
     state.timelines = [];
+    state.pendingSceneDeletes = [];
     state.pendingTimelineDeletes = [];
     state.pendingTimelineRestores.clear();
     state.current = null;
@@ -191,6 +192,27 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(log).toEqual([]);
     expect(state.scenes.get('locked')?.dirty).toBe(true);
     expect(onSaveSettled).not.toHaveBeenCalled();
+  });
+
+  it('项目写操作按调用顺序串行执行', async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    let signalFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { signalFirstStarted = resolve; });
+    const first = runProjectWriteOperation(async () => {
+      order.push('first:start');
+      signalFirstStarted();
+      await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      order.push('first:end');
+    });
+    await firstStarted;
+    const second = runProjectWriteOperation(async () => { order.push('second'); });
+
+    await Promise.resolve();
+    expect(order).toEqual(['first:start']);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first:start', 'first:end', 'second']);
   });
 
   it('第一个已有场景失败时继续保存第二个场景和时间轴，并保留失败 dirty', async () => {
@@ -231,6 +253,167 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.scenes.get('good')!.dirty).toBe(false);
     expect(log).toContain('good:write');
     expect(status.textContent).toMatch(/部分成功/);
+  });
+
+  function nestedScenarioProject(options: {
+    failNewWrite?: boolean;
+    failRemove?: boolean;
+  } = {}): {
+    root: FileSystemDirectoryHandle;
+    operations: string[];
+    nestedFiles: Set<string>;
+  } {
+    const operations: string[] = [];
+    const nestedFiles = new Set(['old.gal', 'delete-me.gal']);
+    const makeWritableFile = (name: string): FileSystemFileHandle => ({
+      kind: 'file',
+      name,
+      isSameEntry: async () => false,
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+      getFile: async () => new File([''], name),
+      createWritable: async () => ({
+        write: async () => {
+          operations.push(`write:${name}`);
+          if (options.failNewWrite) throw new Error('new write failed');
+        },
+        close: async () => { operations.push(`close:${name}`); },
+      } as unknown as FileSystemWritableFileStream),
+    } as unknown as FileSystemFileHandle);
+    const nested = {
+      kind: 'directory',
+      name: 'chapter',
+      getDirectoryHandle: async (name: string) => { throw new Error(`missing nested directory ${name}`); },
+      getFileHandle: async (name: string, create?: FileSystemGetFileOptions) => {
+        operations.push(`open:chapter/${name}`);
+        if (!nestedFiles.has(name) && !create?.create) throw new Error(`missing file ${name}`);
+        nestedFiles.add(name);
+        return makeWritableFile(name);
+      },
+      removeEntry: async (name: string) => {
+        operations.push(`remove:chapter/${name}`);
+        if (options.failRemove) throw new Error('remove failed');
+        nestedFiles.delete(name);
+      },
+    } as unknown as FileSystemDirectoryHandle;
+    const scenario = directoryHandle('scenario', { chapter: nested });
+    const content = directoryHandle('content', { scenario });
+    return { root: directoryHandle('project', { content }), operations, nestedFiles };
+  }
+
+  it('嵌套场景重命名保存时先在原目录写新文件，再删除精确旧文件', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+    }];
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).toEqual([
+      'open:chapter/new.gal',
+      'write:new.gal',
+      'close:new.gal',
+      'remove:chapter/old.gal',
+    ]);
+    expect(project.nestedFiles.has('new.gal')).toBe(true);
+    expect(project.nestedFiles.has('old.gal')).toBe(false);
+    expect(state.scenes.get('chapter/new')).toMatchObject({ file: 'chapter/new.gal', dirty: false });
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('嵌套场景的新文件写入失败时保留旧文件与待删除状态', async () => {
+    const project = nestedScenarioProject({ failNewWrite: true });
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
+    });
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+    }];
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).toEqual(['open:chapter/new.gal', 'write:new.gal']);
+    expect(project.nestedFiles.has('old.gal')).toBe(true);
+    expect(state.scenes.get('chapter/new')?.dirty).toBe(true);
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+  });
+
+  it('任一同步改写的场景仍保存失败时，不清理重命名前的旧文件', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/new', {
+      id: 'new', file: 'chapter/new.gal', text: '@scene new\n', eol: '\n', dirty: true, handle: null,
+    });
+    state.scenes.set('reader', scene('reader', fileHandle('write', log, 'reader.gal')));
+    state.pendingSceneDeletes = [{
+      kind: 'rename', id: 'old', file: 'chapter/old.gal', replacementKey: 'chapter/new',
+    }];
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).not.toContain('remove:chapter/old.gal');
+    expect(project.nestedFiles.has('old.gal')).toBe(true);
+    expect(state.scenes.get('chapter/new')?.dirty).toBe(false);
+    expect(state.scenes.get('reader')?.dirty).toBe(true);
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+  });
+
+  it('拒绝把场景写到 content/scenario 之外', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    state.scenes.set('escape', {
+      id: 'escape', file: '../escape.gal', text: '@scene escape\n', eol: '\n', dirty: true, handle: null,
+    });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).toEqual([]);
+    expect(state.scenes.get('escape')?.dirty).toBe(true);
+    expect(status.textContent).toContain('场景路径无效');
+  });
+
+  it('嵌套场景删除通过保存全部移除精确路径，删除失败时保留待处理记录', async () => {
+    const project = nestedScenarioProject({ failRemove: true });
+    state.dirHandle = project.root;
+    state.pendingSceneDeletes = [{ kind: 'delete', id: 'delete-me', file: 'chapter/delete-me.gal' }];
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).toEqual(['remove:chapter/delete-me.gal']);
+    expect(project.nestedFiles.has('delete-me.gal')).toBe(true);
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+  });
+
+  it('待删路径被当前场景重新占用时拒绝物理删除', async () => {
+    const project = nestedScenarioProject();
+    state.dirHandle = project.root;
+    state.scenes.set('chapter/delete-me', {
+      id: 'delete-me',
+      file: 'chapter/delete-me.gal',
+      text: '@scene delete-me\n',
+      eol: '\n',
+      dirty: false,
+      handle: fileHandle(null, log, 'delete-me.gal'),
+    });
+    state.pendingSceneDeletes = [{ kind: 'delete', id: 'delete-me', file: 'chapter/delete-me.gal' }];
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+
+    await saveAll();
+
+    expect(project.operations).toEqual([]);
+    expect(project.nestedFiles.has('delete-me.gal')).toBe(true);
+    expect(state.pendingSceneDeletes).toHaveLength(1);
+    expect(status.textContent).toContain('旧路径已被当前场景重新占用');
   });
 
   it('删除失败纳入汇总，不能调用清除恢复备份的 onSaved', async () => {
@@ -814,6 +997,17 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await switching;
     expect(onProjectClosing).toHaveBeenCalledTimes(1);
     expect(state.dirName).toBe('next-project');
+  });
+
+  it('场景改名或删除尚未保存时拒绝切换项目与演示项目', async () => {
+    const root = directoryHandle('next-project', {
+      content: directoryHandle('content', { scenario: directoryHandle('scenario') }),
+    }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
+    state.pendingSceneDeletes = [{ kind: 'delete', id: 'old', file: 'old.gal' }];
+
+    await expect(openProjectFromHandle(root)).rejects.toThrow('请先保存全部');
+    expect(() => loadDemoProject()).toThrow('请先保存全部');
+    expect(state.pendingSceneDeletes).toHaveLength(1);
   });
 
   it('切换到演示项目时清除上一项目的素材目录筛选', () => {

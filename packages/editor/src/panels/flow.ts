@@ -11,7 +11,12 @@
  *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
 import { state, h, setStatus } from '../state.js';
-import { assertProjectWriteUnlocked, runProjectWriteOperation } from '../project-io.js';
+import {
+  assertProjectWriteUnlocked,
+  isSceneFilePathReserved,
+  runProjectWriteOperation,
+  sceneFileIdentity,
+} from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
@@ -39,12 +44,26 @@ import type {
 /** 导航钩子（main.ts 注入）：切回块编辑标签页并可滚动到指定行；requestValidate 触发重校验 */
 let openSceneHook: (sceneKey: string, line?: number) => void = () => {};
 let requestValidateHook: () => void = () => {};
+let renameSceneHook: (sceneId: string) => void = (sceneId) => {
+  void renameScene(sceneId).then(() => refreshFlowIfVisible()).catch((error: unknown) => {
+    setStatus(error instanceof Error ? error.message : '当前无法重命名场景', false, 5000);
+  });
+};
+let deleteSceneHook: (sceneId: string) => void = (sceneId) => {
+  void deleteScene(sceneId).then(() => refreshFlowIfVisible()).catch((error: unknown) => {
+    setStatus(error instanceof Error ? error.message : '当前无法删除场景', false, 5000);
+  });
+};
 export function bindFlowHooks(opts: {
   openScene: (sceneKey: string, line?: number) => void;
   requestValidate: () => void;
+  onRenameScene?: (sceneId: string) => void;
+  onDeleteScene?: (sceneId: string) => void;
 }): void {
   openSceneHook = opts.openScene;
   requestValidateHook = opts.requestValidate;
+  renameSceneHook = opts.onRenameScene ?? renameSceneHook;
+  deleteSceneHook = opts.onDeleteScene ?? deleteSceneHook;
 }
 
 /* ============================ 纯函数助手（可单测） ============================ */
@@ -123,106 +142,192 @@ function sceneIssueStats(): Map<string, { errors: number; warnings: number }> {
 
 /* ============================ 场景操作（E1b） ============================ */
 
-/** 场景 Map key（相对路径）← 场景 ID 反查 */
-function sceneKeyById(sceneId: string): string | null {
-  for (const [key, sc] of state.scenes) if (sc.id === sceneId) return key;
-  return null;
+/** 流程图只有运行时 sceneId；磁盘操作必须在唯一匹配时才可继续。 */
+export function resolveSceneKeyForOperation(sceneId: string): string | null {
+  const matches = [...state.scenes].filter(([, scene]) => scene.id === sceneId).map(([key]) => key);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
-/** 重命名场景：内存改名 + 全部场景引用同步改写 + 句柄置空（保存时落新名）；
- *  平坦路径（content/scenario 直属）尝试删除旧盘上文件；子目录场景提示手动处理。 */
-async function renameSceneUnlocked(sceneId: string): Promise<void> {
+function pendingRenameFor(sceneKey: string): boolean {
+  return state.pendingSceneDeletes.some((pending) => (
+    pending.kind === 'rename' && pending.replacementKey === sceneKey
+  ));
+}
+
+function renamedSceneFile(file: string, newId: string): string {
+  const parts = file.replaceAll('\\', '/').split('/');
+  parts[parts.length - 1] = `${newId}.gal`;
+  return parts.join('/');
+}
+
+function renamedSceneKey(sceneKey: string, newId: string): string {
+  const parts = sceneKey.split('/');
+  parts[parts.length - 1] = newId;
+  return parts.join('/');
+}
+
+function validSceneId(value: string): boolean {
+  return value.length > 0
+    && value.length <= 120
+    && !/[\s.<>:"/\\|?*\u0000-\u001f]/u.test(value);
+}
+
+function sceneConfigReferences(sceneId: string): string[] {
+  const references: string[] = [];
+  if (state.entryScene === sceneId) references.push('项目入口');
+  if (collectConfigSceneRoots(state.configFiles).includes(sceneId)) references.push('事件、成长或日历配置');
+  return references;
+}
+
+function blockConfiguredSceneOperation(sceneId: string): boolean {
+  const references = sceneConfigReferences(sceneId);
+  if (references.length === 0) return false;
+  setStatus(
+    `场景“${sceneId}”仍被${references.join('和')}引用，请先在“配置”中改掉引用`,
+    false,
+    6000,
+  );
+  return true;
+}
+
+/** 只更新内存与引用；旧磁盘文件由“保存全部”在新文件写成后清理。 */
+async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   assertProjectWriteUnlocked();
+  const current = state.scenes.get(sceneKey);
+  if (!current) return;
+  if (pendingRenameFor(sceneKey)) {
+    setStatus('该场景已有尚未保存的重命名，请先保存全部', false, 5000);
+    return;
+  }
+  const sceneId = current.id;
+  if (blockConfiguredSceneOperation(sceneId)) return;
+  if ([...state.scenes.values()].filter((scene) => scene.id === sceneId).length !== 1) {
+    setStatus(`场景 ID“${sceneId}”对应多个文件，请先删除重复场景再重命名`, false, 6000);
+    return;
+  }
   const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
   if (!input) return;
   const newId = input.trim();
-  if (!/^[^\s.]+$/.test(newId)) { setStatus('场景 ID 非法（不能含空格/点号）', false, 4000); return; }
+  if (!validSceneId(newId)) {
+    setStatus('场景 ID 不能包含空格、点号或文件名保留字符', false, 5000);
+    return;
+  }
   if (newId === sceneId) return;
-  if ([...state.scenes.values()].some((s) => s.id === newId)) {
+  if ([...state.scenes.values()].some((scene) => scene.id === newId)) {
     setStatus(`场景 '${newId}' 已存在`, false, 4000);
     return;
   }
-  const key = sceneKeyById(sceneId);
-  if (!key) return;
+  const targetFile = renamedSceneFile(current.file, newId);
+  if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) {
+    setStatus('Windows 下不能只改变场景文件名的大小写，请使用不同名称', false, 6000);
+    return;
+  }
+  if (isSceneFilePathReserved(targetFile, sceneKey)) {
+    setStatus('目标场景路径已存在或正等待删除，请先保存全部', false, 6000);
+    return;
+  }
 
-  // 引用改写（含自身场景内的 @jump/@call 自引用）
   let refCount = 0;
-  for (const sc of state.scenes.values()) {
-    const next = rewriteSceneRefs(sc.text, sceneId, newId);
-    if (next !== sc.text) { sc.text = next; sc.dirty = true; refCount++; }
-  }
-  const sc = state.scenes.get(key)!;
-  // @scene 声明行同步（锁定行首：不误伤台词/注释中恰好出现的字面 '@scene 旧名'；验收轮 Minor2 修复）
-  sc.text = sc.text.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`);
-  sc.dirty = true;
-  sc.id = newId;
-  sc.file = sc.file.replace(new RegExp(`${escapeRe(sceneId)}\\.gal$`), `${newId}.gal`);
-
-  // Map 重键（保持插入顺序）
-  const prefix = key.slice(0, key.length - sceneId.length);
-  const newKey = prefix + newId;
-  const entries = [...state.scenes.entries()].map(([k, v]) => (k === key ? [newKey, v] as const : [k, v] as const));
-  state.scenes = new Map(entries);
-  if (state.current === key) state.current = newKey;
-
-  // 盘上旧文件清理（仅平坦路径；句柄置空后保存会创建新名文件）
-  const flat = !key.includes('/');
-  if (sc.handle && state.dirHandle && flat) {
-    sc.handle = null;
-    try {
-      const contentDir = await state.dirHandle.getDirectoryHandle('content');
-      const scenarioDir = await contentDir.getDirectoryHandle('scenario');
-      await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
-    } catch (err) {
-      setStatus(`重命名已生效，但旧文件 ${sceneId}.gal 删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
+  for (const scene of state.scenes.values()) {
+    const next = rewriteSceneRefs(scene.text, sceneId, newId);
+    if (next !== scene.text) {
+      scene.text = next;
+      scene.dirty = true;
+      refCount++;
     }
-  } else if (sc.handle && !flat) {
-    sc.handle = null;
-    setStatus(`子目录场景重命名：内存已改名，请手动重命名盘上文件 ${sceneId}.gal → ${newId}.gal`, false, 6000);
+  }
+  const scene = state.scenes.get(sceneKey)!;
+  scene.text = scene.text.replace(
+    new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'),
+    `$1@scene ${newId}`,
+  );
+  scene.dirty = true;
+  scene.id = newId;
+  const oldFile = scene.file;
+  scene.file = targetFile;
+
+  const newKey = renamedSceneKey(sceneKey, newId);
+  state.scenes = new Map([...state.scenes].map(([key, value]) => (
+    key === sceneKey ? [newKey, value] as const : [key, value] as const
+  )));
+  if (state.current === sceneKey) state.current = newKey;
+
+  if (scene.handle && state.dirHandle) {
+    state.pendingSceneDeletes.push({ kind: 'rename', id: sceneId, file: oldFile, replacementKey: newKey });
+    scene.handle = null;
   }
 
-  setStatus(`场景已重命名 ${sceneId} → ${newId}（同步改写 ${refCount} 处引用；保存后落盘）`, true, 5000);
+  setStatus(
+    `场景已重命名 ${sceneId} → ${newId}（同步改写 ${refCount} 处引用；保存全部后写入磁盘）`,
+    true,
+    6000,
+  );
   renderSidebar();
   requestValidateHook();
+}
+
+export async function renameSceneAtKey(sceneKey: string): Promise<void> {
+  await runProjectWriteOperation(() => renameSceneAtKeyUnlocked(sceneKey));
 }
 
 export async function renameScene(sceneId: string): Promise<void> {
-  await runProjectWriteOperation(() => renameSceneUnlocked(sceneId));
-}
-
-/** 删除场景：引用检查（有入边时确认）→ 移出内存 → 平坦路径删除盘上文件 */
-async function deleteSceneUnlocked(sceneId: string): Promise<void> {
-  assertProjectWriteUnlocked();
-  const key = sceneKeyById(sceneId);
-  if (!key) return;
-  let refs = 0;
-  for (const [k, sc] of state.scenes) {
-    if (k === key) continue;
-    refs += countSceneRefs(sc.text, sceneId);
-  }
-  if (refs > 0 && !window.confirm(`场景 '${sceneId}' 被 ${refs} 处 @jump/@call 引用，删除将产生悬空引用（lint 会报 J001）。确定删除？`)) {
+  const sceneKey = resolveSceneKeyForOperation(sceneId);
+  if (!sceneKey) {
+    setStatus(`无法从流程图唯一确定场景 '${sceneId}'，请在左侧场景目录选择精确文件`, false, 6000);
     return;
   }
-  const sc = state.scenes.get(key)!;
-  state.scenes.delete(key);
-  if (state.current === key) state.current = [...state.scenes.keys()][0] ?? null;
+  await renameSceneAtKey(sceneKey);
+}
 
-  if (sc.handle && state.dirHandle && !key.includes('/')) {
-    try {
-      const contentDir = await state.dirHandle.getDirectoryHandle('content');
-      const scenarioDir = await contentDir.getDirectoryHandle('scenario');
-      await (scenarioDir as unknown as { removeEntry: (n: string) => Promise<void> }).removeEntry(`${sceneId}.gal`);
-    } catch (err) {
-      setStatus(`场景已从编辑器移除，但盘上文件删除失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
-    }
+/** 精确路径进入待保存清理；不在点击按钮时直接改磁盘。 */
+async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
+  assertProjectWriteUnlocked();
+  const scene = state.scenes.get(sceneKey);
+  if (!scene) return;
+  if (pendingRenameFor(sceneKey)) {
+    setStatus('该场景已有尚未保存的重命名，请先保存全部再删除', false, 5000);
+    return;
   }
-  setStatus(`已删除场景 '${sceneId}'`, true, 4000);
+  const sceneId = scene.id;
+  if (blockConfiguredSceneOperation(sceneId)) return;
+  let refs = 0;
+  for (const [key, candidate] of state.scenes) {
+    if (key === sceneKey) continue;
+    refs += countSceneRefs(candidate.text, sceneId);
+  }
+  const warning = refs > 0
+    ? `场景“${sceneId}”被 ${refs} 处剧情跳转引用。删除后这些引用会失效。\n\n文件：${scene.file}\n\n确定标记删除吗？`
+    : `确定标记删除场景“${sceneId}”吗？\n\n文件：${scene.file}\n\n磁盘文件将在“保存全部”时删除。`;
+  const dirtyWarning = scene.dirty ? '\n\n该场景包含未保存内容，继续将放弃这些内容。' : '';
+  if (!window.confirm(`${warning}${dirtyWarning}`)) return;
+
+  state.scenes.delete(sceneKey);
+  if (state.current === sceneKey) state.current = [...state.scenes.keys()][0] ?? null;
+  if (scene.handle && state.dirHandle) {
+    state.pendingSceneDeletes.push({ kind: 'delete', id: sceneId, file: scene.file });
+  }
+  setStatus(
+    scene.handle && state.dirHandle
+      ? `已标记删除场景“${sceneId}”，保存全部后写入磁盘`
+      : `已移除尚未落盘的场景“${sceneId}”`,
+    true,
+    5000,
+  );
   renderSidebar();
   requestValidateHook();
 }
 
+export async function deleteSceneAtKey(sceneKey: string): Promise<void> {
+  await runProjectWriteOperation(() => deleteSceneAtKeyUnlocked(sceneKey));
+}
+
 export async function deleteScene(sceneId: string): Promise<void> {
-  await runProjectWriteOperation(() => deleteSceneUnlocked(sceneId));
+  const sceneKey = resolveSceneKeyForOperation(sceneId);
+  if (!sceneKey) {
+    setStatus(`无法从流程图唯一确定场景 '${sceneId}'，请在左侧场景目录选择精确文件`, false, 6000);
+    return;
+  }
+  await deleteSceneAtKey(sceneKey);
 }
 
 /* ============================ 渲染 ============================ */
@@ -472,16 +577,27 @@ function currentGraph(): FlowGraph {
 
 /** 拖拽建链的插入动作（源节点 → 目标节点；写入源场景末尾，走 history 可 undo） */
 function createLink(fromNode: FlowNode, toNode: FlowNode): void {
-  const sceneKey = sceneKeyById(fromNode.sceneId);
-  const sc = sceneKey ? state.scenes.get(sceneKey) : undefined;
-  if (!sceneKey || !sc) {
-    setStatus(`无法定位源场景 '${fromNode.sceneId}'（宿主入口不可编辑）`, false, 4000);
+  const resolved = resolveFlowLinkSceneKeys(fromNode, toNode);
+  if (!resolved) {
+    setStatus('无法唯一确定剧情连接的两端，宿主入口与重复场景不可编辑', false, 5000);
     return;
   }
+  const sceneKey = resolved.sourceKey;
+  const sc = state.scenes.get(sceneKey)!;
   const line = buildJumpLine(fromNode, toNode);
   setSceneText(sceneKey, appendLineToScene(sc.text, sc.eol, line));
   setStatus(`已为场景“${fromNode.sceneId}”新增剧情跳转，可撤销；校验稍后刷新`, true, 4000);
   renderSidebar();
+}
+
+export function resolveFlowLinkSceneKeys(
+  fromNode: FlowNode,
+  toNode: FlowNode,
+): { sourceKey: string; targetKey: string } | null {
+  if (fromNode.kind === 'host-entry' || toNode.kind === 'host-entry') return null;
+  const sourceKey = resolveSceneKeyForOperation(fromNode.sceneId);
+  const targetKey = resolveSceneKeyForOperation(toNode.sceneId);
+  return sourceKey && targetKey ? { sourceKey, targetKey } : null;
 }
 
 /** 右键上下文菜单（简单 DOM 浮层） */
@@ -497,10 +613,10 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
   menu.setAttribute('aria-label', `场景 ${sceneId} 的操作`);
   const rename = h('button', undefined, '重命名场景…');
   rename.setAttribute('role', 'menuitem');
-  rename.onclick = () => { closeSceneMenu(); void renameScene(sceneId).then(() => refreshFlowIfVisible()); };
+  rename.onclick = () => { closeSceneMenu(); renameSceneHook(sceneId); };
   const del = h('button', undefined, '删除场景…');
   del.setAttribute('role', 'menuitem');
-  del.onclick = () => { closeSceneMenu(); void deleteScene(sceneId).then(() => refreshFlowIfVisible()); };
+  del.onclick = () => { closeSceneMenu(); deleteSceneHook(sceneId); };
   menu.append(rename, del);
   const rect = container.getBoundingClientRect();
   container.appendChild(menu);
@@ -555,7 +671,7 @@ function closeSceneMenu(restoreFocus = false): void {
 }
 
 function openFlowNode(node: FlowNode): void {
-  const key = sceneKeyById(node.sceneId);
+  const key = resolveSceneKeyForOperation(node.sceneId);
   if (!key) {
     setStatus(`无法定位场景“${node.sceneId}”`, false, 4000);
     return;
@@ -656,7 +772,7 @@ function drawReturnMarkers(
       text.setAttribute('y', String(y + 15));
       text.textContent = marker.label;
       const openTarget = (): void => {
-        const key = sceneKeyById(marker.targetSceneId);
+        const key = resolveSceneKeyForOperation(marker.targetSceneId);
         if (key) openSceneHook(key);
         else setStatus(`无法定位返回场景“${marker.targetSceneId}”`, false, 4000);
       };

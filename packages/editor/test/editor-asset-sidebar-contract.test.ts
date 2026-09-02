@@ -51,6 +51,17 @@ describe('editor scene and asset outline contract', () => {
     expect(sidebarSource).not.toContain('renderAllHook');
   });
 
+  it('exposes native path-specific rename and delete actions beside each scene', () => {
+    expect(sidebarSource).toMatch(/h\(\s*['"]div['"]\s*,\s*['"]scene-row['"]\s*\)/);
+    expect(sidebarSource).toMatch(/dataset\.sceneKey\s*=\s*id/);
+    expect(sidebarSource).toMatch(/dataset\.action\s*=\s*['"]rename-scene['"]/);
+    expect(sidebarSource).toMatch(/dataset\.action\s*=\s*['"]delete-scene['"]/);
+    expect(sidebarSource).toMatch(/onRenameSceneHook\(id\)/);
+    expect(sidebarSource).toMatch(/onDeleteSceneHook\(id\)/);
+    expect(sidebarSource).toContain('重命名场景');
+    expect(sidebarSource).toContain('删除场景');
+  });
+
   it('exposes the complete asset catalog and stable insert/copy actions', () => {
     expect(assetsSource).toMatch(/setAttribute\(\s*['"]data-editor-region['"]\s*,\s*['"]asset-catalog['"]\s*\)/);
     expect(assetsSource).toMatch(/dataset\.assetKey\s*=\s*entry\.key/);
