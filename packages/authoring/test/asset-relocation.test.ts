@@ -814,6 +814,30 @@ describe('reference-aware project asset relocation planner', () => {
     );
   });
 
+  it('does not loop when ordinary project text contains a short portrait placeholder fragment', async () => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@show lynn:uniform normal\nlynn: foo0\n@end\n',
+      },
+      assets: [
+        { path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 10 },
+      ],
+      items: [
+        {
+          itemId: 'portrait-normal',
+          sourcePath: 'content/assets/portrait/lynn_uniform_normal.png',
+          targetPath: 'content/assets/portrait/rin_uniform_normal.png',
+        },
+      ],
+    }), hasher);
+
+    expect(result.plan.status).toBe('ready');
+    expect(changedBatchText(result, 'content/scenario/start.gal')).toBe(
+      '@scene start\n@show rin:uniform normal\nlynn: foo0\n@end\n',
+    );
+  });
+
   it('turns an invalid inventory path into a fail-closed batch plan instead of throwing', async () => {
     const input = await makeBatchInput({
       files: {
