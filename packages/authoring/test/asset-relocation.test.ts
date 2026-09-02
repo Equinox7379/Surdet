@@ -747,4 +747,87 @@ describe('reference-aware project asset relocation planner', () => {
       .toContain('ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE');
     expect(incomplete.textChanges).toEqual([]);
   });
+
+  it('blocks distinct physical sources that share one runtime asset identity', async () => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg scene\n@end\n',
+      },
+      assets: [
+        { path: 'content/assets/bg/chapter-one/scene.webp', bytes: 10 },
+        { path: 'content/assets/bg/chapter-two/scene.webp', bytes: 20 },
+      ],
+      assetDirectories: ['content/assets/bg/chapter-one', 'content/assets/bg/chapter-two'],
+      items: [
+        { itemId: 'first-scene', sourcePath: 'content/assets/bg/chapter-one/scene.webp', targetPath: 'content/assets/bg/chapter-one/first.webp' },
+        { itemId: 'second-scene', sourcePath: 'content/assets/bg/chapter-two/scene.webp', targetPath: 'content/assets/bg/chapter-two/second.webp' },
+      ],
+    }), hasher);
+
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_SOURCE_AMBIGUOUS');
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('blocks a complete portrait role when its outfits map to different target roles', async () => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@hide lynn\n@show lynn:uniform normal\n@show lynn:casual normal\n@end\n',
+      },
+      assets: [
+        { path: 'content/assets/portrait/lynn_uniform_normal.png', bytes: 10 },
+        { path: 'content/assets/portrait/lynn_casual_normal.png', bytes: 20 },
+      ],
+      items: [
+        { itemId: 'uniform', sourcePath: 'content/assets/portrait/lynn_uniform_normal.png', targetPath: 'content/assets/portrait/cast/rin_uniform_normal.png' },
+        { itemId: 'casual', sourcePath: 'content/assets/portrait/lynn_casual_normal.png', targetPath: 'content/assets/portrait/cast/sora_casual_normal.png' },
+      ],
+    }), hasher);
+
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code))
+      .toContain('ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE');
+    expect(result.textChanges).toEqual([]);
+  });
+
+  it('chooses internal placeholders that cannot collide with real runtime keys', async () => {
+    const result = await planProjectAssetRelocationBatch(await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg a\n@bg surdetbatch111111110\n@end\n',
+      },
+      assets: [
+        { path: 'content/assets/bg/a.webp', bytes: 10 },
+        { path: 'content/assets/bg/surdetbatch111111110.webp', bytes: 20 },
+      ],
+      items: [
+        { itemId: 'ordinary', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/x.webp' },
+        { itemId: 'reserved-looking', sourcePath: 'content/assets/bg/surdetbatch111111110.webp', targetPath: 'content/assets/bg/y.webp' },
+      ],
+    }), hasher);
+
+    expect(result.plan.status).toBe('ready');
+    expect(changedBatchText(result, 'content/scenario/start.gal')).toBe(
+      '@scene start\n@bg x\n@bg y\n@end\n',
+    );
+  });
+
+  it('turns an invalid inventory path into a fail-closed batch plan instead of throwing', async () => {
+    const input = await makeBatchInput({
+      files: {
+        'game.config.json': '{"entryScene":"start","characters":{},"variables":{}}\n',
+        'content/scenario/start.gal': '@scene start\n@bg a\n@end\n',
+      },
+      assets: [{ path: 'content/assets/bg/a.webp', bytes: 10 }],
+      items: [{ itemId: 'a', sourcePath: 'content/assets/bg/a.webp', targetPath: 'content/assets/bg/x.webp' }],
+    });
+    (input.assetFiles as ProjectAssetFileFact[]).push({ path: '..\\outside.webp', bytes: 1 });
+
+    const result = await planProjectAssetRelocationBatch(input, hasher);
+    expect(result.plan.status).toBe('blocked');
+    expect(result.plan.blockers.map((blocker) => blocker.code)).toContain('ASSET_RELOCATION_SCAN_INCOMPLETE');
+    expect(result.textChanges).toEqual([]);
+  });
 });

@@ -1031,35 +1031,59 @@ function descriptorSemanticEqual(
   return left.kind === right.kind && left.key === right.key && (left.variant ?? '') === (right.variant ?? '');
 }
 
+function descriptorSemanticKey(value: ProjectAssetPathDescriptor): string {
+  return `${value.kind}\0${value.key}\0${value.variant ?? ''}`;
+}
+
+function placeholderTokens(value: ProjectAssetPathDescriptor): string[] {
+  if (value.kind !== 'portrait') return opaqueTokens(value);
+  const { role, outfit } = roleAndOutfit(value.key);
+  return [...new Set([...opaqueTokens(value), role, outfit].filter(Boolean))];
+}
+
 function batchPlaceholder(
   source: ProjectAssetPathDescriptor,
   index: number,
   operationId: string,
   portraitRoleIndex: number,
   portraitKeyIndex: number,
+  reservedSemanticKeys: Set<string>,
+  reservedTexts: readonly string[],
 ): ProjectAssetPathDescriptor {
   const nonce = operationId.replace(/[^a-zA-Z0-9]/gu, '').slice(0, 8).toLowerCase() || 'operation';
-  if (source.kind !== 'portrait') {
-    const key = `surdetbatch${nonce}${index}`;
-    return {
-      ...source,
-      path: `${source.directory}/${key}.${source.format}`,
-      fileName: `${key}.${source.format}`,
-      key,
-      invalidName: false,
-    };
+  for (let attempt = 0; ; attempt += 1) {
+    const suffix = attempt === 0 ? `${index}` : `${index}x${attempt}`;
+    const candidate: ProjectAssetPathDescriptor = source.kind !== 'portrait'
+      ? (() => {
+        const key = `surdetbatch${nonce}${suffix}`;
+        return {
+          ...source,
+          path: `${source.directory}/${key}.${source.format}`,
+          fileName: `${key}.${source.format}`,
+          key,
+          invalidName: false,
+        };
+      })()
+      : (() => {
+        const role = `surdetbatch${nonce}r${portraitRoleIndex}x${attempt}`;
+        const outfit = `o${portraitKeyIndex}`;
+        const variant = `v${index}`;
+        return {
+          ...source,
+          path: `${source.directory}/${role}_${outfit}_${variant}.${source.format}`,
+          fileName: `${role}_${outfit}_${variant}.${source.format}`,
+          key: `${role}:${outfit}`,
+          variant,
+          invalidName: false,
+        };
+      })();
+    const semanticKey = descriptorSemanticKey(candidate);
+    if (reservedSemanticKeys.has(semanticKey)) continue;
+    const tokens = placeholderTokens(candidate);
+    if (reservedTexts.some((text) => tokens.some((token) => text.includes(token)))) continue;
+    reservedSemanticKeys.add(semanticKey);
+    return candidate;
   }
-  const role = `surdetbatch${nonce}r${portraitRoleIndex}`;
-  const outfit = `o${portraitKeyIndex}`;
-  const variant = `v${index}`;
-  return {
-    ...source,
-    path: `${source.directory}/${role}_${outfit}_${variant}.${source.format}`,
-    fileName: `${role}_${outfit}_${variant}.${source.format}`,
-    key: `${role}:${outfit}`,
-    variant,
-    invalidName: false,
-  };
 }
 
 function batchMoveIdsForKey(moves: readonly NormalizedBatchMove[], move: NormalizedBatchMove): string[] {
@@ -1169,8 +1193,12 @@ export async function planProjectAssetRelocationBatch(
   }
   const selectedSourceFolds = new Set(normalizedCandidates.map((candidate) => portableFold(candidate.source.path)));
   const selectedSourcePaths = new Set(normalizedCandidates.map((candidate) => candidate.source.path));
-  const sourceFacts = input.assetFiles.map((fact) => ({ fact, descriptor: describeProjectAssetPath(fact.path) }))
-    .filter((item): item is { fact: ProjectAssetFileFact; descriptor: ProjectAssetPathDescriptor } => item.descriptor !== null);
+  const sourceFacts = input.assetFiles.flatMap((fact) => {
+    const path = safeNormalizePath(fact.path);
+    if (path === null) return [];
+    const descriptor = describeProjectAssetPath(path);
+    return descriptor === null ? [] : [{ fact, descriptor }];
+  });
   const portraitRoleIndexes = new Map<string, number>();
   const portraitKeyIndexes = new Map<string, number>();
   const sortedRoles = [...new Set(normalizedCandidates.filter((candidate) => candidate.source.kind === 'portrait')
@@ -1179,6 +1207,18 @@ export async function planProjectAssetRelocationBatch(
   const sortedKeys = [...new Set(normalizedCandidates.filter((candidate) => candidate.source.kind === 'portrait')
     .map((candidate) => candidate.source.key))].sort();
   sortedKeys.forEach((key, index) => portraitKeyIndexes.set(key, index));
+  const reservedSemanticKeys = new Set([
+    ...sourceFacts.map((item) => descriptorSemanticKey(item.descriptor)),
+    ...normalizedCandidates.flatMap((candidate) => [
+      descriptorSemanticKey(candidate.source),
+      descriptorSemanticKey(candidate.target),
+    ]),
+  ]);
+  const reservedTexts = [
+    ...input.snapshot.files.map((file) => file.text),
+    ...(input.galleryFile === null ? [] : [input.galleryFile.text]),
+    ...input.opaqueFiles.map((file) => file.text),
+  ];
 
   const moves: NormalizedBatchMove[] = [];
   for (let index = 0; index < normalizedCandidates.length; index += 1) {
@@ -1200,11 +1240,28 @@ export async function planProjectAssetRelocationBatch(
       input.operationId,
       portraitRoleIndexes.get(sourceRole) ?? index,
       portraitKeyIndexes.get(candidate.source.key) ?? index,
+      reservedSemanticKeys,
+      reservedTexts,
     );
     moves.push({ ...candidate, moveId, placeholder, keyGroupComplete, roleGroupComplete });
   }
 
   const moveIdBySource = new Map(moves.map((move) => [portableFold(move.source.path), move.moveId]));
+  const semanticSourceGroups = new Map<string, NormalizedBatchMove[]>();
+  for (const move of moves) {
+    const key = descriptorSemanticKey(move.source);
+    semanticSourceGroups.set(key, [...(semanticSourceGroups.get(key) ?? []), move]);
+  }
+  for (const group of semanticSourceGroups.values()) {
+    if (group.length < 2) continue;
+    batchBlocker(
+      blockers,
+      'ASSET_RELOCATION_SOURCE_AMBIGUOUS',
+      '多个物理文件共用同一个运行时素材身份，不能自动判断引用属于哪一个。',
+      group.map((move) => move.moveId),
+      group[0]!.source.path,
+    );
+  }
   for (const group of sourceGroups.values()) {
     if (group.length > 1) {
       batchBlocker(blockers, 'ASSET_RELOCATION_DUPLICATE_SOURCE', '同一个源素材不能在一个批次中出现多次。',
@@ -1239,6 +1296,21 @@ export async function planProjectAssetRelocationBatch(
     const targetVariants = new Set(group.map((move) => `${move.target.key}\0${move.target.variant ?? ''}`));
     if (targetKeys.size !== 1 || targetVariants.size !== group.length) {
       batchBlocker(blockers, 'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE', '同一立绘组必须一致映射到一个新角色服装，并保留唯一表情。', group.map((move) => move.moveId), group[0]!.source.path);
+    }
+  }
+  for (const sourceRole of sortedRoles) {
+    const group = moves.filter((move) => move.source.kind === 'portrait'
+      && roleAndOutfit(move.source.key).role === sourceRole);
+    if (group.length === 0 || !group.every((move) => move.roleGroupComplete)) continue;
+    const targetRoles = new Set(group.map((move) => roleAndOutfit(move.target.key).role));
+    if (targetRoles.size > 1) {
+      batchBlocker(
+        blockers,
+        'ASSET_RELOCATION_AMBIGUOUS_GROUP_REFERENCE',
+        '同一角色的完整立绘组必须一致映射到同一个目标角色。',
+        group.map((move) => move.moveId),
+        group[0]!.source.path,
+      );
     }
   }
 
