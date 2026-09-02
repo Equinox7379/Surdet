@@ -1066,7 +1066,7 @@ function batchPlaceholder(
       })()
       : (() => {
         const role = `surdetbatch${nonce}r${portraitRoleIndex}x${attempt}`;
-        const outfit = `o${portraitKeyIndex}`;
+        const outfit = `surdetbatch${nonce}o${portraitKeyIndex}x${attempt}`;
         const variant = `v${index}`;
         return {
           ...source,
