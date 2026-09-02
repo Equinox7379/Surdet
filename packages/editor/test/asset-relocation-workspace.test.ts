@@ -42,6 +42,8 @@ function detail(
   planStatus: 'ready' | 'blocked' = 'ready',
 ): AssetRelocationDetail {
   const targetPath = `${selected.targetDirectory}/${selected.fileName}`;
+  const moveId = 'relocation-move-test';
+  const move = { sourcePath: selected.sourcePath, targetPath };
   const receipt = status === 'COMMITTED' || status === 'UNDONE'
     ? {
       schemaVersion: 1 as const,
@@ -54,17 +56,19 @@ function detail(
       sourcePath: selected.sourcePath,
       targetPath,
       targetIdentity: evidence('e'.repeat(64)),
+      moves: [{ moveId, ...move, targetIdentity: evidence('e'.repeat(64)) }],
       textFiles: [{ path: 'src/scene.gal', sha256: 'f'.repeat(64), identity: evidence('f'.repeat(64)) }],
       committedAt: '2026-09-02T00:00:00.000Z',
     }
     : null;
   return {
-    request: { operationId: OPERATION_ID, sourcePath: selected.sourcePath, targetPath },
+    request: { operationId: OPERATION_ID, sourcePath: selected.sourcePath, targetPath, moves: [move] },
     operation: {
       operationId: OPERATION_ID,
       status,
       sourcePath: selected.sourcePath,
       targetPath,
+      moves: [move],
       updatedAt: '2026-09-02T00:00:00.000Z',
       manualRecoveryRequired: false,
     },
@@ -92,6 +96,28 @@ function detail(
         format: 'png',
         invalidName: false,
       },
+      moves: [{
+        moveId,
+        source: {
+          path: selected.sourcePath,
+          directory: 'content/assets/background',
+          fileName: 'old.png',
+          kind: 'background',
+          key: 'old',
+          format: 'png',
+          invalidName: false,
+        },
+        target: {
+          path: targetPath,
+          directory: selected.targetDirectory,
+          fileName: selected.fileName,
+          kind: selected.kind,
+          key: selected.fileName.replace(/\.[^.]+$/u, ''),
+          format: 'png',
+          invalidName: false,
+        },
+      }],
+      affectedAssetCount: planStatus === 'ready' ? 1 : 0,
       affectedReferenceCount: planStatus === 'ready' ? 2 : 0,
       affectedFileCount: planStatus === 'ready' ? 1 : 0,
       referenceChanges: [],
@@ -111,6 +137,7 @@ function detail(
         sourcePath: selected.sourcePath,
         targetPath,
         sourceIdentity: evidence('2'.repeat(64)),
+        moves: [{ moveId, ...move, sourceIdentity: evidence('2'.repeat(64)) }],
         restoredTextFiles: [{ path: 'src/scene.gal', sha256: SHA256, identity: evidence(SHA256) }],
         undoneAt: '2026-09-02T00:01:00.000Z',
       }
@@ -186,10 +213,19 @@ describe('Editor asset relocation workspace', () => {
     workspace.setMessage('新提示');
     workspace.reset();
     expect(workspace.snapshot()).toEqual({
+      mode: 'idle',
+      batchEditing: false,
       source: null,
+      selection: [],
+      batchKind: null,
+      visibleAssetIds: [],
       targetDirectory: '',
       fileName: '',
+      fileNames: {},
+      plan: null,
       detail: null,
+      receipt: null,
+      undoReceipt: null,
       busy: false,
       message: null,
     });

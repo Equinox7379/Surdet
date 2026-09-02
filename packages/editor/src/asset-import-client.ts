@@ -3,6 +3,7 @@ import type {
   ProjectAssetImportStagedItem,
   ProjectAssetImportTargetRequest,
   ProjectAssetRelocationPlan,
+  ProjectAssetRelocationBatchPlan,
 } from '@surdet/authoring';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
@@ -76,6 +77,7 @@ export interface AssetRelocationOperationSummary {
   status: AssetRelocationOperationStatus;
   sourcePath: string;
   targetPath: string;
+  moves: AssetRelocationMoveRequest[];
   updatedAt: string;
   manualRecoveryRequired: boolean;
 }
@@ -87,13 +89,15 @@ export type AssetRelocationReferenceChange = ProjectAssetRelocationPlan['referen
 export type AssetRelocationBlocker = ProjectAssetRelocationPlan['blockers'][number];
 
 export interface AssetRelocationPublicPlan {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   operationId: string;
   planId: string;
   planFingerprint: string;
   status: 'ready' | 'blocked';
   source: AssetRelocationPlanDescriptor | null;
   target: AssetRelocationPlanDescriptor | null;
+  moves: ProjectAssetRelocationBatchPlan['moves'];
+  affectedAssetCount: number;
   affectedReferenceCount: number;
   affectedFileCount: number;
   referenceChanges: AssetRelocationReferenceChange[];
@@ -102,6 +106,12 @@ export interface AssetRelocationPublicPlan {
 
 export interface AssetRelocationRequest {
   operationId: string;
+  sourcePath: string;
+  targetPath: string;
+  moves: AssetRelocationMoveRequest[];
+}
+
+export interface AssetRelocationMoveRequest {
   sourcePath: string;
   targetPath: string;
 }
@@ -117,6 +127,10 @@ export interface AssetRelocationReceipt {
   sourcePath: string;
   targetPath: string;
   targetIdentity: AssetRelocationFileEvidence;
+  moves: Array<AssetRelocationMoveRequest & {
+    moveId: string;
+    targetIdentity: AssetRelocationFileEvidence;
+  }>;
   textFiles: Array<{
     path: string;
     sha256: string;
@@ -134,6 +148,10 @@ export interface AssetRelocationUndoReceipt {
   sourcePath: string;
   targetPath: string;
   sourceIdentity: AssetRelocationFileEvidence;
+  moves: Array<AssetRelocationMoveRequest & {
+    moveId: string;
+    sourceIdentity: AssetRelocationFileEvidence;
+  }>;
   restoredTextFiles: Array<{
     path: string;
     sha256: string;
@@ -156,12 +174,19 @@ export interface AssetRelocationDiscovery {
   recentReceipts: AssetRelocationReceipt[];
 }
 
-export interface AssetRelocationPlanInput {
+export type AssetRelocationPlanInput = {
   operationId: string;
   sourcePath: string;
   targetDirectory: string;
   fileName: string;
-}
+  moves?: never;
+} | {
+  operationId: string;
+  moves: AssetRelocationMoveRequest[];
+  sourcePath?: never;
+  targetDirectory?: never;
+  fileName?: never;
+};
 
 export interface AssetRelocationTokenResult {
   operationToken: string;
@@ -374,6 +399,11 @@ const RETRY_DISPOSITIONS = new Set<AssetImportRetryDisposition>([
 ]);
 const RELOCATION_REFERENCE_SOURCES = new Set(['scene', 'timeline', 'character', 'gallery']);
 const RELOCATION_BLOCKERS = new Set([
+  'ASSET_RELOCATION_BATCH_EMPTY',
+  'ASSET_RELOCATION_BATCH_LIMIT',
+  'ASSET_RELOCATION_DUPLICATE_SOURCE',
+  'ASSET_RELOCATION_DUPLICATE_TARGET',
+  'ASSET_RELOCATION_BATCH_KIND_MISMATCH',
   'ASSET_RELOCATION_SOURCE_NOT_FOUND',
   'ASSET_RELOCATION_SOURCE_AMBIGUOUS',
   'ASSET_RELOCATION_UNSUPPORTED_KIND',
@@ -546,9 +576,18 @@ function parseRelocationDescriptor(value: unknown): NonNullable<ProjectAssetRelo
   return value as unknown as NonNullable<ProjectAssetRelocationPlan['source']>;
 }
 
+function parseRelocationMoveRequests(value: unknown): AssetRelocationMoveRequest[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) throw invalidResponse();
+  return value.map((entry) => {
+    if (!isRecord(entry) || !hasExactKeys(entry, ['sourcePath', 'targetPath'])
+      || !isProjectRelativePath(entry.sourcePath) || !isProjectRelativePath(entry.targetPath)) throw invalidResponse();
+    return { sourcePath: entry.sourcePath, targetPath: entry.targetPath };
+  });
+}
+
 function parseRelocationReferenceChange(value: unknown): ProjectAssetRelocationPlan['referenceChanges'][number] {
   if (!isRecord(value)
-    || !hasRequiredKeys(value, ['after', 'before', 'field', 'referenceId', 'sourceKind', 'sourceLabel', 'sourcePath'], ['line'])
+    || !hasRequiredKeys(value, ['after', 'before', 'field', 'referenceId', 'sourceKind', 'sourceLabel', 'sourcePath'], ['line', 'moveIds'])
     || !isSafeText(value.referenceId, 256)
     || typeof value.sourceKind !== 'string'
     || !RELOCATION_REFERENCE_SOURCES.has(value.sourceKind)
@@ -557,16 +596,20 @@ function parseRelocationReferenceChange(value: unknown): ProjectAssetRelocationP
     || !isSafeText(value.field, 256)
     || !isSafeText(value.before, 2_048)
     || !isSafeText(value.after, 2_048)
+    || (value.moveIds !== undefined && (!Array.isArray(value.moveIds)
+      || !value.moveIds.every((item) => isSafeText(item, 128))))
     || (value.line !== undefined && (!Number.isSafeInteger(value.line) || (value.line as number) < 1))) throw invalidResponse();
   return value as unknown as ProjectAssetRelocationPlan['referenceChanges'][number];
 }
 
 function parseRelocationBlocker(value: unknown): ProjectAssetRelocationPlan['blockers'][number] {
   if (!isRecord(value)
-    || !hasRequiredKeys(value, ['code', 'message'], ['line', 'sourcePath'])
+    || !hasRequiredKeys(value, ['code', 'message'], ['line', 'moveIds', 'sourcePath'])
     || typeof value.code !== 'string'
     || !RELOCATION_BLOCKERS.has(value.code)
     || !isSafeText(value.message, 1_024)
+    || (value.moveIds !== undefined && (!Array.isArray(value.moveIds)
+      || !value.moveIds.every((item) => isSafeText(item, 128))))
     || (value.sourcePath !== undefined && !isProjectRelativePath(value.sourcePath))
     || (value.line !== undefined && (!Number.isSafeInteger(value.line) || (value.line as number) < 1))) throw invalidResponse();
   return value as unknown as ProjectAssetRelocationPlan['blockers'][number];
@@ -574,11 +617,6 @@ function parseRelocationBlocker(value: unknown): ProjectAssetRelocationPlan['blo
 
 function parseRelocationPublicPlan(value: unknown): AssetRelocationPublicPlan {
   if (!isRecord(value)
-    || !hasExactKeys(value, [
-      'affectedFileCount', 'affectedReferenceCount', 'blockers', 'operationId', 'planFingerprint',
-      'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
-    ])
-    || value.schemaVersion !== 1
     || !isUuid(value.operationId)
     || !isSafeText(value.planId, 256)
     || !isSha256(value.planFingerprint)
@@ -591,19 +629,55 @@ function parseRelocationPublicPlan(value: unknown): AssetRelocationPublicPlan {
     || (value.affectedFileCount as number) < 0
     || !Array.isArray(value.referenceChanges)
     || !Array.isArray(value.blockers)) throw invalidResponse();
+  const schemaVersion = value.schemaVersion;
+  const legacy = schemaVersion === 1 && hasExactKeys(value, [
+    'affectedFileCount', 'affectedReferenceCount', 'blockers', 'operationId', 'planFingerprint',
+    'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
+  ]);
+  const batch = schemaVersion === 2 && hasExactKeys(value, [
+    'affectedAssetCount', 'affectedFileCount', 'affectedReferenceCount', 'blockers', 'moves',
+    'operationId', 'planFingerprint', 'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
+  ]);
+  if (!legacy && !batch) throw invalidResponse();
   const source = value.source === null ? null : parseRelocationDescriptor(value.source);
   const target = value.target === null ? null : parseRelocationDescriptor(value.target);
   const referenceChanges = value.referenceChanges.map(parseRelocationReferenceChange);
   const blockers = value.blockers.map(parseRelocationBlocker);
+  const moves = batch && Array.isArray(value.moves)
+    ? value.moves.map((entry) => {
+      if (!isRecord(entry) || !hasExactKeys(entry, ['moveId', 'source', 'target'])
+        || !isSafeText(entry.moveId, 128)) throw invalidResponse();
+      return {
+        moveId: entry.moveId,
+        source: parseRelocationDescriptor(entry.source),
+        target: parseRelocationDescriptor(entry.target),
+      };
+    })
+    : source !== null && target !== null
+      ? [{ moveId: 'relocation-move-legacy', source, target }]
+      : [];
+  const affectedAssetCount = batch ? value.affectedAssetCount : value.status === 'ready' ? moves.length : 0;
+  if (!Number.isSafeInteger(affectedAssetCount) || (affectedAssetCount as number) < 0
+    || (value.status === 'ready' && affectedAssetCount !== moves.length)
+    || (value.status === 'blocked' && affectedAssetCount !== 0)) throw invalidResponse();
   if (value.affectedReferenceCount !== referenceChanges.length
     || (value.status === 'ready' && blockers.length > 0)
     || (value.status === 'blocked' && (referenceChanges.length > 0 || value.affectedReferenceCount !== 0))) throw invalidResponse();
-  return { ...value, source, target, referenceChanges, blockers } as unknown as AssetRelocationPublicPlan;
+  return {
+    ...value,
+    schemaVersion,
+    source,
+    target,
+    moves,
+    affectedAssetCount: affectedAssetCount as number,
+    referenceChanges,
+    blockers,
+  } as unknown as AssetRelocationPublicPlan;
 }
 
 function parseRelocationOperationSummary(value: unknown): AssetRelocationOperationSummary {
   if (!isRecord(value)
-    || !hasExactKeys(value, ['manualRecoveryRequired', 'operationId', 'sourcePath', 'status', 'targetPath', 'updatedAt'])
+    || !hasRequiredKeys(value, ['manualRecoveryRequired', 'operationId', 'sourcePath', 'status', 'targetPath', 'updatedAt'], ['moves'])
     || !isUuid(value.operationId)
     || typeof value.status !== 'string'
     || !RELOCATION_OPERATION_STATUSES.has(value.status as AssetRelocationOperationStatus)
@@ -611,7 +685,10 @@ function parseRelocationOperationSummary(value: unknown): AssetRelocationOperati
     || !isProjectRelativePath(value.targetPath)
     || !isTimestamp(value.updatedAt)
     || typeof value.manualRecoveryRequired !== 'boolean') throw invalidResponse();
-  return value as unknown as AssetRelocationOperationSummary;
+  const moves = value.moves === undefined
+    ? [{ sourcePath: value.sourcePath, targetPath: value.targetPath }]
+    : parseRelocationMoveRequests(value.moves);
+  return { ...value, moves } as unknown as AssetRelocationOperationSummary;
 }
 
 function parseRelocationOperation(value: unknown): AssetRelocationOperation {
@@ -620,19 +697,23 @@ function parseRelocationOperation(value: unknown): AssetRelocationOperation {
 
 function parseRelocationRequest(value: unknown): AssetRelocationRequest {
   if (!isRecord(value)
-    || !hasExactKeys(value, ['operationId', 'sourcePath', 'targetPath'])
+    || !hasRequiredKeys(value, ['operationId', 'sourcePath', 'targetPath'], ['moves'])
     || !isUuid(value.operationId)
     || !isProjectRelativePath(value.sourcePath)
     || !isProjectRelativePath(value.targetPath)) throw invalidResponse();
-  return value as unknown as AssetRelocationRequest;
+  const moves = value.moves === undefined
+    ? [{ sourcePath: value.sourcePath, targetPath: value.targetPath }]
+    : parseRelocationMoveRequests(value.moves);
+  if (moves[0]?.sourcePath !== value.sourcePath || moves[0]?.targetPath !== value.targetPath) throw invalidResponse();
+  return { ...value, moves } as unknown as AssetRelocationRequest;
 }
 
 function parseRelocationReceipt(value: unknown): AssetRelocationReceipt {
   if (!isRecord(value)
-    || !hasExactKeys(value, [
+    || !hasRequiredKeys(value, [
       'committedAt', 'operationId', 'planFingerprint', 'planId', 'projectIdentity', 'receiptFingerprint',
       'receiptId', 'schemaVersion', 'sourcePath', 'targetIdentity', 'targetPath', 'textFiles',
-    ])
+    ], ['moves'])
     || value.schemaVersion !== 1
     || !isUuid(value.receiptId)
     || !isSha256(value.receiptFingerprint)
@@ -660,19 +741,37 @@ function parseRelocationReceipt(value: unknown): AssetRelocationReceipt {
       identity: parseRelocationFileEvidence(entry.identity),
     };
   });
+  const targetIdentity = parseRelocationFileEvidence(value.targetIdentity);
+  const moves = value.moves === undefined
+    ? [{ moveId: 'relocation-move-legacy', sourcePath: value.sourcePath, targetPath: value.targetPath, targetIdentity }]
+    : (() => {
+      if (!Array.isArray(value.moves) || value.moves.length < 1 || value.moves.length > 100) throw invalidResponse();
+      return value.moves.map((entry) => {
+        if (!isRecord(entry) || !hasExactKeys(entry, ['moveId', 'sourcePath', 'targetIdentity', 'targetPath'])
+          || !isSafeText(entry.moveId, 128) || !isProjectRelativePath(entry.sourcePath)
+          || !isProjectRelativePath(entry.targetPath)) throw invalidResponse();
+        return {
+          moveId: entry.moveId,
+          sourcePath: entry.sourcePath,
+          targetPath: entry.targetPath,
+          targetIdentity: parseRelocationFileEvidence(entry.targetIdentity),
+        };
+      });
+    })();
   return {
     ...value,
-    targetIdentity: parseRelocationFileEvidence(value.targetIdentity),
+    targetIdentity,
+    moves,
     textFiles,
   } as unknown as AssetRelocationReceipt;
 }
 
 function parseRelocationUndoReceipt(value: unknown): AssetRelocationUndoReceipt {
   if (!isRecord(value)
-    || !hasExactKeys(value, [
+    || !hasRequiredKeys(value, [
       'operationId', 'receiptId', 'restoredTextFiles', 'schemaVersion', 'sourceIdentity',
       'sourcePath', 'targetPath', 'undoReceiptFingerprint', 'undoReceiptId', 'undoneAt',
-    ])
+    ], ['moves'])
     || value.schemaVersion !== 1
     || !isUuid(value.undoReceiptId)
     || !isSha256(value.undoReceiptFingerprint)
@@ -698,9 +797,27 @@ function parseRelocationUndoReceipt(value: unknown): AssetRelocationUndoReceipt 
       identity: parseRelocationFileEvidence(entry.identity),
     };
   });
+  const sourceIdentity = parseRelocationFileEvidence(value.sourceIdentity);
+  const moves = value.moves === undefined
+    ? [{ moveId: 'relocation-move-legacy', sourcePath: value.sourcePath, targetPath: value.targetPath, sourceIdentity }]
+    : (() => {
+      if (!Array.isArray(value.moves) || value.moves.length < 1 || value.moves.length > 100) throw invalidResponse();
+      return value.moves.map((entry) => {
+        if (!isRecord(entry) || !hasExactKeys(entry, ['moveId', 'sourceIdentity', 'sourcePath', 'targetPath'])
+          || !isSafeText(entry.moveId, 128) || !isProjectRelativePath(entry.sourcePath)
+          || !isProjectRelativePath(entry.targetPath)) throw invalidResponse();
+        return {
+          moveId: entry.moveId,
+          sourcePath: entry.sourcePath,
+          targetPath: entry.targetPath,
+          sourceIdentity: parseRelocationFileEvidence(entry.sourceIdentity),
+        };
+      });
+    })();
   return {
     ...value,
-    sourceIdentity: parseRelocationFileEvidence(value.sourceIdentity),
+    sourceIdentity,
+    moves,
     restoredTextFiles,
   } as unknown as AssetRelocationUndoReceipt;
 }
@@ -717,16 +834,21 @@ function parseRelocationDetail(value: unknown): AssetRelocationDetail {
   const undoReceipt = value.undoReceipt === null ? null : parseRelocationUndoReceipt(value.undoReceipt);
   if (operation.operationId !== request.operationId
     || plan.operationId !== request.operationId
+    || plan.moves.length !== request.moves.length
+    || plan.moves.some((move, index) => move.source.path !== request.moves[index]?.sourcePath
+      || move.target.path !== request.moves[index]?.targetPath)
     || (plan.source !== null && plan.source.path !== request.sourcePath)
     || (plan.target !== null && plan.target.path !== request.targetPath)
     || (receipt !== null && (receipt.operationId !== request.operationId
       || receipt.planId !== plan.planId
       || receipt.planFingerprint !== plan.planFingerprint
+      || receipt.moves.length !== request.moves.length
       || receipt.sourcePath !== request.sourcePath
       || receipt.targetPath !== request.targetPath))
     || (undoReceipt !== null && (receipt === null
       || undoReceipt.operationId !== request.operationId
       || undoReceipt.receiptId !== receipt.receiptId
+      || undoReceipt.moves.length !== request.moves.length
       || undoReceipt.sourcePath !== request.sourcePath
       || undoReceipt.targetPath !== request.targetPath))) throw invalidResponse();
   return { request, operation, plan, receipt, undoReceipt, allowedActions: [...value.allowedActions] };
@@ -906,6 +1028,16 @@ function requireFingerprint(value: string): void {
 }
 
 function requireRelocationPlanInput(value: unknown): AssetRelocationPlanInput {
+  if (isRecord(value) && Object.prototype.hasOwnProperty.call(value, 'moves')) {
+    if (!hasExactKeys(value, ['moves', 'operationId']) || !isUuid(value.operationId)) {
+      throw new AssetImportClientError('INVALID_REQUEST', RELOCATION_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+    }
+    const moves = parseRelocationMoveRequests(value.moves).map((move) => ({
+      sourcePath: move.sourcePath.normalize('NFC'),
+      targetPath: move.targetPath.normalize('NFC'),
+    }));
+    return { operationId: value.operationId, moves };
+  }
   if (!isRecord(value)
     || !hasExactKeys(value, ['fileName', 'operationId', 'sourcePath', 'targetDirectory'])
     || !isUuid(value.operationId)
@@ -1338,7 +1470,11 @@ export function createAssetImportAuthorityClient(
       { binding: true, operationKind: 'relocation' },
     );
     const detail = requireRelocationDetailOperation(result.detail, normalized.operationId);
-    if (detail.request.sourcePath !== normalized.sourcePath
+    if ('moves' in normalized && normalized.moves !== undefined) {
+      if (detail.request.moves.length !== normalized.moves.length
+        || detail.request.moves.some((move, index) => move.sourcePath !== normalized.moves[index]?.sourcePath
+          || move.targetPath !== normalized.moves[index]?.targetPath)) throw invalidResponse();
+    } else if (detail.request.sourcePath !== normalized.sourcePath
       || detail.request.targetPath !== `${normalized.targetDirectory}/${normalized.fileName}`) throw invalidResponse();
     operationTokens.set(operationTokenKey('relocation', normalized.operationId), result.operationToken);
     return { ...result, detail };

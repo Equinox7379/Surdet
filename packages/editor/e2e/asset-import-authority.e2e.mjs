@@ -36,6 +36,11 @@ export const MILESTONE_IDS = Object.freeze([
   'referenced-asset-relocated-and-reloaded',
   'relocated-scene-previewed',
   'asset-relocation-undo-succeeded',
+  'batch-relocation-impact-previewed',
+  'batch-relocation-800px-readable',
+  'referenced-batch-swap-committed-and-reloaded',
+  'batch-swapped-scene-previewed',
+  'batch-relocation-undo-succeeded',
   'repository-and-starter-unchanged',
   'browser-error-channels-empty',
   'isolated-process-cleanup',
@@ -1116,6 +1121,96 @@ async function run() {
     projectAfter = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
     assert(projectAfter.sha256 === projectBefore.sha256, 'relocation undo did not restore the isolated project baseline');
     pass('asset-relocation-undo-succeeded', { sourceRestored: true, targetRemoved: true, referencesRestored: true });
+
+    await page.getByRole('button', { name: '关闭提示' }).click();
+    await page.getByRole('button', { name: '批量整理' }).click();
+    const castleRow = page.locator('[data-asset-id="file:content/assets/bg/castle_hall.svg"]');
+    const nightRow = page.locator('[data-asset-id="file:content/assets/bg/night_field.svg"]');
+    await castleRow.locator('input[type="checkbox"]').check();
+    await nightRow.locator('input[type="checkbox"]').check();
+    await page.getByRole('button', { name: '整理所选' }).click();
+    await page.locator('.asset-relocation-batch-items > summary').click();
+    await page.getByRole('textbox', { name: 'castle_hall.svg 整理后的文件名' }).fill('night_field');
+    await page.getByRole('textbox', { name: 'night_field.svg 整理后的文件名' }).fill('castle_hall');
+    await page.getByRole('button', { name: '检查整批影响' }).click();
+    const batchCommitButton = page.getByRole('button', { name: /整理 2 个素材并更新 \d+ 处引用/ });
+    await batchCommitButton.waitFor({ state: 'visible' });
+    const batchImpactText = await page.locator('.asset-relocation-impact').textContent();
+    assert(batchImpactText?.includes('将整理 2 个素材'), 'batch impact did not explain the two selected assets');
+    for (const label of ['场景', '时间轴', '鉴赏配置']) {
+      assert(batchImpactText?.includes(label), `batch relocation impact omitted ${label}`);
+    }
+    pass('batch-relocation-impact-previewed', { assets: 2, groups: ['scene', 'timeline', 'gallery'] });
+
+    await page.setViewportSize({ width: 800, height: 900 });
+    await batchCommitButton.scrollIntoViewIfNeeded();
+    const narrowLayout = await page.evaluate(() => {
+      const documentElement = document.documentElement;
+      const button = [...document.querySelectorAll('button')]
+        .find((candidate) => candidate.textContent?.includes('整理 2 个素材并更新'));
+      const rect = button?.getBoundingClientRect() ?? null;
+      return {
+        noHorizontalOverflow: documentElement.scrollWidth <= documentElement.clientWidth,
+        buttonVisible: rect !== null && rect.width > 0 && rect.height > 0
+          && rect.left >= 0 && rect.right <= documentElement.clientWidth
+          && rect.top >= 0 && rect.bottom <= window.innerHeight,
+      };
+    });
+    assert(narrowLayout.noHorizontalOverflow, 'batch relocation introduced horizontal overflow at 800px');
+    assert(narrowLayout.buttonVisible, 'batch relocation action was not reachable at 800px');
+    pass('batch-relocation-800px-readable', narrowLayout);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    await batchCommitButton.click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.mainTab === 'assets'
+        && window.surdetEditorDebug.state.assetCenterSelectedId === 'file:content/assets/bg/night_field.svg'
+        && window.surdetEditorDebug.state.projectWriteLock === null
+    ));
+    await page.locator('.asset-relocation-result', { hasText: '素材整理完成（2 项）' }).waitFor({ state: 'visible' });
+    assert(fs.readFileSync(relocationSource).equals(collisionBefore), 'batch swap did not exchange castle_hall bytes');
+    assert(fs.readFileSync(relocationCollision).equals(relocationSourceBefore), 'batch swap did not exchange night_field bytes');
+    const ch02AfterSwap = fs.readFileSync(path.join(projectRoot, 'content', 'scenario', 'ch02.gal'), 'utf8');
+    const ch01AfterSwap = fs.readFileSync(path.join(projectRoot, 'content', 'scenario', 'ch01_02.gal'), 'utf8');
+    const ch03AfterSwap = fs.readFileSync(path.join(projectRoot, 'content', 'scenario', 'ch03_turn_event.gal'), 'utf8');
+    assert(ch02AfterSwap.includes('@bg night_field'), 'batch swap did not update ch02 to night_field');
+    assert(ch01AfterSwap.includes('@bg castle_hall'), 'batch swap did not update ch01_02 to castle_hall');
+    assert(ch03AfterSwap.includes('@bg castle_hall'), 'batch swap did not update ch03_turn_event to castle_hall');
+    for (const relativePath of ['content/timelines/intro_arrival.json', 'content/timelines/intro_cinematic.json']) {
+      const timeline = fs.readFileSync(path.join(projectRoot, ...relativePath.split('/')), 'utf8');
+      assert(timeline.includes('night_field'), `batch swap did not update ${relativePath}`);
+      assert(!timeline.includes('castle_hall'), `batch swap left the old key in ${relativePath}`);
+    }
+    const galleryAfterSwap = JSON.parse(fs.readFileSync(path.join(projectRoot, 'content', 'config', 'gallery.json'), 'utf8'));
+    assert(galleryAfterSwap.cgs?.find((item) => item.id === 'cg_hall')?.src === 'night_field', 'batch swap did not update the hall gallery entry');
+    assert(galleryAfterSwap.cgs?.find((item) => item.id === 'cg_field')?.src === 'castle_hall', 'batch swap did not update the field gallery entry');
+    pass('referenced-batch-swap-committed-and-reloaded', { assets: 2, referencesUpdated: true });
+
+    await page.locator('.asset-center-reference[data-source-path="content/scenario/ch02.gal"]').click();
+    await page.waitForFunction(() => window.surdetEditorDebug.state.current === 'ch02');
+    await page.locator('[data-editor-mode="preview"]').click();
+    const batchPreviewElement = await page.locator('#preview-view .preview-frame').elementHandle();
+    const batchPreviewFrame = await batchPreviewElement?.contentFrame();
+    assert(batchPreviewFrame, 'batch-swapped scene preview iframe was not connected');
+    await batchPreviewFrame.waitForURL((url) => url.pathname.endsWith('/preview.html'));
+    await batchPreviewFrame.waitForFunction((backgroundKey) => (
+      window.surdetPreviewDebug?.presentationSnapshot?.stage?.backgroundKey === backgroundKey
+    ), 'night_field');
+    pass('batch-swapped-scene-previewed', { sceneId: 'ch02', backgroundKey: 'night_field' });
+
+    await page.locator('[data-editor-mode="assets"]').click();
+    await page.locator('.asset-relocation-result', { hasText: '素材整理完成（2 项）' }).waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: '撤销整批整理' }).click();
+    await page.waitForFunction(() => (
+      window.surdetEditorDebug.state.mainTab === 'assets'
+        && window.surdetEditorDebug.state.assetCenterSelectedId === 'file:content/assets/bg/castle_hall.svg'
+        && window.surdetEditorDebug.state.projectWriteLock === null
+    ));
+    assert(fs.readFileSync(relocationSource).equals(relocationSourceBefore), 'batch relocation undo did not restore castle_hall bytes');
+    assert(fs.readFileSync(relocationCollision).equals(collisionBefore), 'batch relocation undo did not restore night_field bytes');
+    projectAfter = hashCanonicalProjectTree(projectRoot, registeredRootChallengeNames);
+    assert(projectAfter.sha256 === projectBefore.sha256, 'batch relocation undo did not restore the isolated project baseline');
+    pass('batch-relocation-undo-succeeded', { assetsRestored: true, referencesRestored: true });
 
     originalStarterAfter = hashProjectTree(starterRoot);
     repositoryTreeAfter = repositoryTreeIdentity();

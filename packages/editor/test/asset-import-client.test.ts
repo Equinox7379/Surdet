@@ -180,6 +180,62 @@ function relocationDetail(status: 'PLANNED' | 'COMMITTED' | 'UNDONE' | 'RECOVERY
   };
 }
 
+function batchRelocationDetail() {
+  const firstSource = relocationPlan().source;
+  const firstTarget = relocationPlan().target;
+  const secondSource = {
+    ...firstSource,
+    path: 'content/assets/bg/other.webp',
+    fileName: 'other.webp',
+    key: 'other',
+  };
+  const secondTarget = {
+    ...firstTarget,
+    path: 'content/assets/bg/old.webp',
+    fileName: 'old.webp',
+    key: 'old',
+  };
+  const moves = [
+    { sourcePath: firstSource.path, targetPath: firstTarget.path },
+    { sourcePath: secondSource.path, targetPath: secondTarget.path },
+  ];
+  return {
+    request: {
+      operationId: RELOCATION_OPERATION_ID,
+      sourcePath: moves[0]!.sourcePath,
+      targetPath: moves[0]!.targetPath,
+      moves,
+    },
+    operation: {
+      ...relocationSummary(),
+      sourcePath: moves[0]!.sourcePath,
+      targetPath: moves[0]!.targetPath,
+      moves,
+    },
+    plan: {
+      schemaVersion: 2,
+      operationId: RELOCATION_OPERATION_ID,
+      planId: 'relocation-plan-' + 'e'.repeat(32),
+      planFingerprint: 'e'.repeat(64),
+      status: 'ready',
+      source: firstSource,
+      target: firstTarget,
+      moves: [
+        { moveId: 'move-a', source: firstSource, target: firstTarget },
+        { moveId: 'move-b', source: secondSource, target: secondTarget },
+      ],
+      affectedAssetCount: 2,
+      affectedReferenceCount: 0,
+      affectedFileCount: 0,
+      referenceChanges: [],
+      blockers: [],
+    },
+    receipt: null,
+    undoReceipt: null,
+    allowedActions: ['commit', 'cancel'],
+  };
+}
+
 function committedReceipt() {
   return {
     schemaVersion: 1,
@@ -619,6 +675,36 @@ describe('Editor 素材导入 authority client', () => {
       receiptId: RELOCATION_RECEIPT_ID,
       receiptFingerprint: 'a'.repeat(64),
     })).rejects.toMatchObject({ code: 'IMPORT_OPERATION_NOT_AUTHORIZED' });
+  });
+
+  it('sends and parses one strict batch relocation request without creating a second client path', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await client.bindProject(root.handle());
+    const detail = batchRelocationDetail();
+    fetcher.mockResolvedValueOnce(success({
+      operationToken: RELOCATION_OPERATION_TOKEN,
+      expiresAt: '2026-09-01T00:30:00.000Z',
+      detail,
+    }));
+
+    const planned = await client.relocationPlan({
+      operationId: RELOCATION_OPERATION_ID,
+      moves: detail.request.moves,
+    });
+
+    expect(planned.detail.plan).toMatchObject({
+      schemaVersion: 2,
+      affectedAssetCount: 2,
+      moves: [{ moveId: 'move-a' }, { moveId: 'move-b' }],
+    });
+    expect(planned.detail.request.moves).toEqual(detail.request.moves);
+    const request = requestRecords(fetcher).at(-1)!;
+    expect(request.input).toBe(`${AUTHORITY_PATH}/relocations/plan`);
+    expect(jsonBody(request.init)).toEqual({
+      operationId: RELOCATION_OPERATION_ID,
+      moves: detail.request.moves,
+    });
   });
 
   it('rejects malformed relocation detail and unsafe relocation input before a request', async () => {
