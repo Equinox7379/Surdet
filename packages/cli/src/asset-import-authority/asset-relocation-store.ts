@@ -62,15 +62,60 @@ function semanticSha256(value: unknown): string {
 }
 
 function validateRecord(operationId: string, value: AssetRelocationStoredOperation): AssetRelocationStoredOperation {
-  const expectedBackupPath = `.surdet/asset-relocation/${operationId}/backup/source.bin`;
   const request = value?.request;
   const journal = value?.journal;
   const plan = value?.plan;
   const textFiles = value?.textFiles;
   const scannedFiles = value?.scannedFiles;
+  const legacyRequest = !Array.isArray(request?.moves);
+  const legacyReceipt = value?.receipt !== null && !Array.isArray(value?.receipt?.moves);
+  const legacyUndoReceipt = value?.undoReceipt !== null && !Array.isArray(value?.undoReceipt?.moves);
+  if (request !== undefined && legacyRequest) {
+    request.moves = [{ sourcePath: request.sourcePath, targetPath: request.targetPath }];
+  }
+  if (!Array.isArray(value?.binaryBaselines) && value?.binaryBaseline !== undefined) {
+    value.binaryBaselines = [value.binaryBaseline];
+  }
+  if (journal !== undefined && !Array.isArray(journal.binaryItems)) {
+    journal.binaryItems = [{
+      moveId: 'relocation-move-legacy',
+      sourcePath: request.sourcePath,
+      targetPath: request.targetPath,
+      state: journal.binaryState,
+      backupRelativePath: journal.binaryBackupRelativePath,
+      backupIdentity: journal.binaryBackupIdentity,
+      targetIdentity: journal.binaryTargetIdentity,
+    }];
+  }
+  if (value?.receipt !== null && legacyReceipt) {
+    value.receipt.moves = [{
+      moveId: journal.binaryItems[0]?.moveId ?? 'relocation-move-legacy',
+      sourcePath: value.receipt.sourcePath,
+      targetPath: value.receipt.targetPath,
+      targetIdentity: value.receipt.targetIdentity,
+    }];
+  }
+  if (value?.undoReceipt !== null && legacyUndoReceipt) {
+    value.undoReceipt.moves = [{
+      moveId: journal.binaryItems[0]?.moveId ?? 'relocation-move-legacy',
+      sourcePath: value.undoReceipt.sourcePath,
+      targetPath: value.undoReceipt.targetPath,
+      sourceIdentity: value.undoReceipt.sourceIdentity,
+    }];
+  }
   let valid = value?.schemaVersion === 1;
   valid = valid
     && request.operationId === operationId
+    && Array.isArray(request.moves)
+    && request.moves.length >= 1
+    && request.moves.length <= 100
+    && request.moves.every((move) => validRelativePath(move.sourcePath)
+      && validRelativePath(move.targetPath)
+      && move.sourcePath.startsWith('content/assets/')
+      && move.targetPath.startsWith('content/assets/')
+      && move.sourcePath !== move.targetPath)
+    && request.sourcePath === request.moves[0]?.sourcePath
+    && request.targetPath === request.moves[0]?.targetPath
     && validRelativePath(request.sourcePath)
     && validRelativePath(request.targetPath)
     && request.sourcePath.startsWith('content/assets/')
@@ -83,7 +128,18 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
     && STATUSES.has(journal.status)
     && (journal.recoveryPhase === null || ['commit', 'rollback', 'undo'].includes(journal.recoveryPhase))
     && BINARY_STATES.has(journal.binaryState)
-    && journal.binaryBackupRelativePath === expectedBackupPath
+    && Array.isArray(journal.binaryItems)
+    && journal.binaryItems.length === request.moves.length
+    && journal.binaryItems.every((item, index) => item.sourcePath === request.moves[index]?.sourcePath
+      && item.targetPath === request.moves[index]?.targetPath
+      && BINARY_STATES.has(item.state)
+      && item.backupRelativePath === (legacyRequest && request.moves.length === 1
+        ? `.surdet/asset-relocation/${operationId}/backup/source.bin`
+        : `.surdet/asset-relocation/${operationId}/backup/source-${String(index).padStart(4, '0')}.bin`)
+      && (item.backupIdentity === null || validEvidence(item.backupIdentity))
+      && (item.targetIdentity === null || validEvidence(item.targetIdentity)))
+    && journal.binaryBackupRelativePath === journal.binaryItems[0]?.backupRelativePath
+    && journal.binaryState === journal.binaryItems[0]?.state
     && (journal.binaryBackupIdentity === null || validEvidence(journal.binaryBackupIdentity))
     && (journal.binaryTargetIdentity === null || validEvidence(journal.binaryTargetIdentity))
     && typeof journal.updatedAt === 'string'
@@ -95,19 +151,27 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
     && journal.textStates.every((state) => TEXT_STATES.has(state))
     && journal.textResultIdentities.every((identity) => identity === null || validEvidence(identity))
     && plan?.operationId === operationId
-    && /^relocation-plan-[0-9a-f]{32}$/u.test(plan.planId)
+    && /^relocation-(?:batch-)?plan-[0-9a-f]{32}$/u.test(plan.planId)
     && SHA256.test(plan.planFingerprint)
+    && (plan.schemaVersion === 1 || (plan.schemaVersion === 2
+      && Array.isArray(plan.moves)
+      && plan.moves.length === request.moves.length
+      && plan.moves.every((move, index) => move.source.path === request.moves[index]?.sourcePath
+        && move.target.path === request.moves[index]?.targetPath)))
     && (plan.source === null || plan.source.path === request.sourcePath)
     && (plan.target === null || plan.target.path === request.targetPath)
     && Array.isArray(scannedFiles)
     && scannedFiles.every((file) => validRelativePath(file.path) && SHA256.test(file.sha256))
     && new Set(scannedFiles.map((file) => file.path)).size === scannedFiles.length
-    && value.binaryBaseline?.source?.path === request.sourcePath
-    && value.binaryBaseline?.target?.path === request.targetPath
-    && ['absent', 'exists'].includes(value.binaryBaseline?.target?.state)
-    && validEvidence(value.binaryBaseline?.source)
-    && validRelativePath(value.binaryBaseline?.targetDirectory?.path)
-    && SHA256.test(value.binaryBaseline?.assetInventoryFingerprint ?? '')
+    && Array.isArray(value.binaryBaselines)
+    && value.binaryBaselines.length === request.moves.length
+    && sameJson(value.binaryBaseline, value.binaryBaselines[0])
+    && value.binaryBaselines.every((baseline, index) => baseline?.source?.path === request.moves[index]?.sourcePath
+      && baseline?.target?.path === request.moves[index]?.targetPath
+      && ['absent', 'exists'].includes(baseline?.target?.state)
+      && validEvidence(baseline?.source)
+      && validRelativePath(baseline?.targetDirectory?.path)
+      && SHA256.test(baseline?.assetInventoryFingerprint ?? ''))
     && textFiles.every((file, index) => validRelativePath(file.path)
       && SHA256.test(file.beforeSha256)
       && SHA256.test(file.afterSha256)
@@ -117,7 +181,10 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
     && new Set(textFiles.map((file) => file.path)).size === textFiles.length;
 
   if (valid && value.receipt !== null) {
-    const { receiptFingerprint, ...semantic } = value.receipt;
+    const { receiptFingerprint, ...semanticWithMoves } = value.receipt;
+    const semantic = legacyReceipt
+      ? Object.fromEntries(Object.entries(semanticWithMoves).filter(([key]) => key !== 'moves'))
+      : semanticWithMoves;
     valid = UUID.test(value.receipt.receiptId)
       && SHA256.test(receiptFingerprint)
       && semanticSha256(semantic) === receiptFingerprint
@@ -128,6 +195,11 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       && value.receipt.sourcePath === request.sourcePath
       && value.receipt.targetPath === request.targetPath
       && validEvidence(value.receipt.targetIdentity)
+      && value.receipt.moves.length === request.moves.length
+      && value.receipt.moves.every((move, index) => move.sourcePath === request.moves[index]?.sourcePath
+        && move.targetPath === request.moves[index]?.targetPath
+        && move.moveId === journal.binaryItems[index]?.moveId
+        && validEvidence(move.targetIdentity))
       && Array.isArray(value.receipt.textFiles)
       && value.receipt.textFiles.length === textFiles.length
       && value.receipt.textFiles.every((file, index) => file.path === textFiles[index]!.path
@@ -139,7 +211,10 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       && typeof value.receipt.committedAt === 'string';
   }
   if (valid && value.undoReceipt !== null) {
-    const { undoReceiptFingerprint, ...semantic } = value.undoReceipt;
+    const { undoReceiptFingerprint, ...semanticWithMoves } = value.undoReceipt;
+    const semantic = legacyUndoReceipt
+      ? Object.fromEntries(Object.entries(semanticWithMoves).filter(([key]) => key !== 'moves'))
+      : semanticWithMoves;
     valid = UUID.test(value.undoReceipt.undoReceiptId)
       && SHA256.test(undoReceiptFingerprint)
       && semanticSha256(semantic) === undoReceiptFingerprint
@@ -149,6 +224,11 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       && value.undoReceipt.sourcePath === request.sourcePath
       && value.undoReceipt.targetPath === request.targetPath
       && validEvidence(value.undoReceipt.sourceIdentity)
+      && value.undoReceipt.moves.length === request.moves.length
+      && value.undoReceipt.moves.every((move, index) => move.sourcePath === request.moves[index]?.sourcePath
+        && move.targetPath === request.moves[index]?.targetPath
+        && move.moveId === journal.binaryItems[index]?.moveId
+        && validEvidence(move.sourceIdentity))
       && value.undoReceipt.restoredTextFiles.length === textFiles.length
       && value.undoReceipt.restoredTextFiles.every((file, index) => file.path === textFiles[index]!.path
         && file.sha256 === textFiles[index]!.beforeSha256

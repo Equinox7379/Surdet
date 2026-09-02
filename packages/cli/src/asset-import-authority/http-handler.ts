@@ -349,6 +349,23 @@ function requireProjectRelativePath(value: unknown, field: string): string {
 }
 
 function parseRelocationPlan(value: unknown): PlanAssetRelocationRequest {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, 'moves')) {
+    const object = exactObject(value, ['moves', 'operationId']);
+    if (!Array.isArray(object.moves) || object.moves.length < 1 || object.moves.length > 100) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', 'moves 数量必须在 1 到 100 之间', { field: 'moves' });
+    }
+    return {
+      operationId: requireUuid(object.operationId, 'operationId'),
+      moves: object.moves.map((value, index) => {
+        const move = exactObject(value, ['sourcePath', 'targetPath']);
+        return {
+          sourcePath: requireProjectRelativePath(move.sourcePath, `moves[${index}].sourcePath`),
+          targetPath: requireProjectRelativePath(move.targetPath, `moves[${index}].targetPath`),
+        };
+      }),
+    };
+  }
   const object = exactObject(value, ['fileName', 'operationId', 'sourcePath', 'targetDirectory']);
   const sourcePath = requireProjectRelativePath(object.sourcePath, 'sourcePath');
   const targetDirectory = requireProjectRelativePath(object.targetDirectory, 'targetDirectory');
@@ -456,6 +473,7 @@ function publicRelocationDetail(detail: AssetRelocationDetailResponse): unknown 
       status: detail.operation.status,
       sourcePath: detail.request.sourcePath,
       targetPath: detail.request.targetPath,
+      moves: detail.request.moves,
       updatedAt: detail.operation.updatedAt,
       manualRecoveryRequired: detail.operation.status === 'RECOVERY_REQUIRED',
     },

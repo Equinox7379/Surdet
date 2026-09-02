@@ -4,6 +4,7 @@ import type {
   ProjectAssetImportTargetFact,
   ProjectAssetImportTargetRequest,
   ProjectAssetRelocationBinaryBaseline,
+  ProjectAssetRelocationBatchPlan,
   ProjectAssetRelocationPlan,
   ProjectAssetRelocationScannedFile,
   ProjectAssetRelocationTextChange,
@@ -314,8 +315,25 @@ export interface AssetRelocationFileEvidence extends AssetImportFileIdentity {
 
 export interface AssetRelocationRequest {
   operationId: string;
+  moves: AssetRelocationMoveRequest[];
+  /** 单素材兼容投影；始终等于 moves[0]。 */
   sourcePath: string;
   targetPath: string;
+}
+
+export interface AssetRelocationMoveRequest {
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface AssetRelocationBinaryJournalItem {
+  moveId: string;
+  sourcePath: string;
+  targetPath: string;
+  state: AssetRelocationBinaryState;
+  backupRelativePath: string;
+  backupIdentity: AssetRelocationFileEvidence | null;
+  targetIdentity: AssetRelocationFileEvidence | null;
 }
 
 export interface AssetRelocationJournal {
@@ -328,6 +346,7 @@ export interface AssetRelocationJournal {
   binaryBackupRelativePath: string;
   binaryBackupIdentity: AssetRelocationFileEvidence | null;
   binaryTargetIdentity: AssetRelocationFileEvidence | null;
+  binaryItems: AssetRelocationBinaryJournalItem[];
   textStates: AssetRelocationTextState[];
   textResultIdentities: Array<AssetRelocationFileEvidence | null>;
   updatedAt: string;
@@ -350,6 +369,12 @@ export interface AssetRelocationReceipt {
   sourcePath: string;
   targetPath: string;
   targetIdentity: AssetRelocationFileEvidence;
+  moves: Array<{
+    moveId: string;
+    sourcePath: string;
+    targetPath: string;
+    targetIdentity: AssetRelocationFileEvidence;
+  }>;
   textFiles: Array<{ path: string; sha256: string; identity: AssetRelocationFileEvidence }>;
   committedAt: string;
 }
@@ -363,6 +388,12 @@ export interface AssetRelocationUndoReceipt {
   sourcePath: string;
   targetPath: string;
   sourceIdentity: AssetRelocationFileEvidence;
+  moves: Array<{
+    moveId: string;
+    sourcePath: string;
+    targetPath: string;
+    sourceIdentity: AssetRelocationFileEvidence;
+  }>;
   restoredTextFiles: Array<{ path: string; sha256: string; identity: AssetRelocationFileEvidence }>;
   undoneAt: string;
 }
@@ -370,9 +401,10 @@ export interface AssetRelocationUndoReceipt {
 export interface AssetRelocationStoredOperation {
   schemaVersion: 1;
   request: AssetRelocationRequest;
-  plan: ProjectAssetRelocationPlan;
+  plan: ProjectAssetRelocationPlan | ProjectAssetRelocationBatchPlan;
   scannedFiles: ProjectAssetRelocationScannedFile[];
   binaryBaseline: ProjectAssetRelocationBinaryBaseline;
+  binaryBaselines: ProjectAssetRelocationBinaryBaseline[];
   textFiles: AssetRelocationStoredText[];
   journal: AssetRelocationJournal;
   receipt: AssetRelocationReceipt | null;
@@ -381,8 +413,9 @@ export interface AssetRelocationStoredOperation {
 
 export interface PlanAssetRelocationRequest {
   operationId: string;
-  sourcePath: string;
-  targetPath: string;
+  sourcePath?: string;
+  targetPath?: string;
+  moves?: AssetRelocationMoveRequest[];
 }
 
 export interface CommitAssetRelocationRequest {
@@ -401,7 +434,7 @@ export interface UndoAssetRelocationRequest {
 export interface AssetRelocationDetailResponse {
   request: AssetRelocationRequest;
   operation: AssetRelocationJournal;
-  plan: ProjectAssetRelocationPlan;
+  plan: ProjectAssetRelocationPlan | ProjectAssetRelocationBatchPlan;
   receipt: AssetRelocationReceipt | null;
   undoReceipt: AssetRelocationUndoReceipt | null;
 }
@@ -411,6 +444,7 @@ export interface AssetRelocationOperationSummary {
   status: AssetRelocationOperationStatus;
   sourcePath: string;
   targetPath: string;
+  moves: AssetRelocationMoveRequest[];
   updatedAt: string;
   manualRecoveryRequired: boolean;
 }
