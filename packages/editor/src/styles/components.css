@@ -13,11 +13,12 @@
 .editor-command,
 [data-action-scope="global"],
 [data-action-scope="workspace"] {
-  min-height: 34px;
+  min-height: var(--surdet-control-height);
   border: 1px solid var(--surdet-border-strong);
   border-radius: var(--surdet-radius-tight);
   padding: var(--surdet-space-8) var(--surdet-space-12);
   font-weight: 600;
+  font-size: var(--surdet-type-control);
   line-height: 1.2;
   cursor: pointer;
   transition:
@@ -70,7 +71,7 @@
 }
 
 .surdet-field {
-  min-height: 36px;
+  min-height: var(--surdet-control-height);
   width: 100%;
   border: 1px solid var(--surdet-border-default);
   border-radius: var(--surdet-radius-tight);
@@ -109,7 +110,7 @@
   align-items: center;
   gap: var(--surdet-space-8);
   color: var(--surdet-text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--surdet-type-control);
   line-height: 1.4;
 }
 
@@ -131,7 +132,7 @@
 
 .surdet-technical-text {
   font-family: var(--surdet-font-mono);
-  font-size: 0.8125rem;
+  font-size: var(--surdet-type-caption);
   overflow-wrap: anywhere;
 }
 
