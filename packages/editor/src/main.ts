@@ -1412,6 +1412,7 @@ function renderMainArea(): void {
   } else if (state.mainTab === 'review') {
     const reviewEl = h('section');
     reviewEl.id = 'review-view';
+    reviewEl.dataset['editorPanel'] = 'review';
     col.appendChild(reviewEl);
     renderReviewPanel(reviewEl);
   } else {

@@ -7,10 +7,6 @@ const previewHtml = readFileSync(path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../preview.html',
 ), 'utf8');
-const editorStyles = readFileSync(path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../src/styles.css',
-), 'utf8');
 const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function readEditorFile(relativePath: string): string {
@@ -23,6 +19,7 @@ const mainSource = readEditorFile('src/main.ts');
 const panelSource = readEditorFile('src/panels/preview-panel.ts');
 const reviewPanelSource = readEditorFile('src/panels/review-panel.ts');
 const previewStyles = readEditorFile('src/styles/preview-workspace.css');
+const reviewStyles = readEditorFile('src/styles/review-workspace.css');
 
 describe('preview stage layout contract', () => {
   it('centers the Gal canvas in both axes without stretching it', () => {
@@ -74,13 +71,13 @@ describe('preview stage layout contract', () => {
   });
 
   it('keeps review task, main, and detail columns independently scrollable', () => {
-    expect(editorStyles).toMatch(/#review-view\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
-    expect(editorStyles).toMatch(/\.review-workbench\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(210px,\s*260px\)\s+minmax\(460px,\s*1fr\)\s+minmax\(260px,\s*340px\)[^}]*height:\s*100%[^}]*min-height:\s*0/s);
+    expect(reviewStyles).toMatch(/#review-view\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
+    expect(reviewStyles).toMatch(/\.review-workbench\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(220px,\s*260px\)\s+minmax\(520px,\s*1fr\)\s+minmax\(270px,\s*340px\)[^}]*height:\s*100%[^}]*min-height:\s*0/s);
     for (const selector of ['review-task-list', 'review-main', 'review-details']) {
-      expect(editorStyles).toMatch(new RegExp(`\\.${selector}\\s*\\{[^}]*min-height:\\s*0[^}]*overflow-y:\\s*auto`, 's'));
+      expect(reviewStyles).toMatch(new RegExp(`\\.${selector}\\s*\\{[^}]*min-height:\\s*0[^}]*overflow-y:\\s*auto`, 's'));
     }
-    expect(editorStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*review-workbench/);
-    expect(editorStyles).toMatch(/@media\s*\(max-width:\s*900px\)[\s\S]*review-workbench/);
-    expect(editorStyles).toMatch(/\.review-preview-shell\s*\{[^}]*min-height:\s*360px/s);
+    expect(reviewStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*review-workbench/);
+    expect(reviewStyles).toMatch(/@media\s*\(max-width:\s*900px\)[\s\S]*review-workbench/);
+    expect(reviewStyles).toMatch(/\.review-preview-shell\s*\{[^}]*min-height:\s*360px/s);
   });
 });
