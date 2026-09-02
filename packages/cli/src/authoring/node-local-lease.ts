@@ -41,6 +41,8 @@ export interface NodeLocalLeaseManagerOptions {
    * DEFAULT_PUBLICATION_POLL_DELAY_MS between bounded publication-window polls.
    */
   publicationDelay?: (delayMs: number) => Promise<void>;
+  /** Injection seam for deterministic lease read-race tests. */
+  readLeaseRecord?: (file: string) => Promise<{ value: unknown } | null>;
 }
 
 interface LocalLease {
@@ -147,6 +149,7 @@ export class NodeLocalLeaseManager {
   private readonly isProcessAlive: (pid: number) => boolean | Promise<boolean>;
   private readonly scheduleHeartbeat: (callback: () => Promise<void>, intervalMs: number) => () => void | Promise<void>;
   private readonly publicationDelay: (delayMs: number) => Promise<void>;
+  private readonly readLeaseRecord: (file: string) => Promise<{ value: unknown } | null>;
   private readonly heartbeatControllers = new Map<string, HeartbeatController>();
 
   constructor(
@@ -177,6 +180,7 @@ export class NodeLocalLeaseManager {
     this.publicationDelay = options.publicationDelay ?? ((delayMs) => new Promise((resolve) => {
       setTimeout(resolve, delayMs);
     }));
+    this.readLeaseRecord = options.readLeaseRecord ?? ((file) => readJsonRecord<unknown>(file));
   }
 
   private scopeDirectory(scope: LeaseScope): string {
@@ -244,7 +248,7 @@ export class NodeLocalLeaseManager {
   private async loadLease(scope: LeaseScope, resourceId: string): Promise<LocalLease> {
     const file = this.leaseFile(scope, resourceId);
     try {
-      const loaded = await readJsonRecord<unknown>(file);
+      const loaded = await this.readLeaseRecord(file);
       if (loaded === null) {
         // Missing record right after the lock directory exists is the publication window,
         // not corruption; acquire() may retry this case within its bounded budget.
@@ -268,13 +272,26 @@ export class NodeLocalLeaseManager {
       if (error instanceof AuthoringOperationError && error.code === 'LEASE_CORRUPT') throw error;
       const details = error instanceof AuthoringOperationError ? error.details : undefined;
       const rawCode = errorCode(error);
-      const transientRead = rawCode === 'ENOENT' || rawCode === 'EBUSY' || rawCode === 'EPERM';
+      const recordReadChanged = error instanceof AuthoringOperationError
+        && error.code === 'CHANGE_STORE_CORRUPT'
+        && details?.['path'] === file
+        && details?.['sha256'] === undefined;
+      const currentPath = recordReadChanged
+        ? await fs.lstat(file).catch((statError: unknown) => (
+          errorCode(statError) === 'ENOENT' ? null : undefined
+        ))
+        : undefined;
+      const transientRecordRead = recordReadChanged
+        && (currentPath === null
+          || (currentPath !== undefined && currentPath.isFile() && !currentPath.isSymbolicLink()));
+      const transientRead = rawCode === 'ENOENT' || rawCode === 'EBUSY' || rawCode === 'EPERM'
+        || transientRecordRead;
       throw leaseCorrupt(`lease.json 无法读取：${file}`, {
         path: file,
         scope,
         resourceId,
         ...(details ?? {}),
-        ...(transientRead ? { publicationPhase: 'read', readErrorCode: rawCode } : {}),
+        ...(transientRead ? { publicationPhase: 'read', readErrorCode: rawCode ?? 'RECORD_REPLACED' } : {}),
         cause: error instanceof Error ? error.message : String(error),
       });
     }
