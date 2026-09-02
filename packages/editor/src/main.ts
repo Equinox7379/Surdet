@@ -50,7 +50,14 @@ import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, upd
 import { bindAssetsPanelHooks } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
 import { disposeAssetCenterThumbnails } from './panels/asset-center-thumbnails.js';
-import { renderFlow, bindFlowHooks } from './panels/flow.js';
+import {
+  bindFlowHooks,
+  deleteScene,
+  deleteSceneAtKey,
+  renderFlow,
+  renameScene,
+  renameSceneAtKey,
+} from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
@@ -484,6 +491,7 @@ function openImportedAsset(): void {
 function hasDirtyProjectFiles(): boolean {
   return [...state.scenes.values()].some(({ dirty }) => dirty)
     || state.timelines.some(({ dirty }) => dirty)
+    || state.pendingSceneDeletes.length > 0
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
 }
@@ -930,6 +938,45 @@ async function saveProject(): Promise<void> {
   refreshProjectBarProjection();
 }
 
+function confirmProjectSwitch(): boolean {
+  if (state.pendingSceneDeletes.length > 0) {
+    setStatus('当前仍有待保存的场景改名或删除，请先保存全部', false, 5000);
+    return false;
+  }
+  return !hasDirtyProjectFiles()
+    || window.confirm('当前项目还有未保存修改。切换项目会放弃这些修改，确定继续吗？');
+}
+
+async function openProjectSafely(): Promise<void> {
+  if (!confirmProjectSwitch()) return;
+  try {
+    await openProject();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    setStatus(error instanceof Error ? error.message : '当前无法打开项目', false, 5000);
+  }
+}
+
+function loadDemoProjectSafely(): void {
+  if (!confirmProjectSwitch()) return;
+  try {
+    loadDemoProject();
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : '当前无法切换演示项目', false, 5000);
+  }
+}
+
+async function runSceneLifecycleAction(operation: () => Promise<void>): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : '当前无法修改场景', false, 5000);
+  } finally {
+    renderMainArea();
+    refreshProjectBarProjection();
+  }
+}
+
 function scheduleAuthoringIndexRebuild(): void {
   authoringRevision += 1;
   state.assetIntelligenceState = 'loading';
@@ -1099,6 +1146,8 @@ bindProjectIoHooks({
 });
 bindSidebarHooks({
   onSelectScene: (sceneKey) => jumpToScene(sceneKey),
+  onRenameScene: (sceneKey) => { void runSceneLifecycleAction(() => renameSceneAtKey(sceneKey)); },
+  onDeleteScene: (sceneKey) => { void runSceneLifecycleAction(() => deleteSceneAtKey(sceneKey)); },
 });
 bindAssetsPanelHooks({
   onInserted: () => renderEditor(),
@@ -1119,6 +1168,8 @@ bindFlowHooks({
     scheduleValidate();
     scheduleAuthoringIndexRebuild();
   },
+  onRenameScene: (sceneId) => { void runSceneLifecycleAction(() => renameScene(sceneId)); },
+  onDeleteScene: (sceneId) => { void runSceneLifecycleAction(() => deleteScene(sceneId)); },
 });
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
@@ -1247,7 +1298,7 @@ const appEl = document.getElementById('app')!;
 function renderAll(): void {
   appEl.innerHTML = '';
   const header = renderProjectBar(projectBarProjection(), {
-    onOpenProject: () => { void openProject(); },
+    onOpenProject: () => { void openProjectSafely(); },
     onOpenReview: () => {
       void (async () => {
         try {
@@ -1262,7 +1313,7 @@ function renderAll(): void {
     onUndo: doUndo,
     onRedo: doRedo,
     onSaveProject: () => { void saveProject(); },
-    onLoadDemo: loadDemoProject,
+    onLoadDemo: loadDemoProjectSafely,
     onExportCurrent: exportCurrent,
   });
   appEl.appendChild(header);
@@ -1323,7 +1374,7 @@ function renderMainArea(): void {
     assetsEl.id = 'asset-center-view';
     col.appendChild(assetsEl);
     renderAssetCenter(assetsEl, {
-      onOpenProject: () => { void openProject(); },
+      onOpenProject: () => { void openProjectSafely(); },
       onOpenReference: (reference) => {
         if (state.projectWriteLock === 'asset-relocation') {
           assetRelocationWorkspace.setMessage('请先完成或取消素材整理，再打开引用位置。');
@@ -1538,6 +1589,7 @@ window.addEventListener('beforeunload', (e) => {
     }
   }
   if (state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingSceneDeletes.length > 0
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0) {
     e.preventDefault();

@@ -2,6 +2,7 @@
  * 侧栏（E0 拆分；E2 增加场景/素材标签页）。
  */
 import { state, h, setStatus, type SceneEntry } from '../state.js';
+import { isSceneFilePathReserved } from '../project-io.js';
 import { renderAssetsPanel } from './assets.js';
 
 export function renderSidebar(): void {
@@ -74,6 +75,8 @@ export function renderSidebar(): void {
     group.appendChild(groupHeading);
     for (const [id, sc] of scenes) {
       const selected = id === state.current;
+      const row = h('div', 'scene-row');
+      row.dataset.sceneKey = id;
       const item = h('button', 'scene-item' + (selected ? ' active' : ''));
       item.type = 'button';
       item.dataset.sceneId = id;
@@ -89,7 +92,20 @@ export function renderSidebar(): void {
       facts.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
       item.appendChild(facts);
       item.onclick = () => onSelectSceneHook(id);
-      group.appendChild(item);
+      const actions = h('span', 'scene-row-actions');
+      const rename = h('button', 'scene-row-action', '改名');
+      rename.type = 'button';
+      rename.dataset.action = 'rename-scene';
+      rename.setAttribute('aria-label', `重命名场景 ${sc.file}`);
+      rename.onclick = () => onRenameSceneHook(id);
+      const remove = h('button', 'scene-row-action', '删除');
+      remove.type = 'button';
+      remove.dataset.action = 'delete-scene';
+      remove.setAttribute('aria-label', `删除场景 ${sc.file}`);
+      remove.onclick = () => onDeleteSceneHook(id);
+      actions.append(rename, remove);
+      row.append(item, actions);
+      group.appendChild(row);
     }
     list.appendChild(group);
   }
@@ -98,8 +114,16 @@ export function renderSidebar(): void {
 
 /** 场景导航钩子（main.ts 注入，确保所有跳转共享同一选择协调器）。 */
 let onSelectSceneHook: (sceneKey: string) => void = () => {};
-export function bindSidebarHooks(opts: { onSelectScene: (sceneKey: string) => void }): void {
+let onRenameSceneHook: (sceneKey: string) => void = () => {};
+let onDeleteSceneHook: (sceneKey: string) => void = () => {};
+export function bindSidebarHooks(opts: {
+  onSelectScene: (sceneKey: string) => void;
+  onRenameScene?: (sceneKey: string) => void;
+  onDeleteScene?: (sceneKey: string) => void;
+}): void {
   onSelectSceneHook = opts.onSelectScene;
+  onRenameSceneHook = opts.onRenameScene ?? (() => {});
+  onDeleteSceneHook = opts.onDeleteScene ?? (() => {});
 }
 
 /** 新建场景模板（M6 E5-4）：带注释的 .gal 片段，{id} 占位替换为场景 ID */
@@ -127,8 +151,16 @@ export function newScene(): void {
   const name = window.prompt('新场景 ID（文件名，不含 .gal）');
   if (!name || name.trim().length === 0) return;
   const id = name.trim();
-  if (state.scenes.has(id)) {
+  if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) {
+    setStatus('场景 ID 不能包含空格、点号或文件名保留字符', false, 5000);
+    return;
+  }
+  if ([...state.scenes.values()].some((scene) => scene.id === id)) {
     setStatus(`场景 '${id}' 已存在`, false);
+    return;
+  }
+  if (isSceneFilePathReserved(`${id}.gal`)) {
+    setStatus('该场景文件正等待删除，请先保存全部', false, 5000);
     return;
   }
   const tplChoice = window.prompt('选择模板：0 空白 / 1 纯对话 / 2 选择分支 / 3 演出制作 / 4 结局（取消 = 空白）');

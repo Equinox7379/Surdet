@@ -102,7 +102,7 @@ describe('Flow Canvas interaction preservation contract', () => {
     expect(returnMarkerBlock).toMatch(/setAttribute\(\s*['"]role['"]\s*,\s*['"]link['"]\s*\)/);
     expect(returnMarkerBlock).toMatch(/setAttribute\(\s*['"]tabindex['"]\s*,\s*['"]0['"]\s*\)/);
     expect(returnMarkerBlock).toMatch(/event\.key\s*!==\s*['"]Enter['"]\s*&&\s*event\.key\s*!==\s*['"] ['"]/);
-    expect(returnMarkerBlock).toMatch(/const\s+key\s*=\s*sceneKeyById\(marker\.targetSceneId\)/);
+    expect(returnMarkerBlock).toMatch(/const\s+key\s*=\s*resolveSceneKeyForOperation\(marker\.targetSceneId\)/);
     expect(returnMarkerBlock).toMatch(/openSceneHook\(key\)/);
     expect(returnMarkerBlock).toMatch(/addEventListener\(\s*['"]click['"]\s*,\s*openTarget\s*\)/);
     expect(returnMarkerBlock).toMatch(/event\.preventDefault\(\)[\s\S]{0,120}?openTarget\(\)/);

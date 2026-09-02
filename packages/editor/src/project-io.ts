@@ -40,6 +40,7 @@ let assetRefreshRevision = 0;
 let activeProjectWriteOperations = 0;
 let projectTransitionPending = false;
 const projectWriteIdleWaiters = new Set<() => void>();
+let projectWriteQueueTail: Promise<void> = Promise.resolve();
 
 function notifyProjectWriteIdle(): void {
   if (activeProjectWriteOperations !== 0) return;
@@ -54,11 +55,16 @@ function notifyProjectWriteIdle(): void {
 export async function runProjectWriteOperation<T>(operation: () => Promise<T>): Promise<T> {
   assertProjectWriteUnlocked();
   if (projectTransitionPending) throw new Error('项目正在切换，请稍后再保存');
+  const previous = projectWriteQueueTail;
+  let releaseQueue!: () => void;
+  projectWriteQueueTail = new Promise<void>((resolve) => { releaseQueue = resolve; });
   activeProjectWriteOperations += 1;
   try {
+    await previous;
     return await operation();
   } finally {
     activeProjectWriteOperations -= 1;
+    releaseQueue();
     notifyProjectWriteIdle();
   }
 }
@@ -127,6 +133,9 @@ export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture' } = {},
 ): Promise<void> {
+  if (state.pendingSceneDeletes.length > 0) {
+    throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
+  }
   await beginProjectTransition();
   let succeeded = false;
   try {
@@ -191,6 +200,7 @@ async function loadProjectFromHandle(
   state.dirName = dir.name;
   state.dirHandle = dir;
   state.scenes.clear();
+  state.pendingSceneDeletes = [];
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = [];
@@ -472,6 +482,62 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
   }
 }
 
+function scenarioPathParts(file: string): string[] {
+  let relative = file.replaceAll('\\', '/');
+  if (relative.startsWith('content/scenario/')) relative = relative.slice('content/scenario/'.length);
+  if (relative.length === 0 || relative.startsWith('/') || /^[A-Za-z]:/.test(relative)) {
+    throw new Error(`场景路径无效：${file}`);
+  }
+  const parts = relative.split('/');
+  if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) {
+    throw new Error(`场景路径无效：${file}`);
+  }
+  const fileName = parts.at(-1);
+  if (!fileName?.toLowerCase().endsWith('.gal')) throw new Error(`场景文件必须使用 .gal：${file}`);
+  return parts;
+}
+
+/** Windows 磁盘身份按大小写不敏感比较；同时复用同一套越级路径校验。 */
+export function sceneFileIdentity(file: string): string {
+  return scenarioPathParts(file).join('/').toLocaleLowerCase('en-US');
+}
+
+export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
+  const identity = sceneFileIdentity(file);
+  return [...state.scenes].some(([key, scene]) => (
+    key !== ignoredSceneKey && sceneFileIdentity(scene.file) === identity
+  )) || state.pendingSceneDeletes.some((pending) => sceneFileIdentity(pending.file) === identity);
+}
+
+async function scenarioParentDirectory(
+  root: FileSystemDirectoryHandle,
+  file: string,
+  create: boolean,
+): Promise<{ directory: FileSystemDirectoryHandle; fileName: string; relativeFile: string }> {
+  const parts = scenarioPathParts(file);
+  const fileName = parts.pop()!;
+  const contentDir = await root.getDirectoryHandle('content', { create });
+  let directory = await contentDir.getDirectoryHandle('scenario', { create });
+  for (const part of parts) directory = await directory.getDirectoryHandle(part, { create });
+  return { directory, fileName, relativeFile: [...parts, fileName].join('/') };
+}
+
+async function createScenarioFileHandle(
+  root: FileSystemDirectoryHandle,
+  file: string,
+): Promise<{ handle: FileSystemFileHandle; relativeFile: string }> {
+  const target = await scenarioParentDirectory(root, file, true);
+  return {
+    handle: await target.directory.getFileHandle(target.fileName, { create: true }),
+    relativeFile: target.relativeFile,
+  };
+}
+
+async function removeScenarioFile(root: FileSystemDirectoryHandle, file: string): Promise<void> {
+  const target = await scenarioParentDirectory(root, file, false);
+  await target.directory.removeEntry(target.fileName);
+}
+
 export interface TimelineAutosaveRestoreResult {
   restored: number;
   conflicts: TimelineAutosaveRestoreConflict[];
@@ -747,6 +813,7 @@ async function saveAllUnlocked(): Promise<void> {
     else exportCurrent();
     const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
       || state.timelines.some((entry) => entry.dirty)
+      || state.pendingSceneDeletes.length > 0
       || state.pendingTimelineDeletes.length > 0
       || state.pendingTimelineRestores.size > 0;
     onSaveSettled({
@@ -760,6 +827,7 @@ async function saveAllUnlocked(): Promise<void> {
   }
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingSceneDeletes.length > 0
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
   let saved = 0;
@@ -809,16 +877,13 @@ async function saveAllUnlocked(): Promise<void> {
     if (!sc.dirty) continue;
     const handle = sc.handle;
     if (!handle) {
-      // 新建场景：在项目目录 content/scenario/ 下真实创建文件落盘（M3：不再以下载冒充保存）
+      // 新建或重命名场景：按 SceneEntry.file 的真实相对目录落盘。
       if (state.dirHandle) {
         try {
-          const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
-          const scenarioDir = await contentDir.getDirectoryHandle('scenario', { create: true });
-          const fileName = `${sc.id}.gal`;
-          const fh = await scenarioDir.getFileHandle(fileName, { create: true });
-          await writeFileHandle(fh, sc.text);
-          sc.handle = fh;
-          sc.file = `content/scenario/${fileName}`;
+          const target = await createScenarioFileHandle(state.dirHandle, sc.file || `${sc.id}.gal`);
+          await writeFileHandle(target.handle, sc.text);
+          sc.handle = target.handle;
+          sc.file = target.relativeFile;
           sc.dirty = false;
           saved++;
         } catch (err) {
@@ -839,6 +904,37 @@ async function saveAllUnlocked(): Promise<void> {
       recordFailure(`场景 '${sc.id}' 保存`, err);
     }
     void key;
+  }
+  if (state.dirHandle) {
+    const remainingSceneDeletes: typeof state.pendingSceneDeletes = [];
+    for (const pending of state.pendingSceneDeletes) {
+      if (pending.kind === 'rename') {
+        const replacement = pending.replacementKey ? state.scenes.get(pending.replacementKey) : undefined;
+        if (!replacement) {
+          remainingSceneDeletes.push(pending);
+          recordFailure(`场景 '${pending.id}' 旧文件清理`, new Error('重命名目标不存在'));
+          continue;
+        }
+        const sceneWritesPending = [...state.scenes.values()].some((scene) => scene.dirty);
+        if (replacement.dirty || replacement.handle === null || sceneWritesPending) {
+          remainingSceneDeletes.push(pending);
+          continue;
+        }
+      }
+      try {
+        const pendingIdentity = sceneFileIdentity(pending.file);
+        const pathReused = [...state.scenes.values()].some((scene) => (
+          sceneFileIdentity(scene.file) === pendingIdentity
+        ));
+        if (pathReused) throw new Error('旧路径已被当前场景重新占用，未执行删除');
+        await removeScenarioFile(state.dirHandle, pending.file);
+        removed++;
+      } catch (err) {
+        remainingSceneDeletes.push(pending);
+        recordFailure(`场景 '${pending.id}' 旧文件清理`, err);
+      }
+    }
+    state.pendingSceneDeletes = remainingSceneDeletes;
   }
   let timelineSaved = false;
   for (const timeline of state.timelines) {
@@ -869,17 +965,19 @@ async function saveAllUnlocked(): Promise<void> {
   }
   const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
+    || state.pendingSceneDeletes.length > 0
     || state.pendingTimelineDeletes.length > 0
     || state.pendingTimelineRestores.size > 0;
   const changed = saved + removed;
   if (!hadPendingChanges) {
     setStatus('无待保存改动', true, 4000);
   } else if (failures === 0 && !remainingDirty) {
-    setStatus(`全部成功：已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}`, true, 4000);
+    setStatus(`全部成功：已保存 ${saved} 项${removed > 0 ? `，清理 ${removed} 个旧文件` : ''}`, true, 4000);
   } else if (changed > 0) {
-    setStatus(`部分成功：已保存 ${saved} 项${removed > 0 ? `，删除 ${removed} 条时间轴` : ''}，失败 ${failures} 项`, false, 6000);
+    setStatus(`部分成功：已保存 ${saved} 项${removed > 0 ? `，清理 ${removed} 个旧文件` : ''}，失败 ${failures} 项`, false, 6000);
   } else {
-    setStatus(`全部失败：${failures} 项操作失败`, false, 6000);
+    const firstFailure = failureMessages[0] ? `；${failureMessages[0]}` : '';
+    setStatus(`全部失败：${failures} 项操作失败${firstFailure}`, false, 6000);
   }
   if (timelineSaved) renderAll();
   else renderSidebar();
@@ -919,6 +1017,9 @@ export function exportTimeline(id: string, text: string): void {
 
 /** 无 FS API 环境的内存演示项目 */
 export function loadDemoProject(): void {
+  if (state.pendingSceneDeletes.length > 0) {
+    throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
+  }
   if (projectTransitionPending || activeProjectWriteOperations > 0) {
     throw new Error('当前项目仍在保存，请稍后再切换');
   }
@@ -934,6 +1035,7 @@ export function loadDemoProject(): void {
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
   state.scenes.clear();
+  state.pendingSceneDeletes = [];
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = [];
