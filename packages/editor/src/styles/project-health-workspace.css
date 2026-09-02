@@ -1,0 +1,418 @@
+#stats-view,
+#audit-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surdet-surface-app);
+  color: var(--surdet-text-primary);
+  font-family: var(--surdet-font-ui);
+  font-size: var(--surdet-type-body);
+  scrollbar-gutter: stable;
+}
+
+[data-editor-panel="stats"] .project-health-workspace,
+[data-editor-panel="audit"] .project-health-workspace {
+  width: min(100%, 1280px);
+  min-width: 0;
+  margin: 0 auto;
+  padding: var(--surdet-space-32) var(--surdet-space-40) var(--surdet-space-64);
+}
+
+.project-health-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--surdet-space-24);
+  padding-bottom: var(--surdet-space-24);
+  border-bottom: 1px solid var(--surdet-border-strong);
+}
+
+.project-health-heading-copy {
+  max-width: 720px;
+}
+
+.project-health-kicker {
+  margin: 0 0 var(--surdet-space-8);
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.project-health-heading h1 {
+  margin: 0;
+  font-size: var(--surdet-type-display);
+  line-height: 1.25;
+}
+
+.project-health-description {
+  margin: var(--surdet-space-12) 0 0;
+  color: var(--surdet-text-secondary);
+  line-height: 1.65;
+}
+
+.project-health-overview {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2.2fr);
+  gap: var(--surdet-space-40);
+  padding: var(--surdet-space-32) 0;
+  border-bottom: 1px solid var(--surdet-border-default);
+}
+
+.project-health-lead {
+  align-self: start;
+}
+
+.project-health-lead-label,
+.project-health-lead-note,
+.project-health-record-kind,
+.project-health-record-text,
+.project-health-audit-counts,
+.project-health-coverage-warning {
+  margin: 0;
+}
+
+.project-health-lead-label {
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-control);
+}
+
+.project-health-lead-value {
+  margin: var(--surdet-space-8) 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.project-health-lead-note {
+  max-width: 32ch;
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+  line-height: 1.6;
+}
+
+.project-health-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--surdet-space-32) var(--surdet-space-40);
+}
+
+.project-health-fact-group h2,
+.project-health-section-heading > h2,
+.project-health-audit-overview h2,
+.project-health-empty h2 {
+  margin: 0;
+  font-size: var(--surdet-type-section);
+  line-height: 1.35;
+}
+
+.project-health-fact-list {
+  margin: var(--surdet-space-12) 0 0;
+}
+
+.project-health-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--surdet-space-16);
+  padding: var(--surdet-space-8) 0;
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+.project-health-fact dt {
+  color: var(--surdet-text-secondary);
+}
+
+.project-health-fact dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
+.project-health-section {
+  padding-top: var(--surdet-space-32);
+}
+
+.project-health-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--surdet-space-16);
+  margin-bottom: var(--surdet-space-12);
+}
+
+.project-health-section-heading span {
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+}
+
+.project-health-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border-top: 1px solid var(--surdet-border-strong);
+}
+
+.project-health-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.project-health-table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.project-health-table th,
+.project-health-table td {
+  padding: var(--surdet-space-12) var(--surdet-space-8);
+  border-bottom: 1px solid var(--surdet-border-default);
+  text-align: right;
+  vertical-align: middle;
+}
+
+.project-health-table th {
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+  font-weight: 700;
+}
+
+.project-health-table th:first-child,
+.project-health-table td:first-child {
+  width: 52%;
+  text-align: left;
+}
+
+.project-health-scene-cell,
+.project-health-scene-link {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.project-health-scene-link,
+.project-health-secondary-action {
+  min-height: var(--surdet-control-height);
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-primary);
+  font: inherit;
+  text-align: left;
+}
+
+.project-health-scene-link {
+  width: 100%;
+  border-color: transparent;
+  padding: var(--surdet-space-6) var(--surdet-space-8);
+  background: transparent;
+  font-weight: 680;
+}
+
+.project-health-scene-link:hover,
+.project-health-secondary-action:hover {
+  border-color: var(--surdet-border-strong);
+  background: var(--surdet-surface-selected);
+  color: var(--surdet-text-primary);
+}
+
+.project-health-empty,
+.project-health-audit-overview {
+  margin-top: var(--surdet-space-32);
+  padding: var(--surdet-space-24) 0;
+  border-top: 1px solid var(--surdet-border-default);
+  border-bottom: 1px solid var(--surdet-border-default);
+}
+
+.project-health-empty p,
+.project-health-audit-overview p {
+  max-width: 760px;
+  margin: var(--surdet-space-8) 0 0;
+  color: var(--surdet-text-secondary);
+  line-height: 1.6;
+}
+
+.project-health-error h2,
+.project-health-coverage-warning {
+  color: var(--surdet-state-danger);
+}
+
+.project-health-audit-counts {
+  font-variant-numeric: tabular-nums;
+}
+
+.project-health-record {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--surdet-space-12) var(--surdet-space-24);
+  padding: var(--surdet-space-20) 0;
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+.project-health-record-copy,
+.project-health-record-text,
+.project-health-record-actions,
+.project-health-secondary-action {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-health-record-kind {
+  font-weight: 720;
+}
+
+.project-health-record-text {
+  margin-top: var(--surdet-space-8);
+  line-height: 1.65;
+}
+
+.project-health-record-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--surdet-space-8);
+  flex-wrap: wrap;
+}
+
+.project-health-secondary-action {
+  padding: var(--surdet-space-8) var(--surdet-space-12);
+  white-space: normal;
+}
+
+.project-health-technical {
+  margin-top: var(--surdet-space-20);
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+}
+
+.project-health-record-technical {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+.project-health-technical summary {
+  width: fit-content;
+  min-height: 28px;
+  cursor: pointer;
+  color: var(--surdet-text-secondary);
+  font-weight: 650;
+}
+
+.project-health-technical p,
+.project-health-technical pre {
+  max-width: 900px;
+  margin: var(--surdet-space-12) 0 0;
+  line-height: 1.6;
+}
+
+.project-health-technical pre,
+.project-health-technical-list dd {
+  overflow-wrap: anywhere;
+  font-family: var(--surdet-font-mono);
+}
+
+.project-health-technical-list {
+  margin: var(--surdet-space-12) 0 0;
+}
+
+.project-health-technical-list > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: var(--surdet-space-12);
+  padding: var(--surdet-space-6) 0;
+}
+
+.project-health-technical-list dt {
+  color: var(--surdet-text-secondary);
+}
+
+.project-health-technical-list dd {
+  margin: 0;
+  color: var(--surdet-text-primary);
+}
+
+.project-health-method,
+.project-health-audit-scope {
+  padding-top: var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+.project-health-scene-link:focus-visible,
+.project-health-secondary-action:focus-visible,
+.project-health-technical summary:focus-visible {
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1024px) {
+  [data-editor-panel="stats"] .project-health-workspace,
+  [data-editor-panel="audit"] .project-health-workspace {
+    padding-inline: var(--surdet-space-24);
+  }
+
+  .project-health-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .project-health-lead-note {
+    max-width: 60ch;
+  }
+}
+
+@media (max-width: 720px) {
+  [data-editor-panel="stats"] .project-health-workspace,
+  [data-editor-panel="audit"] .project-health-workspace {
+    padding: var(--surdet-space-24) var(--surdet-space-16) var(--surdet-space-48);
+  }
+
+  .project-health-facts {
+    grid-template-columns: 1fr;
+    gap: var(--surdet-space-24);
+  }
+
+  .project-health-record {
+    grid-template-columns: 1fr;
+  }
+
+  .project-health-record-actions {
+    justify-content: flex-start;
+  }
+
+  .project-health-record-technical {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .project-health-heading {
+    display: block;
+  }
+
+  .project-health-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--surdet-space-4);
+  }
+
+  .project-health-record-actions,
+  .project-health-secondary-action {
+    width: 100%;
+  }
+
+  .project-health-technical-list > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-health-scene-link,
+  .project-health-secondary-action {
+    transition: none;
+  }
+}

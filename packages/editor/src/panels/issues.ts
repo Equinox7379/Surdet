@@ -12,9 +12,23 @@ import { refreshFlowIfVisible } from './flow.js';
 
 let validateTimer: ReturnType<typeof setTimeout> | null = null;
 let onIssueJumpHook: (sceneKey: string, line: number) => void = () => {};
+let onValidationAppliedHook: () => void = () => {};
 
-export function bindIssueNavigation(opts: { onJump: (sceneKey: string, line: number) => void }): void {
+export function bindIssueNavigation(opts: {
+  onJump: (sceneKey: string, line: number) => void;
+  onValidationApplied?: () => void;
+}): void {
   onIssueJumpHook = opts.onJump;
+  onValidationAppliedHook = opts.onValidationApplied ?? (() => {});
+}
+
+/** 项目身份切换时使旧定时器和 Worker 回包失效，禁止旧项目校验覆盖新项目。 */
+export function invalidatePendingValidation(): void {
+  if (validateTimer) {
+    clearTimeout(validateTimer);
+    validateTimer = null;
+  }
+  validateSeq += 1;
 }
 
 export function scheduleValidate(): void {
@@ -51,6 +65,7 @@ export function applyValidation(issues: Issue[], edges: { from: string; to: stri
   updateEdges();   // 刷新场景引用图谱
   updateGraph();   // 刷新场景拓扑图（自我迭代⑤）
   refreshFlowIfVisible(); // 刷新流程图（E1a；仅当前在流程图标签页时）
+  onValidationAppliedHook();
   const errors = issues.filter((i) => i.severity === 'error').length;
   const warnings = issues.length - errors;
   setStatus(errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`, errors === 0);

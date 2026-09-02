@@ -45,16 +45,16 @@ import {
 } from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
-import { bindIssueNavigation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
+import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { bindAssetsPanelHooks } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
 import { disposeAssetCenterThumbnails } from './panels/asset-center-thumbnails.js';
 import { renderFlow, bindFlowHooks } from './panels/flow.js';
-import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant } from './panels/config.js';
+import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession } from './panels/config.js';
 import { renderPreviewPanel } from './panels/preview-panel.js';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
-import { renderStatsPanel } from './panels/stats-panel.js';
+import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel } from './panels/review-panel.js';
@@ -1064,6 +1064,10 @@ bindProjectIoHooks({
   renderSidebar,
   onAssetsRefreshed: refreshAuthoringIndexImmediately,
   onProjectClosing: closeCurrentProjectRuntime,
+  onProjectStateReset: () => {
+    invalidatePendingValidation();
+    resetConfigSession();
+  },
   onProjectLoadSettled: (succeeded) => {
     authoringProjectChanging = false;
     authoringQueued = false;
@@ -1220,6 +1224,14 @@ bindSearchHooks({
 });
 bindIssueNavigation({
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  onValidationApplied: () => {
+    if (state.mainTab !== 'audit') return;
+    const audit = document.getElementById('audit-view');
+    if (audit) renderAuditPanel(audit);
+  },
+});
+bindStatsHooks({
+  onJump: (sceneKey) => jumpToScene(sceneKey),
 });
 bindAuditHooks({
   // 审计条目点击 → 跳转定位（与搜索/流程图导航同一入口）
@@ -1402,11 +1414,13 @@ function renderMainArea(): void {
   } else if (state.mainTab === 'stats') {
     const stEl = h('section');
     stEl.id = 'stats-view';
+    stEl.dataset['editorPanel'] = 'stats';
     col.appendChild(stEl);
     renderStatsPanel(stEl);
   } else if (state.mainTab === 'audit') {
     const auEl = h('section');
     auEl.id = 'audit-view';
+    auEl.dataset['editorPanel'] = 'audit';
     col.appendChild(auEl);
     renderAuditPanel(auEl);
   } else if (state.mainTab === 'review') {
