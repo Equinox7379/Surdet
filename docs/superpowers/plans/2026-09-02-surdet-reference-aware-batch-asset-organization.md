@@ -119,7 +119,7 @@
 - 修改 `packages/cli/src/asset-import-authority/http-handler.ts`
 - 修改 `packages/cli/test/asset-import-authority-http.test.ts`
 - 修改 `packages/editor/src/asset-import-client.ts`
-- 修改 `packages/editor/src/asset-import-client.test.ts`
+- 修改 `packages/editor/test/asset-import-client.test.ts`
 
 **步骤：**
 
@@ -139,7 +139,8 @@
 **文件：**
 
 - 修改 `packages/editor/src/asset-relocation-workspace.ts`
-- 修改 `packages/editor/src/asset-relocation-workspace.test.ts`
+- 修改 `packages/editor/test/asset-relocation-workspace.test.ts`
+- 新增 `packages/editor/test/asset-relocation-workspace-batch.test.ts`
 - 修改 `packages/editor/src/main.ts`
 - 修改 `packages/editor/src/project-io.ts` 或相邻写入协调文件（仅现有冻结必须同步时）
 
@@ -162,7 +163,7 @@
 
 - 修改 `packages/editor/src/panels/asset-center.ts`
 - 修改 `packages/editor/src/styles/asset-center.css`
-- 修改 `packages/editor/src/editor-asset-center-contract.test.ts`
+- 修改 `packages/editor/test/editor-asset-center-contract.test.ts`
 - 修改必要的相邻 Editor 视图测试
 
 **步骤：**
@@ -185,7 +186,7 @@
 **文件：**
 
 - 修改 `packages/editor/e2e/asset-import-authority.e2e.mjs`
-- 修改 `packages/editor/src/asset-import-authority-runner.test.mjs`
+- 修改 `packages/editor/test/asset-import-authority-runner.test.mjs`
 - 修改必要的浏览器夹具，限定在现有任务临时目录
 
 **步骤：**

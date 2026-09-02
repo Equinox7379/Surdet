@@ -180,6 +180,26 @@ test('asset import runner verifies referenced relocation, preview reload, and ex
   assert.match(source, /relocation undo did not restore the isolated project baseline/);
 });
 
+test('asset import runner verifies a referenced batch swap, narrow layout, reload, and exact undo', () => {
+  for (const milestone of [
+    'batch-relocation-impact-previewed',
+    'batch-relocation-800px-readable',
+    'referenced-batch-swap-committed-and-reloaded',
+    'batch-swapped-scene-previewed',
+    'batch-relocation-undo-succeeded',
+  ]) assert.ok(source.includes(milestone), `missing batch relocation milestone: ${milestone}`);
+  for (const label of ['批量整理', '整理所选', '检查整批影响', '撤销整批整理']) {
+    assert.ok(source.includes(label), `missing batch relocation browser action: ${label}`);
+  }
+  assert.match(source, /setViewportSize\(\{\s*width:\s*800,\s*height:\s*900\s*\}\)/);
+  assert.match(source, /scrollWidth\s*<=\s*documentElement\.clientWidth/);
+  assert.match(source, /castle_hall\.svg 整理后的文件名/);
+  assert.match(source, /night_field\.svg 整理后的文件名/);
+  assert.match(source, /batch swap did not exchange castle_hall bytes/);
+  assert.match(source, /batch swap did not update ch02 to night_field/);
+  assert.match(source, /batch relocation undo did not restore the isolated project baseline/);
+});
+
 test('CI or verify-all executes the real asset import Playwright runner', () => {
   const executionSources = `${rootPackageSource}\n${ciWorkflowSource}\n${verifyAllSource}`;
   assert.match(rootPackageSource, /"verify:asset-import"\s*:\s*"node\s+packages\/editor\/e2e\/asset-import-authority\.e2e\.mjs"/);

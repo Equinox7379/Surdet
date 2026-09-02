@@ -66,7 +66,13 @@ export interface AssetCenterHooks {
     workspace: AssetRelocationWorkspaceProjection;
     availabilityMessage: string | null;
     onBegin: (item: ProjectAssetItem, targetDirectory: string) => void;
+    onBeginBatch: () => void;
+    onSelectBatchItem: (item: ProjectAssetItem, selected: boolean) => void;
+    onSetVisibleBatchItems: (assetIds: readonly string[]) => void;
+    onOpenBatchEditor: () => void;
+    onReturnToBatchSelection: () => void;
     onUpdateTarget: (update: { targetDirectory?: string; fileName?: string }) => void;
+    onUpdateBatchTarget: (update: { targetDirectory?: string; assetId?: string; fileName?: string }) => void;
     onCheckImpact: () => void;
     onCommit: () => void;
     onModify: () => void;
@@ -318,13 +324,21 @@ function assetDirectory(sourcePath: string): string {
 }
 
 function relocationDirectories(items: readonly ProjectAssetItem[], item: ProjectAssetItem): string[] {
+  return relocationDirectoriesForKind(items, item.kind, item.sourcePath ?? undefined);
+}
+
+function relocationDirectoriesForKind(
+  items: readonly ProjectAssetItem[],
+  kind: ProjectAssetKind,
+  fallbackPath?: string,
+): string[] {
   const directories = new Set<string>();
   for (const candidate of items) {
-    if (candidate.physical && candidate.kind === item.kind && candidate.sourcePath) {
+    if (candidate.physical && candidate.kind === kind && candidate.sourcePath) {
       directories.add(assetDirectory(candidate.sourcePath));
     }
   }
-  if (item.sourcePath) directories.add(assetDirectory(item.sourcePath));
+  if (fallbackPath) directories.add(assetDirectory(fallbackPath));
   return [...directories].sort((left, right) => left.localeCompare(right, 'zh-CN'));
 }
 
@@ -346,6 +360,8 @@ function renderRelocationStatus(
   const detail = projection.detail;
   if (detail === null) return null;
   const status = detail.operation.status;
+  const batch = projection.mode === 'batch' || detail.request.moves.length > 1;
+  const moveCount = detail.request.moves.length;
   if (TERMINAL_RELOCATION_STATUSES.has(status)) {
     const labels: Record<Extract<AssetRelocationOperationStatus, 'COMMITTED' | 'UNDONE' | 'ROLLED_BACK' | 'CANCELLED'>, string> = {
       COMMITTED: '素材整理完成',
@@ -355,20 +371,25 @@ function renderRelocationStatus(
     };
     const completed = h('div', 'asset-relocation-result');
     completed.dataset.relocationStatus = status;
-    completed.append(
-      h('strong', undefined, labels[status as keyof typeof labels]),
-      h('p', undefined, `当前位置：${relocationCurrentPath(status, detail.request.sourcePath, detail.request.targetPath)}`),
-    );
+    completed.dataset.relocationCount = String(moveCount);
+    completed.appendChild(h('strong', undefined, batch
+      ? `${labels[status as keyof typeof labels]}（${moveCount} 项）`
+      : labels[status as keyof typeof labels]));
+    completed.appendChild(h('p', undefined, batch
+      ? status === 'COMMITTED'
+        ? '所选素材已移动到新的位置。'
+        : '所选素材已经恢复到整理前的位置。'
+      : `当前位置：${relocationCurrentPath(status, detail.request.sourcePath, detail.request.targetPath)}`));
     if (status === 'COMMITTED') {
       completed.appendChild(h('p', undefined, `已更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件。`));
     }
     const actions = h('div', 'asset-relocation-actions');
-    const view = h('button', undefined, '查看当前位置') as HTMLButtonElement;
+    const view = h('button', undefined, batch ? '查看整理结果' : '查看当前位置') as HTMLButtonElement;
     view.type = 'button';
     view.onclick = hooks.assetRelocation.onViewTarget;
     actions.appendChild(view);
     if (status === 'COMMITTED') {
-      const undo = h('button', undefined, '撤销本次整理') as HTMLButtonElement;
+      const undo = h('button', undefined, batch ? '撤销整批整理' : '撤销本次整理') as HTMLButtonElement;
       undo.type = 'button';
       undo.disabled = projection.busy;
       undo.onclick = hooks.assetRelocation.onUndo;
@@ -574,12 +595,182 @@ function renderRelocation(
   return section;
 }
 
+function renderBatchRelocationWorkbench(
+  items: readonly ProjectAssetItem[],
+  hooks: AssetCenterHooks,
+): HTMLElement {
+  const projection = hooks.assetRelocation.workspace;
+  const section = h('section', 'asset-relocation-batch');
+  section.dataset.assetRelocationBatch = 'true';
+  section.setAttribute('aria-live', 'polite');
+  section.setAttribute('aria-busy', String(projection.busy));
+
+  const kindLabel = projection.batchKind === null ? '素材' : KIND_LABELS[projection.batchKind];
+  const heading = h('div', 'asset-relocation-batch-heading');
+  const headingCopy = h('div');
+  headingCopy.append(
+    h('p', 'asset-center-eyebrow', '批量整理'),
+    h('h2', undefined, `整理 ${projection.selection.length} 个${kindLabel}素材`),
+    h('p', undefined, '先确认统一位置和每个文件名；检查影响后才会真正写入项目。'),
+  );
+  heading.appendChild(headingCopy);
+  section.appendChild(heading);
+
+  const status = renderRelocationStatus(projection, hooks);
+  if (status !== null) {
+    section.appendChild(status);
+    return section;
+  }
+
+  const lockedByPlan = projection.detail !== null;
+  const shared = h('div', 'asset-relocation-batch-shared');
+  const directoryLabel = h('label');
+  directoryLabel.appendChild(h('span', undefined, '统一放到'));
+  const directory = document.createElement('select');
+  directory.setAttribute('aria-label', '整批目标素材目录');
+  directory.disabled = lockedByPlan || projection.busy;
+  const directories = relocationDirectoriesForKind(items, projection.batchKind ?? 'other', projection.selection[0]?.sourcePath);
+  if (projection.targetDirectory && !directories.includes(projection.targetDirectory)) directories.push(projection.targetDirectory);
+  for (const path of directories.sort((left, right) => left.localeCompare(right, 'zh-CN'))) {
+    const option = document.createElement('option');
+    option.value = path;
+    option.textContent = path;
+    directory.appendChild(option);
+  }
+  directory.value = projection.targetDirectory;
+  directory.onchange = () => hooks.assetRelocation.onUpdateBatchTarget({ targetDirectory: directory.value });
+  directoryLabel.appendChild(directory);
+  shared.appendChild(directoryLabel);
+  section.appendChild(shared);
+
+  const perItem = document.createElement('details');
+  perItem.className = 'asset-relocation-batch-items';
+  perItem.open = projection.detail?.plan.status === 'blocked';
+  perItem.appendChild(h('summary', undefined, `逐项调整文件名（${projection.selection.length}）`));
+  const rows = h('div', 'asset-relocation-batch-rows');
+  const plannedMoves = new Map(projection.plan?.moves.map((move) => [move.source.path, move.moveId] as const) ?? []);
+  for (const source of projection.selection) {
+    const row = h('div', 'asset-relocation-batch-row');
+    row.dataset.assetId = source.assetId;
+    const current = h('div', 'asset-relocation-batch-current');
+    current.append(h('strong', undefined, source.fileName), h('small', undefined, `当前位置：${source.sourcePath}`));
+    const fileLabel = h('label');
+    fileLabel.appendChild(h('span', undefined, '整理后的文件名'));
+    const extensionOffset = source.fileName.lastIndexOf('.');
+    const extension = extensionOffset > 0 ? source.fileName.slice(extensionOffset) : '';
+    const nextFileName = projection.fileNames[source.assetId] ?? source.fileName;
+    const input = document.createElement('input');
+    input.value = extension && nextFileName.endsWith(extension)
+      ? nextFileName.slice(0, -extension.length)
+      : nextFileName;
+    input.disabled = lockedByPlan || projection.busy;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', `${source.fileName} 整理后的文件名`);
+    const control = h('span', 'asset-relocation-file-control');
+    control.appendChild(input);
+    if (extension) control.appendChild(h('span', 'asset-relocation-extension', extension));
+    fileLabel.appendChild(control);
+    const target = h('small', 'asset-relocation-batch-target');
+    const updateTarget = (): void => {
+      target.textContent = `新位置：${directory.value}/${input.value.trim()}${extension}`;
+    };
+    input.oninput = () => {
+      hooks.assetRelocation.onUpdateBatchTarget({
+        assetId: source.assetId,
+        fileName: `${input.value}${extension}`,
+      });
+      updateTarget();
+    };
+    directory.addEventListener('change', updateTarget);
+    updateTarget();
+    row.append(current, fileLabel, target);
+    const moveId = plannedMoves.get(source.sourcePath);
+    const itemBlockers = moveId === undefined ? [] : projection.plan?.blockers.filter((blocker) => blocker.moveIds?.includes(moveId)) ?? [];
+    if (itemBlockers.length > 0) {
+      const issues = h('ul', 'asset-relocation-batch-row-issues');
+      for (const blocker of itemBlockers) issues.appendChild(h('li', undefined, blocker.message));
+      row.appendChild(issues);
+    }
+    rows.appendChild(row);
+  }
+  perItem.appendChild(rows);
+  section.appendChild(perItem);
+
+  const detail = projection.detail;
+  if (detail !== null) {
+    if (detail.plan.status === 'blocked') {
+      const blockers = h('div', 'asset-relocation-blockers');
+      blockers.appendChild(h('strong', undefined, '这批素材暂时不能安全整理'));
+      const list = h('ul');
+      for (const blocker of detail.plan.blockers) list.appendChild(h('li', undefined, blocker.message));
+      blockers.appendChild(list);
+      section.appendChild(blockers);
+    } else {
+      const impact = h('div', 'asset-relocation-impact');
+      impact.appendChild(h('strong', undefined,
+        `将整理 ${detail.plan.affectedAssetCount} 个素材，更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件。`));
+      const sourceLabels: Record<string, string> = {
+        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置',
+      };
+      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery'] as const) {
+        const changes = detail.plan.referenceChanges.filter((change) => change.sourceKind === sourceKind);
+        if (changes.length === 0) continue;
+        const disclosure = document.createElement('details');
+        disclosure.appendChild(h('summary', undefined, `${sourceLabels[sourceKind]}（${changes.length}）`));
+        const list = h('ul');
+        for (const change of changes) list.appendChild(h('li', undefined, `${change.sourceLabel}：${change.before} → ${change.after}`));
+        disclosure.appendChild(list);
+        impact.appendChild(disclosure);
+      }
+      section.appendChild(impact);
+    }
+  }
+
+  const actions = h('div', 'asset-relocation-actions asset-relocation-batch-actions');
+  if (detail === null) {
+    const check = h('button', 'asset-relocation-primary', '检查整批影响') as HTMLButtonElement;
+    check.type = 'button';
+    check.disabled = projection.busy || projection.selection.length === 0;
+    check.onclick = hooks.assetRelocation.onCheckImpact;
+    actions.appendChild(check);
+    const back = h('button', undefined, '返回选择') as HTMLButtonElement;
+    back.type = 'button';
+    back.disabled = projection.busy;
+    back.onclick = hooks.assetRelocation.onReturnToBatchSelection;
+    actions.appendChild(back);
+  } else if (detail.plan.status === 'ready') {
+    const commit = h('button', 'asset-relocation-primary',
+      `整理 ${detail.plan.affectedAssetCount} 个素材并更新 ${detail.plan.affectedReferenceCount} 处引用`) as HTMLButtonElement;
+    commit.type = 'button';
+    commit.disabled = projection.busy;
+    commit.onclick = hooks.assetRelocation.onCommit;
+    actions.appendChild(commit);
+  }
+  if (detail !== null) {
+    const modify = h('button', undefined, '修改目标') as HTMLButtonElement;
+    modify.type = 'button';
+    modify.disabled = projection.busy;
+    modify.onclick = hooks.assetRelocation.onModify;
+    actions.appendChild(modify);
+  }
+  const exit = h('button', undefined, '退出批量整理') as HTMLButtonElement;
+  exit.type = 'button';
+  exit.disabled = projection.busy;
+  exit.onclick = hooks.assetRelocation.onCancel;
+  actions.appendChild(exit);
+  section.appendChild(actions);
+  if (projection.message) section.appendChild(h('p', 'asset-relocation-message', projection.message));
+  return section;
+}
+
 function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items: readonly ProjectAssetItem[], hooks: AssetCenterHooks): void {
   host.replaceChildren();
   host.className = 'asset-center-inspector';
   host.setAttribute('aria-label', '素材详情');
   if (item === null) {
-    const detachedRelocation = renderDetachedRelocation(hooks);
+    const detachedRelocation = hooks.assetRelocation.workspace.mode === 'batch'
+      ? null
+      : renderDetachedRelocation(hooks);
     host.append(
       h('p', 'asset-center-eyebrow', '素材详情'),
       h('h2', undefined, '选择一项素材'),
@@ -647,9 +838,9 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items
     preview,
     facts,
     references,
-    renderRelocation(item, items, hooks),
-    technical,
   );
+  if (hooks.assetRelocation.workspace.mode !== 'batch') host.appendChild(renderRelocation(item, items, hooks));
+  host.appendChild(technical);
 }
 
 export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHooks): void {
@@ -684,12 +875,15 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
 
   const intelligence = state.assetIntelligence;
   const items = intelligence.items;
+  const relocationProjection = hooks.assetRelocation.workspace;
   const folderOptions = buildAssetFolderOptions(items);
   if (state.assetCenterFolder !== 'all' && !folderOptions.some((option) => option.path === state.assetCenterFolder)) {
     state.assetCenterFolder = 'all';
   }
   const filtered = filterAssetItems(items);
-  const thumbnailSession = state.assetCenterView === 'grid' ? beginAssetThumbnailSession() : null;
+  const effectiveAssetView = relocationProjection.mode === 'batch' ? 'list' : state.assetCenterView;
+  const thumbnailSession = effectiveAssetView === 'grid' ? beginAssetThumbnailSession() : null;
+  if (relocationProjection.mode === 'batch') hooks.assetRelocation.onSetVisibleBatchItems(filtered.map((item) => item.assetId));
   if (state.assetCenterSelectedId && !items.some((item) => item.assetId === state.assetCenterSelectedId)) {
     state.assetCenterSelectedId = null;
   }
@@ -697,7 +891,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   container.dataset.assetQuery = state.assetCenterQuery;
   container.dataset.assetKindFilter = state.assetCenterKind;
   container.dataset.assetStatusFilter = state.assetCenterStatus;
-  container.dataset.assetView = state.assetCenterView;
+  container.dataset.assetView = effectiveAssetView;
   container.dataset.assetSort = state.assetCenterSort;
   container.dataset.assetFolder = state.assetCenterFolder;
   container.dataset.visibleCount = String(filtered.length);
@@ -713,6 +907,14 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
 
   const restoreControlFocus = (selector: string): void => {
     requestAnimationFrame(() => container.querySelector<HTMLElement>(selector)?.focus());
+  };
+  const restoreAssetRowControl = (assetId: string, selector: string): void => {
+    requestAnimationFrame(() => {
+      [...container.querySelectorAll<HTMLElement>('[data-asset-id]')]
+        .find((candidate) => candidate.dataset.assetId === assetId)
+        ?.querySelector<HTMLElement>(selector)
+        ?.focus();
+    });
   };
 
   const header = h('header', 'asset-center-header');
@@ -916,7 +1118,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     rail.appendChild(button);
   }
 
-  const library = h('section', `asset-center-library ${state.assetCenterView}`);
+  const library = h('section', `asset-center-library ${effectiveAssetView}`);
   library.setAttribute('aria-label', '素材列表');
   library.dataset.visibleCount = String(filtered.length);
   library.dataset.totalCount = String(items.length);
@@ -926,6 +1128,28 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   libraryTitle.append(h('h2', undefined, '素材库'), h('p', undefined, `${scopeLabel} ${filtered.length} 项，共 ${items.length} 项`));
 
   const libraryControls = h('div', 'asset-center-library-controls');
+  const batchControls = h('div', 'asset-center-batch-controls');
+  if (relocationProjection.mode === 'idle') {
+    const beginBatch = h('button', undefined, '批量整理') as HTMLButtonElement;
+    beginBatch.type = 'button';
+    beginBatch.disabled = hooks.assetRelocation.availabilityMessage !== null;
+    if (hooks.assetRelocation.availabilityMessage) beginBatch.title = hooks.assetRelocation.availabilityMessage;
+    beginBatch.onclick = hooks.assetRelocation.onBeginBatch;
+    batchControls.appendChild(beginBatch);
+  } else if (relocationProjection.mode === 'batch') {
+    batchControls.appendChild(h('strong', undefined, `已选 ${relocationProjection.selection.length} 项`));
+    if (!relocationProjection.batchEditing) {
+      const organize = h('button', 'asset-center-batch-primary', '整理所选') as HTMLButtonElement;
+      organize.type = 'button';
+      organize.disabled = relocationProjection.selection.length === 0 || relocationProjection.busy;
+      organize.onclick = hooks.assetRelocation.onOpenBatchEditor;
+      const exit = h('button', undefined, '退出选择') as HTMLButtonElement;
+      exit.type = 'button';
+      exit.disabled = relocationProjection.busy;
+      exit.onclick = hooks.assetRelocation.onCancel;
+      batchControls.append(organize, exit);
+    }
+  }
   const folderLabel = h('label', 'asset-center-folder-controls');
   folderLabel.appendChild(h('span', undefined, '位置'));
   const folderSelect = document.createElement('select');
@@ -967,7 +1191,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     requestAnimationFrame(() => container.querySelector<HTMLSelectElement>('[data-asset-sort="control"]')?.focus());
   };
   sortLabel.appendChild(sort);
-  libraryControls.append(folderLabel, sortLabel);
+  libraryControls.append(batchControls, folderLabel, sortLabel);
   libraryHeader.append(libraryTitle, libraryControls);
   library.appendChild(libraryHeader);
 
@@ -1001,49 +1225,86 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     }
     library.appendChild(breadcrumbs);
   }
-  const list = h('div', 'asset-center-items');
-  list.id = 'asset-center-library-items';
-  list.setAttribute('role', 'listbox');
-  list.setAttribute('aria-label', '项目素材');
-  if (filtered.length === 0) {
-    list.appendChild(h('div', 'asset-center-no-results', '当前筛选下没有素材。可以清除搜索，或切换位置、分类与状态。'));
-  }
-  for (const item of filtered) {
-    const row = h('button', 'asset-center-item') as HTMLButtonElement;
-    row.type = 'button';
-    row.setAttribute('role', 'option');
-    row.setAttribute('aria-selected', String(item.assetId === state.assetCenterSelectedId));
-    row.dataset.assetId = item.assetId;
-    row.dataset.assetKind = item.kind;
-    row.dataset.assetStatus = assetStatusTokens(item).join(' ');
-    const thumbnail = h('span', 'asset-center-thumbnail');
-    thumbnail.setAttribute('aria-hidden', 'true');
-    const name = h('span', 'asset-center-item-name');
-    name.append(h('strong', undefined, friendlyAssetName(item)), h('small', undefined, KIND_LABELS[item.kind]));
-    const format = item.format ? `${item.format.toUpperCase()} 文件` : item.physical ? '格式未识别' : '素材文件尚不存在';
-    const context = h('span', 'asset-center-item-context');
-    context.append(
-      h('span', undefined, format),
-      h('small', 'asset-center-item-path', item.sourcePath ?? item.assetId),
-    );
-    const usage = item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
-    const meta = h('span', 'asset-center-item-meta');
-    meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
-    row.append(thumbnail, name, context, meta);
-    const selectItem = (restoreKeyboardFocus: boolean): void => {
-      hooks.onSelectAsset(item, restoreKeyboardFocus);
-    };
-    row.onclick = () => selectItem(false);
-    row.onkeydown = (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectItem(true);
+  if (relocationProjection.mode === 'batch' && relocationProjection.batchEditing) {
+    library.appendChild(renderBatchRelocationWorkbench(items, hooks));
+  } else {
+    const batchSelecting = relocationProjection.mode === 'batch';
+    const list = h('div', 'asset-center-items');
+    list.id = 'asset-center-library-items';
+    list.setAttribute('role', batchSelecting ? 'list' : 'listbox');
+    list.setAttribute('aria-label', batchSelecting ? '选择要批量整理的素材' : '项目素材');
+    if (filtered.length === 0) {
+      list.appendChild(h('div', 'asset-center-no-results', '当前筛选下没有素材。可以清除搜索，或切换位置、分类与状态。'));
+    }
+    for (const item of filtered) {
+      const row = batchSelecting
+        ? h('div', 'asset-center-item asset-center-item-selecting')
+        : h('button', 'asset-center-item') as HTMLElement;
+      if (row instanceof HTMLButtonElement) row.type = 'button';
+      row.setAttribute('role', batchSelecting ? 'listitem' : 'option');
+      if (!batchSelecting) row.setAttribute('aria-selected', String(item.assetId === state.assetCenterSelectedId));
+      else row.dataset.batchSelected = String(relocationProjection.selection.some((source) => source.assetId === item.assetId));
+      row.dataset.assetId = item.assetId;
+      row.dataset.assetKind = item.kind;
+      row.dataset.assetStatus = assetStatusTokens(item).join(' ');
+      const thumbnail = h('span', 'asset-center-thumbnail');
+      thumbnail.setAttribute('aria-hidden', 'true');
+      const name = h('span', 'asset-center-item-name');
+      name.append(h('strong', undefined, friendlyAssetName(item)), h('small', undefined, KIND_LABELS[item.kind]));
+      const format = item.format ? `${item.format.toUpperCase()} 文件` : item.physical ? '格式未识别' : '素材文件尚不存在';
+      const context = h('span', 'asset-center-item-context');
+      context.append(
+        h('span', undefined, format),
+        h('small', 'asset-center-item-path', item.sourcePath ?? item.assetId),
+      );
+      const usage = item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
+      const meta = h('span', 'asset-center-item-meta');
+      meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
+      if (batchSelecting) {
+        const selection = h('label', 'asset-center-select-control');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = relocationProjection.selection.some((source) => source.assetId === item.assetId);
+        const issue = relocationEntryIssue(item, hooks);
+        const wrongKind = relocationProjection.batchKind !== null && relocationProjection.batchKind !== item.kind;
+        checkbox.disabled = issue !== null || wrongKind || relocationProjection.busy;
+        const disabledReason = wrongKind ? '一个批次只能整理同类素材。' : issue;
+        checkbox.setAttribute('aria-label', disabledReason
+          ? `无法选择 ${friendlyAssetName(item)}：${disabledReason}`
+          : `选择 ${friendlyAssetName(item)}`);
+        if (disabledReason) checkbox.title = disabledReason;
+        checkbox.onchange = () => {
+          hooks.assetRelocation.onSelectBatchItem(item, checkbox.checked);
+          restoreAssetRowControl(item.assetId, 'input[type="checkbox"]');
+        };
+        selection.append(checkbox, h('span', undefined, '选择'));
+        const details = h('button', 'asset-center-detail-button', '查看详情') as HTMLButtonElement;
+        details.type = 'button';
+        details.onclick = () => {
+          hooks.onSelectAsset(item, false);
+          restoreAssetRowControl(item.assetId, '.asset-center-detail-button');
+        };
+        row.append(selection, thumbnail, name, context, meta, details);
+      } else {
+        row.append(thumbnail, name, context, meta);
       }
-    };
-    list.appendChild(row);
-    if (thumbnailSession) thumbnailSession.mount(thumbnail, item, dirAssetFor(item));
+      const selectItem = (restoreKeyboardFocus: boolean): void => {
+        hooks.onSelectAsset(item, restoreKeyboardFocus);
+      };
+      if (!batchSelecting) {
+        row.onclick = () => selectItem(false);
+        row.onkeydown = (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectItem(true);
+          }
+        };
+      }
+      list.appendChild(row);
+      if (thumbnailSession) thumbnailSession.mount(thumbnail, item, dirAssetFor(item));
+    }
+    library.appendChild(list);
   }
-  library.appendChild(list);
 
   const inspector = h('aside', 'asset-center-inspector');
   renderInspector(inspector, selected, items, hooks);

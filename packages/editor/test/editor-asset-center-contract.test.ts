@@ -110,7 +110,7 @@ describe('editor Asset Center contract', () => {
     expect(thumbnailSource).toMatch(/disposeAssetCenterThumbnails/);
     expect(centerSource).toMatch(/asset-center-thumbnail/);
     expect(centerSource).toMatch(/aria-hidden/);
-    expect(centerSource).toMatch(/assetCenterView\s*===\s*['"]grid['"]/);
+    expect(centerSource).toMatch(/effectiveAssetView\s*===\s*['"]grid['"]/);
     expect(centerSource).toMatch(/thumbnailSession\.mount/);
     expect(mainSource).toMatch(/disposeAssetCenterThumbnails/);
     expect(centerCss).toMatch(/asset-center-library\.grid[\s\S]*asset-center-thumbnail/);
@@ -196,5 +196,30 @@ describe('editor Asset Center contract', () => {
     expect(projectIoSource).toMatch(/reloadCurrentProjectFromHandle[\s\S]*notifyProjectLoaded:\s*false/);
     expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-relocation-actions/i);
     expect(centerCss).not.toMatch(/asset-relocation[^{}]*\{[^}]*border-(?:left|inline-start)\s*:/i);
+  });
+
+  it('supports one human-readable batch selection and relocation workspace without nested controls', () => {
+    const relocationSource = `${centerSource}\n${mainSource}\n${relocationWorkspaceSource}`;
+    for (const copy of [
+      '批量整理', '已选', '整理所选', '退出选择', '统一放到', '逐项调整文件名',
+      '检查整批影响', '退出批量整理', '撤销整批整理',
+    ]) expect(relocationSource).toContain(copy);
+    expect(centerSource).toMatch(/checkbox\.type\s*=\s*['"]checkbox['"]/);
+    expect(centerSource).toMatch(/asset-center-item-selecting/);
+    expect(centerSource).toMatch(/asset-center-detail-button/);
+    expect(centerSource).toMatch(/batchSelecting[\s\S]*h\(['"]div['"],\s*['"]asset-center-item asset-center-item-selecting/);
+    expect(centerSource).toMatch(/checkbox\.onchange[\s\S]*onSelectBatchItem/);
+    expect(centerSource).toMatch(/workspace\.mode\s*!==\s*['"]batch['"][\s\S]*renderRelocation/);
+    expect(centerSource).toMatch(/effectiveAssetView[\s\S]*['"]list['"]/);
+    expect(centerSource).toMatch(/restoreAssetRowControl[\s\S]*input\[type=/);
+    expect(centerSource).toMatch(/onSetVisibleBatchItems/);
+    expect(mainSource).toMatch(/relocationPlan\([\s\S]*moves:\s*requestedMoves/);
+    expect(mainSource).toMatch(/batchRelocationMoves/);
+    expect(mainSource).toMatch(/setBatchDetail/);
+    expect(relocationWorkspaceSource).toMatch(/mode:\s*['"]idle['"]\s*\|\s*['"]single['"]\s*\|\s*['"]batch['"]/);
+    const batchRules = ruleBodiesMatching(centerCss, /asset-(?:center|relocation)-batch/i).join('\n');
+    expect(batchRules).not.toMatch(/position\s*:\s*(?:fixed|sticky)/i);
+    expect(centerCss).toMatch(/@media\s*\([^)]*max-width\s*:\s*800px\)[\s\S]*asset-relocation-batch-row/i);
+    expect(centerCss).not.toMatch(/asset-(?:center|relocation)-batch[^{}]*\{[^}]*border-(?:left|inline-start)\s*:/i);
   });
 });

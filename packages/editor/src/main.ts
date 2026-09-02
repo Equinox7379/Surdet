@@ -65,7 +65,10 @@ import {
   type AssetRelocationDetail,
 } from './asset-import-client.js';
 import { createAssetImportWorkspace } from './asset-import-workspace.js';
-import { createAssetRelocationWorkspace } from './asset-relocation-workspace.js';
+import {
+  createAssetRelocationWorkspace,
+  type AssetRelocationSource,
+} from './asset-relocation-workspace.js';
 import {
   renderModeNavigation,
   renderProjectBar,
@@ -153,11 +156,29 @@ async function bindCurrentProjectAssetImport(): Promise<void> {
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     assetImportWorkspace.applyBinding(binding);
     const pendingRelocation = binding.pendingRelocations[0];
-    if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().source === null) {
+    if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().mode === 'idle') {
       const detail = await client.relocationQuery(pendingRelocation.operationId);
       if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
-      const source = detail.plan.source;
-      if (source !== null && ['background', 'portrait', 'avatar'].includes(source.kind)) {
+      if (detail.plan.moves.length > 1) {
+        assetRelocationWorkspace.beginBatch();
+        for (const move of detail.plan.moves) {
+          if (!['background', 'portrait', 'avatar'].includes(move.source.kind)) continue;
+          assetRelocationWorkspace.select({
+            assetId: `file:${move.source.path}`,
+            sourcePath: move.source.path,
+            kind: move.source.kind as AssetRelocationSource['kind'],
+            targetDirectory: move.target.directory,
+            fileName: move.target.fileName,
+          });
+        }
+        assetRelocationWorkspace.openBatchEditor();
+        assetRelocationWorkspace.setBatchDetail(detail);
+        assetRelocationWorkspace.setMessage('发现一批尚未结束的素材整理，请先恢复或安全回退。');
+        state.projectWriteLock = 'asset-relocation';
+        refreshProjectBarProjection();
+      } else {
+        const source = detail.plan.source;
+        if (source === null || !['background', 'portrait', 'avatar'].includes(source.kind)) return;
         assetRelocationWorkspace.begin({
           assetId: `file:${source.path}`,
           sourcePath: source.path,
@@ -534,27 +555,82 @@ function assetRelocationAvailabilityMessage(): string | null {
   return importProjection.message ?? '本机素材权限服务尚未绑定当前项目。';
 }
 
+function assetRelocationSourceForItem(item: ProjectAssetItem, targetDirectory?: string): AssetRelocationSource | null {
+  if (!item.sourcePath || !['background', 'portrait', 'avatar'].includes(item.kind)) return null;
+  return {
+    assetId: item.assetId,
+    sourcePath: item.sourcePath,
+    kind: item.kind as AssetRelocationSource['kind'],
+    targetDirectory: targetDirectory ?? item.sourcePath.split('/').slice(0, -1).join('/'),
+    fileName: item.sourcePath.split('/').at(-1) ?? '',
+  };
+}
+
 function beginAssetRelocation(item: ProjectAssetItem, targetDirectory: string): void {
-  if (!item.sourcePath || !['background', 'portrait', 'avatar'].includes(item.kind)) return;
+  const source = assetRelocationSourceForItem(item, targetDirectory);
+  if (source === null) return;
   const issue = assetRelocationAvailabilityMessage();
   if (issue !== null) {
     assetRelocationWorkspace.setMessage(issue);
     renderMainArea();
     return;
   }
-  assetRelocationWorkspace.begin({
-    assetId: item.assetId,
-    sourcePath: item.sourcePath,
-    kind: item.kind as 'background' | 'portrait' | 'avatar',
-    targetDirectory,
-    fileName: item.sourcePath.split('/').at(-1) ?? '',
-  });
+  assetRelocationWorkspace.begin(source);
   renderMainArea();
+}
+
+function beginAssetRelocationBatch(): void {
+  const issue = assetRelocationAvailabilityMessage();
+  if (issue !== null) {
+    assetRelocationWorkspace.setMessage(issue);
+    renderMainArea();
+    return;
+  }
+  assetRelocationWorkspace.beginBatch();
+  renderMainArea();
+}
+
+function selectAssetRelocationBatchItem(item: ProjectAssetItem, selected: boolean): void {
+  const source = assetRelocationSourceForItem(item);
+  if (source === null || assetRelocationWorkspace.snapshot().mode !== 'batch') return;
+  if (selected) assetRelocationWorkspace.select(source);
+  else assetRelocationWorkspace.unselect(item.assetId);
+  renderMainArea();
+}
+
+function openAssetRelocationBatchEditor(): void {
+  assetRelocationWorkspace.openBatchEditor();
+  renderMainArea();
+}
+
+function returnToAssetRelocationBatchSelection(): void {
+  assetRelocationWorkspace.returnToBatchSelection();
+  renderMainArea();
+}
+
+function batchRelocationMoves(snapshot = assetRelocationWorkspace.snapshot()): Array<{ sourcePath: string; targetPath: string }> {
+  return snapshot.selection.map((source) => ({
+    sourcePath: source.sourcePath,
+    targetPath: `${snapshot.targetDirectory}/${snapshot.fileNames[source.assetId] ?? source.fileName}`,
+  })).sort((left, right) => left.sourcePath.localeCompare(right.sourcePath)
+    || left.targetPath.localeCompare(right.targetPath));
+}
+
+function sameRelocationMoves(
+  left: readonly { sourcePath: string; targetPath: string }[],
+  right: readonly { sourcePath: string; targetPath: string }[],
+): boolean {
+  const normalizedLeft = [...left].sort((a, b) => a.sourcePath.localeCompare(b.sourcePath) || a.targetPath.localeCompare(b.targetPath));
+  const normalizedRight = [...right].sort((a, b) => a.sourcePath.localeCompare(b.sourcePath) || a.targetPath.localeCompare(b.targetPath));
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((move, index) => move.sourcePath === normalizedRight[index]?.sourcePath
+      && move.targetPath === normalizedRight[index]?.targetPath);
 }
 
 async function checkAssetRelocationImpact(): Promise<void> {
   const snapshot = assetRelocationWorkspace.snapshot();
-  if (snapshot.source === null) return;
+  const batch = snapshot.mode === 'batch';
+  if ((!batch && snapshot.source === null) || (batch && (!snapshot.batchEditing || snapshot.selection.length === 0))) return;
   if (hasDirtyProjectFiles()) {
     assetRelocationWorkspace.setMessage('请先保存当前项目修改，再检查整理影响。');
     renderMainArea();
@@ -567,25 +643,33 @@ async function checkAssetRelocationImpact(): Promise<void> {
     renderMainArea();
     return;
   }
-  if (assetRelocationWorkspace.snapshot().source?.sourcePath !== snapshot.source.sourcePath) return;
+  const requestedMoves = batch ? batchRelocationMoves(snapshot) : [];
+  const current = assetRelocationWorkspace.snapshot();
+  if (batch) {
+    if (current.mode !== 'batch' || !current.batchEditing || !sameRelocationMoves(requestedMoves, batchRelocationMoves(current))) return;
+  } else if (current.source?.sourcePath !== snapshot.source!.sourcePath) return;
   setAssetRelocationWriteLock(true);
-  await runAssetRelocationAction('正在检查引用影响…', async (context) => {
+  await runAssetRelocationAction(batch ? '正在检查整批引用影响…' : '正在检查引用影响…', async (context) => {
     let planned: Awaited<ReturnType<typeof context.client.relocationPlan>>;
     const operationId = crypto.randomUUID();
     try {
-      planned = await context.client.relocationPlan({
-        operationId,
-        sourcePath: snapshot.source!.sourcePath,
-        targetDirectory: snapshot.targetDirectory,
-        fileName: snapshot.fileName.trim(),
-      });
+      planned = await context.client.relocationPlan(batch
+        ? { operationId, moves: requestedMoves }
+        : {
+          operationId,
+          sourcePath: snapshot.source!.sourcePath,
+          targetDirectory: snapshot.targetDirectory,
+          fileName: snapshot.fileName.trim(),
+        });
     } catch (error) {
       try {
         const discovery = await context.client.relocationList();
         const pending = discovery.operations.find((operation) => (
           operation.operationId === operationId
-          || (operation.sourcePath === snapshot.source!.sourcePath
-            && operation.targetPath === `${snapshot.targetDirectory}/${snapshot.fileName.trim()}`)
+          || (batch
+            ? sameRelocationMoves(operation.moves, requestedMoves)
+            : operation.sourcePath === snapshot.source!.sourcePath
+              && operation.targetPath === `${snapshot.targetDirectory}/${snapshot.fileName.trim()}`)
         ));
         if (pending === undefined) throw error;
         planned = await context.client.relocationResume(pending.operationId);
@@ -594,9 +678,12 @@ async function checkAssetRelocationImpact(): Promise<void> {
       }
     }
     requireCurrentAssetRelocationAction(context);
-    assetRelocationWorkspace.setDetail(planned.detail);
+    if (batch) assetRelocationWorkspace.setBatchDetail(planned.detail);
+    else assetRelocationWorkspace.setDetail(planned.detail);
     assetRelocationWorkspace.setMessage(planned.detail.plan.status === 'ready'
-      ? '检查完成。确认无误后即可移动素材并更新引用。'
+      ? batch
+        ? '检查完成。确认无误后即可一次整理所选素材并更新引用。'
+        : '检查完成。确认无误后即可移动素材并更新引用。'
       : '发现不能自动处理的内容，请查看原因或修改目标。');
   });
 }
@@ -607,6 +694,7 @@ async function cancelRemoteAssetRelocation(keepEditor: boolean): Promise<void> {
   if (detail === null) {
     setAssetRelocationWriteLock(false);
     if (!keepEditor) assetRelocationWorkspace.reset();
+    if (state.mainTab === 'assets') renderMainArea();
     return;
   }
   if (['COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED'].includes(detail.operation.status)) {
@@ -645,7 +733,9 @@ async function projectAssetRelocationDetail(
   detail: AssetRelocationDetail,
 ): Promise<boolean> {
   requireCurrentAssetRelocationAction(context);
-  assetRelocationWorkspace.setDetail(detail);
+  const batch = detail.request.moves.length > 1 || assetRelocationWorkspace.snapshot().mode === 'batch';
+  if (batch) assetRelocationWorkspace.setBatchDetail(detail);
+  else assetRelocationWorkspace.setDetail(detail);
   const status = detail.operation.status;
   if (['RECOVERY_REQUIRED', 'PUBLISHING', 'ROLLING_BACK', 'UNDOING'].includes(status)) {
     setAssetRelocationWriteLock(true);
@@ -653,7 +743,10 @@ async function projectAssetRelocationDetail(
     return true;
   }
   if (!['COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED'].includes(status)) return false;
-  const selectedPath = status === 'COMMITTED' ? detail.request.targetPath : detail.request.sourcePath;
+  const firstMove = detail.request.moves[0];
+  const selectedPath = status === 'COMMITTED'
+    ? firstMove?.targetPath ?? detail.request.targetPath
+    : firstMove?.sourcePath ?? detail.request.sourcePath;
   await reloadCurrentProjectFromHandle({ mainTab: 'assets', selectedAssetId: `file:${selectedPath}` });
   requireCurrentAssetRelocationAction(context);
   setAssetRelocationWriteLock(false);
@@ -740,13 +833,14 @@ async function recoverAssetRelocation(action: 'resume' | 'rollback'): Promise<vo
 function relocationMatchesItem(item: ProjectAssetItem): boolean {
   const snapshot = assetRelocationWorkspace.snapshot();
   if (snapshot.source?.assetId === item.assetId) return true;
-  return snapshot.detail?.request.targetPath === item.sourcePath;
+  if (snapshot.selection.some((source) => source.assetId === item.assetId)) return true;
+  return snapshot.detail?.request.moves.some((move) => move.targetPath === item.sourcePath) === true;
 }
 
 async function selectAssetCenterItem(item: ProjectAssetItem, restoreKeyboardFocus: boolean): Promise<void> {
   const snapshot = assetRelocationWorkspace.snapshot();
   if (snapshot.busy) return;
-  if (snapshot.source !== null && !relocationMatchesItem(item)) {
+  if (snapshot.mode === 'single' && snapshot.source !== null && !relocationMatchesItem(item)) {
     if (snapshot.detail !== null && !['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(snapshot.detail.operation.status)) {
       await cancelRemoteAssetRelocation(false);
       if (assetRelocationWorkspace.snapshot().detail !== null) return;
@@ -759,9 +853,10 @@ async function selectAssetCenterItem(item: ProjectAssetItem, restoreKeyboardFocu
   renderMainArea();
   if (restoreKeyboardFocus) {
     requestAnimationFrame(() => {
-      [...document.querySelectorAll<HTMLButtonElement>('[role="option"][data-asset-id]')]
-        .find((candidate) => candidate.dataset.assetId === item.assetId)
-        ?.focus();
+      const row = [...document.querySelectorAll<HTMLElement>('[data-asset-id]')]
+        .find((candidate) => candidate.dataset.assetId === item.assetId);
+      if (row?.matches('[role="option"]')) row.focus();
+      else row?.querySelector<HTMLButtonElement>('.asset-center-detail-button')?.focus();
     });
   }
 }
@@ -769,7 +864,10 @@ async function selectAssetCenterItem(item: ProjectAssetItem, restoreKeyboardFocu
 function viewAssetRelocationTarget(): void {
   const detail = assetRelocationWorkspace.snapshot().detail;
   if (detail === null) return;
-  const path = detail.operation.status === 'COMMITTED' ? detail.request.targetPath : detail.request.sourcePath;
+  const firstMove = detail.request.moves[0];
+  const path = detail.operation.status === 'COMMITTED'
+    ? firstMove?.targetPath ?? detail.request.targetPath
+    : firstMove?.sourcePath ?? detail.request.sourcePath;
   state.assetCenterSelectedId = `file:${path}`;
   renderMainArea();
 }
@@ -1269,7 +1367,13 @@ function renderMainArea(): void {
         workspace: assetRelocationWorkspace.snapshot(),
         availabilityMessage: assetRelocationAvailabilityMessage(),
         onBegin: beginAssetRelocation,
+        onBeginBatch: beginAssetRelocationBatch,
+        onSelectBatchItem: selectAssetRelocationBatchItem,
+        onSetVisibleBatchItems: (assetIds) => assetRelocationWorkspace.setVisibleAssetIds(assetIds),
+        onOpenBatchEditor: openAssetRelocationBatchEditor,
+        onReturnToBatchSelection: returnToAssetRelocationBatchSelection,
         onUpdateTarget: (update) => assetRelocationWorkspace.updateTarget(update),
+        onUpdateBatchTarget: (update) => assetRelocationWorkspace.updateBatchTarget(update),
         onCheckImpact: () => { void checkAssetRelocationImpact(); },
         onCommit: () => { void commitAssetRelocation(); },
         onModify: () => { void cancelRemoteAssetRelocation(true); },
