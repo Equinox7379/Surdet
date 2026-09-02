@@ -23,6 +23,11 @@ const RELOCATION_OPERATION_ID = '66666666-6666-4666-8666-666666666666';
 const RELOCATION_RECEIPT_ID = '77777777-7777-4777-8777-777777777777';
 const RELOCATION_OPERATION_TOKEN = 'r'.repeat(64);
 const RELOCATION_RESUMED_TOKEN = 's'.repeat(64);
+const SCENE_OPERATION_ID = '88888888-8888-4888-8888-888888888888';
+const SCENE_REQUEST_ID = '99999999-9999-4999-8999-999999999999';
+const SCENE_PLAN_FINGERPRINT = '8'.repeat(64);
+const SCENE_SOURCE_PATH = 'content/scenario/chapter/old.gal';
+const SCENE_TARGET_PATH = 'content/scenario/chapter/new.gal';
 
 const configuration = {
   authorityContractVersion: 1 as const,
@@ -617,6 +622,125 @@ describe('Editor 素材导入 authority client', () => {
     expect(header(planRequest.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
     expect(header(planRequest.init, 'x-surdet-import-operation')).toBe(FIRST_OPERATION_TOKEN);
     expect(header(planRequest.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
+  });
+
+  it('sends scenePlan to the exact endpoint with binding auth and no operation token', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    const expected = {
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename' as const,
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+      planFingerprint: SCENE_PLAN_FINGERPRINT,
+      status: 'PLANNED' as const,
+    };
+    fetcher.mockResolvedValueOnce(success(expected));
+
+    await expect(client.scenePlan({
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+    })).resolves.toEqual(expected);
+
+    const request = requestRecords(fetcher).at(-1)!;
+    expect(request.input).toBe(`${AUTHORITY_PATH}/scenes/plan`);
+    expect(jsonBody(request.init)).toEqual({
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+    });
+    expect(header(request.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
+    expect(header(request.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(header(request.init, 'x-surdet-import-operation')).toBeNull();
+  });
+
+  it('sends sceneCommit with the exact batch body and rejects malformed scene responses', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    const input = {
+      requestId: SCENE_REQUEST_ID,
+      plans: [{ operationId: SCENE_OPERATION_ID, planFingerprint: SCENE_PLAN_FINGERPRINT }],
+      writes: [{ path: SCENE_TARGET_PATH, text: '@scene new\n', expectedSha256: null }],
+    };
+    const expected = {
+      requestId: SCENE_REQUEST_ID,
+      status: 'COMMITTED' as const,
+      writes: [{ path: SCENE_TARGET_PATH, sha256: 'a'.repeat(64) }],
+      deletedPaths: [SCENE_SOURCE_PATH],
+    };
+    fetcher.mockResolvedValueOnce(success(expected));
+
+    await expect(client.sceneCommit(input)).resolves.toEqual(expected);
+
+    const request = requestRecords(fetcher).at(-1)!;
+    expect(request.input).toBe(`${AUTHORITY_PATH}/scenes/commit`);
+    expect(jsonBody(request.init)).toEqual(input);
+    expect(header(request.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
+    expect(header(request.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(header(request.init, 'x-surdet-import-operation')).toBeNull();
+
+    fetcher.mockResolvedValueOnce(success({ ...expected, unexpected: true }));
+    await expect(client.sceneCommit(input)).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+  });
+
+  it('rejects a malformed scenePlan success response', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    fetcher.mockResolvedValueOnce(success({
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+      planFingerprint: SCENE_PLAN_FINGERPRINT,
+      status: 'PLANNED',
+      unexpected: true,
+    }));
+
+    await expect(client.scenePlan({
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+    })).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+  });
+
+  it('rejects valid scene responses that belong to a different request', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    fetcher.mockResolvedValueOnce(success({
+      operationId: SCENE_REQUEST_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+      planFingerprint: SCENE_PLAN_FINGERPRINT,
+      status: 'PLANNED',
+    }));
+
+    await expect(client.scenePlan({
+      operationId: SCENE_OPERATION_ID,
+      kind: 'rename',
+      sourcePath: SCENE_SOURCE_PATH,
+      targetPath: SCENE_TARGET_PATH,
+    })).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+
+    fetcher.mockResolvedValueOnce(success({
+      requestId: SCENE_OPERATION_ID,
+      status: 'COMMITTED',
+      writes: [{ path: SCENE_TARGET_PATH, sha256: 'a'.repeat(64) }],
+      deletedPaths: [SCENE_SOURCE_PATH],
+    }));
+    await expect(client.sceneCommit({
+      requestId: SCENE_REQUEST_ID,
+      plans: [{ operationId: SCENE_OPERATION_ID, planFingerprint: SCENE_PLAN_FINGERPRINT }],
+      writes: [{ path: SCENE_TARGET_PATH, text: '@scene new\n', expectedSha256: null }],
+    })).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
   });
 
   it('strictly parses relocation discovery/detail and reuses the bound operation token map', async () => {

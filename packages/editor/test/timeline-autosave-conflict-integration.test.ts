@@ -6,7 +6,7 @@ const mainSource = readFileSync(fileURLToPath(new URL('../src/main.ts', import.m
 
 function functionSource(name: string, nextName: string): string {
   const start = mainSource.indexOf(`function ${name}(`);
-  const end = mainSource.indexOf(`\nfunction ${nextName}(`, start + 1);
+  const end = mainSource.indexOf(`function ${nextName}(`, start + 1);
   expect(start, `${name} should exist`).toBeGreaterThanOrEqual(0);
   expect(end, `${nextName} should follow ${name}`).toBeGreaterThan(start);
   return mainSource.slice(start, end);
@@ -74,5 +74,24 @@ describe('timeline autosave conflict main integration', () => {
     expect(download).not.toMatch(/pendingAutosaveTimelineConflicts\s*=/);
     expect(download).not.toMatch(/persistCurrentAutosave/);
     expect(download).toContain('待处理记录仍保留');
+  });
+
+  it('binds startup recovery to one project and freezes user writes until it settles', () => {
+    expect(mainSource).toMatch(/interface SceneAutosaveRecoveryContext[\s\S]*?generation:[\s\S]*?client:[\s\S]*?projectRoot:[\s\S]*?projectId:/);
+    expect(mainSource).toMatch(/function sceneAutosaveRecoveryIsCurrent\([\s\S]*?context\.client === assetImportClient[\s\S]*?context\.projectRoot === state\.dirHandle[\s\S]*?context\.projectId === state\.autosaveProjectId/);
+    expect(mainSource).toMatch(/context\.client\.sceneCommit\(/);
+    expect(mainSource).not.toMatch(/const result = await assetImportClient\.sceneCommit\(/);
+    expect(mainSource).toMatch(/main\.toggleAttribute\('inert', sceneAutosaveRecoveryPhase !== 'idle'\)/);
+    expect(mainSource).toMatch(/writeLocked: state\.projectWriteLock !== null \|\| sceneRecoveryLocked/);
+    expect(mainSource).toMatch(/function confirmProjectSwitch\(\)[\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);
+    expect(mainSource).toMatch(/async function saveProject\(\)[\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);
+    expect(mainSource).toMatch(/function doUndo\(\)[\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);
+    expect(mainSource).toMatch(/function doRedo\(\)[\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);
+  });
+
+  it('does not let the autosave timer replace evidence while startup recovery is active', () => {
+    const persist = functionSource('persistCurrentAutosave', 'handleTimelineAutosaveRepair');
+    expect(persist).toMatch(/sceneAutosaveRecoveryPhase !== 'idle'/);
+    expect(mainSource).toMatch(/setInterval\([\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);
   });
 });

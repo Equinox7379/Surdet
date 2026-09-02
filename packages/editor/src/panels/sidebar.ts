@@ -2,7 +2,7 @@
  * 侧栏（E0 拆分；E2 增加场景/素材标签页）。
  */
 import { state, h, setStatus, type SceneEntry } from '../state.js';
-import { isSceneFilePathReserved } from '../project-io.js';
+import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io.js';
 import { renderAssetsPanel } from './assets.js';
 
 export function renderSidebar(): void {
@@ -56,7 +56,7 @@ export function renderSidebar(): void {
   newBtn.type = 'button';
   newBtn.className = 'outline-new-scene';
   newBtn.setAttribute('data-action', 'create-scene');
-  newBtn.onclick = newScene;
+  newBtn.onclick = () => { void newScene(); };
   sidebar.appendChild(newBtn);
   const list = h('div', 'scene-list');
   list.id = 'scene-outline-list';
@@ -147,7 +147,11 @@ const SCENE_TEMPLATES: { name: string; body: string }[] = [
   },
 ];
 
-export function newScene(): void {
+async function newSceneUnlocked(): Promise<void> {
+  if (state.pendingSceneCommit !== null) {
+    setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
+    return;
+  }
   const name = window.prompt('新场景 ID（文件名，不含 .gal）');
   if (!name || name.trim().length === 0) return;
   const id = name.trim();
@@ -166,6 +170,9 @@ export function newScene(): void {
   const tplChoice = window.prompt('选择模板：0 空白 / 1 纯对话 / 2 选择分支 / 3 演出制作 / 4 结局（取消 = 空白）');
   const idx = tplChoice === null ? 0 : Number(tplChoice.trim());
   const tpl = Number.isInteger(idx) && idx >= 0 && idx < SCENE_TEMPLATES.length ? SCENE_TEMPLATES[idx]! : SCENE_TEMPLATES[0]!;
+  const pendingCreateOperationId = [...state.scenes.values()].find((scene) => (
+    scene.handle === null && !scene.persistedSha256 && scene.pendingCreateOperationId
+  ))?.pendingCreateOperationId ?? crypto.randomUUID();
   state.scenes.set(id, {
     id,
     file: `${id}.gal`,
@@ -173,6 +180,11 @@ export function newScene(): void {
     eol: '\n',
     dirty: true,
     handle: null,
+    pendingCreateOperationId,
   });
   onSelectSceneHook(id);
+}
+
+export async function newScene(): Promise<void> {
+  await runProjectWriteOperation(newSceneUnlocked);
 }

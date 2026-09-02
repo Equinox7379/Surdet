@@ -15,7 +15,7 @@ const UPLOAD_IDLE_TIMEOUT_MS = 35_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
-type OperationKind = 'import' | 'relocation';
+type OperationKind = 'import' | 'relocation' | 'scene';
 
 export type AssetImportOperationStatus =
   | 'UPLOADING' | 'STAGED' | 'READY' | 'PUBLISHING' | 'ROLLING_BACK'
@@ -194,6 +194,35 @@ export interface AssetRelocationTokenResult {
   detail: AssetRelocationDetail;
 }
 
+export interface SceneLifecyclePlanInput {
+  operationId: string;
+  kind: 'rename' | 'delete';
+  sourcePath: string;
+  targetPath?: string;
+}
+
+export interface SceneLifecyclePlanResult {
+  operationId: string;
+  kind: 'rename' | 'delete';
+  sourcePath: string;
+  targetPath: string | null;
+  planFingerprint: string;
+  status: 'PLANNED' | 'COMMITTED' | 'CANCELLED';
+}
+
+export interface SceneLifecycleCommitInput {
+  requestId: string;
+  plans: Array<{ operationId: string; planFingerprint: string }>;
+  writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
+}
+
+export interface SceneLifecycleCommitResult {
+  requestId: string;
+  status: 'COMMITTED';
+  writes: Array<{ path: string; sha256: string }>;
+  deletedPaths: string[];
+}
+
 export interface AssetImportBindingSnapshot extends AssetImportOperationDiscovery {
   projectIdentity: string;
   projectName: string;
@@ -301,6 +330,8 @@ export interface AssetImportAuthorityClient {
   relocationCancel(operationId: string): Promise<AssetRelocationDetail>;
   relocationRecover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetRelocationDetail>;
   relocationUndo(operationId: string, input: { receiptId: string; receiptFingerprint: string }): Promise<AssetRelocationDetail>;
+  scenePlan(input: SceneLifecyclePlanInput): Promise<SceneLifecyclePlanResult>;
+  sceneCommit(input: SceneLifecycleCommitInput): Promise<SceneLifecycleCommitResult>;
   revokeBinding(): Promise<void>;
   dispose(): void;
 }
@@ -374,6 +405,18 @@ const RELOCATION_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freez
   ASSET_RELOCATION_OPAQUE_REFERENCE: '项目中存在无法安全改写的素材引用。',
   ASSET_RELOCATION_RECOVERY_REQUIRED: '上一次素材整理未完整结束，需要人工恢复。',
   ASSET_RELOCATION_UNDO_BLOCKED_CHANGED: '素材整理后的文件已被修改，不能自动撤销。',
+});
+
+const SCENE_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  ...ERROR_MESSAGES,
+  INVALID_REQUEST: '场景保存请求格式不正确。',
+  AUTHORITY_UNAVAILABLE: '本机场景安全保存服务未连接，请从项目启动器重新打开编辑器。',
+  IMPORT_OPERATION_NOT_FOUND: '没有找到这次场景操作记录。',
+  IMPORT_OPERATION_CONFLICT: '这次场景操作的状态已经变化，请重新打开项目后再试。',
+  IMPORT_PLAN_STALE: '场景文件已在编辑器外发生变化，Surdet 没有覆盖它。请重新打开项目核对。',
+  IMPORT_TARGET_EXISTS: '目标场景文件已被占用，Surdet 没有覆盖它。',
+  IMPORT_TARGET_UNSAFE: '场景文件位置不安全。',
+  IMPORT_RECOVERY_REQUIRED: '场景保存没有完整收束，请保留现场并重新打开项目。',
 });
 
 const OPERATION_STATUSES = new Set<AssetImportOperationStatus>([
@@ -975,6 +1018,40 @@ function parseOperationDetail(value: unknown): AssetImportOperationDetail {
   };
 }
 
+function parseScenePlanResult(value: unknown): SceneLifecyclePlanResult {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['kind', 'operationId', 'planFingerprint', 'sourcePath', 'status', 'targetPath'])
+    || !isUuid(value.operationId)
+    || (value.kind !== 'rename' && value.kind !== 'delete')
+    || !isSafeText(value.sourcePath, 1_024)
+    || (value.targetPath !== null && !isSafeText(value.targetPath, 1_024))
+    || !isSha256(value.planFingerprint)
+    || !['PLANNED', 'COMMITTED', 'CANCELLED'].includes(String(value.status))) throw invalidResponse();
+  if ((value.kind === 'rename') !== (typeof value.targetPath === 'string')) throw invalidResponse();
+  return value as unknown as SceneLifecyclePlanResult;
+}
+
+function parseSceneCommitResult(value: unknown): SceneLifecycleCommitResult {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['deletedPaths', 'requestId', 'status', 'writes'])
+    || !isUuid(value.requestId)
+    || value.status !== 'COMMITTED'
+    || !Array.isArray(value.writes)
+    || !Array.isArray(value.deletedPaths)
+    || !value.deletedPaths.every((entry) => isSafeText(entry, 1_024))) throw invalidResponse();
+  const writes = value.writes.map((entry) => {
+    if (!isRecord(entry) || !hasExactKeys(entry, ['path', 'sha256'])
+      || !isSafeText(entry.path, 1_024) || !isSha256(entry.sha256)) throw invalidResponse();
+    return { path: entry.path, sha256: entry.sha256 };
+  });
+  return {
+    requestId: value.requestId,
+    status: 'COMMITTED',
+    writes,
+    deletedPaths: [...value.deletedPaths] as string[],
+  };
+}
+
 function parseErrorEnvelope(value: unknown, operationKind: OperationKind = 'import'): AssetImportClientError {
   if (!isRecord(value)
     || value.ok !== false
@@ -997,10 +1074,14 @@ function parseErrorEnvelope(value: unknown, operationKind: OperationKind = 'impo
       || (error.details.field !== undefined && !isSafeText(error.details.field, 64))) return invalidResponse();
     details = error.details as { operationId?: string; itemId?: string; field?: string };
   }
-  const messages = operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES : ERROR_MESSAGES;
+  const messages = operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES
+    : operationKind === 'scene' ? SCENE_ERROR_MESSAGES
+      : ERROR_MESSAGES;
   return new AssetImportClientError(
     code,
-    messages[code] ?? (operationKind === 'relocation' ? '素材整理未完成，请查看技术详情。' : '素材导入未完成，请查看技术详情。'),
+    messages[code] ?? (operationKind === 'relocation' ? '素材整理未完成，请查看技术详情。'
+      : operationKind === 'scene' ? '场景保存未完成，请查看技术详情。'
+        : '素材导入未完成，请查看技术详情。'),
     error.retryDisposition as AssetImportRetryDisposition,
     details,
   );
@@ -1576,6 +1657,37 @@ export function createAssetImportAuthorityClient(
     return requireRelocationDetailOperation(detail, operationId);
   };
 
+  const scenePlan = async (input: SceneLifecyclePlanInput): Promise<SceneLifecyclePlanResult> => {
+    if (!isRecord(input) || !isUuid(input.operationId)
+      || (input.kind !== 'rename' && input.kind !== 'delete')
+      || !isSafeText(input.sourcePath, 1_024)
+      || (input.kind === 'rename' && !isSafeText(input.targetPath, 1_024))
+      || (input.kind === 'delete' && input.targetPath !== undefined)) {
+      throw new AssetImportClientError('INVALID_REQUEST', SCENE_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+    }
+    const result = await request('/scenes/plan', {
+      operationId: input.operationId,
+      kind: input.kind,
+      sourcePath: input.sourcePath,
+      ...(input.kind === 'rename' ? { targetPath: input.targetPath } : {}),
+    }, parseScenePlanResult, { binding: true, operationKind: 'scene' });
+    const expectedTarget = input.kind === 'rename' ? input.targetPath : null;
+    if (result.operationId !== input.operationId || result.kind !== input.kind
+      || result.sourcePath !== input.sourcePath || result.targetPath !== expectedTarget
+      || result.status !== 'PLANNED') throw invalidResponse();
+    return result;
+  };
+
+  const sceneCommit = async (input: SceneLifecycleCommitInput): Promise<SceneLifecycleCommitResult> => {
+    if (!isRecord(input) || !isUuid(input.requestId)
+      || !Array.isArray(input.plans) || !Array.isArray(input.writes)) {
+      throw new AssetImportClientError('INVALID_REQUEST', SCENE_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
+    }
+    const result = await request('/scenes/commit', input, parseSceneCommitResult, { binding: true, operationKind: 'scene' });
+    if (result.requestId !== input.requestId) throw invalidResponse();
+    return result;
+  };
+
   const revokeBinding = async (): Promise<void> => {
     if (bindingToken === null) return;
     try {
@@ -1609,6 +1721,8 @@ export function createAssetImportAuthorityClient(
     relocationCancel,
     relocationRecover,
     relocationUndo,
+    scenePlan,
+    sceneCommit,
     revokeBinding,
     dispose() { disposed = true; clearAuthorization(); },
   };

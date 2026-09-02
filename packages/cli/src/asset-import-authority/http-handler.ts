@@ -28,6 +28,10 @@ import {
   type ListAssetRelocationsResponse,
   type PlanAssetRelocationRequest,
   type RecoverAssetRelocationRequest,
+  type SceneLifecycleCommitRequest,
+  type SceneLifecycleCommitResponse,
+  type SceneLifecyclePlanRequest,
+  type SceneLifecyclePlanResponse,
   type UndoAssetRelocationRequest,
 } from './types.js';
 
@@ -107,6 +111,8 @@ export interface AssetImportAuthorityHttpTarget {
   relocationCancel?(operationId: string): Promise<AssetRelocationDetailResponse>;
   relocationRecover?(operationId: string, request: RecoverAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
   relocationUndo?(operationId: string, request: UndoAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
+  scenePlan?(request: SceneLifecyclePlanRequest): Promise<SceneLifecyclePlanResponse>;
+  sceneCommit?(request: SceneLifecycleCommitRequest): Promise<SceneLifecycleCommitResponse>;
 }
 
 export interface AssetImportAuthorityHttpHandlerOptions {
@@ -123,7 +129,8 @@ type Route = {
     | 'operation-create' | 'operation-list' | 'upload' | 'plan' | 'seal'
     | 'commit' | 'cancel' | 'operation-query' | 'resume' | 'recover' | 'undo'
     | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
-    | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo';
+    | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
+    | 'scene-plan' | 'scene-commit';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -384,6 +391,58 @@ function parseRelocationPlan(value: unknown): PlanAssetRelocationRequest {
   };
 }
 
+function parseScenePlan(value: unknown): SceneLifecyclePlanRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '场景计划格式无效');
+  }
+  const kind = (value as Record<string, unknown>).kind;
+  const object = exactObject(value, kind === 'rename'
+    ? ['kind', 'operationId', 'sourcePath', 'targetPath']
+    : ['kind', 'operationId', 'sourcePath']);
+  if (object.kind !== 'rename' && object.kind !== 'delete') {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '场景计划类型无效', { field: 'kind' });
+  }
+  return {
+    operationId: requireUuid(object.operationId, 'operationId'),
+    kind: object.kind,
+    sourcePath: requireProjectRelativePath(object.sourcePath, 'sourcePath'),
+    ...(object.kind === 'rename'
+      ? { targetPath: requireProjectRelativePath(object.targetPath, 'targetPath') }
+      : {}),
+  };
+}
+
+function parseSceneCommit(value: unknown): SceneLifecycleCommitRequest {
+  const object = exactObject(value, ['plans', 'requestId', 'writes']);
+  if (!Array.isArray(object.plans) || object.plans.length > 100
+    || !Array.isArray(object.writes) || object.writes.length > 512) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '场景保存批次格式无效');
+  }
+  return {
+    requestId: requireUuid(object.requestId, 'requestId'),
+    plans: object.plans.map((value, index) => {
+      const plan = exactObject(value, ['operationId', 'planFingerprint']);
+      return {
+        operationId: requireUuid(plan.operationId, `plans[${index}].operationId`),
+        planFingerprint: requireSha256(plan.planFingerprint, `plans[${index}].planFingerprint`),
+      };
+    }),
+    writes: object.writes.map((value, index) => {
+      const write = exactObject(value, ['expectedSha256', 'path', 'text']);
+      if (typeof write.text !== 'string') {
+        throw new AssetImportAuthorityError('INVALID_REQUEST', '场景正文格式无效', { field: `writes[${index}].text` });
+      }
+      return {
+        path: requireProjectRelativePath(write.path, `writes[${index}].path`),
+        text: write.text,
+        expectedSha256: write.expectedSha256 === null
+          ? null
+          : requireSha256(write.expectedSha256, `writes[${index}].expectedSha256`),
+      };
+    }),
+  };
+}
+
 function parseRelocationUndo(value: unknown): UndoAssetRelocationRequest {
   const object = exactObject(value, ['receiptFingerprint', 'receiptId']);
   return {
@@ -496,6 +555,8 @@ function parseRoute(url: string): Route | null {
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/query`) return { kind: 'operation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`) return { kind: 'relocation-plan', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/query`) return { kind: 'relocation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
+  if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`) return { kind: 'scene-plan', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
+  if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`) return { kind: 'scene-commit', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   const challenge = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges/(${UUID_SEGMENT})/confirm$`));
   if (challenge) return { kind: 'challenge-confirm', method: 'POST', challengeId: challenge[1], bindingRequired: false, operationTokenRequired: false, binary: false };
   const upload = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/(${UUID_SEGMENT})/items/(${UUID_SEGMENT})$`));
@@ -895,6 +956,14 @@ export function createAssetImportAuthorityHttpHandler(
         case 'relocation-undo':
           if (options.authority.relocationUndo === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
           data = publicRelocationDetail(await options.authority.relocationUndo(route.operationId!, parseRelocationUndo(body)));
+          break;
+        case 'scene-plan':
+          if (options.authority.scenePlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
+          data = await options.authority.scenePlan(parseScenePlan(body));
+          break;
+        case 'scene-commit':
+          if (options.authority.sceneCommit === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
+          data = await options.authority.sceneCommit(parseSceneCommit(body));
           break;
       }
       if (requestOperationToken !== undefined

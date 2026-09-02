@@ -297,6 +297,30 @@ function installRelocationTarget(service: ReturnType<typeof target>): ReturnType
   return service;
 }
 
+function installSceneTarget(service: ReturnType<typeof target>): ReturnType<typeof target> {
+  service.scenePlan = async (request) => {
+    service.calls.push(['scene-plan', request]);
+    return {
+      operationId: request.operationId,
+      kind: request.kind,
+      sourcePath: request.sourcePath,
+      targetPath: request.targetPath ?? null,
+      planFingerprint: '5'.repeat(64),
+      status: 'PLANNED' as const,
+    };
+  };
+  service.sceneCommit = async (request) => {
+    service.calls.push(['scene-commit', request]);
+    return {
+      requestId: request.requestId,
+      status: 'COMMITTED' as const,
+      writes: request.writes.map((write) => ({ path: write.path, sha256: '6'.repeat(64) })),
+      deletedPaths: [],
+    };
+  };
+  return service;
+}
+
 async function harness(service: ReturnType<typeof target> = target()): Promise<{ origin: string; target: ReturnType<typeof target> }> {
   let expectedOrigin = '';
   const server = http.createServer(createAssetImportAuthorityHttpHandler({
@@ -679,6 +703,176 @@ describe('project asset import authority HTTP boundary', () => {
     for (const secret of ['C:\\secret', authorityToken, operationToken, 'hidden-cause', 'stack']) {
       expect(failed.text.toLowerCase()).not.toContain(secret.toLowerCase());
     }
+  });
+
+  it('requires a project binding before dispatching scene plan or commit', async () => {
+    const fixture = await harness(installSceneTarget(target()));
+    const planBody = {
+      operationId,
+      kind: 'rename',
+      sourcePath: 'content/scenario/start.gal',
+      targetPath: 'content/scenario/intro.gal',
+    };
+    const commitBody = {
+      requestId: itemId,
+      plans: [{ operationId, planFingerprint: '5'.repeat(64) }],
+      writes: [{ path: 'content/scenario/intro.gal', text: '@scene intro\n', expectedSha256: null }],
+    };
+
+    for (const [route, body] of [
+      [`${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`, planBody],
+      [`${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, commitBody],
+    ] as const) {
+      const rejected = await request(fixture.origin, route, {
+        method: 'POST',
+        headers: headers(fixture.origin),
+        body: JSON.stringify(body),
+      });
+      expect(rejected.response.status).toBe(403);
+      expect(rejected.body).toMatchObject({ ok: false, error: { code: 'AUTHORITY_TOKEN_REJECTED' } });
+    }
+    expect(fixture.target.calls.filter(([name]) => name === 'scene-plan' || name === 'scene-commit')).toHaveLength(0);
+  });
+
+  it('strictly validates scene plan and commit fields and project-relative paths before dispatch', async () => {
+    const fixture = await harness(installSceneTarget(target()));
+    const validPlan = {
+      operationId,
+      kind: 'rename',
+      sourcePath: 'content/scenario/start.gal',
+      targetPath: 'content/scenario/intro.gal',
+    };
+    const validCommit = {
+      requestId: itemId,
+      plans: [{ operationId, planFingerprint: '5'.repeat(64) }],
+      writes: [{ path: 'content/scenario/intro.gal', text: '@scene intro\n', expectedSha256: null }],
+    };
+    const invalidRequests = [
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, unexpected: true },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, sourcePath: '/outside/start.gal' },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, targetPath: 'C:/outside/intro.gal' },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, sourcePath: 'content/scenario/../outside.gal' },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, sourcePath: 'content\\scenario\\start.gal' },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`,
+        body: { ...validPlan, kind: 'delete', targetPath: 'content/scenario/deleted.gal' },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`,
+        body: { ...validCommit, unexpected: true },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`,
+        body: {
+          ...validCommit,
+          plans: [{ operationId, planFingerprint: '5'.repeat(64), unexpected: true }],
+        },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`,
+        body: {
+          ...validCommit,
+          writes: [{ ...validCommit.writes[0], path: '/outside/intro.gal' }],
+        },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`,
+        body: {
+          ...validCommit,
+          writes: [{ ...validCommit.writes[0], expectedSha256: 'not-a-sha256' }],
+        },
+      },
+      {
+        route: `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`,
+        body: {
+          ...validCommit,
+          writes: [{ ...validCommit.writes[0], text: 42 }],
+        },
+      },
+    ];
+
+    for (const { route, body } of invalidRequests) {
+      const rejected = await request(fixture.origin, route, {
+        method: 'POST',
+        headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+        body: JSON.stringify(body),
+      });
+      expect(rejected.response.status).toBe(400);
+      expect(rejected.body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    }
+    expect(fixture.target.calls.filter(([name]) => name === 'scene-plan' || name === 'scene-commit')).toHaveLength(0);
+  });
+
+  it('dispatches valid scene plan and commit requests and returns their public responses', async () => {
+    const fixture = await harness(installSceneTarget(target()));
+    const planBody = {
+      operationId,
+      kind: 'rename',
+      sourcePath: 'content/scenario/start.gal',
+      targetPath: 'content/scenario/intro.gal',
+    };
+    const planned = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify(planBody),
+    });
+    expect(planned.response.status).toBe(200);
+    expect(planned.body).toEqual({ ok: true, data: {
+      operationId,
+      kind: 'rename',
+      sourcePath: 'content/scenario/start.gal',
+      targetPath: 'content/scenario/intro.gal',
+      planFingerprint: '5'.repeat(64),
+      status: 'PLANNED',
+    } });
+    expect(fixture.target.calls).toContainEqual(['scene-plan', planBody]);
+
+    const commitBody = {
+      requestId: itemId,
+      plans: [{ operationId, planFingerprint: '5'.repeat(64) }],
+      writes: [{ path: 'content/scenario/intro.gal', text: '@scene intro\n', expectedSha256: null }],
+    };
+    const committed = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify(commitBody),
+    });
+    expect(committed.response.status).toBe(200);
+    expect(committed.body).toEqual({ ok: true, data: {
+      requestId: itemId,
+      status: 'COMMITTED',
+      writes: [{ path: 'content/scenario/intro.gal', sha256: '6'.repeat(64) }],
+      deletedPaths: [],
+    } });
+    expect(fixture.target.calls).toContainEqual(['scene-commit', commitBody]);
+
+    const createOnlyBody = {
+      requestId: relocationReceiptId,
+      plans: [],
+      writes: [{ path: 'content/scenario/fresh.gal', text: '@scene fresh\n', expectedSha256: null }],
+    };
+    const created = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
+      method: 'POST',
+      headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify(createOnlyBody),
+    });
+    expect(created.response.status).toBe(200);
+    expect(fixture.target.calls).toContainEqual(['scene-commit', createOnlyBody]);
   });
 
   it('strictly validates relocation plan fields and rejects absolute paths', async () => {

@@ -60,6 +60,8 @@ const AUTHORITY_NAMESPACE_DIRECTORIES = [
   'operations',
   'relocation-index',
   'relocations',
+  'scene-plans',
+  'scene-commits',
   'challenge-index',
   'challenges',
   'recovery-barriers',

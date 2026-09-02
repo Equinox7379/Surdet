@@ -50,6 +50,9 @@ const OPAQUE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json
 const TERMINAL = new Set(['COMMITTED', 'CANCELLED', 'ROLLED_BACK', 'UNDONE']);
 
 export type AssetRelocationFaultPoint =
+  | 'after_plan_record_before_workspace'
+  | 'after_workspace_text_before_record'
+  | 'after_cancel_workspace_before_record'
   | 'after_binary_backup_intent'
   | 'after_binary_backup_before_journal'
   | 'after_binary_backups_before_targets'
@@ -231,12 +234,19 @@ async function projectFileEvidence(
   return stableBinaryEvidence(path.join(parent, fileName));
 }
 
-async function writeExclusiveText(file: string, text: string, expectedSha256: string): Promise<void> {
+async function writeExclusiveText(
+  file: string,
+  text: string,
+  expectedSha256: string,
+  expectedIdentity?: AssetRelocationFileEvidence,
+): Promise<AssetRelocationFileEvidence> {
   const bytes = Buffer.from(text, 'utf8');
   const actual = crypto.createHash('sha256').update(bytes).digest('hex');
   if (actual !== expectedSha256) throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '准备文本指纹不一致');
+  let created = false;
   try {
     const handle = await fs.open(file, 'wx', 0o600);
+    created = true;
     try {
       await handle.writeFile(bytes);
       await handle.sync();
@@ -246,16 +256,49 @@ async function writeExclusiveText(file: string, text: string, expectedSha256: st
     await syncParentDirectories(path.dirname(file));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const existing = await fs.readFile(file);
-    if (crypto.createHash('sha256').update(existing).digest('hex') !== expectedSha256) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '准备文本路径已被不同内容占用');
-    }
   }
+  const evidence = relocationEvidence(await stableBinaryEvidence(file));
+  if (evidence.sha256 !== expectedSha256
+    || (!created && (expectedIdentity === undefined || !sameFileIdentity(evidence, expectedIdentity)))) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '准备文本路径身份无法证明属于当前操作');
+  }
+  return evidence;
 }
 
 async function removeExactFile(file: string): Promise<void> {
   await fs.unlink(file);
   await syncParentDirectories(path.dirname(file));
+}
+
+async function removeOwnedExactFile(file: string, expected: AssetRelocationFileEvidence): Promise<void> {
+  const quarantine = path.join(path.dirname(file), `.${path.basename(file)}.surdet-relocation-removing`);
+  const filePresent = await fileExists(file);
+  const quarantinePresent = await fileExists(quarantine);
+  if (!filePresent) {
+    if (!quarantinePresent) return;
+    const interrupted = await stableBinaryEvidence(quarantine).catch(() => null);
+    if (interrupted === null || interrupted.sha256 !== expected.sha256
+      || !sameFileIdentity(interrupted.identity, expected)) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理中断清理文件身份不一致');
+    }
+    await removeExactFile(quarantine);
+    return;
+  }
+  if (quarantinePresent) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理安全清理路径已被占用');
+  }
+  await fs.rename(file, quarantine);
+  await syncParentDirectories(path.dirname(file));
+  const moved = await stableBinaryEvidence(quarantine).catch(() => null);
+  if (moved === null || moved.sha256 !== expected.sha256
+    || !sameFileIdentity(moved.identity, expected)) {
+    if (!await fileExists(file)) {
+      await fs.rename(quarantine, file).catch(() => undefined);
+      await syncParentDirectories(path.dirname(file)).catch(() => undefined);
+    }
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理安全清理时文件身份发生变化');
+  }
+  await removeExactFile(quarantine);
 }
 
 function relocationEvidence(evidence: BinaryEvidence): AssetRelocationFileEvidence {
@@ -554,18 +597,13 @@ export class ProjectAssetRelocationAuthority {
     };
   }
 
-  private async prepareWorkspace(
+  private async captureTextFiles(
     request: AssetRelocationRequest,
     captured: CapturedPlan,
-  ): Promise<{ workspace: AssetRelocationOperationWorkspace; textFiles: AssetRelocationStoredOperation['textFiles'] }> {
-    const workspace = await createAssetRelocationProjectWorkspace(this.paths, request.operationId);
+  ): Promise<AssetRelocationStoredOperation['textFiles']> {
     const textFiles: AssetRelocationStoredOperation['textFiles'] = [];
     for (const [index, change] of captured.prepared.textChanges.entries()) {
       const name = `text-${String(index).padStart(4, '0')}.txt`;
-      const prepared = path.join(workspace.prepared, name);
-      const backup = path.join(workspace.backup, name);
-      await writeExclusiveText(prepared, change.afterText, change.afterSha256);
-      await writeExclusiveText(backup, change.beforeText, change.beforeSha256);
       const before = await projectFileEvidence(this.paths, change.path);
       if (before === null || before.sha256 !== change.beforeSha256) {
         throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `引用文件在计划期间发生变化：${change.path}`);
@@ -577,7 +615,46 @@ export class ProjectAssetRelocationAuthority {
         backupRelativePath: relativeWorkspacePath(request.operationId, 'backup', name),
       });
     }
-    return { workspace, textFiles };
+    return textFiles;
+  }
+
+  private async materializeWorkspace(
+    recordInput: AssetRelocationStoredOperation,
+  ): Promise<{ record: AssetRelocationStoredOperation; workspace: AssetRelocationOperationWorkspace }> {
+    let record = recordInput;
+    const workspace = await createAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    for (let index = 0; index < record.textFiles.length; index += 1) {
+      const file = record.textFiles[index]!;
+      const preparedIdentity = await writeExclusiveText(
+        absoluteAssetImportProjectPath(this.paths, file.preparedRelativePath),
+        file.afterText,
+        file.afterSha256,
+        file.preparedIdentity,
+      );
+      const backupIdentity = await writeExclusiveText(
+        absoluteAssetImportProjectPath(this.paths, file.backupRelativePath),
+        file.beforeText,
+        file.beforeSha256,
+        file.backupIdentity,
+      );
+      if (sameJson(preparedIdentity, file.preparedIdentity)
+        && sameJson(backupIdentity, file.backupIdentity)) continue;
+      await this.fault('after_workspace_text_before_record');
+      const textFiles = record.textFiles.map((candidate, candidateIndex) => (
+        candidateIndex === index ? { ...candidate, preparedIdentity, backupIdentity } : candidate
+      ));
+      const next: AssetRelocationStoredOperation = {
+        ...record,
+        textFiles,
+        journal: {
+          ...record.journal,
+          journalVersion: record.journal.journalVersion + 1,
+          updatedAt: this.timestamp(),
+        },
+      };
+      record = await this.store.replace(record, next);
+    }
+    return { record, workspace };
   }
 
   private detail(record: AssetRelocationStoredOperation): AssetRelocationDetailResponse {
@@ -598,6 +675,9 @@ export class ProjectAssetRelocationAuthority {
         if (!sameJson(existing.request, request)) {
           throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', 'operationId 已用于不同素材整理');
         }
+        if (existing.journal.status === 'PLANNED') {
+          return this.detail((await this.materializeWorkspace(existing)).record);
+        }
         return this.detail(existing);
       }
       const own = await this.store.list();
@@ -605,7 +685,7 @@ export class ProjectAssetRelocationAuthority {
         throw new AssetImportAuthorityError('PROJECT_BUSY', '已有素材整理尚未结束');
       }
       const captured = await this.capture(request);
-      const prepared = await this.prepareWorkspace(request, captured);
+      const textFiles = await this.captureTextFiles(request, captured);
       const timestamp = this.timestamp();
       const record: AssetRelocationStoredOperation = {
         schemaVersion: 1,
@@ -614,7 +694,7 @@ export class ProjectAssetRelocationAuthority {
         scannedFiles: captured.prepared.scannedFiles,
         binaryBaseline: captured.prepared.binaryBaselines[0]!,
         binaryBaselines: captured.prepared.binaryBaselines,
-        textFiles: prepared.textFiles,
+        textFiles,
         journal: {
           schemaVersion: 1,
           operationId: request.operationId,
@@ -634,19 +714,17 @@ export class ProjectAssetRelocationAuthority {
             backupIdentity: null,
             targetIdentity: null,
           })),
-          textStates: prepared.textFiles.map(() => 'PENDING'),
-          textResultIdentities: prepared.textFiles.map(() => null),
+          textStates: textFiles.map(() => 'PENDING'),
+          textResultIdentities: textFiles.map(() => null),
           updatedAt: timestamp,
         },
         receipt: null,
         undoReceipt: null,
       };
-      try {
-        return this.detail(await this.store.create(record));
-      } catch (error) {
-        await fs.rm(prepared.workspace.root, { recursive: true, force: true }).catch(() => undefined);
-        throw error;
-      }
+      let stored = await this.store.create(record);
+      await this.fault('after_plan_record_before_workspace');
+      stored = (await this.materializeWorkspace(stored)).record;
+      return this.detail(stored);
     }));
   }
 
@@ -677,13 +755,91 @@ export class ProjectAssetRelocationAuthority {
   private async verifyWorkspaceTexts(record: AssetRelocationStoredOperation): Promise<void> {
     await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
     for (const file of record.textFiles) {
-      const prepared = await fs.readFile(absoluteAssetImportProjectPath(this.paths, file.preparedRelativePath));
-      const backup = await fs.readFile(absoluteAssetImportProjectPath(this.paths, file.backupRelativePath));
-      if (crypto.createHash('sha256').update(prepared).digest('hex') !== file.afterSha256
-        || crypto.createHash('sha256').update(backup).digest('hex') !== file.beforeSha256) {
+      if (file.preparedIdentity === undefined || file.backupIdentity === undefined) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理准备文本缺少可证明的文件身份');
+      }
+      const prepared = await stableBinaryEvidence(
+        absoluteAssetImportProjectPath(this.paths, file.preparedRelativePath),
+      );
+      const backup = await stableBinaryEvidence(
+        absoluteAssetImportProjectPath(this.paths, file.backupRelativePath),
+      );
+      if (prepared.sha256 !== file.afterSha256
+        || backup.sha256 !== file.beforeSha256
+        || !sameFileIdentity(prepared.identity, file.preparedIdentity)
+        || !sameFileIdentity(backup.identity, file.backupIdentity)) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理准备文本发生变化');
       }
     }
+  }
+
+  private async removePlannedWorkspace(record: AssetRelocationStoredOperation): Promise<void> {
+    await assertAssetImportProjectRootIdentity(this.paths);
+    const workspaceRoot = path.join(this.paths.relocationWorkspace, record.request.operationId);
+    const rootStat = await fs.lstat(workspaceRoot).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    if (rootStat === null) return;
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消工作区身份不安全');
+    }
+    // A crash may leave a completed file before its node identity reaches the
+    // durable operation record. Content equality is not ownership proof, so a
+    // cancellation closes the registered plan but deliberately preserves the
+    // whole workspace rather than risking deletion of an external replacement.
+    if (record.textFiles.some((file) => file.preparedIdentity === undefined
+      || file.backupIdentity === undefined)) return;
+    const expected = {
+      prepared: new Map(record.textFiles.map((file) => [path.posix.basename(file.preparedRelativePath), file.preparedIdentity])),
+      backup: new Map(record.textFiles.map((file) => [path.posix.basename(file.backupRelativePath), file.backupIdentity])),
+    };
+    const rootEntries = await fs.readdir(workspaceRoot, { withFileTypes: true });
+    if (rootEntries.some((entry) => !['prepared', 'backup'].includes(entry.name)
+      || !entry.isDirectory() || entry.isSymbolicLink())) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消工作区包含未知内容');
+    }
+    for (const group of ['prepared', 'backup'] as const) {
+      const groupPath = path.join(workspaceRoot, group);
+      const groupStat = await fs.lstat(groupPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      if (groupStat === null) continue;
+      if (!groupStat.isDirectory() || groupStat.isSymbolicLink()) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消目录身份不安全');
+      }
+      let entries = await fs.readdir(groupPath, { withFileTypes: true });
+      for (const [name, expectedIdentity] of expected[group]) {
+        const interruptedName = `.${name}.surdet-relocation-removing`;
+        if (!entries.some((entry) => entry.name === interruptedName)) continue;
+        if (entries.some((entry) => entry.name === name) || expectedIdentity === undefined) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消目录包含冲突清理现场');
+        }
+        await removeOwnedExactFile(path.join(groupPath, name), expectedIdentity);
+      }
+      entries = await fs.readdir(groupPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const expectedIdentity = expected[group].get(entry.name);
+        if (expectedIdentity === undefined || !entry.isFile() || entry.isSymbolicLink()) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消目录包含未知文件');
+        }
+        const evidence = await stableBinaryEvidence(path.join(groupPath, entry.name));
+        if (!sameFileIdentity(evidence.identity, expectedIdentity) || evidence.sha256 !== expectedIdentity.sha256) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消文件身份不一致');
+        }
+      }
+      for (const entry of entries) {
+        await removeOwnedExactFile(path.join(groupPath, entry.name), expected[group].get(entry.name)!);
+      }
+      await fs.rmdir(groupPath);
+    }
+    const remaining = await fs.readdir(workspaceRoot);
+    if (remaining.length > 0) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理取消工作区未能安全清空');
+    }
+    await fs.rmdir(workspaceRoot);
+    await syncParentDirectories(path.dirname(workspaceRoot));
   }
 
   private async replaceTextDurably(
@@ -990,17 +1146,12 @@ export class ProjectAssetRelocationAuthority {
         || record.journal.textResultIdentities.some((identity) => identity === null)) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理成功终态记录不完整');
       }
-      await this.verifyCommittedFiles(record);
       for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
         const item = record.journal.binaryItems[index]!;
-        const target = await projectFileEvidence(this.paths, item.targetPath);
-        const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
         const receiptMove = record.receipt.moves[index];
-        if (target === null || receiptMove === undefined
-          || !sameFileIdentity(target.identity, receiptMove.targetIdentity)
-          || !sameFileIdentity(target.identity, item.targetIdentity!)
-          || !sameFileIdentity(backup.identity, item.backupIdentity!)) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理成功终态文件身份不一致：${item.targetPath}`);
+        if (receiptMove === undefined
+          || !sameFileIdentity(receiptMove.targetIdentity, item.targetIdentity!)) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理成功终态记录身份不一致：${item.targetPath}`);
         }
       }
     } else if (record.journal.status === 'ROLLED_BACK' || record.journal.status === 'CANCELLED') {
@@ -1011,61 +1162,11 @@ export class ProjectAssetRelocationAuthority {
           && record.journal.binaryItems.some((item) => item.state !== 'SOURCE'))) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理回退终态记录不完整');
       }
-      const sourcePaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.sourcePath)));
-      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
-        const item = record.journal.binaryItems[index]!;
-        const baseline = record.binaryBaselines[index]!;
-        const source = await projectFileEvidence(this.paths, item.sourcePath);
-        const target = await projectFileEvidence(this.paths, item.targetPath);
-        if (source === null || (!sourcePaths.has(portableFold(item.targetPath)) && target !== null)
-          || !sameFileIdentity(source.identity, baseline.source)
-          || source.sha256 !== baseline.source.sha256) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理回退终态文件身份不一致：${item.sourcePath}`);
-        }
-      }
-      for (const [index, file] of record.textFiles.entries()) {
-        const current = await projectFileEvidence(this.paths, file.path);
-        const expected = record.journal.textResultIdentities[index] ?? file.beforeIdentity;
-        if (current === null || current.sha256 !== file.beforeSha256
-          || !sameFileIdentity(current.identity, expected)) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理回退文本不一致：${file.path}`);
-        }
-      }
-      if (record.journal.status === 'CANCELLED') {
-        const projectWorkspace = path.join(
-          this.paths.relocationWorkspace,
-          record.request.operationId,
-        );
-        if (await fileExists(projectWorkspace)) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '已取消的素材整理仍残留项目工作区');
-        }
-      }
     } else {
       if (record.receipt === null || record.undoReceipt === null
         || record.journal.binaryItems.some((item) => item.state !== 'UNDONE')
         || record.journal.textStates.some((state) => state !== 'UNDONE')) {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理撤销终态记录不完整');
-      }
-      const sourcePaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.sourcePath)));
-      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
-        const item = record.journal.binaryItems[index]!;
-        const baseline = record.binaryBaselines[index]!;
-        const undoMove = record.undoReceipt.moves[index];
-        const source = await projectFileEvidence(this.paths, item.sourcePath);
-        const target = await projectFileEvidence(this.paths, item.targetPath);
-        if (source === null || (!sourcePaths.has(portableFold(item.targetPath)) && target !== null) || undoMove === undefined
-          || !sameFileIdentity(source.identity, undoMove.sourceIdentity)
-          || source.sha256 !== baseline.source.sha256) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理撤销终态文件身份不一致：${item.sourcePath}`);
-        }
-      }
-      for (const [index, file] of record.textFiles.entries()) {
-        const current = await projectFileEvidence(this.paths, file.path);
-        const expected = record.journal.textResultIdentities[index];
-        if (current === null || expected == null || current.sha256 !== file.beforeSha256
-          || !sameFileIdentity(current.identity, expected)) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理撤销文本不一致：${file.path}`);
-        }
       }
     }
     const terminalFingerprint = await this.textHasher.sha256(stableStringify({
@@ -1311,6 +1412,7 @@ export class ProjectAssetRelocationAuthority {
       if (record.plan.planFingerprint !== request.planFingerprint) {
         throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '计划指纹不匹配');
       }
+      record = (await this.materializeWorkspace(record)).record;
       await this.assertFresh(record);
       record = await this.update(record, { journal: { status: 'PUBLISHING', recoveryPhase: 'commit' } });
       try {
@@ -1332,33 +1434,38 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async preflightUndo(record: AssetRelocationStoredOperation): Promise<void> {
-    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
     if (record.receipt === null) throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '成功回执缺失，不能撤销');
-    const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
-    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
-      const item = record.journal.binaryItems[index]!;
-      const baseline = record.binaryBaselines[index]!;
-      const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
-      const target = await projectFileEvidence(this.paths, item.targetPath);
-      const receiptMove = record.receipt.moves[index];
-      if (target === null || receiptMove === undefined
-        || !sameNodeIdentity(target.identity, backup.identity)
-        || !sameFileIdentity(target.identity, receiptMove.targetIdentity)
-        || target.sha256 !== baseline.source.sha256) {
-        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `目标素材已经变化，不能撤销：${item.targetPath}`);
+    try {
+      await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+      const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
+      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+        const item = record.journal.binaryItems[index]!;
+        const baseline = record.binaryBaselines[index]!;
+        const backup = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, item.backupRelativePath));
+        const target = await projectFileEvidence(this.paths, item.targetPath);
+        const receiptMove = record.receipt.moves[index];
+        if (target === null || receiptMove === undefined
+          || !sameNodeIdentity(target.identity, backup.identity)
+          || !sameFileIdentity(target.identity, receiptMove.targetIdentity)
+          || target.sha256 !== baseline.source.sha256) {
+          throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `目标素材已经变化，不能撤销：${item.targetPath}`);
+        }
+        if (!targetPaths.has(portableFold(item.sourcePath))
+          && await projectFileEvidence(this.paths, item.sourcePath) !== null) {
+          throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `源路径已被占用，不能撤销：${item.sourcePath}`);
+        }
       }
-      if (!targetPaths.has(portableFold(item.sourcePath))
-        && await projectFileEvidence(this.paths, item.sourcePath) !== null) {
-        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `源路径已被占用，不能撤销：${item.sourcePath}`);
+      for (const [index, file] of record.textFiles.entries()) {
+        const current = await projectFileEvidence(this.paths, file.path);
+        const expected = record.journal.textResultIdentities[index];
+        if (current === null || expected == null || current.sha256 !== file.afterSha256
+          || !sameFileIdentity(current.identity, expected)) {
+          throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `引用文件已经变化，不能撤销：${file.path}`);
+        }
       }
-    }
-    for (const [index, file] of record.textFiles.entries()) {
-      const current = await projectFileEvidence(this.paths, file.path);
-      const expected = record.journal.textResultIdentities[index];
-      if (current === null || expected == null || current.sha256 !== file.afterSha256
-        || !sameFileIdentity(current.identity, expected)) {
-        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', `引用文件已经变化，不能撤销：${file.path}`);
-      }
+    } catch (error) {
+      if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_UNDO_BLOCKED_CHANGED') throw error;
+      throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '撤销所需的操作备份缺失或身份不安全');
     }
   }
 
@@ -1607,10 +1714,9 @@ export class ProjectAssetRelocationAuthority {
       if (record.journal.status !== 'PLANNED') {
         throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '只有未提交的整理计划可以取消');
       }
+      await this.removePlannedWorkspace(record);
+      await this.fault('after_cancel_workspace_before_record');
       record = await this.update(record, { journal: { status: 'CANCELLED', recoveryPhase: null } });
-      const workspace = await assertAssetRelocationProjectWorkspace(this.paths, operationId);
-      await fs.rm(workspace.root, { recursive: true, force: true });
-      await syncParentDirectories(path.dirname(workspace.root));
       return this.detail(record);
     }));
   }

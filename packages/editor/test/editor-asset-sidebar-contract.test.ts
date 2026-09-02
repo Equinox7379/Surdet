@@ -43,10 +43,11 @@ describe('editor scene and asset outline contract', () => {
   });
 
   it('routes newly created scenes through the same centralized navigation hook', () => {
-    const newSceneBody = sidebarSource.match(/export function newScene\(\): void \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const newSceneBody = sidebarSource.match(/async function newSceneUnlocked\(\): Promise<void> \{([\s\S]*?)\n\}/)?.[1] ?? '';
     expect(newSceneBody).toMatch(/state\.scenes\.set\(id,/);
     expect(newSceneBody).toMatch(/onSelectSceneHook\(id\)/);
     expect(newSceneBody).not.toMatch(/state\.current\s*=\s*id/);
+    expect(sidebarSource).toMatch(/runProjectWriteOperation\(newSceneUnlocked\)/);
     expect(sidebarSource).not.toContain('bindSidebarRenderAll');
     expect(sidebarSource).not.toContain('renderAllHook');
   });
