@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ChangeRecord } from '@surdet/authoring';
+import { AuthoringOperationError, type ChangeRecord } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import {
   NodeLocalLeaseManager,
@@ -496,6 +496,42 @@ describe('NodeLocalLeaseManager', () => {
     const published = JSON.parse(await fsp.readFile(leasePath, 'utf8')) as { ownerToken?: string };
     expect(published['ownerToken']).toBe('owner-token-1');
     await expect(fsp.readdir(path.join(root, '.locks', 'stale'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retries a structured lease read-replacement race instead of reporting corruption', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-read-race-'));
+    temporaryRoots.push(root);
+    const resourceId = 'chg-read-race';
+    const lockDirectory = path.join(root, '.locks', 'changes', `${resourceId}.lock`);
+    const leasePath = path.join(lockDirectory, 'lease.json');
+    await fsp.mkdir(lockDirectory, { recursive: true });
+    const state = makeState();
+    const lease = {
+      formatVersion: 1,
+      scope: 'change',
+      resourceId,
+      ownerToken: 'owner-token-read-race',
+      pid: 1001,
+      hostname: state.hostname,
+      acquiredAt: new Date(state.clock.nowMs).toISOString(),
+      heartbeatAt: new Date(state.clock.nowMs).toISOString(),
+    };
+    await fsp.writeFile(leasePath, JSON.stringify(lease), 'utf8');
+    let reads = 0;
+    const manager = makeManager(root, state, {
+      readLeaseRecord: async (file) => {
+        reads += 1;
+        if (reads === 1) {
+          throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', 'JSON record 读取期间发生替换', { path: file });
+        }
+        return { value: JSON.parse(await fsp.readFile(file, 'utf8')) as unknown };
+      },
+      publicationDelay: async () => undefined,
+    });
+
+    await expect(manager.acquire({ scope: 'change', resourceId })).rejects.toMatchObject({ code: 'CHANGE_BUSY' });
+    expect(reads).toBe(2);
+    expect(await fsp.readFile(leasePath, 'utf8')).toBe(JSON.stringify(lease));
   });
 
   it('allows a durable publication to exceed the former 100 ms window', async () => {
