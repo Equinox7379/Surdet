@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { RendererProjectionSnapshot } from '@surdet/renderer';
-import { acceptPreviewTraceMessage, normalizePreviewTraceMessage } from '../src/panels/preview-panel.js';
+import {
+  acceptPreviewTraceMessage,
+  isCurrentPreviewFrameSource,
+  normalizePreviewTraceMessage,
+  projectPreviewTraceRow,
+} from '../src/panels/preview-panel.js';
 import {
   createPreviewTraceEvidenceSnapshot,
   previewTraceEvidenceChanged,
@@ -107,5 +112,77 @@ describe('preview causal trace contract', () => {
       },
     });
     expect(acceptPreviewTraceMessage(current, 2)).toEqual(current);
+  });
+
+  it('accepts status and trace messages only from the currently mounted iframe', () => {
+    const currentFrame = {} as WindowProxy;
+    const staleFrame = {} as WindowProxy;
+
+    expect(isCurrentPreviewFrameSource(currentFrame, currentFrame)).toBe(true);
+    expect(isCurrentPreviewFrameSource(staleFrame, currentFrame)).toBe(false);
+    expect(isCurrentPreviewFrameSource(null, currentFrame)).toBe(false);
+    expect(isCurrentPreviewFrameSource(currentFrame, null)).toBe(false);
+
+    const source = readFileSync(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../src/panels/preview-panel.ts',
+    ), 'utf8');
+    expect(source).toContain('notifyPreviewReady?.(e.source)');
+    expect(source).toContain('notifyPreviewDiagnostic?.(diagnostic, e.source)');
+    expect(source).toContain('isCurrentPreviewFrameSource(source, frame.contentWindow)');
+  });
+
+  it('projects runtime enums into Chinese-first causal record labels', () => {
+    const base = {
+      type: 'surdet-preview-trace-event' as const,
+      traceId: 'trace-current',
+      generation: 2,
+      sequence: 3,
+      coreEmitted: true as const,
+      presentationApplied: true,
+      presentationBefore: {},
+      presentationAfter: {},
+    };
+
+    expect(projectPreviewTraceRow({
+      ...base,
+      event: {
+        kind: 'instruction',
+        source: { sceneId: 'intro', index: 4, op: 'text', file: 'intro.gal', line: 12, col: 1 },
+      },
+    })).toEqual({
+      title: '显示台词',
+      sourceLabel: 'intro 场景 · 第 12 行',
+      technicalLabel: '事件 4 · instruction / text',
+    });
+
+    expect(projectPreviewTraceRow({
+      ...base,
+      sequence: 4,
+      event: {
+        kind: 'choice',
+        source: { sceneId: 'intro', index: 5, op: 'choice', file: 'intro.gal', line: 16, col: 1 },
+      },
+    }).title).toBe('提供选择');
+
+    expect(projectPreviewTraceRow({
+      ...base,
+      event: {
+        kind: 'future-event',
+        source: { sceneId: 'intro', index: 6, op: 'future-op', file: 'intro.gal', line: 18, col: 1 },
+      },
+    } as unknown as Parameters<typeof projectPreviewTraceRow>[0]).title).toBe('剧情事件');
+  });
+
+  it('guards against duplicate, out-of-order, and post-complete trace messages', () => {
+    const source = readFileSync(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../src/panels/preview-panel.ts',
+    ), 'utf8');
+
+    expect(source).toContain('let lastTraceSequence = -1');
+    expect(source).toContain('let traceCompleted = false');
+    expect(source).toContain('current.sequence <= lastTraceSequence');
+    expect(source).toContain('if (traceCompleted) return');
   });
 });

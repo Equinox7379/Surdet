@@ -132,7 +132,7 @@ test('Frontend Pass 3B runner settles the Preview iframe before intentional navi
   const previewClick = source.indexOf("getByRole('button', { name: '▶ 预览演出'");
   const returnToTimeline = source.indexOf("await firstPage.locator('[data-editor-mode=\"timeline\"]'", previewClick);
   const settled = source.lastIndexOf("previewFrame.waitForLoadState('networkidle', { timeout: 10_000 })", returnToTimeline);
-  const replayClick = source.indexOf("getByRole('button', { name: '▶ 播放 / 重载', exact: true }).click()", settled);
+  const replayClick = source.indexOf("getByRole('button', { name: '重新播放', exact: true }).click()", settled);
   assert.ok(previewClick >= 0 && settled > previewClick && settled < returnToTimeline, 'Preview iframe is torn down before its module graph settles');
   assert.ok(replayClick > settled && replayClick < returnToTimeline, 'Preview replay identity is not exercised before returning to Timeline');
   assert.match(source, /#preview-view iframe\.preview-frame\[title="剧情预览"\]/);

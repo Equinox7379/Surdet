@@ -29,4 +29,32 @@ describe('editor preview Renderer v2 lifecycle contract', () => {
     expect(source).toMatch(/(?:runtime|queries)\.queries?\.presentation\.snapshot\(\)|queries\.presentation\.snapshot\(\)/);
     expect(source).toContain('queries.diagnostics.resourceSnapshot()');
   });
+
+  it('invalidates the previous executable session before a reload can fail', () => {
+    const source = readFileSync(previewSourcePath, 'utf8');
+    const invalidationBody = source.slice(
+      source.indexOf('function invalidatePreviewSession()'),
+      source.indexOf('async function load('),
+    );
+    const loadBody = source.slice(
+      source.indexOf('async function load('),
+      source.indexOf('let loadQueue = Promise.resolve()'),
+    );
+
+    const invalidateAt = loadBody.indexOf('invalidatePreviewSession();');
+    const resetAt = loadBody.indexOf('activeRuntime.resetSession({ clearAssets: true })');
+    const compileAt = loadBody.indexOf('const reg = new SceneRegistry()');
+
+    expect(invalidateAt).toBeGreaterThanOrEqual(0);
+    expect(invalidateAt).toBeLessThan(resetAt);
+    expect(resetAt).toBeLessThan(compileAt);
+    expect(invalidationBody).toMatch(/interp\s*=\s*null;/);
+    expect(invalidationBody).toMatch(/store\s*=\s*null;/);
+    expect(invalidationBody).toMatch(/registry\s*=\s*null;/);
+    expect(invalidationBody).toMatch(/calendar\s*=\s*null;/);
+    expect(invalidationBody).toMatch(/growth\s*=\s*null;/);
+    expect(invalidationBody).toMatch(/turnResumeSnap\s*=\s*null;/);
+    expect(loadBody.match(/invalidatePreviewSession\(\);/g)).toHaveLength(2);
+    expect(loadBody).toMatch(/catch \(err\) \{\s*\/\/[^\n]+\n\s*invalidatePreviewSession\(\);/);
+  });
 });

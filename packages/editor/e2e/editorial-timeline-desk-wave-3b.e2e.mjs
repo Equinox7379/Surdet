@@ -1213,7 +1213,7 @@ async function run() {
         eventCount: window.surdetEditorDebug.state.previewTrace.length,
         timelineInstructionCount: window.surdetEditorDebug.state.previewTrace.filter((event) => event.source?.op === 'timeline').length,
       }));
-      await firstPage.getByRole('button', { name: '▶ 播放 / 重载', exact: true }).click();
+      await firstPage.getByRole('button', { name: '重新播放', exact: true }).click();
       try {
         await firstPage.waitForFunction((id) => (
           window.surdetEditorDebug?.state?.mainTab === 'preview'

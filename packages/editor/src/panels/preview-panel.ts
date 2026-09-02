@@ -18,9 +18,10 @@ import {
 
 /** 预览就绪监听器：模块级单例注册，避免反复进出预览标签页时监听器累积（M6 审阅轮 Minor 1） */
 let previewReadyListenerBound = false;
-let notifyPreviewReady: (() => void) | null = null;
-let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic) => void) | null = null;
+let notifyPreviewReady: ((source: MessageEventSource | null) => void) | null = null;
+let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic, source: MessageEventSource | null) => void) | null = null;
 let notifyPreviewTrace: ((message: PreviewTraceMessage, source: MessageEventSource | null) => void) | null = null;
+let previewPanelMountRevision = 0;
 
 export interface PreviewTraceStartMessage {
   type: 'surdet-preview-trace-start';
@@ -135,6 +136,53 @@ export function acceptPreviewTraceMessage(message: PreviewTraceMessage | null, c
   return message !== null && message.generation === currentGeneration ? message : null;
 }
 
+/** 所有 Preview bridge 消息都必须来自当前挂载 iframe。 */
+export function isCurrentPreviewFrameSource(
+  source: MessageEventSource | null,
+  currentFrame: WindowProxy | null,
+): boolean {
+  return currentFrame !== null && source === currentFrame;
+}
+
+export interface PreviewTraceRowProjection {
+  title: string;
+  sourceLabel: string;
+  technicalLabel: string;
+}
+
+const TRACE_KIND_LABELS: Record<RuntimeTraceEvent['kind'], string> = {
+  instruction: '执行剧情指令',
+  choice: '提供选择',
+  state: '更新剧情状态',
+  condition: '判断剧情条件',
+  'control-flow': '切换剧情位置',
+  'scene-end': '场景结束',
+};
+
+const INSTRUCTION_OP_LABELS: Readonly<Record<string, string>> = {
+  text: '显示台词',
+  bg: '切换背景',
+  portrait: '调整立绘',
+  timeline: '播放演出',
+  bgm: '播放背景音乐',
+  se: '播放音效',
+  voice: '播放语音',
+  wait: '等待剧情时间',
+};
+
+/** 用户先读中文动作；内部 kind/op 只保留为次级技术信息。 */
+export function projectPreviewTraceRow(message: PreviewTraceEventMessage): PreviewTraceRowProjection {
+  const { kind, source } = message.event;
+  const title = kind === 'instruction'
+    ? INSTRUCTION_OP_LABELS[source.op] ?? TRACE_KIND_LABELS.instruction
+    : TRACE_KIND_LABELS[kind] ?? '剧情事件';
+  return {
+    title,
+    sourceLabel: `${source.sceneId} 场景 · 第 ${source.line} 行`,
+    technicalLabel: `事件 ${message.sequence + 1} · ${kind} / ${source.op}`,
+  };
+}
+
 let currentPreviewTrace: PreviewTraceMessage[] = [];
 
 /** Task 7 展示用的当前预览轨迹快照；只返回当前 iframe 的浅拷贝。 */
@@ -147,10 +195,10 @@ function bindPreviewReadyListenerOnce(): void {
   previewReadyListenerBound = true;
   window.addEventListener('message', (e: MessageEvent) => {
     const d = e.data as { type?: string } | null;
-    if (d?.type === 'surdet-preview-ready') notifyPreviewReady?.();
+    if (d?.type === 'surdet-preview-ready') notifyPreviewReady?.(e.source);
     if (d?.type === 'surdet-preview-diagnostic') {
       const diagnostic = normalizePreviewDiagnostic((d as { diagnostic?: unknown }).diagnostic);
-      if (diagnostic) notifyPreviewDiagnostic?.(diagnostic);
+      if (diagnostic) notifyPreviewDiagnostic?.(diagnostic, e.source);
     }
     if (d?.type === 'surdet-preview-trace-start' || d?.type === 'surdet-preview-trace-event' || d?.type === 'surdet-preview-trace-complete') {
       const trace = normalizePreviewTraceMessage(e.data);
@@ -388,56 +436,126 @@ async function readProjectTimelines(): Promise<unknown[]> {
   return parsePreviewTimelines(state.timelines).definitions;
 }
 
-export function renderPreviewPanel(container: HTMLElement): void {
+export interface PreviewPanelOptions {
+  embedded?: boolean;
+}
+
+export function renderPreviewPanel(container: HTMLElement, options: PreviewPanelOptions = {}): void {
   container.innerHTML = '';
+  const mountRevision = ++previewPanelMountRevision;
   if (state.reviewWorkspace === null) state.previewChoices = null;
   currentPreviewTrace = [];
   const sc = state.current ? state.scenes.get(state.current) : undefined;
 
-  const toolbar = h('div', 'preview-toolbar');
+  const workspace = h('div', 'preview-workspace');
+  workspace.setAttribute('data-preview-layout', options.embedded === true ? 'embedded' : 'standalone');
+  const toolbar = h('header', 'preview-toolbar');
+  const title = h('h2', 'preview-title', '剧情预览');
+  toolbar.appendChild(title);
+  const controls = h('div', 'preview-controls');
+  const entryControl = h('label', 'preview-entry-control');
+  entryControl.appendChild(h('span', 'preview-control-label', '播放入口'));
   const labelSel = h('select');
+  labelSel.setAttribute('aria-label', '播放入口');
   const fromStart = h('option', undefined, '从场景开头');
   fromStart.value = '';
   labelSel.appendChild(fromStart);
   if (sc) {
     for (const lb of listLabels(sc.text)) {
-      const opt = h('option', undefined, `从 @label ${lb}`);
+      const opt = h('option', undefined, `从段落标记 ${lb}`);
       opt.value = lb;
       labelSel.appendChild(opt);
     }
   }
-  toolbar.appendChild(labelSel);
+  entryControl.appendChild(labelSel);
+  controls.appendChild(entryControl);
 
   const fastWrap = h('label', 'preview-fast');
   const fastChk = h('input');
   fastChk.type = 'checkbox';
   fastChk.checked = true;
-  fastWrap.append(fastChk, document.createTextNode(' 快进速度（跳过打字机）'));
-  toolbar.appendChild(fastWrap);
+  fastWrap.append(fastChk, document.createTextNode(' 跳过逐字显示'));
+  controls.appendChild(fastWrap);
 
-  const playBtn = h('button', 'primary', '▶ 播放 / 重载');
-  toolbar.appendChild(playBtn);
-  container.appendChild(toolbar);
+  const playBtn = h('button', 'preview-replay-action', '重新播放');
+  playBtn.setAttribute('data-action', 'reload-preview');
+  playBtn.setAttribute('data-action-scope', 'workspace');
+  controls.appendChild(playBtn);
+  toolbar.appendChild(controls);
+  workspace.appendChild(toolbar);
 
+  const stage = h('section', 'preview-stage');
+  stage.setAttribute('aria-label', '剧情舞台');
   const frame = h('iframe', 'preview-frame');
   frame.src = './preview.html';
   frame.title = '剧情预览';
-  container.appendChild(frame);
+  stage.appendChild(frame);
+  workspace.appendChild(stage);
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
-  container.appendChild(diagnostics);
-  const traceBox = h('div', 'preview-trace');
+  workspace.appendChild(diagnostics);
+
+  const traceBox = h('section', 'preview-causal-dock preview-trace');
   traceBox.id = 'preview-trace';
-  traceBox.appendChild(h('h3', undefined, '因果轨迹'));
-  const traceList = h('div', 'preview-trace-list');
+  const dockHeader = h('div', 'preview-causal-header');
+  const dockHeading = h('div', 'preview-causal-heading');
+  dockHeading.appendChild(h('h2', undefined, '因果记录'));
+  const dockCount = h('span', 'preview-causal-count', '本次 0 条');
+  dockHeading.appendChild(dockCount);
+  dockHeader.appendChild(dockHeading);
+  const dockToggle = h('button', 'preview-causal-toggle', '收起记录');
+  dockToggle.type = 'button';
+  dockToggle.setAttribute('data-action-scope', 'workspace');
+  dockHeader.appendChild(dockToggle);
+  traceBox.appendChild(dockHeader);
+  const traceList = h('ol', 'preview-causal-list preview-trace-list');
+  traceList.id = 'preview-causal-list';
+  dockToggle.setAttribute('aria-controls', traceList.id);
   traceBox.appendChild(traceList);
-  container.appendChild(traceBox);
+  workspace.appendChild(traceBox);
+  container.appendChild(workspace);
+
+  const constrainedViewport = window.matchMedia?.('(max-width: 480px), (max-height: 700px)').matches === true;
+  let dockExpanded = options.embedded !== true && !constrainedViewport;
+  let lastFocusedSequence: number | null = null;
+  let savedScrollTop = 0;
+
+  const focusTraceSequence = (sequence: number): void => {
+    const target = traceList.querySelector<HTMLButtonElement>(`[data-preview-trace-sequence="${sequence}"]`);
+    target?.focus({ preventScroll: true });
+  };
+
+  const updateDockState = (): void => {
+    traceList.hidden = !dockExpanded;
+    dockToggle.setAttribute('aria-expanded', String(dockExpanded));
+    dockToggle.textContent = dockExpanded ? '收起记录' : '展开记录';
+  };
+
+  dockToggle.onclick = () => {
+    savedScrollTop = traceList.scrollTop;
+    dockExpanded = !dockExpanded;
+    updateDockState();
+    if (dockExpanded && lastFocusedSequence !== null) {
+      queueMicrotask(() => {
+        traceList.scrollTop = savedScrollTop;
+        focusTraceSequence(lastFocusedSequence!);
+      });
+    }
+  };
+  updateDockState();
 
   const renderTraceList = (): void => {
+    const active = document.activeElement as HTMLElement | null | undefined;
+    const activeSequence = active?.dataset?.['previewTraceSequence'];
+    const restoreFocus = activeSequence !== undefined;
+    if (activeSequence !== undefined) lastFocusedSequence = Number(activeSequence);
+    savedScrollTop = traceList.scrollTop;
     traceList.innerHTML = '';
     const events = currentPreviewTrace.filter((message): message is PreviewTraceEventMessage => message.type === 'surdet-preview-trace-event');
+    dockCount.textContent = `本次 ${events.length} 条`;
     if (events.length === 0) {
-      traceList.appendChild(h('div', 'empty', '尚无本次预览观察证据'));
+      const emptyItem = h('li', 'preview-causal-empty', '播放剧情后，这里会按顺序显示画面变化及其来源。');
+      traceList.appendChild(emptyItem);
       return;
     }
     for (const message of events) {
@@ -456,28 +574,48 @@ export function renderPreviewPanel(container: HTMLElement): void {
         );
         if (cueRefs.length > 0) selectedRef = cueRefs[0]!;
       }
+      const row = projectPreviewTraceRow(message);
+      const item = h('li', 'preview-causal-item');
       const button = h('button', message.sequence === state.selectedTraceStep ? 'preview-trace-event selected' : 'preview-trace-event');
-      button.textContent = `#${message.sequence} ${message.event.kind} · ${source.sceneId}:${source.line}${message.presentationApplied ? ' · 演出已应用' : ''}`;
+      button.type = 'button';
+      button.setAttribute('data-preview-trace-sequence', String(message.sequence));
+      button.setAttribute('aria-pressed', String(message.sequence === state.selectedTraceStep));
+      button.append(
+        h('span', 'preview-trace-sequence', String(message.sequence + 1).padStart(2, '0')),
+        h('span', 'preview-trace-summary', row.title),
+        h('span', 'preview-trace-result', message.presentationApplied ? '画面已更新' : '剧情已推进'),
+        h('span', 'preview-trace-source', row.sourceLabel),
+        h('span', 'preview-trace-technical surdet-technical-text', row.technicalLabel),
+      );
       button.title = selectedRef ?? '当前对象索引尚未定位该事件';
+      button.onfocus = () => { lastFocusedSequence = message.sequence; };
       button.onclick = () => {
         state.selectedTraceStep = message.sequence;
         state.selectedObjectRef = selectedRef;
         dispatchPreviewTraceSelection({ event: message.event, objectRef: selectedRef, sequence: message.sequence });
         renderTraceList();
       };
-      traceList.appendChild(button);
+      item.appendChild(button);
+      traceList.appendChild(item);
     }
+    traceList.scrollTop = savedScrollTop;
+    if (restoreFocus && lastFocusedSequence !== null) focusTraceSequence(lastFocusedSequence);
   };
   renderTraceList();
 
   let currentTraceId: string | null = null;
   let currentTraceGeneration = -1;
+  let lastTraceSequence = -1;
+  let traceCompleted = false;
   notifyPreviewTrace = (message, source) => {
-    if (source !== frame.contentWindow) return;
+    if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
+    if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     if (message.type === 'surdet-preview-trace-start') {
       if (currentTraceGeneration >= 0 && message.generation < currentTraceGeneration) return;
       currentTraceGeneration = message.generation;
       currentTraceId = message.traceId;
+      lastTraceSequence = -1;
+      traceCompleted = false;
       currentPreviewTrace = [message];
       state.previewTrace = [];
       state.selectedTraceStep = null;
@@ -487,6 +625,13 @@ export function renderPreviewPanel(container: HTMLElement): void {
     const current = acceptPreviewTraceMessage(message, currentTraceGeneration);
     if (current === null) return;
     if (current.traceId !== currentTraceId) return;
+    if (traceCompleted) return;
+    if (current.type === 'surdet-preview-trace-event') {
+      if (current.sequence <= lastTraceSequence) return;
+      lastTraceSequence = current.sequence;
+    } else {
+      traceCompleted = true;
+    }
     currentPreviewTrace = [...currentPreviewTrace, current];
     if (current.type === 'surdet-preview-trace-event') state.previewTrace = [...state.previewTrace, current.event];
     renderTraceList();
@@ -494,7 +639,9 @@ export function renderPreviewPanel(container: HTMLElement): void {
 
   let ready = false;
   let latestGeneration = 0;
-  notifyPreviewDiagnostic = (diagnostic) => {
+  notifyPreviewDiagnostic = (diagnostic, source) => {
+    if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
+    if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     if (diagnostic.generation < latestGeneration) return;
     latestGeneration = diagnostic.generation;
     diagnostics.textContent = `${diagnostic.level === 'error' ? '错误' : diagnostic.level === 'warning' ? '警告' : '状态'}：${diagnostic.message}${diagnostic.label ? `（@label ${diagnostic.label}）` : ''}`;
@@ -506,6 +653,8 @@ export function renderPreviewPanel(container: HTMLElement): void {
     const revision = ++sendRevision;
     currentTraceId = null;
     currentTraceGeneration = -1;
+    lastTraceSequence = -1;
+    traceCompleted = false;
     currentPreviewTrace = [];
     state.previewTrace = [];
     state.selectedTraceStep = null;
@@ -566,14 +715,16 @@ export function renderPreviewPanel(container: HTMLElement): void {
     void send();
   };
 
-  notifyPreviewReady = () => {
+  notifyPreviewReady = (source) => {
+    if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
+    if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     ready = true;
     void send(); // 就绪即播放当前场景
   };
   bindPreviewReadyListenerOnce();
 
   playBtn.onclick = () => {
-    // “播放 / 重载”只重启当前预览入口。时间轴直演由 Timeline Desk 显式建立，
+    // “重新播放”只重启当前预览入口。时间轴直演由 Timeline Desk 显式建立，
     // 重载不得悄悄降级成普通场景；只有上方入口选择器等明确导航动作才退出直演。
     void send();
   };
@@ -582,6 +733,7 @@ export function renderPreviewPanel(container: HTMLElement): void {
   };
 
   if (!sc) {
-    container.appendChild(h('div', 'empty', '请先在左侧选择一个场景，再回到本标签页播放预览。'));
+    diagnostics.textContent = '请先在左侧选择一个场景，再回到这里播放预览。';
+    diagnostics.className = 'preview-diagnostics info';
   }
 }

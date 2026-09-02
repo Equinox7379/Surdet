@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderPreviewPanel } from '../src/panels/preview-panel.js';
+import { getCurrentPreviewTrace, renderPreviewPanel } from '../src/panels/preview-panel.js';
 import { state } from '../src/state.js';
 
 class FakeElement {
@@ -7,6 +7,7 @@ class FakeElement {
   readonly children: FakeElement[] = [];
   className = '';
   checked = false;
+  isConnected = true;
   src = '';
   title = '';
   type = '';
@@ -136,9 +137,19 @@ describe('timeline preview replay', () => {
     const frame = container.querySelector('iframe');
     expect(frame?.contentWindow).not.toBeNull();
     expect(previewMessageListener).not.toBeNull();
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: {} } as unknown as MessageEvent);
+    await Promise.resolve();
+    expect(postedPreviewMessages).toHaveLength(0);
+
+    container.isConnected = false;
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame!.contentWindow } as unknown as MessageEvent);
+    await Promise.resolve();
+    expect(postedPreviewMessages).toHaveLength(0);
+
+    container.isConnected = true;
     previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame!.contentWindow } as unknown as MessageEvent);
     await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
-    const reload = container.findButton('▶ 播放 / 重载');
+    const reload = container.findButton('重新播放');
     expect(reload).not.toBeNull();
     reload!.onclick?.();
     expect(state.previewTimelineId).toBe('opening');
@@ -152,5 +163,38 @@ describe('timeline preview replay', () => {
     entrySelector!.value = 'start';
     entrySelector!.onchange?.();
     expect(state.previewTimelineId).toBeNull();
+
+    previewMessageListener!({
+      data: { type: 'surdet-preview-trace-start', traceId: 'trace-1', generation: 7, sceneId: 'intro' },
+      source: frame!.contentWindow,
+    } as unknown as MessageEvent);
+    const event = {
+      type: 'surdet-preview-trace-event',
+      traceId: 'trace-1',
+      generation: 7,
+      sequence: 1,
+      coreEmitted: true,
+      presentationApplied: true,
+      presentationBefore: {},
+      presentationAfter: {},
+      event: {
+        kind: 'instruction',
+        source: { sceneId: 'intro', index: 1, op: 'text', file: 'intro.gal', line: 3, col: 1 },
+      },
+    };
+    previewMessageListener!({ data: event, source: frame!.contentWindow } as unknown as MessageEvent);
+    previewMessageListener!({ data: event, source: frame!.contentWindow } as unknown as MessageEvent);
+    previewMessageListener!({ data: { ...event, sequence: 0 }, source: frame!.contentWindow } as unknown as MessageEvent);
+    previewMessageListener!({
+      data: { type: 'surdet-preview-trace-complete', traceId: 'trace-1', generation: 7, status: 'passed', eventCount: 1 },
+      source: frame!.contentWindow,
+    } as unknown as MessageEvent);
+    previewMessageListener!({ data: { ...event, sequence: 2 }, source: frame!.contentWindow } as unknown as MessageEvent);
+
+    expect(getCurrentPreviewTrace().map((message) => message.type)).toEqual([
+      'surdet-preview-trace-start',
+      'surdet-preview-trace-event',
+      'surdet-preview-trace-complete',
+    ]);
   });
 });
