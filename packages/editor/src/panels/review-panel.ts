@@ -765,7 +765,7 @@ function renderResultReview(
         const target = document.getElementById('review-view') ?? container;
         renderReviewPanel(target, workspace, options);
         const host = target.querySelector('#review-preview-host');
-        if (host) renderPreviewPanel(host as HTMLElement);
+        if (host) renderPreviewPanel(host as HTMLElement, { embedded: true });
       })
       .catch((error) => {
         resultPreviews.delete(workspace);

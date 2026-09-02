@@ -1396,6 +1396,7 @@ function renderMainArea(): void {
   } else if (state.mainTab === 'preview') {
     const pvEl = h('section');
     pvEl.id = 'preview-view';
+    pvEl.dataset['editorPanel'] = 'preview';
     col.appendChild(pvEl);
     renderPreviewPanel(pvEl);
   } else if (state.mainTab === 'stats') {

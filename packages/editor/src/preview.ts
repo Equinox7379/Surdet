@@ -947,6 +947,18 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   appliedAssetUrls = urls;
 }
 
+function invalidatePreviewSession(): void {
+  interp = null;
+  store = null;
+  registry = null;
+  calendar = null;
+  growth = null;
+  achievements = null;
+  scheduler = null;
+  affection = null;
+  turnResumeSnap = null;
+}
+
 async function load(p: LoadPayload): Promise<void> {
   const activeRuntime = runtime;
   if (!bus || !activeRuntime) return;
@@ -958,6 +970,9 @@ async function load(p: LoadPayload): Promise<void> {
   const trace = startPreviewTrace(generation, p);
   postPreviewDiagnostic({ generation, level: 'info', phase: 'reload', message: '预览正在重新加载…', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   clearError();
+  // 从新请求开始的一刻起，上一轮会话就不再是当前事实。即使后续编译失败，
+  // 调试探针和输入事件也不能继续推进旧解释器。
+  invalidatePreviewSession();
   try {
     previewProjectKey = p.projectKey?.trim() || 'untitled';
     sessionStart = Date.now();
@@ -1066,6 +1081,8 @@ async function load(p: LoadPayload): Promise<void> {
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
     postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   } catch (err) {
+    // 构造新解释器后仍可能在 start() 阶段失败；半成品会话同样不得继续响应输入。
+    invalidatePreviewSession();
     const message = `预览失败：${err instanceof Error ? err.message : String(err)}`;
     failPreviewTrace(trace, message);
     postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message, sceneId: p.sceneId });
