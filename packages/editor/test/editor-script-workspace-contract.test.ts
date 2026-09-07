@@ -28,7 +28,7 @@ describe('editor continuous manuscript contract', () => {
     expect(editorSource).toMatch(/h\(\s*['"]article['"]\s*,\s*['"]manuscript-sheet['"]\s*\)/);
     expect(editorSource).toMatch(/dataset\.editorRegion\s*=\s*['"]manuscript['"]/);
     expect(editorSource).toMatch(/dataset\.sceneId\s*=\s*state\.current/);
-    expect(editorSource).toMatch(/lines\.forEach\(\(line\s*,\s*index\)\s*=>\s*\{[^}]*renderBlock\(line\s*,\s*index\)/s);
+    expect(editorSource).toMatch(/lines\.forEach\(\(line\s*,\s*index\)\s*=>\s*\{[^}]*renderBlock\(line\s*,\s*index\s*,\s*lines\.length\)/s);
     expect(editorSource).not.toMatch(/(?:narrative|dialogue|interaction)Column/i);
   });
 
