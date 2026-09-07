@@ -8,9 +8,12 @@ class FakeElement {
   readonly tagName: string;
   readonly children: FakeElement[] = [];
   readonly attributes = new Map<string, string>();
+  readonly dataset: Record<string, string> = {};
+  readonly style = { setProperty: (_name: string, _value: string): void => {} };
   className = '';
   id = '';
   type = '';
+  open = false;
   onclick: (() => void) | null = null;
   private ownText = '';
 
@@ -38,10 +41,37 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+    if (name.startsWith('data-')) {
+      const key = name.slice(5).replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      this.dataset[key] = value;
+    }
   }
 
   getAttribute(name: string): string | null {
+    if (name.startsWith('data-')) {
+      const key = name.slice(5).replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      return this.dataset[key] ?? null;
+    }
     return this.attributes.get(name) ?? null;
+  }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    const matches = (element: FakeElement): boolean => {
+      if (selector === '[data-workbench-panel]') return element.dataset.workbenchPanel !== undefined;
+      if (selector.startsWith('.')) return element.className.split(/\s+/).includes(selector.slice(1));
+      return false;
+    };
+    const found: FakeElement[] = [];
+    const visit = (element: FakeElement): void => {
+      if (matches(element)) found.push(element);
+      for (const child of element.children) visit(child);
+    };
+    visit(this);
+    return found;
+  }
+
+  querySelector(selector: string): FakeElement | null {
+    return this.querySelectorAll(selector)[0] ?? null;
   }
 
   click(): void {
@@ -102,18 +132,34 @@ describe('integrated authoring workbench contract', () => {
     expect(workbench.manuscript.getAttribute('data-editor-region')).toBe('manuscript');
     expect(workbench.context.id).toBe('right');
     expect(workbench.context.getAttribute('data-editor-region')).toBe('context');
+    expect(workbench.root.dataset.mobilePanel).toBe('editor');
 
-    const toolbar = workbench.root.children[1]!.children[0]!;
-    const toggle = toolbar.children[0]!;
-    expect(toggle.tagName).toBe('BUTTON');
-    expect(toggle.getAttribute('aria-controls')).toBe('right');
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    toggle.click();
+    const navigation = workbench.root.children[0]!;
+    expect(navigation.tagName).toBe('NAV');
+    const panelControls = navigation.querySelectorAll('[data-workbench-panel]');
+    expect(panelControls).toHaveLength(5);
+    const editorControl = panelControls.find((item) => item.dataset.workbenchPanel === 'editor')!;
+    const contextControl = panelControls.find((item) => item.dataset.workbenchPanel === 'context')!;
+    expect(editorControl.getAttribute('aria-pressed')).toBe('true');
+    expect(contextControl.getAttribute('aria-pressed')).toBe('false');
+
+    const details = workbench.root.querySelector('.v4-project-context')!;
+    expect(details.tagName).toBe('DETAILS');
+    expect(details.children[0]!.tagName).toBe('SUMMARY');
+    expect(details.children[0]!.dataset.action).toBe('toggle-authoring-context');
+
+    contextControl.click();
+    expect(workbench.root.dataset.mobilePanel).toBe('context');
     expect(workbench.root.getAttribute('data-auxiliary-view')).toBe('context');
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    toggle.click();
+    expect(editorControl.getAttribute('aria-pressed')).toBe('false');
+    expect(contextControl.getAttribute('aria-pressed')).toBe('true');
+    expect(details.open).toBe(true);
+
+    editorControl.click();
+    expect(workbench.root.dataset.mobilePanel).toBe('editor');
     expect(workbench.root.getAttribute('data-auxiliary-view')).toBe('outline');
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(editorControl.getAttribute('aria-pressed')).toBe('true');
+    expect(contextControl.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('keeps the topology builder pure and mounts it from the single composition root', () => {

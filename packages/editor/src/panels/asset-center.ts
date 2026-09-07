@@ -1,3 +1,4 @@
+import { enhanceAssetCenter } from '../v4/surfaces.js';
 import type { ProjectAssetItem, ProjectAssetKind, ProjectAssetReference } from '@surdet/authoring';
 import { state, h } from '../state.js';
 import {
@@ -882,7 +883,7 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   }
   const filtered = filterAssetItems(items);
   const effectiveAssetView = relocationProjection.mode === 'batch' ? 'list' : state.assetCenterView;
-  const thumbnailSession = effectiveAssetView === 'grid' ? beginAssetThumbnailSession() : null;
+  const thumbnailSession = beginAssetThumbnailSession();
   if (relocationProjection.mode === 'batch') hooks.assetRelocation.onSetVisibleBatchItems(filtered.map((item) => item.assetId));
   if (state.assetCenterSelectedId && !items.some((item) => item.assetId === state.assetCenterSelectedId)) {
     state.assetCenterSelectedId = null;
@@ -1314,5 +1315,6 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   importHost.hidden = !hooks.assetImportOpen;
   if (hooks.assetImportOpen) renderAssetImportWorkbench(importHost, state.assetImportWorkspace, hooks.assetImport);
   container.append(header, importHost, overview, insights, shell);
+  enhanceAssetCenter(container);
 
 }

@@ -59,7 +59,11 @@ import {
   renameSceneAtKey,
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession } from './panels/config.js';
-import { renderPreviewPanel } from './panels/preview-panel.js';
+import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
+import { disposeScriptV4 } from './v4/script-workbench.js';
+import { bindV4Navigation } from './v4/ui.js';
+import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
+import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
@@ -219,6 +223,9 @@ function invalidateAuthoringForProjectChange(): void {
 }
 
 function closeCurrentProjectRuntime(): void {
+  disposeScriptV4();
+  disposePreviewPanel();
+  disposeV4SurfaceViews();
   invalidateAuthoringForProjectChange();
   resetAssetImportRuntime();
 }
@@ -1405,7 +1412,45 @@ bindAuditHooks({
 
 const appEl = document.getElementById('app')!;
 
+bindV4Navigation({
+  onMode: (mode) => {
+    if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) {
+      setStatus('请先完成当前恢复或素材整理操作', false, 5000); return;
+    }
+    state.previewTimelineId = null;
+    state.mainTab = mode;
+    renderMainArea();
+  },
+  onTimeline: (id) => {
+    if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) return;
+    if (!state.timelines.some((entry) => entry.id === id)) {
+      setStatus('引用的时间轴不存在，请先检查项目内容', false, 5000); return;
+    }
+    state.currentTimeline = id;
+    state.currentTimelineCue = null;
+    state.previewTimelineId = null;
+    state.mainTab = 'timeline';
+    renderMainArea();
+  },
+  onAsset: (id) => {
+    if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) return;
+    const item = state.assetIntelligence?.items.find((candidate) => candidate.assetId === id);
+    if (!item) { setStatus('素材事实已变化，请重新读取', false, 5000); return; }
+    state.assetCenterQuery = '';
+    state.assetCenterKind = 'all';
+    state.assetCenterStatus = 'all';
+    state.assetCenterFolder = 'all';
+    state.mainTab = 'assets';
+    state.assetCenterSelectedId = id;
+    renderMainArea();
+    void selectAssetCenterItem(item, true);
+  },
+});
+
 function renderAll(): void {
+  disposeScriptV4();
+  disposePreviewPanel();
+  disposeV4SurfaceViews();
   appEl.innerHTML = '';
   const header = renderProjectBar(projectBarProjection(), {
     onOpenProject: () => { void openProjectSafely(); },
@@ -1448,12 +1493,16 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
+  disposeScriptV4();
+  disposePreviewPanel();
+  disposeV4SurfaceViews();
   if (state.mainTab !== 'assets') {
     disposeAssetCenterPreview();
     disposeAssetCenterThumbnails();
   }
   main.innerHTML = '';
   const navigation = renderModeNavigation(state.mainTab, (mode) => {
+      if (state.projectLoading) return;
       if (state.projectWriteLock === 'asset-relocation' && mode !== 'assets') {
         setStatus('素材整理进行中，完成或取消后才能离开素材中心', false, 5000);
         return;
@@ -1581,6 +1630,7 @@ function renderMainArea(): void {
     stEl.dataset['editorPanel'] = 'stats';
     col.appendChild(stEl);
     renderStatsPanel(stEl);
+    renderAssetInsights(stEl);
   } else if (state.mainTab === 'audit') {
     const auEl = h('section');
     auEl.id = 'audit-view';

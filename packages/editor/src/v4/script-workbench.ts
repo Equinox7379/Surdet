@@ -1,0 +1,713 @@
+import { state, h, setStatus, type SceneEntry } from '../state.js';
+import { setCurrentText } from '../history.js';
+import { parseScript, splitInstr, type LineModel } from '../model.js';
+import { decodeInstructionArgument } from '@surdet/authoring';
+import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
+import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode, navigateTimeline } from './ui.js';
+import {
+  applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
+  moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
+  setInstructionPosition, simpleChoice, sourceEol, stepAt, writeSimpleChoice,
+  type ScriptView, type SourceEdit,
+} from './script-source.js';
+
+interface ViewState { view: ScriptView; line: number; scroll: number; dock: 'layout' | 'runtime' }
+const viewStates = new WeakMap<SceneEntry, ViewState>();
+let active: ScriptWorkbench | null = null;
+const ACTION_NAMES: Record<string, string> = {
+  scene: '场景', bg: '背景', show: '人物出场', hide: '人物退场', wait: '等待',
+  bgm: '背景音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
+  set: '变量', mod: '变量增量', choice: '分支选择', goto: '前往段落', jump: '前往场景',
+  call: '调用场景', timeline: '演出', if: '条件', elif: '其他条件', else: '否则',
+  endif: '条件结束', end: '结束', fadein: '淡入', fadeout: '淡出', mov: '人物移动',
+};
+
+/** Called before the legacy renderer replaces its rows. Return borrowed DOM nodes first. */
+export function prepareScriptV4Render(): void { active?.returnFields(); }
+export function disposeScriptV4(): void { active?.dispose(); active = null; }
+
+/** Decorates existing B01-bound rows; it does not own a second document or undo stack. */
+export function installScriptV4(editor: HTMLElement, rerender: () => void): void {
+  const root = editor.closest<HTMLElement>('.authoring-workbench');
+  const scene = state.current === null ? undefined : state.scenes.get(state.current);
+  if (!root?.querySelector('#script-v4-inspector') || !scene || state.current === null) return;
+  if (!active || active.root !== root || active.scene !== scene) {
+    disposeScriptV4();
+    active = new ScriptWorkbench(root, editor, scene, state.current, rerender);
+  }
+  active.decorate();
+}
+
+export class ScriptWorkbench {
+  readonly view: ViewState;
+  private readonly abort = new AbortController();
+  private readonly inspector: HTMLElement;
+  private readonly picture: HTMLElement;
+  private readonly runtime: HTMLElement;
+  private readonly sourceStatus: HTMLElement;
+  private stageImages = new ImageScope();
+  private inspectorImages = new ImageScope();
+  private rowImages = new ImageScope();
+  private borrowed: { block: HTMLElement; fields: HTMLElement } | null = null;
+  private inputScheduled = false;
+  private knownSource = '';
+  private lastStageIdentity = '';
+  private pointerCleanup: (() => void) | null = null;
+
+  constructor(
+    readonly root: HTMLElement,
+    private readonly editor: HTMLElement,
+    readonly scene: SceneEntry,
+    private readonly sceneKey: string,
+    private readonly rerender: () => void,
+  ) {
+    this.view = viewStates.get(scene) ?? { view: 'arrange', line: Math.max(0, parseScript(scene.text).findIndex((line) => line.kind === 'text')), scroll: 0, dock: 'layout' };
+    viewStates.set(scene, this.view);
+    this.inspector = root.querySelector('#script-v4-inspector')!;
+    this.picture = root.querySelector('#script-v4-edit-layout')!;
+    this.runtime = root.querySelector('#script-v4-runtime')!;
+    this.sourceStatus = root.querySelector('#script-v4-source-status')!;
+    this.knownSource = scene.text;
+    this.installToolbar();
+    root.addEventListener('input', () => this.afterInput(), { signal: this.abort.signal });
+    root.addEventListener('change', () => this.afterInput(), { signal: this.abort.signal });
+    editor.addEventListener('focusin', (event) => {
+      const target = event.target as HTMLElement;
+      const block = target.closest<HTMLElement>('.block[data-line]');
+      if (block && !target.closest('.technical-details') && Number(block.dataset.line) !== this.view.line) {
+        this.select(Number(block.dataset.line), false);
+      }
+    }, { signal: this.abort.signal });
+    editor.addEventListener('scroll', () => { this.view.scroll = editor.scrollTop; }, { signal: this.abort.signal });
+    this.installDock();
+  }
+
+  private current(): boolean {
+    return this.root.isConnected && state.current === this.sceneKey && state.scenes.get(this.sceneKey) === this.scene;
+  }
+  private editable(): boolean { return this.current() && allowedToEdit(this.root); }
+  private lines(): LineModel[] { return parseScript(this.scene.text); }
+  private block(index: number): HTMLElement | null { return this.editor.querySelector(`.block[data-line="${index}"]`); }
+
+  returnFields(): void {
+    const borrowed = this.borrowed;
+    if (!borrowed) return;
+    const technical = borrowed.block.querySelector('.technical-details');
+    if (borrowed.block.isConnected) borrowed.block.insertBefore(borrowed.fields, technical);
+    else borrowed.fields.remove();
+    this.borrowed = null;
+  }
+  dispose(): void {
+    this.returnFields();
+    this.abort.abort();
+    this.stageImages.dispose(); this.inspectorImages.dispose(); this.rowImages.dispose();
+    this.pointerCleanup?.();
+    if (this.runtime.querySelector('iframe.preview-frame')) {
+      disposePreviewPanel();
+      this.runtime.replaceChildren();
+    }
+  }
+
+  private installToolbar(): void {
+    const host = this.root.querySelector<HTMLElement>('#script-v4-toolbar')!;
+    const views = h('div', 'v4-view-switch');
+    views.setAttribute('aria-label', '剧本编辑方式');
+    for (const [value, label] of [['arrange', '编排'], ['manuscript', '稿件'], ['source', '源码']] as const) {
+      const control = button(label, () => {
+        if (!this.current()) return;
+        this.view.view = value;
+        this.returnFields();
+        this.rerender();
+      });
+      control.dataset.scriptView = value;
+      views.append(control);
+    }
+    host.replaceChildren(views,
+      button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'),
+      button('查看素材', () => navigateMode('assets')),
+      button('导出 .gal', () => this.download()));
+  }
+
+  private installDock(): void {
+    const tools = this.root.querySelector<HTMLElement>('#script-v4-stage-tools')!;
+    const show = (mode: 'layout' | 'runtime'): void => {
+      if (!this.current()) return;
+      if (mode === 'runtime' && !this.editable()) return;
+      this.view.dock = mode;
+      this.picture.hidden = mode !== 'layout';
+      this.runtime.hidden = mode !== 'runtime';
+      for (const control of tools.querySelectorAll<HTMLElement>('[data-stage-mode]')) {
+        control.setAttribute('aria-pressed', String(control.dataset.stageMode === mode));
+      }
+      if (mode === 'layout') {
+        disposePreviewPanel();
+        this.runtime.replaceChildren();
+        this.drawStage();
+      } else {
+        // Deliberate launch, never selecting an arbitrary source row and claiming a replay.
+        state.previewTimelineId = null;
+        state.previewChoices = null;
+        renderPreviewPanel(this.runtime, { embedded: true });
+      }
+      this.updateStatus();
+    };
+    const edit = button('编辑排布', () => show('layout'));
+    edit.dataset.stageMode = 'layout';
+    const play = button('运行预览', () => show('runtime'));
+    play.dataset.stageMode = 'runtime';
+    tools.replaceChildren(edit, play);
+    // Never auto-start audio on returning from another view.
+    this.view.dock = 'layout';
+    edit.setAttribute('aria-pressed', 'true');
+    play.setAttribute('aria-pressed', 'false');
+    this.runtime.hidden = true;
+    this.picture.hidden = false;
+  }
+
+  decorate(): void {
+    if (!this.current()) return;
+    this.returnFields();
+    this.rowImages.dispose(); this.rowImages = new ImageScope();
+    const lines = this.lines();
+    this.knownSource = this.scene.text;
+    this.view.line = Math.min(Math.max(0, this.view.line), lines.length - 1);
+    this.root.dataset.scriptView = this.view.view;
+    this.inspector.toggleAttribute('inert', this.view.view === 'source');
+    for (const control of this.root.querySelectorAll<HTMLElement>('[data-script-view]')) {
+      if (control === this.root) continue;
+      control.setAttribute('aria-pressed', String(control.dataset.scriptView === this.view.view));
+    }
+    this.root.querySelector('#v4-speaker-choices')?.remove();
+    const speakers = h('datalist'); speakers.id = 'v4-speaker-choices';
+    try {
+      const config = JSON.parse(state.gameConfigText) as { characters?: Record<string, { name?: unknown }> };
+      for (const character of Object.values(config.characters ?? {})) {
+        if (typeof character?.name === 'string') speakers.append(new Option(character.name, character.name));
+      }
+    } catch { /* Invalid config remains visible to the shared validator, not replaced with invented roles. */ }
+    this.root.append(speakers);
+    this.editor.querySelector('.v4-source-editor')?.remove();
+    if (this.view.view === 'source') this.createSourceEditor();
+    for (const block of this.editor.querySelectorAll<HTMLElement>('.block')) this.decorateBlock(block, lines[Number(block.dataset.line)]);
+    this.select(this.view.line, false);
+    this.editor.scrollTop = this.view.scroll;
+    this.drawStage();
+    refreshPreviewSourceState();
+  }
+
+  private decorateBlock(block: HTMLElement, line: LineModel | undefined): void {
+    if (block.dataset.v4Bound === 'true') return;
+    block.dataset.v4Bound = 'true';
+    const index = Number(block.dataset.line);
+    if (!line) return;
+    const action = button('', () => this.select(index, true), 'v4-step-summary');
+    action.dataset.stepSummary = String(index);
+    block.insertBefore(action, block.querySelector('.fields'));
+    const ops = block.querySelector<HTMLElement>('.ops');
+    if (ops) {
+      ops.replaceChildren(
+        button('↑', () => this.structural((text) => moveStep(text, index, -1)), 'v4-row-op'),
+        button('↓', () => this.structural((text) => moveStep(text, index, 1)), 'v4-row-op'),
+        button('＋', () => { this.select(index, false); this.openInsert(); }, 'v4-row-op'),
+        button('复制', () => this.structural((text) => duplicateStep(text, index)), 'v4-row-op'),
+        button('删除', () => this.remove(index), 'v4-row-op'),
+      );
+      const labels = ['上移剧情步骤', '下移剧情步骤', '在步骤后添加剧情', '复制剧情步骤', '删除剧情步骤'];
+      [...ops.querySelectorAll('button')].forEach((control, i) => { control.setAttribute('aria-label', `${labels[i]}，第 ${index + 1} 行`); });
+    }
+    const handle = button('⋮⋮', () => {}, 'v4-drag-handle');
+    handle.setAttribute('aria-label', `拖动第 ${index + 1} 行所在步骤；也可使用上移下移`);
+    handle.onpointerdown = (event) => this.beginDrag(event, index, handle);
+    block.prepend(handle);
+    this.decorateDialogue(block);
+    this.updateSummary(block, line);
+  }
+
+  private decorateDialogue(block: HTMLElement): void {
+    if (!block.classList.contains('block-text')) return;
+    const original = block.querySelector<HTMLInputElement>('.fields input.wide');
+    if (!original || original.dataset.v4Proxy === 'true') return;
+    original.dataset.v4Proxy = 'true';
+    block.querySelector<HTMLInputElement>('.fields input:not(.wide)')?.setAttribute('list', 'v4-speaker-choices');
+    original.hidden = true;
+    original.setAttribute('aria-hidden', 'true');
+    original.tabIndex = -1;
+    const textarea = h('textarea', 'v4-dialogue-input');
+    textarea.rows = 2; textarea.value = original.value;
+    textarea.setAttribute('aria-label', '台词内容');
+    textarea.oninput = () => {
+      if (!original.isConnected || !this.editable()) return;
+      if (/[\r\n]/.test(textarea.value)) {
+        const index = Number(block.dataset.line), current = this.lines()[index];
+        if (current?.kind !== 'text') return;
+        const raw = `${current.speaker ? current.speaker + current.sep : ''}${textarea.value}`;
+        this.view.view = 'source';
+        this.structural((text) => {
+          const rows = parseScript(text);
+          const offset = rows.slice(0, index).reduce((sum, row) => sum + row.raw.length + row.eol.length, 0);
+          const eol = current.eol || sourceEol(text);
+          return { text: text.slice(0, offset) + raw.replace(/\r\n|\n|\r/g, eol) + text.slice(offset + current.raw.length), selectedLine: index };
+        });
+        queueMicrotask(() => this.editor.querySelector<HTMLElement>('.v4-source-editor')?.focus());
+        return;
+      }
+      original.value = textarea.value;
+      original.dispatchEvent(new Event('input', { bubbles: true }));
+      this.fitTextarea(textarea);
+    };
+    // A physical newline is another DSL row, not a hidden multiline dialogue token.
+    textarea.onkeydown = (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        const index = Number(block.dataset.line);
+        const current = this.lines()[index];
+        const speaker = current?.kind === 'text' ? current.speaker : '';
+        this.structural((text) => insertStep(text, index, [speaker ? `${speaker}${current?.kind === 'text' ? current.sep : '：'}` : '']), true);
+      }
+    };
+    original.before(textarea);
+    this.fitTextarea(textarea);
+  }
+  private fitTextarea(textarea: HTMLTextAreaElement): void {
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(48, textarea.scrollHeight)}px`;
+  }
+
+  private updateSummary(block: HTMLElement, line: LineModel | undefined): void {
+    const summary = block.querySelector<HTMLElement>('[data-step-summary]');
+    if (!line || !summary) return;
+    const signature = `${line.kind}\0${line.raw}`;
+    if (summary.dataset.sourceSignature === signature) return;
+    summary.dataset.sourceSignature = signature;
+    block.dataset.stepKind = line.kind;
+    if (line.kind === 'instr') {
+      const { name, args } = splitInstr(line.raw);
+      const source = name === 'bg' ? state.dirAssets.find((asset) => asset.kind === 'bg' && asset.key === decodeInstructionArgument(args[0] ?? ''))
+        : name === 'show' ? state.dirAssets.find((asset) => asset.kind === 'portrait' && asset.key === decodeInstructionArgument(args[0] ?? '') && (asset.expr ?? 'normal') === decodeInstructionArgument(args[1] ?? 'normal')) : undefined;
+      const previous = summary.querySelector<HTMLElement>('.v4-step-thumb');
+      const imageKey = source?.sourcePath ?? '';
+      let thumb = previous;
+      if (previous?.dataset.sourcePath !== imageKey) {
+        if (previous) this.rowImages.cancel(previous);
+        thumb = source ? h('span', 'v4-step-thumb') : null;
+        if (thumb) { thumb.dataset.sourcePath = imageKey; queueMicrotask(() => { if (thumb) void this.rowImages.image(thumb, source, '', name === 'bg' ? 'cover' : 'contain'); }); }
+      }
+      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', ACTION_NAMES[name] ?? `@${name}`), h('strong', undefined, args.map(decodeInstructionArgument).join('  ') || (name === 'choice' ? '选择剧情走向' : '无位置参数')));
+    } else if (line.kind === 'choice-option') {
+      const option = simpleChoice(line.raw);
+      summary.replaceChildren(h('small', 'v4-step-type', '选项'), h('strong', undefined, option?.text || line.raw.trim()), h('small', 'v4-source-hint', option ? `→ ${option.target}` : '完整行内动作'));
+    } else if (line.kind === 'label') {
+      summary.replaceChildren(h('small', 'v4-step-type', '段落'), h('strong', undefined, line.name));
+    } else if (line.kind === 'blank') summary.replaceChildren(h('small', undefined, '空行'));
+    else if (line.kind === 'comment') summary.replaceChildren(h('small', undefined, line.raw.trim()));
+    else summary.replaceChildren();
+  }
+
+  private afterInput(): void {
+    if (this.inputScheduled) return;
+    this.inputScheduled = true;
+    queueMicrotask(() => {
+      this.inputScheduled = false;
+      if (!this.current()) return;
+      const lines = this.lines();
+      for (const block of this.editor.querySelectorAll<HTMLElement>('.block')) {
+        this.decorateDialogue(block);
+        this.updateSummary(block, lines[Number(block.dataset.line)]);
+      }
+      this.knownSource = this.scene.text;
+      // Do not rebuild focused property fields on each keystroke.
+      refreshPreviewSourceState();
+      this.drawStage(); this.updateStatus();
+    });
+  }
+
+  private select(index: number, focus: boolean): void {
+    if (!this.current() || !this.lines()[index]) return;
+    this.view.line = index;
+    for (const block of this.editor.querySelectorAll<HTMLElement>('.block')) block.classList.toggle('v4-current', Number(block.dataset.line) === index);
+    const block = this.block(index);
+    this.renderInspector(); this.drawStage(); this.updateStatus();
+    if (focus && block) {
+      block.scrollIntoView({ block: 'nearest' });
+      block.focus({ preventScroll: true });
+      // Let the existing selection handler publish the true Authoring objectRef.
+      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+  }
+
+  private writeRaw(raw: string, original: string, index = this.view.line): boolean {
+    if (!this.editable()) return false;
+    const block = this.block(index), current = this.lines()[index];
+    const input = block?.querySelector<HTMLInputElement>('.raw input');
+    if (!block || !input || current?.raw !== original) {
+      setStatus('当前步骤已变化，未覆盖新内容，请重新选择步骤', false, 5000);
+      return false;
+    }
+    input.value = raw;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const accepted = this.lines()[index]?.raw === raw;
+    if (!accepted) input.value = this.lines()[index]?.raw ?? original;
+    return accepted;
+  }
+
+  private renderInspector(): void {
+    this.returnFields();
+    this.inspectorImages.dispose(); this.inspectorImages = new ImageScope();
+    const index = this.view.line, line = this.lines()[index], block = this.block(index);
+    this.inspector.replaceChildren();
+    if (!line || !block) return;
+    this.inspector.append(h('div', 'v4-inspector-title', line.kind === 'text' ? '当前对白' : line.kind === 'instr' ? ACTION_NAMES[line.name] ?? `@${line.name}` : line.kind === 'choice-option' ? '分支选项' : '当前步骤'));
+    const location = h('p', 'v4-source-hint', `${this.scene.file} · 第 ${index + 1} 行`);
+    this.inspector.append(location);
+    const readInstruction = (): Extract<LineModel, { kind: 'instr' }> | null => {
+      const current = this.lines()[index];
+      if (!this.current() || line.kind !== 'instr' || current?.kind !== 'instr'
+        || current.name !== line.name || current.raw !== line.raw) {
+        setStatus('步骤已在其他入口修改，请重新选择后调整属性', false, 5000);
+        return null;
+      }
+      return current;
+    };
+    const editParameter = (parameter: number, value: string): void => {
+      const current = readInstruction();
+      if (!current) return;
+      if (this.writeRaw(setInstructionArgument(current.raw, parameter, value), current.raw, index)) {
+        this.renderInspector(); this.drawStage();
+      }
+    };
+    if (line.kind === 'text') {
+      this.inspector.append(h('p', 'v4-muted', '说话人和台词直接在正文编辑。本次修改只作用于这一句。'));
+      const voices = state.dirAssets.filter((asset) => asset.kind === 'voice' && asset.handle !== null);
+      const select = h('select');
+      select.append(new Option('选择语音文件', ''));
+      voices.forEach((asset) => select.append(new Option(asset.key, asset.key)));
+      select.disabled = voices.length === 0;
+      const boundSource = this.scene.text;
+      select.onchange = () => {
+        if (!select.value || !this.editable()) return;
+        if (this.scene.text !== boundSource) { setStatus('对白已变化，请重新选择后关联语音', false, 5000); return; }
+        const previous = this.lines()[index - 1];
+        if (previous?.kind === 'instr' && previous.name === 'voice') {
+          this.writeRaw(setInstructionArgument(previous.raw, 0, select.value), previous.raw, index - 1);
+        } else {
+          this.structural((text) => {
+            const rows = parseScript(text), at = rows[index]!;
+            const eol = at.eol || sourceEol(text);
+            const start = rows.slice(0, index).reduce((sum, row) => sum + row.raw.length + row.eol.length, 0);
+            return { text: text.slice(0, start) + `@voice ${quoteAssetArgument(select.value)}${eol}` + text.slice(start), selectedLine: index + 1 };
+          });
+        }
+      };
+      this.inspector.append(field('关联语音', select));
+      if (!voices.length) this.inspector.append(h('p', 'v4-muted', '当前项目没有可关联的语音文件。'));
+    } else if (line.kind === 'instr') {
+      const { args } = splitInstr(line.raw);
+      if (line.name === 'show') {
+        const target = decodeInstructionArgument(args[0] ?? '');
+        const portraits = state.dirAssets.filter((asset) => asset.kind === 'portrait' && asset.handle !== null);
+        const targets = [...new Set(portraits.map((asset) => asset.key))];
+        const select = h('select');
+        if (!targets.includes(target)) select.append(new Option(target || '尚未指定', target));
+        targets.forEach((key) => select.append(new Option(key, key)));
+        select.value = target;
+        select.onchange = () => editParameter(0, select.value);
+        this.inspector.append(field('人物与服装', select));
+        const expression = decodeInstructionArgument(args[1] ?? 'normal');
+        const grid = h('div', 'v4-pick-grid');
+        for (const asset of portraits.filter((item) => item.key === target)) {
+          const control = button('', () => editParameter(1, asset.expr ?? 'normal'), 'v4-image-pick');
+          control.setAttribute('aria-label', `选择表情 ${asset.expr ?? 'normal'}`);
+          control.setAttribute('aria-pressed', String((asset.expr ?? 'normal') === expression));
+          const thumb = h('span', 'v4-pick-image');
+          control.append(thumb, h('span', undefined, asset.expr ?? 'normal'));
+          grid.append(control);
+          queueMicrotask(() => { void this.inspectorImages.image(thumb, asset, '', 'contain'); });
+        }
+        this.inspector.append(grid);
+        const positions = h('div', 'v4-segmented');
+        const position = instructionPosition(line.raw);
+        for (const [key, label] of [['left', '左侧'], ['center', '中央'], ['right', '右侧']] as const) {
+          const control = button(label, () => {
+            const current = readInstruction();
+            if (current && this.writeRaw(setInstructionPosition(current.raw, key), current.raw, index)) {
+              this.renderInspector(); this.drawStage();
+            }
+          });
+          control.setAttribute('aria-pressed', String(position === key));
+          control.disabled = position === 'ambiguous';
+          positions.append(control);
+        }
+        this.inspector.append(field('出场位置', positions));
+        if (position === 'default' || position === 'ambiguous') this.inspector.append(h('p', 'v4-muted', position === 'default' ? '未显式设置位置；编辑排布使用居中示意。' : '位置修饰有歧义，请在原始行中确认。'));
+      } else if (line.name === 'bg') {
+        const grid = h('div', 'v4-background-picks');
+        for (const asset of state.dirAssets.filter((item) => item.kind === 'bg' && item.handle !== null)) {
+          const control = button('', () => editParameter(0, asset.key), 'v4-image-pick');
+          control.setAttribute('aria-label', `选择背景 ${asset.key}`);
+          control.setAttribute('aria-pressed', String(decodeInstructionArgument(args[0] ?? '') === asset.key));
+          const thumb = h('span', 'v4-pick-image');
+          control.append(thumb, h('span', undefined, asset.key)); grid.append(control);
+          queueMicrotask(() => { void this.inspectorImages.image(thumb, asset, '', 'cover'); });
+        }
+        this.inspector.append(grid);
+        if (!grid.childElementCount) this.inspector.append(h('p', 'v4-muted', '项目中没有可用背景，请先导入素材。'));
+      } else if (line.name === 'timeline') {
+        const id = decodeInstructionArgument(args[0] ?? '');
+        this.inspector.append(button('打开对应时间轴', () => navigateTimeline(id)));
+      } else if (line.name === 'wait') {
+        const quick = h('div', 'v4-segmented');
+        for (const milliseconds of [200, 500, 1000, 2000]) quick.append(button(`${milliseconds} ms`, () => editParameter(0, String(milliseconds))));
+        this.inspector.append(quick);
+      } else if (line.name === 'choice') {
+        const range = stepAt(this.lines(), index);
+        this.inspector.append(h('p', 'v4-muted', `共 ${range.end - range.start} 个选项。选择具体选项可编辑文字、条件和目标；步骤排列会携带整组选项。`));
+        this.inspector.append(button('添加选项', () => {
+          if (!readInstruction()) return;
+          const labels = this.lines().filter((item): item is Extract<LineModel, { kind: 'label' }> => item.kind === 'label');
+          const target = labels[0]?.name;
+          if (!target) { setStatus('先添加一个段落标记，或在源码中编写完整分支', false, 5000); return; }
+          this.structural((text) => insertStep(text, index, [`  新选项 -> @goto ${target}`]));
+        }));
+      }
+    } else if (line.kind === 'choice-option') {
+      const draft = simpleChoice(line.raw);
+      if (draft) {
+        let expected = line.raw;
+        for (const [key, label] of [['text', '选项文字'], ['condition', '显示条件（可空）'], ['target', '目标段落']] as const) {
+          const input = h('input'); input.value = draft[key];
+          input.oninput = () => {
+            if (!input.isConnected) return;
+            const next = { ...draft, [key]: input.value };
+            try {
+              const raw = writeSimpleChoice(next);
+              if (this.writeRaw(raw, expected, index)) { Object.assign(draft, next); expected = raw; }
+            } catch (error) { setStatus(error instanceof Error ? error.message : String(error), false, 5000); }
+          };
+          this.inspector.append(field(label, input));
+        }
+      } else this.inspector.append(h('p', 'v4-muted', '这条选项包含组合动作或高级语法，保留完整原始行编辑，不自动简化。'));
+    }
+    if (line.kind !== 'text') {
+      const fields = block.querySelector<HTMLElement>('.fields');
+      if (fields) {
+        this.borrowed = { block, fields };
+        const advanced = disclosure('全部参数与高级语法', fields);
+        advanced.open = line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice'].includes(line.name);
+        if (line.kind === 'blank' || line.kind === 'comment' || line.kind === 'label') advanced.open = true;
+        this.inspector.append(advanced);
+      }
+    }
+    this.inspector.append(button('定位原始行', () => {
+      const details = block.querySelector<HTMLDetailsElement>('.technical-details');
+      if (details) { details.open = true; block.scrollIntoView({ block: 'center' }); block.querySelector<HTMLInputElement>('.raw input')?.focus(); }
+    }));
+  }
+
+  private drawStage(): void {
+    if (!this.current() || this.view.dock !== 'layout') return;
+    const projection = projectEditLayout(this.lines(), this.view.line);
+    const identity = JSON.stringify(projection);
+    if (identity === this.lastStageIdentity && this.picture.childElementCount) return;
+    this.lastStageIdentity = identity;
+    this.stageImages.dispose(); this.stageImages = new ImageScope();
+    this.picture.replaceChildren();
+    this.picture.dataset.editLayout = 'not-run';
+    const stage = h('div', 'v4-edit-stage');
+    this.picture.append(stage);
+    stage.append(h('small', 'v4-stage-label', '编辑排布 · 未运行'));
+    if (projection.reason) {
+      stage.append(h('p', 'v4-stage-empty', projection.reason));
+      return;
+    }
+    if (projection.background) {
+      const ref = projection.background;
+      const image = button('', () => this.select(ref.line, true), 'v4-stage-background');
+      image.setAttribute('aria-label', `定位背景 ${ref.key}`);
+      stage.append(image);
+      void this.stageImages.image(image, state.dirAssets.find((asset) => asset.kind === 'bg' && asset.key === ref.key), '', 'cover');
+    }
+    for (const actor of projection.actors) {
+      const control = button('', () => this.select(actor.line, true), `v4-stage-actor position-${actor.position}`);
+      control.setAttribute('aria-label', `定位人物 ${actor.target} ${actor.expression}`);
+      stage.append(control);
+      void this.stageImages.image(control, state.dirAssets.find((asset) => asset.kind === 'portrait' && asset.key === actor.target && (asset.expr ?? 'normal') === actor.expression), actor.target);
+    }
+    if (projection.dialogue) {
+      const text = h('div', 'v4-stage-dialogue');
+      text.append(h('strong', undefined, projection.dialogue.speaker), h('p', undefined, projection.dialogue.value));
+      stage.append(text);
+    }
+    if (!projection.background && !projection.actors.length && !projection.dialogue) stage.append(h('p', 'v4-stage-empty', '此片段尚未明确设置画面'));
+  }
+
+  private updateStatus(): void {
+    const actual = this.runtime.querySelector<HTMLElement>('[data-preview-source-state]')?.dataset.previewSourceState;
+    this.sourceStatus.textContent = this.view.dock === 'runtime'
+      ? actual === 'stale' ? '剧本已有修改。当前仍是上次运行，请重新播放以应用最新内容。' : '运行位置与编辑选择分别记录；选择步骤不会伪造重放。'
+      : `${this.scene.file} · 编辑第 ${this.view.line + 1} 行。画面仅表示当前明确的静态排布。`;
+  }
+
+  private createSourceEditor(): void {
+    const textarea = h('textarea', 'v4-source-editor');
+    textarea.setAttribute('aria-label', '完整剧本源码');
+    textarea.spellcheck = false;
+    textarea.value = this.scene.text;
+    let expected = this.scene.text;
+    textarea.oninput = () => {
+      if (!this.editable() || this.scene.text !== expected) {
+        setStatus('源文已在其他入口变化，请重新打开源码视图', false, 5000); return;
+      }
+      const next = applySourceTextareaEdit(expected, textarea.value);
+      if (next !== expected) { setCurrentText(next, { coalesce: true }); expected = next; }
+      this.updateStatus();
+    };
+    this.editor.querySelector('.manuscript-sheet')?.append(textarea);
+  }
+
+  private structural(change: (text: string) => SourceEdit, focusDialogue = false): void {
+    if (!this.editable()) return;
+    const before = this.scene.text;
+    if (before !== this.knownSource) throw new Error('源文已在另一入口变化，请重新选择场景后操作');
+    const rows = parseScript(before);
+    const blocks = [...this.editor.querySelectorAll<HTMLElement>('.block[data-line]')];
+    if (rows.length !== blocks.length || blocks.some((block) => {
+      const row = rows[Number(block.dataset.line)];
+      return !row || block.querySelector<HTMLInputElement>('.raw input')?.value !== row.raw
+        || !block.classList.contains(`block-${row.kind}`);
+    })) throw new Error('场景结构已变化，请切回编排并重新选择步骤');
+    const result = change(before);
+    if (this.scene.text !== before) throw new Error('源文已变化，未执行步骤操作');
+    if (result.text === before) return;
+    this.returnFields();
+    setCurrentText(result.text);
+    this.view.line = result.selectedLine;
+    this.rerender();
+    queueMicrotask(() => {
+      const block = this.block(result.selectedLine);
+      block?.scrollIntoView({ block: 'nearest' });
+      if (focusDialogue) block?.querySelector<HTMLElement>('.v4-dialogue-input, .fields textarea, .fields input')?.focus();
+    });
+  }
+  private remove(index: number): void {
+    const range = stepAt(this.lines(), index);
+    if (!window.confirm(range.end > range.start ? '删除这组分支及全部选项？可以撤销。' : '删除这个剧情步骤？可以撤销。')) return;
+    this.structural((text) => deleteStep(text, index));
+  }
+
+  private beginDrag(event: PointerEvent, index: number, control: HTMLElement): void {
+    if (event.button !== 0 || !this.editable()) return;
+    event.preventDefault();
+    const expected = this.scene.text;
+    control.setPointerCapture(event.pointerId);
+    let target = index;
+    const clear = (): void => {
+      for (const row of this.editor.querySelectorAll('.v4-drop-before')) row.classList.remove('v4-drop-before');
+      control.removeEventListener('pointermove', move); control.removeEventListener('pointerup', up); control.removeEventListener('pointercancel', cancel);
+      if (control.hasPointerCapture(event.pointerId)) control.releasePointerCapture(event.pointerId);
+      this.pointerCleanup = null;
+    };
+    const move = (next: PointerEvent): void => {
+      const row = document.elementFromPoint(next.clientX, next.clientY)?.closest<HTMLElement>('.block[data-line]');
+      if (!row || !this.editor.contains(row)) return;
+      target = Number(row.dataset.line);
+      for (const item of this.editor.querySelectorAll('.v4-drop-before')) item.classList.remove('v4-drop-before');
+      row.classList.add('v4-drop-before');
+    };
+    const cancel = (): void => clear();
+    const up = (): void => {
+      clear();
+      if (this.scene.text !== expected) { setStatus('拖动期间源文变化，已取消排列', false, 5000); return; }
+      this.structural((text) => moveStepBefore(text, index, target));
+    };
+    control.addEventListener('pointermove', move); control.addEventListener('pointerup', up); control.addEventListener('pointercancel', cancel);
+    this.pointerCleanup = clear;
+  }
+
+  private openInsert(): void {
+    if (!this.editable()) return;
+    this.returnFields();
+    const before = this.scene.text, at = this.view.line;
+    const dialog = h('dialog', 'v4-insert-dialog');
+    dialog.setAttribute('aria-label', '添加剧情');
+    const type = h('select');
+    const kinds = [['text', '对白'], ['bg', '背景'], ['show', '人物'], ['voice', '语音'], ['bgm', '音乐'], ['se', '音效'], ['wait', '等待'], ['choice', '分支'], ['timeline', '时间轴'], ['set', '变量'], ['raw', '原始指令']];
+    kinds.forEach(([key, label]) => type.append(new Option(label!, key!)));
+    const body = h('div', 'v4-insert-fields'), message = h('p', 'v4-muted');
+    const drafts = new Map<string, string[]>();
+    let previousType = type.value;
+    const remember = (): void => { drafts.set(previousType, [...body.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')].map((control) => control.value)); };
+    const input = (label: string, value = ''): HTMLInputElement => { const control = h('input'); control.value = value; body.append(field(label, control)); return control; };
+    const selectAssets = (kind: string): void => {
+      const select = h('select');
+      const entries = state.dirAssets.filter((asset) => asset.kind === kind && asset.handle !== null);
+      select.append(new Option('请选择项目素材', ''));
+      [...new Set(entries.map((asset) => asset.key))].forEach((key) => select.append(new Option(key, key)));
+      body.append(field('素材', select));
+      if (!entries.length) message.textContent = '该类素材尚未导入，可以先去素材中心处理。';
+      if (kind === 'portrait') {
+        const expression = h('select');
+        const fill = (): void => { expression.replaceChildren(); entries.filter((asset) => asset.key === select.value).forEach((asset) => expression.append(new Option(asset.expr ?? 'normal', asset.expr ?? 'normal'))); };
+        select.onchange = fill;
+        body.append(field('表情', expression)); fill();
+      }
+    };
+    const render = (): void => {
+      body.replaceChildren(); message.textContent = '';
+      const kind = type.value;
+      if (kind === 'text') { input('说话人（可空）'); const control = h('textarea'); body.append(field('对白', control)); }
+      else if (kind === 'bg' || kind === 'voice' || kind === 'bgm' || kind === 'se' || kind === 'show') selectAssets(kind === 'show' ? 'portrait' : kind);
+      else if (kind === 'wait') input('等待毫秒', '500');
+      else if (kind === 'timeline') { const control = h('select'); state.timelines.forEach((item) => control.append(new Option(item.id, item.id))); body.append(field('已有时间轴', control)); }
+      else if (kind === 'choice') { input('第一个选项', '继续交谈'); input('第二个选项', '暂时离开'); message.textContent = '将连同两个唯一段落标记和分支结束位置一起插入。'; }
+      else if (kind === 'set') { input('变量名'); input('表达式', '0'); }
+      else { const control = h('textarea'); control.value = '@'; body.append(field('完整原始行', control)); }
+      const draft = drafts.get(kind);
+      if (draft) [...body.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,select,textarea')].forEach((control, i) => {
+        if (draft[i] !== undefined) control.value = draft[i]!;
+        if (control instanceof HTMLSelectElement) control.dispatchEvent(new Event('change'));
+      });
+      previousType = kind;
+    };
+    type.onchange = () => { remember(); render(); };
+    const close = (): void => { dialog.close(); dialog.remove(); this.renderInspector(); };
+    const add = button('插入到当前步骤之后', () => {
+      if (!this.editable() || this.scene.text !== before) { message.textContent = '场景或插入位置已变化，请关闭后重新添加。'; return; }
+      const values = [...body.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,select,textarea')].map((control) => control.value);
+      let rows: string[];
+      if (type.value === 'text') {
+        const speaker = values[0] ?? '', content = values[1] ?? '';
+        if (/[\r\n：:]/.test(speaker)) throw new Error('请使用不含换行或冒号的说话人名称');
+        rows = content.split(/\r\n|\n|\r/).map((text) => speaker ? `${speaker}：${text}` : text);
+      } else if (type.value === 'raw') rows = (values[0] ?? '').split(/\r\n|\n|\r/);
+      else if (type.value === 'choice') {
+        const labels = new Set(this.lines().filter((line): line is Extract<LineModel, { kind: 'label' }> => line.kind === 'label').map((line) => line.name));
+        let n = 1; while (['a', 'b', 'end'].some((part) => labels.has(`branch_${n}_${part}`))) n++;
+        const base = `branch_${n}`;
+        const labelsText = values.map((value) => { if (!value.trim() || /[\r\n]|\s->|\[if:/.test(value)) throw new Error('请填写不含控制语法的选项文字'); return value; });
+        rows = ['@choice', `  ${labelsText[0]} -> @goto ${base}_a`, `  ${labelsText[1]} -> @goto ${base}_b`, `@label ${base}_a`, '在这里续写第一条分支。', `@goto ${base}_end`, `@label ${base}_b`, '在这里续写第二条分支。', `@label ${base}_end`];
+      } else if (type.value === 'set') {
+        if (!/^[^\s@]+$/.test(values[0] ?? '') || /[\r\n]/.test(values[1] ?? '')) throw new Error('请填写单行变量名与表达式');
+        rows = [`@set ${values[0]} = ${values[1] ?? ''}`];
+      } else {
+        if (!values[0]) throw new Error('请先选择或填写参数');
+        rows = [`@${type.value} ${quoteAssetArgument(values[0])}${type.value === 'show' ? ' ' + quoteAssetArgument(values[1] || 'normal') + ' @ center' : ''}`];
+      }
+      close();
+      this.view.line = at;
+      this.structural((text) => insertStep(text, at, rows), type.value === 'text');
+    }, 'v4-button v4-primary');
+    const footer = h('footer'); footer.append(button('取消', close), add);
+    dialog.append(h('h2', undefined, '添加剧情'), field('内容类型', type), body, message, footer);
+    // Kept under the application's inert/write-lock region, not body.
+    this.root.append(dialog); render();
+    dialog.oncancel = (event) => { event.preventDefault(); close(); };
+    dialog.showModal();
+  }
+
+  private download(): void {
+    if (!this.current()) return;
+    const url = URL.createObjectURL(new Blob([this.scene.text], { type: 'text/plain;charset=utf-8' }));
+    const link = h('a'); link.href = url; link.download = this.scene.file.split('/').at(-1) || 'scene.gal'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}

@@ -10,6 +10,7 @@ import {
 import type { LineModel } from '../model.js';
 import { selectAuthoringObject } from '../causal-selection.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
+import { installScriptV4, prepareScriptV4Render } from '../v4/script-workbench.js';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -179,6 +180,7 @@ export function refreshManuscriptFacts(): void {
 }
 
 export function renderEditor(): void {
+  prepareScriptV4Render();
   const editorEl = document.getElementById('editor');
   if (!editorEl) return;
   editorEl.innerHTML = '';
@@ -230,6 +232,7 @@ export function renderEditor(): void {
   footer.appendChild(addBtn);
   article.appendChild(footer);
   editorEl.appendChild(article);
+  installScriptV4(editorEl, renderEditor);
 }
 
 function renderBlock(line: LineModel, index: number, lineCount: number): HTMLElement {

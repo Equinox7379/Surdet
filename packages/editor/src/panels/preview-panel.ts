@@ -22,6 +22,36 @@ let notifyPreviewReady: ((source: MessageEventSource | null) => void) | null = n
 let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic, source: MessageEventSource | null) => void) | null = null;
 let notifyPreviewTrace: ((message: PreviewTraceMessage, source: MessageEventSource | null) => void) | null = null;
 let previewPanelMountRevision = 0;
+let activePreviewCleanup: (() => void) | null = null;
+let notifyPreviewSourceEdited: (() => void) | null = null;
+
+/** One actual runtime owner across script, standalone preview and result review. */
+export function disposePreviewPanel(): void {
+  previewPanelMountRevision += 1;
+  const cleanup = activePreviewCleanup;
+  activePreviewCleanup = null;
+  notifyPreviewReady = null;
+  notifyPreviewDiagnostic = null;
+  notifyPreviewTrace = null;
+  notifyPreviewSourceEdited = null;
+  // Completed observations remain available when their source is opened.
+  // Resource teardown must not erase the causal navigation's selected trace.
+  cleanup?.();
+}
+
+export function refreshPreviewSourceState(): void { notifyPreviewSourceEdited?.(); }
+
+function previewSourceKey(): string {
+  return JSON.stringify({
+    scene: state.current,
+    scenes: [...state.scenes.entries()].map(([key, entry]) => [key, entry.text]),
+    config: state.gameConfigText,
+    configs: state.configFiles,
+    timelines: state.timelines.map((entry) => [entry.file, entry.text]),
+    assets: state.dirAssets.map((entry) => [entry.sourcePath, entry.key, entry.expr, entry.bytes, entry.lastModified]),
+  });
+}
+
 
 export interface PreviewTraceStartMessage {
   type: 'surdet-preview-trace-start';
@@ -306,9 +336,11 @@ function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
   }
 }
 
-/** 预览字体缓存（避免每次点播放重读字体；key = 项目目录 + 角色路径 + 文件版本） */
-let previewFontsCacheKey = '';
-let previewFontsCache: Partial<Record<FontRole, PreviewFont>> = {};
+/** 按实际项目根隔离字体缓存；同名目录不能共享字体字节。 */
+const previewFontsCache = new WeakMap<FileSystemDirectoryHandle, {
+  key: string;
+  fonts: Partial<Record<FontRole, PreviewFont>>;
+}>();
 
 /** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
 async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>>> {
@@ -318,7 +350,8 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
   } catch {
     return {};
   }
-  if (!state.dirHandle) return {};
+  const root = state.dirHandle;
+  if (!root) return {};
   const configured = cfg.fonts && typeof cfg.fonts === 'object'
     ? cfg.fonts as Partial<Record<FontRole, unknown>>
     : null;
@@ -338,14 +371,15 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
       if (!fontPath) continue;
       const segs = fontPath.split('/').filter((s) => s.length > 0);
       const fname = segs.pop()!;
-      let dir: FileSystemDirectoryHandle = state.dirHandle;
+      let dir: FileSystemDirectoryHandle = root;
       for (const s of segs) dir = await dir.getDirectoryHandle(s);
       const file = await (await dir.getFileHandle(fname)).getFile();
       files.set(role, file);
       versions.push(`${role}:${fontPath}:${file.lastModified}:${file.size}`);
     }
-    const key = `${state.dirName}|${versions.join('|')}`;
-    if (key === previewFontsCacheKey) return previewFontsCache;
+    const key = versions.join('|');
+    const cached = previewFontsCache.get(root);
+    if (cached?.key === key) return cached.fonts;
     const result: Partial<Record<FontRole, PreviewFont>> = {};
     for (const [role, file] of files) {
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
@@ -355,12 +389,10 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
         version: `${file.lastModified}:${file.size}`,
       };
     }
-    previewFontsCacheKey = key;
-    previewFontsCache = result;
+    previewFontsCache.set(root, { key, fonts: result });
     return result;
   } catch {
-    previewFontsCacheKey = '';
-    previewFontsCache = {};
+    previewFontsCache.delete(root);
     return {};
   }
 }
@@ -441,6 +473,10 @@ export interface PreviewPanelOptions {
 }
 
 export function renderPreviewPanel(container: HTMLElement, options: PreviewPanelOptions = {}): void {
+  if (!container.isConnected) return;
+  disposePreviewPanel();
+  state.previewTrace = [];
+  state.selectedTraceStep = null;
   container.innerHTML = '';
   const mountRevision = ++previewPanelMountRevision;
   if (state.reviewWorkspace === null) state.previewChoices = null;
@@ -490,10 +526,22 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   frame.src = './preview.html';
   frame.title = '剧情预览';
   stage.appendChild(frame);
+  activePreviewCleanup = () => { frame.remove(); };
   workspace.appendChild(stage);
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
   workspace.appendChild(diagnostics);
+  const sourceState = h('p', 'preview-source-state', '尚未启动');
+  sourceState.dataset.previewSourceState = 'idle';
+  sourceState.setAttribute('aria-live', 'polite');
+  workspace.appendChild(sourceState);
+  let publishedSource: string | null = null;
+  notifyPreviewSourceEdited = () => {
+    if (sourceState.dataset.previewSourceState !== 'stale' && publishedSource !== null && publishedSource !== previewSourceKey()) {
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '内容已修改；当前画面仍属于上一次运行，请重新播放。';
+    }
+  };
 
   const traceBox = h('section', 'preview-causal-dock preview-trace');
   traceBox.id = 'preview-trace';
@@ -651,26 +699,30 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   let sendRevision = 0;
   const send = async (): Promise<void> => {
     const revision = ++sendRevision;
-    currentTraceId = null;
-    currentTraceGeneration = -1;
-    lastTraceSequence = -1;
-    traceCompleted = false;
-    currentPreviewTrace = [];
-    state.previewTrace = [];
-    state.selectedTraceStep = null;
-    renderTraceList();
     if (!ready) return;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {
       setStatus('预览：请先选择一个场景', false, 4000);
       return;
     }
+    const requestRoot = state.dirHandle;
+    const requestSceneKey = state.current;
+    const requestScene = cur;
+    const requestAssets = state.dirAssets;
+    const requestSource = previewSourceKey();
     // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
     const cachedFonts = await readProjectFonts();
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
     const assets = await readProjectImages();
     const timelines = await readProjectTimelines();
-    if (revision !== sendRevision) return;
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
+    if (state.dirHandle !== requestRoot || state.current !== requestSceneKey
+      || (requestSceneKey !== null && state.scenes.get(requestSceneKey) !== requestScene)
+      || state.dirAssets !== requestAssets || previewSourceKey() !== requestSource) {
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '读取素材期间内容或项目发生变化，本次未启动，请重新播放。';
+      return;
+    }
     const message = {
       type: 'surdet-preview-load',
       payload: {
@@ -704,7 +756,22 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       ...assets.audio.map((a) => a.file.buffer),
       ...Object.values(fonts).map((font) => font.buffer),
     ];
-    frame.contentWindow?.postMessage(message, '*', transfer);
+    const target = frame.contentWindow;
+    if (!target) return;
+    target.postMessage(message, '*', transfer);
+    // A rejected or superseded read has not begun a new run. Only a published
+    // payload replaces the previous observations and their source selection.
+    currentTraceId = null;
+    currentTraceGeneration = -1;
+    lastTraceSequence = -1;
+    traceCompleted = false;
+    currentPreviewTrace = [];
+    state.previewTrace = [];
+    state.selectedTraceStep = null;
+    renderTraceList();
+    publishedSource = requestSource;
+    sourceState.dataset.previewSourceState = 'fresh';
+    sourceState.textContent = '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
   };
 
   // 从时间轴面板进入时，previewTimelineId 可能仍指向“直演”临时场景。

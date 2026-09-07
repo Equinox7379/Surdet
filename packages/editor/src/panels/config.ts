@@ -25,6 +25,7 @@ import type {
   CalendarRows, EventsRows, GrowthRows, GalleryRows, TerminologyTableRows,
 } from '../config-edit.js';
 import { renderCalendarMap } from './calendar-map.js';
+import { enhanceConfigTables } from '../v4/surfaces.js';
 import { createSnapshotHistory, snapshotPush, snapshotUndo, snapshotRedo } from '../history.js';
 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
@@ -131,6 +132,7 @@ function renderConfigWorkspace(root: HTMLElement): void {
   index.appendChild(indexItems);
   workspace.append(index, ledger);
   root.appendChild(workspace);
+  enhanceConfigTables(root);
 }
 
 /** 本地重建全部区块（保留内存行模型与未保存输入；仅增删行时用）。
@@ -375,7 +377,8 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap, opt
         chk.onchange = () => { pushConfigHistory(false); rows[i]![c.key] = chk.checked; };
         td.appendChild(chk);
       } else {
-        const inp = h('input', c.type === 'json' ? 'mono' : '');
+        const inp = c.type === 'json' ? h('textarea', 'mono') : h('input');
+        if (c.type === 'json') (inp as HTMLTextAreaElement).rows = 4;
         inp.value = String(row[c.key] ?? '');
         inp.placeholder = c.label;
         inp.setAttribute('aria-label', `${c.label}，第 ${i + 1} 行`);
