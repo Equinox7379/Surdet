@@ -60,7 +60,7 @@ import {
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession } from './panels/config.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
-import { disposeScriptV4 } from './v4/script-workbench.js';
+import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation } from './v4/ui.js';
 import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
 import './styles/v4-workbench.css';
@@ -1319,8 +1319,10 @@ function jumpToScene(sceneKey: string, line?: number): void {
     const objectRef = target?.dataset.objectRef || null;
     state.selectedObjectRef = selectAuthoringObject(objectRef);
     document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
-    target?.scrollIntoView({ block: 'center' });
-    target?.focus({ preventScroll: true });
+    if (!revealScriptV4Line(Math.max(0, line))) {
+      target?.scrollIntoView({ block: 'center' });
+      target?.focus({ preventScroll: true });
+    }
   }
 }
 

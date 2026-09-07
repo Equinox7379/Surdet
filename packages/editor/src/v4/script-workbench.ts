@@ -26,6 +26,9 @@ const ACTION_NAMES: Record<string, string> = {
 export function prepareScriptV4Render(): void { active?.returnFields(); }
 export function disposeScriptV4(): void { active?.dispose(); active = null; }
 
+/** Reveal a source location through the currently mounted V4 view. */
+export function revealScriptV4Line(index: number): boolean { return active?.revealLine(index) ?? false; }
+
 /** Decorates existing B01-bound rows; it does not own a second document or undo stack. */
 export function installScriptV4(editor: HTMLElement, rerender: () => void): void {
   const root = editor.closest<HTMLElement>('.authoring-workbench');
@@ -335,6 +338,39 @@ export class ScriptWorkbench {
     }
   }
 
+  /** Main's search/issues/trace navigation must not focus hidden legacy rows in source view. */
+  revealLine(index: number): boolean {
+    const rows = this.lines();
+    const line = rows[index];
+    if (!this.current() || !Number.isInteger(index) || !line) return false;
+    this.root.dataset.mobilePanel = 'editor';
+    this.root.dataset.auxiliaryView = 'outline';
+    for (const control of this.root.querySelectorAll<HTMLElement>('[data-workbench-panel]')) {
+      control.setAttribute('aria-pressed', String(control.dataset.workbenchPanel === 'editor'));
+    }
+    this.select(index, false);
+    if (this.view.view === 'source') {
+      const textarea = this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor');
+      if (!textarea) return false;
+      // Native textarea offsets use LF and UTF-16, even for CRLF/CR documents.
+      const start = rows.slice(0, index).reduce((offset, row) => offset + row.raw.length + (row.eol ? 1 : 0), 0);
+      textarea.scrollIntoView({ block: 'start' });
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(start, start + line.raw.length);
+      const style = getComputedStyle(textarea);
+      const lineHeight = Number.parseFloat(style.lineHeight) || (Number.parseFloat(style.fontSize) || 13) * 1.9;
+      const padding = Number.parseFloat(style.paddingTop) || 0;
+      const visibleHeight = Math.min(textarea.clientHeight, this.editor.clientHeight);
+      textarea.scrollTop = Math.max(0, padding + index * lineHeight - visibleHeight / 3);
+      return true;
+    }
+    const block = this.block(index);
+    if (!block) return false;
+    block.scrollIntoView({ block: 'center' });
+    block.focus({ preventScroll: true });
+    return true;
+  }
+
   private writeRaw(raw: string, original: string, index = this.view.line): boolean {
     if (!this.editable()) return false;
     const block = this.block(index), current = this.lines()[index];
@@ -551,6 +587,7 @@ export class ScriptWorkbench {
     const textarea = h('textarea', 'v4-source-editor');
     textarea.setAttribute('aria-label', '完整剧本源码');
     textarea.spellcheck = false;
+    textarea.wrap = 'off'; // Source rows stay physical rows when revealing a location.
     textarea.value = this.scene.text;
     let expected = this.scene.text;
     textarea.oninput = () => {
@@ -564,8 +601,8 @@ export class ScriptWorkbench {
     this.editor.querySelector('.manuscript-sheet')?.append(textarea);
   }
 
-  private structural(change: (text: string) => SourceEdit, focusDialogue = false): void {
-    if (!this.editable()) return;
+  private structural(change: (text: string) => SourceEdit, focusDialogue = false): boolean {
+    if (!this.editable()) return false;
     const before = this.scene.text;
     if (before !== this.knownSource) throw new Error('源文已在另一入口变化，请重新选择场景后操作');
     const rows = parseScript(before);
@@ -577,16 +614,19 @@ export class ScriptWorkbench {
     })) throw new Error('场景结构已变化，请切回编排并重新选择步骤');
     const result = change(before);
     if (this.scene.text !== before) throw new Error('源文已变化，未执行步骤操作');
-    if (result.text === before) return;
+    if (result.text === before) return false;
     this.returnFields();
     setCurrentText(result.text);
     this.view.line = result.selectedLine;
     this.rerender();
     queueMicrotask(() => {
+      if (!this.current()) return;
+      if (this.view.view === 'source') { this.revealLine(result.selectedLine); return; }
       const block = this.block(result.selectedLine);
       block?.scrollIntoView({ block: 'nearest' });
       if (focusDialogue) block?.querySelector<HTMLElement>('.v4-dialogue-input, .fields textarea, .fields input')?.focus();
     });
+    return true;
   }
   private remove(index: number): void {
     const range = stepAt(this.lines(), index);
@@ -625,6 +665,21 @@ export class ScriptWorkbench {
 
   private openInsert(): void {
     if (!this.editable()) return;
+    if (this.view.view === 'source') {
+      const textarea = this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor');
+      if (!textarea || textarea.value !== this.scene.text.replace(/\r\n|\r/g, '\n')) {
+        setStatus('源文已在其他入口变化，请重新打开源码视图后添加', false, 5000);
+        return;
+      }
+      const start = textarea.selectionStart, end = textarea.selectionEnd, scroll = textarea.scrollTop;
+      this.view.line = Math.min(textarea.value.slice(0, start).split('\n').length - 1, this.lines().length - 1);
+      // Refresh the hidden B01 rows from the accepted source before freezing an
+      // insertion anchor. Never relax structural()'s stale-coordinate checks.
+      this.returnFields();
+      this.rerender();
+      const fresh = this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor');
+      if (fresh) { fresh.setSelectionRange(start, end); fresh.scrollTop = scroll; }
+    }
     this.returnFields();
     const before = this.scene.text, at = this.view.line;
     const dialog = h('dialog', 'v4-insert-dialog');
@@ -692,9 +747,17 @@ export class ScriptWorkbench {
         if (!values[0]) throw new Error('请先选择或填写参数');
         rows = [`@${type.value} ${quoteAssetArgument(values[0])}${type.value === 'show' ? ' ' + quoteAssetArgument(values[1] || 'normal') + ' @ center' : ''}`];
       }
-      close();
       this.view.line = at;
-      this.structural((text) => insertStep(text, at, rows), type.value === 'text');
+      try {
+        const applied = this.structural((text) => insertStep(text, at, rows), type.value === 'text');
+        // Keep the draft and dialog on any rejected/no-op edit. Closing is a
+        // consequence of accepted source, never a prerequisite to committing it.
+        if (applied) close();
+        else message.textContent = '本次没有插入内容，草稿仍保留，请检查输入或当前编辑状态。';
+      } catch (error) {
+        message.textContent = error instanceof Error ? error.message : '未插入内容，草稿仍保留。';
+        setStatus(message.textContent, false, 6000);
+      }
     }, 'v4-button v4-primary');
     const footer = h('footer'); footer.append(button('取消', close), add);
     dialog.append(h('h2', undefined, '添加剧情'), field('内容类型', type), body, message, footer);

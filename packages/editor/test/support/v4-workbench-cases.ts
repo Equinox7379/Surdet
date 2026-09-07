@@ -3,7 +3,7 @@ import { histories, bindHistoryHooks, undo, redo } from '../../src/history.js';
 import { renderEditor } from '../../src/panels/editor.js';
 import { disposePreviewPanel, renderPreviewPanel } from '../../src/panels/preview-panel.js';
 import { buildAuthoringWorkbench } from '../../src/shell/authoring-workbench.js';
-import { disposeScriptV4 } from '../../src/v4/script-workbench.js';
+import { disposeScriptV4, revealScriptV4Line } from '../../src/v4/script-workbench.js';
 import { enhanceConfigTables } from '../../src/v4/surfaces.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
@@ -96,6 +96,91 @@ export function mountV4Fixture(): void { fixture(); }
 export function currentFixtureText(): string { return state.current ? state.scenes.get(state.current)?.text ?? '' : ''; }
 export interface BrowserCase { name: string; run: () => void | Promise<void> }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'source edit then insert refreshes row bindings without losing the dialog draft', run: async () => {
+    const scene = fixture(); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    input('.v4-source-editor', SOURCE.replace(/\r\n/g, '\n').replace('你好。', '源码修改。')); await tick();
+    const beforeInsert = scene.text;
+    const textarea = control<HTMLTextAreaElement>('.v4-source-editor');
+    const caret = textarea.value.indexOf('凛:源码修改。'); textarea.setSelectionRange(caret, caret);
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-fields textarea', '新增对白不丢失。');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后'); await tick();
+    assert(!document.querySelector('.v4-insert-dialog'), 'accepted insertion did not close the dialog');
+    assert(scene.text === beforeInsert.replace('凛:源码修改。', '凛:源码修改。\r\n新增对白不丢失。'), scene.text);
+    assert(control('.authoring-workbench').dataset.scriptView === 'source', 'source insertion switched views');
+    assert(document.activeElement === control('.v4-source-editor'), 'source focus was not restored');
+    undo(); assert(scene.text === beforeInsert, 'insert undo removed the earlier source edit');
+    redo(); assert(scene.text.includes('新增对白不丢失。'), 'insert redo is missing');
+  } },
+  { name: 'source insertion anchors to the caret rather than the previous selected row', run: async () => {
+    const scene = fixture(); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    const textarea = control<HTMLTextAreaElement>('.v4-source-editor');
+    const caret = textarea.value.indexOf('@wait 500'); textarea.setSelectionRange(caret, caret);
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-fields textarea', '光标后的对白');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后'); await tick();
+    assert(scene.text.includes('@wait 500\r\n光标后的对白\r\n@choice'), scene.text);
+  } },
+  { name: 'rejected structural insertion retains dialog, draft, source and history', run: async () => {
+    const scene = fixture(); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-fields textarea', '不能因拒绝而消失');
+    const historyDepth = histories.get('start')?.past.length ?? 0;
+    control<HTMLInputElement>('.block[data-line="3"] .raw input').value = '@show unexpected normal';
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后'); await tick();
+    assert(control<HTMLTextAreaElement>('.v4-insert-fields textarea').value === '不能因拒绝而消失', 'draft was discarded');
+    assert(control<HTMLDialogElement>('.v4-insert-dialog').open, 'failed insert closed the dialog');
+    assert(scene.text === SOURCE, 'rejected insertion changed the source');
+    assert((histories.get('start')?.past.length ?? 0) === historyDepth, 'rejected insertion added history');
+    clickText('.v4-insert-dialog footer', '取消');
+  } },
+  { name: 'source location selects the visible UTF-16 row without changing mixed EOL or history', run: () => {
+    const original = '@scene start\r\n凛:😀前文\n凛：定位目标\r@end'; const scene = fixture(original);
+    control<HTMLButtonElement>('[data-script-view="source"]').click();
+    assert(revealScriptV4Line(2), 'visible source navigation was not handled');
+    const textarea = control<HTMLTextAreaElement>('.v4-source-editor');
+    assert(document.activeElement === textarea, 'hidden row received focus');
+    assert(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd) === '凛：定位目标', 'wrong source range selected');
+    assert(control('.authoring-workbench').dataset.mobilePanel === 'editor', 'source workspace not revealed');
+    assert(scene.text === original && (histories.get('start')?.past.length ?? 0) === 0, 'navigation changed content or history');
+  } },
+  { name: 'long source location scrolls physical rows rather than guessing soft wraps', run: () => {
+    const text = ['@scene start', ...Array.from({ length: 80 }, (_, i) => `凛：第${i}句${'长'.repeat(80)}`)].join('\r\n');
+    fixture(text); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    const textarea = control<HTMLTextAreaElement>('.v4-source-editor');
+    textarea.style.cssText = 'width:300px;height:180px;min-height:0;font:14px/24px monospace;padding:8px';
+    const editor = control<HTMLElement>('#editor');
+    editor.style.cssText = 'height:100px;overflow:auto';
+    editor.scrollTop = editor.scrollHeight;
+    assert(revealScriptV4Line(61), 'long source location not handled');
+    assert(textarea.wrap === 'off' && textarea.scrollTop > 300, 'source row was not brought into the viewport');
+    assert(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd).startsWith('凛：第60句'), 'wrong long-source row');
+    const targetTop = textarea.getBoundingClientRect().top + textarea.clientTop + 8 + 61 * 24 - textarea.scrollTop;
+    const visible = editor.getBoundingClientRect();
+    assert(targetTop >= visible.top && targetTop + 24 <= visible.bottom, 'selected source row is clipped by the outer editor viewport');
+  } },
+  { name: 'arrange location preserves the visible row target and makes no content edit', run: () => {
+    const scene = fixture();
+    assert(revealScriptV4Line(5), 'arrange location not handled');
+    assert(document.activeElement === control('.block[data-line="5"]'), 'arrange row was not focused');
+    assert(control('.block[data-line="5"]').classList.contains('v4-current'), 'inspector selection did not follow');
+    assert(scene.text === SOURCE && (histories.get('start')?.past.length ?? 0) === 0, 'arrange navigation mutated source');
+  } },
+  { name: 'empty source can insert its first dialogue and retain missing terminal newline', run: async () => {
+    const scene = fixture(''); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-fields textarea', '从空文档开始');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后'); await tick();
+    assert(scene.text === '从空文档开始', scene.text);
+    assert(!document.querySelector('.v4-insert-dialog'), 'first insertion did not finish');
+  } },
+  { name: 'source caret in a choice option inserts after the complete choice group', run: async () => {
+    const scene = fixture(); control<HTMLButtonElement>('[data-script-view="source"]').click();
+    input('.v4-source-editor', SOURCE.replace(/\r\n/g, '\n').replace('你好。', '源文已改。')); await tick();
+    const textarea = control<HTMLTextAreaElement>('.v4-source-editor');
+    const caret = textarea.value.indexOf('  继续 ->'); textarea.setSelectionRange(caret, caret);
+    clickText('#script-v4-toolbar', '添加剧情');
+    input('.v4-insert-dialog > label select', 'wait', 'change'); input('.v4-insert-fields input', '600');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后'); await tick();
+    assert(scene.text.includes('  离开 -> @goto done\r\n@wait 600\r\n@label again'), scene.text);
+    assert(scene.text.includes('源文已改。'), 'the prior source edit was rolled back');
+  } },
   { name: 'visual picker changes expression and retains modifier', run: async () => {
     const scene = fixture(); control<HTMLButtonElement>('[data-step-summary="3"]').click();
     control<HTMLButtonElement>('[aria-label="选择表情 despair"]').click(); await tick();

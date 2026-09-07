@@ -93,6 +93,42 @@ try {
   await page.locator('.block[data-line="5"] .v4-dialogue-input').fill('更新后的对白。');
   await page.locator('[data-preview-source-state="stale"]').waitFor();
   assert.equal(await page.locator('iframe.preview-frame').getAttribute('src'), beforeFrame);
+  // Final-audit closure: exercise the actual composition root, not only module fixtures.
+  await page.locator('[data-script-view="source"]').click();
+  const sourceBeforeClosure = await page.locator('.v4-source-editor').inputValue();
+  const sourceEdited = sourceBeforeClosure.replace('更新后的对白。', '源码修改后的对白。');
+  assert.notEqual(sourceEdited, sourceBeforeClosure, 'source closure fixture drifted');
+  // End the existing 600 ms typing-coalescing window before the new source edit.
+  await page.waitForTimeout(650);
+  await page.locator('.v4-source-editor').fill(sourceEdited);
+  await page.locator('.v4-source-editor').evaluate((node) => {
+    const caret = node.value.indexOf('凛：源码修改后的对白。');
+    if (caret < 0) throw new Error('source insertion anchor is missing');
+    node.setSelectionRange(caret, caret);
+  });
+  await page.locator('#script-v4-toolbar').getByRole('button', { name: '添加剧情', exact: true }).click();
+  await page.locator('.v4-insert-fields textarea').fill('源码插入定位用例。');
+  await page.getByRole('button', { name: '插入到当前步骤之后', exact: true }).click();
+  await page.locator('.v4-insert-dialog').waitFor({ state: 'detached' });
+  const sourceAfterInsert = sourceEdited.replace('凛：源码修改后的对白。', '凛：源码修改后的对白。\n源码插入定位用例。');
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert);
+  assert.equal(await page.locator('.v4-authoring').getAttribute('data-script-view'), 'source');
+  await page.locator('#search-input').fill('源码插入定位用例。');
+  await page.locator('#search-panel').getByRole('button', { name: '搜索', exact: true }).click();
+  await page.locator('.search-item').filter({ hasText: '源码插入定位用例。' }).first().click();
+  const sourceLocation = await page.locator('.v4-source-editor').evaluate((node) => ({
+    active: node === document.activeElement,
+    selected: node.value.slice(node.selectionStart, node.selectionEnd),
+  }));
+  assert.deepEqual(sourceLocation, { active: true, selected: '源码插入定位用例。' });
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'search navigation changed source');
+  // Keep original fixture shape for the existing nine-workspace checks.
+  await page.locator('[data-action="undo"]').click();
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceEdited);
+  await page.locator('[data-action="undo"]').click();
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceBeforeClosure);
+  await page.locator('[data-script-view="arrange"]').click();
+  console.log('PASS full Editor: source edit -> anchored insertion -> visible search location -> independent undo');
   await page.locator('[data-editor-mode="config"]').click();
   await page.getByRole('button', { name: '名词表', exact: true }).click();
   const variants = page.getByRole('textbox', { name: '变体列表，第 1 行', exact: true });
