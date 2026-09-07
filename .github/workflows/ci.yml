@@ -24,5 +24,7 @@ jobs:
         run: npm run verify:all
       - name: Verify asset import authority browser flow
         run: npm run verify:asset-import
+      - name: Verify instruction writeback in Chromium
+        run: node packages/editor/e2e/instruction-writeback.e2e.mjs
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy

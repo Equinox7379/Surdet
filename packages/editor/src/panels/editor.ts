@@ -2,13 +2,14 @@
  * 块式编辑区（E0 拆分：原 main.ts 纯搬移）。
  * raw 行为事实来源：类型化控件只是编辑糖；行级编辑经 history 入撤销栈。
  */
-import { state, h } from '../state.js';
+import { state, h, setStatus } from '../state.js';
 import { setCurrentText } from '../history.js';
 import {
-  parseScript, serializeScript, parseLine, splitInstr, rebuildInstrRaw, rebuildTextRaw, rebuildLabelRaw,
+  parseScript, serializeScript, parseLine, rebuildTextRaw, rebuildLabelRaw,
 } from '../model.js';
 import type { LineModel } from '../model.js';
 import { selectAuthoringObject } from '../causal-selection.js';
+import { InstructionFieldSource } from '../instruction-field-source.js';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -64,7 +65,7 @@ export function moveLine(index: number, dir: -1 | 1): void {
 }
 
 /** 指令类型化编辑模板：指令名 → 位置参数字段（null = 整体参数单输入） */
-export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number } | null> = {
+export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number; restFrom?: number } | null> = {
   bg: { labels: ['背景 key'] },
   show: { labels: ['角色:服装', '表情/第二参数'] },
   hide: { labels: ['角色'] },
@@ -74,15 +75,15 @@ export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number 
   fadein: { labels: ['毫秒'] },
   fadeout: { labels: ['毫秒'] },
   wait: { labels: ['毫秒'] },
-  set: { labels: ['变量', '运算符', '表达式'], opSelect: 1 },
+  set: { labels: ['变量', '运算符', '表达式'], opSelect: 1, restFrom: 2 },
   mod: { labels: ['变量', '增量'] },
   inc: { labels: ['变量'] },
   dec: { labels: ['变量'] },
   toggle: { labels: ['变量'] },
   flag: { labels: ['变量'] },
   unflag: { labels: ['变量'] },
-  if: { labels: ['条件表达式'] },
-  elif: { labels: ['条件表达式'] },
+  if: { labels: ['条件表达式'], restFrom: 0 },
+  elif: { labels: ['条件表达式'], restFrom: 0 },
   goto: { labels: ['标签'] },
   loop: { labels: ['标签'] },
   jump: { labels: ['场景.标签'] },
@@ -218,7 +219,7 @@ export function renderEditor(): void {
   lineList.setAttribute('role', 'listbox');
   lineList.setAttribute('aria-label', '场景行');
   lines.forEach((line, index) => {
-    lineList.appendChild(renderBlock(line, index));
+    lineList.appendChild(renderBlock(line, index, lines.length));
   });
   article.appendChild(lineList);
   const footer = h('footer', 'manuscript-footer');
@@ -231,7 +232,10 @@ export function renderEditor(): void {
   editorEl.appendChild(article);
 }
 
-function renderBlock(line: LineModel, index: number): HTMLElement {
+function renderBlock(line: LineModel, index: number, lineCount: number): HTMLElement {
+  const sceneKey = state.current;
+  const scene = sceneKey === null ? undefined : state.scenes.get(sceneKey);
+  let expectedRaw = line.raw;
   const objectRef = objectRefForLine(index);
   const selected = objectRef !== null && objectRef === state.selectedObjectRef;
   const block = h('section', `block block-${line.kind}${selected ? ' selected' : ''}`);
@@ -259,7 +263,8 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
 
   const bar = h('div', 'bar');
   bar.appendChild(h('span', 'continuity-line-number', String(index + 1).padStart(2, '0')));
-  bar.appendChild(h('span', 'badge ' + badgeTone(line), kindBadge(line)));
+  const badge = h('span', 'badge ' + badgeTone(line), kindBadge(line));
+  bar.appendChild(badge);
   const current = h('span', 'current-segment', '当前段');
   current.hidden = !selected;
   bar.appendChild(current);
@@ -291,43 +296,90 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
   const fields = h('div', 'fields');
   block.appendChild(fields);
 
-  const commit = (next: LineModel): void => {
-    updateLine(index, next);
-    const rawInput = block.querySelector<HTMLInputElement>('.raw input');
-    if (rawInput) rawInput.value = next.raw;
+  const readBoundLine = (): LineModel | null => {
+    if (!block.isConnected || sceneKey === null || scene === undefined
+      || state.current !== sceneKey || state.scenes.get(sceneKey) !== scene
+      || state.projectLoading || state.projectWriteLock === 'asset-relocation'
+      || block.closest('[inert]') !== null) return null;
+    const latest = parseScript(scene.text);
+    const currentLine = latest[index];
+    // A preceding @choice edit can change this row's kind without changing its
+    // raw source or index. An old text control must not strip option indentation.
+    if (latest.length !== lineCount || currentLine?.raw !== expectedRaw
+      || currentLine.kind !== line.kind) {
+      setStatus('场景内容已变化，未覆盖新内容；请重新打开当前场景后再编辑', false, 5000);
+      return null;
+    }
+    return currentLine;
   };
 
-  if (line.kind === 'text') {
-    const sp = h('input');
-    sp.placeholder = '说话人（可空）';
-    sp.value = line.speaker;
-    sp.style.width = '110px';
-    const val = h('input', 'wide');
-    val.placeholder = '台词内容（支持 {变量} 插值与 基础字《注音》）';
-    val.value = line.value;
-    const sep = line.sep;
-    sp.oninput = () => commit({ ...line, speaker: sp.value, raw: rebuildTextRaw(sp.value, val.value, sep) });
-    val.oninput = () => commit({ ...line, value: val.value, raw: rebuildTextRaw(sp.value, val.value, sep) });
-    fields.append(sp, val);
-  } else if (line.kind === 'label') {
-    const name = h('input', 'wide');
-    name.placeholder = '标签名';
-    name.value = line.name;
-    name.oninput = () => commit({ ...line, name: name.value, raw: rebuildLabelRaw(name.value) });
-    fields.appendChild(name);
-  } else if (line.kind === 'instr') {
-    renderInstrFields(fields, line, commit);
-  } else {
-    const ta = h('textarea', 'wide');
-    ta.rows = line.kind === 'choice-option' ? 1 : 1;
-    ta.value = line.raw;
-    ta.oninput = () => {
-      const prev = index > 0 ? parseScript(currentText())[index - 1]! : null;
-      const prevKind = line.kind === 'choice-option' ? 'choice' : prev ? prevKindOf(prev) : '';
-      commit(parseLine(ta.value, prevKind, line.eol));
-    };
-    fields.appendChild(ta);
-  }
+  const commit = (next: LineModel): void => {
+    const currentLine = readBoundLine();
+    if (currentLine === null) return;
+    if (next.raw === currentLine.raw) return;
+    const previousKind = line.kind;
+    expectedRaw = next.raw;
+    line = { ...next, eol: currentLine.eol };
+    updateLine(index, line);
+    // A textarea may insert several physical lines. Rebuild structural rows so
+    // the new source layout does not leave every old line-count binding stale.
+    if (/[\r\n]/.test(next.raw)) {
+      renderEditor();
+      return;
+    }
+    block.classList.remove(`block-${previousKind}`);
+    block.classList.add(`block-${line.kind}`);
+    block.setAttribute('aria-label', `第 ${index + 1} 行，${kindBadge(line)}`);
+    badge.className = 'badge ' + badgeTone(line);
+    badge.textContent = kindBadge(line);
+    const rawInput = block.querySelector<HTMLInputElement>('.raw input');
+    if (rawInput && rawInput.value !== line.raw) rawInput.value = line.raw;
+  };
+
+  const renderFields = (): void => {
+    fields.replaceChildren();
+    const model = line;
+    if (model.kind === 'text') {
+      const sp = h('input');
+      sp.placeholder = '说话人（可空）';
+      sp.value = model.speaker;
+      sp.style.width = '110px';
+      const val = h('input', 'wide');
+      val.placeholder = '台词内容（支持 {变量} 插值与 基础字《注音》）';
+      val.value = model.value;
+      const sep = model.sep;
+      const updateText = (): void => {
+        if (!sp.isConnected || !val.isConnected) return;
+        commit({ ...model, speaker: sp.value, value: val.value, raw: rebuildTextRaw(sp.value, val.value, sep) });
+      };
+      sp.oninput = updateText;
+      val.oninput = updateText;
+      fields.append(sp, val);
+    } else if (model.kind === 'label') {
+      const name = h('input', 'wide');
+      name.placeholder = '标签名';
+      name.value = model.name;
+      name.oninput = () => {
+        if (!name.isConnected) return;
+        commit({ ...model, name: name.value, raw: rebuildLabelRaw(name.value) });
+      };
+      fields.appendChild(name);
+    } else if (model.kind === 'instr') {
+      renderInstrFields(fields, model, readBoundLine, commit);
+    } else {
+      const ta = h('textarea', 'wide');
+      ta.rows = 1;
+      ta.value = model.raw;
+      ta.oninput = () => {
+        if (!ta.isConnected) return;
+        const prev = index > 0 ? parseScript(currentText())[index - 1]! : null;
+        const prevKind = model.kind === 'choice-option' ? 'choice' : prev ? prevKindOf(prev) : '';
+        commit(parseLine(ta.value, prevKind, model.eol));
+      };
+      fields.appendChild(ta);
+    }
+  };
+  renderFields();
 
   const technical = h('details', 'technical-details');
   const summary = h('summary', undefined, '技术信息');
@@ -339,9 +391,12 @@ function renderBlock(line: LineModel, index: number): HTMLElement {
   rawInput.value = line.raw;
   rawInput.title = '原始行（直接编辑将重新分类该行）';
   rawInput.oninput = () => {
+    const currentLine = readBoundLine();
+    if (currentLine === null) return;
     const prev = index > 0 ? parseScript(currentText())[index - 1]! : null;
     const prevKind = prev ? prevKindOf(prev) : '';
-    updateLine(index, parseLine(rawInput.value, prevKind, line.eol));
+    commit(parseLine(rawInput.value, prevKind, currentLine.eol));
+    renderFields();
   };
   rawWrap.appendChild(rawInput);
   technicalBody.appendChild(rawWrap);
@@ -364,54 +419,65 @@ function prevKindOf(l: LineModel): string {
 function renderInstrFields(
   fields: HTMLElement,
   line: Extract<LineModel, { kind: 'instr' }>,
+  readLine: () => LineModel | null,
   commit: (next: LineModel) => void,
 ): void {
-  const { name, args } = splitInstr(line.raw);
-  const tpl = INSTR_FIELDS[name];
-
-  const writeBack = (newArgs: string[]): void => {
-    commit({ ...line, raw: rebuildInstrRaw(name, newArgs) });
-  };
-
-  if (tpl === undefined) {
-    // 未知指令：整体参数单输入
-    const input = h('input', 'wide');
-    input.placeholder = '参数（空格分隔）';
-    input.value = args.join(' ');
-    input.oninput = () => writeBack(input.value.split(/\s+/).filter((s) => s.length > 0));
-    fields.appendChild(input);
-    return;
-  }
-  if (tpl === null || tpl.labels.length === 0) {
+  const tpl = INSTR_FIELDS[line.name];
+  if (tpl !== undefined && tpl !== null && tpl.labels.length === 0) {
     fields.appendChild(h('span', 'badge dim', '无参数'));
     return;
   }
+  const labels = tpl?.labels ?? ['参数（空格分隔）'];
+  // Only these expression fields consume the full remaining source. Other
+  // positional fields must leave extra, undisplayed arguments untouched.
+  let source: InstructionFieldSource;
+  try {
+    source = new InstructionFieldSource(line.raw, labels.length, tpl?.restFrom ?? (tpl == null ? 0 : undefined));
+  } catch {
+    // A partially typed '@' remains editable in the mounted raw input.
+    fields.appendChild(h('span', 'dim', '请在原始行中补全指令名'));
+    return;
+  }
+  const writeBack = (control: HTMLElement, index: number, value: string): void => {
+    if (!control.isConnected) return;
+    const currentLine = readLine();
+    if (currentLine?.kind !== 'instr' || currentLine.name !== line.name) return;
+    try {
+      const raw = source.replace(currentLine.raw, index, value);
+      commit({ ...currentLine, raw });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '指令字段未修改', false, 5000);
+    }
+  };
 
-  tpl.labels.forEach((labelText, i) => {
-    if (tpl.opSelect === i) {
-      const sel = h('select');
-      for (const op of ['=', '+=', '-=']) {
-        const opt = h('option', undefined, op);
-        opt.value = op;
-        if ((args[i] ?? '') === op) opt.selected = true;
-        sel.appendChild(opt);
+  labels.forEach((labelText, index) => {
+    const value = source.value(line.raw, index);
+    if (tpl?.opSelect === index) {
+      const select = h('select');
+      select.setAttribute('aria-label', labelText);
+      const operators = ['=', ':=', '+=', '-='];
+      if (!operators.includes(value)) {
+        const unknown = h('option', undefined, value || '请选择运算符');
+        unknown.value = value;
+        unknown.selected = true;
+        select.appendChild(unknown);
       }
-      sel.onchange = () => {
-        const next = [...args];
-        next[i] = sel.value;
-        writeBack(next);
-      };
-      fields.appendChild(sel);
+      for (const op of operators) {
+        const option = h('option', undefined, op);
+        option.value = op;
+        option.selected = value === op;
+        select.appendChild(option);
+      }
+      select.value = value;
+      select.onchange = () => writeBack(select, index, select.value);
+      fields.appendChild(select);
       return;
     }
-    const input = h('input', i === tpl.labels.length - 1 ? 'wide' : '');
+    const input = h('input', index === labels.length - 1 ? 'wide' : '');
     input.placeholder = labelText;
-    input.value = args[i] ?? '';
-    input.oninput = () => {
-      const next = [...args];
-      next[i] = input.value;
-      writeBack(next);
-    };
+    input.setAttribute('aria-label', labelText);
+    input.value = value;
+    input.oninput = () => writeBack(input, index, input.value);
     fields.appendChild(input);
   });
 }
