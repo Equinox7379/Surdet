@@ -26,5 +26,19 @@ jobs:
         run: npm run verify:asset-import
       - name: Verify instruction writeback in Chromium
         run: node packages/editor/e2e/instruction-writeback.e2e.mjs
+      - name: Verify V4 mounted production adapters in Chromium
+        run: node packages/editor/e2e/v4-workbench.e2e.mjs
+      - name: Verify V4 built editor and actual preview
+        env:
+          SURDET_V4_SCREENSHOTS: artifacts/v4-ui
+        run: node packages/editor/e2e/v4-app.e2e.mjs
+      - name: Retain three V4 review screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surdet-v4-ui
+          path: artifacts/v4-ui/*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy

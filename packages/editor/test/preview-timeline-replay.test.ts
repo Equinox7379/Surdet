@@ -5,6 +5,8 @@ import { state } from '../src/state.js';
 class FakeElement {
   readonly tagName: string;
   readonly children: FakeElement[] = [];
+  readonly dataset: Record<string, string> = {};
+  readonly style = { setProperty: (_name: string, _value: string): void => {} };
   className = '';
   checked = false;
   isConnected = true;

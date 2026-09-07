@@ -110,8 +110,13 @@ describe('editor Asset Center contract', () => {
     expect(thumbnailSource).toMatch(/disposeAssetCenterThumbnails/);
     expect(centerSource).toMatch(/asset-center-thumbnail/);
     expect(centerSource).toMatch(/aria-hidden/);
-    expect(centerSource).toMatch(/effectiveAssetView\s*===\s*['"]grid['"]/);
-    expect(centerSource).toMatch(/thumbnailSession\.mount/);
+    const thumbnailSessionStart = centerSource.indexOf('const thumbnailSession = beginAssetThumbnailSession();');
+    const libraryStart = centerSource.indexOf("const library = h('section', `asset-center-library ${effectiveAssetView}`);");
+    const thumbnailMount = centerSource.indexOf('thumbnailSession.mount', thumbnailSessionStart);
+    expect(thumbnailSessionStart).toBeGreaterThanOrEqual(0);
+    expect(libraryStart).toBeGreaterThan(thumbnailSessionStart);
+    expect(thumbnailMount).toBeGreaterThan(libraryStart);
+    expect(centerSource.slice(thumbnailSessionStart, thumbnailMount)).not.toMatch(/effectiveAssetView\s*===\s*['"]grid['"]/);
     expect(mainSource).toMatch(/disposeAssetCenterThumbnails/);
     expect(centerCss).toMatch(/asset-center-library\.grid[\s\S]*asset-center-thumbnail/);
     expect(centerCss).toMatch(/aspect-ratio\s*:\s*16\s*\/\s*9/);
