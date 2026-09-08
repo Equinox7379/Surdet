@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { fakeFileSystemInit } from './support/fake-file-system.mjs';
@@ -36,6 +37,8 @@ const documents = {
   'content/assets/portrait/lynn_uniform_normal.svg': svg,
   'content/assets/portrait/lynn_uniform_despair.svg': svg,
   'content/timelines/intro.json': JSON.stringify({ version: 1, id: 'intro', durationMs: 600, tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 600, easing: 'linear', action: 'fade', alpha: 0 }] }] }),
+  'content/timelines/invalid.json': JSON.stringify({ version: 1, id: 'invalid', durationMs: -1, tracks: [] }),
+  'content/assets/bg/long-technical-path-for-image-failure/unavailable.svg': 'controlled invalid image in the isolated test project',
 };
 // Reuse existing Starter SVGs only as test art; never depend on this project in production.
 for (const [target, original] of [
@@ -45,22 +48,80 @@ for (const [target, original] of [
 ]) documents[target] = await fs.readFile(path.resolve(editorRoot, '../../examples/starter/content/assets', original), 'utf8');
 let files = Object.entries(documents).map(([file, text]) => ({ path: file, bytes: Buffer.from(text).toString('base64') }));
 let browser;
+let zoomContext;
+let zoomRoot;
 const errors = [];
-const open = async () => {
-  const context = await browser.newContext({ viewport: { width: 1792, height: 900 } });
-  await context.addInitScript(fakeFileSystemInit, { rootName: 'surdet-v4-test-only', files });
+const open = async (context = undefined) => {
+  context ??= await browser.newContext({ viewport: { width: 1792, height: 900 } });
+  context.setDefaultTimeout(20000);
+  await context.addInitScript(fakeFileSystemInit, { rootName: 'surdet-v4-test-only-中文长项目名称与跨页面编辑体验检查', files });
+  await context.addInitScript(() => {
+    window.__pass10ImageStates = [];
+    new MutationObserver(() => {
+      for (const node of document.querySelectorAll('[data-image-state],[data-asset-thumbnail-state]')) {
+        const state = node.getAttribute('data-image-state') ?? node.getAttribute('data-asset-thumbnail-state');
+        if (!window.__pass10ImageStates.includes(state)) window.__pass10ImageStates.push(state);
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-image-state', 'data-asset-thumbnail-state'] });
+  });
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('requestfailed', (request) => errors.push(`${request.url()}: ${request.failure()?.errorText}`));
+  page.on('response', (response) => { if (response.request().resourceType() === 'stylesheet' && !response.ok()) errors.push(`stylesheet ${response.status()}: ${response.url()}`); });
   page.on('dialog', (dialog) => { void dialog.accept(); });
   await page.goto(url);
+  assert.equal(await page.locator('.editor-project-name').innerText(), '未打开项目');
+  await page.locator('[data-action="undo"]').click();
+  assert.equal(await page.locator('.editor-project-name').innerText(), '未打开项目', 'empty-history undo must remain a no-op');
   await page.locator('[data-action="open-project"]').click();
   await page.locator('.v4-authoring .block[data-line="3"]').waitFor();
   return { context, page };
+};
+
+const keyboardActivate = async (control, key = 'Enter') => {
+  await control.focus();
+  assert(await control.evaluate((node) => node === document.activeElement), 'keyboard target did not receive focus');
+  await control.press(key);
+};
+
+const checkSurface = async (page, mode) => {
+  const root = page.locator(`[data-editor-mode-surface="${mode}"]`);
+  await root.waitFor();
+  assert.equal(await root.count(), 1, `${mode}: duplicate mode roots`);
+  assert.equal(await page.locator(`[data-editor-mode="${mode}"]`).getAttribute('aria-current'), 'page');
+  const controlledId = await page.locator(`[data-editor-mode="${mode}"]`).getAttribute('aria-controls');
+  assert(await root.evaluate((node, id) => Boolean(id && node.contains(document.getElementById(id))), controlledId), `${mode}: navigation does not reference its active work surface`);
+  assert(await root.evaluate((node) => getComputedStyle(node).display === 'flex' && node.getBoundingClientRect().height > 100), `${mode}: main structure collapsed`);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${mode}: page overflow`);
+  assert(await page.locator('iframe.preview-frame').count() <= 1, `${mode}: multiple preview runtimes`);
+  if (mode === 'preview') {
+    await page.waitForFunction(() => {
+      const frame = document.querySelector('iframe.preview-frame');
+      const canvas = frame?.contentDocument?.querySelector('canvas')?.getBoundingClientRect();
+      return canvas && canvas.width > 0 && canvas.height > 0 && canvas.left >= -1 && canvas.top >= -1 && canvas.right <= frame.contentWindow.innerWidth + 1 && canvas.bottom <= frame.contentWindow.innerHeight + 1;
+    }).catch(async (error) => {
+      console.error('Preview canvas bounds', await page.locator('iframe.preview-frame').evaluate((frame) => ({ viewport: [innerWidth, innerHeight], frame: [frame.contentWindow.innerWidth, frame.contentWindow.innerHeight], canvas: frame.contentDocument.querySelector('canvas')?.getBoundingClientRect().toJSON() })));
+      throw error;
+    });
+  }
 };
 try {
   browser = await chromium.launch({ headless: true });
   let opened = await open();
   let page = opened.page;
+  const addStory = page.locator('#script-v4-toolbar').getByRole('button', { name: '添加剧情', exact: true });
+  await keyboardActivate(addStory, 'Space');
+  const dialog = page.getByRole('dialog', { name: '添加剧情', exact: true });
+  assert.equal(await dialog.count(), 1, 'one activation must open only one dialog');
+  await page.keyboard.press('Tab');
+  assert(await dialog.evaluate((node) => node.contains(document.activeElement)), 'dialog Tab escaped the active modal');
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached' });
+  assert(await addStory.evaluate((node) => node === document.activeElement), 'Escape did not restore the insertion trigger');
+  assert(await addStory.evaluate((node) => getComputedStyle(node).outlineStyle === 'solid' && parseFloat(getComputedStyle(node).outlineWidth) >= 2), 'focus must remain independently visible');
+  await keyboardActivate(page.locator('.scene-item').first());
+  await keyboardActivate(page.locator('[data-step-summary="3"]'), 'Space');
   await page.locator('[data-step-summary="3"]').click();
   await page.getByRole('button', { name: '选择表情 despair', exact: true }).click();
   await page.getByRole('button', { name: '左侧', exact: true }).click();
@@ -146,12 +207,31 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes('名词表已保存'));
   await page.getByRole('button', { name: '角色', exact: true }).click();
   console.log('PASS full-width native JSON textarea and preserved invalid draft');
+  await keyboardActivate(page.locator('[data-editor-mode="timeline"]'));
+  await keyboardActivate(page.locator('[data-timeline-id="invalid"]'));
+  assert(await page.getByText('此时间轴暂不可播放', { exact: true }).isVisible(), 'invalid timeline must have a textual error state');
+  const disabledPreview = page.locator('.timeline-header-actions .primary');
+  assert(await disabledPreview.isDisabled(), 'invalid timeline preview must stay disabled');
+  await disabledPreview.evaluate((node) => node.focus());
+  assert(!await disabledPreview.evaluate((node) => node === document.activeElement), 'disabled preview remained focusable');
+  assert.equal(await page.locator('.timeline-header-actions .primary').isDisabled(), true);
+  await keyboardActivate(page.locator('[data-timeline-id="intro"]'));
+  await keyboardActivate(page.locator('[data-editor-mode="assets"]'));
+  await page.locator('.asset-center-item[data-asset-id]').filter({ hasText: 'unavailable' }).first().scrollIntoViewIfNeeded();
+  await page.locator('[data-asset-thumbnail-state="error"]').first().waitFor();
+  assert(await page.locator('[data-asset-thumbnail-state="error"] .asset-center-thumbnail-label').first().evaluate((node) => {
+    const label = node.getBoundingClientRect(), item = node.closest('[data-asset-id]').getBoundingClientRect();
+    return label.left >= item.left && label.right <= item.right && label.top >= item.top && label.bottom <= item.bottom;
+  }), 'failed image label escaped its own asset row');
+  const imageStates = await page.evaluate(() => window.__pass10ImageStates);
+  assert(imageStates.includes('loading') && imageStates.includes('ready') && imageStates.includes('error'), 'image loading/failure must settle into readable placeholders');
+  console.log('PASS textual validation error, disabled preview, real image loading/error and long technical path');
   const modes = ['editor', 'assets', 'flow', 'timeline', 'config', 'preview', 'review', 'stats', 'audit'];
-  for (const [width, height] of [[1792, 900], [1280, 800], [390, 844]]) {
+  for (const [width, height] of [[1792, 900], [1280, 800], [960, 720], [390, 844]]) {
     await page.setViewportSize({ width, height });
     for (const mode of modes) {
-      await page.locator(`[data-editor-mode="${mode}"]`).click();
-      await page.locator(`[data-editor-mode-surface="${mode}"]`).waitFor();
+      await keyboardActivate(page.locator(`[data-editor-mode="${mode}"]`), modes.indexOf(mode) % 2 ? 'Space' : 'Enter');
+      await checkSurface(page, mode);
       await page.waitForTimeout(100);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${mode} ${width}: page overflow`);
       assert(await page.locator('iframe.preview-frame').count() <= 1, `${mode}: multiple preview runtimes`);
@@ -169,7 +249,7 @@ try {
     }
   }
   await page.locator('[data-editor-mode="editor"]').click();
-  await page.setViewportSize({ width: 960, height: 800 });
+  await page.setViewportSize({ width: 960, height: 720 });
   await page.locator('[data-workbench-panel="outline"]').click();
   assert(await page.locator('#sidebar').isVisible(), 'medium-width scene directory is unreachable');
   await page.locator('[data-workbench-panel="editor"]').click();
@@ -192,16 +272,37 @@ try {
   await dialogue.fill('更新后的对白。');
   await page.setViewportSize({ width: 390, height: 844 });
   for (const [panel, selector] of [['outline', '#sidebar'], ['picture', '#script-v4-edit-layout'], ['inspector', '#script-v4-inspector'], ['context', '#right'], ['editor', '#editor']]) {
-    await page.locator(`[data-workbench-panel="${panel}"]`).click();
+    await keyboardActivate(page.locator(`[data-workbench-panel="${panel}"]`));
     assert(await page.locator(selector).isVisible(), `mobile ${panel} is unreachable`);
+    assert(await page.evaluate(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLElement && active.getClientRects().length > 0 && !active.closest('[hidden],[inert]');
+    }), `mobile ${panel}: focus remained in a hidden panel`);
   }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert(await page.locator('.editor-mode-button').first().evaluate((node) => parseFloat(getComputedStyle(node).transitionDuration) < .001), 'reduced motion did not disable navigation transitions');
+  await keyboardActivate(page.locator('[data-editor-mode="review"]'));
+  assert(await page.getByText('暂无审阅任务', { exact: true }).isVisible(), 'empty review state disappeared');
+  await checkSurface(page, 'review');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   console.log('PASS medium directory, mobile panels, long dialogue and synthetic composition (not native IME)');
   if (process.env.SURDET_V4_SCREENSHOTS) {
     const output = path.resolve(process.env.SURDET_V4_SCREENSHOTS); await fs.mkdir(output, { recursive: true });
     await page.setViewportSize({ width: 1792, height: 900 });
-    for (const mode of ['editor', 'assets', 'config']) {
+    for (const [mode, name, width, height] of [
+      ['editor', '01-editor-wide.png', 1792, 900],
+      ['assets', '02-assets-wide.png', 1792, 900],
+      ['flow', '03-flow-medium.png', 960, 720],
+      ['preview', '04-preview-or-review-wide.png', 1792, 900],
+      ['stats', '05-project-health-wide.png', 1792, 900],
+    ]) {
+      await page.setViewportSize({ width, height });
       await page.locator(`[data-editor-mode="${mode}"]`).click();
       await page.waitForTimeout(100);
+      if (mode === 'preview') await page.waitForFunction(() => {
+        const runtime = document.querySelector('iframe.preview-frame')?.contentWindow?.surdetPreviewDebug?.runtime;
+        return runtime && JSON.stringify(runtime.queries.diagnostics.projectionSnapshot()).includes('更新后的对白。');
+      });
       if (mode === 'assets') await page.locator('.asset-center-item[data-asset-id]').first().click();
       await page.waitForFunction(() => [...document.querySelectorAll('[data-image-state="loading"],[data-asset-thumbnail-state="loading"]')].every((node) => {
         const rect = node.getBoundingClientRect();
@@ -213,12 +314,61 @@ try {
           if (rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= innerHeight) await image.decode();
         }
       });
-      await page.screenshot({ path: path.join(output, `${mode}.png`) });
+      await page.screenshot({ path: path.join(output, name) });
     }
   }
+  await browser.close(); browser = null;
+  // Reuse the Pass 8 chrome.tabs.setZoom method in a disposable profile. Local
+  // zoom is headed; CI uses Chromium's headless extension support, never page-scale.
+  zoomRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-pass10-zoom-'));
+  const extension = path.join(zoomRoot, 'extension'); await fs.mkdir(extension);
+  await fs.writeFile(path.join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Surdet Editor zoom test', version: '1.0', permissions: ['tabs'], background: { service_worker: 'zoom.js' } }));
+  await fs.writeFile(path.join(extension, 'zoom.js'), 'chrome.runtime.onInstalled.addListener(() => {}); setInterval(() => chrome.runtime.getPlatformInfo(), 20000);');
+  zoomContext = await chromium.launchPersistentContext(path.join(zoomRoot, 'profile'), { channel: 'chromium', headless: Boolean(process.env.CI), viewport: { width: 1792, height: 1000 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+  opened = await open(zoomContext); page = opened.page;
+  const worker = zoomContext.serviceWorkers()[0] ?? await zoomContext.waitForEvent('serviceworker');
+  const zoomBaseline = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio }));
+  const zoom = await worker.evaluate(async (url) => {
+    const tab = (await chrome.tabs.query({})).find((tab) => tab.url?.startsWith(url));
+    if (!tab) throw new Error('Editor zoom tab missing');
+    await chrome.tabs.setZoom(tab.id, 2);
+    return chrome.tabs.getZoom(tab.id);
+  }, url);
+  assert.equal(zoom, 2);
+  await page.waitForFunction((baseline) => Math.abs(innerWidth - baseline.width / 2) <= 1 && Math.abs(devicePixelRatio - baseline.ratio * 2) < .01, zoomBaseline).catch(async (error) => {
+    console.error('Browser zoom metrics', { zoom, baseline: zoomBaseline, actual: await page.evaluate(() => ({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio })) });
+    throw error;
+  });
+  console.log('PASS actual browser zoom', JSON.stringify({ zoom, before: zoomBaseline, after: await page.evaluate(() => ({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio })) }));
+  for (const mode of ['editor', 'assets', 'review']) {
+    await keyboardActivate(page.locator(`[data-editor-mode="${mode}"]`));
+    await checkSurface(page, mode);
+    if (mode === 'editor') {
+      await keyboardActivate(page.locator('[data-workbench-panel="outline"]'));
+      assert(await page.locator('#sidebar').isVisible());
+      await keyboardActivate(page.locator('[data-workbench-panel="editor"]'));
+      await keyboardActivate(page.locator('#script-v4-toolbar').getByRole('button', { name: '添加剧情', exact: true }));
+      await page.keyboard.press('Escape');
+    }
+    if (mode === 'assets') {
+      await keyboardActivate(page.locator('.asset-center-item[data-asset-id]').first());
+      const search = page.locator('.asset-center-search input');
+      await search.fill('没有匹配的素材');
+      assert.equal(await page.locator('.asset-center-item[data-asset-id]').count(), 0);
+      await search.fill('');
+    }
+  }
+  await keyboardActivate(page.locator('[data-editor-mode="editor"]'));
+  if (process.env.SURDET_V4_SCREENSHOTS) await page.screenshot({ path: path.join(path.resolve(process.env.SURDET_V4_SCREENSHOTS), '06-editor-narrow-or-zoom.png') });
   assert.deepEqual(errors, []);
-  console.log('PASS nine modes × three widths, no page errors, no duplicate preview; FS adapter scope only.');
+  console.log(`PASS nine modes × four viewports, keyboard/modal focus, reduced motion, empty review, genuine 200% Chromium zoom (${process.env.CI ? 'CI headless' : 'local visible'}); no runtime/style errors or duplicate preview; FS adapter scope only.`);
 } finally {
   await browser?.close();
+  await zoomContext?.close();
+  if (zoomRoot) {
+    assert.equal(path.dirname(zoomRoot), path.resolve(os.tmpdir()));
+    assert(path.basename(zoomRoot).startsWith('surdet-pass10-zoom-'));
+    await fs.rm(zoomRoot, { recursive: true, force: true });
+  }
   await new Promise((resolve) => server.close(resolve));
 }

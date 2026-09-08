@@ -188,7 +188,7 @@ describe('editor visual token contract', () => {
     );
   });
 
-  it('loads legacy compatibility first and migrated layers in dependency order', () => {
+  it('loads only semantic layers in dependency order', () => {
     const hrefs = [...indexHtml.matchAll(/<link\b[^>]*>/gi)]
       .map((match) => match[0])
       .filter((tag) => /\brel=["']stylesheet["']/i.test(tag))
@@ -202,7 +202,6 @@ describe('editor visual token contract', () => {
       ].includes(href));
 
     expect(hrefs).toEqual([
-      '/src/styles.css',
       '/src/styles/tokens.css',
       '/src/styles/components.css',
       '/src/styles/app-shell.css',

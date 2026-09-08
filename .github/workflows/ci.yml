@@ -32,7 +32,7 @@ jobs:
         env:
           SURDET_V4_SCREENSHOTS: artifacts/v4-ui
         run: node packages/editor/e2e/v4-app.e2e.mjs
-      - name: Retain three V4 review screenshots
+      - name: Retain Pass 10 Editor review screenshots
         if: always()
         uses: actions/upload-artifact@v7
         with:

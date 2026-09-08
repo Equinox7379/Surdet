@@ -1,7 +1,35 @@
-#app,
-#app * {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
+
+::selection {
+  background: var(--surdet-surface-selected);
+  color: var(--surdet-text-primary);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--surdet-border-default);
+  border: 2px solid var(--surdet-surface-app);
+  border-radius: var(--surdet-radius-control);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--surdet-border-strong); }
+
+.empty {
+  padding: var(--surdet-space-12);
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.mono { font-family: var(--surdet-font-mono); }
+.dim { color: var(--surdet-text-secondary); }
+
+#app input[type="checkbox"] { accent-color: var(--surdet-action-primary); }
 
 #app button,
 #app input,

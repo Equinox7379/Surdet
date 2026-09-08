@@ -535,8 +535,22 @@
 }
 
 .asset-center-thumbnail {
+  position: relative;
   display: none;
 }
+
+.asset-center-library.list .asset-center-thumbnail-label {
+  position: static;
+  display: block;
+  padding: 3px;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transform: none;
+}
+
+.asset-center-library.list .asset-center-thumbnail-detail { display: none; }
 
 .asset-center-library.grid .asset-center-thumbnail {
   position: relative;
