@@ -45,7 +45,9 @@ jobs:
       - name: Verify Pass 8 actual player and file save bridge
         env:
           SURDET_PASS8_OUTPUT: artifacts/pass8-ui
-        run: node packages/renderer/e2e/pass8-player.e2e.mjs
+        run: |
+          npm run build -w @surdet/shell
+          node packages/renderer/e2e/pass8-player.e2e.mjs
       - name: Retain three Pass 8 player review screenshots
         if: always()
         uses: actions/upload-artifact@v7
