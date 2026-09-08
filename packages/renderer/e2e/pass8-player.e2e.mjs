@@ -62,6 +62,9 @@ try {
   // A fresh test-only profile permits the real chrome.tabs.setZoom API. No personal browser is touched.
   const context = await chromium.launchPersistentContext(browserProfile, { channel: 'chromium', headless: true, viewport: { width: 1440, height: 900 }, args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`] });
   browser = context;
+  // Standalone Playwright has no test-runner deadline. Keep CI failures bounded and diagnostic.
+  context.setDefaultTimeout(60_000);
+  context.setDefaultNavigationTimeout(60_000);
   const zoomWorker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   await context.exposeBinding('__pass8Save', async (_source, operation, ...args) => {
     assert(['read', 'write', 'delete', 'list', 'listMeta', 'listBackupMeta', 'restoreBackup'].includes(operation));
