@@ -46,6 +46,7 @@ import { GalleryLayer } from './layers/gallery/gallery-layer.js';
 import { SystemPanelLayer } from './layers/system-panel/system-panel-layer.js';
 import { WorldLayer, makeWorldBackgroundTexture } from './layers/world/world-layer.js';
 import type { RendererTheme } from './theme.js';
+import { PlayerFocusScope } from './player-controls.js';
 
 /** Keep the legacy public type path while the source of truth lives in battle-view.ts. */
 export type { BattleHandlers } from './battle-view.js';
@@ -143,6 +144,7 @@ export class RendererStageHost {
   #fontFamilies: Record<FontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
   /** 舞台直接交互/异步资源更新时唤醒外部帧调度器。 */
   #frameRequest: FrameRequestHandler | null = null;
+  #playerFocus: PlayerFocusScope | null = null;
   /** 画质策略由舞台统一应用，默认 balanced 兼顾正式游戏和编辑器预览。 */
   #loadingLayer: LoadingLayer;
   readonly #world: WorldLayer;
@@ -224,6 +226,7 @@ export class RendererStageHost {
       antialias: false,
       resolution,
       autoDensity: true,
+      accessibilityOptions: { enabledByDefault: true, deactivateOnMouseMove: false },
       canvas,
     };
     try {
@@ -247,6 +250,7 @@ export class RendererStageHost {
     // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
     // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
     this.#uiLayer.addChild(this.#world.fadeOverlay, this.#world.flashOverlay);
+    this.#playerFocus = new PlayerFocusScope(this.#uiLayer, app.renderer, app.canvas, () => this.#requestFrame());
     this.#layout();
     return undefined;
   }
@@ -837,6 +841,8 @@ export class RendererStageHost {
    * setBackground/setPortrait 会把命中的注入纹理也放进占位缓存，故销毁前按注册表排除。
    */
   destroy(): void {
+    this.#playerFocus?.destroy();
+    this.#playerFocus = null;
     this.#loadingLayer.destroy();
     this.#menu.dispose();
     this.#dialogue.dispose();

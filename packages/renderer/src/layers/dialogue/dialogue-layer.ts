@@ -1,6 +1,7 @@
 import {
   Container,
   Graphics,
+  Rectangle,
   Sprite,
   Text as PText,
   TextStyle,
@@ -24,6 +25,7 @@ import type {
   SpeakerProfile,
 } from '../../types.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import {
   bindThemeGraphicsProjection,
   bindThemeTextProjection,
@@ -99,6 +101,8 @@ interface ChoiceView {
   readonly bg: Graphics;
   readonly bar: Graphics;
   readonly label: PText;
+  width: number;
+  height: number;
 }
 
 interface CommandRailLayout {
@@ -152,6 +156,13 @@ export class DialogueLayer implements DialogueProjectionPort {
   #speakerPlate: Graphics;
   #dialogCharsPerLine = 40;
   #dialogPanel: Graphics;
+  #dialogMask: Graphics;
+  #choiceMask: Graphics;
+  #nvlMask: Graphics;
+  #advScroll = 0;
+  #choiceScroll = 0;
+  #nvlScroll = 0;
+  #choiceBottom = 720;
   #dialogRubyLayer: Container;
   #rubyBasePool: PText[] = [];
   #rubyTextPool: PText[] = [];
@@ -159,6 +170,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   #choiceLayer: Container;
   #choiceViews: ChoiceView[] = [];
   #choiceHighlight = -1;
+  #choiceCommitted = false;
+  #dialogTop = 466;
   #choiceFadeRemain = 0;
   #choiceFadeDur = 280;
 
@@ -178,6 +191,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #backlogBuilt = false;
 
   #nvlLayer: Container;
+  #nvlTextLayer: Container;
   #nvlBackground: Graphics;
   #nvlLines: PText[] = [];
   #nvlLineCounts: number[] = [];
@@ -222,17 +236,39 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#root.addChild(this.#dialogueRoot, this.#dialogueOverlayRoot);
 
     this.#choiceLayer = new Container();
+    this.#dialogMask = bindThemeGraphicsProjection(new Graphics(), [null]);
+    this.#choiceMask = bindThemeGraphicsProjection(new Graphics(), [null]);
+    this.#nvlMask = bindThemeGraphicsProjection(new Graphics().rect(this.#w * 0.16, 48, this.#w * 0.68, this.#h - 108).fill(0xffffff), [null]);
+    this.#choiceLayer.mask = this.#choiceMask;
+    this.#choiceLayer.eventMode = 'static';
+    this.#choiceLayer.on('wheel', (event) => {
+      if (!this.#choiceViews.length) return;
+      event.stopPropagation();
+      this.#choiceScroll += event.deltaY;
+      this.layout();
+      this.#requestFrame();
+    });
     this.#commandRail = new Container();
     this.#commandRail.visible = false;
 
     this.#dialogRubyLayer = new Container();
     this.#nvlLayer = new Container();
+    this.#nvlTextLayer = new Container();
+    // Keep one permanent mask owner even when no NVL paragraph exists.
+    this.#nvlTextLayer.mask = this.#nvlMask;
     this.#nvlLayer.visible = false;
+    this.#nvlLayer.eventMode = 'static';
+    this.#nvlLayer.on('wheel', (event) => {
+      event.stopPropagation();
+      this.#nvlScroll += event.deltaY;
+      this.#layoutNvl();
+      this.#requestFrame();
+    });
     this.#nvlBackground = bindThemeGraphicsProjection(
       new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.86 }),
       ['panel'],
     );
-    this.#nvlLayer.addChild(this.#nvlBackground);
+    this.#nvlLayer.addChild(this.#nvlBackground, this.#nvlTextLayer);
 
     this.#bannerLayer = new Container();
     this.#bannerLayer.visible = false;
@@ -252,7 +288,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerText.anchor.set(0.5);
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
 
-    this.#dialogPanel = bindThemeGraphicsProjection(new Graphics(), ['scrim', 'scrim', 'scrim']);
+    this.#dialogPanel = bindThemeGraphicsProjection(new Graphics(), ['panel', 'line']);
     this.#drawDialogPanel();
     this.#speakerPlate = bindThemeGraphicsProjection(new Graphics(), ['line']);
     this.#speakerAvatar = new Sprite(Texture.EMPTY);
@@ -272,7 +308,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerText = bindThemeTextProjection(new PText({
       text: '',
       style: {
-        fontSize: 18,
+        fontSize: this.#theme.typography.uiSize,
         fill: this.#theme.colors.text,
         fontWeight: 'normal',
         letterSpacing: 1,
@@ -283,17 +319,28 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogText = bindThemeTextProjection(new PText({
       text: '',
       style: {
-        fontSize: 25,
+        fontSize: this.#theme.typography.bodySize,
         fill: this.#theme.colors.text,
         fontWeight: 'normal',
         fontFamily: this.#assets.fontFamily('body'),
         letterSpacing: 0.3,
-        lineHeight: 41,
+        lineHeight: this.#theme.typography.bodySize * 1.6,
         stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
     }), { fill: 'text', stroke: 'textOnAccent' });
-    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 220) / 25));
-    this.#nvlCharsPerLine = Math.max(10, Math.floor((this.#w - 160) / 20));
+    this.#dialogText.mask = this.#dialogMask;
+    this.#dialogRubyLayer.mask = this.#dialogMask;
+    for (const textRoot of [this.#dialogText, this.#dialogRubyLayer]) {
+      textRoot.eventMode = 'static';
+      textRoot.on('wheel', (event) => {
+        event.stopPropagation();
+        this.#advScroll += event.deltaY;
+        this.layout();
+        this.#requestFrame();
+      });
+    }
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 184) / this.#theme.typography.bodySize));
+    this.#nvlCharsPerLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
 
     this.#mountInitialDisplays();
   }
@@ -428,6 +475,25 @@ export class DialogueLayer implements DialogueProjectionPort {
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
     repaintThemeProjection(this.#dialogueRoot, previous, theme);
     repaintThemeProjection(this.#dialogueOverlayRoot, previous, theme);
+    this.#speakerText.style.fontSize = theme.typography.uiSize;
+    this.#dialogText.style.fontSize = theme.typography.bodySize;
+    this.#dialogText.style.lineHeight = theme.typography.bodySize * 1.6;
+    this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 184) / theme.typography.bodySize));
+    this.#nvlCharsPerLine = Math.max(10, Math.floor(this.#w * 0.68 / theme.typography.bodySize));
+    this.#renderDialogText(this.#lastShownDialog);
+    if (this.#nvlActive || this.#interfaceHidden) {
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+    }
+    this.#nvlEntries.forEach((entry, index) => {
+      const wrapped = wrapCjk(entry.speaker ? `${entry.speaker}：${entry.text}` : entry.text, this.#nvlCharsPerLine);
+      this.#nvlLines[index]!.text = wrapped.join('\n');
+      this.#nvlLines[index]!.style.fontSize = theme.typography.bodySize;
+      this.#nvlLines[index]!.style.lineHeight = theme.typography.bodySize * 1.6;
+      this.#nvlLineCounts[index] = wrapped.length;
+    });
+    this.#layoutNvl();
+    this.layout();
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
@@ -449,19 +515,35 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   layout(): void {
-    this.#speakerText.position.set(92, this.#h - 226);
-    this.#dialogText.position.set(92, this.#h - 174);
-    this.#dialogRubyLayer.position.set(92, this.#h - 174);
+    const textHeight = this.#dialogText.visible ? (this.#dialogText.text
+      ? (typeof document === 'undefined' ? this.#dialogText.text.split('\n').length * this.#theme.typography.bodySize * 1.6 : this.#dialogText.height) : 0)
+      : Math.max(0, ...this.#rubyBasePool.filter((text) => text.visible).map((text) => text.y + text.height));
+    this.#dialogTop = Math.max(24, this.#h - Math.max(this.#h * 0.30, textHeight + 136));
+    this.#advScroll = Math.max(0, Math.min(Math.max(0, textHeight + this.#dialogTop + 64 - (this.#h - 68)), this.#advScroll));
+    this.#speakerText.position.set(92, this.#dialogTop + 20);
+    this.#dialogText.position.set(92, this.#dialogTop + 64 - this.#advScroll);
+    this.#dialogRubyLayer.position.set(92, this.#dialogTop + 64 - this.#advScroll);
+    this.#dialogMask.clear().rect(92, this.#dialogTop + 48, this.#w - 184, Math.max(1, this.#h - 116 - this.#dialogTop)).fill(0xffffff);
     this.#speakerAvatar?.position.set(58, this.#h - 54);
+    this.#drawDialogPanel();
+    this.#drawSpeakerPlate();
     const gap = 12;
-    const heights = this.#choiceViews.map((view) => view.label.height + 16);
+    const width = Math.min(this.#w * 0.68, Math.max(360, ...this.#choiceViews.map((view) => view.label.width + 64)));
+    const heights = this.#choiceViews.map((view) => Math.max(56, view.label.height + 24));
     const totalHeight = heights.reduce((sum, height) => sum + height, 0)
       + Math.max(0, heights.length - 1) * gap;
-    let y = (this.#h - totalHeight) / 2;
+    const bottom = this.#lineActive ? Math.max(this.#h * 0.46, this.#dialogTop - 20) : this.#h;
+    this.#choiceBottom = bottom;
+    this.#choiceScroll = Math.max(0, Math.min(Math.max(0, totalHeight - (bottom - 24)), this.#choiceScroll));
+    this.#choiceMask.clear().rect(0, 24, this.#w, Math.max(1, bottom - 24)).fill(0xffffff);
+    let y = Math.max(24, Math.min((this.#h - totalHeight) / 2, bottom - totalHeight)) - this.#choiceScroll;
     for (const [index, view] of this.#choiceViews.entries()) {
-      const width = view.label.width + 60;
       const height = heights[index]!;
+      view.width = width;
+      view.height = height;
       view.holder.position.set((this.#w - width) / 2, y);
+      view.holder.hitArea = new Rectangle(0, 0, width, height);
+      this.#drawChoiceCard(view, index === this.#choiceHighlight);
       y += height + gap;
     }
     this.#applyContinueIndicatorAnchor();
@@ -506,6 +588,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
     this.#renderDialogText(value);
+    this.layout();
     this.#dialogPanel.visible = (speaker ?? '').length > 0 || value.length > 0 || this.#continueIndicator.visible;
     if (this.#interfaceHidden) {
       this.#dialogPanel.visible = false;
@@ -518,6 +601,7 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   /** Begin a new ADV line without exposing a transient empty-panel frame. */
   beginText(speaker: string | null): void {
+    this.#advScroll = 0;
     this.#lineActive = true;
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
@@ -541,25 +625,34 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
     this.#commandRail.visible = false;
     this.#clearChoices();
+    this.#choiceScroll = 0;
+    this.#choiceCommitted = false;
     options.forEach((option, index) => {
       const holder = new Container();
       const label = bindThemeTextProjection(new PText({
         text: option.label,
-        style: { fontSize: 24, fill: this.#theme.colors.text, letterSpacing: 1 } satisfies TextStyleOptions,
+        style: { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body'), letterSpacing: this.#theme.typography.uiLetterSpacing, wordWrap: true, breakWords: true, wordWrapWidth: this.#w * 0.68 - 64 } satisfies TextStyleOptions,
       }), { fill: 'text' });
-      label.position.set(26, 6);
-      const bg = bindThemeGraphicsProjection(new Graphics(), ['textOnAccent', 'line']);
+      label.position.set(36, 12);
+      const bg = bindThemeGraphicsProjection(new Graphics(), ['surface', 'line']);
       const bar = bindThemeGraphicsProjection(new Graphics(), ['line']);
       holder.addChild(bg, bar, label);
-      const view = { holder, bg, bar, label };
+      const view = { holder, bg, bar, label, width: 0, height: 0 };
       this.#choiceViews.push(view);
       this.#registerDisplay(`choice:${index}`, holder);
       this.#drawChoiceCard(view, false);
       holder.eventMode = 'static';
       holder.cursor = 'pointer';
+      bindPlayerControl(holder, { label: option.label, width: 1, height: 1, reveal: () => {
+        const delta = holder.y < 24 ? holder.y - 24 : Math.max(0, holder.y + view.height - this.#choiceBottom);
+        this.#choiceScroll += delta;
+        this.layout();
+      } });
       holder.on('pointerdown', () => {
         this.#onPointerConsumed?.();
-        this.#onSelect?.(option.index);
+        if (this.#choiceCommitted) return;
+        this.#choiceCommitted = true;
+        try { this.#onSelect?.(option.index); } catch (error) { this.#choiceCommitted = false; throw error; }
       });
       holder.on('pointerover', () => this.#drawChoiceCard(view, true));
       holder.on('pointerout', () => {
@@ -585,7 +678,12 @@ export class DialogueLayer implements DialogueProjectionPort {
   setChoiceHighlight(position: number): void {
     this.#requestFrame();
     this.#choiceHighlight = position;
-    this.#choiceViews.forEach((view, index) => this.#drawChoiceCard(view, index === position));
+    const selected = this.#choiceViews[position];
+    if (selected) {
+      this.#choiceScroll += selected.holder.y < 24 ? selected.holder.y - 24
+        : Math.max(0, selected.holder.y + selected.height - this.#choiceBottom);
+    }
+    this.layout();
   }
 
   setAwaiting(awaiting: boolean): void {
@@ -607,6 +705,12 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
     const layer = this.#backlogLayer;
+    markPlayerModal(layer, {
+      scroll: (delta) => this.scrollBacklog(delta),
+      // Search input/escape remain owned by the existing presentation controller and host route.
+      allowKey: (event) => event.key === 'Escape' || event.key === 'Backspace'
+        || (!event.altKey && !event.metaKey && (event.key.length === 1 || (event.ctrlKey && event.code === 'KeyF'))),
+    });
     if (!this.#backlogBuilt) {
       layer.eventMode = 'static';
       layer.on('pointerdown', () => {
@@ -627,9 +731,14 @@ export class DialogueLayer implements DialogueProjectionPort {
       ['panel'],
     ));
     layer.addChild(bindThemeTextProjection(new PText({
-      text: '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
+      text: '文字记录 · Ctrl+F 搜索 · 滚轮翻阅',
       style: { fontSize: 22, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     }), { fill: 'text' })).position.set(60, BACKLOG_HEADER_Y);
+    const close = bindThemeTextProjection(new PText({ text: '返回', style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text } }), { fill: 'text', fontSize: 'uiSize' });
+    close.position.set(this.#w - 120, BACKLOG_HEADER_Y);
+    bindPlayerControl(close, { label: '返回正文', width: 80, height: 40, x: -8, y: -4 });
+    close.on('pointerdown', (event) => { event.stopPropagation?.(); this.#onPointerConsumed?.(); this.hideBacklog(); this.#onBacklogClose?.(); });
+    layer.addChild(close);
     const normalizedQuery = query.trim();
     this.#backlogSearchVisible = normalizedQuery.length > 0;
     this.#backlogIdleSearchHintVisible = false;
@@ -652,7 +761,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     );
     entriesLayer.mask = mask;
     this.#backlogMask = mask;
-    const perLine = 40;
+    const perLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
     let y = 0;
     for (const entry of entries.slice(-120)) {
       const text = entry.text.length > 0 ? entry.text : '（无文本）';
@@ -662,12 +771,12 @@ export class DialogueLayer implements DialogueProjectionPort {
         const textNode = bindThemeTextProjection(new PText({
           text: first && entry.voice ? `▶ ${lineText}` : lineText,
           style: {
-            fontSize: 20,
+            fontSize: this.#theme.typography.bodySize,
             fill: first && entry.speaker ? this.#theme.colors.accent : this.#theme.colors.textMuted,
             fontWeight: first && entry.speaker ? 'bold' : 'normal',
           } satisfies TextStyleOptions,
         }), { fill: first && entry.speaker ? 'accent' : 'textMuted' });
-        textNode.position.set(60, this.#backlogViewportTop + y);
+        textNode.position.set(this.#w * 0.16, this.#backlogViewportTop + y);
         if (first && entry.voice && onReplayVoice) {
           textNode.eventMode = 'static';
           textNode.cursor = 'pointer';
@@ -678,7 +787,7 @@ export class DialogueLayer implements DialogueProjectionPort {
           });
         }
         entriesLayer.addChild(textNode);
-        y += 34;
+        y += this.#theme.typography.bodySize * 1.6;
         first = false;
       }
     }
@@ -841,9 +950,9 @@ export class DialogueLayer implements DialogueProjectionPort {
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const textNode = bindThemeTextProjection(new PText({
       text: wrapped.join('\n'),
-      style: { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
+      style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
     }), { fill: 'text' });
-    this.#nvlLayer.addChild(textNode);
+    this.#nvlTextLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
     this.#nvlLineCounts.push(Math.max(1, wrapped.length));
     this.#nvlEntries.push({ speaker: normalizedSpeaker, text });
@@ -852,22 +961,18 @@ export class DialogueLayer implements DialogueProjectionPort {
       const old = this.#nvlLines.shift()!;
       this.#nvlLineCounts.shift();
       this.#nvlEntries.shift();
-      this.#nvlLayer.removeChild(old);
+      this.#nvlTextLayer.removeChild(old);
       old.destroy();
     }
-    const lineHeight = 28;
-    const entryGap = 6;
-    let y = 60;
-    this.#nvlLines.forEach((line, index) => {
-      line.position.set(80, y);
-      y += this.#nvlLineCounts[index]! * lineHeight + entryGap;
-    });
+    this.#nvlScroll = 0;
+    this.#layoutNvl();
     this.#requestFrame();
   }
 
   clearNvlText(): void {
+    this.#nvlScroll = 0;
     for (const line of this.#nvlLines) {
-      this.#nvlLayer.removeChild(line);
+      this.#nvlTextLayer.removeChild(line);
       line.destroy();
     }
     this.#nvlLines = [];
@@ -881,6 +986,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
+    this.#advScroll = 0;
+    this.#choiceScroll = 0;
     this.#lineActive = false;
     this.#clearChoices();
     this.hideBacklog();
@@ -925,7 +1032,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#frameRequest = null;
     this.#clearChoices();
     for (const line of this.#nvlLines) {
-      this.#nvlLayer.removeChild(line);
+      this.#nvlTextLayer.removeChild(line);
       line.destroy();
     }
     this.#nvlLines = [];
@@ -970,6 +1077,9 @@ export class DialogueLayer implements DialogueProjectionPort {
       ['command-rail', this.#commandRail],
       ['nvl-layer', this.#nvlLayer],
       ['banner-layer', this.#bannerLayer],
+      ['dialog-reading-mask', this.#dialogMask],
+      ['choice-reading-mask', this.#choiceMask],
+      ['nvl-reading-mask', this.#nvlMask],
     ];
     this.#dialogueRoot.addChild(...displays.map(([, display]) => display as unknown as Container));
     for (const [key, display] of displays) this.#registerDisplay(key, display);
@@ -1020,14 +1130,15 @@ export class DialogueLayer implements DialogueProjectionPort {
     const family = style.fontFamily;
     const familyText = Array.isArray(family) ? family.join(', ') : String(family);
     ctx.font = `${style.fontSize}px ${familyText}`;
-    return wrapCjkMeasure(plain, this.#w - 220, (text) => ctx.measureText(text).width);
+    return wrapCjkMeasure(plain, this.#w - 184, (text) => ctx.measureText(text).width);
   }
 
   #drawDialogPanel(): void {
     this.#dialogPanel.clear();
-    this.#dialogPanel.rect(0, this.#h - 282, this.#w, 88).fill({ color: this.#theme.colors.scrim, alpha: 0.10 });
-    this.#dialogPanel.rect(0, this.#h - 194, this.#w, 112).fill({ color: this.#theme.colors.scrim, alpha: 0.25 });
-    this.#dialogPanel.rect(0, this.#h - 82, this.#w, 82).fill({ color: this.#theme.colors.scrim, alpha: 0.52 });
+    const inset = this.#w * 0.04;
+    this.#dialogPanel.roundRect(inset, this.#dialogTop, this.#w - inset * 2, this.#h - this.#dialogTop - 16, this.#theme.radius.md)
+      .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel })
+      .stroke({ width: 1, color: this.#theme.colors.line, alpha: this.#theme.opacity.line });
   }
 
   #drawSpeakerPlate(): void {
@@ -1036,7 +1147,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerPlate.visible = show;
     if (!show) return;
     const w = Math.max(56, this.#speakerText.width + 14);
-    this.#speakerPlate.rect(92, this.#h - 198, w, 1.5).fill({ color: this.#theme.colors.line, alpha: 0.78 });
+    this.#speakerPlate.rect(92, this.#dialogTop + 48, w, 1).fill({ color: this.#theme.colors.line, alpha: this.#theme.opacity.line });
   }
 
   #renderDialogText(value: string): void {
@@ -1058,28 +1169,28 @@ export class DialogueLayer implements DialogueProjectionPort {
     const familyText = Array.isArray(family) ? family.join(', ') : String(family);
     const measure = {
       base: (text: string): number => {
-        if (!ctx) return text.length * 25;
-        ctx.font = `25px ${familyText}`;
+        if (!ctx) return text.length * this.#theme.typography.bodySize;
+        ctx.font = `${this.#theme.typography.bodySize}px ${familyText}`;
         return ctx.measureText(text).width;
       },
       ruby: (text: string): number => {
-        if (!ctx) return text.length * 12;
-        ctx.font = `12px ${familyText}`;
+        if (!ctx) return text.length * this.#theme.typography.bodySize / 2;
+        ctx.font = `${this.#theme.typography.bodySize / 2}px ${familyText}`;
         return ctx.measureText(text).width;
       },
     };
-    const layouts = layoutRuby(segs, this.#w - 220, measure, 41);
+    const layouts = layoutRuby(segs, this.#w - 184, measure, this.#theme.typography.bodySize * 1.6);
     const baseStyle = {
-      fontSize: 25,
+      fontSize: this.#theme.typography.bodySize,
       fill: this.#theme.colors.text,
       fontWeight: 'normal',
       fontFamily: family,
       letterSpacing: 0.3,
-      lineHeight: 41,
+      lineHeight: this.#theme.typography.bodySize * 1.6,
       stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
     } satisfies TextStyleOptions;
     const rubyStyle = {
-      fontSize: 12,
+      fontSize: this.#theme.typography.bodySize / 2,
       fill: this.#theme.colors.text,
       fontFamily: family,
       stroke: { width: 0.8, color: this.#theme.colors.textOnAccent },
@@ -1127,17 +1238,17 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   #drawChoiceCard(view: ChoiceView, selected: boolean): void {
-    view.label.style = selected
-      ? { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontWeight: 'bold', letterSpacing: 1 } satisfies TextStyleOptions
-      : { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions;
-    bindThemeTextProjection(view.label, { fill: selected ? 'text' : 'textMuted' });
-    const w = view.label.width + 60;
-    const h = view.label.height + 16;
+    view.label.style.fontSize = this.#theme.typography.bodySize;
+    view.label.style.fill = selected ? this.#theme.colors.text : this.#theme.colors.textMuted;
+    bindThemeTextProjection(view.label, { fill: selected ? 'text' : 'textMuted', fontSize: 'bodySize' });
+    const w = view.width;
+    const h = view.height;
     view.bg.clear();
-    view.bg.rect(0, 0, w, h).fill({ color: this.#theme.colors.textOnAccent, alpha: selected ? 0.12 : 0.015 });
-    view.bg.rect(0, h - 1, w, 1).fill({ color: this.#theme.colors.line, alpha: selected ? 0.9 : 0.22 });
+    view.bg.roundRect(0, 0, w, h, this.#theme.radius.sm).fill({ color: this.#theme.colors.surface, alpha: this.#theme.opacity.surface })
+      .stroke({ width: selected ? 2 : 1, alignment: 1, color: this.#theme.colors.line, alpha: selected ? 1 : this.#theme.opacity.line });
     view.bar.clear();
-    if (selected) view.bar.rect(0, h - 3, w, 2).fill({ color: this.#theme.colors.line, alpha: 0.95 });
+    if (selected) view.bar.circle(18, h / 2, 3).fill({ color: this.#theme.colors.line, alpha: 0.95 });
+    this.#requestFrame();
   }
 
   #clearChoices(): void {
@@ -1155,8 +1266,17 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #nvlTotalHeight(): number {
     let height = 0;
-    for (const count of this.#nvlLineCounts) height += count * 28 + 6;
+    for (const count of this.#nvlLineCounts) height += count * this.#theme.typography.bodySize * 1.6 + this.#theme.spacing.md;
     return height;
+  }
+
+  #layoutNvl(): void {
+    this.#nvlScroll = Math.max(0, Math.min(Math.max(0, this.#nvlTotalHeight() - (this.#h - 120)), this.#nvlScroll));
+    let y = 60 - this.#nvlScroll;
+    this.#nvlLines.forEach((line, index) => {
+      line.position.set(this.#w * 0.16, y);
+      y += this.#nvlLineCounts[index]! * this.#theme.typography.bodySize * 1.6 + this.#theme.spacing.md;
+    });
   }
 
   #updateSpeakerAvatar(): void {
@@ -1233,6 +1353,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         .rect(10, railH - 8, slotW - 20, 1.5)
         .fill({ color: this.#theme.colors.line, alpha: item.active ? 0.9 : 0 }), ['line']);
       row.addChild(hit, icon, label, underline);
+      bindPlayerControl(row, { label: item.tooltip ?? item.label, width: slotW, height: railH - 6, enabled: item.enabled !== false });
       row.alpha = item.enabled === false ? 0.38 : 1;
       if (item.enabled !== false) {
         row.eventMode = 'static';

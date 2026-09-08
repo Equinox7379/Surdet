@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { Container, Graphics, Text as PText, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BattleView } from '../../src/battle-view.js';
 import type { DialogueProjectionPort, SystemPanelProjectionPort } from '../../src/api/renderer-commands.js';
@@ -263,6 +263,100 @@ describe('SystemPanelLayer direct contract', () => {
       findText(runtime.root, '◀ 返回地图').emit('pointerdown', pointerEvent);
       expect(onBaseClose).toHaveBeenCalledOnce();
       expect(runtime.layer.system()).toEqual({ type: 'none' });
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('gives active controls complete hit areas, accessible names, and readable disabled reasons', () => {
+    const runtime = makeRuntime();
+    const onEnter = vi.fn();
+    const onBuy = vi.fn();
+    const onExecute = vi.fn();
+    try {
+      runtime.layer.showMap({
+        ...mapView(),
+        ap: 1,
+        nodes: [
+          { id: 'open', name: '据点', x: 320, y: 240, enterable: true, visited: false, apCost: 1, isBase: true },
+          { id: 'locked', name: '旧站', x: 700, y: 420, enterable: false, visited: false, apCost: 2 },
+        ],
+      }, onEnter, vi.fn());
+      const openNode = findParentWithText(runtime.root, '据点（行动力 1）');
+      expect(openNode.accessibleTitle).toBe('进入 据点');
+      expect(openNode.hitArea).toEqual(expect.objectContaining({ width: 150, height: 96 }));
+      const lockedNode = findParentWithText(runtime.root, '旧站（行动力 2）（行动力不足）');
+      expect(lockedNode.accessibleTitle).toContain('行动力不足');
+      expect(lockedNode.tabIndex).toBe(-1);
+      lockedNode.emit('pointerdown', pointerEvent);
+      expect(onEnter).not.toHaveBeenCalled();
+      expect((runtime.root.children[1] as Container).children[0]).toMatchObject({ eventMode: 'static' });
+      runtime.layer.hideMap();
+
+      runtime.layer.showShop({
+        gold: 1,
+        items: [{ id: 'locked', name: '一把需要长文字说明的稀有武器', price: 40 }],
+      }, onBuy, vi.fn());
+      const unavailable = findText(runtime.root, '金币不足');
+      expect(unavailable.accessibleTitle).toContain('金币不足');
+      expect(unavailable.tabIndex).toBe(-1);
+      expect(unavailable.style.wordWrap).toBe(true);
+      unavailable.emit('pointerdown', pointerEvent);
+      expect(onBuy).not.toHaveBeenCalled();
+      runtime.layer.hideShop();
+
+      runtime.layer.showBaseCommands({
+        ...baseView(),
+        commands: [{ id: 'locked', name: '一个需要完整显示名称的训练项目', apCost: 5, enabled: false, remaining: 0 }],
+      }, onExecute, vi.fn());
+      const disabled = findText(runtime.root, '不可执行');
+      expect(disabled.accessibleTitle).toContain('行动力不足');
+      expect(disabled.tabIndex).toBe(-1);
+      expect(findText(runtime.root, '一个需要完整显示名称的训练项目').style.wordWrap).toBe(true);
+      disabled.emit('pointerdown', pointerEvent);
+      expect(onExecute).not.toHaveBeenCalled();
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('covers wrapped map labels and scrolls a long shop list inside its masked viewport', () => {
+    const runtime = makeRuntime();
+    const onEnter = vi.fn();
+    const onBuy = vi.fn();
+    const onShopClose = vi.fn();
+    try {
+      const longName = '一个需要完整显示多行中文名称的地图节点';
+      runtime.layer.showMap({
+        ...mapView(),
+        nodes: [{ id: 'long', name: longName, x: 320, y: 240, enterable: true, visited: false, apCost: 1, isBase: false }],
+      }, onEnter, vi.fn());
+      const longNode = findParentWithText(runtime.root, `${longName}（行动力 1）`);
+      expect(longNode.hitArea).toMatchObject({ width: expect.any(Number), height: expect.any(Number) });
+      expect((longNode.hitArea as Rectangle).width).toBeGreaterThan(150);
+      expect((longNode.hitArea as Rectangle).height).toBeGreaterThan(96);
+      const border = longNode.children.find((child) => child instanceof Graphics && child !== longNode.children[0]);
+      expect(border).toBeInstanceOf(Graphics);
+      expect((border as Graphics).getLocalBounds().height).toBeGreaterThan(96);
+      longNode.emit('pointerdown', pointerEvent);
+      expect(onEnter).toHaveBeenCalledWith('long');
+
+      runtime.layer.showShop({
+        gold: 1000,
+        items: Array.from({ length: 24 }, (_, index) => ({ id: `item-${index}`, name: `一个需要完整显示的商品 ${index}`, price: 10 })),
+      }, onBuy, onShopClose);
+      const lastRow = findParentWithText(runtime.root, '一个需要完整显示的商品 23');
+      const list = lastRow.parent;
+      expect(list).toBeInstanceOf(Container);
+      expect(list?.mask).toBeInstanceOf(Graphics);
+      expect((list?.mask as Graphics).eventMode).toBe('none');
+      const before = (list as Container).y;
+      const purchase = lastRow.children.find((child) => child instanceof PText && child.text === '购买');
+      expect(purchase).toBeInstanceOf(PText);
+      purchase!.emit('mouseover', {} as FederatedPointerEvent);
+      expect((list as Container).y).toBeLessThan(before);
+      purchase!.emit('pointerdown', pointerEvent);
+      expect(onBuy).toHaveBeenCalledWith('item-23');
     } finally {
       disposeRuntime(runtime);
     }

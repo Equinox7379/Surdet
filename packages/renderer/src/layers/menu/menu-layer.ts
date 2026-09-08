@@ -26,6 +26,7 @@ import {
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import {
   bindThemeGraphicsProjection,
   bindThemeTextProjection,
@@ -91,6 +92,7 @@ export class MenuLayer implements MenuProjectionPort {
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
+  readonly #surfacePaints = new WeakMap<Graphics, () => void>();
 
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -105,6 +107,8 @@ export class MenuLayer implements MenuProjectionPort {
   #menuHandlers: MenuHandlers | null = null;
   #settingsLayer: Container;
   #settingsRows: SettingsRowView[] = [];
+  #settingsGroup = '阅读';
+  #settingsPage = 0;
   #settingsHandlers: { onChange: (id: string, dir: -1 | 1) => void; onClose: () => void } | null = null;
   #saveLoadLayer: Container;
   #saveLoadHandlers: { onSelect: SaveLoadSelectionHandler; onClose: () => void } | null = null;
@@ -112,6 +116,9 @@ export class MenuLayer implements MenuProjectionPort {
   #saveLoadTransactionPending = false;
   #saveLoadMode: 'save' | 'load' | null = null;
   #saveLoadSlotCount = 0;
+  #saveLoadNotice: PText | null = null;
+  #saveLoadPage = 0;
+  #confirmation: Container | null = null;
   #thumbCache = new Map<string, ThumbnailEntry>();
 
   constructor(options: MenuLayerOptions) {
@@ -205,6 +212,11 @@ export class MenuLayer implements MenuProjectionPort {
     repaintThemeProjection(this.#menuLayer, previous, theme);
     repaintThemeProjection(this.#settingsLayer, previous, theme);
     repaintThemeProjection(this.#saveLoadLayer, previous, theme);
+    const repaintSurface = (node: Container): void => {
+      if (node instanceof Graphics) this.#surfacePaints.get(node)?.();
+      for (const child of node.children) repaintSurface(child);
+    };
+    for (const layer of [this.#titleLayer, this.#endingLayer, this.#menuLayer, this.#settingsLayer, this.#saveLoadLayer]) repaintSurface(layer);
   }
 
   get needsUpdate(): boolean {
@@ -231,6 +243,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#titleHandler = onSelect;
     this.#titleItemCount = view.items.length;
     const layer = this.#titleLayer;
+    markPlayerModal(layer, {});
     const titleTexture = this.#assets.resolveBackground(view.backgroundKey ?? 'title_bg');
     if (titleTexture) {
       const titleBg = new Sprite(titleTexture);
@@ -239,32 +252,21 @@ export class MenuLayer implements MenuProjectionPort {
       titleBg.height = titleTexture.height * scale;
       titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
       layer.addChild(titleBg);
-      layer.addChild(bindThemeGraphicsProjection(
-        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.canvas, alpha: 0.48 }),
-        ['canvas'],
-      ));
+      layer.addChild(this.#surface(0, 0, this.#w, this.#h, 'canvas', 'scrim'));
     } else {
-      layer.addChild(bindThemeGraphicsProjection(
-        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.97 }),
-        ['panel'],
-      ));
+      layer.addChild(this.#surface(0, 0, this.#w, this.#h, 'panel', 'panel'));
     }
-    const vignette = new Graphics();
-    for (let i = 1; i <= 5; i++) {
-      vignette.ellipse(this.#w / 2, this.#h / 2, this.#w * (0.42 + i * 0.16), this.#h * (0.4 + i * 0.17))
-        .stroke({ width: 60, color: this.#theme.colors.canvas, alpha: 0.05 * i });
-    }
-    layer.addChild(bindThemeGraphicsProjection(vignette, ['canvas', 'canvas', 'canvas', 'canvas', 'canvas']));
     const title = bindThemeTextProjection(new PText({
       text: view.title,
       style: {
-        fontSize: 58,
+        fontSize: this.#theme.typography.titleSize,
         fill: this.#theme.colors.text,
         fontWeight: 'normal',
-        letterSpacing: 8,
+        letterSpacing: this.#theme.typography.titleLetterSpacing,
+        wordWrap: true, wordWrapWidth: this.#w * 0.8, breakWords: true,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
-    }), { fill: 'text' });
+    }), { fill: 'text', fontSize: 'titleSize', letterSpacing: 'titleLetterSpacing' });
     title.anchor.set(0.5);
     title.position.set(this.#w / 2, this.#h * 0.28);
     layer.addChild(title);
@@ -274,8 +276,8 @@ export class MenuLayer implements MenuProjectionPort {
     if (view.subtitle) {
       const subtitle = bindThemeTextProjection(new PText({
         text: view.subtitle,
-        style: { fontSize: 18, fill: this.#theme.colors.textMuted, letterSpacing: 3, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions,
-      }), { fill: 'textMuted' });
+        style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions,
+      }), { fill: 'textMuted', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' });
       subtitle.anchor.set(0.5);
       subtitle.position.set(this.#w / 2, this.#h * 0.28 + 76);
       layer.addChild(subtitle);
@@ -288,18 +290,19 @@ export class MenuLayer implements MenuProjectionPort {
       const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
-          fontSize: 20,
+          fontSize: this.#theme.typography.uiSize,
           fill: enabled ? this.#theme.colors.text : this.#theme.colors.textDisabled,
-          letterSpacing: 4,
+          letterSpacing: this.#theme.typography.uiLetterSpacing,
           fontFamily: this.#fontFamily('ui'),
         } satisfies TextStyleOptions,
-      }), { fill: enabled ? 'text' : 'textDisabled' });
+      }), { fill: enabled ? 'text' : 'textDisabled', fontSize: 'uiSize', letterSpacing: 'uiLetterSpacing' });
       label.anchor.set(0.5);
       label.position.set(baseX, baseY);
+      bindPlayerControl(label, { label: item.label, width: 320, height: 46, x: -160, y: -23, enabled });
       if (enabled) {
         const line = bindThemeGraphicsProjection(new Graphics()
-          .roundRect(baseX - 70, baseY + 20, 140, 1, 0.5)
-          .fill({ color: this.#theme.colors.accent, alpha: 0.9 }), ['accent']);
+          .roundRect(baseX - 160, baseY - 23, 320, 46, this.#theme.radius.sm)
+          .stroke({ width: 1.5, color: this.#theme.colors.accent, alpha: 0.9 }), ['accent']);
         line.visible = false;
         layer.addChild(line);
         label.eventMode = 'static';
@@ -309,11 +312,11 @@ export class MenuLayer implements MenuProjectionPort {
         });
         label.on('pointerover', () => {
           line.visible = true;
-          label.style = { fontSize: 20, fill: this.#theme.colors.text, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
         });
         label.on('pointerout', () => {
           line.visible = false;
-          label.style = { fontSize: 20, fill: this.#theme.colors.text, letterSpacing: 4, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
         });
       }
       layer.addChild(label);
@@ -339,13 +342,13 @@ export class MenuLayer implements MenuProjectionPort {
     const label = bindThemeTextProjection(new PText({
       text,
       style: {
-        fontSize: 30,
+        fontSize: this.#theme.typography.headingSize,
         fill: this.#theme.colors.text,
         fontWeight: 'normal',
-        letterSpacing: 9,
+        letterSpacing: this.#theme.typography.uiLetterSpacing,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
-    }), { fill: 'text' });
+    }), { fill: 'text', fontSize: 'headingSize', letterSpacing: 'uiLetterSpacing' });
     label.anchor.set(0.5);
     label.position.set(this.#w / 2, this.#h / 2);
     this.#endingLayer.addChild(bindThemeGraphicsProjection(
@@ -370,10 +373,13 @@ export class MenuLayer implements MenuProjectionPort {
     this.#menuHandlers = { onSelect, onClose };
     this.#systemMenuItemCount = items.length;
     const layer = this.#menuLayer;
+    markPlayerModal(layer, { close: () => {
+      const handler = this.#menuHandlers?.onClose;
+      this.hideSystemMenu();
+      handler?.();
+    } });
     layer.alpha = 0;
-    const bg = bindThemeGraphicsProjection(new Graphics()
-      .rect(0, 0, this.#w, this.#h)
-      .fill({ color: this.#theme.colors.scrim, alpha: 0.62 }), ['scrim']);
+    const bg = this.#surface(0, 0, this.#w, this.#h, 'scrim', 'scrim');
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       const handler = this.#menuHandlers?.onClose;
@@ -394,24 +400,18 @@ export class MenuLayer implements MenuProjectionPort {
     panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px + 10, py + 12, pw, panelH, 6)
       .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }), ['canvas']));
-    panel.addChild(bindThemeGraphicsProjection(new Graphics()
-      .roundRect(px, py, pw, panelH, 6)
-      .fill({ color: this.#theme.colors.surface, alpha: 0.97 })
-      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }), ['surface', 'line']));
-    panel.addChild(bindThemeGraphicsProjection(new Graphics()
-      .rect(px, py, 3, panelH)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
+    panel.addChild(this.#surface(px, py, pw, panelH, 'panel', 'panel', 'md', true));
     panel.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px + 28, py + headerH - 1, pw - 54, 1)
       .fill({ color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
     panel.addChild(bindThemeTextProjection(new PText({
-      text: 'SYSTEM',
-      style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'accentSoft' })).position.set(px + 28, py + 19);
+      text: '暂停阅读',
+      style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'accentSoft', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' })).position.set(px + 28, py + 19);
     panel.addChild(bindThemeTextProjection(new PText({
       text: '系统菜单',
-      style: { fontSize: 27, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(px + 27, py + 42);
+      style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'text', fontSize: 'headingSize' })).position.set(px + 27, py + 42);
 
     items.forEach((item, i) => {
       const row = new Container();
@@ -422,30 +422,32 @@ export class MenuLayer implements MenuProjectionPort {
         // Transparent interaction geometry is a fixed hit-area color, not a theme token.
         .fill({ color: 0x173149, alpha: 0 }), [null]);
       const marker = bindThemeGraphicsProjection(new Graphics()
-        .rect(0, 13, 3, rowH - 26)
-        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 }), ['accentSoft']);
+        .roundRect(0, 4, pw - 32, rowH - 8, this.#theme.radius.sm)
+        .stroke({ width: 1.5, color: this.#theme.colors.accentSoft, alpha: 0.9 }), ['accentSoft']);
+      marker.alpha = 0;
       const index = bindThemeTextProjection(new PText({
         text: String(i + 1).padStart(2, '0'),
-        style: { fontSize: 13, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions,
-      }), { fill: 'textMuted' });
+        style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions,
+      }), { fill: 'textMuted', fontSize: 'captionSize' });
       index.position.set(22, 19);
       const label = bindThemeTextProjection(new PText({
         text: item.label,
-        style: { fontSize: 21, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions,
-      }), { fill: 'text' });
+        style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions,
+      }), { fill: 'text', fontSize: 'uiSize' });
       label.position.set(62, 14);
       row.addChild(hover, marker, index, label);
+      bindPlayerControl(row, { label: item.label, width: pw - 32, height: rowH - 8, y: 4 });
       row.eventMode = 'static';
       row.cursor = 'pointer';
       row.on('pointerover', () => {
         hover.alpha = 1;
         marker.alpha = 1;
-        label.style = { fontSize: 21, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions;
+        label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions;
       });
       row.on('pointerout', () => {
         hover.alpha = 0;
         marker.alpha = 0;
-        label.style = { fontSize: 21, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions;
+        label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions;
       });
       row.on('pointerdown', () => {
         const handler = this.#menuHandlers?.onSelect;
@@ -481,10 +483,24 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsRows = rows.map((row) => ({ ...row }));
     this.#settingsHandlers = { onChange, onClose };
     const layer = this.#settingsLayer;
-    const bg = bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.66 }),
-      ['scrim'],
-    );
+    const closeSettings = (): void => { const handler = this.#settingsHandlers?.onClose; this.hideSettings(); handler?.(); };
+    const groups = [
+      { label: '阅读', rows: this.#settingsRows.filter((row) => /^(textSpeedCps|autoBaseDelayMs|autoPerCharMs|skipStrategy)$/.test(row.id)) },
+      { label: '声音', rows: this.#settingsRows.filter((row) => /Volume$/.test(row.id)) },
+      { label: '显示与输入', rows: this.#settingsRows.filter((row) => !/^(textSpeedCps|autoBaseDelayMs|autoPerCharMs|skipStrategy)$|Volume$/.test(row.id)) },
+    ].filter((group) => group.rows.length > 0);
+    const group = groups.find((item) => item.label === this.#settingsGroup) ?? groups[0];
+    this.#settingsGroup = group?.label ?? '阅读';
+    const pageSize = 6;
+    const pageCount = Math.max(1, Math.ceil((group?.rows.length ?? 0) / pageSize));
+    this.#settingsPage = Math.min(this.#settingsPage, pageCount - 1);
+    const shownRows = group?.rows.slice(this.#settingsPage * pageSize, (this.#settingsPage + 1) * pageSize) ?? [];
+    const changePage = (direction: number): void => {
+      this.#settingsPage = Math.max(0, Math.min(pageCount - 1, this.#settingsPage + direction));
+      this.showSettings(rows, onChange, onClose);
+    };
+    markPlayerModal(layer, { close: closeSettings, scroll: (delta) => { if (delta) changePage(Math.sign(delta)); } });
+    const bg = this.#surface(0, 0, this.#w, this.#h, 'scrim', 'scrim');
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       const handler = this.#settingsHandlers?.onClose;
@@ -496,36 +512,31 @@ export class MenuLayer implements MenuProjectionPort {
     const px = 240;
     const py = 54;
     const pw = 800;
-    const headerH = 106;
-    const rowH = 58;
-    const panelH = headerH + this.#settingsRows.length * rowH + 34;
+    const headerH = 150;
+    const rowH = Math.max(62, this.#theme.typography.uiSize * 2 + 18);
+    const panelH = Math.min(this.#h - py * 2, headerH + shownRows.length * rowH + 72);
     layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .roundRect(px + 10, py + 12, pw, panelH, 6)
       .fill({ color: this.#theme.colors.canvas, alpha: 0.28 }), ['canvas']));
-    layer.addChild(bindThemeGraphicsProjection(new Graphics()
-      .roundRect(px, py, pw, panelH, 6)
-      .fill({ color: this.#theme.colors.surface, alpha: 0.98 })
-      .stroke({ width: 1, color: this.#theme.colors.line, alpha: 0.52 }), ['surface', 'line']));
-    layer.addChild(bindThemeGraphicsProjection(new Graphics()
-      .rect(px, py, 3, panelH)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
+    layer.addChild(this.#surface(px, py, pw, panelH, 'panel', 'panel', 'md', true));
     layer.addChild(bindThemeTextProjection(new PText({
-      text: 'SETTINGS',
-      style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'accentSoft' })).position.set(px + 30, py + 20);
+      text: '即时生效',
+      style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'accentSoft', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' })).position.set(px + 30, py + 20);
     layer.addChild(bindThemeTextProjection(new PText({
       text: '设置',
-      style: { fontSize: 28, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(px + 28, py + 44);
+      style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'text', fontSize: 'headingSize' })).position.set(px + 28, py + 44);
     layer.addChild(bindThemeGraphicsProjection(new Graphics()
       .rect(px + 28, py + headerH - 1, pw - 56, 1)
       .fill({ color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
-    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
+    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted', fontSize: 'headingSize' });
     close.position.set(px + pw - 52, py + 26);
+    bindPlayerControl(close, { label: '关闭设置', width: 48, height: 48, x: -10, y: -8 });
     close.eventMode = 'static';
     close.cursor = 'pointer';
-    close.on('pointerover', () => { close.style = { fontSize: 30, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
-    close.on('pointerout', () => { close.style = { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions; });
+    close.on('pointerover', () => { close.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
+    close.on('pointerout', () => { close.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions; });
     close.on('pointerdown', () => {
       const handler = this.#settingsHandlers?.onClose;
       this.hideSettings();
@@ -533,38 +544,60 @@ export class MenuLayer implements MenuProjectionPort {
     });
     layer.addChild(close);
 
-    this.#settingsRows.forEach((row, i) => {
+    groups.forEach((item, index) => {
+      const tab = new PText({ text: item.label, style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.textMuted, fontFamily: this.#fontFamily('ui') } });
+      tab.position.set(px + 32 + index * 190, py + 102);
+      bindThemeTextProjection(tab, { fill: 'textMuted', fontSize: 'uiSize' });
+      bindPlayerControl(tab, { label: `${item.label}设置`, width: 170, height: 40, x: -8, y: -6 });
+      if (item === group) {
+        layer.addChild(bindThemeGraphicsProjection(new Graphics().roundRect(tab.x - 8, tab.y - 6, 170, 40, this.#theme.radius.sm)
+          .stroke({ width: 1.5, color: this.#theme.colors.accent }), ['accent']));
+      }
+      tab.on('pointerdown', () => { this.#settingsGroup = item.label; this.#settingsPage = 0; this.showSettings(rows, onChange, onClose); });
+      layer.addChild(tab);
+    });
+    shownRows.forEach((row, i) => {
       const y = py + headerH + i * rowH;
       layer.addChild(bindThemeGraphicsProjection(new Graphics()
         .rect(px + 28, y + rowH - 1, pw - 56, 1)
         .fill({ color: this.#theme.colors.line, alpha: i === this.#settingsRows.length - 1 ? 0.18 : 0.26 }), ['line']));
       layer.addChild(bindThemeTextProjection(new PText({
         text: row.label,
-        style: { fontSize: 21, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-      }), { fill: 'text' })).position.set(px + 32, y + 16);
+        style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text } satisfies TextStyleOptions,
+      }), { fill: 'text', fontSize: 'uiSize' })).position.set(px + 32, y + 16);
       const controls = new Container();
       controls.position.set(px + pw - 300, y + 9);
       const value = bindThemeTextProjection(new PText({
         text: row.display,
-        style: { fontSize: 19, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-      }), { fill: 'text' });
+        style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+      }), { fill: 'text', fontSize: 'uiSize' });
       value.anchor.set(0.5, 0);
       value.position.set(150, 7);
-      const left = bindThemeTextProjection(new PText({ text: '‹', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft' });
+      const left = bindThemeTextProjection(new PText({ text: '‹', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft', fontSize: 'headingSize' });
       left.position.set(52, -3);
-      const right = bindThemeTextProjection(new PText({ text: '›', style: { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft' });
+      const right = bindThemeTextProjection(new PText({ text: '›', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions }), { fill: 'accentSoft', fontSize: 'headingSize' });
       right.position.set(230, -3);
+      bindPlayerControl(left, { label: `减小${row.label}`, width: 48, height: 48, x: -12, y: 0, adjust: (dir) => this.#settingsHandlers?.onChange(row.id, dir) });
+      bindPlayerControl(right, { label: `增大${row.label}`, width: 48, height: 48, x: -12, y: 0, adjust: (dir) => this.#settingsHandlers?.onChange(row.id, dir) });
       for (const control of [left, right]) {
         control.eventMode = 'static';
         control.cursor = 'pointer';
-        control.on('pointerover', () => { control.style = { fontSize: 32, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
-        control.on('pointerout', () => { control.style = { fontSize: 32, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions; });
+        control.on('pointerover', () => { control.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
+        control.on('pointerout', () => { control.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions; });
       }
       left.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, -1));
       right.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, 1));
       controls.addChild(left, value, right);
       layer.addChild(controls);
     });
+    if (pageCount > 1) {
+      const pager = new PText({ text: `${this.#settingsPage + 1} / ${pageCount}　下一页`, style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.text } });
+      pager.position.set(px + pw - 230, py + panelH - 48);
+      bindThemeTextProjection(pager, { fill: 'text', fontSize: 'captionSize' });
+      bindPlayerControl(pager, { label: '下一页设置', width: 200, height: 40 });
+      pager.on('pointerdown', () => changePage(this.#settingsPage + 1 < pageCount ? 1 : -this.#settingsPage));
+      layer.addChild(pager);
+    }
     this.#bringToFront(layer);
     layer.visible = true;
     this.#registerListener('settings', layer);
@@ -577,6 +610,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsLayer.visible = false;
     this.#settingsHandlers = null;
     this.#settingsRows = [];
+    this.#settingsPage = 0;
   }
 
   showSaveLoad(
@@ -588,15 +622,27 @@ export class MenuLayer implements MenuProjectionPort {
     if (this.#disposed) return;
     this.#requestFrame();
     this.#clearLayer(this.#saveLoadLayer, 'save-load');
+    this.#saveLoadNotice = null;
     this.#saveLoadHandlers = { onSelect, onClose };
     this.#saveLoadOptions = options;
     this.#saveLoadMode = view.mode;
     this.#saveLoadSlotCount = view.slots.length;
     const layer = this.#saveLoadLayer;
-    const bg = bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.scrim, alpha: 0.84 }),
-      ['scrim'],
-    );
+    const closeSaveLoad = (): void => {
+      if (this.#saveLoadTransactionPending) return;
+      const handler = this.#saveLoadHandlers?.onClose;
+      this.hideSaveLoad();
+      handler?.();
+    };
+    const pageCount = Math.max(1, Math.ceil(view.slots.length / 6));
+    this.#saveLoadPage = Math.min(this.#saveLoadPage, pageCount - 1);
+    const changePage = (direction: number): void => {
+      if (this.#saveLoadTransactionPending) return;
+      this.#saveLoadPage = Math.max(0, Math.min(pageCount - 1, this.#saveLoadPage + direction));
+      this.showSaveLoad(view, onSelect, onClose, options);
+    };
+    markPlayerModal(layer, { close: closeSaveLoad, scroll: (delta) => { if (delta) changePage(Math.sign(delta)); } });
+    const bg = this.#surface(0, 0, this.#w, this.#h, 'scrim', 'scrim');
     bg.eventMode = 'static';
     bg.on('pointerdown', () => {
       if (this.#saveLoadTransactionPending) {
@@ -608,27 +654,25 @@ export class MenuLayer implements MenuProjectionPort {
       handler?.();
     });
     layer.addChild(bg);
-    layer.addChild(bindThemeGraphicsProjection(new Graphics()
-      .rect(86, 68, 3, 78)
-      .fill({ color: this.#theme.colors.accentSoft, alpha: 0.94 }), ['accentSoft']));
     layer.addChild(bindThemeTextProjection(new PText({
       text: view.mode === 'save' ? 'SAVE DATA' : 'LOAD DATA',
-      style: { fontSize: 13, fill: this.#theme.colors.accentSoft, letterSpacing: 4, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'accentSoft' })).position.set(108, 70);
+      style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'accentSoft', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' })).position.set(108, 70);
     layer.addChild(bindThemeTextProjection(new PText({
       text: view.mode === 'save' ? '存档' : '读档',
-      style: { fontSize: 34, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(106, 91);
+      style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'text', fontSize: 'headingSize' })).position.set(106, 91);
     layer.addChild(bindThemeTextProjection(new PText({
-      text: '记录当前剧情进度',
-      style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
-    }), { fill: 'textMuted' })).position.set(255, 110);
-    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
+      text: view.mode === 'save' ? '选择槽位，记录当前剧情进度' : '选择记录，继续阅读',
+      style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
+    }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(255, 110);
+    const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted', fontSize: 'headingSize' });
     close.position.set(this.#w - 106, 76);
+    bindPlayerControl(close, { label: '关闭存读档', width: 48, height: 48, x: -10, y: -8 });
     close.eventMode = 'static';
     close.cursor = 'pointer';
-    close.on('pointerover', () => { close.style = { fontSize: 30, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
-    close.on('pointerout', () => { close.style = { fontSize: 30, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions; });
+    close.on('pointerover', () => { close.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
+    close.on('pointerout', () => { close.style = { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions; });
     close.on('pointerdown', () => {
       if (this.#saveLoadTransactionPending) {
         this.#onPointerConsumed?.();
@@ -640,32 +684,35 @@ export class MenuLayer implements MenuProjectionPort {
     });
     layer.addChild(close);
 
+    this.#saveLoadNotice = bindThemeTextProjection(new PText({ text: '', style: {
+      fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted,
+      wordWrap: true, breakWords: true, wordWrapWidth: this.#w - 540,
+    } }), { fill: 'textMuted', fontSize: 'captionSize' });
+    this.#saveLoadNotice.position.set(420, 76);
+    layer.addChild(this.#saveLoadNotice);
+
     const cols = 2;
-    const cardW = 480;
-    const cardH = 104;
+    const cardW = (this.#w - 180 - 22) / cols;
+    const cardH = 144;
     const gapX = 22;
     const gapY = 16;
-    const startX = 150;
-    const startY = 180;
-    view.slots.forEach((slot, i) => {
+    const startX = 90;
+    const startY = 160;
+    view.slots.slice(this.#saveLoadPage * 6, (this.#saveLoadPage + 1) * 6).forEach((slot, i) => {
       const x = startX + (i % cols) * (cardW + gapX);
       const y = startY + Math.floor(i / cols) * (cardH + gapY);
       const selectable = view.mode === 'save' || !slot.empty;
       const card = new Container();
       card.position.set(x, y);
-      const surface = bindThemeGraphicsProjection(new Graphics()
-        .roundRect(0, 0, cardW, cardH, 4)
-        .fill({ color: selectable ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.92 })
-        .stroke({ width: 1, color: selectable ? this.#theme.colors.line : this.#theme.colors.textDisabled, alpha: selectable ? 0.68 : 0.38 }),
-        [selectable ? 'surfaceStrong' : 'panel', selectable ? 'line' : 'textDisabled'],
-      );
+      const surface = this.#surface(0, 0, cardW, cardH, selectable ? 'surfaceStrong' : 'panel', 'surface', 'md', true);
       const hover = bindThemeGraphicsProjection(new Graphics()
         .roundRect(0, 0, cardW, cardH, 4)
         // Transparent interaction geometry is a fixed hit-area color, not a theme token.
         .fill({ color: 0x173149, alpha: 0 }), [null]);
       const marker = bindThemeGraphicsProjection(new Graphics()
-        .rect(0, 13, 3, cardH - 26)
-        .fill({ color: this.#theme.colors.accentSoft, alpha: 0 }), ['accentSoft']);
+        .roundRect(1, 1, cardW - 2, cardH - 2, this.#theme.radius.md)
+        .stroke({ width: 2, color: this.#theme.colors.accentSoft, alpha: 0.95 }), ['accentSoft']);
+      marker.alpha = 0;
       card.addChild(surface, hover, marker);
       let textX = 28;
       if (slot.thumbnail) {
@@ -677,40 +724,50 @@ export class MenuLayer implements MenuProjectionPort {
         textX = 166;
       }
       card.addChild(bindThemeTextProjection(new PText({
-        text: String(i + 1).padStart(2, '0'),
-        style: { fontSize: 13, fill: selectable ? this.#theme.colors.accentSoft : this.#theme.colors.textDisabled, letterSpacing: 1 } satisfies TextStyleOptions,
-      }), { fill: selectable ? 'accentSoft' : 'textDisabled' })).position.set(textX, 14);
+        text: String(this.#saveLoadPage * 6 + i + 1).padStart(2, '0'),
+        style: { fontSize: this.#theme.typography.captionSize, fill: selectable ? this.#theme.colors.accentSoft : this.#theme.colors.textDisabled, letterSpacing: 1 } satisfies TextStyleOptions,
+      }), { fill: selectable ? 'accentSoft' : 'textDisabled', fontSize: 'captionSize' })).position.set(textX, 14);
       const kindLabel = slot.kind === 'auto' ? '自动' : slot.kind === 'quick' ? '快速' : '手动';
       card.addChild(bindThemeTextProjection(new PText({
         text: slot.empty ? '空槽位' : (slot.label ?? '未命名场景'),
-        style: { fontSize: 21, fill: selectable ? this.#theme.colors.text : this.#theme.colors.textDisabled, fontWeight: 'bold' } satisfies TextStyleOptions,
-      }), { fill: selectable ? 'text' : 'textDisabled' })).position.set(textX, 34);
+        style: { fontSize: this.#theme.typography.uiSize, fill: selectable ? this.#theme.colors.text : this.#theme.colors.textDisabled, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: cardW - textX - 20 } satisfies TextStyleOptions,
+      }), { fill: selectable ? 'text' : 'textDisabled', fontSize: 'uiSize' })).position.set(textX, 34);
       if (!slot.empty) {
         const playtime = slot.playTimeSec !== undefined && slot.playTimeSec > 0
           ? ` · ${Math.floor(slot.playTimeSec / 60)}分钟`
           : '';
         card.addChild(bindThemeTextProjection(new PText({
-          text: `${kindLabel}　${formatSlotTime(slot.updatedAt)}${playtime}`,
-          style: { fontSize: 15, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
-        }), { fill: 'textMuted' })).position.set(textX, 70);
+          text: `${kindLabel}　${formatSlotTime(slot.updatedAt) || '时间未提供'}${playtime}`,
+          style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
+        }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(textX, 112);
       } else {
         card.addChild(bindThemeTextProjection(new PText({
           text: `${kindLabel}　等待记录`,
-          style: { fontSize: 15, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        }), { fill: 'textDisabled' })).position.set(textX, 70);
+          style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions,
+        }), { fill: 'textDisabled', fontSize: 'captionSize' })).position.set(textX, 112);
       }
       if (view.mode === 'load' && slot.backupAvailable) {
+        let restoreConfirmed = false;
         const restore = bindThemeTextProjection(new PText({
           text: '恢复备份并读取',
-          style: { fontSize: 14, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions,
-        }), { fill: 'accentSoft' });
-        restore.position.set(cardW - 174, 70);
+          style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions,
+        }), { fill: 'accentSoft', fontSize: 'captionSize' });
+        restore.position.set(cardW - 210, 80);
+        bindPlayerControl(restore, { label: `恢复槽位 ${slot.id} 的备份并读取`, width: 204, height: 34, x: -4, y: -4 });
         restore.eventMode = 'static';
         restore.cursor = 'pointer';
-        restore.on('pointerover', () => { restore.style = { fontSize: 14, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
-        restore.on('pointerout', () => { restore.style = { fontSize: 14, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions; });
+        restore.on('pointerover', () => { restore.style = { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
+        restore.on('pointerout', () => { restore.style = { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions; });
         restore.on('pointerdown', (event) => {
           event.stopPropagation?.();
+          if (this.#saveLoadTransactionPending) { this.#onPointerConsumed?.(); return; }
+          if (!restoreConfirmed) {
+            this.#confirmAction(layer, `恢复槽位 ${slot.id} 的备份并读取？当前进度将被替换。`, '恢复并读取', () => {
+              restoreConfirmed = true;
+              try { restore.emit('pointerdown', event); } finally { restoreConfirmed = false; }
+            });
+            return;
+          }
           const handler = this.#saveLoadOptions.onRestore;
           if (this.#saveLoadOptions.completion === 'host-transaction') {
             if (this.#saveLoadTransactionPending) {
@@ -718,6 +775,7 @@ export class MenuLayer implements MenuProjectionPort {
               return;
             }
             this.#saveLoadTransactionPending = true;
+            this.#saveLoadMessage('正在恢复并读取…');
             const onTransactionComplete = this.#saveLoadOptions.onTransactionComplete;
             const onTransactionError = this.#saveLoadOptions.onTransactionError;
             try {
@@ -729,7 +787,7 @@ export class MenuLayer implements MenuProjectionPort {
                   if (result !== false) {
                     this.hideSaveLoad();
                     onTransactionComplete?.();
-                  }
+                  } else this.#saveLoadMessage('读取未完成，可重试或返回。');
                 },
                 (error) => {
                   this.#saveLoadTransactionPending = false;
@@ -753,6 +811,8 @@ export class MenuLayer implements MenuProjectionPort {
         card.addChild(restore);
       }
       if (selectable) {
+        let overwriteConfirmed = false;
+        bindPlayerControl(card, { label: `${view.mode === 'save' ? '保存到' : '读取'}槽位 ${slot.id}：${slot.empty ? '空槽位' : (slot.label ?? '场景未提供')}`, width: cardW, height: cardH });
         card.eventMode = 'static';
         card.cursor = 'pointer';
         card.on('pointerover', () => {
@@ -764,6 +824,15 @@ export class MenuLayer implements MenuProjectionPort {
           marker.alpha = 0;
         });
         card.on('pointerdown', (event) => {
+          if (this.#saveLoadTransactionPending) { this.#onPointerConsumed?.(); event.stopPropagation?.(); return; }
+          if (view.mode === 'save' && !slot.empty && !overwriteConfirmed) {
+            event.stopPropagation?.();
+            this.#confirmAction(layer, `覆盖槽位 ${slot.id} 的现有存档？`, '覆盖存档', () => {
+              overwriteConfirmed = true;
+              try { card.emit('pointerdown', event); } finally { overwriteConfirmed = false; }
+            });
+            return;
+          }
           const handler = this.#saveLoadHandlers?.onSelect;
           if (this.#saveLoadOptions.completion === 'host-transaction') {
           if (this.#saveLoadTransactionPending) {
@@ -772,6 +841,7 @@ export class MenuLayer implements MenuProjectionPort {
               return;
             }
             this.#saveLoadTransactionPending = true;
+            this.#saveLoadMessage(view.mode === 'save' ? '正在保存…' : '正在读取…');
             const onTransactionComplete = this.#saveLoadOptions.onTransactionComplete;
             const onTransactionError = this.#saveLoadOptions.onTransactionError;
             try {
@@ -785,7 +855,7 @@ export class MenuLayer implements MenuProjectionPort {
                   if (result !== false) {
                     this.hideSaveLoad();
                     onTransactionComplete?.();
-                  }
+                  } else this.#saveLoadMessage(view.mode === 'save' ? '存档未完成，可重试或返回。' : '读取未完成，可重试或返回。');
                 },
                 (error) => {
                   this.#saveLoadTransactionPending = false;
@@ -807,6 +877,7 @@ export class MenuLayer implements MenuProjectionPort {
           }
         });
       } else {
+        bindPlayerControl(card, { label: `槽位 ${slot.id}：空槽位`, width: cardW, height: cardH, enabled: false });
         // Empty load slots are real hit targets so their click cannot fall
         // through to the full-screen close surface. They intentionally do
         // not have an onSelect handler: the event is consumed and is a no-op.
@@ -818,6 +889,18 @@ export class MenuLayer implements MenuProjectionPort {
       }
       layer.addChild(card);
     });
+    if (pageCount > 1) {
+      for (const [label, direction, x] of [['上一页', -1, 90], ['下一页', 1, this.#w - 210]] as const) {
+        const pager = bindThemeTextProjection(new PText({ text: label, style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text } }), { fill: 'text', fontSize: 'uiSize' });
+        pager.position.set(x, this.#h - 54);
+        const enabled = direction < 0 ? this.#saveLoadPage > 0 : this.#saveLoadPage + 1 < pageCount;
+        bindPlayerControl(pager, { label: `${label}存档`, width: 120, height: 40, enabled });
+        pager.alpha = enabled ? 1 : this.#theme.opacity.disabled;
+        pager.on('pointerdown', () => { if (enabled) changePage(direction); });
+        layer.addChild(pager);
+      }
+      layer.addChild(bindThemeTextProjection(new PText({ text: `${this.#saveLoadPage + 1} / ${pageCount}`, style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted } }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(this.#w / 2 - 24, this.#h - 50);
+    }
     this.#bringToFront(layer);
     layer.visible = true;
     this.#registerListener('save-load', layer);
@@ -881,7 +964,59 @@ export class MenuLayer implements MenuProjectionPort {
     }
   }
 
+  #confirmAction(parent: Container, message: string, actionLabel: string, action: () => void): void {
+    if (this.#saveLoadTransactionPending || !parent.visible || (this.#confirmation && !this.#confirmation.destroyed)) return;
+    const panel = new Container();
+    this.#confirmation = panel;
+    const close = (): void => { this.#confirmation = null; parent.removeChild(panel); panel.destroy({ children: true }); this.#requestFrame(); };
+    markPlayerModal(panel, { close });
+    panel.addChild(this.#surface(0, 0, this.#w, this.#h, 'scrim', 'scrim'));
+    panel.eventMode = 'static';
+    panel.on('pointerdown', (event) => { this.#onPointerConsumed?.(); event.stopPropagation?.(); });
+    const x = (this.#w - 600) / 2;
+    const y = (this.#h - 230) / 2;
+    panel.addChild(this.#surface(x, y, 600, 230, 'panel', 'panel', 'md', true));
+    panel.addChild(bindThemeTextProjection(new PText({ text: message, style: { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, wordWrap: true, wordWrapWidth: 536, breakWords: true } }), { fill: 'text', fontSize: 'bodySize' })).position.set(x + 32, y + 32);
+    for (const [label, index, activate] of [['取消', 0, close], [actionLabel, 1, () => { close(); action(); }]] as const) {
+      const button = new Container();
+      button.position.set(x + 32 + index * 280, y + 158);
+      const border = bindThemeGraphicsProjection(new Graphics().roundRect(0, 0, 256, 48, this.#theme.radius.sm)
+        .stroke({ width: 1.5, color: this.#theme.colors.line }), ['line']);
+      const text = bindThemeTextProjection(new PText({ text: label, style: { fontSize: this.#theme.typography.uiSize, fill: index === 1 ? this.#theme.colors.danger : this.#theme.colors.text } }), { fill: index === 1 ? 'danger' : 'text', fontSize: 'uiSize' });
+      text.anchor.set(0.5); text.position.set(128, 24);
+      button.addChild(border, text);
+      bindPlayerControl(button, { label, width: 256, height: 48 });
+      button.on('pointerover', () => { border.alpha = 1; this.#requestFrame(); });
+      button.on('pointerout', () => { border.alpha = 0.5; this.#requestFrame(); });
+      button.on('pointerdown', (event) => { event.stopPropagation?.(); activate(); });
+      panel.addChild(button);
+    }
+    parent.addChild(panel);
+    this.#requestFrame();
+  }
+
+  #surface(x: number, y: number, width: number, height: number, color: keyof RendererTheme['colors'], opacity: keyof RendererTheme['opacity'], radius?: keyof RendererTheme['radius'], border = false): Graphics {
+    const graphic = bindThemeGraphicsProjection(new Graphics(), border ? [color, 'line'] : [color]);
+    const paint = (): void => {
+      graphic.clear();
+      if (radius) graphic.roundRect(x, y, width, height, this.#theme.radius[radius]);
+      else graphic.rect(x, y, width, height);
+      graphic.fill({ color: this.#theme.colors[color], alpha: this.#theme.opacity[opacity] });
+      if (border) graphic.stroke({ width: 1, color: this.#theme.colors.line, alpha: this.#theme.opacity.line });
+    };
+    this.#surfacePaints.set(graphic, paint);
+    paint();
+    return graphic;
+  }
+
+  #saveLoadMessage(message: string): void {
+    if (!this.#saveLoadNotice || this.#saveLoadNotice.destroyed) return;
+    this.#saveLoadNotice.text = message;
+    this.#requestFrame();
+  }
+
   #handleSaveLoadTransactionError(error: unknown, report = this.#saveLoadOptions.onTransactionError): void {
+    this.#saveLoadMessage(this.#saveLoadMode === 'save' ? '存档失败，可重试或返回。' : '读取失败，可重试或返回。');
     if (report) {
       report(error);
       return;
@@ -933,9 +1068,14 @@ export class MenuLayer implements MenuProjectionPort {
     if (url.startsWith('data:')) {
       if (typeof Image !== 'undefined') {
         const image = new Image();
-        image.src = url;
         const texture = Texture.from(image);
-        entry = { texture, dispose: () => texture.destroy(true) };
+        image.onload = () => {
+          texture.source.update();
+          texture.update();
+          this.#requestFrame();
+        };
+        image.src = url;
+        entry = { texture, dispose: () => { image.onload = null; image.onerror = null; texture.destroy(true); } };
       } else {
         entry = { texture: Texture.WHITE, dispose: () => undefined };
       }

@@ -210,12 +210,12 @@ describe('GalleryLayer direct contract', () => {
       runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
       findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
       cycleTheme();
-      expect(findText(runtime.root, '暂无音乐条目（gallery.json 未配置）').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
+      expect(findText(runtime.root, '暂无音乐条目').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
 
       runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
       findText(runtime.root, '文本').emit('pointerdown', pointerEvent);
       cycleTheme();
-      expect(findText(runtime.root, '暂无文本回想条目（gallery.json 未配置 texts）').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
+      expect(findText(runtime.root, '暂无文本回想条目').style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
 
       runtime.layer.showGallery({ cgs: [{ id: 'cg-viewer', name: 'viewer', unlocked: true, src: 'cg-viewer' }], music: [], texts: [] });
       findParentWithText(runtime.root, 'viewer').emit('pointerdown', pointerEvent);
@@ -337,6 +337,68 @@ describe('GalleryLayer direct contract', () => {
     }
   });
 
+  it('scrolls long lists and reveals keyboard focused entries without changing unlock or callback ownership', () => {
+    const runtime = makeGalleryRuntime();
+    const onPlayMusic = vi.fn();
+    const music = Array.from({ length: 24 }, (_, index) => ({
+      id: `music-${index}`,
+      name: `一首需要完整阅读的长曲目 ${index}`,
+      unlocked: index % 3 !== 0,
+      src: `music-${index}.mp3`,
+    }));
+    try {
+      runtime.layer.showGallery({ cgs: [], music, onPlayMusic });
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+      const last = findParentWithText(runtime.root, '♪  一首需要完整阅读的长曲目 23');
+      expect(last.hitArea).toEqual(expect.objectContaining({ width: 920, height: expect.any(Number) }));
+      expect(last.accessibleTitle).toContain('播放');
+      expect(last.children.some((child) => child instanceof PText && child.text.includes('一首需要完整阅读'))).toBe(true);
+      const list = last.parent;
+      expect(list).toBeInstanceOf(Container);
+      const before = (list as Container).y;
+
+      // The helper emits a generic mouseover for DOM accessibility focus; the
+      // Gallery layer must reveal the corresponding row inside its viewport.
+      last.emit('mouseover', {} as FederatedPointerEvent);
+      expect((list as Container).y).toBeLessThan(before);
+
+      // The locked first item remains visible as disabled text and cannot
+      // invoke the owner callback even when a raw pointer event is emitted.
+      const locked = findParentWithText(runtime.root, '?  ???');
+      expect(locked.accessibleTitle).toBe('未解锁条目');
+      locked.emit('pointerdown', pointerEvent);
+      expect(onPlayMusic).not.toHaveBeenCalled();
+    } finally {
+      disposeGalleryRuntime(runtime);
+    }
+  });
+
+  it('uses an explicit missing-image placeholder and never creates a generated CG texture', () => {
+    const root = new Container();
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const createBackgroundTexture = vi.fn(() => new Texture());
+    const layer = new GalleryLayer({
+      uiLayer: root,
+      width: 1280,
+      height: 720,
+      assets,
+      lifecycle,
+      createBackgroundTexture,
+    });
+    try {
+      layer.showGallery({ cgs: [{ id: 'missing', name: '缺失图片', unlocked: true, src: 'missing' }], music: [] });
+      expect(createBackgroundTexture).not.toHaveBeenCalled();
+      expect(findText(root, '图像不可用').text).toBe('图像不可用');
+      findParentWithText(root, '缺失图片').emit('pointerdown', pointerEvent);
+      expect(findText(root, '图像不可用').text).toBe('图像不可用');
+    } finally {
+      layer.dispose();
+      assets.dispose();
+      lifecycle.dispose();
+    }
+  });
+
   it('uses the gallery root as a full-viewport input blocker while visible', () => {
     const runtime = makeGalleryRuntime();
     try {
@@ -360,7 +422,8 @@ describe('GalleryLayer direct contract', () => {
       runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
 
       const textTab = findText(runtime.root, '文本');
-      expect(textTab.hitArea).toEqual(expect.objectContaining(new Rectangle(0, -18, 60, 62)));
+      expect(textTab.hitArea).toEqual(expect.objectContaining(new Rectangle(-12, -12, 80, 52)));
+      expect(textTab.accessibleTitle).toBe('文本');
     } finally {
       disposeGalleryRuntime(runtime);
     }
@@ -556,7 +619,7 @@ describe('GalleryLayer direct contract', () => {
     const failure = new Error('gallery close callback');
     try {
       runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
-      expect(findText(runtime.root, '暂无 CG 条目（gallery.json 未配置）').text).toContain('暂无 CG 条目');
+      expect(findText(runtime.root, '暂无 CG 条目').text).toContain('暂无 CG 条目');
       expect(runtime.layer.gallery()).toEqual({ type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null });
 
       runtime.layer.showGallery({ cgs: [], music: [{ id: 'music-1', name: '主题曲', unlocked: true }] });

@@ -10,12 +10,12 @@ import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import type { FrameRequestHandler } from '../../types.js';
 import type { BasePanelView, MapView } from '../../ui-views.js';
 import type {
-  RendererFontRole,
   ShopView,
   SystemPanelProjectionPort,
 } from '../../api/renderer-commands.js';
 import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
+import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import {
   bindThemeGraphicsProjection,
@@ -26,6 +26,8 @@ import {
 } from '../../theme-projection.js';
 
 type PanelName = 'battle' | 'map' | 'shop' | 'base';
+type TextRole = 'text' | 'textMuted' | 'textDisabled' | 'textOnAccent' | 'accent' | 'accentSoft';
+type TypographyRole = 'titleSize' | 'headingSize' | 'bodySize' | 'uiSize' | 'captionSize';
 
 interface PanelHandlers {
   readonly onEnter?: (nodeId: string) => void;
@@ -77,6 +79,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #frameRequest: FrameRequestHandler | null = null;
   #listenerSequence = 0;
   #listenerKeys = new Map<PanelName, Set<string>>();
+  #panelLayouts = new Map<PanelName, () => void>();
 
   #battleLayer: Container;
   #battleHandlers: BattleHandlers | null = null;
@@ -88,6 +91,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #shopLayer: Container;
   #shopHandlers: { onBuy: (itemId: string) => void; onClose: () => void } | null = null;
   #shopItemCount = 0;
+  #shopScrollOffset = 0;
+  #shopScrollContent: Container | null = null;
+  #shopScrollHeight = 0;
+  #shopViewportTop = 0;
+  #shopViewportHeight = 0;
   #baseLayer: Container;
   #baseHandlers: { onExec: (cmdId: string) => void; onClose: () => void } | null = null;
   #baseCommandCount = 0;
@@ -108,6 +116,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#baseLayer = new Container();
     for (const layer of [this.#battleLayer, this.#mapLayer, this.#shopLayer, this.#baseLayer]) {
       layer.visible = false;
+      markPlayerModal(layer, {});
     }
     this.#root.addChild(this.#battleLayer, this.#mapLayer, this.#shopLayer, this.#baseLayer);
     this.#registerDisplay('battle-layer', this.#battleLayer);
@@ -157,6 +166,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     repaintThemeProjection(this.#mapLayer, previous, theme);
     repaintThemeProjection(this.#shopLayer, previous, theme);
     repaintThemeProjection(this.#baseLayer, previous, theme);
+    for (const layout of this.#panelLayouts.values()) layout();
   }
 
   get needsUpdate(): boolean {
@@ -174,47 +184,51 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#battleHandlers = handlers;
     this.#battleUnitCount = view.units.length;
     const layer = this.#battleLayer;
-    layer.addChild(bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.9 }),
-      ['panel'],
-    ));
-    const heading = bindThemeTextProjection(new PText({
-      text: `回合 ${view.turn} —— 当前行动：${view.actingTeam}`,
-      style: { fontSize: 26, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' });
+    this.#addPanelBackground(layer);
+    const heading = this.#text(`回合 ${view.turn} —— 当前行动：${view.actingTeam}`, this.#w - 120, 'text', 'headingSize', 'bold');
     layer.addChild(heading).position.set(60, 36);
 
     const teams = [...new Set(view.units.map((u) => u.team))];
     teams.forEach((team, ti) => {
       const x = 80 + ti * 620;
-      layer.addChild(bindThemeTextProjection(new PText({
-        text: `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
-        style: { fontSize: 20, fill: team === view.actingTeam ? this.#theme.colors.accent : this.#theme.colors.textMuted, fontWeight: 'bold' } satisfies TextStyleOptions,
-      }), { fill: team === view.actingTeam ? 'accent' : 'textMuted' })).position.set(x, 92);
+      layer.addChild(this.#text(
+        `${team}${team === view.actingTeam ? '（行动中）' : ''}`,
+        520,
+        team === view.actingTeam ? 'accent' : 'textMuted',
+        'uiSize',
+        'bold',
+      )).position.set(x, 92);
       view.units.filter((u) => u.team === team).forEach((u, i) => {
         const y = 136 + i * 88;
         const row = new Container();
         row.position.set(x, y);
         row.addChild(bindThemeGraphicsProjection(
-          new Graphics().roundRect(0, 0, 520, 72, 10).fill({ color: u.alive ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }),
+          new Graphics().roundRect(0, 0, 520, 72, this.#theme.radius.lg).fill({ color: u.alive ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: this.#theme.opacity.surface }),
           [u.alive ? 'surfaceStrong' : 'panel'],
         ));
-        row.addChild(bindThemeTextProjection(new PText({
-          text: u.alive ? u.name : `${u.name}（倒下）`,
-          style: { fontSize: 20, fill: u.alive ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        }), { fill: u.alive ? 'text' : 'textDisabled' })).position.set(18, 8);
+        row.addChild(this.#text(
+          u.alive ? u.name : `${u.name}（倒下）`,
+          330,
+          u.alive ? 'text' : 'textDisabled',
+        )).position.set(18, 8);
         // Combat HP track/fill colors encode gameplay health, not a Player UI theme role.
-        // Combat HP track/fill colors encode gameplay health, not a Player UI theme role.
-        row.addChild(bindThemeGraphicsProjection(new Graphics().rect(18, 46, 340, 12).fill(0x333340), [null]));
+        row.addChild(bindThemeGraphicsProjection(new Graphics().rect(18, 46, 340, 10).fill(0x333340), [null]));
         if (u.hpRatio > 0) {
           row.addChild(bindThemeGraphicsProjection(
-            new Graphics().rect(18, 46, 340 * u.hpRatio, 12).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f),
+            new Graphics().rect(18, 46, 340 * u.hpRatio, 10).fill(u.hpRatio > 0.35 ? 0x57c26a : 0xd8544f),
             [null],
           ));
         }
-        row.addChild(bindThemeTextProjection(new PText({ text: `${u.hp}/${u.maxHp}`, style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' })).position.set(372, 40);
-        if (u.alive && u.team !== view.actingTeam) {
-          row.eventMode = 'static';
+        row.addChild(this.#text(`${u.hp}/${u.maxHp}`, 120, 'textMuted', 'captionSize')).position.set(372, 40);
+        const targetable = u.alive && u.team !== view.actingTeam;
+        this.#controlBorder(row, 520, 72);
+        bindPlayerControl(row, {
+          label: targetable ? `攻击 ${u.name}` : `${u.name}（不可攻击）`,
+          width: 520,
+          height: 72,
+          enabled: targetable,
+        });
+        if (targetable) {
           row.cursor = 'pointer';
           this.#listen('battle', row, 'pointerdown', () => {
             this.#battleHandlers?.onAttack(u.uid, this.#battleSelectedSkill);
@@ -236,60 +250,79 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         })),
       ];
       let sx = 60;
-      for (const btn of skillBtns) {
+      const selectSkillAt = (index: number, direction: -1 | 0 | 1 = 0): void => {
+        let cursor = (index + skillBtns.length) % skillBtns.length;
+        for (let attempts = 0; attempts < skillBtns.length; attempts += 1) {
+          const candidate = skillBtns[cursor]!;
+          if (candidate.ready) {
+            this.#battleSelectedSkill = candidate.id;
+            if (this.#battleHandlers) this.showBattle(view, this.#battleHandlers, message);
+            return;
+          }
+          cursor = (cursor + (direction || 1) + skillBtns.length) % skillBtns.length;
+        }
+      };
+      const selectedSkillIndex = (): number => {
+        const index = skillBtns.findIndex((btn) => btn.id === this.#battleSelectedSkill);
+        return index >= 0 ? index : 0;
+      };
+      skillBtns.forEach((btn, index) => {
         const selected = btn.id !== null && btn.id === this.#battleSelectedSkill;
-        const t = bindThemeTextProjection(new PText({
-          text: btn.label,
-          style: {
-            fontSize: 18,
-            fill: selected ? this.#theme.colors.textOnAccent : btn.ready ? this.#theme.colors.text : this.#theme.colors.textDisabled,
-          } satisfies TextStyleOptions,
-        }), { fill: selected ? 'textOnAccent' : btn.ready ? 'text' : 'textDisabled' });
+        const t = this.#text(
+          btn.label,
+          240,
+          selected ? 'textOnAccent' : btn.ready ? 'text' : 'textDisabled',
+        );
+        const padWidth = Math.max(72, this.#textWidth(t) + 20);
         const pad = bindThemeGraphicsProjection(
-          new Graphics().roundRect(sx - 10, this.#h - 150, t.width + 20, 34, 8)
-            .fill({ color: selected ? this.#theme.colors.accent : this.#theme.colors.surface, alpha: 0.95 }),
+          new Graphics().roundRect(sx - 10, this.#h - 150, padWidth, 34, this.#theme.radius.md)
+            .fill({ color: selected ? this.#theme.colors.accent : this.#theme.colors.surface, alpha: this.#theme.opacity.surface }),
           [selected ? 'accent' : 'surface'],
         );
         layer.addChild(pad);
         t.position.set(sx, this.#h - 144);
         layer.addChild(t);
+        this.#controlBorder(pad, padWidth, 34, sx - 10, this.#h - 150);
+        bindPlayerControl(pad, {
+          label: btn.ready ? btn.label : `${btn.label}（不可用）`,
+          width: padWidth,
+          height: 34,
+          x: sx - 10,
+          y: this.#h - 150,
+          enabled: btn.ready,
+          adjust: btn.ready ? (direction) => selectSkillAt(selectedSkillIndex() + direction, direction) : undefined,
+        });
         if (btn.ready) {
-          pad.eventMode = 'static';
           pad.cursor = 'pointer';
           this.#listen('battle', pad, 'pointerdown', () => {
-            this.#battleSelectedSkill = btn.id;
-            if (this.#battleHandlers) this.showBattle(view, this.#battleHandlers, message);
+            selectSkillAt(index);
           });
         }
-        sx += t.width + 34;
-      }
+        sx += padWidth + 14;
+      });
       if (actingUnit.canMove) {
         const mkMove = (label: string, dir: -1 | 1, x: number): void => {
-          const b = bindThemeTextProjection(new PText({
-            text: label,
-            style: { fontSize: 18, fill: this.#theme.colors.accentSoft } satisfies TextStyleOptions,
-          }), { fill: 'accentSoft' });
+          const b = this.#text(label, 112, 'accentSoft');
           b.position.set(x, this.#h - 144);
-          b.eventMode = 'static';
+          layer.addChild(b);
+          bindPlayerControl(b, { label: label.replace(/[◀▶▸]/g, '').trim(), width: 112, height: 40, x: -8, y: -8 });
+          this.#controlBorder(b, 112, 40, -8, -8);
           b.cursor = 'pointer';
           this.#listen('battle', b, 'pointerdown', () => this.#battleHandlers?.onMove?.(dir));
-          layer.addChild(b);
         };
         mkMove('◀ 移动', -1, sx + 30);
         mkMove('移动 ▶', 1, sx + 140);
       }
     }
 
-    layer.addChild(bindThemeTextProjection(new PText({
-      text: message.length > 0 ? message : '点击敌方单位发起攻击',
-      style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(60, this.#h - 84);
-    const pass = bindThemeTextProjection(new PText({ text: '▸ 跳过行动', style: { fontSize: 20, fill: this.#theme.colors.accent } satisfies TextStyleOptions }), { fill: 'accent' });
+    layer.addChild(this.#text(message.length > 0 ? message : '点击敌方单位发起攻击', this.#w - 360, 'text')).position.set(60, this.#h - 84);
+    const pass = this.#text('▸ 跳过行动', 160, 'accent');
     pass.position.set(this.#w - 210, this.#h - 84);
-    pass.eventMode = 'static';
+    layer.addChild(pass);
+    bindPlayerControl(pass, { label: '跳过行动', width: 160, height: 44, x: -12, y: -10 });
+    this.#controlBorder(pass, 160, 44, -12, -10);
     pass.cursor = 'pointer';
     this.#listen('battle', pass, 'pointerdown', () => this.#battleHandlers?.onPass());
-    layer.addChild(pass);
     layer.visible = true;
   }
 
@@ -299,6 +332,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#battleLayer.visible = false;
     this.#clearPanel('battle', this.#battleLayer);
     this.#battleHandlers = null;
+    this.#battleSelectedSkill = null;
     this.#battleUnitCount = 0;
   }
 
@@ -309,15 +343,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapHandlers = { onEnter, onEndTurn };
     this.#mapNodeCount = view.nodes.length;
     const layer = this.#mapLayer;
-    layer.addChild(bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 }),
-      ['panel'],
-    ));
-    layer.addChild(bindThemeTextProjection(new PText({
-      text: `${view.date} —— 回合 ${view.turn}`,
-      style: { fontSize: 24, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(60, 36);
-    layer.addChild(bindThemeTextProjection(new PText({ text: '行动力', style: { fontSize: 16, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' })).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
+    this.#addPanelBackground(layer);
+    layer.addChild(this.#text(`${view.date} —— 回合 ${view.turn}`, this.#w - 120, 'text', 'headingSize', 'bold')).position.set(60, 36);
+    layer.addChild(this.#text('行动力', 120, 'textMuted', 'captionSize')).position.set(this.#w - 60 - view.maxAp * 30 - 60, 40);
     // AP and visited-node colors encode gameplay availability/state; keep them outside theme tokens.
     for (let i = 0; i < view.maxAp; i++) {
       layer.addChild(bindThemeGraphicsProjection(
@@ -334,17 +362,35 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         [node.enterable ? 'accent' : null],
       ));
       if (node.visited) {
-        dot.addChild(bindThemeTextProjection(new PText({ text: '✓', style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(-9, -13);
+        dot.addChild(this.#text('✓', 32, 'text', 'uiSize')).position.set(-9, -13);
       }
-      const nameTag = bindThemeTextProjection(new PText({
-        text: `${node.name}${node.apCost > 0 ? `（行动力 ${node.apCost}）` : ''}`,
-        style: { fontSize: 16, fill: node.enterable ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: node.enterable ? 'text' : 'textDisabled' });
+      const reason = this.#mapNodeReason(view, node);
+      const nameTag = this.#text(
+        `${node.name}${node.apCost > 0 ? `（行动力 ${node.apCost}）` : ''}${reason ? `（${reason}）` : ''}`,
+        180,
+        node.enterable ? 'text' : 'textDisabled',
+        'captionSize',
+      );
       nameTag.anchor.set(0.5, 0);
       nameTag.position.set(0, 34);
       dot.addChild(nameTag);
+      // The label is part of the node's player-facing control. Size the
+      // semantic hit area and focus decoration around wrapped names instead
+      // of leaving the lower lines outside the fixed dot rectangle.
+      const nodeControlWidth = Math.max(150, Math.ceil(this.#textWidth(nameTag)) + 24);
+      const nodeControlHeight = Math.max(96, Math.ceil(this.#textHeight(nameTag)) + 70);
+      const nodeControlX = -nodeControlWidth / 2;
+      const nodeControlY = -32;
+      this.#controlBorder(dot, nodeControlWidth, nodeControlHeight, nodeControlX, nodeControlY);
+      bindPlayerControl(dot, {
+        label: node.enterable ? `进入 ${node.name}` : `${node.name}：${reason || '暂不可进入'}`,
+        width: nodeControlWidth,
+        height: nodeControlHeight,
+        x: nodeControlX,
+        y: nodeControlY,
+        enabled: node.enterable,
+      });
       if (node.enterable) {
-        dot.eventMode = 'static';
         dot.cursor = 'pointer';
         this.#listen('map', dot, 'pointerdown', () => {
           const callback = this.#mapHandlers?.onEnter;
@@ -354,16 +400,17 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       }
       layer.addChild(dot);
     }
-    const end = bindThemeTextProjection(new PText({ text: '▸ 结束回合', style: { fontSize: 22, fill: this.#theme.colors.accent } satisfies TextStyleOptions }), { fill: 'accent' });
+    const end = this.#text('▸ 结束回合', 180, 'accent');
     end.position.set(this.#w - 210, this.#h - 70);
-    end.eventMode = 'static';
+    layer.addChild(end);
+    bindPlayerControl(end, { label: '结束回合', width: 180, height: 44, x: -12, y: -10 });
+    this.#controlBorder(end, 180, 44, -12, -10);
     end.cursor = 'pointer';
     this.#listen('map', end, 'pointerdown', () => {
       const callback = this.#mapHandlers?.onEndTurn;
       this.hideMap();
       callback?.();
     });
-    layer.addChild(end);
     layer.visible = true;
   }
 
@@ -382,59 +429,98 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#clearPanel('shop', this.#shopLayer);
     this.#shopHandlers = { onBuy, onClose };
     this.#shopItemCount = view.items.length;
+    this.#shopScrollOffset = 0;
     const layer = this.#shopLayer;
-    layer.addChild(bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }),
-      ['panel'],
-    ));
-    layer.addChild(bindThemeTextProjection(new PText({
-      text: '商 店',
-      style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(60, 36);
+    this.#addPanelBackground(layer);
+    layer.addChild(this.#text('商 店', this.#w - 120, 'text', 'headingSize', 'bold')).position.set(60, 36);
     layer.addChild(bindThemeTextProjection(new PText({
       text: `金币：${view.gold}`,
       // Gold is an in-world economy indicator, not a generic UI accent.
-      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
+      style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.uiSize, fill: 0xffd77a } satisfies TextStyleOptions,
     }), { fill: null })).position.set(this.#w - 240, 44);
-    view.items.forEach((item, i) => {
+
+    const width = Math.min(920, this.#w - 120);
+    const scrollContent = new Container();
+    this.#shopScrollContent = scrollContent;
+    this.#shopViewportTop = 104;
+    this.#shopViewportHeight = Math.max(80, this.#h - this.#shopViewportTop - 116);
+    const mask = bindThemeGraphicsProjection(
+      new Graphics().rect(56, this.#shopViewportTop, width + 8, this.#shopViewportHeight).fill(0xffffff),
+      [null],
+    );
+    mask.eventMode = 'none';
+    layer.addChild(scrollContent, mask);
+    scrollContent.mask = mask;
+    const rows = view.items.map((item) => {
       const affordable = view.gold >= item.price;
       const row = new Container();
-      row.position.set(60, 120 + i * 64);
-      row.addChild(bindThemeGraphicsProjection(
-        new Graphics().roundRect(0, 0, 720, 52, 10).fill({ color: this.#theme.colors.surfaceStrong, alpha: 0.96 }),
-        ['surfaceStrong'],
-      ));
-      row.addChild(bindThemeTextProjection(new PText({ text: item.name, style: { fontSize: 22, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(20, 13);
-      row.addChild(bindThemeTextProjection(
-        new PText({ text: `${item.price} 金币`, style: { fontSize: 18, fill: 0xffd77a } satisfies TextStyleOptions }),
+      let rowHeight = 58;
+      const background = bindThemeGraphicsProjection(new Graphics(), ['surfaceStrong']);
+      row.addChild(background);
+      const nameWidth = Math.max(180, width - 320);
+      const name = this.#text(item.name, nameWidth, 'text');
+      name.position.set(20, 14);
+      row.addChild(name);
+      const price = bindThemeTextProjection(
+        new PText({ text: `${item.price} 金币`, style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.captionSize, fill: 0xffd77a } satisfies TextStyleOptions }),
         { fill: null },
-      )).position.set(320, 16);
-      const btn = bindThemeTextProjection(new PText({
-        text: affordable ? '购买' : '金币不足',
-      style: { fontSize: 20, fill: affordable ? this.#theme.colors.accent : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: affordable ? 'accent' : 'textDisabled' });
-      btn.position.set(580, 14);
+      );
+      row.addChild(price);
+      const btn = this.#text(affordable ? '购买' : '金币不足', 140, affordable ? 'accent' : 'textDisabled');
+      row.addChild(btn);
+      bindPlayerControl(btn, {
+        label: affordable ? `购买 ${item.name}` : `${item.name}：金币不足`,
+        width: 140,
+        height: 44,
+        x: -10,
+        y: -8,
+        enabled: affordable,
+        reveal: () => this.#revealShop(row, rowHeight),
+      });
+      const buttonBorder = this.#controlBorder(btn, 140, 44, -10, -8);
       if (affordable) {
-        btn.eventMode = 'static';
         btn.cursor = 'pointer';
         this.#listen('shop', btn, 'pointerdown', () => this.#shopHandlers?.onBuy(item.id));
       }
-      row.addChild(btn);
-      layer.addChild(row);
+      scrollContent.addChild(row);
+      return { row, background, name, price, btn, buttonBorder, setHeight: (height: number): void => { rowHeight = height; } };
     });
-    if (view.message && view.message.length > 0) {
-      layer.addChild(bindThemeTextProjection(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(60, this.#h - 130);
-    }
-    const close = bindThemeTextProjection(new PText({ text: '✕ 离开商店', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
-    close.position.set(this.#w - 220, this.#h - 74);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    this.#listen('shop', close, 'pointerdown', () => {
-      const callback = this.#shopHandlers?.onClose;
-      this.hideShop();
-      callback?.();
-    });
+
+    const message = view.message && view.message.length > 0
+      ? this.#text(view.message, width, 'text')
+      : null;
+    if (message) scrollContent.addChild(message);
+
+    const close = this.#text('✕ 离开商店', 180, 'textMuted');
     layer.addChild(close);
+    bindPlayerControl(close, { label: '离开商店', width: 180, height: 44, x: -12, y: -10 });
+    const closeBorder = this.#controlBorder(close, 180, 44, -12, -10);
+    close.cursor = 'pointer';
+    this.#listen('shop', close, 'pointerdown', () => this.#closeShop());
+
+    const layout = (): void => {
+      let y = 0;
+      for (const { row, background, name, price, btn, buttonBorder, setHeight } of rows) {
+        const rowHeight = Math.max(58, this.#textHeight(name) + 28);
+        setHeight(rowHeight);
+        row.position.set(60, y);
+        background.clear().roundRect(0, 0, width, rowHeight, this.#theme.radius.md)
+          .fill({ color: this.#theme.colors.surfaceStrong, alpha: this.#theme.opacity.surface });
+        name.position.set(20, (rowHeight - this.#textHeight(name)) / 2);
+        price.position.set(width - 280, (rowHeight - this.#textHeight(price)) / 2);
+        btn.position.set(width - 150, (rowHeight - this.#textHeight(btn)) / 2);
+        buttonBorder.position.copyFrom(btn.position);
+        y += rowHeight + this.#theme.spacing.sm;
+      }
+      if (message) message.position.set(60, y + 8);
+      this.#shopScrollHeight = message ? y + 8 + this.#textHeight(message) : y;
+      this.#scrollShop(0);
+      close.position.set(this.#w - 220, this.#h - 74);
+      closeBorder.position.copyFrom(close.position);
+    };
+    this.#panelLayouts.set('shop', layout);
+    layout();
+    markPlayerModal(layer, { close: () => this.#closeShop(), scroll: (delta) => this.#scrollShop(delta) });
     layer.visible = true;
   }
 
@@ -447,6 +533,12 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#shopItemCount = 0;
   }
 
+  #closeShop(): void {
+    const callback = this.#shopHandlers?.onClose;
+    this.hideShop();
+    callback?.();
+  }
+
   showBaseCommands(view: BasePanelView, onExec: (cmdId: string) => void, onClose: () => void): void {
     if (!this.#ensureActive()) return;
     this.#requestFrame();
@@ -454,60 +546,81 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#baseHandlers = { onExec, onClose };
     this.#baseCommandCount = view.commands.length;
     const layer = this.#baseLayer;
-    layer.addChild(bindThemeGraphicsProjection(
-      new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.96 }),
-      ['panel'],
-    ));
-    layer.addChild(bindThemeTextProjection(new PText({
-      text: '据 点 指 令',
-      style: { fontSize: 32, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(60, 36);
+    this.#addPanelBackground(layer);
+    layer.addChild(this.#text('据 点 指 令', this.#w - 120, 'text', 'headingSize', 'bold')).position.set(60, 36);
     // AP is a gameplay resource indicator; its gold-colored label is intentionally not a theme token.
     layer.addChild(bindThemeTextProjection(new PText({
       text: `${view.date}　行动力：${view.ap}/${view.maxAp}`,
-      style: { fontSize: 22, fill: 0xffd77a } satisfies TextStyleOptions,
+      style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.uiSize, fill: 0xffd77a } satisfies TextStyleOptions,
     }), { fill: null })).position.set(this.#w - 340, 44);
-    view.commands.forEach((cmd, i) => {
+    const width = Math.min(1060, this.#w - 120);
+    const rows = view.commands.map((cmd) => {
       const row = new Container();
-      row.position.set(60, 120 + i * 64);
-      row.addChild(bindThemeGraphicsProjection(
-        new Graphics().roundRect(0, 0, 860, 52, 10).fill({ color: cmd.enabled ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.96 }),
-        [cmd.enabled ? 'surfaceStrong' : 'panel'],
-      ));
-      row.addChild(bindThemeTextProjection(new PText({
-        text: cmd.name,
-        style: { fontSize: 22, fill: cmd.enabled ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: cmd.enabled ? 'text' : 'textDisabled' })).position.set(20, 13);
-      row.addChild(bindThemeTextProjection(new PText({
+      const background = bindThemeGraphicsProjection(new Graphics(), [cmd.enabled ? 'surfaceStrong' : 'panel']);
+      row.addChild(background);
+      const nameWidth = Math.max(220, width - 420);
+      const name = this.#text(cmd.name, nameWidth, cmd.enabled ? 'text' : 'textDisabled');
+      row.addChild(name);
+      const reason = this.#baseCommandReason(view, cmd);
+      const reasonText = !cmd.enabled ? this.#text(reason, nameWidth, 'textDisabled', 'captionSize') : null;
+      if (reasonText) row.addChild(reasonText);
+      const info = bindThemeTextProjection(new PText({
         text: `AP ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
-        style: { fontSize: 18, fill: cmd.enabled ? 0xffd77a : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: cmd.enabled ? null : 'textDisabled' })).position.set(360, 16);
-      const btn = bindThemeTextProjection(new PText({
-        text: cmd.enabled ? '执行' : '不可执行',
-      style: { fontSize: 20, fill: cmd.enabled ? this.#theme.colors.accent : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: cmd.enabled ? 'accent' : 'textDisabled' });
-      btn.position.set(720, 14);
+        style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.captionSize, fill: cmd.enabled ? 0xffd77a : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
+      }), { fill: cmd.enabled ? null : 'textDisabled' });
+      row.addChild(info);
+      const btn = this.#text(cmd.enabled ? '执行' : '不可执行', 140, cmd.enabled ? 'accent' : 'textDisabled');
+      row.addChild(btn);
+      bindPlayerControl(btn, {
+        label: cmd.enabled ? `执行 ${cmd.name}` : `${cmd.name}：${reason}`,
+        width: 140,
+        height: 44,
+        x: -10,
+        y: -8,
+        enabled: cmd.enabled,
+      });
+      const buttonBorder = this.#controlBorder(btn, 140, 44, -10, -8);
       if (cmd.enabled) {
-        btn.eventMode = 'static';
         btn.cursor = 'pointer';
         this.#listen('base', btn, 'pointerdown', () => this.#baseHandlers?.onExec(cmd.id));
       }
-      row.addChild(btn);
       layer.addChild(row);
+      return { row, background, name, reasonText, info, btn, buttonBorder, enabled: cmd.enabled };
     });
-    if (view.message && view.message.length > 0) {
-      layer.addChild(bindThemeTextProjection(new PText({ text: view.message, style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions }), { fill: 'text' })).position.set(60, this.#h - 130);
-    }
-    const close = bindThemeTextProjection(new PText({ text: '◀ 返回地图', style: { fontSize: 22, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted' });
-    close.position.set(this.#w - 220, this.#h - 74);
-    close.eventMode = 'static';
-    close.cursor = 'pointer';
-    this.#listen('base', close, 'pointerdown', () => {
-      const callback = this.#baseHandlers?.onClose;
-      this.hideBaseCommands();
-      callback?.();
-    });
+    const message = view.message && view.message.length > 0
+      ? this.#text(view.message, width, 'text')
+      : null;
+    if (message) layer.addChild(message);
+    const close = this.#text('◀ 返回地图', 180, 'textMuted');
     layer.addChild(close);
+    bindPlayerControl(close, { label: '返回地图', width: 180, height: 44, x: -12, y: -10 });
+    const closeBorder = this.#controlBorder(close, 180, 44, -12, -10);
+    close.cursor = 'pointer';
+    this.#listen('base', close, 'pointerdown', () => this.#closeBaseCommands());
+
+    const layout = (): void => {
+      let y = 120;
+      for (const { row, background, name, reasonText, info, btn, buttonBorder, enabled } of rows) {
+        const nameHeight = this.#textHeight(name);
+        const reasonHeight = reasonText ? this.#textHeight(reasonText) : 0;
+        const rowHeight = Math.max(58, nameHeight + reasonHeight + (reasonText ? 34 : 28));
+        row.position.set(60, y);
+        background.clear().roundRect(0, 0, width, rowHeight, this.#theme.radius.md)
+          .fill({ color: enabled ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: this.#theme.opacity.surface });
+        name.position.set(20, reasonText ? 10 : (rowHeight - nameHeight) / 2);
+        if (reasonText) reasonText.position.set(20, nameHeight + 14);
+        info.position.set(width - 330, (rowHeight - this.#textHeight(info)) / 2);
+        btn.position.set(width - 150, (rowHeight - this.#textHeight(btn)) / 2);
+        buttonBorder.position.copyFrom(btn.position);
+        y += rowHeight + this.#theme.spacing.sm;
+      }
+      if (message) message.position.set(60, Math.max(y + 8, this.#h - 132 - this.#textHeight(message)));
+      close.position.set(this.#w - 220, this.#h - 74);
+      closeBorder.position.copyFrom(close.position);
+    };
+    this.#panelLayouts.set('base', layout);
+    layout();
+    markPlayerModal(layer, { close: () => this.#closeBaseCommands() });
     layer.visible = true;
   }
 
@@ -518,6 +631,12 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#clearPanel('base', this.#baseLayer);
     this.#baseHandlers = null;
     this.#baseCommandCount = 0;
+  }
+
+  #closeBaseCommands(): void {
+    const callback = this.#baseHandlers?.onClose;
+    this.hideBaseCommands();
+    callback?.();
   }
 
   showVideo(source: string, onEnd: () => void): void {
@@ -619,6 +738,102 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#requestFrameCallback?.();
   }
 
+  #addPanelBackground(layer: Container): Graphics {
+    const background = bindThemeGraphicsProjection(
+      new Graphics().rect(0, 0, this.#w, this.#h).fill({
+        color: this.#theme.colors.panel,
+        alpha: this.#theme.opacity.panel,
+      }),
+      ['panel'],
+    );
+    // A modal's scrim must also be an input barrier; otherwise a click in a
+    // gap between controls can reach the dialogue canvas underneath.
+    background.eventMode = 'static';
+    layer.addChild(background);
+    return background;
+  }
+
+  #text(
+    value: string,
+    width: number,
+    role: TextRole,
+    typography: TypographyRole = 'uiSize',
+    fontWeight: 'normal' | 'bold' = 'normal',
+  ): PText {
+    return bindThemeTextProjection(new PText({
+      text: value,
+      style: {
+        fontFamily: this.#assets.fontFamily('ui'),
+        fontSize: this.#theme.typography[typography],
+        fill: this.#theme.colors[role],
+        fontWeight,
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: Math.max(1, width),
+      } satisfies TextStyleOptions,
+    }), { fill: role, fontSize: typography });
+  }
+
+  #textHeight(text: PText): number {
+    const measured = typeof document === 'undefined' ? 0 : text.height;
+    if (Number.isFinite(measured) && measured > 0) return measured;
+    const size = Number(text.style.fontSize) || this.#theme.typography.uiSize;
+    const wrapWidth = Number(text.style.wordWrapWidth) || Math.max(1, this.#w - 120);
+    return text.text.split(/\r?\n/).reduce(
+      (lines, line) => lines + Math.max(1, Math.ceil(line.length * size / wrapWidth)),
+      0,
+    ) * size * 1.35;
+  }
+
+  #textWidth(text: PText): number {
+    if (typeof document !== 'undefined') return text.width;
+    return Math.min(Number(text.style.wordWrapWidth) || this.#w,
+      Math.max(0, ...text.text.split('\n').map((line) => line.length)) * Number(text.style.fontSize));
+  }
+
+  #controlBorder(target: Container, width: number, height: number, x = 0, y = 0): Graphics {
+    const border = bindThemeGraphicsProjection(
+      new Graphics().rect(x, y, width, height).stroke({ color: this.#theme.colors.line, width: 2 }),
+      ['line'],
+    );
+    border.visible = false;
+    border.eventMode = 'none';
+    const parent = target.parent;
+    if (target instanceof PText || target instanceof Graphics) {
+      // Pixi v8 Graphics is a ViewContainer implementation but warns when
+      // used as a parent. Keep focus decoration beside it in the same layer.
+      if (parent) {
+        parent.addChild(border);
+        border.position.copyFrom(target.position);
+      }
+    } else {
+      target.addChild(border);
+    }
+    target.on('pointerover', () => {
+      border.visible = true;
+      this.#requestFrame();
+    });
+    target.on('pointerout', () => {
+      border.visible = false;
+      this.#requestFrame();
+    });
+    return border;
+  }
+
+  #mapNodeReason(view: MapView, node: MapView['nodes'][number]): string {
+    if (node.enterable) return '';
+    if (node.apCost > view.ap) return '行动力不足';
+    if (node.visited) return '已访问';
+    return '暂不可进入';
+  }
+
+  #baseCommandReason(view: BasePanelView, command: BasePanelView['commands'][number]): string {
+    if (command.enabled) return '';
+    if (command.apCost > view.ap) return '行动力不足';
+    if (command.remaining === 0) return '本回合次数已用尽';
+    return '当前不可执行';
+  }
+
   #registerDisplay(key: string, layer: Container): void {
     this.#lifecycle.register('system', 'display', key, () => {
       if (layer.parent) layer.parent.removeChild(layer);
@@ -642,7 +857,31 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     for (const key of [...(this.#listenerKeys.get(panel) ?? [])]) {
       this.#lifecycle.release('system', 'listener', key);
     }
+    this.#panelLayouts.delete(panel);
     layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    if (panel === 'shop') {
+      this.#shopScrollContent = null;
+      this.#shopScrollOffset = 0;
+      this.#shopScrollHeight = 0;
+      this.#shopViewportTop = 0;
+      this.#shopViewportHeight = 0;
+    }
+  }
+
+  #scrollShop(delta: number): void {
+    if (!this.#shopScrollContent) return;
+    const maxOffset = Math.max(0, this.#shopScrollHeight - this.#shopViewportHeight);
+    this.#shopScrollOffset = Math.max(0, Math.min(maxOffset, this.#shopScrollOffset + delta));
+    this.#shopScrollContent.y = this.#shopViewportTop - this.#shopScrollOffset;
+    this.#requestFrame();
+  }
+
+  #revealShop(target: Container, height: number): void {
+    const bottom = target.y + height;
+    if (target.y < this.#shopScrollOffset) this.#scrollShop(target.y - this.#shopScrollOffset);
+    else if (bottom > this.#shopScrollOffset + this.#shopViewportHeight) {
+      this.#scrollShop(Math.min(target.y, bottom - this.#shopViewportHeight) - this.#shopScrollOffset);
+    }
   }
 
   #hidePanel(panel: PanelName, layer: Container): void {

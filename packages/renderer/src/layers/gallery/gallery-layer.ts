@@ -12,6 +12,7 @@ import type { GalleryOverlayState } from '../../api/renderer-queries.js';
 import type { GalleryItemView } from '../../gallery.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
+import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import {
   bindThemeGraphicsProjection,
@@ -28,7 +29,7 @@ export interface GalleryLayerOptions {
   readonly height: number;
   readonly assets: RenderAssetRegistry;
   readonly lifecycle?: RenderLifecycle;
-  /** The compatibility stage supplies the existing deterministic background fallback. */
+  /** Retained for the stage compatibility constructor; missing images use an explicit placeholder. */
   readonly createBackgroundTexture: (key: string, width: number, height: number) => Texture;
   readonly requestFrame?: () => void;
 }
@@ -62,7 +63,6 @@ export class GalleryLayer implements GalleryProjectionPort {
   readonly #assets: RenderAssetRegistry;
   readonly #lifecycle: RenderLifecycle;
   readonly #ownsLifecycle: boolean;
-  readonly #createBackgroundTexture: (key: string, width: number, height: number) => Texture;
   readonly #requestFrameCallback?: () => void;
   #disposed = false;
 
@@ -78,6 +78,11 @@ export class GalleryLayer implements GalleryProjectionPort {
   #galleryHeader: Container | null = null;
   #galleryContent: Container | null = null;
   #galleryTabs: { cg: PText; music: PText; text: PText } | null = null;
+  #tabBorders = new Map<string, Graphics>();
+  #scrollOffset = 0;
+  #scrollContent: Container | null = null;
+  #scrollHeight = 0;
+  #layoutContent: (() => void) | null = null;
 
   constructor(options: GalleryLayerOptions) {
     this.#root = options.uiLayer;
@@ -86,7 +91,6 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#assets = options.assets;
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
-    this.#createBackgroundTexture = options.createBackgroundTexture;
     this.#requestFrameCallback = options.requestFrame;
 
     this.#galleryLayer = new Container();
@@ -94,6 +98,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryLayer.eventMode = 'none';
     this.#root.addChild(this.#galleryLayer);
     this.#registerDisplay('gallery-layer', this.#galleryLayer);
+    markPlayerModal(this.#galleryLayer, {
+      close: () => this.#galleryMode === 'viewer' ? this.#returnToGrid() : this.#closeGallery(),
+      scroll: (delta) => this.#scrollGallery(delta),
+    });
   }
 
   gallery(): GalleryOverlayState {
@@ -129,6 +137,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#theme = theme;
     this.#updateTabStyles();
     repaintThemeProjection(this.#galleryLayer, previous, theme);
+    this.#layoutContent?.();
   }
 
   showGallery(options: {
@@ -153,6 +162,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryTab = 'cg';
     this.#galleryMode = 'grid';
     this.#galleryViewerKey = null;
+    this.#scrollOffset = 0;
     this.#rebuildGallery();
     this.#bringToFront();
     this.#galleryLayer.eventMode = 'auto';
@@ -217,7 +227,7 @@ export class GalleryLayer implements GalleryProjectionPort {
 
     if (!this.#galleryHeader) {
       const blocker = bindThemeGraphicsProjection(
-        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: 0.95 }),
+        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel }),
         ['panel'],
       );
       blocker.eventMode = 'static';
@@ -229,22 +239,22 @@ export class GalleryLayer implements GalleryProjectionPort {
       const mkBtn = (label: string, x: number, width: number, onTap: () => void): PText => {
         const t = bindThemeTextProjection(new PText({
           text: label,
-          style: { fontSize: 24, fill: this.#theme.colors.textMuted, fontWeight: 'normal' } satisfies TextStyleOptions,
-        }), { fill: 'textMuted' });
+          style: { fontSize: this.#theme.typography.uiSize, fontFamily: this.#assets.fontFamily('ui'), fill: this.#theme.colors.textMuted, fontWeight: 'normal' } satisfies TextStyleOptions,
+        }), { fill: 'textMuted', fontSize: 'uiSize' });
         t.position.set(x, 30);
-        // Use a stable logical hit box instead of relying on the rendered glyph
-        // bounds, which vary with font loading and can miss a real player click.
-        t.hitArea = new Rectangle(0, -18, width, 62);
-        t.eventMode = 'static';
+        header.addChild(t);
+        bindPlayerControl(t, { label, x: -12, y: -12, width, height: 52 });
+        const border = this.#controlBorder(t, width, 52, -12, -12);
+        this.#tabBorders.set(label, border);
+        t.on('pointerout', () => { border.visible = this.#galleryTabs?.[this.#galleryTab] === t; });
         t.cursor = 'pointer';
         t.on('pointerdown', onTap);
-        header.addChild(t);
         return t;
       };
       this.#galleryTabs = {
-        cg: mkBtn('CG', 60, 96, () => this.#selectGalleryTab('cg')),
-        music: mkBtn('音乐', 150, 112, () => this.#selectGalleryTab('music')),
-        text: mkBtn('文本', 240, 60, () => this.#selectGalleryTab('text')),
+        cg: mkBtn('CG', this.#margin, 80, () => this.#selectGalleryTab('cg')),
+        music: mkBtn('音乐', this.#margin + 96, 80, () => this.#selectGalleryTab('music')),
+        text: mkBtn('文本', this.#margin + 192, 80, () => this.#selectGalleryTab('text')),
       };
       const close = mkBtn('✕ 关闭', this.#w - 150, 150, () => this.#closeGallery());
       close.eventMode = 'static';
@@ -261,122 +271,107 @@ export class GalleryLayer implements GalleryProjectionPort {
       return;
     }
 
-    if (this.#galleryTab === 'cg') {
-      const items = views.cgs;
-      if (items.length === 0) {
-        content.addChild(bindThemeTextProjection(
-          new PText({ text: '暂无 CG 条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
-          { fill: 'textMuted' },
-        )).position.set(60, 100);
-        this.#registerListener();
-        return;
-      }
-      const cols = 4;
-      const cw = 270;
-      const ch = 152;
-      items.forEach((item, i) => {
-        const x = 60 + (i % cols) * (cw + 20);
-        const y = 96 + Math.floor(i / cols) * (ch + 48);
+    const list = new Container();
+    this.#scrollContent = list;
+    const mask = bindThemeGraphicsProjection(new Graphics().rect(this.#margin - 4, 92, this.#w - this.#margin * 2 + 8, this.#viewportHeight).fill(0xffffff), [null]);
+    list.mask = mask;
+    content.addChild(list, mask);
+    const items = this.#galleryTab === 'cg' ? views.cgs : this.#galleryTab === 'music' ? views.music : views.texts;
+    if (!items.length) {
+      const empty = this.#galleryTab === 'cg' ? '暂无 CG 条目' : this.#galleryTab === 'music' ? '暂无音乐条目' : '暂无文本回想条目';
+      list.addChild(this.#text(empty, this.#w - this.#margin * 2, 'textMuted')).position.set(this.#margin, 8);
+      this.#scrollHeight = 64;
+    } else if (this.#galleryTab === 'cg') {
+      const gap = this.#theme.spacing.lg;
+      const cols = Math.max(1, Math.min(4, Math.floor((this.#w - this.#margin * 2 + gap) / 280)));
+      const cw = (this.#w - this.#margin * 2 - (cols - 1) * gap) / cols;
+      const ch = cw * 9 / 16;
+      const rows = items.map((item) => {
         const cell = new Container();
-        cell.position.set(x, y);
+        cell.addChild(bindThemeGraphicsProjection(new Graphics().rect(0, 0, cw, ch).fill(this.#theme.colors.surfaceStrong), ['surfaceStrong']));
+        const key = item.src ?? item.id;
+        const texture = item.unlocked ? this.#assets.resolveBackground(key) : null;
+        if (texture) this.#addImage(cell, texture, cw, ch);
+        else {
+          const placeholder = this.#text(item.unlocked ? '图像不可用' : '未解锁', cw - 32, item.unlocked ? 'textMuted' : 'textDisabled');
+          placeholder.position.set(16, ch / 2 - 16);
+          cell.addChild(placeholder);
+        }
+        const label = this.#text(item.unlocked ? item.name : '???', cw, item.unlocked ? 'text' : 'textDisabled');
+        label.position.set(0, ch + 12);
+        cell.addChild(label);
+        const border = this.#controlBorder(cell, cw, ch);
+        bindPlayerControl(cell, {
+          label: item.unlocked ? `查看 ${item.name}` : '未解锁的 CG', width: cw, height: ch + 48, enabled: item.unlocked,
+          reveal: () => this.#reveal(cell),
+        });
         if (item.unlocked) {
-          const key = item.src ?? item.id;
-          const tex = this.#assets.resolveBackground(key)
-            ?? this.#assets.getOrCreateBackground(key, () => this.#createBackgroundTexture(key, 320, 180));
-          const sp = new Sprite(tex);
-          sp.width = cw;
-          sp.height = ch;
-          cell.addChild(sp);
-          cell.eventMode = 'static';
           cell.cursor = 'pointer';
           cell.on('pointerdown', () => {
             this.#galleryMode = 'viewer';
             this.#galleryViewerKey = key;
             this.#rebuildGallery();
           });
-        } else {
-          cell.addChild(bindThemeGraphicsProjection(
-            new Graphics().rect(0, 0, cw, ch).fill({ color: this.#theme.colors.surfaceStrong, alpha: 1 }),
-            ['surfaceStrong'],
-          ));
-          const question = bindThemeTextProjection(
-            new PText({ text: '?', style: { fontSize: 42, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions }),
-            { fill: 'textDisabled' },
-          );
-          cell.addChild(question).position.set(cw / 2 - 12, ch / 2 - 30);
         }
-        const itemLabel = bindThemeTextProjection(new PText({
-          text: item.unlocked ? item.name : '???',
-          style: { fontSize: 18, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        }), { fill: item.unlocked ? 'text' : 'textDisabled' });
-        cell.addChild(itemLabel).position.set(0, ch + 10);
-        content.addChild(cell);
+        list.addChild(cell);
+        return { cell, label, border };
       });
-      this.#registerListener();
-      return;
-    }
-
-    if (this.#galleryTab === 'music') {
-      const items = views.music;
-      if (items.length === 0) {
-        content.addChild(bindThemeTextProjection(
-          new PText({ text: '暂无音乐条目（gallery.json 未配置）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
-          { fill: 'textMuted' },
-        )).position.set(60, 100);
-        this.#registerListener();
-        return;
-      }
-      items.forEach((item, i) => {
-        const y = 96 + i * 58;
+      this.#layoutContent = () => {
+        let y = 0;
+        for (let i = 0; i < rows.length; i += cols) {
+          const group = rows.slice(i, i + cols);
+          const rowHeight = ch + 12 + Math.max(...group.map(({ label }) => this.#textHeight(label))) + 24;
+          group.forEach(({ cell, border }, col) => {
+            cell.position.set(this.#margin + col * (cw + gap), y);
+            (cell.hitArea as Rectangle).height = rowHeight - 8;
+            border.clear().rect(0, 0, cw, rowHeight - 8).stroke({ color: this.#theme.colors.line, width: 2 });
+          });
+          y += rowHeight;
+        }
+        this.#scrollHeight = y;
+        this.#scrollGallery(0);
+      };
+    } else {
+      const isMusic = this.#galleryTab === 'music';
+      const width = Math.min(920, this.#w - this.#margin * 2);
+      const rows = items.map((item) => {
         const row = new Container();
-        row.position.set(60, y);
-        row.addChild(bindThemeGraphicsProjection(
-          new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }),
-          [item.unlocked ? 'surfaceStrong' : 'panel'],
-        ));
-        row.addChild(bindThemeTextProjection(new PText({
-          text: `${item.unlocked ? '♪' : '?'}  ${item.unlocked ? item.name : '???'}`,
-          style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-        }), { fill: item.unlocked ? 'text' : 'textDisabled' })).position.set(18, 10);
-        if (item.unlocked) {
-          row.eventMode = 'static';
+        const background = bindThemeGraphicsProjection(new Graphics(), [item.unlocked ? 'surfaceStrong' : 'panel']);
+        row.addChild(background);
+        const label = this.#text(`${item.unlocked ? isMusic ? '♪' : '❐' : '?'}  ${item.unlocked ? item.name : '???'}`, width - 40, item.unlocked ? 'text' : 'textDisabled');
+        label.position.set(20, 14);
+        row.addChild(label);
+        const enabled = item.unlocked && Boolean(isMusic ? this.#galleryOnPlayMusic : this.#galleryOnReplayText);
+        const note = !item.unlocked ? '未解锁' : !enabled ? (isMusic ? '当前无法播放' : '当前无法回想') : '';
+        const status = note ? this.#text(note, width - 40, 'textDisabled') : null;
+        if (status) row.addChild(status);
+        const border = this.#controlBorder(row, width, 58);
+        bindPlayerControl(row, { label: item.unlocked ? `${isMusic ? '播放' : '回想'} ${item.name}` : '未解锁条目', width, height: 58, enabled, reveal: () => this.#reveal(row) });
+        if (enabled) {
           row.cursor = 'pointer';
-          row.on('pointerdown', () => this.#galleryOnPlayMusic?.(item.id, item.src));
+          row.on('pointerdown', () => isMusic ? this.#galleryOnPlayMusic?.(item.id, item.src) : this.#galleryOnReplayText?.({ ...item }));
         }
-        content.addChild(row);
+        list.addChild(row);
+        return { row, background, label, status, border, item };
       });
-      this.#registerListener();
-      return;
+      this.#layoutContent = () => {
+        let y = 0;
+        for (const { row, background, label, status, border, item } of rows) {
+          const labelHeight = this.#textHeight(label);
+          if (status) status.position.set(20, labelHeight + 20);
+          const height = Math.max(58, labelHeight + (status ? this.#textHeight(status) + 6 : 0) + 28);
+          row.position.set(this.#margin, y);
+          (row.hitArea as Rectangle).height = height;
+          background.clear().roundRect(0, 0, width, height, this.#theme.radius.md).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: this.#theme.opacity.surface });
+          border.clear().roundRect(0, 0, width, height, this.#theme.radius.md).stroke({ color: this.#theme.colors.line, width: 2 });
+          y += height + this.#theme.spacing.sm;
+        }
+        this.#scrollHeight = y;
+        this.#scrollGallery(0);
+      };
     }
-
-    const items = views.texts;
-    if (items.length === 0) {
-      content.addChild(bindThemeTextProjection(
-        new PText({ text: '暂无文本回想条目（gallery.json 未配置 texts）', style: { fontSize: 20, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }),
-        { fill: 'textMuted' },
-      )).position.set(60, 100);
-      this.#registerListener();
-      return;
-    }
-    items.forEach((item, i) => {
-      const y = 96 + i * 58;
-      const row = new Container();
-      row.position.set(60, y);
-      row.addChild(bindThemeGraphicsProjection(
-        new Graphics().roundRect(0, 0, 720, 46, 8).fill({ color: item.unlocked ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: 0.95 }),
-        [item.unlocked ? 'surfaceStrong' : 'panel'],
-      ));
-      row.addChild(bindThemeTextProjection(new PText({
-        text: `${item.unlocked ? '❐' : '?'}  ${item.unlocked ? item.name : '???'}`,
-        style: { fontSize: 20, fill: item.unlocked ? this.#theme.colors.text : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
-      }), { fill: item.unlocked ? 'text' : 'textDisabled' })).position.set(18, 10);
-      if (item.unlocked) {
-        row.eventMode = 'static';
-        row.cursor = 'pointer';
-        row.on('pointerdown', () => this.#galleryOnReplayText?.({ ...item }));
-      }
-      content.addChild(row);
-    });
+    this.#layoutContent?.();
+    this.#scrollGallery(0);
     this.#registerListener();
   }
 
@@ -384,6 +379,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryTab = tab;
     this.#galleryMode = 'grid';
     this.#galleryViewerKey = null;
+    this.#scrollOffset = 0;
     this.#rebuildGallery();
   }
 
@@ -393,31 +389,89 @@ export class GalleryLayer implements GalleryProjectionPort {
     for (const [tab, text] of Object.entries(tabs) as Array<['cg' | 'music' | 'text', PText]>) {
       const active = this.#galleryTab === tab;
       text.style = {
-        fontSize: 24,
+        fontFamily: this.#assets.fontFamily('ui'),
+        fontSize: this.#theme.typography.uiSize,
         fill: active ? this.#theme.colors.accent : this.#theme.colors.textMuted,
         fontWeight: active ? 'bold' : 'normal',
       } satisfies TextStyleOptions;
-      bindThemeTextProjection(text, { fill: active ? 'accent' : 'textMuted' });
+      bindThemeTextProjection(text, { fill: active ? 'accent' : 'textMuted', fontSize: 'uiSize' });
+      const border = this.#tabBorders.get(text.text);
+      if (border) border.visible = active;
     }
   }
 
   #buildGalleryViewer(content: Container, key: string): void {
-    const tex = this.#assets.resolveBackground(key)
-      ?? this.#assets.getOrCreateBackground(key, () => this.#createBackgroundTexture(key, this.#w, this.#h));
-    const sp = new Sprite(tex);
-    sp.width = this.#w;
-    sp.height = this.#h;
-    content.addChild(sp);
-    content.addChild(bindThemeTextProjection(new PText({
-      text: '点击任意处返回列表',
-      style: { fontSize: 20, fill: this.#theme.colors.text } satisfies TextStyleOptions,
-    }), { fill: 'text' })).position.set(this.#w - 250, this.#h - 44);
-    content.eventMode = 'static';
-    content.on('pointerdown', () => {
-      this.#galleryMode = 'grid';
-      this.#galleryViewerKey = null;
-      this.#rebuildGallery();
-    });
+    const width = this.#w - this.#margin * 2;
+    const height = this.#h - 156;
+    const image = new Container();
+    image.position.set(this.#margin, 92);
+    const texture = this.#assets.resolveBackground(key);
+    if (texture) this.#addImage(image, texture, width, height);
+    else image.addChild(this.#text('图像不可用', width, 'textMuted')).position.set(0, height / 2);
+    content.addChild(image);
+    content.addChild(this.#text('点击任意处返回列表', width, 'text')).position.set(this.#margin, this.#h - 48);
+    bindPlayerControl(content, { label: '返回画廊列表', x: this.#margin, y: 88, width, height: this.#h - 112 });
+    this.#controlBorder(content, width, this.#h - 112, this.#margin, 88);
+    content.on('pointerdown', () => this.#returnToGrid());
+    markPlayerModal(content, { close: () => this.#returnToGrid() });
+  }
+
+  #returnToGrid(): void {
+    this.#galleryMode = 'grid';
+    this.#galleryViewerKey = null;
+    this.#rebuildGallery();
+  }
+
+  get #margin(): number { return Math.max(32, this.#w * 0.047); }
+  get #viewportHeight(): number { return Math.max(80, this.#h - 116); }
+
+  #text(value: string, width: number, role: 'text' | 'textMuted' | 'textDisabled'): PText {
+    return bindThemeTextProjection(new PText({ text: value, style: {
+      fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.uiSize,
+      fill: this.#theme.colors[role], wordWrap: true, breakWords: true, wordWrapWidth: width,
+    } }), { fill: role, fontSize: 'uiSize' });
+  }
+
+  #textHeight(text: PText): number {
+    if (typeof document !== 'undefined') return text.height;
+    // Headless projection has no canvas font metrics. Browser layout always uses Pixi's measured height.
+    const size = Number(text.style.fontSize);
+    return text.text.split('\n').reduce((lines, line) => lines + Math.max(1, Math.ceil(line.length * size / text.style.wordWrapWidth)), 0) * size * 1.4;
+  }
+
+  #addImage(target: Container, texture: Texture, width: number, height: number): void {
+    const sprite = new Sprite(texture);
+    const scale = Math.min(width / Math.max(1, texture.width), height / Math.max(1, texture.height));
+    sprite.width = texture.width * scale;
+    sprite.height = texture.height * scale;
+    sprite.position.set((width - sprite.width) / 2, (height - sprite.height) / 2);
+    target.addChild(sprite);
+  }
+
+  #controlBorder(target: Container, width: number, height: number, x = 0, y = 0): Graphics {
+    const border = bindThemeGraphicsProjection(new Graphics().rect(x, y, width, height).stroke({ color: this.#theme.colors.line, width: 2 }), ['line']);
+    border.visible = false;
+    border.eventMode = 'none';
+    if (target instanceof PText) {
+      target.parent!.addChild(border);
+      border.position.copyFrom(target.position);
+    } else target.addChild(border);
+    target.on('pointerover', () => { border.visible = true; this.#requestFrame(); });
+    target.on('pointerout', () => { border.visible = false; this.#requestFrame(); });
+    return border;
+  }
+
+  #scrollGallery(delta: number): void {
+    if (!this.#scrollContent) return;
+    this.#scrollOffset = Math.max(0, Math.min(Math.max(0, this.#scrollHeight - this.#viewportHeight), this.#scrollOffset + delta));
+    this.#scrollContent.y = 92 - this.#scrollOffset;
+    this.#requestFrame();
+  }
+
+  #reveal(target: Container): void {
+    const bottom = target.y + (target.hitArea as Rectangle).height;
+    if (target.y < this.#scrollOffset) this.#scrollGallery(target.y - this.#scrollOffset);
+    else if (bottom > this.#scrollOffset + this.#viewportHeight) this.#scrollGallery(Math.min(target.y, bottom - this.#viewportHeight) - this.#scrollOffset);
   }
 
   #closeGallery(): void {
@@ -450,6 +504,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryLayer.removeAllListeners();
     this.#galleryHeader = null;
     this.#galleryTabs = null;
+    this.#tabBorders.clear();
     this.#galleryLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
   }
 
@@ -462,6 +517,8 @@ export class GalleryLayer implements GalleryProjectionPort {
     content?.removeChildren().forEach((child) => child.destroy({ children: true }));
     content?.destroy({ children: false });
     this.#galleryContent = null;
+    this.#scrollContent = null;
+    this.#layoutContent = null;
   }
 
   #bringToFront(): void {
