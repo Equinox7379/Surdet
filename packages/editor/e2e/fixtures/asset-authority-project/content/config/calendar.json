@@ -1,0 +1,18 @@
+{
+  "nodes": [
+    { "id": "map_01", "name": "据点", "x": 120, "y": 480, "isBase": true, "apCost": 0 },
+    { "id": "map_02", "name": "迷雾森林", "x": 360, "y": 240, "apCost": 2, "requires": ["map_01"], "eventId": "forest_event" },
+    { "id": "map_03", "name": "城镇", "x": 640, "y": 360, "apCost": 1 }
+  ],
+  "maxAp": 3,
+  "maxTurns": 30,
+  "dateTemplate": "第{month}月 第{turn}周",
+  "weeksPerMonth": 4,
+  "onTurnStartEventId": "ev_turn_start",
+  "onTurnEndEventId": "ev_turn_end",
+  "baseCommands": [
+    { "id": "rest", "name": "休息", "apCost": 1, "effects": { "lynn.hp": 5 } },
+    { "id": "train", "name": "特训", "apCost": 2, "effects": { "lynn.atk": 1 }, "perTurn": 1 },
+    { "id": "patrol", "name": "巡逻", "apCost": 1, "perTurn": 2, "when": "hasSword" }
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createStarterOwnerTeardown } from '../src/starter-owner-teardown.js';
+import { createStarterOwnerTeardown } from '../../shared/player/owner-teardown.js';
 
 function target(): EventTarget & { listenerCount(type: string): number } {
   const listeners = new Map<string, Set<EventListener>>();
@@ -20,6 +20,7 @@ function target(): EventTarget & { listenerCount(type: string): number } {
 describe('starter owner teardown', () => {
   it('creates one runtime owner and releases every resource exactly once', () => {
     const runtime = { dispose: vi.fn() };
+    const host = { dispose: vi.fn() };
     const audio = { dispose: vi.fn() };
     const gamepad = { stop: vi.fn() };
     const revoke = vi.fn();
@@ -29,6 +30,7 @@ describe('starter owner teardown', () => {
     const windowTarget = target();
     const owner = createStarterOwnerTeardown({
       runtime,
+      host,
       audioManager: audio,
       gamepad,
       fontBlobUrls,
@@ -46,6 +48,8 @@ describe('starter owner teardown', () => {
     owner.dispose();
 
     expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(host.dispose).toHaveBeenCalledOnce();
+    expect(host.dispose.mock.invocationCallOrder[0]).toBeLessThan(runtime.dispose.mock.invocationCallOrder[0]);
     expect(audio.dispose).toHaveBeenCalledOnce();
     expect(gamepad.stop).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledTimes(2);
@@ -62,6 +66,7 @@ describe('starter owner teardown', () => {
     try {
       const owner = createStarterOwnerTeardown({
         runtime: { dispose: vi.fn() },
+        host: { dispose: vi.fn() },
         audioManager: { dispose: vi.fn() },
         gamepad: { stop: vi.fn() },
         fontBlobUrls: new Set<string>(),
@@ -74,5 +79,21 @@ describe('starter owner teardown', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+
+  it('still releases Renderer and owned resources when Host cleanup throws', () => {
+    const failure = new Error('host cleanup failed');
+    const runtime = { dispose: vi.fn() };
+    const revoke = vi.fn();
+    const owner = createStarterOwnerTeardown({
+      host: { dispose: () => { throw failure; } }, runtime,
+      audioManager: { dispose: vi.fn() }, gamepad: { stop: vi.fn() },
+      fontBlobUrls: new Set(['blob:font']), assetBlobUrls: new Set(),
+      revokeObjectUrl: revoke,
+    });
+    expect(() => owner.dispose()).toThrow(AggregateError);
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledWith('blob:font');
+    expect(() => owner.dispose()).not.toThrow();
   });
 });

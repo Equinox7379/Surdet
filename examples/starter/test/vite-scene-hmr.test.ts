@@ -112,13 +112,13 @@ describe('real Vite .gal HMR', () => {
     await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
     await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'ch01_01', undefined, { timeout: 15000 });
     await waitForStableResources();
-    // The 1050ms blocking intro timeline owns the opening background and portrait.
+    // The authored opening timeline owns the initial background and portrait.
     // Capture the HMR baseline only after that authored projection has settled;
     // otherwise CI speed can make natural timeline progress look like an HMR mutation.
     await page.waitForFunction(() => {
       const snapshot = window.__surdetDebug.presentationSnapshot as HmrPresentationSnapshot | undefined;
-      return snapshot?.stage.backgroundKey === 'castle_hall'
-        && snapshot.stage.portraits.some((portrait) => portrait.key === 'lynn:uniform')
+      return snapshot?.stage.backgroundKey === 'harbor'
+        && snapshot.stage.portraits.some((portrait) => portrait.key === 'lynn:coat')
         && snapshot.timelines.every((timeline) => !timeline.blocking);
     }, undefined, { timeout: 15000 });
 
@@ -203,8 +203,10 @@ describe('real Vite .gal HMR', () => {
 
     const scenePath = path.join(tempRoot, 'content', 'scenario', 'ch01_01.gal');
     const original = await readFile(scenePath, 'utf8');
-    const validReplacementOne = original.replace('等了你三个晚上', '等了你四个晚上');
-    const validReplacementTwo = validReplacementOne.replace('等了你四个晚上', '等了你五个晚上');
+    const firstDialogue = original.split(/\r?\n/).find((line) => line.startsWith('旁白：'))!;
+    expect(firstDialogue).toBeTruthy();
+    const validReplacementOne = original.replace(firstDialogue, `${firstDialogue}（第一次文字修订）`);
+    const validReplacementTwo = validReplacementOne.replace('（第一次文字修订）', '（第二次文字修订）');
     expect(validReplacementOne).not.toBe(original);
     expect(validReplacementTwo).not.toBe(validReplacementOne);
 

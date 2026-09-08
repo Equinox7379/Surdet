@@ -38,9 +38,9 @@ const evidenceClass = process.argv.includes('--diagnostic') ? 'DIAGNOSTIC' : 'FO
 const starterTrackedFiles = [
   'game.config.json',
   path.join('content', 'scenario', 'ch01_01.gal'),
-  path.join('content', 'timelines', 'intro_cinematic.json'),
-  path.join('content', 'assets', 'bg', 'night_field.svg'),
-  path.join('content', 'assets', 'portrait', 'lynn_uniform_night.svg'),
+  path.join('content', 'timelines', 'harbor_arrival.json'),
+  path.join('content', 'assets', 'bg', 'harbor.png'),
+  path.join('content', 'assets', 'portrait', 'lynn_coat_normal.png'),
 ];
 
 const TARGET_SCENE_ID = 'agent_probe';
@@ -575,8 +575,8 @@ const agentBlackoutDefinition = {
   id: TARGET_TIMELINE_ID,
   durationMs: 800,
   tracks: [
-    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] },
-    { kind: 'portrait', target: 'lynn:uniform', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'night', position: 'left' }] },
+    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'harbor' }] },
+    { kind: 'portrait', target: 'lynn:coat', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'left' }] },
     {
       kind: 'screen',
       cues: [
@@ -595,17 +595,17 @@ const agentProbeBlocks = [
 function assertCleanStage(stage, label) {
   assert(stage && typeof stage === 'object', `${label} stage 快照缺失`);
   const portraitKeys = (stage.portraits ?? []).map((portrait) => portrait?.key);
-  assert(!portraitKeys.includes('lynn:uniform'), `${label} stage.portraits 意外包含 lynn:uniform：${JSON.stringify(stage.portraits)}`);
-  assert(stage.backgroundKey !== 'night_field', `${label} stage.backgroundKey 已经是 night_field：${JSON.stringify(stage.backgroundKey)}`);
+  assert(!portraitKeys.includes('lynn:coat'), `${label} stage.portraits 意外包含 lynn:coat：${JSON.stringify(stage.portraits)}`);
+  assert(stage.backgroundKey !== 'harbor', `${label} stage.backgroundKey 已经是 harbor：${JSON.stringify(stage.backgroundKey)}`);
   assert(stage.fadeAlpha === 0, `${label} stage.fadeAlpha 不是 0：${JSON.stringify(stage.fadeAlpha)}`);
 }
 
 function assertFinalStage(stage) {
   assert(stage && typeof stage === 'object', '播放完成后 stage 快照缺失');
-  assert(stage.backgroundKey === 'night_field', `最终 backgroundKey 不是 night_field：${JSON.stringify(stage.backgroundKey)}`);
-  const lynn = (stage.portraits ?? []).find((portrait) => portrait?.key === 'lynn:uniform');
-  assert(lynn, `最终 stage.portraits 不含 lynn:uniform：${JSON.stringify(stage.portraits)}`);
-  assert(lynn.view?.expression === 'night', `lynn 表情不是 night：${JSON.stringify(lynn.view)}`);
+  assert(stage.backgroundKey === 'harbor', `最终 backgroundKey 不是 harbor：${JSON.stringify(stage.backgroundKey)}`);
+  const lynn = (stage.portraits ?? []).find((portrait) => portrait?.key === 'lynn:coat');
+  assert(lynn, `最终 stage.portraits 不含 lynn:coat：${JSON.stringify(stage.portraits)}`);
+  assert(lynn.view?.expression === 'normal', `lynn 表情不是 normal：${JSON.stringify(lynn.view)}`);
   assert(Math.abs((stage.fadeAlpha ?? 1) - 0) < 0.001, `播放完成后 fadeAlpha 未回到 0：${JSON.stringify(stage.fadeAlpha)}`);
 }
 
@@ -692,10 +692,10 @@ async function runPreflight() {
     assert(capabilities.result.capabilities.includes(capability), `capabilities 缺少 ${capability}`);
   }
   const starterAssets = success('project.assets', runCli(['project', 'assets', '--project', starterRoot]));
-  const nightField = starterAssets.result.backgrounds.find((entry) => entry.key === 'night_field');
-  const lynnNight = starterAssets.result.portraits.find((entry) => entry.role === 'lynn' && entry.expression === 'night');
-  assert(nightField?.resolved === true, 'Starter night_field 未 resolved');
-  assert(lynnNight?.resolved === true, 'Starter lynn night 未 resolved');
+  const normalField = starterAssets.result.backgrounds.find((entry) => entry.key === 'harbor');
+  const lynnNight = starterAssets.result.portraits.find((entry) => entry.role === 'lynn' && entry.expression === 'normal');
+  assert(normalField?.resolved === true, 'Starter harbor 未 resolved');
+  assert(lynnNight?.resolved === true, 'Starter lynn normal 未 resolved');
   assert(!fs.existsSync(fixtureRoot), 'preflight 不得创建 fixture');
   assert(!fs.existsSync(artifactPath), 'preflight 不得创建 artifact');
   return { status: 'PREFLIGHT_PASSED', runHead, checks };
@@ -727,10 +727,10 @@ async function run() {
     const assets = success('project.assets', runCli(['project', 'assets', '--project', fixtureRoot]));
     const inspect = success('project.inspect', runCli(['project', 'inspect', '--project', fixtureRoot]));
     // 资源门槛：FORMAL 使用的背景与立绘必须 resolved；CLI 内部两个入口逐字段一致。
-    const nightField = assets.result.backgrounds.find((entry) => entry.key === 'night_field');
-    const lynnNight = assets.result.portraits.find((entry) => entry.role === 'lynn' && entry.outfit === 'uniform' && entry.expression === 'night');
-    assert(nightField?.resolved === true, `night_field 未 resolved：${JSON.stringify(nightField)}`);
-    assert(lynnNight?.resolved === true, `lynn_uniform_night 未 resolved：${JSON.stringify(lynnNight)}`);
+    const normalField = assets.result.backgrounds.find((entry) => entry.key === 'harbor');
+    const lynnNight = assets.result.portraits.find((entry) => entry.role === 'lynn' && entry.outfit === 'coat' && entry.expression === 'normal');
+    assert(normalField?.resolved === true, `harbor 未 resolved：${JSON.stringify(normalField)}`);
+    assert(lynnNight?.resolved === true, `lynn_coat_normal 未 resolved：${JSON.stringify(lynnNight)}`);
     assert(JSON.stringify(assets.result) === JSON.stringify(inspect.result.assets), 'project.assets 与 project.inspect.assets 逐字段不一致');
     catalog = assets.result;
   });
@@ -773,8 +773,8 @@ async function run() {
     const body = success('object.inspect', runCli(['object', 'inspect', '--project', fixtureRoot, '--ref', `timeline:${TARGET_TIMELINE_ID}`, '--change', changeId]));
     assert(body.result.kind === 'timeline', `object.inspect 未返回 timeline：${JSON.stringify(body.result)}`);
     assert(/^[0-9a-f]{64}$/.test(body.result.fingerprint), 'object.inspect timeline fingerprint 缺失');
-    assert(body.result.references.includes('asset:bg:night_field'), 'timeline 未引用 night_field 资产');
-    assert(body.result.references.includes('asset:portrait:lynn:uniform:night'), 'timeline 未引用 lynn night 资产');
+    assert(body.result.references.includes('asset:bg:harbor'), 'timeline 未引用 harbor 资产');
+    assert(body.result.references.includes('asset:portrait:lynn:coat:normal'), 'timeline 未引用 lynn normal 资产');
   });
 
   await step('project.validate.green', async () => {
@@ -922,7 +922,7 @@ async function run() {
     assertCleanStage(before.stage, '触发 agent_blackout 前');
     stageBefore = before.stage;
     stageAfterFirstFrame = after && typeof after === 'object' && after.stage ? after.stage : null;
-    assert(stageAfterFirstFrame?.backgroundKey === 'night_field', `第一帧后 backgroundKey 不是 night_field：${JSON.stringify(stageAfterFirstFrame)}`);
+    assert(stageAfterFirstFrame?.backgroundKey === 'harbor', `第一帧后 backgroundKey 不是 harbor：${JSON.stringify(stageAfterFirstFrame)}`);
     // 方法修正：cue1（atMs=0、durationMs=0、alpha=1）在第一帧 microtask 快照中瞬时到 1，这是“达到 1”的主证据。
     assert(Math.abs(Number(stageAfterFirstFrame?.fadeAlpha ?? -1) - 1) < 0.001, `第一帧后 fadeAlpha 未达到 1：${JSON.stringify(stageAfterFirstFrame?.fadeAlpha)}`);
   });

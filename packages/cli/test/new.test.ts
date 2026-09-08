@@ -9,6 +9,7 @@ const gameTemplateMain = fs.readFileSync(
   new URL('../templates/game/src/main.ts', import.meta.url),
   'utf8',
 );
+const sharedPlayer = fs.readFileSync(new URL('../../../examples/shared/player/player.ts', import.meta.url), 'utf8');
 
 function makeFakeEngine(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-engine-'));
@@ -21,11 +22,13 @@ function makeFakeEngine(): string {
 
 describe('surdet new', () => {
   it('模板使用公共 Presentation 与标题会话边界', () => {
-    expect(gameTemplateMain).toContain('connectInterpreterPresentation');
-    expect(gameTemplateMain).toContain('enterPlayerTitleSession');
-    expect(gameTemplateMain).toContain('clearForBoundary');
-    expect(gameTemplateMain).not.toContain('interp.setPresentationHooks');
-    expect(gameTemplateMain).not.toContain('preserveWorld: true');
+    expect(gameTemplateMain).toContain("from '../../../examples/shared/player/player.js'");
+    expect(gameTemplateMain).toContain('startPlayer({');
+    expect(sharedPlayer).toContain('connectInterpreterPresentation');
+    expect(sharedPlayer).toContain('enterPlayerTitleSession');
+    expect(sharedPlayer).toContain('clearForBoundary');
+    expect(sharedPlayer).not.toContain('interp.setPresentationHooks');
+    expect(sharedPlayer).not.toContain('preserveWorld: true');
   });
 
   it('创建脚手架 + 注册 workspace + lint 通过', async () => {
@@ -38,7 +41,12 @@ describe('surdet new', () => {
     expect(fs.existsSync(path.join(target, 'game.config.json'))).toBe(true);
     expect(fs.existsSync(path.join(target, 'src/main.ts'))).toBe(true);
 
-    const generatedMain = fs.readFileSync(path.join(target, 'src/main.ts'), 'utf8');
+    const generatedEntry = fs.readFileSync(path.join(target, 'src/main.ts'), 'utf8');
+    expect(generatedEntry).toContain("from '../../../examples/shared/player/player.js'");
+    expect(generatedEntry).toContain('startPlayer({');
+    expect(fs.existsSync(path.join(target, 'README.md'))).toBe(true);
+    expect(fs.statSync(path.join(target, 'content/assets/bg/harbor.png')).size).toBeGreaterThan(0);
+    const generatedMain = generatedEntry + '\n' + sharedPlayer;
     expect(generatedMain).toContain('createRendererRuntime');
     expect(generatedMain).toContain('createPlayerShellController');
     expect(generatedMain).toContain('createRendererPlayerShellSlots');

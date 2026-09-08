@@ -7,7 +7,7 @@ import {
 } from '@surdet/host';
 import { createRendererTheme } from '@surdet/renderer';
 
-const starterMain = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+const starterMain = readFileSync(new URL('../../shared/player/player.ts', import.meta.url), 'utf8');
 
 describe('Starter public player UI coordination', () => {
   it('uses the public shell controller and renderer-backed providers', () => {

@@ -312,7 +312,7 @@ function variableDeclarations(config) {
 function sceneBlocks() {
   return [
     { kind: 'text', speaker: '凛', value: 'Agent 纵向切片起点。' },
-    { kind: 'instruction', name: 'bg', args: ['night_field'] },
+    { kind: 'instruction', name: 'bg', args: ['harbor'] },
     {
       kind: 'choice',
       options: [

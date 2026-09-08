@@ -1,5 +1,5 @@
 @scene ch01_01
 @label start
-@bg castle_hall
+@bg harbor
 @battle fight_01
 @end

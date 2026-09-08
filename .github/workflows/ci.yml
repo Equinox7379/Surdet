@@ -42,6 +42,20 @@ jobs:
           retention-days: 7
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy
+      - name: Verify modern Starter and generated project
+        timeout-minutes: 10
+        env:
+          SURDET_STARTER_OUTPUT: artifacts/starter-ui
+          SURDET_NEW_PLAYER_OUTPUT: artifacts/starter-ui/new-project
+        run: npm run verify:starter
+      - name: Retain modern Starter player evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surdet-starter-player
+          path: artifacts/starter-ui
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify Pass 8 actual player and file save bridge
         timeout-minutes: 15
         env:

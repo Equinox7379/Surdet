@@ -13,7 +13,7 @@
 - **编号命名空间：** 本文件历史标题中的 `Wave 1–10` 仅是 Wave 6 之后、Wave 7 之前的前端重构内部批次；它们不是 Surdet 主线 Wave。自 2026-08-31 起，对用户和台账统一称为 `Frontend Pass 1–10`。主线 `Stage 6 Wave 6` 已在本地闭合，主线 Wave 7 尚未设计、授权或启动。
 - 设计权威：`docs/superpowers/specs/2026-08-30-surdet-frontend-editorial-workbench-redesign-design.md`。
 - 只改前端：允许 `packages/editor`、`packages/renderer` 及其测试；`packages/host`、`packages/shell` 默认只跑消费回归。只有当前代码中已经存在、能证明为纯显示的 seam，才允许另开白名单修改。
-- 禁止修改 `packages/authoring`、`packages/core`、`packages/cli` 生产代码、公共 schema、项目/存档/脚本/时间轴格式、文件写入/EOL/备份/恢复/lease/apply/commit 语义、Starter 内容、依赖与 lockfile。
+- 禁止修改 `packages/authoring`、`packages/core`、`packages/cli` 生产代码、公共 schema、项目/存档/脚本/时间轴格式、文件写入/EOL/备份/恢复/lease/apply/commit 语义、依赖与 lockfile。2026-09-08 Owner 后续明确要求 Starter 全面重做，已将 Starter 内容、共用玩家入口、新项目模板与必要公共战斗输入门禁纳入本轮；此前对 Starter 的排除不再适用。
 - 保留业务单一真相：新视觉组件只渲染现有前端状态，通过回调调用现有业务函数；不得复制状态机、索引、验证、预览、审阅、保存或素材插入逻辑。
 - 保留稳定锚点：仍准确的 ID、`data-*`、对象引用和事件合同原样保留；必须替换时，在同一提交中建立等价永久测试。
 - 永久删除所有彩色左竖线及等价横向 inset 色条；选择、当前、焦点、错误、警告、只读改用整面反馈、完整边界、文字、图标与 ARIA。
@@ -601,7 +601,7 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 - [x] **Step 7:** An implementation-independent `luna_worker` reviewed the actual diff, semantic CSS ownership, behavior, final six screenshots and evidence boundaries; no confirmed substantive blockers remain.
 - [x] **Step 8:** The 2026-09-08 report records local gates, actual screenshots/zoom, Luna and untested boundaries. The containing commit and its GitHub Checks identify the review version and remote result.
 - [x] **Step 9:** This Execution Ledger, docs index and the original untracked local long-term ledger are updated. Owner experience and cloud approval remain unsigned.
-- **Step 10 — external closeout:** Normal commit and ordinary push to verified main are authorized. The containing commit's GitHub Checks and the local long-term ledger record the final SHA/run; stop at cloud independent review, with no Starter modernization, Pass 11, Wave 7 or release/deployment.
+- **Step 10 — external closeout:** Normal commit and ordinary push to verified main are authorized. Close the Owner-added Starter/template modernization in the same goal, then record the containing commit's GitHub Checks and final SHA/run in the local long-term ledger. Stop at cloud independent review, with no Pass 11, Wave 7 or release/deployment.
 
 ---
 
@@ -997,7 +997,11 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 
 ### 2026-09-08 — Frontend Pass 10 local implementation and independent review
 
+**Initial CI and subsequent authorization:** Ordinary commit/push `cec7dc4806b7998dc5618e666b701ec553c8271a` completed. Run `34227911701` passed root, asset import, writeback and V4 browser steps, then failed the existing Pass 8 player error-count assertion (`4 !== 3`). A real delayed navigation reproduced Starter's pending battle callback reaching the disposed Renderer after beforeunload. Owner then explicitly required a complete Starter overhaul. The scope blocker is resolved: callback invalidation and Host-before-Renderer disposal pass focused and real-navigation RED/GREEN checks. The new Starter/template and local integration gates are complete; final remote results belong to the containing commit's GitHub Checks. Cloud review remains unsigned.
+
 Owner supplied the Pass 10 construction Goal and authorized normal commit/push. Starting local/remote main was `434c8da43e645e7e8bdd4b2035081cc1017e7868`, ahead/behind 0/0; Pass 8 and Pass 9 cloud reviews were already closed. Older execution and push restrictions above remain historical.
+
+The following four paragraphs record the Editor-only baseline at `cec7dc4`. The subsequent Owner-authorized Starter work and its verification are recorded separately below.
 
 The legacy stylesheet and link are removed. Live main-column, search, empty-state, asset-popup, causal and timeline-control rules now live in the existing semantic layers. No replacement compatibility stylesheet, old token or new `!important` was introduced. Actual screenshot/geometry REDs also closed the failed-thumbnail label escaping its asset row and Editor preview padding clipping the real canvas. Production changes stay in Editor CSS/HTML; Renderer, Host/Shell, business TypeScript, Authoring/Core/CLI, content/templates, formats and dependencies are unchanged.
 
@@ -1006,3 +1010,11 @@ Final local gates: `verify:all` PASS (Editor 76 files / 721 tests, Renderer 54 /
 Prior failures remain in task logs: default-concurrency Authoring worker channel closure and an action-scope test reading the deleted stylesheet. Task-only single-worker limits and the corrected test stylesheet owners resolved them without weakening assertions. Final aggregate was rerun after these failures and passed; that successful final run was not repeated.
 
 Implementation-independent `luna_worker` review and affected-part rechecks found no confirmed substantive blockers. Operator technical verdict is PASS; Owner experience and cloud independent review are not signed. The containing commit and its GitHub Checks identify the final remote review version/result; exact SHA/run are also recorded in the original untracked local long-term ledger. Native directory chooser, real IME, physical gamepad and Windows system DPI changes remain untested. Stop at cloud independent review; no Starter modernization, Pass 11, mainline Wave 7, packaging, release or deployment.
+
+### 2026-09-08 — Owner-authorized Starter and new-project overhaul
+
+Owner explicitly required a thorough Starter remake while Pass 10 remained active. The implementation replaces the obsolete content with 雾港来信 (three endings and a separate optional-system playground), seven image assets, coherent theme, first-run guidance and working title return. The three portraits and matching avatar were regenerated in the Owner-requested two-dimensional style; explicitly authorized local background cleanup preserves character RGB and supplies true alpha. Starter and the new-project template now consume one `examples/shared/player` entry using the existing public Core/Renderer/Host/Player Shell boundaries. Legacy assets required solely by Editor fixture tests were moved to dedicated test fixtures rather than retained as unused player assets.
+
+Real RED/GREEN checks closed the delayed battle teardown callback, new-game calendar state retention, title-gallery replay input boundary, premature load-operation completion, player control during enemy turns and premature practice completion. The public battle view adds optional input gating without assuming which team belongs to a human, and distinct accessible names for left/right movement. Renderer production changed in this extension: the full Pass 8 player and Windows Electron A–G checks were refreshed and passed, including native keyboard reload of an actual saved noninitial position across two processes.
+
+Current local evidence: five full Starter player flows with the final portrait expressions, three independent review regressions, a real `cmdNew` project with typecheck/build/two branches/save/reload/title load, lifecycle/input 8 tests and public battle panel checks pass. The content simulator explores 40 paths and 52 save round trips, reaches all three endings and reports no runtime errors. A fresh complete `verify:all` passes 278 files / 2618 tests across nine workspaces with original test timeouts; subsequent portrait and accessible-name edits pass the affected build, actual player flows and ten panel tests. Asset import 26/26 and built V4 nine modes/four viewports/native 200% zoom also pass. See the [Starter delivery record](../../SURDET-STARTER-MODERNIZATION-DELIVERY-REPORT-2026-09-08.md); the containing commit and its GitHub Checks identify the remote review version. Stop at cloud independent review. No new phase, formal-game change, dependency/format change, release or deployment is authorized by this extension.

@@ -1,10 +1,10 @@
 # Frontend Pass 10：最终视觉系统与可访问性收口
 
-本地实现、真实页面、最终聚合与 Luna 复核均通过，Operator verdict = PASS；云端独立终审 pending。基线为 `434c8da43e645e7e8bdd4b2035081cc1017e7868`（Pass 9 云端已关闭）。审查版本以包含本报告的提交及其 GitHub Checks 为准；最终 SHA/run 同步登记到本机原长期台账。
+Editor Pass 10 的本地实现、真实页面、聚合与 Luna 复核均通过；已推送 `cec7dc4806b7998dc5618e666b701ec553c8271a` 的 CI 在末尾发现既有 Starter 退出竞态。Owner 随后要求 Starter 全面重做与立绘风格调整，相关实现和本地验证已完成，详见 [Starter 交付记录](SURDET-STARTER-MODERNIZATION-DELIVERY-REPORT-2026-09-08.md)。本文件随施工提交冻结，远端结果以该提交的 GitHub Checks 为准；云端独立终审 pending。原 Editor 基线为 `434c8da43e645e7e8bdd4b2035081cc1017e7868`，下文保留该子项的验证记录。
 
 ## 实际范围
 
-生产修改仅在 Editor 样式与 HTML 入口。Renderer、Host/Shell、Authoring/Core/CLI/Agent Port、Starter/模板、正式内容、格式、依赖与 lockfile 均未改。原状态、导航回调、保存、DSL/EOL、预览 runtime 和审阅 authority 保持。
+Editor 子项的生产修改仅在样式与 HTML 入口，原状态、导航回调、保存、DSL/EOL、预览 runtime 和审阅 authority 保持。Owner 后续追加的 Starter 全面重做、共用玩家入口、新项目模板与公共战斗输入门禁见 [Starter 交付记录](SURDET-STARTER-MODERNIZATION-DELIVERY-REPORT-2026-09-08.md)。Host/Shell、Authoring/Core/CLI/Agent Port 生产、正式游戏、格式、依赖与 lockfile 仍未改。
 
 旧 `src/styles.css` 与加载入口已删除。源码搜索与九模式实际 computed style 的启用/禁用对照确认：主列伸缩迁到 `app-shell.css`；box sizing、selection、滚动条、字体与空状态原语进入 `components.css`；搜索、素材悬浮预览、问题与因果的必要结构进入 `script-workspace.css`；时间轴原先依赖全局皮肤的控件改用该工作区的紧凑语义样式。场景、步骤、徽章与主要工作区的旧卡片/色条皮肤已由语义层接管；无生产消费者的 `.cfg-table` 删除。没有整体搬迁旧文件、新兼容层、旧 token 或新增 `!important`。
 
@@ -25,4 +25,6 @@
 
 未参与实现的 `luna_worker` 独立读取完整 diff、旧层与迁移后的源码、合同和真实结果；完成两处视觉修复、动作范围测试读取源与六张最终图补审，未发现确认的实质阻断。主代理亲自检查源码、红绿结果与图片；Luna 未代跑浏览器或代签云端终审。
 
-本地验证不代签云端终审或 Owner 体验。真实中文输入法、Windows 原生目录选择器、物理手柄和 Windows 系统 DPI 切换未实测。未打包、release、部署或改写 Git 历史；Starter 现代化、Frontend Pass 11、主线 Wave 7、音频及后续主题未开始。最终停止点为 `FRONTEND_PASS_10_WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`。
+本地验证不代签云端终审或 Owner 体验。真实中文输入法、Windows 原生目录选择器、物理手柄和 Windows 系统 DPI 切换未实测。未打包、release、部署或改写 Git 历史；Frontend Pass 11、主线 Wave 7、音频及后续主题未开始。
+
+原 CI 聚合、素材导入、写回、V4 module/built Editor 与预览均成功；最后玩家测试多出一条 `Renderer runtime has already been disposed`，原错误总数断言 `4 !== 3` 未放宽。本机以真实 battle/pass 后延迟目标文档响应 1600 ms 复现：beforeunload 销毁 runtime 后，650 ms 敌方回调继续 showBattle。Owner 追加 Starter 授权后，在共用 adapter 中增加 reset/dispose 回调失效，并在入口先销毁 Host 再销毁 Renderer；生命周期聚焦及真实延迟导航已红绿关闭。该范围阻断已解除，当前继续新版 Starter 总体验证和新提交 CI；整体停止点仍为等待云端独立终审。

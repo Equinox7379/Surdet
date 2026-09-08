@@ -38,7 +38,7 @@ export interface ProjectSystemAdapterOptions {
   renderer: ProjectSystemRenderer;
   store: VariableStore;
   registry: SceneRegistry;
-  calendar: CalendarRunner;
+  calendar?: CalendarRunner;
   scheduler?: EventScheduler;
   combat?: CombatSolver;
   combatConfig?: CombatConfig;
@@ -69,8 +69,9 @@ function safeJump(options: ProjectSystemAdapterOptions, context: HostSystemConte
 }
 
 function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystemAdapter | null {
-  const { calendar, scheduler } = options;
-  if (!calendar) return null;
+  if (!options.calendar) return null;
+  const calendar = options.calendar;
+  const scheduler = options.scheduler;
   return {
     id: 'calendar',
     open: (_payload, context) => {
@@ -211,6 +212,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
 function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAdapter | null {
   const { combat, combatConfig } = options;
   if (!combat || !combatConfig) return null;
+  let generation = 0;
   const schedule = options.timer ?? ((callback: () => void, delayMs: number): void => {
     const timer = (globalThis as unknown as { setTimeout?: (fn: () => void, ms: number) => void }).setTimeout;
     if (timer) timer(callback, delayMs);
@@ -219,7 +221,9 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
   return {
     id: 'battle',
     open: (_payload, context) => {
+      const activeGeneration = ++generation;
       combat.start(options.combatSetup ?? { allies: ['sword'], enemies: ['goblin'] });
+      const canPlayerAct = (): boolean => activeGeneration === generation && !combat.finished && combat.actingTeam === combatConfig.teams[0];
       let battleMessage = '战斗开始！点击敌方单位发起攻击。';
       const settle = (): void => {
         if (combat.finished) {
@@ -234,10 +238,10 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
       const renderBattle = (): void => {
         try {
           options.renderer.showBattle(
-            buildBattleView(combat.snapshot(), combatConfig.skills),
+            { ...buildBattleView(combat.snapshot(), combatConfig.skills), inputEnabled: canPlayerAct() },
             {
               onAttack: (targetUid, skillId) => {
-                if (combat.actingTeam !== combatConfig.teams[0]) return;
+                if (!canPlayerAct()) return;
                 const acting = combat.units.find((unit) => unit.alive && unit.team === combat.actingTeam);
                 if (!acting) return;
                 try {
@@ -251,6 +255,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
                 settle();
               },
               onMove: (direction) => {
+                if (!canPlayerAct()) return;
                 const moving = combat.units.find((unit) => unit.alive && unit.team === combat.actingTeam);
                 if (!moving) return;
                 try {
@@ -262,6 +267,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
                 settle();
               },
               onPass: () => {
+                if (!canPlayerAct()) return;
                 combat.pass();
                 battleMessage = '无可攻击目标，跳过本次行动。';
                 settle();
@@ -272,7 +278,7 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
           const enemyTeam = combatConfig.teams[1] ?? 'enemies';
           if (!combat.finished && combat.actingTeam === enemyTeam) {
             schedule(() => {
-              if (combat.finished || combat.actingTeam !== enemyTeam) return;
+              if (activeGeneration !== generation || combat.finished || combat.actingTeam !== enemyTeam) return;
               try {
                 const suggestion = combat.suggestAction(enemyTeam);
                 if (suggestion.kind === 'attack') {
@@ -298,7 +304,8 @@ function createBattleAdapter(options: ProjectSystemAdapterOptions): HostSystemAd
       };
       renderBattle();
     },
-    reset: () => { options.renderer.hideBattle(); },
+    reset: () => { generation++; options.renderer.hideBattle(); },
+    dispose: () => { generation++; },
   };
 }
 

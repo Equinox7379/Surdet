@@ -48,6 +48,8 @@ export interface BattleView {
   /** 当前行动阵营 */
   actingTeam: string;
   finished: boolean;
+  /** 战斗输入是否开放；缺省为 true，finished 时始终关闭。 */
+  inputEnabled?: boolean;
   winner: string | null;
   units: BattleUnitView[];
 }

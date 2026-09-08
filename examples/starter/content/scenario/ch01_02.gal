@@ -1,16 +1,44 @@
 @scene ch01_02
 @label start
-@bg night_field
-@show lynn:uniform night @ right
-@unlock_cg cg_field
-@unlock_text t_night
+@bg post_office
+@show lynn:coat hesitant @ right
+@unlock_cg post_office
+@unlock_text t_post_office
 
-主角：黎明之前，还有一段路。
-凛：跟着我。
-主角：远处好像有狼嚎……
-@shake 500
-@flash 250
-@wait 600
-@autosave
-@jump ch02.start
-@end
+旁白：旧邮局后室堆着撤下来的邮袋和灯塔登记册。雾在玻璃外，脚下还是干燥的木地板。
+主角：山路还没开始。先把这三枚退回章和档案对上。
+
+@if askedRelation
+凛：沈岳替父亲守灯，也替我收过父亲留下的东西。我一直没有问他，为什么不回信。
+@elif foundStamp
+凛：我看见“地址已撤出邮路”时，还是先想到他不愿见我。
+凛：现在我得把邮局的章和他的决定分开看。
+@else
+凛：我以前不敢进这间档案室。只要看到“地址已撤出邮路”，我就得承认那些信可能根本没到他手里。
+@endif
+
+主角：登记册先确认了一件事：去年秋天灯塔地址撤出邮路。现在要查的是信里写了什么，以及谁来签收。
+
+凛：封口还完整。我们可以先看信，也可以带着旧地址去问他。
+@choice
+  请她拆开信，在档案室看清楚再走 -> @flag letterOpened @mod lynn.trust +2 @goto open_letter
+  把信交给她，等她准备好 -> @mod lynn.trust +3 @goto wait_for_lynn
+  核对旧地址和灯塔登记 -> @flag verifiedRoute @mod lynn.trust +1 @goto trace_route
+
+@label open_letter
+凛：信里夹着父亲借用灯塔罗盘的清单，最后一行写着“地址变更后，仍请交到值守室”。
+主角：这是归还说明，不是求他回信。
+凛：我现在知道要交还什么了，也知道自己为什么一直不敢拆开。
+@jump ch02
+
+@label wait_for_lynn
+主角：信先不拆。把退回章和登记册带上，沈岳可以自己看。
+@show lynn:coat normal @ right
+凛：好。我把封口留着，也把旧地址的复印页夹在后面。
+@jump ch02
+
+@label trace_route
+主角：旧登记册写着：灯塔地址去年秋天撤出邮路，改由持证送件人转交。
+凛：三次退回都是邮局按旧地址处理。我们这次就是持证送件人。
+主角：那就把登记页和信一起带上。
+@jump ch02

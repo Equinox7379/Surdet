@@ -1,7 +1,8 @@
 [
-  { "id": "first_battle", "name": "初战告捷", "description": "赢得第一场战斗", "when": "battleWon" },
-  { "id": "best_friend", "name": "挚友", "description": "凛的好感度达到 50", "when": "lynn.trust >= 50" },
-  { "id": "clear_game", "name": "通关纪念", "description": "达成 Clear 条件", "when": "cleared" },
-  { "id": "level_5", "name": "身经百战", "description": "任意角色达到 Lv.5", "hidden": false },
-  { "id": "secret_ending", "name": "???", "description": "达成隐藏结局", "hidden": true }
+  { "id": "letter_received", "name": "没有退回的信", "description": "接下那封退回三次的旧信", "when": "receivedLetter" },
+  { "id": "truth_in_the_stamp", "name": "印章背后", "description": "从退回印章找到灯塔线索", "when": "foundStamp" },
+  { "id": "open_door", "name": "灯还亮着", "description": "以足够的信任让凛自己走上灯塔", "when": "lynn.trust >= 5" },
+  { "id": "clear_game", "name": "雾散之前", "description": "完成任一主线结局", "when": "cleared" },
+  { "id": "map_reader", "name": "港口便签", "description": "在自由探索中查看雾港地图", "when": "mapVisited" },
+  { "id": "practice_complete", "name": "练习留下的痕迹", "description": "在自由探索中完成一次演练", "when": "trained" }
 ]

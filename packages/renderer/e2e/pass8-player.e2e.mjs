@@ -23,10 +23,11 @@ let writes = 0;
 const scenario = await fs.readFile(new URL('./fixtures/pass8.gal', import.meta.url), 'utf8');
 const systemsScenario = await fs.readFile(new URL('./fixtures/pass8-systems.gal', import.meta.url), 'utf8');
 const battleScenario = await fs.readFile(new URL('./fixtures/pass8-battle.gal', import.meta.url), 'utf8');
-const longScenario = `@scene ch01_01\n@label start\n@bg castle_hall\n旁白：${'长篇中文。'.repeat(120)}\n@nvl on\n旁白：${'全文阅读。'.repeat(120)}\n@end`;
+const longScenario = `@scene ch01_01\n@label start\n@bg post_office\n旁白：${'长篇中文。'.repeat(120)}\n@nvl on\n旁白：${'全文阅读。'.repeat(120)}\n@end`;
 const errors = [];
 const server = await createServer({
   root: path.join(root, 'examples/starter'),
+  cacheDir: path.join(output, '.vite'),
   configFile: false,
   build: { assetsInlineLimit: 0 },
   server: { host: '127.0.0.1', port: 0 },
@@ -46,8 +47,8 @@ const server = await createServer({
           + `\nconst mode = new URLSearchParams(location.search).get('system-test');\nexport const sceneFiles = new URLSearchParams(location.search).has('fixture') || mode ? {'../content/scenario/ch01_01.gal': async () => mode === 'long' ? ${JSON.stringify(longScenario)} : mode === 'battle' ? ${JSON.stringify(battleScenario)} : mode ? ${JSON.stringify(systemsScenario)} : ${JSON.stringify(scenario)}} : originalScenes;`;
       }
       if (file.endsWith('/examples/starter/src/main.ts')) {
-        assert(code.includes('createRendererTheme()'));
-        return code.replace('createRendererTheme()', "createRendererTheme(new URLSearchParams(location.search).has('project-theme') ? { colors: { accent: 0xda9146, panel: 0x22202b }, typography: { bodySize: 32, titleSize: 44 } } : {})");
+        assert(code.includes('theme: PROJECT_THEME'));
+        return code.replace('theme: PROJECT_THEME', "theme: new URLSearchParams(location.search).has('project-theme') ? { colors: { accent: 0xda9146, panel: 0x22202b }, typography: { bodySize: 32, titleSize: 44 } } : PROJECT_THEME");
       }
     },
   }],
@@ -219,12 +220,12 @@ try {
   await page.keyboard.press('l'); await overlay('backlog');
   await activate('返回正文'); await overlay('none');
   await openMenu(); await activate('鉴赏'); await overlay('gallery');
-  const locked = page.getByRole('button', { name: '未解锁的 CG（不可用）', exact: true });
+  const locked = page.getByRole('button', { name: '未解锁的 CG（不可用）', exact: true }).first();
   assert.equal(await locked.getAttribute('aria-disabled'), 'true');
   const lockedBox = await locked.boundingBox(); assert(lockedBox);
   await page.mouse.click(lockedBox.x + lockedBox.width / 2, lockedBox.y + lockedBox.height / 2);
   assert.equal(await page.evaluate(() => window.__surdetDebug.queries.overlay.gallery().mode), 'grid');
-  await activate('查看 大厅重逢');
+  await activate('查看 雾港清晨');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.gallery().mode === 'viewer');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.gallery().mode === 'grid');
@@ -339,10 +340,10 @@ try {
   await canvasText('金币：10');
   await activate('离开商店');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
-  await activate('进入 据点');
+  await activate('进入 旧邮局');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'base');
-  await activate('执行 休息');
-  await canvasText('执行了「休息」。');
+  await activate('执行 喝一杯热茶');
+  await canvasText('执行了「喝一杯热茶」。');
   await activate('返回地图');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
   await page.goto(`${url}?system-test=battle`);
@@ -352,7 +353,14 @@ try {
   await activate('跳过行动');
   await canvasText('跳过本次行动');
   console.log('PASS real Host system routes: purchase/disabled purchase, map/base action/return, battle pass');
-  await page.goto(`${url}?system-test=long`);
+  // Exercise the real beforeunload path while the enemy's delayed action is
+  // pending. A slow destination must not leave callbacks targeting a disposed runtime.
+  const longUrl = `${url}?system-test=long`;
+  await page.route(longUrl, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    await route.continue();
+  });
+  try { await page.goto(longUrl); } finally { await page.unroute(longUrl); }
   await page.waitForFunction(() => window.__surdetDebug?.uiSession.base === 'title');
   await activate('开始游戏');
   await advanceUntil(() => window.__surdetDebug.dialogueProjection.dialogText.length > 500);

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   RENDERER_STARTUP_DIAGNOSTIC_SCHEMA_VERSION,
+  rendererStartupSourceRelativePath,
   applyRendererStartupInstrumentation,
   parseRendererStartupDiagnosticArgs,
   transformRendererStartupSource,
@@ -13,7 +14,7 @@ import {
 } from '../e2e/renderer-startup-diagnostic-instrumentation.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const starterSourcePath = path.join(repositoryRoot, 'examples/starter/src/main.ts');
+const starterSourcePath = path.join(repositoryRoot, rendererStartupSourceRelativePath);
 const legacyStarterCommit = '007438b569ec95350fdc9d7882ad49f55bbb7968';
 
 function starterSource() {
@@ -151,21 +152,21 @@ describe('renderer startup diagnostic instrumentation', () => {
   it('applies only the unified source diff and records exact instrumentation hashes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-startup-instrumentation-test-'));
     try {
-      fs.mkdirSync(path.join(root, 'examples/starter/src'), { recursive: true });
-      fs.writeFileSync(path.join(root, 'examples/starter/src/main.ts'), starterSource(), 'utf8');
+      fs.mkdirSync(path.dirname(path.join(root, rendererStartupSourceRelativePath)), { recursive: true });
+      fs.writeFileSync(path.join(root, rendererStartupSourceRelativePath), starterSource(), 'utf8');
       fs.writeFileSync(path.join(root, 'package-lock.json'), '{}\n', 'utf8');
       execFileSync('git', ['init', '--quiet'], { cwd: root, shell: false });
       execFileSync('git', ['config', 'user.email', 'diagnostic@example.invalid'], { cwd: root, shell: false });
       execFileSync('git', ['config', 'user.name', 'Diagnostic Test'], { cwd: root, shell: false });
-      execFileSync('git', ['add', '--', 'examples/starter/src/main.ts', 'package-lock.json'], { cwd: root, shell: false });
+      execFileSync('git', ['add', '--', rendererStartupSourceRelativePath, 'package-lock.json'], { cwd: root, shell: false });
       execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: root, shell: false });
       const result = applyRendererStartupInstrumentation(root);
-      expect(result.instrumentedPaths).toEqual(['examples/starter/src/main.ts']);
+      expect(result.instrumentedPaths).toEqual([rendererStartupSourceRelativePath]);
       expect(result.onlyUnifiedInstrumentationDiff).toBe(true);
       expect(result.instrumentationDiffSha256).toBe(result.fullDiffSha256);
       expect(result.beforeStatus).toBe('');
       expect(result.afterStatus).toHaveLength(1);
-      expect(result.afterStatus[0]).toContain('examples/starter/src/main.ts');
+      expect(result.afterStatus[0]).toContain(rendererStartupSourceRelativePath);
       expect(() => applyRendererStartupInstrumentation(root)).toThrow(/干净 checkout/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

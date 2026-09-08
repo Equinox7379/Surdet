@@ -8,6 +8,7 @@ export interface StarterStoppable {
 
 export interface StarterOwnerTeardownOptions {
   readonly runtime: StarterDisposable;
+  readonly host: StarterDisposable;
   readonly audioManager: StarterDisposable;
   readonly gamepad: StarterStoppable;
   readonly fontBlobUrls: Set<string>;
@@ -58,9 +59,10 @@ export function createStarterOwnerTeardown(
       const failures: unknown[] = [];
 
       // Keep this order synchronous and explicit: input/audio stop first, then the
-      // renderer runtime, then host listeners and external Blob URLs.
+      // host callbacks, renderer runtime, listeners and external Blob URLs.
       run(() => options.gamepad.stop(), failures);
       run(() => options.audioManager.dispose(), failures);
+      run(() => options.host.dispose(), failures);
       run(() => options.runtime.dispose(), failures);
       for (const remove of listenerRemovers.splice(0)) run(remove, failures);
       for (const url of options.fontBlobUrls) run(() => options.revokeObjectUrl(url), failures);

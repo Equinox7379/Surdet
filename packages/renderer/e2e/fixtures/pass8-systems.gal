@@ -1,6 +1,6 @@
 @scene ch01_01
 @label start
-@bg castle_hall
+@bg harbor
 @shop gold bag
 @calendar map_01
 @end

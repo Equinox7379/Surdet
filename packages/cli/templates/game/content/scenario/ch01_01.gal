@@ -1,26 +1,23 @@
 @scene ch01_01
-@bg castle
-@bgm tense_01
-
 @label start
-凛：欢迎来到你的新世界。
-主角：这是哪里？
+@bg harbor
 
-@set lynn.trust = 0
-@if lynn.trust >= 5
-凛：（轻声）你记得我。
-@else
-凛：（移开视线）我们刚认识。
-@endif
-
+旁白：港口还没有醒来。你口袋里的信，已经被海风吹得微微发潮。
+旁白：信封上只有一句话：等你准备好的时候再打开。
+@autosave
 @choice
-  自我介绍 -> @mod lynn.trust +3 @goto intro
-  保持沉默 -> @mod lynn.trust +1 @goto silent
+  现在打开 -> @flag opened @goto letter
+  留到船上再读 -> @goto voyage
 
-@label intro
-凛：很好，我喜欢坦诚的人。
-@end
+@label letter
+旁白：里面是一张很旧的船票，背面写着你的名字。
+旁白：你把信重新折好。这一次，你知道自己为什么出发。
+@goto finish
 
-@label silent
-凛：……你有心事。
+@label voyage
+旁白：你把信放回内袋，朝亮灯的码头走去。
+旁白：有些答案，可以留给路上的自己。
+
+@label finish
+旁白：第一班船靠岸了。你的故事，从这里继续。
 @end

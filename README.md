@@ -21,7 +21,7 @@ npm install
 npm run build
 ```
 
-启动示例游戏：
+启动示例游戏《雾港来信》（三结局短篇，附可选的自由探索）：
 
 ```powershell
 npm run dev -w surdet-starter
@@ -76,7 +76,8 @@ node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stag
 | `packages/host` | Player Shell 与宿主协调 |
 | `packages/shell` | Electron、文件存储与发行壳 |
 | `packages/editor` | 可视化创作界面 |
-| `examples/starter` | 最小示例项目与集成入口 |
+| `examples/starter` | 《雾港来信》示例游戏与可选系统玩法 |
+| `examples/shared/player` | Starter 与新项目模板共用的玩家入口 |
 
 ## 验证
 
