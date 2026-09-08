@@ -14,12 +14,13 @@
 | 使用 AI 剧本模板 | [ai-writing-prompt.md](ai-writing-prompt.md) |
 | 迁移 Renderer 消费方 | [renderer-v2-migration.md](renderer-v2-migration.md) |
 | 迁移 Player Shell | [player-shell-migration.md](player-shell-migration.md) |
+| 查看前端最终收口 | [Frontend Pass 10 交付报告](SURDET-FRONTEND-EDITORIAL-WORKBENCH-REDESIGN-DELIVERY-REPORT-2026-09-08.md) |
 
 `capabilities.json` 是能力矩阵的机器可读来源，由 `npm run docs:capabilities` 生成；不要手工维护第二份能力真相。
 
 ## 当前阶段
 
-Stage 6 Wave 4 的 Agent Port 已在本地完成验证。FORMAL、真实外部 Agent、自修复、并发可靠性与语义引导 smoke 均已有证据；项目所有者批准的 apply-resume 只写入桌面隔离 fixture，并于 2026-08-24 明确确认 Editor/预览人工路径全部通过。当前停在项目所有者 push 授权门；尚未部署、发行或进入 Wave 5。
+主线 Stage 6 Wave 6 已闭合；Editor V4、Frontend Pass 8 玩家界面与 Pass 9 Windows Electron 消费验证已通过云端终审。当前 Frontend Pass 10 负责退出 Editor 旧兼容样式、九模式一致性与可访问性收口，结果见上方交付报告；不以本地验证代签云端终审或 Owner 体验。Starter 现代化、主线 Wave 7、发行与部署均未开始。下列 Wave 4 文档保留为该阶段的既有证据。
 
 - [Wave 4 设计规格](superpowers/specs/2026-08-20-surdet-agent-port-stage-6-wave-4-design.md)
 - [Wave 4 总任务书与 Execution Ledger](superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md)

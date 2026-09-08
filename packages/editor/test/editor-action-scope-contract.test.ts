@@ -77,8 +77,9 @@ const documentStub = {
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const reviewPanelSource = readFileSync(path.resolve(testDir, '../src/panels/review-panel.ts'), 'utf8');
-const legacyStyles = readFileSync(path.resolve(testDir, '../src/styles.css'), 'utf8');
 const componentStyles = readFileSync(path.resolve(testDir, '../src/styles/components.css'), 'utf8');
+const reviewStyles = ['review-workspace.css', 'v4-workbench.css']
+  .map((file) => readFileSync(path.resolve(testDir, '../src/styles', file), 'utf8')).join('\n');
 
 function ruleBodies(source: string, selector: RegExp): string[] {
   const matches: string[] = [];
@@ -231,7 +232,7 @@ describe('editor action scope contract', () => {
 
   it('keeps workspace actions in document flow instead of pinning them to the viewport', () => {
     const operationRules = [
-      ...ruleBodies(legacyStyles, /\.review-operations/),
+      ...ruleBodies(reviewStyles, /\.review-operations/),
       ...ruleBodies(componentStyles, /\.review-operations/),
       ...ruleBodies(componentStyles, /\[data-action-scope=["']workspace["']\]/),
     ];

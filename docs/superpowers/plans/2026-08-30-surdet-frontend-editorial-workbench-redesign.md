@@ -1,8 +1,8 @@
 # Surdet Frontend Editorial Workbench Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 2026-09-08 当前执行依据：Owner 批准的 Frontend Pass 10 施工包与本机 AGENTS。主代理完成施工，未参与实现的 `luna_worker` 独立复核；允许正常 commit、普通 push 和同 Goal CI 闭合。历史逐波停工/push 门不覆盖本轮持续授权。
 
-**Goal:** 在不修改 Surdet 业务真相、项目格式、存档、Agent Port 或后端语义的前提下，把 Editor 八个主模式与 Renderer 玩家界面逐波迁移为“创作优先版本案卷”，彻底退出旧 Mirror’s Edge/卡片化/AI 模板视觉，并保持所有现有功能可达、可读、可测试。
+**Goal:** 在不修改 Surdet 业务真相、项目格式、存档、Agent Port 或后端语义的前提下，把 Editor 九个主模式与 Renderer 玩家界面逐波迁移为“创作优先版本案卷”，彻底退出旧 Mirror’s Edge/卡片化/AI 模板视觉，并保持所有现有功能可达、可读、可测试。
 
 **Architecture:** 保留现有单例状态、业务 hooks、Panel renderer、RendererTheme 与 Host/Shell 消费边界；新增纯前端视觉基础层、应用框架层和工作区原语层，再逐模式迁移 DOM 与样式。每波先建立语义 RED，再实现最小 GREEN；已迁移区域只消费 `--surdet-*` 语义 token，未迁移区域临时留在 legacy 样式中，但不复制业务逻辑。Editor 与 Renderer 继续各自投影同一业务状态，不建立跨包主题运行时。
 
@@ -580,28 +580,28 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 
 ## Task 10: Wave 10 — Full Consistency, Accessibility, and Closure
 
-**Outcome:** 全部旧视觉签名退出生产样式；八模式、Renderer、四种窗口、缩放、键盘、中文长文本和横切状态完成收口；生成精简交付报告并等待 push 授权。
+**Outcome:** 删除旧 `src/styles.css` 与生产加载入口，活动结构归入已有语义层；九模式、四视口、键盘、焦点、长中文、横切状态与真实 200% 浏览器缩放完成收口。正常 commit/push 与 exact-head CI 后停止待云端独立终审。Pass 8/9、B01、V4、F01/F02 不重开。
 
 **Files:**
-- Modify: `packages/editor/src/styles.css` (reduce to final imports/reset or remove obsolete legacy rules)
+- Delete: `packages/editor/src/styles.css`; remove its link from `packages/editor/index.html`
 - Modify: all new `packages/editor/src/styles/*.css` only as required by final findings
 - Modify: affected Editor/Renderer accessibility tests
 - Create: `packages/editor/test/editor-final-visual-system-contract.test.ts`
-- Create: `docs/SURDET-FRONTEND-EDITORIAL-WORKBENCH-REDESIGN-DELIVERY-REPORT-2026-08-30.md`
+- Create: `docs/SURDET-FRONTEND-EDITORIAL-WORKBENCH-REDESIGN-DELIVERY-REPORT-2026-09-08.md`
 - Modify: `docs/README.md`
 - Modify: `docs/superpowers/plans/2026-08-30-surdet-frontend-editorial-workbench-redesign.md`
-- Modify after reviewed closure only: `docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md`
+- Update locally, never stage: `docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md`
 
-- [ ] **Step 1:** RED final mechanical contract across all Editor production CSS: no old tokens, radial decorations, universal pills, active colored left bars, status `border-left: 3px`, generic panel shadows, glass or floating primary actions.
-- [ ] **Step 2:** Verify all eight modes have distinct semantic root attributes and task-specific layouts while sharing shell/tokens.
-- [ ] **Step 3:** Run Editor full test/typecheck/build and Renderer full test/typecheck/build.
-- [ ] **Step 4:** Run Host/Shell adjacent consumer suites. Run `verify:all` only if the final diff truly crosses aggregate boundaries and the Execution Ledger explicitly authorizes one fresh aggregate run.
-- [ ] **Step 5:** Inspect 1920×1080, 1440×900, 1280×720, 1024×768; Windows 125%/150%; browser 100%/125%/150%/200%; long Chinese, empty, error, dirty, readonly and keyboard focus states. Use both an empty project and a loaded isolated real fixture; confirm the loaded authoring desk reaches the approved maturity/density benchmark without fabricated fields.
-- [ ] **Step 6:** Confirm `4173` is free and all artifacts stay outside the repository.
-- [ ] **Step 7:** Run a local independent review of exact commits, unchanged forbidden roots, behavior contracts, visual artifacts and evidence boundaries.
-- [ ] **Step 8:** Write the delivery report with confirmed facts, reasonable inferences, unverified items, tests, exact commit identities and all four review statuses.
-- [ ] **Step 9:** After every visible wave has Owner acceptance and local review, consolidate only the reviewed outcome into the existing long-term ledger and update `docs/README.md` canonical entry.
-- [ ] **Step 10:** Create exact docs-only closure commit `docs(editor): close editorial workbench redesign`; stop for explicit push authorization and remote review.
+- [x] **Step 1:** Permanent RED identifies the loaded legacy stylesheet and tokens. Migrate live structure and remove the old file; final style/navigation contracts GREEN.
+- [x] **Step 2:** Exercise editor/assets/flow/timeline/config/preview/review/stats/audit with original mode callbacks and style owners at 1792×900, 1280×800, 960×720 and 390×844.
+- [x] **Step 3:** Final aggregate supplies Editor 76 files / 721 tests and Renderer 54 / 439 plus typecheck/build; all passed.
+- [x] **Step 4:** Host/Shell consumption including Pass 9 passed 6 files / 69 tests. Host/Shell typecheck and builds passed (Shell build supplied separately); final `verify:all` passed. Renderer production unchanged: no repeated local Pass 8/Windows A–G; CI retains its player regression.
+- [x] **Step 5:** Test actual modal/keyboard focus, narrow panels, long Chinese/path, invalid drafts, dirty/empty/error/disabled and image loading states. Check editor/assets/review at real visible Chromium 200% zoom; synthetic composition is not native IME. Readonly review contracts remain covered by existing tests.
+- [x] **Step 6:** Inspect six representative built-page screenshots; list thumbnail failure stays in its own row, the real preview canvas/controls remain inside its iframe, and task browsers/temporary servers close.
+- [x] **Step 7:** An implementation-independent `luna_worker` reviewed the actual diff, semantic CSS ownership, behavior, final six screenshots and evidence boundaries; no confirmed substantive blockers remain.
+- [x] **Step 8:** The 2026-09-08 report records local gates, actual screenshots/zoom, Luna and untested boundaries. The containing commit and its GitHub Checks identify the review version and remote result.
+- [x] **Step 9:** This Execution Ledger, docs index and the original untracked local long-term ledger are updated. Owner experience and cloud approval remain unsigned.
+- **Step 10 — external closeout:** Normal commit and ordinary push to verified main are authorized. The containing commit's GitHub Checks and the local long-term ledger record the final SHA/run; stop at cloud independent review, with no Starter modernization, Pass 11, Wave 7 or release/deployment.
 
 ---
 
@@ -994,3 +994,15 @@ Wave 1 is intentionally the structural foundation and must not be presented as t
 **STOP BOUNDARY**
 
 - Continue only Frontend Pass 4 local planning and implementation. Push, Frontend Pass 5 and mainline Wave 7 remain unauthorized and unstarted.
+
+### 2026-09-08 — Frontend Pass 10 local implementation and independent review
+
+Owner supplied the Pass 10 construction Goal and authorized normal commit/push. Starting local/remote main was `434c8da43e645e7e8bdd4b2035081cc1017e7868`, ahead/behind 0/0; Pass 8 and Pass 9 cloud reviews were already closed. Older execution and push restrictions above remain historical.
+
+The legacy stylesheet and link are removed. Live main-column, search, empty-state, asset-popup, causal and timeline-control rules now live in the existing semantic layers. No replacement compatibility stylesheet, old token or new `!important` was introduced. Actual screenshot/geometry REDs also closed the failed-thumbnail label escaping its asset row and Editor preview padding clipping the real canvas. Production changes stay in Editor CSS/HTML; Renderer, Host/Shell, business TypeScript, Authoring/Core/CLI, content/templates, formats and dependencies are unchanged.
+
+Final local gates: `verify:all` PASS (Editor 76 files / 721 tests, Renderer 54 / 439, Host 11 / 87, Shell 23 / 200, workspace typechecks and included builds); Shell build separately PASS. Host/Shell consumer group 69 tests, V4 module 35 cases plus real input/focus, asset import browser 26/26, and the complete built V4 app all passed. The app covers nine modes × four viewports, modal/navigation keyboard focus, invalid/dirty/empty/disabled/image states, long Chinese/path, reduced motion and visible Chromium 200% zoom. Six final screenshots were inspected. Readonly result contracts remain covered by existing Editor tests. No local Windows A–G rerun was required because Renderer production is unchanged.
+
+Prior failures remain in task logs: default-concurrency Authoring worker channel closure and an action-scope test reading the deleted stylesheet. Task-only single-worker limits and the corrected test stylesheet owners resolved them without weakening assertions. Final aggregate was rerun after these failures and passed; that successful final run was not repeated.
+
+Implementation-independent `luna_worker` review and affected-part rechecks found no confirmed substantive blockers. Operator technical verdict is PASS; Owner experience and cloud independent review are not signed. The containing commit and its GitHub Checks identify the final remote review version/result; exact SHA/run are also recorded in the original untracked local long-term ledger. Native directory chooser, real IME, physical gamepad and Windows system DPI changes remain untested. Stop at cloud independent review; no Starter modernization, Pass 11, mainline Wave 7, packaging, release or deployment.

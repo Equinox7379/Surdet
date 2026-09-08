@@ -23,6 +23,24 @@
   background: var(--surdet-surface-app);
 }
 
+/* Timeline controls keep their compact workspace density without a global skin. */
+.timeline-shell :where(button, input, select) {
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  padding: 5px 8px;
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-primary);
+}
+
+.timeline-shell :where(button) { cursor: pointer; }
+.timeline-shell :where(button:disabled, input:disabled, select:disabled) { cursor: not-allowed; opacity: 0.55; }
+.timeline-header-actions .primary {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-primary);
+  color: var(--surdet-surface-panel);
+}
+.timeline-header-actions .danger { color: var(--surdet-state-danger); }
+
 .timeline-library {
   min-width: 0;
   min-height: 0;

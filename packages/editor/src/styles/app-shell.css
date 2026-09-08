@@ -345,6 +345,9 @@ body {
 }
 
 .editor-mode-surface {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   grid-row: 3;
   min-width: 0;
   min-height: 0;
