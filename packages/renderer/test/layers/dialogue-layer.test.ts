@@ -227,7 +227,7 @@ describe('DialogueLayer visual layout contracts', () => {
       const layer = backlogRoot(runtime.root);
       const header = layer.children.find(
         (child) => child instanceof PText
-          && child.text === '文字记录（滚轮/PageUp/PageDown 滚动 · 点击任意处关闭）',
+          && child.text === '文字记录 · Ctrl+F 搜索 · 滚轮翻阅',
       );
       expect(header).toBeInstanceOf(PText);
       expect((header as PText).style.fill).toBe(DEFAULT_RENDERER_THEME.colors.text);
@@ -380,7 +380,7 @@ describe('DialogueLayer command rail stability', () => {
   });
 
   it('retains clone-safe raw NVL entries and evicts them with visible lines', () => {
-    const runtime = makeRuntime(220);
+    const runtime = makeRuntime(260);
     const nvlEntries = (): { speaker: string | null; text: string }[] => (
       (runtime.layer as unknown as { nvlPresentationEntries: readonly { speaker: string | null; text: string }[] })
         .nvlPresentationEntries.map((entry) => ({ ...entry }))

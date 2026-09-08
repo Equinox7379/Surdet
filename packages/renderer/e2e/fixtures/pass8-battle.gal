@@ -1,0 +1,5 @@
+@scene ch01_01
+@label start
+@bg castle_hall
+@battle fight_01
+@end

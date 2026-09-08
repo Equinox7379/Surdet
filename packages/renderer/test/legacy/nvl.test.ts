@@ -9,10 +9,10 @@
 import { describe, expect, it } from 'vitest';
 import { PixiStage } from '../../src/pixi-stage.js';
 
-/** 默认舞台 1280x720 → NVL 每行容量 floor((1280-160)/20) = 56 字 */
-const CHARS_PER_LINE = 56;
-/** 单线条目占高：1*28 + 6 = 34；淘汰预算 720-120 = 600 → 最多 floor(600/34) = 17 条 */
-const SINGLE_ENTRY_H = 34;
+/** Pass 8 默认 1280x720：68% 阅读列 / 28px 正文 = 31 字。 */
+const CHARS_PER_LINE = 31;
+/** 正文行高 44.8 + 段间距 16；原 NVL 淘汰预算仍为 600。 */
+const SINGLE_ENTRY_H = 60.8;
 
 function makeStage(): PixiStage {
   return new PixiStage();
@@ -25,13 +25,12 @@ describe('appendNvlText 断行禁则（wrapCjk 接入）', () => {
     stage.appendNvlText(null, body);
     const rendered = stage.nvlLines[0]!.text;
     expect(rendered.replaceAll('\n', '')).toBe(body);
-    // 56/56/8 三行
-    expect(rendered.split('\n')).toHaveLength(3);
+    expect(rendered.split('\n')).toHaveLength(4);
   });
 
   it('行首禁则：句号不挂第二行行首（裸断行会挂）', () => {
     const stage = makeStage();
-    // 第 57 字是"。"：裸按 56 断行会让"。"落行首
+    // 超出一行的句号仍收进上一行。
     const body = '山'.repeat(CHARS_PER_LINE) + '。' + '海'.repeat(20);
     stage.appendNvlText(null, body);
     const lines = stage.nvlLines[0]!.text.split('\n');
@@ -87,11 +86,10 @@ describe('appendNvlText 断行禁则（wrapCjk 接入）', () => {
 describe('appendNvlText 布局（累计行高排布 + 超底边淘汰）', () => {
   it('多行条目占高计入排布：后续条目 y 随前行折行数下移（不再定步长重叠）', () => {
     const stage = makeStage();
-    stage.appendNvlText(null, '山'.repeat(120)); // 折 3 行
+    stage.appendNvlText(null, '山'.repeat(120)); // 折 4 行
     stage.appendNvlText(null, '短句');
     expect(stage.nvlLines[0]!.y).toBe(60);
-    // 第二条 = 60 + 3*28 + 6 = 150（旧实现固定 60+35=95，视觉重叠）
-    expect(stage.nvlLines[1]!.y).toBe(60 + 3 * 28 + 6);
+    expect(stage.nvlLines[1]!.y).toBeCloseTo(60 + 4 * 44.8 + 16);
   });
 
   it('超出屏幕底边淘汰最旧（保头对齐 y=60，总高不超预算）', () => {
@@ -99,23 +97,23 @@ describe('appendNvlText 布局（累计行高排布 + 超底边淘汰）', () =>
     for (let i = 0; i < 25; i++) stage.appendNvlText(null, `第${i}行`);
     const budget = 720 - 120;
     expect(stage.nvlLines.length).toBeLessThan(25);
-    expect(stage.nvlLines.length).toBe(Math.floor(budget / SINGLE_ENTRY_H)); // 17
+    expect(stage.nvlLines.length).toBe(Math.floor(budget / SINGLE_ENTRY_H));
     expect(stage.nvlLines[0]!.y).toBe(60); // 淘汰后重排，头条回到顶边
     // 末条底部不越过下边距（h-60）
     const last = stage.nvlLines[stage.nvlLines.length - 1]!;
-    expect(last.y + 28).toBeLessThanOrEqual(720 - 60);
+    expect(last.y + 44.8).toBeLessThanOrEqual(720 - 60);
   });
 
   it('长条目挤占空间：短条目存量随之减少（按行高而非条数淘汰）', () => {
     const stage = makeStage();
-    for (let i = 0; i < 5; i++) stage.appendNvlText(null, '山'.repeat(120)); // 各折 3 行（90px）
+    for (let i = 0; i < 5; i++) stage.appendNvlText(null, '山'.repeat(120));
     stage.appendNvlText(null, '尾巴');
-    // 5 条×(3*28+6=90) = 450，+尾条 34 → 484 ≤ 600，全部保留
-    expect(stage.nvlLines).toHaveLength(6);
-    stage.appendNvlText(null, '山'.repeat(120)); // 第 6 条长条：484+90 = 574 ≤ 600，仍全保留
-    expect(stage.nvlLines).toHaveLength(7);
-    stage.appendNvlText(null, '山'.repeat(120)); // 追加后 574+90 = 664 > 600 → 淘汰最旧（90px）回落到 574
-    expect(stage.nvlLines).toHaveLength(7);
+    // 两条长段与尾条占 451.2px；再追加长段时必须淘汰旧段。
+    expect(stage.nvlLines).toHaveLength(3);
+    stage.appendNvlText(null, '山'.repeat(120));
+    expect(stage.nvlLines).toHaveLength(3);
+    stage.appendNvlText(null, '山'.repeat(120));
+    expect(stage.nvlLines).toHaveLength(3);
     expect(stage.nvlLines[0]!.y).toBe(60);
   });
 

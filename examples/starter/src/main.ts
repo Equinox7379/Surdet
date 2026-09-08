@@ -187,6 +187,11 @@ async function main(): Promise<void> {
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
     onWaitEnd: () => { uiSession.setVideoActive(false); interp.finishWait(); },
     onPointerConsumed: () => playerShell?.commands.consumePointer(),
+    onBacklogClose: () => {
+      playerShell?.commands.consumePointer();
+      if (playerShell?.queries.snapshot().overlay === 'backlog') playerShell.commands.close();
+      refreshCommandRail();
+    },
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
@@ -870,6 +875,7 @@ async function main(): Promise<void> {
     } catch (err) {
       if (source === 'title') showTitleScreen();
       console.error('[starter] 存档列表读取失败:', err);
+      dialogue.showBanner('存档列表读取失败，请重试。', 'tip');
       refreshCommandRail();
       return;
     }
@@ -1245,6 +1251,7 @@ async function main(): Promise<void> {
   ownerTeardown.trackListener(() => window.removeEventListener('keyup', ctrlKeyUp));
 
   function routeGameAction(action: GameAction): void {
+    if (action === 'backlog') { openBacklog(); refreshCommandRail(); return; }
     if (action === 'advance') {
       const st = interp.status;
       if (st === 'awaiting-advance' || st === 'awaiting-timer' || renderer.status === 'choice') {
@@ -1292,7 +1299,7 @@ async function main(): Promise<void> {
       }
       if (e.code === 'Escape') {
         e.preventDefault();
-        if (!renderer.handleBacklogEscape()) renderer.dispatchInput({ type: 'backlog.toggle' });
+        if (!renderer.handleBacklogEscape()) openBacklog();
         refreshCommandRail();
         return;
       }

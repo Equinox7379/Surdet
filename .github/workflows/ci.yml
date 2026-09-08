@@ -42,3 +42,18 @@ jobs:
           retention-days: 7
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy
+      - name: Verify Pass 8 actual player and file save bridge
+        env:
+          SURDET_PASS8_OUTPUT: artifacts/pass8-ui
+        run: node packages/renderer/e2e/pass8-player.e2e.mjs
+      - name: Retain three Pass 8 player review screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surdet-pass8-player
+          path: |
+            artifacts/pass8-ui/01-reading.png
+            artifacts/pass8-ui/02-settings.png
+            artifacts/pass8-ui/03-save-load.png
+          if-no-files-found: ignore
+          retention-days: 7

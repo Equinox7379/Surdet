@@ -16,6 +16,7 @@ import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js
 import type { SaveLoadView, SystemMenuItemView, TitleView } from '../../src/ui-views.js';
 import type { SettingsRowView } from '../../src/settings-store.js';
 import { createPlayerUiSession } from '../../../host/src/player-ui.js';
+import { createRendererTheme } from '../../src/theme.js';
 
 const pointerEvent = {} as FederatedPointerEvent;
 
@@ -320,6 +321,26 @@ describe('Menu v2 characterization contract', () => {
 });
 
 describe('Menu backup restore projection contract', () => {
+  it('cancels an overwrite without invoking storage, then confirms exactly one original action', () => {
+    const runtime = makeRealMenuRuntime();
+    const onSelect = vi.fn(() => false);
+    try {
+      runtime.facade.commands.menu.showSaveLoad({ mode: 'save', slots: [{ id: '1', empty: false, label: '既有存档' }] }, onSelect, vi.fn());
+      const card = findParentWithText(runtime.root, '既有存档');
+      card.emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      findParentWithText(runtime.root, '取消').emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(runtime.facade.queries.overlay.menu()).toEqual({ type: 'save-load', mode: 'save' });
+      card.emit('pointerdown', pointerEvent);
+      // Repeated input before the next frame must not stack confirmation surfaces.
+      card.emit('pointerdown', pointerEvent);
+      findParentWithText(runtime.root, '覆盖存档').emit('pointerdown', pointerEvent);
+      expect(onSelect.mock.calls).toEqual([['1']]);
+      expect(() => findTextDeep(runtime.root, '覆盖存档')).toThrow();
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
+
   it('shows restore only for load backups and keeps normal card selection separate', () => {
     const runtime = makeRealMenuRuntime();
     const onSelect = vi.fn(() => false);
@@ -371,6 +392,8 @@ describe('Menu backup restore projection contract', () => {
       }, vi.fn(), vi.fn(), options);
       const restore = findTextDeep(runtime.root, '恢复备份并读取');
       restore.emit('pointerdown', pointerEvent);
+      expect(onRestore).not.toHaveBeenCalled();
+      findParentWithText(runtime.root, '恢复并读取').emit('pointerdown', pointerEvent);
       restore.emit('pointerdown', pointerEvent);
 
       expect(onRestore).toHaveBeenCalledOnce();
@@ -391,6 +414,26 @@ describe('Menu backup restore projection contract', () => {
 });
 
 describe('MenuLayer projection and lifecycle contract', () => {
+  it('repaints explicit theme roles without rebinding controls or retaining old scrim opacity', () => {
+    const runtime = makeRealMenuRuntime();
+    const onSelect = vi.fn();
+    try {
+      runtime.layer.setTheme(createRendererTheme({ typography: { headingSize: 22, uiSize: 22 } }));
+      runtime.layer.showSystemMenu([{ id: 'resume', label: '继续' }], onSelect, vi.fn());
+      const label = findTextDeep(runtime.root, '继续');
+      const row = label.parent!;
+      const root = row.parent!.parent!;
+      runtime.layer.setTheme(createRendererTheme({ typography: { headingSize: 30, uiSize: 18 }, opacity: { scrim: 0.1 }, radius: { md: 9 } }));
+      expect(findTextDeep(runtime.root, '继续')).toBe(label);
+      expect(label.style.fontSize).toBe(18);
+      const fill = (root.children[0] as import('pixi.js').Graphics).context.instructions[0] as unknown as { data: { style: { alpha: number } } };
+      expect(fill.data.style.alpha).toBe(0.1);
+      expect(row.hitArea).toBeTruthy();
+      row.emit('pointerdown', pointerEvent);
+      expect(onSelect.mock.calls).toEqual([['resume']]);
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
+
   it('uses the injected MenuProjectionPort as the sole v2 menu renderer', () => {
     let overlay: MenuOverlayState = { type: 'none' };
     const menu = {

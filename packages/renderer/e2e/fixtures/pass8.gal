@@ -1,0 +1,22 @@
+@scene ch01_01
+@label start
+@bg castle_hall
+@show lynn:uniform normal @ right
+@set lynn.trust = 0
+@set hasSword = false
+@unlock_cg cg_hall
+@unlock_text t_first
+凛：这是玩家界面的真实阅读路径。背景、人物与对白继续由原运行器负责；长中文句子需要完整显示，标点、换行与角色姓名也要保持清楚。
+主角：这一句用于区分存档前后的位置，读取后应恢复到此前保存的那一句。
+@choice
+  接受邀请，继续阅读 -> @mod lynn.trust +3 @goto selected
+  留在这里观察周围的环境，再作决定 -> @mod lynn.trust +1 @goto selected
+  只有持剑时才能进入的分支 [if:hasSword] -> @mod lynn.trust +99 @goto selected
+@label selected
+凛：选择后的信任是 {lynn.trust}。
+@nvl on
+旁白：夜色落在城堡的窗边。全屏阅读继续使用真实 NVL 模式，文本来自同一份剧情。
+旁白：第二段保留正常的顺序与分页语义，菜单关闭后也不能重新播放这一段。
+@nvl off
+凛：我们回到了普通对白。
+@end
