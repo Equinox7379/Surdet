@@ -4,7 +4,7 @@
  * 三条选择肢标签整体下移一层）。
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { compileScene, collectConfigSceneRoots } from '@surdet/core';
 import type { CompiledScene } from '@surdet/core';
@@ -16,7 +16,8 @@ const read = (p: string) => readFileSync(fileURLToPath(new URL(p, base)), 'utf8'
 
 describe('边标签纵向位置回归（真实 starter 全图）', () => {
   const scenes = new Map<string, CompiledScene>();
-  for (const id of ['ch01_01', 'ch01_02', 'ch02', 'ch03_turn_event']) {
+  for (const file of readdirSync(fileURLToPath(new URL('content/scenario/', base))).filter((file) => file.endsWith('.gal'))) {
+    const id = file.slice(0, -4);
     scenes.set(id, compileScene(read(`content/scenario/${id}.gal`), `${id}.gal`, id));
   }
   const roots = collectConfigSceneRoots({
@@ -27,8 +28,8 @@ describe('边标签纵向位置回归（真实 starter 全图）', () => {
   const graph = buildFlowGraph(scenes, roots);
   const layout = layoutFlowGraph(graph, 'ch01_01');
 
-  it('ch01_01 的 3 条 choice 边标签各归其位（沉默最上、转身离开最下）', () => {
-    const labeled = graph.edges.filter((e) => e.kind === 'choice');
+  it('ch01_01 的 3 条 choice 边标签各归其位（询问最上、收信最下）', () => {
+    const labeled = graph.edges.filter((e) => e.kind === 'choice' && layout.boxes.get(e.from)?.node.sceneId === 'ch01_01');
     expect(labeled).toHaveLength(3);
     const lyOf = (labelPrefix: string): number => {
       const e = labeled.find((x) => x.label!.startsWith(labelPrefix))!;
@@ -37,12 +38,12 @@ describe('边标签纵向位置回归（真实 starter 全图）', () => {
       const sameLane = a.node.sceneId === b.node.sceneId && a.node.kind !== 'host-entry' && b.node.kind !== 'host-entry';
       return edgeGeometry(a, b, e.kind, sameLane).ly;
     };
-    const lySilence = lyOf('沉默');
-    const lySword = lyOf('拔出剑');
-    const lyLeave = lyOf('转身离开');
-    // 顺序与目标节点深度一致：沉默(answer_silence) 最上，转身离开(answer_leave) 最下
-    expect(lySilence).toBeLessThan(lySword);
-    expect(lySword).toBeLessThan(lyLeave);
+    const lyAsk = lyOf('先问凛');
+    const lyInspect = lyOf('在窗口');
+    const lyKeep = lyOf('先收下信');
+    // 顺序与本场景三个目标分支的深度一致，其他场景的选择不混入本组。
+    expect(lyAsk).toBeLessThan(lyInspect);
+    expect(lyInspect).toBeLessThan(lyKeep);
   });
 
   it('任意带标签的边：标签 y 落在边两端点纵向范围之内（错位即失败）', () => {

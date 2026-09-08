@@ -192,8 +192,8 @@ const timelineDefinition = {
   id: 'agent_port_intro',
   durationMs: 800,
   tracks: [
-    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] },
-    { kind: 'portrait', target: 'lynn:uniform', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'night', position: 'left' }] },
+    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'harbor' }] },
+    { kind: 'portrait', target: 'lynn:coat', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'left' }] },
     { kind: 'screen', cues: [
       { atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 },
       { atMs: 50, durationMs: 700, easing: 'inOutSine', action: 'fade', alpha: 0 },
@@ -223,8 +223,8 @@ async function authoringWorkflow(port, { pendingMutation = false } = {}) {
   assert(capabilities.capabilities?.length === 20, 'capabilities.describe did not return 20 registry entries');
   resultOf(await callTool(port, 'surdet_project_inspect'), 'project.inspect');
   const assets = resultOf(await callTool(port, 'surdet_project_assets'), 'project.assets');
-  assert(assets.backgrounds.some((asset) => asset.key === 'night_field' && asset.resolved), 'night_field asset missing');
-  assert(assets.portraits.some((asset) => asset.role === 'lynn' && asset.expression === 'night' && asset.resolved), 'lynn night portrait missing');
+  assert(assets.backgrounds.some((asset) => asset.key === 'harbor' && asset.resolved), 'harbor asset missing');
+  assert(assets.portraits.some((asset) => asset.role === 'lynn' && asset.expression === 'normal' && asset.resolved), 'lynn normal portrait missing');
 
   const begun = resultOf(await callTool(port, 'surdet_change_begin', {
     intent: 'Create the deterministic Agent Port introduction flow.',

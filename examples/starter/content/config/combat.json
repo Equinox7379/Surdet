@@ -1,11 +1,11 @@
 {
   "teams": ["allies", "enemies"],
   "units": [
-    { "id": "sword", "name": "剑士", "hp": 20, "atk": 5, "def": 2, "range": 1, "move": 2, "kind": "human" },
-    { "id": "goblin", "name": "哥布林", "hp": 10, "atk": 3, "def": 0, "range": 1, "move": 1, "kind": "beast" }
+    { "id": "sword", "name": "港口教练", "hp": 24, "atk": 6, "def": 2, "range": 1, "move": 2, "kind": "human" },
+    { "id": "goblin", "name": "带护具的练习搭档", "hp": 12, "atk": 3, "def": 0, "range": 1, "move": 1, "kind": "human" }
   ],
   "skills": [],
-  "elementChain": { "human": { "beast": 1.5 } },
+  "elementChain": { "human": { "human": 1 } },
   "winCondition": "all_down",
   "maxTurns": 10,
   "damage": { "base": "atk * 2 - def", "critChance": 0, "critMultiplier": 1.5 }

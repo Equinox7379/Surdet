@@ -6,7 +6,7 @@ import path from 'node:path';
 import * as url from 'node:url';
 
 export const RENDERER_STARTUP_DIAGNOSTIC_SCHEMA_VERSION = 1;
-export const rendererStartupSourceRelativePath = 'examples/starter/src/main.ts';
+export const rendererStartupSourceRelativePath = 'examples/shared/player/player.ts';
 
 const scriptPath = url.fileURLToPath(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(scriptPath), '../../..');
@@ -154,7 +154,9 @@ export function transformRendererStartupSource(source) {
   if (typeof source !== 'string') throw new Error('插桩源代码必须是字符串');
   if (source.includes(sourceMarker)) throw new Error('统一启动诊断探针已经存在，拒绝重复插桩');
   const normalized = source.replace(/\r\n/g, '\n');
-  const mainAnchor = 'async function main(): Promise<void> {\n';
+  const mainAnchor = normalized.includes('export async function startPlayer(project: PlayerProject): Promise<void> {')
+    ? 'export async function startPlayer(project: PlayerProject): Promise<void> {\n'
+    : 'async function main(): Promise<void> {\n';
   let transformed = replaceUnique(normalized, mainAnchor, `${mainAnchor}${startupPrelude()}\n`, 'main');
   const modernRuntimeStart = '  const runtime = await createRendererRuntime({';
   if (countOccurrences(transformed, modernRuntimeStart) === 1) {
@@ -270,7 +272,10 @@ export function validateRendererStartupDiagnosticSnapshot(value) {
 
 export function applyRendererStartupInstrumentation(workspaceRoot) {
   const root = path.resolve(workspaceRoot);
-  const sourcePath = path.join(root, rendererStartupSourceRelativePath);
+  // The diagnostic explicitly supports its frozen pre-extraction comparison commit.
+  const relativeSource = fs.existsSync(path.join(root, rendererStartupSourceRelativePath))
+    ? rendererStartupSourceRelativePath : 'examples/starter/src/main.ts';
+  const sourcePath = path.join(root, relativeSource);
   if (!fs.existsSync(sourcePath)) throw new Error(`插桩源文件不存在：${sourcePath}`);
   const beforeStatus = git(root, ['status', '--porcelain', '--untracked-files=all']).trim();
   if (beforeStatus !== '') throw new Error(`插桩要求干净 checkout，当前状态为：\n${beforeStatus}`);
@@ -280,15 +285,15 @@ export function applyRendererStartupInstrumentation(workspaceRoot) {
   const transformed = transformRendererStartupSource(source);
   fs.writeFileSync(sourcePath, transformed, 'utf8');
   git(root, ['diff', '--check']);
-  const sourceDiff = git(root, ['diff', '--binary', '--', rendererStartupSourceRelativePath]);
+  const sourceDiff = git(root, ['diff', '--binary', '--', relativeSource]);
   const fullDiff = git(root, ['diff', '--binary']);
   const changedPaths = git(root, ['diff', '--name-only']).split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
   const afterStatus = git(root, ['status', '--porcelain', '--untracked-files=all']).split(/\r?\n/).map((item) => item.trimEnd()).filter(Boolean);
-  if (changedPaths.length !== 1 || changedPaths[0] !== rendererStartupSourceRelativePath) {
+  if (changedPaths.length !== 1 || changedPaths[0] !== relativeSource) {
     throw new Error(`启动诊断插桩产生了额外 tracked 差异：${JSON.stringify(changedPaths)}`);
   }
   if (fullDiff !== sourceDiff) throw new Error('启动诊断完整 diff 与唯一 source diff 不一致');
-  if (afterStatus.length !== 1 || !afterStatus[0].endsWith(rendererStartupSourceRelativePath)) {
+  if (afterStatus.length !== 1 || !afterStatus[0].endsWith(relativeSource)) {
     throw new Error(`启动诊断插桩后工作树不精确：${JSON.stringify(afterStatus)}`);
   }
   return {

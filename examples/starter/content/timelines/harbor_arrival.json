@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "harbor_arrival",
+  "durationMs": 900,
+  "tracks": [
+    { "kind": "background", "cues": [
+      { "atMs": 0, "durationMs": 0, "easing": "linear", "action": "set", "key": "harbor" }
+    ] },
+    { "kind": "portrait", "target": "lynn:coat", "cues": [
+      { "atMs": 200, "durationMs": 600, "easing": "outCubic", "action": "show", "expression": "normal", "position": "right" }
+    ] },
+    { "kind": "screen", "cues": [
+      { "atMs": 0, "durationMs": 0, "easing": "linear", "action": "fade", "alpha": 1 },
+      { "atMs": 20, "durationMs": 760, "easing": "inOutSine", "action": "fade", "alpha": 0 }
+    ] }
+  ]
+}

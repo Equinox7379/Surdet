@@ -1,0 +1,15 @@
+@scene ending_delivered
+@label start
+@bg lighthouse_dawn
+@show lynn:coat normal @ right
+@unlock_text t_ending_delivered
+
+@flag cleared
+@clear ending_delivered
+你把信递到沈岳面前。
+凛：请签收。
+沈岳先看了一眼旧地址，又在回执上写下“地址已更新”。
+凛没有解释那些年为什么没来，只把回执折好，放回外套内袋。
+沈岳把新的值守室地址贴到门边的收件牌上，随后在回执上落笔。
+旁白：这封信终于交到收件人手中；旧地址留在档案里，新的地址从今天开始生效。
+@end

@@ -1,0 +1,8 @@
+{
+  "clearCondition": "cleared",
+  "inherit": [
+    { "variable": "lynn.trust", "mode": "copy" },
+    { "variable": "hasSword", "mode": "copy" }
+  ],
+  "unlockGallery": true
+}

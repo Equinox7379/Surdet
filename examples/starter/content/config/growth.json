@@ -7,13 +7,10 @@
     {
       "characterId": "lynn",
       "initialLevel": 1,
-      "maxLevel": 20,
+      "maxLevel": 10,
       "statGrowth": {
         "lynn.atk": 2,
         "lynn.hp": 10
-      },
-      "levelEvents": {
-        "10": "ch01_02"
       }
     }
   ]

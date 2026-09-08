@@ -183,6 +183,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#clearPanel('battle', this.#battleLayer);
     this.#battleHandlers = handlers;
     this.#battleUnitCount = view.units.length;
+    const inputEnabled = view.inputEnabled !== false && !view.finished;
     const layer = this.#battleLayer;
     this.#addPanelBackground(layer);
     const heading = this.#text(`回合 ${view.turn} —— 当前行动：${view.actingTeam}`, this.#w - 120, 'text', 'headingSize', 'bold');
@@ -220,7 +221,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
           ));
         }
         row.addChild(this.#text(`${u.hp}/${u.maxHp}`, 120, 'textMuted', 'captionSize')).position.set(372, 40);
-        const targetable = u.alive && u.team !== view.actingTeam;
+        const targetable = inputEnabled && u.alive && u.team !== view.actingTeam;
         this.#controlBorder(row, 520, 72);
         bindPlayerControl(row, {
           label: targetable ? `攻击 ${u.name}` : `${u.name}（不可攻击）`,
@@ -283,16 +284,17 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         t.position.set(sx, this.#h - 144);
         layer.addChild(t);
         this.#controlBorder(pad, padWidth, 34, sx - 10, this.#h - 150);
+        const skillEnabled = inputEnabled && btn.ready;
         bindPlayerControl(pad, {
           label: btn.ready ? btn.label : `${btn.label}（不可用）`,
           width: padWidth,
           height: 34,
           x: sx - 10,
           y: this.#h - 150,
-          enabled: btn.ready,
-          adjust: btn.ready ? (direction) => selectSkillAt(selectedSkillIndex() + direction, direction) : undefined,
+          enabled: skillEnabled,
+          adjust: skillEnabled ? (direction) => selectSkillAt(selectedSkillIndex() + direction, direction) : undefined,
         });
-        if (btn.ready) {
+        if (skillEnabled) {
           pad.cursor = 'pointer';
           this.#listen('battle', pad, 'pointerdown', () => {
             selectSkillAt(index);
@@ -305,10 +307,19 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
           const b = this.#text(label, 112, 'accentSoft');
           b.position.set(x, this.#h - 144);
           layer.addChild(b);
-          bindPlayerControl(b, { label: label.replace(/[◀▶▸]/g, '').trim(), width: 112, height: 40, x: -8, y: -8 });
+          bindPlayerControl(b, {
+            label: dir === -1 ? '向左移动' : '向右移动',
+            width: 112,
+            height: 40,
+            x: -8,
+            y: -8,
+            enabled: inputEnabled,
+          });
           this.#controlBorder(b, 112, 40, -8, -8);
-          b.cursor = 'pointer';
-          this.#listen('battle', b, 'pointerdown', () => this.#battleHandlers?.onMove?.(dir));
+          if (inputEnabled) {
+            b.cursor = 'pointer';
+            this.#listen('battle', b, 'pointerdown', () => this.#battleHandlers?.onMove?.(dir));
+          }
         };
         mkMove('◀ 移动', -1, sx + 30);
         mkMove('移动 ▶', 1, sx + 140);
@@ -319,10 +330,12 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     const pass = this.#text('▸ 跳过行动', 160, 'accent');
     pass.position.set(this.#w - 210, this.#h - 84);
     layer.addChild(pass);
-    bindPlayerControl(pass, { label: '跳过行动', width: 160, height: 44, x: -12, y: -10 });
+    bindPlayerControl(pass, { label: '跳过行动', width: 160, height: 44, x: -12, y: -10, enabled: inputEnabled });
     this.#controlBorder(pass, 160, 44, -12, -10);
-    pass.cursor = 'pointer';
-    this.#listen('battle', pass, 'pointerdown', () => this.#battleHandlers?.onPass());
+    if (inputEnabled) {
+      pass.cursor = 'pointer';
+      this.#listen('battle', pass, 'pointerdown', () => this.#battleHandlers?.onPass());
+    }
     layer.visible = true;
   }
 

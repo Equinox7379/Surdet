@@ -4,18 +4,12 @@
       "characterId": "lynn",
       "variable": "lynn.trust",
       "tiers": [
-        { "min": 0, "stage": "陌生" },
-        { "min": 30, "stage": "好感" },
-        { "min": 70, "stage": "恋慕" }
+        { "min": 0, "stage": "还在试着说清楚" },
+        { "min": 3, "stage": "愿意同行" },
+        { "min": 5, "stage": "把旧事交给你" }
       ]
     }
   ],
-  "events": [
-    { "id": "ev_trust_30", "characterId": "lynn", "when": "lynn.trust >= 30", "scene": "ch01_01", "once": true },
-    { "id": "ev_trust_70", "characterId": "lynn", "when": "lynn.trust >= 70", "scene": "ch01_01", "once": true }
-  ],
-  "scheduled": [
-    { "id": "ev_turn_start", "characterId": "lynn", "when": "true", "scene": "ch03_turn_event", "once": true, "priority": 10, "effects": { "lynn.trust": 2 } },
-    { "id": "ev_turn_end", "characterId": "lynn", "when": "true", "scene": "ch03_turn_event", "once": false, "priority": 0 }
-  ]
+  "events": [],
+  "scheduled": []
 }

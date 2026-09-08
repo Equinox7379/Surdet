@@ -1,29 +1,42 @@
 @scene ch02
 @label start
-@bg castle_hall
+@bg lighthouse_dawn
+@show lynn:coat hesitant @ right
+@unlock_cg lighthouse_dawn
+@unlock_text t_lighthouse
 
-凛：第二章——全家桶系统演示。
-@calendar map_01
-凛：地图日程已接入宿主（CalendarRunner）。
-@set lynn.trust = 40
-@affection lynn
-凛：好感阶段演示——当前好感度 {lynn.trust}。
-@event ev_trust_30
-凛：好感事件已触发（AffectionSystem）。
-凛：战斗前特训——经验值系统演示（GrowthSystem）。
-@exp lynn 28
-凛：获得 28 点经验！升级时属性成长已自动写回变量（atk/hp）。
-凛：出发前，先补给一下吧。
-@shop gold bag
-@battle fight_01
-凛：回合战斗已接入宿主（CombatSolver）。
-@if battleWon
-@flag cleared
-@clear demo_end
-凛：战斗胜利！已达成 Clear 条件（NewGamePlus）。结局已记录到全局通关档案。
+旁白：天快亮时，你们站到灯塔门前。雾在山坳里缓慢下沉，值守室的窗里亮着一盏小灯。
+凛：档案室的记录已经说明了：地址被邮局撤出邮路，退回章是自动处理，不是沈岳拒收。
+主角：他可能一次也没有见过你寄出的信。
+
+@if letterOpened
+凛：我把父亲的罗盘清单带来了。先把清单交给他，再说明我为什么一直没有来。
+@elif verifiedRoute
+凛：我把旧登记页带来了。先让他看到地址怎么被改掉，再问他愿不愿意收这封信。
 @else
-凛：战斗失败……
+凛：我没有拆信，也没有替他猜答案。信交出去以后，他要不要说话由他决定。
 @endif
-@autosave
-@jump ch01_01.start
-@end
+
+主角：门没有锁。
+凛：那我先进去。你把信和封面上的退回章放在回执下面。
+@choice
+  让凛亲自把信交出去 -> @goto let_lynn_speak
+  替她解释那场旧事 -> @goto speak_for_lynn
+  只把信递出，不替任何人解释 -> @goto simple_delivery
+
+@label let_lynn_speak
+@if lynn.trust >= 5
+@jump ending_open_door
+@else
+@jump ending_unanswered
+@endif
+
+@label speak_for_lynn
+@if foundStamp
+@jump ending_open_door
+@else
+@jump ending_unanswered
+@endif
+
+@label simple_delivery
+@jump ending_delivered

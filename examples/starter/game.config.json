@@ -1,69 +1,111 @@
 {
-  "title": "Surdet Starter",
-  "version": "0.1.0",
+  "title": "雾港来信",
+  "version": "0.2.0",
   "entryScene": "ch01_01",
   "characters": {
     "lynn": {
       "name": "凛",
       "avatar": "lynn"
+    },
+    "player": {
+      "name": "主角"
+    },
+    "narrator": {
+      "name": "旁白"
+    },
+    "shen_yue": {
+      "name": "沈岳"
     }
+  },
+  "fonts": {
+    "body": "content/assets/fonts/MiSans-Regular.otf",
+    "ui": "content/assets/fonts/MiSans-Regular.otf"
   },
   "variables": {
     "gold": {
       "type": "number",
       "initial": 100,
       "min": 0,
-      "description": "金币（商店购买用）"
+      "description": "自由探索时的零钱"
     },
     "bag": {
       "type": "string[]",
       "initial": [],
-      "description": "道具袋（道具 ID 列表）"
+      "description": "自由探索时带回的物品 ID"
     },
     "lynn.trust": {
       "type": "number",
       "initial": 0,
       "min": 0,
       "max": 100,
-      "description": "凛的好感度"
+      "description": "凛愿意把多少旧事交给搭档"
     },
     "hasSword": {
       "type": "flag",
       "initial": false,
-      "description": "主角是否持剑"
-    },
-    "heroName": {
-      "type": "string",
-      "initial": "雷恩",
-      "description": "主角名"
-    },
-    "chapter": {
-      "type": "number",
-      "initial": 1,
-      "readonly": true,
-      "description": "当前章节"
+      "description": "自由探索中是否买过铁剑"
     },
     "battleWon": {
       "type": "flag",
       "initial": false,
-      "description": "上一场战斗是否胜利（宿主写入）"
+      "description": "最近一次演练是否获胜（宿主写入）"
     },
     "cleared": {
       "type": "flag",
       "initial": false,
-      "description": "是否达成 Clear（NewGamePlus 周目继承判定）"
+      "description": "是否达成主线结局（NewGamePlus 周目继承判定）"
     },
     "lynn.atk": {
       "type": "number",
       "initial": 5,
       "min": 0,
-      "description": "凛的攻击力（成长系统升级时增量写回）"
+      "description": "凛的攻击力（自由探索演练升级时增量写回）"
     },
     "lynn.hp": {
       "type": "number",
       "initial": 20,
       "min": 1,
-      "description": "凛的生命值（成长系统升级时增量写回）"
+      "description": "凛的生命值（自由探索演练升级时增量写回）"
+    },
+    "receivedLetter": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否接下退回三次的旧信"
+    },
+    "askedRelation": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否在出发前问清凛与沈岳的关系"
+    },
+    "foundStamp": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否从退回印章找到灯塔线索"
+    },
+    "letterOpened": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否在上山前读过信"
+    },
+    "verifiedRoute": {
+      "type": "flag",
+      "initial": false,
+      "description": "是否核对过退回地址与灯塔登记"
+    },
+    "mapVisited": {
+      "type": "flag",
+      "initial": false,
+      "description": "自由探索中是否查看过雾港地图"
+    },
+    "supplyChecked": {
+      "type": "flag",
+      "initial": false,
+      "description": "自由探索中是否完成过一次补给"
+    },
+    "trained": {
+      "type": "flag",
+      "initial": false,
+      "description": "自由探索中是否完成过一次演练"
     }
   }
 }

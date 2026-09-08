@@ -1,0 +1,56 @@
+@scene playground
+@label start
+@bg harbor
+@show lynn:coat normal @ right
+
+@label hub
+旁白：旧邮局的工作台重新开门了。地图、柜台和港口演练场都可以使用。
+@if mapVisited
+凛：我已经把旧邮局、码头和灯塔在纸上连起来了。
+@endif
+@if supplyChecked
+主角：包里现在有 {bag}，手头还剩 {gold} 枚硬币。
+@endif
+@if trained
+凛：教练在木桩旁留了三道记号，正好标出我刚才失去平衡的位置。
+@endif
+
+@choice
+  查看雾港地图 [if:mapVisited == false] -> @goto explore_map
+  去柜台补给 [if:supplyChecked == false] -> @goto supply
+  进行一次演练 [if:trained == false] -> @goto training
+  返回标题 -> @goto finish
+
+@label explore_map
+@calendar map_01
+@flag mapVisited
+凛：地图收起时，旧邮局、码头和山上灯塔都已经标在你的便签上。
+主角：下次接哪一单，先看路程和送件时限。
+@goto hub
+
+@label supply
+@shop gold bag
+@has_item bag iron_sword hasSword
+@flag supplyChecked
+@if hasSword
+凛：铁剑已经放进包里。港口教练说，先检查护具，再决定要不要拿它上场。
+@else
+凛：你没有买铁剑，只带走了更轻的东西。手头还剩 {gold} 枚硬币。
+@endif
+@goto hub
+
+@label training
+凛：港口教练让她拿木剑走完一轮封闭步伐，脚步刚好踩过三块标记板。
+@battle fight_01
+@exp lynn 12
+@flag trained
+@if battleWon
+凛：教练吹哨收剑，护垫上留下了一道清楚的木剑印。
+@else
+凛：教练在她失去平衡前收了木剑，只记下她哪一步踩出了圈。
+@endif
+@goto hub
+
+@label finish
+凛：教练把木剑收回架上，你们也把今天的送件单装进包里。
+@end

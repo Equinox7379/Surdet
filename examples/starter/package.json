@@ -2,7 +2,7 @@
   "name": "surdet-starter",
   "private": true,
   "version": "0.1.0",
-  "description": "Surdet 示例游戏：解释器 + 渲染层 + 程序化占位素材",
+  "description": "雾港来信：三种结局的原创短篇与可选玩法，使用 Surdet 共用玩家入口",
   "type": "module",
   "scripts": {
     "dev": "vite",

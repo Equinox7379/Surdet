@@ -1,0 +1,20 @@
+@scene ending_unanswered
+@label start
+@bg lighthouse_dawn
+@show lynn:coat hesitant @ right
+@unlock_text t_ending_unanswered
+
+@flag cleared
+@clear ending_unanswered
+沈岳先看退回章。
+沈岳：地址已撤出邮路。信没有到过我手里，我也没有机会拒收。
+@if letterOpened
+凛：我已经看过清单，却还是不知道该怎么把这些年说完。
+@else
+凛：我连信都没有拆开。今天先让你知道它确实送到了。
+@endif
+沈岳把新的值守室地址写进收件登记簿，却没有替凛补完下一句话。
+主角：回执上写什么？
+沈岳：写“已交到收件人手中”。剩下的等她愿意再说。
+旁白：凛把旧地址划掉，把新的值守室地址抄进自己的送件本，和你一起下山。
+@end

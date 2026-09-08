@@ -13,6 +13,7 @@ const editorRoot = path.resolve(path.dirname(runnerPath), '..');
 const repoRoot = path.resolve(editorRoot, '..', '..');
 const STARTER_RELATIVE_PATH = 'examples/starter';
 const starterRoot = path.join(repoRoot, ...STARTER_RELATIVE_PATH.split('/'));
+const fixtureProjectRoot = path.join(editorRoot, 'e2e', 'fixtures', 'asset-authority-project');
 const forbiddenPorts = new Set([4173, 4175]);
 const EXPECTED_UNDO_CONSOLE_ERROR = 'Failed to load resource: the server responded with a status of 409 (Conflict)';
 
@@ -97,12 +98,12 @@ function repositoryTreeIdentity() {
   };
 }
 
-function copyStarter(destination, options = {}) {
-  fs.cpSync(starterRoot, destination, {
+function copyProjectFixture(destination, options = {}) {
+  fs.cpSync(fixtureProjectRoot, destination, {
     recursive: true,
     filter(source) {
       const name = path.basename(source);
-      const relative = path.relative(starterRoot, source).split(path.sep).join('/');
+      const relative = path.relative(fixtureProjectRoot, source).split(path.sep).join('/');
       if (options.includeTests === false && (relative === 'test' || relative.startsWith('test/'))) return false;
       return !['.git', 'node_modules', 'dist', '.vite'].includes(name);
     },
@@ -561,8 +562,8 @@ async function run() {
   const artifactRoot = path.join(fixtureRoot, 'artifact');
   fs.mkdirSync(sourceRoot, { recursive: true });
   fs.mkdirSync(artifactRoot, { recursive: true });
-  copyStarter(projectRoot, { includeTests: false });
-  copyStarter(wrongProjectRoot);
+  copyProjectFixture(projectRoot, { includeTests: false });
+  copyProjectFixture(wrongProjectRoot);
   const nestedChallengeLikePath = path.join(projectRoot, 'content', '.surdet-bind-nested-sentinel.txt');
   fs.mkdirSync(path.dirname(nestedChallengeLikePath), { recursive: true });
   fs.writeFileSync(nestedChallengeLikePath, 'nested challenge-like project file\n', 'utf8');

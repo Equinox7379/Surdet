@@ -259,7 +259,8 @@ const betaTimeline = {
   id: 'beta_opening',
   durationMs: 400,
   tracks: [
-    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'castle_hall' }] },
+    // Reuse an asset reference already present in the baseline arrival timeline.
+    { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'harbor' }] },
   ],
 };
 

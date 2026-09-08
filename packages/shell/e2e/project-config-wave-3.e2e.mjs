@@ -37,7 +37,7 @@ const evidenceClass = process.argv.includes('--diagnostic') ? 'DIAGNOSTIC' : 'FO
 const starterTrackedFiles = [
   'game.config.json',
   path.join('content', 'scenario', 'ch01_01.gal'),
-  path.join('content', 'assets', 'avatar', 'lynn.svg'),
+  path.join('content', 'assets', 'avatar', 'lynn.png'),
 ];
 
 const TARGET_SCENE_ID = 'agent_probe';

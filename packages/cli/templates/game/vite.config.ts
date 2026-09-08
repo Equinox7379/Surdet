@@ -4,5 +4,6 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist',
+    assetsInlineLimit: 0,
   },
 });

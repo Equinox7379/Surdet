@@ -1,43 +1,44 @@
 @scene ch01_01
 @label start
-@timeline intro_cinematic @ blocking
-@unlock_cg cg_hall
-@unlock_text t_first
+@timeline harbor_arrival @ blocking
+@unlock_cg harbor
+@unlock_text t_harbor_arrival
 
-凛：你终于来了，等了你三个晚上。
-主角：让我来这里的人，是你？
-凛：是我。这片大陆已经撑不住了。
-
-@set lynn.trust = 0
-@set hasSword = false
+旁白：清晨五点四十，雾贴着港口的仓门，潮水把缆绳一根根绷紧。
+旁白：你和凛是雾港的代送搭档。今天，旧邮局把一只封好的信封交给你们；退回章已经盖了三次。
+凛：收件人写的是沈岳，山上灯塔的守夜人。
+主角：信封还封着。你为什么不自己送？
+@show lynn:coat hesitant @ right
+凛：因为我不知道他还在不在灯塔，也不知道他还愿不愿意见我。
+凛：父亲出海以后，沈岳替我守过那盏灯。我只知道自己一直没有把话说完。
+@flag receivedLetter
 
 @if lynn.trust >= 5
-凛：（轻声）……你还记得那天的事。
+凛：你没有立刻追问。那让我能把信拿稳。
 @else
-@timeline lynn_steps_forward
-凛：（移开视线）……算了，现在说这些没用。
+凛：我还没想好，要从哪一句开始说。
 @endif
-
-@voice lynn_despair_01
-凛：南方的军团，明天就会攻到王城。
 
 @autosave
 @choice
-  拔出剑 -> @mod lynn.trust +3 @goto answer_sword
-  沉默   -> @mod lynn.trust +1 @goto answer_silence
-  转身离开 [if:hasSword] -> @goto answer_leave
+  先问凛和沈岳的关系 -> @mod lynn.trust +2 @flag askedRelation @goto ask_relation
+  在窗口查退回章的理由 -> @flag foundStamp @goto inspect_stamp
+  先收下信，等她自己开口 -> @mod lynn.trust -1 @goto keep_moving
 
-@label answer_silence
-凛：……你的沉默，比剑更伤人。
-@hide lynn
-@jump ch01_02.start
+@label ask_relation
+凛：沈岳是我父亲的搭档。父亲出海失踪后，是他把父亲的罗盘送回我手里。
+凛：我十八岁那年寄过第一封信，后来每年一封，没有一封回信。
+主角：所以你把没有回信，当成了他不想见你。
+凛：我一直这么想。现在要把这封信送上去，我得先承认自己可能弄错了。
+@jump ch01_02
 
-@label answer_sword
-凛：你果然还是那个雷恩。
-@hide lynn
-@jump ch01_02.start
+@label inspect_stamp
+主角：三枚章上写的都是“地址已撤出邮路”，不是“拒收”。
+凛：三次都是这个理由？
+主角：都是。旧邮局的档案室还在，我们先查清楚地址，再上山。
+@jump ch01_02
 
-@label answer_leave
-凛：你居然选择转身？！
-@hide lynn
-@jump ch01_02.start
+@label keep_moving
+主角：先收下。到了档案室再查地址，你愿意说的时候再说。
+凛：如果退件是邮路的问题，我就不该把它当成沈岳的回答。
+@jump ch01_02

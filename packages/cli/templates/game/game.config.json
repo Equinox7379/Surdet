@@ -1,23 +1,12 @@
 {
-  "title": "New Game",
+  "title": "第一封信",
   "version": "0.1.0",
+  "entryScene": "ch01_01",
   "variables": {
-    "heroName": {
-      "type": "string",
-      "initial": "雷恩",
-      "description": "主角名"
-    },
-    "lynn.trust": {
-      "type": "number",
-      "initial": 0,
-      "min": 0,
-      "max": 100,
-      "description": "凛的好感度"
-    },
-    "hasSword": {
+    "opened": {
       "type": "flag",
       "initial": false,
-      "description": "是否持剑"
+      "description": "是否在离港前打开信封"
     }
   }
 }

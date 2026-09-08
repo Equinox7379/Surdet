@@ -1,0 +1,29 @@
+@scene ch02
+@label start
+@bg castle_hall
+
+凛：第二章——全家桶系统演示。
+@calendar map_01
+凛：地图日程已接入宿主（CalendarRunner）。
+@set lynn.trust = 40
+@affection lynn
+凛：好感阶段演示——当前好感度 {lynn.trust}。
+@event ev_trust_30
+凛：好感事件已触发（AffectionSystem）。
+凛：战斗前特训——经验值系统演示（GrowthSystem）。
+@exp lynn 28
+凛：获得 28 点经验！升级时属性成长已自动写回变量（atk/hp）。
+凛：出发前，先补给一下吧。
+@shop gold bag
+@battle fight_01
+凛：回合战斗已接入宿主（CombatSolver）。
+@if battleWon
+@flag cleared
+@clear demo_end
+凛：战斗胜利！已达成 Clear 条件（NewGamePlus）。结局已记录到全局通关档案。
+@else
+凛：战斗失败……
+@endif
+@autosave
+@jump ch01_01.start
+@end

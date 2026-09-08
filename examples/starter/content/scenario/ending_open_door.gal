@@ -1,0 +1,25 @@
+@scene ending_open_door
+@label start
+@bg lighthouse_dawn
+@show lynn:coat normal @ right
+@unlock_text t_ending_open
+
+@flag cleared
+@clear ending_open_door
+@if foundStamp
+凛把三枚退回章和旧登记页排在桌上，指给沈岳看“地址已撤出邮路”那一行。
+@elif verifiedRoute
+凛把登记册的复印页压在信封下，先说明灯塔地址什么时候被改掉。
+@elif letterOpened
+凛把父亲借用罗盘的清单递给沈岳，说明信里要归还的东西。
+@else
+凛把封好的信递过去。
+凛：我以前把邮局的退件章，当成了你的回答。
+@endif
+沈岳看完退回章，摇头。
+沈岳：我没有退过你的信。地址撤掉以后，信都回了邮局。
+@show lynn:coat smile @ right
+凛：那我这些年等的，原来不是你的回信。
+沈岳在新的值守室地址旁签名，凛把旧罗盘放在登记册上，补写了自己的名字。
+旁白：回程时，旧地址被你们从送件单上划掉，新的地址留在了下一张单子上。
+@end

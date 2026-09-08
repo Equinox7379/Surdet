@@ -45,7 +45,7 @@ for (const [target, original] of [
   ['content/assets/bg/hall.svg', 'bg/castle_hall.svg'],
   ['content/assets/portrait/lynn_uniform_normal.svg', 'portrait/lynn_uniform_normal.svg'],
   ['content/assets/portrait/lynn_uniform_despair.svg', 'portrait/lynn_uniform_despair.svg'],
-]) documents[target] = await fs.readFile(path.resolve(editorRoot, '../../examples/starter/content/assets', original), 'utf8');
+]) documents[target] = await fs.readFile(path.resolve(editorRoot, 'e2e/fixtures/asset-authority-project/content/assets', original), 'utf8');
 let files = Object.entries(documents).map(([file, text]) => ({ path: file, bytes: Buffer.from(text).toString('base64') }));
 let browser;
 let zoomContext;

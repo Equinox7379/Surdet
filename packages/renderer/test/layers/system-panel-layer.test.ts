@@ -196,6 +196,8 @@ describe('SystemPanelLayer direct contract', () => {
       expect(onAttack).toHaveBeenCalledOnce();
       expect(onAttack).toHaveBeenCalledWith('slime', 'fire');
 
+      expect(findText(runtime.root, '◀ 移动').accessibleHint).toBe('向左移动');
+      expect(findText(runtime.root, '移动 ▶').accessibleHint).toBe('向右移动');
       findText(runtime.root, '◀ 移动').emit('pointerdown', pointerEvent);
       findText(runtime.root, '▸ 跳过行动').emit('pointerdown', pointerEvent);
       expect(onMove).toHaveBeenCalledWith(-1);
@@ -206,6 +208,52 @@ describe('SystemPanelLayer direct contract', () => {
       runtime.layer.showBattle(battleView(), { onAttack, onMove, onPass });
       runtime.layer.reset();
       expect(runtime.layer.system()).toEqual({ type: 'none' });
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('disables every battle input and native accessibility when input is disabled or finished', () => {
+    const runtime = makeRuntime();
+    const onAttack = vi.fn();
+    const onMove = vi.fn();
+    const onPass = vi.fn();
+    try {
+      runtime.layer.showBattle({ ...battleView(), inputEnabled: false } as BattleView, { onAttack, onMove, onPass });
+      const disabledTarget = findParentWithText(runtime.root, '史莱姆');
+      const disabledSkill = findText(runtime.root, '火球');
+      const disabledSkillControl = disabledSkill.parent!.children[disabledSkill.parent!.children.indexOf(disabledSkill) - 1] as Container;
+      const disabledMove = findText(runtime.root, '◀ 移动');
+      const disabledPass = findText(runtime.root, '▸ 跳过行动');
+      expect(disabledTarget.tabIndex).toBe(-1);
+      expect(disabledSkillControl.tabIndex).toBe(-1);
+      expect(disabledMove.tabIndex).toBe(-1);
+      expect(disabledPass.tabIndex).toBe(-1);
+      disabledTarget.emit('pointerdown', pointerEvent);
+      emitPreviousSibling(disabledSkill);
+      disabledMove.emit('pointerdown', pointerEvent);
+      disabledPass.emit('pointerdown', pointerEvent);
+      expect(onAttack).not.toHaveBeenCalled();
+      expect(onMove).not.toHaveBeenCalled();
+      expect(onPass).not.toHaveBeenCalled();
+
+      runtime.layer.showBattle({ ...battleView(), finished: true }, { onAttack, onMove, onPass });
+      const finishedTarget = findParentWithText(runtime.root, '史莱姆');
+      const finishedSkill = findText(runtime.root, '火球');
+      const finishedSkillControl = finishedSkill.parent!.children[finishedSkill.parent!.children.indexOf(finishedSkill) - 1] as Container;
+      const finishedMove = findText(runtime.root, '◀ 移动');
+      const finishedPass = findText(runtime.root, '▸ 跳过行动');
+      expect(finishedTarget.tabIndex).toBe(-1);
+      expect(finishedSkillControl.tabIndex).toBe(-1);
+      expect(finishedMove.tabIndex).toBe(-1);
+      expect(finishedPass.tabIndex).toBe(-1);
+      finishedTarget.emit('pointerdown', pointerEvent);
+      emitPreviousSibling(finishedSkill);
+      finishedMove.emit('pointerdown', pointerEvent);
+      finishedPass.emit('pointerdown', pointerEvent);
+      expect(onAttack).not.toHaveBeenCalled();
+      expect(onMove).not.toHaveBeenCalled();
+      expect(onPass).not.toHaveBeenCalled();
     } finally {
       disposeRuntime(runtime);
     }
