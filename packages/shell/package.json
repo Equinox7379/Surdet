@@ -26,7 +26,8 @@
     "e2e:renderer-baseline:v3": "node e2e/renderer-baseline-v3-ab.e2e.mjs",
     "benchmark:save": "node scripts/benchmark-save-store.mjs",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e:frontend-pass9": "node e2e/player-shell-wave-3.e2e.mjs --pass9"
   },
   "devDependencies": {
     "electron": "43.2.0",
