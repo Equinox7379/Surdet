@@ -1,7 +1,7 @@
 /**
- * Player Shell Foundation Wave 3 — real Electron A–F matrix.
+ * Player Shell Foundation Wave 3 — real Electron A–F matrix, plus Pass 9 restart case G.
  *
- * Every case launches a fresh Electron process with a fresh userData root.
+ * Every case uses an isolated userData root; G reuses its root across two fresh processes.
  * The formal game is always the built Zero dist; Starter is never an implicit
  * fallback. The debug surface is read-only for semantic evidence, except for
  * the already-public Renderer theme command and the explicit title setup used
@@ -21,6 +21,7 @@ const repoRoot = path.resolve(shellDir, '../..');
 const gameSourceRoot = path.join(repoRoot, 'examples', 'zero-after-midnight');
 const gameDist = path.join(gameSourceRoot, 'dist');
 const smoke = process.argv.includes('--smoke');
+const pass9 = process.argv.includes('--pass9');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-player-shell-wave-3-'));
 const evidencePath = path.join(tempRoot, smoke ? 'task7-player-shell-wave-3-smoke.json' : 'task7-player-shell-wave-3-matrix.json');
 
@@ -94,9 +95,9 @@ async function withWatchdog(label, operation, timeoutMs = 8000) {
   }
 }
 
-async function launchSession(caseId) {
+async function launchSession(caseId, userDataOverride = null) {
   const caseRoot = path.join(tempRoot, caseId);
-  const userData = path.join(caseRoot, 'user-data');
+  const userData = userDataOverride ?? path.join(caseRoot, 'user-data');
   fs.mkdirSync(userData, { recursive: true });
   const app = await electron.launch({
     args: ['.', `--user-data-dir=${userData}`],
@@ -107,7 +108,14 @@ async function launchSession(caseId) {
       SURDET_E2E_GAME_DIR: path.resolve(gameDist),
     },
   });
-  const page = await app.firstWindow();
+  app.context().setDefaultTimeout(20000);
+  let page;
+  try {
+    page = await app.firstWindow();
+  } catch (error) {
+    await app.close();
+    throw error;
+  }
   const events = {
     pageErrors: [],
     consoleErrors: [],
@@ -295,39 +303,64 @@ async function launchSession(caseId) {
     },
   };
 
-  await page.evaluate(() => {
-    window.addEventListener('unhandledrejection', (event) => {
-      const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
-      console.error(`[e2e-unhandledrejection] ${reason}`);
+  try {
+    await page.evaluate(() => {
+      window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
+        console.error(`[e2e-unhandledrejection] ${reason}`);
+      });
     });
-  });
-  await session.waitFor('正式游戏调试语义接口', () => window.__surdetDebug?.playerShell !== undefined, undefined, 30000);
-  await session.waitFor('正式游戏素材完成', () => {
-    const progress = window.__surdetDebug?.assetLoading;
-    return progress?.done === true && progress.total > 0 && progress.completed === progress.total && progress.failed === 0;
-  }, undefined, 120000);
-  const title = await page.title();
-  if (!title.includes('零点之后')) throw new Error(`Electron 未加载《零点之后》：${title}`);
-  await session.waitTitle();
-  return session;
+    await session.waitFor('正式游戏调试语义接口', () => window.__surdetDebug?.playerShell !== undefined, undefined, 30000);
+    await session.waitFor('正式游戏素材完成', () => {
+      const progress = window.__surdetDebug?.assetLoading;
+      return progress?.done === true && progress.total > 0 && progress.completed === progress.total && progress.failed === 0;
+    }, undefined, 120000);
+    const title = await page.title();
+    if (!title.includes('零点之后')) throw new Error(`Electron 未加载《零点之后》：${title}`);
+    await session.waitTitle();
+    session.identity = await app.evaluate(({ app, BrowserWindow }) => ({
+      userData: app.getPath('userData'),
+      windowCount: BrowserWindow.getAllWindows().length,
+    }));
+    session.identity.pid = app.process().pid;
+    if (path.relative(userData, session.identity.userData) !== '' || session.identity.windowCount !== 1) {
+      throw new Error(`Electron 启动身份不符：${JSON.stringify(session.identity)}`);
+    }
+    return session;
+  } catch (error) {
+    try { await closeSession(session); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], `Electron ${caseId} 启动与清理失败`); }
+    throw error;
+  }
 }
 
 async function closeSession(session) {
   session.events.intentionalClose = true;
   session.markClosing();
-  if (session.app) await session.app.close().catch((error) => console.error(`Electron close failed: ${errorText(error)}`));
+  const child = session.app.process();
+  await withWatchdog(`关闭 Electron ${session.caseId}`, () => session.app.close(), 20000);
+  await withWatchdog(`等待 Electron ${session.caseId} 进程退出`, () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    return new Promise((resolve) => child.once('exit', resolve));
+  });
+  if (child.exitCode !== 0 || child.signalCode !== null) {
+    throw new Error(`Electron ${session.caseId} 非正常退出：pid=${child.pid} code=${child.exitCode} signal=${child.signalCode}`);
+  }
+  await session.assertNoRuntimeError(`${session.caseId} 关闭期间`);
+  return { pid: child.pid, exitCode: child.exitCode, signal: child.signalCode, closed: true };
 }
 
 async function runCase(caseId, label, action) {
   const startedAt = Date.now();
   let session = null;
+  let result;
   try {
     session = await launchSession(caseId);
     const before = await session.snapshot();
     const details = await action(session);
     const after = await session.snapshot();
     const audit = await session.assertNoRuntimeError(label);
-    return {
+    result = {
       id: caseId,
       name: label,
       ok: true,
@@ -341,7 +374,7 @@ async function runCase(caseId, label, action) {
   } catch (error) {
     const after = session ? await session.snapshot().catch(() => null) : null;
     const audit = session ? await session.auditErrors(after).catch(() => ({ events: cloneJson(session.events) })) : null;
-    return {
+    result = {
       id: caseId,
       name: label,
       ok: false,
@@ -352,8 +385,18 @@ async function runCase(caseId, label, action) {
       events: audit?.events ?? null,
     };
   } finally {
-    if (session) await closeSession(session);
+    if (session) {
+      try {
+        result.lifecycle = await closeSession(session);
+        result.events = (await session.auditErrors(null)).events;
+      } catch (error) {
+        result.ok = false;
+        result.cleanupError = errorText(error);
+        result.events = (await session.auditErrors(null)).events;
+      }
+    }
   }
+  return result;
 }
 
 async function startGame(session) {
@@ -412,6 +455,7 @@ async function caseB(session) {
 async function caseC(session) {
   await startGame(session);
   await openSaveLoad(session, 'save');
+  const before = await session.snapshot();
   session.allowExpectedError(/player shell operation failed|存档索引读取或解析失败|存档写入失败/i, 'controlled save rejection');
   await session.writeSaveIndex('{"broken":');
   await session.clickTarget('save-load:slot-1');
@@ -421,6 +465,7 @@ async function caseC(session) {
   });
   const rejected = await session.snapshot();
   if (rejected.playerShell?.overlay !== 'save-load' || rejected.activeOverlay !== 'save-load') throw new Error('保存拒绝后页面未保留');
+  if (positionKey(rejected.position) !== positionKey(before.position)) throw new Error('保存拒绝改变了原解释器位置');
   await session.writeSaveIndex('{}\n');
   await session.clickTarget('save-load:slot-1');
   await session.waitGame();
@@ -459,9 +504,14 @@ async function caseE(session) {
 async function caseF(session) {
   await startGame(session);
   const before = await session.snapshot();
+  const defaultTheme = before.theme;
+  if (!defaultTheme?.colors) throw new Error('无法读取进入 Case F 时的默认主题');
+  const defaultAccent = defaultTheme.colors.accent;
+  const defaultText = defaultTheme.colors.text;
   const beforeDialogueFills = before.themeProjection?.dialogue?.visibleTextFills ?? [];
-  if (!beforeDialogueFills.includes(0xf2f6ff)) throw new Error('主题场景未找到已显示的正式对话文字');
+  if (!beforeDialogueFills.includes(defaultText)) throw new Error('主题场景未找到已显示的正式对话文字');
   const collisionColor = 0x123456;
+  if (collisionColor === defaultAccent || collisionColor === defaultText) throw new Error('碰撞测试色不得等于默认主题');
   await session.page.evaluate((color) => window.surdetDebug.commands.preferences.setTheme({ colors: { accent: color, text: color } }), collisionColor);
   await session.waitFor('同色主题投影', () => window.__surdetDebug?.theme?.colors?.accent === 0x123456
     && window.__surdetDebug?.theme?.colors?.text === 0x123456);
@@ -469,15 +519,17 @@ async function caseF(session) {
   const collisionDialogueFills = collision.themeProjection?.dialogue?.visibleTextFills ?? [];
   if (!collisionDialogueFills.includes(collisionColor)) throw new Error('已显示的正式对话文字未发生同色主题投影');
   await session.page.evaluate(() => window.surdetDebug.commands.preferences.setTheme({}));
-  await session.waitFor('默认主题恢复', () => window.__surdetDebug?.theme?.colors?.accent === 0x5ac8ff
-    && window.__surdetDebug?.theme?.colors?.text === 0xf2f6ff);
+  await session.waitFor('默认主题恢复', (expected) => {
+    const colors = window.__surdetDebug?.theme?.colors;
+    return colors?.accent === expected.accent && colors?.text === expected.text;
+  }, { accent: defaultAccent, text: defaultText });
   const restored = await session.snapshot();
   const restoredDialogueFills = restored.themeProjection?.dialogue?.visibleTextFills ?? [];
   if (collision.theme?.colors?.accent !== collisionColor
     || collision.theme?.colors?.text !== collisionColor
-    || restored.theme?.colors?.accent !== 0x5ac8ff
-    || restored.theme?.colors?.text !== 0xf2f6ff) throw new Error('Theme command/query 未同步');
-  if (!restoredDialogueFills.includes(0xf2f6ff)) throw new Error('默认主题恢复后正式对话文字未恢复');
+    || restored.theme?.colors?.accent !== defaultAccent
+    || restored.theme?.colors?.text !== defaultText) throw new Error('Theme command/query 未同步');
+  if (!restoredDialogueFills.includes(defaultText)) throw new Error('默认主题恢复后正式对话文字未恢复');
   if (JSON.stringify(before.resources) !== JSON.stringify(collision.resources)
     || JSON.stringify(before.resources) !== JSON.stringify(restored.resources)) {
     throw new Error('Theme 切换增长了 Renderer 资源计数');
@@ -493,6 +545,175 @@ async function caseF(session) {
     },
     resources: restored.resources,
   };
+}
+async function runRestartCase() {
+  const startedAt = Date.now();
+  const caseId = 'G';
+  const label = 'same userData save → close → relaunch → accessible title load';
+  const caseRoot = path.join(tempRoot, caseId);
+  const userData = path.join(caseRoot, 'user-data');
+  const screenshots = {
+    beforeRestart: path.join(caseRoot, 'pass9-before-restart.png'),
+    afterRestart: path.join(caseRoot, 'pass9-after-restart.png'),
+  };
+  fs.mkdirSync(caseRoot, { recursive: true });
+  let first = null;
+  let second = null;
+  let firstAudit = null;
+  let secondAudit = null;
+  let firstIdentity = null;
+  let secondIdentity = null;
+  let firstClosed = null;
+  let secondClosed = null;
+  try {
+    first = await launchSession('G-first', userData);
+    firstIdentity = first.identity;
+    await startGame(first);
+    await first.waitFor('Pass 8 正式对白已显示', () => {
+      const debug = window.__surdetDebug;
+      return Boolean(debug?.dialogueProjection?.dialogText?.length)
+        && debug?.playerShell?.snapshot?.operation === 'idle';
+    });
+    const initialPosition = (await first.snapshot()).position;
+    let saved = await first.snapshot();
+    for (let attempt = 0; attempt < 4 && positionKey(saved.position) === positionKey(initialPosition); attempt += 1) {
+      const point = await first.canvasPoint(640, 360);
+      if (!point) throw new Error('找不到正式游戏画布');
+      await first.page.mouse.click(point.x, point.y);
+      await first.waitForPresentedFrame('推进到非初始保存点');
+      await first.waitGame();
+      saved = await first.snapshot();
+    }
+    if (positionKey(saved.position) === positionKey(initialPosition)) throw new Error('保存点仍是新游戏初始位置');
+    await completeSaveLoad(first, 'save');
+    await first.page.screenshot({ path: screenshots.beforeRestart });
+    firstAudit = await first.assertNoRuntimeError('G first session');
+    const savedFiles = fs.readdirSync(path.join(userData, 'saves')).filter((name) => name.endsWith('.json'));
+    const savedSlot = savedFiles.filter((name) => name !== 'index.json')
+      .map((name) => JSON.parse(fs.readFileSync(path.join(userData, 'saves', name), 'utf8')))
+      .find((snapshot) => snapshot.meta?.id === '1');
+    if (!savedSlot || JSON.stringify(savedSlot.position) !== JSON.stringify(saved.position)) {
+      throw new Error('真实槽位 1 文件未保存当前剧情位置');
+    }
+    firstClosed = await closeSession(first);
+    firstAudit = await first.auditErrors(null);
+    first = null;
+
+    second = await launchSession('G-second', userData);
+    secondIdentity = second.identity;
+    if (secondIdentity.pid === firstIdentity.pid || secondIdentity.userData !== firstIdentity.userData) {
+      throw new Error(`Electron 重启身份不符：${JSON.stringify({ firstIdentity, secondIdentity })}`);
+    }
+    await second.waitTitle();
+    if (second.app.windows().length !== 1) throw new Error(`重启后主窗口数量异常：${second.app.windows().length}`);
+    await second.page.evaluate(() => {
+      window.__pass9LoadClicks = [];
+      document.addEventListener('click', (event) => {
+        const label = event.target instanceof Element
+          ? event.target.closest('button')?.getAttribute('aria-label') : null;
+        if (label === '读取存档' || label?.startsWith('读取槽位 1：')) window.__pass9LoadClicks.push(label);
+      }, true);
+    });
+    const loadTitle = second.page.getByRole('button', { name: '读取存档', exact: true });
+    await loadTitle.waitFor();
+    await loadTitle.focus();
+    await second.press('Enter');
+    await second.waitOverlay('save-load');
+    const slot = second.page.getByRole('button', { name: /^读取槽位 1：/ });
+    await slot.waitFor();
+    await slot.focus();
+    await second.press('Enter');
+    await second.waitGame();
+    const loaded = await second.snapshot();
+    const keyboardClicks = await second.page.evaluate(() => window.__pass9LoadClicks);
+    if (keyboardClicks.length !== 2 || keyboardClicks[0] !== '读取存档' || !keyboardClicks[1].startsWith('读取槽位 1：')) {
+      throw new Error(`键盘读档控件未各激活一次：${JSON.stringify(keyboardClicks)}`);
+    }
+    if (second.app.windows().length !== 1 || await second.page.locator('canvas').count() !== 1) {
+      throw new Error('重启读档后存在重复主窗口或渲染画布');
+    }
+    if (positionKey(loaded.position) !== positionKey(saved.position)
+      || loaded.position?.sceneHash !== saved.position?.sceneHash) {
+      throw new Error(`重启读档位置不一致：saved=${positionKey(saved.position)} loaded=${positionKey(loaded.position)}`);
+    }
+    if (loaded.playerShell?.returnStack?.length !== 0) throw new Error('重启读档后仍有旧返回栈');
+    const bindings = loaded.bindingSnapshot?.bindings ?? [];
+    const expectedSlots = ['title', 'system-menu', 'save-load', 'settings', 'gallery', 'backlog'];
+    if (JSON.stringify(bindings.map((entry) => entry.slot)) !== JSON.stringify(expectedSlots)
+      || bindings.some((entry) => entry.overridden !== false)) {
+      throw new Error(`重启后的默认六槽注册表异常：${JSON.stringify(loaded.bindingSnapshot)}`);
+    }
+
+    await second.press('Escape');
+    await second.waitOverlay('system-menu');
+    await second.clickTarget('system:settings');
+    await second.waitOverlay('settings');
+    await second.page.screenshot({ path: screenshots.afterRestart });
+    await second.clickTarget('settings:close');
+    await second.waitOverlay('system-menu');
+    await second.clickTarget('system:resume');
+    await second.waitGame();
+    const returned = await second.snapshot();
+    if (!isIdleGame(returned) || returned.playerShell?.returnStack?.length !== 0) {
+      throw new Error('重启读档后设置返回链没有回到干净的游戏状态');
+    }
+    secondAudit = await second.assertNoRuntimeError('G second session');
+    secondClosed = await closeSession(second);
+    secondAudit = await second.auditErrors(null);
+    second = null;
+
+    return {
+      id: caseId,
+      name: label,
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      userData,
+      before: saved,
+      after: returned,
+      events: {
+        first: firstAudit.events,
+        second: secondAudit.events,
+      },
+      details: {
+        initialPosition,
+        savedPosition: saved.position,
+        savedSlotPosition: savedSlot.position,
+        loadedPosition: loaded.position,
+        bindings: loaded.bindingSnapshot,
+        screenshots,
+        savedFiles,
+        sessions: { first: firstIdentity, second: secondIdentity },
+        shutdown: { first: firstClosed, second: secondClosed },
+        sameUserData: firstIdentity.userData === secondIdentity.userData,
+        accessibleKeyboardLoad: true,
+        keyboardClicks,
+      },
+    };
+  } catch (error) {
+    const after = second ? await second.snapshot().catch(() => null)
+      : first ? await first.snapshot().catch(() => null) : null;
+    const cleanupErrors = [];
+    for (const session of [first, second]) {
+      if (!session || session.app.process().exitCode !== null) continue;
+      try { await closeSession(session); }
+      catch (cleanupError) { cleanupErrors.push(errorText(cleanupError)); }
+    }
+    return {
+      id: caseId,
+      name: label,
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      userData,
+      error: errorText(error),
+      after,
+      cleanupErrors,
+      events: {
+        first: firstAudit?.events ?? cloneJson(first?.events ?? null),
+        second: secondAudit?.events ?? cloneJson(second?.events ?? null),
+      },
+      details: { screenshots, sessions: { first: firstIdentity, second: secondIdentity }, shutdown: { first: firstClosed, second: secondClosed } },
+    };
+  }
 }
 
 async function main() {
@@ -512,12 +733,19 @@ async function main() {
     const result = await runCase(caseId, label, action);
     cases.push(result);
     if (result.ok) console.log(`PASS ${caseId} ${label}`);
-    else console.error(`FAIL ${caseId} ${label}\n${result.error}`);
+    else console.error(`FAIL ${caseId} ${label}\n${result.error ?? result.cleanupError}`);
+  }
+  if (pass9 && !smoke) {
+    console.log('BEGIN G same userData restart/load');
+    const result = await runRestartCase();
+    cases.push(result);
+    if (result.ok) console.log(`PASS G ${result.name}`);
+    else console.error(`FAIL G ${result.name}\n${result.error}`);
   }
   const evidence = {
     schemaVersion: 1,
-    phase: 'Task 7 isolated player shell foundation acceptance matrix',
-    runKind: smoke ? 'smoke' : 'formal',
+    phase: pass9 ? 'Frontend Pass 9 Host/Shell consumer acceptance' : 'Task 7 isolated player shell foundation acceptance matrix',
+    runKind: smoke ? 'smoke' : pass9 ? 'pass9' : 'formal',
     generatedAt: new Date().toISOString(),
     formalGame: {
       sourceRoot: path.resolve(gameSourceRoot),
@@ -532,7 +760,8 @@ async function main() {
       eachCaseFreshUserData: true,
     },
     cases,
-    status: cases.length === selected.length && cases.every((entry) => entry.ok) ? 'PASSED' : 'FAILED',
+    status: cases.length === selected.length + (pass9 && !smoke ? 1 : 0)
+      && cases.every((entry) => entry.ok) ? 'PASSED' : 'FAILED',
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
   const evidenceSha256 = sha256File(evidencePath);
