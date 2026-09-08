@@ -1,7 +1,8 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { compileScene } from '@surdet/core';
+import { cp, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -209,12 +210,20 @@ describe('real Vite .gal HMR', () => {
     const validReplacementTwo = validReplacementOne.replace('（第一次文字修订）', '（第二次文字修订）');
     expect(validReplacementOne).not.toBe(original);
     expect(validReplacementTwo).not.toBe(validReplacementOne);
+    const sceneHash = (source: string): string => compileScene(source, scenePath, 'ch01_01').sceneHash;
+    const publishScene = async (source: string): Promise<void> => {
+      // Publish a complete editor save. In-place truncation can expose an
+      // intermediate source to the file watcher before writeFile has finished.
+      const pendingPath = `${scenePath}.pending`;
+      await writeFile(pendingPath, source, 'utf8');
+      await rename(pendingPath, scenePath);
+    };
 
-    await writeFile(scenePath, validReplacementOne, 'utf8');
+    await publishScene(validReplacementOne);
     try {
       await page.waitForFunction(
-        (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
-        initial.position?.sceneHash,
+        (expectedHash) => window.__surdetDebug.position?.sceneHash === expectedHash,
+        sceneHash(validReplacementOne),
         { timeout: 15000 },
       );
       await waitForStableResources();
@@ -232,10 +241,10 @@ describe('real Vite .gal HMR', () => {
     expect(afterValidOne.position?.sceneId).toBe('ch01_01');
     expect(afterValidOne.position?.pc).toBeGreaterThanOrEqual(0);
 
-    await writeFile(scenePath, validReplacementTwo, 'utf8');
+    await publishScene(validReplacementTwo);
     await page.waitForFunction(
-      (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
-      afterValidOne.position?.sceneHash,
+      (expectedHash) => window.__surdetDebug.position?.sceneHash === expectedHash,
+      sceneHash(validReplacementTwo),
       { timeout: 15000 },
     );
     await waitForStableResources();
@@ -246,7 +255,8 @@ describe('real Vite .gal HMR', () => {
     expect(afterValidTwo.position?.pc).toBeGreaterThanOrEqual(0);
 
     const invalidReplacement = `${validReplacementTwo}\n@if (`;
-    await writeFile(scenePath, invalidReplacement, 'utf8');
+    expect(() => sceneHash(invalidReplacement)).toThrow();
+    await publishScene(invalidReplacement);
     await waitForConsole(page, messages, (message) => message.includes('场景热重载失败，保留旧场景 ch01_01'));
     await waitForStableResources();
     const afterInvalid = await captureState();
@@ -254,12 +264,7 @@ describe('real Vite .gal HMR', () => {
     expectStableResources(afterValidTwo, afterInvalid);
     expect(afterInvalid.position).toEqual(afterValidTwo.position);
 
-    await writeFile(scenePath, original, 'utf8');
-    await page.waitForFunction(
-      (oldHash) => window.__surdetDebug.position?.sceneHash !== oldHash,
-      afterInvalid.position?.sceneHash,
-      { timeout: 15000 },
-    );
+    await publishScene(original);
     await page.waitForFunction(
       (originalHash) => window.__surdetDebug.position?.sceneHash === originalHash,
       initial.position?.sceneHash,
