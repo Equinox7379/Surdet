@@ -1,5 +1,9 @@
 import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { AuthoringOperationError, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
+  HUMAN_WORKSPACE_BLOCKED_REASONS } from '@surdet/authoring';
+import { EditorWorkspaceAuthorityError, type EditorWorkspaceAuthority, type EditorWorkspaceStateInput,
+  type ActiveEditorWriteInput } from '../editor-workspace-authority/editor-workspace-authority.js';
 import type {
   ProjectAssetImportStagedItem,
   ProjectAssetImportTargetRequest,
@@ -67,6 +71,10 @@ const PUBLIC_CODES = new Set([
   'IMPORT_LIMIT_EXCEEDED',
   'IMPORT_RECOVERY_REQUIRED',
   'IMPORT_UNDO_BLOCKED_CHANGED',
+  'HUMAN_WORKSPACE_DIRTY',
+  'HUMAN_WORKSPACE_BUSY',
+  'HUMAN_WORKSPACE_STATE_CORRUPT',
+  'EDITOR_PROJECT_BASELINE_CHANGED',
 ]);
 
 type EmptyObject = Record<string, never>;
@@ -87,6 +95,7 @@ type ReceiptSummary = {
 
 export interface AssetImportAuthorityHttpTarget {
   projectIdentity: string;
+  workspace?: EditorWorkspaceAuthority;
   createChallenge(browserSessionId: string): Promise<CreateBindingChallengeResponse>;
   confirmChallenge(challengeId: string, request: ConfirmBindingChallengeRequest): Promise<ConfirmBindingChallengeResponse>;
   validateBinding(token: string, browserSessionId?: string): boolean | Promise<boolean>;
@@ -112,7 +121,7 @@ export interface AssetImportAuthorityHttpTarget {
   relocationRecover?(operationId: string, request: RecoverAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
   relocationUndo?(operationId: string, request: UndoAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
   scenePlan?(request: SceneLifecyclePlanRequest): Promise<SceneLifecyclePlanResponse>;
-  sceneCommit?(request: SceneLifecycleCommitRequest): Promise<SceneLifecycleCommitResponse>;
+  sceneCommit?(request: SceneLifecycleCommitRequest, workspaceWrite?: ActiveEditorWriteInput): Promise<SceneLifecycleCommitResponse>;
 }
 
 export interface AssetImportAuthorityHttpHandlerOptions {
@@ -130,7 +139,8 @@ type Route = {
     | 'commit' | 'cancel' | 'operation-query' | 'resume' | 'recover' | 'undo'
     | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
     | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
-    | 'scene-plan' | 'scene-commit';
+    | 'scene-plan' | 'scene-commit' | 'workspace';
+  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -194,12 +204,14 @@ function statusForCode(code: string): number {
   if (code === 'IMPORT_OPERATION_NOT_FOUND') return 404;
   if (code === 'IMPORT_PLAN_BLOCKED' || code === 'IMPORT_UPLOAD_MISMATCH') return 422;
   if (['PROJECT_BUSY', 'PROJECT_IDENTITY_MISMATCH', 'IMPORT_PLAN_STALE', 'IMPORT_TARGET_EXISTS',
-    'IMPORT_OPERATION_CONFLICT', 'IMPORT_RECOVERY_REQUIRED', 'IMPORT_UNDO_BLOCKED_CHANGED'].includes(code)) return 409;
+    'IMPORT_OPERATION_CONFLICT', 'IMPORT_RECOVERY_REQUIRED', 'IMPORT_UNDO_BLOCKED_CHANGED',
+    'HUMAN_WORKSPACE_DIRTY', 'HUMAN_WORKSPACE_BUSY', 'HUMAN_WORKSPACE_STATE_CORRUPT', 'EDITOR_PROJECT_BASELINE_CHANGED'].includes(code)) return 409;
   return 400;
 }
 
 function publicCode(error: unknown): string {
-  if (!(error instanceof AssetImportAuthorityError)) return 'AUTHORITY_UNAVAILABLE';
+  if (!(error instanceof AssetImportAuthorityError) && !(error instanceof AuthoringOperationError)
+    && !(error instanceof EditorWorkspaceAuthorityError)) return 'AUTHORITY_UNAVAILABLE';
   if (PUBLIC_CODES.has(error.code)) return error.code;
   if (error.code === 'IMPORT_AUTH_REQUIRED') return 'AUTHORITY_TOKEN_REJECTED';
   if (error.code === 'IMPORT_AUTHORITY_NOT_READY') return 'AUTHORITY_UNAVAILABLE';
@@ -353,6 +365,34 @@ function requireProjectRelativePath(value: unknown, field: string): string {
     throw new AssetImportAuthorityError('INVALID_REQUEST', `${field} 格式无效`, { field });
   }
   return value.normalize('NFC');
+}
+
+function parseWorkspaceState(value: Record<string, unknown>, extra: string[]): EditorWorkspaceStateInput {
+  const optional = ['loadedProjectRevision', 'loadedCoordinationRevision'].filter(key => value?.[key] !== undefined);
+  const object = exactObject(value, ['workspaceSessionId', 'browserSessionId', 'workspaceGeneration', 'availability',
+    'dirtyScopes', 'busyReasons', 'blockedReasons', ...optional, ...extra]);
+  const strings = <T extends string>(key: string, allowed: readonly T[]): T[] => {
+    const values = object[key];
+    if (!Array.isArray(values) || !values.every(value => typeof value === 'string' && allowed.includes(value as T))) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', `${key} 格式无效`);
+    }
+    return values as T[];
+  };
+  if (!Number.isSafeInteger(object.workspaceGeneration) || Number(object.workspaceGeneration) < 0
+    || !['clean', 'dirty', 'busy', 'blocked'].includes(String(object.availability))) {
+    throw new AssetImportAuthorityError('INVALID_REQUEST', '工作区状态格式无效');
+  }
+  return {
+    workspaceSessionId: requireUuid(object.workspaceSessionId, 'workspaceSessionId'),
+    browserSessionId: parseStatus({ browserSessionId: object.browserSessionId }).browserSessionId,
+    workspaceGeneration: object.workspaceGeneration as number,
+    availability: object.availability as EditorWorkspaceStateInput['availability'],
+    dirtyScopes: strings('dirtyScopes', HUMAN_WORKSPACE_DIRTY_SCOPES),
+    busyReasons: strings('busyReasons', HUMAN_WORKSPACE_BUSY_REASONS),
+    blockedReasons: strings('blockedReasons', HUMAN_WORKSPACE_BLOCKED_REASONS),
+    ...(object.loadedProjectRevision === undefined ? {} : { loadedProjectRevision: requireSha256(object.loadedProjectRevision, 'loadedProjectRevision') }),
+    ...(object.loadedCoordinationRevision === undefined ? {} : { loadedCoordinationRevision: requireSha256(object.loadedCoordinationRevision, 'loadedCoordinationRevision') }),
+  };
 }
 
 function parseRelocationPlan(value: unknown): PlanAssetRelocationRequest {
@@ -548,6 +588,9 @@ async function publicRelocationList(authority: AssetImportAuthorityHttpTarget): 
 }
 
 function parseRoute(url: string): Route | null {
+  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke)$`));
+  if (workspace) return { kind: 'workspace', workspaceAction: workspace[1] as Route['workspaceAction'],
+    method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/status`) return { kind: 'status', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`) return { kind: 'challenge-create', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/revoke`) return { kind: 'binding-revoke', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
@@ -738,6 +781,9 @@ export function createAssetImportAuthorityHttpHandler(
       if (route.kind === 'status' || route.kind === 'challenge-create' || route.kind === 'binding-revoke') {
         browserSessionId = parseStatus(body).browserSessionId;
       }
+      if (route.kind === 'workspace') {
+        browserSessionId = parseStatus({ browserSessionId: (body as Record<string, unknown>)?.browserSessionId }).browserSessionId;
+      }
       if (route.bindingRequired) {
         requestBindingToken = headerValue(request, ASSET_IMPORT_AUTHORITY_BINDING_HEADER);
         if (requestBindingToken === undefined || !await options.authority.validateBinding(requestBindingToken, browserSessionId)) {
@@ -783,6 +829,49 @@ export function createAssetImportAuthorityHttpHandler(
 
       let data: unknown;
       switch (route.kind) {
+        case 'workspace': {
+          const workspace = options.authority.workspace;
+          if (!workspace) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '工作区服务尚未就绪');
+          const action = route.workspaceAction!;
+          if (action === 'snapshot' || action === 'revoke') {
+            const object = exactObject(body, ['workspaceSessionId', 'browserSessionId']);
+            const sessionId = requireUuid(object.workspaceSessionId, 'workspaceSessionId');
+            if (action === 'snapshot') data = await workspace.snapshot();
+            else {
+              await workspace.revoke(sessionId, browserSessionId!);
+              data = { revoked: true };
+            }
+          } else {
+            const object = body as Record<string, unknown>;
+            const extra = action === 'begin' ? ['expectedProjectRevision', 'expectedCoordinationRevision', 'purpose']
+              : action === 'publish' ? ['writeLeaseId', 'path', 'text', 'expectedSha256']
+                : action === 'heartbeat' ? [] : ['writeLeaseId'];
+            const state = parseWorkspaceState(object, extra);
+            if (action === 'heartbeat') {
+              const record = await workspace.heartbeat(state);
+              data = { workspaceGeneration: record.workspaceGeneration, heartbeatAt: record.heartbeatAt };
+            } else if (action === 'begin') {
+              if (!['save-all', 'config-save', 'character-save'].includes(String(object.purpose))) {
+                throw new AssetImportAuthorityError('INVALID_REQUEST', '保存用途无效');
+              }
+              data = await workspace.beginWrite({ ...state,
+                purpose: object.purpose as 'save-all' | 'config-save' | 'character-save',
+                expectedProjectRevision: requireSha256(object.expectedProjectRevision, 'expectedProjectRevision'),
+                expectedCoordinationRevision: requireSha256(object.expectedCoordinationRevision, 'expectedCoordinationRevision') });
+            } else {
+              const active = { ...state, writeLeaseId: requireUuid(object.writeLeaseId, 'writeLeaseId') };
+              if (action === 'publish') {
+                if (object.text !== null && typeof object.text !== 'string') throw new AssetImportAuthorityError('INVALID_REQUEST', '保存正文格式无效');
+                data = await workspace.publishFile({ ...active, text: object.text,
+                  path: requireProjectRelativePath(object.path, 'path'),
+                  expectedSha256: object.expectedSha256 === null ? null : requireSha256(object.expectedSha256, 'expectedSha256') });
+              } else if (action === 'renew') data = await workspace.renewWrite(active);
+              else if (action === 'finish') data = await workspace.finishWrite(active);
+              else { await workspace.abortWrite(active); data = { aborted: true }; }
+            }
+          }
+          break;
+        }
         case 'status':
           data = { authorityContractVersion: 1, authorityAvailable: true, projectIdentity: options.authority.projectIdentity, bindingRequired: true };
           break;
@@ -961,10 +1050,24 @@ export function createAssetImportAuthorityHttpHandler(
           if (options.authority.scenePlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
           data = await options.authority.scenePlan(parseScenePlan(body));
           break;
-        case 'scene-commit':
+        case 'scene-commit': {
           if (options.authority.sceneCommit === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
-          data = await options.authority.sceneCommit(parseSceneCommit(body));
+          const object = body as Record<string, unknown>;
+          let workspaceWrite: ActiveEditorWriteInput | undefined;
+          let sceneBody = body;
+          if (typeof object === 'object' && object !== null && 'workspaceWrite' in object) {
+            exactObject(object, ['requestId', 'plans', 'writes', 'workspaceWrite']);
+            const write = object.workspaceWrite as Record<string, unknown>;
+            workspaceWrite = { ...parseWorkspaceState(write, ['writeLeaseId']), writeLeaseId: requireUuid(write.writeLeaseId, 'writeLeaseId') };
+            if (!await options.authority.validateBinding(requestBindingToken!, workspaceWrite.browserSessionId)) {
+              return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED');
+            }
+            const { workspaceWrite: _workspaceWrite, ...rest } = object;
+            sceneBody = rest;
+          }
+          data = await options.authority.sceneCommit(parseSceneCommit(sceneBody), workspaceWrite);
           break;
+        }
       }
       if (requestOperationToken !== undefined
         && ['commit', 'cancel', 'recover', 'undo', 'relocation-commit', 'relocation-cancel', 'relocation-recover', 'relocation-undo'].includes(route.kind)) {

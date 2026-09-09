@@ -4,6 +4,8 @@
  * UI 联动（renderAll/runValidate/renderSidebar）经钩子注入，保持模块无环。
  */
 import { state, setStatus } from './state.js';
+import { beginEditorWorkspaceWrite, finishEditorWorkspaceWrite, publishEditorWorkspaceFile,
+  editorWorkspaceStatus } from './editor-workspace.js';
 import { histories } from './history.js';
 import { clearTimelineHistories, clearTimelineHistory, pushTimelineSnapshot } from './timeline-history.js';
 import { resolveAutosaveProjectIdentity } from './autosave.js';
@@ -27,6 +29,7 @@ let onProjectLoaded: () => void = () => {};
 let onProjectClosing: () => void = () => {};
 /** 每次替换内存项目事实前失效上一项目的异步结果与页面缓存。 */
 let onProjectStateReset: () => void = () => {};
+let onProjectReading: () => Promise<void> = async () => {};
 /** 无论项目载入成功或失败都必须收束切换状态。 */
 let onProjectLoadSettled: (succeeded: boolean) => void = () => {};
 /** 保存全部完成（清除崩溃备份挂点；A1） */
@@ -64,7 +67,13 @@ export async function runProjectWriteOperation<T>(operation: () => Promise<T>): 
   activeProjectWriteOperations += 1;
   try {
     await previous;
-    return await operation();
+    await beginEditorWorkspaceWrite();
+    try {
+      return await operation();
+    } finally {
+      const warning = await finishEditorWorkspaceWrite();
+      if (warning) setStatus(warning, false, 8000);
+    }
   } finally {
     activeProjectWriteOperations -= 1;
     releaseQueue();
@@ -129,6 +138,7 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded?: () => void;
   onProjectClosing?: () => void;
   onProjectStateReset?: () => void;
+  onProjectReading?: () => Promise<void>;
   onProjectLoadSettled?: (succeeded: boolean) => void;
   onSaved?: () => void;
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
@@ -144,6 +154,7 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
   onProjectClosing = opts.onProjectClosing ?? (() => {});
   onProjectStateReset = opts.onProjectStateReset ?? (() => {});
+  onProjectReading = opts.onProjectReading ?? (async () => {});
   onProjectLoadSettled = opts.onProjectLoadSettled ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
   onSaveSettled = opts.onSaveSettled ?? (() => {});
@@ -196,6 +207,9 @@ export async function openProjectFromHandle(
 export async function reloadCurrentProjectFromHandle(options: {
   mainTab?: typeof state.mainTab;
   selectedAssetId?: string | null;
+  sceneKey?: string | null;
+  sceneId?: string;
+  timelineId?: string | null;
 } = {}): Promise<void> {
   await beginProjectTransition();
   const dir = state.dirHandle;
@@ -208,6 +222,9 @@ export async function reloadCurrentProjectFromHandle(options: {
   try {
     await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false });
     if (options.mainTab !== undefined) state.mainTab = options.mainTab;
+    if (options.sceneKey && state.scenes.has(options.sceneKey)) state.current = options.sceneKey;
+    else if (options.sceneId) state.current = [...state.scenes].find(([, scene]) => scene.id === options.sceneId)?.[0] ?? state.current;
+    if (options.timelineId && state.timelines.some(timeline => timeline.id === options.timelineId)) state.currentTimeline = options.timelineId;
     if (options.selectedAssetId !== undefined) state.assetCenterSelectedId = options.selectedAssetId;
     renderAll();
     succeeded = true;
@@ -260,6 +277,7 @@ async function loadProjectFromHandle(
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+  await onProjectReading();
   for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
     try {
       const contentDir = await dir.getDirectoryHandle('content');
@@ -400,7 +418,7 @@ async function optionalDirectory(
   }
 }
 
-async function collectProjectAssets(
+export async function collectProjectAssets(
   root: FileSystemDirectoryHandle,
   strict: boolean,
 ): Promise<DirAsset[]> {
@@ -467,9 +485,33 @@ export function assertProjectWriteUnlocked(): void {
 
 export async function writeFileHandle(fh: FileSystemFileHandle, text: string): Promise<void> {
   assertProjectWriteUnlocked();
+  if (editorWorkspaceStatus().protection !== 'unavailable') {
+    const parts = await state.dirHandle?.resolve(fh);
+    if (!parts) throw new Error('文件不属于当前绑定项目，未执行保存');
+    await publishEditorWorkspaceFile(parts.join('/'), text);
+    return;
+  }
   const w = await fh.createWritable();
   await w.write(text);
   await w.close();
+}
+
+/** New bound files are created by Node under the save lease, before refreshing the browser handle. */
+export async function writeProjectText(path: string, text: string, handle: FileSystemFileHandle | null): Promise<FileSystemFileHandle> {
+  assertProjectWriteUnlocked();
+  const coordinated = await publishEditorWorkspaceFile(path, text);
+  if (!coordinated && handle !== null) {
+    await writeFileHandle(handle, text);
+    return handle;
+  }
+  if (state.dirHandle === null) throw new Error('未连接项目目录，不能保存');
+  const parts = path.split('/');
+  const fileName = parts.pop()!;
+  let directory = state.dirHandle;
+  for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: !coordinated });
+  const savedHandle = await directory.getFileHandle(fileName, { create: !coordinated });
+  if (!coordinated) await writeFileHandle(savedHandle, text);
+  return savedHandle;
 }
 
 export async function sceneTextSha256(text: string): Promise<string> {
@@ -520,6 +562,7 @@ export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: st
         eol: text.includes('\r\n') ? '\r\n' : '\n',
         dirty: false,
         handle: ent,
+        persistedSha256: await sceneTextSha256(text),
       });
     }
   }
@@ -877,17 +920,16 @@ async function saveAllUnlocked(): Promise<void> {
     const remaining: typeof state.pendingTimelineDeletes = [];
     for (const pending of state.pendingTimelineDeletes) {
       try {
-        const contentDir = await state.dirHandle.getDirectoryHandle('content');
-        let timelineDir = await contentDir.getDirectoryHandle('timelines');
-        const parts = pending.file.split('/').filter(Boolean);
-        const fileName = parts.pop();
-        if (!fileName) {
-          recordFailure(`时间轴 '${pending.id}' 删除`, new Error('文件名为空'));
-          remaining.push(pending);
-          continue;
+        const projectPath = pending.file.startsWith('content/timelines/') ? pending.file : `content/timelines/${pending.file}`;
+        if (!await publishEditorWorkspaceFile(projectPath, null)) {
+          const contentDir = await state.dirHandle.getDirectoryHandle('content');
+          let timelineDir = await contentDir.getDirectoryHandle('timelines');
+          const parts = pending.file.split('/').filter(Boolean);
+          const fileName = parts.pop();
+          if (!fileName) throw new Error('文件名为空');
+          for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
+          await timelineDir.removeEntry(fileName);
         }
-        for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
-        await timelineDir.removeEntry(fileName);
         state.pendingTimelineRestores.delete(pending.id);
         clearTimelineHistory(pending.id);
         onTimelineDeleted(pending.id);
@@ -1084,23 +1126,15 @@ async function saveAllUnlocked(): Promise<void> {
   for (const timeline of state.timelines) {
     if (!timeline.dirty) continue;
     try {
-      let handle = timeline.handle;
-      if (!handle) {
-        if (!state.dirHandle) {
+      if (!timeline.handle && !state.dirHandle) {
           exportTimeline(timeline.id, timeline.text);
           recordFailure(`演示项目时间轴 '${timeline.id}' 保存`, new Error(`已下载 ${timeline.id}.json（脏标记保留）`));
           continue;
-        }
-        const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
-        const parts = timeline.file.split('/').filter(Boolean);
-        const fileName = parts.pop() ?? `${timeline.id}.json`;
-        let timelineDir = await contentDir.getDirectoryHandle('timelines', { create: true });
-        for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part, { create: true });
-        handle = await timelineDir.getFileHandle(fileName, { create: true });
-        timeline.handle = handle;
       }
       const submittedText = timeline.text;
-      await writeFileHandle(handle, submittedText);
+      const projectPath = timeline.file.startsWith('content/timelines/') ? timeline.file : `content/timelines/${timeline.file}`;
+      timeline.handle = await writeProjectText(projectPath, submittedText, timeline.handle);
+      timeline.persistedSha256 = await sceneTextSha256(submittedText);
       timeline.dirty = timeline.text !== submittedText;
       timelineSaved = true;
       saved++;

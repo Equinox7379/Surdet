@@ -1,3 +1,5 @@
+import type { ProjectMutationLeaseContext } from '../editor-workspace-authority/project-mutation-lease-context.js';
+
 export type AssetProjectMutationOwner = 'asset-import' | 'asset-relocation' | 'scene-lifecycle';
 
 type ReadinessGate = () => void | Promise<void>;
@@ -10,6 +12,8 @@ type ReadinessGate = () => void | Promise<void>;
 export class AssetProjectMutationCoordinator {
   private readonly readiness = new Map<AssetProjectMutationOwner, ReadinessGate>();
   private tail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly defaultLeaseContext?: ProjectMutationLeaseContext) {}
 
   register(owner: AssetProjectMutationOwner, gate: ReadinessGate): void {
     this.readiness.set(owner, gate);
@@ -25,7 +29,10 @@ export class AssetProjectMutationCoordinator {
     for (const gate of this.readiness.values()) await gate();
   }
 
-  async run<T>(owner: AssetProjectMutationOwner, work: () => Promise<T>): Promise<T> {
+  async run<T>(
+    owner: AssetProjectMutationOwner,
+    work: () => Promise<T>,
+  ): Promise<T> {
     const previous = this.tail;
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });
@@ -33,8 +40,13 @@ export class AssetProjectMutationCoordinator {
     this.tail = tail;
     await previous;
     try {
-      await this.assertOtherReady(owner);
-      return await work();
+      const readinessAndWork = async (): Promise<T> => {
+        await this.assertOtherReady(owner);
+        return work();
+      };
+      return this.defaultLeaseContext === undefined
+        ? await readinessAndWork()
+        : await this.defaultLeaseContext.run(() => readinessAndWork());
     } finally {
       release();
       if (this.tail === tail) this.tail = Promise.resolve();

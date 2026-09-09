@@ -209,6 +209,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   if (handle === null) {
     throw new AuthoringOperationError('PROJECT_NOT_FOUND', '未连接 game.config.json（演示项目不落盘）');
   }
+  const submittedSceneTexts = new Map([...state.scenes.values()].map(scene => [scene, scene.text]));
   const base = createEditorProjectStorage();
   const snapshot = await loadProjectSnapshot(base, base);
   const session: ChangeSession = await beginChange(snapshot, new InMemoryChangeRepository());
@@ -274,13 +275,18 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   for (const scene of state.scenes.values()) {
     if (scene.handle !== null) sceneHandles.set(scenarioPath(scene), scene.handle);
   }
-  await commitChange(session, new EditorWriteStorage(base, handle, sceneHandles));
+  const committed = await commitChange(session, new EditorWriteStorage(base, handle, sceneHandles));
   const updatedText = session.record.workingFiles[CONFIG_PATH]!;
   state.gameConfigText = updatedText;
   // 同步被迁移场景的 editor 内存态（磁盘已是新文本，内存不得停留旧 speaker）。
   for (const scene of state.scenes.values()) {
-    const migrated = session.record.workingFiles[scenarioPath(scene)];
-    if (migrated !== undefined && migrated !== scene.text) scene.text = migrated;
+    const filePath = scenarioPath(scene);
+    if (!committed.files.includes(filePath) || !submittedSceneTexts.has(scene)) continue;
+    const migrated = session.record.workingFiles[filePath]!;
+    const persistedSha256 = await base.sha256(migrated);
+    if (scene.text === submittedSceneTexts.get(scene)) scene.text = migrated;
+    scene.persistedSha256 = persistedSha256;
+    scene.dirty = scene.text !== migrated;
   }
   return { changeId: session.record.changeId, updatedText, changed, speakerMigrations };
 }

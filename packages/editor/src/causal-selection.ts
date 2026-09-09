@@ -15,8 +15,25 @@ export function reconcileAuthoringSelection(
   selectedObjectRef: string | null,
   previousIndex: ObjectIndex | null,
   nextIndex: ObjectIndex,
+  externalReload = false,
 ): string | null {
   if (selectedObjectRef === null) return null;
+  if (externalReload) {
+    const previous = previousIndex?.byRef.get(selectedObjectRef);
+    const next = nextIndex.byRef.get(selectedObjectRef);
+    if (!previous || !next || previous.kind !== next.kind) return null;
+    if (previous.semanticId !== undefined && previous.semanticId === next.semanticId) return next.objectRef;
+    if (previous.kind === 'track' || previous.kind === 'cue') {
+      const timelineRef = selectedObjectRef.split('/track:')[0]!;
+      if (JSON.stringify(previousIndex?.byRef.get(timelineRef)?.details) !== JSON.stringify(nextIndex.byRef.get(timelineRef)?.details)) return null;
+    }
+    // Positional/anonymous refs only survive when the object at that location
+    // is unchanged; a shifted cue or another line cannot inherit the selection.
+    return previous.source !== undefined && next.source !== undefined
+      && previous.source.path === next.source.path && previous.source.line === next.source.line
+      && previous.source.raw === next.source.raw && previous.fingerprint === next.fingerprint
+      ? next.objectRef : null;
+  }
   if (nextIndex.byRef.has(selectedObjectRef)) return selectedObjectRef;
   const previous = previousIndex?.byRef.get(selectedObjectRef)
     ?? previousIndex?.objects.find((object) => object.objectRef === selectedObjectRef);

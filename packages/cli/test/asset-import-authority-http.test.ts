@@ -1,5 +1,5 @@
 import * as http from 'node:http';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, realpath } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,6 +25,8 @@ import type {
 import { AssetImportBindingService } from '../src/asset-import-authority/binding.js';
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
+import { EditorWorkspaceAuthority } from '../src/editor-workspace-authority/editor-workspace-authority.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 
 const servers: http.Server[] = [];
 const roots: string[] = [];
@@ -414,6 +416,54 @@ afterEach(async () => {
 });
 
 describe('project asset import authority HTTP boundary', () => {
+  it('requires matching browser binding for workspace state and publishes only under the guarded write lease', async () => {
+    const fixture = await bindingHarness();
+    await writeFile(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {} }));
+    const workspace = new EditorWorkspaceAuthority(await realpath(fixture.projectRoot), {
+      leaseManager: new NodeLocalLeaseManager(path.join(path.dirname(fixture.projectRoot), 'coordination')),
+    });
+    fixture.target.workspace = workspace;
+    const browserSessionId = 'workspace-http-browser';
+    const token = await bindProject(fixture, browserSessionId);
+    const state = { workspaceSessionId: itemId, browserSessionId, workspaceGeneration: 0, availability: 'clean',
+      dirtyScopes: [], busyReasons: [], blockedReasons: [] };
+    const send = (action: string, body: object, binding = token) => request(fixture.origin,
+      `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/${action}`, { method: 'POST',
+        headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: binding }), body: JSON.stringify(body) });
+    try {
+      expect((await send('heartbeat', { ...state, browserSessionId: 'another-browser' })).response.status).toBe(403);
+      expect((await send('heartbeat', { ...state, draftText: 'private text must not be accepted' })).response.status).toBe(400);
+      const heartbeat = await send('heartbeat', state);
+      expect(heartbeat.response.status).toBe(200);
+      expect(Object.keys(heartbeat.body.data).sort()).toEqual(['heartbeatAt', 'workspaceGeneration']);
+      const snapshot = await send('snapshot', { workspaceSessionId: itemId, browserSessionId });
+      expect(snapshot.response.status).toBe(200);
+      expect(snapshot.text).not.toContain(fixture.projectRoot.replaceAll('\\', '\\\\'));
+      expect(snapshot.text).not.toContain('browserSessionId');
+      const baseline = snapshot.body.data.diskBaseline;
+      const saving = { ...state, workspaceGeneration: 1, availability: 'busy', busyReasons: ['saving'] };
+      const begin = { ...saving, purpose: 'save-all', expectedProjectRevision: baseline.projectRevision,
+        expectedCoordinationRevision: baseline.coordinationRevision };
+      const stale = await send('begin', { ...begin, expectedCoordinationRevision: '0'.repeat(64) });
+      expect(stale.body.error.code).toBe('EDITOR_PROJECT_BASELINE_CHANGED');
+      const begun = await send('begin', begin);
+      expect(begun.response.status).toBe(200);
+      const active = { ...saving, writeLeaseId: begun.body.data.writeLeaseId };
+      const published = await send('publish', { ...active, path: 'content/scenario/start.gal', expectedSha256: null,
+        text: '@scene start\n凛：真实绑定保存。\n@end\n' });
+      expect(published.response.status).toBe(200);
+      expect(await readFile(path.join(fixture.projectRoot, 'content/scenario/start.gal'), 'utf8')).toContain('真实绑定保存');
+      const finished = await send('finish', { ...active, workspaceGeneration: 2, availability: 'clean', busyReasons: [] });
+      expect(finished.response.status).toBe(200);
+      expect(finished.body.data.changedPaths).toEqual(['content/scenario/start.gal']);
+      expect(finished.body.data.mutationNotice.status).toBe('written');
+      const late = await send('publish', { ...active, path: 'content/scenario/start.gal', expectedSha256: published.body.data.sha256, text: 'late' });
+      expect(late.body.error.code).toBe('HUMAN_WORKSPACE_STATE_CORRUPT');
+    } finally {
+      await workspace.close();
+    }
+  });
+
   it('injects a rotating token only for an explicitly bound main Editor document', async () => {
     const html = '<html><head></head><body></body></html>';
     const config = { authorityContractVersion: 1 as const, endpoint: ASSET_IMPORT_AUTHORITY_BASE_PATH, token: authorityToken };

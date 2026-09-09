@@ -30,6 +30,7 @@ export * from './review-presentation.js';
 export * from './review-projection.js';
 export * from './review-receipts.js';
 export * from './review-terminal.js';
+export * from './human-workspace-contract.js';
 export * from './capability-contract.js';
 export * from './capability-registry.js';
 export * from './error-catalog.js';

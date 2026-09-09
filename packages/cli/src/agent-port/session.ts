@@ -12,6 +12,7 @@ import {
   loadProjectSnapshot,
   nativeCapabilityToMcpTool,
   normalizeAuthoringError,
+  humanWorkspaceCommitBlock,
   type AuthoringCapabilityId,
   type AuthoringEnvelope,
   type AutonomyPolicy,
@@ -20,6 +21,8 @@ import {
   type CommitJournalStatus,
   type EvidenceFreshness,
   type RecoveryDisposition,
+  type HumanWorkspaceSummary,
+  type ProjectMutationNotice,
 } from '@surdet/authoring';
 import { dispatchAuthoringCapability } from '../authoring/authoring-dispatcher.js';
 import { AuthoringService } from '../authoring/authoring-service.js';
@@ -27,6 +30,8 @@ import { NodeChangeStore } from '../authoring/node-change-store.js';
 import { NodeLocalLeaseManager, type LeaseInspection } from '../authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
+import { HumanWorkspaceStore } from '../authoring/human-workspace-store.js';
+import { ProjectMutationNoticeStore } from '../authoring/project-mutation-notice-store.js';
 import { recordInvocation } from './invocation-ledger.js';
 import { generateDeliveryCapsule, type SealedDeliveryCapsule } from './delivery-capsule.js';
 import { isCapabilityAllowed } from './policy.js';
@@ -62,6 +67,8 @@ export interface SessionDescription {
   projectIdentity: string;
   projectName: string;
   projectRevision: string;
+  humanWorkspace: HumanWorkspaceSummary;
+  projectMutation?: ProjectMutationNotice;
   policy: AutonomyPolicy;
   review?: {
     reviewState: 'unreviewed' | 'awaiting-decision' | 'human-reviewed' | 'awaiting-approval' | 'owner-approved' | 'returned' | 'stale';
@@ -206,6 +213,7 @@ function capabilityAvailability(
   activeChangeId: string | undefined,
   activeRecord: ChangeRecord | undefined,
   capability: (typeof AUTHORING_CAPABILITY_REGISTRY)[number],
+  humanWorkspace: HumanWorkspaceSummary,
 ): SessionCapability {
   let availability: CapabilityAvailability;
   let reason: string | undefined;
@@ -231,6 +239,9 @@ function capabilityAvailability(
     && CHANGE_STATUS_SENSITIVE_CAPABILITIES.has(capability.id)) {
     availability = 'state-blocked';
     reason = `当前 change 状态 '${activeRecord.status}' 不允许普通 mutation；先使用 recovery capability`;
+  } else if (capability.id === 'change.commit' && humanWorkspaceCommitBlock(humanWorkspace) !== null) {
+    availability = 'state-blocked';
+    reason = `human-workspace-${humanWorkspace.availability}`;
   } else {
     availability = 'available';
   }
@@ -274,6 +285,8 @@ export class AgentPortSession {
   private lastChangeIdValue?: string;
   private invocationTail: Promise<void> = Promise.resolve();
   private readonly leaseManager = new NodeLocalLeaseManager();
+  private readonly humanWorkspaceStore = new HumanWorkspaceStore({ dataRoot: this.leaseManager.dataRoot });
+  private readonly mutationNoticeStore = new ProjectMutationNoticeStore({ dataRoot: this.leaseManager.dataRoot });
 
   constructor(
     readonly sessionId: string,
@@ -535,6 +548,9 @@ export class AgentPortSession {
   }
 
   async describe(): Promise<SessionDescription> {
+    const { summary: humanWorkspace } = await this.humanWorkspaceStore.inspect(this.projectRoot);
+    // A notice is only a hint. Its loss cannot hide workspace state or prevent re-inspection.
+    const projectMutation = await this.mutationNoticeStore.readLatest(this.projectRoot).catch(() => null);
     const opened = await this.activeOpenedChange();
     const record = opened?.record;
     const changeLease = this.activeChangeIdValue === undefined
@@ -584,7 +600,7 @@ export class AgentPortSession {
         recoveryDisposition = 'MANUAL_RECOVERY_REQUIRED';
       }
     }
-    const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition));
+    const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition, humanWorkspace));
     const activeIntegration = record?.integration;
     const review = reviewFor(record);
     const activeChange = record === undefined
@@ -631,6 +647,8 @@ export class AgentPortSession {
       projectIdentity: this.projectIdentity,
       projectName: this.projectName,
       projectRevision: this.openedProjectRevision,
+      humanWorkspace,
+      ...(projectMutation === null ? {} : { projectMutation }),
       policy: this.policy,
       review,
       ...(activeChange === undefined ? {} : { activeChange }),
@@ -644,8 +662,13 @@ export class AgentPortSession {
         || journal.manualRecoveryRequired
         || changeLease.manualRecoveryRequired
         || projectLease.manualRecoveryRequired
+        || humanWorkspace.blockedReasons.some(reason => reason === 'workspace-state-corrupt' || reason === 'write-settlement-failed')
         || recoveryDisposition === 'MANUAL_RECOVERY_REQUIRED',
-      nextActions,
+      nextActions: humanWorkspaceCommitBlock(humanWorkspace) === null
+        ? nextActions
+        : humanWorkspace.availability === 'blocked' && humanWorkspace.retryAfterMs === undefined
+          ? []
+          : ['session.describe'],
     };
   }
 

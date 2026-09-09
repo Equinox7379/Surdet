@@ -73,10 +73,14 @@ import {
 import { NodeChangeStore } from './node-change-store.js';
 import { CompositionService, compositionServiceForProject } from './composition-service.js';
 import { reviewServiceForProject } from './review-service.js';
-import { NodeLocalLeaseManager } from './node-local-lease.js';
+import { NodeLocalLeaseManager, type LeaseHandle } from './node-local-lease.js';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 import { ChangeRecordProjectStorage } from './working-project-storage.js';
+import { HumanWorkspaceStore } from './human-workspace-store.js';
+import { assertHumanWorkspaceAllowsAgentCommit } from './human-workspace-gate.js';
+import { loadProjectCoordinationBaseline } from './project-coordination-baseline.js';
+import { ProjectMutationNoticeStore } from './project-mutation-notice-store.js';
 
 export interface ServiceMetadata {
   projectIdentity: string;
@@ -89,6 +93,10 @@ export interface ServiceMetadata {
 export interface ServiceResult<T> extends ServiceMetadata {
   result: T;
 }
+
+export type AgentCommitCoordination =
+  | { status: 'written'; mutationSequence: number }
+  | { status: 'warning'; reason: 'coordination-unavailable'; message: string };
 
 function hashText(text: string): string {
   return crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
@@ -140,11 +148,11 @@ async function loadProjectContext(
 async function withProjectLeaseRetry<T>(
   leaseManager: NodeLocalLeaseManager,
   projectRootIdentity: string,
-  callback: () => Promise<T>,
+  callback: (lease: LeaseHandle) => Promise<T>,
 ): Promise<T> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      return await leaseManager.withProjectLease(projectRootIdentity, async () => callback());
+      return await leaseManager.withProjectLease(projectRootIdentity, callback);
     } catch (error) {
       const transientMissingLease = error instanceof AuthoringOperationError
         && error.code === 'LEASE_CORRUPT'
@@ -440,13 +448,23 @@ async function inspectRecoveryFromStore(
 }
 
 export class AuthoringService {
+  private readonly humanWorkspaceStore: HumanWorkspaceStore;
+  private readonly mutationNoticeStore: ProjectMutationNoticeStore;
+
   constructor(
     private readonly leasedStore?: NodeChangeStore,
     private readonly leaseManager = new NodeLocalLeaseManager(),
-  ) {}
+    coordination: { humanWorkspaceStore?: HumanWorkspaceStore; mutationNoticeStore?: ProjectMutationNoticeStore } = {},
+  ) {
+    this.humanWorkspaceStore = coordination.humanWorkspaceStore ?? new HumanWorkspaceStore({ dataRoot: leaseManager.dataRoot });
+    this.mutationNoticeStore = coordination.mutationNoticeStore ?? new ProjectMutationNoticeStore({ dataRoot: leaseManager.dataRoot });
+  }
 
   withLeasedStore(leasedStore: NodeChangeStore): AuthoringService {
-    return new AuthoringService(leasedStore, this.leaseManager);
+    return new AuthoringService(leasedStore, this.leaseManager, {
+      humanWorkspaceStore: this.humanWorkspaceStore,
+      mutationNoticeStore: this.mutationNoticeStore,
+    });
   }
 
   private loadProjectContext(storage: NodeProjectStorage): Promise<ProjectSnapshotContext> {
@@ -1017,7 +1035,7 @@ export class AuthoringService {
   async commit(
     changeId: string,
     approvalRef?: ReviewApprovalRef,
-  ): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[] }>> {
+  ): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[]; coordination: AgentCommitCoordination }>> {
     const opened = await NodeChangeStore.openByChangeId(changeId);
     if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
     let verifiedApproval: VerifiedReviewApproval | undefined;
@@ -1033,7 +1051,8 @@ export class AuthoringService {
       verifiedApproval = inspected;
     }
     return this.withOpenChange(changeId, async (context) => {
-      return withProjectLeaseRetry(this.leaseManager, context.session.record.projectRootIdentity, async () => {
+      return withProjectLeaseRetry(this.leaseManager, context.session.record.projectRootIdentity, async (projectLease) => {
+        await assertHumanWorkspaceAllowsAgentCommit(this.humanWorkspaceStore, context.storage.rootIdentity);
         const freshProject = await loadSnapshot(context.storage);
         await assertBaseStillMatches(context.session, freshProject);
         if (verifiedApproval !== undefined) {
@@ -1043,8 +1062,27 @@ export class AuthoringService {
         if (rebound === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
         const reboundSession = openChange(rebound, context.store, context.storage);
         const result = await commitChange(reboundSession, context.storage);
-        const snapshot = await loadSnapshot(context.storage);
-        return { ...metadataForChange(reboundSession, snapshot.revision), result };
+        let projectRevision = context.snapshot.revision;
+        let coordination: AgentCommitCoordination;
+        try {
+          const baseline = await loadProjectCoordinationBaseline(context.storage);
+          projectRevision = baseline.projectRevision;
+          const notice = await this.mutationNoticeStore.record(context.storage.rootIdentity, {
+            projectRevision,
+            coordinationRevision: baseline.coordinationRevision,
+            initiator: 'external-agent',
+            changedPaths: result.files,
+            changeId,
+          }, () => this.leaseManager.assertOwned(projectLease));
+          coordination = { status: 'written', mutationSequence: notice.sequence };
+        } catch {
+          coordination = {
+            status: 'warning',
+            reason: 'coordination-unavailable',
+            message: '项目已提交，协调通知暂不可用；请重新读取项目。',
+          };
+        }
+        return { ...metadataForChange(reboundSession, projectRevision), result: { ...result, coordination } };
       });
     });
   }

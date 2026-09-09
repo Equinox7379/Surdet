@@ -1,6 +1,8 @@
 import { EDITOR_MODE_GROUPS, EDITOR_MODES, type EditorModeId } from './editor-modes.js';
 
 export type ProjectSaveState = 'saved' | 'dirty' | 'partial-failure';
+export type RelayProtectionState = 'unavailable' | 'connected' | 'lost';
+export type RelayUpdateState = 'none' | 'pending' | 'conflict';
 
 export interface ProjectBarProjection {
   projectName: string;
@@ -13,6 +15,9 @@ export interface ProjectBarProjection {
   writeLocked?: boolean;
   writeLockLabel?: string;
   writeLockTitle?: string;
+  relayProtection?: RelayProtectionState;
+  relayUpdate?: RelayUpdateState;
+  relayDirty?: boolean;
 }
 
 export interface ProjectBarActions {
@@ -23,6 +28,10 @@ export interface ProjectBarActions {
   onSaveProject(): void;
   onLoadDemo?(): void;
   onExportCurrent?(): void;
+  onViewProjectChanges?(): void;
+  onSyncProject?(): void;
+  onDiscardProjectDrafts?(): void;
+  onKeepProjectDrafts?(): void;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -77,6 +86,73 @@ function saveStateLabel(state: ProjectSaveState): string {
   return '已保存';
 }
 
+function relayProtectionLabel(state: RelayProtectionState): string {
+  if (state === 'connected') return '接力保护：已连接';
+  if (state === 'lost') return '接力保护：连接中断';
+  return '接力保护：未接入';
+}
+
+function relayUpdateLabel(state: RelayUpdateState): string {
+  if (state === 'pending') return '外部变更已写入项目';
+  if (state === 'conflict') return '项目磁盘已变化，未覆盖你的草稿';
+  return '';
+}
+
+function setRelayActionState(
+  button: HTMLButtonElement | null,
+  visible: boolean,
+  disabled: boolean,
+): void {
+  if (!button) return;
+  button.hidden = !visible;
+  button.setAttribute('aria-hidden', String(!visible));
+  button.disabled = disabled;
+}
+
+function setRelayActionLabel(button: HTMLButtonElement | null, label: string): void {
+  const labelElement = button?.querySelector<HTMLElement>('.editor-command-label');
+  if (labelElement) labelElement.textContent = label;
+}
+
+function updateRelayProjection(
+  projection: Pick<ProjectBarProjection, 'relayProtection' | 'relayUpdate' | 'relayDirty' | 'writeLocked'>,
+  root: ParentNode,
+): void {
+  const relay = root.querySelector<HTMLElement>('.editor-relay-status');
+  if (!relay) return;
+  const protection = projection.relayProtection ?? 'unavailable';
+  const update = projection.relayUpdate ?? 'none';
+  const dirty = projection.relayDirty === true;
+  const connected = protection === 'connected';
+  const writeDisabled = projection.writeLocked === true;
+  const protectionElement = relay.querySelector<HTMLElement>('.editor-relay-protection');
+  const updateElement = relay.querySelector<HTMLElement>('.editor-relay-update');
+  const viewChanges = relay.querySelector<HTMLButtonElement>('[data-action="view-project-changes"]');
+  const syncProject = relay.querySelector<HTMLButtonElement>('[data-action="sync-project"]');
+  const keepDrafts = relay.querySelector<HTMLButtonElement>('[data-action="keep-project-drafts"]');
+  const discardDrafts = relay.querySelector<HTMLButtonElement>('[data-action="discard-project-drafts"]');
+
+  relay.setAttribute('data-relay-protection', protection);
+  relay.setAttribute('data-relay-update', update);
+  relay.setAttribute('data-relay-dirty', String(dirty));
+  if (protectionElement) protectionElement.textContent = relayProtectionLabel(protection);
+  if (updateElement) {
+    updateElement.textContent = relayUpdateLabel(update);
+    updateElement.hidden = update === 'none';
+  }
+
+  const hasExternalUpdate = update === 'pending' || update === 'conflict';
+  setRelayActionLabel(viewChanges, update === 'conflict' ? '查看变化' : '查看范围');
+  setRelayActionState(viewChanges, hasExternalUpdate, false);
+  setRelayActionState(syncProject, update === 'pending' && connected, writeDisabled);
+  setRelayActionState(keepDrafts, update === 'conflict', false);
+  setRelayActionState(
+    discardDrafts,
+    connected && (update === 'conflict' || (update === 'none' && dirty)),
+    writeDisabled,
+  );
+}
+
 /**
  * 只更新项目栏的事实投影，不重建命令按钮，也不复制任何业务状态。
  * 编辑、选择和保存回调都可以复用这一入口，让顶栏始终反映当前内存事实。
@@ -84,7 +160,15 @@ function saveStateLabel(state: ProjectSaveState): string {
 export function updateProjectBarProjection(
   projection: Pick<
     ProjectBarProjection,
-    'projectName' | 'objectLabel' | 'saveState' | 'writeLocked' | 'writeLockLabel' | 'writeLockTitle'
+    | 'projectName'
+    | 'objectLabel'
+    | 'saveState'
+    | 'writeLocked'
+    | 'writeLockLabel'
+    | 'writeLockTitle'
+    | 'relayProtection'
+    | 'relayUpdate'
+    | 'relayDirty'
   >,
   root: ParentNode = document,
 ): void {
@@ -112,6 +196,7 @@ export function updateProjectBarProjection(
   for (const button of lockedCommands) {
     button.disabled = projection.writeLocked === true;
   }
+  updateRelayProjection(projection, root);
 }
 
 export function renderProjectBar(
@@ -194,7 +279,26 @@ export function renderProjectBar(
   feedback.setAttribute('data-editor-region', 'operation-feedback');
   feedback.append(saveState, status);
 
-  header.append(identity, context, commands, feedback);
+  const relayStatus = element('div', 'editor-relay-status');
+  relayStatus.setAttribute('aria-live', 'polite');
+  const relayProtection = element('span', 'editor-relay-protection');
+  const relayUpdate = element('span', 'editor-relay-update');
+  const relayActions = element('span', 'editor-relay-actions');
+  if (actions.onViewProjectChanges) {
+    relayActions.appendChild(actionButton('查看范围', 'view-project-changes', actions.onViewProjectChanges));
+  }
+  if (actions.onSyncProject) {
+    relayActions.appendChild(actionButton('同步项目', 'sync-project', actions.onSyncProject));
+  }
+  if (actions.onKeepProjectDrafts) {
+    relayActions.appendChild(actionButton('保留草稿', 'keep-project-drafts', actions.onKeepProjectDrafts));
+  }
+  if (actions.onDiscardProjectDrafts) {
+    relayActions.appendChild(actionButton('放弃草稿并同步', 'discard-project-drafts', actions.onDiscardProjectDrafts));
+  }
+  relayStatus.append(relayProtection, relayUpdate, relayActions);
+  header.append(identity, context, commands, feedback, relayStatus);
+  updateRelayProjection(projection, header);
   return header;
 }
 

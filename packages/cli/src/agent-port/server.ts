@@ -4,6 +4,8 @@ import {
   AUTHORING_ENVELOPE_SCHEMA_VERSION,
   AUTHORING_CAPABILITY_REGISTRY,
   DELIVERY_CAPSULE_VERSION,
+  HUMAN_WORKSPACE_SUMMARY_SCHEMA,
+  PROJECT_MUTATION_NOTICE_SCHEMA,
   createEnvelopeJsonSchema,
   createFailureEnvelope,
   createSuccessEnvelope,
@@ -259,6 +261,8 @@ const capsuleOutputSchema: JsonSchema = {
 const sessionDescriptionSchema: JsonSchema = {
   type: 'object',
   properties: {
+    humanWorkspace: HUMAN_WORKSPACE_SUMMARY_SCHEMA,
+    projectMutation: PROJECT_MUTATION_NOTICE_SCHEMA,
     sessionId: { type: 'string' },
     startedAt: { type: 'string' },
     engineVersion: { type: 'string' },
@@ -342,7 +346,7 @@ const sessionDescriptionSchema: JsonSchema = {
   required: [
     'sessionId', 'startedAt', 'engineVersion', 'contractVersion', 'projectIdentity',
     'projectName', 'projectRevision', 'policy', 'resumed', 'capabilities', 'evidence',
-    'lease', 'journal', 'recoveryDisposition', 'manualRecoveryRequired', 'nextActions',
+    'lease', 'journal', 'recoveryDisposition', 'manualRecoveryRequired', 'nextActions', 'humanWorkspace',
   ],
   additionalProperties: false,
 };

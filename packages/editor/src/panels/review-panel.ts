@@ -3,6 +3,7 @@ import type {
   ReviewConflict,
 } from '@surdet/authoring';
 import { state, h, setStatus } from '../state.js';
+import { publishEditorWorkspaceState } from '../editor-workspace.js';
 import {
   canSealDecision,
   labelForCandidate,
@@ -173,6 +174,7 @@ function resetDecisionIdentityIfChanged(workspace: ReviewWorkspaceState, previou
   if (decisionContentIdentity(workspace.decisionDraft) === previous) return;
   workspace.decisionDraft.decisionId = '';
   decisionSealStates.delete(workspace);
+  publishEditorWorkspaceState();
 }
 
 function safeGroupIncluded(workspace: ReviewWorkspaceState, group: ReviewSafeGroupView): boolean {

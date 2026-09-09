@@ -91,6 +91,7 @@ describe('Surdet Agent Port session and policy contract', () => {
     expectCode(() => parseAgentPortArgs(['--project', 'x', '--policy', 'observe', '--unknown']), 'INVALID_REQUEST');
     expectCode(() => parseAgentPortArgs(['--project', 'x', '--policy', 'observe', '--policy', 'stage']), 'INVALID_REQUEST');
     expectCode(() => parseAgentPortArgs(['--project', 'x', '--policy', 'observe', '--contract-version', '0.9.0']), 'CONTRACT_VERSION_UNSUPPORTED');
+    expectCode(() => parseAgentPortArgs(['--project', 'x', '--policy', 'observe', '--contract-version', '2.1.0']), 'CONTRACT_VERSION_UNSUPPORTED');
     expect(allowedCapabilitiesForPolicy('observe')).toContain('project.inspect');
     expect(allowedCapabilitiesForPolicy('observe')).not.toContain('change.begin');
   });

@@ -2,18 +2,28 @@ import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AssetImportBindingService } from './binding.js';
 import { ProjectAssetImportAuthority } from './authority.js';
-import { openAssetImportAuthorityPaths } from './filesystem.js';
+import { openAssetImportAuthorityPaths, absoluteAssetImportProjectPath, assetImportFileIdentity } from './filesystem.js';
 import {
   ASSET_IMPORT_AUTHORITY_BASE_PATH,
   createAssetImportAuthorityHttpHandler,
   type AssetImportAuthorityHttpTarget,
 } from './http-handler.js';
-import { acquireAssetImportProjectLease, type AssetImportProjectLease } from './project-lease.js';
 import { AssetImportRecordStore } from './record-store.js';
 import { AssetProjectMutationCoordinator } from './mutation-coordinator.js';
 import { AssetRelocationStore } from './asset-relocation-store.js';
 import { ProjectAssetRelocationAuthority } from './asset-relocation-authority.js';
 import { ProjectSceneLifecycleAuthority } from './scene-lifecycle-authority.js';
+import { NodeLocalLeaseManager } from '../authoring/node-local-lease.js';
+import { NodeProjectStorage } from '../authoring/node-project-storage.js';
+import { loadProjectCoordinationBaseline, type ProjectCoordinationBaseline } from '../authoring/project-coordination-baseline.js';
+import { ProjectMutationNoticeStore } from '../authoring/project-mutation-notice-store.js';
+import { EditorWorkspaceAuthority } from '../editor-workspace-authority/editor-workspace-authority.js';
+import { ProjectMutationLeaseContext } from '../editor-workspace-authority/project-mutation-lease-context.js';
+import type {
+  AssetImportJournal,
+  AssetRelocationJournal,
+  AssetRelocationDetailResponse,
+} from './types.js';
 
 export interface AssetImportAuthorityBrowserConfig {
   authorityContractVersion: 1;
@@ -50,12 +60,50 @@ export interface AssetImportAuthorityVitePlugin {
 }
 
 interface Runtime {
-  authority: AssetImportAuthorityHttpTarget;
-  lease: AssetImportProjectLease;
-  close(): void;
+  authority: AssetImportAuthorityHttpTarget & { workspace: EditorWorkspaceAuthority };
+  workspace: EditorWorkspaceAuthority;
+  close(): Promise<void>;
 }
 
 const INJECTED_MARKER = 'data-surdet-asset-import-authority';
+const MUTATION_NOTICE_WARNING = '[surdet] project mutation notice unavailable';
+
+type MutationNoticeInitiator = 'asset-authority' | 'scene-authority';
+
+function warnMutationNotice(): void {
+  console.warn(MUTATION_NOTICE_WARNING);
+}
+
+function changedCoordinationPaths(
+  before: ProjectCoordinationBaseline | null,
+  after: ProjectCoordinationBaseline | null,
+): string[] {
+  if (before === null || after === null) return [];
+  const left = new Map(before.files.map((file) => [file.path, file.sha256]));
+  const right = new Map(after.files.map((file) => [file.path, file.sha256]));
+  return [...new Set([...left.keys(), ...right.keys()])]
+    .filter((path) => left.get(path) !== right.get(path))
+    .sort((leftPath, rightPath) => leftPath.localeCompare(rightPath));
+}
+
+function relocationDetailPaths(detail: AssetRelocationDetailResponse): string[] {
+  return [
+    ...(detail.receipt?.moves.flatMap((move) => [move.sourcePath, move.targetPath]) ?? []),
+    ...(detail.receipt?.textFiles.map((file) => file.path) ?? []),
+    ...(detail.undoReceipt?.moves.flatMap((move) => [move.sourcePath, move.targetPath]) ?? []),
+    ...(detail.undoReceipt?.restoredTextFiles.map((file) => file.path) ?? []),
+    ...(detail.undoReceipt === null ? [] : [detail.undoReceipt.sourcePath, detail.undoReceipt.targetPath]),
+  ];
+}
+
+function journalProgressed(
+  before: Pick<AssetImportJournal | AssetRelocationJournal, 'journalVersion' | 'status'> | null,
+  after: Pick<AssetImportJournal | AssetRelocationJournal, 'journalVersion' | 'status'>,
+): boolean {
+  return before === null
+    || before.journalVersion !== after.journalVersion
+    || before.status !== after.status;
+}
 
 function scriptSource(config: AssetImportAuthorityBrowserConfig): string {
   const json = JSON.stringify(config)
@@ -84,11 +132,62 @@ function expectedOrigin(request: IncomingMessage): string | undefined {
 
 async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePluginOptions, 'projectRoot' | 'dataRoot'>>): Promise<Runtime> {
   const paths = await openAssetImportAuthorityPaths({ projectRoot: options.projectRoot, dataRoot: options.dataRoot });
-  const lease = await acquireAssetImportProjectLease({ projectRoot: paths.projectRoot, dataRoot: paths.dataRoot });
+  const leaseManager = new NodeLocalLeaseManager();
+  const mutationContext = await ProjectMutationLeaseContext.open(paths.projectRoot, leaseManager);
+  const workspace = new EditorWorkspaceAuthority(paths.projectRoot, { leaseManager });
   let stopChallengeCleanup: (() => void) | undefined;
   try {
     const store = new AssetImportRecordStore(paths);
-    const mutationCoordinator = new AssetProjectMutationCoordinator();
+    const relocationStore = new AssetRelocationStore(paths);
+    const mutationNoticeStore = new ProjectMutationNoticeStore({ dataRoot: leaseManager.dataRoot });
+    const readBaseline = async (): Promise<ProjectCoordinationBaseline | null> => {
+      try {
+        return await loadProjectCoordinationBaseline(await NodeProjectStorage.open(paths.projectRoot));
+      } catch {
+        warnMutationNotice();
+        return null;
+      }
+    };
+    const readImportJournal = async (operationId: string): Promise<AssetImportJournal | null> => {
+      return (await store.readOperation(operationId)).journal;
+    };
+    const readRelocationJournal = async (operationId: string): Promise<AssetRelocationJournal | null> => {
+      return (await relocationStore.read(operationId))?.journal ?? null;
+    };
+    const targetIdentities = async (targets: string[]): Promise<Map<string, string> | null> => {
+      try {
+        return new Map(await Promise.all([...new Set(targets)].map(async target => {
+          const identity = await assetImportFileIdentity(absoluteAssetImportProjectPath(paths, target)).catch(error => {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw error;
+          });
+          return [target, JSON.stringify(identity)] as const;
+        })));
+      } catch {
+        warnMutationNotice();
+        return null;
+      }
+    };
+    const recordNotice = async (
+      initiator: MutationNoticeInitiator,
+      operationId: string,
+      changedPaths: readonly string[],
+      baselineAfter: ProjectCoordinationBaseline | null,
+    ): Promise<void> => {
+      if (changedPaths.length === 0 || baselineAfter === null) return;
+      try {
+        await mutationNoticeStore.record(paths.projectRoot, {
+          projectRevision: baselineAfter.projectRevision,
+          coordinationRevision: baselineAfter.coordinationRevision,
+          initiator,
+          changedPaths: [...new Set(changedPaths)].sort((left, right) => left.localeCompare(right)),
+          operationId,
+        }, () => mutationContext.assertHeld());
+      } catch {
+        warnMutationNotice();
+      }
+    };
+    const mutationCoordinator = new AssetProjectMutationCoordinator(mutationContext);
     const binding = new AssetImportBindingService(paths, store);
     await binding.recoverExpiredChallenges();
     stopChallengeCleanup = binding.startExpiredChallengeCleanup();
@@ -96,7 +195,7 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
       textHasher: {
         sha256: async (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
       },
-      assertLeaseHeld: () => lease.assertHeld(),
+      assertLeaseHeld: () => mutationContext.assertHeld(),
       mutationCoordinator,
     });
     const relocation = new ProjectAssetRelocationAuthority(
@@ -107,19 +206,18 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         textHasher: {
           sha256: async (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
         },
-        assertLeaseHeld: () => lease.assertHeld(),
+        assertLeaseHeld: () => mutationContext.assertHeld(),
         mutationCoordinator,
       },
     );
     const sceneLifecycle = new ProjectSceneLifecycleAuthority(paths, {
-      assertLeaseHeld: () => lease.assertHeld(),
+      assertLeaseHeld: () => mutationContext.assertHeld(),
       mutationCoordinator,
+      onRecovered: async (requestId, changedPaths) => recordNotice('scene-authority', requestId, changedPaths, await readBaseline()),
     });
-    await authority.list();
-    await relocation.list();
-    await sceneLifecycle.recoverPending();
-    const target: AssetImportAuthorityHttpTarget = {
+    const target: AssetImportAuthorityHttpTarget & { workspace: EditorWorkspaceAuthority } = {
       projectIdentity: paths.projectIdentity,
+      workspace,
       createChallenge: (browserSessionId) => binding.createChallenge(browserSessionId),
       confirmChallenge: (challengeId, request) => binding.confirmChallenge(challengeId, request),
       validateBinding: (token, browserSessionId) => browserSessionId === undefined
@@ -127,32 +225,102 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         : binding.validateBinding(token, browserSessionId),
       revoke: (browserSessionId) => binding.revoke(browserSessionId),
       createOperation: (request) => authority.createOperation(request),
-      expectedUploadBytes: (operationId, itemId) => authority.expectedUploadBytes(operationId, itemId),
+      expectedUploadBytes: (operationId, itemId) => mutationContext.run(() => authority.expectedUploadBytes(operationId, itemId)),
       uploadItem: (operationId, itemId, body) => authority.uploadItem(operationId, itemId, body),
       plan: (operationId, request) => authority.plan(operationId, request),
       seal: (operationId, request) => authority.seal(operationId, request),
-      commit: (operationId, request) => authority.commit(operationId, request),
+      commit: (operationId, request) => mutationContext.run(async () => {
+        const before = await readImportJournal(operationId);
+        const response = await authority.commit(operationId, request);
+        if (journalProgressed(before, response.operation)) {
+          await recordNotice('asset-authority', operationId, response.receipt.files.map(file => file.targetPath), await readBaseline());
+        }
+        return response;
+      }),
       cancel: (operationId) => authority.cancel(operationId),
-      list: () => authority.list(),
-      query: (operationId) => authority.query(operationId),
-      issueOperationToken: (operationId) => authority.issueOperationToken(operationId),
-      recover: (operationId, request) => authority.recover(operationId, request),
-      undo: (operationId, request) => authority.undo(operationId, request),
+      list: () => mutationContext.run(() => authority.list()),
+      query: (operationId) => mutationContext.run(() => authority.query(operationId)),
+      issueOperationToken: (operationId) => mutationContext.run(() => authority.issueOperationToken(operationId)),
+      recover: (operationId, request) => mutationContext.run(async () => {
+        const before = await readImportJournal(operationId);
+        const targets = (await store.readPublication(operationId))?.files.map(file => file.targetPath) ?? [];
+        const beforeFiles = await targetIdentities(targets);
+        const response = await authority.recover(operationId, request);
+        if (journalProgressed(before, response.detail.operation)) {
+          const afterFiles = await targetIdentities(targets);
+          if (beforeFiles !== null && afterFiles !== null) {
+            const changed = targets.filter(target => beforeFiles.get(target) !== afterFiles.get(target));
+            if (changed.length > 0) await recordNotice('asset-authority', operationId, changed, await readBaseline());
+          }
+        }
+        return response;
+      }),
+      undo: (operationId, request) => mutationContext.run(async () => {
+        const before = await readImportJournal(operationId);
+        const response = await authority.undo(operationId, request);
+        if (journalProgressed(before, response.operation)) {
+          await recordNotice('asset-authority', operationId, response.undoReceipt.removedPaths, await readBaseline());
+        }
+        return response;
+      }),
       verifyOperationToken: (operationId, token) => authority.verifyOperationToken(operationId, token),
       relocationPlan: (request) => relocation.plan(request),
-      relocationList: () => relocation.list(),
-      relocationQuery: (operationId) => relocation.query(operationId),
-      relocationCommit: (operationId, request) => relocation.commit(operationId, request),
+      relocationList: () => mutationContext.run(() => relocation.list()),
+      relocationQuery: (operationId) => mutationContext.run(() => relocation.query(operationId)),
+      relocationCommit: (operationId, request) => mutationContext.run(async () => {
+        const before = await readRelocationJournal(operationId);
+        const response = await relocation.commit(operationId, request);
+        if (journalProgressed(before, response.operation)) {
+          await recordNotice('asset-authority', operationId, relocationDetailPaths(response), await readBaseline());
+        }
+        return response;
+      }),
       relocationCancel: (operationId) => relocation.cancel(operationId),
-      relocationRecover: (operationId, request) => relocation.recover(operationId, request),
-      relocationUndo: (operationId, request) => relocation.undo(operationId, request),
+      relocationRecover: (operationId, request) => mutationContext.run(async () => {
+        const stored = await relocationStore.read(operationId);
+        const before = stored?.journal ?? null;
+        const targets = stored === null ? [] : [...stored.request.moves.flatMap(move => [move.sourcePath, move.targetPath]), ...stored.textFiles.map(file => file.path)];
+        const beforeFiles = await targetIdentities(targets);
+        const response = await relocation.recover(operationId, request);
+        if (journalProgressed(before, response.operation)) {
+          const afterFiles = await targetIdentities(targets);
+          if (beforeFiles !== null && afterFiles !== null) {
+            const changed = targets.filter(target => beforeFiles.get(target) !== afterFiles.get(target));
+            if (changed.length > 0) await recordNotice('asset-authority', operationId, changed, await readBaseline());
+          }
+        }
+        return response;
+      }),
+      relocationUndo: (operationId, request) => mutationContext.run(async () => {
+        const before = await readRelocationJournal(operationId);
+        const response = await relocation.undo(operationId, request);
+        if (journalProgressed(before, response.operation)) {
+          await recordNotice('asset-authority', operationId, relocationDetailPaths(response), await readBaseline());
+        }
+        return response;
+      }),
       scenePlan: (request) => sceneLifecycle.plan(request),
-      sceneCommit: (request) => sceneLifecycle.commit(request),
+      sceneCommit: (request, workspaceWrite) => workspaceWrite === undefined
+        ? mutationContext.run(async () => {
+          const before = await readBaseline();
+          const response = await sceneLifecycle.commit(request);
+          const after = await readBaseline();
+          const changedPaths = changedCoordinationPaths(before, after);
+          if (changedPaths.length > 0) {
+            await recordNotice(
+              'scene-authority',
+              request.requestId,
+              [...response.writes.map((write) => write.path), ...response.deletedPaths, ...changedPaths],
+              after,
+            );
+          }
+          return response;
+        })
+        : workspace.withWriteLease(workspaceWrite, lease => mutationContext.runWithLease(lease, () => sceneLifecycle.commit(request))),
     };
-    return { authority: target, lease, close: () => stopChallengeCleanup?.() };
+    return { authority: target, workspace, close: async () => { stopChallengeCleanup?.(); await workspace.close(); } };
   } catch (error) {
     stopChallengeCleanup?.();
-    await lease.release().catch(() => undefined);
     throw error;
   }
 }
@@ -170,8 +338,7 @@ export function assetImportAuthorityVitePlugin(
     endpoint: ASSET_IMPORT_AUTHORITY_BASE_PATH,
     token,
   };
-  let activeLease: AssetImportProjectLease | undefined;
-  let closeActiveRuntime: (() => void) | undefined;
+  let closeActiveRuntime: (() => Promise<void>) | undefined;
   let releasePromise: Promise<void> | undefined;
   let configuredServer: MiddlewareServer | undefined;
   let configurationError: unknown;
@@ -179,10 +346,9 @@ export function assetImportAuthorityVitePlugin(
   let readyPromise: Promise<void> | undefined;
   const releaseRuntime = (): Promise<void> => {
     if (releasePromise !== undefined) return releasePromise;
-    closeActiveRuntime?.();
+    releasePromise = closeActiveRuntime?.() ?? Promise.resolve();
     closeActiveRuntime = undefined;
-    releasePromise = activeLease?.release() ?? Promise.resolve();
-    return releasePromise.finally(() => { activeLease = undefined; });
+    return releasePromise;
   };
 
   return {
@@ -199,7 +365,6 @@ export function assetImportAuthorityVitePlugin(
             throw new Error('asset import authority requires a dedicated HTTP server');
           }
           const runtime = await openRuntime({ projectRoot: options.projectRoot!, dataRoot: options.dataRoot! });
-          activeLease = runtime.lease;
           closeActiveRuntime = runtime.close;
           try {
             const handler = createAssetImportAuthorityHttpHandler({

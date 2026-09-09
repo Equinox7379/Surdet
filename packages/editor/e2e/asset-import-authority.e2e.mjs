@@ -286,7 +286,7 @@ function resolveRootPath(root, relativePath = '') {
   return absolute;
 }
 
-function createNodeFsBridge(roots) {
+export function createNodeFsBridge(roots) {
   return async (request) => {
     assert(request && typeof request === 'object', 'invalid node filesystem bridge request');
     const root = roots[request.rootKey];
@@ -333,7 +333,7 @@ function createNodeFsBridge(roots) {
 
 // Browser-init-only File System Access bridge. Every read reaches the isolated
 // physical fixture, so binding probes and newly committed assets stay fresh.
-const nodeBackedFileSystemInit = ({ initialRootKey }) => {
+export const nodeBackedFileSystemInit = ({ initialRootKey }) => {
   let selectedRootKey = initialRootKey;
   const call = (request) => window.__surdetNodeFs(request);
   const fail = (message) => { throw new DOMException(message, 'NotFoundError'); };
@@ -343,8 +343,11 @@ const nodeBackedFileSystemInit = ({ initialRootKey }) => {
     if (name.endsWith('.json')) return 'application/json';
     if (name.endsWith('.gal')) return 'text/plain';
     if (name.endsWith('.svg')) return 'image/svg+xml';
+    if (name.endsWith('.png')) return 'image/png';
+    if (name.endsWith('.webp')) return 'image/webp';
+    if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
     if (name.endsWith('.wav')) return 'audio/wav';
-    return 'application/octet-stream';
+    return '';
   };
   const bytesFromValue = async (value) => {
     if (value?.type === 'write') return bytesFromValue(value.data);
@@ -425,6 +428,15 @@ const nodeBackedFileSystemInit = ({ initialRootKey }) => {
     },
     async removeEntry(name, options = {}) {
       await call({ op: 'remove', rootKey, path: join(directoryPath, name), recursive: options.recursive === true });
+    },
+    async resolve(other) {
+      if (other?.__surdetRootKey !== rootKey) return null;
+      const child = other.__surdetRelativePath;
+      if (typeof child !== 'string') return null;
+      if (child === directoryPath) return [];
+      const prefix = directoryPath.length === 0 ? '' : `${directoryPath}/`;
+      if (!child.startsWith(prefix)) return null;
+      return child.slice(prefix.length).split('/');
     },
     async queryPermission() { return 'granted'; },
     async requestPermission() { return 'granted'; },

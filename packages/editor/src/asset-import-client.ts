@@ -4,7 +4,13 @@ import type {
   ProjectAssetImportTargetRequest,
   ProjectAssetRelocationPlan,
   ProjectAssetRelocationBatchPlan,
+  HumanWorkspaceReportedAvailability,
+  HumanWorkspaceDirtyScope,
+  HumanWorkspaceBusyReason,
+  HumanWorkspaceBlockedReason,
+  ProjectMutationNotice,
 } from '@surdet/authoring';
+import type { ProjectDiskBaseline } from './project-disk-baseline';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
 const BINDING_HEADER = 'x-surdet-project-binding';
@@ -15,7 +21,7 @@ const UPLOAD_IDLE_TIMEOUT_MS = 35_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
-type OperationKind = 'import' | 'relocation' | 'scene';
+type OperationKind = 'import' | 'relocation' | 'scene' | 'workspace';
 
 export type AssetImportOperationStatus =
   | 'UPLOADING' | 'STAGED' | 'READY' | 'PUBLISHING' | 'ROLLING_BACK'
@@ -304,6 +310,7 @@ export interface AssetImportUploadProgress {
 }
 
 export interface AssetImportAuthorityClient {
+  workspace: EditorWorkspaceClient;
   status(): Promise<AssetImportAuthorityStatus>;
   bindProject(handle: FileSystemDirectoryHandle): Promise<AssetImportBindingSnapshot>;
   listOperations(): Promise<AssetImportOperationDiscovery>;
@@ -331,9 +338,44 @@ export interface AssetImportAuthorityClient {
   relocationRecover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetRelocationDetail>;
   relocationUndo(operationId: string, input: { receiptId: string; receiptFingerprint: string }): Promise<AssetRelocationDetail>;
   scenePlan(input: SceneLifecyclePlanInput): Promise<SceneLifecyclePlanResult>;
-  sceneCommit(input: SceneLifecycleCommitInput): Promise<SceneLifecycleCommitResult>;
+  sceneCommit(input: SceneLifecycleCommitInput, workspaceWrite?: EditorWorkspaceWrite): Promise<SceneLifecycleCommitResult>;
   revokeBinding(): Promise<void>;
   dispose(): void;
+}
+
+export interface EditorWorkspaceState {
+  workspaceSessionId: string;
+  workspaceGeneration: number;
+  availability: HumanWorkspaceReportedAvailability;
+  dirtyScopes: HumanWorkspaceDirtyScope[];
+  busyReasons: HumanWorkspaceBusyReason[];
+  blockedReasons: HumanWorkspaceBlockedReason[];
+  loadedProjectRevision?: string;
+  loadedCoordinationRevision?: string;
+}
+
+export interface EditorWorkspaceSnapshot {
+  diskBaseline: ProjectDiskBaseline;
+  mutationNotice: ProjectMutationNotice | null;
+}
+
+export interface EditorWorkspaceWrite extends EditorWorkspaceState { writeLeaseId: string }
+export interface EditorWorkspaceSettlement {
+  diskBaseline: ProjectDiskBaseline;
+  changedPaths: string[];
+  mutationNotice: { status: 'none' | 'written' | 'unavailable'; message?: string };
+}
+
+export interface EditorWorkspaceClient {
+  heartbeat(state: EditorWorkspaceState): Promise<void>;
+  snapshot(workspaceSessionId: string): Promise<EditorWorkspaceSnapshot>;
+  begin(state: EditorWorkspaceState & { expectedProjectRevision: string; expectedCoordinationRevision: string;
+    purpose: 'save-all' | 'config-save' | 'character-save' }): Promise<{ writeLeaseId: string; expiresAt: string; diskBaseline: ProjectDiskBaseline }>;
+  publish(state: EditorWorkspaceWrite & { path: string; text: string | null; expectedSha256: string | null }): Promise<{ sha256: string | null }>;
+  renew(state: EditorWorkspaceWrite): Promise<void>;
+  finish(state: EditorWorkspaceWrite): Promise<EditorWorkspaceSettlement>;
+  abort(state: EditorWorkspaceWrite): Promise<void>;
+  revoke(workspaceSessionId: string): Promise<void>;
 }
 
 export interface AssetImportAuthorityClientOptions {
@@ -1052,6 +1094,27 @@ function parseSceneCommitResult(value: unknown): SceneLifecycleCommitResult {
   };
 }
 
+const WORKSPACE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  EDITOR_PROJECT_BASELINE_CHANGED: '项目已被外部更新，未覆盖你的草稿。请先查看变化范围。',
+  HUMAN_WORKSPACE_DIRTY: '另一个编辑窗口有未保存内容，请先完成接力。',
+  HUMAN_WORKSPACE_BUSY: '另一个编辑窗口正在操作，请稍后保存。',
+  HUMAN_WORKSPACE_STATE_CORRUPT: '工作区连接或保存状态已失效，编辑内容已保留。',
+  PROJECT_BUSY: '项目正在写入，请稍后保存。',
+  AUTHORITY_TOKEN_REJECTED: '项目绑定已失效，编辑内容已保留。',
+};
+
+function parseWorkspaceBaseline(value: unknown): ProjectDiskBaseline {
+  if (!isRecord(value) || !hasExactKeys(value, ['projectRevision', 'coordinationRevision', 'files'])
+    || !isSha256(value.projectRevision) || !isSha256(value.coordinationRevision) || !Array.isArray(value.files)) throw invalidResponse();
+  const paths = new Set<string>();
+  for (const file of value.files) {
+    if (!isRecord(file) || !hasExactKeys(file, ['path', 'sha256']) || !isProjectRelativePath(file.path)
+      || !isSha256(file.sha256) || paths.has(file.path)) throw invalidResponse();
+    paths.add(file.path);
+  }
+  return value as unknown as ProjectDiskBaseline;
+}
+
 function parseErrorEnvelope(value: unknown, operationKind: OperationKind = 'import'): AssetImportClientError {
   if (!isRecord(value)
     || value.ok !== false
@@ -1074,12 +1137,12 @@ function parseErrorEnvelope(value: unknown, operationKind: OperationKind = 'impo
       || (error.details.field !== undefined && !isSafeText(error.details.field, 64))) return invalidResponse();
     details = error.details as { operationId?: string; itemId?: string; field?: string };
   }
-  const messages = operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES
+  const messages = operationKind === 'workspace' ? WORKSPACE_ERROR_MESSAGES : operationKind === 'relocation' ? RELOCATION_ERROR_MESSAGES
     : operationKind === 'scene' ? SCENE_ERROR_MESSAGES
       : ERROR_MESSAGES;
   return new AssetImportClientError(
     code,
-    messages[code] ?? (operationKind === 'relocation' ? '素材整理未完成，请查看技术详情。'
+    messages[code] ?? (operationKind === 'workspace' ? '工作区暂时不可用，编辑内容已保留。' : operationKind === 'relocation' ? '素材整理未完成，请查看技术详情。'
       : operationKind === 'scene' ? '场景保存未完成，请查看技术详情。'
         : '素材导入未完成，请查看技术详情。'),
     error.retryDisposition as AssetImportRetryDisposition,
@@ -1678,12 +1741,14 @@ export function createAssetImportAuthorityClient(
     return result;
   };
 
-  const sceneCommit = async (input: SceneLifecycleCommitInput): Promise<SceneLifecycleCommitResult> => {
+  const sceneCommit = async (input: SceneLifecycleCommitInput, workspaceWrite?: EditorWorkspaceWrite): Promise<SceneLifecycleCommitResult> => {
     if (!isRecord(input) || !isUuid(input.requestId)
       || !Array.isArray(input.plans) || !Array.isArray(input.writes)) {
       throw new AssetImportClientError('INVALID_REQUEST', SCENE_ERROR_MESSAGES.INVALID_REQUEST!, 'never');
     }
-    const result = await request('/scenes/commit', input, parseSceneCommitResult, { binding: true, operationKind: 'scene' });
+    const result = await request('/scenes/commit', { ...input,
+      ...(workspaceWrite === undefined ? {} : { workspaceWrite: { ...workspaceWrite, browserSessionId } }),
+    }, parseSceneCommitResult, { binding: true, operationKind: 'scene' });
     if (result.requestId !== input.requestId) throw invalidResponse();
     return result;
   };
@@ -1699,7 +1764,48 @@ export function createAssetImportAuthorityClient(
     }
   };
 
+  const workspaceRequest = <T>(action: string, body: object, parser: (value: unknown) => T): Promise<T> =>
+    request(`/workspace/${action}`, { ...body, browserSessionId }, parser, { binding: true, operationKind: 'workspace' });
+  const workspace: EditorWorkspaceClient = {
+    heartbeat: state => workspaceRequest('heartbeat', state, value => {
+      if (!isRecord(value) || !Number.isSafeInteger(value.workspaceGeneration) || !isTimestamp(value.heartbeatAt)) throw invalidResponse();
+    }),
+    snapshot: workspaceSessionId => workspaceRequest('snapshot', { workspaceSessionId }, value => {
+      if (!isRecord(value)) throw invalidResponse();
+      const diskBaseline = parseWorkspaceBaseline(value.diskBaseline);
+      const notice = value.mutationNotice;
+      if (notice !== null && (!isRecord(notice) || !Number.isSafeInteger(notice.sequence)
+        || !isSha256(notice.projectRevision) || !isSha256(notice.coordinationRevision)
+        || !Array.isArray(notice.changedPaths) || !notice.changedPaths.every(path => isProjectRelativePath(path)))) throw invalidResponse();
+      return { diskBaseline, mutationNotice: notice as ProjectMutationNotice | null };
+    }),
+    begin: state => workspaceRequest('begin', state, value => {
+      if (!isRecord(value) || !isUuid(value.writeLeaseId) || !isTimestamp(value.expiresAt)) throw invalidResponse();
+      return { writeLeaseId: value.writeLeaseId, expiresAt: value.expiresAt, diskBaseline: parseWorkspaceBaseline(value.diskBaseline) };
+    }),
+    publish: state => workspaceRequest('publish', state, value => {
+      if (!isRecord(value) || (value.sha256 !== null && !isSha256(value.sha256))) throw invalidResponse();
+      return { sha256: value.sha256 };
+    }),
+    renew: state => workspaceRequest('renew', state, value => {
+      if (!isRecord(value) || !isTimestamp(value.expiresAt)) throw invalidResponse();
+    }),
+    finish: state => workspaceRequest('finish', state, value => {
+      if (!isRecord(value) || !Array.isArray(value.changedPaths) || !value.changedPaths.every(path => isProjectRelativePath(path))
+        || !isRecord(value.mutationNotice) || !['none', 'written', 'unavailable'].includes(String(value.mutationNotice.status))) throw invalidResponse();
+      return { diskBaseline: parseWorkspaceBaseline(value.diskBaseline), changedPaths: value.changedPaths,
+        mutationNotice: value.mutationNotice as EditorWorkspaceSettlement['mutationNotice'] };
+    }),
+    abort: state => workspaceRequest('abort', state, value => {
+      if (!isRecord(value) || value.aborted !== true) throw invalidResponse();
+    }),
+    revoke: workspaceSessionId => workspaceRequest('revoke', { workspaceSessionId }, value => {
+      if (!isRecord(value) || value.revoked !== true) throw invalidResponse();
+    }),
+  };
+
   return {
+    workspace,
     status,
     bindProject,
     listOperations,
