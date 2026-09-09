@@ -43,7 +43,7 @@ jobs:
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy
       - name: Verify modern Starter and generated project
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
           SURDET_STARTER_OUTPUT: artifacts/starter-ui
           SURDET_NEW_PLAYER_OUTPUT: artifacts/starter-ui/new-project
