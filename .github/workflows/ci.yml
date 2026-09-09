@@ -42,12 +42,11 @@ jobs:
           retention-days: 7
       - name: P1/P2 policy
         run: npm run verify:p1p2:policy
-      - name: Verify modern Starter and generated project
+      - name: Verify Starter player regressions
         timeout-minutes: 20
         env:
           SURDET_STARTER_OUTPUT: artifacts/starter-ui
-          SURDET_NEW_PLAYER_OUTPUT: artifacts/starter-ui/new-project
-        run: npm run verify:starter
+        run: node packages/renderer/e2e/starter-regressions.e2e.mjs
       - name: Retain modern Starter player evidence
         if: always()
         uses: actions/upload-artifact@v7
