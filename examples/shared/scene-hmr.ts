@@ -24,6 +24,7 @@ export interface SceneHmrOptions {
 }
 
 export function installSceneHotReload(options: SceneHmrOptions): void {
+  type LoadedScene = { sceneId: string; replacement: ReturnType<typeof compileScene> } | { sceneId: string; error: unknown };
   let updateChain = Promise.resolve();
   options.hot.on('vite:beforeUpdate', (payload) => {
     const directPaths = payload.updates
@@ -31,12 +32,15 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
       .filter((path) => path.toLowerCase().endsWith('.gal'));
     const boundaryChanged = payload.updates.some((update) => update.path.includes('scene-hmr-boundary'));
     const candidatePaths = directPaths.length > 0 ? directPaths : boundaryChanged ? Object.keys(options.sceneFiles) : [];
-    for (const candidatePath of candidatePaths) {
-      const cleanPath = candidatePath.split('?')[0] ?? candidatePath;
-      if (!cleanPath.toLowerCase().endsWith('.gal')) continue;
-      updateChain = updateChain.then(async () => {
+    updateChain = updateChain.then(async () => {
+      // A self-accepting boundary can include every scene. Read that batch
+      // concurrently so unchanged files do not multiply each edit's latency.
+      // Registry and interpreter mutations still follow event and scene order.
+      const loaded = await Promise.all(candidatePaths.map(async (candidatePath): Promise<LoadedScene | null> => {
+        const cleanPath = candidatePath.split('?')[0] ?? candidatePath;
+        if (!cleanPath.toLowerCase().endsWith('.gal')) return null;
         const sceneId = cleanPath.split('/').pop()?.replace(/\.gal$/i, '');
-        if (!sceneId) return;
+        if (!sceneId) return null;
         try {
           const sourceUrl = cleanPath.startsWith('/')
             ? new URL(cleanPath, window.location.origin).href
@@ -44,9 +48,22 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
           const rawUrl = `${sourceUrl}${sourceUrl.includes('?') ? '&' : '?'}raw&t=${Date.now()}`;
           const response = await fetch(rawUrl);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const replacement = compileScene(await response.text(), cleanPath, sceneId);
+          return { sceneId, replacement: compileScene(await response.text(), cleanPath, sceneId) };
+        } catch (error) {
+          return { sceneId, error };
+        }
+      }));
+      for (const candidate of loaded) {
+        if (!candidate) continue;
+        const { sceneId } = candidate;
+        if ('error' in candidate) {
+          console.warn(`[${options.label}] 场景热重载失败，保留旧场景 ${sceneId}：`, candidate.error);
+          continue;
+        }
+        try {
+          const { replacement } = candidate;
           const current = options.registry.get(sceneId);
-          if (replacement.sceneHash === current.sceneHash) return;
+          if (replacement.sceneHash === current.sceneHash) continue;
           const active = options.interpreter.saveSnapshot();
           const position = active?.position ?? null;
           const decision = position?.sceneId === sceneId
@@ -54,7 +71,7 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
             : { apply: true, nextPc: 0 };
           if (!decision.apply) {
             console.warn(`[${options.label}] 热重载已跳过：${decision.diagnostic ?? '场景不匹配'}`);
-            return;
+            continue;
           }
           options.registry.replace(replacement, sceneId);
           if (active && position?.sceneId === sceneId) {
@@ -65,9 +82,9 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
           }
           if (decision.diagnostic) console.info(`[${options.label}] ${decision.diagnostic}`);
         } catch (error) {
-          console.warn(`[${options.label}] 场景热重载失败，保留旧场景 ${sceneId}：`, error);
+          console.warn(`[${options.label}] 场景热重载应用失败 ${sceneId}：`, error);
         }
-      });
-    }
+      }
+    });
   });
 }
