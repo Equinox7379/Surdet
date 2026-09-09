@@ -88,8 +88,13 @@ try {
     assert.equal(await page.evaluate(() => window.surdetDebug.store.get('trained')), false, 'practice completed before combat');
     await activate(page, '跳过行动');
     await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.getAttribute('aria-label') === '跳过行动（不可用）' && button.getAttribute('aria-disabled') === 'true'));
-    for (let i = 0; i < 20 && await page.evaluate(() => window.__surdetDebug.queries.overlay.system().type === 'battle'); i++) {
-      await activate(page, '跳过行动'); await page.waitForTimeout(700);
+    for (let i = 0; i < 20; i++) {
+      await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type !== 'battle' || Array.from(document.querySelectorAll('button')).some(button => {
+        const target = button.container;
+        return button.getAttribute('aria-label') === '跳过行动' && button.getAttribute('aria-disabled') !== 'true' && target?.parent && !target.destroyed && target.accessibleHint === '跳过行动';
+      }));
+      if (await page.evaluate(() => window.__surdetDebug.queries.overlay.system().type !== 'battle')) break;
+      await activate(page, '跳过行动');
     }
     await advanceToChoice(page);
     assert.equal(await page.evaluate(() => window.surdetDebug.store.get('trained')), true, 'completed practice was not recorded');
