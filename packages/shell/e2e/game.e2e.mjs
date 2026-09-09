@@ -31,6 +31,7 @@ console.log(`E2E_USER_DATA=${userData}`);
 try {
   assert.equal(path.resolve(await app.evaluate(({ app }) => app.getPath('userData'))), path.resolve(userData));
   win = await app.firstWindow();
+  await win.bringToFront();
   const pageErrors = [];
   win.on('pageerror', error => pageErrors.push(error.message));
   win.on('console', (msg) => {
@@ -41,6 +42,7 @@ try {
   });
   await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000 });
   console.log('PASS  游戏引导完成（__surdetDebug 就绪）');
+  await win.waitForFunction(() => window.__surdetDebug.assetLoading.done);
 
   const snap = () => win.evaluate(() => ({
     s: window.__surdetDebug.status,
@@ -55,6 +57,11 @@ try {
   await startButton.waitFor({ state: 'visible' });
   const startBounds = await startButton.boundingBox();
   assert(startBounds && startBounds.width > 0 && startBounds.height > 0);
+  console.log('TITLE_INPUT', JSON.stringify(await win.evaluate(() => ({
+    focused: document.hasFocus(), dpr: devicePixelRatio, loading: window.__surdetDebug.assetLoading,
+    canvas: document.querySelector('canvas')?.getBoundingClientRect().toJSON(),
+    button: Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '开始游戏')?.getBoundingClientRect().toJSON(),
+  }))));
   await win.mouse.click(startBounds.x + startBounds.width / 2, startBounds.y + startBounds.height / 2);
   await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000 });
   console.log('PASS  真实鼠标点击开始游戏，解释器离开 idle');
