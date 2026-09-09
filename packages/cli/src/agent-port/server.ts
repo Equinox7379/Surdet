@@ -422,7 +422,7 @@ export function createAgentPortServer(session: AgentPortSession): McpServer {
       description: 'Persist an immutable, evidence-backed delivery capsule for the bound change.',
       inputSchema: standardSchemaFromJson(capsuleInputSchema),
       outputSchema: standardSchemaFromJson(createEnvelopeJsonSchema(capsuleOutputSchema)),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     }, async (input) => {
       try {
         const payload = input as Record<string, unknown>;

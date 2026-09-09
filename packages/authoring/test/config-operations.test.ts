@@ -547,6 +547,16 @@ async function renameNova(change: ChangeSession, name: string): Promise<unknown>
 }
 
 describe('character.ensure speaker token safety (F1)', () => {
+  it.each(['@foo', '//foo'])('rejects reserved DSL prefix %s without changing dialogue or the change record', async (name) => {
+    const change = await openWithFiles(speakerFixture());
+    const before = JSON.stringify(change.record);
+    await expect(applyCharacterEnsure(change, {
+      operationId: 'op-reserved-prefix', id: 'nova', name,
+      expectedFingerprint: await currentTableFingerprint(change),
+    }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record)).toBe(before);
+  });
+
   it('F1-A: whitespace new name with existing refs fails loud with zero mutation', async () => {
     const change = await openWithFiles(speakerFixture());
     const before = JSON.stringify(change.record.workingFiles);

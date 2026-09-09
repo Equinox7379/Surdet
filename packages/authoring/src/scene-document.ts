@@ -12,7 +12,8 @@ const INSTR_NAME_RE = /^@([^\s]+)/;
 
 /** 字符串能否作为合法 speaker token 出现在台词行（非纯数字；parser 与角色改名迁移共享同一语法源）。 */
 export function isValidSpeakerToken(token: string): boolean {
-  return SPEAKER_TOKEN_RE.test(token) && !/^\d+$/.test(token);
+  return SPEAKER_TOKEN_RE.test(token) && !/^\d+$/.test(token)
+    && !token.startsWith('@') && !token.startsWith('//');
 }
 
 export function parseSceneLine(raw: string, previousKind: string, eol: SceneEol = ''): SceneDocumentLine {

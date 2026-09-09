@@ -103,7 +103,10 @@ describe('Surdet Agent Port MCP tool projection', () => {
     expect(names).toHaveLength(allowed.length + 1 + (capsuleExposed ? 1 : 0));
     expect(new Set(names).size).toBe(names.length);
     expect(names).toContain('surdet_session_describe');
-    if (capsuleExposed) expect(names).toContain('surdet_delivery_capsule');
+    if (capsuleExposed) {
+      expect(names).toContain('surdet_delivery_capsule');
+      expect(listed.tools.find((tool) => tool.name === 'surdet_delivery_capsule')?.annotations?.readOnlyHint).toBe(false);
+    }
     for (const id of allowed) expect(names).toContain(nativeCapabilityToMcpTool(id));
     if (policy === 'observe') {
       expect(names).not.toContain('surdet_change_begin');
