@@ -487,12 +487,12 @@ export class RendererStageHost {
     this.#dialogue.scrollBacklog(delta);
   }
 
-  /** 舞台截图缩略图（存档预览用）：整屏截图缩到宽 ≤320 的 JPEG dataURL；失败返回 null */
+  /** 剧情舞台缩略图（存档预览用，不含菜单）：缩到宽 ≤320 的 JPEG dataURL；失败返回 null */
   captureThumbnail(): string | null {
     if (!this.app || typeof document === 'undefined') return null;
     try {
       const extract = this.app.renderer.extract as unknown as { canvas: (opts: { target: unknown }) => HTMLCanvasElement };
-      const source = extract.canvas({ target: this.app.stage });
+      const source = extract.canvas({ target: this.#world.worldContainer });
       const scale = Math.min(1, 320 / source.width);
       const small = document.createElement('canvas');
       small.width = Math.max(1, Math.round(source.width * scale));

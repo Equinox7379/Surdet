@@ -73,3 +73,18 @@ jobs:
             artifacts/pass8-ui/03-save-load.png
           if-no-files-found: ignore
           retention-days: 7
+
+  electron:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build native player
+        run: npm run build -w @surdet/core && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/shell && npm run build -w surdet-starter
+      - name: Verify Electron pointer, keyboard and file saves
+        run: npm run e2e -w @surdet/shell

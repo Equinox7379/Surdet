@@ -716,9 +716,12 @@ export class MenuLayer implements MenuProjectionPort {
       card.addChild(surface, hover, marker);
       let textX = 28;
       if (slot.thumbnail) {
-        const thumb = new Sprite(this.#thumbTexture(slot.thumbnail));
-        thumb.width = 128;
-        thumb.height = 72;
+        const texture = this.#thumbTexture(slot.thumbnail);
+        const thumb = new Sprite(texture);
+        const sizeThumbnail = () => { thumb.width = 128; thumb.height = 72; };
+        sizeThumbnail();
+        texture.on('update', sizeThumbnail);
+        thumb.once('destroyed', () => texture.off('update', sizeThumbnail));
         thumb.position.set(18, 16);
         card.addChild(thumb);
         textX = 166;
@@ -1069,6 +1072,7 @@ export class MenuLayer implements MenuProjectionPort {
       if (typeof Image !== 'undefined') {
         const image = new Image();
         const texture = Texture.from(image);
+        texture.dynamic = true;
         image.onload = () => {
           texture.source.update();
           texture.update();

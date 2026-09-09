@@ -178,7 +178,7 @@ export async function applyCharacterEnsure(
           if (!isValidSpeakerToken(input.name)) {
             throw new AuthoringOperationError(
               'VALIDATION_FAILED',
-              `角色 '${input.id}' 存在 ${referenceCount} 处按显示名解析的台词 speaker 引用，但新名字 '${input.name}' 无法作为 Surdet speaker token 表达（1-24 字符、不含空白与冒号）；请改用可表达的名字，或先手动迁移这些台词`,
+              `角色 '${input.id}' 存在 ${referenceCount} 处按显示名解析的台词 speaker 引用，但新名字 '${input.name}' 无法作为 Surdet speaker token 表达（1-24 字符、不含空白与冒号，不能以 @ 或 // 开头）；请改用可表达的名字，或先手动迁移这些台词`,
             );
           }
           for (const [path, text] of Object.entries(record.workingFiles)) {

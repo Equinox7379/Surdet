@@ -63,7 +63,7 @@ node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stag
 → 另行授权 apply
 ```
 
-`observe` 只读，`stage` 只写隔离 change，`apply` 必须显式恢复一个已经审核的 change。MCP 只投影共享 authoring 合同，不维护第二套业务语义。
+`observe` 不修改项目文件；恢复 change 后的校验与模拟可以在 change store 追加证据。`stage` 只写隔离 change。`apply` 是启动时由操作者授予的项目写权限：普通 change 可在该会话创建或通过 `--resume-change` 恢复，并在证据门通过后提交；integration change 还必须有最终人类批准回执。推荐按上面的流程先复核，再另行启动 apply。MCP 只投影共享 authoring 合同，不维护第二套业务语义。
 
 ## 工作区
 

@@ -122,6 +122,7 @@ try {
   await page.keyboard.press('Space');
   await page.waitForFunction(() => window.__surdetDebug?.dialogueProjection?.dialogText.includes('保持清楚'));
   const first = await state();
+  const sceneThumbnail = await page.evaluate(() => window.__surdetDebug.queries.world.captureThumbnail());
   await page.screenshot({ path: path.join(output, '01-reading.png') });
   await openMenu();
   await page.keyboard.press('x');
@@ -133,6 +134,7 @@ try {
   assert.equal(writes, 1);
   const savedA = saves.read('1');
   assert.deepEqual(savedA.position, first.position);
+  assert(sceneThumbnail && savedA.meta.thumbnail === sceneThumbnail, 'saving must not capture the save-menu overlay in the scene thumbnail');
   await advanceUntil(() => window.__surdetDebug.dialogueProjection.dialogText.includes('那一句'));
   const second = await state();
   assert.notDeepEqual(second.position, first.position);
@@ -143,6 +145,16 @@ try {
   await page.keyboard.press('Escape');
   assert.equal(writes, 1, 'cancel overwrite makes zero storage writes');
   assert.deepEqual(saves.read('1').position, first.position);
+  await page.waitForFunction(() => {
+    const card = Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label')?.startsWith('保存到槽位 1：'))?.container;
+    return card?.children?.some(child => child.texture?.source?.resource instanceof HTMLImageElement && child.texture.source.resource.complete && child.texture.source.resource.naturalWidth > 0);
+  });
+  const thumbnail = await page.evaluate(() => {
+    const card = Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label')?.startsWith('保存到槽位 1：'))?.container;
+    const sprite = card?.children?.find(child => child.texture?.source?.resource instanceof HTMLImageElement);
+    return sprite ? { width: sprite.width, height: sprite.height } : null;
+  });
+  assert(thumbnail && thumbnail.width === 128 && thumbnail.height === 72, 'saved thumbnail must occupy its 128 x 72 card area after loading');
   await page.screenshot({ path: path.join(output, '03-save-load.png') });
   await activate(slotName); await activate('覆盖存档'); await overlay('none');
   assert.equal(writes, 2);

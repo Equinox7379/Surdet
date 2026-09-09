@@ -7,10 +7,15 @@
  * 运行：npm run e2e -w @surdet/shell（退出码 0 = 全部通过）
  */
 import { _electron as electron } from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import { QUICK_SLOT } from '@surdet/core';
 import * as path from 'node:path';
 import * as url from 'node:url';
 
 const shellDir = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-electron-game-'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failures = 0;
@@ -19,49 +24,42 @@ const check = (cond, label) => {
   if (!cond) failures++;
 };
 
-const app = await electron.launch({ args: ['.'], cwd: shellDir });
+const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: shellDir,
+  env: { ...process.env, SURDET_E2E: '1', SURDET_E2E_GAME_DIR: path.resolve(shellDir, '../../examples/starter/dist') } });
+let win;
+console.log(`E2E_USER_DATA=${userData}`);
 try {
-  const win = await app.firstWindow();
+  assert.equal(path.resolve(await app.evaluate(({ app }) => app.getPath('userData'))), path.resolve(userData));
+  win = await app.firstWindow();
+  const pageErrors = [];
+  win.on('pageerror', error => pageErrors.push(error.message));
   win.on('console', (msg) => {
+    if (msg.type() === 'error') pageErrors.push(msg.text());
     if (msg.text().includes('快速存档') || msg.text().includes('快速读档')) {
       console.log(`[GAME] ${msg.text()}`);
     }
   });
   await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000 });
-  check(true, '游戏引导完成（__surdetDebug 就绪）');
+  console.log('PASS  游戏引导完成（__surdetDebug 就绪）');
 
   const snap = () => win.evaluate(() => ({
     s: window.__surdetDebug.status,
     r: window.__surdetDebug.rendererStatus,
     p: window.__surdetDebug.position,
+    system: window.__surdetDebug.queries.overlay.system().type,
   }));
 
-  // 标题画面：点击首个菜单项（新开局）。舞台逻辑坐标 (640, 720*0.48)，
-  // 经画布实际包围盒换算为页面像素坐标（兼容任意窗口尺寸/缩放）
-  await sleep(800); // 等标题层完成首帧渲染
-  const box = await win.evaluate(() => {
-    const c = document.querySelector('canvas');
-    if (!c) return null;
-    const r = c.getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height };
-  });
-  if (!box) {
-    check(false, '找到游戏画布');
-    throw new Error('canvas not found');
-  }
-  check(true, '找到游戏画布');
-  const clickX = box.left + box.width * 0.5;
-  const clickY = box.top + box.height * 0.48;
-  await win.mouse.click(clickX, clickY);
-  await sleep(2500);
-  const startedByClick = (await snap()).s !== 'idle';
-  if (!startedByClick) {
-    // 坐标点击未命中（窗口/DPI/letterbox 差异）：走同一处理函数的确定性入口，E2E 焦点是剧情链路
-    console.log('WARN  标题点击未命中，回退调试入口 titleSelect(new)');
-    await win.evaluate(() => window.__surdetDebug.titleSelect('new'));
-    await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000 });
-  }
-  check(true, `标题 → 剧情（解释器离开 idle，方式：${startedByClick ? '画布点击' : '调试入口'}）`);
+  await win.locator('canvas').waitFor({ state: 'visible' });
+  // 点击当前真实控件，不猜测旧版菜单坐标；点击失败直接使本项失败。
+  const startButton = win.getByRole('button', { name: '开始游戏', exact: true });
+  await startButton.waitFor({ state: 'visible' });
+  const startBounds = await startButton.boundingBox();
+  assert(startBounds && startBounds.width > 0 && startBounds.height > 0);
+  await win.mouse.click(startBounds.x + startBounds.width / 2, startBounds.y + startBounds.height / 2);
+  await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000 });
+  console.log('PASS  真实鼠标点击开始游戏，解释器离开 idle');
+  await win.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting');
+  await win.screenshot({ path: path.join(userData, 'playing.png') });
 
   let steps = 0;
   let choices = 0;
@@ -74,11 +72,11 @@ try {
 
   while (steps < 500) {
     steps++;
-    const { s, r, p } = await snap();
+    const { s, r, p, system } = await snap();
     if (s === 'ended') { ended = true; break; }
     if (s === 'paused') { pausedHit = true; break; }
-    // 停滞检测：系统交互层（战斗/地图/商店）靠画布点击操作，键盘推进无效——
-    // 连续无状态变化视为"到达系统交互层"，ADV 自动化部分到此为止
+    if (['map', 'base', 'battle', 'shop'].includes(system)) break;
+    // 无进展时停止循环，由结尾检查实际面板/结局；不能把卡住当作通关。
     const sig = `${s}|${r}|${p?.sceneId ?? ''}|${p?.pc ?? ''}`;
     if (sig === lastSig) {
       stall++;
@@ -88,18 +86,24 @@ try {
       lastSig = sig;
     }
     if (r === 'choice') {
-      await win.keyboard.press('Enter'); // 确认高亮选项
+      await win.keyboard.press('1'); // 玩家数字键选择首项
       choices++;
       await sleep(200);
       continue;
     }
     if (s === 'awaiting-advance' || s === 'awaiting-timer') {
       if (!saved && steps > 6) {
-        saved = await win.evaluate(() => window.__surdetDebug.quickSave());
-        await sleep(250);
-        // 剧情可能在下一步立刻进入连续选择肢；同轮完成读档，保证回归每次实际覆盖该路径。
-        loaded = saved && await win.evaluate(() => window.__surdetDebug.quickLoad());
-        await sleep(400);
+        await win.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting');
+        await win.keyboard.press('F5');
+        await win.waitForFunction(async slot => (await window.surdetSave.list()).includes(slot), QUICK_SLOT);
+        const stored = await win.evaluate(slot => window.surdetSave.read(slot), QUICK_SLOT);
+        saved = stored !== null;
+        const savedPosition = stored.position;
+        await win.keyboard.press('Space');
+        await win.waitForFunction(position => JSON.stringify(window.__surdetDebug.position) !== JSON.stringify(position), savedPosition);
+        await win.keyboard.press('F9');
+        await win.waitForFunction(position => JSON.stringify(window.__surdetDebug.position) === JSON.stringify(position), savedPosition);
+        loaded = true;
         continue;
       }
       await win.keyboard.press('Space');
@@ -113,9 +117,13 @@ try {
   check(saved, 'F5 快速存档已触发');
   check(loaded, 'F9 快速读档已触发');
   check(final.s !== 'idle', '读档后未回退 idle（存档回路健康）');
-  const reached = ended || pausedHit || stall > 40;
+  const reached = ended || pausedHit || ['map', 'base', 'battle', 'shop'].includes(final.system);
   check(reached, `剧情推进到达系统交互层/结局（steps=${steps}, choices=${choices}, final=${final.s}/${final.r}, scene=${final.p?.sceneId ?? '-'}）`);
   console.log(`\n[E2E] steps=${steps} choices=${choices} saved=${saved} loaded=${loaded} final=${final.s} scene=${final.p?.sceneId ?? '-'}`);
+  assert.deepEqual(pageErrors, []);
+} catch (error) {
+  await win?.screenshot({ path: path.join(userData, 'failure.png') }).catch(() => {});
+  throw error;
 } finally {
   await app.close();
 }
