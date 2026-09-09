@@ -91,11 +91,3 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: npm run e2e -w @surdet/shell
-      - name: Retain failed Electron view
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: electron-failure
-          path: ${{ runner.temp }}/surdet-electron-game-*/failure.png
-          if-no-files-found: ignore
-          retention-days: 7

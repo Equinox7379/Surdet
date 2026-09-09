@@ -66,7 +66,8 @@ try {
   await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000 });
   console.log('PASS  真实鼠标点击开始游戏，解释器离开 idle');
   await win.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting');
-  await win.screenshot({ path: path.join(userData, 'playing.png') });
+  // Windows CI 的虚拟桌面截图调用可能不返回；本地保留画面，CI 验证下方实际输入和文件回路。
+  if (!process.env.CI) await win.screenshot({ path: path.join(userData, 'playing.png') });
 
   let steps = 0;
   let choices = 0;
@@ -129,7 +130,7 @@ try {
   console.log(`\n[E2E] steps=${steps} choices=${choices} saved=${saved} loaded=${loaded} final=${final.s} scene=${final.p?.sceneId ?? '-'}`);
   assert.deepEqual(pageErrors, []);
 } catch (error) {
-  await win?.screenshot({ path: path.join(userData, 'failure.png') }).catch(() => {});
+  if (!process.env.CI) await win?.screenshot({ path: path.join(userData, 'failure.png') }).catch(() => {});
   throw error;
 } finally {
   await app.close();
