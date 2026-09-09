@@ -30,12 +30,27 @@ describe('causal selection bridge', () => {
     const nextIndex = { revision: 'new', objects: [replacement], byRef: new Map([[replacement.objectRef, replacement]]) };
 
     expect(reconcileAuthoringSelection(previousObject.objectRef, previousIndex, nextIndex)).toBe(replacement.objectRef);
+    expect(reconcileAuthoringSelection(previousObject.objectRef, previousIndex, nextIndex, true)).toBeNull();
     expect(reconcileAuthoringSelection(replacement.objectRef, nextIndex, nextIndex)).toBe(replacement.objectRef);
     expect(reconcileAuthoringSelection(previousObject.objectRef, previousIndex, {
       ...nextIndex,
       objects: [replacement, { ...replacement, objectRef: 'scene:alpha/text:2@new-cccc' }],
     })).toBeNull();
     expect(reconcileAuthoringSelection('missing', previousIndex, nextIndex)).toBeNull();
+  });
+
+  it('keeps named objects but clears positional cue selection when an external edit changes its timeline', () => {
+    const timeline = { kind: 'timeline' as const, objectRef: 'timeline:intro', semanticId: 'timeline:intro',
+      details: { cues: ['same'] }, references: [], referencedBy: [] };
+    const cue = { kind: 'cue' as const, objectRef: 'timeline:intro/track:0/cue:0',
+      source: { path: 'content/timelines/intro.json', line: 1, col: 1, raw: 'same' }, references: [], referencedBy: [] };
+    const objects = [timeline, cue];
+    const previous = { revision: 'old', objects, byRef: new Map(objects.map(object => [object.objectRef, object])) };
+    const updated = [{ ...timeline, details: { cues: ['same', 'same'] } }, cue];
+    const next = { revision: 'new', objects: updated, byRef: new Map(updated.map(object => [object.objectRef, object])) };
+    expect(reconcileAuthoringSelection(timeline.objectRef, previous, next, true)).toBe(timeline.objectRef);
+    expect(reconcileAuthoringSelection(cue.objectRef, previous, next, true)).toBeNull();
+    expect(reconcileAuthoringSelection(cue.objectRef, previous, previous, true)).toBe(cue.objectRef);
   });
 
   it('filters trace by selected object and locates source from a trace event', () => {

@@ -560,6 +560,29 @@ afterEach(() => {
 });
 
 describe('Editor 素材导入 authority client', () => {
+  it('uses binding-scoped workspace requests without disclosing tokens in JSON and reads the notice sequence', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    const state = { workspaceSessionId: OPERATION_ID, workspaceGeneration: 1, availability: 'dirty' as const,
+      dirtyScopes: ['config' as const], busyReasons: [], blockedReasons: [] };
+    fetcher.mockResolvedValueOnce(success({ workspaceGeneration: 1, heartbeatAt: '2026-09-09T10:00:00.000Z' }));
+    await client.workspace.heartbeat(state);
+    const sent = requestRecords(fetcher).at(-1)!;
+    expect(sent.input).toBe(`${AUTHORITY_PATH}/workspace/heartbeat`);
+    expect(header(sent.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(header(sent.init, 'x-surdet-import-operation')).toBeNull();
+    expect(jsonBody(sent.init)).toEqual({ ...state, browserSessionId: expect.any(String) });
+    const diskBaseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [] };
+    const mutationNotice = { schemaVersion: 1, sequence: 7, projectIdentity: PROJECT_IDENTITY,
+      projectRevision: diskBaseline.projectRevision, coordinationRevision: diskBaseline.coordinationRevision,
+      initiator: 'external-agent', changedPaths: ['game.config.json'], occurredAt: '2026-09-09T10:00:00.000Z' };
+    fetcher.mockResolvedValueOnce(success({ diskBaseline, mutationNotice }));
+    await expect(client.workspace.snapshot(OPERATION_ID)).resolves.toEqual({ diskBaseline, mutationNotice });
+    fetcher.mockResolvedValueOnce(success({ diskBaseline: { ...diskBaseline, files: [{ path: 'C:/private/file', sha256: '3'.repeat(64) }] }, mutationNotice }));
+    await expect(client.workspace.snapshot(OPERATION_ID)).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+  });
+
   it('maps an absent authority to a safe client error without making a request', async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createAssetImportAuthorityClient({ configuration: null, fetcher } as never);

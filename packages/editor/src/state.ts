@@ -31,6 +31,8 @@ export interface TimelineEntry {
   eol: '\r\n' | '\n';
   dirty: boolean;
   handle: FileSystemFileHandle | null;
+  /** 最近一次成功读取或保存的磁盘正文指纹。 */
+  persistedSha256?: string;
 }
 
 export interface PendingSceneDelete {

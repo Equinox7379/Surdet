@@ -166,6 +166,31 @@ describe('character table editing through shared authoring semantics', () => {
     return { configDisk, sceneDisk };
   }
 
+  it('preserves scene typing that arrives while the character transaction is writing', async () => {
+    const { configDisk, sceneDisk } = installFixture(characterFixtureText());
+    const createWritable = configDisk.handle.createWritable.bind(configDisk.handle);
+    let started!: () => void;
+    const writing = new Promise<void>(resolve => { started = resolve; });
+    let resume!: () => void;
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    configDisk.handle.createWritable = async (...args) => {
+      const writable = await createWritable(...args);
+      const write = writable.write.bind(writable);
+      writable.write = async data => { started(); await paused; await write(data); };
+      return writable;
+    };
+    const committed = commitCharacterTable([{ id: 'lynn', name: '凛', avatar: 'lynn' }, { id: 'nova', name: '诺瓦测试', avatar: 'lynn' }]);
+    await writing;
+    state.scenes.get('ch01_01')!.text += '\n保存期间继续输入。\n';
+    state.scenes.get('ch01_01')!.dirty = true;
+    resume();
+    await committed;
+    expect(state.scenes.get('ch01_01')!.text).toContain('保存期间继续输入');
+    expect(state.scenes.get('ch01_01')!.dirty).toBe(true);
+    expect(sceneDisk.read()).toContain('诺瓦测试：');
+    expect(sceneDisk.read()).not.toContain('保存期间继续输入');
+  });
+
   it('edits display name via shared character.ensure and persists after reload', async () => {
     const { configDisk, sceneDisk } = installFixture(characterFixtureText());
     const rows: CharacterTableEditRow[] = [

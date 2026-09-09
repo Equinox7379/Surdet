@@ -215,13 +215,24 @@ describe('project scene lifecycle authority', () => {
     };
 
     await expect(value.authority.commit(request)).rejects.toBeInstanceOf(SceneLifecycleInjectedTermination);
-    const recovered = new ProjectSceneLifecycleAuthority(value.paths, { assertLeaseHeld: () => undefined });
+    const recoveries: Array<{ requestId: string; changedPaths: string[] }> = [];
+    const recovered = new ProjectSceneLifecycleAuthority(value.paths, {
+      assertLeaseHeld: () => undefined,
+      onRecovered: async (requestId, changedPaths) => {
+        recoveries.push({ requestId, changedPaths });
+        await expect(fs.stat(path.join(value.project, 'content/scenario/chapter/new.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await fs.readFile(path.join(value.project, 'content/scenario/chapter/old.gal'), 'utf8')).toBe(oldText);
+      },
+    });
     await expect(recovered.commit(request)).resolves.toMatchObject({ status: 'COMMITTED', requestId: request.requestId });
     await expect(fs.readFile(path.join(value.project, 'content/scenario/chapter/new.gal'), 'utf8'))
       .resolves.toContain('@scene new');
     await expect(fs.readFile(path.join(value.project, 'content/scenario/reader.gal'), 'utf8')).resolves.toBe(readerAfter);
     await expect(fs.stat(path.join(value.project, 'content/scenario/chapter/old.gal')))
       .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0]?.requestId).toBe(request.requestId);
+    expect(recoveries[0]?.changedPaths).toContain('content/scenario/chapter/new.gal');
   });
 
   it('retries safely after a crash between stage creation and durable stage identity', async () => {

@@ -1,6 +1,6 @@
 /**
  * 配置标签页（Frontend Pass 4）：角色、变量、成就、日历与地图、成长、事件、鉴赏、名词表八类配置台账。
- *  - 打开时从盘上重新读取源文件（外部修改即时可见）
+ *  - 项目初次加载或无本地草稿时从盘上重新读取源文件
  *  - 表格 ⇄ JSON 双向转换与校验全部经 config-edit.ts 纯逻辑（落盘前必过校验）
  *  - 写盘 2 空格缩进、键序稳定、未知字段经原条目合并保留；无目录连接时诚实提示
  *  - 复杂字段（effects/tiers/statGrowth/levelEvents/requires）以 JSON 文本列编辑
@@ -8,7 +8,8 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { assertProjectWriteUnlocked, runProjectWriteOperation, writeFileHandle } from '../project-io.js';
+import { assertProjectWriteUnlocked, runProjectWriteOperation, writeProjectText } from '../project-io.js';
+import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
@@ -30,11 +31,13 @@ import { createSnapshotHistory, snapshotPush, snapshotUndo, snapshotRedo } from 
 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
 let requestValidateHook: () => void = () => {};
-export function bindConfigHooks(opts: { requestValidate: () => void }): void {
+let configDraftStateChangedHook: (() => void) | undefined;
+export function bindConfigHooks(opts: { requestValidate: () => void; onDraftStateChanged?: () => void }): void {
   requestValidateHook = opts.requestValidate;
+  configDraftStateChangedHook = opts.onDraftStateChanged;
 }
 
-type ConfigSectionId =
+export type ConfigSectionId =
   | 'characters'
   | 'variables'
   | 'achievements'
@@ -43,6 +46,11 @@ type ConfigSectionId =
   | 'events'
   | 'gallery'
   | 'terminology';
+
+export interface ConfigDraftInspection {
+  dirty: boolean;
+  dirtySections: ConfigSectionId[];
+}
 
 interface ConfigSectionDescriptor {
   id: ConfigSectionId;
@@ -143,7 +151,7 @@ function rerenderConfig(): void {
   renderConfigWorkspace(root);
 }
 
-/* ---- 行模型缓存（切换标签页重入时从盘上源重载） ---- */
+/* ---- 行模型缓存（项目重载时清理；同一项目有草稿时跨标签页复用） ---- */
 let charRows: CharacterTableEditRow[] | null = null;
 let varRows: VariableRow[] | null = null;
 let achRows: AchievementRow[] | null = null;
@@ -153,6 +161,61 @@ let grRows: GrowthRows | null = null;
 let gaRows: GalleryRows | null = null;
 let termRows: TerminologyTableRows | null = null;
 let configSessionRevision = 0;
+let configSessionLoaded = false;
+const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
+
+function scheduleConfigDraftStateChanged(): void {
+  const hook = configDraftStateChangedHook;
+  if (!hook) return;
+  // Edits call this before mutating the row model so the hook observes the
+  // completed input/structural edit in the same task.
+  queueMicrotask(() => {
+    if (configDraftStateChangedHook === hook) hook();
+  });
+}
+
+function serializeConfigSection(sectionId: ConfigSectionId): string {
+  switch (sectionId) {
+    case 'characters': return JSON.stringify(ensureCharRows());
+    case 'variables': return JSON.stringify(ensureVarRows());
+    case 'achievements': return JSON.stringify(ensureAchRows());
+    case 'calendar': return JSON.stringify(ensureCalRows());
+    case 'growth': return JSON.stringify(ensureGrRows());
+    case 'events': return JSON.stringify(ensureEvRows());
+    case 'gallery': return JSON.stringify(ensureGaRows());
+    case 'terminology': return JSON.stringify(ensureTermRows());
+  }
+}
+
+function captureConfigBaseline(sectionId: ConfigSectionId): void {
+  configBaselines[sectionId] = serializeConfigSection(sectionId);
+}
+
+function captureAllConfigBaselines(): void {
+  for (const descriptor of CONFIG_SECTIONS) captureConfigBaseline(descriptor.id);
+}
+
+function markConfigSectionSaved(sectionId: ConfigSectionId, submittedRows: unknown, sessionRevision: number): void {
+  if (sessionRevision !== configSessionRevision) return;
+  configBaselines[sectionId] = JSON.stringify(submittedRows);
+  scheduleConfigDraftStateChanged();
+}
+
+function notifyConfigDraftStateChanged(): void {
+  configDraftStateChangedHook?.();
+}
+
+/** 只读配置草稿投影：按行模型与最后成功读取/保存的 section baseline 比较。 */
+export function inspectConfigDraftState(): ConfigDraftInspection {
+  const dirtySections: ConfigSectionId[] = [];
+  for (const descriptor of CONFIG_SECTIONS) {
+    const baseline = configBaselines[descriptor.id];
+    if (baseline !== undefined && baseline !== serializeConfigSection(descriptor.id)) {
+      dirtySections.push(descriptor.id);
+    }
+  }
+  return { dirty: dirtySections.length > 0, dirtySections };
+}
 
 /** 打开配置页时从盘上重读源文件（外部改动即时可见；失败沿用内存态） */
 async function refreshConfigSources(revision: number): Promise<boolean> {
@@ -237,6 +300,8 @@ function clearConfigRowsAndHistory(): void {
   grRows = null;
   gaRows = null;
   termRows = null;
+  configSessionLoaded = false;
+  for (const sectionId of Object.keys(configBaselines) as ConfigSectionId[]) delete configBaselines[sectionId];
   configHist.past = [];
   configHist.future = [];
 }
@@ -245,6 +310,7 @@ function clearConfigRowsAndHistory(): void {
 export function resetConfigSession(): void {
   configSessionRevision += 1;
   clearConfigRowsAndHistory();
+  notifyConfigDraftStateChanged();
 }
 
 function clone<T>(v: T): T {
@@ -256,8 +322,9 @@ function takeConfigSnapshot(): ConfigSnapshot {
 }
 
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
-function pushConfigHistory(coalesce: boolean): void {
+function pushConfigHistory(coalesce: boolean, notify = true): void {
   snapshotPush(configHist, takeConfigSnapshot(), Date.now(), coalesce);
+  if (notify) scheduleConfigDraftStateChanged();
 }
 
 function restoreConfigSnapshot(snap: ConfigSnapshot): void {
@@ -281,6 +348,7 @@ export function configUndo(): void {
     return;
   }
   restoreConfigSnapshot(snap);
+  notifyConfigDraftStateChanged();
   setStatus('配置：已撤销（未写盘，保存后生效）', true, 2500);
 }
 
@@ -292,6 +360,7 @@ export function configRedo(): void {
     return;
   }
   restoreConfigSnapshot(snap);
+  notifyConfigDraftStateChanged();
   setStatus('配置：已重做（未写盘，保存后生效）', true, 2500);
 }
 
@@ -425,32 +494,27 @@ async function saveConfigFileUnlocked(
   json: Record<string, unknown>,
   errors: string[],
   label: string,
+  submittedRows: unknown,
+  sessionRevision: number,
 ): Promise<void> {
   assertProjectWriteUnlocked();
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return;
   }
-  let handle = state.handles[name];
-  if (!handle && state.dirHandle) {
-    try {
-      const contentDir = await state.dirHandle.getDirectoryHandle('content', { create: true });
-      const configDir = await contentDir.getDirectoryHandle('config', { create: true });
-      handle = await configDir.getFileHandle(`${name}.json`, { create: true });
-      state.handles[name] = handle;
-    } catch { /* 创建失败走下方提示 */ }
-  }
-  if (!handle) {
+  const handle = state.handles[name];
+  if (!handle && !state.dirHandle) {
     setStatus(`${label}无法保存：未连接游戏目录（演示项目不落盘）`, false, 6000);
     return;
   }
   try {
-    await writeFileHandle(handle, JSON.stringify(json, null, 2) + '\n');
+    state.handles[name] = await writeProjectText(`content/config/${name}.json`, JSON.stringify(json, null, 2) + '\n', handle);
   } catch (err) {
     setStatus(`${label}写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
     return;
   }
   state.configFiles[name] = json;
+  markConfigSectionSaved(name, submittedRows, sessionRevision);
   requestValidateHook();
   setStatus(`${label}已保存`, true, 4000);
 }
@@ -460,8 +524,14 @@ async function saveConfigFile(
   json: Record<string, unknown>,
   errors: string[],
   label: string,
+  submittedRows: unknown,
 ): Promise<void> {
-  await runProjectWriteOperation(() => saveConfigFileUnlocked(name, json, errors, label));
+  const sessionRevision = configSessionRevision;
+  try {
+    await runProjectWriteOperation(() => saveConfigFileUnlocked(name, json, errors, label, submittedRows, sessionRevision));
+  } catch (error) {
+    setStatus(`${label}未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+  }
 }
 
 function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTMLElement } {
@@ -489,7 +559,9 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 
 async function saveVariablesUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
+  const sessionRevision = configSessionRevision;
   const rows = ensureVarRows();
+  const submittedRows = clone(rows);
   const { variables, errors } = rowsToVariables(rows);
   if (errors.length > 0) {
     setStatus(`变量表未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
@@ -508,31 +580,27 @@ async function saveVariablesUnlocked(): Promise<void> {
       return;
     }
   }
-  let handle = state.handles.gameConfig;
-  if (!handle && state.dirHandle) {
-    try {
-      handle = await state.dirHandle.getFileHandle('game.config.json', { create: true });
-      state.handles.gameConfig = handle;
-    } catch { /* 创建失败走下方提示 */ }
-  }
-  if (!handle) {
+  const handle = state.handles.gameConfig;
+  if (!handle && !state.dirHandle) {
     setStatus('变量表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
     return;
   }
-  const text = applyVariablesToConfig(state.gameConfigText, variables);
+  const text = applyVariablesToConfig(state.gameConfigText, variables) + '\n';
   try {
-    await writeFileHandle(handle, text + '\n');
+    state.handles.gameConfig = await writeProjectText('game.config.json', text, handle);
   } catch (err) {
     setStatus(`变量表写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
     return;
   }
   state.gameConfigText = text;
+  markConfigSectionSaved('variables', submittedRows, sessionRevision);
   requestValidateHook();
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
 }
 
 async function saveVariables(): Promise<void> {
-  await runProjectWriteOperation(saveVariablesUnlocked);
+  try { await runProjectWriteOperation(saveVariablesUnlocked); }
+  catch (error) { setStatus(`变量表未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000); }
 }
 
 /** 角色表（Wave 3 closure）：显示名/头像可编辑；保存经 @surdet/authoring 的共享
@@ -591,7 +659,9 @@ function renderCharactersSection(): HTMLElement {
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
 async function saveCharactersUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
+  const sessionRevision = configSessionRevision;
   const rows = ensureCharRows();
+  const submittedRows = clone(rows);
   let handle = state.handles.gameConfig;
   if (!handle && state.dirHandle) {
     try {
@@ -604,13 +674,13 @@ async function saveCharactersUnlocked(): Promise<void> {
     return;
   }
   try {
-    const result = await commitCharacterTable(rows);
+    const result = await commitCharacterTable(submittedRows);
     if (result.changed === 0) {
+      markConfigSectionSaved('characters', submittedRows, sessionRevision);
       setStatus('角色表无改动', true, 4000);
       return;
     }
-    charRows = null; // 提交成功：行缓存从新基线重建
-    rerenderConfig();
+    markConfigSectionSaved('characters', submittedRows, sessionRevision);
     requestValidateHook();
     const migrationNote = result.speakerMigrations.length > 0 ? `，同步迁移 ${result.speakerMigrations.length} 处台词 speaker` : '';
     setStatus(`角色表已保存（${result.changed} 个角色更新${migrationNote}）`, true, 4000);
@@ -621,7 +691,8 @@ async function saveCharactersUnlocked(): Promise<void> {
 }
 
 async function saveCharacters(): Promise<void> {
-  await runProjectWriteOperation(saveCharactersUnlocked);
+  try { await runProjectWriteOperation(saveCharactersUnlocked); }
+  catch (error) { setStatus(`角色表未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000); }
 }
 
 function renderVariablesSection(): HTMLElement {
@@ -717,8 +788,9 @@ function renderVariablesSection(): HTMLElement {
 
 async function saveAchievements(): Promise<void> {
   const rows = ensureAchRows();
+  const submittedRows = clone(rows);
   const { json, errors } = rowsToAchievements(rows);
-  await saveConfigFile('achievements', json as unknown as Record<string, unknown>, errors, '成就表');
+  await saveConfigFile('achievements', json as unknown as Record<string, unknown>, errors, '成就表', submittedRows);
 }
 
 function renderAchievementsSection(): HTMLElement {
@@ -824,9 +896,12 @@ function renderCalendarSection(): HTMLElement {
   const mapWrap = h('div', 'config-map-stage');
   mapSection.appendChild(mapWrap);
   sec.appendChild(mapSection);
-  renderCalendarMap(mapWrap, cal.nodes, rerenderConfig, {
-    onDragStart: () => pushConfigHistory(false),
-    onBeforeEdit: () => pushConfigHistory(false), // 连线增删也可 Ctrl+Z 撤销（审阅轮 Minor 1 修复）
+  renderCalendarMap(mapWrap, cal.nodes, () => {
+    rerenderConfig();
+    notifyConfigDraftStateChanged();
+  }, {
+    onDragStart: () => pushConfigHistory(false, false),
+    onBeforeEdit: () => pushConfigHistory(false, false), // 连线增删也可 Ctrl+Z 撤销（审阅轮 Minor 1 修复）
   });
 
   const detailTables = h('details', 'config-table-details');
@@ -860,8 +935,10 @@ function renderCalendarSection(): HTMLElement {
 
   const saveBtn = h('button', 'primary', '保存日历配置');
   saveBtn.onclick = () => {
-    const { json, errors } = rowsToCalendar(state.configFiles.calendar, ensureCalRows());
-    void saveConfigFile('calendar', json, errors, '日历配置');
+    const rows = ensureCalRows();
+    const submittedRows = clone(rows);
+    const { json, errors } = rowsToCalendar(state.configFiles.calendar, rows);
+    void saveConfigFile('calendar', json, errors, '日历配置', submittedRows);
   };
   ops.appendChild(saveBtn);
   sec.appendChild(ops);
@@ -892,8 +969,10 @@ function renderGrowthSection(): HTMLElement {
 
   const saveBtn = h('button', 'primary', '保存成长配置');
   saveBtn.onclick = () => {
-    const { json, errors } = rowsToGrowth(state.configFiles.growth, ensureGrRows());
-    void saveConfigFile('growth', json, errors, '成长配置');
+    const rows = ensureGrRows();
+    const submittedRows = clone(rows);
+    const { json, errors } = rowsToGrowth(state.configFiles.growth, rows);
+    void saveConfigFile('growth', json, errors, '成长配置', submittedRows);
   };
   ops.appendChild(saveBtn);
   sec.appendChild(ops);
@@ -934,8 +1013,10 @@ function renderEventsSection(): HTMLElement {
 
   const saveBtn = h('button', 'primary', '保存事件配置');
   saveBtn.onclick = () => {
-    const { json, errors } = rowsToEvents(state.configFiles.events, ensureEvRows());
-    void saveConfigFile('events', json, errors, '事件配置');
+    const rows = ensureEvRows();
+    const submittedRows = clone(rows);
+    const { json, errors } = rowsToEvents(state.configFiles.events, rows);
+    void saveConfigFile('events', json, errors, '事件配置', submittedRows);
   };
   ops.appendChild(saveBtn);
   sec.appendChild(ops);
@@ -965,8 +1046,10 @@ function renderGallerySection(): HTMLElement {
 
   const saveBtn = h('button', 'primary', '保存鉴赏配置');
   saveBtn.onclick = () => {
-    const { json, errors } = rowsToGallery(state.configFiles.gallery, ensureGaRows());
-    void saveConfigFile('gallery', json, errors, '鉴赏配置');
+    const rows = ensureGaRows();
+    const submittedRows = clone(rows);
+    const { json, errors } = rowsToGallery(state.configFiles.gallery, rows);
+    void saveConfigFile('gallery', json, errors, '鉴赏配置', submittedRows);
   };
   ops.appendChild(saveBtn);
   sec.appendChild(ops);
@@ -983,6 +1066,7 @@ export async function addTerminologyVariant(canonical: string, variant: string):
     return;
   }
   try {
+    const sessionRevision = configSessionRevision;
     await runProjectWriteOperation(async () => {
       const rows = ensureTermRows();
       let row = rows.terms.find((r) => String(r.canonical ?? '').trim() === canonical);
@@ -1005,7 +1089,8 @@ export async function addTerminologyVariant(canonical: string, variant: string):
       list.push(variant);
       row.variants = JSON.stringify(list);
       const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
-      await saveConfigFileUnlocked('terminology', json, errors, '名词表');
+      const submittedRows = clone(rows);
+      await saveConfigFileUnlocked('terminology', json, errors, '名词表', submittedRows, sessionRevision);
     });
   } catch (error) {
     setStatus(`名词表未修改：${error instanceof Error ? error.message : String(error)}`, false, 4000);
@@ -1077,8 +1162,10 @@ function renderTerminologySection(): HTMLElement {
   importBtn.onclick = () => fileInput.click();
   const saveBtn = h('button', 'primary', '保存名词表');
   saveBtn.onclick = () => {
-    const { json, errors } = rowsToTerminology(state.configFiles.terminology, ensureTermRows());
-    void saveConfigFile('terminology', json, errors, '名词表');
+    const rows = ensureTermRows();
+    const submittedRows = clone(rows);
+    const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
+    void saveConfigFile('terminology', json, errors, '名词表', submittedRows);
   };
   ops.append(exportBtn, importBtn, fileInput, saveBtn);
   sec.appendChild(ops);
@@ -1087,8 +1174,21 @@ function renderTerminologySection(): HTMLElement {
 
 /* ============================ 入口 ============================ */
 
-/** 渲染配置标签页（每次进入从盘上重读源文件） */
+/** 渲染配置标签页；同一项目已有草稿/历史时复用内存态，避免重进工作面丢失编辑。 */
 export function renderConfig(container: HTMLElement): void {
+  if (editorWorkspaceStatus().protection !== 'unavailable') {
+    renderConfigWorkspace(container);
+    if (!configSessionLoaded) {
+      captureAllConfigBaselines();
+      configSessionLoaded = true;
+    }
+    return;
+  }
+  const history = configHistoryDepth();
+  if (configSessionLoaded && (inspectConfigDraftState().dirty || history.past > 0 || history.future > 0)) {
+    renderConfigWorkspace(container);
+    return;
+  }
   container.innerHTML = '';
   const loading = h('div', 'dim', '正在读取配置文件…');
   loading.style.padding = '12px';
@@ -1098,5 +1198,8 @@ export function renderConfig(container: HTMLElement): void {
     if (!current) return;
     clearConfigRowsAndHistory();
     renderConfigWorkspace(container);
+    captureAllConfigBaselines();
+    configSessionLoaded = true;
+    notifyConfigDraftStateChanged();
   });
 }

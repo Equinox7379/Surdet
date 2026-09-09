@@ -11,9 +11,16 @@
  *   panels/sidebar  场景列表　panels/editor 块编辑区　panels/issues 校验编排+结果　panels/right 变量/拓扑/引用
  */
 import { state, h, setStatus } from './state.js';
+import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorkspace, editorWorkspaceStatus,
+  publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
+  editorWorkspaceTextChanges } from './editor-workspace.js';
+import type { ProjectDiskBaseline } from './project-disk-baseline.js';
+import { hasReviewDraft, discardReviewDraft } from './review-workspace.js';
+import { refreshReviewFixtureIdentity } from './review-preview.js';
 import {
   buildObjectIndex,
   buildProjectAssetIntelligence,
+  loadProjectSnapshot,
   type ProjectAssetImportTargetRequest,
   type ProjectAssetItem,
   type ProjectAssetReference,
@@ -34,6 +41,8 @@ import {
   reloadCurrentProjectFromHandle,
   waitForProjectWritesToSettle,
   refreshProjectAssetIntelligence,
+  collectProjectAssets,
+  sceneTextSha256,
   saveAll,
   exportCurrent,
   loadDemoProject,
@@ -58,7 +67,8 @@ import {
   renameScene,
   renameSceneAtKey,
 } from './panels/flow.js';
-import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession } from './panels/config.js';
+import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
+  inspectConfigDraftState } from './panels/config.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation } from './v4/ui.js';
@@ -125,6 +135,8 @@ interface SceneAutosaveRecoveryContext {
 let sceneAutosaveRecoverySequence = 0;
 let sceneAutosaveRecoveryPhase: SceneAutosaveRecoveryPhase = 'idle';
 let assetImportActionRunning = false;
+let sceneLifecycleActionRunning = false;
+let loadedWorkspaceAssets = new Map<string, string>();
 let assetImportPanelOpen = false;
 let assetImportActionSequence = 0;
 let assetImportCancelRequested = false;
@@ -146,7 +158,8 @@ function resetAssetImportRuntime(): void {
   assetImportCancelRequested = false;
   assetImportActionCancellable = false;
   assetImportPanelOpen = false;
-  assetImportClient.dispose();
+  const closingClient = assetImportClient;
+  void disconnectEditorWorkspace().finally(() => closingClient.dispose());
   assetImportClient = createAssetImportAuthorityClient();
   assetImportWorkspace.reset();
   assetRelocationActionSequence += 1;
@@ -230,10 +243,11 @@ function closeCurrentProjectRuntime(): void {
   resetAssetImportRuntime();
 }
 
-async function bindCurrentProjectAssetImport(): Promise<void> {
+async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBaseline | null): Promise<void> {
   const root = state.dirHandle;
   const client = assetImportClient;
   const generation = assetImportGeneration;
+  const baseline = state.projectLoading ? undefined : preservedBaseline ?? editorWorkspaceStatus().baseline;
   if (root === null) {
     assetImportWorkspace.markUnavailable();
     return;
@@ -243,6 +257,8 @@ async function bindCurrentProjectAssetImport(): Promise<void> {
     const binding = await client.bindProject(root);
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     assetImportWorkspace.applyBinding(binding);
+    await connectEditorWorkspace(client.workspace, root, baseline);
+    if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     const pendingRelocation = binding.pendingRelocations[0];
     if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().mode === 'idle') {
       const detail = await client.relocationQuery(pendingRelocation.operationId);
@@ -575,7 +591,9 @@ function hasDirtyProjectFiles(): boolean {
     || state.pendingSceneDeletes.length > 0
     || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
-    || state.pendingTimelineRestores.size > 0;
+    || state.pendingTimelineRestores.size > 0
+    || inspectConfigDraftState().dirty
+    || hasReviewDraft(state.reviewWorkspace);
 }
 
 interface AssetRelocationActionContext {
@@ -985,7 +1003,11 @@ function projectBarProjection(): ProjectBarProjection {
     ? saveAttemptLeftDirty ? 'partial-failure' : 'dirty'
     : 'saved';
   const sceneRecoveryLocked = sceneAutosaveRecoveryPhase !== 'idle';
+  const relay = editorWorkspaceStatus();
   return {
+    relayProtection: relay.protection,
+    relayUpdate: relay.update,
+    relayDirty: relay.dirty,
     projectName: state.dirName || '未打开项目',
     objectLabel: currentObjectLabel(),
     saveState,
@@ -993,7 +1015,8 @@ function projectBarProjection(): ProjectBarProjection {
     canRedo: true,
     fsSupported: state.fsSupported,
     hasScenes: state.scenes.size > 0,
-    writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked,
+    writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked || relay.saving || sceneLifecycleActionRunning
+      || state.reviewWorkspace?.authority.state === 'submitting',
     ...(sceneRecoveryLocked ? {
       writeLockLabel: sceneAutosaveRecoveryPhase === 'running'
         ? '正在恢复上次未完成的保存'
@@ -1006,6 +1029,7 @@ function projectBarProjection(): ProjectBarProjection {
 }
 
 function refreshProjectBarProjection(): void {
+  publishEditorWorkspaceState();
   updateProjectBarProjection(projectBarProjection());
 }
 
@@ -1031,6 +1055,125 @@ async function saveProject(): Promise<void> {
     setStatus(error instanceof Error ? error.message : '当前不能保存项目', false, 5000);
   }
   refreshProjectBarProjection();
+}
+
+async function viewProjectChanges(): Promise<void> {
+  const root = state.dirHandle;
+  if (root === null) return;
+  try {
+    const snapshot = await pollEditorWorkspace(true);
+    const freshAssets = await collectProjectAssets(root, true);
+    if (state.dirHandle !== root) return;
+    if (snapshot === null) throw new Error('工作区尚未连接');
+    const diskFiles = new Map<string, { path: string; text: string; bytes: number; sha256: string }>();
+    const diskStorage = {
+      rootIdentity: 'bound-editor-change-inspection',
+      listFiles: async () => snapshot.diskBaseline.files.map(file => file.path),
+      exists: async (path: string) => snapshot.diskBaseline.files.some(file => file.path === path),
+      readText: async (path: string) => {
+        const existing = diskFiles.get(path);
+        if (existing) return existing;
+        const parts = path.split('/');
+        const name = parts.pop()!;
+        let directory = root;
+        for (const part of parts) directory = await directory.getDirectoryHandle(part);
+        const file = await (await directory.getFileHandle(name)).getFile();
+        const bytes = await file.arrayBuffer();
+        const hash = await crypto.subtle.digest('SHA-256', bytes);
+        const result = { path, text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes), bytes: bytes.byteLength,
+          sha256: [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
+        diskFiles.set(path, result);
+        return result;
+      },
+    };
+    const freshSnapshot = await loadProjectSnapshot(diskStorage, { sha256: sceneTextSha256 });
+    const gallery = await diskStorage.exists('content/config/gallery.json')
+      ? JSON.parse((await diskStorage.readText('content/config/gallery.json')).text) : undefined;
+    const freshIntelligence = buildProjectAssetIntelligence(freshSnapshot, freshAssets.flatMap(asset => asset.sourcePath?.startsWith('content/assets/')
+      ? [{ path: asset.sourcePath, bytes: asset.bytes }] : []), { gallery });
+    if (state.dirHandle !== root) return;
+    const changes = editorWorkspaceTextChanges();
+    const freshFacts = new Map(freshAssets.filter(asset => asset.sourcePath !== undefined)
+      .map(asset => [asset.sourcePath!, `${asset.bytes}:${asset.lastModified}:${asset.kind}`]));
+    const assetChanges = [...new Set([...loadedWorkspaceAssets.keys(), ...freshFacts.keys()])]
+      .filter(path => loadedWorkspaceAssets.get(path) !== freshFacts.get(path)).sort();
+    document.getElementById('editor-project-changes')?.remove();
+    const dialog = h('dialog', 'editor-project-changes-dialog');
+    dialog.id = 'editor-project-changes';
+    dialog.append(h('h2', undefined, '项目变化范围'));
+    dialog.append(h('p', 'dim', `已重新扫描 ${freshIntelligence.summary.fileCount} 个素材文件。`));
+    const textChanges = changes?.all ?? [];
+    if (changes === null) dialog.append(h('p', undefined, '尚未记录读取基线，请显式同步项目后继续编辑。'));
+    const groups: Array<[string, string[]]> = [['新增文本', changes?.created ?? []], ['修改文本', changes?.modified ?? []],
+      ['删除文本', changes?.deleted ?? []], ['素材变化', assetChanges]];
+    for (const [label, paths] of groups) {
+      if (paths.length === 0) continue;
+      dialog.append(h('h3', undefined, `${label}（${paths.length}）`));
+      const list = h('ul');
+      for (const path of paths) list.append(h('li', undefined, path));
+      dialog.append(list);
+    }
+    if (changes !== null && textChanges.length === 0 && assetChanges.length === 0) {
+      dialog.append(h('p', undefined, '与当前读取基线相比，没有检测到文件变化。'));
+    }
+    const latest = editorWorkspaceStatus().latest?.mutationNotice;
+    if (latest) {
+      const initiator = latest.initiator === 'external-agent' ? 'Agent' : latest.initiator === 'human-editor' ? '编辑器' : '项目操作';
+      dialog.append(h('p', 'dim', `最近一次写入来自${initiator}；以上范围按完整读取基线比较。`));
+    }
+    const close = h('button', undefined, '关闭');
+    close.onclick = () => dialog.close();
+    dialog.append(close);
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+  } catch (error) {
+    setStatus(`无法读取变化范围：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+  }
+}
+
+async function syncProject(discardDrafts = false): Promise<void> {
+  if (editorWorkspaceStatus().protection === 'unavailable' || state.dirHandle === null) return;
+  try {
+    await waitForProjectWritesToSettle();
+    if (state.projectWriteLock !== null || sceneAutosaveRecoveryPhase !== 'idle' || sceneLifecycleActionRunning
+      || pendingAutosaveTimelineConflicts.length > 0) {
+      throw new Error('当前操作尚未完成，请稍后同步项目。');
+    }
+    if (hasDirtyProjectFiles() && !discardDrafts) throw new Error('草稿仍未保存，请选择保留或放弃草稿。');
+    const previous = { mainTab: state.mainTab, sceneKey: state.current,
+      sceneId: state.current === null ? undefined : state.scenes.get(state.current)?.id,
+      timelineId: state.currentTimeline, selectedAssetId: state.assetCenterSelectedId };
+    const previousSelection = state.selectedObjectRef;
+    const previousIndex = state.authoringIndex;
+    const reviewWorkspace = state.reviewWorkspace;
+    if (discardDrafts) {
+      if (reviewWorkspace !== null) discardReviewDraft(reviewWorkspace);
+      if (state.autosaveProjectId) clearAutosave(state.autosaveProjectId);
+    }
+    disposePreviewPanel();
+    disposeScriptV4();
+    document.getElementById('main')?.setAttribute('inert', '');
+    state.selectedObjectRef = null;
+    await reloadCurrentProjectFromHandle(previous);
+    state.reviewWorkspace = reviewWorkspace;
+    if (reviewWorkspace !== null) await refreshReviewFixtureIdentity(reviewWorkspace);
+    await refreshAuthoringIndexImmediately();
+    if (state.authoringIndex !== null) {
+      state.selectedObjectRef = reconcileAuthoringSelection(previousSelection, previousIndex, state.authoringIndex, true);
+    }
+    saveAttemptLeftDirty = false;
+    blockedSceneAutosave = null;
+    pendingAutosaveTimelineConflicts = [];
+    if (state.autosaveProjectId) clearAutosave(state.autosaveProjectId);
+    renderAll();
+    await pollEditorWorkspace(true);
+    setStatus(previousSelection !== null && state.selectedObjectRef === null
+      ? '项目已同步；原选中对象已变化，已清空选择。' : '项目已同步，可以继续编辑。', true, 6000);
+  } catch (error) {
+    document.getElementById('main')?.toggleAttribute('inert', sceneAutosaveRecoveryPhase !== 'idle');
+    setStatus(`项目未同步：${error instanceof Error ? error.message : String(error)}`, false, 8000);
+  }
 }
 
 function confirmProjectSwitch(): boolean {
@@ -1066,11 +1209,14 @@ function loadDemoProjectSafely(): void {
 }
 
 async function runSceneLifecycleAction(operation: () => Promise<void>): Promise<void> {
+  sceneLifecycleActionRunning = true;
+  refreshProjectBarProjection();
   try {
     await operation();
   } catch (error) {
     setStatus(error instanceof Error ? error.message : '当前无法修改场景', false, 5000);
   } finally {
+    sceneLifecycleActionRunning = false;
     renderMainArea();
     refreshProjectBarProjection();
   }
@@ -1204,6 +1350,20 @@ bindHistoryHooks({
   },
   onHistoryNav: () => { renderEditor(); renderSidebar(); refreshProjectBarProjection(); },
 });
+bindEditorWorkspaceHooks({
+  facts: () => ({
+    sceneDirty: [...state.scenes.values()].some(scene => scene.dirty) || state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null,
+    timelineDirty: state.timelines.some(timeline => timeline.dirty) || state.pendingTimelineDeletes.length > 0 || state.pendingTimelineRestores.size > 0,
+    configDirty: inspectConfigDraftState().dirty,
+    reviewDirty: hasReviewDraft(state.reviewWorkspace),
+    projectTransition: state.projectLoading,
+    assetImportWriting: assetImportActionRunning,
+    assetRelocationWriting: assetRelocationWorkspace.snapshot().busy || state.projectWriteLock === 'asset-relocation',
+    sceneLifecycleWriting: sceneLifecycleActionRunning,
+    autosaveRecoveryBlocked: sceneAutosaveRecoveryPhase !== 'idle' || pendingAutosaveTimelineConflicts.length > 0,
+  }),
+  onChanged: refreshProjectBarProjection,
+});
 bindProjectIoHooks({
   renderAll,
   runValidate: () => { runValidate(); scheduleAuthoringIndexRebuild(); },
@@ -1223,13 +1383,17 @@ bindProjectIoHooks({
       requestId: input.requestId,
       plans: input.plans,
       writes: input.writes,
-    });
+    }, currentEditorWorkspaceWrite());
   },
   onSceneCommitStateChanged: () => persistCurrentAutosave(Date.now()),
   onProjectClosing: closeCurrentProjectRuntime,
   onProjectStateReset: () => {
     invalidatePendingValidation();
     resetConfigSession();
+  },
+  onProjectReading: async () => {
+    if (editorWorkspaceStatus().protection === 'unavailable') await bindCurrentProjectAssetImport();
+    else await readEditorWorkspaceBaseline();
   },
   onProjectLoadSettled: (succeeded) => {
     authoringProjectChanging = false;
@@ -1238,6 +1402,10 @@ bindProjectIoHooks({
       clearTimeout(authoringTimer);
       authoringTimer = null;
     }
+    if (succeeded) loadedWorkspaceAssets = new Map(state.dirAssets.filter(asset => asset.sourcePath !== undefined)
+      .map(asset => [asset.sourcePath!, `${asset.bytes}:${asset.lastModified}:${asset.kind}`]));
+    refreshProjectBarProjection();
+    if (succeeded) void pollEditorWorkspace().catch(() => {});
   },
   onProjectLoaded: () => {
     authoringProjectChanging = false;
@@ -1247,8 +1415,7 @@ bindProjectIoHooks({
     clearTimelineViewStates();
     resetAuthoringState();
     refreshProjectBarProjection();
-    const bindingReady = bindCurrentProjectAssetImport();
-    startCurrentProjectAutosaveRecovery(bindingReady);
+    startCurrentProjectAutosaveRecovery(Promise.resolve());
   },
   onSaved: () => {
     persistCurrentAutosave(Date.now());
@@ -1291,6 +1458,7 @@ bindFlowHooks({
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
+  onDraftStateChanged: refreshProjectBarProjection,
 });
 bindTimelineHooks({
   onPreview: (timelineId) => {
@@ -1472,6 +1640,10 @@ function renderAll(): void {
     onSaveProject: () => { void saveProject(); },
     onLoadDemo: loadDemoProjectSafely,
     onExportCurrent: exportCurrent,
+    onViewProjectChanges: () => { void viewProjectChanges(); },
+    onSyncProject: () => { void syncProject(); },
+    onDiscardProjectDrafts: () => { void syncProject(true); },
+    onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
   });
   appEl.appendChild(header);
 
@@ -1757,6 +1929,11 @@ window.addEventListener('keydown', (e) => {
 
 // 关页保护：存在未保存改动时提示（防误关丢失编辑）
 window.addEventListener('beforeunload', (e) => {
+  if (inspectConfigDraftState().dirty || hasReviewDraft(state.reviewWorkspace)) {
+    e.preventDefault();
+    e.returnValue = '';
+    return;
+  }
   if (state.projectWriteLock === 'asset-relocation' || sceneAutosaveRecoveryPhase !== 'idle') {
     e.preventDefault();
     e.returnValue = '';
@@ -1779,10 +1956,13 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
+let suspendedWorkspaceBaseline: ProjectDiskBaseline | null = null;
 window.addEventListener('pagehide', (event) => {
+  suspendedWorkspaceBaseline = editorWorkspaceStatus().baseline;
   if (event.persisted) resetAssetImportRuntime();
   else {
-    assetImportClient.dispose();
+    const closingClient = assetImportClient;
+    void disconnectEditorWorkspace().finally(() => closingClient.dispose());
     assetImportWorkspace.dispose();
     assetRelocationWorkspace.dispose();
   }
@@ -1790,9 +1970,14 @@ window.addEventListener('pagehide', (event) => {
 
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) {
-    const bindingReady = bindCurrentProjectAssetImport();
+    const bindingReady = bindCurrentProjectAssetImport(suspendedWorkspaceBaseline);
     startCurrentProjectAutosaveRecovery(bindingReady);
   }
+});
+
+window.addEventListener('focus', () => {
+  publishEditorWorkspaceState(true);
+  void pollEditorWorkspace(true).catch(() => {});
 });
 
 // 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪

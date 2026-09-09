@@ -62,6 +62,10 @@ class FakeElement {
     visit(this);
     return found;
   }
+
+  querySelector(selector: string): FakeElement | null {
+    return this.querySelectorAll(selector)[0] ?? null;
+  }
 }
 
 const documentStub = {

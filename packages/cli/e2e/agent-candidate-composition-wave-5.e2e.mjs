@@ -69,7 +69,7 @@ function hashTree(root) {
   };
 }
 
-function copyStarter(destination) {
+export function copyStarter(destination) {
   fs.cpSync(starterRoot, destination, {
     recursive: true,
     filter(source) {
@@ -265,7 +265,7 @@ const betaTimeline = {
 };
 
 /** Seal one v2 candidate capsule in its own stage session. */
-async function sealCandidate(fixture, dataDir, label, ops) {
+export async function sealCandidate(fixture, dataDir, label, ops) {
   const errors = { protocol: [], stderrUnexpected: [], childCleanupFailures: [] };
   const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'stage', dataDir }));
   let changeId;

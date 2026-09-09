@@ -10,6 +10,7 @@ class FakeElement {
   readonly attributes = new Map<string, string>();
   className = '';
   disabled = false;
+  hidden = false;
   type = '';
   onclick: (() => void) | null = null;
   private ownText = '';
@@ -188,6 +189,71 @@ describe('editor action scope contract', () => {
     expect(bar.querySelector('[data-action="save-project"]')!.getAttribute('title'))
       .toBe('恢复完成前暂停编辑和项目切换');
     expect((bar.querySelector('[data-action="save-project"]') as unknown as { disabled: boolean }).disabled).toBe(true);
+  });
+
+  it('projects relay protection and external updates without rebuilding relay controls', () => {
+    vi.stubGlobal('document', documentStub);
+    const callbacks = {
+      onOpenProject: vi.fn(),
+      onOpenReview: vi.fn(),
+      onUndo: vi.fn(),
+      onRedo: vi.fn(),
+      onSaveProject: vi.fn(),
+      onViewProjectChanges: vi.fn(),
+      onSyncProject: vi.fn(),
+      onKeepProjectDrafts: vi.fn(),
+      onDiscardProjectDrafts: vi.fn(),
+    };
+    const bar = renderProjectBar({
+      projectName: '当前项目',
+      objectLabel: '场景 ch01_01',
+      saveState: 'dirty',
+      canUndo: true,
+      canRedo: true,
+      relayProtection: 'connected',
+      relayUpdate: 'pending',
+      relayDirty: true,
+    }, callbacks) as unknown as FakeElement;
+    const relay = bar.querySelector('.editor-relay-status')!;
+    const view = bar.querySelector('[data-action="view-project-changes"]')!;
+    const sync = bar.querySelector('[data-action="sync-project"]')!;
+    const discard = bar.querySelector('[data-action="discard-project-drafts"]')!;
+    expect(relay.textContent).toContain('接力保护：已连接');
+    expect(relay.textContent).toContain('外部变更已写入项目');
+    expect(view.hidden).toBe(false);
+    expect(sync.hidden).toBe(false);
+    expect(sync.disabled).toBe(false);
+    expect(discard.hidden).toBe(true);
+
+    updateProjectBarProjection({
+      projectName: '当前项目',
+      objectLabel: '场景 ch01_01',
+      saveState: 'dirty',
+      writeLocked: true,
+      relayProtection: 'connected',
+      relayUpdate: 'conflict',
+      relayDirty: true,
+    }, bar as unknown as ParentNode);
+
+    expect(bar.querySelector('.editor-relay-status')!).toBe(relay);
+    expect(relay.textContent).toContain('项目磁盘已变化，未覆盖你的草稿');
+    expect(view.hidden).toBe(false);
+    expect(sync.hidden).toBe(true);
+    expect(bar.querySelector('[data-action="keep-project-drafts"]')!.hidden).toBe(false);
+    expect(discard.hidden).toBe(false);
+    expect(discard.disabled).toBe(true);
+
+    updateProjectBarProjection({
+      projectName: '当前项目',
+      objectLabel: '场景 ch01_01',
+      saveState: 'dirty',
+      relayProtection: 'connected',
+      relayUpdate: 'none',
+      relayDirty: true,
+    }, bar as unknown as ParentNode);
+    expect(relay.textContent).toContain('接力保护：已连接');
+    expect(discard.hidden).toBe(false);
+    expect(discard.disabled).toBe(false);
   });
 
   it('keeps decision saving workspace-scoped and gives the two scopes distinct style identities', () => {

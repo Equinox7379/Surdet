@@ -185,6 +185,58 @@ body {
   gap: var(--surdet-space-4);
 }
 
+.editor-relay-status {
+  grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--surdet-space-6);
+  color: var(--surdet-shell-chrome-muted);
+  font-size: var(--surdet-type-caption);
+  line-height: 1.25;
+}
+
+.editor-relay-protection,
+.editor-relay-update {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-relay-update {
+  color: var(--surdet-shell-chrome-text);
+}
+
+.editor-relay-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--surdet-space-4);
+}
+
+.editor-relay-status .editor-command {
+  min-height: 28px;
+  padding: var(--surdet-space-4) var(--surdet-space-8);
+  font-size: var(--surdet-type-caption);
+}
+
+.editor-relay-status [hidden] { display: none; }
+
+.editor-project-changes-dialog {
+  width: min(640px, calc(100vw - 40px));
+  max-height: 75vh;
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--surdet-shell-chrome-muted);
+  border-radius: 12px;
+}
+
+.editor-project-changes-dialog li { overflow-wrap: anywhere; }
+.editor-project-changes-dialog::backdrop { background: rgb(0 0 0 / 40%); }
+
 .editor-save-state {
   color: var(--surdet-shell-chrome-text);
   font-size: var(--surdet-type-caption);
@@ -441,6 +493,10 @@ body {
 
   .editor-operation-feedback {
     align-items: flex-start;
+  }
+
+  .editor-relay-status {
+    justify-content: flex-start;
   }
 
   .editor-project-bar #status {

@@ -74,6 +74,7 @@ export interface SceneLifecycleAuthorityOptions {
   mutationCoordinator?: AssetProjectMutationCoordinator;
   faultInjector?: (point: SceneLifecycleFaultPoint) => void | Promise<void>;
   now?: () => Date;
+  onRecovered?: (requestId: string, changedPaths: string[]) => Promise<void>;
 }
 
 export type SceneLifecycleFaultPoint =
@@ -399,12 +400,14 @@ export class ProjectSceneLifecycleAuthority {
   private readonly mutationCoordinator: AssetProjectMutationCoordinator;
   private readonly faultInjector?: SceneLifecycleAuthorityOptions['faultInjector'];
   private readonly now: () => Date;
+  private readonly onRecovered?: SceneLifecycleAuthorityOptions['onRecovered'];
 
   constructor(readonly paths: AssetImportAuthorityPaths, options: SceneLifecycleAuthorityOptions) {
     this.assertLeaseHeld = options.assertLeaseHeld;
     this.mutationCoordinator = options.mutationCoordinator ?? new AssetProjectMutationCoordinator();
     this.faultInjector = options.faultInjector;
     this.now = options.now ?? (() => new Date());
+    this.onRecovered = options.onRecovered;
     this.mutationCoordinator.register('scene-lifecycle', async () => {
       await this.assertLeaseHeld();
       await assertAssetImportProjectRootIdentity(this.paths);
@@ -594,6 +597,7 @@ export class ProjectSceneLifecycleAuthority {
 
   private async restoreIncompleteCommit(recordInput: SceneCommitRecord): Promise<SceneCommitRecord> {
     let record = recordInput;
+    const changedPaths = new Set<string>();
     try {
       for (let index = record.deletes.length - 1; index >= 0; index -= 1) {
         const deletion = record.deletes[index]!;
@@ -607,6 +611,7 @@ export class ProjectSceneLifecycleAuthority {
           }
           if (currentSource === null) {
             await moveOwnedFile(quarantine, source.absolutePath, privateEvidence(deletion.source));
+            changedPaths.add(deletion.sourcePath);
           } else if (sameEvidence(currentSource, privateEvidence(deletion.source))
             && sameNodeIdentity(currentSource.identity, evidence.identity)) {
             await this.removeStoredFile(quarantine, deletion.source, '场景删除恢复保留文件身份发生变化');
@@ -633,6 +638,7 @@ export class ProjectSceneLifecycleAuthority {
           && current.sha256 === stageEvidence.sha256
           && sameNodeIdentity(current.identity, stageEvidence.identity)) {
           await this.removeStoredFile(target.absolutePath, publicEvidence(current), '场景回退目标身份发生变化');
+          changedPaths.add(write.path);
           current = null;
         }
         const displacedExists = await pathExists(displaced);
@@ -646,6 +652,7 @@ export class ProjectSceneLifecycleAuthority {
           }
           if (current === null) {
             current = await moveOwnedFile(displaced, target.absolutePath, baseline);
+            changedPaths.add(write.path);
           } else if (sameEvidence(current, baseline)
             && sameNodeIdentity(current.identity, displacedEvidence.identity)) {
             await this.removeStoredFile(displaced, publicEvidence(displacedEvidence), '场景回退保留文件身份发生变化');
@@ -667,7 +674,6 @@ export class ProjectSceneLifecycleAuthority {
         }
       }
       record = await this.replaceCommit(record, { status: 'ROLLED_BACK' });
-      return record;
     } catch (error) {
       if (record.status !== 'RECOVERY_REQUIRED') {
         await this.replaceCommit(record, { status: 'RECOVERY_REQUIRED' }).catch(() => undefined);
@@ -675,6 +681,8 @@ export class ProjectSceneLifecycleAuthority {
       if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_RECOVERY_REQUIRED') throw error;
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '场景保存中断且无法安全回退');
     }
+    if (changedPaths.size > 0) await this.onRecovered?.(record.requestId, [...changedPaths]);
+    return record;
   }
 
   private async finalizeCommitted(record: SceneCommitRecord): Promise<void> {
