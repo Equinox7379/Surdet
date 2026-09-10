@@ -1,0 +1,66 @@
+# Stage 6 Wave 8：候选组合就绪性本地交付
+
+- 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
+- 代码提交 / 实现终点：`8cf275d4d532533fd43eef6c299397f9932bf239`。本报告以单独文档提交保存。
+- 当前状态：本地实现、验证及主代理检查完成，等待云端独立复审；push 未授权。
+- 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
+
+## 实现
+
+新 stage 事务固定记录 candidate 身份、已解析基线素材身份和操作事实版本。apply 与旧内部 service 调用创建 direct 事务；恢复时沿用记录中的身份，integration 元数据优先，不因会话 policy 改变而绕过 candidate 检查。
+
+八项可组合内容操作直接使用 handler 已生成并通过原有语法检查的拟结果，保存连续 sequence、原始引用、依赖来源、产物及该次前后指纹。事实、操作结果和 workingFiles 使用同一次 record CAS 持久化。精确重试先返回原结果；`changed:false` 不推进 workingRevision；缺依赖、互引环和 CAS 失败均不推进内存记录、持久化操作或已有证据。
+
+`composition-reference-analysis.ts` 统一场景、选项内联指令、表达式、角色与时间轴素材分析。缺失对象保留在 raw facts 中；本地 goto/loop 和自场景跳转不生成跨单元依赖。赋值右侧、if/elif 和选项 when 都使用 Core 表达式解析器。解析错误保留来源与其他可解析引用，object index 再过滤可展示关系。
+
+`candidate-composition-guard.ts` 只用不可变基线、冻结的已解析素材及更早的真实生产者解析依赖。`composition-unit-graph.ts` 由 guard、readiness 和 candidate comparison 共用；第二条互引边在落盘前拒绝，最终 integration-plan 的既有环检查保留。没有自动重排操作、拆分对象单元、planner 或新增工具。
+
+新 candidate 的 manifest 使用已记录时点事实，继续核验唯一成功 invocation、输入摘要、capability 身份、更早生产者和最终对象/素材；不会用最终文件反推早期事实。候选比较使用最终结果指纹，同时保留完整重放历史，正确处理创建后修改及移除后重建。旧 OPEN 记录不补写历史；已封存 v2 capsule 继续读取。
+
+Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、manifest **1.0.0**、record format **2** 保持不变。新增三种明确错误及修复提示，session/diff 提供严格的 readiness 投影。readiness 不是最终胶囊或运行证据的通过声明。30 项原生 capability 与 30 个 stage MCP 工具数量保持不变。README 同步说明新行为；现有能力矩阵生成及漂移检查通过，生成器的既有跨层能力数据不受本轮合同版本影响。
+
+## 验证与修复记录
+
+- 写入前 hook 与时点 sequence 的两个用例先失败，修复后通过；覆盖精确重试、无变化操作、失败证据保留和 CAS 内存一致性。
+- 时点归属、缺失引用、互引拒绝、本地跳转、角色迁移、入口连续设置、时间轴后续素材及旧记录路径通过。阶段聚焦为 Authoring 15 文件 / 154 项；随后比较层的三个新增红灯修复后，比较、计划、重放和 Review 投影 4 文件 / 62 项通过。
+- 真实 Port 在同一 change 内先拒绝缺失 ending，补建后接受原操作；拒绝 A/B 第二条互引边后继续验证、模拟、运行并封装 ready capsule。记录不包含被拒绝的操作，项目字节不变。
+- mode/resume、素材冻结、严格输出 schema、旧记录及未知事实版本、胶囊身份和失败 invocation 噪声均已验证。未知事实版本返回可读的 blocked 投影，不再破坏严格输出 schema。
+- 真实候选比较验证“创建后修改”与“直接创建”得到相同最终内容；显式选择前者后，计划按该候选的 create/patch 两步重放，dry-run 通过。apply、integration、租约和恢复相邻回归保持通过。
+- 旧 MCP/组合/输出合同夹具曾只引用背景名而无物理素材，已补齐夹具中的实际 SVG，未放宽断言。首轮全量因此失败的输出合同测试修复后 3/3 通过。
+- 后续一次全量中的既有 stale-plan 纵向用例触及 5 秒测试超时；单独复验耗时 2.171 秒通过。未修改超时或性能门限，也不宣称已定位偶发根因。
+- 最终 `npm run verify:all` 完整通过，退出码 0。9 个工作区共 296 个测试文件、2,716 项 Vitest 测试通过，其中 Authoring 346 项、CLI 525 项；类型检查、Starter/正式内容校验模拟及 Editor/Starter/正式项目构建均通过。正式内容既有 speaker 警告和构建 chunk 提示保留，不把它们写成零警告。前两次输出保留在任务目录的 `verify-all.log`、`verify-all-final.log`；最终代码结果为 `verify-all-completed.log`。
+
+## 一次 fresh Agent 资格化
+
+使用全新 Starter 副本与全新 Codex 会话，`gpt-5.6-luna / max`，一次自然创作要求，无人工 follow-up。会话 `01a08bbd-d1f7-7402-be38-4ac70cb42152`，耗时约 664 秒。源码、Shell、通用文件操作、Git、浏览器、其他业务 MCP、历史与子代理工具未接入。
+
+当前客户端仍附带一个仅 Plan 模式可用的 `request_user_input` 定义，本次固定 Default。Owner 已明确接受并要求如实记录此限制。实际没有调用该工具，也没有人工补充输入；这是工具层边界记录，不冒充操作系统级隔离证明。
+
+| 项目 | 实际结果 |
+| --- | --- |
+| 原始用户输入 / 完成轮次 | 1 / 1 |
+| 工具调用 | 101 次 Surdet 业务调用，2 次 MCP 资源发现 |
+| 调用错误 | 5 次：2 次提前依赖拒绝、1 次输入 schema、1 次 DSL 语法、1 次过期对象引用；均自行处理 |
+| 整份回滚 / 重建 | 0 / 0，始终为同一 change |
+| 作品 | 《雨停之前》；5 个新场景、入口、三场景单向链、变量双分支、时间轴与真实基线背景/立绘 |
+| 轨迹后修订 | 有；实际读取两路 trace 后继续修改，最终工作版本 21，共 21 项成功内容操作 |
+| 最终校验 | fresh，issues 为空 |
+| 最终模拟 | fresh / passed，两路 ended，预算未耗尽，无运行错误 |
+| 最终运行 | 选择 0 / 1 均 passed / fresh / workingRevision 21，变量分别为 truth / silence |
+| Object diff | 最后一次生成于版本 19，最终为 stale；未冒称 fresh，也未由主代理替 Agent 补取。R2 本次资格门要求的新鲜证据为 validation、simulation 和两路 runtime |
+| Capsule | ready，无原因或警告；磁盘 payload 身份经既有 store API 核验 |
+| Stage 项目 | 41 个文件逐一比对，修改 0、新增 0 |
+
+- change：`chg_0001_576fecda-5cb0-4027-8c3d-7aa74b05b3a3`
+- capsule：`fa99bf91-eb45-4350-8a97-200ec938867a`
+- capsule artifact SHA：`11d2888b24b933456e57c02e07c14cebffbd35283deafb30921f9b11e9e4a9c6`
+- 最终 trace：`trace_1789051460650_f26a48e7-f9bf-44be-8a76-e63350a144a4`、`trace_1789051466217_f2b37ba8-77a8-413a-92cf-4a0377a3277b`。
+- 原始会话、工具暴露核对和磁盘核对位于 `<local-path>`。客户端已退出，临时认证链接已移除。
+
+该结果证明无需人工救场、无需因依赖顺序重建整个候选；不宣称零调用错误。资格化后发现的比较签名和未知版本投影问题由对应回归及最终全量覆盖，两处不改变本次正常 candidate 创作轨迹，未重复消耗 fresh Agent 试次。
+
+## 检查与停止点
+
+当前 AGENTS 禁止委派审核，因此施工包中的 Luna 审核条款未执行。Luna 仅承担共享解析器、依赖图和对应测试的独立并行实现；主代理亲自检查状态原子性、时点事实、引用边界、环、恢复模式、旧数据和严格 schema，并修复上述发现。不能把这写成 Luna 独立审核通过。后续云端独立复审仍待进行。
+
+未修改 Core、Renderer、Host、Shell、Editor 或正式游戏生产源码，未增加依赖、修改权限/审批语义、部署或正式 pack/release。本轮没有重新执行 Electron/新作品视觉人工签收。实现已普通本地提交，停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，未执行 push，没有针对本轮新提交的远端 CI 或云端复审结论。
