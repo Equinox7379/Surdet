@@ -18,8 +18,9 @@ function makeProject(name: string): string {
   fs.mkdirSync(path.join(root, 'content', 'timelines'), { recursive: true });
   fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {} }), 'utf8');
   fs.writeFileSync(path.join(root, 'content', 'scenario', 'start.gal'), '@scene start\n\u51db\uff1a\u5f00\u59cb\u3002\n@end\n', 'utf8');
-  // Baseline opening timeline referencing night_field so the asset object
-  // enters the base object index (required by manifest dependency closure).
+  // The referenced background must also be a physically resolved base asset.
+  fs.mkdirSync(path.join(root, 'content', 'assets', 'bg'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'content', 'assets', 'bg', 'night_field.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>', 'utf8');
   fs.writeFileSync(path.join(root, 'content', 'timelines', 'baseline_opening.json'), JSON.stringify({
     version: 1, id: 'baseline_opening', durationMs: 100,
     tracks: [{ kind: 'background', target: '', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'set', key: 'night_field' }] }],

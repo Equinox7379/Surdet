@@ -8,10 +8,18 @@ import type {
   ScenePatchInput,
   ScenePatchOperation,
   VariableEnsureInput,
+  TextHasher,
 } from './contracts.js';
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
-import { serializeProjectConfigDocument } from './config-document.js';
+import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import { normalizeProjectPath } from './project-storage.js';
+import { buildSceneOperationCompositionDraft, buildVariableOperationCompositionDraft, compositionTextHasher } from './operation-composition-facts.js';
+
+function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
+  const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
+  return typeof characters === 'object' && characters !== null && !Array.isArray(characters)
+    ? characters as Record<string, unknown> : {};
+}
 
 function scenePath(sceneId: string): string {
   if (!isValidSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
@@ -118,9 +126,9 @@ function validateSceneCandidate(path: string, sceneId: string, text: string): vo
   }
 }
 
-export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput): Promise<{ sceneId: string; path: string }> {
+export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
-  return runOperation(change, input, (record) => {
+  return runOperation(change, input, async (record) => {
     if (record.workingFiles[path] !== undefined) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `场景已存在：${input.sceneId}`);
     }
@@ -137,17 +145,21 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
     validateSceneCandidate(path, input.sceneId, text);
     return {
       result: { sceneId: input.sceneId, path },
+      compositionDraft: await buildSceneOperationCompositionDraft({
+        capabilityId: 'scene.create', sceneId: input.sceneId, afterText: text,
+        characters: sceneCharacters(record.workingFiles), hasher,
+      }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
   });
 }
 
-export async function applyScenePatch(change: ChangeSession, input: ScenePatchInput): Promise<{ path: string; line: number; kind: string }> {
+export async function applyScenePatch(change: ChangeSession, input: ScenePatchInput, hasher: TextHasher = compositionTextHasher): Promise<{ path: string; line: number; kind: string }> {
   const patch = input.patch;
   const sceneId = input.sceneId ?? sceneIdFromTarget(operationTarget(patch));
   if (sceneId === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'scene.patch 缺少 sceneId');
   const path = scenePath(sceneId);
-  return runOperation(change, input, (record) => {
+  return runOperation(change, input, async (record) => {
     const source = record.workingFiles[path];
     if (source === undefined) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `场景不存在：${sceneId}`);
     const lines = parseSceneDocument(source);
@@ -176,13 +188,17 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
     validateSceneCandidate(path, sceneId, text);
     return {
       result: { path, line: index + 1, kind: patch.kind },
+      compositionDraft: await buildSceneOperationCompositionDraft({
+        capabilityId: 'scene.patch', sceneId, beforeText: source, afterText: text,
+        characters: sceneCharacters(record.workingFiles), hasher,
+      }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
   });
 }
 
-export async function ensureVariable(change: ChangeSession, input: VariableEnsureInput): Promise<{ name: string; created: boolean }> {
-  return runOperation<{ name: string; created: boolean }>(change, input, (record) => {
+export async function ensureVariable(change: ChangeSession, input: VariableEnsureInput, hasher: TextHasher = compositionTextHasher): Promise<{ name: string; created: boolean }> {
+  return runOperation<{ name: string; created: boolean }>(change, input, async (record) => {
     const path = 'game.config.json';
     const currentText = record.workingFiles[path] ?? '{}';
     let config: Record<string, unknown>;
@@ -207,12 +223,16 @@ export async function ensureVariable(change: ChangeSession, input: VariableEnsur
       if (stableStringify(existing) !== stableStringify(declaration)) {
         throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `变量合同冲突：${input.name}`);
       }
-      return { result: { name: input.name, created: false }, changed: false };
+      return {
+        result: { name: input.name, created: false }, changed: false,
+        compositionDraft: await buildVariableOperationCompositionDraft({ name: input.name, declaration, existing, hasher }),
+      };
     }
     variables[input.name] = declaration;
     config['variables'] = variables;
     return {
       result: { name: input.name, created: true },
+      compositionDraft: await buildVariableOperationCompositionDraft({ name: input.name, declaration, hasher }),
       workingFiles: { ...record.workingFiles, [path]: serializeProjectConfigDocument(config, currentText) },
     };
   });

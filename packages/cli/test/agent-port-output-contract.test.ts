@@ -20,6 +20,7 @@ function makeProject(): string {
   process.env['SURDET_AGENT_DATA_DIR'] = data;
   fs.mkdirSync(path.join(root, 'content', 'scenario'), { recursive: true });
   fs.mkdirSync(path.join(root, 'content', 'assets', 'avatar'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'content', 'assets', 'bg'), { recursive: true });
   fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({
     entryScene: 'start',
     variables: { trust: { type: 'number', initial: 0 } },
@@ -32,6 +33,7 @@ function makeProject(): string {
     '@end',
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(root, 'content', 'assets', 'avatar', 'lynn.svg'), '<svg></svg>', 'utf8');
+  fs.writeFileSync(path.join(root, 'content', 'assets', 'bg', 'night_field.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>', 'utf8');
   return root;
 }
 

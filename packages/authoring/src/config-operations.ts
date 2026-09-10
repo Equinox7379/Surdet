@@ -14,6 +14,7 @@ import type {
 import type { TextHasher } from './project-storage.js';
 import { isValidSpeakerToken, parseSceneDocument, serializeSceneDocument } from './scene-document.js';
 import { buildSpeakerCharacterRefs } from './object-index.js';
+import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -209,6 +210,10 @@ export async function applyCharacterEnsure(
     config['characters'] = characters;
     const fingerprintAfter = await charactersFingerprint(config, hasher);
     return {
+      compositionDraft: await buildCharacterOperationCompositionDraft({
+        capabilityId: 'character.ensure', id: input.id, beforeCharacter: existing,
+        afterCharacter: next, characters, migratedFiles, hasher,
+      }),
       result: {
         id: input.id,
         ...(created ? { created: true } : {}),
@@ -259,10 +264,14 @@ export async function applyCharacterRemove(
     if (characters[input.id] === undefined) {
       throw new AuthoringOperationError('OBJECT_NOT_FOUND', `角色不存在：${input.id}`);
     }
+    const beforeCharacter = characters[input.id];
     delete characters[input.id];
     config['characters'] = characters;
     const fingerprintAfter = await charactersFingerprint(config, hasher);
     return {
+      compositionDraft: await buildCharacterOperationCompositionDraft({
+        capabilityId: 'character.remove', id: input.id, beforeCharacter, characters, hasher,
+      }),
       result: {
         id: input.id,
         removed: true,
@@ -301,12 +310,14 @@ export async function applyEntrySceneSet(
       throw new AuthoringOperationError('OBJECT_REF_STALE', 'entryScene 指纹不匹配');
     }
     const scenes = workingScenes(record);
-    if (!scenes.has(input.sceneId)) {
+    if (!scenes.has(input.sceneId) && (record.integration !== undefined || record.composition?.mode !== 'candidate')) {
       throw new AuthoringOperationError('VALIDATION_FAILED', `入口场景不存在：${input.sceneId}`);
     }
+    const beforeEntryScene = config['entryScene'];
     config['entryScene'] = input.sceneId;
     const fingerprintAfter = await entrySceneFingerprint(config, hasher);
     return {
+      compositionDraft: await buildEntrySceneOperationCompositionDraft({ sceneId: input.sceneId, beforeEntryScene, hasher }),
       result: {
         sceneId: input.sceneId,
         entryScene: input.sceneId,

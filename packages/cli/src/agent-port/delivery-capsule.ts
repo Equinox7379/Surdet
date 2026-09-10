@@ -4,20 +4,14 @@ import {
   AUTHORING_CONTRACT_VERSION,
   DELIVERY_CAPSULE_VERSION,
   AuthoringOperationError,
-  avatarAssetRef,
-  backgroundAssetRef,
-  buildAssetCatalog,
   buildCompositionManifest,
-  buildObjectIndex,
+  projectCompositionObjectFacts,
   evidenceFreshness,
   inspectTransactionRecovery,
   loadProjectSnapshot,
-  portraitAssetRef,
   type AutonomyPolicy,
   type ChangeRecord,
   type EvidenceFreshness,
-  type ManifestObjectFact,
-  type ManifestObjectFacts,
   type OperationInvocationFact,
   type RecoveryInspection,
 } from '@surdet/authoring';
@@ -230,37 +224,6 @@ function isSemanticEntry(value: unknown): value is SemanticDiffEntry {
 }
 
 /** 资源是 stage 不修改的共享输入，不要求先被基线时间轴引用。 */
-function projectObjectFacts(baseSnapshot: Awaited<ReturnType<typeof loadProjectSnapshot>>, workingSnapshot: Awaited<ReturnType<typeof loadProjectSnapshot>>, assetPaths: readonly string[]): ManifestObjectFacts {
-  const toFact = (object: { objectRef: string; references: string[]; fingerprint?: string }): ManifestObjectFact => ({
-    objectRef: object.objectRef,
-    references: [...object.references],
-    ...(object.fingerprint === undefined ? {} : { fingerprint: object.fingerprint }),
-  });
-  const catalog = buildAssetCatalog(assetPaths);
-  const availableAssetRefs = [
-    ...catalog.backgrounds.filter((asset) => asset.resolved).map((asset) => backgroundAssetRef(asset.key)),
-    ...catalog.portraits.filter((asset) => asset.resolved).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
-    ...catalog.avatars.filter((asset) => asset.resolved).map((asset) => avatarAssetRef(asset.key)),
-  ];
-  const factsWithAssets = (snapshot: Awaited<ReturnType<typeof loadProjectSnapshot>>): ManifestObjectFact[] => {
-    const facts = buildObjectIndex(snapshot).objects.map(toFact);
-    for (const objectRef of availableAssetRefs) {
-      if (!facts.some((object) => object.objectRef === objectRef)) facts.push({ objectRef, references: [] });
-    }
-    return facts;
-  };
-  const baseObjects = factsWithAssets(baseSnapshot);
-  const workingObjects = factsWithAssets(workingSnapshot);
-  const assetRefs = (objects: readonly ManifestObjectFact[]): string[] =>
-    objects.filter((object) => object.objectRef.startsWith('asset:')).map((object) => object.objectRef);
-  return {
-    baseObjects,
-    workingObjects,
-    baseAssetRefs: assetRefs(baseObjects),
-    workingAssetRefs: assetRefs(workingObjects),
-  };
-}
-
 /** invocation ledger → 最小成功 invocation fact 投影（只保留带 operationId 的成功记录）。 */
 function successInvocationFacts(records: readonly InvocationRecord[]): OperationInvocationFact[] {
   return records
@@ -344,7 +307,7 @@ export async function generateDeliveryCapsule(
         projectIdentity: session.projectIdentity,
         invocationFacts: successInvocationFacts(invocations),
         semanticDiff: semanticEntries(diff).filter(isSemanticEntry),
-        objectFacts: projectObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles()),
+        objectFacts: projectCompositionObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles(), record.integration === undefined && record.composition?.mode === 'candidate' ? record.composition.baseAssetRefs : undefined),
       }, hasher);
       // Wave 5：integration change 的 provenance 与失败审计（在 composition manifest 之后构造）。
       let integrationProvenance: DeliveryCapsulePayload['integrationProvenance'];

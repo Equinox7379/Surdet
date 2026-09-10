@@ -1,8 +1,15 @@
-import { parseInlineInstructions } from '@surdet/core';
 import { splitInstruction } from './scene-document.js';
 import { buildAssetCatalog } from './asset-catalog.js';
 import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
+import {
+  analyzeCharacterCompositionReferences,
+  analyzeSceneCompositionReferences,
+  analyzeTimelineCompositionReferences,
+  CompositionReferenceAnalysisError,
+} from './composition-reference-analysis.js';
+
+export { buildSpeakerCharacterRefs } from './composition-reference-analysis.js';
 
 export interface ObjectIndex {
   revision: string;
@@ -51,62 +58,48 @@ function addReferenceCandidate(candidates: Map<string, string[]>, objectRef: str
   if (current !== undefined && !current.includes(target)) current.push(target);
 }
 
-const VARIABLE_REFERENCE_INSTRUCTIONS = new Set(['set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag']);
-
-function referenceTargetsForInstruction(name: string, args: readonly string[], sceneId: string): string[] {
-  if (name === 'timeline') {
-    // @timeline <id> [@ blocking]：只取第一个参数为时间轴 ID，忽略修饰符 token。
-    const target = args[0];
-    return target !== undefined && target.length > 0 && !target.startsWith('@') ? [`timeline:${target}`] : [];
-  }
-  if (name === 'goto' || name === 'loop') {
-    const target = args.join(' ');
-    return target.length > 0 ? [`label:${sceneId}.${target}`] : [];
-  }
-  if (name === 'jump' || name === 'call') {
-    const targetScene = args.join(' ').split('.')[0] ?? '';
-    return targetScene.length > 0 ? [`scene:${targetScene}`] : [];
-  }
-  if (VARIABLE_REFERENCE_INSTRUCTIONS.has(name)) {
-    const variable = args[0];
-    return variable !== undefined && variable.length > 0 ? [`variable:${variable}`] : [];
-  }
-  return [];
-}
-
-function choiceOptionReferenceTargets(raw: string, scene: ProjectSnapshotScene, lineNumber: number): string[] {
-  const trimmed = raw.trimStart();
-  const arrowIndex = trimmed.indexOf(' -> ');
-  if (arrowIndex < 0) return [];
-  const inline = trimmed.slice(arrowIndex + 4).trim();
-  if (inline.length === 0) return [];
-  try {
-    const instructions = parseInlineInstructions(inline, scene.path, lineNumber, raw.length - trimmed.length + arrowIndex + 5);
-    const targets: string[] = [];
-    let jumpSeen = false;
-    for (const instruction of instructions) {
-      if (instruction.name === 'goto' || instruction.name === 'jump') {
-        if (jumpSeen) continue;
-        jumpSeen = true;
-      }
-      for (const target of referenceTargetsForInstruction(instruction.name, instruction.args, scene.id)) {
-        if (!targets.includes(target)) targets.push(target);
-      }
-    }
-    return targets;
-  } catch {
-    // Invalid choice syntax is reported by shared validation; keep the source object indexable.
-    return [];
-  }
-}
-
 function addSceneObjects(
   snapshot: ProjectSnapshot,
   scene: ProjectSnapshotScene,
   objects: AuthoringObject[],
   candidates: Map<string, string[]>,
-  speakerRefMap: Map<string, string>,
+  characters: Record<string, unknown>,
 ): void {
+  let rawReferences: ReturnType<typeof analyzeSceneCompositionReferences> = [];
+  try {
+    rawReferences = analyzeSceneCompositionReferences({
+      sceneId: scene.id,
+      path: scene.path,
+      text: scene.file.text,
+      characters,
+    });
+  } catch (error) {
+    // Full scene compilation/validation owns malformed syntax. The analyzer
+    // still exposes every parseable reference so an isolated bad choice does
+    // not erase unrelated jump/speaker/asset edges from the index.
+    if (error instanceof CompositionReferenceAnalysisError) rawReferences = error.partialReferences;
+    else throw error;
+  }
+  const referencesByLine = new Map<number, string[]>();
+  const kindOrder = new Map<string, number>([
+    ['character', 0], ['variable', 1], ['timeline', 2], ['scene', 3], ['label', 4],
+    ['background-asset', 5], ['portrait-asset', 6], ['avatar-asset', 7],
+  ]);
+  for (const reference of [...rawReferences].sort((left, right) => (
+    (left.source.line ?? -1) - (right.source.line ?? -1)
+    || (kindOrder.get(left.kind) ?? 99) - (kindOrder.get(right.kind) ?? 99)
+    || left.token.localeCompare(right.token)
+    || (left.objectRef ?? '').localeCompare(right.objectRef ?? '')
+  ))) {
+    if (reference.scope === 'non-composition' || reference.objectRef === undefined || reference.source.line === undefined) continue;
+    const targets = referencesByLine.get(reference.source.line) ?? [];
+    if (!targets.includes(reference.objectRef)) targets.push(reference.objectRef);
+    referencesByLine.set(reference.source.line, targets);
+  }
+  const addLineReferences = (objectRef: string, lineNumber: number): void => {
+    for (const target of referencesByLine.get(lineNumber) ?? []) addReferenceCandidate(candidates, objectRef, target);
+  };
+
   addObject(objects, sceneObject(scene), candidates);
   const sceneRef = `scene:${scene.id}`;
   let currentChoiceRef: string | null = null;
@@ -125,9 +118,7 @@ function addSceneObjects(
         referencedBy: [],
       };
       addObject(objects, object, candidates);
-      for (const target of choiceOptionReferenceTargets(line.raw, scene, lineNumber)) {
-        addReferenceCandidate(candidates, objectRef, target);
-      }
+      addLineReferences(objectRef, lineNumber);
       continue;
     }
     if (line.kind === 'label') {
@@ -158,9 +149,7 @@ function addSceneObjects(
       };
       addObject(objects, object, candidates);
       currentChoiceRef = name === 'choice' ? objectRef : null;
-      for (const target of referenceTargetsForInstruction(name, args, scene.id)) {
-        addReferenceCandidate(candidates, objectRef, target);
-      }
+      addLineReferences(objectRef, lineNumber);
       continue;
     }
     currentChoiceRef = null;
@@ -175,10 +164,7 @@ function addSceneObjects(
         references: [],
         referencedBy: [],
       }, candidates);
-      // Wave 3：台词 speaker → 角色（speaker 可为角色 ID 或显示名；空 speaker 为旁白，不建边）。
-      const speaker = line.speaker.trim();
-      const characterRef = speaker.length > 0 ? speakerRefMap.get(speaker) : undefined;
-      if (characterRef !== undefined) addReferenceCandidate(candidates, textRef, characterRef);
+      addLineReferences(textRef, lineNumber);
     }
   }
 }
@@ -220,9 +206,11 @@ function addConfigObjects(
         ...(declaration === null ? {} : { details: declaration }),
       }, candidates);
       if (typeof avatar === 'string' && avatar.trim().length > 0) {
-        const ref = `asset:avatar:${avatar.trim()}`;
-        ensureAvatar(avatar.trim(), configSource(raw));
-        addReferenceCandidate(candidates, characterRef, ref);
+        for (const reference of analyzeCharacterCompositionReferences({ id, avatar })) {
+          if (reference.objectRef === undefined) continue;
+          ensureAvatar(avatar.trim(), configSource(raw));
+          addReferenceCandidate(candidates, characterRef, reference.objectRef);
+        }
       }
     }
   }
@@ -244,24 +232,6 @@ function addConfigObjects(
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function assetRefForCue(track: Record<string, unknown>, cue: Record<string, unknown>): string | null {
-  const kind = track['kind'];
-  const action = cue['action'];
-  if (kind === 'background' && action === 'set') {
-    const key = cue['key'];
-    return typeof key === 'string' && key.length > 0 ? `asset:bg:${key}` : null;
-  }
-  if (kind === 'portrait' && (action === 'show' || action === 'expression')) {
-    const target = track['target'];
-    const expression = cue['expression'];
-    if (typeof target !== 'string' || typeof expression !== 'string') return null;
-    const [role, outfit = ''] = target.split(':');
-    if (!role || !outfit || expression.length === 0) return null;
-    return `asset:portrait:${role}:${outfit}:${expression}`;
-  }
-  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -311,7 +281,6 @@ function addTimelineObjects(
     }, candidates);
   };
 
-  const timelineAssets = new Set<string>();
   const tracks = definition['tracks'] as unknown[];
   tracks.forEach((rawTrack, trackIndex) => {
     const track = asRecord(rawTrack);
@@ -330,7 +299,6 @@ function addTimelineObjects(
       childRefs: trackChildRefs,
       details: track,
     }, candidates);
-    const trackAssets = new Set<string>();
     const cues = Array.isArray(track['cues']) ? track['cues'] as unknown[] : [];
     cues.forEach((rawCue, cueIndex) => {
       const cue = asRecord(rawCue);
@@ -347,43 +315,26 @@ function addTimelineObjects(
         referencedBy: [],
         details: cue,
       }, candidates);
-      const assetRef = assetRefForCue(track, cue);
-      if (assetRef === null) return;
-      trackAssets.add(assetRef);
-      timelineAssets.add(assetRef);
-      ensureAsset(assetRef, { path: timelinePath, line: 1, raw: cueRaw });
-      addReferenceCandidate(candidates, cueRef, assetRef);
+      // Asset edges are populated below from the shared raw analyzer. Keeping
+      // cue creation independent preserves malformed/opaque cue indexing.
     });
-    for (const assetRef of trackAssets) addReferenceCandidate(candidates, trackRef, assetRef);
   });
-  for (const assetRef of timelineAssets) addReferenceCandidate(candidates, timelineRef, assetRef);
-}
-
-/**
- * speaker 令牌 → 角色引用：匹配角色 ID 或显示名（name）；同名冲突时不建立该令牌的边。
- * 供 object-index 与共享 validation 共用，不复制第二套映射。
- */
-export function buildSpeakerCharacterRefs(characters: Record<string, unknown>): Map<string, string> {
-  const byId = new Map<string, string>();
-  const byName = new Map<string, string[]>();
-  for (const id of Object.keys(characters)) {
-    byId.set(id, `character:${id}`);
-    const raw = characters[id];
-    const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? raw as Record<string, unknown>
-      : null;
-    const name = record === null ? undefined : record['name'];
-    if (typeof name === 'string' && name.trim().length > 0) {
-      const list = byName.get(name.trim()) ?? [];
-      list.push(`character:${id}`);
-      byName.set(name.trim(), list);
-    }
+  for (const reference of analyzeTimelineCompositionReferences({ timelineId: name, path: timelinePath, definition })) {
+    const assetRef = reference.objectRef;
+    const trackIndex = reference.source.trackIndex;
+    const cueIndex = reference.source.cueIndex;
+    if (assetRef === undefined || trackIndex === undefined || cueIndex === undefined) continue;
+    const cueRef = `timeline:${name}/track:${trackIndex}/cue:${cueIndex}`;
+    const trackRef = `timeline:${name}/track:${trackIndex}`;
+    const cue = definition['tracks'] && Array.isArray(definition['tracks'])
+      ? asRecord(definition['tracks'][trackIndex])?.['cues']
+      : undefined;
+    const cueValue = Array.isArray(cue) ? asRecord(cue[cueIndex]) : null;
+    ensureAsset(assetRef, { path: timelinePath, line: 1, raw: cueValue === null ? timelineText : JSON.stringify(cueValue) });
+    addReferenceCandidate(candidates, cueRef, assetRef);
+    addReferenceCandidate(candidates, trackRef, assetRef);
+    addReferenceCandidate(candidates, timelineRef, assetRef);
   }
-  const result = new Map<string, string>(byId);
-  for (const [name, refs] of byName) {
-    if (refs.length === 1 && !result.has(name)) result.set(name, refs[0]!);
-  }
-  return result;
 }
 
 export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
@@ -393,8 +344,7 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   const characters = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
     ? charactersValue as Record<string, unknown>
     : {};
-  const speakerRefMap = buildSpeakerCharacterRefs(characters);
-  for (const scene of snapshot.scenes) addSceneObjects(snapshot, scene, objects, candidates, speakerRefMap);
+  for (const scene of snapshot.scenes) addSceneObjects(snapshot, scene, objects, candidates, characters);
   for (const [name, declaration] of Object.entries(snapshot.variables)) {
     addObject(objects, {
       kind: 'variable',

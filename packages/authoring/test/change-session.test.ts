@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
   beginChange,
+  openChange,
   recordValidation,
   recordRuntimeTrace,
   recordSimulationEvidence,
   runOperation,
 } from '../src/change-session.js';
+import type { RecordedOperationCompositionFacts } from '../src/composition-contracts.js';
 import { applySceneCreate, ensureVariable } from '../src/operations.js';
 
 function digest(text: string): string {
@@ -22,6 +24,49 @@ function digest(text: string): string {
 }
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
+
+describe('Wave 8 pre-persist operation facts', () => {
+  const facts: RecordedOperationCompositionFacts = {
+    factsVersion: '1.0.0', capabilityId: 'variable.ensure', primaryObject: 'variable:flag',
+    rawReferences: [], requiredObjects: [], producedObjects: [{ objectRef: 'variable:flag', disposition: 'create' }],
+  };
+
+  it('keeps sequence and facts atomic, with exact retries before the handler and guard', async () => {
+    const repo = new InMemoryChangeRepository();
+    const initial = await beginChange(await loadProjectSnapshot(fixtureStorage(), hasher), repo);
+    const guard = vi.fn(async () => facts);
+    const change = openChange(initial.record, repo, undefined, guard);
+    const handler = vi.fn(() => ({ result: 'ok', changed: false, compositionDraft: facts }));
+    await runOperation(change, { operationId: '10' }, handler);
+    await runOperation(change, { operationId: '2' }, handler);
+    await runOperation(change, { operationId: '10' }, handler);
+    expect(change.record.workingRevision).toBe(0);
+    expect(change.record.operations['10']).toMatchObject({ sequence: 0, compositionFacts: facts });
+    expect(change.record.operations['2']).toMatchObject({ sequence: 1, compositionFacts: facts });
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(guard).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not invalidate evidence or write a rejected proposal, and preserves memory on CAS failure', async () => {
+    const repo = new InMemoryChangeRepository();
+    const initial = await beginChange(await loadProjectSnapshot(fixtureStorage(), hasher), repo);
+    await recordValidation(initial, { evidenceId: 'fresh', errors: 0 });
+    const before = structuredClone(initial.record);
+    const change = openChange(initial.record, repo, undefined, async () => {
+      throw new AuthoringOperationError('CANDIDATE_DEPENDENCY_NOT_READY', 'missing scene');
+    });
+    const handler = () => ({ result: 'ok', workingFiles: { ...before.workingFiles, 'new.gal': 'new' } });
+    await expect(runOperation(change, { operationId: 'rejected' }, handler)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(change.record).toEqual(before);
+    expect(await repo.read(before.changeId)).toEqual(before);
+    const stale = openChange(structuredClone(before), repo, undefined, async () => facts);
+    await runOperation(initial, { operationId: 'other-writer' }, () => ({ result: true }));
+    const persisted = await repo.read(before.changeId);
+    await expect(runOperation(stale, { operationId: 'stale' }, handler)).rejects.toMatchObject({ code: 'CHANGE_RECORD_CONFLICT' });
+    expect(stale.record).toEqual(before);
+    expect(await repo.read(before.changeId)).toEqual(persisted);
+  });
+});
 
 function fixtureStorage(): ProjectStorage {
   const contents: Record<string, string> = {

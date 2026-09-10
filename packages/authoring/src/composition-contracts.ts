@@ -23,6 +23,87 @@ export interface RecordedOperation {
   requestHash: string;
   normalizedInput?: JsonValue;
   result: unknown;
+  sequence?: number;
+  compositionFacts?: RecordedOperationCompositionFacts;
+}
+
+export interface ChangeCompositionMetadata {
+  mode: 'candidate' | 'direct';
+  operationFactsVersion: '1.0.0';
+  baseAssetRefs: string[];
+}
+
+export type CompositionReferenceKind =
+  | 'scene' | 'label' | 'timeline' | 'variable' | 'character'
+  | 'background-asset' | 'portrait-asset' | 'avatar-asset';
+
+export interface RawCompositionReference {
+  kind: CompositionReferenceKind;
+  scope: 'candidate-external' | 'primary-local' | 'non-composition';
+  token: string;
+  objectRef?: string;
+  source: {
+    path: string;
+    line?: number;
+    blockIndex?: number;
+    optionIndex?: number;
+    trackIndex?: number;
+    cueIndex?: number;
+  };
+}
+
+export interface OperationCompositionDraft {
+  capabilityId: ComposableCapabilityId;
+  primaryObject: string;
+  rawReferences: RawCompositionReference[];
+  producedObjects: ObjectProduction[];
+  objectFingerprintBefore?: string;
+  objectFingerprintAfter?: string;
+}
+
+export interface RecordedOperationCompositionFacts extends OperationCompositionDraft {
+  factsVersion: '1.0.0';
+  requiredObjects: ObjectRequirement[];
+}
+
+export interface CandidateDependencyIssue {
+  code: 'OBJECT_NOT_ESTABLISHED' | 'ASSET_NOT_RESOLVED' | 'REFERENCE_TARGET_AMBIGUOUS';
+  kind: CompositionReferenceKind;
+  token: string;
+  objectRef?: string;
+  source: RawCompositionReference['source'];
+  suggestedCapabilities: string[];
+  repairStrategy: 'create-before-retry' | 'choose-resolved-asset' | 'inspect-and-retry';
+}
+
+export interface CompositionDependencyEdge {
+  fromPrimaryObject: string;
+  toPrimaryObject: string;
+  objectRef: string;
+  consumerSequence: number;
+  producerSequence: number;
+}
+
+export interface CompositionDependencyCycle {
+  primaryObjects: string[];
+  edges: CompositionDependencyEdge[];
+}
+
+export interface CandidateCompositionReadiness {
+  mode: 'candidate' | 'direct' | 'integration' | 'legacy-unclassified';
+  status: 'ready' | 'blocked' | 'not-applicable' | 'legacy-unavailable';
+  operationFactsVersion?: '1.0.0';
+  operationCount: number;
+  issueCount: number;
+  issues: Array<{
+    code: 'OPERATION_SEQUENCE_INVALID' | 'OPERATION_FACTS_MISSING' | 'OPERATION_FACTS_INVALID'
+      | 'DEPENDENCY_IDENTITY_UNAVAILABLE' | 'DEPENDENCY_CYCLE';
+    operationId?: string;
+    message: string;
+    objectRefs?: string[];
+    cycle?: CompositionDependencyCycle;
+  }>;
+  truncated: boolean;
 }
 
 export const COMPOSABLE_CAPABILITY_IDS: readonly ComposableCapabilityId[] = [
@@ -81,7 +162,11 @@ export interface CompositionIneligibility {
     | 'INVOCATION_FACT_AMBIGUOUS'
     | 'UNSUPPORTED_CAPABILITY'
     | 'OBJECT_IDENTITY_UNAVAILABLE'
-    | 'DEPENDENCY_IDENTITY_UNAVAILABLE';
+    | 'DEPENDENCY_IDENTITY_UNAVAILABLE'
+    | 'OPERATION_SEQUENCE_INVALID'
+    | 'OPERATION_FACTS_MISSING'
+    | 'OPERATION_FACTS_INVALID'
+    | 'DEPENDENCY_CYCLE';
   operationId?: string;
   message: string;
 }

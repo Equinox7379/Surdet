@@ -491,6 +491,33 @@ const traceEventSchema = strictObject({
 
 const traceEventsSchema = arrayOf(traceEventSchema);
 
+export const CANDIDATE_COMPOSITION_READINESS_SCHEMA: JsonSchema = {
+  ...strictObject({
+    mode: { enum: ['candidate', 'direct', 'integration', 'legacy-unclassified'] },
+    status: { enum: ['ready', 'blocked', 'not-applicable', 'legacy-unavailable'] },
+    operationFactsVersion: { const: '1.0.0' },
+    operationCount: { type: 'integer', minimum: 0 },
+    issueCount: { type: 'integer', minimum: 0 },
+    truncated: booleanSchema,
+    issues: arrayOf(strictObject({
+      code: { enum: ['OPERATION_SEQUENCE_INVALID', 'OPERATION_FACTS_MISSING', 'OPERATION_FACTS_INVALID', 'DEPENDENCY_IDENTITY_UNAVAILABLE', 'DEPENDENCY_CYCLE'] },
+      operationId: stringSchema, message: stringSchema, objectRefs: stringArraySchema,
+      cycle: strictObject({
+        primaryObjects: stringArraySchema,
+        edges: arrayOf(strictObject({
+          fromPrimaryObject: stringSchema, toPrimaryObject: stringSchema, objectRef: stringSchema,
+          consumerSequence: { type: 'integer', minimum: 0 }, producerSequence: { type: 'integer', minimum: 0 },
+        }, ['fromPrimaryObject', 'toPrimaryObject', 'objectRef', 'consumerSequence', 'producerSequence'])),
+      }, ['primaryObjects', 'edges']),
+    }, ['code', 'message'])),
+  }, ['mode', 'status', 'operationCount', 'issueCount', 'issues', 'truncated']),
+  oneOf: [
+    { properties: { mode: { const: 'candidate' }, status: { enum: ['ready', 'blocked'] } } },
+    { properties: { mode: { enum: ['direct', 'integration'] }, status: { const: 'not-applicable' } } },
+    { properties: { mode: { const: 'legacy-unclassified' }, status: { const: 'legacy-unavailable' } } },
+  ],
+};
+
 const changeDiffProperties: SchemaProperties = {
   summary: strictObject({
     createdScenes: integerSchema,
@@ -510,10 +537,11 @@ const changeDiffProperties: SchemaProperties = {
 
 const changeDiffResultSchema = strictObject({
   ...changeDiffProperties,
+  compositionReadiness: CANDIDATE_COMPOSITION_READINESS_SCHEMA,
   view: { const: 'working' },
   evidenceId: stringSchema,
   freshness: evidenceFreshnessSchema,
-}, ['summary', 'semantic', 'files', 'view', 'evidenceId', 'freshness']);
+}, ['summary', 'semantic', 'files', 'compositionReadiness', 'view', 'evidenceId', 'freshness']);
 
 const recoveryFileStateSchema = strictObject({
   path: stringSchema,
@@ -828,7 +856,7 @@ const definitions = {
   diff: {
     inputSchema: emptyInputSchema,
     outputSchema: changeDiffResultSchema,
-    example: { input: {}, expectedResultShape: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [], view: 'working', evidenceId: 'diff_...', freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
+    example: { input: {}, expectedResultShape: { summary: { createdScenes: 0, modifiedScenes: 0, changedVariables: 0, warnings: [] }, semantic: [], files: [], compositionReadiness: { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 1, issueCount: 0, issues: [], truncated: false }, view: 'working', evidenceId: 'diff_...', freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   commit: {
     inputSchema: strictObject({ approvalRef: approvalRefSchema }),
@@ -938,7 +966,12 @@ export const CONTENT_MUTATION_CAPABILITY_IDS = new Set<string>([
 
 const commonErrors = ['INVALID_REQUEST', 'PROJECT_INVALID', 'PROJECT_NOT_FOUND', 'POLICY_BLOCKED'] as const;
 const readRepair = ['inspect the returned object or project facts before retrying'] as const;
-const mutateRepair = ['inspect current object fingerprints, repair the request, then retry'] as const;
+const mutateRepair = [
+  'inspect current object fingerprints, repair the request, then retry',
+  'stage candidates require dependencies before persistence: follow issues.suggestedCapabilities, establish missing objects or choose resolved assets, then retry the same operationId and payload',
+  'keep primary-object dependencies acyclic; the rejected second edge was not persisted; mutual empty skeletons do not resolve a cycle',
+  'candidateReadiness describes persisted composition facts only, not validation or capsule readiness; legacy changes without operation facts require a new change',
+] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', composable: false, preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
@@ -1047,7 +1080,7 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
     idempotency: item.idempotency,
     composable: item.composable,
     preconditions: item.preconditions,
-    possibleErrors: item.possibleErrors,
+    possibleErrors: item.composable ? [...item.possibleErrors, 'CANDIDATE_DEPENDENCY_NOT_READY', 'CANDIDATE_DEPENDENCY_CYCLE', 'CANDIDATE_OPERATION_FACTS_REQUIRED'] : item.possibleErrors,
     repairRecipes: item.repairRecipes,
     minimalExample: {
       input: schema.example.input,

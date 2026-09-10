@@ -13,6 +13,8 @@ import {
   nativeCapabilityToMcpTool,
   normalizeAuthoringError,
   humanWorkspaceCommitBlock,
+  inspectCandidateCompositionReadiness,
+  type CandidateCompositionReadiness,
   type AuthoringCapabilityId,
   type AuthoringEnvelope,
   type AutonomyPolicy,
@@ -104,6 +106,7 @@ export interface SessionDescription {
   recoveryDisposition: RecoveryDisposition;
   manualRecoveryRequired: boolean;
   nextActions: string[];
+  candidateReadiness?: CandidateCompositionReadiness;
 }
 
 const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
@@ -602,6 +605,7 @@ export class AgentPortSession {
     }
     const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition, humanWorkspace));
     const activeIntegration = record?.integration;
+    const candidateReadiness = record === undefined ? undefined : inspectCandidateCompositionReadiness(record);
     const review = reviewFor(record);
     const activeChange = record === undefined
       ? undefined
@@ -638,7 +642,9 @@ export class AgentPortSession {
               ? ['change.recovery.inspect', ...(this.policy === 'apply' ? ['change.recovery.execute'] : [])]
               : record?.status === 'COMMITTED' || record?.status === 'ROLLED_BACK'
                 ? ['change.recovery.inspect']
-                : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
+                : candidateReadiness?.status === 'blocked' || candidateReadiness?.status === 'legacy-unavailable'
+                  ? ['change.diff', 'change.rollback']
+                  : ['project.validate', 'project.simulate', 'runtime.run-from', 'change.diff'];
     return {
       sessionId: this.sessionId,
       startedAt: this.startedAt,
@@ -652,6 +658,7 @@ export class AgentPortSession {
       policy: this.policy,
       review,
       ...(activeChange === undefined ? {} : { activeChange }),
+      ...(candidateReadiness === undefined ? {} : { candidateReadiness }),
       resumed: this.wasResumed,
       capabilities,
       evidence: evidenceFor(record),

@@ -7,11 +7,12 @@ import type {
   IdenticalUnitGroup,
   ObjectChangeUnit,
   ObjectProduction,
-  ObjectRequirement,
   VerifiedCompositionCandidate,
   CandidateEvidenceSummary,
+  CompositionDependencyEdge,
 } from './composition-contracts.js';
 import type { TextHasher } from './contracts.js';
+import { buildPrimaryObjectDependencyGraph } from './composition-unit-graph.js';
 
 const MAX_CANDIDATES = 8;
 const MAX_OPERATIONS_PER_CANDIDATE = 256;
@@ -30,7 +31,7 @@ function compareByRef(left: VerifiedCompositionCandidate, right: VerifiedComposi
 interface WorkingUnit {
   unit: ObjectChangeUnit;
   /** source='candidate' 且已确认指向更早产物的依赖（用于建边）。 */
-  sameCandidateLinks: Array<{ requirement: ObjectRequirement; producerSequence: number }>;
+  dependencyEdges: CompositionDependencyEdge[];
   /** source='candidate' 但没有任何更早 operation 产出对应对象：结构阻断。 */
   brokenDependency: boolean;
   seed: Record<string, unknown>;
@@ -54,44 +55,46 @@ function collectImpacts(candidate: VerifiedCompositionCandidate): { potentialImp
   return { potentialImpact, observedImpact };
 }
 
+function finalUnitProduction(unit: ObjectChangeUnit, objectRef: string): ObjectProduction | undefined {
+  const productions = unit.producedObjects.filter((item) => item.objectRef === objectRef);
+  const final = productions[productions.length - 1];
+  if (final === undefined || final.disposition === 'remove') return final;
+  // A create followed by patches is still one creation relative to the common base.
+  return { ...final, disposition: productions[0]!.disposition === 'create' ? 'create' : 'update' };
+}
+
 /** 按 candidate+primaryObject 分组构建不可拆单元；unitId 只由规范种子哈希派生。 */
 function buildUnitsForEligibleCandidate(
   candidate: VerifiedCompositionCandidate,
   manifest: CompositionManifest,
+  graph: ReturnType<typeof buildPrimaryObjectDependencyGraph>,
 ): WorkingUnit[] {
   if (manifest.operations.length > MAX_OPERATIONS_PER_CANDIDATE) {
     throw invalidRequest(`候选 ${candidate.candidateId} 的 manifest operation 超过上限 ${MAX_OPERATIONS_PER_CANDIDATE}`);
-  }
-  const groups = new Map<string, CompositionOperation[]>();
-  for (const item of manifest.operations) {
-    const bucket = groups.get(item.primaryObject) ?? [];
-    bucket.push(item);
-    groups.set(item.primaryObject, bucket);
   }
   const impacts = collectImpacts(candidate);
   // candidate 依赖解析必须看全 manifest 的产物（producer 常在另一个对象组里）。
   const producedBySequence = new Map<number, ObjectProduction[]>();
   for (const item of manifest.operations) producedBySequence.set(item.sequence, item.producedObjects);
   const built: WorkingUnit[] = [];
-  for (const [primaryObject, items] of groups) {
+  for (const { primaryObject, operationSequences } of graph.groups) {
+    const items = manifest.operations.filter((item) => operationSequences.includes(item.sequence));
     const operations = [...items].sort((left, right) => left.sequence - right.sequence);
     const finalForPrimary = [...operations]
       .reverse()
       .flatMap((item) => item.producedObjects)
       .find((production) => production.objectRef === primaryObject);
 
-    const sameCandidateLinks: WorkingUnit['sameCandidateLinks'] = [];
     let brokenDependency = false;
     for (const item of operations) {
       for (const requirement of item.requiredObjects) {
         if (requirement.source === 'base') continue;
         const producerSequence = requirement.candidateOperationSequence;
         const productions = producerSequence === undefined ? undefined : producedBySequence.get(producerSequence);
-        if (productions === undefined || !productions.some((production) => production.objectRef === requirement.objectRef)) {
+        if (producerSequence === undefined || producerSequence >= item.sequence || productions === undefined || !productions.some((production) => production.objectRef === requirement.objectRef && production.disposition !== 'remove')) {
           brokenDependency = true;
           continue;
         }
-        sameCandidateLinks.push({ requirement, producerSequence: producerSequence! });
       }
     }
 
@@ -116,7 +119,7 @@ function buildUnitsForEligibleCandidate(
         ...impacts,
         evidenceSummary: candidate.evidenceSummary satisfies CandidateEvidenceSummary,
       },
-      sameCandidateLinks,
+      dependencyEdges: graph.edges.filter((edge) => edge.fromPrimaryObject === primaryObject),
       brokenDependency,
       seed,
       operations,
@@ -207,12 +210,13 @@ export async function compareCandidates(
 
   // ---- 第二层：不可拆单元；边上限在建图前保护（规则2：缺强依赖 → blocking）----
   const workingUnits: WorkingUnit[] = [];
-  for (const { candidate, manifest } of eligible) {
-    workingUnits.push(...buildUnitsForEligibleCandidate(candidate, manifest));
+  const candidateGraphs = eligible.map(({ candidate, manifest }) => ({ candidate, manifest, graph: buildPrimaryObjectDependencyGraph(manifest.operations.map((operation) => ({ ...operation, operationId: operation.sourceOperationId }))) }));
+  for (const { candidate, manifest, graph } of candidateGraphs) {
+    workingUnits.push(...buildUnitsForEligibleCandidate(candidate, manifest, graph));
   }
   let edgeBudget = 0;
   for (const entry of workingUnits) {
-    edgeBudget += entry.unit.requiredBaseObjects.length + entry.sameCandidateLinks.length;
+    edgeBudget += entry.unit.requiredBaseObjects.length + entry.dependencyEdges.length;
   }
   if (edgeBudget > MAX_DEPENDENCY_EDGES) {
     throw invalidRequest(`候选依赖边总数超过上限 ${MAX_DEPENDENCY_EDGES}：${edgeBudget}`);
@@ -240,17 +244,29 @@ export async function compareCandidates(
         repairActions: ['重新创建依赖闭合完整的候选'],
       }));
     }
-    for (const link of entry.sameCandidateLinks) {
+    for (const link of entry.dependencyEdges) {
       const producerUnit = unitByCandidateAndSequence.get(`${entry.unit.candidateId}\u0000${link.producerSequence}`);
       if (producerUnit === undefined || producerUnit.unitId === entry.unit.unitId) continue;
       if (!entry.unit.requiredUnitIds.includes(producerUnit.unitId)) entry.unit.requiredUnitIds.push(producerUnit.unitId);
       dependencyEdges.push({
         fromUnitId: entry.unit.unitId,
         toUnitId: producerUnit.unitId,
-        objectRef: link.requirement.objectRef,
+        objectRef: link.objectRef,
       });
     }
     entry.unit.requiredUnitIds.sort();
+  }
+  for (const { candidate, graph } of candidateGraphs) {
+    for (const cycle of graph.cycles) {
+      hardBlocked = true;
+      conflicts.push(await makeConflict(hasher, {
+        severity: 'blocking', code: 'DEPENDENCY_CYCLE', candidateIds: [candidate.candidateId],
+        unitIds: units.filter((unit) => unit.candidateId === candidate.candidateId && cycle.primaryObjects.includes(unit.primaryObject)).map((unit) => unit.unitId).sort(),
+        objectRefs: cycle.primaryObjects, allowedResolutions: ['regenerate-candidate'],
+        details: { primaryObjects: cycle.primaryObjects, edges: cycle.edges.map((edge) => ({ ...edge })) },
+        repairActions: ['改为单向依赖后重新创建候选；互相创建空骨架不能解除对象单元的依赖环'],
+      }));
+    }
   }
 
   // ---- 第三层：对象重叠（规则3 identical / 规则4 selection-required / 规则5 remove-vs-required）----
@@ -261,7 +277,7 @@ export async function compareCandidates(
     byObject.set(unit.primaryObject, bucket);
   }
   const signatureOf = (unit: ObjectChangeUnit, objectRef: string): string => {
-    const production = unit.producedObjects.find((item) => item.objectRef === objectRef);
+    const production = finalUnitProduction(unit, objectRef);
     return `${production?.disposition ?? '?'}\u0000${production?.finalFingerprint ?? '?'}`;
   };
   for (const [objectRef, bucket] of byObject) {
@@ -275,7 +291,7 @@ export async function compareCandidates(
     }
     let wholeBucketIdentical = false;
     for (const [, signatureBucket] of [...bySignature.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      const production = signatureBucket[0]!.producedObjects.find((item) => item.objectRef === objectRef);
+      const production = finalUnitProduction(signatureBucket[0]!, objectRef);
       if (signatureBucket.length < 2 || production?.finalFingerprint === undefined) continue;
       // 相同对象桶内也要按精确结果签名形成子组。A/D 相同而 C 不同时，
       // A/D 的 provenance 仍必须保留，C 则继续参与 selection-required 冲突。
@@ -313,8 +329,8 @@ export async function compareCandidates(
 
   const removedRefs = new Map<string, ObjectChangeUnit>();
   for (const unit of units) {
-    for (const production of unit.producedObjects) {
-      if (production.disposition === 'remove') removedRefs.set(production.objectRef, unit);
+    for (const objectRef of new Set(unit.producedObjects.map((production) => production.objectRef))) {
+      if (finalUnitProduction(unit, objectRef)?.disposition === 'remove') removedRefs.set(objectRef, unit);
     }
   }
   for (const [objectRef, removerUnit] of removedRefs) {

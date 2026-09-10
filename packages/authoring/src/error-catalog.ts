@@ -28,6 +28,7 @@ export const AUTHORING_ERROR_CODES = [
   'RECOVERY_PLAN_STALE', 'RECOVERY_AMBIGUOUS', 'RECOVERY_EXECUTION_FAILED',
   'INVOCATION_LEDGER_WRITE_FAILED', 'CAPSULE_IDENTITY_MISMATCH',
   'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_BASE_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE',
+  'CANDIDATE_DEPENDENCY_NOT_READY', 'CANDIDATE_DEPENDENCY_CYCLE', 'CANDIDATE_OPERATION_FACTS_REQUIRED',
   'COMPOSITION_DEPENDENCY_MISSING', 'COMPOSITION_CONFLICT_UNRESOLVED',
   'COMPOSITION_PLAN_STALE', 'COMPOSITION_PLAN_INVALID', 'COMPOSITION_REPLAY_FAILED',
   'COMPOSITION_INCOMPLETE', 'REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH',
@@ -127,6 +128,20 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   CANDIDATE_PROJECT_MISMATCH: { category: 'conflict', retryDisposition: 'new-change', repairActions: [action('project.inspect', '确认目标项目身份；为不同项目分别产生候选。')] },
   CANDIDATE_BASE_MISMATCH: { category: 'conflict', retryDisposition: 'new-change', repairActions: [action('project.inspect', '回到统一 base revision 后重新产生全部候选。')] },
   CANDIDATE_NOT_COMPOSABLE: { category: 'request', retryDisposition: 'new-change', repairActions: [action('project.inspect', '确认当前项目与基线后，用 v2 capsule manifest（2.0.0）重新封存该候选。')] },
+  CANDIDATE_DEPENDENCY_NOT_READY: { category: 'validation', retryDisposition: 'after-repair', repairActions: [
+    action('project.inspect', '确认命名对象是否已在基线存在。'),
+    action('project.assets', '素材依赖必须选择当前已解析资源。'),
+    action('session.describe', '当前操作尚未写入；依照 issues 中的 suggestedCapabilities 先建立生产者，再以同一 operationId 和原负载重试。'),
+  ] },
+  CANDIDATE_DEPENDENCY_CYCLE: { category: 'validation', retryDisposition: 'after-repair', repairActions: [
+    action('change.diff', '读取当前已持久化的单向依赖；拟写入的第二条环边没有落盘。'),
+    action('session.describe', '改写或放弃拟写入的操作，保持对象单元单向依赖；互相创建空骨架不能解除此环。'),
+  ] },
+  CANDIDATE_OPERATION_FACTS_REQUIRED: { category: 'conflict', retryDisposition: 'new-change', repairActions: [
+    action('change.diff', '读取现有 change 的状态；不从最终文件补写历史事实。'),
+    action('change.rollback', '放弃缺少时点事实的旧候选。'),
+    action('change.begin', '在新合同下重新创建 candidate。'),
+  ] },
   COMPOSITION_DEPENDENCY_MISSING: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('composition.plan', '把缺失依赖单元纳入选择或其生产者候选，重新生成计划。')] },
   COMPOSITION_CONFLICT_UNRESOLVED: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('composition.plan', '为每个 selection-required 冲突给出显式 unitId 裁决后重新计划。')] },
   COMPOSITION_PLAN_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('project.inspect', '刷新项目 revision 与 comparison identity。'), action('composition.inspect', '核对计划基线。'), action('composition.compare', '基线已移动时重新比较并重排计划。')] },

@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TextHasher } from '@surdet/authoring';
+import type { AuthoringObject, TextHasher } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { CompositionService } from '../src/authoring/composition-service.js';
 import { NodeChangeStore as NodeChangeStoreStatic } from '../src/authoring/node-change-store.js';
@@ -197,13 +197,23 @@ describe('CompositionService compare/plan/dry-run', () => {
   it('matches typed replay results against plan final fingerprints', async () => {
     const fixture = await setup('fingerprints');
     const first = await sealCandidate(fixture.projectRoot, 'fp-a', async (session) => {
-      expect((await session.invoke('scene.create', { operationId: 'op-fp-scene', sceneId: 'fp_scene' })).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'op-fp-scene', sceneId: 'fp_scene', blocks: [{ kind: 'text', value: '初稿' }] })).ok).toBe(true);
+      const scene = await session.invoke('object.inspect', { objectRef: 'scene:fp_scene' });
+      if (!scene.ok) throw new Error(scene.error.message);
+      const text = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
+      if (!text.ok) throw new Error(text.error.message);
+      const target = text.result as AuthoringObject;
+      expect((await session.invoke('scene.patch', { operationId: 'op-fp-patch', sceneId: 'fp_scene', patch: { kind: 'replaceText', target: target.objectRef, expectedFingerprint: target.fingerprint, value: '定稿' } })).ok).toBe(true);
     });
     const second = await sealCandidate(fixture.projectRoot, 'fp-b', async (session) => {
-      expect((await session.invoke('variable.ensure', { operationId: 'op-fp-var', name: 'flag.fp', type: 'number', initial: 0 })).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'op-fp-direct', sceneId: 'fp_scene', blocks: [{ kind: 'text', value: '定稿' }] })).ok).toBe(true);
     });
-    const result = await planFromComparison(fixture, [first.ref, second.ref]);
+    const compared = await fixture.service.compare([first.ref, second.ref]);
+    expect(compared.comparison.identicalGroups).toHaveLength(1);
+    const selected = compared.comparison.units.find((unit) => unit.candidateId === `cand-${first.ref.changeId}`)!;
+    const result = await planFromComparison(fixture, [first.ref, second.ref], { selectedUnitIds: [selected.unitId] });
     expect(result.plan.dryRun.status).toBe('passed');
+    expect(result.plan.replayOperations.map((operation) => operation.sourceOperationId)).toEqual(['op-fp-scene', 'op-fp-patch']);
     // plan 内每个 provenance 目标都能在 dry-run 指纹表中找到，且与单元封存值一致。
     expect(Object.keys(result.plan.dryRun.finalObjectFingerprints)).toContain('scene:fp_scene');
     for (const entry of result.plan.provenance) {

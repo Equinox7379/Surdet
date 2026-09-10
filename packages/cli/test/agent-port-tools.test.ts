@@ -270,6 +270,8 @@ describe('Surdet Agent Port MCP tool projection', () => {
   it('preserves every legal object inspection details shape over MCP', async () => {
     const { session, client, server } = await connected('stage');
     try {
+      fs.mkdirSync(path.join(session.projectRoot, 'content', 'assets', 'bg'), { recursive: true });
+      fs.writeFileSync(path.join(session.projectRoot, 'content', 'assets', 'bg', 'night_field.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>', 'utf8');
       const begun = await client.callTool({ name: 'surdet_change_begin', arguments: { intent: 'inspect timeline details', acceptanceCriteria: ['structured output'], initiator: 'external-agent' } });
       expect(begun.isError).not.toBe(true);
 
