@@ -118,6 +118,7 @@ function addSceneObjects(
         objectRef,
         ...(currentChoiceRef === null ? {} : { parentRef: currentChoiceRef }),
         source: sourceOf(scene.path, lineNumber, line.raw),
+        fingerprint: fingerprint(line.raw),
         references: [],
         referencedBy: [],
       };
@@ -149,6 +150,7 @@ function addSceneObjects(
         objectRef,
         parentRef: sceneRef,
         source: sourceOf(scene.path, lineNumber, line.raw),
+        fingerprint: fingerprint(line.raw),
         references: [],
         referencedBy: [],
       };
@@ -167,6 +169,7 @@ function addSceneObjects(
         objectRef: textRef,
         parentRef: sceneRef,
         source: sourceOf(scene.path, lineNumber, line.raw),
+        fingerprint: fingerprint(line.raw),
         references: [],
         referencedBy: [],
       }, candidates);

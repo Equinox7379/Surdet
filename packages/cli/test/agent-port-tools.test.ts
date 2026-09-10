@@ -318,4 +318,129 @@ describe('Surdet Agent Port MCP tool projection', () => {
       await session.close();
     }
   });
+
+  it('uses an inspected dialogue fingerprint for scene.patch and rejects stale reuse', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      const projectValidation = await client.callTool({ name: 'surdet_project_validate', arguments: {} });
+      expect(projectValidation.isError).not.toBe(true);
+      const projectValidationEnvelope = textEnvelope(projectValidation);
+      expect(projectValidationEnvelope.ok).toBe(true);
+      const projectValidationResult = projectValidationEnvelope.result as {
+        view?: unknown;
+        issues?: Array<Record<string, unknown>>;
+      };
+      expect(projectValidationResult.view).toBe('project');
+      const unresolvedSpeaker = projectValidationResult.issues?.find((issue) => issue.code === 'SPEAKER_UNRESOLVED');
+      const textObjectRef = unresolvedSpeaker?.objectRef;
+      expect(typeof textObjectRef).toBe('string');
+
+      const begun = await client.callTool({
+        name: 'surdet_change_begin',
+        arguments: {
+          intent: 'replace a dialogue through its inspected fingerprint',
+          acceptanceCriteria: ['matching fingerprint patches the dialogue', 'stale fingerprint leaves working content unchanged'],
+          initiator: 'external-agent',
+        },
+      });
+      expect(begun.isError).not.toBe(true);
+
+      const inspected = await client.callTool({
+        name: 'surdet_object_inspect',
+        arguments: { objectRef: textObjectRef },
+      });
+      expect(inspected.isError).not.toBe(true);
+      const inspectedEnvelope = textEnvelope(inspected);
+      expect(inspectedEnvelope.ok).toBe(true);
+      const inspectedObject = inspectedEnvelope.result as Record<string, unknown>;
+      expect(inspectedObject.kind).toBe('text');
+      expect(inspectedObject.objectRef).toBe(textObjectRef);
+      const inspectedFingerprint = inspectedObject.fingerprint;
+      expect(typeof inspectedFingerprint).toBe('string');
+
+      const patched = await client.callTool({
+        name: 'surdet_scene_patch',
+        arguments: {
+          operationId: 'op-mcp-dialogue-fingerprint',
+          sceneId: 'start',
+          patch: {
+            kind: 'replaceText',
+            target: textObjectRef,
+            expectedFingerprint: inspectedFingerprint,
+            value: '修改后的台词。',
+          },
+        },
+      });
+      expect(patched.isError).not.toBe(true);
+      const patchedEnvelope = textEnvelope(patched);
+      expect(patchedEnvelope.ok).toBe(true);
+      expect(patchedEnvelope.workingRevision).toBe(1);
+
+      const workingValidation = await client.callTool({ name: 'surdet_project_validate', arguments: {} });
+      expect(workingValidation.isError).not.toBe(true);
+      const workingValidationEnvelope = textEnvelope(workingValidation);
+      expect(workingValidationEnvelope.ok).toBe(true);
+      const workingValidationResult = workingValidationEnvelope.result as {
+        view?: unknown;
+        issues?: Array<Record<string, unknown>>;
+      };
+      expect(workingValidationResult.view).toBe('working');
+      const workingUnresolvedSpeaker = workingValidationResult.issues?.find((issue) => issue.code === 'SPEAKER_UNRESOLVED');
+      const workingTextObjectRef = workingUnresolvedSpeaker?.objectRef;
+      expect(typeof workingTextObjectRef).toBe('string');
+
+      const workingInspection = await client.callTool({
+        name: 'surdet_object_inspect',
+        arguments: { objectRef: workingTextObjectRef },
+      });
+      expect(workingInspection.isError).not.toBe(true);
+      const workingInspectionEnvelope = textEnvelope(workingInspection);
+      expect(workingInspectionEnvelope.ok).toBe(true);
+      const workingObject = workingInspectionEnvelope.result as Record<string, unknown>;
+      expect((workingObject.source as Record<string, unknown>).raw).toBe('凛：修改后的台词。');
+      const workingFingerprint = workingObject.fingerprint;
+      expect(typeof workingFingerprint).toBe('string');
+      const workingRevisionBeforeStale = patchedEnvelope.workingRevision;
+
+      const stale = await client.callTool({
+        name: 'surdet_scene_patch',
+        arguments: {
+          operationId: 'op-mcp-dialogue-stale-fingerprint',
+          sceneId: 'start',
+          patch: {
+            kind: 'replaceText',
+            target: textObjectRef,
+            expectedFingerprint: inspectedFingerprint,
+            value: '不应写入。',
+          },
+        },
+      });
+      expect(stale.isError).toBe(true);
+      const staleEnvelope = textEnvelope(stale);
+      expect(staleEnvelope.ok).toBe(false);
+      expect((staleEnvelope.error as Record<string, unknown>).code).toBe('OBJECT_PRECONDITION_FAILED');
+
+      const afterStaleDescription = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
+      expect(afterStaleDescription.isError).not.toBe(true);
+      const afterStaleDescriptionEnvelope = textEnvelope(afterStaleDescription);
+      expect(afterStaleDescriptionEnvelope.ok).toBe(true);
+      const activeChange = (afterStaleDescriptionEnvelope.result as Record<string, unknown>).activeChange as Record<string, unknown>;
+      expect(activeChange.workingRevision).toBe(workingRevisionBeforeStale);
+
+      const afterStaleInspection = await client.callTool({
+        name: 'surdet_object_inspect',
+        arguments: { objectRef: workingTextObjectRef },
+      });
+      expect(afterStaleInspection.isError).not.toBe(true);
+      const afterStaleInspectionEnvelope = textEnvelope(afterStaleInspection);
+      expect(afterStaleInspectionEnvelope.ok).toBe(true);
+      const afterStaleObject = afterStaleInspectionEnvelope.result as Record<string, unknown>;
+      expect((afterStaleObject.source as Record<string, unknown>).raw).toBe('凛：修改后的台词。');
+      expect(afterStaleObject.fingerprint).toBe(workingFingerprint);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
 });
