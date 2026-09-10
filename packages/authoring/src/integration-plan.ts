@@ -208,16 +208,6 @@ export async function buildIntegrationPlan(
   }
   for (const unitId of excluded) included.delete(unitId);
 
-  // Step 2.7：拒绝仍含 blocking 的可执行计划。
-  for (const conflict of comparison.conflicts) {
-    if (conflict.severity !== 'blocking' || conflict.unitIds.length === 0) continue;
-    for (const unitId of conflict.unitIds) {
-      if (included.has(unitId)) {
-        throw invalid(`blocking 冲突涉及的单元仍在计划内：${conflict.code} ${unitId}`);
-      }
-    }
-  }
-
   const candidateRefById = new Map<string, CandidateCapsuleRef>();
   const manifestByCandidate = new Map<string, CompositionManifest>();
   const withManifests = comparison as ComparisonWithManifests;
@@ -238,22 +228,59 @@ export async function buildIntegrationPlan(
     }
   }
 
-  // Step 2.6：identical group 去重——保留显式裁决者或最小 unitId，provenance 记录全体。
+  // 相同输出可能来自不同依赖链；不能保留依赖已被人类排除的来源。
+  const dependenciesAvailable = (unitId: string, visiting = new Set<string>()): boolean => {
+    if (visiting.has(unitId)) return true; // 依赖环由后面的拓扑排序拒绝。
+    const next = new Set(visiting).add(unitId);
+    return unitsById.get(unitId)!.requiredUnitIds.every((requiredId) =>
+      [...(identicalPeersByUnit.get(requiredId) ?? [requiredId])].some((peerId) =>
+        included.has(peerId) && dependenciesAvailable(peerId, next)));
+  };
+
+  // Step 2.6：保留显式裁决者或依赖仍成立的最小 unitId，provenance 记录全体。
   const deduplicatedUnits: IdenticalUnitResolution[] = [];
-  const suppressedUnits = new Set<string>();
+  const retainedByUnit = new Map<string, string>();
   for (const group of comparison.identicalGroups) {
     // 组内任一成员入选即代表整个 group；其余成员既不吸入也不重复 replay。
     const present = group.unitIds.filter((unitId) => included.has(unitId));
     if (present.length === 0) continue;
     const explicit = present.find((unitId) =>
       input.conflictResolutions.some((item) => item.resolution === 'choose-unit' && item.chosenUnitId === unitId));
-    const retained = explicit ?? [...present].sort()[0]!;
+    const retained = explicit ?? present.filter((unitId) => dependenciesAvailable(unitId)).sort()[0];
+    if (retained === undefined) {
+      throw new AuthoringOperationError('COMPOSITION_DEPENDENCY_MISSING', `相同结果没有依赖完整的可用来源：${group.primaryObject}`);
+    }
     deduplicatedUnits.push({ groupId: group.groupId, retainedUnitId: retained, provenanceUnitIds: [...group.unitIds].sort() });
-    for (const unitId of present) {
-      if (unitId !== retained) suppressedUnits.add(unitId);
+    for (const unitId of group.unitIds) retainedByUnit.set(unitId, retained);
+  }
+
+  // 按裁决和去重后的真实来源重建闭包，移除仅被落选来源吸入的依赖。
+  const retainedId = (unitId: string): string => retainedByUnit.get(unitId) ?? unitId;
+  included.clear();
+  implicitInclusions.length = 0;
+  frontier = [...selectedSet].filter((unitId) => !excluded.has(unitId)).map(retainedId);
+  while (frontier.length > 0) {
+    const unitId = frontier.pop()!;
+    if (included.has(unitId)) continue;
+    const unit = unitsById.get(unitId);
+    if (unit === undefined || excluded.has(unitId)) {
+      throw new AuthoringOperationError('COMPOSITION_DEPENDENCY_MISSING', `选择的单元依赖已排除或不存在的单元：${unitId}`);
+    }
+    included.add(unitId);
+    if (!selectedSet.has(unitId)) implicitInclusions.push(unitId);
+    frontier.push(...unit.requiredUnitIds.map(retainedId));
+  }
+  implicitInclusions.sort();
+
+  // Step 2.7：只检查最终仍会执行的单元。
+  for (const conflict of comparison.conflicts) {
+    if (conflict.severity !== 'blocking' || conflict.unitIds.length === 0) continue;
+    for (const unitId of conflict.unitIds) {
+      if (included.has(unitId)) {
+        throw invalid(`blocking 冲突涉及的单元仍在计划内：${conflict.code} ${unitId}`);
+      }
     }
   }
-  for (const unitId of suppressedUnits) included.delete(unitId);
 
   // Step 2.9 前置：拓扑排序（Kahn）；同层按 primaryObject、capsule SHA、最小 source sequence。
   const orderedUnits: ObjectChangeUnit[] = [];
@@ -263,7 +290,7 @@ export async function buildIntegrationPlan(
     const dependents = new Map<string, string[]>();
     for (const unitId of remaining) {
       const unit = unitsById.get(unitId)!;
-      const deps = unit.requiredUnitIds.filter((id) => remaining.has(id) && id !== unitId);
+      const deps = [...new Set(unit.requiredUnitIds.map(retainedId))].filter((id) => remaining.has(id) && id !== unitId);
       inDegree.set(unitId, deps.length);
       for (const dep of deps) {
         dependents.set(dep, [...(dependents.get(dep) ?? []), unitId]);
