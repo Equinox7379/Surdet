@@ -319,20 +319,20 @@ describe('Surdet Agent Port MCP tool projection', () => {
     }
   });
 
-  it('uses an inspected dialogue fingerprint for scene.patch and rejects stale reuse', async () => {
+  it('discovers dialogue through scene children, patches its fingerprint and rejects stale reuse', async () => {
     const { session, client, server } = await connected('stage');
     try {
-      const projectValidation = await client.callTool({ name: 'surdet_project_validate', arguments: {} });
-      expect(projectValidation.isError).not.toBe(true);
-      const projectValidationEnvelope = textEnvelope(projectValidation);
-      expect(projectValidationEnvelope.ok).toBe(true);
-      const projectValidationResult = projectValidationEnvelope.result as {
-        view?: unknown;
-        issues?: Array<Record<string, unknown>>;
-      };
-      expect(projectValidationResult.view).toBe('project');
-      const unresolvedSpeaker = projectValidationResult.issues?.find((issue) => issue.code === 'SPEAKER_UNRESOLVED');
-      const textObjectRef = unresolvedSpeaker?.objectRef;
+      const projectScene = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'scene:start' } });
+      expect(projectScene.isError).not.toBe(true);
+      const projectSceneObject = textEnvelope(projectScene).result as Record<string, unknown>;
+      expect(Array.isArray(projectSceneObject.childRefs)).toBe(true);
+      const projectChildren: Record<string, unknown>[] = [];
+      for (const objectRef of projectSceneObject.childRefs as string[]) {
+        const child = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef } });
+        expect(child.isError).not.toBe(true);
+        projectChildren.push(textEnvelope(child).result as Record<string, unknown>);
+      }
+      const textObjectRef = projectChildren.find((child) => child.kind === 'text')?.objectRef;
       expect(typeof textObjectRef).toBe('string');
 
       const begun = await client.callTool({
@@ -376,18 +376,19 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(patchedEnvelope.ok).toBe(true);
       expect(patchedEnvelope.workingRevision).toBe(1);
 
-      const workingValidation = await client.callTool({ name: 'surdet_project_validate', arguments: {} });
-      expect(workingValidation.isError).not.toBe(true);
-      const workingValidationEnvelope = textEnvelope(workingValidation);
-      expect(workingValidationEnvelope.ok).toBe(true);
-      const workingValidationResult = workingValidationEnvelope.result as {
-        view?: unknown;
-        issues?: Array<Record<string, unknown>>;
-      };
-      expect(workingValidationResult.view).toBe('working');
-      const workingUnresolvedSpeaker = workingValidationResult.issues?.find((issue) => issue.code === 'SPEAKER_UNRESOLVED');
-      const workingTextObjectRef = workingUnresolvedSpeaker?.objectRef;
+      const workingScene = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'scene:start' } });
+      expect(workingScene.isError).not.toBe(true);
+      const workingSceneObject = textEnvelope(workingScene).result as Record<string, unknown>;
+      expect(Array.isArray(workingSceneObject.childRefs)).toBe(true);
+      const workingChildren: Record<string, unknown>[] = [];
+      for (const objectRef of workingSceneObject.childRefs as string[]) {
+        const child = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef } });
+        expect(child.isError).not.toBe(true);
+        workingChildren.push(textEnvelope(child).result as Record<string, unknown>);
+      }
+      const workingTextObjectRef = workingChildren.find((child) => child.kind === 'text')?.objectRef;
       expect(typeof workingTextObjectRef).toBe('string');
+      expect(workingTextObjectRef).not.toBe(textObjectRef);
 
       const workingInspection = await client.callTool({
         name: 'surdet_object_inspect',

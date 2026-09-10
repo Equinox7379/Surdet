@@ -80,5 +80,20 @@ describe('revision-scoped object index', () => {
     ]);
     expect(index.byRef.get('label:ch01_01.path_a')!.referencedBy).toEqual([options[0]!.objectRef]);
     expect(index.byRef.get('label:ch01_01.path_b')!.referencedBy).toEqual([options[1]!.objectRef]);
+
+    const scene = index.byRef.get('scene:ch01_01')!;
+    expect(scene.childRefs).toContain('label:ch01_01.path_a');
+    expect(scene.childRefs).toContain('label:ch01_01.path_b');
+    const children = scene.childRefs!.map((ref) => index.byRef.get(ref)!);
+    expect(children.every((child) => child.parentRef === scene.objectRef)).toBe(true);
+    expect(children.filter((child) => child.kind === 'text').map((child) => child.source!.raw)).toEqual([
+      '凛：Agent 纵向切片起点。',
+      '凛：Agent 路径 A 后续台词。',
+      '凛：Agent 路径 B 后续台词。',
+    ]);
+    const choice = children.find((child) => child.kind === 'choice')!;
+    expect(choice.childRefs).toEqual(options.map((option) => option.objectRef));
+    expect(options.every((option) => option.parentRef === choice.objectRef)).toBe(true);
+    expect(scene.childRefs).not.toContain(options[0]!.objectRef);
   });
 });
