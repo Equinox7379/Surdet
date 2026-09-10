@@ -37,6 +37,7 @@ function sceneObject(scene: ProjectSnapshotScene): AuthoringObject {
     source: sourceOf(scene.path, 1, first?.raw ?? ''),
     references: [],
     referencedBy: [],
+    childRefs: [],
   };
 }
 
@@ -107,6 +108,7 @@ function addSceneObjects(
   speakerRefMap: Map<string, string>,
 ): void {
   addObject(objects, sceneObject(scene), candidates);
+  const sceneRef = `scene:${scene.id}`;
   let currentChoiceRef: string | null = null;
   for (let index = 0; index < scene.document.length; index++) {
     const line = scene.document[index]!;
@@ -134,13 +136,13 @@ function addSceneObjects(
         kind: 'label',
         semanticId: `label:${scene.id}.${line.name}`,
         objectRef: `label:${scene.id}.${line.name}`,
+        parentRef: sceneRef,
         source: sourceOf(scene.path, lineNumber, line.raw),
         references: [],
         referencedBy: [],
       }, candidates);
       continue;
     }
-    const sceneRef = `scene:${scene.id}`;
     if (line.kind === 'instr') {
       const { name, args } = splitInstruction(line.raw);
       const kind = name === 'choice' ? 'choice' : 'instruction';
@@ -413,6 +415,10 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
 
   const byRef = new Map(objects.map((object) => [object.objectRef, object]));
   for (const object of objects) {
+    const parent = object.parentRef === undefined ? undefined : byRef.get(object.parentRef);
+    if (parent?.kind === 'scene' || parent?.kind === 'choice') {
+      (parent.childRefs ??= []).push(object.objectRef);
+    }
     const targets = candidates.get(object.objectRef) ?? [];
     for (const target of targets) {
       if (!byRef.has(target)) continue;
