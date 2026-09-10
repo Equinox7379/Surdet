@@ -266,7 +266,8 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
         : sceneDocumentRefs(document, speakerRefs);
       const requiredObjects = await resolveRequirements(refs, objectFacts, sealedOperations);
       if (requiredObjects === undefined) {
-        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `场景引用无法在基线或更早操作中建立身份：${primaryObject}`);
+        const missing = [...new Set(refs)].filter((ref) => resolveRequirement(ref, objectFacts, sealedOperations) === undefined);
+        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `场景 ${primaryObject} 的依赖未在基线或更早操作中建立身份：${missing.join(', ')}。形成可组合候选时应先创建被引用对象，或先创建空场景，再用 scene.patch 填入跨场景内容。`);
       }
       return {
         ok: true,
@@ -388,7 +389,8 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
       const fingerprintAfter = await sha256Text(stableStringify(definition));
       const requiredObjects = await resolveRequirements(timelineAssetRefs(definition), objectFacts, sealedOperations);
       if (requiredObjects === undefined) {
-        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `时间轴资源引用无法建立身份：${primaryObject}`);
+        const missing = [...new Set(timelineAssetRefs(definition))].filter((ref) => resolveRequirement(ref, objectFacts, sealedOperations) === undefined);
+        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `时间轴 ${primaryObject} 的资源引用无法建立身份：${missing.join(', ')}。请用 project.assets 核对这些资源是否存在并已解析。`);
       }
       const diffEntry = diffEntryFor(semanticDiff, String(normalizedInput['operationId']));
       return {
