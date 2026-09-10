@@ -305,6 +305,63 @@ describe('Wave 5 integration plans', () => {
     expect(draft.replayOperations.filter((item) => group!.unitIds.includes(item.sourceUnitId))).toHaveLength(1);
   });
 
+  it('keeps the selected entry source for identical set-entry units and excludes the other entry closure', async () => {
+    const cold = readyCandidate('entry-cold', [
+      operation(0, 'op-cold-arrival', 'scene.create', 'scene:cold_arrival', [production('scene:cold_arrival', 'create', 'fp-cold-arrival')]),
+      operation(1, 'op-cold-entry', 'scene.create', 'scene:qualification_entry', [production('scene:qualification_entry', 'create', 'fp-cold-entry')], [
+        requirement('scene:cold_arrival', 'candidate', 0),
+      ]),
+      operation(2, 'op-cold-entry-set', 'project.entry-scene.set', 'config:entryScene', [production('config:entryScene', 'update', 'fp-entry')], [
+        requirement('scene:qualification_entry', 'candidate', 1),
+      ]),
+    ]);
+    const warm = readyCandidate('entry-warm', [
+      operation(0, 'op-warm-entry', 'scene.create', 'scene:qualification_entry', [production('scene:qualification_entry', 'create', 'fp-warm-entry')]),
+      operation(1, 'op-warm-entry-set', 'project.entry-scene.set', 'config:entryScene', [production('config:entryScene', 'update', 'fp-entry')], [
+        requirement('scene:qualification_entry', 'candidate', 0),
+      ]),
+    ]);
+    const { comparison } = await compareWithManifests([cold, warm]);
+    const coldEntry = comparison.units.find((unit) => unit.candidateId === cold.candidateId && unit.primaryObject === 'scene:qualification_entry')!;
+    const warmEntry = comparison.units.find((unit) => unit.candidateId === warm.candidateId && unit.primaryObject === 'scene:qualification_entry')!;
+    const setEntryUnits = comparison.units.filter((unit) => unit.primaryObject === 'config:entryScene');
+    const coldSetEntry = setEntryUnits.find((unit) => unit.candidateId === cold.candidateId)!;
+    const warmSetEntry = setEntryUnits.find((unit) => unit.candidateId === warm.candidateId)!;
+    const entryConflict = comparison.conflicts.find((conflict) =>
+      conflict.severity === 'selection-required' && conflict.objectRefs.includes('scene:qualification_entry'))!;
+    const setEntryGroup = comparison.identicalGroups.find((group) =>
+      group.primaryObject === 'config:entryScene' && group.finalFingerprint === 'fp-entry')!;
+
+    expect(setEntryUnits).toHaveLength(2);
+    expect(setEntryGroup.unitIds).toEqual(expect.arrayContaining([coldSetEntry.unitId, warmSetEntry.unitId]));
+    expect(entryConflict.unitIds).toEqual(expect.arrayContaining([coldEntry.unitId, warmEntry.unitId]));
+
+    const draft = await buildIntegrationPlan({
+      comparison,
+      selectedUnitIds: [warmEntry.unitId, coldSetEntry.unitId, warmSetEntry.unitId],
+      conflictResolutions: [{
+        conflictId: entryConflict.conflictId,
+        resolution: 'choose-unit',
+        chosenUnitId: warmEntry.unitId,
+        actor: 'human',
+      }],
+      review: { reviewState: 'unreviewed' },
+      now: NOW_A,
+    }, hasher);
+
+    const dedupe = draft.deduplicatedUnits.find((item) => item.groupId === setEntryGroup.groupId)!;
+    expect(dedupe.retainedUnitId).toBe(warmSetEntry.unitId);
+    expect(new Set(dedupe.provenanceUnitIds)).toEqual(new Set([coldSetEntry.unitId, warmSetEntry.unitId]));
+    expect(draft.replayOperations.some((item) => item.primaryObject === 'scene:cold_arrival')).toBe(false);
+    expect(draft.replayOperations.filter((item) => item.primaryObject === 'scene:qualification_entry').map((item) => item.sourceUnitId)).toEqual([warmEntry.unitId]);
+
+    const entryIndex = draft.replayOperations.findIndex((item) => item.primaryObject === 'scene:qualification_entry');
+    const setEntryIndex = draft.replayOperations.findIndex((item) => item.primaryObject === 'config:entryScene');
+    expect(entryIndex).toBeGreaterThanOrEqual(0);
+    expect(setEntryIndex).toBeGreaterThan(entryIndex);
+    expect(draft.replayOperations[setEntryIndex]!.sourceUnitId).toBe(warmSetEntry.unitId);
+  });
+
   it('has no caller-supplied replay payload entry point', async () => {
     const a = readyCandidate('na', [operation(0, 'op_n_a', 'scene.create', 'scene:n', [production('scene:n', 'create', 'fp-n-a')])]);
     const b = readyCandidate('nb', [operation(0, 'op_n_b', 'variable.ensure', 'variable:n', [production('variable:n', 'create', 'fp-n-b')])]);
