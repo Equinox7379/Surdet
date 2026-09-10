@@ -168,4 +168,144 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(listDataFiles()).toEqual(before);
     await session.close();
   });
+
+  it('seals a ready composition when a new timeline uses resolved but previously unreferenced assets', async () => {
+    const root = makeProject('unreferenced-assets');
+    fs.mkdirSync(path.join(root, 'content', 'assets', 'bg'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content', 'assets', 'portrait'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content', 'timelines'), { recursive: true });
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>\n';
+    fs.writeFileSync(path.join(root, 'content', 'assets', 'bg', 'post_office.svg'), svg, 'utf8');
+    fs.writeFileSync(path.join(root, 'content', 'assets', 'bg', 'lighthouse_dawn.svg'), svg, 'utf8');
+    fs.writeFileSync(path.join(root, 'content', 'assets', 'portrait', 'lynn_uniform_night.svg'), svg, 'utf8');
+
+    const session = await openSession('unreferenced-assets', 'stage', undefined, root);
+    try {
+      const assets = await session.invoke('project.assets', {});
+      expect(assets.ok).toBe(true);
+      if (!assets.ok) throw new Error(assets.error.message);
+      const catalog = assets.result as {
+        backgrounds: Array<{ key: string; sourcePath: string; resolved: boolean }>;
+        portraits: Array<{ key: string; timelineTarget?: string; role?: string; outfit?: string; expression?: string; sourcePath: string; resolved: boolean }>;
+      };
+      const postOffice = catalog.backgrounds.find((entry) => entry.key === 'post_office');
+      const lighthouse = catalog.backgrounds.find((entry) => entry.key === 'lighthouse_dawn');
+      const portrait = catalog.portraits.find((entry) => entry.key === 'lynn:uniform' && entry.expression === 'night');
+      expect(postOffice).toEqual(expect.objectContaining({ sourcePath: 'content/assets/bg/post_office.svg', resolved: true }));
+      expect(lighthouse).toEqual(expect.objectContaining({ sourcePath: 'content/assets/bg/lighthouse_dawn.svg', resolved: true }));
+      expect(portrait).toEqual(expect.objectContaining({ sourcePath: 'content/assets/portrait/lynn_uniform_night.svg', resolved: true }));
+      expect(portrait?.timelineTarget).toBe('lynn:uniform');
+
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const timelineId = 'unreferenced_asset_timeline';
+      expect((await session.invoke('timeline.create', {
+        operationId: 'op-unreferenced-assets-timeline',
+        timelineId,
+        definition: {
+          version: 1,
+          id: timelineId,
+          durationMs: 100,
+          tracks: [
+            {
+              kind: 'background',
+              cues: [
+                { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: postOffice!.key },
+                { atMs: 50, durationMs: 0, easing: 'linear', action: 'set', key: lighthouse!.key },
+              ],
+            },
+            {
+              kind: 'portrait',
+              target: portrait!.timelineTarget,
+              cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: portrait!.expression, position: 'left' }],
+            },
+          ],
+        },
+      })).ok).toBe(true);
+      expect((await session.invoke('scene.create', {
+        operationId: 'op-unreferenced-assets-scene',
+        sceneId: 'unreferenced_asset_scene',
+        blocks: [{ kind: 'instruction', name: 'timeline', args: [timelineId] }],
+      })).ok).toBe(true);
+      await stageEvidence(session);
+
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility).toBe('ready');
+      const manifest = capsule.composition.manifest as {
+        operations: Array<{
+          capabilityId: string;
+          sourceOperationId: string;
+          requiredObjects: Array<{ objectRef: string; source: string; candidateOperationSequence?: number }>;
+        }>;
+      };
+      const timelineOperation = manifest.operations.find((operation) => operation.sourceOperationId === 'op-unreferenced-assets-timeline');
+      expect(timelineOperation).toBeDefined();
+      const requiredObjects = timelineOperation!.requiredObjects;
+      const expectedAssetRefs = [
+        `asset:bg:${postOffice!.key}`,
+        `asset:bg:${lighthouse!.key}`,
+        `asset:portrait:${portrait!.role}:${portrait!.outfit}:${portrait!.expression}`,
+      ];
+      expect(requiredObjects.map((object) => object.objectRef).sort()).toEqual(expectedAssetRefs.sort());
+      for (const objectRef of expectedAssetRefs) {
+        expect(requiredObjects).toContainEqual(expect.objectContaining({ objectRef, source: 'base' }));
+      }
+      const sceneOperation = manifest.operations.find((operation) => operation.sourceOperationId === 'op-unreferenced-assets-scene');
+      expect(sceneOperation?.requiredObjects).toContainEqual(expect.objectContaining({
+        objectRef: `timeline:${timelineId}`,
+        source: 'candidate',
+        candidateOperationSequence: 0,
+      }));
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('keeps a capsule unavailable when a timeline references a missing physical asset', async () => {
+    const root = makeProject('missing-asset');
+    fs.mkdirSync(path.join(root, 'content', 'assets', 'portrait'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content', 'timelines'), { recursive: true });
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>\n';
+    fs.writeFileSync(path.join(root, 'content', 'assets', 'portrait', 'lynn_uniform_night.svg'), svg, 'utf8');
+
+    const session = await openSession('missing-asset', 'stage', undefined, root);
+    try {
+      const assets = await session.invoke('project.assets', {});
+      expect(assets.ok).toBe(true);
+      if (!assets.ok) throw new Error(assets.error.message);
+      const catalog = assets.result as {
+        backgrounds: Array<{ key: string; resolved: boolean }>;
+        portraits: Array<{ key: string; timelineTarget?: string; expression?: string; resolved: boolean }>;
+      };
+      expect(catalog.backgrounds.some((entry) => entry.key === 'missing_backdrop')).toBe(false);
+      const portrait = catalog.portraits.find((entry) => entry.key === 'lynn:uniform' && entry.expression === 'night');
+      expect(portrait).toEqual(expect.objectContaining({ resolved: true }));
+
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const timelineId = 'missing_asset_timeline';
+      const created = await session.invoke('timeline.create', {
+        operationId: 'op-missing-asset-timeline',
+        timelineId,
+        definition: {
+          version: 1,
+          id: timelineId,
+          durationMs: 100,
+          tracks: [
+            { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'missing_backdrop' }] },
+            { kind: 'portrait', target: portrait!.timelineTarget, cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: portrait!.expression, position: 'left' }] },
+          ],
+        },
+      });
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+      await stageEvidence(session);
+
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility).toBe('unavailable');
+      expect(capsule.composition.reasons).toContainEqual(expect.objectContaining({
+        code: 'DEPENDENCY_IDENTITY_UNAVAILABLE',
+        operationId: 'op-missing-asset-timeline',
+      }));
+    } finally {
+      await session.close();
+    }
+  });
 });

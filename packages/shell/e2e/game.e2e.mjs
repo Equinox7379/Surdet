@@ -36,7 +36,7 @@ try {
   win.on('pageerror', error => pageErrors.push(error.message));
   win.on('console', (msg) => {
     if (msg.type() === 'error') pageErrors.push(msg.text());
-    if (msg.text().includes('快速存档') || msg.text().includes('快速读档')) {
+    if (msg.text().includes('快速存档') || msg.text().includes('快速读档') || msg.text().startsWith('E2E_POINTER_DOWN')) {
       console.log(`[GAME] ${msg.text()}`);
     }
   });
@@ -52,6 +52,9 @@ try {
   }));
 
   await win.locator('canvas').waitFor({ state: 'visible' });
+  await win.evaluate(() => document.addEventListener('pointerdown', event => {
+    console.info('E2E_POINTER_DOWN', JSON.stringify({ x: event.clientX, y: event.clientY, target: event.target?.tagName, trusted: event.isTrusted }));
+  }, { capture: true, once: true }));
   // 点击当前真实控件，不猜测旧版菜单坐标；点击失败直接使本项失败。
   const startButton = win.getByRole('button', { name: '开始游戏', exact: true });
   await startButton.waitFor({ state: 'visible' });
@@ -130,6 +133,15 @@ try {
   console.log(`\n[E2E] steps=${steps} choices=${choices} saved=${saved} loaded=${loaded} final=${final.s} scene=${final.p?.sceneId ?? '-'}`);
   assert.deepEqual(pageErrors, []);
 } catch (error) {
+  console.error('NATIVE_FAILURE_STATE', await win?.evaluate(() => ({
+    focused: document.hasFocus(), visibility: document.visibilityState,
+    status: window.__surdetDebug?.status, rendererStatus: window.__surdetDebug?.rendererStatus,
+    position: window.__surdetDebug?.position, menu: window.__surdetDebug?.queries.overlay.menu(),
+    startButton: Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '开始游戏')?.getBoundingClientRect().toJSON(),
+  })).catch(() => null));
+  console.error('NATIVE_WINDOW_STATE', await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(window => ({
+    visible: window.isVisible(), focused: window.isFocused(), minimized: window.isMinimized(), contentBounds: window.getContentBounds(),
+  }))).catch(() => null));
   if (!process.env.CI) await win?.screenshot({ path: path.join(userData, 'failure.png') }).catch(() => {});
   throw error;
 } finally {
