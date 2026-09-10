@@ -6,6 +6,7 @@ import {
   DELIVERY_CAPSULE_VERSION,
   HUMAN_WORKSPACE_SUMMARY_SCHEMA,
   PROJECT_MUTATION_NOTICE_SCHEMA,
+  CANDIDATE_COMPOSITION_READINESS_SCHEMA,
   createEnvelopeJsonSchema,
   createFailureEnvelope,
   createSuccessEnvelope,
@@ -263,6 +264,7 @@ const sessionDescriptionSchema: JsonSchema = {
   properties: {
     humanWorkspace: HUMAN_WORKSPACE_SUMMARY_SCHEMA,
     projectMutation: PROJECT_MUTATION_NOTICE_SCHEMA,
+    candidateReadiness: CANDIDATE_COMPOSITION_READINESS_SCHEMA,
     sessionId: { type: 'string' },
     startedAt: { type: 'string' },
     engineVersion: { type: 'string' },

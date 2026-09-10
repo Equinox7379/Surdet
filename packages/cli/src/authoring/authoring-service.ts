@@ -25,6 +25,9 @@ import {
   buildOperationLedgerDiff,
   commitChange,
   createChangeDiff,
+  createCandidateOperationPrePersistHook,
+  inspectCandidateCompositionReadiness,
+  resolvedCompositionAssetRefs,
   createEvidenceEnvelope,
   executeTransactionRecovery,
   evidenceFreshness,
@@ -239,7 +242,12 @@ async function openChangeFromStore<T>(
     if (storage.rootIdentity !== record.projectRootIdentity) {
       throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
     }
-    const session = openChange(record, leasedStore, storage);
+    const beforeOperationPersist = record.integration === undefined && record.composition?.mode === 'candidate'
+      ? createCandidateOperationPrePersistHook({
+        baseObjects: buildObjectIndex(await loadSnapshot(new ChangeRecordProjectStorage(record, 'base'))).objects,
+        baseAssetRefs: record.composition.baseAssetRefs,
+      }) : undefined;
+    const session = openChange(record, leasedStore, storage, beforeOperationPersist);
     const snapshot = await loadSnapshot(new ChangeRecordProjectStorage(session.record));
     return callback({ store: leasedStore, session, storage, snapshot });
 }
@@ -304,7 +312,7 @@ function changedPaths(session: ChangeSession): string[] {
   return [...paths].filter((filePath) => session.record.baseContents[filePath] !== session.record.workingFiles[filePath]).sort();
 }
 
-function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDiff> {
+function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDiff> & { compositionReadiness: ReturnType<typeof inspectCandidateCompositionReadiness> } {
   const paths = changedPaths(session);
   const files = paths.map((filePath) => {
     const before = session.record.baseContents[filePath] ?? '';
@@ -326,6 +334,7 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
   });
   const diffFiles = files.flatMap((diff) => diff.files);
   return {
+    compositionReadiness: inspectCandidateCompositionReadiness(session.record),
     summary: {
       createdScenes: paths.filter((filePath) => session.record.baseFiles[filePath] === undefined && filePath.endsWith('.gal')).length,
       modifiedScenes: paths.filter((filePath) => session.record.baseFiles[filePath] !== undefined && filePath.endsWith('.gal')).length,
@@ -803,11 +812,18 @@ export class AuthoringService {
     };
   }
 
-  async begin(projectRoot: string, intent?: ChangeIntentMetadata): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
+  async begin(projectRoot: string, intent?: ChangeIntentMetadata, options?: { compositionMode: 'candidate' | 'direct' }): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot } = await this.loadProjectContext(storage);
+    const { snapshot, assetFiles } = await this.loadProjectContext(storage);
     const store = await NodeChangeStore.forProject(snapshot.rootIdentity);
-    const session = await beginChange(snapshot, store, storage, intent);
+    const baseAssetRefs = resolvedCompositionAssetRefs(assetFiles.map((file) => file.path));
+    const composition = { mode: options?.compositionMode ?? 'direct', operationFactsVersion: '1.0.0' as const, baseAssetRefs };
+    const session = await beginChange(snapshot, store, storage, intent, {
+      composition,
+      ...(composition.mode === 'candidate' ? { beforeOperationPersist: createCandidateOperationPrePersistHook({
+        baseObjects: buildObjectIndex(snapshot).objects, baseAssetRefs,
+      }) } : {}),
+    });
     return {
       ...metadataForChange(session),
       result: {

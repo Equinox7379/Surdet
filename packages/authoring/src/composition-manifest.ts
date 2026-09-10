@@ -1,8 +1,9 @@
 import { AuthoringOperationError, stableStringify } from './change-session.js';
-import type { ChangeRecord, SceneDocumentLine, TextHasher } from './contracts.js';
+import type { ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
-import { buildSpeakerCharacterRefs } from './object-index.js';
-import { parseSceneDocument, splitInstruction } from './scene-document.js';
+import { analyzeSceneCompositionReferences, analyzeTimelineCompositionReferences } from './composition-reference-analysis.js';
+import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
+import { resolveOperationRequirementsAtSequence } from './candidate-composition-guard.js';
 import {
   COMPOSABLE_CAPABILITY_IDS,
   type ComposableCapabilityId,
@@ -18,8 +19,6 @@ import {
 type SemanticEntry = ChangeDiff['semantic'][number];
 
 const CONFIG_PATH = 'game.config.json';
-const SCENE_INSTRUCTION_VARIABLES = new Set(['set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag']);
-const JUMP_LIKE_INSTRUCTIONS = new Set(['jump', 'call']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -51,13 +50,6 @@ function readWorkingJson(record: ChangeRecord, filePath: string): Record<string,
   } catch {
     return undefined;
   }
-}
-
-/** 台词 speaker（角色 ID 或显示名）到 character ref 的唯一解析表；characters 表缺失时为空。 */
-function workingSpeakerRefs(record: ChangeRecord): Map<string, string> {
-  const config = readWorkingJson(record, CONFIG_PATH);
-  const characters = config === undefined ? {} : (isRecord(config['characters']) ? config['characters'] : {});
-  return buildSpeakerCharacterRefs(characters);
 }
 
 function baseFingerprint(objectFacts: ManifestObjectFacts, objectRef: string): string | undefined {
@@ -122,99 +114,6 @@ async function resolveRequirements(
   return requirements;
 }
 
-function sceneBlockRefs(blocks: readonly unknown[], speakerRefs: Map<string, string>): string[] {
-  const refs: string[] = [];
-  for (const rawBlock of blocks) {
-    if (!isRecord(rawBlock)) continue;
-    const kind = rawBlock['kind'];
-    if (kind === 'text') {
-      const speaker = typeof rawBlock['speaker'] === 'string' ? rawBlock['speaker'].trim() : '';
-      const characterRef = speaker.length > 0 ? speakerRefs.get(speaker) : undefined;
-      if (characterRef !== undefined) refs.push(characterRef);
-      continue;
-    }
-    if (kind === 'instruction') {
-      const name = stringAt(rawBlock, 'name');
-      const args = asArray(rawBlock['args']).map((arg) => (typeof arg === 'string' ? arg : ''));
-      if (name === undefined || args.length === 0) continue;
-      if (name === 'timeline' && !args[0]!.startsWith('@')) refs.push(`timeline:${args[0]}`);
-      else if (JUMP_LIKE_INSTRUCTIONS.has(name)) {
-        const targetScene = args.join(' ').split('.')[0] ?? '';
-        if (targetScene.length > 0) refs.push(`scene:${targetScene}`);
-      } else if (SCENE_INSTRUCTION_VARIABLES.has(name) && args[0]!.length > 0) {
-        refs.push(`variable:${args[0]}`);
-      }
-      continue;
-    }
-    if (kind === 'choice') {
-      for (const rawOption of asArray(rawBlock['options'])) {
-        if (!isRecord(rawOption)) continue;
-        const when = typeof rawOption['when'] === 'string' ? rawOption['when'] : '';
-        const variableMatch = /^\[if:([^\]]+)\]/.exec(when.trim());
-        if (variableMatch !== null && variableMatch[1]!.length > 0) refs.push(`variable:${variableMatch[1]}`);
-        const target = rawOption['target'];
-        if (isRecord(target) && target['kind'] === 'scene' && typeof target['value'] === 'string' && target['value'].length > 0) {
-          refs.push(`scene:${target['value'].split('.')[0]}`);
-        }
-      }
-    }
-  }
-  return refs;
-}
-
-function sceneDocumentRefs(document: readonly SceneDocumentLine[], speakerRefs: Map<string, string>): string[] {
-  const refs: string[] = [];
-  for (const line of document) {
-    if (line.kind === 'text') {
-      const speaker = line.speaker.trim();
-      const characterRef = speaker.length > 0 ? speakerRefs.get(speaker) : undefined;
-      if (characterRef !== undefined) refs.push(characterRef);
-      continue;
-    }
-    if (line.kind === 'instr' && line.name !== 'choice') {
-      const { name, args } = splitInstruction(line.raw);
-      if (name === 'timeline' && args.length > 0 && !args[0]!.startsWith('@')) refs.push(`timeline:${args[0]}`);
-      else if (JUMP_LIKE_INSTRUCTIONS.has(name)) {
-        const targetScene = args.join(' ').split('.')[0] ?? '';
-        if (targetScene.length > 0) refs.push(`scene:${targetScene}`);
-      } else if (SCENE_INSTRUCTION_VARIABLES.has(name) && args[0] !== undefined && args[0].length > 0) {
-        refs.push(`variable:${args[0]}`);
-      }
-      continue;
-    }
-    if (line.kind === 'choice-option') {
-      const variableMatch = /^\s*\[if:([^\]]+)\]/.exec(line.raw.slice(line.raw.indexOf('[')));
-      if (variableMatch !== null && variableMatch[1]!.length > 0) refs.push(`variable:${variableMatch[1]}`);
-    }
-  }
-  return refs;
-}
-
-function timelineAssetRefs(definition: Record<string, unknown>): string[] {
-  const refs: string[] = [];
-  for (const rawTrack of asArray(definition['tracks'])) {
-    if (!isRecord(rawTrack)) continue;
-    const trackKind = stringAt(rawTrack, 'kind');
-    const target = stringAt(rawTrack, 'target');
-    for (const rawCue of asArray(rawTrack['cues'])) {
-      if (!isRecord(rawCue)) continue;
-      const action = stringAt(rawCue, 'action');
-      if (trackKind === 'background' && action === 'set' && stringAt(rawCue, 'key') !== undefined) {
-        refs.push(`asset:bg:${rawCue['key']}`);
-        continue;
-      }
-      if (trackKind === 'portrait' && (action === 'show' || action === 'expression')
-        && target !== undefined && stringAt(rawCue, 'expression') !== undefined) {
-        const [role, outfit = ''] = target.split(':');
-        if (role !== undefined && role.length > 0 && outfit.length > 0) {
-          refs.push(`asset:portrait:${role}:${outfit}:${rawCue['expression']}`);
-        }
-      }
-    }
-  }
-  return refs;
-}
-
 interface CapabilityFactInput {
   capabilityId: ComposableCapabilityId;
   normalizedInput: Record<string, unknown>;
@@ -259,15 +158,17 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
         { objectRef: primaryObject, disposition, finalFingerprint: await sha256Text(text) },
       ];
       const diffEntry = diffEntryFor(semanticDiff, String(normalizedInput['operationId']));
-      const speakerRefs = workingSpeakerRefs(record);
-      const document = parseSceneDocument(text);
-      const refs = capabilityId === 'scene.create'
-        ? sceneBlockRefs(asArray(normalizedInput['blocks']), speakerRefs)
-        : sceneDocumentRefs(document, speakerRefs);
+      const config = readWorkingJson(record, CONFIG_PATH);
+      const rawRefs = analyzeSceneCompositionReferences({
+        sceneId, path: scenePath(sceneId), text,
+        characters: isRecord(config?.['characters']) ? config['characters'] : {},
+      }).filter((reference) => reference.scope === 'candidate-external');
+      if (rawRefs.some((reference) => reference.objectRef === undefined)) return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `场景 ${primaryObject} 存在无法唯一解析的引用`);
+      const refs = rawRefs.map((reference) => reference.objectRef!);
       const requiredObjects = await resolveRequirements(refs, objectFacts, sealedOperations);
       if (requiredObjects === undefined) {
         const missing = [...new Set(refs)].filter((ref) => resolveRequirement(ref, objectFacts, sealedOperations) === undefined);
-        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `场景 ${primaryObject} 的依赖未在基线或更早操作中建立身份：${missing.join(', ')}。形成可组合候选时应先创建被引用对象，或先创建空场景，再用 scene.patch 填入跨场景内容。`);
+        return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `场景 ${primaryObject} 的依赖未在基线或更早操作中建立身份：${missing.join(', ')}。请先创建被引用对象，再补充单向引用；互相创建空骨架不能解除对象单元的依赖环。`);
       }
       return {
         ok: true,
@@ -387,9 +288,12 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
         ? (baseHas(objectFacts, primaryObject) ? 'update' : 'create')
         : 'update';
       const fingerprintAfter = await sha256Text(stableStringify(definition));
-      const requiredObjects = await resolveRequirements(timelineAssetRefs(definition), objectFacts, sealedOperations);
+      const rawRefs = analyzeTimelineCompositionReferences({ timelineId, path, definition });
+      if (rawRefs.some((reference) => reference.objectRef === undefined)) return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `时间轴 ${primaryObject} 存在无法唯一解析的引用`);
+      const refs = rawRefs.map((reference) => reference.objectRef!);
+      const requiredObjects = await resolveRequirements(refs, objectFacts, sealedOperations);
       if (requiredObjects === undefined) {
-        const missing = [...new Set(timelineAssetRefs(definition))].filter((ref) => resolveRequirement(ref, objectFacts, sealedOperations) === undefined);
+        const missing = [...new Set(refs)].filter((ref) => resolveRequirement(ref, objectFacts, sealedOperations) === undefined);
         return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `时间轴 ${primaryObject} 的资源引用无法建立身份：${missing.join(', ')}。请用 project.assets 核对这些资源是否存在并已解析。`);
       }
       const diffEntry = diffEntryFor(semanticDiff, String(normalizedInput['operationId']));
@@ -440,6 +344,90 @@ export interface BuildCompositionManifestInput {
   objectFacts: ManifestObjectFacts;
 }
 
+async function finalProductionFingerprint(record: ChangeRecord, objectRef: string, hasher: TextHasher): Promise<string | undefined> {
+  if (objectRef.startsWith('scene:')) {
+    const text = record.workingFiles[scenePath(objectRef.slice('scene:'.length))];
+    return text === undefined ? undefined : hasher.sha256(text);
+  }
+  let value: unknown;
+  if (objectRef.startsWith('timeline:')) value = readWorkingJson(record, timelinePath(objectRef.slice('timeline:'.length)));
+  else {
+    const config = readWorkingJson(record, CONFIG_PATH);
+    if (objectRef === 'config:characters') value = config?.['characters'] ?? {};
+    else if (objectRef === 'config:entryScene') value = config?.['entryScene'];
+    else if (objectRef.startsWith('variable:')) value = isRecord(config?.['variables']) ? config['variables'][objectRef.slice('variable:'.length)] : undefined;
+    else if (objectRef.startsWith('character:')) value = isRecord(config?.['characters']) ? config['characters'][objectRef.slice('character:'.length)] : undefined;
+  }
+  return value === undefined ? undefined : hasher.sha256(stableStringify(value));
+}
+
+/** Recheck persisted temporal facts; final files are used only for last-production verification. */
+export async function buildCompositionManifestFromRecordedFacts(
+  input: BuildCompositionManifestInput, hasher: TextHasher,
+): Promise<{ eligibility: 'ready'; reasons: []; manifest: CompositionManifest } | { eligibility: 'unavailable'; reasons: CompositionIneligibility[] }> {
+  const readiness = inspectCandidateCompositionReadiness(input.record);
+  const reasons: CompositionIneligibility[] = readiness.issues.map(({ code, operationId, message }) => ({ code, ...(operationId === undefined ? {} : { operationId }), message }));
+  const operations: CompositionOperation[] = [];
+  const entries = Object.entries(input.record.operations).sort((a, b) => (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || a[0].localeCompare(b[0]));
+  const priorOperations = entries.filter(([, item]) => item.compositionFacts !== undefined && item.sequence !== undefined)
+    .map(([operationId, item]) => ({ operationId, sequence: item.sequence!, facts: item.compositionFacts! }));
+  for (const [operationId, recorded] of entries) {
+    const issue = (code: CompositionIneligibility['code'], message: string) => reasons.push({ code, operationId, message });
+    const normalized = recorded.normalizedInput;
+    let valid = true;
+    if (normalized === undefined) { issue('MISSING_NORMALIZED_INPUT', '成功操作缺少规范化输入，不能重放'); valid = false; }
+    else if (!isRecord(normalized) || normalized['operationId'] !== operationId || stableStringify(normalized) !== recorded.requestHash) {
+      issue('OBJECT_IDENTITY_UNAVAILABLE', '规范化输入、operationId 或 requestHash 不一致'); valid = false;
+    }
+    const invocations = input.invocationFacts.filter((fact) => fact.ok && fact.operationId === operationId);
+    if (invocations.length !== 1) {
+      issue(invocations.length === 0 ? 'INVOCATION_FACT_MISSING' : 'INVOCATION_FACT_AMBIGUOUS', '需要唯一成功 invocation fact；后续 capability 身份分析受阻'); valid = false;
+    }
+    const invocation = invocations.length === 1 ? invocations[0] : undefined;
+    const inputSha256 = await hasher.sha256(recorded.requestHash);
+    if (invocation !== undefined && invocation.inputSha256 !== inputSha256) { issue('INVOCATION_FACT_MISSING', 'invocation inputSha256 与操作输入不一致'); valid = false; }
+    if (invocation !== undefined && !COMPOSABLE_CAPABILITY_IDS.includes(invocation.capabilityId as ComposableCapabilityId)) { issue('UNSUPPORTED_CAPABILITY', 'capability 不在可组合白名单内'); valid = false; }
+    const facts = recorded.compositionFacts;
+    if (facts === undefined || facts.factsVersion !== '1.0.0' || !Array.isArray(facts.rawReferences) || !Array.isArray(facts.requiredObjects) || !Array.isArray(facts.producedObjects) || recorded.sequence === undefined) continue;
+    if (invocation !== undefined && invocation.capabilityId !== facts.capabilityId) { issue('OPERATION_FACTS_INVALID', '成功 invocation capability 与时点事实不一致'); valid = false; }
+    const resolved = resolveOperationRequirementsAtSequence({
+      rawReferences: facts.rawReferences, sequence: recorded.sequence, baseObjects: input.objectFacts.baseObjects,
+      baseAssetRefs: input.record.composition?.baseAssetRefs ?? [], priorOperations,
+    });
+    if (!resolved.ok) { issue('DEPENDENCY_IDENTITY_UNAVAILABLE', `依赖未在基线或更早生产者中建立：${resolved.issues.map((item) => item.objectRef ?? item.token).join('、')}`); valid = false; }
+    else if (stableStringify(resolved.requiredObjects) !== stableStringify(facts.requiredObjects)) { issue('OPERATION_FACTS_INVALID', '已记录依赖与时点解析不一致，不能替换生产者或补写历史'); valid = false; }
+    for (const requirement of facts.requiredObjects) {
+      if (requirement.source === 'base' && requirement.objectRef.startsWith('asset:') && !input.objectFacts.workingAssetRefs.includes(requirement.objectRef)) {
+        issue('DEPENDENCY_IDENTITY_UNAVAILABLE', `基线素材当前已无法解析：${requirement.objectRef}`); valid = false;
+      }
+    }
+    if (valid && normalized !== undefined) operations.push({
+      sequence: recorded.sequence, capabilityId: facts.capabilityId, sourceOperationId: operationId,
+      normalizedInput: normalized, inputSha256, primaryObject: facts.primaryObject,
+      ...(facts.objectFingerprintBefore === undefined ? {} : { objectFingerprintBefore: facts.objectFingerprintBefore }),
+      ...(facts.objectFingerprintAfter === undefined ? {} : { objectFingerprintAfter: facts.objectFingerprintAfter }),
+      requiredObjects: facts.requiredObjects.map((item) => ({ ...item })), producedObjects: facts.producedObjects.map((item) => ({ ...item })),
+    });
+  }
+  const finalProductions = new Map<string, { operationId: string; production: ObjectProduction }>();
+  for (const operation of operations) for (const production of operation.producedObjects) finalProductions.set(production.objectRef, { operationId: operation.sourceOperationId, production });
+  for (const [objectRef, { operationId, production }] of finalProductions) {
+    const finalFingerprint = await finalProductionFingerprint(input.record, objectRef, hasher);
+    if (production.disposition === 'remove' ? finalFingerprint !== undefined : finalFingerprint === undefined || finalFingerprint !== production.finalFingerprint) {
+      reasons.push({ code: 'OPERATION_FACTS_INVALID', operationId, message: `最后一个产物与最终对象不一致：${objectRef}` });
+    }
+  }
+  if (reasons.length > 0 || operations.length !== entries.length) {
+    return { eligibility: 'unavailable', reasons: reasons.sort((a, b) => (a.operationId ?? '').localeCompare(b.operationId ?? '') || a.code.localeCompare(b.code) || a.message.localeCompare(b.message)) };
+  }
+  const manifest = {
+    manifestVersion: '1.0.0' as const, projectIdentity: input.projectIdentity,
+    baseProjectRevision: input.record.baseRevision, sourceChangeId: input.record.changeId,
+    sourceWorkingRevision: input.record.workingRevision, operations,
+  };
+  return { eligibility: 'ready', reasons: [], manifest: { ...manifest, manifestFingerprint: await hasher.sha256(stableStringify(manifest)) } };
+}
+
 export async function buildCompositionManifest(
   input: BuildCompositionManifestInput,
   hasher: TextHasher,
@@ -447,6 +435,15 @@ export async function buildCompositionManifest(
   | { eligibility: 'ready'; reasons: []; manifest: CompositionManifest }
   | { eligibility: 'unavailable'; reasons: CompositionIneligibility[] }
 > {
+  if (input.record.integration === undefined && input.record.composition?.mode === 'candidate') return buildCompositionManifestFromRecordedFacts(input, hasher);
+  if (input.record.integration === undefined && input.record.composition === undefined) return {
+    eligibility: 'unavailable', reasons: [
+      { code: 'OPERATION_FACTS_MISSING', message: '旧变更没有操作时点事实；请创建新候选。已封存 capsule 仍可读取' },
+      ...Object.entries(input.record.operations).filter(([, operation]) => operation.normalizedInput === undefined).map(([operationId]) => ({
+        code: 'MISSING_NORMALIZED_INPUT' as const, operationId, message: '旧操作没有规范化输入，不能从最终文件或 diff 重建',
+      })),
+    ],
+  };
   const reasons: CompositionIneligibility[] = [];
   const operations: CompositionOperation[] = [];
   const entries = Object.entries(input.record.operations);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChangeRecord, TextHasher } from '../src/contracts.js';
 import { stableStringify } from '../src/change-session.js';
 import { buildCompositionManifest } from '../src/composition-manifest.js';
+import { buildVariableOperationCompositionDraft } from '../src/operation-composition-facts.js';
 import type {
   ManifestObjectFacts,
   OperationInvocationFact,
@@ -49,8 +50,9 @@ function legacyRecord(): ChangeRecord {
   return record;
 }
 
-function newRecord(): ChangeRecord {
+async function newRecord(): Promise<ChangeRecord> {
   const record = emptyRecord();
+  record.composition = { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs: [] };
   record.workingFiles['game.config.json'] = `${JSON.stringify({
     variables: {
       'agent.wave5.flag': { type: 'int', initial: 0 },
@@ -60,6 +62,11 @@ function newRecord(): ChangeRecord {
     requestHash: stableStringify(variableInput),
     normalizedInput: variableInput,
     result: { name: 'agent.wave5.flag', created: true },
+    sequence: 0,
+    compositionFacts: {
+      ...await buildVariableOperationCompositionDraft({ name: variableInput.name, declaration: { type: 'int', initial: 0 }, hasher }),
+      factsVersion: '1.0.0', requiredObjects: [],
+    },
   };
   return record;
 }
@@ -85,6 +92,48 @@ function objectFacts(): ManifestObjectFacts {
 }
 
 describe('Wave 5 composition manifest sealing', () => {
+  it('aggregates independent fact, input, invocation and sequence problems', async () => {
+    const record = await newRecord();
+    const operation = record.operations['op_variable']!;
+    operation.sequence = 3;
+    operation.compositionFacts!.primaryObject = 'scene:forged';
+    record.operations['missing'] = { requestHash: '{}', result: null, sequence: 3 };
+    const result = await buildCompositionManifest({ record, projectIdentity: 'fixture-root', invocationFacts: [], semanticDiff: [], objectFacts: objectFacts() }, hasher);
+    expect(result.eligibility).toBe('unavailable');
+    if (result.eligibility === 'ready') throw new Error('invalid facts accepted');
+    expect(result.reasons.map((reason) => reason.code)).toEqual(expect.arrayContaining([
+      'OPERATION_SEQUENCE_INVALID', 'OPERATION_FACTS_INVALID', 'OPERATION_FACTS_MISSING', 'MISSING_NORMALIZED_INPUT', 'INVOCATION_FACT_MISSING',
+    ]));
+  });
+
+  it('rejects mismatched invocation input SHA and unsupported capability independently of persisted facts', async () => {
+    const record = await newRecord();
+    const result = await buildCompositionManifest({
+      record, projectIdentity: 'fixture-root', semanticDiff: [], objectFacts: objectFacts(),
+      invocationFacts: [{ operationId: 'op_variable', capabilityId: 'change.diff', inputSha256: 'wrong', ok: true }],
+    }, hasher);
+    expect(result.eligibility).toBe('unavailable');
+    if (result.eligibility === 'ready') throw new Error('invalid invocation accepted');
+    expect(result.reasons.map((reason) => reason.code)).toEqual(expect.arrayContaining(['INVOCATION_FACT_MISSING', 'UNSUPPORTED_CAPABILITY', 'OPERATION_FACTS_INVALID']));
+  });
+
+  it('refuses to backfill a legacy record that has normalized inputs but no operation-time facts', async () => {
+    const record = await newRecord();
+    delete record.composition;
+    delete record.operations['op_variable']!.compositionFacts;
+    const before = JSON.stringify(record);
+    const result = await buildCompositionManifest({ record, projectIdentity: 'fixture-root', invocationFacts: [await successFact('op_variable', record.operations['op_variable']!.requestHash)], semanticDiff: [], objectFacts: objectFacts() }, hasher);
+    expect(result).toMatchObject({ eligibility: 'unavailable', reasons: [expect.objectContaining({ code: 'OPERATION_FACTS_MISSING' })] });
+    expect(JSON.stringify(record)).toBe(before);
+  });
+
+  it('checks the last production against the final state without rewriting recorded history', async () => {
+    const record = await newRecord();
+    record.workingFiles['game.config.json'] = '{}';
+    const result = await buildCompositionManifest({ record, projectIdentity: 'fixture-root', invocationFacts: [await successFact('op_variable', record.operations['op_variable']!.requestHash)], semanticDiff: [], objectFacts: objectFacts() }, hasher);
+    expect(result).toMatchObject({ eligibility: 'unavailable', reasons: [expect.objectContaining({ code: 'OPERATION_FACTS_INVALID', operationId: 'op_variable' })] });
+  });
+
   it('marks a legacy operation with only requestHash/result as unavailable MISSING_NORMALIZED_INPUT', async () => {
     const result = await buildCompositionManifest({
       record: legacyRecord(),
@@ -125,7 +174,7 @@ describe('Wave 5 composition manifest sealing', () => {
   });
 
   it('seals a deterministic manifest from a new record plus one unique successful invocation fact', async () => {
-    const record = newRecord();
+    const record = await newRecord();
     const first = await buildCompositionManifest({
       record,
       projectIdentity: 'fixture-root',
@@ -159,7 +208,7 @@ describe('Wave 5 composition manifest sealing', () => {
   });
 
   it('is unavailable when the successful invocation fact is missing or ambiguous', async () => {
-    const record = newRecord();
+    const record = await newRecord();
     const requestHash = record.operations['op_variable']!.requestHash;
     const missing = await buildCompositionManifest({
       record,
@@ -190,7 +239,7 @@ describe('Wave 5 composition manifest sealing', () => {
   });
 
   it('ignores failed invocations and never seals them into the manifest', async () => {
-    const record = newRecord();
+    const record = await newRecord();
     const requestHash = record.operations['op_variable']!.requestHash;
     const onlyFailed = await buildCompositionManifest({
       record,

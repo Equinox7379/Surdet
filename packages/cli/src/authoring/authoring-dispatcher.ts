@@ -76,7 +76,9 @@ export async function dispatchAuthoringCapability(
         ),
       };
     case 'change.begin':
-      return { value: await service.begin(requireProject(context), payload as ChangeIntentMetadata) };
+      return { value: await service.begin(requireProject(context), payload as ChangeIntentMetadata, {
+        compositionMode: context.policy === 'stage' ? 'candidate' : 'direct',
+      }) };
     case 'scene.create':
       return { value: await service.sceneCreate(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneCreate']>[1]), operationId: operationIdFrom(payload) };
     case 'scene.patch':

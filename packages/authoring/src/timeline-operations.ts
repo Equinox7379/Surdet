@@ -16,6 +16,7 @@ import type {
 } from './contracts.js';
 import { normalizeProjectPath } from './project-storage.js';
 import type { TextHasher } from './project-storage.js';
+import { buildTimelineOperationCompositionDraft } from './operation-composition-facts.js';
 
 const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'screen']);
 const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
@@ -151,6 +152,9 @@ export async function applyTimelineCreate(
     const fingerprint = await timelineFingerprint(definition, hasher);
     const text = `${JSON.stringify(definition, null, 2)}\n`;
     return {
+      compositionDraft: await buildTimelineOperationCompositionDraft({
+        capabilityId: 'timeline.create', timelineId: input.timelineId, afterDefinition: definition, hasher,
+      }),
       result: {
         timelineId: input.timelineId,
         path,
@@ -280,6 +284,9 @@ export async function applyTimelinePatch(
     }
     const fingerprintAfter = await timelineFingerprint(next, hasher);
     return {
+      compositionDraft: await buildTimelineOperationCompositionDraft({
+        capabilityId: 'timeline.patch', timelineId: input.timelineId, beforeDefinition: definition, afterDefinition: next, hasher,
+      }),
       result: {
         timelineId: input.timelineId,
         objectRef: `timeline:${input.timelineId}`,

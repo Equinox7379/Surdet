@@ -127,6 +127,18 @@ function bystander(): VerifiedCompositionCandidate {
 }
 
 describe('Wave 5 candidate comparison', () => {
+  it('blocks a legacy synthetic reciprocal primary-unit cycle even though each producer sequence is earlier', async () => {
+    const result = await compare([readyCandidate('cycle', [
+      operation(0, 'create-a', 'scene.create', 'scene:A', [production('scene:A', 'create', 'a0')]),
+      operation(1, 'create-b', 'scene.create', 'scene:B', [production('scene:B', 'create', 'b0')]),
+      operation(2, 'a-to-b', 'scene.patch', 'scene:A', [production('scene:A', 'update', 'a1')], [requirement('scene:B', 'candidate', 1)]),
+      operation(3, 'b-to-a', 'scene.patch', 'scene:B', [production('scene:B', 'update', 'b1')], [requirement('scene:A', 'candidate', 0)]),
+    ]), bystander()]);
+    expect(result.status).toBe('blocked');
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ code: 'DEPENDENCY_CYCLE', severity: 'blocking', objectRefs: ['scene:A', 'scene:B'] }));
+    expect(result.units.find((unit) => unit.primaryObject === 'scene:A')!.operationSequences).toEqual([0, 2]);
+  });
+
   it('treats disjoint closures as composable with no structural conflicts', async () => {
     const result = await compare([
       readyCandidate('a', [operation(0, 'op_a', 'scene.create', 'scene:alpha', [production('scene:alpha', 'create', 'fp-alpha')])]),
@@ -169,6 +181,42 @@ describe('Wave 5 candidate comparison', () => {
     // provenance 保留：两个候选都还在 candidates 与 units 里。
     expect(result.candidates).toHaveLength(2);
     expect(result.units.every((unit) => unit.primaryObject === 'scene:same')).toBe(true);
+  });
+
+  it('compares final results rather than the shared initial production of two edited scenes', async () => {
+    const candidates = ['a', 'b'].map((id) => readyCandidate(id, [
+      operation(0, `create-${id}`, 'scene.create', 'scene:edited', [production('scene:edited', 'create', 'same-initial')]),
+      operation(1, `patch-${id}`, 'scene.patch', 'scene:edited', [production('scene:edited', 'update', `final-${id}`)]),
+    ]));
+    const result = await compare(candidates);
+    expect(result.status).toBe('review-only');
+    expect(result.identicalGroups).toEqual([]);
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ code: 'OBJECT_RESULTS_DIVERGE' }));
+  });
+
+  it('groups equal final scene results even when one candidate reached them through a patch', async () => {
+    const result = await compare([
+      readyCandidate('a', [
+        operation(0, 'create-a', 'scene.create', 'scene:edited', [production('scene:edited', 'create', 'initial')]),
+        operation(1, 'patch-a', 'scene.patch', 'scene:edited', [production('scene:edited', 'update', 'final')]),
+      ]),
+      readyCandidate('b', [operation(0, 'create-b', 'scene.create', 'scene:edited', [production('scene:edited', 'create', 'final')])]),
+    ]);
+    expect(result.status).toBe('composable');
+    expect(result.identicalGroups).toHaveLength(1);
+    expect(result.identicalGroups[0]!.finalFingerprint).toBe('final');
+  });
+
+  it('does not treat a removed then recreated character as absent in the final result', async () => {
+    const result = await compare([
+      readyCandidate('restored', [
+        operation(0, 'remove', 'character.remove', 'character:old', [production('character:old', 'remove')]),
+        operation(1, 'restore', 'character.ensure', 'character:old', [production('character:old', 'create', 'restored')]),
+      ]),
+      readyCandidate('consumer', [operation(0, 'use', 'scene.create', 'scene:uses', [production('scene:uses', 'create', 'uses')], [requirement('character:old', 'base')])]),
+    ]);
+    expect(result.conflicts.some((conflict) => conflict.code === 'REQUIRED_OBJECT_REMOVED')).toBe(false);
+    expect(result.status).toBe('composable');
   });
 
   it('groups an identical signature subset while keeping a divergent peer reviewable', async () => {

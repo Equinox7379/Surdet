@@ -1917,7 +1917,7 @@ async function runPreflight() {
       assert(names.includes('surdet_review_prepare_comparison') && names.includes('surdet_review_inspect_approval'), `${label} review tools missing`);
       assert(!names.includes('surdet_change_begin') && !names.includes('surdet_change_commit') && !names.includes('surdet_delivery_capsule'), `${label} observe policy exposed mutation/capsule`);
       assert(described.capabilities.length === 30, `${label} expected 30 capabilities, got ${described.capabilities.length}`);
-      assert(described.contractVersion === '2.2.0', `${label} contract was ${described.contractVersion}`);
+      assert(described.contractVersion === '2.3.0', `${label} contract was ${described.contractVersion}`);
       const era = port.client.getProtocolEra();
       const negotiated = port.client.getNegotiatedProtocolVersion?.();
       if (label === 'legacy') {

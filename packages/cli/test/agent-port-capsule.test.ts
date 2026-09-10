@@ -120,7 +120,7 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(capsule.runtime.status).toBe('stale');
     expect((capsule.objectDiff as any).freshness?.status ?? capsule.warnings).toBeDefined();
     expect(capsule.capsuleVersion).toBe('2.0.0');
-    expect(capsule.contractVersion).toBe('2.2.0');
+    expect(capsule.contractVersion).toBe('2.3.0');
     expect(capsule.composition.eligibility).toBe('ready');
     const manifest = capsule.composition.manifest as { operations: unknown[] } | undefined;
     expect(manifest?.operations.length).toBeGreaterThan(0);
@@ -260,7 +260,7 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     }
   });
 
-  it('keeps a capsule unavailable when a timeline references a missing physical asset', async () => {
+  it('rejects a missing timeline asset before persistence and keeps the persisted candidate ready', async () => {
     const root = makeProject('missing-asset');
     fs.mkdirSync(path.join(root, 'content', 'assets', 'portrait'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content', 'timelines'), { recursive: true });
@@ -281,6 +281,8 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
       expect(portrait).toEqual(expect.objectContaining({ resolved: true }));
 
       expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      await stageEvidence(session);
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
       const timelineId = 'missing_asset_timeline';
       const created = await session.invoke('timeline.create', {
         operationId: 'op-missing-asset-timeline',
@@ -295,15 +297,35 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
           ],
         },
       });
-      expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
-      await stageEvidence(session);
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: false, error: {
+        code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { operationApplied: false, issues: [expect.objectContaining({ objectRef: 'asset:bg:missing_backdrop', code: 'ASSET_NOT_RESOLVED' })] },
+      } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
 
       const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility).toBe('ready');
+      expect(capsule.operations).toEqual([]);
+      expect(capsule.validation.status).toBe('fresh');
+      expect((await session.describe()).candidateReadiness).toMatchObject({ status: 'ready', operationCount: 0 });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('keeps final sealing authoritative when a previously resolved asset disappears', async () => {
+    const root = makeProject('disappearing-asset');
+    const assetPath = path.join(root, 'content', 'assets', 'bg', 'night.svg');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>');
+    const session = await openSession('disappearing-asset', 'stage', undefined, root);
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'night-scene', sceneId: 'night', blocks: [{ kind: 'instruction', name: 'bg', args: ['night'] }] })).ok).toBe(true);
+      fs.unlinkSync(assetPath);
+      expect((await session.describe()).candidateReadiness?.status).toBe('ready');
+      const capsule = await generateDeliveryCapsule(session);
       expect(capsule.composition.eligibility).toBe('unavailable');
-      expect(capsule.composition.reasons).toContainEqual(expect.objectContaining({
-        code: 'DEPENDENCY_IDENTITY_UNAVAILABLE',
-        operationId: 'op-missing-asset-timeline',
-      }));
+      expect(capsule.composition.reasons).toContainEqual(expect.objectContaining({ code: 'DEPENDENCY_IDENTITY_UNAVAILABLE', operationId: 'night-scene' }));
     } finally {
       await session.close();
     }

@@ -65,6 +65,8 @@ node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stag
 
 `observe` 不修改项目文件；恢复 change 后的校验与模拟可以在 change store 追加证据。`stage` 只写隔离 change。`apply` 是启动时由操作者授予的项目写权限：普通 change 可在该会话创建或通过 `--resume-change` 恢复，并在证据门通过后提交；integration change 还必须有最终人类批准回执。推荐按上面的流程先复核，再另行启动 apply。MCP 只投影共享 authoring 合同，不维护第二套业务语义。
 
+当前 Authoring 合同为 `2.3.0`。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+
 ## 工作区
 
 | 工作区 | 职责 |

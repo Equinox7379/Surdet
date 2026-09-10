@@ -1,0 +1,220 @@
+import { createHash } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import { beginChange, InMemoryChangeRepository, openChange, recordValidation, type ChangeSession } from '../src/change-session.js';
+import { loadProjectSnapshot } from '../src/project-snapshot.js';
+import { buildObjectIndex } from '../src/object-index.js';
+import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
+import { applyCharacterEnsure, applyCharacterRemove, applyEntrySceneSet, charactersFingerprint, entrySceneFingerprint } from '../src/config-operations.js';
+import { applyTimelineCreate, applyTimelinePatch } from '../src/timeline-operations.js';
+import { createCandidateOperationPrePersistHook, resolveOperationRequirementsAtSequence } from '../src/candidate-composition-guard.js';
+import { inspectCandidateCompositionReadiness } from '../src/candidate-readiness.js';
+import { stableStringify } from '../src/change-session.js';
+import { buildCompositionManifest } from '../src/composition-manifest.js';
+import type { SceneBlockInput } from '../src/contracts.js';
+
+const hasher = { sha256: async (text: string) => createHash('sha256').update(text).digest('hex') };
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+const config = (change: ChangeSession) => JSON.parse(change.record.workingFiles['game.config.json']!);
+const facts = (change: ChangeSession, id: string) => change.record.operations[id]!.compositionFacts!;
+
+async function seal(change: ChangeSession) {
+  return buildCompositionManifest({
+    record: change.record, projectIdentity: 'wave8-fixture', semanticDiff: [],
+    invocationFacts: Object.entries(change.record.operations).map(([operationId, operation]) => ({
+      operationId, capabilityId: operation.compositionFacts!.capabilityId, inputSha256: sha(operation.requestHash), ok: true,
+    })),
+    objectFacts: {
+      baseObjects: [{ objectRef: 'scene:A', references: [] }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
+      workingObjects: [], baseAssetRefs: change.record.composition!.baseAssetRefs, workingAssetRefs: change.record.composition!.baseAssetRefs,
+    },
+  }, hasher);
+}
+
+async function candidate(baseAssetRefs: string[] = []) {
+  const files = {
+    'game.config.json': '{"entryScene":"A","variables":{},"characters":{}}',
+    'content/scenario/A.gal': '@scene A\n旁白：开场。\n@end\n',
+  };
+  const snapshot = await loadProjectSnapshot({
+    rootIdentity: 'wave8-fixture', listFiles: async () => Object.keys(files),
+    exists: async (path) => path in files,
+    readText: async (path) => { const text = files[path as keyof typeof files]; return { path, text, bytes: text.length, sha256: sha(text) }; },
+  }, hasher);
+  const repository = new InMemoryChangeRepository();
+  const hook = createCandidateOperationPrePersistHook({ baseObjects: buildObjectIndex(snapshot).objects, baseAssetRefs });
+  return beginChange(snapshot, repository, undefined, undefined, {
+    composition: { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs }, beforeOperationPersist: hook,
+  });
+}
+
+async function insert(change: ChangeSession, operationId: string, sceneId: string, blocks: SceneBlockInput[]) {
+  const snapshot = await loadProjectSnapshot({
+    rootIdentity: 'wave8-fixture', listFiles: async () => Object.keys(change.record.workingFiles),
+    exists: async (path) => path in change.record.workingFiles,
+    readText: async (path) => { const text = change.record.workingFiles[path]!; return { path, text, bytes: text.length, sha256: sha(text) }; },
+  }, hasher);
+  const anchor = buildObjectIndex(snapshot).objects.find((object) => object.objectRef.startsWith(`scene:${sceneId}/`) && object.source?.line === 1)!;
+  return applyScenePatch(change, { operationId, sceneId, patch: { kind: 'insertAfter', anchor: anchor.objectRef, expectedFingerprint: anchor.fingerprint!, blocks } }, hasher);
+}
+
+describe('candidate operation-time facts', () => {
+  it('returns the same early missing-producer contract for an entry-scene mutation', async () => {
+    const change = await candidate();
+    const before = structuredClone(change.record);
+    await expect(applyEntrySceneSet(change, { operationId: 'missing-entry', sceneId: 'missing', expectedFingerprint: await entrySceneFingerprint(config(change), hasher) }, hasher)).rejects.toMatchObject({
+      code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { capabilityId: 'project.entry-scene.set', issues: [expect.objectContaining({ objectRef: 'scene:missing', suggestedCapabilities: ['scene.create'] })] },
+    });
+    expect(change.record).toEqual(before);
+  });
+
+  it('retains an ambiguous portrait reference instead of claiming no asset dependency', async () => {
+    const change = await candidate();
+    await expect(applySceneCreate(change, { operationId: 'ambiguous', sceneId: 'portrait', blocks: [{ kind: 'instruction', name: 'show', args: ['rin', 'smile'] }] }, hasher)).rejects.toMatchObject({
+      code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: [expect.objectContaining({ code: 'REFERENCE_TARGET_AMBIGUOUS', kind: 'portrait-asset', token: 'rin:smile' })] },
+    });
+    expect(change.record.workingRevision).toBe(0);
+  });
+
+  it('does not attribute a later scene reference to earlier content; keeps removed references in history', async () => {
+    const change = await candidate();
+    await insert(change, '10', 'A', [{ kind: 'text', value: '先写对白。' }]);
+    await applySceneCreate(change, { operationId: '2', sceneId: 'B' }, hasher);
+    await insert(change, 'op2', 'A', [{ kind: 'instruction', name: 'jump', args: ['B'] }]);
+    expect(facts(change, '10').requiredObjects).toEqual([]);
+    expect(facts(change, 'op2').requiredObjects).toEqual([{ objectRef: 'scene:B', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: facts(change, '2').objectFingerprintAfter }]);
+    expect(change.record.operations['10']!.sequence).toBe(0);
+    expect(change.record.operations['2']!.sequence).toBe(1);
+    expect(facts(change, '10').objectFingerprintAfter).not.toBe(facts(change, 'op2').objectFingerprintAfter);
+    const earlier = structuredClone(facts(change, 'op2'));
+    const document = change.record.workingFiles['content/scenario/A.gal']!;
+    const jumpLine = document.split('\n').findIndex((line) => line === '@jump B') + 1;
+    let digest = 0x811c9dc5;
+    for (const char of '@jump B') { digest ^= char.charCodeAt(0); digest = Math.imul(digest, 0x01000193); }
+    const fingerprint = (digest >>> 0).toString(16).padStart(8, '0');
+    await applyScenePatch(change, { operationId: 'remove-jump', sceneId: 'A', patch: { kind: 'removeObject', target: `scene:A/instr:${jumpLine}@${fingerprint}`, expectedFingerprint: fingerprint } }, hasher);
+    expect(facts(change, 'op2')).toEqual(earlier);
+    expect(facts(change, 'remove-jump').requiredObjects).toEqual([]);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('ready');
+    const capsule = await seal(change);
+    expect(capsule.eligibility).toBe('ready');
+    if (capsule.eligibility !== 'ready') throw new Error(JSON.stringify(capsule.reasons));
+    expect(capsule.manifest.operations.map((operation) => operation.sourceOperationId)).toEqual(['10', '2', 'op2', 'remove-jump']);
+    expect(capsule.manifest.operations[0]!.requiredObjects).toEqual([]);
+    expect(capsule.manifest.operations[2]!.requiredObjects).toEqual(earlier.requiredObjects);
+  });
+
+  it('rejects all missing dependencies without touching record or evidence, then accepts the same operation after creation', async () => {
+    const change = await candidate();
+    await recordValidation(change, { evidenceId: 'fresh', errors: 0 });
+    const before = structuredClone(change.record);
+    const input = { operationId: 'entry', sceneId: 'entry', blocks: [
+      { kind: 'instruction' as const, name: 'bg', args: ['missing-background'] },
+      { kind: 'instruction' as const, name: 'jump', args: ['ending'] },
+    ] };
+    await expect(applySceneCreate(change, input, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: {
+      operationApplied: false, capabilityId: 'scene.create', workingRevisionBefore: 0, workingRevisionAfter: 0,
+      issues: expect.arrayContaining([expect.objectContaining({ objectRef: 'scene:ending' }), expect.objectContaining({ objectRef: 'asset:bg:missing-background' })]),
+    } });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+    const entry = { ...input, blocks: [input.blocks[1]!] };
+    await expect(applySceneCreate(change, entry, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    await applySceneCreate(change, { operationId: 'ending', sceneId: 'ending' }, hasher);
+    await applySceneCreate(change, entry, hasher);
+    expect(change.record.operations['entry']!.sequence).toBe(1);
+  });
+
+  it('rejects the second edge between newly created primary units before persistence', async () => {
+    const change = await candidate();
+    await applySceneCreate(change, { operationId: 'a', sceneId: 'newA' }, hasher);
+    await applySceneCreate(change, { operationId: 'b', sceneId: 'newB' }, hasher);
+    await insert(change, 'a-to-b', 'newA', [{ kind: 'instruction', name: 'jump', args: ['newB'] }]);
+    const before = structuredClone(change.record);
+    await expect(insert(change, 'b-to-a', 'newB', [{ kind: 'instruction', name: 'jump', args: ['newA'] }])).rejects.toMatchObject({
+      code: 'CANDIDATE_DEPENDENCY_CYCLE', details: { operationApplied: false, unsupportedRecovery: 'mutual-empty-skeleton', cycles: [expect.objectContaining({ primaryObjects: ['scene:newA', 'scene:newB'] })] },
+    });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('ready');
+  });
+
+  it('keeps local goto and a self-scene jump inside their primary unit', async () => {
+    const change = await candidate();
+    await applySceneCreate(change, { operationId: 'local', sceneId: 'local', blocks: [
+      { kind: 'label', name: 'again' },
+      { kind: 'instruction', name: 'goto', args: ['again'] },
+      { kind: 'instruction', name: 'jump', args: ['local'] },
+    ] }, hasher);
+    expect(facts(change, 'local').requiredObjects).toEqual([]);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('ready');
+  });
+
+  it('records no-change facts without incrementing workingRevision', async () => {
+    const change = await candidate();
+    const declaration = { name: 'flag', type: 'int' as const, initial: 0 };
+    await ensureVariable(change, { ...declaration, operationId: 'first' }, hasher);
+    await ensureVariable(change, { ...declaration, operationId: 'same' }, hasher);
+    expect(change.record.workingRevision).toBe(1);
+    expect(change.record.operations['same']!.sequence).toBe(1);
+    expect(facts(change, 'same').producedObjects[0]).toMatchObject({ disposition: 'update', finalFingerprint: facts(change, 'first').objectFingerprintAfter });
+  });
+
+  it('captures each character table, migration and removal at its operation time', async () => {
+    const change = await candidate(['asset:avatar:rin']);
+    await applyCharacterEnsure(change, { operationId: 'rin', id: 'rin', name: '凛', avatar: 'rin', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    await insert(change, 'dialogue', 'A', [{ kind: 'text', speaker: '凛', value: '旧名字。' }]);
+    await applyCharacterEnsure(change, { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    const created = structuredClone(facts(change, 'rin'));
+    const renamed = structuredClone(facts(change, 'rename'));
+    expect(renamed.producedObjects).toContainEqual({ objectRef: 'scene:A', disposition: 'update', finalFingerprint: sha(change.record.workingFiles['content/scenario/A.gal']!) });
+    await applyCharacterRemove(change, { operationId: 'remove', id: 'rin', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    expect(facts(change, 'rin')).toEqual(created);
+    expect(facts(change, 'rename')).toEqual(renamed);
+    expect(created.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint).not.toBe(renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint);
+    expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'character:rin', disposition: 'remove' });
+    expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'config:characters', disposition: 'update', finalFingerprint: sha('{}') });
+  });
+
+  it('keeps successive entryScene settings at their own time', async () => {
+    const change = await candidate();
+    await applySceneCreate(change, { operationId: 'b', sceneId: 'B' }, hasher);
+    await applyEntrySceneSet(change, { operationId: 'entry-b', sceneId: 'B', expectedFingerprint: await entrySceneFingerprint(config(change), hasher) }, hasher);
+    await applyEntrySceneSet(change, { operationId: 'entry-a', sceneId: 'A', expectedFingerprint: await entrySceneFingerprint(config(change), hasher) }, hasher);
+    expect(facts(change, 'entry-b').objectFingerprintAfter).toBe(sha(stableStringify('B')));
+    expect(facts(change, 'entry-a').objectFingerprintAfter).toBe(sha(stableStringify('A')));
+    expect(facts(change, 'entry-b').requiredObjects[0]!.objectRef).toBe('scene:B');
+    expect((await seal(change)).eligibility).toBe('ready');
+  });
+
+  it('keeps later timeline assets out of earlier facts', async () => {
+    const change = await candidate(['asset:bg:night']);
+    const created = await applyTimelineCreate(change, { operationId: 'timeline', timelineId: 'intro', definition: { version: 1, id: 'intro', durationMs: 100, tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 0 }] }] } }, hasher);
+    await applyTimelinePatch(change, { operationId: 'early-patch', timelineId: 'intro', patch: { kind: 'addTrack', trackKind: 'background', expectedFingerprint: created.fingerprint } }, hasher);
+    await applyTimelinePatch(change, { operationId: 'timeline-patch', timelineId: 'intro', patch: { kind: 'insertCue', trackRef: 'timeline:intro/track:1', expectedFingerprint: sha(stableStringify({ kind: 'background', cues: [] })), cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night' } } }, hasher);
+    expect(facts(change, 'timeline').requiredObjects).toEqual([]);
+    expect(facts(change, 'early-patch').requiredObjects).toEqual([]);
+    expect(facts(change, 'timeline-patch').requiredObjects).toContainEqual({ objectRef: 'asset:bg:night', source: 'base' });
+    expect((await seal(change)).eligibility).toBe('ready');
+  });
+
+  it('does not silently migrate legacy or incomplete candidate ledgers', async () => {
+    const change = await candidate();
+    await applySceneCreate(change, { operationId: 'b', sceneId: 'B' }, hasher);
+    delete change.record.operations['b']!.compositionFacts;
+    const before = structuredClone(change.record);
+    await expect(applySceneCreate(change, { operationId: 'c', sceneId: 'C' }, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_OPERATION_FACTS_REQUIRED' });
+    expect(change.record).toEqual(before);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('blocked');
+    delete change.record.composition;
+    expect(inspectCandidateCompositionReadiness(change.record)).toMatchObject({ mode: 'legacy-unclassified', status: 'legacy-unavailable' });
+    const candidateWithoutHook = openChange({ ...before, operations: {} }, change.repository);
+    await expect(applySceneCreate(candidateWithoutHook, { operationId: 'missing-hook', sceneId: 'C' }, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_OPERATION_FACTS_REQUIRED' });
+  });
+
+  it('resolves assets only from frozen resolved identities, even if an unresolved index object exists', () => {
+    expect(resolveOperationRequirementsAtSequence({
+      sequence: 0, baseObjects: [{ objectRef: 'asset:bg:missing', references: [] }], baseAssetRefs: [], priorOperations: [],
+      rawReferences: [{ kind: 'background-asset', scope: 'candidate-external', token: 'missing', objectRef: 'asset:bg:missing', source: { path: 'content/scenario/A.gal' } }],
+    })).toMatchObject({ ok: false, issues: [{ code: 'ASSET_NOT_RESOLVED' }] });
+  });
+});

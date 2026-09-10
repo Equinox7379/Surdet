@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
+import { parseSceneDocument } from '../src/scene-document.js';
 
 function digest(text: string): string {
   let hash = 0x811c9dc5;
@@ -95,5 +96,42 @@ describe('revision-scoped object index', () => {
     expect(choice.childRefs).toEqual(options.map((option) => option.objectRef));
     expect(options.every((option) => option.parentRef === choice.objectRef)).toBe(true);
     expect(scene.childRefs).not.toContain(options[0]!.objectRef);
+  });
+
+  it('keeps parseable references after a malformed choice line', async () => {
+    const contents: Record<string, string> = {
+      'game.config.json': '{"entryScene":"entry","variables":{}}',
+      'content/scenario/entry.gal': '@scene entry\n@end',
+      'content/scenario/later.gal': '@scene later\n@end',
+    };
+    const storage: ProjectStorage = {
+      rootIdentity: 'partial-analysis-fixture',
+      listFiles: async () => Object.keys(contents),
+      readText: async (path): Promise<ProjectFile> => {
+        const text = contents[path];
+        if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+        return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+      },
+      exists: async (path) => path in contents,
+    };
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const entry = snapshot.scenes.find((scene) => scene.id === 'entry')!;
+    const malformed = [
+      '@scene entry',
+      '@choice',
+      '  Broken -> @set value = "unterminated',
+      '@jump later',
+      '@end',
+    ].join('\n');
+    entry.file = { ...entry.file, text: malformed };
+    entry.document = parseSceneDocument(malformed);
+
+    const index = buildObjectIndex(snapshot);
+    const jump = index.objects.find((object) => object.source?.raw === '@jump later');
+    expect(jump).toBeDefined();
+    expect(jump!.references).toEqual(['scene:later']);
+    const brokenOption = index.objects.find((object) => object.kind === 'choice-option');
+    expect(brokenOption).toBeDefined();
+    expect(brokenOption!.references).toEqual([]);
   });
 });

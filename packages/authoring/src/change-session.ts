@@ -8,7 +8,7 @@ import type {
   EvidenceFreshness,
   ProjectWriteStorage,
 } from './contracts.js';
-import type { JsonValue } from './composition-contracts.js';
+import type { ChangeCompositionMetadata, JsonValue, OperationCompositionDraft, RecordedOperationCompositionFacts } from './composition-contracts.js';
 import type { IntegrationMetadata } from './integration-execution.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 
@@ -161,11 +161,24 @@ export class InMemoryChangeRepository implements ChangeRepository {
   }
 }
 
+export interface OperationPrePersistContext {
+  current: ChangeRecord;
+  proposed: ChangeRecord;
+  operationId: string;
+  normalizedInput: JsonValue;
+  sequence: number;
+  draft?: OperationCompositionDraft;
+}
+
+export type OperationPrePersistHook = (context: OperationPrePersistContext) =>
+  Promise<RecordedOperationCompositionFacts | undefined>;
+
 export class ChangeSession {
   constructor(
     readonly record: ChangeRecord,
     readonly repository: ChangeRepository,
     readonly storage?: ProjectWriteStorage,
+    readonly beforeOperationPersist?: OperationPrePersistHook,
   ) {}
 }
 
@@ -184,6 +197,8 @@ function changeIdentityRandom(): string {
 /** Wave 5：integration change 创建选项；普通调用不传即维持原行为。 */
 export interface BeginChangeOptions {
   integration?: IntegrationMetadata;
+  composition?: ChangeCompositionMetadata;
+  beforeOperationPersist?: OperationPrePersistHook;
 }
 
 export async function beginChange(
@@ -211,11 +226,12 @@ export async function beginChange(
     baseContents,
     workingFiles: { ...baseContents },
     operations: {},
+    composition: clone(options?.composition ?? { mode: 'direct', operationFactsVersion: '1.0.0', baseAssetRefs: [] }),
     ...(boundedIntent === undefined ? {} : { intent: boundedIntent }),
     ...(options?.integration === undefined ? {} : { integration: options.integration }),
   };
   await repository.create(record);
-  return new ChangeSession(record, repository, storage);
+  return new ChangeSession(record, repository, storage, options?.beforeOperationPersist);
 }
 
 function validateIntentMetadata(intent: ChangeIntentMetadata | undefined): ChangeIntentMetadata | undefined {
@@ -243,8 +259,9 @@ export function openChange(
   record: ChangeRecord,
   repository: ChangeRepository,
   storage?: ProjectWriteStorage,
+  beforeOperationPersist?: OperationPrePersistHook,
 ): ChangeSession {
-  return new ChangeSession(record, repository, storage);
+  return new ChangeSession(record, repository, storage, beforeOperationPersist);
 }
 
 function assertOpen(change: ChangeSession): void {
@@ -287,6 +304,7 @@ export interface OperationOutcome<T> {
   result: T;
   workingFiles?: Record<string, string>;
   changed?: boolean;
+  compositionDraft?: OperationCompositionDraft;
 }
 
 export async function runOperation<T>(
@@ -308,10 +326,24 @@ export async function runOperation<T>(
   }
 
   const outcome = await handler(change.record);
+  const sequence = Object.keys(change.record.operations).length;
   const next = clone(change.record);
   next.workingFiles = outcome.workingFiles === undefined ? { ...next.workingFiles } : { ...outcome.workingFiles };
   if (outcome.changed !== false) next.workingRevision += 1;
-  next.operations[input.operationId] = { requestHash, normalizedInput, result: outcome.result };
+  const compositionFacts = await change.beforeOperationPersist?.({
+    current: change.record, proposed: next, operationId: input.operationId, normalizedInput, sequence,
+    ...(outcome.compositionDraft === undefined ? {} : { draft: outcome.compositionDraft }),
+  });
+  if (change.record.integration === undefined && change.record.composition?.mode === 'candidate' && compositionFacts === undefined) {
+    throw new AuthoringOperationError('CANDIDATE_OPERATION_FACTS_REQUIRED', '候选操作缺少写入前事实检查；请新建候选后重试', {
+      changeId: change.record.changeId, operationId: input.operationId,
+      retryDisposition: 'new-change', requiredAction: 'new-change',
+    });
+  }
+  next.operations[input.operationId] = {
+    requestHash, normalizedInput, result: outcome.result, sequence,
+    ...(compositionFacts === undefined ? {} : { compositionFacts: clone(compositionFacts) }),
+  };
   next.latestValidation = undefined;
   await persistRecord(change, next);
   return outcome.result;
