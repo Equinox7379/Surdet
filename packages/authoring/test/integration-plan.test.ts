@@ -305,7 +305,7 @@ describe('Wave 5 integration plans', () => {
     expect(draft.replayOperations.filter((item) => group!.unitIds.includes(item.sourceUnitId))).toHaveLength(1);
   });
 
-  it('keeps the selected entry source for identical set-entry units and excludes the other entry closure', async () => {
+  it('distinguishes entry dependency semantics and preserves the selected source closure', async () => {
     const cold = readyCandidate('entry-cold', [
       operation(0, 'op-cold-arrival', 'scene.create', 'scene:cold_arrival', [production('scene:cold_arrival', 'create', 'fp-cold-arrival')]),
       operation(1, 'op-cold-entry', 'scene.create', 'scene:qualification_entry', [production('scene:qualification_entry', 'create', 'fp-cold-entry')], [
@@ -329,11 +329,12 @@ describe('Wave 5 integration plans', () => {
     const warmSetEntry = setEntryUnits.find((unit) => unit.candidateId === warm.candidateId)!;
     const entryConflict = comparison.conflicts.find((conflict) =>
       conflict.severity === 'selection-required' && conflict.objectRefs.includes('scene:qualification_entry'))!;
-    const setEntryGroup = comparison.identicalGroups.find((group) =>
-      group.primaryObject === 'config:entryScene' && group.finalFingerprint === 'fp-entry')!;
+    const setEntryConflict = comparison.conflicts.find((conflict) =>
+      conflict.severity === 'selection-required' && conflict.objectRefs.includes('config:entryScene'))!;
 
     expect(setEntryUnits).toHaveLength(2);
-    expect(setEntryGroup.unitIds).toEqual(expect.arrayContaining([coldSetEntry.unitId, warmSetEntry.unitId]));
+    expect(comparison.identicalGroups).toEqual([]);
+    expect(setEntryConflict.unitIds).toEqual(expect.arrayContaining([coldSetEntry.unitId, warmSetEntry.unitId]));
     expect(entryConflict.unitIds).toEqual(expect.arrayContaining([coldEntry.unitId, warmEntry.unitId]));
 
     const draft = await buildIntegrationPlan({
@@ -344,14 +345,18 @@ describe('Wave 5 integration plans', () => {
         resolution: 'choose-unit',
         chosenUnitId: warmEntry.unitId,
         actor: 'human',
+      }, {
+        conflictId: setEntryConflict.conflictId,
+        resolution: 'choose-unit',
+        chosenUnitId: warmSetEntry.unitId,
+        actor: 'human',
       }],
       review: { reviewState: 'unreviewed' },
       now: NOW_A,
     }, hasher);
 
-    const dedupe = draft.deduplicatedUnits.find((item) => item.groupId === setEntryGroup.groupId)!;
-    expect(dedupe.retainedUnitId).toBe(warmSetEntry.unitId);
-    expect(new Set(dedupe.provenanceUnitIds)).toEqual(new Set([coldSetEntry.unitId, warmSetEntry.unitId]));
+    expect(draft.deduplicatedUnits).toEqual([]);
+    expect(draft.excludedUnitIds).toEqual(expect.arrayContaining([coldEntry.unitId, coldSetEntry.unitId]));
     expect(draft.replayOperations.some((item) => item.primaryObject === 'scene:cold_arrival')).toBe(false);
     expect(draft.replayOperations.filter((item) => item.primaryObject === 'scene:qualification_entry').map((item) => item.sourceUnitId)).toEqual([warmEntry.unitId]);
 

@@ -11,6 +11,7 @@ export interface PrimaryObjectOperationFact {
   primaryObject: string;
   requiredObjects: ObjectRequirement[];
   producedObjects: ObjectProduction[];
+  replayStateRequirements?: ObjectRequirement[];
 }
 
 export interface PrimaryObjectOperationGroup {
@@ -121,7 +122,7 @@ export function buildPrimaryObjectDependencyGraph(
   const edgeKeys = new Set<string>();
   const edges: CompositionDependencyEdge[] = [];
   for (const consumer of ordered) {
-    for (const requirement of consumer.requiredObjects) {
+    for (const requirement of [...consumer.requiredObjects, ...consumer.replayStateRequirements ?? []]) {
       if (requirement.source !== 'candidate' || requirement.candidateOperationSequence === undefined) continue;
       const producers = byProducerSequence.get(requirement.candidateOperationSequence) ?? [];
       for (const producer of producers) {

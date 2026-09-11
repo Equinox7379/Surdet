@@ -38,6 +38,7 @@ export async function buildSceneOperationCompositionDraft(input: {
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'scene.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeText === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(input.beforeText) }),
     objectFingerprintAfter,
+    ...(input.beforeText === undefined ? {} : { replayStatePreconditions: [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }] }),
   };
 }
 
@@ -77,7 +78,8 @@ export async function buildVariableOperationCompositionDraft(input: {
 export async function buildCharacterOperationCompositionDraft(input: {
   capabilityId: 'character.ensure' | 'character.remove';
   id: string; beforeCharacter?: unknown; afterCharacter?: Record<string, unknown>;
-  characters: Record<string, unknown>; migratedFiles?: Record<string, string>; hasher: TextHasher;
+  characters: Record<string, unknown>; charactersFingerprintBefore: string;
+  migratedFiles?: Record<string, string>; workingFilesBefore?: Readonly<Record<string, string>>; hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `character:${input.id}`;
   const objectFingerprintAfter = input.afterCharacter === undefined ? undefined
@@ -88,6 +90,13 @@ export async function buildCharacterOperationCompositionDraft(input: {
     rawReferences: input.capabilityId === 'character.remove' ? [] : analyzeCharacterCompositionReferences({
       id: input.id, ...(typeof avatar === 'string' ? { avatar } : {}),
     }),
+    replayStatePreconditions: [
+      { objectRef: 'config:characters', expectedFingerprint: input.charactersFingerprintBefore },
+      ...await Promise.all(Object.keys(input.migratedFiles ?? {}).sort().map(async (path) => ({
+        objectRef: `scene:${path.slice('content/scenario/'.length, -'.gal'.length)}`,
+        expectedFingerprint: await input.hasher.sha256(input.workingFilesBefore![path]!),
+      }))),
+    ],
     producedObjects: [
       input.capabilityId === 'character.remove' ? { objectRef: primaryObject, disposition: 'remove' }
         : { objectRef: primaryObject, disposition: input.beforeCharacter === undefined ? 'create' : 'update', finalFingerprint: objectFingerprintAfter! },

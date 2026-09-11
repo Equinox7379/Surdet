@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AUTHORING_CONTRACT_VERSION, CANDIDATE_COMPOSITION_READINESS_SCHEMA, type AuthoringEnvelope, type AuthoringObject } from '@surdet/authoring';
+import { AUTHORING_CONTRACT_VERSION, CANDIDATE_COMPOSITION_READINESS_SCHEMA, type AuthoringEnvelope, type AuthoringObject, type CompositionManifest } from '@surdet/authoring';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -38,6 +38,32 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it.each([{ capability: 'scene.patch' }, { inputSha256: 'conflicting-input-sha' }])('keeps exact retry history and rejects a distinct success fact: %j', async (conflict) => {
+    const { root } = fixture();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', {}));
+      const input = { operationId: 'retry-scene', sceneId: 'retry' };
+      result(await session.invoke('scene.create', input));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      result(await session.invoke('scene.create', input));
+      const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
+      expect(opened.record).toEqual(before);
+      const successes = (await opened.store.readInvocations(opened.record.changeId)).filter((entry) => entry.ok && entry.operationId === input.operationId);
+      expect(successes).toHaveLength(2);
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility, JSON.stringify(capsule.composition.reasons)).toBe('ready');
+      expect((capsule.composition.manifest as CompositionManifest).operations).toHaveLength(1);
+        await NodeChangeStore.withChangeLeaseForProject(opened.record.changeId, opened.record.projectRootIdentity, async (store) => {
+          await store.writeInvocation(opened.record.changeId, { ...successes[0]!, invocationId: `conflict-${Object.keys(conflict)[0]}`, ...conflict });
+        });
+        const rejected = await generateDeliveryCapsule(session);
+        expect(rejected.composition.eligibility).toBe('unavailable');
+        expect(rejected.composition.reasons).toContainEqual(expect.objectContaining({ code: 'INVOCATION_FACT_AMBIGUOUS' }));
+      expect((await opened.store.readInvocations(opened.record.changeId)).filter((entry) => entry.ok && entry.operationId === input.operationId)).toHaveLength(3);
+    } finally { await session.close(); }
+  });
+
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

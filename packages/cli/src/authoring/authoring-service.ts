@@ -28,6 +28,7 @@ import {
   createCandidateOperationPrePersistHook,
   inspectCandidateCompositionReadiness,
   resolvedCompositionAssetRefs,
+  buildReplayStateBaseObjects,
   createEvidenceEnvelope,
   executeTransactionRecovery,
   evidenceFreshness,
@@ -242,10 +243,13 @@ async function openChangeFromStore<T>(
     if (storage.rootIdentity !== record.projectRootIdentity) {
       throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
     }
-    const beforeOperationPersist = record.integration === undefined && record.composition?.mode === 'candidate'
+    const baseSnapshot = record.integration === undefined && record.composition?.mode === 'candidate'
+      ? await loadSnapshot(new ChangeRecordProjectStorage(record, 'base')) : undefined;
+    const beforeOperationPersist = baseSnapshot !== undefined
       ? createCandidateOperationPrePersistHook({
-        baseObjects: buildObjectIndex(await loadSnapshot(new ChangeRecordProjectStorage(record, 'base'))).objects,
-        baseAssetRefs: record.composition.baseAssetRefs,
+        baseObjects: buildObjectIndex(baseSnapshot).objects,
+        baseAssetRefs: record.composition!.baseAssetRefs,
+        baseReplayStates: await buildReplayStateBaseObjects(baseSnapshot, { sha256: async (text) => hashText(text) }),
       }) : undefined;
     const session = openChange(record, leasedStore, storage, beforeOperationPersist);
     const snapshot = await loadSnapshot(new ChangeRecordProjectStorage(session.record));
@@ -822,6 +826,7 @@ export class AuthoringService {
       composition,
       ...(composition.mode === 'candidate' ? { beforeOperationPersist: createCandidateOperationPrePersistHook({
         baseObjects: buildObjectIndex(snapshot).objects, baseAssetRefs,
+        baseReplayStates: await buildReplayStateBaseObjects(snapshot, { sha256: async (text) => hashText(text) }),
       }) } : {}),
     });
     return {

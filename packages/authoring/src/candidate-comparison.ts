@@ -63,6 +63,11 @@ function finalUnitProduction(unit: ObjectChangeUnit, objectRef: string): ObjectP
   return { ...final, disposition: productions[0]!.disposition === 'create' ? 'create' : 'update' };
 }
 
+function finalUnitFootprint(unit: ObjectChangeUnit): ObjectProduction[] {
+  return [...new Set(unit.producedObjects.map((item) => item.objectRef))].sort()
+    .map((objectRef) => finalUnitProduction(unit, objectRef)!);
+}
+
 /** 按 candidate+primaryObject 分组构建不可拆单元；unitId 只由规范种子哈希派生。 */
 function buildUnitsForEligibleCandidate(
   candidate: VerifiedCompositionCandidate,
@@ -87,7 +92,7 @@ function buildUnitsForEligibleCandidate(
 
     let brokenDependency = false;
     for (const item of operations) {
-      for (const requirement of item.requiredObjects) {
+      for (const requirement of [...item.requiredObjects, ...item.replayStateRequirements ?? []]) {
         if (requirement.source === 'base') continue;
         const producerSequence = requirement.candidateOperationSequence;
         const productions = producerSequence === undefined ? undefined : producedBySequence.get(producerSequence);
@@ -105,6 +110,7 @@ function buildUnitsForEligibleCandidate(
       operationSequences: operations.map((item) => item.sequence),
       produced: operations.flatMap((item) => item.producedObjects),
       required: operations.flatMap((item) => item.requiredObjects),
+      replayState: operations.flatMap((item) => item.replayStateRequirements ?? []),
     };
     built.push({
       unit: {
@@ -114,7 +120,7 @@ function buildUnitsForEligibleCandidate(
         operationSequences: operations.map((item) => item.sequence),
         ...(finalForPrimary?.finalFingerprint === undefined ? {} : { finalFingerprint: finalForPrimary.finalFingerprint }),
         requiredUnitIds: [],
-        requiredBaseObjects: operations.flatMap((item) => item.requiredObjects.filter((entry) => entry.source === 'base')),
+        requiredBaseObjects: operations.flatMap((item) => [...item.requiredObjects, ...item.replayStateRequirements ?? []].filter((entry) => entry.source === 'base')),
         producedObjects: operations.flatMap((item) => item.producedObjects),
         ...impacts,
         evidenceSummary: candidate.evidenceSummary satisfies CandidateEvidenceSummary,
@@ -270,48 +276,70 @@ export async function compareCandidates(
   }
 
   // ---- 第三层：对象重叠（规则3 identical / 规则4 selection-required / 规则5 remove-vs-required）----
+  const footprints = new Map(units.map((unit) => [unit.unitId, finalUnitFootprint(unit)]));
+  const entryByUnit = new Map(workingUnits.map((entry) => [entry.unit.unitId, entry]));
+  const signatures = new Map<string, string>();
+  const signatureOf = async (unit: ObjectChangeUnit, visiting = new Set<string>()): Promise<string> => {
+    const cached = signatures.get(unit.unitId);
+    if (cached !== undefined) return cached;
+    if (visiting.has(unit.unitId)) return `blocked-cycle:${unit.unitId}`;
+    const next = new Set(visiting).add(unit.unitId);
+    const requirements: string[] = [];
+    for (const operation of entryByUnit.get(unit.unitId)!.operations) {
+      for (const [kind, items] of [['semantic', operation.requiredObjects], ['replay-state', operation.replayStateRequirements ?? []]] as const) {
+        for (const requirement of items) {
+          const producer = requirement.source === 'candidate'
+            ? unitByCandidateAndSequence.get(`${unit.candidateId}\u0000${requirement.candidateOperationSequence}`) : undefined;
+          // Internal steps are replayed together and are not external dependency semantics.
+          if (producer?.unitId === unit.unitId) continue;
+          requirements.push(stableStringify({
+            kind, objectRef: requirement.objectRef, source: requirement.source,
+            expectedFingerprint: requirement.expectedFingerprint,
+            ...(requirement.source === 'candidate' ? { producer: producer === undefined ? 'missing' : await signatureOf(producer, next) } : {}),
+          }));
+        }
+      }
+    }
+    const signature = await sha256Text(stableStringify({ primaryObject: unit.primaryObject,
+      footprint: footprints.get(unit.unitId), requirements: [...new Set(requirements)].sort() }));
+    signatures.set(unit.unitId, signature);
+    return signature;
+  };
+  const bySignature = new Map<string, ObjectChangeUnit[]>();
+  for (const unit of units) {
+    const signature = await signatureOf(unit);
+    const bucket = bySignature.get(signature) ?? [];
+    bucket.push(unit);
+    bySignature.set(signature, bucket);
+  }
+  for (const [signature, bucket] of bySignature) {
+    const first = bucket[0]!;
+    if (bucket.length < 2 || first.finalFingerprint === undefined
+      || footprints.get(first.unitId)!.some((item) => item.disposition !== 'remove' && item.finalFingerprint === undefined)) continue;
+    const unitIds = bucket.map((unit) => unit.unitId).sort();
+    identicalGroups.push({ groupId: (await sha256Text(stableStringify({ signature, unitIds }))).slice(0, 32),
+      unitIds, primaryObject: first.primaryObject, finalFingerprint: first.finalFingerprint });
+  }
   const byObject = new Map<string, ObjectChangeUnit[]>();
   for (const unit of units) {
-    const bucket = byObject.get(unit.primaryObject) ?? [];
-    bucket.push(unit);
-    byObject.set(unit.primaryObject, bucket);
+    for (const production of footprints.get(unit.unitId)!) {
+      const bucket = byObject.get(production.objectRef) ?? [];
+      bucket.push(unit);
+      byObject.set(production.objectRef, bucket);
+    }
   }
-  const signatureOf = (unit: ObjectChangeUnit, objectRef: string): string => {
-    const production = finalUnitProduction(unit, objectRef);
-    return `${production?.disposition ?? '?'}\u0000${production?.finalFingerprint ?? '?'}`;
-  };
-  for (const [objectRef, bucket] of byObject) {
-    if (bucket.length < 2) continue;
-    const bySignature = new Map<string, ObjectChangeUnit[]>();
-    for (const unit of bucket) {
-      const signature = signatureOf(unit, objectRef);
-      const signatureBucket = bySignature.get(signature) ?? [];
-      signatureBucket.push(unit);
-      bySignature.set(signature, signatureBucket);
-    }
-    let wholeBucketIdentical = false;
-    for (const [, signatureBucket] of [...bySignature.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      const production = finalUnitProduction(signatureBucket[0]!, objectRef);
-      if (signatureBucket.length < 2 || production?.finalFingerprint === undefined) continue;
-      // 相同对象桶内也要按精确结果签名形成子组。A/D 相同而 C 不同时，
-      // A/D 的 provenance 仍必须保留，C 则继续参与 selection-required 冲突。
-      const orderedUnits = [...signatureBucket].sort((left, right) => left.unitId.localeCompare(right.unitId));
-      const groupId = (await sha256Text(stableStringify({
-        primaryObject: objectRef,
-        finalFingerprint: production.finalFingerprint,
-        unitIds: orderedUnits.map((unit) => unit.unitId),
-      }))).slice(0, 32);
-      identicalGroups.push({
-        groupId,
-        unitIds: orderedUnits.map((unit) => unit.unitId),
-        primaryObject: objectRef,
-        finalFingerprint: production.finalFingerprint,
-      });
-      wholeBucketIdentical = bySignature.size === 1 && signatureBucket.length === bucket.length;
-    }
-    if (wholeBucketIdentical) continue;
-    softReviewOnly = true;
-    conflicts.push(await makeConflict(hasher, {
+  for (const [objectRef, writers] of byObject) {
+    const candidates = new Set(writers.map((unit) => unit.candidateId));
+    if (candidates.size < 2) continue;
+    // A shared state chain within one candidate is ordered, never a self-conflict.
+    // Split mixed buckets into cross-candidate pairs so choosing a source cannot
+    // exclude another necessary writer from that same source.
+    const buckets = candidates.size === writers.length ? [writers] : writers.flatMap((left, index) =>
+      writers.slice(index + 1).filter((right) => left.candidateId !== right.candidateId).map((right) => [left, right]));
+    for (const bucket of buckets) {
+      if (identicalGroups.some((group) => bucket.every((unit) => group.unitIds.includes(unit.unitId)))) continue;
+      softReviewOnly = true;
+      conflicts.push(await makeConflict(hasher, {
       severity: 'selection-required',
       code: 'OBJECT_RESULTS_DIVERGE',
       candidateIds: [...new Set(bucket.map((unit) => unit.candidateId))].sort(),
@@ -321,16 +349,17 @@ export async function compareCandidates(
       details: {
         signatures: [...bucket]
           .sort((left, right) => left.unitId.localeCompare(right.unitId))
-          .map((unit) => ({ unitId: unit.unitId, signature: signatureOf(unit, objectRef) })),
+          .map((unit) => ({ unitId: unit.unitId, signature: signatures.get(unit.unitId)! })),
       },
       repairActions: ['选择一个单元并排除其余', '全部排除后重新规划'],
-    }));
+      }));
+    }
   }
 
-  const removedRefs = new Map<string, ObjectChangeUnit>();
+  const removedRefs: Array<[string, ObjectChangeUnit]> = [];
   for (const unit of units) {
     for (const objectRef of new Set(unit.producedObjects.map((production) => production.objectRef))) {
-      if (finalUnitProduction(unit, objectRef)?.disposition === 'remove') removedRefs.set(objectRef, unit);
+      if (finalUnitProduction(unit, objectRef)?.disposition === 'remove') removedRefs.push([objectRef, unit]);
     }
   }
   for (const [objectRef, removerUnit] of removedRefs) {

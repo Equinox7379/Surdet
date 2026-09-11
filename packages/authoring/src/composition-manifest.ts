@@ -3,7 +3,7 @@ import type { ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
 import { analyzeSceneCompositionReferences, analyzeTimelineCompositionReferences } from './composition-reference-analysis.js';
 import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
-import { resolveOperationRequirementsAtSequence } from './candidate-composition-guard.js';
+import { resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from './candidate-composition-guard.js';
 import {
   COMPOSABLE_CAPABILITY_IDS,
   type ComposableCapabilityId,
@@ -389,6 +389,8 @@ export async function buildCompositionManifestFromRecordedFacts(
     if (invocation !== undefined && !COMPOSABLE_CAPABILITY_IDS.includes(invocation.capabilityId as ComposableCapabilityId)) { issue('UNSUPPORTED_CAPABILITY', 'capability 不在可组合白名单内'); valid = false; }
     const facts = recorded.compositionFacts;
     if (facts === undefined || facts.factsVersion !== '1.0.0' || !Array.isArray(facts.rawReferences) || !Array.isArray(facts.requiredObjects) || !Array.isArray(facts.producedObjects) || recorded.sequence === undefined) continue;
+    if ((facts.replayStatePreconditions !== undefined && !Array.isArray(facts.replayStatePreconditions))
+      || (facts.replayStateRequirements !== undefined && !Array.isArray(facts.replayStateRequirements))) continue;
     if (invocation !== undefined && invocation.capabilityId !== facts.capabilityId) { issue('OPERATION_FACTS_INVALID', '成功 invocation capability 与时点事实不一致'); valid = false; }
     const resolved = resolveOperationRequirementsAtSequence({
       rawReferences: facts.rawReferences, sequence: recorded.sequence, baseObjects: input.objectFacts.baseObjects,
@@ -396,6 +398,13 @@ export async function buildCompositionManifestFromRecordedFacts(
     });
     if (!resolved.ok) { issue('DEPENDENCY_IDENTITY_UNAVAILABLE', `依赖未在基线或更早生产者中建立：${resolved.issues.map((item) => item.objectRef ?? item.token).join('、')}`); valid = false; }
     else if (stableStringify(resolved.requiredObjects) !== stableStringify(facts.requiredObjects)) { issue('OPERATION_FACTS_INVALID', '已记录依赖与时点解析不一致，不能替换生产者或补写历史'); valid = false; }
+    const replay = resolveReplayStateRequirementsAtSequence({
+      preconditions: facts.replayStatePreconditions ?? [], sequence: recorded.sequence,
+      baseReplayStates: input.objectFacts.baseReplayStates ?? [], priorOperations,
+    });
+    if (!replay.ok || stableStringify(replay.requirements) !== stableStringify(facts.replayStateRequirements ?? [])) {
+      issue('OPERATION_FACTS_INVALID', '重放状态前置条件与基线或精确历史产物不一致'); valid = false;
+    }
     for (const requirement of facts.requiredObjects) {
       if (requirement.source === 'base' && requirement.objectRef.startsWith('asset:') && !input.objectFacts.workingAssetRefs.includes(requirement.objectRef)) {
         issue('DEPENDENCY_IDENTITY_UNAVAILABLE', `基线素材当前已无法解析：${requirement.objectRef}`); valid = false;
@@ -407,6 +416,7 @@ export async function buildCompositionManifestFromRecordedFacts(
       ...(facts.objectFingerprintBefore === undefined ? {} : { objectFingerprintBefore: facts.objectFingerprintBefore }),
       ...(facts.objectFingerprintAfter === undefined ? {} : { objectFingerprintAfter: facts.objectFingerprintAfter }),
       requiredObjects: facts.requiredObjects.map((item) => ({ ...item })), producedObjects: facts.producedObjects.map((item) => ({ ...item })),
+      replayStateRequirements: (facts.replayStateRequirements ?? []).map((item) => ({ ...item })),
     });
   }
   const finalProductions = new Map<string, { operationId: string; production: ObjectProduction }>();
