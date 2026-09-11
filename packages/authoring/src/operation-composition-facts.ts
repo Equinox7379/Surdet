@@ -1,6 +1,7 @@
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
+import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -85,6 +86,11 @@ export async function buildCharacterOperationCompositionDraft(input: {
   const objectFingerprintAfter = input.afterCharacter === undefined ? undefined
     : await input.hasher.sha256(stableStringify(input.afterCharacter));
   const avatar = input.afterCharacter?.['avatar'];
+  const migratedScenes = Object.entries(input.migratedFiles ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([path, text]) => {
+    const id = sceneIdFromScenarioPath(path);
+    resolveUniqueScenarioPath(input.workingFilesBefore!, id);
+    return { path, text, objectRef: `scene:${id}` };
+  });
   return {
     capabilityId: input.capabilityId, primaryObject,
     rawReferences: input.capabilityId === 'character.remove' ? [] : analyzeCharacterCompositionReferences({
@@ -92,8 +98,8 @@ export async function buildCharacterOperationCompositionDraft(input: {
     }),
     replayStatePreconditions: [
       { objectRef: 'config:characters', expectedFingerprint: input.charactersFingerprintBefore },
-      ...await Promise.all(Object.keys(input.migratedFiles ?? {}).sort().map(async (path) => ({
-        objectRef: `scene:${path.slice('content/scenario/'.length, -'.gal'.length)}`,
+      ...await Promise.all(migratedScenes.map(async ({ path, objectRef }) => ({
+        objectRef,
         expectedFingerprint: await input.hasher.sha256(input.workingFilesBefore![path]!),
       }))),
     ],
@@ -101,8 +107,8 @@ export async function buildCharacterOperationCompositionDraft(input: {
       input.capabilityId === 'character.remove' ? { objectRef: primaryObject, disposition: 'remove' }
         : { objectRef: primaryObject, disposition: input.beforeCharacter === undefined ? 'create' : 'update', finalFingerprint: objectFingerprintAfter! },
       { objectRef: 'config:characters', disposition: 'update', finalFingerprint: await input.hasher.sha256(stableStringify(input.characters)) },
-      ...await Promise.all(Object.entries(input.migratedFiles ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(async ([path, text]) => ({
-        objectRef: `scene:${path.slice('content/scenario/'.length, -'.gal'.length)}`,
+      ...await Promise.all(migratedScenes.map(async ({ text, objectRef }) => ({
+        objectRef,
         disposition: 'update' as const, finalFingerprint: await input.hasher.sha256(text),
       }))),
     ],

@@ -4,6 +4,7 @@ import { parseSceneDocument } from './scene-document.js';
 import type { SceneDocumentLine } from './contracts.js';
 import type { ProjectFile, ProjectStorage, TextHasher } from './project-storage.js';
 import { isSnapshotPath, normalizeProjectPath } from './project-storage.js';
+import { sceneIdFromScenarioPath } from './scenario-identity.js';
 
 export interface ProjectSnapshotScene {
   id: string;
@@ -25,11 +26,6 @@ export interface ProjectSnapshot {
   variables: Record<string, unknown>;
   scenes: ProjectSnapshotScene[];
   timelines: ProjectFile[];
-}
-
-function sceneIdFromPath(path: string): string {
-  const name = path.slice(path.lastIndexOf('/') + 1);
-  return name.slice(0, -'.gal'.length);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -60,7 +56,7 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const scenes = canonicalFiles
     .filter((file) => file.path.startsWith('content/scenario/') && file.path.toLowerCase().endsWith('.gal'))
     .map((file) => {
-      const id = sceneIdFromPath(file.path);
+      const id = sceneIdFromScenarioPath(file.path);
       return {
         id,
         path: file.path,

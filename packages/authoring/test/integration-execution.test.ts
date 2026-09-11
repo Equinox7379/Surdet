@@ -140,7 +140,7 @@ async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeR
 }
 
 describe('Wave 5 integration execution', () => {
-  it.each(['before-mismatch', 'missing-before', 'after-mismatch', 'no-migration', 'duplicate-scene'] as const)('rejects sealed character migration %s before persisting the operation', async (failure) => {
+  it.each(['before-mismatch', 'missing-before', 'after-mismatch', 'no-migration', 'duplicate-scene', 'duplicate-basename'] as const)('rejects sealed character migration %s before persisting the operation', async (failure) => {
     const snapshot = makeSixObjectSnapshot();
     let draft: OperationCompositionDraft | undefined;
     const source = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, {
@@ -162,6 +162,7 @@ describe('Wave 5 integration execution', () => {
     if (failure === 'missing-before') operation.replayStateRequirements = operation.replayStateRequirements!.filter((item) => item.objectRef !== 'scene:intro');
     if (failure === 'after-mismatch') sceneProduction.finalFingerprint = 'wrong';
     if (failure === 'duplicate-scene') operation.producedObjects.push({ ...sceneProduction });
+    if (failure === 'duplicate-basename') target.record.workingFiles['content/scenario/chapter/intro.gal'] = '@scene intro\n@end\n';
     if (failure === 'no-migration') {
       target.record.workingFiles['content/scenario/intro.gal'] = '@scene intro\n@end\n';
       sceneRequirement.expectedFingerprint = await hasher.sha256(target.record.workingFiles['content/scenario/intro.gal']);
@@ -169,7 +170,7 @@ describe('Wave 5 integration execution', () => {
     }
     const before = JSON.stringify(target.record);
     const persistedBefore = JSON.stringify(await repository.read(target.record.changeId));
-    await expect(replayCompositionOperation(target, operation, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    await expect(replayCompositionOperation(target, operation, hasher)).rejects.toMatchObject({ code: failure === 'duplicate-basename' ? 'OBJECT_AMBIGUOUS' : 'COMPOSITION_REPLAY_FAILED' });
     expect(JSON.stringify(target.record)).toBe(before);
     expect(JSON.stringify(await repository.read(target.record.changeId))).toBe(persistedBefore);
   });

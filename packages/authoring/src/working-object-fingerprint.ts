@@ -2,6 +2,7 @@ import { AuthoringOperationError, stableStringify } from './change-session.js';
 import { parseProjectConfigDocument } from './config-document.js';
 import { timelinePathFor } from './timeline-operations.js';
 import type { TextHasher } from './contracts.js';
+import { resolveUniqueScenarioPath } from './scenario-identity.js';
 
 export type ComposableObjectRef =
   | `scene:${string}`
@@ -67,7 +68,8 @@ export async function fingerprintWorkingObject(
 
   if (objectRef.startsWith('scene:')) {
     const id = assertSafeSemanticId(objectRef.slice('scene:'.length), objectRef);
-    const text = workingFiles[`content/scenario/${id}.gal`];
+    const path = resolveUniqueScenarioPath(workingFiles, id);
+    const text = path === undefined ? undefined : workingFiles[path];
     return text === undefined ? absent() : present(text);
   }
   if (objectRef.startsWith('timeline:')) {

@@ -1,8 +1,8 @@
 # Stage 6 Wave 8：候选组合就绪性本地交付
 
 - 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
-- 代码提交 / 实现终点：`8cf275d4d532533fd43eef6c299397f9932bf239`。本报告以单独文档提交保存。
-- 第二次云端源码复审：`NEEDS_FIX`，剩余 W8-R2-04。2026-09-11 两轮定向整改记录见本文末节；push 仍未授权。
+- 初始实现提交：`8cf275d4d532533fd43eef6c299397f9932bf239`。当前实现终点是包含本文 W8-R2-05 整改的后继提交，父提交为 `b267b11`；精确 SHA 随累计 `WAVE8-R2-REVIEW4.patch` 提供。
+- 第三次云端源码复审：前三项修复和 W8-R2-04 均通过，剩余 W8-R2-05 为 `NEEDS_FIX`。本次整改与当前停止点见本文末节；push 仍未授权。
 - 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
 
 ## 实现
@@ -100,6 +100,23 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 - 聚焦验证共 8 文件 / 131 项通过：Authoring 5 文件 / 99 项，CLI 3 文件 / 32 项。覆盖普通自动迁移、已有正向迁移重放、完整 footprint 去重、角色表状态顺序、候选 readiness 与真实 invocation exact retry。Authoring/CLI 类型检查与构建通过。
 - 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,741 项 Vitest 测试通过，其中 Authoring 363 项、CLI 533 项。类型检查、内容校验/模拟与构建通过；既有内容和 chunk 警告保留。日志位于 `D:/CodexTasks/surdet-wave8-cloud-repair-20260911/verify-all-review3.log`。
 
-本轮提交的父提交为 `4528a66`；精确 SHA 随累计 `WAVE8-R2-REVIEW3.patch` 提供，范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；停止于等待第三次云端源码复审。
+该轮提交为 `b267b11`，父提交为 `4528a66`；累计 `WAVE8-R2-REVIEW3.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..b267b11`。该轮未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；第三次云端复审已确认 W8-R2-04 通过，后续状态见下节。
+
+## 2026-09-11 第三次云端复审：W8-R2-05 嵌套场景身份整改
+
+本轮保留 `8cf275d → 7e213be → 4528a66 → b267b11`，追加一笔代码、测试和本文更新的普通本地提交。此前夹具仅覆盖根目录场景，未覆盖项目既有的嵌套路径支持，导致场景语义 ID 与物理路径混用未被发现。
+
+- 公共 `scenario-identity.ts` 统一文件名 stem 与语义 scene ID，按该 ID 唯一反查实际路径；多个文件同 basename 明确报 `OBJECT_AMBIGUOUS`，不优先选择根目录或任意一个路径。
+- 项目 snapshot、角色迁移时点 facts、封存角色重放、工作对象指纹，以及胶囊封装的最终产物指纹核对共用解析。`chapter/start.gal` 的对象始终为 `scene:start`，读取和写入保留真实 nested path。
+- 没有移动用户场景、增加能力、改变 MCP 输入或版本；封存 footprint 限制、指纹前置条件及写入前原子边界保持不变。
+
+本轮验证：
+
+- 修改前真实 Port 反例确认：嵌套迁移被 `CANDIDATE_OPERATION_FACTS_REQUIRED` 拒绝，根目录与子目录同名却被接受。修改后，嵌套 candidate 改名、语义 facts、ready capsule、plan dry-run 和 integration READY 全链通过；workingFiles 精确等于选定候选，不生成 root `start.gal`，原项目不变。同 basename 的 candidate 改名明确报歧义，持久化 ChangeRecord 零推进。
+- Authoring 覆盖嵌套与根目录的同语义指纹、缺失场景、拒绝路径型 objectRef、根目录/嵌套及双嵌套重名；封存重放遇同 basename 时，内存与 repository ChangeRecord 均不变。W8-R2-04 三个真实反例、正向迁移、完整 footprint、exact retry 与既有 Q1 路径继续保留。
+- 聚焦验证共 11 文件 / 157 项通过：Authoring 8 文件 / 123 项，CLI 3 文件 / 34 项。Authoring/CLI 类型检查与构建通过。
+- 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,747 项 Vitest 测试通过，其中 Authoring 367 项、CLI 535 项。类型检查、内容校验/模拟与构建通过；既有内容和 chunk 警告保留。日志位于 `D:/CodexTasks/surdet-wave8-cloud-repair-20260911/verify-all-review4.log`。
+
+本轮提交的父提交为 `b267b11`；累计 `WAVE8-R2-REVIEW4.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；当前停止于等待第四次云端源码复审。
 
 `PUSH_NOT_AUTHORIZED`。完成本地整改后停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第二次云端源码复审，不声称云端已通过。
