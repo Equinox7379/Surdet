@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createServer as createPortProbe } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
@@ -25,12 +26,20 @@ const systemsScenario = await fs.readFile(new URL('./fixtures/pass8-systems.gal'
 const battleScenario = await fs.readFile(new URL('./fixtures/pass8-battle.gal', import.meta.url), 'utf8');
 const longScenario = `@scene ch01_01\n@label start\n@bg post_office\n旁白：${'长篇中文。'.repeat(120)}\n@nvl on\n旁白：${'全文阅读。'.repeat(120)}\n@end`;
 const errors = [];
+// Vite treats port: 0 as its default 5173, which Windows may reserve.
+const portProbe = createPortProbe();
+await new Promise((resolve, reject) => {
+  portProbe.once('error', reject);
+  portProbe.listen(0, '127.0.0.1', resolve);
+});
+const port = portProbe.address().port;
+await new Promise((resolve, reject) => portProbe.close((error) => error ? reject(error) : resolve()));
 const server = await createServer({
   root: path.join(root, 'examples/starter'),
   cacheDir: path.join(output, '.vite'),
   configFile: false,
   build: { assetsInlineLimit: 0 },
-  server: { host: '127.0.0.1', port: 0 },
+  server: { host: '127.0.0.1', port, strictPort: true },
   plugins: [{
     name: 'pass8-controlled-project-input', enforce: 'pre',
     configureServer(server) {
@@ -362,9 +371,6 @@ try {
   await page.waitForFunction(() => window.__surdetDebug?.uiSession.base === 'title');
   await activate('开始游戏');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'battle');
-  await activate('跳过行动');
-  await canvasText('跳过本次行动');
-  console.log('PASS real Host system routes: purchase/disabled purchase, map/base action/return, battle pass');
   // Exercise the real beforeunload path while the enemy's delayed action is
   // pending. A slow destination must not leave callbacks targeting a disposed runtime.
   const longUrl = `${url}?system-test=long`;
@@ -372,7 +378,27 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1600));
     await route.continue();
   });
-  try { await page.goto(longUrl); } finally { await page.unroute(longUrl); }
+  await page.evaluate((destination) => {
+    let root = Array.from(document.querySelectorAll('button')).find((button) => button.container?.parent)?.container;
+    if (!root) throw new Error('battle canvas root is missing');
+    while (root.parent) root = root.parent;
+    // The pass message lasts only until the 650ms enemy timer. Observe the real
+    // native click's rendered result and navigate in that event, before a CI round trip.
+    window.addEventListener('click', (event) => {
+      const contains = (node) => String(node.text ?? '').includes('跳过本次行动') || node.children?.some(contains);
+      if (!event.isTrusted || !contains(root)) return;
+      console.info('PASS8_BATTLE_SKIP_OBSERVED');
+      window.location.assign(destination);
+    }, { once: true });
+  }, longUrl);
+  try {
+    await Promise.all([
+      page.waitForEvent('console', { predicate: (message) => message.text() === 'PASS8_BATTLE_SKIP_OBSERVED' }),
+      page.waitForURL(longUrl),
+      activate('跳过行动'),
+    ]);
+  } finally { await page.unroute(longUrl); }
+  console.log('PASS real Host system routes: purchase/disabled purchase, map/base action/return, battle pass and pending-action navigation');
   await page.waitForFunction(() => window.__surdetDebug?.uiSession.base === 'title');
   await activate('开始游戏');
   await advanceUntil(() => window.__surdetDebug.dialogueProjection.dialogText.length > 500);
