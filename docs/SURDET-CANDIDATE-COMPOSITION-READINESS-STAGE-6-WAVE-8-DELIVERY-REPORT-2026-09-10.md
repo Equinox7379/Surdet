@@ -1,9 +1,9 @@
 # Stage 6 Wave 8：候选组合就绪性本地交付
 
 - 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
-- 初始实现提交：`8cf275d4d532533fd43eef6c299397f9932bf239`。当前实现终点是包含本文 W8-R2-06 整改的后继提交，父提交为 `3bffd71`；精确 SHA 随累计 `WAVE8-R2-REVIEW5.patch` 提供。
-- 第四次云端源码复审：前三项修复、W8-R2-04 和 W8-R2-05 均通过，剩余 W8-R2-06 为 `NEEDS_FIX`。本次整改与当前停止点见本文末节；push 仍未授权。
-- 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
+- 初始实现提交：`8cf275d4d532533fd43eef6c299397f9932bf239`。当前代码终点为 W8-R2-06 整改提交 `9cf1a51545c1c73d3b8ff6ad92460167182a9632`；累计代码补丁为 `WAVE8-R2-REVIEW5.patch`。
+- 第五次云端源码复审：用户于 2026-09-11 确认最新整改通过，并明确批准普通 push。六笔实现与报告提交保留，项目规则和本次状态同步随同推送。
+- 本轮依据：Owner 提供的 Wave 8 R2 正式施工包及后续明确要求。长期路线台账与受保护资料保持原样；用户另行授权更新项目 AGENTS，并将其纳入版本控制。
 
 ## 实现
 
@@ -61,9 +61,9 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 
 ## 检查与停止点
 
-当前 AGENTS 禁止委派审核，因此施工包中的 Luna 审核条款未执行。Luna 仅承担共享解析器、依赖图和对应测试的独立并行实现；主代理亲自检查状态原子性、时点事实、引用边界、环、恢复模式、旧数据和严格 schema，并修复上述发现。不能把这写成 Luna 独立审核通过。后续云端独立复审仍待进行。
+初始施工时 AGENTS 禁止委派审核，因此施工包中的 Luna 审核条款未执行。Luna 仅承担共享解析器、依赖图和对应测试的独立并行实现；主代理亲自检查状态原子性、时点事实、引用边界、环、恢复模式、旧数据和严格 schema，并修复上述发现。不能把这写成 Luna 独立审核通过。后续云端复审及整改记录见下文。
 
-未修改 Core、Renderer、Host、Shell、Editor 或正式游戏生产源码，未增加依赖、修改权限/审批语义、部署或正式 pack/release。本轮没有重新执行 Electron/新作品视觉人工签收。实现已普通本地提交，停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，未执行 push，没有针对本轮新提交的远端 CI 或云端复审结论。
+未修改 Core、Renderer、Host、Shell、Editor 或正式游戏生产源码，未增加依赖、修改权限/审批语义、部署或正式 pack/release。初始施工没有重新执行 Electron/新作品视觉人工签收；当时实现已普通本地提交，停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，未执行 push，没有针对当时新提交的远端 CI 或云端复审结论。当前批准状态见本文末节。
 
 ## 2026-09-11 云端复审定向整改
 
@@ -131,4 +131,4 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 
 本轮只修改入口设置生产逻辑、相关测试和本文，未扩展 scene.create/scene.patch、Editor 或场景生命周期。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径。后继提交的父提交为 `3bffd71`，累计 `WAVE8-R2-REVIEW5.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。
 
-`PUSH_NOT_AUTHORIZED`。当前停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第五次云端源码复审；本地通过不等于云端批准。
+2026-09-11，用户确认第五次云端源码复审通过，并明确表示“批准普通 push，另外你刚才的也 pass 了，一并 push”。当前状态为 `CLOUD_REVIEW_ACCEPTED`、`ORDINARY_PUSH_AUTHORIZED`。本次仅补充项目规则和报告状态，代码保持在已验收的 `9cf1a51`；复用上述聚焦验证与最终全量结果。远端推送与 CI 结果以对应 Git 和 Actions 记录为准。
