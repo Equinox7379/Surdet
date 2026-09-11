@@ -3,10 +3,12 @@ import type {
   CandidateEvidenceSummary,
   CompositionComparison,
   CompositionConflict,
+  JsonValue,
   ObjectChangeUnit,
 } from './composition-contracts.js';
 import type { ChangeDiff } from './diff.js';
 import type { IntegrationPlan } from './integration-plan.js';
+import type { ReviewDecisionIntent } from './review-decision-preview.js';
 
 export type ReviewKind = 'comparison' | 'integration-result';
 
@@ -48,7 +50,7 @@ export interface ReviewTaskSummary {
   candidateCount: number;
   objectCount: number;
   conflictCount: number;
-  statementSource: 'candidate-intent' | 'generated-fallback';
+  statementSource: 'candidate-intent' | 'generated-fallback' | 'creative-brief' | 'not-provided';
 }
 
 export interface ReviewObjectSummary {
@@ -106,6 +108,182 @@ export interface ReviewUnitPresentation {
   highlights: string[];
   completeness: 'content' | 'metadata-only';
   omittedFactCount: number;
+}
+
+export interface CreativeBriefInput {
+  title?: string;
+  request: string;
+  acceptanceCriteria?: string[];
+}
+
+export interface ReviewCreativeBrief {
+  status: 'provided' | 'not-provided';
+  source: 'review-preparation-input';
+  title?: string;
+  request?: string;
+  acceptanceCriteria: string[];
+  fingerprint?: string;
+}
+
+export interface ReviewCandidateClaim {
+  source: 'candidate-change-intent';
+  statement?: string;
+  acceptanceCriteria: string[];
+}
+
+export interface ReviewChangedObjectFact {
+  objectRef: string;
+  disposition: ObjectChangeUnit['producedObjects'][number]['disposition'];
+  finalFingerprint?: string;
+  unitId: string;
+}
+
+export interface ReviewSceneFact {
+  sceneId: string;
+  objectRef: string;
+  unitId: string;
+  action: string;
+  operationSequence: number;
+  highlights: string[];
+}
+
+export interface ReviewChoiceFact {
+  unitId: string;
+  sceneId?: string;
+  label: string;
+  target?: string;
+  action: string;
+  operationSequence: number;
+}
+
+export interface ReviewVariableFact {
+  unitId: string;
+  name: string;
+  type?: string;
+  initial?: JsonValue;
+}
+
+export interface ReviewTimelineFact {
+  unitId: string;
+  timelineId: string;
+  durationMs?: number;
+  trackCount?: number;
+  trackKinds: string[];
+}
+
+export interface ReviewAssetFact {
+  unitId: string;
+  assetRef: string;
+  kind?: string;
+}
+
+export interface ReviewRuntimePathFact {
+  traceId: string;
+  status: 'passed' | 'failed';
+  startSceneId: string;
+  visitedSceneIds: string[];
+  choices: Array<{
+    sceneId: string;
+    optionIndex: number;
+    label?: string;
+  }>;
+  endingSceneId?: string;
+  finalVariables: Array<{
+    name: string;
+    value?: JsonValue;
+  }>;
+}
+
+export interface ReviewRuntimeTraceInput {
+  sourceChangeId: string;
+  sourceWorkingRevision: number;
+  traceId: string;
+  events: import('./runtime-trace.js').RuntimeTraceEvent[];
+  status?: 'passed' | 'failed';
+}
+
+/** Runtime traces read from the candidate's sealed evidence at review preparation time. */
+export interface ReviewCandidateRuntimeInput {
+  status: 'available' | 'unavailable';
+  sourceChangeId: string;
+  sourceWorkingRevision: number;
+  traces: Array<{
+    traceId: string;
+    status: 'passed';
+    events: import('./runtime-trace.js').RuntimeTraceEvent[];
+  }>;
+  limitations: string[];
+}
+
+export interface ReviewCandidateVerifiedFacts {
+  source: {
+    content: 'sealed-composition-manifest' | 'manifest-unavailable';
+    evidence: 'sealed-capsule-evidence' | 'evidence-unavailable';
+    runtime: 'sealed-runtime-trace' | 'runtime-unavailable';
+  };
+  /** Every unit belonging to this candidate, including units outside conflicts. */
+  units: ReviewUnitOutcome[];
+  content: {
+    changedObjects: ReviewChangedObjectFact[];
+    scenes: ReviewSceneFact[];
+    choices: ReviewChoiceFact[];
+    variables: ReviewVariableFact[];
+    timelines: ReviewTimelineFact[];
+    assets: ReviewAssetFact[];
+    excerpts: string[];
+    omittedFactCount: number;
+    /** Final scene text reconstructed from complete sealed file diffs; operation history stays separate. */
+    finalScenes?: Array<{ unitId: string; sceneId: string; source: 'sealed-capsule-diff'; paragraphs: string[] }>;
+  };
+  runtime: {
+    status: 'verified' | 'unavailable';
+    workingRevision?: number;
+    paths: ReviewRuntimePathFact[];
+    limitations: string[];
+  };
+}
+
+export interface CandidateAdoptionPreset {
+  candidateRef: CandidateCapsuleRef;
+  candidateId: string;
+  status: 'available' | 'blocked';
+  selectedUnitIds: string[];
+  conflictResolutions: import('./integration-plan.js').ConflictResolutionInput[];
+  reasons: Array<{ code: string; message: string }>;
+}
+
+export interface ReviewCandidateV2 extends ReviewCandidate {
+  claims: ReviewCandidateClaim;
+  verifiedFacts: ReviewCandidateVerifiedFacts;
+  adoptionPreset: CandidateAdoptionPreset;
+}
+
+export interface ReviewHumanFact {
+  kind: string;
+  label: string;
+  objectRef?: string;
+  unitId?: string;
+  candidateId?: string;
+  value?: JsonValue;
+}
+
+export interface ReviewActualResultExplanation {
+  source: 'integration-result';
+  decisionIntent: ReviewDecisionIntent;
+  decisionFingerprint: string;
+  planId: string;
+  planFingerprint: string;
+  integrationChangeId: string;
+  workingRevision: number;
+  runtimeTraceIds: string[];
+  selectedSources: ReviewHumanFact[];
+  actualIncluded: ReviewHumanFact[];
+  actualDependencies: ReviewHumanFact[];
+  actualExcluded: ReviewHumanFact[];
+  actualChanges: ReviewHumanFact[];
+  actualRuntimeOutcomes: ReviewRuntimePathFact[];
+  warnings: string[];
+  explanationFingerprint: string;
 }
 
 export interface ReviewSafeGroupEvidence {
@@ -198,6 +376,8 @@ export interface ReviewFinalResult {
   runtimeTraceObservations: ReviewRuntimeTraceObservation[];
   resultTreeSha256: string;
   warnings: ReviewWarning[];
+  /** Only v2 result reviews populate this actual, identity-bound explanation. */
+  actualExplanation?: ReviewActualResultExplanation;
 }
 
 export interface ResultReviewCurrentFacts {
@@ -256,7 +436,7 @@ export interface VerifiedReviewApproval {
   bindingFingerprint: string;
 }
 
-export interface HumanReviewProjection {
+export interface HumanReviewProjectionV1 {
   reviewVersion: '1.0.0';
   reviewId: string;
   kind: ReviewKind;
@@ -275,3 +455,16 @@ export interface HumanReviewProjection {
   sourceIdentity: ReviewSourceIdentity;
   reviewFingerprint: string;
 }
+
+export interface HumanReviewProjectionV2 extends Omit<HumanReviewProjectionV1,
+  'reviewVersion' | 'candidates' | 'defaultSelectedUnitIds' | 'finalResult'> {
+  reviewVersion: '2.0.0';
+  candidates: ReviewCandidateV2[];
+  /** v2 intentionally starts with no low-level selection. */
+  defaultSelectedUnitIds: [];
+  creativeBrief: ReviewCreativeBrief;
+  finalResult?: ReviewFinalResult;
+}
+
+/** Public projection name shared by legacy v1 readers and Wave 9 v2 consumers. */
+export type HumanReviewProjection = HumanReviewProjectionV1 | HumanReviewProjectionV2;

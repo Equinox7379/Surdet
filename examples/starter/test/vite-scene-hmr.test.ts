@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { compileScene } from '@surdet/core';
 import { cp, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createServer as createPortProbe } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const starterRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,11 +76,18 @@ async function waitForConsole(page: Page, messages: string[], predicate: (messag
 describe('real Vite .gal HMR', () => {
   it('keeps the running page and long-lived resources across two valid edits, an invalid edit, and recovery', async () => {
     const tempRoot = await copyStarterToTemp();
+    const portProbe = createPortProbe();
+    await new Promise<void>((resolve, reject) => { portProbe.once('error', reject); portProbe.listen(0, '127.0.0.1', resolve); });
+    const address = portProbe.address();
+    if (address === null || typeof address === 'string') throw new Error('未分配测试端口');
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => portProbe.close((error) => error ? reject(error) : resolve()));
     const server = await createServer({
       root: tempRoot,
       configFile: path.join(tempRoot, 'vite.config.ts'),
       logLevel: 'error',
-      server: { port: 0, strictPort: false },
+      // Vite treats port 0 as its default 5173, which can be reserved by Windows.
+      server: { host: '127.0.0.1', port, strictPort: true },
     });
     activeServer = server;
     await server.listen();

@@ -95,7 +95,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
       const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
       expect(opened.record).toEqual(beforeCycle);
       const description = await session.describe();
-      expect(description.contractVersion).toBe('2.3.0');
+      expect(description.contractVersion).toBe('2.4.0');
       expect(description.candidateReadiness).toMatchObject({ mode: 'candidate', status: 'ready', operationCount: 5, issueCount: 0, truncated: false });
       result(await session.invoke('project.validate', {}));
       result(await session.invoke('project.simulate', { sceneId: 'entry' }));
@@ -179,8 +179,8 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
     await session.close();
   });
 
-  it('validates strict mode/status and nested readiness fields under contract 2.3', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.3.0');
+  it('validates strict mode/status and nested readiness fields under contract 2.4', async () => {
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.4.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

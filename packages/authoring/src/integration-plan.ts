@@ -65,6 +65,38 @@ export interface IntegrationPlan {
 export type IntegrationPlanDraft = Omit<IntegrationPlan, 'planId' | 'planFingerprint' | 'dryRun'>;
 
 /**
+ * 预览与正式计划共用的稳定内容投影。
+ *
+ * 它刻意排除 review binding、planId、planFingerprint、decidedAt、reason
+ * 与自然语言错误消息。这样预览可以绑定真实组合内容，又不会把尚未生成的
+ * decisionFingerprint 反向塞进自身，形成 preview -> decision -> plan -> preview 的循环。
+ */
+export interface IntegrationPlanContentProjection {
+  planVersion: IntegrationPlan['planVersion'];
+  projectIdentity: string;
+  expectedProjectRevision: string;
+  comparisonFingerprint: string;
+  sourceCapsules: CandidateCapsuleRef[];
+  selectedUnitIds: string[];
+  implicitInclusions: string[];
+  excludedUnitIds: string[];
+  conflictResolutions: Array<{
+    conflictId: string;
+    resolution: ConflictResolutionInput['resolution'];
+    chosenUnitId?: string;
+    actor: ConflictResolutionInput['actor'];
+  }>;
+  deduplicatedUnits: IdenticalUnitResolution[];
+  replayOperations: PlannedReplayOperation[];
+  provenance: IntegrationPlanDraft['provenance'];
+  dryRun: {
+    status: IntegrationPlan['dryRun']['status'];
+    finalObjectFingerprints: Record<string, string>;
+    errors: Array<{ code: string; operationIndex?: number }>;
+  };
+}
+
+/**
  * 运行时随 comparison 附带的封存 manifest 视图（candidateId→manifest）；
  * 不参与 comparisonFingerprint，也不持久化。buildIntegrationPlan 只信任这些
  * 已随候选验证过的 operations，绝不接受 caller 提供的 replay payload。
@@ -387,22 +419,15 @@ export async function buildIntegrationPlan(
   };
 }
 
-/**
- * sealDryRunResult 对规范投影计算最终 planFingerprint：
- * draft 全部语义字段 + dryRun status/final fingerprints/error code/index；
- * 排除 planId/planFingerprint/decidedAt/reason/自然语言 message。planId 从该指纹派生。
- */
-export async function sealDryRunResult(
+export function integrationPlanContentProjection(
   draft: IntegrationPlanDraft,
   dryRun: IntegrationPlan['dryRun'],
-  hasher: { sha256(text: string): Promise<string> },
-): Promise<IntegrationPlan> {
-  const semantic = {
+): IntegrationPlanContentProjection {
+  return {
     planVersion: draft.planVersion,
     projectIdentity: draft.projectIdentity,
     expectedProjectRevision: draft.expectedProjectRevision,
     comparisonFingerprint: draft.comparisonFingerprint,
-    review: draft.review,
     sourceCapsules: draft.sourceCapsules,
     selectedUnitIds: draft.selectedUnitIds,
     implicitInclusions: draft.implicitInclusions,
@@ -423,6 +448,33 @@ export async function sealDryRunResult(
         ...(error.operationIndex === undefined ? {} : { operationIndex: error.operationIndex }),
       })),
     },
+  };
+}
+
+export async function integrationPlanContentFingerprintOf(
+  draft: IntegrationPlanDraft,
+  dryRun: IntegrationPlan['dryRun'],
+  hasher: { sha256(text: string): Promise<string> },
+): Promise<string> {
+  return hasher.sha256(stableStringify(integrationPlanContentProjection(draft, dryRun)));
+}
+
+/**
+ * sealDryRunResult 对规范投影计算最终 planFingerprint：
+ * draft 全部语义字段 + dryRun status/final fingerprints/error code/index；
+ * 排除 planId/planFingerprint/decidedAt/reason/自然语言 message。planId 从该指纹派生。
+ *
+ * 正式 planFingerprint 仍包含 review binding。预览不得直接复用它，而应使用
+ * integrationPlanContentFingerprintOf() 后再绑定 review 与高层决定意图。
+ */
+export async function sealDryRunResult(
+  draft: IntegrationPlanDraft,
+  dryRun: IntegrationPlan['dryRun'],
+  hasher: { sha256(text: string): Promise<string> },
+): Promise<IntegrationPlan> {
+  const semantic = {
+    ...integrationPlanContentProjection(draft, dryRun),
+    review: draft.review,
   };
   const planFingerprint = await hasher.sha256(stableStringify(semantic));
   return {

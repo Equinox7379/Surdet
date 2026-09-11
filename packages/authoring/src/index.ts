@@ -32,6 +32,8 @@ export * from './integration-execution.js';
 export * from './working-object-fingerprint.js';
 export * from './review-contracts.js';
 export * from './review-presentation.js';
+export * from './review-decision-preview.js';
+export * from './review-decision-receipt-v2.js';
 export * from './review-projection.js';
 export * from './review-receipts.js';
 export * from './review-terminal.js';

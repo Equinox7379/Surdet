@@ -57,14 +57,23 @@ export async function startDevProject(args = process.argv.slice(2), runtimeOptio
     'SURDET_EDITOR_PROJECT_ROOT',
     'SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT',
   ];
-  const previousEnvironment = new Map(environmentKeys.map((key) => [key, process.env[key]]));
-  let server;
-  try {
-    process.env.SURDET_EDITOR_PROJECT_LAUNCHER = '1';
-    process.env.SURDET_EDITOR_PROJECT_ROOT = options.projectRoot;
-    process.env.SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT = options.dataRoot;
+  const withBoundEnvironment = async (action) => {
+    const previousEnvironment = new Map(environmentKeys.map((key) => [key, process.env[key]]));
+    try {
+      process.env.SURDET_EDITOR_PROJECT_LAUNCHER = '1';
+      process.env.SURDET_EDITOR_PROJECT_ROOT = options.projectRoot;
+      process.env.SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT = options.dataRoot;
+      return await action();
+    } finally {
+      for (const [key, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  };
+  const server = await withBoundEnvironment(async () => {
     const { createServer } = await import('vite');
-    server = await createServer({
+    return createServer({
       root: packageRoot,
       configFile: path.join(packageRoot, 'vite.config.ts'),
       ...(typeof runtimeOptions.cacheDir === 'string' && runtimeOptions.cacheDir.length > 0
@@ -75,13 +84,8 @@ export async function startDevProject(args = process.argv.slice(2), runtimeOptio
         ? { optimizeDeps: { noDiscovery: true, include: runtimeOptions.optimizedDependencies ?? [] } }
         : {}),
     });
-  } finally {
-    for (const [key, value] of previousEnvironment) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-  try {
+  });
+  const readyAuthority = async () => {
     const authorityPlugin = server.config.plugins.find(
       (plugin) => plugin.name === 'surdet-project-asset-import-authority',
     );
@@ -89,6 +93,24 @@ export async function startDevProject(args = process.argv.slice(2), runtimeOptio
       throw new Error('素材导入写入服务插件未就绪');
     }
     await authorityPlugin.api.ready();
+  };
+  // Vite reloads its config on restart; keep this server's project binding for that read too.
+  const restart = server.restart.bind(server);
+  let pendingRestart;
+  const restartBound = (forceOptimize) => {
+    pendingRestart ??= withBoundEnvironment(async () => {
+      await restart(forceOptimize);
+      await readyAuthority();
+    }).finally(() => {
+      // Vite replaces the public methods with those of its replacement server.
+      server.restart = restartBound;
+      pendingRestart = undefined;
+    });
+    return pendingRestart;
+  };
+  server.restart = restartBound;
+  try {
+    await readyAuthority();
     await server.listen();
     server.printUrls();
   } catch (error) {

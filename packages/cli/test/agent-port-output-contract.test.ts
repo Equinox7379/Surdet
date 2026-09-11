@@ -292,7 +292,7 @@ describe('Wave 5 composition output-schema conformance', () => {
 describe('Wave 6 human review output contracts', () => {
   it('publishes strict review tool shapes and no agent-side human receipt writers', () => {
     const reviewCases = [
-      ['review.prepare-comparison', ['candidateRefs']],
+      ['review.prepare-comparison', ['candidateRefs', 'creativeBrief']],
       ['review.inspect-decision', ['reviewId', 'decisionId']],
       ['review.prepare-result', ['planId', 'artifactSha256', 'changeId']],
       ['review.inspect-approval', ['resultReviewId', 'approvalId']],

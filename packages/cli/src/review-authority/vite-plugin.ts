@@ -17,6 +17,7 @@ export interface ReviewAuthorityBrowserConfig {
 
 export interface ReviewAuthorityVitePluginOptions {
   dataRoot?: string;
+  projectRoot?: string;
   token?: string;
 }
 
@@ -80,7 +81,7 @@ export function injectReviewAuthorityConfig(
 
 export function reviewAuthorityVitePlugin(options: ReviewAuthorityVitePluginOptions = {}): ReviewAuthorityVitePlugin {
   const leases = new NodeLocalLeaseManager(options.dataRoot);
-  const authority = new ReviewTerminalAuthority(leases.dataRoot, leases);
+  const authority = new ReviewTerminalAuthority(leases.dataRoot, leases, undefined, options.projectRoot);
   const token = options.token ?? crypto.randomBytes(32).toString('base64url');
   const browserConfig: ReviewAuthorityBrowserConfig = {
     protocolVersion: '1.0.0',

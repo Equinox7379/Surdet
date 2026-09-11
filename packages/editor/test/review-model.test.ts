@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { HumanReviewProjection, ReviewUnitOutcome } from '@surdet/authoring';
+import type { HumanReviewProjectionV1, ReviewUnitOutcome } from '@surdet/authoring';
 import {
   canSealDecision,
   labelForConflictSeverity,
@@ -9,7 +9,7 @@ import {
   presentationForReviewUnit,
 } from '../src/review-model.js';
 
-function baseProjection(overrides: Partial<HumanReviewProjection> = {}): HumanReviewProjection {
+function baseProjection(overrides: Partial<HumanReviewProjectionV1> = {}): HumanReviewProjectionV1 {
   return {
     reviewVersion: '1.0.0',
     reviewId: 'review-1',

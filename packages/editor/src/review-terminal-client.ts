@@ -1,5 +1,10 @@
 import {
   parseReviewTerminalSnapshot,
+  isReviewDecisionPreview,
+  parseReviewDecisionPreviewCommand,
+  stableStringify,
+  type ReviewDecisionPreview,
+  type ReviewDecisionPreviewCommand,
   type ReviewPayloadIdentity,
   type ReviewTerminalCommand,
   type ReviewTerminalSnapshot,
@@ -40,6 +45,11 @@ const BUSINESS_ERROR_CODES = new Set([
   'CHANGE_STORE_CORRUPT',
   'PATH_OUTSIDE_PROJECT',
   'LEASE_CORRUPT',
+  'REVIEW_PREVIEW_UNAVAILABLE',
+  'COMPOSITION_PLAN_STALE',
+  'COMPOSITION_PLAN_INVALID',
+  'COMPOSITION_CONFLICT_UNRESOLVED',
+  'COMPOSITION_DEPENDENCY_MISSING',
 ]);
 
 const TERMINAL_STATES = new Set<ReviewTerminalSnapshot['state']>([
@@ -65,6 +75,7 @@ export interface ReviewTerminalClient {
   status(): Promise<'available' | 'unavailable'>;
   describe(input: ReviewTerminalDescribeInput): Promise<ReviewTerminalSnapshot>;
   write(command: ReviewTerminalCommand): Promise<ReviewTerminalSnapshot>;
+  previewDecision?(command: ReviewDecisionPreviewCommand): Promise<ReviewDecisionPreview>;
 }
 
 export interface ReviewTerminalClientOptions {
@@ -288,7 +299,7 @@ export function createReviewTerminalClient(
   const fetcher = options.fetcher ?? (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
   const timeoutMs = normalizeTimeout(options.timeoutMs);
 
-  const request = async (suffix: 'status' | 'describe' | 'write', body?: unknown): Promise<unknown> => {
+  const request = async (suffix: 'status' | 'describe' | 'write' | 'preview-decision', body?: unknown): Promise<unknown> => {
     if (configuration === null || fetcher === null) throw unavailable();
     const controller = new AbortController();
     let timedOut = false;
@@ -402,5 +413,12 @@ export function createReviewTerminalClient(
     }
   };
 
-  return { status, describe, write };
+  const previewDecision = async (command: ReviewDecisionPreviewCommand): Promise<ReviewDecisionPreview> => {
+    parseReviewDecisionPreviewCommand(command);
+    const result = await request('preview-decision', command);
+    if (!isReviewDecisionPreview(result) || result.reviewId !== command.reviewId
+      || stableStringify(result.decisionIntent) !== stableStringify(command.decisionIntent)) throw invalidResponse();
+    return result;
+  };
+  return { status, describe, write, previewDecision };
 }

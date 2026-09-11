@@ -4,14 +4,17 @@ import {
   AuthoringOperationError,
   parseReviewTerminalCommand,
   parseReviewTerminalSnapshot,
+  parseReviewDecisionPreviewCommand,
   validateComparisonDecision,
+  validateComparisonDecisionV2,
   validateFinalApproval,
   validateReturnRequest,
-  type ComparisonDecisionReceipt,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
   type ResultReviewCurrentFacts,
   type ReviewPayloadIdentity,
+  type ReviewDecisionPreviewCommand,
+  type ReviewDecisionPreview,
   type ReviewTerminalAction,
   type ReviewTerminalCommand,
   type ReviewTerminalRecord,
@@ -25,6 +28,8 @@ import {
   isFinalApprovalReceipt,
   parseReviewProjection,
 } from './review-service.js';
+import { compositionServiceForProject } from './composition-service.js';
+import { prepareReviewDecisionPreview } from './review-decision-preview-service.js';
 
 export interface ReviewTerminalDescribeInput {
   projectIdentity: string;
@@ -153,6 +158,7 @@ export class ReviewTerminalAuthority {
     dataRoot: string,
     leases?: NodeLocalLeaseManager,
     hasher: TextHasher = defaultHasher(),
+    private readonly projectRoot?: string,
   ) {
     this.dataRoot = path.resolve(dataRoot);
     this.leases = leases ?? new NodeLocalLeaseManager(this.dataRoot);
@@ -244,6 +250,45 @@ export class ReviewTerminalAuthority {
     }
   }
 
+  async previewDecision(rawInput: unknown): Promise<ReviewDecisionPreview> {
+    const command = parseReviewDecisionPreviewCommand(rawInput);
+    const input = parseReviewTerminalDescribeInput({
+      projectIdentity: command.projectIdentity,
+      reviewId: command.reviewId,
+      reviewPayload: command.reviewPayload,
+    });
+    const store = this.storeFor(input.projectIdentity);
+    const loaded = await store.readReview<HumanReviewProjection>(input.reviewId);
+    const projection = this.verifyLoadedReview(input, loaded);
+    return this.previewLoadedDecision(projection, command);
+  }
+
+  private async previewLoadedDecision(
+    projection: HumanReviewProjection,
+    command: ReviewDecisionPreviewCommand,
+  ): Promise<ReviewDecisionPreview> {
+    if (this.projectRoot === undefined) {
+      throw new AuthoringOperationError('REVIEW_PREVIEW_UNAVAILABLE', '请从绑定项目入口打开审阅。');
+    }
+    if (projection.reviewVersion !== '2.0.0' || projection.kind !== 'comparison') {
+      throw new AuthoringOperationError('REVIEW_FORMAT_UNSUPPORTED', '当前审阅不支持整案决定预览。');
+    }
+    const composition = await compositionServiceForProject(this.projectRoot, this.dataRoot);
+    if (composition.projectIdentity !== projection.projectIdentity) {
+      return identityMismatch('绑定项目与审阅项目身份不一致。');
+    }
+    return prepareReviewDecisionPreview(composition, {
+      source: {
+        reviewId: projection.reviewId,
+        reviewFingerprint: projection.reviewFingerprint,
+        comparisonFingerprint: projection.sourceIdentity.comparisonFingerprint,
+        candidates: projection.candidates.map(({ candidateId, ref }) => ({ candidateId, ref })),
+      },
+      intent: command.decisionIntent,
+      ...(command.customSelection === undefined ? {} : { customSelection: command.customSelection }),
+    }, this.hasher);
+  }
+
   async write(rawCommand: ReviewTerminalCommand | unknown): Promise<ReviewTerminalSnapshot> {
     const command = parseReviewTerminalCommand(rawCommand);
     const input = parseReviewTerminalDescribeInput({
@@ -264,8 +309,26 @@ export class ReviewTerminalAuthority {
           }
           await validateComparisonDecision({
             projection,
-            receipt: command.receipt as ComparisonDecisionReceipt,
+            receipt: command.receipt,
           }, this.hasher);
+          if (command.receipt.receiptVersion === '2.0.0') {
+            const receipt = command.receipt;
+            const preview = await this.previewLoadedDecision(projection, {
+              ...input,
+              decisionIntent: receipt.decisionIntent,
+              ...(receipt.decisionIntent.mode === 'custom-mix' ? { customSelection: {
+                selectedUnitIds: receipt.selectedUnitIds,
+                conflictResolutions: receipt.conflictResolutions,
+              } } : {}),
+            });
+            await validateComparisonDecisionV2({
+              receipt,
+              preview,
+              projectIdentity: projection.projectIdentity,
+              expectedProjectRevision: projection.expectedProjectRevision,
+              candidateRefs: projection.candidates.map((candidate) => candidate.ref),
+            }, this.hasher);
+          }
           return;
         }
         if (command.action === 'result-approval') {

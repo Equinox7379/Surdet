@@ -1,6 +1,8 @@
 import type {
   HumanReviewProjection,
   ReviewConflict,
+  ReviewRuntimePathFact,
+  ReviewDecisionIntent,
 } from '@surdet/authoring';
 import { state, h, setStatus } from '../state.js';
 import { publishEditorWorkspaceState } from '../editor-workspace.js';
@@ -30,6 +32,8 @@ import {
   writeApprovalReceipt,
   writeDecisionReceipt,
   writeReturnReceipt,
+  canSaveReviewDecision,
+  previewReviewDecision,
   type ReviewDecisionDraft,
   type ReviewWorkspaceState,
 } from '../review-workspace.js';
@@ -250,7 +254,7 @@ function appendReviewWorkspaceHeader(
   const heading = h('div', 'review-workspace-heading');
   heading.appendChild(h('div', 'review-workspace-kicker', projection.kind === 'comparison' ? '候选方案校对' : '最终结果校对'));
   heading.appendChild(h('h2', undefined, projection.task.title));
-  if (projection.task.goal) heading.appendChild(h('p', 'review-workspace-goal', projection.task.goal));
+  if (projection.reviewVersion === '1.0.0' && projection.task.goal) heading.appendChild(h('p', 'review-workspace-goal', projection.task.goal));
   header.appendChild(heading);
   const status = h('div', 'review-workspace-status');
   const stateLabel = h('strong', 'review-state', labelForReviewState(projection.state));
@@ -352,14 +356,19 @@ function renderComparisonReview(
   options: ReviewPanelOptions,
 ): void {
   const projection = workspace.projection;
+  if (projection.reviewVersion === '2.0.0') {
+    renderWholeProposalReview(container, workspace, options);
+    return;
+  }
   const decisionSaved = workspace.receiptStatus === 'decision-written';
+  const legacyReadOnly = projection.reviewVersion === '1.0.0';
   const authorityWritable = workspace.authority.state === 'available';
   const pendingTerminalAction = pendingTerminalActionOf(workspace);
-  const decisionChoiceLocked = decisionSaved
+  const decisionChoiceLocked = legacyReadOnly || decisionSaved
     || decisionWrites.has(workspace)
     || pendingTerminalAction !== null
     || !authorityWritable;
-  const decisionSubmitLocked = decisionSaved || decisionWrites.has(workspace) || !authorityWritable;
+  const decisionSubmitLocked = legacyReadOnly || decisionSaved || decisionWrites.has(workspace) || !authorityWritable;
   const unresolvedCount = projection.conflicts.filter((conflict) => (
     conflict.severity === 'blocking'
     || (conflict.severity === 'selection-required'
@@ -400,6 +409,7 @@ function renderComparisonReview(
   overview.appendChild(h('div', 'review-section-kicker', '比较结果'));
   overview.appendChild(h('h2', undefined, '这次需要校对什么'));
   overview.appendChild(h('p', 'review-overview-goal', projection.task.goal ?? '核对候选内容，处理分歧后保存决定。'));
+  overview.appendChild(h('p', 'review-warning', '这是旧版只读审阅；已有决定仍然有效。要作出新决定，请创建新版整案审阅。'));
   overview.appendChild(h('div', 'review-evidence-summary', `共 ${projection.task.candidateCount} 个方案，涉及 ${projection.task.objectCount} 个对象`));
   appendAuthorityStatus(overview, workspace);
   if (workspace.decisionReceipt !== null) {
@@ -418,6 +428,7 @@ function renderComparisonReview(
     ));
   }
   main.appendChild(overview);
+  overview.appendChild(h('p', 'review-warning', '这是旧版逐项审阅。要使用整案采用和保存前预览，请重新生成审阅任务；已有回执仍保持有效。'));
 
   let decisionButton: HTMLButtonElement | null = null;
   const decisionControls: HTMLButtonElement[] = [];
@@ -716,6 +727,297 @@ function renderComparisonReview(
   container.appendChild(shell);
 }
 
+function appendRuntimePaths(container: HTMLElement, paths: readonly ReviewRuntimePathFact[]): void {
+  for (const [index, path] of paths.entries()) {
+    const item = h('article', 'review-readable-route');
+    const choices = path.choices.map((choice) => choice.label ?? `选项 ${choice.optionIndex + 1}`);
+    item.appendChild(h('strong', undefined, choices.length > 0 ? choices.join(' → ') : `运行路线 ${index + 1}`));
+    item.appendChild(h('p', undefined, path.endingSceneId
+      ? `到达结尾：${labelForObjectRef(`scene:${path.endingSceneId}`)}` : '本次运行尚未到达场景结束。'));
+    if (path.finalVariables.length > 0) item.appendChild(h('div', 'review-route-state',
+      path.finalVariables.map((variable) => `${variable.name} = ${JSON.stringify(variable.value)}`).join('；')));
+    const detail = h('details', 'review-route-details');
+    detail.appendChild(h('summary', undefined, '查看经过的场景'));
+    detail.appendChild(h('p', undefined, path.visitedSceneIds.map((scene) => labelForObjectRef(`scene:${scene}`)).join(' → ')));
+    item.appendChild(detail);
+    container.appendChild(item);
+  }
+}
+
+const visibleProposals = new WeakMap<ReviewWorkspaceState, string>();
+
+function renderWholeProposalReview(container: HTMLElement, workspace: ReviewWorkspaceState, options: ReviewPanelOptions): void {
+  const projection = workspace.projection;
+  if (projection.reviewVersion !== '2.0.0') return;
+  const locked = workspace.receiptStatus !== 'none' || workspace.authority.state !== 'available'
+    || decisionWrites.has(workspace) || pendingTerminalActionOf(workspace) !== null;
+  const saveLocked = workspace.receiptStatus !== 'none' || workspace.authority.state !== 'available' || decisionWrites.has(workspace);
+  const selected = workspace.decisionDraft.decisionIntent;
+  const units = projection.candidates.flatMap((candidate) => candidate.verifiedFacts.units);
+  const unitById = new Map(units.map((unit) => [unit.unitId, unit]));
+  const redraw = (): void => {
+    const scroll = container.querySelector('.review-main')?.scrollTop ?? 0;
+    const active = document.activeElement;
+    const focusKey = ['data-adopt-candidate', 'data-proposal-switch', 'data-mix-base', 'data-mix-unit', 'data-action']
+      .map((key) => ({ key, value: active?.getAttribute(key) }))
+      .find((entry) => entry.value != null);
+    renderReviewPanel(container, workspace, options);
+    const next = container.querySelector('.review-main');
+    if (next !== null) next.scrollTop = scroll;
+    if (focusKey !== undefined) {
+      const target = [...container.querySelectorAll<HTMLElement>(`[${focusKey.key}]`)]
+        .find((element) => element.getAttribute(focusKey.key) === focusKey.value);
+      target?.focus({ preventScroll: true });
+    }
+  };
+  const requestPreview = (): void => {
+    const request = previewReviewDecision(workspace, options.reviewTerminalClient);
+    redraw();
+    void request.then(redraw, () => redraw());
+  };
+  const changed = (): void => {
+    workspace.decisionDraft.decisionId = '';
+    delete workspace.decisionPreview;
+    decisionSealStates.delete(workspace);
+    publishEditorWorkspaceState();
+  };
+  const resolveMixConflicts = (): void => {
+    const selection = new Set(workspace.decisionDraft.selectedUnitIds);
+    workspace.decisionDraft.conflictResolutions = [];
+    for (const conflict of projection.conflicts.filter((item) => item.severity === 'selection-required')) {
+      const chosen = conflict.unitIds.filter((id) => selection.has(id));
+      if (chosen.length === 1 && conflict.allowedResolutions.includes('choose-unit')) workspace.decisionDraft.conflictResolutions.push({ conflictId: conflict.conflictId, resolution: 'choose-unit', chosenUnitId: chosen[0]! });
+      if (chosen.length === 0 && conflict.allowedResolutions.includes('exclude-all')) workspace.decisionDraft.conflictResolutions.push({ conflictId: conflict.conflictId, resolution: 'exclude-all' });
+    }
+  };
+  const adopt = (candidate: typeof projection.candidates[number]): void => {
+    if (locked || decisionWrites.has(workspace) || pendingTerminalActionOf(workspace) !== null || candidate.adoptionPreset.status !== 'available') return;
+    workspace.decisionDraft = {
+      decisionId: '', decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: candidate.candidateId, ref: candidate.ref } },
+      selectedUnitIds: [...candidate.adoptionPreset.selectedUnitIds],
+      conflictResolutions: candidate.adoptionPreset.conflictResolutions.map(({ conflictId, resolution, chosenUnitId }) => ({
+        conflictId, resolution, ...(chosenUnitId === undefined ? {} : { chosenUnitId }),
+      })),
+    };
+    changed();
+    requestPreview();
+  };
+  const shell = h('div', 'review-workbench review-whole-workbench');
+  appendReviewWorkspaceHeader(shell, projection, workspace.receiptStatus === 'decision-written' ? '决定已保存' : '阅读整案，选择后核对预计结果');
+  const main = h('section', 'review-main review-whole-main');
+  main.setAttribute('aria-label', '整案审阅');
+  main.setAttribute('data-review-main', 'comparison');
+  const brief = markReviewSection(h('section', 'review-section review-creative-brief'), 'creative-brief');
+  brief.appendChild(h('h2', undefined, '原始创作要求'));
+  brief.appendChild(h('p', undefined, projection.creativeBrief.status === 'provided'
+    ? projection.creativeBrief.request ?? '未提供原始创作要求。' : '未提供原始创作要求。'));
+  for (const criterion of projection.creativeBrief.acceptanceCriteria) brief.appendChild(h('div', 'review-criterion', criterion));
+  brief.appendChild(h('p', 'review-section-intro', '这里保留本次审阅的创作要求；“候选自述”由创作者填写；内容改动与运行路线由系统从封存记录中核对。'));
+  appendAuthorityStatus(brief, workspace);
+  main.appendChild(brief);
+  const proposals = markReviewSection(h('section', 'review-section'), 'whole-proposals');
+  proposals.appendChild(h('h2', undefined, '比较完整方案'));
+  proposals.appendChild(h('p', 'review-section-intro', '每个方案保留自己的场景、选项、结尾和演出。先看故事，再决定采用哪一套。'));
+  const visibleId = visibleProposals.get(workspace) ?? projection.candidates[0]?.candidateId;
+  const switches = h('div', 'review-proposal-switches');
+  switches.setAttribute('role', 'group'); switches.setAttribute('aria-label', '切换方案全文');
+  for (const candidate of projection.candidates) {
+    const button = h('button', undefined, `阅读方案 ${candidate.displayOrdinal}`) as HTMLButtonElement;
+    button.setAttribute('data-proposal-switch', candidate.candidateId);
+    button.setAttribute('aria-pressed', String(candidate.candidateId === visibleId));
+    button.onclick = () => { visibleProposals.set(workspace, candidate.candidateId); redraw(); };
+    switches.appendChild(button);
+  }
+  proposals.appendChild(switches);
+  const routeOverview = h('div', 'review-proposal-overview');
+  routeOverview.setAttribute('aria-label', '各方案路线概览');
+  for (const candidate of projection.candidates) {
+    routeOverview.appendChild(h('p', undefined, `方案 ${candidate.displayOrdinal}：${candidate.verifiedFacts.runtime.paths
+      .flatMap((path) => path.choices.map((choice) => choice.label ?? `选项 ${choice.optionIndex + 1}`)).join(' / ') || '尚无可核对的路线'}`));
+  }
+  proposals.appendChild(routeOverview);
+  const cards = h('div', 'review-proposal-grid');
+  for (const candidate of projection.candidates) {
+    const active = selected?.mode === 'adopt-candidate' && selected.candidate.candidateId === candidate.candidateId;
+    const card = h('article', `review-proposal-card${active ? ' selected' : ''}`);
+    card.setAttribute('data-proposal', candidate.candidateId);
+    card.setAttribute('data-proposal-visible', String(candidate.candidateId === visibleId));
+    card.appendChild(h('h3', undefined, `方案 ${candidate.displayOrdinal}${active ? ' · 已选择' : ''}`));
+    const facts = candidate.verifiedFacts;
+    card.appendChild(h('div', 'review-proposal-scope', `${new Set(facts.content.scenes.map((scene) => scene.sceneId)).size} 个场景 · ${facts.runtime.paths.length} 条已运行路线 · ${new Set(facts.content.timelines.map((timeline) => timeline.timelineId)).size} 段演出`));
+    const claims = h('details', 'review-candidate-claims');
+    claims.appendChild(h('summary', undefined, '候选自述'));
+    claims.appendChild(h('p', undefined, candidate.claims.statement ?? '候选没有填写自述。'));
+    for (const criterion of candidate.claims.acceptanceCriteria) claims.appendChild(h('div', 'review-criterion', criterion));
+    card.appendChild(claims);
+    card.appendChild(h('h4', undefined, '方案正文'));
+    card.appendChild(h('p', 'review-section-intro', '以下是候选封存后的内容，按已运行的场景顺序阅读。'));
+    const sceneOrder = [...new Set(facts.runtime.paths.flatMap((path) => path.visitedSceneIds))];
+    const sceneUnits = facts.units.filter((unit) => unit.primaryObject.startsWith('scene:')).sort((left, right) => {
+      const rank = (objectRef: string): number => { const index = sceneOrder.indexOf(objectRef.slice('scene:'.length)); return index < 0 ? sceneOrder.length : index; };
+      return rank(left.primaryObject) - rank(right.primaryObject);
+    });
+    for (const unit of sceneUnits) {
+      const story = h('details', 'review-story-scene') as HTMLDetailsElement;
+      story.open = true;
+      story.appendChild(h('summary', undefined, labelForObjectRef(unit.primaryObject)));
+      const finalScene = facts.content.finalScenes?.find((scene) => scene.unitId === unit.unitId);
+      if (finalScene === undefined) story.appendChild(h('p', 'review-warning', '此场景没有可核对的完整正文，可展开改动记录查看已有内容。'));
+      else for (const line of finalScene.paragraphs) story.appendChild(h('p', 'review-story-line', line));
+      const history = h('details', 'review-story-history');
+      history.appendChild(h('summary', undefined, '查看创作改动记录'));
+      const sceneFacts = facts.content.scenes.filter((scene) => scene.unitId === unit.unitId)
+        .sort((left, right) => left.operationSequence - right.operationSequence);
+      for (const fact of sceneFacts) {
+        const action = ({ create: '新建场景', replaceText: '替换台词', insertAfter: '插入内容', replaceChoiceOption: '替换选项', removeObject: '移除内容' } as Record<string, string>)[fact.action] ?? '修改场景';
+        history.appendChild(h('strong', 'review-story-action', action));
+        for (const line of fact.highlights) history.appendChild(h('p', 'review-story-line', line));
+      }
+      if (sceneFacts.length === 0) appendUnitPresentation(history, unit);
+      story.appendChild(history);
+      card.appendChild(story);
+    }
+    if (sceneUnits.length === 0) card.appendChild(h('p', undefined, '此方案没有场景文本改动。'));
+    card.appendChild(h('h4', undefined, '实际运行路线'));
+    if (facts.runtime.status === 'unavailable') card.appendChild(h('p', 'review-warning', '暂无可核对的运行路线。'));
+    appendRuntimePaths(card, facts.runtime.paths);
+    for (const limitation of facts.runtime.limitations) card.appendChild(h('p', 'review-warning', limitation));
+    const other = h('details', 'review-proposal-other');
+    other.appendChild(h('summary', undefined, '其他内容与验证'));
+    for (const unit of facts.units.filter((unit) => !unit.primaryObject.startsWith('scene:'))) appendUnitPresentation(other, unit);
+    other.appendChild(h('p', undefined, candidateEvidenceSummary(candidate.evidence)));
+    card.appendChild(other);
+    if (candidate.adoptionPreset.status === 'blocked') {
+      for (const reason of candidate.adoptionPreset.reasons) card.appendChild(h('p', 'review-warning', reason.message));
+    }
+    const button = appendDecisionButton(card, workspace, `采用整个方案 ${candidate.displayOrdinal}`, 'adopt-candidate',
+      locked || candidate.adoptionPreset.status !== 'available', () => adopt(candidate));
+    button.setAttribute('data-adopt-candidate', candidate.candidateId);
+    button.setAttribute('aria-pressed', String(active));
+    cards.appendChild(card);
+  }
+  proposals.appendChild(cards);
+  main.appendChild(proposals);
+  const mix = markReviewSection(h('section', 'review-section review-custom-mix'), 'custom-mix');
+  const mixButton = h('button', 'review-secondary-action', selected?.mode === 'custom-mix' ? '正在自定义组合' : '我想自定义组合') as HTMLButtonElement;
+  mixButton.setAttribute('data-action', 'custom-mix');
+  mixButton.disabled = locked || selected?.mode === 'custom-mix';
+  mixButton.onclick = () => {
+    if (locked) return;
+    const intent: ReviewDecisionIntent = { mode: 'custom-mix', ...(selected?.mode === 'adopt-candidate' ? { baseCandidate: selected.candidate } : {}) };
+    workspace.decisionDraft.decisionIntent = intent;
+    resolveMixConflicts(); changed(); requestPreview();
+  };
+  mix.appendChild(mixButton);
+  if (selected?.mode === 'custom-mix') {
+    const bases = h('div', 'review-mix-bases');
+    bases.setAttribute('role', 'group'); bases.setAttribute('aria-label', '选择组合底稿');
+    for (const base of [...projection.candidates, undefined]) {
+      const button = h('button', undefined, base === undefined ? '从空白开始' : `以方案 ${base.displayOrdinal} 为底稿`) as HTMLButtonElement;
+      button.disabled = locked || (base !== undefined && base.adoptionPreset.status !== 'available');
+      button.setAttribute('data-mix-base', base?.candidateId ?? 'none');
+      button.setAttribute('aria-pressed', String(selected.baseCandidate?.candidateId === base?.candidateId));
+      button.onclick = () => {
+        if (button.disabled) return;
+        workspace.decisionDraft = {
+          decisionId: '', decisionIntent: { mode: 'custom-mix', ...(base === undefined ? {} : { baseCandidate: { candidateId: base.candidateId, ref: base.ref } }) },
+          selectedUnitIds: [...(base?.adoptionPreset.selectedUnitIds ?? [])], conflictResolutions: [],
+        };
+        resolveMixConflicts(); changed(); requestPreview();
+      };
+      bases.appendChild(button);
+    }
+    mix.appendChild(bases);
+    mix.appendChild(h('p', undefined, '选择要保留的内容。依赖会在预览中明确列出；同一处有不同版本时，需要作出选择。'));
+    for (const objectRef of [...new Set(units.map((unit) => unit.primaryObject))]) {
+      const group = h('fieldset', 'review-mix-candidate');
+      group.appendChild(h('legend', undefined, labelForObjectRef(objectRef)));
+      for (const unit of units.filter((item) => item.primaryObject === objectRef)) {
+        const label = h('label', 'review-mix-unit');
+        const check = document.createElement('input'); check.type = 'checkbox';
+        check.checked = workspace.decisionDraft.selectedUnitIds.includes(unit.unitId); check.disabled = locked;
+        check.setAttribute('data-mix-unit', unit.unitId);
+        check.onchange = () => {
+          if (locked) return;
+          const selection = new Set(workspace.decisionDraft.selectedUnitIds);
+          if (check.checked) selection.add(unit.unitId); else selection.delete(unit.unitId);
+          workspace.decisionDraft.selectedUnitIds = [...selection];
+          resolveMixConflicts(); changed(); requestPreview();
+        };
+        label.appendChild(check);
+        const description = h('span');
+        description.appendChild(h('strong', undefined, labelForCandidate(projection, unit.candidateId)));
+        appendUnitPresentation(description, unit); label.appendChild(description);
+        group.appendChild(label);
+      }
+      mix.appendChild(group);
+    }
+    for (const conflict of projection.conflicts.filter((item) => item.severity === 'selection-required'
+      && !workspace.decisionDraft.conflictResolutions.some((resolution) => resolution.conflictId === item.conflictId))) {
+      mix.appendChild(h('p', 'review-warning', `请为 ${conflict.objectRefs.map(labelForObjectRef).join('、')} 保留一个版本，或全部取消。`));
+    }
+  }
+  main.appendChild(mix);
+  const forecast = markReviewSection(h('section', 'review-section review-decision-forecast'), 'decision-preview');
+  forecast.appendChild(h('h2', undefined, workspace.receiptStatus === 'decision-written' ? '你保存的决定' : '保存前，核对预计结果'));
+  const intent = workspace.decisionReceipt?.receiptVersion === '2.0.0' ? workspace.decisionReceipt.decisionIntent : selected;
+  const intentLabel = intent === undefined ? '尚未选择方案' : intent.mode === 'adopt-candidate'
+    ? `采用整个${labelForCandidate(projection, intent.candidate.candidateId)}` : '自定义组合';
+  forecast.appendChild(h('p', 'review-current-choice', intentLabel));
+  const pending = workspace.decisionPreview;
+  if (workspace.receiptStatus === 'decision-written') {
+    const marker = h('div', 'review-receipt-status', '决定已保存，重新打开仍会显示同一份决定。');
+    marker.setAttribute('data-decision-receipt', 'written');
+    marker.setAttribute('data-decision-fingerprint', workspace.decisionReceipt!.decisionFingerprint);
+    forecast.appendChild(marker);
+  } else if (pending?.status === 'loading') forecast.appendChild(h('p', 'review-preview-pending', '正在核对这次选择的实际组合…'));
+  else if (pending?.status === 'error') forecast.appendChild(h('p', 'review-warning', pending.message ?? '预览失败，请重新核对选择。'));
+  else if (pending?.value !== undefined) {
+    const preview = pending.value;
+    const appendUnits = (title: string, ids: string[]): void => {
+      forecast.appendChild(h('h3', undefined, `${title} · ${ids.length} 项`));
+      if (ids.length === 0) forecast.appendChild(h('p', undefined, '无'));
+      for (const id of ids) {
+        const unit = unitById.get(id);
+        if (unit === undefined) continue;
+        forecast.appendChild(h('p', 'review-forecast-item', `${labelForCandidate(projection, unit.candidateId)} · ${labelForObjectRef(unit.primaryObject)}`));
+      }
+    };
+    appendUnits('直接采用', preview.effectiveUnitIds.filter((id) => !preview.implicitInclusions.includes(id)));
+    appendUnits('自动带入的依赖', preview.implicitInclusions);
+    appendUnits('未纳入', preview.excludedUnitIds);
+    appendUnits('相同结果的来源保留', preview.selectedUnitIds.filter((id) => !preview.effectiveUnitIds.includes(id) && !preview.excludedUnitIds.includes(id)));
+    forecast.appendChild(h('h3', undefined, '预计项目变化'));
+    for (const objectRef of Object.keys(preview.dryRun.finalObjectFingerprints)) forecast.appendChild(h('p', 'review-forecast-item', labelForObjectRef(objectRef)));
+    forecast.appendChild(h('p', preview.status === 'ready' ? 'review-preview-ready' : 'review-warning',
+      preview.status === 'ready' ? '组合试运行已通过，可以保存这次决定。' : '这次组合无法通过试运行，请调整选择。'));
+    for (const error of preview.dryRun.errors) forecast.appendChild(h('p', 'review-warning', error.message));
+  } else if (intent !== undefined) forecast.appendChild(h('p', undefined, '选择已更新，请查看新的组合预览。'));
+  const actions = h('div', 'review-whole-actions');
+  appendDecisionButton(actions, workspace, '查看组合预览', 'preview-decision', locked || selected === undefined || pending?.status === 'loading', requestPreview);
+  appendDecisionButton(actions, workspace, workspace.receiptStatus === 'decision-written' ? '决定已保存'
+    : pendingTerminalActionOf(workspace) === 'comparison-decision' ? '再次确认保存状态' : '保存我的决定', 'save-decision',
+    saveLocked || !canSaveReviewDecision(workspace), () => {
+      if (saveLocked || decisionWrites.has(workspace) || !canSaveReviewDecision(workspace)) return;
+      const seal = sealDecisionState(workspace, options);
+      const draft = structuredClone(workspace.decisionDraft);
+      decisionWrites.add(workspace); redraw();
+      void writeDecisionReceipt(workspace, draft, seal.decidedAt, options.reviewTerminalClient).then(() => {
+        decisionWrites.delete(workspace); redraw(); setStatus('已保存我的决定', true, 5000);
+      }, (error) => {
+        decisionWrites.delete(workspace);
+        if (pendingTerminalActionOf(workspace) === null) delete workspace.decisionPreview;
+        redraw();
+        setStatus(`保存决定失败：${terminalErrorMessage(error)}`, false, 6000);
+      });
+    });
+  forecast.appendChild(actions);
+  main.appendChild(forecast);
+  appendTechDetails(main, projection, '查看对象、冲突与技术详情');
+  shell.appendChild(main);
+  container.appendChild(shell);
+}
+
 function appendResultPlan(
   container: HTMLElement,
   projection: HumanReviewProjection,
@@ -857,6 +1159,7 @@ function renderResultReview(
   const projection = workspace.projection;
   const result = projection.finalResult;
   if (result === undefined) throw new Error('integration-result 审阅缺少 finalResult');
+  const actual = projection.reviewVersion === '2.0.0' ? result.actualExplanation : undefined;
   const pendingTerminalAction = pendingTerminalActionOf(workspace);
   const resultWriteLocked = resultWrites.has(workspace);
   const resultPreviewLocked = resultPreviews.has(workspace);
@@ -869,7 +1172,7 @@ function renderResultReview(
     && authorityWritable
     && !workspace.fixtureChanged
     && evidenceFresh;
-  const shell = h('div', 'review-workbench');
+  const shell = h('div', actual === undefined ? 'review-workbench' : 'review-workbench review-whole-workbench');
   appendReviewWorkspaceHeader(
     shell,
     projection,
@@ -886,9 +1189,9 @@ function renderResultReview(
   steps.appendChild(h('li', undefined, '核对变更与证据'));
   steps.appendChild(h('li', undefined, '批准或退回'));
   taskList.appendChild(steps);
-  shell.appendChild(taskList);
+  if (actual === undefined) shell.appendChild(taskList);
 
-  const main = h('section', 'review-main');
+  const main = h('section', actual === undefined ? 'review-main' : 'review-main review-whole-main');
   main.setAttribute('aria-label', '审阅正文');
   main.setAttribute('data-review-main', 'result');
   const overview = markReviewSection(h('section', 'review-section review-overview review-result-overview'), 'overview');
@@ -911,6 +1214,37 @@ function renderResultReview(
   if (workspace.fixtureChanged) overview.appendChild(h('div', 'review-warning', '你正在查看探索性修改，批准已禁用。'));
   if (!evidenceFresh) overview.appendChild(h('div', 'review-warning', '证据不是全部新鲜状态，批准已禁用。'));
   main.appendChild(overview);
+  if (actual !== undefined) {
+    const decision = markReviewSection(h('section', 'review-section'), 'actual-decision');
+    decision.appendChild(h('h2', undefined, '你最终作出的决定'));
+    const intent = actual.decisionIntent;
+    const chosenOrdinal = intent.mode === 'adopt-candidate' ? result.plan.sourceCandidates.find((candidate) =>
+      candidate.ref.changeId === intent.candidate.ref.changeId && candidate.ref.capsuleId === intent.candidate.ref.capsuleId
+      && candidate.ref.artifactSha256 === intent.candidate.ref.artifactSha256)?.displayOrdinal : undefined;
+    decision.appendChild(h('p', 'review-current-choice', intent.mode === 'custom-mix' ? '自定义组合'
+      : chosenOrdinal === undefined ? '采用已选的完整方案' : `采用整个方案 ${chosenOrdinal}`));
+    decision.appendChild(h('p', 'review-section-intro', '以下说明来自这个结果的实际执行、项目变化和新鲜运行记录。'));
+    main.appendChild(decision);
+    const appendActual = (title: string, facts: typeof actual.actualIncluded, sectionName: string): void => {
+      const section = markReviewSection(h('section', 'review-section'), sectionName);
+      section.appendChild(h('h2', undefined, title));
+      if (facts.length === 0) section.appendChild(h('p', undefined, '无'));
+      const unidentified = facts.filter((fact) => fact.objectRef === undefined && fact.kind !== 'excluded-candidate');
+      for (const fact of facts.filter((item) => item.objectRef !== undefined || item.kind === 'excluded-candidate')) {
+        const label = fact.objectRef === undefined ? fact.label
+          : fact.label.includes(fact.objectRef) ? fact.label.replace(fact.objectRef, labelForObjectRef(fact.objectRef))
+            : labelForObjectRef(fact.objectRef);
+        section.appendChild(h('p', 'review-result-fact', label));
+      }
+      if (unidentified.length > 0) section.appendChild(h('p', undefined, `${unidentified.length} 项内容，具体来源见技术详情。`));
+      main.appendChild(section);
+    };
+    appendActual('实际采用的内容', actual.actualIncluded, 'actual-included');
+    appendActual('实际自动带入', actual.actualDependencies, 'actual-dependencies');
+    appendActual('实际未纳入', actual.actualExcluded, 'actual-excluded');
+    appendActual('实际项目变化', actual.actualChanges, 'actual-changes');
+    for (const warning of actual.warnings) overview.appendChild(h('p', 'review-warning', warning));
+  }
   const freshness = result.freshness;
   const previewShell = markReviewSection(h('section', 'review-section review-preview-shell'), 'result-preview');
   previewShell.appendChild(h('h2', undefined, '预览正式结果'));
@@ -942,7 +1276,10 @@ function renderResultReview(
         const target = document.getElementById('review-view') ?? container;
         renderReviewPanel(target, workspace, options);
         const host = target.querySelector('#review-preview-host');
-        if (host) renderPreviewPanel(host as HTMLElement, { embedded: true });
+        if (host) {
+          renderPreviewPanel(host as HTMLElement, { embedded: true });
+          host.scrollIntoView?.({ block: 'nearest' });
+        }
       })
       .catch((error) => {
         resultPreviews.delete(workspace);
@@ -956,7 +1293,7 @@ function renderResultReview(
   previewShell.appendChild(host);
   const operations = markReviewSection(h('div', 'review-operations review-result-actions'), 'result-actions');
   operations.setAttribute('data-editor-region', 'workspace-actions');
-  const approve = h('button', 'primary', pendingTerminalAction === 'result-approval' ? '再次确认批准状态' : '批准这个计划') as HTMLButtonElement;
+  const approve = h('button', 'primary', pendingTerminalAction === 'result-approval' ? '再次确认批准状态' : actual === undefined ? '批准这个计划' : '批准这个结果') as HTMLButtonElement;
   approve.setAttribute('data-action', 'approve-result');
   approve.setAttribute('data-action-scope', 'workspace');
   approve.disabled = terminalReceipt
@@ -1103,7 +1440,8 @@ function renderResultReview(
   }
 
   const evidence = markReviewSection(h('section', 'review-section review-evidence'), 'result-evidence');
-  evidence.appendChild(h('h2', undefined, '证据与观察'));
+  evidence.appendChild(h('h2', undefined, actual === undefined ? '证据与观察' : '实际运行与验证'));
+  if (actual !== undefined) appendRuntimePaths(evidence, actual.actualRuntimeOutcomes);
   evidence.appendChild(h('div', 'review-evidence-summary', [
     `证据新鲜度：差异 ${labelForFreshness(freshness.diff)}`,
     `校验 ${labelForFreshness(freshness.validation)}`,
@@ -1111,10 +1449,13 @@ function renderResultReview(
     `运行 ${labelForFreshness(freshness.runtime)}`,
   ].join('；')));
   const traceEvidence = reconcileReviewTraceEvidence(projection, state.previewTrace);
-  evidence.appendChild(h('div', undefined, `实际观察：${state.previewTrace.length > 0 ? `${state.previewTrace.length} 个事件` : '尚未观察'}`));
-  if (traceEvidence.matched.length > 0) evidence.appendChild(h('div', undefined, `已对照运行证据：${traceEvidence.matched.join('、')}`));
-  if (traceEvidence.missing.length > 0) evidence.appendChild(h('div', 'review-warning', `待对照运行证据：${traceEvidence.missing.join('、')}`));
-  if (traceEvidence.unexpected.length > 0) evidence.appendChild(h('div', 'review-warning', `正式证据外观察：${traceEvidence.unexpected.length} 个事件`));
+  const observations = h('section', 'review-result-section');
+  observations.appendChild(h('h3', undefined, '本次互动预览的记录对照'));
+  observations.appendChild(h('div', undefined, `本次预览：${state.previewTrace.length > 0 ? `${state.previewTrace.length} 个事件` : '尚未运行'}`));
+  if (traceEvidence.matched.length > 0) observations.appendChild(h('div', undefined, `已对照运行证据：${traceEvidence.matched.join('、')}`));
+  if (traceEvidence.missing.length > 0) observations.appendChild(h('div', undefined, `本次尚未覆盖：${traceEvidence.missing.join('、')}`));
+  if (traceEvidence.unexpected.length > 0) observations.appendChild(h('div', undefined, `正式证据外观察：${traceEvidence.unexpected.length} 个事件`));
+  if (actual === undefined) evidence.appendChild(observations);
 
   const technical = markReviewSection(
     h('details', 'review-technical-disclosure review-result-technical') as HTMLDetailsElement,
@@ -1135,15 +1476,17 @@ function renderResultReview(
   appendFact(evidenceIdentity, '模拟证据', result.evidence.simulationEvidenceId);
   appendFact(evidenceIdentity, '运行轨迹', listText(result.evidence.runtimeTraceIds));
   technical.appendChild(evidenceIdentity);
+  if (actual !== undefined) technical.appendChild(observations);
   appendTechDetails(technical, projection, '查看审阅包技术身份');
 
   main.appendChild(previewShell);
-  main.appendChild(operations);
+  if (actual === undefined) main.appendChild(operations);
   main.appendChild(resultSummary);
   main.appendChild(evidence);
+  if (actual !== undefined) main.appendChild(operations);
   main.appendChild(technical);
   shell.appendChild(main);
-  renderObjectDetails(shell, workspace);
+  renderObjectDetails(actual === undefined ? shell : technical, workspace);
   container.appendChild(shell);
 }
 

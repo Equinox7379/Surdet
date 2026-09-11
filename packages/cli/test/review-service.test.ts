@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   approvalFingerprintOf,
+  buildComparisonReviewProjection,
   stableStringify,
   type CandidateCapsuleRef,
   type ChangeRecord,
@@ -300,13 +301,18 @@ async function setupResultFixture(options: {
       createdAt: '2026-08-27T00:00:00.000Z',
       seed: 906,
       events: [{
-        kind: 'text',
+        kind: 'instruction',
         source: { sceneId: 'wave6_alpha', index: 0, op: 'text', file: 'content/scenario/wave6_alpha.gal', line: 2, col: 1 },
       }],
     });
   });
 
   const reviews = new NodeReviewStore(composition.store.projectDirectory, composition.projectIdentity);
+  await reviews.createReview(binding.reviewId, await buildComparisonReviewProjection({
+    reviewId: binding.reviewId,
+    comparison: comparison(composition.projectIdentity, snapshot.revision),
+    candidates: [], objects: [],
+  }, realHasher));
   const leases = options.leaseManagerFactory?.(dataRoot) ?? new NodeLocalLeaseManager(dataRoot);
   const service = new ReviewService(reviews, composition, realHasher, leases);
   const originalBefore = await hashProjectTree(projectRoot);
@@ -577,10 +583,10 @@ describe('ReviewService', () => {
       expect(prepareSettled, 'prepareResult returned before the in-flight project heartbeat drained').toBe(false);
       expect(createReviewCalls).toBe(1);
       const reviewIdsDuringDrain = await directoryNames(path.join(fixture.composition.store.projectDirectory, 'reviews'));
-      expect(reviewIdsDuringDrain).toHaveLength(1);
+      expect(reviewIdsDuringDrain).toHaveLength(2);
       const recordDuringDrain = await fixture.changeStore.read(fixture.changeId);
       const bindingDuringDrain = recordDuringDrain?.integration?.review?.resultReview;
-      expect(bindingDuringDrain?.reviewId).toBe(reviewIdsDuringDrain[0]);
+      expect(reviewIdsDuringDrain).toEqual(['decision-review', bindingDuringDrain?.reviewId].sort());
       const reviewDuringDrain = await fixture.reviews.readReview(bindingDuringDrain!.reviewId);
       const resultProjectDuringDrain = await fixture.reviews.resultProjectDirectory(bindingDuringDrain!.reviewId);
       expect(await hashProjectTree(resultProjectDuringDrain)).toBe(bindingDuringDrain?.resultTreeSha256);
@@ -594,7 +600,7 @@ describe('ReviewService', () => {
       expect(prepared.reviewId).toBe(bindingDuringDrain?.reviewId);
       expect(prepared.projection.finalResult?.resultTreeSha256).toBe(bindingDuringDrain?.resultTreeSha256);
       expect(createReviewCalls).toBe(1);
-      expect(await directoryNames(path.join(fixture.composition.store.projectDirectory, 'reviews'))).toEqual([prepared.reviewId]);
+      expect(await directoryNames(path.join(fixture.composition.store.projectDirectory, 'reviews'))).toEqual(['decision-review', prepared.reviewId].sort());
       const recordAfter = await fixture.changeStore.read(fixture.changeId);
       expect(recordAfter?.integration?.review?.resultReview).toEqual(bindingDuringDrain);
       expect((await fixture.reviews.readReview(prepared.reviewId)).identity).toEqual(reviewDuringDrain.identity);
@@ -691,7 +697,7 @@ describe('ReviewService', () => {
     expect((prepared.projection.finalResult as any).freshness).toEqual({ diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' });
     expect((prepared.projection.finalResult as any).runtimeTraceObservations).toEqual([{
       traceId: 'runtime-trace',
-      observationKeys: ['text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'],
+      observationKeys: ['instruction|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1'],
     }]);
     expect(await fsp.readFile(path.join(prepared.projectDirectory!, 'content', 'scenario', 'wave6_alpha.gal'), 'utf8'))
       .toBe(workingFiles['content/scenario/wave6_alpha.gal']);

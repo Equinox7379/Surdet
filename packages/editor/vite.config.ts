@@ -17,7 +17,7 @@ const assetImportPlugin = projectLauncher
   : assetImportAuthorityVitePlugin(undefined);
 
 export default defineConfig({
-  plugins: [reviewAuthorityVitePlugin(), assetImportPlugin],
+  plugins: [reviewAuthorityVitePlugin(projectLauncher ? { projectRoot, dataRoot } : {}), assetImportPlugin],
   server: { port: 5174 },
   build: {
     rollupOptions: {

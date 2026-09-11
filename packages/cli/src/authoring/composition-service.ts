@@ -6,6 +6,7 @@ import {
   loadProjectSnapshot,
   sealDryRunResult,
   fingerprintWorkingObject,
+  assertDecisionPlanContentFingerprint,
   type ConflictResolutionInput,
   type CandidateCapsuleRef,
   type CompositionComparison,
@@ -47,6 +48,25 @@ export interface CompositionPlanResult {
   comparison: CompositionCompareResult['comparison'];
 }
 
+export interface PrepareCompositionPlanInput {
+  candidateRefs: CandidateCapsuleRef[];
+  comparisonFingerprint: string;
+  selectedUnitIds: string[];
+  conflictResolutions?: ConflictResolutionInput[];
+  review?: IntegrationReviewBinding;
+  now?: string;
+}
+
+/**
+ * 比较、构造计划草稿与内存试运行的只读结果。
+ * 不封存正式计划，不调用 NodeCompositionStore.writePlan()，也不创建 change。
+ */
+export interface CompositionPlanPreparation {
+  comparison: CompositionCompareResult['comparison'];
+  draft: IntegrationPlanDraft;
+  dryRun: CompositionDryRunReport;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -68,12 +88,12 @@ function agentDataRoot(): string {
 }
 
 /** 从项目根组装服务（与 NodeChangeStore 同一 dataRoot 约定），供 MCP/CLI 薄投影复用。 */
-export async function compositionServiceForProject(projectRoot: string): Promise<CompositionService> {
+export async function compositionServiceForProject(projectRoot: string, dataRoot = agentDataRoot()): Promise<CompositionService> {
   const resolved = path.resolve(projectRoot);
   const storage = await NodeProjectStorage.open(resolved);
   const identity = projectIdentityFromRoot(storage.rootIdentity);
-  const store = new NodeCompositionStore(path.join(agentDataRoot(), identity), identity);
-  return new CompositionService(store, identity, resolved, sha256TextHasher);
+  const store = new NodeCompositionStore(path.join(dataRoot, identity), identity);
+  return new CompositionService(store, identity, resolved, sha256TextHasher, new NodeLocalLeaseManager(dataRoot));
 }
 
 export interface IntegrationProvenanceSource {
@@ -176,17 +196,11 @@ export class CompositionService {
   }
 
   /**
-   * 完整 plan 流程：compare → buildIntegrationPlan → dry-run → seal → writePlan。
+   * 只读计划准备：compare → buildIntegrationPlan → 内存 dry-run。
+   * 该层供正式 plan 与人类决定预览共同复用，绝不写 plan artifact。
    * comparison 每次现场重算，绝不接受调用方传入的旧 comparison JSON。
    */
-  async plan(input: {
-    candidateRefs: CandidateCapsuleRef[];
-    comparisonFingerprint: string;
-    selectedUnitIds: string[];
-    conflictResolutions?: ConflictResolutionInput[];
-    review?: IntegrationReviewBinding;
-    now?: string;
-  }): Promise<CompositionPlanResult> {
+  async preparePlan(input: PrepareCompositionPlanInput): Promise<CompositionPlanPreparation> {
     // Re-compare live on every request; the caller's fingerprint must match the fresh
     // result, otherwise the reviewed decision is stale and we fail loud instead of
     // silently accepting outdated selections.
@@ -217,9 +231,29 @@ export class CompositionService {
       now: input.now ?? new Date().toISOString(),
     }, this.hasher);
     const dryRun = await this.dryRun(draft);
-    const sealedPlan = await sealDryRunResult(draft, dryRun, this.hasher);
+    return { comparison, draft, dryRun };
+  }
+
+  /**
+   * 正式 plan 流程是唯一计划落盘入口：复用只读准备结果，再 seal + writePlan。
+   * 决定预览只能调用 preparePlan()，不能调用本方法后删除或忽略计划文件。
+   */
+  async plan(input: PrepareCompositionPlanInput & { expectedPlanContentFingerprint?: string }): Promise<CompositionPlanResult> {
+    const prepared = await this.preparePlan(input);
+    if (input.expectedPlanContentFingerprint !== undefined) {
+      await assertDecisionPlanContentFingerprint({
+        receipt: { planContentFingerprint: input.expectedPlanContentFingerprint },
+        draft: prepared.draft,
+        dryRun: prepared.dryRun,
+      }, this.hasher);
+    }
+    const sealedPlan = await sealDryRunResult(
+      prepared.draft,
+      prepared.dryRun,
+      this.hasher,
+    );
     const identity = await this.store.writePlan(sealedPlan);
-    return { plan: sealedPlan, identity, comparison };
+    return { plan: sealedPlan, identity, comparison: prepared.comparison };
   }
 
   /**

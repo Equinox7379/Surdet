@@ -19,6 +19,9 @@ import type {
   VerifiedReviewApproval,
 } from './review-contracts.js';
 import type { IntegrationMetadata } from './integration-execution.js';
+import { decisionFingerprintV2Of, type ComparisonDecisionReceiptV2 } from './review-decision-receipt-v2.js';
+import { isReviewDecisionIntent, reviewDecisionPreviewFingerprintOf } from './review-decision-preview.js';
+import { isReviewProjectionV2Fields, resultReviewFingerprintOf } from './review-projection.js';
 
 export interface ComparisonDecisionReceipt {
   receiptVersion: '1.0.0';
@@ -39,6 +42,8 @@ export interface ComparisonDecisionReceipt {
   decisionFingerprint: string;
 }
 
+export type AnyComparisonDecisionReceipt = ComparisonDecisionReceipt | ComparisonDecisionReceiptV2;
+
 export type IntegrationReviewBinding =
   | { reviewState: 'unreviewed' }
   | {
@@ -49,7 +54,7 @@ export type IntegrationReviewBinding =
     };
 
 export interface VerifiedComparisonDecision {
-  receipt: ComparisonDecisionReceipt;
+  receipt: AnyComparisonDecisionReceipt;
   selectedUnitIds: string[];
   conflictResolutions: ConflictResolutionInput[];
   review: Extract<IntegrationReviewBinding, { reviewState: 'human-reviewed' }>;
@@ -322,6 +327,11 @@ export async function validateFinalApproval(input: {
   if (projection.kind !== 'integration-result' || projection.state !== 'STAGE_READY' || finalResult === undefined) {
     throw new AuthoringOperationError('REVIEW_RESULT_NOT_READY', 'result projection 不是可批准的 STAGE_READY 结果');
   }
+  if (projection.reviewVersion === '2.0.0'
+    && (!isReviewProjectionV2Fields(projection)
+      || projection.reviewFingerprint !== await resultReviewFingerprintOf(projection, hasher))) {
+    throw approvalStale('最终结果说明与审阅身份不一致。');
+  }
   const expectedEvidence = resultEvidenceFromFinal(finalResult);
   const actualReceiptEvidence = {
     diffEvidenceId: receipt.evidence.diffEvidenceId,
@@ -497,7 +507,7 @@ function selectionConflicts(projection: HumanReviewProjection): ReviewConflict[]
 
 export async function validateComparisonDecision(input: {
   projection: HumanReviewProjection;
-  receipt: ComparisonDecisionReceipt;
+  receipt: AnyComparisonDecisionReceipt;
 }, hasher: TextHasher): Promise<VerifiedComparisonDecision> {
   const { projection, receipt } = input;
   if (projection.kind !== 'comparison' || projection.state !== 'COMPARISON_PREPARED') {
@@ -514,13 +524,42 @@ export async function validateComparisonDecision(input: {
   if (stableStringify(actualCandidateRefs) !== stableStringify(expectedCandidateRefs)) {
     throw stale('决定对应的 candidateRefs 已变化');
   }
-  if (receipt.receiptVersion !== '1.0.0' || receipt.reviewerChannel !== 'surdet-editor-local') {
+  if (receipt.receiptVersion !== projection.reviewVersion || receipt.reviewerChannel !== 'surdet-editor-local') {
     throw invalid('决定回执版本或 reviewerChannel 非法');
   }
   if (receipt.decisionId.length === 0 || receipt.decidedAt.length === 0) {
     throw invalid('决定回执缺少 decisionId 或 decidedAt');
   }
-  const expectedFingerprint = await decisionFingerprintOf(receipt, hasher);
+  if (receipt.receiptVersion === '2.0.0') {
+    if (projection.reviewVersion !== '2.0.0') throw invalid('v2 决定必须来自 v2 审阅');
+    if (receipt.reviewFingerprint !== projection.reviewFingerprint) throw stale('决定绑定的审阅内容已变化');
+    if (!isReviewDecisionIntent(receipt.decisionIntent)) throw invalid('决定意图结构无效');
+    const chosen = receipt.decisionIntent.mode === 'adopt-candidate'
+      ? receipt.decisionIntent.candidate : receipt.decisionIntent.baseCandidate;
+    if (chosen !== undefined && !projection.candidates.some((candidate) =>
+      candidate.candidateId === chosen.candidateId
+      && stableStringify(candidate.ref) === stableStringify(chosen.ref))) {
+      throw stale('决定意图引用了当前审阅之外的候选');
+    }
+    const units = new Set(projection.candidates.flatMap((candidate) => candidate.verifiedFacts.units.map((unit) => unit.unitId)));
+    if (receipt.selectedUnitIds.some((unitId) => !units.has(unitId))) throw invalid('决定选择了审阅之外的单元');
+    if (receipt.decisionIntent.mode === 'adopt-candidate') {
+      const preset = projection.candidates.find((candidate) => candidate.candidateId === chosen!.candidateId)!.adoptionPreset;
+      if (preset.status !== 'available'
+        || stableStringify([...receipt.selectedUnitIds].sort()) !== stableStringify([...preset.selectedUnitIds].sort())
+        || stableStringify(normalizeReceiptResolutions(receipt.conflictResolutions))
+          !== stableStringify(normalizeReceiptResolutions(preset.conflictResolutions))) {
+        throw invalid('整案决定没有保留所选候选的完整推导结果');
+      }
+    }
+    if (!/^[0-9a-f]{64}$/.test(receipt.planContentFingerprint)
+      || receipt.previewFingerprint !== await reviewDecisionPreviewFingerprintOf(receipt, hasher)) {
+      throw invalid('决定的预览身份与审阅、意图或计划内容不符');
+    }
+  }
+  const expectedFingerprint = receipt.receiptVersion === '2.0.0'
+    ? await decisionFingerprintV2Of(receipt, hasher)
+    : await decisionFingerprintOf(receipt, hasher);
   if (receipt.decisionFingerprint !== expectedFingerprint) {
     throw invalid('decisionFingerprint 与决定内容不符');
   }

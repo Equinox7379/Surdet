@@ -112,6 +112,11 @@ export const fakeFileSystemInit = ({ rootName, files }) => {
     if (name.endsWith('.json')) return 'application/json';
     if (name.endsWith('.gal')) return 'text/plain';
     if (name.endsWith('.svg')) return 'image/svg+xml';
+    if (name.endsWith('.png')) return 'image/png';
+    if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+    if (name.endsWith('.webp')) return 'image/webp';
+    if (name.endsWith('.gif')) return 'image/gif';
+    if (name.endsWith('.avif')) return 'image/avif';
     if (name.endsWith('.otf')) return 'font/otf';
     if (name.endsWith('.wav')) return 'audio/wav';
     if (name.endsWith('.ogg')) return 'audio/ogg';

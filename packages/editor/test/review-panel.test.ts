@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { reviewDecisionPreviewFingerprintOf } from '@surdet/authoring';
 import type {
   FinalApprovalReceipt,
   HumanReviewProjection,
+  HumanReviewProjectionV2,
+  ReviewDecisionPreview,
+  ReviewDecisionPreviewCommand,
   ReturnRequestReceipt,
   ReviewObjectSummary,
   ReviewTerminalCommand,
@@ -30,6 +35,8 @@ class FakeElement {
   type = '';
   title = '';
   onclick: (() => void) | null = null;
+  onchange: (() => void) | null = null;
+  checked = false;
   ontoggle: (() => void) | null = null;
   private ownText = '';
 
@@ -190,6 +197,48 @@ function comparisonWorkspace(): ReviewWorkspaceState {
   return workspaceFor(projection);
 }
 
+function wholeWorkspace(): ReviewWorkspaceState {
+  const base = comparisonWorkspace().projection;
+  const projection: HumanReviewProjectionV2 = {
+    ...base, reviewVersion: '2.0.0', reviewFingerprint: 'e'.repeat(64), defaultSelectedUnitIds: [],
+    sourceIdentity: { ...base.sourceIdentity, comparisonFingerprint: 'f'.repeat(64) },
+    creativeBrief: { status: 'provided', source: 'review-preparation-input', request: '写一段分别通向两个结局的海边故事。', acceptanceCriteria: [] },
+    candidates: base.candidates.filter((candidate) => candidate.candidateId !== 'candidate-d').map((candidate) => {
+      const unit = base.conflicts[0]!.options.find((item) => item.candidateId === candidate.candidateId)!;
+      const unique = { ...unit, unitId: `${unit.unitId}-unique`, primaryObject: `scene:${candidate.displayOrdinal}_end`, presentation: { actionLabel: '新建场景', objectLabel: `结局 ${candidate.displayOrdinal}`, highlights: [`这是方案 ${candidate.displayOrdinal} 独有的结局。`], completeness: 'content' as const, omittedFactCount: 0 } };
+      return {
+        ...candidate, claims: { source: 'candidate-change-intent' as const, statement: '候选自己的主张', acceptanceCriteria: [] },
+        verifiedFacts: {
+          source: { content: 'sealed-composition-manifest' as const, evidence: 'sealed-capsule-evidence' as const, runtime: 'sealed-runtime-trace' as const },
+          units: [unit, unique], content: { changedObjects: [], choices: [], variables: [], timelines: [], assets: [], excerpts: [], omittedFactCount: 0,
+            scenes: [{ sceneId: `${candidate.displayOrdinal}_end`, objectRef: unique.primaryObject, unitId: unique.unitId, action: 'create', operationSequence: 1, highlights: ['已经替换的旧结局。'] }],
+            finalScenes: [{ sceneId: `${candidate.displayOrdinal}_end`, unitId: unique.unitId, source: 'sealed-capsule-diff' as const, paragraphs: unique.presentation.highlights }] },
+          runtime: { status: 'verified' as const, paths: [{ traceId: `trace-${candidate.displayOrdinal}`, status: 'passed' as const, startSceneId: 'start', visitedSceneIds: ['start', `${candidate.displayOrdinal}_end`], choices: [{ sceneId: 'start', optionIndex: 0, label: `走向结局 ${candidate.displayOrdinal}` }], endingSceneId: `${candidate.displayOrdinal}_end`, finalVariables: [{ name: 'route', value: 1 }] }], limitations: [] },
+        },
+        adoptionPreset: { candidateId: candidate.candidateId, candidateRef: candidate.ref, status: 'available' as const, selectedUnitIds: [unit.unitId, unique.unitId],
+          conflictResolutions: [{ conflictId: 'conflict-1', resolution: 'choose-unit' as const, chosenUnitId: unit.unitId, actor: 'human' as const }], reasons: [] },
+      };
+    }),
+  };
+  return workspaceFor(projection);
+}
+
+async function panelWholePreview(command: ReviewDecisionPreviewCommand): Promise<ReviewDecisionPreview> {
+  const projection = wholeWorkspace().projection as HumanReviewProjectionV2;
+  const intent = command.decisionIntent;
+  const candidate = intent.mode === 'adopt-candidate' ? projection.candidates.find((item) => item.candidateId === intent.candidate.candidateId)! : undefined;
+  const selectedUnitIds = candidate?.adoptionPreset.selectedUnitIds ?? command.customSelection!.selectedUnitIds;
+  const preview: ReviewDecisionPreview = {
+    previewVersion: '1.0.0', reviewId: command.reviewId, reviewFingerprint: projection.reviewFingerprint,
+    comparisonFingerprint: projection.sourceIdentity.comparisonFingerprint, decisionIntent: intent, status: 'ready', selectedUnitIds,
+    conflictResolutions: candidate?.adoptionPreset.conflictResolutions.map(({ conflictId, resolution, chosenUnitId }) => ({ conflictId, resolution, chosenUnitId })) ?? command.customSelection!.conflictResolutions,
+    effectiveUnitIds: selectedUnitIds, implicitInclusions: [], excludedUnitIds: projection.candidates.flatMap((item) => item.adoptionPreset.selectedUnitIds).filter((id) => !selectedUnitIds.includes(id)),
+    planContentFingerprint: '1'.repeat(64), dryRun: { status: 'passed', errors: [], finalObjectFingerprints: { 'scene:actual_end': '2'.repeat(64) } }, previewFingerprint: '',
+  };
+  preview.previewFingerprint = await reviewDecisionPreviewFingerprintOf(preview, { sha256: async (text) => createHash('sha256').update(text).digest('hex') });
+  return preview;
+}
+
 function resultWorkspace(): ReviewWorkspaceState {
   const projection = comparisonWorkspace().projection;
   const result: HumanReviewProjection = {
@@ -241,7 +290,7 @@ function workspaceFor(projection: HumanReviewProjection): ReviewWorkspaceState {
   return {
     rootHandle: {} as FileSystemDirectoryHandle,
     identity: {
-      reviewVersion: '1.0.0', reviewId: projection.reviewId, kind: projection.kind,
+      reviewVersion: projection.reviewVersion, reviewId: projection.reviewId, kind: projection.kind,
       projectIdentity: projection.projectIdentity, expectedProjectRevision: projection.expectedProjectRevision,
       comparisonFingerprint: projection.sourceIdentity.comparisonFingerprint,
       payload: { relativePath: projection.kind === 'comparison' ? 'comparison/review.json' : 'result/review.json', bytes: 1, sha256: '0'.repeat(64) },
@@ -267,6 +316,86 @@ afterEach(() => {
 });
 
 describe('Editor review panel', () => {
+  it('shows separate sources and complete unique content, then previews every whole or mix selection', async () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = wholeWorkspace();
+    const previewDecision = vi.fn(panelWholePreview);
+    const client = { previewDecision, status: async () => 'available' as const, describe: async () => { throw new Error('unused'); }, write: async () => { throw new Error('unused'); } };
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: client });
+    expect(textOf(container)).toContain('原始创作要求');
+    expect(textOf(container)).toContain('候选自述');
+    expect(textOf(container)).toContain('方案正文');
+    expect(textOf(container)).toContain('这是方案 A 独有的结局。');
+    expect(textOf(container)).not.toContain('已经替换的旧结局。');
+    expect(textOf(container)).toContain('走向结局 C');
+    expect(textOf(container)).not.toContain('review-fp');
+    expect(textOf(container)).not.toContain('unit-a');
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual([]);
+    expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-mix-unit]')).toBeNull();
+    container.querySelector('[data-adopt-candidate="candidate-a"]')!.click();
+    expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(true);
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual(['unit-a', 'unit-a-unique']);
+    expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(false);
+    expect(textOf(container)).toContain('场景 actual_end');
+
+    container.querySelector('[data-proposal-switch="candidate-c"]')!.click();
+    expect(container.querySelector('[data-proposal="candidate-c"]')?.getAttribute('data-proposal-visible')).toBe('true');
+    expect(workspace.decisionDraft.decisionIntent).toMatchObject({ mode: 'adopt-candidate', candidate: { candidateId: 'candidate-a' } });
+    container.querySelector('[data-action="custom-mix"]')!.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
+    container.querySelector('[data-mix-base="candidate-c"]')!.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual(['unit-c', 'unit-c-unique']);
+    const check = container.querySelector('[data-mix-unit="unit-c-unique"]')!;
+    check.checked = false; check.onchange!();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
+    expect(previewDecision.mock.calls.at(-1)?.[0]).toMatchObject({ decisionIntent: { mode: 'custom-mix', baseCandidate: { candidateId: 'candidate-c' } }, customSelection: { selectedUnitIds: ['unit-c'] } });
+    container.querySelector('[data-mix-base="none"]')!.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
+    expect(workspace.decisionDraft.decisionIntent).toEqual({ mode: 'custom-mix' });
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual([]);
+    expect(workspace.decisionDraft.conflictResolutions).toEqual([{ conflictId: 'conflict-1', resolution: 'exclude-all' }]);
+    expect(previewDecision).toHaveBeenCalledTimes(5);
+  });
+
+  it('puts actual decision, execution changes and runtime before the v2 approval and folded technical evidence', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = resultWorkspace();
+    const original = workspace.projection;
+    const result = original.finalResult!;
+    workspace.projection = {
+      ...original, reviewVersion: '2.0.0', candidates: [], defaultSelectedUnitIds: [],
+      creativeBrief: { status: 'not-provided', source: 'review-preparation-input', acceptanceCriteria: [] },
+      finalResult: { ...result, actualExplanation: {
+        source: 'integration-result', decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: 'candidate-a', ref: result.plan.sourceCandidates[0]!.ref } },
+        decisionFingerprint: 'decision-fp', planId: result.planId, planFingerprint: result.planFingerprint,
+        integrationChangeId: result.integrationChangeId, workingRevision: result.workingRevision, runtimeTraceIds: result.evidence.runtimeTraceIds,
+        selectedSources: [], actualIncluded: [{ kind: 'included-unit', label: 'technical-unit-name', objectRef: 'scene:actual_story' }],
+        actualDependencies: [{ kind: 'automatic-dependency', label: 'dependency', objectRef: 'timeline:actual_performance' }],
+        actualExcluded: [{ kind: 'excluded-candidate', label: '方案 D 未纳入' }],
+        actualChanges: [{ kind: 'changed-object', label: 'change', objectRef: 'scene:actual_story' }],
+        actualRuntimeOutcomes: [{ traceId: 'trace-1', status: 'passed', startSceneId: 'actual_story', visitedSceneIds: ['actual_story', 'actual_ending'], choices: [{ sceneId: 'actual_story', optionIndex: 0, label: '实际结果中的选择' }], endingSceneId: 'actual_ending', finalVariables: [{ name: 'route', value: 2 }] }],
+        warnings: [], explanationFingerprint: 'explanation-fp',
+      } },
+    };
+    const container = new FakeElement('div'); renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const main = container.querySelector('[data-review-main="result"]')!;
+    const sections = ['actual-decision', 'actual-included', 'actual-dependencies', 'actual-excluded', 'actual-changes', 'result-preview', 'result-evidence', 'result-actions', 'technical'];
+    const order = sections.map((name) => main.children.indexOf(main.querySelector(`[data-review-section="${name}"]`)!));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(textOf(container)).toContain('采用整个方案 A');
+    expect(textOf(container)).toContain('场景 actual_story');
+    expect(textOf(container)).toContain('实际结果中的选择');
+    expect(textOf(container)).toContain('route = 2');
+    expect(textOf(container)).not.toContain('technical-unit-name');
+    expect(textOf(container)).not.toContain('plan-fp');
+    expect(textOf(container)).not.toContain('+Alpha A');
+    expect(container.querySelector('[data-action="approve-result"]')?.textContent).toBe('批准这个结果');
+  });
   it('keeps review content visible but disables terminal controls when the local authority is unavailable', () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
@@ -364,21 +493,19 @@ describe('Editor review panel', () => {
     expect(container.querySelector('[data-choice-unit="unit-d"]')!.textContent).not.toBe(choiceForUnit!.textContent);
     const projectionBeforeChoice = JSON.stringify(workspace.projection);
     choiceForUnit!.click();
-    expect(choiceForUnit!.getAttribute('aria-pressed')).toBe('true');
-    expect(choiceForUnit!.getAttribute('data-choice-selected')).toBe('true');
-    expect(choiceForUnit!.textContent).toContain('已选择');
+    expect(choiceForUnit!.disabled).toBe(true);
+    expect(choiceForUnit!.getAttribute('aria-pressed')).toBe('false');
+    expect(textOf(container)).toContain('旧版只读审阅');
     expect(container.querySelector('[data-choice-unit="unit-d"]')!.getAttribute('aria-pressed')).toBe('false');
     const safeToggle = container.querySelector('[data-safe-group-toggle="group-1"]')!;
     expect(safeToggle.getAttribute('aria-pressed')).toBe('true');
     expect(safeToggle.textContent).toBe('排除本组');
     expect(JSON.stringify(workspace.projection)).toBe(projectionBeforeChoice);
-    expect(decisionButton?.disabled).toBe(false);
-    expect(workspace.decisionDraft.conflictResolutions).toEqual([
-      { conflictId: 'conflict-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' },
-    ]);
+    expect(decisionButton?.disabled).toBe(true);
+    expect(workspace.decisionDraft.conflictResolutions).toEqual([]);
   });
 
-  it('keeps an identical unit choice scoped to its own conflict', () => {
+  it('keeps both historical conflict choices unchanged in a readonly review', () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
     const firstConflict = workspace.projection.conflicts[0]!;
@@ -397,7 +524,8 @@ describe('Editor review panel', () => {
 
     firstChoice.click();
 
-    expect(firstChoice.getAttribute('aria-pressed')).toBe('true');
+    expect(firstChoice.getAttribute('aria-pressed')).toBe('false');
+    expect(firstChoice.disabled).toBe(true);
     expect(secondChoice.getAttribute('aria-pressed')).toBe('false');
     expect(secondChoice.textContent).not.toContain('已选择');
   });
@@ -421,7 +549,7 @@ describe('Editor review panel', () => {
     expect(textOf(container)).toContain('还需决定 1 项');
   });
 
-  it('excludes and restores a safe group through the existing decision draft', () => {
+  it('preserves a historical safe group without allowing new exclusions', () => {
     vi.stubGlobal('document', documentStub);
     const workspace = comparisonWorkspace();
     const projectionBeforeToggle = JSON.stringify(workspace.projection);
@@ -433,10 +561,8 @@ describe('Editor review panel', () => {
     expect(toggle.textContent).toBe('排除本组');
 
     toggle.click();
-    expect(workspace.decisionDraft.selectedUnitIds).not.toContain('unit-a');
-    expect(workspace.decisionDraft.selectedUnitIds).not.toContain('unit-d');
-    expect(toggle.getAttribute('aria-pressed')).toBe('false');
-    expect(toggle.textContent).toBe('保留本组');
+    expect(toggle.disabled).toBe(true);
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual(expect.arrayContaining(['unit-a', 'unit-d']));
 
     toggle.click();
     expect(workspace.decisionDraft.selectedUnitIds).toEqual(expect.arrayContaining(['unit-a', 'unit-d']));
@@ -550,8 +676,9 @@ describe('Editor review panel', () => {
 
   it('generates one decision identity and reuses it after an uncertain save response', async () => {
     vi.stubGlobal('document', documentStub);
-    const workspace = comparisonWorkspace();
+    const workspace = wholeWorkspace();
     const terminalClient = {
+      previewDecision: panelWholePreview,
       status: async () => 'available' as const,
       describe: async () => { throw new Error('not used'); },
       write: vi.fn(async (_command: ReviewTerminalCommand) => {
@@ -562,7 +689,8 @@ describe('Editor review panel', () => {
     const options = { now: () => '2026-08-29T00:00:00.000Z', reviewTerminalClient: terminalClient };
     renderReviewPanel(container as unknown as HTMLElement, workspace, options);
 
-    container.querySelector('[data-choice-unit="unit-a"]')!.click();
+    container.querySelector('[data-adopt-candidate="candidate-a"]')!.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
     const save = container.querySelector('[data-action="save-decision"]')!;
     save.click();
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
@@ -573,7 +701,7 @@ describe('Editor review panel', () => {
     container.querySelector('[data-action="save-decision"]')!.click();
     expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
-    const lockedChoice = container.querySelector('[data-choice-unit="unit-d"]')!;
+    const lockedChoice = container.querySelector('[data-adopt-candidate="candidate-c"]')!;
     expect(lockedChoice.disabled).toBe(true);
     lockedChoice.click();
     expect(workspace.decisionDraft.decisionId).toBe(firstDecisionId);
@@ -589,15 +717,17 @@ describe('Editor review panel', () => {
 
   it('does not expose raw transport errors in the user-facing save message', async () => {
     vi.stubGlobal('document', documentStub);
-    const workspace = comparisonWorkspace();
+    const workspace = wholeWorkspace();
     const terminalClient = {
+      previewDecision: panelWholePreview,
       status: async () => 'available' as const,
       describe: async () => { throw new Error('not used'); },
       write: async () => { throw new Error('ENGLISH_SECRET_DETAIL'); },
     };
     const container = new FakeElement('div');
     renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: terminalClient });
-    container.querySelector('[data-choice-unit="unit-a"]')!.click();
+    container.querySelector('[data-adopt-candidate="candidate-a"]')!.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
     container.querySelector('[data-action="save-decision"]')!.click();
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
     expect(statusElement.textContent).not.toContain('ENGLISH_SECRET_DETAIL');
@@ -606,12 +736,13 @@ describe('Editor review panel', () => {
 
   it('freezes every decision control while a receipt write is pending', async () => {
     vi.stubGlobal('document', documentStub);
-    const workspace = comparisonWorkspace();
+    const workspace = wholeWorkspace();
     let rejectWrite: ((error: Error) => void) | null = null;
     const write = vi.fn(() => new Promise<never>((_resolve, reject) => {
       rejectWrite = reject;
     }));
     const terminalClient = {
+      previewDecision: panelWholePreview,
       status: async () => 'available' as const,
       describe: async () => { throw new Error('not used'); },
       write,
@@ -622,9 +753,9 @@ describe('Editor review panel', () => {
       reviewTerminalClient: terminalClient,
     });
 
-    const choiceA = container.querySelector('[data-choice-unit="unit-a"]')!;
-    const choiceD = container.querySelector('[data-choice-unit="unit-d"]')!;
+    const choiceA = container.querySelector('[data-adopt-candidate="candidate-a"]')!;
     choiceA.click();
+    await vi.waitFor(() => expect(workspace.decisionPreview?.status).toBe('ready'));
     const selectedBeforeSave = [...workspace.decisionDraft.selectedUnitIds];
     const resolutionsBeforeSave = workspace.decisionDraft.conflictResolutions.map((resolution) => ({ ...resolution }));
     const save = container.querySelector('[data-action="save-decision"]')!;
@@ -633,15 +764,16 @@ describe('Editor review panel', () => {
     const sealedDecisionId = workspace.decisionDraft.decisionId;
 
     const decisionControls = container.querySelectorAll('button').filter((button) => (
-      button.getAttribute('data-choice-unit') !== null
-      || button.getAttribute('data-choice-exclude') !== null
-      || button.getAttribute('data-choice-regenerate') !== null
+      button.getAttribute('data-adopt-candidate') !== null
+      || button.getAttribute('data-action') === 'custom-mix'
+      || button.getAttribute('data-action') === 'preview-decision'
       || button.getAttribute('data-action') === 'save-decision'
     ));
     for (const control of decisionControls) expect(control.disabled).toBe(true);
-    choiceD.click();
+    container.querySelector('[data-adopt-candidate="candidate-c"]')!.click();
     expect(workspace.decisionDraft).toEqual({
       decisionId: sealedDecisionId,
+      decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: 'candidate-a', ref: workspace.projection.candidates[0]!.ref } },
       selectedUnitIds: selectedBeforeSave,
       conflictResolutions: resolutionsBeforeSave,
     });
@@ -650,9 +782,8 @@ describe('Editor review panel', () => {
     rejectWrite!(Object.assign(new Error('release pending receipt write'), { code: 'REVIEW_BUSY' }));
     await vi.waitFor(() => expect(statusElement.textContent).toContain('保存决定失败'));
     for (const control of container.querySelectorAll('button').filter((button) => (
-      button.getAttribute('data-choice-unit') !== null
-      || button.getAttribute('data-choice-exclude') !== null
-      || button.getAttribute('data-choice-regenerate') !== null
+      button.getAttribute('data-adopt-candidate') !== null
+      || button.getAttribute('data-action') === 'custom-mix'
     ))) expect(control.disabled).toBe(true);
     expect(container.querySelector('[data-action="save-decision"]')?.disabled).toBe(false);
     expect(container.querySelector('[data-action="save-decision"]')?.textContent).toContain('再次确认');

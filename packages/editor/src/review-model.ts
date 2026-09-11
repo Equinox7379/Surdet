@@ -81,10 +81,12 @@ export function labelForUnknownCode(code: string): string {
 
 /** 把稳定 objectRef 转成面向人的短标签；原始 ref 仍可放在技术详情中。 */
 export function labelForObjectRef(objectRef: string): string {
+  if (objectRef === 'config:entryScene') return '项目入口场景';
   const separator = objectRef.indexOf(':');
   if (separator < 0) return `对象 ${objectRef}`;
   const kind = objectRef.slice(0, separator);
   const semanticId = objectRef.slice(separator + 1);
+  if (kind === 'config') return `项目配置 ${semanticId}`;
   return `${labelForObjectKind(kind)} ${semanticId}`;
 }
 

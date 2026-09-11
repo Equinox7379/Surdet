@@ -240,8 +240,7 @@ export class NodeChangeStore implements ChangeRepository {
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
   }
 
-  static async openByChangeId(changeId: string): Promise<OpenChangeResult | null> {
-    const root = dataRoot();
+  static async openByChangeId(changeId: string, root = dataRoot()): Promise<OpenChangeResult | null> {
     const projects = await fs.readdir(root, { withFileTypes: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
@@ -307,9 +306,9 @@ export class NodeChangeStore implements ChangeRepository {
   static async openForProject(
     changeId: string,
     projectRootIdentity: string,
-    options: { allowTerminal?: boolean; allowStale?: boolean } = {},
+    options: { allowTerminal?: boolean; allowStale?: boolean; dataRoot?: string } = {},
   ): Promise<OpenChangeResult | null> {
-    const root = dataRoot();
+    const root = options.dataRoot ?? dataRoot();
     const projectDirectory = path.join(root, projectIdentityFromRoot(projectRootIdentity));
     const changeDirectory = path.join(projectDirectory, safeId(changeId));
     if (!(await isDirectory(changeDirectory))) return null;
@@ -360,7 +359,7 @@ export class NodeChangeStore implements ChangeRepository {
   ): Promise<T> {
     const manager = options.leaseManager ?? new NodeLocalLeaseManager();
     return manager.withLease({ scope: 'change', resourceId: changeId }, async (handle) => {
-      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, options);
+      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { ...options, dataRoot: manager.dataRoot });
       if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
       const leased = new NodeChangeStore(opened.store.rootDirectory, opened.store.rootIdentity, opened.store.projectDirectory, {
         manager,

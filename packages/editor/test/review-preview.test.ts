@@ -92,6 +92,14 @@ describe('review result preview', () => {
       .toEqual({ sceneId: 'wave6_alpha', choices: { 'choice-1': 'a' }, timelineId: 'timeline-1' });
   });
 
+  it('starts a whole result at its project entry rather than an alphabetically earlier changed ending', () => {
+    const value: HumanReviewProjection = { ...projection(), reviewVersion: '2.0.0', candidates: [], defaultSelectedUnitIds: [],
+      creativeBrief: { status: 'not-provided', source: 'review-preparation-input', acceptanceCriteria: [] } };
+    expect(selectReviewPreviewScene(['wave6_alpha', 'entry'], value, undefined, 'entry')).toBe('entry');
+    expect(selectReviewPreviewScene(['wave6_alpha', 'entry'], value, 'wave6_alpha', 'entry')).toBe('wave6_alpha');
+    expect(selectReviewPreviewScene(['wave6_alpha'], value, undefined, 'missing')).toBe('wave6_alpha');
+  });
+
   it('hashes the fixture tree by sorted relative file identities, independent of enumeration order', async () => {
     const first = new MemoryDirectory('project').file('b.txt', 'B').file('a.txt', 'A');
     const second = new MemoryDirectory('project').file('a.txt', 'A').file('b.txt', 'B');

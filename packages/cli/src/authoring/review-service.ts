@@ -12,22 +12,30 @@ import {
   reviewTraceObservationKey,
   stableStringify,
   validateComparisonDecision,
+  isComparisonDecisionReceiptV2,
+  isReviewProjectionV2Fields,
+  assertDecisionPlanContentFingerprint,
   validateFinalApproval,
   validateReturnRequest,
   type AuthoringObject,
   type CandidateCapsuleRef,
+  type CreativeBriefInput,
   type ChangeDiff,
   type ChangeRecord,
-  type ComparisonDecisionReceipt,
+  type AnyComparisonDecisionReceipt,
   type CompositionComparison,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
   type IntegrationPlan,
   type ResultReviewCurrentFacts,
   type ReturnRequestReceipt,
+  type RuntimeTraceEvent,
   type TextHasher,
   type VerifiedComparisonDecision,
   type VerifiedReviewApproval,
+  type VerifiedCompositionCandidate,
+  type ReviewCandidateRuntimeInput,
+  type ReviewRuntimeTraceInput,
 } from '@surdet/authoring';
 import type { CompositionCompareResult, CompositionService } from './composition-service.js';
 import { compositionServiceForProject } from './composition-service.js';
@@ -203,18 +211,22 @@ export async function hashProjectTree(directory: string): Promise<string> {
   return treeIdentityOf(files);
 }
 
-function candidateIntent(candidate: unknown): { intent?: string; acceptanceCriteria: string[] } {
-  if (!isRecord(candidate)) return { acceptanceCriteria: [] };
-  const intent = typeof candidate['intent'] === 'string' && candidate['intent'].trim().length > 0
-    ? candidate['intent']
-    : undefined;
-  const criteria = Array.isArray(candidate['acceptanceCriteria'])
-    ? candidate['acceptanceCriteria'].filter((item): item is string => typeof item === 'string')
-    : [];
-  return {
-    ...(intent === undefined ? {} : { intent }),
-    acceptanceCriteria: criteria,
-  };
+function isReviewRuntimeEvent(value: unknown): value is RuntimeTraceEvent {
+  if (!isRecord(value) || reviewTraceObservationKey(value) === undefined
+    || !['instruction', 'choice', 'state', 'condition', 'control-flow', 'scene-end'].includes(String(value['kind']))) return false;
+  const scalar = (item: unknown): boolean => item === undefined || typeof item === 'string'
+    || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item));
+  const choice = value['choice'];
+  const condition = value['condition'];
+  const flow = value['controlFlow'];
+  return (choice === undefined || (isRecord(choice) && Number.isInteger(choice['optionIndex'])
+      && Number(choice['optionIndex']) >= 0 && typeof choice['label'] === 'string'))
+    && (condition === undefined || (isRecord(condition) && typeof condition['expression'] === 'string'
+      && typeof condition['result'] === 'boolean'))
+    && (flow === undefined || (isRecord(flow) && typeof flow['from'] === 'string' && typeof flow['to'] === 'string'))
+    && (value['stateDelta'] === undefined || (Array.isArray(value['stateDelta'])
+      && value['stateDelta'].every((delta) => isRecord(delta) && typeof delta['variable'] === 'string'
+        && scalar(delta['before']) && scalar(delta['after']))));
 }
 
 export function parseReviewProjection(value: unknown, reviewId: string): HumanReviewProjection {
@@ -225,7 +237,7 @@ export function parseReviewProjection(value: unknown, reviewId: string): HumanRe
   const stringArray = (candidate: unknown): candidate is string[] =>
     Array.isArray(candidate) && candidate.every((item) => typeof item === 'string');
   if (!isRecord(value)
-    || value['reviewVersion'] !== '1.0.0'
+    || (value['reviewVersion'] !== '1.0.0' && value['reviewVersion'] !== '2.0.0')
     || value['reviewId'] !== reviewId
     || (value['kind'] !== 'comparison' && value['kind'] !== 'integration-result')
     || typeof value['state'] !== 'string'
@@ -275,10 +287,14 @@ export function parseReviewProjection(value: unknown, reviewId: string): HumanRe
       throw reviewError('REVIEW_IDENTITY_MISMATCH', `review projection 最终结果身份无效：${reviewId}`);
     }
   }
+  if (value['reviewVersion'] === '2.0.0' && !isReviewProjectionV2Fields(value)) {
+    throw reviewError('REVIEW_IDENTITY_MISMATCH', `review v2 事实或结果身份无效：${reviewId}`);
+  }
   return value as unknown as HumanReviewProjection;
 }
 
-export function isComparisonDecisionReceipt(value: unknown, reviewId: string): value is ComparisonDecisionReceipt {
+export function isComparisonDecisionReceipt(value: unknown, reviewId: string): value is AnyComparisonDecisionReceipt {
+  if (isComparisonDecisionReceiptV2(value)) return value.reviewId === reviewId;
   if (!isRecord(value)
     || value['receiptVersion'] !== '1.0.0'
     || typeof value['decisionId'] !== 'string'
@@ -373,14 +389,20 @@ function objectSummary(ref: string, object: AuthoringObject | undefined, diff: u
 async function runtimeTraceObservationsOf(store: NodeChangeStore, record: ChangeRecord) {
   const summaries = [...(record.runtimeTraces ?? [])]
     .sort((left, right) => left.traceId.localeCompare(right.traceId));
-  return Promise.all(summaries.map(async (summary) => {
+  const traces: ReviewRuntimeTraceInput[] = [];
+  const observations = await Promise.all(summaries.map(async (summary) => {
     const trace = await store.readTrace(record.changeId, summary.traceId);
-    if (!isRecord(trace) || trace['traceId'] !== summary.traceId || !Array.isArray(trace['events'])) {
+    if (!isRecord(trace) || trace['traceId'] !== summary.traceId
+      || trace['changeId'] !== record.changeId || trace['projectRevision'] !== record.baseRevision
+      || (trace['workingRevision'] !== undefined && trace['workingRevision'] !== record.workingRevision)
+      || !Array.isArray(trace['events']) || !trace['events'].every(isReviewRuntimeEvent)) {
       throw reviewError('REVIEW_RESULT_NOT_READY', `runtime trace 记录缺失或结构无效：${summary.traceId}`, {
         changeId: record.changeId,
         traceId: summary.traceId,
       });
     }
+    traces.push({ sourceChangeId: record.changeId, sourceWorkingRevision: summary.workingRevision,
+      traceId: summary.traceId, status: summary.status, events: trace['events'] });
     const observationKeys = trace['events'].map((event) => reviewTraceObservationKey(event));
     if (observationKeys.some((key) => key === undefined)) {
       throw reviewError('REVIEW_RESULT_NOT_READY', `runtime trace 含不可比较事件：${summary.traceId}`, {
@@ -393,6 +415,7 @@ async function runtimeTraceObservationsOf(store: NodeChangeStore, record: Change
       observationKeys: [...new Set(observationKeys as string[])].sort((left, right) => left.localeCompare(right)),
     };
   }));
+  return { observations, traces: traces.sort((left, right) => left.traceId.localeCompare(right.traceId)) };
 }
 
 function evidenceOf(record: ChangeRecord): ResultReviewCurrentFacts['evidence'] {
@@ -436,24 +459,72 @@ export class ReviewService {
     leases?: NodeLocalLeaseManager,
   ) {
     this.hasher = hasher;
-    this.leases = leases ?? new NodeLocalLeaseManager();
+    this.leases = leases ?? new NodeLocalLeaseManager(path.dirname(reviews.projectDirectory));
   }
 
-  async prepareComparison(input: { candidateRefs: CandidateCapsuleRef[] }): Promise<PreparedReviewResult> {
+  private async candidateRuntime(candidate: VerifiedCompositionCandidate): Promise<ReviewCandidateRuntimeInput> {
+    const result: ReviewCandidateRuntimeInput = {
+      status: 'unavailable', sourceChangeId: candidate.ref.changeId,
+      sourceWorkingRevision: candidate.sourceWorkingRevision, traces: [], limitations: [],
+    };
+    const sealedIds = new Set(candidate.sealedRuntimeTraceIds ?? []);
+    if (sealedIds.size === 0) {
+      result.limitations.push('封存候选没有可核对的运行轨迹引用。');
+      return result;
+    }
+    const opened = await NodeChangeStore.openByChangeId(candidate.ref.changeId, path.dirname(this.reviews.projectDirectory));
+    if (opened === null || projectIdentityFromRoot(opened.record.projectRootIdentity) !== candidate.projectIdentity
+      || opened.record.baseRevision !== candidate.baseProjectRevision) {
+      throw reviewError('REVIEW_IDENTITY_MISMATCH', '候选运行来源与封存项目身份不一致。');
+    }
+    const summaries = (opened.record.runtimeTraces ?? []).filter((summary) => sealedIds.has(summary.traceId)
+      && summary.workingRevision === candidate.sourceWorkingRevision && summary.status === 'passed');
+    for (const summary of summaries) {
+      let trace: unknown;
+      try {
+        trace = await opened.store.readTrace(candidate.ref.changeId, summary.traceId);
+      } catch (error) {
+        if (codeOf(error) !== 'CHANGE_STORE_CORRUPT') throw error;
+        result.limitations.push(`封存运行轨迹 ${summary.traceId} 无法读取，未展示其内容。`);
+        continue;
+      }
+      if (!isRecord(trace) || trace['traceId'] !== summary.traceId || trace['changeId'] !== candidate.ref.changeId
+        || trace['projectRevision'] !== candidate.baseProjectRevision
+        || (trace['workingRevision'] !== undefined && trace['workingRevision'] !== candidate.sourceWorkingRevision)
+        || !Array.isArray(trace['events']) || !trace['events'].every(isReviewRuntimeEvent)) {
+        result.limitations.push(`封存运行轨迹 ${summary.traceId} 无法核对，未展示其内容。`);
+        continue;
+      }
+      result.traces.push({ traceId: summary.traceId, status: 'passed', events: trace['events'] });
+    }
+    result.status = result.traces.length > 0 ? 'available' : 'unavailable';
+    if (result.status === 'unavailable' && result.limitations.length === 0) {
+      result.limitations.push('没有与封存工作版本一致且通过的运行轨迹。');
+    }
+    return result;
+  }
+
+  async prepareComparison(input: { candidateRefs: CandidateCapsuleRef[]; creativeBrief?: CreativeBriefInput }): Promise<PreparedReviewResult> {
     const compared = await this.composition.compare([...input.candidateRefs]);
     const objects = this.composition.currentSnapshot === undefined
       ? []
       : buildObjectIndex(await this.composition.currentSnapshot()).objects;
-    const candidates = compared.candidates.map((candidate) => ({
+    const candidates = await Promise.all(compared.candidates.map(async (candidate) => ({
       candidateId: candidate.candidateId,
       ref: candidate.ref,
       evidenceSummary: candidate.evidenceSummary,
       manifest: candidate.composition.manifest,
-      ...candidateIntent(candidate),
-    }));
+      ...(candidate.intent === undefined ? {} : { intent: candidate.intent }),
+      acceptanceCriteria: candidate.acceptanceCriteria ?? [],
+      sealedRuntimeTraceIds: candidate.sealedRuntimeTraceIds ?? [],
+      sealedFileDiffs: candidate.sealedFileDiffs ?? [],
+      runtime: await this.candidateRuntime(candidate),
+    })));
     const reviewId = newReviewId('comparison');
     const projection = await buildComparisonReviewProjection({
       reviewId,
+      reviewVersion: '2.0.0',
+      ...(input.creativeBrief === undefined ? {} : { creativeBrief: input.creativeBrief }),
       comparison: compared.comparison as CompositionComparison,
       candidates,
       objects,
@@ -562,6 +633,27 @@ export class ReviewService {
   async prepareResult(input: { planId: string; artifactSha256: string; changeId: string }): Promise<PreparedReviewResult> {
     if (this.composition.store === undefined) throw reviewError('REVIEW_RESULT_NOT_READY', 'composition store 不可用');
     const { plan } = await this.composition.store.readPlan(input.planId, input.artifactSha256);
+    if (plan.review?.reviewState !== 'human-reviewed') throw reviewError('REVIEW_RESULT_NOT_READY', '最终审阅需要人类决定。');
+    const source = await this.readReview<HumanReviewProjection>(plan.review.reviewId);
+    const sourceProjection = parseReviewProjection(source.value, plan.review.reviewId);
+    if (sourceProjection.kind !== 'comparison' || sourceProjection.projectIdentity !== plan.projectIdentity
+      || sourceProjection.expectedProjectRevision !== plan.expectedProjectRevision
+      || sourceProjection.sourceIdentity.comparisonFingerprint !== plan.comparisonFingerprint) {
+      throw reviewError('REVIEW_IDENTITY_MISMATCH', '最终审阅的原始 comparison 与正式计划不一致。');
+    }
+    let decisionIntent: import('@surdet/authoring').ReviewDecisionIntent | undefined;
+    if (sourceProjection.reviewVersion === '2.0.0') {
+      const saved = await this.reviews.readDecision<unknown>(sourceProjection.reviewId);
+      if (saved === null || !isComparisonDecisionReceiptV2(saved.value)) {
+        throw reviewError('REVIEW_DECISION_REQUIRED', '最终审阅缺少原始整案决定。');
+      }
+      const decision = await validateComparisonDecision({ projection: sourceProjection, receipt: saved.value }, this.hasher);
+      if (stableStringify(decision.review) !== stableStringify(plan.review)) {
+        throw reviewError('REVIEW_IDENTITY_MISMATCH', '正式计划与保存的审阅决定不一致。');
+      }
+      await assertDecisionPlanContentFingerprint({ receipt: saved.value, draft: plan, dryRun: plan.dryRun }, this.hasher);
+      decisionIntent = saved.value.decisionIntent;
+    }
     return this.withResultChange(input.changeId, async (storage, store, record) => {
       const integration = record.integration;
       if (plan.projectIdentity !== this.composition.projectIdentity
@@ -582,18 +674,25 @@ export class ReviewService {
       const diff = await store.readDiff(record.changeId);
       if (!isChangeDiff(diff)) throw reviewError('REVIEW_RESULT_NOT_READY', 'integration change 缺少或包含无效 diff evidence', { changeId: record.changeId });
       const diffFingerprint = await this.hasher.sha256(stableStringify(diff));
-      const runtimeTraceObservations = await runtimeTraceObservationsOf(store, record);
+      const runtime = await runtimeTraceObservationsOf(store, record);
       const files = await this.fixtureFiles(storage, record);
       const resultTreeSha256 = treeIdentityOf(files);
       const reviewId = newReviewId('result');
       const projection = await buildResultReviewProjection({
         reviewId,
+        reviewVersion: sourceProjection.reviewVersion,
+        ...(decisionIntent === undefined ? {} : { decisionIntent }),
+        ...(sourceProjection.reviewVersion === '2.0.0' ? {
+          sourceUnitObjects: sourceProjection.candidates.flatMap((candidate) => candidate.verifiedFacts.units
+            .map((unit) => ({ unitId: unit.unitId, primaryObject: unit.primaryObject, sourceCapsule: candidate.ref }))),
+        } : {}),
         plan,
         change: record,
         diffFingerprint,
         diff,
         freshness: { diff: 'fresh', validation: 'fresh', simulation: 'fresh', runtime: 'fresh' },
-        runtimeTraceObservations,
+        runtimeTraceObservations: runtime.observations,
+        runtimeTraces: runtime.traces,
         resultTreeSha256,
         changedObjects: await this.projectObjects(record, plan, diff),
       }, this.hasher);
@@ -678,8 +777,8 @@ export class ReviewService {
   }
 }
 
-export async function reviewServiceForProject(projectRoot: string): Promise<ReviewService> {
-  const composition = await compositionServiceForProject(projectRoot);
+export async function reviewServiceForProject(projectRoot: string, dataRoot?: string): Promise<ReviewService> {
+  const composition = await compositionServiceForProject(projectRoot, dataRoot);
   const reviews = new NodeReviewStore(composition.store.projectDirectory, composition.projectIdentity);
   return new ReviewService(reviews, composition, composition.hasher);
 }
