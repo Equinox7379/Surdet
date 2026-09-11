@@ -132,3 +132,10 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 本轮只修改入口设置生产逻辑、相关测试和本文，未扩展 scene.create/scene.patch、Editor 或场景生命周期。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径。后继提交的父提交为 `3bffd71`，累计 `WAVE8-R2-REVIEW5.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。
 
 2026-09-11，用户确认第五次云端源码复审通过，并明确表示“批准普通 push，另外你刚才的也 pass 了，一并 push”。当前状态为 `CLOUD_REVIEW_ACCEPTED`、`ORDINARY_PUSH_AUTHORIZED`。本次仅补充项目规则和报告状态，代码保持在已验收的 `9cf1a51`；复用上述聚焦验证与最终全量结果。远端推送与 CI 结果以对应 Git 和 Actions 记录为准。
+
+## 2026-09-11 推送后 Electron 测试脚本修复
+
+- [CI run 34583391069](https://github.com/Equinox7379/Surdet/actions/runs/34583391069) 对应 `397ee1b3d1c1ec4dc2d6fc6839924c8ed0dd5583`：Linux `verify` 通过，Windows `electron` 失败。Windows 构建、真实鼠标开局通过；实际日志的超时栈指向 `game.e2e.mjs:71`，即开局后等待 renderer 为 `awaiting`，失败快照为 `awaiting-advance/awaiting`、`ch01_01:5`。该日志尚未记录 F5 路径。
+- 仅修改 `packages/shell/e2e/game.e2e.mjs`：开局和存档前按公开剧情输入状态确认就绪；存档后的推进复用 Wave 4 现有语义，最多四次真实键盘输入，每次确认可输入，choice 用数字键 `1`，其余用 Space，每次按公开 `sceneId:pc` 判断是否推进。仅位置等待超时进入下一次尝试，四次仍未推进明确失败；保留并明确断言 F5 前后、离开存档位置及 F9 精确恢复的事实。
+- Core、Renderer、Host、Shell、Starter 依次构建通过；随后仅运行一次 `npm run e2e -w @surdet/shell`，退出码 0。真实 F5/F9 回路位于 `ch01_01:7`，首次 Space 推进成功，F9 精确恢复；最终 71 步、3 次选择，到达 `ending_unanswered`。日志：`<local-path>`。
+- 本次生产代码、Starter 内容和 Wave 8 Authoring 实现未改，未增加 sleep 或提高 30 秒超时，未使用 debug command、跳过失败或降低位置断言；未重跑本地 `verify:all`、fresh Agent、Review、Editor 或 Wave 8 资格化。修复追加普通提交并按已有授权推送，随后等待该提交对应的新 CI；新 CI 结论以 Actions 记录为准。
