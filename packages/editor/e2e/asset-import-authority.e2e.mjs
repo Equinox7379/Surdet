@@ -1393,6 +1393,7 @@ async function run() {
       completed: `${completedMilestoneNames.length}/${MILESTONE_IDS.length}`,
       lastPassedNode: evidence.lastPassedNode,
       firstFailedNode,
+      failure: evidence.failure,
       evidence: evidenceIdentity,
       identity,
     }, null, 2)}\n`);
