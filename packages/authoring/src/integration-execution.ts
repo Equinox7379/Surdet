@@ -67,7 +67,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * 八项 capability 到既有 apply 函数的穷尽 switch。
- * 只把 operationId 替换为 integrationOperationId；normalizedInput 原样进入既有类型化实现。
+ * 替换 operationId 后保留 normalizedInput；角色改名额外绑定封存的产物范围。
  * 输入的 schema 严格校验在 CLI 边界（AJV validateCapabilityInput）完成；本层做结构防御。
  */
 export async function replayCompositionOperation(
@@ -91,7 +91,7 @@ export async function replayCompositionOperation(
     case 'variable.ensure':
       return ensureVariable(change, replayInput as never);
     case 'character.ensure':
-      return applyCharacterEnsure(change, replayInput as never, hasher);
+      return applyCharacterEnsure(change, replayInput as never, hasher, operation);
     case 'character.remove':
       return applyCharacterRemove(change, replayInput as never, hasher);
     case 'timeline.create':

@@ -7,8 +7,11 @@ import {
   commitChange,
   executeIntegrationReplay,
   fingerprintWorkingObject,
+  applyCharacterEnsure,
+  charactersFingerprint,
+  replayCompositionOperation,
 } from '../src/index.js';
-import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, ProjectSnapshot, TextHasher } from '../src/index.js';
+import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, OperationCompositionDraft, PlannedReplayOperation, ProjectSnapshot, TextHasher } from '../src/index.js';
 
 const hasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
@@ -137,6 +140,67 @@ async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeR
 }
 
 describe('Wave 5 integration execution', () => {
+  it.each(['before-mismatch', 'missing-before', 'after-mismatch', 'no-migration', 'duplicate-scene'] as const)('rejects sealed character migration %s before persisting the operation', async (failure) => {
+    const snapshot = makeSixObjectSnapshot();
+    let draft: OperationCompositionDraft | undefined;
+    const source = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, {
+      beforeOperationPersist: async (context) => { draft = context.draft; return undefined; },
+    });
+    const input = { operationId: 'rename', id: 'lynn', name: '小凛', expectedFingerprint: await charactersFingerprint(snapshot.config!, hasher) };
+    await applyCharacterEnsure(source, input, hasher);
+    const operation: PlannedReplayOperation = {
+      ...makePlan().replayOperations[0]!, ...draft!,
+      sourceOperationId: input.operationId, normalizedInput: input,
+      requiredObjects: [],
+      replayStateRequirements: draft!.replayStatePreconditions!.map((item) => ({ ...item, source: 'base' })),
+    };
+    const repository = new InMemoryChangeRepository();
+    const target = await beginChange(snapshot, repository);
+    const sceneProduction = operation.producedObjects.find((item) => item.objectRef === 'scene:intro')!;
+    const sceneRequirement = operation.replayStateRequirements!.find((item) => item.objectRef === 'scene:intro')!;
+    if (failure === 'before-mismatch') sceneRequirement.expectedFingerprint = 'stale';
+    if (failure === 'missing-before') operation.replayStateRequirements = operation.replayStateRequirements!.filter((item) => item.objectRef !== 'scene:intro');
+    if (failure === 'after-mismatch') sceneProduction.finalFingerprint = 'wrong';
+    if (failure === 'duplicate-scene') operation.producedObjects.push({ ...sceneProduction });
+    if (failure === 'no-migration') {
+      target.record.workingFiles['content/scenario/intro.gal'] = '@scene intro\n@end\n';
+      sceneRequirement.expectedFingerprint = await hasher.sha256(target.record.workingFiles['content/scenario/intro.gal']);
+      sceneProduction.finalFingerprint = sceneRequirement.expectedFingerprint;
+    }
+    const before = JSON.stringify(target.record);
+    const persistedBefore = JSON.stringify(await repository.read(target.record.changeId));
+    await expect(replayCompositionOperation(target, operation, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    expect(JSON.stringify(target.record)).toBe(before);
+    expect(JSON.stringify(await repository.read(target.record.changeId))).toBe(persistedBefore);
+  });
+
+  it('keeps a sealed zero-scene rename valid for a display name that is not a speaker token and retries exactly', async () => {
+    const snapshot = makeSixObjectSnapshot();
+    const scene = snapshot.files.find((item) => item.path === 'content/scenario/intro.gal')!;
+    const baselineScene = scene.text;
+    scene.text = '@scene intro\n@end\n';
+    scene.sha256 = await hasher.sha256(scene.text);
+    let draft: OperationCompositionDraft | undefined;
+    const source = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, {
+      beforeOperationPersist: async (context) => { draft = context.draft; return undefined; },
+    });
+    const input = { operationId: 'rename', id: 'lynn', name: '凛 Renamed', expectedFingerprint: await charactersFingerprint(snapshot.config!, hasher) };
+    await applyCharacterEnsure(source, input, hasher);
+    const operation: PlannedReplayOperation = {
+      ...makePlan().replayOperations[0]!, ...draft!,
+      sourceOperationId: input.operationId, normalizedInput: input, requiredObjects: [],
+      replayStateRequirements: draft!.replayStatePreconditions!.map((item) => ({ ...item, source: 'base' })),
+    };
+    const target = await beginChange(makeSixObjectSnapshot(), new InMemoryChangeRepository());
+    const first = await replayCompositionOperation(target, operation, hasher);
+    const after = JSON.stringify(target.record);
+    expect(await replayCompositionOperation(target, operation, hasher)).toEqual(first);
+    expect(JSON.stringify(target.record)).toBe(after);
+    expect(target.record.workingRevision).toBe(1);
+    expect(target.record.workingFiles['content/scenario/intro.gal']).toBe(baselineScene);
+    expect(JSON.parse(target.record.workingFiles['game.config.json']!).characters.lynn.name).toBe('凛 Renamed');
+  });
+
   it('creates a REPLAYING integration change and advances nextOperationIndex with receipts', async () => {
     const plan = makePlan();
     const change = await beginIntegrationChange(plan);

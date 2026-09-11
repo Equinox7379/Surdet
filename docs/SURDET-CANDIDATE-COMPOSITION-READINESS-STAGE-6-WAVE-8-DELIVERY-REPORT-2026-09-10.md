@@ -2,7 +2,7 @@
 
 - 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
 - 代码提交 / 实现终点：`8cf275d4d532533fd43eef6c299397f9932bf239`。本报告以单独文档提交保存。
-- 首轮云端源码复审：`NEEDS_FIX`。2026-09-11 定向整改记录见本文末节；push 仍未授权。
+- 第二次云端源码复审：`NEEDS_FIX`，剩余 W8-R2-04。2026-09-11 两轮定向整改记录见本文末节；push 仍未授权。
 - 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
 
 ## 实现
@@ -84,5 +84,22 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 - 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,732 项 Vitest 测试通过，其中 Authoring 357 项、CLI 530 项。此前超时的既有用例在本次全量内 2.733 秒通过。类型、内容校验/模拟和构建通过；原有内容与 chunk 警告保留。日志位于 `<local-path>`。
 
 整改提交为本节所在提交，父提交是 `7e213be`；精确 SHA 随 `WAVE8-R2-REVIEW2.patch` 和交付消息提供。累计 patch 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。
+
+## 2026-09-11 第二次云端复审：W8-R2-04 定向整改
+
+第二次云端复审确认前三项修复基本通过，但发现角色改名在 integration replay 中重新扫描全部场景，可能产生未封存的场景修改。本轮保留 `8cf275d → 7e213be → 4528a66`，只追加一笔普通本地修复提交。
+
+- 公共 Authoring 层 `replayCompositionOperation` 把封存 operation 的产物和状态前置条件传给角色操作。集成改名只读取声明的迁移场景；普通 candidate/direct 改名仍扫描并自动迁移全部场景。
+- 声明场景必须有唯一 before fingerprint、update disposition 和 after fingerprint；先核对当前字节，再计算迁移。返回持久化结果前，将实际完整 produced footprint 与封存对象、disposition、fingerprint 逐项比较。任何缺失、重复、前后指纹失配或声明了却未发生的迁移均拒绝，不写入 operation 或 working files。
+- 没有扩展场景依赖图、增加 capability、修改 MCP 输入或提升版本；原有角色表状态边、完整 footprint 比较、exact retry 和 Q1 路径保留。
+
+本轮验证：
+
+- 三个真实 CompositionService 反例修改前均失败：删除最后旧 speaker 后改名并同时选择两单元，dry-run 报对象指纹失配；只选角色单元时原场景被暗改；另一个候选先引入旧 speaker 后也被改名。修复后，三条路径都完成真实胶囊、plan dry-run 与 integration execute，并核对场景字节及原项目不变。
+- Authoring 新增 6 项：场景 before 不符、before 缺失、after 不符、没有实际迁移及重复声明均在持久化前拒绝；无场景 footprint 时允许非 speaker-token 显示名，并验证精确重试不重复写入。
+- 聚焦验证共 8 文件 / 131 项通过：Authoring 5 文件 / 99 项，CLI 3 文件 / 32 项。覆盖普通自动迁移、已有正向迁移重放、完整 footprint 去重、角色表状态顺序、候选 readiness 与真实 invocation exact retry。Authoring/CLI 类型检查与构建通过。
+- 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,741 项 Vitest 测试通过，其中 Authoring 363 项、CLI 533 项。类型检查、内容校验/模拟与构建通过；既有内容和 chunk 警告保留。日志位于 `<local-path>`。
+
+本轮提交的父提交为 `4528a66`；精确 SHA 随累计 `WAVE8-R2-REVIEW3.patch` 提供，范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；停止于等待第三次云端源码复审。
 
 `PUSH_NOT_AUTHORIZED`。完成本地整改后停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第二次云端源码复审，不声称云端已通过。

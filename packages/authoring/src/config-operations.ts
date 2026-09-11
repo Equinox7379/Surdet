@@ -15,6 +15,7 @@ import type { TextHasher } from './project-storage.js';
 import { isValidSpeakerToken, parseSceneDocument, serializeSceneDocument } from './scene-document.js';
 import { buildSpeakerCharacterRefs } from './object-index.js';
 import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
+import type { CompositionOperation } from './composition-contracts.js';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -103,6 +104,7 @@ export async function applyCharacterEnsure(
   change: ChangeSession,
   input: CharacterEnsureInput,
   hasher: TextHasher,
+  sealedOperation?: Pick<CompositionOperation, 'producedObjects' | 'replayStateRequirements'>,
 ): Promise<CharacterOperationResult> {
   return runOperation<CharacterOperationResult>(change, input, async (record) => {
     if (!validCharacterId(input.id)) {
@@ -151,23 +153,39 @@ export async function applyCharacterEnsure(
     // 迁移结果先落在本地（handler 任何失败都不得污染 record.workingFiles）。
     const speakerMigrations: SpeakerMigrationImpact[] = [];
     const migratedFiles: Record<string, string> = {};
+    // Integration consumes only the sealed scene footprint; ordinary edits still scan all scenes.
+    const sceneFiles: Array<[string, string]> = [];
+    if (sealedOperation !== undefined) {
+      for (const produced of sealedOperation.producedObjects) {
+        if (!produced.objectRef.startsWith('scene:')) continue;
+        const path = `content/scenario/${produced.objectRef.slice('scene:'.length)}.gal`;
+        const requirements = (sealedOperation.replayStateRequirements ?? []).filter((item) => item.objectRef === produced.objectRef);
+        const text = record.workingFiles[path];
+        if (produced.disposition !== 'update' || produced.finalFingerprint === undefined
+          || requirements.length !== 1 || text === undefined
+          || await hasher.sha256(text) !== requirements[0]!.expectedFingerprint) {
+          throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `角色迁移场景前置条件不匹配：${produced.objectRef}`);
+        }
+        sceneFiles.push([path, text]);
+      }
+    } else if (!created && nameChanges && oldSpeakerToken !== undefined) {
+      sceneFiles.push(...Object.entries(record.workingFiles).filter(([path]) => path.startsWith('content/scenario/') && path.endsWith('.gal')));
+    }
     if (!created && nameChanges && oldSpeakerToken !== undefined) {
       const speakerRefMap = buildSpeakerCharacterRefs(characters);
       const resolved = speakerRefMap.get(oldSpeakerToken);
       if (resolved === undefined && oldSpeakerToken !== input.id) {
         // 旧显示名不唯一（或被角色 ID 遮蔽）且被台词引用时无法证明归属，拒绝猜测。
-        for (const [path, text] of Object.entries(record.workingFiles)) {
-          if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+        for (const [path, text] of sceneFiles) {
           if (parseSceneDocument(text).some((line) => line.kind === 'text' && line.speaker === oldSpeakerToken)) {
             throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `旧显示名 '${existingName}' 不唯一且被 ${path} 引用，无法确定 speaker 归属`);
           }
         }
       } else if (resolved === `character:${input.id}` && oldSpeakerToken !== input.id) {
-        // 旧显示名经 name 路径唯一解析到本角色：迁移所有 speaker === canonical token 的台词。
+        // 旧显示名经 name 路径唯一解析到本角色：迁移本次场景范围内 speaker === canonical token 的台词。
         //（若旧显示名恰等于本角色 ID，则令牌走 ID 路径，改名后仍解析到本角色，无需迁移。）
         let referenceCount = 0;
-        for (const [path, text] of Object.entries(record.workingFiles)) {
-          if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+        for (const [, text] of sceneFiles) {
           for (const line of parseSceneDocument(text)) {
             if (line.kind === 'text' && line.speaker === oldSpeakerToken) referenceCount += 1;
           }
@@ -182,8 +200,7 @@ export async function applyCharacterEnsure(
               `角色 '${input.id}' 存在 ${referenceCount} 处按显示名解析的台词 speaker 引用，但新名字 '${input.name}' 无法作为 Surdet speaker token 表达（1-24 字符、不含空白与冒号，不能以 @ 或 // 开头）；请改用可表达的名字，或先手动迁移这些台词`,
             );
           }
-          for (const [path, text] of Object.entries(record.workingFiles)) {
-            if (!path.startsWith('content/scenario/') || !path.endsWith('.gal')) continue;
+          for (const [path, text] of sceneFiles) {
             const migrated = migrateSceneSpeakerTokens(text, oldSpeakerToken, input.name, path);
             if (migrated !== null) {
               migratedFiles[path] = migrated.text;
@@ -209,12 +226,20 @@ export async function applyCharacterEnsure(
     characters[input.id] = next;
     config['characters'] = characters;
     const fingerprintAfter = await charactersFingerprint(config, hasher);
+    const compositionDraft = await buildCharacterOperationCompositionDraft({
+      capabilityId: 'character.ensure', id: input.id, beforeCharacter: existing,
+      afterCharacter: next, characters, migratedFiles, hasher,
+      charactersFingerprintBefore: fingerprintBefore, workingFilesBefore: record.workingFiles,
+    });
+    if (sealedOperation !== undefined) {
+      const actual = [...compositionDraft.producedObjects].sort((a, b) => a.objectRef.localeCompare(b.objectRef));
+      const expected = [...sealedOperation.producedObjects].sort((a, b) => a.objectRef.localeCompare(b.objectRef));
+      if (stableStringify(actual) !== stableStringify(expected)) {
+        throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `角色重放产物与封存范围或指纹不匹配：character:${input.id}`);
+      }
+    }
     return {
-      compositionDraft: await buildCharacterOperationCompositionDraft({
-        capabilityId: 'character.ensure', id: input.id, beforeCharacter: existing,
-        afterCharacter: next, characters, migratedFiles, hasher,
-        charactersFingerprintBefore: fingerprintBefore, workingFilesBefore: record.workingFiles,
-      }),
+      compositionDraft,
       result: {
         id: input.id,
         ...(created ? { created: true } : {}),

@@ -104,6 +104,63 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it.each(['all', 'character-only'] as const)('replays rename after deleting the last old speaker with %s selected', async (selection) => {
+    const fixture = await setup(`sealed-rename-${selection}`);
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    const baseScene = fs.readFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), 'utf8');
+    const first = await sealCandidate(fixture.projectRoot, 'deleted-speaker', async (session) => {
+      const scene = await session.invoke('object.inspect', { objectRef: 'scene:start' });
+      if (!scene.ok) throw new Error(scene.error.message);
+      const target = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
+      if (!target.ok) throw new Error(target.error.message);
+      const object = target.result as AuthoringObject;
+      expect((await session.invoke('scene.patch', { operationId: 'delete-speaker', sceneId: 'start', patch: { kind: 'removeObject', target: object.objectRef, expectedFingerprint: object.fingerprint } })).ok).toBe(true);
+      expect((await session.invoke('character.ensure', { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: await realHasher.sha256(stableStringify(characters)) })).ok).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      expect(record.operations['rename']!.compositionFacts!.producedObjects.map((item) => item.objectRef)).toEqual(['character:rin', 'config:characters']);
+    });
+    const other = await sealCandidate(fixture.projectRoot, 'other', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const refs = [first.ref, other.ref];
+    const compared = await fixture.service.compare(refs);
+    const selectedUnitIds = compared.comparison.units.filter((unit) => unit.candidateId === `cand-${first.ref.changeId}` && (selection === 'all' || unit.primaryObject === 'character:rin')).map((unit) => unit.unitId);
+    const planned = await planFromComparison(fixture, refs, { selectedUnitIds });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    expect(planned.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(selection === 'all' ? ['rename', 'delete-speaker'] : ['rename']);
+    const executed = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: `sealed-${selection}` });
+    const { record } = (await NodeChangeStoreStatic.openByChangeId(executed.changeId))!;
+    expect(record.workingFiles['content/scenario/start.gal']).toBe(selection === 'all' ? '@scene start\n@end\n' : baseScene);
+    expect(JSON.parse(record.workingFiles['game.config.json']!).characters.rin.name).toBe('小凛');
+    expect(fs.readFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe(baseScene);
+  });
+
+  it('does not migrate an old speaker introduced by another candidate before the sealed rename', async () => {
+    const fixture = await setup('sealed-rename-foreign-scene');
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), '@scene start\n@end\n');
+    const first = await sealCandidate(fixture.projectRoot, 'rename', async (session) => {
+      const added = await session.invoke('character.ensure', { operationId: 'table-first', id: 'zeta', name: 'Zeta', expectedFingerprint: await realHasher.sha256(stableStringify(characters)) });
+      if (!added.ok) throw new Error(added.error.message);
+      expect((await session.invoke('character.ensure', { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: (added.result as { fingerprint: string }).fingerprint })).ok).toBe(true);
+    });
+    let foreignScene = '';
+    const second = await sealCandidate(fixture.projectRoot, 'foreign-scene', async (session) => {
+      expect((await session.invoke('scene.create', { operationId: 'foreign-scene', sceneId: 'other', blocks: [{ kind: 'text', speaker: '凛', value: '另一个候选的台词。' }] })).ok).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      foreignScene = record.workingFiles['content/scenario/other.gal']!;
+    });
+    const planned = await planFromComparison(fixture, [first.ref, second.ref]);
+    expect(planned.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(['table-first', 'foreign-scene', 'rename']);
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    const executed = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'foreign-scene-rename' });
+    const { record } = (await NodeChangeStoreStatic.openByChangeId(executed.changeId))!;
+    expect(record.workingFiles['content/scenario/other.gal']).toBe(foreignScene);
+    expect(fs.existsSync(path.join(fixture.projectRoot, 'content/scenario/other.gal'))).toBe(false);
+  });
+
   it('closes and replays successive character table writes in source order', async () => {
     const fixture = await setup('character-state-order');
     const first = await sealCandidate(fixture.projectRoot, 'characters', async (session) => {
