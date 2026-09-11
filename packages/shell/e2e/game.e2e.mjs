@@ -40,9 +40,10 @@ try {
       console.log(`[GAME] ${msg.text()}`);
     }
   });
-  await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000 });
+  // Windows runner 的公开状态轮询不依赖画面帧回调，超时和断言仍按原合同执行。
+  await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000, polling: 100 });
   console.log('PASS  游戏引导完成（__surdetDebug 就绪）');
-  await win.waitForFunction(() => window.__surdetDebug.assetLoading.done);
+  await win.waitForFunction(() => window.__surdetDebug.assetLoading.done, undefined, { polling: 100 });
 
   const snap = () => win.evaluate(() => ({
     s: window.__surdetDebug.status,
@@ -54,7 +55,7 @@ try {
     const debug = window.__surdetDebug;
     return ['awaiting-advance', 'awaiting-timer', 'choice'].includes(debug.status)
       || debug.rendererStatus === 'choice';
-  }, undefined, { timeout: 12000 });
+  }, undefined, { timeout: 12000, polling: 100 });
 
   await win.locator('canvas').waitFor({ state: 'visible' });
   await win.evaluate(() => document.addEventListener('pointerdown', event => {
@@ -71,7 +72,7 @@ try {
     button: Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '开始游戏')?.getBoundingClientRect().toJSON(),
   }))));
   await win.mouse.click(startBounds.x + startBounds.width / 2, startBounds.y + startBounds.height / 2);
-  await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000 });
+  await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000, polling: 100 });
   console.log('PASS  真实鼠标点击开始游戏，解释器离开 idle');
   await waitForStoryInput();
   // Windows CI 的虚拟桌面截图调用可能不返回；本地保留画面，CI 验证下方实际输入和文件回路。
@@ -112,7 +113,7 @@ try {
         await waitForStoryInput();
         const beforeSavePosition = (await snap()).p;
         await win.keyboard.press('F5');
-        await win.waitForFunction(async slot => (await window.surdetSave.list()).includes(slot), QUICK_SLOT);
+        await win.waitForFunction(async slot => (await window.surdetSave.list()).includes(slot), QUICK_SLOT, { polling: 100 });
         const stored = await win.evaluate(slot => window.surdetSave.read(slot), QUICK_SLOT);
         saved = stored !== null;
         const savedPosition = stored.position;
@@ -132,7 +133,7 @@ try {
             await win.waitForFunction(expected => {
               const position = window.__surdetDebug.position;
               return position !== null && `${position.sceneId}:${position.pc}` !== expected;
-            }, savedPositionKey, { timeout: 5000 });
+            }, savedPositionKey, { timeout: 5000, polling: 100 });
             advanced = true;
             console.log(`PASS  存档后第 ${attempt} 次真实 ${inputKey} 推进离开 ${savedPositionKey}`);
             break;
@@ -144,7 +145,7 @@ try {
         assert(advanced, `连续 4 次真实键盘输入后位置仍为 ${savedPositionKey}`);
         assert.notDeepEqual((await snap()).p, savedPosition, 'F9 前必须已离开存档位置');
         await win.keyboard.press('F9');
-        await win.waitForFunction(position => JSON.stringify(window.__surdetDebug.position) === JSON.stringify(position), savedPosition);
+        await win.waitForFunction(position => JSON.stringify(window.__surdetDebug.position) === JSON.stringify(position), savedPosition, { polling: 100 });
         assert.deepEqual((await snap()).p, savedPosition, 'F9 必须恢复存档精确位置');
         console.log(`PASS  F5/F9 精确位置回路 ${savedPositionKey}`);
         loaded = true;
