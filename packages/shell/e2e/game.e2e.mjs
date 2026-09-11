@@ -40,10 +40,18 @@ try {
       console.log(`[GAME] ${msg.text()}`);
     }
   });
-  // Windows runner 的公开状态轮询不依赖画面帧回调，超时和断言仍按原合同执行。
-  await win.waitForFunction(() => window.__surdetDebug !== undefined, undefined, { timeout: 30000, polling: 100 });
+  // 由测试进程轮询公开状态，避免等待依赖 Windows 虚拟桌面的页面计时器；保留各项超时。
+  const waitForPublicState = async (predicate, argument, timeout = 30000) => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await win.evaluate(predicate, argument)) return;
+      await sleep(100);
+    }
+    throw new errors.TimeoutError(`公开状态等待超过 ${timeout}ms`);
+  };
+  await waitForPublicState(() => window.__surdetDebug !== undefined);
   console.log('PASS  游戏引导完成（__surdetDebug 就绪）');
-  await win.waitForFunction(() => window.__surdetDebug.assetLoading.done, undefined, { polling: 100 });
+  await waitForPublicState(() => window.__surdetDebug.assetLoading.done);
 
   const snap = () => win.evaluate(() => ({
     s: window.__surdetDebug.status,
@@ -51,11 +59,11 @@ try {
     p: window.__surdetDebug.position,
     system: window.__surdetDebug.queries.overlay.system().type,
   }));
-  const waitForStoryInput = () => win.waitForFunction(() => {
+  const waitForStoryInput = () => waitForPublicState(() => {
     const debug = window.__surdetDebug;
     return ['awaiting-advance', 'awaiting-timer', 'choice'].includes(debug.status)
       || debug.rendererStatus === 'choice';
-  }, undefined, { timeout: 12000, polling: 100 });
+  }, undefined, 12000);
 
   await win.locator('canvas').waitFor({ state: 'visible' });
   await win.evaluate(() => document.addEventListener('pointerdown', event => {
@@ -72,7 +80,7 @@ try {
     button: Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '开始游戏')?.getBoundingClientRect().toJSON(),
   }))));
   await win.mouse.click(startBounds.x + startBounds.width / 2, startBounds.y + startBounds.height / 2);
-  await win.waitForFunction(() => window.__surdetDebug.status !== 'idle', undefined, { timeout: 10000, polling: 100 });
+  await waitForPublicState(() => window.__surdetDebug.status !== 'idle', undefined, 10000);
   console.log('PASS  真实鼠标点击开始游戏，解释器离开 idle');
   await waitForStoryInput();
   // Windows CI 的虚拟桌面截图调用可能不返回；本地保留画面，CI 验证下方实际输入和文件回路。
@@ -113,7 +121,7 @@ try {
         await waitForStoryInput();
         const beforeSavePosition = (await snap()).p;
         await win.keyboard.press('F5');
-        await win.waitForFunction(async slot => (await window.surdetSave.list()).includes(slot), QUICK_SLOT, { polling: 100 });
+        await waitForPublicState(async slot => (await window.surdetSave.list()).includes(slot), QUICK_SLOT);
         const stored = await win.evaluate(slot => window.surdetSave.read(slot), QUICK_SLOT);
         saved = stored !== null;
         const savedPosition = stored.position;
@@ -130,10 +138,10 @@ try {
           await win.keyboard.press(inputKey);
           if (inputKey === '1') choices++;
           try {
-            await win.waitForFunction(expected => {
+            await waitForPublicState(expected => {
               const position = window.__surdetDebug.position;
               return position !== null && `${position.sceneId}:${position.pc}` !== expected;
-            }, savedPositionKey, { timeout: 5000, polling: 100 });
+            }, savedPositionKey, 5000);
             advanced = true;
             console.log(`PASS  存档后第 ${attempt} 次真实 ${inputKey} 推进离开 ${savedPositionKey}`);
             break;
@@ -145,7 +153,7 @@ try {
         assert(advanced, `连续 4 次真实键盘输入后位置仍为 ${savedPositionKey}`);
         assert.notDeepEqual((await snap()).p, savedPosition, 'F9 前必须已离开存档位置');
         await win.keyboard.press('F9');
-        await win.waitForFunction(position => JSON.stringify(window.__surdetDebug.position) === JSON.stringify(position), savedPosition, { polling: 100 });
+        await waitForPublicState(position => JSON.stringify(window.__surdetDebug.position) === JSON.stringify(position), savedPosition);
         assert.deepEqual((await snap()).p, savedPosition, 'F9 必须恢复存档精确位置');
         console.log(`PASS  F5/F9 精确位置回路 ${savedPositionKey}`);
         loaded = true;
