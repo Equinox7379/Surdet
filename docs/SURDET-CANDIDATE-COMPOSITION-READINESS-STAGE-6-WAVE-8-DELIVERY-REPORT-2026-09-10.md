@@ -1,8 +1,8 @@
 # Stage 6 Wave 8：候选组合就绪性本地交付
 
 - 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
-- 初始实现提交：`8cf275d4d532533fd43eef6c299397f9932bf239`。当前实现终点是包含本文 W8-R2-05 整改的后继提交，父提交为 `b267b11`；精确 SHA 随累计 `WAVE8-R2-REVIEW4.patch` 提供。
-- 第三次云端源码复审：前三项修复和 W8-R2-04 均通过，剩余 W8-R2-05 为 `NEEDS_FIX`。本次整改与当前停止点见本文末节；push 仍未授权。
+- 初始实现提交：`8cf275d4d532533fd43eef6c299397f9932bf239`。当前实现终点是包含本文 W8-R2-06 整改的后继提交，父提交为 `3bffd71`；精确 SHA 随累计 `WAVE8-R2-REVIEW5.patch` 提供。
+- 第四次云端源码复审：前三项修复、W8-R2-04 和 W8-R2-05 均通过，剩余 W8-R2-06 为 `NEEDS_FIX`。本次整改与当前停止点见本文末节；push 仍未授权。
 - 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
 
 ## 实现
@@ -117,6 +117,18 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 - 聚焦验证共 11 文件 / 157 项通过：Authoring 8 文件 / 123 项，CLI 3 文件 / 34 项。Authoring/CLI 类型检查与构建通过。
 - 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,747 项 Vitest 测试通过，其中 Authoring 367 项、CLI 535 项。类型检查、内容校验/模拟与构建通过；既有内容和 chunk 警告保留。日志位于 `<local-path>`。
 
-本轮提交的父提交为 `b267b11`；累计 `WAVE8-R2-REVIEW4.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；当前停止于等待第四次云端源码复审。
+该轮提交为 `3bffd71`，父提交为 `b267b11`；累计 `WAVE8-R2-REVIEW4.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..3bffd71`。该轮未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径，未 push；第四次云端复审已确认 W8-R2-05 通过，当前状态见下节。
 
-`PUSH_NOT_AUTHORIZED`。完成本地整改后停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第二次云端源码复审，不声称云端已通过。
+## 2026-09-11 第四次云端复审：W8-R2-06 嵌套入口场景整改
+
+本轮保留前五个提交，仅追加一笔普通本地提交。`applyEntrySceneSet()` 使用现有 `resolveUniqueScenarioPath()` 核对入口目标，移除仅供该函数使用的旧 `workingScenes()` 路径裁切逻辑。
+
+- 唯一 root/nested 场景接受；重名返回 `OBJECT_AMBIGUOUS`。缺失目标在 candidate 中仍交给原 guard 返回 `CANDIDATE_DEPENDENCY_NOT_READY`，direct/integration 保留 `VALIDATION_FAILED`。指纹并发检查仍先于存在性检查。
+- 修改前复现 nested direct 被拒绝、candidate 与 capsule ready 但 plan dry-run 报入口不存在，以及重名 candidate 被接受。修复后 nested candidate → capsule → plan → integration READY 通过，workingFiles 精确等于所选候选，场景字节与路径不变，不创建 root 文件，原项目不变。
+- 永久回归覆盖根目录与嵌套 direct 入口、direct/candidate/integration 重名零推进、integration 缺失目标的原错误，以及 candidate 缺失目标后补建生产者并用同一 operationId 重试、封装 ready 胶囊和按依赖顺序重放。原有角色迁移、封存范围、完整 footprint、exact retry 和 Q1 回归保留。
+- 聚焦验证共 6 文件 / 108 项通过：Authoring 4 文件 / 80 项，CLI 2 文件 / 28 项。Authoring/CLI 类型检查与构建通过。
+- 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,754 项 Vitest 测试通过，其中 Authoring 371 项、CLI 538 项。类型检查、内容校验/模拟与构建通过；既有内容和 chunk 警告保留。日志位于 `<local-path>`。
+
+本轮只修改入口设置生产逻辑、相关测试和本文，未扩展 scene.create/scene.patch、Editor 或场景生命周期。未重跑 fresh Agent、人工 Review、Editor 或 Electron 专项路径。后继提交的父提交为 `3bffd71`，累计 `WAVE8-R2-REVIEW5.patch` 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。
+
+`PUSH_NOT_AUTHORIZED`。当前停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第五次云端源码复审；本地通过不等于云端批准。

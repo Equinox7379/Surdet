@@ -40,16 +40,6 @@ function validCharacterId(id: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id);
 }
 
-function workingScenes(record: { workingFiles: Record<string, string> }): Set<string> {
-  const scenes = new Set<string>();
-  for (const filePath of Object.keys(record.workingFiles)) {
-    if (!filePath.startsWith('content/scenario/') || !filePath.endsWith('.gal')) continue;
-    const base = filePath.slice('content/scenario/'.length, -'.gal'.length);
-    scenes.add(base);
-  }
-  return scenes;
-}
-
 export interface CharacterOperationResult {
   id: string;
   created?: boolean;
@@ -337,8 +327,8 @@ export async function applyEntrySceneSet(
     if (input.expectedFingerprint !== fingerprintBefore) {
       throw new AuthoringOperationError('OBJECT_REF_STALE', 'entryScene 指纹不匹配');
     }
-    const scenes = workingScenes(record);
-    if (!scenes.has(input.sceneId) && (record.integration !== undefined || record.composition?.mode !== 'candidate')) {
+    const scenePath = resolveUniqueScenarioPath(record.workingFiles, input.sceneId);
+    if (scenePath === undefined && (record.integration !== undefined || record.composition?.mode !== 'candidate')) {
       throw new AuthoringOperationError('VALIDATION_FAILED', `入口场景不存在：${input.sceneId}`);
     }
     const beforeEntryScene = config['entryScene'];

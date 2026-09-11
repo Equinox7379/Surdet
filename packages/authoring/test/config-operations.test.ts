@@ -193,9 +193,9 @@ describe('character.remove', () => {
 });
 
 describe('entry-scene.set', () => {
-  it('sets entryScene to an existing scene with a matching fingerprint', async () => {
+  it.each(['content/scenario/prologue.gal', 'content/scenario/chapter/prologue.gal'])('sets entryScene to the unique scene at %s with a matching fingerprint', async (scenePath) => {
     const { change } = await open();
-    change.record.workingFiles['content/scenario/prologue.gal'] = '@scene prologue\n@end';
+    change.record.workingFiles[scenePath] = '@scene prologue\n@end';
     const current = await entrySceneFingerprint({ entryScene: 'ch01_01' }, hasher);
     const result = await applyEntrySceneSet(change, {
       operationId: 'op-entry',
@@ -206,6 +206,20 @@ describe('entry-scene.set', () => {
     const parsed = JSON.parse(change.record.workingFiles['game.config.json']!) as { entryScene: string };
     expect(parsed.entryScene).toBe('prologue');
     expect(result.diffEntry.kind).toBe('config.entry-scene.set');
+  });
+
+  it('rejects duplicate basenames without advancing the direct change', async () => {
+    const { change, repo } = await open();
+    change.record.workingFiles['content/scenario/a/prologue.gal'] = '@scene prologue\n@end';
+    change.record.workingFiles['content/scenario/b/prologue.gal'] = '@scene prologue\n@end';
+    const before = JSON.stringify(change.record);
+    const persistedBefore = JSON.stringify(await repo.read(change.record.changeId));
+    await expect(applyEntrySceneSet(change, {
+      operationId: 'ambiguous-entry', sceneId: 'prologue',
+      expectedFingerprint: await entrySceneFingerprint({ entryScene: 'ch01_01' }, hasher),
+    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_AMBIGUOUS' });
+    expect(JSON.stringify(change.record)).toBe(before);
+    expect(JSON.stringify(await repo.read(change.record.changeId))).toBe(persistedBefore);
   });
 
   it('rejects a scene that does not exist in the working files', async () => {
