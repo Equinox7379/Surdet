@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ReviewTerminalCommand, ReviewTerminalSnapshot } from '@surdet/authoring';
+import type { ReviewDecisionPreview, ReviewTerminalCommand, ReviewTerminalSnapshot } from '@surdet/authoring';
 import {
   createReviewTerminalClient,
   ReviewAuthorityClientError,
@@ -55,6 +55,25 @@ function response(body: unknown, status = 200): Response {
 }
 
 describe('ReviewTerminalClient', () => {
+  it('uses the existing protected transport for readonly previews and rejects a reply for another decision', async () => {
+    const input = { ...describeInput, decisionIntent: { mode: 'custom-mix' as const }, customSelection: { selectedUnitIds: [], conflictResolutions: [] } };
+    const preview: ReviewDecisionPreview = {
+      previewVersion: '1.0.0', reviewId: input.reviewId, reviewFingerprint: 'a'.repeat(64), comparisonFingerprint: 'b'.repeat(64), decisionIntent: input.decisionIntent,
+      status: 'ready', selectedUnitIds: [], conflictResolutions: [], effectiveUnitIds: [], implicitInclusions: [], excludedUnitIds: [],
+      planContentFingerprint: 'c'.repeat(64), dryRun: { status: 'passed', finalObjectFingerprints: {}, errors: [] }, previewFingerprint: 'd'.repeat(64),
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ ok: true, result: preview }))
+      .mockResolvedValueOnce(response({ ok: true, result: { ...preview, reviewId: 'foreign-review' } }))
+      .mockResolvedValueOnce(response({ ok: true, result: { ...preview, decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: 'a', ref: { changeId: 'change-a', capsuleId: 'capsule-a', artifactSha256: 'e'.repeat(64) } } } } }));
+    const client = createReviewTerminalClient({ configuration: config, fetcher });
+    await expect(client.previewDecision!(input)).resolves.toEqual(preview);
+    expect(fetcher.mock.calls[0]![0]).toBe(`${config.endpoint}/preview-decision`);
+    expect(fetcher.mock.calls[0]![1]).toMatchObject({ method: 'POST', body: JSON.stringify(input) });
+    expect(new Headers(fetcher.mock.calls[0]![1]?.headers).get('X-Surdet-Review-Authority')).toBe(config.token);
+    await expect(client.previewDecision!(input)).rejects.toMatchObject({ code: 'REVIEW_AUTHORITY_INVALID_RESPONSE' });
+    await expect(client.previewDecision!(input)).rejects.toMatchObject({ code: 'REVIEW_AUTHORITY_INVALID_RESPONSE' });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
   it('reports unavailable without injected configuration and performs no fetch', async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createReviewTerminalClient({ configuration: null, fetcher });

@@ -662,7 +662,7 @@ export class AuthoringService {
 
   async prepareComparisonReview(
     projectRoot: string,
-    input: { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }> },
+    input: { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }>; creativeBrief?: import('@surdet/authoring').CreativeBriefInput },
   ): Promise<ServiceResult<unknown>> {
     const service = await reviewServiceForProject(projectRoot);
     const prepared = await service.prepareComparison(input);
@@ -748,6 +748,8 @@ export class AuthoringService {
           selectedUnitIds: verified.selectedUnitIds,
           conflictResolutions: verified.conflictResolutions,
           review: verified.review,
+          ...(verified.receipt.receiptVersion === '2.0.0'
+            ? { expectedPlanContentFingerprint: verified.receipt.planContentFingerprint } : {}),
         };
       })()
       : {

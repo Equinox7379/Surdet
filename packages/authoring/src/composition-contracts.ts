@@ -293,6 +293,13 @@ export interface VerifiedCompositionCandidate {
   projectIdentity: string;
   baseProjectRevision: string;
   sourceWorkingRevision: number;
+  /** Original sealed claims, independent from the review preparation brief. */
+  intent?: string;
+  acceptanceCriteria?: string[];
+  /** Only identities referenced in the sealed capsule; never populated from later traces. */
+  sealedRuntimeTraceIds?: string[];
+  /** Full file diffs from the identity-verified sealed capsule, never the mutable workspace. */
+  sealedFileDiffs?: import('./diff.js').ChangeDiffFile[];
   composition: CapsuleCompositionProjection;
   evidenceSummary: CandidateEvidenceSummary;
   semanticDiff: CompositionSemanticDiffEntry[];

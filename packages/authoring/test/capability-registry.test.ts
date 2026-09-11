@@ -195,7 +195,7 @@ describe('wave 5 composition capabilities', () => {
 describe('wave 6 human review capabilities', () => {
   it('publishes exactly the four human-review capabilities without agent receipt inputs', () => {
     const expected = [
-      ['review.prepare-comparison', ['candidateRefs']],
+      ['review.prepare-comparison', ['candidateRefs', 'creativeBrief']],
       ['review.inspect-decision', ['reviewId', 'decisionId']],
       ['review.prepare-result', ['planId', 'artifactSha256', 'changeId']],
       ['review.inspect-approval', ['resultReviewId', 'approvalId']],

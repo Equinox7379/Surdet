@@ -19,6 +19,8 @@ import {
   buildReviewUnitPresentation,
   buildResultReviewProjection,
   comparisonReviewFingerprintOf,
+  isReviewProjectionV2Fields,
+  resultReviewFingerprintOf,
   reviewTraceObservationKey,
 } from '../src/index.js';
 
@@ -545,6 +547,49 @@ describe('comparison review projection', () => {
     expect(presentation.omittedFactCount).toBe(4);
   });
 
+  it('keeps full v2 scene creation and later replacements separate without dropping the final edits', async () => {
+    const longLine = '后来替换的台词。'.repeat(30);
+    const sourceCandidates = candidates.map((item) => {
+      if (item.candidateId !== 'cand-A') return item;
+      const operations = [
+        operation(0, 'scene.create', { sceneId: 'wave6_alpha', blocks: [
+          ...Array.from({ length: 12 }, (_, index) => ({ kind: 'text', value: `第 ${index + 1} 句` })),
+          { kind: 'choice', options: [{ label: '最初的选项', target: { kind: 'scene', value: 'old_end' } }] },
+        ] }, 'scene:wave6_alpha', 'fp-alpha'),
+        item.manifest.operations[1]!,
+        operation(2, 'scene.patch', { sceneId: 'wave6_alpha', patch: { kind: 'replaceText', target: 'text-1', value: longLine } }, 'scene:wave6_alpha', 'fp-alpha'),
+        operation(3, 'scene.patch', { sceneId: 'wave6_alpha', patch: { kind: 'replaceChoiceOption', target: 'choice-1', option: { label: '封存前替换的选项', target: { kind: 'scene', value: 'new_end' } } } }, 'scene:wave6_alpha', 'fp-alpha'),
+      ];
+      const manifest = { ...item.manifest, operations };
+      const scenePath = 'custom/story/wave6_alpha.gal';
+      const sealedFileDiffs = [{ path: scenePath, unexpectedFormatChange: false,
+        unifiedDiff: [`--- ${scenePath}`, `+++ ${scenePath}`, ' @scene wave6_alpha', '-最初的台词', `+${longLine}`,
+          ' @choice', '-  最初的选项 -> @jump old_end', '+  封存前替换的选项 -> @jump new_end', '-已经移除的内容',
+          ...Array.from({ length: 12 }, (_, index) => `+第 ${index + 1} 句`)].join('\n') }];
+      return { ...item, manifest, sealedFileDiffs, composition: { ...item.composition, manifest } };
+    });
+    const compared = comparison();
+    compared.units.find((item) => item.unitId === 'unit-a-alpha')!.operationSequences = [0, 2, 3];
+    const projected = await buildComparisonReviewProjection({ reviewId: 'full-v2', reviewVersion: '2.0.0', comparison: compared, candidates: sourceCandidates, objects }, hasher);
+    if (projected.reviewVersion !== '2.0.0') throw new Error('v2 missing');
+    const facts = projected.candidates.find((item) => item.candidateId === 'cand-A')!.verifiedFacts;
+    const scenes = [...facts.content.scenes].sort((a, b) => a.operationSequence - b.operationSequence);
+    expect(scenes.map((scene) => scene.action)).toEqual(['create', 'replaceText', 'replaceChoiceOption']);
+    expect(scenes[0]!.highlights).toHaveLength(13);
+    expect(scenes[0]!.highlights.join('\n')).not.toContain(longLine);
+    expect(scenes[1]!.highlights).toEqual([`替换台词：${longLine}`]);
+    expect(scenes[2]!.highlights).toEqual(['选项：封存前替换的选项 → new_end']);
+    expect(facts.content.choices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: '最初的选项', action: 'create', operationSequence: 0 }),
+      expect.objectContaining({ label: '封存前替换的选项', action: 'replaceChoiceOption', operationSequence: 3 }),
+    ]));
+    expect(facts.units.find((item) => item.unitId === 'unit-a-alpha')!.presentation!.highlights).toContain(`替换台词：${longLine}`);
+    expect(facts.content.omittedFactCount).toBe(0);
+    expect(facts.content.finalScenes).toEqual([{ unitId: 'unit-a-alpha', sceneId: 'wave6_alpha', source: 'sealed-capsule-diff',
+      paragraphs: [longLine, '选项：封存前替换的选项', ...Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 句`)] }]);
+    expect(JSON.stringify(facts.content.finalScenes)).not.toMatch(/最初|已经移除/);
+  });
+
   it('recomputes a legacy projection with presentation absent without injecting new identity fields', async () => {
     const current = await buildComparisonReviewProjection({
       reviewId: 'review-legacy-fingerprint',
@@ -916,5 +961,125 @@ describe('comparison review projection', () => {
       'text|wave6_alpha|0|text|content/scenario/wave6_alpha.gal|2|1',
     );
     expect(reviewTraceObservationKey({ kind: 'text', source: { sceneId: 'wave6_alpha' } })).toBeUndefined();
+  });
+
+  it.each([
+    { request: '' },
+    { request: ' \r\n ' },
+    { request: '有效创作要求', acceptanceCriteria: [' '] },
+  ])('rejects empty supplied brief content before creating an unreadable review: %j', async (creativeBrief) => {
+    await expect(buildComparisonReviewProjection({ reviewId: 'invalid-brief', reviewVersion: '2.0.0',
+      creativeBrief, comparison: comparison(), candidates, objects }, hasher)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  });
+
+  it('keeps v2 creative brief, candidate claims, verified units, and adoption preset as separate fields', async () => {
+    const projection = await buildComparisonReviewProjection({
+      reviewId: 'review-v2-comparison',
+      reviewVersion: '2.0.0',
+      creativeBrief: {
+        title: 'Wave 9 brief',
+        request: 'Build the complete authored route.',
+        acceptanceCriteria: ['keep authored intent'],
+      },
+      comparison: comparison(),
+      candidates,
+      objects,
+    }, hasher);
+
+    expect(projection.reviewVersion).toBe('2.0.0');
+    if (projection.reviewVersion !== '2.0.0') throw new Error('v2 projection missing');
+    expect(projection.creativeBrief).toMatchObject({
+      status: 'provided',
+      request: 'Build the complete authored route.',
+    });
+    expect(projection.task.statementSource).toBe('creative-brief');
+    expect(projection.defaultSelectedUnitIds).toEqual([]);
+    expect(projection.candidates).toHaveLength(candidates.length);
+    for (const item of projection.candidates) {
+      const source = candidates.find((candidateItem) => candidateItem.candidateId === item.candidateId)!;
+      const expectedUnits = comparison().units.filter((unitItem) => unitItem.candidateId === item.candidateId);
+      expect(item.claims.source).toBe('candidate-change-intent');
+      expect(item.verifiedFacts.units.map((unitItem) => unitItem.unitId)).toEqual(
+        expect.arrayContaining(expectedUnits.map((unitItem) => unitItem.unitId)),
+      );
+      expect(item.adoptionPreset.candidateId).toBe(source.candidateId);
+      expect(item.adoptionPreset.candidateRef).toEqual(source.ref);
+    }
+    expect(projection.candidates.find((item) => item.candidateId === 'cand-A')?.adoptionPreset).toMatchObject({
+      status: 'available',
+      selectedUnitIds: ['unit-a-alpha', 'unit-a-variable'],
+      conflictResolutions: [expect.objectContaining({ conflictId: 'conflict-alpha', resolution: 'choose-unit' })],
+    });
+    expect(projection.candidates.find((item) => item.candidateId === 'cand-B')?.adoptionPreset).toMatchObject({
+      status: 'available',
+      selectedUnitIds: ['unit-b-beta', 'unit-b-timeline'],
+      conflictResolutions: [expect.objectContaining({ conflictId: 'conflict-alpha', resolution: 'exclude-all' })],
+    });
+    expect(isReviewProjectionV2Fields(projection)).toBe(true);
+  });
+
+  it('binds v2 actual result explanation to the reviewed decision and result evidence', async () => {
+    const runtimeEvent = {
+      kind: 'instruction' as const,
+      source: { sceneId: 'wave6_alpha', index: 0, op: 'instruction', file: 'content/scenario/wave6_alpha.gal', line: 2, col: 1 },
+    };
+    const projection = await buildResultReviewProjection({
+      reviewId: 'result-v2',
+      reviewVersion: '2.0.0',
+      decisionIntent: {
+        mode: 'adopt-candidate',
+        candidate: { candidateId: 'cand-A', ref: { ...ref('A'), artifactSha256: 'a'.repeat(64) } },
+      },
+      plan: reviewedPlan(),
+      change: readyResultChange(),
+      diffFingerprint: 'diff-fingerprint',
+      ...resultReviewEvidence(),
+      runtimeTraces: [{
+        sourceChangeId: 'change-result',
+        sourceWorkingRevision: 3,
+        traceId: 'runtime-trace',
+        status: 'passed',
+        events: [runtimeEvent],
+      }],
+      resultTreeSha256: 'result-tree-sha',
+    }, hasher);
+
+    expect(projection.reviewVersion).toBe('2.0.0');
+    if (projection.reviewVersion !== '2.0.0' || projection.finalResult === undefined) {
+      throw new Error('v2 result projection missing');
+    }
+    expect(projection.finalResult.actualExplanation).toMatchObject({
+      source: 'integration-result',
+      decisionFingerprint: 'decision-fingerprint',
+      planId: 'plan-result',
+      planFingerprint: 'plan-fingerprint',
+      integrationChangeId: 'change-result',
+      workingRevision: 3,
+      runtimeTraceIds: ['runtime-trace'],
+      actualRuntimeOutcomes: [expect.objectContaining({ traceId: 'runtime-trace', status: 'passed' })],
+    });
+    expect(isReviewProjectionV2Fields(projection)).toBe(true);
+
+    const changedExplanation = {
+      ...projection,
+      finalResult: {
+        ...projection.finalResult,
+        actualExplanation: {
+          ...projection.finalResult.actualExplanation!,
+          warnings: ['changed explanation'],
+        },
+      },
+    } as typeof projection;
+    expect(await resultReviewFingerprintOf(changedExplanation, hasher)).not.toBe(projection.reviewFingerprint);
+    expect(isReviewProjectionV2Fields({
+      ...projection,
+      finalResult: {
+        ...projection.finalResult,
+        actualExplanation: {
+          ...projection.finalResult.actualExplanation!,
+          decisionFingerprint: 'other-decision',
+        },
+      },
+    })).toBe(false);
   });
 });

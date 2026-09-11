@@ -2,11 +2,22 @@ import {
   approvalFingerprintOf,
   AuthoringOperationError,
   decisionFingerprintOf,
+  decisionFingerprintV2Of,
+  isComparisonDecisionReceiptV2,
+  isReviewProjectionV2Fields,
+  resultReviewFingerprintOf,
+  reviewDecisionPreviewFingerprintOf,
+  isReviewDecisionPreview,
+  stableStringify,
   returnFingerprintOf,
   validateComparisonDecision,
   validateFinalApprovalReceipt,
   validateReturnRequest,
   type ComparisonDecisionReceipt,
+  type AnyComparisonDecisionReceipt,
+  type ComparisonDecisionReceiptV2,
+  type ReviewDecisionIntent,
+  type ReviewDecisionPreview,
   type FinalApprovalReceipt,
   type HumanReviewProjection,
   type ReviewTerminalCommand,
@@ -23,7 +34,7 @@ import {
 import { refreshReviewFixtureIdentity } from './review-preview.js';
 
 export interface ReviewWorkspaceIdentity {
-  reviewVersion: '1.0.0';
+  reviewVersion: '1.0.0' | '2.0.0';
   reviewId: string;
   kind: 'comparison' | 'integration-result';
   projectIdentity: string;
@@ -41,6 +52,7 @@ export interface ReviewWorkspaceIdentity {
 
 export interface ReviewDecisionDraft {
   decisionId: string;
+  decisionIntent?: ReviewDecisionIntent;
   selectedUnitIds: string[];
   conflictResolutions: Array<{
     conflictId: string;
@@ -60,7 +72,13 @@ export interface ReviewWorkspaceState {
   currentResultTreeSha256: string | null;
   fixtureChanged: boolean;
   receiptStatus: 'none' | 'decision-written' | 'approval-written' | 'returned';
-  decisionReceipt: ComparisonDecisionReceipt | null;
+  decisionReceipt: AnyComparisonDecisionReceipt | null;
+  decisionPreview?: {
+    selectionKey: string;
+    status: 'loading' | 'ready' | 'blocked' | 'error';
+    value?: ReviewDecisionPreview;
+    message?: string;
+  };
   approvalReceipt: FinalApprovalReceipt | null;
   returnReceipt: ReturnRequestReceipt | null;
   authority: {
@@ -300,7 +318,7 @@ async function getFixedFile(
 
 function parseIdentity(value: unknown, reviewId = 'unknown'): ReviewWorkspaceIdentity {
   if (!record(value)) throw identityError(`review identity 无效：${reviewId}`);
-  if (value['reviewVersion'] !== '1.0.0') throw formatError(`不支持的 reviewVersion：${String(value['reviewVersion'] ?? '')}`);
+  if (value['reviewVersion'] !== '1.0.0' && value['reviewVersion'] !== '2.0.0') throw formatError(`不支持的 reviewVersion：${String(value['reviewVersion'] ?? '')}`);
   const kind = value['kind'];
   if (kind !== 'comparison' && kind !== 'integration-result') throw identityError(`review kind 无效：${reviewId}`);
   const payload = value['payload'];
@@ -338,7 +356,7 @@ function parseIdentity(value: unknown, reviewId = 'unknown'): ReviewWorkspaceIde
     throw identityError(`review identity workingRevision 无效：${String(value['reviewId'])}`);
   }
   return {
-    reviewVersion: '1.0.0',
+    reviewVersion: value['reviewVersion'],
     reviewId: value['reviewId'],
     kind,
     projectIdentity: value['projectIdentity'],
@@ -357,7 +375,7 @@ function parseIdentity(value: unknown, reviewId = 'unknown'): ReviewWorkspaceIde
 
 function validateProjection(value: unknown, identity: ReviewWorkspaceIdentity): HumanReviewProjection {
   if (!record(value)) throw identityError(`review payload 不是对象：${identity.reviewId}`);
-  if (value['reviewVersion'] !== '1.0.0') throw formatError(`不支持的 review payload version：${identity.reviewId}`);
+  if (value['reviewVersion'] !== identity.reviewVersion) throw formatError(`review payload version 不匹配：${identity.reviewId}`);
   const sourceIdentity = value['sourceIdentity'];
   if (value['reviewId'] !== identity.reviewId
     || value['kind'] !== identity.kind
@@ -373,6 +391,9 @@ function validateProjection(value: unknown, identity: ReviewWorkspaceIdentity): 
   }
   validateConflictContracts(value, identity);
   validateDependencyContracts(value, identity);
+  if (value['reviewVersion'] === '2.0.0' && !isReviewProjectionV2Fields(value)) {
+    throw formatError(`review v2 事实或结果身份无效：${identity.reviewId}`);
+  }
   if (identity.kind === 'integration-result') {
     if (sourceIdentity['integrationChangeId'] !== identity.integrationChangeId
       || sourceIdentity['workingRevision'] !== identity.workingRevision) {
@@ -406,9 +427,10 @@ function reviewDirectoryState(projection: HumanReviewProjection): ReviewDecision
   };
 }
 
-function decisionDraftFromReceipt(value: ComparisonDecisionReceipt): ReviewDecisionDraft {
+function decisionDraftFromReceipt(value: AnyComparisonDecisionReceipt): ReviewDecisionDraft {
   return {
     decisionId: value.decisionId,
+    ...(value.receiptVersion === '2.0.0' ? { decisionIntent: value.decisionIntent } : {}),
     selectedUnitIds: [...value.selectedUnitIds],
     conflictResolutions: value.conflictResolutions.map((item) => ({ ...item })),
   };
@@ -418,12 +440,15 @@ async function verifiedDecisionReceipt(
   projection: HumanReviewProjection,
   value: unknown,
   hasher: TextHasher,
-): Promise<ComparisonDecisionReceipt> {
+): Promise<AnyComparisonDecisionReceipt> {
   if (!record(value)) throw formatError(`comparison decision receipt 不是对象：${projection.reviewId}`);
+  if (value['receiptVersion'] === '2.0.0' && !isComparisonDecisionReceiptV2(value)) {
+    throw formatError(`comparison v2 decision receipt 结构无效：${projection.reviewId}`);
+  }
   try {
     const verified = await validateComparisonDecision({
       projection,
-      receipt: value as unknown as ComparisonDecisionReceipt,
+      receipt: value as unknown as AnyComparisonDecisionReceipt,
     }, hasher);
     return verified.receipt;
   } catch (error) {
@@ -508,6 +533,7 @@ export function discardReviewDraft(workspace: ReviewWorkspaceState): void {
   }
   workspace.decisionDraft = workspace.decisionReceipt === null ? reviewDirectoryState(workspace.projection)
     : decisionDraftFromReceipt(workspace.decisionReceipt);
+  delete workspace.decisionPreview;
 }
 
 async function reconcileAuthoritySnapshot(
@@ -705,6 +731,10 @@ export async function openReviewWorkspace(
     throw identityError(`review payload bytes/SHA 与 identity sidecar 不一致：${identity.reviewId}`);
   }
   const projection = validateProjection(payloadRead.value, identity);
+  if (projection.reviewVersion === '2.0.0' && projection.kind === 'integration-result'
+    && projection.reviewFingerprint !== await resultReviewFingerprintOf(projection, hasher)) {
+    throw identityError('最终结果说明与审阅身份不一致，无法批准。');
+  }
   const decision = await optionalJson(rootHandle, 'decision.json');
   const approval = await optionalJson(rootHandle, 'final-approval.json');
   const returned = await optionalJson(rootHandle, 'return-request.json');
@@ -767,18 +797,81 @@ export async function openReviewWorkspace(
   return workspace;
 }
 
+export function reviewDecisionDraftKey(draft: ReviewDecisionDraft): string {
+  return stableStringify({
+    decisionIntent: draft.decisionIntent,
+    selectedUnitIds: [...draft.selectedUnitIds].sort(),
+    conflictResolutions: [...draft.conflictResolutions].sort((left, right) => left.conflictId.localeCompare(right.conflictId)),
+  });
+}
+
+export function canSaveReviewDecision(workspace: ReviewWorkspaceState): boolean {
+  if (workspace.projection.reviewVersion === '1.0.0') return canSealDecision(workspace.projection, workspace.decisionDraft);
+  if (workspace.receiptStatus !== 'none' || workspace.authority.state !== 'available') return false;
+  const preview = workspace.decisionPreview;
+  return preview?.status === 'ready' && preview.value?.status === 'ready'
+    && preview.selectionKey === reviewDecisionDraftKey(workspace.decisionDraft);
+}
+
+export async function previewReviewDecision(workspace: ReviewWorkspaceState, client?: ReviewTerminalClient): Promise<void> {
+  const intent = workspace.decisionDraft.decisionIntent;
+  if (workspace.projection.reviewVersion !== '2.0.0' || intent === undefined
+    || workspace.receiptStatus !== 'none' || workspace.authority.state !== 'available') throw invalidReview('请先选择一个方案。');
+  const previewClient = terminalClientFor(workspace, client);
+  if (previewClient.previewDecision === undefined) throw authorityError('REVIEW_PREVIEW_UNAVAILABLE', '请从绑定项目入口打开审阅。');
+  const pending: NonNullable<ReviewWorkspaceState['decisionPreview']> = {
+    selectionKey: reviewDecisionDraftKey(workspace.decisionDraft), status: 'loading',
+  };
+  workspace.decisionPreview = pending;
+  try {
+    const preview = await previewClient.previewDecision({ ...describeInput(workspace), decisionIntent: structuredClone(intent),
+      ...(intent.mode === 'custom-mix' ? { customSelection: {
+        selectedUnitIds: [...workspace.decisionDraft.selectedUnitIds],
+        conflictResolutions: workspace.decisionDraft.conflictResolutions.map((item) => ({ ...item })),
+      } } : {}),
+    });
+    if (workspace.decisionPreview !== pending || pending.selectionKey !== reviewDecisionDraftKey(workspace.decisionDraft)) return;
+    if (!isReviewDecisionPreview(preview) || preview.reviewId !== workspace.projection.reviewId
+      || stableStringify(preview.decisionIntent) !== stableStringify(intent)
+      || preview.reviewFingerprint !== workspace.projection.reviewFingerprint
+      || preview.comparisonFingerprint !== workspace.projection.sourceIdentity.comparisonFingerprint
+      || preview.previewFingerprint !== await reviewDecisionPreviewFingerprintOf(preview, hasherFor(workspace))) {
+      throw identityError('预览与当前审阅身份不一致。');
+    }
+    if (workspace.decisionPreview !== pending || pending.selectionKey !== reviewDecisionDraftKey(workspace.decisionDraft)) return;
+    pending.status = preview.status;
+    pending.value = preview;
+  } catch (error) {
+    if (workspace.decisionPreview !== pending || pending.selectionKey !== reviewDecisionDraftKey(workspace.decisionDraft)) return;
+    pending.status = 'error';
+    const code = error instanceof ReviewAuthorityClientError || error instanceof AuthoringOperationError ? error.code : '';
+    const messages: Record<string, string> = {
+      REVIEW_DECISION_STALE: '这份审阅已过期，请打开重新生成的审阅。',
+      COMPOSITION_PLAN_STALE: '项目已变化，这份审阅已过期，请打开重新生成的审阅。',
+      REVIEW_PREVIEW_UNAVAILABLE: '当前入口没有连接项目，请从绑定项目入口打开审阅。',
+      REVIEW_AUTHORITY_UNAVAILABLE: '本机审阅服务未连接，暂时无法预览和保存。',
+      COMPOSITION_CONFLICT_UNRESOLVED: '同一内容保留了多个版本，请保留一个版本或全部取消。',
+      COMPOSITION_DEPENDENCY_MISSING: '所选内容缺少依赖，无法完成组合。',
+    };
+    pending.message = messages[code] ?? (error instanceof ReviewAuthorityClientError || error instanceof AuthoringOperationError
+      ? error.message : '预览未完成，请重试。');
+    throw error;
+  }
+}
+
 export async function writeDecisionReceipt(
   workspace: ReviewWorkspaceState,
   draft: ReviewDecisionDraft,
   now: string,
   terminalClient?: ReviewTerminalClient,
-): Promise<ComparisonDecisionReceipt> {
+): Promise<AnyComparisonDecisionReceipt> {
   if (workspace.identity.kind !== 'comparison') throw invalidReview('只有 comparison review 可以写入决定');
-  if (draft.decisionId.length === 0 || !canSealDecision(workspace.projection, draft)) {
+  if (draft.decisionId.length === 0 || (workspace.projection.reviewVersion === '2.0.0'
+    ? !canSaveReviewDecision(workspace) || reviewDecisionDraftKey(draft) !== reviewDecisionDraftKey(workspace.decisionDraft)
+    : !canSealDecision(workspace.projection, draft))) {
     throw invalidReview('当前审阅不能封存决定');
   }
-  const unsigned: Omit<ComparisonDecisionReceipt, 'decisionFingerprint'> = {
-    receiptVersion: '1.0.0',
+  const common = {
     decisionId: draft.decisionId,
     reviewId: workspace.projection.reviewId,
     comparisonFingerprint: workspace.projection.sourceIdentity.comparisonFingerprint,
@@ -787,13 +880,26 @@ export async function writeDecisionReceipt(
     candidateRefs: workspace.projection.candidates.map((candidate) => ({ ...candidate.ref })),
     selectedUnitIds: [...draft.selectedUnitIds],
     conflictResolutions: draft.conflictResolutions.map((resolution) => ({ ...resolution })),
-    reviewerChannel: 'surdet-editor-local',
+    reviewerChannel: 'surdet-editor-local' as const,
     decidedAt: now,
   };
-  const receipt: ComparisonDecisionReceipt = {
-    ...unsigned,
-    decisionFingerprint: await decisionFingerprintOf(unsigned, hasherFor(workspace)),
-  };
+  let receipt: AnyComparisonDecisionReceipt;
+  if (workspace.projection.reviewVersion === '2.0.0') {
+    const preview = workspace.decisionPreview!.value!;
+    const unsigned: Omit<ComparisonDecisionReceiptV2, 'decisionFingerprint'> = {
+      ...common, receiptVersion: '2.0.0', reviewFingerprint: preview.reviewFingerprint,
+      decisionIntent: preview.decisionIntent, selectedUnitIds: preview.selectedUnitIds,
+      conflictResolutions: preview.conflictResolutions, planContentFingerprint: preview.planContentFingerprint,
+      previewFingerprint: preview.previewFingerprint,
+    };
+    receipt = { ...unsigned, decisionFingerprint: await decisionFingerprintV2Of(unsigned, hasherFor(workspace)) };
+    if (!canSaveReviewDecision(workspace) || reviewDecisionDraftKey(draft) !== reviewDecisionDraftKey(workspace.decisionDraft)) {
+      throw invalidReview('选择已经改变，请重新查看预览。');
+    }
+  } else {
+    const unsigned = { ...common, receiptVersion: '1.0.0' as const };
+    receipt = { ...unsigned, decisionFingerprint: await decisionFingerprintOf(unsigned, hasherFor(workspace)) };
+  }
   if (workspace.authority.state === 'terminal'
     && workspace.decisionReceipt?.decisionFingerprint === receipt.decisionFingerprint) {
     return workspace.decisionReceipt;

@@ -634,7 +634,7 @@ const approvalRefSchema = strictObject({
 }, ['resultReviewId', 'approvalId', 'approvalFingerprint']);
 
 const reviewWorkspaceIdentitySchema = strictObject({
-  reviewVersion: { const: '1.0.0' },
+  reviewVersion: { enum: ['1.0.0', '2.0.0'] },
   reviewId: stringSchema,
   kind: { enum: ['comparison', 'integration-result'] },
   projectIdentity: stringSchema,
@@ -884,7 +884,14 @@ const definitions = {
     example: { input: { operationId: 'op_recovery', recoveryToken: '...' }, expectedResultShape: { changeId: 'chg_...', status: 'OPEN', disposition: 'REOPEN_OPEN' } },
   },
   reviewPrepareComparison: {
-    inputSchema: strictObject({ candidateRefs: candidateRefsSchema }, ['candidateRefs']),
+    inputSchema: strictObject({
+      candidateRefs: candidateRefsSchema,
+      creativeBrief: strictObject({
+        title: { type: 'string', minLength: 1, maxLength: 256 },
+        request: { type: 'string', minLength: 1, maxLength: 16000 },
+        acceptanceCriteria: { type: 'array', maxItems: 64, items: { type: 'string', minLength: 1, maxLength: 2000 } },
+      }, ['request']),
+    }, ['candidateRefs']),
     outputSchema: preparedReviewResultSchema,
     example: { input: { candidateRefs: [] }, expectedResultShape: { reviewId: 'review_comparison_...', projection: {}, identity: {} } },
   },

@@ -3,6 +3,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AuthoringOperationError,
   parseReviewTerminalCommand,
+  parseReviewDecisionPreviewCommand,
+  type ReviewDecisionPreviewCommand,
+  type ReviewDecisionPreview,
   type ReviewTerminalCommand,
   type ReviewTerminalSnapshot,
 } from '@surdet/authoring';
@@ -18,6 +21,7 @@ export const REVIEW_AUTHORITY_MAX_BODY_BYTES = 256 * 1024;
 export interface ReviewAuthorityHttpTarget {
   describe(input: ReviewTerminalDescribeInput): Promise<ReviewTerminalSnapshot>;
   write(command: ReviewTerminalCommand): Promise<ReviewTerminalSnapshot>;
+  previewDecision?(command: ReviewDecisionPreviewCommand): Promise<ReviewDecisionPreview>;
 }
 
 export interface ReviewAuthorityHttpHandlerOptions {
@@ -39,6 +43,11 @@ const SAFE_BUSINESS_ERROR_CODES = new Set([
   'REVIEW_DECISION_REQUIRED',
   'REVIEW_DECISION_INVALID',
   'REVIEW_DECISION_STALE',
+  'REVIEW_PREVIEW_UNAVAILABLE',
+  'COMPOSITION_PLAN_STALE',
+  'COMPOSITION_PLAN_INVALID',
+  'COMPOSITION_CONFLICT_UNRESOLVED',
+  'COMPOSITION_DEPENDENCY_MISSING',
   'REVIEW_RESULT_NOT_READY',
   'REVIEW_APPROVAL_REQUIRED',
   'REVIEW_APPROVAL_STALE',
@@ -208,7 +217,8 @@ export function createReviewAuthorityHttpHandler(
       const statusRoute = `${REVIEW_AUTHORITY_BASE_PATH}/status`;
       const describeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/describe`;
       const writeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/write`;
-      if (route !== statusRoute && route !== describeRoute && route !== writeRoute) {
+      const previewRoute = `${REVIEW_AUTHORITY_BASE_PATH}/preview-decision`;
+      if (route !== statusRoute && route !== describeRoute && route !== writeRoute && route !== previewRoute) {
         sendBoundaryError(request, response, 404, 'NOT_FOUND', '本机审阅服务没有这个入口。');
         return;
       }
@@ -253,9 +263,14 @@ export function createReviewAuthorityHttpHandler(
         return;
       }
       const body = parseJson(await readBody(request, maxBodyBytes, bodyTimeoutMs));
+      if (route === previewRoute && options.authority.previewDecision === undefined) {
+        throw new AuthoringOperationError('REVIEW_PREVIEW_UNAVAILABLE', '当前入口不支持决定预览。');
+      }
       const result = route === describeRoute
         ? await options.authority.describe(parseReviewTerminalDescribeInput(body))
-        : await options.authority.write(parseReviewTerminalCommand(body));
+        : route === previewRoute
+          ? await options.authority.previewDecision!(parseReviewDecisionPreviewCommand(body))
+          : await options.authority.write(parseReviewTerminalCommand(body));
       sendJson(response, 200, { ok: true, result });
     })().catch((error: unknown) => {
       if (error instanceof BodyTooLargeError) {

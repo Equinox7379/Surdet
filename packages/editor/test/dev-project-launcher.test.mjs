@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
+import * as http from 'node:http';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -132,6 +133,31 @@ describe('bound project Editor launcher', () => {
       const confirmed = (await confirmation.json()).data;
       assert.match(confirmed.bindingToken, /^[0-9a-f]{64}$/);
       await assert.rejects(fs.readFile(path.join(projectRoot, challenge.relativeProbePath)));
+      const environment = [process.env.SURDET_EDITOR_PROJECT_LAUNCHER, process.env.SURDET_EDITOR_PROJECT_ROOT, process.env.SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT];
+      for (let index = 0; index < 2; index++) {
+        await first.restart();
+        const restartedMain = await first.transformIndexHtml('/', '<html><head></head></html>');
+        const restartedMatch = restartedMain.match(/__SURDET_ASSET_IMPORT_AUTHORITY__=Object\.freeze\((\{[^<]+\})\);/);
+        assert.notEqual(restartedMatch, null, 'configuration reload must retain the project binding');
+        const restartedConfig = JSON.parse(restartedMatch[1]);
+        const statusBody = JSON.stringify({ browserSessionId: 'launcher-browser' });
+        const restartedStatus = await new Promise((resolve, reject) => {
+          const request = http.request(`${origin}${restartedConfig.endpoint}/status`, {
+            method: 'POST', agent: false,
+            headers: { ...authorityHeaders, 'x-surdet-asset-import-authority': restartedConfig.token, 'Content-Length': Buffer.byteLength(statusBody) },
+          }, (response) => {
+            let body = '';
+            response.setEncoding('utf8');
+            response.on('data', (chunk) => { body += chunk; });
+            response.on('end', () => resolve({ status: response.statusCode, body }));
+          });
+          request.on('error', reject);
+          request.end(statusBody);
+        });
+        assert.equal(restartedStatus.status, 200);
+        assert.equal(JSON.parse(restartedStatus.body).data.projectIdentity, confirmed.projectIdentity);
+        assert.deepEqual([process.env.SURDET_EDITOR_PROJECT_LAUNCHER, process.env.SURDET_EDITOR_PROJECT_ROOT, process.env.SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT], environment);
+      }
       await new Promise((resolve) => setTimeout(resolve, 500));
     } finally {
       await first.close();

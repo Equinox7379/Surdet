@@ -140,8 +140,12 @@ export function selectReviewPreviewScene(
   sceneIds: readonly string[],
   projection: HumanReviewProjection,
   requestedSceneId: string | undefined,
+  projectEntryScene?: string,
 ): string | null {
   if (requestedSceneId !== undefined && sceneIds.includes(requestedSceneId)) return requestedSceneId;
+  if (projection.reviewVersion === '2.0.0' && projectEntryScene !== undefined && sceneIds.includes(projectEntryScene)) {
+    return projectEntryScene;
+  }
   const changedObjects = projection.finalResult?.changedObjects && projection.finalResult.changedObjects.length > 0
     ? projection.finalResult.changedObjects
     : projection.objects;
@@ -296,7 +300,7 @@ export async function openReviewPreview(
   }
   await openProjectFromHandle(workspace.projectHandle, { source: 'review-fixture' });
   const sceneIds = [...state.scenes.values()].map((scene) => scene.id);
-  const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId);
+  const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId, state.entryScene);
   if (sceneId === null) throw new Error('result fixture 没有可运行场景');
   const sceneKey = [...state.scenes.entries()].find(([, scene]) => scene.id === sceneId)?.[0];
   if (sceneKey === undefined) throw new Error(`result fixture 缺少场景：${sceneId}`);

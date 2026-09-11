@@ -10,34 +10,68 @@ import type {
 } from './composition-contracts.js';
 import type { AuthoringObject, ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
+import { parseSceneDocument } from './scene-document.js';
+import { compileScene } from '@surdet/core';
 import type { IntegrationPlan } from './integration-plan.js';
 import type {
+  CandidateAdoptionPreset,
+  CreativeBriefInput,
   HumanReviewProjection,
+  HumanReviewProjectionV1,
+  HumanReviewProjectionV2,
+  ReviewActualResultExplanation,
+  ReviewCandidateClaim,
+  ReviewCandidateVerifiedFacts,
+  ReviewCandidateV2,
+  ReviewCandidateRuntimeInput,
+  ReviewChangedObjectFact,
+  ReviewChoiceFact,
+  ReviewCreativeBrief,
   ReviewCandidate,
   ReviewConflict,
   ReviewDependency,
   ReviewEvidenceSummary,
   ReviewFinalResult,
+  ReviewHumanFact,
   ReviewObjectSummary,
+  ReviewRuntimePathFact,
+  ReviewRuntimeTraceInput,
   ReviewResultFreshness,
   ReviewRuntimeTraceObservation,
+  ReviewSceneFact,
   ReviewSafeGroup,
+  ReviewTimelineFact,
   ReviewUnitOutcome,
+  ReviewVariableFact,
+  ReviewAssetFact,
   ReviewWarning,
 } from './review-contracts.js';
 import {
   buildReviewUnitPresentation,
   metadataOnlyReviewUnitPresentation,
 } from './review-presentation.js';
+import {
+  deriveWholeCandidateSelection,
+  isReviewDecisionIntent,
+  type ReviewDecisionCandidate,
+  type ReviewDecisionIntent,
+} from './review-decision-preview.js';
 
 export interface BuildComparisonReviewProjectionInput {
   reviewId: string;
   comparison: CompositionComparison;
+  /** Defaults to v1 so existing callers keep the historical payload and fingerprint. */
+  reviewVersion?: '1.0.0' | '2.0.0';
+  creativeBrief?: CreativeBriefInput;
   candidates: Array<Pick<VerifiedCompositionCandidate,
     'candidateId' | 'ref' | 'evidenceSummary'> & {
       intent?: string;
       acceptanceCriteria: string[];
       manifest?: CompositionManifest;
+      /** Runtime facts already selected from the candidate's sealed evidence. */
+      sealedRuntimeTraceIds?: readonly string[];
+      sealedFileDiffs?: ChangeDiff['files'];
+      runtime?: ReviewCandidateRuntimeInput;
     }>;
   objects: AuthoringObject[];
 }
@@ -77,6 +111,7 @@ function sortedFacts(values: readonly unknown[]): unknown[] {
 function unitPresentation(
   unit: ObjectChangeUnit,
   manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+  detail: 'summary' | 'full' = 'summary',
 ): ReviewUnitOutcome['presentation'] {
   const manifest = manifests.get(unit.candidateId);
   if (manifest === undefined) return metadataOnlyReviewUnitPresentation(unit.primaryObject);
@@ -93,12 +128,13 @@ function unitPresentation(
     }
     operations.push(operation);
   }
-  return buildReviewUnitPresentation(unit.primaryObject, operations);
+  return buildReviewUnitPresentation(unit.primaryObject, operations, detail);
 }
 
 function projectUnitOutcome(
   unit: ObjectChangeUnit,
   manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+  detail: 'summary' | 'full' = 'summary',
 ): ReviewUnitOutcome {
   return {
     unitId: unit.unitId,
@@ -113,7 +149,350 @@ function projectUnitOutcome(
     potentialImpact: sortedFacts(unit.potentialImpact),
     observedImpact: sortedFacts(unit.observedImpact),
     evidence: normalizedEvidence(unit.evidenceSummary),
-    presentation: unitPresentation(unit, manifests),
+    presentation: unitPresentation(unit, manifests, detail),
+  };
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  const record = jsonRecord(value);
+  const field = record?.[key];
+  return typeof field === 'string' && field.length > 0 ? field : undefined;
+}
+
+function numberField(value: unknown, key: string): number | undefined {
+  const record = jsonRecord(value);
+  const field = record?.[key];
+  return typeof field === 'number' && Number.isFinite(field) ? field : undefined;
+}
+
+function arrayField(value: unknown, key: string): unknown[] {
+  const record = jsonRecord(value);
+  return Array.isArray(record?.[key]) ? record[key] as unknown[] : [];
+}
+
+function operationSourceFacts(
+  unit: ObjectChangeUnit,
+  operation: CompositionOperation,
+  presentation: ReviewUnitOutcome['presentation'],
+): {
+  scenes: ReviewSceneFact[];
+  choices: ReviewChoiceFact[];
+  variables: ReviewVariableFact[];
+  timelines: ReviewTimelineFact[];
+  assets: ReviewAssetFact[];
+  excerpts: string[];
+} {
+  const input = jsonRecord(operation.normalizedInput);
+  const scenes: ReviewSceneFact[] = [];
+  const choices: ReviewChoiceFact[] = [];
+  const variables: ReviewVariableFact[] = [];
+  const timelines: ReviewTimelineFact[] = [];
+  const assets: ReviewAssetFact[] = [];
+  const excerpts = presentation?.highlights ?? [];
+  const sceneId = stringField(input, 'sceneId');
+  if (operation.capabilityId === 'scene.create' || operation.capabilityId === 'scene.patch') {
+    const patch = jsonRecord(input?.['patch']);
+    const action = operation.capabilityId === 'scene.create'
+      ? 'create'
+      : stringField(patch, 'kind') ?? 'patch';
+    scenes.push({
+      sceneId: sceneId ?? operation.primaryObject.replace(/^scene:/, ''),
+      objectRef: operation.primaryObject,
+      unitId: unit.unitId,
+      action,
+      operationSequence: operation.sequence,
+      highlights: [...excerpts],
+    });
+    {
+      const blocks = operation.capabilityId === 'scene.create' ? arrayField(input, 'blocks')
+        : stringField(patch, 'kind') === 'insertAfter' ? arrayField(patch, 'blocks')
+          : stringField(patch, 'kind') === 'replaceChoiceOption' ? [{ kind: 'choice', options: [patch?.['option']] }] : [];
+      for (const block of blocks) {
+        if (stringField(block, 'kind') !== 'choice') continue;
+        for (const option of arrayField(block, 'options')) {
+          const label = stringField(option, 'label');
+          if (label === undefined) continue;
+          const target = jsonRecord(option)?.['target'];
+          choices.push({
+            unitId: unit.unitId,
+            ...(sceneId === undefined ? {} : { sceneId }),
+            label,
+            action,
+            operationSequence: operation.sequence,
+            ...(stringField(target, 'value') === undefined ? {} : { target: stringField(target, 'value') }),
+          });
+        }
+      }
+    }
+  }
+  if (operation.capabilityId === 'variable.ensure') {
+    const name = stringField(input, 'name');
+    if (name !== undefined) {
+      const initial = jsonRecord(input)?.['initial'];
+      variables.push({
+        unitId: unit.unitId,
+        name,
+        ...(stringField(input, 'type') === undefined ? {} : { type: stringField(input, 'type') }),
+        ...(initial === undefined || (typeof initial !== 'string' && typeof initial !== 'number'
+          && typeof initial !== 'boolean' && initial !== null && !Array.isArray(initial)
+          && typeof initial !== 'object') ? {} : { initial: initial as never }),
+      });
+    }
+  }
+  if (operation.capabilityId === 'timeline.create' || operation.capabilityId === 'timeline.patch') {
+    const definition = jsonRecord(input?.['definition']);
+    const timelineId = stringField(input, 'timelineId') ?? operation.primaryObject.replace(/^timeline:/, '');
+    const tracks = arrayField(definition, 'tracks');
+    const trackKinds = tracks
+      .map((track) => stringField(track, 'kind'))
+      .filter((kind): kind is string => kind !== undefined)
+      .sort((left, right) => left.localeCompare(right));
+    timelines.push({
+      unitId: unit.unitId,
+      timelineId,
+      ...(numberField(definition, 'durationMs') === undefined ? {} : { durationMs: numberField(definition, 'durationMs') }),
+      ...(definition === undefined ? {} : { trackCount: tracks.length }),
+      trackKinds,
+    });
+  }
+  for (const required of operation.requiredObjects) {
+    if (!required.objectRef.includes('asset')) continue;
+    assets.push({ unitId: unit.unitId, assetRef: required.objectRef });
+  }
+  return { scenes, choices, variables, timelines, assets, excerpts };
+}
+
+function candidateContentFacts(
+  units: readonly ObjectChangeUnit[],
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+): ReviewCandidateVerifiedFacts['content'] {
+  const changedObjects: ReviewChangedObjectFact[] = [];
+  const scenes: ReviewSceneFact[] = [];
+  const choices: ReviewChoiceFact[] = [];
+  const variables: ReviewVariableFact[] = [];
+  const timelines: ReviewTimelineFact[] = [];
+  const assets: ReviewAssetFact[] = [];
+  const excerpts: string[] = [];
+  let omittedFactCount = 0;
+  const sortedUnits = [...units].sort((left, right) =>
+    left.primaryObject.localeCompare(right.primaryObject)
+    || left.unitId.localeCompare(right.unitId));
+  for (const unit of sortedUnits) {
+    for (const produced of unit.producedObjects) {
+      changedObjects.push({
+        objectRef: produced.objectRef,
+        disposition: produced.disposition,
+        ...(produced.finalFingerprint === undefined ? {} : { finalFingerprint: produced.finalFingerprint }),
+        unitId: unit.unitId,
+      });
+    }
+    const manifest = manifests.get(unit.candidateId);
+    if (manifest === undefined) continue;
+    const bySequence = new Map(manifest.operations.map((operation) => [operation.sequence, operation]));
+    const usedOperations = [...unit.operationSequences]
+      .sort((left, right) => left - right)
+      .map((sequence) => bySequence.get(sequence))
+      .filter((operation): operation is CompositionOperation => operation !== undefined);
+    for (const operation of usedOperations) {
+      const presentation = buildReviewUnitPresentation(unit.primaryObject, [operation], 'full');
+      omittedFactCount += presentation.omittedFactCount;
+      const facts = operationSourceFacts(unit, operation, presentation);
+      scenes.push(...facts.scenes);
+      choices.push(...facts.choices);
+      variables.push(...facts.variables);
+      timelines.push(...facts.timelines);
+      assets.push(...facts.assets);
+      excerpts.push(...facts.excerpts);
+    }
+  }
+  const unique = <T>(items: readonly T[]): T[] => [...new Map(items.map((item) => [stableStringify(item), item])).values()]
+    .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)));
+  return {
+    changedObjects: unique(changedObjects),
+    scenes: unique(scenes),
+    choices: unique(choices),
+    variables: unique(variables),
+    timelines: unique(timelines),
+    assets: unique(assets),
+    excerpts: unique(excerpts),
+    omittedFactCount,
+  };
+}
+
+function runtimeInputsOf(
+  candidate: BuildComparisonReviewProjectionInput['candidates'][number],
+): ReviewRuntimeTraceInput[] {
+  const runtime = candidate.runtime;
+  if (runtime === undefined || runtime.status !== 'available') return [];
+  const sealedIds = new Set(candidate.sealedRuntimeTraceIds ?? []);
+  const byIdentity = new Map<string, ReviewRuntimeTraceInput>();
+  for (const trace of runtime.traces) {
+    if (sealedIds.size > 0 && !sealedIds.has(trace.traceId)) continue;
+    const value: ReviewRuntimeTraceInput = {
+      sourceChangeId: runtime.sourceChangeId,
+      sourceWorkingRevision: runtime.sourceWorkingRevision,
+      traceId: trace.traceId,
+      events: trace.events,
+      status: trace.status,
+    };
+    if (!value || typeof value.traceId !== 'string' || value.traceId.length === 0
+      || typeof value.sourceChangeId !== 'string' || value.sourceChangeId.length === 0
+      || !Number.isInteger(value.sourceWorkingRevision)
+      || !Array.isArray(value.events)) continue;
+    const key = [value.sourceChangeId, value.sourceWorkingRevision, value.traceId].join('\u0000');
+    if (!byIdentity.has(key)) {
+      byIdentity.set(key, {
+        sourceChangeId: value.sourceChangeId,
+        sourceWorkingRevision: value.sourceWorkingRevision,
+        traceId: value.traceId,
+        events: value.events.map((event) => ({
+          ...event,
+          source: { ...event.source },
+          ...(event.stateDelta === undefined ? {} : { stateDelta: event.stateDelta.map((delta) => ({ ...delta })) }),
+          ...(event.condition === undefined ? {} : { condition: { ...event.condition } }),
+          ...(event.controlFlow === undefined ? {} : { controlFlow: { ...event.controlFlow } }),
+          ...(event.choice === undefined ? {} : { choice: { ...event.choice } }),
+        })),
+        ...(value.status === undefined ? {} : { status: value.status }),
+      });
+    }
+  }
+  return [...byIdentity.values()].sort((left, right) =>
+    left.sourceChangeId.localeCompare(right.sourceChangeId)
+    || left.sourceWorkingRevision - right.sourceWorkingRevision
+    || left.traceId.localeCompare(right.traceId));
+}
+
+function runtimePathOf(trace: ReviewRuntimeTraceInput): ReviewRuntimePathFact | undefined {
+  if (trace.events.length === 0) return undefined;
+  const visitedSceneIds: string[] = [];
+  const visited = new Set<string>();
+  const choices: ReviewRuntimePathFact['choices'] = [];
+  const finalVariables = new Map<string, ReviewRuntimePathFact['finalVariables'][number]>();
+  let endingSceneId: string | undefined;
+  for (const event of trace.events) {
+    const sceneId = event.source.sceneId;
+    if (!visited.has(sceneId)) {
+      visited.add(sceneId);
+      visitedSceneIds.push(sceneId);
+    }
+    if (event.kind === 'choice' && event.choice !== undefined) {
+      choices.push({
+        sceneId,
+        optionIndex: event.choice.optionIndex,
+        ...(event.choice.label.length === 0 ? {} : { label: event.choice.label }),
+      });
+    }
+    if (event.kind === 'scene-end') endingSceneId = sceneId;
+    for (const delta of event.stateDelta ?? []) {
+      finalVariables.set(delta.variable, {
+        name: delta.variable,
+        ...(delta.after === undefined ? {} : { value: delta.after as ReviewRuntimePathFact['finalVariables'][number]['value'] }),
+      });
+    }
+  }
+  return {
+    traceId: trace.traceId,
+    status: trace.status ?? 'passed',
+    startSceneId: visitedSceneIds[0] ?? trace.events[0]!.source.sceneId,
+    visitedSceneIds,
+    choices,
+    ...(endingSceneId === undefined ? {} : { endingSceneId }),
+    finalVariables: [...finalVariables.values()].sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
+
+function candidateRuntimeFacts(
+  candidate: BuildComparisonReviewProjectionInput['candidates'][number],
+): ReviewCandidateVerifiedFacts['runtime'] {
+  const manifest = candidate.manifest;
+  const runtime = candidate.runtime;
+  const runtimeInputs = runtimeInputsOf(candidate);
+  const expectedChangeId = manifest?.sourceChangeId ?? candidate.ref.changeId;
+  const expectedWorkingRevision = manifest?.sourceWorkingRevision;
+  const identityMismatch = runtime !== undefined
+    && (runtime.sourceChangeId !== expectedChangeId
+      || (expectedWorkingRevision !== undefined && runtime.sourceWorkingRevision !== expectedWorkingRevision));
+  const matching = identityMismatch
+    ? []
+    : runtimeInputs.filter((trace) => trace.sourceChangeId === expectedChangeId
+      && (expectedWorkingRevision === undefined || trace.sourceWorkingRevision === expectedWorkingRevision));
+  const paths = matching
+    .map(runtimePathOf)
+    .filter((path): path is ReviewRuntimePathFact => path !== undefined)
+    .sort((left, right) => left.traceId.localeCompare(right.traceId));
+  if (paths.length === 0) {
+    const limitations = [
+      ...(runtime?.limitations ?? []),
+      ...(identityMismatch ? ['运行事实不可用：封存轨迹与候选 source change 或 workingRevision 不匹配。'] : []),
+      ...(runtime?.status === 'available' && !identityMismatch && runtimeInputs.length === 0
+        ? ['运行事实不可用：当前候选没有可核对的封存轨迹身份。'] : []),
+      ...(runtime === undefined ? ['运行事实不可用：当前候选没有可核对的封存轨迹身份。'] : []),
+    ];
+    return {
+      status: 'unavailable',
+      ...(runtime?.sourceWorkingRevision !== undefined ? { workingRevision: runtime.sourceWorkingRevision } : {}),
+      paths: [],
+      limitations: sortedStrings(limitations),
+    };
+  }
+  const limitations = sortedStrings([
+    ...(runtime?.limitations ?? []),
+    ...(matching.length === paths.length ? [] : ['部分运行轨迹为空，仅展示可读的操作摘录。']),
+  ]);
+  return {
+    status: 'verified',
+    workingRevision: matching[0]!.sourceWorkingRevision,
+    paths,
+    limitations,
+  };
+}
+
+function candidateVerifiedFacts(
+  candidate: BuildComparisonReviewProjectionInput['candidates'][number],
+  units: readonly ObjectChangeUnit[],
+  manifests: ReadonlyMap<string, CompositionManifest | undefined>,
+): ReviewCandidateVerifiedFacts {
+  const content = candidateContentFacts(units, manifests);
+  content.finalScenes = [];
+  for (const file of candidate.sealedFileDiffs ?? []) {
+    if (!file.path.endsWith('.gal')) continue;
+    const [beforeHeader, afterHeader, ...lines] = file.unifiedDiff.split('\n');
+    // Surdet's diff contains every line, without context hunks. Never infer missing content.
+    if (beforeHeader !== `--- ${file.path}` || afterHeader !== `+++ ${file.path}`
+      || lines.some((line) => !/^[ +\-]/.test(line))) continue;
+    const sourceText = lines.filter((line) => line[0] !== '-').map((line) => line.slice(1)).join('\n');
+    const document = parseSceneDocument(sourceText);
+    const header = document.find((line) => line.kind === 'instr' && line.name === 'scene');
+    const sceneId = header?.raw.trim().match(/^@scene\s+(\S+)\s*$/)?.[1];
+    const unit = units.find((item) => item.primaryObject === `scene:${sceneId}`);
+    if (sceneId === undefined || unit === undefined) continue;
+    const paragraphs = compileScene(sourceText, file.path, sceneId).instructions.flatMap((instruction): string[] => {
+      if (instruction.op === 'text') return [instruction.speaker ? `${instruction.speaker}：${instruction.value}` : instruction.value];
+      if (instruction.op === 'choice') return instruction.options.map((option) => `选项：${option.label}`);
+      return [];
+    });
+    content.finalScenes.push({ unitId: unit.unitId, sceneId, source: 'sealed-capsule-diff', paragraphs });
+  }
+  content.finalScenes.sort((left, right) => left.sceneId.localeCompare(right.sceneId));
+  const runtime = candidateRuntimeFacts(candidate);
+  return {
+    source: {
+      content: candidate.manifest === undefined ? 'manifest-unavailable' : 'sealed-composition-manifest',
+      evidence: candidate.manifest === undefined ? 'evidence-unavailable' : 'sealed-capsule-evidence',
+      runtime: runtime.status === 'verified' ? 'sealed-runtime-trace' : 'runtime-unavailable',
+    },
+    units: [...units]
+      .sort((left, right) => left.primaryObject.localeCompare(right.primaryObject) || left.unitId.localeCompare(right.unitId))
+      .map((unit) => projectUnitOutcome(unit, manifests, 'full')),
+    content,
+    runtime,
   };
 }
 
@@ -355,7 +734,115 @@ function projectEvidence(
   };
 }
 
-function reviewFingerprintPayload(projection: HumanReviewProjection): Record<string, unknown> {
+function reviewCreativeBriefOf(input: CreativeBriefInput | undefined): ReviewCreativeBrief {
+  if (input === undefined) {
+    return {
+      status: 'not-provided',
+      source: 'review-preparation-input',
+      acceptanceCriteria: [],
+    };
+  }
+  if (input.request.trim().length === 0 || input.acceptanceCriteria?.some((criterion) => criterion.trim().length === 0)) {
+    throw invalid('已提供的创作要求和验收条目不能为空。');
+  }
+  return {
+    status: 'provided',
+    source: 'review-preparation-input',
+    ...(input.title === undefined ? {} : { title: input.title }),
+    request: input.request,
+    acceptanceCriteria: [...(input.acceptanceCriteria ?? [])],
+  };
+}
+
+async function withBriefFingerprint(
+  brief: ReviewCreativeBrief,
+  hasher: TextHasher,
+): Promise<ReviewCreativeBrief> {
+  if (brief.status !== 'provided') return brief;
+  const { fingerprint: _fingerprint, ...content } = brief;
+  void _fingerprint;
+  return {
+    ...brief,
+    fingerprint: await hasher.sha256(stableStringify(content)),
+  };
+}
+
+function presetForCandidate(
+  comparison: CompositionComparison,
+  candidate: BuildComparisonReviewProjectionInput['candidates'][number],
+  allCandidates: readonly ReviewDecisionCandidate[],
+): CandidateAdoptionPreset {
+  const selectedUnitIds = sortedStrings(comparison.units
+    .filter((unit) => unit.candidateId === candidate.candidateId)
+    .map((unit) => unit.unitId));
+  const base = {
+    candidateRef: { ...candidate.ref },
+    candidateId: candidate.candidateId,
+    selectedUnitIds,
+  };
+  if (comparison.status === 'blocked') {
+    return {
+      ...base,
+      status: 'blocked',
+      conflictResolutions: [],
+      reasons: [{ code: 'COMPARISON_BLOCKED', message: '当前 comparison 含阻断事实，整案采用被阻止。' }],
+    };
+  }
+  const blocking = comparison.conflicts.filter((conflict) => conflict.severity === 'blocking');
+  if (blocking.length > 0) {
+    return {
+      ...base,
+      status: 'blocked',
+      conflictResolutions: [],
+      reasons: blocking.map((conflict) => ({ code: conflict.code, message: `存在阻断冲突：${conflict.conflictId}` })),
+    };
+  }
+  try {
+    const derived = deriveWholeCandidateSelection({
+      comparison,
+      candidates: allCandidates,
+      candidate: { candidateId: candidate.candidateId, ref: candidate.ref },
+    });
+    return {
+      ...base,
+      status: 'available',
+      conflictResolutions: derived.conflictResolutions,
+      reasons: [],
+    };
+  } catch (error) {
+    return {
+      ...base,
+      status: 'blocked',
+      conflictResolutions: [],
+      reasons: [{
+        code: error instanceof AuthoringOperationError ? error.code : 'WHOLE_CANDIDATE_BLOCKED',
+        message: error instanceof Error ? error.message : '整案采用无法由当前低层组合合同表达。',
+      }],
+    };
+  }
+}
+
+function candidateClaimsOf(
+  candidate: BuildComparisonReviewProjectionInput['candidates'][number],
+): ReviewCandidateClaim {
+  return {
+    source: 'candidate-change-intent',
+    ...(candidate.intent === undefined ? {} : { statement: candidate.intent }),
+    acceptanceCriteria: [...candidate.acceptanceCriteria],
+  };
+}
+
+function candidateUnits(
+  comparison: CompositionComparison,
+  candidateId: string,
+): ObjectChangeUnit[] {
+  return comparison.units
+    .filter((unit) => unit.candidateId === candidateId)
+    .sort((left, right) => left.primaryObject.localeCompare(right.primaryObject) || left.unitId.localeCompare(right.unitId));
+}
+
+function legacyReviewFingerprintPayload(projection: HumanReviewProjectionV1): Record<string, unknown> {
+  // Keep this field selection byte-for-byte compatible with the Wave 8 v1 identity.
   return {
     reviewVersion: projection.reviewVersion,
     kind: projection.kind,
@@ -390,6 +877,29 @@ function reviewFingerprintPayload(projection: HumanReviewProjection): Record<str
       void source;
       return object;
     }),
+  };
+}
+
+function reviewFingerprintPayload(projection: HumanReviewProjection): Record<string, unknown> {
+  if (projection.reviewVersion === '1.0.0') return legacyReviewFingerprintPayload(projection);
+  return {
+    reviewVersion: projection.reviewVersion,
+    kind: projection.kind,
+    projectIdentity: projection.projectIdentity,
+    expectedProjectRevision: projection.expectedProjectRevision,
+    task: projection.task,
+    creativeBrief: projection.creativeBrief,
+    candidates: projection.candidates,
+    safeGroups: projection.safeGroups,
+    conflicts: projection.conflicts,
+    dependencies: projection.dependencies,
+    defaultSelectedUnitIds: projection.defaultSelectedUnitIds,
+    evidence: projection.evidence,
+    objects: projection.objects.map(({ source, ...object }) => {
+      void source;
+      return object;
+    }),
+    sourceIdentity: projection.sourceIdentity,
   };
 }
 
@@ -430,7 +940,7 @@ export async function buildComparisonReviewProjection(
     ...input.comparison.conflicts.flatMap((item) => item.objectRefs),
   ]).size;
   const declared = orderedInputs.find((item) => item.intent !== undefined && item.intent.trim().length > 0);
-  const task = declared === undefined
+  const legacyTask = declared === undefined
     ? {
         title: '候选创作方案审阅',
         acceptanceCriteria: [],
@@ -447,14 +957,78 @@ export async function buildComparisonReviewProjection(
         conflictCount: conflicts.length,
         statementSource: 'candidate-intent' as const,
       };
-  const projection: HumanReviewProjection = {
+  const sourceIdentity = {
+    projectIdentity: input.comparison.projectIdentity,
+    expectedProjectRevision: input.comparison.expectedProjectRevision,
+    comparisonFingerprint: input.comparison.comparisonFingerprint,
+  };
+  if (input.reviewVersion === '2.0.0') {
+    const creativeBrief = await withBriefFingerprint(reviewCreativeBriefOf(input.creativeBrief), hasher);
+    const decisionCandidates: ReviewDecisionCandidate[] = orderedInputs.map((item) => ({
+      candidateId: item.candidateId,
+      ref: item.ref,
+    }));
+    const v2Candidates: ReviewCandidateV2[] = orderedInputs.map((item, index) => {
+      const candidate = candidates[index]!;
+      return {
+        ...candidate,
+        claims: candidateClaimsOf(item),
+        verifiedFacts: candidateVerifiedFacts(
+          item,
+          candidateUnits(input.comparison, item.candidateId),
+          manifests,
+        ),
+        adoptionPreset: presetForCandidate(input.comparison, item, decisionCandidates),
+      };
+    });
+    const task = creativeBrief.status === 'provided'
+      ? {
+          title: creativeBrief.title ?? '本次创作要求',
+          goal: creativeBrief.request,
+          acceptanceCriteria: [...creativeBrief.acceptanceCriteria],
+          candidateCount: v2Candidates.length,
+          objectCount,
+          conflictCount: conflicts.length,
+          statementSource: 'creative-brief' as const,
+        }
+      : {
+          title: '本次创作要求',
+          acceptanceCriteria: [],
+          candidateCount: v2Candidates.length,
+          objectCount,
+          conflictCount: conflicts.length,
+          statementSource: 'not-provided' as const,
+        };
+    const projection: HumanReviewProjectionV2 = {
+      reviewVersion: '2.0.0',
+      reviewId: input.reviewId,
+      kind: 'comparison',
+      state: 'COMPARISON_PREPARED',
+      projectIdentity: input.comparison.projectIdentity,
+      expectedProjectRevision: input.comparison.expectedProjectRevision,
+      task,
+      candidates: v2Candidates,
+      creativeBrief,
+      safeGroups,
+      conflicts,
+      dependencies,
+      defaultSelectedUnitIds: [],
+      evidence,
+      objects,
+      sourceIdentity,
+      reviewFingerprint: '',
+    };
+    projection.reviewFingerprint = await comparisonReviewFingerprintOf(projection, hasher);
+    return projection;
+  }
+  const projection: HumanReviewProjectionV1 = {
     reviewVersion: '1.0.0',
     reviewId: input.reviewId,
     kind: 'comparison',
     state: 'COMPARISON_PREPARED',
     projectIdentity: input.comparison.projectIdentity,
     expectedProjectRevision: input.comparison.expectedProjectRevision,
-    task,
+    task: legacyTask,
     candidates,
     safeGroups,
     conflicts,
@@ -462,11 +1036,7 @@ export async function buildComparisonReviewProjection(
     defaultSelectedUnitIds,
     evidence,
     objects,
-    sourceIdentity: {
-      projectIdentity: input.comparison.projectIdentity,
-      expectedProjectRevision: input.comparison.expectedProjectRevision,
-      comparisonFingerprint: input.comparison.comparisonFingerprint,
-    },
+    sourceIdentity,
     reviewFingerprint: '',
   };
   projection.reviewFingerprint = await comparisonReviewFingerprintOf(projection, hasher);
@@ -476,11 +1046,18 @@ export async function buildComparisonReviewProjection(
 export interface BuildResultReviewProjectionInput {
   reviewId: string;
   plan: IntegrationPlan;
+  /** Sealed source object identities only; actual inclusion is derived from the executed plan. */
+  sourceUnitObjects?: readonly (Pick<ReviewUnitOutcome, 'unitId' | 'primaryObject'> & { sourceCapsule: CandidateCapsuleRef })[];
   change: ChangeRecord;
+  /** v2 result reviews carry the saved high-level decision explicitly. */
+  reviewVersion?: '1.0.0' | '2.0.0';
+  decisionIntent?: ReviewDecisionIntent;
   diffFingerprint: string;
   diff: ChangeDiff;
   freshness?: ReviewResultFreshness;
   runtimeTraceObservations: ReviewRuntimeTraceObservation[];
+  /** Raw traces are supplied by the Node adapter after identity/evidence checks. */
+  runtimeTraces?: readonly ReviewRuntimeTraceInput[];
   resultTreeSha256: string;
   changedObjects?: ReviewObjectSummary[];
   warnings?: ReviewWarning[];
@@ -517,6 +1094,170 @@ function resultNotReady(message: string): AuthoringOperationError {
   return new AuthoringOperationError('REVIEW_RESULT_NOT_READY', message);
 }
 
+function resultRuntimeInputsOf(input: BuildResultReviewProjectionInput): ReviewRuntimeTraceInput[] {
+  const values = [...(input.runtimeTraces ?? [])];
+  const summaries = new Map((input.change.runtimeTraces ?? []).map((trace) => [trace.traceId, trace]));
+  const byIdentity = new Map<string, ReviewRuntimeTraceInput>();
+  for (const value of values) {
+    const summary = summaries.get(value.traceId);
+    if (!summary || summary.status !== 'passed' || summary.workingRevision !== input.change.workingRevision
+      || value.sourceChangeId !== input.change.changeId
+      || value.sourceWorkingRevision !== input.change.workingRevision
+      || value.status === 'failed'
+      || !Array.isArray(value.events)) continue;
+    if (byIdentity.has(value.traceId)) continue;
+    byIdentity.set(value.traceId, {
+      sourceChangeId: value.sourceChangeId,
+      sourceWorkingRevision: value.sourceWorkingRevision,
+      traceId: value.traceId,
+      events: value.events.map((event) => ({
+        ...event,
+        source: { ...event.source },
+        ...(event.stateDelta === undefined ? {} : { stateDelta: event.stateDelta.map((delta) => ({ ...delta })) }),
+        ...(event.condition === undefined ? {} : { condition: { ...event.condition } }),
+        ...(event.controlFlow === undefined ? {} : { controlFlow: { ...event.controlFlow } }),
+        ...(event.choice === undefined ? {} : { choice: { ...event.choice } }),
+      })),
+      status: 'passed',
+    });
+  }
+  return [...byIdentity.values()].sort((left, right) => left.traceId.localeCompare(right.traceId));
+}
+
+function resultRuntimePathsOf(input: BuildResultReviewProjectionInput): ReviewRuntimePathFact[] {
+  const expectedIds = new Set((input.change.runtimeTraces ?? [])
+    .filter((trace) => trace.status === 'passed' && trace.workingRevision === input.change.workingRevision)
+    .map((trace) => trace.traceId));
+  const raw = resultRuntimeInputsOf(input)
+    .map(runtimePathOf)
+    .filter((path): path is ReviewRuntimePathFact => path !== undefined && expectedIds.has(path.traceId));
+  const byTraceId = new Map<string, ReviewRuntimePathFact>();
+  for (const path of raw) {
+    if (!byTraceId.has(path.traceId)) byTraceId.set(path.traceId, path);
+  }
+  return [...byTraceId.values()].sort((left, right) => left.traceId.localeCompare(right.traceId));
+}
+
+function resultUnitDescriptions(plan: IntegrationPlan, sourceUnits: BuildResultReviewProjectionInput['sourceUnitObjects'] = []): Map<string, { objectRef?: string; sourceCapsule?: CandidateCapsuleRef }> {
+  const byUnit = new Map<string, { objectRef?: string; sourceCapsule?: CandidateCapsuleRef }>();
+  for (const unit of sourceUnits) byUnit.set(unit.unitId, { objectRef: unit.primaryObject, sourceCapsule: unit.sourceCapsule });
+  for (const operation of plan.replayOperations) {
+    const current = byUnit.get(operation.sourceUnitId) ?? {};
+    byUnit.set(operation.sourceUnitId, {
+      objectRef: current.objectRef ?? operation.primaryObject,
+      sourceCapsule: current.sourceCapsule ?? operation.sourceCapsule,
+    });
+  }
+  for (const entry of plan.provenance) {
+    const current = byUnit.get(entry.sourceUnitId) ?? {};
+    byUnit.set(entry.sourceUnitId, {
+      objectRef: current.objectRef ?? entry.targetObject,
+      sourceCapsule: current.sourceCapsule ?? entry.sourceCapsule,
+    });
+  }
+  return byUnit;
+}
+
+function sourceOrdinal(plan: IntegrationPlan, ref: CandidateCapsuleRef): string | undefined {
+  const index = [...plan.sourceCapsules].sort(compareRefs)
+    .findIndex((candidate) => candidateRefKey(candidate) === candidateRefKey(ref));
+  return index < 0 ? undefined : String.fromCharCode('A'.charCodeAt(0) + index);
+}
+
+function resultUnitFact(
+  kind: string,
+  unitId: string,
+  descriptions: ReadonlyMap<string, { objectRef?: string; sourceCapsule?: CandidateCapsuleRef }>,
+  plan: IntegrationPlan,
+): ReviewHumanFact {
+  const description = descriptions.get(unitId);
+  const objectRef = description?.objectRef;
+  const ordinal = description?.sourceCapsule === undefined ? undefined : sourceOrdinal(plan, description.sourceCapsule);
+  return {
+    kind,
+    label: objectRef === undefined ? unitId : `${ordinal === undefined ? '' : `方案 ${ordinal} 中的`}${objectRef}（${kind === 'automatic-dependency' ? '自动带入' : kind === 'excluded-unit' ? '未纳入' : '纳入'}）`,
+    ...(objectRef === undefined ? {} : { objectRef }),
+    unitId,
+  };
+}
+
+function actualSourceFacts(plan: IntegrationPlan): ReviewHumanFact[] {
+  const byRef = new Map<string, ReviewHumanFact>();
+  const sourceRefs = [
+    ...plan.replayOperations.map((operation) => operation.sourceCapsule),
+    ...plan.provenance.map((entry) => entry.sourceCapsule),
+  ];
+  for (const sourceCapsule of sourceRefs) {
+    const key = candidateRefKey(sourceCapsule);
+    if (byRef.has(key)) continue;
+    const ordinal = sourceOrdinal(plan, sourceCapsule);
+    byRef.set(key, {
+      kind: 'selected-source',
+      label: ordinal === undefined ? `实际执行来源 ${sourceCapsule.changeId}` : `方案 ${ordinal} 的实际执行来源`,
+      value: { ...sourceCapsule },
+    });
+  }
+  return [...byRef.values()].sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function actualChangeFacts(
+  changedObjects: readonly ReviewObjectSummary[],
+  diff: ChangeDiff,
+): ReviewHumanFact[] {
+  const byRef = new Map<string, ReviewHumanFact>();
+  for (const object of changedObjects) {
+    byRef.set(object.objectRef, {
+      kind: 'changed-object',
+      label: `项目变化：${object.objectRef}`,
+      objectRef: object.objectRef,
+      value: {
+        kind: object.kind,
+        ...(object.semanticId === undefined ? {} : { semanticId: object.semanticId }),
+      },
+    });
+  }
+  for (const entry of diff.semantic) {
+    const objectRef = entry.objectAfter ?? entry.objectBefore;
+    if (objectRef === undefined || byRef.has(objectRef)) continue;
+    byRef.set(objectRef, { kind: 'changed-object', label: `项目变化：${objectRef}`, objectRef });
+  }
+  return [...byRef.values()].sort((left, right) => (left.objectRef ?? '').localeCompare(right.objectRef ?? ''));
+}
+
+function actualExcludedFacts(plan: IntegrationPlan, descriptions: ReadonlyMap<string, { objectRef?: string; sourceCapsule?: CandidateCapsuleRef }>): ReviewHumanFact[] {
+  const included = new Set(plan.replayOperations.map((operation) => operation.sourceUnitId));
+  const requested = new Set([...plan.selectedUnitIds, ...plan.implicitInclusions]);
+  for (const group of plan.deduplicatedUnits) {
+    if (!included.has(group.retainedUnitId)) continue;
+    for (const unitId of group.provenanceUnitIds) if (requested.has(unitId)) included.add(unitId);
+  }
+  const facts: ReviewHumanFact[] = sortedStrings([
+    ...plan.excludedUnitIds,
+    ...[...descriptions.keys()].filter((unitId) => !included.has(unitId)),
+  ])
+    .map((unitId) => resultUnitFact('excluded-unit', unitId, descriptions, plan));
+  const actualSourceKeys = new Set([
+    ...plan.replayOperations.map((operation) => candidateRefKey(operation.sourceCapsule)),
+    ...plan.provenance.map((entry) => candidateRefKey(entry.sourceCapsule)),
+  ]);
+  for (const sourceCapsule of [...plan.sourceCapsules].sort(compareRefs)) {
+    if (actualSourceKeys.has(candidateRefKey(sourceCapsule))) continue;
+    const ordinal = sourceOrdinal(plan, sourceCapsule);
+    facts.push({
+      kind: 'excluded-candidate',
+      label: ordinal === undefined ? `候选 ${sourceCapsule.changeId} 未纳入` : `方案 ${ordinal} 未纳入`,
+      value: { ...sourceCapsule },
+    });
+  }
+  return facts.sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function actualExplanationFingerprintPayload(explanation: ReviewActualResultExplanation): Record<string, unknown> {
+  const { explanationFingerprint: _fingerprint, ...payload } = explanation;
+  void _fingerprint;
+  return payload;
+}
+
 function resultReviewFingerprintPayload(projection: HumanReviewProjection): Record<string, unknown> {
   return {
     reviewVersion: projection.reviewVersion,
@@ -530,6 +1271,210 @@ function resultReviewFingerprintPayload(projection: HumanReviewProjection): Reco
     finalResult: projection.finalResult,
     sourceIdentity: projection.sourceIdentity,
   };
+}
+
+/** Result review 的可复算 identity；读取方可用它拒绝被篡改的实际结果说明。 */
+export async function resultReviewFingerprintOf(
+  projection: HumanReviewProjection,
+  hasher: TextHasher,
+): Promise<string> {
+  if (projection.kind !== 'integration-result') throw invalid('result review fingerprint 只能用于 integration-result projection');
+  return hasher.sha256(stableStringify(resultReviewFingerprintPayload(projection)));
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(nonEmptyString);
+}
+
+function candidateRefShape(value: unknown): boolean {
+  const ref = jsonRecord(value);
+  return ref !== undefined
+    && nonEmptyString(ref['changeId'])
+    && nonEmptyString(ref['capsuleId'])
+    && nonEmptyString(ref['artifactSha256']);
+}
+
+function runtimePathShape(value: unknown): boolean {
+  const path = jsonRecord(value);
+  if (path === undefined
+    || !nonEmptyString(path['traceId'])
+    || (path['status'] !== 'passed' && path['status'] !== 'failed')
+    || !nonEmptyString(path['startSceneId'])
+    || !stringArray(path['visitedSceneIds'])
+    || !Array.isArray(path['choices'])
+    || !path['choices'].every((choice) => {
+      const item = jsonRecord(choice);
+      return item !== undefined && nonEmptyString(item['sceneId'])
+        && typeof item['optionIndex'] === 'number' && Number.isInteger(item['optionIndex'])
+        && (item['label'] === undefined || typeof item['label'] === 'string');
+    })
+    || (path['endingSceneId'] !== undefined && !nonEmptyString(path['endingSceneId']))
+    || !Array.isArray(path['finalVariables'])) return false;
+  return path['finalVariables'].every((variable) => {
+    const item = jsonRecord(variable);
+    return item !== undefined && nonEmptyString(item['name']);
+  });
+}
+
+function humanFactShape(value: unknown): boolean {
+  const fact = jsonRecord(value);
+  return fact !== undefined && nonEmptyString(fact['kind']) && nonEmptyString(fact['label'])
+    && (fact['objectRef'] === undefined || nonEmptyString(fact['objectRef']))
+    && (fact['unitId'] === undefined || nonEmptyString(fact['unitId']))
+    && (fact['candidateId'] === undefined || nonEmptyString(fact['candidateId']));
+}
+
+function reviewUnitShape(value: unknown): boolean {
+  const unit = jsonRecord(value);
+  return unit !== undefined
+    && nonEmptyString(unit['unitId'])
+    && nonEmptyString(unit['candidateId'])
+    && nonEmptyString(unit['primaryObject'])
+    && Array.isArray(unit['outcomes'])
+    && Array.isArray(unit['potentialImpact'])
+    && Array.isArray(unit['observedImpact'])
+    && jsonRecord(unit['evidence']) !== undefined;
+}
+
+function candidateVerifiedFactsShape(value: unknown): boolean {
+  const facts = jsonRecord(value);
+  const source = jsonRecord(facts?.['source']);
+  const content = jsonRecord(facts?.['content']);
+  const runtime = jsonRecord(facts?.['runtime']);
+  return facts !== undefined
+    && source !== undefined
+    && (source['content'] === 'sealed-composition-manifest' || source['content'] === 'manifest-unavailable')
+    && (source['evidence'] === 'sealed-capsule-evidence' || source['evidence'] === 'evidence-unavailable')
+    && (source['runtime'] === 'sealed-runtime-trace' || source['runtime'] === 'runtime-unavailable')
+    && Array.isArray(facts['units']) && facts['units'].every(reviewUnitShape)
+    && content !== undefined
+    && Array.isArray(content['changedObjects'])
+    && content['changedObjects'].every((value) => { const item = jsonRecord(value); return item !== undefined && nonEmptyString(item['objectRef']) && nonEmptyString(item['unitId']); })
+    && Array.isArray(content['scenes'])
+    && content['scenes'].every((value) => { const item = jsonRecord(value); return item !== undefined && nonEmptyString(item['sceneId']) && nonEmptyString(item['unitId']) && nonEmptyString(item['action']) && Number.isInteger(item['operationSequence']) && stringArray(item['highlights']); })
+    && Array.isArray(content['choices'])
+    && Array.isArray(content['variables'])
+    && Array.isArray(content['timelines'])
+    && content['timelines'].every((value) => { const item = jsonRecord(value); return item !== undefined && nonEmptyString(item['timelineId']) && stringArray(item['trackKinds']); })
+    && Array.isArray(content['assets'])
+    && stringArray(content['excerpts'])
+    && typeof content['omittedFactCount'] === 'number'
+    && Number.isInteger(content['omittedFactCount'])
+    && (content['finalScenes'] === undefined || (Array.isArray(content['finalScenes'])
+      && content['finalScenes'].every((value) => { const item = jsonRecord(value); return item !== undefined && nonEmptyString(item['sceneId']) && nonEmptyString(item['unitId']) && item['source'] === 'sealed-capsule-diff' && stringArray(item['paragraphs']); })))
+    && runtime !== undefined
+    && (runtime['status'] === 'verified' || runtime['status'] === 'unavailable')
+    && (runtime['workingRevision'] === undefined
+      || (typeof runtime['workingRevision'] === 'number' && Number.isInteger(runtime['workingRevision'])))
+    && Array.isArray(runtime['paths']) && runtime['paths'].every(runtimePathShape)
+    && stringArray(runtime['limitations']);
+}
+
+function candidateClaimShape(value: unknown): boolean {
+  const claim = jsonRecord(value);
+  return claim !== undefined
+    && claim['source'] === 'candidate-change-intent'
+    && (claim['statement'] === undefined || typeof claim['statement'] === 'string')
+    && stringArray(claim['acceptanceCriteria']);
+}
+
+function adoptionPresetShape(value: unknown): boolean {
+  const preset = jsonRecord(value);
+  return preset !== undefined
+    && candidateRefShape(preset['candidateRef'])
+    && nonEmptyString(preset['candidateId'])
+    && (preset['status'] === 'available' || preset['status'] === 'blocked')
+    && stringArray(preset['selectedUnitIds'])
+    && Array.isArray(preset['conflictResolutions'])
+    && preset['conflictResolutions'].every((resolution) => {
+      const item = jsonRecord(resolution);
+      return item !== undefined && nonEmptyString(item['conflictId'])
+        && (item['resolution'] === 'choose-unit' || item['resolution'] === 'exclude-all'
+          || item['resolution'] === 'regenerate-candidate')
+        && (item['actor'] === 'human' || item['actor'] === 'review-agent');
+    })
+    && Array.isArray(preset['reasons'])
+    && preset['reasons'].every((reason) => {
+      const item = jsonRecord(reason);
+      return item !== undefined && nonEmptyString(item['code']) && nonEmptyString(item['message']);
+    });
+}
+
+function candidateV2Shape(value: unknown): boolean {
+  const candidate = jsonRecord(value);
+  return candidate !== undefined
+    && nonEmptyString(candidate['candidateId'])
+    && candidateRefShape(candidate['ref'])
+    && nonEmptyString(candidate['displayOrdinal'])
+    && candidateClaimShape(candidate['claims'])
+    && candidateVerifiedFactsShape(candidate['verifiedFacts'])
+    && adoptionPresetShape(candidate['adoptionPreset'])
+    && jsonRecord(candidate['evidence']) !== undefined;
+}
+
+function actualExplanationShape(value: unknown, finalResult: Record<string, unknown>, sourceIdentity: Record<string, unknown>): boolean {
+  const explanation = jsonRecord(value);
+  const evidence = jsonRecord(finalResult['evidence']);
+  const sourceDecisionFingerprint = sourceIdentity['decisionFingerprint'];
+  return explanation !== undefined
+    && explanation['source'] === 'integration-result'
+    && isReviewDecisionIntent(explanation['decisionIntent'])
+    && nonEmptyString(explanation['decisionFingerprint'])
+    && explanation['decisionFingerprint'] === sourceDecisionFingerprint
+    && nonEmptyString(explanation['planId'])
+    && explanation['planId'] === finalResult['planId']
+    && nonEmptyString(explanation['planFingerprint'])
+    && explanation['planFingerprint'] === finalResult['planFingerprint']
+    && nonEmptyString(explanation['integrationChangeId'])
+    && explanation['integrationChangeId'] === finalResult['integrationChangeId']
+    && typeof explanation['workingRevision'] === 'number'
+    && Number.isInteger(explanation['workingRevision'])
+    && explanation['workingRevision'] === finalResult['workingRevision']
+    && stringArray(explanation['runtimeTraceIds'])
+    && evidence !== undefined
+    && stringArray(evidence['runtimeTraceIds'])
+    && stableStringify(explanation['runtimeTraceIds']) === stableStringify(evidence['runtimeTraceIds'])
+    && Array.isArray(explanation['selectedSources']) && explanation['selectedSources'].every(humanFactShape)
+    && Array.isArray(explanation['actualIncluded']) && explanation['actualIncluded'].every(humanFactShape)
+    && Array.isArray(explanation['actualDependencies']) && explanation['actualDependencies'].every(humanFactShape)
+    && Array.isArray(explanation['actualExcluded']) && explanation['actualExcluded'].every(humanFactShape)
+    && Array.isArray(explanation['actualChanges']) && explanation['actualChanges'].every(humanFactShape)
+    && Array.isArray(explanation['actualRuntimeOutcomes']) && explanation['actualRuntimeOutcomes'].every(runtimePathShape)
+    && stringArray(explanation['warnings'])
+    && nonEmptyString(explanation['explanationFingerprint']);
+}
+
+/**
+ * Validates only the fields introduced by Review Projection v2. The legacy
+ * projection parser remains responsible for the shared v1 fields.
+ */
+export function isReviewProjectionV2Fields(value: unknown): value is HumanReviewProjectionV2 {
+  const projection = jsonRecord(value);
+  if (projection === undefined || projection['reviewVersion'] !== '2.0.0') return false;
+  const brief = jsonRecord(projection['creativeBrief']);
+  const sourceIdentity = jsonRecord(projection['sourceIdentity']);
+  const finalResult = projection['finalResult'];
+  const finalResultRecord = finalResult === undefined ? undefined : jsonRecord(finalResult);
+  return brief !== undefined
+    && (brief['status'] === 'provided' || brief['status'] === 'not-provided')
+    && brief['source'] === 'review-preparation-input'
+    && stringArray(brief['acceptanceCriteria'])
+    && (brief['status'] === 'provided'
+      ? nonEmptyString(brief['request'])
+      : brief['request'] === undefined)
+    && (brief['title'] === undefined || typeof brief['title'] === 'string')
+    && (brief['fingerprint'] === undefined || nonEmptyString(brief['fingerprint']))
+    && Array.isArray(projection['candidates']) && projection['candidates'].every(candidateV2Shape)
+    && Array.isArray(projection['defaultSelectedUnitIds'])
+    && projection['defaultSelectedUnitIds'].length === 0
+    && sourceIdentity !== undefined
+    && (projection['kind'] !== 'integration-result'
+      ? !finalResultRecord || actualExplanationShape(finalResultRecord['actualExplanation'], finalResultRecord, sourceIdentity)
+      : finalResultRecord !== undefined && actualExplanationShape(finalResultRecord['actualExplanation'], finalResultRecord, sourceIdentity));
 }
 
 function resultEvidenceOf(change: ChangeRecord): {
@@ -683,7 +1628,98 @@ export async function buildResultReviewProjection(
     resultTreeSha256: input.resultTreeSha256,
     warnings,
   };
-  const projection: HumanReviewProjection = {
+  if (input.reviewVersion === '2.0.0') {
+    if (input.decisionIntent === undefined) {
+      throw resultNotReady('v2 result review 缺少已保存的 decisionIntent');
+    }
+    const runtimePaths = resultRuntimePathsOf(input);
+    const runtimePathIds = new Set(runtimePaths.map((path) => path.traceId));
+    const runtimePathWarnings = resultEvidence.evidence.runtimeTraceIds
+      .filter((traceId) => !runtimePathIds.has(traceId))
+      .map((traceId) => `运行结果轨迹 ${traceId} 未提供可读路径，仅保留 fresh runtime evidence identity。`);
+    const descriptions = resultUnitDescriptions(plan, input.sourceUnitObjects);
+    const explanation: ReviewActualResultExplanation = {
+      source: 'integration-result',
+      decisionIntent: input.decisionIntent,
+      decisionFingerprint: review.decisionFingerprint,
+      planId: finalResult.planId,
+      planFingerprint: finalResult.planFingerprint,
+      integrationChangeId: finalResult.integrationChangeId,
+      workingRevision: finalResult.workingRevision,
+      runtimeTraceIds: [...finalResult.evidence.runtimeTraceIds],
+      selectedSources: actualSourceFacts(plan),
+      actualIncluded: sortedStrings(integration.includedUnitIds)
+        .map((unitId) => resultUnitFact('included-unit', unitId, descriptions, plan)),
+      actualDependencies: sortedStrings(plan.implicitInclusions)
+        .map((unitId) => resultUnitFact('automatic-dependency', unitId, descriptions, plan)),
+      actualExcluded: actualExcludedFacts(plan, descriptions),
+      actualChanges: actualChangeFacts(changedObjects, input.diff),
+      actualRuntimeOutcomes: runtimePaths,
+      warnings: sortedStrings([
+        ...warnings.map((warning) => warning.message),
+        ...input.diff.summary.warnings,
+        ...runtimePathWarnings,
+      ]),
+      explanationFingerprint: '',
+    };
+    explanation.explanationFingerprint = await hasher.sha256(
+      stableStringify(actualExplanationFingerprintPayload(explanation)),
+    );
+    finalResult.actualExplanation = explanation;
+  }
+  const resultSourceIdentity = {
+    projectIdentity: plan.projectIdentity,
+    expectedProjectRevision: plan.expectedProjectRevision,
+    comparisonFingerprint: plan.comparisonFingerprint,
+    planFingerprint: plan.planFingerprint,
+    integrationChangeId: change.changeId,
+    workingRevision: change.workingRevision,
+    decisionReviewId: review.reviewId,
+    decisionId: review.decisionId,
+    decisionFingerprint: review.decisionFingerprint,
+  };
+  if (input.reviewVersion === '2.0.0') {
+    const projection: HumanReviewProjectionV2 = {
+      reviewVersion: '2.0.0',
+      reviewId: input.reviewId,
+      kind: 'integration-result',
+      state: 'STAGE_READY',
+      projectIdentity: plan.projectIdentity,
+      expectedProjectRevision: plan.expectedProjectRevision,
+      task: {
+        title: '正式创作结果',
+        acceptanceCriteria: [],
+        candidateCount: 0,
+        objectCount: changedObjects.length,
+        conflictCount: 0,
+        statementSource: 'not-provided',
+      },
+      candidates: [],
+      creativeBrief: {
+        status: 'not-provided',
+        source: 'review-preparation-input',
+        acceptanceCriteria: [],
+      },
+      safeGroups: [],
+      conflicts: [],
+      dependencies: [],
+      defaultSelectedUnitIds: [],
+      evidence: {
+        candidateMatrix: [],
+        blockingCount: 0,
+        selectionRequiredCount: 0,
+        advisoryCount: warnings.length,
+        canCreateDecision: false,
+      },
+      objects: changedObjects,
+      finalResult,
+      sourceIdentity: resultSourceIdentity,
+      reviewFingerprint: '',
+    };
+    projection.reviewFingerprint = await resultReviewFingerprintOf(projection, hasher);
+    return projection;
+  }
+  const projection: HumanReviewProjectionV1 = {
     reviewVersion: '1.0.0',
     reviewId: input.reviewId,
     kind: 'integration-result',
@@ -712,19 +1748,9 @@ export async function buildResultReviewProjection(
     },
     objects: changedObjects,
     finalResult,
-    sourceIdentity: {
-      projectIdentity: plan.projectIdentity,
-      expectedProjectRevision: plan.expectedProjectRevision,
-      comparisonFingerprint: plan.comparisonFingerprint,
-      planFingerprint: plan.planFingerprint,
-      integrationChangeId: change.changeId,
-      workingRevision: change.workingRevision,
-      decisionReviewId: review.reviewId,
-      decisionId: review.decisionId,
-      decisionFingerprint: review.decisionFingerprint,
-    },
+    sourceIdentity: resultSourceIdentity,
     reviewFingerprint: '',
   };
-  projection.reviewFingerprint = await hasher.sha256(stableStringify(resultReviewFingerprintPayload(projection)));
+  projection.reviewFingerprint = await resultReviewFingerprintOf(projection, hasher);
   return projection;
 }

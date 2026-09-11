@@ -18,7 +18,7 @@ export interface ReviewArtifactIdentity {
 }
 
 export interface ReviewWorkspaceIdentity {
-  reviewVersion: '1.0.0';
+  reviewVersion: '1.0.0' | '2.0.0';
   reviewId: string;
   kind: ReviewKind;
   projectIdentity: string;
@@ -196,7 +196,7 @@ function asRequiredString(value: unknown, field: string): string {
 
 function validateIdentity(value: unknown, reviewId: string, expectedProjectIdentity: string): ReviewWorkspaceIdentity {
   if (!isRecord(value)
-    || value['reviewVersion'] !== '1.0.0'
+    || (value['reviewVersion'] !== '1.0.0' && value['reviewVersion'] !== '2.0.0')
     || value['reviewId'] !== reviewId
     || (value['kind'] !== 'comparison' && value['kind'] !== 'integration-result')) {
     throw identityMismatch(`review identity 无效：${reviewId}`);
@@ -229,7 +229,7 @@ function validateIdentity(value: unknown, reviewId: string, expectedProjectIdent
     throw identityMismatch(`review workingRevision 无效：${reviewId}`);
   }
   return {
-    reviewVersion: '1.0.0',
+    reviewVersion: value['reviewVersion'],
     reviewId,
     kind,
     projectIdentity,
@@ -253,6 +253,7 @@ function payloadFacts(value: unknown, reviewId: string, identity: ReviewWorkspac
     : sourceIdentity?.['comparisonFingerprint'];
   if (!isRecord(value)
     || value['reviewId'] !== reviewId
+    || value['reviewVersion'] !== identity.reviewVersion
     || value['kind'] !== identity.kind
     || value['projectIdentity'] !== identity.projectIdentity
     || value['expectedProjectRevision'] !== identity.expectedProjectRevision
@@ -355,8 +356,8 @@ export class NodeReviewStore {
       || (payload['kind'] !== 'comparison' && payload['kind'] !== 'integration-result')) {
       throw new AuthoringOperationError('INVALID_REQUEST', 'review payload 缺少合法 kind');
     }
-    if (payload['reviewVersion'] !== '1.0.0') {
-      throw new AuthoringOperationError('REVIEW_FORMAT_UNSUPPORTED', 'reviewVersion 不是受支持的 1.0.0');
+    if (payload['reviewVersion'] !== '1.0.0' && payload['reviewVersion'] !== '2.0.0') {
+      throw new AuthoringOperationError('REVIEW_FORMAT_UNSUPPORTED', 'reviewVersion 不是受支持的 1.0.0 或 2.0.0');
     }
     const kind = payload['kind'] as ReviewKind;
     if (payload['reviewId'] !== reviewId) throw identityMismatch(`review payload reviewId 不匹配：${reviewId}`);
@@ -383,7 +384,7 @@ export class NodeReviewStore {
     await ensureDirectoryChain(path.dirname(payloadFile), true);
     const payloadBytes = serialized(payload);
     const identity: ReviewWorkspaceIdentity = {
-      reviewVersion: '1.0.0',
+      reviewVersion: payload['reviewVersion'],
       reviewId,
       kind,
       projectIdentity,

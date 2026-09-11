@@ -70,7 +70,7 @@ export class NodeCompositionStore {
     if (!/^[0-9a-f]{64}$/.test(ref.artifactSha256)) {
       throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `artifactSha256 必须是 64 位小写十六进制：${ref.changeId}/${ref.capsuleId}`);
     }
-    const opened = await NodeChangeStore.openByChangeId(ref.changeId);
+    const opened = await NodeChangeStore.openByChangeId(ref.changeId, path.dirname(this.projectDirectory));
     if (opened === null) {
       throw new AuthoringOperationError('CHANGE_NOT_FOUND', `source change 不存在：${ref.changeId}`, { changeId: ref.changeId });
     }
@@ -162,6 +162,16 @@ function projectPayloadToCandidate(payload: unknown, ref: CandidateCapsuleRef): 
   const manualReviewRequired = Array.isArray(payload['manualReviewRequired']) ? payload['manualReviewRequired'] : [];
   const objectDiff = isRecord(payload['objectDiff']) ? payload['objectDiff'] : {};
   const semantic = Array.isArray(objectDiff['semantic']) ? objectDiff['semantic'] : [];
+  const invocations = isRecord(payload['invocationSummary']) ? payload['invocationSummary']['records'] : [];
+  const sealedRuntimeTraceIds = new Set<string>();
+  if (Array.isArray(invocations)) {
+    for (const invocation of invocations) {
+      if (!isRecord(invocation) || invocation['ok'] !== true || !Array.isArray(invocation['evidenceIds'])) continue;
+      for (const evidenceId of invocation['evidenceIds']) {
+        if (typeof evidenceId === 'string' && /^trace_[A-Za-z0-9_-]+$/.test(evidenceId)) sealedRuntimeTraceIds.add(evidenceId);
+      }
+    }
+  }
   return {
     candidateId: `cand-${ref.changeId}`,
     ref,
@@ -169,6 +179,14 @@ function projectPayloadToCandidate(payload: unknown, ref: CandidateCapsuleRef): 
     projectIdentity,
     baseProjectRevision: asString(payload['baseProjectRevision']),
     sourceWorkingRevision: typeof payload['workingRevision'] === 'number' ? payload['workingRevision'] : 0,
+    ...(typeof payload['intent'] === 'string' ? { intent: payload['intent'] } : {}),
+    acceptanceCriteria: Array.isArray(payload['acceptanceCriteria'])
+      ? payload['acceptanceCriteria'].filter((item): item is string => typeof item === 'string') : [],
+    sealedRuntimeTraceIds: [...sealedRuntimeTraceIds].sort(),
+    sealedFileDiffs: (Array.isArray(objectDiff['files']) ? objectDiff['files'] : [])
+      .filter((file) => isRecord(file) && typeof file['path'] === 'string' && typeof file['unifiedDiff'] === 'string')
+      .map((file) => ({ path: file['path'] as string, unifiedDiff: file['unifiedDiff'] as string,
+        unexpectedFormatChange: file['unexpectedFormatChange'] === true })),
     composition: {
       eligibility: composition['eligibility'] === 'ready' ? 'ready' : 'unavailable',
       reasons: (Array.isArray(composition['reasons']) ? composition['reasons'] : []) as VerifiedCompositionCandidate['composition']['reasons'],

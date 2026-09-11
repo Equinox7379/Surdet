@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AuthoringOperationError, type ReviewTerminalSnapshot } from '@surdet/authoring';
+import { AuthoringOperationError, type ReviewDecisionPreviewCommand, type ReviewTerminalSnapshot } from '@surdet/authoring';
 import {
   createReviewAuthorityHttpHandler,
   type ReviewAuthorityHttpTarget,
@@ -95,6 +95,46 @@ afterEach(async () => {
 });
 
 describe('review authority HTTP boundary', () => {
+  it('validates preview origin, token and exact input before readonly dispatch', async () => {
+    const fixture = await harness();
+    const previews: ReviewDecisionPreviewCommand[] = [];
+    fixture.target.previewDecision = async (command) => {
+      previews.push(command);
+      return { previewVersion: '1.0.0', reviewId: command.reviewId, reviewFingerprint: 'a'.repeat(64), comparisonFingerprint: 'b'.repeat(64), decisionIntent: command.decisionIntent,
+        status: 'ready', selectedUnitIds: [], conflictResolutions: [], effectiveUnitIds: [], implicitInclusions: [], excludedUnitIds: [], planContentFingerprint: 'c'.repeat(64),
+        dryRun: { status: 'passed', finalObjectFingerprints: {}, errors: [] }, previewFingerprint: 'd'.repeat(64) };
+    };
+    const command = { ...describeInput, decisionIntent: { mode: 'custom-mix' }, customSelection: { selectedUnitIds: [], conflictResolutions: [] } };
+    const route = '/__surdet/review-authority/v1/preview-decision';
+    for (const [requestHeaders, input, status] of [
+      [headers(fixture.origin, { 'X-Surdet-Review-Authority': 'wrong' }), command, 403],
+      [headers('http://foreign.invalid'), command, 403],
+      [headers(fixture.origin), { ...command, rootPath: 'C:/private' }, 400],
+      [headers(fixture.origin), { ...command, customSelection: { selectedUnitIds: ['unit', 'unit'], conflictResolutions: [] } }, 400],
+    ] as const) {
+      const result = await request(fixture.origin, route, { method: 'POST', headers: requestHeaders, body: JSON.stringify(input) });
+      expect(result.response.status).toBe(status);
+      expect(previews).toEqual([]);
+    }
+    const result = await request(fixture.origin, route, { method: 'POST', headers: headers(fixture.origin), body: JSON.stringify(command) });
+    expect(result.response.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: true, result: { previewVersion: '1.0.0', reviewId: command.reviewId } });
+    expect(previews).toEqual([command]);
+    expect(fixture.calls).toEqual({ describe: [], write: [] });
+  });
+
+  it('fails closed for an unbound preview endpoint or a stale project without exposing local details', async () => {
+    const fixture = await harness();
+    const input = { ...describeInput, decisionIntent: { mode: 'custom-mix' }, customSelection: { selectedUnitIds: [], conflictResolutions: [] } };
+    const call = () => request(fixture.origin, '/__surdet/review-authority/v1/preview-decision', { method: 'POST', headers: headers(fixture.origin), body: JSON.stringify(input) });
+    const unavailable = await call();
+    expect(unavailable.body).toMatchObject({ ok: false, error: { code: 'REVIEW_PREVIEW_UNAVAILABLE' } });
+    fixture.target.previewDecision = async () => { throw new AuthoringOperationError('COMPOSITION_PLAN_STALE', 'private path C:/private/project'); };
+    const stale = await call();
+    expect(stale.body).toMatchObject({ ok: false, error: { code: 'COMPOSITION_PLAN_STALE' } });
+    expect(stale.text).not.toContain('C:/private');
+    expect(fixture.calls).toEqual({ describe: [], write: [] });
+  });
   it('injects the token only into the main Editor HTML and never into preview.html', () => {
     const config: ReviewAuthorityBrowserConfig = {
       protocolVersion: '1.0.0',

@@ -6,6 +6,7 @@ import type {
   CandidateEvidenceSummary,
   FinalApprovalReceipt,
   HumanReviewProjection,
+  HumanReviewProjectionV1,
   ReviewCandidate,
   ReviewConflict,
   ReviewEvidenceBinding,
@@ -86,7 +87,7 @@ const conflict: ReviewConflict = {
   })),
 };
 
-function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReviewProjection {
+function projection(overrides: Partial<HumanReviewProjectionV1> = {}): HumanReviewProjectionV1 {
   return {
     reviewVersion: '1.0.0',
     reviewId: 'review-wave6',

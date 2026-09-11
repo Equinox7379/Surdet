@@ -42,8 +42,9 @@ function objectLabel(objectRef: string): string {
   }
 }
 
-function boundedHighlights(values: readonly string[]): { highlights: string[]; omittedFactCount: number } {
+function boundedHighlights(values: readonly string[], full = false): { highlights: string[]; omittedFactCount: number } {
   const meaningful = values.map((value) => value.trim()).filter((value) => value.length > 0);
+  if (full) return { highlights: meaningful, omittedFactCount: 0 };
   let omittedFactCount = Math.max(0, meaningful.length - MAX_HIGHLIGHTS);
   const highlights = meaningful.slice(0, MAX_HIGHLIGHTS).map((value) => {
     if (value.length <= MAX_HIGHLIGHT_CHARS) return value;
@@ -122,16 +123,10 @@ interface OperationPresentation {
   omittedFactCount: number;
 }
 
-function result(
-  actionLabel: string,
-  facts: readonly string[],
-  completeness: ReviewUnitPresentation['completeness'] = 'content',
-): OperationPresentation {
-  const bounded = boundedHighlights(facts);
-  return { actionLabel, completeness, ...bounded };
-}
-
-function presentationForOperation(operation: CompositionOperation): OperationPresentation {
+function presentationForOperation(operation: CompositionOperation, full = false): OperationPresentation {
+  const result = (actionLabel: string, facts: readonly string[], completeness: ReviewUnitPresentation['completeness'] = 'content'): OperationPresentation => ({
+    actionLabel, completeness, ...boundedHighlights(facts, full),
+  });
   if (!isRecord(operation.normalizedInput)) return result('审阅对象变更', [], 'metadata-only');
   const input = operation.normalizedInput;
   switch (operation.capabilityId) {
@@ -246,12 +241,13 @@ export function metadataOnlyReviewUnitPresentation(primaryObject: string): Revie
 export function buildReviewUnitPresentation(
   primaryObject: string,
   operations: readonly CompositionOperation[],
+  detail: 'summary' | 'full' = 'summary',
 ): ReviewUnitPresentation {
   if (operations.length === 0) return metadataOnlyReviewUnitPresentation(primaryObject);
   const projected = [...operations]
     .sort((left, right) => left.sequence - right.sequence)
-    .map(presentationForOperation);
-  const bounded = boundedHighlights(projected.flatMap((item) => item.highlights));
+    .map((operation) => presentationForOperation(operation, detail === 'full'));
+  const bounded = boundedHighlights(projected.flatMap((item) => item.highlights), detail === 'full');
   const actionLabels = [...new Set(projected.map((item) => item.actionLabel))];
   return {
     actionLabel: actionLabels.length === 1 ? actionLabels[0]! : '组合修改',

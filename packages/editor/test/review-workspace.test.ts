@@ -4,6 +4,10 @@ import type {
   ComparisonDecisionReceipt,
   FinalApprovalReceipt,
   HumanReviewProjection,
+  HumanReviewProjectionV1,
+  HumanReviewProjectionV2,
+  ReviewDecisionPreview,
+  ReviewDecisionPreviewCommand,
   ReviewEvidenceBinding,
   ReviewFinalResult,
   ReviewTerminalCommand,
@@ -15,12 +19,15 @@ import {
   approvalFingerprintOf,
   decisionFingerprintOf,
   returnFingerprintOf,
+  reviewDecisionPreviewFingerprintOf,
 } from '@surdet/authoring';
 import {
   openReviewWorkspace,
   writeApprovalReceipt,
   writeDecisionReceipt,
   writeReturnReceipt,
+  previewReviewDecision,
+  canSaveReviewDecision,
   type ReviewDecisionDraft,
   type ReviewWorkspaceIdentity,
   type ReviewWorkspaceState,
@@ -126,6 +133,7 @@ function receiptFingerprint(action: ReviewTerminalCommand['action'], receipt: un
 }
 
 class MemoryReviewTerminalAuthority implements ReviewTerminalClient {
+  previewDecision?: ReviewTerminalClient['previewDecision'];
   readonly commands: ReviewTerminalCommand[] = [];
   private readonly snapshots = new Map<string, ReviewTerminalSnapshot>();
 
@@ -289,7 +297,7 @@ function installReceipt(root: MemoryDirectory, fileName: string, receipt: unknow
   root.file(fileName, `${JSON.stringify(receipt)}\n`);
 }
 
-function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReviewProjection {
+function projection(overrides: Partial<HumanReviewProjectionV1> = {}): HumanReviewProjectionV1 {
   return {
     reviewVersion: '1.0.0',
     reviewId: 'rev_comparison_1',
@@ -314,7 +322,7 @@ function projection(overrides: Partial<HumanReviewProjection> = {}): HumanReview
 function identityFor(value: HumanReviewProjection): ReviewWorkspaceIdentity {
   const payload = `${JSON.stringify(value)}\n`;
   return {
-    reviewVersion: '1.0.0',
+    reviewVersion: value.reviewVersion,
     reviewId: value.reviewId,
     kind: value.kind,
     projectIdentity: value.projectIdentity,
@@ -337,6 +345,134 @@ function installWorkspace(root: MemoryDirectory, value: HumanReviewProjection): 
   const [directory, file] = identity.payload.relativePath.split('/');
   root.directory(directory!).file(file!, `${JSON.stringify(value)}\n`);
 }
+
+function wholeProjection(): HumanReviewProjectionV2 {
+  const base = projection();
+  return {
+    ...base, reviewVersion: '2.0.0', reviewFingerprint: 'e'.repeat(64), defaultSelectedUnitIds: [],
+    sourceIdentity: { ...base.sourceIdentity, comparisonFingerprint: 'f'.repeat(64) },
+    creativeBrief: { status: 'not-provided', source: 'review-preparation-input', acceptanceCriteria: [] },
+    candidates: ['a', 'b'].map((name, index) => {
+      const candidateId = `candidate-${name}`;
+      const ref = { changeId: `change-${name}`, capsuleId: `capsule-${name}`, artifactSha256: name.repeat(64) };
+      const evidence = { validation: 'fresh', simulation: 'fresh', runtime: 'fresh', warnings: 0, manualReviewRequired: [] } as const;
+      const units = ['scene', 'variable'].map((kind) => ({
+        candidateId, unitId: `${name}-${kind}`, primaryObject: `${kind}:${name}`, outcomes: [], potentialImpact: [], observedImpact: [],
+        evidence: { ...evidence, manualReviewRequired: [] },
+      }));
+      return {
+        candidateId, ref, displayOrdinal: index === 0 ? 'A' : 'B', acceptanceCriteria: [], evidence: { ...evidence, manualReviewRequired: [] },
+        claims: { source: 'candidate-change-intent' as const, acceptanceCriteria: [] },
+        verifiedFacts: {
+          source: { content: 'sealed-composition-manifest' as const, evidence: 'sealed-capsule-evidence' as const, runtime: 'runtime-unavailable' as const },
+          units, content: { changedObjects: [], scenes: [], choices: [], variables: [], timelines: [], assets: [], excerpts: [], omittedFactCount: 0 },
+          runtime: { status: 'unavailable' as const, paths: [], limitations: ['暂无运行事实'] },
+        },
+        adoptionPreset: { candidateId, candidateRef: ref, status: 'available' as const, selectedUnitIds: units.map((unit) => unit.unitId), conflictResolutions: [], reasons: [] },
+      };
+    }),
+  };
+}
+
+function chooseWhole(workspace: ReviewWorkspaceState, index: number): void {
+  const candidate = (workspace.projection as HumanReviewProjectionV2).candidates[index]!;
+  workspace.decisionDraft = { decisionId: '', decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: candidate.candidateId, ref: candidate.ref } },
+    selectedUnitIds: [...candidate.adoptionPreset.selectedUnitIds], conflictResolutions: [] };
+  delete workspace.decisionPreview;
+}
+
+async function wholePreview(command: ReviewDecisionPreviewCommand): Promise<ReviewDecisionPreview> {
+  const projection = wholeProjection();
+  const intent = command.decisionIntent;
+  const candidate = intent.mode === 'adopt-candidate' ? projection.candidates.find((item) => item.candidateId === intent.candidate.candidateId) : undefined;
+  const selectedUnitIds = candidate?.adoptionPreset.selectedUnitIds ?? command.customSelection!.selectedUnitIds;
+  const preview: ReviewDecisionPreview = {
+    previewVersion: '1.0.0', reviewId: command.reviewId, reviewFingerprint: projection.reviewFingerprint,
+    comparisonFingerprint: projection.sourceIdentity.comparisonFingerprint, decisionIntent: command.decisionIntent,
+    status: 'ready', selectedUnitIds, conflictResolutions: command.customSelection?.conflictResolutions ?? [],
+    effectiveUnitIds: selectedUnitIds, implicitInclusions: [],
+    excludedUnitIds: projection.candidates.flatMap((item) => item.adoptionPreset.selectedUnitIds).filter((id) => !selectedUnitIds.includes(id)),
+    planContentFingerprint: await hasher.sha256(JSON.stringify(command)),
+    dryRun: { status: 'passed', finalObjectFingerprints: {}, errors: [] }, previewFingerprint: '',
+  };
+  preview.previewFingerprint = await reviewDecisionPreviewFingerprintOf(preview, hasher);
+  return preview;
+}
+
+describe('whole-proposal preview and decision', () => {
+  it('starts empty, saves the current complete proposal, and restores the same v2 decision on reopen', async () => {
+    const root = new MemoryDirectory('whole'); installWorkspace(root, wholeProjection());
+    const authority = authorityFor(root); authority.previewDecision = wholePreview;
+    const workspace = await openWorkspace(root);
+    expect(workspace.decisionDraft.selectedUnitIds).toEqual([]);
+    expect(canSaveReviewDecision(workspace)).toBe(false);
+    chooseWhole(workspace, 0);
+    await previewReviewDecision(workspace);
+    expect(canSaveReviewDecision(workspace)).toBe(true);
+    const receipt = await writeDecisionReceipt(workspace, { ...workspace.decisionDraft, decisionId: 'whole-decision' }, '2026-09-12T00:00:00.000Z');
+    expect(receipt).toMatchObject({ receiptVersion: '2.0.0', selectedUnitIds: ['a-scene', 'a-variable'], decisionIntent: { mode: 'adopt-candidate', candidate: { candidateId: 'candidate-a' } } });
+    expect(authority.commands).toHaveLength(1);
+    const reopened = await openWorkspace(root);
+    expect(reopened.receiptStatus).toBe('decision-written');
+    expect(reopened.decisionReceipt).toEqual(receipt);
+    expect(reopened.decisionDraft.decisionIntent).toEqual(workspace.decisionDraft.decisionIntent);
+    expect(canSaveReviewDecision(reopened)).toBe(false);
+  });
+
+  it('ignores late replies across A to B to A and refuses a save while a changed draft is unpreviewed', async () => {
+    const root = new MemoryDirectory('late'); installWorkspace(root, wholeProjection());
+    const authority = authorityFor(root);
+    const requests: Array<{ command: ReviewDecisionPreviewCommand; resolve: (preview: ReviewDecisionPreview) => void }> = [];
+    authority.previewDecision = (command) => new Promise((resolve) => requests.push({ command, resolve }));
+    const workspace = await openWorkspace(root);
+    chooseWhole(workspace, 0); const oldA = previewReviewDecision(workspace);
+    chooseWhole(workspace, 1); const oldB = previewReviewDecision(workspace);
+    chooseWhole(workspace, 0); const currentA = previewReviewDecision(workspace);
+    requests[0]!.resolve(await wholePreview(requests[0]!.command)); await oldA;
+    expect(workspace.decisionPreview?.status).toBe('loading');
+    requests[2]!.resolve(await wholePreview(requests[2]!.command)); await currentA;
+    const currentPreview = workspace.decisionPreview;
+    requests[1]!.resolve(await wholePreview(requests[1]!.command)); await oldB;
+    expect(workspace.decisionPreview).toBe(currentPreview);
+    expect(canSaveReviewDecision(workspace)).toBe(true);
+    workspace.decisionDraft.selectedUnitIds.pop();
+    expect(canSaveReviewDecision(workspace)).toBe(false);
+    await expect(writeDecisionReceipt(workspace, { ...workspace.decisionDraft, decisionId: 'stale' }, '2026-09-12T00:00:00.000Z')).rejects.toThrow('当前审阅不能封存决定');
+    expect(authority.commands).toEqual([]);
+  });
+
+  it.each(['identity', 'intent', 'review-id', 'blocked', 'unavailable', 'stale'] as const)('prevents saving a %s preview', async (failure) => {
+    const root = new MemoryDirectory(failure); installWorkspace(root, wholeProjection());
+    const authority = authorityFor(root);
+    authority.previewDecision = async (command) => {
+      if (failure === 'unavailable') throw new ReviewAuthorityClientError('REVIEW_AUTHORITY_UNAVAILABLE', '本机审阅服务未连接。');
+      if (failure === 'stale') throw new ReviewAuthorityClientError('COMPOSITION_PLAN_STALE', '项目版本已变化。');
+      const preview = await wholePreview(command);
+      if (failure === 'identity') preview.reviewFingerprint = '1'.repeat(64);
+      if (failure === 'review-id') preview.reviewId = 'another-review';
+      if (failure === 'intent') preview.decisionIntent = { mode: 'custom-mix' };
+      if (failure === 'blocked') { preview.status = 'blocked'; preview.dryRun.status = 'failed'; }
+      preview.previewFingerprint = await reviewDecisionPreviewFingerprintOf(preview, hasher);
+      return preview;
+    };
+    const workspace = await openWorkspace(root); chooseWhole(workspace, 0);
+    if (failure === 'blocked') await previewReviewDecision(workspace);
+    else await expect(previewReviewDecision(workspace)).rejects.toThrow();
+    expect(canSaveReviewDecision(workspace)).toBe(false);
+    expect(authority.commands).toEqual([]);
+  });
+
+  it('previews an explicit empty-base mix with its selected units and resolutions', async () => {
+    const root = new MemoryDirectory('mix'); installWorkspace(root, wholeProjection());
+    const requests: ReviewDecisionPreviewCommand[] = [];
+    authorityFor(root).previewDecision = async (command) => { requests.push(command); return wholePreview(command); };
+    const workspace = await openWorkspace(root);
+    workspace.decisionDraft = { decisionId: '', decisionIntent: { mode: 'custom-mix' }, selectedUnitIds: ['a-scene', 'b-variable'], conflictResolutions: [] };
+    await previewReviewDecision(workspace);
+    expect(requests[0]).toMatchObject({ decisionIntent: { mode: 'custom-mix' }, customSelection: { selectedUnitIds: ['a-scene', 'b-variable'], conflictResolutions: [] } });
+    expect(canSaveReviewDecision(workspace)).toBe(true);
+  });
+});
 
 function resultProjection(): HumanReviewProjection {
   const evidence: ReviewEvidenceBinding = {

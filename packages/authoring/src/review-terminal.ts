@@ -155,8 +155,9 @@ function validateReceiptShape(
   value: unknown,
   reviewId: string,
 ): void {
-  if (!isRecord(value) || value['receiptVersion'] !== '1.0.0') {
-    return invalid('receipt 必须是版本为 1.0.0 的对象。');
+  if (!isRecord(value) || (value['receiptVersion'] !== '1.0.0'
+    && !(action === 'comparison-decision' && value['receiptVersion'] === '2.0.0'))) {
+    return invalid('receipt 版本与当前审阅动作不兼容。');
   }
   if (action === 'comparison-decision') {
     requireReceiptField(value, 'decisionId', 'receipt.decisionId');
@@ -164,6 +165,11 @@ function validateReceiptShape(
       return invalid('决定回执的 reviewId 与命令不一致。');
     }
     requireReceiptFingerprint(value, 'decisionFingerprint', 'receipt.decisionFingerprint');
+    if (value['receiptVersion'] === '2.0.0') {
+      requireReceiptFingerprint(value, 'reviewFingerprint', 'receipt.reviewFingerprint');
+      requireReceiptFingerprint(value, 'planContentFingerprint', 'receipt.planContentFingerprint');
+      requireReceiptFingerprint(value, 'previewFingerprint', 'receipt.previewFingerprint');
+    }
     return;
   }
   if (action === 'result-approval') {
