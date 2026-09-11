@@ -104,6 +104,63 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('seals and replays a character migration using the semantic ID of a nested scene', async () => {
+    const fixture = await setup('nested-character-migration');
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    const nestedPath = 'content/scenario/chapter/start.gal';
+    fs.mkdirSync(path.dirname(path.join(fixture.projectRoot, nestedPath)), { recursive: true });
+    fs.renameSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), path.join(fixture.projectRoot, nestedPath));
+    const base = treeSnapshot(fixture.projectRoot);
+    let expectedFiles: Record<string, string> = {};
+    const first = await sealCandidate(fixture.projectRoot, 'nested-rename', async (session) => {
+      const renamed = await session.invoke('character.ensure', { operationId: 'nested-rename', id: 'rin', name: '小凛', expectedFingerprint: await realHasher.sha256(stableStringify(characters)) });
+      expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      const facts = record.operations['nested-rename']!.compositionFacts!;
+      expect(facts.producedObjects.map((item) => item.objectRef)).toEqual(['character:rin', 'config:characters', 'scene:start']);
+      expect(facts.replayStateRequirements).toContainEqual({ objectRef: 'scene:start', source: 'base', expectedFingerprint: await realHasher.sha256('@scene start\n凛：开始。\n@end\n') });
+      expectedFiles = record.workingFiles;
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'other', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const refs = [first.ref, second.ref];
+    const compared = await fixture.service.compare(refs);
+    const rename = compared.comparison.units.find((unit) => unit.primaryObject === 'character:rin')!;
+    const planned = await planFromComparison(fixture, refs, { selectedUnitIds: [rename.unitId] });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    expect(planned.plan.dryRun.finalObjectFingerprints['scene:start']).toBe((await fingerprintWorkingObject(expectedFiles, 'scene:start', realHasher)).fingerprint);
+    const executed = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'nested-migration' });
+    const { record } = (await NodeChangeStoreStatic.openByChangeId(executed.changeId))!;
+    expect(record.integration?.status).toBe('READY');
+    expect(record.workingFiles).toEqual(expectedFiles);
+    expect(record.workingFiles[nestedPath]).toBe('@scene start\n小凛：开始。\n@end\n');
+    expect(record.workingFiles['content/scenario/start.gal']).toBeUndefined();
+    expect(treeSnapshot(fixture.projectRoot)).toEqual(base);
+  });
+
+  it('rejects duplicate scene basenames during candidate character migration without advancing the change', async () => {
+    const fixture = await setup('ambiguous-character-migration');
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/scenario/chapter'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/chapter/start.gal'), '@scene start\n@end\n');
+    const baseline = treeSnapshot(fixture.projectRoot);
+    const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const before = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      const result = await session.invoke('character.ensure', { operationId: 'ambiguous-rename', id: 'rin', name: '小凛', expectedFingerprint: await realHasher.sha256(stableStringify(characters)) });
+      expect(result).toMatchObject({ ok: false, error: { code: 'OBJECT_AMBIGUOUS' } });
+      const after = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      expect(after).toEqual(before);
+      expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+    } finally {
+      await session.close();
+    }
+  });
+
   it.each(['all', 'character-only'] as const)('replays rename after deleting the last old speaker with %s selected', async (selection) => {
     const fixture = await setup(`sealed-rename-${selection}`);
     const characters = { rin: { name: '凛' } };

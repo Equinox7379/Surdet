@@ -16,6 +16,7 @@ import { isValidSpeakerToken, parseSceneDocument, serializeSceneDocument } from 
 import { buildSpeakerCharacterRefs } from './object-index.js';
 import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
 import type { CompositionOperation } from './composition-contracts.js';
+import { resolveUniqueScenarioPath } from './scenario-identity.js';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -158,11 +159,11 @@ export async function applyCharacterEnsure(
     if (sealedOperation !== undefined) {
       for (const produced of sealedOperation.producedObjects) {
         if (!produced.objectRef.startsWith('scene:')) continue;
-        const path = `content/scenario/${produced.objectRef.slice('scene:'.length)}.gal`;
+        const path = resolveUniqueScenarioPath(record.workingFiles, produced.objectRef.slice('scene:'.length));
         const requirements = (sealedOperation.replayStateRequirements ?? []).filter((item) => item.objectRef === produced.objectRef);
-        const text = record.workingFiles[path];
+        const text = path === undefined ? undefined : record.workingFiles[path];
         if (produced.disposition !== 'update' || produced.finalFingerprint === undefined
-          || requirements.length !== 1 || text === undefined
+          || requirements.length !== 1 || path === undefined || text === undefined
           || await hasher.sha256(text) !== requirements[0]!.expectedFingerprint) {
           throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `角色迁移场景前置条件不匹配：${produced.objectRef}`);
         }

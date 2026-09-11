@@ -35,6 +35,20 @@ const cases = [
 ] as const;
 
 describe('working object fingerprint resolver', () => {
+  it('uses a nested scene path without changing semantic identity or inventing a root file', async () => {
+    const text = workingFiles['content/scenario/intro.gal']!;
+    const nested = { 'content/scenario/chapter/intro.gal': text };
+    expect(await fingerprintWorkingObject(nested, 'scene:intro', hasher)).toEqual(await fingerprintWorkingObject(workingFiles, 'scene:intro', hasher));
+    expect((await fingerprintWorkingObject(nested, 'scene:missing', hasher)).state).toBe('absent');
+    await expect(fingerprintWorkingObject(nested, 'scene:chapter/intro', hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    expect(nested).toEqual({ 'content/scenario/chapter/intro.gal': text });
+  });
+
+  it.each(['content/scenario/intro.gal', 'content/scenario/a/intro.gal'])('rejects a second basename instead of preferring %s', async (firstPath) => {
+    const files = { [firstPath]: '@scene intro\n@end\n', 'content/scenario/b/intro.gal': '@scene intro\n凛：另一个文件。\n@end\n' };
+    await expect(fingerprintWorkingObject(files, 'scene:intro', hasher)).rejects.toMatchObject({ code: 'OBJECT_AMBIGUOUS' });
+  });
+
   it.each(cases)('fingerprints %s as %s', async (objectRef, state) => {
     const result = await fingerprintWorkingObject(workingFiles, objectRef, hasher);
     expect(result.objectRef).toBe(objectRef);

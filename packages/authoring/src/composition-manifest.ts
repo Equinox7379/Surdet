@@ -1,6 +1,7 @@
 import { AuthoringOperationError, stableStringify } from './change-session.js';
 import type { ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
+import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { analyzeSceneCompositionReferences, analyzeTimelineCompositionReferences } from './composition-reference-analysis.js';
 import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
 import { resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from './candidate-composition-guard.js';
@@ -346,7 +347,8 @@ export interface BuildCompositionManifestInput {
 
 async function finalProductionFingerprint(record: ChangeRecord, objectRef: string, hasher: TextHasher): Promise<string | undefined> {
   if (objectRef.startsWith('scene:')) {
-    const text = record.workingFiles[scenePath(objectRef.slice('scene:'.length))];
+    const path = resolveUniqueScenarioPath(record.workingFiles, objectRef.slice('scene:'.length));
+    const text = path === undefined ? undefined : record.workingFiles[path];
     return text === undefined ? undefined : hasher.sha256(text);
   }
   let value: unknown;
