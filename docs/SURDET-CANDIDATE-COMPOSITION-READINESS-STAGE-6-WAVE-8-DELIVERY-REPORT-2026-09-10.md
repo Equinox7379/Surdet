@@ -2,7 +2,7 @@
 
 - 施工基线：`47fd2fa07cf6502f74cca19403f3c1a7bc30c741`，`main`。
 - 代码提交 / 实现终点：`8cf275d4d532533fd43eef6c299397f9932bf239`。本报告以单独文档提交保存。
-- 当前状态：本地实现、验证及主代理检查完成，等待云端独立复审；push 未授权。
+- 首轮云端源码复审：`NEEDS_FIX`。2026-09-11 定向整改记录见本文末节；push 仍未授权。
 - 本轮依据：Owner 提供的 Wave 8 R2 正式施工包。长期路线台账、AGENTS 与受保护资料保持原样。
 
 ## 实现
@@ -64,3 +64,25 @@ Authoring Contract 为 **2.3.0**；envelope **1.0.0**、capsule **2.0.0**、mani
 当前 AGENTS 禁止委派审核，因此施工包中的 Luna 审核条款未执行。Luna 仅承担共享解析器、依赖图和对应测试的独立并行实现；主代理亲自检查状态原子性、时点事实、引用边界、环、恢复模式、旧数据和严格 schema，并修复上述发现。不能把这写成 Luna 独立审核通过。后续云端独立复审仍待进行。
 
 未修改 Core、Renderer、Host、Shell、Editor 或正式游戏生产源码，未增加依赖、修改权限/审批语义、部署或正式 pack/release。本轮没有重新执行 Electron/新作品视觉人工签收。实现已普通本地提交，停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，未执行 push，没有针对本轮新提交的远端 CI 或云端复审结论。
+
+## 2026-09-11 云端复审定向整改
+
+云端针对累计 `47fd2fa..7e213be` 提出 W8-R2-01、02 两个 HIGH 与 W8-R2-03 一个阻断 push 的 MEDIUM。本轮保留 `8cf275d` 和 `7e213be`，仅追加一个包含代码、测试和本节的普通后继提交；原始验证和 fresh Agent 记录作为首轮历史保留，未重跑 fresh Agent、Electron 或人工 Review 路径。
+
+- **W8-R2-01：重放状态前置关系。** handler 从实际操作前状态记录 `replayStatePreconditions`；角色操作覆盖 `config:characters` 和所有 speaker migration 场景，scene.patch 同时记录其消费的完整场景前态。guard 将其解析为独立的 `replayStateRequirements`：优先最后一个匹配指纹的更早 producer sequence，否则匹配不可变 base。状态边与语义边共用现有 primary-unit 图；缺失、指纹不符或成环均在 CAS 前拒绝。readiness 与 sealer 检查这些已存事实，封装时重新核验来源，不补写旧历史。
+- **W8-R2-02：完整产物比较。** 每个 unit 按 objectRef 计算最后 production，保留相对基线的 create/update/remove 语义。identical 签名同时包含 primary、完整最终 footprint，以及规范化的 base/candidate 依赖语义；候选依赖连同生产单元的完整签名比较，排除 artifact ID、operation ID 和内部重放步骤差异。重叠索引覆盖全部产物。同候选共享写入不产生选择冲突；混合重叠按跨候选关系处理，避免选择一个来源时排除该来源自身的必要前置单元。
+- **W8-R2-03：成功重试的胶囊幂等。** invocation ledger 保留所有真实调用。仅胶囊事实投影按成功记录的 `(operationId, capabilityId, inputSha256)` 合并等价项；capability 或输入摘要不同仍为歧义，规范输入/摘要/身份检查继续有效。
+
+反例与回归：
+
+- 修改前已复现角色 `zeta → alpha` 的 ready capsule 在计划 dry-run 中报 `OBJECT_REF_STALE`；修复后只选 alpha 会闭合 zeta，并按源顺序成功重放。
+- “先 patch 场景、后改名迁移”按状态边重放。与另一候选的场景正文形成真实 secondary 冲突后，测试显式选择迁移来源；最终 integration workingFiles 的场景与角色表逐项等于选定来源，原项目未写入。两个完整迁移 footprint 相同的真实胶囊只重放一条角色操作，同时保留双来源 provenance。
+- 同 primary、不同迁移正文；不同角色共享角色表；迁移单元与 scene 单元共享场景；不同依赖前态；相同完整 footprint；最后 state producer 归属；封装时来源篡改/事实缺失，均有定向覆盖。角色表状态环和场景/角色互依环在持久化前拒绝，record、workingRevision、workingFiles 和证据保持不变。
+- 两个独立真实 Agent Port 用例均执行首次成功和 exact retry，确认两条成功 invocation 留存、manifest 仅一个 operation、capsule ready；分别追加不同 capability 和不同 input SHA 的成功记录，两种反例均保持 unavailable。
+- Q1 的匿名场景子对象遍历、已存在未引用素材与选定来源依赖闭包仍通过。入口字段值相同但来源依赖不同的单元现在明确要求选择，不再冒充 identical；选定来源及其依赖闭包仍保持正确。
+- 聚焦测试、Authoring/CLI 类型检查及构建通过。一次聚焦运行中，既有 `plans only with reviewed fingerprint...` 用例触及原 5 秒超时；单独复验 3.733 秒通过，未调整测试门限，不将偶发原因写成已定位。
+- 本轮唯一一次最终 `npm run verify:all` 完整通过，退出码 0；14 个现有检查步骤完成，9 个工作区共 296 个测试文件、2,732 项 Vitest 测试通过，其中 Authoring 357 项、CLI 530 项。此前超时的既有用例在本次全量内 2.733 秒通过。类型、内容校验/模拟和构建通过；原有内容与 chunk 警告保留。日志位于 `D:/CodexTasks/surdet-wave8-cloud-repair-20260911/verify-all.log`。
+
+整改提交为本节所在提交，父提交是 `7e213be`；精确 SHA 随 `WAVE8-R2-REVIEW2.patch` 和交付消息提供。累计 patch 范围为 `47fd2fa07cf6502f74cca19403f3c1a7bc30c741..HEAD`。
+
+`PUSH_NOT_AUTHORIZED`。完成本地整改后停止于 `WAITING_FOR_CLOUD_INDEPENDENT_REVIEW`，等待第二次云端源码复审，不声称云端已通过。

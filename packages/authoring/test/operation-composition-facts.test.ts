@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { beginChange, InMemoryChangeRepository, openChange, recordValidation, type ChangeSession } from '../src/change-session.js';
+import { beginChange, InMemoryChangeRepository, openChange, recordValidation, runOperation, type ChangeSession } from '../src/change-session.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
 import { applyCharacterEnsure, applyCharacterRemove, applyEntrySceneSet, charactersFingerprint, entrySceneFingerprint } from '../src/config-operations.js';
 import { applyTimelineCreate, applyTimelinePatch } from '../src/timeline-operations.js';
-import { createCandidateOperationPrePersistHook, resolveOperationRequirementsAtSequence } from '../src/candidate-composition-guard.js';
+import { createCandidateOperationPrePersistHook, resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from '../src/candidate-composition-guard.js';
 import { inspectCandidateCompositionReadiness } from '../src/candidate-readiness.js';
 import { stableStringify } from '../src/change-session.js';
 import { buildCompositionManifest } from '../src/composition-manifest.js';
 import type { SceneBlockInput } from '../src/contracts.js';
+import { buildReplayStateBaseObjects } from '../src/composition-object-facts.js';
 
 const hasher = { sha256: async (text: string) => createHash('sha256').update(text).digest('hex') };
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -25,6 +26,10 @@ async function seal(change: ChangeSession) {
     })),
     objectFacts: {
       baseObjects: [{ objectRef: 'scene:A', references: [] }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
+      baseReplayStates: [
+        { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
+        { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
+      ],
       workingObjects: [], baseAssetRefs: change.record.composition!.baseAssetRefs, workingAssetRefs: change.record.composition!.baseAssetRefs,
     },
   }, hasher);
@@ -41,7 +46,7 @@ async function candidate(baseAssetRefs: string[] = []) {
     readText: async (path) => { const text = files[path as keyof typeof files]; return { path, text, bytes: text.length, sha256: sha(text) }; },
   }, hasher);
   const repository = new InMemoryChangeRepository();
-  const hook = createCandidateOperationPrePersistHook({ baseObjects: buildObjectIndex(snapshot).objects, baseAssetRefs });
+  const hook = createCandidateOperationPrePersistHook({ baseObjects: buildObjectIndex(snapshot).objects, baseAssetRefs, baseReplayStates: await buildReplayStateBaseObjects(snapshot, hasher) });
   return beginChange(snapshot, repository, undefined, undefined, {
     composition: { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs }, beforeOperationPersist: hook,
   });
@@ -161,11 +166,15 @@ describe('candidate operation-time facts', () => {
 
   it('captures each character table, migration and removal at its operation time', async () => {
     const change = await candidate(['asset:avatar:rin']);
-    await applyCharacterEnsure(change, { operationId: 'rin', id: 'rin', name: '凛', avatar: 'rin', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
     await insert(change, 'dialogue', 'A', [{ kind: 'text', speaker: '凛', value: '旧名字。' }]);
+    await applyCharacterEnsure(change, { operationId: 'rin', id: 'rin', name: '凛', avatar: 'rin', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
     await applyCharacterEnsure(change, { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
     const created = structuredClone(facts(change, 'rin'));
     const renamed = structuredClone(facts(change, 'rename'));
+    expect(renamed.replayStateRequirements).toEqual([
+      { objectRef: 'config:characters', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: created.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint },
+      { objectRef: 'scene:A', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: facts(change, 'dialogue').objectFingerprintAfter },
+    ]);
     expect(renamed.producedObjects).toContainEqual({ objectRef: 'scene:A', disposition: 'update', finalFingerprint: sha(change.record.workingFiles['content/scenario/A.gal']!) });
     await applyCharacterRemove(change, { operationId: 'remove', id: 'rin', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
     expect(facts(change, 'rin')).toEqual(created);
@@ -173,6 +182,72 @@ describe('candidate operation-time facts', () => {
     expect(created.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint).not.toBe(renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint);
     expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'character:rin', disposition: 'remove' });
     expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'config:characters', disposition: 'update', finalFingerprint: sha('{}') });
+    expect(facts(change, 'remove').replayStateRequirements).toEqual([{ objectRef: 'config:characters', source: 'candidate', candidateOperationSequence: 2, expectedFingerprint: renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint }]);
+  });
+
+  it('rejects a state-only cycle between character units without changing record or evidence', async () => {
+    const change = await candidate();
+    for (const id of ['zeta', 'alpha']) await applyCharacterEnsure(change, { operationId: id, id, name: id, expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    await recordValidation(change, { evidenceId: 'state-cycle', errors: 0 });
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { operationId: 'zeta-again', id: 'zeta', name: 'Zeta', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_CYCLE' });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+  });
+
+  it('rejects migration back into a scene that already depends on this candidate character', async () => {
+    const change = await candidate();
+    await applyCharacterEnsure(change, { operationId: 'rin', id: 'rin', name: '凛', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    await insert(change, 'dialogue', 'A', [{ kind: 'text', speaker: '凛', value: '旧名字。' }]);
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_CYCLE' });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+  });
+
+  it.each(['missing', 'mismatch'])('rejects %s replay state facts before CAS and retains evidence', async (mode) => {
+    const change = await candidate();
+    await recordValidation(change, { evidenceId: 'untouched', errors: 0 });
+    const before = structuredClone(change.record);
+    const input = { operationId: 'bad-state', id: 'rin', expectedFingerprint: sha('{}') };
+    await expect(runOperation(change, input, async () => ({
+      result: {}, workingFiles: { ...change.record.workingFiles, 'game.config.json': '{}' },
+      compositionDraft: { capabilityId: 'character.ensure', primaryObject: 'character:rin', rawReferences: [],
+        producedObjects: [{ objectRef: 'character:rin', disposition: 'create', finalFingerprint: 'rin' }, { objectRef: 'config:characters', disposition: 'update', finalFingerprint: 'table-after' }], objectFingerprintAfter: 'rin',
+        ...(mode === 'missing' ? {} : { replayStatePreconditions: [{ objectRef: 'config:characters', expectedFingerprint: 'not-in-base-or-history' }] }),
+      },
+    }))).rejects.toMatchObject({ code: 'CANDIDATE_OPERATION_FACTS_REQUIRED' });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+  });
+
+  it('resolves the last matching state producer before falling back to base', async () => {
+    const change = await candidate();
+    await applyCharacterEnsure(change, { operationId: 'first', id: 'rin', name: '凛', expectedFingerprint: sha('{}') }, hasher);
+    const state = await charactersFingerprint(config(change), hasher);
+    await applyCharacterEnsure(change, { operationId: 'same', id: 'rin', name: '凛', expectedFingerprint: state }, hasher);
+    const resolved = resolveReplayStateRequirementsAtSequence({
+      preconditions: [{ objectRef: 'config:characters', expectedFingerprint: state }], sequence: 2,
+      baseReplayStates: [{ objectRef: 'config:characters', expectedFingerprint: state }],
+      priorOperations: Object.values(change.record.operations).map((operation) => ({ sequence: operation.sequence!, facts: operation.compositionFacts! })),
+    });
+    expect(resolved).toEqual({ ok: true, requirements: [{ objectRef: 'config:characters', expectedFingerprint: state, source: 'candidate', candidateOperationSequence: 1 }] });
+  });
+
+  it('rechecks persisted state predecessor attribution when sealing, without backfilling missing facts', async () => {
+    const change = await candidate();
+    for (const id of ['zeta', 'alpha']) await applyCharacterEnsure(change, { operationId: id, id, name: id, expectedFingerprint: await charactersFingerprint(config(change), hasher) }, hasher);
+    expect((await seal(change)).eligibility).toBe('ready');
+    const saved = structuredClone(facts(change, 'alpha'));
+    facts(change, 'alpha').replayStateRequirements = [{ objectRef: 'config:characters', source: 'base', expectedFingerprint: saved.replayStatePreconditions![0]!.expectedFingerprint }];
+    expect(await seal(change)).toMatchObject({ eligibility: 'unavailable', reasons: expect.arrayContaining([expect.objectContaining({ code: 'OPERATION_FACTS_INVALID', operationId: 'alpha' })]) });
+    change.record.operations['alpha']!.compositionFacts = structuredClone(saved);
+    delete facts(change, 'alpha').replayStatePreconditions;
+    delete facts(change, 'alpha').replayStateRequirements;
+    const before = structuredClone(change.record);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('blocked');
+    expect((await seal(change)).eligibility).toBe('unavailable');
+    expect(change.record).toEqual(before);
   });
 
   it('keeps successive entryScene settings at their own time', async () => {

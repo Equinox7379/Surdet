@@ -59,11 +59,14 @@ export interface OperationCompositionDraft {
   producedObjects: ObjectProduction[];
   objectFingerprintBefore?: string;
   objectFingerprintAfter?: string;
+  /** Exact state consumed by this handler, separate from semantic references. */
+  replayStatePreconditions?: ReplayStatePrecondition[];
 }
 
 export interface RecordedOperationCompositionFacts extends OperationCompositionDraft {
   factsVersion: '1.0.0';
   requiredObjects: ObjectRequirement[];
+  replayStateRequirements?: ReplayStateRequirement[];
 }
 
 export interface CandidateDependencyIssue {
@@ -125,6 +128,15 @@ export interface ObjectRequirement {
   expectedFingerprint?: string;
 }
 
+export interface ReplayStatePrecondition {
+  objectRef: string;
+  expectedFingerprint: string;
+}
+
+export interface ReplayStateRequirement extends ObjectRequirement {
+  expectedFingerprint: string;
+}
+
 export interface ObjectProduction {
   objectRef: string;
   disposition: 'create' | 'update' | 'remove';
@@ -142,6 +154,7 @@ export interface CompositionOperation {
   objectFingerprintAfter?: string;
   requiredObjects: ObjectRequirement[];
   producedObjects: ObjectProduction[];
+  replayStateRequirements?: ReplayStateRequirement[];
 }
 
 export interface CompositionManifest {
@@ -182,6 +195,7 @@ export interface ManifestObjectFacts {
   workingObjects: ManifestObjectFact[];
   baseAssetRefs: string[];
   workingAssetRefs: string[];
+  baseReplayStates?: ReplayStatePrecondition[];
 }
 
 /** CLI 将 invocation ledger 投影成的最小结构；@surdet/authoring 不导入 Node 或 MCP 类型。 */

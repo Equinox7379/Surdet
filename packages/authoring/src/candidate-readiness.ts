@@ -49,6 +49,18 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
   const rawRefs = new Set(facts.rawReferences.filter((ref) => ref.scope === 'candidate-external').map((ref) => ref.objectRef));
   const requiredRefs = new Set(facts.requiredObjects.map((ref) => ref.objectRef));
   if (rawRefs.has(undefined) || rawRefs.size !== requiredRefs.size || [...rawRefs].some((ref) => !requiredRefs.has(ref!))) return 'raw references 与已解析依赖不一致';
+  const preconditions = facts.replayStatePreconditions ?? [];
+  const replay = facts.replayStateRequirements ?? [];
+  if (!Array.isArray(preconditions) || !Array.isArray(replay)) return '重放状态事实形状无效';
+  const expectedRefs = facts.capabilityId === 'character.ensure' || facts.capabilityId === 'character.remove'
+    ? ['config:characters', ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
+    : facts.capabilityId === 'scene.patch' ? [facts.primaryObject] : [];
+  if (expectedRefs.includes('config:characters') && facts.producedObjects.filter((item) => item.objectRef === 'config:characters' && item.disposition === 'update').length !== 1) return '角色操作缺少唯一角色表产物';
+  if (preconditions.length !== expectedRefs.length || new Set(preconditions.map((item) => item.objectRef)).size !== expectedRefs.length
+    || expectedRefs.some((ref) => !preconditions.some((item) => item.objectRef === ref && typeof item.expectedFingerprint === 'string'))
+    || replay.length !== preconditions.length || preconditions.some((before) => replay.filter((item) => item.objectRef === before.objectRef && item.expectedFingerprint === before.expectedFingerprint).length !== 1)) return '重放状态前置事实缺失或不一致';
+  if (preconditions.some((item) => item.objectRef === 'config:characters' && item.expectedFingerprint !== input['expectedFingerprint'])) return '角色表前置指纹与规范输入不一致';
+  if (facts.capabilityId === 'scene.patch' && preconditions[0]?.expectedFingerprint !== facts.objectFingerprintBefore) return '场景重放前置指纹与操作前状态不一致';
   return undefined;
 }
 
@@ -84,7 +96,7 @@ export function inspectCandidateCompositionReadiness(record: ChangeRecord): Cand
       if (Number.isInteger(operation.sequence) && operation.sequence! >= 0) valid.push({ operationId, sequence: operation.sequence!, facts });
     }
     for (const operation of valid) {
-      for (const requirement of operation.facts.requiredObjects) {
+      for (const requirement of [...operation.facts.requiredObjects, ...operation.facts.replayStateRequirements ?? []]) {
         if (requirement.source === 'base') continue;
         const producer = valid.find((item) => item.sequence === requirement.candidateOperationSequence);
         const production = producer?.facts.producedObjects.find((item) => item.objectRef === requirement.objectRef && item.disposition !== 'remove');

@@ -213,6 +213,7 @@ export async function applyCharacterEnsure(
       compositionDraft: await buildCharacterOperationCompositionDraft({
         capabilityId: 'character.ensure', id: input.id, beforeCharacter: existing,
         afterCharacter: next, characters, migratedFiles, hasher,
+        charactersFingerprintBefore: fingerprintBefore, workingFilesBefore: record.workingFiles,
       }),
       result: {
         id: input.id,
@@ -271,6 +272,7 @@ export async function applyCharacterRemove(
     return {
       compositionDraft: await buildCharacterOperationCompositionDraft({
         capabilityId: 'character.remove', id: input.id, beforeCharacter, characters, hasher,
+        charactersFingerprintBefore: fingerprintBefore,
       }),
       result: {
         id: input.id,

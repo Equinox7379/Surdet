@@ -127,6 +127,50 @@ function bystander(): VerifiedCompositionCandidate {
 }
 
 describe('Wave 5 candidate comparison', () => {
+  it('does not deduplicate equal primary characters with different migrated scene results', async () => {
+    const result = await compare(['a', 'b'].map((id) => readyCandidate(id, [operation(0, id, 'character.ensure', 'character:rin', [
+      production('character:rin', 'update', 'same-character'), production('config:characters', 'update', 'same-table'), production('scene:start', 'update', `scene-${id}`),
+    ])])));
+    expect(result.identicalGroups).toEqual([]);
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ severity: 'selection-required', objectRefs: ['scene:start'] }));
+  });
+
+  it('detects shared secondary writes across different primary objects', async () => {
+    const result = await compare(['alice', 'bob'].map((id) => readyCandidate(id, [operation(0, id, 'character.ensure', `character:${id}`, [
+      production(`character:${id}`, 'create', id), production('config:characters', 'update', `table-${id}`),
+    ])])));
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ severity: 'selection-required', objectRefs: ['config:characters'] }));
+  });
+
+  it('detects migration versus scene-unit overlap and never deduplicates different primaries', async () => {
+    const result = await compare([
+      readyCandidate('rename', [operation(0, 'rename', 'character.ensure', 'character:rin', [production('character:rin', 'update', 'rin'), production('scene:start', 'update', 'same-scene'), production('config:characters', 'update', 'table')])]),
+      readyCandidate('patch', [operation(0, 'patch', 'scene.patch', 'scene:start', [production('scene:start', 'update', 'same-scene')])]),
+    ]);
+    expect(result.identicalGroups).toEqual([]);
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ severity: 'selection-required', objectRefs: ['scene:start'] }));
+  });
+
+  it('deduplicates a complete equivalent footprint independent of production and dependency order', async () => {
+    const produced = [production('character:rin', 'update', 'rin'), production('config:characters', 'update', 'table'), production('scene:start', 'update', 'scene')];
+    const required = [requirement('asset:avatar:rin', 'base'), requirement('character:base', 'base')];
+    const result = await compare([
+      readyCandidate('a', [operation(0, 'a', 'character.ensure', 'character:rin', produced, required)]),
+      readyCandidate('b', [operation(0, 'b', 'character.ensure', 'character:rin', [...produced].reverse(), [...required].reverse())]),
+    ]);
+    expect(result.identicalGroups).toHaveLength(1);
+    expect(result.conflicts).toEqual([]);
+    expect(result.identicalGroups[0]!.unitIds).toHaveLength(2);
+  });
+
+  it('keeps equal final footprints distinct when their base dependency fingerprints differ', async () => {
+    const result = await compare(['a', 'b'].map((id) => readyCandidate(id, [operation(0, id, 'scene.patch', 'scene:start', [production('scene:start', 'update', 'same')], [
+      { objectRef: 'character:rin', source: 'base', expectedFingerprint: id },
+    ])])));
+    expect(result.identicalGroups).toEqual([]);
+    expect(result.conflicts).toContainEqual(expect.objectContaining({ severity: 'selection-required', objectRefs: ['scene:start'] }));
+  });
+
   it('blocks a legacy synthetic reciprocal primary-unit cycle even though each producer sequence is earlier', async () => {
     const result = await compare([readyCandidate('cycle', [
       operation(0, 'create-a', 'scene.create', 'scene:A', [production('scene:A', 'create', 'a0')]),

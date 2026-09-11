@@ -6,6 +6,7 @@ import {
   AuthoringOperationError,
   buildCompositionManifest,
   projectCompositionObjectFacts,
+  buildReplayStateBaseObjects,
   evidenceFreshness,
   inspectTransactionRecovery,
   loadProjectSnapshot,
@@ -226,7 +227,7 @@ function isSemanticEntry(value: unknown): value is SemanticDiffEntry {
 /** 资源是 stage 不修改的共享输入，不要求先被基线时间轴引用。 */
 /** invocation ledger → 最小成功 invocation fact 投影（只保留带 operationId 的成功记录）。 */
 function successInvocationFacts(records: readonly InvocationRecord[]): OperationInvocationFact[] {
-  return records
+  const facts = records
     .filter((record) => record.ok && record.operationId !== undefined)
     .map((record) => ({
       capabilityId: record.capability,
@@ -234,6 +235,8 @@ function successInvocationFacts(records: readonly InvocationRecord[]): Operation
       inputSha256: record.inputSha256,
       ok: true,
     }));
+  // Keep every ledger entry; exact retries project to one logical success fact.
+  return [...new Map(facts.map((fact) => [JSON.stringify([fact.operationId, fact.capabilityId, fact.inputSha256]), fact])).values()];
 }
 
 export async function generateDeliveryCapsule(
@@ -307,7 +310,10 @@ export async function generateDeliveryCapsule(
         projectIdentity: session.projectIdentity,
         invocationFacts: successInvocationFacts(invocations),
         semanticDiff: semanticEntries(diff).filter(isSemanticEntry),
-        objectFacts: projectCompositionObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles(), record.integration === undefined && record.composition?.mode === 'candidate' ? record.composition.baseAssetRefs : undefined),
+        objectFacts: {
+          ...projectCompositionObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles(), record.integration === undefined && record.composition?.mode === 'candidate' ? record.composition.baseAssetRefs : undefined),
+          baseReplayStates: await buildReplayStateBaseObjects(baseSnapshot, hasher),
+        },
       }, hasher);
       // Wave 5：integration change 的 provenance 与失败审计（在 composition manifest 之后构造）。
       let integrationProvenance: DeliveryCapsulePayload['integrationProvenance'];

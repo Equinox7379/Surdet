@@ -1,9 +1,9 @@
 import { AuthoringOperationError, stableStringify, type OperationPrePersistHook } from './change-session.js';
 import type {
   CandidateDependencyIssue, ManifestObjectFact, ObjectRequirement,
-  RawCompositionReference, RecordedOperationCompositionFacts,
+  RawCompositionReference, RecordedOperationCompositionFacts, ReplayStatePrecondition, ReplayStateRequirement,
 } from './composition-contracts.js';
-import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
+import { compositionFactIdentityIssue, inspectCandidateCompositionReadiness } from './candidate-readiness.js';
 import { buildPrimaryObjectDependencyGraph } from './composition-unit-graph.js';
 
 export function resolveOperationRequirementsAtSequence(input: {
@@ -52,8 +52,9 @@ export function resolveOperationRequirementsAtSequence(input: {
 
 export function createCandidateOperationPrePersistHook(input: {
   baseObjects: readonly ManifestObjectFact[]; baseAssetRefs: readonly string[];
+  baseReplayStates?: readonly ReplayStatePrecondition[];
 }): OperationPrePersistHook {
-  return async ({ current, operationId, sequence, draft }) => {
+  return async ({ current, operationId, sequence, draft, normalizedInput }) => {
     if (current.integration !== undefined || current.composition?.mode !== 'candidate') return undefined;
     const readiness = inspectCandidateCompositionReadiness(current);
     if (draft === undefined || readiness.status !== 'ready') {
@@ -70,7 +71,14 @@ export function createCandidateOperationPrePersistHook(input: {
       workingRevisionBefore: current.workingRevision, workingRevisionAfter: current.workingRevision,
       issues: resolved.issues, retryDisposition: 'after-repair',
     });
-    const facts: RecordedOperationCompositionFacts = { ...draft, factsVersion: '1.0.0', requiredObjects: resolved.requiredObjects };
+    const replay = resolveReplayStateRequirementsAtSequence({ preconditions: draft.replayStatePreconditions ?? [], sequence, baseReplayStates: input.baseReplayStates ?? [], priorOperations });
+    if (!replay.ok) throw new AuthoringOperationError('CANDIDATE_OPERATION_FACTS_REQUIRED', '操作消耗的前置状态无法归属到基线或更早的精确产物，尚未写入', {
+      operationApplied: false, operationId, objectRefs: replay.missingObjects,
+      workingRevisionBefore: current.workingRevision, workingRevisionAfter: current.workingRevision,
+    });
+    const facts: RecordedOperationCompositionFacts = { ...draft, factsVersion: '1.0.0', requiredObjects: resolved.requiredObjects, replayStateRequirements: replay.requirements };
+    const identityIssue = compositionFactIdentityIssue(normalizedInput, facts);
+    if (identityIssue !== undefined) throw new AuthoringOperationError('CANDIDATE_OPERATION_FACTS_REQUIRED', identityIssue, { operationApplied: false, operationId });
     const graph = buildPrimaryObjectDependencyGraph([
       ...priorOperations.map((item) => ({ operationId: item.operationId, sequence: item.sequence, ...item.facts })),
       { operationId, sequence, ...facts },
@@ -81,4 +89,24 @@ export function createCandidateOperationPrePersistHook(input: {
     });
     return facts;
   };
+}
+
+export function resolveReplayStateRequirementsAtSequence(input: {
+  preconditions: readonly ReplayStatePrecondition[];
+  sequence: number;
+  baseReplayStates: readonly ReplayStatePrecondition[];
+  priorOperations: ReadonlyArray<{ sequence: number; facts: RecordedOperationCompositionFacts }>;
+}): { ok: true; requirements: ReplayStateRequirement[] } | { ok: false; missingObjects: string[] } {
+  const requirements: ReplayStateRequirement[] = [];
+  const missingObjects: string[] = [];
+  const prior = input.priorOperations.filter((item) => item.sequence < input.sequence).sort((a, b) => b.sequence - a.sequence);
+  for (const precondition of input.preconditions) {
+    const producer = prior.find((item) => item.facts.producedObjects.some((production) =>
+      production.objectRef === precondition.objectRef && production.disposition !== 'remove' && production.finalFingerprint === precondition.expectedFingerprint));
+    if (producer !== undefined) requirements.push({ ...precondition, source: 'candidate', candidateOperationSequence: producer.sequence });
+    else if (input.baseReplayStates.some((base) => base.objectRef === precondition.objectRef && base.expectedFingerprint === precondition.expectedFingerprint)) requirements.push({ ...precondition, source: 'base' });
+    else missingObjects.push(precondition.objectRef);
+  }
+  return missingObjects.length > 0 ? { ok: false, missingObjects: missingObjects.sort() }
+    : { ok: true, requirements: requirements.sort((a, b) => a.objectRef.localeCompare(b.objectRef)) };
 }

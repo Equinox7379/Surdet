@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AuthoringObject, TextHasher } from '@surdet/authoring';
+import { fingerprintWorkingObject, stableStringify, type AuthoringObject, type TextHasher } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { CompositionService } from '../src/authoring/composition-service.js';
 import { NodeChangeStore as NodeChangeStoreStatic } from '../src/authoring/node-change-store.js';
@@ -104,6 +104,103 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('closes and replays successive character table writes in source order', async () => {
+    const fixture = await setup('character-state-order');
+    const first = await sealCandidate(fixture.projectRoot, 'characters', async (session) => {
+      let expectedFingerprint = await realHasher.sha256('{}');
+      for (const id of ['zeta', 'alpha']) {
+        const ensured = await session.invoke('character.ensure', { operationId: id, id, name: id, expectedFingerprint });
+        expect(ensured.ok, JSON.stringify(ensured)).toBe(true);
+        if (ensured.ok) expectedFingerprint = (ensured.result as { fingerprint: string }).fingerprint;
+      }
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'other', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const compared = await fixture.service.compare([first.ref, second.ref]);
+    const alpha = compared.comparison.units.find((unit) => unit.primaryObject === 'character:alpha')!;
+    const planned = await planFromComparison(fixture, [first.ref, second.ref], { selectedUnitIds: [alpha.unitId] });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    expect(planned.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(['zeta', 'alpha']);
+    expect(compared.comparison.conflicts.filter((item) => item.severity === 'selection-required')).toEqual([]);
+  });
+
+  it('orders a scene patch before character migration and replays the selected full footprint', async () => {
+    const fixture = await setup('migration-state-order');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters: { rin: { name: '凛' } } }));
+    const expectedFingerprint = await realHasher.sha256(stableStringify({ rin: { name: '凛' } }));
+    let expectedScene = '';
+    let expectedTable = '';
+    let expectedFiles: Record<string, string> = {};
+    const first = await sealCandidate(fixture.projectRoot, 'migration', async (session) => {
+      const scene = await session.invoke('object.inspect', { objectRef: 'scene:start' });
+      if (!scene.ok) throw new Error(scene.error.message);
+      const target = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
+      if (!target.ok) throw new Error(target.error.message);
+      const object = target.result as AuthoringObject;
+      expect((await session.invoke('scene.patch', { operationId: 'patch-first', sceneId: 'start', patch: { kind: 'replaceText', target: object.objectRef, expectedFingerprint: object.fingerprint, value: '选择的正文。' } })).ok).toBe(true);
+      const renamed = await session.invoke('character.ensure', { operationId: 'rename-second', id: 'rin', name: '小凛', expectedFingerprint });
+      expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      expectedScene = record.workingFiles['content/scenario/start.gal']!;
+      expectedFiles = record.workingFiles;
+      expectedTable = await realHasher.sha256(stableStringify(JSON.parse(record.workingFiles['game.config.json']!).characters));
+      expect(record.operations['rename-second']!.compositionFacts!.replayStateRequirements).toContainEqual(expect.objectContaining({ objectRef: 'scene:start', source: 'candidate', candidateOperationSequence: 0 }));
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'other-scene', async (session) => {
+      const scene = await session.invoke('object.inspect', { objectRef: 'scene:start' });
+      if (!scene.ok) throw new Error(scene.error.message);
+      const target = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
+      if (!target.ok) throw new Error(target.error.message);
+      const object = target.result as AuthoringObject;
+      expect((await session.invoke('scene.patch', { operationId: 'other-scene', sceneId: 'start', patch: { kind: 'replaceText', target: object.objectRef, expectedFingerprint: object.fingerprint, value: '另一个候选的正文。' } })).ok).toBe(true);
+    });
+    const comparison = await fixture.service.compare([first.ref, second.ref]);
+    const rename = comparison.comparison.units.find((unit) => unit.primaryObject === 'character:rin')!;
+    const selectionConflicts = comparison.comparison.conflicts.filter((item) => item.severity === 'selection-required');
+    expect(selectionConflicts).toHaveLength(2);
+    expect(selectionConflicts.every((item) => item.objectRefs.includes('scene:start'))).toBe(true);
+    const result = await fixture.service.plan({
+      candidateRefs: [first.ref, second.ref], comparisonFingerprint: comparison.comparison.comparisonFingerprint,
+      selectedUnitIds: [rename.unitId], conflictResolutions: selectionConflicts.map((conflict) => ({
+        conflictId: conflict.conflictId, resolution: 'choose-unit', actor: 'human',
+        chosenUnitId: conflict.unitIds.find((id) => comparison.comparison.units.some((unit) => unit.unitId === id && unit.candidateId === `cand-${first.ref.changeId}`))!,
+      })),
+    });
+    expect(result.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(['patch-first', 'rename-second']);
+    expect(result.plan.dryRun.status).toBe('passed');
+    expect(result.plan.dryRun.finalObjectFingerprints['scene:start']).toBe((await fingerprintWorkingObject(expectedFiles, 'scene:start', realHasher)).fingerprint);
+    expect(result.plan.dryRun.finalObjectFingerprints['config:characters']).toBe((await fingerprintWorkingObject(expectedFiles, 'config:characters', realHasher)).fingerprint);
+    const executed = await fixture.service.executePlan({ planId: result.plan.planId, artifactSha256: result.identity.sha256, executeOperationId: 'migration-replay' });
+    const { record } = (await NodeChangeStoreStatic.openByChangeId(executed.changeId))!;
+    expect(record.workingFiles['content/scenario/start.gal']).toBe(expectedScene);
+    expect(await realHasher.sha256(stableStringify(JSON.parse(record.workingFiles['game.config.json']!).characters))).toBe(expectedTable);
+    expect(fs.readFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe('@scene start\n凛：开始。\n@end\n');
+  });
+
+  it('safely deduplicates equivalent full migration footprints from two real capsules', async () => {
+    const fixture = await setup('identical-migration');
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    const expectedFingerprint = await realHasher.sha256(stableStringify(characters));
+    const refs: SealedRef[] = [];
+    for (const name of ['one', 'two']) refs.push(await sealCandidate(fixture.projectRoot, name, async (session) => {
+      expect((await session.invoke('character.ensure', { operationId: name, id: 'rin', name: '小凛', expectedFingerprint })).ok).toBe(true);
+    }));
+    const compared = await fixture.service.compare(refs.map((item) => item.ref));
+    expect(compared.comparison.identicalGroups).toHaveLength(1);
+    expect(compared.comparison.conflicts.filter((item) => item.severity === 'selection-required')).toEqual([]);
+    const planned = await planFromComparison(fixture, refs.map((item) => item.ref));
+    expect(planned.plan.dryRun.status).toBe('passed');
+    expect(planned.plan.replayOperations).toHaveLength(1);
+    expect(planned.plan.deduplicatedUnits).toHaveLength(1);
+    expect(planned.plan.deduplicatedUnits[0]!.provenanceUnitIds).toHaveLength(2);
+    const expectedFiles = { 'game.config.json': JSON.stringify({ characters: { rin: { name: '小凛' } } }), 'content/scenario/start.gal': '@scene start\n小凛：开始。\n@end\n' };
+    for (const objectRef of ['character:rin', 'config:characters', 'scene:start']) {
+      expect(planned.plan.dryRun.finalObjectFingerprints[objectRef]).toBe((await fingerprintWorkingObject(expectedFiles, objectRef, realHasher)).fingerprint);
+    }
+  });
+
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

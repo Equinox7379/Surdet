@@ -2,6 +2,16 @@ import { buildObjectIndex } from './object-index.js';
 import { buildAssetCatalog, backgroundAssetRef, portraitAssetRef, avatarAssetRef } from './asset-catalog.js';
 import type { ManifestObjectFact, ManifestObjectFacts } from './composition-contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
+import type { TextHasher } from './project-storage.js';
+import { stableStringify } from './change-session.js';
+import type { ReplayStatePrecondition } from './composition-contracts.js';
+
+export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
+  return [
+    { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
+    ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
+  ];
+}
 
 export function resolvedCompositionAssetRefs(assetPaths: readonly string[]): string[] {
   const catalog = buildAssetCatalog(assetPaths);
