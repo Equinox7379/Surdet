@@ -104,6 +104,79 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('seals and replays a nested entry scene through candidate, plan and integration', async () => {
+    const fixture = await setup('nested-entry-scene');
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/scenario/chapter'), { recursive: true });
+    fs.renameSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), path.join(fixture.projectRoot, 'content/scenario/chapter/start.gal'));
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/other.gal'), '@scene other\n@end\n');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'other', variables: {} }));
+    const baseline = treeSnapshot(fixture.projectRoot);
+    let expectedFiles: Record<string, string> = {};
+    const first = await sealCandidate(fixture.projectRoot, 'nested-entry', async (session) => {
+      expect((await session.invoke('project.entry-scene.set', { operationId: 'nested-entry', sceneId: 'start', expectedFingerprint: await realHasher.sha256(stableStringify('other')) })).ok).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      expect(record.operations['nested-entry']!.compositionFacts!.requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'scene:start', source: 'base' }));
+      expectedFiles = record.workingFiles;
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'other', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const refs = [first.ref, second.ref];
+    const compared = await fixture.service.compare(refs);
+    const entry = compared.comparison.units.find((unit) => unit.primaryObject === 'config:entryScene')!;
+    const planned = await planFromComparison(fixture, refs, { selectedUnitIds: [entry.unitId] });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    const executed = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'nested-entry' });
+    const { record } = (await NodeChangeStoreStatic.openByChangeId(executed.changeId))!;
+    expect(record.integration?.status).toBe('READY');
+    expect(record.workingFiles).toEqual(expectedFiles);
+    expect(JSON.parse(record.workingFiles['game.config.json']!).entryScene).toBe('start');
+    expect(record.workingFiles['content/scenario/chapter/start.gal']).toBe('@scene start\n凛：开始。\n@end\n');
+    expect(record.workingFiles['content/scenario/start.gal']).toBeUndefined();
+    expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+  });
+
+  it('rejects ambiguous entry scene identity in a candidate without advancing its record', async () => {
+    const fixture = await setup('ambiguous-entry-scene');
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/scenario/chapter'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/chapter/start.gal'), '@scene start\n@end\n');
+    const baseline = treeSnapshot(fixture.projectRoot);
+    const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const before = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('project.entry-scene.set', { operationId: 'ambiguous-entry', sceneId: 'start', expectedFingerprint: await realHasher.sha256(stableStringify('start')) })).toMatchObject({ ok: false, error: { code: 'OBJECT_AMBIGUOUS' } });
+      expect((await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('retries the same entry operation after creating its missing scene producer', async () => {
+    const fixture = await setup('missing-entry-producer');
+    const first = await sealCandidate(fixture.projectRoot, 'repaired-entry', async (session) => {
+      const input = { operationId: 'entry-retry', sceneId: 'ending', expectedFingerprint: await realHasher.sha256(stableStringify('start')) };
+      const before = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('project.entry-scene.set', input)).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect((await session.invoke('scene.create', { operationId: 'entry-producer', sceneId: 'ending' })).ok).toBe(true);
+      expect((await session.invoke('project.entry-scene.set', input)).ok).toBe(true);
+      const { record } = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!;
+      expect(record.operations['entry-retry']!.sequence).toBe(1);
+      expect(record.operations['entry-retry']!.compositionFacts!.requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'scene:ending', source: 'candidate', candidateOperationSequence: 0 }));
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'other', async (session) => {
+      expect((await session.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+    });
+    const refs = [first.ref, second.ref];
+    const compared = await fixture.service.compare(refs);
+    const entry = compared.comparison.units.find((unit) => unit.primaryObject === 'config:entryScene')!;
+    const planned = await planFromComparison(fixture, refs, { selectedUnitIds: [entry.unitId] });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    expect(planned.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(['entry-producer', 'entry-retry']);
+  });
+
   it('seals and replays a character migration using the semantic ID of a nested scene', async () => {
     const fixture = await setup('nested-character-migration');
     const characters = { rin: { name: '凛' } };

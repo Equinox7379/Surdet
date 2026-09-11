@@ -9,6 +9,7 @@ import {
   fingerprintWorkingObject,
   applyCharacterEnsure,
   charactersFingerprint,
+  entrySceneFingerprint,
   replayCompositionOperation,
 } from '../src/index.js';
 import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, OperationCompositionDraft, PlannedReplayOperation, ProjectSnapshot, TextHasher } from '../src/index.js';
@@ -140,6 +141,22 @@ async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeR
 }
 
 describe('Wave 5 integration execution', () => {
+  it.each(['missing', 'ambiguous'] as const)('rejects a %s entry scene before advancing integration', async (target) => {
+    const plan = makePlan();
+    const repository = new InMemoryChangeRepository();
+    const change = await beginIntegrationChange(plan, repository);
+    if (target === 'ambiguous') change.record.workingFiles['content/scenario/chapter/start.gal'] = '@scene start\n@end\n';
+    const operation: PlannedReplayOperation = {
+      ...plan.replayOperations[0]!, capabilityId: 'project.entry-scene.set', primaryObject: 'config:entryScene',
+      normalizedInput: { operationId: 'entry', sceneId: target === 'missing' ? 'ghost' : 'start', expectedFingerprint: await entrySceneFingerprint({ entryScene: 'start' }, hasher) },
+    };
+    const before = JSON.stringify(change.record);
+    const persistedBefore = JSON.stringify(await repository.read(change.record.changeId));
+    await expect(replayCompositionOperation(change, operation, hasher)).rejects.toMatchObject({ code: target === 'missing' ? 'VALIDATION_FAILED' : 'OBJECT_AMBIGUOUS' });
+    expect(JSON.stringify(change.record)).toBe(before);
+    expect(JSON.stringify(await repository.read(change.record.changeId))).toBe(persistedBefore);
+  });
+
   it.each(['before-mismatch', 'missing-before', 'after-mismatch', 'no-migration', 'duplicate-scene', 'duplicate-basename'] as const)('rejects sealed character migration %s before persisting the operation', async (failure) => {
     const snapshot = makeSixObjectSnapshot();
     let draft: OperationCompositionDraft | undefined;
