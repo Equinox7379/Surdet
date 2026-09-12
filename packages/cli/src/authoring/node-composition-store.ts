@@ -89,16 +89,17 @@ export class NodeCompositionStore {
     const directory = this.planDirectory(plan.planId);
     const payloadPath = path.join(directory, 'payload.json');
     const identityPath = path.join(directory, 'identity.json');
-    const existingIdentity = await readJsonRecord<CompositionArtifactIdentity>(identityPath).catch(() => null);
-    const existingPayload = await readJsonRecord<unknown>(payloadPath).catch(() => null);
+    const existingIdentity = await readJsonRecord<CompositionArtifactIdentity>(identityPath);
+    const existingPayload = await readJsonRecord<unknown>(payloadPath);
     if (existingPayload !== null) {
       // 同 planId 已封存：同语义幂等回读；不同 payload 拒绝且绝不覆盖（create-only 纪律）。
-      if (existingIdentity === null
-        || stableStringify(existingPayload.value as JsonValue) !== stableStringify(plan as unknown as JsonValue)) {
+      if (stableStringify(existingPayload.value as JsonValue) !== stableStringify(plan as unknown as JsonValue)) {
         throw invalid(`同 planId 已存在不同内容的已封存计划，拒绝覆盖：${plan.planId}`, { planId: plan.planId });
       }
-      return existingIdentity!.value;
+      if (existingIdentity === null) await createJsonRecord(identityPath, existingPayload.identity);
+      return (await this.readPlan(plan.planId, existingPayload.identity.sha256)).identity;
     }
+    if (existingIdentity !== null) throw invalid(`计划 payload 缺失，保留原身份并停止：${plan.planId}`);
     const identity = await createJsonRecord(payloadPath, plan);
     await createJsonRecord(identityPath, identity);
     return identity;

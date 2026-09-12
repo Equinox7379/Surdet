@@ -676,3 +676,5 @@
   .review-approved-apply .review-operations { align-items: stretch; flex-direction: column; }
   .review-approved-apply .review-operations button { width: 100%; }
 }
+.review-preparation-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.review-preparation-progress { margin-block: 1rem; }

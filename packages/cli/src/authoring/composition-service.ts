@@ -346,23 +346,28 @@ export class CompositionService {
         { expectedProjectRevision: plan.expectedProjectRevision, currentRevision: snapshot.revision });
     }
     const storage = await NodeProjectStorage.open(this.projectRoot);
-    const store = await NodeChangeStore.forProject(snapshot.rootIdentity);
+    const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leases.dataRoot);
 
     // 扫描阶段不需要 change lease；真正写入的 replay 阶段在 withChangeLease 内进行。
     let existingTarget: { changeId: string; metadata: IntegrationMetadata } | undefined;
     if (input.changeId === undefined) {
       for (const directoryName of await listChangeDirectories(store.projectDirectory)) {
         const head = await store.read(directoryName);
-        if (head === null || head.status !== 'OPEN') continue;
+        if (head === null) continue;
         // 多会话并行的普通 OPEN change 合法存在；只有该计划的 integration change 可被精确恢复。
         // 「session 已持普通 active change 时拒绝执行」是 MCP session 层不变量（Wave 5 Task 5）。
         if (head.integration === undefined || head.integration.planId !== plan.planId) continue;
+        if (head.status !== 'OPEN') {
+          throw new AuthoringOperationError('CHANGE_NOT_OPEN', '该计划的原组合已经关闭或失效，未新建另一个结果', { changeId: head.changeId });
+        }
         if (head.integration.executeOperationId !== input.executeOperationId) {
           throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID',
             'executeOperationId 与既有 integration change 不一致', { changeId: head.changeId });
         }
+        if (existingTarget !== undefined) {
+          throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', '该计划存在多个组合，无法确认恢复目标，未继续执行');
+        }
         existingTarget = { changeId: head.changeId, metadata: head.integration };
-        break;
       }
     } else {
       const opened = await store.read(input.changeId);
@@ -408,7 +413,7 @@ export class CompositionService {
         nextOperationIndex: metadata.nextOperationIndex,
         replayedOperations: metadata.replayedOperations,
       };
-    });
+    }, this.leases);
   }
 
 }

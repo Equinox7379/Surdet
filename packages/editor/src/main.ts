@@ -15,7 +15,10 @@ import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorks
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
   editorWorkspaceTextChanges } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
-import { hasReviewDraft, discardReviewDraft, type ReviewWorkspaceState } from './review-workspace.js';
+import { hasReviewDraft, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
+import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
+import { disposeReviewPreparation } from './review-preparation-section.js';
+import { isReviewPreparationReference, type ReviewPreparationReference } from '@surdet/authoring';
 import type { ExistingEditorSyncPort } from './review-apply-controller.js';
 import { openReviewPreview, refreshReviewFixtureIdentity } from './review-preview.js';
 import {
@@ -114,6 +117,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 let authoringProjectChanging = false;
 let boundReviewProject: { projectIdentity: string; handle: FileSystemDirectoryHandle } | null = null;
+const PREPARATION_SESSION_KEY = 'surdet.review-preparation';
 const authoringWaiters: Array<{
   revision: number;
   resolve: () => void;
@@ -1183,6 +1187,46 @@ async function syncProject(discardDrafts = false): Promise<boolean> {
   }
 }
 
+function rememberReviewPreparation(decision: ReviewPreparationReference): void {
+  sessionStorage.setItem(PREPARATION_SESSION_KEY, JSON.stringify(decision));
+}
+
+async function openPreparedReview(source: ReviewWorkspaceState, decision: ReviewPreparationReference): Promise<void> {
+  const config = globalThis.__SURDET_REVIEW_AUTHORITY__;
+  if (!config) throw new Error('本机审阅服务未连接。');
+  const client = createReviewPreparationClient({ token: config.token });
+  const prepared = await openReviewWorkspace(client.directory(decision, 'result'));
+  if (state.reviewWorkspace !== source || state.mainTab !== 'review') throw new Error('审阅页面已切换，结果已保留，回到原审阅后可以打开。');
+  if (prepared.projection.finalResult?.plan.review.reviewState !== 'human-reviewed'
+    || prepared.projection.finalResult.plan.review.decisionFingerprint !== decision.decisionFingerprint) {
+    throw new Error('生成结果与保存决定不一致，未打开。');
+  }
+  // Switching only the review leaves the current source buffers and their drafts intact.
+  state.reviewWorkspace = prepared;
+  state.selectedObjectRef = null;
+  renderMainArea();
+  document.querySelector<HTMLElement>('[data-action="preview-result"]')?.focus();
+  setStatus('试玩结果已准备好，可以查看和试玩。', true, 6000);
+}
+
+async function restoreReviewPreparation(): Promise<void> {
+  const config = globalThis.__SURDET_REVIEW_AUTHORITY__;
+  if (!config) return;
+  try {
+    const saved = sessionStorage.getItem(PREPARATION_SESSION_KEY);
+    if (!saved) return;
+    const decision: unknown = JSON.parse(saved);
+    if (!isReviewPreparationReference(decision)) throw new Error('保存的准备入口无法核对。');
+    const client = createReviewPreparationClient({ token: config.token });
+    const progress = await client.status(decision, 'inspect-preparation');
+    const ready = progress.stage === 'ready' && !progress.working;
+    const workspace = await openReviewWorkspace(client.directory(decision, ready ? 'result' : 'comparison'));
+    if (state.dirHandle !== null || state.reviewWorkspace !== null || hasDirtyProjectFiles() || state.projectLoading) return;
+    state.reviewWorkspace = workspace; state.mainTab = 'review'; renderMainArea();
+    setStatus(ready ? '已打开此前准备的试玩结果。' : '已找回准备进度，可以继续。', true, 6000);
+  } catch (error) { setStatus(preparationErrorMessage(error), false, 8000); }
+}
+
 function reviewApplyEditor(workspace: ReviewWorkspaceState): ExistingEditorSyncPort {
   const identity = (): string | null => boundReviewProject?.handle === state.dirHandle
     && editorWorkspaceStatus().protection === 'connected' ? boundReviewProject.projectIdentity : null;
@@ -1241,6 +1285,7 @@ function reviewApplyEditor(workspace: ReviewWorkspaceState): ExistingEditorSyncP
       if (key === undefined) throw new Error('项目中没有可继续编辑的入口场景。');
       jumpToScene(key);
       if (state.mainTab !== 'editor' || state.current !== key) throw new Error('剧本工作面尚未打开。');
+      sessionStorage.removeItem(PREPARATION_SESSION_KEY);
     },
   };
 }
@@ -1736,7 +1781,7 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
-  if (state.reviewWorkspace === null) disposeReviewApply();
+  if (state.reviewWorkspace === null) { disposeReviewApply(); disposeReviewPreparation(); }
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
@@ -1889,6 +1934,8 @@ function renderMainArea(): void {
     renderReviewPanel(reviewEl, state.reviewWorkspace,
       state.reviewWorkspace === null ? {} : {
         reviewApplyEditor: reviewApplyEditor(state.reviewWorkspace),
+        onRememberPreparation: rememberReviewPreparation,
+        onOpenPreparedResult: openPreparedReview,
         onPreview: async (workspace, request) => {
           if (hasDirtyProjectFiles() || state.projectLoading || authoringProjectChanging
               || state.projectWriteLock !== null || sceneAutosaveRecoveryPhase !== 'idle'
@@ -2315,3 +2362,4 @@ setInterval(() => {
 renderAll();
 runValidate();
 scheduleAuthoringIndexRebuild();
+void restoreReviewPreparation();

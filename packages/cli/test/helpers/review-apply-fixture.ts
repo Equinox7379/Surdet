@@ -15,15 +15,19 @@ import { reviewServiceForProject } from '../../src/authoring/review-service.js';
 
 const hasher = { sha256: async (text: string) => crypto.createHash('sha256').update(text).digest('hex') };
 
-/** Synthetic human receipts, built through the normal terminal authority, never Owner acceptance. */
-export async function createReviewApplyFixture(root: string, approve = true) {
+/** Only candidates and comparison; no saved decision, formal plan, integration or result. */
+export async function createReviewComparisonFixture(root: string, entryScene = 'start', background?: Uint8Array) {
   const projectRoot = path.join(root, '试写项目');
   const dataRoot = path.join(root, 'data');
   await fs.mkdir(path.join(projectRoot, 'content/scenario'), { recursive: true });
   await fs.mkdir(dataRoot, { recursive: true });
-  await fs.writeFile(path.join(projectRoot, 'game.config.json'), JSON.stringify({ title: '写回试用', entryScene: 'start', variables: {} }));
-  const initial = '@scene start\n这是试写项目的原始台词。\n@end\n';
-  await fs.writeFile(path.join(projectRoot, 'content/scenario/start.gal'), initial);
+  if (background) {
+    await fs.mkdir(path.join(projectRoot, 'content/assets/bg'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, 'content/assets/bg/harbor.png'), background);
+  }
+  await fs.writeFile(path.join(projectRoot, 'game.config.json'), JSON.stringify({ title: '写回试用', entryScene, variables: {} }));
+  const initial = `@scene ${entryScene}\n${background ? '@bg harbor\n' : ''}这是试写项目的原始台词。\n@end\n`;
+  await fs.writeFile(path.join(projectRoot, 'content/scenario', `${entryScene}.gal`), initial);
   // Existing Agent Port fixtures use process-scoped storage. Only fixture creation
   // changes it; the application backend itself always receives an explicit root.
   const oldDataRoot = process.env['SURDET_AGENT_DATA_DIR'];
@@ -39,15 +43,15 @@ export async function createReviewApplyFixture(root: string, approve = true) {
           return response.result;
         };
         await invoke('change.begin', { intent: `试写方案 ${name}` });
-        const scene = await invoke('object.inspect', { objectRef: 'scene:start' }) as AuthoringObject;
-        const target = await invoke('object.inspect', { objectRef: scene.childRefs![1] }) as AuthoringObject;
-        await invoke('scene.patch', { operationId: `text-${name}`, sceneId: 'start', patch: {
+        const scene = await invoke('object.inspect', { objectRef: `scene:${entryScene}` }) as AuthoringObject;
+        const target = await invoke('object.inspect', { objectRef: scene.childRefs![background ? 2 : 1] }) as AuthoringObject;
+        await invoke('scene.patch', { operationId: `text-${name}`, sceneId: entryScene, patch: {
           kind: 'replaceText', target: target.objectRef, expectedFingerprint: target.fingerprint,
           value: name === 'a' ? '窗外的雨停了，我们继续写下一个故事。' : '灯光亮起，新的一页开始了。',
         } });
         await invoke('scene.create', { operationId: `scene-${name}`, sceneId: `ending_${name}`, blocks: [{ kind: 'text', value: '这是一份非正式试写样例。' }] });
         for (const operation of ['change.diff', 'project.validate', 'project.simulate'] as const) await invoke(operation, {});
-        await invoke('runtime.run-from', { sceneId: 'start', choices: [] });
+        await invoke('runtime.run-from', { sceneId: entryScene, choices: [] });
         const capsule = await generateDeliveryCapsule(session);
         if (capsule.composition.eligibility !== 'ready') throw new Error('fixture candidate is not ready');
         refs.push({ changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 });
@@ -57,6 +61,16 @@ export async function createReviewApplyFixture(root: string, approve = true) {
     const comparison = await reviews.prepareComparison({ candidateRefs: refs, creativeBrief: {
       title: '写回试用', request: '在专用试写项目中体验批准、写回和继续编辑。', acceptanceCriteria: ['保留真实项目与草稿边界'],
     } });
+    return { root, projectRoot, dataRoot, initial, refs, reviews, comparison };
+  } finally {
+    if (oldDataRoot === undefined) delete process.env['SURDET_AGENT_DATA_DIR'];
+    else process.env['SURDET_AGENT_DATA_DIR'] = oldDataRoot;
+  }
+}
+
+/** Synthetic receipts through the normal authority, never Owner acceptance. */
+export async function createReviewApplyFixture(root: string, approve = true) {
+    const { projectRoot, dataRoot, initial, refs, reviews, comparison } = await createReviewComparisonFixture(root);
     const authority = new ReviewTerminalAuthority(dataRoot, undefined, hasher, projectRoot);
     const candidate = comparison.projection.candidates[0]!;
     const command = { projectIdentity: comparison.identity.projectIdentity, reviewId: comparison.reviewId,
@@ -105,8 +119,4 @@ export async function createReviewApplyFixture(root: string, approve = true) {
     if (await fs.readFile(path.join(projectRoot, 'content/scenario/start.gal'), 'utf8') !== initial) throw new Error('approval mutated source project');
     return { root, projectRoot, dataRoot, initial, authority, authoring, reviews, result, resultCommand, approval,
       ref: { resultReviewId: approval.resultReviewId, approvalId: approval.approvalId, approvalFingerprint: approval.approvalFingerprint } };
-  } finally {
-    if (oldDataRoot === undefined) delete process.env['SURDET_AGENT_DATA_DIR'];
-    else process.env['SURDET_AGENT_DATA_DIR'] = oldDataRoot;
-  }
 }

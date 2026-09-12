@@ -43,6 +43,7 @@ export class ReviewApplyController {
   private readonly notify: (s: ReviewApplyViewState) => void;
   private epoch = 0;
   private disposed = false;
+  private recheck: ReturnType<typeof setTimeout> | undefined;
   private state: ReviewApplyViewState;
 
   constructor(
@@ -61,7 +62,7 @@ export class ReviewApplyController {
   private emit(): void { if (!this.disposed) this.notify(this.snapshot); }
   private current(epoch: number): boolean { return !this.disposed && epoch === this.epoch; }
   private editorBusy(): boolean { return this.state.sync === 'checking' || this.state.continuation === 'opening'; }
-  dispose(): void { this.disposed = true; this.epoch++; }
+  dispose(): void { this.disposed = true; this.epoch++; clearTimeout(this.recheck); }
 
   async check(): Promise<void> {
     if (this.disposed || this.state.request === 'writing' || this.editorBusy()) return;
@@ -116,6 +117,7 @@ export class ReviewApplyController {
   }
 
   private async request(action: ReviewApplyRequest['action']): Promise<void> {
+    clearTimeout(this.recheck);
     const epoch = ++this.epoch;
     const last = this.state.status;
     this.state = { ...this.state, request: action === 'write-approved-result' ? 'writing' : 'checking', message: '' };
@@ -124,6 +126,11 @@ export class ReviewApplyController {
       const result = await this.transport({ protocolVersion: '1.0.0', action, approvalRef: { ...this.state.approval } });
       if (!this.current(epoch)) return;
       this.acceptStatus(result, last);
+      // The existing workspace grace period can end without another UI event.
+      // Re-read only; writing still requires a new explicit click.
+      if (result.phase === 'blocked' && result.retryAfterMs !== undefined) {
+        this.recheck = setTimeout(() => { void this.check(); }, Math.max(100, result.retryAfterMs));
+      }
     } catch (error) {
       if (!this.current(epoch)) return;
       const mismatch = isReviewApplyTargetError(error);

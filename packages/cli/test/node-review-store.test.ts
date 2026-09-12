@@ -5,7 +5,7 @@ import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { NodeReviewStore } from '../src/authoring/node-review-store.js';
 
@@ -103,10 +103,32 @@ async function setup(): Promise<{ root: string; projectDirectory: string; store:
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe('NodeReviewStore', () => {
+  it('keeps a mid-file interruption outside the result tree and resumes without partial bytes', async () => {
+    const fixture = await setup();
+    await fixture.store.createReview('result_interrupted', { ...payload('result_interrupted'), kind: 'integration-result' });
+    const files = [{ relativePath: 'content/assets/bg/image.png', bytes: Buffer.from('complete binary image bytes') }];
+    const probe = await fsp.open(path.join(fixture.root, 'probe'), 'wx');
+    const prototype = Object.getPrototypeOf(probe);
+    const write = prototype.write as (this: fsp.FileHandle, bytes: Buffer) => Promise<unknown>;
+    await probe.close();
+    const failWrite = async function (this: fsp.FileHandle) {
+      await write.call(this, Buffer.from('co'));
+      throw new Error('mid-file interruption');
+    };
+    vi.spyOn(prototype, 'write').mockImplementationOnce(failWrite);
+    vi.spyOn(prototype, 'writeFile').mockImplementationOnce(failWrite);
+    await expect(fixture.store.createResultProject('result_interrupted', files)).rejects.toThrow('mid-file interruption');
+    vi.restoreAllMocks();
+    const target = path.join(fixture.projectDirectory, 'reviews/result_interrupted/result/project', files[0]!.relativePath);
+    expect(await fsp.stat(target).then(() => true, () => false)).toBe(false);
+    await fixture.store.createResultProject('result_interrupted', files);
+    expect(await fsp.readFile(target)).toEqual(files[0]!.bytes);
+  });
   it.each(['../escape', '..\\escape', 'a/b', 'a\\b', '', 'CON', 'name.'])('rejects unsafe review id %s', async (reviewId) => {
     const fixture = await setup();
     await expect(fixture.store.createReview(reviewId, payload(reviewId))).rejects.toMatchObject({ code: 'INVALID_REQUEST' });

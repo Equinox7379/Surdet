@@ -13,6 +13,7 @@ function validStatus(v:unknown,request:ReviewApplyRequest):v is ReviewApplyStatu
     ||typeof v.targetDisplayName!=='string'||typeof v.targetPath!=='string'||!strings(v.changedPaths)
     ||typeof v.phase!=='string'||!['ready','blocked','writing','written','unknown','recovery-required'].includes(v.phase)
     ||typeof v.canWrite!=='boolean'||v.canWrite!==(v.phase==='ready')
+    ||(v.retryAfterMs!==undefined && (typeof v.retryAfterMs!=='number'||!Number.isSafeInteger(v.retryAfterMs)||v.retryAfterMs<0))
     ||typeof v.currentProject!=='string'||!['matches-approved-base','matches-commit','changed-after-commit','unknown'].includes(v.currentProject)
     ||!Array.isArray(v.blockers)||!v.blockers.every(b=>record(b)&&typeof b.code==='string'&&typeof b.message==='string'))return false;
   if(v.phase==='written'){

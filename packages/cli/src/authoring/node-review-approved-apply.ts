@@ -106,6 +106,7 @@ export class NodeReviewApprovedApplyBackend implements ReviewApprovedApplyBacken
       writeState: locked ? 'committing'
         : journal !== null && !recovered ? 'recovery-required' : 'unwritten',
       workspace: workspace.availability === 'blocked' ? 'lost' : workspace.availability,
+      ...(workspace.retryAfterMs === undefined ? {} : { retryAfterMs: workspace.retryAfterMs }),
       currentProject: snapshot.revision === record.baseRevision ? 'matches-approved-base' : 'unknown',
       blockers: record.status === 'OPEN' ? [] : [{ code: 'CHANGE_NOT_OPEN', message: '事务已关闭或失去原基线，需要重新核对结果。' }],
     };

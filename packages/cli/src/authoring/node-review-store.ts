@@ -5,9 +5,12 @@ import {
   AuthoringOperationError,
   type ReviewKind,
   type ReviewTerminalAction,
+  type ReviewPreparationRecord,
+  type PreparedReviewContent,
 } from '@surdet/authoring';
-import { createJsonRecord, readJsonRecord, type JsonRecordIdentity } from './node-json-record.js';
+import { createJsonRecord, readJsonRecord, replaceJsonRecord, type JsonRecordIdentity } from './node-json-record.js';
 import { NodeLocalLeaseManager } from './node-local-lease.js';
+import { syncFileAndParent } from './node-durable-file.js';
 
 const GENERATED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', 'dist']);
 
@@ -399,9 +402,12 @@ export class NodeReviewStore {
     const identityFile = path.join(reviewDirectory, 'identity.json');
     const existingIdentity = await readBytes(identityFile, this.projectDirectory);
     if (existingPayload !== null || existingIdentity !== null) {
-      if (existingPayload === null || existingIdentity === null || Buffer.compare(existingPayload, payloadBytes) !== 0) {
+      if (existingPayload === null || Buffer.compare(existingPayload, payloadBytes) !== 0) {
         throw identityMismatch(`同 reviewId 已存在不同或不完整的 review workspace：${reviewId}`);
       }
+      // The immutable payload may have reached disk before its sidecar. Only the
+      // exact same payload may finish that interrupted publication.
+      if (existingIdentity === null) await createOnlyJson(identityFile, this.projectDirectory, identity);
       const read = await this.readReview(reviewId);
       return read.identity;
     }
@@ -495,6 +501,47 @@ export class NodeReviewStore {
     return this.readRecord<T>(reviewId, 'decision.json');
   }
 
+  async readPreparation(reviewId: string): Promise<ReviewPreparationRecord | null> {
+    return (await this.readRecord<ReviewPreparationRecord>(reviewId, 'preparation.json'))?.value ?? null;
+  }
+
+  /** Caller holds the comparison preparation lease; this record never changes the decision. */
+  async writePreparation(reviewId: string, value: ReviewPreparationRecord): Promise<void> {
+    const review = await this.readReview(reviewId);
+    if (review.identity.kind !== 'comparison') throw identityMismatch('准备进度必须属于比较审阅。');
+    const file = path.join(review.reviewDirectory, 'preparation.json');
+    if (await readBytes(file, this.projectDirectory) === null) await createOnlyJson(file, this.projectDirectory, value);
+    else {
+      await assertSafeFile(file, this.projectDirectory, false);
+      await replaceJsonRecord(file, value);
+      await assertSafeFile(file, this.projectDirectory, false);
+    }
+  }
+
+  /** Bounded read-only delivery of a review and its fixture, never an arbitrary filesystem path. */
+  async readPreparedContent(reviewId: string, relativePath: string, kind: 'file' | 'directory'): Promise<PreparedReviewContent> {
+    const review = await this.readReview(reviewId);
+    if (relativePath !== '') assertRelativeProjectFile(relativePath);
+    const metadata = ['identity.json', review.identity.payload.relativePath,
+      ...(review.identity.kind === 'comparison' ? ['decision.json'] : ['final-approval.json', 'return-request.json'])];
+    const allowed = (p: string): boolean => p === '' || metadata.includes(p) || metadata.some((file) => file.startsWith(`${p}/`))
+      || (review.identity.kind === 'integration-result' && (p === 'result/project' || p.startsWith('result/project/')));
+    if (!allowed(relativePath)) throw pathError(relativePath);
+    const target = path.join(review.reviewDirectory, ...relativePath.split('/'));
+    if (kind === 'file') {
+      const bytes = await readBytes(target, review.reviewDirectory);
+      if (bytes === null) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `审阅文件不存在：${relativePath}`);
+      return { kind: 'file', base64: bytes.toString('base64') };
+    }
+    if (!await ensureDirectoryChain(target, false)) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `审阅目录不存在：${relativePath}`);
+    const entries = await fs.readdir(target, { withFileTypes: true });
+    return { kind: 'directory', entries: entries.filter((entry) => allowed(relativePath ? `${relativePath}/${entry.name}` : entry.name))
+      .map((entry) => {
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) throw pathError(entry.name);
+        return { name: entry.name, kind: entry.isDirectory() ? 'directory' as const : 'file' as const };
+      }).sort((a, b) => a.name.localeCompare(b.name)) };
+  }
+
   async createFinalApproval(reviewId: string, value: unknown): Promise<JsonRecordIdentity> {
     return this.writeTerminal(reviewId, 'result-approval', value);
   }
@@ -529,6 +576,10 @@ export class NodeReviewStore {
     }
     const projectDirectory = path.join(review.reviewDirectory, 'result', 'project');
     await ensureDirectoryChain(projectDirectory, true);
+    // Incomplete writes stay outside the playable tree, including after a
+    // process interruption. Only a complete file is linked into the result.
+    const pendingDirectory = path.join(review.reviewDirectory, 'result', '.pending');
+    await ensureDirectoryChain(pendingDirectory, true);
     for (const file of files) {
       assertRelativeProjectFile(file.relativePath);
       const target = path.join(projectDirectory, ...file.relativePath.split('/'));
@@ -540,12 +591,24 @@ export class NodeReviewStore {
         if (Buffer.compare(existing, expected) !== 0) throw identityMismatch(`result project 文件已存在不同 bytes：${file.relativePath}`);
         continue;
       }
-      const handle = await fs.open(target, 'wx');
+      const temporary = path.join(pendingDirectory, `${crypto.randomUUID()}.tmp`);
+      let handle: fs.FileHandle | undefined;
       try {
-        await handle.write(expected);
+        handle = await fs.open(temporary, 'wx');
+        await handle.writeFile(expected);
         await handle.sync();
+        await handle.close(); handle = undefined;
+        await assertSafeFile(target, projectDirectory, true);
+        try { await fs.link(temporary, target); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          const raced = await readBytes(target, projectDirectory);
+          if (raced === null || Buffer.compare(raced, expected) !== 0) throw identityMismatch(`result project 并发创建了不同 bytes：${file.relativePath}`);
+        }
+        await syncFileAndParent(target);
       } finally {
-        await handle.close();
+        if (handle) await handle.close();
+        await fs.rm(temporary, { force: true });
       }
       await assertSafeFile(target, projectDirectory, false);
     }

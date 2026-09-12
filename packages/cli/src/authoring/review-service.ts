@@ -555,11 +555,11 @@ export class ReviewService {
     }
   }
 
-  async inspectDecision(input: { reviewId: string; decisionId?: string }): Promise<VerifiedComparisonDecision> {
+  async inspectDecision(input: { reviewId: string; decisionId?: string }, options: { allowStale?: boolean } = {}): Promise<VerifiedComparisonDecision> {
     const loaded = await this.readReview<HumanReviewProjection>(input.reviewId);
     const projection = parseReviewProjection(loaded.value, input.reviewId);
     if (projection.kind !== 'comparison') throw reviewError('REVIEW_IDENTITY_MISMATCH', `review 不是 comparison：${input.reviewId}`);
-    await this.assertFreshComparison(projection);
+    if (!options.allowStale) await this.assertFreshComparison(projection);
     const decision = await this.reviews.readDecision<unknown>(input.reviewId);
     if (decision === null) throw reviewError('REVIEW_DECISION_REQUIRED', `review 尚未收到人类决定：${input.reviewId}`, { reviewId: input.reviewId });
     if (!isComparisonDecisionReceipt(decision.value, input.reviewId)) {
@@ -633,7 +633,7 @@ export class ReviewService {
     ), { ...options, leaseManager: this.leases });
   }
 
-  async prepareResult(input: { planId: string; artifactSha256: string; changeId: string }): Promise<PreparedReviewResult> {
+  async prepareResult(input: { planId: string; artifactSha256: string; changeId: string; resultReviewId?: string }): Promise<PreparedReviewResult> {
     if (this.composition.store === undefined) throw reviewError('REVIEW_RESULT_NOT_READY', 'composition store 不可用');
     const { plan } = await this.composition.store.readPlan(input.planId, input.artifactSha256);
     if (plan.review?.reviewState !== 'human-reviewed') throw reviewError('REVIEW_RESULT_NOT_READY', '最终审阅需要人类决定。');
@@ -680,7 +680,11 @@ export class ReviewService {
       const runtime = await runtimeTraceObservationsOf(store, record);
       const files = await this.fixtureFiles(storage, record);
       const resultTreeSha256 = treeIdentityOf(files);
-      const reviewId = newReviewId('result');
+      const boundResult = integration.review?.resultReview;
+      if (boundResult !== undefined && input.resultReviewId !== undefined && boundResult.reviewId !== input.resultReviewId) {
+        throw reviewError('REVIEW_IDENTITY_MISMATCH', '该组合已经绑定另一份结果，不能另建或替换。');
+      }
+      const reviewId = boundResult?.reviewId ?? input.resultReviewId ?? newReviewId('result');
       const projection = await buildResultReviewProjection({
         reviewId,
         reviewVersion: sourceProjection.reviewVersion,
@@ -705,8 +709,10 @@ export class ReviewService {
       if (actualTree !== resultTreeSha256) {
         throw reviewError('REVIEW_FIXTURE_CHANGED', `result fixture tree identity 不一致：${reviewId}`, { reviewId });
       }
-      const session = openChange(record, store, storage);
-      await bindResultReview(session, projection);
+      if (boundResult === undefined) {
+        const session = openChange(record, store, storage);
+        await bindResultReview(session, projection);
+      }
       return { reviewId, projection, identity, projectDirectory };
     });
   }
