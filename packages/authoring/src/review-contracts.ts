@@ -232,8 +232,10 @@ export interface ReviewCandidateVerifiedFacts {
     assets: ReviewAssetFact[];
     excerpts: string[];
     omittedFactCount: number;
-    /** Final scene text reconstructed from complete sealed file diffs; operation history stays separate. */
-    finalScenes?: Array<{ unitId: string; sceneId: string; source: 'sealed-capsule-diff'; paragraphs: string[] }>;
+    finalSceneStatus: 'verified' | 'unavailable';
+    finalSceneLimitations: string[];
+    /** Candidate-level final text from complete diffs at the sealed final revision. */
+    finalScenes: Array<{ sceneId: string; producerUnitIds: string[]; source: 'sealed-current-object-diff'; paragraphs: string[] }>;
   };
   runtime: {
     status: 'verified' | 'unavailable';

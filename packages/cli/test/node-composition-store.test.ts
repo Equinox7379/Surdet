@@ -2,9 +2,10 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CandidateCapsuleRef } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
 const temporaryRoots: string[] = [];
@@ -110,6 +111,39 @@ describe('NodeCompositionStore', () => {
     await expect(store.readCandidate(sealed.ref)).rejects.toMatchObject({ code: 'CAPSULE_IDENTITY_MISMATCH' });
     fs.writeFileSync(payloadPath, original);
     expect((await store.readCandidate(sealed.ref)).composition.eligibility).toBe('ready');
+  });
+
+  it('projects semantic impacts and file content only for exact fresh sealed revisions', async () => {
+    const fixture = await setupFixture('diff-freshness');
+    const sealed = await makeSealedCandidate({ dataDir: fixture.dataDir, projectRoot: fixture.projectRoot, name: 'freshness',
+      run: async (session) => { expect((await session.invoke('scene.create', { operationId: 'scene', sceneId: 'alpha' })).ok).toBe(true); },
+    });
+    const identity = sealed.session.projectIdentity;
+    const store = new NodeCompositionStore(path.join(fixture.dataDir, identity), identity);
+    const opened = (await NodeChangeStore.openByChangeId(sealed.ref.changeId))!;
+    const loaded = await opened.store.readCapsulePayload(sealed.ref.changeId, sealed.ref.capsuleId, sealed.ref.artifactSha256);
+    const payload = loaded.payload as { workingRevision: number; objectDiff: Record<string, unknown> };
+    const revision = payload.workingRevision;
+    const semantic = [{ kind: 'scene', operationId: 'scene', potentialImpact: ['旧的可能影响'], observedImpact: ['旧的运行观察'] }];
+    const read = vi.spyOn(NodeChangeStore.prototype, 'readCapsulePayload');
+    try {
+      for (const freshness of [undefined, {},
+        ...['missing', 'stale', 'failed', 'incomplete'].map((status) => ({ status, workingRevision: revision, currentWorkingRevision: revision })),
+        { status: 'fresh' }, { status: 'fresh', workingRevision: revision }, { status: 'fresh', currentWorkingRevision: revision },
+        { status: 'fresh', workingRevision: revision - 1, currentWorkingRevision: revision },
+        { status: 'fresh', workingRevision: revision, currentWorkingRevision: revision + 1 },
+        { status: 'fresh', workingRevision: revision, currentWorkingRevision: revision },
+      ]) {
+        // Isolate projection from identity verification (covered above); the original artifact stays untouched.
+        read.mockResolvedValue({ ...loaded, payload: { ...payload, objectDiff: { ...payload.objectDiff, freshness, semantic } } });
+        const candidate = await store.readCandidate(sealed.ref);
+        const current = freshness?.status === 'fresh' && freshness.workingRevision === revision && freshness.currentWorkingRevision === revision;
+        expect(candidate.semanticDiff, JSON.stringify(freshness)).toEqual(current ? semantic : []);
+        expect(candidate.sealedFileDiffs!.length > 0, JSON.stringify(freshness)).toBe(current);
+        expect(candidate.objectDiffFreshness!.status).toBe(freshness?.status ?? 'missing');
+        expect(candidate.composition.eligibility).toBe('ready');
+      }
+    } finally { read.mockRestore(); await sealed.session.close(); }
   });
 
   it('writes immutable plans with payload+identity, idempotent read-back, no central index', async () => {

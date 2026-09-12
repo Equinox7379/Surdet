@@ -71,6 +71,8 @@ export interface BuildComparisonReviewProjectionInput {
       /** Runtime facts already selected from the candidate's sealed evidence. */
       sealedRuntimeTraceIds?: readonly string[];
       sealedFileDiffs?: ChangeDiff['files'];
+      sourceWorkingRevision?: number;
+      objectDiffFreshness?: VerifiedCompositionCandidate['objectDiffFreshness'];
       runtime?: ReviewCandidateRuntimeInput;
     }>;
   objects: AuthoringObject[];
@@ -322,6 +324,9 @@ function candidateContentFacts(
     assets: unique(assets),
     excerpts: unique(excerpts),
     omittedFactCount,
+    finalSceneStatus: 'unavailable',
+    finalSceneLimitations: [],
+    finalScenes: [],
   };
 }
 
@@ -460,26 +465,48 @@ function candidateVerifiedFacts(
   manifests: ReadonlyMap<string, CompositionManifest | undefined>,
 ): ReviewCandidateVerifiedFacts {
   const content = candidateContentFacts(units, manifests);
-  content.finalScenes = [];
-  for (const file of candidate.sealedFileDiffs ?? []) {
+  const freshness = candidate.objectDiffFreshness;
+  const currentDiff = freshness?.status === 'fresh'
+    && candidate.sourceWorkingRevision !== undefined
+    && freshness.workingRevision === candidate.sourceWorkingRevision
+    && freshness.currentWorkingRevision === candidate.sourceWorkingRevision;
+  if (!currentDiff) content.finalSceneLimitations.push('当前胶囊没有与最终工作版本一致的完整正文差异。');
+  for (const file of currentDiff ? candidate.sealedFileDiffs ?? [] : []) {
     if (!file.path.endsWith('.gal')) continue;
     const [beforeHeader, afterHeader, ...lines] = file.unifiedDiff.split('\n');
     // Surdet's diff contains every line, without context hunks. Never infer missing content.
     if (beforeHeader !== `--- ${file.path}` || afterHeader !== `+++ ${file.path}`
-      || lines.some((line) => !/^[ +\-]/.test(line))) continue;
+      || lines.some((line) => !/^[ +\-]/.test(line))) {
+      content.finalSceneLimitations.push(`场景文件 ${file.path} 的封存差异不包含可核对的完整正文。`);
+      continue;
+    }
     const sourceText = lines.filter((line) => line[0] !== '-').map((line) => line.slice(1)).join('\n');
     const document = parseSceneDocument(sourceText);
     const header = document.find((line) => line.kind === 'instr' && line.name === 'scene');
     const sceneId = header?.raw.trim().match(/^@scene\s+(\S+)\s*$/)?.[1];
-    const unit = units.find((item) => item.primaryObject === `scene:${sceneId}`);
-    if (sceneId === undefined || unit === undefined) continue;
+    const producerUnitIds = sortedStrings(units.filter((unit) => unit.producedObjects.some((object) => object.objectRef === `scene:${sceneId}`)).map((unit) => unit.unitId));
+    if (sceneId === undefined || producerUnitIds.length === 0) {
+      content.finalSceneLimitations.push(`场景文件 ${file.path} 无法与候选的场景产物对应。`);
+      continue;
+    }
     const paragraphs = compileScene(sourceText, file.path, sceneId).instructions.flatMap((instruction): string[] => {
       if (instruction.op === 'text') return [instruction.speaker ? `${instruction.speaker}：${instruction.value}` : instruction.value];
       if (instruction.op === 'choice') return instruction.options.map((option) => `选项：${option.label}`);
       return [];
     });
-    content.finalScenes.push({ unitId: unit.unitId, sceneId, source: 'sealed-capsule-diff', paragraphs });
+    content.finalScenes.push({ producerUnitIds, sceneId, source: 'sealed-current-object-diff', paragraphs });
   }
+  if (currentDiff) {
+    const sceneRefs = sortedStrings(units.flatMap((unit) => unit.producedObjects)
+      .filter((object) => object.objectRef.startsWith('scene:') && object.disposition !== 'remove').map((object) => object.objectRef));
+    for (const objectRef of sceneRefs) {
+      if (!content.finalScenes.some((scene) => objectRef === `scene:${scene.sceneId}`)) {
+        content.finalSceneLimitations.push(`场景 ${objectRef.slice('scene:'.length)} 没有可核对的完整正文差异。`);
+      }
+    }
+  }
+  if (currentDiff && content.finalSceneLimitations.length === 0) content.finalSceneStatus = 'verified';
+  else content.finalScenes = [];
   content.finalScenes.sort((left, right) => left.sceneId.localeCompare(right.sceneId));
   const runtime = candidateRuntimeFacts(candidate);
   return {
@@ -1364,8 +1391,18 @@ function candidateVerifiedFactsShape(value: unknown): boolean {
     && stringArray(content['excerpts'])
     && typeof content['omittedFactCount'] === 'number'
     && Number.isInteger(content['omittedFactCount'])
-    && (content['finalScenes'] === undefined || (Array.isArray(content['finalScenes'])
-      && content['finalScenes'].every((value) => { const item = jsonRecord(value); return item !== undefined && nonEmptyString(item['sceneId']) && nonEmptyString(item['unitId']) && item['source'] === 'sealed-capsule-diff' && stringArray(item['paragraphs']); })))
+    && (content['finalSceneStatus'] === 'verified' || content['finalSceneStatus'] === 'unavailable')
+    && stringArray(content['finalSceneLimitations'])
+    && Array.isArray(content['finalScenes'])
+    && (content['finalSceneStatus'] !== 'unavailable' || (content['finalScenes'].length === 0 && content['finalSceneLimitations'].length > 0))
+    && content['finalScenes'].every((value) => {
+      const item = jsonRecord(value);
+      return item !== undefined && nonEmptyString(item['sceneId']) && stringArray(item['producerUnitIds'])
+        && item['producerUnitIds'].length > 0 && item['producerUnitIds'].every(nonEmptyString)
+        && stableStringify(item['producerUnitIds']) === stableStringify(sortedStrings(item['producerUnitIds']))
+        && item['producerUnitIds'].every((unitId) => (facts['units'] as unknown[]).some((unit) => jsonRecord(unit)?.['unitId'] === unitId))
+        && item['source'] === 'sealed-current-object-diff' && stringArray(item['paragraphs']);
+    })
     && runtime !== undefined
     && (runtime['status'] === 'verified' || runtime['status'] === 'unavailable')
     && (runtime['workingRevision'] === undefined

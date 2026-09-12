@@ -1,4 +1,4 @@
-import type { ChangeStatus } from './contracts.js';
+import type { ChangeStatus, EvidenceFreshness } from './contracts.js';
 
 /** 5.1 JSON 与记录操作 */
 export type JsonPrimitive = string | number | boolean | null;
@@ -298,7 +298,9 @@ export interface VerifiedCompositionCandidate {
   acceptanceCriteria?: string[];
   /** Only identities referenced in the sealed capsule; never populated from later traces. */
   sealedRuntimeTraceIds?: string[];
-  /** Full file diffs from the identity-verified sealed capsule, never the mutable workspace. */
+  /** Sealed freshness, checked against sourceWorkingRevision before projecting current facts. */
+  objectDiffFreshness?: EvidenceFreshness;
+  /** Current full file diffs from the identity-verified sealed capsule, never the mutable workspace. */
   sealedFileDiffs?: import('./diff.js').ChangeDiffFile[];
   composition: CapsuleCompositionProjection;
   evidenceSummary: CandidateEvidenceSummary;

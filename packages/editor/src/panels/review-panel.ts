@@ -844,40 +844,50 @@ function renderWholeProposalReview(container: HTMLElement, workspace: ReviewWork
     card.setAttribute('data-proposal-visible', String(candidate.candidateId === visibleId));
     card.appendChild(h('h3', undefined, `方案 ${candidate.displayOrdinal}${active ? ' · 已选择' : ''}`));
     const facts = candidate.verifiedFacts;
-    card.appendChild(h('div', 'review-proposal-scope', `${new Set(facts.content.scenes.map((scene) => scene.sceneId)).size} 个场景 · ${facts.runtime.paths.length} 条已运行路线 · ${new Set(facts.content.timelines.map((timeline) => timeline.timelineId)).size} 段演出`));
+    const finalScenes = facts.content.finalSceneStatus === 'verified' ? facts.content.finalScenes : [];
+    const sceneIds = [...new Set([
+      ...facts.content.changedObjects.filter((object) => object.objectRef.startsWith('scene:')).map((object) => object.objectRef.slice('scene:'.length)),
+      ...facts.content.scenes.map((scene) => scene.sceneId), ...finalScenes.map((scene) => scene.sceneId),
+    ])];
+    card.appendChild(h('div', 'review-proposal-scope', `${sceneIds.length} 个场景 · ${facts.runtime.paths.length} 条已运行路线 · ${new Set(facts.content.timelines.map((timeline) => timeline.timelineId)).size} 段演出`));
     const claims = h('details', 'review-candidate-claims');
     claims.appendChild(h('summary', undefined, '候选自述'));
     claims.appendChild(h('p', undefined, candidate.claims.statement ?? '候选没有填写自述。'));
     for (const criterion of candidate.claims.acceptanceCriteria) claims.appendChild(h('div', 'review-criterion', criterion));
     card.appendChild(claims);
-    card.appendChild(h('h4', undefined, '方案正文'));
-    card.appendChild(h('p', 'review-section-intro', '以下是候选封存后的内容，按已运行的场景顺序阅读。'));
+    card.appendChild(h('h4', undefined, facts.content.finalSceneStatus === 'verified' ? '系统核对到的最终正文' : '完整正文暂不可核对'));
+    card.appendChild(h('p', 'review-section-intro', facts.content.finalSceneStatus === 'verified'
+      ? '来源：与候选最终工作版本一致的封存差异。按已运行的场景顺序阅读。'
+      : '下面只展示封存操作与运行事实。'));
+    for (const limitation of facts.content.finalSceneLimitations) card.appendChild(h('p', 'review-warning', limitation));
     const sceneOrder = [...new Set(facts.runtime.paths.flatMap((path) => path.visitedSceneIds))];
-    const sceneUnits = facts.units.filter((unit) => unit.primaryObject.startsWith('scene:')).sort((left, right) => {
-      const rank = (objectRef: string): number => { const index = sceneOrder.indexOf(objectRef.slice('scene:'.length)); return index < 0 ? sceneOrder.length : index; };
-      return rank(left.primaryObject) - rank(right.primaryObject);
+    sceneIds.sort((left, right) => {
+      const rank = (sceneId: string): number => { const index = sceneOrder.indexOf(sceneId); return index < 0 ? sceneOrder.length : index; };
+      return rank(left) - rank(right) || left.localeCompare(right);
     });
-    for (const unit of sceneUnits) {
+    for (const sceneId of sceneIds) {
       const story = h('details', 'review-story-scene') as HTMLDetailsElement;
       story.open = true;
-      story.appendChild(h('summary', undefined, labelForObjectRef(unit.primaryObject)));
-      const finalScene = facts.content.finalScenes?.find((scene) => scene.unitId === unit.unitId);
+      story.appendChild(h('summary', undefined, labelForObjectRef(`scene:${sceneId}`)));
+      const finalScene = finalScenes.find((scene) => scene.sceneId === sceneId);
       if (finalScene === undefined) story.appendChild(h('p', 'review-warning', '此场景没有可核对的完整正文，可展开改动记录查看已有内容。'));
       else for (const line of finalScene.paragraphs) story.appendChild(h('p', 'review-story-line', line));
       const history = h('details', 'review-story-history');
       history.appendChild(h('summary', undefined, '查看创作改动记录'));
-      const sceneFacts = facts.content.scenes.filter((scene) => scene.unitId === unit.unitId)
+      const sceneFacts = facts.content.scenes.filter((scene) => scene.sceneId === sceneId)
         .sort((left, right) => left.operationSequence - right.operationSequence);
       for (const fact of sceneFacts) {
         const action = ({ create: '新建场景', replaceText: '替换台词', insertAfter: '插入内容', replaceChoiceOption: '替换选项', removeObject: '移除内容' } as Record<string, string>)[fact.action] ?? '修改场景';
         history.appendChild(h('strong', 'review-story-action', action));
         for (const line of fact.highlights) history.appendChild(h('p', 'review-story-line', line));
       }
-      if (sceneFacts.length === 0) appendUnitPresentation(history, unit);
+      for (const unit of facts.units.filter((unit) => unit.outcomes.some((object) => object.objectRef === `scene:${sceneId}`))) {
+        if (!sceneFacts.some((fact) => fact.unitId === unit.unitId)) appendUnitPresentation(history, unit);
+      }
       story.appendChild(history);
       card.appendChild(story);
     }
-    if (sceneUnits.length === 0) card.appendChild(h('p', undefined, '此方案没有场景文本改动。'));
+    if (sceneIds.length === 0 && facts.content.finalSceneStatus === 'verified') card.appendChild(h('p', undefined, '此方案没有场景文本改动。'));
     card.appendChild(h('h4', undefined, '实际运行路线'));
     if (facts.runtime.status === 'unavailable') card.appendChild(h('p', 'review-warning', '暂无可核对的运行路线。'));
     appendRuntimePaths(card, facts.runtime.paths);
