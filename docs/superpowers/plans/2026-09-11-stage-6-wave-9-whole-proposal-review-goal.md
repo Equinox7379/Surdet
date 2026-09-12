@@ -1451,10 +1451,26 @@ Owner 于 2026-09-11 明确派发桌面 R2 包并要求“没问题再开工”�
 | Task 6 | Task 3–5；Q1 真实候选、新隔离 review | 后端真实链通过；沿用原 Q1 cold-start 隔离项目，在其数据目录创建新 v2 review / plan / integration。胶囊绑定绝对来源目录，迁移副本被身份检查拒绝，未改写其身份或旧回执。所选 7 项完整、另案 7 项未纳入、两条实际路线 route 为 1/-1，项目基线未改变。详情在 `<local-path>`。 |
 | Task 7–8 | Task 6；Editor 与选择、混合、过期、旧 v1 边界 | 已实现；77 项 Editor 定向测试和 7 项现有布局/authority 检查通过。实际浏览器验证整案、混合、冲突、键盘保存与重开、四种窗口宽度、真实 200% 页面缩放和减少动态效果。最终结果按实际来源说明，并从项目入口试玩。修复了连续配置重载丢失项目绑定，启动器 7 项检查通过。 |
 | Task 9 | Task 7–8；全新候选与 Owner 验收 | 两个独立、仅开放 Surdet MCP 的外部创作会话交付 fresh capsule。Owner 在无外部方案讲解的页面中阅读后反馈“A 更自然，B 很别扭，剩下交给你判断”，据此采用 A，并由主代理代保存、核对及批准。正式结果包含 A 的全部 6 项、未纳入 B 的 6 项，两条结局路线分别为 1/-1；正文与来源一致，原项目未变，批准身份有效。此记录不等同于 Owner 本人完成无辅助点击与最终试玩验收。 |
-| Task 10 | 实现与实际路径；主代理复核、全量验证、commit / push / CI | 本地检查完成。一次 verify:all 暴露接口升级旧断言、结果名称映射及 Windows 保留端口问题；修正后对应 Authoring、CLI、Editor、真实 HMR 用例通过，并完成该脚本剩余阶段。新增封存正文与空要求校验的定向用例、三个工作区类型检查和构建通过；资源导入真实浏览器流程 26/26 通过。正常提交、推送和对应 CI 正在完成。 |
+| Task 10 | 实现与实际路径；主代理复核、全量验证、commit / push / CI | 原施工及三笔 CI 修正已普通推送，`fd1fc6e` 的完整 CI 已成功。2026-09-12 收到 Cloud Source Review 1 定向修复包；新增修复及本轮验证见下方记录，Wave 9 尚未正式关闭。 |
 
 当前没有新增依赖、正式内容改动、部署或发行。Owner 的方案选择与后续代理操作已分开记录；本轮结果批准来自 Owner 最新明确委托，不能冒充 Owner 亲自操作。审核由主代理亲自承担。
 
 2026-09-12 开发样本补充：从浏览器实际保存的 v2 决定完成新正式链，结果位于 `<local-path>`，两条路线成立，原项目未变。此前早期开发版 v2 因缺少后续补齐的场景操作序号被当前校验明确拒绝，未改写旧包或添加开发格式兼容。PNG 预览问题来自测试文件接口的错误 MIME，已修正该接口并看到真实背景与立绘，未修改 Renderer。以上均不替代 Owner 验收。
 
 最终样本位于 `<local-path>`：`owner-review-ready.json`、`owner-result.json` 和 `owner-approval.json` 对应真实审阅、执行及批准。主代理核对了保存预览、计划内容身份、实际执行来源、结果树和批准身份。三份剧本及项目配置与 A 一致；时间轴 JSON 的格式不同，内容相同。新鲜真实预览显示正常背景、立绘和入口台词。封存正文复用 Core 编译器读取最终文字与选项，修改过程收进展开区，避免旧稿混入主阅读内容。实际启动时的短暂目录绑定探针已正常清理，随后原项目树核对一致。
+
+CI 修正：实现提交 `21a527355e3dc75fd0098c17af233810282b5176` 的 [run 34628303627](https://github.com/Equinox7379/Surdet/actions/runs/34628303627) 中，Electron 在等待剧情输入时超时，错误后的现场状态已为 `awaiting-advance`；同一脚本在本机完整通过。`680eb51178619dc243b2eb5f9288fcca5f3f250e` 仅将该测试脚本的公开状态等待改为 Node 进程轮询，保留原超时、真实输入与精确位置断言，未修改游戏运行代码。更改后本机与新提交的 Windows CI 均完成开局、F5/F9 精确位置回路及结局检查；失败记录保留，未调用 CI rerun。
+
+`680eb51` 的 [run 34629237668](https://github.com/Equinox7379/Surdet/actions/runs/34629237668) 通过全量验证和 Electron，随后资源导入浏览器流程在 24/26 的错误通道检查失败。该运行仅打印失败节点，具体错误留在未上传的临时文件中，无法据此确认根因；本机复验 26/26 通过。`6664923d0cb4a469e89369917ee0e45c1e473cad` 只补充一行失败详情输出，保留所有断言，不将输出改进冒充产品缺陷修复。
+
+`6664923` 的 [run 34630177102](https://github.com/Equinox7379/Surdet/actions/runs/34630177102) 通过 Electron、全量验证、资源导入、Editor 浏览器流程及 Starter 回归，在 Pass 8 等待“跳过本次行动”时超时。独立实际场景复现确认，该提示会被 650 毫秒后的敌方行动替换，晚一秒观察已无法读到。`fd1fc6e92218a6111027c6b63757a01f443fb5a9` 在真实原生点击事件中确认画布提示并立即导航到慢速目标页，保持待执行回调的离开页面检查；另用系统分配的端口避免本机已证实的 5173 保留端口错误。完整 Pass 8 本机回归通过，含真实文件存读档、模式 / 菜单 / 缩放、系统操作、离开页面与长文本滚动。未修改游戏运行代码。
+
+### Cloud Source Review 1 定向修复（2026-09-12）
+
+Owner 派发桌面 `Surdet_Wave9_Cloud_Source_Review1_Targeted_Repair_2026-09-12.zip` 后，主代理沿原 Goal 继续处理来源一致性。现场复核确认 `main` 与 `surdet/main` 均为 `fd1fc6e92218a6111027c6b63757a01f443fb5a9`，其 [run 34633565765](https://github.com/Equinox7379/Surdet/actions/runs/34633565765) 的 Linux verify 与 Windows electron 已全部成功；包内此前尚待 CI 的状态不再适用。
+
+- 真实红灯：在 `change.diff` 后继续修改对白，再补齐 validation / simulation / runtime 并封存 ready capsule；原 v2 页面事实仍包含较早对白。单独 `character.ensure` 改名后，嵌套场景正文被遗漏；先 patch 再改名时只保留一个来源。三条真实 Agent Port → capsule → NodeCompositionStore → ReviewService 路径均复现了缺陷。
+- 修复：NodeCompositionStore 保留强类型 objectDiff freshness，仅当 status 为 fresh 且两个工作版本均等于胶囊最终工作版本时传递当前 semantic / file facts。Authoring 再按该身份投影正文，并从实际 `@scene` 与全部 producedObjects 收集稳定、去重的 producerUnitIds。缺正文、过期或无法归属时明确 unavailable，保留候选自述、封存操作和运行事实。v2 shape 与 fingerprint 覆盖状态、限制和来源；v1 序列化与 fingerprint 不受新增字段影响。
+- 页面：整案正文按候选场景展示，包含角色改名的场景副产物；当前正文和不可核对状态使用明确的中文来源说明。真实构建页面在 1440 与 390 像素宽度下查看了 fresh / stale 两种真实胶囊，验证了键盘切换、无横向溢出、无页面脚本异常，以及折叠操作记录仍可读取。此处只验证页面阅读，不在静态预览中代签决定。
+- 验证：Authoring 59 项、CLI 30 项、Editor 67 项定向检查通过；三个受影响工作区的类型检查与构建通过。最终单次完整 `verify:all` exit 0：全部 2,794 项测试、类型检查、内容验证与构建通过。主代理已复核实际调用方、diff、测试与页面；`W9_R1 = LOCALLY_FIXED`。本修复提交与推送身份由 Git 记录，对应 CI 由该提交的 Actions 记录判定，不把开工基线的成功预签给新提交。
+- 边界：未改变 capsule / manifest 格式、composition-ready 条件或 Wave 8 依赖与重放语义；未补写旧胶囊，未重跑 fresh Agent、Owner 验收或本机 Electron。保留此前四笔提交和全部旧候选、回执、失败证据。本轮停止目标为 `WAITING_FOR_CLOUD_SOURCE_REVIEW_2`，`FreshOwnerFinalAcceptance = STILL_PENDING`。

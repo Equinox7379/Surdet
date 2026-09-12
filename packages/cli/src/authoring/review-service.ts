@@ -517,6 +517,8 @@ export class ReviewService {
       ...(candidate.intent === undefined ? {} : { intent: candidate.intent }),
       acceptanceCriteria: candidate.acceptanceCriteria ?? [],
       sealedRuntimeTraceIds: candidate.sealedRuntimeTraceIds ?? [],
+      sourceWorkingRevision: candidate.sourceWorkingRevision,
+      ...(candidate.objectDiffFreshness === undefined ? {} : { objectDiffFreshness: candidate.objectDiffFreshness }),
       sealedFileDiffs: candidate.sealedFileDiffs ?? [],
       runtime: await this.candidateRuntime(candidate),
     })));

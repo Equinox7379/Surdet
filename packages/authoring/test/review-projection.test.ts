@@ -22,6 +22,7 @@ import {
   isReviewProjectionV2Fields,
   resultReviewFingerprintOf,
   reviewTraceObservationKey,
+  stableStringify,
 } from '../src/index.js';
 
 const hasher: TextHasher = {
@@ -566,7 +567,9 @@ describe('comparison review projection', () => {
         unifiedDiff: [`--- ${scenePath}`, `+++ ${scenePath}`, ' @scene wave6_alpha', '-最初的台词', `+${longLine}`,
           ' @choice', '-  最初的选项 -> @jump old_end', '+  封存前替换的选项 -> @jump new_end', '-已经移除的内容',
           ...Array.from({ length: 12 }, (_, index) => `+第 ${index + 1} 句`)].join('\n') }];
-      return { ...item, manifest, sealedFileDiffs, composition: { ...item.composition, manifest } };
+      return { ...item, manifest, sealedFileDiffs,
+        objectDiffFreshness: { status: 'fresh' as const, workingRevision: 1, currentWorkingRevision: 1 },
+        composition: { ...item.composition, manifest } };
     });
     const compared = comparison();
     compared.units.find((item) => item.unitId === 'unit-a-alpha')!.operationSequences = [0, 2, 3];
@@ -585,9 +588,60 @@ describe('comparison review projection', () => {
     ]));
     expect(facts.units.find((item) => item.unitId === 'unit-a-alpha')!.presentation!.highlights).toContain(`替换台词：${longLine}`);
     expect(facts.content.omittedFactCount).toBe(0);
-    expect(facts.content.finalScenes).toEqual([{ unitId: 'unit-a-alpha', sceneId: 'wave6_alpha', source: 'sealed-capsule-diff',
+    expect(facts.content.finalSceneStatus).toBe('verified');
+    expect(facts.content.finalSceneLimitations).toEqual([]);
+    expect(facts.content.finalScenes).toEqual([{ producerUnitIds: ['unit-a-alpha'], sceneId: 'wave6_alpha', source: 'sealed-current-object-diff',
       paragraphs: [longLine, '选项：封存前替换的选项', ...Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 句`)] }]);
     expect(JSON.stringify(facts.content.finalScenes)).not.toMatch(/最初|已经移除/);
+  });
+
+  it('requires matching sealed diff revisions and complete scene provenance while preserving v1 bytes', async () => {
+    const sealedFileDiffs = [{ path: 'custom/story.gal', unexpectedFormatChange: false,
+      unifiedDiff: '--- custom/story.gal\n+++ custom/story.gal\n @scene wave6_alpha\n-旧文本\n+最终文本\n @end' }];
+    const first = { ...candidate('A'), sealedFileDiffs,
+      objectDiffFreshness: { status: 'fresh' as const, workingRevision: 1, currentWorkingRevision: 1 } };
+    const input = { reviewId: 'diff-provenance', comparison: comparison(), candidates: [first, ...candidates.filter((item) => item.candidateId !== 'cand-A')], objects };
+    const fresh = await buildComparisonReviewProjection({ ...input, reviewVersion: '2.0.0' }, hasher);
+    if (fresh.reviewVersion !== '2.0.0') throw new Error('v2 required');
+    expect(isReviewProjectionV2Fields(fresh)).toBe(true);
+    const freshnessCases: Array<VerifiedCompositionCandidate['objectDiffFreshness']> = [undefined,
+      ...(['missing', 'stale', 'failed', 'incomplete'] as const).map((status) => ({ status, workingRevision: 1, currentWorkingRevision: 1 })),
+      { status: 'fresh' }, { status: 'fresh', workingRevision: 1 }, { status: 'fresh', currentWorkingRevision: 1 },
+      { status: 'fresh', workingRevision: 0, currentWorkingRevision: 1 }, { status: 'fresh', workingRevision: 1, currentWorkingRevision: 2 },
+    ];
+    for (const objectDiffFreshness of freshnessCases) {
+      const { objectDiffFreshness: _fresh, ...withoutFreshness } = first;
+      const source = objectDiffFreshness === undefined ? withoutFreshness : { ...withoutFreshness, objectDiffFreshness };
+      const projected = await buildComparisonReviewProjection({ ...input, reviewVersion: '2.0.0', candidates: [source, ...candidates.filter((item) => item.candidateId !== 'cand-A')] }, hasher);
+      if (projected.reviewVersion !== '2.0.0') throw new Error('v2 required');
+      const content = projected.candidates[0]!.verifiedFacts.content;
+      expect(content.finalScenes, JSON.stringify(objectDiffFreshness)).toEqual([]);
+      expect(content.finalSceneStatus).toBe('unavailable');
+      expect(content.finalSceneLimitations.length).toBeGreaterThan(0);
+      expect(content.scenes.length).toBeGreaterThan(0);
+    }
+    for (const change of [
+      (review: typeof fresh) => { review.candidates[0]!.verifiedFacts.content.finalSceneLimitations.push('来源限制'); },
+      (review: typeof fresh) => { review.candidates[0]!.verifiedFacts.content.finalSceneStatus = 'unavailable'; },
+      (review: typeof fresh) => { review.candidates[0]!.verifiedFacts.content.finalScenes[0]!.producerUnitIds.push('unit-a-variable'); },
+    ]) {
+      const changed = structuredClone(fresh); change(changed);
+      expect(await comparisonReviewFingerprintOf(changed, hasher)).not.toBe(fresh.reviewFingerprint);
+    }
+    const unavailable = structuredClone(fresh);
+    unavailable.candidates[0]!.verifiedFacts.content.finalSceneStatus = 'unavailable';
+    expect(isReviewProjectionV2Fields(unavailable)).toBe(false);
+    const legacy = await buildComparisonReviewProjection({ ...input, candidates }, hasher);
+    const withV2Sources = await buildComparisonReviewProjection(input, hasher);
+    expect(stableStringify(withV2Sources)).toBe(stableStringify(legacy));
+    expect(withV2Sources.reviewFingerprint).toBe(legacy.reviewFingerprint);
+
+    const noProducer = comparison();
+    noProducer.units.find((unit) => unit.unitId === 'unit-a-alpha')!.producedObjects = [];
+    const orphan = await buildComparisonReviewProjection({ ...input, reviewVersion: '2.0.0', comparison: noProducer }, hasher);
+    if (orphan.reviewVersion !== '2.0.0') throw new Error('v2 required');
+    expect(orphan.candidates[0]!.verifiedFacts.content).toMatchObject({ finalSceneStatus: 'unavailable', finalScenes: [] });
+    expect(orphan.candidates[0]!.verifiedFacts.content.finalSceneLimitations.join('')).toContain('无法与候选的场景产物对应');
   });
 
   it('recomputes a legacy projection with presentation absent without injecting new identity fields', async () => {

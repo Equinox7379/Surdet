@@ -365,7 +365,8 @@ function wholeProjection(): HumanReviewProjectionV2 {
         claims: { source: 'candidate-change-intent' as const, acceptanceCriteria: [] },
         verifiedFacts: {
           source: { content: 'sealed-composition-manifest' as const, evidence: 'sealed-capsule-evidence' as const, runtime: 'runtime-unavailable' as const },
-          units, content: { changedObjects: [], scenes: [], choices: [], variables: [], timelines: [], assets: [], excerpts: [], omittedFactCount: 0 },
+          units, content: { changedObjects: [], scenes: [], choices: [], variables: [], timelines: [], assets: [], excerpts: [], omittedFactCount: 0,
+            finalSceneStatus: 'unavailable' as const, finalScenes: [], finalSceneLimitations: ['当前胶囊没有与最终工作版本一致的完整正文差异。'] },
           runtime: { status: 'unavailable' as const, paths: [], limitations: ['暂无运行事实'] },
         },
         adoptionPreset: { candidateId, candidateRef: ref, status: 'available' as const, selectedUnitIds: units.map((unit) => unit.unitId), conflictResolutions: [], reasons: [] },

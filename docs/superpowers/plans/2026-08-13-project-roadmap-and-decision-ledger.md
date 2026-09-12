@@ -3472,23 +3472,23 @@ Owner 已明确决定：**Windows 原生目录选择器与真实中文输入法�
 | 项目 | 当前已知事实与边界 |
 | --- | --- |
 | 活动仓库 / 分支 | `Equinox7379/Surdet` / `main`。 |
-| 已闭合的代码与测试基线 | `1a702e8b2542a18cd26718d22e1c33157a8e6ef1` 已普通推送；包含 Wave 8 R2、项目 AGENTS 更新及后续两笔 Electron harness 修复。本次台账纳入 Git 属于其后的纯文档变更。 |
-| 最后云端与 Owner 验收 | Owner 已确认 Wave 8 R2 最新源码整改通过并批准普通 push；随后确认包含 exact-head CI 收口的 Wave 8 Goal 为 PASS。既有 Wave 7、Frontend Pass 1–10 关闭结论保留；不据此宣布未经操作的 Review 理解体验通过。 |
-| 对应已核实 CI | [run 34586305112](https://github.com/Equinox7379/Surdet/actions/runs/34586305112) 精确对应上述代码基线，Linux `verify` 与 Windows `electron` 全部 success。此前 34583391069、34585864559 的 Windows 失败保留，未调用 CI rerun；修复与真实位置回路详见 Wave 8 交付报告。本次纯文档提交若触发新 CI，以其自身运行结果为准。 |
+| 本轮开工时已核实的实现基线 | `fd1fc6e92218a6111027c6b63757a01f443fb5a9` 已普通推送，包含 Wave 9 实现及三笔 CI 修正；完整 CI 通过不等于 Wave 9 云端或 Owner 最终验收通过。本轮来源修复在该基线上追加。 |
+| 最后云端与 Owner 验收 | Wave 8 R2 与此前已关闭结论保留。Wave 9 fresh A/B 页面中，Owner 在无外部方案讲解下阅读并反馈“A 更自然，B 很别扭，剩下交给你判断”；主代理依此选 A、代保存、执行、核对并批准。该反馈与委托不等于 Owner 本人完成无辅助点击及最终试玩。Cloud Source Review 1 要求定向修复来源事实；`FreshOwnerFinalAcceptance = STILL_PENDING`，等待 Cloud Source Review 2。 |
+| 对应已核实 CI | [run 34633565765](https://github.com/Equinox7379/Surdet/actions/runs/34633565765) 精确对应 `fd1fc6e`，Linux `verify` 与 Windows `electron` 全部 success。此前各次失败和修正保留于 Wave 9 Execution Ledger，未调用 CI rerun。本轮追加修复的 CI 必须按新提交单独核对。 |
 | 既有数据安全修复 | 第 9.1 节五项修复继续关闭；A5 等已关闭历史不恢复成活动 finding。 |
 | B01 | `abdb7ba` 已推送并通过终审，不重开。 |
 | Editor 前端 | Pass 1–7 既有迁移保留；Pass 7.5 / V4 已批准并完成正式落地。 |
 | V4 设计基线 | 九工作面与可视化混合编排保留；不无故重开风格探索或丢弃原有业务能力。 |
 | 整个前端路线 | Frontend Pass 1–10 已由本轮收到的云端终审裁决关闭；B01、V4、F01/F02 保持关闭。另行暂停的按钮改版不因此获得认可或重启。 |
-| 当前活动目标 | Owner 于 2026-09-11 派发 Wave 9 R2 正式施工包并要求核对无误后开工。当前执行整案优先审阅、保存前权威预览与实际结果一致性；执行状态统一维护于 [Wave 9 任务书 Execution Ledger](2026-09-11-stage-6-wave-9-whole-proposal-review-goal.md#execution-ledger--本地持续更新)。 |
-| 主线阶段 | Stage 6 Wave 8 R2 已远端闭合；Wave 9 R2 已获 Owner 派发并进入本地施工，目标为候选审阅可理解性与独立决策闭环。 |
+| 当前活动目标 | Owner 于 2026-09-12 派发 Cloud Source Review 1 定向修复包：阻止过期正文与语义影响成为当前事实，补齐角色改名的场景副产物及多个来源，保留整案审阅与采用合同。执行状态统一维护于 [Wave 9 任务书 Execution Ledger](2026-09-11-stage-6-wave-9-whole-proposal-review-goal.md#execution-ledger--本地持续更新)。 |
+| 主线阶段 | Stage 6 Wave 8 R2 已远端闭合；Wave 9 仍在来源修复与复审阶段，未正式关闭。 |
 | 暂缓验证 | 原生 Windows 目录选择器、真实中文输入法均未实测，由 Owner 暂缓，不作为当前门槛。 |
-| 已解决问题与保留边界 | Wave 8 候选组合和本轮 CI 已确认问题均已修复。fresh Agent 一次自然创作要求下自行恢复调用错误、零整份回滚和重建，完成 ready capsule；证据范围见交付报告。Q1 的人类 Review 仍是经讲解、预填五处后完成，未经外部协助的可理解性尚未验收。 |
-| 本机状态 | `E:\surdet` / `main`；Wave 9 本地实现、验证和 Owner 委托的最终结果核对已完成，正在正常提交与推送，CI 尚待对应提交结果。原未跟踪资料与受保护文件保持原位。完成情况与人工/代理操作边界统一见本轮任务书 Execution Ledger。 |
-| 当前授权 | Owner 已明确派发 Wave 9 R2 Goal，允许范围内生产代码、测试与必要文档修改、普通提交、fast-forward push 到当前 main 及对应 CI 修复。保持原始项目、旧 Q1 回执与受保护资料，不改历史，不扩展到音频、打包、发行或部署。最终新候选的无外部讲解验收仍须 Owner 本人完成。 |
+| 已解决问题与保留边界 | Wave 9 已接通整案 / 混合选择、三源事实与封存最终正文、保存前只读权威预览、v2 回执、正式计划及实际结果说明；旧 v1 可读取。Q1 的历史协助过程保留；新的独立候选与 Owner 选案反馈见本轮任务书。原生目录选择器与中文输入法的暂缓范围没有改变。 |
+| 本机状态 | `E:\surdet` / `main`；`W9_R1 = LOCALLY_FIXED`，定向测试、类型检查、构建、实际页面与单次完整 `verify:all` 均通过。原未跟踪资料与受保护文件保持原位；本修复的提交、推送和 CI 身份以 Git 及对应 Actions 记录为准，不能把开工基线的成功预签给新提交。 |
+| 当前授权 | 原 Wave 9 Goal 的范围内实现、必要验证、普通提交、fast-forward push 与对应 CI 修复授权继续有效。本轮保留旧候选与回执，不重新运行 fresh Agent 或 Owner 验收，完成后停止在 `WAITING_FOR_CLOUD_SOURCE_REVIEW_2`；不自动开始下一波，不扩展到音频、打包、发行或部署。 |
 | 台账交付状态 | 本文件纳入仓库版本控制，后续云端与本地读取同一路径。旧的 local-only、未跟踪和禁止提交表述保留为历史事实，不再作为本台账的当前限制。 |
 
-Wave 8 的实现、fresh Agent 边界、逐次云端整改及 Electron CI 修复统一见 [Wave 8 交付报告](../../SURDET-CANDIDATE-COMPOSITION-READINESS-STAGE-6-WAVE-8-DELIVERY-REPORT-2026-09-10.md)。第 9.20 节的 Q1 过程与当时停止点保留为历史；其中有协助的 Review 事实仍是下一步讨论的依据。当前没有因波次编号而自动启动的新 Goal。
+Wave 8 的实现、fresh Agent 边界、逐次云端整改及 Electron CI 修复统一见 [Wave 8 交付报告](../../SURDET-CANDIDATE-COMPOSITION-READINESS-STAGE-6-WAVE-8-DELIVERY-REPORT-2026-09-10.md)。第 9.20 节的 Q1 过程与当时停止点保留为历史；Wave 9 当前结果以任务书 Execution Ledger 为准。当前没有因波次编号而自动启动的新 Goal。
 
 ### 9.9 本次修订方式、本机同步与后续维护
 

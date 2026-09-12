@@ -3,6 +3,7 @@ import {
   AuthoringOperationError,
   stableStringify,
   type CandidateCapsuleRef,
+  type EvidenceFreshness,
   type IntegrationPlan,
   type VerifiedCompositionCandidate,
 } from '@surdet/authoring';
@@ -161,7 +162,21 @@ function projectPayloadToCandidate(payload: unknown, ref: CandidateCapsuleRef): 
   const warnings = Array.isArray(payload['warnings']) ? payload['warnings'] : [];
   const manualReviewRequired = Array.isArray(payload['manualReviewRequired']) ? payload['manualReviewRequired'] : [];
   const objectDiff = isRecord(payload['objectDiff']) ? payload['objectDiff'] : {};
-  const semantic = Array.isArray(objectDiff['semantic']) ? objectDiff['semantic'] : [];
+  const freshness = isRecord(objectDiff['freshness']) ? objectDiff['freshness'] : {};
+  const status = freshness['status'];
+  const objectDiffFreshness: EvidenceFreshness = {
+    status: status === 'fresh' || status === 'stale' || status === 'failed' || status === 'incomplete' ? status : 'missing',
+    ...(typeof freshness['workingRevision'] === 'number' ? { workingRevision: freshness['workingRevision'] } : {}),
+    ...(typeof freshness['currentWorkingRevision'] === 'number' ? { currentWorkingRevision: freshness['currentWorkingRevision'] } : {}),
+  };
+  const sourceWorkingRevision = payload['workingRevision'];
+  if (typeof sourceWorkingRevision !== 'number' || !Number.isInteger(sourceWorkingRevision) || sourceWorkingRevision < 0) {
+    throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `候选胶囊缺少有效的封存工作版本：${ref.changeId}/${ref.capsuleId}`);
+  }
+  const currentDiff = objectDiffFreshness.status === 'fresh'
+    && objectDiffFreshness.workingRevision === sourceWorkingRevision
+    && objectDiffFreshness.currentWorkingRevision === sourceWorkingRevision;
+  const semantic = currentDiff && Array.isArray(objectDiff['semantic']) ? objectDiff['semantic'] : [];
   const invocations = isRecord(payload['invocationSummary']) ? payload['invocationSummary']['records'] : [];
   const sealedRuntimeTraceIds = new Set<string>();
   if (Array.isArray(invocations)) {
@@ -178,12 +193,13 @@ function projectPayloadToCandidate(payload: unknown, ref: CandidateCapsuleRef): 
     capsuleVersion: '2.0.0',
     projectIdentity,
     baseProjectRevision: asString(payload['baseProjectRevision']),
-    sourceWorkingRevision: typeof payload['workingRevision'] === 'number' ? payload['workingRevision'] : 0,
+    sourceWorkingRevision,
+    objectDiffFreshness,
     ...(typeof payload['intent'] === 'string' ? { intent: payload['intent'] } : {}),
     acceptanceCriteria: Array.isArray(payload['acceptanceCriteria'])
       ? payload['acceptanceCriteria'].filter((item): item is string => typeof item === 'string') : [],
     sealedRuntimeTraceIds: [...sealedRuntimeTraceIds].sort(),
-    sealedFileDiffs: (Array.isArray(objectDiff['files']) ? objectDiff['files'] : [])
+    sealedFileDiffs: (currentDiff && Array.isArray(objectDiff['files']) ? objectDiff['files'] : [])
       .filter((file) => isRecord(file) && typeof file['path'] === 'string' && typeof file['unifiedDiff'] === 'string')
       .map((file) => ({ path: file['path'] as string, unifiedDiff: file['unifiedDiff'] as string,
         unexpectedFormatChange: file['unexpectedFormatChange'] === true })),

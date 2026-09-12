@@ -212,7 +212,8 @@ function wholeWorkspace(): ReviewWorkspaceState {
           source: { content: 'sealed-composition-manifest' as const, evidence: 'sealed-capsule-evidence' as const, runtime: 'sealed-runtime-trace' as const },
           units: [unit, unique], content: { changedObjects: [], choices: [], variables: [], timelines: [], assets: [], excerpts: [], omittedFactCount: 0,
             scenes: [{ sceneId: `${candidate.displayOrdinal}_end`, objectRef: unique.primaryObject, unitId: unique.unitId, action: 'create', operationSequence: 1, highlights: ['已经替换的旧结局。'] }],
-            finalScenes: [{ sceneId: `${candidate.displayOrdinal}_end`, unitId: unique.unitId, source: 'sealed-capsule-diff' as const, paragraphs: unique.presentation.highlights }] },
+            finalSceneStatus: 'verified' as const, finalSceneLimitations: [],
+            finalScenes: [{ sceneId: `${candidate.displayOrdinal}_end`, producerUnitIds: [unique.unitId], source: 'sealed-current-object-diff' as const, paragraphs: unique.presentation.highlights }] },
           runtime: { status: 'verified' as const, paths: [{ traceId: `trace-${candidate.displayOrdinal}`, status: 'passed' as const, startSceneId: 'start', visitedSceneIds: ['start', `${candidate.displayOrdinal}_end`], choices: [{ sceneId: 'start', optionIndex: 0, label: `走向结局 ${candidate.displayOrdinal}` }], endingSceneId: `${candidate.displayOrdinal}_end`, finalVariables: [{ name: 'route', value: 1 }] }], limitations: [] },
         },
         adoptionPreset: { candidateId: candidate.candidateId, candidateRef: candidate.ref, status: 'available' as const, selectedUnitIds: [unit.unitId, unique.unitId],
@@ -325,7 +326,8 @@ describe('Editor review panel', () => {
     renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: client });
     expect(textOf(container)).toContain('原始创作要求');
     expect(textOf(container)).toContain('候选自述');
-    expect(textOf(container)).toContain('方案正文');
+    expect(textOf(container)).toContain('系统核对到的最终正文');
+    expect(textOf(container)).toContain('与候选最终工作版本一致的封存差异');
     expect(textOf(container)).toContain('这是方案 A 独有的结局。');
     expect(textOf(container)).not.toContain('已经替换的旧结局。');
     expect(textOf(container)).toContain('走向结局 C');
@@ -359,6 +361,40 @@ describe('Editor review panel', () => {
     expect(workspace.decisionDraft.selectedUnitIds).toEqual([]);
     expect(workspace.decisionDraft.conflictResolutions).toEqual([{ conflictId: 'conflict-1', resolution: 'exclude-all' }]);
     expect(previewDecision).toHaveBeenCalledTimes(5);
+  });
+
+  it('explains unavailable final text while retaining sealed operations, and shows secondary scene text without a primary scene unit', () => {
+    vi.stubGlobal('document', documentStub);
+    const workspace = wholeWorkspace();
+    const projection = workspace.projection as HumanReviewProjectionV2;
+    const stale = projection.candidates[0]!.verifiedFacts;
+    stale.content.finalSceneStatus = 'unavailable';
+    stale.content.finalSceneLimitations = ['当前胶囊没有与最终工作版本一致的完整正文差异。'];
+    stale.content.finalScenes = [];
+    const secondary = projection.candidates[1]!.verifiedFacts;
+    const unit = secondary.units[0]!;
+    unit.primaryObject = 'character:rin';
+    unit.outcomes = [{ objectRef: 'scene:secondary', disposition: 'update' }];
+    unit.presentation = { actionLabel: '新建或更新角色', objectLabel: '角色 凛', highlights: ['显示名：小凛'], completeness: 'content', omittedFactCount: 0 };
+    secondary.units = [unit];
+    secondary.content.scenes = [];
+    secondary.content.changedObjects = [{ objectRef: 'scene:secondary', disposition: 'update', unitId: unit.unitId }];
+    secondary.content.finalScenes = [{ sceneId: 'secondary', producerUnitIds: [unit.unitId], source: 'sealed-current-object-diff', paragraphs: ['小凛：迁移后的正文。'] }];
+    const container = new FakeElement('div'); renderReviewPanel(container as unknown as HTMLElement, workspace);
+    const staleCard = container.querySelector('[data-proposal="candidate-a"]')!;
+    expect(textOf(staleCard)).toContain('完整正文暂不可核对');
+    expect(textOf(staleCard)).toContain('当前胶囊没有与最终工作版本一致的完整正文差异');
+    expect(textOf(staleCard)).toContain('下面只展示封存操作与运行事实');
+    expect(textOf(staleCard)).not.toContain('这是方案 A 独有的结局。');
+    const history = staleCard.children.find((element) => element.className === 'review-story-scene')!.children.find((element) => element.className === 'review-story-history')!;
+    history.open = true;
+    expect(textOf(staleCard)).toContain('已经替换的旧结局。');
+    expect(textOf(staleCard)).toContain('走向结局 A');
+    expect(container.querySelector('[data-adopt-candidate="candidate-a"]')!.disabled).toBe(false);
+    const secondaryCard = container.querySelector('[data-proposal="candidate-c"]')!;
+    expect(textOf(secondaryCard)).toContain('1 个场景');
+    expect(textOf(secondaryCard)).toContain('小凛：迁移后的正文。');
+    expect(textOf(secondaryCard)).not.toContain('此方案没有场景文本改动');
   });
 
   it('puts actual decision, execution changes and runtime before the v2 approval and folded technical evidence', () => {

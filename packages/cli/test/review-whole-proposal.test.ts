@@ -8,6 +8,7 @@ import {
   approvalFingerprintOf,
   validateFinalApproval,
   integrationPlanContentFingerprintOf,
+  stableStringify,
   type AuthoringObject,
   type ComparisonDecisionReceiptV2,
   type FinalApprovalReceipt,
@@ -17,6 +18,7 @@ import {
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession } from '../src/agent-port/session.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { ReviewTerminalAuthority } from '../src/authoring/review-terminal-authority.js';
 import { reviewServiceForProject } from '../src/authoring/review-service.js';
 import { compositionServiceForProject } from '../src/authoring/composition-service.js';
@@ -110,6 +112,80 @@ async function receiptFor(f: Awaited<ReturnType<typeof fixture>>, preview: Revie
 }
 
 describe('whole proposal review through sealed candidates and local authority', () => {
+  it.each(['stale', 'rename', 'patch-and-rename'] as const)('projects current scene content from a real %s candidate', async (mode) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-review-content-'));
+    roots.push(root);
+    const projectRoot = path.join(root, 'project');
+    const dataRoot = path.join(root, 'data');
+    fs.mkdirSync(path.join(projectRoot, 'content/scenario/nested'), { recursive: true });
+    const characters = { rin: { name: '凛' } };
+    fs.writeFileSync(path.join(projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {}, characters }));
+    fs.writeFileSync(path.join(projectRoot, mode === 'rename' ? 'content/scenario/nested/start.gal' : 'content/scenario/start.gal'), '@scene start\n凛：原始对白。\n@end\n');
+    process.env['SURDET_AGENT_DATA_DIR'] = dataRoot;
+    const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
+    try {
+      expect((await session.invoke('change.begin', { intent: '来源回归候选' })).ok).toBe(true);
+      const patch = async (operationId: string, value: string) => {
+        const scene = await session.invoke('object.inspect', { objectRef: 'scene:start' });
+        if (!scene.ok) throw new Error(JSON.stringify(scene));
+        const target = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
+        if (!target.ok) throw new Error(JSON.stringify(target));
+        const object = target.result as AuthoringObject;
+        const changed = await session.invoke('scene.patch', { operationId, sceneId: 'start', patch: {
+          kind: 'replaceText', target: object.objectRef, expectedFingerprint: object.fingerprint, value,
+        } });
+        expect(changed.ok, JSON.stringify(changed)).toBe(true);
+      };
+      if (mode !== 'rename') await patch('first-text', '较早版本对白。');
+      if (mode === 'stale') {
+        expect((await session.invoke('change.diff', {})).ok).toBe(true);
+        await patch('final-text', '最终版本对白。');
+      } else {
+        const renamed = await session.invoke('character.ensure', { operationId: 'rename', id: 'rin', name: '小凛',
+          expectedFingerprint: await hasher.sha256(stableStringify(characters)) });
+        expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
+        expect((await session.invoke('change.diff', {})).ok).toBe(true);
+      }
+      for (const operation of ['project.validate', 'project.simulate'] as const) expect((await session.invoke(operation, {})).ok).toBe(true);
+      expect((await session.invoke('runtime.run-from', { sceneId: 'start', choices: [] })).ok).toBe(true);
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility).toBe('ready');
+      const diff = capsule.objectDiff as { freshness: { status: string; workingRevision: number; currentWorkingRevision: number }; semantic: unknown[] };
+      expect(diff.freshness.status).toBe(mode === 'stale' ? 'stale' : 'fresh');
+      expect(diff.semantic.length).toBeGreaterThan(0);
+      const ref = { changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
+      const store = new NodeCompositionStore(path.join(dataRoot, session.projectIdentity), session.projectIdentity);
+      const candidate = await store.readCandidate(ref);
+      const service = await reviewServiceForProject(projectRoot, dataRoot);
+      const other = await openAgentPortSession({ projectRoot, policy: 'stage' });
+      let otherRef;
+      try {
+        expect((await other.invoke('change.begin', {})).ok).toBe(true);
+        expect((await other.invoke('variable.ensure', { operationId: 'other', name: 'other', type: 'number', initial: 0 })).ok).toBe(true);
+        const sealed = await generateDeliveryCapsule(other);
+        otherRef = { changeId: sealed.changeId, capsuleId: sealed.capsuleId, artifactSha256: sealed.artifactIdentity.sha256 };
+      } finally { await other.close(); }
+      const prepared = await service.prepareComparison({ candidateRefs: [ref, otherRef] });
+      if (prepared.projection.reviewVersion !== '2.0.0') throw new Error('v2 required');
+      const reviewed = prepared.projection.candidates.find((item) => item.ref.changeId === ref.changeId)!;
+      const content = reviewed.verifiedFacts.content;
+      expect(reviewed.adoptionPreset.status).toBe('available');
+      if (mode === 'stale') {
+        expect.soft(content.finalScenes).toEqual([]);
+        expect.soft(candidate.semanticDiff).toEqual([]);
+        expect.soft(reviewed.verifiedFacts.units.every((unit) => unit.potentialImpact.length === 0 && unit.observedImpact.length === 0)).toBe(true);
+        expect(JSON.stringify(content.scenes)).toContain('最终版本对白。');
+      } else {
+        const unitIds = reviewed.verifiedFacts.units.map((unit) => unit.unitId).sort();
+        expect(content.finalScenes).toEqual([{ sceneId: 'start', producerUnitIds: unitIds, source: 'sealed-current-object-diff',
+          paragraphs: [`小凛：${mode === 'rename' ? '原始对白。' : '较早版本对白。'}`] }]);
+        expect(unitIds).toHaveLength(mode === 'rename' ? 1 : 2);
+      }
+    } finally {
+      await session.close();
+    }
+  }, 30_000);
+
   it('keeps the three information sources separate and previews the whole candidate without writing artifacts', async () => {
     const f = await fixture();
     const projection = f.prepared.projection;
