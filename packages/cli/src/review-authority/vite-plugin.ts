@@ -4,6 +4,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as path from 'node:path';
 import { NodeLocalLeaseManager } from '../authoring/node-local-lease.js';
 import { ReviewTerminalAuthority } from '../authoring/review-terminal-authority.js';
+import { NodeReviewApprovedApplyBackend } from '../authoring/node-review-approved-apply.js';
+import { ReviewApprovedApplyService } from '../authoring/review-approved-apply-service.js';
 import {
   createReviewAuthorityHttpHandler,
   REVIEW_AUTHORITY_BASE_PATH,
@@ -88,7 +90,15 @@ export function reviewAuthorityVitePlugin(options: ReviewAuthorityVitePluginOpti
     endpoint: REVIEW_AUTHORITY_BASE_PATH,
     token,
   };
-  const handler = createReviewAuthorityHttpHandler({ authority, token, expectedOrigin });
+  let applyService: Promise<ReviewApprovedApplyService> | undefined;
+  const handler = createReviewAuthorityHttpHandler({ authority, token, expectedOrigin,
+    ...(options.projectRoot === undefined ? {} : { applyApprovedResult: async (request) => {
+      applyService ??= NodeReviewApprovedApplyBackend.open(options.projectRoot!, leases.dataRoot)
+        .then((backend) => new ReviewApprovedApplyService(backend))
+        .catch((error: unknown) => { applyService = undefined; throw error; });
+      return (await applyService).execute(request);
+    } }),
+  });
   const mountAuthority: ReviewMiddleware = (request, response, next) => {
     if ((request.url ?? '').startsWith(`${REVIEW_AUTHORITY_BASE_PATH}/`)) handler(request, response);
     else next();

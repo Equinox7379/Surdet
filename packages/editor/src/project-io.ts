@@ -178,7 +178,7 @@ export async function openProject(): Promise<void> {
 
 export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
-  options: { source?: 'normal' | 'review-fixture' } = {},
+  options: { source?: 'normal' | 'review-fixture'; preserveReviewWorkspace?: boolean } = {},
 ): Promise<void> {
   if (state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null) {
     throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
@@ -205,6 +205,7 @@ export async function openProjectFromHandle(
  * 供本机 authority 完成跨文件写入后刷新全部浏览器句柄与编辑历史。
  */
 export async function reloadCurrentProjectFromHandle(options: {
+  preserveReviewWorkspace?: boolean;
   mainTab?: typeof state.mainTab;
   selectedAssetId?: string | null;
   sceneKey?: string | null;
@@ -220,7 +221,7 @@ export async function reloadCurrentProjectFromHandle(options: {
   assetRefreshRevision += 1;
   let succeeded = false;
   try {
-    await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false });
+    await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false, preserveReviewWorkspace: options.preserveReviewWorkspace });
     if (options.mainTab !== undefined) state.mainTab = options.mainTab;
     if (options.sceneKey && state.scenes.has(options.sceneKey)) state.current = options.sceneKey;
     else if (options.sceneId) state.current = [...state.scenes].find(([, scene]) => scene.id === options.sceneId)?.[0] ?? state.current;
@@ -240,11 +241,11 @@ export async function reloadCurrentProjectFromHandle(options: {
 
 async function loadProjectFromHandle(
   dir: FileSystemDirectoryHandle,
-  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean },
+  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean; preserveReviewWorkspace?: boolean },
 ): Promise<void> {
   state.projectLoading = true;
   onProjectStateReset();
-  if ((options.source ?? 'normal') === 'normal') {
+  if ((options.source ?? 'normal') === 'normal' && !options.preserveReviewWorkspace) {
     state.reviewWorkspace = null;
     state.mainTab = 'editor';
   } else {
@@ -288,7 +289,8 @@ async function loadProjectFromHandle(
       if (name === 'achievements' || name === 'calendar' || name === 'events' || name === 'growth' || name === 'gallery' || name === 'terminology') {
         state.handles[name] = fh;
       }
-    } catch {
+    } catch (error) {
+      if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
       state.configFiles[name] = null;
     }
   }
@@ -299,27 +301,19 @@ async function loadProjectFromHandle(
     state.gameConfigText = await (await cfgHandle.getFile()).text();
     const cfg = JSON.parse(state.gameConfigText) as { entryScene?: string };
     state.entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
-  } catch {
+  } catch (error) {
+    if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
     state.gameConfigText = '';
     state.entryScene = '';
   }
   // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
-  state.dirAssets = await collectProjectAssets(dir, false);
+  state.dirAssets = await collectProjectAssets(dir, true);
   // 递归读取 content/scenario/**/*.gal
-  try {
-    const contentDir = await dir.getDirectoryHandle('content');
-    const scenarioDir = await contentDir.getDirectoryHandle('scenario');
-    await readScenarioDir(scenarioDir, '');
-  } catch {
-    /* 无剧本目录：空项目 */
-  }
-  try {
-    const contentDir = await dir.getDirectoryHandle('content');
-    const timelineDir = await contentDir.getDirectoryHandle('timelines');
-    await readTimelineDir(timelineDir, '');
-  } catch {
-    /* 没有时间轴目录按空目录处理 */
-  }
+  const contentDir = await optionalDirectory(dir, 'content', true);
+  const scenarioDir = contentDir === null ? null : await optionalDirectory(contentDir, 'scenario', true);
+  if (scenarioDir !== null) await readScenarioDir(scenarioDir, '');
+  const timelineDir = contentDir === null ? null : await optionalDirectory(contentDir, 'timelines', true);
+  if (timelineDir !== null) await readTimelineDir(timelineDir, '');
   const first = state.scenes.keys().next().value as string | undefined;
   state.current = first ?? null;
   state.currentTimeline = state.timelines[0]?.id ?? null;

@@ -12,6 +12,7 @@ import {
 import type { LeaseHandle } from '../authoring/node-local-lease.js';
 import { NodeLocalLeaseManager } from '../authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
+import { projectIdentityFromRoot } from '../authoring/project-identity.js';
 import {
   HumanWorkspaceStore,
 } from '../authoring/human-workspace-store.js';
@@ -51,6 +52,7 @@ export interface PublishEditorFileInput extends ActiveEditorWriteInput {
 }
 
 export interface EditorWorkspaceSnapshot {
+  projectIdentity: string;
   humanWorkspace: Awaited<ReturnType<HumanWorkspaceStore['inspect']>>['summary'];
   mutationNotice: ProjectMutationNotice | null;
   diskBaseline: ProjectCoordinationBaseline;
@@ -214,6 +216,7 @@ export class EditorWorkspaceAuthority {
       this.baseline(),
     ]);
     return {
+      projectIdentity: projectIdentityFromRoot(this.projectRootIdentity),
       humanWorkspace: humanWorkspace.summary,
       mutationNotice,
       diskBaseline,

@@ -5,7 +5,10 @@ import type {
   ReviewDecisionIntent,
 } from '@surdet/authoring';
 import { state, h, setStatus } from '../state.js';
-import { publishEditorWorkspaceState } from '../editor-workspace.js';
+import { publishEditorWorkspaceState, flushEditorWorkspaceState } from '../editor-workspace.js';
+import { ReviewApplyController, type ExistingEditorSyncPort } from '../review-apply-controller.js';
+import { createReviewApplyClient } from '../review-apply-client.js';
+import { renderReviewApplySection } from '../review-apply-section.js';
 import {
   canSealDecision,
   labelForCandidate,
@@ -47,6 +50,45 @@ export interface ReviewPanelOptions {
   onReloadOfficialResult?: (workspace: ReviewWorkspaceState) => Promise<void> | void;
   onRefreshFixtureIdentity?: (workspace: ReviewWorkspaceState) => Promise<unknown> | unknown;
   reviewTerminalClient?: ReviewTerminalClient;
+  reviewApplyEditor?: ExistingEditorSyncPort;
+}
+
+let activeApply: { workspace: ReviewWorkspaceState; approvalFingerprint: string;
+  controller: ReviewApplyController; host: HTMLElement } | null = null;
+
+export function disposeReviewApply(): void {
+  activeApply?.controller.dispose();
+  activeApply = null;
+}
+
+function appendApprovedApply(parent: HTMLElement, workspace: ReviewWorkspaceState, options: ReviewPanelOptions): void {
+  const approval = workspace.approvalReceipt;
+  if (approval === null || workspace.returnReceipt !== null || options.reviewApplyEditor === undefined) return;
+  if (activeApply !== null && (activeApply.workspace !== workspace
+    || activeApply.approvalFingerprint !== approval.approvalFingerprint)) disposeReviewApply();
+  if (activeApply === null) {
+    const host = h('div');
+    const config = globalThis.__SURDET_REVIEW_AUTHORITY__;
+    if (config === undefined) {
+      host.appendChild(h('p', 'review-warning', '本机写回服务未连接，请从绑定项目的编辑器入口打开。'));
+      parent.appendChild(host);
+      return;
+    }
+    const client = createReviewApplyClient({ token: config.token });
+    const ref = { resultReviewId: approval.resultReviewId, approvalId: approval.approvalId,
+      approvalFingerprint: approval.approvalFingerprint };
+    const controller = new ReviewApplyController(ref, async (request) => {
+      if (request.action === 'write-approved-result') await flushEditorWorkspaceState();
+      return client.execute(request);
+    }, options.reviewApplyEditor, (view) => {
+      if (activeApply?.controller !== controller) return;
+      renderReviewApplySection(activeApply.host, view, controller);
+    });
+    activeApply = { workspace, approvalFingerprint: approval.approvalFingerprint, controller, host };
+    renderReviewApplySection(host, controller.snapshot, controller);
+    void controller.check();
+  }
+  parent.appendChild(activeApply.host);
 }
 
 function nowOf(options: ReviewPanelOptions): string {
@@ -1212,6 +1254,7 @@ function renderResultReview(
   overview.appendChild(h('p', 'review-overview-goal', evidenceFresh ? '校验、模拟、运行和变更证据均已齐备。' : '部分证据需要更新，批准按钮会保持禁用。'));
   appendAuthorityStatus(overview, workspace);
   appendResultReceipt(overview, workspace, result);
+  appendApprovedApply(overview, workspace, options);
   if (pendingTerminalAction !== null) {
     overview.appendChild(h(
       'div',
@@ -1505,6 +1548,8 @@ export function renderReviewPanel(
   workspace: ReviewWorkspaceState | null = state.reviewWorkspace,
   options: ReviewPanelOptions = {},
 ): void {
+  if (activeApply !== null && (activeApply.workspace !== workspace || workspace?.approvalReceipt === null
+    || workspace?.returnReceipt !== null)) disposeReviewApply();
   container.innerHTML = '';
   if (workspace === null) {
     container.appendChild(h('div', 'empty', '暂无审阅任务'));

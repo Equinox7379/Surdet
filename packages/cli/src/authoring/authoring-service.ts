@@ -168,21 +168,21 @@ async function withProjectLeaseRetry<T>(
   throw new AuthoringOperationError('PROJECT_BUSY', `项目 '${projectRootIdentity}' 在有界重试后仍被占用`);
 }
 
-async function openChangeRecordContext(changeId: string): Promise<{
+async function openChangeRecordContext(changeId: string, dataRoot?: string): Promise<{
   store: NodeChangeStore;
   session: ChangeSession;
 }> {
-  const opened = await NodeChangeStore.openByChangeId(changeId);
+  const opened = await NodeChangeStore.openByChangeId(changeId, dataRoot);
   if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
   return { store: opened.store, session: openChange(opened.record, opened.store) };
 }
 
-async function openChangeIdentityContext(changeId: string): Promise<{
+async function openChangeIdentityContext(changeId: string, dataRoot?: string): Promise<{
   store: NodeChangeStore;
   session: ChangeSession;
   storage: NodeProjectStorage;
 }> {
-  const recordContext = await openChangeRecordContext(changeId);
+  const recordContext = await openChangeRecordContext(changeId, dataRoot);
   const storage = await NodeProjectStorage.open(recordContext.session.record.projectRootIdentity);
   if (storage.rootIdentity !== recordContext.session.record.projectRootIdentity) {
     throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', '项目根目录身份已变化');
@@ -191,13 +191,13 @@ async function openChangeIdentityContext(changeId: string): Promise<{
   return { store: recordContext.store, session, storage };
 }
 
-async function openChangeContext(changeId: string): Promise<{
+async function openChangeContext(changeId: string, dataRoot?: string): Promise<{
   store: NodeChangeStore;
   session: ChangeSession;
   storage: NodeProjectStorage;
   snapshot: ProjectSnapshot;
 }> {
-  const identity = await openChangeIdentityContext(changeId);
+  const identity = await openChangeIdentityContext(changeId, dataRoot);
   const { session } = identity;
   const snapshot = await loadSnapshot(new ChangeRecordProjectStorage(session.record));
   return { ...identity, snapshot };
@@ -208,10 +208,11 @@ interface OpenChangeContext extends Awaited<ReturnType<typeof openChangeContext>
 async function withChangeLeaseRetry<T>(
   changeId: string,
   callback: (leasedStore: NodeChangeStore) => Promise<T>,
+  leaseManager: NodeLocalLeaseManager,
 ): Promise<T> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      return await NodeChangeStore.withChangeLease(changeId, callback);
+      return await NodeChangeStore.withChangeLease(changeId, callback, leaseManager);
     } catch (error) {
       const transientMissingLease = error instanceof AuthoringOperationError
         && error.code === 'LEASE_CORRUPT'
@@ -228,8 +229,9 @@ async function withChangeLeaseRetry<T>(
 async function withOpenChange<T>(
   changeId: string,
   callback: (context: OpenChangeContext) => Promise<T>,
+  leaseManager: NodeLocalLeaseManager,
 ): Promise<T> {
-  return withChangeLeaseRetry(changeId, (leasedStore) => openChangeFromStore(changeId, leasedStore, callback));
+  return withChangeLeaseRetry(changeId, (leasedStore) => openChangeFromStore(changeId, leasedStore, callback), leaseManager);
 }
 
 async function openChangeFromStore<T>(
@@ -486,7 +488,7 @@ export class AuthoringService {
 
   private withOpenChange<T>(changeId: string, callback: (context: OpenChangeContext) => Promise<T>): Promise<T> {
     return this.leasedStore === undefined
-      ? withOpenChange(changeId, callback)
+      ? withOpenChange(changeId, callback, this.leaseManager)
       : openChangeFromStore(changeId, this.leasedStore, callback);
   }
 
@@ -576,7 +578,7 @@ export class AuthoringService {
 
   async inspectObject(projectRoot: string, objectRef: string, changeId?: string): Promise<ServiceResult<AuthoringObject>> {
     // 带 --change 时读取事务 workingFiles 的对象（patch 指纹以事务内当前状态为准）。
-    const context = changeId === undefined ? undefined : await openChangeContext(changeId);
+    const context = changeId === undefined ? undefined : await openChangeContext(changeId, this.leaseManager.dataRoot);
     const snapshot = context?.snapshot ?? (await this.loadProjectContext(await NodeProjectStorage.open(projectRoot))).snapshot;
     const object = inspectObject(buildObjectIndex(snapshot), objectRef);
     // timeline/track/cue 附当前 SHA-256 指纹，供后续类型化 patch 的 expectedFingerprint 使用。
@@ -632,7 +634,7 @@ export class AuthoringService {
   // —— Wave 5 composition.*：薄投影；依赖/冲突/plan/replay 计算全部在 CompositionService。 ——
 
   async compareComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
-    const service = await compositionServiceForProject(projectRoot);
+    const service = await compositionServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const refs = (input as { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }> }).candidateRefs;
     const raw = await service.compare(refs);
     const comparison = raw.comparison as import('@surdet/authoring').CompositionComparison;
@@ -664,7 +666,7 @@ export class AuthoringService {
     projectRoot: string,
     input: { candidateRefs: Array<{ changeId: string; capsuleId: string; artifactSha256: string }>; creativeBrief?: import('@surdet/authoring').CreativeBriefInput },
   ): Promise<ServiceResult<unknown>> {
-    const service = await reviewServiceForProject(projectRoot);
+    const service = await reviewServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const prepared = await service.prepareComparison(input);
     return {
       projectIdentity: prepared.identity.projectIdentity,
@@ -677,7 +679,7 @@ export class AuthoringService {
     projectRoot: string,
     input: { reviewId: string; decisionId?: string },
   ): Promise<ServiceResult<unknown>> {
-    const service = await reviewServiceForProject(projectRoot);
+    const service = await reviewServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const verified = await service.inspectDecision(input);
     return {
       projectIdentity: verified.receipt.projectIdentity,
@@ -690,7 +692,7 @@ export class AuthoringService {
     projectRoot: string,
     input: { planId: string; artifactSha256: string; changeId: string },
   ): Promise<ServiceResult<unknown>> {
-    const service = await reviewServiceForProject(projectRoot);
+    const service = await reviewServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const prepared = await service.prepareResult(input);
     return {
       projectIdentity: prepared.identity.projectIdentity,
@@ -703,7 +705,7 @@ export class AuthoringService {
     projectRoot: string,
     input: { resultReviewId: string; approvalId?: string },
   ): Promise<ServiceResult<unknown>> {
-    const service = await reviewServiceForProject(projectRoot);
+    const service = await reviewServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const inspected = await service.inspectApproval(input);
     const receipt = inspected.receipt as unknown as Record<string, unknown>;
     return {
@@ -716,7 +718,7 @@ export class AuthoringService {
   }
 
   async planComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
-    const service = await compositionServiceForProject(projectRoot);
+    const service = await compositionServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const hasReviewedDecision = Object.prototype.hasOwnProperty.call(input, 'reviewDecision');
     const hasDirectSelection = Object.prototype.hasOwnProperty.call(input, 'selectedUnitIds');
     if (hasReviewedDecision === hasDirectSelection) {
@@ -731,7 +733,7 @@ export class AuthoringService {
           decisionId: string;
           decisionFingerprint: string;
         };
-        const reviewService = await reviewServiceForProject(projectRoot);
+        const reviewService = await reviewServiceForProject(projectRoot, this.leaseManager.dataRoot);
         const verified = await reviewService.inspectDecision({
           reviewId: decision.reviewId,
           decisionId: decision.decisionId,
@@ -780,7 +782,7 @@ export class AuthoringService {
   }
 
   async inspectComposition(projectRoot: string, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
-    const service = await compositionServiceForProject(projectRoot);
+    const service = await compositionServiceForProject(projectRoot, this.leaseManager.dataRoot);
     const outcome = await service.inspect(input as { planId: string; artifactSha256: string });
     return {
       projectIdentity: service.projectIdentity,
@@ -790,10 +792,10 @@ export class AuthoringService {
   }
 
   async executeComposition(projectRoot: string, activeChangeId: string | undefined, input: Record<string, unknown>): Promise<ServiceResult<unknown>> {
-    const service = await compositionServiceForProject(projectRoot);
+    const service = await compositionServiceForProject(projectRoot, this.leaseManager.dataRoot);
     // session 状态机不变量：已有普通 active change 时拒绝执行（integration resume 由 service 核对）。
     if (activeChangeId !== undefined) {
-      const record = await NodeChangeStore.openByChangeId(activeChangeId).then((opened) => opened?.record ?? null);
+      const record = await NodeChangeStore.openByChangeId(activeChangeId, this.leaseManager.dataRoot).then((opened) => opened?.record ?? null);
       if (record !== null && record.integration === undefined) {
         throw new AuthoringOperationError('CHANGE_BUSY', '当前 session 已有普通 active change，不能执行 composition.execute', {
           changeId: activeChangeId,
@@ -821,7 +823,7 @@ export class AuthoringService {
   async begin(projectRoot: string, intent?: ChangeIntentMetadata, options?: { compositionMode: 'candidate' | 'direct' }): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
     const { snapshot, assetFiles } = await this.loadProjectContext(storage);
-    const store = await NodeChangeStore.forProject(snapshot.rootIdentity);
+    const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leaseManager.dataRoot);
     const baseAssetRefs = resolvedCompositionAssetRefs(assetFiles.map((file) => file.path));
     const composition = { mode: options?.compositionMode ?? 'direct', operationFactsVersion: '1.0.0' as const, baseAssetRefs };
     const session = await beginChange(snapshot, store, storage, intent, {
@@ -1004,7 +1006,7 @@ export class AuthoringService {
   }
 
   async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; events: unknown[]; count: number; seed: number; freshness: ReturnType<typeof evidenceFreshness> }>> {
-    const context = await openChangeContext(changeId);
+    const context = await openChangeContext(changeId, this.leaseManager.dataRoot);
     const value = await context.store.readTrace(changeId, traceId) as { events?: Parameters<typeof normalizeTrace>[0]; seed?: unknown } | null;
     if (value === null || !Array.isArray(value.events)) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹不存在：${traceId}`);
     if (typeof value.seed !== 'number') throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹缺少实际 seed：${traceId}`);
@@ -1059,14 +1061,14 @@ export class AuthoringService {
     changeId: string,
     approvalRef?: ReviewApprovalRef,
   ): Promise<ServiceResult<{ changeId: string; status: 'COMMITTED'; files: string[]; coordination: AgentCommitCoordination }>> {
-    const opened = await NodeChangeStore.openByChangeId(changeId);
+    const opened = await NodeChangeStore.openByChangeId(changeId, this.leaseManager.dataRoot);
     if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
     let verifiedApproval: VerifiedReviewApproval | undefined;
     if (opened.record.integration !== undefined) {
       if (approvalRef === undefined) {
         throw new AuthoringOperationError('REVIEW_APPROVAL_REQUIRED', 'integration change 必须显式提供 approvalRef');
       }
-      const reviewService = await reviewServiceForProject(opened.record.projectRootIdentity);
+      const reviewService = await reviewServiceForProject(opened.record.projectRootIdentity, this.leaseManager.dataRoot);
       const inspected = await reviewService.inspectApproval(approvalRef);
       if (!('bindingFingerprint' in inspected)) {
         throw new AuthoringOperationError('REVIEW_RETURNED', 'result review 已被项目所有者退回，不能继续 commit');
@@ -1122,19 +1124,19 @@ export class AuthoringService {
       return { ...metadataForChange(session), result: { changeId: rolledBack.changeId, status: 'ROLLED_BACK' } };
     };
     return this.leasedStore === undefined
-      ? withChangeLeaseRetry(changeId, rollbackWithStore)
+      ? withChangeLeaseRetry(changeId, rollbackWithStore, this.leaseManager)
       : rollbackWithStore(this.leasedStore);
   }
 
   async inspectRecovery(changeId: string): Promise<ServiceResult<RecoveryInspection>> {
-    const discovered = await NodeChangeStore.openByChangeId(changeId);
+    const discovered = await NodeChangeStore.openByChangeId(changeId, this.leaseManager.dataRoot);
     if (discovered === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
     const projectRootIdentity = discovered.record.projectRootIdentity;
     const changeLease = await this.leaseManager.inspect('change', changeId);
     const projectLease = await this.leaseManager.inspect('project', projectRootIdentity);
     const observedLock = changeLease.state !== 'free' ? changeLease : projectLease;
     if (observedLock.state !== 'free') {
-      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+      const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true, dataRoot: this.leaseManager.dataRoot });
       if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
       return inspectRecoveryFromStore(changeId, opened.store, recoveryLockState(observedLock.state));
     }
@@ -1154,7 +1156,7 @@ export class AuthoringService {
         const latestChangeLease = await this.leaseManager.inspect('change', changeId);
         const latestProjectLease = await this.leaseManager.inspect('project', projectRootIdentity);
         const latest = latestChangeLease.state !== 'free' ? latestChangeLease : latestProjectLease;
-        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true, dataRoot: this.leaseManager.dataRoot });
         if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
         return inspectRecoveryFromStore(changeId, opened.store, recoveryLockState(latest.state));
       }
@@ -1166,7 +1168,7 @@ export class AuthoringService {
     changeId: string,
     input: { operationId: string; recoveryToken: string },
   ): Promise<ServiceResult<{ changeId: string; status: 'OPEN' | 'COMMITTED'; disposition: string }>> {
-    const discovered = await NodeChangeStore.openByChangeId(changeId);
+    const discovered = await NodeChangeStore.openByChangeId(changeId, this.leaseManager.dataRoot);
     if (discovered === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
     const projectRootIdentity = discovered.record.projectRootIdentity;
     return NodeChangeStore.withChangeLeaseForProject(
@@ -1175,7 +1177,7 @@ export class AuthoringService {
       async (leasedStore) => withProjectLeaseRetry(this.leaseManager, projectRootIdentity, async () => {
         // Recovery never reuses inspect's object graph: both record and journal
         // are read after the change -> project locks are held.
-        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true });
+        const opened = await NodeChangeStore.openForProject(changeId, projectRootIdentity, { allowTerminal: true, allowStale: true, dataRoot: this.leaseManager.dataRoot });
         if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
         const record = await leasedStore.read(changeId);
         if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -143,6 +143,76 @@ async function readRecordAndJournalBytes(fixture: Fixture, rootIdentity: string,
 }
 
 describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
+  it('替换失败恢复后，同一事务重试成功且保留第一次日志', async () => {
+    await withFixture('surdet-recovery-retry-', async (fixture) => {
+      const service = new AuthoringService();
+      const changeId = await beginRecoveryChange(fixture.projectRoot, true);
+      await service.validate(changeId);
+      const original = filesDigest(fixture.projectRoot);
+      const replace = NodeProjectStorage.prototype.replaceFromStage;
+      let replacements = 0;
+      const fault = vi.spyOn(NodeProjectStorage.prototype, 'replaceFromStage').mockImplementation(async function (this: NodeProjectStorage, file, stage) {
+        if (++replacements === 2) throw new Error('one-time replacement failure');
+        return replace.call(this, file, stage);
+      });
+      try {
+        await expect(service.commit(changeId)).rejects.toMatchObject({ code: 'COMMIT_FAILED_RECOVERED' });
+      } finally {
+        fault.mockRestore();
+      }
+      expect(filesDigest(fixture.projectRoot)).toEqual(original);
+      const opened = (await NodeChangeStore.openByChangeId(changeId))!;
+      const before = (await opened.store.readLatestJournal(changeId))!;
+      expect(before.status).toBe('RECOVERED');
+      const directory = path.join(changeDirectory(fixture.dataRoot, opened.record.projectRootIdentity, changeId), 'journals');
+      const oldLogs = new Map(fs.readdirSync(directory).map((name) => [name, fs.readFileSync(path.join(directory, name))]));
+      const inspected = await service.inspectRecovery(changeId);
+      expect(inspected.result.disposition).toBe('REOPEN_OPEN');
+      await service.executeRecovery(changeId, { operationId: 'reopen-for-retry', recoveryToken: inspected.result.recoveryToken! });
+      await expect(service.commit(changeId)).resolves.toMatchObject({ result: { status: 'COMMITTED' } });
+      const after = (await NodeChangeStore.openByChangeId(changeId))!;
+      const journal = (await after.store.readLatestJournal(changeId))!;
+      expect(after.record.status).toBe('COMMITTED');
+      expect(journal.status).toBe('COMMITTED');
+      expect(journal.journalVersion).toBeGreaterThan(before.journalVersion);
+      for (const [name, bytes] of oldLogs) expect(fs.readFileSync(path.join(directory, name))).toEqual(bytes);
+      for (const entry of journal.files) {
+        expect(fs.readFileSync(path.join(fixture.projectRoot, entry.path), 'utf8')).toBe(after.record.workingFiles[entry.path]);
+      }
+      expect(fs.readFileSync(path.join(fixture.projectRoot, 'content/scenario/s1.gal'), 'utf8')).toBe('@scene s1\n开场。\n@end\n');
+    });
+  });
+
+  it('按 changeId 查找损坏目标保留错误，真正不存在仍返回 null', async () => {
+    await withFixture('surdet-corrupt-lookup-', async (fixture) => {
+      const changeId = await beginRecoveryChange(fixture.projectRoot);
+      const storage = await NodeProjectStorage.open(fixture.projectRoot);
+      const manifest = path.join(changeDirectory(fixture.dataRoot, storage.rootIdentity, changeId), 'manifest.json');
+      fs.writeFileSync(manifest, '{"formatVersion":');
+      await expect(NodeChangeStore.openForProject(changeId, storage.rootIdentity)).rejects.toMatchObject({ code: 'CHANGE_STORE_CORRUPT' });
+      await expect(NodeChangeStore.openByChangeId(changeId)).rejects.toMatchObject({ code: 'CHANGE_STORE_CORRUPT' });
+      await expect(new AuthoringService().inspectRecovery(changeId)).rejects.toMatchObject({ code: 'CHANGE_STORE_CORRUPT' });
+      await expect(NodeChangeStore.openByChangeId('absent-change')).resolves.toBeNull();
+    });
+  });
+
+  it('未恢复的 STAGING 阻止重提，恢复后才允许同一事务写入', async () => {
+    await withFixture('surdet-retry-pending-recovery-', async (fixture) => {
+      const service = new AuthoringService();
+      const changeId = await beginRecoveryChange(fixture.projectRoot);
+      await service.validate(changeId);
+      const { rootIdentity } = await prepareInterruptedChange(fixture, changeId, 'staging');
+      const beforeProject = filesDigest(fixture.projectRoot);
+      const beforeRecords = await readRecordAndJournalBytes(fixture, rootIdentity, changeId);
+      await expect(service.commit(changeId)).rejects.toMatchObject({ code: 'RECOVERY_AMBIGUOUS' });
+      expect(filesDigest(fixture.projectRoot)).toEqual(beforeProject);
+      expect(await readRecordAndJournalBytes(fixture, rootIdentity, changeId)).toEqual(beforeRecords);
+      const inspected = await service.inspectRecovery(changeId);
+      await service.executeRecovery(changeId, { operationId: 'recover-staging', recoveryToken: inspected.result.recoveryToken! });
+      await expect(service.commit(changeId)).resolves.toMatchObject({ result: { status: 'COMMITTED' } });
+    });
+  });
+
   it('record 已创建但 head 未发布：同内容恢复写入接管孤儿 record，不误报冲突', async () => {
     await withFixture('surdet-task7-orphan-record-', async (fixture) => {
       const changeId = await beginRecoveryChange(fixture.projectRoot);

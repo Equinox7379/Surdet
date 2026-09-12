@@ -135,12 +135,12 @@ function directoryHandle(
     requestPermission: async () => 'granted',
     getDirectoryHandle: async (child: string) => {
       const value = directories[child];
-      if (!value) throw new Error(`missing directory ${child}`);
+      if (!value) throw new DOMException(`missing directory ${child}`, 'NotFoundError');
       return value;
     },
     getFileHandle: async (child: string) => {
       const value = files[child];
-      if (!value) throw new Error(`missing file ${child}`);
+      if (!value) throw new DOMException(`missing file ${child}`, 'NotFoundError');
       return value;
     },
     values: async function* () {
@@ -1354,6 +1354,48 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await switching;
     expect(onProjectClosing).toHaveBeenCalledTimes(1);
     expect(state.dirName).toBe('next-project');
+  });
+
+  it('写回后重新加载来源项目保留同一审阅及回执，真实读取新正文', async () => {
+    const root = directoryHandle('source-project', {
+      content: directoryHandle('content', { scenario: directoryHandle('scenario', {}, {
+        'start.gal': fileHandle(null, log, 'start.gal', '@scene start\n写回后的正文。\n@end\n'),
+      }) }),
+    }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{"entryScene":"start"}') });
+    const workspace = { reviewId: 'approved-review', approvalReceipt: { approvalId: 'kept-approval' } } as unknown as NonNullable<typeof state.reviewWorkspace>;
+    state.reviewWorkspace = workspace;
+    const settled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectLoadSettled: settled });
+    await openProjectFromHandle(root, { preserveReviewWorkspace: true });
+    expect(state.reviewWorkspace).toBe(workspace);
+    expect(state.mainTab).toBe('review');
+    expect(state.scenes.get('start')?.text).toContain('写回后的正文');
+    expect(settled).toHaveBeenCalledWith(true);
+  });
+
+  it.each(['config', 'scene', 'timeline', 'assets'])('%s 的真实读取故障不能冒充项目加载成功', async (area) => {
+    const broken = fileHandle(null, log, area === 'scene' ? 'start.gal' : area === 'timeline' ? 'intro.json' : 'events.json');
+    broken.getFile = async () => { throw new DOMException('read denied', 'NotAllowedError'); };
+    const content = directoryHandle('content', {
+      scenario: directoryHandle('scenario', {}, area === 'scene' ? { 'start.gal': broken } : {}),
+      timelines: directoryHandle('timelines', {}, area === 'timeline' ? { 'intro.json': broken } : {}),
+      config: directoryHandle('config', {}, area === 'config' ? { 'events.json': broken } : {}),
+    });
+    if (area === 'assets') {
+      const getDirectory = content.getDirectoryHandle;
+      content.getDirectoryHandle = async (name, options) => {
+        if (name === 'assets') throw new DOMException('read denied', 'NotAllowedError');
+        return getDirectory(name, options);
+      };
+    }
+    const root = directoryHandle('unreadable-project', { content });
+    const loaded = vi.fn(), settled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onProjectLoaded: loaded, onProjectLoadSettled: settled });
+    await expect(openProjectFromHandle(root, { preserveReviewWorkspace: true })).rejects.toThrow('read denied');
+    expect(loaded).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledWith(false);
+    expect(state.projectLoading).toBe(false);
   });
 
   it('场景改名或删除尚未保存时拒绝切换项目与演示项目', async () => {

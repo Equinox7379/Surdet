@@ -355,6 +355,7 @@ export interface EditorWorkspaceState {
 }
 
 export interface EditorWorkspaceSnapshot {
+  projectIdentity: string;
   diskBaseline: ProjectDiskBaseline;
   mutationNotice: ProjectMutationNotice | null;
 }
@@ -1771,13 +1772,13 @@ export function createAssetImportAuthorityClient(
       if (!isRecord(value) || !Number.isSafeInteger(value.workspaceGeneration) || !isTimestamp(value.heartbeatAt)) throw invalidResponse();
     }),
     snapshot: workspaceSessionId => workspaceRequest('snapshot', { workspaceSessionId }, value => {
-      if (!isRecord(value)) throw invalidResponse();
+      if (!isRecord(value) || typeof value.projectIdentity !== 'string' || !/^[0-9a-f]{32}$/.test(value.projectIdentity)) throw invalidResponse();
       const diskBaseline = parseWorkspaceBaseline(value.diskBaseline);
       const notice = value.mutationNotice;
       if (notice !== null && (!isRecord(notice) || !Number.isSafeInteger(notice.sequence)
         || !isSha256(notice.projectRevision) || !isSha256(notice.coordinationRevision)
         || !Array.isArray(notice.changedPaths) || !notice.changedPaths.every(path => isProjectRelativePath(path)))) throw invalidResponse();
-      return { diskBaseline, mutationNotice: notice as ProjectMutationNotice | null };
+      return { projectIdentity: value.projectIdentity, diskBaseline, mutationNotice: notice as ProjectMutationNotice | null };
     }),
     begin: state => workspaceRequest('begin', state, value => {
       if (!isRecord(value) || !isUuid(value.writeLeaseId) || !isTimestamp(value.expiresAt)) throw invalidResponse();

@@ -236,3 +236,25 @@ export function editorWorkspaceTextChanges() {
   if (current?.baseline === null || current?.baseline === undefined || current.latest === null) return null;
   return diffProjectDiskBaselines(current.baseline, current.latest.diskBaseline);
 }
+
+/** Publish current local facts before the explicitly requested external write. */
+export async function flushEditorWorkspaceState(): Promise<void> {
+  const current = connection;
+  if (current === null) return;
+  try {
+    await enqueue(current, async () => {
+      if (connection !== current) throw new Error('工作区已经切换，未继续写回。');
+      const body = stateFor(current); // Actual dirty/busy facts, never force-clean.
+      if (current.writeLeaseId !== null) {
+        await current.client.renew({ ...body, writeLeaseId: current.writeLeaseId });
+      } else {
+        await current.client.heartbeat(body);
+      }
+      if (connection !== current) throw new Error('工作区已经切换，未继续写回。');
+      current.lost = false;
+    });
+  } catch (error) {
+    if (connection === current) { current.lost = true; onChanged(); }
+    throw error;
+  }
+}

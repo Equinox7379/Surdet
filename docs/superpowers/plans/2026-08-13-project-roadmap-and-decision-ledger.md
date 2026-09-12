@@ -3480,12 +3480,12 @@ Owner 已明确决定：**Windows 原生目录选择器与真实中文输入法�
 | Editor 前端 | Pass 1–7 既有迁移保留；Pass 7.5 / V4 已批准并完成正式落地。 |
 | V4 设计基线 | 九工作面与可视化混合编排保留；不无故重开风格探索或丢弃原有业务能力。 |
 | 整个前端路线 | Frontend Pass 1–10 已由本轮收到的云端终审裁决关闭；B01、V4、F01/F02 保持关闭。另行暂停的按钮改版不因此获得认可或重启。 |
-| 当前活动目标 | `REUSED_PAIR_POSTFIX_CONTINUATION` 已完成本地续验：新 integration、两条实际运行和内容核对通过，Owner 亲自保存决定、试玩及正式批准完成。Owner 的非阻断预览大小反馈已作局部样式修正，模糊问题已恢复浏览器原生像素密度；真实页面与构建通过。身份与反馈统一见 [Wave 9 任务书 Execution Ledger](2026-09-11-stage-6-wave-9-whole-proposal-review-goal.md#execution-ledger--本地持续更新)，当前为 `WAITING_FOR_CLOUD_FINAL_CLOSURE`。 |
-| 主线阶段 | Stage 6 Wave 8 R2 已远端闭合；Wave 9 来源问题已复审关闭，同样本的 Owner 亲自操作与体验已补齐，等待云端最终裁决，整波尚未正式关闭。 |
+| 当前活动目标 | Wave 10 已批准结果的显式写回、加载与继续编辑已完成本地实现及验证，相关公共事务缺陷一并修复；详见 [Wave 10 执行记录](2026-09-12-stage-6-wave-10-approved-apply.md)。Wave 9 同样本的 Owner 亲自保存决定、试玩与批准，以及预览大小和清晰度修复，继续保留在 [Wave 9 任务书 Execution Ledger](2026-09-11-stage-6-wave-9-whole-proposal-review-goal.md#execution-ledger--本地持续更新)。 |
+| 主线阶段 | Stage 6 Wave 10 本地实现完成，Owner 尚未亲自操作新写回功能。Owner 2026-09-12 明确授权直接施工，等待云端修包／裁决不再是本轮前置步骤；不据此倒填历史云端验收。 |
 | 暂缓验证 | 原生 Windows 目录选择器、真实中文输入法均未实测，由 Owner 暂缓，不作为当前门槛。 |
 | 已解决问题与保留边界 | Wave 9 已接通整案 / 混合选择、三源事实与封存最终正文、保存前只读权威预览、v2 回执、正式计划及实际结果说明；旧 v1 可读取。Q1 的历史协助过程保留；新的独立候选与 Owner 选案反馈见本轮任务书。原生目录选择器与中文输入法的暂缓范围没有改变。 |
 | 本机状态 | `E:\surdet` / `main`；`W9_R1 = LOCALLY_FIXED`，来源修复提交为 `744b18c`，定向测试、类型检查、构建、实际页面与单次完整 `verify:all` 均通过；Pass 8 等待时机修正提交为 `a09190d`，完整本地回归通过。两者均纳入普通推送范围，实际 HEAD 与同步状态以 Git 记录为准。原未跟踪资料与受保护文件保持原位；本地结果不标记为远端 CI 通过。 |
-| 当前授权与停止点 | 本次实际续验与显示修正按授权普通 commit / push，停在 `WAITING_FOR_CLOUD_FINAL_CLOSURE`；2026 年 9 月 CI 仍停用，Linux 干净环境复验留待恢复。不跑 fresh Agent，不执行 `change.commit`、部署或发行，不自行关闭 Wave 9 或开始下一波。 |
+| 当前授权与停止点 | 2026-09-12 Owner 在 Wave 10 R2.2 集中审查后明确要求主代理直接开工，并授权仔细检查、修复相关旧问题。本轮停止在本地实现、验证与提交，供 Owner 使用新建非正式样例；未 push、未部署，2026 年 9 月托管 CI 继续暂停，不涉及生产项目、发行或下一波。结果见 [Wave 10 执行记录](2026-09-12-stage-6-wave-10-approved-apply.md)。 |
 | 台账交付状态 | 本文件纳入仓库版本控制，后续云端与本地读取同一路径。旧的 local-only、未跟踪和禁止提交表述保留为历史事实，不再作为本台账的当前限制。 |
 
 Wave 8 的实现、fresh Agent 边界、逐次云端整改及 Electron CI 修复统一见 [Wave 8 交付报告](../../SURDET-CANDIDATE-COMPOSITION-READINESS-STAGE-6-WAVE-8-DELIVERY-REPORT-2026-09-10.md)。第 9.20 节的 Q1 过程与当时停止点保留为历史；Wave 9 当前结果以任务书 Execution Ledger 为准。当前没有因波次编号而自动启动的新 Goal。

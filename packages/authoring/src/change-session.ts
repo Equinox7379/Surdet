@@ -594,9 +594,13 @@ export async function commitChange(
     }
   }
 
+  const previousJournal = await change.repository.readLatestJournal(change.record.changeId) as CommitJournal | null;
+  if (previousJournal !== null && previousJournal.status !== 'RECOVERED') {
+    throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', '上次提交尚未完成恢复，请先检查并执行事务恢复');
+  }
   let journal: CommitJournal = {
     formatVersion: 2,
-    journalVersion: 0,
+    journalVersion: previousJournal?.journalVersion ?? 0,
     changeId: change.record.changeId,
     recordVersionAtCommitStart: change.record.recordVersion,
     projectRevisionAtCommitStart: change.record.baseRevision,
@@ -604,13 +608,11 @@ export async function commitChange(
     files: [],
   };
   const writeJournal = async (status: CommitJournal['status']): Promise<void> => {
-    journal = {
-      ...clone(journal),
-      journalVersion: journal.journalVersion + 1,
-      status,
-      files: clone(journal.files),
-    };
-    await change.repository.writeJournal(change.record.changeId, journal);
+    journal.journalVersion += 1;
+    journal.status = status;
+    // Keep the entries being updated by the replacement/rollback loops alive.
+    // Replacing this array here loses later files' replaced/restored flags.
+    await change.repository.writeJournal(change.record.changeId, clone(journal));
   };
   try {
     for (const path of paths) {

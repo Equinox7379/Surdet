@@ -577,9 +577,10 @@ describe('Editor 素材导入 authority client', () => {
     const mutationNotice = { schemaVersion: 1, sequence: 7, projectIdentity: PROJECT_IDENTITY,
       projectRevision: diskBaseline.projectRevision, coordinationRevision: diskBaseline.coordinationRevision,
       initiator: 'external-agent', changedPaths: ['game.config.json'], occurredAt: '2026-09-09T10:00:00.000Z' };
-    fetcher.mockResolvedValueOnce(success({ diskBaseline, mutationNotice }));
-    await expect(client.workspace.snapshot(OPERATION_ID)).resolves.toEqual({ diskBaseline, mutationNotice });
-    fetcher.mockResolvedValueOnce(success({ diskBaseline: { ...diskBaseline, files: [{ path: 'C:/private/file', sha256: '3'.repeat(64) }] }, mutationNotice }));
+    const projectIdentity = 'a'.repeat(32);
+    fetcher.mockResolvedValueOnce(success({ projectIdentity, diskBaseline, mutationNotice }));
+    await expect(client.workspace.snapshot(OPERATION_ID)).resolves.toEqual({ projectIdentity, diskBaseline, mutationNotice });
+    fetcher.mockResolvedValueOnce(success({ projectIdentity, diskBaseline: { ...diskBaseline, files: [{ path: 'C:/private/file', sha256: '3'.repeat(64) }] }, mutationNotice }));
     await expect(client.workspace.snapshot(OPERATION_ID)).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
   });
 
