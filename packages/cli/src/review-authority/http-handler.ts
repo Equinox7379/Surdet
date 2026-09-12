@@ -12,6 +12,10 @@ import {
   type ReviewDecisionPreview,
   type ReviewTerminalCommand,
   type ReviewTerminalSnapshot,
+  parseReviewPreparationRequest,
+  type ReviewPreparationRequest,
+  type ReviewPreparationStatus,
+  type PreparedReviewContent,
 } from '@surdet/authoring';
 import {
   parseReviewTerminalDescribeInput,
@@ -35,6 +39,7 @@ export interface ReviewAuthorityHttpHandlerOptions {
   maxBodyBytes?: number;
   bodyTimeoutMs?: number;
   applyApprovedResult?(request: ReviewApplyRequest): Promise<ReviewApplyStatus>;
+  prepareResult?(request: ReviewPreparationRequest): Promise<ReviewPreparationStatus | PreparedReviewContent>;
 }
 
 class BodyTooLargeError extends Error {}
@@ -66,6 +71,9 @@ const SAFE_BUSINESS_ERROR_CODES = new Set([
   'CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'CHANGE_ID_AMBIGUOUS',
   'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_AMBIGUOUS',
   'COMMIT_RECOVERY_FAILED', 'HUMAN_WORKSPACE_DIRTY', 'HUMAN_WORKSPACE_BUSY', 'HUMAN_WORKSPACE_STATE_CORRUPT',
+  'REVIEW_PREPARATION_UNAVAILABLE', 'REVIEW_PREPARATION_IO_FAILED', 'OBJECT_NOT_FOUND',
+  'CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_PROJECT_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE',
+  'COMPOSITION_REPLAY_FAILED', 'VALIDATION_FAILED', 'RUNTIME_FAILED', 'SIMULATION_INCOMPLETE', 'REVIEW_FIXTURE_CHANGED',
 ]);
 
 function headerValue(request: IncomingMessage, name: string): string | undefined {
@@ -229,7 +237,8 @@ export function createReviewAuthorityHttpHandler(
       const writeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/write`;
       const previewRoute = `${REVIEW_AUTHORITY_BASE_PATH}/preview-decision`;
       const applyRoute = `${REVIEW_AUTHORITY_BASE_PATH}/apply-approved-result`;
-      if (route !== statusRoute && route !== describeRoute && route !== writeRoute && route !== previewRoute && route !== applyRoute) {
+      const preparationRoute = `${REVIEW_AUTHORITY_BASE_PATH}/prepare-result`;
+      if (route !== statusRoute && route !== describeRoute && route !== writeRoute && route !== previewRoute && route !== applyRoute && route !== preparationRoute) {
         sendBoundaryError(request, response, 404, 'NOT_FOUND', '本机审阅服务没有这个入口。');
         return;
       }
@@ -274,6 +283,12 @@ export function createReviewAuthorityHttpHandler(
         return;
       }
       const body = parseJson(await readBody(request, maxBodyBytes, bodyTimeoutMs));
+      if (route === preparationRoute) {
+        const command = parseReviewPreparationRequest(body);
+        if (options.prepareResult === undefined) throw new AuthoringOperationError('REVIEW_PREPARATION_UNAVAILABLE', '当前入口未绑定来源项目。');
+        sendJson(response, 200, { ok: true, result: await options.prepareResult(command) });
+        return;
+      }
       if (route === applyRoute) {
         const command = parseReviewApplyRequest(body);
         if (options.applyApprovedResult === undefined) throw new ReviewApplyError('REVIEW_APPLY_UNAVAILABLE', '当前服务未绑定写回项目。');

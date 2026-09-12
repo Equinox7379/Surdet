@@ -272,6 +272,20 @@ describe('Wave 5 integration execution', () => {
     })()).rejects.toMatchObject({ code: 'COMPOSITION_PLAN_INVALID' });
   });
 
+  it('rechecks READY results on resume and refuses changes outside the saved plan', async () => {
+    const plan = makePlan();
+    const change = await beginIntegrationChange(plan);
+    await executeIntegrationReplay(change, plan, hasher);
+    plan.dryRun.finalObjectFingerprints['scene:alpha'] = (await fingerprintWorkingObject(change.record.workingFiles, 'scene:alpha', hasher)).fingerprint;
+    change.record.workingFiles['content/scenario/alpha.gal'] = '@scene alpha\n另一份未获选择的台词。\n@end\n';
+    await expect(executeIntegrationReplay(change, plan, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+
+    const other = await beginIntegrationChange(makePlan());
+    await executeIntegrationReplay(other, makePlan(), hasher);
+    other.record.operations['foreign-edit'] = other.record.operations['cmp_t4_0000_aaa']!;
+    await expect(executeIntegrationReplay(other, makePlan(), hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+  });
+
   it('seals integration metadata on the created record; takeover refusal lives in the service scan', async () => {
     const plan = makePlan();
     const repository = new InMemoryChangeRepository();

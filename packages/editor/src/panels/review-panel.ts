@@ -9,6 +9,7 @@ import { publishEditorWorkspaceState, flushEditorWorkspaceState } from '../edito
 import { ReviewApplyController, type ExistingEditorSyncPort } from '../review-apply-controller.js';
 import { createReviewApplyClient } from '../review-apply-client.js';
 import { renderReviewApplySection } from '../review-apply-section.js';
+import { renderReviewPreparation, type ReviewPreparationOptions } from '../review-preparation-section.js';
 import {
   canSealDecision,
   labelForCandidate,
@@ -44,7 +45,7 @@ import { renderReviewCausalPanel } from './right.js';
 import { renderPreviewPanel } from './preview-panel.js';
 import type { ReviewTerminalClient } from '../review-terminal-client.js';
 
-export interface ReviewPanelOptions {
+export interface ReviewPanelOptions extends ReviewPreparationOptions {
   now?: () => string;
   onPreview?: (workspace: ReviewWorkspaceState, request: ReviewPreviewRequest) => Promise<void> | void;
   onReloadOfficialResult?: (workspace: ReviewWorkspaceState) => Promise<void> | void;
@@ -1557,6 +1558,10 @@ export function renderReviewPanel(
   }
   if (workspace.projection.kind === 'comparison') renderComparisonReview(container, workspace, options);
   else renderResultReview(container, workspace, options);
+  const content = container.querySelector<HTMLElement>('.review-main') ?? container;
+  renderReviewPreparation(content, workspace, options);
+  const preparation = content.querySelector('.review-preparation');
+  if (preparation) content.querySelector('.review-decision-forecast')?.after(preparation);
 }
 
 /** 顶层“打开审阅任务”入口；创建 review workspace 后只切换到审阅页，不自动写回任何回执。 */

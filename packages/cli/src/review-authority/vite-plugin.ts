@@ -6,6 +6,7 @@ import { NodeLocalLeaseManager } from '../authoring/node-local-lease.js';
 import { ReviewTerminalAuthority } from '../authoring/review-terminal-authority.js';
 import { NodeReviewApprovedApplyBackend } from '../authoring/node-review-approved-apply.js';
 import { ReviewApprovedApplyService } from '../authoring/review-approved-apply-service.js';
+import { ReviewPreparationService } from '../authoring/review-preparation-service.js';
 import {
   createReviewAuthorityHttpHandler,
   REVIEW_AUTHORITY_BASE_PATH,
@@ -91,7 +92,13 @@ export function reviewAuthorityVitePlugin(options: ReviewAuthorityVitePluginOpti
     token,
   };
   let applyService: Promise<ReviewApprovedApplyService> | undefined;
+  let preparationService: Promise<ReviewPreparationService> | undefined;
   const handler = createReviewAuthorityHttpHandler({ authority, token, expectedOrigin,
+    ...(options.projectRoot === undefined ? {} : { prepareResult: async (request) => {
+      preparationService ??= ReviewPreparationService.open(options.projectRoot!, leases.dataRoot)
+        .catch((error: unknown) => { preparationService = undefined; throw error; });
+      return (await preparationService).execute(request);
+    } }),
     ...(options.projectRoot === undefined ? {} : { applyApprovedResult: async (request) => {
       applyService ??= NodeReviewApprovedApplyBackend.open(options.projectRoot!, leases.dataRoot)
         .then((backend) => new ReviewApprovedApplyService(backend))

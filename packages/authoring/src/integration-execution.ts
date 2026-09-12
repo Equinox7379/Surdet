@@ -150,6 +150,10 @@ export async function executeIntegrationReplay(
   if (change.record.status !== 'OPEN') {
     throw new AuthoringOperationError('CHANGE_NOT_OPEN', `integration change 状态为 ${change.record.status}`);
   }
+  const plannedOperations = new Set(plan.replayOperations.map(operation => operation.integrationOperationId));
+  if (Object.keys(change.record.operations).some(operationId => !plannedOperations.has(operationId))) {
+    throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', '组合包含保存计划之外的编辑，未继续准备结果。');
+  }
 
   const planReview = plan.review ?? { reviewState: 'unreviewed' as const };
   let metadata: IntegrationMetadata = current;
@@ -201,25 +205,24 @@ export async function executeIntegrationReplay(
     }));
   }
 
-  if (metadata.status !== 'READY') {
-    // Step 5：逐项核对 final fingerprints，全部匹配才 CAS READY。
-    for (const [objectRef, expected] of Object.entries(plan.dryRun.finalObjectFingerprints)) {
-      try {
-        const actual = await fingerprintWorkingObject(change.record.workingFiles, objectRef, hasher);
-        if (actual.fingerprint === expected) continue;
-        throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `final fingerprint mismatch：${objectRef}`);
-      } catch (error) {
-        const failure = {
-          code: errorCodeOf(error),
-          message: messageOf(error),
-          operationIndex: Math.max(0, metadata.nextOperationIndex - 1),
-          integrationOperationId: metadata.replayedOperations.at(-1)?.integrationOperationId ?? '',
-        };
-        await updateIntegrationMetadata(change, (m) => ({ ...m, status: 'FAILED', failure }));
-        throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', failure.message, { planId: plan.planId });
-      }
+  // READY may be resumed after a lost acknowledgement. Recheck its actual
+  // contents too; the old label cannot authorize intervening edits.
+  for (const [objectRef, expected] of Object.entries(plan.dryRun.finalObjectFingerprints)) {
+    try {
+      const actual = await fingerprintWorkingObject(change.record.workingFiles, objectRef, hasher);
+      if (actual.fingerprint === expected) continue;
+      throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `final fingerprint mismatch：${objectRef}`);
+    } catch (error) {
+      const failure = {
+        code: errorCodeOf(error),
+        message: messageOf(error),
+        operationIndex: Math.max(0, metadata.nextOperationIndex - 1),
+        integrationOperationId: metadata.replayedOperations.at(-1)?.integrationOperationId ?? '',
+      };
+      await updateIntegrationMetadata(change, (m) => ({ ...m, status: 'FAILED', failure }));
+      throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', failure.message, { planId: plan.planId });
     }
-    metadata = await updateIntegrationMetadata(change, (m) => ({ ...m, status: 'READY' }));
   }
+  if (metadata.status !== 'READY') metadata = await updateIntegrationMetadata(change, (m) => ({ ...m, status: 'READY' }));
   return metadata;
 }

@@ -37,6 +37,7 @@ export interface ApprovedApplyInspection {
   changedPaths: readonly string[];
   writeState: 'unwritten' | 'committing' | 'committed' | 'recovery-required' | 'unknown';
   workspace: WorkspaceCondition;
+  retryAfterMs?: number;
   blockers: readonly ApplyBlocker[];
   currentProject: 'matches-approved-base' | 'matches-commit' | 'changed-after-commit' | 'unknown';
   commit?: DurableCommitFact;
@@ -63,6 +64,7 @@ export interface ReviewApplyStatus {
   changedPaths: readonly string[];
   phase: ReviewApplyPhase;
   canWrite: boolean;
+  retryAfterMs?: number;
   blockers: readonly ApplyBlocker[];
   currentProject: ApprovedApplyInspection['currentProject'];
   commit?: DurableCommitFact;
@@ -156,7 +158,8 @@ export function statusFromInspection(s:ApprovedApplyInspection):ReviewApplyStatu
     if(s.workspace==='busy' && !blockers.some(x=>x.code==='HUMAN_WORKSPACE_BUSY'))
       blockers.push({code:'HUMAN_WORKSPACE_BUSY',message:'项目正在保存或切换，完成后再检查。'});
     if(s.workspace==='lost' && !blockers.some(x=>x.code==='HUMAN_WORKSPACE_STATE_CORRUPT'))
-      blockers.push({code:'HUMAN_WORKSPACE_STATE_CORRUPT',message:'工作区连接尚未确认，未执行写回。'});
+      blockers.push({code:'HUMAN_WORKSPACE_STATE_CORRUPT',message:s.retryAfterMs===undefined
+        ?'工作区连接尚未确认，未执行写回。':'正在等待旧窗口连接确认，稍后会自动检查；尚未写回。'});
     if(s.currentProject!=='matches-approved-base' && !blockers.some(x=>x.code==='PROJECT_CHANGED_SINCE_BEGIN'))
       blockers.push({code:'PROJECT_CHANGED_SINCE_BEGIN',message:'项目已离开批准结果的来源基线，需要重新审阅；未覆盖现有内容。'});
     phase=blockers.length===0?'ready':'blocked';
@@ -166,6 +169,7 @@ export function statusFromInspection(s:ApprovedApplyInspection):ReviewApplyStatu
     integrationChangeId:s.binding.integrationChangeId,targetDisplayName:s.targetDisplayName,
     targetPath:s.scope.canonicalProjectRoot,changedPaths:[...s.changedPaths],phase,
     canWrite:phase==='ready',blockers,currentProject:s.currentProject,
+    ...(phase==='blocked' && s.retryAfterMs!==undefined?{retryAfterMs:s.retryAfterMs}:{}),
     ...(s.commit===undefined?{}:{commit:s.commit}),
   };
 }

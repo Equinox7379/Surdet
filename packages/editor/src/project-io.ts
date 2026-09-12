@@ -321,7 +321,7 @@ async function loadProjectFromHandle(
   state.projectLoading = false;
   renderAll();
   runValidate(); // 打开后立即校验
-  if (!state.autosaveProjectId) {
+  if (!state.autosaveProjectId && options.source !== 'review-fixture') {
     setStatus('当前浏览器无法安全识别项目目录，自动备份未启用', false, 8000);
   }
   if (options.notifyProjectLoaded !== false) {

@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import {ReviewApprovedApplyService} from '../../cli/src/authoring/review-approved-apply-service.js';
 import {parseReviewApplyRequest,statusFromInspection} from '@surdet/authoring';
@@ -34,3 +34,19 @@ test('after sync, continue only on the verified bound project',async()=>{const f
 test('transport failure after write locks resubmit until explicit status check',async()=>{const e=editorFixture();let calls=0;const ready=statusFromInspection(base());const c=new ReviewApplyController(ref,async r=>{calls++;if(r.action==='write-approved-result')throw new Error('lost');return ready;},e.port,()=>{});await c.check();await c.write();assert.equal(c.snapshot.status.phase,'unknown');await c.write();assert.equal(calls,2);await c.check();assert.equal(c.snapshot.status.canWrite,true);});
 test('disposed context discards a late response',async()=>{const e=editorFixture();let resolve;const p=new Promise(r=>resolve=r);let notifications=0;const c=new ReviewApplyController(ref,()=>p,e.port,()=>notifications++);const work=c.check();c.dispose();resolve(statusFromInspection(base()));await work;assert.equal(c.snapshot.status,null);assert.equal(notifications,1);});
 test('status read failure after written does not erase success',async()=>{const f=fixture(),svc=new ReviewApprovedApplyService(f.backend),e=editorFixture();let fail=false;const c=new ReviewApplyController(ref,async r=>{if(fail)throw new Error('offline');return svc.execute(r);},e.port,()=>{});await c.check();await c.write();fail=true;await c.check();assert.equal(c.snapshot.status.phase,'written');});
+test('workspace grace expiry triggers a fresh read, never an automatic write', async () => {
+  vi.useFakeTimers();
+  const f=fixture(), svc=new ReviewApprovedApplyService(f.backend), e=editorFixture();
+  const c=new ReviewApplyController(ref,r=>svc.execute(r),e.port,()=>{});
+  try {
+    f.state={...base(),workspace:'lost',retryAfterMs:2000};
+    await c.check();
+    assert.equal(c.snapshot.status.phase,'blocked');
+    f.state=base();
+    await vi.advanceTimersByTimeAsync(2000);
+    assert.equal(c.snapshot.status.phase,'ready');
+    assert.equal(f.calls,0);
+    await c.write();
+    assert.equal(f.calls,1);
+  } finally { c.dispose(); vi.useRealTimers(); }
+});
