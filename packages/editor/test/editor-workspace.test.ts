@@ -23,7 +23,7 @@ beforeEach(() => {
   facts = { sceneDirty: false, timelineDirty: false, configDirty: false, reviewDirty: false,
     projectTransition: true, assetImportWriting: false, assetRelocationWriting: false,
     sceneLifecycleWriting: false, autosaveRecoveryBlocked: false };
-  disk = { diskBaseline: structuredClone(oldBaseline), mutationNotice: null };
+  disk = { projectIdentity: 'a'.repeat(32), diskBaseline: structuredClone(oldBaseline), mutationNotice: null };
   client = {
     heartbeat: vi.fn(async () => {}), snapshot: vi.fn(async () => structuredClone(disk)),
     begin: vi.fn(async () => ({ writeLeaseId: '11111111-1111-4111-8111-111111111111',
@@ -57,7 +57,7 @@ describe('bound Editor sequential relay', () => {
   it('compares the full loaded baseline across multiple external changes without adopting it', async () => {
     await connectEditorWorkspace(client, root);
     facts.projectTransition = false;
-    disk = { diskBaseline: newBaseline, mutationNotice: { schemaVersion: 1, sequence: 2, projectIdentity: 'a'.repeat(64),
+    disk = { projectIdentity: 'a'.repeat(32), diskBaseline: newBaseline, mutationNotice: { schemaVersion: 1, sequence: 2, projectIdentity: 'a'.repeat(64),
       projectRevision: newBaseline.projectRevision, coordinationRevision: newBaseline.coordinationRevision,
       initiator: 'external-agent', occurredAt: '2026-09-09T10:00:00.000Z', changedPaths: ['game.config.json'] } };
     await pollEditorWorkspace(true);

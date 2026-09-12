@@ -17,7 +17,9 @@ const assetImportPlugin = projectLauncher
   : assetImportAuthorityVitePlugin(undefined);
 
 export default defineConfig({
-  plugins: [reviewAuthorityVitePlugin(projectLauncher ? { projectRoot, dataRoot } : {}), assetImportPlugin],
+  // Review transactions share the Agent/Editor coordination store. --data-root
+  // belongs to asset-import storage and may legitimately be a different folder.
+  plugins: [reviewAuthorityVitePlugin(projectLauncher ? { projectRoot } : {}), assetImportPlugin],
   server: { port: 5174 },
   build: {
     rollupOptions: {

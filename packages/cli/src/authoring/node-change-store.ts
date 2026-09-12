@@ -196,6 +196,33 @@ function validateJournal(value: unknown, changeId: string, file: string): Commit
   return journal as CommitJournal;
 }
 
+function validateJournalContinuation(previous: CommitJournal, journal: CommitJournal, file: string): void {
+  // A recovered attempt is closed. An explicit retry appends a new STAGING
+  // attempt; its newly staged files must not be compared with the old attempt.
+  if (journal.status === 'STAGING') {
+    if (previous.status === 'RECOVERED'
+      && journal.recordVersionAtCommitStart >= previous.recordVersionAtCommitStart
+      && journal.projectRevisionAtCommitStart === previous.projectRevisionAtCommitStart
+      && journal.files.every((entry) => !entry.replaced && !entry.restored)) return;
+    throw journalCorrupt(`commit journal 在恢复完成前重启提交：${file}`, { path: file, changeId: journal.changeId });
+  }
+  if (journal.recordVersionAtCommitStart !== previous.recordVersionAtCommitStart
+    || journal.projectRevisionAtCommitStart !== previous.projectRevisionAtCommitStart) {
+    throw journalCorrupt(`commit journal 起始身份前后矛盾：${file}`, { path: file, changeId: journal.changeId });
+  }
+  const previousFiles = new Map(previous.files.map((entry) => [entry.path, entry]));
+  if (journal.files.length !== previous.files.length
+    || journal.files.some((entry) => {
+      const baseline = previousFiles.get(entry.path);
+      return baseline === undefined
+        || baseline.originalSha256 !== entry.originalSha256
+        || baseline.targetSha256 !== entry.targetSha256
+        || baseline.stagedIdentity !== entry.stagedIdentity;
+    })) {
+    throw journalCorrupt(`commit journal 文件身份前后矛盾：${file}`, { path: file, changeId: journal.changeId });
+  }
+}
+
 function conflict(
   changeId: string,
   precondition: ChangeWritePrecondition,
@@ -233,8 +260,7 @@ export class NodeChangeStore implements ChangeRepository {
     private readonly leaseBinding?: LeaseBinding,
   ) {}
 
-  static async forProject(rootIdentity: string): Promise<NodeChangeStore> {
-    const root = dataRoot();
+  static async forProject(rootIdentity: string, root = dataRoot()): Promise<NodeChangeStore> {
     const projectDirectory = path.join(root, projectIdentityFromRoot(rootIdentity));
     await fs.mkdir(projectDirectory, { recursive: true });
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
@@ -289,16 +315,16 @@ export class NodeChangeStore implements ChangeRepository {
       );
     }
     if (legacyPaths.length === 1) throw unsupported(changeId, legacyPaths[0]!);
-    if (matches.length === 0) return null;
+    if (matches.length === 0) {
+      if (corruptCandidates.length > 0) throw corruptCandidates[0]!;
+      return null;
+    }
     if (matches.length > 1) {
       throw new AuthoringOperationError(
         'CHANGE_ID_AMBIGUOUS',
         `变更事务 '${changeId}' 在 ${matches.length} 个项目中存在同名记录——请为各项目隔离 SURDET_AGENT_DATA_DIR，或人工归档冲突的旧事务后重试`,
         { changeId, matchCount: matches.length, projectRootIdentities: matches.map((match) => match.record.projectRootIdentity) },
       );
-    }
-    if (matches.length === 0 && legacyPaths.length === 0 && corruptCandidates.length > 0) {
-      throw corruptCandidates[0]!;
     }
     return matches[0]!;
   }
@@ -369,10 +395,9 @@ export class NodeChangeStore implements ChangeRepository {
     });
   }
 
-  static async withChangeLease<T>(changeId: string, callback: (leased: NodeChangeStore) => Promise<T>): Promise<T> {
-    const manager = new NodeLocalLeaseManager();
+  static async withChangeLease<T>(changeId: string, callback: (leased: NodeChangeStore) => Promise<T>, manager = new NodeLocalLeaseManager()): Promise<T> {
     return manager.withLease({ scope: 'change', resourceId: changeId }, async (handle) => {
-      const opened = await NodeChangeStore.openByChangeId(changeId);
+      const opened = await NodeChangeStore.openByChangeId(changeId, manager.dataRoot);
       if (opened === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
       const leased = new NodeChangeStore(opened.store.rootDirectory, opened.store.rootIdentity, opened.store.projectDirectory, {
         manager,
@@ -561,6 +586,7 @@ export class NodeChangeStore implements ChangeRepository {
         actualVersion: journal.journalVersion,
       });
     }
+    if (latest !== null) validateJournalContinuation(latest, journal, journalPath);
     await createJsonRecord(path.join(journalDirectory, versionFile(journal.journalVersion)), journal);
   }
 
@@ -607,22 +633,7 @@ export class NodeChangeStore implements ChangeRepository {
         });
       }
       if (journals.length > 0) {
-        const previous = journals[0]!;
-        if (journal.recordVersionAtCommitStart !== previous.recordVersionAtCommitStart
-          || journal.projectRevisionAtCommitStart !== previous.projectRevisionAtCommitStart) {
-          throw journalCorrupt(`commit journal 起始身份前后矛盾：${file}`, { path: file, changeId });
-        }
-        const previousFiles = new Map(previous.files.map((entry) => [entry.path, entry]));
-        if (journal.files.length !== previous.files.length
-          || journal.files.some((entry) => {
-            const baseline = previousFiles.get(entry.path);
-            return baseline === undefined
-              || baseline.originalSha256 !== entry.originalSha256
-              || baseline.targetSha256 !== entry.targetSha256
-              || baseline.stagedIdentity !== entry.stagedIdentity;
-          })) {
-          throw journalCorrupt(`commit journal 文件身份前后矛盾：${file}`, { path: file, changeId });
-        }
+        validateJournalContinuation(journals.at(-1)!, journal, file);
       }
       journals.push(journal);
     }

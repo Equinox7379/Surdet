@@ -2,6 +2,10 @@ import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AuthoringOperationError,
+  ReviewApplyError,
+  parseReviewApplyRequest,
+  type ReviewApplyRequest,
+  type ReviewApplyStatus,
   parseReviewTerminalCommand,
   parseReviewDecisionPreviewCommand,
   type ReviewDecisionPreviewCommand,
@@ -30,6 +34,7 @@ export interface ReviewAuthorityHttpHandlerOptions {
   expectedOrigin(request: IncomingMessage): string | readonly string[];
   maxBodyBytes?: number;
   bodyTimeoutMs?: number;
+  applyApprovedResult?(request: ReviewApplyRequest): Promise<ReviewApplyStatus>;
 }
 
 class BodyTooLargeError extends Error {}
@@ -57,6 +62,10 @@ const SAFE_BUSINESS_ERROR_CODES = new Set([
   'CHANGE_STORE_CORRUPT',
   'PATH_OUTSIDE_PROJECT',
   'LEASE_CORRUPT',
+  'REVIEW_APPLY_UNAVAILABLE', 'PROJECT_IDENTITY_MISMATCH', 'PROJECT_CHANGED_SINCE_BEGIN',
+  'CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'CHANGE_ID_AMBIGUOUS',
+  'CHANGE_STORE_FORMAT_UNSUPPORTED', 'JOURNAL_CORRUPT', 'RECOVERY_AMBIGUOUS',
+  'COMMIT_RECOVERY_FAILED', 'HUMAN_WORKSPACE_DIRTY', 'HUMAN_WORKSPACE_BUSY', 'HUMAN_WORKSPACE_STATE_CORRUPT',
 ]);
 
 function headerValue(request: IncomingMessage, name: string): string | undefined {
@@ -99,16 +108,17 @@ function sendJson(
 }
 
 function errorCode(error: unknown): string {
-  return error instanceof AuthoringOperationError && SAFE_BUSINESS_ERROR_CODES.has(error.code)
+  return (error instanceof AuthoringOperationError || error instanceof ReviewApplyError) && SAFE_BUSINESS_ERROR_CODES.has(error.code)
     ? error.code
     : 'INTERNAL_ERROR';
 }
 
 function statusForError(error: unknown): number {
-  if (!(error instanceof AuthoringOperationError)) return 500;
+  if (!(error instanceof AuthoringOperationError || error instanceof ReviewApplyError)) return 500;
   if (!SAFE_BUSINESS_ERROR_CODES.has(error.code)) return 500;
   if (error.code === 'INVALID_REQUEST' || error.code === 'REVIEW_DECISION_INVALID') return 400;
   if (error.code === 'REVIEW_NOT_FOUND') return 404;
+  if (error.code === 'REVIEW_APPLY_UNAVAILABLE') return 503;
   if (error.code === 'REVIEW_BUSY'
     || error.code === 'REVIEW_TERMINAL_ALREADY_SET'
     || error.code === 'REVIEW_IDENTITY_MISMATCH'
@@ -218,7 +228,8 @@ export function createReviewAuthorityHttpHandler(
       const describeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/describe`;
       const writeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/write`;
       const previewRoute = `${REVIEW_AUTHORITY_BASE_PATH}/preview-decision`;
-      if (route !== statusRoute && route !== describeRoute && route !== writeRoute && route !== previewRoute) {
+      const applyRoute = `${REVIEW_AUTHORITY_BASE_PATH}/apply-approved-result`;
+      if (route !== statusRoute && route !== describeRoute && route !== writeRoute && route !== previewRoute && route !== applyRoute) {
         sendBoundaryError(request, response, 404, 'NOT_FOUND', '本机审阅服务没有这个入口。');
         return;
       }
@@ -263,6 +274,12 @@ export function createReviewAuthorityHttpHandler(
         return;
       }
       const body = parseJson(await readBody(request, maxBodyBytes, bodyTimeoutMs));
+      if (route === applyRoute) {
+        const command = parseReviewApplyRequest(body);
+        if (options.applyApprovedResult === undefined) throw new ReviewApplyError('REVIEW_APPLY_UNAVAILABLE', '当前服务未绑定写回项目。');
+        sendJson(response, 200, { ok: true, result: await options.applyApprovedResult(command) });
+        return;
+      }
       if (route === previewRoute && options.authority.previewDecision === undefined) {
         throw new AuthoringOperationError('REVIEW_PREVIEW_UNAVAILABLE', '当前入口不支持决定预览。');
       }

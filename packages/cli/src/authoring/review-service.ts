@@ -618,6 +618,7 @@ export class ReviewService {
   private async withResultChange<T>(
     changeId: string,
     callback: (storage: NodeProjectStorage, store: NodeChangeStore, record: ChangeRecord) => Promise<T>,
+    options: { allowTerminal?: boolean; allowStale?: boolean } = {},
   ): Promise<T> {
     const storage = await NodeProjectStorage.open(this.composition.projectRoot);
     if (projectIdentityFromRoot(storage.rootIdentity) !== this.composition.projectIdentity) {
@@ -629,7 +630,7 @@ export class ReviewService {
         if (record === null) throw reviewError('REVIEW_RESULT_NOT_READY', `integration change 不存在：${changeId}`, { changeId });
         return callback(storage, store, record);
       })
-    ), { leaseManager: this.leases });
+    ), { ...options, leaseManager: this.leases });
   }
 
   async prepareResult(input: { planId: string; artifactSha256: string; changeId: string }): Promise<PreparedReviewResult> {
@@ -724,7 +725,12 @@ export class ReviewService {
     return { receipt };
   }
 
-  async inspectApproval(input: { resultReviewId: string; approvalId?: string; approvalFingerprint?: string }): Promise<ReviewInspectionResult> {
+  async inspectApproval(
+    input: { resultReviewId: string; approvalId?: string; approvalFingerprint?: string },
+    // Application inspection verifies the original approval independently of the
+    // current disk. Its adapter must inspect disk/recovery; commit uses the default.
+    options: { forApplication?: boolean } = {},
+  ): Promise<ReviewInspectionResult> {
     const loaded = await this.readReview<HumanReviewProjection>(input.resultReviewId);
     const projection = parseReviewProjection(loaded.value, input.resultReviewId);
     if (projection.kind !== 'integration-result' || projection.finalResult === undefined) {
@@ -739,13 +745,16 @@ export class ReviewService {
         || projectIdentityFromRoot(record.projectRootIdentity) !== projection.projectIdentity) {
         throw reviewError('REVIEW_APPROVAL_STALE', `当前 integration 与 result review 不匹配：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       }
-      const snapshot = await loadProjectSnapshot(storage, this.hasher);
+      const committed = options.forApplication === true && record.status === 'COMMITTED';
+      const projectRevision = options.forApplication === true
+        ? record.baseRevision
+        : (await loadProjectSnapshot(storage, this.hasher)).revision;
       const diff = await store.readDiff(record.changeId);
       if (diff === null) throw reviewError('REVIEW_APPROVAL_STALE', `当前 diff evidence 缺失：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       const resultProject = await this.reviews.resultProjectDirectory(input.resultReviewId);
       const current: ResultReviewCurrentFacts = {
         projectIdentity: projection.projectIdentity,
-        projectRevision: snapshot.revision,
+        projectRevision,
         planId: integration.planId,
         planFingerprint: integration.planFingerprint,
         integrationChangeId: record.changeId,
@@ -774,8 +783,16 @@ export class ReviewService {
         && input.approvalFingerprint !== verified.receipt.approvalFingerprint) {
         throw reviewError('REVIEW_IDENTITY_MISMATCH', `approvalFingerprint 与磁盘批准回执不匹配：${input.resultReviewId}`, { reviewId: input.resultReviewId });
       }
+      if (committed) {
+        const persisted = integration.review?.approval;
+        if (persisted?.approvalId !== verified.receipt.approvalId
+          || persisted.approvalFingerprint !== verified.receipt.approvalFingerprint
+          || persisted.bindingFingerprint !== verified.bindingFingerprint) {
+          throw reviewError('REVIEW_IDENTITY_MISMATCH', '已提交事务与批准回执的持久化绑定不一致');
+        }
+      }
       return verified;
-    });
+    }, { allowTerminal: options.forApplication, allowStale: options.forApplication });
   }
 }
 

@@ -661,3 +661,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Approved result application within the existing review workspace. */
+.review-approved-apply { border-top: 1px solid var(--surdet-border-default); }
+.review-approved-apply .review-apply-target { font-weight: 700; }
+.review-approved-apply .review-apply-path {
+  font-family: var(--surdet-font-mono); color: var(--surdet-text-secondary);
+  overflow-wrap: anywhere; font-size: var(--surdet-type-caption);
+}
+.review-approved-apply .review-operations { display: flex; flex-wrap: wrap; gap: var(--surdet-space-12); }
+.review-approved-apply details { margin-block: var(--surdet-space-12); }
+.review-approved-apply li { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .review-approved-apply .review-operations { align-items: stretch; flex-direction: column; }
+  .review-approved-apply .review-operations button { width: 100%; }
+}

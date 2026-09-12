@@ -64,7 +64,8 @@ describe('preview stage layout contract', () => {
     expect(panelSource).toContain("options.embedded !== true && !constrainedViewport");
     expect(panelSource).toContain("workspace.setAttribute('data-preview-layout', options.embedded === true ? 'embedded' : 'standalone')");
     expect(previewStyles).toMatch(/#review-preview-host\s*\{[^}]*min-height:\s*420px/s);
-    expect(previewStyles).toMatch(/#review-preview-host \.preview-workspace\[data-preview-layout="embedded"\]\s*\{[^}]*min-height:\s*420px/s);
+    expect(previewStyles).toMatch(/#review-preview-host \.preview-workspace\[data-preview-layout="embedded"\]\s*\{[^}]*height:\s*auto/s);
+    expect(previewStyles).toMatch(/#review-preview-host \.preview-stage\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9[^}]*max-height:\s*75vh/s);
     expect(previewStyles).toMatch(/\.preview-diagnostics\s*\{[^}]*max-height:\s*96px[^}]*overflow-y:\s*auto/s);
     expect(previewStyles).toMatch(/@media\s*\(max-width:\s*480px\)[\s\S]*\.preview-causal-list\s*\{[^}]*max-height:\s*96px/s);
     expect(previewStyles).toMatch(/@media\s*\(max-height:\s*700px\)[\s\S]*\.preview-causal-list\s*\{[^}]*max-height:\s*96px/s);
