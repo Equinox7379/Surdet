@@ -1482,3 +1482,25 @@ Owner 派发桌面 `Surdet_Wave9_Cloud_Source_Review1_Targeted_Repair_2026-09-12
 Owner 最新明确：2026 年 9 月暂停 CI，10 月再做，当前用本地验证并继续推送。仓库唯一的 CI 工作流（ID `327280977`）已在 GitHub 停用并核实为 `disabled_manually`，没有修改工作流源码或测试断言；普通推送仍交付全部来源修复、Pass 8 修正与本记录，实际提交及同步状态以 Git 为准。暂停 CI 不等于暂停推送。
 
 本月的替代方式直接复用已有命令：受影响模块的测试、类型检查与构建，加相应真实浏览器 / Electron 回归；跨模块修改需要全量验证时使用现有 `npm run verify:all`，不新建 runner 或检查框架。本次来源修复的 2,794 项全量检查与页面验证、随后 Pass 8 修正的完整本地回归均仍覆盖当前代码，后续仅变更状态文档，因此复用这些结果。远端 `744b18c` 的 CI 仍为 failure，Linux 干净环境复验留待 CI 恢复，不把本地通过或停用 CI 写成 CI 通过。全部修正交付后等待 Cloud Source Review 2，最终 Owner 验收仍待完成。
+
+### 同样本修后续验（2026-09-12）
+
+Owner 派发《Surdet Wave 9：修后续验执行单》，确认云端第二次复审已关闭 W9-R1、W9-R1B 并接受 Pass 8 等待修正。本次为 `REUSED_PAIR_POSTFIX_CONTINUATION`：复用 Owner 先前独立阅读的同一对最终候选，补齐 Owner 本人选择保存、实际试玩及批准或退回。初次陌生阅读、此前代理代操作和本次操作分开记录；不重新运行 fresh Agent 或新鲜盲测，不代选或代签，不执行 `change.commit`、部署或发行。
+
+开工本机与远端 `main` 均为 `4c6b4b3d6afb0de66c5191a67b41d6954f6a894d`，已跟踪工作树与暂存区干净，原未跟踪材料保留。原始 `owner-review-ready.json`、`owner-result.json`、`owner-approval.json` 及其项目、数据目录、两份胶囊均仍存在；现有 store 已核对原项目基线、胶囊及最终工作版本的运行轨迹。胶囊中的较早版本轨迹按生产规则过滤，不改写旧证据。现有构建覆盖当前源码，未重跑全量测试或 CI。
+
+同样本来源审阅为 `review_comparison_34e66e70f7cf4844b667d3d181f95707`；候选仍为 capsule `54636d52-58f7-45a7-81c5-083541a2e0e3` 与 `bed2c7f7-dc03-45d5-b734-a795379b44df`。新建审阅为 `review_comparison_a347720e4ec84d73bd2c39c3e5304268`，精确引用和准备身份保存在 `D:/CodexTasks/surdet-wave9-postfix-owner-20260912/review-ready.json`，原候选与旧回执未变。两案均有可核对的封存最终正文及两条运行路线。
+
+已在绑定原项目与原数据目录的 `127.0.0.1:5174` Editor 载入新审阅。目录准备沿用现有文件桥；本机正式审阅 authority 已连接，review / project 身份匹配，初始决定及终态回执均不存在，高层选择、低层选择和冲突裁决均为空，未演练保存。Windows 原生目录选择器仍不在本次验收范围。
+
+Owner 亲自完成选择与保存，并反馈“好了，我保存了”。本机 authority 的新 v2 回执经 `inspectDecision` 核验，decision 为 `6632da80-156c-4b1e-a981-86071e8da2c4`，实际决定是采用整个方案 A。正式 plan `pln_4d863167dd2e496d4e2dfdfb5499b1ac` 的 dry-run 通过，并与保存决定的 plan-content fingerprint 一致；使用已保存的 executeOperationId 生成隔离 integration `chg_0002_d70e9af0-ce74-470c-8c0e-3ed1f78cab84`，working revision 为 14。14 项重放全部来自实际选定的胶囊，6 项有效单元完整纳入，另一案的独有执行未带入。
+
+新 integration 自身的 `change.diff`、validation、simulation 和两条 `runtime.run-from` 均通过；从实际入口 `wave9_entry` 的两个选项分别到达 `wave9_end_quay` / `wave9_end_tower`，`wave9.route` 为 1 / -1。新 result 为 `review_result_f53d688a761842c6b9f0dd9f2794a259`，其 decision / plan / integration / revision 对应一致；三份最终场景正文与所选胶囊封存正文逐段一致，五个实际变更文件与本次 diff 一致，时间轴和入口与所选来源一致，实际纳入 / 排除说明及两条 trace 均已核对。任务外记录为同一输出目录的 `execution.json`、`integration-checks.json`、`result-ready.json`；原始来源项目内容未改动，未复用旧结果的 trace。
+
+已通过正常结果审阅入口打开这份新 result 自身的 `result/project` 真实预览，实际显示开场画面；页面 result 身份正确、authority 可用、fixture 未变且与正式结果树一致。Owner 试玩后明确反馈“通过，就是预览页面太小了，不构成阻断”，并亲自在页面保存批准。`inspectApproval` 核验实际回执 `approval_1789212465654`，保存时间为 `2026-09-12T11:27:45.654Z`，decision / plan / integration / revision / diff / 新运行证据 / 结果树均与本次结果匹配，未写回来源项目。
+
+外部操作协助如实保留：主代理代为载入目录、打开预览；Owner 在聊天中称通过后，主代理提醒页面尚需点击“批准这个结果”，之后 Owner 保存了正式回执。主代理没有代选、代保存决定、代推进剧情或代批准；这包含一次页面外的批准操作提醒，不记为全程无辅助。初次陌生阅读仍属于先前那一次，本轮没有重跑新鲜盲测。
+
+按 Owner 的非阻断反馈，仅调整 `packages/editor/src/styles/preview-workspace.css` 的结果内嵌预览：让舞台按可用宽度保持 16:9，最高占视口 75%，工具栏和运行记录不再挤占固定 420px 预览高度。Owner 随后反馈画面发糊，现场确认是主代理准备的浏览器窗口将设备密度设为 1，而 Windows 原生密度为 1.5；已改用原生窗口密度，未改 Renderer 或结果素材。最终可见舞台约 1239×650 CSS 像素，画布实际 1731×974 像素，已查看真实截图，页面无异常，结果 fixture 和批准保持不变；Editor 构建通过。旧逻辑验证继续有效，没有重跑全量资格化或托管 CI。Owner 对“因果记录”的问题已沿运行事件、来源定位和主编辑器跳转接线核对：它仍用于运行记录与定位，不是完整因果推断；本轮没有扩展或重写这项功能。
+
+本次结论：`REUSED_PAIR_POSTFIX_CONTINUATION`；技术复核通过，Owner 亲自选择保存、实际试玩及正式批准均完成，预览显示反馈已处理。上述显示修正由主代理验证，未另行要求 Owner 重跑验收。此记录与局部样式修正按既有授权普通提交推送；施工停止在 `WAITING_FOR_CLOUD_FINAL_CLOSURE`，Wave 9 是否正式关闭由云端裁决，不启动下一 Wave。
