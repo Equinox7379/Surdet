@@ -188,7 +188,14 @@
 }
 
 #review-preview-host .preview-workspace[data-preview-layout="embedded"] {
-  min-height: 420px;
+  height: auto;
+  grid-template-rows: auto auto auto auto auto;
+}
+
+#review-preview-host .preview-stage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 75vh;
 }
 
 #review-preview-host .preview-causal-list {
