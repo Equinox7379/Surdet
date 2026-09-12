@@ -1477,4 +1477,8 @@ Owner 派发桌面 `Surdet_Wave9_Cloud_Source_Review1_Targeted_Repair_2026-09-12
 
 来源修复已普通推送至 `744b18c48b2db2d59ef6dd767f90671385b2913d`。对应 [run 34684432841](https://github.com/Equinox7379/Surdet/actions/runs/34684432841) 的 Electron、`verify:all`、资源导入、实际 Editor 预览与 Starter 回归均通过；最后的 Pass 8 在测试脚本读取战斗画布时失败：`battle canvas root is missing`。系统状态已经进入战斗，但可访问按钮的 DOM 映射尚未就绪；日志中的损坏存档错误属于此前已通过的受控故障用例。
 
-本地仅将这处立即读取改为等待实际“跳过行动”按钮及其有效画布映射，再安装原点击观察器；真实输入、导航断言与原超时保持不变。语法检查及完整 Pass 8 回归均通过，覆盖真实文件存读档、受控损坏、战斗跳过行动和 pending-action 导航；本轮日志保存在 `D:/CodexTasks/surdet-wave9-review1-20260912/pass8-control-ready.log`。Owner 随后反馈 CI 额度不足，因此该测试修正与状态登记仅保存在本地提交，暂不推送、不重跑 CI，也未修改 workflow。远端 `744b18c` 的 CI 仍为 failure，本地通过不替代远端复验；来源修复等待 Cloud Source Review 2，最终 Owner 验收仍待完成。
+`a09190d` 仅将这处立即读取改为等待实际“跳过行动”按钮及其有效画布映射，再安装原点击观察器；真实输入、导航断言与原超时保持不变。语法检查及完整 Pass 8 回归均通过，覆盖真实文件存读档、受控损坏、战斗跳过行动和 pending-action 导航；本轮日志保存在 `D:/CodexTasks/surdet-wave9-review1-20260912/pass8-control-ready.log`。
+
+Owner 最新明确：2026 年 9 月暂停 CI，10 月再做，当前用本地验证并继续推送。仓库唯一的 CI 工作流（ID `327280977`）已在 GitHub 停用并核实为 `disabled_manually`，没有修改工作流源码或测试断言；普通推送仍交付全部来源修复、Pass 8 修正与本记录，实际提交及同步状态以 Git 为准。暂停 CI 不等于暂停推送。
+
+本月的替代方式直接复用已有命令：受影响模块的测试、类型检查与构建，加相应真实浏览器 / Electron 回归；跨模块修改需要全量验证时使用现有 `npm run verify:all`，不新建 runner 或检查框架。本次来源修复的 2,794 项全量检查与页面验证、随后 Pass 8 修正的完整本地回归均仍覆盖当前代码，后续仅变更状态文档，因此复用这些结果。远端 `744b18c` 的 CI 仍为 failure，Linux 干净环境复验留待 CI 恢复，不把本地通过或停用 CI 写成 CI 通过。全部修正交付后等待 Cloud Source Review 2，最终 Owner 验收仍待完成。

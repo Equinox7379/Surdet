@@ -3474,7 +3474,7 @@ Owner 已明确决定：**Windows 原生目录选择器与真实中文输入法�
 | 活动仓库 / 分支 | `Equinox7379/Surdet` / `main`。 |
 | 本轮开工时已核实的实现基线 | `fd1fc6e92218a6111027c6b63757a01f443fb5a9` 已普通推送，包含 Wave 9 实现及三笔 CI 修正；完整 CI 通过不等于 Wave 9 云端或 Owner 最终验收通过。本轮来源修复在该基线上追加。 |
 | 最后云端与 Owner 验收 | Wave 8 R2 与此前已关闭结论保留。Wave 9 fresh A/B 页面中，Owner 在无外部方案讲解下阅读并反馈“A 更自然，B 很别扭，剩下交给你判断”；主代理依此选 A、代保存、执行、核对并批准。该反馈与委托不等于 Owner 本人完成无辅助点击及最终试玩。Cloud Source Review 1 要求定向修复来源事实；`FreshOwnerFinalAcceptance = STILL_PENDING`，等待 Cloud Source Review 2。 |
-| 对应已核实 CI | `fd1fc6e` 的完整 CI 已通过。来源修复 `744b18c` 的 [run 34684432841](https://github.com/Equinox7379/Surdet/actions/runs/34684432841) 中，Electron、全量检查、资源导入、实际 Editor 预览与 Starter 回归通过，Pass 8 因测试过早读取尚未就绪的战斗画布而失败。本地定向修正后的完整 Pass 8 已通过；Owner 反馈 CI 额度不足，暂不触发新 CI，远端失败状态保留。详情与失败记录统一见 Wave 9 Execution Ledger。 |
+| 对应已核实 CI | `fd1fc6e` 的完整 CI 已通过。来源修复 `744b18c` 的 [run 34684432841](https://github.com/Equinox7379/Surdet/actions/runs/34684432841) 中，Electron、全量检查、资源导入、实际 Editor 预览与 Starter 回归通过，Pass 8 因测试过早读取尚未就绪的战斗画布而失败。`a09190d` 的定向修正已通过本地完整 Pass 8。Owner 明确本月暂停 CI；仓库 CI 工作流已核实为 `disabled_manually`，普通推送继续交付代码，旧 CI 失败记录保留。详情统一见 Wave 9 Execution Ledger。 |
 | 既有数据安全修复 | 第 9.1 节五项修复继续关闭；A5 等已关闭历史不恢复成活动 finding。 |
 | B01 | `abdb7ba` 已推送并通过终审，不重开。 |
 | Editor 前端 | Pass 1–7 既有迁移保留；Pass 7.5 / V4 已批准并完成正式落地。 |
@@ -3484,8 +3484,8 @@ Owner 已明确决定：**Windows 原生目录选择器与真实中文输入法�
 | 主线阶段 | Stage 6 Wave 8 R2 已远端闭合；Wave 9 仍在来源修复与复审阶段，未正式关闭。 |
 | 暂缓验证 | 原生 Windows 目录选择器、真实中文输入法均未实测，由 Owner 暂缓，不作为当前门槛。 |
 | 已解决问题与保留边界 | Wave 9 已接通整案 / 混合选择、三源事实与封存最终正文、保存前只读权威预览、v2 回执、正式计划及实际结果说明；旧 v1 可读取。Q1 的历史协助过程保留；新的独立候选与 Owner 选案反馈见本轮任务书。原生目录选择器与中文输入法的暂缓范围没有改变。 |
-| 本机状态 | `E:\surdet` / `main`；`W9_R1 = LOCALLY_FIXED`，来源修复已推送至 `744b18c`，定向测试、类型检查、构建、实际页面与单次完整 `verify:all` 均通过。随后 Pass 8 等待时机修正通过本地完整回归，仅保存在本地提交。原未跟踪资料与受保护文件保持原位；提交身份以 Git 记录为准，本地通过不替代远端 CI。 |
-| 当前授权与停止点 | 原 Wave 9 Goal 范围内施工与普通本地提交授权保留；Owner 最新反馈 CI 额度不足，因此暂不继续推送或触发 CI。来源修复等待 `WAITING_FOR_CLOUD_SOURCE_REVIEW_2`，测试脚本修正尚未推送、未取得新 CI 结果。保留旧候选与回执，不重新运行 fresh Agent 或 Owner 验收，不自动开始下一波或扩展到音频、打包、发行、部署。 |
+| 本机状态 | `E:\surdet` / `main`；`W9_R1 = LOCALLY_FIXED`，来源修复提交为 `744b18c`，定向测试、类型检查、构建、实际页面与单次完整 `verify:all` 均通过；Pass 8 等待时机修正提交为 `a09190d`，完整本地回归通过。两者均纳入普通推送范围，实际 HEAD 与同步状态以 Git 记录为准。原未跟踪资料与受保护文件保持原位；本地结果不标记为远端 CI 通过。 |
+| 当前授权与停止点 | Owner 明确：2026 年 9 月暂停 CI，10 月再做；使用现有本地检查完成验证，修复后继续普通推送供云端审核。推送授权未撤销，不再以 CI 额度不足扣留代码。来源修复等待 `WAITING_FOR_CLOUD_SOURCE_REVIEW_2`，Linux 干净环境复验留待 CI 恢复。保留旧候选与回执，不重新运行 fresh Agent 或 Owner 验收，不自动开始下一波或扩展到音频、打包、发行、部署。 |
 | 台账交付状态 | 本文件纳入仓库版本控制，后续云端与本地读取同一路径。旧的 local-only、未跟踪和禁止提交表述保留为历史事实，不再作为本台账的当前限制。 |
 
 Wave 8 的实现、fresh Agent 边界、逐次云端整改及 Electron CI 修复统一见 [Wave 8 交付报告](../../SURDET-CANDIDATE-COMPOSITION-READINESS-STAGE-6-WAVE-8-DELIVERY-REPORT-2026-09-10.md)。第 9.20 节的 Q1 过程与当时停止点保留为历史；Wave 9 当前结果以任务书 Execution Ledger 为准。当前没有因波次编号而自动启动的新 Goal。
