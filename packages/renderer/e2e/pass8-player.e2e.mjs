@@ -378,9 +378,12 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1600));
     await route.continue();
   });
-  await page.evaluate((destination) => {
-    let root = Array.from(document.querySelectorAll('button')).find((button) => button.container?.parent)?.container;
-    if (!root) throw new Error('battle canvas root is missing');
+  await page.waitForFunction((destination) => {
+    // System overlay state can precede Pixi's next accessibility update.
+    // Capture the live battle control's canvas only after its DOM projection is ready.
+    let root = Array.from(document.querySelectorAll('button')).find((button) => button.getAttribute('aria-label') === '跳过行动'
+      && button.container?.parent && !button.container.destroyed && button.container.accessibleHint === '跳过行动')?.container;
+    if (!root) return false;
     while (root.parent) root = root.parent;
     // The pass message lasts only until the 650ms enemy timer. Observe the real
     // native click's rendered result and navigate in that event, before a CI round trip.
@@ -390,6 +393,7 @@ try {
       console.info('PASS8_BATTLE_SKIP_OBSERVED');
       window.location.assign(destination);
     }, { once: true });
+    return true;
   }, longUrl);
   try {
     await Promise.all([

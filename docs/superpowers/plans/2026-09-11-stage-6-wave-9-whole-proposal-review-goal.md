@@ -1474,3 +1474,7 @@ Owner 派发桌面 `Surdet_Wave9_Cloud_Source_Review1_Targeted_Repair_2026-09-12
 - 页面：整案正文按候选场景展示，包含角色改名的场景副产物；当前正文和不可核对状态使用明确的中文来源说明。真实构建页面在 1440 与 390 像素宽度下查看了 fresh / stale 两种真实胶囊，验证了键盘切换、无横向溢出、无页面脚本异常，以及折叠操作记录仍可读取。此处只验证页面阅读，不在静态预览中代签决定。
 - 验证：Authoring 59 项、CLI 30 项、Editor 67 项定向检查通过；三个受影响工作区的类型检查与构建通过。最终单次完整 `verify:all` exit 0：全部 2,794 项测试、类型检查、内容验证与构建通过。主代理已复核实际调用方、diff、测试与页面；`W9_R1 = LOCALLY_FIXED`。本修复提交与推送身份由 Git 记录，对应 CI 由该提交的 Actions 记录判定，不把开工基线的成功预签给新提交。
 - 边界：未改变 capsule / manifest 格式、composition-ready 条件或 Wave 8 依赖与重放语义；未补写旧胶囊，未重跑 fresh Agent、Owner 验收或本机 Electron。保留此前四笔提交和全部旧候选、回执、失败证据。本轮停止目标为 `WAITING_FOR_CLOUD_SOURCE_REVIEW_2`，`FreshOwnerFinalAcceptance = STILL_PENDING`。
+
+来源修复已普通推送至 `744b18c48b2db2d59ef6dd767f90671385b2913d`。对应 [run 34684432841](https://github.com/Equinox7379/Surdet/actions/runs/34684432841) 的 Electron、`verify:all`、资源导入、实际 Editor 预览与 Starter 回归均通过；最后的 Pass 8 在测试脚本读取战斗画布时失败：`battle canvas root is missing`。系统状态已经进入战斗，但可访问按钮的 DOM 映射尚未就绪；日志中的损坏存档错误属于此前已通过的受控故障用例。
+
+本地仅将这处立即读取改为等待实际“跳过行动”按钮及其有效画布映射，再安装原点击观察器；真实输入、导航断言与原超时保持不变。语法检查及完整 Pass 8 回归均通过，覆盖真实文件存读档、受控损坏、战斗跳过行动和 pending-action 导航；本轮日志保存在 `<local-path>`。Owner 随后反馈 CI 额度不足，因此该测试修正与状态登记仅保存在本地提交，暂不推送、不重跑 CI，也未修改 workflow。远端 `744b18c` 的 CI 仍为 failure，本地通过不替代远端复验；来源修复等待 Cloud Source Review 2，最终 Owner 验收仍待完成。
