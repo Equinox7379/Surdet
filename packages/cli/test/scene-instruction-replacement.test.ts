@@ -401,6 +401,80 @@ describe('Wave15 replaceInstruction through the CLI service and disk', () => {
     expect(treeSnapshot(fixture.root)).toEqual(baseline);
   });
 
+  it.each(['stage', 'apply'] as const)('rejects an old instruction reference after lines move in a %s change, preserving retries', { timeout: 30_000 }, async (policy) => {
+    const fixture = makeProject(`stale-reference-${policy}`);
+    const sourcePath = path.join(fixture.root, fixture.rootScenePath);
+    const source = '@scene start\n@bg old_start\n@wait 10\n@bg old_start\n@end\n';
+    fs.writeFileSync(sourcePath, source, 'utf8');
+    const connection = await connected(fixture, policy);
+    try {
+      expect((await call(connection.client, 'change.begin')).body.ok).toBe(true);
+      const instructionAtLine = async (line: number): Promise<InstructionTarget> => {
+        const scene = await call(connection.client, 'object.inspect', { objectRef: 'scene:start' });
+        expect(scene.body.ok).toBe(true);
+        for (const childRef of (scene.body.result as AuthoringObject).childRefs ?? []) {
+          const inspected = await call(connection.client, 'object.inspect', { objectRef: childRef });
+          expect(inspected.body.ok).toBe(true);
+          const object = inspected.body.result as AuthoringObject;
+          if (object.kind === 'instruction' && object.source?.line === line && typeof object.fingerprint === 'string') {
+            return { objectRef: object.objectRef, fingerprint: object.fingerprint, source: object.source };
+          }
+        }
+        throw new Error(`instruction at line ${line} not found`);
+      };
+      // Capture the second identical background through the public index.
+      const originalTarget = await instructionAtLine(4);
+      const anchor = await instructionAtLine(1);
+      expect((await call(connection.client, 'scene.patch', {
+        operationId: 'insert-leading-waits',
+        patch: { kind: 'insertAfter', anchor: anchor.objectRef, expectedFingerprint: anchor.fingerprint,
+          blocks: [
+            { kind: 'instruction', name: 'wait', args: ['1'] },
+            { kind: 'instruction', name: 'wait', args: ['2'] },
+          ],
+        },
+      })).body.ok).toBe(true);
+      const changeId = connection.session.activeChangeId!;
+      const before = (await NodeChangeStore.openByChangeId(changeId, fixture.data))!.record;
+      const shiftedLines = before.workingFiles[fixture.rootScenePath]!.split('\n');
+      expect(shiftedLines[3]).toBe('@bg old_start');
+      expect(shiftedLines[5]).toBe('@bg old_start');
+      const request = { operationId: 'replace-second-background', patch: {
+        kind: 'replaceInstruction', target: originalTarget.objectRef, expectedFingerprint: originalTarget.fingerprint,
+        instruction: { kind: 'instruction', name: 'bg', args: ['new_start'] },
+      } };
+      const rejected = await call(connection.client, 'scene.patch', request);
+      expect(rejected.raw.isError).toBe(true);
+      expect(rejected.body).toMatchObject({ ok: false, error: { code: 'OBJECT_PRECONDITION_FAILED' } });
+      expect((await NodeChangeStore.openByChangeId(changeId, fixture.data))!.record).toEqual(before);
+      expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+
+      // Refresh the moved original. A rejected operation may be retried with
+      // corrected input, while an already successful operation remains idempotent.
+      const fresh = await instructionAtLine(6);
+      expect(fresh.objectRef).not.toBe(originalTarget.objectRef);
+      const corrected = { ...request, patch: { ...request.patch, target: fresh.objectRef, expectedFingerprint: fresh.fingerprint } };
+      const accepted = await call(connection.client, 'scene.patch', corrected);
+      expect(accepted.body).toMatchObject({ ok: true, result: { path: fixture.rootScenePath, line: 6, kind: 'replaceInstruction' } });
+      const after = (await NodeChangeStore.openByChangeId(changeId, fixture.data))!.record;
+      expect(after.workingFiles[fixture.rootScenePath]).toBe(
+        '@scene start\n@wait 1\n@wait 2\n@bg old_start\n@wait 10\n@bg new_start\n@end\n',
+      );
+      const retried = await call(connection.client, 'scene.patch', corrected);
+      expect(retried.body.ok).toBe(true);
+      expect(retried.body.result).toEqual(accepted.body.result);
+      expect((await NodeChangeStore.openByChangeId(changeId, fixture.data))!.record).toEqual(after);
+      const conflict = await call(connection.client, 'scene.patch', { ...corrected, patch: {
+        ...corrected.patch, instruction: { kind: 'instruction', name: 'bg', args: ['new_left'] },
+      } });
+      expect(conflict.body).toMatchObject({ ok: false, error: { code: 'OPERATION_ID_CONFLICT' } });
+      expect((await NodeChangeStore.openByChangeId(changeId, fixture.data))!.record).toEqual(after);
+      expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+    } finally {
+      await closeConnected(connection);
+    }
+  });
+
   it('requires an explicit resolution for two candidates competing on the same scene instruction', { timeout: 30_000 }, async () => {
     const fixture = makeProject('conflict');
     const first = await sealCandidate(fixture, 'left', 'start', '@bg old_start', 'new_left');

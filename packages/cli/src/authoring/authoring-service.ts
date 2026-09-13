@@ -896,6 +896,15 @@ export class AuthoringService {
 
   async scenePatch(changeId: string, input: ScenePatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
+      // Public requests must use a current reference. Sealed replay calls the
+      // shared operation directly under its existing scene preconditions.
+      if (input.patch.kind === 'replaceInstruction'
+        && !Object.prototype.hasOwnProperty.call(context.session.record.operations, input.operationId)) {
+        const target = buildObjectIndex(context.snapshot).byRef.get(input.patch.target);
+        if (target?.kind !== 'instruction') {
+          throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '指令引用已过期或不属于当前工作版本，请重新读取对象后再替换');
+        }
+      }
       const result = await applyScenePatch(context.session, input);
       return { ...metadataForChange(context.session), result };
     });
