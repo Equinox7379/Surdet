@@ -6,7 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { openAgentPortSession } from '../src/agent-port/session.js';
 import { HumanWorkspaceStore } from '../src/authoring/human-workspace-store.js';
-import { ProjectAssetImportAuthority } from '../src/asset-import-authority/authority.js';
+import { AssetImportInjectedTermination, ProjectAssetImportAuthority } from '../src/asset-import-authority/authority.js';
+import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
@@ -276,3 +277,135 @@ await import(${JSON.stringify(pathToFileURL(path.join(repo, 'packages/cli/dist/a
   expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
   await resumed.close();
 }, 45_000);
+
+it('refuses Agent recovery of a failed Editor undo while preserving explicit Editor recovery', async () => {
+  const f = await fixture();
+  const session = await f.open('apply');
+  try {
+    const request = await requestFor(session);
+    const ready = result(await session.invoke('asset.import.stage', request));
+    const commit = { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint };
+    const committed = result(await session.invoke('asset.import.commit', commit));
+    const paths = await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') });
+    const store = new AssetImportRecordStore(paths);
+    const lease = await ProjectMutationLeaseContext.open(f.projectRoot);
+    let obstruction: string | undefined;
+    const authority = new ProjectAssetImportAuthority(paths, store, {
+      textHasher: { sha256: async text => crypto.createHash('sha256').update(text).digest('hex') },
+      assertLeaseHeld: () => lease.assertHeld(),
+      faultInjector: async point => {
+        if (point !== 'after_undo_rename_intent_before_rename') return;
+        const publication = await store.readPublication(request.operationId);
+        expect(publication).not.toBeNull();
+        obstruction = path.join(f.projectRoot, publication!.files[0]!.undoRelativePath);
+        // A real invalid filesystem node makes undo enter RECOVERY_REQUIRED.
+        // The fault hook itself succeeds, so this is not a simulated journal rewrite.
+        await fs.mkdir(obstruction, { recursive: true });
+      },
+    });
+    await expect(lease.run(() => authority.undo(request.operationId, {
+      receiptId: committed.receipt.receiptId,
+      receiptSha256: committed.receipt.receiptSha256,
+    }))).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect(obstruction).toBeDefined();
+    await fs.rmdir(obstruction!); // Remove only the obstruction created above.
+    const before = result(await session.invoke('asset.import.inspect', { operationId: request.operationId }));
+    expect(before.operation.status).toBe('RECOVERY_REQUIRED');
+    expect(before.undoReceipt).toBeNull();
+    const publicationBefore = await store.readPublication(request.operationId);
+    expect(publicationBefore!.files[0]!.state).toBe('UNDO_RENAME_INTENT');
+    expect(await session.invoke('asset.import.recover', commit)).toMatchObject({ ok: false,
+      error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
+    expect(await store.readPublication(request.operationId)).toEqual(publicationBefore);
+    const after = result(await session.invoke('asset.import.inspect', { operationId: request.operationId }));
+    expect(after.operation.status).toBe('RECOVERY_REQUIRED');
+    expect(after.receipt.receiptId).toBe(committed.receipt.receiptId);
+    expect(after.undoReceipt).toBeNull();
+    // This restriction belongs to the Agent adapter, not the existing Editor API.
+    const editorRecovered = await lease.run(() => authority.recover(request.operationId, { action: 'resume' }));
+    expect(editorRecovered.detail.operation.status).toBe('UNDONE');
+  } finally { await session.close(); }
+});
+
+it('rechecks live runtime keys when resuming an import interrupted before publication', async () => {
+  const f = await fixture();
+  const session = await f.open('apply');
+  try {
+    const request = await requestFor(session);
+    const ready = result(await session.invoke('asset.import.stage', request));
+    const commit = { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint };
+    const paths = await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') });
+    const store = new AssetImportRecordStore(paths);
+    const lease = await ProjectMutationLeaseContext.open(f.projectRoot);
+    const authority = new ProjectAssetImportAuthority(paths, store, {
+      textHasher: { sha256: async text => crypto.createHash('sha256').update(text).digest('hex') },
+      assertLeaseHeld: () => lease.assertHeld(),
+      faultInjector: point => {
+        if (point === 'after_prepare_intent_before_file') throw new AssetImportInjectedTermination(point);
+      },
+    });
+    await expect(lease.run(() => authority.commit(request.operationId, commit)))
+      .rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    expect((await store.readOperation(request.operationId)).journal.status).toBe('PUBLISHING');
+    expect((await store.readPublication(request.operationId))!.files[0]!.state).toBe('PREPARE_INTENT');
+    const competingPath = path.join(f.projectRoot, 'content/assets/bg/old/night.png');
+    await fs.mkdir(path.dirname(competingPath), { recursive: true });
+    await fs.writeFile(competingPath, png);
+    expect(await session.invoke('asset.import.recover', commit)).toMatchObject({ ok: false,
+      error: { code: 'IMPORT_PLAN_STALE' } });
+    expect(await fs.readFile(competingPath)).toEqual(png);
+    expect(await fs.stat(path.join(f.projectRoot, 'content/assets/bg/night.png')).catch(() => null)).toBeNull();
+    const blocked = result(await session.invoke('asset.import.inspect', { operationId: request.operationId }));
+    expect(blocked.receipt).toBeNull();
+    expect(blocked.plan.planId).toBe(ready.plan.planId);
+    expect(blocked.operation.status).toBe('PUBLISHING');
+    await fs.unlink(competingPath); // Remove only this test's competing image.
+    const recovered = result(await session.invoke('asset.import.recover', commit));
+    expect(recovered.operation).toMatchObject({ operationId: request.operationId, status: 'COMMITTED' });
+    expect(recovered.plan.planId).toBe(ready.plan.planId);
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
+  } finally { await session.close(); }
+});
+
+it('rechecks runtime keys after files are verified but before a receipt exists, without rejecting its own target', async () => {
+  const f = await fixture();
+  const session = await f.open('apply');
+  try {
+    const request = await requestFor(session);
+    const ready = result(await session.invoke('asset.import.stage', request));
+    const commit = { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint };
+    const paths = await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') });
+    const store = new AssetImportRecordStore(paths);
+    const lease = await ProjectMutationLeaseContext.open(f.projectRoot);
+    const authority = new ProjectAssetImportAuthority(paths, store, {
+      textHasher: { sha256: async text => crypto.createHash('sha256').update(text).digest('hex') },
+      assertLeaseHeld: () => lease.assertHeld(),
+    });
+    const receiptPath = path.join(paths.projectNamespace, 'operations', request.operationId, 'receipt.json');
+    const writeReceipt = store.writeReceipt.bind(store);
+    vi.spyOn(store, 'writeReceipt').mockImplementationOnce(async receipt => {
+      await fs.mkdir(receiptPath); // A real obstruction at the receipt write boundary.
+      return writeReceipt(receipt);
+    });
+    await expect(lease.run(() => authority.commit(request.operationId, commit)))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    await fs.rmdir(receiptPath); // Remove only this test's obstruction.
+    const publication = await store.readPublication(request.operationId);
+    expect(publication!.files.map(file => file.state)).toEqual(['VERIFIED']);
+    expect(await store.readReceipt(request.operationId)).toBeNull();
+    const competingPath = path.join(f.projectRoot, 'content/assets/bg/night.webp');
+    await fs.writeFile(competingPath, png);
+    expect(await session.invoke('asset.import.recover', commit)).toMatchObject({ ok: false,
+      error: { code: 'IMPORT_PLAN_STALE' } });
+    expect(await store.readPublication(request.operationId)).toEqual(publication);
+    expect(await store.readReceipt(request.operationId)).toBeNull();
+    expect(await fs.readFile(competingPath)).toEqual(png);
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
+    await fs.unlink(competingPath);
+    const recovered = result(await session.invoke('asset.import.recover', commit));
+    expect(recovered.operation.status).toBe('COMMITTED');
+    expect(recovered.plan.planId).toBe(ready.plan.planId);
+    expect(recovered.receipt.files[0].fileIdentity.inode).toBe(publication!.files[0]!.finalIdentity!.inode);
+  } finally { await session.close(); }
+});

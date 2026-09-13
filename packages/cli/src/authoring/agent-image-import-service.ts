@@ -165,7 +165,11 @@ export class AgentImageImportService {
         if (capability === 'asset.import.commit') {
           await authority.commit(operationId, input as unknown as AgentImageCommitRequest);
         } else {
-          if (detail.operation.status === 'UNDOING' || detail.undoReceipt !== null) {
+          const publication = await store.readPublication(operationId);
+          const hasUndoState = publication?.files.some(file => [
+            'UNDO_RENAME_INTENT', 'UNDO_QUARANTINED', 'UNDO_VERIFIED',
+          ].includes(file.state)) ?? false;
+          if (detail.operation.status === 'UNDOING' || detail.undoReceipt !== null || hasUndoState) {
             throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '本入口不执行素材撤销');
           }
           await authority.recover(operationId, { action: 'resume' });

@@ -629,7 +629,7 @@ describe('project asset import authority operations', () => {
     await expect(stat(path.join(externalParent, 'theme.mp3'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('classifies a linked-but-unjournaled target after restart and rolls it into retained quarantine', async () => {
+  it.each(['rollback', 'resume'] as const)('retains a competing runtime key while recovering a linked-but-unjournaled target with %s', async (action) => {
     const { authority, paths, projectRoot } = await fixture();
     const operationId = '39393939-3939-4939-8939-393939393939';
     const itemId = '4a4a4a4a-4a4a-4a4a-8a4a-4a4a4a4a4a4a';
@@ -649,9 +649,12 @@ describe('project asset import authority operations', () => {
     await expect(readFile(target, 'utf8')).resolves.toBe('hello');
     expect((await new AssetImportRecordStore(paths).readOperation(operationId)).journal.status).toBe('PUBLISHING');
 
+    const competingPath = path.join(projectRoot, 'content', 'assets', 'bg', 'crash.webp');
+    await writeFile(competingPath, 'keep this competing image');
     const recovered = reopenedAuthority(paths);
-    const result = await recovered.recover(operationId, { action: 'rollback' });
+    const result = await recovered.recover(operationId, { action });
     expect(result.detail.operation.status).toBe('ROLLED_BACK');
+    await expect(readFile(competingPath, 'utf8')).resolves.toBe('keep this competing image');
     await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
     const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'rollback', `${itemId}.bin`);
     await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
@@ -751,6 +754,8 @@ describe('project asset import authority operations', () => {
     const storedBefore = await new AssetImportRecordStore(paths).readReceipt(operationId);
     expect(storedBefore?.receiptSha256).toMatch(/^[0-9a-f]{64}$/);
 
+    const competingPath = path.join(projectRoot, 'content', 'assets', 'bg', 'receipt.webp');
+    await writeFile(competingPath, 'keep this later image');
     const recovered = reopenedAuthority(paths);
     await expect(recovered.recover(operationId, { action: 'rollback' }))
       .rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
@@ -760,6 +765,7 @@ describe('project asset import authority operations', () => {
     const result = await recovered.recover(operationId, { action: 'resume' });
     expect(result.detail.operation.status).toBe('COMMITTED');
     expect(result.detail.receipt).toEqual(storedBefore);
+    await expect(readFile(competingPath, 'utf8')).resolves.toBe('keep this later image');
     await expect(readFile(path.join(projectRoot, 'content', 'assets', 'bg', 'receipt.png'), 'utf8'))
       .resolves.toBe('hello');
     expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
