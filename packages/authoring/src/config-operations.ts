@@ -115,8 +115,9 @@ export async function applyCharacterEnsure(
     if (input.expectedFingerprint !== fingerprintBefore) {
       throw new AuthoringOperationError('OBJECT_REF_STALE', `characters 指纹不匹配：${input.id}`);
     }
-    const existing = characters[input.id];
-    const created = existing === undefined;
+    const hasExisting = Object.prototype.hasOwnProperty.call(characters, input.id);
+    const existing = hasExisting ? characters[input.id] : undefined;
+    const created = !hasExisting;
     const existingRecord = existing !== undefined && isRecord(existing) ? existing : null;
     const existingName = existingRecord !== null && typeof existingRecord['name'] === 'string' ? existingRecord['name'] : undefined;
     const nameChanges = existingName !== input.name;
@@ -278,7 +279,7 @@ export async function applyCharacterRemove(
     if (input.expectedFingerprint !== fingerprintBefore) {
       throw new AuthoringOperationError('OBJECT_REF_STALE', `characters 指纹不匹配：${input.id}`);
     }
-    if (characters[input.id] === undefined) {
+    if (!Object.prototype.hasOwnProperty.call(characters, input.id)) {
       throw new AuthoringOperationError('OBJECT_NOT_FOUND', `角色不存在：${input.id}`);
     }
     const beforeCharacter = characters[input.id];

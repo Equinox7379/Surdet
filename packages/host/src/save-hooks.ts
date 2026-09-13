@@ -32,11 +32,7 @@ export function createSystemHooks(adapters: readonly HostStateAdapter[]): System
     if (validationError !== null) throw validationError;
   };
   return {
-    snapshot: (): SystemSnapshots => {
-      const result: Record<string, unknown> = {};
-      for (const adapter of list) result[adapter.id] = adapter.snapshot();
-      return result as SystemSnapshots;
-    },
+    snapshot: (): SystemSnapshots => Object.fromEntries(list.map(adapter => [adapter.id, adapter.snapshot()])) as SystemSnapshots,
     validate,
     restore: (snapshot: SystemSnapshots): void => {
       const source = snapshot as Record<string, unknown>;

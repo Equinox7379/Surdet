@@ -322,8 +322,6 @@ export async function generateDeliveryCapsule(
         const planSource = await loadIntegrationProvenance(session.projectRoot, {
           planId: integrationMeta.planId,
           planFingerprint: integrationMeta.planFingerprint,
-          status: integrationMeta.status,
-          executeOperationId: integrationMeta.executeOperationId,
         });
         integrationProvenance = {
           planId: integrationMeta.planId,
@@ -367,11 +365,13 @@ export async function generateDeliveryCapsule(
         workingRevision: record.workingRevision,
         ...(record.intent?.intent === undefined ? {} : { intent: record.intent.intent }),
         acceptanceCriteria: record.intent?.acceptanceCriteria ?? [],
-        operations: Object.entries(record.operations).map(([operationId, operation]) => ({
-          operationId,
-          requestHash: operation.requestHash,
-          result: operation.result,
-        })),
+        operations: Object.entries(record.operations)
+          .sort((a, b) => (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || a[0].localeCompare(b[0]))
+          .map(([operationId, operation]) => ({
+            operationId,
+            requestHash: operation.requestHash,
+            result: operation.result,
+          })),
         invocationSummary: safeInvocationSummary(invocations, journal),
         objectDiff: objectDiffWithFreshness(diff, diffFreshnessValue),
         causalImpact: semanticImpacts(diff),

@@ -3,7 +3,7 @@
  * 的行模型 ⇄ JSON 双向转换与校验。UI 只管表格，落盘前全部经此处校验（编辑器不产出非法配置）。
  */
 import { parseProjectConfigDocument } from '@surdet/authoring';
-import { parseExpr, collectVars } from '@surdet/core';
+import { parseExpr, collectVars, validateVarDecl, type LintIssue } from '@surdet/core';
 import type { CompiledScene, GenericInstr, ChoiceInstr, CondJumpInstr, SetInstr, ModifyInstr, SwitchInstr, TextInstr } from '@surdet/core';
 
 /* ============================ 变量表 ============================ */
@@ -46,7 +46,7 @@ function parseInitial(type: string, raw: string): { ok: true; value: unknown } |
   const t = raw.trim();
   switch (type) {
     case 'number': {
-      if (t === '' || !/^-?\d+(\.\d+)?$/.test(t)) return { ok: false, error: `initial '${raw}' 不是合法数字` };
+      if (t === '' || !/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t)) return { ok: false, error: `initial '${raw}' 不是合法数字` };
       return { ok: true, value: Number(t) };
     }
     case 'boolean':
@@ -55,8 +55,14 @@ function parseInitial(type: string, raw: string): { ok: true; value: unknown } |
       if (t === 'false') return { ok: true, value: false };
       return { ok: false, error: `initial '${raw}' 应为 true/false` };
     }
-    case 'string':
-      return { ok: true, value: t.replace(/^"|"$/g, '') };
+    case 'string': {
+      if (!t.startsWith('"')) return { ok: true, value: raw };
+      try {
+        return { ok: true, value: JSON.parse(t) };
+      } catch {
+        return { ok: false, error: `initial '${raw}' 不是合法字符串` };
+      }
+    }
     case 'string[]':
     case 'number[]':
     case 'object': {
@@ -108,12 +114,14 @@ export function rowsToVariables(rows: VariableRow[]): { variables: Record<string
       if (!Number.isFinite(n)) errors.push(`变量 '${name}' max 不是合法数字`);
       else decl.max = n;
     }
-    if (typeof decl.min === 'number' && typeof decl.max === 'number' && decl.min > decl.max) {
-      errors.push(`变量 '${name}' min(${decl.min}) > max(${decl.max})`);
-    }
     if (row.readonly) decl.readonly = true;
     if (row.description.trim() !== '') decl.description = row.description.trim();
-    variables[name] = decl;
+    const issues: LintIssue[] = [];
+    if (!validateVarDecl('game.config.json', name, decl, issues)) {
+      errors.push(...issues.map(issue => issue.text));
+      continue;
+    }
+    Object.defineProperty(variables, name, { value: decl, enumerable: true, writable: true, configurable: true });
   }
   return { variables, errors };
 }
@@ -281,9 +289,12 @@ function origList(raw: unknown, field: string): unknown[] {
 
 /** 行数组 → 列表条目：按主键（id/characterId）匹配原条目合并（保留未编辑字段），
  *  避免删行/中间插行时按索引合并导致未知字段错位（M4 批次审阅轮 Major 1 修复）；
- *  新增行（主键无匹配）或主键被改名时从空条目起步 */
+ *  新增行（主键无匹配）或主键被改名时从空条目起步。
+ *  numberKeys 由各配置字段契约显式提供；未列出的非 JSON 列一律按文本保存，
+ *  避免标识、场景和表达式等数字样式文本被静默改型。 */
 function applyRowsToList(
   origArr: unknown[], rows: RowMap[], knownKeys: string[], jsonKeys: string[], errors: string[], listLabel: string, primaryKey: string,
+  numberKeys: readonly string[] = [],
 ): Record<string, unknown>[] {
   const claimed = new Set<unknown>(); // 一个原条目最多被一行认领（重复主键时后续行从空起步）
   const findOrig = (row: RowMap): Record<string, unknown> | null => {
@@ -316,8 +327,13 @@ function applyRowsToList(
         }
         continue;
       }
-      if (/^-?\d+(\.\d+)?$/.test(t)) entry[key] = Number(t);
-      else entry[key] = t;
+      if (numberKeys.includes(key)) {
+        const n = Number(t);
+        if (!Number.isFinite(n)) errors.push(`${listLabel} 第 ${i + 1} 行 ${key} 不是有限数字：${t}`);
+        else entry[key] = n;
+        continue;
+      }
+      entry[key] = t;
     }
     out.push(entry);
   }
@@ -418,8 +434,8 @@ export function rowsToCalendar(raw: unknown, rows: CalendarRows): { json: Record
     if (!Number.isFinite(n)) errors.push(`日历 ${k} 不是数字：${t}`);
     else json[k] = n;
   }
-  json.nodes = applyRowsToList(normalizeCalendarSourceNodes(raw, errors), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id');
-  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id');
+  json.nodes = applyRowsToList(normalizeCalendarSourceNodes(raw, errors), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id', ['x', 'y', 'apCost']);
+  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id', ['apCost', 'perTurn']);
   checkUniqueId(rows.nodes, 'id', '地图节点', errors);
   checkUniqueId(rows.baseCommands, 'id', '据点指令', errors);
   for (const r of rows.nodes) checkExprCell(r.visibleWhen, `地图节点 ${String(r.id ?? '')} 的 visibleWhen`, errors);
@@ -451,8 +467,8 @@ export function rowsToEvents(raw: unknown, rows: EventsRows): { json: Record<str
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const json: Record<string, unknown> = { ...obj };
   json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, EVENT_PROFILE_KEYS, ['tiers'], errors, '好感 profile', 'characterId');
-  json.events = applyRowsToList(origList(raw, 'events'), rows.events, EVENT_KEYS, ['effects'], errors, '事件', 'id');
-  json.scheduled = applyRowsToList(origList(raw, 'scheduled'), rows.scheduled, EVENT_KEYS, ['effects'], errors, '日程事件', 'id');
+  json.events = applyRowsToList(origList(raw, 'events'), rows.events, EVENT_KEYS, ['effects'], errors, '事件', 'id', ['priority']);
+  json.scheduled = applyRowsToList(origList(raw, 'scheduled'), rows.scheduled, EVENT_KEYS, ['effects'], errors, '日程事件', 'id', ['priority']);
   checkUniqueId(rows.events, 'id', '事件', errors);
   checkUniqueId(rows.scheduled, 'id', '日程事件', errors);
   for (const r of [...rows.events, ...rows.scheduled]) checkExprCell(r.when, `事件 ${String(r.id ?? '')} 的 when`, errors);
@@ -491,7 +507,7 @@ export function rowsToGrowth(raw: unknown, rows: GrowthRows): { json: Record<str
     else curve[k] = n;
   }
   json.curve = curve;
-  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, GROWTH_PROFILE_KEYS, ['statGrowth', 'levelEvents'], errors, '成长 profile', 'characterId');
+  json.profiles = applyRowsToList(origList(raw, 'profiles'), rows.profiles, GROWTH_PROFILE_KEYS, ['statGrowth', 'levelEvents'], errors, '成长 profile', 'characterId', ['initialLevel', 'maxLevel']);
   for (const p of json.profiles as Record<string, unknown>[]) {
     if (typeof p.initialLevel === 'number' && typeof p.maxLevel === 'number' && p.initialLevel > p.maxLevel) {
       errors.push(`成长 profile ${String(p.characterId ?? '')} initialLevel(${p.initialLevel}) > maxLevel(${p.maxLevel})`);

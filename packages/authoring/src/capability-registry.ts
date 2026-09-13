@@ -64,7 +64,7 @@ const inspectionDetailsSchema: JsonSchema = {
   oneOf: [stringSchema, jsonObjectSchema],
 };
 
-const evidenceFreshnessSchema = strictObject({
+export const EVIDENCE_FRESHNESS_SCHEMA: JsonSchema = strictObject({
   evidenceId: stringSchema,
   status: { enum: ['missing', 'fresh', 'stale', 'failed', 'incomplete'] },
   workingRevision: integerSchema,
@@ -405,7 +405,7 @@ const validationWorkingResultSchema = strictObject({
   issues: arrayOf(validationIssueSchema),
   scenes: validationScenesSchema,
   evidenceId: stringSchema,
-  freshness: evidenceFreshnessSchema,
+  freshness: EVIDENCE_FRESHNESS_SCHEMA,
 }, ['view', 'ok', 'issues', 'scenes', 'evidenceId', 'freshness']);
 
 const validationOutputSchema: JsonSchema = {
@@ -455,7 +455,7 @@ const simulationWorkingResultSchema = strictObject({
   view: { const: 'working' },
   report: simulationReportSchema,
   evidenceId: stringSchema,
-  freshness: evidenceFreshnessSchema,
+  freshness: EVIDENCE_FRESHNESS_SCHEMA,
 }, [...simulationReportRequired, 'view', 'report', 'evidenceId', 'freshness']);
 
 const simulationOutputSchema: JsonSchema = {
@@ -545,7 +545,7 @@ const changeDiffResultSchema = strictObject({
   compositionReadiness: CANDIDATE_COMPOSITION_READINESS_SCHEMA,
   view: { const: 'working' },
   evidenceId: stringSchema,
-  freshness: evidenceFreshnessSchema,
+  freshness: EVIDENCE_FRESHNESS_SCHEMA,
 }, ['summary', 'semantic', 'files', 'compositionReadiness', 'view', 'evidenceId', 'freshness']);
 
 const recoveryFileStateSchema = strictObject({
@@ -583,7 +583,7 @@ const runtimeRunFromResultSchema = strictObject({
   finalVariables: jsonValueSchema,
   eventCount: integerSchema,
   seed: seedSchema,
-  freshness: evidenceFreshnessSchema,
+  freshness: EVIDENCE_FRESHNESS_SCHEMA,
 }, ['view', 'traceId', 'status', 'sceneId', 'choices', 'finalVariables', 'eventCount', 'seed', 'freshness']);
 
 const capabilitySummarySchema = strictObject({
@@ -875,7 +875,7 @@ const definitions = {
   },
   readTrace: {
     inputSchema: strictObject({ traceId: stringSchema, query: traceQuerySchema }, ['traceId']),
-    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: evidenceFreshnessSchema }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
+    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: EVIDENCE_FRESHNESS_SCHEMA }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
     example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, seed: 1592639710, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   diff: {

@@ -74,7 +74,7 @@ const STALE_AFTER_MS = 15_000;
 const PUBLICATION_POLL_LIMIT = 100;
 const DEFAULT_PUBLICATION_POLL_DELAY_MS = 10;
 
-function defaultDataRoot(): string {
+export function defaultAgentDataRoot(): string {
   const configured = process.env['SURDET_AGENT_DATA_DIR'];
   if (configured !== undefined && configured.trim().length > 0) return path.resolve(configured);
   const localAppData = process.env['LOCALAPPDATA'];
@@ -153,7 +153,7 @@ export class NodeLocalLeaseManager {
   private readonly heartbeatControllers = new Map<string, HeartbeatController>();
 
   constructor(
-    readonly dataRoot: string = defaultDataRoot(),
+    readonly dataRoot: string = defaultAgentDataRoot(),
     options: NodeLocalLeaseManagerOptions = {},
   ) {
     this.now = options.now ?? (() => Date.now());

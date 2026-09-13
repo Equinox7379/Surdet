@@ -214,13 +214,15 @@ export class FileSaveStore {
 
   /** 全部槽位元信息（索引存在时仍读取——损坏必须大声失败，保持原行为）；
    *  物理真值基于磁盘扫描：canonical 文件优先，legacy 文件只补足未暴露的逻辑身份，
-   *  同一逻辑身份只出现一次（canonical/索引/legacy 之间按 meta.id 去重）。 */
+   *  索引只辅助已有物理槽位的元信息，不能单独制造槽位；同一逻辑身份只出现一次
+   *  （canonical/索引/legacy 之间按 meta.id 去重）。 */
   listMeta(): SaveSlotMeta[] {
     const index = fs.existsSync(this.indexPath()) ? this.readIndex() : {};
-    const metas = new Map<string, SaveSlotMeta>();
+    const indexedMetas = new Map<string, SaveSlotMeta>();
     for (const m of Object.values(index)) {
-      if (m && typeof m.id === 'string' && !metas.has(m.id)) metas.set(m.id, m);
+      if (m && typeof m.id === 'string' && !indexedMetas.has(m.id)) indexedMetas.set(m.id, m);
     }
+    const metas = new Map<string, SaveSlotMeta>();
     const entries = fs.readdirSync(this.dir).filter((f) => {
       const folded = asciiCaseFold(f);
       return folded.endsWith('.json') && folded !== INDEX_FILE && !folded.endsWith('.tmp');
@@ -241,7 +243,7 @@ export class FileSaveStore {
     for (const f of legacy) {
       const snap = this.#readFile(path.join(this.dir, f));
       if (snap && typeof snap.meta?.id === 'string' && !metas.has(snap.meta.id)) {
-        metas.set(snap.meta.id, snap.meta);
+        metas.set(snap.meta.id, indexedMetas.get(snap.meta.id) ?? snap.meta);
       }
     }
     return [...metas.values()];

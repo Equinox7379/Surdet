@@ -64,7 +64,7 @@ export function editorWorkspaceStatus() {
     protection: connection === null ? 'unavailable' as const : connection.lost ? 'lost' as const : 'connected' as const,
     update: connection?.pendingExternal ? projection().dirtyScopes.length > 0 ? 'conflict' as const : 'pending' as const : 'none' as const,
     dirty: projection().dirtyScopes.length > 0,
-    saving: connection?.saving ?? false,
+    saving: connection !== null && (connection.saving || connection.writeLeaseId !== null),
     baseline: connection?.baseline ?? null,
     latest: connection?.latest ?? null,
   };
@@ -116,20 +116,22 @@ export async function connectEditorWorkspace(client: EditorWorkspaceClient, root
   }
 }
 
-/** Call only before an explicit project read, never after loading old buffers. */
-export async function readEditorWorkspaceBaseline(): Promise<void> {
+/** Capture before reading buffers; failed reads must not advance their write baseline. */
+export async function readEditorWorkspaceBaseline(readProject?: () => Promise<void>): Promise<ProjectDiskBaseline | null> {
   const current = connection;
-  if (current === null) return;
+  if (current === null) { await readProject?.(); return null; }
   const snapshot = await enqueue(current, async () => {
     await current.client.heartbeat(stateFor(current));
     return current.client.snapshot(current.sessionId);
   });
-  if (connection !== current) return;
+  await readProject?.();
+  if (connection !== current) return snapshot.diskBaseline;
   current.baseline = snapshot.diskBaseline;
   current.latest = snapshot;
   current.observedSequence = snapshot.mutationNotice?.sequence ?? 0;
   current.pendingExternal = false;
   current.lost = false;
+  return snapshot.diskBaseline;
 }
 
 export async function pollEditorWorkspace(force = false): Promise<EditorWorkspaceSnapshot | null> {

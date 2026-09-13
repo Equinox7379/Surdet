@@ -119,6 +119,212 @@ describe('Interpreter 存档', () => {
     expect(interp.clearTracker.snapshot()).toEqual(before.clears);
   });
 
+  it('缺失目标场景时拒绝读档且保留选择等待、快照状态与继续能力', () => {
+    const { store, bus, registry, interp } = makeInterp([
+      ...decls,
+      { name: 'roll', type: 'number', initial: 0 },
+    ]);
+    const random = createSeededRandomSource(11);
+    interp.setRandomSource(random);
+    registry.register(compileScene(
+      '@set trust = 5\n' +
+      '@choice\n' +
+      '  继续 -> @goto after\n' +
+      '  结束 -> @end\n' +
+      '@label after\n凛：仍可继续。\n@end',
+      'current.gal',
+      'current',
+    ));
+    const choiceEvents: unknown[] = [];
+    const textEvents: string[] = [];
+    const rejectedEvents: string[] = [];
+    bus.on('choice', (payload) => choiceEvents.push(payload));
+    bus.on('text', (payload) => textEvents.push(payload.value));
+    bus.on('stateReset', () => rejectedEvents.push('stateReset'));
+    bus.on('saveMigrated', () => rejectedEvents.push('saveMigrated'));
+
+    interp.start('current');
+    expect(interp.status).toBe('awaiting-choice');
+    const before = {
+      variables: store.snapshot(),
+      random: random.snapshot(),
+      readSet: interp.readTracker.snapshot(),
+      gallery: interp.gallery.snapshot(),
+      clears: interp.clearTracker.snapshot(),
+      position: interp.savePosition(),
+      status: interp.status,
+    };
+    const incoming = interp.saveSnapshot()!;
+    incoming.meta = { ...incoming.meta, id: 'missing-scene' };
+    incoming.variables = { trust: 99, roll: 77 };
+    incoming.readSet = ['missing-scene#4'];
+    incoming.random = { ...before.random, state: (before.random.state + 1) >>> 0 };
+    incoming.position = { sceneId: 'missing-scene', pc: 0 };
+
+    expect(() => interp.loadSnapshot(incoming)).toThrow(/未注册/);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(random.snapshot()).toEqual(before.random);
+    expect(interp.readTracker.snapshot()).toEqual(before.readSet);
+    expect(interp.gallery.snapshot()).toEqual(before.gallery);
+    expect(interp.clearTracker.snapshot()).toEqual(before.clears);
+    expect(interp.savePosition()).toEqual(before.position);
+    expect(interp.status).toBe(before.status);
+    expect(choiceEvents).toHaveLength(1);
+    expect(rejectedEvents).toEqual([]);
+
+    interp.choose(0);
+    expect(textEvents).toEqual(['仍可继续。']);
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
+  it('目标场景有效但变量声明类型不匹配时不先恢复随机状态', () => {
+    const { store, bus, registry, interp } = makeInterp([
+      ...decls,
+      { name: 'roll', type: 'number', initial: 0 },
+    ]);
+    const random = createSeededRandomSource(13);
+    interp.setRandomSource(random);
+    registry.register(compileScene('凛：当前。', 'current.gal', 'current'));
+    interp.start('current');
+    const before = {
+      variables: store.snapshot(),
+      random: random.snapshot(),
+      position: interp.savePosition(),
+      status: interp.status,
+    };
+    const rejectedEvents: string[] = [];
+    bus.on('stateReset', () => rejectedEvents.push('stateReset'));
+    bus.on('saveMigrated', () => rejectedEvents.push('saveMigrated'));
+    const incoming = interp.saveSnapshot()!;
+    incoming.variables = { trust: 'wrong', roll: 88 } as never;
+    incoming.random = { ...before.random, state: (before.random.state + 1) >>> 0 };
+
+    expect(() => interp.loadSnapshot(incoming)).toThrow(/Variable 'trust'.*expected finite number/);
+    expect(store.snapshot()).toEqual(before.variables);
+    expect(random.snapshot()).toEqual(before.random);
+    expect(interp.savePosition()).toEqual(before.position);
+    expect(interp.status).toBe(before.status);
+    expect(rejectedEvents).toEqual([]);
+  });
+
+  it('text 事件回调内 loadSnapshot 在任何状态写入前拒绝重入', () => {
+    const { store, bus, registry, interp } = makeInterp([
+      ...decls,
+      { name: 'roll', type: 'number', initial: 0 },
+    ]);
+    const random = createSeededRandomSource(17);
+    interp.setRandomSource(random);
+    registry.register(compileScene('凛：当前。\n凛：之后。', 'reentry-text.gal', 'reentry-text'));
+
+    let attempted = false;
+    let caught: unknown;
+    let before: {
+      variables: ReturnType<typeof store.snapshot>;
+      random: ReturnType<typeof random.snapshot>;
+      readSet: ReturnType<typeof interp.readTracker.snapshot>;
+      position: ReturnType<typeof interp.savePosition>;
+      status: typeof interp.status;
+    } | null = null;
+    let stateResetCount = 0;
+    bus.on('stateReset', () => { stateResetCount++; });
+    bus.on('text', () => {
+      if (attempted) return;
+      attempted = true;
+      before = {
+        variables: store.snapshot(),
+        random: random.snapshot(),
+        readSet: interp.readTracker.snapshot(),
+        position: interp.savePosition(),
+        status: interp.status,
+      };
+      const incoming = interp.saveSnapshot()!;
+      incoming.variables = { trust: 99, roll: 8 };
+      incoming.readSet = ['replacement#1'];
+      incoming.random = { ...before.random, state: (before.random.state + 1) >>> 0 };
+      incoming.position = { ...incoming.position!, pc: 1 };
+      try {
+        interp.loadSnapshot(incoming);
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    interp.start('reentry-text');
+    expect(attempted).toBe(true);
+    expect(String(caught)).toMatch(/重入/);
+    expect(store.snapshot()).toEqual(before!.variables);
+    expect(random.snapshot()).toEqual(before!.random);
+    expect(interp.readTracker.snapshot()).toEqual(before!.readSet);
+    expect(interp.savePosition()).toEqual(before!.position);
+    expect(interp.status).toBe(before!.status);
+    expect(stateResetCount).toBe(0);
+  });
+
+  it('choice 事件回调内 loadSnapshot 拒绝重入并保留选择等待', () => {
+    const { store, bus, registry, interp } = makeInterp([
+      ...decls,
+      { name: 'roll', type: 'number', initial: 0 },
+    ]);
+    const random = createSeededRandomSource(19);
+    interp.setRandomSource(random);
+    registry.register(compileScene(
+      '凛：开场。\n' +
+      '@choice\n' +
+      '  继续 -> @goto after\n' +
+      '  结束 -> @end\n' +
+      '@label after\n凛：继续。',
+      'reentry-choice.gal',
+      'reentry-choice',
+    ));
+
+    let attempted = false;
+    let caught: unknown;
+    let before: {
+      variables: ReturnType<typeof store.snapshot>;
+      random: ReturnType<typeof random.snapshot>;
+      readSet: ReturnType<typeof interp.readTracker.snapshot>;
+      position: ReturnType<typeof interp.savePosition>;
+      status: typeof interp.status;
+    } | null = null;
+    let stateResetCount = 0;
+    bus.on('stateReset', () => { stateResetCount++; });
+    bus.on('choice', () => {
+      if (attempted) return;
+      attempted = true;
+      before = {
+        variables: store.snapshot(),
+        random: random.snapshot(),
+        readSet: interp.readTracker.snapshot(),
+        position: interp.savePosition(),
+        status: interp.status,
+      };
+      const incoming = interp.saveSnapshot()!;
+      incoming.variables = { trust: 88, roll: 7 };
+      incoming.readSet = ['replacement#2'];
+      incoming.random = { ...before.random, state: (before.random.state + 1) >>> 0 };
+      incoming.position = { ...incoming.position!, pc: 0 };
+      try {
+        interp.loadSnapshot(incoming);
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    interp.start('reentry-choice');
+    interp.advance();
+    expect(attempted).toBe(true);
+    expect(String(caught)).toMatch(/重入/);
+    expect(store.snapshot()).toEqual(before!.variables);
+    expect(random.snapshot()).toEqual(before!.random);
+    expect(interp.readTracker.snapshot()).toEqual(before!.readSet);
+    expect(interp.savePosition()).toEqual(before!.position);
+    expect(interp.status).toBe(before!.status);
+    expect(stateResetCount).toBe(0);
+
+    interp.choose(0);
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
   it('@unlock_cg/@unlock_music 更新解锁状态并广播事件', () => {
     const { bus, registry, interp } = makeInterp();
     registry.register(compileScene('@unlock_cg cg_end\n@unlock_cg cg_end\n@unlock_music m_op', 's.gal', 's1'));
@@ -451,6 +657,49 @@ describe('Interpreter 存档', () => {
     expect(() => interp.loadSnapshot(old)).toThrow('invalid migrated systems');
     expect(calls).toEqual(['validate']);
     expect(events).toEqual([]);
+  });
+
+  it('旧档 saveMigrated 在随机恢复成功后发出', () => {
+    const { bus, registry, interp } = makeInterp();
+    const order: string[] = [];
+    const random = {
+      next: () => 0.5,
+      snapshot: () => ({ algorithm: 'mulberry32-v1' as const, state: 7 }),
+      validateSnapshot: () => { order.push('validate'); },
+      restore: () => { order.push('restore'); },
+    };
+    interp.setRandomSource(random);
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    snap.meta = { ...snap.meta, schemaVersion: 1 };
+    bus.on('saveMigrated', () => order.push('saveMigrated'));
+
+    interp.loadSnapshot(snap);
+    expect(order).toEqual(['validate', 'restore', 'saveMigrated']);
+  });
+
+  it('自定义随机恢复失败时不提前发 saveMigrated', () => {
+    const { bus, registry, interp } = makeInterp();
+    const order: string[] = [];
+    const random = {
+      next: () => 0.5,
+      snapshot: () => ({ algorithm: 'mulberry32-v1' as const, state: 11 }),
+      validateSnapshot: () => { order.push('validate'); },
+      restore: () => {
+        order.push('restore');
+        throw new Error('random restore rejected');
+      },
+    };
+    interp.setRandomSource(random);
+    registry.register(compileScene('凛：甲。', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    snap.meta = { ...snap.meta, schemaVersion: 1 };
+    bus.on('saveMigrated', () => order.push('saveMigrated'));
+
+    expect(() => interp.loadSnapshot(snap)).toThrow('random restore rejected');
+    expect(order).toEqual(['validate', 'restore']);
   });
 
   it('读档场景哈希不匹配发 saveMismatch（剧本存档后被编辑，仍照常加载）', () => {

@@ -496,27 +496,28 @@ async function saveConfigFileUnlocked(
   label: string,
   submittedRows: unknown,
   sessionRevision: number,
-): Promise<void> {
+): Promise<boolean> {
   assertProjectWriteUnlocked();
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
-    return;
+    return false;
   }
   const handle = state.handles[name];
   if (!handle && !state.dirHandle) {
     setStatus(`${label}无法保存：未连接游戏目录（演示项目不落盘）`, false, 6000);
-    return;
+    return false;
   }
   try {
     state.handles[name] = await writeProjectText(`content/config/${name}.json`, JSON.stringify(json, null, 2) + '\n', handle);
   } catch (err) {
     setStatus(`${label}写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
-    return;
+    return false;
   }
   state.configFiles[name] = json;
   markConfigSectionSaved(name, submittedRows, sessionRevision);
   requestValidateHook();
   setStatus(`${label}已保存`, true, 4000);
+  return true;
 }
 
 async function saveConfigFile(
@@ -557,7 +558,7 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 
 /* ============================ 变量表编辑器 ============================ */
 
-async function saveVariablesUnlocked(): Promise<void> {
+async function saveVariablesUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
   const sessionRevision = configSessionRevision;
   const rows = ensureVarRows();
@@ -565,7 +566,7 @@ async function saveVariablesUnlocked(): Promise<void> {
   const { variables, errors } = rowsToVariables(rows);
   if (errors.length > 0) {
     setStatus(`变量表未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
-    return;
+    return false;
   }
   // 删除保护：被剧本引用的变量删除前需确认（列出引用场景）
   const original = parseVariablesToRows(parseConfigObj());
@@ -577,25 +578,26 @@ async function saveVariablesUnlocked(): Promise<void> {
       .map((r) => `${r.name}（引用于：${[...(refs.get(r.name.trim()) ?? [])].join('、')}）`)
       .join('\n');
     if (!window.confirm(`以下待删除变量仍被剧本引用：\n${detail}\n删除后相关指令会运行时报错。仍要删除吗？`)) {
-      return;
+      return false;
     }
   }
   const handle = state.handles.gameConfig;
   if (!handle && !state.dirHandle) {
     setStatus('变量表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
-    return;
+    return false;
   }
   const text = applyVariablesToConfig(state.gameConfigText, variables) + '\n';
   try {
     state.handles.gameConfig = await writeProjectText('game.config.json', text, handle);
   } catch (err) {
     setStatus(`变量表写入失败：${err instanceof Error ? err.message : String(err)}`, false, 6000);
-    return;
+    return false;
   }
   state.gameConfigText = text;
   markConfigSectionSaved('variables', submittedRows, sessionRevision);
   requestValidateHook();
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
+  return true;
 }
 
 async function saveVariables(): Promise<void> {
@@ -657,7 +659,7 @@ function renderCharactersSection(): HTMLElement {
 }
 
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
-async function saveCharactersUnlocked(): Promise<void> {
+async function saveCharactersUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
   const sessionRevision = configSessionRevision;
   const rows = ensureCharRows();
@@ -671,22 +673,24 @@ async function saveCharactersUnlocked(): Promise<void> {
   }
   if (!handle) {
     setStatus('角色表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
-    return;
+    return false;
   }
   try {
     const result = await commitCharacterTable(submittedRows);
     if (result.changed === 0) {
       markConfigSectionSaved('characters', submittedRows, sessionRevision);
       setStatus('角色表无改动', true, 4000);
-      return;
+      return true;
     }
     markConfigSectionSaved('characters', submittedRows, sessionRevision);
     requestValidateHook();
     const migrationNote = result.speakerMigrations.length > 0 ? `，同步迁移 ${result.speakerMigrations.length} 处台词 speaker` : '';
     setStatus(`角色表已保存（${result.changed} 个角色更新${migrationNote}）`, true, 4000);
+    return true;
   } catch (err) {
     const code = err instanceof AuthoringOperationError ? `${err.code}：` : '';
     setStatus(`角色表未保存：${code}${err instanceof Error ? err.message : String(err)}`, false, 8000);
+    return false;
   }
 }
 
@@ -1170,6 +1174,82 @@ function renderTerminologySection(): HTMLElement {
   ops.append(exportBtn, importBtn, fileInput, saveBtn);
   sec.appendChild(ops);
   return sec;
+}
+
+export interface ConfigSaveOutcome {
+  saved: number;
+  failures: number;
+  remainingDirty: boolean;
+}
+
+/**
+ * 在 project-io 已取得项目写入边界时保存所有 dirty 配置区块。
+ * 各配置区仍复用自己的校验、共享事务和写盘实现；此入口不再次申请写锁。
+ */
+export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
+  const dirtySections = inspectConfigDraftState().dirtySections;
+  let saved = 0;
+  let failures = 0;
+  for (const section of dirtySections) {
+    let ok = false;
+    try {
+      switch (section) {
+        case 'characters':
+          ok = await saveCharactersUnlocked();
+          break;
+        case 'variables':
+          ok = await saveVariablesUnlocked();
+          break;
+        case 'achievements': {
+          const rows = ensureAchRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToAchievements(rows);
+          ok = await saveConfigFileUnlocked('achievements', json as unknown as Record<string, unknown>, errors, '成就表', submittedRows, configSessionRevision);
+          break;
+        }
+        case 'calendar': {
+          const rows = ensureCalRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToCalendar(state.configFiles.calendar, rows);
+          ok = await saveConfigFileUnlocked('calendar', json, errors, '日历配置', submittedRows, configSessionRevision);
+          break;
+        }
+        case 'growth': {
+          const rows = ensureGrRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToGrowth(state.configFiles.growth, rows);
+          ok = await saveConfigFileUnlocked('growth', json, errors, '成长配置', submittedRows, configSessionRevision);
+          break;
+        }
+        case 'events': {
+          const rows = ensureEvRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToEvents(state.configFiles.events, rows);
+          ok = await saveConfigFileUnlocked('events', json, errors, '事件配置', submittedRows, configSessionRevision);
+          break;
+        }
+        case 'gallery': {
+          const rows = ensureGaRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToGallery(state.configFiles.gallery, rows);
+          ok = await saveConfigFileUnlocked('gallery', json, errors, '鉴赏配置', submittedRows, configSessionRevision);
+          break;
+        }
+        case 'terminology': {
+          const rows = ensureTermRows();
+          const submittedRows = clone(rows);
+          const { json, errors } = rowsToTerminology(state.configFiles.terminology, rows);
+          ok = await saveConfigFileUnlocked('terminology', json, errors, '名词表', submittedRows, configSessionRevision);
+          break;
+        }
+      }
+    } catch (error) {
+      setStatus(`配置“${section}”未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+    }
+    if (ok) saved++;
+    else failures++;
+  }
+  return { saved, failures, remainingDirty: inspectConfigDraftState().dirty };
 }
 
 /* ============================ 入口 ============================ */

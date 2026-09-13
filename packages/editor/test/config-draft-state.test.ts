@@ -139,9 +139,11 @@ const {
   inspectConfigDraftState,
   renderConfig,
   resetConfigSession,
+  saveDirtyConfigSections,
 } = await import('../src/panels/config.js');
 
 async function renderFixture(): Promise<FakeElement> {
+  state.dirHandle = null;
   state.gameConfigText = INITIAL_GAME_CONFIG;
   state.configFiles = configFiles() as typeof state.configFiles;
   state.handles = {
@@ -217,6 +219,38 @@ describe('configuration draft state', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(inspectConfigDraftState()).toEqual({ dirty: false, dirtySections: [] });
     expect(configHistoryDepth().past).toBeGreaterThan(0);
+  });
+
+  it('global save aggregator writes dirty config and keeps it dirty after a write failure', async () => {
+    const root = await renderFixture();
+    const variable = byAttribute(root, 'aria-label', '变量名，第 1 行');
+    variable.value = 'trust.global';
+    variable.oninput?.();
+
+    let diskText = state.gameConfigText;
+    let failWrite = false;
+    const handle = {
+      getFile: async () => ({ text: async () => diskText }),
+      createWritable: async () => ({
+        write: async (value: unknown) => {
+          if (failWrite) throw new Error('global fixture write failure');
+          diskText = String(value);
+        },
+        close: async () => {},
+      }),
+    };
+    state.handles.gameConfig = handle as unknown as FileSystemFileHandle;
+
+    await expect(saveDirtyConfigSections()).resolves.toEqual({ saved: 1, failures: 0, remainingDirty: false });
+    expect((JSON.parse(diskText) as { variables: Record<string, unknown> }).variables['trust.global']).toBeDefined();
+    expect(inspectConfigDraftState()).toEqual({ dirty: false, dirtySections: [] });
+
+    variable.value = 'trust.global.failed';
+    variable.oninput?.();
+    failWrite = true;
+    await expect(saveDirtyConfigSections()).resolves.toEqual({ saved: 0, failures: 1, remainingDirty: true });
+    expect((JSON.parse(diskText) as { variables: Record<string, unknown> }).variables['trust.global.failed']).toBeUndefined();
+    expect(inspectConfigDraftState()).toEqual({ dirty: true, dirtySections: ['variables'] });
   });
 
   it('keeps input made during a delayed save dirty while disk contains the submitted snapshot', async () => {

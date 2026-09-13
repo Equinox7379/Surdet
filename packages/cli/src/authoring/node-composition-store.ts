@@ -105,9 +105,10 @@ export class NodeCompositionStore {
     return identity;
   }
 
-  async readPlan(planId: string, expectedSha256: string): Promise<{ plan: IntegrationPlan; identity: CompositionArtifactIdentity }> {
+  /** Always checks the persisted sidecar; external references additionally bind their expected SHA. */
+  async readPlan(planId: string, expectedSha256?: string): Promise<{ plan: IntegrationPlan; identity: CompositionArtifactIdentity }> {
     assertCanonicalId(planId, 'planId');
-    if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+    if (expectedSha256 !== undefined && !/^[0-9a-f]{64}$/.test(expectedSha256)) {
       throw invalid(`artifactSha256 必须是 64 位小写十六进制：${planId}`);
     }
     const directory = this.planDirectory(planId);
@@ -127,7 +128,7 @@ export class NodeCompositionStore {
     if (!sameWindowsPath(sidecar.value.path, path.join(directory, 'payload.json'))
       || sidecar.value.bytes !== loaded.identity.bytes
       || sidecar.value.sha256 !== loaded.identity.sha256
-      || sidecar.value.sha256 !== expectedSha256) {
+      || (expectedSha256 !== undefined && sidecar.value.sha256 !== expectedSha256)) {
       throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `integration plan 身份不成立：${planId}`, {
         planId,
         expectedSha256,

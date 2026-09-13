@@ -24,11 +24,19 @@ export class VariableStore {
     if (this.#decls.has(decl.name)) {
       throw new Error(`Variable '${decl.name}' is already declared`);
     }
-    if (decl.type === 'number' && decl.min !== undefined && decl.max !== undefined && decl.min > decl.max) {
-      throw new Error(`Variable '${decl.name}': min (${decl.min}) > max (${decl.max})，clamp 约束非法`);
+    if (decl.type === 'number') {
+      if (decl.min !== undefined && !Number.isFinite(decl.min)) {
+        throw new Error(`Variable '${decl.name}': min (${String(decl.min)}) 必须是有限 number`);
+      }
+      if (decl.max !== undefined && !Number.isFinite(decl.max)) {
+        throw new Error(`Variable '${decl.name}': max (${String(decl.max)}) 必须是有限 number`);
+      }
+      if (decl.min !== undefined && decl.max !== undefined && decl.min > decl.max) {
+        throw new Error(`Variable '${decl.name}': min (${decl.min}) > max (${decl.max})，clamp 约束非法`);
+      }
     }
     assertType(decl.initial, decl, 'initial');
-    this.#decls.set(decl.name, { ...decl });
+    this.#decls.set(decl.name, { ...decl, initial: cloneValue(decl.initial) });
     this.#values.set(decl.name, cloneValue(decl.initial));
   }
 
@@ -110,6 +118,7 @@ export class VariableStore {
     let n = (this.#values.get(name) as number) + delta;
     if (decl.min !== undefined) n = Math.max(decl.min, n);
     if (decl.max !== undefined) n = Math.min(decl.max, n);
+    assertType(n, decl, 'value');
     this.#values.set(name, n);
   }
 
@@ -149,9 +158,9 @@ export class VariableStore {
 
   /** 全量快照（存档用），返回可序列化对象 */
   snapshot(): Record<string, VarValue> {
-    const out: Record<string, VarValue> = {};
-    for (const [k, v] of this.#values) out[k] = cloneValue(v);
-    return out;
+    const entries: Array<[string, VarValue]> = [];
+    for (const [k, v] of this.#values) entries.push([k, cloneValue(v)]);
+    return Object.fromEntries(entries);
   }
 
   /**
@@ -159,7 +168,16 @@ export class VariableStore {
    * 恢复时重新施加范围 clamp，防止篡改存档破坏数值约束。
    * readonly 变量默认跳过（系统专属、防篡改）；读档等可信恢复传 allowReadonly: true（审计修复）。
    */
+  validateRestore(data: Record<string, VarValue>, opts?: { allowReadonly?: boolean }): void {
+    this.#prepareRestore(data, opts);
+  }
+
   restore(data: Record<string, VarValue>, opts?: { allowReadonly?: boolean }): void {
+    const updates = this.#prepareRestore(data, opts);
+    for (const { key, value } of updates) this.#values.set(key, value);
+  }
+
+  #prepareRestore(data: Record<string, VarValue>, opts?: { allowReadonly?: boolean }): Array<{ key: string; value: VarValue }> {
     const updates: Array<{ key: string; value: VarValue }> = [];
     for (const [key, value] of Object.entries(data)) {
       const decl = this.#decls.get(key);
@@ -168,7 +186,7 @@ export class VariableStore {
       assertType(value, decl, 'snapshot');
       updates.push({ key, value: coerce(decl, value) });
     }
-    for (const { key, value } of updates) this.#values.set(key, value);
+    return updates;
   }
 
   #assertDeclared(name: string): void {
@@ -281,9 +299,9 @@ function checkPrimitive<T extends VarPrimitive>(
 function cloneValue(value: VarValue): VarValue {
   if (Array.isArray(value)) return value.map(cloneValue);
   if (typeof value === 'object' && value !== null) {
-    const out: { [key: string]: VarValue } = {};
-    for (const [key, nested] of Object.entries(value)) out[key] = cloneValue(nested);
-    return out;
+    const entries: Array<[string, VarValue]> = [];
+    for (const [key, nested] of Object.entries(value)) entries.push([key, cloneValue(nested)]);
+    return Object.fromEntries(entries);
   }
   return value;
 }

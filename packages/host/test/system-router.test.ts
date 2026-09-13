@@ -12,6 +12,16 @@ import type { HostStateAdapter } from '../src/types.js';
 import type { CoreEventMap } from '@surdet/core';
 
 describe('createSystemHooks', () => {
+  it('preserves literal adapter IDs through a serialized snapshot', () => {
+    const restored: unknown[] = [];
+    const hooks = createSystemHooks([{ id: '__proto__', snapshot: () => ({ turn: 2 }),
+      validate: () => {}, restore: value => { restored.push(value); } }]);
+    const saved = JSON.parse(JSON.stringify(hooks.snapshot!()));
+    expect(Object.keys(saved)).toEqual(['__proto__']);
+    hooks.restore!(saved);
+    expect(restored).toEqual([{ turn: 2 }]);
+  });
+
   it('snapshots and restores adapters by ID', () => {
     const restored: unknown[] = [];
     const adapter: HostStateAdapter = {

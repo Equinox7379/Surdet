@@ -73,6 +73,8 @@ export class RenderAssetRegistry {
   #portraits: AssetMap = new Map();
   #avatars: AssetMap = new Map();
   #sourceRefs = new Map<string, number>();
+  #sourceLoads = new Map<string, Promise<void>>();
+  #sourceReleases = new Map<string, { promise: Promise<void>; failed: boolean }>();
   #generatedRefs = new Map<Texture, number>();
   #fontFaces = new Map<RendererFontRole, { face: FontFace; family: string }>();
   #fontFamilies: Record<RendererFontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
@@ -88,9 +90,7 @@ export class RenderAssetRegistry {
   }
 
   async registerBackground(key: string, source: RenderAssetSource, format?: string): Promise<void> {
-    const slot = await this.#prepare(source, format);
-    if (!slot) return;
-    this.#commit(this.#backgrounds, key, slot);
+    await this.#register(this.#backgrounds, key, source, format);
   }
 
   async registerPortrait(
@@ -100,15 +100,11 @@ export class RenderAssetRegistry {
     source: RenderAssetSource,
     format?: string,
   ): Promise<void> {
-    const slot = await this.#prepare(source, format);
-    if (!slot) return;
-    this.#commit(this.#portraits, `${charId}:${costume}:${expression}`, slot);
+    await this.#register(this.#portraits, `${charId}:${costume}:${expression}`, source, format);
   }
 
   async registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> {
-    const slot = await this.#prepare(source, format);
-    if (!slot) return;
-    this.#commit(this.#avatars, key, slot);
+    await this.#register(this.#avatars, key, source, format);
   }
 
   resolveBackground(key: string): Texture | null {
@@ -139,11 +135,12 @@ export class RenderAssetRegistry {
   ): Promise<boolean> {
     if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false;
     const token = this.#generation.token();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const face = new FontFace(family, `url(${url})`, { weight: '400' });
       const loaded = await Promise.race([
         face.load(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('字体加载超时')), timeoutMs)),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('字体加载超时')), timeoutMs); }),
       ]);
       if (!token.current) return false;
 
@@ -162,6 +159,8 @@ export class RenderAssetRegistry {
       return true;
     } catch {
       return false;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
 
@@ -194,16 +193,22 @@ export class RenderAssetRegistry {
 
   async releaseRegisteredAssetSources(): Promise<void> {
     this.#ensureActive('releaseRegisteredAssetSources');
-    const sources = new Set<string>();
+    // Synchronous reset/dispose can start an unload before this awaited barrier.
+    // Failed attempts remain owned until the caller explicitly retries release.
+    for (const [source, release] of this.#sourceReleases) {
+      if (release.failed) this.#unloadSource(source, true);
+    }
+    const pending = await Promise.allSettled([...this.#sourceLoads.values()]);
     for (const map of [this.#backgrounds, this.#portraits, this.#avatars]) {
       for (const [key, slot] of [...map.entries()]) {
         if (slot.ownership !== 'loaded') continue;
         map.delete(key);
-        if (slot.source) sources.add(slot.source);
-        this.#releaseSlot(slot, false);
+        this.#releaseSlot(slot);
       }
     }
-    if (sources.size > 0) await Promise.allSettled([this.#unload([...sources])]);
+    const results = await Promise.allSettled([...this.#sourceReleases.values()].map(({ promise }) => promise));
+    const failure = [...pending, ...results].find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
   }
 
   diagnosticSnapshot(): RenderAssetDiagnosticSnapshot {
@@ -212,7 +217,7 @@ export class RenderAssetRegistry {
       portraits: [...this.#portraits.keys()].sort(),
       avatars: [...this.#avatars.keys()].sort(),
       fontFamilies: { ...this.#fontFamilies },
-      sources: [...this.#sourceRefs.keys()].sort(),
+      sources: [...new Set([...this.#sourceRefs.keys(), ...this.#sourceLoads.keys(), ...this.#sourceReleases.keys()])].sort(),
     };
   }
 
@@ -228,16 +233,30 @@ export class RenderAssetRegistry {
     if (this.#ownsLifecycle) this.#lifecycle.dispose();
   }
 
-  #prepare(source: RenderAssetSource, format?: string): Promise<AssetSlot | null> {
+  async #register(map: AssetMap, key: string, source: RenderAssetSource, format?: string): Promise<void> {
     const token = this.#generation.token();
     if (typeof source !== 'string') {
-      return Promise.resolve(token.current ? { texture: source, ownership: 'caller' } : null);
+      this.#commit(map, key, { texture: source, ownership: 'caller' });
+      return;
     }
-    return this.#load(source, format).then(async (texture) => {
-      if (token.current) return { texture, ownership: 'loaded', source } as AssetSlot;
-      if ((this.#sourceRefs.get(source) ?? 0) === 0) await this.#unload([source]);
-      return null;
-    });
+    const previous = this.#sourceLoads.get(source);
+    const pending = (async () => {
+      // A previous registration reports its own load error; a new request may
+      // try loading again. Failed unloads remain owned and still block reuse.
+      if (previous) await previous.catch(() => undefined);
+      const release = this.#sourceReleases.get(source);
+      if (release) await release.promise;
+      if (!token.current) return;
+      const texture = await this.#load(source, format);
+      if (token.current) this.#commit(map, key, { texture, ownership: 'loaded', source });
+      else if ((this.#sourceRefs.get(source) ?? 0) === 0) await this.#unloadSource(source);
+    })();
+    this.#sourceLoads.set(source, pending);
+    const settled = (): void => {
+      if (this.#sourceLoads.get(source) === pending) this.#sourceLoads.delete(source);
+    };
+    void pending.then(settled, settled);
+    await pending;
   }
 
   #commit(map: AssetMap, key: string, slot: AssetSlot): void {
@@ -273,7 +292,7 @@ export class RenderAssetRegistry {
     this.#generatedRefs.set(texture, (this.#generatedRefs.get(texture) ?? 0) + 1);
   }
 
-  #releaseSlot(slot: AssetSlot, disposeLoaded = true): void {
+  #releaseSlot(slot: AssetSlot): void {
     if (slot.ownership === 'generated') {
       const refs = (this.#generatedRefs.get(slot.texture) ?? 1) - 1;
       if (refs <= 0) {
@@ -283,28 +302,41 @@ export class RenderAssetRegistry {
         this.#generatedRefs.set(slot.texture, refs);
       }
     }
-    if (slot.ownership === 'loaded' && slot.source) this.#releaseSource(slot.source, disposeLoaded);
+    if (slot.ownership === 'loaded' && slot.source) this.#releaseSource(slot.source);
   }
 
   #acquireSource(source: string): void {
     const refs = this.#sourceRefs.get(source) ?? 0;
     if (refs === 0) {
       this.#lifecycle.register('runtime', 'blob', `asset:${source}`, () => {
-        void this.#unload([source]).catch(() => undefined);
+        this.#unloadSource(source);
       });
     }
     this.#sourceRefs.set(source, refs + 1);
   }
 
-  #releaseSource(source: string, dispose = true): void {
+  #releaseSource(source: string): void {
     const refs = (this.#sourceRefs.get(source) ?? 1) - 1;
     if (refs > 0) {
       this.#sourceRefs.set(source, refs);
       return;
     }
     this.#sourceRefs.delete(source);
-    if (dispose) this.#lifecycle.release('runtime', 'blob', `asset:${source}`);
-    else this.#lifecycle.forget('runtime', 'blob', `asset:${source}`);
+    this.#lifecycle.release('runtime', 'blob', `asset:${source}`);
+  }
+
+  #unloadSource(source: string, retry = false): Promise<void> {
+    const previous = this.#sourceReleases.get(source);
+    if (previous && (!retry || !previous.failed)) return previous.promise;
+    const promise = (async () => { await this.#unload([source]); })();
+    const release = { promise, failed: false };
+    this.#sourceReleases.set(source, release);
+    // Observe rejection for synchronous lifecycle callers, while preserving the
+    // rejected promise for releaseRegisteredAssetSources to report and retry.
+    void promise.then(() => {
+      if (this.#sourceReleases.get(source) === release) this.#sourceReleases.delete(source);
+    }, () => { release.failed = true; });
+    return promise;
   }
 
   #ensureActive(command: string): void {

@@ -67,6 +67,14 @@ describe('VariableStore', () => {
     expect(s.getNumber('lynn.trust')).toBe(100);
   });
 
+  it('modify 溢出时沿用 set 的有限 number 错误且保留原值', () => {
+    const s = new VariableStore([{ name: 'amount', type: 'number', initial: 1e308 }]);
+    expect(() => s.modify('amount', 1e308)).toThrow(
+      /Variable 'amount' \(value\): expected finite number/,
+    );
+    expect(s.getNumber('amount')).toBe(1e308);
+  });
+
   it('toggle 只作用于 boolean/flag', () => {
     const s = new VariableStore(base);
     s.toggle('hasSword');
@@ -109,6 +117,29 @@ describe('VariableStore', () => {
     expect(restored.get('nested')).toEqual(initial);
   });
 
+  it('snapshot 和深拷贝保留合法的 __proto__ 字面键', () => {
+    const nested = Object.fromEntries([['__proto__', { value: 3 }]]) as unknown as VarValue;
+    const s = new VariableStore([
+      { name: '__proto__', type: 'number', initial: 7 },
+      { name: 'cfg', type: 'object', initial: nested },
+    ]);
+
+    const snapshot = s.snapshot();
+    expect(Object.prototype.hasOwnProperty.call(snapshot, '__proto__')).toBe(true);
+    expect(snapshot['__proto__']).toBe(7);
+    const snapshotCfg = snapshot.cfg as Record<string, VarValue>;
+    expect(Object.prototype.hasOwnProperty.call(snapshotCfg, '__proto__')).toBe(true);
+    expect(snapshotCfg['__proto__']).toEqual({ value: 3 });
+
+    const restored = new VariableStore([
+      { name: '__proto__', type: 'number', initial: 0 },
+      { name: 'cfg', type: 'object', initial: {} },
+    ]);
+    restored.restore(snapshot);
+    expect(restored.getNumber('__proto__')).toBe(7);
+    expect(restored.get('cfg')).toEqual(nested);
+  });
+
   it('restore 忽略未知键并对已知键重新 clamp', () => {
     const s = new VariableStore(base);
     s.restore({ ghost: 'x', 'lynn.trust': 999 });
@@ -142,6 +173,15 @@ describe('VariableStore', () => {
     expect(s.getBoolean('hasSword')).toBe(false);
     expect(s.getString('heroName')).toBe('雷恩');
     expect(s.getNumber('chapter')).toBe(1); // readonly 一并重置
+  });
+
+  it('declare 深拷贝 object 初值，外部修改不影响 reset', () => {
+    const initial = { score: 1 } as unknown as VarValue;
+    const s = new VariableStore([{ name: 'cfg', type: 'object', initial }]);
+    (initial as { score: number }).score = 99;
+
+    s.reset();
+    expect(s.get('cfg')).toEqual({ score: 1 });
   });
 
   it('declarations 返回声明表副本', () => {

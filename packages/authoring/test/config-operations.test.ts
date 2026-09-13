@@ -151,6 +151,21 @@ describe('character.ensure', () => {
     expect(change.record.workingRevision).toBe(1);
   });
 
+  it('treats a missing constructor character as new instead of inherited data', async () => {
+    const { change } = await open();
+    const current = await charactersFingerprint({ characters: { lynn: { name: '凛', avatar: 'lynn' } } }, hasher);
+    const result = await applyCharacterEnsure(change, {
+      operationId: 'op-constructor-character',
+      id: 'constructor',
+      name: '构造者',
+      expectedFingerprint: current,
+    }, hasher);
+    expect(result.created).toBe(true);
+    const parsed = JSON.parse(change.record.workingFiles['game.config.json']!) as { characters: Record<string, unknown> };
+    expect(Object.prototype.hasOwnProperty.call(parsed.characters, 'constructor')).toBe(true);
+    expect(parsed.characters['constructor']).toEqual({ name: '构造者' });
+  });
+
   it('rejects structurally broken characters tables', async () => {
     const repo = new InMemoryChangeRepository();
     const change = await beginChange(snapshot(), repo);
@@ -187,6 +202,16 @@ describe('character.remove', () => {
     await expect(applyCharacterRemove(change, {
       operationId: 'op-missing',
       id: 'nobody',
+      expectedFingerprint: current,
+    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_NOT_FOUND' });
+  });
+
+  it('rejects a missing constructor character with OBJECT_NOT_FOUND', async () => {
+    const { change } = await open();
+    const current = await charactersFingerprint({ characters: { lynn: { name: '凛', avatar: 'lynn' } } }, hasher);
+    await expect(applyCharacterRemove(change, {
+      operationId: 'op-missing-constructor',
+      id: 'constructor',
       expectedFingerprint: current,
     }, hasher)).rejects.toMatchObject({ code: 'OBJECT_NOT_FOUND' });
   });

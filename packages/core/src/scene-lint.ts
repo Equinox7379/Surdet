@@ -6,7 +6,9 @@ import { IMPLEMENTED_INSTRUCTIONS } from './dsl/compiler.js';
 import { parseExpr, collectVars } from './dsl/expr-parser.js';
 import type { ExprAst } from './dsl/expr-ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
+import { VariableStore } from './state/variable-store.js';
 import { isVarType, VAR_TYPES } from './state/types.js';
+import type { VarDeclaration, VarValue } from './state/types.js';
 import type {
   ChoiceInstr,
   CompiledScene,
@@ -146,57 +148,50 @@ export function validateVarDecl(cfgPath: string, name: string, decl: unknown, is
     });
     return false;
   }
-  if (!initialMatches(type, initial)) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的 initial 与 type '${type}' 不匹配（得到 ${JSON.stringify(initial)}）`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
-    return false;
-  }
-  // min/max 约束自检（与运行时 VariableStore.declare 一致，作者在 lint 阶段即可发现）
-  const min = (decl as Record<string, unknown>)['min'];
-  const max = (decl as Record<string, unknown>)['max'];
-  if (
-    type === 'number'
-    && typeof min === 'number'
-    && typeof max === 'number'
-    && min > max
-  ) {
-    issues.push({
-      severity: 'error',
-      code: 'VAR_DECL',
-      text: `${cfgPath}: 变量 '${name}' 的 min (${min}) > max (${max})，clamp 约束非法`,
-      file: cfgPath,
-      line: 0,
-      col: 0,
-    });
+  // 运行时唯一声明校验：这里不再维护一份浅层 initialMatches，避免 lint 通过而启动失败。
+  // 仅使用声明字段的运行时形状，VariableStore 不会修改传入对象。
+  const runtimeDecl = {
+    ...(decl as Record<string, unknown>),
+    name,
+    type,
+    initial: initial as VarValue,
+  } as unknown as VarDeclaration;
+  try {
+    new VariableStore([runtimeDecl]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const initialPrefix = `Variable '${name}' (initial):`;
+    if (message.startsWith(initialPrefix)) {
+      issues.push({
+        severity: 'error',
+        code: 'VAR_DECL',
+        text: `${cfgPath}: 变量 '${name}' 的 initial 与 type '${type}' 不匹配（得到 ${JSON.stringify(initial)}）`,
+        file: cfgPath,
+        line: 0,
+        col: 0,
+      });
+    } else if (message === `Variable '${name}': min (${runtimeDecl.min}) > max (${runtimeDecl.max})，clamp 约束非法`) {
+      issues.push({
+        severity: 'error',
+        code: 'VAR_DECL',
+        text: `${cfgPath}: 变量 '${name}' 的 min (${runtimeDecl.min}) > max (${runtimeDecl.max})，clamp 约束非法`,
+        file: cfgPath,
+        line: 0,
+        col: 0,
+      });
+    } else {
+      issues.push({
+        severity: 'error',
+        code: 'VAR_DECL',
+        text: `${cfgPath}: 变量 '${name}' 的声明无效（${message}）`,
+        file: cfgPath,
+        line: 0,
+        col: 0,
+      });
+    }
     return false;
   }
   return true;
-}
-
-function initialMatches(type: string, initial: unknown): boolean {
-  switch (type) {
-    case 'string':
-      return typeof initial === 'string';
-    case 'number':
-      return typeof initial === 'number' && Number.isFinite(initial);
-    case 'boolean':
-    case 'flag':
-      return typeof initial === 'boolean';
-    case 'string[]':
-      return Array.isArray(initial) && initial.every((v) => typeof v === 'string');
-    case 'number[]':
-      return Array.isArray(initial) && initial.every((v) => typeof v === 'number' && Number.isFinite(v));
-    case 'object':
-      return typeof initial === 'object' && initial !== null && !Array.isArray(initial);
-    default:
-      return false;
-  }
 }
 
 /** 收集场景内全部说话人（原始文本，供 choice 选项"疑似缩进正文"判定） */

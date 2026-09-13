@@ -50,6 +50,29 @@ try {
     await context.close();
   }
 
+  // Exercise normal reverse navigation in the real map modal. The transient
+  // no-active-control boundary is covered deterministically by player-controls.test.ts.
+  {
+    const { page, context, errors } = await open();
+    await activate(page, '自由探索'); await advanceToChoice(page);
+    await activate(page, '查看雾港地图');
+    await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
+    const focusResults = [];
+    for (const key of ['Shift+Tab', 'ArrowUp']) {
+      await page.getByRole('button', { name: '进入 旧邮局', exact: true }).focus();
+      await page.keyboard.press(key);
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '结束回合');
+      const focusAfter = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? null);
+      assert.equal(focusAfter, '结束回合', `${key} did not wrap to the last enabled map control`);
+      if (key === 'Shift+Tab') await page.screenshot({ path: path.join(output, '05-modal-reverse-focus.png') });
+      focusResults.push({ key, focusBefore: '进入 旧邮局', focusAfter });
+    }
+    assert.deepEqual(errors, []);
+    evidence.push({ case: 'modal-reverse-focus-wrap', focusResults });
+    console.log('PASS modal reverse focus: real Shift+Tab and ArrowUp wrap to the last enabled map control');
+    await context.close();
+  }
+
   const routes = [
     { ending: 'ending_open_door', choices: ['先问凛和沈岳的关系', '把信交给她，等她准备好', '让凛亲自把信交出去'] },
     { ending: 'ending_unanswered', choices: ['先收下信，等她自己开口', '请她拆开信，在档案室看清楚再走', '让凛亲自把信交出去'] },
