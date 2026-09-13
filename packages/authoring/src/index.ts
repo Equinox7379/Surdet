@@ -11,6 +11,7 @@ export * from './simulation.js';
 export * from './evidence.js';
 export * from './diff.js';
 export * from './runtime-trace.js';
+export * from './preview-observation.js';
 export * from './asset-catalog.js';
 export * from './asset-intelligence.js';
 export * from './asset-import.js';

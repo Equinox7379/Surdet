@@ -6,7 +6,14 @@
  */
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
-import type { EvidenceEnvelope, RuntimeTraceEvent } from '@surdet/authoring';
+import { isPreviewSourcePath, normalizePreviewTraceMessage, previewSourceText,
+  type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
+  type PreviewSourceFacts, type PreviewPublishInput } from '@surdet/authoring';
+export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTraceStartMessage,
+  type PreviewTraceEventMessage, type PreviewTraceCompleteMessage } from '@surdet/authoring';
+import { createEditorProjectStorage } from '../authoring-project-storage.js';
+import { assetPathForHandle } from '../project-io.js';
+import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
 import type { FontRole } from '@surdet/renderer';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 import {
@@ -22,6 +29,7 @@ let notifyPreviewReady: ((source: MessageEventSource | null) => void) | null = n
 let notifyPreviewDiagnostic: ((diagnostic: PreviewDiagnostic, source: MessageEventSource | null) => void) | null = null;
 let notifyPreviewTrace: ((message: PreviewTraceMessage, source: MessageEventSource | null) => void) | null = null;
 let previewPanelMountRevision = 0;
+let publishedPreviewGeneration = 0;
 let activePreviewCleanup: (() => void) | null = null;
 let notifyPreviewSourceEdited: (() => void) | null = null;
 
@@ -44,123 +52,13 @@ export function refreshPreviewSourceState(): void { notifyPreviewSourceEdited?.(
 function previewSourceKey(): string {
   return JSON.stringify({
     scene: state.current,
-    scenes: [...state.scenes.entries()].map(([key, entry]) => [key, entry.text]),
+    scenes: [...state.scenes.entries()].map(([key, entry]) => [key, entry.id, entry.file, entry.text]),
     config: state.gameConfigText,
     configs: state.configFiles,
     timelines: state.timelines.map((entry) => [entry.file, entry.text]),
     assets: state.dirAssets.map((entry) => [entry.sourcePath, entry.key, entry.expr, entry.bytes, entry.lastModified]),
   });
 }
-
-
-export interface PreviewTraceStartMessage {
-  type: 'surdet-preview-trace-start';
-  traceId: string;
-  generation: number;
-  sceneId: string;
-  label?: string;
-}
-
-export interface PreviewTraceEventMessage {
-  type: 'surdet-preview-trace-event';
-  traceId: string;
-  generation: number;
-  sequence: number;
-  coreEmitted: true;
-  presentationApplied: boolean;
-  presentationBefore: unknown;
-  presentationAfter: unknown;
-  event: RuntimeTraceEvent;
-}
-
-export interface PreviewTraceCompleteMessage {
-  type: 'surdet-preview-trace-complete';
-  traceId: string;
-  generation: number;
-  status: 'passed' | 'failed';
-  eventCount: number;
-  firstError?: string;
-  lastEvent?: RuntimeTraceEvent;
-}
-
-export type PreviewTraceMessage = PreviewTraceStartMessage | PreviewTraceEventMessage | PreviewTraceCompleteMessage;
-
-/** 与 authoring EvidenceEnvelope 的 result 形状保持兼容，供后续正式证据接线使用。 */
-export type PreviewTraceEvidence = EvidenceEnvelope<{
-  traceId: string;
-  generation: number;
-  eventCount: number;
-  firstError?: string;
-}>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isRuntimeTraceEvent(value: unknown): value is RuntimeTraceEvent {
-  if (!isRecord(value) || !isRecord(value['source'])) return false;
-  const source = value['source'];
-  return typeof value['kind'] === 'string'
-    && typeof source['sceneId'] === 'string'
-    && Number.isInteger(source['index'])
-    && typeof source['op'] === 'string'
-    && typeof source['file'] === 'string'
-    && Number.isInteger(source['line'])
-    && Number.isInteger(source['col']);
-}
-
-/** 只接受预览 iframe 输出的三类结构化轨迹消息；不把内部状态当成人工验收。 */
-export function normalizePreviewTraceMessage(value: unknown): PreviewTraceMessage | null {
-  if (!isRecord(value) || typeof value['type'] !== 'string' || typeof value['traceId'] !== 'string'
-    || value['traceId'].trim().length === 0 || !Number.isInteger(value['generation']) || (value['generation'] as number) < 0) {
-    return null;
-  }
-  const type = value['type'];
-  const traceId = value['traceId'];
-  const generation = value['generation'] as number;
-  if (type === 'surdet-preview-trace-start') {
-    if (typeof value['sceneId'] !== 'string' || value['sceneId'].trim().length === 0) return null;
-    return {
-      type,
-      traceId,
-      generation,
-      sceneId: value['sceneId'],
-      ...(typeof value['label'] === 'string' ? { label: value['label'] } : {}),
-    };
-  }
-  if (type === 'surdet-preview-trace-event') {
-    if (!Number.isInteger(value['sequence']) || value['sequence'] as number < 0
-      || value['coreEmitted'] !== true || typeof value['presentationApplied'] !== 'boolean'
-      || !('presentationBefore' in value) || !('presentationAfter' in value)
-      || !isRuntimeTraceEvent(value['event'])) return null;
-    return {
-      type,
-      traceId,
-      generation,
-      sequence: value['sequence'] as number,
-      coreEmitted: true,
-      presentationApplied: value['presentationApplied'],
-      presentationBefore: value['presentationBefore'],
-      presentationAfter: value['presentationAfter'],
-      event: value['event'],
-    };
-  }
-  if (type === 'surdet-preview-trace-complete') {
-    if (!['passed', 'failed'].includes(String(value['status'])) || !Number.isInteger(value['eventCount'])
-      || (value['eventCount'] as number) < 0 || (value['lastEvent'] !== undefined && !isRuntimeTraceEvent(value['lastEvent']))) return null;
-    return {
-      type,
-      traceId,
-      generation,
-      status: value['status'] as 'passed' | 'failed',
-      eventCount: value['eventCount'] as number,
-      ...(typeof value['firstError'] === 'string' ? { firstError: value['firstError'] } : {}),
-      ...(value['lastEvent'] === undefined ? {} : { lastEvent: value['lastEvent'] }),
-    };
-  }
-  return null;
-}
-
 /** 父窗口只接受当前 iframe generation；旧预览的迟到消息必须丢弃。 */
 export function acceptPreviewTraceMessage(message: PreviewTraceMessage | null, currentGeneration: number): PreviewTraceMessage | null {
   return message !== null && message.generation === currentGeneration ? message : null;
@@ -303,6 +201,7 @@ export function clonePreviewFontsForTransfer(
 interface PreviewImage {
   buffer: ArrayBuffer;
   mime: string;
+  sourcePath?: string;
 }
 
 interface PreviewAssets {
@@ -436,16 +335,17 @@ async function readProjectImages(): Promise<PreviewAssets> {
       const file = await asset.handle.getFile();
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
       const buffer = await file.arrayBuffer();
+      const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
       if (asset.kind === 'bgm' || asset.kind === 'se' || asset.kind === 'voice') {
         audio.set(`${asset.kind}:${asset.key}`, {
           kind: asset.kind,
           key: asset.key,
-          file: { buffer, mime: file.type || AUDIO_MIME[ext] || 'application/octet-stream' },
+          file: { buffer, mime: file.type || AUDIO_MIME[ext] || 'application/octet-stream', sourcePath },
         });
         continue;
       }
       if (!asset.isImage || (asset.kind !== 'bg' && asset.kind !== 'portrait' && asset.kind !== 'avatar')) continue;
-      const image = { buffer, mime: file.type || IMAGE_MIME[ext] || 'application/octet-stream' };
+      const image = { buffer, mime: file.type || IMAGE_MIME[ext] || 'application/octet-stream', sourcePath };
       if (asset.kind === 'bg') {
         backgrounds.set(asset.key, { key: asset.key, image });
         continue;
@@ -468,8 +368,24 @@ async function readProjectTimelines(): Promise<unknown[]> {
   return parsePreviewTimelines(state.timelines).definitions;
 }
 
+/** Hash the buffers actually sent to the iframe, before transferring their ownership. */
+async function previewSourceFacts(assets: PreviewAssets): Promise<PreviewSourceFacts> {
+  const storage = createEditorProjectStorage();
+  const files = await Promise.all((await storage.listFiles()).filter(isPreviewSourcePath).map(async path => ({ path,
+    sha256: await storage.sha256(previewSourceText(path, (await storage.readText(path)).text)) })));
+  const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
+    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file)];
+  const facts = await Promise.all(buffers.map(async value => {
+    if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
+    const hash = await crypto.subtle.digest('SHA-256', value.buffer);
+    return { path: value.sourcePath, sha256: [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
+  }));
+  return { files, assets: facts };
+}
+
 export interface PreviewPanelOptions {
   embedded?: boolean;
+  onSourceStateChange?: () => void;
 }
 
 export function renderPreviewPanel(container: HTMLElement, options: PreviewPanelOptions = {}): void {
@@ -526,7 +442,6 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   frame.src = './preview.html';
   frame.title = '剧情预览';
   stage.appendChild(frame);
-  activePreviewCleanup = () => { frame.remove(); };
   workspace.appendChild(stage);
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
@@ -536,10 +451,35 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sourceState.setAttribute('aria-live', 'polite');
   workspace.appendChild(sourceState);
   let publishedSource: string | null = null;
+  let expectedTraceId: string | null = null;
+  type Publication = { publisher: NonNullable<ReturnType<typeof editorPreviewPublisher>>; previewId: string; previewGeneration: number };
+  let formal: Publication | null = null;
+  let pendingInvalidation: Publication | null = null;
+  const invalidate = async (reason: Extract<PreviewPublishInput, { action: 'invalidate' }>['reason']): Promise<void> => {
+    const previous = formal ?? pendingInvalidation;
+    formal = null;
+    if (previous === null) return;
+    pendingInvalidation = previous;
+    await previous.publisher.publish({ action: 'invalidate', previewGeneration: previous.previewGeneration, reason });
+    if (pendingInvalidation === previous) pendingInvalidation = null;
+  };
+  const publishTrace = (message: PreviewTraceMessage): void => {
+    const current = formal;
+    if (current === null) return;
+    void current.publisher.publish({ action: 'append', previewId: current.previewId,
+      previewGeneration: current.previewGeneration, messages: [message] }).catch(error => {
+      if (formal !== current) return;
+      void invalidate('source-changed').catch(() => {});
+      sourceState.textContent = `预览可继续，观察记录未能同步：${error instanceof Error ? error.message : String(error)}`;
+    });
+  };
+  activePreviewCleanup = () => { expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
   notifyPreviewSourceEdited = () => {
     if (sourceState.dataset.previewSourceState !== 'stale' && publishedSource !== null && publishedSource !== previewSourceKey()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '内容已修改；当前画面仍属于上一次运行，请重新播放。';
+      void invalidate('source-changed').catch(() => {});
+      options.onSourceStateChange?.();
     }
   };
 
@@ -658,6 +598,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   notifyPreviewTrace = (message, source) => {
     if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
     if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
+    if (message.traceId !== expectedTraceId) return;
     if (message.type === 'surdet-preview-trace-start') {
       if (currentTraceGeneration >= 0 && message.generation < currentTraceGeneration) return;
       currentTraceGeneration = message.generation;
@@ -667,6 +608,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       currentPreviewTrace = [message];
       state.previewTrace = [];
       state.selectedTraceStep = null;
+      publishTrace(message);
       renderTraceList();
       return;
     }
@@ -681,6 +623,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       traceCompleted = true;
     }
     currentPreviewTrace = [...currentPreviewTrace, current];
+    publishTrace(current);
     if (current.type === 'surdet-preview-trace-event') state.previewTrace = [...state.previewTrace, current.event];
     renderTraceList();
   };
@@ -700,6 +643,13 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   const send = async (): Promise<void> => {
     const revision = ++sendRevision;
     if (!ready) return;
+    try { await invalidate('reload'); }
+    catch (error) {
+      sourceState.textContent = `重新播放尚未开始，请重试：${error instanceof Error ? error.message : String(error)}`;
+      return;
+    }
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
+    expectedTraceId = null;
     const cur = state.current ? state.scenes.get(state.current) : undefined;
     if (!cur) {
       setStatus('预览：请先选择一个场景', false, 4000);
@@ -723,9 +673,36 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       sourceState.textContent = '读取素材期间内容或项目发生变化，本次未启动，请重新播放。';
       return;
     }
+    const traceId = `preview-${crypto.randomUUID()}`;
+    let observationError: string | null = null;
+    const publisher = editorPreviewPublisher(requestRoot);
+    const status = editorWorkspaceStatus();
+    if (publisher !== null && state.reviewWorkspace === null && state.previewTimelineId === null
+      && !status.dirty && !status.saving && status.update === 'none') {
+      const previewGeneration = ++publishedPreviewGeneration;
+      try {
+        const source = await previewSourceFacts(assets);
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || previewSourceKey() !== requestSource) return;
+        await publisher.publish({ action: 'begin', previewId: traceId, previewGeneration, sceneId: cur.id,
+          ...(labelSel.value ? { label: labelSel.value } : {}), source,
+          expectedProjectRevision: publisher.baseline.projectRevision,
+          expectedCoordinationRevision: publisher.baseline.coordinationRevision });
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || previewSourceKey() !== requestSource
+          || state.dirHandle !== requestRoot || !container.isConnected) {
+          await publisher.publish({ action: 'invalidate', previewGeneration, reason: 'source-changed' }).catch(() => {});
+          return;
+        }
+        formal = { publisher, previewId: traceId, previewGeneration };
+      } catch (error) {
+        observationError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || previewSourceKey() !== requestSource
+      || state.dirHandle !== requestRoot || !container.isConnected) return;
     const message = {
       type: 'surdet-preview-load',
       payload: {
+        traceId,
         sceneId: cur.id,
         projectKey: state.dirName || 'untitled',
         // 全量场景下发：预览内跨场景 @jump 可正常跳转（多场景预览）
@@ -758,6 +735,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     ];
     const target = frame.contentWindow;
     if (!target) return;
+    expectedTraceId = traceId;
     target.postMessage(message, '*', transfer);
     // A rejected or superseded read has not begun a new run. Only a published
     // payload replaces the previous observations and their source selection.
@@ -771,7 +749,10 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     renderTraceList();
     publishedSource = requestSource;
     sourceState.dataset.previewSourceState = 'fresh';
-    sourceState.textContent = '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
+    sourceState.textContent = observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
+      : formal !== null ? '已载入保存的内容；Agent 可读取本次实际播放记录。'
+      : '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
+    options.onSourceStateChange?.();
   };
 
   // 从时间轴面板进入时，previewTimelineId 可能仍指向“直演”临时场景。

@@ -1,6 +1,26 @@
 import type { RuntimeTraceEventPayload } from '@surdet/core';
+import type { ObjectIndex } from './object-index.js';
 
 export type RuntimeTraceEvent = RuntimeTraceEventPayload;
+
+export interface CausalTraceEvent {
+  step?: number; sequence?: number; sourceRef?: string; kind?: string;
+  event?: RuntimeTraceEvent; source?: RuntimeTraceEvent['source'];
+}
+
+/** Resolve both the Editor dock and the public preview observation against the same object index. */
+export function locateObjectForTraceEvent(event: CausalTraceEvent, index?: ObjectIndex): string | null {
+  if (typeof event.sourceRef === 'string' && event.sourceRef.length > 0) return event.sourceRef;
+  const source = event.event?.source ?? event.source;
+  if (!source || index === undefined) return null;
+  const candidates = index.objects.filter(object => object.source?.line === source.line
+    && (object.source.path === source.file || object.source.path.endsWith(`/${source.file}`) || source.file.endsWith(`/${object.source.path}`)));
+  if (candidates.length === 0) return null;
+  const preferred = candidates.find(object => (source.op === 'text' && object.kind === 'text')
+    || (source.op === 'choice' && object.kind === 'choice') || (source.op === 'label' && object.kind === 'label')
+    || (source.op === 'timeline' && object.kind === 'instruction'));
+  return (preferred ?? candidates[0])?.objectRef ?? null;
+}
 
 export interface TraceQuery {
   kind?: RuntimeTraceEvent['kind'];

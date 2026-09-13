@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getCurrentPreviewTrace, renderPreviewPanel } from '../src/panels/preview-panel.js';
 import { state } from '../src/state.js';
+import * as workspace from '../src/editor-workspace.js';
 
 class FakeElement {
   readonly tagName: string;
@@ -100,9 +101,11 @@ const originalState = {
   previewTimelineId: state.previewTimelineId,
   reviewWorkspace: state.reviewWorkspace,
   scenes: state.scenes,
+  gameConfigText: state.gameConfigText,
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   postedPreviewMessages.splice(0);
   previewMessageListener = null;
@@ -110,10 +113,11 @@ afterEach(() => {
   state.previewTimelineId = originalState.previewTimelineId;
   state.reviewWorkspace = originalState.reviewWorkspace;
   state.scenes = originalState.scenes;
+  state.gameConfigText = originalState.gameConfigText;
 });
 
 describe('timeline preview replay', () => {
-  it('keeps direct timeline identity in both initial and replay payloads, then clears it on normal entry selection', async () => {
+  it('keeps replay identity, excludes late events and waits for saved-observation invalidation', async () => {
     vi.stubGlobal('document', documentStub);
     vi.stubGlobal('window', {
       addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
@@ -165,14 +169,22 @@ describe('timeline preview replay', () => {
     entrySelector!.value = 'start';
     entrySelector!.onchange?.();
     expect(state.previewTimelineId).toBeNull();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(3));
+    const traceId = (postedPreviewMessages[2] as { payload: { traceId: string } }).payload.traceId;
+    const oldTraceId = (postedPreviewMessages[1] as { payload: { traceId: string } }).payload.traceId;
+    previewMessageListener!({
+      data: { type: 'surdet-preview-trace-start', traceId: oldTraceId, generation: 99, sceneId: 'intro' },
+      source: frame!.contentWindow,
+    } as unknown as MessageEvent);
+    expect(getCurrentPreviewTrace()).toHaveLength(0);
 
     previewMessageListener!({
-      data: { type: 'surdet-preview-trace-start', traceId: 'trace-1', generation: 7, sceneId: 'intro' },
+      data: { type: 'surdet-preview-trace-start', traceId, generation: 7, sceneId: 'intro' },
       source: frame!.contentWindow,
     } as unknown as MessageEvent);
     const event = {
       type: 'surdet-preview-trace-event',
-      traceId: 'trace-1',
+      traceId,
       generation: 7,
       sequence: 1,
       coreEmitted: true,
@@ -188,7 +200,7 @@ describe('timeline preview replay', () => {
     previewMessageListener!({ data: event, source: frame!.contentWindow } as unknown as MessageEvent);
     previewMessageListener!({ data: { ...event, sequence: 0 }, source: frame!.contentWindow } as unknown as MessageEvent);
     previewMessageListener!({
-      data: { type: 'surdet-preview-trace-complete', traceId: 'trace-1', generation: 7, status: 'passed', eventCount: 1 },
+      data: { type: 'surdet-preview-trace-complete', traceId, generation: 7, status: 'passed', eventCount: 1 },
       source: frame!.contentWindow,
     } as unknown as MessageEvent);
     previewMessageListener!({ data: { ...event, sequence: 2 }, source: frame!.contentWindow } as unknown as MessageEvent);
@@ -198,5 +210,26 @@ describe('timeline preview replay', () => {
       'surdet-preview-trace-event',
       'surdet-preview-trace-complete',
     ]);
+
+    const baseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [] };
+    let rejectInvalidation = true;
+    const publish = vi.fn(async (preview: import('@surdet/authoring').PreviewPublishInput) => {
+      if (preview.action === 'invalidate' && rejectInvalidation) throw new Error('连接暂时中断');
+      return { previewId: preview.action === 'invalidate' ? null : preview.previewId, previewGeneration: preview.previewGeneration };
+    });
+    vi.spyOn(workspace, 'editorPreviewPublisher').mockReturnValue({ baseline, publish });
+    vi.spyOn(workspace, 'editorWorkspaceStatus').mockReturnValue({ protection: 'connected', update: 'none', dirty: false, saving: false, baseline, latest: null });
+    state.gameConfigText = '{"entryScene":"intro","variables":{}}';
+    reload!.onclick?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(4));
+    const savedTraceId = (postedPreviewMessages[3] as { payload: { traceId: string } }).payload.traceId;
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ action: 'begin', previewId: savedTraceId }));
+    reload!.onclick?.();
+    await vi.waitFor(() => expect(container.textContent).toContain('重新播放尚未开始'));
+    expect(postedPreviewMessages).toHaveLength(4);
+    rejectInvalidation = false;
+    reload!.onclick?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(5));
+    expect((postedPreviewMessages[4] as { payload: { traceId: string } }).payload.traceId).not.toBe(savedTraceId);
   });
 });

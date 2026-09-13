@@ -497,6 +497,21 @@ const traceEventSchema = strictObject({
 
 const traceEventsSchema = arrayOf(traceEventSchema);
 
+const previewFileFactSchema = strictObject({ path: stringSchema, sha256: importShaSchema }, ['path', 'sha256']);
+const previewObservationSchema = strictObject({
+  previewId: stringSchema, previewGeneration: integerSchema, workspaceSessionId: stringSchema, projectIdentity: stringSchema,
+  projectRevision: importShaSchema, coordinationRevision: importShaSchema, sceneId: stringSchema, label: stringSchema,
+  startedAt: stringSchema, updatedAt: stringSchema, runtimeGeneration: { oneOf: [integerSchema, nullSchema] },
+  state: { enum: ['starting', 'running', 'passed', 'failed'] }, firstError: stringSchema,
+  source: strictObject({ files: arrayOf(previewFileFactSchema), assets: arrayOf(previewFileFactSchema) }, ['files', 'assets']),
+  events: arrayOf(strictObject({ type: { const: 'surdet-preview-trace-event' }, traceId: stringSchema, generation: integerSchema,
+    sequence: integerSchema, coreEmitted: { const: true }, presentationApplied: booleanSchema,
+    presentationBefore: jsonObjectSchema, presentationAfter: jsonObjectSchema, event: traceEventSchema,
+    objectRef: { oneOf: [stringSchema, nullSchema] },
+  }, ['type', 'traceId', 'generation', 'sequence', 'coreEmitted', 'presentationApplied', 'presentationBefore', 'presentationAfter', 'event', 'objectRef'])),
+}, ['previewId', 'previewGeneration', 'workspaceSessionId', 'projectIdentity', 'projectRevision', 'coordinationRevision', 'sceneId',
+  'startedAt', 'updatedAt', 'runtimeGeneration', 'state', 'source', 'events']);
+
 export const CANDIDATE_COMPOSITION_READINESS_SCHEMA: JsonSchema = {
   ...strictObject({
     mode: { enum: ['candidate', 'direct', 'integration', 'legacy-unclassified'] },
@@ -899,6 +914,16 @@ const definitions = {
     outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: EVIDENCE_FRESHNESS_SCHEMA }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
     example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, seed: 1592639710, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
+  readPreview: {
+    inputSchema: strictObject({ previewId: stringSchema, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }),
+    outputSchema: strictObject({ view: { const: 'saved-project' }, kind: { const: 'editor-preview' },
+      status: { enum: ['current', 'stale', 'unavailable', 'ambiguous'] }, reasons: stringArraySchema,
+      observation: { oneOf: [previewObservationSchema, nullSchema] }, eventCount: integerSchema, hasMore: booleanSchema,
+      availablePreviews: arrayOf(strictObject({ previewId: stringSchema, workspaceSessionId: stringSchema, sceneId: stringSchema }, ['previewId', 'workspaceSessionId', 'sceneId'])),
+    }, ['view', 'kind', 'status', 'reasons', 'observation', 'eventCount', 'hasMore', 'availablePreviews']),
+    example: { input: {}, expectedResultShape: { view: 'saved-project', kind: 'editor-preview', status: 'unavailable',
+      reasons: ['no-active-saved-preview'], observation: null, eventCount: 0, hasMore: false, availablePreviews: [] } },
+  },
   diff: {
     inputSchema: emptyInputSchema,
     outputSchema: changeDiffResultSchema,
@@ -988,6 +1013,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'project.simulate',
   'runtime.run-from',
   'runtime.read-trace',
+  'runtime.read-preview',
   'change.diff',
   'change.commit',
   'change.rollback',
@@ -1063,6 +1089,10 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
   'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
   'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
+  'runtime.read-preview': { title: 'Read actual Editor preview', purpose: 'Read actual bound-Editor preview events, presentation snapshots and source object refs for the saved project. Separate from Core explicit-path evidence and from screenshots; never certifies pixels or approves/commits a change.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false,
+    preconditions: ['Open the normal bound Editor on this saved project and actually play its preview; drafts are not published', 'Only status=current belongs to the current saved source; check observation.state for partial or completed runs'],
+    possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_BUSY', 'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT'],
+    repairRecipes: ['Use the browser to play/reload the bound Editor preview. Do not infer visuals from runtime.run-from.', 'For ambiguous workspaces use an availablePreviews previewId; page with offset/limit while keeping that previewId.', 'Use observation.events objectRef with object.inspect and existing scene.patch/timeline.patch in an isolated change. Saved-project observations do not describe unsaved working changes. After an authorized commit synchronize the Editor, replay and read a new preview.'] },
   'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
   'change.commit': { title: 'Commit change', purpose: 'Commit one validated staged change to the project.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'bound human workspaces are absent or clean', 'fresh validation, simulation, and runtime evidence satisfy the commit contract', 'integration changes require a fresh owner approval reference'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN', 'CHANGE_BUSY', 'PROJECT_BUSY', 'PROJECT_CHANGED_SINCE_BEGIN', 'HUMAN_WORKSPACE_DIRTY', 'HUMAN_WORKSPACE_BUSY', 'HUMAN_WORKSPACE_STATE_CORRUPT', 'VALIDATION_REQUIRED', 'VALIDATION_STALE', 'VALIDATION_FAILED', 'SIMULATION_REQUIRED', 'RUNTIME_EVIDENCE_REQUIRED', 'REVIEW_APPROVAL_REQUIRED', 'REVIEW_APPROVAL_STALE', 'REVIEW_RETURNED', 'COMMIT_FAILED_RECOVERED', 'COMMIT_RECOVERY_FAILED'], repairRecipes: ['inspect session, project, diff, and recovery journal; manual recovery is required when commit recovery fails'] },
   'change.rollback': { title: 'Rollback change', purpose: 'Mark one open change rolled back without touching the project.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change is OPEN'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
@@ -1122,6 +1152,8 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
                                   ? 'runFrom'
                                   : id === 'runtime.read-trace'
                                     ? 'readTrace'
+                                    : id === 'runtime.read-preview'
+                                      ? 'readPreview'
                                     : id === 'change.diff'
                                       ? 'diff'
                                       : id === 'change.commit'

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssetImportClientError, type EditorWorkspaceClient, type EditorWorkspaceSnapshot } from '../src/asset-import-client.js';
 import { bindEditorWorkspaceHooks, beginEditorWorkspaceWrite, connectEditorWorkspace, disconnectEditorWorkspace,
   editorWorkspaceStatus, editorWorkspaceTextChanges, finishEditorWorkspaceWrite, pollEditorWorkspace,
-  publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline } from '../src/editor-workspace.js';
+  publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline, editorPreviewPublisher } from '../src/editor-workspace.js';
 
 const oldBaseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [
   { path: 'game.config.json', sha256: '3'.repeat(64) },
@@ -26,6 +26,8 @@ beforeEach(() => {
   disk = { projectIdentity: 'a'.repeat(32), diskBaseline: structuredClone(oldBaseline), mutationNotice: null };
   client = {
     heartbeat: vi.fn(async () => {}), snapshot: vi.fn(async () => structuredClone(disk)),
+    preview: vi.fn(async ({ preview }) => ({ previewId: preview.action === 'invalidate' ? null : preview.previewId,
+      previewGeneration: preview.previewGeneration })),
     begin: vi.fn(async () => ({ writeLeaseId: '11111111-1111-4111-8111-111111111111',
       expiresAt: '2026-09-09T11:00:00.000Z', diskBaseline: structuredClone(disk.diskBaseline) })),
     publish: vi.fn(async () => ({ sha256: '9'.repeat(64) })), renew: vi.fn(async () => {}),
@@ -38,6 +40,18 @@ beforeEach(() => {
 afterEach(async () => { await disconnectEditorWorkspace(); });
 
 describe('bound Editor sequential relay', () => {
+  it('publishes actual dirty facts and never sends a captured preview into a replacement binding', async () => {
+    await connectEditorWorkspace(client, root);
+    const publisher = editorPreviewPublisher(root)!;
+    facts.sceneDirty = true;
+    await publisher.publish({ action: 'invalidate', previewGeneration: 1, reason: 'source-changed' });
+    expect(client.preview).toHaveBeenCalledWith(expect.objectContaining({ dirtyScopes: ['scene'] }));
+    await connectEditorWorkspace(client, root);
+    vi.mocked(client.preview).mockClear();
+    await expect(publisher.publish({ action: 'invalidate', previewGeneration: 2, reason: 'closed' }))
+      .rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+    expect(client.preview).not.toHaveBeenCalled();
+  });
   it('keeps the loaded baseline when reading replacement buffers fails', async () => {
     await connectEditorWorkspace(client, root);
     disk.diskBaseline = newBaseline;

@@ -9,6 +9,8 @@ import type {
   HumanWorkspaceBusyReason,
   HumanWorkspaceBlockedReason,
   ProjectMutationNotice,
+  PreviewPublishInput,
+  PreviewPublishAck,
 } from '@surdet/authoring';
 import type { ProjectDiskBaseline } from './project-disk-baseline';
 
@@ -369,6 +371,7 @@ export interface EditorWorkspaceSettlement {
 
 export interface EditorWorkspaceClient {
   heartbeat(state: EditorWorkspaceState): Promise<void>;
+  preview(state: EditorWorkspaceState & { preview: PreviewPublishInput }): Promise<PreviewPublishAck>;
   snapshot(workspaceSessionId: string): Promise<EditorWorkspaceSnapshot>;
   begin(state: EditorWorkspaceState & { expectedProjectRevision: string; expectedCoordinationRevision: string;
     purpose: 'save-all' | 'config-save' | 'character-save' }): Promise<{ writeLeaseId: string; expiresAt: string; diskBaseline: ProjectDiskBaseline }>;
@@ -1097,6 +1100,10 @@ function parseSceneCommitResult(value: unknown): SceneLifecycleCommitResult {
 }
 
 const WORKSPACE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  PREVIEW_OBSERVATION_UNAVAILABLE: '当前预览连接不可用，请从绑定项目重新播放。',
+  PREVIEW_OBSERVATION_STALE: '预览或内容版本已变化，本次观察未继续发布。',
+  PREVIEW_OBSERVATION_CORRUPT: '预览记录无法核对，原记录已保留。',
+  PREVIEW_OBSERVATION_LIMIT: '本次预览记录已达上限，请从较近的段落标记重新播放。',
   EDITOR_PROJECT_BASELINE_CHANGED: '项目已被外部更新，未覆盖你的草稿。请先查看变化范围。',
   HUMAN_WORKSPACE_DIRTY: '另一个编辑窗口有未保存内容，请先完成接力。',
   HUMAN_WORKSPACE_BUSY: '另一个编辑窗口正在操作，请稍后保存。',
@@ -1771,6 +1778,12 @@ export function createAssetImportAuthorityClient(
   const workspace: EditorWorkspaceClient = {
     heartbeat: state => workspaceRequest('heartbeat', state, value => {
       if (!isRecord(value) || !Number.isSafeInteger(value.workspaceGeneration) || !isTimestamp(value.heartbeatAt)) throw invalidResponse();
+    }),
+    preview: state => workspaceRequest('preview', state, value => {
+      const expectedId = state.preview.action === 'invalidate' ? null : state.preview.previewId;
+      if (!isRecord(value) || !hasExactKeys(value, ['previewId', 'previewGeneration'])
+        || value.previewId !== expectedId || value.previewGeneration !== state.preview.previewGeneration) throw invalidResponse();
+      return { previewId: expectedId, previewGeneration: state.preview.previewGeneration };
     }),
     snapshot: workspaceSessionId => workspaceRequest('snapshot', { workspaceSessionId }, value => {
       if (!isRecord(value) || typeof value.projectIdentity !== 'string' || !/^[0-9a-f]{32}$/.test(value.projectIdentity)) throw invalidResponse();

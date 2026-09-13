@@ -88,7 +88,7 @@ async function dispatchCli(
     || capability === 'gallery.cg.create' || capability === 'gallery.cg.patch'
     || capability === 'timeline.patch' || capability === 'project.entry-scene.set' || capability === 'runtime.run-from') {
     input = readJsonFile(args.input);
-  } else if (capability === 'project.simulate') {
+  } else if (capability === 'project.simulate' || capability === 'runtime.read-preview') {
     input = readOptionalJsonFile(args.input);
   } else if (capability === 'runtime.read-trace') {
     input = {
