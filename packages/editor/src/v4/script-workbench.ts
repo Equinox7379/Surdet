@@ -150,7 +150,7 @@ export class ScriptWorkbench {
         // Deliberate launch, never selecting an arbitrary source row and claiming a replay.
         state.previewTimelineId = null;
         state.previewChoices = null;
-        renderPreviewPanel(this.runtime, { embedded: true });
+        renderPreviewPanel(this.runtime, { embedded: true, onSourceStateChange: () => this.updateStatus() });
       }
       this.updateStatus();
     };

@@ -187,6 +187,12 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     return { path: relativePath, text, bytes: bytes.byteLength, sha256: sha256(bytes) };
   }
 
+  /** Fingerprint the bytes actually supplied to a bound preview, with the normal path checks. */
+  async readFileFingerprint(relativePath: string): Promise<{ path: string; sha256: string }> {
+    const absolute = await this.assertSafeTarget(relativePath);
+    return { path: relativePath, sha256: sha256(await fs.readFile(absolute)) };
+  }
+
   async exists(relativePath: string): Promise<boolean> {
     const candidate = this.resolveRelative(relativePath);
     try {

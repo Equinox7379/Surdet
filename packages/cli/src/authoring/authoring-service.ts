@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { PreviewObservationService } from './preview-observation-service.js';
 import {
   assertValidRandomSeed,
   type VarValue,
@@ -15,6 +16,8 @@ import {
   stableStringify,
   type GalleryCgCreateInput,
   type GalleryCgPatchInput,
+  type PreviewReadInput,
+  type PreviewReadResult,
   applyCharacterRemove,
   applyEntrySceneSet,
   applyTimelineCreate,
@@ -1044,6 +1047,16 @@ export class AuthoringService {
         },
       };
     });
+  }
+
+  async readPreview(projectRoot: string, query: PreviewReadInput = {}): Promise<ServiceResult<PreviewReadResult>> {
+    const storage = await NodeProjectStorage.open(projectRoot);
+    const lease = await this.leaseManager.acquire({ scope: 'project', resourceId: storage.rootIdentity });
+    try {
+      const snapshot = await loadProjectSnapshot(storage, { sha256: async text => hashText(text) });
+      const result = await new PreviewObservationService(this.leaseManager.dataRoot).read(storage.rootIdentity, query);
+      return { projectIdentity: projectIdentityFromRoot(storage.rootIdentity), projectRevision: snapshot.revision, result };
+    } finally { await lease.release(); }
   }
 
   async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; events: unknown[]; count: number; seed: number; freshness: ReturnType<typeof evidenceFreshness> }>> {

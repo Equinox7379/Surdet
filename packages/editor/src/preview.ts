@@ -64,6 +64,8 @@ interface PreviewConfigs {
 
 interface LoadPayload {
   sceneId: string;
+  /** Parent request identity rejects late messages from a superseded reload. */
+  traceId?: string;
   /** 预览存档隔离键（通常为编辑器当前项目目录名） */
   projectKey?: string;
   scenes: SceneSrc[];
@@ -139,7 +141,7 @@ function createPreviewTraceId(): string {
 
 function startPreviewTrace(generation: number, payload: LoadPayload): ActivePreviewTrace {
   const trace: ActivePreviewTrace = {
-    traceId: createPreviewTraceId(),
+    traceId: payload.traceId ?? createPreviewTraceId(),
     generation,
     sceneId: payload.sceneId,
     sequence: 0,

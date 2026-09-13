@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import {
   AuthoringOperationError,
+  type PreviewPublishInput,
   aggregateHumanWorkspaceObservations,
   humanWorkspaceCommitBlock,
   type HumanWorkspaceBlockedReason,
@@ -22,6 +23,7 @@ import {
   type ProjectCoordinationBaseline,
 } from '../authoring/project-coordination-baseline.js';
 import { ProjectMutationNoticeStore } from '../authoring/project-mutation-notice-store.js';
+import { PreviewObservationService } from '../authoring/preview-observation-service.js';
 
 export interface EditorWorkspaceStateInput {
   workspaceSessionId: string;
@@ -138,6 +140,7 @@ export class EditorWorkspaceAuthority {
   private readonly maxWriteMs: number;
   private readonly activeWrites = new Map<string, ActiveWrite>();
   private readonly now: () => number;
+  private readonly previews: PreviewObservationService;
 
   constructor(
     readonly projectRootIdentity: string,
@@ -152,6 +155,7 @@ export class EditorWorkspaceAuthority {
     });
     this.maxWriteMs = options.maxWriteMs ?? 120_000;
     this.now = options.now ?? (() => Date.now());
+    this.previews = new PreviewObservationService(this.leaseManager.dataRoot, this.workspaceStore);
   }
 
   private async baseline(): Promise<ProjectCoordinationBaseline> {
@@ -221,6 +225,15 @@ export class EditorWorkspaceAuthority {
       mutationNotice,
       diskBaseline,
     };
+  }
+
+  async publishPreview(input: EditorWorkspaceStateInput, preview: PreviewPublishInput) {
+    await this.requireSession(input);
+    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    const lease = preview.action === 'invalidate' ? null
+      : await this.leaseManager.acquire({ scope: 'project', resourceId: this.projectRootIdentity });
+    try { return await this.previews.publish(this.projectRootIdentity, input.workspaceSessionId, input.browserSessionId, preview); }
+    finally { await lease?.release(); }
   }
 
   async beginWrite(input: BeginEditorWriteInput): Promise<{

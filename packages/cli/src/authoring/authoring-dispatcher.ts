@@ -132,6 +132,8 @@ export async function dispatchAuthoringCapability(
     }
     case 'runtime.run-from':
       return { value: await service.runFrom(requireChange(context), payload) };
+    case 'runtime.read-preview':
+      return { value: await service.readPreview(requireProject(context), payload) };
     case 'runtime.read-trace':
       return {
         value: await service.readTrace(

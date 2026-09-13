@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AuthoringOperationError, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
+import { AuthoringOperationError, parsePreviewPublishInput, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
   HUMAN_WORKSPACE_BLOCKED_REASONS } from '@surdet/authoring';
 import { EditorWorkspaceAuthorityError, type EditorWorkspaceAuthority, type EditorWorkspaceStateInput,
   type ActiveEditorWriteInput } from '../editor-workspace-authority/editor-workspace-authority.js';
@@ -53,6 +53,7 @@ const KINDS = new Set([
   'sound-effect', 'voice', 'video', 'font', 'other',
 ]);
 const PUBLIC_CODES = new Set([
+  'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT', 'PREVIEW_OBSERVATION_LIMIT',
   'INVALID_REQUEST',
   'AUTHORITY_ORIGIN_REJECTED',
   'AUTHORITY_TOKEN_REJECTED',
@@ -140,7 +141,7 @@ type Route = {
     | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
     | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
     | 'scene-plan' | 'scene-commit' | 'workspace';
-  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke';
+  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -189,6 +190,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown, close
 }
 
 function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'after-human-action' | 'manual-recovery' | 'never' {
+  if (code === 'PREVIEW_OBSERVATION_CORRUPT') return 'manual-recovery';
+  if (code.startsWith('PREVIEW_OBSERVATION_')) return 'after-refresh';
   if (code === 'AUTHORITY_UNAVAILABLE') return 'same-request';
   if (code === 'IMPORT_OPERATION_NOT_FOUND' || code === 'PROJECT_BUSY') return 'after-refresh';
   if (code === 'IMPORT_RECOVERY_REQUIRED') return 'manual-recovery';
@@ -197,6 +200,9 @@ function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'aft
 }
 
 function statusForCode(code: string): number {
+  if (code === 'PREVIEW_OBSERVATION_LIMIT') return 413;
+  if (code === 'PREVIEW_OBSERVATION_UNAVAILABLE') return 404;
+  if (code === 'PREVIEW_OBSERVATION_STALE' || code === 'PREVIEW_OBSERVATION_CORRUPT') return 409;
   if (code === 'AUTHORITY_TOKEN_REJECTED') return 403;
   if (code === 'AUTHORITY_ORIGIN_REJECTED') return 403;
   if (code === 'AUTHORITY_UNAVAILABLE') return 503;
@@ -588,7 +594,7 @@ async function publicRelocationList(authority: AssetImportAuthorityHttpTarget): 
 }
 
 function parseRoute(url: string): Route | null {
-  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke)$`));
+  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke|preview)$`));
   if (workspace) return { kind: 'workspace', workspaceAction: workspace[1] as Route['workspaceAction'],
     method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/status`) return { kind: 'status', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
@@ -845,11 +851,13 @@ export function createAssetImportAuthorityHttpHandler(
             const object = body as Record<string, unknown>;
             const extra = action === 'begin' ? ['expectedProjectRevision', 'expectedCoordinationRevision', 'purpose']
               : action === 'publish' ? ['writeLeaseId', 'path', 'text', 'expectedSha256']
-                : action === 'heartbeat' ? [] : ['writeLeaseId'];
+                : action === 'preview' ? ['preview'] : action === 'heartbeat' ? [] : ['writeLeaseId'];
             const state = parseWorkspaceState(object, extra);
             if (action === 'heartbeat') {
               const record = await workspace.heartbeat(state);
               data = { workspaceGeneration: record.workspaceGeneration, heartbeatAt: record.heartbeatAt };
+            } else if (action === 'preview') {
+              data = await workspace.publishPreview(state, parsePreviewPublishInput(object.preview));
             } else if (action === 'begin') {
               if (!['save-all', 'config-save', 'character-save'].includes(String(object.purpose))) {
                 throw new AssetImportAuthorityError('INVALID_REQUEST', '保存用途无效');
