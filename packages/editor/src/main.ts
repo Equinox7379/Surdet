@@ -1782,7 +1782,7 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
-  if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config'].includes(state.mainTab)) {
+  if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config', 'audit'].includes(state.mainTab)) {
     const requestedMode = state.mainTab;
     const workspace = state.reviewWorkspace;
     state.mainTab = 'review';
