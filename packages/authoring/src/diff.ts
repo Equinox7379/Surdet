@@ -107,7 +107,11 @@ export function buildOperationLedgerDiff(record: {
   operations: Record<string, { requestHash: string; result: unknown; sequence?: number }>;
 }): ChangeDiff['semantic'] {
   const entries: ChangeDiff['semantic'] = [];
-  const operationEntries = Object.entries(record.operations);
+  const operationEntries = Object.entries(record.operations).filter(([, operation]) => {
+    const result = operation.result;
+    return typeof result === 'object' && result !== null
+      && isLedgerDiffEntry((result as Record<string, unknown>)['diffEntry']);
+  });
   const orderedEntries = operationEntries.every(([, operation]) => Number.isInteger(operation.sequence))
     ? operationEntries.slice().sort((a, b) => a[1].sequence! - b[1].sequence!)
     : operationEntries;
