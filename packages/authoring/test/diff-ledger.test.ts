@@ -86,6 +86,28 @@ describe('operation-ledger diff', () => {
     expect(ledger.map((entry) => entry.operationId)).toEqual(['op-create', 'op-patch']);
   });
 
+  it('preserves semantic sequence order when a recovery record has no sequence', () => {
+    const resultFor = (operationId: string) => ({
+      diffEntry: {
+        kind: 'timeline.patch', operationId, directChange: {},
+        potentialImpact: [], observedImpact: [],
+      },
+    });
+    const operations: Parameters<typeof buildOperationLedgerDiff>[0]['operations'] = {
+      '2': { requestHash: '{}', sequence: 1, result: resultFor('2') },
+      '10': { requestHash: '{}', sequence: 0, result: resultFor('10') },
+    };
+    expect(buildOperationLedgerDiff({ operations }).map(entry => entry.operationId)).toEqual(['10', '2']);
+    // Transaction recovery persists this non-semantic record without a sequence.
+    operations['recovery-op'] = {
+      requestHash: 'recovery',
+      result: { changeId: 'change', status: 'OPEN', disposition: 'REOPEN_OPEN' },
+    };
+    const before = structuredClone(operations);
+    expect(buildOperationLedgerDiff({ operations }).map(entry => entry.operationId)).toEqual(['10', '2']);
+    expect(operations).toEqual(before);
+  });
+
   it('orders numeric operation ids by their persisted sequences', () => {
     const diffEntry = (operationId: string) => ({
       diffEntry: {
