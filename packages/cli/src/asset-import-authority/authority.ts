@@ -2208,6 +2208,14 @@ export class ProjectAssetImportAuthority {
         this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
         return { detail: await this.query(operationId) };
       }
+      // No receipt exists yet: recovery must obey the live catalog collision gate.
+      // Check keys only, since this operation may already own its exact target files.
+      const recoveryPlan = await this.store.readPlan(operationId);
+      if (recoveryPlan === null) return this.enterRecovery(operationId, '恢复发布缺少持久导入计划');
+      const recoveryFacts = await this.targetFacts(recoveryPlan.targets);
+      if (recoveryFacts.some(fact => (fact.conflictingAssetPaths?.length ?? 0) > 0)) {
+        throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '恢复发布时素材标识已被其他文件占用，已保留原操作和文件');
+      }
       if (allVerified) {
         await this.finishCommittedPublication(publication);
         await this.store.resolveOperationBarriers(operationId);
