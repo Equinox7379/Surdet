@@ -6,6 +6,7 @@ import {
   parseReviewPreparationRequest, samePreparationReference,
   type ReviewPreparationRecord, type ReviewPreparationReference, type ReviewPreparationRequest,
   type ReviewPreparationStatus, type PreparedReviewContent, type HumanReviewProjection,
+  type EvidenceEnvelope, type SimulationReport,
 } from '@surdet/authoring';
 import { AuthoringService } from './authoring-service.js';
 import { compositionServiceForProject, type CompositionService } from './composition-service.js';
@@ -187,7 +188,32 @@ export class ReviewPreparationService {
               }
             } else if (current.completed === 5) {
               if (!change.runtimeTraces?.some((trace) => trace.workingRevision === change.workingRevision && trace.status === 'passed')) {
-                await this.authoring.runFrom(change.changeId, {});
+                const simulation = change.latestSimulation;
+                if (simulation?.workingRevision !== change.workingRevision || simulation.status !== 'passed') {
+                  throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '当前组合缺少本版本通过的模拟证据，已有准备进度保留。');
+                }
+                const evidence = await opened.store.readEvidence(change.changeId, simulation.evidenceId) as EvidenceEnvelope<SimulationReport> | null;
+                const report = evidence?.result;
+                if (evidence?.schemaVersion !== 1 || evidence.evidenceId !== simulation.evidenceId
+                  || evidence.capability !== 'project.simulate' || evidence.status !== 'passed'
+                  || evidence.changeId !== change.changeId || evidence.workingRevision !== change.workingRevision
+                  || evidence.projectRevision !== change.baseRevision || report?.status !== 'passed'
+                  || report.budgetExhausted !== false || typeof report.entryScene !== 'string' || !report.entryScene
+                  || !Number.isInteger(report.seed) || !Array.isArray(report.paths)) {
+                  throw corrupt('当前组合的模拟证据缺失、损坏或身份不匹配，不能猜测运行路径。');
+                }
+                // Pruned paths may be marked passed, but only an ended path can
+                // supply the complete explicit choices required by runFrom.
+                const completedPath = report.paths.find(candidate => candidate?.status === 'passed' && candidate.termination === 'ended');
+                if (!completedPath) {
+                  throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '当前模拟没有正常结束的完整路径，无法准备运行检查；已有进度保留。');
+                }
+                if (!Array.isArray(completedPath.choices) || completedPath.choices.some(choice => !Number.isInteger(choice) || choice < 0)) {
+                  throw corrupt('模拟证据中的完整路径选择序列损坏，不能猜测选项。');
+                }
+                await this.authoring.runFrom(change.changeId, {
+                  sceneId: report.entryScene, choices: completedPath.choices, seed: report.seed,
+                });
               }
             } else {
               await this.reviews.prepareResult({ ...current.plan!, changeId: change.changeId, resultReviewId: current.resultReviewId });

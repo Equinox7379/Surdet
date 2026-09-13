@@ -7,6 +7,7 @@ import { transform } from 'esbuild';
 import { chromium } from 'playwright';
 import { startDevProject } from '../../editor/scripts/dev-project.mjs';
 import { createNodeFsBridge, nodeBackedFileSystemInit } from '../../editor/e2e/asset-import-authority.e2e.mjs';
+import { NodeChangeStore } from '../dist/authoring/node-change-store.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-wave11-browser-'));
@@ -24,7 +25,7 @@ try {
   browser = await chromium.launch({ headless: true });
   for (const mode of ['whole', 'mixed']) {
     const entryScene = mode === 'whole' ? 'arrival' : 'opening';
-    const fixture = await createReviewComparisonFixture(path.join(root, mode), entryScene, background);
+    const fixture = await createReviewComparisonFixture(path.join(root, mode), entryScene, background, true);
     process.env.SURDET_AGENT_DATA_DIR = fixture.dataRoot;
     const sourceFile = path.join(fixture.projectRoot, 'content/scenario', `${entryScene}.gal`);
     const projectData = path.join(fixture.dataRoot, fixture.comparison.identity.projectIdentity);
@@ -82,7 +83,7 @@ try {
       await page.route('**/review-authority/v1/prepare-result', async (route) => {
         const request = route.request().postDataJSON();
         const response = await route.fetch();
-        if (!dropped && request.action === 'prepare-result' && (await response.json()).result?.stage === 'validate') {
+        if (!dropped && request.action === 'prepare-result' && (await response.json()).result?.stage === 'run') {
           dropped = true; await route.abort('connectionfailed');
         } else await route.fulfill({ response });
       });
@@ -91,7 +92,12 @@ try {
     if (mode === 'whole') {
       await page.locator('.review-preparation[data-preparation-error="REVIEW_PREPARATION_UNKNOWN"]').waitFor();
       const checkpoint = JSON.parse(await fs.readFile(path.join(comparisonRoot, 'preparation.json'), 'utf8'));
-      assert.equal(checkpoint.completed, 3);
+      assert.equal(checkpoint.completed, 5);
+      const beforeRestart = await NodeChangeStore.openForProject(checkpoint.changeId, fixture.projectRoot, { dataRoot: fixture.dataRoot });
+      const simulationId = beforeRestart.record.latestSimulation.evidenceId;
+      const simulation = await beforeRestart.store.readEvidence(checkpoint.changeId, simulationId);
+      assert.equal(simulation.result.paths[0].termination, 'pruned');
+      assert.deepEqual(simulation.result.paths.find(p => p.termination === 'ended').choices, [1, 1]);
       await page.unroute('**/review-authority/v1/prepare-result');
       await server.close();
       server = await startDevProject(['--project', fixture.projectRoot, '--data-root', path.join(root, mode, 'asset-data'), '--port', '5187'],
@@ -104,6 +110,8 @@ try {
       assert.equal(resumed.plan.planId, checkpoint.plan.planId);
       assert.equal(resumed.changeId, checkpoint.changeId);
       assert.equal(resumed.resultReviewId, checkpoint.resultReviewId);
+      const afterRestart = await NodeChangeStore.openForProject(resumed.changeId, fixture.projectRoot, { dataRoot: fixture.dataRoot });
+      assert.equal(afterRestart.record.latestSimulation.evidenceId, simulationId);
     } else await page.locator('[data-review-main="result"]').waitFor({ timeout: 60000 });
     assert.equal(await fs.readFile(sourceFile, 'utf8'), fixture.initial);
     const progress = JSON.parse(await fs.readFile(path.join(comparisonRoot, 'preparation.json'), 'utf8'));
@@ -121,7 +129,19 @@ try {
     await page.locator('[data-action="preview-result"]').click();
     await page.waitForFunction(() => document.querySelector('#review-preview-host iframe.preview-frame')?.contentWindow?.surdetPreviewDebug?.rendererStatus === 'awaiting');
     assert.equal((await page.locator('#status').innerText()).includes('自动备份未启用'), false);
+    const previewFrame = await (await page.locator('#review-preview-host iframe.preview-frame').elementHandle()).contentFrame();
+    await previewFrame.locator('canvas').click({ position: { x: 40, y: 40 } });
+    await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.rendererStatus === 'choice');
+    await page.screenshot({ path: path.join(root, `${mode}-choices.png`), fullPage: true });
+    await page.keyboard.press('2');
+    await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.rendererStatus === 'choice'
+      && window.surdetPreviewDebug.runtime.queries.diagnostics.projectionSnapshot().dialogue?.choiceLabels.includes('返回路口'));
+    await page.keyboard.press('2');
+    await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.rendererStatus === 'awaiting'
+      && window.surdetPreviewDebug.runtime.queries.diagnostics.projectionSnapshot().dialogue?.dialogText === '我们走到了故事的出口。');
     await page.screenshot({ path: path.join(root, `${mode}-preview.png`), fullPage: true });
+    await page.keyboard.press('Enter');
+    await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.interp?.status === 'ended');
     await page.locator('[data-action="approve-result"]').click();
     await page.locator('[data-action="write-approved-result"]').click();
     await page.locator('[data-action="sync-approved-project"]').waitFor();
@@ -146,7 +166,7 @@ try {
     assert.equal((await fs.readdir(path.join(projectData, 'reviews'))).length, 2);
     if (mode === 'mixed') assert.equal(await fs.stat(path.join(fixture.projectRoot, `content/scenario/${mixedScene}.gal`)).then(() => true, () => false), true);
     assert.deepEqual(errors, []);
-    console.log(`PASS ${mode}: saved decision -> prepare -> automatic result -> preview -> approve -> write -> load -> edit/save/reopen`);
+    console.log(`PASS ${mode}: saved decision -> prepare -> automatic result -> two real choices -> ending -> approve -> write -> load -> edit/save/reopen`);
     await context.close(); await server.close(); server = undefined;
   }
   console.log(`Artifacts: ${root}`);

@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import * as http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
-import { approvalFingerprintOf, decisionFingerprintV2Of, type ComparisonDecisionReceiptV2, type ReviewPreparationReference,
+import { approvalFingerprintOf, decisionFingerprintV2Of, type EvidenceEnvelope, type SimulationReport, type ComparisonDecisionReceiptV2, type ReviewPreparationReference,
   type ReviewPreparationRecord, type FinalApprovalReceipt, type HumanReviewProjection } from '@surdet/authoring';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
@@ -27,9 +27,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
-async function fixture() {
+async function fixture(branching = false) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-preparation-')); roots.push(root);
-  const f = await createReviewComparisonFixture(root, 'arrival');
+  const f = await createReviewComparisonFixture(root, 'arrival', undefined, branching);
   const authority = new ReviewTerminalAuthority(f.dataRoot, undefined, hasher, f.projectRoot);
   const candidate = f.comparison.projection.candidates[0]!;
   const command = { projectIdentity: f.comparison.identity.projectIdentity, reviewId: f.comparison.reviewId,
@@ -57,6 +57,72 @@ async function fixture() {
 }
 const request = (decision: ReviewPreparationReference, action = 'prepare-result') => ({ protocolVersion: '1.0.0' as const,
   action: action as 'prepare-result' | 'inspect-preparation', decision });
+
+it('runs a completed branching simulation path and resumes a lost runtime acknowledgement', async () => {
+  const f = await fixture(true);
+  for (const stage of ['compose', 'diff', 'validate', 'simulate']) {
+    expect(await f.service.execute(request(f.ref))).toMatchObject({ stage });
+  }
+  const checkpoint = await f.progress();
+  const authoring = new AuthoringService(undefined, new NodeLocalLeaseManager(f.dataRoot));
+  const simulated = await authoring.simulate(checkpoint.changeId!, { seed: 0 });
+  expect(simulated.result.report.paths[0]).toMatchObject({ status: 'passed', termination: 'pruned', choices: [0] });
+  expect(simulated.result.report.paths.find(p => p.termination === 'ended')).toMatchObject({ choices: [1, 1] });
+  expect(await f.service.execute(request(f.ref))).toMatchObject({ stage: 'run' });
+  const run = AuthoringService.prototype.runFrom;
+  const runSpy = vi.spyOn(AuthoringService.prototype, 'runFrom').mockImplementationOnce(async function (this: AuthoringService, changeId, input) {
+    await run.call(this, changeId, input);
+    throw new Error('lost runtime acknowledgement');
+  });
+  const restarted = await ReviewPreparationService.open(f.projectRoot, f.dataRoot);
+  expect(await restarted.execute(request(f.ref))).toMatchObject({ stage: 'run', error: { code: 'REVIEW_PREPARATION_IO_FAILED' } });
+  expect(runSpy).toHaveBeenCalledWith(checkpoint.changeId, { sceneId: 'arrival', choices: [1, 1], seed: 0 });
+  const opened = (await NodeChangeStore.openForProject(checkpoint.changeId!, f.projectRoot, { dataRoot: f.dataRoot }))!;
+  expect(opened.record.latestSimulation?.evidenceId).toBe(simulated.result.evidenceId);
+  expect(opened.record.runtimeTraces).toHaveLength(1);
+  const trace = await opened.store.readTrace(checkpoint.changeId!, opened.record.runtimeTraces![0]!.traceId) as { seed: number };
+  expect(trace.seed).toBe(0);
+  expect(await restarted.execute(request(f.ref))).toMatchObject({ stage: 'result' });
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  expect(await restarted.execute(request(f.ref))).toMatchObject({ stage: 'ready', resultReviewId: checkpoint.resultReviewId });
+  expect(await f.progress()).toMatchObject({ plan: checkpoint.plan, changeId: checkpoint.changeId, workingRevision: checkpoint.workingRevision });
+  expect(await fs.readdir(path.join(f.projectData, 'composition-plans'))).toEqual([checkpoint.plan!.planId]);
+  expect((await fs.readdir(f.projectData)).filter(name => name.startsWith('chg_'))).toHaveLength(3);
+  expect(await fs.readFile(f.source, 'utf8')).toBe(f.initial);
+  expect(await f.reviews.reviews.readFinalApproval(checkpoint.resultReviewId)).toBeNull();
+}, 30_000);
+
+it('keeps the same preparation when persisted simulation identity or completed paths cannot be verified', async () => {
+  const f = await fixture(true);
+  for (const stage of ['compose', 'diff', 'validate', 'simulate', 'run']) {
+    expect(await f.service.execute(request(f.ref))).toMatchObject({ stage });
+  }
+  const checkpoint = await f.progress();
+  const opened = (await NodeChangeStore.openForProject(checkpoint.changeId!, f.projectRoot, { dataRoot: f.dataRoot }))!;
+  const evidenceId = opened.record.latestSimulation!.evidenceId;
+  const evidenceFile = path.join(f.projectData, checkpoint.changeId!, 'evidence', `${evidenceId}.json`);
+  const original = await opened.store.readEvidence(checkpoint.changeId!, evidenceId) as EvidenceEnvelope<SimulationReport>;
+  const pruned = original.result.paths.filter(p => p.termination === 'pruned');
+  expect(pruned.length).toBeGreaterThan(0);
+  const invalid: Array<[EvidenceEnvelope<SimulationReport>, string]> = [
+    [{ ...original, changeId: f.refs[0]!.changeId }, 'CHANGE_STORE_CORRUPT'],
+    [{ ...original, workingRevision: original.workingRevision! - 1 }, 'CHANGE_STORE_CORRUPT'],
+    [{ ...original, result: { ...original.result, paths: pruned } }, 'SIMULATION_INCOMPLETE'],
+    [{ ...original, result: { ...original.result, paths: pruned.map(p => ({ ...p, termination: 'budget-exhausted' })) } }, 'SIMULATION_INCOMPLETE'],
+  ];
+  for (const [evidence, code] of invalid) {
+    // External disk corruption: the normal store correctly forbids replacing evidence.
+    await fs.writeFile(evidenceFile, JSON.stringify(evidence));
+    const resumed = await ReviewPreparationService.open(f.projectRoot, f.dataRoot);
+    expect(await resumed.execute(request(f.ref))).toMatchObject({ stage: 'run', error: { code } });
+    expect(await f.progress()).toMatchObject({ plan: checkpoint.plan, changeId: checkpoint.changeId, resultReviewId: checkpoint.resultReviewId, completed: 5 });
+    expect((await opened.store.read(checkpoint.changeId!))?.runtimeTraces ?? []).toHaveLength(0);
+    expect(await fs.readFile(f.source, 'utf8')).toBe(f.initial);
+  }
+  await fs.writeFile(evidenceFile, JSON.stringify(original));
+  expect(await f.service.execute(request(f.ref))).toMatchObject({ stage: 'result' });
+  expect(await f.service.execute(request(f.ref))).toMatchObject({ stage: 'ready', resultReviewId: checkpoint.resultReviewId });
+}, 30_000);
 
 it('resumes partial plan/result publication and lost integration acknowledgement without new identities', async () => {
   const f = await fixture();
