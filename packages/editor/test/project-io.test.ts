@@ -163,6 +163,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.fsSupported = true;
     state.autosaveProjectId = 'test-project';
     state.dirHandle = {} as FileSystemDirectoryHandle;
+    state.reviewPreviewReadOnly = false;
     state.scenes.clear();
     state.timelines = [];
     state.pendingSceneDeletes = [];
@@ -1354,6 +1355,22 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await switching;
     expect(onProjectClosing).toHaveBeenCalledTimes(1);
     expect(state.dirName).toBe('next-project');
+  });
+
+  it('只读结果不尝试绑定写服务，回到来源项目后恢复正常读取和保存入口', async () => {
+    const root = directoryHandle('result');
+    Object.assign(root, { queryPermission: async () => 'denied' });
+    const reading = vi.fn(async () => {});
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectReading: reading });
+    await openProjectFromHandle(root, { source: 'review-fixture' });
+    expect(state.reviewPreviewReadOnly).toBe(true);
+    expect(reading).not.toHaveBeenCalled();
+    await openProjectFromHandle(directoryHandle('source'));
+    expect(state.reviewPreviewReadOnly).toBe(false);
+    expect(reading).toHaveBeenCalledOnce();
+    await openProjectFromHandle(directoryHandle('writable-result'), { source: 'review-fixture' });
+    expect(state.reviewPreviewReadOnly).toBe(false);
+    expect(reading).toHaveBeenCalledTimes(2);
   });
 
   it('写回后重新加载来源项目保留同一审阅及回执，真实读取新正文', async () => {

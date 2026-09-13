@@ -5,8 +5,10 @@ import {
   buildReviewPreviewRequest,
   hashReviewFixtureTree,
   reconcileReviewTraceEvidence,
+  restoreOfficialResult,
   selectReviewPreviewScene,
 } from '../src/review-preview.js';
+import type { ReviewWorkspaceState } from '../src/review-workspace.js';
 
 class MemoryFile {
   readonly kind = 'file' as const;
@@ -119,5 +121,22 @@ describe('review result preview', () => {
       unexpected: [],
     });
     expect(reconcileReviewTraceEvidence(projection(), [])).toEqual({ matched: [], missing: ['trace-1', 'trace-2'], unexpected: [] });
+  });
+
+  it('reloads an unchanged readonly result without attempting writes, and rejects changed content', async () => {
+    const root = new MemoryDirectory('project').file('scene.gal', '@scene start\n正文。\n');
+    const handle = root.handle(); // No write methods: generated results are immutable.
+    const workspace = {
+      projectHandle: handle,
+      officialResultTreeSha256: await hashReviewFixtureTree(handle, bytesHasher),
+      currentResultTreeSha256: null,
+      fixtureChanged: true,
+    } as unknown as ReviewWorkspaceState;
+    await restoreOfficialResult(workspace, bytesHasher);
+    expect(workspace.fixtureChanged).toBe(false);
+    expect(workspace.currentResultTreeSha256).toBe(workspace.officialResultTreeSha256);
+    root.file('scene.gal', '外部变化。');
+    await expect(restoreOfficialResult(workspace, bytesHasher)).rejects.toThrow();
+    expect(await hashReviewFixtureTree(handle, bytesHasher)).not.toBe(workspace.officialResultTreeSha256);
   });
 });

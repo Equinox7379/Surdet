@@ -117,6 +117,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 let authoringProjectChanging = false;
 let boundReviewProject: { projectIdentity: string; handle: FileSystemDirectoryHandle } | null = null;
+let returningFromReviewPreview = false;
 const PREPARATION_SESSION_KEY = 'surdet.review-preparation';
 const authoringWaiters: Array<{
   revision: number;
@@ -1781,6 +1782,24 @@ function renderAll(): void {
 function renderMainArea(): void {
   const main = document.getElementById('main');
   if (!main) return;
+  if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config'].includes(state.mainTab)) {
+    const requestedMode = state.mainTab;
+    const workspace = state.reviewWorkspace;
+    state.mainTab = 'review';
+    if (workspace !== null && !returningFromReviewPreview) {
+      returningFromReviewPreview = true;
+      const editor = reviewApplyEditor(workspace);
+      void editor.synchronize(workspace.identity.projectIdentity).then(async () => {
+        if (state.reviewWorkspace !== workspace) return;
+        if (requestedMode === 'editor') await editor.continueWriting(workspace.identity.projectIdentity);
+        else { state.mainTab = requestedMode; renderMainArea(); }
+      }).catch((error) => {
+        setStatus(`尚未返回来源项目：${error instanceof Error ? error.message : String(error)}`, false, 8000);
+      }).finally(() => { returningFromReviewPreview = false; });
+    }
+    // Never mount editable controls against an immutable generated result,
+    // including navigation from trace links and other panels.
+  }
   if (state.reviewWorkspace === null) { disposeReviewApply(); disposeReviewPreparation(); }
   disposeScriptV4();
   disposePreviewPanel();
