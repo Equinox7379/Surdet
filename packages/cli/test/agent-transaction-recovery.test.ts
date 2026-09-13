@@ -8,6 +8,8 @@ import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../src/authoring/project-identity.js';
+import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
+import { openAgentPortSession } from '../src/agent-port/session.js';
 
 type RecoveryMode = 'staging' | 'replacing-mixed' | 'committed';
 type Fixture = { parent: string; dataRoot: string; projectRoot: string };
@@ -143,6 +145,69 @@ async function readRecordAndJournalBytes(fixture: Fixture, rootIdentity: string,
 }
 
 describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
+  it.each(['stage', 'apply'] as const)('恢复记录保留 %s 交付包时序与原组合约束', async (policy) => {
+    await withFixture(`surdet-recovery-capsule-order-${policy}-`, async (fixture) => {
+      const sourceBefore = filesDigest(fixture.projectRoot);
+      const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy });
+      let changeId: string;
+      try {
+        expect((await session.invoke('change.begin', {})).ok).toBe(true);
+        changeId = session.activeChangeId!;
+        for (const [operationId, timelineId] of [['10', 'first'], ['2', 'second']] as const) {
+          const created = await session.invoke('timeline.create', {
+            operationId, timelineId, definition: { version: 1, id: timelineId, durationMs: 100, tracks: [{ kind: 'screen', cues: [] }] },
+          });
+          expect(created.ok, JSON.stringify(created)).toBe(true);
+        }
+      } finally {
+        await session.close();
+      }
+      const prepared = await prepareInterruptedChange(fixture, changeId, 'staging');
+      const recovery = new AuthoringService();
+      const inspected = await recovery.inspectRecovery(changeId);
+      const input = { operationId: 'recover-order', recoveryToken: inspected.result.recoveryToken! };
+      const recovered = await recovery.executeRecovery(changeId, input);
+      expect(recovered.result.disposition).toBe('REOPEN_OPEN');
+      const afterRecovery = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity))!.record;
+      expect((await new AuthoringService().executeRecovery(changeId, input)).result).toEqual(recovered.result);
+      expect((await NodeChangeStore.openForProject(changeId, prepared.rootIdentity))!.record).toEqual(afterRecovery);
+
+      const resumed = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy, resumeChangeId: changeId });
+      try {
+        const expectedOrder = ['10', '2', 'recover-order'];
+        const expectedSemanticOrder = ['10', '2'];
+        const later = await resumed.invoke('timeline.create', {
+          operationId: '1', timelineId: 'last', definition: { version: 1, id: 'last', durationMs: 100, tracks: [{ kind: 'screen', cues: [] }] },
+        });
+        if (policy === 'apply') {
+          expect(later.ok, JSON.stringify(later)).toBe(true);
+          expectedOrder.push('1');
+          expectedSemanticOrder.push('1');
+        } else {
+          expect(later).toMatchObject({ ok: false, error: { code: 'CANDIDATE_OPERATION_FACTS_REQUIRED' } });
+        }
+        expect((await resumed.invoke('change.diff', {})).ok).toBe(true);
+        const capsule = await generateDeliveryCapsule(resumed);
+        expect((capsule.operations as Array<{ operationId: string }>).map((operation) => operation.operationId))
+          .toEqual(expectedOrder);
+        expect((capsule.objectDiff as { semantic: Array<{ kind: string; operationId: string }> }).semantic
+          .filter((entry) => entry.kind === 'timeline.create').map((entry) => entry.operationId))
+          .toEqual(expectedSemanticOrder);
+        expect(capsule.composition.eligibility).toBe('unavailable');
+        expect(capsule.composition.manifest).toBeUndefined();
+        expect(capsule.composition.reasons).toEqual(expect.arrayContaining([
+          expect.objectContaining({ operationId: 'recover-order' }),
+        ]));
+        const reopened = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity))!.record;
+        expect(expectedOrder.map((id) => reopened.operations[id]!.sequence)).toEqual(expectedOrder.map((_, index) => index));
+        expect(reopened.operations['recover-order']!.normalizedInput).toBeUndefined();
+        expect(filesDigest(fixture.projectRoot)).toEqual(sourceBefore);
+      } finally {
+        await resumed.close();
+      }
+    });
+  });
+
   it('替换失败恢复后，同一事务重试成功且保留第一次日志', async () => {
     await withFixture('surdet-recovery-retry-', async (fixture) => {
       const service = new AuthoringService();

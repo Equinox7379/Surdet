@@ -185,6 +185,7 @@ describe('shared transaction recovery matrix', () => {
     expect(reopened).toEqual({ changeId: staging.change.record.changeId, status: 'OPEN', disposition: 'REOPEN_OPEN' });
     expect(staging.storage.removeStageCalls).toBe(2);
     expect(staging.change.record.status).toBe('OPEN');
+    expect(staging.change.record.operations['recover-staging']!.sequence).toBe(0);
     expect(await executeTransactionRecovery({
       change: staging.change,
       journal: stagingJournal,
@@ -194,6 +195,7 @@ describe('shared transaction recovery matrix', () => {
       operationId: 'recover-staging',
     })).toEqual(reopened);
     expect(staging.storage.removeStageCalls).toBe(2);
+    expect(staging.change.record.operations['recover-staging']!.sequence).toBe(0);
     await expect(executeTransactionRecovery({
       change: staging.change,
       journal: stagingJournal,
@@ -225,6 +227,7 @@ describe('shared transaction recovery matrix', () => {
     expect(rollback.storage.restoreCalls).toBe(1);
     expect(rollback.storage.removePathCalls).toBe(1);
     expect(rollback.change.record.status).toBe('OPEN');
+    expect(rollback.change.record.operations['recover-replacing']!.sequence).toBe(0);
 
     const committed = await fixture('target');
     const committedJournal = { ...committed.journal, status: 'COMMITTED' as const };
@@ -245,6 +248,7 @@ describe('shared transaction recovery matrix', () => {
     });
     expect(finalized).toMatchObject({ status: 'COMMITTED', disposition: 'FINALIZE_COMMITTED' });
     expect(committed.change.record.status).toBe('COMMITTED');
+    expect(committed.change.record.operations['recover-committed']!.sequence).toBe(0);
     expect(committed.storage.removeStageCalls).toBe(2);
   });
 
