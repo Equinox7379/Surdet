@@ -56,6 +56,10 @@ Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要
 
 `stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：未完成上传可重试原暂存请求；已封存的来源和目标不可替换；发布中断用原计划指纹恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放素材删除、移动或撤销。
 
+图像导入后，可以用 `project.gallery` 读取 CG 条目及当前指纹，在隔离 change 中调用 `gallery.cg.create` 新增条目，或用 `gallery.cg.patch` 逐条修改 `name` / `src`。`src` 使用 `project.assets.backgrounds[].key`；省略时使用 CG 的 `id`，修改时传 `src: null` 恢复这一规则。其他 CG、音乐、文本回想及未修改字段会保留，不提供删除或 ID 改名。
+
+在剧情中使用 `@unlock_cg <id>` 解锁对应条目。候选应先建立 CG，再编排引用它的剧情；不同条目可组合，同一条目的不同修改需要明确选择。CG 解锁遵循既有存读档状态，不是跨周目永久收集。`surdet new` 的播放器会读取可选的 `content/config/gallery.json`，不需要另外接入鉴赏界面。
+
 推荐工作流：
 
 ```text
@@ -71,7 +75,7 @@ Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要
 
 `observe` 不修改项目文件；恢复 change 后的校验与模拟可以在 change store 追加证据。`stage` 只写隔离 change。`apply` 是启动时由操作者授予的项目写权限：普通 change 可在该会话创建或通过 `--resume-change` 恢复，并在证据门通过后提交；integration change 还必须有最终人类批准回执。推荐按上面的流程先复核，再另行启动 apply。MCP 只投影共享 authoring 合同，不维护第二套业务语义。
 
-当前 Authoring 合同为 `2.3.0`。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+当前 Authoring 合同为 `2.4.0`。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
 
 ## 工作区
 

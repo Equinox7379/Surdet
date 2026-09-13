@@ -227,7 +227,8 @@ const diffEntrySchema = strictObject({
   objectAfter: stringSchema,
   fingerprintBefore: stringSchema,
   fingerprintAfter: stringSchema,
-  directChange: jsonValueSchema,
+  // CG differences retain full entry metadata, including nested fields.
+  directChange: { anyOf: [jsonValueSchema, jsonObjectSchema] },
   potentialImpact: arrayOf(jsonValueSchema),
   observedImpact: arrayOf(jsonValueSchema),
 }, ['kind', 'operationId', 'directChange', 'potentialImpact', 'observedImpact']);
@@ -693,6 +694,26 @@ const importDetailSchema = strictObject({
 const importDetailExample = { operation: { status: 'READY' }, manifest: {}, stagedItems: [], plan: {}, receipt: null, undoReceipt: null };
 
 const definitions = {
+  gallery: {
+    inputSchema: emptyInputSchema,
+    outputSchema: strictObject({
+      view: { enum: ['project', 'working'] },
+      cgs: arrayOf(strictObject({ id: stringSchema, name: stringSchema, src: stringSchema, objectRef: stringSchema, fingerprint: stringSchema }, ['id', 'name', 'objectRef', 'fingerprint'])),
+    }, ['view', 'cgs']),
+    example: { input: {}, expectedResultShape: { view: 'working', cgs: [{ id: 'night_cg', name: '夜色', src: 'night', objectRef: 'gallery:cgs:night_cg', fingerprint: '...' }] } },
+  },
+  galleryCgCreate: {
+    inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, name: stringSchema, src: stringSchema }, ['operationId', 'id', 'name']),
+    outputSchema: strictObject({ id: stringSchema, objectRef: stringSchema, fingerprint: stringSchema, entry: jsonObjectSchema, diffEntry: diffEntrySchema }, ['id', 'objectRef', 'fingerprint', 'entry', 'diffEntry']),
+    example: { input: { operationId: 'op_cg', id: 'night_cg', name: '夜色', src: 'night' }, expectedResultShape: { id: 'night_cg', objectRef: 'gallery:cgs:night_cg', fingerprint: '...', entry: {}, diffEntry: {} } },
+  },
+  galleryCgPatch: {
+    inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, expectedFingerprint: stringSchema,
+      patch: { ...strictObject({ name: stringSchema, src: { oneOf: [stringSchema, nullSchema] } }, []), minProperties: 1 },
+    }, ['operationId', 'id', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ id: stringSchema, objectRef: stringSchema, fingerprint: stringSchema, entry: jsonObjectSchema, diffEntry: diffEntrySchema }, ['id', 'objectRef', 'fingerprint', 'entry', 'diffEntry']),
+    example: { input: { operationId: 'op_cg_name', id: 'night_cg', expectedFingerprint: '...', patch: { name: '归途夜色' } }, expectedResultShape: { id: 'night_cg', objectRef: 'gallery:cgs:night_cg', fingerprint: '...', entry: {}, diffEntry: {} } },
+  },
   compositionCompare: {
     inputSchema: strictObject({
       candidateRefs: { ...arrayOf(strictObject({
@@ -945,6 +966,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'capabilities.describe',
   'project.inspect',
   'project.assets',
+  'project.gallery',
   'asset.sources',
   'asset.import.stage',
   'asset.import.inspect',
@@ -959,6 +981,8 @@ export const AUTHORING_CAPABILITY_IDS = [
   'character.remove',
   'timeline.create',
   'timeline.patch',
+  'gallery.cg.create',
+  'gallery.cg.patch',
   'project.entry-scene.set',
   'project.validate',
   'project.simulate',
@@ -988,17 +1012,18 @@ type DefinitionMetadata = {
   readonly minimumPolicy: AutonomyPolicy;
   readonly sideEffects: readonly SideEffectClass[];
   readonly idempotency: IdempotencyClass;
-  /** Wave 5：true 仅限八项内容 mutation；其余（含 composition.*）必须 false。 */
+  /** true 仅限共享内容 mutation 白名单；其余（含 composition.*）必须 false。 */
   readonly composable: boolean;
   readonly preconditions: readonly string[];
   readonly possibleErrors: readonly string[];
   readonly repairRecipes: readonly string[];
 };
 
-/** 八项内容 mutation 白名单：composable=true 的唯一合法集合。 */
+/** 内容 mutation 白名单：composable=true 的唯一合法集合。 */
 export const CONTENT_MUTATION_CAPABILITY_IDS = new Set<string>([
   'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
   'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
+  'gallery.cg.create', 'gallery.cg.patch',
 ]);
 
 const commonErrors = ['INVALID_REQUEST', 'PROJECT_INVALID', 'PROJECT_NOT_FOUND', 'POLICY_BLOCKED'] as const;
@@ -1013,6 +1038,9 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'project.gallery': { title: 'Inspect CG gallery', purpose: 'Read CG id/name/src and per-entry fingerprints from the active working change, or the bound project when no change is active. src is a project.assets background key; omitted src uses id.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['bound project or active change is readable'], possibleErrors: [...commonErrors, 'CHANGE_NOT_FOUND', 'OBJECT_AMBIGUOUS'], repairRecipes: readRepair },
+  'gallery.cg.create': { title: 'Create CG entry', purpose: 'Add one CG without replacing gallery.json or changing other CG/music/text/unknown fields. Import images first, refresh project.assets, create CGs before scenes that unlock them with the existing unlock_cg instruction. Unlocks follow existing per-save rules.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'id is new', 'src or id names a resolved project.assets.backgrounds key'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OBJECT_AMBIGUOUS', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.gallery before creating; configure CGs before adding @unlock_cg references with scene.create/scene.patch.', ...mutateRepair] },
+  'gallery.cg.patch': { title: 'Patch CG entry', purpose: 'Update only one CG name/src using its current entry fingerprint. id remains stable. Omitted fields and unknown fields are preserved; src:null restores the existing id fallback. Distinct CGs compose independently; competing changes to the same CG require an explicit selection.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'copy expectedFingerprint from project.gallery or object.inspect of gallery:cgs:<id>'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the active change with project.gallery; retry with the current CG fingerprint after inspecting its fields.', ...mutateRepair] },
   'asset.sources': { title: "Inspect authorized image sources", purpose: "Discover startup-authorized directories and inspect PNG/JPEG/WebP files before staging. No downloads or arbitrary paths.", minimumPolicy: 'observe', sideEffects: ["project-read", "authorized-source-read"], idempotency: 'pure-read', composable: false, preconditions: ["startup source directories explicitly granted"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
   'asset.import.stage': { title: "Stage images", purpose: "Stage and seal an image import using the existing import authority, without writing project files. Retry the same operationId; source requests stay immutable. Blocked targets may be corrected before sealing.", minimumPolicy: 'stage', sideEffects: ["project-read", "authorized-source-read", "change-store-write"], idempotency: 'operation-id', composable: false, preconditions: ["no active story change","source digests copied from asset.sources"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
   'asset.import.inspect': { title: "Inspect image import", purpose: "Reconcile the durable progress of one image import, including after restart or response loss. Never creates another operation.", minimumPolicy: 'observe', sideEffects: ["project-read","change-store-read","change-store-write"], idempotency: 'idempotent', composable: false, preconditions: ["operationId identifies an Agent image import"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
@@ -1053,6 +1081,9 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
   const schema = definitions[id === 'asset.sources' ? 'assetSources'
+    : id === 'project.gallery' ? 'gallery'
+    : id === 'gallery.cg.create' ? 'galleryCgCreate'
+    : id === 'gallery.cg.patch' ? 'galleryCgPatch'
     : id === 'asset.import.stage' ? 'assetImportStage'
     : id === 'asset.import.inspect' ? 'assetImportInspect'
     : id === 'asset.import.commit' ? 'assetImportCommit'

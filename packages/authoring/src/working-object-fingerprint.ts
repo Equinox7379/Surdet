@@ -3,12 +3,14 @@ import { parseProjectConfigDocument } from './config-document.js';
 import { timelinePathFor } from './timeline-operations.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
+import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 
 export type ComposableObjectRef =
   | `scene:${string}`
   | `timeline:${string}`
   | `variable:${string}`
   | `character:${string}`
+  | `gallery:cgs:${string}`
   | 'config:characters'
   | 'config:entryScene';
 
@@ -84,6 +86,12 @@ export async function fingerprintWorkingObject(
         `时间轴对象无法解析：${objectRef}（${error instanceof Error ? error.message : String(error)}）`,
       );
     }
+  }
+
+  if (objectRef.startsWith('gallery:cgs:')) {
+    const id = objectRef.slice('gallery:cgs:'.length);
+    const entry = readGalleryDocument(workingFiles[GALLERY_PATH]).cgs.find((item) => item.id === id);
+    return entry === undefined ? absent() : present(entry);
   }
 
   const config = parseConfigObject(workingFiles['game.config.json']);

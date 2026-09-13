@@ -1,5 +1,5 @@
 /** 项目内容入口。与 Starter 共用同一套玩家菜单、存档、输入和退出实现。 */
-import { startPlayer, showPlayerRecovery } from '../../../examples/shared/player/player.js';
+import { startPlayer, showPlayerRecovery, type PlayerProject } from '../../../examples/shared/player/player.js';
 import gameConfig from '../game.config.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
@@ -14,6 +14,8 @@ void startPlayer({
   assetFiles,
   fontFiles: import.meta.glob<string>('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true }),
   timelineFiles: import.meta.glob('../content/timelines/**/*.json', { eager: true, import: 'default' }),
+  gallery: (Object.values(import.meta.glob('../content/config/gallery.json', { eager: true, import: 'default' }))[0]
+    ?? { cgs: [], music: [] }) as NonNullable<PlayerProject['gallery']>,
   subtitle: '潮水退去以前，故事已经开始',
   titleBackground: 'harbor',
   endScenes: ['ch01_01'],

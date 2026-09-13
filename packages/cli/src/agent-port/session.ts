@@ -118,6 +118,8 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'character.remove',
   'timeline.create',
   'timeline.patch',
+  'gallery.cg.create',
+  'gallery.cg.patch',
   'project.entry-scene.set',
   'runtime.run-from',
   'runtime.read-trace',

@@ -20,6 +20,8 @@ import { timelineIdFromPath, timelineIdentityConflict, timelineIdentityMismatchM
 import type { ProjectSnapshot } from './project-snapshot.js';
 import { validateTimeline, type TimelineDefinition } from '@surdet/core';
 import type { ProjectAssetCatalog } from './contracts.js';
+import { validateGalleryConfig } from './gallery-validation.js';
+import { GALLERY_PATH } from './gallery-operations.js';
 
 export type AuthoringValidationIssue = LintIssue & {
   objectRef?: string;
@@ -402,6 +404,14 @@ export function validateSnapshot(
     }
   }
 
+  const galleryFile = snapshot.files.find((file) => file.path === GALLERY_PATH);
+  if (galleryFile !== undefined) {
+    rawIssues.push(...validateGalleryConfig({
+      text: galleryFile.text,
+      galleryPath: GALLERY_PATH, scenes, failedSceneIds: failedScenes, characters: null, configPath,
+      ...(assetCatalog === undefined ? {} : { bgAssets: new Set(assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => entry.key)) }),
+    }));
+  }
   attachHints(rawIssues);
   const issues = rawIssues.map((issue) => enrich(index, issue));
   return {

@@ -112,6 +112,13 @@ function addSceneInstructionReferences(
     return;
   }
 
+  if (name === 'unlock_cg') {
+    // Core stores the exact argument for unlock_cg, including any literal quotes.
+    const token = args[0] ?? '';
+    addReference(references, 'gallery-cg', 'candidate-external', token, source, `gallery:cgs:${token}`);
+    return;
+  }
+
   if (name === 'goto' || name === 'loop') {
     const token = instructionTarget(args);
     if (token.length > 0) {
