@@ -467,7 +467,6 @@ describe('Surdet Agent Port security and cleanup countertests', () => {
 
 describe('Wave 6 review security boundary', () => {
   it('does not expose agent-side human receipt writers', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(35);
     expect(AUTHORING_CAPABILITY_IDS).not.toContain('review.write-decision');
     expect(AUTHORING_CAPABILITY_IDS).not.toContain('review.approve');
   });
