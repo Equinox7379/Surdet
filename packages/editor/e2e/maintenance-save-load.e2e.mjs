@@ -15,6 +15,8 @@ const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const fixtureSourceRoot = path.join(editorRoot, 'e2e', 'fixtures', 'asset-authority-project');
 const forbiddenPorts = new Set([4173, 4175]);
 const sceneSource = '@scene start\n@bg castle_hall\n凛：分数是 {score}。\n@end\n';
+const renamedCharacter = '凛·维护';
+const renamedSceneSource = sceneSource.replace('凛：', `${renamedCharacter}：`);
 const expectedInjectedError = 'EACCES: permission denied, read content/scenario/start.gal';
 
 function errorText(error) {
@@ -269,6 +271,8 @@ async function main() {
     ({ context: activeContext, page: activePage } = await openBrowserPage(browser, baseUrl, bridge, channels));
     await openProject(activePage, 'project', path.basename(projectRoot), channels);
 
+    await openConfigSection(activePage, '角色', 'characters');
+    await activePage.getByRole('textbox', { name: 'lynn 的显示名称', exact: true }).fill(renamedCharacter);
     await openConfigSection(activePage, '变量', 'variables');
     await activePage.getByRole('textbox', { name: '初始值，第 1 行', exact: true }).fill('42');
     await activePage.getByRole('button', { name: '名词表', exact: true }).click();
@@ -299,6 +303,12 @@ async function main() {
     assert.equal(savedConfig.variables.line.initial, '原始文案', 'global save changed the string variable unexpectedly');
     assert.equal(savedTerminology.terms[0].canonical, '新城堡大厅', 'global save did not write terminology.json');
     assert.deepEqual(savedTerminology.terms[0].variants, ['新大厅', '大厅']);
+    assert.deepEqual(savedConfig.characters.lynn, { name: renamedCharacter, avatar: 'lynn' });
+    assert.equal(
+      await fs.readFile(path.join(projectRoot, 'content', 'scenario', 'start.gal'), 'utf8'),
+      renamedSceneSource,
+      'global save did not migrate the renamed character speaker in the same transaction',
+    );
 
     await activeContext.close();
     activeContext = null;
@@ -306,6 +316,12 @@ async function main() {
 
     ({ context: activeContext, page: activePage } = await openBrowserPage(browser, baseUrl, bridge, channels));
     await openProject(activePage, 'project', path.basename(projectRoot), channels);
+    await openConfigSection(activePage, '角色', 'characters');
+    assert.equal(
+      await activePage.getByRole('textbox', { name: 'lynn 的显示名称', exact: true }).inputValue(),
+      renamedCharacter,
+      'saved character name did not survive a fresh browser context',
+    );
     await openConfigSection(activePage, '变量', 'variables');
     assert.equal(
       await activePage.getByRole('textbox', { name: '初始值，第 1 行', exact: true }).inputValue(),
@@ -336,7 +352,7 @@ async function main() {
     await activePage.locator('[data-script-view="source"]').click();
     const sourceEditor = activePage.locator('.v4-source-editor');
     await sourceEditor.waitFor({ state: 'visible' });
-    const draftSource = sceneSource.replace('分数是 {score}', '草稿分数是 {score}');
+    const draftSource = renamedSceneSource.replace('分数是 {score}', '草稿分数是 {score}');
     await sourceEditor.fill(draftSource);
     await activePage.waitForFunction((expected) => (
       window.surdetEditorDebug?.state?.scenes?.get('start')?.text === expected
@@ -498,6 +514,8 @@ async function main() {
       screenshotPath,
       savedScore: 42,
       savedTerminology: '新城堡大厅',
+      savedCharacterName: renamedCharacter,
+      characterSpeakerMigrationSaved: true,
       previewBackground: 'castle_hall',
       previewText: '分数是 42。',
       failedOpenPreservedDirtyDraft: true,

@@ -16,6 +16,7 @@
     "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run typecheck -w @surdet/authoring && npm run typecheck --workspaces --if-present",
     "verify:all": "node scripts/verify-all.mjs",
     "verify:asset-import": "node packages/editor/e2e/asset-import-authority.e2e.mjs",
+    "verify:editor-save-load": "node packages/editor/e2e/maintenance-save-load.e2e.mjs",
     "verify:starter": "node packages/renderer/e2e/starter-player.e2e.mjs && node packages/renderer/e2e/starter-regressions.e2e.mjs && node packages/cli/e2e/new-project-player.e2e.mjs",
     "verify:p1p2:policy": "node scripts/verify-p1-p2.mjs",
     "verify:p1p2": "npm run verify:p1p2:policy && npm run verify:all",

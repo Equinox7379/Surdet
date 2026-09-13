@@ -107,6 +107,7 @@ npm run test -w @surdet/cli
 npm run typecheck -w @surdet/authoring
 npm run typecheck -w @surdet/cli
 npm run verify:docs
+npm run verify:editor-save-load
 ```
 
 测试绿灯不能替代玩家对画面、声音和交互手感的判断。

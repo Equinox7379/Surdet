@@ -190,7 +190,7 @@ async function persistRecord(
   const next = clone(current);
   next.status = status;
   next.recordVersion = current.recordVersion + 1;
-  next.operations = { ...next.operations, [operationId]: { requestHash, result } };
+  next.operations = { ...next.operations, [operationId]: { requestHash, sequence: Object.keys(current.operations).length, result } };
   await change.repository.write(next, {
     expectedRecordVersion: current.recordVersion,
     expectedStatus: current.status,
