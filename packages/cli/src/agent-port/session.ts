@@ -38,6 +38,7 @@ import { recordInvocation } from './invocation-ledger.js';
 import { generateDeliveryCapsule, type SealedDeliveryCapsule } from './delivery-capsule.js';
 import { isCapabilityAllowed } from './policy.js';
 import type { AgentPortOptions } from './args.js';
+import { authorizeImageSources, type AuthorizedImageSource } from '../authoring/agent-image-import-service.js';
 
 export interface SessionCapability {
   id: AuthoringCapabilityId;
@@ -226,6 +227,9 @@ function capabilityAvailability(
   } else if (capability.id === 'change.begin' && activeChangeId !== undefined) {
     availability = 'state-blocked';
     reason = '当前 session 已有 active change';
+  } else if (activeChangeId !== undefined && ['asset.import.stage', 'asset.import.commit', 'asset.import.recover'].includes(capability.id)) {
+    availability = 'state-blocked';
+    reason = '先导入素材并刷新项目事实，再创建剧情 change';
   } else if (capability.id === 'composition.execute' && activeRecord !== undefined && activeRecord.integration === undefined) {
     // Wave 5：普通 active change 占用 session 时拒绝执行；无 active 或 integration resume 均 available。
     availability = 'state-blocked';
@@ -242,7 +246,7 @@ function capabilityAvailability(
     && CHANGE_STATUS_SENSITIVE_CAPABILITIES.has(capability.id)) {
     availability = 'state-blocked';
     reason = `当前 change 状态 '${activeRecord.status}' 不允许普通 mutation；先使用 recovery capability`;
-  } else if (capability.id === 'change.commit' && humanWorkspaceCommitBlock(humanWorkspace) !== null) {
+  } else if (['change.commit', 'asset.import.commit', 'asset.import.recover'].includes(capability.id) && humanWorkspaceCommitBlock(humanWorkspace) !== null) {
     availability = 'state-blocked';
     reason = `human-workspace-${humanWorkspace.availability}`;
   } else {
@@ -302,6 +306,8 @@ export class AgentPortSession {
     private readonly wasResumed: boolean,
     activeChangeId?: string,
     private readonly service = new AuthoringService(),
+    private readonly assetSources: readonly AuthorizedImageSource[] = [],
+    private readonly assetImportDataRoot?: string,
   ) {
     this.activeChangeIdValue = activeChangeId;
     this.lastChangeIdValue = activeChangeId;
@@ -360,11 +366,15 @@ export class AgentPortSession {
     policy: AutonomyPolicy;
     projectRoot: string;
     activeChangeId?: string;
+    assetSources: readonly AuthorizedImageSource[];
+    assetImportDataRoot?: string;
   } {
     return {
       sessionId: this.sessionId,
       policy: this.policy,
       projectRoot: this.projectRoot,
+      assetSources: this.assetSources,
+      ...(this.assetImportDataRoot === undefined ? {} : { assetImportDataRoot: this.assetImportDataRoot }),
       ...(this.activeChangeIdValue === undefined ? {} : { activeChangeId: this.activeChangeIdValue }),
     };
   }
@@ -712,5 +722,8 @@ export async function openAgentPortSession(options: AgentPortOptions): Promise<A
     new Date().toISOString(),
     resumedChangeId !== undefined,
     resumedChangeId,
+    undefined,
+    await authorizeImageSources(options.assetSources ?? []),
+    options.assetImportDataRoot ?? process.env['SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT'],
   );
 }

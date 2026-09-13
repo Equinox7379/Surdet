@@ -477,6 +477,7 @@ const ASSET_KINDS = new Set([
 const PLAN_ISSUES = new Set([
   'IMPORT_NAME_INVALID', 'IMPORT_FORMAT_UNSUPPORTED', 'IMPORT_PORTRAIT_NAME_INVALID',
   'IMPORT_TARGET_DUPLICATE_IN_BATCH', 'IMPORT_TARGET_EXISTS', 'IMPORT_TARGET_UNSAFE',
+  'IMPORT_ASSET_KEY_CONFLICT',
 ]);
 const ALLOWED_ACTIONS = new Set(['upload', 'plan', 'seal', 'commit', 'cancel', 'resume', 'recover', 'undo']);
 const RELOCATION_ALLOWED_ACTIONS = new Set(['commit', 'cancel', 'resume', 'recover', 'undo']);

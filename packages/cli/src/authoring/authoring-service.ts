@@ -84,6 +84,7 @@ import { ChangeRecordProjectStorage } from './working-project-storage.js';
 import { HumanWorkspaceStore } from './human-workspace-store.js';
 import { assertHumanWorkspaceAllowsAgentCommit } from './human-workspace-gate.js';
 import { loadProjectCoordinationBaseline } from './project-coordination-baseline.js';
+import { AgentImageImportService, type AuthorizedImageSource, type ImageImportCapability } from './agent-image-import-service.js';
 import { ProjectMutationNoticeStore } from './project-mutation-notice-store.js';
 
 export interface ServiceMetadata {
@@ -524,6 +525,14 @@ export class AuthoringService {
       projectRevision: snapshot.revision,
       result: buildAssetCatalog(assetFiles, snapshot, { gallery }),
     };
+  }
+
+  async invokeImageImport(projectRoot: string, capability: ImageImportCapability, input: Record<string, unknown>,
+    sources: readonly AuthorizedImageSource[], dataRoot?: string): Promise<ServiceResult<Record<string, unknown>>> {
+    const result = await new AgentImageImportService(this.leaseManager).invoke(projectRoot, capability, input, sources, dataRoot);
+    const assets = await this.projectAssets(projectRoot);
+    return { projectIdentity: assets.projectIdentity, projectRevision: assets.projectRevision,
+      result: capability === 'asset.sources' ? result : { ...result, catalog: assets.result } };
   }
 
   async validateProject(projectRoot: string): Promise<ServiceResult<{

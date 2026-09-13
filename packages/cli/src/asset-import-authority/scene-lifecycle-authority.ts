@@ -75,6 +75,8 @@ export interface SceneLifecycleAuthorityOptions {
   faultInjector?: (point: SceneLifecycleFaultPoint) => void | Promise<void>;
   now?: () => Date;
   onRecovered?: (requestId: string, changedPaths: string[]) => Promise<void>;
+  /** Image import must not recover unrelated scene writes as a readiness side effect. */
+  recoverOnReadinessCheck?: boolean;
 }
 
 export type SceneLifecycleFaultPoint =
@@ -411,7 +413,18 @@ export class ProjectSceneLifecycleAuthority {
     this.mutationCoordinator.register('scene-lifecycle', async () => {
       await this.assertLeaseHeld();
       await assertAssetImportProjectRootIdentity(this.paths);
-      await this.recoverPendingCommitsInternal();
+      if (options.recoverOnReadinessCheck !== false) {
+        await this.recoverPendingCommitsInternal();
+        return;
+      }
+      for (const requestId of await this.commitIds()) {
+        const record = await this.readCommit(requestId);
+        if (record !== null && record.status !== 'COMMITTED' && record.status !== 'ROLLED_BACK') {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '场景保存尚未完成；请先通过场景保存服务恢复，图像导入不会代为修改剧情。', {
+            authority: 'scene-lifecycle', requestId,
+          });
+        }
+      }
     });
   }
 

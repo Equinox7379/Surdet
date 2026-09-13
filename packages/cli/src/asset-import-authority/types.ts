@@ -87,6 +87,8 @@ export interface AssetImportOperationManifest {
   createdAt: string;
   manifestFingerprint: string;
   items: AssetImportOperationManifestItem[];
+  /** Immutable source request for the Agent adapter; absent for browser uploads. */
+  agentRequestFingerprint?: string;
 }
 
 export interface AssetImportOperationPlanRecord {
@@ -235,6 +237,7 @@ export interface UndoOperationResponse {
 export interface CreateImportOperationRequest {
   operationId: string;
   items: AssetImportOperationManifestItem[];
+  agentRequestFingerprint?: string;
 }
 
 export interface CreateImportOperationResponse {

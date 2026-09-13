@@ -39,6 +39,7 @@ const ISSUE_LABELS: Readonly<Record<string, string>> = {
   IMPORT_PORTRAIT_NAME_INVALID: '立绘名称需要包含角色、服装和表情。',
   IMPORT_TARGET_DUPLICATE_IN_BATCH: '本次选择中有重复的目标位置。',
   IMPORT_TARGET_EXISTS: '目标位置已有同名文件，请换一个名称。',
+  IMPORT_ASSET_KEY_CONFLICT: '这个素材名称已被其他图片使用，请换一个名称。',
   IMPORT_TARGET_UNSAFE: '目标位置不可用，请检查文件名。',
 };
 
@@ -47,6 +48,7 @@ const FILE_NAME_ISSUES = new Set([
   'IMPORT_TARGET_UNSAFE',
   'IMPORT_TARGET_DUPLICATE_IN_BATCH',
   'IMPORT_TARGET_EXISTS',
+  'IMPORT_ASSET_KEY_CONFLICT',
   'IMPORT_PORTRAIT_NAME_INVALID',
 ]);
 

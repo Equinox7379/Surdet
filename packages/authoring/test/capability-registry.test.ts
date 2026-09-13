@@ -8,11 +8,12 @@ import {
   type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
-  it('is the single complete 30-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(30);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(30);
+  it('is the single complete 35-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(35);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(35);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
-      'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect',
+      'capabilities.describe', 'project.inspect', 'project.assets',
+      'asset.sources', 'asset.import.stage', 'asset.import.inspect', 'asset.import.commit', 'asset.import.recover', 'object.inspect',
       'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
       'character.ensure', 'character.remove', 'timeline.create', 'timeline.patch',
       'project.entry-scene.set', 'project.validate', 'project.simulate',
@@ -31,7 +32,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(30);
+    expect(new Set(names).size).toBe(35);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -102,8 +103,8 @@ describe('authoring capability registry', () => {
 });
 
 describe('wave 5 composition capabilities', () => {
-  it('extends the registry to exactly 30 capabilities with four composition entries', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(30);
+  it('retains the four composition entries in the complete registry', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(35);
     expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
     expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
     expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');

@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
   buildProjectAssetImportPlan,
+  buildAssetCatalog,
   destinationDirectoryForAssetKind,
   stableStringify,
   type ProjectAssetImportPlan,
@@ -23,6 +24,7 @@ import {
 } from './filesystem.js';
 import { AssetImportRecordStore } from './record-store.js';
 import { AssetProjectMutationCoordinator } from './mutation-coordinator.js';
+import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import {
   AssetImportAuthorityError,
   normalizeAssetImportSourceName,
@@ -494,6 +496,7 @@ export class ProjectAssetImportAuthority {
       schemaVersion: 1,
       operationId: manifest.operationId,
       items: manifest.items,
+      ...(manifest.agentRequestFingerprint === undefined ? {} : { agentRequestFingerprint: manifest.agentRequestFingerprint }),
     }));
     if (fingerprint !== manifest.manifestFingerprint) {
       return this.enterRecovery(operationId, '持久导入清单内容与清单指纹不一致');
@@ -503,6 +506,9 @@ export class ProjectAssetImportAuthority {
 
   async createOperation(request: CreateImportOperationRequest): Promise<CreateImportOperationResponse> {
     const operationId = requireUuid(request.operationId, 'operationId');
+    if (request.agentRequestFingerprint !== undefined && !/^[0-9a-f]{64}$/.test(request.agentRequestFingerprint)) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', 'Agent 素材来源请求指纹无效');
+    }
     return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.requireNoRecoveryBarrier();
       await assertAssetImportProjectRootIdentity(this.paths);
@@ -510,7 +516,7 @@ export class ProjectAssetImportAuthority {
       const registration = await this.store.readOperationRegistration(operationId);
       const existing = registration === null ? null : await this.readVerifiedManifest(operationId);
       if (existing !== null) {
-        if (!sameJson(existing.items, items)) {
+        if (!sameJson(existing.items, items) || existing.agentRequestFingerprint !== request.agentRequestFingerprint) {
           throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', 'operationId 已用于不同导入清单');
         }
         const operation = await this.store.readOperation(operationId);
@@ -525,10 +531,12 @@ export class ProjectAssetImportAuthority {
       }
 
       const createdAt = now();
+      const agentRequest = request.agentRequestFingerprint === undefined ? {} : { agentRequestFingerprint: request.agentRequestFingerprint };
       const manifestFingerprint = await this.textHasher.sha256(stableStringify({
         schemaVersion: 1,
         operationId,
         items,
+        ...agentRequest,
       }));
       if (!/^[0-9a-f]{64}$/.test(manifestFingerprint)) {
         throw new AssetImportAuthorityError('IMPORT_AUTHORITY_NOT_READY', '素材导入哈希器返回了无效摘要');
@@ -539,6 +547,7 @@ export class ProjectAssetImportAuthority {
         createdAt,
         manifestFingerprint,
         items,
+        ...agentRequest,
       };
       try {
         await this.store.registerOperation({ operationId, itemCount: items.length, createdAt });
@@ -718,9 +727,19 @@ export class ProjectAssetImportAuthority {
 
   private async targetFacts(targets: ProjectAssetImportTargetRequest[]): Promise<ProjectAssetImportTargetFact[]> {
     const facts: ProjectAssetImportTargetFact[] = [];
+    const storage = await NodeProjectStorage.open(this.paths.projectRoot);
+    const catalog = buildAssetCatalog([...new Set([
+      ...(await storage.listFiles()).filter(file => file.startsWith('content/assets/')),
+      ...targets.flatMap(target => { const file = targetRelativePath(target); return file === null ? [] : [file]; }),
+    ])]);
+    const entries = [...catalog.backgrounds, ...catalog.portraits, ...catalog.avatars].filter(entry => entry.resolved);
+    const key = (entry: typeof entries[number]): string => `${entry.kind}:${entry.key}:${entry.expression ?? ''}`.normalize('NFC').toLowerCase();
     for (const target of targets) {
       const relativePath = targetRelativePath(target);
-      if (relativePath !== null) facts.push(await inspectAssetImportTarget(this.paths, relativePath));
+      if (relativePath === null) continue;
+      const entry = entries.find(item => item.sourcePath === relativePath);
+      const conflicts = entry === undefined ? [] : entries.filter(item => item.sourcePath !== relativePath && key(item) === key(entry)).map(item => item.sourcePath).sort();
+      facts.push({ ...await inspectAssetImportTarget(this.paths, relativePath), ...(conflicts.length === 0 ? {} : { conflictingAssetPaths: conflicts }) });
     }
     return facts;
   }

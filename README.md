@@ -50,6 +50,12 @@ Agent Port 的正式入口为：
 node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stage
 ```
 
+接入外部已准备好的图片时，启动参数可追加 `--asset-source <图片目录绝对路径>`（可重复）。只开放这些实际目录内的普通文件，不接受任意路径、链接跳转或下载地址。`--asset-import-data-root <导入数据目录>` 指向现有素材 authority 的独立数据区；与绑定同一项目的 Editor 使用相同目录。未显式传入时沿用 `SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT`，再缺省则使用本机原素材 authority 默认数据区。
+
+Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要，随后用 `asset.import.stage` 暂存和封存导入。首版支持 PNG、JPEG、WebP 的背景、立绘、头像，单张最多 32 MiB、每次最多 32 张且合计不超过 128 MiB。立绘命名继续使用 `角色_服装_表情`，实际编排标识以 `project.assets` 返回的 `key`、`timelineTarget`、`expression` 为准。
+
+`stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：未完成上传可重试原暂存请求；已封存的来源和目标不可替换；发布中断用原计划指纹恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放素材删除、移动或撤销。
+
 推荐工作流：
 
 ```text
