@@ -29,6 +29,7 @@ function arrayAt(value: JsonRecord, key: string): JsonValue[] {
 }
 
 function objectLabel(objectRef: string): string {
+  if (objectRef.startsWith('gallery:cgs:')) return `CG ${objectRef.slice('gallery:cgs:'.length)}`;
   const separator = objectRef.indexOf(':');
   const kind = separator < 0 ? objectRef : objectRef.slice(0, separator);
   const id = separator < 0 ? objectRef : objectRef.slice(separator + 1);
@@ -130,6 +131,16 @@ function presentationForOperation(operation: CompositionOperation, full = false)
   if (!isRecord(operation.normalizedInput)) return result('审阅对象变更', [], 'metadata-only');
   const input = operation.normalizedInput;
   switch (operation.capabilityId) {
+    case 'gallery.cg.create':
+    case 'gallery.cg.patch': {
+      const fields = operation.capabilityId === 'gallery.cg.patch' ? input['patch'] : input;
+      if (!isRecord(fields)) return result('修改 CG', [], 'metadata-only');
+      const facts = [
+        ...(typeof fields['name'] === 'string' ? [`名称：${fields['name']}`] : []),
+        ...(typeof fields['src'] === 'string' ? [`图片：${fields['src']}`] : fields['src'] === null ? ['图片：使用 CG ID 对应素材'] : []),
+      ];
+      return result(operation.capabilityId === 'gallery.cg.create' ? '新增 CG' : '修改 CG', facts);
+    }
     case 'scene.create': {
       const facts = sceneBlockFacts(arrayAt(input, 'blocks'));
       return result('新建场景', facts.length === 0 ? ['场景内容为空'] : facts);

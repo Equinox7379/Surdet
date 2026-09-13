@@ -7,7 +7,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-/** 可进入确定性重放的八项内容 mutation；registry composable 白名单与之严格一致。 */
+/** 可进入确定性重放的内容 mutation；registry composable 白名单与之严格一致。 */
 export type ComposableCapabilityId =
   | 'scene.create'
   | 'scene.patch'
@@ -16,6 +16,8 @@ export type ComposableCapabilityId =
   | 'character.remove'
   | 'timeline.create'
   | 'timeline.patch'
+  | 'gallery.cg.create'
+  | 'gallery.cg.patch'
   | 'project.entry-scene.set';
 
 /** operation ledger 记录；normalizedInput 仅新记录拥有，旧记录只读保留。 */
@@ -34,7 +36,7 @@ export interface ChangeCompositionMetadata {
 }
 
 export type CompositionReferenceKind =
-  | 'scene' | 'label' | 'timeline' | 'variable' | 'character'
+  | 'scene' | 'label' | 'timeline' | 'variable' | 'character' | 'gallery-cg'
   | 'background-asset' | 'portrait-asset' | 'avatar-asset';
 
 export interface RawCompositionReference {
@@ -117,6 +119,8 @@ export const COMPOSABLE_CAPABILITY_IDS: readonly ComposableCapabilityId[] = [
   'character.remove',
   'timeline.create',
   'timeline.patch',
+  'gallery.cg.create',
+  'gallery.cg.patch',
   'project.entry-scene.set',
 ];
 

@@ -58,3 +58,5 @@ Owner 转交的云端结论为：维护批次带一项非阻断问题通过，Wa
 主代理核对 `transaction-recovery.ts` 的持久写入及 CLI `diffForChange()` 调用后，应用桌面 `Surdet_Maintenance_semantic_order.patch`：`buildOperationLedgerDiff()` 先排除不产生语义差异的记录，再决定是否按 sequence 排序。恢复记录本身仍保留，真正缺少 sequence 的旧式语义记录保持原顺序；不改变执行次序或项目内容。
 
 先只加入补丁附带回归，运行 `npm run test -w @surdet/authoring -- test/diff-ledger.test.ts`：5 项通过、1 项失败，实际得到 `2 → 10`，预期 `10 → 2`。再应用生产修复，同一命令 6 项全部通过，覆盖恢复记录、正常数字编号、旧式顺序和原记录不被修改；`npm run typecheck -w @surdet/authoring` 与 `npm run build -w @surdet/authoring` 均通过。这里是仓库内生产函数与既有服务组件测试，不称为新的完整事务恢复或浏览器实测；前述 2,951 项合计及浏览器结果保留各自历史范围，本次未重跑全仓。生产变更仅限该差异函数，连同回归及原有记录普通提交、推送后，交云端仅复核本处修补。九月 CI 继续暂停，无 Owner 必做体验。
+
+2026-09-13 后续收到 Owner 转交的云端定向复核：`a034530078c38ffb592148fdcc50acf4615056d7` PASS，最后的非阻断排序遗漏关闭，维护批次收口。本机开始新任务时核对本地与远端均为该提交；新授权的 Wave 13 CG 创作能力另见其执行记录，不继续扩大全仓维护或重开旧验收。

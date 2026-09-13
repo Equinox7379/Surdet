@@ -156,10 +156,12 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     cue: 'Cue',
     asset: '素材',
     character: '角色',
+    'gallery-cg': 'CG',
     'entry-scene': '入口场景',
   };
-  const semanticName = object.semanticId?.slice(object.semanticId.indexOf(':') + 1);
-  const title = ['scene', 'variable', 'timeline', 'track', 'cue', 'asset', 'character', 'entry-scene'].includes(object.kind)
+  const semanticName = object.kind === 'gallery-cg' ? object.objectRef.slice('gallery:cgs:'.length)
+    : object.semanticId?.slice(object.semanticId.indexOf(':') + 1);
+  const title = ['scene', 'variable', 'timeline', 'track', 'cue', 'asset', 'character', 'gallery-cg', 'entry-scene'].includes(object.kind)
     ? `${kindNames[object.kind]} ${semanticName ?? object.objectRef}`
     : object.source
       ? quotedSummary(object.kind, raw)
@@ -171,6 +173,7 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
 }
 
 export function describeAuthoringReference(ref: string): string {
+  if (ref.startsWith('gallery:cgs:')) return `CG ${ref.slice('gallery:cgs:'.length)}`;
   if (ref.startsWith('variable:')) return `变量 ${ref.slice('variable:'.length)}`;
   if (ref.startsWith('label:')) {
     const value = ref.slice('label:'.length);

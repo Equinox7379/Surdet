@@ -70,6 +70,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.inspectProject(requireProject(context)) };
     case 'project.assets':
       return { value: await service.projectAssets(requireProject(context)) };
+    case 'project.gallery':
+      return { value: await service.projectGallery(requireProject(context), context.activeChangeId) };
     case 'asset.sources':
     case 'asset.import.stage':
     case 'asset.import.inspect':
@@ -104,6 +106,10 @@ export async function dispatchAuthoringCapability(
       return { value: await service.variableEnsure(requireChange(context), payload as unknown as Parameters<AuthoringService['variableEnsure']>[1]), operationId: operationIdFrom(payload) };
     case 'character.ensure':
       return { value: await service.characterEnsure(requireChange(context), payload as unknown as Parameters<AuthoringService['characterEnsure']>[1]), operationId: operationIdFrom(payload) };
+    case 'gallery.cg.create':
+      return { value: await service.galleryCgCreate(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryCgCreate']>[1]), operationId: operationIdFrom(payload) };
+    case 'gallery.cg.patch':
+      return { value: await service.galleryCgPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryCgPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'character.remove':
       return { value: await service.characterRemove(requireChange(context), payload as unknown as Parameters<AuthoringService['characterRemove']>[1]), operationId: operationIdFrom(payload) };
     case 'timeline.create':

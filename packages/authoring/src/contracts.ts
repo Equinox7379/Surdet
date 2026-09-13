@@ -39,7 +39,7 @@ export interface ProjectStorage {
 }
 
 export interface AuthoringObject {
-  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene';
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene' | 'gallery-cg';
   semanticId?: string;
   objectRef: string;
   parentRef?: string;
@@ -55,6 +55,22 @@ export interface AuthoringObject {
 }
 
 export type ChangeStatus = 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
+
+export interface GalleryCgCreateInput {
+  operationId: string;
+  id: string;
+  name: string;
+  /** Resolved background key from project.assets; omitted means id. */
+  src?: string;
+}
+
+export interface GalleryCgPatchInput {
+  operationId: string;
+  id: string;
+  expectedFingerprint: string;
+  /** Only supplied fields change. null removes src, restoring the existing id fallback. */
+  patch: { name?: string; src?: string | null };
+}
 
 export type CommitJournalStatus = 'STAGING' | 'REPLACING' | 'RECOVERED' | 'RECOVERY_FAILED' | 'COMMITTED';
 

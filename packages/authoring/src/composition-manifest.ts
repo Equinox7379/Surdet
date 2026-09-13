@@ -5,6 +5,7 @@ import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { analyzeSceneCompositionReferences, analyzeTimelineCompositionReferences } from './composition-reference-analysis.js';
 import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
 import { resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from './candidate-composition-guard.js';
+import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 import {
   COMPOSABLE_CAPABILITY_IDS,
   type ComposableCapabilityId,
@@ -147,6 +148,26 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
   const sha256Text = async (text: string) => hasher.sha256(text);
 
   switch (capabilityId) {
+    case 'gallery.cg.create':
+    case 'gallery.cg.patch': {
+      const id = stringAt(normalizedInput, 'id');
+      if (id === undefined) return unavailable('OBJECT_IDENTITY_UNAVAILABLE', 'CG 输入缺少 id');
+      const diffEntry = diffEntryFor(semanticDiff, String(normalizedInput['operationId']));
+      const directChange = isRecord(diffEntry?.directChange) ? diffEntry.directChange : undefined;
+      const entry = directChange?.['after'];
+      if (!isRecord(entry) || entry['id'] !== id) return unavailable('OBJECT_IDENTITY_UNAVAILABLE', `CG 操作缺少真实条目产物：${id}`);
+      const key = typeof entry['src'] === 'string' ? entry['src'] : id;
+      const requiredObjects = await resolveRequirements([`asset:bg:${key}`], objectFacts, sealedOperations);
+      if (requiredObjects === undefined) return unavailable('DEPENDENCY_IDENTITY_UNAVAILABLE', `CG 素材未解析：${key}`);
+      const primaryObject = `gallery:cgs:${id}`;
+      const fingerprintAfter = await sha256Text(stableStringify(entry));
+      return {
+        ok: true, primaryObject, requiredObjects,
+        producedObjects: [{ objectRef: primaryObject, disposition: capabilityId === 'gallery.cg.create' ? 'create' : 'update', finalFingerprint: fingerprintAfter }],
+        fingerprintAfter,
+        ...(diffEntry?.fingerprintBefore === undefined ? {} : { fingerprintBefore: diffEntry.fingerprintBefore }),
+      };
+    }
     case 'scene.create':
     case 'scene.patch': {
       const sceneId = stringAt(normalizedInput, 'sceneId');
@@ -352,7 +373,8 @@ async function finalProductionFingerprint(record: ChangeRecord, objectRef: strin
     return text === undefined ? undefined : hasher.sha256(text);
   }
   let value: unknown;
-  if (objectRef.startsWith('timeline:')) value = readWorkingJson(record, timelinePath(objectRef.slice('timeline:'.length)));
+  if (objectRef.startsWith('gallery:cgs:')) value = readGalleryDocument(record.workingFiles[GALLERY_PATH]).cgs.find((entry) => entry.id === objectRef.slice('gallery:cgs:'.length));
+  else if (objectRef.startsWith('timeline:')) value = readWorkingJson(record, timelinePath(objectRef.slice('timeline:'.length)));
   else {
     const config = readWorkingJson(record, CONFIG_PATH);
     if (objectRef === 'config:characters') value = config?.['characters'] ?? {};

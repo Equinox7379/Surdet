@@ -37,7 +37,7 @@ export function resolveOperationRequirementsAtSequence(input: {
     if (requirement !== undefined) {
       requirements.set(`${requirement.objectRef}|${requirement.source}|${requirement.candidateOperationSequence ?? ''}`, requirement);
     } else {
-      const capability = { scene: 'scene.create', timeline: 'timeline.create', variable: 'variable.ensure', character: 'character.ensure', label: 'scene.patch' }[reference.kind as 'scene' | 'timeline' | 'variable' | 'character' | 'label'];
+      const capability = { scene: 'scene.create', timeline: 'timeline.create', variable: 'variable.ensure', character: 'character.ensure', label: 'scene.patch', 'gallery-cg': 'gallery.cg.create' }[reference.kind as 'scene' | 'timeline' | 'variable' | 'character' | 'label' | 'gallery-cg'];
       issues.push({
         code: objectRef === undefined ? 'REFERENCE_TARGET_AMBIGUOUS' : asset ? 'ASSET_NOT_RESOLVED' : 'OBJECT_NOT_ESTABLISHED',
         kind: reference.kind, token: reference.token, ...(objectRef === undefined ? {} : { objectRef }), source: reference.source,

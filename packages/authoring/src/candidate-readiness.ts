@@ -39,6 +39,11 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
     case 'project.entry-scene.set':
       if (typeof input['sceneId'] !== 'string') return 'entryScene facts 缺少 sceneId';
       expected = 'config:entryScene';
+      break;
+    case 'gallery.cg.create':
+    case 'gallery.cg.patch':
+      if (typeof input['id'] !== 'string') return 'CG facts 缺少 id';
+      expected = `gallery:cgs:${input['id']}`;
   }
   if (facts.primaryObject !== expected) return 'operation facts 的 primaryObject 与输入身份不一致';
   const primary = facts.producedObjects.filter((item) => item.objectRef === expected);
@@ -54,13 +59,15 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
   if (!Array.isArray(preconditions) || !Array.isArray(replay)) return '重放状态事实形状无效';
   const expectedRefs = facts.capabilityId === 'character.ensure' || facts.capabilityId === 'character.remove'
     ? ['config:characters', ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
-    : facts.capabilityId === 'scene.patch' ? [facts.primaryObject] : [];
+    : facts.capabilityId === 'scene.patch' || facts.capabilityId === 'gallery.cg.patch' ? [facts.primaryObject] : [];
   if (expectedRefs.includes('config:characters') && facts.producedObjects.filter((item) => item.objectRef === 'config:characters' && item.disposition === 'update').length !== 1) return '角色操作缺少唯一角色表产物';
   if (preconditions.length !== expectedRefs.length || new Set(preconditions.map((item) => item.objectRef)).size !== expectedRefs.length
     || expectedRefs.some((ref) => !preconditions.some((item) => item.objectRef === ref && typeof item.expectedFingerprint === 'string'))
     || replay.length !== preconditions.length || preconditions.some((before) => replay.filter((item) => item.objectRef === before.objectRef && item.expectedFingerprint === before.expectedFingerprint).length !== 1)) return '重放状态前置事实缺失或不一致';
   if (preconditions.some((item) => item.objectRef === 'config:characters' && item.expectedFingerprint !== input['expectedFingerprint'])) return '角色表前置指纹与规范输入不一致';
   if (facts.capabilityId === 'scene.patch' && preconditions[0]?.expectedFingerprint !== facts.objectFingerprintBefore) return '场景重放前置指纹与操作前状态不一致';
+  if (facts.capabilityId === 'gallery.cg.patch' && (preconditions[0]?.expectedFingerprint !== facts.objectFingerprintBefore
+    || facts.objectFingerprintBefore !== input['expectedFingerprint'])) return 'CG 重放前置指纹与规范输入不一致';
   return undefined;
 }
 

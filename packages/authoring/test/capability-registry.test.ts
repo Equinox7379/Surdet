@@ -8,14 +8,15 @@ import {
   type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
-  it('is the single complete 35-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(35);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(35);
+  it('is the single complete 38-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(38);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(38);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
-      'capabilities.describe', 'project.inspect', 'project.assets',
+      'capabilities.describe', 'project.inspect', 'project.assets', 'project.gallery',
       'asset.sources', 'asset.import.stage', 'asset.import.inspect', 'asset.import.commit', 'asset.import.recover', 'object.inspect',
       'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
       'character.ensure', 'character.remove', 'timeline.create', 'timeline.patch',
+      'gallery.cg.create', 'gallery.cg.patch',
       'project.entry-scene.set', 'project.validate', 'project.simulate',
       'runtime.run-from', 'runtime.read-trace', 'change.diff', 'change.commit',
       'change.rollback', 'change.recovery.inspect', 'change.recovery.execute',
@@ -32,7 +33,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(35);
+    expect(new Set(names).size).toBe(38);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -104,17 +105,18 @@ describe('authoring capability registry', () => {
 
 describe('wave 5 composition capabilities', () => {
   it('retains the four composition entries in the complete registry', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(35);
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(38);
     expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
     expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
     expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');
     expect(getCapabilityDefinition('composition.inspect').minimumPolicy).toBe('observe');
   });
 
-  it('marks only the eight content mutations composable; composition.* must be false', () => {
+  it('marks only the ten content mutations composable; composition.* must be false', () => {
     const composableWhitelist = new Set([
       'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
       'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
+      'gallery.cg.create', 'gallery.cg.patch',
     ]);
     for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
       expect(typeof definition.composable).toBe('boolean');

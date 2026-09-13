@@ -104,6 +104,128 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('combines independent CG entries and unlock scenes, then resumes their exact integration', async () => {
+    const fixture = await setup('gallery-combination');
+    const galleryPath = 'content/config/gallery.json';
+    const original = {
+      cgs: [{ id: 'legacy', name: '原有 CG', src: 'legacy', note: { preserve: true } }],
+      music: [{ id: 'song', name: '原有音乐', volume: 0.5 }],
+      texts: [{ id: 'memory', name: '原有回想', scene: 'start', extra: true }],
+      extension: { preserve: ['all', 'fields'] },
+    };
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/config'), { recursive: true });
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/assets/bg'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, galleryPath), JSON.stringify(original));
+    for (const key of ['legacy', 'sunrise', 'moonrise']) fs.writeFileSync(path.join(fixture.projectRoot, `content/assets/bg/${key}.png`), 'image fixture');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), '@scene start\n@unlock_cg legacy\n@unlock_music song\n@unlock_text memory\n@end\n');
+    const baseline = treeSnapshot(fixture.projectRoot);
+    const first = await sealCandidate(fixture.projectRoot, 'sunrise', async (session) => {
+      const created = await session.invoke('gallery.cg.create', { operationId: 'cg-sunrise', id: 'sunrise', name: '初稿' });
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+      if (!created.ok) throw new Error(created.error.message);
+      const patched = await session.invoke('gallery.cg.patch', { operationId: 'cg-sunrise-name', id: 'sunrise', expectedFingerprint: (created.result as { fingerprint: string }).fingerprint, patch: { name: '黎明之约' } });
+      expect(patched, JSON.stringify(patched)).toMatchObject({ ok: true });
+      expect(await session.invoke('scene.create', { operationId: 'scene-sunrise', sceneId: 'sunrise_branch', blocks: [{ kind: 'instruction', name: 'unlock_cg', args: ['sunrise'] }] })).toMatchObject({ ok: true });
+      const validated = await session.invoke('project.validate', {});
+      expect(validated, JSON.stringify(validated)).toMatchObject({ ok: true, result: { ok: true } });
+      const record = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      expect(record.operations['scene-sunrise']!.compositionFacts!.requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'gallery:cgs:sunrise', source: 'candidate' }));
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'moonrise', async (session) => {
+      expect(await session.invoke('gallery.cg.create', { operationId: 'cg-moonrise', id: 'moon', name: '月下归途', src: 'moonrise' })).toMatchObject({ ok: true });
+      expect(await session.invoke('scene.create', { operationId: 'scene-moonrise', sceneId: 'moon_branch', blocks: [{ kind: 'instruction', name: 'unlock_cg', args: ['moon'] }] })).toMatchObject({ ok: true });
+      const validated = await session.invoke('project.validate', {});
+      expect(validated, JSON.stringify(validated)).toMatchObject({ ok: true, result: { ok: true } });
+    });
+    const refs = [first.ref, second.ref];
+    const compared = await fixture.service.compare(refs);
+    expect(compared.comparison.conflicts.filter((conflict) => conflict.severity === 'selection-required')).toEqual([]);
+    const scenes = compared.comparison.units.filter((unit) => unit.primaryObject.startsWith('scene:'));
+    const planned = await planFromComparison(fixture, refs, { selectedUnitIds: scenes.map((unit) => unit.unitId) });
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    expect(planned.plan.replayOperations.map((operation) => operation.sourceOperationId).sort()).toEqual(['cg-moonrise', 'cg-sunrise', 'cg-sunrise-name', 'scene-moonrise', 'scene-sunrise']);
+    expect(Object.keys(planned.plan.dryRun.finalObjectFingerprints)).toEqual(expect.arrayContaining(['gallery:cgs:sunrise', 'gallery:cgs:moon']));
+
+    const authoring = await import('@surdet/authoring');
+    const storage = await NodeProjectStorage.open(fixture.projectRoot);
+    const nodeStore = await NodeChangeStoreStatic.forProject(storage.rootIdentity);
+    const seeded = await authoring.beginChange(await fixture.service.currentSnapshot(), nodeStore, storage, undefined, {
+      integration: {
+        planId: planned.plan.planId, planFingerprint: planned.plan.planFingerprint, executeOperationId: 'gallery-resume',
+        sourceCapsules: planned.plan.sourceCapsules, includedUnitIds: planned.plan.selectedUnitIds,
+        deduplicatedUnits: planned.plan.deduplicatedUnits, conflictResolutions: [], status: 'REPLAYING', nextOperationIndex: 0, replayedOperations: [],
+      },
+    });
+    await NodeChangeStoreStatic.withChangeLease(seeded.record.changeId, async (leased) => {
+      const session = new authoring.ChangeSession((await leased.read(seeded.record.changeId))!, leased, storage);
+      await authoring.replayCompositionOperation(session, planned.plan.replayOperations[0]!, realHasher);
+    });
+    const serviceB = new CompositionService(new NodeCompositionStore(path.join(fixture.dataDir, fixture.identity), fixture.identity), fixture.identity, fixture.projectRoot, realHasher);
+    const resumed = await serviceB.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'gallery-resume' });
+    expect(resumed).toMatchObject({ status: 'READY', changeId: seeded.record.changeId, workingRevision: 5 });
+    const record = (await NodeChangeStoreStatic.openByChangeId(resumed.changeId))!.record;
+    const gallery = JSON.parse(record.workingFiles[galleryPath]!);
+    expect(gallery).toEqual({ ...original, cgs: [...original.cgs, expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: expect.any(String) })] });
+    expect(gallery.cgs).toEqual(expect.arrayContaining([{ id: 'sunrise', name: '黎明之约' }, { id: 'moon', name: '月下归途', src: 'moonrise' }]));
+    expect(await serviceB.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'gallery-resume' })).toMatchObject({ changeId: resumed.changeId, workingRevision: 5 });
+    expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+  });
+
+  it('requires an explicit selection for competing patches to the same CG', async () => {
+    const fixture = await setup('gallery-conflict');
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/config'), { recursive: true });
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/assets/bg'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/assets/bg/legacy.png'), 'image fixture');
+    const original = { cgs: [{ id: 'legacy', name: '原名', extra: { keep: true } }], music: [], rootExtra: 42 };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), JSON.stringify(original));
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), '@scene start\n@unlock_cg legacy\n@end\n');
+    const fingerprint = await realHasher.sha256(stableStringify(original.cgs[0]));
+    const candidates: SealedRef[] = [];
+    for (const name of ['朝霞', '晚霞']) candidates.push(await sealCandidate(fixture.projectRoot, name, async (session) => {
+      expect(await session.invoke('gallery.cg.patch', { operationId: `cg-${name}`, id: 'legacy', expectedFingerprint: fingerprint, patch: { name } })).toMatchObject({ ok: true });
+    }));
+    const refs = candidates.map((candidate) => candidate.ref);
+    const compared = await fixture.service.compare(refs);
+    const conflicts = compared.comparison.conflicts.filter((conflict) => conflict.severity === 'selection-required');
+    expect(conflicts.length).toBeGreaterThan(0);
+    expect(conflicts.every((conflict) => conflict.objectRefs.includes('gallery:cgs:legacy'))).toBe(true);
+    await expect(planFromComparison(fixture, refs)).rejects.toMatchObject({ code: 'COMPOSITION_CONFLICT_UNRESOLVED' });
+    const chosen = compared.comparison.units.find((unit) => unit.candidateId === `cand-${candidates[0]!.ref.changeId}`)!;
+    const plan = await fixture.service.plan({ candidateRefs: refs, comparisonFingerprint: compared.comparison.comparisonFingerprint,
+      selectedUnitIds: [chosen.unitId], conflictResolutions: conflicts.map((conflict) => ({ conflictId: conflict.conflictId, resolution: 'choose-unit', actor: 'human', chosenUnitId: chosen.unitId })),
+    });
+    expect(plan.plan.dryRun.status, JSON.stringify(plan.plan.dryRun)).toBe('passed');
+    const result = await fixture.service.executePlan({ planId: plan.plan.planId, artifactSha256: plan.identity.sha256, executeOperationId: 'choose-cg' });
+    const record = (await NodeChangeStoreStatic.openByChangeId(result.changeId))!.record;
+    expect(JSON.parse(record.workingFiles['content/config/gallery.json']!)).toEqual({ ...original, cgs: [{ ...original.cgs[0], name: '朝霞' }] });
+    expect(JSON.parse(fs.readFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), 'utf8'))).toEqual(original);
+  });
+
+  it('rejects missing CG producers and literal-ID mismatches without advancing the candidate', async () => {
+    const fixture = await setup('gallery-dependency');
+    fs.mkdirSync(path.join(fixture.projectRoot, 'content/assets/bg'), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, 'content/assets/bg/night.png'), 'image fixture');
+    const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });
+    try {
+      expect(await session.invoke('change.begin', {})).toMatchObject({ ok: true });
+      const unlock = { operationId: 'unlock', sceneId: 'night_branch', blocks: [{ kind: 'instruction', name: 'unlock_cg', args: ['夜色'] }] };
+      let before = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('scene.create', unlock)).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(await session.invoke('gallery.cg.create', { operationId: 'missing-bg', id: 'missing', name: '缺图', src: 'absent' })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(await session.invoke('gallery.cg.create', { operationId: 'cg-night', id: '夜色', name: '夜色', src: 'night' })).toMatchObject({ ok: true });
+      before = (await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record;
+      // Core uses the exact argument token; quotes are not silently decoded to another CG ID.
+      expect(await session.invoke('scene.create', { ...unlock, operationId: 'quoted-unlock', blocks: [{ kind: 'instruction', name: 'unlock_cg', args: ['"夜色"'] }] })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStoreStatic.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(await session.invoke('scene.create', unlock)).toMatchObject({ ok: true });
+      expect(await session.invoke('project.validate', {})).toMatchObject({ ok: true, result: { ok: true } });
+      const run = await session.invoke('runtime.run-from', { sceneId: 'night_branch', choices: [] });
+      expect(run, JSON.stringify(run)).toMatchObject({ ok: true });
+    } finally { await session.close(); }
+  });
+
   it('seals and replays a nested entry scene through candidate, plan and integration', async () => {
     const fixture = await setup('nested-entry-scene');
     fs.mkdirSync(path.join(fixture.projectRoot, 'content/scenario/chapter'), { recursive: true });

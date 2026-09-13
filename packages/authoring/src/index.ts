@@ -19,6 +19,8 @@ export * from './asset-relocation.js';
 export * from './timeline-operations.js';
 export * from './timeline-identity.js';
 export * from './config-operations.js';
+export * from './gallery-operations.js';
+export * from './gallery-validation.js';
 export * from './config-document.js';
 export * from './composition-contracts.js';
 export * from './composition-reference-analysis.js';

@@ -8,6 +8,13 @@ import {
 import {
   bindVerifiedApproval,
   applyCharacterEnsure,
+  applyGalleryCgCreate,
+  applyGalleryCgPatch,
+  inspectGallery,
+  GALLERY_PATH,
+  stableStringify,
+  type GalleryCgCreateInput,
+  type GalleryCgPatchInput,
   applyCharacterRemove,
   applyEntrySceneSet,
   applyTimelineCreate,
@@ -527,6 +534,16 @@ export class AuthoringService {
     };
   }
 
+  async projectGallery(projectRoot: string, changeId?: string): Promise<ServiceResult<Awaited<ReturnType<typeof inspectGallery>> & { view: 'project' | 'working' }>> {
+    const context = changeId === undefined ? undefined : await openChangeContext(changeId, this.leaseManager.dataRoot);
+    const snapshot = context?.snapshot ?? (await this.loadProjectContext(await NodeProjectStorage.open(projectRoot))).snapshot;
+    const gallery = await inspectGallery(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text, { sha256: async (text) => hashText(text) });
+    return {
+      ...(context === undefined ? { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision } : metadataForChange(context.session)),
+      result: { view: context === undefined ? 'project' : 'working', ...gallery },
+    };
+  }
+
   async invokeImageImport(projectRoot: string, capability: ImageImportCapability, input: Record<string, unknown>,
     sources: readonly AuthorizedImageSource[], dataRoot?: string): Promise<ServiceResult<Record<string, unknown>>> {
     const result = await new AgentImageImportService(this.leaseManager).invoke(projectRoot, capability, input, sources, dataRoot);
@@ -601,6 +618,7 @@ export class AuthoringService {
     if (object.kind === 'entry-scene') {
       object.fingerprint = await entrySceneFingerprint(snapshot.config, { sha256: async (text) => hashText(text) });
     }
+    if (object.kind === 'gallery-cg') object.fingerprint = hashText(stableStringify(object.details));
     if (context !== undefined) return { ...metadataForChange(context.session), result: object };
     return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: object };
   }
@@ -622,6 +640,20 @@ export class AuthoringService {
   async characterEnsure(changeId: string, input: CharacterEnsureInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applyCharacterEnsure(context.session, input, { sha256: async (text) => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async galleryCgCreate(changeId: string, input: GalleryCgCreateInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applyGalleryCgCreate(context.session, input, { sha256: async (text) => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async galleryCgPatch(changeId: string, input: GalleryCgPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applyGalleryCgPatch(context.session, input, { sha256: async (text) => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
   }

@@ -5,11 +5,14 @@ import type { ProjectSnapshot } from './project-snapshot.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
 import type { ReplayStatePrecondition } from './composition-contracts.js';
+import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
+  const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
   return [
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
+    ...await Promise.all(cgs.map(async (entry) => ({ objectRef: `gallery:cgs:${entry.id}`, expectedFingerprint: await hasher.sha256(stableStringify(entry)) }))),
   ];
 }
 

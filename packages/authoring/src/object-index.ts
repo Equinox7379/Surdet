@@ -2,6 +2,8 @@ import { splitInstruction } from './scene-document.js';
 import { buildAssetCatalog } from './asset-catalog.js';
 import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
+import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
+import { AuthoringOperationError } from './change-session.js';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -361,6 +363,25 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
     }, candidates);
   }
   addConfigObjects(snapshot, objects, candidates);
+  let cgs: GalleryCgEntry[] = [];
+  try {
+    cgs = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text).cgs;
+  } catch (error) {
+    // Shared validation reports malformed gallery data; the remaining project stays inspectable.
+    if (!(error instanceof AuthoringOperationError)) throw error;
+  }
+  for (const entry of cgs) {
+    const objectRef = `gallery:cgs:${entry.id}`;
+    const assetRef = `asset:bg:${entry.src ?? entry.id}`;
+    addObject(objects, {
+      kind: 'gallery-cg', semanticId: objectRef, objectRef, details: entry,
+      source: sourceOf(GALLERY_PATH, 1, JSON.stringify(entry)), references: [], referencedBy: [],
+    }, candidates);
+    if (!objects.some((object) => object.objectRef === assetRef)) addObject(objects, {
+      kind: 'asset', semanticId: assetRef, objectRef: assetRef, references: [], referencedBy: [],
+    }, candidates);
+    addReferenceCandidate(candidates, objectRef, assetRef);
+  }
   for (const timeline of snapshot.timelines) addTimelineObjects(timeline.path, timeline.text, objects, candidates);
 
   const byRef = new Map(objects.map((object) => [object.objectRef, object]));

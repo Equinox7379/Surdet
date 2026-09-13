@@ -15,6 +15,7 @@ import {
 } from './config-operations.js';
 import { applyTimelineCreate, applyTimelinePatch } from './timeline-operations.js';
 import { fingerprintWorkingObject } from './working-object-fingerprint.js';
+import { applyGalleryCgCreate, applyGalleryCgPatch } from './gallery-operations.js';
 
 export interface IntegrationReplayReceipt {
   operationIndex: number;
@@ -66,7 +67,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 八项 capability 到既有 apply 函数的穷尽 switch。
+ * 内容 capability 到既有 apply 函数的穷尽 switch。
  * 替换 operationId 后保留 normalizedInput；角色改名额外绑定封存的产物范围。
  * 输入的 schema 严格校验在 CLI 边界（AJV validateCapabilityInput）完成；本层做结构防御。
  */
@@ -100,6 +101,10 @@ export async function replayCompositionOperation(
       return applyTimelinePatch(change, replayInput as never, hasher);
     case 'project.entry-scene.set':
       return applyEntrySceneSet(change, replayInput as never, hasher);
+    case 'gallery.cg.create':
+      return applyGalleryCgCreate(change, replayInput as never, hasher);
+    case 'gallery.cg.patch':
+      return applyGalleryCgPatch(change, replayInput as never, hasher);
     default:
       throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', `不支持的 composition capability：${String(operation.capabilityId)}`);
   }
