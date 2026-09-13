@@ -36,4 +36,14 @@
 - 原始调用与截图在 `D:/CodexTasks/surdet-wave15-20260914/`，包括 `mcp-wave15-change-diff.json`、`mcp-wave15-change-commit.json`、`mcp-preview-baseline-wave15.json`、`mcp-preview-postcommit-wave15.json`、`root-current-observation.json`、`root-check-result.json`、前后画布及 `root-current-canvas.png`。这些本机材料不纳入 Git。
 - 协助边界：首次打开项目的脚本超过工具时限，随后读取页面确认已加载；选项点击沿用上轮已给出的画布操作提示。未把它称为完全无协助一次成功，未把结构化表现状态单独当成像素证明。没有新增 Owner 体验记录。
 
-本轮目标内无已确认未修复项。组合粒度保持既有场景对象，不宣称新增了跨候选的任意指令级合并；未扩展到控制流指令或多行替换。实现提交为 `a4e3c6af18aa2cb904b7c41c92e519cf02630f29`；按随后获得的授权普通推送后等待独立复审。授权更新仅修改项目约定和记录，复用上述仍有效的实现验证结果。
+初次实现提交为 `a4e3c6af18aa2cb904b7c41c92e519cf02630f29`，随后连同授权记录 `6916076b3554ce89fa7f35dc79dfc0c25e2188ee` 普通推送。组合粒度保持既有场景对象，不宣称新增了跨候选的任意指令级合并；未扩展到控制流指令或多行替换。云端随后发现的旧引用遗漏及本地补修如下。
+
+## 旧指令引用补修（2026-09-14）
+
+- 开工核实本地与远端 `main` 均为 `6916076b3554ce89fa7f35dc79dfc0c25e2188ee`，tracked 工作树干净，原有未跟踪材料保留。沿用已登记的普通实现、验证、提交与推送授权；云端本次未签最终 PASS。
+- 已核实桌面候选补丁及真实调用链：相同指令发生行号移动后，原文指纹仍可能匹配错误位置。补修在 `AuthoringService.scenePatch()` 的既有变更租约内，用当前工作快照的对象索引核对新 `replaceInstruction` 请求的完整引用；过期请求返回 `OBJECT_PRECONDITION_FAILED`，不重定位、不推进持久记录、不写来源项目。
+- 已成功记录的 operationId 继续交给原 `runOperation()`：相同负载返回原结果，不同负载返回 `OPERATION_ID_CONFLICT`。MCP 和原生 authoring 调用共用该服务入口；封存候选重放仍直接使用共享操作及原组合约束，没有修改封存输入或要求候选版本等于组合后的全项目版本。
+- 主代理先仅应用补丁中的两个回归，在未修复服务上实际执行：stage / apply 均因旧请求被接受而失败。应用生产修正后，完整 `scene-instruction-replacement.test.ts` **5/5 通过**，覆盖旧引用拒绝后完整记录和来源磁盘不变、重新查询后只改第 6 行、成功请求重试和变负载冲突，以及原有子目录封装、独立候选组合、同场景冲突和同一 integration 续接。测试通过真实 MCP 协议投影、服务、编译与磁盘存储，连接使用 InMemoryTransport；未将其称为独立进程或浏览器验收。
+- CLI 类型检查、构建均通过。主代理核对最终生产差异仅为服务入口的 9 行检查；复用前述仍有效的画面及共享层验证，不重跑旧 Q1、全仓或整套浏览器流程。原始输出保留在 `D:/CodexTasks/surdet-wave15-20260914/stale-reference/` 的 `red-tests.log`、`green-tests.log`、`typecheck.log` 和 `build.log`，不纳入 Git。
+
+此项已修复并完成定向验证，普通推送后等待云端定向复核；不代签最终 PASS 或 Owner 体验，九月 CI 继续暂停。
