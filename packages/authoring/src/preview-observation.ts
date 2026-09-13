@@ -87,6 +87,11 @@ export function isPreviewSourcePath(path: string): boolean {
     || (path.startsWith('content/timelines/') && path.toLowerCase().endsWith('.json'));
 }
 
+/** Both roots are already consumed by the Editor preview; Node still validates project containment. */
+export function isPreviewAssetPath(path: string): boolean {
+  return path.startsWith('content/assets/') || path.startsWith('public/');
+}
+
 /** Editor config buffers are parsed JSON; compare their actual values, not indentation. */
 export function previewSourceText(path: string, text: string): string {
   return path.toLowerCase().endsWith('.json') ? stableStringify(JSON.parse(text.replace(/^\uFEFF/, ''))) : text;
@@ -106,7 +111,7 @@ function facts(value: unknown, assets: boolean): PreviewFileFact[] {
     const fact = exact(item, ['path', 'sha256']);
     if (typeof fact.path !== 'string' || typeof fact.sha256 !== 'string' || !SHA.test(fact.sha256)) return invalid('预览来源指纹无效');
     try { normalizeProjectPath(fact.path); } catch { return invalid('预览来源路径无效'); }
-    if (seen.has(fact.path) || (assets ? !fact.path.startsWith('content/assets/') : !isPreviewSourcePath(fact.path))) return invalid('预览来源路径重复或不受支持');
+    if (seen.has(fact.path) || (assets ? !isPreviewAssetPath(fact.path) : !isPreviewSourcePath(fact.path))) return invalid('预览来源路径重复或不受支持');
     seen.add(fact.path);
     return { path: fact.path, sha256: fact.sha256 };
   });

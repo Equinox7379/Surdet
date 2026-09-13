@@ -189,3 +189,48 @@ it('preserves corrupt observations and exposes their specific error through MCP 
     .rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_CORRUPT', retryDisposition: 'manual-recovery' });
   expect(await fs.readFile(file, 'utf8')).toBe('{ interrupted record');
 });
+
+it('observes public assets and detects their byte, directory and missing-file changes', async () => {
+  const f = await fixture();
+  const publicRelative = 'public/bg/night.svg';
+  const publicImage = path.join(f.project, publicRelative);
+  await fs.mkdir(path.dirname(publicImage), { recursive: true });
+  await fs.rename(path.join(f.project, 'content/assets/bg/night.svg'), publicImage);
+  const baseline = (await f.editor.workspace.snapshot(f.workspace.workspaceSessionId)).diskBaseline;
+  f.workspace.workspaceGeneration += 1;
+  f.workspace.loadedProjectRevision = baseline.projectRevision;
+  f.workspace.loadedCoordinationRevision = baseline.coordinationRevision;
+  f.begin.expectedProjectRevision = baseline.projectRevision;
+  f.begin.expectedCoordinationRevision = baseline.coordinationRevision;
+  f.begin.source.assets = [{ path: publicRelative, sha256: sha('<svg/>') }];
+
+  await f.publish(); await f.append();
+  expect(await f.read()).toMatchObject({ status: 'current', observation: {
+    previewId: f.begin.previewId, source: { assets: [{ path: publicRelative, sha256: sha('<svg/>') }] },
+  } });
+  await fs.writeFile(publicImage, '<SVG/>');
+  const changedBytes = await f.read();
+  expect(changedBytes.status).toBe('stale');
+  expect(changedBytes.reasons).toContain('preview-source-changed');
+  await fs.writeFile(publicImage, '<svg/>');
+  expect((await f.read()).status).toBe('current');
+
+  const addedImage = path.join(f.project, 'public/bg/another.svg');
+  await fs.writeFile(addedImage, '<svg/>');
+  const changedDirectory = await f.read();
+  expect(changedDirectory.status).toBe('stale');
+  expect(changedDirectory.reasons).toContain('preview-source-changed');
+  await fs.unlink(addedImage); // Only this test's extra image.
+  await fs.rename(publicImage, addedImage);
+  const missingSource = await f.read();
+  expect(missingSource.status).toBe('stale');
+  expect(missingSource.reasons).toContain('preview-source-unavailable');
+  await fs.rename(addedImage, publicImage);
+
+  for (const unsafePath of ['public/../../outside.svg', 'private/night.svg']) {
+    await expect(f.publish({ ...f.begin, previewGeneration: 2, source: {
+      ...f.begin.source, assets: [{ path: unsafePath, sha256: sha('<svg/>') }],
+    } })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  }
+  expect(await f.read()).toMatchObject({ status: 'current', observation: { previewId: f.begin.previewId } });
+}, 20_000);

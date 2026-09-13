@@ -1,7 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import {
-  AuthoringOperationError, buildObjectIndex, isPreviewSourcePath, loadProjectSnapshot,
+  AuthoringOperationError, buildObjectIndex, isPreviewAssetPath, isPreviewSourcePath, loadProjectSnapshot,
   locateObjectForTraceEvent, normalizePreviewTraceMessage, parsePreviewPublishInput,
   PREVIEW_MAX_EVENTS, previewSourceText, stableStringify,
   type PreviewObservation, type PreviewPublishInput, type PreviewPublishAck, type PreviewReadInput,
@@ -88,7 +88,7 @@ export class PreviewObservationService {
     const files = await Promise.all(paths.filter(isPreviewSourcePath).map(async file => ({ path: file,
       sha256: hash(previewSourceText(file, (await storage.readText(file)).text)) })));
     const assets = await Promise.all(source.assets.map(fact => storage.readFileFingerprint(fact.path)));
-    return { source: { files, assets }, assetPaths: paths.filter(file => file.startsWith('content/assets/')).sort() };
+    return { source: { files, assets }, assetPaths: paths.filter(isPreviewAssetPath).sort() };
   }
   async publish(root: string, sessionId: string, browserId: string, value: PreviewPublishInput): Promise<PreviewPublishAck> {
     const input = parsePreviewPublishInput(value);
