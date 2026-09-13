@@ -16,7 +16,7 @@ import { reviewServiceForProject } from '../../src/authoring/review-service.js';
 const hasher = { sha256: async (text: string) => crypto.createHash('sha256').update(text).digest('hex') };
 
 /** Only candidates and comparison; no saved decision, formal plan, integration or result. */
-export async function createReviewComparisonFixture(root: string, entryScene = 'start', background?: Uint8Array) {
+export async function createReviewComparisonFixture(root: string, entryScene = 'start', background?: Uint8Array, branching = false) {
   const projectRoot = path.join(root, '试写项目');
   const dataRoot = path.join(root, 'data');
   await fs.mkdir(path.join(projectRoot, 'content/scenario'), { recursive: true });
@@ -25,8 +25,10 @@ export async function createReviewComparisonFixture(root: string, entryScene = '
     await fs.mkdir(path.join(projectRoot, 'content/assets/bg'), { recursive: true });
     await fs.writeFile(path.join(projectRoot, 'content/assets/bg/harbor.png'), background);
   }
-  await fs.writeFile(path.join(projectRoot, 'game.config.json'), JSON.stringify({ title: '写回试用', entryScene, variables: {} }));
-  const initial = `@scene ${entryScene}\n${background ? '@bg harbor\n' : ''}这是试写项目的原始台词。\n@end\n`;
+  await fs.writeFile(path.join(projectRoot, 'game.config.json'), JSON.stringify({ title: '写回试用', entryScene,
+    variables: branching ? { luck: { type: 'number', initial: 0 } } : {} }));
+  const branch = '@random luck 0 100\n@label crossroads\n@choice\n  再想一想 -> @goto crossroads\n  继续走 -> @goto confirm\n@label confirm\n@choice\n  返回路口 -> @goto crossroads\n  继续故事 -> @goto finish\n@label finish\n我们走到了故事的出口。\n@clear branch_done\n';
+  const initial = `@scene ${entryScene}\n${background ? '@bg harbor\n' : ''}这是试写项目的原始台词。\n${branching ? branch : ''}@end\n`;
   await fs.writeFile(path.join(projectRoot, 'content/scenario', `${entryScene}.gal`), initial);
   // Existing Agent Port fixtures use process-scoped storage. Only fixture creation
   // changes it; the application backend itself always receives an explicit root.
@@ -51,7 +53,7 @@ export async function createReviewComparisonFixture(root: string, entryScene = '
         } });
         await invoke('scene.create', { operationId: `scene-${name}`, sceneId: `ending_${name}`, blocks: [{ kind: 'text', value: '这是一份非正式试写样例。' }] });
         for (const operation of ['change.diff', 'project.validate', 'project.simulate'] as const) await invoke(operation, {});
-        await invoke('runtime.run-from', { sceneId: entryScene, choices: [] });
+        await invoke('runtime.run-from', { sceneId: entryScene, choices: branching ? [1, 1] : [] });
         const capsule = await generateDeliveryCapsule(session);
         if (capsule.composition.eligibility !== 'ready') throw new Error('fixture candidate is not ready');
         refs.push({ changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 });
