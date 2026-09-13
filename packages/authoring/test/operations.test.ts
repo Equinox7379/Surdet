@@ -72,6 +72,14 @@ describe('typed authoring operations', () => {
     expect(await storage.exists('content/scenario/branch_a.gal')).toBe(false);
   });
 
+  it('creates a variable named __proto__ as an own config property', async () => {
+    const change = await beginChange(await loadProjectSnapshot(fixtureStorage(), hasher), new InMemoryChangeRepository());
+    await ensureVariable(change, { operationId: 'op-prototype-variable', name: '__proto__', type: 'number', initial: 7 });
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!) as { variables: Record<string, unknown> };
+    expect(Object.prototype.hasOwnProperty.call(config.variables, '__proto__')).toBe(true);
+    expect(config.variables['__proto__']).toEqual({ type: 'number', initial: 7 });
+  });
+
   it('serializes typed choice effects as instructions after the arrow', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const change = await beginChange(snapshot, new InMemoryChangeRepository());

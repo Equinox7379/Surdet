@@ -104,10 +104,14 @@ function isLedgerDiffEntry(value: unknown): value is {
  * 不按 JSON 数组位置猜测身份、不做模糊树匹配。
  */
 export function buildOperationLedgerDiff(record: {
-  operations: Record<string, { requestHash: string; result: unknown }>;
+  operations: Record<string, { requestHash: string; result: unknown; sequence?: number }>;
 }): ChangeDiff['semantic'] {
   const entries: ChangeDiff['semantic'] = [];
-  for (const [operationId, operation] of Object.entries(record.operations)) {
+  const operationEntries = Object.entries(record.operations);
+  const orderedEntries = operationEntries.every(([, operation]) => Number.isInteger(operation.sequence))
+    ? operationEntries.slice().sort((a, b) => a[1].sequence! - b[1].sequence!)
+    : operationEntries;
+  for (const [operationId, operation] of orderedEntries) {
     const result = operation.result;
     if (typeof result !== 'object' || result === null) continue;
     const diffEntry = (result as Record<string, unknown>)['diffEntry'];
@@ -139,7 +143,7 @@ export function createChangeDiff(input: ChangeDiffInput): ChangeDiff {
   const warnings = unexpectedFormatChange ? ['检测到与语义修改无关的行终止符变化'] : [];
   return {
     summary: {
-      createdScenes: input.before.path.endsWith('.gal') ? 0 : 0,
+      createdScenes: 0,
       modifiedScenes: input.after.path.endsWith('.gal') ? 1 : 0,
       changedVariables: 0,
       warnings,

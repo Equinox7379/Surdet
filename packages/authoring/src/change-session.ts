@@ -316,7 +316,9 @@ export async function runOperation<T>(
   if (input.operationId.length === 0) throw new AuthoringOperationError('INVALID_REQUEST', 'operationId 不能为空');
   const normalizedInput = normalizeJsonValue(input);
   const requestHash = stableStringify(normalizedInput);
-  const previous = change.record.operations[input.operationId];
+  const previous = Object.prototype.hasOwnProperty.call(change.record.operations, input.operationId)
+    ? change.record.operations[input.operationId]
+    : undefined;
   if (previous !== undefined) {
     if (previous.requestHash !== requestHash) {
       throw new AuthoringOperationError('OPERATION_ID_CONFLICT', `operationId 已用于不同负载：${input.operationId}`);
@@ -340,9 +342,12 @@ export async function runOperation<T>(
       retryDisposition: 'new-change', requiredAction: 'new-change',
     });
   }
-  next.operations[input.operationId] = {
-    requestHash, normalizedInput, result: outcome.result, sequence,
-    ...(compositionFacts === undefined ? {} : { compositionFacts: clone(compositionFacts) }),
+  next.operations = {
+    ...next.operations,
+    [input.operationId]: {
+      requestHash, normalizedInput, result: outcome.result, sequence,
+      ...(compositionFacts === undefined ? {} : { compositionFacts: clone(compositionFacts) }),
+    },
   };
   next.latestValidation = undefined;
   await persistRecord(change, next);

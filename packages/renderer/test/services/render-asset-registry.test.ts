@@ -84,6 +84,53 @@ describe('RenderAssetRegistry', () => {
     expect(unload).toHaveBeenCalledWith(['blob:old']);
   });
 
+  it('does not commit a caller texture after a synchronous reset', async () => {
+    const { registry } = registryHarness();
+    const registration = registry.registerBackground('old', fakeTexture('old'));
+    registry.reset({ clearAssets: true });
+    await registration;
+    expect(registry.resolveBackground('old')).toBeNull();
+  });
+
+  it('waits for a pending stale load and its unload before releasing source URLs', async () => {
+    let finishLoad!: (texture: Texture) => void;
+    let finishUnload!: () => void;
+    const unload = vi.fn(() => new Promise<void>(resolve => { finishUnload = resolve; }));
+    const registry = new RenderAssetRegistry({
+      load: () => new Promise<Texture>(resolve => { finishLoad = resolve; }), unload,
+    });
+    const registration = registry.registerBackground('old', 'blob:pending');
+    registry.reset({ clearAssets: true });
+    let released = false;
+    const release = registry.releaseRegisteredAssetSources().then(() => { released = true; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(released).toBe(false);
+    finishLoad(fakeTexture('old'));
+    await vi.waitFor(() => expect(unload).toHaveBeenCalledOnce());
+    expect(released).toBe(false);
+    finishUnload();
+    await Promise.all([registration, release]);
+    expect(registry.resolveBackground('old')).toBeNull();
+    expect(registry.diagnosticSnapshot().sources).toEqual([]);
+  });
+
+  it('finishes a stale load before loading the same URL for the new session', async () => {
+    let finishLoad!: (texture: Texture) => void;
+    const load = vi.fn().mockImplementationOnce(() => new Promise<Texture>(resolve => { finishLoad = resolve; }))
+      .mockResolvedValue(fakeTexture('new'));
+    const unload = vi.fn(async () => {});
+    const registry = new RenderAssetRegistry({ load, unload });
+    const oldRegistration = registry.registerBackground('room', 'blob:same');
+    registry.reset({ clearAssets: true });
+    const newRegistration = registry.registerBackground('room', 'blob:same');
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(1);
+    finishLoad(fakeTexture('old'));
+    await Promise.all([oldRegistration, newRegistration]);
+    expect(unload).toHaveBeenCalledOnce();
+    expect(registry.resolveBackground('room')?.label).toBe('new');
+  });
+
   it('releases a shared Blob source only after its last registration', async () => {
     const { registry, unload } = registryHarness();
 
@@ -94,6 +141,51 @@ describe('RenderAssetRegistry', () => {
 
     expect(unload).toHaveBeenCalledTimes(1);
     expect(unload).toHaveBeenCalledWith(['blob:shared']);
+  });
+
+  it('waits for an unload already started by clearAssets before allowing URL revocation', async () => {
+    let finish!: () => void;
+    const unload = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const registry = new RenderAssetRegistry({ load: async () => fakeTexture('old'), unload });
+    await registry.registerBackground('room', 'blob:old');
+    registry.reset({ clearAssets: true });
+    let released = false;
+    const release = registry.releaseRegisteredAssetSources().then(() => { released = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(released).toBe(false);
+    expect(registry.diagnosticSnapshot().sources).toEqual(['blob:old']);
+    finish();
+    await release;
+    expect(unload).toHaveBeenCalledTimes(1);
+    expect(registry.diagnosticSnapshot().sources).toEqual([]);
+  });
+
+  it('reports unload failure and retains the source for an explicit retry', async () => {
+    const unload = vi.fn().mockRejectedValueOnce(new Error('unload failed')).mockResolvedValue(undefined);
+    const registry = new RenderAssetRegistry({ load: async () => fakeTexture('old'), unload });
+    await registry.registerBackground('room', 'blob:old');
+    await expect(registry.releaseRegisteredAssetSources()).rejects.toThrow('unload failed');
+    expect(registry.diagnosticSnapshot().sources).toEqual(['blob:old']);
+    await registry.releaseRegisteredAssetSources();
+    expect(unload).toHaveBeenCalledTimes(2);
+    expect(registry.diagnosticSnapshot().sources).toEqual([]);
+  });
+
+  it('does not reload a source while its previous texture is still being unloaded', async () => {
+    let finish!: () => void;
+    const load = vi.fn(async () => fakeTexture('image'));
+    const unload = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const registry = new RenderAssetRegistry({ load, unload });
+    await registry.registerBackground('room', 'blob:shared');
+    registry.reset({ clearAssets: true });
+    const registration = registry.registerBackground('room', 'blob:shared');
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(1);
+    finish();
+    await registration;
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(registry.resolveBackground('room')).not.toBeNull();
   });
 
   it('resets generated caches while preserving registered textures unless clearAssets is requested', async () => {
@@ -132,6 +224,19 @@ describe('RenderAssetRegistry', () => {
 
     expect(add).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the font deadline once loading has completed', async () => {
+    vi.useFakeTimers();
+    try {
+      class FakeFontFace { async load(): Promise<this> { return this; } }
+      vi.stubGlobal('FontFace', FakeFontFace);
+      vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+      const registry = new RenderAssetRegistry();
+      expect(await registry.registerFontRole('body', 'blob:font')).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      registry.dispose();
+    } finally { vi.useRealTimers(); }
   });
 
   it('reports a stable disposed error for post-dispose mutations', () => {

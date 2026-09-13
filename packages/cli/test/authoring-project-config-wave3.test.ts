@@ -59,19 +59,16 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     const { root, data } = fixtureProject();
     const env = { SURDET_AGENT_DATA_DIR: data };
 
-    // 能力面 30 项（含 Wave 6 human review readers）。
+    // 纵向链只依赖本用例实际调用的能力；完整注册表由 authoring-contract.test.ts 覆盖。
     const capabilities = runCli(['capabilities', 'describe', '--json'], env);
     expect(capabilities.status).toBe(0);
-    expect(body(capabilities).result.capabilities.map((definition: any) => definition.id)).toEqual([
+    const capabilityIds = body(capabilities).result.capabilities.map((definition: any) => definition.id);
+    expect(capabilityIds).toEqual(expect.arrayContaining([
       'capabilities.describe', 'project.inspect', 'project.assets', 'object.inspect', 'change.begin',
-      'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure', 'character.remove',
-      'timeline.create', 'timeline.patch', 'project.entry-scene.set',
+      'scene.create', 'scene.patch', 'character.ensure', 'project.entry-scene.set',
       'project.validate', 'project.simulate', 'runtime.run-from', 'runtime.read-trace',
-      'change.diff', 'change.commit', 'change.rollback',
-      'change.recovery.inspect', 'change.recovery.execute',
-      'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
-      'review.prepare-comparison', 'review.inspect-decision', 'review.prepare-result', 'review.inspect-approval',
-    ]);
+      'change.diff', 'change.commit',
+    ]));
 
     // project.assets avatars 与 project.inspect characters/entryScene/title。
     const assets = runCli(['project', 'assets', '--project', root, '--json'], env);

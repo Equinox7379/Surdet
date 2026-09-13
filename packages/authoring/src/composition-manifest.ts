@@ -458,7 +458,8 @@ export async function buildCompositionManifest(
   };
   const reasons: CompositionIneligibility[] = [];
   const operations: CompositionOperation[] = [];
-  const entries = Object.entries(input.record.operations);
+  const entries = Object.entries(input.record.operations).sort((a, b) =>
+    (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || a[0].localeCompare(b[0]));
 
   for (let sequence = 0; sequence < entries.length; sequence += 1) {
     const [sourceOperationId, recorded] = entries[sequence]!;

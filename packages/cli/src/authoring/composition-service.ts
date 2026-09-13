@@ -20,7 +20,7 @@ import {
 } from '@surdet/authoring';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
-import { NodeLocalLeaseManager } from './node-local-lease.js';
+import { defaultAgentDataRoot, NodeLocalLeaseManager } from './node-local-lease.js';
 import { ChangeRecordProjectStorage } from './working-project-storage.js';
 import { NodeCompositionStore, type CompositionArtifactIdentity } from './node-composition-store.js';
 import {
@@ -80,15 +80,8 @@ const sha256TextHasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
 };
 
-function agentDataRoot(): string {
-  const configured = process.env['SURDET_AGENT_DATA_DIR'];
-  if (configured !== undefined && configured.trim().length > 0) return path.resolve(configured);
-  const localAppData = process.env['LOCALAPPDATA'];
-  return path.join(localAppData ?? path.join(os.homedir(), 'AppData', 'Local'), 'Surdet', 'agent-changes');
-}
-
 /** 从项目根组装服务（与 NodeChangeStore 同一 dataRoot 约定），供 MCP/CLI 薄投影复用。 */
-export async function compositionServiceForProject(projectRoot: string, dataRoot = agentDataRoot()): Promise<CompositionService> {
+export async function compositionServiceForProject(projectRoot: string, dataRoot = defaultAgentDataRoot()): Promise<CompositionService> {
   const resolved = path.resolve(projectRoot);
   const storage = await NodeProjectStorage.open(resolved);
   const identity = projectIdentityFromRoot(storage.rootIdentity);
@@ -99,8 +92,6 @@ export async function compositionServiceForProject(projectRoot: string, dataRoot
 export interface IntegrationProvenanceSource {
   planId: string;
   planFingerprint: string;
-  status: 'REPLAYING' | 'READY' | 'FAILED';
-  executeOperationId: string;
 }
 
 /**
@@ -110,24 +101,15 @@ export interface IntegrationProvenanceSource {
 export async function loadIntegrationProvenance(
   projectRoot: string,
   integration: IntegrationProvenanceSource,
-): Promise<{ available: true; plan: Record<string, unknown> } | { available: false; reason: 'COMPOSITION_PLAN_INVALID' }> {
+  dataRoot = defaultAgentDataRoot(),
+): Promise<{ available: true; plan: IntegrationPlan } | { available: false; reason: 'COMPOSITION_PLAN_INVALID' }> {
   try {
     const storage = await NodeProjectStorage.open(path.resolve(projectRoot));
     const identity = projectIdentityFromRoot(storage.rootIdentity);
-    const directory = path.join(agentDataRoot(), identity, 'composition-plans', integration.planId);
-    let identityRecord: { sha256?: unknown } = {};
-    try {
-      identityRecord = JSON.parse(await fs.promises.readFile(path.join(directory, 'identity.json'), 'utf8')) as { sha256?: unknown };
-    } catch {
-      return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
-    }
-    if (typeof identityRecord.sha256 !== 'string') return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
-    const { store } = await (async () => ({ store: new NodeCompositionStore(path.join(agentDataRoot(), identity), identity) }))();
-    await store.readPlan(integration.planId, identityRecord.sha256);
-    const payload = JSON.parse(await fs.promises.readFile(path.join(directory, 'payload.json'), 'utf8')) as Record<string, unknown>;
-    const planFingerprint = typeof payload['planFingerprint'] === 'string' ? payload['planFingerprint'] : undefined;
-    if (planFingerprint !== integration.planFingerprint) return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
-    return { available: true, plan: payload };
+    const store = new NodeCompositionStore(path.join(dataRoot, identity), identity);
+    const { plan } = await store.readPlan(integration.planId);
+    if (plan.planFingerprint !== integration.planFingerprint) return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
+    return { available: true, plan };
   } catch {
     return { available: false, reason: 'COMPOSITION_PLAN_INVALID' };
   }
@@ -420,7 +402,6 @@ export class CompositionService {
 
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import { NodeChangeStore } from './node-change-store.js';
 import { ChangeSession } from '@surdet/authoring';
 import type { IntegrationMetadata } from '@surdet/authoring';

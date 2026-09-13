@@ -399,6 +399,31 @@ describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
     });
   });
 
+  it.each(['__proto__', 'constructor'])('恢复 operationId %s 可持久化并幂等重放', async (operationId) => {
+    await withFixture(`surdet-task7-prototype-${operationId}-`, async (fixture) => {
+      const changeId = await beginRecoveryChange(fixture.projectRoot);
+      const prepared = await prepareInterruptedChange(fixture, changeId, 'staging');
+      const service = new AuthoringService();
+      const inspected = await service.inspectRecovery(changeId);
+      const first = await service.executeRecovery(changeId, {
+        operationId,
+        recoveryToken: inspected.result.recoveryToken!,
+      });
+      const opened = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true }))!;
+      expect(Object.prototype.hasOwnProperty.call(opened.record.operations, operationId)).toBe(true);
+      expect(opened.record.operations[operationId]!.result).toEqual(first.result);
+      const afterFirst = opened.record.recordVersion;
+
+      const second = await service.executeRecovery(changeId, {
+        operationId,
+        recoveryToken: inspected.result.recoveryToken!,
+      });
+      const reopened = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true }))!;
+      expect(second.result).toEqual(first.result);
+      expect(reopened.record.recordVersion).toBe(afterFirst);
+    });
+  });
+
   it('V1/corrupt manifest、head、record、journal：稳定错误且原始文件保留', async () => {
     await withFixture('surdet-task7-corrupt-', async (fixture) => {
       const manifestChange = await beginRecoveryChange(fixture.projectRoot);

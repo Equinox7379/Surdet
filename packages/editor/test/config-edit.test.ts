@@ -53,6 +53,27 @@ describe('变量表 ⇄ JSON', () => {
     })).toThrow(/game\.config\.json.*JSON 对象/);
   });
 
+  it('preserves escaped strings, scientific numbers and literal prototype keys when saving existing variables', () => {
+    const variables = Object.fromEntries([
+      ['__proto__', { type: 'number', initial: 7 }],
+      ['tiny', { type: 'number', initial: 1e-8 }],
+      ['story', { type: 'string', initial: '  第一行\n"第二行"\\结尾  ' }],
+    ]);
+    const converted = rowsToVariables(parseVariablesToRows({ variables }));
+    expect(converted.errors).toEqual([]);
+    expect(JSON.parse(applyVariablesToConfig('{}', converted.variables)).variables).toEqual(variables);
+  });
+
+  it.each([
+    ['number', '9'.repeat(400)],
+    ['number[]', '["wrong"]'],
+    ['string[]', '[7]'],
+    ['object', '[1,2]'],
+  ])('rejects a %s initial that the runtime cannot accept', (type, initial) => {
+    const converted = rowsToVariables([{ name: 'value', type, initial, min: '', max: '', readonly: false, description: '' }]);
+    expect(converted.errors.length).toBeGreaterThan(0);
+  });
+
   it('非法输入被校验拦截：重复名/坏 initial/min>max/坏类型', () => {
     const { errors } = rowsToVariables([
       { name: 'a', type: 'number', initial: '1', min: '', max: '', readonly: false, description: '' },
@@ -183,17 +204,31 @@ describe('calendar ⇄ JSON', () => {
     expect(json.onTurnStartEventId).toBe('ev_turn_start');
   });
 
+  it('未编辑往返保留数字样式文本，并保留科学计数法数字', () => {
+    const raw = {
+      nodes: [{ id: '007', name: '123', x: 1e-8, y: 2e-8, apCost: 1e-8, eventId: '123' }],
+      baseCommands: [{ id: '001', name: '123', apCost: 1e-8, perTurn: 1e-8, when: 'true', effects: {} }],
+    };
+    const { json, errors } = rowsToCalendar(raw, parseCalendarRows(raw));
+    expect(errors).toEqual([]);
+    expect(json).toEqual(raw);
+    expect(typeof (json.nodes as Record<string, unknown>[])[0]!.id).toBe('string');
+    expect(typeof (json.nodes as Record<string, unknown>[])[0]!.x).toBe('number');
+  });
+
   it('非法输入拦截：重复节点 ID / 坏 when / 坏 JSON / 非数字标量', () => {
     const rows = parseCalendarRows(calendarRaw);
     rows.nodes.push({ id: 'map_01', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' });
     rows.baseCommands[0]!.when = 'trust >=';
     rows.baseCommands[1]!.effects = '{bad';
     rows.scalars.maxAp = 'abc';
+    rows.nodes[0]!.x = 'Infinity';
     const { errors } = rowsToCalendar(calendarRaw, rows);
     expect(errors.some((e) => e.includes("'map_01' 重复"))).toBe(true);
     expect(errors.some((e) => e.includes('when') && e.includes('表达式'))).toBe(true);
     expect(errors.some((e) => e.includes('JSON'))).toBe(true);
     expect(errors.some((e) => e.includes('maxAp') && e.includes('数字'))).toBe(true);
+    expect(errors.some((e) => e.includes('地图节点') && e.includes('x') && e.includes('有限数字'))).toBe(true);
   });
 
   it('删行/中间插行时未知字段不错位（按主键合并，审阅轮 Major 1 回归）', () => {
@@ -312,13 +347,28 @@ describe('events ⇄ JSON', () => {
     expect((json.profiles as Record<string, unknown>[])[0]!.tiers).toEqual([{ min: 0, stage: '陌生' }]);
   });
 
+  it('未编辑往返保留数字样式文本，并保留科学计数法 priority', () => {
+    const raw = {
+      profiles: [{ characterId: '123', variable: '007', tiers: ['123'] }],
+      events: [{ id: '001', characterId: '123', when: 'true', scene: '123', once: true, priority: 1e-8, effects: {} }],
+      scheduled: [],
+    };
+    const { json, errors } = rowsToEvents(raw, parseEventsRows(raw));
+    expect(errors).toEqual([]);
+    expect(json).toEqual(raw);
+    expect(typeof (json.events as Record<string, unknown>[])[0]!.id).toBe('string');
+    expect(typeof (json.events as Record<string, unknown>[])[0]!.priority).toBe('number');
+  });
+
   it('拦截：重复事件 ID 与坏 when', () => {
     const rows = parseEventsRows(eventsRaw);
     rows.events.push({ id: 'ev_a', characterId: '', when: '', scene: '', once: false, priority: '', effects: '' });
     rows.scheduled[0]!.when = '>>> bad';
+    rows.scheduled[0]!.priority = 'Infinity';
     const { errors } = rowsToEvents(eventsRaw, rows);
     expect(errors.some((e) => e.includes("'ev_a' 重复"))).toBe(true);
     expect(errors.some((e) => e.includes('when') && e.includes('表达式'))).toBe(true);
+    expect(errors.some((e) => e.includes('日程事件') && e.includes('priority') && e.includes('有限数字'))).toBe(true);
   });
 });
 
@@ -350,6 +400,18 @@ describe('growth ⇄ JSON', () => {
     rows2.profiles[0]!.levelEvents = '{"10": 123}';
     expect(rowsToGrowth(growthRaw, rows2).errors.some((e) => e.includes('levelEvents'))).toBe(true);
   });
+
+  it('有限数字列拒绝 Infinity，并保留科学计数法等级', () => {
+    const rows = parseGrowthRows(growthRaw);
+    rows.profiles[0]!.initialLevel = '1e-8';
+    const ok = rowsToGrowth(growthRaw, rows);
+    expect(ok.errors).toEqual([]);
+    expect((ok.json.profiles as Record<string, unknown>[])[0]!.initialLevel).toBe(1e-8);
+
+    rows.profiles[0]!.initialLevel = 'Infinity';
+    const bad = rowsToGrowth(growthRaw, rows);
+    expect(bad.errors.some((e) => e.includes('initialLevel') && e.includes('数字'))).toBe(true);
+  });
 });
 
 const galleryRaw = {
@@ -366,6 +428,18 @@ describe('gallery ⇄ JSON', () => {
     const { json, errors } = rowsToGallery(galleryRaw, rows);
     expect(errors).toEqual([]);
     expect((json.cgs as Record<string, unknown>[])[0]!.src).toBe('castle_hall');
+  });
+
+  it('未编辑往返保留数字样式文本字段', () => {
+    const raw = {
+      cgs: [{ id: '007', name: '123', src: '001' }],
+      music: [{ id: '002', name: '003', src: '004' }],
+      texts: [{ id: '123', name: '007', scene: '123', label: '001' }],
+    };
+    const { json, errors } = rowsToGallery(raw, parseGalleryRows(raw));
+    expect(errors).toEqual([]);
+    expect(json).toEqual(raw);
+    expect(typeof (json.cgs as Record<string, unknown>[])[0]!.id).toBe('string');
   });
 
   it('拦截重复 CG ID', () => {
@@ -398,6 +472,14 @@ describe('terminology ⇄ JSON', () => {
     const { json, errors } = rowsToTerminology(termRaw, rows);
     expect(errors).toEqual([]);
     expect(json.terms).toEqual(termRaw.terms);
+  });
+
+  it('未编辑往返保留数字样式 canonical 文本', () => {
+    const raw = { terms: [{ canonical: '123', variants: ['007'] }] };
+    const { json, errors } = rowsToTerminology(raw, parseTerminologyRows(raw));
+    expect(errors).toEqual([]);
+    expect(json).toEqual(raw);
+    expect(typeof (json.terms as Record<string, unknown>[])[0]!.canonical).toBe('string');
   });
 
   it('拦截：规范词重复 / 坏 variants JSON', () => {

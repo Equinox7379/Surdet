@@ -133,8 +133,12 @@ function parseAssumeValue(raw: string): VarValue {
 
 export function simulateProject(projectDir: string, opts: SimulateOptions = {}): SimulateReport {
   const snapshot = loadSnapshot(projectDir);
-  const initialVariables: Record<string, VarValue> = {};
-  for (const [name, raw] of Object.entries(opts.assume ?? {})) initialVariables[name] = parseAssumeValue(raw);
+  const initialVariables: Record<string, VarValue> = Object.create(null) as Record<string, VarValue>;
+  for (const [name, raw] of Object.entries(opts.assume ?? {})) {
+    Object.defineProperty(initialVariables, name, {
+      value: parseAssumeValue(raw), enumerable: true, writable: true, configurable: true,
+    });
+  }
   const report = simulateSnapshot(snapshot, {
     maxPaths: opts.maxPaths,
     maxStepsPerPath: opts.maxStepsPerPath,
@@ -160,7 +164,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
 /* ============================ CLI 命令 ============================ */
 
 export async function cmdSimulate(projectDir: string, argv: string[]): Promise<number> {
-  const opts: SimulateOptions = { assume: {} };
+  const opts: SimulateOptions = { assume: Object.create(null) as Record<string, string> };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--max-paths') opts.maxPaths = Number(argv[++i]);
@@ -169,7 +173,9 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
     else if (a === '--assume') {
       const kv = argv[++i] ?? '';
       const eq = kv.indexOf('=');
-      if (eq > 0) opts.assume![kv.slice(0, eq)] = kv.slice(eq + 1);
+      if (eq > 0) Object.defineProperty(opts.assume!, kv.slice(0, eq), {
+        value: kv.slice(eq + 1), enumerable: true, writable: true, configurable: true,
+      });
     }
   }
 

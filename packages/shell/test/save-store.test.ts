@@ -109,6 +109,26 @@ describe('FileSaveStore', () => {
     expect(store.listMeta().map((m) => m.id)).toEqual(['auto']);
   });
 
+  it('主档缺失时 list/listMeta 以物理文件为准，备份仍独立可见', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('ghost', makeSnap('ghost'));
+    store.write('ghost', { ...makeSnap('ghost'), meta: { id: 'ghost', createdAt: 1, updatedAt: 2 } });
+
+    const mainFile = path.join(dir, `${canonicalSlotStem('ghost')}.json`);
+    const backupFile = path.join(dir, `${canonicalSlotStem('ghost')}.json.bak`);
+    expect(fs.existsSync(mainFile)).toBe(true);
+    expect(fs.existsSync(backupFile)).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'index.json'))).toBe(true);
+
+    fs.unlinkSync(mainFile);
+
+    expect(store.read('ghost')).toBeNull();
+    expect(store.list()).not.toContain('ghost');
+    expect(store.listMeta().map((m) => m.id)).not.toContain('ghost');
+    expect(store.listBackupMeta().map((m) => m.id)).toEqual(['ghost']);
+  });
+
   it('listMeta 在无索引的旧存档目录回退逐文件读取', () => {
     const dir = makeDir();
     fs.writeFileSync(path.join(dir, 'legacy.json'), JSON.stringify(makeSnap('legacy')));

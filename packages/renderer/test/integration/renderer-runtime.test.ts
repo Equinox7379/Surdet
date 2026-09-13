@@ -182,6 +182,18 @@ describe('Renderer v2 runtime facade', () => {
     ]);
   });
 
+  it('preserves literal keys when cloning supported legacy opaque presentation data', async () => {
+    const internals = fakeInternals();
+    const payload = { ...JSON.parse('{"__proto__":{"frame":2}}'), callback: () => {} };
+    internals.controller.snapshotPresentation = () => payload;
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    const snapshot = runtime.queries.presentation.snapshot() as Record<string, unknown>;
+    expect(Object.keys(snapshot)).toEqual(['__proto__', 'callback']);
+    expect(snapshot['__proto__']).toEqual({ frame: 2 });
+    expect(Object.getPrototypeOf(snapshot)).toBe(Object.prototype);
+    runtime.dispose();
+  });
+
   it('preserves reset and presentation restore delegation', async () => {
     const internals = fakeInternals();
     const runtime = await createRendererRuntimeFromInternals(internals);

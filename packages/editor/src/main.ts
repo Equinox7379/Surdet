@@ -73,7 +73,7 @@ import {
   renameSceneAtKey,
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
-  inspectConfigDraftState } from './panels/config.js';
+  inspectConfigDraftState, saveDirtyConfigSections } from './panels/config.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation } from './v4/ui.js';
@@ -255,7 +255,8 @@ async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBase
   const root = state.dirHandle;
   const client = assetImportClient;
   const generation = assetImportGeneration;
-  const baseline = state.projectLoading ? undefined : preservedBaseline ?? editorWorkspaceStatus().baseline;
+  const baseline = preservedBaseline !== undefined ? preservedBaseline
+    : state.projectLoading ? undefined : editorWorkspaceStatus().baseline;
   if (root === null) {
     assetImportWorkspace.markUnavailable();
     return;
@@ -1027,6 +1028,7 @@ function projectBarProjection(): ProjectBarProjection {
     hasScenes: state.scenes.size > 0,
     writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked || relay.saving || sceneLifecycleActionRunning
       || state.reviewWorkspace?.authority.state === 'submitting',
+    ...(relay.saving ? { writeLockLabel: '正在保存', writeLockTitle: '保存完成后可继续操作' } : {}),
     ...(sceneRecoveryLocked ? {
       writeLockLabel: sceneAutosaveRecoveryPhase === 'running'
         ? '正在恢复上次未完成的保存'
@@ -1506,9 +1508,24 @@ bindProjectIoHooks({
     invalidatePendingValidation();
     resetConfigSession();
   },
-  onProjectReading: async () => {
-    if (editorWorkspaceStatus().protection === 'unavailable') await bindCurrentProjectAssetImport();
-    else await readEditorWorkspaceBaseline();
+  onProjectReading: async (root, readProject, reopen) => {
+    if (state.dirHandle !== null && editorWorkspaceStatus().protection !== 'unavailable'
+      && (root === state.dirHandle || await root.isSameEntry(state.dirHandle))) {
+      const baseline = await readEditorWorkspaceBaseline(readProject);
+      if (reopen) await bindCurrentProjectAssetImport(baseline);
+      return;
+    }
+    // 新目录先独立核验并取基线；读取失败时不拆掉旧项目的连接和草稿。
+    const probe = createAssetImportAuthorityClient();
+    let baseline: ProjectDiskBaseline | null = null;
+    try {
+      await probe.bindProject(root);
+      baseline = (await probe.workspace.snapshot(crypto.randomUUID())).diskBaseline;
+    } catch {
+      // 普通未绑定目录仍可打开；未知基线不能在随后绑定成功时冒充已读取的版本。
+    } finally { probe.dispose(); }
+    await readProject();
+    await bindCurrentProjectAssetImport(baseline);
   },
   onProjectLoadSettled: (succeeded) => {
     authoringProjectChanging = false;
@@ -1532,6 +1549,8 @@ bindProjectIoHooks({
     refreshProjectBarProjection();
     startCurrentProjectAutosaveRecovery(Promise.resolve());
   },
+  hasDirtyConfigDrafts: () => inspectConfigDraftState().dirty,
+  saveConfigDrafts: saveDirtyConfigSections,
   onSaved: () => {
     persistCurrentAutosave(Date.now());
   },
@@ -2081,7 +2100,8 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
     return;
   }
-  if (state.projectWriteLock === 'asset-relocation' || sceneAutosaveRecoveryPhase !== 'idle') {
+  if (state.projectWriteLock === 'asset-relocation' || sceneAutosaveRecoveryPhase !== 'idle'
+    || editorWorkspaceStatus().saving) {
     e.preventDefault();
     e.returnValue = '';
     return;

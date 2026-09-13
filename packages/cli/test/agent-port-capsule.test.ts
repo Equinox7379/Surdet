@@ -70,6 +70,46 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     await session.close();
   });
 
+  it.each(['__proto__', 'constructor'])('persists and replays prototype-named operationId %s through Agent Port', async (operationId) => {
+    const session = await openSession(`prototype-operation-${operationId}`, 'apply');
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const input = { operationId, sceneId: `prototype_${operationId}` };
+      const first = await session.invoke('scene.create', input);
+      expect(first.ok).toBe(true);
+      const replay = await session.invoke('scene.create', input);
+      expect(replay.ok).toBe(true);
+      if (!first.ok || !replay.ok) throw new Error('prototype operation failed');
+      expect(replay.result).toEqual(first.result);
+
+      const opened = await NodeChangeStore.openByChangeId(session.activeChangeId!);
+      expect(opened).not.toBeNull();
+      expect(Object.prototype.hasOwnProperty.call(opened!.record.operations, operationId)).toBe(true);
+      expect(opened!.record.operations[operationId]!.sequence).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('keeps prototype-shaped variables on the public Agent Port path', async () => {
+    const session = await openSession('prototype-config', 'apply');
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const variable = await session.invoke('variable.ensure', {
+        operationId: 'prototype-variable', name: '__proto__', type: 'number', initial: 7,
+      });
+      expect(variable.ok).toBe(true);
+
+      const opened = await NodeChangeStore.openByChangeId(session.activeChangeId!);
+      expect(opened).not.toBeNull();
+      const config = JSON.parse(opened!.record.workingFiles['game.config.json']!) as { variables: Record<string, unknown> };
+      expect(Object.prototype.hasOwnProperty.call(config.variables, '__proto__')).toBe(true);
+      expect(config.variables['__proto__']).toEqual({ type: 'number', initial: 7 });
+    } finally {
+      await session.close();
+    }
+  });
+
   it('seals an OPEN stage capsule without mutating project files', async () => {
     const session = await openSession('stage-capsule');
     expect((await session.invoke('change.begin', {})).ok).toBe(true);
@@ -125,6 +165,67 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     const manifest = capsule.composition.manifest as { operations: unknown[] } | undefined;
     expect(manifest?.operations.length).toBeGreaterThan(0);
     await session.close();
+  });
+
+  it('seals direct manifests in persisted sequence order for numeric and alphabetic operation ids', async () => {
+    const seal = async (name: string, sceneOperationId: string, entryOperationId: string) => {
+      const session = await openSession(name, 'apply');
+      try {
+        expect((await session.invoke('change.begin', {})).ok).toBe(true);
+        expect((await session.invoke('scene.create', {
+          operationId: sceneOperationId,
+          sceneId: 'direct_entry',
+          blocks: [{ kind: 'text', value: '直达入口。' }],
+        })).ok).toBe(true);
+        const inspected = await session.invoke('object.inspect', { objectRef: 'config:entryScene' });
+        expect(inspected.ok).toBe(true);
+        if (!inspected.ok) throw new Error(inspected.error.message);
+        const entryFingerprint = (inspected.result as { fingerprint?: unknown }).fingerprint;
+        expect(typeof entryFingerprint).toBe('string');
+        expect((await session.invoke('project.entry-scene.set', {
+          operationId: entryOperationId,
+          sceneId: 'direct_entry',
+          expectedFingerprint: entryFingerprint,
+        })).ok).toBe(true);
+        expect((await session.invoke('change.diff', {})).ok).toBe(true);
+
+        const opened = await NodeChangeStore.openByChangeId(session.activeChangeId!);
+        expect(opened).not.toBeNull();
+        const record = opened!.record;
+        expect(record.operations[sceneOperationId]!.sequence).toBe(0);
+        expect(record.operations[entryOperationId]!.sequence).toBe(1);
+        return await generateDeliveryCapsule(session);
+      } finally {
+        await session.close();
+      }
+    };
+
+    const numeric = await seal('direct-numeric-order', '10', '2');
+    expect(numeric.composition.eligibility).toBe('ready');
+    if (numeric.composition.eligibility !== 'ready') return;
+    const numericManifest = numeric.composition.manifest as {
+      operations: Array<{ sourceOperationId: string; sequence: number; requiredObjects: unknown[] }>;
+    };
+    expect(numericManifest.operations.map((operation) => [operation.sourceOperationId, operation.sequence]))
+      .toEqual([['10', 0], ['2', 1]]);
+    expect((numeric.operations as Array<{ operationId: string }>).map((operation) => operation.operationId))
+      .toEqual(['10', '2']);
+    expect((numeric.objectDiff as { semantic: Array<{ operationId: string }> }).semantic.map((entry) => entry.operationId))
+      .toEqual(['change.diff:content/scenario/direct_entry.gal', 'change.diff:game.config.json', '2']);
+    expect(numericManifest.operations[1]!.requiredObjects).toContainEqual(expect.objectContaining({
+      objectRef: 'scene:direct_entry', source: 'candidate', candidateOperationSequence: 0,
+    }));
+
+    const alphabetic = await seal('direct-alphabetic-order', 'scene-first', 'entry-second');
+    expect(alphabetic.composition.eligibility).toBe('ready');
+    if (alphabetic.composition.eligibility !== 'ready') return;
+    const alphabeticManifest = alphabetic.composition.manifest as {
+      operations: Array<{ sourceOperationId: string; sequence: number }>;
+    };
+    expect(alphabeticManifest.operations.map((operation) => [operation.sourceOperationId, operation.sequence]))
+      .toEqual([['scene-first', 0], ['entry-second', 1]]);
+    expect((alphabetic.operations as Array<{ operationId: string }>).map((operation) => operation.operationId))
+      .toEqual(['scene-first', 'entry-second']);
   });
 
   it('keeps consecutive capsules immutable and verifies disk identity', async () => {

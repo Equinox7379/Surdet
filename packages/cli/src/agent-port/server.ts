@@ -7,6 +7,7 @@ import {
   HUMAN_WORKSPACE_SUMMARY_SCHEMA,
   PROJECT_MUTATION_NOTICE_SCHEMA,
   CANDIDATE_COMPOSITION_READINESS_SCHEMA,
+  EVIDENCE_FRESHNESS_SCHEMA,
   createEnvelopeJsonSchema,
   createFailureEnvelope,
   createSuccessEnvelope,
@@ -29,18 +30,6 @@ const capsuleInputSchema: JsonSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
   properties: { label: { type: 'string', maxLength: 120 } },
-  additionalProperties: false,
-};
-
-const freshnessSchema: JsonSchema = {
-  type: 'object',
-  properties: {
-    evidenceId: { type: 'string' },
-    status: { enum: ['missing', 'fresh', 'stale', 'failed', 'incomplete'] },
-    workingRevision: { type: 'integer' },
-    currentWorkingRevision: { type: 'integer' },
-  },
-  required: ['status'],
   additionalProperties: false,
 };
 
@@ -223,9 +212,9 @@ const capsuleOutputSchema: JsonSchema = {
     invocationSummary: {},
     objectDiff: {},
     causalImpact: { type: 'object', properties: { potentialImpact: { type: 'array', items: {} }, observedImpact: { type: 'array', items: {} } }, required: ['potentialImpact', 'observedImpact'], additionalProperties: false },
-    validation: freshnessSchema,
-    simulation: freshnessSchema,
-    runtime: freshnessSchema,
+    validation: EVIDENCE_FRESHNESS_SCHEMA,
+    simulation: EVIDENCE_FRESHNESS_SCHEMA,
+    runtime: EVIDENCE_FRESHNESS_SCHEMA,
     recovery: recoverySummarySchema,
     warnings: { type: 'array', items: {} },
     manualReviewRequired: { type: 'array', items: {} },
@@ -325,9 +314,9 @@ const sessionDescriptionSchema: JsonSchema = {
     evidence: {
       type: 'object',
       properties: {
-        validation: freshnessSchema,
-        simulation: freshnessSchema,
-        runtime: freshnessSchema,
+        validation: EVIDENCE_FRESHNESS_SCHEMA,
+        simulation: EVIDENCE_FRESHNESS_SCHEMA,
+        runtime: EVIDENCE_FRESHNESS_SCHEMA,
       },
       additionalProperties: false,
     },

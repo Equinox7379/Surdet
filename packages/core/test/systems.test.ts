@@ -185,6 +185,25 @@ describe('NewGamePlus', () => {
     expect(result['maxTrust']).toBe(5); // max(5, 3)
   });
 
+  it('合法原型名变量可继承，缺失变量不会读取对象原型', () => {
+    const config: NewGamePlusConfig = {
+      clearCondition: 'true',
+      inherit: [
+        { variable: '__proto__', mode: 'copy' },
+        { variable: 'constructor', mode: 'copy' },
+        { variable: 'toString', mode: 'copy' },
+      ],
+      unlockGallery: false,
+    };
+    const store = new VariableStore([{ name: '__proto__', type: 'number', initial: 0 }]);
+    store.set('__proto__', 7);
+    const result = new NewGamePlus(config, store).computeInherit({});
+    expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true);
+    expect(result['__proto__']).toBe(7);
+    expect(Object.prototype.hasOwnProperty.call(result, 'constructor')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(result, 'toString')).toBe(false);
+  });
+
   it('unlockGallery 透传', () => {
     const ngp = new NewGamePlus(ngpConfig, new VariableStore(decls));
     expect(ngp.unlockGallery).toBe(true);

@@ -29,11 +29,18 @@ let onProjectLoaded: () => void = () => {};
 let onProjectClosing: () => void = () => {};
 /** 每次替换内存项目事实前失效上一项目的异步结果与页面缓存。 */
 let onProjectStateReset: () => void = () => {};
-let onProjectReading: () => Promise<void> = async () => {};
+let onProjectReading: (root: FileSystemDirectoryHandle, readProject: () => Promise<void>, reopen: boolean) => Promise<void>
+  = async (_root, readProject) => readProject();
 /** 无论项目载入成功或失败都必须收束切换状态。 */
 let onProjectLoadSettled: (succeeded: boolean) => void = () => {};
 /** 保存全部完成（清除崩溃备份挂点；A1） */
 let onSaved: () => void = () => {};
+/** 配置面板的 dirty 草稿事实与解锁保存入口；由 main 装配，避免 project-io 反向依赖面板。 */
+let hasDirtyConfigDrafts: () => boolean = () => false;
+let saveConfigDrafts: () => Promise<{ saved: number; failures: number; remainingDirty: boolean }> = async () => {
+  const dirty = hasDirtyConfigDrafts();
+  return { saved: 0, failures: dirty ? 1 : 0, remainingDirty: dirty };
+};
 /** 保存尝试完成后的 UI 事实投影；不改变任何写盘或恢复语义。 */
 let onSaveSettled: (outcome: ProjectSaveOutcome) => void = () => {};
 let onTimelineDeleted: (timelineId: string) => void = () => {};
@@ -138,9 +145,11 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded?: () => void;
   onProjectClosing?: () => void;
   onProjectStateReset?: () => void;
-  onProjectReading?: () => Promise<void>;
+  onProjectReading?: (root: FileSystemDirectoryHandle, readProject: () => Promise<void>, reopen: boolean) => Promise<void>;
   onProjectLoadSettled?: (succeeded: boolean) => void;
   onSaved?: () => void;
+  hasDirtyConfigDrafts?: () => boolean;
+  saveConfigDrafts?: () => Promise<{ saved: number; failures: number; remainingDirty: boolean }>;
   onSaveSettled?: (outcome: ProjectSaveOutcome) => void;
   onTimelineDeleted?: (timelineId: string) => void;
   onAssetsRefreshed?: () => Promise<void>;
@@ -154,9 +163,14 @@ export function bindProjectIoHooks(opts: {
   onProjectLoaded = opts.onProjectLoaded ?? (() => {});
   onProjectClosing = opts.onProjectClosing ?? (() => {});
   onProjectStateReset = opts.onProjectStateReset ?? (() => {});
-  onProjectReading = opts.onProjectReading ?? (async () => {});
+  onProjectReading = opts.onProjectReading ?? (async (_root, readProject) => readProject());
   onProjectLoadSettled = opts.onProjectLoadSettled ?? (() => {});
   onSaved = opts.onSaved ?? (() => {});
+  hasDirtyConfigDrafts = opts.hasDirtyConfigDrafts ?? (() => false);
+  saveConfigDrafts = opts.saveConfigDrafts ?? (async () => {
+    const dirty = hasDirtyConfigDrafts();
+    return { saved: 0, failures: dirty ? 1 : 0, remainingDirty: dirty };
+  });
   onSaveSettled = opts.onSaveSettled ?? (() => {});
   onTimelineDeleted = opts.onTimelineDeleted ?? (() => {});
   onAssetsRefreshed = opts.onAssetsRefreshed ?? null;
@@ -176,6 +190,20 @@ export async function openProject(): Promise<void> {
   await openProjectFromHandle(dir);
 }
 
+interface LoadedProjectData {
+  dirName: string;
+  dirHandle: FileSystemDirectoryHandle;
+  reviewPreviewReadOnly: boolean;
+  scenes: Map<string, import('./state.js').SceneEntry>;
+  timelines: import('./state.js').TimelineEntry[];
+  gameConfigText: string;
+  entryScene: string;
+  handles: typeof state.handles;
+  configFiles: typeof state.configFiles;
+  dirAssets: DirAsset[];
+  autosaveProjectId: string | null;
+}
+
 export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture'; preserveReviewWorkspace?: boolean } = {},
@@ -185,13 +213,13 @@ export async function openProjectFromHandle(
   }
   await beginProjectTransition();
   let succeeded = false;
+  const previousProjectLoading = state.projectLoading;
+  state.projectLoading = true;
   try {
-    onProjectClosing();
-    assetRefreshRevision += 1;
-    await loadProjectFromHandle(dir, options);
+    await loadProjectFromHandle(dir, options, true);
     succeeded = true;
   } finally {
-    state.projectLoading = false;
+    state.projectLoading = previousProjectLoading;
     try {
       onProjectLoadSettled(succeeded);
     } finally {
@@ -218,10 +246,11 @@ export async function reloadCurrentProjectFromHandle(options: {
     endProjectTransition();
     throw new Error('当前项目未连接可写目录');
   }
-  assetRefreshRevision += 1;
   let succeeded = false;
+  const previousProjectLoading = state.projectLoading;
+  state.projectLoading = true;
   try {
-    await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false, preserveReviewWorkspace: options.preserveReviewWorkspace });
+    await loadProjectFromHandle(dir, { source: 'normal', notifyProjectLoaded: false, preserveReviewWorkspace: options.preserveReviewWorkspace }, false);
     if (options.mainTab !== undefined) state.mainTab = options.mainTab;
     if (options.sceneKey && state.scenes.has(options.sceneKey)) state.current = options.sceneKey;
     else if (options.sceneId) state.current = [...state.scenes].find(([, scene]) => scene.id === options.sceneId)?.[0] ?? state.current;
@@ -230,7 +259,7 @@ export async function reloadCurrentProjectFromHandle(options: {
     renderAll();
     succeeded = true;
   } finally {
-    state.projectLoading = false;
+    state.projectLoading = previousProjectLoading;
     try {
       onProjectLoadSettled(succeeded);
     } finally {
@@ -242,87 +271,21 @@ export async function reloadCurrentProjectFromHandle(options: {
 async function loadProjectFromHandle(
   dir: FileSystemDirectoryHandle,
   options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean; preserveReviewWorkspace?: boolean },
+  closeOldRuntime: boolean,
 ): Promise<void> {
-  state.projectLoading = true;
-  onProjectStateReset();
-  if ((options.source ?? 'normal') === 'normal' && !options.preserveReviewWorkspace) {
-    state.reviewWorkspace = null;
-    state.mainTab = 'editor';
-  } else {
-    state.mainTab = 'review';
-  }
-  state.dirName = dir.name;
-  state.dirHandle = dir;
   const permissions = dir as FileSystemDirectoryHandle & {
     queryPermission?: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
   };
-  state.reviewPreviewReadOnly = options.source === 'review-fixture'
+  const reviewPreviewReadOnly = options.source === 'review-fixture'
     && await permissions.queryPermission?.({ mode: 'readwrite' }) === 'denied';
-  state.scenes.clear();
-  state.pendingSceneDeletes = [];
-  state.pendingSceneCommit = null;
-  state.lastValidation = null;
-  state.lastEdges = [];
-  state.timelines = [];
-  state.pendingTimelineDeletes = [];
-  state.pendingTimelineRestores.clear();
-  state.currentTimeline = null;
-  state.currentTimelineCue = null;
-  state.previewTimelineId = null;
-  histories.clear(); // 换项目：历史栈失效
-  clearTimelineHistories();
-  state.handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null };
-  state.dirAssets = [];
-  state.assetIntelligence = null;
-  state.assetIntelligenceState = 'loading';
-  state.assetCenterSelectedId = null;
-  state.assetCenterQuery = '';
-  state.assetCenterKind = 'all';
-  state.assetCenterStatus = 'all';
-  state.assetCenterFolder = 'all';
-  // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
-  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
-  state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
-  if (!state.reviewPreviewReadOnly) await onProjectReading();
-  for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
-    try {
-      const contentDir = await dir.getDirectoryHandle('content');
-      const configDir = await contentDir.getDirectoryHandle('config');
-      const fh = await configDir.getFileHandle(`${name}.json`);
-      state.configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
-      // 配置编辑器写盘句柄（E3 全部配置文件）
-      if (name === 'achievements' || name === 'calendar' || name === 'events' || name === 'growth' || name === 'gallery' || name === 'terminology') {
-        state.handles[name] = fh;
-      }
-    } catch (error) {
-      if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
-      state.configFiles[name] = null;
-    }
-  }
-  // game.config.json（entryScene/变量表；句柄供变量编辑器写盘）
-  try {
-    const cfgHandle = await dir.getFileHandle('game.config.json');
-    state.handles.gameConfig = cfgHandle;
-    state.gameConfigText = await (await cfgHandle.getFile()).text();
-    const cfg = JSON.parse(state.gameConfigText) as { entryScene?: string };
-    state.entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
-  } catch (error) {
-    if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
-    state.gameConfigText = '';
-    state.entryScene = '';
-  }
-  // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
-  state.dirAssets = await collectProjectAssets(dir, true);
-  // 递归读取 content/scenario/**/*.gal
-  const contentDir = await optionalDirectory(dir, 'content', true);
-  const scenarioDir = contentDir === null ? null : await optionalDirectory(contentDir, 'scenario', true);
-  if (scenarioDir !== null) await readScenarioDir(scenarioDir, '');
-  const timelineDir = contentDir === null ? null : await optionalDirectory(contentDir, 'timelines', true);
-  if (timelineDir !== null) await readTimelineDir(timelineDir, '');
-  const first = state.scenes.keys().next().value as string | undefined;
-  state.current = first ?? null;
-  state.currentTimeline = state.timelines[0]?.id ?? null;
-  state.autosaveProjectId = await resolveAutosaveProjectIdentity(dir);
+  const readAndCommit = async (): Promise<void> => {
+    const loaded = await readProjectFromHandle(dir, reviewPreviewReadOnly);
+    if (closeOldRuntime) onProjectClosing();
+    assetRefreshRevision += 1;
+    commitLoadedProject(loaded, options);
+  };
+  if (reviewPreviewReadOnly) await readAndCommit();
+  else await onProjectReading(dir, readAndCommit, closeOldRuntime);
   state.projectLoading = false;
   renderAll();
   runValidate(); // 打开后立即校验
@@ -332,6 +295,116 @@ async function loadProjectFromHandle(
   if (options.notifyProjectLoaded !== false) {
     onProjectLoaded(); // 崩溃保险：只在真正打开项目时检查同项目未保存快照（A1）
   }
+}
+
+/** 读取阶段只创建临时对象，不触碰当前项目状态或运行时。 */
+async function readProjectFromHandle(
+  dir: FileSystemDirectoryHandle,
+  reviewPreviewReadOnly: boolean,
+): Promise<LoadedProjectData> {
+  const scenes = new Map<string, import('./state.js').SceneEntry>();
+  const timelines: import('./state.js').TimelineEntry[] = [];
+  const handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null } as typeof state.handles;
+  const configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null } as typeof state.configFiles;
+  let gameConfigText = '';
+  let entryScene = '';
+  // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
+  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
+  for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
+    try {
+      const contentDir = await dir.getDirectoryHandle('content');
+      const configDir = await contentDir.getDirectoryHandle('config');
+      const fh = await configDir.getFileHandle(`${name}.json`);
+      configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
+      handles[name] = fh;
+    } catch (error) {
+      if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
+      configFiles[name] = null;
+    }
+  }
+  // game.config.json（entryScene/变量表；句柄供变量编辑器写盘）
+  try {
+    const cfgHandle = await dir.getFileHandle('game.config.json');
+    handles.gameConfig = cfgHandle;
+    gameConfigText = await (await cfgHandle.getFile()).text();
+    const cfg = JSON.parse(gameConfigText) as { entryScene?: string };
+    entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
+  } catch (error) {
+    if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
+    gameConfigText = '';
+    entryScene = '';
+  }
+  // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
+  const dirAssets = await collectProjectAssets(dir, true);
+  // 递归读取 content/scenario/**/*.gal
+  const contentDir = await optionalDirectory(dir, 'content', true);
+  const scenarioDir = contentDir === null ? null : await optionalDirectory(contentDir, 'scenario', true);
+  if (scenarioDir !== null) await readScenarioDir(scenarioDir, '', scenes);
+  const timelineDir = contentDir === null ? null : await optionalDirectory(contentDir, 'timelines', true);
+  if (timelineDir !== null) await readTimelineDir(timelineDir, '', timelines);
+  return {
+    dirName: dir.name,
+    dirHandle: dir,
+    reviewPreviewReadOnly,
+    scenes,
+    timelines,
+    gameConfigText,
+    entryScene,
+    handles,
+    configFiles,
+    dirAssets,
+    autosaveProjectId: await resolveAutosaveProjectIdentity(dir),
+  };
+}
+
+/** 读取完整成功后一次提交项目事实；之后才接入新项目运行时。 */
+function commitLoadedProject(
+  loaded: LoadedProjectData,
+  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean; preserveReviewWorkspace?: boolean },
+): void {
+  state.projectLoading = true;
+  onProjectStateReset();
+  if ((options.source ?? 'normal') === 'normal' && !options.preserveReviewWorkspace) {
+    state.reviewWorkspace = null;
+    state.mainTab = 'editor';
+  } else {
+    state.mainTab = 'review';
+  }
+  state.dirName = loaded.dirName;
+  state.dirHandle = loaded.dirHandle;
+  state.reviewPreviewReadOnly = loaded.reviewPreviewReadOnly;
+  state.scenes.clear();
+  for (const [key, scene] of loaded.scenes) state.scenes.set(key, scene);
+  state.pendingSceneDeletes = [];
+  state.pendingSceneCommit = null;
+  state.lastValidation = null;
+  state.lastEdges = [];
+  state.timelines = loaded.timelines;
+  state.pendingTimelineDeletes = [];
+  state.pendingTimelineRestores.clear();
+  state.currentTimeline = null;
+  state.currentTimelineCue = null;
+  state.previewTimelineId = null;
+  histories.clear(); // 换项目：历史栈失效
+  clearTimelineHistories();
+  state.handles = loaded.handles;
+  state.dirAssets = loaded.dirAssets;
+  state.assetIntelligence = null;
+  state.assetIntelligenceState = 'loading';
+  state.assetCenterSelectedId = null;
+  state.assetCenterQuery = '';
+  state.assetCenterKind = 'all';
+  state.assetCenterStatus = 'all';
+  state.assetCenterFolder = 'all';
+  // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
+  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
+  state.configFiles = loaded.configFiles;
+  state.gameConfigText = loaded.gameConfigText;
+  state.entryScene = loaded.entryScene;
+  const first = state.scenes.keys().next().value as string | undefined;
+  state.current = first ?? null;
+  state.currentTimeline = state.timelines[0]?.id ?? null;
+  state.autosaveProjectId = loaded.autosaveProjectId;
 }
 
 /** 素材目录扫描（E2）：顶层目录定类型（bg/portrait/avatar/bgm/se/voice/video），子目录继承类型；
@@ -518,20 +591,24 @@ export async function sceneTextSha256(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
+export async function readScenarioDir(
+  dir: FileSystemDirectoryHandle,
+  prefix: string,
+  target: Map<string, import('./state.js').SceneEntry> = state.scenes,
+): Promise<void> {
   // values() 异步迭代器未包含在默认 DOM lib 类型中，显式断言
   const entries = (dir as unknown as {
     values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
   }).values();
   for await (const ent of entries) {
     if (ent.kind === 'directory') {
-      await readScenarioDir(ent, prefix + ent.name + '/');
+      await readScenarioDir(ent, prefix + ent.name + '/', target);
     } else if (ent.kind === 'file' && ent.name.endsWith('.gal')) {
       const id = ent.name.replace(/\.gal$/, '');
       const text = await (await ent.getFile()).text();
       // key = 相对路径：子目录同名 .gal 各占一条，同名冲突由校验 LINT_DUP 显式报错（M4）
       const key = prefix + id;
-      state.scenes.set(key, {
+      target.set(key, {
         id,
         file: prefix + ent.name,
         text,
@@ -545,16 +622,20 @@ export async function readScenarioDir(dir: FileSystemDirectoryHandle, prefix: st
 }
 
 /** 递归读取 content/timelines 下的 JSON；文本原样保留，预览发送时再解析。 */
-export async function readTimelineDir(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
+export async function readTimelineDir(
+  dir: FileSystemDirectoryHandle,
+  prefix: string,
+  target: import('./state.js').TimelineEntry[] = state.timelines,
+): Promise<void> {
   const entries = (dir as unknown as {
     values: () => AsyncIterable<FileSystemDirectoryHandle | FileSystemFileHandle>;
   }).values();
   for await (const ent of entries) {
     if (ent.kind === 'directory') {
-      await readTimelineDir(ent, prefix + ent.name + '/');
+      await readTimelineDir(ent, prefix + ent.name + '/', target);
     } else if (ent.kind === 'file' && ent.name.endsWith('.json')) {
       const text = await (await ent.getFile()).text();
-      state.timelines.push({
+      target.push({
         id: ent.name.replace(/\.json$/, ''),
         file: prefix + ent.name,
         text,
@@ -878,33 +959,13 @@ export function repairTimelineAutosaveConflict(
 
 async function saveAllUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
-  if (!state.fsSupported) {
-    const timeline = state.currentTimeline
-      ? state.timelines.find((entry) => entry.id === state.currentTimeline)
-      : undefined;
-    if (timeline) exportTimeline(timeline.id, timeline.text);
-    else exportCurrent();
-    const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
-      || state.timelines.some((entry) => entry.dirty)
-      || state.pendingSceneDeletes.length > 0
-      || state.pendingSceneCommit !== null
-      || state.pendingTimelineDeletes.length > 0
-      || state.pendingTimelineRestores.size > 0;
-    onSaveSettled({
-      hadPendingChanges: remainingDirty,
-      saved: 0,
-      removed: 0,
-      failures: 0,
-      remainingDirty,
-    });
-    return;
-  }
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
     || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
-    || state.pendingTimelineRestores.size > 0;
+    || state.pendingTimelineRestores.size > 0
+    || hasDirtyConfigDrafts();
   let saved = 0;
   let removed = 0;
   let failures = 0;
@@ -915,6 +976,42 @@ async function saveAllUnlocked(): Promise<void> {
     failureMessages.push(`${label}：${message}`);
     setStatus(`${label}失败：${message}`, false, 6000);
   };
+  const saveConfigDraftsForProject = async (): Promise<boolean> => {
+    try {
+      const result = await saveConfigDrafts();
+      saved += result.saved;
+      failures += result.failures;
+      if (result.failures > 0) failureMessages.push(`配置草稿：${result.failures} 个区块未保存`);
+      return result.remainingDirty;
+    } catch (error) {
+      recordFailure('配置草稿保存', error);
+      return true;
+    }
+  };
+  if (!state.fsSupported) {
+    const timeline = state.currentTimeline
+      ? state.timelines.find((entry) => entry.id === state.currentTimeline)
+      : undefined;
+    if (timeline) exportTimeline(timeline.id, timeline.text);
+    else exportCurrent();
+    const configRemainingDirty = await saveConfigDraftsForProject();
+    const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
+      || state.timelines.some((entry) => entry.dirty)
+      || state.pendingSceneDeletes.length > 0
+      || state.pendingSceneCommit !== null
+      || state.pendingTimelineDeletes.length > 0
+      || state.pendingTimelineRestores.size > 0
+      || configRemainingDirty
+      || hasDirtyConfigDrafts();
+    onSaveSettled({
+      hadPendingChanges,
+      saved,
+      removed,
+      failures,
+      remainingDirty,
+    });
+    return;
+  }
   if (state.dirHandle) {
     const remaining: typeof state.pendingTimelineDeletes = [];
     for (const pending of state.pendingTimelineDeletes) {
@@ -1141,12 +1238,15 @@ async function saveAllUnlocked(): Promise<void> {
       recordFailure(`时间轴 '${timeline.id}' 保存`, err);
     }
   }
+  const configRemainingDirty = await saveConfigDraftsForProject();
   const remainingDirty = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
     || state.pendingSceneCommit !== null
     || state.pendingTimelineDeletes.length > 0
-    || state.pendingTimelineRestores.size > 0;
+    || state.pendingTimelineRestores.size > 0
+    || configRemainingDirty
+    || hasDirtyConfigDrafts();
   const changed = saved + removed;
   if (!hadPendingChanges) {
     setStatus('无待保存改动', true, 4000);

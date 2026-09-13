@@ -218,8 +218,9 @@ export async function ensureVariable(change: ChangeSession, input: VariableEnsur
     if (input.readonly !== undefined) declaration['readonly'] = input.readonly;
     if (input.min !== undefined) declaration['min'] = input.min;
     if (input.max !== undefined) declaration['max'] = input.max;
-    const existing = variables[input.name];
-    if (existing !== undefined) {
+    const hasExisting = Object.prototype.hasOwnProperty.call(variables, input.name);
+    const existing = hasExisting ? variables[input.name] : undefined;
+    if (hasExisting) {
       if (stableStringify(existing) !== stableStringify(declaration)) {
         throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `变量合同冲突：${input.name}`);
       }
@@ -228,8 +229,7 @@ export async function ensureVariable(change: ChangeSession, input: VariableEnsur
         compositionDraft: await buildVariableOperationCompositionDraft({ name: input.name, declaration, existing, hasher }),
       };
     }
-    variables[input.name] = declaration;
-    config['variables'] = variables;
+    config['variables'] = { ...variables, [input.name]: declaration };
     return {
       result: { name: input.name, created: true },
       compositionDraft: await buildVariableOperationCompositionDraft({ name: input.name, declaration, hasher }),

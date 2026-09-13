@@ -1,6 +1,5 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   AuthoringOperationError,
@@ -11,7 +10,7 @@ import {
   type CommitJournal,
 } from '@surdet/authoring';
 import type { InvocationRecord } from '../agent-port/invocation-ledger.js';
-import { NodeLocalLeaseManager, type LeaseHandle } from './node-local-lease.js';
+import { defaultAgentDataRoot, NodeLocalLeaseManager, type LeaseHandle } from './node-local-lease.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from './node-json-record.js';
 
@@ -45,13 +44,6 @@ function clone<T>(value: T): T {
 
 function safeId(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, '_');
-}
-
-function dataRoot(): string {
-  const configured = process.env['SURDET_AGENT_DATA_DIR'];
-  if (configured !== undefined && configured.trim().length > 0) return path.resolve(configured);
-  const localAppData = process.env['LOCALAPPDATA'];
-  return path.join(localAppData ?? path.join(os.homedir(), 'AppData', 'Local'), 'Surdet', 'agent-changes');
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -260,13 +252,13 @@ export class NodeChangeStore implements ChangeRepository {
     private readonly leaseBinding?: LeaseBinding,
   ) {}
 
-  static async forProject(rootIdentity: string, root = dataRoot()): Promise<NodeChangeStore> {
+  static async forProject(rootIdentity: string, root = defaultAgentDataRoot()): Promise<NodeChangeStore> {
     const projectDirectory = path.join(root, projectIdentityFromRoot(rootIdentity));
     await fs.mkdir(projectDirectory, { recursive: true });
     return new NodeChangeStore(root, rootIdentity, projectDirectory);
   }
 
-  static async openByChangeId(changeId: string, root = dataRoot()): Promise<OpenChangeResult | null> {
+  static async openByChangeId(changeId: string, root = defaultAgentDataRoot()): Promise<OpenChangeResult | null> {
     const projects = await fs.readdir(root, { withFileTypes: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
@@ -334,7 +326,7 @@ export class NodeChangeStore implements ChangeRepository {
     projectRootIdentity: string,
     options: { allowTerminal?: boolean; allowStale?: boolean; dataRoot?: string } = {},
   ): Promise<OpenChangeResult | null> {
-    const root = options.dataRoot ?? dataRoot();
+    const root = options.dataRoot ?? defaultAgentDataRoot();
     const projectDirectory = path.join(root, projectIdentityFromRoot(projectRootIdentity));
     const changeDirectory = path.join(projectDirectory, safeId(changeId));
     if (!(await isDirectory(changeDirectory))) return null;

@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { loadProjectSnapshot, simulateSnapshot } from '@surdet/authoring';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
-import { simulateProject } from '../src/simulate.js';
+import { cmdSimulate, simulateProject } from '../src/simulate.js';
 
 function makeProject(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-sim-'));
@@ -136,6 +136,32 @@ describe('simulateProject（无头自动模拟）', () => {
     const withAssume = simulateProject(makeProject(files), { assume: { battleWon: 'true' } });
     expect(withAssume.endings.map((e) => e.ending)).toEqual(['win_end']);
     expect(withAssume.runtimeErrors).toEqual([]);
+  });
+
+  it('--assume 与 simulateProject 保留合法 __proto__ 变量名', async () => {
+    const variables = Object.fromEntries([
+      ['__proto__', { type: 'number', initial: 0 }],
+    ]);
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'ch1', variables }),
+      'content/scenario/ch1.gal': '@scene ch1\n@if __proto__ > 0\n@clear proto_ok\n@else\n@clear proto_missing\n@endif\n@end\n',
+    });
+    const assume = Object.create(null) as Record<string, string>;
+    assume['__proto__'] = '1';
+    expect(simulateProject(dir, { assume }).endings).toEqual([{ ending: 'proto_ok', times: 1 }]);
+
+    let stdout = '';
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: unknown) => {
+      stdout += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      expect(await cmdSimulate(dir, ['--assume', '__proto__=1', '--json'])).toBe(0);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    expect(JSON.parse(stdout).endings).toEqual([{ ending: 'proto_ok', times: 1 }]);
   });
 
   it('缺 entryScene / 入口场景文件缺失 → 明确报错', () => {

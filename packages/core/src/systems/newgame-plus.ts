@@ -46,10 +46,10 @@ export class NewGamePlus {
 
   /** 计算继承结果：base 为新周目初始值表，返回值合并进初始表 */
   computeInherit(base: Record<string, VarValue>): Record<string, VarValue> {
-    const clearedVars: Record<string, VarValue> = {};
+    const clearedVars: Record<string, VarValue> = Object.create(null) as Record<string, VarValue>;
     for (const entry of this.#config.inherit) {
       const v = this.#env.getVariable(entry.variable);
-      if (v !== undefined) clearedVars[entry.variable] = v;
+      if (v !== undefined) setOwn(clearedVars, entry.variable, v);
     }
     return this.computeInheritFrom(base, clearedVars);
   }
@@ -60,23 +60,23 @@ export class NewGamePlus {
   computeInheritFrom(base: Record<string, VarValue>, clearedVars: Record<string, VarValue>): Record<string, VarValue> {
     const out: Record<string, VarValue> = { ...base };
     for (const entry of this.#config.inherit) {
-      const cleared = clearedVars[entry.variable];
-      const current = base[entry.variable];
+      const cleared = hasOwn(clearedVars, entry.variable) ? clearedVars[entry.variable] : undefined;
+      const current = hasOwn(base, entry.variable) ? base[entry.variable] : undefined;
       switch (entry.mode) {
         case 'copy':
-          if (cleared !== undefined) out[entry.variable] = cleared;
+          if (cleared !== undefined) setOwn(out, entry.variable, cleared);
           break;
         case 'add': {
           const w = entry.weight ?? 1;
           const add = typeof cleared === 'number' ? Math.round(cleared * w) : 0;
           const b = typeof current === 'number' ? current : 0;
-          out[entry.variable] = b + add;
+          setOwn(out, entry.variable, b + add);
           break;
         }
         case 'max': {
           const b = typeof current === 'number' ? current : 0;
           const c = typeof cleared === 'number' ? cleared : b;
-          out[entry.variable] = Math.max(b, c);
+          setOwn(out, entry.variable, Math.max(b, c));
           break;
         }
       }
@@ -92,4 +92,12 @@ export class NewGamePlus {
   inheritEntries(): NgpInheritEntry[] {
     return [...this.#config.inherit];
   }
+}
+
+function hasOwn(record: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function setOwn(record: Record<string, VarValue>, key: string, value: VarValue): void {
+  Object.defineProperty(record, key, { value, enumerable: true, writable: true, configurable: true });
 }

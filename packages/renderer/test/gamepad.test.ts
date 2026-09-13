@@ -67,6 +67,10 @@ describe('diffGamepad（边沿检测）', () => {
     expect(rendererInputForGamepadAction('up')).toEqual({ type: 'choice.move', delta: -1 });
     expect(rendererInputForGamepadAction('right')).toEqual({ type: 'choice.move', delta: 1 });
     expect(rendererInputForGamepadAction('shoulderRight')).toEqual({ type: 'skip.toggle', scope: 'read' });
+    expect(rendererInputForGamepadAction('shoulderRight', false)).toEqual({ type: 'skip.toggle', scope: 'read' });
+    expect(rendererInputForGamepadAction('shoulderRight', true)).toBeNull();
+    expect(rendererInputForGamepadAction('shoulderLeft', false)).toBeNull();
+    expect(rendererInputForGamepadAction('shoulderLeft', true)).toEqual({ type: 'skip.toggle', scope: 'read' });
     expect(rendererInputForGamepadAction('menu')).toBeNull();
   });
 });

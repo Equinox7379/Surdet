@@ -7,8 +7,8 @@ if (!['--tracked', '--staged'].includes(mode) || process.argv.length !== 3) {
   process.exitCode = 2;
 } else {
   const args = mode === '--tracked'
-    ? ['ls-files']
-    : ['diff', '--cached', '--name-only', '--diff-filter=ACMR'];
+    ? ['ls-files', '-z']
+    : ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'];
   const result = spawnSync('git', args, { encoding: 'utf8' });
   if (result.error) {
     console.error(`无法读取 Git 路径：${result.error.message}`);
@@ -24,7 +24,7 @@ if (!['--tracked', '--staged'].includes(mode) || process.argv.length !== 3) {
       /^shot.*\.(png|mjs)$/i,
       /^(main\.js|preload\.js)$/i,
     ];
-    const paths = result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).map((value) => value.replaceAll('\\', '/'));
+    const paths = result.stdout.split('\0').filter(Boolean);
     const rejected = paths.filter((value) => forbidden.some((pattern) => pattern.test(value)));
     if (rejected.length > 0) {
       console.error(`仓库卫生检查失败（${mode}）：发现禁止路径`);

@@ -195,9 +195,7 @@ function cloneOpaque(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map((item) => cloneOpaque(item));
   if (isRecord(value)) {
-    const copy: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value)) copy[key] = cloneOpaque(item);
-    return copy;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneOpaque(item)]));
   }
   return value;
 }

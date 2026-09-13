@@ -99,6 +99,22 @@ describe('change session operation identity', () => {
     expect(change.record.workingFiles['content/scenario/branch_a.gal']).toContain('@scene branch_a');
   });
 
+  it.each(['__proto__', 'constructor'])('persists and replays prototype-named operationId %s', async (operationId) => {
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(await loadProjectSnapshot(fixtureStorage(), hasher), repository);
+    const handler = vi.fn(() => ({ result: { operationId }, changed: false }));
+
+    const first = await runOperation(change, { operationId }, handler);
+    const persisted = await repository.read(change.record.changeId);
+    expect(persisted).not.toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(persisted!.operations, operationId)).toBe(true);
+    expect(persisted!.operations[operationId]!.result).toEqual(first);
+
+    const replay = await runOperation(change, { operationId }, handler);
+    expect(replay).toEqual(first);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('persists bounded intent metadata outside project contents', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const repository = new InMemoryChangeRepository();

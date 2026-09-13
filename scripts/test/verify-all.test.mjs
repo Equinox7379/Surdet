@@ -37,17 +37,21 @@ test('the I/O-heavy CLI suite uses one file worker', () => {
   assert.match(cliPackage.scripts.test, /(?:^|\s)--maxWorkers=1(?:\s|$)/);
 });
 
-test('the root test script builds CLI prerequisites before workspace tests', () => {
+test('the root test script builds CLI, Renderer and Host prerequisites before workspace tests', () => {
   const script = rootPackage.scripts.test;
   const coreBuild = script.indexOf('npm run build -w @surdet/core');
   const authoringBuild = script.indexOf('npm run build -w @surdet/authoring');
   const cliBuild = script.indexOf('npm run build -w @surdet/cli');
+  const rendererBuild = script.indexOf('npm run build -w @surdet/renderer');
+  const hostBuild = script.indexOf('npm run build -w @surdet/host');
   const workspaceTests = script.indexOf('npm run test --workspaces --if-present');
 
   assert.ok(coreBuild >= 0, 'root test must build @surdet/core');
   assert.ok(authoringBuild > coreBuild, 'root test must build @surdet/authoring after core');
   assert.ok(cliBuild > authoringBuild, 'root test must build @surdet/cli after authoring');
-  assert.ok(workspaceTests > cliBuild, 'workspace tests must run only after CLI build');
+  assert.ok(rendererBuild > coreBuild, 'root test must build Renderer after Core');
+  assert.ok(hostBuild > rendererBuild, 'root test must build Host after Renderer');
+  assert.ok(workspaceTests > Math.max(cliBuild, hostBuild), 'workspace tests need fresh CLI, Renderer and Host exports');
   assert.doesNotMatch(script, /npm run test -w @surdet\/authoring/, 'workspace tests already include authoring');
 });
 

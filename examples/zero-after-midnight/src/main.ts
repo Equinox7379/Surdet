@@ -52,6 +52,7 @@ import {
   createRendererTheme,
   AssetLoadQueue,
   actionForKeyboardEvent,
+  rendererInputForGamepadAction,
   rendererInputForGameAction,
 } from '@surdet/renderer';
 import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
@@ -1490,11 +1491,17 @@ async function main(): Promise<void> {
           if (renderer.status === 'choice') renderer.dispatchInput({ type: 'choice.move', delta: 1 });
           break;
         case 'shoulderRight':
-          if (!renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+          {
+            const input = rendererInputForGamepadAction(a, renderer.skipMode);
+            if (input) renderer.dispatchInput(input);
+          }
           refreshCommandRail();
           break;
         case 'shoulderLeft':
-          if (renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+          {
+            const input = rendererInputForGamepadAction(a, renderer.skipMode);
+            if (input) renderer.dispatchInput(input);
+          }
           refreshCommandRail();
           break;
         default:

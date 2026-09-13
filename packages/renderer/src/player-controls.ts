@@ -200,7 +200,12 @@ export class PlayerFocusScope {
     } else if (event.key === 'Tab' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault();
       const direction = event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey) ? -1 : 1;
-      if (buttons.length) buttons[(index + direction + buttons.length) % buttons.length]!.focus({ preventScroll: true });
+      if (buttons.length) {
+        const nextIndex = index < 0 && direction < 0
+          ? buttons.length - 1
+          : (index + direction + buttons.length) % buttons.length;
+        buttons[nextIndex]!.focus({ preventScroll: true });
+      }
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       const adjust = active?.container && controls.get(active.container)?.adjust;

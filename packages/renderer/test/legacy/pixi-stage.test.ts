@@ -99,7 +99,8 @@ describe('PixiStage 素材注入', () => {
     await stage.releaseRegisteredAssetSources();
 
     expect(load).toHaveBeenCalledTimes(3);
-    expect(unload).toHaveBeenCalledWith(expect.arrayContaining(['blob:castle', 'blob:portrait', 'blob:avatar']));
+    expect(unload.mock.calls.flatMap(([sources]) => sources).sort())
+      .toEqual(['blob:avatar', 'blob:castle', 'blob:portrait']);
     expect(Texture.EMPTY.destroyed).toBe(false);
   });
 

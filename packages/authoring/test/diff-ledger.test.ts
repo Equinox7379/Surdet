@@ -76,6 +76,35 @@ describe('operation-ledger diff', () => {
     expect(patch.fingerprintBefore).not.toBe(patch.fingerprintAfter);
   });
 
+  it('keeps the existing entry order for legacy ledgers without persisted sequences', async () => {
+    const { change } = await session();
+    const legacyOperations = Object.fromEntries(Object.entries(change.record.operations).map(([operationId, operation]) => [operationId, {
+      requestHash: operation.requestHash,
+      result: operation.result,
+    }]));
+    const ledger = buildOperationLedgerDiff({ operations: legacyOperations });
+    expect(ledger.map((entry) => entry.operationId)).toEqual(['op-create', 'op-patch']);
+  });
+
+  it('orders numeric operation ids by their persisted sequences', () => {
+    const diffEntry = (operationId: string) => ({
+      diffEntry: {
+        kind: 'test',
+        operationId,
+        directChange: {},
+        potentialImpact: [],
+        observedImpact: [],
+      },
+    });
+    const ledger = buildOperationLedgerDiff({
+      operations: {
+        '2': { requestHash: '{}', sequence: 1, result: diffEntry('2') },
+        '10': { requestHash: '{}', sequence: 0, result: diffEntry('10') },
+      },
+    });
+    expect(ledger.map((entry) => entry.operationId)).toEqual(['10', '2']);
+  });
+
   it('aligns the timeline file by its stable semantic id without array-position guessing', async () => {
     const { change } = await session();
     const after = change.record.workingFiles['content/timelines/agent_blackout.json']!;

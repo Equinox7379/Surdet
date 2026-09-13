@@ -1211,14 +1211,15 @@ export class AuthoringService {
           }
           throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', `变更事务 '${changeId}' 没有可验证的 journal`);
         }
-        if (record.operations[input.operationId] === undefined && inspection.recoveryToken !== input.recoveryToken) {
+        const hasExistingRecovery = Object.prototype.hasOwnProperty.call(record.operations, input.operationId);
+        if (!hasExistingRecovery && inspection.recoveryToken !== input.recoveryToken) {
           throw new AuthoringOperationError('RECOVERY_PLAN_STALE', '恢复计划 token 与当前 record/journal/project 事实不匹配', {
             changeId,
             recoveryToken: input.recoveryToken,
           });
         }
-        if (record.operations[input.operationId] === undefined) await assertRecoveryBaseRevision(storage, journal, inspection);
-        if (record.operations[input.operationId] === undefined) await assertRecoveryStageIdentities(storage, journal);
+        if (!hasExistingRecovery) await assertRecoveryBaseRevision(storage, journal, inspection);
+        if (!hasExistingRecovery) await assertRecoveryStageIdentities(storage, journal);
         const session = openChange(record, leasedStore, storage);
         const result = await executeTransactionRecovery({
           change: session,

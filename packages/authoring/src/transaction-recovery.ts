@@ -190,7 +190,7 @@ async function persistRecord(
   const next = clone(current);
   next.status = status;
   next.recordVersion = current.recordVersion + 1;
-  next.operations[operationId] = { requestHash, result };
+  next.operations = { ...next.operations, [operationId]: { requestHash, result } };
   await change.repository.write(next, {
     expectedRecordVersion: current.recordVersion,
     expectedStatus: current.status,
@@ -277,7 +277,9 @@ export async function executeTransactionRecovery(input: {
 }): Promise<{ changeId: string; status: 'OPEN' | 'COMMITTED'; disposition: string }> {
   if (input.operationId.length === 0) throw new AuthoringOperationError('INVALID_REQUEST', 'operationId 不能为空');
   if (input.recoveryToken.length === 0) throw new AuthoringOperationError('INVALID_REQUEST', 'recoveryToken 不能为空');
-  const existing = input.change.record.operations[input.operationId];
+  const existing = Object.prototype.hasOwnProperty.call(input.change.record.operations, input.operationId)
+    ? input.change.record.operations[input.operationId]
+    : undefined;
   const requestedHash = operationHash(input.operationId, input.recoveryToken, input.inspection.disposition);
   if (existing !== undefined) {
     if (existing.requestHash !== requestedHash) {

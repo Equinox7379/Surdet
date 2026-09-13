@@ -10,7 +10,10 @@ export type GamepadAction =
   | 'shoulderLeft' | 'shoulderRight';
 
 /** Convert gamepad edges to Renderer actions without installing browser listeners. */
-export function rendererInputForGamepadAction(action: GamepadAction): RendererInputAction | null {
+export function rendererInputForGamepadAction(
+  action: GamepadAction,
+  skipMode = false,
+): RendererInputAction | null {
   switch (action) {
     case 'advance': return { type: 'advance' };
     case 'cancel': return { type: 'escape' };
@@ -18,8 +21,8 @@ export function rendererInputForGamepadAction(action: GamepadAction): RendererIn
     case 'left': return { type: 'choice.move', delta: -1 };
     case 'down':
     case 'right': return { type: 'choice.move', delta: 1 };
-    case 'shoulderLeft':
-    case 'shoulderRight': return { type: 'skip.toggle', scope: 'read' };
+    case 'shoulderLeft': return skipMode ? { type: 'skip.toggle', scope: 'read' } : null;
+    case 'shoulderRight': return skipMode ? null : { type: 'skip.toggle', scope: 'read' };
     case 'menu': return null;
   }
 }

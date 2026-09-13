@@ -7,6 +7,7 @@ import {
   readTimelineDir,
   refreshProjectAssetIntelligence,
   repairTimelineAutosaveConflict,
+  reloadCurrentProjectFromHandle,
   restoreTimelineAutosaveEntries,
   runProjectWriteOperation,
   saveAll,
@@ -240,6 +241,27 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(onSaveSettled).toHaveBeenCalledWith({
       hadPendingChanges: true,
       saved: 2,
+      removed: 0,
+      failures: 1,
+      remainingDirty: true,
+    });
+  });
+
+  it('保存全部纳入 dirty 配置区块，配置失败时不清除恢复备份', async () => {
+    const onSaved = vi.fn();
+    const onSaveSettled = vi.fn();
+    const saveConfigDrafts = vi.fn(async () => ({ saved: 0, failures: 1, remainingDirty: true }));
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSaved, onSaveSettled,
+      hasDirtyConfigDrafts: () => true, saveConfigDrafts });
+
+    await expect(saveAll()).resolves.toBeUndefined();
+
+    expect(saveConfigDrafts).toHaveBeenCalledTimes(1);
+    expect(status.textContent).toMatch(/全部失败/);
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onSaveSettled).toHaveBeenCalledWith({
+      hadPendingChanges: true,
+      saved: 0,
       removed: 0,
       failures: 1,
       remainingDirty: true,
@@ -1360,7 +1382,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   it('只读结果不尝试绑定写服务，回到来源项目后恢复正常读取和保存入口', async () => {
     const root = directoryHandle('result');
     Object.assign(root, { queryPermission: async () => 'denied' });
-    const reading = vi.fn(async () => {});
+    const reading = vi.fn(async (_root: FileSystemDirectoryHandle, readProject: () => Promise<void>) => readProject());
     bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectReading: reading });
     await openProjectFromHandle(root, { source: 'review-fixture' });
     expect(state.reviewPreviewReadOnly).toBe(true);
@@ -1411,6 +1433,172 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
       onProjectLoaded: loaded, onProjectLoadSettled: settled });
     await expect(openProjectFromHandle(root, { preserveReviewWorkspace: true })).rejects.toThrow('read denied');
     expect(loaded).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledWith(false);
+    expect(state.projectLoading).toBe(false);
+  });
+
+  it('打开项目的完整读取失败时保留旧项目事实、历史与审阅现场', async () => {
+    const oldDir = directoryHandle('old-project');
+    const oldSceneHandle = fileHandle(null, log, 'old.gal', '@scene old\n旧正文\n');
+    const oldScene = scene('old', oldSceneHandle, false);
+    const oldTimeline = timeline('old-timeline', fileHandle(null, log, 'old-timeline.json'), false);
+    const oldHandles = {
+      gameConfig: fileHandle(null, log, 'old-game.config.json'),
+      achievements: null,
+      calendar: null,
+      events: null,
+      growth: null,
+      gallery: null,
+      terminology: null,
+    };
+    const oldConfigFiles = {
+      events: { old: true },
+      growth: null,
+      calendar: null,
+      achievements: null,
+      gallery: null,
+      terminology: null,
+    };
+    const oldWorkspace = { reviewId: 'old-review' } as unknown as NonNullable<typeof state.reviewWorkspace>;
+    const oldHistory = { past: ['旧快照'], future: [], lastPushAt: 1 };
+    const oldTimelines = [oldTimeline];
+    state.dirName = 'old-project';
+    state.dirHandle = oldDir;
+    state.scenes.set('old', oldScene);
+    state.timelines = oldTimelines;
+    state.current = 'old';
+    state.currentTimeline = 'old-timeline';
+    state.gameConfigText = '{"title":"旧配置"}';
+    state.entryScene = 'old';
+    state.handles = oldHandles as typeof state.handles;
+    state.configFiles = oldConfigFiles as typeof state.configFiles;
+    state.reviewWorkspace = oldWorkspace;
+    state.mainTab = 'review';
+    const oldValidation = { issues: [], scenes: new Map([['old', {} as never]]) };
+    state.lastValidation = oldValidation;
+    state.lastEdges = [{ from: 'old', to: 'old', kind: 'jump' }];
+    const { histories } = await import('../src/history.js');
+    histories.clear();
+    histories.set('old', oldHistory);
+
+    const broken = fileHandle(null, log, 'events.json');
+    broken.getFile = async () => { throw new DOMException('read denied', 'NotAllowedError'); };
+    const content = directoryHandle('content', {
+      scenario: directoryHandle('scenario'),
+      config: directoryHandle('config', {}, { 'events.json': broken }),
+    });
+    const root = directoryHandle('broken-project', { content });
+    const onProjectClosing = vi.fn();
+    const onProjectStateReset = vi.fn();
+    const loaded = vi.fn();
+    const settled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onProjectClosing, onProjectStateReset, onProjectLoaded: loaded, onProjectLoadSettled: settled });
+
+    await expect(openProjectFromHandle(root, { preserveReviewWorkspace: true })).rejects.toThrow('read denied');
+
+    expect(state.dirName).toBe('old-project');
+    expect(state.dirHandle).toBe(oldDir);
+    expect(state.scenes.get('old')).toBe(oldScene);
+    expect(state.timelines).toBe(oldTimelines);
+    expect(state.current).toBe('old');
+    expect(state.currentTimeline).toBe('old-timeline');
+    expect(state.gameConfigText).toBe('{"title":"旧配置"}');
+    expect(state.entryScene).toBe('old');
+    expect(state.handles).toBe(oldHandles);
+    expect(state.configFiles).toBe(oldConfigFiles);
+    expect(state.reviewWorkspace).toBe(oldWorkspace);
+    expect(state.mainTab).toBe('review');
+    expect(state.lastValidation).toBe(oldValidation);
+    expect(state.lastEdges).toEqual([{ from: 'old', to: 'old', kind: 'jump' }]);
+    expect(histories.get('old')).toBe(oldHistory);
+    expect(onProjectClosing).not.toHaveBeenCalled();
+    expect(onProjectStateReset).not.toHaveBeenCalled();
+    expect(loaded).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledWith(false);
+    expect(state.projectLoading).toBe(false);
+  });
+
+  it('重新加载当前项目的完整读取失败时保留可用工作区', async () => {
+    const oldDir = directoryHandle('reload-project');
+    const oldSceneHandle = fileHandle(null, log, 'old.gal', '@scene old\n旧正文\n');
+    const oldScene = scene('old', oldSceneHandle, false);
+    state.dirName = 'reload-project';
+    state.dirHandle = oldDir;
+    state.scenes.set('old', oldScene);
+    state.current = 'old';
+    state.gameConfigText = '{"title":"旧配置"}';
+    state.entryScene = 'old';
+    const oldHandles = state.handles;
+    const oldConfigFiles = state.configFiles;
+    const oldWorkspace = { reviewId: 'reload-review' } as unknown as NonNullable<typeof state.reviewWorkspace>;
+    state.reviewWorkspace = oldWorkspace;
+    state.mainTab = 'review';
+
+    const broken = fileHandle(null, log, 'events.json');
+    broken.getFile = async () => { throw new DOMException('read denied', 'NotAllowedError'); };
+    const content = directoryHandle('content', {
+      scenario: directoryHandle('scenario'),
+      config: directoryHandle('config', {}, { 'events.json': broken }),
+    });
+    oldDir.getDirectoryHandle = async (name: string) => {
+      if (name === 'content') return content;
+      throw new DOMException(`missing directory ${name}`, 'NotFoundError');
+    };
+    const onProjectStateReset = vi.fn();
+    const settled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
+      onProjectStateReset, onProjectLoadSettled: settled });
+
+    await expect(reloadCurrentProjectFromHandle({ preserveReviewWorkspace: true })).rejects.toThrow('read denied');
+
+    expect(state.dirName).toBe('reload-project');
+    expect(state.dirHandle).toBe(oldDir);
+    expect(state.scenes.get('old')).toBe(oldScene);
+    expect(state.current).toBe('old');
+    expect(state.gameConfigText).toBe('{"title":"旧配置"}');
+    expect(state.entryScene).toBe('old');
+    expect(state.handles).toBe(oldHandles);
+    expect(state.configFiles).toBe(oldConfigFiles);
+    expect(state.reviewWorkspace).toBe(oldWorkspace);
+    expect(state.mainTab).toBe('review');
+    expect(onProjectStateReset).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledWith(false);
+    expect(state.projectLoading).toBe(false);
+  });
+
+  it('重新加载的工作区基线读取失败时不提交新项目事实', async () => {
+    const oldDir = directoryHandle('baseline-project');
+    const oldScene = scene('old', fileHandle(null, log, 'old.gal', '@scene old\n旧正文\n'), false);
+    state.dirName = 'baseline-project';
+    state.dirHandle = oldDir;
+    state.scenes.set('old', oldScene);
+    state.current = 'old';
+    state.gameConfigText = '{"title":"旧配置"}';
+    state.entryScene = 'old';
+    const oldHandles = state.handles;
+    const oldConfigFiles = state.configFiles;
+    const oldWorkspace = { reviewId: 'baseline-review' } as unknown as NonNullable<typeof state.reviewWorkspace>;
+    state.reviewWorkspace = oldWorkspace;
+    state.mainTab = 'review';
+    const onProjectStateReset = vi.fn();
+    const settled = vi.fn();
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onProjectStateReset,
+      onProjectReading: async () => { throw new Error('workspace baseline failed'); }, onProjectLoadSettled: settled });
+
+    await expect(reloadCurrentProjectFromHandle({ preserveReviewWorkspace: true })).rejects.toThrow('workspace baseline failed');
+
+    expect(state.dirName).toBe('baseline-project');
+    expect(state.dirHandle).toBe(oldDir);
+    expect(state.scenes.get('old')).toBe(oldScene);
+    expect(state.current).toBe('old');
+    expect(state.gameConfigText).toBe('{"title":"旧配置"}');
+    expect(state.entryScene).toBe('old');
+    expect(state.handles).toBe(oldHandles);
+    expect(state.configFiles).toBe(oldConfigFiles);
+    expect(state.reviewWorkspace).toBe(oldWorkspace);
+    expect(state.mainTab).toBe('review');
+    expect(onProjectStateReset).not.toHaveBeenCalled();
     expect(settled).toHaveBeenCalledWith(false);
     expect(state.projectLoading).toBe(false);
   });

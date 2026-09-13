@@ -38,6 +38,53 @@ beforeEach(() => {
 afterEach(async () => { await disconnectEditorWorkspace(); });
 
 describe('bound Editor sequential relay', () => {
+  it('keeps the loaded baseline when reading replacement buffers fails', async () => {
+    await connectEditorWorkspace(client, root);
+    disk.diskBaseline = newBaseline;
+    await expect(readEditorWorkspaceBaseline(async () => { throw new Error('file read failed'); }))
+      .rejects.toThrow('file read failed');
+    expect(editorWorkspaceStatus().baseline).toEqual(oldBaseline);
+  });
+
+  it('captures the baseline before reading buffers, so intervening writes remain external changes', async () => {
+    await connectEditorWorkspace(client, root);
+    await readEditorWorkspaceBaseline(async () => {
+      disk.diskBaseline = newBaseline;
+    });
+    facts.projectTransition = false;
+    await pollEditorWorkspace(true);
+    expect(editorWorkspaceStatus()).toMatchObject({ baseline: oldBaseline, update: 'pending' });
+  });
+
+  it('returns the captured baseline when successful reopening replaces the old connection', async () => {
+    await connectEditorWorkspace(client, root);
+    const captured = await readEditorWorkspaceBaseline(async () => {
+      await disconnectEditorWorkspace();
+      disk.diskBaseline = newBaseline;
+    });
+    expect(captured).toEqual(oldBaseline);
+    await connectEditorWorkspace(client, root, captured);
+    expect(editorWorkspaceStatus()).toMatchObject({ baseline: oldBaseline, update: 'pending' });
+  });
+
+  it('remains busy until the service acknowledges the end of the write lease', async () => {
+    await connectEditorWorkspace(client, root);
+    facts.projectTransition = false;
+    await beginEditorWorkspaceWrite();
+    let settle!: () => void;
+    vi.mocked(client.finish).mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { settle = resolve; });
+      return { diskBaseline: oldBaseline, changedPaths: [], mutationNotice: { status: 'written' } };
+    });
+    const finishing = finishEditorWorkspaceWrite();
+    await vi.waitFor(() => expect(client.finish).toHaveBeenCalledOnce());
+    const pendingState = editorWorkspaceStatus();
+    settle();
+    await finishing;
+    expect(pendingState.saving).toBe(true);
+    expect(editorWorkspaceStatus().saving).toBe(false);
+  });
+
   it('publishes current dirty scopes with increasing generations and does not send draft content', async () => {
     await connectEditorWorkspace(client, root);
     facts.projectTransition = false;

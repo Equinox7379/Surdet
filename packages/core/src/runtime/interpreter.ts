@@ -332,6 +332,12 @@ export class Interpreter {
   /** 从快照恢复：变量/已读/解锁 + 全家桶系统状态 + 定位到挂起点并重新驱动到挂起状态。
    *  注意：须在 UI 线程（非事件回调）调用，事件回调内调用会撞 #stepping 重入守卫。 */
   loadSnapshot(snap: SaveSnapshot): void {
+    if (this.#stepping) {
+      throw new RuntimeError(
+        '解释器重入：当前正处在事件回调执行中，不应直接触发 #step/' +
+          'loadSnapshot 等操作，请改在 UI 线程（非事件回调）调用',
+      );
+    }
     // 阶段 A：迁移前只做兼容校验，允许旧 schema 缺少后续版本新增字段。
     try {
       assertValidSnapshot(snap, 'legacy');
@@ -360,14 +366,37 @@ export class Interpreter {
       throw new RuntimeError(err instanceof Error ? err.message : String(err));
     }
     snap = candidate;
+
+    // 所有可确定的读档失败都必须发生在任何运行时状态写入之前：先解析当前场景和
+    // 调用栈返回场景，避免变量/随机/已读状态已替换后才发现剧本目标不存在。
+    const scene = snap.position === null
+      ? null
+      : this.#sceneOrRuntimeError(
+        snap.position.sceneId,
+        `存档指向的场景 '${snap.position.sceneId}' 未注册（剧本可能已重构或该场景被移除）`,
+      );
+    for (const frame of snap.callStack ?? []) {
+      this.#sceneOrRuntimeError(
+        frame.sceneId,
+        `存档调用栈返回点场景 '${frame.sceneId}' 未注册（读档后剧本可能已重构）`,
+      );
+    }
     if (snap.systems) this.#systemHooks.validate?.(snap.systems);
     this.#presentationHooks?.validate?.(snap.presentation?.payload ?? null);
+    this.#store.validateRestore(snap.variables, { allowReadonly: true });
     if (snap.random !== undefined) {
       if (this.#randomSource.restore === undefined) {
         throw new RuntimeError('该存档包含 seeded 随机状态，但当前解释器没有可恢复的随机源');
       }
       try {
-        this.#randomSource.restore(snap.random);
+        this.#randomSource.validateSnapshot?.(snap.random);
+      } catch (err) {
+        throw new RuntimeError(err instanceof Error ? err.message : String(err));
+      }
+    }
+    if (snap.random !== undefined) {
+      try {
+        this.#randomSource.restore!(snap.random);
       } catch (err) {
         throw new RuntimeError(err instanceof Error ? err.message : String(err));
       }
@@ -395,21 +424,20 @@ export class Interpreter {
       this.#status = 'idle';
       return;
     }
-    const scene = this.#sceneOrRuntimeError(snap.position.sceneId, `存档指向的场景 '${snap.position.sceneId}' 未注册（剧本可能已重构或该场景被移除）`);
     // 场景哈希校验：存档后剧本被编辑 → pc 定位可能指向错误指令。
     // 仍按原定位加载（下方 clamp 到合法范围），但发 saveMismatch 供宿主提示玩家。
     // 旧档无 sceneHash（schema ≤ v2）或场景无哈希时跳过校验。
     const expectedHash = snap.position.sceneHash;
-    const actualHash = scene.sceneHash;
+    const actualHash = scene!.sceneHash;
     if (expectedHash !== undefined && actualHash !== undefined && expectedHash !== actualHash) {
       this.#bus.emit('saveMismatch', {
-        sceneId: scene.sceneId,
+        sceneId: scene!.sceneId,
         expected: expectedHash,
         actual: actualHash,
       });
     }
-    this.#scene = scene;
-    const max = Math.max(0, scene.instructions.length - 1);
+    this.#scene = scene!;
+    const max = Math.max(0, scene!.instructions.length - 1);
     this.#pc = Math.min(Math.max(0, snap.position.pc), max);
     this.#status = 'running';
     this.#step(); // 重新挂起到当前指令（text/choice/wait 会重新发出事件）
