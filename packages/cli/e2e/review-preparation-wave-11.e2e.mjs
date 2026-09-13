@@ -25,6 +25,11 @@ try {
   browser = await chromium.launch({ headless: true });
   for (const mode of ['whole', 'mixed']) {
     const entryScene = mode === 'whole' ? 'arrival' : 'opening';
+    if (mode === 'whole') {
+      const scenarioRoot = path.join(root, mode, '试写项目/content/scenario');
+      await fs.mkdir(scenarioRoot, { recursive: true });
+      await fs.writeFile(path.join(scenarioRoot, 'audit_names.gal'), '@scene audit_names\n林晓：你好。\n林晓：我们出发吧。\n林晓同学：准备好了。\n@end\n');
+    }
     const fixture = await createReviewComparisonFixture(path.join(root, mode), entryScene, background, true);
     process.env.SURDET_AGENT_DATA_DIR = fixture.dataRoot;
     const sourceFile = path.join(fixture.projectRoot, 'content/scenario', `${entryScene}.gal`);
@@ -149,6 +154,14 @@ try {
     await page.locator('[data-action="sync-approved-project"]').waitFor();
     await page.screenshot({ path: path.join(root, `${mode}-written.png`), fullPage: true });
     await page.evaluate(() => window.__surdetE2eSetPickerRoot('project'));
+    if (mode === 'whole') {
+      await page.locator('[data-editor-mode="audit"]').click();
+      await page.locator('[data-audit-add-variant="林晓:林晓同学"]').click();
+      await page.waitForFunction(() => document.querySelector('#status')?.textContent?.includes('名词表已保存'));
+      const terminology = JSON.parse(await fs.readFile(path.join(fixture.projectRoot, 'content/config/terminology.json'), 'utf8'));
+      assert.deepEqual(terminology.terms, [{ canonical: '林晓', variants: ['林晓同学'] }]);
+      assert.equal(await fs.stat(path.join(resultRoot, 'result/project/content/config/terminology.json')).then(() => true, () => false), false);
+    }
     // Normal navigation must load the writable source, never expose the
     // immutable HTTP result as an editable project until Save fails.
     await page.locator('[data-editor-mode="editor"]').click();
