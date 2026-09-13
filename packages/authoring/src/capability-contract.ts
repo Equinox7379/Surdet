@@ -7,6 +7,7 @@ export type CapabilityAvailability = 'available' | 'policy-blocked' | 'state-blo
 export type SideEffectClass =
   | 'none'
   | 'project-read'
+  | 'authorized-source-read'
   | 'change-store-read'
   | 'change-store-write'
   | 'project-write'

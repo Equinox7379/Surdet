@@ -5,6 +5,7 @@ import type {
   JsonSchema,
   SideEffectClass,
 } from './capability-contract.js';
+import { AGENT_IMAGE_MAX_FILES } from './agent-image-import.js';
 
 const JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema' as const;
 
@@ -32,6 +33,10 @@ const booleanSchema: JsonSchema = { type: 'boolean' };
 const nullSchema: JsonSchema = { type: 'null' };
 const stringArraySchema: JsonSchema = arrayOf(stringSchema);
 const emptyInputSchema = strictObject({});
+const importUuidSchema: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' };
+const importShaSchema: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
+const importOperationSchema = strictObject({ operationId: importUuidSchema }, ['operationId']);
+const importCommitSchema = strictObject({ operationId: importUuidSchema, planFingerprint: importShaSchema }, ['operationId', 'planFingerprint']);
 
 // The domain deliberately permits JSON values in variable initial values and
 // operation evidence. Objects still reject undeclared top-level properties;
@@ -680,6 +685,13 @@ const verifiedReturnSchema = strictObject({
   receipt: jsonObjectSchema,
 }, ['receipt']);
 
+const importDetailSchema = strictObject({
+  operation: jsonObjectSchema, manifest: jsonObjectSchema, stagedItems: arrayOf(jsonObjectSchema),
+  plan: { oneOf: [jsonObjectSchema, nullSchema] }, receipt: { oneOf: [jsonObjectSchema, nullSchema] },
+  undoReceipt: { oneOf: [jsonObjectSchema, nullSchema] }, catalog: assetCatalogSchema, coordination: jsonObjectSchema,
+}, ['operation', 'manifest', 'stagedItems', 'plan', 'receipt', 'undoReceipt']);
+const importDetailExample = { operation: { status: 'READY' }, manifest: {}, stagedItems: [], plan: {}, receipt: null, undoReceipt: null };
+
 const definitions = {
   compositionCompare: {
     inputSchema: strictObject({
@@ -772,6 +784,19 @@ const definitions = {
     outputSchema: assetCatalogSchema,
     example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample } },
   },
+  assetSources: {
+    inputSchema: strictObject({ sourceId: stringSchema, path: { type: 'string', description: 'Relative path returned here. Omit sourceId to discover startup-authorized roots; inspect a directory to list entries, then inspect a file for its SHA-256.' } }),
+    outputSchema: strictObject({ roots: arrayOf(strictObject({ sourceId: stringSchema, name: stringSchema }, ['sourceId', 'name'])), supportedFormats: stringArraySchema, limits: jsonObjectSchema, sourceId: stringSchema, entries: arrayOf(strictObject({ path: stringSchema, kind: { enum: ['file', 'directory'] } }, ['path', 'kind'])), file: strictObject({ path: stringSchema, bytes: integerSchema, sha256: importShaSchema }, ['path', 'bytes', 'sha256']) }, ['roots', 'supportedFormats', 'limits']),
+    example: { input: {}, expectedResultShape: { roots: [], supportedFormats: ['png', 'jpg', 'jpeg', 'webp'], limits: {} } },
+  },
+  assetImportStage: {
+    inputSchema: strictObject({ operationId: importUuidSchema, items: { type: 'array', minItems: 1, maxItems: AGENT_IMAGE_MAX_FILES, items: strictObject({ itemId: importUuidSchema, sourceId: stringSchema, sourcePath: stringSchema, sha256: importShaSchema, kind: { enum: ['background', 'portrait', 'avatar'] }, fileName: { type: 'string', description: 'Single filename. Background: night.png. Portrait: rin_uniform_smile.png (role_outfit_expression). Avatar: rin.png. Copy SHA-256 from asset.sources. Preserve the actual PNG/JPEG/WebP format; never a project path.' } }, ['itemId', 'sourceId', 'sourcePath', 'sha256', 'kind', 'fileName']) } }, ['operationId', 'items']),
+    outputSchema: importDetailSchema,
+    example: { input: { operationId: '22222222-2222-4222-8222-222222222222', items: [{ itemId: '33333333-3333-4333-8333-333333333333', sourceId: 'source_from_asset_sources', sourcePath: 'night.png', sha256: 'a'.repeat(64), kind: 'background', fileName: 'night.png' }] }, expectedResultShape: importDetailExample },
+  },
+  assetImportInspect: { inputSchema: importOperationSchema, outputSchema: importDetailSchema, example: { input: { operationId: '22222222-2222-4222-8222-222222222222' }, expectedResultShape: importDetailExample } },
+  assetImportCommit: { inputSchema: importCommitSchema, outputSchema: importDetailSchema, example: { input: { operationId: '22222222-2222-4222-8222-222222222222', planFingerprint: 'a'.repeat(64) }, expectedResultShape: importDetailExample } },
+  assetImportRecover: { inputSchema: importCommitSchema, outputSchema: importDetailSchema, example: { input: { operationId: '22222222-2222-4222-8222-222222222222', planFingerprint: 'a'.repeat(64) }, expectedResultShape: importDetailExample } },
   objectInspect: {
     inputSchema: strictObject({ objectRef: stringSchema }, ['objectRef']),
     outputSchema: objectInspectionSchema,
@@ -920,6 +945,11 @@ export const AUTHORING_CAPABILITY_IDS = [
   'capabilities.describe',
   'project.inspect',
   'project.assets',
+  'asset.sources',
+  'asset.import.stage',
+  'asset.import.inspect',
+  'asset.import.commit',
+  'asset.import.recover',
   'object.inspect',
   'change.begin',
   'scene.create',
@@ -980,7 +1010,14 @@ const mutateRepair = [
   'candidateReadiness describes persisted composition facts only, not validation or capsule readiness; legacy changes without operation facts require a new change',
 ] as const;
 
+const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
+
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'asset.sources': { title: "Inspect authorized image sources", purpose: "Discover startup-authorized directories and inspect PNG/JPEG/WebP files before staging. No downloads or arbitrary paths.", minimumPolicy: 'observe', sideEffects: ["project-read", "authorized-source-read"], idempotency: 'pure-read', composable: false, preconditions: ["startup source directories explicitly granted"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
+  'asset.import.stage': { title: "Stage images", purpose: "Stage and seal an image import using the existing import authority, without writing project files. Retry the same operationId; source requests stay immutable. Blocked targets may be corrected before sealing.", minimumPolicy: 'stage', sideEffects: ["project-read", "authorized-source-read", "change-store-write"], idempotency: 'operation-id', composable: false, preconditions: ["no active story change","source digests copied from asset.sources"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
+  'asset.import.inspect': { title: "Inspect image import", purpose: "Reconcile the durable progress of one image import, including after restart or response loss. Never creates another operation.", minimumPolicy: 'observe', sideEffects: ["project-read","change-store-read","change-store-write"], idempotency: 'idempotent', composable: false, preconditions: ["operationId identifies an Agent image import"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
+  'asset.import.commit': { title: "Commit image import", purpose: "Explicitly publish sealed images without overwriting files. Then refresh project.assets/project.inspect before change.begin and use catalog keys for story authoring.", minimumPolicy: 'apply', sideEffects: ["project-write","change-store-write"], idempotency: 'operation-id', composable: false, preconditions: ["no active story change","bound workspaces absent or clean","sealed plan fingerprint matches"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
+  'asset.import.recover': { title: "Recover image import", purpose: "Continue the existing import recovery. It may safely roll back incomplete publication; inspect the returned status, never assume COMMITTED. Does not expose asset undo, deletion or relocation.", minimumPolicy: 'apply', sideEffects: ["project-write","change-store-write"], idempotency: 'operation-id', composable: false, preconditions: ["no active story change","bound workspaces absent or clean","same operationId and plan fingerprint"], possibleErrors: imageImportErrors, repairRecipes: ['After an uncertain response inspect the same operationId; do not create a replacement.', 'Import first, refresh project/assets facts, then start a story change.'] },
   'capabilities.describe': { title: 'Describe capabilities', purpose: 'Return the shared authoring contract and available capability definitions.', minimumPolicy: 'observe', sideEffects: ['none'], idempotency: 'pure-read', composable: false, preconditions: [], possibleErrors: ['INVALID_REQUEST'], repairRecipes: readRepair },
   'project.inspect': { title: 'Inspect project', purpose: 'Read the canonical project object and revision view.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'project.assets': { title: 'Inspect project assets', purpose: 'Read shared physical asset metadata, references, health facts, and the compatible background/portrait/avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
@@ -1015,7 +1052,12 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
-  const schema = definitions[id === 'capabilities.describe'
+  const schema = definitions[id === 'asset.sources' ? 'assetSources'
+    : id === 'asset.import.stage' ? 'assetImportStage'
+    : id === 'asset.import.inspect' ? 'assetImportInspect'
+    : id === 'asset.import.commit' ? 'assetImportCommit'
+    : id === 'asset.import.recover' ? 'assetImportRecover'
+    : id === 'capabilities.describe'
     ? 'describe'
     : id === 'project.inspect'
       ? 'inspect'

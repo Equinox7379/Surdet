@@ -31,6 +31,7 @@ const ISSUE_ORDER: readonly ProjectAssetImportIssueCode[] = [
   'IMPORT_PORTRAIT_NAME_INVALID',
   'IMPORT_TARGET_DUPLICATE_IN_BATCH',
   'IMPORT_TARGET_EXISTS',
+  'IMPORT_ASSET_KEY_CONFLICT',
   'IMPORT_TARGET_UNSAFE',
 ];
 
@@ -70,6 +71,8 @@ export interface ProjectAssetImportTargetRequest {
 export interface ProjectAssetImportTargetFact {
   path: string;
   state: 'absent' | 'exists-file' | 'exists-directory' | 'unsafe';
+  /** Existing or requested files that resolve to the same runtime catalog key. */
+  conflictingAssetPaths?: string[];
 }
 
 export interface BuildProjectAssetImportPlanInput {
@@ -86,6 +89,7 @@ export type ProjectAssetImportIssueCode =
   | 'IMPORT_PORTRAIT_NAME_INVALID'
   | 'IMPORT_TARGET_DUPLICATE_IN_BATCH'
   | 'IMPORT_TARGET_EXISTS'
+  | 'IMPORT_ASSET_KEY_CONFLICT'
   | 'IMPORT_TARGET_UNSAFE';
 
 export interface ProjectAssetImportPlanItem {
@@ -260,7 +264,9 @@ function normalizeFact(fact: ProjectAssetImportTargetFact): ProjectAssetImportTa
   if (state !== 'absent' && state !== 'exists-file' && state !== 'exists-directory' && state !== 'unsafe') {
     throw invalidRequest(`target fact 状态无效：${String(state)}`);
   }
-  return { path, state };
+  return { path, state, ...(fact.conflictingAssetPaths === undefined ? {} : {
+    conflictingAssetPaths: [...new Set(fact.conflictingAssetPaths.map(value => requireText(value, 'conflicting asset path').normalize('NFC')))].sort(compareCodePoints),
+  }) };
 }
 
 function compareStaged(left: ProjectAssetImportStagedItem, right: ProjectAssetImportStagedItem): number {
@@ -363,6 +369,9 @@ export async function buildProjectAssetImportPlan(
         if (facts.length > 1) pushIssue(issues, 'IMPORT_TARGET_UNSAFE');
         if (facts.some((fact) => fact.state === 'exists-file' || fact.state === 'exists-directory')) {
           pushIssue(issues, 'IMPORT_TARGET_EXISTS');
+        }
+        if (facts.some(fact => (fact.conflictingAssetPaths?.length ?? 0) > 0)) {
+          pushIssue(issues, 'IMPORT_ASSET_KEY_CONFLICT');
         }
         if (facts.some((fact) => fact.state !== 'absent')) {
           // An existing target is already reported separately; `unsafe` is

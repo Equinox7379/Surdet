@@ -517,6 +517,7 @@ export class AssetImportRecordStore {
       && validUuid(value.operationId)
       && typeof value.createdAt === 'string'
       && validSha256(value.manifestFingerprint)
+      && (value.agentRequestFingerprint === undefined || validSha256(value.agentRequestFingerprint))
       && Array.isArray(value.items)
       && value.items.length > 0
       && registration !== null
@@ -707,7 +708,8 @@ export class AssetImportRecordStore {
     if (value?.schemaVersion !== 1 || value.operationId !== operationId || !Array.isArray(value.targets)
       || !Array.isArray(value.targetFacts)
       || value.targetFacts.some((fact) => typeof fact?.path !== 'string'
-        || !['absent', 'exists-file', 'exists-directory', 'unsafe'].includes(fact?.state))
+        || !['absent', 'exists-file', 'exists-directory', 'unsafe'].includes(fact?.state)
+        || (fact.conflictingAssetPaths !== undefined && (!Array.isArray(fact.conflictingAssetPaths) || fact.conflictingAssetPaths.some(file => typeof file !== 'string'))))
       || value.plan?.schemaVersion !== 1
       || value.plan.projectIdentity !== this.paths.projectIdentity
       || value.plan.manifestFingerprint !== manifest.manifestFingerprint

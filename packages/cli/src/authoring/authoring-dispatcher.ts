@@ -7,12 +7,15 @@ import {
 } from '@surdet/authoring';
 import { AuthoringService, type ServiceResult } from './authoring-service.js';
 import { validateCapabilityInput } from './schema-validator.js';
+import type { AuthorizedImageSource } from './agent-image-import-service.js';
 
 export interface InvocationContext {
   sessionId: string;
   policy: AutonomyPolicy;
   projectRoot?: string;
   activeChangeId?: string;
+  assetSources?: readonly AuthorizedImageSource[];
+  assetImportDataRoot?: string;
 }
 
 export interface DispatchResult {
@@ -67,6 +70,20 @@ export async function dispatchAuthoringCapability(
       return { value: await service.inspectProject(requireProject(context)) };
     case 'project.assets':
       return { value: await service.projectAssets(requireProject(context)) };
+    case 'asset.sources':
+    case 'asset.import.stage':
+    case 'asset.import.inspect':
+    case 'asset.import.commit':
+    case 'asset.import.recover': {
+      if (definition.minimumPolicy === 'apply' && context.policy !== 'apply'
+        || definition.minimumPolicy === 'stage' && context.policy === 'observe') {
+        throw new AuthoringOperationError('POLICY_BLOCKED', `当前 policy 不允许 ${capability}`);
+      }
+      if (context.activeChangeId !== undefined && capability !== 'asset.sources' && capability !== 'asset.import.inspect') {
+        throw new AuthoringOperationError('SESSION_STATE_INVALID', '先完成素材导入、重新读取项目，再创建剧情 change；已有 change 时不能导入素材。');
+      }
+      return { value: await service.invokeImageImport(requireProject(context), capability, payload, context.assetSources ?? [], context.assetImportDataRoot), operationId: operationIdFrom(payload) };
+    }
     case 'object.inspect':
       return {
         value: await service.inspectObject(

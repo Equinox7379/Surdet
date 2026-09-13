@@ -9,6 +9,8 @@ export interface AgentPortOptions {
   policy: AutonomyPolicy;
   resumeChangeId?: string;
   requestedContractVersion?: string;
+  assetSources?: string[];
+  assetImportDataRoot?: string;
 }
 
 function valueAfter(args: readonly string[], index: number, flag: string): string {
@@ -29,6 +31,8 @@ export function parseAgentPortArgs(args: readonly string[]): AgentPortOptions {
   let selectedPolicy: AutonomyPolicy | undefined;
   let resumeChangeId: string | undefined;
   let requestedContractVersion: string | undefined;
+  const assetSources: string[] = [];
+  let assetImportDataRoot: string | undefined;
 
   for (let index = 0; index < args.length; index++) {
     const flag = args[index]!;
@@ -39,6 +43,13 @@ export function parseAgentPortArgs(args: readonly string[]): AgentPortOptions {
     } else if (flag === '--policy') {
       if (selectedPolicy !== undefined) throw new AuthoringOperationError('INVALID_REQUEST', '--policy 只能出现一次');
       selectedPolicy = policy(valueAfter(args, index, flag));
+      index += 1;
+    } else if (flag === '--asset-source') {
+      assetSources.push(valueAfter(args, index, flag));
+      index += 1;
+    } else if (flag === '--asset-import-data-root') {
+      if (assetImportDataRoot !== undefined) throw new AuthoringOperationError('INVALID_REQUEST', '--asset-import-data-root 只能出现一次');
+      assetImportDataRoot = valueAfter(args, index, flag);
       index += 1;
     } else if (flag === '--resume-change') {
       if (resumeChangeId !== undefined) throw new AuthoringOperationError('INVALID_REQUEST', '--resume-change 只能出现一次');
@@ -64,5 +75,7 @@ export function parseAgentPortArgs(args: readonly string[]): AgentPortOptions {
     policy: selectedPolicy,
     ...(resumeChangeId === undefined ? {} : { resumeChangeId }),
     ...(requestedContractVersion === undefined ? {} : { requestedContractVersion }),
+    ...(assetSources.length === 0 ? {} : { assetSources }),
+    ...(assetImportDataRoot === undefined ? {} : { assetImportDataRoot }),
   };
 }
