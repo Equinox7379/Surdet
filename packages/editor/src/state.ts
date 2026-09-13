@@ -78,6 +78,8 @@ export const state = {
   projectLoading: false,
   /** 项目根目录句柄（保存新建场景时写入 content/scenario/） */
   dirHandle: null as FileSystemDirectoryHandle | null,
+  /** 正式结果的只读预览不能作为创作工作区。 */
+  reviewPreviewReadOnly: false,
   scenes: new Map<string, SceneEntry>(),
   /** 场景删除与重命名旧文件清理统一在“保存全部”边界执行。 */
   pendingSceneDeletes: [] as PendingSceneDelete[],

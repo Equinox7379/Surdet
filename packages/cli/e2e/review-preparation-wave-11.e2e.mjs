@@ -142,13 +142,19 @@ try {
     await page.screenshot({ path: path.join(root, `${mode}-preview.png`), fullPage: true });
     await page.keyboard.press('Enter');
     await previewFrame.waitForFunction(() => window.surdetPreviewDebug?.interp?.status === 'ended');
+    await page.locator('[data-action="reload-official-result"]').click();
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent?.includes('已重新加载正式结果'));
     await page.locator('[data-action="approve-result"]').click();
     await page.locator('[data-action="write-approved-result"]').click();
     await page.locator('[data-action="sync-approved-project"]').waitFor();
     await page.screenshot({ path: path.join(root, `${mode}-written.png`), fullPage: true });
     await page.evaluate(() => window.__surdetE2eSetPickerRoot('project'));
-    await page.locator('[data-action="sync-approved-project"]').click();
-    await page.locator('[data-action="continue-approved-project"]').click();
+    // Normal navigation must load the writable source, never expose the
+    // immutable HTTP result as an editable project until Save fails.
+    await page.locator('[data-editor-mode="editor"]').click();
+    await page.locator('[data-relay-protection="connected"]').waitFor();
+    await page.locator('[data-script-view="source"]').waitFor();
+    assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.reviewPreviewReadOnly), false);
     await page.locator('[data-script-view="source"]').click();
     const current = await page.locator('.v4-source-editor').inputValue();
     assert.equal(current, await fs.readFile(sourceFile, 'utf8'));

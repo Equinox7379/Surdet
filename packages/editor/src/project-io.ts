@@ -253,6 +253,11 @@ async function loadProjectFromHandle(
   }
   state.dirName = dir.name;
   state.dirHandle = dir;
+  const permissions = dir as FileSystemDirectoryHandle & {
+    queryPermission?: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
+  };
+  state.reviewPreviewReadOnly = options.source === 'review-fixture'
+    && await permissions.queryPermission?.({ mode: 'readwrite' }) === 'denied';
   state.scenes.clear();
   state.pendingSceneDeletes = [];
   state.pendingSceneCommit = null;
@@ -278,7 +283,7 @@ async function loadProjectFromHandle(
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
   // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
-  await onProjectReading();
+  if (!state.reviewPreviewReadOnly) await onProjectReading();
   for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
     try {
       const contentDir = await dir.getDirectoryHandle('content');
@@ -1208,6 +1213,7 @@ export function loadDemoProject(): void {
   state.mainTab = 'editor';
   state.dirName = '（演示项目·未连接目录）';
   state.dirHandle = null;
+  state.reviewPreviewReadOnly = false;
   state.scenes.clear();
   state.pendingSceneDeletes = [];
   state.pendingSceneCommit = null;

@@ -265,6 +265,10 @@ export async function restoreOfficialResult(
     reloadOfficialResult(workspace);
     return;
   }
+  if (await hashReviewFixtureTree(workspace.projectHandle, hasher) === workspace.officialResultTreeSha256) {
+    reloadOfficialResult(workspace);
+    return;
+  }
   const snapshot = officialFixtureSnapshots.get(workspace);
   if (snapshot === undefined) throw new Error('尚未建立正式 result fixture 快照，请先预览正式结果');
   await removeReviewFixtureExtras(workspace.projectHandle, '', new Set(snapshot.keys()));
