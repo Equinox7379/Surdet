@@ -14,6 +14,8 @@ import { AuthoringOperationError, runOperation, stableStringify, type ChangeSess
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import { normalizeProjectPath } from './project-storage.js';
 import { buildSceneOperationCompositionDraft, buildVariableOperationCompositionDraft, compositionTextHasher } from './operation-composition-facts.js';
+import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
+import { resolveUniqueScenarioPath } from './scenario-identity.js';
 
 function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
   const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
@@ -146,7 +148,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
     return {
       result: { sceneId: input.sceneId, path },
       compositionDraft: await buildSceneOperationCompositionDraft({
-        capabilityId: 'scene.create', sceneId: input.sceneId, afterText: text,
+        capabilityId: 'scene.create', sceneId: input.sceneId, path, afterText: text,
         characters: sceneCharacters(record.workingFiles), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
@@ -158,8 +160,15 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
   const patch = input.patch;
   const sceneId = input.sceneId ?? sceneIdFromTarget(operationTarget(patch));
   if (sceneId === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'scene.patch 缺少 sceneId');
-  const path = scenePath(sceneId);
+  const defaultPath = scenePath(sceneId); // Existing scenes may live in subdirectories.
   return runOperation(change, input, async (record) => {
+    if (patch.kind === 'replaceInstruction') {
+      const target = /^scene:([^/]+)\/instruction:(\d+)@[0-9a-f]{8}-([0-9a-f]{8})$/.exec(patch.target);
+      if (target?.[1] !== sceneId || target?.[3] !== patch.expectedFingerprint) {
+        throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'replaceInstruction 需要本场景的真实指令 objectRef 和原内容指纹');
+      }
+    }
+    const path = resolveUniqueScenarioPath(record.workingFiles, sceneId) ?? defaultPath;
     const source = record.workingFiles[path];
     if (source === undefined) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `场景不存在：${sceneId}`);
     const lines = parseSceneDocument(source);
@@ -170,6 +179,20 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
     if (patch.kind === 'replaceText') {
       if (current.kind !== 'text') throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'replaceText 目标不是台词对象');
       const raw = rebuildTextRaw(patch.speaker ?? current.speaker, patch.value, current.sep);
+      nextLines = [...lines];
+      nextLines[index] = parseSceneLine(raw, previousKind(lines, index), current.eol);
+    } else if (patch.kind === 'replaceInstruction') {
+      if (current.kind !== 'instr' || !REPLACEABLE_SCENE_INSTRUCTIONS.some((name) => name === current.name)) {
+        throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'replaceInstruction 目标必须是 bg、show、hide 或 wait 单条指令');
+      }
+      if (patch.instruction.kind !== 'instruction' || !REPLACEABLE_SCENE_INSTRUCTIONS.includes(patch.instruction.name)) {
+        throw new AuthoringOperationError('INVALID_REQUEST', 'replaceInstruction 仅支持 bg、show、hide 和 wait');
+      }
+      const replacement = renderBlocks([patch.instruction])[0]!.raw;
+      if (/[\r\n\u2028\u2029]/.test(replacement)) {
+        throw new AuthoringOperationError('INVALID_REQUEST', 'replaceInstruction 不能包含换行或多条指令');
+      }
+      const raw = /^\s*/.exec(current.raw)![0] + replacement + /\s*$/.exec(current.raw)![0];
       nextLines = [...lines];
       nextLines[index] = parseSceneLine(raw, previousKind(lines, index), current.eol);
     } else if (patch.kind === 'insertAfter') {
@@ -189,7 +212,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
     return {
       result: { path, line: index + 1, kind: patch.kind },
       compositionDraft: await buildSceneOperationCompositionDraft({
-        capabilityId: 'scene.patch', sceneId, beforeText: source, afterText: text,
+        capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
         characters: sceneCharacters(record.workingFiles), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },

@@ -23,6 +23,7 @@ export const compositionTextHasher: TextHasher = {
 export async function buildSceneOperationCompositionDraft(input: {
   capabilityId: 'scene.create' | 'scene.patch';
   sceneId: string;
+  path: string;
   beforeText?: string;
   afterText: string;
   characters: Record<string, unknown>;
@@ -33,7 +34,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   return {
     capabilityId: input.capabilityId, primaryObject,
     rawReferences: analyzeSceneCompositionReferences({
-      sceneId: input.sceneId, path: `content/scenario/${input.sceneId}.gal`,
+      sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
     }),
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'scene.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],

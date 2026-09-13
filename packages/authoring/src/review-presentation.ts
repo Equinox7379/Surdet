@@ -159,6 +159,15 @@ function presentationForOperation(operation: CompositionOperation, full = false)
           const facts = sceneBlockFacts(arrayAt(patch, 'blocks'));
           return result('修改场景', facts.length === 0 ? [] : facts, facts.length === 0 ? 'metadata-only' : 'content');
         }
+        case 'replaceInstruction': {
+          const facts = sceneBlockFacts(patch['instruction'] === undefined ? [] : [patch['instruction']]);
+          const instruction = patch['instruction'];
+          const modifiers = isRecord(instruction) ? instruction['modifiers'] : undefined;
+          if (isRecord(modifiers) && Object.keys(modifiers).length > 0) {
+            facts.push(`修饰符：${Object.entries(modifiers).map(([key, value]) => `${key}=${value}`).join('、')}`);
+          }
+          return result('替换演出指令', facts, facts.length === 0 ? 'metadata-only' : 'content');
+        }
         case 'replaceChoiceOption': {
           const facts = choiceOptionFacts(patch['option']);
           return result('修改场景', facts, facts.length === 0 ? 'metadata-only' : 'content');

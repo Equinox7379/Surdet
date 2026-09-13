@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
-import { InMemoryChangeRepository, beginChange } from '../src/change-session.js';
+import { InMemoryChangeRepository, beginChange, openChange } from '../src/change-session.js';
 import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
+import { buildObjectIndex } from '../src/object-index.js';
+import type { ScenePatchInput } from '../src/contracts.js';
 
 function digest(text: string): string {
   let hash = 0x811c9dc5;
@@ -15,10 +17,10 @@ function digest(text: string): string {
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
-function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}'): ProjectStorage {
+function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}', sceneText = '@scene prologue\n凛：开场。\n@end\n', scenePath = 'content/scenario/prologue.gal'): ProjectStorage {
   const contents: Record<string, string> = {
     'game.config.json': configText,
-    'content/scenario/prologue.gal': '@scene prologue\n凛：开场。\n@end\n',
+    [scenePath]: sceneText,
   };
   return {
     rootIdentity: 'fixture-root',
@@ -33,6 +35,75 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}')
 }
 
 describe('typed authoring operations', () => {
+  it.each(['\n', '\r\n'])('replaces one instruction in place, preserving surrounding bytes and persistent retries (%j)', async (eol) => {
+    const raw = '  @show lynn:coat hesitant @ right  ';
+    const source = ['@scene prologue', '// 保留注释', raw, '', '凛：开场。', '@end'].join(eol);
+    const path = 'content/scenario/chapter/prologue.gal';
+    const storage = fixtureStorage(undefined, source, path);
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const object = buildObjectIndex(snapshot).objects.find((item) => item.source?.raw === raw)!;
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(snapshot, repository);
+    const input: ScenePatchInput = { operationId: 'replace-show', patch: {
+      kind: 'replaceInstruction', target: object.objectRef, expectedFingerprint: object.fingerprint!,
+      instruction: { kind: 'instruction', name: 'show', args: ['lynn:coat', 'smile'], modifiers: { pos: 'right' } },
+    } };
+    const result = await applyScenePatch(change, input, hasher);
+    expect(result).toEqual({ path, line: 3, kind: 'replaceInstruction' });
+    expect(change.record.workingFiles[path]).toBe(source.replace(raw, '  @show lynn:coat smile @pos=right  '));
+    expect((await storage.readText(path)).text).toBe(source);
+    const reopened = openChange((await repository.read(change.record.changeId))!, repository);
+    expect(await applyScenePatch(reopened, input, hasher)).toEqual(result);
+    expect(reopened.record.workingRevision).toBe(1);
+    expect(Object.keys(reopened.record.operations)).toEqual(['replace-show']);
+    await expect(applyScenePatch(reopened, { ...input, operationId: 'stale-target' }, hasher))
+      .rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+  });
+
+  it.each([
+    ['@bg day', 'bg', ['night']],
+    ['@hide lynn', 'hide', ['lynn:coat']],
+    ['@wait 10', 'wait', ['250']],
+  ] as const)('replaces supported instruction %s without adding a line', async (raw, name, args) => {
+    const source = `@scene prologue\n${raw}\n凛：开场。\n@end\n`;
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const object = buildObjectIndex(snapshot).objects.find((item) => item.source?.raw === raw)!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'replace', patch: {
+      kind: 'replaceInstruction', target: object.objectRef, expectedFingerprint: object.fingerprint!,
+      instruction: { kind: 'instruction', name, args: [...args] },
+    } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace(raw, `@${name} ${args.join(' ')}`));
+  });
+
+  it.each([
+    { label: 'wrong scene', sceneId: 'elsewhere', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'wrong object kind', targetKind: 'text', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'stale fingerprint', fingerprint: 'deadbeef', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'text target', raw: '凛：开场。', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'scene declaration', raw: '@scene prologue', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'choice structure', raw: '@choice', code: 'OBJECT_PRECONDITION_FAILED' },
+    { label: 'control flow replacement', instruction: { kind: 'instruction', name: 'end' }, code: 'INVALID_REQUEST' },
+    { label: 'multiline argument', instruction: { kind: 'instruction', name: 'bg', args: ['night\n@end'] }, code: 'INVALID_REQUEST' },
+    { label: 'Unicode line separator', instruction: { kind: 'instruction', name: 'bg', args: ['night\u2028@end'] }, code: 'INVALID_REQUEST' },
+    { label: 'multiline modifier', instruction: { kind: 'instruction', name: 'show', args: ['lynn'], modifiers: { pos: 'right\r\n@end' } }, code: 'INVALID_REQUEST' },
+    { label: 'compiler rejection', instruction: { kind: 'instruction', name: 'wait', args: ['invalid'] }, code: 'INVALID_REQUEST' },
+  ])('rejects $label before any persistence', async ({ sceneId, targetKind, fingerprint, raw, instruction, code }) => {
+    const source = '@scene prologue\n@show lynn hesitant\n凛：开场。\n@choice\n  继续 -> @goto done\n@label done\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const object = buildObjectIndex(snapshot).objects.find((item) => item.kind !== 'scene' && item.source?.raw === (raw ?? '@show lynn hesitant'))!;
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(snapshot, repository);
+    const before = structuredClone(change.record);
+    await expect(applyScenePatch(change, { operationId: 'rejected', ...(sceneId === undefined ? {} : { sceneId }), patch: {
+      kind: 'replaceInstruction', target: targetKind === undefined ? object.objectRef : object.objectRef.replace('/instruction:', `/${targetKind}:`),
+      expectedFingerprint: fingerprint ?? object.fingerprint!,
+      instruction: instruction ?? { kind: 'instruction', name: 'show', args: ['lynn', 'smile'] },
+    } } as ScenePatchInput, hasher)).rejects.toMatchObject({ code });
+    expect(change.record).toEqual(before);
+    expect(await repository.read(change.record.changeId)).toEqual(before);
+  });
+
   it.each([
     ['CRLF', '\r\n'],
     ['LF', '\n'],

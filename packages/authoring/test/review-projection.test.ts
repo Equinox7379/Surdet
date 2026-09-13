@@ -530,6 +530,17 @@ describe('comparison review projection', () => {
     },
   );
 
+  it('shows the replaced instruction and its modifiers in review content', () => {
+    const presentation = buildReviewUnitPresentation('scene:alpha', [operation(0, 'scene.patch', {
+      operationId: 'replace-show', sceneId: 'alpha', patch: { kind: 'replaceInstruction', target: 'hidden-target', expectedFingerprint: 'hidden-fingerprint',
+        instruction: { kind: 'instruction', name: 'show', args: ['lynn:coat', 'smile'], modifiers: { pos: 'right' } },
+      },
+    }, 'scene:alpha', 'after')]);
+    expect(presentation).toMatchObject({ actionLabel: '替换演出指令', completeness: 'content',
+      highlights: ['演出指令：show（lynn:coat、smile）', '修饰符：pos=right'],
+    });
+  });
+
   it('bounds long typed content and reports every omitted fact', () => {
     const blocks = Array.from({ length: 12 }, (_, index) => ({
       kind: 'text' as const,
