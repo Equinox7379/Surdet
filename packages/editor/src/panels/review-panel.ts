@@ -920,7 +920,7 @@ function renderWholeProposalReview(container: HTMLElement, workspace: ReviewWork
       const sceneFacts = facts.content.scenes.filter((scene) => scene.sceneId === sceneId)
         .sort((left, right) => left.operationSequence - right.operationSequence);
       for (const fact of sceneFacts) {
-        const action = ({ create: '新建场景', replaceText: '替换台词', insertAfter: '插入内容', replaceChoiceOption: '替换选项', removeObject: '移除内容' } as Record<string, string>)[fact.action] ?? '修改场景';
+        const action = ({ create: '新建场景', replaceText: '替换台词', replaceInstruction: '替换演出指令', insertAfter: '插入内容', replaceChoiceOption: '替换选项', removeObject: '移除内容' } as Record<string, string>)[fact.action] ?? '修改场景';
         history.appendChild(h('strong', 'review-story-action', action));
         for (const line of fact.highlights) history.appendChild(h('p', 'review-story-line', line));
       }

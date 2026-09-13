@@ -6,6 +6,7 @@ import type {
   SideEffectClass,
 } from './capability-contract.js';
 import { AGENT_IMAGE_MAX_FILES } from './agent-image-import.js';
+import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
 
 const JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema' as const;
 
@@ -143,6 +144,17 @@ const scenePatchSchema: JsonSchema = {
       speaker: stringSchema,
       value: stringSchema,
     }, ['kind', 'target', 'expectedFingerprint', 'value']),
+    strictObject({
+      kind: { const: 'replaceInstruction' },
+      target: { type: 'string', description: 'Copy the instruction objectRef from object.inspect or runtime.read-preview; sceneId, when provided, must match it.' },
+      expectedFingerprint: stringSchema,
+      instruction: strictObject({
+        kind: { const: 'instruction' },
+        name: { enum: [...REPLACEABLE_SCENE_INSTRUCTIONS] },
+        args: stringArraySchema,
+        modifiers: stringMapSchema,
+      }, ['kind', 'name']),
+    }, ['kind', 'target', 'expectedFingerprint', 'instruction']),
     strictObject({
       kind: { const: 'insertAfter' },
       anchor: stringSchema,
@@ -853,9 +865,11 @@ const definitions = {
     example: { input: { operationId: 'op_scene', sceneId: 'agent_port_entry' }, expectedResultShape: { sceneId: 'agent_port_entry', path: 'content/scenario/agent_port_entry.gal' } },
   },
   scenePatch: {
-    inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, patch: scenePatchSchema }, ['operationId', 'patch']),
+    inputSchema: { ...strictObject({ operationId: stringSchema, sceneId: stringSchema, patch: scenePatchSchema }, ['operationId', 'patch']),
+      description: 'Patch one source object with its original fingerprint. replaceInstruction replaces one existing bg/show/hide/wait line in place using a complete instruction (omitted modifiers are removed). Arguments follow the existing instruction block DSL token convention; no newlines. Surrounding lines and comments are preserved. Re-read object facts after edits; never insert an overriding instruction to simulate replacement.',
+    },
     outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema }, ['path', 'line', 'kind']),
-    example: { input: { operationId: 'op_patch', patch: { kind: 'removeObject', target: 'scene:x/text:1@abc', expectedFingerprint: 'abc' } }, expectedResultShape: { path: 'content/scenario/x.gal', line: 1, kind: 'removeObject' } },
+    example: { input: { operationId: 'op_patch', patch: { kind: 'replaceInstruction', target: 'scene:x/instruction:2@12345678-abcdef12', expectedFingerprint: 'abcdef12', instruction: { kind: 'instruction', name: 'show', args: ['lynn:coat', 'smile'], modifiers: { pos: 'right' } } } }, expectedResultShape: { path: 'content/scenario/x.gal', line: 2, kind: 'replaceInstruction' } },
   },
   variableEnsure: {
     inputSchema: strictObject({ operationId: stringSchema, name: stringSchema, type: stringSchema, initial: jsonValueSchema, readonly: booleanSchema, min: numberSchema, max: numberSchema }, ['operationId', 'name', 'type', 'initial']),

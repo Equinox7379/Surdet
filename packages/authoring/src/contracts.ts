@@ -196,8 +196,11 @@ export type SceneBlockInput =
   | { kind: 'instruction'; name: string; args?: string[]; modifiers?: Record<string, string> }
   | { kind: 'choice'; options: { label: string; when?: string; effects?: { name: string; args: string[] }[]; target: { kind: 'goto' | 'jump'; value: string } }[] };
 
+export const REPLACEABLE_SCENE_INSTRUCTIONS = ['bg', 'show', 'hide', 'wait'] as const;
+
 export type ScenePatchOperation =
   | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
+  | { kind: 'replaceInstruction'; target: string; expectedFingerprint: string; instruction: Extract<SceneBlockInput, { kind: 'instruction' }> & { name: typeof REPLACEABLE_SCENE_INSTRUCTIONS[number] } }
   | { kind: 'insertAfter'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
   | { kind: 'replaceChoiceOption'; target: string; expectedFingerprint: string; option: Extract<SceneBlockInput, { kind: 'choice' }>['options'][number] }
   | { kind: 'removeObject'; target: string; expectedFingerprint: string };
