@@ -1,4 +1,4 @@
-import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Text as PText, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
@@ -26,10 +26,49 @@ function make() {
     const visit = (node: Container): PText[] => [ ...(node instanceof PText ? [node] : []), ...node.children.flatMap(visit) ];
     return visit(root);
   };
-  return { root, layer, texts, dispose: () => { layer.dispose(); assets.dispose(); } };
+  return { root, layer, assets, texts, dispose: () => { layer.dispose(); assets.dispose(); } };
 }
 
 describe('Pass 8 active dialogue presentation', () => {
+  it('centers short and long speaker names inside the nameplate', () => {
+    const r = make();
+    try {
+      for (const name of ['林汀', '这是一位名字比较长的人物']) {
+        r.layer.showText(name, '姓名牌中的名字应居中。');
+        const nameText = r.texts().find((text) => text.text === `「${name}」`)!;
+        const plate = r.root.children[0]!.children[2]!.getBounds();
+        const text = nameText.getBounds();
+        expect(text.x + text.width / 2).toBeCloseTo(plate.x + plate.width / 2, 1);
+        expect(text.y + text.height / 2).toBeCloseTo(plate.y + plate.height / 2, 1);
+      }
+    } finally { r.dispose(); }
+  });
+
+  it('reflows around a late avatar without exposing hidden dialogue or changing its content', () => {
+    const r = make();
+    try {
+      const resolve = vi.spyOn(r.assets, 'resolveAvatar').mockReturnValue(null);
+      r.layer.setSpeakerProfiles([{ id: 'lynn', name: '林汀', avatarKey: 'lynn' }]);
+      const source = '有头像时应当为正文保留空间。'.repeat(8);
+      r.layer.showText('林汀', source);
+      const body = r.texts().find((text) => text.text.startsWith('有头像'))!;
+      const withoutAvatarX = body.x;
+      r.layer.hideInterface(true);
+      resolve.mockReturnValue(Texture.EMPTY);
+      r.layer.refreshSpeakerAvatar();
+      expect(body.visible).toBe(false);
+      r.layer.hideInterface(false);
+      const avatar = r.root.children[0]!.children[1]!;
+      expect(avatar.visible).toBe(true);
+      expect(body.x).toBeGreaterThan(avatar.getBounds().right);
+      expect(body.x).toBeGreaterThan(withoutAvatarX);
+      expect(body.text.replaceAll('\n', '')).toBe(source);
+      r.layer.showText(null, source);
+      expect(avatar.visible).toBe(false);
+      expect(body.x).toBe(withoutAvatarX);
+    } finally { r.dispose(); }
+  });
+
   it('never paints the NVL clipping rectangle before, between, or after NVL paragraphs', () => {
     const r = make();
     try {

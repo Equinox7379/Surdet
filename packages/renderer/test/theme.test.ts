@@ -116,29 +116,29 @@ describe('RendererTheme', () => {
   it('provides the complete immutable Surdet default token set', () => {
     expect(DEFAULT_RENDERER_THEME).toEqual({
       colors: {
-        canvas: 0x101315,
-        scrim: 0x080b0d,
-        panel: 0x181d20,
-        surface: 0x232a2d,
-        surfaceStrong: 0x303a3d,
-        line: 0x80958b,
-        accent: 0xb7ccbe,
-        accentSoft: 0xbfcfcc,
-        text: 0xf2f3ef,
-        textMuted: 0xbcc6c3,
-        textDisabled: 0x929d99,
-        textOnAccent: 0x101714,
-        danger: 0xe8aaa5,
+        canvas: 0x11121c,
+        scrim: 0x0d0e18,
+        panel: 0x202230,
+        surface: 0x272a3b,
+        surfaceStrong: 0x36394b,
+        line: 0xbca78d,
+        accent: 0xf1cea3,
+        accentSoft: 0xd7c6b7,
+        text: 0xfff8ef,
+        textMuted: 0xd3ccd0,
+        textDisabled: 0x9c95a2,
+        textOnAccent: 0x181923,
+        danger: 0xf0b8b2,
       },
-      opacity: { scrim: 0.70, panel: 0.96, surface: 0.94, line: 0.28, disabled: 0.64 },
+      opacity: { scrim: 0.68, panel: 0.94, surface: 0.88, line: 0.48, disabled: 0.64 },
       typography: {
-        titleSize: 48,
+        titleSize: 58,
         headingSize: 30,
         bodySize: 28,
         uiSize: 22,
         captionSize: 18,
-        titleLetterSpacing: 1,
-        uiLetterSpacing: 0.5,
+        titleLetterSpacing: 5,
+        uiLetterSpacing: 1,
       },
       spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 40 },
       radius: { sm: 2, md: 4, lg: 6 },
@@ -387,7 +387,7 @@ describe('live Pixi player-layer theme projection', () => {
     const theme = customTheme();
 
     layer.showSystemMenu([{ id: 'settings', label: '设置' }], vi.fn(), vi.fn());
-    const systemTitle = findText(root, '系统菜单');
+    const systemTitle = findText(root, '菜单');
     layer.setTheme(theme);
     expect(systemTitle.style.fill).toBe(theme.colors.text);
     layer.hideSystemMenu();

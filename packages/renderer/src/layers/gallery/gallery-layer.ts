@@ -14,6 +14,7 @@ import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
 import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { drawPlayerDivider, drawPlayerFrame } from '../../ui-decoration.js';
 import {
   bindThemeGraphicsProjection,
   bindThemeTextProjection,
@@ -226,16 +227,14 @@ export class GalleryLayer implements GalleryProjectionPort {
     layer.eventMode = 'auto';
 
     if (!this.#galleryHeader) {
-      const blocker = bindThemeGraphicsProjection(
-        new Graphics().rect(0, 0, this.#w, this.#h).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel }),
-        ['panel'],
-      );
+      const blocker = drawPlayerFrame(new Graphics(), this.#theme, 16, 12, this.#w - 32, this.#h - 24, { ornament: true });
       blocker.eventMode = 'static';
       layer.addChild(blocker);
 
       const header = new Container();
       this.#galleryHeader = header;
       layer.addChild(header);
+      header.addChild(drawPlayerDivider(new Graphics(), this.#theme, this.#margin, 77, this.#w - this.#margin * 2));
       const mkBtn = (label: string, x: number, width: number, onTap: () => void): PText => {
         const t = bindThemeTextProjection(new PText({
           text: label,
@@ -288,7 +287,7 @@ export class GalleryLayer implements GalleryProjectionPort {
       const ch = cw * 9 / 16;
       const rows = items.map((item) => {
         const cell = new Container();
-        cell.addChild(bindThemeGraphicsProjection(new Graphics().rect(0, 0, cw, ch).fill(this.#theme.colors.surfaceStrong), ['surfaceStrong']));
+        cell.addChild(drawPlayerFrame(new Graphics(), this.#theme, 0, 0, cw, ch, { color: 'surfaceStrong' }));
         const key = item.src ?? item.id;
         const texture = item.unlocked ? this.#assets.resolveBackground(key) : null;
         if (texture) this.#addImage(cell, texture, cw, ch);

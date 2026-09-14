@@ -297,22 +297,25 @@ describe('DialogueLayer command rail stability', () => {
     }
   });
 
-  it('limits hover changes to the target row without waking the rail', () => {
+  it('keeps command labels readable and limits hover changes to the target row', () => {
     const runtime = makeRuntime();
     try {
       runtime.layer.showCommandRail(railItems, () => undefined);
       const rail = commandRailRoot(runtime.root);
       const row = rail.children[1] as Container;
-      const label = row.children[2] as PText;
-      expect(label.alpha).toBe(0);
+      const label = row.children.find((child) => child instanceof PText) as PText;
+      expect(label.alpha).toBe(1);
+      const originalFill = label.style.fill;
 
       row.emit('pointerover', {} as FederatedPointerEvent);
       expect(label.alpha).toBe(1);
+      expect(label.style.fill).not.toBe(originalFill);
       expect(alphaSnapshot(runtime.layer)).toBe(1);
       expect(runtime.lifecycle.snapshot().activeTweens).toBe(0);
 
       row.emit('pointerout', {} as FederatedPointerEvent);
-      expect(label.alpha).toBe(0);
+      expect(label.alpha).toBe(1);
+      expect(label.style.fill).toBe(originalFill);
       expect(alphaSnapshot(runtime.layer)).toBe(1);
       expect(runtime.lifecycle.snapshot().activeTweens).toBe(0);
     } finally {
