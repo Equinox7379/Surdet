@@ -410,6 +410,10 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   const title = h('h2', 'preview-title', '剧情预览');
   toolbar.appendChild(title);
   const controls = h('div', 'preview-controls');
+  const reviewResult = state.reviewWorkspace?.projectHandle != null && state.reviewWorkspace.projectHandle === state.dirHandle
+    ? state.reviewWorkspace : null;
+  const reviewResultLabel = reviewResult === null ? null
+    : `${reviewResult.fixtureChanged ? '审阅副本（已修改）' : state.reviewPreviewReadOnly ? '正式结果（只读）' : '审阅结果'}· ${reviewResult.identity.reviewId}`;
   let selectedTarget: PreviewContentTarget | null = null;
   let isolated: PreviewContent | undefined;
   let projected: Awaited<ReturnType<typeof projectPreviewContent>> | undefined;
@@ -417,13 +421,15 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sourceControl.appendChild(h('span', 'preview-control-label', '试玩内容'));
   const sourceSel = h('select');
   sourceSel.setAttribute('aria-label', '试玩内容');
-  const memoryOption = h('option', undefined, '当前编辑内容（含草稿）');
+  const memoryOption = h('option', undefined, reviewResultLabel ?? '当前编辑内容（含草稿）');
   memoryOption.value = '';
   sourceSel.appendChild(memoryOption);
+  sourceSel.disabled = state.reviewWorkspace !== null;
   sourceControl.appendChild(sourceSel);
   controls.appendChild(sourceControl);
   const refreshSources = h('button', undefined, '刷新试玩列表');
   refreshSources.type = 'button';
+  refreshSources.hidden = state.reviewWorkspace !== null;
   controls.appendChild(refreshSources);
   const sceneControl = h('label', 'preview-entry-control');
   sceneControl.appendChild(h('span', 'preview-control-label', '试玩场景'));
@@ -839,6 +845,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     sourceState.textContent = observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
       : isolated !== undefined ? `${isolated.title}；未写回来源，Agent 可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
       : formal !== null ? '已载入保存的内容；Agent 可读取本次实际播放记录。'
+      : reviewResultLabel !== null ? `${reviewResultLabel}；本页展示当前审阅结果及其实际轨迹。`
       : '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
     options.onSourceStateChange?.();
   };

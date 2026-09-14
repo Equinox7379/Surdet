@@ -1102,7 +1102,7 @@ async function load(p: LoadPayload): Promise<void> {
       ...(p.replay === undefined ? {} : { replay: parsePreviewPlaybackCheckpoint(p.replay) }),
       onStatus: message => postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message, sceneId: p.sceneId }),
     });
-    replayController.attach(interp);
+    replayController.attach(interp, controller);
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
