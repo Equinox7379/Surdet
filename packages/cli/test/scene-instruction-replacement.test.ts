@@ -48,6 +48,12 @@ interface InstructionTarget {
   source: NonNullable<AuthoringObject['source']>;
 }
 
+interface StructureTarget {
+  objectRef: string;
+  fingerprint: string;
+  structure: Record<string, any>;
+}
+
 interface SealedCandidate {
   ref: CandidateCapsuleRef;
 }
@@ -159,6 +165,28 @@ async function findMcpInstructionTarget(client: Client, sceneId: string, rawNeed
     }
   }
   throw new Error(`instruction ${rawNeedle} not found in scene:${sceneId}`);
+}
+
+async function findMcpStructureTarget(client: Client, sceneId: string, kind: 'choice' | 'condition'): Promise<StructureTarget> {
+  const scene = await call(client, 'object.inspect', { objectRef: `scene:${sceneId}` });
+  if (scene.body.ok !== true) throw new Error(JSON.stringify(scene.body));
+  const sceneObject = scene.body.result as AuthoringObject;
+  for (const childRef of sceneObject.childRefs ?? []) {
+    const inspected = await call(client, 'object.inspect', { objectRef: childRef });
+    if (inspected.body.ok !== true) throw new Error(JSON.stringify(inspected.body));
+    const object = inspected.body.result as AuthoringObject;
+    const structure = (object.details as { structure?: Record<string, any> } | undefined)?.structure;
+    if (object.kind === kind && structure !== undefined && typeof structure.fingerprint === 'string') {
+      return { objectRef: object.objectRef, fingerprint: structure.fingerprint, structure };
+    }
+  }
+  throw new Error(`${kind} structure not found in scene:${sceneId}`);
+}
+
+async function inspectMcpObject(client: Client, objectRef: string): Promise<AuthoringObject> {
+  const inspected = await call(client, 'object.inspect', { objectRef });
+  if (inspected.body.ok !== true) throw new Error(JSON.stringify(inspected.body));
+  return inspected.body.result as AuthoringObject;
 }
 
 async function sealCandidate(
@@ -399,6 +427,168 @@ describe('Wave15 replaceInstruction through the CLI service and disk', () => {
     });
     expect(repeated).toMatchObject({ status: 'READY', changeId: seeded.record.changeId, workingRevision: resumed.workingRevision });
     expect(treeSnapshot(fixture.root)).toEqual(baseline);
+  });
+
+  it.each(['stage', 'apply'] as const)('edits complete choice and nested condition structures through public MCP in a %s change', { timeout: 30_000 }, async (policy) => {
+    const fixture = makeProject(`structure-${policy}`);
+    const source = [
+      '@scene start',
+      '@choice',
+      '  First [if:trust > 0] -> @set trust = 1 @goto first',
+      '// keep choice separator',
+      '',
+      '  Second -> @jump second',
+      '  Third -> @goto third',
+      '@if outer',
+      '// keep outer comment',
+      '@if inner',
+      'Nested yes',
+      '@else',
+      'Nested no',
+      '@endif',
+      '@elif fallback',
+      'Fallback',
+      '@else',
+      '// keep outer else',
+      'Default',
+      '@endif',
+      '@label first',
+      '@label second',
+      '@label third',
+      '@end',
+    ].join('\n') + '\n';
+    fs.writeFileSync(path.join(fixture.root, fixture.rootScenePath), source, 'utf8');
+    fs.writeFileSync(path.join(fixture.root, 'content', 'scenario', 'second.gal'), '@scene second\n@end\n', 'utf8');
+    fs.writeFileSync(path.join(fixture.root, 'game.config.json'), JSON.stringify({
+      entryScene: 'start',
+      variables: {
+        trust: { type: 'number', initial: 0 },
+        outer: { type: 'boolean', initial: true },
+        inner: { type: 'boolean', initial: true },
+        fallback: { type: 'boolean', initial: false },
+      },
+    }), 'utf8');
+    const connection = await connected(fixture, policy);
+    try {
+      expect((await call(connection.client, 'change.begin')).body.ok).toBe(true);
+      const initialChoice = await findMcpStructureTarget(connection.client, 'start', 'choice');
+      expect(initialChoice.structure.options).toHaveLength(3);
+      expect(initialChoice.structure.options.map((option: Record<string, any>) => [option.label, option.when]))
+        .toEqual([['First', 'trust > 0'], ['Second', null], ['Third', null]]);
+      const initialCondition = await findMcpStructureTarget(connection.client, 'start', 'condition');
+      expect(initialCondition.structure.branches.map((branch: Record<string, any>) => branch.kind))
+        .toEqual(['if', 'elif', 'else']);
+      const initialIfBranch = await inspectMcpObject(connection.client, initialCondition.structure.branches[0].objectRef);
+      const nestedConditionRef = (initialIfBranch.childRefs ?? []).find((ref) => ref.includes('/condition:'));
+      expect(nestedConditionRef).toBeDefined();
+      await inspectMcpObject(connection.client, nestedConditionRef!);
+
+      const choicePatch = {
+        operationId: 'replace-choice-group-public',
+        patch: {
+          kind: 'replaceChoiceGroup',
+          target: initialChoice.objectRef,
+          expectedFingerprint: initialChoice.fingerprint,
+          choice: {
+            kind: 'choice',
+            options: [
+              { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'first' } },
+              { label: '中间', effects: [{ name: 'mod', args: ['trust', '+1'] }], target: { kind: 'jump', value: 'second' } },
+              { label: '右侧', target: { kind: 'goto', value: 'third' } },
+            ],
+          },
+        },
+      };
+      const choiceResult = await call(connection.client, 'scene.patch', choicePatch);
+      expect(choiceResult.body).toMatchObject({ ok: true, result: { kind: 'replaceChoiceGroup', line: 2 } });
+      const afterChoice = (await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record;
+      expect(afterChoice.workingFiles[fixture.rootScenePath]).toContain('// keep choice separator');
+      expect(afterChoice.workingFiles[fixture.rootScenePath]).toContain('左侧 [if:trust > 0] -> @set trust = 1 @goto first');
+      expect(afterChoice.workingFiles[fixture.rootScenePath]).toContain('中间 -> @mod trust +1 @jump second');
+
+      // The old full structure ref is rejected before runOperation and leaves
+      // the durable record untouched.
+      const staleCondition = await call(connection.client, 'scene.patch', {
+        operationId: 'stale-condition-target-public',
+        patch: {
+          kind: 'replaceConditionBlock',
+          target: initialCondition.objectRef,
+          expectedFingerprint: initialCondition.fingerprint,
+          condition: { kind: 'condition', branches: [{ kind: 'if', expr: 'outer', blocks: [] }] },
+        },
+      });
+      expect(staleCondition.body).toMatchObject({ ok: false, error: { code: 'OBJECT_PRECONDITION_FAILED' } });
+      expect((await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record).toEqual(afterChoice);
+
+      const currentCondition = await findMcpStructureTarget(connection.client, 'start', 'condition');
+      const currentIf = await inspectMcpObject(connection.client, currentCondition.structure.branches[0].objectRef);
+      const currentNestedRef = (currentIf.childRefs ?? []).find((ref) => ref.includes('/condition:'));
+      expect(currentNestedRef).toBeDefined();
+      const currentNested = await inspectMcpObject(connection.client, currentNestedRef!);
+      const currentNestedBranchRef = (currentNested.details as { structure: { branches: Array<{ objectRef: string }> } }).structure.branches[0]!.objectRef;
+
+      // A branch from a nested condition is a real object, but is not a
+      // direct child of the outer target and must be rejected publicly.
+      const foreignBranch = await call(connection.client, 'scene.patch', {
+        operationId: 'foreign-condition-branch-public',
+        patch: {
+          kind: 'replaceConditionBlock',
+          target: currentCondition.objectRef,
+          expectedFingerprint: currentCondition.fingerprint,
+          condition: { kind: 'condition', branches: [{ kind: 'if', expr: 'outer', sourceBranch: currentNestedBranchRef }] },
+        },
+      });
+      expect(foreignBranch.body).toMatchObject({ ok: false, error: { code: 'OBJECT_PRECONDITION_FAILED' } });
+      const beforeCondition = (await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record;
+      expect(beforeCondition).toEqual(afterChoice);
+
+      const conditionPatch = {
+        operationId: 'replace-condition-block-public',
+        patch: {
+          kind: 'replaceConditionBlock',
+          target: currentCondition.objectRef,
+          expectedFingerprint: currentCondition.fingerprint,
+          condition: {
+            kind: 'condition',
+            branches: [
+              { kind: 'if', expr: 'outer', sourceBranch: currentCondition.structure.branches[0].objectRef },
+              { kind: 'elif', expr: 'fallback', sourceBranch: currentCondition.structure.branches[1].objectRef, blocks: [{ kind: 'condition', branches: [
+                { kind: 'if', expr: 'inner', blocks: [{ kind: 'text', value: '新增嵌套分支' }] },
+                { kind: 'else', blocks: [{ kind: 'text', value: '新增嵌套兜底' }] },
+              ] }] },
+              { kind: 'else', sourceBranch: currentCondition.structure.branches[2].objectRef },
+            ],
+          },
+        },
+      };
+      const conditionResult = await call(connection.client, 'scene.patch', conditionPatch);
+      expect(conditionResult.body).toMatchObject({ ok: true, result: { kind: 'replaceConditionBlock', line: 8 } });
+      const afterCondition = (await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record;
+      const working = afterCondition.workingFiles[fixture.rootScenePath]!;
+      expect(working).toContain('// keep outer comment');
+      expect(working).toContain('// keep outer else');
+      expect(working).toContain('@elif fallback\n@if inner\n  新增嵌套分支\n@else\n  新增嵌套兜底\n@endif');
+      expect(working).not.toContain('\nFallback\n');
+
+      const retried = await call(connection.client, 'scene.patch', conditionPatch);
+      expect(retried.body).toEqual(conditionResult.body);
+      expect((await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record).toEqual(afterCondition);
+      const conflict = await call(connection.client, 'scene.patch', {
+        ...conditionPatch,
+        patch: {
+          ...conditionPatch.patch,
+          condition: {
+            ...conditionPatch.patch.condition,
+            branches: [{ ...conditionPatch.patch.condition.branches[0], expr: 'outerChanged' }],
+          },
+        },
+      });
+      expect(conflict.body).toMatchObject({ ok: false, error: { code: 'OPERATION_ID_CONFLICT' } });
+      expect((await NodeChangeStore.openByChangeId(connection.session.activeChangeId!, fixture.data))!.record).toEqual(afterCondition);
+      expect(fs.readFileSync(path.join(fixture.root, fixture.rootScenePath), 'utf8')).toBe(source);
+    } finally {
+      await closeConnected(connection);
+    }
   });
 
   it.each(['stage', 'apply'] as const)('rejects an old instruction reference after lines move in a %s change, preserving retries', { timeout: 30_000 }, async (policy) => {

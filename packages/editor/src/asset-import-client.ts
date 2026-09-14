@@ -11,7 +11,9 @@ import type {
   ProjectMutationNotice,
   PreviewPublishInput,
   PreviewPublishAck,
+  PreviewContent, PreviewContentOption, PreviewContentTarget,
 } from '@surdet/authoring';
+import { isPreviewSourcePath, parsePreviewContentTarget, stableStringify } from '@surdet/authoring';
 import type { ProjectDiskBaseline } from './project-disk-baseline';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
@@ -372,6 +374,8 @@ export interface EditorWorkspaceSettlement {
 export interface EditorWorkspaceClient {
   heartbeat(state: EditorWorkspaceState): Promise<void>;
   preview(state: EditorWorkspaceState & { preview: PreviewPublishInput }): Promise<PreviewPublishAck>;
+  previewSources(state: EditorWorkspaceState): Promise<PreviewContentOption[]>;
+  previewContent(state: EditorWorkspaceState & { target: PreviewContentTarget }): Promise<PreviewContent>;
   snapshot(workspaceSessionId: string): Promise<EditorWorkspaceSnapshot>;
   begin(state: EditorWorkspaceState & { expectedProjectRevision: string; expectedCoordinationRevision: string;
     purpose: 'save-all' | 'config-save' | 'character-save' }): Promise<{ writeLeaseId: string; expiresAt: string; diskBaseline: ProjectDiskBaseline }>;
@@ -1102,6 +1106,15 @@ function parseSceneCommitResult(value: unknown): SceneLifecycleCommitResult {
 const WORKSPACE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PREVIEW_OBSERVATION_UNAVAILABLE: '当前预览连接不可用，请从绑定项目重新播放。',
   PREVIEW_OBSERVATION_STALE: '预览或内容版本已变化，本次观察未继续发布。',
+  PREVIEW_CONTENT_BASE_CHANGED: '来源项目已改变，不再匹配这份隔离内容的基线。请核对来源与候选；没有替换内容或写回项目。',
+  PREVIEW_CONTENT_CHANGED: '这份工作变更已有新修改，请重新播放当前版本。',
+  PREVIEW_CONTENT_INVALID: '所选版本的剧情或配置无法编译。请修正该变更后重新播放；保留的旧画面不代表新版本。',
+  CAPSULE_IDENTITY_MISMATCH: '封存候选的身份或文件指纹不匹配，不能继续使用这份候选。',
+  CANDIDATE_NOT_COMPOSABLE: '这份候选没有可验证的重放记录，请返回工作变更重新封装。',
+  COMPOSITION_REPLAY_FAILED: '封存内容按原操作重放失败。请查看候选与依赖，不会退回来源旧内容。',
+  COMPOSITION_PLAN_INVALID: '组合计划记录无法核对，请保留原记录并检查对应计划。',
+  CHANGE_NOT_FOUND: '绑定项目中找不到这份工作变更，请刷新试玩列表。',
+  CHANGE_NOT_OPEN: '这份工作变更已经关闭，不能继续编辑或当作当前工作版本。',
   PREVIEW_OBSERVATION_CORRUPT: '预览记录无法核对，原记录已保留。',
   PREVIEW_OBSERVATION_LIMIT: '本次预览记录已达上限，请从较近的段落标记重新播放。',
   EDITOR_PROJECT_BASELINE_CHANGED: '项目已被外部更新，未覆盖你的草稿。请先查看变化范围。',
@@ -1784,6 +1797,28 @@ export function createAssetImportAuthorityClient(
       if (!isRecord(value) || !hasExactKeys(value, ['previewId', 'previewGeneration'])
         || value.previewId !== expectedId || value.previewGeneration !== state.preview.previewGeneration) throw invalidResponse();
       return { previewId: expectedId, previewGeneration: state.preview.previewGeneration };
+    }),
+    previewSources: state => workspaceRequest('preview-sources', state, value => {
+      if (!isRecord(value) || !hasExactKeys(value, ['sources']) || !Array.isArray(value.sources)) throw invalidResponse();
+      return value.sources.map(item => {
+        if (!isRecord(item) || !hasExactKeys(item, ['target', 'title']) || typeof item.title !== 'string') throw invalidResponse();
+        try { return { target: parsePreviewContentTarget(item.target), title: item.title }; }
+        catch { throw invalidResponse(); }
+      });
+    }),
+    previewContent: state => workspaceRequest('preview-content', state, value => {
+      if (!isRecord(value) || !hasExactKeys(value, ['target', 'title', 'files', 'projectIdentity', 'projectRevision', 'contentRevision', 'coordinationRevision'])
+        || typeof value.title !== 'string' || typeof value.projectIdentity !== 'string' || !/^[0-9a-f]{32}$/.test(value.projectIdentity)
+        || !isSha256(value.projectRevision) || !isSha256(value.contentRevision) || !isSha256(value.coordinationRevision)
+        || !isRecord(value.files) || !Object.entries(value.files).every(([file, text]) => isProjectRelativePath(file) && isPreviewSourcePath(file) && typeof text === 'string')) throw invalidResponse();
+      let target: PreviewContentTarget;
+      try { target = parsePreviewContentTarget(value.target); } catch { throw invalidResponse(); }
+      const requested = state.target;
+      if (target.kind === 'working-change' ? requested.kind !== target.kind || target.changeId !== requested.changeId
+        || target.workingRevision === undefined || (requested.workingRevision !== undefined && requested.workingRevision !== target.workingRevision)
+        : stableStringify(target) !== stableStringify(requested)) throw invalidResponse();
+      return { target, title: value.title, files: value.files as Record<string, string>, projectIdentity: value.projectIdentity,
+        projectRevision: value.projectRevision, contentRevision: value.contentRevision, coordinationRevision: value.coordinationRevision };
     }),
     snapshot: workspaceSessionId => workspaceRequest('snapshot', { workspaceSessionId }, value => {
       if (!isRecord(value) || typeof value.projectIdentity !== 'string' || !/^[0-9a-f]{32}$/.test(value.projectIdentity)) throw invalidResponse();

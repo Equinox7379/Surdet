@@ -6,12 +6,29 @@ import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
 import type { ReplayStatePrecondition } from './composition-contracts.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
+import { timelineIdFromPath } from './timeline-identity.js';
+import { parseTimelineDefinition, timelineFingerprint } from './timeline-operations.js';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
   const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
+  const timelineObjects = await Promise.all(snapshot.timelines.map(async (timeline) => {
+    const objectRef = `timeline:${timelineIdFromPath(timeline.path)}`;
+    try {
+      return { objectRef, expectedFingerprint: await timelineFingerprint(parseTimelineDefinition(timeline.text), hasher) };
+    } catch {
+      // Keep the existing file fact for malformed timelines; timeline operations
+      // still reject them through the normal project validation path.
+      return { objectRef, expectedFingerprint: timeline.sha256 };
+    }
+  }));
   return [
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
+    ...timelineObjects,
+    ...await Promise.all(Object.entries(snapshot.variables).sort(([left], [right]) => left.localeCompare(right)).map(async ([name, declaration]) => ({
+      objectRef: `variable:${name}`,
+      expectedFingerprint: await hasher.sha256(stableStringify(declaration)),
+    }))),
     ...await Promise.all(cgs.map(async (entry) => ({ objectRef: `gallery:cgs:${entry.id}`, expectedFingerprint: await hasher.sha256(stableStringify(entry)) }))),
   ];
 }

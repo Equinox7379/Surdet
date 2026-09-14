@@ -50,11 +50,11 @@ const baseDefinition: TimelineDefinition = {
   ],
 };
 
-function snapshot(): ProjectSnapshot {
+function snapshot(files: ProjectSnapshot['files'] = []): ProjectSnapshot {
   return {
     rootIdentity: 'fixture-root',
     revision: 'rev000000',
-    files: [],
+    files,
     configFile: null,
     config: {},
     variables: {},
@@ -63,9 +63,9 @@ function snapshot(): ProjectSnapshot {
   };
 }
 
-async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepository }> {
+async function open(files: ProjectSnapshot['files'] = []): Promise<{ change: ChangeSession; repo: InMemoryChangeRepository }> {
   const repo = new InMemoryChangeRepository();
-  const change = await beginChange(snapshot(), repo);
+  const change = await beginChange(snapshot(files), repo);
   return { change, repo };
 }
 
@@ -118,21 +118,60 @@ describe('timeline.create', () => {
     expect(change.record.workingRevision).toBe(1);
   });
 
-  it('rejects definitions outside the wave 2 whitelist', async () => {
+  it('accepts every non-audio Core track/action and rejects unsupported tracks', async () => {
     const { change } = await open();
-    const camera: TimelineDefinition = {
+    const visual: TimelineDefinition = {
       ...baseDefinition,
-      tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'zoom', scale: 1 }] }],
+      durationMs: 1_600,
+      tracks: [
+        { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] },
+        {
+          kind: 'portrait',
+          target: 'lynn:uniform',
+          cues: [
+            { atMs: 0, durationMs: 100, easing: 'linear', action: 'show', expression: 'night', position: 'left' },
+            { atMs: 100, durationMs: 100, easing: 'linear', action: 'move', position: 'center' },
+            { atMs: 200, durationMs: 0, easing: 'linear', action: 'expression', expression: 'alert' },
+            { atMs: 300, durationMs: 100, easing: 'linear', action: 'hide' },
+          ],
+        },
+        {
+          kind: 'camera',
+          cues: [
+            { atMs: 0, durationMs: 200, easing: 'outCubic', action: 'zoom', scale: 1.25 },
+            { atMs: 200, durationMs: 200, easing: 'linear', action: 'pan', x: 120, y: -60 },
+            { atMs: 400, durationMs: 100, easing: 'linear', action: 'shake', strength: 12 },
+          ],
+        },
+        {
+          kind: 'screen',
+          cues: [
+            { atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 },
+            { atMs: 50, durationMs: 100, easing: 'linear', action: 'tint', color: 0x123456, alpha: 0.5 },
+            { atMs: 150, durationMs: 100, easing: 'linear', action: 'flash' },
+            { atMs: 250, durationMs: 100, easing: 'linear', action: 'wipe' },
+          ],
+        },
+        {
+          kind: 'particle',
+          cues: [
+            { atMs: 0, durationMs: 500, easing: 'linear', action: 'start', kind: 'snow' },
+            { atMs: 500, durationMs: 0, easing: 'linear', action: 'stop' },
+          ],
+        },
+      ],
     };
-    await expect(applyTimelineCreate(change, createInput('op-camera', camera), hasher))
-      .rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
-    const tint: TimelineDefinition = {
+    const created = await applyTimelineCreate(change, createInput('op-visual', visual), hasher);
+    expect(created.fingerprint).toMatch(/^[0-9a-f]{8}$/);
+
+    const unsupported: TimelineDefinition = {
       ...baseDefinition,
-      tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'tint', color: 0, alpha: 1 }] }],
+      id: 'unsupported_timeline',
+      tracks: [{ kind: 'unknown' as never, cues: [] }],
     };
-    await expect(applyTimelineCreate(change, createInput('op-tint', tint), hasher))
+    await expect(applyTimelineCreate(change, createInput('op-unsupported', unsupported), hasher))
       .rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
-    expect(change.record.workingFiles).toEqual({});
+    expect(Object.keys(change.record.workingFiles)).toEqual(['content/timelines/agent_blackout.json']);
   });
 
   it('rejects structurally invalid definitions before staging', async () => {
@@ -145,6 +184,14 @@ describe('timeline.create', () => {
       .rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     expect(change.record.workingFiles).toEqual({});
   });
+
+  it('does not add an audio track through timeline.create', async () => {
+    const { change } = await open();
+    await expect(applyTimelineCreate(change, createInput('op-audio-create', definitionWithAudio()), hasher))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record.workingFiles).toEqual({});
+    expect(change.record.workingRevision).toBe(0);
+  });
 });
 
 function definitionWithPortrait(): TimelineDefinition {
@@ -155,6 +202,32 @@ function definitionWithPortrait(): TimelineDefinition {
       { kind: 'portrait', target: 'lynn:uniform', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', expression: 'night', position: 'left' }] },
     ],
   };
+}
+
+function definitionWithAudio(): TimelineDefinition {
+  const definition = JSON.parse(JSON.stringify({ ...baseDefinition, id: 'agent_audio' })) as TimelineDefinition;
+  definition.tracks.push({
+    kind: 'audio' as never,
+    cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'bgm', key: 'existing_theme' }],
+  });
+  const background = definition.tracks[0] as unknown as Record<string, unknown>;
+  background['opaqueTrackMetadata'] = { source: 'fixture' };
+  const backgroundCue = definition.tracks[0]!.cues[0] as unknown as Record<string, unknown>;
+  backgroundCue['opaqueCueMetadata'] = 'preserve';
+  const audio = definition.tracks.at(-1) as unknown as Record<string, unknown>;
+  audio['opaqueTrackMetadata'] = { source: 'audio-fixture' };
+  return definition;
+}
+
+async function openedWithAudio(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepository }> {
+  const definition = definitionWithAudio();
+  const text = `${JSON.stringify(definition)}\n`;
+  return open([{
+    path: 'content/timelines/agent_audio.json',
+    text,
+    bytes: text.length,
+    sha256: await hasher.sha256(text),
+  }]);
 }
 
 async function created(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepository }> {
@@ -211,6 +284,116 @@ describe('timeline.patch', () => {
     await applyTimelinePatch(change, removeInput, hasher);
     expect(change.record.workingRevision).toBe(4);
     expect((JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition).tracks[3]!.cues).toHaveLength(0);
+  });
+
+  it('sets total duration with a full timeline fingerprint and lets Core reject cue overflow', async () => {
+    const { change } = await created();
+    const source = JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition;
+    const before = await timelineFingerprint(source, hasher);
+    const result = await applyTimelinePatch(change, {
+      operationId: 'op-duration',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'setDuration', expectedFingerprint: before, durationMs: 1_200 },
+    }, hasher);
+    const next = JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition;
+    expect(next.durationMs).toBe(1_200);
+    expect(result.diffEntry.kind).toBe('timeline.patch.setDuration');
+    expect(result.diffEntry.fingerprintBefore).toBe(before);
+
+    const unchanged = JSON.stringify(change.record.workingFiles);
+    const currentFingerprint = await timelineFingerprint(next, hasher);
+    await expect(applyTimelinePatch(change, {
+      operationId: 'op-duration-too-short',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'setDuration', expectedFingerprint: currentFingerprint, durationMs: 100 },
+    }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(unchanged);
+    expect(change.record.workingRevision).toBe(2);
+  });
+
+  it('updates and removes a non-audio track target while preserving opaque fields', async () => {
+    const definition = JSON.parse(JSON.stringify(definitionWithPortrait())) as TimelineDefinition;
+    const targetTrack = definition.tracks[0]! as unknown as Record<string, unknown>;
+    targetTrack['opaqueTrackMetadata'] = { keep: true };
+    const cue = targetTrack['cues'] as unknown as Array<Record<string, unknown>>;
+    cue[0]!['opaqueCueMetadata'] = 'keep';
+    const text = `${JSON.stringify(definition)}\n`;
+    const { change } = await open([{
+      path: 'content/timelines/agent_blackout.json',
+      text,
+      bytes: text.length,
+      sha256: await hasher.sha256(text),
+    }]);
+
+    const source = JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition;
+    const trackRef = trackRefFor('agent_blackout', 0);
+    const trackFingerprint = await timelineFingerprint(source.tracks[0], hasher);
+    const before = JSON.stringify(change.record.workingFiles);
+    await expect(applyTimelinePatch(change, {
+      operationId: 'op-target-stale',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'setTrackTarget', expectedFingerprint: 'deadbeef', trackRef, target: 'lynn:stale' },
+    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    expect(JSON.stringify(change.record.workingFiles)).toBe(before);
+    expect(change.record.workingRevision).toBe(0);
+
+    await applyTimelinePatch(change, {
+      operationId: 'op-target-set',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'setTrackTarget', expectedFingerprint: trackFingerprint, trackRef, target: 'lynn:casual' },
+    }, hasher);
+    const updated = JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition;
+    const updatedTrack = updated.tracks[0] as unknown as Record<string, unknown>;
+    expect(updatedTrack['target']).toBe('lynn:casual');
+    expect(updatedTrack['opaqueTrackMetadata']).toEqual({ keep: true });
+    expect((updatedTrack['cues'] as Array<Record<string, unknown>>)[0]!['opaqueCueMetadata']).toBe('keep');
+
+    const updatedFingerprint = await timelineFingerprint(updated.tracks[0], hasher);
+    await applyTimelinePatch(change, {
+      operationId: 'op-target-remove',
+      timelineId: 'agent_blackout',
+      patch: { kind: 'setTrackTarget', expectedFingerprint: updatedFingerprint, trackRef, target: null },
+    }, hasher);
+    const removed = JSON.parse(change.record.workingFiles['content/timelines/agent_blackout.json']!) as TimelineDefinition;
+    expect(Object.prototype.hasOwnProperty.call(removed.tracks[0], 'target')).toBe(false);
+  });
+
+  it('retains existing audio tracks across non-audio patches and rejects every audio mutation path', async () => {
+    const { change } = await openedWithAudio();
+    const path = 'content/timelines/agent_audio.json';
+    const source = JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
+    const audioIndex = source.tracks.findIndex((track) => track.kind === ('audio' as never));
+    expect(audioIndex).toBeGreaterThanOrEqual(0);
+    const audioTrack = source.tracks[audioIndex]!;
+    const audioTrackRef = trackRefFor('agent_audio', audioIndex);
+    const audioCueRef = cueRefFor('agent_audio', audioIndex, 0);
+    const audioTrackFingerprint = await timelineFingerprint(audioTrack, hasher);
+    const audioCueFingerprint = await timelineFingerprint(audioTrack.cues[0], hasher);
+    const updated = await applyTimelinePatch(change, {
+      operationId: 'op-audio-duration',
+      timelineId: 'agent_audio',
+      patch: { kind: 'setDuration', expectedFingerprint: await timelineFingerprint(source, hasher), durationMs: 900 },
+    }, hasher);
+    expect(updated.fingerprint).not.toBe(await timelineFingerprint(source, hasher));
+    const afterDuration = JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
+    expect(afterDuration.tracks[audioIndex]).toEqual(audioTrack);
+    const preservedText = change.record.workingFiles[path]!;
+
+    const attempts: TimelinePatchInput[] = [
+      { operationId: 'op-audio-add', timelineId: 'agent_audio', patch: { kind: 'addTrack', expectedFingerprint: updated.fingerprint, trackKind: 'audio' as never } },
+      { operationId: 'op-audio-remove-track', timelineId: 'agent_audio', patch: { kind: 'removeTrack', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef } },
+      { operationId: 'op-audio-set-target', timelineId: 'agent_audio', patch: { kind: 'setTrackTarget', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef, target: 'forbidden' } },
+      { operationId: 'op-audio-insert', timelineId: 'agent_audio', patch: { kind: 'insertCue', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef, cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'forbidden' } } },
+      { operationId: 'op-audio-replace', timelineId: 'agent_audio', patch: { kind: 'replaceCue', expectedFingerprint: audioCueFingerprint, cueRef: audioCueRef, cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'forbidden' } } },
+      { operationId: 'op-audio-remove-cue', timelineId: 'agent_audio', patch: { kind: 'removeCue', expectedFingerprint: audioCueFingerprint, cueRef: audioCueRef } },
+    ];
+    for (const attempt of attempts) {
+      await expect(applyTimelinePatch(change, attempt, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+      expect(change.record.workingFiles[path]).toBe(preservedText);
+    }
+    const final = JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
+    expect(final.tracks[audioIndex]).toEqual(audioTrack);
+    expect(change.record.workingRevision).toBe(1);
   });
 
   it('rejects a stale fingerprint without any partial write', async () => {

@@ -46,7 +46,10 @@ const MAX_SPEAKER_LEN = 24;
  */
 export class Lexer {
   tokenize(source: string, file: string): Token[] {
-    const lines = source.split(/\r?\n/);
+    // Keep bare CR as a line delimiter as well; authoring preserves all three
+    // supported source EOL forms and the parser must see the same physical
+    // lines when deriving structural spans.
+    const lines = source.split(/\r\n|\n|\r/);
     const tokens: Token[] = [];
     for (let i = 0; i < lines.length; i++) {
       const lineText = lines[i] ?? '';

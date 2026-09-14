@@ -134,4 +134,79 @@ describe('revision-scoped object index', () => {
     expect(brokenOption).toBeDefined();
     expect(brokenOption!.references).toEqual([]);
   });
+
+  it('indexes choice structure and paired nested condition branches', async () => {
+    const source = [
+      '@scene prologue',
+      '@if trust > 0',
+      '// preserve this branch',
+      '@if inner',
+      'Inner',
+      '@endif',
+      '@choice',
+      '  Continue -> @goto continue',
+      '// between options',
+      '  Leave [if:canLeave] -> @goto leave',
+      '@elif fallback',
+      'Fallback',
+      '@else',
+      'Default',
+      '@endif',
+      '@label continue',
+      '@label leave',
+      '@end',
+    ].join('\n');
+    const contents: Record<string, string> = {
+      'game.config.json': '{"entryScene":"prologue","variables":{"trust":{"type":"number","initial":0},"canLeave":{"type":"boolean","initial":true}}}',
+      'content/scenario/prologue.gal': source,
+    };
+    const storage: ProjectStorage = {
+      rootIdentity: 'structure-fixture',
+      listFiles: async () => Object.keys(contents),
+      readText: async (path): Promise<ProjectFile> => {
+        const text = contents[path];
+        if (text === undefined) throw new Error(`missing fixture file: ${path}`);
+        return { path, text, bytes: text.length, sha256: await hasher.sha256(text) };
+      },
+      exists: async (path) => path in contents,
+    };
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const index = buildObjectIndex(snapshot);
+    const condition = index.objects.find((object) => object.kind === 'condition')!;
+    const conditionDetails = condition.details as { structure: {
+      kind: string;
+      fingerprint: string;
+      span: { startLine: number; endLine: number };
+      branches: Array<{ objectRef: string; kind: string; expr: string | null; span: { startLine: number; endLine: number } }>;
+    } };
+    expect(conditionDetails.structure).toMatchObject({
+      kind: 'condition', fingerprint: expect.stringMatching(/^[0-9a-f]{8}$/), span: { startLine: 2, endLine: 15 },
+    });
+    expect(conditionDetails.structure.branches.map((branch) => [branch.kind, branch.expr])).toEqual([
+      ['if', 'trust > 0'], ['elif', 'fallback'], ['else', null],
+    ]);
+    expect(condition.childRefs).toEqual(conditionDetails.structure.branches.map((branch) => branch.objectRef));
+    const branches = condition.childRefs!.map((ref) => index.byRef.get(ref)!);
+    expect(branches.every((branch) => branch.kind === 'condition-branch' && branch.parentRef === condition.objectRef)).toBe(true);
+    const nested = index.objects.find((object) => object.kind === 'condition' && object.objectRef !== condition.objectRef)!;
+    expect(nested.parentRef).toBe(branches[0]!.objectRef);
+    expect(nested.details).toMatchObject({ structure: { span: { startLine: 4, endLine: 6 } } });
+
+    const choice = index.objects.find((object) => object.kind === 'choice')!;
+    expect(choice.fingerprint).toBe(digest('@choice'));
+    expect(choice.details).toMatchObject({
+      structure: {
+        kind: 'choice',
+        span: { startLine: 7, endLine: 10 },
+        fingerprint: expect.stringMatching(/^[0-9a-f]{8}$/),
+        options: [
+          { index: 0, label: 'Continue', when: null },
+          { index: 1, label: 'Leave', when: 'canLeave' },
+        ],
+      },
+    });
+    const options = index.objects.filter((object) => object.kind === 'choice-option');
+    expect((choice.details as { structure: { options: Array<{ objectRef: string }> } }).structure.options.map((option) => option.objectRef))
+      .toEqual(options.map((option) => option.objectRef));
+  });
 });

@@ -202,7 +202,8 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
       };
     }
 
-    case 'variable.ensure': {
+    case 'variable.ensure':
+    case 'variable.patch-initial': {
       const name = stringAt(normalizedInput, 'name');
       if (name === undefined) return unavailable('OBJECT_IDENTITY_UNAVAILABLE', `变量输入缺少合法 name（operation sequence ${sequence}）`);
       const config = readWorkingJson(record, CONFIG_PATH);
@@ -212,7 +213,7 @@ async function buildCapabilityFact(input: CapabilityFactInput): Promise<Capabili
       const primaryObject = `variable:${name}`;
       const producedObjects: ObjectProduction[] = [{
         objectRef: primaryObject,
-        disposition: baseHas(objectFacts, primaryObject) ? 'update' : 'create',
+        disposition: capabilityId === 'variable.patch-initial' || baseHas(objectFacts, primaryObject) ? 'update' : 'create',
         finalFingerprint: await sha256Text(stableStringify(declaration)),
       }];
       const diffEntry = diffEntryFor(semanticDiff, String(normalizedInput['operationId']));

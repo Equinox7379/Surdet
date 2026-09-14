@@ -123,7 +123,7 @@ export class SceneCompiler {
 
     this.#emitBlocks(emitter, ast.blocks);
 
-    const endLine = source.split(/\r?\n/).length;
+    const endLine = source.split(/\r\n|\n|\r/).length;
     emitter.emit<DslInstr>({ op: 'end', index: -1, file, line: endLine, col: 1 });
     emitter.resolveGotos();
 

@@ -3,6 +3,7 @@ import {
   insertLinesAfter,
   parseSceneDocument,
   parseSceneLine,
+  parseSceneStructure,
   rewriteInstructionArgumentsRaw,
   serializeSceneDocument,
   splitInstruction,
@@ -83,5 +84,62 @@ describe('URL line raw roundtrip (N2)', () => {
   it('parse → serialize preserves URL lines byte-for-byte', () => {
     const source = '@scene s\r\nhttps://example.com/story\nhttp://example.com/story\r\n@end';
     expect(serializeSceneDocument(parseSceneDocument(source), '\n')).toBe(source);
+  });
+});
+
+describe('Core-backed scene structure facts', () => {
+  it('exposes paired nested condition and choice ranges without guessing a later endif', () => {
+    const source = [
+      '@scene s',
+      '@if outer',
+      '// keep outer comment',
+      'A',
+      '@if inner',
+      'B',
+      '@else',
+      'C',
+      '@endif',
+      '@elif fallback',
+      'D',
+      '@else',
+      '// keep else comment',
+      'E',
+      '@endif',
+      '@choice',
+      '  One -> @goto one',
+      '// between options',
+      '',
+      '  Two -> @goto two',
+      '@label one',
+      '@label two',
+      '@end',
+    ].join('\n');
+    const document = parseSceneStructure(source, 's.gal', 's');
+    expect(document.conditions.map((condition) => condition.span)).toEqual([
+      { startLine: 2, endLine: 15 },
+      { startLine: 5, endLine: 9 },
+    ]);
+    expect(document.conditions[0]!.branches.map((branch) => ({
+      kind: branch.kind,
+      span: branch.span,
+      bodySpan: branch.bodySpan,
+    }))).toEqual([
+      { kind: 'if', span: { startLine: 2, endLine: 9 }, bodySpan: { startLine: 3, endLine: 9 } },
+      { kind: 'elif', span: { startLine: 10, endLine: 11 }, bodySpan: { startLine: 11, endLine: 11 } },
+      { kind: 'else', span: { startLine: 12, endLine: 14 }, bodySpan: { startLine: 13, endLine: 14 } },
+    ]);
+    expect(document.conditions[1]!.branches.map((branch) => [branch.kind, branch.span.startLine, branch.span.endLine])).toEqual([
+      ['if', 5, 6], ['else', 7, 8],
+    ]);
+    expect(document.choices[0]).toMatchObject({
+      span: { startLine: 16, endLine: 20 },
+      options: [
+        { index: 0, label: 'One', span: { startLine: 17, endLine: 17 } },
+        { index: 1, label: 'Two', span: { startLine: 20, endLine: 20 } },
+      ],
+    });
+    expect(parseSceneDocument(source).filter((line) => line.kind === 'choice-option').map((line) => line.raw)).toEqual([
+      '  One -> @goto one', '  Two -> @goto two',
+    ]);
   });
 });

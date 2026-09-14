@@ -43,6 +43,7 @@ import {
   executeTransactionRecovery,
   evidenceFreshness,
   ensureVariable,
+  applyVariablePatchInitial,
   inspectObject,
   inspectProject,
   normalizeTrace,
@@ -83,6 +84,7 @@ import {
   type TimelinePatchInput,
   type TraceQuery,
   type VariableEnsureInput,
+  type VariablePatchInitialInput,
 } from '@surdet/authoring';
 import { NodeChangeStore } from './node-change-store.js';
 import { CompositionService, compositionServiceForProject } from './composition-service.js';
@@ -115,6 +117,31 @@ export type AgentCommitCoordination =
 
 function hashText(text: string): string {
   return crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+}
+
+function validateCurrentScenePatchReferences(snapshot: ProjectSnapshot, input: ScenePatchInput): void {
+  const patch = input.patch;
+  if (patch.kind !== 'replaceInstruction'
+    && patch.kind !== 'replaceChoiceGroup'
+    && patch.kind !== 'replaceConditionBlock') return;
+
+  const index = buildObjectIndex(snapshot);
+  const target = index.byRef.get(patch.target);
+  const expectedKind = patch.kind === 'replaceInstruction'
+    ? 'instruction'
+    : patch.kind === 'replaceChoiceGroup' ? 'choice' : 'condition';
+  if (target?.kind !== expectedKind) {
+    const label = patch.kind === 'replaceInstruction' ? '指令' : patch.kind === 'replaceChoiceGroup' ? 'choice 结构' : 'condition 结构';
+    throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `${label}引用已过期或不属于当前工作版本，请重新读取对象后再替换`);
+  }
+  if (patch.kind !== 'replaceConditionBlock') return;
+  for (const branch of patch.condition.branches) {
+    if (branch.sourceBranch === undefined) continue;
+    const source = index.byRef.get(branch.sourceBranch);
+    if (source?.kind !== 'condition-branch' || source.parentRef !== target.objectRef) {
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'sourceBranch 必须引用当前 condition 的直接分支，请重新读取目标结构后再替换');
+    }
+  }
 }
 
 function engineIdentity(): { version: string; gitHead: string } {
@@ -621,6 +648,13 @@ export class AuthoringService {
     if (object.kind === 'entry-scene') {
       object.fingerprint = await entrySceneFingerprint(snapshot.config, { sha256: async (text) => hashText(text) });
     }
+    if (object.kind === 'variable' && object.objectRef.startsWith('variable:')) {
+      const name = object.objectRef.slice('variable:'.length);
+      const declaration = snapshot.variables[name];
+      if (Object.prototype.hasOwnProperty.call(snapshot.variables, name)) {
+        object.fingerprint = hashText(stableStringify(declaration));
+      }
+    }
     if (object.kind === 'gallery-cg') object.fingerprint = hashText(stableStringify(object.details));
     if (context !== undefined) return { ...metadataForChange(context.session), result: object };
     return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: object };
@@ -898,12 +932,8 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       // Public requests must use a current reference. Sealed replay calls the
       // shared operation directly under its existing scene preconditions.
-      if (input.patch.kind === 'replaceInstruction'
-        && !Object.prototype.hasOwnProperty.call(context.session.record.operations, input.operationId)) {
-        const target = buildObjectIndex(context.snapshot).byRef.get(input.patch.target);
-        if (target?.kind !== 'instruction') {
-          throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '指令引用已过期或不属于当前工作版本，请重新读取对象后再替换');
-        }
+      if (!Object.prototype.hasOwnProperty.call(context.session.record.operations, input.operationId)) {
+        validateCurrentScenePatchReferences(context.snapshot, input);
       }
       const result = await applyScenePatch(context.session, input);
       return { ...metadataForChange(context.session), result };
@@ -913,6 +943,13 @@ export class AuthoringService {
   async variableEnsure(changeId: string, input: VariableEnsureInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await ensureVariable(context.session, input);
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async variablePatchInitial(changeId: string, input: VariablePatchInitialInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applyVariablePatchInitial(context.session, input, { sha256: async (text) => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
   }

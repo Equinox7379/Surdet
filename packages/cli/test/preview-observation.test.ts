@@ -116,6 +116,74 @@ it('uses real binding, HTTP, client, disk storage and MCP schemas; resolves sour
   expect(await fs.readFile(path.join(f.project, 'content/scenario/chapter/start.gal'), 'utf8')).toContain('凛：开始。');
 }, 20_000);
 
+it('opens the immutable capsule rather than later working files, and binds its observation across HTTP and MCP', async () => {
+  const f = await fixture();
+  expect((await f.session.invoke('change.begin', { intent: '封存候选试玩', initiator: 'external-agent' })).ok).toBe(true);
+  expect((await f.session.invoke('scene.create', { operationId: 'sealed-scene', sceneId: 'sealed', blocks: [{ kind: 'text', value: '封存时的内容。' }] })).ok).toBe(true);
+  const sealed = await f.mcp.callTool({ name: 'surdet_delivery_capsule', arguments: { label: '封存试玩' } });
+  expect(sealed.isError, JSON.stringify(sealed)).not.toBe(true);
+  const capsule = (sealed.structuredContent as any).result;
+  const target = { kind: 'candidate' as const, changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 };
+  expect((await f.session.invoke('scene.create', { operationId: 'after-seal', sceneId: 'later', blocks: [{ kind: 'text', value: '封存以后的改动。' }] })).ok).toBe(true);
+  const dirty = { ...f.workspace, workspaceGeneration: 2, availability: 'dirty' as const, dirtyScopes: ['scene' as const] };
+  expect((await f.editor.workspace.previewSources(dirty)).some(option => JSON.stringify(option.target) === JSON.stringify(target))).toBe(true);
+  const { PreviewContentService } = await import('../src/authoring/preview-content-service.js');
+  await new PreviewContentService(f.dataRoot).resolve(f.project, target);
+  const content = await f.editor.workspace.previewContent({ ...dirty, target });
+  expect(content.files['content/scenario/sealed.gal']).toContain('封存时的内容。');
+  expect(content.files['content/scenario/later.gal']).toBeUndefined();
+  const preview = { ...f.begin, sceneId: 'sealed', content: { target, contentRevision: content.contentRevision }, source: {
+    assets: f.begin.source.assets, files: Object.entries(content.files).map(([file, text]) => ({ path: file, sha256: sha(previewSourceText(file, text)) })),
+  } };
+  await f.editor.workspace.preview({ ...dirty, preview });
+  expect(await f.read()).toMatchObject({ view: 'candidate', status: 'current', observation: { content: { target } } });
+  await expect(f.editor.workspace.previewContent({ ...dirty, target: { ...target, artifactSha256: '0'.repeat(64) } })).rejects.toMatchObject({ code: 'CAPSULE_IDENTITY_MISMATCH' });
+  await expect(fs.stat(path.join(f.project, 'content/scenario/sealed.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(fs.stat(path.join(f.dataRoot, (await f.editor.workspace.snapshot(dirty.workspaceSessionId)).projectIdentity, 'composition-plans'))).rejects.toMatchObject({ code: 'ENOENT' });
+}, 30_000);
+
+it('opens the same READY integration without approving or applying, rejects substituted identity and source drift', async () => {
+  const f = await fixture();
+  const refs = [];
+  for (const [number, session, mcp] of [[1, f.session, f.mcp]] as const) {
+    expect((await session.invoke('change.begin', { intent: '组合试玩A', initiator: 'external-agent' })).ok).toBe(true);
+    expect((await session.invoke('scene.create', { operationId: `a${number}`, sceneId: 'first', blocks: [{ kind: 'text', value: '第一份贡献。' }] })).ok).toBe(true);
+    const sealed = (await mcp.callTool({ name: 'surdet_delivery_capsule', arguments: { label: 'A' } })).structuredContent as any;
+    expect(sealed.ok).toBe(true);
+    refs.push({ changeId: sealed.result.changeId, capsuleId: sealed.result.capsuleId, artifactSha256: sealed.result.artifactIdentity.sha256 });
+  }
+  const other = await openAgentPortSession({ projectRoot: f.project, policy: 'stage' });
+  const server = createAgentPortServer(other);
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'integration-preview', version: '1.0.0' });
+  await server.connect(right); await mcp.connect(left);
+  cleanups.push(async () => { await mcp.close(); await server.close(); await other.close(); });
+  expect((await other.invoke('change.begin', { intent: '组合试玩B', initiator: 'external-agent' })).ok).toBe(true);
+  expect((await other.invoke('scene.create', { operationId: 'b1', sceneId: 'second', blocks: [{ kind: 'text', value: '第二份贡献。' }] })).ok).toBe(true);
+  const sealed = (await mcp.callTool({ name: 'surdet_delivery_capsule', arguments: { label: 'B' } })).structuredContent as any;
+  expect(sealed.ok).toBe(true);
+  refs.push({ changeId: sealed.result.changeId, capsuleId: sealed.result.capsuleId, artifactSha256: sealed.result.artifactIdentity.sha256 });
+  const composition = await import('../src/authoring/composition-service.js');
+  const service = await composition.compositionServiceForProject(f.project, f.dataRoot);
+  const { comparison } = await service.compare(refs);
+  const planned = await service.plan({ candidateRefs: refs, comparisonFingerprint: comparison.comparisonFingerprint, selectedUnitIds: comparison.units.map(unit => unit.unitId) });
+  const executed = await service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'preview-integration' });
+  const options = await f.editor.workspace.previewSources(f.workspace);
+  const target = options.find(option => option.target.kind === 'integration-result' && option.target.changeId === executed.changeId)!.target;
+  expect(target.kind).toBe('integration-result');
+  const content = await f.editor.workspace.previewContent({ ...f.workspace, target });
+  expect(content.files['content/scenario/first.gal']).toContain('第一份贡献。');
+  expect(content.files['content/scenario/second.gal']).toContain('第二份贡献。');
+  await f.editor.workspace.preview({ ...f.workspace, preview: { ...f.begin, sceneId: 'first', content: { target, contentRevision: content.contentRevision },
+    source: { assets: f.begin.source.assets, files: Object.entries(content.files).map(([file, text]) => ({ path: file, sha256: sha(previewSourceText(file, text)) })) } } });
+  expect(await f.read()).toMatchObject({ view: 'integration-result', status: 'current', observation: { content: { target } } });
+  if (target.kind !== 'integration-result') throw new Error('result missing');
+  await expect(f.editor.workspace.previewContent({ ...f.workspace, target: { ...target, planFingerprint: '0'.repeat(64) } })).rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+  await expect(fs.stat(path.join(f.project, 'content/scenario/first.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await fs.appendFile(path.join(f.project, 'content/scenario/chapter/start.gal'), '// 外部修改\n');
+  expect(await f.read()).toMatchObject({ view: 'integration-result', status: 'stale' });
+}, 30_000);
+
 it('rejects wrong source, mutated retries, dirty drafts and stale messages through real structured HTTP/client errors', async () => {
   const f = await fixture();
   await expect(f.publish({ ...f.begin, expectedProjectRevision: '0'.repeat(64) }))
@@ -233,4 +301,50 @@ it('observes public assets and detects their byte, directory and missing-file ch
     } })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   }
   expect(await f.read()).toMatchObject({ status: 'current', observation: { previewId: f.begin.previewId } });
+}, 20_000);
+
+it('plays an isolated working revision through the bound HTTP client and MCP observation without saving human drafts or source files', async () => {
+  const f = await fixture();
+  const sourceBefore = await fs.readFile(path.join(f.project, 'content/scenario/chapter/start.gal'), 'utf8');
+  const started = await f.session.invoke('change.begin', { intent: '章节返修', initiator: 'external-agent' });
+  expect(started.ok, JSON.stringify(started)).toBe(true);
+  if (!started.ok) throw new Error(started.error.message);
+  const changeId = (started.result as { changeId: string }).changeId;
+  expect((await f.session.invoke('scene.create', { operationId: 'working-scene', sceneId: 'isolated',
+    blocks: [{ kind: 'text', speaker: '凛', value: '尚未写回的章节。' }] })).ok).toBe(true);
+  const dirty = { ...f.workspace, workspaceGeneration: 2, availability: 'dirty' as const, dirtyScopes: ['scene' as const] };
+  const options = await f.editor.workspace.previewSources(dirty);
+  expect(options).toContainEqual({ target: { kind: 'working-change', changeId }, title: expect.stringContaining('章节返修') });
+  const content = await f.editor.workspace.previewContent({ ...dirty, target: { kind: 'working-change', changeId } });
+  expect(content.target).toEqual({ kind: 'working-change', changeId, workingRevision: 1 });
+  expect(content.files['content/scenario/isolated.gal']).toContain('尚未写回的章节。');
+  expect(content.contentRevision).not.toBe(content.projectRevision);
+  const begin: PreviewBeginInput = { ...f.begin, sceneId: 'isolated',
+    content: { target: content.target, contentRevision: content.contentRevision },
+    source: { files: Object.entries(content.files).map(([file, text]) => ({ path: file, sha256: sha(previewSourceText(file, text)) })), assets: f.begin.source.assets } };
+  await f.editor.workspace.preview({ ...dirty, preview: begin });
+  await f.editor.workspace.preview({ ...dirty, preview: { action: 'append', previewId: begin.previewId, previewGeneration: 1,
+    messages: [
+      { type: 'surdet-preview-trace-start', traceId: begin.previewId, generation: 1, sceneId: 'isolated' },
+      { type: 'surdet-preview-trace-event', traceId: begin.previewId, generation: 1, sequence: 0, coreEmitted: true,
+        presentationApplied: false, presentationBefore: {}, presentationAfter: {}, event: { kind: 'instruction',
+          source: { sceneId: 'isolated', index: 0, op: 'text', file: 'isolated.gal', line: 2, col: 1 } } },
+    ] } });
+  const observation = await f.read();
+  expect(observation).toMatchObject({ view: 'working-change', status: 'current', observation: {
+    content: { target: content.target, contentRevision: content.contentRevision }, events: [{ objectRef: expect.stringMatching(/^scene:isolated\/text:/) }] } });
+  const target = observation.observation.events[0].objectRef;
+  const inspect = await f.session.invoke('object.inspect', { objectRef: target });
+  expect(inspect.ok).toBe(true);
+  expect((await f.session.invoke('scene.create', { operationId: 'working-next', sceneId: 'next',
+    blocks: [{ kind: 'text', value: '修改后的新版本。' }] })).ok).toBe(true);
+  expect(await f.read()).toMatchObject({ view: 'working-change', status: 'stale' });
+  await expect(f.editor.workspace.previewContent({ ...dirty, target: content.target }))
+    .rejects.toMatchObject({ code: 'PREVIEW_CONTENT_CHANGED', message: expect.stringContaining('新修改') });
+  const reloaded = await f.editor.workspace.previewContent({ ...dirty, target: { kind: 'working-change', changeId } });
+  expect(reloaded.target).toMatchObject({ changeId, workingRevision: 2 });
+  expect(await fs.readFile(path.join(f.project, 'content/scenario/chapter/start.gal'), 'utf8')).toBe(sourceBefore);
+  await expect(fs.stat(path.join(f.project, 'content/scenario/isolated.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+  const snapshot = await f.editor.workspace.snapshot(dirty.workspaceSessionId);
+  expect(snapshot.diskBaseline.projectRevision).toBe(f.begin.expectedProjectRevision);
 }, 20_000);

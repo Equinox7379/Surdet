@@ -17,6 +17,7 @@ import {
   type ProjectSnapshot,
   type TextHasher,
   type VerifiedCompositionCandidate,
+  type ChangeRecord,
 } from '@surdet/authoring';
 import { NodeProjectStorage } from './node-project-storage.js';
 import { projectIdentityFromRoot } from './project-identity.js';
@@ -243,60 +244,7 @@ export class CompositionService {
    * 逐条 replayCompositionOperation；回读 produced object fingerprint；丢弃 session。
    */
   async dryRun(draft: IntegrationPlanDraft): Promise<CompositionDryRunReport> {
-    const errors: CompositionDryRunReport['errors'] = [];
-    const snapshot = await this.currentSnapshot();
-    if (snapshot.revision !== draft.expectedProjectRevision) {
-      return {
-        status: 'failed',
-        finalObjectFingerprints: {},
-        errors: [{ code: 'COMPOSITION_PLAN_STALE', message: `project revision 已离开计划基线：${draft.expectedProjectRevision}` }],
-      };
-    }
-    const repository = new InMemoryChangeRepository();
-    let session: Awaited<ReturnType<typeof beginChange>> | undefined;
-    try {
-      session = await beginChange(snapshot, repository);
-      for (let index = 0; index < draft.replayOperations.length; index += 1) {
-        const operation = draft.replayOperations[index]!;
-        try {
-          await replayCompositionOperation(session, operation, this.hasher);
-        } catch (error) {
-          const code = error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED';
-          const message = error instanceof Error ? error.message : String(error);
-          errors.push({ code, message, operationIndex: index });
-          break;
-        }
-      }
-    } finally {
-      // 内存 session 直接丢弃：不写 NodeChangeStore change、不写 source capsule、不写 project。
-      void session;
-    }
-
-    // 回读所有 produced object fingerprints：六类 composable object 共用唯一 resolver。
-    const finalObjectFingerprints: Record<string, string> = {};
-    if (session !== undefined && errors.length === 0) {
-      for (const entry of draft.provenance) {
-        try {
-          const fingerprint = await fingerprintWorkingObject(
-            session.record.workingFiles,
-            entry.targetObject,
-            this.hasher,
-          );
-          finalObjectFingerprints[entry.targetObject] = fingerprint.fingerprint;
-        } catch (error) {
-          errors.push({
-            code: error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED',
-            message: error instanceof Error ? error.message : String(error),
-          });
-          break;
-        }
-      }
-    }
-    return {
-      status: errors.length === 0 ? 'passed' : 'failed',
-      finalObjectFingerprints,
-      errors,
-    };
+    return (await materializeCompositionReplay(await this.currentSnapshot(), draft, this.hasher)).report;
   }
 
   /** composition.inspect：按 ID+SHA 读回封存 plan artifact（不重算比较）。 */
@@ -398,6 +346,39 @@ export class CompositionService {
     }, this.leases);
   }
 
+}
+
+/** One in-memory replay implementation for plan checks and immutable candidate viewing. */
+export async function materializeCompositionReplay(
+  snapshot: ProjectSnapshot,
+  draft: Pick<IntegrationPlanDraft, 'expectedProjectRevision' | 'replayOperations' | 'provenance'>,
+  hasher: TextHasher,
+): Promise<{ report: CompositionDryRunReport; record?: ChangeRecord }> {
+  const errors: CompositionDryRunReport['errors'] = [];
+  if (snapshot.revision !== draft.expectedProjectRevision) return { report: {
+    status: 'failed', finalObjectFingerprints: {},
+    errors: [{ code: 'COMPOSITION_PLAN_STALE', message: `project revision 已离开计划基线：${draft.expectedProjectRevision}` }],
+  } };
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  for (const [index, operation] of draft.replayOperations.entries()) {
+    try { await replayCompositionOperation(session, operation, hasher); }
+    catch (error) {
+      errors.push({ code: error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED',
+        message: error instanceof Error ? error.message : String(error), operationIndex: index });
+      break;
+    }
+  }
+  const finalObjectFingerprints: Record<string, string> = {};
+  if (errors.length === 0) for (const entry of draft.provenance) {
+    try { finalObjectFingerprints[entry.targetObject] = (await fingerprintWorkingObject(session.record.workingFiles, entry.targetObject, hasher)).fingerprint; }
+    catch (error) {
+      errors.push({ code: error instanceof AuthoringOperationError ? error.code : 'COMPOSITION_REPLAY_FAILED',
+        message: error instanceof Error ? error.message : String(error) });
+      break;
+    }
+  }
+  const report: CompositionDryRunReport = { status: errors.length === 0 ? 'passed' : 'failed', finalObjectFingerprints, errors };
+  return { report, ...(errors.length === 0 ? { record: session.record } : {}) };
 }
 
 import * as crypto from 'node:crypto';

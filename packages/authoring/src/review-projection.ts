@@ -214,7 +214,8 @@ function operationSourceFacts(
     {
       const blocks = operation.capabilityId === 'scene.create' ? arrayField(input, 'blocks')
         : stringField(patch, 'kind') === 'insertAfter' ? arrayField(patch, 'blocks')
-          : stringField(patch, 'kind') === 'replaceChoiceOption' ? [{ kind: 'choice', options: [patch?.['option']] }] : [];
+          : stringField(patch, 'kind') === 'replaceChoiceOption' ? [{ kind: 'choice', options: [patch?.['option']] }]
+            : stringField(patch, 'kind') === 'replaceChoiceGroup' ? [patch?.['choice']] : [];
       for (const block of blocks) {
         if (stringField(block, 'kind') !== 'choice') continue;
         for (const option of arrayField(block, 'options')) {

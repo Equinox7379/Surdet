@@ -541,6 +541,93 @@ describe('comparison review projection', () => {
     });
   });
 
+  it('shows complete choice groups and retained condition branches with structural object labels', () => {
+    const choice = buildReviewUnitPresentation('scene:alpha/choice:2@12345678-fedcba98', [operation(0, 'scene.patch', {
+      operationId: 'replace-choice-group',
+      sceneId: 'alpha',
+      patch: {
+        kind: 'replaceChoiceGroup',
+        target: 'hidden-choice',
+        expectedFingerprint: 'hidden-structure',
+        choice: {
+          kind: 'choice',
+          options: [
+            { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'left' } },
+            { label: '右侧', target: { kind: 'jump', value: 'right' } },
+          ],
+        },
+      },
+    }, 'scene:alpha/choice:2@12345678-fedcba98', 'after-choice')]);
+    expect(choice).toMatchObject({ actionLabel: '替换选择组', objectLabel: '场景 alpha 的选择组', completeness: 'content' });
+    expect(choice.highlights).toEqual([
+      '选项：左侧（显示条件：trust > 0；效果：set（trust、=、1）） → left',
+      '选项：右侧 → right',
+    ]);
+
+    const condition = buildReviewUnitPresentation('scene:alpha/condition:4@12345678-abcdef12', [operation(1, 'scene.patch', {
+      operationId: 'replace-condition-block',
+      sceneId: 'alpha',
+      patch: {
+        kind: 'replaceConditionBlock',
+        target: 'hidden-condition',
+        expectedFingerprint: 'hidden-structure',
+        condition: {
+          kind: 'condition',
+          branches: [
+            { kind: 'if', expr: 'trust > 0', sourceBranch: 'hidden-branch-if' },
+            { kind: 'else', sourceBranch: 'hidden-branch-else' },
+          ],
+        },
+      },
+    }, 'scene:alpha/condition:4@12345678-abcdef12', 'after-condition')]);
+    expect(condition).toMatchObject({ actionLabel: '替换条件块', objectLabel: '场景 alpha 的条件块', completeness: 'content' });
+    expect(condition.highlights).toEqual(['如果：trust > 0（保留原分支正文）', '否则（保留原分支正文）']);
+  });
+
+  it('projects all options from a complete choice group into v2 source facts', async () => {
+    const source = candidate('A');
+    const groupOperation = operation(4, 'scene.patch', {
+      operationId: 'op-choice-group',
+      sceneId: 'wave6_alpha',
+      patch: {
+        kind: 'replaceChoiceGroup',
+        target: 'hidden-choice',
+        expectedFingerprint: 'hidden-structure',
+        choice: {
+          kind: 'choice',
+          options: [
+            { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'left' } },
+            { label: '中间', target: { kind: 'jump', value: 'middle' } },
+            { label: '右侧', target: { kind: 'goto', value: 'right' } },
+          ],
+        },
+      },
+    }, 'scene:wave6_alpha', 'fp-choice-group');
+    const manifest = { ...source.manifest, operations: [...source.manifest.operations, groupOperation] };
+    const compared = comparison({
+      units: comparison().units.map((unit) => unit.unitId === 'unit-a-alpha'
+        ? { ...unit, operationSequences: [0, 4] }
+        : unit),
+    });
+    const projected = await buildComparisonReviewProjection({
+      reviewId: 'choice-group-facts',
+      reviewVersion: '2.0.0',
+      comparison: compared,
+      candidates: [
+        { ...source, manifest, composition: { ...source.composition, manifest } },
+        ...candidates.filter((item) => item.candidateId !== 'cand-A'),
+      ],
+      objects,
+    }, hasher);
+    if (projected.reviewVersion !== '2.0.0') throw new Error('v2 required');
+    const facts = projected.candidates.find((item) => item.candidateId === 'cand-A')!.verifiedFacts;
+    expect(facts.content.choices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: '左侧', target: 'left', action: 'replaceChoiceGroup', operationSequence: 4 }),
+      expect.objectContaining({ label: '中间', target: 'middle', action: 'replaceChoiceGroup', operationSequence: 4 }),
+      expect.objectContaining({ label: '右侧', target: 'right', action: 'replaceChoiceGroup', operationSequence: 4 }),
+    ]));
+  });
+
   it('bounds long typed content and reports every omitted fact', () => {
     const blocks = Array.from({ length: 12 }, (_, index) => ({
       kind: 'text' as const,

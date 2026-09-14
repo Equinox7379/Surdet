@@ -5,7 +5,7 @@ import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
 import { applyCharacterEnsure, applyCharacterRemove, applyEntrySceneSet, charactersFingerprint, entrySceneFingerprint } from '../src/config-operations.js';
-import { applyTimelineCreate, applyTimelinePatch } from '../src/timeline-operations.js';
+import { applyTimelineCreate, applyTimelinePatch, timelineFingerprint } from '../src/timeline-operations.js';
 import { createCandidateOperationPrePersistHook, resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from '../src/candidate-composition-guard.js';
 import { inspectCandidateCompositionReadiness } from '../src/candidate-readiness.js';
 import { stableStringify } from '../src/change-session.js';
@@ -258,6 +258,46 @@ describe('candidate operation-time facts', () => {
     expect(facts(change, 'entry-b').objectFingerprintAfter).toBe(sha(stableStringify('B')));
     expect(facts(change, 'entry-a').objectFingerprintAfter).toBe(sha(stableStringify('A')));
     expect(facts(change, 'entry-b').requiredObjects[0]!.objectRef).toBe('scene:B');
+    expect((await seal(change)).eligibility).toBe('ready');
+  });
+
+  it('records full timeline state predecessors for duration and track-target patches', async () => {
+    const change = await candidate();
+    const timelineId = 'authoring_timeline';
+    const created = await applyTimelineCreate(change, {
+      operationId: 'timeline-create', timelineId,
+      definition: {
+        version: 1, id: timelineId, durationMs: 100,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 10, easing: 'linear', action: 'fade', alpha: 0 }] }],
+      },
+    }, hasher);
+    const durationPatch = await applyTimelinePatch(change, {
+      operationId: 'timeline-duration', timelineId,
+      patch: { kind: 'setDuration', expectedFingerprint: created.fingerprint, durationMs: 50 },
+    }, hasher);
+    const afterDuration = JSON.parse(change.record.workingFiles['content/timelines/authoring_timeline.json']!);
+    const trackFingerprint = await timelineFingerprint(afterDuration.tracks[0], hasher);
+    await applyTimelinePatch(change, {
+      operationId: 'timeline-target', timelineId,
+      patch: { kind: 'setTrackTarget', expectedFingerprint: trackFingerprint, trackRef: 'timeline:authoring_timeline/track:0', target: 'screen:main' },
+    }, hasher);
+
+    expect(facts(change, 'timeline-duration').replayStatePreconditions).toEqual([
+      { objectRef: 'timeline:authoring_timeline', expectedFingerprint: created.fingerprint },
+    ]);
+    expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
+      { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: created.fingerprint },
+    ]);
+    expect(facts(change, 'timeline-target').replayStatePreconditions).toEqual([
+      { objectRef: 'timeline:authoring_timeline', expectedFingerprint: durationPatch.fingerprint },
+    ]);
+    expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
+      { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: durationPatch.fingerprint },
+    ]);
+    expect(JSON.parse(change.record.workingFiles['content/timelines/authoring_timeline.json']!)).toMatchObject({
+      durationMs: 50,
+      tracks: [{ kind: 'screen', target: 'screen:main' }],
+    });
     expect((await seal(change)).eligibility).toBe('ready');
   });
 

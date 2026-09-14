@@ -1,4 +1,12 @@
-import { DslError, pos, type AstBlock, type AstChoiceOption, type SceneAst } from './ast.js';
+import {
+  DslError,
+  pos,
+  type AstBlock,
+  type AstChoiceOption,
+  type AstIfBranch,
+  type AstIfBlock,
+  type SceneAst,
+} from './ast.js';
 import { parseInlineInstructions } from './lexer.js';
 import { validateExpr } from './expr-parser.js';
 import type { InstructionToken, TextToken, Token } from './token.js';
@@ -27,15 +35,17 @@ class TokenCursor {
   }
 }
 
-/** @if 嵌套深度上限（if/elif 链递归），防止病态输入触发 JS 栈溢出（RangeError）而非可定位的 DslError */
+/** @if 嵌套深度上限，防止病态输入触发 JS 栈溢出（RangeError）而非可定位的 DslError */
 const MAX_IF_NESTING = 200;
+/** 单个 @if 的分支上限；legacy else 投影会为每个分支建立一层旧 AST。 */
+const MAX_IF_BRANCHES = MAX_IF_NESTING;
 
 /**
  * 语法分析器：Token 流 → SceneAst（嵌套块）。
  * 结构校验：@if/@elif/@else/@endif 配对；@choice 必须有缩进选项行。
  */
 export class Parser {
-  /** @if 嵌套深度（#parseIfChain 递归计数，超限抛 S008 而非 RangeError） */
+  /** @if 嵌套深度（超限抛 S008 而非 RangeError） */
   #ifDepth = 0;
 
   parse(tokens: Token[], sceneId: string): SceneAst {
@@ -101,53 +111,176 @@ export class Parser {
   }
 
   /**
-   * 解析 if 链：@if expr ... (@elif expr ...)* (@else ...)? @endif
-   * elif 分支递归复用本方法（nested 为 else 中的嵌套 if）。
+   * 解析 if 链：@if expr ... (@elif expr ...)* (@else ...)? @endif。
+   *
+   * branches 保留源码中的每个分支与真实边界；then/else 继续提供旧的
+   * 递归形状，compiler 和已有调用方无需改变控制流语义。
    */
-  #parseIfChain(cursor: TokenCursor): AstBlock {
+  #parseIfChain(cursor: TokenCursor): AstIfBlock {
     this.#ifDepth++;
     try {
-      const head = cursor.next() as InstructionToken; // @if 或 @elif
+      const first = cursor.next() as InstructionToken; // @if
       if (this.#ifDepth > MAX_IF_NESTING) {
-        throw new DslError('S008', `@if 嵌套过深（超过 ${MAX_IF_NESTING} 层），请拆分场景或改用跳转`, head);
-      }
-      const expr = head.args.join(' ');
-      if (expr.length === 0) {
-        throw new DslError('S001', `@${head.name} 缺少条件表达式`, head);
-      }
-      try {
-        validateExpr(expr);
-      } catch {
-        throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, head);
+        throw new DslError('S008', `@if 嵌套过深（超过 ${MAX_IF_NESTING} 层），请拆分场景或改用跳转`, first);
       }
 
-      const then = this.#parseBlockList(cursor, ['else', 'elif', 'endif']);
-      const stopTok = cursor.peek();
+      const branches: AstIfBranch[] = [];
+      let head = first;
+      let kind: 'if' | 'elif' = 'if';
+      let expr = this.#validateConditionExpression(head);
+      let blocks = this.#parseIfBranchBlocks(cursor, ['else', 'elif', 'endif'], 0, head);
 
-      if (stopTok.type === 'instruction' && stopTok.name === 'else') {
+      for (;;) {
+        const stopTok = cursor.peek();
+        if (stopTok.type !== 'instruction'
+          || (stopTok.name !== 'else' && stopTok.name !== 'elif' && stopTok.name !== 'endif')) {
+          if (cursor.eof) {
+            throw new DslError('S003', `@${head.name} 缺少 @endif`, head, 'if 块未闭合');
+          }
+          throw new DslError('S003', `@${head.name} 后面缺少 @else/@elif/@endif`, head);
+        }
+
+        branches.push(this.#makeIfBranch(kind, expr, blocks, head, stopTok));
+        if (branches.length > MAX_IF_BRANCHES) {
+          throw new DslError(
+            'S008',
+            `@if 分支过多（超过 ${MAX_IF_BRANCHES} 个），请拆分条件结构或改用跳转`,
+            branches.at(-1)!.span.start,
+          );
+        }
+
+        if (stopTok.name === 'endif') {
+          cursor.next();
+          return {
+            kind: 'if',
+            expr: this.#validateConditionExpression(first),
+            then: branches[0]?.blocks ?? [],
+            else: this.#legacyElse(branches.slice(1)),
+            branches,
+            pos: first,
+            span: { start: first, end: stopTok },
+          };
+        }
+
         cursor.next();
-        const elseBlocks = this.#parseBlockList(cursor, ['endif']);
-        this.#expectEndif(cursor, head);
-        return { kind: 'if', expr, then, else: elseBlocks, pos: head };
-      }
+        if (stopTok.name === 'else') {
+          if (branches.length >= MAX_IF_BRANCHES) {
+            throw new DslError(
+              'S008',
+              `@if 分支过多（超过 ${MAX_IF_BRANCHES} 个），请拆分条件结构或改用跳转`,
+              stopTok,
+            );
+          }
+          const elseBlocks = this.#parseIfBranchBlocks(cursor, ['endif'], branches.length, stopTok);
+          const endif = cursor.peek();
+          if (endif.type !== 'instruction' || endif.name !== 'endif') {
+            this.#expectEndif(cursor, first);
+          }
+          branches.push(this.#makeIfBranch('else', null, elseBlocks, stopTok, endif));
+          cursor.next(); // @endif
+          return {
+            kind: 'if',
+            expr: this.#validateConditionExpression(first),
+            then: branches[0]?.blocks ?? [],
+            else: this.#legacyElse(branches.slice(1)),
+            branches,
+            pos: first,
+            span: { start: first, end: endif },
+          };
+        }
 
-      if (stopTok.type === 'instruction' && stopTok.name === 'elif') {
-        const nested = this.#parseIfChain(cursor);
-        return { kind: 'if', expr, then, else: [nested], pos: head };
+        // @elif becomes the next explicit branch. Its body is parsed with the
+        // same stop set, so nested if blocks remain owned by this branch.
+        head = stopTok;
+        if (branches.length >= MAX_IF_BRANCHES) {
+          throw new DslError(
+            'S008',
+            `@if 分支过多（超过 ${MAX_IF_BRANCHES} 个），请拆分条件结构或改用跳转`,
+            head,
+          );
+        }
+        kind = 'elif';
+        expr = this.#validateConditionExpression(head);
+        blocks = this.#parseIfBranchBlocks(cursor, ['else', 'elif', 'endif'], branches.length, head);
       }
-
-      if (stopTok.type === 'instruction' && stopTok.name === 'endif') {
-        cursor.next();
-        return { kind: 'if', expr, then, else: [], pos: head };
-      }
-
-      if (cursor.eof) {
-        throw new DslError('S003', `@${head.name} 缺少 @endif`, head, 'if 块未闭合');
-      }
-      throw new DslError('S003', `@${head.name} 后面缺少 @else/@elif/@endif`, head);
     } finally {
       this.#ifDepth--;
     }
+  }
+
+  #validateConditionExpression(head: InstructionToken): string {
+    const expr = head.args.join(' ');
+    if (expr.length === 0) {
+      throw new DslError('S001', `@${head.name} 缺少条件表达式`, head);
+    }
+    try {
+      validateExpr(expr);
+    } catch {
+      throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, head);
+    }
+    return expr;
+  }
+
+  /**
+   * 解析当前分支正文，并把同一条件链中此前的 @elif 数计入组合深度。
+   * 旧 parser 把每个 @elif 递归为一层 if；这里保留同一深度边界，避免
+   * 明确 branches 后让“长 elif 链 + 嵌套 if”绕过 S008，直到 compiler 栈溢出。
+   */
+  #parseIfBranchBlocks(
+    cursor: TokenCursor,
+    stops: readonly string[],
+    branchIndex: number,
+    head: InstructionToken,
+  ): AstBlock[] {
+    const chainDepth = this.#ifDepth;
+    const combinedDepth = chainDepth + branchIndex;
+    if (combinedDepth > MAX_IF_NESTING) {
+      throw new DslError(
+        'S008',
+        `@if/@elif 组合嵌套过深（超过 ${MAX_IF_NESTING} 层），请拆分条件结构或改用跳转`,
+        head,
+      );
+    }
+    this.#ifDepth = combinedDepth;
+    try {
+      return this.#parseBlockList(cursor, stops);
+    } finally {
+      this.#ifDepth = chainDepth;
+    }
+  }
+
+  #makeIfBranch(
+    kind: 'if' | 'elif' | 'else',
+    expr: string | null,
+    blocks: AstBlock[],
+    head: InstructionToken,
+    boundary: Token,
+  ): AstIfBranch {
+    const bodyStart = { file: head.file, line: head.line + 1, col: 1 };
+    return {
+      kind,
+      expr,
+      blocks,
+      span: { start: head, end: boundary },
+      bodySpan: { start: bodyStart, end: boundary },
+    };
+  }
+
+  /** 将显式分支投影回旧 compiler 使用的递归 else 结构。 */
+  #legacyElse(branches: readonly AstIfBranch[]): AstBlock[] {
+    const branch = branches[0];
+    if (branch === undefined) return [];
+    if (branch.kind === 'else') return branch.blocks;
+    const nested: AstIfBlock = {
+      kind: 'if',
+      expr: branch.expr!,
+      then: branch.blocks,
+      else: this.#legacyElse(branches.slice(1)),
+      branches: [...branches],
+      pos: branch.span.start,
+      span: { start: branch.span.start, end: branches.at(-1)!.span.end },
+    };
+    return [nested];
   }
 
   #expectEndif(cursor: TokenCursor, ifTok: Token): void {
@@ -168,7 +301,14 @@ export class Parser {
     const options: AstChoiceOption[] = [];
 
     for (;;) {
-      const tok = cursor.peek();
+      let tok = cursor.peek();
+      // Comments are transparent to the DSL parser, including between choice
+      // options. Consuming them here keeps the whole option run in one AST
+      // block; the authoring document retains the comment rows separately.
+      while (tok.type === 'comment') {
+        cursor.next();
+        tok = cursor.peek();
+      }
       if (tok.type !== 'text') break;
       if (!/^\s/.test(tok.raw)) break;
       cursor.next();
@@ -183,7 +323,7 @@ export class Parser {
         '选项行必须以空格/Tab 缩进，形如：选项文本 [if:expr] -> @goto label',
       );
     }
-    return { kind: 'choice', options, pos: choiceTok };
+    return { kind: 'choice', options, pos: choiceTok, span: { start: choiceTok, end: cursor.peek() } };
   }
 
   #parseChoiceOption(textTok: TextToken): AstChoiceOption {
@@ -265,6 +405,19 @@ export class Parser {
       rest.push(ins);
     }
 
-    return { label: labelText, when, inline: rest, jump, extraJumps, pos: pos0 };
+    return {
+      label: labelText,
+      when,
+      inline: rest,
+      jump,
+      extraJumps,
+      pos: pos0,
+      span: {
+        start: pos0,
+        // col is already offset by the line indent; raw.length includes that
+        // indent, so the end column is the physical line length plus one.
+        end: pos(textTok.file, textTok.line, textTok.raw.length + 1),
+      },
+    };
   }
 }

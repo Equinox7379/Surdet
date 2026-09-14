@@ -27,6 +27,16 @@ describe('Parser', () => {
     if (nested.kind !== 'if') throw new Error('expect nested if');
     expect(nested.expr).toBe('b > 1');
     expect(nested.else.map((b) => b.kind)).toEqual(['text']);
+    expect(top.branches.map((branch) => ({ kind: branch.kind, expr: branch.expr }))).toEqual([
+      { kind: 'if', expr: 'a > 1' },
+      { kind: 'elif', expr: 'b > 1' },
+      { kind: 'else', expr: null },
+    ]);
+    expect(top.span).toMatchObject({ start: { line: 1 }, end: { line: 7 } });
+    expect(top.branches.map((branch) => [branch.span.start.line, branch.span.end.line])).toEqual([
+      [1, 3], [3, 5], [5, 7],
+    ]);
+    expect(top.branches[1]!.bodySpan).toMatchObject({ start: { line: 4 }, end: { line: 5 } });
   });
 
   it('if 未闭合抛错', () => {
@@ -43,10 +53,54 @@ describe('Parser', () => {
     expect(c.options[1]!.when).toBe('hasSword');
     expect(c.options[1]!.inline.map((i) => i.name)).toEqual(['mod']);
     expect(c.options[2]!.jump).toBeNull();
+    expect(c.span).toMatchObject({ start: { line: 1 }, end: { line: 5 } });
+    expect(c.options[0]!.span).toMatchObject({
+      start: { line: 2 },
+      end: { line: 2, col: '  选项A -> @goto a'.length + 1 },
+    });
+  });
+
+  it('nested conditions keep independent branch boundaries', () => {
+    const src = [
+      '@if outer',
+      '// then comment',
+      '@if inner',
+      '内层真',
+      '@else',
+      '内层假',
+      '@endif',
+      '@elif fallback',
+      '后备',
+      '@else',
+      '兜底',
+      '@endif',
+    ].join('\n');
+    const ast = new Parser().parse(new Lexer().tokenize(src, 'nested.gal'), 's');
+    const outer = ast.blocks[0]!;
+    if (outer.kind !== 'if') throw new Error('expect outer if');
+    expect(outer.branches.map((branch) => [branch.kind, branch.span.start.line, branch.span.end.line])).toEqual([
+      ['if', 1, 8], ['elif', 8, 10], ['else', 10, 12],
+    ]);
+    const inner = outer.branches[0]!.blocks[0]!;
+    if (inner.kind !== 'if') throw new Error('expect inner if');
+    expect(inner.span).toMatchObject({ start: { line: 3 }, end: { line: 7 } });
+    expect(inner.branches.map((branch) => [branch.kind, branch.span.start.line, branch.span.end.line])).toEqual([
+      ['if', 3, 5], ['else', 5, 7],
+    ]);
   });
 
   it('choice 无缩进选项抛错', () => {
     expect(() => compile('@choice\n未缩进的选项')).toThrow(/S004/);
+  });
+
+  it('bare CR source keeps structural line positions', () => {
+    const ast = new Parser().parse(new Lexer().tokenize('@if flag\rA\r@else\rB\r@endif', 'cr.gal'), 's');
+    const condition = ast.blocks[0]!;
+    if (condition.kind !== 'if') throw new Error('expect if');
+    expect(condition.span).toMatchObject({ start: { line: 1 }, end: { line: 5 } });
+    expect(condition.branches.map((branch) => [branch.kind, branch.span.start.line, branch.span.end.line])).toEqual([
+      ['if', 1, 3], ['else', 3, 5],
+    ]);
   });
 });
 
@@ -181,6 +235,51 @@ describe('SceneCompiler', () => {
     for (let i = 0; i < depth; i++) src += '@endif\n';
     expect(() => compile(src)).toThrow(/S008/);
     expect(() => compile(src)).toThrow(/嵌套过深/);
+  });
+
+  it('单个 @if 的超长 elif 链抛可定位 S008（而非 legacy else 栈溢出）', () => {
+    const branchCount = 201;
+    const lines: string[] = [];
+    for (let i = 0; i < branchCount; i++) {
+      lines.push(`${i === 0 ? '@if' : '@elif'} flag_${i}`);
+      lines.push(`分支${i}`);
+    }
+    lines.push('@endif');
+    const source = lines.join('\n');
+
+    expect(() => compile(source)).toThrow(/S008/);
+    expect(() => compile(source)).toThrow(/分支过多/);
+    expect(() => compile(source)).toThrow(/ch01_01\.gal:401:1/);
+  });
+
+  it('组合 if/elif 深度超过 200 抛 S008，而不是 compiler RangeError', () => {
+    const layers = 40;
+    const branchesPerLayer = 120;
+    const lines: string[] = [];
+    for (let layer = 0; layer < layers; layer += 1) {
+      for (let branch = 0; branch < branchesPerLayer; branch += 1) {
+        lines.push(`${branch === 0 ? '@if' : '@elif'} layer_${layer}_${branch}`);
+        if (branch < branchesPerLayer - 1) lines.push(`正文_${layer}_${branch}`);
+      }
+    }
+    lines.push('最深正文');
+    for (let layer = layers - 1; layer >= 0; layer -= 1) lines.push('@endif');
+
+    expect(() => compile(lines.join('\n'))).toThrow(/S008/);
+    expect(() => compile(lines.join('\n'))).toThrow(/组合嵌套过深/);
+  });
+
+  it('单个条件链 200 个分支仍保持原有编译语义', () => {
+    const branchCount = 200;
+    const lines: string[] = [];
+    for (let i = 0; i < branchCount; i += 1) {
+      lines.push(`${i === 0 ? '@if' : '@elif'} flag_${i}`);
+      lines.push(`分支${i}`);
+    }
+    lines.push('@endif');
+    const scene = compile(lines.join('\n'));
+    expect(scene.instructions.some((instruction) => instruction.op === 'condJump')).toBe(true);
+    expect(scene.instructions.at(-1)?.op).toBe('end');
   });
 
   it('choice 选项内块指令抛 S007', () => {

@@ -21,6 +21,7 @@ function ruleBodiesMatching(css: string, selectorPattern: RegExp): string[] {
 }
 
 const editorSource = readEditorFile('src/panels/editor.ts');
+const scriptWorkbenchSource = readEditorFile('src/v4/script-workbench.ts');
 const scriptWorkspaceCss = readEditorFile('src/styles/script-workspace.css');
 
 describe('editor continuous manuscript contract', () => {
@@ -59,6 +60,12 @@ describe('editor continuous manuscript contract', () => {
     expect(editorSource.match(/\.oninput\s*=/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
     expect(editorSource).toMatch(/data-action['"]\s*,\s*['"]append-dialogue-line/);
     expect(editorSource.match(/state\.selectedObjectRef\s*=\s*null/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps complex choice conditions, effects, and targets in an immediately editable raw row', () => {
+    expect(scriptWorkbenchSource).toContain('显示条件、选中后效果和目标均保留在原始行中');
+    expect(scriptWorkbenchSource).toMatch(/const rawOnlyChoice = line\.kind === ['"]choice-option['"] && simpleChoice\(line\.raw\) === null/);
+    expect(scriptWorkbenchSource).toMatch(/advanced\.open\s*=\s*rawOnlyChoice\s*\|\|/);
   });
 
   it('styles selection as a complete manuscript surface with an explicit current marker', () => {

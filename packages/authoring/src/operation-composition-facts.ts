@@ -61,19 +61,33 @@ export async function buildTimelineOperationCompositionDraft(input: {
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),
     objectFingerprintAfter,
+    ...(input.beforeDefinition === undefined ? {} : {
+      replayStatePreconditions: [{
+        objectRef: primaryObject,
+        expectedFingerprint: await input.hasher.sha256(stableStringify(input.beforeDefinition)),
+      }],
+    }),
   };
 }
 
 export async function buildVariableOperationCompositionDraft(input: {
+  capabilityId?: 'variable.ensure' | 'variable.patch-initial';
   name: string; declaration: unknown; existing?: unknown; hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `variable:${input.name}`;
+  const capabilityId = input.capabilityId ?? 'variable.ensure';
   const objectFingerprintAfter = await input.hasher.sha256(stableStringify(input.declaration));
+  const objectFingerprintBefore = input.existing === undefined
+    ? undefined
+    : await input.hasher.sha256(stableStringify(input.existing));
   return {
-    capabilityId: 'variable.ensure', primaryObject, rawReferences: [],
+    capabilityId, primaryObject, rawReferences: [],
     producedObjects: [{ objectRef: primaryObject, disposition: input.existing === undefined ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
-    ...(input.existing === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.existing)) }),
+    ...(objectFingerprintBefore === undefined ? {} : { objectFingerprintBefore }),
     objectFingerprintAfter,
+    ...(capabilityId === 'variable.patch-initial' && objectFingerprintBefore !== undefined
+      ? { replayStatePreconditions: [{ objectRef: primaryObject, expectedFingerprint: objectFingerprintBefore }] }
+      : {}),
   };
 }
 

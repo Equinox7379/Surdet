@@ -1,4 +1,4 @@
-import { splitInstruction } from './scene-document.js';
+import { parseSceneStructure, serializeSceneDocument, splitInstruction } from './scene-document.js';
 import { buildAssetCatalog } from './asset-catalog.js';
 import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
@@ -35,6 +35,23 @@ function anonymousRef(revision: string, sceneId: string, kind: string, line: num
 function sourceOf(path: string, line: number, raw: string): { path: string; line: number; col: number; raw: string } {
   const offset = raw.length - raw.trimStart().length;
   return { path, line, col: offset + 1, raw };
+}
+
+function spanText(scene: ProjectSnapshotScene, span: { startLine: number; endLine: number }): string {
+  return serializeSceneDocument(
+    scene.document.slice(Math.max(0, span.startLine - 1), Math.max(span.startLine - 1, span.endLine)),
+    scene.document.find((line) => line.eol === '\r\n') === undefined ? '\n' : '\r\n',
+  );
+}
+
+function spanFingerprint(scene: ProjectSnapshotScene, span: { startLine: number; endLine: number }): string {
+  return fingerprint(spanText(scene, span));
+}
+
+function containsSpan(outer: { startLine: number; endLine: number }, inner: { startLine: number; endLine: number }): boolean {
+  return outer.endLine >= outer.startLine
+    && outer.startLine <= inner.startLine
+    && outer.endLine >= inner.endLine;
 }
 
 function sceneObject(scene: ProjectSnapshotScene): AuthoringObject {
@@ -105,6 +122,7 @@ function addSceneObjects(
   addObject(objects, sceneObject(scene), candidates);
   const sceneRef = `scene:${scene.id}`;
   let currentChoiceRef: string | null = null;
+  const lineObjects = new Map<number, AuthoringObject>();
   for (let index = 0; index < scene.document.length; index++) {
     const line = scene.document[index]!;
     const lineNumber = index + 1;
@@ -120,6 +138,7 @@ function addSceneObjects(
         referencedBy: [],
       };
       addObject(objects, object, candidates);
+      lineObjects.set(lineNumber, object);
       addLineReferences(objectRef, lineNumber);
       continue;
     }
@@ -150,14 +169,16 @@ function addSceneObjects(
         referencedBy: [],
       };
       addObject(objects, object, candidates);
+      lineObjects.set(lineNumber, object);
       currentChoiceRef = name === 'choice' ? objectRef : null;
       addLineReferences(objectRef, lineNumber);
       continue;
     }
+    if (line.kind === 'blank' || line.kind === 'comment') continue;
     currentChoiceRef = null;
     if (line.kind === 'text') {
       const textRef = anonymousRef(snapshot.revision, scene.id, 'text', lineNumber, line.raw);
-      addObject(objects, {
+      const object: AuthoringObject = {
         kind: 'text',
         objectRef: textRef,
         parentRef: sceneRef,
@@ -165,8 +186,126 @@ function addSceneObjects(
         fingerprint: fingerprint(line.raw),
         references: [],
         referencedBy: [],
-      }, candidates);
+      };
+      addObject(objects, object, candidates);
+      lineObjects.set(lineNumber, object);
       addLineReferences(textRef, lineNumber);
+    }
+  }
+
+  // Structural objects are derived from the same Core parser facts as compilation.
+  // Malformed scenes retain the line-level index above; structure facts are simply
+  // unavailable until the scene parses again.
+  let structureDocument: ReturnType<typeof parseSceneStructure> | undefined;
+  try {
+    structureDocument = parseSceneStructure(scene.file.text, scene.path, scene.id);
+  } catch {
+    structureDocument = undefined;
+  }
+  if (structureDocument === undefined) return;
+
+  for (const choice of structureDocument.choices) {
+    const choiceObject = lineObjects.get(choice.span.startLine);
+    if (choiceObject?.kind !== 'choice') continue;
+    const structureFingerprint = spanFingerprint(scene, choice.span);
+    choiceObject.details = {
+      structure: {
+        kind: 'choice',
+        fingerprint: structureFingerprint,
+        span: choice.span,
+        options: choice.options.map((option) => ({
+          index: option.index,
+          objectRef: lineObjects.get(option.span.startLine)?.objectRef,
+          label: option.label,
+          when: option.when,
+          span: option.span,
+        })),
+      },
+    };
+  }
+
+  const branchRefs = new Map<string, string>();
+  for (const condition of structureDocument.conditions) {
+    for (const branch of condition.branches) {
+      branchRefs.set(`${condition.span.startLine}:${branch.span.startLine}`, `scene:${scene.id}/condition-branch:${branch.span.startLine}@${snapshot.revision.slice(0, 8)}-${spanFingerprint(scene, branch.span)}`);
+    }
+  }
+  for (const condition of structureDocument.conditions) {
+    const rootFingerprint = spanFingerprint(scene, condition.span);
+    const conditionRef = `scene:${scene.id}/condition:${condition.span.startLine}@${snapshot.revision.slice(0, 8)}-${rootFingerprint}`;
+    const branches = condition.branches.map((branch, index) => {
+      const branchFingerprint = spanFingerprint(scene, branch.span);
+      const branchRef = branchRefs.get(`${condition.span.startLine}:${branch.span.startLine}`)!;
+      return {
+        index,
+        objectRef: branchRef,
+        kind: branch.kind,
+        expr: branch.expr,
+        fingerprint: branchFingerprint,
+        span: branch.span,
+        bodySpan: branch.bodySpan,
+      };
+    });
+    const enclosing = structureDocument.conditions
+      .filter((outer) => outer !== condition)
+      .flatMap((outer) => outer.branches.map((branch) => ({ outer, branch })))
+      .filter(({ branch }) => containsSpan(branch.bodySpan, condition.span))
+      .sort((left, right) => (
+        (left.branch.bodySpan.endLine - left.branch.bodySpan.startLine)
+        - (right.branch.bodySpan.endLine - right.branch.bodySpan.startLine)
+      ))[0];
+    const parentRef = enclosing === undefined
+      ? sceneRef
+      : branchRefs.get(`${enclosing.outer.span.startLine}:${enclosing.branch.span.startLine}`) ?? sceneRef;
+    const header = scene.document[condition.span.startLine - 1];
+    if (header === undefined) continue;
+    const rootObject: AuthoringObject = {
+      kind: 'condition',
+      objectRef: conditionRef,
+      parentRef,
+      source: sourceOf(scene.path, condition.span.startLine, header.raw),
+      fingerprint: rootFingerprint,
+      references: [],
+      referencedBy: [],
+      childRefs: [],
+      details: {
+        structure: {
+          kind: 'condition',
+          fingerprint: rootFingerprint,
+          span: condition.span,
+          branches,
+        },
+      },
+    };
+    addObject(objects, rootObject, candidates);
+    addLineReferences(conditionRef, condition.span.startLine);
+    for (const branch of condition.branches) {
+      const branchRef = branchRefs.get(`${condition.span.startLine}:${branch.span.startLine}`)!;
+      const branchLine = scene.document[branch.span.startLine - 1];
+      if (branchLine === undefined) continue;
+      const branchObject: AuthoringObject = {
+        kind: 'condition-branch',
+        objectRef: branchRef,
+        parentRef: conditionRef,
+        source: sourceOf(scene.path, branch.span.startLine, branchLine.raw),
+        fingerprint: spanFingerprint(scene, branch.span),
+        references: [],
+        referencedBy: [],
+        details: {
+          structure: {
+            kind: 'condition-branch',
+            fingerprint: spanFingerprint(scene, branch.span),
+            span: branch.span,
+            bodySpan: branch.bodySpan,
+            index: condition.branches.indexOf(branch),
+            conditionRef,
+            branchKind: branch.kind,
+            expr: branch.expr,
+          },
+        },
+      };
+      addObject(objects, branchObject, candidates);
+      addLineReferences(branchRef, branch.span.startLine);
     }
   }
 }
@@ -387,7 +526,7 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   const byRef = new Map(objects.map((object) => [object.objectRef, object]));
   for (const object of objects) {
     const parent = object.parentRef === undefined ? undefined : byRef.get(object.parentRef);
-    if (parent?.kind === 'scene' || parent?.kind === 'choice') {
+    if (parent?.kind === 'scene' || parent?.kind === 'choice' || parent?.kind === 'condition' || parent?.kind === 'condition-branch') {
       (parent.childRefs ??= []).push(object.objectRef);
     }
     const targets = candidates.get(object.objectRef) ?? [];

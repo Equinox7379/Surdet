@@ -14,12 +14,54 @@ export interface SceneAst {
   blocks: AstBlock[];
 }
 
+/**
+ * 源码范围。end 指向范围之后的结构标记（例如分支的下一个
+ * @elif/@else/@endif，条件块的 @endif），因此调用方可以无歧义地把
+ * 行范围转换为 [start.line, end.line)；对于完整条件块，span.end 是
+ * @endif 本身，便于把闭合标记纳入完整块范围。
+ */
+export interface SourceSpan {
+  start: SourcePos;
+  end: SourcePos;
+}
+
+export interface AstIfBranch {
+  kind: 'if' | 'elif' | 'else';
+  /** @else 没有表达式。 */
+  expr: string | null;
+  blocks: AstBlock[];
+  /** 分支头到下一个分支头或 @endif 之前的源码范围。 */
+  span: SourceSpan;
+  /** 分支正文范围；不包含分支头和下一个结构标记。 */
+  bodySpan: SourceSpan;
+}
+
+export interface AstIfBlock {
+  kind: 'if';
+  expr: string;
+  then: AstBlock[];
+  else: AstBlock[];
+  /** 保留显式 if/elif/else 分支事实，供 authoring 精确定位与编辑。 */
+  branches: AstIfBranch[];
+  pos: SourcePos;
+  /** 从 @if 到 @endif（end 指向 @endif）的完整源码范围。 */
+  span: SourceSpan;
+}
+
+export interface AstChoiceBlock {
+  kind: 'choice';
+  options: AstChoiceOption[];
+  pos: SourcePos;
+  /** 从 @choice 到下一条语义 token 的源码范围。 */
+  span: SourceSpan;
+}
+
 export type AstBlock =
   | { kind: 'label'; name: string; pos: SourcePos }
   | { kind: 'instr'; name: string; args: string[]; modifiers: Map<string, string>; pos: SourcePos }
   | { kind: 'text'; speaker: string | null; value: string; pos: SourcePos }
-  | { kind: 'if'; expr: string; then: AstBlock[]; else: AstBlock[]; pos: SourcePos }
-  | { kind: 'choice'; options: AstChoiceOption[]; pos: SourcePos };
+  | AstIfBlock
+  | AstChoiceBlock;
 
 export interface AstChoiceOption {
   /** 选项文本 */
@@ -34,6 +76,8 @@ export interface AstChoiceOption {
   extraJumps?: number;
   /** 选项行位置 */
   pos: SourcePos;
+  /** 选项行的源码范围（end 为该行结束列）。 */
+  span: SourceSpan;
 }
 
 export interface AstInline {

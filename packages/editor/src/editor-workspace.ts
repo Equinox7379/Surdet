@@ -2,7 +2,7 @@ import { AssetImportClientError, type EditorWorkspaceClient, type EditorWorkspac
   type EditorWorkspaceWrite, type EditorWorkspaceSnapshot } from './asset-import-client.js';
 import { diffProjectDiskBaselines, expectedShaFor, type ProjectDiskBaseline } from './project-disk-baseline.js';
 import { projectHumanWorkspace, type EditorWorkspaceFacts } from './human-workspace-projection.js';
-import type { PreviewPublishInput } from '@surdet/authoring';
+import type { PreviewPublishInput, PreviewContentTarget } from '@surdet/authoring';
 
 type WorkspaceFacts = Omit<EditorWorkspaceFacts, 'relayBound' | 'saving' | 'externalUpdateConflict'>;
 let readFacts: () => WorkspaceFacts = () => ({ sceneDirty: false, timelineDirty: false, configDirty: false,
@@ -77,6 +77,14 @@ export function editorPreviewPublisher(root: FileSystemDirectoryHandle | null) {
   if (current === null || current.root !== root || current.lost || current.baseline === null) return null;
   return {
     baseline: current.baseline,
+    sources: () => enqueue(current, async () => {
+      if (connection !== current) throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目已切换。', 'after-refresh');
+      return current.client.previewSources(stateFor(current));
+    }),
+    content: (target: PreviewContentTarget) => enqueue(current, async () => {
+      if (connection !== current) throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目已切换。', 'after-refresh');
+      return current.client.previewContent({ ...stateFor(current), target });
+    }),
     publish: (preview: PreviewPublishInput) => enqueue(current, async () => {
       if (connection !== current) throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目已切换，请重新播放。', 'after-refresh');
       return current.client.preview({ ...stateFor(current), preview });

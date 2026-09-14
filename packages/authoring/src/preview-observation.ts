@@ -1,15 +1,17 @@
 import { AuthoringOperationError, stableStringify } from './change-session.js';
 import { normalizeProjectPath } from './project-storage.js';
 import type { RuntimeTraceEvent } from './runtime-trace.js';
+import { parsePreviewPlaybackCheckpoint, type PreviewPlaybackCheckpoint } from './preview-replay.js';
 
 /** The existing Editor iframe protocol, shared with its bound observation relay. */
 export interface PreviewTraceStartMessage {
-  type: 'surdet-preview-trace-start'; traceId: string; generation: number; sceneId: string; label?: string;
+  type: 'surdet-preview-trace-start'; traceId: string; generation: number; sceneId: string; label?: string; seed?: number;
 }
 export interface PreviewTraceEventMessage {
   type: 'surdet-preview-trace-event'; traceId: string; generation: number; sequence: number;
   coreEmitted: true; presentationApplied: boolean; presentationBefore: unknown; presentationAfter: unknown;
   event: RuntimeTraceEvent;
+  playback?: PreviewPlaybackCheckpoint;
 }
 export interface PreviewTraceCompleteMessage {
   type: 'surdet-preview-trace-complete'; traceId: string; generation: number; status: 'passed' | 'failed';
@@ -17,13 +19,25 @@ export interface PreviewTraceCompleteMessage {
 }
 export type PreviewTraceMessage = PreviewTraceStartMessage | PreviewTraceEventMessage | PreviewTraceCompleteMessage;
 
-export const PREVIEW_CONFIG_PATHS = ['calendar', 'events', 'growth', 'achievements'].map(name => `content/config/${name}.json`);
+export const PREVIEW_CONFIG_PATHS = ['calendar', 'events', 'growth', 'achievements', 'gallery'].map(name => `content/config/${name}.json`);
 export const PREVIEW_MAX_EVENTS = 2_000;
 export interface PreviewFileFact { path: string; sha256: string }
 export interface PreviewSourceFacts { files: PreviewFileFact[]; assets: PreviewFileFact[] }
+/** The saved project remains the asset/baseline authority; isolated text is never written back by preview. */
+export type PreviewContentTarget = { kind: 'saved-project' }
+  | { kind: 'working-change'; changeId: string; workingRevision?: number }
+  | { kind: 'candidate'; changeId: string; capsuleId: string; artifactSha256: string }
+  | { kind: 'integration-result'; changeId: string; planId: string; planFingerprint: string; workingRevision: number };
+export interface PreviewContent {
+  target: PreviewContentTarget; contentRevision: string; projectRevision: string; coordinationRevision: string;
+  projectIdentity: string; title: string; files: Record<string, string>;
+}
+export interface PreviewContentOption { target: PreviewContentTarget; title: string }
 export interface PreviewBeginInput {
   action: 'begin'; previewId: string; previewGeneration: number; sceneId: string; label?: string;
   expectedProjectRevision: string; expectedCoordinationRevision: string; source: PreviewSourceFacts;
+  content?: { target: PreviewContentTarget; contentRevision: string };
+  seed?: number;
 }
 export type PreviewPublishInput = PreviewBeginInput
   | { action: 'append'; previewId: string; previewGeneration: number; messages: PreviewTraceMessage[] }
@@ -36,10 +50,12 @@ export interface PreviewObservation {
   startedAt: string; updatedAt: string; runtimeGeneration: number | null;
   state: 'starting' | 'running' | 'passed' | 'failed'; firstError?: string;
   source: PreviewSourceFacts; events: PreviewObservedEvent[];
+  content?: { target: PreviewContentTarget; contentRevision: string };
+  seed?: number;
 }
 export interface PreviewReadInput { previewId?: string; offset?: number; limit?: number }
 export interface PreviewReadResult {
-  view: 'saved-project'; kind: 'editor-preview'; status: 'current' | 'stale' | 'unavailable' | 'ambiguous';
+  view: PreviewContentTarget['kind']; kind: 'editor-preview'; status: 'current' | 'stale' | 'unavailable' | 'ambiguous';
   reasons: string[]; observation: PreviewObservation | null; eventCount: number; hasMore: boolean;
   availablePreviews: { previewId: string; workspaceSessionId: string; sceneId: string }[];
 }
@@ -61,15 +77,19 @@ export function normalizePreviewTraceMessage(value: unknown): PreviewTraceMessag
   const type = value['type']; const traceId = value['traceId']; const generation = value['generation'] as number;
   if (type === 'surdet-preview-trace-start') {
     if (typeof value['sceneId'] !== 'string' || !value['sceneId'].trim()) return null;
-    return { type, traceId, generation, sceneId: value['sceneId'], ...(typeof value['label'] === 'string' ? { label: value['label'] } : {}) };
+    if (value.seed !== undefined && !validSeed(value.seed)) return null;
+    return { type, traceId, generation, sceneId: value['sceneId'], ...(typeof value['label'] === 'string' ? { label: value['label'] } : {}),
+      ...(value.seed === undefined ? {} : { seed: value.seed as number }) };
   }
   if (type === 'surdet-preview-trace-event') {
     if (!Number.isSafeInteger(value['sequence']) || (value['sequence'] as number) < 0 || value['coreEmitted'] !== true
       || typeof value['presentationApplied'] !== 'boolean' || !('presentationBefore' in value) || !('presentationAfter' in value)
       || !isRuntimeTraceEvent(value['event'])) return null;
+    let playback: PreviewPlaybackCheckpoint | undefined;
+    try { if (value.playback !== undefined) playback = parsePreviewPlaybackCheckpoint(value.playback); } catch { return null; }
     return { type, traceId, generation, sequence: value['sequence'] as number, coreEmitted: true,
       presentationApplied: value['presentationApplied'], presentationBefore: value['presentationBefore'],
-      presentationAfter: value['presentationAfter'], event: value['event'] };
+      presentationAfter: value['presentationAfter'], event: value['event'], ...(playback === undefined ? {} : { playback }) };
   }
   if (type === 'surdet-preview-trace-complete') {
     if (!['passed', 'failed'].includes(String(value['status'])) || !Number.isSafeInteger(value['eventCount'])
@@ -104,6 +124,36 @@ function exact(value: unknown, keys: readonly string[]): Record<string, unknown>
 }
 const SHA = /^[0-9a-f]{64}$/;
 const PREVIEW_ID = /^preview-[0-9a-f-]{36}$/;
+function validSeed(value: unknown): boolean { return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 0xffffffff; }
+export function parsePreviewContentTarget(value: unknown): PreviewContentTarget {
+  if (!isRecord(value)) return invalid('试玩内容身份无效');
+  if (value.kind === 'saved-project') { exact(value, ['kind']); return { kind: 'saved-project' }; }
+  if (value.kind === 'working-change') {
+    exact(value, ['kind', 'changeId', 'workingRevision']);
+    if (typeof value.changeId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value.changeId)
+      || (value.workingRevision !== undefined && (!Number.isSafeInteger(value.workingRevision) || (value.workingRevision as number) < 0))) return invalid('隔离变更身份或版本无效');
+    return { kind: 'working-change', changeId: value.changeId,
+      ...(value.workingRevision === undefined ? {} : { workingRevision: value.workingRevision as number }) };
+  }
+  const id = (key: string): string => {
+    if (typeof value[key] !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value[key])) return invalid(`试玩 ${key} 无效`);
+    return value[key];
+  };
+  const sha = (key: string): string => {
+    if (typeof value[key] !== 'string' || !SHA.test(value[key])) return invalid(`试玩 ${key} 指纹无效`);
+    return value[key];
+  };
+  if (value.kind === 'candidate') {
+    exact(value, ['kind', 'changeId', 'capsuleId', 'artifactSha256']);
+    return { kind: 'candidate', changeId: id('changeId'), capsuleId: id('capsuleId'), artifactSha256: sha('artifactSha256') };
+  }
+  if (value.kind === 'integration-result') {
+    exact(value, ['kind', 'changeId', 'planId', 'planFingerprint', 'workingRevision']);
+    if (!Number.isSafeInteger(value.workingRevision) || (value.workingRevision as number) < 0) return invalid('组合结果版本无效');
+    return { kind: 'integration-result', changeId: id('changeId'), planId: id('planId'), planFingerprint: sha('planFingerprint'), workingRevision: value.workingRevision as number };
+  }
+  return invalid('不支持的试玩内容类型');
+}
 function facts(value: unknown, assets: boolean): PreviewFileFact[] {
   if (!Array.isArray(value) || value.length > 20_000) return invalid('预览来源清单无效');
   const seen = new Set<string>();
@@ -135,12 +185,23 @@ export function parsePreviewPublishInput(value: unknown): PreviewPublishInput {
     return { action: 'append', previewGeneration, previewId: value.previewId, messages: messages as PreviewTraceMessage[] };
   }
   if (value.action !== 'begin') return invalid('未知预览观察操作');
-  exact(value, ['action', 'previewId', 'previewGeneration', 'sceneId', 'label', 'expectedProjectRevision', 'expectedCoordinationRevision', 'source']);
+  exact(value, ['action', 'previewId', 'previewGeneration', 'sceneId', 'label', 'expectedProjectRevision', 'expectedCoordinationRevision', 'source', 'content', 'seed']);
   if (typeof value.sceneId !== 'string' || !value.sceneId.trim() || (value.label !== undefined && typeof value.label !== 'string')
     || typeof value.expectedProjectRevision !== 'string' || !SHA.test(value.expectedProjectRevision)
     || typeof value.expectedCoordinationRevision !== 'string' || !SHA.test(value.expectedCoordinationRevision)) return invalid('预览入口或内容版本无效');
   const source = exact(value.source, ['files', 'assets']);
+  if (value.seed !== undefined && !validSeed(value.seed)) return invalid('试玩随机种子无效');
+  let content: PreviewBeginInput['content'];
+  if (value.content !== undefined) {
+    const parsed = exact(value.content, ['target', 'contentRevision']);
+    if (typeof parsed.contentRevision !== 'string' || !SHA.test(parsed.contentRevision)) return invalid('试玩内容版本无效');
+    const target = parsePreviewContentTarget(parsed.target);
+    if (target.kind === 'working-change' && target.workingRevision === undefined) return invalid('发布观察必须固定隔离工作版本');
+    content = { target, contentRevision: parsed.contentRevision };
+  }
   return { action: 'begin', previewId: value.previewId, previewGeneration, sceneId: value.sceneId,
     expectedProjectRevision: value.expectedProjectRevision, expectedCoordinationRevision: value.expectedCoordinationRevision,
-    ...(value.label === undefined ? {} : { label: value.label as string }), source: { files: facts(source.files, false), assets: facts(source.assets, true) } };
+    ...(value.label === undefined ? {} : { label: value.label as string }), ...(content === undefined ? {} : { content }),
+    ...(value.seed === undefined ? {} : { seed: value.seed as number }),
+    source: { files: facts(source.files, false), assets: facts(source.assets, true) } };
 }
