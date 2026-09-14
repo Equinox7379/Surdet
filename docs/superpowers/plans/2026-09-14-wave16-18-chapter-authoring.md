@@ -81,3 +81,30 @@ Agent 随后以 replaceChoiceGroup/replaceConditionBlock 修改第二选择组�
 最终补修定向执行：Editor 的 preview-timeline-replay、preview-replay-runtime、preview-checkpoints 三份测试共 10 项通过；Editor 类型检查及新鲜构建通过，仍保留原分块大小提示。前述 Authoring、CLI、Core、Renderer 结果按各自范围沿用，未重跑全仓或历史波次。浏览器脚本的分页上限、跨连接函数绑定、就绪等待和持久进度字段等错误已在测试设施内纠正，失败输出保留，不计为产品回归通过。
 
 **本批次本地技术目标已完成，交云端独立复核。** 阶段实现 `98d3917` 已推送，最终补修与本记录按长期授权一并普通提交、推送，具体提交由 Git 确认。没有 Owner 体验记录，也不把等待体验作为停止点。九月 CI 未启用，未发行或部署，未修改正式作品；原生目录选择器、中文输入法维持既有暂缓边界。截图、测试项目、原始日志和浏览器 profile 仅留 D 盘，不加入正式提交。
+
+### 云端反馈后的两处预览边界补修（2026-09-14）
+
+首次最终交付为 `74751e301bb4b8462469e62643bf838898def4ac`。Owner 转交云端复审及桌面 `Surdet_Wave16-18_preview_boundaries.patch` 后，主代理核对本地和远端均仍是该提交，沿原目标及普通提交、推送授权完成定向续接。本节是当前补修状态；云端保留主体实现、暂缓最终 PASS 的判断如实保留，不代签复审，也不重新验收旧波次。
+
+补修前先运行仓库内反例：真实 Core 驱动的无选择循环、重复子场景调用、带选择循环，均在记录第三次后回放到了第一次，三项均出现 `expected 1 to be 3`；旧记录和新字段解析另有两项红灯。真实服务、磁盘、HTTP、客户端和 MCP 夹具中，向 READY integration 通过公开创作入口追加独立场景后，预览请求错误成功并返回 `unplanned.gal`。这些本机红灯分别保存在 `editor-red-behavior.log` 和 `cli-red.log`，没有用云端隔离执行替代。
+
+生产修改保持在同一调用链：
+
+- `PreviewReplayController` 从实际 Core 轨迹记录目标访问次数，attach 新解释器时重置计数；回到目标同时核对源码身份、访问次数和已消费的选择路径。共享检查点解析、公开输出 schema、持久检查点一起保留 `targetVisit`。旧记录可读，但缺少有效访问次数时停止自动续接，不猜成第一次。
+- `PreviewContentService` 对照封存计划的重放操作编号，沿用组合执行已有的“计划外操作拒绝”约束。返回 `PREVIEW_OBSERVATION_STALE` 时不改计划、操作记录或来源文件；已有正式结果审阅目录仍经过原版本、目录树和素材检查。
+- 实际浏览器还确认同一旧记录边界的提示被覆盖：控制器给出停止原因，随后 `preview.ts` 的通用“预览已启动”立即替换它。补齐启动状态接线，已有回放诊断优先保留；这使生产修改比候选补丁多涉及一个文件，没有新增运行器或恢复机制。修前截图和失败输出保留。
+
+使用新鲜 Authoring/CLI 构建的定向结果：
+
+| 范围 | 本机结果 |
+| --- | --- |
+| Authoring：preview-replay、capability-registry、integration-execution | 3 文件 37 项通过。 |
+| CLI：preview-observation、preview-sealed-result、agent-port-output-contract | 3 文件 14 项通过；新字段实际经过 HTTP 发布、MCP 输出 schema 和 CLI 子进程读取，计划外编辑拒绝后原记录不变、来源磁盘未写入。 |
+| Editor：preview-replay-visits、preview-replay-runtime、preview-checkpoints、preview-timeline-replay、preview-runtime-contract、preview-runtime-lifecycle | 最后定向复验 6 文件 18 项通过，覆盖访问次数、旧记录、原表现输入、持久记录和重载边界；包含既有静态合同检查，不作为视觉证据。 |
+| 类型检查与构建 | Authoring、CLI、Editor 均通过；补齐启动提示后重新完成 Editor 类型检查与构建。既有大分块提示保留，未调整阈值。 |
+
+本轮原始材料位于 `<local-path>`。最终浏览器结果为 `browser-aKQ93R/result.json`：在隔离的正常绑定项目，点击画面走到第三次，再点击“回到上次位置”，真实画面仍显示“第3次”，新预览的公开 MCP 观察包含三次实际文本事件和相同目标检查点。去掉本测试检查点的访问次数字段后，页面保持普通入口并持续显示停止原因。随后先正常播放 READY 组合，再通过公开 MCP 追加计划外场景，刷新并明确选择接口新返回的工作版本，HTTP 返回结构化拒绝；页面说明旧画面不代表新版本，原操作记录、来源剧本和配置不变，来源目录没有新增场景。最终运行页面错误为空。
+
+主代理亲自查看 `third-visit-replayed.png`、`legacy-stopped.png`、`ready-unplanned-refused.png`，均位于上述最终浏览器目录。验证沿用 NodeFsBridge 读取真实磁盘及原 Editor 预览运行器；不是原生目录选择器或 Owner 体验，没有批准、写回正式作品。前期脚本读取错状态字段、未聚焦 iframe 的按键、与发布队列争用项目租约、以及混淆列表中保留的旧版本，分别保留失败材料；最终按真实发布队列完成后读取，并按接口返回的新版本定位。提示覆盖则是本次实际发现并修复的产品接线问题，没有混写为脚本错误。
+
+**两处边界及相关停止提示的本机补修已完成，按既有授权普通提交、推送后等待云端定向复审。** 三结局、CG、玩家重开读档和明确写回等既有结果继续沿用，未重新执行整套验收或 Q1。本任务浏览器与 4464 测试服务已关闭，Owner 页面未动；CI 工作流只读核实仍为 `disabled_manually`。最终提交身份由 Git 确认，截图、日志和临时测试项目不进入提交。

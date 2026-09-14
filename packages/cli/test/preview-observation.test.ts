@@ -95,9 +95,17 @@ async function fixture() {
 it('uses real binding, HTTP, client, disk storage and MCP schemas; resolves source and never manufactures commit evidence', async () => {
   const f = await fixture();
   expect(await f.read()).toMatchObject({ status: 'unavailable', observation: null });
+  f.begin.seed = 0;
+  const startedMessage = f.messages[0];
+  const eventMessage = f.messages[1];
+  if (startedMessage?.type !== 'surdet-preview-trace-start' || eventMessage?.type !== 'surdet-preview-trace-event') throw new Error('fixture trace shape changed');
+  startedMessage.seed = 0;
+  eventMessage.playback = { seed: 0, sceneId: 'start', choices: [], targetVisit: 1,
+    target: { sceneId: 'start', kind: 'text', anchor: null, fingerprint: sha('凛：开始。') } };
   await f.publish();
   await f.append();
   await f.append(); // A response-loss retry preserves the same facts and identity.
+  expect((await f.read()).observation.events[0].playback).toEqual(eventMessage.playback);
   const observed = await f.read({ limit: 1 });
   expect(observed).toMatchObject({ status: 'current', eventCount: 1, hasMore: false,
     observation: { previewId: f.begin.previewId, projectRevision: f.begin.expectedProjectRevision,
@@ -105,10 +113,12 @@ it('uses real binding, HTTP, client, disk storage and MCP schemas; resolves sour
   expect((await f.read({ offset: 1 })).observation.events).toEqual([]);
   const native = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/index.js', import.meta.url)),
     'runtime', 'read-preview', '--project', f.project, '--input', '-', '--json'], {
-    encoding: 'utf8', env: process.env, input: JSON.stringify({ previewId: f.begin.previewId, offset: 1 }),
+    encoding: 'utf8', env: process.env, input: JSON.stringify({ previewId: f.begin.previewId, offset: 0 }),
   });
   expect(native.status, native.stdout || native.stderr).toBe(0);
-  expect(JSON.parse(native.stdout)).toMatchObject({ ok: true, result: { status: 'current', observation: { previewId: f.begin.previewId, events: [] } } });
+  expect(JSON.parse(native.stdout)).toMatchObject({ ok: true, result: { status: 'current', observation: {
+    previewId: f.begin.previewId, events: [{ playback: eventMessage.playback }],
+  } } });
   await f.session.invoke('change.begin', { intent: 'targeted repair', acceptanceCriteria: ['preserve preview facts'], initiator: 'external-agent' });
   expect((await f.read()).view).toBe('saved-project');
   const description = await f.session.describe();
@@ -180,6 +190,25 @@ it('opens the same READY integration without approving or applying, rejects subs
   if (target.kind !== 'integration-result') throw new Error('result missing');
   await expect(f.editor.workspace.previewContent({ ...f.workspace, target: { ...target, planFingerprint: '0'.repeat(64) } })).rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
   await expect(fs.stat(path.join(f.project, 'content/scenario/first.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+  // Existing authoring can append to the OPEN integration. It must not then
+  // be presented as the sealed plan result just because planned objects match.
+  const repair = await openAgentPortSession({ projectRoot: f.project, policy: 'stage', resumeChangeId: executed.changeId });
+  try {
+    const extra = await repair.invoke('scene.create', {
+      operationId: 'outside-sealed-plan', sceneId: 'unplanned', blocks: [{ kind: 'text', value: '不属于计划的额外场景。' }],
+    });
+    expect(extra.ok, JSON.stringify(extra)).toBe(true);
+  } finally { await repair.close(); }
+  const { NodeChangeStore } = await import('../src/authoring/node-change-store.js');
+  const beforeRejection = (await NodeChangeStore.openByChangeId(executed.changeId, f.dataRoot))!.record;
+  const changedTarget = (await f.editor.workspace.previewSources(f.workspace))
+    .find(option => option.target.kind === 'integration-result' && option.target.changeId === executed.changeId)!.target;
+  await expect(f.editor.workspace.previewContent({ ...f.workspace, target: changedTarget }))
+    .rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+  expect((await NodeChangeStore.openByChangeId(executed.changeId, f.dataRoot))!.record).toEqual(beforeRejection);
+  expect(await f.read()).toMatchObject({ view: 'integration-result', status: 'stale' });
+  await expect(fs.stat(path.join(f.project, 'content/scenario/unplanned.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
   await fs.appendFile(path.join(f.project, 'content/scenario/chapter/start.gal'), '// 外部修改\n');
   expect(await f.read()).toMatchObject({ view: 'integration-result', status: 'stale' });
 }, 30_000);

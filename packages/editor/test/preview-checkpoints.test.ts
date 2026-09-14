@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../src/preview-checkpoints.js';
-const checkpoint = { seed: 19, sceneId: 'start', choices: [], target: { sceneId: 'start', kind: 'text' as const, anchor: null, fingerprint: 'a'.repeat(64) } };
+const checkpoint = { seed: 19, sceneId: 'start', choices: [], target: { sceneId: 'start', kind: 'text' as const, anchor: null, fingerprint: 'a'.repeat(64) }, targetVisit: 3 };
 afterEach(() => vi.unstubAllGlobals());
 it('continues a working change across revisions while keeping projects, candidates and entry points separate', () => {
   const values = new Map<string, string>();

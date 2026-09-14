@@ -50,6 +50,7 @@ function cloneCheckpoint(checkpoint: PreviewPlaybackCheckpoint): PreviewPlayback
     ...(checkpoint.label === undefined ? {} : { label: checkpoint.label }),
     choices: checkpoint.choices.map(cloneChoice),
     target: checkpoint.target === null ? null : cloneSource(checkpoint.target),
+    ...(checkpoint.targetVisit === undefined ? {} : { targetVisit: checkpoint.targetVisit }),
   };
 }
 
@@ -80,6 +81,8 @@ export class PreviewReplayController {
   #disposed = false;
   #scheduled = false;
   #currentPoint: PreviewReplayPoint | null = null;
+  #currentVisit = 0;
+  readonly #visits = new Map<PreviewReplayPoint, number>();
   #availableOptions: readonly PreviewChoiceOption[] | null = null;
   #recordedChoices: PreviewReplayChoice[] = [];
   #replayChoiceIndex = 0;
@@ -118,6 +121,9 @@ export class PreviewReplayController {
         } else if (!targetPoint.unique) {
           eligible = false;
           this.#notify('试玩续接已停止：保存的目标源点在当前剧本中不唯一，已保持正常入口。');
+        } else if (!Number.isSafeInteger(this.#replay.targetVisit) || (this.#replay.targetVisit ?? 0) < 1) {
+          eligible = false;
+          this.#notify('试玩续接已停止：原记录缺少有效的目标访问次数，请正常播放后重新记录。');
         }
       }
     }
@@ -136,6 +142,8 @@ export class PreviewReplayController {
     this.#input = input;
     this.#scheduled = false;
     this.#currentPoint = null;
+    this.#currentVisit = 0;
+    this.#visits.clear();
     this.#availableOptions = null;
     this.#recordedChoices = [];
     this.#replayChoiceIndex = 0;
@@ -152,6 +160,8 @@ export class PreviewReplayController {
     if (event.kind === 'instruction') {
       if (event.source.op === 'text' || event.source.op === 'choice') {
         this.#currentPoint = this.#pointAt(event.source.sceneId, event.source.line);
+        this.#currentVisit = this.#currentPoint === null ? 0 : (this.#visits.get(this.#currentPoint) ?? 0) + 1;
+        if (this.#currentPoint !== null) this.#visits.set(this.#currentPoint, this.#currentVisit);
         this.#availableOptions = null;
       } else {
         this.#currentPoint = null;
@@ -182,6 +192,7 @@ export class PreviewReplayController {
       ...(this.#label === undefined ? {} : { label: this.#label }),
       choices: this.#recordedChoices.map(cloneChoice),
       target: !this.#recordingValid || this.#currentPoint === null ? null : cloneSource(this.#currentPoint.source),
+      ...(!this.#recordingValid || this.#currentPoint === null ? {} : { targetVisit: this.#currentVisit }),
     };
   }
 
@@ -297,7 +308,8 @@ export class PreviewReplayController {
       this.#disableAuto('当前源点身份不唯一，无法安全自动续接。');
       return;
     }
-    if (this.#replay.target !== null && samePreviewReplaySource(point.source, this.#replay.target)) {
+    if (this.#replay.target !== null && samePreviewReplaySource(point.source, this.#replay.target)
+      && this.#currentVisit === this.#replay.targetVisit) {
       if (this.#replayChoiceIndex === this.#replay.choices.length) {
         this.#autoEnabled = false;
         this.#notify('试玩已回到保存的目标源点，自动续接已停止。');

@@ -9,6 +9,8 @@ export interface PreviewReplayChoice { source: PreviewReplaySource; optionFinger
 export interface PreviewPlaybackCheckpoint {
   seed: number; sceneId: string; label?: string;
   choices: PreviewReplayChoice[]; target: PreviewReplaySource | null;
+  /** Actual visit number of this source point; older records remain readable but cannot be replayed. */
+  targetVisit?: number;
 }
 export interface PreviewReplayPoint {
   source: PreviewReplaySource; unique: boolean;
@@ -70,10 +72,12 @@ export function parsePreviewPlaybackCheckpoint(value: unknown): PreviewPlaybackC
       || (item.anchor !== null && typeof item.anchor !== 'string') || typeof item.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(item.fingerprint)) return invalid();
     return item as unknown as PreviewReplaySource;
   };
-  const input = object(value, ['seed', 'sceneId', 'label', 'choices', 'target']);
+  const input = object(value, ['seed', 'sceneId', 'label', 'choices', 'target', 'targetVisit']);
   if (!Number.isSafeInteger(input.seed) || (input.seed as number) < 0 || (input.seed as number) > 0xffffffff
     || typeof input.sceneId !== 'string' || !input.sceneId || (input.label !== undefined && typeof input.label !== 'string')
     || !Array.isArray(input.choices) || input.choices.length > 256) return invalid();
+  if (input.targetVisit !== undefined && (input.target === null || !Number.isSafeInteger(input.targetVisit)
+    || (input.targetVisit as number) < 1)) return invalid();
   const choices = input.choices.map(raw => {
     const item = object(raw, ['source', 'optionFingerprint']);
     if (typeof item.optionFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(item.optionFingerprint)) return invalid();
@@ -82,5 +86,6 @@ export function parsePreviewPlaybackCheckpoint(value: unknown): PreviewPlaybackC
     return { source: ref, optionFingerprint: item.optionFingerprint };
   });
   return { seed: input.seed as number, sceneId: input.sceneId, ...(input.label === undefined ? {} : { label: input.label as string }),
-    choices, target: input.target === null ? null : source(input.target) };
+    choices, target: input.target === null ? null : source(input.target),
+    ...(input.targetVisit === undefined ? {} : { targetVisit: input.targetVisit as number }) };
 }

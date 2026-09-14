@@ -616,6 +616,7 @@ const previewSeedSchema = { type: 'integer', minimum: 0, maximum: 4294967295 };
 const previewPlaybackSchema = strictObject({ seed: previewSeedSchema, sceneId: stringSchema, label: stringSchema,
   choices: { type: 'array', maxItems: 256, items: strictObject({ source: previewReplaySourceSchema, optionFingerprint: importShaSchema }, ['source', 'optionFingerprint']) },
   target: { oneOf: [previewReplaySourceSchema, nullSchema] },
+  targetVisit: { type: 'integer', minimum: 1, maximum: 9007199254740991 },
 }, ['seed', 'sceneId', 'choices', 'target']);
 const previewObservationSchema = strictObject({
   previewId: stringSchema, previewGeneration: integerSchema, workspaceSessionId: stringSchema, projectIdentity: stringSchema,

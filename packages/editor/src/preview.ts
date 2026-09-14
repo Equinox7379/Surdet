@@ -1097,16 +1097,22 @@ async function load(p: LoadPayload): Promise<void> {
     });
     interp.setRandomSource(createSeededRandomSource(p.seed!));
     const sources = await buildPreviewReplaySources(p.scenes, { sha256: previewTextHash });
+    let replayReportedStatus = false;
     replayController = new PreviewReplayController({ sources, seed: p.seed!, sceneId: p.sceneId,
       ...(p.startLabel === undefined ? {} : { label: p.startLabel }),
       ...(p.replay === undefined ? {} : { replay: parsePreviewPlaybackCheckpoint(p.replay) }),
-      onStatus: message => postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message, sceneId: p.sceneId }),
+      onStatus: message => {
+        replayReportedStatus = true;
+        postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message, sceneId: p.sceneId });
+      },
     });
     replayController.attach(interp, controller);
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
-    postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
+    if (!replayReportedStatus) {
+      postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
+    }
   } catch (err) {
     // 构造新解释器后仍可能在 start() 阶段失败；半成品会话同样不得继续响应输入。
     invalidatePreviewSession();
