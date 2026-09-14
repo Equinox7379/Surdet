@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "id": "tm_night_archive",
+  "durationMs": 1800,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "set",
+          "key": "post_office"
+        }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:coat",
+      "cues": [
+        {
+          "atMs": 100,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "show",
+          "expression": "hesitant",
+          "position": "left"
+        },
+        {
+          "atMs": 900,
+          "durationMs": 240,
+          "easing": "outCubic",
+          "action": "expression",
+          "expression": "normal"
+        }
+      ]
+    },
+    {
+      "kind": "camera",
+      "cues": [
+        {
+          "atMs": 260,
+          "durationMs": 1100,
+          "easing": "inOutSine",
+          "action": "pan",
+          "x": -16,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "kind": "screen",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "fade",
+          "alpha": 1
+        },
+        {
+          "atMs": 80,
+          "durationMs": 700,
+          "easing": "inOutSine",
+          "action": "fade",
+          "alpha": 0
+        }
+      ]
+    }
+  ]
+}

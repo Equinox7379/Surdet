@@ -55,6 +55,21 @@ describe('character validation wiring', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('distinguishes an unavailable avatar catalog from a known empty catalog', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': goodConfig,
+      'content/scenario/agent_probe.gal': agentProbeText,
+    }), hasher);
+    const unavailable = validateSnapshot(snapshot);
+    expect(unavailable.issues.filter((issue) => issue.code === 'ASSET_UNRESOLVED')).toEqual([]);
+    const empty = validateSnapshot(snapshot, undefined, { assetCatalog: buildAssetCatalog([]) });
+    const missing = empty.issues.filter((issue) => issue.code === 'ASSET_UNRESOLVED');
+    expect(missing).toHaveLength(2);
+    expect(missing.map((issue) => issue.text)).toEqual(expect.arrayContaining([
+      expect.stringContaining("角色 'lynn'"), expect.stringContaining("角色 'nova'"),
+    ]));
+  });
+
   it('reports malformed character tables as errors', async () => {
     const snapshot = await loadProjectSnapshot(storageFor({
       'game.config.json': JSON.stringify({ entryScene: 'agent_probe', characters: { bad: { avatar: 'x' } } }),

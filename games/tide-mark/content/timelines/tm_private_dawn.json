@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "id": "tm_private_dawn",
+  "durationMs": 1600,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "set",
+          "key": "lighthouse_dawn"
+        }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:coat",
+      "cues": [
+        {
+          "atMs": 100,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "show",
+          "expression": "normal",
+          "position": "right"
+        },
+        {
+          "atMs": 1000,
+          "durationMs": 220,
+          "easing": "outCubic",
+          "action": "expression",
+          "expression": "smile"
+        }
+      ]
+    },
+    {
+      "kind": "camera",
+      "cues": [
+        {
+          "atMs": 250,
+          "durationMs": 1000,
+          "easing": "inOutSine",
+          "action": "pan",
+          "x": 18,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "kind": "screen",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "fade",
+          "alpha": 1
+        },
+        {
+          "atMs": 50,
+          "durationMs": 650,
+          "easing": "inOutSine",
+          "action": "fade",
+          "alpha": 0
+        }
+      ]
+    }
+  ]
+}

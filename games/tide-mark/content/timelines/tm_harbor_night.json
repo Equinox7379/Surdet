@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "id": "tm_harbor_night",
+  "durationMs": 1900,
+  "tracks": [
+    {
+      "kind": "background",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "set",
+          "key": "harbor"
+        }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "target": "lynn:coat",
+      "cues": [
+        {
+          "atMs": 100,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "show",
+          "expression": "normal",
+          "position": "left"
+        },
+        {
+          "atMs": 860,
+          "durationMs": 200,
+          "easing": "outCubic",
+          "action": "expression",
+          "expression": "hesitant"
+        }
+      ]
+    },
+    {
+      "kind": "camera",
+      "cues": [
+        {
+          "atMs": 300,
+          "durationMs": 1200,
+          "easing": "inOutSine",
+          "action": "pan",
+          "x": -24,
+          "y": 0
+        },
+        {
+          "atMs": 1300,
+          "durationMs": 260,
+          "easing": "outCubic",
+          "action": "shake",
+          "strength": 4
+        }
+      ]
+    },
+    {
+      "kind": "screen",
+      "cues": [
+        {
+          "atMs": 0,
+          "durationMs": 0,
+          "easing": "linear",
+          "action": "fade",
+          "alpha": 1
+        },
+        {
+          "atMs": 80,
+          "durationMs": 600,
+          "easing": "inOutSine",
+          "action": "fade",
+          "alpha": 0
+        }
+      ]
+    }
+  ]
+}

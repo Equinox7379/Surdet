@@ -1,0 +1,40 @@
+{
+  "title": "潮痕未干",
+  "version": "0.1.0",
+  "entryScene": "arrival",
+  "characters": {
+    "narrator": {
+      "name": "旁白"
+    },
+    "lin_ting": {
+      "name": "林汀",
+      "avatar": "lynn"
+    },
+    "zhou_du": {
+      "name": "周渡"
+    },
+    "lin_yu": {
+      "name": "林屿"
+    }
+  },
+  "variables": {
+    "trust": {
+      "type": "number",
+      "initial": 0,
+      "min": -3,
+      "max": 3
+    },
+    "proof": {
+      "type": "number",
+      "initial": 0,
+      "min": 0,
+      "max": 4
+    },
+    "stance": {
+      "type": "number",
+      "initial": 0,
+      "min": -1,
+      "max": 1
+    }
+  }
+}

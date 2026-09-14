@@ -221,7 +221,7 @@ export function validateSnapshot(
   for (const [id, rawDeclaration] of Object.entries(characters)) {
     const record = isRecordLike(rawDeclaration);
     const avatar = record === null ? undefined : record['avatar'];
-    if (typeof avatar === 'string' && avatar.trim().length > 0 && !resolvedAvatars.has(avatar.trim())) {
+    if (options.assetCatalog !== undefined && typeof avatar === 'string' && avatar.trim().length > 0 && !resolvedAvatars.has(avatar.trim())) {
       rawIssues.push({
         severity: 'warning',
         code: 'ASSET_UNRESOLVED',
