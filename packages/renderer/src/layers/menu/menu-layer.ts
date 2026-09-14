@@ -26,6 +26,7 @@ import {
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
+import { drawPlayerDivider, drawPlayerFrame } from '../../ui-decoration.js';
 import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import {
   bindThemeGraphicsProjection,
@@ -252,7 +253,17 @@ export class MenuLayer implements MenuProjectionPort {
       titleBg.height = titleTexture.height * scale;
       titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
       layer.addChild(titleBg);
-      layer.addChild(this.#surface(0, 0, this.#w, this.#h, 'canvas', 'scrim'));
+      for (let index = 0; index < 64; index++) {
+        const shade = new Graphics();
+        const paint = (): void => {
+          shade.clear().rect(index * this.#w / 64, 0, this.#w / 64, this.#h)
+            .fill({ color: this.#theme.colors.canvas, alpha: this.#theme.opacity.scrim * Math.max(0.12, 1.25 - index / 48) });
+          bindThemeGraphicsProjection(shade, ['canvas']);
+        };
+        this.#surfacePaints.set(shade, paint);
+        paint();
+        layer.addChild(shade);
+      }
     } else {
       layer.addChild(this.#surface(0, 0, this.#w, this.#h, 'panel', 'panel'));
     }
@@ -263,30 +274,28 @@ export class MenuLayer implements MenuProjectionPort {
         fill: this.#theme.colors.text,
         fontWeight: 'normal',
         letterSpacing: this.#theme.typography.titleLetterSpacing,
-        wordWrap: true, wordWrapWidth: this.#w * 0.8, breakWords: true,
+        wordWrap: true, wordWrapWidth: this.#w * 0.60, breakWords: true,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
     }), { fill: 'text', fontSize: 'titleSize', letterSpacing: 'titleLetterSpacing' });
-    title.anchor.set(0.5);
-    title.position.set(this.#w / 2, this.#h * 0.28);
+    title.position.set(this.#w * 0.09, this.#h * 0.22);
     layer.addChild(title);
-    layer.addChild(bindThemeGraphicsProjection(new Graphics()
-      .roundRect(this.#w / 2 - 210, this.#h * 0.28 + 47, 420, 1, 0.5)
-      .fill({ color: this.#theme.colors.accent, alpha: 0.55 }), ['accent']));
+    const ruleY = title.y + (typeof document === 'undefined' ? this.#theme.typography.titleSize * 1.25 : title.height) + 24;
+    layer.addChild(drawPlayerDivider(new Graphics(), this.#theme, title.x, ruleY, 332));
     if (view.subtitle) {
       const subtitle = bindThemeTextProjection(new PText({
         text: view.subtitle,
         style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions,
       }), { fill: 'textMuted', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' });
-      subtitle.anchor.set(0.5);
-      subtitle.position.set(this.#w / 2, this.#h * 0.28 + 76);
+      subtitle.position.set(title.x + 2, ruleY + 22);
       layer.addChild(subtitle);
     }
-    const startY = this.#h * 0.52;
+    const startY = Math.min(ruleY + 94, this.#h - view.items.length * 58 - 48);
     view.items.forEach((item, i) => {
       const enabled = item.enabled !== false;
-      const baseX = this.#w / 2;
-      const baseY = startY + i * 52;
+      const rowY = startY + i * 58;
+      const frame = drawPlayerFrame(new Graphics(), this.#theme, title.x, rowY, 332, 46,
+        { alpha: 0.56, ornament: i === 0 });
       const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
@@ -297,29 +306,24 @@ export class MenuLayer implements MenuProjectionPort {
         } satisfies TextStyleOptions,
       }), { fill: enabled ? 'text' : 'textDisabled', fontSize: 'uiSize', letterSpacing: 'uiLetterSpacing' });
       label.anchor.set(0.5);
-      label.position.set(baseX, baseY);
-      bindPlayerControl(label, { label: item.label, width: 320, height: 46, x: -160, y: -23, enabled });
+      label.position.set(title.x + 166, rowY + 23);
+      frame.alpha = label.alpha = enabled ? 1 : this.#theme.opacity.disabled;
+      bindPlayerControl(label, { label: item.label, width: 332, height: 46, x: -166, y: -23, enabled });
       if (enabled) {
-        const line = bindThemeGraphicsProjection(new Graphics()
-          .roundRect(baseX - 160, baseY - 23, 320, 46, this.#theme.radius.sm)
-          .stroke({ width: 1.5, color: this.#theme.colors.accent, alpha: 0.9 }), ['accent']);
-        line.visible = false;
-        layer.addChild(line);
-        label.eventMode = 'static';
         label.cursor = 'pointer';
         label.on('pointerdown', () => {
           this.#titleHandler?.(item.id);
         });
         label.on('pointerover', () => {
-          line.visible = true;
-          label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          drawPlayerFrame(frame, this.#theme, title.x, rowY, 332, 46, { color: 'surfaceStrong', alpha: 0.86, active: true, ornament: i === 0 });
+          label.style.fill = this.#theme.colors.accent;
         });
         label.on('pointerout', () => {
-          line.visible = false;
-          label.style = { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, letterSpacing: this.#theme.typography.uiLetterSpacing, fontFamily: this.#fontFamily('ui') } satisfies TextStyleOptions;
+          drawPlayerFrame(frame, this.#theme, title.x, rowY, 332, 46, { alpha: 0.56, ornament: i === 0 });
+          label.style.fill = this.#theme.colors.text;
         });
       }
-      layer.addChild(label);
+      layer.addChild(frame, label);
     });
     this.#bringToFront(layer);
     layer.visible = true;
@@ -409,7 +413,7 @@ export class MenuLayer implements MenuProjectionPort {
       style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
     }), { fill: 'accentSoft', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' })).position.set(px + 28, py + 19);
     panel.addChild(bindThemeTextProjection(new PText({
-      text: '系统菜单',
+      text: '菜单',
       style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
     }), { fill: 'text', fontSize: 'headingSize' })).position.set(px + 27, py + 42);
 
@@ -426,7 +430,7 @@ export class MenuLayer implements MenuProjectionPort {
         .stroke({ width: 1.5, color: this.#theme.colors.accentSoft, alpha: 0.9 }), ['accentSoft']);
       marker.alpha = 0;
       const index = bindThemeTextProjection(new PText({
-        text: String(i + 1).padStart(2, '0'),
+        text: '◇',
         style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted, letterSpacing: 1 } satisfies TextStyleOptions,
       }), { fill: 'textMuted', fontSize: 'captionSize' });
       index.position.set(22, 19);
@@ -654,6 +658,7 @@ export class MenuLayer implements MenuProjectionPort {
       handler?.();
     });
     layer.addChild(bg);
+    layer.addChild(this.#surface(20, 20, this.#w - 40, this.#h - 40, 'panel', 'panel', 'md', true));
     layer.addChild(bindThemeTextProjection(new PText({
       text: view.mode === 'save' ? 'SAVE DATA' : 'LOAD DATA',
       style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
@@ -1001,11 +1006,15 @@ export class MenuLayer implements MenuProjectionPort {
   #surface(x: number, y: number, width: number, height: number, color: keyof RendererTheme['colors'], opacity: keyof RendererTheme['opacity'], radius?: keyof RendererTheme['radius'], border = false): Graphics {
     const graphic = bindThemeGraphicsProjection(new Graphics(), border ? [color, 'line'] : [color]);
     const paint = (): void => {
+      if (border) {
+        drawPlayerFrame(graphic, this.#theme, x, y, width, height,
+          { color, alpha: this.#theme.opacity[opacity], ornament: height > 120 });
+        return;
+      }
       graphic.clear();
       if (radius) graphic.roundRect(x, y, width, height, this.#theme.radius[radius]);
       else graphic.rect(x, y, width, height);
       graphic.fill({ color: this.#theme.colors[color], alpha: this.#theme.opacity[opacity] });
-      if (border) graphic.stroke({ width: 1, color: this.#theme.colors.line, alpha: this.#theme.opacity.line });
     };
     this.#surfacePaints.set(graphic, paint);
     paint();
