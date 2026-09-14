@@ -15,6 +15,19 @@ function makeProject(files: Record<string, string>): string {
 }
 
 describe('lintProject', () => {
+  it('does not report a real avatar missing when the caller has not supplied asset catalog facts', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({
+        entryScene: 'start',
+        characters: { lin_ting: { name: '林汀', avatar: 'lynn' } },
+        variables: { trust: { type: 'number', initial: 0 } },
+      }),
+      'content/scenario/start.gal': '@scene start\n林汀：信收到了。\n@end\n',
+      'content/assets/avatar/lynn.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+    });
+    expect(lintProject(dir).issues).toEqual([]);
+  });
+
   it('合法项目通过', () => {
     const dir = makeProject({
       'content/scenario/ch01_01.gal': `@label start\n凛：你好。\n@jump ch01_02\n`,
