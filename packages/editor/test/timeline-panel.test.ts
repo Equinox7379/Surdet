@@ -69,4 +69,34 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(panelSource).toContain("block.classList.toggle('instant-at-end', geometry.anchorAtEnd)");
     expect(panelSource).not.toContain('Math.max(-2000, Math.min(2000, parsed))');
   });
+
+  it('provides editable targets for every non-audio track while retaining audio projection', () => {
+    expect(panelSource).toContain("if (track.kind !== 'audio')");
+    expect(panelSource).toContain('track-${trackIndex}-target');
+    expect(panelSource).toContain("target.value.trim()");
+    expect(panelSource).toContain('delete nextTrack.target');
+    expect(panelSource).toContain("else if (track.target) {");
+  });
+
+  it('keeps the inspector controls aligned with every Core non-audio payload', () => {
+    for (const control of [
+      'createResourceCue',
+      "typeof cue.expression === 'string'",
+      "next.position = position.value",
+      "setNumber('透明度', 'alpha'",
+      "setNumber('缩放', 'scale'",
+      "setNumber('水平偏移', 'x'",
+      "setNumber('垂直偏移', 'y'",
+      "setNumber('震动强度', 'strength'",
+      "setNumber('颜色值', 'color'",
+      "setString('粒子预设', 'kind'",
+    ]) {
+      expect(panelSource).toContain(control);
+    }
+    expect(panelSource).toContain("duration.dataset.timelineFocus = 'timeline-duration'");
+    expect(panelSource).toContain("duration.title = '时间轴总时长（毫秒）'");
+    expect(panelSource).toContain("if (track.kind === 'camera')");
+    expect(panelSource).toContain("if (track.kind === 'screen')");
+    expect(panelSource).toContain("if (track.kind === 'particle' && cue.action === 'start')");
+  });
 });

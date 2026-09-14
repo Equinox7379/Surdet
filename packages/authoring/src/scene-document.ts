@@ -1,4 +1,4 @@
-import { extractSpeaker } from '@surdet/core';
+import { extractSpeaker, Lexer, Parser, type AstBlock, type AstIfBlock } from '@surdet/core';
 import type { SceneDocumentLine, SceneDocumentLineInput, SceneEol } from './contracts.js';
 
 /**
@@ -58,9 +58,109 @@ export function parseSceneDocument(text: string): SceneDocumentLine[] {
     const raw = eol.length > 0 ? chunk.slice(0, -eol.length) : chunk;
     const line = parseSceneLine(raw, previousKind, eol);
     out.push(line);
+    // Blank/comment rows are transparent to the Core parser. Keep the choice
+    // context across them so an indented option can still be indexed and
+    // rewritten without dropping the intervening source rows.
+    if ((line.kind === 'blank' || line.kind === 'comment')
+      && (previousKind === 'choice' || previousKind === 'choice-option')) continue;
     previousKind = line.kind === 'instr' && line.name === 'choice' ? 'choice' : line.kind;
   }
   return out;
+}
+
+export interface SceneStructureSpan {
+  /** 1-based, inclusive physical line range. */
+  startLine: number;
+  endLine: number;
+}
+
+export interface SceneChoiceStructureOption {
+  index: number;
+  label: string;
+  when: string | null;
+  span: SceneStructureSpan;
+}
+
+export interface SceneChoiceStructure {
+  kind: 'choice';
+  span: SceneStructureSpan;
+  options: SceneChoiceStructureOption[];
+}
+
+export interface SceneConditionBranchStructure {
+  kind: 'if' | 'elif' | 'else';
+  expr: string | null;
+  /** Includes the branch marker and body, excludes the next marker/@endif. */
+  span: SceneStructureSpan;
+  /** Excludes both the branch marker and the next marker/@endif. */
+  bodySpan: SceneStructureSpan;
+}
+
+export interface SceneConditionStructure {
+  kind: 'condition';
+  /** Includes @if through @endif. */
+  span: SceneStructureSpan;
+  branches: SceneConditionBranchStructure[];
+}
+
+export interface SceneStructureDocument {
+  choices: SceneChoiceStructure[];
+  conditions: SceneConditionStructure[];
+}
+
+function inclusiveSpan(startLine: number, endLine: number): SceneStructureSpan {
+  return { startLine, endLine };
+}
+
+/**
+ * Parse the same Core AST used by compilation and expose only physical line
+ * ranges needed by authoring. Comments and blank lines stay in the document;
+ * their line numbers are deliberately never inferred by searching for a
+ * later @endif.
+ */
+export function parseSceneStructure(source: string, file: string, sceneId: string): SceneStructureDocument {
+  const ast = new Parser().parse(new Lexer().tokenize(source, file), sceneId);
+  const choices: SceneChoiceStructure[] = [];
+  const conditions: SceneConditionStructure[] = [];
+
+  const visit = (blocks: readonly AstBlock[]): void => {
+    for (const block of blocks) {
+      if (block.kind === 'choice') {
+        const lastOptionLine = block.options.at(-1)?.pos.line ?? block.pos.line;
+        choices.push({
+          kind: 'choice',
+          span: inclusiveSpan(block.pos.line, lastOptionLine),
+          options: block.options.map((option, index) => ({
+            index,
+            label: option.label,
+            when: option.when,
+            span: inclusiveSpan(option.pos.line, option.pos.line),
+          })),
+        });
+        continue;
+      }
+      if (block.kind !== 'if') continue;
+      const ifBlock = block as AstIfBlock;
+      const branches = ifBlock.branches.map((branch) => {
+        const boundaryLine = branch.span.end.line;
+        return {
+          kind: branch.kind,
+          expr: branch.expr,
+          span: inclusiveSpan(branch.span.start.line, boundaryLine - 1),
+          bodySpan: inclusiveSpan(branch.bodySpan.start.line, boundaryLine - 1),
+        } satisfies SceneConditionBranchStructure;
+      });
+      conditions.push({
+        kind: 'condition',
+        span: inclusiveSpan(ifBlock.span.start.line, ifBlock.span.end.line),
+        branches,
+      });
+      for (const branch of ifBlock.branches) visit(branch.blocks);
+    }
+  };
+
+  visit(ast.blocks);
+  return { choices, conditions };
 }
 
 export function serializeSceneDocument(

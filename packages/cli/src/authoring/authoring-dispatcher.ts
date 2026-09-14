@@ -104,6 +104,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.scenePatch(requireChange(context), payload as unknown as Parameters<AuthoringService['scenePatch']>[1]), operationId: operationIdFrom(payload) };
     case 'variable.ensure':
       return { value: await service.variableEnsure(requireChange(context), payload as unknown as Parameters<AuthoringService['variableEnsure']>[1]), operationId: operationIdFrom(payload) };
+    case 'variable.patch-initial':
+      return { value: await service.variablePatchInitial(requireChange(context), payload as unknown as Parameters<AuthoringService['variablePatchInitial']>[1]), operationId: operationIdFrom(payload) };
     case 'character.ensure':
       return { value: await service.characterEnsure(requireChange(context), payload as unknown as Parameters<AuthoringService['characterEnsure']>[1]), operationId: operationIdFrom(payload) };
     case 'gallery.cg.create':

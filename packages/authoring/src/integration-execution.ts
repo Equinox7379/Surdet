@@ -8,6 +8,7 @@ import {
   applyScenePatch,
   ensureVariable,
 } from './operations.js';
+import { applyVariablePatchInitial } from './variable-operations.js';
 import {
   applyCharacterEnsure,
   applyCharacterRemove,
@@ -91,6 +92,8 @@ export async function replayCompositionOperation(
       return applyScenePatch(change, replayInput as never);
     case 'variable.ensure':
       return ensureVariable(change, replayInput as never);
+    case 'variable.patch-initial':
+      return applyVariablePatchInitial(change, replayInput as never, hasher);
     case 'character.ensure':
       return applyCharacterEnsure(change, replayInput as never, hasher, operation);
     case 'character.remove':

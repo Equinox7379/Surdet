@@ -7,6 +7,7 @@ class FakeElement {
   readonly tagName: string;
   readonly children: FakeElement[] = [];
   readonly dataset: Record<string, string> = {};
+  readonly attributes: Record<string, string> = {};
   readonly style = { setProperty: (_name: string, _value: string): void => {} };
   className = '';
   checked = false;
@@ -49,12 +50,14 @@ class FakeElement {
     for (const child of children) this.appendChild(child);
   }
 
-  setAttribute(): void {}
+  setAttribute(name: string, value: string): void { this.attributes[name] = value; }
+  replaceChildren(...children: FakeElement[]): void { this.children.splice(0); this.append(...children); }
 
   querySelector(tagName: string): FakeElement | null {
-    const expected = tagName.toUpperCase();
+    const selector = /^(\w+)(?:\[aria-label="([^"]+)"\])?$/.exec(tagName);
+    const expected = (selector?.[1] ?? tagName).toUpperCase();
     const visit = (element: FakeElement): FakeElement | null => {
-      if (element.tagName === expected) return element;
+      if (element.tagName === expected && (!selector?.[2] || element.attributes['aria-label'] === selector[2])) return element;
       for (const child of element.children) {
         const match = visit(child);
         if (match) return match;
@@ -164,7 +167,7 @@ describe('timeline preview replay', () => {
       message as { payload?: { timelinePreviewId?: string } }
     ).payload?.timelinePreviewId)).toEqual(['opening', 'opening']);
 
-    const entrySelector = container.querySelector('select');
+    const entrySelector = container.querySelector('select[aria-label="播放入口"]');
     expect(entrySelector).not.toBeNull();
     entrySelector!.value = 'start';
     entrySelector!.onchange?.();
@@ -217,7 +220,8 @@ describe('timeline preview replay', () => {
       if (preview.action === 'invalidate' && rejectInvalidation) throw new Error('连接暂时中断');
       return { previewId: preview.action === 'invalidate' ? null : preview.previewId, previewGeneration: preview.previewGeneration };
     });
-    vi.spyOn(workspace, 'editorPreviewPublisher').mockReturnValue({ baseline, publish });
+    vi.spyOn(workspace, 'editorPreviewPublisher').mockReturnValue({ baseline, publish,
+      sources: vi.fn(async () => []), content: vi.fn(async () => { throw new Error('没有请求试玩内容'); }) });
     vi.spyOn(workspace, 'editorWorkspaceStatus').mockReturnValue({ protection: 'connected', update: 'none', dirty: false, saving: false, baseline, latest: null });
     state.gameConfigText = '{"entryScene":"intro","variables":{}}';
     reload!.onclick?.();

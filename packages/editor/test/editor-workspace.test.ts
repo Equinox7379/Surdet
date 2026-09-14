@@ -25,6 +25,7 @@ beforeEach(() => {
     sceneLifecycleWriting: false, autosaveRecoveryBlocked: false };
   disk = { projectIdentity: 'a'.repeat(32), diskBaseline: structuredClone(oldBaseline), mutationNotice: null };
   client = {
+    previewSources: vi.fn(async () => []), previewContent: vi.fn(async () => { throw new Error('没有请求试玩内容'); }),
     heartbeat: vi.fn(async () => {}), snapshot: vi.fn(async () => structuredClone(disk)),
     preview: vi.fn(async ({ preview }) => ({ previewId: preview.action === 'invalidate' ? null : preview.previewId,
       previewGeneration: preview.previewGeneration })),

@@ -693,9 +693,9 @@ export class WorldLayer implements WorldProjectionPort {
       else if (cue.action === 'wipe' && event.started) this.wipe(cue.durationMs);
       return;
     }
-    if (event.track === 'particle' && typeof cue.kind === 'string' && (event.started || event.final)) {
-      if (cue.action === 'start') this.startParticles(cue.kind);
-      else this.stopParticles();
+    if (event.track === 'particle' && (event.started || event.final)) {
+      if (cue.action === 'start' && typeof cue.kind === 'string') this.startParticles(cue.kind);
+      else if (cue.action === 'stop') this.stopParticles();
     }
     this.#syncEffectRegistration();
   }

@@ -642,7 +642,25 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       setStatus('已更换轨道类型，可撤销', true, 4000);
     };
     head.appendChild(kind);
-    if (track.target) head.append(h('span', 'timeline-track-target', track.target));
+    if (track.kind !== 'audio') {
+      const target = textInput(track.target ?? '', '轨道目标（可选）');
+      target.className = 'timeline-track-target';
+      target.dataset.timelineFocus = `track-${trackIndex}-target`;
+      target.setAttribute('aria-label', `${timelineTrackLabel(track.kind)}轨道目标`);
+      target.title = '轨道目标（留空以移除）';
+      target.onchange = () => {
+        const value = target.value.trim();
+        commit((next) => {
+          const nextTrack = next.tracks[trackIndex];
+          if (!nextTrack) return;
+          if (value.length === 0) delete nextTrack.target;
+          else nextTrack.target = value;
+        });
+      };
+      head.appendChild(target);
+    } else if (track.target) {
+      head.append(h('span', 'timeline-track-target', track.target));
+    }
     const addAction = selectInput(
       TIMELINE_ACTIONS[track.kind],
       TIMELINE_ACTIONS[track.kind][0]!,

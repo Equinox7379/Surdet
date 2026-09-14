@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compileScene } from '@surdet/core';
-import { parseScript } from '../src/model.js';
+import { parseScript, serializeScript } from '../src/model.js';
 import { InstructionFieldSource } from '../src/instruction-field-source.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
@@ -99,6 +99,29 @@ describe('V4 source adapters use shared rows and preserve B01', () => {
     const raw = '  路线 [if:score > 5] -> @mod score +2 @goto again';
     expect(simpleChoice(raw)).toBeNull();
     expect(parseScript('@choice\n' + raw)[1]?.raw).toBe(raw);
+  });
+  it('round-trips nested conditions, choice effects and unknown instructions without dropping source rows', () => {
+    const raw = [
+      '@scene test',
+      '@if route == "north"',
+      '  @choice',
+      '    继续 [if:hasMap] -> @set route = "north" @mod trust +2 @goto north',
+      '    离开 -> @jump exit',
+      '    保留 -> @mystery opaque @goto hidden',
+      '  @endif',
+      '@endif',
+      '@mystery top-level payload',
+      '@end',
+    ].join('\r\n');
+    const lines = parseScript(raw);
+    expect(lines.filter((line) => line.kind === 'choice-option').map((line) => line.raw)).toEqual([
+      '    继续 [if:hasMap] -> @set route = "north" @mod trust +2 @goto north',
+      '    离开 -> @jump exit',
+      '    保留 -> @mystery opaque @goto hidden',
+    ]);
+    expect(serializeScript(lines, '\r\n')).toBe(raw);
+    expect(applySourceTextareaEdit(raw, raw.replace('opaque @goto hidden', 'opaque changed @goto hidden')))
+      .toContain('保留 -> @mystery opaque changed @goto hidden');
   });
   it('retains editable empty intermediate choice labels', () => {
     const next = writeSimpleChoice({ text: '', condition: '', target: 'again', indent: '  ', trailing: '' });

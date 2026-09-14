@@ -143,6 +143,8 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     text: '台词',
     choice: '选择分支',
     'choice-option': '选项',
+    condition: '条件块',
+    'condition-branch': '条件分支',
     instruction: '指令',
     variable: '变量',
     timeline: '时间轴',

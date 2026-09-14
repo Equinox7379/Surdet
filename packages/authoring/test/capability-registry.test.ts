@@ -8,13 +8,13 @@ import {
   type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
-  it('is the single complete 39-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(39);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(39);
+  it('is the single complete 40-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(40);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(40);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'project.gallery',
       'asset.sources', 'asset.import.stage', 'asset.import.inspect', 'asset.import.commit', 'asset.import.recover', 'object.inspect',
-      'change.begin', 'scene.create', 'scene.patch', 'variable.ensure',
+      'change.begin', 'scene.create', 'scene.patch', 'variable.ensure', 'variable.patch-initial',
       'character.ensure', 'character.remove', 'timeline.create', 'timeline.patch',
       'gallery.cg.create', 'gallery.cg.patch',
       'project.entry-scene.set', 'project.validate', 'project.simulate',
@@ -33,7 +33,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(39);
+    expect(new Set(names).size).toBe(40);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -89,6 +89,61 @@ describe('authoring capability registry', () => {
     expect(runFrom.repairRecipes.join(' ')).toContain('omit label');
   });
 
+  it('publishes recursive condition blocks and atomic structure patch contracts', () => {
+    const create = getCapabilityDefinition('scene.create');
+    const createSchema = create.inputSchema as Record<string, any>;
+    const alternatives = (createSchema.properties.blocks.items.oneOf as Array<Record<string, any>>);
+    const condition = alternatives.find((schema) => schema.properties?.kind?.const === 'condition');
+    expect(condition).toBeDefined();
+    expect(condition?.properties.branches).toMatchObject({ type: 'array', minItems: 1, items: { $ref: '#/$defs/sceneConditionBranch' } });
+    expect(createSchema.$defs.sceneConditionBranch.oneOf).toHaveLength(3);
+    expect(createSchema.$defs.sceneConditionBranch.oneOf[0].properties.blocks.items).toEqual({ $ref: '#/$defs/sceneBlock' });
+
+    const patch = getCapabilityDefinition('scene.patch').inputSchema as Record<string, any>;
+    const variants = patch.properties.patch.oneOf as Array<Record<string, any>>;
+    expect(variants.map((variant) => variant.properties.kind.const)).toEqual([
+      'replaceText', 'replaceInstruction', 'insertAfter', 'replaceChoiceOption',
+      'replaceChoiceGroup', 'replaceConditionBlock', 'removeObject',
+    ]);
+    const choice = variants.find((variant) => variant.properties.kind.const === 'replaceChoiceGroup')!;
+    expect(choice.properties.choice.properties.kind.const).toBe('choice');
+    const conditionPatch = variants.find((variant) => variant.properties.kind.const === 'replaceConditionBlock')!;
+    expect(conditionPatch.properties.condition.properties.branches.items)
+      .toEqual({ $ref: '#/$defs/sceneConditionPatchBranch' });
+    expect(patch.$defs.sceneConditionPatchBranch.oneOf).toHaveLength(9);
+  });
+
+  it('publishes the complete non-audio timeline schema and patch variants', () => {
+    const create = getCapabilityDefinition('timeline.create');
+    const definition = create.inputSchema.properties as Record<string, any>;
+    const timeline = definition.definition as Record<string, any>;
+    expect(timeline.properties.durationMs).toMatchObject({ type: 'integer', minimum: 0, maximum: 600000 });
+    expect(timeline.properties.tracks).toMatchObject({ minItems: 1 });
+    const track = timeline.properties.tracks.items as Record<string, any>;
+    expect(track.properties.kind.enum).toEqual(['background', 'portrait', 'camera', 'screen', 'particle']);
+    const cue = track.properties.cues.items as Record<string, any>;
+    expect(cue.properties.action.enum).toEqual([
+      'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake',
+      'fade', 'tint', 'flash', 'wipe', 'start', 'stop',
+    ]);
+    expect(cue.properties).toEqual(expect.objectContaining({
+      key: expect.any(Object), expression: expect.any(Object), position: expect.any(Object),
+      alpha: expect.any(Object), scale: expect.any(Object), x: expect.any(Object),
+      y: expect.any(Object), strength: expect.any(Object), color: expect.any(Object), kind: expect.any(Object),
+    }));
+
+    const patch = getCapabilityDefinition('timeline.patch').inputSchema.properties as Record<string, any>;
+    const variants = patch.patch.oneOf as Array<Record<string, any>>;
+    expect(variants.map((variant) => variant.properties.kind.const)).toEqual([
+      'addTrack', 'setDuration', 'removeTrack', 'setTrackTarget', 'insertCue', 'replaceCue', 'removeCue',
+    ]);
+    expect(variants.find((variant) => variant.properties.kind.const === 'setDuration')?.properties.durationMs)
+      .toMatchObject({ type: 'integer', minimum: 0, maximum: 600000 });
+    expect(variants.find((variant) => variant.properties.kind.const === 'setTrackTarget')?.properties.target)
+      .toEqual({ oneOf: [{ type: 'string' }, { type: 'null' }] });
+    expect(getCapabilityDefinition('timeline.patch').possibleErrors).toContain('UNSUPPORTED_OPERATION');
+  });
+
   it('publishes strict recovery inspect/execute schemas and apply policy', () => {
     const registry = AUTHORING_CAPABILITY_REGISTRY as unknown as ReadonlyArray<Record<string, any>>;
     const inspect = registry.find((definition) => definition.id === 'change.recovery.inspect');
@@ -105,16 +160,16 @@ describe('authoring capability registry', () => {
 
 describe('wave 5 composition capabilities', () => {
   it('retains the four composition entries in the complete registry', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(39);
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(40);
     expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
     expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
     expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');
     expect(getCapabilityDefinition('composition.inspect').minimumPolicy).toBe('observe');
   });
 
-  it('marks only the ten content mutations composable; composition.* must be false', () => {
+  it('marks only the eleven content mutations composable; composition.* must be false', () => {
     const composableWhitelist = new Set([
-      'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
+      'scene.create', 'scene.patch', 'variable.ensure', 'variable.patch-initial', 'character.ensure',
       'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
       'gallery.cg.create', 'gallery.cg.patch',
     ]);

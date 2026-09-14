@@ -61,6 +61,16 @@ async function connected(policy: 'observe' | 'stage' | 'apply'): Promise<{ sessi
   return { session, client, server };
 }
 
+async function connectedProject(projectRoot: string, policy: 'observe' | 'stage' | 'apply'): Promise<{ session: AgentPortSession; client: Client; server: ReturnType<typeof createAgentPortServer> }> {
+  const session = await openAgentPortSession({ projectRoot, policy });
+  const server = createAgentPortServer(session);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'agent-port-test', version: '0.1.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return { session, client, server };
+}
+
 describe('Surdet Agent Port MCP tool projection', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
@@ -129,11 +139,11 @@ describe('Surdet Agent Port MCP tool projection', () => {
     if (policy === 'stage') {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(37);
+      expect(names).toHaveLength(38);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(41);
+      expect(names).toHaveLength(42);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -141,7 +151,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(39);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(40);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {
@@ -314,6 +324,216 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect((trackInspected.structuredContent as any).result.childRefs).toEqual([
         'timeline:mcp_timeline_details/track:0/cue:0',
       ]);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
+
+  it('creates timeline variants through MCP, composes independent objects, and replays saved patches', async () => {
+    const first = await connected('stage');
+    const projectRoot = first.session.projectRoot;
+    let firstRef: { changeId: string; capsuleId: string; artifactSha256: string };
+    try {
+      expect((await first.client.callTool({ name: 'surdet_change_begin', arguments: {} })).isError).not.toBe(true);
+      const timelineId = 'mcp_timeline_shared';
+      const definition = {
+        version: 1,
+        id: timelineId,
+        durationMs: 100,
+        tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 10, easing: 'linear', action: 'fade', alpha: 0 }] }],
+      };
+      const created = await first.client.callTool({
+        name: 'surdet_timeline_create',
+        arguments: { operationId: 'op-mcp-timeline-create', timelineId, definition },
+      });
+      expect(created.isError).not.toBe(true);
+      const createdResult = textEnvelope(created).result as Record<string, unknown>;
+      const createFingerprint = createdResult.fingerprint;
+      expect(typeof createFingerprint).toBe('string');
+
+      const duration = await first.client.callTool({
+        name: 'surdet_timeline_patch',
+        arguments: {
+          operationId: 'op-mcp-timeline-duration', timelineId,
+          patch: { kind: 'setDuration', expectedFingerprint: createFingerprint, durationMs: 50 },
+        },
+      });
+      expect(duration.isError).not.toBe(true);
+      const track = await first.client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: `timeline:${timelineId}/track:0` } });
+      expect(track.isError).not.toBe(true);
+      const trackFingerprint = (textEnvelope(track).result as Record<string, unknown>).fingerprint;
+      expect(typeof trackFingerprint).toBe('string');
+      const target = await first.client.callTool({
+        name: 'surdet_timeline_patch',
+        arguments: {
+          operationId: 'op-mcp-timeline-target', timelineId,
+          patch: { kind: 'setTrackTarget', expectedFingerprint: trackFingerprint, trackRef: `timeline:${timelineId}/track:0`, target: 'screen:main' },
+        },
+      });
+      expect(target.isError).not.toBe(true);
+      expect(textEnvelope(target).workingRevision).toBe(3);
+
+      for (const [name, arguments_] of [
+        ['surdet_project_validate', {}],
+        ['surdet_project_simulate', {}],
+        ['surdet_runtime_run_from', { sceneId: 'start', choices: [] }],
+        ['surdet_change_diff', {}],
+      ] as const) {
+        const result = await first.client.callTool({ name, arguments: arguments_ });
+        expect(result.isError, name).not.toBe(true);
+      }
+      const capsule = await first.client.callTool({ name: 'surdet_delivery_capsule', arguments: { label: 'timeline MCP candidate A' } });
+      expect(capsule.isError).not.toBe(true);
+      const capsuleResult = textEnvelope(capsule).result as Record<string, unknown>;
+      expect((capsuleResult.composition as Record<string, unknown>).eligibility).toBe('ready');
+      firstRef = {
+        changeId: String(capsuleResult.changeId),
+        capsuleId: String(capsuleResult.capsuleId),
+        artifactSha256: String((capsuleResult.artifactIdentity as Record<string, unknown>).sha256),
+      };
+    } finally {
+      await first.client.close();
+      await first.server.close();
+      await first.session.close();
+    }
+
+    const second = await connectedProject(projectRoot, 'stage');
+    let secondRef: { changeId: string; capsuleId: string; artifactSha256: string };
+    try {
+      expect((await second.client.callTool({ name: 'surdet_change_begin', arguments: {} })).isError).not.toBe(true);
+      const sharedId = 'mcp_timeline_shared';
+      const definitions = [
+        { id: sharedId, durationMs: 80, target: 'screen:alternate' },
+        { id: 'mcp_timeline_independent', durationMs: 40, target: 'screen:independent' },
+      ];
+      for (const [index, item] of definitions.entries()) {
+        const created = await second.client.callTool({
+          name: 'surdet_timeline_create',
+          arguments: {
+            operationId: `op-mcp-timeline-b-${index}`,
+            timelineId: item.id,
+            definition: {
+              version: 1,
+              id: item.id,
+              durationMs: item.durationMs,
+              tracks: [{ kind: 'screen', target: item.target, cues: [{ atMs: 0, durationMs: 10, easing: 'linear', action: 'fade', alpha: 0 }] }],
+            },
+          },
+        });
+        expect(created.isError).not.toBe(true);
+      }
+      for (const [name, arguments_] of [
+        ['surdet_project_validate', {}],
+        ['surdet_project_simulate', {}],
+        ['surdet_runtime_run_from', { sceneId: 'start', choices: [] }],
+        ['surdet_change_diff', {}],
+      ] as const) {
+        const result = await second.client.callTool({ name, arguments: arguments_ });
+        expect(result.isError, name).not.toBe(true);
+      }
+      const capsule = await second.client.callTool({ name: 'surdet_delivery_capsule', arguments: { label: 'timeline MCP candidate B' } });
+      expect(capsule.isError).not.toBe(true);
+      const capsuleResult = textEnvelope(capsule).result as Record<string, unknown>;
+      expect((capsuleResult.composition as Record<string, unknown>).eligibility).toBe('ready');
+      secondRef = {
+        changeId: String(capsuleResult.changeId),
+        capsuleId: String(capsuleResult.capsuleId),
+        artifactSha256: String((capsuleResult.artifactIdentity as Record<string, unknown>).sha256),
+      };
+    } finally {
+      await second.client.close();
+      await second.server.close();
+      await second.session.close();
+    }
+
+    const composed = await connectedProject(projectRoot, 'stage');
+    try {
+      const candidateRefs = [firstRef, secondRef];
+      const compared = await composed.client.callTool({ name: 'surdet_composition_compare', arguments: { candidateRefs } });
+      expect(compared.isError).not.toBe(true);
+      const comparison = textEnvelope(compared).result as {
+        comparisonFingerprint: string;
+        units: Array<{ unitId: string; candidateId: string; primaryObject: string }>;
+        conflicts: Array<{ conflictId: string; severity: string }>;
+      };
+      const sharedA = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${firstRef.changeId}`);
+      const sharedB = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${secondRef.changeId}`);
+      const independent = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_independent');
+      expect(sharedA).toBeDefined();
+      expect(sharedB).toBeDefined();
+      expect(independent).toBeDefined();
+      const conflict = comparison.conflicts.find((item) => item.severity === 'selection-required');
+      expect(conflict).toBeDefined();
+
+      const planned = await composed.client.callTool({
+        name: 'surdet_composition_plan',
+        arguments: {
+          candidateRefs,
+          comparisonFingerprint: comparison.comparisonFingerprint,
+          selectedUnitIds: comparison.units.map((unit) => unit.unitId),
+          conflictResolutions: [{ conflictId: conflict!.conflictId, resolution: 'choose-unit', chosenUnitId: sharedA!.unitId, actor: 'human' }],
+          reason: 'timeline MCP candidate replay',
+        },
+      });
+      expect(planned.isError).not.toBe(true);
+      const planResult = textEnvelope(planned).result as Record<string, unknown>;
+      expect(planResult.dryRunStatus).toBe('passed');
+      const executed = await composed.client.callTool({
+        name: 'surdet_composition_execute',
+        arguments: { planId: planResult.planId, artifactSha256: planResult.artifactSha256, executeOperationId: 'exec-mcp-timeline' },
+      });
+      expect(executed.isError).not.toBe(true);
+      expect((textEnvelope(executed).result as Record<string, unknown>).status).toBe('READY');
+
+      const shared = await composed.client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_shared' } });
+      const sharedDetails = (textEnvelope(shared).result as Record<string, any>).details;
+      expect(sharedDetails).toMatchObject({ durationMs: 50, tracks: [{ target: 'screen:main' }] });
+      const savedIndependent = await composed.client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: 'timeline:mcp_timeline_independent' } });
+      expect((textEnvelope(savedIndependent).result as Record<string, any>).details.tracks[0].target).toBe('screen:independent');
+    } finally {
+      await composed.client.close();
+      await composed.server.close();
+      await composed.session.close();
+    }
+  }, 30_000);
+
+  it('patches an existing baseline timeline through MCP using its replay state fact', async () => {
+    const projectRoot = makeProject('timeline-baseline');
+    fs.mkdirSync(path.join(projectRoot, 'content', 'timelines'), { recursive: true });
+    const timelineId = 'baseline_mcp_timeline';
+    fs.writeFileSync(path.join(projectRoot, 'content', 'timelines', `${timelineId}.json`), JSON.stringify({
+      version: 1,
+      id: timelineId,
+      durationMs: 100,
+      tracks: [{ kind: 'screen', target: 'screen:base', cues: [{ atMs: 0, durationMs: 10, easing: 'linear', action: 'fade', alpha: 0 }] }],
+    }), 'utf8');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-tools-data-timeline-baseline-'));
+    temporaryRoots.push(data);
+    process.env['SURDET_AGENT_DATA_DIR'] = data;
+    const { session, client, server } = await connectedProject(projectRoot, 'stage');
+    try {
+      expect((await client.callTool({ name: 'surdet_change_begin', arguments: {} })).isError).not.toBe(true);
+      const inspected = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: `timeline:${timelineId}` } });
+      expect(inspected.isError).not.toBe(true);
+      const inspection = textEnvelope(inspected).result as Record<string, unknown>;
+      expect(inspection.fingerprint).toEqual(expect.any(String));
+
+      const patched = await client.callTool({
+        name: 'surdet_timeline_patch',
+        arguments: {
+          operationId: 'op-mcp-baseline-timeline-patch',
+          timelineId,
+          patch: { kind: 'setDuration', expectedFingerprint: inspection.fingerprint, durationMs: 80 },
+        },
+      });
+      expect(patched.isError, textContent(patched)).not.toBe(true);
+      expect(textEnvelope(patched).workingRevision).toBe(1);
+
+      const after = await client.callTool({ name: 'surdet_object_inspect', arguments: { objectRef: `timeline:${timelineId}` } });
+      expect(after.isError).not.toBe(true);
+      expect((textEnvelope(after).result as Record<string, any>).details.durationMs).toBe(80);
     } finally {
       await client.close();
       await server.close();

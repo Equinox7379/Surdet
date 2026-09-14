@@ -206,6 +206,27 @@ describe('WorldLayer direct presentation contract', () => {
     }
   });
 
+  it('stops timeline particles without requiring a kind on the stop cue', async () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.startParticles('snow');
+      expect(runtime.layer.snapshotPresentation().particleKind).toBe('snow');
+      const stopCue = { atMs: 0, durationMs: 0, easing: 'linear' as const, action: 'stop' as const };
+      runtime.layer.applyTimelineFrame({
+        track: 'particle',
+        cue: stopCue,
+        started: true,
+        final: false,
+        progress: 1,
+        elapsedMs: 0,
+      });
+      expect(runtime.layer.snapshotPresentation().particleKind).toBeNull();
+      expect(runtime.layer.particleContainer.children).toHaveLength(0);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
   it('restores valid snapshots atomically and rejects invalid snapshots without partial mutation', async () => {
     const runtime = makeRuntime();
     try {

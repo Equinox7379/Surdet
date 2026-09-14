@@ -18,6 +18,7 @@
 import {
   compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, SaveManager, QUICK_SLOT, AUTO_SLOT,
   TimelineRegistry,
+  createSeededRandomSource,
   CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler,
 } from '@surdet/core';
 import type {
@@ -25,7 +26,10 @@ import type {
   SaveStorage, SystemSnapshots,
   CalendarConfig, GrowthConfig, AchievementDef, AffectionProfile, RelationshipEvent, ScheduledEventDef,
 } from '@surdet/core';
-import type { RuntimeTraceEvent } from '@surdet/authoring';
+import { buildPreviewReplaySources, parsePreviewPlaybackCheckpoint,
+  type PreviewPlaybackCheckpoint, type RuntimeTraceEvent } from '@surdet/authoring';
+import { PreviewReplayController } from './preview-replay-runtime.js';
+import { previewTextHash } from './preview-content.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
   SettingsStore, SETTING_STEPS, stepSetting,
@@ -86,6 +90,9 @@ interface LoadPayload {
   timelinePreviewId?: string;
   startLabel?: string;
   fast?: boolean;
+  seed?: number;
+  replay?: PreviewPlaybackCheckpoint;
+  strictSource?: boolean;
 }
 
 /** 快进速度：每秒 1000 字（近似瞬时）；常规 30 字/秒 */
@@ -134,6 +141,7 @@ interface ActivePreviewTrace {
 }
 
 let activePreviewTrace: ActivePreviewTrace | null = null;
+let replayController: PreviewReplayController | null = null;
 
 function createPreviewTraceId(): string {
   return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
@@ -157,6 +165,7 @@ function startPreviewTrace(generation: number, payload: LoadPayload): ActivePrev
     traceId: trace.traceId,
     generation: trace.generation,
     sceneId: trace.sceneId,
+    ...(payload.seed === undefined ? {} : { seed: payload.seed }),
     ...(trace.label === undefined ? {} : { label: trace.label }),
   }, '*');
   return trace;
@@ -166,6 +175,8 @@ function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => P
   const trace = activePreviewTrace;
   if (!trace || trace.completed) return;
   const sequence = trace.sequence++;
+  replayController?.observe(event);
+  const playback = replayController?.checkpoint();
   const presentationBefore = evidenceSnapshot();
   // Core runtimeTrace is emitted before the corresponding text/choice/instruction
   // event. A microtask observes the Renderer after all synchronous handlers for
@@ -183,6 +194,7 @@ function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => P
       presentationBefore,
       presentationAfter,
       event,
+      ...(playback === undefined ? {} : { playback }),
     }, '*');
   });
 }
@@ -403,6 +415,7 @@ async function boot(): Promise<void> {
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
   controller.connect(bus);
+  bus.on('choice', ({ options }) => replayController?.choice(options));
   bus.on('runtimeTrace', (event) => captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(
     queries.presentation.snapshot(),
     queries.diagnostics.projectionSnapshot(),
@@ -950,6 +963,8 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
 }
 
 function invalidatePreviewSession(): void {
+  replayController?.dispose();
+  replayController = null;
   interp = null;
   store = null;
   registry = null;
@@ -969,6 +984,7 @@ async function load(p: LoadPayload): Promise<void> {
   const dialogue = commands.dialogue;
   const presentation = commands.presentation;
   const generation = previewGeneration.next();
+  p = { ...p, seed: p.seed ?? crypto.getRandomValues(new Uint32Array(1))[0]! };
   const trace = startPreviewTrace(generation, p);
   postPreviewDiagnostic({ generation, level: 'info', phase: 'reload', message: '预览正在重新加载…', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
   clearError();
@@ -1029,6 +1045,7 @@ async function load(p: LoadPayload): Promise<void> {
       try {
         timelines.register(definition);
       } catch (err) {
+        if (p.strictSource) throw new Error(`所选内容的时间轴无效：${err instanceof Error ? err.message : String(err)}`);
         console.warn('[preview] 时间轴定义无效，已跳过：', err instanceof Error ? err.message : String(err));
       }
     }
@@ -1078,6 +1095,14 @@ async function load(p: LoadPayload): Promise<void> {
       snapshot: () => queries.presentation.snapshot(),
       restore: (payload) => presentation.restore(payload),
     });
+    interp.setRandomSource(createSeededRandomSource(p.seed!));
+    const sources = await buildPreviewReplaySources(p.scenes, { sha256: previewTextHash });
+    replayController = new PreviewReplayController({ sources, seed: p.seed!, sceneId: p.sceneId,
+      ...(p.startLabel === undefined ? {} : { label: p.startLabel }),
+      ...(p.replay === undefined ? {} : { replay: parsePreviewPlaybackCheckpoint(p.replay) }),
+      onStatus: message => postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message, sceneId: p.sceneId }),
+    });
+    replayController.attach(interp);
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);

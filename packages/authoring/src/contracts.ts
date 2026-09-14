@@ -39,7 +39,7 @@ export interface ProjectStorage {
 }
 
 export interface AuthoringObject {
-  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene' | 'gallery-cg';
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'condition' | 'condition-branch' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene' | 'gallery-cg';
   semanticId?: string;
   objectRef: string;
   parentRef?: string;
@@ -190,19 +190,68 @@ export interface ProjectWriteStorage extends ProjectStorage {
   removePath?(path: string): Promise<void>;
 }
 
+export interface SceneChoiceEffectInput {
+  name: string;
+  args: string[];
+}
+
+export interface SceneChoiceTargetInput {
+  kind: 'goto' | 'jump';
+  value: string;
+}
+
+export interface SceneChoiceOptionInput {
+  label: string;
+  /** 缺省或 null 表示无显示条件。 */
+  when?: string | null;
+  effects?: SceneChoiceEffectInput[];
+  target: SceneChoiceTargetInput;
+}
+
+export interface SceneConditionBranchInput {
+  kind: 'if' | 'elif' | 'else';
+  /** if/elif 必填；else 不带表达式。 */
+  expr?: string;
+  blocks: SceneBlockInput[];
+}
+
+export interface SceneConditionPatchBranchInput {
+  kind: 'if' | 'elif' | 'else';
+  /** if/elif 必填；else 不带表达式。 */
+  expr?: string;
+  /** 复用当前目标条件块的直接分支；不能引用其他条件块。 */
+  sourceBranch?: string;
+  /** 提供时替换该分支正文；省略且有 sourceBranch 时逐字保留原正文。 */
+  blocks?: SceneBlockInput[];
+}
+
+export interface SceneConditionBlockInput {
+  kind: 'condition';
+  branches: SceneConditionBranchInput[];
+}
+
 export type SceneBlockInput =
   | { kind: 'text'; speaker?: string; value: string }
   | { kind: 'label'; name: string }
   | { kind: 'instruction'; name: string; args?: string[]; modifiers?: Record<string, string> }
-  | { kind: 'choice'; options: { label: string; when?: string; effects?: { name: string; args: string[] }[]; target: { kind: 'goto' | 'jump'; value: string } }[] };
+  | { kind: 'choice'; options: SceneChoiceOptionInput[] }
+  | SceneConditionBlockInput;
 
-export const REPLACEABLE_SCENE_INSTRUCTIONS = ['bg', 'show', 'hide', 'wait'] as const;
+/** 单行可替换的场景指令；结构入口、音频/视频及 call/return 等流程边界不在此列。 */
+export const REPLACEABLE_SCENE_INSTRUCTIONS = [
+  'bg', 'show', 'hide', 'wait',
+  'set', 'mod', 'goto', 'jump',
+  'fadein', 'fadeout', 'shake', 'flash', 'zoom', 'wipe', 'transition',
+  'particle', 'mov', 'tint', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
+] as const;
 
 export type ScenePatchOperation =
   | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
   | { kind: 'replaceInstruction'; target: string; expectedFingerprint: string; instruction: Extract<SceneBlockInput, { kind: 'instruction' }> & { name: typeof REPLACEABLE_SCENE_INSTRUCTIONS[number] } }
   | { kind: 'insertAfter'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
-  | { kind: 'replaceChoiceOption'; target: string; expectedFingerprint: string; option: Extract<SceneBlockInput, { kind: 'choice' }>['options'][number] }
+  | { kind: 'replaceChoiceOption'; target: string; expectedFingerprint: string; option: SceneChoiceOptionInput }
+  | { kind: 'replaceChoiceGroup'; target: string; expectedFingerprint: string; choice: Extract<SceneBlockInput, { kind: 'choice' }> }
+  | { kind: 'replaceConditionBlock'; target: string; expectedFingerprint: string; condition: { kind: 'condition'; branches: SceneConditionPatchBranchInput[] } }
   | { kind: 'removeObject'; target: string; expectedFingerprint: string };
 
 export interface SceneCreateInput {
@@ -227,11 +276,32 @@ export interface VariableEnsureInput {
   max?: number;
 }
 
-/** Stage 6 Wave 2：本 Wave 唯一允许写入的 track kind。 */
-export type Wave2TrackKind = 'background' | 'portrait' | 'screen';
+export interface VariablePatchInitialInput {
+  operationId: string;
+  name: string;
+  expectedFingerprint: string;
+  initial: unknown;
+}
 
-/** Stage 6 Wave 2：本 Wave 唯一允许写入的 action（background.set / portrait.* / screen.fade）。 */
-export type Wave2Action = 'set' | 'show' | 'hide' | 'move' | 'expression' | 'fade';
+/** Stage 6 Wave 2：可由 authoring 时间轴入口写入的非音频 track kind。 */
+export type Wave2TrackKind = 'background' | 'portrait' | 'camera' | 'screen' | 'particle';
+
+/** Stage 6 Wave 2：可由 authoring 时间轴入口写入的非音频 action。 */
+export type Wave2Action =
+  | 'set'
+  | 'show'
+  | 'hide'
+  | 'move'
+  | 'expression'
+  | 'zoom'
+  | 'pan'
+  | 'shake'
+  | 'fade'
+  | 'tint'
+  | 'flash'
+  | 'wipe'
+  | 'start'
+  | 'stop';
 
 export interface TimelineCueInput {
   atMs: number;
@@ -242,6 +312,12 @@ export interface TimelineCueInput {
   expression?: string;
   position?: string;
   alpha?: number;
+  scale?: number;
+  x?: number;
+  y?: number;
+  strength?: number;
+  color?: number;
+  kind?: string;
 }
 
 export interface TimelineCreateInput {
@@ -253,6 +329,8 @@ export interface TimelineCreateInput {
 export type TimelinePatchOperation =
   | { kind: 'addTrack'; expectedFingerprint: string; trackKind: Wave2TrackKind; target?: string }
   | { kind: 'removeTrack'; expectedFingerprint: string; trackRef: string }
+  | { kind: 'setDuration'; expectedFingerprint: string; durationMs: number }
+  | { kind: 'setTrackTarget'; expectedFingerprint: string; trackRef: string; target: string | null }
   | { kind: 'insertCue'; expectedFingerprint: string; trackRef: string; cue: TimelineCueInput }
   | { kind: 'replaceCue'; expectedFingerprint: string; cueRef: string; cue: TimelineCueInput }
   | { kind: 'removeCue'; expectedFingerprint: string; cueRef: string };

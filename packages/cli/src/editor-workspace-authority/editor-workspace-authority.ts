@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import {
   AuthoringOperationError,
   type PreviewPublishInput,
+  type PreviewContentTarget,
   aggregateHumanWorkspaceObservations,
   humanWorkspaceCommitBlock,
   type HumanWorkspaceBlockedReason,
@@ -24,6 +25,7 @@ import {
 } from '../authoring/project-coordination-baseline.js';
 import { ProjectMutationNoticeStore } from '../authoring/project-mutation-notice-store.js';
 import { PreviewObservationService } from '../authoring/preview-observation-service.js';
+import { PreviewContentService } from '../authoring/preview-content-service.js';
 
 export interface EditorWorkspaceStateInput {
   workspaceSessionId: string;
@@ -234,6 +236,22 @@ export class EditorWorkspaceAuthority {
       : await this.leaseManager.acquire({ scope: 'project', resourceId: this.projectRootIdentity });
     try { return await this.previews.publish(this.projectRootIdentity, input.workspaceSessionId, input.browserSessionId, preview); }
     finally { await lease?.release(); }
+  }
+
+  async previewSources(input: EditorWorkspaceStateInput) {
+    await this.requireSession(input);
+    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    return { sources: await new PreviewContentService(this.leaseManager.dataRoot).list(this.projectRootIdentity) };
+  }
+
+  async previewContent(input: EditorWorkspaceStateInput, target: PreviewContentTarget) {
+    await this.requireSession(input);
+    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    const resolved = await new PreviewContentService(this.leaseManager.dataRoot).resolve(this.projectRootIdentity, target);
+    if (resolved.content.projectRevision !== input.loadedProjectRevision || resolved.content.coordinationRevision !== input.loadedCoordinationRevision) {
+      throw new AuthoringOperationError('PREVIEW_OBSERVATION_STALE', '当前绑定工作区尚未加载所选内容的来源基线');
+    }
+    return resolved.content;
   }
 
   async beginWrite(input: BeginEditorWriteInput): Promise<{

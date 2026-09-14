@@ -83,7 +83,7 @@ async function dispatchCli(
   };
   let input: unknown = {};
   if (capability === 'object.inspect') input = { objectRef: required(args.ref, '--ref') };
-  else if (capability === 'scene.create' || capability === 'scene.patch' || capability === 'variable.ensure'
+  else if (capability === 'scene.create' || capability === 'scene.patch' || capability === 'variable.ensure' || capability === 'variable.patch-initial'
     || capability === 'character.ensure' || capability === 'character.remove' || capability === 'timeline.create'
     || capability === 'gallery.cg.create' || capability === 'gallery.cg.patch'
     || capability === 'timeline.patch' || capability === 'project.entry-scene.set' || capability === 'runtime.run-from') {

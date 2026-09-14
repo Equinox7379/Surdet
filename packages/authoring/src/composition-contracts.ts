@@ -12,6 +12,7 @@ export type ComposableCapabilityId =
   | 'scene.create'
   | 'scene.patch'
   | 'variable.ensure'
+  | 'variable.patch-initial'
   | 'character.ensure'
   | 'character.remove'
   | 'timeline.create'
@@ -115,6 +116,7 @@ export const COMPOSABLE_CAPABILITY_IDS: readonly ComposableCapabilityId[] = [
   'scene.create',
   'scene.patch',
   'variable.ensure',
+  'variable.patch-initial',
   'character.ensure',
   'character.remove',
   'timeline.create',

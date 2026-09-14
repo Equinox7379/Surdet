@@ -116,7 +116,7 @@ const choiceTargetSchema = strictObject({
 
 const choiceOptionSchema = strictObject({
   label: stringSchema,
-  when: stringSchema,
+  when: { oneOf: [stringSchema, nullSchema] },
   effects: arrayOf(choiceEffectSchema),
   target: choiceTargetSchema,
 }, ['label', 'target']);
@@ -126,14 +126,73 @@ const sceneChoiceBlockSchema = strictObject({
   options: arrayOf(choiceOptionSchema),
 }, ['kind', 'options']);
 
+// Scene blocks are recursive: a condition branch can contain another
+// condition, choice, instruction, label, or text block. The public schemas
+// keep the recursive nodes in the root $defs so the MCP/AJV validator can
+// resolve them without a depth limit.
+const sceneBlockRef: JsonSchema = { $ref: '#/$defs/sceneBlock' };
+
+const sceneConditionBranchSchema: JsonSchema = {
+  oneOf: [
+    strictObject({
+      kind: { const: 'if' },
+      expr: stringSchema,
+      blocks: { ...arrayOf(sceneBlockRef), minItems: 0 },
+    }, ['kind', 'expr', 'blocks']),
+    strictObject({
+      kind: { const: 'elif' },
+      expr: stringSchema,
+      blocks: { ...arrayOf(sceneBlockRef), minItems: 0 },
+    }, ['kind', 'expr', 'blocks']),
+    strictObject({
+      kind: { const: 'else' },
+      blocks: { ...arrayOf(sceneBlockRef), minItems: 0 },
+    }, ['kind', 'blocks']),
+  ],
+};
+
+const sceneConditionBlockSchema: JsonSchema = strictObject({
+  kind: { const: 'condition' },
+  branches: { type: 'array', minItems: 1, items: { $ref: '#/$defs/sceneConditionBranch' } },
+}, ['kind', 'branches']);
+
 const sceneBlockSchema: JsonSchema = {
   oneOf: [
     sceneTextBlockSchema,
     sceneLabelBlockSchema,
     sceneInstructionBlockSchema,
     sceneChoiceBlockSchema,
+    sceneConditionBlockSchema,
   ],
 };
+
+function conditionPatchBranchVariants(kind: 'if' | 'elif' | 'else'): JsonSchema[] {
+  const properties: SchemaProperties = {
+    kind: { const: kind },
+    ...(kind === 'else' ? {} : { expr: stringSchema }),
+    sourceBranch: stringSchema,
+    blocks: arrayOf(sceneBlockRef),
+  };
+  const headerRequired = kind === 'else' ? ['kind'] : ['kind', 'expr'];
+  return [
+    strictObject(properties, [...headerRequired, 'sourceBranch', 'blocks']),
+    { ...strictObject(properties, [...headerRequired, 'sourceBranch']), not: { required: ['blocks'] } },
+    { ...strictObject(properties, [...headerRequired, 'blocks']), not: { required: ['sourceBranch'] } },
+  ];
+}
+
+const sceneConditionPatchBranchSchema: JsonSchema = {
+  oneOf: [
+    ...conditionPatchBranchVariants('if'),
+    ...conditionPatchBranchVariants('elif'),
+    ...conditionPatchBranchVariants('else'),
+  ],
+};
+
+const sceneConditionPatchSchema: JsonSchema = strictObject({
+  kind: { const: 'condition' },
+  branches: { type: 'array', minItems: 1, items: { $ref: '#/$defs/sceneConditionPatchBranch' } },
+}, ['kind', 'branches']);
 
 const scenePatchSchema: JsonSchema = {
   oneOf: [
@@ -168,6 +227,18 @@ const scenePatchSchema: JsonSchema = {
       option: choiceOptionSchema,
     }, ['kind', 'target', 'expectedFingerprint', 'option']),
     strictObject({
+      kind: { const: 'replaceChoiceGroup' },
+      target: stringSchema,
+      expectedFingerprint: stringSchema,
+      choice: sceneChoiceBlockSchema,
+    }, ['kind', 'target', 'expectedFingerprint', 'choice']),
+    strictObject({
+      kind: { const: 'replaceConditionBlock' },
+      target: stringSchema,
+      expectedFingerprint: stringSchema,
+      condition: sceneConditionPatchSchema,
+    }, ['kind', 'target', 'expectedFingerprint', 'condition']),
+    strictObject({
       kind: { const: 'removeObject' },
       target: stringSchema,
       expectedFingerprint: stringSchema,
@@ -175,28 +246,40 @@ const scenePatchSchema: JsonSchema = {
   ],
 };
 
+const sceneSchemaDefinitions: Record<string, JsonSchema> = {
+  sceneBlock: sceneBlockSchema,
+  sceneConditionBranch: sceneConditionBranchSchema,
+  sceneConditionPatchBranch: sceneConditionPatchBranchSchema,
+};
+
 const timelineCueSchema = strictObject({
-  atMs: numberSchema,
-  durationMs: numberSchema,
+  atMs: { type: 'integer', minimum: 0 },
+  durationMs: { type: 'integer', minimum: 0 },
   easing: { enum: ['linear', 'inOutSine', 'outCubic', 'inOutCubic'] },
-  action: stringSchema,
+  action: { enum: ['set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', 'start', 'stop'] },
   key: { type: 'string', description: 'background set cue only: copy project.assets.backgrounds[].key' },
   expression: { type: 'string', description: 'portrait cue only: copy project.assets.portraits[].expression for the selected timelineTarget' },
   position: stringSchema,
-  alpha: numberSchema,
+  alpha: { type: 'number', minimum: 0, maximum: 1 },
+  scale: { type: 'number', exclusiveMinimum: 0, description: 'camera zoom cue only: positive scale' },
+  x: { type: 'number', minimum: -2000, maximum: 2000, description: 'camera pan cue only' },
+  y: { type: 'number', minimum: -2000, maximum: 2000, description: 'camera pan cue only' },
+  strength: { type: 'number', minimum: 0, maximum: 64, description: 'camera shake cue only' },
+  color: { type: 'number', minimum: 0, maximum: 16777215, description: 'screen tint cue only: 0xRRGGBB number' },
+  kind: { type: 'string', description: 'particle start cue only: preset kind' },
 }, ['atMs', 'durationMs', 'easing', 'action']);
 
 const timelineTrackSchema = strictObject({
-  kind: { enum: ['background', 'portrait', 'screen'] },
-  target: { type: 'string', description: 'portrait track only: copy project.assets.portraits[].timelineTarget; omit for background and screen' },
+  kind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle'] },
+  target: { type: 'string', description: 'track target; for portrait copy project.assets.portraits[].timelineTarget' },
   cues: arrayOf(timelineCueSchema),
 }, ['kind', 'cues']);
 
 const timelineDefinitionSchema = strictObject({
   version: { const: 1 },
   id: stringSchema,
-  durationMs: numberSchema,
-  tracks: arrayOf(timelineTrackSchema),
+  durationMs: { type: 'integer', minimum: 0, maximum: 600000 },
+  tracks: { ...arrayOf(timelineTrackSchema), minItems: 1 },
 }, ['version', 'id', 'durationMs', 'tracks']);
 
 const timelinePatchSchema: JsonSchema = {
@@ -204,14 +287,25 @@ const timelinePatchSchema: JsonSchema = {
     strictObject({
       kind: { const: 'addTrack' },
       expectedFingerprint: stringSchema,
-      trackKind: { enum: ['background', 'portrait', 'screen'] },
+      trackKind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle'] },
       target: stringSchema,
     }, ['kind', 'expectedFingerprint', 'trackKind']),
+    strictObject({
+      kind: { const: 'setDuration' },
+      expectedFingerprint: stringSchema,
+      durationMs: { type: 'integer', minimum: 0, maximum: 600000 },
+    }, ['kind', 'expectedFingerprint', 'durationMs']),
     strictObject({
       kind: { const: 'removeTrack' },
       expectedFingerprint: stringSchema,
       trackRef: stringSchema,
     }, ['kind', 'expectedFingerprint', 'trackRef']),
+    strictObject({
+      kind: { const: 'setTrackTarget' },
+      expectedFingerprint: stringSchema,
+      trackRef: stringSchema,
+      target: { oneOf: [stringSchema, nullSchema] },
+    }, ['kind', 'expectedFingerprint', 'trackRef', 'target']),
     strictObject({
       kind: { const: 'insertCue' },
       expectedFingerprint: stringSchema,
@@ -510,15 +604,31 @@ const traceEventSchema = strictObject({
 const traceEventsSchema = arrayOf(traceEventSchema);
 
 const previewFileFactSchema = strictObject({ path: stringSchema, sha256: importShaSchema }, ['path', 'sha256']);
+const previewContentTargetSchema = { oneOf: [
+  strictObject({ kind: { const: 'saved-project' } }, ['kind']),
+  strictObject({ kind: { const: 'working-change' }, changeId: stringSchema, workingRevision: integerSchema }, ['kind', 'changeId', 'workingRevision']),
+  strictObject({ kind: { const: 'candidate' }, changeId: stringSchema, capsuleId: stringSchema, artifactSha256: importShaSchema }, ['kind', 'changeId', 'capsuleId', 'artifactSha256']),
+  strictObject({ kind: { const: 'integration-result' }, changeId: stringSchema, planId: stringSchema, planFingerprint: importShaSchema, workingRevision: integerSchema }, ['kind', 'changeId', 'planId', 'planFingerprint', 'workingRevision']),
+] };
+const previewReplaySourceSchema = strictObject({ sceneId: stringSchema, kind: { enum: ['text', 'choice'] },
+  anchor: { oneOf: [stringSchema, nullSchema] }, fingerprint: importShaSchema }, ['sceneId', 'kind', 'anchor', 'fingerprint']);
+const previewSeedSchema = { type: 'integer', minimum: 0, maximum: 4294967295 };
+const previewPlaybackSchema = strictObject({ seed: previewSeedSchema, sceneId: stringSchema, label: stringSchema,
+  choices: { type: 'array', maxItems: 256, items: strictObject({ source: previewReplaySourceSchema, optionFingerprint: importShaSchema }, ['source', 'optionFingerprint']) },
+  target: { oneOf: [previewReplaySourceSchema, nullSchema] },
+}, ['seed', 'sceneId', 'choices', 'target']);
 const previewObservationSchema = strictObject({
   previewId: stringSchema, previewGeneration: integerSchema, workspaceSessionId: stringSchema, projectIdentity: stringSchema,
   projectRevision: importShaSchema, coordinationRevision: importShaSchema, sceneId: stringSchema, label: stringSchema,
   startedAt: stringSchema, updatedAt: stringSchema, runtimeGeneration: { oneOf: [integerSchema, nullSchema] },
   state: { enum: ['starting', 'running', 'passed', 'failed'] }, firstError: stringSchema,
   source: strictObject({ files: arrayOf(previewFileFactSchema), assets: arrayOf(previewFileFactSchema) }, ['files', 'assets']),
+  content: strictObject({ target: previewContentTargetSchema, contentRevision: importShaSchema }, ['target', 'contentRevision']),
+  seed: previewSeedSchema,
   events: arrayOf(strictObject({ type: { const: 'surdet-preview-trace-event' }, traceId: stringSchema, generation: integerSchema,
     sequence: integerSchema, coreEmitted: { const: true }, presentationApplied: booleanSchema,
     presentationBefore: jsonObjectSchema, presentationAfter: jsonObjectSchema, event: traceEventSchema,
+    playback: previewPlaybackSchema,
     objectRef: { oneOf: [stringSchema, nullSchema] },
   }, ['type', 'traceId', 'generation', 'sequence', 'coreEmitted', 'presentationApplied', 'presentationBefore', 'presentationAfter', 'event', 'objectRef'])),
 }, ['previewId', 'previewGeneration', 'workspaceSessionId', 'projectIdentity', 'projectRevision', 'coordinationRevision', 'sceneId',
@@ -860,21 +970,36 @@ const definitions = {
     example: { input: {}, expectedResultShape: { changeId: 'chg_...', baseRevision: '...', workingRevision: 0 } },
   },
   sceneCreate: {
-    inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, blocks: arrayOf(sceneBlockSchema) }, ['operationId', 'sceneId']),
+    inputSchema: {
+      ...strictObject({ operationId: stringSchema, sceneId: stringSchema, blocks: arrayOf(sceneBlockSchema) }, ['operationId', 'sceneId']),
+      $defs: sceneSchemaDefinitions,
+    },
     outputSchema: strictObject({ sceneId: stringSchema, path: stringSchema }, ['sceneId', 'path']),
-    example: { input: { operationId: 'op_scene', sceneId: 'agent_port_entry' }, expectedResultShape: { sceneId: 'agent_port_entry', path: 'content/scenario/agent_port_entry.gal' } },
+    example: { input: { operationId: 'op_scene', sceneId: 'agent_port_entry', blocks: [
+      { kind: 'choice', options: [{ label: '继续', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '1'] }], target: { kind: 'goto', value: 'next' } }] },
+      { kind: 'condition', branches: [{ kind: 'if', expr: 'trust > 0', blocks: [{ kind: 'text', value: '进入下一段。' }] }, { kind: 'else', blocks: [{ kind: 'text', value: '暂时停留。' }] }] },
+    ] }, expectedResultShape: { sceneId: 'agent_port_entry', path: 'content/scenario/agent_port_entry.gal' } },
   },
   scenePatch: {
     inputSchema: { ...strictObject({ operationId: stringSchema, sceneId: stringSchema, patch: scenePatchSchema }, ['operationId', 'patch']),
-      description: 'Patch one source object with its original fingerprint. replaceInstruction replaces one existing bg/show/hide/wait line in place using a complete instruction (omitted modifiers are removed). Arguments follow the existing instruction block DSL token convention; no newlines. Surrounding lines and comments are preserved. Re-read object facts after edits; never insert an overriding instruction to simulate replacement.',
+      $defs: sceneSchemaDefinitions,
+      description: `Patch one source object with its original fingerprint. replaceInstruction replaces one existing whitelisted single-line scene instruction in place using a complete instruction (omitted modifiers are removed); the whitelist is ${REPLACEABLE_SCENE_INSTRUCTIONS.join('、')}. Audio, video, flow-boundary, and structure directives stay outside this entry. replaceChoiceGroup atomically replaces the complete choice options; use choice.details.structure.fingerprint, which is distinct from the line fingerprint used by replaceChoiceOption/insertAfter. replaceConditionBlock atomically replaces one paired nested condition; branches determine order and add/delete branches, sourceBranch must be a current direct branch of the target, and omitting blocks preserves that branch body comments, indentation, and line endings byte-for-byte. New branches must provide blocks. Re-read object facts after edits; surrounding source outside the selected structure is preserved.`,
     },
     outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema }, ['path', 'line', 'kind']),
-    example: { input: { operationId: 'op_patch', patch: { kind: 'replaceInstruction', target: 'scene:x/instruction:2@12345678-abcdef12', expectedFingerprint: 'abcdef12', instruction: { kind: 'instruction', name: 'show', args: ['lynn:coat', 'smile'], modifiers: { pos: 'right' } } } }, expectedResultShape: { path: 'content/scenario/x.gal', line: 2, kind: 'replaceInstruction' } },
+    example: { input: { operationId: 'op_patch', patch: { kind: 'replaceChoiceGroup', target: 'scene:x/choice:2@12345678-abcdef12', expectedFingerprint: 'fedcba98', choice: { kind: 'choice', options: [
+      { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['route', 'left'] }], target: { kind: 'goto', value: 'left' } },
+      { label: '右侧', target: { kind: 'jump', value: 'right' } },
+    ] } } }, expectedResultShape: { path: 'content/scenario/x.gal', line: 2, kind: 'replaceChoiceGroup' } },
   },
   variableEnsure: {
     inputSchema: strictObject({ operationId: stringSchema, name: stringSchema, type: stringSchema, initial: jsonValueSchema, readonly: booleanSchema, min: numberSchema, max: numberSchema }, ['operationId', 'name', 'type', 'initial']),
     outputSchema: strictObject({ name: stringSchema, created: booleanSchema }, ['name', 'created']),
     example: { input: { operationId: 'op_variable', name: 'agent.route', type: 'string', initial: '' }, expectedResultShape: { name: 'agent.route', created: true } },
+  },
+  variablePatchInitial: {
+    inputSchema: strictObject({ operationId: stringSchema, name: stringSchema, expectedFingerprint: stringSchema, initial: jsonValueSchema }, ['operationId', 'name', 'expectedFingerprint', 'initial']),
+    outputSchema: strictObject({ name: stringSchema, objectRef: stringSchema, fingerprint: stringSchema, diffEntry: diffEntrySchema }, ['name', 'objectRef', 'fingerprint', 'diffEntry']),
+    example: { input: { operationId: 'op_variable_initial', name: 'agent.route', expectedFingerprint: '...', initial: 'alternate' }, expectedResultShape: { name: 'agent.route', objectRef: 'variable:agent.route', fingerprint: '...', diffEntry: {} } },
   },
   characterEnsure: {
     inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, name: stringSchema, avatar: { oneOf: [stringSchema, nullSchema] }, expectedFingerprint: stringSchema }, ['operationId', 'id', 'name', 'expectedFingerprint']),
@@ -889,12 +1014,12 @@ const definitions = {
   timelineCreate: {
     inputSchema: strictObject({ operationId: stringSchema, timelineId: stringSchema, definition: timelineDefinitionSchema }, ['operationId', 'timelineId', 'definition']),
     outputSchema: strictObject({ timelineId: stringSchema, path: stringSchema, objectRef: stringSchema, fingerprint: stringSchema, diffEntry: diffEntrySchema }, ['timelineId', 'path', 'objectRef', 'fingerprint', 'diffEntry']),
-    example: { input: { operationId: 'op_timeline', timelineId: 'agent_port_intro', definition: { version: 1, id: 'agent_port_intro', durationMs: 1000, tracks: [] } }, expectedResultShape: { timelineId: 'agent_port_intro', path: 'content/timelines/agent_port_intro.json', objectRef: 'timeline:agent_port_intro', fingerprint: '...', diffEntry: {} } },
+    example: { input: { operationId: 'op_timeline', timelineId: 'agent_port_intro', definition: { version: 1, id: 'agent_port_intro', durationMs: 1000, tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 300, easing: 'linear', action: 'fade', alpha: 0 }] }] } }, expectedResultShape: { timelineId: 'agent_port_intro', path: 'content/timelines/agent_port_intro.json', objectRef: 'timeline:agent_port_intro', fingerprint: '...', diffEntry: {} } },
   },
   timelinePatch: {
     inputSchema: strictObject({ operationId: stringSchema, timelineId: stringSchema, patch: timelinePatchSchema }, ['operationId', 'timelineId', 'patch']),
     outputSchema: strictObject({ timelineId: stringSchema, objectRef: stringSchema, fingerprint: stringSchema, diffEntry: diffEntrySchema }, ['timelineId', 'objectRef', 'fingerprint', 'diffEntry']),
-    example: { input: { operationId: 'op_timeline_patch', timelineId: 'agent_port_intro', patch: { kind: 'addTrack', expectedFingerprint: '...', trackKind: 'background' } }, expectedResultShape: { timelineId: 'agent_port_intro', objectRef: 'timeline:agent_port_intro', fingerprint: '...', diffEntry: {} } },
+    example: { input: { operationId: 'op_timeline_patch', timelineId: 'agent_port_intro', patch: { kind: 'setDuration', expectedFingerprint: '...', durationMs: 900 } }, expectedResultShape: { timelineId: 'agent_port_intro', objectRef: 'timeline:agent_port_intro', fingerprint: '...', diffEntry: {} } },
   },
   entrySceneSet: {
     inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, expectedFingerprint: stringSchema }, ['operationId', 'sceneId', 'expectedFingerprint']),
@@ -930,7 +1055,7 @@ const definitions = {
   },
   readPreview: {
     inputSchema: strictObject({ previewId: stringSchema, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }),
-    outputSchema: strictObject({ view: { const: 'saved-project' }, kind: { const: 'editor-preview' },
+    outputSchema: strictObject({ view: { enum: ['saved-project', 'working-change', 'candidate', 'integration-result'] }, kind: { const: 'editor-preview' },
       status: { enum: ['current', 'stale', 'unavailable', 'ambiguous'] }, reasons: stringArraySchema,
       observation: { oneOf: [previewObservationSchema, nullSchema] }, eventCount: integerSchema, hasMore: booleanSchema,
       availablePreviews: arrayOf(strictObject({ previewId: stringSchema, workspaceSessionId: stringSchema, sceneId: stringSchema }, ['previewId', 'workspaceSessionId', 'sceneId'])),
@@ -1016,6 +1141,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'scene.create',
   'scene.patch',
   'variable.ensure',
+  'variable.patch-initial',
   'character.ensure',
   'character.remove',
   'timeline.create',
@@ -1062,6 +1188,7 @@ type DefinitionMetadata = {
 /** 内容 mutation 白名单：composable=true 的唯一合法集合。 */
 export const CONTENT_MUTATION_CAPABILITY_IDS = new Set<string>([
   'scene.create', 'scene.patch', 'variable.ensure', 'character.ensure',
+  'variable.patch-initial',
   'character.remove', 'timeline.create', 'timeline.patch', 'project.entry-scene.set',
   'gallery.cg.create', 'gallery.cg.patch',
 ]);
@@ -1091,20 +1218,21 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.assets': { title: 'Inspect project assets', purpose: 'Read shared physical asset metadata, references, health facts, and the compatible background/portrait/avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
-  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
-  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", ...mutateRepair] },
+  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change. Blocks include choices with display conditions/effects/targets and recursively nested if/elif/else condition blocks; the Core parser and compiler validate every pairing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'for nested condition creation provide blocks for every branch; use scene.patch only after object.inspect exposes a current structure fingerprint', ...mutateRepair] },
+  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint. replaceChoiceGroup edits the complete choice group atomically; replaceConditionBlock edits one paired nested condition atomically and preserves omitted sourceBranch bodies byte-for-byte. The structural fingerprint in choice.details.structure or condition.details.structure is separate from the original line fingerprint used by existing row operations.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target and every supplied sourceBranch reference the current working object index', 'expectedFingerprint is the complete structure fingerprint for choice/condition edits'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'inspect the scene root, then inspect the complete choice or condition object and copy its structure fingerprint and direct childRefs', 'for replaceConditionBlock omit blocks only with a current direct sourceBranch to preserve its body; provide blocks for each new branch', ...mutateRepair] },
   'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'variable.patch-initial': { title: 'Patch variable initial', purpose: 'Update only the initial value of one existing variable declaration using its complete declaration fingerprint. Name, type, readonly, range constraints, and unknown declaration fields are preserved; numeric range violations are rejected without clamping.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'variable declaration fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.remove': { title: 'Remove character', purpose: 'Remove one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'timeline.create': { title: 'Create timeline', purpose: 'Create one validated Wave 2 presentation timeline.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'definition passes the shared timeline whitelist'], possibleErrors: [...commonErrors, 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
-  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one timeline track or cue using its current fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['object.inspect the timeline and copy an exact trackRef from childRefs; inspect that track and copy an exact cueRef from childRefs', 'copy portrait target from project.assets.portraits[].timelineTarget', ...mutateRepair] },
+  'timeline.create': { title: 'Create timeline', purpose: 'Create one validated non-audio Wave 2 presentation timeline with background, portrait, camera, screen, and particle tracks. Cue actions and parameters follow the shared Core timeline validator; existing audio tracks remain project data and are not added through this entry.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'definition passes the shared timeline whitelist and Core validation'], possibleErrors: [...commonErrors, 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
+  'timeline.patch': { title: 'Patch timeline', purpose: 'Patch one validated non-audio timeline duration, track target, track, or cue with its current full fingerprint. setDuration and setTrackTarget preserve every other field; replaceCue is a complete cue replacement. Existing audio tracks stay intact, while new entry points cannot add or modify audio.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'timeline, track, or cue fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'UNSUPPORTED_OPERATION', 'OPERATION_ID_CONFLICT'], repairRecipes: ['object.inspect the timeline and copy an exact trackRef from childRefs; inspect that track and copy an exact cueRef from childRefs', 'for setDuration use the full timeline fingerprint and keep every cue within the new duration; Core rejects overflow rather than truncating', 'for setTrackTarget copy the track fingerprint and use project.assets.portraits[].timelineTarget for portrait tracks; pass null to remove a target', ...mutateRepair] },
   'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
   'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
   'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
   'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
-  'runtime.read-preview': { title: 'Read actual Editor preview', purpose: 'Read actual bound-Editor preview events, presentation snapshots and source object refs for the saved project. Separate from Core explicit-path evidence and from screenshots; never certifies pixels or approves/commits a change.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false,
-    preconditions: ['Open the normal bound Editor on this saved project and actually play its preview; drafts are not published', 'Only status=current belongs to the current saved source; check observation.state for partial or completed runs'],
+  'runtime.read-preview': { title: 'Read actual Editor preview', purpose: 'Read actual bound-Editor preview events, presentation snapshots and source object refs for its selected saved project or isolated working change. Use the Editor 试玩内容 selector to play a working change before committing. Separate from Core explicit-path evidence and screenshots; never certifies pixels or approves/commits a change.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false,
+    preconditions: ['Open the normal bound Editor and select 试玩内容 to play the saved project, working change, sealed candidate or ready integration result; human drafts are not saved or discarded', 'Only status=current belongs to the selected version. Check observation.content for changeId, workingRevision or sealed identity, and observation.state for partial or completed runs. Repair a working change with existing authoring operations then reload. Sealed candidates/results are read-only: return to their source candidate change, edit and repackage/recompose; never modify sealed content or reuse old approval.', '回到上次位置 replays actual recorded choices and seed through the existing interpreter; if choice identity, condition or visibility changed, choose again at the real choice prompt'],
     possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_BUSY', 'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT'],
     repairRecipes: ['Use the browser to play/reload the bound Editor preview. Do not infer visuals from runtime.run-from.', 'For ambiguous workspaces use an availablePreviews previewId; page with offset/limit while keeping that previewId.', 'Use observation.events objectRef with object.inspect and existing scene.patch/timeline.patch in an isolated change. Saved-project observations do not describe unsaved working changes. After an authorized commit synchronize the Editor, replay and read a new preview.'] },
   'change.diff': { title: 'Diff change', purpose: 'Read file and operation-ledger differences for the active change.', minimumPolicy: 'observe', sideEffects: ['change-store-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['active change must be readable'], possibleErrors: ['CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'], repairRecipes: readRepair },
@@ -1148,6 +1276,8 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
                 ? 'scenePatch'
                 : id === 'variable.ensure'
                   ? 'variableEnsure'
+                  : id === 'variable.patch-initial'
+                    ? 'variablePatchInitial'
                   : id === 'character.ensure'
                     ? 'characterEnsure'
                     : id === 'character.remove'

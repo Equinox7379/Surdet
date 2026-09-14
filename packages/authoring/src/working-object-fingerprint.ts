@@ -57,16 +57,25 @@ export async function fingerprintWorkingObject(
   objectRef: string,
   hasher: TextHasher,
 ): Promise<WorkingObjectFingerprintResult> {
-  const present = async (value: unknown): Promise<WorkingObjectFingerprintResult> => ({
-    objectRef: objectRef as ComposableObjectRef,
-    state: 'present',
-    fingerprint: await hasher.sha256(stableStringify({ objectRef, state: 'present', value })),
-  });
-  const absent = async (): Promise<WorkingObjectFingerprintResult> => ({
-    objectRef: objectRef as ComposableObjectRef,
-    state: 'absent',
-    fingerprint: await hasher.sha256(stableStringify({ objectRef, state: 'absent' })),
-  });
+  const content = readWorkingObject(workingFiles, objectRef);
+  return { objectRef: objectRef as ComposableObjectRef, state: content.state,
+    fingerprint: await hasher.sha256(stableStringify(content.state === 'absent'
+      ? { objectRef, state: content.state } : { objectRef, state: content.state, value: content.value })) };
+}
+
+/** Manifest products hash raw scene text / JSON values, without plan identity wrappers. */
+export async function fingerprintWorkingObjectValue(
+  workingFiles: Readonly<Record<string, string>>, objectRef: string, hasher: TextHasher,
+): Promise<string | undefined> {
+  const content = readWorkingObject(workingFiles, objectRef);
+  return content.state === 'absent' ? undefined : hasher.sha256(objectRef.startsWith('scene:')
+    ? content.value as string : stableStringify(content.value));
+}
+
+function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objectRef: string):
+  { state: 'present'; value: unknown } | { state: 'absent' } {
+  const present = (value: unknown) => ({ state: 'present' as const, value });
+  const absent = () => ({ state: 'absent' as const });
 
   if (objectRef.startsWith('scene:')) {
     const id = assertSafeSemanticId(objectRef.slice('scene:'.length), objectRef);
@@ -79,7 +88,7 @@ export async function fingerprintWorkingObject(
     const text = workingFiles[timelinePathFor(id)];
     if (text === undefined) return absent();
     try {
-      return await present(JSON.parse(text.replace(/^\uFEFF/, '')));
+      return present(JSON.parse(text.replace(/^\uFEFF/, '')));
     } catch (error) {
       throw new AuthoringOperationError(
         'COMPOSITION_REPLAY_FAILED',

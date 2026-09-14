@@ -521,14 +521,15 @@ export class ScriptWorkbench {
           };
           this.inspector.append(field(label, input));
         }
-      } else this.inspector.append(h('p', 'v4-muted', '这条选项包含组合动作或高级语法，保留完整原始行编辑，不自动简化。'));
+      } else this.inspector.append(h('p', 'v4-muted', '这条选项包含完整语法；显示条件、选中后效果和目标均保留在原始行中，可直接编辑并撤销。'));
     }
     if (line.kind !== 'text') {
       const fields = block.querySelector<HTMLElement>('.fields');
       if (fields) {
         this.borrowed = { block, fields };
         const advanced = disclosure('全部参数与高级语法', fields);
-        advanced.open = line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice'].includes(line.name);
+        const rawOnlyChoice = line.kind === 'choice-option' && simpleChoice(line.raw) === null;
+        advanced.open = rawOnlyChoice || line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice'].includes(line.name);
         if (line.kind === 'blank' || line.kind === 'comment' || line.kind === 'label') advanced.open = true;
         this.inspector.append(advanced);
       }

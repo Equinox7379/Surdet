@@ -284,6 +284,7 @@ export function analyzeSceneCompositionReferences(input: {
         continue;
       }
 
+      if ((line.kind === 'blank' || line.kind === 'comment') && choiceOptionIndex !== null) continue;
       choiceOptionIndex = null;
       if (line.kind !== 'text') continue;
       const speaker = line.speaker.trim();

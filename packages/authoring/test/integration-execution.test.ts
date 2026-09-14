@@ -11,6 +11,7 @@ import {
   charactersFingerprint,
   entrySceneFingerprint,
   replayCompositionOperation,
+  timelineFingerprint,
 } from '../src/index.js';
 import type { ChangeRepository, ChangeWritePrecondition, IntegrationPlan, OperationCompositionDraft, PlannedReplayOperation, ProjectSnapshot, TextHasher } from '../src/index.js';
 
@@ -235,6 +236,65 @@ describe('Wave 5 integration execution', () => {
     expect(Object.keys(change.record.operations).sort()).toEqual([
       'cmp_t4_0000_aaa', 'cmp_t4_0001_bbb', 'cmp_t4_0002_ccc',
     ]);
+  });
+
+  it('replays timeline create, duration and track-target edits into the persisted integration change', async () => {
+    const timelineId = 'replay_timeline';
+    const definition = {
+      version: 1 as const,
+      id: timelineId,
+      durationMs: 100,
+      tracks: [{ kind: 'screen' as const, cues: [{ atMs: 0, durationMs: 10, easing: 'linear' as const, action: 'fade' as const, alpha: 0 }] }],
+    };
+    const durationDefinition = { ...definition, durationMs: 50 };
+    const finalDefinition = { ...durationDefinition, tracks: [{ ...durationDefinition.tracks[0]!, target: 'screen:main' }] };
+    const timelineRef = `timeline:${timelineId}`;
+    const timelinePath = `content/timelines/${timelineId}.json`;
+    const sourceCapsule = { changeId: 'chg_src', capsuleId: 'cap_src', artifactSha256: 'a'.repeat(64) };
+    const createFingerprint = await timelineFingerprint(definition, hasher);
+    const durationFingerprint = await timelineFingerprint(durationDefinition, hasher);
+    const trackFingerprint = await timelineFingerprint(durationDefinition.tracks[0], hasher);
+    const finalFingerprint = await timelineFingerprint(finalDefinition, hasher);
+    const finalObjectFingerprint = (await fingerprintWorkingObject(
+      { [`content/timelines/${timelineId}.json`]: JSON.stringify(finalDefinition) }, timelineRef, hasher,
+    )).fingerprint;
+    const timelinePlan = makePlan({
+      replayOperations: [
+        {
+          sequence: 0, capabilityId: 'timeline.create', sourceOperationId: 'src-timeline-create',
+          normalizedInput: { operationId: 'cmp_t4_timeline_create', timelineId, definition },
+          inputSha256: '1'.repeat(64), primaryObject: timelineRef,
+          requiredObjects: [], producedObjects: [{ objectRef: timelineRef, disposition: 'create', finalFingerprint: createFingerprint }],
+          integrationOperationId: 'cmp_t4_timeline_create', sourceCapsule, sourceUnitId: 'u1',
+        },
+        {
+          sequence: 1, capabilityId: 'timeline.patch', sourceOperationId: 'src-timeline-duration',
+          normalizedInput: { operationId: 'cmp_t4_timeline_duration', timelineId, patch: { kind: 'setDuration', expectedFingerprint: createFingerprint, durationMs: 50 } },
+          inputSha256: '2'.repeat(64), primaryObject: timelineRef,
+          objectFingerprintBefore: createFingerprint, objectFingerprintAfter: durationFingerprint,
+          requiredObjects: [], producedObjects: [{ objectRef: timelineRef, disposition: 'update', finalFingerprint: durationFingerprint }],
+          integrationOperationId: 'cmp_t4_timeline_duration', sourceCapsule, sourceUnitId: 'u1',
+        },
+        {
+          sequence: 2, capabilityId: 'timeline.patch', sourceOperationId: 'src-timeline-target',
+          normalizedInput: { operationId: 'cmp_t4_timeline_target', timelineId, patch: { kind: 'setTrackTarget', expectedFingerprint: trackFingerprint, trackRef: `${timelineRef}/track:0`, target: 'screen:main' } },
+          inputSha256: '3'.repeat(64), primaryObject: timelineRef,
+          objectFingerprintBefore: durationFingerprint, objectFingerprintAfter: finalFingerprint,
+          requiredObjects: [], producedObjects: [{ objectRef: timelineRef, disposition: 'update', finalFingerprint }],
+          integrationOperationId: 'cmp_t4_timeline_target', sourceCapsule, sourceUnitId: 'u1',
+        },
+      ],
+      dryRun: { status: 'passed', finalObjectFingerprints: { [timelineRef]: finalObjectFingerprint }, errors: [] },
+    });
+    const change = await beginIntegrationChange(timelinePlan);
+    const metadata = await executeIntegrationReplay(change, timelinePlan, hasher);
+    expect(metadata.status).toBe('READY');
+    expect(metadata.nextOperationIndex).toBe(3);
+    expect(metadata.replayedOperations.map((item) => item.integrationOperationId)).toEqual([
+      'cmp_t4_timeline_create', 'cmp_t4_timeline_duration', 'cmp_t4_timeline_target',
+    ]);
+    expect(JSON.parse(change.record.workingFiles[timelinePath]!)).toEqual(finalDefinition);
+    expect(change.record.workingRevision).toBe(3);
   });
 
   it('does not double-apply mutations when a receipt write was interrupted before persistence', async () => {

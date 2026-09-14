@@ -33,8 +33,22 @@ function objectLabel(objectRef: string): string {
   const separator = objectRef.indexOf(':');
   const kind = separator < 0 ? objectRef : objectRef.slice(0, separator);
   const id = separator < 0 ? objectRef : objectRef.slice(separator + 1);
+  if (kind === 'scene') {
+    const [sceneId, structuralRef] = id.split('/', 2);
+    if (structuralRef?.startsWith('choice:')) return `场景 ${sceneId} 的选择组`;
+    if (structuralRef?.startsWith('choice-option:')) return `场景 ${sceneId} 的选择项`;
+    if (structuralRef?.startsWith('condition:')) return `场景 ${sceneId} 的条件块`;
+    if (structuralRef?.startsWith('condition-branch:')) return `场景 ${sceneId} 的条件分支`;
+    if (structuralRef?.startsWith('instruction:')) return `场景 ${sceneId} 的演出指令`;
+    if (structuralRef?.startsWith('text:')) return `场景 ${sceneId} 的台词`;
+  }
   switch (kind) {
     case 'scene': return `场景 ${id}`;
+    case 'choice': return `选择组 ${id}`;
+    case 'choice-option': return `选择项 ${id}`;
+    case 'condition': return `条件块 ${id}`;
+    case 'condition-branch': return `条件分支 ${id}`;
+    case 'instruction': return `演出指令 ${id}`;
     case 'timeline': return `时间轴 ${id}`;
     case 'variable': return `变量 ${id}`;
     case 'character': return `角色 ${id}`;
@@ -76,9 +90,23 @@ function choiceOptionFacts(value: JsonValue | undefined): string[] {
   const label = stringAt(value, 'label');
   if (label === undefined) return [];
   const target = value['target'];
-  if (!isRecord(target)) return [`选项：${label}`];
+  const details: string[] = [];
+  const when = stringAt(value, 'when');
+  if (when !== undefined) details.push(`显示条件：${when}`);
+  const effects = arrayAt(value, 'effects')
+    .map((effect) => {
+      if (!isRecord(effect)) return undefined;
+      const name = stringAt(effect, 'name');
+      if (name === undefined) return undefined;
+      const args = arrayAt(effect, 'args').filter((item): item is string => typeof item === 'string');
+      return `${name}${args.length === 0 ? '' : `（${args.join('、')}）`}`;
+    })
+    .filter((effect): effect is string => effect !== undefined);
+  if (effects.length > 0) details.push(`效果：${effects.join('、')}`);
+  const suffix = details.length === 0 ? '' : `（${details.join('；')}）`;
+  if (!isRecord(target)) return [`选项：${label}${suffix}`];
   const targetValue = stringAt(target, 'value');
-  return [targetValue === undefined ? `选项：${label}` : `选项：${label} → ${targetValue}`];
+  return [targetValue === undefined ? `选项：${label}${suffix}` : `选项：${label}${suffix} → ${targetValue}`];
 }
 
 function sceneBlockFacts(blocks: readonly JsonValue[]): string[] {
@@ -95,6 +123,17 @@ function sceneBlockFacts(blocks: readonly JsonValue[]): string[] {
       }
       case 'choice': {
         for (const option of arrayAt(block, 'options')) facts.push(...choiceOptionFacts(option));
+        break;
+      }
+      case 'condition': {
+        for (const branch of arrayAt(block, 'branches')) {
+          if (!isRecord(branch)) continue;
+          const kind = stringAt(branch, 'kind');
+          const expr = stringAt(branch, 'expr');
+          const header = kind === 'else' ? '否则' : `${kind === 'elif' ? '否则如果' : '如果'}${expr === undefined ? '' : `：${expr}`}`;
+          const body = sceneBlockFacts(arrayAt(branch, 'blocks'));
+          facts.push(body.length === 0 ? `${header}（正文为空）` : `${header}：${body.join('；')}`);
+        }
         break;
       }
       case 'instruction': {
@@ -172,19 +211,42 @@ function presentationForOperation(operation: CompositionOperation, full = false)
           const facts = choiceOptionFacts(patch['option']);
           return result('修改场景', facts, facts.length === 0 ? 'metadata-only' : 'content');
         }
+        case 'replaceChoiceGroup': {
+          const facts = patch['choice'] === undefined ? [] : sceneBlockFacts([patch['choice']]);
+          return result('替换选择组', facts, facts.length === 0 ? 'metadata-only' : 'content');
+        }
+        case 'replaceConditionBlock': {
+          const condition = patch['condition'];
+          const facts: string[] = [];
+          if (isRecord(condition)) {
+            for (const branch of arrayAt(condition, 'branches')) {
+              if (!isRecord(branch)) continue;
+              const kind = stringAt(branch, 'kind');
+              const expr = stringAt(branch, 'expr');
+              const header = kind === 'else' ? '否则' : `${kind === 'elif' ? '否则如果' : '如果'}${expr === undefined ? '' : `：${expr}`}`;
+              const body = sceneBlockFacts(arrayAt(branch, 'blocks'));
+              const retained = stringAt(branch, 'sourceBranch') !== undefined && branch['blocks'] === undefined;
+              facts.push(body.length > 0 ? `${header}：${body.join('；')}` : retained ? `${header}（保留原分支正文）` : `${header}（正文为空）`);
+            }
+          }
+          return result('替换条件块', facts, facts.length === 0 ? 'metadata-only' : 'content');
+        }
         case 'removeObject': return result('修改场景', ['移除一项场景内容']);
         default: return result('修改场景', [], 'metadata-only');
       }
     }
-    case 'variable.ensure': {
+    case 'variable.ensure':
+    case 'variable.patch-initial': {
       const name = stringAt(input, 'name');
-      const type = stringAt(input, 'type');
       const initial = scalarLabel(input['initial']);
-      const facts = [
-        ...(type === undefined ? [] : [`类型：${variableTypeLabel(type)}`]),
-        ...(initial === undefined ? ['初始值：结构化数据（未展开）'] : [`初始值：${initial}`]),
-      ];
-      return result('设置变量', facts, name === undefined || initial === undefined ? 'metadata-only' : 'content');
+      const type = operation.capabilityId === 'variable.ensure' ? stringAt(input, 'type') : undefined;
+      const facts = operation.capabilityId === 'variable.ensure'
+        ? [
+          ...(type === undefined ? [] : [`类型：${variableTypeLabel(type)}`]),
+          ...(initial === undefined ? ['初始值：结构化数据（未展开）'] : [`初始值：${initial}`]),
+        ]
+        : [initial === undefined ? '初始值：结构化数据（未展开）' : `初始值：${initial}`];
+      return result(operation.capabilityId === 'variable.ensure' ? '设置变量' : '修改变量初始值', facts, name === undefined || initial === undefined ? 'metadata-only' : 'content');
     }
     case 'character.ensure': {
       const name = stringAt(input, 'name');
@@ -242,6 +304,7 @@ function presentationForOperation(operation: CompositionOperation, full = false)
       return result('设置入口场景', sceneId === undefined ? [] : [`入口场景：${sceneId}`], sceneId === undefined ? 'metadata-only' : 'content');
     }
   }
+  return result('审阅对象变更', [], 'metadata-only');
 }
 
 export function metadataOnlyReviewUnitPresentation(primaryObject: string): ReviewUnitPresentation {

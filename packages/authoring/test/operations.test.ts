@@ -77,6 +77,39 @@ describe('typed authoring operations', () => {
   });
 
   it.each([
+    ['@set trust = 1', 'mod', ['trust', '+2']],
+    ['@mod trust +1', 'set', ['trust', '=', '4']],
+    ['@goto destination', 'jump', ['other_scene.end']],
+    ['@jump other_scene.end', 'goto', ['destination']],
+    ['@transition slide 200', 'flash', ['white', '200']],
+    ['@particle snow', 'mov', ['lynn:normal', 'left', '100']],
+  ] as const)('replaces state, jump and representative visual instruction %s', async (raw, name, args) => {
+    const source = ['@scene prologue', '@label destination', raw, '@label end', '@end'].join('\n');
+    const path = 'content/scenario/prologue.gal';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source, path), hasher);
+    const object = buildObjectIndex(snapshot).objects.find((item) => item.source?.raw === raw)!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: `replace-${name}`, patch: {
+      kind: 'replaceInstruction', target: object.objectRef, expectedFingerprint: object.fingerprint!,
+      instruction: { kind: 'instruction', name, args: [...args] },
+    } }, hasher);
+    expect(change.record.workingFiles[path]).toContain(`@${name} ${args.join(' ')}`);
+    expect(change.record.workingFiles[path]).not.toContain(raw);
+  });
+
+  it('keeps audio instructions outside the single-line replacement whitelist', async () => {
+    const source = '@scene prologue\n@voice narrator\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const voice = buildObjectIndex(snapshot).objects.find((item) => item.source?.raw === '@voice narrator')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await expect(applyScenePatch(change, { operationId: 'replace-voice', patch: {
+      kind: 'replaceInstruction', target: voice.objectRef, expectedFingerprint: voice.fingerprint!,
+      instruction: { kind: 'instruction', name: 'bg', args: ['night'] },
+    } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source);
+  });
+
+  it.each([
     { label: 'wrong scene', sceneId: 'elsewhere', code: 'OBJECT_PRECONDITION_FAILED' },
     { label: 'wrong object kind', targetKind: 'text', code: 'OBJECT_PRECONDITION_FAILED' },
     { label: 'stale fingerprint', fingerprint: 'deadbeef', code: 'OBJECT_PRECONDITION_FAILED' },
@@ -207,5 +240,207 @@ describe('typed authoring operations', () => {
     expect(change.record.workingFiles).toEqual(beforeFiles);
     expect(change.record.workingRevision).toBe(0);
     expect(change.record.operations).toEqual({});
+  });
+
+  it('replaces a complete choice group while keeping its row-level identity and separators', async () => {
+    const source = [
+      '@scene prologue',
+      '@choice',
+      '  Continue [if:trust > 0] -> @set trust = 1 @goto continue',
+      '// keep separator',
+      '',
+      '  Leave -> @goto leave',
+      '@label continue',
+      '@label leave',
+      '@end',
+    ].join('\n');
+    const storage = fixtureStorage('{"entryScene":"prologue","variables":{"trust":{"type":"number","initial":0}}}', source);
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const choice = buildObjectIndex(snapshot).objects.find((object) => object.kind === 'choice')!;
+    const structure = (choice.details as { structure: { fingerprint: string } }).structure;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const result = await applyScenePatch(change, {
+      operationId: 'replace-choice-group',
+      patch: {
+        kind: 'replaceChoiceGroup',
+        target: choice.objectRef,
+        expectedFingerprint: structure.fingerprint,
+        choice: {
+          kind: 'choice',
+          options: [
+            { label: 'Leave first', effects: [{ name: 'set', args: ['trust', '=', '2'] }], target: { kind: 'goto', value: 'leave' } },
+            { label: 'Continue second', when: 'trust > 0', target: { kind: 'jump', value: 'next' } },
+          ],
+        },
+      },
+    }, hasher);
+    expect(result).toEqual({ path: 'content/scenario/prologue.gal', line: 2, kind: 'replaceChoiceGroup' });
+    const written = change.record.workingFiles['content/scenario/prologue.gal']!;
+    expect(written).toContain('@choice\n  Leave first -> @set trust = 2 @goto leave\n// keep separator\n\n  Continue second [if:trust > 0] -> @jump next');
+    expect(written).not.toContain('  Continue [if:trust > 0]');
+    expect(written).not.toContain('  Leave -> @goto leave');
+    expect(await storage.readText('content/scenario/prologue.gal')).toMatchObject({ text: source });
+    expect(change.record.workingRevision).toBe(1);
+  });
+
+  it('keeps the legacy choice-option replacement usable after transparent comment rows', async () => {
+    const source = '@scene prologue\n@choice\n  First -> @goto first\n// separator\n  Second -> @goto second\n@label first\n@label second\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const option = buildObjectIndex(snapshot).objects.find((object) => object.kind === 'choice-option' && object.source?.line === 5)!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, {
+      operationId: 'replace-choice-option-after-comment',
+      patch: {
+        kind: 'replaceChoiceOption',
+        target: option.objectRef,
+        expectedFingerprint: option.fingerprint!,
+        option: { label: 'Changed', target: { kind: 'goto', value: 'second' } },
+      },
+    }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toContain('// separator\n  Changed -> @goto second');
+  });
+
+  it('replaces condition branches atomically and preserves omitted sourceBranch bodies byte-for-byte', async () => {
+    const source = [
+      '@scene prologue',
+      '@if outer',
+      '// preserve outer comment',
+      'A',
+      '@if inner',
+      'N',
+      '@else',
+      'M',
+      '@endif',
+      '@elif fallback',
+      'B',
+      '@else',
+      '// preserve else comment',
+      'C',
+      '@endif',
+      '@end',
+    ].join('\n');
+    const storage = fixtureStorage(undefined, source);
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const index = buildObjectIndex(snapshot);
+    const condition = index.objects.find((object) => object.kind === 'condition' && object.source?.line === 2)!;
+    const details = (condition.details as { structure: { fingerprint: string; branches: Array<{ objectRef: string }> } }).structure;
+    const originalBody = ['// preserve outer comment', 'A', '@if inner', 'N', '@else', 'M', '@endif'].join('\n');
+    const originalElse = ['// preserve else comment', 'C'].join('\n');
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, {
+      operationId: 'replace-condition-block',
+      patch: {
+        kind: 'replaceConditionBlock',
+        target: condition.objectRef,
+        expectedFingerprint: details.fingerprint,
+        condition: {
+          kind: 'condition',
+          branches: [
+            { kind: 'if', expr: 'outerChanged', sourceBranch: details.branches[0]!.objectRef },
+            { kind: 'elif', expr: 'newFlag', blocks: [{ kind: 'text', speaker: '凛', value: 'new branch' }] },
+            { kind: 'else', sourceBranch: details.branches[2]!.objectRef },
+          ],
+        },
+      },
+    }, hasher);
+    const written = change.record.workingFiles['content/scenario/prologue.gal']!;
+    expect(written).toContain('@if outerChanged\n' + originalBody);
+    expect(written).toContain('@elif newFlag\n凛：new branch\n@else\n' + originalElse + '\n@endif');
+    expect(written).not.toContain('@elif fallback');
+    expect(written).not.toContain('\nB\n');
+    expect(await storage.readText('content/scenario/prologue.gal')).toMatchObject({ text: source });
+    expect(change.record.workingRevision).toBe(1);
+
+    const beforeRejected = structuredClone(change.record);
+    await expect(applyScenePatch(change, {
+      operationId: 'stale-condition-block',
+      patch: {
+        kind: 'replaceConditionBlock',
+        target: condition.objectRef,
+        expectedFingerprint: details.fingerprint,
+        condition: { kind: 'condition', branches: [{ kind: 'if', expr: 'again', blocks: [] }] },
+      },
+    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(change.record).toEqual(beforeRejected);
+  });
+
+  it.each(['\r\n', '\r'] as const)('keeps condition edits in the source EOL style (%j)', async (eol) => {
+    const source = [
+      '@scene prologue',
+      '@if keep',
+      '// preserve this body',
+      '凛：原文',
+      '@else',
+      '凛：备用',
+      '@endif',
+      '@end',
+    ].join(eol) + eol;
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const condition = buildObjectIndex(snapshot).objects.find((object) => object.kind === 'condition')!;
+    const details = (condition.details as { structure: { fingerprint: string; branches: Array<{ objectRef: string }> } }).structure;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, {
+      operationId: `condition-eol-${eol === '\r' ? 'cr' : 'crlf'}`,
+      patch: {
+        kind: 'replaceConditionBlock',
+        target: condition.objectRef,
+        expectedFingerprint: details.fingerprint,
+        condition: {
+          kind: 'condition',
+          branches: [
+            { kind: 'if', expr: 'keep', sourceBranch: details.branches[0]!.objectRef },
+            { kind: 'elif', expr: 'new_flag', blocks: [{ kind: 'text', speaker: '凛', value: '新增正文' }] },
+            { kind: 'else', sourceBranch: details.branches[1]!.objectRef },
+          ],
+        },
+      },
+    }, hasher);
+    const written = change.record.workingFiles['content/scenario/prologue.gal']!;
+    expect(written).toContain(`@elif new_flag${eol}凛：新增正文${eol}@else`);
+    expect(written).toContain(`// preserve this body${eol}凛：原文`);
+    expect(written.replaceAll(eol, '')).not.toContain('\n');
+    if (eol === '\r\n') expect(written).not.toContain('\r\r');
+  });
+
+  it('rejects a nested branch reference when replacing an outer condition', async () => {
+    const source = '@scene prologue\n@if outer\n@if inner\nA\n@endif\n@else\nB\n@endif\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const index = buildObjectIndex(snapshot);
+    const outer = index.objects.find((object) => object.kind === 'condition' && object.source?.line === 2)!;
+    const nested = index.objects.find((object) => object.kind === 'condition' && object.source?.line === 3)!;
+    const nestedBranch = index.byRef.get(nested.childRefs![0]!)!;
+    const outerDetails = (outer.details as { structure: { fingerprint: string } }).structure;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const before = structuredClone(change.record);
+    await expect(applyScenePatch(change, {
+      operationId: 'nested-source-branch',
+      patch: {
+        kind: 'replaceConditionBlock',
+        target: outer.objectRef,
+        expectedFingerprint: outerDetails.fingerprint,
+        condition: {
+          kind: 'condition',
+          branches: [{ kind: 'if', expr: 'changed', sourceBranch: nestedBranch.objectRef }],
+        },
+      },
+    }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(change.record).toEqual(before);
+  });
+
+  it('creates nested condition blocks through the same typed scene operation', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applySceneCreate(change, {
+      operationId: 'create-condition-scene',
+      sceneId: 'condition_scene',
+      blocks: [{
+        kind: 'condition',
+        branches: [
+          { kind: 'if', expr: 'trust > 0', blocks: [{ kind: 'text', speaker: '凛', value: 'positive' }] },
+          { kind: 'else', blocks: [{ kind: 'instruction', name: 'bg', args: ['night'] }] },
+        ],
+      }],
+    });
+    expect(change.record.workingFiles['content/scenario/condition_scene.gal']).toContain('@if trust > 0\n  凛：positive\n@else\n  @bg night\n@endif');
   });
 });
