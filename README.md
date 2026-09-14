@@ -14,7 +14,7 @@ Surdet 是一个数据驱动的桌面 Galgame 引擎，也是一套面向外部�
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本。
+需要 Node.js 24 或更高版本，与根目录 `package.json` 的要求一致。
 
 ```powershell
 npm install
@@ -75,6 +75,16 @@ Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要
 
 `observe` 不修改项目文件；恢复 change 后的校验与模拟可以在 change store 追加证据。`stage` 只写隔离 change。`apply` 是启动时由操作者授予的项目写权限：普通 change 可在该会话创建或通过 `--resume-change` 恢复，并在证据门通过后提交；integration change 还必须有最终人类批准回执。推荐按上面的流程先复核，再另行启动 apply。MCP 只投影共享 authoring 合同，不维护第二套业务语义。
 
+要试玩尚未写回的工作变更，用绑定项目的 Editor 入口启动，再在页面打开同一个项目目录：
+
+```powershell
+npm run dev:project -w surdet-editor -- --project <项目目录绝对路径>
+```
+
+Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGENT_DATA_DIR`，两者也应使用同一个目录。进入“预览”，从“试玩内容”选择工作变更、封存候选或组合结果；列表未更新时点击“刷新试玩列表”。工作变更可以在原 change 中继续修改，再点击“重新播放”加载当前版本；封存候选和组合结果按各自封存身份打开。
+
+播放后通过公开 `runtime.read-preview` 能力读取实际观察，先核对返回的内容身份、版本和 `status`，再定位返修对象。观察中的运行和表现事实不能替代截图。页面的“回到上次位置”沿已记录的真实选择重新播放；选择或目标不再匹配时会停下，需正常重选。试玩不批准、不写回，也不会保存或丢弃来源草稿。
+
 当前 Authoring 合同为 `2.4.0`。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
 
 ## 工作区
@@ -129,6 +139,6 @@ npm run verify:editor-save-load
 
 - Surdet 面向外部 Agent，不在引擎内部绑定或托管模型。
 - 音频生产不是当前主线；真实听感仍由项目所有者判断。
-- `seed` 已进入部分证据合同，但 `@random` 仍使用 `Math.random()`；在独立可靠性任务完成前，不宣称全链路 seeded determinism。
+- `@random` 使用解释器的随机源；带 `seed` 的模拟与显式路径运行可复用该种子。实际播放器、外部系统和自定义回调是否可重放，仍应按各自接线验证。
 - 性能 baseline 是特定历史环境的资格化证据，不代表任意设备上的通用性能承诺。
 - 发布、部署和远端 push 都是独立授权门，不由测试通过自动触发。

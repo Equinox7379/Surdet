@@ -251,7 +251,8 @@ function sendError(request: IncomingMessage, response: ServerResponse, code: str
     error: {
       code,
       messageKey: `assetImport.${code}`,
-      retryDisposition: retryDisposition(code),
+      retryDisposition: code === 'PROJECT_BUSY' && error instanceof AuthoringOperationError
+        && error.details?.manualRecoveryRequired === true ? 'manual-recovery' : retryDisposition(code),
       ...(details === undefined ? {} : { details }),
     },
   }, true);

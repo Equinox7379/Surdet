@@ -2,6 +2,11 @@
   "title": "第一封信",
   "version": "0.1.0",
   "entryScene": "ch01_01",
+  "characters": {
+    "narrator": {
+      "name": "旁白"
+    }
+  },
   "variables": {
     "opened": {
       "type": "flag",

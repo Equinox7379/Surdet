@@ -41,6 +41,72 @@ beforeEach(() => {
 afterEach(async () => { await disconnectEditorWorkspace(); });
 
 describe('bound Editor sequential relay', () => {
+  const traceStart = { action: 'append' as const, previewId: 'preview-1', previewGeneration: 3,
+    messages: [{ type: 'surdet-preview-trace-start' as const, traceId: 'preview-1', generation: 3, sceneId: 'start' }] };
+
+  it('retries temporary preview contention in order, preserving the exact observation request', async () => {
+    await connectEditorWorkspace(client, root);
+    const publisher = editorPreviewPublisher(root)!;
+    const busy = new AssetImportClientError('PROJECT_BUSY', 'busy', 'after-refresh');
+    vi.mocked(client.preview).mockRejectedValueOnce(busy).mockRejectedValueOnce(busy);
+    const started = publisher.publish(traceStart);
+    const completed = publisher.publish({ ...traceStart, messages: [{ type: 'surdet-preview-trace-complete',
+      traceId: 'preview-1', generation: 3, status: 'passed', eventCount: 0 }] });
+    await Promise.all([started, completed]);
+    const calls = vi.mocked(client.preview).mock.calls.map(([input]) => input);
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(calls[1]).toEqual(calls[2]);
+    expect(calls.map(call => call.preview.action === 'append' && call.preview.messages[0]?.type))
+      .toEqual(['surdet-preview-trace-start', 'surdet-preview-trace-start', 'surdet-preview-trace-start', 'surdet-preview-trace-complete']);
+    expect(client.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new AssetImportClientError('PROJECT_BUSY', 'manual recovery', 'manual-recovery'),
+    new AssetImportClientError('PREVIEW_OBSERVATION_STALE', 'stale', 'after-refresh'),
+    new AssetImportClientError('AUTHORITY_UNAVAILABLE', 'response unknown', 'same-request'),
+  ])('does not automatically repeat a non-transient observation failure: $code / $retryDisposition', async error => {
+    await connectEditorWorkspace(client, root);
+    vi.mocked(client.preview).mockRejectedValue(error);
+    await expect(editorPreviewPublisher(root)!.publish(traceStart)).rejects.toBe(error);
+    expect(client.preview).toHaveBeenCalledOnce();
+  });
+
+  it('stops a waiting preview when current workspace facts change', async () => {
+    await connectEditorWorkspace(client, root);
+    vi.mocked(client.preview).mockImplementationOnce(async () => {
+      facts.sceneDirty = true;
+      throw new AssetImportClientError('PROJECT_BUSY', 'busy', 'after-refresh');
+    });
+    await expect(editorPreviewPublisher(root)!.publish(traceStart)).rejects.toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+    expect(client.preview).toHaveBeenCalledOnce();
+    expect(editorWorkspaceStatus()).toMatchObject({ dirty: true, baseline: oldBaseline });
+  });
+
+  it('cancels a preview retry before reconnecting, without publishing into either binding', async () => {
+    await connectEditorWorkspace(client, root);
+    vi.mocked(client.preview).mockRejectedValueOnce(new AssetImportClientError('PROJECT_BUSY', 'busy', 'after-refresh'));
+    const pending = editorPreviewPublisher(root)!.publish(traceStart).catch(error => error);
+    await vi.waitFor(() => expect(client.preview).toHaveBeenCalledOnce());
+    await connectEditorWorkspace(client, root);
+    expect(await pending).toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+    expect(client.preview).toHaveBeenCalledOnce();
+  });
+
+  it('bounds persistent preview contention and releases the queue for explicit invalidation', async () => {
+    await connectEditorWorkspace(client, root);
+    const publisher = editorPreviewPublisher(root)!;
+    const busy = new AssetImportClientError('PROJECT_BUSY', 'still busy', 'after-refresh');
+    vi.mocked(client.preview).mockRejectedValue(busy);
+    await expect(publisher.publish(traceStart)).rejects.toBe(busy);
+    expect(vi.mocked(client.preview).mock.calls.length).toBeGreaterThan(1);
+    expect(vi.mocked(client.preview).mock.calls.length).toBeLessThan(10);
+    vi.mocked(client.preview).mockResolvedValueOnce({ previewId: null, previewGeneration: 3 });
+    await expect(publisher.publish({ action: 'invalidate', previewGeneration: 3, reason: 'closed' }))
+      .resolves.toEqual({ previewId: null, previewGeneration: 3 });
+  });
+
   it('publishes actual dirty facts and never sends a captured preview into a replacement binding', async () => {
     await connectEditorWorkspace(client, root);
     const publisher = editorPreviewPublisher(root)!;
