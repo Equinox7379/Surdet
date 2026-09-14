@@ -134,6 +134,10 @@ export class PreviewContentService {
         || record.integration?.status !== 'READY' || record.integration.planId !== target.planId || record.integration.planFingerprint !== target.planFingerprint) stale('组合结果身份、版本或来源基线已变化');
       const { plan } = await compositions.readPlan(target.planId);
       if (plan.projectIdentity !== projectIdentity || plan.planId !== target.planId || plan.planFingerprint !== target.planFingerprint || plan.expectedProjectRevision !== before.projectRevision || plan.dryRun.status !== 'passed') stale('组合结果的封存计划不匹配');
+      const plannedOperations = new Set(plan.replayOperations.map(operation => operation.integrationOperationId));
+      if (Object.keys(record.operations).some(operationId => !plannedOperations.has(operationId))) {
+        stale('组合包含保存计划之外的编辑，请返回原工作变更返修并重新组合');
+      }
       for (const [objectRef, expected] of Object.entries(plan.dryRun.finalObjectFingerprints)) {
         if ((await fingerprintWorkingObject(record.workingFiles, objectRef, hasher)).fingerprint !== expected) stale('组合结果已偏离封存计划产物');
       }

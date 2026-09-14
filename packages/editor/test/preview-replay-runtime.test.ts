@@ -287,7 +287,7 @@ describe('PreviewReplayController', () => {
         seed,
         sceneId: 'duplicate-choice',
         choices: [{ source: choicePoint.source, optionFingerprint: choicePoint.options![0]!.fingerprint }],
-        target: targetPoint.source,
+        target: targetPoint.source, targetVisit: 1,
       },
       onStatus: (message) => choiceStatuses.push(message),
     });
@@ -358,7 +358,7 @@ describe('PreviewReplayController', () => {
       sources,
       seed,
       sceneId: 'lifecycle',
-      replay: { seed, sceneId: 'lifecycle', choices: [], target },
+      replay: { seed, sceneId: 'lifecycle', choices: [], target, targetVisit: 1 },
       onStatus: () => {},
     });
     attach(disposedController, disposedRuntime.interpreter, disposedRuntime.bus);
@@ -376,7 +376,7 @@ describe('PreviewReplayController', () => {
       sources,
       seed,
       sceneId: 'lifecycle',
-      replay: { seed, sceneId: 'lifecycle', choices: [], target },
+      replay: { seed, sceneId: 'lifecycle', choices: [], target, targetVisit: 1 },
       onStatus: () => {},
     });
     attach(generationController, oldRuntime.interpreter, oldRuntime.bus);
