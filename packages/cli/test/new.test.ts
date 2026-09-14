@@ -69,6 +69,7 @@ describe('surdet new', () => {
     const r = lintProject(target);
     expect(r.ok).toBe(true);
     expect(r.sceneCount).toBe(1);
+    expect(r.issues).toEqual([]);
   });
 
   it('非法名字拒绝', async () => {

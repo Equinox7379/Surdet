@@ -15,6 +15,7 @@ import { openAgentPortSession } from '../src/agent-port/session.js';
 import { createAgentPortServer } from '../src/agent-port/server.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { PreviewObservationService } from '../src/authoring/preview-observation-service.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 
 const cleanups: (() => Promise<unknown>)[] = [];
 const sha = (value: string | Buffer) => crypto.createHash('sha256').update(value).digest('hex');
@@ -91,6 +92,23 @@ async function fixture() {
     preview: { action: 'append', previewId: begin.previewId, previewGeneration: begin.previewGeneration, messages: value } });
   return { project, dataRoot, editor, workspace, begin, messages, read, publish, append, session, mcp };
 }
+
+it('preserves temporary and manual-recovery lease failures across preview HTTP and the browser client', async () => {
+  const f = await fixture();
+  await f.publish();
+  for (const foreign of [false, true]) {
+    const manager = new NodeLocalLeaseManager(f.dataRoot, foreign ? { hostname: () => 'preview-foreign-host' } : {});
+    const lease = await manager.acquire({ scope: 'project', resourceId: await fs.realpath(f.project) });
+    try {
+      const record = await fs.readFile(path.join(lease.directory, 'lease.json'), 'utf8');
+      await expect(f.append()).rejects.toMatchObject({ code: 'PROJECT_BUSY',
+        retryDisposition: foreign ? 'manual-recovery' : 'after-refresh' });
+      expect(await fs.readFile(path.join(lease.directory, 'lease.json'), 'utf8')).toBe(record);
+    } finally { await lease.release(); }
+  }
+  await f.append();
+  expect(await f.read()).toMatchObject({ status: 'current', eventCount: 1, observation: { previewId: f.begin.previewId } });
+});
 
 it('uses real binding, HTTP, client, disk storage and MCP schemas; resolves source and never manufactures commit evidence', async () => {
   const f = await fixture();
