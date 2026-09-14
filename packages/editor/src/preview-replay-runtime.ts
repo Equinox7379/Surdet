@@ -21,6 +21,10 @@ const MAX_REPLAY_CHOICES = 256;
 const MAX_AUTO_STEPS = 4096;
 
 type PreviewChoiceOption = { index: number; label: string };
+export interface PreviewReplayInput {
+  advance(): boolean;
+  select(index: number): boolean;
+}
 
 export interface PreviewReplayControllerOptions {
   sources: PreviewReplaySources;
@@ -56,7 +60,7 @@ function sameOptionalLabel(left: string | undefined, right: string | undefined):
 /**
  * Drives the existing Core interpreter back to a source checkpoint.
  *
- * This class deliberately observes Core's trace and public blocking methods;
+ * This class observes Core's trace and drives the normal presentation input;
  * it does not own variables, save state, program counters, or renderer waits.
  * A controller without `replay` is a recording observer and never advances
  * the interpreter by itself.
@@ -71,6 +75,7 @@ export class PreviewReplayController {
   readonly #initialReplayEligible: boolean;
 
   #interpreter: Interpreter | null = null;
+  #input: PreviewReplayInput | null = null;
   #generation = 0;
   #disposed = false;
   #scheduled = false;
@@ -121,13 +126,14 @@ export class PreviewReplayController {
   }
 
   /** Attach before Interpreter.start(). Attaching a new interpreter starts a new observed run. */
-  attach(interpreter: Interpreter): void {
+  attach(interpreter: Interpreter, input: PreviewReplayInput): void {
     if (this.#disposed) {
       this.#notify('试玩续接已停止：控制器已经释放。');
       return;
     }
     this.#generation += 1;
     this.#interpreter = interpreter;
+    this.#input = input;
     this.#scheduled = false;
     this.#currentPoint = null;
     this.#availableOptions = null;
@@ -185,6 +191,7 @@ export class PreviewReplayController {
     this.#disposed = true;
     this.#generation += 1;
     this.#interpreter = null;
+    this.#input = null;
     this.#scheduled = false;
     this.#availableOptions = null;
     this.#autoEnabled = false;
@@ -303,7 +310,8 @@ export class PreviewReplayController {
     if (interpreter.status === 'awaiting-advance') {
       if (!this.#consumeAutoBudget()) return;
       try {
-        interpreter.advance();
+        if (this.#input?.advance()) this.#scheduleContinue();
+        else this.#disableAuto('当前画面未接受文本推进，已停在真实播放位置。');
       } catch (error) {
         this.#disableAuto(`解释器无法继续文本：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -328,7 +336,7 @@ export class PreviewReplayController {
       }
       if (!this.#consumeAutoBudget()) return;
       try {
-        interpreter.choose(index);
+        if (!this.#input?.select(index)) this.#disableAuto('当前画面未接受保存选项，已停在真实选择肢。');
       } catch (error) {
         this.#disableAuto(`解释器拒绝保存选项：${error instanceof Error ? error.message : String(error)}`);
       }

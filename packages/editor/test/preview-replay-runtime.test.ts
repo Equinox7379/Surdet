@@ -14,7 +14,8 @@ import {
   type PreviewPlaybackCheckpoint,
   type PreviewReplaySources,
 } from '@surdet/authoring';
-import { PreviewReplayController } from '../src/preview-replay-runtime.js';
+import { PreviewReplayController, type PreviewReplayInput } from '../src/preview-replay-runtime.js';
+import { PresentationController, type RendererCommands, type RendererQueries } from '@surdet/renderer';
 
 const seed = 0x1234;
 
@@ -40,10 +41,13 @@ function makeRuntime(
   return { store, bus, registry, interpreter };
 }
 
-function attach(controller: PreviewReplayController, interpreter: Interpreter, bus: EventBus<CoreEventMap>): void {
+function attach(controller: PreviewReplayController, interpreter: Interpreter, bus: EventBus<CoreEventMap>, input: PreviewReplayInput = {
+  advance: () => { interpreter.advance(); return true; },
+  select: index => { interpreter.choose(index); return true; },
+}): void {
   bus.on('runtimeTrace', (event) => controller.observe(event));
   bus.on('choice', (event) => controller.choice(event.options));
-  controller.attach(interpreter);
+  controller.attach(interpreter, input);
 }
 
 async function flushMicrotasks(count = 80): Promise<void> {
@@ -96,6 +100,38 @@ async function recordAReplayCheckpoint(
 }
 
 describe('PreviewReplayController', () => {
+  it('clears actual presentation choices when replay reaches the later dialogue', async () => {
+    const original = await recordAReplayCheckpoint();
+    const runtime = makeRuntime([{ id: 'intro', text: replayScene() }]);
+    let visibleChoices: { index: number; label: string }[] = [];
+    let text = '';
+    const commands = { dialogue: {
+      showText: (_speaker: string | null, value: string) => { text = value; },
+      showChoices: (options: { index: number; label: string }[]) => { visibleChoices = options; },
+      hideChoices: () => { visibleChoices = []; },
+      setAwaiting: () => {},
+      setChoiceHighlight: () => {},
+    } } as unknown as RendererCommands;
+    const queries = {} as RendererQueries;
+    const presentation = new PresentationController(commands, queries, undefined, {
+      commands, queries, onAdvance: () => runtime.interpreter.advance(), onSelect: index => runtime.interpreter.choose(index),
+    });
+    presentation.connect(runtime.bus);
+    const replay = new PreviewReplayController({ sources: original.sources, seed, sceneId: 'intro', label: 'start',
+      replay: original.checkpoint, onStatus: () => {},
+    });
+    attach(replay, runtime.interpreter, runtime.bus, presentation);
+    runtime.interpreter.start('intro', 'start');
+    await flushMicrotasks();
+    presentation.advance(); // Finish the target line's normal typewriter.
+    expect(runtime.interpreter.status).toBe('awaiting-advance');
+    expect(text).toBe('目标对白。');
+    expect(visibleChoices).toEqual([]);
+    expect(presentation.status).toBe('awaiting');
+    replay.dispose();
+    presentation.destroy();
+  });
+
   it('follows a moved performance line back to the original dialogue source', async () => {
     const original = await recordAReplayCheckpoint();
     const changedText = replayScene('凛：新增演出。');

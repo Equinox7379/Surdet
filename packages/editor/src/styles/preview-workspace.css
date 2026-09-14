@@ -46,6 +46,10 @@
   gap: var(--surdet-space-12);
 }
 
+.preview-controls > [hidden] {
+  display: none;
+}
+
 .preview-entry-control {
   display: grid;
   grid-template-columns: auto minmax(180px, 280px);
