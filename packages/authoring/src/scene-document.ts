@@ -49,7 +49,7 @@ export function parseSceneLine(raw: string, previousKind: string, eol: SceneEol 
 
 export function parseSceneDocument(text: string): SceneDocumentLine[] {
   if (text === '') return [parseSceneLine('', '', '')];
-  const chunks = text.match(/.*?(?:\r\n|\n|\r|$)/g)?.filter((chunk) => chunk.length > 0) ?? [];
+  const chunks = text.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g)?.filter((chunk) => chunk.length > 0) ?? [];
   const out: SceneDocumentLine[] = [];
   let previousKind = '';
   for (const chunk of chunks) {

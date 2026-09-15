@@ -15,6 +15,20 @@ describe('scene document EOL identity', () => {
     expect(serializeSceneDocument(parseSceneDocument(source), '\n')).toBe(source);
   });
 
+  it.each(['\u2028', '\u2029'])('preserves a non-CR/LF separator %j as raw source content', (separator) => {
+    for (const raw of [`林汀：前半句${separator}后半句`, `林汀：末尾保留${separator}`, separator]) {
+      const lines = parseSceneDocument(raw);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]?.raw).toBe(raw);
+      expect(serializeSceneDocument(lines, '\n')).toBe(raw);
+    }
+    const source = `@scene mixed\r\n林汀：前半句${separator}后半句\n周渡：灯塔还亮着。\r@end`;
+    const lines = parseSceneDocument(source);
+    expect(lines).toHaveLength(4);
+    expect(lines.map(line => line.eol)).toEqual(['\r\n', '\n', '\r', '']);
+    expect(serializeSceneDocument(lines, '\n')).toBe(source);
+  });
+
   it('inserts with the anchor EOL without changing unrelated delimiters', () => {
     const source = '@scene mixed\r\n凛：第一行\n@end';
     const next = insertLinesAfter(parseSceneDocument(source), 1, [{ kind: 'text', speaker: '凛', value: '新增', raw: '凛：新增' }]);
