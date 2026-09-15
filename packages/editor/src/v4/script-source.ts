@@ -64,6 +64,20 @@ export function insertStep(text: string, index: number, inserted: readonly strin
   return finishEdit(lines, next, end + 1, eol);
 }
 
+/** Enter replaces the selected dialogue range with a new row, retaining its speaker and local EOL. */
+export function splitDialogue(text: string, index: number, start: number, end: number): SourceEdit {
+  const lines = parseScript(text), line = lines[index];
+  if (line?.kind !== 'text' || !Number.isInteger(start) || !Number.isInteger(end)
+    || start < 0 || end < start || end > line.value.length) throw new Error('台词或光标位置已变化，请重新选择');
+  const prefix = line.raw.slice(0, line.raw.length - line.value.length);
+  const offset = lines.slice(0, index).reduce((size, row) => size + row.raw.length + row.eol.length, 0);
+  const eol = line.eol || sourceEol(text);
+  let replacement = prefix + line.value.slice(0, start) + eol + prefix + line.value.slice(end);
+  // The shared document represents a final blank row by its own EOL, not a phantom trailing token.
+  if (prefix === '' && end === line.value.length && index === lines.length - 1 && !line.eol) replacement += eol;
+  return { text: text.slice(0, offset) + replacement + text.slice(offset + line.raw.length), selectedLine: index + 1 };
+}
+
 export function deleteStep(text: string, index: number): SourceEdit {
   const lines = parseScript(text), range = stepAt(lines, index);
   const next = [...lines];
