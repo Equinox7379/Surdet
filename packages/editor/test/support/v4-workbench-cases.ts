@@ -123,6 +123,21 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'scoped replacement preserves Unicode separators and unrelated dialogue through undo and redo', run: () => {
+    for (const separator of ['\u2028', '\u2029']) {
+      const before = `@scene start\r\n林汀：前半句${separator}后半句\n周渡：灯塔还亮着。\r@end`;
+      const { scene, other } = searchFixture(before);
+      const otherBefore = other.text;
+      input('#search-input', '灯塔'); input('[aria-label="查找范围"]', 'scene', 'change');
+      clickText('#search-panel', '替换'); input('.search-replacement input', '邮局');
+      clickText('#search-panel', '替换当前场景');
+      assert(currentFixtureText() === before.replace('灯塔', '邮局'), 'replacement removed an unrelated source prefix');
+      assert(scene.dirty && !other.dirty && other.text === otherBefore, 'scoped replacement saved or changed another scene');
+      assert(histories.get('start')?.past.length === 1, 'replacement lost its independent undo point');
+      undo(); assert(currentFixtureText() === before, 'undo did not restore every source character');
+      redo(); assert(currentFixtureText() === before.replace('灯塔', '邮局'), 'redo did not preserve the unrelated source');
+    }
+  } },
   { name: 'search retains query, scope and keyboard focus while navigating between real scene rows', run: () => {
     const { jumps } = searchFixture(); input('#search-input', '查找');
     searchKey('Enter'); searchKey('Enter'); searchKey('Enter');

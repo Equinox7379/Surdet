@@ -77,6 +77,12 @@ describe('V4 source adapters use shared rows and preserve B01', () => {
       text: '@scene x\n  岚:  你好😀\r\n  岚:  继续\r\n@end', selectedLine: 2,
     });
   });
+  it.each(['\u2028', '\u2029'])('keeps source offsets when a previous dialogue contains %j', (separator) => {
+    const source = `@scene x\r\n林汀：原句${separator}原样保留\n周渡：前句后句\r@end`;
+    expect(splitDialogue(source, 2, 2, 2)).toEqual({
+      text: source.replace('周渡：前句后句', '周渡：前句\r周渡：后句'), selectedLine: 3,
+    });
+  });
   it('replaces the selected dialogue range and keeps the file terminal shape', () => {
     expect(splitDialogue('岚：开始删掉结尾', 0, 2, 4).text).toBe('岚：开始\n岚：结尾');
     expect(splitDialogue('岚：你好\r\n', 0, 2, 2).text).toBe('岚：你好\r\n岚：\r\n');

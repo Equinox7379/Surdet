@@ -54,6 +54,23 @@ describe('searchScenes', () => {
 });
 
 describe('replaceInSceneText', () => {
+  it.each(['\u2028', '\u2029'])('替换其他词时保留 %j 所在行与说话人', (separator) => {
+    const text = `@scene start\r\n林汀：前半句${separator}后半句\n周渡：灯塔还亮着。\r@end`;
+    const documents = [{ key: 'start', id: 'start', text }];
+    for (const query of ['前半句', '后半句']) {
+      expect(searchScenes(documents, query, false)).toEqual([
+        { sceneKey: 'start', sceneId: 'start', line: 1, text: `林汀：前半句${separator}后半句` },
+      ]);
+    }
+    for (const regex of [false, true]) {
+      expect(replaceInSceneText(text, '灯塔', '邮局', regex)).toEqual({
+        text: text.replace('灯塔', '邮局'), count: 1,
+      });
+    }
+    expect(replaceInSceneText(text, '灯塔', '灯塔', false)).toEqual({ text, count: 1 });
+    expect(replaceInSceneText(text, '不存在', '其他', false)).toEqual({ text, count: 0 });
+  });
+
   it('正则逐行替换与显示匹配一致，并保留每一处原换行', () => {
     const text = 'a\r\nb\nc\r';
     expect(replaceInSceneText(text, '^', '前', true)).toEqual({ text: '前a\r\n前b\n前c\r', count: 3 });
